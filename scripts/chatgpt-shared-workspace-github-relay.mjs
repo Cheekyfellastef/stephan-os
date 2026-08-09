@@ -25,14 +25,9 @@ import {
   loadSharedWorkspaceHeadTruthEvidence,
 } from '../shared/agents/sharedWorkspaceHeadTruthV1.mjs';
 import {
-  PARTICIPANT_ROLE,
-  buildConversationConnectionProjection,
-} from '../shared/agents/sharedWorkspaceMissionRoomV2.mjs';
-import {
   createSharedWorkspaceEventRecord,
   createSharedWorkspaceReceiptRecord,
   resolveSharedWorkspacePath,
-  validateSharedWorkspaceRecord,
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 
@@ -46,8 +41,6 @@ export const CHATGPT_SHARED_WORKSPACE_REQUEST_MARKER = '<!-- stephanos-chatgpt-s
 export const CHATGPT_SHARED_WORKSPACE_RESPONSE_MARKER = '<!-- stephanos-chatgpt-shared-workspace-response-v1 -->';
 
 const MAX_COMMENT_BYTES = 12 * 1024;
-const MAX_CONVERSATION_REPLY_BYTES = 64 * 1024;
-const CONVERSATION_REPLY_STALE_AFTER_MS = 5 * 60 * 1000;
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 const UNSAFE_REMOTE_TEXT = /(?:BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|xox[baprs]-|gh[pousr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{20,}|[a-z]:\\|\\\\|\/(?:users|home|workspace|tmp)\/)/i;
 
@@ -259,182 +252,6 @@ function eventIdFor(receiptId) {
   return `chatgpt-event-${digest(receiptId).slice(0, 24)}`;
 }
 
-function conversationReplyFileName(request = {}) {
-  const messageId = safeId(request?.boundedPayload?.requestMessageId || request?.boundedPayload?.messageId);
-  return messageId ? `conversation-reply-${messageId}.json` : '';
-}
-
-export async function loadConversationReply({
-  workspaceRoot,
-  repoRoot,
-  request,
-  nowMs,
-  readFileFn = readFile,
-} = {}) {
-  const fileName = conversationReplyFileName(request);
-  if (!fileName) return Object.freeze({ ok: false, reason: 'CONVERSATION_REPLY_IDENTITY_INCOMPLETE', record: null });
-  const resolved = resolveSharedWorkspacePath({ root: workspaceRoot, repoRoot, segments: ['outbox', fileName] });
-  if (!resolved.ok) return Object.freeze({ ok: false, reason: resolved.reason, record: null });
-  let raw;
-  try {
-    raw = await readFileFn(resolved.path, 'utf8');
-  } catch (error) {
-    return Object.freeze({ ok: false, reason: error?.code === 'ENOENT' ? 'CONVERSATION_REPLY_NOT_READY' : 'CONVERSATION_REPLY_READ_FAILED', record: null });
-  }
-  if (Buffer.byteLength(raw, 'utf8') > MAX_CONVERSATION_REPLY_BYTES) return Object.freeze({ ok: false, reason: 'CONVERSATION_REPLY_TOO_LARGE', record: null });
-  let record;
-  try { record = JSON.parse(raw); } catch {
-    return Object.freeze({ ok: false, reason: 'CONVERSATION_REPLY_JSON_INVALID', record: null });
-  }
-  const validation = validateSharedWorkspaceRecord(record, { nowMs, staleAfterMs: CONVERSATION_REPLY_STALE_AFTER_MS });
-  if (!validation.valid) return Object.freeze({ ok: false, reason: 'CONVERSATION_REPLY_RECORD_INVALID', record: null, validation });
-  const subject = request.boundedPayload || {};
-  const expectedHead = text(subject.expectedTargetSourceHead).toLowerCase();
-  const responder = safeId(record.senderParticipantId || record.participantId);
-  const identityMatches = record.channel === 'stephanos-conversation'
-    && record.deliveryState === 'REPLIED'
-    && record.recipientParticipantId === 'chatgpt'
-    && record.requestedEntityId === safeId(subject.requestedEntityId)
-    && record.conversationId === safeId(subject.conversationId)
-    && record.threadId === safeId(subject.threadId)
-    && record.replyToMessageId === safeId(subject.requestMessageId || subject.messageId)
-    && record.correlationId === safeId(subject.correlationId, safeId(subject.conversationId))
-    && (responder === safeId(subject.requestedEntityId) || responder === 'stephanos');
-  if (!identityMatches) return Object.freeze({ ok: false, reason: 'CONVERSATION_REPLY_IDENTITY_MISMATCH', record: null });
-  if (expectedHead && text(record.expectedTargetSourceHead).toLowerCase() !== expectedHead) {
-    return Object.freeze({ ok: false, reason: 'CONVERSATION_REPLY_TARGET_HEAD_MISMATCH', record: null });
-  }
-  if (validation.stale) return Object.freeze({ ok: false, reason: 'CONVERSATION_REPLY_STALE', record, validation });
-  return Object.freeze({ ok: true, reason: 'CONVERSATION_REPLY_READY', record, validation });
-}
-
-export function buildConversationReplyProjection({ loadStatus = {}, request = {}, timestampUtc = new Date().toISOString() } = {}) {
-  const record = loadStatus.record || null;
-  return Object.freeze({
-    projectionKind: 'conversation-reply-projection',
-    aggregationOk: true,
-    aggregationReason: text(loadStatus.reason, 'CONVERSATION_REPLY_NOT_READY'),
-    state: loadStatus.ok ? 'REPLIED' : 'UNPROVEN',
-    blocker: loadStatus.ok ? '' : text(loadStatus.reason, 'CONVERSATION_REPLY_NOT_READY'),
-    conversationId: safeId(request?.boundedPayload?.conversationId),
-    threadId: safeId(request?.boundedPayload?.threadId),
-    requestMessageId: safeId(request?.boundedPayload?.requestMessageId || request?.boundedPayload?.messageId),
-    requestedEntityId: safeId(request?.boundedPayload?.requestedEntityId),
-    reply: record ? {
-      messageId: safeId(record.messageId),
-      senderParticipantId: safeId(record.senderParticipantId || record.participantId),
-      recipientParticipantId: safeId(record.recipientParticipantId),
-      replyToMessageId: safeId(record.replyToMessageId),
-      correlationId: safeId(record.correlationId),
-      sourceHead: text(record.expectedTargetSourceHead).toLowerCase(),
-      observedAtUtc: text(record.originTimestampUtc || record.timestampUtc),
-      body: bounded(record.body, 2000),
-      proofRefs: Array.isArray(record.proofRefs) ? record.proofRefs.map(String) : [],
-    } : null,
-    timestampUtc,
-    arbitraryFilesystemAccess: false,
-    commandExecutionAccess: false,
-    sourceMutationAccess: false,
-  });
-}
-
-function participantRole(participantId) {
-  if (participantId === 'stephanos') return PARTICIPANT_ROLE.STEPHANOS;
-  if (participantId === 'openclaw') return PARTICIPANT_ROLE.OPENCLAW;
-  if (participantId === 'codex') return PARTICIPANT_ROLE.CODEX;
-  return PARTICIPANT_ROLE.FUTURE_AGENT;
-}
-
-export async function loadParticipantConnectionReceipts({
-  workspaceRoot,
-  repoRoot,
-  participantIds = ['stephanos', 'openclaw', 'codex'],
-  nowMs,
-  readFileFn = readFile,
-} = {}) {
-  const receipts = [];
-  const loads = {};
-  for (const rawId of participantIds.slice(0, 8)) {
-    const participantId = safeId(rawId);
-    if (!participantId) continue;
-    const resolved = resolveSharedWorkspacePath({
-      root: workspaceRoot,
-      repoRoot,
-      segments: ['status', `conversation-participant-${participantId}-current.json`],
-    });
-    if (!resolved.ok) {
-      loads[participantId] = resolved.reason;
-      continue;
-    }
-    try {
-      const raw = await readFileFn(resolved.path, 'utf8');
-      if (Buffer.byteLength(raw, 'utf8') > MAX_CONVERSATION_REPLY_BYTES) {
-        loads[participantId] = 'CONVERSATION_CONNECTION_RECEIPT_TOO_LARGE';
-        continue;
-      }
-      const record = JSON.parse(raw);
-      const validation = validateSharedWorkspaceRecord(record, { nowMs, staleAfterMs: CONVERSATION_REPLY_STALE_AFTER_MS });
-      if (!validation.valid || record.participantId !== participantId) {
-        loads[participantId] = 'CONVERSATION_CONNECTION_RECEIPT_INVALID';
-        continue;
-      }
-      receipts.push(record);
-      loads[participantId] = validation.stale ? 'CONVERSATION_CONNECTION_RECEIPT_STALE' : 'CONVERSATION_CONNECTION_RECEIPT_LOADED';
-    } catch (error) {
-      loads[participantId] = error?.code === 'ENOENT' ? 'CONVERSATION_CONNECTION_RECEIPT_MISSING' : 'CONVERSATION_CONNECTION_RECEIPT_READ_FAILED';
-    }
-  }
-  return Object.freeze({ receipts: Object.freeze(receipts), loads: Object.freeze(loads) });
-}
-
-export function buildParticipantConnectionsProjection({ loadStatus = {}, participantIds = [], nowMs = Date.now() } = {}) {
-  const participants = participantIds.map((participantId) => ({
-    participantId,
-    role: participantRole(participantId),
-    conversationAdapterId: loadStatus.receipts?.find((record) => record.participantId === participantId)?.conversationAdapterId || '',
-    canReceiveConversation: true,
-    canReplyConversation: true,
-  }));
-  const projection = buildConversationConnectionProjection({ participants, receipts: loadStatus.receipts || [], nowMs });
-  return Object.freeze({ ...projection, loads: loadStatus.loads || {} });
-}
-
-export async function loadConversationTargetRegistration({
-  workspaceRoot,
-  repoRoot,
-  request,
-  nowMs,
-  readFileFn = readFile,
-} = {}) {
-  const participantId = safeId(request?.boundedPayload?.requestedEntityId);
-  if (['stephanos', 'openclaw', 'codex'].includes(participantId)) {
-    return Object.freeze({ registered: true, participantId, reason: 'CORE_CONVERSATION_PARTICIPANT' });
-  }
-  if (!participantId.startsWith('future-agent-')) return Object.freeze({ registered: false, participantId, reason: 'CONVERSATION_TARGET_NOT_REGISTERED' });
-  const resolved = resolveSharedWorkspacePath({ root: workspaceRoot, repoRoot, segments: ['capabilities', `${participantId}.json`] });
-  if (!resolved.ok) return Object.freeze({ registered: false, participantId, reason: resolved.reason });
-  try {
-    const raw = await readFileFn(resolved.path, 'utf8');
-    if (Buffer.byteLength(raw, 'utf8') > MAX_CONVERSATION_REPLY_BYTES) return Object.freeze({ registered: false, participantId, reason: 'CONVERSATION_CAPABILITY_TOO_LARGE' });
-    const record = JSON.parse(raw);
-    const validation = validateSharedWorkspaceRecord(record, { nowMs, staleAfterMs: CONVERSATION_REPLY_STALE_AFTER_MS });
-    const operations = Array.isArray(record.conversationOperations) ? record.conversationOperations : [];
-    const registered = validation.valid
-      && !validation.stale
-      && record.agentId === participantId
-      && safeId(record.conversationAdapterId) === safeId(request.boundedPayload?.targetCapabilityId)
-      && operations.includes('RECEIVE_TURN')
-      && operations.includes('REPLY_TURN');
-    return Object.freeze({
-      registered,
-      participantId,
-      reason: registered ? 'CONVERSATION_TARGET_REGISTERED' : (validation.stale ? 'CONVERSATION_TARGET_CAPABILITY_STALE' : 'CONVERSATION_TARGET_NOT_REGISTERED'),
-    });
-  } catch (error) {
-    return Object.freeze({ registered: false, participantId, reason: error?.code === 'ENOENT' ? 'CONVERSATION_TARGET_CAPABILITY_MISSING' : 'CONVERSATION_TARGET_CAPABILITY_READ_FAILED' });
-  }
-}
-
 function readProjectionForOperation(operation, projection) {
   if (operation === 'READ_LATEST_PROOF') {
     return Object.freeze({
@@ -499,11 +316,6 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   headTruthProjectionBuilder = buildSharedWorkspaceHeadTruthProjection,
   deliveryEvidenceLoader = loadScopedDeliveryStatusEvidence,
   deliveryProjectionBuilder = buildScopedDeliveryStatusProjection,
-  conversationReplyLoader = loadConversationReply,
-  conversationReplyProjectionBuilder = buildConversationReplyProjection,
-  participantConnectionLoader = loadParticipantConnectionReceipts,
-  participantConnectionsProjectionBuilder = buildParticipantConnectionsProjection,
-  conversationTargetRegistrationLoader = loadConversationTargetRegistration,
   recordBuilder = buildChatGptBridgeRecord,
   writeAtomicJsonFn = writeAtomicJson,
 } = {}) {
@@ -550,24 +362,12 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
     });
   }
 
-  const needsConversationRegistration = ['WRITE_CONVERSATION_TURN', 'READ_CONVERSATION_REPLY'].includes(request.operation);
-  const targetRegistration = parsed.ok && needsConversationRegistration
-    ? await conversationTargetRegistrationLoader({
-        workspaceRoot: paths.workspaceRoot,
-        repoRoot: paths.repoRoot,
-        request,
-        nowMs,
-        readFileFn,
-      })
-    : null;
-  const registeredConversationParticipantIds = targetRegistration?.registered ? [targetRegistration.participantId] : [];
   const replayStore = createInMemoryReplayStore();
   const verification = parsed.ok
     ? verifyRequestFn(request, {
         authenticated: observed.authorLogin === CHATGPT_SHARED_WORKSPACE_OWNER,
         transportConfigured: true,
         replayStore,
-        registeredConversationParticipantIds,
         nowMs,
         timestampUtc,
       })
@@ -628,27 +428,6 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         timestampUtc,
         nowMs,
       });
-    } else if (request.operation === 'READ_CONVERSATION_REPLY') {
-      const loadStatus = await conversationReplyLoader({
-        workspaceRoot: paths.workspaceRoot,
-        repoRoot: paths.repoRoot,
-        request,
-        nowMs,
-        readFileFn,
-      });
-      projection = conversationReplyProjectionBuilder({ loadStatus, request, timestampUtc, nowMs });
-    } else if (request.operation === 'READ_PARTICIPANT_CONNECTIONS') {
-      const participantIds = Array.isArray(request.boundedPayload?.participantIds) && request.boundedPayload.participantIds.length
-        ? request.boundedPayload.participantIds.map((value) => safeId(value)).filter(Boolean)
-        : ['stephanos', 'openclaw', 'codex'];
-      const loadStatus = await participantConnectionLoader({
-        workspaceRoot: paths.workspaceRoot,
-        repoRoot: paths.repoRoot,
-        participantIds,
-        nowMs,
-        readFileFn,
-      });
-      projection = participantConnectionsProjectionBuilder({ loadStatus, participantIds, timestampUtc, nowMs });
     } else {
       projection = await projectionBuilder({
         workspaceRoot: paths.workspaceRoot,
@@ -663,16 +442,13 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
     const built = recordBuilder(request, {
       timestampUtc,
       workspaceValidationOptions: { nowMs },
-      registeredConversationParticipantIds,
     });
     if (!built?.ok) {
       deliveryStatus = built?.reason || 'WORKSPACE_RECORD_BUILD_FAILED';
       primaryWrite = { ok: false, reason: deliveryStatus, bytes: 0 };
     } else {
       workspaceRecord = built.record;
-      const messageName = request.operation === 'WRITE_CONVERSATION_TURN'
-        ? `conversation-${safeId(request.boundedPayload?.requestMessageId, digest(observed.body).slice(0, 24))}.json`
-        : `${safeId(request.requestId, digest(observed.body).slice(0, 24))}.json`;
+      const messageName = `${safeId(request.requestId, digest(observed.body).slice(0, 24))}.json`;
       primaryWrite = await persistOnce({
         workspaceRoot: paths.workspaceRoot,
         repoRoot: paths.repoRoot,
