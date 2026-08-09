@@ -49,9 +49,86 @@ test('exactly one fresh identified active lane remains authoritative', () => {
   assert.equal(result.activeGoal,'#1'); assert.equal(result.activeLane,'PR #1601'); assert.equal(result.selectedGoal,null); assert.match(result.whyNow,/authoritative/);
 });
 
-test('multiple identified active lanes fail closed', () => {
+test('multiple active lanes without resource scopes fail closed', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'ACTIVE',activePr:1601}),goal(2,{state:'IMPLEMENTING',branch:'feature/two'})] });
-  assert.equal(result.failClosed,true); assert.ok(result.contradictions.some(({code}) => code === 'MULTIPLE_ACTIVE_LANES'));
+  assert.equal(result.failClosed,true); assert.ok(result.contradictions.some(({code}) => code === 'ACTIVE_RESOURCE_SCOPE_MISSING'));
+});
+
+test('malformed authority-bearing resource evidence rejects even one active claim', () => {
+  const sparseResourceIds = [];
+  sparseResourceIds[1] = 'goal:1';
+  for (const resourceIds of ['goal:1', [42], ['../bad'], sparseResourceIds]) {
+    const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'ACTIVE',activePr:1601,resourceIds})] });
+    assert.equal(result.failClosed,true);
+    assert.deepEqual(result.activeGoals,[]);
+    assert.equal(result.portfolio[0].lifecycle,'BLOCKED');
+    assert.ok(result.contradictions.some(({code}) => code === 'ACTIVE_RESOURCE_EVIDENCE_INVALID'));
+  }
+});
+
+test('five resource-disjoint active lanes remain authoritative together', () => {
+  const goals = Array.from({ length:5 }, (_, index) => goal(index + 1, {
+    state:index % 2 ? 'IMPLEMENTING' : 'ACTIVE',
+    branch:`feature/lane-${index + 1}`,
+    resourceIds:[`goal:${index + 1}`],
+  }));
+  const result = buildMissionScheduler({ now:NOW, goals });
+  assert.equal(result.failClosed,false);
+  assert.deepEqual(result.activeGoals,['#1','#2','#3','#4','#5']);
+  assert.equal(result.programmeStatus,'IN_PROGRESS');
+  assert.equal(result.elasticCapacity.desiredWidth,5);
+  assert.deepEqual(result.parallelCandidates,[]);
+  assert.deepEqual(result.decisionReceipt.activeIssues,[1,2,3,4,5]);
+});
+
+test('resource conflict and active width overflow fail closed', () => {
+  const conflicting = buildMissionScheduler({ now:NOW, goals:[
+    goal(1,{state:'ACTIVE',branch:'feature/one',resourceIds:['repo:main']}),
+    goal(2,{state:'ACTIVE',branch:'feature/two',resourceIds:['repo:main']}),
+  ] });
+  assert.equal(conflicting.failClosed,true);
+  assert.ok(conflicting.contradictions.some(({code}) => code === 'ACTIVE_RESOURCE_CONFLICT'));
+
+  const overWidth = buildMissionScheduler({
+    now:NOW,
+    maximumActiveLanes:5,
+    goals:Array.from({ length:6 }, (_, index) => goal(index + 1, {
+      state:'ACTIVE', branch:`feature/over-${index + 1}`, resourceIds:[`goal:${index + 1}`],
+    })),
+  });
+  assert.equal(overWidth.failClosed,true);
+  assert.ok(overWidth.contradictions.some(({code}) => code === 'ACTIVE_LANE_CAPACITY_EXCEEDED'));
+});
+
+test('scheduler exposes five resource-disjoint ready candidates without granting mutation authority', () => {
+  const goals = Array.from({ length:7 }, (_, index) => goal(index + 1, {
+    priority:100 - index,
+    resourceIds:[index === 5 ? 'goal:1' : `goal:${index + 1}`],
+  }));
+  const result = buildMissionScheduler({ now:NOW, goals, availableExecutorSlots:8, maximumActiveLanes:5 });
+  assert.equal(result.failClosed,false);
+  assert.deepEqual(result.parallelCandidates,['#1','#2','#3','#4','#5']);
+  assert.equal(result.parallelHeld.find(({candidateId}) => candidateId === '#6').reasonCode,'RESOURCE_CONFLICT');
+  assert.equal(result.parallelHeld.find(({candidateId}) => candidateId === '#7').reasonCode,'PARALLEL_CAPACITY_FULL');
+  assert.equal(result.readOnly,true);
+  assert.equal(result.elasticCapacity.remainingAdmissionSlots,5);
+});
+
+test('scheduler holds new ready admissions when executor capacity is degraded', () => {
+  const goals = Array.from({ length:3 }, (_, index) => goal(index + 1, { resourceIds:[`goal:${index + 1}`] }));
+  const result = buildMissionScheduler({ now:NOW, goals, availableExecutorSlots:3 });
+  assert.equal(result.failClosed,false);
+  assert.equal(result.elasticCapacity.status,'DEGRADED_CAPACITY');
+  assert.equal(result.selectedGoal,null);
+  assert.deepEqual(result.parallelCandidates,[]);
+  assert.ok(result.parallelHeld.every(({ reasonCode }) => reasonCode === 'CAPACITY_SAFE_HOLD'));
+  assert.match(result.whyNow,/held.*capacity/i);
+});
+
+test('invalid parallel capacity policy fails closed', () => {
+  const result = buildMissionScheduler({ now:NOW, minimumActiveLanes:4, goals:[goal(1,{resourceIds:['goal:1']})] });
+  assert.equal(result.failClosed,true);
+  assert.ok(result.contradictions.some(({code}) => code === 'INVALID_PARALLEL_CAPACITY_POLICY'));
 });
 
 test('active state without lane identity fails closed and is not next eligible', () => {
