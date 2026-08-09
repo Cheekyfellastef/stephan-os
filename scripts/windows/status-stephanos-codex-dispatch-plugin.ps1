@@ -60,7 +60,9 @@ catch { $serverSourceSha256 = '' }
 $attachmentProof = $null
 $attachmentProofValid = $false
 $attachmentProofFresh = $false
-$attachmentBlocker = 'CHATGPT_PLUGIN_TOOL_PROOF_MISSING'
+$attachmentSessionValid = $false
+$remoteTransportAuthenticated = $false
+$attachmentBlocker = 'LOCAL_CODEX_SESSION_PROOF_MISSING'
 if (Test-Path -LiteralPath $attachmentProofPath -PathType Leaf) {
     try {
         $attachmentProof = Get-Content -LiteralPath $attachmentProofPath -Raw | ConvertFrom-Json
@@ -70,6 +72,26 @@ if (Test-Path -LiteralPath $attachmentProofPath -PathType Leaf) {
         $requiredTools = @('dispatch_codex_task', 'get_codex_task_status', 'read_codex_task_result')
         $listedTools = @($attachmentProof.toolsListed | ForEach-Object { [string]$_ })
         $toolsPresent = ($requiredTools | Where-Object { $listedTools -notcontains $_ }).Count -eq 0
+        $supportedClientNames = @('codex-mcp-client')
+        $supportedProtocols = @('2024-11-05', '2025-03-26', '2025-06-18')
+        $clientName = ([string]$attachmentProof.clientInfo.name).Trim().ToLowerInvariant()
+        $clientVersion = ([string]$attachmentProof.clientInfo.version).Trim()
+        $sessionId = ([string]$attachmentProof.clientSession.sessionId).Trim()
+        $protocolVersion = ([string]$attachmentProof.clientSession.protocolVersion).Trim()
+        $initializedAt = [DateTimeOffset]::Parse([string]$attachmentProof.clientSession.initializedAt)
+        $readyAt = [DateTimeOffset]::Parse([string]$attachmentProof.clientSession.readyAt)
+        $attachmentSessionValid = (
+            $supportedClientNames -contains $clientName -and
+            $clientVersion -match '^[0-9A-Za-z][0-9A-Za-z._+-]{0,39}$' -and
+            $sessionId -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' -and
+            $supportedProtocols -contains $protocolVersion -and
+            $attachmentProof.clientSession.initializeReceived -eq $true -and
+            $attachmentProof.clientSession.initializedNotificationReceived -eq $true -and
+            $attachmentProof.clientSession.supportedClient -eq $true -and
+            $attachmentProof.clientSession.ready -eq $true -and
+            $readyAt -ge $initializedAt -and
+            $readyAt -le $observedAt
+        )
         $attachmentProofValid = (
             [string]$attachmentProof.schemaVersion -eq 'stephanos.codex-dispatch-surface-attachment.v1' -and
             $attachmentProof.attached -eq $true -and
@@ -79,15 +101,20 @@ if (Test-Path -LiteralPath $attachmentProofPath -PathType Leaf) {
             [System.IO.Path]::GetFullPath([string]$attachmentProof.repositoryRoot) -eq $RepositoryRoot -and
             [string]$attachmentProof.sourceHead -eq $sourceHead -and
             [string]$attachmentProof.serverSourceSha256 -eq $serverSourceSha256 -and
+            [string]$attachmentProof.transport.kind -eq 'local-stdio' -and
+            $attachmentProof.transport.clientIdentityAuthenticated -eq $false -and
+            $attachmentProof.transport.remoteTransportAuthenticated -eq $false -and
             $attachmentProof.requiredDispatchToolsPresent -eq $true -and
             $toolsPresent -and
+            $attachmentSessionValid -and
             $attachmentProofFresh
         )
-        if (-not $attachmentProofFresh) { $attachmentBlocker = 'CHATGPT_PLUGIN_TOOL_PROOF_STALE' }
-        elseif (-not $attachmentProofValid) { $attachmentBlocker = 'CHATGPT_PLUGIN_TOOL_PROOF_INVALID' }
+        if (-not $attachmentProofFresh) { $attachmentBlocker = 'LOCAL_CODEX_SESSION_PROOF_STALE' }
+        elseif (-not $attachmentSessionValid) { $attachmentBlocker = 'LOCAL_CODEX_SESSION_PROOF_INVALID' }
+        elseif (-not $attachmentProofValid) { $attachmentBlocker = 'LOCAL_CODEX_TOOL_PROOF_INVALID' }
         else { $attachmentBlocker = '' }
     }
-    catch { $attachmentBlocker = 'CHATGPT_PLUGIN_TOOL_PROOF_INVALID' }
+    catch { $attachmentBlocker = 'LOCAL_CODEX_SESSION_PROOF_INVALID' }
 }
 
 $status = [ordered]@{
@@ -110,6 +137,7 @@ $status = [ordered]@{
     attachmentProofFresh = $attachmentProofFresh
     attachmentProofValid = $attachmentProofValid
     attachmentBlocker = $attachmentBlocker
+    remoteTransportAuthenticated = $remoteTransportAuthenticated
     executionSurfaceHandshake = [ordered]@{
         surfaceId = if ($attachmentProofValid) { [string]$attachmentProof.surfaceId } else { 'stephanos-codex-dispatch-local-mcp' }
         surfaceReceipt = if ($attachmentProofValid) { [string]$attachmentProof.surfaceReceipt } else { '' }
@@ -120,8 +148,14 @@ $status = [ordered]@{
         observedAt = if ($attachmentProofValid) { [string]$attachmentProof.observedAt } else { '' }
         sourceHead = if ($attachmentProofValid) { [string]$attachmentProof.sourceHead } else { '' }
         serverSourceSha256 = if ($attachmentProofValid) { [string]$attachmentProof.serverSourceSha256 } else { '' }
+        clientName = if ($attachmentProofValid) { [string]$attachmentProof.clientInfo.name } else { '' }
+        clientSessionId = if ($attachmentProofValid) { [string]$attachmentProof.clientSession.sessionId } else { '' }
+        clientSessionInitialized = $attachmentSessionValid
+        transportKind = if ($attachmentProofValid) { [string]$attachmentProof.transport.kind } else { '' }
+        clientIdentityAuthenticated = $false
+        remoteTransportAuthenticated = $remoteTransportAuthenticated
     }
-    chatgptPluginToolProof = if ($attachmentProofValid) { 'verified-exact-head-tools-list' } else { 'requires-new-compatible-chat-tools-list' }
+    chatgptPluginToolProof = if ($attachmentProofValid) { 'verified-initialized-local-codex-session-tools-list' } else { 'requires-initialized-local-codex-session-tools-list' }
     localBridgeReady = (
         (Test-Path -LiteralPath $manifestPath) -and
         (Test-Path -LiteralPath $mcpConfigPath) -and
@@ -134,10 +168,14 @@ $status = [ordered]@{
     readyForRemoteChatDispatch = $false
     finalVerdict = ""
 }
-$status.readyForCodexCliDispatch = $status.localBridgeReady
+$status.readyForCodexCliDispatch = $status.localBridgeReady -and $attachmentProofValid
 $status.readyForRemoteChatDispatch = $status.localBridgeReady -and $attachmentProofValid
+$status.readyForRemoteChatDispatch = $status.readyForRemoteChatDispatch -and $remoteTransportAuthenticated
 $status.finalVerdict = if ($status.readyForRemoteChatDispatch) {
     "STEPHANOS_CODEX_DISPATCH_BRIDGE_ATTACHED_READY"
+}
+elseif ($status.readyForCodexCliDispatch) {
+    "BLOCKED_AUTHENTICATED_REMOTE_MCP_TRANSPORT_REQUIRED"
 }
 elseif ($status.localBridgeReady) {
     "BLOCKED_CHATGPT_PLUGIN_ATTACHMENT_UNPROVEN"
