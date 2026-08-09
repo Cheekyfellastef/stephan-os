@@ -79,6 +79,14 @@ function baseOptions(workspace, adapter) {
     receiptExistsFn: workspace.receiptExistsFn,
     recordExistsFn: workspace.recordExistsFn,
     writeAtomicJsonFn: workspace.writeAtomicJsonFn,
+    headTruthEvidenceLoader: async () => ({ records: {
+      sync: {
+        timestampUtc: '2026-07-16T19:09:00.000Z',
+        classification: 'SYNC_NO_CHANGE',
+        localHeadBefore: 'a'.repeat(40),
+        remoteHeadObserved: 'a'.repeat(40),
+      },
+    } }),
   };
 }
 
@@ -142,6 +150,15 @@ test('authenticated read publishes a sanitized projection, audit event and final
         return { ok: true, reason: 'RESPONSE_COMMENT_UPDATED' };
       },
     }),
+    headTruthEvidenceLoader: async () => ({ records: {} }),
+    headTruthProjectionBuilder: () => ({
+      aggregationOk: true,
+      projectionKind: 'shared-workspace-head-truth',
+      githubMainHead: 'a'.repeat(40),
+      windowsCheckoutHead: 'a'.repeat(40),
+      state: 'CURRENT',
+      freshness: 'CURRENT',
+    }),
     projectionBuilder: async () => projection(),
   });
 
@@ -152,9 +169,41 @@ test('authenticated read publishes a sanitized projection, audit event and final
   assert.deepEqual(workspace.writes[0].segments, ['receipts', 'chatgpt-bridge-request-live-1.json']);
   assert.deepEqual(workspace.writes[1].segments, ['receipts', `${result.completionReceiptId}.json`]);
   assert.equal(workspace.events.length, 1);
+  assert.match(responseBody, /"projectionKind": "shared-workspace-head-truth"/);
+  assert.match(responseBody, new RegExp(`"githubMainHead": "${'a'.repeat(40)}"`));
   assert.equal(responseBody.includes('C:\\Users\\Stephan'), false);
   assert.match(responseBody, /\[REDACTED\]/);
   assert.equal(validateChatGptSharedWorkspaceResponseBody(responseBody).valid, true);
+});
+
+test('current-status read uses canonical head truth and does not fall back to unrelated latest global status', async () => {
+  let responseBody = '';
+  let globalProjectionCalls = 0;
+  const workspace = fakeWorkspace();
+  const main = 'c'.repeat(40);
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...baseOptions(workspace, {
+      readRequest: () => ({ ok: true, body: envelope(request()), authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER }),
+      writeResponse: (body) => { responseBody = body; return { ok: true, reason: 'RESPONSE_COMMENT_UPDATED' }; },
+    }),
+    projectionBuilder: async () => { globalProjectionCalls += 1; return projection(); },
+    headTruthEvidenceLoader: async () => ({ records: {
+      sync: {
+        timestampUtc: '2026-07-16T19:09:00.000Z',
+        classification: 'SYNC_NO_CHANGE',
+        localHeadBefore: main,
+        remoteHeadObserved: main,
+      },
+    } }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.deliveryStatus, 'WORKSPACE_READ_PASS');
+  assert.equal(globalProjectionCalls, 1);
+  assert.match(responseBody, /"projectionKind": "shared-workspace-head-truth"/);
+  assert.match(responseBody, new RegExp(`"windowsCheckoutHead": "${main}"`));
+  assert.match(responseBody, /"sourceHeadsAgree": true/);
+  assert.match(responseBody, /"currentStatus"/);
 });
 
 test('authenticated bounded write persists only the canonical message, audit, event and completion records', async () => {

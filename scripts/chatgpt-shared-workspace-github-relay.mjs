@@ -21,6 +21,10 @@ import {
   loadScopedDeliveryStatusEvidence,
 } from '../shared/agents/sharedWorkspaceScopedDeliveryStatusV1.mjs';
 import {
+  buildSharedWorkspaceHeadTruthProjection,
+  loadSharedWorkspaceHeadTruthEvidence,
+} from '../shared/agents/sharedWorkspaceHeadTruthV1.mjs';
+import {
   createSharedWorkspaceEventRecord,
   createSharedWorkspaceReceiptRecord,
   resolveSharedWorkspacePath,
@@ -308,6 +312,8 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   readFileFn = readFile,
   verifyRequestFn = verifyChatGptBridgeRequest,
   projectionBuilder = createSanitizedSharedWorkspaceProjection,
+  headTruthEvidenceLoader = loadSharedWorkspaceHeadTruthEvidence,
+  headTruthProjectionBuilder = buildSharedWorkspaceHeadTruthProjection,
   deliveryEvidenceLoader = loadScopedDeliveryStatusEvidence,
   deliveryProjectionBuilder = buildScopedDeliveryStatusProjection,
   recordBuilder = buildChatGptBridgeRecord,
@@ -382,7 +388,33 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   let primaryWrite = { ok: true, reason: 'NO_PRIMARY_WRITE_REQUIRED', bytes: 0 };
 
   if (verification.accepted && CHATGPT_BRIDGE_READ_OPERATIONS.includes(request.operation)) {
-    if (request.operation === 'READ_DELIVERY_STATUS') {
+    if (request.operation === 'READ_CURRENT_STATUS') {
+      const [loadStatus, workspaceProjection] = await Promise.all([
+        headTruthEvidenceLoader({
+          workspaceRoot: paths.workspaceRoot,
+          repoRoot: paths.repoRoot,
+        }),
+        projectionBuilder({
+          workspaceRoot: paths.workspaceRoot,
+          repoRoot: paths.repoRoot,
+          timestampUtc,
+          nowMs,
+        }),
+      ]);
+      const headTruth = headTruthProjectionBuilder({
+        records: loadStatus.records,
+        timestampUtc,
+        nowMs,
+      });
+      projection = Object.freeze({
+        ...headTruth,
+        currentGoal: workspaceProjection?.currentGoal || null,
+        currentStatus: workspaceProjection?.currentStatus || null,
+        latestProof: workspaceProjection?.latestProof || null,
+        workspaceAggregationOk: workspaceProjection?.aggregationOk !== false,
+        workspaceAggregationReason: text(workspaceProjection?.aggregationReason),
+      });
+    } else if (request.operation === 'READ_DELIVERY_STATUS') {
       const loadStatus = await deliveryEvidenceLoader({
         workspaceRoot: paths.workspaceRoot,
         repoRoot: paths.repoRoot,

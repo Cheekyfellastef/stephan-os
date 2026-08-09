@@ -20,3 +20,24 @@ For Music Tile URL/artwork delivery, live requires all three feature receipts:
 - `AUTO_URL_AND_ARTWORK_RUNTIME_PROOF=true`.
 
 The bridge remains read-only for status queries and grants no arbitrary filesystem, command, source-mutation, merge, deployment or self-approval authority.
+
+## Canonical commit truth
+
+`READ_CURRENT_STATUS` is the shared source-head question for Stephanos, ChatGPT, Codex, OpenClaw and future workspace participants. It reads only the existing fixed Shared Workspace records:
+
+- `status/battle-bridge-github-sync-current.json`
+- `status/post-sync-runtime-refresh-current.json`
+- `status/battle-bridge-ignition-supervisor-current.json`
+
+The response projects these truths separately:
+
+- GitHub `main` observed by the canonical sync task;
+- the canonical Windows checkout head;
+- the exact-head-proven built UI head when a UI refresh occurred;
+- the exact-head-proven served runtime head.
+
+Matching head strings alone are insufficient. Evidence older than 35 minutes is `STALE`, missing sync evidence is blocked, source drift is `WINDOWS_CHECKOUT_NOT_AT_GITHUB_MAIN`, and served drift is `SERVED_RUNTIME_NOT_AT_WINDOWS_HEAD`. A stale or missing response must never be described as current or live.
+
+## Stephanos as the conversation surface
+
+The Shared Workspace remains the one canonical conversation substrate. Participants address bounded messages to `stephanos`; Stephanos projects current status, proof, blockers and responses from those records. This contract does not create another mailbox, workspace, status database, execution authority or unrestricted chat transport. It makes the existing participant and relay paths converge on one evidence-backed Stephanos conversation.
