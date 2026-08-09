@@ -350,7 +350,7 @@ test('normalizes only trusted mechanical markers while preserving owner lane evi
   assert.equal(normalized[4], ownerLaneReceipt);
 });
 
-test('trusted workflow fans every bounded retry target into an exact-head matrix', () => {
+test('trusted workflow serializes every bounded retry under the same PR authority lock', () => {
   assert.match(COORDINATOR_WORKFLOW, /permissions:\s*\n\s+actions: write\b/);
   const retryStepStart = COORDINATOR_WORKFLOW.indexOf(
     '- name: Retry one exact failed canonical independent review',
@@ -358,9 +358,13 @@ test('trusted workflow fans every bounded retry target into an exact-head matrix
   assert.ok(retryStepStart >= 0, 'bounded retry step must exist');
   const retryStep = COORDINATOR_WORKFLOW.slice(retryStepStart);
 
-  assert.match(COORDINATOR_WORKFLOW, /retry_targets:\s*\$\{\{ steps\.coordinate\.outputs\.retry_targets \}\}/);
-  assert.match(COORDINATOR_WORKFLOW, /needs\.coordinate\.outputs\.retry_targets != '\[\]'/);
-  assert.match(COORDINATOR_WORKFLOW, /target:\s*\$\{\{ fromJSON\(needs\.coordinate\.outputs\.retry_targets\) \}\}/);
+  assert.match(COORDINATOR_WORKFLOW, /targets:\s*\$\{\{ steps\.plan\.outputs\.targets \}\}/);
+  assert.match(COORDINATOR_WORKFLOW, /target:\s*\$\{\{ fromJSON\(needs\.plan\.outputs\.targets\) \}\}/);
+  assert.match(
+    COORDINATOR_WORKFLOW,
+    /group: exact-head-review-dispatch-\$\{\{ github\.repository \}\}-pr-\$\{\{ matrix\.target\.prNumber \}\}/,
+  );
+  assert.match(COORDINATOR_WORKFLOW, /steps\.coordinate\.outputs\.retry_targets != '\[\]'/);
   assert.match(COORDINATOR_WORKFLOW, /max-parallel:\s*4/);
   assert.doesNotMatch(COORDINATOR_WORKFLOW, /steps\.coordinate\.outputs\.decision ==/);
   assert.match(
@@ -369,12 +373,11 @@ test('trusted workflow fans every bounded retry target into an exact-head matrix
   );
   assert.match(
     retryStep,
-    /STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD:\s*\$\{\{ matrix\.target\.exactHead \}\}/,
+    /STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD:\s*\$\{\{ fromJSON\(steps\.coordinate\.outputs\.retry_targets\)\[0\]\.exactHead \}\}/,
   );
   assert.match(retryStep, /run: node scripts\/retry-independent-review\.mjs/);
   assert.doesNotMatch(retryStep, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_(?:RUN|WORKFLOW)_ID/);
 });
-
 test('workflow and runner wire repository fallback, owner lane authority and sentinel marker continuity', () => {
   assert.ok(COORDINATOR_WORKFLOW.includes('GITHUB_TOKEN: ${{ github.token }}'));
   assert.ok(COORDINATOR_WORKFLOW.includes('STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}'));
