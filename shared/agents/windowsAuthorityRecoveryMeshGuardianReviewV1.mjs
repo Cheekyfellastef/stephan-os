@@ -156,7 +156,7 @@ function reviewUninstaller(source, path, findings) {
     [/Unregister-ScheduledTask -TaskName \$guardianTaskName[\s\S]*Unregister-ScheduledTask -TaskName \$taskName/, 'recovery-guardian-uninstall-order-not-proved'],
   ]);
   forbidPatterns(findings, source, path, [
-    [/Register-ScheduledTask|Start-ScheduledTask|New-ScheduledTask/i, 'recovery-guardian-uninstall-start-or-register-forbidden'],
+    [/\b(?:Register|Start)-ScheduledTask\b|\bNew-ScheduledTask(?:Action|Trigger|Principal|SettingsSet)?\b/i, 'recovery-guardian-uninstall-start-or-register-forbidden'],
     [/Invoke-Expression|Start-Process|Restart-Computer|shutdown\.exe|Stop-Process/i, 'windows-authority-expanded'],
     [/\bgit(?:\.exe)?\b/i, 'recovery-guardian-uninstall-git-forbidden'],
   ]);
@@ -180,10 +180,10 @@ export function analyzeWindowsAuthorityRecoveryMeshGuardianReview(input = {}) {
       continue;
     }
     const source = candidates[0].content;
-    if (path.endsWith('install-battle-bridge-recovery-mesh.ps1')) reviewInstaller(source, path, findings);
-    if (path.endsWith('run-battle-bridge-recovery-mesh-guardian-hidden.ps1')) reviewGuardian(source, path, findings);
-    if (path.endsWith('run-stephanos-scheduled-task-windowless.vbs')) reviewLauncher(source, path, findings);
-    if (path.endsWith('uninstall-battle-bridge-recovery-mesh.ps1')) reviewUninstaller(source, path, findings);
+    if (path === WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[0]) reviewInstaller(source, path, findings);
+    if (path === WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[1]) reviewGuardian(source, path, findings);
+    if (path === WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[2]) reviewLauncher(source, path, findings);
+    if (path === WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[3]) reviewUninstaller(source, path, findings);
     proofRefs.push(`proofs/windows-authority-specialist/${path}@${sourceHead}#${candidates[0].blobSha}:${candidates[0].size}`);
   }
   const clean = findings.length === 0;

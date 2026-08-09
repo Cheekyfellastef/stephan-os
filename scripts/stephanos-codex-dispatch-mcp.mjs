@@ -5,6 +5,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import {
   createCodexQueueRecord,
   transitionCodexQueueRecord,
@@ -20,6 +21,10 @@ import {
   syncCodexDispatchBridge,
 } from '../shared/agents/codexDispatchHostOps.mjs';
 import { updateStephanosFromChat } from '../shared/agents/stephanosChatUpdate.mjs';
+import {
+  validateRemoteCodexBattleBridgeAttachment,
+  validateRemoteCodexBattleBridgeHandoff,
+} from '../shared/agents/remoteCodexBattleBridgeHandoffV1.mjs';
 
 export const STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA = 'stephanos.codex-dispatch-mcp.v1';
 export const STEPHANOS_CODEX_DISPATCH_MCP_NAME = 'stephanos-codex-dispatch';
@@ -33,17 +38,28 @@ const TOOLS = Object.freeze([
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      required: ['issueNumber', 'task', 'operatorApproval'],
+      required: [
+        'requestId', 'issueNumber', 'task', 'operatorApproval', 'operatorApprovalReceipt',
+        'repository', 'expectedHead', 'exactHeadProof', 'branch', 'requestedProofCommands',
+        'authorityEnvelope', 'surfaceAttachment',
+      ],
       properties: {
+        requestId: { type: 'string', minLength: 8, maxLength: 121 },
         issueNumber: { type: 'integer', minimum: 1, description: 'Owning GitHub issue or goal number.' },
         task: { type: 'string', minLength: 20, maxLength: 4000, description: 'Exact bounded Battle Bridge proof or diagnostics task.' },
         operatorApproval: { type: 'string', enum: ['operator-approved'], description: 'Must only be supplied after the user explicitly requests dispatch.' },
-        branch: { type: 'string', default: 'main', maxLength: 160 },
+        operatorApprovalReceipt: { type: 'object' },
+        repository: { type: 'string', enum: ['Cheekyfellastef/stephan-os'] },
+        expectedHead: { type: 'string', pattern: '^[0-9a-f]{40}$' },
+        exactHeadProof: { type: 'object' },
+        branch: { type: 'string', enum: ['main'] },
         requestedProofCommands: {
           type: 'array',
           maxItems: 20,
           items: { type: 'string', maxLength: 300 },
         },
+        authorityEnvelope: { type: 'object' },
+        surfaceAttachment: { type: 'object' },
       },
     },
     annotations: {
@@ -195,14 +211,44 @@ function asTextResult(value, isError = false) {
   return { content: [{ type: 'text', text }], structuredContent: value, isError };
 }
 
+const REMOTE_DISPATCH_ARGUMENT_FIELDS = Object.freeze([
+  'requestId', 'issueNumber', 'task', 'operatorApproval', 'operatorApprovalReceipt', 'repository',
+  'expectedHead', 'exactHeadProof', 'branch', 'requestedProofCommands', 'authorityEnvelope',
+  'surfaceAttachment',
+]);
+
+function validateRemoteDispatchArguments(args, timestamp) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)
+      || !isDeepStrictEqual(Object.keys(args).sort(), [...REMOTE_DISPATCH_ARGUMENT_FIELDS].sort())) {
+    return { ok: false, blocker: 'REMOTE_CODEX_DISPATCH_ARGUMENT_SHAPE_INVALID' };
+  }
+  const handoff = args.authorityEnvelope;
+  const validation = validateRemoteCodexBattleBridgeHandoff(handoff, { now: new Date(timestamp) });
+  if (!validation.ok) return validation;
+  const comparisons = [
+    ['requestId', args.requestId, handoff.requestId],
+    ['issueNumber', args.issueNumber, handoff.owningIssue],
+    ['task', args.task, handoff.task],
+    ['operatorApproval', args.operatorApproval, handoff.operatorApproval],
+    ['operatorApprovalReceipt', args.operatorApprovalReceipt, handoff.operatorApprovalReceipt],
+    ['repository', args.repository, handoff.repository],
+    ['expectedHead', args.expectedHead, handoff.expectedHead],
+    ['exactHeadProof', args.exactHeadProof, handoff.exactHeadProof],
+    ['branch', args.branch, 'main'],
+    ['requestedProofCommands', args.requestedProofCommands, handoff.requestedProofCommands],
+  ];
+  const mismatch = comparisons.find(([, actual, expected]) => !isDeepStrictEqual(actual, expected));
+  if (mismatch) return { ok: false, blocker: 'REMOTE_CODEX_DISPATCH_ARGUMENT_MISMATCH', field: mismatch[0] };
+  return { ok: true, handoff };
+}
+
 function approvedQueueRecord(args, now) {
   const created = createCodexQueueRecord({
     issueNumber: args.issueNumber,
     branch: args.branch || 'main',
     prompt: args.task,
-    requestedProofCommands: Array.isArray(args.requestedProofCommands) && args.requestedProofCommands.length
-      ? args.requestedProofCommands
-      : ['git rev-parse HEAD'],
+    requestedProofCommands: args.requestedProofCommands,
+    exactHeadProof: args.exactHeadProof,
     createdAt: now,
     approvalRequirements: {
       requiresOperatorApprovalBeforeDispatch: true,
@@ -218,7 +264,7 @@ function approvedQueueRecord(args, now) {
   const ready = transitionCodexQueueRecord(waiting.record, 'READY_FOR_MANUAL_DISPATCH', {
     timestamp: now,
     reason: 'Operator approved guarded Battle Bridge Codex dispatch.',
-    approvalReceipt: `chatgpt-mcp-${randomUUID()}`,
+    approvalReceipt: args.operatorApprovalReceipt.bindingSha256,
   });
   if (!ready.valid) throw new Error(`Unable to record operator approval: ${ready.error || ready.errors?.join(', ')}`);
   return ready.record;
@@ -230,6 +276,7 @@ export function createCodexDispatchMcpHandler({
   now = () => new Date().toISOString(),
   attachmentProofPublisher = publishCodexDispatchAttachmentProof,
   attachmentIdentity = {},
+  readRepositoryHead = readSourceHead,
 } = {}) {
   let clientInfo = {};
   let toolsListed = false;
@@ -237,12 +284,12 @@ export function createCodexDispatchMcpHandler({
   const processAttachmentIdentity = Object.freeze({
     platform: attachmentIdentity.platform || process.platform,
     repositoryRoot,
-    sourceHead: attachmentIdentity.sourceHead || readSourceHead(repositoryRoot),
     serverSourceSha256: attachmentIdentity.serverSourceSha256 || currentServerSourceSha256(),
   });
   const publishAttachmentHeartbeat = () => attachmentProofPublisher(createCodexDispatchAttachmentProof({
     clientInfo,
     now: now(),
+    sourceHead: readRepositoryHead(repositoryRoot),
     ...processAttachmentIdentity,
   }));
   return async function handle(method, params = {}) {
@@ -273,6 +320,52 @@ export function createCodexDispatchMcpHandler({
           return asTextResult({ ok: false, blocker: 'OPERATOR_APPROVAL_REQUIRED', nextOperatorAction: 'Ask the operator to explicitly approve this exact dispatch.' }, true);
         }
         const timestamp = now();
+        const argumentValidation = validateRemoteDispatchArguments(args, timestamp);
+        if (!argumentValidation.ok) return asTextResult(argumentValidation, true);
+        const transportedAttachmentValidation = validateRemoteCodexBattleBridgeAttachment(
+          argumentValidation.handoff,
+          args.surfaceAttachment,
+          { now: new Date(timestamp) },
+        );
+        if (!transportedAttachmentValidation.ok) return asTextResult(transportedAttachmentValidation, true);
+        const transportedRepositoryRoot = args.surfaceAttachment?.repositoryRoot
+          ? resolve(String(args.surfaceAttachment.repositoryRoot))
+          : '';
+        const canonicalRepositoryRoot = repositoryRoot ? resolve(repositoryRoot) : '';
+        if (!transportedRepositoryRoot || transportedRepositoryRoot !== canonicalRepositoryRoot) {
+          return asTextResult({ ok: false, blocker: 'BATTLE_BRIDGE_ATTACHMENT_REPOSITORY_ROOT_MISMATCH' }, true);
+        }
+        const liveHead = readRepositoryHead(repositoryRoot);
+        if (!/^[0-9a-f]{40}$/.test(liveHead)
+            || liveHead !== argumentValidation.handoff.expectedHead) {
+          return asTextResult({
+            ok: false,
+            blocker: 'BATTLE_BRIDGE_EXECUTION_HEAD_MISMATCH',
+            expectedHead: argumentValidation.handoff.expectedHead,
+            observedHead: liveHead,
+          }, true);
+        }
+        const liveAttachment = createCodexDispatchAttachmentProof({
+          clientInfo,
+          now: timestamp,
+          sourceHead: liveHead,
+          ...processAttachmentIdentity,
+        });
+        const liveAttachmentValidation = validateRemoteCodexBattleBridgeAttachment(
+          argumentValidation.handoff,
+          liveAttachment,
+          { now: new Date(timestamp) },
+        );
+        if (!liveAttachmentValidation.ok) return asTextResult(liveAttachmentValidation, true);
+        const executionHead = readRepositoryHead(repositoryRoot);
+        if (executionHead !== argumentValidation.handoff.expectedHead || executionHead !== liveHead) {
+          return asTextResult({
+            ok: false,
+            blocker: 'BATTLE_BRIDGE_EXECUTION_HEAD_CHANGED',
+            expectedHead: argumentValidation.handoff.expectedHead,
+            observedHead: executionHead,
+          }, true);
+        }
         const queueRecord = approvedQueueRecord(args, timestamp);
         const dispatched = dispatchQueuedCodexJob({ queueRecord, integration, now: timestamp });
         return asTextResult({
