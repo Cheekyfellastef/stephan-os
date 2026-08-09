@@ -415,17 +415,20 @@ test('failed chat updates retain installed source truth and bounded post-sync te
             ok: false,
             status: 1,
             signal: null,
-            stdout: [
-              'not ok 41 - preserves canonical source truth',
-              'not ok 42 - reports bounded verification evidence',
-              '# tests 145',
-              '# pass 143',
-              '# fail 2',
-              '# cancelled 0',
-              '# skipped 0',
-              '# todo 0',
-            ].join('\n'),
+            stdout: `${'ok 1 - earlier passing evidence\n'.repeat(220)}\n...[truncated]`,
             stderr: 'C:\\Users\\Stephan\\secret-shaped-local-path',
+            tapSummary: {
+              tests: 145,
+              pass: 143,
+              fail: 2,
+              cancelled: 0,
+              skipped: 0,
+              todo: 0,
+              failingTests: [
+                'preserves canonical source truth',
+                'reports bounded verification evidence',
+              ],
+            },
           },
         },
       },
@@ -450,7 +453,7 @@ test('failed chat updates retain installed source truth and bounded post-sync te
       'preserves canonical source truth',
       'reports bounded verification evidence',
     ],
-    outputTruncated: false,
+    outputTruncated: true,
   });
 
   const serialized = serializeBoundedReceiptJson(receipt);

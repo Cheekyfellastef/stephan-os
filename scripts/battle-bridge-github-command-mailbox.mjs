@@ -355,12 +355,22 @@ function postSyncVerificationProjection(receipt = {}, operationResult = {}) {
   if (receipt?.operation !== 'UPDATE_STEPHANOS_FROM_CHAT') return Object.freeze({});
   const tests = operationResult?.sync?.tests;
   if (!tests || typeof tests !== 'object' || Array.isArray(tests)) return Object.freeze({});
+  const producedSummary = tests.tapSummary && typeof tests.tapSummary === 'object' && !Array.isArray(tests.tapSummary)
+    ? tests.tapSummary
+    : null;
   const counts = { tests: 0, pass: 0, fail: 0, cancelled: 0, skipped: 0, todo: 0 };
-  for (const match of String(tests.stdout || '').matchAll(/^\s*#\s+(tests|pass|fail|cancelled|skipped|todo)\s+(\d+)\s*$/gm)) {
-    counts[match[1]] = safeNonNegativeNumber(match[2]);
+  if (producedSummary) {
+    for (const key of Object.keys(counts)) counts[key] = safeNonNegativeNumber(producedSummary[key]);
+  } else {
+    for (const match of String(tests.stdout || '').matchAll(/^\s*#\s+(tests|pass|fail|cancelled|skipped|todo)\s+(\d+)\s*$/gm)) {
+      counts[match[1]] = safeNonNegativeNumber(match[2]);
+    }
   }
-  const failingTests = [...String(tests.stdout || '').matchAll(/^\s*not ok\s+\d+\s+-\s+(.+?)\s*$/gm)]
-    .map((match) => safeTelemetryText(match[1], 180))
+  const producedFailingTests = Array.isArray(producedSummary?.failingTests)
+    ? producedSummary.failingTests
+    : [...String(tests.stdout || '').matchAll(/^\s*not ok\s+\d+\s+-\s+(.+?)\s*$/gm)].map((match) => match[1]);
+  const failingTests = producedFailingTests
+    .map((name) => safeTelemetryText(name, 180))
     .filter(Boolean)
     .slice(0, 3);
   return Object.freeze({
