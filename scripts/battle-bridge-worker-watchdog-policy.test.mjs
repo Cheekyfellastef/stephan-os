@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -9,6 +10,10 @@ import {
 } from './battle-bridge-worker-watchdog-policy.mjs';
 
 const NOW = Date.parse('2026-07-15T02:00:00.000Z');
+const PROBE_SCRIPT = readFileSync(
+  new URL('./windows/probe-mission-orchestrator-worker-watchdog.ps1', import.meta.url),
+  'utf8',
+);
 
 function healthyInput() {
   return {
@@ -17,6 +22,11 @@ function healthyInput() {
       taskName: APPROVED_WORKER_TASK,
       status: 'Running',
       actionMatchesCanonicalWorker: true,
+    },
+    repository: {
+      repositoryRoot: 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os',
+      branch: 'main',
+      headSha: 'a'.repeat(40),
     },
     process: {
       running: true,
@@ -111,6 +121,33 @@ test('wrong repository or branch cannot prove canonical main or expose a repair 
   assert.ok(result.blockers.includes('worker-not-proven-from-canonical-main'));
 });
 
+test('old-head heartbeat is not healthy and authorizes only the fixed worker restart', () => {
+  const input = healthyInput();
+  input.heartbeat.headSha = 'b'.repeat(40);
+  const result = buildWorkerWatchdogRecoveryDecision(input);
+  assert.equal(result.assessment.canonicalRepositoryHeadProven, true);
+  assert.equal(result.assessment.heartbeatMatchesCanonicalRepositoryHead, false);
+  assert.equal(result.assessment.sourceHead, '');
+  assert.equal(result.assessment.healthy, false);
+  assert.equal(result.action, 'START_APPROVED_WORKER_TASK');
+  assert.equal(result.restartTaskName, APPROVED_WORKER_TASK);
+  assert.ok(result.blockers.includes('worker-heartbeat-head-mismatch'));
+});
+
+test('unproven repository head fails closed without restart authority', () => {
+  for (const headSha of ['', 'not-a-sha']) {
+    const input = healthyInput();
+    input.repository.headSha = headSha;
+    const result = buildWorkerWatchdogRecoveryDecision(input);
+    assert.equal(result.assessment.canonicalRepositoryHeadProven, false);
+    assert.equal(result.assessment.heartbeatMatchesCanonicalRepositoryHead, false);
+    assert.equal(result.assessment.sourceHead, '');
+    assert.equal(result.assessment.restartPermitted, false);
+    assert.equal(result.action, 'BLOCKED');
+    assert.ok(result.blockers.includes('canonical-repository-head-unproven'));
+  }
+});
+
 test('command line and heartbeat pid must bind to the canonical worker process', () => {
   const commandLineInput = healthyInput();
   commandLineInput.process.commandLineMatchesCanonicalWorker = false;
@@ -150,6 +187,15 @@ test('invalid correlation blocks restart authorization and clears task target', 
   assert.equal(result.action, 'BLOCKED');
   assert.equal(result.restartTaskName, '');
   assert.ok(result.blockers.includes('invalid-issue-or-pr-correlation'));
+});
+
+test('Windows probe binds repository truth to fixed read-only git commands', () => {
+  assert.match(PROBE_SCRIPT, /Get-Command git\.exe -ErrorAction Stop/);
+  assert.match(PROBE_SCRIPT, /-C \$repositoryRoot symbolic-ref --quiet --short HEAD/);
+  assert.match(PROBE_SCRIPT, /-C \$repositoryRoot rev-parse --verify HEAD/);
+  assert.match(PROBE_SCRIPT, /repositoryRoot = \$repositoryRoot/);
+  assert.match(PROBE_SCRIPT, /headSha = \$repositoryHead/);
+  assert.doesNotMatch(PROBE_SCRIPT, /Invoke-Expression|Start-Process/);
 });
 
 test('forbidden command surfaces remain absent', () => {
