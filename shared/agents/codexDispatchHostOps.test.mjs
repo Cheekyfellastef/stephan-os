@@ -72,6 +72,7 @@ test('sync bridge fast-forwards latest canonical main and runs tests through the
   assert.deepEqual(result.tests.args, CODEX_DISPATCH_TEST_ARGS);
   assert.equal(result.tests.args.includes('--test-reporter=tap'), true);
   assert.deepEqual(result.tests.tapSummary, {
+    summaryComplete: true,
     tests: 22,
     pass: 22,
     fail: 0,
@@ -92,6 +93,7 @@ test('TAP summary is extracted before stdout is bounded', () => {
   const output = `${'ok 1 - noisy passing test\n'.repeat(400)}not ok 401 - late Windows-only failure\n# tests 401\n# pass 400\n# fail 1\n# cancelled 0\n# skipped 0\n# todo 0\n`;
   assert.ok(output.length > 6000);
   assert.deepEqual(parseTapTestSummary(output), {
+    summaryComplete: true,
     tests: 401,
     pass: 400,
     fail: 1,
@@ -99,6 +101,19 @@ test('TAP summary is extracted before stdout is bounded', () => {
     skipped: 0,
     todo: 0,
     failingTests: ['late Windows-only failure'],
+  });
+});
+
+test('incomplete TAP output preserves partial failures and marks missing totals unknown', () => {
+  assert.deepEqual(parseTapTestSummary('ok 1 - completed\nnot ok 2 - process ended before trailer\n'), {
+    summaryComplete: false,
+    tests: null,
+    pass: null,
+    fail: null,
+    cancelled: null,
+    skipped: null,
+    todo: null,
+    failingTests: ['process ended before trailer'],
   });
 });
 

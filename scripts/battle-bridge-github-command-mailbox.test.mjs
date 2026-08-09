@@ -418,6 +418,7 @@ test('failed chat updates retain installed source truth and bounded post-sync te
             stdout: `${'ok 1 - earlier passing evidence\n'.repeat(220)}\n...[truncated]`,
             stderr: 'C:\\Users\\Stephan\\secret-shaped-local-path',
             tapSummary: {
+              summaryComplete: true,
               tests: 145,
               pass: 143,
               fail: 2,
@@ -443,6 +444,7 @@ test('failed chat updates retain installed source truth and bounded post-sync te
     ok: false,
     status: 1,
     signal: '',
+    summaryComplete: true,
     tests: 145,
     pass: 143,
     fail: 2,
@@ -460,6 +462,41 @@ test('failed chat updates retain installed source truth and bounded post-sync te
   const compact = JSON.parse(serialized).result.result;
   assert.deepEqual(compact.postSyncVerification, projected.postSyncVerification);
   assert.doesNotMatch(serialized, /C:\\Users|secret-shaped/i);
+});
+
+test('incomplete post-sync TAP evidence projects unknown totals without dropping partial failures', () => {
+  const receipt = {
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    result: {
+      result: {
+        sync: {
+          tests: {
+            ok: false,
+            status: null,
+            signal: 'SIGTERM',
+            stdout: 'not ok 2 - partial Windows failure',
+            tapSummary: {
+              summaryComplete: false,
+              tests: null,
+              pass: null,
+              fail: null,
+              cancelled: null,
+              skipped: null,
+              todo: null,
+              failingTests: ['partial Windows failure'],
+            },
+          },
+        },
+      },
+    },
+  };
+  const evidence = createSanitizedMailboxReceiptProjection(receipt).operationResult.postSyncVerification;
+  assert.equal(evidence.summaryComplete, false);
+  assert.equal(evidence.tests, null);
+  assert.equal(evidence.pass, null);
+  assert.equal(evidence.fail, null);
+  assert.equal(evidence.signal, 'SIGTERM');
+  assert.deepEqual(evidence.failingTests, ['partial Windows failure']);
 });
 
 test('derives a deterministic Windows-safe receipt filename for colon-bearing request IDs', () => {

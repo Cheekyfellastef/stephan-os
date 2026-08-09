@@ -137,6 +137,12 @@ function safeNonNegativeNumber(value) {
   return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
 }
 
+function safeOptionalNonNegativeInteger(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : null;
+}
+
 function safeTelemetryText(value, limit = 500) {
   const normalized = String(value ?? '').trim();
   if (UNSAFE_TELEMETRY_PATTERN.test(normalized)) return '';
@@ -358,14 +364,23 @@ function postSyncVerificationProjection(receipt = {}, operationResult = {}) {
   const producedSummary = tests.tapSummary && typeof tests.tapSummary === 'object' && !Array.isArray(tests.tapSummary)
     ? tests.tapSummary
     : null;
-  const counts = { tests: 0, pass: 0, fail: 0, cancelled: 0, skipped: 0, todo: 0 };
+  const countKeys = ['tests', 'pass', 'fail', 'cancelled', 'skipped', 'todo'];
+  const counts = Object.fromEntries(countKeys.map((key) => [key, null]));
+  const observedCounts = new Set();
   if (producedSummary) {
-    for (const key of Object.keys(counts)) counts[key] = safeNonNegativeNumber(producedSummary[key]);
+    for (const key of countKeys) {
+      counts[key] = safeOptionalNonNegativeInteger(producedSummary[key]);
+      if (counts[key] !== null) observedCounts.add(key);
+    }
   } else {
     for (const match of String(tests.stdout || '').matchAll(/^\s*#\s+(tests|pass|fail|cancelled|skipped|todo)\s+(\d+)\s*$/gm)) {
-      counts[match[1]] = safeNonNegativeNumber(match[2]);
+      counts[match[1]] = safeOptionalNonNegativeInteger(match[2]);
+      if (counts[match[1]] !== null) observedCounts.add(match[1]);
     }
   }
+  const summaryComplete = producedSummary
+    ? producedSummary.summaryComplete === true && countKeys.every((key) => observedCounts.has(key))
+    : countKeys.every((key) => observedCounts.has(key));
   const producedFailingTests = Array.isArray(producedSummary?.failingTests)
     ? producedSummary.failingTests
     : [...String(tests.stdout || '').matchAll(/^\s*not ok\s+\d+\s+-\s+(.+?)\s*$/gm)].map((match) => match[1]);
@@ -379,6 +394,7 @@ function postSyncVerificationProjection(receipt = {}, operationResult = {}) {
       ok: tests.ok === true,
       status: Number.isInteger(tests.status) ? tests.status : null,
       signal: safeTelemetryText(tests.signal, 40),
+      summaryComplete,
       ...counts,
       failingTests,
       outputTruncated: String(tests.stdout || '').includes('...[truncated]')

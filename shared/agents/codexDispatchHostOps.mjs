@@ -379,15 +379,21 @@ function bounded(value = '', limit = 6000) {
 
 export function parseTapTestSummary(value = '') {
   const output = String(value || '');
-  const counts = { tests: 0, pass: 0, fail: 0, cancelled: 0, skipped: 0, todo: 0 };
+  const countKeys = ['tests', 'pass', 'fail', 'cancelled', 'skipped', 'todo'];
+  const counts = Object.fromEntries(countKeys.map((key) => [key, null]));
+  const observedCounts = new Set();
   for (const match of output.matchAll(/^\s*#\s+(tests|pass|fail|cancelled|skipped|todo)\s+(\d+)\s*$/gm)) {
-    counts[match[1]] = Number.parseInt(match[2], 10);
+    const count = Number.parseInt(match[2], 10);
+    if (Number.isSafeInteger(count) && count >= 0) {
+      counts[match[1]] = count;
+      observedCounts.add(match[1]);
+    }
   }
   const failingTests = [...output.matchAll(/^\s*not ok\s+\d+\s+-\s+(.+?)\s*$/gm)]
     .map((match) => String(match[1]).trim().slice(0, 500))
     .filter(Boolean)
     .slice(0, 3);
-  return Object.freeze({ ...counts, failingTests });
+  return Object.freeze({ summaryComplete: countKeys.every((key) => observedCounts.has(key)), ...counts, failingTests });
 }
 
 function capture(spawnSyncFn, command, args, { cwd, timeout = 120000, captureTapSummary = false } = {}) {
