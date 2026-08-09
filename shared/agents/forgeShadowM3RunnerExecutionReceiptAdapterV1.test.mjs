@@ -136,6 +136,12 @@ function observation({ runner, artifact, runtimePlan }, patch = {}) {
     runnerId: runner.runnerId, poolId: runner.poolId, runnerClass: runner.runnerClass,
     runtimeBoundary: runner.runtimeBoundary, sourceHead: HEAD, sourceTree: TREE,
     artifactDigest: artifact.artifactDigest, artifactSetDigest: runtimePlan.artifactSetDigest,
+    canaryForgeService: runtimePlan.canaryForge.serviceId,
+    canaryForgeBackupDigest: runtimePlan.canaryForge.backupDigest,
+    canaryForgeStarted: true, canaryForgeDestroyed: true,
+    canonicalM2Sealed: true, canonicalM2Unchanged: true,
+    privateRelayUsed: runner.runnerClass === 'windows-proof-isolated',
+    privateRelayDestroyed: true,
     startedAtUtc: '2026-08-07T21:21:00Z', completedAtUtc: '2026-08-07T21:22:00Z',
     installed: true, registered: true, connected: true, ephemeralRegistration: true,
     canaryWorkflowId: FORGE_SHADOW_M3_CANARY_WORKFLOW,
@@ -217,6 +223,8 @@ test('runner proof fails closed on identity, canary, teardown, authority or proo
     { workspaceDestroyed: false }, { runtimeBoundaryDestroyed: false },
     { canonicalCheckoutMounted: true }, { containerSocketMounted: true },
     { hostProcessAccess: true }, { gitRefWrite: true }, { mergeAuthority: true },
+    { canaryForgeDestroyed: false }, { canonicalM2Unchanged: false },
+    { privateRelayUsed: true }, { privateRelayDestroyed: false },
     { proofRefs: ['proofs/forge-shadow-m3/not-content-addressed.json'] },
   ]) {
     let first = true;

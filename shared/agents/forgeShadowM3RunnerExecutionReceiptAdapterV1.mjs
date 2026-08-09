@@ -37,6 +37,9 @@ const AUTHORIZATION_KEYS = [
 const OBSERVATION_KEYS = [
   'schemaVersion', 'runnerId', 'poolId', 'runnerClass', 'runtimeBoundary',
   'sourceHead', 'sourceTree', 'artifactDigest', 'artifactSetDigest',
+  'canaryForgeService', 'canaryForgeBackupDigest', 'canaryForgeStarted',
+  'canaryForgeDestroyed', 'canonicalM2Sealed', 'canonicalM2Unchanged',
+  'privateRelayUsed', 'privateRelayDestroyed',
   'startedAtUtc', 'completedAtUtc', 'installed', 'registered', 'connected',
   'ephemeralRegistration', 'canaryWorkflowId', 'canaryScenario', 'canaryHead',
   'canaryTree', 'canarySucceeded', 'unregistered',
@@ -49,6 +52,8 @@ const OBSERVATION_KEYS = [
 ];
 const NORMALIZED_RUNNER_KEYS = [
   'runnerId', 'poolId', 'runnerClass', 'runtimeBoundary', 'artifactDigest',
+  'canaryForgeService', 'canaryForgeBackupDigest', 'canaryForgeDestroyed',
+  'canonicalM2Sealed', 'canonicalM2Unchanged', 'privateRelayUsed', 'privateRelayDestroyed',
   'startedAtUtc', 'completedAtUtc', 'installed', 'registered', 'connected',
   'ephemeralRegistration', 'canarySucceeded', 'unregistered',
   'registrationCredentialDestroyed', 'workspaceDestroyed', 'runtimeBoundaryDestroyed',
@@ -214,6 +219,12 @@ function validateObservation(value, runner, artifact, plan, authorization, block
   if (text(value.sourceTree).toLowerCase() !== plan.canonicalMainTree) blockers.push(`runner-tree-mismatch:${prefix}`);
   if (text(value.artifactDigest).toLowerCase() !== artifact.artifactDigest) blockers.push(`runner-artifact-mismatch:${prefix}`);
   if (text(value.artifactSetDigest).toLowerCase() !== plan.artifactSetDigest) blockers.push(`runner-artifact-set-mismatch:${prefix}`);
+  if (value.canaryForgeService !== plan.canaryForge.serviceId) blockers.push(`runner-canary-forge-service-mismatch:${prefix}`);
+  if (text(value.canaryForgeBackupDigest).toLowerCase() !== plan.canaryForge.backupDigest) blockers.push(`runner-canary-forge-backup-mismatch:${prefix}`);
+  if (value.canaryForgeStarted !== true || value.canaryForgeDestroyed !== true) blockers.push(`runner-canary-forge-lifecycle-incomplete:${prefix}`);
+  if (value.canonicalM2Sealed !== true || value.canonicalM2Unchanged !== true) blockers.push(`runner-canonical-m2-mutated:${prefix}`);
+  const relayRequired = runner.runnerClass === 'windows-proof-isolated';
+  if (value.privateRelayUsed !== relayRequired || value.privateRelayDestroyed !== true) blockers.push(`runner-private-relay-proof-invalid:${prefix}`);
   if (!Number.isFinite(startedMs) || !Number.isFinite(completedMs)) blockers.push(`runner-time-invalid:${prefix}`);
   else {
     if (startedMs < instant(authorization.issuedAtUtc) || completedMs > authorization.expiresMs) blockers.push(`runner-time-outside-authorization:${prefix}`);
@@ -247,6 +258,13 @@ function validateObservation(value, runner, artifact, plan, authorization, block
     runnerClass: runner.runnerClass,
     runtimeBoundary: runner.runtimeBoundary,
     artifactDigest: artifact.artifactDigest,
+    canaryForgeService: plan.canaryForge.serviceId,
+    canaryForgeBackupDigest: plan.canaryForge.backupDigest,
+    canaryForgeDestroyed: true,
+    canonicalM2Sealed: true,
+    canonicalM2Unchanged: true,
+    privateRelayUsed: relayRequired,
+    privateRelayDestroyed: true,
     startedAtUtc: new Date(startedMs).toISOString(),
     completedAtUtc: new Date(completedMs).toISOString(),
     installed: true,
@@ -340,6 +358,13 @@ export function validateForgeShadowM3RunnerRuntimeReceipt(receipt, {
         || runner?.runtimeBoundary !== 'battle-bridge-windows-proof-sandbox')) blockers.push(`receipt-windows-runner-contract-invalid:${text(runner?.runnerId)}`);
     if (!isLinux && !isWindows) blockers.push(`receipt-runner-prefix-invalid:${text(runner?.runnerId)}`);
     if (!DIGEST.test(text(runner?.artifactDigest).toLowerCase())) blockers.push(`receipt-runner-artifact-invalid:${text(runner?.runnerId)}`);
+    if (runner?.canaryForgeService !== 'stephanos-forge-shadow-m3-canary') blockers.push(`receipt-runner-canary-forge-invalid:${text(runner?.runnerId)}`);
+    if (!SHA256_HEX.test(text(runner?.canaryForgeBackupDigest).toLowerCase())) blockers.push(`receipt-runner-canary-backup-invalid:${text(runner?.runnerId)}`);
+    if (runner?.canaryForgeDestroyed !== true || runner?.canonicalM2Sealed !== true
+        || runner?.canonicalM2Unchanged !== true || runner?.privateRelayDestroyed !== true) {
+      blockers.push(`receipt-runner-canary-teardown-invalid:${text(runner?.runnerId)}`);
+    }
+    if (runner?.privateRelayUsed !== isWindows) blockers.push(`receipt-runner-private-relay-invalid:${text(runner?.runnerId)}`);
     if (!safeProofRefs(runner?.proofRefs, text(runner?.runnerId))) blockers.push(`receipt-runner-proof-invalid:${text(runner?.runnerId)}`);
     const startedMs = instant(runner?.startedAtUtc);
     const completedMs = instant(runner?.completedAtUtc);
