@@ -176,6 +176,52 @@ test('bootstrap token revocation is attempted even when mirror migration fails',
   lacks('Write-Output $token');
 });
 
+test('a sealed stale canonical mirror has one fixed loopback-only refresh and local token lifecycle', () => {
+  has("$MirrorRefreshTokenName = 'stephanos-m2-one-shot-refresh'");
+  has('function Invoke-OneShotLocalMirrorRefresh');
+  has("'--token-name', $MirrorRefreshTokenName");
+  has("'--scopes', 'write:repository,write:user'");
+  has('Invoke-RestMethod -Method Post -Uri "$ApiRoot/repos/$Owner/$RepoName/mirror-sync"');
+  has('Invoke-RestMethod -Method Delete -Uri "$ApiRoot/users/$Owner/tokens/$MirrorRefreshTokenName"');
+  has('$refreshSucceeded = $false');
+  has('$revocationSucceeded = $false');
+  has("Fail 'FORGE_MIRROR_REFRESH_TOKEN_REVOCATION_FAILED'");
+  has('credentialPersisted = $true');
+  has("Fail 'FORGE_MIRROR_REFRESH_REQUEST_FAILED'");
+  lacks('mirror-sync?');
+});
+
+test('stale-head admission is restricted to an already sealed fixed container', () => {
+  has('[switch]$AllowStaleHeadLabel');
+  has("if ($labeledHead -notmatch '^[0-9a-f]{40}$') { Fail 'FORGE_CONTAINER_HEAD_LABEL_INVALID' }");
+  has("if (-not $AllowStaleHeadLabel) { Fail 'FORGE_CONTAINER_HEAD_LABEL_MISMATCH' }");
+  has("if ($sealed -ne 'true') { Fail 'UNSEALED_FORGE_CONTAINER_HEAD_LABEL_MISMATCH' }");
+  has('Assert-ContainerIdentity $PodmanExe $ContainerName $DataVolume $HostPort -AllowStaleHeadLabel');
+});
+
+test('one-shot refresh verifies the stored pull mirror still has the one canonical identity and remote', () => {
+  has('function Assert-FixedMirrorMetadata');
+  has('Invoke-RestMethod -Method Get -Uri "$ApiRoot/repos/$Owner/$RepoName"');
+  has("if ([string]$mirror.owner.login -ne $Owner) { Fail 'FORGE_MIRROR_OWNER_MISMATCH' }");
+  has("if ([string]$mirror.name -ne $RepoName) { Fail 'FORGE_MIRROR_REPOSITORY_NAME_MISMATCH' }");
+  has("if ($mirror.mirror -isnot [bool] -or $mirror.mirror -ne $true) { Fail 'FORGE_REPOSITORY_NOT_PULL_MIRROR' }");
+  has("if ([string]$mirror.original_url -ne $RemoteUrl) { Fail 'FORGE_MIRROR_REMOTE_MISMATCH' }");
+  assert.equal(source.match(/Assert-FixedMirrorMetadata/g)?.length, 3);
+});
+
+test('one-shot refresh opens a bounded migration window then reseals and reproves exact head', () => {
+  has('function Wait-ExpectedMirrorHead');
+  has("if ($sealed -ne 'true') { Fail 'FORGE_MIRROR_HEAD_MISMATCH' @{ observedHead = $mirrorHead } }");
+  has('Run one fixed loopback-only mirror refresh to $ExpectedHead, revoke its local token, and reseal');
+  has('Start-FixedContainer $PodmanExe $false');
+  has('$refreshResult = Invoke-OneShotLocalMirrorRefresh $PodmanExe');
+  has('$refreshedMirrorHead = Wait-ExpectedMirrorHead $GitExe');
+  has('Start-FixedContainer $PodmanExe $true');
+  has("Fail 'FORGE_MIRROR_REFRESH_HEAD_MISMATCH'");
+  has('oneShotMirrorRefreshPerformed = $mirrorRefreshPerformed');
+  has('mirrorRefreshTokenRevoked = $mirrorRefreshTokenRevoked');
+});
+
 test('mirror creation is exactly the canonical public unauthenticated repository', () => {
   has('clone_addr = $RemoteUrl');
   has('repo_name = $RepoName');

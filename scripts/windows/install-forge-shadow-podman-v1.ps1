@@ -30,6 +30,7 @@ $HostAddress = '127.0.0.1'
 $HostPort = 3340
 $RestorePort = 3341
 $BootstrapTokenName = 'stephanos-m2-bootstrap'
+$MirrorRefreshTokenName = 'stephanos-m2-one-shot-refresh'
 $RepoRoot = Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'
 $GitExe = 'C:\Program Files\Git\cmd\git.exe'
 $WslExe = Join-Path $env:SystemRoot 'System32\wsl.exe'
@@ -146,16 +147,22 @@ function Assert-ContainerIdentity(
     [string]$Podman,
     [string]$Name,
     [string]$ExpectedVolume = $DataVolume,
-    [int]$ExpectedPort = $HostPort
+    [int]$ExpectedPort = $HostPort,
+    [switch]$AllowStaleHeadLabel
 ) {
     $inspectResult = Invoke-PodmanRemote $Podman @('inspect', '--format', '{{json .}}', $Name)
     try { $inspect = (($inspectResult.Output -join "`n") | ConvertFrom-Json) } catch { Fail 'FORGE_CONTAINER_INSPECTION_INVALID' }
     $labels = $inspect.Config.Labels
     if ([string]$labels.'stephanos.repository' -ne $Repository) { Fail 'FORGE_CONTAINER_REPOSITORY_LABEL_MISMATCH' }
-    if ([string]$labels.'stephanos.main-head' -ne $ExpectedHead) { Fail 'FORGE_CONTAINER_HEAD_LABEL_MISMATCH' }
+    $labeledHead = ([string]$labels.'stephanos.main-head').ToLowerInvariant()
+    if ($labeledHead -notmatch '^[0-9a-f]{40}$') { Fail 'FORGE_CONTAINER_HEAD_LABEL_INVALID' }
     if ([string]$labels.'stephanos.image-digest' -ne $ForgejoImageDigest) { Fail 'FORGE_CONTAINER_DIGEST_LABEL_MISMATCH' }
     $sealed = [string]$labels.'stephanos.sealed'
     if (@('true', 'false') -notcontains $sealed) { Fail 'FORGE_CONTAINER_SEAL_LABEL_INVALID' }
+    if ($labeledHead -ne $ExpectedHead) {
+        if (-not $AllowStaleHeadLabel) { Fail 'FORGE_CONTAINER_HEAD_LABEL_MISMATCH' }
+        if ($sealed -ne 'true') { Fail 'UNSEALED_FORGE_CONTAINER_HEAD_LABEL_MISMATCH' }
+    }
     if ([string]$inspect.ImageName -ne $ImageRef) { Fail 'FORGE_CONTAINER_IMAGE_REFERENCE_MISMATCH' }
     if ([string]$inspect.ImageDigest -ne $ForgejoImageDigest) { Fail 'FORGE_CONTAINER_IMAGE_DIGEST_MISMATCH' }
     if ([string]$inspect.Config.User -ne '1000:1000') { Fail 'FORGE_CONTAINER_USER_NOT_ROOTLESS' }
@@ -394,6 +401,53 @@ function Invoke-LocalMigration([string]$Podman) {
     }
 }
 
+function Invoke-OneShotLocalMirrorRefresh([string]$Podman) {
+    $tokenResult = Invoke-PodmanRemote $Podman @(
+        'exec', $ContainerName, 'forgejo', 'admin', 'user', 'generate-access-token',
+        '--username', $Owner,
+        '--token-name', $MirrorRefreshTokenName,
+        '--raw',
+        '--scopes', 'write:repository,write:user'
+    ) -AllowFailure
+    $token = (($tokenResult.Output -join '').Trim())
+    $tokenValid = $tokenResult.ExitCode -eq 0 -and $token -match '^[A-Za-z0-9._-]{20,}$'
+    $refreshSucceeded = $false
+    $revocationSucceeded = $false
+    $refreshErrorType = if ($tokenValid) { '' } else { 'LOCAL_TOKEN_GENERATION_FAILED' }
+    $revocationErrorType = ''
+    $headers = $null
+    try {
+        if ($tokenValid) {
+            $headers = @{ Authorization = "token $token"; Accept = 'application/json' }
+            try {
+                [void](Invoke-RestMethod -Method Post -Uri "$ApiRoot/repos/$Owner/$RepoName/mirror-sync" -Headers $headers -TimeoutSec 180)
+                $refreshSucceeded = $true
+            } catch {
+                $refreshErrorType = $_.Exception.GetType().FullName
+            } finally {
+                try {
+                    [void](Invoke-RestMethod -Method Delete -Uri "$ApiRoot/users/$Owner/tokens/$MirrorRefreshTokenName" -Headers $headers -TimeoutSec 20)
+                    $revocationSucceeded = $true
+                } catch {
+                    $revocationErrorType = $_.Exception.GetType().FullName
+                }
+            }
+        }
+    } finally {
+        $headers = $null
+        $token = $null
+        $tokenResult = $null
+        [GC]::Collect()
+    }
+
+    return [pscustomobject]@{
+        RefreshSucceeded = $refreshSucceeded
+        RevocationSucceeded = $revocationSucceeded
+        RefreshErrorType = $refreshErrorType
+        RevocationErrorType = $revocationErrorType
+    }
+}
+
 function Get-MirrorHead([string]$Git, [int]$Port = $HostPort) {
     $url = "http://127.0.0.1:$Port/$Owner/$RepoName.git"
     $result = Invoke-Fixed $Git @('ls-remote', '--exit-code', $url, 'refs/heads/main') -AllowFailure
@@ -401,6 +455,28 @@ function Get-MirrorHead([string]$Git, [int]$Port = $HostPort) {
     $line = ($result.Output | Select-Object -First 1)
     if ($line -match '^([0-9a-f]{40})\s+refs/heads/main$') { return $Matches[1].ToLowerInvariant() }
     return ''
+}
+
+function Assert-FixedMirrorMetadata {
+    try {
+        $mirror = Invoke-RestMethod -Method Get -Uri "$ApiRoot/repos/$Owner/$RepoName" -TimeoutSec 10
+    } catch {
+        Fail 'FORGE_MIRROR_METADATA_UNAVAILABLE'
+    }
+    if ([string]$mirror.owner.login -ne $Owner) { Fail 'FORGE_MIRROR_OWNER_MISMATCH' }
+    if ([string]$mirror.name -ne $RepoName) { Fail 'FORGE_MIRROR_REPOSITORY_NAME_MISMATCH' }
+    if ($mirror.mirror -isnot [bool] -or $mirror.mirror -ne $true) { Fail 'FORGE_REPOSITORY_NOT_PULL_MIRROR' }
+    if ([string]$mirror.original_url -ne $RemoteUrl) { Fail 'FORGE_MIRROR_REMOTE_MISMATCH' }
+}
+
+function Wait-ExpectedMirrorHead([string]$Git, [int]$Attempts = 30) {
+    $observedHead = ''
+    for ($attempt = 1; $attempt -le $Attempts; $attempt += 1) {
+        $observedHead = Get-MirrorHead $Git
+        if ($observedHead -eq $ExpectedHead) { return $observedHead }
+        Start-Sleep -Seconds 2
+    }
+    return $observedHead
 }
 
 function Get-ForgeTree([string]$Root, [string]$Head) {
@@ -576,8 +652,10 @@ try {
     }
 
     $sealed = ''
+    $mirrorRefreshPerformed = $false
+    $mirrorRefreshTokenRevoked = $false
     if (Get-ContainerExists $PodmanExe $ContainerName) {
-        $sealed = Assert-ContainerIdentity $PodmanExe $ContainerName $DataVolume $HostPort
+        $sealed = Assert-ContainerIdentity $PodmanExe $ContainerName $DataVolume $HostPort -AllowStaleHeadLabel
     } else {
         if (-not (Test-PortFree $HostPort)) { Fail 'FIXED_LOOPBACK_PORT_NOT_AVAILABLE' }
         if (-not $PSCmdlet.ShouldProcess($ContainerName, 'Start fixed Forgejo bootstrap container')) { Fail 'RUNTIME_MUTATION_NOT_CONFIRMED' }
@@ -586,7 +664,7 @@ try {
 
     $version = Wait-Forgejo $ApiRoot
     if (-not $version) { Fail 'FORGE_SERVICE_HEALTH_FAILED' }
-    [void](Assert-ContainerIdentity $PodmanExe $ContainerName $DataVolume $HostPort)
+    [void](Assert-ContainerIdentity $PodmanExe $ContainerName $DataVolume $HostPort -AllowStaleHeadLabel)
 
     $mirrorHead = Get-MirrorHead $GitExe
     if (-not $mirrorHead) {
@@ -596,7 +674,60 @@ try {
         Invoke-LocalMigration $PodmanExe
         $mirrorHead = Get-MirrorHead $GitExe
     }
-    if ($mirrorHead -ne $ExpectedHead) { Fail 'FORGE_MIRROR_HEAD_MISMATCH' @{ observedHead = $mirrorHead } }
+    if ($mirrorHead -ne $ExpectedHead) {
+        if ($sealed -ne 'true') { Fail 'FORGE_MIRROR_HEAD_MISMATCH' @{ observedHead = $mirrorHead } }
+        Assert-FixedMirrorMetadata
+        if (-not $PSCmdlet.ShouldProcess("$Owner/$RepoName", "Run one fixed loopback-only mirror refresh to $ExpectedHead, revoke its local token, and reseal")) {
+            Fail 'RUNTIME_MUTATION_NOT_CONFIRMED'
+        }
+
+        $refreshResult = $null
+        $refreshedMirrorHead = ''
+        try {
+            [void](Invoke-PodmanRemote $PodmanExe @('rm', '-f', $ContainerName))
+            Start-FixedContainer $PodmanExe $false
+            $refreshVersion = Wait-Forgejo $ApiRoot
+            if (-not $refreshVersion) { Fail 'FORGE_MIRROR_REFRESH_SERVICE_HEALTH_FAILED' }
+            $refreshSeal = Assert-ContainerIdentity $PodmanExe $ContainerName $DataVolume $HostPort
+            if ($refreshSeal -ne 'false') { Fail 'FORGE_MIRROR_REFRESH_WINDOW_NOT_PROVED' }
+            Ensure-LocalOwner $PodmanExe
+            $refreshResult = Invoke-OneShotLocalMirrorRefresh $PodmanExe
+            if ($refreshResult.RefreshSucceeded) {
+                $refreshedMirrorHead = Wait-ExpectedMirrorHead $GitExe
+            }
+        } finally {
+            if (Get-ContainerExists $PodmanExe $ContainerName) {
+                [void](Invoke-PodmanRemote $PodmanExe @('rm', '-f', $ContainerName) -AllowFailure)
+            }
+            Start-FixedContainer $PodmanExe $true
+        }
+
+        $sealed = Assert-ContainerIdentity $PodmanExe $ContainerName $DataVolume $HostPort
+        if ($sealed -ne 'true') { Fail 'FORGE_FINAL_SEAL_NOT_PROVED' }
+        $version = Wait-Forgejo $ApiRoot
+        if (-not $version) { Fail 'FORGE_SEALED_SERVICE_HEALTH_FAILED' }
+        if ($null -eq $refreshResult) { Fail 'FORGE_MIRROR_REFRESH_RESULT_MISSING' }
+        if (-not $refreshResult.RevocationSucceeded) {
+            Fail 'FORGE_MIRROR_REFRESH_TOKEN_REVOCATION_FAILED' @{
+                mirrorRefreshTokenRevoked = $false
+                credentialPersisted = $true
+                errorType = $refreshResult.RevocationErrorType
+            }
+        }
+        $mirrorRefreshTokenRevoked = $true
+        if (-not $refreshResult.RefreshSucceeded) {
+            Fail 'FORGE_MIRROR_REFRESH_REQUEST_FAILED' @{
+                mirrorRefreshTokenRevoked = $true
+                errorType = $refreshResult.RefreshErrorType
+            }
+        }
+        if ($refreshedMirrorHead -ne $ExpectedHead) {
+            Fail 'FORGE_MIRROR_REFRESH_HEAD_MISMATCH' @{ observedHead = $refreshedMirrorHead; mirrorRefreshTokenRevoked = $true }
+        }
+        Assert-FixedMirrorMetadata
+        $mirrorRefreshPerformed = $true
+        $mirrorHead = Get-MirrorHead $GitExe
+    }
 
     if ($sealed -ne 'true') {
         if (-not $PSCmdlet.ShouldProcess($ContainerName, 'Seal Forgejo read-only M2 posture')) { Fail 'RUNTIME_MUTATION_NOT_CONFIRMED' }
@@ -642,6 +773,8 @@ try {
         persistentWritableSurface = '/var/lib/gitea'
         boundedEphemeralWritableSurfaces = @('/run', '/tmp', '/var/tmp')
         automaticMirrorUpdatesEnabled = $false
+        oneShotMirrorRefreshPerformed = $mirrorRefreshPerformed
+        mirrorRefreshTokenRevoked = $mirrorRefreshTokenRevoked
         githubCredentialUsed = $false
         bootstrapTokenRevoked = $true
         credentialPersisted = $false
