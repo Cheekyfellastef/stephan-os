@@ -131,6 +131,21 @@ test('requires remote transport authentication to remain separate from local Cod
   assert.ok(codes.includes('dispatch-status-v2-authenticated-transport-blocker-missing'));
 });
 
+test('rejects a later remote readiness override after the authenticated assignment', () => {
+  const badStatus = `${status}\n$status.readyForRemoteChatDispatch = $true\n`;
+  const result = upgradeWindowsAuthorityNoFaffRescueReviewV2(baseResult(), {
+    sources: [
+      { path: RESCUE, content: rescue },
+      { path: STATIC, content: staticTest },
+      { path: STATUS, content: badStatus },
+    ],
+  });
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some(
+    ({ code }) => code === 'dispatch-status-v2-remote-readiness-assignment-not-unique',
+  ));
+});
+
 test('requires current static tests to guard dynamic blocker, tree binding and transport separation', () => {
   const result = upgradeWindowsAuthorityNoFaffRescueReviewV2(baseResult(), {
     sources: [
