@@ -7,12 +7,6 @@ import {
   validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
 import { validateDeliveryStatusSubject } from './sharedWorkspaceScopedDeliveryStatusV1.mjs';
-import {
-  CONVERSATION_DELIVERY_STATE,
-  PARTICIPANT_ROLE,
-  createRoomMessage,
-  validateRoomMessage,
-} from './sharedWorkspaceMissionRoomV2.mjs';
 
 export const CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION = 'chatgpt-participant-bridge.v1';
 export const CHATGPT_BRIDGE_PARTICIPANT_ID = 'chatgpt-bridge';
@@ -25,8 +19,6 @@ export const CHATGPT_BRIDGE_READ_OPERATIONS = Object.freeze([
   'READ_LATEST_PROOF',
   'READ_OPERATOR_ATTENTION',
   'READ_DELIVERY_STATUS',
-  'READ_CONVERSATION_REPLY',
-  'READ_PARTICIPANT_CONNECTIONS',
 ]);
 
 export const CHATGPT_BRIDGE_WRITE_OPERATIONS = Object.freeze([
@@ -35,7 +27,6 @@ export const CHATGPT_BRIDGE_WRITE_OPERATIONS = Object.freeze([
   'WRITE_BLOCKER_CLASSIFICATION',
   'WRITE_OPERATOR_ATTENTION_REQUEST',
   'WRITE_APPROVAL_REQUEST',
-  'WRITE_CONVERSATION_TURN',
 ]);
 
 export const CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS = Object.freeze(['READ_FILE', 'WRITE_FILE', 'EXECUTE']);
@@ -45,14 +36,11 @@ export const CHATGPT_BRIDGE_RECORD_KINDS = Object.freeze({
   LATEST_PROOF: 'latest-proof-projection',
   OPERATOR_ATTENTION: 'operator-attention-projection',
   DELIVERY_STATUS: 'delivery-status-projection',
-  CONVERSATION_REPLY: 'conversation-reply-projection',
-  PARTICIPANT_CONNECTIONS: 'participant-connections-projection',
   GOAL_INTENT_PROPOSAL: 'goal-intent-proposal',
   NEXT_ACTION_PACKET: 'next-action-packet',
   BLOCKER_CLASSIFICATION: 'blocker-classification',
   OPERATOR_ATTENTION_REQUEST: 'operator-attention-request',
   APPROVAL_REQUEST: 'approval-request',
-  CONVERSATION_TURN: 'conversation-turn',
 });
 
 export const CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP = Object.freeze({
@@ -60,14 +48,11 @@ export const CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP = Object.freeze({
   READ_LATEST_PROOF: CHATGPT_BRIDGE_RECORD_KINDS.LATEST_PROOF,
   READ_OPERATOR_ATTENTION: CHATGPT_BRIDGE_RECORD_KINDS.OPERATOR_ATTENTION,
   READ_DELIVERY_STATUS: CHATGPT_BRIDGE_RECORD_KINDS.DELIVERY_STATUS,
-  READ_CONVERSATION_REPLY: CHATGPT_BRIDGE_RECORD_KINDS.CONVERSATION_REPLY,
-  READ_PARTICIPANT_CONNECTIONS: CHATGPT_BRIDGE_RECORD_KINDS.PARTICIPANT_CONNECTIONS,
   WRITE_GOAL_INTENT_PROPOSAL: CHATGPT_BRIDGE_RECORD_KINDS.GOAL_INTENT_PROPOSAL,
   WRITE_NEXT_ACTION_PACKET: CHATGPT_BRIDGE_RECORD_KINDS.NEXT_ACTION_PACKET,
   WRITE_BLOCKER_CLASSIFICATION: CHATGPT_BRIDGE_RECORD_KINDS.BLOCKER_CLASSIFICATION,
   WRITE_OPERATOR_ATTENTION_REQUEST: CHATGPT_BRIDGE_RECORD_KINDS.OPERATOR_ATTENTION_REQUEST,
   WRITE_APPROVAL_REQUEST: CHATGPT_BRIDGE_RECORD_KINDS.APPROVAL_REQUEST,
-  WRITE_CONVERSATION_TURN: CHATGPT_BRIDGE_RECORD_KINDS.CONVERSATION_TURN,
 });
 
 export const CHATGPT_BRIDGE_RESPONSE_STATUSES = Object.freeze([
@@ -88,9 +73,6 @@ export const CHATGPT_BRIDGE_RESPONSE_STATUSES = Object.freeze([
 const SECRET_KEY_PATTERN = /secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|env/i;
 const SECRET_VALUE_PATTERN = /BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY|xox[baprs]-|gh[pousr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{20,}|\.env\b|browser cookies?|session\b/i;
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
-const SHA_PATTERN = /^[0-9a-f]{40}$/i;
-const CONVERSATION_TARGETS = Object.freeze(['stephanos', 'openclaw', 'codex']);
-const CONVERSATION_MAX_BODY_BYTES = 2048;
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -146,56 +128,6 @@ function sanitizedProjectionText(value) {
 
 function canonicalHash(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
-}
-
-function validateConversationIdentityPayload(payload = {}, { replyRead = false, registeredParticipantIds = [] } = {}) {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { ok: false, reason: 'CONVERSATION_PAYLOAD_INVALID' };
-  const conversationId = safeId(payload.conversationId);
-  const threadId = safeId(payload.threadId);
-  const requestMessageId = safeId(payload.requestMessageId || payload.messageId);
-  const requestedEntityId = safeId(payload.requestedEntityId);
-  const correlationId = safeId(payload.correlationId, conversationId);
-  const knownTarget = CONVERSATION_TARGETS.includes(requestedEntityId);
-  const registeredFutureTarget = requestedEntityId.startsWith('future-agent-')
-    && safeId(payload.targetCapabilityId)
-    && registeredParticipantIds.includes(requestedEntityId);
-  if (!conversationId || !threadId || !requestMessageId || !requestedEntityId || !correlationId) {
-    return { ok: false, reason: 'CONVERSATION_IDENTITY_INCOMPLETE' };
-  }
-  if (!knownTarget && !registeredFutureTarget) return { ok: false, reason: 'CONVERSATION_TARGET_NOT_REGISTERED' };
-  const expectedTargetSourceHead = text(payload.expectedTargetSourceHead).toLowerCase();
-  if (expectedTargetSourceHead && !SHA_PATTERN.test(expectedTargetSourceHead)) return { ok: false, reason: 'CONVERSATION_TARGET_HEAD_INVALID' };
-  if (replyRead) {
-    return { ok: true, conversationId, threadId, requestMessageId, requestedEntityId, correlationId, expectedTargetSourceHead };
-  }
-  const body = text(payload.body);
-  if (!body || Buffer.byteLength(body, 'utf8') > CONVERSATION_MAX_BODY_BYTES) return { ok: false, reason: 'CONVERSATION_BODY_INVALID' };
-  const createdAtUtc = text(payload.createdAtUtc);
-  const expiresAtUtc = text(payload.expiresAtUtc);
-  if (!Number.isFinite(Date.parse(createdAtUtc)) || !Number.isFinite(Date.parse(expiresAtUtc)) || Date.parse(expiresAtUtc) <= Date.parse(createdAtUtc)) {
-    return { ok: false, reason: 'CONVERSATION_EXPIRY_INVALID' };
-  }
-  return { ok: true, conversationId, threadId, requestMessageId, requestedEntityId, correlationId, expectedTargetSourceHead, body, createdAtUtc, expiresAtUtc };
-}
-
-export function validateConversationTurnPayload(payload = {}, options = {}) {
-  return validateConversationIdentityPayload(payload, { replyRead: false, registeredParticipantIds: options.registeredParticipantIds || [] });
-}
-
-export function validateConversationReplyReadPayload(payload = {}, options = {}) {
-  return validateConversationIdentityPayload(payload, { replyRead: true, registeredParticipantIds: options.registeredParticipantIds || [] });
-}
-
-export function validateParticipantConnectionsReadPayload(payload = {}) {
-  const participantIds = Array.isArray(payload?.participantIds) && payload.participantIds.length
-    ? payload.participantIds
-    : CONVERSATION_TARGETS;
-  if (participantIds.length > 8) return { ok: false, reason: 'CONVERSATION_PARTICIPANT_SET_TOO_LARGE' };
-  const normalized = participantIds.map((value) => safeId(value));
-  if (normalized.some((value) => !value) || new Set(normalized).size !== normalized.length) {
-    return { ok: false, reason: 'CONVERSATION_PARTICIPANT_SET_INVALID' };
-  }
-  return { ok: true, participantIds: normalized };
 }
 
 function auditReceipt(input = {}) {
@@ -278,27 +210,6 @@ export function buildChatGptBridgeRecord(request = {}, options = {}) {
   }
 
   const timestampUtc = text(options.timestampUtc, request.timestampUtc);
-  const conversation = request.operation === 'WRITE_CONVERSATION_TURN'
-    ? validateConversationTurnPayload(request.boundedPayload, { registeredParticipantIds: options.registeredConversationParticipantIds || [] })
-    : null;
-  if (conversation && !conversation.ok) return { ok: false, reason: conversation.reason };
-  const roomMessage = conversation?.ok ? createRoomMessage({
-    messageId: conversation.requestMessageId,
-    participantId: 'chatgpt',
-    role: PARTICIPANT_ROLE.PLANNER,
-    recipientParticipantId: 'stephanos',
-    requestedEntityId: conversation.requestedEntityId,
-    conversationId: conversation.conversationId,
-    threadId: conversation.threadId,
-    correlationId: conversation.correlationId,
-    body: conversation.body,
-    createdAtUtc: conversation.createdAtUtc,
-    expiresAtUtc: conversation.expiresAtUtc,
-    deliveryState: CONVERSATION_DELIVERY_STATE.QUEUED,
-    sourceHead: conversation.expectedTargetSourceHead,
-    proofRefs: [`receipts/${requestId}`],
-  }) : null;
-  if (roomMessage && !validateRoomMessage(roomMessage).valid) return { ok: false, reason: 'CONVERSATION_MESSAGE_INVALID' };
   const record = {
     schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
     kind: SHARED_WORKSPACE_RECORD_KINDS.MESSAGE,
@@ -309,21 +220,9 @@ export function buildChatGptBridgeRecord(request = {}, options = {}) {
     relatedIssue: text(request.relatedGoal),
     relatedPr: text(request.relatedPr),
     proofRefs: [`receipts/${requestId}`],
-    channel: conversation ? 'stephanos-conversation' : 'chatgpt-participant-bridge',
+    channel: 'chatgpt-participant-bridge',
     summary: text(request.boundedPayload?.summary, request.recordKind),
     body: `{"recordKind":${JSON.stringify(request.recordKind)},"boundedPayload":${serializedPayload.json}}`,
-    ...(roomMessage ? {
-      senderParticipantId: roomMessage.senderParticipantId,
-      recipientParticipantId: roomMessage.recipientParticipantId,
-      requestedEntityId: roomMessage.requestedEntityId,
-      conversationId: roomMessage.conversationId,
-      threadId: roomMessage.threadId,
-      replyToMessageId: roomMessage.replyToMessageId,
-      deliveryState: roomMessage.deliveryState,
-      originTimestampUtc: roomMessage.createdAtUtc,
-      expiresAtUtc: roomMessage.expiresAtUtc,
-      expectedTargetSourceHead: roomMessage.sourceHead,
-    } : {}),
   };
   const validation = validateSharedWorkspaceRecord(record, options.workspaceValidationOptions);
   if (!validation.valid) return { ok: false, reason: 'BLOCKED_WORKSPACE_RECORD_INVALID', validation };
@@ -394,9 +293,6 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
     if (!serializedPayload.ok || serializedPayload.bytes > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (serializedPayloadHasSecretShapedData(serializedPayload)) responseStatus = 'BLOCKED_SECRET_SHAPED_DATA';
     else if (operation === 'READ_DELIVERY_STATUS' && !validateDeliveryStatusSubject(request.boundedPayload?.statusSubject).ok) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
-    else if (operation === 'WRITE_CONVERSATION_TURN' && !validateConversationTurnPayload(request.boundedPayload, { registeredParticipantIds: options.registeredConversationParticipantIds || [] }).ok) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
-    else if (operation === 'READ_CONVERSATION_REPLY' && !validateConversationReplyReadPayload(request.boundedPayload, { registeredParticipantIds: options.registeredConversationParticipantIds || [] }).ok) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
-    else if (operation === 'READ_PARTICIPANT_CONNECTIONS' && !validateParticipantConnectionsReadPayload(request.boundedPayload).ok) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (request.recordKind === 'approval-result') responseStatus = 'BLOCKED_APPROVAL_REQUIRED';
     else if (text(request.approvalRef)) {
       const approvalCheck = verifyOperatorApprovalSeparation(request, options.operatorApproval);

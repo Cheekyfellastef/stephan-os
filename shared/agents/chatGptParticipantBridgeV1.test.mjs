@@ -24,9 +24,6 @@ import {
   createSanitizedSharedWorkspaceProjection,
   verifyChatGptBridgeRequest,
   verifyOperatorApprovalSeparation,
-  validateConversationReplyReadPayload,
-  validateConversationTurnPayload,
-  validateParticipantConnectionsReadPayload,
 } from './chatGptParticipantBridgeV1.mjs';
 
 const NOW = Date.parse('2026-07-13T00:00:00.000Z');
@@ -53,14 +50,13 @@ function verify(request, options = {}) {
 }
 
 test('V1 exposes exact read/write allowlists and no generic file or execute capability', () => {
-  assert.deepEqual(CHATGPT_BRIDGE_READ_OPERATIONS, ['READ_CURRENT_STATUS', 'READ_LATEST_PROOF', 'READ_OPERATOR_ATTENTION', 'READ_DELIVERY_STATUS', 'READ_CONVERSATION_REPLY', 'READ_PARTICIPANT_CONNECTIONS']);
+  assert.deepEqual(CHATGPT_BRIDGE_READ_OPERATIONS, ['READ_CURRENT_STATUS', 'READ_LATEST_PROOF', 'READ_OPERATOR_ATTENTION', 'READ_DELIVERY_STATUS']);
   assert.deepEqual(CHATGPT_BRIDGE_WRITE_OPERATIONS, [
     'WRITE_GOAL_INTENT_PROPOSAL',
     'WRITE_NEXT_ACTION_PACKET',
     'WRITE_BLOCKER_CLASSIFICATION',
     'WRITE_OPERATOR_ATTENTION_REQUEST',
     'WRITE_APPROVAL_REQUEST',
-    'WRITE_CONVERSATION_TURN',
   ]);
   assert.deepEqual(CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS, ['READ_FILE', 'WRITE_FILE', 'EXECUTE']);
   for (const forbidden of CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS) {
@@ -151,101 +147,13 @@ test('ChatGPT cannot create approval-result truth or self-approve operator decis
 test('bounded record builders preserve Shared Workspace boundaries and validate canonically', () => {
   for (const [operation, recordKind] of Object.entries(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP)) {
     if (!operation.startsWith('WRITE_')) continue;
-    const boundedPayload = operation === 'WRITE_CONVERSATION_TURN' ? {
-      conversationId: 'conversation-1506',
-      threadId: 'thread-1506',
-      requestMessageId: 'message-1506-1',
-      requestedEntityId: 'openclaw',
-      correlationId: 'turn-1506-1',
-      body: 'Give Stephanos a grounded conversational reply.',
-      createdAtUtc: '2026-07-13T00:00:00.000Z',
-      expiresAtUtc: '2026-07-13T00:10:00.000Z',
-    } : validRequest().boundedPayload;
-    const built = buildChatGptBridgeRecord(validRequest({ operation, recordKind, requestId: `request-${recordKind}`, boundedPayload }));
+    const built = buildChatGptBridgeRecord(validRequest({ operation, recordKind, requestId: `request-${recordKind}` }));
     assert.equal(built.ok, true);
-    assert.equal(built.record.channel, operation === 'WRITE_CONVERSATION_TURN' ? 'stephanos-conversation' : 'chatgpt-participant-bridge');
+    assert.equal(built.record.channel, 'chatgpt-participant-bridge');
     assert.equal(built.record.participantId, CHATGPT_BRIDGE_PARTICIPANT_ID);
     assert.equal(built.record.body.includes('EXECUTE'), false);
     assert.equal(validateSharedWorkspaceRecord(built.record).valid, true);
   }
-});
-
-test('conversation turns are addressed to Stephanos and preserve the requested entity and exact reply identity', () => {
-  const boundedPayload = {
-    conversationId: 'conversation-1506',
-    threadId: 'thread-1506',
-    requestMessageId: 'message-1506-1',
-    requestedEntityId: 'openclaw',
-    correlationId: 'turn-1506-1',
-    body: 'What is your grounded assessment of the current control plane?',
-    createdAtUtc: '2026-07-13T00:00:00.000Z',
-    expiresAtUtc: '2026-07-13T00:10:00.000Z',
-    expectedTargetSourceHead: 'a'.repeat(40),
-  };
-  assert.equal(validateConversationTurnPayload(boundedPayload).ok, true);
-  const built = buildChatGptBridgeRecord(validRequest({
-    operation: 'WRITE_CONVERSATION_TURN',
-    recordKind: CHATGPT_BRIDGE_RECORD_KINDS.CONVERSATION_TURN,
-    boundedPayload,
-  }));
-  assert.equal(built.ok, true);
-  assert.equal(built.record.senderParticipantId, 'chatgpt');
-  assert.equal(built.record.recipientParticipantId, 'stephanos');
-  assert.equal(built.record.requestedEntityId, 'openclaw');
-  assert.equal(built.record.conversationId, 'conversation-1506');
-  assert.equal(built.record.threadId, 'thread-1506');
-  assert.equal(built.record.deliveryState, 'QUEUED');
-  assert.equal(built.record.expectedTargetSourceHead, 'a'.repeat(40));
-});
-
-test('conversation payloads fail closed for unregistered targets, missing reply identity, invalid heads and unsafe expiry', () => {
-  const base = {
-    conversationId: 'conversation-1506',
-    threadId: 'thread-1506',
-    requestMessageId: 'message-1506-1',
-    requestedEntityId: 'openclaw',
-    correlationId: 'turn-1506-1',
-    body: 'Bounded conversation.',
-    createdAtUtc: '2026-07-13T00:00:00.000Z',
-    expiresAtUtc: '2026-07-13T00:10:00.000Z',
-  };
-  assert.equal(validateConversationTurnPayload({ ...base, requestedEntityId: 'mystery-agent' }).reason, 'CONVERSATION_TARGET_NOT_REGISTERED');
-  assert.equal(validateConversationTurnPayload({ ...base, expectedTargetSourceHead: 'wrong' }).reason, 'CONVERSATION_TARGET_HEAD_INVALID');
-  assert.equal(validateConversationTurnPayload({ ...base, expiresAtUtc: base.createdAtUtc }).reason, 'CONVERSATION_EXPIRY_INVALID');
-  assert.equal(validateConversationReplyReadPayload({ ...base, requestMessageId: '' }).reason, 'CONVERSATION_IDENTITY_INCOMPLETE');
-
-  const rejected = verify(validRequest({
-    operation: 'WRITE_CONVERSATION_TURN',
-    recordKind: CHATGPT_BRIDGE_RECORD_KINDS.CONVERSATION_TURN,
-    boundedPayload: { ...base, requestedEntityId: 'mystery-agent' },
-  }));
-  assert.equal(rejected.responseStatus, 'BLOCKED_PAYLOAD_UNSAFE');
-});
-
-test('future conversation targets require an explicit registered capability identity', () => {
-  const base = {
-    conversationId: 'conversation-1506',
-    threadId: 'thread-1506',
-    requestMessageId: 'message-1506-1',
-    requestedEntityId: 'future-agent-42',
-    correlationId: 'turn-1506-1',
-    body: 'Hello future participant.',
-    createdAtUtc: '2026-07-13T00:00:00.000Z',
-    expiresAtUtc: '2026-07-13T00:10:00.000Z',
-  };
-  assert.equal(validateConversationTurnPayload(base).reason, 'CONVERSATION_TARGET_NOT_REGISTERED');
-  assert.equal(validateConversationTurnPayload({ ...base, targetCapabilityId: 'future-agent-42-conversation' }).reason, 'CONVERSATION_TARGET_NOT_REGISTERED');
-  assert.equal(validateConversationTurnPayload(
-    { ...base, targetCapabilityId: 'future-agent-42-conversation' },
-    { registeredParticipantIds: ['future-agent-42'] },
-  ).ok, true);
-});
-
-test('participant connection reads default to core entities and reject ambiguous or oversized sets', () => {
-  assert.deepEqual(validateParticipantConnectionsReadPayload({}).participantIds, ['stephanos', 'openclaw', 'codex']);
-  assert.deepEqual(validateParticipantConnectionsReadPayload({ participantIds: ['stephanos', 'future-agent-42'] }).participantIds, ['stephanos', 'future-agent-42']);
-  assert.equal(validateParticipantConnectionsReadPayload({ participantIds: ['codex', 'codex'] }).ok, false);
-  assert.equal(validateParticipantConnectionsReadPayload({ participantIds: Array.from({ length: 9 }, (_, index) => `future-agent-${index}`) }).reason, 'CONVERSATION_PARTICIPANT_SET_TOO_LARGE');
 });
 
 test('sanitized status/proof projection redacts secret-shaped strings and omits execution capability', async () => {

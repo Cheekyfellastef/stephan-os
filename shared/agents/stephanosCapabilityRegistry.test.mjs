@@ -72,18 +72,6 @@ test('mailbox receipt reads, watchdog acceptance, shared workspace and post-sync
   assert.equal(refresh.liveOpenClawUpdateAllowed, false);
 });
 
-test('shared conversation routing is discoverable without granting execution or mutation authority', () => {
-  const bridge = findStephanosCapability('chatgpt-participant-bridge');
-  const conversation = findStephanosCapability('shared-conversation-router');
-  assert.ok(bridge.operations.includes('WRITE_CONVERSATION_TURN'));
-  assert.ok(bridge.operations.includes('READ_CONVERSATION_REPLY'));
-  assert.equal(conversation.ownerIssue, 1506);
-  assert.deepEqual(conversation.operations, ['WRITE_CONVERSATION_TURN', 'READ_CONVERSATION_REPLY', 'READ_PARTICIPANT_CONNECTIONS']);
-  assert.equal(conversation.requiresOperatorApproval, false);
-  assert.equal(conversation.runtimeMutationAllowed, false);
-  assert.equal(conversation.arbitraryShellAllowed, false);
-});
-
 test('five-door recovery mesh is discoverable without becoming a second execution authority', () => {
   const mesh = findStephanosCapability('battle-bridge-recovery-mesh');
   assert.equal(mesh.ownerIssue, 1291);
