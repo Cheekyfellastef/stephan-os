@@ -1,11 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import {
-  WINDOWS_AUTHORITY_SOURCE_SCHEMA_VERSION,
-  analyzeWindowsAuthoritySpecialistReview,
-} from './windowsAuthoritySpecialistReviewV1.mjs';
+import { analyzeWindowsAuthorityNoFaffRescueReview } from './windowsAuthorityNoFaffRescueReviewV1.mjs';
 
+const WINDOWS_AUTHORITY_SOURCE_SCHEMA_VERSION = 'stephanos.windows-authority-source.v1';
 const IMPORT_TOKEN = 'im' + 'port';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = 'a'.repeat(40);
@@ -48,7 +46,7 @@ function analysis() {
 }
 
 function review(sources) {
-  return analyzeWindowsAuthoritySpecialistReview({
+  return analyzeWindowsAuthorityNoFaffRescueReview({
     repository: REPOSITORY,
     sourceHead: HEAD,
     analysis: analysis(),
