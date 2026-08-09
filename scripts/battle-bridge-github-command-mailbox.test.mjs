@@ -391,6 +391,74 @@ test('exact-head proof projections retain the verified PR and local heads', () =
   assert.equal(missingAncestry.operationResult.expectedHeadMatch, false);
 });
 
+test('failed chat updates retain installed source truth and bounded post-sync test evidence', () => {
+  const head = '10ce35ad3d9542694f02e6727954b965d3de4f6b';
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'post-sync-evidence-001',
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    expectedHead: head,
+    state: 'BLOCKED',
+    result: {
+      ok: false,
+      verdict: 'COMMAND_EXECUTION_BLOCKED',
+      result: {
+        ok: false,
+        blocker: 'POST_SYNC_VERIFICATION_FAILED',
+        finalVerdict: 'POST_SYNC_VERIFICATION_FAILED',
+        sourceInstalled: true,
+        sourceHead: head,
+        branch: 'main',
+        expectedHeadMatch: true,
+        sync: {
+          tests: {
+            ok: false,
+            status: 1,
+            signal: null,
+            stdout: [
+              'not ok 41 - preserves canonical source truth',
+              'not ok 42 - reports bounded verification evidence',
+              '# tests 145',
+              '# pass 143',
+              '# fail 2',
+              '# cancelled 0',
+              '# skipped 0',
+              '# todo 0',
+            ].join('\n'),
+            stderr: 'C:\\Users\\Stephan\\secret-shaped-local-path',
+          },
+        },
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt).operationResult;
+  assert.equal(projected.sourceHead, head);
+  assert.equal(projected.expectedHeadMatch, true);
+  assert.equal(projected.sourceInstalled, true);
+  assert.deepEqual(projected.postSyncVerification, {
+    ok: false,
+    status: 1,
+    signal: '',
+    tests: 145,
+    pass: 143,
+    fail: 2,
+    cancelled: 0,
+    skipped: 0,
+    todo: 0,
+    failingTests: [
+      'preserves canonical source truth',
+      'reports bounded verification evidence',
+    ],
+    outputTruncated: false,
+  });
+
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const compact = JSON.parse(serialized).result.result;
+  assert.deepEqual(compact.postSyncVerification, projected.postSyncVerification);
+  assert.doesNotMatch(serialized, /C:\\Users|secret-shaped/i);
+});
+
 test('derives a deterministic Windows-safe receipt filename for colon-bearing request IDs', () => {
   const requestId = 'proof:2026-07-30T20:00:00Z';
   const filename = createWindowsSafeMailboxReceiptFilename(requestId);

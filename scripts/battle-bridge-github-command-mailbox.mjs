@@ -351,6 +351,32 @@ function conveyorProjection(operationResult = {}) {
   });
 }
 
+function postSyncVerificationProjection(receipt = {}, operationResult = {}) {
+  if (receipt?.operation !== 'UPDATE_STEPHANOS_FROM_CHAT') return Object.freeze({});
+  const tests = operationResult?.sync?.tests;
+  if (!tests || typeof tests !== 'object' || Array.isArray(tests)) return Object.freeze({});
+  const counts = { tests: 0, pass: 0, fail: 0, cancelled: 0, skipped: 0, todo: 0 };
+  for (const match of String(tests.stdout || '').matchAll(/^\s*#\s+(tests|pass|fail|cancelled|skipped|todo)\s+(\d+)\s*$/gm)) {
+    counts[match[1]] = safeNonNegativeNumber(match[2]);
+  }
+  const failingTests = [...String(tests.stdout || '').matchAll(/^\s*not ok\s+\d+\s+-\s+(.+?)\s*$/gm)]
+    .map((match) => safeTelemetryText(match[1], 180))
+    .filter(Boolean)
+    .slice(0, 3);
+  return Object.freeze({
+    sourceInstalled: operationResult?.sourceInstalled === true,
+    postSyncVerification: Object.freeze({
+      ok: tests.ok === true,
+      status: Number.isInteger(tests.status) ? tests.status : null,
+      signal: safeTelemetryText(tests.signal, 40),
+      ...counts,
+      failingTests,
+      outputTruncated: String(tests.stdout || '').includes('...[truncated]')
+        || String(tests.stderr || '').includes('...[truncated]'),
+    }),
+  });
+}
+
 export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   const execution = receipt?.result || {};
   const operationResult = execution?.result || {};
@@ -404,6 +430,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+      ...postSyncVerificationProjection(receipt, operationResult),
       monitorCount: Number(operationResult?.monitorCount || 0),
       executedCount: Number(operationResult?.executedCount || 0),
       unaffectedMonitorCount: Number(operationResult?.unaffectedMonitorCount || 0),
@@ -496,6 +523,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+        ...postSyncVerificationProjection(receipt, operationResult),
         monitorCount: Number(operationResult?.monitorCount || 0),
         executedCount: Number(operationResult?.executedCount || 0),
         unaffectedMonitorCount: Number(operationResult?.unaffectedMonitorCount || 0),
