@@ -322,6 +322,25 @@ test('lifecycle messages require exact request and notification forms and cannot
   );
 });
 
+test('lifecycle requests require string or safe-integer JSON-RPC ids before mutating session state', async () => {
+  const params = {
+    protocolVersion: '2025-06-18',
+    clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' },
+  };
+  for (const invalidId of [true, [], {}, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps: fakeHostOps() });
+    await assert.rejects(
+      handler('initialize', params, requestMeta(invalidId)),
+      /MCP_INITIALIZE_REQUEST_REQUIRED/,
+      JSON.stringify(invalidId),
+    );
+    await handler('initialize', params, requestMeta('valid-after-rejection'));
+    await handler('notifications/initialized', {}, notificationMeta());
+    const listed = await handler('tools/list');
+    assert.equal(listed.tools.length, 6);
+  }
+});
+
 test('tool calls fail closed until a supported client completes initialization', async () => {
   const integration = fakeIntegration();
   const hostOps = fakeHostOps();
@@ -549,6 +568,40 @@ test('stdio transport rejects lifecycle messages with request and notification i
   const responses = captured.trim().split(/\r?\n/).map(JSON.parse);
   assert.deepEqual(responses.map((response) => response.id), [1, 2, 3, 4]);
   assert.equal(responses[1].error.message, 'MCP_INITIALIZED_NOTIFICATION_REQUIRED');
+  assert.equal(attachmentProofs.length, 1);
+  assert.equal(attachmentProofs[0].clientSession.ready, true);
+});
+
+test('stdio transport rejects malformed JSON-RPC request ids before lifecycle handling', async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const attachmentProofs = [];
+  let captured = '';
+  output.on('data', (chunk) => { captured += chunk.toString(); });
+  const handler = createCodexDispatchMcpHandler({
+    integration: fakeIntegration(),
+    hostOps: fakeHostOps(),
+    attachmentProofPublisher: (proof) => attachmentProofs.push(proof),
+    ...windowsAttachmentOptions(),
+  });
+  const server = runStdioMcpServer({ input, output, handler });
+  const params = { protocolVersion: '2025-06-18', clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' } };
+  for (const id of [true, [], {}, 1.5]) {
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id, method: 'initialize', params })}\n`);
+  }
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 'valid', method: 'initialize', params })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`);
+  input.end();
+  await server;
+  const responses = captured.trim().split(/\r?\n/).map(JSON.parse);
+  assert.deepEqual(responses.slice(0, 4).map(({ id, error }) => [id, error.message]), [
+    [null, 'Invalid Request'],
+    [null, 'Invalid Request'],
+    [null, 'Invalid Request'],
+    [null, 'Invalid Request'],
+  ]);
+  assert.deepEqual(responses.slice(4).map((response) => response.id), ['valid', 2]);
   assert.equal(attachmentProofs.length, 1);
   assert.equal(attachmentProofs[0].clientSession.ready, true);
 });

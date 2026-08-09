@@ -348,8 +348,7 @@ export function createCodexDispatchMcpHandler({
   return async function handle(method, params = {}, message = {}) {
     const messageIsRequest = message.isRequest === true
       && message.isNotification !== true
-      && message.id !== undefined
-      && message.id !== null;
+      && (typeof message.id === 'string' || Number.isSafeInteger(message.id));
     const messageIsNotification = message.isNotification === true
       && message.isRequest !== true
       && message.id === undefined;
@@ -520,13 +519,15 @@ export async function runStdioMcpServer({ input = process.stdin, output = proces
     }
     const structurallyObject = Boolean(request) && typeof request === 'object' && !Array.isArray(request);
     const hasId = structurallyObject && Object.prototype.hasOwnProperty.call(request, 'id');
-    const isRequest = hasId && request.id !== null;
+    const validRequestId = hasId
+      && (typeof request.id === 'string' || Number.isSafeInteger(request.id));
+    const isRequest = validRequestId;
     const isNotification = structurallyObject && !hasId;
     if (!structurallyObject
         || request.jsonrpc !== '2.0' || typeof request.method !== 'string'
         || (!isRequest && !isNotification)) {
       if (!isNotification) {
-        output.write(`${JSON.stringify({ jsonrpc: '2.0', id: hasId ? request.id : null, error: { code: -32600, message: 'Invalid Request' } })}\n`);
+        output.write(`${JSON.stringify({ jsonrpc: '2.0', id: validRequestId ? request.id : null, error: { code: -32600, message: 'Invalid Request' } })}\n`);
       }
       continue;
     }

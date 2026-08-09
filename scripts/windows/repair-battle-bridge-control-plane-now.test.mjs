@@ -29,6 +29,9 @@ test('rescue repairs the existing Codex dispatch plugin without creating another
   assert.match(ps1, /readyForCodexCliDispatch/);
   assert.match(ps1, /finalVerdict = \$dispatchBlocker/);
   assert.match(ps1, /separately reviewed authenticated ChatGPT transport/);
+  assert.match(ps1, /elseif \(\$dispatchProof\.localBridgeReady -eq \$true\)/);
+  assert.match(ps1, /\$attachmentBlocker = \[string\]\$dispatchProof\.attachmentBlocker/);
+  assert.match(ps1, /complete initialize\/initialized\/tools-list/);
   assert.doesNotMatch(ps1, /Restart ChatGPT desktop.*tools\/list/);
   assert.match(ps1, /BATTLE_BRIDGE_NO_FAFF_RESCUE_REMOTE_CODEX_READY/);
   assert.match(ps1, /newWorkerCreated = \$false/);

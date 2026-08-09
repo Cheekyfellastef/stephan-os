@@ -234,6 +234,13 @@ if ($dispatchProof.readyForRemoteChatDispatch -ne $true) {
     $dispatchNextAction = if ($dispatchProof.readyForCodexCliDispatch -eq $true) {
         'Establish the separately reviewed authenticated ChatGPT transport; the proven local Codex stdio session cannot establish remote transport identity.'
     }
+    elseif ($dispatchProof.localBridgeReady -eq $true) {
+        $attachmentBlocker = [string]$dispatchProof.attachmentBlocker
+        if ([string]::IsNullOrWhiteSpace($attachmentBlocker)) {
+            $attachmentBlocker = 'LOCAL_CODEX_SESSION_PROOF_UNAVAILABLE'
+        }
+        "Start a compatible local Codex MCP session and complete initialize/initialized/tools-list. Current attachment blocker: $attachmentBlocker"
+    }
     else {
         'Repair the fixed local Codex CLI/plugin prerequisite named by codexDispatchStatus.'
     }
