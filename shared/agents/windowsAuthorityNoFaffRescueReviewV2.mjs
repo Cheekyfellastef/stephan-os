@@ -59,9 +59,13 @@ function requireLiteral(findings, source, path, literal, code) {
   if (!source.includes(literal)) findings.push(finding(code, path));
 }
 
-function requireSingleAssignment(findings, source, path, pattern, code) {
-  const matches = source.match(pattern) ?? [];
-  if (matches.length !== 1) findings.push(finding(code, path));
+function requireFinalAssignment(findings, source, path, pattern, requiredAssignment, code) {
+  const assignments = [...source.matchAll(pattern)];
+  const finalAssignment = assignments.at(-1);
+  const requiredIndex = source.lastIndexOf(requiredAssignment);
+  if (!finalAssignment || requiredIndex < 0 || finalAssignment.index !== requiredIndex) {
+    findings.push(finding(code, path));
+  }
 }
 
 function forbidPattern(findings, source, path, pattern, code) {
@@ -129,12 +133,13 @@ function reviewAuthenticatedTransportStatus(source, findings) {
   ];
   for (const [literal, code] of requirements) requireLiteral(findings, source, STATUS_PATH, literal, code);
 
-  requireSingleAssignment(
+  requireFinalAssignment(
     findings,
     source,
     STATUS_PATH,
-    /^\s*\$status\.readyForRemoteChatDispatch\s*=/gm,
-    'dispatch-status-v2-remote-readiness-assignment-not-unique',
+    /\$status\s*(?:\.\s*readyForRemoteChatDispatch|\[\s*['"]readyForRemoteChatDispatch['"]\s*\])\s*=/gi,
+    '$status.readyForRemoteChatDispatch = $status.readyForRemoteChatDispatch -and $remoteTransportAuthenticated',
+    'dispatch-status-v2-final-remote-readiness-not-auth-bound',
   );
 }
 

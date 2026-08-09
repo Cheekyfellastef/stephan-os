@@ -45,6 +45,7 @@ $attachmentProof.clientSession.initializedNotificationReceived -eq $true
 $attachmentProof.clientSession.supportedClient -eq $true
 $attachmentProof.clientSession.ready -eq $true
 $status.readyForCodexCliDispatch = $status.localBridgeReady -and $attachmentProofValid
+$status.readyForRemoteChatDispatch = $status.localBridgeReady -and $attachmentProofValid
 $status.readyForRemoteChatDispatch = $status.readyForRemoteChatDispatch -and $remoteTransportAuthenticated
 BLOCKED_AUTHENTICATED_REMOTE_MCP_TRANSPORT_REQUIRED
 clientIdentityAuthenticated = $false
@@ -142,8 +143,29 @@ test('rejects a later remote readiness override after the authenticated assignme
   });
   assert.equal(result.clean, false);
   assert.ok(result.findings.some(
-    ({ code }) => code === 'dispatch-status-v2-remote-readiness-assignment-not-unique',
+    ({ code }) => code === 'dispatch-status-v2-final-remote-readiness-not-auth-bound',
   ));
+});
+
+test('requires the final remote readiness assignment across PowerShell property spellings', () => {
+  const overrides = [
+    '$Status.readyForRemoteChatDispatch = $true',
+    '; $status.readyForRemoteChatDispatch = $true',
+    "$status['readyForRemoteChatDispatch'] = $true",
+  ];
+  for (const override of overrides) {
+    const result = upgradeWindowsAuthorityNoFaffRescueReviewV2(baseResult(), {
+      sources: [
+        { path: RESCUE, content: rescue },
+        { path: STATIC, content: staticTest },
+        { path: STATUS, content: `${status}\n${override}\n` },
+      ],
+    });
+    assert.equal(result.clean, false, override);
+    assert.ok(result.findings.some(
+      ({ code }) => code === 'dispatch-status-v2-final-remote-readiness-not-auth-bound',
+    ), override);
+  }
 });
 
 test('requires current static tests to guard dynamic blocker, tree binding and transport separation', () => {
