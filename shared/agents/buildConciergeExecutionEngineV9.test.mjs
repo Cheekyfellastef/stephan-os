@@ -74,6 +74,40 @@ test('V9 keeps conflicting candidates held while independent capacity continues'
   assert.equal(engine.elasticCapacity.status,'RUNNING');
 });
 
+test('V9 holds every admission while executor capacity is degraded', () => {
+  const receipts = Array.from({ length:3 }, (_, index) => ({
+    receiptId:`degraded-${index + 1}`,
+    goal:{ id:`degraded-${index + 1}`, title:`Build degraded ${index + 1}`, intent:'Add bounded source code and tests', resourceIds:[`goal:${index + 1}`] },
+  }));
+  const engine = buildConciergeExecutionEngineV9({
+    receipts,
+    dispatchAdapterAvailable:true,
+    sourceApproved:true,
+    availableExecutorSlots:3,
+  });
+  assert.equal(engine.elasticCapacity.status,'DEGRADED_CAPACITY');
+  assert.equal(engine.elasticCapacity.scaleAction,'SAFE_HOLD');
+  assert.equal(engine.dispatchReadyCount,0);
+  assert.deepEqual(engine.parallelDispatchCandidates,[]);
+  assert.ok(engine.parallelHeld.every(({ reasonCode }) => reasonCode === 'CAPACITY_SAFE_HOLD'));
+});
+
+test('V9 rejects duplicate candidate identities before parallel admission', () => {
+  const engine = buildConciergeExecutionEngineV9({
+    receipts:[
+      { receiptId:'duplicate-1', goal:{ id:'duplicate', title:'Build duplicate one', intent:'Add bounded source code and tests', resourceIds:['goal:1'] } },
+      { receiptId:'duplicate-2', goal:{ id:'duplicate', title:'Build duplicate two', intent:'Add bounded source code and tests', resourceIds:['goal:2'] } },
+    ],
+    dispatchAdapterAvailable:true,
+    sourceApproved:true,
+    availableExecutorSlots:8,
+  });
+  assert.equal(engine.dispatchReadyCount,0);
+  assert.deepEqual(engine.parallelDispatchCandidates,[]);
+  assert.ok(engine.parallelHeld.every(({ reasonCode }) => reasonCode === 'DUPLICATE_CANDIDATE_ID'));
+  assert.match(engine.blockers.join(' '), /identities must be unique/);
+});
+
 test('V9 exact-head approval boundary is preserved and dispatch is model-only without source approval', () => {
   const engine = buildConciergeExecutionEngineV9({ receipts: [receipt], dispatchAdapterAvailable: true });
   assert.equal(engine.enrichedCandidates[0].dispatchReady, false);

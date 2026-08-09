@@ -25,6 +25,8 @@
 - Parallel admission requires explicit resource identity.
 - A resource can have only one active owner.
 - Capacity contradictions, malformed scopes, sparse inventories and unsafe resource identifiers fail closed.
+- Active claims with malformed resource evidence fail closed even when only one lane is present.
+- A degraded-capacity `SAFE_HOLD` admits no new work, and duplicate candidate identities invalidate the whole admission inventory.
 - Capacity projection is advisory and grants no mutation authority.
 
 ## Serialization that must remain
@@ -53,3 +55,5 @@ The Vite build itself remains one writer because all stages materialize the same
 > Parallelize independent preparation and proof; serialize only the exact authority-bearing resource being mutated.
 
 This invariant replaces the legacy global rule that Stephanos may have exactly one active implementation lane.
+
+Admission truth is part of the same invariant: no active or ready lane is projected from malformed resource evidence, duplicate candidate identity, or a capacity verdict whose action is `SAFE_HOLD`.

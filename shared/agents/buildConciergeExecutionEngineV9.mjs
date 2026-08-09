@@ -240,11 +240,13 @@ export function buildConciergeExecutionEngineV9(input = {}) {
     availableExecutorSlots,
   });
   if (capacity.status === 'SAFE_HOLD_INVALID_CAPACITY') blockers.push('Parallel execution capacity evidence is invalid.');
-  const selection = blockers.length || capacity.status === 'SAFE_HOLD_INVALID_CAPACITY'
-    ? { selected:[], held:eligible.map(({ candidateId }) => ({ candidateId, reasonCode:'SAFE_HOLD' })), reasonCodes:['SAFE_HOLD'] }
+  if (capacity.status === 'DEGRADED_CAPACITY') blockers.push('Parallel execution capacity is below the healthy five-lane baseline; admissions are held.');
+  const selection = blockers.length || capacity.scaleAction === 'SAFE_HOLD'
+    ? { selected:[], held:eligible.map(({ candidateId }) => ({ candidateId, reasonCode:'CAPACITY_SAFE_HOLD' })), reasonCodes:['CAPACITY_SAFE_HOLD'] }
     : eligible.length === 1 && requestedActive.length === 0 && eligible[0].resourceIds.length === 0
       ? { selected:eligible, held:[], reasonCodes:['LEGACY_SINGLE_LANE'] }
       : selectResourceDisjointCandidates(eligible, { limit:capacity.remainingAdmissionSlots, activeResourceIds:activeResources });
+  if (selection.reasonCodes.includes('DUPLICATE_CANDIDATE_ID')) blockers.push('Candidate identities must be unique before parallel admission.');
   const selectedIds = new Set(selection.selected.map(({ candidateId }) => candidateId));
   const heldById = new Map(selection.held.map((entry) => [entry.candidateId, entry]));
   const admittedCandidates = enrichedCandidates.map((candidate) => {

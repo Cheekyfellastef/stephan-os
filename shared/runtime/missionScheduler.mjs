@@ -393,6 +393,7 @@ export function buildMissionScheduler(input = {}) {
     else if (goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length || goal.boundExceededFlywheelEvidence.length || goal.invalidFlywheelEvidenceEntries.length) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_FLYWHEEL_EVIDENCE_INVALID', issue:goal.issue }); }
     else if (!goal.convergenceEvidenceComplete) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_STRUCTURAL_REVIEW_REQUIRED', issue:goal.issue }); }
     else if (hasMalformedRelations(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_RELATION_EVIDENCE_INVALID', issue:goal.issue }); }
+    else if (goal.invalidResourceContainer || goal.invalidResourceEntries.length || goal.resourceIdsBoundExceeded || goal.invalidResourceIds.length) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_RESOURCE_EVIDENCE_INVALID', issue:goal.issue }); }
     else if (goal.duplicateOf || goal.supersededBy) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_GOAL_INVALIDATED', issue:goal.issue }); }
     else if (staleByGoal.get(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'STALE_ACTIVE_EVIDENCE', issue:goal.issue }); }
     else if (!goal.activePr && !goal.branch) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_LANE_IDENTITY_MISSING', issue:goal.issue }); }
@@ -430,11 +431,6 @@ export function buildMissionScheduler(input = {}) {
   const activeClaims = !failClosed ? authoritative : [];
   const activeClaim = activeClaims[0] ?? null;
   const active = activeClaim ? portfolio[goals.indexOf(activeClaim)] : null;
-  const action = failClosed || active ? null : mergeReady[0] ?? ready[0] ?? closeReady[0] ?? null;
-  const operatorNeeded = approvalGoals.length > 0 || Boolean(active?.approvalRequired || active?.route === 'OPERATOR_APPROVAL' || action?.route === 'OPERATOR_APPROVAL');
-  const blockers = freeze([...contradictions, ...lifecycleBlockers(portfolio)]);
-  const programmeStatus = failClosed ? 'BLOCKED' : active ? 'IN_PROGRESS' : action?.lifecycle === 'MERGE_READY' ? 'MERGE_READY' : action?.lifecycle === 'CLOSE_READY' ? 'CLOSE_READY' : action ? 'READY_TO_ADVANCE' : operatorNeeded ? 'APPROVAL_REQUIRED' : 'WAITING';
-  const actionable = [...mergeReady, ...ready, ...closeReady];
   const capacity = deriveElasticBuildWidth({
     minimumLanes:minimumActiveLanes,
     maximumLanes:maximumActiveLanes,
@@ -442,14 +438,25 @@ export function buildMissionScheduler(input = {}) {
     readyIndependentWorkCount:ready.length,
     availableExecutorSlots,
   });
-  const parallelSelection = failClosed ? { selected:[], held:[], reasonCodes:[] } : selectResourceDisjointCandidates(
+  const capacitySafeHold = capacity.scaleAction === 'SAFE_HOLD';
+  const admissionReady = capacitySafeHold ? [] : ready;
+  const actionable = [...mergeReady, ...admissionReady, ...closeReady];
+  const action = failClosed || active ? null : actionable[0] ?? null;
+  const operatorNeeded = approvalGoals.length > 0 || Boolean(active?.approvalRequired || active?.route === 'OPERATOR_APPROVAL' || action?.route === 'OPERATOR_APPROVAL');
+  const blockers = freeze([...contradictions, ...lifecycleBlockers(portfolio)]);
+  const programmeStatus = failClosed ? 'BLOCKED' : active ? 'IN_PROGRESS' : action?.lifecycle === 'MERGE_READY' ? 'MERGE_READY' : action?.lifecycle === 'CLOSE_READY' ? 'CLOSE_READY' : action ? 'READY_TO_ADVANCE' : operatorNeeded ? 'APPROVAL_REQUIRED' : 'WAITING';
+  const parallelSelection = failClosed
+    ? { selected:[], held:[], reasonCodes:[] }
+    : capacitySafeHold
+      ? { selected:[], held:ready.map((goal) => ({ candidateId:`#${goal.issue}`, reasonCode:'CAPACITY_SAFE_HOLD' })), reasonCodes:['CAPACITY_SAFE_HOLD'] }
+      : selectResourceDisjointCandidates(
     ready.map((goal) => ({ candidateId:`#${goal.issue}`, issue:goal.issue, route:goal.route, resourceIds:goal.resourceIds })),
     { limit:capacity.remainingAdmissionSlots, activeResourceIds:activeClaims.flatMap((goal) => goal.resourceIds) },
   );
   const activeGoalRefs = activeClaims.map((goal) => `#${goal.issue}`);
   const activeLaneRefs = activeClaims.map((goal) => goal.activePr ? `PR #${goal.activePr}` : compactString(goal.branch));
   const parallelCandidateRefs = parallelSelection.selected.map(({ candidateId }) => candidateId);
-  return freeze({ schemaVersion:'stephanos.mission-scheduler.v1', readOnly:true, failClosed, contradictions, contradictionsTotal:contradictions.length, blockers, programmeStatus, activeGoal:activeGoalRefs[0] ?? null, activeGoals:activeGoalRefs, activeLane:activeLaneRefs[0] ?? null, activeLanes:activeLaneRefs, whyNow:failClosed ? contradictionRationale(contradictions) : active ? `${activeClaims.length} fresh, resource-scoped active lane${activeClaims.length === 1 ? ' remains' : 's remain'} authoritative.` : action?.lifecycle === 'MERGE_READY' ? 'Exact-head-proven and exact-head-approved implementation is ready for guarded merge.' : action?.lifecycle === 'CLOSE_READY' ? 'Completed goal is ready for guarded closure.' : action ? selectionRationale(action) : operatorNeeded ? 'Operator approval is required before work can advance.' : 'No eligible lane is currently available.', selectedGoal:action?.issue ? `#${action.issue}` : null, selectedRoute:action?.route ?? null, selectedLifecycle:action?.lifecycle ?? null, parallelCandidates:parallelCandidateRefs, parallelCandidateDetails:parallelSelection.selected, parallelHeld:parallelSelection.held, elasticCapacity:capacity, nextEligible:failClosed ? [] : actionable.filter((goal) => goal !== action).slice(0,maximumActiveLanes).map((goal) => `#${goal.issue}`), operatorNeeded, operatorAction:operatorNeeded ? 'OPERATOR_APPROVAL_REQUIRED' : 'NO_OPERATOR_ACTION_REQUIRED', portfolio, decisionReceipt:{ correlationId:text(source.correlationId, `scheduler-${nowMs}`), decidedAt:new Date(nowMs).toISOString(), status:failClosed ? 'BLOCKED_FAIL_CLOSED' : active ? 'ACTIVE_LANES' : action?.lifecycle === 'MERGE_READY' ? 'MERGE_READY' : action?.lifecycle === 'CLOSE_READY' ? 'CLOSE_READY' : action ? 'LANE_SELECTED' : operatorNeeded ? 'APPROVAL_REQUIRED' : 'WAITING', failClosed, contradictionCodes:contradictions.map(({code}) => code), selectedIssue:action?.issue ?? null, selectedIssues:parallelSelection.selected.map(({ issue }) => issue), selectedLifecycle:action?.lifecycle ?? null, activeIssue:active?.issue ?? null, activeIssues:activeClaims.map((goal) => goal.issue), route:failClosed ? 'BLOCKED_UNSAFE_OR_UNKNOWN' : action?.route ?? active?.route ?? (operatorNeeded ? 'OPERATOR_APPROVAL' : 'WAITING_FOR_EXTERNAL_CONDITION'), proofRefs, proofHeadShas:[...provenHeads], proofReceipts } });
+  return freeze({ schemaVersion:'stephanos.mission-scheduler.v1', readOnly:true, failClosed, contradictions, contradictionsTotal:contradictions.length, blockers, programmeStatus, activeGoal:activeGoalRefs[0] ?? null, activeGoals:activeGoalRefs, activeLane:activeLaneRefs[0] ?? null, activeLanes:activeLaneRefs, whyNow:failClosed ? contradictionRationale(contradictions) : active ? `${activeClaims.length} fresh, resource-scoped active lane${activeClaims.length === 1 ? ' remains' : 's remain'} authoritative.` : action?.lifecycle === 'MERGE_READY' ? 'Exact-head-proven and exact-head-approved implementation is ready for guarded merge.' : action?.lifecycle === 'CLOSE_READY' ? 'Completed goal is ready for guarded closure.' : action ? selectionRationale(action) : capacitySafeHold ? 'New build admission is held because elastic capacity is below the healthy baseline.' : operatorNeeded ? 'Operator approval is required before work can advance.' : 'No eligible lane is currently available.', selectedGoal:action?.issue ? `#${action.issue}` : null, selectedRoute:action?.route ?? null, selectedLifecycle:action?.lifecycle ?? null, parallelCandidates:parallelCandidateRefs, parallelCandidateDetails:parallelSelection.selected, parallelHeld:parallelSelection.held, elasticCapacity:capacity, nextEligible:failClosed ? [] : actionable.filter((goal) => goal !== action).slice(0,maximumActiveLanes).map((goal) => `#${goal.issue}`), operatorNeeded, operatorAction:operatorNeeded ? 'OPERATOR_APPROVAL_REQUIRED' : 'NO_OPERATOR_ACTION_REQUIRED', portfolio, decisionReceipt:{ correlationId:text(source.correlationId, `scheduler-${nowMs}`), decidedAt:new Date(nowMs).toISOString(), status:failClosed ? 'BLOCKED_FAIL_CLOSED' : active ? 'ACTIVE_LANES' : action?.lifecycle === 'MERGE_READY' ? 'MERGE_READY' : action?.lifecycle === 'CLOSE_READY' ? 'CLOSE_READY' : action ? 'LANE_SELECTED' : operatorNeeded ? 'APPROVAL_REQUIRED' : 'WAITING', failClosed, contradictionCodes:contradictions.map(({code}) => code), selectedIssue:action?.issue ?? null, selectedIssues:parallelSelection.selected.map(({ issue }) => issue), selectedLifecycle:action?.lifecycle ?? null, activeIssue:active?.issue ?? null, activeIssues:activeClaims.map((goal) => goal.issue), route:failClosed ? 'BLOCKED_UNSAFE_OR_UNKNOWN' : action?.route ?? active?.route ?? (operatorNeeded ? 'OPERATOR_APPROVAL' : 'WAITING_FOR_EXTERNAL_CONDITION'), proofRefs, proofHeadShas:[...provenHeads], proofReceipts } });
 }
 
 export function answerMissionQuery(input = {}, query = '') {

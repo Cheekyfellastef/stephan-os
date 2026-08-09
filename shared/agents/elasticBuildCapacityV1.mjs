@@ -100,6 +100,19 @@ export function selectResourceDisjointCandidates(candidates = [], options = {}) 
     return freeze({ selected:[], held:[], reasonCodes:['INVALID_PARALLEL_SELECTION_POLICY'] });
   }
 
+  const candidateIds = candidates.map((candidate) => typeof candidate?.candidateId === 'string' ? candidate.candidateId.trim() : '');
+  const candidateIdCounts = new Map();
+  for (const id of candidateIds) if (id) candidateIdCounts.set(id, (candidateIdCounts.get(id) ?? 0) + 1);
+  const duplicateCandidateIds = new Set([...candidateIdCounts].filter(([, count]) => count > 1).map(([id]) => id));
+  if (duplicateCandidateIds.size) return freeze({
+    selected:[],
+    held:candidateIds.map((id) => ({
+      candidateId:id || null,
+      reasonCode:duplicateCandidateIds.has(id) ? 'DUPLICATE_CANDIDATE_ID' : 'INVALID_CANDIDATE_INVENTORY',
+    })),
+    reasonCodes:['DUPLICATE_CANDIDATE_ID', ...(candidateIds.some((id) => !duplicateCandidateIds.has(id)) ? ['INVALID_CANDIDATE_INVENTORY'] : [])],
+  });
+
   const owned = new Set(active);
   const selected = [];
   const held = [];

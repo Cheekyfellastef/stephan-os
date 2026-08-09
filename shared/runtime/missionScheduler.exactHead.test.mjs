@@ -47,6 +47,23 @@ test('merge readiness requires proof and approval bound to goal, PR and exact he
   assert.deepEqual(exact.decisionReceipt.proofReceipts, [receipt()]);
 });
 
+test('degraded build capacity holds new admission without suppressing an exact-head merge gate', () => {
+  const candidate = goal(1, {
+    state:'IMPLEMENTED',
+    activePr:1601,
+    repository:REPOSITORY,
+    branch:BRANCH,
+    proofState:'PASS',
+    headSha:HEAD,
+    operatorApprovalReceipt:receipt(),
+  });
+  const result = buildMissionScheduler({ now:NOW, availableExecutorSlots:3, goals:[candidate], proofReceipts:[receipt()] });
+  assert.equal(result.elasticCapacity.status,'DEGRADED_CAPACITY');
+  assert.equal(result.portfolio[0].lifecycle,'MERGE_READY');
+  assert.equal(result.selectedGoal,'#1');
+  assert.equal(result.programmeStatus,'MERGE_READY');
+});
+
 test('SHA-only proof and approval evidence cannot create merge readiness', () => {
   const result = buildMissionScheduler({
     now:NOW,

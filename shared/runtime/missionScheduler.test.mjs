@@ -54,6 +54,18 @@ test('multiple active lanes without resource scopes fail closed', () => {
   assert.equal(result.failClosed,true); assert.ok(result.contradictions.some(({code}) => code === 'ACTIVE_RESOURCE_SCOPE_MISSING'));
 });
 
+test('malformed authority-bearing resource evidence rejects even one active claim', () => {
+  const sparseResourceIds = [];
+  sparseResourceIds[1] = 'goal:1';
+  for (const resourceIds of ['goal:1', [42], ['../bad'], sparseResourceIds]) {
+    const result = buildMissionScheduler({ now:NOW, goals:[goal(1,{state:'ACTIVE',activePr:1601,resourceIds})] });
+    assert.equal(result.failClosed,true);
+    assert.deepEqual(result.activeGoals,[]);
+    assert.equal(result.portfolio[0].lifecycle,'BLOCKED');
+    assert.ok(result.contradictions.some(({code}) => code === 'ACTIVE_RESOURCE_EVIDENCE_INVALID'));
+  }
+});
+
 test('five resource-disjoint active lanes remain authoritative together', () => {
   const goals = Array.from({ length:5 }, (_, index) => goal(index + 1, {
     state:index % 2 ? 'IMPLEMENTING' : 'ACTIVE',
@@ -100,6 +112,17 @@ test('scheduler exposes five resource-disjoint ready candidates without granting
   assert.equal(result.parallelHeld.find(({candidateId}) => candidateId === '#7').reasonCode,'PARALLEL_CAPACITY_FULL');
   assert.equal(result.readOnly,true);
   assert.equal(result.elasticCapacity.remainingAdmissionSlots,5);
+});
+
+test('scheduler holds new ready admissions when executor capacity is degraded', () => {
+  const goals = Array.from({ length:3 }, (_, index) => goal(index + 1, { resourceIds:[`goal:${index + 1}`] }));
+  const result = buildMissionScheduler({ now:NOW, goals, availableExecutorSlots:3 });
+  assert.equal(result.failClosed,false);
+  assert.equal(result.elasticCapacity.status,'DEGRADED_CAPACITY');
+  assert.equal(result.selectedGoal,null);
+  assert.deepEqual(result.parallelCandidates,[]);
+  assert.ok(result.parallelHeld.every(({ reasonCode }) => reasonCode === 'CAPACITY_SAFE_HOLD'));
+  assert.match(result.whyNow,/held.*capacity/i);
 });
 
 test('invalid parallel capacity policy fails closed', () => {

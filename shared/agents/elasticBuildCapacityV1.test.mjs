@@ -57,3 +57,18 @@ test('missing, malformed, sparse or active-conflicting resource scope is never a
   const sparse = selectResourceDisjointCandidates(new Array(1), { limit:5, activeResourceIds:[] });
   assert.deepEqual(sparse.reasonCodes, ['INVALID_CANDIDATE_INVENTORY']);
 });
+
+test('resource selection fails closed for duplicate candidate identities', () => {
+  const result = selectResourceDisjointCandidates([
+    { candidateId:'duplicate', resourceIds:['goal:1'] },
+    { candidateId:'duplicate', resourceIds:['goal:2'] },
+    { candidateId:'otherwise-safe', resourceIds:['goal:3'] },
+  ], { limit:5, activeResourceIds:[] });
+  assert.deepEqual(result.selected,[]);
+  assert.deepEqual(result.held.map(({ reasonCode }) => reasonCode), [
+    'DUPLICATE_CANDIDATE_ID',
+    'DUPLICATE_CANDIDATE_ID',
+    'INVALID_CANDIDATE_INVENTORY',
+  ]);
+  assert.ok(result.reasonCodes.includes('DUPLICATE_CANDIDATE_ID'));
+});
