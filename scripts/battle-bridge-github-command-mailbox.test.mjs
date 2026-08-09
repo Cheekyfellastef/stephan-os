@@ -606,6 +606,114 @@ test('malformed Forge proof values fail closed during projection', () => {
   assert.equal(projected.operationResult.readyForM3, null);
 });
 
+test('failed chat updates retain installed source truth and bounded post-sync test evidence', () => {
+  const head = '10ce35ad3d9542694f02e6727954b965d3de4f6b';
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'post-sync-evidence-001',
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    expectedHead: head,
+    state: 'BLOCKED',
+    result: {
+      ok: false,
+      verdict: 'COMMAND_EXECUTION_BLOCKED',
+      result: {
+        ok: false,
+        blocker: 'POST_SYNC_VERIFICATION_FAILED',
+        finalVerdict: 'POST_SYNC_VERIFICATION_FAILED',
+        sourceInstalled: true,
+        sourceHead: head,
+        branch: 'main',
+        expectedHeadMatch: true,
+        sync: {
+          tests: {
+            ok: false,
+            status: 1,
+            signal: null,
+            stdout: `${'ok 1 - earlier passing evidence\n'.repeat(220)}\n...[truncated]`,
+            stderr: 'C:\\Users\\Stephan\\secret-shaped-local-path',
+            tapSummary: {
+              summaryComplete: true,
+              tests: 145,
+              pass: 143,
+              fail: 2,
+              cancelled: 0,
+              skipped: 0,
+              todo: 0,
+              failingTests: [
+                'preserves canonical source truth',
+                'reports bounded verification evidence',
+              ],
+            },
+          },
+        },
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt).operationResult;
+  assert.equal(projected.sourceHead, head);
+  assert.equal(projected.expectedHeadMatch, true);
+  assert.equal(projected.sourceInstalled, true);
+  assert.deepEqual(projected.postSyncVerification, {
+    ok: false,
+    status: 1,
+    signal: '',
+    summaryComplete: true,
+    tests: 145,
+    pass: 143,
+    fail: 2,
+    cancelled: 0,
+    skipped: 0,
+    todo: 0,
+    failingTests: [
+      'preserves canonical source truth',
+      'reports bounded verification evidence',
+    ],
+    outputTruncated: true,
+  });
+
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const compact = JSON.parse(serialized).result.result;
+  assert.deepEqual(compact.postSyncVerification, projected.postSyncVerification);
+  assert.doesNotMatch(serialized, /C:\\Users|secret-shaped/i);
+});
+
+test('incomplete post-sync TAP evidence projects unknown totals without dropping partial failures', () => {
+  const receipt = {
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    result: {
+      result: {
+        sync: {
+          tests: {
+            ok: false,
+            status: null,
+            signal: 'SIGTERM',
+            stdout: 'not ok 2 - partial Windows failure',
+            tapSummary: {
+              summaryComplete: false,
+              tests: null,
+              pass: null,
+              fail: null,
+              cancelled: null,
+              skipped: null,
+              todo: null,
+              failingTests: ['partial Windows failure'],
+            },
+          },
+        },
+      },
+    },
+  };
+  const evidence = createSanitizedMailboxReceiptProjection(receipt).operationResult.postSyncVerification;
+  assert.equal(evidence.summaryComplete, false);
+  assert.equal(evidence.tests, null);
+  assert.equal(evidence.pass, null);
+  assert.equal(evidence.fail, null);
+  assert.equal(evidence.signal, 'SIGTERM');
+  assert.deepEqual(evidence.failingTests, ['partial Windows failure']);
+});
+
 test('derives a deterministic Windows-safe receipt filename for colon-bearing request IDs', () => {
   const requestId = 'proof:2026-07-30T20:00:00Z';
   const filename = createWindowsSafeMailboxReceiptFilename(requestId);

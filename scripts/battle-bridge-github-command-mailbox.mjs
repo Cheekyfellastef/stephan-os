@@ -141,6 +141,12 @@ function safeNonNegativeNumber(value) {
   return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
 }
 
+function safeOptionalNonNegativeInteger(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : null;
+}
+
 function safeTelemetryText(value, limit = 500) {
   const normalized = String(value ?? '').trim();
   if (UNSAFE_TELEMETRY_PATTERN.test(normalized)) return '';
@@ -453,6 +459,52 @@ function conveyorProjection(operationResult = {}) {
   });
 }
 
+function postSyncVerificationProjection(receipt = {}, operationResult = {}) {
+  if (receipt?.operation !== 'UPDATE_STEPHANOS_FROM_CHAT') return Object.freeze({});
+  const tests = operationResult?.sync?.tests;
+  if (!tests || typeof tests !== 'object' || Array.isArray(tests)) return Object.freeze({});
+  const producedSummary = tests.tapSummary && typeof tests.tapSummary === 'object' && !Array.isArray(tests.tapSummary)
+    ? tests.tapSummary
+    : null;
+  const countKeys = ['tests', 'pass', 'fail', 'cancelled', 'skipped', 'todo'];
+  const counts = Object.fromEntries(countKeys.map((key) => [key, null]));
+  const observedCounts = new Set();
+  if (producedSummary) {
+    for (const key of countKeys) {
+      counts[key] = safeOptionalNonNegativeInteger(producedSummary[key]);
+      if (counts[key] !== null) observedCounts.add(key);
+    }
+  } else {
+    for (const match of String(tests.stdout || '').matchAll(/^\s*#\s+(tests|pass|fail|cancelled|skipped|todo)\s+(\d+)\s*$/gm)) {
+      counts[match[1]] = safeOptionalNonNegativeInteger(match[2]);
+      if (counts[match[1]] !== null) observedCounts.add(match[1]);
+    }
+  }
+  const summaryComplete = producedSummary
+    ? producedSummary.summaryComplete === true && countKeys.every((key) => observedCounts.has(key))
+    : countKeys.every((key) => observedCounts.has(key));
+  const producedFailingTests = Array.isArray(producedSummary?.failingTests)
+    ? producedSummary.failingTests
+    : [...String(tests.stdout || '').matchAll(/^\s*not ok\s+\d+\s+-\s+(.+?)\s*$/gm)].map((match) => match[1]);
+  const failingTests = producedFailingTests
+    .map((name) => safeTelemetryText(name, 180))
+    .filter(Boolean)
+    .slice(0, 3);
+  return Object.freeze({
+    sourceInstalled: operationResult?.sourceInstalled === true,
+    postSyncVerification: Object.freeze({
+      ok: tests.ok === true,
+      status: Number.isInteger(tests.status) ? tests.status : null,
+      signal: safeTelemetryText(tests.signal, 40),
+      summaryComplete,
+      ...counts,
+      failingTests,
+      outputTruncated: String(tests.stdout || '').includes('...[truncated]')
+        || String(tests.stderr || '').includes('...[truncated]'),
+    }),
+  });
+}
+
 export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   const execution = receipt?.result || {};
   const operationResult = execution?.result || {};
@@ -509,6 +561,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
       ...forgeM2ResultProjection(receipt, operationResult),
       ...forgeDigestResolutionProjection(operationResult),
+      ...postSyncVerificationProjection(receipt, operationResult),
       monitorCount: Number(operationResult?.monitorCount || 0),
       executedCount: Number(operationResult?.executedCount || 0),
       unaffectedMonitorCount: Number(operationResult?.unaffectedMonitorCount || 0),
@@ -604,6 +657,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
         ...forgeM2ResultProjection(receipt, operationResult),
         ...forgeDigestResolutionProjection(operationResult),
+        ...postSyncVerificationProjection(receipt, operationResult),
         monitorCount: Number(operationResult?.monitorCount || 0),
         executedCount: Number(operationResult?.executedCount || 0),
         unaffectedMonitorCount: Number(operationResult?.unaffectedMonitorCount || 0),
