@@ -71,6 +71,19 @@ function assertOrdinaryWatchdogDidNotClaimCanaryKill(status) {
   assert.equal(status.workerKilledObserved, false);
 }
 
+function exactHeadRestartProof(headSha, terminatedVerifiedOwnedProcess = false) {
+  return {
+    started: true,
+    restarted: true,
+    taskName: APPROVED_WORKER_TASK,
+    sourceHead: headSha,
+    exactHeadProofOk: true,
+    proofFresh: true,
+    terminatedVerifiedOwnedProcess,
+    restartVerdict: 'APPROVED_RUNTIME_RESTART_PASS',
+  };
+}
+
 test('healthy worker is a no-op and publishes Shared Workspace proof', async () => {
   await withFixture(async ({ paths }) => {
     const now = new Date();
@@ -130,7 +143,7 @@ test('old-head live worker is restarted once and recovery requires a current-hea
       run(mode) {
         if (mode === 'StartApprovedWorkerTask') {
           starts += 1;
-          return { ok: true, data: { started: true, taskName: APPROVED_WORKER_TASK } };
+          return { ok: true, data: exactHeadRestartProof(currentHead, true) };
         }
         inspections += 1;
         return {
@@ -157,6 +170,13 @@ test('old-head live worker is restarted once and recovery requires a current-hea
     assert.equal(result.finalAssessment.heartbeatMatchesCanonicalRepositoryHead, true);
     assert.equal(result.finalAssessment.sourceHead, currentHead);
     assert.equal(starts, 1);
+    const status = await readCurrentStatus(paths);
+    assert.equal(status.verifiedOwnedWorkerTerminationObserved, true);
+    assert.equal(status.restartExactHeadProofOk, true);
+    assert.equal(status.restartProofFresh, true);
+    assert.equal(status.restartSourceHead, currentHead);
+    assert.equal(status.restartVerdict, 'APPROVED_RUNTIME_RESTART_PASS');
+    assertOrdinaryWatchdogDidNotClaimCanaryKill(status);
   });
 });
 
@@ -168,7 +188,7 @@ test('unhealthy fixed worker is started once and bounded probes can prove recove
       run(mode) {
         if (mode === 'StartApprovedWorkerTask') {
           starts += 1;
-          return { ok: true, data: { started: true, taskName: APPROVED_WORKER_TASK } };
+          return { ok: true, data: exactHeadRestartProof('a'.repeat(40)) };
         }
         inspections += 1;
         return { ok: true, data: workerObservation({ paths, healthy: inspections > 1 }) };
@@ -196,7 +216,7 @@ test('recovery starts at most once and fails after exactly three probes without 
       run(mode) {
         if (mode === 'StartApprovedWorkerTask') {
           starts += 1;
-          return { ok: true, data: { started: true, taskName: APPROVED_WORKER_TASK } };
+          return { ok: true, data: exactHeadRestartProof('a'.repeat(40)) };
         }
         inspections += 1;
         return { ok: true, data: workerObservation({ paths, healthy: false }) };
@@ -245,7 +265,7 @@ test('restart cooldown prevents repeated starts without claiming canary kill evi
     const probeAdapter = {
       run(mode) {
         if (mode === 'StartApprovedWorkerTask') starts += 1;
-        return { ok: true, data: mode === 'Inspect' ? workerObservation({ paths, healthy: false }) : { started: true, taskName: APPROVED_WORKER_TASK } };
+        return { ok: true, data: mode === 'Inspect' ? workerObservation({ paths, healthy: false }) : exactHeadRestartProof('a'.repeat(40)) };
       },
     };
     const result = await runBattleBridgeWorkerWatchdog({ paths, expectedPaths: paths, probeAdapter, now, sleep: async () => {} });
@@ -255,6 +275,30 @@ test('restart cooldown prevents repeated starts without claiming canary kill evi
     assertOrdinaryWatchdogDidNotClaimCanaryKill(status);
     assert.equal(status.supervisorDetectedWorkerDown, true);
     assert.equal(status.supervisorRestartedWorker, false);
+  });
+});
+
+test('restart without a fresh exact-head adapter receipt fails closed', async () => {
+  await withFixture(async ({ paths }) => {
+    const probeAdapter = {
+      run(mode) {
+        if (mode === 'Inspect') return { ok: true, data: workerObservation({ paths, healthy: false }) };
+        return { ok: true, data: { started: true, taskName: APPROVED_WORKER_TASK } };
+      },
+    };
+    const result = await runBattleBridgeWorkerWatchdog({
+      paths,
+      expectedPaths: paths,
+      probeAdapter,
+      now: new Date(),
+      sleep: async () => {},
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.classification, 'WORKER_WATCHDOG_START_FAILED');
+    const status = await readCurrentStatus(paths);
+    assert.equal(status.restartExactHeadProofOk, false);
+    assert.equal(status.restartProofFresh, false);
+    assert.equal(status.restartSourceHead, '');
   });
 });
 

@@ -65,7 +65,7 @@ test('rollback removes only the watchdog task and preserves worker, source and p
   assert.doesNotMatch(source, /Remove-Item|Stop-Process|Restart-Computer|shutdown\.exe|\bgit(?:\.exe)?\s/i);
 });
 
-test('internal probe permits only inspect or fixed canonical task start and never process kill', async () => {
+test('internal probe permits only inspect or exact-head canonical worker restart', async () => {
   const source = await readFile(probePath, 'utf8');
   assert.match(source, /ValidateSet\('Inspect', 'StartApprovedWorkerTask'\)/);
   assert.match(source, /\$taskName = 'Stephanos Mission Orchestrator Worker'/);
@@ -76,7 +76,12 @@ test('internal probe permits only inspect or fixed canonical task start and neve
   assert.match(source, /\.Actions\.Count -ne 1/);
   assert.match(source, /actionMatchesCanonicalWorker/);
   assert.match(source, /The fixed Mission Orchestrator worker task action is not canonical/);
-  assert.match(source, /Start-ScheduledTask -TaskName \$taskName/);
+  assert.match(source, /restart-approved-stephanos-runtime\.ps1/);
+  assert.match(source, /Get-Command powershell\.exe -ErrorAction Stop/);
+  assert.match(source, /'mission-worker'/);
+  assert.match(source, /'-ExpectedHead'/);
+  assert.match(source, /\$repositoryHead/);
+  assert.match(source, /APPROVED_RUNTIME_RESTART_PASS/);
   assert.match(source, /Get-CimInstance Win32_Process/);
   assert.match(source, /CommandLineToArgvW/);
   assert.match(source, /Test-CanonicalWorkerProcessCommandLine/);

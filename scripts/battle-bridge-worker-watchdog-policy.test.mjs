@@ -195,6 +195,15 @@ test('Windows probe binds repository truth to fixed read-only git commands', () 
   assert.match(PROBE_SCRIPT, /-C \$repositoryRoot rev-parse --verify HEAD/);
   assert.match(PROBE_SCRIPT, /repositoryRoot = \$repositoryRoot/);
   assert.match(PROBE_SCRIPT, /headSha = \$repositoryHead/);
+  assert.match(PROBE_SCRIPT, /restart-approved-stephanos-runtime\.ps1/);
+  assert.match(PROBE_SCRIPT, /Get-Command powershell\.exe -ErrorAction Stop/);
+  assert.match(PROBE_SCRIPT, /'mission-worker'/);
+  assert.match(PROBE_SCRIPT, /'-ExpectedHead'/);
+  assert.match(PROBE_SCRIPT, /\$repositoryHead/);
+  assert.match(PROBE_SCRIPT, /stephanos\.approved-runtime-restart\.v1/);
+  assert.match(PROBE_SCRIPT, /APPROVED_RUNTIME_RESTART_PASS/);
+  assert.match(PROBE_SCRIPT, /terminatedVerifiedOwnedProcess/);
+  assert.doesNotMatch(PROBE_SCRIPT, /Stop-ScheduledTask|Stop-Process/);
   assert.doesNotMatch(PROBE_SCRIPT, /Invoke-Expression|Start-Process/);
 });
 

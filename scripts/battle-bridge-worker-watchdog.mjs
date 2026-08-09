@@ -31,6 +31,7 @@ export const WORKER_WATCHDOG_AUTHORITY = Object.freeze({
   processKillAllowed: false,
   pcRestartAllowed: false,
   sourceMutationAllowed: false,
+  verifiedOwnedWorkerTerminationAllowed: true,
   visiblePowerShellRequired: false,
   maximumStartsPerRun: 1,
 });
@@ -200,6 +201,7 @@ async function publishWatchdogRecords({
   restartAttemptedAtUtc = '',
   recoveryProbeCount = 0,
   probeError = '',
+  restartProof = null,
 }) {
   const timestampUtc = now.toISOString();
   const stamp = isoStamp(now);
@@ -219,6 +221,11 @@ async function publishWatchdogRecords({
     recoveryProbeCount,
     probeError,
     workerKilledObserved: false,
+    verifiedOwnedWorkerTerminationObserved: restartProof?.terminatedVerifiedOwnedProcess === true,
+    restartExactHeadProofOk: restartProof?.exactHeadProofOk === true,
+    restartProofFresh: restartProof?.proofFresh === true,
+    restartSourceHead: text(restartProof?.sourceHead),
+    restartVerdict: text(restartProof?.restartVerdict),
     supervisorDetectedWorkerDown: initialAssessment?.healthy === false,
     supervisorRestartedWorker: restartAttempted,
     workerRecovered: finalAssessment?.healthy === true,
@@ -360,7 +367,14 @@ export async function runBattleBridgeWorkerWatchdog({
 
     const startResult = probeAdapter.run('StartApprovedWorkerTask');
     const restartAttemptedAtUtc = now.toISOString();
-    if (!startResult.ok || startResult.data?.started !== true || startResult.data?.taskName !== APPROVED_WORKER_TASK) {
+    if (!startResult.ok
+      || startResult.data?.started !== true
+      || startResult.data?.restarted !== true
+      || startResult.data?.taskName !== APPROVED_WORKER_TASK
+      || startResult.data?.sourceHead !== initialAssessment.canonicalRepositoryHead
+      || startResult.data?.exactHeadProofOk !== true
+      || startResult.data?.proofFresh !== true
+      || startResult.data?.restartVerdict !== 'APPROVED_RUNTIME_RESTART_PASS') {
       const publication = await publishWatchdogRecords({
         workspaceRoot: paths.workspaceRoot,
         repoRoot: paths.repoRoot,
@@ -371,6 +385,7 @@ export async function runBattleBridgeWorkerWatchdog({
         restartAttempted: true,
         restartAttemptedAtUtc,
         probeError: startResult.error || 'Fixed worker task start was not proven.',
+        restartProof: startResult.data,
       });
       return Object.freeze({ ok: false, classification: 'WORKER_WATCHDOG_START_FAILED', decision, startResult, publication });
     }
@@ -405,6 +420,7 @@ export async function runBattleBridgeWorkerWatchdog({
       restartAttemptedAtUtc,
       recoveryProbeCount,
       probeError: lastProbeError,
+      restartProof: startResult.data,
     });
     return Object.freeze({ ok: recovered, classification, decision, startResult, initialAssessment, finalAssessment, recoveryProbeCount, publication });
   } catch (error) {

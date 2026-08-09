@@ -15,6 +15,7 @@ if (-not $env:USERPROFILE) {
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'))
 $workerPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\mission-orchestrator-worker-supervised.mjs'))
 $workerLauncherPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\start-mission-orchestrator-worker.ps1'))
+$runtimeRestartPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\restart-approved-stephanos-runtime.ps1'))
 $windowlessLauncherPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'))
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'))
 $heartbeatPath = Join-Path $workspaceRoot 'status\mission-orchestrator-worker-heartbeat.json'
@@ -155,16 +156,66 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
     if (-not $taskActionMatchesCanonicalWorker) {
         throw 'The fixed Mission Orchestrator worker task action is not canonical.'
     }
-    Start-ScheduledTask -TaskName $taskName
+    if ($repositoryBranch -ne 'main' -or $repositoryHead -notmatch '^[0-9a-f]{40}$') {
+        throw 'The canonical repository head is not proven for fixed worker restart.'
+    }
+    if (-not (Test-Path -LiteralPath $runtimeRestartPath -PathType Leaf)) {
+        throw 'The approved runtime restart adapter is missing.'
+    }
+    $powerShellCommand = Get-Command powershell.exe -ErrorAction Stop
+    $restartArguments = @(
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        $runtimeRestartPath,
+        '-Target',
+        'mission-worker',
+        '-ExpectedHead',
+        $repositoryHead,
+        '-TimeoutSeconds',
+        '90'
+    )
+    $restartOutput = @(& $powerShellCommand.Source @restartArguments 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'The approved runtime restart adapter failed.'
+    }
+    $restartJson = ($restartOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+    $restartReceipt = $restartJson | ConvertFrom-Json
+    $restartReceiptValid = (
+        $restartReceipt -and
+        [string]$restartReceipt.schemaVersion -eq 'stephanos.approved-runtime-restart.v1' -and
+        [string]$restartReceipt.target -eq 'mission-worker' -and
+        [string]$restartReceipt.taskName -eq $taskName -and
+        [string]$restartReceipt.expectedHead -eq $repositoryHead -and
+        [string]$restartReceipt.sourceHead -eq $repositoryHead -and
+        $restartReceipt.canonicalActionVerified -eq $true -and
+        $restartReceipt.exactHeadProofOk -eq $true -and
+        $restartReceipt.proofFresh -eq $true -and
+        $restartReceipt.ok -eq $true -and
+        [string]$restartReceipt.finalVerdict -eq 'APPROVED_RUNTIME_RESTART_PASS'
+    )
+    if (-not $restartReceiptValid) {
+        throw 'The approved runtime restart receipt is invalid.'
+    }
     [pscustomobject]@{
         mode = $Mode
         taskName = $taskName
         taskActionMatchesCanonicalWorker = $true
         started = $true
+        restarted = $true
+        sourceHead = $repositoryHead
+        exactHeadProofOk = $true
+        proofFresh = $true
+        terminatedVerifiedOwnedProcess = [bool]$restartReceipt.terminatedVerifiedOwnedProcess
+        verifiedOwnedProcessTerminationOnly = $true
+        restartVerdict = [string]$restartReceipt.finalVerdict
         arbitraryTaskNameAllowed = $false
+        arbitraryProcessKillAllowed = $false
         arbitraryPowerShellAllowed = $false
         visiblePowerShellRequired = $false
-    } | ConvertTo-Json -Depth 4
+    } | ConvertTo-Json -Depth 5
     exit 0
 }
 
