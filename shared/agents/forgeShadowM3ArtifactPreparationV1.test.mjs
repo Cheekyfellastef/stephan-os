@@ -211,3 +211,11 @@ test('the request has no caller-controlled network, path, command, build, or cre
   assert.match(source, /EB114F5E6C0DC2BCDD183550A4B61A2DC5923710/);
   assert.doesNotMatch(source, /input\.(?:url|path|command|token|credential|build)/i);
 });
+
+test('proof references use the canonical Windows-safe mailbox filename', async () => withProfile(async (userProfile) => {
+  const requestId = 'CON.proof:forge-m3-artifact-001';
+  const result = await prepareForgeShadowM3RunnerArtifacts(input({ requestId }), options(userProfile));
+  assert.equal(result.ok, true);
+  assert.match(result.proofRefs[0], /^receipts\/github-command-mailbox\/_request-[0-9a-f]{32}\.json$/);
+  assert.doesNotMatch(result.proofRefs[0], /CON\.proof/i);
+}));

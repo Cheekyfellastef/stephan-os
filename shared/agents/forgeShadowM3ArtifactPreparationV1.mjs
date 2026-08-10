@@ -12,6 +12,7 @@ import {
   FORGE_SHADOW_M3_ARTIFACT_SOURCE,
   resolveForgeShadowM3RunnerArtifacts,
 } from './forgeShadowM3RunnerArtifactResolverV1.mjs';
+import { createWindowsSafeMailboxReceiptFilename } from './windowsSafeMailboxReceiptFilename.mjs';
 
 export const FORGE_SHADOW_M3_ARTIFACT_PREPARATION_SCHEMA =
   'stephanos.forge-shadow-m3-artifact-preparation.v1';
@@ -372,7 +373,9 @@ export async function prepareForgeShadowM3RunnerArtifacts(input = {}, {
       repository: REPOSITORY, expectedHead: head, expectedTree: tree, requestId: input.requestId,
       observationId: input.observationId, requestedAtUtc: input.requestedAtUtc,
     }), 'utf8'));
-    const proofRefs = Object.freeze([`receipts/github-command-mailbox/${input.requestId}.json`]);
+    const proofRefs = Object.freeze([
+      `receipts/github-command-mailbox/${createWindowsSafeMailboxReceiptFilename(input.requestId)}`,
+    ]);
     const releaseManifestDigest = sha256(releaseBytes);
     const checksumManifestDigest = sha256(checksumBytes);
     const provenanceDigest = sha256(Buffer.from(stable({
