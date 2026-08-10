@@ -184,8 +184,19 @@ jobs:
           repositories: stephan-os
           permission-administration: read
       - name: Re-prove immutable evidence after protected approval
+        id: approval
         env:
+          GH_TOKEN: \${{ github.token }}
           STEPHANOS_RULESET_PROOF_TOKEN: \${{ steps.ruleset-proof-token.outputs.token }}
+          STEPHANOS_EXPECTED_REPOSITORY: \${{ needs.personal-repository-evidence.outputs.repository }}
+          STEPHANOS_EXPECTED_PR_NUMBER: \${{ needs.personal-repository-evidence.outputs.pr_number }}
+          STEPHANOS_EXPECTED_BRANCH: \${{ needs.personal-repository-evidence.outputs.branch }}
+          STEPHANOS_EXPECTED_SOURCE_HEAD: \${{ needs.personal-repository-evidence.outputs.source_head }}
+          STEPHANOS_EXPECTED_SOURCE_TREE: \${{ needs.personal-repository-evidence.outputs.source_tree }}
+          STEPHANOS_EXPECTED_BASE_SHA: \${{ needs.personal-repository-evidence.outputs.base_sha }}
+          STEPHANOS_EXPECTED_WORKFLOW_RUN_ID: \${{ needs.personal-repository-evidence.outputs.workflow_run_id }}
+          STEPHANOS_EXPECTED_WORKFLOW_RUN_ATTEMPT: \${{ needs.personal-repository-evidence.outputs.workflow_run_attempt }}
+          STEPHANOS_EXPECTED_EVIDENCE_SHA256: \${{ needs.personal-repository-evidence.outputs.evidence_sha256 }}
         run: node scripts/operator-protected-personal-repository-merge.mjs approve
   operator-personal-repository-squash-merge:
     name: operator-personal-repository-squash-merge
@@ -313,6 +324,18 @@ test('admits only the exact personal-repository fallback workflow source', () =>
       [
         '          STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
         '          STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
+      ].join('\n'),
+    ),
+    content.replace(
+      '          GH_TOKEN: ${{ github.token }}',
+      '          GH_TOKEN: ${{ github.token }}\n          NODE_OPTIONS: --import=./arbitrary.mjs',
+    ),
+    content.replace(
+      '      - run: node scripts/operator-protected-personal-repository-merge.mjs evidence',
+      [
+        '      - env:',
+        '          "STEPHANOS_RULESET_PROOF_TOKEN": ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}',
+        '        run: node scripts/operator-protected-personal-repository-merge.mjs evidence',
       ].join('\n'),
     ),
     content.replace(
