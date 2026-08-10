@@ -1,11 +1,58 @@
 name: Protected Operator Merge Queue Boundary
+run-name: Protected operator merge ${{ github.event.merge_group.head_sha || format('PR #{0} at {1}', inputs.pr_number, inputs.expected_head) }}
 
 on:
   merge_group:
     types: [checks_requested]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Exact personal-repository fallback mode
+        required: true
+        type: string
+      pr_number:
+        description: Exact pull request number
+        required: true
+        type: string
+      expected_branch:
+        description: Exact source branch
+        required: true
+        type: string
+      expected_head:
+        description: Exact full source head SHA
+        required: true
+        type: string
+      expected_head_tree:
+        description: Exact full source tree SHA
+        required: true
+        type: string
+      expected_base:
+        description: Exact full current main SHA
+        required: true
+        type: string
+      independent_review_run_id:
+        description: Selected immutable independent-review run ID
+        required: true
+        type: string
+      independent_review_run_attempt:
+        description: Selected immutable independent-review attempt
+        required: true
+        type: string
+      independent_review_artifact_id:
+        description: Selected immutable independent-review artifact ID
+        required: true
+        type: string
+      independent_review_artifact_digest:
+        description: Selected immutable independent-review archive digest
+        required: true
+        type: string
+      independent_review_payload_sha256:
+        description: Selected immutable independent-review payload SHA-256
+        required: true
+        type: string
 
 concurrency:
-  group: protected-operator-merge-group-${{ github.event.merge_group.head_sha }}
+  group: protected-operator-merge-${{ github.event.merge_group.head_sha || inputs.expected_head || github.run_id }}
   cancel-in-progress: false
 
 permissions: {}
@@ -13,6 +60,7 @@ permissions: {}
 jobs:
   merge-group-evidence:
     name: merge-group-evidence
+    if: ${{ github.event_name == 'merge_group' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -47,6 +95,7 @@ jobs:
 
   operator-merge-queue-boundary:
     name: operator-merge-queue-boundary
+    if: ${{ github.event_name == 'merge_group' }}
     needs: [merge-group-evidence]
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -79,3 +128,120 @@ jobs:
           STEPHANOS_EXPECTED_WORKFLOW_RUN_ATTEMPT: ${{ needs.merge-group-evidence.outputs.workflow_run_attempt }}
           STEPHANOS_EXPECTED_EVIDENCE_SHA256: ${{ needs.merge-group-evidence.outputs.evidence_sha256 }}
         run: node scripts/operator-protected-merge-gate-v2.mjs approve
+
+  personal-repository-evidence:
+    name: personal-repository-evidence
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      deployments: read
+      pull-requests: read
+    outputs:
+      repository: ${{ steps.evidence.outputs.repository }}
+      pr_number: ${{ steps.evidence.outputs.pr_number }}
+      branch: ${{ steps.evidence.outputs.branch }}
+      source_head: ${{ steps.evidence.outputs.source_head }}
+      source_tree: ${{ steps.evidence.outputs.source_tree }}
+      base_sha: ${{ steps.evidence.outputs.base_sha }}
+      workflow_run_id: ${{ steps.evidence.outputs.workflow_run_id }}
+      workflow_run_attempt: ${{ steps.evidence.outputs.workflow_run_attempt }}
+      evidence_sha256: ${{ steps.evidence.outputs.evidence_sha256 }}
+    steps:
+      - name: Check out the trusted exact dispatch base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Prove exact personal-repository evidence before protected approval
+        id: evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/operator-protected-personal-repository-merge.mjs evidence
+
+  operator-personal-repository-approval:
+    name: operator-personal-repository-approval
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: [personal-repository-evidence]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: operator-merge-approval
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      deployments: read
+      pull-requests: read
+    outputs:
+      approval_receipt: ${{ steps.approval.outputs.approval_receipt }}
+      approval_receipt_sha256: ${{ steps.approval.outputs.approval_receipt_sha256 }}
+    steps:
+      - name: Check out the same trusted exact dispatch base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Re-prove immutable evidence after protected approval
+        id: approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STEPHANOS_EXPECTED_REPOSITORY: ${{ needs.personal-repository-evidence.outputs.repository }}
+          STEPHANOS_EXPECTED_PR_NUMBER: ${{ needs.personal-repository-evidence.outputs.pr_number }}
+          STEPHANOS_EXPECTED_BRANCH: ${{ needs.personal-repository-evidence.outputs.branch }}
+          STEPHANOS_EXPECTED_SOURCE_HEAD: ${{ needs.personal-repository-evidence.outputs.source_head }}
+          STEPHANOS_EXPECTED_SOURCE_TREE: ${{ needs.personal-repository-evidence.outputs.source_tree }}
+          STEPHANOS_EXPECTED_BASE_SHA: ${{ needs.personal-repository-evidence.outputs.base_sha }}
+          STEPHANOS_EXPECTED_WORKFLOW_RUN_ID: ${{ needs.personal-repository-evidence.outputs.workflow_run_id }}
+          STEPHANOS_EXPECTED_WORKFLOW_RUN_ATTEMPT: ${{ needs.personal-repository-evidence.outputs.workflow_run_attempt }}
+          STEPHANOS_EXPECTED_EVIDENCE_SHA256: ${{ needs.personal-repository-evidence.outputs.evidence_sha256 }}
+        run: node scripts/operator-protected-personal-repository-merge.mjs approve
+
+  operator-personal-repository-squash-merge:
+    name: operator-personal-repository-squash-merge
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: [personal-repository-evidence, operator-personal-repository-approval]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      checks: read
+      contents: write
+      deployments: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Check out the same trusted exact dispatch base for final revalidation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Re-prove, squash exact head and publish the bounded receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STEPHANOS_EXPECTED_REPOSITORY: ${{ needs.personal-repository-evidence.outputs.repository }}
+          STEPHANOS_EXPECTED_PR_NUMBER: ${{ needs.personal-repository-evidence.outputs.pr_number }}
+          STEPHANOS_EXPECTED_BRANCH: ${{ needs.personal-repository-evidence.outputs.branch }}
+          STEPHANOS_EXPECTED_SOURCE_HEAD: ${{ needs.personal-repository-evidence.outputs.source_head }}
+          STEPHANOS_EXPECTED_SOURCE_TREE: ${{ needs.personal-repository-evidence.outputs.source_tree }}
+          STEPHANOS_EXPECTED_BASE_SHA: ${{ needs.personal-repository-evidence.outputs.base_sha }}
+          STEPHANOS_EXPECTED_WORKFLOW_RUN_ID: ${{ needs.personal-repository-evidence.outputs.workflow_run_id }}
+          STEPHANOS_EXPECTED_WORKFLOW_RUN_ATTEMPT: ${{ needs.personal-repository-evidence.outputs.workflow_run_attempt }}
+          STEPHANOS_EXPECTED_EVIDENCE_SHA256: ${{ needs.personal-repository-evidence.outputs.evidence_sha256 }}
+          STEPHANOS_APPROVAL_RECEIPT: ${{ needs.operator-personal-repository-approval.outputs.approval_receipt }}
+        run: node scripts/operator-protected-personal-repository-merge.mjs merge

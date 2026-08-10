@@ -75,12 +75,14 @@ test('classifies every live v2 approval-boundary path', () => {
     '.github/workflows/operator-merge-approval-gate-test.yml',
     '.github/workflows/stephanos-deploy.yml',
     'scripts/operator-protected-merge-gate-v2.mjs',
+    'scripts/operator-protected-personal-repository-merge.mjs',
     'scripts/independent-merge-security-review-v2.mjs',
     'shared/agents/operatorMergeApprovalGate.mjs',
     'shared/agents/operatorMergeApprovalGateV2.mjs',
     'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
     'shared/agents/operatorMergeBaseBindingV1.mjs',
     'shared/agents/operatorMergeReviewArtifactV1.mjs',
+    'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
     'shared/agents/providerNeutralReviewV1.mjs',
     'shared/agents/qualifiedSpecialistReviewV1.mjs',
   ]);
@@ -201,6 +203,39 @@ test('protected workflow evidence is bound to exact ref, size, blob and least-au
   assert.equal(isApprovalBoundaryBootstrapAnalysis(permissionResult), false);
 });
 
+test('protected workflow rejects extra dispatch authority and moving fallback checkouts', () => {
+  const path = '.github/workflows/operator-merge-approval-gate.yml';
+  const changedFiles = [{ filename: path, status: 'modified' }];
+  const diff = diffFor(path, ['unsafe_command:', 'ref: ${{ github.event.repository.default_branch }}']);
+  const extraInput = workflowContent(path).replace(
+    '      pr_number:',
+    '      unsafe_command:\n        description: Forbidden unbounded input\n        required: false\n        type: string\n      pr_number:',
+  );
+  const extraInputResult = analyzeIndependentSecurityReviewV2({
+    changedFiles,
+    diff,
+    repository,
+    sourceHead,
+    protectedWorkflowSources: [workflowSource(path, { content: extraInput })],
+  });
+  assert.ok(extraInputResult.findings.some((item) => item.code === 'write-workflow-does-not-use-trusted-source'));
+  assert.equal(isApprovalBoundaryBootstrapAnalysis(extraInputResult), false);
+
+  const movingCheckout = workflowContent(path).replace(
+    'ref: ${{ github.sha }}',
+    'ref: ${{ github.event.repository.default_branch }}',
+  );
+  const movingResult = analyzeIndependentSecurityReviewV2({
+    changedFiles,
+    diff,
+    repository,
+    sourceHead,
+    protectedWorkflowSources: [workflowSource(path, { content: movingCheckout })],
+  });
+  assert.ok(movingResult.findings.some((item) => item.code === 'write-workflow-does-not-use-trusted-source'));
+  assert.equal(isApprovalBoundaryBootstrapAnalysis(movingResult), false);
+});
+
 test('failed independent reviews still publish immutable findings evidence', () => {
   const workflow = workflowContent('.github/workflows/independent-merge-security-review.yml');
   assert.match(workflow, /Upload the exact-run immutable independent review result[\s\S]*?if: \$\{\{ always\(\) \}\}[\s\S]*?actions\/upload-artifact@v4/);
@@ -268,6 +303,34 @@ test('rejects new live v2 merge authority without exact-head protection', () => 
     diff: diffFor(path, ["runRequired('gh', ['pr', 'merge', String(prNumber)]);"]),
   });
   assert.ok(result.findings.some((item) => item.code === 'operator-v2-exact-head-guard-missing'));
+});
+
+test('accepts only exact-head squash REST merge authority and rejects branch deletion', () => {
+  const path = 'scripts/operator-protected-personal-repository-merge.mjs';
+  const exact = analyzeIndependentSecurityReviewV2({
+    changedFiles: [path],
+    diff: diffFor(path, [
+      "await apiJson(`/repos/${owner}/${repo}/pulls/${receipt.prNumber}/merge`, {",
+      "  method: 'PUT',",
+      "  body: { merge_method: 'squash', sha: receipt.sourceHead },",
+      '});',
+    ]),
+  });
+  assert.equal(exact.findings.some((item) => item.code === 'operator-v2-exact-head-guard-missing'), false);
+
+  const unbound = analyzeIndependentSecurityReviewV2({
+    changedFiles: [path],
+    diff: diffFor(path, [
+      "await apiJson(`/repos/${owner}/${repo}/pulls/${receipt.prNumber}/merge`, { method: 'PUT' });",
+    ]),
+  });
+  assert.ok(unbound.findings.some((item) => item.code === 'operator-v2-exact-head-guard-missing'));
+
+  const deletion = analyzeIndependentSecurityReviewV2({
+    changedFiles: [path],
+    diff: diffFor(path, ["await apiJson(branchPath, { method: 'DELETE' });"]),
+  });
+  assert.ok(deletion.findings.some((item) => item.code === 'operator-v2-branch-deletion-authority'));
 });
 
 test('rejects mutation authority in the live v2 independent reviewer', () => {

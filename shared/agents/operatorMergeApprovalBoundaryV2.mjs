@@ -15,12 +15,14 @@ export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
   '.github/workflows/operator-merge-approval-gate-test.yml',
   '.github/workflows/stephanos-deploy.yml',
   'scripts/operator-protected-merge-gate-v2.mjs',
+  'scripts/operator-protected-personal-repository-merge.mjs',
   'scripts/independent-merge-security-review-v2.mjs',
   'shared/agents/operatorMergeApprovalGate.mjs',
   'shared/agents/operatorMergeApprovalGateV2.mjs',
   'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
   'shared/agents/operatorMergeBaseBindingV1.mjs',
   'shared/agents/operatorMergeReviewArtifactV1.mjs',
+  'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
   'shared/agents/providerNeutralReviewV1.mjs',
   'shared/agents/qualifiedSpecialistReviewV1.mjs',
 ]);
@@ -37,6 +39,7 @@ const ALL_APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
 
 const OPERATOR_EXECUTOR_PATHS = Object.freeze([
   'scripts/operator-protected-merge-gate-v2.mjs',
+  'scripts/operator-protected-personal-repository-merge.mjs',
 ]);
 
 const INDEPENDENT_REVIEWER_PATHS = Object.freeze([
@@ -46,6 +49,7 @@ const INDEPENDENT_REVIEWER_PATHS = Object.freeze([
 
 const BASE_BINDING_PATHS = Object.freeze([
   'shared/agents/operatorMergeBaseBindingV1.mjs',
+  'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
 ]);
 
 function text(value) {
@@ -110,11 +114,23 @@ export function analyzeIndependentSecurityReviewV2(input = {}) {
       ));
     }
     const addsMergeAuthority = /\bgh\s+pr\s+merge\b/.test(additions)
-      || /['"]pr['"]\s*,\s*['"]merge['"]/.test(additions);
-    if (addsMergeAuthority && !/--match-head-commit/.test(patch)) {
+      || /['"]pr['"]\s*,\s*['"]merge['"]/.test(additions)
+      || /pulls\/\$\{[^}]+\}\/merge/.test(additions);
+    const exactCliMerge = /--match-head-commit/.test(patch);
+    const exactRestSquash = /method:\s*['"]PUT['"]/.test(patch)
+      && /merge_method:\s*['"]squash['"]/.test(patch)
+      && /sha:\s*receipt\.sourceHead/.test(patch);
+    if (addsMergeAuthority && !exactCliMerge && !exactRestSquash) {
       findings.push(finding(
         'operator-v2-exact-head-guard-missing',
-        'Any newly introduced live v2 merge command must include --match-head-commit.',
+        'Any newly introduced live v2 merge must use --match-head-commit or the exact REST head SHA with squash only.',
+        path,
+      ));
+    }
+    if (/delete_branch|method:\s*['"]DELETE['"]|git\/refs\/heads\/.+[\s\S]*DELETE/.test(additions)) {
+      findings.push(finding(
+        'operator-v2-branch-deletion-authority',
+        'The protected merge executor may not delete the source branch.',
         path,
       ));
     }
