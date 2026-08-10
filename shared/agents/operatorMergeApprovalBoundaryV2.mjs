@@ -266,13 +266,21 @@ function yamlJobNames(source) {
     .filter((index) => index >= 0);
   if (jobsIndexes.length !== 1) return Object.freeze([]);
   const names = [];
+  let observedJob = false;
   for (let index = jobsIndexes[0] + 1; index < lines.length; index += 1) {
     const line = lines[index];
     if (!line.trim() || line.trimStart().startsWith('#')) continue;
-    if (indentation(line) === 0) break;
+    const indent = indentation(line);
+    if (indent === 0) break;
+    if (indent < 2 || indent % 2 !== 0 || (indent > 2 && !observedJob)) {
+      return Object.freeze(['__invalid-job-mapping__']);
+    }
     const job = line.match(/^ {2}(?:"([^"]+)"|'([^']+)'|([a-zA-Z0-9_-]+)):\s*$/);
-    if (indentation(line) === 2 && !job) return Object.freeze(['__invalid-job-mapping__']);
-    if (job) names.push(job[1] ?? job[2] ?? job[3]);
+    if (indent === 2 && !job) return Object.freeze(['__invalid-job-mapping__']);
+    if (job) {
+      names.push(job[1] ?? job[2] ?? job[3]);
+      observedJob = true;
+    }
   }
   return Object.freeze(names);
 }

