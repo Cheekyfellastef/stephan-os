@@ -349,6 +349,30 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     payload,
   });
   if (!published) {
+    if (['chatgpt-github', 'foundry-forge'].includes(adapter)) {
+      const fabricPublication = await publishExternalLaneHandoff(state, action, options);
+      if (fabricPublication?.ok !== true) {
+        await unlink(path).catch(() => {});
+        return {
+          published: false,
+          reason: `shared-workspace-handoff:${text(fabricPublication?.reason, 'publication-failed')}`,
+          action,
+          path: '',
+          adapter,
+          fabricPublication,
+        };
+      }
+      return {
+        published: true,
+        reason: 'external-action-publication-reconciled',
+        action,
+        payload,
+        path,
+        adapter,
+        fabricPublication,
+        queueItemReused: true,
+      };
+    }
     return {
       published: false,
       reason: 'action-already-published',
