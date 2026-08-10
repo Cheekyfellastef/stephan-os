@@ -321,6 +321,12 @@ function normalizeForgeSidecar(value, nowMs) {
   });
 }
 
+export function adjudicateForgeSidecarCapacity(value, options = {}) {
+  const nowMs = timestamp(options.nowUtc ?? options.now);
+  if (nowMs === null) return null;
+  return normalizeForgeSidecar(value, nowMs);
+}
+
 function normalizeLane(lane, repository, nowMs) {
   if (!lane || typeof lane !== 'object' || Array.isArray(lane)) return null;
   const prNumber = positiveInteger(lane.prNumber);
