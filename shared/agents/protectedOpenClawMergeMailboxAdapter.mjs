@@ -192,7 +192,6 @@ function validateArtifactMetadata(artifact, command) {
 
 export function validateProtectedOpenClawMergeChecks(checks) {
   if (!Array.isArray(checks) || checks.length < 1) return false;
-  const identities = new Set();
   const successfulRequiredWorkflows = new Set();
   const requiredWorkflows = new Set(PROTECTED_OPENCLAW_MERGE_REQUIRED_WORKFLOWS);
 
@@ -202,12 +201,14 @@ export function validateProtectedOpenClawMergeChecks(checks) {
     const state = String(check?.state || '').trim().toUpperCase();
     if (!name || !workflow || !state) return false;
 
-    const identity = `${workflow}\0${name}`;
-    if (identities.has(identity)) return false;
-    identities.add(identity);
+    // The immutable qualified-review artifact adjudicates review/escalation workflows.
+    // Here, fail closed on every row belonging to the seven canonical CI workflows,
+    // including a failed duplicate, without letting unrelated checks redefine the gate.
+    if (!requiredWorkflows.has(workflow)) continue;
 
+    const identity = `${workflow}\0${name}`;
     if (state === 'SUCCESS') {
-      if (requiredWorkflows.has(workflow)) successfulRequiredWorkflows.add(workflow);
+      successfulRequiredWorkflows.add(workflow);
       continue;
     }
     if (state === 'SKIPPED' && PROTECTED_OPENCLAW_NEUTRAL_SKIPPED_CHECKS.has(identity)) continue;
