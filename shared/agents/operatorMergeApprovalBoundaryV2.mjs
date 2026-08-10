@@ -283,10 +283,48 @@ function yamlHasInheritedEnvironment(source) {
   ));
 }
 
+function yamlHasForbiddenExecutionContext(source) {
+  const forbiddenJobKeys = new Set([
+    'container', 'continue-on-error', 'defaults', 'env', 'services', 'strategy',
+    'uses', 'with', 'secrets', 'concurrency',
+  ]);
+  return String(source).split(/\r?\n/).some((line) => {
+    const workflowKey = line.match(/^(?:"([^"]+)"|'([^']+)'|([a-zA-Z0-9_-]+))\s*:/);
+    const jobKey = line.match(/^ {4}(?:"([^"]+)"|'([^']+)'|([a-zA-Z0-9_-]+))\s*:/);
+    const workflowName = workflowKey && (workflowKey[1] ?? workflowKey[2] ?? workflowKey[3]);
+    const jobName = jobKey && (jobKey[1] ?? jobKey[2] ?? jobKey[3]);
+    return workflowName === 'defaults' || workflowName === 'env'
+      || (jobName && forbiddenJobKeys.has(jobName));
+  });
+}
+
 function jobHasExactNeeds(source, jobName, expectedValue) {
   const job = yamlJobBlock(source, jobName);
   const needs = job.split(/\r?\n/).filter((line) => /^ {4}needs\s*:/.test(line));
   return needs.length === 1 && needs[0] === `    needs: ${expectedValue}`;
+}
+
+function jobHasExactScalar(source, jobName, key, expectedValue) {
+  const job = yamlJobBlock(source, jobName);
+  const entries = job.split(/\r?\n/).filter((line) => line.startsWith(`    ${key}:`));
+  return entries.length === 1 && entries[0] === `    ${key}: ${expectedValue}`;
+}
+
+function jobHasExactEnvironment(source, jobName, expectedName = '') {
+  const lines = yamlJobBlock(source, jobName).split(/\r?\n/);
+  const starts = lines
+    .map((line, index) => (line === '    environment:' ? index : -1))
+    .filter((index) => index >= 0);
+  if (!expectedName) return starts.length === 0;
+  if (starts.length !== 1) return false;
+  const entries = [];
+  for (let index = starts[0] + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    if (indentation(line) <= 4) break;
+    entries.push(line);
+  }
+  return entries.length === 1 && entries[0] === `      name: ${expectedName}`;
 }
 
 function yamlJobSteps(source, jobName) {
@@ -415,7 +453,19 @@ function personalRepositoryRulesetProofTokenIsBound(source) {
   if (jobNames.length !== expectedJobNames.length
     || [...jobNames].sort().some((jobName, index) => jobName !== [...expectedJobNames].sort()[index])) return false;
   if (yamlHasInheritedEnvironment(source)
-    || !jobHasExactNeeds(source, 'operator-personal-repository-approval', '[personal-repository-evidence]')) return false;
+    || yamlHasForbiddenExecutionContext(source)
+    || !jobHasExactNeeds(source, 'operator-merge-queue-boundary', '[merge-group-evidence]')
+    || !jobHasExactNeeds(source, 'operator-personal-repository-approval', '[personal-repository-evidence]')
+    || !jobHasExactNeeds(source, 'operator-personal-repository-squash-merge', '[personal-repository-evidence, operator-personal-repository-approval]')
+    || !jobHasExactEnvironment(source, 'merge-group-evidence')
+    || !jobHasExactEnvironment(source, 'operator-merge-queue-boundary', 'operator-merge-approval')
+    || !jobHasExactEnvironment(source, 'personal-repository-evidence')
+    || !jobHasExactEnvironment(source, 'operator-personal-repository-approval', 'operator-merge-approval')
+    || !jobHasExactEnvironment(source, 'operator-personal-repository-squash-merge')
+    || expectedJobNames.some((jobName) => (
+      !jobHasExactScalar(source, jobName, 'runs-on', 'ubuntu-latest')
+      || !jobHasExactScalar(source, jobName, 'timeout-minutes', '20')
+    ))) return false;
   const parsed = yamlJobSteps(source, 'operator-personal-repository-approval');
   if (!parsed.valid) return false;
   const approvalSteps = parsed.steps.filter((step) => (

@@ -102,6 +102,8 @@ jobs:
   merge-group-evidence:
     name: merge-group-evidence
     if: \${{ github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       actions: read
       checks: read
@@ -120,6 +122,11 @@ jobs:
   operator-merge-queue-boundary:
     name: operator-merge-queue-boundary
     if: \${{ github.event_name == 'merge_group' }}
+    needs: [merge-group-evidence]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: operator-merge-approval
     permissions:
       actions: read
       checks: read
@@ -138,6 +145,8 @@ jobs:
   personal-repository-evidence:
     name: personal-repository-evidence
     if: \${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       actions: read
       checks: read
@@ -158,6 +167,8 @@ jobs:
     name: operator-personal-repository-approval
     if: \${{ github.event_name == 'workflow_dispatch' }}
     needs: [personal-repository-evidence]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment:
       name: operator-merge-approval
     permissions:
@@ -203,6 +214,8 @@ jobs:
     name: operator-personal-repository-squash-merge
     if: \${{ github.event_name == 'workflow_dispatch' }}
     needs: [personal-repository-evidence, operator-personal-repository-approval]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       actions: read
       checks: read
@@ -336,10 +349,27 @@ test('admits only the exact personal-repository fallback workflow source', () =>
       'env:\n  NODE_OPTIONS: --import=./arbitrary.mjs\n\npermissions: {}',
     ),
     content.replace(
+      'permissions: {}',
+      'defaults:\n  run:\n    shell: bash -c "source ./arbitrary.sh; {0}"\n\npermissions: {}',
+    ),
+    content.replace(
       '    environment:\n      name: operator-merge-approval',
       '    "env":\n      NODE_OPTIONS: --import=./arbitrary.mjs\n    environment:\n      name: operator-merge-approval',
     ),
     content.replace('    needs: [personal-repository-evidence]\n', ''),
+    content.replace('    needs: [merge-group-evidence]\n', ''),
+    content.replace('    runs-on: ubuntu-latest', '    runs-on: self-hosted'),
+    content.replace(
+      '    timeout-minutes: 20',
+      '    timeout-minutes: 20\n    container: ghcr.io/example/arbitrary:latest',
+    ),
+    content.replace(
+      '    environment:\n      name: operator-merge-approval',
+      '',
+    ).replace(
+      '  merge-group-evidence:\n    name: merge-group-evidence',
+      '  merge-group-evidence:\n    environment:\n      name: operator-merge-approval\n    name: merge-group-evidence',
+    ),
     content.replace(
       '      - run: node scripts/operator-protected-personal-repository-merge.mjs evidence',
       [
