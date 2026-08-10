@@ -89,7 +89,7 @@ test('rejects absent, stale, or spoofed approval tokens without returning token 
   }
 });
 
-test('workflow is manual-only, exact-head-bound, and grants Pages authority only to deploy job', async () => {
+test('workflow is manual-only, exact-head-bound, and grants only the required Pages permissions per job', async () => {
   const workflow = await readFile(new URL('../.github/workflows/stephanos-deploy.yml', import.meta.url), 'utf8');
   assert.doesNotMatch(workflow, /^\s*push:\s*$/m);
   assert.match(workflow, /^\s*workflow_dispatch:\s*$/m);
@@ -100,8 +100,11 @@ test('workflow is manual-only, exact-head-bound, and grants Pages authority only
   assert.match(workflow, /run: node scripts\/stephanos-pages-deployment-approval\.mjs/);
   assert.match(workflow, /STEPHANOS_DEPLOY_RUN_ATTEMPT: \$\{\{ github\.run_attempt \}\}/);
 
-  const permissions = [...workflow.matchAll(/^\s+(contents|pages|id-token):\s+(read|write)$/gm)]
-    .map((match) => `${match[1]}:${match[2]}`);
-  assert.deepEqual(permissions, ['contents:read', 'pages:write', 'id-token:write']);
+  const build = workflow.match(/  build:[\s\S]*?\n  deploy:/)?.[0] || '';
+  const deploy = workflow.match(/  deploy:[\s\S]*$/)?.[0] || '';
+  assert.match(build, /permissions:\n\s+contents: read\n\s+pages: write/);
+  assert.doesNotMatch(build, /id-token: write/);
+  assert.match(deploy, /permissions:\n\s+pages: write\n\s+id-token: write/);
+  assert.doesNotMatch(deploy, /contents: write/);
   assert.equal((workflow.match(/uses: actions\/deploy-pages@v4/g) || []).length, 1);
 });
