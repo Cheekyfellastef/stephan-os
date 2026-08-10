@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   APPROVAL_BOUNDARY_PATHS_V2,
   analyzeIndependentSecurityReviewV2,
+  validatePersonalRepositoryProtectedWorkflowSource,
 } from './operatorMergeApprovalBoundaryV2.mjs';
 import { isApprovalBoundaryBootstrapAnalysis } from './operatorMergeApprovalGateV2.mjs';
 import { createProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
@@ -62,6 +63,127 @@ function diffFor(path, additions) {
   ].join('\n');
 }
 
+function personalRepositoryWorkflowContent() {
+  const inputs = [
+    'mode',
+    'pr_number',
+    'expected_branch',
+    'expected_head',
+    'expected_head_tree',
+    'expected_base',
+    'independent_review_run_id',
+    'independent_review_run_attempt',
+    'independent_review_artifact_id',
+    'independent_review_artifact_digest',
+    'independent_review_payload_sha256',
+  ].map((input) => [
+    `      ${input}:`,
+    '        description: Exact bounded input',
+    '        required: true',
+    '        type: string',
+  ].join('\n')).join('\n');
+  return `name: Protected Operator Merge Queue Boundary
+run-name: Protected operator merge \${{ github.event.merge_group.head_sha || format('PR #{0} at {1}', inputs.pr_number, inputs.expected_head) }}
+
+on:
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+    inputs:
+${inputs}
+
+concurrency:
+  group: protected-operator-merge-\${{ github.event.merge_group.head_sha || inputs.expected_head || github.run_id }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  merge-group-evidence:
+    name: merge-group-evidence
+    if: \${{ github.event_name == 'merge_group' }}
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out merge-group base
+        uses: actions/checkout@v4
+        with:
+          ref: \${{ github.event.merge_group.base_sha }}
+          persist-credentials: false
+      - run: node scripts/operator-protected-merge-gate-v2.mjs evidence
+  operator-merge-queue-boundary:
+    name: operator-merge-queue-boundary
+    if: \${{ github.event_name == 'merge_group' }}
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Recheck merge-group base
+        uses: actions/checkout@v4
+        with:
+          ref: \${{ github.event.merge_group.base_sha }}
+          persist-credentials: false
+      - run: node scripts/operator-protected-merge-gate-v2.mjs approve
+  personal-repository-evidence:
+    name: personal-repository-evidence
+    if: \${{ github.event_name == 'workflow_dispatch' }}
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      deployments: read
+      pull-requests: read
+    steps:
+      - name: Check out dispatch base
+        uses: actions/checkout@v4
+        with:
+          ref: \${{ github.sha }}
+          persist-credentials: false
+      - run: node scripts/operator-protected-personal-repository-merge.mjs evidence
+  operator-personal-repository-approval:
+    name: operator-personal-repository-approval
+    if: \${{ github.event_name == 'workflow_dispatch' }}
+    environment:
+      name: operator-merge-approval
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      deployments: read
+      pull-requests: read
+    steps:
+      - name: Recheck dispatch base
+        uses: actions/checkout@v4
+        with:
+          ref: \${{ github.sha }}
+          persist-credentials: false
+      - run: node scripts/operator-protected-personal-repository-merge.mjs approve
+  operator-personal-repository-squash-merge:
+    name: operator-personal-repository-squash-merge
+    if: \${{ github.event_name == 'workflow_dispatch' }}
+    needs: [personal-repository-evidence, operator-personal-repository-approval]
+    permissions:
+      actions: read
+      checks: read
+      contents: write
+      deployments: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Final dispatch base recheck
+        uses: actions/checkout@v4
+        with:
+          ref: \${{ github.sha }}
+          persist-credentials: false
+      - run: node scripts/operator-protected-personal-repository-merge.mjs merge
+`;
+}
+
 test('classifies every live v2 approval-boundary path', () => {
   assert.deepEqual(APPROVAL_BOUNDARY_PATHS_V2, [
     '.github/workflows/operator-merge-approval-gate.yml',
@@ -75,15 +197,78 @@ test('classifies every live v2 approval-boundary path', () => {
     '.github/workflows/operator-merge-approval-gate-test.yml',
     '.github/workflows/stephanos-deploy.yml',
     'scripts/operator-protected-merge-gate-v2.mjs',
+    'scripts/operator-protected-personal-repository-merge.mjs',
     'scripts/independent-merge-security-review-v2.mjs',
     'shared/agents/operatorMergeApprovalGate.mjs',
     'shared/agents/operatorMergeApprovalGateV2.mjs',
     'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
     'shared/agents/operatorMergeBaseBindingV1.mjs',
     'shared/agents/operatorMergeReviewArtifactV1.mjs',
+    'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+    'shared/agents/protectedOpenClawMergeMailboxAdapter.mjs',
     'shared/agents/providerNeutralReviewV1.mjs',
     'shared/agents/qualifiedSpecialistReviewV1.mjs',
   ]);
+});
+
+test('admits only the exact personal-repository fallback workflow source', () => {
+  const path = '.github/workflows/operator-merge-approval-gate.yml';
+  const content = personalRepositoryWorkflowContent();
+  const exact = {
+    changedFiles: [{ filename: path, status: 'modified' }],
+    repository,
+    sourceHead,
+    protectedWorkflowSources: [workflowSource(path, { content })],
+  };
+  const validation = validatePersonalRepositoryProtectedWorkflowSource(exact);
+  assert.equal(validation.valid, true, validation.blockers.join(','));
+  assert.match(validation.proofRef, /^proofs\/personal-repository-workflow-source\//);
+
+  const analysis = analyzeIndependentSecurityReviewV2({
+    ...exact,
+    changedFiles: [
+      ...exact.changedFiles,
+      'scripts/operator-protected-personal-repository-merge.mjs',
+      'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+    ],
+    diff: [
+      diffFor(path, ['workflow_dispatch:']),
+      diffFor('scripts/operator-protected-personal-repository-merge.mjs', [
+        "await api(`/pulls/${receipt.prNumber}/merge`, { method: 'PUT', body: { merge_method: 'squash', sha: receipt.sourceHead } });",
+      ]),
+      diffFor('shared/agents/operatorPersonalRepositoryMergeV1.mjs', [
+        'return Object.freeze({ exactBaseSha });',
+      ]),
+    ].join('\n'),
+  });
+  assert.equal(analysis.findings.some((item) => item.code === 'write-workflow-does-not-use-trusted-source'), false);
+  assert.equal(analysis.findings.every((item) => (
+    item.code === 'approval-boundary-v2-self-change-requires-qualified-review'
+  )), true);
+  assert.equal(analysis.findings.length, 3);
+  assert.equal(isApprovalBoundaryBootstrapAnalysis(analysis), true);
+
+  for (const altered of [
+    content.replace('  workflow_dispatch:', '  pull_request:\n  workflow_dispatch:'),
+    content.replace('ref: ${{ github.sha }}', 'ref: ${{ github.event.pull_request.head.sha }}'),
+    content.replace('contents: write', 'contents: read'),
+    content.replace(
+      '  personal-repository-evidence:\n    name: personal-repository-evidence',
+      '  personal-repository-evidence:\n    permissions:\n      contents: write\n    name: personal-repository-evidence',
+    ),
+    content.replace('      mode:', '      extra_input:\n        required: true\n        type: string\n      mode:'),
+    content.replace('        required: true', '        required: false'),
+    content.replace('        type: string', '        type: boolean'),
+    content.replace('cancel-in-progress: false', 'cancel-in-progress: true'),
+    content.replace("github.event_name == 'workflow_dispatch'", "github.event_name == 'merge_group'"),
+    content.replace('persist-credentials: false', 'persist-credentials: true'),
+  ]) {
+    const blocked = validatePersonalRepositoryProtectedWorkflowSource({
+      ...exact,
+      protectedWorkflowSources: [workflowSource(path, { content: altered })],
+    });
+    assert.equal(blocked.valid, false);
+  }
 });
 
 test('fails closed when any live v2 boundary attempts to review itself', () => {

@@ -12,11 +12,17 @@ import {
   validateBattleBridgeGitHubCommand,
 } from './battleBridgeGitHubCommandMailbox.mjs';
 import {
+  PROTECTED_OPENCLAW_MERGE_MAX_BOOTSTRAP_FINDINGS,
   PROTECTED_OPENCLAW_MERGE_FINDING,
   PROTECTED_OPENCLAW_MERGE_MODE,
   PROTECTED_OPENCLAW_MERGE_OPERATION,
   buildProtectedOpenClawMergePlan,
+  validateProtectedOpenClawBootstrapFindings,
 } from './protectedOpenClawMergeMailboxAdapter.mjs';
+import {
+  APPROVAL_BOUNDARY_PATHS_V2,
+  WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1,
+} from './operatorMergeApprovalBoundaryV2.mjs';
 
 const head = '850cf7ae18cba03f96b9b5efa119f1572a014257';
 const base = 'c82bfdd1639558ecb24f75d5a845f6ce39ba9af0';
@@ -80,4 +86,35 @@ test('execution plan binds exact head, base and fixed signed OpenClaw identity',
   assert.equal(Object.hasOwn(plan.claims, 'requireExactBaseSha'), false);
   assert.equal(plan.normalized.expectedBase, base);
   assert.match(plan.claims.branch, /^openclaw\//);
+});
+
+test('bootstrap adapter accepts one or more unique self-change findings only', () => {
+  const finding = (path, overrides = {}) => ({
+    severity: 'P0',
+    code: PROTECTED_OPENCLAW_MERGE_FINDING,
+    summary: 'Qualified operator bootstrap required.',
+    path,
+    ...overrides,
+  });
+  assert.equal(validateProtectedOpenClawBootstrapFindings([
+    finding('.github/workflows/operator-merge-approval-gate.yml'),
+  ]), true);
+  assert.equal(validateProtectedOpenClawBootstrapFindings([
+    finding('.github/workflows/operator-merge-approval-gate.yml'),
+    finding('scripts/operator-protected-personal-repository-merge.mjs'),
+    finding('shared/agents/operatorPersonalRepositoryMergeV1.mjs'),
+  ]), true);
+  for (const findings of [
+    [],
+    [finding('.github/workflows/operator-merge-approval-gate.yml'), finding('.github/workflows/operator-merge-approval-gate.yml')],
+    [finding('.github/workflows/operator-merge-approval-gate.yml', { severity: 'P1' })],
+    [finding('.github/workflows/operator-merge-approval-gate.yml', { code: 'write-workflow-does-not-use-trusted-source' })],
+    [finding('')],
+    [finding('untrusted/path.mjs')],
+    [...APPROVAL_BOUNDARY_PATHS_V2, ...WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1]
+      .slice(0, PROTECTED_OPENCLAW_MERGE_MAX_BOOTSTRAP_FINDINGS + 1)
+      .map((path) => finding(path)),
+  ]) {
+    assert.equal(validateProtectedOpenClawBootstrapFindings(findings), false);
+  }
 });

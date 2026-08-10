@@ -4,10 +4,20 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { validateIndependentReviewArtifact } from './operatorMergeReviewArtifactV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
+import {
+  APPROVAL_BOUNDARY_PATHS_V2,
+  WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1,
+} from './operatorMergeApprovalBoundaryV2.mjs';
 
 export const PROTECTED_OPENCLAW_MERGE_OPERATION = 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE';
 export const PROTECTED_OPENCLAW_MERGE_MODE = 'qualified-operator-bootstrap';
 export const PROTECTED_OPENCLAW_MERGE_FINDING = 'approval-boundary-v2-self-change-requires-qualified-review';
+export const PROTECTED_OPENCLAW_MERGE_MAX_BOOTSTRAP_FINDINGS = 20;
+
+const PROTECTED_OPENCLAW_BOOTSTRAP_PATHS = new Set([
+  ...APPROVAL_BOUNDARY_PATHS_V2,
+  ...WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1,
+]);
 
 const SHA40 = /^[a-f0-9]{40}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -169,6 +179,23 @@ function validateArtifactMetadata(artifact, command) {
   );
 }
 
+export function validateProtectedOpenClawBootstrapFindings(findings, expectedCode = PROTECTED_OPENCLAW_MERGE_FINDING) {
+  if (!Array.isArray(findings)
+    || findings.length < 1
+    || findings.length > PROTECTED_OPENCLAW_MERGE_MAX_BOOTSTRAP_FINDINGS) return false;
+  const paths = new Set();
+  for (const finding of findings) {
+    const path = String(finding?.path || '').trim();
+    if (finding?.severity !== 'P0'
+      || finding?.code !== expectedCode
+      || !path
+      || !PROTECTED_OPENCLAW_BOOTSTRAP_PATHS.has(path)
+      || paths.has(path)) return false;
+    paths.add(path);
+  }
+  return true;
+}
+
 function validateArtifactPayload(artifact, pull, command) {
   const validation = validateIndependentReviewArtifact(artifact, {
     repository: 'Cheekyfellastef/stephan-os',
@@ -188,9 +215,9 @@ function validateArtifactPayload(artifact, pull, command) {
     && artifact?.receipt?.assuranceMode === 'specialist'
     && artifact?.receipt?.blocker === ''
     && artifact?.receipt?.verdict === 'findings'
-    && findings.length === 1
-    && findings[0]?.severity === 'P0'
-    && findings[0]?.code === command.reviewFindingCode
+    && Array.isArray(artifact?.receipt?.reviewScope)
+    && artifact.receipt.reviewScope.includes('operator-protected-bootstrap-required')
+    && validateProtectedOpenClawBootstrapFindings(findings, command.reviewFindingCode)
   );
 }
 
