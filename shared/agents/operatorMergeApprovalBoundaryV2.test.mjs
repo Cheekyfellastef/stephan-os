@@ -106,6 +106,16 @@ test('admits only the exact personal-repository fallback workflow source', () =>
   assert.equal(validation.valid, true, validation.blockers.join(','));
   assert.match(validation.proofRef, /^proofs\/personal-repository-workflow-source\//);
 
+  const parserSafeContent = content.replace(
+    "format('PR #{0} at {1}', inputs.pr_number, inputs.expected_head)",
+    'inputs.expected_head || github.run_id',
+  );
+  const parserSafeValidation = validatePersonalRepositoryProtectedWorkflowSource({
+    ...exact,
+    protectedWorkflowSources: [workflowSource(path, { content: parserSafeContent })],
+  });
+  assert.equal(parserSafeValidation.valid, true, parserSafeValidation.blockers.join(','));
+
   const analysis = analyzeIndependentSecurityReviewV2({
     ...exact,
     changedFiles: [

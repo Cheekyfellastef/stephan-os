@@ -7,7 +7,10 @@ import {
 } from './operatorMergeApprovalGate.mjs';
 
 const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
-const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = 'b6f480f97274e63c835e39533aaa93e179ff58fc5026f7e05d9f17d760c303ef';
+const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = Object.freeze([
+  'b6f480f97274e63c835e39533aaa93e179ff58fc5026f7e05d9f17d760c303ef',
+  '4a03e84b98855e0a8f5f631bd809d392075bd54a303097ef54093ea39e257cd2',
+]);
 const PERSONAL_REPOSITORY_WORKFLOW_SOURCE_KEYS = Object.freeze([
   'schemaVersion',
   'repository',
@@ -594,7 +597,9 @@ export function validatePersonalRepositoryProtectedWorkflowSource(input = {}) {
   const size = Buffer.byteLength(content, 'utf8');
   const blockers = [];
   const canonicalContent = content.replace(/\n+$/u, '\n');
-  if (createHash('sha256').update(canonicalContent, 'utf8').digest('hex') !== PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256) {
+  if (!PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256.includes(
+    createHash('sha256').update(canonicalContent, 'utf8').digest('hex'),
+  )) {
     blockers.push('personal-repository-workflow-content-digest-not-exact');
   }
   if (!sameKeys(source, PERSONAL_REPOSITORY_WORKFLOW_SOURCE_KEYS)
@@ -629,7 +634,7 @@ export function validatePersonalRepositoryProtectedWorkflowSource(input = {}) {
       block.lines.filter((line) => /^ {8}required:\s*true\s*$/.test(line)).length !== 1
       || block.lines.filter((line) => /^ {8}type:\s*string\s*$/.test(line)).length !== 1
     ))
-    || !/^run-name: Protected operator merge \$\{\{ github\.event\.merge_group\.head_sha \|\| format\('PR #\{0\} at \{1\}', inputs\.pr_number, inputs\.expected_head\) \}\}\s*$/m.test(content)) {
+    || !/^run-name: Protected operator merge \$\{\{ github\.event\.merge_group\.head_sha \|\| (?:format\('PR #\{0\} at \{1\}', inputs\.pr_number, inputs\.expected_head\)|inputs\.expected_head \|\| github\.run_id) \}\}\s*$/m.test(content)) {
     blockers.push('personal-repository-workflow-dispatch-inputs-not-exact');
   }
   const checkouts = checkoutBlocks(content);
