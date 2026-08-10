@@ -226,20 +226,24 @@ async function currentWorkflowExecution(context) {
   }
   const run = await apiJson(`/repos/${context.owner}/${context.repo}/actions/runs/${context.runId}`);
   const expectedDisplayTitle = `Protected operator merge ${context.dispatch.identity.sourceHead}`;
-  if (exactPositiveInteger(run?.id) !== context.runId
-    || exactPositiveInteger(run?.run_attempt) !== context.runAttempt
-    || exactPositiveInteger(run?.workflow_id) !== definition.id
-    || run?.name !== PERSONAL_REPOSITORY_WORKFLOW_NAME
-    || run?.event !== 'workflow_dispatch'
-    || text(run?.repository?.full_name) !== context.repository
-    || text(run?.head_sha).toLowerCase() !== context.dispatch.identity.baseSha
-    || text(run?.head_branch) !== 'main'
-    || text(run?.display_title) !== expectedDisplayTitle
-    || canonicalDispatchWorkflowPath(run, context.repository) !== PERSONAL_REPOSITORY_WORKFLOW_PATH
-    || text(run?.triggering_actor?.login || run?.actor?.login).toLowerCase() !== OPERATOR_MERGE_REVIEWER.toLowerCase()
-    || !['queued', 'in_progress'].includes(text(run?.status).toLowerCase())) {
+  const runIdentityMismatches = [
+    ['run-id', exactPositiveInteger(run?.id) === context.runId],
+    ['run-attempt', exactPositiveInteger(run?.run_attempt) === context.runAttempt],
+    ['workflow-id', exactPositiveInteger(run?.workflow_id) === definition.id],
+    ['workflow-name', run?.name === PERSONAL_REPOSITORY_WORKFLOW_NAME],
+    ['event', run?.event === 'workflow_dispatch'],
+    ['repository', text(run?.repository?.full_name) === context.repository],
+    ['base-head', text(run?.head_sha).toLowerCase() === context.dispatch.identity.baseSha],
+    ['base-branch', text(run?.head_branch) === 'main'],
+    ['display-title', text(run?.display_title) === expectedDisplayTitle],
+    ['workflow-path', canonicalDispatchWorkflowPath(run, context.repository) === PERSONAL_REPOSITORY_WORKFLOW_PATH],
+    ['triggering-actor', text(run?.triggering_actor?.login || run?.actor?.login).toLowerCase() === OPERATOR_MERGE_REVIEWER.toLowerCase()],
+    ['run-status', ['queued', 'in_progress'].includes(text(run?.status).toLowerCase())],
+  ].filter(([, matches]) => !matches).map(([field]) => field);
+  if (runIdentityMismatches.length !== 0) {
     fail('Current workflow run is not the exact operator-dispatched trusted-main execution.', {
       blockers: ['personal-repository-workflow-run-identity-mismatch'],
+      mismatches: runIdentityMismatches,
     });
   }
   const dispatchRuns = (await apiCollection(
