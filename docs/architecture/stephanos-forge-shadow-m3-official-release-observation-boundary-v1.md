@@ -1,5 +1,7 @@
 # Stephanos Forge Shadow M3 Official Release Observation Boundary V1
 
+> Live-source correction: Forgejo's stable Runner release does not publish a Windows executable. This source-only synthetic adjudication boundary remains non-executing and is not used by the #1507 live preparation route. See `stephanos-forge-shadow-m3-artifact-preparation-v1.md` for the truthful signed-Linux plus source-built-Windows estate.
+
 ## Purpose
 
 This boundary prepares the next source-only step in Forge goal #1671. It admits a future read-only observation receipt for the official stable Forgejo runner release and converts it into the exact `releaseObservation` accepted by the merged M3 runner artifact resolver.
