@@ -33,6 +33,7 @@ import {
   getReadableMailboxReceiptFilenames,
 } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
+import { publishCodexCapacityToSharedWorkspace } from '../shared/agents/codexCapacitySharedWorkspace.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -1031,6 +1032,10 @@ async function executeSelectedMailboxCommand(selected, receiptRef) {
         receiptRef,
       });
     },
+    publishCodexCapacityStatus: publishCodexCapacityToSharedWorkspace,
+    sharedWorkspaceRoot,
+    repoRoot,
+    capacityPublicationTimestampUtc: new Date().toISOString(),
   });
 }
 

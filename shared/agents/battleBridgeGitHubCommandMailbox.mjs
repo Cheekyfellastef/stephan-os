@@ -603,6 +603,10 @@ export async function executeBattleBridgeGitHubCommand(command, {
   executeProtectedOpenClawMerge = executeProtectedOpenClawMergeOnBattleBridge,
   readCodexBankedResetStatus = readCodexBankedResetStatusOnBattleBridge,
   redeemBankedCodexReset = executeCodexBankedResetOnBattleBridge,
+  publishCodexCapacityStatus,
+  sharedWorkspaceRoot = '',
+  repoRoot = '',
+  capacityPublicationTimestampUtc = new Date().toISOString(),
 } = {}) {
   const handlers = {
     UPDATE_STEPHANOS_FROM_CHAT: updateStephanos,
@@ -639,12 +643,47 @@ export async function executeBattleBridgeGitHubCommand(command, {
         result,
       });
     }
+    let sharedWorkspacePublication = null;
+    if (command.operation === CODEX_BANKED_RESET_STATUS_OPERATION && typeof publishCodexCapacityStatus === 'function') {
+      const publication = await publishCodexCapacityStatus(sharedWorkspaceRoot, {
+        statusResult: result,
+        timestampUtc: capacityPublicationTimestampUtc,
+        proofRefs: result?.proofRefs,
+      }, {
+        repoRoot,
+        nowMs: Date.parse(capacityPublicationTimestampUtc),
+      });
+      const publishedRemainingPercent = publication?.slice?.remainingPercent;
+      sharedWorkspacePublication = Object.freeze({
+        ok: publication?.ok === true,
+        reason: String(publication?.reason || 'CODEX_CAPACITY_WORKSPACE_PUBLISH_UNKNOWN'),
+        truthState: String(publication?.slice?.truthState || 'UNKNOWN'),
+        observedAtUtc: String(publication?.slice?.observedAtUtc || ''),
+        remainingPercent: publishedRemainingPercent !== null
+          && publishedRemainingPercent !== undefined
+          && publishedRemainingPercent !== ''
+          && Number.isFinite(Number(publishedRemainingPercent))
+          ? Number(publishedRemainingPercent)
+          : null,
+        capacityUsable: publication?.slice?.capacityUsable === true,
+        finalVerdict: String(publication?.finalVerdict || 'CODEX_CAPACITY_WORKSPACE_PUBLISH_BLOCKED'),
+      });
+      if (!sharedWorkspacePublication.ok) {
+        return fail('CODEX_CAPACITY_WORKSPACE_PUBLISH_FAILED', {
+          operation: command.operation,
+          requestId: command.requestId,
+          result,
+          sharedWorkspacePublication,
+        });
+      }
+    }
     return Object.freeze({
       ok: result?.ok !== false,
       verdict: result?.ok === false ? 'COMMAND_EXECUTION_BLOCKED' : 'COMMAND_EXECUTION_COMPLETE',
       operation: command.operation,
       requestId: command.requestId,
       result,
+      ...(sharedWorkspacePublication ? { sharedWorkspacePublication } : {}),
     });
   } catch (error) {
     return fail('COMMAND_EXECUTION_FAILED', {
