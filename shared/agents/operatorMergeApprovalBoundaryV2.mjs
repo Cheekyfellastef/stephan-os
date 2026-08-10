@@ -72,6 +72,7 @@ const PERSONAL_REPOSITORY_WORKFLOW_JOB_STEPS = Object.freeze([
     steps: Object.freeze([
       Object.freeze({ executableKey: 'uses', executableValue: 'actions/checkout@v4' }),
       Object.freeze({ executableKey: 'uses', executableValue: 'actions/setup-node@v4' }),
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/create-github-app-token@v2' }),
       Object.freeze({ executableKey: 'run', executableValue: 'node scripts/operator-protected-personal-repository-merge.mjs approve' }),
     ]),
   }),
@@ -474,6 +475,12 @@ export function validatePersonalRepositoryProtectedWorkflowSource(input = {}) {
     if (!jobHasExactExecutionSteps(content, policy)) {
       blockers.push('personal-repository-workflow-job-steps-not-exact');
     }
+  }
+  if (!/^      - name: Mint exact read-only ruleset proof token\s*\n        id: ruleset-proof-token\s*\n        uses: actions\/create-github-app-token@v2\s*\n        with:\s*\n          app-id: \$\{\{ secrets\.STEPHANOS_RULESET_PROOF_APP_ID \}\}\s*\n          private-key: \$\{\{ secrets\.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY \}\}\s*\n          owner: \$\{\{ github\.repository_owner \}\}\s*\n          repositories: stephan-os\s*\n          permission-administration: read\s*$/m.test(content)) {
+    blockers.push('personal-repository-workflow-ruleset-proof-token-not-exact');
+  }
+  if (!/^          STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}\s*$/m.test(content)) {
+    blockers.push('personal-repository-workflow-ruleset-proof-token-not-bound');
   }
   for (const pattern of [
     /^\s+pull_request(?:_target)?:\s*$/m,
