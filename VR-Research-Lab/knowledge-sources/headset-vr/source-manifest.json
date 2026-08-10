@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "source_id": "creator-headset-vr",
+  "title": "Headset-VR Configuration and Profile Field Evidence",
+  "priority": "P1",
+  "status": "registered-configuration-profile-field-evidence",
+  "canonical_source": "https://www.youtube.com/@headset-vr6310",
+  "supporting_profile_index": "https://www.patreon.com/HeadsetVR",
+  "snapshot_date": "2026-08-10",
+  "licence": "Creator-controlled videos, captions and written posts; UEVR profiles, CVars, scripts and other attachments may be community-authored and retain their own terms. Store metadata, attribution, timestamps and independently written configuration notes only unless exact reuse permission is established.",
+  "evidence_role": "Operational configuration evidence for converting flat games to VR: UEVR profile selection, 6DoF setup, CVars, controller attachment, menu interaction, camera mode, runtime constraints, install order, compatibility and playability.",
+  "seed_items": [
+    {
+      "title": "Installing Alien Isolation Grandmother VR Mod Properly In 2026!",
+      "published": "2026-02-24",
+      "evidence_status": "public-install-sequence-indexed",
+      "evidence": "Shows an ordered multi-component installation route and an explicit SteamVR runtime constraint; public metadata also tags Quest 3."
+    },
+    {
+      "title": "Aliens Fireteam Elite / 6Dof UEVR Mod / PSVR2 Adapter / Can you Play Online In VR?",
+      "published": "2025-05-19",
+      "evidence_status": "public-profile-metadata-indexed",
+      "evidence": "Publishes separate 6DoF profiles including a Game Pass executable variant and a CVars package, useful for executable-specific and configuration-layer modelling."
+    },
+    {
+      "title": "Karma The Dark World / UEVR Mod / It's NOT Karma Chameleon!!",
+      "published": "2025-06-09",
+      "evidence_status": "public-profile-metadata-indexed",
+      "evidence": "Credits a community profile and describes right-motion-controller cursor control plus scripting, useful for provenance and UI-interaction configuration patterns."
+    },
+    {
+      "title": "The Only Noir Game You Need: Nobody Wants to Die in UEVR!",
+      "published": "2026-03-13",
+      "evidence_status": "public-profile-metadata-indexed",
+      "evidence": "Documents a profile with arms attached to the right controller, useful as a compact embodiment/profile configuration example."
+    }
+  ],
+  "known_boundaries": [
+    "Headset-VR is not the normative authority for UEVR internals; prefer UEVR source and documentation for implementation claims.",
+    "A working creator profile is evidence for a particular game build, executable, runtime, headset and configuration, not universal compatibility.",
+    "Community-authored profiles must retain the original author and source; do not silently attribute every attachment to Headset-VR.",
+    "Do not rehost Patreon attachments or creator video content unless provenance and reuse rights are explicit.",
+    "Quest 3 and Meta Air Link acceptance remain separate Battle Bridge evidence even when a post carries a Quest 3 tag."
+  ],
+  "programme_links": [1591, 1593, 1594, 1595, 1596, 1597, 1605, 1606, 1643],
+  "refresh_owner": 1596,
+  "promotion_rule": "Extract reproducible configuration recipes with exact game/executable/profile/runtime provenance, distinguish creator and community authorship, verify implementation claims against canonical tools, and require local headset proof before acceptance."
+}
