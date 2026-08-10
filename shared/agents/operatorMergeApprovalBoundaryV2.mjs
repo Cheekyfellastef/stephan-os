@@ -299,10 +299,88 @@ function yamlJobSteps(source, jobName) {
       }
       entries.push(Object.freeze({ key: entry[1], value: entry[2] ?? '' }));
     }
-    return Object.freeze({ entries: Object.freeze(entries) });
+    return Object.freeze({
+      entries: Object.freeze(entries),
+      lines: Object.freeze([...block]),
+    });
   });
 
   return Object.freeze({ valid, steps: Object.freeze(steps) });
+}
+
+function yamlStepNestedMapping(step, mappingKey) {
+  if (!step?.lines) return Object.freeze({ valid: false, entries: Object.freeze([]) });
+  const starts = step.lines
+    .map((line, index) => (line === `        ${mappingKey}:` ? index : -1))
+    .filter((index) => index >= 0);
+  if (starts.length !== 1) return Object.freeze({ valid: false, entries: Object.freeze([]) });
+
+  const entries = [];
+  let valid = true;
+  for (let index = starts[0] + 1; index < step.lines.length; index += 1) {
+    const line = step.lines[index];
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    if (indentation(line) <= 8) break;
+    const entry = line.match(/^ {10}([a-zA-Z0-9_-]+):(?:\s*(.*))?$/);
+    if (!entry) {
+      valid = false;
+      continue;
+    }
+    entries.push(Object.freeze({ key: entry[1], value: entry[2] ?? '' }));
+  }
+  if (new Set(entries.map((entry) => entry.key)).size !== entries.length) valid = false;
+  return Object.freeze({ valid, entries: Object.freeze(entries) });
+}
+
+function stepHasExactEntries(step, expectedEntries) {
+  if (!step || step.entries.length !== expectedEntries.length) return false;
+  const observed = new Map(step.entries.map((entry) => [entry.key, entry.value]));
+  return observed.size === expectedEntries.length
+    && expectedEntries.every(([key, value]) => observed.get(key) === value);
+}
+
+function personalRepositoryRulesetProofTokenIsExact(source) {
+  const parsed = yamlJobSteps(source, 'operator-personal-repository-approval');
+  if (!parsed.valid) return false;
+  const mintSteps = parsed.steps.filter((step) => (
+    step.entries.some((entry) => entry.key === 'uses'
+      && entry.value === 'actions/create-github-app-token@v2')
+  ));
+  if (mintSteps.length !== 1 || !stepHasExactEntries(mintSteps[0], [
+    ['name', 'Mint exact read-only ruleset proof token'],
+    ['id', 'ruleset-proof-token'],
+    ['uses', 'actions/create-github-app-token@v2'],
+    ['with', ''],
+  ])) return false;
+
+  const withMapping = yamlStepNestedMapping(mintSteps[0], 'with');
+  const expectedWith = [
+    ['app-id', '${{ secrets.STEPHANOS_RULESET_PROOF_APP_ID }}'],
+    ['private-key', '${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}'],
+    ['owner', '${{ github.repository_owner }}'],
+    ['repositories', 'stephan-os'],
+    ['permission-administration', 'read'],
+  ];
+  return withMapping.valid
+    && withMapping.entries.length === expectedWith.length
+    && stepHasExactEntries({ entries: withMapping.entries }, expectedWith);
+}
+
+function personalRepositoryRulesetProofTokenIsBound(source) {
+  const parsed = yamlJobSteps(source, 'operator-personal-repository-approval');
+  if (!parsed.valid) return false;
+  const approvalSteps = parsed.steps.filter((step) => (
+    step.entries.some((entry) => entry.key === 'run'
+      && entry.value === 'node scripts/operator-protected-personal-repository-merge.mjs approve')
+  ));
+  if (approvalSteps.length !== 1) return false;
+  const envMapping = yamlStepNestedMapping(approvalSteps[0], 'env');
+  const boundTokens = envMapping.entries.filter((entry) => entry.key === 'STEPHANOS_RULESET_PROOF_TOKEN');
+  const allTokenBindings = String(source).match(/^\s+STEPHANOS_RULESET_PROOF_TOKEN:/gm) ?? [];
+  return envMapping.valid
+    && boundTokens.length === 1
+    && boundTokens[0].value === '${{ steps.ruleset-proof-token.outputs.token }}'
+    && allTokenBindings.length === 1;
 }
 
 function jobHasExactExecutionSteps(source, policy) {
@@ -476,10 +554,10 @@ export function validatePersonalRepositoryProtectedWorkflowSource(input = {}) {
       blockers.push('personal-repository-workflow-job-steps-not-exact');
     }
   }
-  if (!/^      - name: Mint exact read-only ruleset proof token\s*\n        id: ruleset-proof-token\s*\n        uses: actions\/create-github-app-token@v2\s*\n        with:\s*\n          app-id: \$\{\{ secrets\.STEPHANOS_RULESET_PROOF_APP_ID \}\}\s*\n          private-key: \$\{\{ secrets\.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY \}\}\s*\n          owner: \$\{\{ github\.repository_owner \}\}\s*\n          repositories: stephan-os\s*\n          permission-administration: read\s*$/m.test(content)) {
+  if (!personalRepositoryRulesetProofTokenIsExact(content)) {
     blockers.push('personal-repository-workflow-ruleset-proof-token-not-exact');
   }
-  if (!/^          STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}\s*$/m.test(content)) {
+  if (!personalRepositoryRulesetProofTokenIsBound(content)) {
     blockers.push('personal-repository-workflow-ruleset-proof-token-not-bound');
   }
   for (const pattern of [

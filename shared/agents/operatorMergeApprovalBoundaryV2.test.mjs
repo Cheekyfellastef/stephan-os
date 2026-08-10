@@ -291,8 +291,29 @@ test('admits only the exact personal-repository fallback workflow source', () =>
     content.replace('persist-credentials: false', 'persist-credentials: true'),
     content.replace('permission-administration: read', 'permission-administration: write'),
     content.replace(
+      '          permission-administration: read',
+      '          permission-administration: read\n          permission-contents: write',
+    ),
+    content.replace(
       'STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
       'STEPHANOS_RULESET_PROOF_TOKEN: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}',
+    ),
+    content.replace(
+      'STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
+      'STEPHANOS_RULESET_PROOF_TOKEN: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}',
+    ).replace(
+      '          private-key: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}',
+      [
+        '          private-key: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}',
+        '          STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
+      ].join('\n'),
+    ),
+    content.replace(
+      '          STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
+      [
+        '          STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
+        '          STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
+      ].join('\n'),
     ),
     content.replace(
       '      - run: node scripts/operator-protected-personal-repository-merge.mjs evidence',
