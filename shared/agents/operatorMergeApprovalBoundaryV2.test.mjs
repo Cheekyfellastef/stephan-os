@@ -157,6 +157,7 @@ jobs:
   operator-personal-repository-approval:
     name: operator-personal-repository-approval
     if: \${{ github.event_name == 'workflow_dispatch' }}
+    needs: [personal-repository-evidence]
     environment:
       name: operator-merge-approval
     permissions:
@@ -330,6 +331,15 @@ test('admits only the exact personal-repository fallback workflow source', () =>
       '          GH_TOKEN: ${{ github.token }}',
       '          GH_TOKEN: ${{ github.token }}\n          NODE_OPTIONS: --import=./arbitrary.mjs',
     ),
+    content.replace(
+      'permissions: {}',
+      'env:\n  NODE_OPTIONS: --import=./arbitrary.mjs\n\npermissions: {}',
+    ),
+    content.replace(
+      '    environment:\n      name: operator-merge-approval',
+      '    "env":\n      NODE_OPTIONS: --import=./arbitrary.mjs\n    environment:\n      name: operator-merge-approval',
+    ),
+    content.replace('    needs: [personal-repository-evidence]\n', ''),
     content.replace(
       '      - run: node scripts/operator-protected-personal-repository-merge.mjs evidence',
       [

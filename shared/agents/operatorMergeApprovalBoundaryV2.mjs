@@ -276,6 +276,19 @@ function yamlJobNames(source) {
   return Object.freeze(names);
 }
 
+function yamlHasInheritedEnvironment(source) {
+  return String(source).split(/\r?\n/).some((line) => (
+    /^(?:env|"env"|'env')\s*:/.test(line)
+    || /^ {4}(?:env|"env"|'env')\s*:/.test(line)
+  ));
+}
+
+function jobHasExactNeeds(source, jobName, expectedValue) {
+  const job = yamlJobBlock(source, jobName);
+  const needs = job.split(/\r?\n/).filter((line) => /^ {4}needs\s*:/.test(line));
+  return needs.length === 1 && needs[0] === `    needs: ${expectedValue}`;
+}
+
 function yamlJobSteps(source, jobName) {
   const job = yamlJobBlock(source, jobName);
   if (!job) return Object.freeze({ valid: false, steps: Object.freeze([]) });
@@ -401,6 +414,8 @@ function personalRepositoryRulesetProofTokenIsBound(source) {
   const jobNames = yamlJobNames(source);
   if (jobNames.length !== expectedJobNames.length
     || [...jobNames].sort().some((jobName, index) => jobName !== [...expectedJobNames].sort()[index])) return false;
+  if (yamlHasInheritedEnvironment(source)
+    || !jobHasExactNeeds(source, 'operator-personal-repository-approval', '[personal-repository-evidence]')) return false;
   const parsed = yamlJobSteps(source, 'operator-personal-repository-approval');
   if (!parsed.valid) return false;
   const approvalSteps = parsed.steps.filter((step) => (
