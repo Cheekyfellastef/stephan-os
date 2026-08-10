@@ -271,6 +271,7 @@ function yamlJobNames(source) {
     if (!line.trim() || line.trimStart().startsWith('#')) continue;
     if (indentation(line) === 0) break;
     const job = line.match(/^ {2}(?:"([^"]+)"|'([^']+)'|([a-zA-Z0-9_-]+)):\s*$/);
+    if (indentation(line) === 2 && !job) return Object.freeze(['__invalid-job-mapping__']);
     if (job) names.push(job[1] ?? job[2] ?? job[3]);
   }
   return Object.freeze(names);
