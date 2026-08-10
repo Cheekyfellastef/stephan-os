@@ -129,17 +129,18 @@ function successfulRequiredChecks() {
   }));
 }
 
-test('protected merge requires every canonical workflow while allowing only exact neutral coordinator skips', () => {
+test('protected merge requires every canonical workflow while allowing exact neutral coordinator skips and unrelated review escalation', () => {
   const checks = [
     ...successfulRequiredChecks(),
     { name: 'worker-watchdog-proof', workflow: 'Battle Bridge Worker Watchdog Proof', state: 'SUCCESS' },
+    { name: 'exact-head-review', workflow: 'Stephanos Exact-Head Review', state: 'FAILURE' },
     { name: 'coordinate', workflow: 'Exact-Head Review Dispatch', state: 'SKIPPED' },
     { name: 'retry', workflow: 'Exact-Head Review Dispatch', state: 'SKIPPED' },
   ];
   assert.equal(validateProtectedOpenClawMergeChecks(checks), true);
 });
 
-test('protected merge rejects missing, non-successful, ambiguous and spoofed check identities', () => {
+test('protected merge rejects missing or non-successful required workflows without letting duplicate success conceal failure', () => {
   const required = successfulRequiredChecks();
   const withoutBuild = required.filter((check) => check.workflow !== 'Build Stephanos UI');
   assert.equal(validateProtectedOpenClawMergeChecks(withoutBuild), false);
@@ -154,11 +155,20 @@ test('protected merge rejects missing, non-successful, ambiguous and spoofed che
   assert.equal(validateProtectedOpenClawMergeChecks([
     ...required,
     { ...required[0] },
+  ]), true);
+  assert.equal(validateProtectedOpenClawMergeChecks([
+    ...required,
+    { ...required[0], state: 'FAILURE' },
   ]), false);
+});
+
+test('protected merge ignores non-required workflow conclusions but rejects malformed or unexpected required skips', () => {
+  const required = successfulRequiredChecks();
   assert.equal(validateProtectedOpenClawMergeChecks([
     ...required,
     { name: 'coordinate', workflow: 'Spoofed Review Dispatch', state: 'SKIPPED' },
-  ]), false);
+    { name: 'external-review', workflow: 'Provider Review', state: 'PENDING' },
+  ]), true);
   assert.equal(validateProtectedOpenClawMergeChecks([
     ...required,
     { name: 'unrelated', workflow: 'Exact-Head Review Dispatch', state: 'SKIPPED' },
@@ -173,4 +183,10 @@ test('protected merge check inspection requests exact name, state and workflow i
   const source = readFileSync(new URL('./protectedOpenClawMergeMailboxAdapter.mjs', import.meta.url), 'utf8');
   assert.match(source, /'--json', 'name,state,workflow'/);
   assert.doesNotMatch(source, /'--json', 'state'/);
+});
+
+test('feature branches emit only the pull-request build checks consumed by protected merge', () => {
+  const source = readFileSync(new URL('../../.github/workflows/build-stephanos-ui.yml', import.meta.url), 'utf8');
+  assert.match(source, /^  push:\n    branches:\n      - main\n    paths:\s*$/m);
+  assert.match(source, /^  pull_request:\s*$/m);
 });

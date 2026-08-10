@@ -9,21 +9,15 @@ import {
   WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1,
 } from './operatorMergeApprovalBoundaryV2.mjs';
 import {
-  REQUIRED_EXACT_HEAD_WORKFLOWS,
-} from './operatorMergeApprovalGate.mjs';
+  PROTECTED_MERGE_REQUIRED_WORKFLOWS,
+  validateProtectedMergeCheckRows,
+} from './protectedMergeCheckClassifierV1.mjs';
 
 export const PROTECTED_OPENCLAW_MERGE_OPERATION = 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE';
 export const PROTECTED_OPENCLAW_MERGE_MODE = 'qualified-operator-bootstrap';
 export const PROTECTED_OPENCLAW_MERGE_FINDING = 'approval-boundary-v2-self-change-requires-qualified-review';
 export const PROTECTED_OPENCLAW_MERGE_MAX_BOOTSTRAP_FINDINGS = 20;
-export const PROTECTED_OPENCLAW_MERGE_REQUIRED_WORKFLOWS = Object.freeze([
-  ...REQUIRED_EXACT_HEAD_WORKFLOWS,
-]);
-
-const PROTECTED_OPENCLAW_NEUTRAL_SKIPPED_CHECKS = new Set([
-  'Exact-Head Review Dispatch\0coordinate',
-  'Exact-Head Review Dispatch\0retry',
-]);
+export const PROTECTED_OPENCLAW_MERGE_REQUIRED_WORKFLOWS = PROTECTED_MERGE_REQUIRED_WORKFLOWS;
 
 const PROTECTED_OPENCLAW_BOOTSTRAP_PATHS = new Set([
   ...APPROVAL_BOUNDARY_PATHS_V2,
@@ -190,34 +184,7 @@ function validateArtifactMetadata(artifact, command) {
   );
 }
 
-export function validateProtectedOpenClawMergeChecks(checks) {
-  if (!Array.isArray(checks) || checks.length < 1) return false;
-  const identities = new Set();
-  const successfulRequiredWorkflows = new Set();
-  const requiredWorkflows = new Set(PROTECTED_OPENCLAW_MERGE_REQUIRED_WORKFLOWS);
-
-  for (const check of checks) {
-    const name = String(check?.name || '').trim();
-    const workflow = String(check?.workflow || '').trim();
-    const state = String(check?.state || '').trim().toUpperCase();
-    if (!name || !workflow || !state) return false;
-
-    const identity = `${workflow}\0${name}`;
-    if (identities.has(identity)) return false;
-    identities.add(identity);
-
-    if (state === 'SUCCESS') {
-      if (requiredWorkflows.has(workflow)) successfulRequiredWorkflows.add(workflow);
-      continue;
-    }
-    if (state === 'SKIPPED' && PROTECTED_OPENCLAW_NEUTRAL_SKIPPED_CHECKS.has(identity)) continue;
-    return false;
-  }
-
-  return PROTECTED_OPENCLAW_MERGE_REQUIRED_WORKFLOWS.every((workflow) => (
-    successfulRequiredWorkflows.has(workflow)
-  ));
-}
+export const validateProtectedOpenClawMergeChecks = validateProtectedMergeCheckRows;
 
 export function validateProtectedOpenClawBootstrapFindings(findings, expectedCode = PROTECTED_OPENCLAW_MERGE_FINDING) {
   if (!Array.isArray(findings)
