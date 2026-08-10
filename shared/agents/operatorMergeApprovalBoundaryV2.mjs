@@ -7,6 +7,7 @@ import {
 } from './operatorMergeApprovalGate.mjs';
 
 const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
+const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = '4a03e84b98855e0a8f5f631bd809d392075bd54a303097ef54093ea39e257cd2';
 const PERSONAL_REPOSITORY_WORKFLOW_SOURCE_KEYS = Object.freeze([
   'schemaVersion',
   'repository',
@@ -72,6 +73,7 @@ const PERSONAL_REPOSITORY_WORKFLOW_JOB_STEPS = Object.freeze([
     steps: Object.freeze([
       Object.freeze({ executableKey: 'uses', executableValue: 'actions/checkout@v4' }),
       Object.freeze({ executableKey: 'uses', executableValue: 'actions/setup-node@v4' }),
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/create-github-app-token@v2' }),
       Object.freeze({ executableKey: 'run', executableValue: 'node scripts/operator-protected-personal-repository-merge.mjs approve' }),
     ]),
   }),
@@ -88,6 +90,19 @@ const WORKFLOW_STEP_KEYS = Object.freeze({
   uses: Object.freeze(['id', 'name', 'uses', 'with']),
   run: Object.freeze(['env', 'id', 'name', 'run']),
 });
+const PERSONAL_REPOSITORY_APPROVAL_ENV = Object.freeze([
+  Object.freeze(['GH_TOKEN', '${{ github.token }}']),
+  Object.freeze(['STEPHANOS_RULESET_PROOF_TOKEN', '${{ steps.ruleset-proof-token.outputs.token }}']),
+  Object.freeze(['STEPHANOS_EXPECTED_REPOSITORY', '${{ needs.personal-repository-evidence.outputs.repository }}']),
+  Object.freeze(['STEPHANOS_EXPECTED_PR_NUMBER', '${{ needs.personal-repository-evidence.outputs.pr_number }}']),
+  Object.freeze(['STEPHANOS_EXPECTED_BRANCH', '${{ needs.personal-repository-evidence.outputs.branch }}']),
+  Object.freeze(['STEPHANOS_EXPECTED_SOURCE_HEAD', '${{ needs.personal-repository-evidence.outputs.source_head }}']),
+  Object.freeze(['STEPHANOS_EXPECTED_SOURCE_TREE', '${{ needs.personal-repository-evidence.outputs.source_tree }}']),
+  Object.freeze(['STEPHANOS_EXPECTED_BASE_SHA', '${{ needs.personal-repository-evidence.outputs.base_sha }}']),
+  Object.freeze(['STEPHANOS_EXPECTED_WORKFLOW_RUN_ID', '${{ needs.personal-repository-evidence.outputs.workflow_run_id }}']),
+  Object.freeze(['STEPHANOS_EXPECTED_WORKFLOW_RUN_ATTEMPT', '${{ needs.personal-repository-evidence.outputs.workflow_run_attempt }}']),
+  Object.freeze(['STEPHANOS_EXPECTED_EVIDENCE_SHA256', '${{ needs.personal-repository-evidence.outputs.evidence_sha256 }}']),
+]);
 const SHA40 = /^[a-f0-9]{40}$/;
 
 export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
@@ -245,6 +260,83 @@ function yamlJobBlock(source, jobName) {
   return lines.slice(starts[0], end).join('\n');
 }
 
+function yamlJobNames(source) {
+  const lines = String(source).split(/\r?\n/);
+  const jobsIndexes = lines
+    .map((line, index) => (line === 'jobs:' ? index : -1))
+    .filter((index) => index >= 0);
+  if (jobsIndexes.length !== 1) return Object.freeze([]);
+  const names = [];
+  let observedJob = false;
+  for (let index = jobsIndexes[0] + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    const indent = indentation(line);
+    if (indent === 0) break;
+    if (indent < 2 || indent % 2 !== 0 || (indent > 2 && !observedJob)) {
+      return Object.freeze(['__invalid-job-mapping__']);
+    }
+    const job = line.match(/^ {2}(?:"([^"]+)"|'([^']+)'|([a-zA-Z0-9_-]+)):\s*$/);
+    if (indent === 2 && !job) return Object.freeze(['__invalid-job-mapping__']);
+    if (job) {
+      names.push(job[1] ?? job[2] ?? job[3]);
+      observedJob = true;
+    }
+  }
+  return Object.freeze(names);
+}
+
+function yamlHasInheritedEnvironment(source) {
+  return String(source).split(/\r?\n/).some((line) => (
+    /^(?:env|"env"|'env')\s*:/.test(line)
+    || /^ {4}(?:env|"env"|'env')\s*:/.test(line)
+  ));
+}
+
+function yamlHasForbiddenExecutionContext(source) {
+  const forbiddenJobKeys = new Set([
+    'container', 'continue-on-error', 'defaults', 'env', 'services', 'strategy',
+    'uses', 'with', 'secrets', 'concurrency',
+  ]);
+  return String(source).split(/\r?\n/).some((line) => {
+    const workflowKey = line.match(/^(?:"([^"]+)"|'([^']+)'|([a-zA-Z0-9_-]+))\s*:/);
+    const jobKey = line.match(/^ {4}(?:"([^"]+)"|'([^']+)'|([a-zA-Z0-9_-]+))\s*:/);
+    const workflowName = workflowKey && (workflowKey[1] ?? workflowKey[2] ?? workflowKey[3]);
+    const jobName = jobKey && (jobKey[1] ?? jobKey[2] ?? jobKey[3]);
+    return workflowName === 'defaults' || workflowName === 'env'
+      || (jobName && forbiddenJobKeys.has(jobName));
+  });
+}
+
+function jobHasExactNeeds(source, jobName, expectedValue) {
+  const job = yamlJobBlock(source, jobName);
+  const needs = job.split(/\r?\n/).filter((line) => /^ {4}needs\s*:/.test(line));
+  return needs.length === 1 && needs[0] === `    needs: ${expectedValue}`;
+}
+
+function jobHasExactScalar(source, jobName, key, expectedValue) {
+  const job = yamlJobBlock(source, jobName);
+  const entries = job.split(/\r?\n/).filter((line) => line.startsWith(`    ${key}:`));
+  return entries.length === 1 && entries[0] === `    ${key}: ${expectedValue}`;
+}
+
+function jobHasExactEnvironment(source, jobName, expectedName = '') {
+  const lines = yamlJobBlock(source, jobName).split(/\r?\n/);
+  const starts = lines
+    .map((line, index) => (line === '    environment:' ? index : -1))
+    .filter((index) => index >= 0);
+  if (!expectedName) return starts.length === 0;
+  if (starts.length !== 1) return false;
+  const entries = [];
+  for (let index = starts[0] + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    if (indentation(line) <= 4) break;
+    entries.push(line);
+  }
+  return entries.length === 1 && entries[0] === `      name: ${expectedName}`;
+}
+
 function yamlJobSteps(source, jobName) {
   const job = yamlJobBlock(source, jobName);
   if (!job) return Object.freeze({ valid: false, steps: Object.freeze([]) });
@@ -298,10 +390,124 @@ function yamlJobSteps(source, jobName) {
       }
       entries.push(Object.freeze({ key: entry[1], value: entry[2] ?? '' }));
     }
-    return Object.freeze({ entries: Object.freeze(entries) });
+    return Object.freeze({
+      entries: Object.freeze(entries),
+      lines: Object.freeze([...block]),
+    });
   });
 
   return Object.freeze({ valid, steps: Object.freeze(steps) });
+}
+
+function yamlStepNestedMapping(step, mappingKey) {
+  if (!step?.lines) return Object.freeze({ valid: false, entries: Object.freeze([]) });
+  const starts = step.lines
+    .map((line, index) => (line === `        ${mappingKey}:` ? index : -1))
+    .filter((index) => index >= 0);
+  if (starts.length !== 1) return Object.freeze({ valid: false, entries: Object.freeze([]) });
+
+  const entries = [];
+  let valid = true;
+  for (let index = starts[0] + 1; index < step.lines.length; index += 1) {
+    const line = step.lines[index];
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    if (indentation(line) <= 8) break;
+    const entry = line.match(/^ {10}(?:"([^"]+)"|'([^']+)'|([a-zA-Z0-9_-]+)):(?:\s*(.*))?$/);
+    if (!entry) {
+      valid = false;
+      continue;
+    }
+    entries.push(Object.freeze({ key: entry[1] ?? entry[2] ?? entry[3], value: entry[4] ?? '' }));
+  }
+  if (new Set(entries.map((entry) => entry.key)).size !== entries.length) valid = false;
+  return Object.freeze({ valid, entries: Object.freeze(entries) });
+}
+
+function stepHasExactEntries(step, expectedEntries) {
+  if (!step || step.entries.length !== expectedEntries.length) return false;
+  const observed = new Map(step.entries.map((entry) => [entry.key, entry.value]));
+  return observed.size === expectedEntries.length
+    && expectedEntries.every(([key, value]) => observed.get(key) === value);
+}
+
+function personalRepositoryRulesetProofTokenIsExact(source) {
+  const parsed = yamlJobSteps(source, 'operator-personal-repository-approval');
+  if (!parsed.valid) return false;
+  const mintSteps = parsed.steps.filter((step) => (
+    step.entries.some((entry) => entry.key === 'uses'
+      && entry.value === 'actions/create-github-app-token@v2')
+  ));
+  if (mintSteps.length !== 1 || !stepHasExactEntries(mintSteps[0], [
+    ['name', 'Mint exact read-only ruleset proof token'],
+    ['id', 'ruleset-proof-token'],
+    ['uses', 'actions/create-github-app-token@v2'],
+    ['with', ''],
+  ])) return false;
+
+  const withMapping = yamlStepNestedMapping(mintSteps[0], 'with');
+  const expectedWith = [
+    ['app-id', '${{ secrets.STEPHANOS_RULESET_PROOF_APP_ID }}'],
+    ['private-key', '${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}'],
+    ['owner', '${{ github.repository_owner }}'],
+    ['repositories', 'stephan-os'],
+    ['permission-administration', 'read'],
+  ];
+  return withMapping.valid
+    && withMapping.entries.length === expectedWith.length
+    && stepHasExactEntries({ entries: withMapping.entries }, expectedWith);
+}
+
+function personalRepositoryRulesetProofTokenIsBound(source) {
+  const expectedJobNames = PERSONAL_REPOSITORY_WORKFLOW_JOB_STEPS.map((policy) => policy.jobName);
+  const jobNames = yamlJobNames(source);
+  if (jobNames.length !== expectedJobNames.length
+    || [...jobNames].sort().some((jobName, index) => jobName !== [...expectedJobNames].sort()[index])) return false;
+  if (yamlHasInheritedEnvironment(source)
+    || yamlHasForbiddenExecutionContext(source)
+    || !jobHasExactNeeds(source, 'operator-merge-queue-boundary', '[merge-group-evidence]')
+    || !jobHasExactNeeds(source, 'operator-personal-repository-approval', '[personal-repository-evidence]')
+    || !jobHasExactNeeds(source, 'operator-personal-repository-squash-merge', '[personal-repository-evidence, operator-personal-repository-approval]')
+    || !jobHasExactEnvironment(source, 'merge-group-evidence')
+    || !jobHasExactEnvironment(source, 'operator-merge-queue-boundary', 'operator-merge-approval')
+    || !jobHasExactEnvironment(source, 'personal-repository-evidence')
+    || !jobHasExactEnvironment(source, 'operator-personal-repository-approval', 'operator-merge-approval')
+    || !jobHasExactEnvironment(source, 'operator-personal-repository-squash-merge')
+    || expectedJobNames.some((jobName) => (
+      !jobHasExactScalar(source, jobName, 'runs-on', 'ubuntu-latest')
+      || !jobHasExactScalar(source, jobName, 'timeout-minutes', '20')
+    ))) return false;
+  const parsed = yamlJobSteps(source, 'operator-personal-repository-approval');
+  if (!parsed.valid) return false;
+  const approvalSteps = parsed.steps.filter((step) => (
+    step.entries.some((entry) => entry.key === 'run'
+      && entry.value === 'node scripts/operator-protected-personal-repository-merge.mjs approve')
+  ));
+  if (approvalSteps.length !== 1 || !stepHasExactEntries(approvalSteps[0], [
+    ['name', 'Re-prove immutable evidence after protected approval'],
+    ['id', 'approval'],
+    ['env', ''],
+    ['run', 'node scripts/operator-protected-personal-repository-merge.mjs approve'],
+  ])) return false;
+  const envMapping = yamlStepNestedMapping(approvalSteps[0], 'env');
+  if (!envMapping.valid
+    || envMapping.entries.length !== PERSONAL_REPOSITORY_APPROVAL_ENV.length
+    || !stepHasExactEntries({ entries: envMapping.entries }, PERSONAL_REPOSITORY_APPROVAL_ENV)) return false;
+
+  const tokenBindings = [];
+  for (const jobName of jobNames) {
+    const job = yamlJobSteps(source, jobName);
+    if (!job.valid) return false;
+    for (const step of job.steps) {
+      const envEntries = step.entries.filter((entry) => entry.key === 'env');
+      if (envEntries.length === 0) continue;
+      if (envEntries.length !== 1) return false;
+      const mapping = yamlStepNestedMapping(step, 'env');
+      if (!mapping.valid) return false;
+      tokenBindings.push(...mapping.entries.filter((entry) => entry.key === 'STEPHANOS_RULESET_PROOF_TOKEN'));
+    }
+  }
+  return tokenBindings.length === 1
+    && tokenBindings[0].value === '${{ steps.ruleset-proof-token.outputs.token }}';
 }
 
 function jobHasExactExecutionSteps(source, policy) {
@@ -387,6 +593,10 @@ export function validatePersonalRepositoryProtectedWorkflowSource(input = {}) {
   const content = typeof source?.content === 'string' ? source.content : '';
   const size = Buffer.byteLength(content, 'utf8');
   const blockers = [];
+  const canonicalContent = content.replace(/\n+$/u, '\n');
+  if (createHash('sha256').update(canonicalContent, 'utf8').digest('hex') !== PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256) {
+    blockers.push('personal-repository-workflow-content-digest-not-exact');
+  }
   if (!sameKeys(source, PERSONAL_REPOSITORY_WORKFLOW_SOURCE_KEYS)
     || source.schemaVersion !== PROTECTED_WORKFLOW_SOURCE_SCHEMA_VERSION
     || source.repository !== input.repository
@@ -419,7 +629,7 @@ export function validatePersonalRepositoryProtectedWorkflowSource(input = {}) {
       block.lines.filter((line) => /^ {8}required:\s*true\s*$/.test(line)).length !== 1
       || block.lines.filter((line) => /^ {8}type:\s*string\s*$/.test(line)).length !== 1
     ))
-    || !/^run-name: Protected operator merge \$\{\{ github\.event\.merge_group\.head_sha \|\| format\('PR #\{0\} at \{1\}', inputs\.pr_number, inputs\.expected_head\) \}\}\s*$/m.test(content)) {
+    || !/^run-name: Protected operator merge \$\{\{ github\.event\.merge_group\.head_sha \|\| inputs\.expected_head \|\| github\.run_id \}\}\s*$/m.test(content)) {
     blockers.push('personal-repository-workflow-dispatch-inputs-not-exact');
   }
   const checkouts = checkoutBlocks(content);
@@ -474,6 +684,12 @@ export function validatePersonalRepositoryProtectedWorkflowSource(input = {}) {
     if (!jobHasExactExecutionSteps(content, policy)) {
       blockers.push('personal-repository-workflow-job-steps-not-exact');
     }
+  }
+  if (!personalRepositoryRulesetProofTokenIsExact(content)) {
+    blockers.push('personal-repository-workflow-ruleset-proof-token-not-exact');
+  }
+  if (!personalRepositoryRulesetProofTokenIsBound(content)) {
+    blockers.push('personal-repository-workflow-ruleset-proof-token-not-bound');
   }
   for (const pattern of [
     /^\s+pull_request(?:_target)?:\s*$/m,
