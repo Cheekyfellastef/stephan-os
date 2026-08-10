@@ -296,6 +296,7 @@ export function validatePersonalRepositoryConfiguration(input = {}, options = {}
   const rulesets = Array.isArray(input.rulesets) ? input.rulesets : null;
   const requiredCheck = text(options.requiredCheck || PERSONAL_REPOSITORY_REQUIRED_CHECK);
   const expectedIntegrationId = strictPositiveInteger(options.expectedIntegrationId);
+  const requireBypassProof = options.requireBypassProof !== false;
   const environment = validateProtectedEnvironment(input.environment, {
     expectedName: OPERATOR_MERGE_ENVIRONMENT,
     expectedReviewer: OPERATOR_MERGE_REVIEWER,
@@ -366,9 +367,13 @@ export function validatePersonalRepositoryConfiguration(input = {}, options = {}
     if (text(ruleset?.enforcement).toLowerCase() !== 'active') {
       blockers.push(`personal-repository-ruleset-not-active:${rulesetId || 'unknown'}`);
     }
-    if (!Array.isArray(ruleset?.bypass_actors)) {
+    if (!EXPLICIT_TIMEZONE.test(text(ruleset?.updated_at))
+      || !Number.isFinite(Date.parse(ruleset.updated_at))) {
+      configurationNotProved(blockers, `personal-repository-ruleset-updated-at:${rulesetId || 'unknown'}`);
+    }
+    if (requireBypassProof && !Array.isArray(ruleset?.bypass_actors)) {
       configurationNotProved(blockers, `personal-repository-ruleset-bypass-actors:${rulesetId || 'unknown'}`);
-    } else if (ruleset.bypass_actors.length !== 0) {
+    } else if (Array.isArray(ruleset?.bypass_actors) && ruleset.bypass_actors.length !== 0) {
       blockers.push(`personal-repository-ruleset-bypass-present:${rulesetId || 'unknown'}`);
     }
   }
@@ -379,10 +384,13 @@ export function validatePersonalRepositoryConfiguration(input = {}, options = {}
     requiredCheck,
     requiredCheckIntegrationId: expectedIntegrationId,
     activeRulesetIds: Object.freeze(activeRulesetIds),
+    bypassProven: requireBypassProof,
     blockers: Object.freeze(unique(blockers)),
     finalVerdict: blockers.length
       ? 'PERSONAL_REPOSITORY_CONFIGURATION_BLOCKED'
-      : 'PERSONAL_REPOSITORY_CONFIGURATION_READY',
+      : requireBypassProof
+        ? 'PERSONAL_REPOSITORY_CONFIGURATION_READY'
+        : 'PERSONAL_REPOSITORY_CONFIGURATION_PREAPPROVAL_READY',
   });
 }
 

@@ -168,7 +168,12 @@ function configuration(overrides = {}) {
     },
     environment: environment(),
     activeRules: activeRules(),
-    rulesets: [{ id: 91, enforcement: 'active', bypass_actors: [] }],
+    rulesets: [{
+      id: 91,
+      enforcement: 'active',
+      updated_at: '2026-08-10T12:00:00Z',
+      bypass_actors: [],
+    }],
     ...overrides,
   };
 }
@@ -274,12 +279,43 @@ test('configuration requires the exact protected environment and an active no-by
   }).blockers.includes('environment-admin-bypass-not-disabled'));
 
   const bypass = validatePersonalRepositoryConfiguration(configuration({
-    rulesets: [{ id: 91, enforcement: 'active', bypass_actors: [{ actor_id: 1 }] }],
+    rulesets: [{
+      id: 91,
+      enforcement: 'active',
+      updated_at: '2026-08-10T12:00:00Z',
+      bypass_actors: [{ actor_id: 1 }],
+    }],
   }), {
     requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
     expectedIntegrationId: integrationId,
   });
   assert.ok(bypass.blockers.includes('personal-repository-ruleset-bypass-present:91'));
+
+  const publicPreapproval = validatePersonalRepositoryConfiguration(configuration({
+    rulesets: [{ id: 91, enforcement: 'active', updated_at: '2026-08-10T12:00:00Z' }],
+  }), {
+    requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
+    expectedIntegrationId: integrationId,
+    requireBypassProof: false,
+  });
+  assert.equal(publicPreapproval.valid, true);
+  assert.equal(publicPreapproval.bypassProven, false);
+  assert.equal(
+    publicPreapproval.finalVerdict,
+    'PERSONAL_REPOSITORY_CONFIGURATION_PREAPPROVAL_READY',
+  );
+  assert.ok(validatePersonalRepositoryConfiguration(configuration({
+    rulesets: [{ id: 91, enforcement: 'active', updated_at: '2026-08-10T12:00:00Z' }],
+  }), {
+    requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
+    expectedIntegrationId: integrationId,
+  }).blockers.includes('CONFIGURATION_NOT_PROVED:personal-repository-ruleset-bypass-actors:91'));
+  assert.ok(validatePersonalRepositoryConfiguration(configuration({
+    rulesets: [{ id: 91, enforcement: 'active', bypass_actors: [] }],
+  }), {
+    requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
+    expectedIntegrationId: integrationId,
+  }).blockers.includes('CONFIGURATION_NOT_PROVED:personal-repository-ruleset-updated-at:91'));
 
   const queueRule = validatePersonalRepositoryConfiguration(configuration({
     activeRules: [...activeRules(), { type: 'merge_queue', ruleset_id: 91 }],

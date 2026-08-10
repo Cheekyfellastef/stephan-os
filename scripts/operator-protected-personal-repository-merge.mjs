@@ -87,19 +87,31 @@ async function githubResponse(path, {
   maxBytes = MAX_JSON_BYTES,
   authorization = 'required',
 } = {}) {
-  if (!['required', 'omit'].includes(authorization)) {
+  if (!['required', 'omit', 'ruleset-proof'].includes(authorization)) {
     fail('GitHub API authorization mode is invalid.', { authorization });
   }
   if (authorization === 'omit' && (method !== 'GET' || body !== null)) {
     fail('Unauthenticated GitHub API access is restricted to bounded GET requests.', { path, method });
   }
-  const token = text(process.env.GH_TOKEN || process.env.GITHUB_TOKEN);
+  if (authorization === 'ruleset-proof'
+    && (method !== 'GET'
+      || body !== null
+      || !/^\/repos\/[^/]+\/[^/]+\/rulesets\/[1-9][0-9]*\?includes_parents=true$/.test(path))) {
+    fail('Ruleset proof token is restricted to bounded repository ruleset-detail GET requests.', {
+      path,
+      method,
+    });
+  }
+  const token = authorization === 'ruleset-proof'
+    ? text(process.env.STEPHANOS_RULESET_PROOF_TOKEN)
+    : text(process.env.GH_TOKEN || process.env.GITHUB_TOKEN);
   if (authorization === 'required' && !token) fail('GitHub Actions token is required.');
+  if (authorization === 'ruleset-proof' && !token) fail('Protected ruleset proof token is required.');
   const response = await fetch(`https://api.github.com${path}`, {
     method,
     headers: {
       Accept: accept,
-      ...(authorization === 'required' ? { Authorization: `Bearer ${token}` } : {}),
+      ...(authorization === 'omit' ? {} : { Authorization: `Bearer ${token}` }),
       'X-GitHub-Api-Version': API_VERSION,
       'User-Agent': USER_AGENT,
       ...(body === null ? {} : { 'Content-Type': 'application/json' }),
@@ -274,7 +286,37 @@ async function pullRequestReviewState(owner, repo, prNumber) {
   };
 }
 
-async function collectRulesetConfiguration(context, repository, environment, integrationId) {
+function rulesetSnapshot(activeRules, rulesets) {
+  const canonicalActiveRules = (activeRules || [])
+    .map((rule) => canonicalJson(rule))
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const canonicalRulesets = (rulesets || [])
+    .map((ruleset) => canonicalJson({
+      id: ruleset?.id,
+      name: ruleset?.name,
+      target: ruleset?.target,
+      source_type: ruleset?.source_type,
+      source: ruleset?.source,
+      enforcement: ruleset?.enforcement,
+      created_at: ruleset?.created_at,
+      updated_at: ruleset?.updated_at,
+      conditions: ruleset?.conditions,
+      rules: ruleset?.rules,
+    }))
+    .sort((left, right) => Number(left.id) - Number(right.id));
+  return sha256(JSON.stringify(canonicalJson({
+    activeRules: canonicalActiveRules,
+    rulesets: canonicalRulesets,
+  })));
+}
+
+async function collectRulesetConfiguration(
+  context,
+  repository,
+  environment,
+  integrationId,
+  { requireBypassProof = false } = {},
+) {
   let activeRules = null;
   const rulesets = [];
   const readBlockers = [];
@@ -300,7 +342,7 @@ async function collectRulesetConfiguration(context, repository, environment, int
     try {
       rulesets.push(await apiJson(
         `/repos/${context.owner}/${context.repo}/rulesets/${rulesetId}?includes_parents=true`,
-        { authorization: 'omit' },
+        { authorization: requireBypassProof ? 'ruleset-proof' : 'omit' },
       ));
     } catch {
       readBlockers.push(`CONFIGURATION_NOT_PROVED:personal-repository-ruleset-detail:${rulesetId}`);
@@ -314,6 +356,7 @@ async function collectRulesetConfiguration(context, repository, environment, int
   }, {
     requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
     expectedIntegrationId: integrationId,
+    requireBypassProof,
   });
   const blockers = [...new Set([...readBlockers, ...validation.blockers])];
   if (blockers.length) {
@@ -322,7 +365,10 @@ async function collectRulesetConfiguration(context, repository, environment, int
       note: 'Unreadable protection or bypass evidence is blocking.',
     });
   }
-  return validation;
+  return Object.freeze({
+    ...validation,
+    rulesetSnapshotSha256: rulesetSnapshot(activeRules, rulesets),
+  });
 }
 
 function runUnzip(args, message, maxBuffer = INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES + 1) {
@@ -508,6 +554,7 @@ async function collectEvidence(context, expected = {}) {
     repository,
     environment,
     integrationId,
+    { requireBypassProof: mode === 'approve' },
   );
   const independentReview = await loadSelectedIndependentReview(context, evidence.identity);
   const packet = Object.freeze({
@@ -517,6 +564,7 @@ async function collectEvidence(context, expected = {}) {
     requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
     requiredCheckIntegrationId: integrationId,
     activeRulesetIds: configuration.activeRulesetIds,
+    rulesetSnapshotSha256: configuration.rulesetSnapshotSha256,
     workflows: workflows.evidence,
     independentReview,
   });

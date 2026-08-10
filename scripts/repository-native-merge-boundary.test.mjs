@@ -54,6 +54,17 @@ test('protected boundary keeps the native queue and adds only the exact user-own
   assert.equal([...protectedSource.matchAll(/contents: write/g)].length, 1);
   assert.equal([...protectedSource.matchAll(/issues: write/g)].length, 1);
   assert.equal([...protectedSource.matchAll(/pull-requests: write/g)].length, 1);
+  assert.equal([...protectedSource.matchAll(/actions\/create-github-app-token@v2/g)].length, 1);
+  assert.equal([...protectedSource.matchAll(/secrets\.STEPHANOS_RULESET_PROOF_APP_ID/g)].length, 1);
+  assert.equal([...protectedSource.matchAll(/secrets\.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY/g)].length, 1);
+  assert.equal([...protectedSource.matchAll(/STEPHANOS_RULESET_PROOF_TOKEN:/g)].length, 1);
+  assert.match(protectedSource, /permission-administration: read/);
+  const approvalJob = protectedSource.slice(
+    protectedSource.indexOf('  operator-personal-repository-approval:'),
+    protectedSource.indexOf('  operator-personal-repository-squash-merge:'),
+  );
+  assert.match(approvalJob, /actions\/create-github-app-token@v2/);
+  assert.match(approvalJob, /STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}/);
   assert.doesNotMatch(protectedSource, /\b(?:actions|deployments|statuses|checks): write\b/);
   assert.doesNotMatch(protectedSource, /recover|repository_dispatch|workflow_call|continue-on-error/);
 
@@ -73,7 +84,9 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /authorization === 'omit' && \(method !== 'GET' \|\| body !== null\)/);
   assert.match(source, /personal-repository-public-rules-api/);
   assert.match(source, /rules\/branches\/main[\s\S]*?authorization: 'omit'/);
-  assert.match(source, /rulesets\/\$\{rulesetId\}[\s\S]*?authorization: 'omit'/);
+  assert.match(source, /rulesets\/\$\{rulesetId\}[\s\S]*?authorization: requireBypassProof \? 'ruleset-proof' : 'omit'/);
+  assert.match(source, /STEPHANOS_RULESET_PROOF_TOKEN/);
+  assert.match(source, /Ruleset proof token is restricted to bounded repository ruleset-detail GET requests/);
   assert.doesNotMatch(source, /GH_TOKEN[^\n]*rules|GITHUB_TOKEN[^\n]*rules/);
   assert.match(source, /loadSelectedIndependentReview/);
   assert.match(source, /personal-repository-prior-attempt-exists/);
