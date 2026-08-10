@@ -225,7 +225,7 @@ async function currentWorkflowExecution(context) {
     });
   }
   const run = await apiJson(`/repos/${context.owner}/${context.repo}/actions/runs/${context.runId}`);
-  const expectedDisplayTitle = `Protected operator merge PR #${context.dispatch.identity.prNumber} at ${context.dispatch.identity.sourceHead}`;
+  const expectedDisplayTitle = `Protected operator merge ${context.dispatch.identity.sourceHead}`;
   if (exactPositiveInteger(run?.id) !== context.runId
     || exactPositiveInteger(run?.run_attempt) !== context.runAttempt
     || exactPositiveInteger(run?.workflow_id) !== definition.id
