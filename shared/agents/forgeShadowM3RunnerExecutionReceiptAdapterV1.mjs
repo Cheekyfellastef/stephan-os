@@ -384,14 +384,28 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   const unsafe = findForbidden(input);
   if (unsafe) blockers.push(`unsafe-field:${unsafe}`);
   if (platform !== 'win32') blockers.push('connected-windows-battle-bridge-required');
-  let plan;
-  try { plan = planForgeShadowM3RunnerRuntime(input.runtimePlanInput); }
-  catch { blockers.push('runtime-plan-threw'); }
-  if (!plan || plan.valid !== true || plan.finalVerdict !== FORGE_SHADOW_M3_RUNTIME_READY) blockers.push('runtime-plan-not-ready');
-  const planDigest = plan ? buildForgeShadowM3RuntimePlanDigest(plan) : '';
   const nowValue = now();
   const nowMs = nowValue instanceof Date ? nowValue.getTime() : instant(nowValue);
   if (!Number.isFinite(nowMs)) blockers.push('execution-now-invalid');
+  const trustedNowUtc = Number.isFinite(nowMs) ? new Date(nowMs).toISOString() : '';
+  const suppliedPlanInput = input.runtimePlanInput;
+  const trustedPlanInput = suppliedPlanInput && typeof suppliedPlanInput === 'object'
+    && !Array.isArray(suppliedPlanInput)
+    ? {
+        ...suppliedPlanInput,
+        nowUtc: trustedNowUtc,
+        admissionInput: suppliedPlanInput.admissionInput
+          && typeof suppliedPlanInput.admissionInput === 'object'
+          && !Array.isArray(suppliedPlanInput.admissionInput)
+          ? { ...suppliedPlanInput.admissionInput, nowUtc: trustedNowUtc }
+          : suppliedPlanInput.admissionInput,
+      }
+    : suppliedPlanInput;
+  let plan;
+  try { plan = planForgeShadowM3RunnerRuntime(trustedPlanInput); }
+  catch { blockers.push('runtime-plan-threw'); }
+  if (!plan || plan.valid !== true || plan.finalVerdict !== FORGE_SHADOW_M3_RUNTIME_READY) blockers.push('runtime-plan-not-ready');
+  const planDigest = plan ? buildForgeShadowM3RuntimePlanDigest(plan) : '';
   const authorization = plan && Number.isFinite(nowMs)
     ? validateAuthorization(input.runtimeAuthorization, plan, planDigest, nowMs, blockers)
     : null;
@@ -402,13 +416,28 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   for (const runner of plan.runners) {
     const artifact = plan.runnerArtifacts.find((item) => item.runnerClass === runner.runnerClass);
     if (!artifact) return blocked([`runner-artifact-not-found:${runner.runnerId}`], planDigest);
+    const runnerNowValue = now();
+    const runnerNowMs = runnerNowValue instanceof Date ? runnerNowValue.getTime() : instant(runnerNowValue);
+    const runnerAuthorizationBlockers = [];
+    const liveAuthorization = Number.isFinite(runnerNowMs)
+      ? validateAuthorization(input.runtimeAuthorization, plan, planDigest, runnerNowMs, runnerAuthorizationBlockers)
+      : null;
+    if (!Number.isFinite(runnerNowMs)) runnerAuthorizationBlockers.push(`runner-execution-now-invalid:${runner.runnerId}`);
+    if (!liveAuthorization) return blocked(runnerAuthorizationBlockers, planDigest);
+    const remainingAuthorizationMs = liveAuthorization.expiresMs - runnerNowMs;
+    if (remainingAuthorizationMs <= 0) return blocked([`runner-authorization-expired:${runner.runnerId}`], planDigest);
+
     let raw;
+    const controller = new AbortController();
+    let deadlineTimer;
     try {
-      raw = await executeRunner(Object.freeze({
+      const executionRequest = Object.freeze({
         authorization: input.runtimeAuthorization,
         runtimePlan: plan,
         runner,
         artifact,
+        executionDeadlineUtc: liveAuthorization.expiresAtUtc,
+        signal: controller.signal,
         canary: Object.freeze({
           workflowId: FORGE_SHADOW_M3_CANARY_WORKFLOW,
           scenario: FORGE_SHADOW_M3_CANARY_SCENARIO,
@@ -416,9 +445,23 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
           head: plan.canonicalMainHead,
           tree: plan.canonicalMainTree,
         }),
-      }));
+      });
+      const deadline = new Promise((resolveDeadline) => {
+        deadlineTimer = setTimeout(() => {
+          controller.abort();
+          resolveDeadline({ deadlineExceeded: true });
+        }, remainingAuthorizationMs);
+      });
+      const outcome = await Promise.race([
+        Promise.resolve().then(() => executeRunner(executionRequest)).then((value) => ({ value })),
+        deadline,
+      ]);
+      if (outcome.deadlineExceeded) return blocked([`runner-execution-deadline-exceeded:${runner.runnerId}`], planDigest);
+      raw = outcome.value;
     } catch {
       return blocked([`runner-executor-threw:${runner.runnerId}`], planDigest);
+    } finally {
+      if (deadlineTimer) clearTimeout(deadlineTimer);
     }
     const runnerBlockers = [];
     const observation = validateObservation(raw, runner, artifact, plan, authorization, runnerBlockers);
