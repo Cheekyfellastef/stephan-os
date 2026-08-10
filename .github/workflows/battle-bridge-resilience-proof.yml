@@ -12,7 +12,6 @@ on:
       - 'scripts/battle-bridge-backend-freshness-probe.test.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.test.mjs'
-      - 'scripts/request-battle-bridge-recovery.test.mjs'
       - 'scripts/windows/*battle-bridge-recovery-mesh.ps1'
       - 'scripts/windows/request-battle-bridge-recovery.ps1'
       - 'scripts/windows/install-stephanos-backend-autostart.ps1'
@@ -59,7 +58,6 @@ jobs:
           scripts/battle-bridge-recovery-mesh.test.mjs
           scripts/battle-bridge-recovery-mesh-installer.test.mjs
           scripts/battle-bridge-github-command-mailbox.test.mjs
-          scripts/request-battle-bridge-recovery.test.mjs
           integrations/openclaw/stephanos-ignite-command/lib/recovery-wake.test.mjs
           integrations/openclaw/stephanos-ignite-command/manifest.test.mjs
 
