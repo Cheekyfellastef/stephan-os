@@ -85,14 +85,21 @@ async function githubResponse(path, {
   body = null,
   accept = 'application/vnd.github+json',
   maxBytes = MAX_JSON_BYTES,
+  authorization = 'required',
 } = {}) {
+  if (!['required', 'omit'].includes(authorization)) {
+    fail('GitHub API authorization mode is invalid.', { authorization });
+  }
+  if (authorization === 'omit' && (method !== 'GET' || body !== null)) {
+    fail('Unauthenticated GitHub API access is restricted to bounded GET requests.', { path, method });
+  }
   const token = text(process.env.GH_TOKEN || process.env.GITHUB_TOKEN);
-  if (!token) fail('GitHub Actions token is required.');
+  if (authorization === 'required' && !token) fail('GitHub Actions token is required.');
   const response = await fetch(`https://api.github.com${path}`, {
     method,
     headers: {
       Accept: accept,
-      Authorization: `Bearer ${token}`,
+      ...(authorization === 'required' ? { Authorization: `Bearer ${token}` } : {}),
       'X-GitHub-Api-Version': API_VERSION,
       'User-Agent': USER_AGENT,
       ...(body === null ? {} : { 'Content-Type': 'application/json' }),
@@ -127,12 +134,12 @@ async function apiBytes(path, maxBytes) {
   return bytes;
 }
 
-async function apiCollection(path, itemKey = null) {
+async function apiCollection(path, itemKey = null, options = {}) {
   const separator = path.includes('?') ? '&' : '?';
   const items = [];
   let expectedTotal = null;
   for (let page = 1; page <= MAX_API_PAGES; page += 1) {
-    const payload = await apiJson(`${path}${separator}per_page=100&page=${page}`);
+    const payload = await apiJson(`${path}${separator}per_page=100&page=${page}`, options);
     const pageItems = itemKey ? payload?.[itemKey] : payload;
     if (!Array.isArray(pageItems)) {
       fail('GitHub paginated response had an invalid collection.', { path, itemKey, page });
@@ -271,12 +278,20 @@ async function collectRulesetConfiguration(context, repository, environment, int
   let activeRules = null;
   const rulesets = [];
   const readBlockers = [];
-  try {
-    activeRules = (await apiCollection(
-      `/repos/${context.owner}/${context.repo}/rules/branches/main`,
-    )).items;
-  } catch {
-    readBlockers.push('CONFIGURATION_NOT_PROVED:personal-repository-active-main-rules-api');
+  const publicRepository = repository?.private === false
+    && text(repository?.visibility).toLowerCase() === 'public';
+  if (!publicRepository) {
+    readBlockers.push('CONFIGURATION_NOT_PROVED:personal-repository-public-rules-api');
+  } else {
+    try {
+      activeRules = (await apiCollection(
+        `/repos/${context.owner}/${context.repo}/rules/branches/main`,
+        null,
+        { authorization: 'omit' },
+      )).items;
+    } catch {
+      readBlockers.push('CONFIGURATION_NOT_PROVED:personal-repository-active-main-rules-api');
+    }
   }
   const rulesetIds = [...new Set((activeRules || [])
     .map((rule) => exactPositiveInteger(rule?.ruleset_id))
@@ -285,6 +300,7 @@ async function collectRulesetConfiguration(context, repository, environment, int
     try {
       rulesets.push(await apiJson(
         `/repos/${context.owner}/${context.repo}/rulesets/${rulesetId}?includes_parents=true`,
+        { authorization: 'omit' },
       ));
     } catch {
       readBlockers.push(`CONFIGURATION_NOT_PROVED:personal-repository-ruleset-detail:${rulesetId}`);

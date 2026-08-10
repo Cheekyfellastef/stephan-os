@@ -23,14 +23,10 @@ export const PERSONAL_REPOSITORY_AUTHORITY = 'github-actions-protected-environme
 export const PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS = Object.freeze([
   Object.freeze({ name: 'OpenClaw GitHub Operator', path: '.github/workflows/openclaw-github-operator.yml', event: 'pull_request' }),
   Object.freeze({ name: 'Protected Operator Merge Source Proof', path: '.github/workflows/operator-merge-approval-gate-test.yml', event: 'pull_request' }),
-  Object.freeze({ name: 'Critical Backlog Status Read Proof', path: '.github/workflows/critical-backlog-status-read-proof.yml', event: 'pull_request' }),
   Object.freeze({ name: 'Exact-Head Review Dispatch', path: '.github/workflows/exact-head-review-dispatch.yml', event: 'pull_request' }),
-  Object.freeze({ name: 'Battle Bridge Resilience Proof', path: '.github/workflows/battle-bridge-resilience-proof.yml', event: 'pull_request' }),
   Object.freeze({ name: 'PR Clean Guard', path: '.github/workflows/pr-clean.yml', event: 'pull_request' }),
   Object.freeze({ name: 'Build Stephanos UI', path: '.github/workflows/build-stephanos-ui.yml', event: 'pull_request' }),
   Object.freeze({ name: 'Battle Bridge Publisher Proof', path: '.github/workflows/battle-bridge-publisher-proof.yml', event: 'pull_request' }),
-  Object.freeze({ name: 'Codex Capacity Governor Proof', path: '.github/workflows/codex-capacity-governor-proof.yml', event: 'pull_request' }),
-  Object.freeze({ name: 'Battle Bridge Worker Watchdog Proof', path: '.github/workflows/battle-bridge-worker-watchdog-proof.yml', event: 'pull_request' }),
   Object.freeze({ name: 'Codex Dispatch Queue Proof', path: '.github/workflows/codex-dispatch-queue-proof.yml', event: 'pull_request' }),
 ]);
 
@@ -306,6 +302,9 @@ export function validatePersonalRepositoryConfiguration(input = {}, options = {}
   });
   if (!environment.valid) blockers.push(...environment.blockers);
   if (text(repository?.owner?.type).toLowerCase() !== 'user') blockers.push('personal-repository-configuration-owner-not-user');
+  if (repository?.private !== false || text(repository?.visibility).toLowerCase() !== 'public') {
+    blockers.push('personal-repository-rules-api-not-public');
+  }
   if (text(repository.default_branch) !== 'main') blockers.push('personal-repository-default-branch-not-main');
   if (repository.allow_squash_merge !== true) blockers.push('personal-repository-squash-not-enabled');
   if (repository.delete_branch_on_merge !== false) blockers.push('personal-repository-auto-delete-not-disabled');

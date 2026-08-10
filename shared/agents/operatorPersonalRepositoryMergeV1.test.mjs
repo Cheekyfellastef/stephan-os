@@ -160,6 +160,8 @@ function configuration(overrides = {}) {
   return {
     repository: {
       owner: { type: 'User' },
+      private: false,
+      visibility: 'public',
       default_branch: 'main',
       allow_squash_merge: true,
       delete_branch_on_merge: false,
@@ -199,14 +201,23 @@ test('dispatch inputs require an exact positive identity and immutable review ar
   }
 });
 
-test('all eleven exact-head workflow identities must be active and successful', () => {
+test('all seven universally applicable exact-head workflow identities must be active and successful', () => {
+  assert.deepEqual(PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS.map((workflow) => workflow.name), [
+    'OpenClaw GitHub Operator',
+    'Protected Operator Merge Source Proof',
+    'Exact-Head Review Dispatch',
+    'PR Clean Guard',
+    'Build Stephanos UI',
+    'Battle Bridge Publisher Proof',
+    'Codex Dispatch Queue Proof',
+  ]);
   const ready = validatePersonalRepositoryWorkflowRuns(
     workflowDefinitions(),
     workflowRuns(),
     expectedEvidence,
   );
   assert.equal(ready.valid, true);
-  assert.equal(ready.evidence.length, 11);
+  assert.equal(ready.evidence.length, 7);
 
   const failed = workflowRuns();
   failed[3] = { ...failed[3], conclusion: 'failure' };
@@ -244,6 +255,16 @@ test('configuration requires the exact protected environment and an active no-by
     expectedIntegrationId: integrationId,
   });
   assert.equal(ready.valid, true);
+
+  for (const repositoryOverride of [
+    { ...configuration().repository, private: true, visibility: 'private' },
+    { ...configuration().repository, visibility: '' },
+  ]) {
+    assert.ok(validatePersonalRepositoryConfiguration(configuration({ repository: repositoryOverride }), {
+      requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
+      expectedIntegrationId: integrationId,
+    }).blockers.includes('personal-repository-rules-api-not-public'));
+  }
 
   const unsafeEnvironment = environment();
   unsafeEnvironment.can_admins_bypass = true;

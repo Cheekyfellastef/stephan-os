@@ -70,6 +70,11 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /validatePersonalRepositoryEvidence/);
   assert.match(source, /validatePersonalRepositoryConfiguration/);
   assert.match(source, /validatePersonalRepositoryWorkflowRuns/);
+  assert.match(source, /authorization === 'omit' && \(method !== 'GET' \|\| body !== null\)/);
+  assert.match(source, /personal-repository-public-rules-api/);
+  assert.match(source, /rules\/branches\/main[\s\S]*?authorization: 'omit'/);
+  assert.match(source, /rulesets\/\$\{rulesetId\}[\s\S]*?authorization: 'omit'/);
+  assert.doesNotMatch(source, /GH_TOKEN[^\n]*rules|GITHUB_TOKEN[^\n]*rules/);
   assert.match(source, /loadSelectedIndependentReview/);
   assert.match(source, /personal-repository-prior-attempt-exists/);
   assert.match(source, /validatePersonalRepositoryApprovalReceipt/);
