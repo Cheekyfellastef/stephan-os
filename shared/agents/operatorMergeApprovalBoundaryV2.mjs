@@ -42,6 +42,52 @@ const PERSONAL_REPOSITORY_WORKFLOW_PERMISSIONS = Object.freeze([
   'actions:read,checks:read,contents:read,deployments:read,pull-requests:read',
   'actions:read,checks:read,contents:write,deployments:read,issues:write,pull-requests:write',
 ]);
+const PERSONAL_REPOSITORY_WORKFLOW_JOB_STEPS = Object.freeze([
+  Object.freeze({
+    jobName: 'merge-group-evidence',
+    steps: Object.freeze([
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/checkout@v4' }),
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/setup-node@v4' }),
+      Object.freeze({ executableKey: 'run', executableValue: 'node scripts/operator-protected-merge-gate-v2.mjs evidence' }),
+    ]),
+  }),
+  Object.freeze({
+    jobName: 'operator-merge-queue-boundary',
+    steps: Object.freeze([
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/checkout@v4' }),
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/setup-node@v4' }),
+      Object.freeze({ executableKey: 'run', executableValue: 'node scripts/operator-protected-merge-gate-v2.mjs approve' }),
+    ]),
+  }),
+  Object.freeze({
+    jobName: 'personal-repository-evidence',
+    steps: Object.freeze([
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/checkout@v4' }),
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/setup-node@v4' }),
+      Object.freeze({ executableKey: 'run', executableValue: 'node scripts/operator-protected-personal-repository-merge.mjs evidence' }),
+    ]),
+  }),
+  Object.freeze({
+    jobName: 'operator-personal-repository-approval',
+    steps: Object.freeze([
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/checkout@v4' }),
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/setup-node@v4' }),
+      Object.freeze({ executableKey: 'run', executableValue: 'node scripts/operator-protected-personal-repository-merge.mjs approve' }),
+    ]),
+  }),
+  Object.freeze({
+    jobName: 'operator-personal-repository-squash-merge',
+    steps: Object.freeze([
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/checkout@v4' }),
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/setup-node@v4' }),
+      Object.freeze({ executableKey: 'run', executableValue: 'node scripts/operator-protected-personal-repository-merge.mjs merge' }),
+    ]),
+  }),
+]);
+const WORKFLOW_STEP_KEYS = Object.freeze({
+  uses: Object.freeze(['id', 'name', 'uses', 'with']),
+  run: Object.freeze(['env', 'id', 'name', 'run']),
+});
 const SHA40 = /^[a-f0-9]{40}$/;
 
 export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
@@ -199,6 +245,80 @@ function yamlJobBlock(source, jobName) {
   return lines.slice(starts[0], end).join('\n');
 }
 
+function yamlJobSteps(source, jobName) {
+  const job = yamlJobBlock(source, jobName);
+  if (!job) return Object.freeze({ valid: false, steps: Object.freeze([]) });
+  const lines = job.split(/\r?\n/);
+  const stepsIndexes = lines
+    .map((line, index) => (line === '    steps:' ? index : -1))
+    .filter((index) => index >= 0);
+  if (stepsIndexes.length !== 1) return Object.freeze({ valid: false, steps: Object.freeze([]) });
+
+  const stepLines = [];
+  for (let index = stepsIndexes[0] + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.trim() && !line.trimStart().startsWith('#') && indentation(line) <= 4) break;
+    stepLines.push(line);
+  }
+
+  const blocks = [];
+  let current = null;
+  let valid = true;
+  for (const line of stepLines) {
+    if (!line.trim() || line.trimStart().startsWith('#')) {
+      if (current) current.push(line);
+      continue;
+    }
+    if (/^ {6}-\s+/.test(line)) {
+      current = [line];
+      blocks.push(current);
+      continue;
+    }
+    if (!current || indentation(line) <= 6) {
+      valid = false;
+      continue;
+    }
+    current.push(line);
+  }
+
+  const steps = blocks.map((block) => {
+    const entries = [];
+    const first = block[0].match(/^ {6}- ([a-zA-Z0-9_-]+):(?:\s*(.*))?$/);
+    if (!first) {
+      valid = false;
+      return Object.freeze({ entries: Object.freeze([]) });
+    }
+    entries.push(Object.freeze({ key: first[1], value: first[2] ?? '' }));
+    for (const line of block.slice(1)) {
+      if (!line.trim() || line.trimStart().startsWith('#') || indentation(line) > 8) continue;
+      const entry = line.match(/^ {8}([a-zA-Z0-9_-]+):(?:\s*(.*))?$/);
+      if (!entry) {
+        valid = false;
+        continue;
+      }
+      entries.push(Object.freeze({ key: entry[1], value: entry[2] ?? '' }));
+    }
+    return Object.freeze({ entries: Object.freeze(entries) });
+  });
+
+  return Object.freeze({ valid, steps: Object.freeze(steps) });
+}
+
+function jobHasExactExecutionSteps(source, policy) {
+  const parsed = yamlJobSteps(source, policy.jobName);
+  if (!parsed.valid || parsed.steps.length !== policy.steps.length) return false;
+  return parsed.steps.every((step, index) => {
+    const expected = policy.steps[index];
+    const executableEntries = step.entries.filter((entry) => entry.key === 'uses' || entry.key === 'run');
+    const allowedKeys = WORKFLOW_STEP_KEYS[expected.executableKey];
+    return executableEntries.length === 1
+      && executableEntries[0].key === expected.executableKey
+      && executableEntries[0].value === expected.executableValue
+      && step.entries.every((entry) => allowedKeys.includes(entry.key))
+      && new Set(step.entries.map((entry) => entry.key)).size === step.entries.length;
+  });
+}
+
 function permissionSignatures(source, { requireTopLevelEmpty = true } = {}) {
   const lines = String(source).split(/\r?\n/);
   const signatures = [];
@@ -350,6 +470,11 @@ export function validatePersonalRepositoryProtectedWorkflowSource(input = {}) {
       blockers.push('personal-repository-workflow-job-authority-not-exact');
     }
   }
+  for (const policy of PERSONAL_REPOSITORY_WORKFLOW_JOB_STEPS) {
+    if (!jobHasExactExecutionSteps(content, policy)) {
+      blockers.push('personal-repository-workflow-job-steps-not-exact');
+    }
+  }
   for (const pattern of [
     /^\s+pull_request(?:_target)?:\s*$/m,
     /^\s+repository_dispatch:\s*$/m,
@@ -373,9 +498,6 @@ export function validatePersonalRepositoryProtectedWorkflowSource(input = {}) {
     /^  operator-personal-repository-squash-merge:\s*\n    name: operator-personal-repository-squash-merge\s*\n    if: \$\{\{ github\.event_name == 'workflow_dispatch' \}\}\s*$/m,
     /^    environment:\s*\n      name: operator-merge-approval\s*$/m,
     /^    needs: \[personal-repository-evidence, operator-personal-repository-approval\]\s*$/m,
-    /node scripts\/operator-protected-personal-repository-merge\.mjs evidence/,
-    /node scripts\/operator-protected-personal-repository-merge\.mjs approve/,
-    /node scripts\/operator-protected-personal-repository-merge\.mjs merge/,
   ]) {
     if (!pattern.test(content)) blockers.push('personal-repository-workflow-required-boundary-missing');
   }
