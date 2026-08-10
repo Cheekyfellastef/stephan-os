@@ -174,3 +174,9 @@ test('protected merge check inspection requests exact name, state and workflow i
   assert.match(source, /'--json', 'name,state,workflow'/);
   assert.doesNotMatch(source, /'--json', 'state'/);
 });
+
+test('feature branches emit only the pull-request build checks consumed by protected merge', () => {
+  const source = readFileSync(new URL('../../.github/workflows/build-stephanos-ui.yml', import.meta.url), 'utf8');
+  assert.match(source, /^  push:\n    branches:\n      - main\n    paths:\s*$/m);
+  assert.match(source, /^  pull_request:\s*$/m);
+});
