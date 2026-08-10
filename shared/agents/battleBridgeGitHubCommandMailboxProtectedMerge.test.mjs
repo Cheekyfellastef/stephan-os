@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -16,8 +16,10 @@ import {
   PROTECTED_OPENCLAW_MERGE_FINDING,
   PROTECTED_OPENCLAW_MERGE_MODE,
   PROTECTED_OPENCLAW_MERGE_OPERATION,
+  PROTECTED_OPENCLAW_MERGE_REQUIRED_WORKFLOWS,
   buildProtectedOpenClawMergePlan,
   validateProtectedOpenClawBootstrapFindings,
+  validateProtectedOpenClawMergeChecks,
 } from './protectedOpenClawMergeMailboxAdapter.mjs';
 import {
   APPROVAL_BOUNDARY_PATHS_V2,
@@ -117,4 +119,58 @@ test('bootstrap adapter accepts one or more unique self-change findings only', (
   ]) {
     assert.equal(validateProtectedOpenClawBootstrapFindings(findings), false);
   }
+});
+
+function successfulRequiredChecks() {
+  return PROTECTED_OPENCLAW_MERGE_REQUIRED_WORKFLOWS.map((workflow) => ({
+    name: workflow === 'Build Stephanos UI' ? 'build' : 'proof',
+    workflow,
+    state: 'SUCCESS',
+  }));
+}
+
+test('protected merge requires every canonical workflow while allowing only exact neutral coordinator skips', () => {
+  const checks = [
+    ...successfulRequiredChecks(),
+    { name: 'worker-watchdog-proof', workflow: 'Battle Bridge Worker Watchdog Proof', state: 'SUCCESS' },
+    { name: 'coordinate', workflow: 'Exact-Head Review Dispatch', state: 'SKIPPED' },
+    { name: 'retry', workflow: 'Exact-Head Review Dispatch', state: 'SKIPPED' },
+  ];
+  assert.equal(validateProtectedOpenClawMergeChecks(checks), true);
+});
+
+test('protected merge rejects missing, non-successful, ambiguous and spoofed check identities', () => {
+  const required = successfulRequiredChecks();
+  const withoutBuild = required.filter((check) => check.workflow !== 'Build Stephanos UI');
+  assert.equal(validateProtectedOpenClawMergeChecks(withoutBuild), false);
+
+  for (const state of ['PENDING', 'FAILURE', 'CANCELLED', 'SKIPPED']) {
+    assert.equal(validateProtectedOpenClawMergeChecks([
+      ...required.filter((check) => check.workflow !== 'Build Stephanos UI'),
+      { name: 'build', workflow: 'Build Stephanos UI', state },
+    ]), false);
+  }
+
+  assert.equal(validateProtectedOpenClawMergeChecks([
+    ...required,
+    { ...required[0] },
+  ]), false);
+  assert.equal(validateProtectedOpenClawMergeChecks([
+    ...required,
+    { name: 'coordinate', workflow: 'Spoofed Review Dispatch', state: 'SKIPPED' },
+  ]), false);
+  assert.equal(validateProtectedOpenClawMergeChecks([
+    ...required,
+    { name: 'unrelated', workflow: 'Exact-Head Review Dispatch', state: 'SKIPPED' },
+  ]), false);
+  assert.equal(validateProtectedOpenClawMergeChecks([
+    ...required,
+    { name: '', workflow: 'Exact-Head Review Dispatch', state: 'SUCCESS' },
+  ]), false);
+});
+
+test('protected merge check inspection requests exact name, state and workflow identities', () => {
+  const source = readFileSync(new URL('./protectedOpenClawMergeMailboxAdapter.mjs', import.meta.url), 'utf8');
+  assert.match(source, /'--json', 'name,state,workflow'/);
+  assert.doesNotMatch(source, /'--json', 'state'/);
 });
