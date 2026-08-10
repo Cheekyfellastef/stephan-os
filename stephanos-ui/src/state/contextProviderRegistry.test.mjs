@@ -70,8 +70,9 @@ test('requested provider ids constrain used providers safely', () => {
   assert.deepEqual(snapshot.contextProviderIdsUsed, ['uiReality']);
 });
 
-test('VR and Starfield intent infers vrResearch and consumes canonical Shared Workspace projection', () => {
+test('VR, Starfield and Headset-VR intent infers vrResearch and consumes canonical Shared Workspace projection', () => {
   assert.deepEqual(inferContextProviderIds({ operatorMessage: 'What have we learned about Starfield VR and Air Link?' }), ['vrResearch']);
+  assert.deepEqual(inferContextProviderIds({ operatorMessage: 'What did Headset-VR configure for this flat-to-VR profile?' }), ['vrResearch']);
   const snapshot = buildContextProviderSnapshot({
     operatorMessage: 'What have we learned about Starfield VR and Air Link?',
     now: new Date('2026-08-03T15:45:00Z'),
