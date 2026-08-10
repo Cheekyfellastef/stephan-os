@@ -433,7 +433,7 @@ function validateProtectedWorkflowYaml(path, source) {
     const dispatchInputs = yamlWorkflowDispatchInputKeys(source);
     if (dispatchInputs.length !== requiredInputs.length
       || dispatchInputs.some((input, index) => input !== requiredInputs[index])
-      || !/^run-name: Protected operator merge \$\{\{ github\.event\.merge_group\.head_sha \|\| (?:format\('PR #\{0\} at \{1\}', inputs\.pr_number, inputs\.expected_head\)|inputs\.expected_head \|\| github\.run_id) \}\}\s*$/m.test(source)) {
+      || !/^run-name: Protected operator merge \$\{\{ github\.event\.merge_group\.head_sha \|\| inputs\.expected_head \|\| github\.run_id \}\}\s*$/m.test(source)) {
       blockers.push('protected-workflow-dispatch-inputs-not-exact');
     }
   }
