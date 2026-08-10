@@ -7,6 +7,7 @@ import {
 } from './operatorMergeApprovalGate.mjs';
 
 const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
+const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = 'b6f480f97274e63c835e39533aaa93e179ff58fc5026f7e05d9f17d760c303ef';
 const PERSONAL_REPOSITORY_WORKFLOW_SOURCE_KEYS = Object.freeze([
   'schemaVersion',
   'repository',
@@ -592,6 +593,10 @@ export function validatePersonalRepositoryProtectedWorkflowSource(input = {}) {
   const content = typeof source?.content === 'string' ? source.content : '';
   const size = Buffer.byteLength(content, 'utf8');
   const blockers = [];
+  const canonicalContent = content.replace(/\n+$/u, '\n');
+  if (createHash('sha256').update(canonicalContent, 'utf8').digest('hex') !== PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256) {
+    blockers.push('personal-repository-workflow-content-digest-not-exact');
+  }
   if (!sameKeys(source, PERSONAL_REPOSITORY_WORKFLOW_SOURCE_KEYS)
     || source.schemaVersion !== PROTECTED_WORKFLOW_SOURCE_SCHEMA_VERSION
     || source.repository !== input.repository
