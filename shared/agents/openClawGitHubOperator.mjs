@@ -1,3 +1,5 @@
+import { validateProtectedMergeCheckRows } from './protectedMergeCheckClassifierV1.mjs';
+
 const ALLOWED_OPERATIONS = new Set([
   'inspect',
   'create-worktree',
@@ -182,4 +184,3 @@ export function buildOpenClawGitHubOperation(input = {}) {
     finalVerdict: blockers.length ? 'BLOCKED' : 'READY_TO_EXECUTE',
   };
 }
-import { validateProtectedMergeCheckRows } from './protectedMergeCheckClassifierV1.mjs';
