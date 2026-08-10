@@ -73,6 +73,15 @@ function statusCommand(overrides = {}) {
   });
 }
 
+function watchdogAcceptanceCommand(overrides = {}) {
+  return command({
+    requestId: 'watchdog-acceptance-20260720-001',
+    operation: 'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+    expectedInitialPid: 32944,
+    ...overrides,
+  });
+}
+
 function comment(payload = command(), overrides = {}) {
   return {
     id: 100,
@@ -144,6 +153,57 @@ test('control-plane and banked reset commands are allowlisted', () => {
   ]) {
     assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation));
   }
+});
+
+test('watchdog acceptance requires and preserves one positive operator-bound PID', async () => {
+  const validated = validateBattleBridgeGitHubCommand(watchdogAcceptanceCommand(), {
+    authorLogin: 'Cheekyfellastef', now,
+  });
+  assert.equal(validated.ok, true);
+  assert.equal(validated.command.expectedInitialPid, 32944);
+
+  for (const expectedInitialPid of [undefined, null, '', 0, -1, 1.5, '32944', 0x100000000]) {
+    const payload = watchdogAcceptanceCommand({ expectedInitialPid });
+    const result = validateBattleBridgeGitHubCommand(payload, { authorLogin: 'Cheekyfellastef', now });
+    assert.equal(result.ok, false);
+    assert.ok([
+      'WORKER_WATCHDOG_EXPECTED_INITIAL_PID_REQUIRED',
+      'WORKER_WATCHDOG_EXPECTED_INITIAL_PID_INVALID',
+    ].includes(result.blocker), `${String(expectedInitialPid)}: ${result.blocker}`);
+  }
+
+  assert.equal(validateBattleBridgeGitHubCommand(command({ expectedInitialPid: 32944 }), {
+    authorLogin: 'Cheekyfellastef', now,
+  }).blocker, 'WORKER_WATCHDOG_PID_FIELD_NOT_ALLOWED');
+
+  const calls = [];
+  const execution = await executeBattleBridgeGitHubCommand(validated.command, {
+    runWorkerWatchdogAcceptance: async (input) => {
+      calls.push(input.expectedInitialPid);
+      return {
+        ok: true,
+        expectedInitialPid: input.expectedInitialPid,
+        initialObservedPid: input.expectedInitialPid,
+        preKillObservedPid: input.expectedInitialPid,
+        initialPid: input.expectedInitialPid,
+        recoveredPid: 33001,
+      };
+    },
+  });
+  assert.equal(execution.ok, true);
+  assert.deepEqual(calls, [32944]);
+
+  const receipt = buildBattleBridgeGitHubCommandReceipt({
+    command: validated.command,
+    state: 'DONE',
+    acceptedAt: now.toISOString(),
+    heartbeatAt: now.toISOString(),
+    completedAt: now.toISOString(),
+    result: execution,
+  });
+  assert.equal(receipt.expectedInitialPid, 32944);
+  assert.equal(receipt.result.result.initialObservedPid, 32944);
+  assert.equal(receipt.result.result.preKillObservedPid, 32944);
 });
 
 test('recovery mesh install and wake require exact main head and dispatch only to named handlers', async () => {

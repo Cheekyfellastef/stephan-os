@@ -116,6 +116,7 @@ function common(overrides = {}) {
   let installationReads = 0;
   return {
     expectedHead,
+    expectedInitialPid: 101,
     platform: 'win32',
     paths,
     expectedPaths: paths,
@@ -253,10 +254,92 @@ test('classifies successful recovery only from exact fresh publication plus posi
   assert.equal(result.classification, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.success);
 });
 
+test('requires a positive operator-bound initial PID before any worker or watchdog action', async () => {
+  for (const expectedInitialPid of [undefined, 0, -1, 1.5, Number.NaN]) {
+    let inspections = 0;
+    let installs = 0;
+    let kills = 0;
+    const result = await runBattleBridgeWorkerWatchdogAcceptance(common({
+      expectedInitialPid,
+      inspectWorker: () => { inspections += 1; return { ok: true, data: healthyObservation(101) }; },
+      installWatchdog: () => { installs += 1; return { ok: true, data: {} }; },
+      killWorker: () => { kills += 1; return { ok: true, pid: 101 }; },
+    }));
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'EXPECTED_INITIAL_PID_REQUIRED');
+    assert.equal(inspections, 0);
+    assert.equal(installs, 0);
+    assert.equal(kills, 0);
+  }
+});
+
+test('initial PID mismatch stops before watchdog installation, priming or kill', async () => {
+  let installs = 0;
+  let starts = 0;
+  let kills = 0;
+  const result = await runBattleBridgeWorkerWatchdogAcceptance(common({
+    expectedInitialPid: 32944,
+    inspectWorker: () => ({ ok: true, data: healthyObservation(101) }),
+    installWatchdog: () => { installs += 1; return { ok: true, data: {} }; },
+    startWatchdog: () => { starts += 1; return { ok: true, data: {} }; },
+    killWorker: () => { kills += 1; return { ok: true, pid: 101 }; },
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'EXPECTED_INITIAL_PID_MISMATCH');
+  assert.equal(result.expectedInitialPid, 32944);
+  assert.equal(result.initialObservedPid, 101);
+  assert.equal(installs, 0);
+  assert.equal(starts, 0);
+  assert.equal(kills, 0);
+});
+
+test('PID drift during watchdog priming stops without killing either worker', async () => {
+  const observations = [
+    healthyObservation(101),
+    healthyObservation(101),
+    healthyObservation(202),
+  ];
+  let kills = 0;
+  const result = await runBattleBridgeWorkerWatchdogAcceptance(common({
+    inspectWorker: () => ({ ok: true, data: observations.shift() || healthyObservation(202) }),
+    killWorker: () => { kills += 1; return { ok: true, pid: 101 }; },
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'EXPECTED_INITIAL_PID_DRIFTED_AFTER_PRIMING');
+  assert.equal(result.expectedInitialPid, 101);
+  assert.equal(result.initialObservedPid, 101);
+  assert.equal(result.preKillObservedPid, 202);
+  assert.equal(result.workerKilled, false);
+  assert.equal(kills, 0);
+});
+
+test('PID drift in the final pre-kill inspection stops without killing either worker', async () => {
+  const observations = [
+    healthyObservation(101),
+    healthyObservation(101),
+    healthyObservation(101),
+    healthyObservation(202),
+  ];
+  let kills = 0;
+  const result = await runBattleBridgeWorkerWatchdogAcceptance(common({
+    inspectWorker: () => ({ ok: true, data: observations.shift() || healthyObservation(202) }),
+    killWorker: () => { kills += 1; return { ok: true, pid: 101 }; },
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'EXPECTED_INITIAL_PID_DRIFTED_BEFORE_KILL');
+  assert.equal(result.expectedInitialPid, 101);
+  assert.equal(result.initialObservedPid, 101);
+  assert.equal(result.preKillObservedPid, 202);
+  assert.equal(result.workerKilled, false);
+  assert.equal(kills, 0);
+});
+
 test('kills once, starts the installed watchdog task and requires fresh task-published recovery before exact-head proof', async () => {
   const nowMs = Date.now();
   const timestampUtc = new Date(nowMs).toISOString();
   const observations = [
+    healthyObservation(101, timestampUtc, previousHead),
+    healthyObservation(101, timestampUtc, previousHead),
     healthyObservation(101, timestampUtc, previousHead),
     healthyObservation(101, timestampUtc, previousHead),
     downObservation(timestampUtc),
@@ -293,6 +376,9 @@ test('kills once, starts the installed watchdog task and requires fresh task-pub
   assert.equal(result.watchdogStartedThroughScheduledTask, true);
   assert.equal(result.initialHead, previousHead);
   assert.equal(result.recoveredHead, expectedHead);
+  assert.equal(result.expectedInitialPid, 101);
+  assert.equal(result.initialObservedPid, 101);
+  assert.equal(result.preKillObservedPid, 101);
   assert.equal(result.initialPid, 101);
   assert.equal(result.recoveredPid, 202);
   assert.equal(result.workerKilledObserved, true);
@@ -309,6 +395,8 @@ test('fails closed if the installed watchdog Scheduled Task start is not proven'
   const nowMs = Date.now();
   const timestampUtc = new Date(nowMs).toISOString();
   const observations = [
+    healthyObservation(101, timestampUtc, previousHead),
+    healthyObservation(101, timestampUtc, previousHead),
     healthyObservation(101, timestampUtc, previousHead),
     healthyObservation(101, timestampUtc, previousHead),
     downObservation(timestampUtc),
@@ -395,6 +483,8 @@ test('does not claim acceptance without fresh installed-task recovery status', a
   const observations = [
     healthyObservation(101, timestampUtc),
     healthyObservation(101, timestampUtc),
+    healthyObservation(101, timestampUtc),
+    healthyObservation(101, timestampUtc),
     downObservation(timestampUtc),
   ];
   let statusReads = 0;
@@ -419,6 +509,8 @@ test('classifies a rejected final acceptance transaction as recovery publication
   const nowMs = Date.now();
   const timestampUtc = new Date(nowMs).toISOString();
   const observations = [
+    healthyObservation(101, timestampUtc),
+    healthyObservation(101, timestampUtc),
     healthyObservation(101, timestampUtc),
     healthyObservation(101, timestampUtc),
     downObservation(timestampUtc),
@@ -531,6 +623,7 @@ test('authority is fixed to one verified canonical worker kill with no generic e
   assert.equal(WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY.maximumWorkerKillsPerRun, 1);
   assert.equal(WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY.processKillAllowed, true);
   assert.equal(WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY.processKillScope, 'verified-canonical-worker-only');
+  assert.equal(WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY.operatorBoundPidRequired, true);
   assert.equal(WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY.arbitraryPidAllowed, false);
   assert.equal(WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY.arbitraryTaskNameAllowed, false);
   assert.equal(WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY.arbitraryShellAllowed, false);

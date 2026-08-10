@@ -36,6 +36,7 @@ export const WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY = Object.freeze({
   approvedWatchdogTask: APPROVED_WATCHDOG_TASK,
   processKillAllowed: true,
   processKillScope: 'verified-canonical-worker-only',
+  operatorBoundPidRequired: true,
   arbitraryPidAllowed: false,
   arbitraryTaskNameAllowed: false,
   arbitraryShellAllowed: false,
@@ -532,6 +533,7 @@ export async function publishAcceptanceProofTransaction({ paths, now, evidence, 
 
 export async function runBattleBridgeWorkerWatchdogAcceptance({
   expectedHead = '',
+  expectedInitialPid = 0,
   env = process.env,
   platform = process.platform,
   now = new Date(),
@@ -551,6 +553,9 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
 } = {}) {
   if (platform !== 'win32') return blocked('WINDOWS_REQUIRED');
   if (!SHA_40.test(text(expectedHead))) return blocked('EXPECTED_HEAD_REQUIRED');
+  if (!Number.isSafeInteger(expectedInitialPid) || expectedInitialPid <= 0) {
+    return blocked('EXPECTED_INITIAL_PID_REQUIRED', { expectedInitialPid: 0, workerKilled: false });
+  }
   const pathValidation = validateCanonicalWorkerWatchdogAcceptancePaths({ paths, expectedPaths });
   if (!pathValidation.ok) return blocked(pathValidation.blocker);
 
@@ -558,6 +563,41 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
   if (!source?.ok || source.branch !== 'main') return blocked('CANONICAL_MAIN_SOURCE_REQUIRED');
   if (text(source.sourceHead).toLowerCase() !== text(expectedHead).toLowerCase()) {
     return blocked('EXPECTED_HEAD_MISMATCH', { sourceHead: text(source.sourceHead).toLowerCase(), expectedHeadMatch: false });
+  }
+
+  const preflightProbe = inspectWorker();
+  if (!preflightProbe?.ok) {
+    return blocked('INITIAL_WORKER_PROBE_FAILED', {
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      expectedInitialPid,
+      workerKilled: false,
+    });
+  }
+  let initial = assessCanonicalWorkerObservation(preflightProbe.data, {
+    expectedHead,
+    requireExactHead: false,
+    nowMs: Math.max(now.getTime(), Number(clock()) || 0),
+    expectedRepoRoot: paths.repoRoot,
+  });
+  if (!initial.ok) {
+    return blocked('INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY', {
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      expectedInitialPid,
+      initialObservedPid: initial.pid,
+      workerKilled: false,
+    });
+  }
+  const initialObservedPid = initial.pid;
+  if (initialObservedPid !== expectedInitialPid) {
+    return blocked('EXPECTED_INITIAL_PID_MISMATCH', {
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      expectedInitialPid,
+      initialObservedPid,
+      workerKilled: false,
+    });
   }
 
   const install = installWatchdog();
@@ -575,14 +615,36 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
   }
 
   const initialProbe = inspectWorker();
-  if (!initialProbe?.ok) return blocked('INITIAL_WORKER_PROBE_FAILED', { sourceHead: source.sourceHead, expectedHeadMatch: true });
-  let initial = assessCanonicalWorkerObservation(initialProbe.data, {
+  if (!initialProbe?.ok) return blocked('INITIAL_WORKER_PROBE_FAILED', {
+    sourceHead: source.sourceHead,
+    expectedHeadMatch: true,
+    expectedInitialPid,
+    initialObservedPid,
+    workerKilled: false,
+  });
+  initial = assessCanonicalWorkerObservation(initialProbe.data, {
     expectedHead,
     requireExactHead: false,
     nowMs: Math.max(now.getTime(), Number(clock()) || 0),
     expectedRepoRoot: paths.repoRoot,
   });
-  if (!initial.ok) return blocked('INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY', { sourceHead: source.sourceHead, expectedHeadMatch: true });
+  if (!initial.ok) return blocked('INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY', {
+    sourceHead: source.sourceHead,
+    expectedHeadMatch: true,
+    expectedInitialPid,
+    initialObservedPid,
+    workerKilled: false,
+  });
+  if (initial.pid !== expectedInitialPid) {
+    return blocked('EXPECTED_INITIAL_PID_DRIFTED_BEFORE_PRIMING', {
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      expectedInitialPid,
+      initialObservedPid,
+      preKillObservedPid: initial.pid,
+      workerKilled: false,
+    });
+  }
 
   const primeStartedAtMs = clock();
   const primeStart = startWatchdog();
@@ -594,6 +656,8 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
       recoveryClassification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.scheduledTaskLaunchFailure,
       sourceHead: source.sourceHead,
       expectedHeadMatch: true,
+      expectedInitialPid,
+      initialObservedPid,
       workerKilled: false,
     });
   }
@@ -620,6 +684,8 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
       recoveryClassification: classification,
       sourceHead: source.sourceHead,
       expectedHeadMatch: true,
+      expectedInitialPid,
+      initialObservedPid,
       workerKilled: false,
       launchClassification: text(launchStatus?.classification),
       watchdogClassification: text(primedHealthy.status?.classification),
@@ -631,20 +697,45 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     return blocked('WATCHDOG_TASK_RECONCILIATION_FAILED', {
       sourceHead: source.sourceHead,
       expectedHeadMatch: true,
+      expectedInitialPid,
+      initialObservedPid,
       taskState: text(primedIdle.installation?.data?.taskState),
       workerKilled: false,
     });
   }
 
   const readyProbe = inspectWorker();
-  if (!readyProbe?.ok) return blocked('INITIAL_WORKER_PROBE_FAILED', { sourceHead: source.sourceHead, expectedHeadMatch: true });
+  if (!readyProbe?.ok) return blocked('INITIAL_WORKER_PROBE_FAILED', {
+    sourceHead: source.sourceHead,
+    expectedHeadMatch: true,
+    expectedInitialPid,
+    initialObservedPid,
+    workerKilled: false,
+  });
   initial = assessCanonicalWorkerObservation(readyProbe.data, {
     expectedHead,
     requireExactHead: false,
     nowMs: Math.max(now.getTime(), Number(clock()) || 0),
     expectedRepoRoot: paths.repoRoot,
   });
-  if (!initial.ok) return blocked('INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY', { sourceHead: source.sourceHead, expectedHeadMatch: true });
+  if (!initial.ok) return blocked('INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY', {
+    sourceHead: source.sourceHead,
+    expectedHeadMatch: true,
+    expectedInitialPid,
+    initialObservedPid,
+    preKillObservedPid: initial.pid,
+    workerKilled: false,
+  });
+  if (initial.pid !== expectedInitialPid) {
+    return blocked('EXPECTED_INITIAL_PID_DRIFTED_AFTER_PRIMING', {
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      expectedInitialPid,
+      initialObservedPid,
+      preKillObservedPid: initial.pid,
+      workerKilled: false,
+    });
+  }
 
   const sourceBeforeKill = readSourceIdentity();
   if (!sourceBeforeKill?.ok
@@ -653,6 +744,46 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     return blocked('HEAD_CHANGED', {
       sourceHead: text(sourceBeforeKill?.sourceHead).toLowerCase(),
       expectedHeadMatch: false,
+      expectedInitialPid,
+      initialObservedPid,
+      workerKilled: false,
+    });
+  }
+
+  const preKillProbe = inspectWorker();
+  if (!preKillProbe?.ok) {
+    return blocked('PRE_KILL_WORKER_PROBE_FAILED', {
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      expectedInitialPid,
+      initialObservedPid,
+      workerKilled: false,
+    });
+  }
+  const preKill = assessCanonicalWorkerObservation(preKillProbe.data, {
+    expectedHead,
+    requireExactHead: false,
+    nowMs: Math.max(now.getTime(), Number(clock()) || 0),
+    expectedRepoRoot: paths.repoRoot,
+  });
+  const preKillObservedPid = preKill.pid;
+  if (!preKill.ok) {
+    return blocked('PRE_KILL_WORKER_NOT_CANONICAL_AND_HEALTHY', {
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      expectedInitialPid,
+      initialObservedPid,
+      preKillObservedPid,
+      workerKilled: false,
+    });
+  }
+  if (preKillObservedPid !== expectedInitialPid) {
+    return blocked('EXPECTED_INITIAL_PID_DRIFTED_BEFORE_KILL', {
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      expectedInitialPid,
+      initialObservedPid,
+      preKillObservedPid,
       workerKilled: false,
     });
   }
@@ -660,11 +791,18 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
   const baselineStatus = primedHealthy.status;
   const baselineStatusTimestampMs = statusTimestampMs(baselineStatus);
   const baselineTaskLastRunTimeMs = taskLastRunTimestampMs(primedIdle.installation);
-  const initialPid = initial.pid;
+  const initialPid = expectedInitialPid;
   const killedAtMs = clock();
   const killed = killWorker(initialPid);
   if (!killed?.ok || killed.pid !== initialPid) {
-    return blocked('VERIFIED_WORKER_KILL_FAILED', { sourceHead: source.sourceHead, expectedHeadMatch: true, initialPid });
+    return blocked('VERIFIED_WORKER_KILL_FAILED', {
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      expectedInitialPid,
+      initialObservedPid,
+      preKillObservedPid,
+      initialPid,
+    });
   }
 
   let workerKilledObserved = false;
@@ -679,7 +817,14 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     }
   }
   if (!workerKilledObserved) {
-    return blocked('WORKER_TERMINATION_NOT_OBSERVED', { sourceHead: source.sourceHead, expectedHeadMatch: true, initialPid });
+    return blocked('WORKER_TERMINATION_NOT_OBSERVED', {
+      sourceHead: source.sourceHead,
+      expectedHeadMatch: true,
+      expectedInitialPid,
+      initialObservedPid,
+      preKillObservedPid,
+      initialPid,
+    });
   }
 
   const recoveryStartedAtMs = clock();
@@ -692,6 +837,9 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
       recoveryClassification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.scheduledTaskLaunchFailure,
       sourceHead: source.sourceHead,
       expectedHeadMatch: true,
+      expectedInitialPid,
+      initialObservedPid,
+      preKillObservedPid,
       initialPid,
       workerKilledObserved,
     });
@@ -737,6 +885,9 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
       recoveryClassification: classification,
       sourceHead: source.sourceHead,
       expectedHeadMatch: true,
+      expectedInitialPid,
+      initialObservedPid,
+      preKillObservedPid,
       initialPid,
       recoveredPid,
       workerKilledObserved,
@@ -749,6 +900,9 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
       recoveryClassification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.workerRestartFailure,
       sourceHead: source.sourceHead,
       expectedHeadMatch: true,
+      expectedInitialPid,
+      initialObservedPid,
+      preKillObservedPid,
       initialPid,
       recoveredPid,
       workerKilledObserved,
@@ -765,8 +919,11 @@ export async function runBattleBridgeWorkerWatchdogAcceptance({
     watchdogStartedThroughScheduledTask: true,
     watchdogRecoveryRoute: watchdogRecovery.route,
     recoveryClassification: INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.success,
-    initialHead: initial.headSha,
+    initialHead: preKill.headSha,
     recoveredHead: final.headSha,
+    expectedInitialPid,
+    initialObservedPid,
+    preKillObservedPid,
     initialPid,
     recoveredPid,
     workerKilled: true,
@@ -814,7 +971,8 @@ export function isDirectCliEntrypoint({ metaUrl = import.meta.url, argv1 = proce
 
 if (isDirectCliEntrypoint()) {
   const expectedHead = text(process.argv[2]);
-  const result = await runBattleBridgeWorkerWatchdogAcceptance({ expectedHead });
+  const expectedInitialPid = Number(process.argv[3]);
+  const result = await runBattleBridgeWorkerWatchdogAcceptance({ expectedHead, expectedInitialPid });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   process.exitCode = result.ok ? 0 : 2;
 }

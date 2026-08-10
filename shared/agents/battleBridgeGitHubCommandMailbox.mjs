@@ -77,6 +77,7 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const RESET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,120}$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const PR_NUMBER_PATTERN = /^[1-9][0-9]{0,9}$/;
+const WINDOWS_PID_MAX = 0xffffffff;
 const MAX_FUTURE_WINDOW_MS = 6 * 60 * 60 * 1000;
 const RESET_COMMAND_FIELDS = Object.freeze([
   'resetId',
@@ -241,6 +242,23 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
   if (command.expectedHead && !SHA_PATTERN.test(String(command.expectedHead))) {
     return fail('COMMAND_EXPECTED_HEAD_INVALID');
   }
+  let expectedInitialPid = 0;
+  if (command.operation === 'RUN_WORKER_WATCHDOG_ACCEPTANCE') {
+    if (!SHA_PATTERN.test(String(command.expectedHead || ''))) {
+      return fail('WORKER_WATCHDOG_EXPECTED_HEAD_REQUIRED');
+    }
+    if (!hasValue(command.expectedInitialPid)) {
+      return fail('WORKER_WATCHDOG_EXPECTED_INITIAL_PID_REQUIRED');
+    }
+    if (!Number.isSafeInteger(command.expectedInitialPid)
+      || command.expectedInitialPid <= 0
+      || command.expectedInitialPid > WINDOWS_PID_MAX) {
+      return fail('WORKER_WATCHDOG_EXPECTED_INITIAL_PID_INVALID');
+    }
+    expectedInitialPid = command.expectedInitialPid;
+  } else if (hasValue(command.expectedInitialPid)) {
+    return fail('WORKER_WATCHDOG_PID_FIELD_NOT_ALLOWED');
+  }
   if (['INSTALL_BATTLE_BRIDGE_RECOVERY_MESH', 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'].includes(command.operation)
     && !SHA_PATTERN.test(String(command.expectedHead || ''))) {
     return fail('RECOVERY_MESH_EXPECTED_HEAD_REQUIRED');
@@ -353,6 +371,7 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
       branch: 'main',
       operatorApproval: 'operator-approved',
       expectedHead: String(command.expectedHead || ''),
+      expectedInitialPid,
       targetRequestId: command.operation === 'READ_MAILBOX_RECEIPT' ? targetRequestId : '',
       prNumber: ['RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF', PROTECTED_OPENCLAW_MERGE_OPERATION].includes(command.operation)
         ? Number(command.prNumber)
@@ -674,6 +693,9 @@ export function buildBattleBridgeGitHubCommandReceipt({
     issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
     expectedHead: String(command?.expectedHead || ''),
+    expectedInitialPid: command?.operation === 'RUN_WORKER_WATCHDOG_ACCEPTANCE'
+      ? Number(command?.expectedInitialPid || 0)
+      : 0,
     relatedPr: scopedDelivery ? String(scopedDelivery.relatedPr || '') : '',
     mergeCommit: scopedDelivery ? String(scopedDelivery.mergeCommit || '') : '',
     deploymentHead: scopedDelivery ? String(scopedDelivery.deploymentHead || '') : '',

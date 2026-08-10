@@ -44,6 +44,7 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(mailboxSource, /maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH/);
   assert.match(mailboxSource, /deferredCount: batch\.deferredCount/);
   assert.match(mailboxSource, /updateStephanosFromChat\(\{[\s\S]{0,180}expectedHead: command\.expectedHead/);
+  assert.match(mailboxSource, /runBattleBridgeWorkerWatchdogAcceptance\(\{[\s\S]{0,180}expectedInitialPid: command\.expectedInitialPid/);
   assert.doesNotMatch(mailboxSource, /BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE\s*=\s*[^1]*2|issueNumber:\s*1508/);
 
   assert.match(
@@ -389,6 +390,45 @@ test('exact-head proof projections retain the verified PR and local heads', () =
     },
   });
   assert.equal(missingAncestry.operationResult.expectedHeadMatch, false);
+});
+
+test('watchdog acceptance receipt projections preserve every bounded PID identity', () => {
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'watchdog-acceptance-pid-binding-001',
+    operation: 'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+    state: 'DONE',
+    expectedHead: 'a'.repeat(40),
+    expectedInitialPid: 32944,
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      result: {
+        ok: true,
+        finalVerdict: 'WORKER_WATCHDOG_ACCEPTANCE_PASS',
+        expectedInitialPid: 32944,
+        initialObservedPid: 32944,
+        preKillObservedPid: 32944,
+        initialPid: 32944,
+        recoveredPid: 33001,
+      },
+    },
+  };
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.expectedInitialPid, 32944);
+  assert.equal(projected.operationResult.expectedInitialPid, 32944);
+  assert.equal(projected.operationResult.initialObservedPid, 32944);
+  assert.equal(projected.operationResult.preKillObservedPid, 32944);
+  assert.equal(projected.operationResult.initialPid, 32944);
+  assert.equal(projected.operationResult.recoveredPid, 33001);
+
+  const compact = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(compact.expectedInitialPid, 32944);
+  assert.equal(compact.result.result.expectedInitialPid, 32944);
+  assert.equal(compact.result.result.initialObservedPid, 32944);
+  assert.equal(compact.result.result.preKillObservedPid, 32944);
+  assert.equal(compact.result.result.initialPid, 32944);
+  assert.equal(compact.result.result.recoveredPid, 33001);
 });
 
 test('failed chat updates retain installed source truth and bounded post-sync test evidence', () => {
