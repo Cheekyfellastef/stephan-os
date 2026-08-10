@@ -1,7 +1,94 @@
+import { createHash } from 'node:crypto';
 import {
   APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE,
+  PROTECTED_WORKFLOW_SOURCE_MAX_BYTES,
+  PROTECTED_WORKFLOW_SOURCE_SCHEMA_VERSION,
   analyzeIndependentSecurityReview,
 } from './operatorMergeApprovalGate.mjs';
+
+const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
+const PERSONAL_REPOSITORY_WORKFLOW_SOURCE_KEYS = Object.freeze([
+  'schemaVersion',
+  'repository',
+  'path',
+  'ref',
+  'exists',
+  'size',
+  'blobSha',
+  'content',
+]);
+const PERSONAL_REPOSITORY_WORKFLOW_EVENTS = Object.freeze(['merge_group', 'workflow_dispatch']);
+const PERSONAL_REPOSITORY_WORKFLOW_INPUTS = Object.freeze([
+  'mode',
+  'pr_number',
+  'expected_branch',
+  'expected_head',
+  'expected_head_tree',
+  'expected_base',
+  'independent_review_run_id',
+  'independent_review_run_attempt',
+  'independent_review_artifact_id',
+  'independent_review_artifact_digest',
+  'independent_review_payload_sha256',
+]);
+const PERSONAL_REPOSITORY_WORKFLOW_CHECKOUT_REFS = Object.freeze([
+  Object.freeze({ expression: 'github\\.event\\.merge_group\\.base_sha', count: 2 }),
+  Object.freeze({ expression: 'github\\.sha', count: 3 }),
+]);
+const PERSONAL_REPOSITORY_WORKFLOW_PERMISSIONS = Object.freeze([
+  'actions:read,checks:read,contents:read,pull-requests:read',
+  'actions:read,checks:read,contents:read,pull-requests:read',
+  'actions:read,checks:read,contents:read,deployments:read,pull-requests:read',
+  'actions:read,checks:read,contents:read,deployments:read,pull-requests:read',
+  'actions:read,checks:read,contents:write,deployments:read,issues:write,pull-requests:write',
+]);
+const PERSONAL_REPOSITORY_WORKFLOW_JOB_STEPS = Object.freeze([
+  Object.freeze({
+    jobName: 'merge-group-evidence',
+    steps: Object.freeze([
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/checkout@v4' }),
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/setup-node@v4' }),
+      Object.freeze({ executableKey: 'run', executableValue: 'node scripts/operator-protected-merge-gate-v2.mjs evidence' }),
+    ]),
+  }),
+  Object.freeze({
+    jobName: 'operator-merge-queue-boundary',
+    steps: Object.freeze([
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/checkout@v4' }),
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/setup-node@v4' }),
+      Object.freeze({ executableKey: 'run', executableValue: 'node scripts/operator-protected-merge-gate-v2.mjs approve' }),
+    ]),
+  }),
+  Object.freeze({
+    jobName: 'personal-repository-evidence',
+    steps: Object.freeze([
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/checkout@v4' }),
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/setup-node@v4' }),
+      Object.freeze({ executableKey: 'run', executableValue: 'node scripts/operator-protected-personal-repository-merge.mjs evidence' }),
+    ]),
+  }),
+  Object.freeze({
+    jobName: 'operator-personal-repository-approval',
+    steps: Object.freeze([
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/checkout@v4' }),
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/setup-node@v4' }),
+      Object.freeze({ executableKey: 'run', executableValue: 'node scripts/operator-protected-personal-repository-merge.mjs approve' }),
+    ]),
+  }),
+  Object.freeze({
+    jobName: 'operator-personal-repository-squash-merge',
+    steps: Object.freeze([
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/checkout@v4' }),
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/setup-node@v4' }),
+      Object.freeze({ executableKey: 'run', executableValue: 'node scripts/operator-protected-personal-repository-merge.mjs merge' }),
+    ]),
+  }),
+]);
+const WORKFLOW_STEP_KEYS = Object.freeze({
+  uses: Object.freeze(['id', 'name', 'uses', 'with']),
+  run: Object.freeze(['env', 'id', 'name', 'run']),
+});
+const SHA40 = /^[a-f0-9]{40}$/;
 
 export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
   '.github/workflows/operator-merge-approval-gate.yml',
@@ -15,12 +102,15 @@ export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
   '.github/workflows/operator-merge-approval-gate-test.yml',
   '.github/workflows/stephanos-deploy.yml',
   'scripts/operator-protected-merge-gate-v2.mjs',
+  'scripts/operator-protected-personal-repository-merge.mjs',
   'scripts/independent-merge-security-review-v2.mjs',
   'shared/agents/operatorMergeApprovalGate.mjs',
   'shared/agents/operatorMergeApprovalGateV2.mjs',
   'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
   'shared/agents/operatorMergeBaseBindingV1.mjs',
   'shared/agents/operatorMergeReviewArtifactV1.mjs',
+  'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+  'shared/agents/protectedOpenClawMergeMailboxAdapter.mjs',
   'shared/agents/providerNeutralReviewV1.mjs',
   'shared/agents/qualifiedSpecialistReviewV1.mjs',
 ]);
@@ -37,6 +127,7 @@ const ALL_APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
 
 const OPERATOR_EXECUTOR_PATHS = Object.freeze([
   'scripts/operator-protected-merge-gate-v2.mjs',
+  'scripts/operator-protected-personal-repository-merge.mjs',
 ]);
 
 const INDEPENDENT_REVIEWER_PATHS = Object.freeze([
@@ -46,6 +137,7 @@ const INDEPENDENT_REVIEWER_PATHS = Object.freeze([
 
 const BASE_BINDING_PATHS = Object.freeze([
   'shared/agents/operatorMergeBaseBindingV1.mjs',
+  'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
 ]);
 
 function text(value) {
@@ -54,6 +146,368 @@ function text(value) {
 
 function unique(values) {
   return [...new Set(values)];
+}
+
+function sameKeys(candidate, expectedKeys) {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false;
+  const keys = Object.keys(candidate).sort();
+  const expected = [...expectedKeys].sort();
+  return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
+}
+
+function gitBlobSha(content) {
+  const bytes = Buffer.from(content, 'utf8');
+  return createHash('sha1')
+    .update(`blob ${bytes.length}\0`, 'utf8')
+    .update(bytes)
+    .digest('hex');
+}
+
+function indentation(line) {
+  return line.match(/^ */)?.[0].length ?? 0;
+}
+
+function yamlEventKeys(source) {
+  const lines = String(source).split(/\r?\n/);
+  const onIndexes = lines
+    .map((line, index) => (/^on:\s*$/.test(line) ? index : -1))
+    .filter((index) => index >= 0);
+  if (onIndexes.length !== 1) return [];
+  const keys = [];
+  for (let index = onIndexes[0] + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    if (indentation(line) === 0) break;
+    const directKey = line.match(/^ {2}([a-zA-Z0-9_-]+):(?:\s.*)?$/);
+    if (directKey) keys.push(directKey[1]);
+  }
+  return keys;
+}
+
+function yamlWorkflowDispatchInputKeys(source) {
+  const lines = String(source).split(/\r?\n/);
+  const dispatchIndex = lines.findIndex((line) => /^ {2}workflow_dispatch:\s*$/.test(line));
+  if (dispatchIndex < 0) return [];
+  const inputsIndex = lines.findIndex((line, index) => index > dispatchIndex && /^ {4}inputs:\s*$/.test(line));
+  if (inputsIndex < 0) return [];
+  const keys = [];
+  for (let index = inputsIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    if (indentation(line) <= 4) break;
+    const directKey = line.match(/^ {6}([a-zA-Z0-9_-]+):\s*$/);
+    if (directKey) keys.push(directKey[1]);
+  }
+  return keys;
+}
+
+function yamlWorkflowDispatchInputBlocks(source) {
+  const lines = String(source).split(/\r?\n/);
+  const keys = yamlWorkflowDispatchInputKeys(source);
+  return keys.map((key) => {
+    const start = lines.findIndex((line) => line === `      ${key}:`);
+    let end = start + 1;
+    while (end < lines.length && (!lines[end].trim() || indentation(lines[end]) > 6)) end += 1;
+    return Object.freeze({ key, lines: Object.freeze(lines.slice(start + 1, end)) });
+  });
+}
+
+function checkoutBlocks(source) {
+  const lines = String(source).split(/\r?\n/);
+  const blocks = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/^\s*uses:\s*actions\/checkout@/.test(lines[index])) continue;
+    const usesIndent = indentation(lines[index]);
+    let end = index + 1;
+    while (end < lines.length) {
+      const candidate = lines[end];
+      if (candidate.trim() && !candidate.trimStart().startsWith('#')
+        && indentation(candidate) < usesIndent) break;
+      end += 1;
+    }
+    blocks.push(Object.freeze({
+      uses: lines[index].trim(),
+      lines: Object.freeze(lines.slice(index, end)),
+      usesIndent,
+    }));
+  }
+  return Object.freeze(blocks);
+}
+
+function yamlJobBlock(source, jobName) {
+  const lines = String(source).split(/\r?\n/);
+  const starts = lines
+    .map((line, index) => (line === `  ${jobName}:` ? index : -1))
+    .filter((index) => index >= 0);
+  if (starts.length !== 1) return '';
+  let end = starts[0] + 1;
+  while (end < lines.length && !/^ {2}[a-zA-Z0-9_-]+:\s*$/.test(lines[end])) end += 1;
+  return lines.slice(starts[0], end).join('\n');
+}
+
+function yamlJobSteps(source, jobName) {
+  const job = yamlJobBlock(source, jobName);
+  if (!job) return Object.freeze({ valid: false, steps: Object.freeze([]) });
+  const lines = job.split(/\r?\n/);
+  const stepsIndexes = lines
+    .map((line, index) => (line === '    steps:' ? index : -1))
+    .filter((index) => index >= 0);
+  if (stepsIndexes.length !== 1) return Object.freeze({ valid: false, steps: Object.freeze([]) });
+
+  const stepLines = [];
+  for (let index = stepsIndexes[0] + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.trim() && !line.trimStart().startsWith('#') && indentation(line) <= 4) break;
+    stepLines.push(line);
+  }
+
+  const blocks = [];
+  let current = null;
+  let valid = true;
+  for (const line of stepLines) {
+    if (!line.trim() || line.trimStart().startsWith('#')) {
+      if (current) current.push(line);
+      continue;
+    }
+    if (/^ {6}-\s+/.test(line)) {
+      current = [line];
+      blocks.push(current);
+      continue;
+    }
+    if (!current || indentation(line) <= 6) {
+      valid = false;
+      continue;
+    }
+    current.push(line);
+  }
+
+  const steps = blocks.map((block) => {
+    const entries = [];
+    const first = block[0].match(/^ {6}- ([a-zA-Z0-9_-]+):(?:\s*(.*))?$/);
+    if (!first) {
+      valid = false;
+      return Object.freeze({ entries: Object.freeze([]) });
+    }
+    entries.push(Object.freeze({ key: first[1], value: first[2] ?? '' }));
+    for (const line of block.slice(1)) {
+      if (!line.trim() || line.trimStart().startsWith('#') || indentation(line) > 8) continue;
+      const entry = line.match(/^ {8}([a-zA-Z0-9_-]+):(?:\s*(.*))?$/);
+      if (!entry) {
+        valid = false;
+        continue;
+      }
+      entries.push(Object.freeze({ key: entry[1], value: entry[2] ?? '' }));
+    }
+    return Object.freeze({ entries: Object.freeze(entries) });
+  });
+
+  return Object.freeze({ valid, steps: Object.freeze(steps) });
+}
+
+function jobHasExactExecutionSteps(source, policy) {
+  const parsed = yamlJobSteps(source, policy.jobName);
+  if (!parsed.valid || parsed.steps.length !== policy.steps.length) return false;
+  return parsed.steps.every((step, index) => {
+    const expected = policy.steps[index];
+    const executableEntries = step.entries.filter((entry) => entry.key === 'uses' || entry.key === 'run');
+    const allowedKeys = WORKFLOW_STEP_KEYS[expected.executableKey];
+    return executableEntries.length === 1
+      && executableEntries[0].key === expected.executableKey
+      && executableEntries[0].value === expected.executableValue
+      && step.entries.every((entry) => allowedKeys.includes(entry.key))
+      && new Set(step.entries.map((entry) => entry.key)).size === step.entries.length;
+  });
+}
+
+function permissionSignatures(source, { requireTopLevelEmpty = true } = {}) {
+  const lines = String(source).split(/\r?\n/);
+  const signatures = [];
+  let topLevelEmptyCount = 0;
+  let invalid = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index].match(/^( *)permissions:\s*(.*?)\s*$/);
+    if (!match) continue;
+    const permissionIndent = match[1].length;
+    const inline = match[2];
+    if (permissionIndent === 0 && inline === '{}') {
+      topLevelEmptyCount += 1;
+      continue;
+    }
+    if (permissionIndent === 0 || inline) {
+      invalid = true;
+      continue;
+    }
+    const entries = [];
+    for (let child = index + 1; child < lines.length; child += 1) {
+      const line = lines[child];
+      if (!line.trim() || line.trimStart().startsWith('#')) continue;
+      const childIndent = indentation(line);
+      if (childIndent <= permissionIndent) break;
+      const entry = line.match(new RegExp(`^ {${permissionIndent + 2}}([a-z][a-z-]*):\\s*(read|write|none)\\s*$`));
+      if (!entry) {
+        invalid = true;
+        continue;
+      }
+      entries.push(`${entry[1]}:${entry[2]}`);
+    }
+    if (!entries.length || new Set(entries).size !== entries.length) invalid = true;
+    signatures.push(entries.sort().join(','));
+  }
+  return Object.freeze({
+    valid: !invalid && (!requireTopLevelEmpty || topLevelEmptyCount === 1),
+    signatures: Object.freeze(signatures.sort()),
+  });
+}
+
+function jobUsesExactCheckout(source, jobName, refExpression) {
+  const job = yamlJobBlock(source, jobName);
+  const checkouts = checkoutBlocks(job);
+  if (!job || checkouts.length !== 1) return false;
+  const checkout = checkouts[0];
+  const refPattern = new RegExp(`^ {${checkout.usesIndent + 2}}ref:\\s*\\$\\{\\{\\s*${refExpression}\\s*\\}\\}\\s*$`);
+  const persistPattern = new RegExp(`^ {${checkout.usesIndent + 2}}persist-credentials:\\s*false\\s*$`);
+  return checkout.uses === 'uses: actions/checkout@v4'
+    && checkout.lines.filter((line) => refPattern.test(line)).length === 1
+    && checkout.lines.filter((line) => persistPattern.test(line)).length === 1;
+}
+
+export function validatePersonalRepositoryProtectedWorkflowSource(input = {}) {
+  const changedFiles = (Array.isArray(input.changedFiles) ? input.changedFiles : [])
+    .flatMap(changedFilePaths)
+    .filter(Boolean);
+  if (!changedFiles.includes(PERSONAL_REPOSITORY_WORKFLOW_PATH)) {
+    return Object.freeze({ valid: false, blockers: Object.freeze(['personal-repository-workflow-not-changed']) });
+  }
+  const sources = (Array.isArray(input.protectedWorkflowSources) ? input.protectedWorkflowSources : [])
+    .filter((source) => source?.path === PERSONAL_REPOSITORY_WORKFLOW_PATH);
+  if (sources.length !== 1) {
+    return Object.freeze({ valid: false, blockers: Object.freeze(['personal-repository-workflow-source-count-mismatch']) });
+  }
+  const source = sources[0];
+  const content = typeof source?.content === 'string' ? source.content : '';
+  const size = Buffer.byteLength(content, 'utf8');
+  const blockers = [];
+  if (!sameKeys(source, PERSONAL_REPOSITORY_WORKFLOW_SOURCE_KEYS)
+    || source.schemaVersion !== PROTECTED_WORKFLOW_SOURCE_SCHEMA_VERSION
+    || source.repository !== input.repository
+    || source.path !== PERSONAL_REPOSITORY_WORKFLOW_PATH
+    || !SHA40.test(text(input.sourceHead).toLowerCase())
+    || source.ref !== text(input.sourceHead).toLowerCase()
+    || source.exists !== true
+    || !Number.isSafeInteger(source.size)
+    || source.size !== size
+    || size <= 0
+    || size > PROTECTED_WORKFLOW_SOURCE_MAX_BYTES
+    || !/^[a-f0-9]{40}$/.test(text(source.blobSha).toLowerCase())
+    || source.blobSha !== gitBlobSha(content)) {
+    blockers.push('personal-repository-workflow-source-identity-invalid');
+  }
+  const events = yamlEventKeys(content);
+  if (events.length !== PERSONAL_REPOSITORY_WORKFLOW_EVENTS.length
+    || events.some((event, index) => event !== PERSONAL_REPOSITORY_WORKFLOW_EVENTS[index])) {
+    blockers.push('personal-repository-workflow-trigger-not-exact');
+  }
+  if (!/^ {4}types:\s*\[checks_requested\]\s*$/m.test(content)) {
+    blockers.push('personal-repository-workflow-merge-group-action-not-exact');
+  }
+  const inputs = yamlWorkflowDispatchInputKeys(content);
+  const inputBlocks = yamlWorkflowDispatchInputBlocks(content);
+  if (inputs.length !== PERSONAL_REPOSITORY_WORKFLOW_INPUTS.length
+    || inputs.some((input, index) => input !== PERSONAL_REPOSITORY_WORKFLOW_INPUTS[index])
+    || inputBlocks.length !== PERSONAL_REPOSITORY_WORKFLOW_INPUTS.length
+    || inputBlocks.some((block) => (
+      block.lines.filter((line) => /^ {8}required:\s*true\s*$/.test(line)).length !== 1
+      || block.lines.filter((line) => /^ {8}type:\s*string\s*$/.test(line)).length !== 1
+    ))
+    || !/^run-name: Protected operator merge \$\{\{ github\.event\.merge_group\.head_sha \|\| format\('PR #\{0\} at \{1\}', inputs\.pr_number, inputs\.expected_head\) \}\}\s*$/m.test(content)) {
+    blockers.push('personal-repository-workflow-dispatch-inputs-not-exact');
+  }
+  const checkouts = checkoutBlocks(content);
+  if (checkouts.length !== 5) blockers.push('personal-repository-workflow-checkout-count-mismatch');
+  const observedRefCounts = new Map(PERSONAL_REPOSITORY_WORKFLOW_CHECKOUT_REFS.map((entry) => [entry.expression, 0]));
+  for (const checkout of checkouts) {
+    const matchingRefs = PERSONAL_REPOSITORY_WORKFLOW_CHECKOUT_REFS.filter((entry) => {
+      const pattern = new RegExp(`^ {${checkout.usesIndent + 2}}ref:\\s*\\$\\{\\{\\s*${entry.expression}\\s*\\}\\}\\s*$`);
+      return checkout.lines.filter((line) => pattern.test(line)).length === 1;
+    });
+    const persistPattern = new RegExp(`^ {${checkout.usesIndent + 2}}persist-credentials:\\s*false\\s*$`);
+    if (checkout.uses !== 'uses: actions/checkout@v4'
+      || matchingRefs.length !== 1
+      || checkout.lines.filter((line) => persistPattern.test(line)).length !== 1) {
+      blockers.push('personal-repository-workflow-checkout-not-exact-base');
+    } else {
+      const expression = matchingRefs[0].expression;
+      observedRefCounts.set(expression, observedRefCounts.get(expression) + 1);
+    }
+  }
+  for (const expected of PERSONAL_REPOSITORY_WORKFLOW_CHECKOUT_REFS) {
+    if (observedRefCounts.get(expected.expression) !== expected.count) {
+      blockers.push('personal-repository-workflow-checkout-ref-count-mismatch');
+    }
+  }
+  const permissions = permissionSignatures(content);
+  const expectedPermissions = [...PERSONAL_REPOSITORY_WORKFLOW_PERMISSIONS].sort();
+  if (!permissions.valid
+    || permissions.signatures.length !== expectedPermissions.length
+    || permissions.signatures.some((signature, index) => signature !== expectedPermissions[index])) {
+    blockers.push('personal-repository-workflow-permissions-not-exact');
+  }
+  const jobPolicies = [
+    ['merge-group-evidence', PERSONAL_REPOSITORY_WORKFLOW_PERMISSIONS[0], 'github\\.event\\.merge_group\\.base_sha'],
+    ['operator-merge-queue-boundary', PERSONAL_REPOSITORY_WORKFLOW_PERMISSIONS[1], 'github\\.event\\.merge_group\\.base_sha'],
+    ['personal-repository-evidence', PERSONAL_REPOSITORY_WORKFLOW_PERMISSIONS[2], 'github\\.sha'],
+    ['operator-personal-repository-approval', PERSONAL_REPOSITORY_WORKFLOW_PERMISSIONS[3], 'github\\.sha'],
+    ['operator-personal-repository-squash-merge', PERSONAL_REPOSITORY_WORKFLOW_PERMISSIONS[4], 'github\\.sha'],
+  ];
+  for (const [jobName, expectedPermission, expectedRef] of jobPolicies) {
+    const job = yamlJobBlock(content, jobName);
+    const jobPermissions = permissionSignatures(job, { requireTopLevelEmpty: false });
+    if (!job
+      || !jobPermissions.valid
+      || jobPermissions.signatures.length !== 1
+      || jobPermissions.signatures[0] !== expectedPermission
+      || !jobUsesExactCheckout(content, jobName, expectedRef)) {
+      blockers.push('personal-repository-workflow-job-authority-not-exact');
+    }
+  }
+  for (const policy of PERSONAL_REPOSITORY_WORKFLOW_JOB_STEPS) {
+    if (!jobHasExactExecutionSteps(content, policy)) {
+      blockers.push('personal-repository-workflow-job-steps-not-exact');
+    }
+  }
+  for (const pattern of [
+    /^\s+pull_request(?:_target)?:\s*$/m,
+    /^\s+repository_dispatch:\s*$/m,
+    /^\s+workflow_call:\s*$/m,
+    /^\s+schedule:\s*$/m,
+    /continue-on-error:/,
+    /github\.event\.pull_request\.head\.sha/,
+    /github\.event\.repository\.default_branch/,
+  ]) {
+    if (pattern.test(content)) blockers.push('personal-repository-workflow-forbidden-authority');
+  }
+  for (const pattern of [
+    /^concurrency:\s*\n  group: protected-operator-merge-\$\{\{ github\.event\.merge_group\.head_sha \|\| inputs\.expected_head \|\| github\.run_id \}\}\s*\n  cancel-in-progress: false\s*$/m,
+    /^  merge-group-evidence:\s*\n    name: merge-group-evidence\s*\n    if: \$\{\{ github\.event_name == 'merge_group' \}\}\s*$/m,
+    /^  operator-merge-queue-boundary:\s*\n    name: operator-merge-queue-boundary\s*\n    if: \$\{\{ github\.event_name == 'merge_group' \}\}\s*$/m,
+    /^  personal-repository-evidence:\s*$/m,
+    /^  personal-repository-evidence:\s*\n    name: personal-repository-evidence\s*\n    if: \$\{\{ github\.event_name == 'workflow_dispatch' \}\}\s*$/m,
+    /^  operator-personal-repository-approval:\s*$/m,
+    /^  operator-personal-repository-approval:\s*\n    name: operator-personal-repository-approval\s*\n    if: \$\{\{ github\.event_name == 'workflow_dispatch' \}\}\s*$/m,
+    /^  operator-personal-repository-squash-merge:\s*$/m,
+    /^  operator-personal-repository-squash-merge:\s*\n    name: operator-personal-repository-squash-merge\s*\n    if: \$\{\{ github\.event_name == 'workflow_dispatch' \}\}\s*$/m,
+    /^    environment:\s*\n      name: operator-merge-approval\s*$/m,
+    /^    needs: \[personal-repository-evidence, operator-personal-repository-approval\]\s*$/m,
+  ]) {
+    if (!pattern.test(content)) blockers.push('personal-repository-workflow-required-boundary-missing');
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    blockers: Object.freeze(unique(blockers)),
+    proofRef: blockers.length === 0
+      ? `proofs/personal-repository-workflow-source/${source.path}@${source.ref}#${source.blobSha}:${source.size}`
+      : '',
+  });
 }
 
 function changedFilePaths(item) {
@@ -87,8 +541,14 @@ export function analyzeIndependentSecurityReviewV2(input = {}) {
     .flatMap(changedFilePaths)
     .filter(Boolean);
   const diff = String(input.diff || '');
-  const findings = [...(Array.isArray(legacy.findings) ? legacy.findings : [])];
+  const personalRepositoryWorkflow = validatePersonalRepositoryProtectedWorkflowSource(input);
+  const findings = (Array.isArray(legacy.findings) ? legacy.findings : []).filter((item) => !(
+    personalRepositoryWorkflow.valid
+    && item?.code === 'write-workflow-does-not-use-trusted-source'
+    && item?.path === PERSONAL_REPOSITORY_WORKFLOW_PATH
+  ));
   const proofRefs = [...(Array.isArray(legacy.proofRefs) ? legacy.proofRefs : [])];
+  if (personalRepositoryWorkflow.valid) proofRefs.push(personalRepositoryWorkflow.proofRef);
 
   for (const path of ALL_APPROVAL_BOUNDARY_PATHS_V2.filter((item) => changedFiles.includes(item))) {
     proofRefs.push(`proofs/approval-boundary-v2/${path}`);
@@ -110,11 +570,23 @@ export function analyzeIndependentSecurityReviewV2(input = {}) {
       ));
     }
     const addsMergeAuthority = /\bgh\s+pr\s+merge\b/.test(additions)
-      || /['"]pr['"]\s*,\s*['"]merge['"]/.test(additions);
-    if (addsMergeAuthority && !/--match-head-commit/.test(patch)) {
+      || /['"]pr['"]\s*,\s*['"]merge['"]/.test(additions)
+      || /pulls\/\$\{[^}]+\}\/merge/.test(additions);
+    const exactCliMerge = /--match-head-commit/.test(patch);
+    const exactRestSquash = /method:\s*['"]PUT['"]/.test(patch)
+      && /merge_method:\s*['"]squash['"]/.test(patch)
+      && /sha:\s*receipt\.sourceHead/.test(patch);
+    if (addsMergeAuthority && !exactCliMerge && !exactRestSquash) {
       findings.push(finding(
         'operator-v2-exact-head-guard-missing',
-        'Any newly introduced live v2 merge command must include --match-head-commit.',
+        'Any newly introduced live v2 merge must use --match-head-commit or the exact REST head SHA with squash only.',
+        path,
+      ));
+    }
+    if (/delete_branch|method:\s*['"]DELETE['"]|git\/refs\/heads\/.+[\s\S]*DELETE/.test(additions)) {
+      findings.push(finding(
+        'operator-v2-branch-deletion-authority',
+        'The protected merge executor may not delete the source branch.',
         path,
       ));
     }
