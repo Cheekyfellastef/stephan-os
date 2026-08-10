@@ -2,7 +2,7 @@ import { projectCanonicalPrEvidence } from './prEvidenceCanonicalProjection.js';
 import { vrResearchContextProvider } from './vrResearchContextProvider.js';
 
 const PROVIDER_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9-]*$/;
-const VR_RESEARCH_INTENT_PATTERN = /\b(vr|virtual reality|flat-to-vr|starfield|creation kit|skyrim vr|vorpx|mutar|halo mcc vr|uevr|reframework|openxr|vrik|higgs|planck|air link|virtual desktop|cutscene theatre|cutscene theater)\b/i;
+const VR_RESEARCH_INTENT_PATTERN = /\b(vr|virtual reality|flat-to-vr|starfield|creation kit|skyrim vr|vorpx|mutar|halo mcc vr|uevr|reframework|openxr|vrik|higgs|planck|air link|virtual desktop|headset-vr|headset vr|cutscene theatre|cutscene theater)\b/i;
 
 const requiredMethods = [
   'getSummary',
