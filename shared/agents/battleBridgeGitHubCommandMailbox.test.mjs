@@ -514,6 +514,91 @@ test('dispatches read-only reset status only through its named handler', async (
   assert.equal(result.result.pressCount, 0);
 });
 
+test('publishes every completed meter observation to the canonical Shared Workspace fabric', async () => {
+  const validated = validateBattleBridgeGitHubCommand(statusCommand(), {
+    authorLogin: 'Cheekyfellastef', now,
+  });
+  const publications = [];
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    readCodexBankedResetStatus: async () => ({
+      ok: true,
+      observedAtUtc: now.toISOString(),
+      meterSummary: 'Codex weekly remaining 3%',
+      usageSurfaceMatched: true,
+      activeCodexTask: false,
+      proofRefs: ['receipts/github-command-mailbox/meter-read.json'],
+      finalVerdict: 'CODEX_BANKED_RESET_STATUS_READY',
+      readOnly: true,
+      pressAttempted: false,
+      pressCount: 0,
+    }),
+    publishCodexCapacityStatus: async (root, input, options) => {
+      publications.push({ root, input, options });
+      return {
+        ok: true,
+        reason: 'CODEX_CAPACITY_WORKSPACE_PUBLISHED',
+        finalVerdict: 'CODEX_CAPACITY_WORKSPACE_PUBLISH_PASS',
+        slice: { truthState: 'CURRENT', observedAtUtc: now.toISOString(), remainingPercent: 3, capacityUsable: true },
+      };
+    },
+    sharedWorkspaceRoot: 'workspace-root-identity',
+    repoRoot: 'repo-root-identity',
+    capacityPublicationTimestampUtc: now.toISOString(),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(publications.length, 1);
+  assert.equal(publications[0].root, 'workspace-root-identity');
+  assert.equal(publications[0].input.statusResult.meterSummary, 'Codex weekly remaining 3%');
+  assert.equal(result.sharedWorkspacePublication.truthState, 'CURRENT');
+  assert.equal(result.sharedWorkspacePublication.remainingPercent, 3);
+});
+
+test('fails the status command when a successful meter read cannot reach Shared Workspace', async () => {
+  const validated = validateBattleBridgeGitHubCommand(statusCommand(), {
+    authorLogin: 'Cheekyfellastef', now,
+  });
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    readCodexBankedResetStatus: async () => ({
+      ok: true,
+      observedAtUtc: now.toISOString(),
+      meterSummary: 'Codex weekly remaining 3%',
+      usageSurfaceMatched: true,
+      finalVerdict: 'CODEX_BANKED_RESET_STATUS_READY',
+    }),
+    publishCodexCapacityStatus: async () => ({ ok: false, reason: 'WORKSPACE_PATH_MISSING' }),
+    sharedWorkspaceRoot: 'workspace-root-identity',
+    capacityPublicationTimestampUtc: now.toISOString(),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CODEX_CAPACITY_WORKSPACE_PUBLISH_FAILED');
+  assert.equal(result.sharedWorkspacePublication.reason, 'WORKSPACE_PATH_MISSING');
+});
+
+test('preserves UNKNOWN meter percentage as null in the sanitized publication receipt', async () => {
+  const validated = validateBattleBridgeGitHubCommand(statusCommand(), {
+    authorLogin: 'Cheekyfellastef', now,
+  });
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    readCodexBankedResetStatus: async () => ({
+      ok: false,
+      blocker: 'RESET_STATUS_NOT_PROVEN',
+      observedAtUtc: now.toISOString(),
+      finalVerdict: 'CODEX_BANKED_RESET_STATUS_BLOCKED',
+    }),
+    publishCodexCapacityStatus: async () => ({
+      ok: true,
+      reason: 'CODEX_CAPACITY_WORKSPACE_PUBLISHED',
+      finalVerdict: 'CODEX_CAPACITY_WORKSPACE_PUBLISH_PASS',
+      slice: { truthState: 'UNKNOWN', observedAtUtc: now.toISOString(), remainingPercent: null, capacityUsable: false },
+    }),
+    sharedWorkspaceRoot: 'workspace-root-identity',
+    capacityPublicationTimestampUtc: now.toISOString(),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.sharedWorkspacePublication.truthState, 'UNKNOWN');
+  assert.equal(result.sharedWorkspacePublication.remainingPercent, null);
+});
+
 test('dispatches reset only through the named bounded handler', async () => {
   const calls = [];
   const validated = validateBattleBridgeGitHubCommand(resetCommand(), {
