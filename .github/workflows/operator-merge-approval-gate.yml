@@ -1,5 +1,5 @@
 name: Protected Operator Merge Queue Boundary
-run-name: Protected operator merge ${{ github.event.merge_group.head_sha || inputs.expected_head || github.run_id }}
+run-name: Protected operator merge ${{ github.event.merge_group.head_sha || format('PR #{0} at {1}', inputs.pr_number, inputs.expected_head) }}
 
 on:
   merge_group:
