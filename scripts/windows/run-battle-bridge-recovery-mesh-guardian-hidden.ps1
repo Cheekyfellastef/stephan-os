@@ -210,13 +210,37 @@ if (-not $mailboxHealthy) {
     $mailboxRepairAttempted = $true
     $mailboxRaw = (& $fixedPowerShellExe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $mailboxInstallerPath -StartNow 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or -not $mailboxRaw) { Stop-Guardian -Blocker 'MAILBOX_REPAIR_INSTALLER_FAILED' }
-    try { $mailboxRepairReceipt = $mailboxRaw | ConvertFrom-Json }
+    try { $mailboxInstallerReceiptRaw = $mailboxRaw | ConvertFrom-Json }
     catch { Stop-Guardian -Blocker 'MAILBOX_REPAIR_RECEIPT_INVALID' }
+    if ([string]$mailboxInstallerReceiptRaw.taskName -ne $mailboxTaskName `
+        -or $mailboxInstallerReceiptRaw.installed -ne $true `
+        -or $mailboxInstallerReceiptRaw.startedNow -ne $true `
+        -or $mailboxInstallerReceiptRaw.receiptIndexEnabled -ne $true `
+        -or [int]$mailboxInstallerReceiptRaw.intervalMinutes -ne 5 `
+        -or [string]$mailboxInstallerReceiptRaw.runLevel -ne 'Limited' `
+        -or $mailboxInstallerReceiptRaw.arbitraryShellAllowed -ne $false `
+        -or $mailboxInstallerReceiptRaw.destructiveGitAllowed -ne $false `
+        -or $mailboxInstallerReceiptRaw.liveOpenClawUpdateAllowed -ne $false) {
+        Stop-Guardian -Blocker 'MAILBOX_REPAIR_RECEIPT_REJECTED'
+    }
+    $mailboxRepairReceipt = [pscustomobject]@{
+        schemaVersion = 'stephanos.battle-bridge-github-command-mailbox-install.v1'
+        taskName = [string]$mailboxInstallerReceiptRaw.taskName
+        installed = [bool]$mailboxInstallerReceiptRaw.installed
+        startedNow = [bool]$mailboxInstallerReceiptRaw.startedNow
+        receiptIndexEnabled = [bool]$mailboxInstallerReceiptRaw.receiptIndexEnabled
+        intervalMinutes = [int]$mailboxInstallerReceiptRaw.intervalMinutes
+        runLevel = [string]$mailboxInstallerReceiptRaw.runLevel
+        arbitraryShellAllowed = [bool]$mailboxInstallerReceiptRaw.arbitraryShellAllowed
+        destructiveGitAllowed = [bool]$mailboxInstallerReceiptRaw.destructiveGitAllowed
+        liveOpenClawUpdateAllowed = [bool]$mailboxInstallerReceiptRaw.liveOpenClawUpdateAllowed
+        normalizedFromFixedInstaller = $true
+    }
     if ([string]$mailboxRepairReceipt.schemaVersion -ne 'stephanos.battle-bridge-github-command-mailbox-install.v1' `
         -or [string]$mailboxRepairReceipt.taskName -ne $mailboxTaskName `
         -or $mailboxRepairReceipt.installed -ne $true `
         -or $mailboxRepairReceipt.startedNow -ne $true) {
-        Stop-Guardian -Blocker 'MAILBOX_REPAIR_RECEIPT_REJECTED'
+        Stop-Guardian -Blocker 'MAILBOX_REPAIR_NORMALIZED_RECEIPT_REJECTED'
     }
     $repairedMailboxTask = Get-ScheduledTask -TaskName $mailboxTaskName -ErrorAction SilentlyContinue
     if (-not (Test-MailboxTaskIdentity -Task $repairedMailboxTask -ExpectedLauncherPath $launcherPath)) {
