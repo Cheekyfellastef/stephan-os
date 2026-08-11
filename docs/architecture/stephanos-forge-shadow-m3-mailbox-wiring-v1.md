@@ -54,6 +54,28 @@ The runtime authorization passed to `executeForgeShadowM3RunnerPlan` is reconstr
 - explicit operator approval; and
 - M3-only scope.
 
+## Remaining shared-fabric capacity publication boundary
+
+This slice ends at the genuine M3 runtime receipt. It does not publish
+`status/foundry-forge-sidecar-current.json` or
+`status/foundry-forge-build-capacity-current.json`, and therefore does not by
+itself make the controller's `FOUNDRY_FORGE` route dispatchable.
+
+The next source slice, after this stack is reconciled onto current `main`, must:
+
+- convert the genuine closed-world M2 mailbox result into the canonical signed
+  M2 runtime receipt without accepting caller-authored mirror or source truth;
+- publish that M2 receipt and the genuine M3 receipt as one exact-head Forge
+  sidecar status projection;
+- publish a short-lived build-capacity receipt only from measured queue depth
+  and measured start-latency evidence from the fixed Forge executor;
+- bind both records to the same repository, head, tree, mirror parity and M2/M3
+  receipt identities; and
+- fail closed if either shared-workspace write is rejected or partial.
+
+Until that boundary is implemented and live receipts are observed, Forge is
+source-ready only and must not be reported as controller-available capacity.
+
 The existing execution adapter and fixed executor still enforce every runner identity, artifact digest, disposable-canary lifecycle, repository-scoped ephemeral registration, exact canary, teardown, proof reference, canonical-M2 immutability, and zero-residual-authority postcondition.
 
 The terminal mailbox receipt preserves M3 head, tree, referenced prerequisite request IDs, authorization ID, plan digest, plan time and runtime expiration. It continues to deny arbitrary shell, destructive Git, credential export, arbitrary browser automation, live OpenClaw update, merge and deployment authority.
