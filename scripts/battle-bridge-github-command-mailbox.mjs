@@ -181,9 +181,25 @@ function safeTelemetryBranch(value) {
     : '';
 }
 
+function recoveryMeshWakeAdapterBlockerCandidates(stderr = '') {
+  const candidates = [];
+  for (const rawLine of String(stderr || '').replace(/\r/g, '').split('\n')) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (RECOVERY_MESH_SAFE_WAKE_ADAPTER_BLOCKERS.has(line)) {
+      candidates.push(line);
+      continue;
+    }
+    const fullyQualified = line.match(/^\+\s*FullyQualifiedErrorId\s*:\s*([A-Z][A-Z0-9_]+)\s*$/i);
+    if (fullyQualified && RECOVERY_MESH_SAFE_WAKE_ADAPTER_BLOCKERS.has(fullyQualified[1].toUpperCase())) {
+      candidates.push(fullyQualified[1].toUpperCase());
+    }
+  }
+  return [...new Set(candidates)];
+}
+
 export function classifyRecoveryMeshWakeAdapterFailure(invocation = {}) {
-  const text = [invocation?.stderr, invocation?.error].map((value) => String(value || '')).join('\n');
-  const matches = [...RECOVERY_MESH_SAFE_WAKE_ADAPTER_BLOCKERS].filter((blocker) => text.includes(blocker));
+  const matches = recoveryMeshWakeAdapterBlockerCandidates(invocation?.stderr);
   return matches.length === 1 ? matches[0] : 'RECOVERY_MESH_WAKE_ADAPTER_FAILED';
 }
 
