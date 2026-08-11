@@ -22,7 +22,7 @@ export const FORGE_SHADOW_M3_EXECUTION_OBSERVATION_SCHEMA =
   'stephanos.forge-shadow-m3-runner-execution-observation.v1';
 export const FORGE_SHADOW_M3_RUNTIME_AUTHORIZATION_SCHEMA =
   'stephanos.forge-shadow-m3-runner-runtime-authorization.v1';
-export const FORGE_SHADOW_M3_EXECUTION_READY = 'FORGE_SHADOW_M3_RUNNER_READY';
+export const FORGE_SHADOW_M3_EXECUTION_READY = 'FORGE_SHADOW_M3_RUNNER_RUNTIME_READY';
 export const FORGE_SHADOW_M3_EXECUTION_BLOCKED = 'FORGE_SHADOW_M3_RUNNER_EXECUTION_BLOCKED';
 export const FORGE_SHADOW_M3_EXECUTION_SURFACE = 'CONNECTED_WINDOWS_BATTLE_BRIDGE';
 export const FORGE_SHADOW_M3_CANARY_WORKFLOW = 'forge-shadow-m3-isolation-canary-v1';
@@ -50,31 +50,12 @@ const OBSERVATION_KEYS = [
   'sourceMutation', 'gitRefWrite', 'mergeAuthority', 'deploymentAuthority',
   'arbitraryCommand', 'proofRefs',
 ];
-const NORMALIZED_RUNNER_KEYS = [
-  'runnerId', 'poolId', 'runnerClass', 'runtimeBoundary', 'artifactDigest',
-  'canaryForgeService', 'canaryForgeBackupDigest', 'canaryForgeDestroyed',
-  'canonicalM2Sealed', 'canonicalM2Unchanged', 'privateRelayUsed', 'privateRelayDestroyed',
-  'startedAtUtc', 'completedAtUtc', 'installed', 'registered', 'connected',
-  'ephemeralRegistration', 'canarySucceeded', 'unregistered',
-  'registrationCredentialDestroyed', 'workspaceDestroyed', 'runtimeBoundaryDestroyed',
-  'zeroResidualRegistration', 'zeroResidualCredential', 'zeroResidualWorkspace',
-  'proofRefs',
-];
 const RECEIPT_KEYS = [
-  'schemaVersion', 'valid', 'finalVerdict', 'repository', 'sourceHead', 'sourceTree',
-  'runtimeAuthorizationId', 'runtimePlanDigest', 'artifactSetDigest', 'runnerVersion',
-  'canaryWorkflowId', 'canaryScenario', 'runnerCount', 'runners', 'proofRefs',
-  'teardown', 'zeroResidualAuthority', 'canCarryRealWork', 'completedAtUtc',
-  'authority', 'receiptDigest',
-];
-const TEARDOWN_KEYS = [
-  'allRunnersUnregistered', 'allRegistrationCredentialsDestroyed',
-  'allWorkspacesDestroyed', 'allRuntimeBoundariesDestroyed',
-];
-const ZERO_RESIDUAL_KEYS = ['registrationAbsent', 'credentialAbsent', 'workspaceAbsent', 'runtimeBoundaryAbsent'];
-const AUTHORITY_KEYS = [
-  'runtimeMutation', 'futureExecution', 'sourceMutation', 'gitRefWrite',
-  'githubCredentialAccess', 'secretAccess', 'merge', 'deployment', 'arbitraryCommand',
+  'schemaVersion', 'receiptId', 'repository', 'sourceHead', 'sourceTree',
+  'artifactSetDigest', 'runnerIdentities', 'linuxReviewRunnerConnected',
+  'windowsProofRunnerConnected', 'teardownComplete', 'zeroResidualRegistration',
+  'zeroResidualCredential', 'zeroResidualWorkspace', 'canCarryRealWork',
+  'finalVerdict', 'completedAt', 'proofRefs', 'payloadSha256',
 ];
 const FORBIDDEN_FIELDS = new Set([
   'command', 'commands', 'executable', 'args', 'arguments', 'shell', 'powershell',
@@ -97,6 +78,10 @@ function stable(value) {
 
 function sha256(value) {
   return `sha256:${createHash('sha256').update(stable(value), 'utf8').digest('hex')}`;
+}
+
+function sha256Hex(value) {
+  return createHash('sha256').update(stable(value), 'utf8').digest('hex');
 }
 
 function exactKeys(value, expected) {
@@ -285,112 +270,67 @@ function validateObservation(value, runner, artifact, plan, authorization, block
 
 function buildReceipt(plan, authorization, observations) {
   const proofRefs = Object.freeze(unique(observations.flatMap((item) => item.proofRefs)).sort());
-  const completedAtUtc = observations.map((item) => item.completedAtUtc).sort().at(-1);
-  const versions = unique(plan.runnerArtifacts.map((artifact) => artifact.version));
+  const completedAt = observations.map((item) => item.completedAtUtc).sort().at(-1);
+  const runnerIdentities = Object.freeze(observations.map((item) => item.runnerId).sort());
   const body = {
     schemaVersion: FORGE_SHADOW_M3_RUNTIME_RECEIPT_SCHEMA,
-    valid: true,
-    finalVerdict: FORGE_SHADOW_M3_EXECUTION_READY,
+    receiptId: `forge-m3-runtime-${authorization.authorizationId}`,
     repository: plan.repository,
     sourceHead: plan.canonicalMainHead,
     sourceTree: plan.canonicalMainTree,
-    runtimeAuthorizationId: authorization.authorizationId,
-    runtimePlanDigest: buildForgeShadowM3RuntimePlanDigest(plan),
-    artifactSetDigest: plan.artifactSetDigest,
-    runnerVersion: versions.length === 1 ? versions[0] : '',
-    canaryWorkflowId: FORGE_SHADOW_M3_CANARY_WORKFLOW,
-    canaryScenario: FORGE_SHADOW_M3_CANARY_SCENARIO,
-    runnerCount: observations.length,
-    runners: Object.freeze([...observations].sort((left, right) => left.runnerId.localeCompare(right.runnerId))),
-    proofRefs,
-    teardown: Object.freeze({
-      allRunnersUnregistered: true,
-      allRegistrationCredentialsDestroyed: true,
-      allWorkspacesDestroyed: true,
-      allRuntimeBoundariesDestroyed: true,
-    }),
-    zeroResidualAuthority: Object.freeze({
-      registrationAbsent: true,
-      credentialAbsent: true,
-      workspaceAbsent: true,
-      runtimeBoundaryAbsent: true,
-    }),
+    artifactSetDigest: `sha256:${plan.artifactSetDigest}`,
+    runnerIdentities,
+    linuxReviewRunnerConnected: runnerIdentities.includes('stephanos-forge-linux-runner-01'),
+    windowsProofRunnerConnected: runnerIdentities.includes('stephanos-forge-windows-proof-runner-01'),
+    teardownComplete: observations.every((item) => (
+      item.unregistered && item.registrationCredentialDestroyed
+      && item.workspaceDestroyed && item.runtimeBoundaryDestroyed
+    )),
+    zeroResidualRegistration: observations.every((item) => item.zeroResidualRegistration),
+    zeroResidualCredential: observations.every((item) => item.zeroResidualCredential),
+    zeroResidualWorkspace: observations.every((item) => item.zeroResidualWorkspace),
     canCarryRealWork: true,
-    completedAtUtc,
-    authority: falseAuthority(),
+    finalVerdict: FORGE_SHADOW_M3_EXECUTION_READY,
+    completedAt,
+    proofRefs,
   };
-  return Object.freeze({ ...body, receiptDigest: sha256(body) });
+  return Object.freeze({ ...body, payloadSha256: sha256Hex(body) });
 }
 
 export function validateForgeShadowM3RunnerRuntimeReceipt(receipt, {
   expectedRepository = '',
   expectedHead = '',
   expectedTree = '',
-  expectedRuntimePlanDigest = '',
   expectedArtifactSetDigest = '',
 } = {}) {
   const blockers = [];
   if (!exactKeys(receipt, RECEIPT_KEYS)) blockers.push('receipt-fields-invalid');
   if (receipt?.schemaVersion !== FORGE_SHADOW_M3_RUNTIME_RECEIPT_SCHEMA) blockers.push('receipt-schema-invalid');
-  if (receipt?.valid !== true || receipt?.finalVerdict !== FORGE_SHADOW_M3_EXECUTION_READY) blockers.push('receipt-verdict-invalid');
+  if (!SAFE_ID.test(text(receipt?.receiptId))) blockers.push('receipt-id-invalid');
+  if (receipt?.finalVerdict !== FORGE_SHADOW_M3_EXECUTION_READY) blockers.push('receipt-verdict-invalid');
   if (expectedRepository && receipt?.repository !== expectedRepository) blockers.push('receipt-repository-mismatch');
   if (expectedHead && text(receipt?.sourceHead).toLowerCase() !== text(expectedHead).toLowerCase()) blockers.push('receipt-head-mismatch');
   if (expectedTree && text(receipt?.sourceTree).toLowerCase() !== text(expectedTree).toLowerCase()) blockers.push('receipt-tree-mismatch');
   if (!SHA40.test(text(receipt?.sourceHead).toLowerCase()) || !SHA40.test(text(receipt?.sourceTree).toLowerCase())) blockers.push('receipt-source-identity-invalid');
-  if (expectedRuntimePlanDigest && text(receipt?.runtimePlanDigest).toLowerCase() !== text(expectedRuntimePlanDigest).toLowerCase()) blockers.push('receipt-runtime-plan-mismatch');
-  if (expectedArtifactSetDigest && text(receipt?.artifactSetDigest).toLowerCase() !== text(expectedArtifactSetDigest).toLowerCase()) blockers.push('receipt-artifact-set-mismatch');
-  if (!DIGEST.test(text(receipt?.runtimePlanDigest).toLowerCase()) || !SHA256_HEX.test(text(receipt?.artifactSetDigest).toLowerCase())) blockers.push('receipt-digest-invalid');
-  if (!SAFE_ID.test(text(receipt?.runtimeAuthorizationId))) blockers.push('receipt-authorization-id-invalid');
-  if (!SEMVER.test(text(receipt?.runnerVersion))) blockers.push('receipt-runner-version-invalid');
-  if (receipt?.canaryWorkflowId !== FORGE_SHADOW_M3_CANARY_WORKFLOW
-      || receipt?.canaryScenario !== FORGE_SHADOW_M3_CANARY_SCENARIO) blockers.push('receipt-canary-identity-invalid');
-  if (!Array.isArray(receipt?.runners) || receipt.runners.length < 2 || receipt.runners.length > 6 || receipt.runnerCount !== receipt.runners.length) blockers.push('receipt-runner-estate-invalid');
-  const runnerIds = [];
-  for (const runner of Array.isArray(receipt?.runners) ? receipt.runners : []) {
-    if (!exactKeys(runner, NORMALIZED_RUNNER_KEYS)) blockers.push(`receipt-runner-fields-invalid:${text(runner?.runnerId)}`);
-    if (!SAFE_ID.test(text(runner?.runnerId))) blockers.push('receipt-runner-id-invalid');
-    runnerIds.push(text(runner?.runnerId));
-    const isLinux = text(runner?.runnerId).startsWith('stephanos-forge-linux-runner-');
-    const isWindows = text(runner?.runnerId).startsWith('stephanos-forge-windows-proof-runner-');
-    if (isLinux && (runner?.runnerClass !== 'linux-isolated'
-        || runner?.runtimeBoundary !== 'forge-linux-rootless-ephemeral')) blockers.push(`receipt-linux-runner-contract-invalid:${text(runner?.runnerId)}`);
-    if (isWindows && (runner?.runnerClass !== 'windows-proof-isolated'
-        || runner?.runtimeBoundary !== 'battle-bridge-windows-proof-sandbox')) blockers.push(`receipt-windows-runner-contract-invalid:${text(runner?.runnerId)}`);
-    if (!isLinux && !isWindows) blockers.push(`receipt-runner-prefix-invalid:${text(runner?.runnerId)}`);
-    if (!DIGEST.test(text(runner?.artifactDigest).toLowerCase())) blockers.push(`receipt-runner-artifact-invalid:${text(runner?.runnerId)}`);
-    if (runner?.canaryForgeService !== 'stephanos-forge-shadow-m3-canary') blockers.push(`receipt-runner-canary-forge-invalid:${text(runner?.runnerId)}`);
-    if (!SHA256_HEX.test(text(runner?.canaryForgeBackupDigest).toLowerCase())) blockers.push(`receipt-runner-canary-backup-invalid:${text(runner?.runnerId)}`);
-    if (runner?.canaryForgeDestroyed !== true || runner?.canonicalM2Sealed !== true
-        || runner?.canonicalM2Unchanged !== true || runner?.privateRelayDestroyed !== true) {
-      blockers.push(`receipt-runner-canary-teardown-invalid:${text(runner?.runnerId)}`);
-    }
-    if (runner?.privateRelayUsed !== isWindows) blockers.push(`receipt-runner-private-relay-invalid:${text(runner?.runnerId)}`);
-    if (!safeProofRefs(runner?.proofRefs, text(runner?.runnerId))) blockers.push(`receipt-runner-proof-invalid:${text(runner?.runnerId)}`);
-    const startedMs = instant(runner?.startedAtUtc);
-    const completedMs = instant(runner?.completedAtUtc);
-    if (!Number.isFinite(startedMs) || !Number.isFinite(completedMs)
-        || completedMs < startedMs || completedMs - startedMs > MAX_RUNNER_EXECUTION_MS) blockers.push(`receipt-runner-time-invalid:${text(runner?.runnerId)}`);
-    for (const field of [
-      'installed', 'registered', 'connected', 'ephemeralRegistration', 'canarySucceeded',
-      'unregistered', 'registrationCredentialDestroyed', 'workspaceDestroyed',
-      'runtimeBoundaryDestroyed', 'zeroResidualRegistration', 'zeroResidualCredential',
-      'zeroResidualWorkspace',
-    ]) if (runner?.[field] !== true) blockers.push(`receipt-runner-proof-incomplete:${text(runner?.runnerId)}:${field}`);
-  }
-  if (new Set(runnerIds).size !== runnerIds.length) blockers.push('receipt-runner-id-duplicate');
-  if (!runnerIds.some((id) => id.startsWith('stephanos-forge-linux-runner-'))) blockers.push('receipt-linux-runner-missing');
-  if (!runnerIds.some((id) => id.startsWith('stephanos-forge-windows-proof-runner-'))) blockers.push('receipt-windows-runner-missing');
+  const expectedArtifactDigest = text(expectedArtifactSetDigest).toLowerCase();
+  const normalizedExpectedArtifactDigest = SHA256_HEX.test(expectedArtifactDigest)
+    ? `sha256:${expectedArtifactDigest}`
+    : expectedArtifactDigest;
+  if (normalizedExpectedArtifactDigest && text(receipt?.artifactSetDigest).toLowerCase() !== normalizedExpectedArtifactDigest) blockers.push('receipt-artifact-set-mismatch');
+  if (!DIGEST.test(text(receipt?.artifactSetDigest).toLowerCase())) blockers.push('receipt-digest-invalid');
+  const runnerIds = Array.isArray(receipt?.runnerIdentities) ? receipt.runnerIdentities.map(text) : [];
+  if (runnerIds.length !== 2 || new Set(runnerIds).size !== 2
+      || !runnerIds.includes('stephanos-forge-linux-runner-01')
+      || !runnerIds.includes('stephanos-forge-windows-proof-runner-01')) blockers.push('receipt-runner-estate-invalid');
+  for (const field of [
+    'linuxReviewRunnerConnected', 'windowsProofRunnerConnected', 'teardownComplete',
+    'zeroResidualRegistration', 'zeroResidualCredential', 'zeroResidualWorkspace',
+    'canCarryRealWork',
+  ]) if (receipt?.[field] !== true) blockers.push(`receipt-runtime-proof-incomplete:${field}`);
   if (!safeProofRefs(receipt?.proofRefs)) blockers.push('receipt-proof-refs-invalid');
-  const expectedProofRefs = unique((Array.isArray(receipt?.runners) ? receipt.runners : []).flatMap((runner) => runner?.proofRefs || [])).sort();
-  if (stable(receipt?.proofRefs || []) !== stable(expectedProofRefs)) blockers.push('receipt-proof-ref-estate-mismatch');
-  const expectedCompletedAt = (Array.isArray(receipt?.runners) ? receipt.runners : []).map((runner) => text(runner?.completedAtUtc)).sort().at(-1) || '';
-  if (text(receipt?.completedAtUtc) !== expectedCompletedAt) blockers.push('receipt-completion-time-mismatch');
-  if (!exactKeys(receipt?.teardown, TEARDOWN_KEYS) || Object.values(receipt?.teardown || {}).some((value) => value !== true)) blockers.push('receipt-teardown-invalid');
-  if (!exactKeys(receipt?.zeroResidualAuthority, ZERO_RESIDUAL_KEYS) || Object.values(receipt?.zeroResidualAuthority || {}).some((value) => value !== true)) blockers.push('receipt-zero-residual-authority-invalid');
-  if (!exactKeys(receipt?.authority, AUTHORITY_KEYS) || Object.values(receipt?.authority || {}).some((value) => value !== false)) blockers.push('receipt-authority-invalid');
-  if (receipt?.canCarryRealWork !== true || !Number.isFinite(instant(receipt?.completedAtUtc))) blockers.push('receipt-runtime-readiness-invalid');
-  const { receiptDigest, ...body } = receipt || {};
-  if (!DIGEST.test(text(receiptDigest).toLowerCase()) || sha256(body) !== text(receiptDigest).toLowerCase()) blockers.push('receipt-content-digest-invalid');
+  if (!Number.isFinite(instant(receipt?.completedAt))) blockers.push('receipt-completion-time-invalid');
+  const { payloadSha256, ...body } = receipt || {};
+  if (!SHA256_HEX.test(text(payloadSha256).toLowerCase()) || sha256Hex(body) !== text(payloadSha256).toLowerCase()) blockers.push('receipt-content-digest-invalid');
   return Object.freeze({
     ok: blockers.length === 0,
     finalVerdict: blockers.length === 0 ? FORGE_SHADOW_M3_EXECUTION_READY : FORGE_SHADOW_M3_EXECUTION_BLOCKED,
@@ -409,14 +349,28 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   const unsafe = findForbidden(input);
   if (unsafe) blockers.push(`unsafe-field:${unsafe}`);
   if (platform !== 'win32') blockers.push('connected-windows-battle-bridge-required');
-  let plan;
-  try { plan = planForgeShadowM3RunnerRuntime(input.runtimePlanInput); }
-  catch { blockers.push('runtime-plan-threw'); }
-  if (!plan || plan.valid !== true || plan.finalVerdict !== FORGE_SHADOW_M3_RUNTIME_READY) blockers.push('runtime-plan-not-ready');
-  const planDigest = plan ? buildForgeShadowM3RuntimePlanDigest(plan) : '';
   const nowValue = now();
   const nowMs = nowValue instanceof Date ? nowValue.getTime() : instant(nowValue);
   if (!Number.isFinite(nowMs)) blockers.push('execution-now-invalid');
+  const trustedNowUtc = Number.isFinite(nowMs) ? new Date(nowMs).toISOString() : '';
+  const suppliedPlanInput = input.runtimePlanInput;
+  const trustedPlanInput = suppliedPlanInput && typeof suppliedPlanInput === 'object'
+    && !Array.isArray(suppliedPlanInput)
+    ? {
+        ...suppliedPlanInput,
+        nowUtc: trustedNowUtc,
+        admissionInput: suppliedPlanInput.admissionInput
+          && typeof suppliedPlanInput.admissionInput === 'object'
+          && !Array.isArray(suppliedPlanInput.admissionInput)
+          ? { ...suppliedPlanInput.admissionInput, nowUtc: trustedNowUtc }
+          : suppliedPlanInput.admissionInput,
+      }
+    : suppliedPlanInput;
+  let plan;
+  try { plan = planForgeShadowM3RunnerRuntime(trustedPlanInput); }
+  catch { blockers.push('runtime-plan-threw'); }
+  if (!plan || plan.valid !== true || plan.finalVerdict !== FORGE_SHADOW_M3_RUNTIME_READY) blockers.push('runtime-plan-not-ready');
+  const planDigest = plan ? buildForgeShadowM3RuntimePlanDigest(plan) : '';
   const authorization = plan && Number.isFinite(nowMs)
     ? validateAuthorization(input.runtimeAuthorization, plan, planDigest, nowMs, blockers)
     : null;
@@ -427,13 +381,28 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   for (const runner of plan.runners) {
     const artifact = plan.runnerArtifacts.find((item) => item.runnerClass === runner.runnerClass);
     if (!artifact) return blocked([`runner-artifact-not-found:${runner.runnerId}`], planDigest);
+    const runnerNowValue = now();
+    const runnerNowMs = runnerNowValue instanceof Date ? runnerNowValue.getTime() : instant(runnerNowValue);
+    const runnerAuthorizationBlockers = [];
+    const liveAuthorization = Number.isFinite(runnerNowMs)
+      ? validateAuthorization(input.runtimeAuthorization, plan, planDigest, runnerNowMs, runnerAuthorizationBlockers)
+      : null;
+    if (!Number.isFinite(runnerNowMs)) runnerAuthorizationBlockers.push(`runner-execution-now-invalid:${runner.runnerId}`);
+    if (!liveAuthorization) return blocked(runnerAuthorizationBlockers, planDigest);
+    const remainingAuthorizationMs = liveAuthorization.expiresMs - runnerNowMs;
+    if (remainingAuthorizationMs <= 0) return blocked([`runner-authorization-expired:${runner.runnerId}`], planDigest);
+
     let raw;
+    const controller = new AbortController();
+    let deadlineTimer;
     try {
-      raw = await executeRunner(Object.freeze({
+      const executionRequest = Object.freeze({
         authorization: input.runtimeAuthorization,
         runtimePlan: plan,
         runner,
         artifact,
+        executionDeadlineUtc: liveAuthorization.expiresAtUtc,
+        signal: controller.signal,
         canary: Object.freeze({
           workflowId: FORGE_SHADOW_M3_CANARY_WORKFLOW,
           scenario: FORGE_SHADOW_M3_CANARY_SCENARIO,
@@ -441,9 +410,23 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
           head: plan.canonicalMainHead,
           tree: plan.canonicalMainTree,
         }),
-      }));
+      });
+      const deadline = new Promise((resolveDeadline) => {
+        deadlineTimer = setTimeout(() => {
+          controller.abort();
+          resolveDeadline({ deadlineExceeded: true });
+        }, remainingAuthorizationMs);
+      });
+      const outcome = await Promise.race([
+        Promise.resolve().then(() => executeRunner(executionRequest)).then((value) => ({ value })),
+        deadline,
+      ]);
+      if (outcome.deadlineExceeded) return blocked([`runner-execution-deadline-exceeded:${runner.runnerId}`], planDigest);
+      raw = outcome.value;
     } catch {
       return blocked([`runner-executor-threw:${runner.runnerId}`], planDigest);
+    } finally {
+      if (deadlineTimer) clearTimeout(deadlineTimer);
     }
     const runnerBlockers = [];
     const observation = validateObservation(raw, runner, artifact, plan, authorization, runnerBlockers);
@@ -456,7 +439,6 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
     expectedRepository: plan.repository,
     expectedHead: plan.canonicalMainHead,
     expectedTree: plan.canonicalMainTree,
-    expectedRuntimePlanDigest: planDigest,
     expectedArtifactSetDigest: plan.artifactSetDigest,
   });
   if (!validation.ok) return blocked(validation.blockers, planDigest);
