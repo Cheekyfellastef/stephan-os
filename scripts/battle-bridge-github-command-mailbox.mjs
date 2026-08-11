@@ -53,6 +53,17 @@ const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const SAFE_PROOF_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
 const SAFE_CONVEYOR_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 const EXACT_GIT_HEAD_PATTERN = /^[0-9a-f]{40}$/i;
+const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
+  'UPDATE_STEPHANOS_FROM_CHAT',
+  'INSTALL_UNATTENDED_GITHUB_SYNC',
+  'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+  'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
+  'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
+  'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
+  'INSTALL_FORGE_SHADOW_M2',
+  'APPLY_VERIFIED_SPOTIFY_LINK',
+  'REDEEM_BANKED_CODEX_RATE_LIMIT_RESET',
+]);
 const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set([
   'CREATE_NEXT_MISSION',
@@ -627,7 +638,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
 }
 
 function loadState() {
-  try { return JSON.parse(readFileSync(statePath, 'utf8')); } catch { return { consumedRequestIds: [] }; }
+  try { return JSON.parse(readFileSync(statePath, 'utf8')); } catch { return { consumedRequestIds: [], acceptedRequestIds: [] }; }
 }
 
 function saveState(state) {
@@ -646,9 +657,122 @@ export function checkpointTerminalMailboxReceipt(state, receipt, {
     ...(Array.isArray(state.consumedRequestIds) ? state.consumedRequestIds : []),
     receipt.requestId,
   ])].slice(-500);
+  state.acceptedRequestIds = (Array.isArray(state.acceptedRequestIds) ? state.acceptedRequestIds : [])
+    .filter((requestId) => requestId !== receipt.requestId)
+    .slice(-500);
   state.lastReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
   persist(state);
   return state;
+}
+
+export function checkpointAcceptedMailboxReceipt(state, receipt, {
+  persist = saveState,
+} = {}) {
+  if (!state || typeof state !== 'object' || !receipt || receipt.state !== 'ACCEPTED'
+    || !SAFE_REQUEST_ID_PATTERN.test(String(receipt.requestId || '')) || typeof persist !== 'function') {
+    throw new Error('MAILBOX_ACCEPTED_CHECKPOINT_INVALID');
+  }
+  state.acceptedRequestIds = [...new Set([
+    ...(Array.isArray(state.acceptedRequestIds) ? state.acceptedRequestIds : []),
+    receipt.requestId,
+  ])].slice(-500);
+  state.lastAcceptedReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
+  persist(state);
+  return state;
+}
+
+export function buildRejectedMailboxTerminalReceipt(rejection, completedAt) {
+  if (!rejection?.command || !SAFE_REQUEST_ID_PATTERN.test(String(rejection.command.requestId || ''))
+    || !/^COMMAND_[A-Z0-9_:-]{3,150}$/.test(String(rejection.blocker || ''))
+    || !Number.isFinite(Date.parse(String(completedAt || '')))) {
+    throw new Error('MAILBOX_REJECTION_RECEIPT_INVALID');
+  }
+  const timestamp = new Date(completedAt).toISOString();
+  return buildBattleBridgeGitHubCommandReceipt({
+    command: rejection.command,
+    state: 'BLOCKED',
+    acceptedAt: '',
+    heartbeatAt: timestamp,
+    completedAt: timestamp,
+    blocker: rejection.blocker,
+    proofRefs: [rejection.commentUrl].filter(Boolean),
+    result: Object.freeze({
+      ok: false,
+      verdict: 'COMMAND_VALIDATION_BLOCKED',
+      blocker: rejection.blocker,
+      finalVerdict: 'COMMAND_REJECTED_BEFORE_ACCEPTANCE',
+      requestId: rejection.command.requestId,
+      operation: rejection.command.operation,
+      expectedHead: rejection.command.expectedHead || '',
+    }),
+  });
+}
+
+function receiptPublicationId(receipt = {}) {
+  return [receipt.requestId, receipt.state, receipt.completedAt || receipt.acceptedAt || 'unknown'].join(':');
+}
+
+export function checkpointMailboxReceiptPublication(state, receipt, publication, {
+  persist = saveState,
+} = {}) {
+  if (!state || typeof state !== 'object' || !receipt || typeof persist !== 'function') {
+    throw new Error('MAILBOX_RECEIPT_PUBLICATION_CHECKPOINT_INVALID');
+  }
+  const publicationId = receiptPublicationId(receipt);
+  const pending = (Array.isArray(state.pendingReceiptPublications) ? state.pendingReceiptPublications : [])
+    .filter((entry) => entry?.publicationId !== publicationId);
+  if (publication?.ok !== true) {
+    pending.push(Object.freeze({
+      publicationId,
+      receipt: JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES)),
+    }));
+  }
+  state.pendingReceiptPublications = pending.slice(-100);
+  persist(state);
+  return publication;
+}
+
+export function flushMailboxReceiptPublicationOutbox(state, {
+  publish = postReceipt,
+  persist = saveState,
+} = {}) {
+  if (!state || typeof state !== 'object' || typeof publish !== 'function' || typeof persist !== 'function') {
+    throw new Error('MAILBOX_RECEIPT_OUTBOX_INVALID');
+  }
+  const pending = Array.isArray(state.pendingReceiptPublications) ? state.pendingReceiptPublications : [];
+  const retained = [];
+  let publishedCount = 0;
+  for (const entry of pending) {
+    const publication = publish(entry.receipt);
+    if (publication?.ok === true) publishedCount += 1;
+    else retained.push(entry);
+  }
+  state.pendingReceiptPublications = retained.slice(-100);
+  persist(state);
+  return Object.freeze({ attemptedCount: pending.length, publishedCount, pendingCount: retained.length });
+}
+
+export function terminalizeRejectedMailboxCommands(state, rejections = [], {
+  now = () => new Date(),
+  write = writeReceipt,
+  publish = postReceipt,
+  persist = saveState,
+} = {}) {
+  const terminal = [];
+  const consumed = new Set(Array.isArray(state?.consumedRequestIds) ? state.consumedRequestIds : []);
+  for (const rejection of Array.isArray(rejections) ? rejections : []) {
+    const requestId = String(rejection?.command?.requestId || '');
+    if (consumed.has(requestId)) continue;
+    const receipt = buildRejectedMailboxTerminalReceipt(rejection, now().toISOString());
+    const receiptLocation = write(receipt);
+    checkpointTerminalMailboxReceipt(state, receipt, { persist });
+    consumed.add(requestId);
+    const publishable = { ...receipt, receiptRef: receiptLocation.ref };
+    const publication = publish(publishable);
+    checkpointMailboxReceiptPublication(state, publishable, publication, { persist });
+    terminal.push(Object.freeze({ requestId, blocker: receipt.blocker, receipt, receiptLocation, publication }));
+  }
+  return Object.freeze(terminal);
 }
 
 function writeReceipt(receipt) {
@@ -675,6 +799,40 @@ function ghJson(args) {
   });
   if (!result.ok) throw new Error(result.error || result.stderr || 'gh command failed');
   return parseBoundedGitHubJson(result.stdout);
+}
+
+function readGitHubMainHead() {
+  const commit = ghJson([
+    'api',
+    `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/commits/main`,
+  ]);
+  const head = String(commit?.sha || '').toLowerCase();
+  if (!EXACT_GIT_HEAD_PATTERN.test(head)) throw new Error('GITHUB_MAIN_HEAD_INVALID');
+  return head;
+}
+
+export function preflightMailboxControlExpectedHead(selected, {
+  readMainHead = readGitHubMainHead,
+} = {}) {
+  const command = selected?.command || {};
+  if (selected?.partition !== 'CONTROL' || !MAIN_TARGETING_CONTROL_OPERATIONS.has(command.operation)) {
+    return Object.freeze({ ok: true, verdict: 'COMMAND_PREFLIGHT_NOT_REQUIRED' });
+  }
+  const expectedHead = String(command.expectedHead || '').toLowerCase();
+  const githubMainHead = String(readMainHead() || '').toLowerCase();
+  if (!EXACT_GIT_HEAD_PATTERN.test(expectedHead) || !EXACT_GIT_HEAD_PATTERN.test(githubMainHead)) {
+    return Object.freeze({ ok: false, blocker: 'COMMAND_MAIN_HEAD_PREFLIGHT_INVALID', expectedHead, githubMainHead });
+  }
+  if (expectedHead !== githubMainHead) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'COMMAND_EXPECTED_HEAD_SUPERSEDED',
+      expectedHead,
+      githubMainHead,
+      finalVerdict: 'COMMAND_REJECTED_BEFORE_ACCEPTANCE',
+    });
+  }
+  return Object.freeze({ ok: true, verdict: 'COMMAND_MAIN_HEAD_CURRENT', expectedHead, githubMainHead });
 }
 
 export function latestMailboxCommentPage(commentCount, perPage = 100) {
@@ -1087,19 +1245,29 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
   if (repoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) {
     return { ok: false, blocker: 'CANONICAL_CHECKOUT_REQUIRED', repoRoot, expectedRepoRoot };
   }
-  const comments = loadBoundedMailboxComments();
   const state = loadState();
+  const publicationOutbox = flushMailboxReceiptPublicationOutbox(state);
+  const comments = loadBoundedMailboxComments();
   const batch = selectBattleBridgeGitHubCommandBatch(comments, {
-    consumedRequestIds: new Set(state.consumedRequestIds || []),
+    consumedRequestIds: new Set([
+      ...(Array.isArray(state.consumedRequestIds) ? state.consumedRequestIds : []),
+      ...(Array.isArray(state.acceptedRequestIds) ? state.acceptedRequestIds : []),
+    ]),
     now: now(),
     maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
   });
-  if (batch.verdict === 'NO_COMMAND_READY') return batch;
+  const rejectedTerminal = terminalizeRejectedMailboxCommands(state, batch.terminalRejections, { now });
+  if (batch.verdict === 'NO_COMMAND_READY') return Object.freeze({
+    ...batch,
+    terminalizedRejectionCount: rejectedTerminal.length,
+    receiptPublicationOutbox: publicationOutbox,
+  });
   if (!batch.ok) return batch;
 
   const accepted = new Map();
   const executionBatch = await executeBattleBridgeGitHubCommandBatch(batch, {
     now,
+    preflightCommand: async (selected) => preflightMailboxControlExpectedHead(selected),
     beforeExecute: async (selected) => {
       const acceptedAt = now().toISOString();
       const receipt = buildBattleBridgeGitHubCommandReceipt({
@@ -1110,7 +1278,9 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
         proofRefs: [selected.commentUrl],
       });
       const receiptLocation = writeReceipt(receipt);
-      postReceipt({ ...receipt, receiptRef: receiptLocation.ref });
+      checkpointAcceptedMailboxReceipt(state, receipt);
+      const publishable = { ...receipt, receiptRef: receiptLocation.ref };
+      checkpointMailboxReceiptPublication(state, publishable, postReceipt(publishable));
       accepted.set(selected.command.requestId, Object.freeze({ acceptedAt, receiptLocation }));
     },
     executeCommand: async (selected) => {
@@ -1132,7 +1302,8 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
       });
       const receiptLocation = writeReceipt(receipt);
       checkpointTerminalMailboxReceipt(state, receipt);
-      postReceipt({ ...receipt, receiptRef: receiptLocation.ref });
+      const publishable = { ...receipt, receiptRef: receiptLocation.ref };
+      checkpointMailboxReceiptPublication(state, publishable, postReceipt(publishable));
       return Object.freeze({ receipt, execution, receiptLocation });
     },
   });
@@ -1172,6 +1343,8 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     maxConcurrencyObserved: executionBatch.maxConcurrencyObserved,
     controlSerialized: true,
     duplicateWorkerAllowed: false,
+    terminalizedRejectionCount: rejectedTerminal.length,
+    receiptPublicationOutbox: publicationOutbox,
     terminal: Object.freeze(terminal),
   });
 }

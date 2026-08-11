@@ -77,6 +77,7 @@ function comment(payload = command(), overrides = {}) {
   return {
     id: 100,
     html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/1507#issuecomment-100',
+    created_at: now.toISOString(),
     user: { login: 'Cheekyfellastef' },
     body: `\`\`\`${BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(payload)}\n\`\`\``,
     ...overrides,
@@ -358,6 +359,35 @@ test('selects only an unconsumed valid command', () => {
   assert.equal(selected.command.requestId, 'req-1507-new2');
 });
 
+test('binds the maximum command window to immutable comment creation time', () => {
+  const posted = comment(command({
+    requestId: 'req-1507-too-far',
+    expiresAt: '2026-07-21T05:30:01.000Z',
+  }), { id: 7 });
+  const initial = selectBattleBridgeGitHubCommandBatch([posted], { now });
+  const later = selectBattleBridgeGitHubCommandBatch([posted], {
+    now: new Date('2026-07-21T00:30:00.000Z'),
+  });
+  for (const selected of [initial, later]) {
+    assert.equal(selected.verdict, 'NO_COMMAND_READY');
+    assert.equal(selected.terminalRejections.length, 1);
+    assert.equal(selected.terminalRejections[0].blocker, 'COMMAND_EXPIRY_TOO_FAR_AHEAD');
+    assert.equal(selected.terminalRejections[0].command.requestId, 'req-1507-too-far');
+  }
+});
+
+test('never projects attacker-authored validation failures as terminal receipts', () => {
+  const selected = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-attacker' }), {
+      id: 8,
+      user: { login: 'someone-else' },
+    }),
+  ], { now });
+  assert.equal(selected.verdict, 'NO_COMMAND_READY');
+  assert.equal(selected.terminalRejections.length, 0);
+  assert.equal(selected.rejected[0].blocker, 'COMMAND_AUTHOR_NOT_ALLOWED');
+});
+
 test('selects a bounded partitioned batch and reports backpressure without duplicating request IDs', () => {
   const comments = [
     comment(command({ requestId: 'req-1507-control-1' }), { id: 1 }),
@@ -490,6 +520,28 @@ test('publishes acceptance only at slot start and checkpoints terminal state bef
     'execute:req-1507-control-2',
     'checkpoint:req-1507-control-2',
   ]);
+});
+
+test('preflight blocker terminalizes without acceptance or handler execution', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-stale-head' }), { id: 9 }),
+  ], { now });
+  const events = [];
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    preflightCommand: async () => ({ ok: false, blocker: 'COMMAND_EXPECTED_HEAD_SUPERSEDED' }),
+    beforeExecute: async () => events.push('accepted'),
+    executeCommand: async () => {
+      events.push('executed');
+      return { ok: true };
+    },
+    onTerminal: async (_entry, execution) => {
+      events.push(`terminal:${execution.blocker}`);
+      return execution;
+    },
+  });
+  assert.deepEqual(events, ['terminal:COMMAND_EXPECTED_HEAD_SUPERSEDED']);
+  assert.equal(result.results[0].result.blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
 });
 
 test('dispatches read-only reset status only through its named handler', async () => {

@@ -215,6 +215,7 @@ export function extractBattleBridgeGitHubCommand(body = '') {
 export function validateBattleBridgeGitHubCommand(command = {}, {
   authorLogin = '',
   now = new Date(),
+  authoredAt = now,
 } = {}) {
   if (authorLogin !== BATTLE_BRIDGE_GITHUB_COMMAND_AUTHOR) {
     return fail('COMMAND_AUTHOR_NOT_ALLOWED', { authorLogin });
@@ -322,12 +323,13 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
   }
 
   const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  const authoredAtMs = authoredAt instanceof Date ? authoredAt.getTime() : new Date(authoredAt).getTime();
   const expiresAtMs = new Date(command.expiresAt || '').getTime();
-  if (!Number.isFinite(nowMs) || !Number.isFinite(expiresAtMs)) {
+  if (!Number.isFinite(nowMs) || !Number.isFinite(authoredAtMs) || !Number.isFinite(expiresAtMs)) {
     return fail('COMMAND_EXPIRY_INVALID');
   }
-  if (expiresAtMs <= nowMs) return fail('COMMAND_EXPIRED');
-  if (expiresAtMs - nowMs > MAX_FUTURE_WINDOW_MS) {
+  if (expiresAtMs <= authoredAtMs || expiresAtMs <= nowMs) return fail('COMMAND_EXPIRED');
+  if (expiresAtMs - authoredAtMs > MAX_FUTURE_WINDOW_MS) {
     return fail('COMMAND_EXPIRY_TOO_FAR_AHEAD');
   }
 
@@ -389,6 +391,44 @@ export function classifyBattleBridgeMailboxOperation(operation = '') {
     : BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
 }
 
+function projectTerminalMailboxRejection(comment = {}, command = {}, validation = {}) {
+  const requestId = String(command?.requestId || '');
+  const operation = String(command?.operation || '');
+  const expectedHead = String(command?.expectedHead || '').toLowerCase();
+  const blocker = String(validation?.blocker || '').toUpperCase();
+  const commentId = Number(comment?.id || 0);
+  if (comment?.user?.login !== BATTLE_BRIDGE_GITHUB_COMMAND_AUTHOR
+    || !Number.isSafeInteger(commentId) || commentId < 1
+    || !REQUEST_ID_PATTERN.test(requestId)
+    || !BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation)
+    || command?.repository !== BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY
+    || Number(command?.issueNumber) !== BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE
+    || command?.branch !== 'main'
+    || command?.operatorApproval !== 'operator-approved'
+    || (expectedHead && !SHA_PATTERN.test(expectedHead))
+    || !/^COMMAND_[A-Z0-9_:-]{3,150}$/.test(blocker)) {
+    return null;
+  }
+  return Object.freeze({
+    commentId,
+    commentUrl: String(comment?.html_url || comment?.url || ''),
+    blocker,
+    command: Object.freeze({
+      schemaVersion: BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA,
+      requestId,
+      operation,
+      repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+      issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
+      branch: 'main',
+      operatorApproval: 'operator-approved',
+      expectedHead,
+      expiresAt: Number.isFinite(Date.parse(String(command?.expiresAt || '')))
+        ? new Date(command.expiresAt).toISOString()
+        : '',
+    }),
+  });
+}
+
 export function selectBattleBridgeGitHubCommandBatch(comments = [], {
   consumedRequestIds = new Set(),
   now = new Date(),
@@ -400,6 +440,7 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], {
   }
   const ordered = [...comments].sort((a, b) => Number(a?.id || 0) - Number(b?.id || 0));
   const rejected = [];
+  const terminalRejections = [];
   const ready = [];
   const seenRequestIds = new Set();
   for (const comment of ordered) {
@@ -408,9 +449,16 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], {
     const validated = validateBattleBridgeGitHubCommand(extracted.command, {
       authorLogin: comment?.user?.login || '',
       now,
+      authoredAt: comment?.created_at || now,
     });
     if (!validated.ok) {
       rejected.push(Object.freeze({ commentId: comment?.id || null, ...validated }));
+      const terminal = projectTerminalMailboxRejection(comment, extracted.command, validated);
+      if (terminal && !consumedRequestIds.has(terminal.command.requestId)
+        && !seenRequestIds.has(terminal.command.requestId)) {
+        seenRequestIds.add(terminal.command.requestId);
+        terminalRejections.push(terminal);
+      }
       continue;
     }
     if (consumedRequestIds.has(validated.command.requestId)) continue;
@@ -423,7 +471,12 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], {
       partition: classifyBattleBridgeMailboxOperation(validated.command.operation),
     }));
   }
-  if (ready.length === 0) return Object.freeze({ ok: true, verdict: 'NO_COMMAND_READY', rejected });
+  if (ready.length === 0) return Object.freeze({
+    ok: true,
+    verdict: 'NO_COMMAND_READY',
+    rejected,
+    terminalRejections: Object.freeze(terminalRejections),
+  });
   const commands = Object.freeze(ready.slice(0, boundedMaxBatch));
   const controlCount = commands.filter((entry) => entry.partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL).length;
   const observationCount = commands.length - controlCount;
@@ -440,6 +493,7 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], {
     controlSerialized: true,
     duplicateWorkerAllowed: false,
     rejected,
+    terminalRejections: Object.freeze(terminalRejections),
   });
 }
 
@@ -455,6 +509,7 @@ export function selectNextBattleBridgeGitHubCommand(comments = [], options = {})
     command: selected.command,
     partition: selected.partition,
     rejected: batch.rejected,
+    terminalRejections: batch.terminalRejections,
   });
 }
 
@@ -485,6 +540,7 @@ export function revalidateBattleBridgeGitHubCommandForExecution(command = {}, {
 
 export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
   now = () => new Date(),
+  preflightCommand,
   beforeExecute,
   executeCommand,
   onTerminal,
@@ -493,6 +549,7 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
   if (batch?.verdict !== 'COMMAND_BATCH_READY' || entries.length < 1
     || entries.length > BATTLE_BRIDGE_MAILBOX_MAX_BATCH || typeof now !== 'function'
     || typeof executeCommand !== 'function'
+    || (preflightCommand !== undefined && typeof preflightCommand !== 'function')
     || (beforeExecute !== undefined && typeof beforeExecute !== 'function')
     || (onTerminal !== undefined && typeof onTerminal !== 'function')) {
     return fail('MAILBOX_BATCH_EXECUTION_INVALID');
@@ -518,6 +575,16 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
         result: await checkpointTerminal(entry, executionValidation),
       });
       return;
+    }
+    if (preflightCommand) {
+      const preflight = await preflightCommand(entry);
+      if (!preflight?.ok) {
+        results[index] = Object.freeze({
+          entry,
+          result: await checkpointTerminal(entry, preflight || fail('COMMAND_PREFLIGHT_FAILED')),
+        });
+        return;
+      }
     }
     activeExecutions += 1;
     maxConcurrencyObserved = Math.max(maxConcurrencyObserved, activeExecutions);
