@@ -54,9 +54,12 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub comman
     }
 }
 
+$taskPresentAfter = $null -ne (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)
 [pscustomobject]@{
+    schemaVersion = 'stephanos.battle-bridge-github-command-mailbox-install.v1'
     taskName = $taskName
     installed = $true
+    taskPresentAfter = $taskPresentAfter
     currentUser = $currentUser
     executable = $wscriptExe
     launcherPath = $launcherPath
@@ -70,5 +73,7 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub comman
     arbitraryShellAllowed = $false
     destructiveGitAllowed = $false
     liveOpenClawUpdateAllowed = $false
+    sourceMutationAllowed = $false
+    arbitraryTaskNameAllowed = $false
     headlessLauncher = $true
 } | ConvertTo-Json -Depth 4
