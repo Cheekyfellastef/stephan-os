@@ -34,6 +34,18 @@ function boundedGuardianFixture() {
     "$scheduledTaskMutationScope = 'REREGISTER_AND_START_CANONICAL_RECOVERY_MESH_OR_MAILBOX_ONLY'",
     '$mailboxStaleAfterMinutes = 12',
     "$repoRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\\GitHub\\stephan-os'))",
+    "$localHead = (Read-FixedGitText -Arguments @('-C', $repoRoot, 'rev-parse', 'HEAD')).ToLowerInvariant()",
+    '$authoritySourcePaths = @(',
+    "  'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',",
+    "  'scripts/windows/install-battle-bridge-recovery-mesh.ps1',",
+    "  'scripts/windows/run-stephanos-scheduled-task-windowless.vbs'",
+    ')',
+    'foreach ($authorityPath in $authoritySourcePaths) {',
+    '  & $gitExe -C $repoRoot diff --quiet -- $authorityPath',
+    "  if ($LASTEXITCODE -ne 0) { Stop-Guardian -Blocker 'LOCAL_AUTHORITY_SOURCE_DIRTY' }",
+    '  & $gitExe -C $repoRoot diff --cached --quiet -- $authorityPath',
+    "  if ($LASTEXITCODE -ne 0) { Stop-Guardian -Blocker 'LOCAL_AUTHORITY_SOURCE_STAGED_DIRTY' }",
+    '}',
     "$mailboxInstallerPath = Join-Path $repoRoot 'scripts\\windows\\install-battle-bridge-github-command-mailbox.ps1'",
     "$recoveryInstallerPath = Join-Path $repoRoot 'scripts\\windows\\install-battle-bridge-recovery-mesh.ps1'",
     'function Test-MailboxTaskIdentity {',
@@ -159,10 +171,39 @@ test('reviewer rejects arbitrary caller authority and dynamic execution', () => 
   }
 });
 
+test('reviewer requires local HEAD provenance and clean fixed authority source at that commit', () => {
+  const unprovenHead = review(boundedGuardianFixture().replace(
+    "$localHead = (Read-FixedGitText -Arguments @('-C', $repoRoot, 'rev-parse', 'HEAD')).ToLowerInvariant()",
+    "$localHead = $env:CALLER_HEAD",
+  ));
+  assert.ok(codes(unprovenHead).includes('mailbox-recovery-guardian-local-head-provenance-missing'));
+
+  const dirtyProofRemoved = review(boundedGuardianFixture().replace(
+    /foreach \(\$authorityPath in \$authoritySourcePaths\) \{[\s\S]*?\n\}/,
+    '',
+  ));
+  assert.ok(codes(dirtyProofRemoved).includes('mailbox-recovery-guardian-authority-source-proof-incomplete'));
+});
+
+test('reviewer rejects mutation verbs smuggled through fixed Git argument arrays', () => {
+  const widened = review(`${boundedGuardianFixture()}\nRead-FixedGitText -Arguments @('-C', $repoRoot, 'reset', '--hard')`);
+  assert.ok(codes(widened).includes('mailbox-recovery-guardian-git-read-surface-widened'));
+  assert.ok(codes(widened).includes('mailbox-recovery-guardian-git-mutation-argument-forbidden'));
+});
+
+test('reviewer proves Recovery Mesh repair is lexically nested inside the unique exact-head block', () => {
+  const widened = boundedGuardianFixture().replace(
+    "if ($sourceRelation -eq 'EXACT') {\n  if (-not $recoveryHealthy) {",
+    "if ($sourceRelation -eq 'EXACT') {\n}\nif (-not $recoveryHealthy) {",
+  );
+  const result = review(widened);
+  assert.ok(codes(result).includes('mailbox-recovery-guardian-recovery-repair-not-exact-head-gated'));
+});
+
 test('top-level specialist pins and routes the mailbox recovery reviewer before the legacy Recovery Mesh reviewer', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
-  assert.match(source, /MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = 'efb0885fa7889d23d826d06cf45c198bcf1fe653'/);
+  assert.match(source, /MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '9f47c49eaab30db93897e4c5fcfce910a58ed0b9'/);
   const mailboxRoute = source.indexOf('analyzeWindowsAuthorityMailboxRecoveryGuardianReview');
   const legacyRoute = source.indexOf('analyzeWindowsAuthorityRecoveryMeshGuardianReview');
   assert.ok(mailboxRoute > 0 && legacyRoute > mailboxRoute);
