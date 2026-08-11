@@ -51,6 +51,64 @@ function forbidPatterns(findings, source, rules) {
   for (const [pattern, code] of rules) if (pattern.test(source)) findings.push(finding(code));
 }
 
+function extractPowerShellBlock(source, marker) {
+  const markerIndex = source.indexOf(marker);
+  if (markerIndex < 0 || source.indexOf(marker, markerIndex + marker.length) >= 0) return null;
+  const open = source.indexOf('{', markerIndex + marker.length - 1);
+  if (open < 0) return null;
+  let depth = 0;
+  let quote = '';
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
+    const previous = index > 0 ? source[index - 1] : '';
+    if (quote) {
+      if (char === quote && previous !== '`') quote = '';
+      continue;
+    }
+    if (char === "'" || char === '"') { quote = char; continue; }
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return { start: open, end: index, body: source.slice(open + 1, index) };
+      if (depth < 0) return null;
+    }
+  }
+  return null;
+}
+
+function normalizedArgumentBody(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function validateFixedReadCalls(findings, source) {
+  const gitAllowed = new Set([
+    "'-C', $repoRoot, 'branch', '--show-current'",
+    "'-C', $repoRoot, 'remote', 'get-url', 'origin'",
+    "'-C', $repoRoot, 'rev-parse', 'HEAD'",
+  ]);
+  for (const match of source.matchAll(/Read-FixedGitText\s+-Arguments\s+@\(([^)]*)\)/g)) {
+    if (!gitAllowed.has(normalizedArgumentBody(match[1]))) findings.push(finding('mailbox-recovery-guardian-git-read-surface-widened'));
+  }
+  const githubTextAllowed = new Set([
+    "'api', 'repos/Cheekyfellastef/stephan-os/branches/main', '--jq', '.commit.sha'",
+  ]);
+  for (const match of source.matchAll(/Read-FixedGitHubText\s+-Arguments\s+@\(([^)]*)\)/g)) {
+    if (!githubTextAllowed.has(normalizedArgumentBody(match[1]))) findings.push(finding('mailbox-recovery-guardian-gh-read-surface-widened'));
+  }
+  const githubJsonAllowed = new Set(["'api', $comparePath"]);
+  for (const match of source.matchAll(/Read-FixedGitHubJson\s+-Arguments\s+@\(([^)]*)\)/g)) {
+    if (!githubJsonAllowed.has(normalizedArgumentBody(match[1]))) findings.push(finding('mailbox-recovery-guardian-gh-read-surface-widened'));
+  }
+  for (const rawLine of source.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith('& $gitExe')) continue;
+    const allowed = line === '& $gitExe @Arguments'
+      || /^& \$gitExe -C \$repoRoot diff --quiet -- \$authorityPath$/.test(line)
+      || /^& \$gitExe -C \$repoRoot diff --cached --quiet -- \$authorityPath$/.test(line);
+    if (!allowed) findings.push(finding('mailbox-recovery-guardian-direct-git-invocation-widened'));
+  }
+}
+
 function reviewGuardian(source, findings) {
   requireLiterals(findings, source, [
     ["$recoveryTaskName = 'Stephanos Battle Bridge Recovery Mesh'", 'mailbox-recovery-guardian-recovery-task-not-fixed'],
@@ -62,6 +120,13 @@ function reviewGuardian(source, findings) {
     ["$scheduledTaskMutationScope = 'REREGISTER_AND_START_CANONICAL_RECOVERY_MESH_OR_MAILBOX_ONLY'", 'mailbox-recovery-guardian-mutation-scope-not-fixed'],
     ["$mailboxStaleAfterMinutes = 12", 'mailbox-recovery-guardian-mailbox-stale-window-not-fixed'],
     ["'Documents\\GitHub\\stephan-os'", 'mailbox-recovery-guardian-repository-root-not-fixed'],
+    ["$localHead = (Read-FixedGitText -Arguments @('-C', $repoRoot, 'rev-parse', 'HEAD')).ToLowerInvariant()", 'mailbox-recovery-guardian-local-head-provenance-missing'],
+    ["$authoritySourcePaths = @(", 'mailbox-recovery-guardian-authority-source-list-missing'],
+    ["'scripts/windows/install-battle-bridge-github-command-mailbox.ps1'", 'mailbox-recovery-guardian-mailbox-source-proof-missing'],
+    ["'scripts/windows/install-battle-bridge-recovery-mesh.ps1'", 'mailbox-recovery-guardian-recovery-source-proof-missing'],
+    ["'scripts/windows/run-stephanos-scheduled-task-windowless.vbs'", 'mailbox-recovery-guardian-launcher-source-proof-missing'],
+    ["Stop-Guardian -Blocker 'LOCAL_AUTHORITY_SOURCE_DIRTY'", 'mailbox-recovery-guardian-authority-dirt-blocker-missing'],
+    ["Stop-Guardian -Blocker 'LOCAL_AUTHORITY_SOURCE_STAGED_DIRTY'", 'mailbox-recovery-guardian-authority-staged-dirt-blocker-missing'],
     ["$mailboxInstallerPath = Join-Path $repoRoot 'scripts\\windows\\install-battle-bridge-github-command-mailbox.ps1'", 'mailbox-recovery-guardian-mailbox-installer-not-fixed'],
     ["$recoveryInstallerPath = Join-Path $repoRoot 'scripts\\windows\\install-battle-bridge-recovery-mesh.ps1'", 'mailbox-recovery-guardian-recovery-installer-not-fixed'],
     ["function Test-MailboxTaskIdentity", 'mailbox-recovery-guardian-mailbox-identity-check-missing'],
@@ -96,11 +161,24 @@ function reviewGuardian(source, findings) {
     [/\$comparison\.status\s+-eq\s*'ahead'[\s\S]*\$comparison\.ahead_by\s+-gt\s*0[\s\S]*\$comparison\.behind_by\s+-eq\s*0[\s\S]*\$comparison\.merge_base_commit\.sha\s+-eq\s*\$localHead/, 'mailbox-recovery-guardian-ancestor-proof-incomplete'],
     [/if \(\$localHead -eq \$remoteMainHead\) \{[\s\S]*sourceRelation = 'EXACT'[\s\S]*\} else \{[\s\S]*Read-FixedGitHubJson[\s\S]*sourceRelation = 'TRUSTED_ANCESTOR'/, 'mailbox-recovery-guardian-relation-branch-not-fixed'],
     [/if \(-not \$mailboxHealthy\) \{[\s\S]*-File \$mailboxInstallerPath -StartNow[\s\S]*Test-MailboxTaskIdentity/, 'mailbox-recovery-guardian-mailbox-repair-boundary-incomplete'],
-    [/if \(\$sourceRelation -eq 'EXACT'\) \{[\s\S]*if \(-not \$recoveryHealthy\) \{[\s\S]*-File \$recoveryInstallerPath -StartNow -RecoveryMeshOnly/, 'mailbox-recovery-guardian-recovery-repair-not-exact-head-gated'],
+    [/foreach \(\$authorityPath in \$authoritySourcePaths\) \{[\s\S]*& \$gitExe -C \$repoRoot diff --quiet -- \$authorityPath[\s\S]*LOCAL_AUTHORITY_SOURCE_DIRTY[\s\S]*& \$gitExe -C \$repoRoot diff --cached --quiet -- \$authorityPath[\s\S]*LOCAL_AUTHORITY_SOURCE_STAGED_DIRTY/, 'mailbox-recovery-guardian-authority-source-proof-incomplete'],
   ]);
+
+  const exactMarker = "if ($sourceRelation -eq 'EXACT') {";
+  const exactBlock = extractPowerShellBlock(source, exactMarker);
+  const recoveryCall = '-File $recoveryInstallerPath -StartNow -RecoveryMeshOnly';
+  if (!exactBlock || !exactBlock.body.includes(recoveryCall)) {
+    findings.push(finding('mailbox-recovery-guardian-recovery-repair-not-exact-head-gated'));
+  } else {
+    const outsideExactBlock = source.slice(0, exactBlock.start) + source.slice(exactBlock.end + 1);
+    if (outsideExactBlock.includes(recoveryCall)) findings.push(finding('mailbox-recovery-guardian-recovery-repair-outside-exact-head-gate'));
+  }
+
+  validateFixedReadCalls(findings, source);
 
   forbidPatterns(findings, source, [
     [/\bgit(?:\.exe)?\s+(?:fetch|push|reset|clean|rebase|checkout|switch|merge)\b/i, 'mailbox-recovery-guardian-git-mutation-forbidden'],
+    [/["'](?:fetch|push|reset|clean|rebase|checkout|switch|merge)["']/i, 'mailbox-recovery-guardian-git-mutation-argument-forbidden'],
     [/\bRegister-ScheduledTask\b|\bNew-ScheduledTask(?:Action|Trigger|Principal|SettingsSet)?\b|\bStart-ScheduledTask\b/i, 'mailbox-recovery-guardian-direct-task-mutation-forbidden'],
     [/Invoke-Expression|\biex\b|Start-Process|cmd\.exe|Restart-Computer|shutdown\.exe|Stop-Process/i, 'mailbox-recovery-guardian-dynamic-execution-forbidden'],
     [/(?:^|\s)-(?:EncodedCommand|Command)\b/im, 'mailbox-recovery-guardian-dynamic-powershell-forbidden'],
