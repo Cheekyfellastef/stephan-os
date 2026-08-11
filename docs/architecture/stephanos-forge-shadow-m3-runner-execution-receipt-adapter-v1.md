@@ -4,7 +4,7 @@
 
 This source-only adapter closes the truth boundary between the existing deterministic M3 runtime plan and a future separately authorised Battle Bridge runner executor.
 
-It does not install, register, connect or execute a runner by itself. It orchestrates only a fixed host executor supplied by the connected Windows Battle Bridge and refuses to mint `FORGE_SHADOW_M3_RUNNER_READY` until every planned runner returns a closed-world observation proving exact source identity, immutable artifact identity, the fixed isolation canary, complete teardown and zero residual authority.
+It does not install, register, connect or execute a runner by itself. It orchestrates only a fixed host executor supplied by the connected Windows Battle Bridge and refuses to mint the canonical `FORGE_SHADOW_M3_RUNNER_RUNTIME_READY` routing receipt until every planned runner returns a closed-world observation proving exact source identity, immutable artifact identity, the fixed isolation canary, complete teardown and zero residual authority.
 
 The canonical M2 Forge instance is not the M3 execution surface. M2 is deliberately sealed with Actions disabled and must remain that way. For each proof runner, M3 copies the content-addressed M2 backup into a disposable canary-only Forge instance, enables Actions only in that disposable copy, executes the exact canary, then destroys the canary instance and its data. This preserves the M2 security receipt instead of invalidating it to make M3 run.
 

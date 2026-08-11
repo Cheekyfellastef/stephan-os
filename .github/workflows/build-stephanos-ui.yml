@@ -2,6 +2,8 @@ name: Build Stephanos UI
 
 on:
   push:
+    branches:
+      - main
     paths:
       - 'stephanos-ui/**'
       - 'shared/ai/**'

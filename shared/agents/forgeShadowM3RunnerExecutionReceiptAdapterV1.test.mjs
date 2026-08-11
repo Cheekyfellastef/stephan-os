@@ -167,6 +167,8 @@ test('executes only the canonical runner estate and emits a content-addressed M3
     platform: 'win32', now,
     executeRunner: async (request) => {
       calls.push(request);
+      assert.equal(request.executionDeadlineUtc, '2026-08-07T22:19:00.000Z');
+      assert.equal(request.signal.aborted, false);
       return observation(request);
     },
   });
@@ -177,15 +179,66 @@ test('executes only the canonical runner estate and emits a content-addressed M3
     'stephanos-forge-windows-proof-runner-01',
   ]);
   assert.equal(result.receipt.canCarryRealWork, true);
-  assert.equal(result.receipt.runnerCount, 2);
-  assert.ok(result.receipt.runners.every((runner) => runner.ephemeralRegistration && runner.unregistered));
-  assert.ok(Object.values(result.receipt.authority).every((value) => value === false));
-  assert.match(result.receipt.receiptDigest, /^sha256:[0-9a-f]{64}$/);
+  assert.deepEqual(result.receipt.runnerIdentities, [
+    'stephanos-forge-linux-runner-01',
+    'stephanos-forge-windows-proof-runner-01',
+  ]);
+  assert.equal(result.receipt.teardownComplete, true);
+  assert.match(result.receipt.artifactSetDigest, /^sha256:[0-9a-f]{64}$/);
+  assert.match(result.receipt.payloadSha256, /^[0-9a-f]{64}$/);
+  assert.equal(Object.values(result.authority).every((value) => value === false), true);
   assert.equal(validateForgeShadowM3RunnerRuntimeReceipt(result.receipt, {
     expectedRepository: 'Cheekyfellastef/stephan-os', expectedHead: HEAD, expectedTree: TREE,
     expectedRuntimePlanDigest: result.runtimePlanDigest,
     expectedArtifactSetDigest: result.receipt.artifactSetDigest,
   }).ok, true);
+});
+
+test('emits the exact canonical Forge routing receipt contract', async () => {
+  const result = await executeForgeShadowM3RunnerPlan(input(), {
+    platform: 'win32', now, executeRunner: async (request) => observation(request),
+  });
+  assert.deepEqual(Object.keys(result.receipt).sort(), [
+    'artifactSetDigest', 'canCarryRealWork', 'completedAt', 'finalVerdict',
+    'linuxReviewRunnerConnected', 'payloadSha256', 'proofRefs', 'receiptId',
+    'repository', 'runnerIdentities', 'schemaVersion', 'sourceHead', 'sourceTree',
+    'teardownComplete', 'windowsProofRunnerConnected', 'zeroResidualCredential',
+    'zeroResidualRegistration', 'zeroResidualWorkspace',
+  ].sort());
+  assert.equal(result.receipt.finalVerdict, 'FORGE_SHADOW_M3_RUNNER_RUNTIME_READY');
+});
+
+test('replans against the trusted execution clock so caller history cannot admit stale evidence', async () => {
+  const result = await executeForgeShadowM3RunnerPlan(input(runtimePlanInput(), {
+    issuedAtUtc: '2026-08-09T21:59:00Z',
+    expiresAtUtc: '2026-08-09T22:59:00Z',
+  }), {
+    platform: 'win32',
+    now: () => new Date('2026-08-09T22:00:00Z'),
+    executeRunner: async (request) => observation(request),
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.blockers.includes('runtime-plan-not-ready'), JSON.stringify(result.blockers));
+});
+
+test('rechecks authorization immediately before every runner invocation', async () => {
+  const instants = [
+    '2026-08-07T21:20:00Z',
+    '2026-08-07T21:20:00Z',
+    '2026-08-07T22:19:00Z',
+  ];
+  let calls = 0;
+  const result = await executeForgeShadowM3RunnerPlan(input(), {
+    platform: 'win32',
+    now: () => new Date(instants.shift()),
+    executeRunner: async (request) => {
+      calls += 1;
+      return observation(request);
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.ok, false);
+  assert.ok(result.blockers.includes('runtime-authorization-expired'), JSON.stringify(result.blockers));
 });
 
 test('runtime authorization is exact-head, exact-tree, exact-plan, surface and time bound', async () => {
