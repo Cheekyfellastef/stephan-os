@@ -62,6 +62,8 @@ const AUTHORIZATION_RESERVATION_KEYS = [
 const OBSERVATION_KEYS = [
   'schemaVersion', 'authorizationId', 'invocationId', 'runnerId', 'poolId',
   'runnerClass', 'runtimeBoundary',
+  'forgeService', 'forgeListener', 'registrationRepository', 'registrationScope',
+  'registrationMode', 'oneJobMode', 'registrationProofRef',
   'sourceHead', 'sourceTree', 'artifactDigest', 'artifactSetDigest',
   'startedAtUtc', 'completedAtUtc', 'installed', 'registered', 'connected',
   'ephemeralRegistration', 'canaryWorkflowId', 'canaryScenario', 'canaryHead',
@@ -348,6 +350,9 @@ function validateObservation(value, runner, artifact, plan, authorization, invoc
   if (value.invocationId !== invocation.invocationId) blockers.push(`runner-invocation-identity-mismatch:${prefix}`);
   if (value.runnerId !== runner.runnerId || value.poolId !== runner.poolId || value.runnerClass !== runner.runnerClass) blockers.push(`runner-identity-mismatch:${prefix}`);
   if (value.runtimeBoundary !== runner.runtimeBoundary) blockers.push(`runner-boundary-mismatch:${prefix}`);
+  if (value.forgeService !== runner.forgeService || value.forgeListener !== runner.forgeListener) blockers.push(`runner-forge-target-mismatch:${prefix}`);
+  if (value.registrationRepository !== plan.repository || value.registrationScope !== 'repository') blockers.push(`runner-registration-scope-mismatch:${prefix}`);
+  if (value.registrationMode !== runner.registrationMode || value.oneJobMode !== true) blockers.push(`runner-registration-mode-mismatch:${prefix}`);
   if (text(value.sourceHead).toLowerCase() !== plan.canonicalMainHead) blockers.push(`runner-head-mismatch:${prefix}`);
   if (text(value.sourceTree).toLowerCase() !== plan.canonicalMainTree) blockers.push(`runner-tree-mismatch:${prefix}`);
   if (text(value.artifactDigest).toLowerCase() !== artifact.artifactDigest) blockers.push(`runner-artifact-mismatch:${prefix}`);
@@ -380,12 +385,20 @@ function validateObservation(value, runner, artifact, plan, authorization, invoc
     if (value[field] !== false) blockers.push(`runner-authority-invalid:${prefix}:${field}`);
   }
   if (!refs) blockers.push(`runner-proof-refs-invalid:${prefix}`);
+  if (!refs || !refs.includes(value.registrationProofRef)) blockers.push(`runner-registration-proof-ref-invalid:${prefix}`);
   if (blockers.length) return null;
   return Object.freeze({
     runnerId: runner.runnerId,
     poolId: runner.poolId,
     runnerClass: runner.runnerClass,
     runtimeBoundary: runner.runtimeBoundary,
+    forgeService: runner.forgeService,
+    forgeListener: runner.forgeListener,
+    registrationRepository: plan.repository,
+    registrationScope: 'repository',
+    registrationMode: runner.registrationMode,
+    oneJobMode: true,
+    registrationProofRef: value.registrationProofRef,
     artifactDigest: artifact.artifactDigest,
     startedAtUtc: new Date(startedMs).toISOString(),
     completedAtUtc: new Date(completedMs).toISOString(),
@@ -622,8 +635,12 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
       : null;
     if (!Number.isFinite(runnerNowMs)) runnerAuthorizationBlockers.push(`runner-execution-now-invalid:${runner.runnerId}`);
     if (!liveAuthorization) return blocked(runnerAuthorizationBlockers, planDigest);
-    const remainingAuthorizationMs = liveAuthorization.expiresMs - runnerNowMs;
-    if (remainingAuthorizationMs <= 0) return blocked([`runner-authorization-expired:${runner.runnerId}`], planDigest);
+    const executionDeadlineMs = Math.min(
+      liveAuthorization.expiresMs,
+      runnerNowMs + MAX_RUNNER_EXECUTION_MS,
+    );
+    const remainingExecutionMs = executionDeadlineMs - runnerNowMs;
+    if (remainingExecutionMs <= 0) return blocked([`runner-authorization-expired:${runner.runnerId}`], planDigest);
 
     const invocationId = text(createInvocationId({
       authorizationId: liveAuthorization.authorizationId,
@@ -646,7 +663,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
         runtimePlan: plan,
         runner,
         artifact,
-        executionDeadlineUtc: liveAuthorization.expiresAtUtc,
+        executionDeadlineUtc: new Date(executionDeadlineMs).toISOString(),
         signal: controller.signal,
         canary: Object.freeze({
           workflowId: FORGE_SHADOW_M3_CANARY_WORKFLOW,
@@ -660,7 +677,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
         deadlineTimer = setTimeout(() => {
           controller.abort();
           resolveDeadline({ deadlineExceeded: true });
-        }, remainingAuthorizationMs);
+        }, remainingExecutionMs);
       });
       const executorSettlement = Promise.resolve()
         .then(() => executeRunner(executionRequest))

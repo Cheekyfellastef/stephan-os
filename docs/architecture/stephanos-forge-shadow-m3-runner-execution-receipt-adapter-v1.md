@@ -40,6 +40,10 @@ The adapter first proves that the canonical plan contains exactly the one Linux 
 Every returned observation must prove:
 
 - the exact runner, pool and runtime-boundary identity;
+- Forge service `stephanos-forge-shadow` at listener `127.0.0.1:3340`;
+- repository-scoped registration bound exactly to `Cheekyfellastef/stephan-os`;
+- the planned one-time-contained registration mode plus Forgejo `one-job` execution;
+- a runner-scoped content-addressed registration proof included in the aggregate proof estate;
 - exact source head and tree;
 - exact runner-artifact and artifact-set digests;
 - installation, repository-scoped ephemeral registration and connection;
@@ -57,7 +61,7 @@ Every returned observation must prove:
 
 Each runner may return at most eight unique proof references. Because the canonical estate contains exactly two runners, the aggregate receipt accepts at most sixteen; a valid pair of eight-reference runner observations cannot execute successfully and then fail solely at receipt construction.
 
-Every executor call must settle with exactly an observation and a closed-world termination acknowledgement proving the runner has terminated and teardown has been acknowledged. A fresh trusted clock is captured after settlement; neither a future-dated observation completion nor a future-dated termination acknowledgement may exceed that settlement time. At the authorization deadline the adapter requests abort, then awaits executor settlement and validates the bound termination acknowledgement before returning a blocked result. A non-cooperative executor keeps the adapter pending; the adapter never reports a terminal result while that executor may still be mutating the host in the background.
+Every executor call must settle with exactly an observation and a closed-world termination acknowledgement proving the runner has terminated and teardown has been acknowledged. A fresh trusted clock is captured after settlement; neither a future-dated observation completion nor a future-dated termination acknowledgement may exceed that settlement time. The live executor deadline is the earlier of authorization expiry or one hour after the trusted invocation start. At that deadline the adapter requests abort, then awaits executor settlement and validates the bound termination acknowledgement before returning a blocked result. A non-cooperative executor keeps the adapter pending; the adapter never reports a terminal result while that executor may still be mutating the host in the background.
 
 Unknown fields and credential-, command-, path-, URL-, shell- or token-shaped fields fail closed.
 

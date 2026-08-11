@@ -172,12 +172,16 @@ function input(planInput = runtimePlanInput(), authorizationPatch = {}) {
 
 function observation({ runner, artifact, runtimePlan }, patch = {}) {
   const proofDigest = runner.runnerClass === 'linux-isolated' ? '6'.repeat(64) : '7'.repeat(64);
+  const registrationProofRef = `proofs/forge-shadow-m3/${runner.runnerId}/${proofDigest}.json`;
   return {
     schemaVersion: FORGE_SHADOW_M3_EXECUTION_OBSERVATION_SCHEMA,
     authorizationId: patch.authorizationId,
     invocationId: patch.invocationId,
     runnerId: runner.runnerId, poolId: runner.poolId, runnerClass: runner.runnerClass,
     runtimeBoundary: runner.runtimeBoundary, sourceHead: HEAD, sourceTree: TREE,
+    forgeService: runner.forgeService, forgeListener: runner.forgeListener,
+    registrationRepository: 'Cheekyfellastef/stephan-os', registrationScope: 'repository',
+    registrationMode: runner.registrationMode, oneJobMode: true, registrationProofRef,
     artifactDigest: artifact.artifactDigest, artifactSetDigest: runtimePlan.artifactSetDigest,
     startedAtUtc: NOW, completedAtUtc: NOW,
     installed: true, registered: true, connected: true, ephemeralRegistration: true,
@@ -191,7 +195,7 @@ function observation({ runner, artifact, runtimePlan }, patch = {}) {
     tailscaleExposure: false, canonicalCheckoutMounted: false, containerSocketMounted: false,
     hostProcessAccess: false, sourceMutation: false, gitRefWrite: false,
     mergeAuthority: false, deploymentAuthority: false, arbitraryCommand: false,
-    proofRefs: [`proofs/forge-shadow-m3/${runner.runnerId}/${proofDigest}.json`],
+    proofRefs: [registrationProofRef],
     ...patch,
   };
 }
@@ -543,6 +547,10 @@ test('runner proof fails closed on identity, canary, teardown, authority or proo
     { workspaceDestroyed: false }, { runtimeBoundaryDestroyed: false },
     { canonicalCheckoutMounted: true }, { containerSocketMounted: true },
     { hostProcessAccess: true }, { gitRefWrite: true }, { mergeAuthority: true },
+    { registrationRepository: 'attacker/repository' }, { registrationScope: 'instance' },
+    { forgeService: 'attacker-forge' }, { forgeListener: '127.0.0.1:9999' },
+    { registrationMode: 'persistent' }, { oneJobMode: false },
+    { registrationProofRef: `proofs/forge-shadow-m3/unrelated/${'9'.repeat(64)}.json` },
     { proofRefs: ['proofs/forge-shadow-m3/not-content-addressed.json'] },
   ]) {
     let first = true;
@@ -557,6 +565,20 @@ test('runner proof fails closed on identity, canary, teardown, authority or proo
     assert.equal(result.ok, false);
     assert.equal(result.receipt, null);
   }
+});
+
+test('live executor deadline enforces the per-runner limit before authorization expiry', async () => {
+  const result = await executeVerified(input(runtimePlanInput(), {
+    issuedAtUtc: '2026-08-07T21:19:00Z',
+    expiresAtUtc: '2026-08-07T23:19:00Z',
+  }), {
+    platform: 'win32', now,
+    executeRunner: async (request) => {
+      assert.equal(request.executionDeadlineUtc, '2026-08-07T22:20:00.000Z');
+      return executionResult(request);
+    },
+  });
+  assert.equal(result.ok, true, JSON.stringify(result, null, 2));
 });
 
 test('runner observations are bound to both authorization and fresh invocation identity', async () => {
