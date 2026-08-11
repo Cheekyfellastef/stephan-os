@@ -5,6 +5,7 @@ export const WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1 = Object.freeze([
   'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1',
   'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
   'scripts/windows/uninstall-battle-bridge-recovery-mesh.ps1',
+  'scripts/windows/request-battle-bridge-recovery.ps1',
 ]);
 
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
@@ -51,6 +52,10 @@ function requirePatterns(findings, source, path, rules) {
 }
 function forbidPatterns(findings, source, path, rules) {
   for (const [pattern, code] of rules) if (pattern.test(source)) findings.push(finding(code, path));
+}
+function requireLiteralCount(findings, source, path, literal, expected, code) {
+  const observed = source.split(literal).length - 1;
+  if (observed !== expected) findings.push(finding(code, path));
 }
 
 function reviewInstaller(source, path, findings) {
@@ -162,6 +167,57 @@ function reviewUninstaller(source, path, findings) {
   ]);
 }
 
+function reviewIngressAdapter(source, path, findings) {
+  requireLiterals(findings, source, path, [
+    ["[CmdletBinding(DefaultParameterSetName = 'Wake')]", 'recovery-ingress-default-command-not-fixed'],
+    ["[ValidateSet('GITHUB_MAILBOX','TAILSCALE_CONTROL','OPENCLAW_WHATSAPP','AUTHENTICATED_BREAK_GLASS')]", 'recovery-ingress-route-set-not-fixed'],
+    ["$taskName = 'Stephanos Battle Bridge Recovery Mesh'", 'recovery-ingress-task-not-fixed'],
+    ["'Documents\\GitHub\\stephan-os'", 'recovery-ingress-repository-root-not-fixed'],
+    ['run-stephanos-scheduled-task-windowless.vbs', 'recovery-ingress-launcher-not-fixed'],
+    ["$wscriptPath = 'C:\\Windows\\System32\\wscript.exe'", 'recovery-ingress-wscript-not-fixed'],
+    ["'battle-bridge-github-command-mailbox'", 'recovery-ingress-mailbox-issuer-not-fixed'],
+    ["'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'", 'recovery-ingress-operation-not-fixed'],
+    ["$sourceControlExecutable = 'C:\\Program Files\\Git\\cmd\\git.exe'", 'recovery-ingress-git-not-fixed'],
+    ['$currentSourceHead = [string](& $sourceControlExecutable -C $repoRoot rev-parse HEAD)', 'recovery-ingress-source-head-read-missing'],
+    ["[string]$mailboxReceipt.state -notin @('ACCEPTED','DONE')", 'recovery-ingress-mailbox-state-gate-missing'],
+    ["$expectedArguments = \"//B //NoLogo `\"$launcherPath`\" recovery-mesh\"", 'recovery-ingress-task-action-not-fixed'],
+    ["[string]$task.Principal.LogonType -ne 'Interactive'", 'recovery-ingress-principal-proof-missing'],
+    ["[string]$task.Principal.RunLevel -ne 'Limited'", 'recovery-ingress-runlevel-proof-missing'],
+    ["[string]$task.Settings.MultipleInstances -ne 'IgnoreNew'", 'recovery-ingress-overlap-proof-missing'],
+    ["action = 'WAKE_CANONICAL_BATTLE_BRIDGE_DISPATCHER'", 'recovery-ingress-action-not-fixed'],
+    ['arbitraryShellAllowed = $false', 'recovery-ingress-shell-denial-missing'],
+    ['arbitraryTaskNameAllowed = $false', 'recovery-ingress-arbitrary-task-denial-missing'],
+    ['sourceMutationAllowed = $false', 'recovery-ingress-source-denial-missing'],
+    ['Move-Item -LiteralPath $temporaryPath -Destination $requestPath -Force', 'recovery-ingress-durable-request-missing'],
+    ['$taskStateBefore = [string]$task.State', 'recovery-ingress-task-state-proof-missing'],
+    ['$startAttempted = $false', 'recovery-ingress-start-attempt-default-missing'],
+    ["if ($taskStateBefore -ne 'Running') {", 'recovery-ingress-running-idempotency-missing'],
+    ['$startAttempted = $true', 'recovery-ingress-start-attempt-truth-missing'],
+    ['Start-ScheduledTask -TaskName $taskName', 'recovery-ingress-fixed-start-missing'],
+    ['$taskAfterFailure = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue', 'recovery-ingress-start-recheck-missing'],
+    ["throw 'RECOVERY_MESH_TASK_START_FAILED'", 'recovery-ingress-start-failclosed-missing'],
+    ['coordinatorStateBefore = $taskStateBefore', 'recovery-ingress-state-receipt-missing'],
+    ['startAttempted = $startAttempted', 'recovery-ingress-start-receipt-missing'],
+    ['queued = $true', 'recovery-ingress-queue-receipt-missing'],
+  ]);
+  requirePatterns(findings, source, path, [
+    [/if \(\$taskStateBefore -ne 'Running'\) \{[\s\S]*\$startAttempted = \$true[\s\S]*try \{[\s\S]*Start-ScheduledTask -TaskName \$taskName/, 'recovery-ingress-fixed-start-boundary-missing'],
+    [/catch \{[\s\S]*\$taskAfterFailure = Get-ScheduledTask -TaskName \$taskName -ErrorAction SilentlyContinue[\s\S]*if \(-not \$taskAfterFailure -or \[string\]\$taskAfterFailure\.State -ne 'Running'\) \{[\s\S]*throw 'RECOVERY_MESH_TASK_START_FAILED'/, 'recovery-ingress-start-recheck-not-failclosed'],
+    [/Move-Item -LiteralPath \$temporaryPath -Destination \$requestPath -Force[\s\S]*\$taskStateBefore = \[string\]\$task\.State/, 'recovery-ingress-request-not-persisted-before-start'],
+  ]);
+  requireLiteralCount(findings, source, path, 'Start-ScheduledTask -TaskName $taskName', 1, 'recovery-ingress-start-count-not-one');
+  forbidPatterns(findings, source, path, [
+    [/\b(?:Register|Unregister)-ScheduledTask\b|\bNew-ScheduledTask(?:Action|Trigger|Principal|SettingsSet)?\b/i, 'recovery-ingress-task-construction-forbidden'],
+    [/Start-ScheduledTask\s+-TaskName\s+(?!\$taskName\b)/i, 'recovery-ingress-arbitrary-task-start-forbidden'],
+    [/Invoke-Expression|\biex\b|Start-Process|cmd\.exe|Restart-Computer|shutdown\.exe|Stop-Process/i, 'recovery-ingress-dynamic-execution-forbidden'],
+    [/(?:^|\s)-(?:EncodedCommand|Command)\b/im, 'recovery-ingress-dynamic-powershell-forbidden'],
+    [/\bgit(?:\.exe)?\s+(?:push|reset|clean|rebase|checkout|switch|merge|fetch)\b/i, 'windows-authority-source-mutation-forbidden'],
+    [/RunLevel\s+Highest|-MultipleInstances\s+Parallel/i, 'windows-authority-expanded'],
+    [/\[string\]\s*\$TaskName\b/i, 'recovery-ingress-caller-task-name-forbidden'],
+    [/Move-Item -LiteralPath \$temporaryPath -Destination \$requestPath -Force\s*\r?\nStart-ScheduledTask -TaskName \$taskName/, 'recovery-ingress-unconditional-start-forbidden'],
+  ]);
+}
+
 export function analyzeWindowsAuthorityRecoveryMeshGuardianReview(input = {}) {
   const repository = text(input.repository);
   const sourceHead = text(input.sourceHead).toLowerCase();
@@ -184,6 +240,7 @@ export function analyzeWindowsAuthorityRecoveryMeshGuardianReview(input = {}) {
     if (path === WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[1]) reviewGuardian(source, path, findings);
     if (path === WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[2]) reviewLauncher(source, path, findings);
     if (path === WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[3]) reviewUninstaller(source, path, findings);
+    if (path === WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1[4]) reviewIngressAdapter(source, path, findings);
     proofRefs.push(`proofs/windows-authority-specialist/${path}@${sourceHead}#${candidates[0].blobSha}:${candidates[0].size}`);
   }
   const clean = findings.length === 0;
