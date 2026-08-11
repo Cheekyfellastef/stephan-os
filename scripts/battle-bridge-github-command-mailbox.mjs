@@ -472,7 +472,7 @@ function forgeDigestResolutionProjection(operationResult = {}) {
       containerMutationPerformed: safeBoolean(resolution.containerMutationPerformed),
       observedArchitecture: safeTelemetryText(resolution.observedArchitecture, 40),
       observedVersion: safeTelemetryText(resolution.observedVersion, 120),
-      matchingDescriptorCount: safeNonNegativeNumber(resolution.matchingDescriptorCount),
+      matchingDescriptorCount: safeOptionalNonNegativeInteger(resolution.matchingDescriptorCount),
     }),
   });
 }

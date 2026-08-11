@@ -587,8 +587,13 @@ test('Forge digest diagnostics survive bounded serialization without path or cre
   assert.equal(resolution.podmanVersion, '6.0.2');
   assert.equal(resolution.tlsVerified, true);
   assert.equal(resolution.registryCredentialUsed, false);
+  assert.equal(resolution.matchingDescriptorCount, null);
   assert.equal(resolution.observedVersion, '');
   assert.doesNotMatch(JSON.stringify(serialized), /ghp_this|C:\\Users/i);
+
+  receipt.result.result.forgeShadowM2DigestResolution.matchingDescriptorCount = 1;
+  const counted = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(counted.result.result.forgeShadowM2DigestResolution.matchingDescriptorCount, 1);
 });
 
 test('malformed Forge proof values fail closed during projection', () => {
