@@ -7,6 +7,7 @@ import {
   PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS,
   PERSONAL_REPOSITORY_WORKFLOW_NAME,
   PERSONAL_REPOSITORY_WORKFLOW_PATH,
+  buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
@@ -14,6 +15,7 @@ import {
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
   validatePersonalRepositoryEvidence,
+  validatePersonalRepositoryRulesetProofRequest,
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
 } from './operatorPersonalRepositoryMergeV1.mjs';
@@ -254,6 +256,32 @@ test('dispatch inputs require an exact positive identity and immutable review ar
   ]) {
     const result = parsePersonalRepositoryDispatchInputs(dispatchInputs({ [key]: value }));
     assert.ok(result.blockers.includes(blocker), `${key} should produce ${blocker}`);
+  }
+});
+
+test('ruleset proof authority is read-only and restricted to exact configuration GET surfaces', () => {
+  for (const path of [
+    '/repos/Cheekyfellastef/stephan-os',
+    '/repos/Cheekyfellastef/stephan-os/rules/branches/main?per_page=100&page=1',
+    '/repos/Cheekyfellastef/stephan-os/rules/branches/main?per_page=100&page=20',
+    '/repos/Cheekyfellastef/stephan-os/rulesets/20640195?includes_parents=true',
+  ]) {
+    assert.equal(validatePersonalRepositoryRulesetProofRequest({ path, repository }).valid, true, path);
+  }
+
+  for (const input of [
+    { path: '/repos/Cheekyfellastef/stephan-os', method: 'POST' },
+    { path: '/repos/Cheekyfellastef/stephan-os', body: {} },
+    { path: '/repos/Cheekyfellastef/stephan-os/pulls/1762' },
+    { path: '/repos/Cheekyfellastef/stephan-os/rules/branches/feature?per_page=100&page=1' },
+    { path: '/repos/Cheekyfellastef/stephan-os/rules/branches/main?per_page=100&page=21' },
+    { path: '/repos/Cheekyfellastef/stephan-os/rules/branches/main?page=1&per_page=100' },
+    { path: '/repos/Cheekyfellastef/stephan-os/rulesets/20640195' },
+    { path: '/repos/Cheekyfellastef/other', repository },
+  ]) {
+    const blocked = validatePersonalRepositoryRulesetProofRequest({ repository, ...input });
+    assert.equal(blocked.valid, false, JSON.stringify(input));
+    assert.ok(blocked.blockers.length > 0, JSON.stringify(input));
   }
 });
 
@@ -508,6 +536,27 @@ test('configuration requires the exact protected environment and an active no-by
   });
   assert.equal(ready.valid, true);
 
+  const restrictedTokenRepository = { ...configuration().repository };
+  delete restrictedTokenRepository.allow_squash_merge;
+  delete restrictedTokenRepository.delete_branch_on_merge;
+  const hiddenSettings = validatePersonalRepositoryConfiguration(configuration({
+    repository: restrictedTokenRepository,
+  }), {
+    requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
+    expectedIntegrationId: integrationId,
+  });
+  assert.ok(hiddenSettings.blockers.includes('personal-repository-squash-not-enabled'));
+  assert.ok(hiddenSettings.blockers.includes('personal-repository-auto-delete-not-disabled'));
+
+  const contextOnlyRules = activeRules();
+  delete contextOnlyRules[3].parameters.required_status_checks[0].integration_id;
+  assert.ok(validatePersonalRepositoryConfiguration(configuration({
+    activeRules: contextOnlyRules,
+  }), {
+    requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
+    expectedIntegrationId: integrationId,
+  }).blockers.includes('personal-repository-required-check-not-exact'));
+
   for (const repositoryOverride of [
     { ...configuration().repository, private: true, visibility: 'private' },
     { ...configuration().repository, visibility: '' },
@@ -571,6 +620,23 @@ test('configuration requires the exact protected environment and an active no-by
     expectedIntegrationId: integrationId,
   });
   assert.ok(queueRule.blockers.includes('personal-repository-unavailable-merge-queue-rule-present'));
+});
+
+test('configuration evidence binds repository merge settings and exact bypass actors', () => {
+  const exact = configuration();
+  exact.repository.id = 1179385578;
+  const baseline = buildPersonalRepositoryConfigurationEvidence(exact);
+  assert.equal(baseline.repository.allow_squash_merge, true);
+  assert.equal(baseline.repository.delete_branch_on_merge, false);
+  assert.deepEqual(baseline.rulesets[0].bypass_actors, []);
+
+  for (const changed of [
+    configuration({ repository: { ...exact.repository, allow_squash_merge: false } }),
+    configuration({ repository: { ...exact.repository, delete_branch_on_merge: true } }),
+    configuration({ rulesets: [{ ...exact.rulesets[0], bypass_actors: [{ actor_id: 1 }] }] }),
+  ]) {
+    assert.notDeepEqual(buildPersonalRepositoryConfigurationEvidence(changed), baseline);
+  }
 });
 
 test('approval receipt is exact-head, exact-base, immutable-review and squash-only', () => {

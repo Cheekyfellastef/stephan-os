@@ -28,6 +28,7 @@ import {
   PERSONAL_REPOSITORY_EVIDENCE_JOB,
   PERSONAL_REPOSITORY_MERGE_JOB,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
+  buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
@@ -35,6 +36,7 @@ import {
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
   validatePersonalRepositoryEvidence,
+  validatePersonalRepositoryRulesetProofRequest,
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
 } from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
@@ -93,13 +95,17 @@ async function githubResponse(path, {
   if (authorization === 'omit' && (method !== 'GET' || body !== null)) {
     fail('Unauthenticated GitHub API access is restricted to bounded GET requests.', { path, method });
   }
-  if (authorization === 'ruleset-proof'
-    && (method !== 'GET'
-      || body !== null
-      || !/^\/repos\/[^/]+\/[^/]+\/rulesets\/[1-9][0-9]*\?includes_parents=true$/.test(path))) {
-    fail('Ruleset proof token is restricted to bounded repository ruleset-detail GET requests.', {
+  const rulesetProofRequest = validatePersonalRepositoryRulesetProofRequest({
+    path,
+    method,
+    body,
+    repository: process.env.GITHUB_REPOSITORY,
+  });
+  if (authorization === 'ruleset-proof' && !rulesetProofRequest.valid) {
+    fail('Ruleset proof token is restricted to bounded repository-configuration GET requests.', {
       path,
       method,
+      blockers: rulesetProofRequest.blockers,
     });
   }
   const token = authorization === 'ruleset-proof'
@@ -290,27 +296,11 @@ async function pullRequestReviewState(owner, repo, prNumber) {
   };
 }
 
-function rulesetSnapshot(activeRules, rulesets) {
-  const canonicalActiveRules = (activeRules || [])
-    .map((rule) => canonicalJson(rule))
-    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
-  const canonicalRulesets = (rulesets || [])
-    .map((ruleset) => canonicalJson({
-      id: ruleset?.id,
-      name: ruleset?.name,
-      target: ruleset?.target,
-      source_type: ruleset?.source_type,
-      source: ruleset?.source,
-      enforcement: ruleset?.enforcement,
-      created_at: ruleset?.created_at,
-      updated_at: ruleset?.updated_at,
-      conditions: ruleset?.conditions,
-      rules: ruleset?.rules,
-    }))
-    .sort((left, right) => Number(left.id) - Number(right.id));
-  return sha256(JSON.stringify(canonicalJson({
-    activeRules: canonicalActiveRules,
-    rulesets: canonicalRulesets,
+function configurationSnapshot(repository, activeRules, rulesets) {
+  return sha256(JSON.stringify(buildPersonalRepositoryConfigurationEvidence({
+    repository,
+    activeRules,
+    rulesets,
   })));
 }
 
@@ -319,7 +309,6 @@ async function collectRulesetConfiguration(
   repository,
   environment,
   integrationId,
-  { requireBypassProof = false } = {},
 ) {
   let activeRules = null;
   const rulesets = [];
@@ -333,7 +322,7 @@ async function collectRulesetConfiguration(
       activeRules = (await apiCollection(
         `/repos/${context.owner}/${context.repo}/rules/branches/main`,
         null,
-        { authorization: 'omit' },
+        { authorization: 'ruleset-proof' },
       )).items;
     } catch {
       readBlockers.push('CONFIGURATION_NOT_PROVED:personal-repository-active-main-rules-api');
@@ -346,7 +335,7 @@ async function collectRulesetConfiguration(
     try {
       rulesets.push(await apiJson(
         `/repos/${context.owner}/${context.repo}/rulesets/${rulesetId}?includes_parents=true`,
-        { authorization: requireBypassProof ? 'ruleset-proof' : 'omit' },
+        { authorization: 'ruleset-proof' },
       ));
     } catch {
       readBlockers.push(`CONFIGURATION_NOT_PROVED:personal-repository-ruleset-detail:${rulesetId}`);
@@ -360,7 +349,7 @@ async function collectRulesetConfiguration(
   }, {
     requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
     expectedIntegrationId: integrationId,
-    requireBypassProof,
+    requireBypassProof: true,
   });
   const blockers = [...new Set([...readBlockers, ...validation.blockers])];
   if (blockers.length) {
@@ -371,7 +360,7 @@ async function collectRulesetConfiguration(
   }
   return Object.freeze({
     ...validation,
-    rulesetSnapshotSha256: rulesetSnapshot(activeRules, rulesets),
+    configurationSnapshotSha256: configurationSnapshot(repository, activeRules, rulesets),
   });
 }
 
@@ -502,7 +491,7 @@ async function collectEvidence(context, expected = {}) {
   const execution = await currentWorkflowExecution(context);
   const identity = context.dispatch.identity;
   const [repository, pullRequest, liveMainRef, headCommit, comparison, review, environment, workflowRuns] = await Promise.all([
-    apiJson(`/repos/${context.owner}/${context.repo}`),
+    apiJson(`/repos/${context.owner}/${context.repo}`, { authorization: 'ruleset-proof' }),
     apiJson(`/repos/${context.owner}/${context.repo}/pulls/${identity.prNumber}`),
     apiJson(`/repos/${context.owner}/${context.repo}/git/ref/heads/main`),
     apiJson(`/repos/${context.owner}/${context.repo}/git/commits/${identity.sourceHead}`),
@@ -558,7 +547,6 @@ async function collectEvidence(context, expected = {}) {
     repository,
     environment,
     integrationId,
-    { requireBypassProof: mode === 'approve' },
   );
   const independentReview = await loadSelectedIndependentReview(context, evidence.identity);
   const packet = Object.freeze({
@@ -568,7 +556,7 @@ async function collectEvidence(context, expected = {}) {
     requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
     requiredCheckIntegrationId: integrationId,
     activeRulesetIds: configuration.activeRulesetIds,
-    rulesetSnapshotSha256: configuration.rulesetSnapshotSha256,
+    configurationSnapshotSha256: configuration.configurationSnapshotSha256,
     workflows: workflows.evidence,
     independentReview,
   });

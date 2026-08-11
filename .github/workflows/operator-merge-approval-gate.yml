@@ -160,10 +160,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Mint exact read-only ruleset proof token
+        id: ruleset-proof-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_ID }}
+          private-key: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: stephan-os
+          permission-administration: read
       - name: Prove exact personal-repository evidence before protected approval
         id: evidence
         env:
           GH_TOKEN: ${{ github.token }}
+          STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}
         run: node scripts/operator-protected-personal-repository-merge.mjs evidence
 
   operator-personal-repository-approval:
@@ -241,9 +251,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Mint exact read-only ruleset proof token
+        id: ruleset-proof-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_ID }}
+          private-key: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: stephan-os
+          permission-administration: read
       - name: Re-prove, squash exact head and publish the bounded receipt
         env:
           GH_TOKEN: ${{ github.token }}
+          STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}
           STEPHANOS_EXPECTED_REPOSITORY: ${{ needs.personal-repository-evidence.outputs.repository }}
           STEPHANOS_EXPECTED_PR_NUMBER: ${{ needs.personal-repository-evidence.outputs.pr_number }}
           STEPHANOS_EXPECTED_BRANCH: ${{ needs.personal-repository-evidence.outputs.branch }}
