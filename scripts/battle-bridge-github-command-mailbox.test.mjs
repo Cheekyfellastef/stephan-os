@@ -5,12 +5,18 @@ import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  buildRejectedMailboxTerminalReceipt,
+  checkpointAcceptedMailboxReceipt,
+  checkpointMailboxReceiptPublication,
   checkpointTerminalMailboxReceipt,
   createSanitizedMailboxReceiptProjection,
   createWindowsSafeMailboxReceiptFilename,
+  flushMailboxReceiptPublicationOutbox,
   parseBoundedGitHubJson,
+  preflightMailboxControlExpectedHead,
   readMailboxReceipt,
   serializeBoundedReceiptJson,
+  terminalizeRejectedMailboxCommands,
   validateBattleBridgeRecoveryMeshInstallReceipt,
 } from './battle-bridge-github-command-mailbox.mjs';
 import { planForgeShadowM3RunnerAdmission } from '../shared/agents/forgeShadowM3RunnerAdmissionV1.mjs';
@@ -188,6 +194,124 @@ test('terminal checkpoint persists each request immediately and bounds replay hi
     () => checkpointTerminalMailboxReceipt({}, { ...receipt, state: 'ACCEPTED' }),
     /MAILBOX_TERMINAL_CHECKPOINT_INVALID/,
   );
+});
+
+test('accepted checkpoint prevents crash replay until a terminal receipt replaces it', () => {
+  const state = { consumedRequestIds: [], acceptedRequestIds: [] };
+  const snapshots = [];
+  checkpointAcceptedMailboxReceipt(state, {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'req-1507-accepted-1',
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    state: 'ACCEPTED',
+  }, { persist: (value) => snapshots.push(structuredClone(value)) });
+  assert.deepEqual(state.acceptedRequestIds, ['req-1507-accepted-1']);
+  assert.equal(snapshots.length, 1);
+  checkpointTerminalMailboxReceipt(state, {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'req-1507-accepted-1',
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    state: 'BLOCKED',
+  }, { persist: (value) => snapshots.push(structuredClone(value)) });
+  assert.deepEqual(state.acceptedRequestIds, []);
+  assert.deepEqual(state.consumedRequestIds, ['req-1507-accepted-1']);
+});
+
+test('safe owner rejection is terminalized once without an accepted state', () => {
+  const state = { consumedRequestIds: [], acceptedRequestIds: [] };
+  const writes = [];
+  const publications = [];
+  const rejection = {
+    blocker: 'COMMAND_EXPIRY_TOO_FAR_AHEAD',
+    commentUrl: 'https://github.com/Cheekyfellastef/stephan-os/issues/1507#issuecomment-7',
+    command: {
+      schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+      requestId: 'req-1507-rejected-1',
+      operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+      repository: 'Cheekyfellastef/stephan-os',
+      issueNumber: 1507,
+      branch: 'main',
+      operatorApproval: 'operator-approved',
+      expectedHead: 'a'.repeat(40),
+      expiresAt: '2026-08-11T18:00:00.000Z',
+    },
+  };
+  const receipt = buildRejectedMailboxTerminalReceipt(rejection, '2026-08-11T11:30:00.000Z');
+  assert.equal(receipt.state, 'BLOCKED');
+  assert.equal(receipt.acceptedAt, '');
+  assert.equal(receipt.blocker, 'COMMAND_EXPIRY_TOO_FAR_AHEAD');
+  const options = {
+    now: () => new Date('2026-08-11T11:30:00.000Z'),
+    write: (value) => {
+      writes.push(value);
+      return { ref: `receipts/github-command-mailbox/${value.requestId}.json` };
+    },
+    publish: (value) => publications.push(value),
+    persist: () => {},
+  };
+  assert.equal(terminalizeRejectedMailboxCommands(state, [rejection], options).length, 1);
+  assert.equal(terminalizeRejectedMailboxCommands(state, [rejection], options).length, 0);
+  assert.equal(writes.length, 1);
+  assert.equal(publications.length, 1);
+  assert.deepEqual(state.consumedRequestIds, ['req-1507-rejected-1']);
+});
+
+test('failed receipt publication is retried from outbox without replaying the command', () => {
+  const state = { pendingReceiptPublications: [] };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'req-1507-publish-1',
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    state: 'BLOCKED',
+    blocker: 'COMMAND_EXPECTED_HEAD_SUPERSEDED',
+    completedAt: '2026-08-11T11:30:00.000Z',
+  };
+  checkpointMailboxReceiptPublication(state, receipt, { ok: false }, { persist: () => {} });
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  const published = [];
+  const flushed = flushMailboxReceiptPublicationOutbox(state, {
+    publish: (value) => {
+      published.push(value.requestId);
+      return { ok: true };
+    },
+    persist: () => {},
+  });
+  assert.deepEqual(published, ['req-1507-publish-1']);
+  assert.deepEqual(flushed, { attemptedCount: 1, publishedCount: 1, pendingCount: 0 });
+  assert.deepEqual(state.pendingReceiptPublications, []);
+});
+
+test('terminal publication discards an obsolete failed acceptance for the same request', () => {
+  const state = { pendingReceiptPublications: [] };
+  const accepted = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'req-1507-publish-terminal-1',
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    state: 'ACCEPTED',
+    acceptedAt: '2026-08-11T11:30:00.000Z',
+  };
+  checkpointMailboxReceiptPublication(state, accepted, { ok: false }, { persist: () => {} });
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  checkpointMailboxReceiptPublication(state, {
+    ...accepted,
+    state: 'DONE',
+    completedAt: '2026-08-11T11:31:00.000Z',
+  }, { ok: true }, { persist: () => {} });
+  assert.deepEqual(state.pendingReceiptPublications, []);
+});
+
+test('main-targeting control preflight blocks a stale head and ignores observations', () => {
+  const stale = preflightMailboxControlExpectedHead({
+    partition: 'CONTROL',
+    command: { operation: 'UPDATE_STEPHANOS_FROM_CHAT', expectedHead: 'a'.repeat(40) },
+  }, { readMainHead: () => 'b'.repeat(40) });
+  assert.equal(stale.ok, false);
+  assert.equal(stale.blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+  const observation = preflightMailboxControlExpectedHead({
+    partition: 'OBSERVATION',
+    command: { operation: 'READ_DEPLOYMENT_STATUS', expectedHead: 'a'.repeat(40) },
+  }, { readMainHead: () => { throw new Error('must not read'); } });
+  assert.equal(observation.ok, true);
 });
 
 test('GitHub recovery wake binds the authenticated mailbox receipt instead of self-asserting a route boolean', async () => {
