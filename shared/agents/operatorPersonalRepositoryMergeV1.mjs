@@ -10,6 +10,7 @@ const ARTIFACT_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const REPOSITORY_PATTERN = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const BRANCH_PATTERN = /^[a-z0-9][a-z0-9._/-]{0,239}$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
+const PERSONAL_REPOSITORY_ACTIVE_RUN_STATUSES = new Set(['queued', 'in_progress']);
 
 export const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
 export const PERSONAL_REPOSITORY_WORKFLOW_NAME = 'Protected Operator Merge Queue Boundary';
@@ -79,6 +80,146 @@ function canonicalWorkflowPath(run = {}, repository = '') {
   ].filter(Boolean));
   if (!allowed.has(suffix)) return '';
   return path.slice(0, at);
+}
+
+function canonicalPersonalRepositoryDispatchWorkflowPath(run = {}, repository = '') {
+  let path = text(run?.path);
+  if (repository && path.startsWith(`${repository}/`)) path = path.slice(repository.length + 1);
+  const at = path.indexOf('@');
+  if (at === -1) return path;
+  if (at === 0 || at === path.length - 1 || path.indexOf('@', at + 1) !== -1) return '';
+  if (!['main', 'refs/heads/main'].includes(path.slice(at + 1))) return '';
+  return path.slice(0, at);
+}
+
+function personalRepositoryDispatchActor(run = {}) {
+  return text(run?.triggering_actor?.login || run?.actor?.login).toLowerCase();
+}
+
+function personalRepositoryDispatchTitle(sourceHead = '') {
+  return `Protected operator merge ${text(sourceHead).toLowerCase()}`;
+}
+
+export function validatePersonalRepositoryDispatchWorkflowDefinition(definitions = []) {
+  const blockers = [];
+  if (!Array.isArray(definitions)) {
+    blockers.push('personal-repository-workflow-definitions-invalid');
+  }
+  const matches = (Array.isArray(definitions) ? definitions : []).filter((definition) => (
+    text(definition?.path) === PERSONAL_REPOSITORY_WORKFLOW_PATH
+  ));
+  const definition = matches[0];
+  if (matches.length !== 1
+    || definition?.name !== PERSONAL_REPOSITORY_WORKFLOW_NAME
+    || definition?.state !== 'active'
+    || !strictPositiveInteger(definition?.id)) {
+    blockers.push('personal-repository-workflow-definition-not-exact');
+  }
+  const valid = blockers.length === 0;
+  return Object.freeze({
+    valid,
+    definition: valid ? Object.freeze({
+      id: definition.id,
+      name: definition.name,
+      path: definition.path,
+      state: definition.state,
+    }) : null,
+    blockers: Object.freeze(unique(blockers)),
+    finalVerdict: valid
+      ? 'PERSONAL_REPOSITORY_DISPATCH_WORKFLOW_DEFINITION_READY'
+      : 'PERSONAL_REPOSITORY_DISPATCH_WORKFLOW_DEFINITION_BLOCKED',
+  });
+}
+
+export function validatePersonalRepositoryDispatchExecution(input = {}, expected = {}) {
+  const definitionValidation = validatePersonalRepositoryDispatchWorkflowDefinition(input.definitions);
+  const definition = definitionValidation.definition;
+  const run = input?.run && typeof input.run === 'object' && !Array.isArray(input.run)
+    ? input.run
+    : {};
+  const priorRunsValid = Array.isArray(input?.priorRuns);
+  const priorRuns = priorRunsValid ? input.priorRuns : [];
+  const repository = text(expected.repository);
+  const sourceHead = text(expected.sourceHead).toLowerCase();
+  const baseSha = text(expected.baseSha).toLowerCase();
+  const workflowRunId = strictPositiveInteger(expected.workflowRunId);
+  const workflowRunAttempt = strictPositiveInteger(expected.workflowRunAttempt);
+  const expectedTitle = personalRepositoryDispatchTitle(sourceHead);
+  const expectedActor = OPERATOR_MERGE_REVIEWER.toLowerCase();
+  const currentMismatches = [
+    ['run-id', strictPositiveInteger(run?.id) === workflowRunId],
+    ['run-attempt', strictPositiveInteger(run?.run_attempt) === workflowRunAttempt],
+    ['workflow-id', Boolean(definition) && strictPositiveInteger(run?.workflow_id) === definition.id],
+    ['run-name', text(run?.name) === expectedTitle],
+    ['event', text(run?.event) === 'workflow_dispatch'],
+    ['repository', workflowRepository(run) === repository],
+    ['base-head', SHA_PATTERN.test(baseSha) && text(run?.head_sha).toLowerCase() === baseSha],
+    ['base-branch', text(run?.head_branch) === 'main'],
+    ['display-title', text(run?.display_title) === expectedTitle],
+    ['workflow-path', canonicalPersonalRepositoryDispatchWorkflowPath(run, repository) === PERSONAL_REPOSITORY_WORKFLOW_PATH],
+    ['triggering-actor', personalRepositoryDispatchActor(run) === expectedActor],
+    ['run-status', PERSONAL_REPOSITORY_ACTIVE_RUN_STATUSES.has(text(run?.status).toLowerCase())],
+  ].filter(([, matches]) => !matches).map(([field]) => field);
+
+  const malformedPriorRunIds = [];
+  const replayRunIds = [];
+  const differentBasePriorRunIds = [];
+  // GitHub keeps the workflow run ID when a run is retried and increments
+  // run_attempt. The current exact run identity therefore proves that an
+  // earlier attempt already existed even though the runs listing exposes only
+  // the retried record under the current ID.
+  if (workflowRunId && workflowRunAttempt > 1 && currentMismatches.length === 0) {
+    replayRunIds.push(workflowRunId);
+  }
+  for (const candidate of priorRuns) {
+    const candidateId = strictPositiveInteger(candidate?.id);
+    if (candidateId && candidateId === workflowRunId) continue;
+    const candidateActor = personalRepositoryDispatchActor(candidate);
+    const sourceMatching = text(candidate?.name) === expectedTitle
+      || text(candidate?.display_title) === expectedTitle;
+    if (!sourceMatching || (candidateActor && candidateActor !== expectedActor)) continue;
+    const candidateBase = text(candidate?.head_sha).toLowerCase();
+    const exactIdentity = Boolean(
+      candidateId
+      && strictPositiveInteger(candidate?.run_attempt)
+      && definition
+      && strictPositiveInteger(candidate?.workflow_id) === definition.id
+      && text(candidate?.name) === expectedTitle
+      && text(candidate?.display_title) === expectedTitle
+      && text(candidate?.event) === 'workflow_dispatch'
+      && workflowRepository(candidate) === repository
+      && SHA_PATTERN.test(candidateBase)
+      && text(candidate?.head_branch) === 'main'
+      && canonicalPersonalRepositoryDispatchWorkflowPath(candidate, repository) === PERSONAL_REPOSITORY_WORKFLOW_PATH
+      && candidateActor === expectedActor
+    );
+    if (!exactIdentity) {
+      malformedPriorRunIds.push(candidateId || 0);
+      continue;
+    }
+    if (candidateBase === baseSha) replayRunIds.push(candidateId);
+    else differentBasePriorRunIds.push(candidateId);
+  }
+
+  const blockers = [
+    ...definitionValidation.blockers,
+    ...(!priorRunsValid ? ['personal-repository-prior-runs-invalid'] : []),
+    ...(currentMismatches.length ? ['personal-repository-workflow-run-identity-mismatch'] : []),
+    ...(malformedPriorRunIds.length ? ['personal-repository-prior-attempt-invalid'] : []),
+    ...(replayRunIds.length ? ['personal-repository-prior-attempt-exists'] : []),
+  ];
+  return Object.freeze({
+    valid: blockers.length === 0,
+    definition,
+    currentMismatches: Object.freeze(currentMismatches),
+    malformedPriorRunIds: Object.freeze(malformedPriorRunIds.sort((left, right) => left - right)),
+    replayRunIds: Object.freeze(replayRunIds.sort((left, right) => left - right)),
+    differentBasePriorRunIds: Object.freeze(differentBasePriorRunIds.sort((left, right) => left - right)),
+    blockers: Object.freeze(unique(blockers)),
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_DISPATCH_EXECUTION_BLOCKED'
+      : 'PERSONAL_REPOSITORY_DISPATCH_EXECUTION_READY',
+  });
 }
 
 export function parsePersonalRepositoryDispatchInputs(inputs = {}) {
