@@ -7,7 +7,7 @@ const MAILBOX_RECOVERY_GUARDIAN_PATH = './windowsAuthorityMailboxRecoveryGuardia
 const RECOVERY_GUARDIAN_PATH = './windowsAuthorityRecoveryMeshGuardianReviewV1.mjs';
 const CORE_BLOB_SHA = '4424046455d8fd7724f1ae8b7c53b7c6529668df';
 const NO_FAFF_BLOB_SHA = 'f6c2a92f4e2ffebb57e197e72ed0279a896c9ffe';
-const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = 'efb0885fa7889d23d826d06cf45c198bcf1fe653';
+const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '9f47c49eaab30db93897e4c5fcfce910a58ed0b9';
 const RECOVERY_GUARDIAN_BLOB_SHA = '60228170b62d8313bebece5e9e8655cfc45497a5';
 const EXPECTED_NO_FAFF_PATHS = Object.freeze([
   'scripts/windows/repair-battle-bridge-control-plane-now.ps1',
