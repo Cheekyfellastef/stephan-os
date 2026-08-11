@@ -141,21 +141,24 @@ function trustedNowMs(now) {
   }
 }
 
-function findForbidden(value, trail = []) {
+function findForbidden(value, trail = [], seen = new WeakSet()) {
   if (!value || typeof value !== 'object') return '';
+  if (seen.has(value)) return [...trail, 'cyclic-reference'].join('.');
+  seen.add(value);
   for (const [key, nested] of Object.entries(value)) {
     const next = [...trail, key];
     if (FORBIDDEN_FIELDS.has(key.toLowerCase())) return next.join('.');
     if (Array.isArray(nested)) {
       for (let index = 0; index < nested.length; index += 1) {
-        const found = findForbidden(nested[index], [...next, String(index)]);
+        const found = findForbidden(nested[index], [...next, String(index)], seen);
         if (found) return found;
       }
     } else {
-      const found = findForbidden(nested, next);
+      const found = findForbidden(nested, next, seen);
       if (found) return found;
     }
   }
+  seen.delete(value);
   return '';
 }
 
@@ -469,12 +472,17 @@ function createTerminationProofGate({ runner, authorization, invocation, deadlin
     if (!Number.isFinite(trustedObservedMs)) {
       candidateBlockers.push(`runner-termination-ack-observation-now-invalid:${runner.runnerId}`);
     }
-    const proof = Number.isFinite(trustedObservedMs)
-      ? validateTerminationAcknowledgement(
+    let proof = null;
+    if (Number.isFinite(trustedObservedMs)) {
+      try {
+        proof = validateTerminationAcknowledgement(
           value, runner, authorization, invocation,
           trustedObservedMs, deadlineMs, candidateBlockers,
-        )
-      : null;
+        );
+      } catch {
+        candidateBlockers.push(`runner-termination-ack-inspection-threw:${runner.runnerId}`);
+      }
+    }
     for (const blocker of candidateBlockers) invalidBlockers.add(blocker);
     if (!proof) return false;
 
@@ -784,40 +792,50 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
       return blocked([...runnerBlockers, ...terminationGate.blockers()], planDigest);
     }
 
-    const executionResult = settled.value;
-    if (!exactKeys(executionResult, EXECUTION_RESULT_KEYS)) {
-      controller.abort();
-      runnerBlockers.push(`runner-execution-result-fields-invalid:${runner.runnerId}`);
-      await terminationGate.waitFor(invocation.startedMs);
-      return blocked([...runnerBlockers, ...terminationGate.blockers()], planDigest);
-    }
+    try {
+      const executionResult = settled.value;
+      if (!exactKeys(executionResult, EXECUTION_RESULT_KEYS)) {
+        controller.abort();
+        runnerBlockers.push(`runner-execution-result-fields-invalid:${runner.runnerId}`);
+        await terminationGate.waitFor(invocation.startedMs);
+        return blocked([...runnerBlockers, ...terminationGate.blockers()], planDigest);
+      }
 
-    terminationGate.publish(executionResult.terminationAcknowledgement, settledNowMs);
-    const observation = validateObservation(
-      executionResult.observation,
-      runner,
-      artifact,
-      plan,
-      liveAuthorization,
-      invocation,
-      settledNowMs,
-      runnerBlockers,
-    );
-    const minimumAcknowledgedMs = observation
-      ? instant(observation.completedAtUtc)
-      : invocation.startedMs;
-    let termination = terminationGate.proofFor(minimumAcknowledgedMs);
-    const invalidTerminationProof = terminationGate.blockers().length > 0;
-    if (!termination || !observation || runnerBlockers.length || invalidTerminationProof) {
+      terminationGate.publish(executionResult.terminationAcknowledgement, settledNowMs);
+      const observation = validateObservation(
+        executionResult.observation,
+        runner,
+        artifact,
+        plan,
+        liveAuthorization,
+        invocation,
+        settledNowMs,
+        runnerBlockers,
+      );
+      const minimumAcknowledgedMs = observation
+        ? instant(observation.completedAtUtc)
+        : invocation.startedMs;
+      let termination = terminationGate.proofFor(minimumAcknowledgedMs);
+      const invalidTerminationProof = terminationGate.blockers().length > 0;
+      if (!termination || !observation || runnerBlockers.length || invalidTerminationProof) {
+        controller.abort();
+        if (!termination) termination = await terminationGate.waitFor(minimumAcknowledgedMs);
+        return blocked([
+          ...runnerBlockers,
+          ...terminationGate.blockers(),
+        ], planDigest);
+      }
+
+      observations.push(observation);
+    } catch {
       controller.abort();
-      if (!termination) termination = await terminationGate.waitFor(minimumAcknowledgedMs);
+      await terminationGate.waitFor(invocation.startedMs);
       return blocked([
         ...runnerBlockers,
+        `runner-execution-result-inspection-threw:${runner.runnerId}`,
         ...terminationGate.blockers(),
       ], planDigest);
     }
-
-    observations.push(observation);
   }
 
   const receipt = buildReceipt(plan, authorization, observations);

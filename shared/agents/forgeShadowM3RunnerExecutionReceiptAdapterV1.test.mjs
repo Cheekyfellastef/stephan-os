@@ -784,6 +784,93 @@ test('rejected settlement-clock exceptions cannot return without teardown proof'
   assert.equal(state, 'held-pending');
 });
 
+test('hostile fulfilled values abort and wait for valid teardown proof', async () => {
+  const candidates = [
+    () => new Proxy({}, {
+      ownKeys: () => { throw new Error('result keys unavailable'); },
+    }),
+    (request) => {
+      const result = executionResult(request, {}, { terminated: false });
+      Object.defineProperty(result.observation, 'installed', {
+        enumerable: true,
+        get: () => { throw new Error('nested observation unavailable'); },
+      });
+      return result;
+    },
+  ];
+  for (const candidate of candidates) {
+    let aborted = false;
+    const execution = executeVerified(input(), {
+      platform: 'win32', now,
+      executeRunner: async (request) => {
+        request.signal.addEventListener('abort', () => {
+          aborted = true;
+          setTimeout(() => {
+            request.acknowledgeTermination(terminationAcknowledgement(request));
+          }, 25);
+        }, { once: true });
+        return candidate(request);
+      },
+    });
+    const early = await Promise.race([
+      execution.then(() => 'unsafe-return'),
+      new Promise((resolve) => setTimeout(() => resolve('held-pending'), 15)),
+    ]);
+    assert.equal(early, 'held-pending');
+    const result = await execution;
+    assert.equal(aborted, true);
+    assert.equal(result.ok, false);
+    assert.ok(result.blockers.some((item) => item.includes('runner-execution-result-inspection-threw')), JSON.stringify(result.blockers));
+  }
+});
+
+test('cyclic fulfilled values abort and wait for valid teardown proof', async () => {
+  let aborted = false;
+  const execution = executeVerified(input(), {
+    platform: 'win32', now,
+    executeRunner: async (request) => {
+      request.signal.addEventListener('abort', () => {
+        aborted = true;
+        setTimeout(() => {
+          request.acknowledgeTermination(terminationAcknowledgement(request));
+        }, 25);
+      }, { once: true });
+      const result = executionResult(request, {}, { terminated: false });
+      result.observation.cycle = result.observation;
+      return result;
+    },
+  });
+  const early = await Promise.race([
+    execution.then(() => 'unsafe-return'),
+    new Promise((resolve) => setTimeout(() => resolve('held-pending'), 15)),
+  ]);
+  assert.equal(early, 'held-pending');
+  const result = await execution;
+  assert.equal(aborted, true);
+  assert.equal(result.ok, false);
+  assert.ok(result.blockers.some((item) => item.includes('runner-observation-fields-invalid')), JSON.stringify(result.blockers));
+  assert.ok(result.blockers.some((item) => item.includes('runner-observation-unsafe-field')), JSON.stringify(result.blockers));
+});
+
+test('result-inspection exceptions cannot return without teardown proof', async () => {
+  let aborted = false;
+  const execution = executeVerified(input(), {
+    platform: 'win32', now,
+    executeRunner: async (request) => {
+      request.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
+      return new Proxy({}, {
+        ownKeys: () => { throw new Error('result keys unavailable'); },
+      });
+    },
+  });
+  const state = await Promise.race([
+    execution.then(() => 'unsafe-return'),
+    new Promise((resolve) => setTimeout(() => resolve('held-pending'), 35)),
+  ]);
+  assert.equal(aborted, true);
+  assert.equal(state, 'held-pending');
+});
+
 test('malformed fulfilled results trigger abort and wait for delayed valid teardown proof', async () => {
   let aborted = false;
   const started = Date.now();
@@ -850,10 +937,13 @@ test('fulfilled results missing termination acknowledgement cannot return', asyn
   assert.equal(state, 'held-pending');
 });
 
-test('malformed or widened acknowledgements cannot permit a rejection return', async () => {
+test('malformed, widened or hostile acknowledgements cannot permit a rejection return', async () => {
   for (const candidate of [
     { terminated: true },
     (request) => ({ ...terminationAcknowledgement(request), widenedAuthority: true }),
+    () => new Proxy({}, {
+      ownKeys: () => { throw new Error('acknowledgement keys unavailable'); },
+    }),
   ]) {
     const execution = executeVerified(input(), {
       platform: 'win32', now,
