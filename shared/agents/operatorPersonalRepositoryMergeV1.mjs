@@ -164,6 +164,13 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
   const malformedPriorRunIds = [];
   const replayRunIds = [];
   const differentBasePriorRunIds = [];
+  // GitHub keeps the workflow run ID when a run is retried and increments
+  // run_attempt. The current exact run identity therefore proves that an
+  // earlier attempt already existed even though the runs listing exposes only
+  // the retried record under the current ID.
+  if (workflowRunId && workflowRunAttempt > 1 && currentMismatches.length === 0) {
+    replayRunIds.push(workflowRunId);
+  }
   for (const candidate of priorRuns) {
     const candidateId = strictPositiveInteger(candidate?.id);
     if (candidateId && candidateId === workflowRunId) continue;

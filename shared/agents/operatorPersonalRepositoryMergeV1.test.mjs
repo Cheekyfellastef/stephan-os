@@ -338,6 +338,46 @@ test('same-base prior protected dispatch is a replay regardless of failed conclu
   assert.ok(blocked.blockers.includes('personal-repository-prior-attempt-exists'));
 });
 
+test('retried current workflow run is a replay even when GitHub retains or omits the run ID', () => {
+  for (const [attempt, priorRuns] of [
+    [2, [dispatchRun({ run_attempt: 2 })]],
+    [3, []],
+  ]) {
+    const retriedRun = dispatchRun({ run_attempt: attempt });
+    const blocked = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({ run: retriedRun, priorRuns }),
+      {
+        ...expectedDispatchExecution,
+        workflowRunAttempt: attempt,
+      },
+    );
+    assert.equal(blocked.valid, false, attempt);
+    assert.deepEqual(blocked.currentMismatches, [], attempt);
+    assert.deepEqual(blocked.replayRunIds, [runId], attempt);
+    assert.ok(blocked.blockers.includes('personal-repository-prior-attempt-exists'), attempt);
+  }
+});
+
+test('malformed retried current run fails closed without claiming an exact replay', () => {
+  const blocked = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({
+      run: dispatchRun({
+        run_attempt: 2,
+        triggering_actor: { login: 'lookalike-operator' },
+      }),
+      priorRuns: [],
+    }),
+    {
+      ...expectedDispatchExecution,
+      workflowRunAttempt: 2,
+    },
+  );
+  assert.equal(blocked.valid, false);
+  assert.deepEqual(blocked.currentMismatches, ['triggering-actor']);
+  assert.deepEqual(blocked.replayRunIds, []);
+  assert.ok(blocked.blockers.includes('personal-repository-workflow-run-identity-mismatch'));
+});
+
 test('different exact base is a fresh protected dispatch identity, not a replay', () => {
   const priorRunId = runId + 11;
   const ready = validatePersonalRepositoryDispatchExecution(
