@@ -50,12 +50,21 @@ test('guardian proves local source is exact main or a strict trusted ancestor wi
   assert.doesNotMatch(guardian, /\bgit(?:\.exe)?\s+(?:fetch|push|reset|clean|rebase|checkout|switch|merge)\b/i);
 });
 
-test('guardian proves all authority-bearing local files are clean before repairing either task', () => {
-  for (const path of [
+test('guardian proves the complete launched mailbox and Recovery Mesh runner chains are clean', () => {
+  const requiredAuthorityPaths = [
     'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
     'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
     'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
-  ]) assert.match(guardian, new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1',
+    'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs',
+    'scripts/battle-bridge-github-command-mailbox.mjs',
+    'scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1',
+    'scripts/battle-bridge-recovery-mesh.mjs',
+    'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1',
+  ];
+  for (const path of requiredAuthorityPaths) {
+    assert.match(guardian, new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
   assert.match(guardian, /foreach \(\$authorityPath in \$authoritySourcePaths\)/);
   assert.match(guardian, /diff --quiet -- \$authorityPath/);
   assert.match(guardian, /diff --cached --quiet -- \$authorityPath/);
@@ -72,7 +81,6 @@ test('guardian may repair the fixed mailbox while source is a trusted ancestor',
   assert.match(guardian, /MAILBOX_REPAIR_TASK_IDENTITY_UNPROVEN/);
   assert.match(guardian, /mailboxRepairAttempted = \$mailboxRepairAttempted/);
   assert.match(guardian, /mailboxRepairApplied = \$mailboxRepairApplied/);
-  assert.match(guardian, /BATTLE_BRIDGE_MAILBOX_RECOVERED_BY_RECOVERY_GUARDIAN/);
 });
 
 test('guardian validates the legacy fixed mailbox installer receipt before versioning its projection', () => {
@@ -86,6 +94,22 @@ test('guardian validates the legacy fixed mailbox installer receipt before versi
   assert.match(mailboxInstaller, /intervalMinutes = 5/);
   assert.match(mailboxInstaller, /runLevel = 'Limited'/);
   assert.match(mailboxInstaller, /startedNow = \[bool\]\$StartNow/);
+});
+
+test('guardian reports mailbox recovery only after a fresh successful scheduled-task run', () => {
+  assert.match(guardian, /\$mailboxRepairProofWaitSeconds = 20/);
+  assert.match(guardian, /\$mailboxLastRunBefore/);
+  assert.match(guardian, /\$mailboxRepairStartedAt = Get-Date/);
+  assert.match(guardian, /Start-Sleep -Milliseconds 500/);
+  assert.match(guardian, /\$postRunTime -gt \$mailboxLastRunBefore/);
+  assert.match(guardian, /\$postRunTime -ge \$mailboxRepairStartedAt\.AddSeconds\(-2\)/);
+  assert.match(guardian, /\[int\]\$postInfo\.LastTaskResult -eq 0/);
+  assert.match(guardian, /\[string\]\$postTask\.State -ne 'Running'/);
+  assert.match(guardian, /MAILBOX_REPAIR_SUCCESSFUL_RUN_NOT_YET_PROVEN/);
+  assert.match(guardian, /MAILBOX_TASK_RUNNING_WITHOUT_SUCCESS_PROOF/);
+  assert.match(guardian, /BATTLE_BRIDGE_MAILBOX_REPAIR_PENDING_PROOF/);
+  assert.match(guardian, /mailboxRepairRunProven = \$mailboxRepairRunProven/);
+  assert.match(guardian, /if \(\$mailboxRepairApplied -and \$mailboxRepairRunProven\) \{ 'BATTLE_BRIDGE_MAILBOX_RECOVERED_BY_RECOVERY_GUARDIAN' \}/);
 });
 
 test('guardian keeps Recovery Mesh mutation strictly inside the exact-head relation block', () => {
