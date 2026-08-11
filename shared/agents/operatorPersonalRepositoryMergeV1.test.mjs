@@ -5,10 +5,14 @@ import {
   PERSONAL_REPOSITORY_MODE,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
   PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS,
+  PERSONAL_REPOSITORY_WORKFLOW_NAME,
+  PERSONAL_REPOSITORY_WORKFLOW_PATH,
   buildPersonalRepositoryApprovalReceipt,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
   validatePersonalRepositoryConfiguration,
+  validatePersonalRepositoryDispatchExecution,
+  validatePersonalRepositoryDispatchWorkflowDefinition,
   validatePersonalRepositoryEvidence,
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
@@ -29,6 +33,53 @@ const review = Object.freeze({
   artifactId: 9058301333,
   artifactDigest: `sha256:${'d'.repeat(64)}`,
   payloadSha256: 'e'.repeat(64),
+});
+const dispatchWorkflowId = 7199;
+const dispatchTitle = `Protected operator merge ${sourceHead}`;
+
+function dispatchWorkflowDefinition(overrides = {}) {
+  return {
+    id: dispatchWorkflowId,
+    name: PERSONAL_REPOSITORY_WORKFLOW_NAME,
+    path: PERSONAL_REPOSITORY_WORKFLOW_PATH,
+    state: 'active',
+    ...overrides,
+  };
+}
+
+function dispatchRun(overrides = {}) {
+  return {
+    id: runId,
+    run_attempt: runAttempt,
+    workflow_id: dispatchWorkflowId,
+    name: dispatchTitle,
+    display_title: dispatchTitle,
+    event: 'workflow_dispatch',
+    repository: { full_name: repository },
+    head_sha: baseSha,
+    head_branch: 'main',
+    path: `${repository}/${PERSONAL_REPOSITORY_WORKFLOW_PATH}@refs/heads/main`,
+    triggering_actor: { login: 'Cheekyfellastef' },
+    status: 'in_progress',
+    ...overrides,
+  };
+}
+
+function dispatchExecutionInput(overrides = {}) {
+  return {
+    definitions: [dispatchWorkflowDefinition()],
+    run: dispatchRun(),
+    priorRuns: [dispatchRun()],
+    ...overrides,
+  };
+}
+
+const expectedDispatchExecution = Object.freeze({
+  repository,
+  sourceHead,
+  baseSha,
+  workflowRunId: runId,
+  workflowRunAttempt: runAttempt,
 });
 
 function dispatchInputs(overrides = {}) {
@@ -204,6 +255,162 @@ test('dispatch inputs require an exact positive identity and immutable review ar
     const result = parsePersonalRepositoryDispatchInputs(dispatchInputs({ [key]: value }));
     assert.ok(result.blockers.includes(blocker), `${key} should produce ${blocker}`);
   }
+});
+
+test('dispatch workflow definition must be one exact static active definition', () => {
+  const ready = validatePersonalRepositoryDispatchWorkflowDefinition([
+    dispatchWorkflowDefinition(),
+  ]);
+  assert.equal(ready.valid, true);
+  assert.deepEqual(ready.definition, dispatchWorkflowDefinition());
+
+  for (const definitions of [
+    null,
+    [],
+    [dispatchWorkflowDefinition({ name: 'Protected operator merge dynamic-title' })],
+    [dispatchWorkflowDefinition({ path: '.github/workflows/lookalike.yml' })],
+    [dispatchWorkflowDefinition({ state: 'disabled_manually' })],
+    [dispatchWorkflowDefinition({ id: String(dispatchWorkflowId) })],
+    [dispatchWorkflowDefinition(), dispatchWorkflowDefinition({ id: dispatchWorkflowId + 1 })],
+  ]) {
+    const blocked = validatePersonalRepositoryDispatchWorkflowDefinition(definitions);
+    assert.equal(blocked.valid, false);
+    assert.ok(blocked.blockers.length > 0);
+  }
+});
+
+test('current protected dispatch binds every exact dynamic run identity field', () => {
+  const ready = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput(),
+    expectedDispatchExecution,
+  );
+  assert.equal(ready.valid, true);
+  assert.deepEqual(ready.currentMismatches, []);
+
+  const mutations = [
+    ['run-id', { id: runId + 1 }],
+    ['run-attempt', { run_attempt: runAttempt + 1 }],
+    ['workflow-id', { workflow_id: dispatchWorkflowId + 1 }],
+    ['run-name', { name: 'Protected Operator Merge Queue Boundary' }],
+    ['display-title', { display_title: `${dispatchTitle}-widened` }],
+    ['event', { event: 'repository_dispatch' }],
+    ['repository', { repository: { full_name: 'Cheekyfellastef/lookalike' } }],
+    ['base-head', { head_sha: 'f'.repeat(40) }],
+    ['base-branch', { head_branch: 'lookalike-main' }],
+    ['workflow-path', { path: `${repository}/${PERSONAL_REPOSITORY_WORKFLOW_PATH}@feature` }],
+    ['triggering-actor', { triggering_actor: { login: 'lookalike-operator' } }],
+    ['run-status', { status: 'completed' }],
+  ];
+  for (const [field, mutation] of mutations) {
+    const blocked = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({ run: dispatchRun(mutation) }),
+      expectedDispatchExecution,
+    );
+    assert.equal(blocked.valid, false, field);
+    assert.ok(blocked.currentMismatches.includes(field), field);
+  }
+
+  const widened = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({ run: [dispatchRun(), dispatchRun()] }),
+    expectedDispatchExecution,
+  );
+  assert.equal(widened.valid, false);
+  assert.ok(widened.currentMismatches.length > 0);
+});
+
+test('same-base prior protected dispatch is a replay regardless of failed conclusion', () => {
+  const priorRunId = runId + 10;
+  const blocked = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({
+      priorRuns: [
+        dispatchRun(),
+        dispatchRun({
+          id: priorRunId,
+          status: 'completed',
+          conclusion: 'failure',
+        }),
+      ],
+    }),
+    expectedDispatchExecution,
+  );
+  assert.equal(blocked.valid, false);
+  assert.deepEqual(blocked.replayRunIds, [priorRunId]);
+  assert.ok(blocked.blockers.includes('personal-repository-prior-attempt-exists'));
+});
+
+test('different exact base is a fresh protected dispatch identity, not a replay', () => {
+  const priorRunId = runId + 11;
+  const ready = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({
+      priorRuns: [
+        dispatchRun(),
+        dispatchRun({
+          id: priorRunId,
+          head_sha: 'f'.repeat(40),
+          status: 'completed',
+          conclusion: 'failure',
+        }),
+      ],
+    }),
+    expectedDispatchExecution,
+  );
+  assert.equal(ready.valid, true);
+  assert.deepEqual(ready.replayRunIds, []);
+  assert.deepEqual(ready.differentBasePriorRunIds, [priorRunId]);
+});
+
+test('malformed source-matching prior run blocks instead of evading replay proof', () => {
+  const malformedCandidates = [
+    (value) => { delete value.head_sha; },
+    (value) => { delete value.triggering_actor; },
+    (value) => { value.run_attempt = String(value.run_attempt); },
+    (value) => { value.workflow_id += 1; },
+    (value) => { value.name = PERSONAL_REPOSITORY_WORKFLOW_NAME; },
+    (value) => { value.display_title = `${dispatchTitle}-widened`; },
+    (value) => { value.event = 'repository_dispatch'; },
+    (value) => { value.repository = { full_name: 'Cheekyfellastef/lookalike' }; },
+    (value) => { value.head_branch = 'lookalike-main'; },
+    (value) => { value.path = `${repository}/${PERSONAL_REPOSITORY_WORKFLOW_PATH}@feature`; },
+  ];
+  for (const [index, mutate] of malformedCandidates.entries()) {
+    const priorRunId = runId + 20 + index;
+    const malformed = dispatchRun({ id: priorRunId });
+    mutate(malformed);
+    const blocked = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({ priorRuns: [dispatchRun(), malformed] }),
+      expectedDispatchExecution,
+    );
+    assert.equal(blocked.valid, false, index);
+    assert.deepEqual(blocked.malformedPriorRunIds, [priorRunId], index);
+    assert.ok(blocked.blockers.includes('personal-repository-prior-attempt-invalid'), index);
+  }
+
+  const invalidContainer = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({ priorRuns: {} }),
+    expectedDispatchExecution,
+  );
+  assert.equal(invalidContainer.valid, false);
+  assert.ok(invalidContainer.blockers.includes('personal-repository-prior-runs-invalid'));
+});
+
+test('wrong actor or source title cannot become an exact prior operator replay', () => {
+  const ready = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({
+      priorRuns: [
+        dispatchRun(),
+        dispatchRun({ id: runId + 13, triggering_actor: { login: 'lookalike-operator' } }),
+        dispatchRun({
+          id: runId + 14,
+          name: `Protected operator merge ${'9'.repeat(40)}`,
+          display_title: `Protected operator merge ${'9'.repeat(40)}`,
+        }),
+      ],
+    }),
+    expectedDispatchExecution,
+  );
+  assert.equal(ready.valid, true);
+  assert.deepEqual(ready.replayRunIds, []);
+  assert.deepEqual(ready.malformedPriorRunIds, []);
 });
 
 test('all seven universally applicable exact-head workflow identities must be active and successful', () => {
