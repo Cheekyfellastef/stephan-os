@@ -27,9 +27,9 @@ The runtime authorization and its closed-world approval receipt are bound to:
 - a SHA-256 content digest covering the complete approval receipt;
 - `m3Only: true`.
 
-The approval receipt repeats the repository, head, tree, runtime-plan digest, authorization ID, execution surface, issue time and expiry. Missing, widened, self-asserted, mismatched, stale or content-digest-invalid approval evidence is rejected before either host executor is invoked. The adapter also validates the final prefixed receipt ID during preflight so a syntactically valid but oversized authorization ID cannot cause host work whose resulting receipt would be inadmissible.
+The approval receipt repeats the repository, head, tree, runtime-plan digest, authorization ID, execution surface, issue time and expiry. The adapter additionally requires a host-owned `STEPHANOS_OPERATOR_APPROVAL_VERIFIER`; that verifier must independently resolve the immutable approval proof and return a closed-world verification bound to the receipt digest and every execution identity. The verifier is an adapter dependency, never mailbox input. Missing, caller-forged, widened, mismatched, stale, replayed or content-digest-invalid approval evidence is rejected before either host executor is invoked. The adapter also validates the final prefixed receipt ID during preflight so a syntactically valid but oversized authorization ID cannot cause host work whose resulting receipt would be inadmissible.
 
-No runtime execution is authorised by this source PR. A future live request must carry a newly issued authorization for the then-current merged head, tree and runtime-plan digest.
+No runtime execution is authorised by this source PR. A future live request must carry a newly issued authorization for the then-current merged head, tree and runtime-plan digest, and the connected Battle Bridge must supply its separately trusted immutable-proof verifier. A caller cannot satisfy that boundary by supplying another receipt-shaped object.
 
 ## Runner observation contract
 

@@ -11,6 +11,7 @@ import {
   FORGE_SHADOW_M3_EXECUTION_READY,
   FORGE_SHADOW_M3_EXECUTION_SURFACE,
   FORGE_SHADOW_M3_OPERATOR_APPROVAL_SCHEMA,
+  FORGE_SHADOW_M3_OPERATOR_APPROVAL_VERIFICATION_SCHEMA,
   FORGE_SHADOW_M3_RUNTIME_AUTHORIZATION_SCHEMA,
   FORGE_SHADOW_M3_TERMINATION_ACK_SCHEMA,
   buildForgeShadowM3RuntimePlanDigest,
@@ -220,9 +221,34 @@ function executionResult(request, observationPatch = {}, terminationPatch = {}) 
 
 const now = () => new Date(NOW);
 
+function approvalVerification(request, patch = {}) {
+  return {
+    schemaVersion: FORGE_SHADOW_M3_OPERATOR_APPROVAL_VERIFICATION_SCHEMA,
+    verifierId: 'STEPHANOS_OPERATOR_APPROVAL_VERIFIER',
+    verified: true,
+    proofRef: request.approvalReceipt.proofRef,
+    approvalPayloadSha256: request.approvalReceipt.payloadSha256,
+    authorizationId: request.authorizationId,
+    repository: request.repository,
+    expectedHead: request.expectedHead,
+    expectedTree: request.expectedTree,
+    runtimePlanDigest: request.runtimePlanDigest,
+    executionSurface: request.executionSurface,
+    verifiedAtUtc: NOW,
+    ...patch,
+  };
+}
+
+function executeVerified(inputValue, options = {}) {
+  return executeForgeShadowM3RunnerPlan(inputValue, {
+    verifyOperatorApproval: async (request) => approvalVerification(request),
+    ...options,
+  });
+}
+
 test('executes only the canonical runner estate and emits a content-addressed M3 receipt', async () => {
   const calls = [];
-  const result = await executeForgeShadowM3RunnerPlan(input(), {
+  const result = await executeVerified(input(), {
     platform: 'win32', now,
     executeRunner: async (request) => {
       calls.push(request);
@@ -254,7 +280,7 @@ test('executes only the canonical runner estate and emits a content-addressed M3
 });
 
 test('emits the exact canonical Forge routing receipt contract', async () => {
-  const result = await executeForgeShadowM3RunnerPlan(input(), {
+  const result = await executeVerified(input(), {
     platform: 'win32', now, executeRunner: async (request) => executionResult(request),
   });
   assert.deepEqual(Object.keys(result.receipt).sort(), [
@@ -268,7 +294,7 @@ test('emits the exact canonical Forge routing receipt contract', async () => {
 });
 
 test('replans against the trusted execution clock so caller history cannot admit stale evidence', async () => {
-  const result = await executeForgeShadowM3RunnerPlan(input(runtimePlanInput(), {
+  const result = await executeVerified(input(runtimePlanInput(), {
     issuedAtUtc: '2026-08-09T21:59:00Z',
     expiresAtUtc: '2026-08-09T22:59:00Z',
   }), {
@@ -287,7 +313,7 @@ test('rechecks authorization immediately before every runner invocation', async 
     '2026-08-07T22:19:00Z',
   ];
   let calls = 0;
-  const result = await executeForgeShadowM3RunnerPlan(input(), {
+  const result = await executeVerified(input(), {
     platform: 'win32',
     now: () => new Date(instants.shift()),
     executeRunner: async (request) => {
@@ -308,7 +334,7 @@ test('runtime authorization is exact-head, exact-tree, exact-plan, surface and t
     { expiresAtUtc: '2026-08-07T21:20:00Z' },
     { expiresAtUtc: '2026-08-08T01:19:00Z' },
   ]) {
-    const result = await executeForgeShadowM3RunnerPlan(input(runtimePlanInput(), patch), {
+    const result = await executeVerified(input(runtimePlanInput(), patch), {
       platform: 'win32', now, executeRunner: async (request) => executionResult(request),
     });
     assert.equal(result.ok, false);
@@ -327,7 +353,7 @@ test('operator approval is closed-world, content-bound and cannot be self-assert
   ];
   for (const [patch, blocker] of cases) {
     let calls = 0;
-    const result = await executeForgeShadowM3RunnerPlan(input(runtimePlanInput(), patch), {
+    const result = await executeVerified(input(runtimePlanInput(), patch), {
       platform: 'win32', now,
       executeRunner: async (request) => {
         calls += 1;
@@ -340,9 +366,40 @@ test('operator approval is closed-world, content-bound and cannot be self-assert
   }
 });
 
+test('operator approval requires an independent host verifier bound to the immutable proof', async () => {
+  let calls = 0;
+  const executeRunner = async (request) => {
+    calls += 1;
+    return executionResult(request);
+  };
+  const missing = await executeForgeShadowM3RunnerPlan(input(), {
+    platform: 'win32', now, executeRunner,
+  });
+  assert.equal(calls, 0);
+  assert.ok(missing.blockers.includes('operator-approval-verifier-not-configured'));
+
+  const cases = [
+    [() => { throw new Error('unavailable'); }, 'operator-approval-verifier-threw'],
+    [(request) => approvalVerification(request, { verified: false }), 'operator-approval-not-verified'],
+    [(request) => approvalVerification(request, { approvalPayloadSha256: '0'.repeat(64) }), 'operator-approval-verification-digest-mismatch'],
+    [(request) => approvalVerification(request, { authorizationId: 'forge-m3-runtime-authorization-replayed' }), 'operator-approval-verification-authorization-mismatch'],
+    [(request) => approvalVerification(request, { proofRef: `proofs/operator-approvals/replayed/${'9'.repeat(64)}.json` }), 'operator-approval-verification-proof-ref-mismatch'],
+    [(request) => approvalVerification(request, { verifiedAtUtc: '2026-08-07T21:18:59Z' }), 'operator-approval-verification-time-invalid'],
+    [(request) => ({ ...approvalVerification(request), widenedAuthority: true }), 'operator-approval-verification-fields-invalid'],
+  ];
+  for (const [verifyOperatorApproval, blocker] of cases) {
+    calls = 0;
+    const result = await executeVerified(input(), {
+      platform: 'win32', now, executeRunner, verifyOperatorApproval,
+    });
+    assert.equal(calls, 0, `${blocker} reached the executor`);
+    assert.ok(result.blockers.includes(blocker), JSON.stringify(result.blockers));
+  }
+});
+
 test('oversized derived receipt identities fail before runner execution', async () => {
   let calls = 0;
-  const result = await executeForgeShadowM3RunnerPlan(input(runtimePlanInput(), {
+  const result = await executeVerified(input(runtimePlanInput(), {
     authorizationId: `a${'b'.repeat(119)}`,
   }), {
     platform: 'win32', now,
@@ -356,12 +413,12 @@ test('oversized derived receipt identities fail before runner execution', async 
 });
 
 test('execution is Windows-bound and refuses to start without the fixed runner executor', async () => {
-  const wrongHost = await executeForgeShadowM3RunnerPlan(input(), {
+  const wrongHost = await executeVerified(input(), {
     platform: 'linux', now, executeRunner: async (request) => executionResult(request),
   });
   assert.equal(wrongHost.ok, false);
   assert.ok(wrongHost.blockers.includes('connected-windows-battle-bridge-required'));
-  const missing = await executeForgeShadowM3RunnerPlan(input(), { platform: 'win32', now });
+  const missing = await executeVerified(input(), { platform: 'win32', now });
   assert.equal(missing.ok, false);
   assert.ok(missing.blockers.includes('fixed-runner-executor-not-configured'));
 });
@@ -377,7 +434,7 @@ test('runner proof fails closed on identity, canary, teardown, authority or proo
     { proofRefs: ['proofs/forge-shadow-m3/not-content-addressed.json'] },
   ]) {
     let first = true;
-    const result = await executeForgeShadowM3RunnerPlan(input(), {
+    const result = await executeVerified(input(), {
       platform: 'win32', now,
       executeRunner: async (request) => {
         const selected = first ? patch : {};
@@ -392,7 +449,7 @@ test('runner proof fails closed on identity, canary, teardown, authority or proo
 
 test('runner observations are bound to both authorization and fresh invocation identity', async () => {
   let cached;
-  const replay = await executeForgeShadowM3RunnerPlan(input(), {
+  const replay = await executeVerified(input(), {
     platform: 'win32', now,
     createInvocationId: ({ runnerId }) => `invocation-${runnerId}`,
     executeRunner: async (request) => {
@@ -407,7 +464,7 @@ test('runner observations are bound to both authorization and fresh invocation i
   assert.ok(replay.blockers.some((item) => item.includes('runner-invocation-identity-mismatch')), JSON.stringify(replay.blockers));
   assert.ok(replay.blockers.some((item) => item.includes('runner-termination-ack-invocation-mismatch')), JSON.stringify(replay.blockers));
 
-  const wrongAuthorization = await executeForgeShadowM3RunnerPlan(input(), {
+  const wrongAuthorization = await executeVerified(input(), {
     platform: 'win32', now,
     executeRunner: async (request) => executionResult(request, {
       authorizationId: 'forge-m3-runtime-authorization-replayed',
@@ -417,7 +474,7 @@ test('runner observations are bound to both authorization and fresh invocation i
 });
 
 test('two runner proof estates may safely fill the aggregate sixteen-reference receipt bound', async () => {
-  const result = await executeForgeShadowM3RunnerPlan(input(), {
+  const result = await executeVerified(input(), {
     platform: 'win32', now,
     executeRunner: async (request) => executionResult(request, {
       proofRefs: Array.from({ length: 8 }, (_, index) => (
@@ -436,7 +493,7 @@ test('deadline abort waits for executor settlement and delayed teardown acknowle
   });
   let aborted = false;
   const started = Date.now();
-  const execution = executeForgeShadowM3RunnerPlan(deadlineInput, {
+  const execution = executeVerified(deadlineInput, {
     platform: 'win32', now,
     executeRunner: (request) => new Promise((resolve) => {
       request.signal.addEventListener('abort', () => {
@@ -462,7 +519,7 @@ test('non-cooperative executor cannot make the adapter return while host work re
     expiresAtUtc: '2026-08-07T21:20:00.010Z',
   });
   let aborted = false;
-  const execution = executeForgeShadowM3RunnerPlan(deadlineInput, {
+  const execution = executeVerified(deadlineInput, {
     platform: 'win32', now,
     executeRunner: (request) => new Promise(() => {
       request.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
@@ -477,7 +534,7 @@ test('non-cooperative executor cannot make the adapter return while host work re
 });
 
 test('credential-shaped or widened executor observations are rejected and never serialized', async () => {
-  const result = await executeForgeShadowM3RunnerPlan(input(), {
+  const result = await executeVerified(input(), {
     platform: 'win32', now,
     executeRunner: async (request) => ({
       ...executionResult(request),
@@ -490,7 +547,7 @@ test('credential-shaped or widened executor observations are rejected and never 
 });
 
 test('executor failures cannot mint a runtime receipt', async () => {
-  const result = await executeForgeShadowM3RunnerPlan(input(), {
+  const result = await executeVerified(input(), {
     platform: 'win32', now,
     executeRunner: async () => { throw new Error('host failed'); },
   });
@@ -501,7 +558,7 @@ test('executor failures cannot mint a runtime receipt', async () => {
 });
 
 test('receipt validation detects post-issuance mutation and hidden fields', async () => {
-  const result = await executeForgeShadowM3RunnerPlan(input(), {
+  const result = await executeVerified(input(), {
     platform: 'win32', now, executeRunner: async (request) => executionResult(request),
   });
   const mutated = structuredClone(result.receipt);
