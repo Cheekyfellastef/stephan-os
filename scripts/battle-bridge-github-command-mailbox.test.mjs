@@ -172,6 +172,25 @@ test('failed receipt publication is retried from outbox without replaying the co
   assert.deepEqual(state.pendingReceiptPublications, []);
 });
 
+test('terminal publication discards an obsolete failed acceptance for the same request', () => {
+  const state = { pendingReceiptPublications: [] };
+  const accepted = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'req-1507-publish-terminal-1',
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    state: 'ACCEPTED',
+    acceptedAt: '2026-08-11T11:30:00.000Z',
+  };
+  checkpointMailboxReceiptPublication(state, accepted, { ok: false }, { persist: () => {} });
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  checkpointMailboxReceiptPublication(state, {
+    ...accepted,
+    state: 'DONE',
+    completedAt: '2026-08-11T11:31:00.000Z',
+  }, { ok: true }, { persist: () => {} });
+  assert.deepEqual(state.pendingReceiptPublications, []);
+});
+
 test('main-targeting control preflight blocks a stale head and ignores observations', () => {
   const stale = preflightMailboxControlExpectedHead({
     partition: 'CONTROL',

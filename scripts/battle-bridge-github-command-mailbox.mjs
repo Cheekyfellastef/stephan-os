@@ -720,7 +720,10 @@ export function checkpointMailboxReceiptPublication(state, receipt, publication,
   }
   const publicationId = receiptPublicationId(receipt);
   const pending = (Array.isArray(state.pendingReceiptPublications) ? state.pendingReceiptPublications : [])
-    .filter((entry) => entry?.publicationId !== publicationId);
+    .filter((entry) => entry?.publicationId !== publicationId)
+    .filter((entry) => !(receipt.state !== 'ACCEPTED'
+      && entry?.receipt?.requestId === receipt.requestId
+      && entry?.receipt?.state === 'ACCEPTED'));
   if (publication?.ok !== true) {
     pending.push(Object.freeze({
       publicationId,

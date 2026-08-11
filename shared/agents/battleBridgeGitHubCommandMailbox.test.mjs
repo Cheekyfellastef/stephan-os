@@ -388,6 +388,20 @@ test('never projects attacker-authored validation failures as terminal receipts'
   assert.equal(selected.rejected[0].blocker, 'COMMAND_AUTHOR_NOT_ALLOWED');
 });
 
+test('projects allowlisted operation-specific owner validation blockers as terminal receipts', () => {
+  const selected = selectBattleBridgeGitHubCommandBatch([
+    comment(command({
+      requestId: 'req-1507-mesh-missing-head',
+      operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
+      expectedHead: '',
+    }), { id: 9 }),
+  ], { now });
+  assert.equal(selected.verdict, 'NO_COMMAND_READY');
+  assert.equal(selected.terminalRejections.length, 1);
+  assert.equal(selected.terminalRejections[0].blocker, 'RECOVERY_MESH_EXPECTED_HEAD_REQUIRED');
+  assert.equal(selected.terminalRejections[0].command.requestId, 'req-1507-mesh-missing-head');
+});
+
 test('selects a bounded partitioned batch and reports backpressure without duplicating request IDs', () => {
   const comments = [
     comment(command({ requestId: 'req-1507-control-1' }), { id: 1 }),
