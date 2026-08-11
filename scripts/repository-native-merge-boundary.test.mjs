@@ -92,6 +92,8 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /personal-repository-prior-attempt-exists/);
   assert.match(source, /expectedDisplayTitle = `Protected operator merge \$\{context\.dispatch\.identity\.sourceHead\}`/);
   assert.doesNotMatch(source, /expectedDisplayTitle = `Protected operator merge PR #/);
+  assert.match(source, /mismatches: runIdentityMismatches/);
+  assert.doesNotMatch(source, /mismatches:[^\n]*run\?\./);
   assert.match(source, /validatePersonalRepositoryApprovalReceipt/);
   assert.match(source, /method: 'PUT',[\s\S]*?merge_method: 'squash',[\s\S]*?sha: receipt\.sourceHead/);
   assert.equal([...source.matchAll(/pulls\/\$\{receipt\.prNumber\}\/merge/g)].length, 1);
