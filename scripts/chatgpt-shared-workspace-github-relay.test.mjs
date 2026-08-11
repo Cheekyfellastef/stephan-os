@@ -50,6 +50,33 @@ function projection() {
   };
 }
 
+function syncRecord(head = 'a'.repeat(40), timestampUtc = '2026-07-16T19:09:00.000Z') {
+  return {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.status',
+    statusId: 'battle-bridge-github-sync-current',
+    participantId: 'codex',
+    timestampUtc,
+    classification: 'SYNC_NO_CHANGE',
+    status: 'SYNC_NO_CHANGE',
+    localHeadBefore: head,
+    remoteHeadObserved: head,
+    repositoryIdentity: 'Cheekyfellastef/stephan-os',
+    branch: 'main',
+    remote: 'origin',
+    taskName: 'Stephanos Battle Bridge GitHub Sync',
+    syncRecordKind: 'battle-bridge-github-sync-receipt',
+    proofRefs: ['receipts/battle-bridge-github-sync/current.json'],
+    authority: {
+      canonicalRepositoryOnly: true,
+      fastForwardOnly: true,
+      arbitraryShellAllowed: false,
+      pushAllowed: false,
+      mergeToGitHubAllowed: false,
+    },
+  };
+}
+
 function fakeWorkspace() {
   const records = new Map();
   const writes = [];
@@ -79,6 +106,7 @@ function baseOptions(workspace, adapter) {
     receiptExistsFn: workspace.receiptExistsFn,
     recordExistsFn: workspace.recordExistsFn,
     writeAtomicJsonFn: workspace.writeAtomicJsonFn,
+    headTruthEvidenceLoader: async () => ({ records: { sync: syncRecord() } }),
   };
 }
 
@@ -127,7 +155,7 @@ test('fixed adapter uses only the two canonical GitHub comment endpoints without
   assert.equal(calls.every((call) => call.options.shell === false), true);
 });
 
-test('authenticated read publishes a sanitized projection, audit event and final completion receipt', async () => {
+test('authenticated read publishes canonical head truth, a sanitized workspace summary, audit event and final completion receipt', async () => {
   let responseBody = '';
   const workspace = fakeWorkspace();
   const result = await runChatGptSharedWorkspaceGitHubRelay({
@@ -152,9 +180,34 @@ test('authenticated read publishes a sanitized projection, audit event and final
   assert.deepEqual(workspace.writes[0].segments, ['receipts', 'chatgpt-bridge-request-live-1.json']);
   assert.deepEqual(workspace.writes[1].segments, ['receipts', `${result.completionReceiptId}.json`]);
   assert.equal(workspace.events.length, 1);
+  assert.match(responseBody, /"projectionKind": "shared-workspace-head-truth"/);
+  assert.match(responseBody, new RegExp(`"githubMainHead": "${'a'.repeat(40)}"`));
   assert.equal(responseBody.includes('C:\\Users\\Stephan'), false);
   assert.match(responseBody, /\[REDACTED\]/);
   assert.equal(validateChatGptSharedWorkspaceResponseBody(responseBody).valid, true);
+});
+
+test('current-status read uses canonical head truth and does not let unrelated global activity choose source truth', async () => {
+  let responseBody = '';
+  let globalProjectionCalls = 0;
+  const workspace = fakeWorkspace();
+  const main = 'c'.repeat(40);
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...baseOptions(workspace, {
+      readRequest: () => ({ ok: true, body: envelope(request()), authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER }),
+      writeResponse: (body) => { responseBody = body; return { ok: true, reason: 'RESPONSE_COMMENT_UPDATED' }; },
+    }),
+    projectionBuilder: async () => { globalProjectionCalls += 1; return projection(); },
+    headTruthEvidenceLoader: async () => ({ records: { sync: syncRecord(main) } }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.deliveryStatus, 'WORKSPACE_READ_PASS');
+  assert.equal(globalProjectionCalls, 1);
+  assert.match(responseBody, /"projectionKind": "shared-workspace-head-truth"/);
+  assert.match(responseBody, new RegExp(`"windowsCheckoutHead": "${main}"`));
+  assert.match(responseBody, /"sourceHeadsAgree": true/);
+  assert.match(responseBody, /"currentStatus"/);
 });
 
 test('authenticated bounded write persists only the canonical message, audit, event and completion records', async () => {

