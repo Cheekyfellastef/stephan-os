@@ -11,25 +11,29 @@ It does not install, register, connect or execute a runner by itself. It orchest
 The adapter accepts exactly:
 
 1. the complete input to `planForgeShadowM3RunnerRuntime()`; and
-2. one exact runtime authorization.
+2. one exact runtime authorization containing a canonical operator-approval receipt.
 
 The adapter reruns the merged M3 admission and runtime planners. It never accepts a caller-authored object merely claiming that those plans are ready.
 
-The runtime authorization is bound to:
+The runtime authorization and its closed-world approval receipt are bound to:
 
 - repository `Cheekyfellastef/stephan-os`;
 - exact canonical `main` head and tree;
 - the SHA-256 digest of the complete canonical runtime plan;
 - execution surface `CONNECTED_WINDOWS_BATTLE_BRIDGE`;
-- an explicit issue and expiry time no more than two hours apart;
-- `operatorApproved: true`; and
+- an explicit issuance and expiry time no more than two hours apart;
+- issuer `STEPHANOS_OPERATOR_APPROVAL_GATE` and decision `APPROVED`;
+- an authorization-scoped immutable `proofs/operator-approvals/...` reference;
+- a SHA-256 content digest covering the complete approval receipt;
 - `m3Only: true`.
+
+The approval receipt repeats the repository, head, tree, runtime-plan digest, authorization ID, execution surface, issue time and expiry. Missing, widened, self-asserted, mismatched, stale or content-digest-invalid approval evidence is rejected before either host executor is invoked. The adapter also validates the final prefixed receipt ID during preflight so a syntactically valid but oversized authorization ID cannot cause host work whose resulting receipt would be inadmissible.
 
 No runtime execution is authorised by this source PR. A future live request must carry a newly issued authorization for the then-current merged head, tree and runtime-plan digest.
 
 ## Runner observation contract
 
-The host executor is called once for each runner identity derived by the canonical plan. It cannot add runners, rename them or choose different artifacts, labels, boundaries, heads, trees or canaries.
+The host executor is called once for each runner identity derived by the canonical plan. It cannot add runners, rename them or choose different artifacts, labels, boundaries, heads, trees or canaries. Each call receives a fresh invocation identity. Both the observation and termination acknowledgement must echo that invocation identity and the authorization identity, and the observation start must be no earlier than the trusted clock captured immediately before that invocation. Cached, replayed and cross-runner observations therefore fail closed.
 
 Every returned observation must prove:
 
@@ -49,6 +53,10 @@ Every returned observation must prove:
 - no source mutation, Git ref write, merge, deployment or arbitrary-command authority; and
 - one or more runner-scoped content-addressed proof references.
 
+Each runner may return at most eight unique proof references. Because the canonical estate contains exactly two runners, the aggregate receipt accepts at most sixteen; a valid pair of eight-reference runner observations cannot execute successfully and then fail solely at receipt construction.
+
+Every executor call must settle with exactly an observation and a closed-world termination acknowledgement proving the runner has terminated and teardown has been acknowledged. At the authorization deadline the adapter requests abort, then awaits executor settlement and validates the bound termination acknowledgement before returning a blocked result. A non-cooperative executor keeps the adapter pending; the adapter never reports a terminal result while that executor may still be mutating the host in the background.
+
 Unknown fields and credential-, command-, path-, URL-, shell- or token-shaped fields fail closed.
 
 ## Receipt
@@ -57,7 +65,7 @@ A successful result emits:
 
 `stephanos.forge-shadow-m3-runner-runtime-receipt.v1`
 
-The receipt includes the exact source head and tree, authorization ID, runtime-plan digest, artifact-set digest, normalized fixed runner observations, immutable proof references, teardown proof, zero-residual-authority proof and its own content digest.
+The receipt includes the exact source head and tree, artifact-set digest, fixed runner identities, immutable proof references, teardown proof, zero-residual-authority proof and its own content digest. Its identifier is derived from the validated authorization ID.
 
 `validateForgeShadowM3RunnerRuntimeReceipt()` revalidates the closed-world shape and content digest so later Forge-aware routing cannot promote a mutated or widened receipt.
 

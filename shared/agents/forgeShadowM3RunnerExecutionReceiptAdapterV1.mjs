@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import {
   FORGE_SHADOW_M3_RUNTIME_READY,
@@ -15,6 +15,8 @@ const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const PROOF_REF = /^proofs\/forge-shadow-m3\/[a-z0-9][a-z0-9._:-]{2,127}\/[0-9a-f]{64}\.json$/i;
 const MAX_AUTHORIZATION_MS = 2 * 60 * 60 * 1000;
 const MAX_RUNNER_EXECUTION_MS = 60 * 60 * 1000;
+const MAX_RUNNER_PROOF_REFS = 8;
+const MAX_RECEIPT_PROOF_REFS = 16;
 
 export const FORGE_SHADOW_M3_EXECUTION_ADAPTER_SCHEMA =
   'stephanos.forge-shadow-m3-runner-execution-adapter.v1';
@@ -22,6 +24,10 @@ export const FORGE_SHADOW_M3_EXECUTION_OBSERVATION_SCHEMA =
   'stephanos.forge-shadow-m3-runner-execution-observation.v1';
 export const FORGE_SHADOW_M3_RUNTIME_AUTHORIZATION_SCHEMA =
   'stephanos.forge-shadow-m3-runner-runtime-authorization.v1';
+export const FORGE_SHADOW_M3_OPERATOR_APPROVAL_SCHEMA =
+  'stephanos.forge-shadow-m3-operator-approval-receipt.v1';
+export const FORGE_SHADOW_M3_TERMINATION_ACK_SCHEMA =
+  'stephanos.forge-shadow-m3-runner-termination-acknowledgement.v1';
 export const FORGE_SHADOW_M3_EXECUTION_READY = 'FORGE_SHADOW_M3_RUNNER_RUNTIME_READY';
 export const FORGE_SHADOW_M3_EXECUTION_BLOCKED = 'FORGE_SHADOW_M3_RUNNER_EXECUTION_BLOCKED';
 export const FORGE_SHADOW_M3_EXECUTION_SURFACE = 'CONNECTED_WINDOWS_BATTLE_BRIDGE';
@@ -32,10 +38,16 @@ const INPUT_KEYS = ['runtimePlanInput', 'runtimeAuthorization'];
 const AUTHORIZATION_KEYS = [
   'schemaVersion', 'authorizationId', 'repository', 'expectedHead', 'expectedTree',
   'runtimePlanDigest', 'issuedAtUtc', 'expiresAtUtc', 'executionSurface',
-  'operatorApproved', 'm3Only',
+  'approvalReceipt', 'm3Only',
+];
+const APPROVAL_KEYS = [
+  'schemaVersion', 'issuer', 'decision', 'proofRef', 'repository', 'expectedHead',
+  'expectedTree', 'runtimePlanDigest', 'authorizationId', 'executionSurface',
+  'issuedAtUtc', 'expiresAtUtc', 'payloadSha256',
 ];
 const OBSERVATION_KEYS = [
-  'schemaVersion', 'runnerId', 'poolId', 'runnerClass', 'runtimeBoundary',
+  'schemaVersion', 'authorizationId', 'invocationId', 'runnerId', 'poolId',
+  'runnerClass', 'runtimeBoundary',
   'sourceHead', 'sourceTree', 'artifactDigest', 'artifactSetDigest',
   'startedAtUtc', 'completedAtUtc', 'installed', 'registered', 'connected',
   'ephemeralRegistration', 'canaryWorkflowId', 'canaryScenario', 'canaryHead',
@@ -46,6 +58,11 @@ const OBSERVATION_KEYS = [
   'canonicalCheckoutMounted', 'containerSocketMounted', 'hostProcessAccess',
   'sourceMutation', 'gitRefWrite', 'mergeAuthority', 'deploymentAuthority',
   'arbitraryCommand', 'proofRefs',
+];
+const EXECUTION_RESULT_KEYS = ['observation', 'terminationAcknowledgement'];
+const TERMINATION_ACK_KEYS = [
+  'schemaVersion', 'authorizationId', 'invocationId', 'runnerId', 'terminated',
+  'teardownAcknowledged', 'acknowledgedAtUtc',
 ];
 const RECEIPT_KEYS = [
   'schemaVersion', 'receiptId', 'repository', 'sourceHead', 'sourceTree',
@@ -61,6 +78,9 @@ const FORBIDDEN_FIELDS = new Set([
   'publickey', 'dockerhost', 'podmansocket', 'dockersocket', 'registrationtoken',
   'registrationkey', 'selector', 'javascript',
 ]);
+const OPERATOR_APPROVAL_ISSUER = 'STEPHANOS_OPERATOR_APPROVAL_GATE';
+const OPERATOR_APPROVAL_DECISION = 'APPROVED';
+const APPROVAL_PROOF_REF = /^proofs\/operator-approvals\/[a-z0-9][a-z0-9._:-]{7,127}\/[0-9a-f]{64}\.json$/i;
 
 const text = (value) => String(value ?? '').trim();
 const unique = (values) => [...new Set(values)];
@@ -112,8 +132,8 @@ function findForbidden(value, trail = []) {
   return '';
 }
 
-function safeProofRefs(value, runnerId = '') {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 8) return null;
+function safeProofRefs(value, runnerId = '', maximum = MAX_RUNNER_PROOF_REFS) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > maximum) return null;
   const refs = value.map(text);
   if (new Set(refs).size !== refs.length) return null;
   if (!refs.every((ref) => PROOF_REF.test(ref) && !ref.includes('..'))) return null;
@@ -151,6 +171,43 @@ export function buildForgeShadowM3RuntimePlanDigest(plan) {
   return sha256(plan);
 }
 
+function validateApprovalReceipt(receipt, authorization, plan, planDigest, nowMs, blockers) {
+  if (!exactKeys(receipt, APPROVAL_KEYS)) {
+    blockers.push('operator-approval-fields-invalid');
+    return null;
+  }
+  const unsafe = findForbidden(receipt);
+  if (unsafe) blockers.push(`operator-approval-unsafe-field:${unsafe}`);
+  const issuedMs = instant(receipt.issuedAtUtc);
+  const expiresMs = instant(receipt.expiresAtUtc);
+  const { payloadSha256, ...body } = receipt;
+  if (receipt.schemaVersion !== FORGE_SHADOW_M3_OPERATOR_APPROVAL_SCHEMA) blockers.push('operator-approval-schema-invalid');
+  if (receipt.issuer !== OPERATOR_APPROVAL_ISSUER) blockers.push('operator-approval-issuer-invalid');
+  if (receipt.decision !== OPERATOR_APPROVAL_DECISION) blockers.push('operator-approval-decision-invalid');
+  if (!APPROVAL_PROOF_REF.test(text(receipt.proofRef))
+      || !text(receipt.proofRef).startsWith(`proofs/operator-approvals/${text(authorization.authorizationId)}/`)) blockers.push('operator-approval-proof-ref-invalid');
+  if (receipt.repository !== plan.repository) blockers.push('operator-approval-repository-mismatch');
+  if (text(receipt.expectedHead).toLowerCase() !== plan.canonicalMainHead) blockers.push('operator-approval-head-mismatch');
+  if (text(receipt.expectedTree).toLowerCase() !== plan.canonicalMainTree) blockers.push('operator-approval-tree-mismatch');
+  if (text(receipt.runtimePlanDigest).toLowerCase() !== planDigest) blockers.push('operator-approval-plan-digest-mismatch');
+  if (receipt.authorizationId !== authorization.authorizationId) blockers.push('operator-approval-authorization-mismatch');
+  if (receipt.executionSurface !== authorization.executionSurface) blockers.push('operator-approval-surface-mismatch');
+  if (!Number.isFinite(issuedMs) || !Number.isFinite(expiresMs)) blockers.push('operator-approval-time-invalid');
+  else {
+    if (issuedMs !== instant(authorization.issuedAtUtc) || expiresMs !== instant(authorization.expiresAtUtc)) blockers.push('operator-approval-window-mismatch');
+    if (nowMs < issuedMs) blockers.push('operator-approval-not-yet-valid');
+    if (nowMs >= expiresMs) blockers.push('operator-approval-expired');
+  }
+  if (!SHA256_HEX.test(text(payloadSha256).toLowerCase())
+      || sha256Hex(body) !== text(payloadSha256).toLowerCase()) blockers.push('operator-approval-content-digest-invalid');
+  return blockers.length ? null : Object.freeze({
+    issuer: receipt.issuer,
+    decision: receipt.decision,
+    proofRef: receipt.proofRef,
+    payloadSha256: text(payloadSha256).toLowerCase(),
+  });
+}
+
 function validateAuthorization(authorization, plan, planDigest, nowMs, blockers) {
   if (!exactKeys(authorization, AUTHORIZATION_KEYS)) {
     blockers.push('runtime-authorization-fields-invalid');
@@ -162,6 +219,7 @@ function validateAuthorization(authorization, plan, planDigest, nowMs, blockers)
   const expiresMs = instant(authorization.expiresAtUtc);
   if (authorization.schemaVersion !== FORGE_SHADOW_M3_RUNTIME_AUTHORIZATION_SCHEMA) blockers.push('runtime-authorization-schema-invalid');
   if (!SAFE_ID.test(text(authorization.authorizationId))) blockers.push('runtime-authorization-id-invalid');
+  if (!SAFE_ID.test(`forge-m3-runtime-${text(authorization.authorizationId)}`)) blockers.push('runtime-authorization-receipt-id-invalid');
   if (authorization.repository !== plan.repository) blockers.push('runtime-authorization-repository-mismatch');
   if (text(authorization.expectedHead).toLowerCase() !== plan.canonicalMainHead) blockers.push('runtime-authorization-head-mismatch');
   if (text(authorization.expectedTree).toLowerCase() !== plan.canonicalMainTree) blockers.push('runtime-authorization-tree-mismatch');
@@ -173,17 +231,20 @@ function validateAuthorization(authorization, plan, planDigest, nowMs, blockers)
     if (nowMs >= expiresMs) blockers.push('runtime-authorization-expired');
   }
   if (authorization.executionSurface !== FORGE_SHADOW_M3_EXECUTION_SURFACE) blockers.push('runtime-authorization-surface-mismatch');
-  if (authorization.operatorApproved !== true) blockers.push('runtime-authorization-operator-approval-required');
+  const approvalReceipt = validateApprovalReceipt(
+    authorization.approvalReceipt, authorization, plan, planDigest, nowMs, blockers,
+  );
   if (authorization.m3Only !== true) blockers.push('runtime-authorization-m3-only-required');
   return blockers.length ? null : Object.freeze({
     authorizationId: text(authorization.authorizationId),
     issuedAtUtc: new Date(issuedMs).toISOString(),
     expiresAtUtc: new Date(expiresMs).toISOString(),
     expiresMs,
+    approvalReceipt,
   });
 }
 
-function validateObservation(value, runner, artifact, plan, authorization, blockers) {
+function validateObservation(value, runner, artifact, plan, authorization, invocation, blockers) {
   const prefix = text(runner?.runnerId) || 'unknown-runner';
   if (!exactKeys(value, OBSERVATION_KEYS)) {
     blockers.push(`runner-observation-fields-invalid:${prefix}`);
@@ -195,6 +256,8 @@ function validateObservation(value, runner, artifact, plan, authorization, block
   const completedMs = instant(value.completedAtUtc);
   const refs = safeProofRefs(value.proofRefs, prefix);
   if (value.schemaVersion !== FORGE_SHADOW_M3_EXECUTION_OBSERVATION_SCHEMA) blockers.push(`runner-observation-schema-invalid:${prefix}`);
+  if (value.authorizationId !== authorization.authorizationId) blockers.push(`runner-authorization-identity-mismatch:${prefix}`);
+  if (value.invocationId !== invocation.invocationId) blockers.push(`runner-invocation-identity-mismatch:${prefix}`);
   if (value.runnerId !== runner.runnerId || value.poolId !== runner.poolId || value.runnerClass !== runner.runnerClass) blockers.push(`runner-identity-mismatch:${prefix}`);
   if (value.runtimeBoundary !== runner.runtimeBoundary) blockers.push(`runner-boundary-mismatch:${prefix}`);
   if (text(value.sourceHead).toLowerCase() !== plan.canonicalMainHead) blockers.push(`runner-head-mismatch:${prefix}`);
@@ -203,7 +266,7 @@ function validateObservation(value, runner, artifact, plan, authorization, block
   if (text(value.artifactSetDigest).toLowerCase() !== plan.artifactSetDigest) blockers.push(`runner-artifact-set-mismatch:${prefix}`);
   if (!Number.isFinite(startedMs) || !Number.isFinite(completedMs)) blockers.push(`runner-time-invalid:${prefix}`);
   else {
-    if (startedMs < instant(authorization.issuedAtUtc) || completedMs > authorization.expiresMs) blockers.push(`runner-time-outside-authorization:${prefix}`);
+    if (startedMs < invocation.startedMs || completedMs > authorization.expiresMs) blockers.push(`runner-time-outside-invocation:${prefix}`);
     if (completedMs < startedMs || completedMs - startedMs > MAX_RUNNER_EXECUTION_MS) blockers.push(`runner-duration-invalid:${prefix}`);
   }
   if (value.installed !== true || value.registered !== true || value.connected !== true) blockers.push(`runner-execution-incomplete:${prefix}`);
@@ -250,6 +313,22 @@ function validateObservation(value, runner, artifact, plan, authorization, block
     zeroResidualWorkspace: true,
     proofRefs: refs,
   });
+}
+
+function validateTerminationAcknowledgement(value, runner, authorization, invocation, blockers) {
+  const prefix = text(runner?.runnerId) || 'unknown-runner';
+  if (!exactKeys(value, TERMINATION_ACK_KEYS)) {
+    blockers.push(`runner-termination-ack-fields-invalid:${prefix}`);
+    return null;
+  }
+  const acknowledgedMs = instant(value.acknowledgedAtUtc);
+  if (value.schemaVersion !== FORGE_SHADOW_M3_TERMINATION_ACK_SCHEMA) blockers.push(`runner-termination-ack-schema-invalid:${prefix}`);
+  if (value.authorizationId !== authorization.authorizationId) blockers.push(`runner-termination-ack-authorization-mismatch:${prefix}`);
+  if (value.invocationId !== invocation.invocationId) blockers.push(`runner-termination-ack-invocation-mismatch:${prefix}`);
+  if (value.runnerId !== runner.runnerId) blockers.push(`runner-termination-ack-runner-mismatch:${prefix}`);
+  if (value.terminated !== true || value.teardownAcknowledged !== true) blockers.push(`runner-termination-not-acknowledged:${prefix}`);
+  if (!Number.isFinite(acknowledgedMs) || acknowledgedMs < invocation.startedMs) blockers.push(`runner-termination-ack-time-invalid:${prefix}`);
+  return blockers.length ? null : Object.freeze({ acknowledgedAtUtc: new Date(acknowledgedMs).toISOString() });
 }
 
 function buildReceipt(plan, authorization, observations) {
@@ -311,7 +390,7 @@ export function validateForgeShadowM3RunnerRuntimeReceipt(receipt, {
     'zeroResidualRegistration', 'zeroResidualCredential', 'zeroResidualWorkspace',
     'canCarryRealWork',
   ]) if (receipt?.[field] !== true) blockers.push(`receipt-runtime-proof-incomplete:${field}`);
-  if (!safeProofRefs(receipt?.proofRefs)) blockers.push('receipt-proof-refs-invalid');
+  if (!safeProofRefs(receipt?.proofRefs, '', MAX_RECEIPT_PROOF_REFS)) blockers.push('receipt-proof-refs-invalid');
   if (!Number.isFinite(instant(receipt?.completedAt))) blockers.push('receipt-completion-time-invalid');
   const { payloadSha256, ...body } = receipt || {};
   if (!SHA256_HEX.test(text(payloadSha256).toLowerCase()) || sha256Hex(body) !== text(payloadSha256).toLowerCase()) blockers.push('receipt-content-digest-invalid');
@@ -327,6 +406,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   platform = process.platform,
   now = () => new Date(),
   executeRunner,
+  createInvocationId = () => `forge-m3-invocation-${randomUUID()}`,
 } = {}) {
   const blockers = [];
   if (!exactKeys(input, INPUT_KEYS)) blockers.push('input-fields-invalid');
@@ -359,9 +439,11 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
     ? validateAuthorization(input.runtimeAuthorization, plan, planDigest, nowMs, blockers)
     : null;
   if (typeof executeRunner !== 'function') blockers.push('fixed-runner-executor-not-configured');
+  if (typeof createInvocationId !== 'function') blockers.push('invocation-identity-generator-not-configured');
   if (blockers.length) return blocked(blockers, planDigest);
 
   const observations = [];
+  const invocationIds = new Set();
   for (const runner of plan.runners) {
     const artifact = plan.runnerArtifacts.find((item) => item.runnerClass === runner.runnerClass);
     if (!artifact) return blocked([`runner-artifact-not-found:${runner.runnerId}`], planDigest);
@@ -376,12 +458,24 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
     const remainingAuthorizationMs = liveAuthorization.expiresMs - runnerNowMs;
     if (remainingAuthorizationMs <= 0) return blocked([`runner-authorization-expired:${runner.runnerId}`], planDigest);
 
-    let raw;
+    const invocationId = text(createInvocationId({
+      authorizationId: liveAuthorization.authorizationId,
+      runnerId: runner.runnerId,
+    }));
+    if (!SAFE_ID.test(invocationId) || invocationIds.has(invocationId)) {
+      return blocked([`runner-invocation-id-invalid:${runner.runnerId}`], planDigest);
+    }
+    invocationIds.add(invocationId);
+    const invocation = Object.freeze({ invocationId, startedMs: runnerNowMs });
+
+    let executionResult;
     const controller = new AbortController();
     let deadlineTimer;
     try {
       const executionRequest = Object.freeze({
         authorization: input.runtimeAuthorization,
+        authorizationId: liveAuthorization.authorizationId,
+        invocationId,
         runtimePlan: plan,
         runner,
         artifact,
@@ -401,20 +495,57 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
           resolveDeadline({ deadlineExceeded: true });
         }, remainingAuthorizationMs);
       });
+      const executorSettlement = Promise.resolve()
+        .then(() => executeRunner(executionRequest))
+        .then((value) => ({ status: 'fulfilled', value }), () => ({ status: 'rejected' }));
       const outcome = await Promise.race([
-        Promise.resolve().then(() => executeRunner(executionRequest)).then((value) => ({ value })),
+        executorSettlement,
         deadline,
       ]);
-      if (outcome.deadlineExceeded) return blocked([`runner-execution-deadline-exceeded:${runner.runnerId}`], planDigest);
-      raw = outcome.value;
+      if (outcome.deadlineExceeded) {
+        const settled = await executorSettlement;
+        const deadlineBlockers = [`runner-execution-deadline-exceeded:${runner.runnerId}`];
+        if (settled.status !== 'fulfilled' || !exactKeys(settled.value, EXECUTION_RESULT_KEYS)) {
+          deadlineBlockers.push(`runner-termination-ack-missing:${runner.runnerId}`);
+        } else {
+          validateTerminationAcknowledgement(
+            settled.value.terminationAcknowledgement,
+            runner,
+            liveAuthorization,
+            invocation,
+            deadlineBlockers,
+          );
+        }
+        return blocked(deadlineBlockers, planDigest);
+      }
+      if (outcome.status !== 'fulfilled') return blocked([`runner-executor-threw:${runner.runnerId}`], planDigest);
+      executionResult = outcome.value;
     } catch {
       return blocked([`runner-executor-threw:${runner.runnerId}`], planDigest);
     } finally {
       if (deadlineTimer) clearTimeout(deadlineTimer);
     }
     const runnerBlockers = [];
-    const observation = validateObservation(raw, runner, artifact, plan, authorization, runnerBlockers);
-    if (!observation) return blocked(runnerBlockers, planDigest);
+    if (!exactKeys(executionResult, EXECUTION_RESULT_KEYS)) {
+      return blocked([`runner-execution-result-fields-invalid:${runner.runnerId}`], planDigest);
+    }
+    const termination = validateTerminationAcknowledgement(
+      executionResult.terminationAcknowledgement,
+      runner,
+      liveAuthorization,
+      invocation,
+      runnerBlockers,
+    );
+    const observation = validateObservation(
+      executionResult.observation,
+      runner,
+      artifact,
+      plan,
+      liveAuthorization,
+      invocation,
+      runnerBlockers,
+    );
+    if (!termination || !observation) return blocked(runnerBlockers, planDigest);
     observations.push(observation);
   }
 
