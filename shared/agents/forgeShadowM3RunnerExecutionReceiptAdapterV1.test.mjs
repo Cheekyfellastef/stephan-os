@@ -727,6 +727,63 @@ test('non-cooperative executor cannot make the adapter return while host work re
   assert.equal(state, 'held-pending');
 });
 
+test('fulfilled settlement-clock exceptions abort and wait for valid teardown proof', async () => {
+  let clockReads = 0;
+  let aborted = false;
+  const started = Date.now();
+  const execution = executeVerified(input(), {
+    platform: 'win32',
+    now: () => {
+      clockReads += 1;
+      if (clockReads === 5) throw new Error('trusted settlement clock unavailable');
+      return new Date(NOW);
+    },
+    executeRunner: async (request) => {
+      request.signal.addEventListener('abort', () => {
+        aborted = true;
+        setTimeout(() => {
+          request.acknowledgeTermination(terminationAcknowledgement(request));
+        }, 25);
+      }, { once: true });
+      return executionResult(request, {}, { terminated: false });
+    },
+  });
+  const early = await Promise.race([
+    execution.then(() => 'unsafe-return'),
+    new Promise((resolve) => setTimeout(() => resolve('held-pending'), 15)),
+  ]);
+  assert.equal(early, 'held-pending');
+  const result = await execution;
+  assert.equal(aborted, true);
+  assert.ok(Date.now() - started >= 25);
+  assert.equal(result.ok, false);
+  assert.ok(result.blockers.some((item) => item.includes('runner-settlement-now-invalid')), JSON.stringify(result.blockers));
+  assert.ok(result.blockers.some((item) => item.includes('runner-termination-not-acknowledged')), JSON.stringify(result.blockers));
+});
+
+test('rejected settlement-clock exceptions cannot return without teardown proof', async () => {
+  let clockReads = 0;
+  let aborted = false;
+  const execution = executeVerified(input(), {
+    platform: 'win32',
+    now: () => {
+      clockReads += 1;
+      if (clockReads === 5) throw new Error('trusted settlement clock unavailable');
+      return new Date(NOW);
+    },
+    executeRunner: (request) => new Promise((resolve, reject) => {
+      request.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
+      reject(new Error('host failed while settlement clock was unavailable'));
+    }),
+  });
+  const state = await Promise.race([
+    execution.then(() => 'unsafe-return'),
+    new Promise((resolve) => setTimeout(() => resolve('held-pending'), 35)),
+  ]);
+  assert.equal(aborted, true);
+  assert.equal(state, 'held-pending');
+});
+
 test('malformed fulfilled results trigger abort and wait for delayed valid teardown proof', async () => {
   let aborted = false;
   const started = Date.now();

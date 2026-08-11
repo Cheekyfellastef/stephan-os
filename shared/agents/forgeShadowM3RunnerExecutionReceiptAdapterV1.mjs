@@ -132,6 +132,15 @@ function instant(value) {
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
+function trustedNowMs(now) {
+  try {
+    const value = now();
+    return value instanceof Date ? value.getTime() : instant(value);
+  } catch {
+    return Number.NaN;
+  }
+}
+
 function findForbidden(value, trail = []) {
   if (!value || typeof value !== 'object') return '';
   for (const [key, nested] of Object.entries(value)) {
@@ -454,14 +463,7 @@ function createTerminationProofGate({ runner, authorization, invocation, deadlin
   const publish = (value, observedMs) => {
     let trustedObservedMs = observedMs;
     if (!Number.isFinite(trustedObservedMs)) {
-      try {
-        const observedNowValue = now();
-        trustedObservedMs = observedNowValue instanceof Date
-          ? observedNowValue.getTime()
-          : instant(observedNowValue);
-      } catch {
-        trustedObservedMs = Number.NaN;
-      }
+      trustedObservedMs = trustedNowMs(now);
     }
     const candidateBlockers = [];
     if (!Number.isFinite(trustedObservedMs)) {
@@ -589,8 +591,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   const unsafe = findForbidden(input);
   if (unsafe) blockers.push(`unsafe-field:${unsafe}`);
   if (platform !== 'win32') blockers.push('connected-windows-battle-bridge-required');
-  const nowValue = now();
-  const nowMs = nowValue instanceof Date ? nowValue.getTime() : instant(nowValue);
+  const nowMs = trustedNowMs(now);
   if (!Number.isFinite(nowMs)) blockers.push('execution-now-invalid');
   const trustedNowUtc = Number.isFinite(nowMs) ? new Date(nowMs).toISOString() : '';
   const suppliedPlanInput = input.runtimePlanInput;
@@ -636,10 +637,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   } catch {
     blockers.push('operator-approval-verifier-threw');
   }
-  const verificationNowValue = now();
-  const verificationNowMs = verificationNowValue instanceof Date
-    ? verificationNowValue.getTime()
-    : instant(verificationNowValue);
+  const verificationNowMs = trustedNowMs(now);
   if (!Number.isFinite(verificationNowMs)) blockers.push('operator-approval-verification-now-invalid');
   const verifiedAuthorization = plan && Number.isFinite(verificationNowMs)
     ? validateAuthorization(input.runtimeAuthorization, plan, planDigest, verificationNowMs, blockers)
@@ -671,10 +669,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   } catch {
     blockers.push('runtime-authorization-reserver-threw');
   }
-  const reservationNowValue = now();
-  const reservationNowMs = reservationNowValue instanceof Date
-    ? reservationNowValue.getTime()
-    : instant(reservationNowValue);
+  const reservationNowMs = trustedNowMs(now);
   if (!Number.isFinite(reservationNowMs)) blockers.push('runtime-authorization-reservation-now-invalid');
   const reservedAuthorization = plan && Number.isFinite(reservationNowMs)
     ? validateAuthorization(input.runtimeAuthorization, plan, planDigest, reservationNowMs, blockers)
@@ -696,8 +691,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   for (const runner of plan.runners) {
     const artifact = plan.runnerArtifacts.find((item) => item.runnerClass === runner.runnerClass);
     if (!artifact) return blocked([`runner-artifact-not-found:${runner.runnerId}`], planDigest);
-    const runnerNowValue = now();
-    const runnerNowMs = runnerNowValue instanceof Date ? runnerNowValue.getTime() : instant(runnerNowValue);
+    const runnerNowMs = trustedNowMs(now);
     const runnerAuthorizationBlockers = [];
     const liveAuthorization = Number.isFinite(runnerNowMs)
       ? validateAuthorization(input.runtimeAuthorization, plan, planDigest, runnerNowMs, runnerAuthorizationBlockers)
@@ -780,8 +774,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
     const runnerBlockers = [];
     if (deadlineExceeded) runnerBlockers.push(`runner-execution-deadline-exceeded:${runner.runnerId}`);
     if (settled.status !== 'fulfilled') runnerBlockers.push(`runner-executor-threw:${runner.runnerId}`);
-    const settledNowValue = now();
-    const settledNowMs = settledNowValue instanceof Date ? settledNowValue.getTime() : instant(settledNowValue);
+    const settledNowMs = trustedNowMs(now);
     if (!Number.isFinite(settledNowMs)) runnerBlockers.push(`runner-settlement-now-invalid:${runner.runnerId}`);
     else if (settledNowMs > executionDeadlineMs) runnerBlockers.push(`runner-settlement-after-deadline:${runner.runnerId}`);
 
