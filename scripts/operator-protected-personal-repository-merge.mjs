@@ -28,12 +28,12 @@ import {
   PERSONAL_REPOSITORY_EVIDENCE_JOB,
   PERSONAL_REPOSITORY_MERGE_JOB,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
-  PERSONAL_REPOSITORY_WORKFLOW_NAME,
-  PERSONAL_REPOSITORY_WORKFLOW_PATH,
   buildPersonalRepositoryApprovalReceipt,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
   validatePersonalRepositoryConfiguration,
+  validatePersonalRepositoryDispatchExecution,
+  validatePersonalRepositoryDispatchWorkflowDefinition,
   validatePersonalRepositoryEvidence,
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
@@ -199,66 +199,66 @@ function appendOutputs(values) {
   );
 }
 
-function canonicalDispatchWorkflowPath(run, repository) {
-  let path = text(run?.path);
-  if (path.startsWith(`${repository}/`)) path = path.slice(repository.length + 1);
-  const at = path.indexOf('@');
-  if (at === -1) return path;
-  if (at === 0 || at === path.length - 1 || path.indexOf('@', at + 1) !== -1) return '';
-  if (!['main', 'refs/heads/main'].includes(path.slice(at + 1))) return '';
-  return path.slice(0, at);
-}
-
 async function currentWorkflowExecution(context) {
   const definitions = (await apiCollection(
     `/repos/${context.owner}/${context.repo}/actions/workflows`,
     'workflows',
   )).items;
-  const matches = definitions.filter((workflow) => workflow?.path === PERSONAL_REPOSITORY_WORKFLOW_PATH);
-  const definition = matches[0];
-  if (matches.length !== 1
-    || definition?.name !== PERSONAL_REPOSITORY_WORKFLOW_NAME
-    || definition?.state !== 'active'
-    || !exactPositiveInteger(definition?.id)) {
+  const definitionValidation = validatePersonalRepositoryDispatchWorkflowDefinition(definitions);
+  if (!definitionValidation.valid) {
     fail('Protected merge workflow definition is missing, inactive or ambiguous.', {
-      blockers: ['CONFIGURATION_NOT_PROVED:personal-repository-workflow-definition'],
+      blockers: [
+        'CONFIGURATION_NOT_PROVED:personal-repository-workflow-definition',
+        ...definitionValidation.blockers,
+      ],
     });
   }
+  const definition = definitionValidation.definition;
   const run = await apiJson(`/repos/${context.owner}/${context.repo}/actions/runs/${context.runId}`);
+  const dispatchRuns = (await apiCollection(
+    `/repos/${context.owner}/${context.repo}/actions/workflows/${definition.id}/runs?event=workflow_dispatch`,
+    'workflow_runs',
+  )).items;
+  const execution = validatePersonalRepositoryDispatchExecution({
+    definitions,
+    run,
+    priorRuns: dispatchRuns,
+  }, {
+    repository: context.repository,
+    sourceHead: context.dispatch.identity.sourceHead,
+    baseSha: context.dispatch.identity.baseSha,
+    workflowRunId: context.runId,
+    workflowRunAttempt: context.runAttempt,
+  });
   const expectedDisplayTitle = `Protected operator merge ${context.dispatch.identity.sourceHead}`;
-  const runIdentityMismatches = [
-    ['run-id', exactPositiveInteger(run?.id) === context.runId],
-    ['run-attempt', exactPositiveInteger(run?.run_attempt) === context.runAttempt],
-    ['workflow-id', exactPositiveInteger(run?.workflow_id) === definition.id],
-    ['workflow-name', run?.name === PERSONAL_REPOSITORY_WORKFLOW_NAME],
-    ['event', run?.event === 'workflow_dispatch'],
-    ['repository', text(run?.repository?.full_name) === context.repository],
-    ['base-head', text(run?.head_sha).toLowerCase() === context.dispatch.identity.baseSha],
-    ['base-branch', text(run?.head_branch) === 'main'],
-    ['display-title', text(run?.display_title) === expectedDisplayTitle],
-    ['workflow-path', canonicalDispatchWorkflowPath(run, context.repository) === PERSONAL_REPOSITORY_WORKFLOW_PATH],
-    ['triggering-actor', text(run?.triggering_actor?.login || run?.actor?.login).toLowerCase() === OPERATOR_MERGE_REVIEWER.toLowerCase()],
-    ['run-status', ['queued', 'in_progress'].includes(text(run?.status).toLowerCase())],
-  ].filter(([, matches]) => !matches).map(([field]) => field);
+  const triggeringActor = text(run?.triggering_actor?.login || run?.actor?.login).toLowerCase();
+  const runIdentityMismatches = [...new Set([
+    ...execution.currentMismatches,
+    ...(text(run?.name) === expectedDisplayTitle ? [] : ['run-name']),
+    ...(text(run?.display_title) === expectedDisplayTitle ? [] : ['display-title']),
+    ...(triggeringActor === OPERATOR_MERGE_REVIEWER.toLowerCase() ? [] : ['triggering-actor']),
+  ])];
   if (runIdentityMismatches.length !== 0) {
     fail('Current workflow run is not the exact operator-dispatched trusted-main execution.', {
       blockers: ['personal-repository-workflow-run-identity-mismatch'],
       mismatches: runIdentityMismatches,
     });
   }
-  const dispatchRuns = (await apiCollection(
-    `/repos/${context.owner}/${context.repo}/actions/workflows/${definition.id}/runs?event=workflow_dispatch`,
-    'workflow_runs',
-  )).items;
-  const priorAttempts = dispatchRuns.filter((candidate) => (
-    exactPositiveInteger(candidate?.id) !== context.runId
-    && text(candidate?.display_title) === expectedDisplayTitle
-    && text(candidate?.triggering_actor?.login || candidate?.actor?.login).toLowerCase() === OPERATOR_MERGE_REVIEWER.toLowerCase()
-  ));
-  if (priorAttempts.length !== 0) {
+  if (execution.malformedPriorRunIds.length !== 0) {
+    fail('A source-matching prior dispatch has malformed or ambiguous workflow identity.', {
+      blockers: ['personal-repository-prior-attempt-invalid'],
+      priorRunIds: execution.malformedPriorRunIds.filter(Boolean),
+    });
+  }
+  if (execution.replayRunIds.length !== 0) {
     fail('A prior operator-dispatched personal-repository merge attempt already exists for this exact PR head.', {
       blockers: ['personal-repository-prior-attempt-exists'],
-      priorRunIds: priorAttempts.map((candidate) => exactPositiveInteger(candidate?.id)).filter(Boolean),
+      priorRunIds: execution.replayRunIds,
+    });
+  }
+  if (!execution.valid) {
+    fail('Protected merge workflow execution evidence is incomplete or invalid.', {
+      blockers: execution.blockers,
     });
   }
   return { definitions, definition, run };
