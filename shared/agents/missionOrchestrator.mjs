@@ -123,7 +123,10 @@ function activeAgentForPhase(state) {
   if (['CREATE_WORKTREE', 'GITHUB_COMMIT', 'GITHUB_PUSH', 'OPEN_PULL_REQUEST', 'CHECK_PULL_REQUEST', 'MERGE_PULL_REQUEST', 'LOCAL_DEPLOYMENT'].includes(phase)) {
     return { agentId: 'openclaw-standalone', label: 'OpenClaw Standalone', role: 'signed-executor', status: 'ready' };
   }
-  if (phase === 'AGENT_IMPLEMENTATION') return { agentId: 'codex', label: 'Codex', role: 'source-writer', status: 'ready' };
+  if (phase === 'AGENT_IMPLEMENTATION') {
+    const adapter = text(state.dispatch?.adapter, 'codex');
+    return { agentId: adapter, label: adapter, role: 'source-writer', status: state.dispatch?.status === 'running' ? 'running' : 'ready' };
+  }
   if (phase === 'LIVE_RUNTIME_INVESTIGATION') return { agentId: 'openclaw-standalone', label: 'OpenClaw Standalone', role: 'read-only-inspector', status: 'ready' };
   if (phase === 'VERIFYING') return { agentId: 'verification-judge', label: 'Verification Judge', role: 'evidence-judge', status: 'ready' };
   return { agentId: 'none', label: 'None', role: 'none', status: 'idle' };
@@ -157,14 +160,14 @@ function derivePhase(state) {
 function nextActionForPhase(state) {
   const actions = {
     CREATE_WORKTREE: { type: 'OPENCLAW_SIGNED_OPERATION', operation: 'create-worktree', owner: 'OpenClaw', approvalRequired: false },
-    AGENT_IMPLEMENTATION: { type: 'DISPATCH_AGENT', adapter: 'codex', owner: 'Codex', approvalRequired: false },
+    AGENT_IMPLEMENTATION: { type: 'DISPATCH_AGENT', adapter: text(state.dispatch?.adapter, 'codex'), owner: text(state.dispatch?.adapter, 'codex'), approvalRequired: false },
     LIVE_RUNTIME_INVESTIGATION: { type: 'DISPATCH_AGENT', adapter: 'openclaw-readonly', owner: 'OpenClaw', approvalRequired: false },
     VERIFYING: { type: 'COLLECT_AND_JUDGE_EVIDENCE', owner: 'Verification Judge', approvalRequired: false },
     GITHUB_COMMIT: { type: 'OPENCLAW_SIGNED_OPERATION', operation: 'commit', owner: 'OpenClaw', approvalRequired: false },
     GITHUB_PUSH: { type: 'OPENCLAW_SIGNED_OPERATION', operation: 'push', owner: 'OpenClaw', approvalRequired: false },
     OPEN_PULL_REQUEST: { type: 'OPENCLAW_SIGNED_OPERATION', operation: 'open-pr', owner: 'OpenClaw', approvalRequired: false },
     CHECK_PULL_REQUEST: { type: 'OPENCLAW_SIGNED_OPERATION', operation: 'check-pr', owner: 'OpenClaw', approvalRequired: false },
-    REPAIR_REQUIRED: { type: 'DISPATCH_REPAIR', adapter: 'codex', owner: 'Codex', approvalRequired: false },
+    REPAIR_REQUIRED: { type: 'DISPATCH_REPAIR', adapter: text(state.dispatch?.adapter, 'codex'), owner: text(state.dispatch?.adapter, 'codex'), approvalRequired: false },
     AWAITING_OPERATOR_APPROVAL: { type: 'REQUEST_OPERATOR_APPROVAL', owner: 'Operator', approvalRequired: true, requiredToken: state.approval.requiredToken },
     MERGE_PULL_REQUEST: { type: 'OPENCLAW_SIGNED_OPERATION', operation: 'merge-pr', owner: 'OpenClaw', approvalRequired: true },
     LOCAL_DEPLOYMENT: { type: 'OPENCLAW_LOCAL_DEPLOYMENT', operation: 'sync-build-verify-restart', owner: 'OpenClaw', approvalRequired: false },
@@ -181,7 +184,9 @@ function refreshDerivedState(state, timestamp) {
     state.blockers.push('Maximum repair rounds reached.');
   }
   state.activeAgent = activeAgentForPhase(state);
-  state.activeWriter = ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(state.currentPhase) ? 'Codex' : 'none';
+  state.activeWriter = ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(state.currentPhase)
+    ? (text(state.dispatch?.adapter, 'codex') === 'codex' ? 'Codex' : text(state.dispatch?.adapter, 'codex'))
+    : 'none';
   state.nextAction = nextActionForPhase(state);
   state.updatedAt = timestamp;
   state.finalVerdict = state.currentPhase === 'COMPLETE' ? 'MISSION_ORCHESTRATOR_COMPLETE' : state.currentPhase;
@@ -298,10 +303,21 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     state.git.worktreePath = text(event.worktreePath, state.git.worktreePath);
     state.git.clean = event.clean === true;
   } else if (eventType === 'AGENT_DISPATCHED') {
-    const expectedAgent = state.missionKind === 'live-runtime-investigation' ? 'openclaw-standalone' : 'codex';
-    if (text(event.agentId).toLowerCase() !== expectedAgent) return block(state, 'Dispatched agent does not match deterministic ownership.', timestamp);
+    const adapter = text(
+      event.adapter,
+      text(event.agentId).toLowerCase() === 'openclaw-standalone' ? 'openclaw-readonly' : text(event.agentId),
+    ).toLowerCase();
+    const allowedAdapters = state.missionKind === 'live-runtime-investigation'
+      ? new Set(['openclaw-readonly'])
+      : new Set(['codex', 'chatgpt-github', 'foundry-forge']);
+    const eventAgent = text(event.agentId).toLowerCase();
+    const agentMatches = eventAgent === adapter
+      || (eventAgent === 'openclaw-standalone' && adapter === 'openclaw-readonly');
+    if (!allowedAdapters.has(adapter) || !agentMatches) {
+      return block(state, 'Dispatched agent does not match a registered deterministic adapter.', timestamp);
+    }
     if (state.dispatch.status === 'running') return block(state, 'A mission agent is already running.', timestamp);
-    state.dispatch = { ...state.dispatch, status: 'running', startedAt: timestamp, completedAt: '', resultId: '' };
+    state.dispatch = { ...state.dispatch, adapter, status: 'running', startedAt: timestamp, completedAt: '', resultId: '' };
   } else if (eventType === 'AGENT_RESULT_RECEIVED') {
     if (state.dispatch.status !== 'running') return block(state, 'Agent result arrived without an active dispatch.', timestamp);
     if (event.success !== true) {
