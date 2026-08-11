@@ -152,7 +152,7 @@ function fixedPool(runnerClass, artifactDigest) {
   return Object.freeze({
     poolId: linux ? 'forge-linux-build-test-v1' : 'forge-windows-proof-v1',
     runnerClass,
-    count: linux ? 3 : 1,
+    count: 1,
     runtimeBoundary: linux ? 'forge-linux-rootless-ephemeral' : 'battle-bridge-windows-proof-sandbox',
     runtimeArtifactDigest: artifactDigest,
     workloadIds: Object.freeze(linux
@@ -162,7 +162,7 @@ function fixedPool(runnerClass, artifactDigest) {
     memoryMiB: 4096,
     diskMiB: 16384,
     maxJobMinutes: linux ? 45 : 60,
-    maxConcurrentJobs: linux ? 3 : 1,
+    maxConcurrentJobs: 1,
     artifactRetentionDays: 14,
     maxArtifactBytes: 512 * 1024 * 1024,
     workspacePolicy: 'ephemeral-per-job',

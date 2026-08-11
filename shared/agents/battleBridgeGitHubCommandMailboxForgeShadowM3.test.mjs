@@ -16,6 +16,7 @@ import {
 } from './forgeShadowM3MailboxAdapterV1.mjs';
 import { FORGE_SHADOW_M3_ARTIFACT_PREPARATION_READY } from './forgeShadowM3ArtifactPreparationV1.mjs';
 import { FORGE_SHADOW_M3_EXECUTION_READY } from './forgeShadowM3RunnerExecutionReceiptAdapterV1.mjs';
+import { planForgeShadowM3RunnerRuntime } from './forgeShadowM3RunnerRuntimePlanV1.mjs';
 
 const HEAD = 'a'.repeat(40);
 const TREE = 'b'.repeat(40);
@@ -243,7 +244,11 @@ test('execution handler derives the exact plan from durable M2 and artifact rece
   assert.equal(call.runtimeAuthorization.operatorApproved, true);
   assert.equal(call.runtimeAuthorization.m3Only, true);
   assert.deepEqual(call.runtimePlanInput.admissionInput.runnerPools.map((pool) => [pool.runnerClass, pool.count]), [
-    ['windows-proof-isolated', 1], ['linux-isolated', 3],
+    ['windows-proof-isolated', 1], ['linux-isolated', 1],
+  ]);
+  assert.deepEqual(planForgeShadowM3RunnerRuntime(call.runtimePlanInput).runners.map((runner) => runner.runnerId), [
+    'stephanos-forge-linux-runner-01',
+    'stephanos-forge-windows-proof-runner-01',
   ]);
 });
 

@@ -40,7 +40,7 @@ The handler reads both referenced receipts from the one existing canonical mailb
 
 The runner pools are not caller-authored. Source fixes exactly:
 
-- three rootless ephemeral Linux construction runners; and
+- one rootless ephemeral Linux construction runner; and
 - one Windows Sandbox proof runner.
 
 Artifact digests come only from the accepted preparation receipt. The canonical admission and runtime planners are replayed, and their computed runtime-plan digest must equal the operator-authorized digest in the command before the fixed executor can be created.
