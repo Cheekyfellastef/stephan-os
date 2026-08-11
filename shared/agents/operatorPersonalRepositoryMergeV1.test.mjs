@@ -628,12 +628,52 @@ test('configuration evidence binds repository merge settings and exact bypass ac
   const baseline = buildPersonalRepositoryConfigurationEvidence(exact);
   assert.equal(baseline.repository.allow_squash_merge, true);
   assert.equal(baseline.repository.delete_branch_on_merge, false);
+  assert.equal(baseline.environment.name, 'operator-merge-approval');
+  assert.equal(baseline.environment.can_admins_bypass, false);
+  assert.equal(baseline.environment.protection_rules[0].reviewers[0].reviewer.login, 'Cheekyfellastef');
   assert.deepEqual(baseline.rulesets[0].bypass_actors, []);
 
   for (const changed of [
     configuration({ repository: { ...exact.repository, allow_squash_merge: false } }),
     configuration({ repository: { ...exact.repository, delete_branch_on_merge: true } }),
-    configuration({ rulesets: [{ ...exact.rulesets[0], bypass_actors: [{ actor_id: 1 }] }] }),
+    configuration({
+      repository: exact.repository,
+      rulesets: [{ ...exact.rulesets[0], bypass_actors: [{ actor_id: 1 }] }],
+    }),
+    configuration({
+      repository: exact.repository,
+      environment: { ...exact.environment, can_admins_bypass: true },
+    }),
+    configuration({
+      repository: exact.repository,
+      environment: {
+        ...exact.environment,
+        deployment_branch_policy: {
+          ...exact.environment.deployment_branch_policy,
+          protected_branches: false,
+        },
+      },
+    }),
+    configuration({
+      repository: exact.repository,
+      environment: {
+        ...exact.environment,
+        protection_rules: [{
+          ...exact.environment.protection_rules[0],
+          prevent_self_review: true,
+        }],
+      },
+    }),
+    configuration({
+      repository: exact.repository,
+      environment: {
+        ...exact.environment,
+        protection_rules: [{
+          ...exact.environment.protection_rules[0],
+          reviewers: [{ type: 'User', reviewer: { login: 'lookalike-operator' } }],
+        }],
+      },
+    }),
   ]) {
     assert.notDeepEqual(buildPersonalRepositoryConfigurationEvidence(changed), baseline);
   }

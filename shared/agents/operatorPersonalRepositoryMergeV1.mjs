@@ -101,6 +101,7 @@ function canonicalConfigurationValue(value) {
 
 export function buildPersonalRepositoryConfigurationEvidence(input = {}) {
   const repository = input.repository && typeof input.repository === 'object' ? input.repository : {};
+  const environment = input.environment && typeof input.environment === 'object' ? input.environment : {};
   const activeRules = (Array.isArray(input.activeRules) ? input.activeRules : [])
     .map(canonicalConfigurationValue)
     .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
@@ -128,6 +129,12 @@ export function buildPersonalRepositoryConfigurationEvidence(input = {}) {
       default_branch: repository?.default_branch,
       allow_squash_merge: repository?.allow_squash_merge,
       delete_branch_on_merge: repository?.delete_branch_on_merge,
+    },
+    environment: {
+      name: environment?.name,
+      can_admins_bypass: environment?.can_admins_bypass,
+      deployment_branch_policy: environment?.deployment_branch_policy,
+      protection_rules: environment?.protection_rules,
     },
     activeRules,
     rulesets,

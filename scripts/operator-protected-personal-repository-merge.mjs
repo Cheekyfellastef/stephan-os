@@ -296,9 +296,10 @@ async function pullRequestReviewState(owner, repo, prNumber) {
   };
 }
 
-function configurationSnapshot(repository, activeRules, rulesets) {
+function configurationSnapshot(repository, environment, activeRules, rulesets) {
   return sha256(JSON.stringify(buildPersonalRepositoryConfigurationEvidence({
     repository,
+    environment,
     activeRules,
     rulesets,
   })));
@@ -360,7 +361,7 @@ async function collectRulesetConfiguration(
   }
   return Object.freeze({
     ...validation,
-    configurationSnapshotSha256: configurationSnapshot(repository, activeRules, rulesets),
+    configurationSnapshotSha256: configurationSnapshot(repository, environment, activeRules, rulesets),
   });
 }
 
