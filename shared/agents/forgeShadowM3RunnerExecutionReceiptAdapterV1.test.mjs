@@ -626,6 +626,34 @@ test('future-dated observations and teardown acknowledgements cannot outrun trus
   assert.ok(result.blockers.some((item) => item.includes('runner-termination-ack-time-invalid')), JSON.stringify(result.blockers));
 });
 
+test('fulfilled settlement after the computed live deadline cannot mint a receipt', async () => {
+  const instants = [
+    NOW, NOW, NOW, NOW, '2026-08-07T22:20:00Z',
+  ];
+  const result = await executeVerified(input(), {
+    platform: 'win32',
+    now: () => new Date(instants.shift()),
+    executeRunner: async (request) => executionResult(request),
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.blockers.some((item) => item.includes('runner-settlement-after-deadline')), JSON.stringify(result.blockers));
+});
+
+test('termination acknowledgement cannot predate observed completion', async () => {
+  const instants = [NOW, NOW, NOW, NOW, '2026-08-07T21:20:01Z'];
+  const result = await executeVerified(input(), {
+    platform: 'win32',
+    now: () => new Date(instants.shift()),
+    executeRunner: async (request) => executionResult(request, {
+      completedAtUtc: '2026-08-07T21:20:01Z',
+    }, {
+      acknowledgedAtUtc: NOW,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.blockers.some((item) => item.includes('runner-termination-before-observation-complete')), JSON.stringify(result.blockers));
+});
+
 test('two runner proof estates may safely fill the aggregate sixteen-reference receipt bound', async () => {
   const result = await executeVerified(input(), {
     platform: 'win32', now,
@@ -702,12 +730,34 @@ test('credential-shaped or widened executor observations are rejected and never 
 test('executor failures cannot mint a runtime receipt', async () => {
   const result = await executeVerified(input(), {
     platform: 'win32', now,
-    executeRunner: async () => { throw new Error('host failed'); },
+    executeRunner: (request) => new Promise((resolve, reject) => {
+      request.signal.addEventListener('abort', () => {
+        request.acknowledgeTermination(terminationAcknowledgement(request));
+      }, { once: true });
+      reject(new Error('host failed'));
+    }),
   });
   assert.equal(result.ok, false);
   assert.equal(result.receipt, null);
   assert.ok(result.blockers[0].startsWith('runner-executor-threw:'));
   assert.doesNotMatch(JSON.stringify(result), /host failed/);
+});
+
+test('executor rejection cannot return while termination remains unacknowledged', async () => {
+  let aborted = false;
+  const execution = executeVerified(input(), {
+    platform: 'win32', now,
+    executeRunner: (request) => new Promise((resolve, reject) => {
+      request.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
+      reject(new Error('host failed before proof'));
+    }),
+  });
+  const state = await Promise.race([
+    execution.then(() => 'unsafe-return'),
+    new Promise((resolve) => setTimeout(() => resolve('held-pending'), 35)),
+  ]);
+  assert.equal(aborted, true);
+  assert.equal(state, 'held-pending');
 });
 
 test('receipt validation detects post-issuance mutation and hidden fields', async () => {

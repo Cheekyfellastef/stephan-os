@@ -418,7 +418,7 @@ function validateObservation(value, runner, artifact, plan, authorization, invoc
   });
 }
 
-function validateTerminationAcknowledgement(value, runner, authorization, invocation, settledMs, blockers) {
+function validateTerminationAcknowledgement(value, runner, authorization, invocation, settledMs, deadlineMs, blockers) {
   const prefix = text(runner?.runnerId) || 'unknown-runner';
   if (!exactKeys(value, TERMINATION_ACK_KEYS)) {
     blockers.push(`runner-termination-ack-fields-invalid:${prefix}`);
@@ -432,7 +432,8 @@ function validateTerminationAcknowledgement(value, runner, authorization, invoca
   if (value.terminated !== true || value.teardownAcknowledged !== true) blockers.push(`runner-termination-not-acknowledged:${prefix}`);
   if (!Number.isFinite(acknowledgedMs)
       || acknowledgedMs < invocation.startedMs
-      || acknowledgedMs > settledMs) blockers.push(`runner-termination-ack-time-invalid:${prefix}`);
+      || acknowledgedMs > settledMs
+      || acknowledgedMs > deadlineMs) blockers.push(`runner-termination-ack-time-invalid:${prefix}`);
   return blockers.length ? null : Object.freeze({ acknowledgedAtUtc: new Date(acknowledgedMs).toISOString() });
 }
 
@@ -654,6 +655,17 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
 
     let executionResult;
     const controller = new AbortController();
+    let acknowledgeTermination;
+    const terminationAcknowledgement = new Promise((resolve) => {
+      acknowledgeTermination = resolve;
+    });
+    let terminationAcknowledged = false;
+    const publishTerminationAcknowledgement = (value) => {
+      if (terminationAcknowledged) return false;
+      terminationAcknowledged = true;
+      acknowledgeTermination(value);
+      return true;
+    };
     let deadlineTimer;
     try {
       const executionRequest = Object.freeze({
@@ -665,6 +677,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
         artifact,
         executionDeadlineUtc: new Date(executionDeadlineMs).toISOString(),
         signal: controller.signal,
+        acknowledgeTermination: publishTerminationAcknowledgement,
         canary: Object.freeze({
           workflowId: FORGE_SHADOW_M3_CANARY_WORKFLOW,
           scenario: FORGE_SHADOW_M3_CANARY_SCENARIO,
@@ -694,21 +707,32 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
           ? settledNowValue.getTime()
           : instant(settledNowValue);
         if (!Number.isFinite(settledNowMs)) deadlineBlockers.push(`runner-settlement-now-invalid:${runner.runnerId}`);
-        if (settled.status !== 'fulfilled' || !exactKeys(settled.value, EXECUTION_RESULT_KEYS)) {
-          deadlineBlockers.push(`runner-termination-ack-missing:${runner.runnerId}`);
-        } else {
-          validateTerminationAcknowledgement(
-            settled.value.terminationAcknowledgement,
-            runner,
-            liveAuthorization,
-            invocation,
-            settledNowMs,
-            deadlineBlockers,
-          );
-        }
+        const acknowledgement = settled.status === 'fulfilled' && exactKeys(settled.value, EXECUTION_RESULT_KEYS)
+          ? settled.value.terminationAcknowledgement
+          : await terminationAcknowledgement;
+        validateTerminationAcknowledgement(
+          acknowledgement, runner, liveAuthorization, invocation,
+          settledNowMs, executionDeadlineMs, deadlineBlockers,
+        );
         return blocked(deadlineBlockers, planDigest);
       }
-      if (outcome.status !== 'fulfilled') return blocked([`runner-executor-threw:${runner.runnerId}`], planDigest);
+      if (outcome.status !== 'fulfilled') {
+        controller.abort();
+        if (deadlineTimer) {
+          clearTimeout(deadlineTimer);
+          deadlineTimer = undefined;
+        }
+        const acknowledgement = await terminationAcknowledgement;
+        const rejectionBlockers = [`runner-executor-threw:${runner.runnerId}`];
+        const rejectedNowValue = now();
+        const rejectedNowMs = rejectedNowValue instanceof Date ? rejectedNowValue.getTime() : instant(rejectedNowValue);
+        if (!Number.isFinite(rejectedNowMs)) rejectionBlockers.push(`runner-settlement-now-invalid:${runner.runnerId}`);
+        validateTerminationAcknowledgement(
+          acknowledgement, runner, liveAuthorization, invocation,
+          rejectedNowMs, executionDeadlineMs, rejectionBlockers,
+        );
+        return blocked(rejectionBlockers, planDigest);
+      }
       executionResult = outcome.value;
     } catch {
       return blocked([`runner-executor-threw:${runner.runnerId}`], planDigest);
@@ -719,6 +743,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
     const settledNowValue = now();
     const settledNowMs = settledNowValue instanceof Date ? settledNowValue.getTime() : instant(settledNowValue);
     if (!Number.isFinite(settledNowMs)) runnerBlockers.push(`runner-settlement-now-invalid:${runner.runnerId}`);
+    else if (settledNowMs > executionDeadlineMs) runnerBlockers.push(`runner-settlement-after-deadline:${runner.runnerId}`);
     if (!exactKeys(executionResult, EXECUTION_RESULT_KEYS)) {
       return blocked([`runner-execution-result-fields-invalid:${runner.runnerId}`], planDigest);
     }
@@ -728,6 +753,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
       liveAuthorization,
       invocation,
       settledNowMs,
+      executionDeadlineMs,
       runnerBlockers,
     );
     const observation = validateObservation(
@@ -740,7 +766,11 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
       settledNowMs,
       runnerBlockers,
     );
-    if (!termination || !observation) return blocked(runnerBlockers, planDigest);
+    if (termination && observation
+        && instant(termination.acknowledgedAtUtc) < instant(observation.completedAtUtc)) {
+      runnerBlockers.push(`runner-termination-before-observation-complete:${runner.runnerId}`);
+    }
+    if (!termination || !observation || runnerBlockers.length) return blocked(runnerBlockers, planDigest);
     observations.push(observation);
   }
 
