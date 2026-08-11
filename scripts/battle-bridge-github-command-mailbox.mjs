@@ -33,6 +33,7 @@ import {
   getReadableMailboxReceiptFilenames,
 } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
+import { FORGE_SHADOW_BATTLE_BRIDGE_OPERATION } from '../shared/agents/forgeShadowBattleBridgeAdapterV1.mjs';
 import { publishCodexCapacityToSharedWorkspace } from '../shared/agents/codexCapacitySharedWorkspace.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
@@ -53,6 +54,9 @@ const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const SAFE_PROOF_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
 const SAFE_CONVEYOR_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 const EXACT_GIT_HEAD_PATTERN = /^[0-9a-f]{40}$/i;
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/i;
+const OCI_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/i;
+const FORGE_BACKUP_VOLUME_PATTERN = /^stephanos-forge-shadow-backup-[0-9a-f]{16}$/i;
 const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'UPDATE_STEPHANOS_FROM_CHAT',
   'INSTALL_UNATTENDED_GITHUB_SYNC',
@@ -386,6 +390,104 @@ function projectedExpectedHeadMatch(receipt = {}, operationResult = {}) {
     && expectedHead === sourceHead;
 }
 
+function safeBoolean(value) {
+  return typeof value === 'boolean' ? value : null;
+}
+
+function safeSha256(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return SHA256_HEX_PATTERN.test(normalized) ? normalized : '';
+}
+
+function safeOciDigest(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return OCI_DIGEST_PATTERN.test(normalized) ? normalized : '';
+}
+
+function safeForgeBackupVolume(value) {
+  const normalized = String(value || '').trim();
+  return FORGE_BACKUP_VOLUME_PATTERN.test(normalized) ? normalized : '';
+}
+
+function isForgeM2Receipt(receipt = {}) {
+  return receipt?.operation === FORGE_SHADOW_BATTLE_BRIDGE_OPERATION;
+}
+
+function forgeM2HeaderProjection(receipt = {}, operationResult = {}) {
+  if (!isForgeM2Receipt(receipt, operationResult)) return Object.freeze({});
+  return Object.freeze({
+    forgejoVersion: safeTelemetryText(receipt?.forgejoVersion, 40),
+    forgejoImageDigest: safeOciDigest(receipt?.forgejoImageDigest),
+    runtimeBoundary: safeTelemetryText(receipt?.runtimeBoundary, 80),
+    m2Only: safeBoolean(receipt?.m2Only),
+    credentialsMayBeReadOrExported: safeBoolean(receipt?.credentialsMayBeReadOrExported),
+  });
+}
+
+function projectedReceiptExpectedHead(receipt = {}, operationResult = {}) {
+  return isForgeM2Receipt(receipt, operationResult)
+    ? safeTelemetrySha(receipt?.expectedHead)
+    : safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead);
+}
+
+function forgeM2ResultProjection(receipt = {}, operationResult = {}) {
+  if (!isForgeM2Receipt(receipt, operationResult)) return Object.freeze({});
+  return Object.freeze({
+    repository: safeTelemetryText(operationResult?.repository, 180),
+    canonicalTree: safeTelemetrySha(operationResult?.canonicalTree),
+    installerBlob: safeTelemetrySha(operationResult?.installerBlob),
+    forgejoVersion: safeTelemetryText(operationResult?.forgejoVersion, 40),
+    podmanVersion: safeTelemetryText(operationResult?.podmanVersion, 40),
+    forgejoImageDigest: safeOciDigest(operationResult?.forgejoImageDigest),
+    runtimeBoundary: safeTelemetryText(operationResult?.runtimeBoundary, 80),
+    machine: safeTelemetryText(operationResult?.machine, 80),
+    podmanConnection: safeTelemetryText(operationResult?.podmanConnection, 80),
+    container: safeTelemetryText(operationResult?.container, 80),
+    listener: safeTelemetryText(operationResult?.listener, 80),
+    mirrorHead: safeTelemetrySha(operationResult?.mirrorHead),
+    mirrorTree: safeTelemetrySha(operationResult?.mirrorTree),
+    backupDigest: safeSha256(operationResult?.backupDigest),
+    backupVolume: safeForgeBackupVolume(operationResult?.backupVolume),
+    restoreDrillPassed: safeBoolean(operationResult?.restoreDrillPassed),
+    rootFilesystemReadOnly: safeBoolean(operationResult?.rootFilesystemReadOnly),
+    allCapabilitiesDropped: safeBoolean(operationResult?.allCapabilitiesDropped),
+    noNewPrivileges: safeBoolean(operationResult?.noNewPrivileges),
+    githubCredentialUsed: safeBoolean(operationResult?.githubCredentialUsed),
+    credentialPersisted: safeBoolean(operationResult?.credentialPersisted),
+    credentialLogged: safeBoolean(operationResult?.credentialLogged),
+    runnerRegistration: safeBoolean(operationResult?.runnerRegistration),
+    actionsExecution: safeBoolean(operationResult?.actionsExecution),
+    mergeAuthority: safeBoolean(operationResult?.mergeAuthority),
+    readyForM3: safeBoolean(operationResult?.readyForM3),
+  });
+}
+
+function forgeDigestResolutionProjection(operationResult = {}) {
+  const resolution = operationResult?.forgeShadowM2DigestResolution;
+  if (!resolution || typeof resolution !== 'object' || Array.isArray(resolution)) return Object.freeze({});
+  return Object.freeze({
+    forgeShadowM2DigestResolution: Object.freeze({
+      ok: safeBoolean(resolution.ok),
+      status: safeTelemetryText(resolution.status, 120).toUpperCase(),
+      blocker: safeTelemetryText(resolution.blocker, 160).toUpperCase(),
+      imageTag: safeTelemetryText(resolution.imageTag, 180),
+      imageDigest: safeOciDigest(resolution.imageDigest),
+      forgejoVersion: safeTelemetryText(resolution.forgejoVersion, 40),
+      podmanVersion: safeTelemetryText(resolution.podmanVersion, 40),
+      podmanExecutableIdentity: safeTelemetryText(resolution.podmanExecutableIdentity, 80),
+      runtimePlatform: safeTelemetryText(resolution.runtimePlatform, 40),
+      tlsVerified: safeBoolean(resolution.tlsVerified),
+      registryCredentialUsed: safeBoolean(resolution.registryCredentialUsed),
+      mutationPerformed: safeBoolean(resolution.mutationPerformed),
+      pullPerformed: safeBoolean(resolution.pullPerformed),
+      containerMutationPerformed: safeBoolean(resolution.containerMutationPerformed),
+      observedArchitecture: safeTelemetryText(resolution.observedArchitecture, 40),
+      observedVersion: safeTelemetryText(resolution.observedVersion, 120),
+      matchingDescriptorCount: safeOptionalNonNegativeInteger(resolution.matchingDescriptorCount),
+    }),
+  });
+}
+
 function conveyorProjection(operationResult = {}) {
   return Object.freeze({
     decision: safeConveyorDecision(operationResult?.decision),
@@ -464,7 +566,8 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     acceptedAt: safeTelemetryText(receipt?.acceptedAt, 80),
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
-    expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
+    expectedHead: projectedReceiptExpectedHead(receipt, operationResult),
+    ...forgeM2HeaderProjection(receipt, operationResult),
     prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
     proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
     proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
@@ -504,6 +607,8 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+      ...forgeM2ResultProjection(receipt, operationResult),
+      ...forgeDigestResolutionProjection(operationResult),
       ...postSyncVerificationProjection(receipt, operationResult),
       monitorCount: Number(operationResult?.monitorCount || 0),
       executedCount: Number(operationResult?.executedCount || 0),
@@ -558,7 +663,8 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     acceptedAt: safeTelemetryText(receipt?.acceptedAt, 80),
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
-    expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
+    expectedHead: projectedReceiptExpectedHead(receipt, operationResult),
+    ...forgeM2HeaderProjection(receipt, operationResult),
     prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
     proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
     proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
@@ -596,6 +702,8 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+        ...forgeM2ResultProjection(receipt, operationResult),
+        ...forgeDigestResolutionProjection(operationResult),
         ...postSyncVerificationProjection(receipt, operationResult),
         monitorCount: Number(operationResult?.monitorCount || 0),
         executedCount: Number(operationResult?.executedCount || 0),
