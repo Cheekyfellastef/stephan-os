@@ -17,6 +17,7 @@ $fixedPowerShellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
 $wscriptExe = 'C:\Windows\System32\wscript.exe'
 $scheduledTaskMutationScope = 'REREGISTER_AND_START_CANONICAL_RECOVERY_MESH_OR_MAILBOX_ONLY'
 $mailboxStaleAfterMinutes = 12
+$mailboxRepairProofWaitSeconds = 20
 
 function Stop-Guardian {
     param(
@@ -47,6 +48,44 @@ function Stop-Guardian {
         observedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     } | ConvertTo-Json -Depth 6
     exit 2
+}
+
+function Write-MailboxRepairPending {
+    param(
+        [Parameter(Mandatory = $true)][string]$Reason,
+        [string]$SourceRelation = '',
+        [string]$SourceHead = '',
+        [string]$RemoteHead = '',
+        [object]$RepairReceipt = $null
+    )
+
+    [pscustomobject]@{
+        schemaVersion = 'stephanos.battle-bridge-recovery-mesh-guardian.v1'
+        guardianId = $guardianId
+        status = 'MAILBOX_REPAIR_PENDING_PROOF'
+        blocker = $Reason
+        sourceHead = $SourceHead
+        trustedRemoteMainHead = $RemoteHead
+        sourceRelation = $SourceRelation
+        recoveryTaskName = $recoveryTaskName
+        mailboxTaskName = $mailboxTaskName
+        mailboxHealthy = $false
+        mailboxRepairAttempted = $true
+        mailboxRepairApplied = $false
+        mailboxRepairReceipt = $RepairReceipt
+        recoveryRepairAttempted = $false
+        recoveryRepairApplied = $false
+        scheduledTaskMutationScope = $scheduledTaskMutationScope
+        arbitraryShellAllowed = $false
+        arbitraryTaskNameAllowed = $false
+        sourceMutationAllowed = $false
+        gitMutationAllowed = $false
+        arbitraryRuntimeMutationAllowed = $false
+        mergeAuthority = $false
+        finalVerdict = 'BATTLE_BRIDGE_MAILBOX_REPAIR_PENDING_PROOF'
+        observedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    } | ConvertTo-Json -Depth 7
+    exit 3
 }
 
 function Read-FixedGitText {
@@ -130,6 +169,8 @@ function Get-TaskHealth {
     return [pscustomobject]@{
         task = $task
         info = $info
+        taskState = if ($task) { [string]$task.State } else { '' }
+        lastRunTime = $lastRun
         identityCanonical = [bool]$identityCanonical
         ageMinutes = $age
         lastResult = $lastResult
@@ -149,7 +190,13 @@ $launcherPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\wind
 $authoritySourcePaths = @(
     'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
     'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
-    'scripts/windows/run-stephanos-scheduled-task-windowless.vbs'
+    'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
+    'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1',
+    'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs',
+    'scripts/battle-bridge-github-command-mailbox.mjs',
+    'scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1',
+    'scripts/battle-bridge-recovery-mesh.mjs',
+    'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1'
 )
 
 if (-not (Test-Path -LiteralPath $repoRoot -PathType Container)) { Stop-Guardian -Blocker 'CANONICAL_REPOSITORY_MISSING' }
@@ -206,8 +253,15 @@ $mailboxHealthy = $mailboxHealth.healthy
 $mailboxRepairAttempted = $false
 $mailboxRepairApplied = $false
 $mailboxRepairReceipt = $null
+$mailboxRepairRunProven = $false
 if (-not $mailboxHealthy) {
+    if ($mailboxHealth.identityCanonical -and $mailboxHealth.taskState -eq 'Running') {
+        Write-MailboxRepairPending -Reason 'MAILBOX_TASK_RUNNING_WITHOUT_SUCCESS_PROOF' -SourceRelation $sourceRelation -SourceHead $localHead -RemoteHead $remoteMainHead
+    }
+
     $mailboxRepairAttempted = $true
+    $mailboxLastRunBefore = if ($mailboxHealth.lastRunTime -and $mailboxHealth.lastRunTime -gt [datetime]::MinValue) { [datetime]$mailboxHealth.lastRunTime } else { [datetime]::MinValue }
+    $mailboxRepairStartedAt = Get-Date
     $mailboxRaw = (& $fixedPowerShellExe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $mailboxInstallerPath -StartNow 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or -not $mailboxRaw) { Stop-Guardian -Blocker 'MAILBOX_REPAIR_INSTALLER_FAILED' }
     try { $mailboxInstallerReceiptRaw = $mailboxRaw | ConvertFrom-Json }
@@ -242,10 +296,31 @@ if (-not $mailboxHealthy) {
         -or $mailboxRepairReceipt.startedNow -ne $true) {
         Stop-Guardian -Blocker 'MAILBOX_REPAIR_NORMALIZED_RECEIPT_REJECTED'
     }
+
     $repairedMailboxTask = Get-ScheduledTask -TaskName $mailboxTaskName -ErrorAction SilentlyContinue
     if (-not (Test-MailboxTaskIdentity -Task $repairedMailboxTask -ExpectedLauncherPath $launcherPath)) {
         Stop-Guardian -Blocker 'MAILBOX_REPAIR_TASK_IDENTITY_UNPROVEN'
     }
+
+    $mailboxProofDeadline = (Get-Date).AddSeconds($mailboxRepairProofWaitSeconds)
+    do {
+        Start-Sleep -Milliseconds 500
+        $postTask = Get-ScheduledTask -TaskName $mailboxTaskName -ErrorAction SilentlyContinue
+        $postInfo = if ($postTask) { Get-ScheduledTaskInfo -TaskName $mailboxTaskName -ErrorAction SilentlyContinue } else { $null }
+        $postIdentity = Test-MailboxTaskIdentity -Task $postTask -ExpectedLauncherPath $launcherPath
+        $postRunTime = if ($postInfo) { $postInfo.LastRunTime } else { $null }
+        $postRunAdvanced = $postRunTime -and $postRunTime -gt $mailboxLastRunBefore -and $postRunTime -ge $mailboxRepairStartedAt.AddSeconds(-2)
+        $mailboxRepairRunProven = $postIdentity `
+            -and $null -ne $postInfo `
+            -and $postRunAdvanced `
+            -and [int]$postInfo.LastTaskResult -eq 0 `
+            -and [string]$postTask.State -ne 'Running'
+    } while (-not $mailboxRepairRunProven -and (Get-Date) -lt $mailboxProofDeadline)
+
+    if (-not $mailboxRepairRunProven) {
+        Write-MailboxRepairPending -Reason 'MAILBOX_REPAIR_SUCCESSFUL_RUN_NOT_YET_PROVEN' -SourceRelation $sourceRelation -SourceHead $localHead -RemoteHead $remoteMainHead -RepairReceipt $mailboxRepairReceipt
+    }
+
     $mailboxHealthy = $true
     $mailboxRepairApplied = $true
 }
@@ -288,6 +363,7 @@ $status = if ($mailboxRepairApplied -or $recoveryRepairApplied) { 'REPAIRED' } e
     mailboxHealthy = [bool]$mailboxHealthy
     mailboxRepairAttempted = $mailboxRepairAttempted
     mailboxRepairApplied = $mailboxRepairApplied
+    mailboxRepairRunProven = $mailboxRepairRunProven
     mailboxRepairReceipt = $mailboxRepairReceipt
     recoveryHealthyBefore = [bool]$recoveryHealth.healthy
     recoveryRepairAttempted = $recoveryRepairAttempted
@@ -303,6 +379,6 @@ $status = if ($mailboxRepairApplied -or $recoveryRepairApplied) { 'REPAIRED' } e
     gitMutationAllowed = $false
     arbitraryRuntimeMutationAllowed = $false
     mergeAuthority = $false
-    finalVerdict = if ($mailboxRepairApplied) { 'BATTLE_BRIDGE_MAILBOX_RECOVERED_BY_RECOVERY_GUARDIAN' } elseif ($recoveryRepairApplied) { 'BATTLE_BRIDGE_RECOVERY_MESH_GUARDIAN_REPAIRED' } else { 'BATTLE_BRIDGE_RECOVERY_MESH_GUARDIAN_HEALTHY' }
+    finalVerdict = if ($mailboxRepairApplied -and $mailboxRepairRunProven) { 'BATTLE_BRIDGE_MAILBOX_RECOVERED_BY_RECOVERY_GUARDIAN' } elseif ($recoveryRepairApplied) { 'BATTLE_BRIDGE_RECOVERY_MESH_GUARDIAN_REPAIRED' } else { 'BATTLE_BRIDGE_RECOVERY_MESH_GUARDIAN_HEALTHY' }
     observedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
 } | ConvertTo-Json -Depth 8
