@@ -68,10 +68,24 @@ test('guardian may repair the fixed mailbox while source is a trusted ancestor',
   assert.match(guardian, /if \(-not \$mailboxHealthy\)/);
   assert.match(guardian, /-File \$mailboxInstallerPath -StartNow/);
   assert.match(guardian, /stephanos\.battle-bridge-github-command-mailbox-install\.v1/);
+  assert.match(guardian, /normalizedFromFixedInstaller = \$true/);
   assert.match(guardian, /MAILBOX_REPAIR_TASK_IDENTITY_UNPROVEN/);
   assert.match(guardian, /mailboxRepairAttempted = \$mailboxRepairAttempted/);
   assert.match(guardian, /mailboxRepairApplied = \$mailboxRepairApplied/);
   assert.match(guardian, /BATTLE_BRIDGE_MAILBOX_RECOVERED_BY_RECOVERY_GUARDIAN/);
+});
+
+test('guardian validates the legacy fixed mailbox installer receipt before versioning its projection', () => {
+  for (const field of [
+    'taskName', 'installed', 'startedNow', 'receiptIndexEnabled', 'intervalMinutes', 'runLevel',
+    'arbitraryShellAllowed', 'destructiveGitAllowed', 'liveOpenClawUpdateAllowed',
+  ]) assert.match(guardian, new RegExp(`mailboxInstallerReceiptRaw\\.${field}`));
+  assert.match(guardian, /MAILBOX_REPAIR_RECEIPT_REJECTED/);
+  assert.match(guardian, /MAILBOX_REPAIR_NORMALIZED_RECEIPT_REJECTED/);
+  assert.match(mailboxInstaller, /receiptIndexEnabled = \$true/);
+  assert.match(mailboxInstaller, /intervalMinutes = 5/);
+  assert.match(mailboxInstaller, /runLevel = 'Limited'/);
+  assert.match(mailboxInstaller, /startedNow = \[bool\]\$StartNow/);
 });
 
 test('guardian keeps Recovery Mesh mutation strictly inside the exact-head relation block', () => {
@@ -85,17 +99,6 @@ test('guardian keeps Recovery Mesh mutation strictly inside the exact-head relat
   assert.match(guardian, /stephanos\.battle-bridge-recovery-mesh-install\.v1/);
   assert.match(guardian, /recoveryRepairAttempted = \$recoveryRepairAttempted/);
   assert.match(guardian, /recoveryRepairAllowed = \(\$sourceRelation -eq 'EXACT'\)/);
-});
-
-test('mailbox installer emits the closed-world receipt needed for Guardian validation', () => {
-  assert.match(mailboxInstaller, /schemaVersion = 'stephanos\.battle-bridge-github-command-mailbox-install\.v1'/);
-  assert.match(mailboxInstaller, /taskName = \$taskName/);
-  assert.match(mailboxInstaller, /taskPresentAfter = \$taskPresentAfter/);
-  assert.match(mailboxInstaller, /startedNow = \[bool\]\$StartNow/);
-  assert.match(mailboxInstaller, /MultipleInstances IgnoreNew/);
-  assert.match(mailboxInstaller, /RunLevel Limited/);
-  assert.match(mailboxInstaller, /sourceMutationAllowed = \$false/);
-  assert.match(mailboxInstaller, /arbitraryTaskNameAllowed = \$false/);
 });
 
 test('recovery installer retains the separate wake-only guardian and fixed Recovery Mesh receipt', () => {
