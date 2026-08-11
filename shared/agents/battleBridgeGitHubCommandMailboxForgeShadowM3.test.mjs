@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  BATTLE_BRIDGE_GITHUB_COMMAND_MARKER,
   BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
   BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA,
   buildBattleBridgeGitHubCommandReceipt,
   executeBattleBridgeGitHubCommand,
+  executeBattleBridgeGitHubCommandBatch,
+  selectBattleBridgeGitHubCommandBatch,
   validateBattleBridgeGitHubCommand,
 } from './battleBridgeGitHubCommandMailbox.mjs';
 import {
@@ -66,6 +69,16 @@ function executeCommand(patch = {}) {
     runtimeExpiresAtUtc: '2026-08-10T15:00:00.000Z',
     ...patch,
   });
+}
+
+function mailboxComment(payload, { id = 1, createdAt = PLAN_AT } = {}) {
+  return {
+    id,
+    html_url: `https://github.com/Cheekyfellastef/stephan-os/issues/1507#issuecomment-${id}`,
+    created_at: createdAt,
+    user: { login: 'Cheekyfellastef' },
+    body: `\`\`\`${BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(payload)}\n\`\`\``,
+  };
 }
 
 function artifact(runnerClass) {
@@ -195,6 +208,37 @@ test('M3 fields are operation-bound and arbitrary build or execution surfaces ar
     expectedTree: TREE,
   };
   assert.equal(validateBattleBridgeGitHubCommand(nonM3, { authorLogin: 'Cheekyfellastef', now: NOW }).blocker, 'FORGE_M3_FIELD_NOT_ALLOWED');
+});
+
+test('M3 wiring preserves immutable command-age and execution-slot preflight barriers', async () => {
+  const oversizedWindow = selectBattleBridgeGitHubCommandBatch([
+    mailboxComment(prepareCommand({ expiresAt: '2026-08-10T20:00:01.000Z' })),
+  ], { now: NOW });
+  assert.equal(oversizedWindow.verdict, 'NO_COMMAND_READY');
+  assert.equal(oversizedWindow.terminalRejections.length, 1);
+  assert.equal(oversizedWindow.terminalRejections[0].blocker, 'COMMAND_EXPIRY_TOO_FAR_AHEAD');
+
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    mailboxComment(prepareCommand(), { id: 2 }),
+  ], { now: NOW });
+  assert.equal(batch.verdict, 'COMMAND_BATCH_READY');
+
+  const events = [];
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => NOW,
+    preflightCommand: async () => ({ ok: false, blocker: 'COMMAND_EXPECTED_HEAD_SUPERSEDED' }),
+    beforeExecute: async () => events.push('accepted'),
+    executeCommand: async () => {
+      events.push('executed');
+      return { ok: true };
+    },
+    onTerminal: async (_entry, execution) => {
+      events.push(`terminal:${execution.blocker}`);
+      return execution;
+    },
+  });
+  assert.deepEqual(events, ['terminal:COMMAND_EXPECTED_HEAD_SUPERSEDED']);
+  assert.equal(result.results[0].result.blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
 });
 
 test('preparation handler binds the live call to the accepted mailbox identity', async () => {
