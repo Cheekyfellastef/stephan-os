@@ -178,7 +178,7 @@ function observation({ runner, artifact, runtimePlan }, patch = {}) {
     runnerId: runner.runnerId, poolId: runner.poolId, runnerClass: runner.runnerClass,
     runtimeBoundary: runner.runtimeBoundary, sourceHead: HEAD, sourceTree: TREE,
     artifactDigest: artifact.artifactDigest, artifactSetDigest: runtimePlan.artifactSetDigest,
-    startedAtUtc: '2026-08-07T21:21:00Z', completedAtUtc: '2026-08-07T21:22:00Z',
+    startedAtUtc: NOW, completedAtUtc: NOW,
     installed: true, registered: true, connected: true, ephemeralRegistration: true,
     canaryWorkflowId: FORGE_SHADOW_M3_CANARY_WORKFLOW,
     canaryScenario: FORGE_SHADOW_M3_CANARY_SCENARIO,
@@ -203,7 +203,7 @@ function terminationAcknowledgement(request, patch = {}) {
     runnerId: request.runner.runnerId,
     terminated: true,
     teardownAcknowledged: true,
-    acknowledgedAtUtc: '2026-08-07T21:22:01Z',
+    acknowledgedAtUtc: NOW,
     ...patch,
   };
 }
@@ -310,6 +310,8 @@ test('rechecks authorization immediately before every runner invocation', async 
   const instants = [
     '2026-08-07T21:20:00Z',
     '2026-08-07T21:20:00Z',
+    '2026-08-07T21:20:00Z',
+    '2026-08-07T21:20:00Z',
     '2026-08-07T22:19:00Z',
   ];
   let calls = 0;
@@ -397,6 +399,59 @@ test('operator approval requires an independent host verifier bound to the immut
   }
 });
 
+test('asynchronous approval verification is checked against a fresh trusted settlement clock', async () => {
+  const instants = [
+    '2026-08-07T21:20:00Z',
+    '2026-08-07T21:20:01Z',
+    '2026-08-07T21:20:01Z',
+    '2026-08-07T21:20:02Z',
+    '2026-08-07T21:20:02Z',
+    '2026-08-07T21:20:03Z',
+  ];
+  let runner = 0;
+  const result = await executeVerified(input(), {
+    platform: 'win32',
+    now: () => new Date(instants.shift()),
+    verifyOperatorApproval: async (request) => approvalVerification(request, {
+      verifiedAtUtc: '2026-08-07T21:20:01Z',
+    }),
+    executeRunner: async (request) => {
+      runner += 1;
+      const startedAtUtc = runner === 1 ? '2026-08-07T21:20:01Z' : '2026-08-07T21:20:02Z';
+      const acknowledgedAtUtc = runner === 1 ? '2026-08-07T21:20:02Z' : '2026-08-07T21:20:03Z';
+      return executionResult(request, { startedAtUtc, completedAtUtc: startedAtUtc }, { acknowledgedAtUtc });
+    },
+  });
+  assert.equal(result.ok, true, JSON.stringify(result, null, 2));
+});
+
+test('unsupported but admissible runner counts fail before approval verification or host execution', async () => {
+  const planInput = runtimePlanInput();
+  const widenedPlanInput = {
+    ...planInput,
+    admissionInput: {
+      ...planInput.admissionInput,
+      runnerPools: [pool('windows-proof-isolated'), { ...pool('linux-isolated'), count: 2 }],
+    },
+  };
+  let verificationCalls = 0;
+  let executionCalls = 0;
+  const result = await executeVerified(input(widenedPlanInput), {
+    platform: 'win32', now,
+    verifyOperatorApproval: async (request) => {
+      verificationCalls += 1;
+      return approvalVerification(request);
+    },
+    executeRunner: async (request) => {
+      executionCalls += 1;
+      return executionResult(request);
+    },
+  });
+  assert.equal(verificationCalls, 0);
+  assert.equal(executionCalls, 0);
+  assert.ok(result.blockers.includes('runtime-plan-runner-estate-unsupported'), JSON.stringify(result.blockers));
+});
+
 test('oversized derived receipt identities fail before runner execution', async () => {
   let calls = 0;
   const result = await executeVerified(input(runtimePlanInput(), {
@@ -471,6 +526,25 @@ test('runner observations are bound to both authorization and fresh invocation i
     }),
   });
   assert.ok(wrongAuthorization.blockers.some((item) => item.includes('runner-authorization-identity-mismatch')), JSON.stringify(wrongAuthorization.blockers));
+});
+
+test('future-dated observations and teardown acknowledgements cannot outrun trusted settlement', async () => {
+  let calls = 0;
+  const result = await executeVerified(input(), {
+    platform: 'win32', now,
+    executeRunner: async (request) => {
+      calls += 1;
+      return executionResult(request, {
+        completedAtUtc: '2026-08-07T21:20:01Z',
+      }, {
+        acknowledgedAtUtc: '2026-08-07T21:20:01Z',
+      });
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.ok, false);
+  assert.ok(result.blockers.some((item) => item.includes('runner-time-outside-invocation')), JSON.stringify(result.blockers));
+  assert.ok(result.blockers.some((item) => item.includes('runner-termination-ack-time-invalid')), JSON.stringify(result.blockers));
 });
 
 test('two runner proof estates may safely fill the aggregate sixteen-reference receipt bound', async () => {

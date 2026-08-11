@@ -33,7 +33,7 @@ No runtime execution is authorised by this source PR. A future live request must
 
 ## Runner observation contract
 
-The host executor is called once for each runner identity derived by the canonical plan. It cannot add runners, rename them or choose different artifacts, labels, boundaries, heads, trees or canaries. Each call receives a fresh invocation identity. Both the observation and termination acknowledgement must echo that invocation identity and the authorization identity, and the observation start must be no earlier than the trusted clock captured immediately before that invocation. Cached, replayed and cross-runner observations therefore fail closed.
+The adapter first proves that the canonical plan contains exactly the one Linux review runner and one isolated Windows proof runner supported by the routing receipt. Any wider otherwise-valid admission estate is rejected before approval verification or host execution; work cannot run successfully and then become unreceiptable. The host executor is called once for each supported runner identity. It cannot add runners, rename them or choose different artifacts, labels, boundaries, heads, trees or canaries. Each call receives a fresh invocation identity. Both the observation and termination acknowledgement must echo that invocation identity and the authorization identity, and the observation start must be no earlier than the trusted clock captured immediately before that invocation. Cached, replayed and cross-runner observations therefore fail closed.
 
 Every returned observation must prove:
 
@@ -55,7 +55,7 @@ Every returned observation must prove:
 
 Each runner may return at most eight unique proof references. Because the canonical estate contains exactly two runners, the aggregate receipt accepts at most sixteen; a valid pair of eight-reference runner observations cannot execute successfully and then fail solely at receipt construction.
 
-Every executor call must settle with exactly an observation and a closed-world termination acknowledgement proving the runner has terminated and teardown has been acknowledged. At the authorization deadline the adapter requests abort, then awaits executor settlement and validates the bound termination acknowledgement before returning a blocked result. A non-cooperative executor keeps the adapter pending; the adapter never reports a terminal result while that executor may still be mutating the host in the background.
+Every executor call must settle with exactly an observation and a closed-world termination acknowledgement proving the runner has terminated and teardown has been acknowledged. A fresh trusted clock is captured after settlement; neither a future-dated observation completion nor a future-dated termination acknowledgement may exceed that settlement time. At the authorization deadline the adapter requests abort, then awaits executor settlement and validates the bound termination acknowledgement before returning a blocked result. A non-cooperative executor keeps the adapter pending; the adapter never reports a terminal result while that executor may still be mutating the host in the background.
 
 Unknown fields and credential-, command-, path-, URL-, shell- or token-shaped fields fail closed.
 
