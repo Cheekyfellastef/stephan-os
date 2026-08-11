@@ -28,6 +28,8 @@ export const FORGE_SHADOW_M3_OPERATOR_APPROVAL_SCHEMA =
   'stephanos.forge-shadow-m3-operator-approval-receipt.v1';
 export const FORGE_SHADOW_M3_OPERATOR_APPROVAL_VERIFICATION_SCHEMA =
   'stephanos.forge-shadow-m3-operator-approval-verification.v1';
+export const FORGE_SHADOW_M3_AUTHORIZATION_RESERVATION_SCHEMA =
+  'stephanos.forge-shadow-m3-authorization-reservation.v1';
 export const FORGE_SHADOW_M3_TERMINATION_ACK_SCHEMA =
   'stephanos.forge-shadow-m3-runner-termination-acknowledgement.v1';
 export const FORGE_SHADOW_M3_EXECUTION_READY = 'FORGE_SHADOW_M3_RUNNER_RUNTIME_READY';
@@ -51,6 +53,11 @@ const APPROVAL_VERIFICATION_KEYS = [
   'schemaVersion', 'verifierId', 'verified', 'proofRef', 'approvalPayloadSha256',
   'authorizationId', 'repository', 'expectedHead', 'expectedTree',
   'runtimePlanDigest', 'executionSurface', 'verifiedAtUtc',
+];
+const AUTHORIZATION_RESERVATION_KEYS = [
+  'schemaVersion', 'reserverId', 'reservationId', 'reserved', 'authorizationId',
+  'receiptId', 'approvalPayloadSha256', 'repository', 'expectedHead', 'expectedTree',
+  'runtimePlanDigest', 'reservedAtUtc',
 ];
 const OBSERVATION_KEYS = [
   'schemaVersion', 'authorizationId', 'invocationId', 'runnerId', 'poolId',
@@ -88,6 +95,7 @@ const FORBIDDEN_FIELDS = new Set([
 const OPERATOR_APPROVAL_ISSUER = 'STEPHANOS_OPERATOR_APPROVAL_GATE';
 const OPERATOR_APPROVAL_DECISION = 'APPROVED';
 const OPERATOR_APPROVAL_VERIFIER = 'STEPHANOS_OPERATOR_APPROVAL_VERIFIER';
+const OPERATOR_AUTHORIZATION_RESERVER = 'STEPHANOS_OPERATOR_AUTHORIZATION_RESERVER';
 const APPROVAL_PROOF_REF = /^proofs\/operator-approvals\/[a-z0-9][a-z0-9._:-]{7,127}\/[0-9a-f]{64}\.json$/i;
 
 const text = (value) => String(value ?? '').trim();
@@ -257,6 +265,34 @@ function validateApprovalVerification(value, receipt, authorization, plan, planD
     proofRef: value.proofRef,
     approvalPayloadSha256: text(value.approvalPayloadSha256).toLowerCase(),
     verifiedAtUtc: new Date(verifiedAtMs).toISOString(),
+  });
+}
+
+function validateAuthorizationReservation(value, receipt, authorization, plan, planDigest, nowMs, blockers) {
+  if (!exactKeys(value, AUTHORIZATION_RESERVATION_KEYS)) {
+    blockers.push('runtime-authorization-reservation-fields-invalid');
+    return null;
+  }
+  const reservedAtMs = instant(value.reservedAtUtc);
+  const expectedReceiptId = `forge-m3-runtime-${authorization.authorizationId}`;
+  if (value.schemaVersion !== FORGE_SHADOW_M3_AUTHORIZATION_RESERVATION_SCHEMA) blockers.push('runtime-authorization-reservation-schema-invalid');
+  if (value.reserverId !== OPERATOR_AUTHORIZATION_RESERVER) blockers.push('runtime-authorization-reserver-invalid');
+  if (!SAFE_ID.test(text(value.reservationId))) blockers.push('runtime-authorization-reservation-id-invalid');
+  if (value.reserved !== true) blockers.push('runtime-authorization-already-consumed');
+  if (value.authorizationId !== authorization.authorizationId) blockers.push('runtime-authorization-reservation-authorization-mismatch');
+  if (value.receiptId !== expectedReceiptId) blockers.push('runtime-authorization-reservation-receipt-mismatch');
+  if (text(value.approvalPayloadSha256).toLowerCase() !== text(receipt.payloadSha256).toLowerCase()) blockers.push('runtime-authorization-reservation-approval-mismatch');
+  if (value.repository !== plan.repository) blockers.push('runtime-authorization-reservation-repository-mismatch');
+  if (text(value.expectedHead).toLowerCase() !== plan.canonicalMainHead) blockers.push('runtime-authorization-reservation-head-mismatch');
+  if (text(value.expectedTree).toLowerCase() !== plan.canonicalMainTree) blockers.push('runtime-authorization-reservation-tree-mismatch');
+  if (text(value.runtimePlanDigest).toLowerCase() !== planDigest) blockers.push('runtime-authorization-reservation-plan-mismatch');
+  if (!Number.isFinite(reservedAtMs)
+      || reservedAtMs < instant(receipt.issuedAtUtc)
+      || reservedAtMs > nowMs
+      || reservedAtMs >= instant(receipt.expiresAtUtc)) blockers.push('runtime-authorization-reservation-time-invalid');
+  return blockers.length ? null : Object.freeze({
+    reservationId: value.reservationId,
+    reservedAtUtc: new Date(reservedAtMs).toISOString(),
   });
 }
 
@@ -463,6 +499,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   now = () => new Date(),
   executeRunner,
   verifyOperatorApproval,
+  reserveOperatorAuthorization,
   createInvocationId = () => `forge-m3-invocation-${randomUUID()}`,
 } = {}) {
   const blockers = [];
@@ -498,6 +535,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
     : null;
   if (typeof executeRunner !== 'function') blockers.push('fixed-runner-executor-not-configured');
   if (typeof verifyOperatorApproval !== 'function') blockers.push('operator-approval-verifier-not-configured');
+  if (typeof reserveOperatorAuthorization !== 'function') blockers.push('runtime-authorization-reserver-not-configured');
   if (typeof createInvocationId !== 'function') blockers.push('invocation-identity-generator-not-configured');
   if (blockers.length) return blocked(blockers, planDigest);
 
@@ -535,6 +573,41 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   );
   if (!verifiedApproval || !verifiedAuthorization) return blocked(blockers, planDigest);
   authorization = verifiedAuthorization;
+
+  let reservation;
+  try {
+    reservation = await reserveOperatorAuthorization(Object.freeze({
+      authorizationId: authorization.authorizationId,
+      receiptId: `forge-m3-runtime-${authorization.authorizationId}`,
+      approvalPayloadSha256: verifiedApproval.approvalPayloadSha256,
+      repository: plan.repository,
+      expectedHead: plan.canonicalMainHead,
+      expectedTree: plan.canonicalMainTree,
+      runtimePlanDigest: planDigest,
+      nowUtc: new Date(verificationNowMs).toISOString(),
+    }));
+  } catch {
+    blockers.push('runtime-authorization-reserver-threw');
+  }
+  const reservationNowValue = now();
+  const reservationNowMs = reservationNowValue instanceof Date
+    ? reservationNowValue.getTime()
+    : instant(reservationNowValue);
+  if (!Number.isFinite(reservationNowMs)) blockers.push('runtime-authorization-reservation-now-invalid');
+  const reservedAuthorization = plan && Number.isFinite(reservationNowMs)
+    ? validateAuthorization(input.runtimeAuthorization, plan, planDigest, reservationNowMs, blockers)
+    : null;
+  const validatedReservation = reservation && validateAuthorizationReservation(
+    reservation,
+    input.runtimeAuthorization.approvalReceipt,
+    input.runtimeAuthorization,
+    plan,
+    planDigest,
+    reservationNowMs,
+    blockers,
+  );
+  if (!validatedReservation || !reservedAuthorization) return blocked(blockers, planDigest);
+  authorization = reservedAuthorization;
 
   const observations = [];
   const invocationIds = new Set();

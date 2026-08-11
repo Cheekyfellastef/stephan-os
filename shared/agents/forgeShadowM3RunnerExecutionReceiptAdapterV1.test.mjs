@@ -6,6 +6,7 @@ import { planForgeShadowM3RunnerRuntime } from './forgeShadowM3RunnerRuntimePlan
 import {
   FORGE_SHADOW_M3_CANARY_SCENARIO,
   FORGE_SHADOW_M3_CANARY_WORKFLOW,
+  FORGE_SHADOW_M3_AUTHORIZATION_RESERVATION_SCHEMA,
   FORGE_SHADOW_M3_EXECUTION_BLOCKED,
   FORGE_SHADOW_M3_EXECUTION_OBSERVATION_SCHEMA,
   FORGE_SHADOW_M3_EXECUTION_READY,
@@ -239,9 +240,28 @@ function approvalVerification(request, patch = {}) {
   };
 }
 
+function authorizationReservation(request, patch = {}) {
+  return {
+    schemaVersion: FORGE_SHADOW_M3_AUTHORIZATION_RESERVATION_SCHEMA,
+    reserverId: 'STEPHANOS_OPERATOR_AUTHORIZATION_RESERVER',
+    reservationId: `reservation-${request.authorizationId}`,
+    reserved: true,
+    authorizationId: request.authorizationId,
+    receiptId: request.receiptId,
+    approvalPayloadSha256: request.approvalPayloadSha256,
+    repository: request.repository,
+    expectedHead: request.expectedHead,
+    expectedTree: request.expectedTree,
+    runtimePlanDigest: request.runtimePlanDigest,
+    reservedAtUtc: NOW,
+    ...patch,
+  };
+}
+
 function executeVerified(inputValue, options = {}) {
   return executeForgeShadowM3RunnerPlan(inputValue, {
     verifyOperatorApproval: async (request) => approvalVerification(request),
+    reserveOperatorAuthorization: async (request) => authorizationReservation(request),
     ...options,
   });
 }
@@ -308,6 +328,7 @@ test('replans against the trusted execution clock so caller history cannot admit
 
 test('rechecks authorization immediately before every runner invocation', async () => {
   const instants = [
+    '2026-08-07T21:20:00Z',
     '2026-08-07T21:20:00Z',
     '2026-08-07T21:20:00Z',
     '2026-08-07T21:20:00Z',
@@ -404,6 +425,7 @@ test('asynchronous approval verification is checked against a fresh trusted sett
     '2026-08-07T21:20:00Z',
     '2026-08-07T21:20:01Z',
     '2026-08-07T21:20:01Z',
+    '2026-08-07T21:20:01Z',
     '2026-08-07T21:20:02Z',
     '2026-08-07T21:20:02Z',
     '2026-08-07T21:20:03Z',
@@ -450,6 +472,41 @@ test('unsupported but admissible runner counts fail before approval verification
   assert.equal(verificationCalls, 0);
   assert.equal(executionCalls, 0);
   assert.ok(result.blockers.includes('runtime-plan-runner-estate-unsupported'), JSON.stringify(result.blockers));
+});
+
+test('authorization reservation is mandatory, atomic and consumed before runner execution', async () => {
+  let calls = 0;
+  const executeRunner = async (request) => {
+    calls += 1;
+    return executionResult(request);
+  };
+  const missing = await executeForgeShadowM3RunnerPlan(input(), {
+    platform: 'win32', now, executeRunner,
+    verifyOperatorApproval: async (request) => approvalVerification(request),
+  });
+  assert.equal(calls, 0);
+  assert.ok(missing.blockers.includes('runtime-authorization-reserver-not-configured'));
+
+  const consumed = new Set();
+  const reserveOperatorAuthorization = async (request) => {
+    await Promise.resolve();
+    if (consumed.has(request.authorizationId)) {
+      return authorizationReservation(request, { reserved: false });
+    }
+    consumed.add(request.authorizationId);
+    return authorizationReservation(request);
+  };
+  const first = executeVerified(input(), {
+    platform: 'win32', now, executeRunner, reserveOperatorAuthorization,
+  });
+  const replay = executeVerified(input(), {
+    platform: 'win32', now, executeRunner, reserveOperatorAuthorization,
+  });
+  const [firstResult, replayResult] = await Promise.all([first, replay]);
+  assert.equal(firstResult.ok, true, JSON.stringify(firstResult, null, 2));
+  assert.equal(replayResult.ok, false);
+  assert.ok(replayResult.blockers.includes('runtime-authorization-already-consumed'), JSON.stringify(replayResult.blockers));
+  assert.equal(calls, 2, 'replayed authorization reached a runner');
 });
 
 test('oversized derived receipt identities fail before runner execution', async () => {
