@@ -26,7 +26,7 @@ const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'te
 async function runtime() {
   const parent = await mkdtemp(join(tmpdir(), 'mission-worker-service-'));
   const { privateKey } = generateKeyPairSync('ed25519');
-  return { root: join(parent, 'state'), snapshotRoot: join(parent, 'proof'), queueRoot: join(parent, 'queue'), privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }) };
+  return { root: join(parent, 'state'), snapshotRoot: join(parent, 'proof'), queueRoot: join(parent, 'queue'), sharedWorkspaceRoot: join(parent, 'workspace'), privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }) };
 }
 
 test('queue root defaults below Mission Runner orchestrator state', () => {
@@ -44,6 +44,81 @@ test('publishes worktree then one Codex dispatch and collects grounded result', 
   const collected = await collectAgentWorkerResult({ missionId: intent.missionId, actionId: dispatch.action.actionId, adapter: 'codex', success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result'), evidenceReceipts: [proof('focused test output', 'evidence')] }, options);
   assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
   assert.equal((await readMissionRecord(intent.missionId, options)).state.dispatch.status, 'complete');
+});
+
+test('publishes one exact external fallback handoff and accepts its grounded result', async () => {
+  const options = await runtime();
+  const missionId = 'github-fallback-test';
+  const created = await createMissionRecord({
+    ...intent,
+    missionId,
+    branch: 'openclaw/github-fallback-test',
+  }, options);
+  const ready = await appendMissionEvent(missionId, {
+    eventId: 'github-fallback-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'github-fallback-worktree-proof'),
+  }, options);
+  const capacityRouting = {
+    nowUtc: new Date().toISOString(),
+    codexStatus: null,
+    githubLaneReceipt: {
+      schemaVersion: 'stephanos.build-lane-capacity-receipt.v1',
+      receiptId: 'github-fallback-capacity-receipt',
+      route: 'CHATGPT_GITHUB',
+      repository: intent.repository,
+      workerId: 'shared-fabric-chatgpt-github-builder-01',
+      state: 'READY',
+      supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+      supportedTaskClasses: ['FOCUSED_REPAIR'],
+      observedAtUtc: new Date(Date.now() - 1000).toISOString(),
+      expiresAtUtc: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      queueDepth: 0,
+      p95StartLatencySeconds: 10,
+      authorityReceiptIds: [],
+      proofRefs: ['receipts/github-builder/capacity.json'],
+    },
+  };
+  const action = buildMissionWorkerAction(ready.state, { ...options, capacityRouting });
+  const grant = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: 'a'.repeat(40),
+    boundedActionCount: 1,
+    missionId,
+    missionRevision: ready.state.revision,
+    currentPhase: ready.state.currentPhase,
+    actionId: action.actionId,
+    actionKind: action.actionKind,
+    adapter: action.adapter,
+    operation: '',
+    capacityRoute: action.capacityRoute,
+    capacityReceiptId: action.capacityReceiptId,
+    capacityProofRefs: action.capacityProofRefs,
+    repository: ready.state.repository,
+    branch: ready.state.git.branch,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  };
+  const dispatch = await publishNextMissionWorkerAction({ ...options, actionGrant: grant });
+  assert.equal(dispatch.published, true);
+  assert.equal(dispatch.adapter, 'chatgpt-github');
+  assert.equal(dispatch.action.capacityReceiptId, 'github-fallback-capacity-receipt');
+  assert.equal(dispatch.fabricPublication.ok, true);
+  assert.deepEqual((await readMissionWorkerQueue(options)).map(({ adapter }) => adapter), ['chatgpt-github']);
+  const collected = await collectAgentWorkerResult({
+    missionId,
+    actionId: action.actionId,
+    adapter: 'chatgpt-github',
+    success: true,
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: proof('github builder result', 'github-builder-result'),
+    evidenceReceipts: [proof('focused test output', 'github-builder-evidence')],
+  }, options);
+  assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
+  assert.equal(collected.state.dispatch.adapter, 'chatgpt-github');
 });
 
 test('publisher rejects a stale mission revision before signing or queueing', async () => {
