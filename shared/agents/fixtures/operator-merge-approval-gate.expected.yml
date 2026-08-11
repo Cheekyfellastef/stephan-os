@@ -134,6 +134,8 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment:
+      name: operator-merge-approval
     permissions:
       actions: read
       checks: read
@@ -234,6 +236,8 @@ jobs:
     needs: [personal-repository-evidence, operator-personal-repository-approval]
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment:
+      name: operator-merge-approval
     permissions:
       actions: read
       checks: read

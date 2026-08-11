@@ -59,6 +59,7 @@ test('protected boundary keeps the native queue and adds only the exact user-own
   assert.equal([...protectedSource.matchAll(/secrets\.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY/g)].length, 3);
   assert.equal([...protectedSource.matchAll(/STEPHANOS_RULESET_PROOF_TOKEN:/g)].length, 3);
   assert.equal([...protectedSource.matchAll(/permission-administration: read/g)].length, 3);
+  assert.equal([...protectedSource.matchAll(/name: operator-merge-approval/g)].length, 4);
   const evidenceJob = protectedSource.slice(
     protectedSource.indexOf('  personal-repository-evidence:'),
     protectedSource.indexOf('  operator-personal-repository-approval:'),

@@ -7,7 +7,7 @@ import {
 } from './operatorMergeApprovalGate.mjs';
 
 const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
-const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = 'f5935b1f508bf36d94ffbf628e63a98439724b7b3659dbc229e8a926a8eda81d';
+const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = '384cd389d71e64c737fa6b37f13adee73bf96918f7f8fbcb908ad62949cecf2d';
 const PERSONAL_REPOSITORY_WORKFLOW_SOURCE_KEYS = Object.freeze([
   'schemaVersion',
   'repository',
@@ -483,9 +483,9 @@ function personalRepositoryRulesetProofTokenIsBound(source) {
     || !jobHasExactNeeds(source, 'operator-personal-repository-squash-merge', '[personal-repository-evidence, operator-personal-repository-approval]')
     || !jobHasExactEnvironment(source, 'merge-group-evidence')
     || !jobHasExactEnvironment(source, 'operator-merge-queue-boundary', 'operator-merge-approval')
-    || !jobHasExactEnvironment(source, 'personal-repository-evidence')
+    || !jobHasExactEnvironment(source, 'personal-repository-evidence', 'operator-merge-approval')
     || !jobHasExactEnvironment(source, 'operator-personal-repository-approval', 'operator-merge-approval')
-    || !jobHasExactEnvironment(source, 'operator-personal-repository-squash-merge')
+    || !jobHasExactEnvironment(source, 'operator-personal-repository-squash-merge', 'operator-merge-approval')
     || expectedJobNames.some((jobName) => (
       !jobHasExactScalar(source, jobName, 'runs-on', 'ubuntu-latest')
       || !jobHasExactScalar(source, jobName, 'timeout-minutes', '20')
