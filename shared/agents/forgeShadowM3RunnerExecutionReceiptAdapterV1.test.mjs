@@ -587,6 +587,9 @@ test('runner observations are bound to both authorization and fresh invocation i
     platform: 'win32', now,
     createInvocationId: ({ runnerId }) => `invocation-${runnerId}`,
     executeRunner: async (request) => {
+      request.signal.addEventListener('abort', () => {
+        request.acknowledgeTermination(terminationAcknowledgement(request));
+      }, { once: true });
       if (!cached) {
         cached = executionResult(request);
         return cached;
@@ -613,6 +616,9 @@ test('future-dated observations and teardown acknowledgements cannot outrun trus
     platform: 'win32', now,
     executeRunner: async (request) => {
       calls += 1;
+      request.signal.addEventListener('abort', () => {
+        request.acknowledgeTermination(terminationAcknowledgement(request));
+      }, { once: true });
       return executionResult(request, {
         completedAtUtc: '2026-08-07T21:20:01Z',
       }, {
@@ -640,15 +646,22 @@ test('fulfilled settlement after the computed live deadline cannot mint a receip
 });
 
 test('termination acknowledgement cannot predate observed completion', async () => {
-  const instants = [NOW, NOW, NOW, NOW, '2026-08-07T21:20:01Z'];
+  const instants = [NOW, NOW, NOW, NOW, '2026-08-07T21:20:01Z', '2026-08-07T21:20:01Z'];
   const result = await executeVerified(input(), {
     platform: 'win32',
     now: () => new Date(instants.shift()),
-    executeRunner: async (request) => executionResult(request, {
-      completedAtUtc: '2026-08-07T21:20:01Z',
-    }, {
-      acknowledgedAtUtc: NOW,
-    }),
+    executeRunner: async (request) => {
+      request.signal.addEventListener('abort', () => {
+        request.acknowledgeTermination(terminationAcknowledgement(request, {
+          acknowledgedAtUtc: '2026-08-07T21:20:01Z',
+        }));
+      }, { once: true });
+      return executionResult(request, {
+        completedAtUtc: '2026-08-07T21:20:01Z',
+      }, {
+        acknowledgedAtUtc: NOW,
+      });
+    },
   });
   assert.equal(result.ok, false);
   assert.ok(result.blockers.some((item) => item.includes('runner-termination-before-observation-complete')), JSON.stringify(result.blockers));
@@ -712,6 +725,150 @@ test('non-cooperative executor cannot make the adapter return while host work re
   ]);
   assert.equal(aborted, true);
   assert.equal(state, 'held-pending');
+});
+
+test('malformed fulfilled results trigger abort and wait for delayed valid teardown proof', async () => {
+  let aborted = false;
+  const started = Date.now();
+  const execution = executeVerified(input(), {
+    platform: 'win32', now,
+    executeRunner: async (request) => {
+      request.signal.addEventListener('abort', () => {
+        aborted = true;
+        setTimeout(() => {
+          request.acknowledgeTermination(terminationAcknowledgement(request));
+        }, 25);
+      }, { once: true });
+      return { observation: observation(request, {
+        authorizationId: request.authorizationId,
+        invocationId: request.invocationId,
+      }) };
+    },
+  });
+  const early = await Promise.race([
+    execution.then(() => 'unsafe-return'),
+    new Promise((resolve) => setTimeout(() => resolve('held-pending'), 15)),
+  ]);
+  assert.equal(early, 'held-pending');
+  const result = await execution;
+  assert.equal(aborted, true);
+  assert.ok(Date.now() - started >= 25);
+  assert.ok(result.blockers.some((item) => item.includes('runner-execution-result-fields-invalid')), JSON.stringify(result.blockers));
+});
+
+test('widened fulfilled results trigger abort before a blocked return', async () => {
+  let aborted = false;
+  const result = await executeVerified(input(), {
+    platform: 'win32', now,
+    executeRunner: async (request) => {
+      request.signal.addEventListener('abort', () => {
+        aborted = true;
+        request.acknowledgeTermination(terminationAcknowledgement(request));
+      }, { once: true });
+      return { ...executionResult(request), widenedAuthority: true };
+    },
+  });
+  assert.equal(aborted, true);
+  assert.equal(result.ok, false);
+  assert.ok(result.blockers.some((item) => item.includes('runner-execution-result-fields-invalid')), JSON.stringify(result.blockers));
+});
+
+test('fulfilled results missing termination acknowledgement cannot return', async () => {
+  let aborted = false;
+  const execution = executeVerified(input(), {
+    platform: 'win32', now,
+    executeRunner: async (request) => {
+      request.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
+      return { observation: observation(request, {
+        authorizationId: request.authorizationId,
+        invocationId: request.invocationId,
+      }) };
+    },
+  });
+  const state = await Promise.race([
+    execution.then(() => 'unsafe-return'),
+    new Promise((resolve) => setTimeout(() => resolve('held-pending'), 35)),
+  ]);
+  assert.equal(aborted, true);
+  assert.equal(state, 'held-pending');
+});
+
+test('malformed or widened acknowledgements cannot permit a rejection return', async () => {
+  for (const candidate of [
+    { terminated: true },
+    (request) => ({ ...terminationAcknowledgement(request), widenedAuthority: true }),
+  ]) {
+    const execution = executeVerified(input(), {
+      platform: 'win32', now,
+      executeRunner: (request) => new Promise((resolve, reject) => {
+        request.signal.addEventListener('abort', () => {
+          request.acknowledgeTermination(typeof candidate === 'function' ? candidate(request) : candidate);
+        }, { once: true });
+        reject(new Error('host failed before valid teardown proof'));
+      }),
+    });
+    const state = await Promise.race([
+      execution.then(() => 'unsafe-return'),
+      new Promise((resolve) => setTimeout(() => resolve('held-pending'), 25)),
+    ]);
+    assert.equal(state, 'held-pending');
+  }
+});
+
+test('wrong identity, stale, future or false acknowledgements cannot permit a rejection return', async () => {
+  const cases = [
+    (request) => terminationAcknowledgement(request, { invocationId: 'forge-m3-invocation-wrong' }),
+    (request) => terminationAcknowledgement(request, { authorizationId: 'forge-m3-runtime-authorization-wrong' }),
+    (request) => terminationAcknowledgement(request, { runnerId: 'stephanos-forge-runner-wrong' }),
+    (request) => terminationAcknowledgement(request, { acknowledgedAtUtc: '2026-08-07T21:19:59Z' }),
+    (request) => terminationAcknowledgement(request, { acknowledgedAtUtc: '2026-08-07T21:20:01Z' }),
+    (request) => terminationAcknowledgement(request, { terminated: false }),
+    (request) => terminationAcknowledgement(request, { teardownAcknowledged: false }),
+  ];
+  for (const candidate of cases) {
+    const execution = executeVerified(input(), {
+      platform: 'win32', now,
+      executeRunner: (request) => new Promise((resolve, reject) => {
+        request.signal.addEventListener('abort', () => {
+          request.acknowledgeTermination(candidate(request));
+        }, { once: true });
+        reject(new Error('host failed before valid teardown proof'));
+      }),
+    });
+    const state = await Promise.race([
+      execution.then(() => 'unsafe-return'),
+      new Promise((resolve) => setTimeout(() => resolve('held-pending'), 25)),
+    ]);
+    assert.equal(state, 'held-pending');
+  }
+});
+
+test('a delayed valid acknowledgement permits a blocked rejection result', async () => {
+  let aborted = false;
+  const execution = executeVerified(input(), {
+    platform: 'win32', now,
+    executeRunner: (request) => new Promise((resolve, reject) => {
+      request.signal.addEventListener('abort', () => {
+        aborted = true;
+        request.acknowledgeTermination({ ...terminationAcknowledgement(request), widenedAuthority: true });
+        setTimeout(() => {
+          request.acknowledgeTermination(terminationAcknowledgement(request));
+        }, 25);
+      }, { once: true });
+      reject(new Error('host failed before teardown completed'));
+    }),
+  });
+  const early = await Promise.race([
+    execution.then(() => 'unsafe-return'),
+    new Promise((resolve) => setTimeout(() => resolve('held-pending'), 15)),
+  ]);
+  assert.equal(early, 'held-pending');
+  const result = await execution;
+  assert.equal(aborted, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.authority.runtimeMutation, false);
+  assert.ok(result.blockers.some((item) => item.includes('runner-executor-threw')), JSON.stringify(result.blockers));
+  assert.ok(result.blockers.some((item) => item.includes('runner-termination-ack-fields-invalid')), JSON.stringify(result.blockers));
 });
 
 test('credential-shaped or widened executor observations are rejected and never serialized', async () => {

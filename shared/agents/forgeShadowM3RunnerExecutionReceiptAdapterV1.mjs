@@ -437,6 +437,74 @@ function validateTerminationAcknowledgement(value, runner, authorization, invoca
   return blockers.length ? null : Object.freeze({ acknowledgedAtUtc: new Date(acknowledgedMs).toISOString() });
 }
 
+function createTerminationProofGate({ runner, authorization, invocation, deadlineMs, now }) {
+  const invalidBlockers = new Set();
+  const waiters = new Set();
+  let latestProof = null;
+
+  const proofFor = (minimumAcknowledgedMs = invocation.startedMs) => {
+    if (!latestProof) return null;
+    if (latestProof.acknowledgedMs < minimumAcknowledgedMs) {
+      invalidBlockers.add(`runner-termination-before-observation-complete:${runner.runnerId}`);
+      return null;
+    }
+    return latestProof;
+  };
+
+  const publish = (value, observedMs) => {
+    let trustedObservedMs = observedMs;
+    if (!Number.isFinite(trustedObservedMs)) {
+      try {
+        const observedNowValue = now();
+        trustedObservedMs = observedNowValue instanceof Date
+          ? observedNowValue.getTime()
+          : instant(observedNowValue);
+      } catch {
+        trustedObservedMs = Number.NaN;
+      }
+    }
+    const candidateBlockers = [];
+    if (!Number.isFinite(trustedObservedMs)) {
+      candidateBlockers.push(`runner-termination-ack-observation-now-invalid:${runner.runnerId}`);
+    }
+    const proof = Number.isFinite(trustedObservedMs)
+      ? validateTerminationAcknowledgement(
+          value, runner, authorization, invocation,
+          trustedObservedMs, deadlineMs, candidateBlockers,
+        )
+      : null;
+    for (const blocker of candidateBlockers) invalidBlockers.add(blocker);
+    if (!proof) return false;
+
+    const acknowledgedMs = instant(proof.acknowledgedAtUtc);
+    if (!latestProof || acknowledgedMs >= latestProof.acknowledgedMs) {
+      latestProof = Object.freeze({ ...proof, acknowledgedMs });
+    }
+    for (const waiter of [...waiters]) {
+      const accepted = proofFor(waiter.minimumAcknowledgedMs);
+      if (!accepted) continue;
+      waiters.delete(waiter);
+      waiter.resolve(accepted);
+    }
+    return true;
+  };
+
+  const waitFor = (minimumAcknowledgedMs = invocation.startedMs) => {
+    const accepted = proofFor(minimumAcknowledgedMs);
+    if (accepted) return Promise.resolve(accepted);
+    return new Promise((resolve) => {
+      waiters.add(Object.freeze({ minimumAcknowledgedMs, resolve }));
+    });
+  };
+
+  return Object.freeze({
+    publish,
+    proofFor,
+    waitFor,
+    blockers: () => Object.freeze([...invalidBlockers]),
+  });
+}
+
 function buildReceipt(plan, authorization, observations) {
   const proofRefs = Object.freeze(unique(observations.flatMap((item) => item.proofRefs)).sort());
   const completedAt = observations.map((item) => item.completedAtUtc).sort().at(-1);
@@ -653,20 +721,17 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
     invocationIds.add(invocationId);
     const invocation = Object.freeze({ invocationId, startedMs: runnerNowMs });
 
-    let executionResult;
     const controller = new AbortController();
-    let acknowledgeTermination;
-    const terminationAcknowledgement = new Promise((resolve) => {
-      acknowledgeTermination = resolve;
+    const terminationGate = createTerminationProofGate({
+      runner,
+      authorization: liveAuthorization,
+      invocation,
+      deadlineMs: executionDeadlineMs,
+      now,
     });
-    let terminationAcknowledged = false;
-    const publishTerminationAcknowledgement = (value) => {
-      if (terminationAcknowledged) return false;
-      terminationAcknowledged = true;
-      acknowledgeTermination(value);
-      return true;
-    };
     let deadlineTimer;
+    let executorSettlement;
+    let outcome;
     try {
       const executionRequest = Object.freeze({
         authorization: input.runtimeAuthorization,
@@ -677,7 +742,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
         artifact,
         executionDeadlineUtc: new Date(executionDeadlineMs).toISOString(),
         signal: controller.signal,
-        acknowledgeTermination: publishTerminationAcknowledgement,
+        acknowledgeTermination: (value) => terminationGate.publish(value),
         canary: Object.freeze({
           workflowId: FORGE_SHADOW_M3_CANARY_WORKFLOW,
           scenario: FORGE_SHADOW_M3_CANARY_SCENARIO,
@@ -692,70 +757,49 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
           resolveDeadline({ deadlineExceeded: true });
         }, remainingExecutionMs);
       });
-      const executorSettlement = Promise.resolve()
+      executorSettlement = Promise.resolve()
         .then(() => executeRunner(executionRequest))
         .then((value) => ({ status: 'fulfilled', value }), () => ({ status: 'rejected' }));
-      const outcome = await Promise.race([
+      outcome = await Promise.race([
         executorSettlement,
         deadline,
       ]);
-      if (outcome.deadlineExceeded) {
-        const settled = await executorSettlement;
-        const deadlineBlockers = [`runner-execution-deadline-exceeded:${runner.runnerId}`];
-        const settledNowValue = now();
-        const settledNowMs = settledNowValue instanceof Date
-          ? settledNowValue.getTime()
-          : instant(settledNowValue);
-        if (!Number.isFinite(settledNowMs)) deadlineBlockers.push(`runner-settlement-now-invalid:${runner.runnerId}`);
-        const acknowledgement = settled.status === 'fulfilled' && exactKeys(settled.value, EXECUTION_RESULT_KEYS)
-          ? settled.value.terminationAcknowledgement
-          : await terminationAcknowledgement;
-        validateTerminationAcknowledgement(
-          acknowledgement, runner, liveAuthorization, invocation,
-          settledNowMs, executionDeadlineMs, deadlineBlockers,
-        );
-        return blocked(deadlineBlockers, planDigest);
-      }
-      if (outcome.status !== 'fulfilled') {
-        controller.abort();
-        if (deadlineTimer) {
-          clearTimeout(deadlineTimer);
-          deadlineTimer = undefined;
-        }
-        const acknowledgement = await terminationAcknowledgement;
-        const rejectionBlockers = [`runner-executor-threw:${runner.runnerId}`];
-        const rejectedNowValue = now();
-        const rejectedNowMs = rejectedNowValue instanceof Date ? rejectedNowValue.getTime() : instant(rejectedNowValue);
-        if (!Number.isFinite(rejectedNowMs)) rejectionBlockers.push(`runner-settlement-now-invalid:${runner.runnerId}`);
-        validateTerminationAcknowledgement(
-          acknowledgement, runner, liveAuthorization, invocation,
-          rejectedNowMs, executionDeadlineMs, rejectionBlockers,
-        );
-        return blocked(rejectionBlockers, planDigest);
-      }
-      executionResult = outcome.value;
     } catch {
-      return blocked([`runner-executor-threw:${runner.runnerId}`], planDigest);
+      controller.abort();
+      await terminationGate.waitFor(invocation.startedMs);
+      return blocked([
+        `runner-executor-threw:${runner.runnerId}`,
+        ...terminationGate.blockers(),
+      ], planDigest);
     } finally {
       if (deadlineTimer) clearTimeout(deadlineTimer);
     }
+
+    const deadlineExceeded = outcome.deadlineExceeded === true;
+    const settled = deadlineExceeded ? await executorSettlement : outcome;
     const runnerBlockers = [];
+    if (deadlineExceeded) runnerBlockers.push(`runner-execution-deadline-exceeded:${runner.runnerId}`);
+    if (settled.status !== 'fulfilled') runnerBlockers.push(`runner-executor-threw:${runner.runnerId}`);
     const settledNowValue = now();
     const settledNowMs = settledNowValue instanceof Date ? settledNowValue.getTime() : instant(settledNowValue);
     if (!Number.isFinite(settledNowMs)) runnerBlockers.push(`runner-settlement-now-invalid:${runner.runnerId}`);
     else if (settledNowMs > executionDeadlineMs) runnerBlockers.push(`runner-settlement-after-deadline:${runner.runnerId}`);
-    if (!exactKeys(executionResult, EXECUTION_RESULT_KEYS)) {
-      return blocked([`runner-execution-result-fields-invalid:${runner.runnerId}`], planDigest);
+
+    if (settled.status !== 'fulfilled') {
+      controller.abort();
+      await terminationGate.waitFor(invocation.startedMs);
+      return blocked([...runnerBlockers, ...terminationGate.blockers()], planDigest);
     }
-    const termination = validateTerminationAcknowledgement(
-      executionResult.terminationAcknowledgement,
-      runner,
-      liveAuthorization,
-      invocation,
-      settledNowMs,
-      executionDeadlineMs,
-      runnerBlockers,
-    );
+
+    const executionResult = settled.value;
+    if (!exactKeys(executionResult, EXECUTION_RESULT_KEYS)) {
+      controller.abort();
+      runnerBlockers.push(`runner-execution-result-fields-invalid:${runner.runnerId}`);
+      await terminationGate.waitFor(invocation.startedMs);
+      return blocked([...runnerBlockers, ...terminationGate.blockers()], planDigest);
+    }
+
+    terminationGate.publish(executionResult.terminationAcknowledgement, settledNowMs);
     const observation = validateObservation(
       executionResult.observation,
       runner,
@@ -766,11 +810,20 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
       settledNowMs,
       runnerBlockers,
     );
-    if (termination && observation
-        && instant(termination.acknowledgedAtUtc) < instant(observation.completedAtUtc)) {
-      runnerBlockers.push(`runner-termination-before-observation-complete:${runner.runnerId}`);
+    const minimumAcknowledgedMs = observation
+      ? instant(observation.completedAtUtc)
+      : invocation.startedMs;
+    let termination = terminationGate.proofFor(minimumAcknowledgedMs);
+    const invalidTerminationProof = terminationGate.blockers().length > 0;
+    if (!termination || !observation || runnerBlockers.length || invalidTerminationProof) {
+      controller.abort();
+      if (!termination) termination = await terminationGate.waitFor(minimumAcknowledgedMs);
+      return blocked([
+        ...runnerBlockers,
+        ...terminationGate.blockers(),
+      ], planDigest);
     }
-    if (!termination || !observation || runnerBlockers.length) return blocked(runnerBlockers, planDigest);
+
     observations.push(observation);
   }
 
