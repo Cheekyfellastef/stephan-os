@@ -63,6 +63,20 @@ const SAFE_CONVEYOR_DECISIONS = new Set([
   'BLOCKED_BY_INVALID_BACKLOG',
   'BACKLOG_COMPLETE',
 ]);
+const RECOVERY_MESH_SAFE_WAKE_ADAPTER_BLOCKERS = Object.freeze(new Set([
+  'RECOVERY_PATH_REPARSE_ANCESTOR_REJECTED',
+  'RECOVERY_PATH_ANCESTOR_IDENTITY_CHANGED',
+  'RECOVERY_ROUTE_EVIDENCE_ISSUER_INVALID',
+  'RECOVERY_ROUTE_EVIDENCE_REQUIRED',
+  'RECOVERY_GITHUB_RECEIPT_REF_INVALID',
+  'RECOVERY_CANONICAL_GIT_EXECUTABLE_MISSING',
+  'RECOVERY_GITHUB_RECEIPT_AUTHORITY_INVALID',
+  'RECOVERY_MESH_TASK_NOT_INSTALLED',
+  'RECOVERY_MESH_TASK_ACTION_INVALID',
+  'RECOVERY_MESH_TASK_PRINCIPAL_INVALID',
+  'RECOVERY_MESH_TASK_SETTINGS_INVALID',
+  'RECOVERY_MESH_TASK_START_FAILED',
+]));
 
 function bounded(value, limit = 12000) {
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
@@ -165,6 +179,12 @@ function safeTelemetryBranch(value) {
   return /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/.test(normalized) && !normalized.includes('..')
     ? normalized
     : '';
+}
+
+export function classifyRecoveryMeshWakeAdapterFailure(invocation = {}) {
+  const text = [invocation?.stderr, invocation?.error].map((value) => String(value || '')).join('\n');
+  const matches = [...RECOVERY_MESH_SAFE_WAKE_ADAPTER_BLOCKERS].filter((blocker) => text.includes(blocker));
+  return matches.length === 1 ? matches[0] : 'RECOVERY_MESH_WAKE_ADAPTER_FAILED';
 }
 
 function telemetryPosture(value = {}) {
@@ -497,7 +517,6 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
 export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEIPT_JSON_BYTES) {
   const fullJson = JSON.stringify(receipt, null, 2);
   const fullBytes = Buffer.byteLength(fullJson, 'utf8');
-
   const execution = receipt?.result || {};
   const operationResult = execution?.result || {};
   const { requested: requestedPullRequestHead, observed: observedPullRequestHead } = projectedPullRequestHeads(receipt, operationResult);
@@ -642,7 +661,6 @@ function ghJson(args) {
   return parseBoundedGitHubJson(result.stdout);
 }
 
-
 export function latestMailboxCommentPage(commentCount, perPage = 100) {
   const count = Number(commentCount);
   const pageSize = Number(perPage);
@@ -773,7 +791,16 @@ async function wakeBattleBridgeRecoveryMesh(command = {}, { receiptRef = '' } = 
     '-EvidenceSubject', evidenceSubject,
     '-EvidenceProofRef', evidenceProofRef,
   ], { timeout: 60_000, preserveStdout: true });
-  if (!invocation.ok) return { ...identity, ok: false, blocker: 'RECOVERY_MESH_WAKE_ADAPTER_FAILED', exitCode: invocation.status };
+  if (!invocation.ok) {
+    const blocker = classifyRecoveryMeshWakeAdapterFailure(invocation);
+    return {
+      ...identity,
+      ok: false,
+      blocker,
+      finalVerdict: 'BATTLE_BRIDGE_RECOVERY_MESH_WAKE_BLOCKED',
+      exitCode: invocation.status,
+    };
+  }
   let result;
   try { result = parseBoundedGitHubJson(invocation.stdout, 16 * 1024); } catch {
     return { ...identity, ok: false, blocker: 'RECOVERY_MESH_WAKE_RECEIPT_INVALID' };
