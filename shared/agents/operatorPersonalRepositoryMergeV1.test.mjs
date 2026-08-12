@@ -10,12 +10,16 @@ import {
   PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS,
   PERSONAL_REPOSITORY_WORKFLOW_NAME,
   PERSONAL_REPOSITORY_WORKFLOW_PATH,
+  buildPersonalRepositoryArtifactArchiveRequest,
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
   executeBoundedPersonalRepositoryRead,
   extractPersonalRepositoryArtifactZip,
   parsePersonalRepositoryDispatchInputs,
+  readBoundedPersonalRepositoryResponseBody,
   validatePersonalRepositoryApprovalReceipt,
+  validatePersonalRepositoryArtifactArchiveRedirect,
+  validatePersonalRepositoryArtifactArchiveResponse,
   validatePersonalRepositoryConfiguration,
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
@@ -28,6 +32,37 @@ import {
 
 function response(status) {
   return { status, body: { cancel: async () => {} } };
+}
+
+function headers(values = {}) {
+  const normalized = Object.fromEntries(Object.entries(values).map(([key, value]) => [key.toLowerCase(), value]));
+  return { get: (name) => normalized[String(name).toLowerCase()] ?? null };
+}
+
+const ARTIFACT_API_PATH = '/repos/Cheekyfellastef/stephan-os/actions/artifacts/9140818868/zip';
+const ARTIFACT_API_URL = `https://api.github.com${ARTIFACT_API_PATH}`;
+const ARTIFACT_ARCHIVE_URL = 'https://productionresultssa17.blob.core.windows.net/actions-results/80c77559-8ff7-49a5-9d2f-08c5e8ff1b84/workflow-job-run-4d9be84b-e576-5bc3-a654-2085dc99aec3/artifacts/7fc179bd387fce1470d9f99f52fcca5a01ff1d1358562f69c71f5f1cf03b08f4.zip?rscd=attachment&rsct=application%2Fzip&se=2099-01-01T00%3A00%3A00Z&sig=signed&ske=2099-01-01T00%3A00%3A00Z&skoid=00000000-0000-0000-0000-000000000000&sks=b&skt=2099-01-01T00%3A00%3A00Z&sktid=00000000-0000-0000-0000-000000000000&skv=2025-11-05&sp=r&spr=https&sr=b&st=2099-01-01T00%3A00%3A00Z&sv=2025-11-05';
+
+function artifactRedirectResponse(overrides = {}) {
+  return {
+    status: 302,
+    redirected: false,
+    url: ARTIFACT_API_URL,
+    headers: headers({ location: ARTIFACT_ARCHIVE_URL }),
+    body: { cancel: async () => {} },
+    ...overrides,
+  };
+}
+
+function artifactArchiveResponse(overrides = {}) {
+  return {
+    status: 200,
+    redirected: false,
+    url: ARTIFACT_ARCHIVE_URL,
+    headers: headers({ 'content-type': 'application/zip', 'content-length': '1101' }),
+    body: { cancel: async () => {} },
+    ...overrides,
+  };
 }
 
 const ARTIFACT_FILE = 'independent-review-result.json';
@@ -221,6 +256,187 @@ test('in-process artifact ZIP failures remain credential-free and consume no pro
   const credentialNamed = singleEntryZip({ fileName: secret });
   assertZipBlocked(credentialNamed.archive, 'filename-mismatch');
   assert.doesNotMatch(extractPersonalRepositoryArtifactZip.toString(), /process\.env|child_process|spawn|unzip/i);
+});
+
+test('artifact archive transport accepts one exact GitHub-to-Azure redirect and builds a credential-free request', () => {
+  const redirect = validatePersonalRepositoryArtifactArchiveRedirect({
+    path: ARTIFACT_API_PATH,
+    repository: 'Cheekyfellastef/stephan-os',
+    response: artifactRedirectResponse(),
+  });
+  assert.equal(redirect.valid, true);
+  assert.equal(redirect.location, ARTIFACT_ARCHIVE_URL);
+
+  const download = buildPersonalRepositoryArtifactArchiveRequest(redirect.location);
+  assert.equal(download.valid, true);
+  assert.deepEqual(download.request, {
+    url: ARTIFACT_ARCHIVE_URL,
+    method: 'GET',
+    body: null,
+    redirect: 'manual',
+    headers: { Accept: 'application/zip' },
+  });
+  assert.deepEqual(Object.keys(download.request.headers), ['Accept']);
+  assert.doesNotMatch(JSON.stringify(download.request), /authorization|bearer|token|credential|secret/i);
+
+  const archive = validatePersonalRepositoryArtifactArchiveResponse({
+    expectedUrl: download.request.url,
+    response: artifactArchiveResponse(),
+    maxBytes: 256 * 1024,
+  });
+  assert.equal(archive.valid, true);
+  assert.equal(archive.contentLength, 1101);
+});
+
+test('artifact archive redirect rejects missing, malformed, repeated, widened, and credential-bearing locations', () => {
+  const mutations = [
+    '',
+    'not-a-url',
+    ARTIFACT_ARCHIVE_URL.replace('https://', 'http://'),
+    ARTIFACT_ARCHIVE_URL.replace('https://', 'https://user:password@'),
+    ARTIFACT_ARCHIVE_URL.replace('productionresultssa17.blob.core.windows.net', 'api.github.com'),
+    ARTIFACT_ARCHIVE_URL.replace('productionresultssa17.blob.core.windows.net', 'attacker.blob.core.windows.net'),
+    ARTIFACT_ARCHIVE_URL.replace('/actions-results/', '/other-results/'),
+    `${ARTIFACT_ARCHIVE_URL}&sig=duplicate`,
+    `${ARTIFACT_ARCHIVE_URL}&widened=true`,
+    `${ARTIFACT_ARCHIVE_URL}#fragment`,
+    ARTIFACT_ARCHIVE_URL.replace('spr=https', 'spr=http'),
+    ARTIFACT_ARCHIVE_URL.replace('sp=r', 'sp=rw'),
+    ARTIFACT_ARCHIVE_URL.replace('sr=b', 'sr=c'),
+  ];
+  for (const location of mutations) {
+    const responseValue = artifactRedirectResponse({ headers: headers({ location }) });
+    const verdict = validatePersonalRepositoryArtifactArchiveRedirect({
+      path: ARTIFACT_API_PATH,
+      repository: 'Cheekyfellastef/stephan-os',
+      response: responseValue,
+    });
+    assert.equal(verdict.valid, false, location || 'missing location');
+    assert.equal(buildPersonalRepositoryArtifactArchiveRequest(location).valid, false, location || 'missing location');
+  }
+});
+
+test('artifact archive redirect binds repository, API response identity, and one manual hop', () => {
+  for (const input of [
+    { repository: 'Other/stephan-os' },
+    { path: '/repos/Cheekyfellastef/stephan-os/actions/artifacts/0/zip' },
+    { response: artifactRedirectResponse({ status: 200 }) },
+    { response: artifactRedirectResponse({ status: 415, headers: headers({ 'content-type': 'application/json' }) }) },
+    { response: artifactRedirectResponse({ redirected: true }) },
+    { response: artifactRedirectResponse({ url: 'https://api.github.com/repos/Other/stephan-os/actions/artifacts/9140818868/zip' }) },
+  ]) {
+    const verdict = validatePersonalRepositoryArtifactArchiveRedirect({
+      path: ARTIFACT_API_PATH,
+      repository: 'Cheekyfellastef/stephan-os',
+      response: artifactRedirectResponse(),
+      ...input,
+    });
+    assert.equal(verdict.valid, false);
+    assert.equal(verdict.location, '');
+  }
+});
+
+test('artifact archive response rejects every further redirect and malformed binary proof before consumption', async () => {
+  const responses = [
+    artifactArchiveResponse({ status: 302, headers: headers({ location: ARTIFACT_ARCHIVE_URL }) }),
+    artifactArchiveResponse({ redirected: true }),
+    artifactArchiveResponse({ url: ARTIFACT_ARCHIVE_URL.replace('sig=signed', 'sig=changed') }),
+    artifactArchiveResponse({ headers: headers({ 'content-type': 'application/json', 'content-length': '1101' }) }),
+    artifactArchiveResponse({ headers: headers({ 'content-type': 'application/zip' }) }),
+    artifactArchiveResponse({ headers: headers({ 'content-type': 'application/zip', 'content-length': String(256 * 1024 + 1) }) }),
+  ];
+  for (const responseValue of responses) {
+    let consumed = false;
+    await assert.rejects(
+      executeBoundedPersonalRepositoryRead({
+        path: `${ARTIFACT_API_PATH}#credential-free-archive-download`,
+        request: async () => responseValue,
+        validateResponse: (boundedResponse) => validatePersonalRepositoryArtifactArchiveResponse({
+          expectedUrl: ARTIFACT_ARCHIVE_URL,
+          response: boundedResponse,
+          maxBytes: 256 * 1024,
+        }),
+        consume: async () => {
+          consumed = true;
+          return Buffer.alloc(0);
+        },
+        delay: async () => assert.fail('policy violations must not be retried'),
+      }),
+      (error) => error.code === 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION',
+    );
+    assert.equal(consumed, false);
+  }
+});
+
+test('artifact archive body reader bounds streamed bytes independently of declared length', async () => {
+  let cancelled = 0;
+  let released = 0;
+  const chunks = [Buffer.alloc(4, 1), Buffer.alloc(5, 2)];
+  const exact = await readBoundedPersonalRepositoryResponseBody({
+    body: {
+      getReader: () => ({
+        read: async () => (chunks.length ? { done: false, value: chunks.shift() } : { done: true }),
+        cancel: async () => { cancelled += 1; },
+        releaseLock: () => { released += 1; },
+      }),
+    },
+  }, 9);
+  assert.equal(exact.length, 9);
+  assert.equal(cancelled, 0);
+  assert.equal(released, 1);
+
+  let overrunCancelled = 0;
+  await assert.rejects(
+    readBoundedPersonalRepositoryResponseBody({
+      body: {
+        getReader: () => ({
+          read: async () => ({ done: false, value: Buffer.alloc(10, 3) }),
+          cancel: async () => { overrunCancelled += 1; },
+          releaseLock: () => {},
+        }),
+      },
+    }, 9),
+    (error) => error.code === 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION'
+      && error.blockers.includes('personal-repository-artifact-archive-body-size-exceeded'),
+  );
+  assert.equal(overrunCancelled, 1);
+});
+
+test('artifact archive body reader rejects empty, malformed and unavailable streams without throwing secrets', async () => {
+  for (const responseValue of [
+    {},
+    { body: { getReader: () => ({ read: async () => ({ done: true }), releaseLock: () => {} }) } },
+    { body: { getReader: () => ({ read: async () => ({ done: false, value: 'not-bytes' }), cancel: async () => {}, releaseLock: () => {} }) } },
+  ]) {
+    await assert.rejects(
+      readBoundedPersonalRepositoryResponseBody(responseValue, 9),
+      (error) => {
+        assert.equal(error.code, 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION');
+        assert.doesNotMatch(error.message, /token|authorization|bearer|secret/i);
+        return true;
+      },
+    );
+  }
+});
+
+test('artifact archive transport retries genuine transient reads before applying terminal response policy', async () => {
+  const statuses = [503, 502, 200];
+  let validations = 0;
+  const result = await executeBoundedPersonalRepositoryRead({
+    path: `${ARTIFACT_API_PATH}#credential-free-archive-download`,
+    request: async () => artifactArchiveResponse({ status: statuses.shift() }),
+    validateResponse: (boundedResponse) => {
+      validations += 1;
+      return validatePersonalRepositoryArtifactArchiveResponse({
+        expectedUrl: ARTIFACT_ARCHIVE_URL,
+        response: boundedResponse,
+        maxBytes: 256 * 1024,
+      });
+    },
+    delay: async () => {},
+  });
+  assert.equal(result.attempts, 3);
+  assert.equal(validations, 1);
 });
 
 test('bounded personal-repository reads recover from transient transport failures', async () => {

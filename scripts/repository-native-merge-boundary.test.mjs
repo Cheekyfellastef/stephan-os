@@ -112,7 +112,16 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /redirect: authorization === 'ruleset-proof' \? 'error' : 'follow'/);
   assert.match(source, /validatePersonalRepositoryRulesetProofResponse/);
   assert.match(source, /consume: async \(boundedResponse\) => Buffer\.from\(await boundedResponse\.arrayBuffer\(\)\)/);
-  assert.equal([...source.matchAll(/executeBoundedPersonalRepositoryRead/g)].length, 2);
+  assert.equal([...source.matchAll(/executeBoundedPersonalRepositoryRead/g)].length, 4);
+  assert.match(source, /Accept: 'application\/vnd\.github\+json'/);
+  assert.match(source, /redirect: 'manual'/);
+  assert.match(source, /validatePersonalRepositoryArtifactArchiveRedirect/);
+  assert.match(source, /buildPersonalRepositoryArtifactArchiveRequest/);
+  assert.match(source, /validatePersonalRepositoryArtifactArchiveResponse/);
+  assert.match(source, /readBoundedPersonalRepositoryResponseBody\(boundedResponse, maxBytes\)/);
+  assert.match(source, /headers: \{\s*\.\.\.download\.request\.headers,\s*'User-Agent': USER_AGENT,\s*\}/);
+  assert.doesNotMatch(source, /download\.request\.url[\s\S]{0,500}Authorization:/);
+  assert.doesNotMatch(source, /accept: 'application\/octet-stream'/);
   assert.match(source, /personal-repository-public-rules-api/);
   assert.match(source, /repos\/\$\{context\.owner\}\/\$\{context\.repo\}`, \{ authorization: 'ruleset-proof' \}/);
   assert.match(source, /rules\/branches\/main[\s\S]*?authorization: 'ruleset-proof'/);
