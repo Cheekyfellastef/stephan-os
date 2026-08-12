@@ -54,17 +54,37 @@ test('protected boundary keeps the native queue and adds only the exact user-own
   assert.equal([...protectedSource.matchAll(/contents: write/g)].length, 1);
   assert.equal([...protectedSource.matchAll(/issues: write/g)].length, 1);
   assert.equal([...protectedSource.matchAll(/pull-requests: write/g)].length, 1);
-  assert.equal([...protectedSource.matchAll(/actions\/create-github-app-token@v2/g)].length, 1);
-  assert.equal([...protectedSource.matchAll(/secrets\.STEPHANOS_RULESET_PROOF_APP_ID/g)].length, 1);
-  assert.equal([...protectedSource.matchAll(/secrets\.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY/g)].length, 1);
-  assert.equal([...protectedSource.matchAll(/STEPHANOS_RULESET_PROOF_TOKEN:/g)].length, 1);
-  assert.match(protectedSource, /permission-administration: read/);
+  assert.equal([...protectedSource.matchAll(/actions\/create-github-app-token@v2/g)].length, 3);
+  assert.equal([...protectedSource.matchAll(/secrets\.STEPHANOS_RULESET_PROOF_APP_ID/g)].length, 3);
+  assert.equal([...protectedSource.matchAll(/secrets\.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY/g)].length, 3);
+  assert.equal([...protectedSource.matchAll(/STEPHANOS_RULESET_PROOF_TOKEN:/g)].length, 3);
+  assert.equal([...protectedSource.matchAll(/permission-administration: read/g)].length, 3);
+  assert.equal([...protectedSource.matchAll(/name: operator-merge-approval/g)].length, 4);
+  const evidenceJob = protectedSource.slice(
+    protectedSource.indexOf('  personal-repository-evidence:'),
+    protectedSource.indexOf('  operator-personal-repository-approval:'),
+  );
   const approvalJob = protectedSource.slice(
     protectedSource.indexOf('  operator-personal-repository-approval:'),
     protectedSource.indexOf('  operator-personal-repository-squash-merge:'),
   );
+  const mergeJob = protectedSource.slice(
+    protectedSource.indexOf('  operator-personal-repository-squash-merge:'),
+  );
+  assert.match(evidenceJob, /actions\/create-github-app-token@v2/);
+  assert.match(evidenceJob, /STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}/);
+  assert.match(evidenceJob, /environment:\s*\n      name: operator-merge-approval/);
+  assert.match(evidenceJob, /Collect exact personal-repository evidence after protected admission/);
+  assert.doesNotMatch(evidenceJob, /contents: write|issues: write|pull-requests: write/);
   assert.match(approvalJob, /actions\/create-github-app-token@v2/);
   assert.match(approvalJob, /STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}/);
+  assert.match(approvalJob, /needs: \[personal-repository-evidence\]/);
+  assert.match(approvalJob, /Re-prove immutable evidence after protected approval/);
+  assert.doesNotMatch(approvalJob, /contents: write|issues: write|pull-requests: write/);
+  assert.match(mergeJob, /actions\/create-github-app-token@v2/);
+  assert.match(mergeJob, /STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}/);
+  assert.match(mergeJob, /needs: \[personal-repository-evidence, operator-personal-repository-approval\]/);
+  assert.match(mergeJob, /Re-prove, squash exact head and publish the bounded receipt/);
   assert.doesNotMatch(protectedSource, /\b(?:actions|deployments|statuses|checks): write\b/);
   assert.doesNotMatch(protectedSource, /recover|repository_dispatch|workflow_call|continue-on-error/);
 
@@ -82,11 +102,13 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /validatePersonalRepositoryConfiguration/);
   assert.match(source, /validatePersonalRepositoryWorkflowRuns/);
   assert.match(source, /authorization === 'omit' && \(method !== 'GET' \|\| body !== null\)/);
+  assert.match(source, /validatePersonalRepositoryRulesetProofRequest/);
   assert.match(source, /personal-repository-public-rules-api/);
-  assert.match(source, /rules\/branches\/main[\s\S]*?authorization: 'omit'/);
-  assert.match(source, /rulesets\/\$\{rulesetId\}[\s\S]*?authorization: requireBypassProof \? 'ruleset-proof' : 'omit'/);
+  assert.match(source, /repos\/\$\{context\.owner\}\/\$\{context\.repo\}`, \{ authorization: 'ruleset-proof' \}/);
+  assert.match(source, /rules\/branches\/main[\s\S]*?authorization: 'ruleset-proof'/);
+  assert.match(source, /rulesets\/\$\{rulesetId\}[\s\S]*?authorization: 'ruleset-proof'/);
   assert.match(source, /STEPHANOS_RULESET_PROOF_TOKEN/);
-  assert.match(source, /Ruleset proof token is restricted to bounded repository ruleset-detail GET requests/);
+  assert.match(source, /Ruleset proof token is restricted to bounded repository-configuration GET requests/);
   assert.doesNotMatch(source, /GH_TOKEN[^\n]*rules|GITHUB_TOKEN[^\n]*rules/);
   assert.match(source, /loadSelectedIndependentReview/);
   assert.match(source, /personal-repository-prior-attempt-exists/);
@@ -95,6 +117,10 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /mismatches: runIdentityMismatches/);
   assert.doesNotMatch(source, /mismatches:[^\n]*run\?\./);
   assert.match(source, /validatePersonalRepositoryApprovalReceipt/);
+  assert.match(source, /PERSONAL_REPOSITORY_EVIDENCE_READY_AFTER_PROTECTED_ADMISSION/);
+  assert.match(source, /PERSONAL_REPOSITORY_PROTECTED_APPROVAL_READY/);
+  assert.match(source, /PERSONAL_REPOSITORY_PROTECTED_SQUASH_MERGED/);
+  assert.doesNotMatch(source, /PREAPPROVAL|BEFORE_PROTECTED_ENVIRONMENT|Pre-environment|before protected approval/i);
   assert.match(source, /method: 'PUT',[\s\S]*?merge_method: 'squash',[\s\S]*?sha: receipt\.sourceHead/);
   assert.equal([...source.matchAll(/pulls\/\$\{receipt\.prNumber\}\/merge/g)].length, 1);
   assert.doesNotMatch(source, /delete_branch|DELETE|git\s+(?:push|reset|clean|rebase)|--force/);
