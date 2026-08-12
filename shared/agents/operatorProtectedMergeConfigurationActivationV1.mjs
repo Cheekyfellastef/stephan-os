@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, verify } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 export const OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_SCHEMA =
   'stephanos.operator-protected-merge-configuration-activation-evidence.v1';
@@ -6,15 +6,17 @@ export const OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_SCHEMA =
 export const OPERATOR_PROTECTED_MERGE_CONFIGURATION_OBSERVATION_SCHEMA =
   'stephanos.operator-protected-merge-configuration-activation.v1';
 
-export const OPERATOR_PROTECTED_MERGE_CONFIGURATION_PROVENANCE_SCHEMA =
-  'stephanos.operator-protected-merge-configuration-live-observation-provenance.v1';
+export const OPERATOR_PROTECTED_MERGE_CONFIGURATION_PROVIDER_RECEIPT_SCHEMA =
+  'stephanos.operator-protected-merge-configuration-provider-receipt.v1';
 
-export const OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_PUBLIC_KEY_PEM = [
-  '-----BEGIN PUBLIC KEY-----',
-  'MCowBQYDK2VwAyEASWlaPvT+AOVVcz5c18iF9NdOzx1ZerJpxekKjG7Jhm8=',
-  '-----END PUBLIC KEY-----',
-  '',
-].join('\n');
+export const OPERATOR_PROTECTED_MERGE_CONFIGURATION_PROVIDER_REQUIRED =
+  'PROVIDER_PROOF_REQUIRED';
+
+const MAX_CANONICAL_DEPTH = 32;
+const MAX_CANONICAL_NODES = 4096;
+const MAX_CANONICAL_BYTES = 262_144;
+const MAX_CANONICAL_ARRAY_LENGTH = 2048;
+const MAX_CANONICAL_OBJECT_KEYS = 512;
 
 function deepFreeze(value) {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -24,54 +26,146 @@ function deepFreeze(value) {
   return value;
 }
 
-function isPlainRecord(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  return Object.getPrototypeOf(value) === Object.prototype;
-}
+function safeCanonicalJson(value) {
+  const state = {
+    ancestors: new WeakSet(),
+    bytes: 0,
+    nodes: 0,
+    parts: [],
+  };
 
-function isDenseArray(value) {
-  return Array.isArray(value)
-    && Array.from({ length: value.length }, (_, index) => index)
-      .every((index) => Object.hasOwn(value, index));
+  const emit = (part) => {
+    state.bytes += Buffer.byteLength(part, 'utf8');
+    if (state.bytes > MAX_CANONICAL_BYTES) throw new Error('canonical-json-too-large');
+    state.parts.push(part);
+  };
+
+  const visit = (candidate, depth) => {
+    if (depth > MAX_CANONICAL_DEPTH) throw new Error('canonical-json-depth-exceeded');
+    state.nodes += 1;
+    if (state.nodes > MAX_CANONICAL_NODES) throw new Error('canonical-json-node-limit-exceeded');
+
+    if (candidate === null) {
+      emit('null');
+      return;
+    }
+
+    const type = typeof candidate;
+    if (type === 'string') {
+      emit(JSON.stringify(candidate));
+      return;
+    }
+    if (type === 'boolean') {
+      emit(candidate ? 'true' : 'false');
+      return;
+    }
+    if (type === 'number') {
+      if (!Number.isFinite(candidate) || Object.is(candidate, -0)) {
+        throw new Error('canonical-json-number-invalid');
+      }
+      emit(JSON.stringify(candidate));
+      return;
+    }
+    if (type !== 'object') throw new Error('canonical-json-type-unsupported');
+    if (state.ancestors.has(candidate)) throw new Error('canonical-json-cycle');
+
+    const prototype = Object.getPrototypeOf(candidate);
+    const keys = Reflect.ownKeys(candidate);
+    if (keys.some((key) => typeof key === 'symbol')) {
+      throw new Error('canonical-json-symbol-key-unsupported');
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(candidate);
+    state.ancestors.add(candidate);
+    try {
+      if (Array.isArray(candidate)) {
+        if (prototype !== Array.prototype) throw new Error('canonical-json-prototype-unsupported');
+        const lengthDescriptor = descriptors.length;
+        const length = lengthDescriptor?.value;
+        if (!Number.isSafeInteger(length) || length < 0 || length > MAX_CANONICAL_ARRAY_LENGTH) {
+          throw new Error('canonical-json-array-length-invalid');
+        }
+        const expectedKeys = Array.from({ length }, (_, index) => String(index));
+        const actualKeys = keys.filter((key) => key !== 'length');
+        if (
+          actualKeys.length !== expectedKeys.length
+          || actualKeys.some((key, index) => key !== expectedKeys[index])
+        ) {
+          throw new Error('canonical-json-array-not-dense');
+        }
+        emit('[');
+        for (let index = 0; index < length; index += 1) {
+          const descriptor = descriptors[String(index)];
+          if (!descriptor || !Object.hasOwn(descriptor, 'value') || descriptor.enumerable !== true) {
+            throw new Error('canonical-json-property-invalid');
+          }
+          if (index > 0) emit(',');
+          visit(descriptor.value, depth + 1);
+        }
+        emit(']');
+        return;
+      }
+
+      if (prototype !== Object.prototype) throw new Error('canonical-json-prototype-unsupported');
+      if (keys.length > MAX_CANONICAL_OBJECT_KEYS) throw new Error('canonical-json-object-key-limit-exceeded');
+      const sortedKeys = [...keys].sort();
+      emit('{');
+      for (let index = 0; index < sortedKeys.length; index += 1) {
+        const key = sortedKeys[index];
+        const descriptor = descriptors[key];
+        if (!descriptor || !Object.hasOwn(descriptor, 'value') || descriptor.enumerable !== true) {
+          throw new Error('canonical-json-property-invalid');
+        }
+        if (index > 0) emit(',');
+        emit(JSON.stringify(key));
+        emit(':');
+        visit(descriptor.value, depth + 1);
+      }
+      emit('}');
+    } finally {
+      state.ancestors.delete(candidate);
+    }
+  };
+
+  try {
+    visit(value, 0);
+    return Object.freeze({ ok: true, json: state.parts.join(''), blocker: null });
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      json: null,
+      blocker: typeof error?.message === 'string' && error.message.startsWith('canonical-json-')
+        ? error.message
+        : 'canonical-json-inspection-failed',
+    });
+  }
 }
 
 function exactClosedWorldValue(actual, expected) {
-  if (Array.isArray(expected)) {
-    return isDenseArray(actual)
-      && actual.length === expected.length
-      && expected.every((child, index) => exactClosedWorldValue(actual[index], child));
+  const actualJson = safeCanonicalJson(actual);
+  if (!actualJson.ok) return false;
+  const expectedJson = safeCanonicalJson(expected);
+  return expectedJson.ok && actualJson.json === expectedJson.json;
+}
+
+function isPlainRecord(value) {
+  try {
+    return Boolean(value)
+      && typeof value === 'object'
+      && !Array.isArray(value)
+      && Object.getPrototypeOf(value) === Object.prototype;
+  } catch {
+    return false;
   }
-  if (isPlainRecord(expected)) {
-    if (!isPlainRecord(actual)) return false;
-    const expectedKeys = Object.keys(expected).sort();
-    const actualKeys = Object.keys(actual).sort();
-    return exactClosedWorldValue(actualKeys, expectedKeys)
-      && expectedKeys.every((key) => exactClosedWorldValue(actual[key], expected[key]));
-  }
-  return Object.is(actual, expected);
 }
 
-function canonicalJson(value) {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  return `{${Object.keys(value).sort().map((key) => (
-    `${JSON.stringify(key)}:${canonicalJson(value[key])}`
-  )).join(',')}}`;
-}
-
-function sha256(value) {
-  return createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex');
-}
-
-function insertionOrderedSha256(value) {
-  return createHash('sha256').update(JSON.stringify(value), 'utf8').digest('hex');
-}
-
-function decodeCanonicalBase64(value) {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return null;
-  const bytes = Buffer.from(value, 'base64');
-  if (bytes.length !== 64 || bytes.toString('base64') !== value) return null;
-  return bytes;
+function canonicalSha256(value) {
+  const serialized = safeCanonicalJson(value);
+  if (!serialized.ok) return Object.freeze({ ok: false, sha256: null, blocker: serialized.blocker });
+  return Object.freeze({
+    ok: true,
+    sha256: createHash('sha256').update(serialized.json, 'utf8').digest('hex'),
+    blocker: null,
+  });
 }
 
 export const OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION = deepFreeze({
@@ -136,93 +230,60 @@ export const OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION = deepFreeze({
 });
 
 export const OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_SHA256 =
-  insertionOrderedSha256(OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION);
+  canonicalSha256(OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION).sha256;
 
-const EXPECTED_PROVENANCE_CORE = deepFreeze({
-  schema: OPERATOR_PROTECTED_MERGE_CONFIGURATION_PROVENANCE_SCHEMA,
-  receiptId: 'github-live-configuration-observation-pr1766-20260812T113058556Z',
-  observer: {
-    id: 'codex-desktop-battle-bridge',
-    class: 'qualified-operator-authenticated-github-live-observer',
-    independence: 'external-to-source-contract',
-    authority: 'read-only',
-  },
-  observedAtUtc: '2026-08-12T11:30:58.556Z',
-  capture: {
-    repository: 'Cheekyfellastef/stephan-os',
-    authenticated: true,
-    tlsVerified: true,
-    surfaces: [
-      'github-rest-ruleset-20640195',
-      'github-admin-installation-152662199',
-      'github-admin-app-stephanos-ruleset-proof-reader',
-      'github-admin-app-permissions-stephanos-ruleset-proof-reader',
-    ],
-  },
+// This pre-existing independent artifact is exact source-review evidence only. Its immutable
+// identity is useful to reject forged provider metadata, but it does not attest the live App or
+// ruleset observation and therefore cannot activate this contract.
+const KNOWN_SOURCE_REVIEW_RECEIPT = deepFreeze({
+  schema: OPERATOR_PROTECTED_MERGE_CONFIGURATION_PROVIDER_RECEIPT_SCHEMA,
+  provider: 'github-actions-immutable-artifact',
+  repository: 'Cheekyfellastef/stephan-os',
+  observer: 'Independent Merge Security Review',
+  workflowRunId: 31592716405,
+  workflowRunAttempt: 1,
+  artifactId: 9139766493,
+  artifactName: 'stephanos-independent-review-31592716405-attempt-1',
+  artifactDigest: 'sha256:03984ddf408ca7a1a5eb559f748c16be43b905d59cda54193f6e6fc8d2d6e147',
+  payloadSha256: '619c10ccf7aa18852737dfcc3a69c2c3f996cc1dbafcec02e07c4b1a2991c599',
+  sourceHead: 'b1d7e9819dc975dc750fb0d7a41ccffb565ee95e',
+  baseSha: 'ba10365b0c873398ebccc397f64358c7a01fb8cf',
   observationSha256: OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_SHA256,
-  reviewArtifact: {
-    workflow: 'Independent Merge Security Review',
-    workflowRunId: 31591316347,
-    workflowRunAttempt: 1,
-    artifactId: 9139216442,
-    artifactName: 'stephanos-independent-review-31591316347-attempt-1',
-    artifactDigest: 'sha256:aec8620dc9e21a3cbf823bd641cede05a6872c341a2976c22cd1cc25eae3828f',
-    payloadSha256: 'f65acf7914bd1da17320438b3ac9f99f9207d357f8ed98bfdec906bb71236075',
-    sourceHead: '5ac8a414c38400f7ff631cc3842bb79150b1c400',
-    baseSha: 'ba10365b0c873398ebccc397f64358c7a01fb8cf',
-    createdAtUtc: '2026-08-12T11:19:26.603Z',
-    expired: false,
-  },
+  attestationClass: 'source-review-only',
 });
 
-const EXPECTED_SIGNATURE = deepFreeze({
-  algorithm: 'Ed25519',
-  keyId: 'sha256:6facafd823e3d3274218bbe0c7f4228b08e5fca98e057db7ae959300424b559f',
-  value: 'cNF+dYoICe1aERyaFbnbhy1g/gfKhB2B3XfOboQgTa/pyH41xTob+d31CSfFp7N1eTniNYiWFTFfVxKgrkISDA==',
-});
-
-const EXPECTED_EVIDENCE_SHA256 =
-  '419b59c82679b0b5abe31606143c557413755d1a19d4f3232714f73e5aab6094';
-
-function verifyLiveObservationSignature(evidence) {
-  if (!exactClosedWorldValue(evidence?.provenance?.signature, EXPECTED_SIGNATURE)) return false;
-  const signatureBytes = decodeCanonicalBase64(evidence?.provenance?.signature?.value);
-  if (!signatureBytes) return false;
-  const provenanceCore = Object.fromEntries(
-    Object.entries(evidence.provenance).filter(([key]) => key !== 'signature'),
-  );
-  const payload = {
-    schema: evidence.schema,
-    observation: evidence.observation,
-    provenance: provenanceCore,
-  };
-  try {
-    return verify(
-      null,
-      Buffer.from(canonicalJson(payload), 'utf8'),
-      createPublicKey(OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_PUBLIC_KEY_PEM),
-      signatureBytes,
-    );
-  } catch {
-    return false;
-  }
+function result(blockers, finalVerdict = 'BLOCKED') {
+  return Object.freeze({
+    valid: false,
+    finalVerdict,
+    blockers: Object.freeze([...blockers]),
+    evidenceSha256: null,
+  });
 }
 
 export function validateOperatorProtectedMergeConfigurationActivation(evidence) {
+  const canonicalEvidence = safeCanonicalJson(evidence);
+  if (!canonicalEvidence.ok) {
+    return result([
+      'activation-evidence-noncanonical',
+      canonicalEvidence.blocker,
+    ]);
+  }
+  let normalizedEvidence;
+  try {
+    normalizedEvidence = JSON.parse(canonicalEvidence.json);
+  } catch {
+    return result(['activation-evidence-canonicalization-failed']);
+  }
+  if (!isPlainRecord(normalizedEvidence)) return result(['activation-evidence-malformed']);
+  evidence = normalizedEvidence;
+
   const blockers = [];
   const block = (code) => {
     if (!blockers.includes(code)) blockers.push(code);
   };
 
-  if (!isPlainRecord(evidence)) {
-    return Object.freeze({
-      valid: false,
-      blockers: Object.freeze(['activation-evidence-malformed']),
-      evidenceSha256: null,
-    });
-  }
-
-  if (!exactClosedWorldValue(Object.keys(evidence).sort(), ['observation', 'provenance', 'schema'])) {
+  if (!exactClosedWorldValue(Object.keys(evidence).sort(), ['observation', 'providerReceipt', 'schema'])) {
     block('activation-evidence-keys-invalid');
   }
   if (evidence.schema !== OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_SCHEMA) {
@@ -256,45 +317,69 @@ export function validateOperatorProtectedMergeConfigurationActivation(evidence) 
     block('activation-observation-keys-invalid');
   }
 
-  const provenance = isPlainRecord(evidence.provenance) ? evidence.provenance : {};
-  if (!isPlainRecord(evidence.provenance)) block('activation-provenance-malformed');
-  const expectedProvenanceKeys = [...Object.keys(EXPECTED_PROVENANCE_CORE), 'signature'].sort();
-  if (!exactClosedWorldValue(Object.keys(provenance).sort(), expectedProvenanceKeys)) {
-    block('activation-provenance-keys-invalid');
-  }
-  if (provenance.schema !== EXPECTED_PROVENANCE_CORE.schema) block('activation-provenance-schema-mismatch');
-  if (provenance.receiptId !== EXPECTED_PROVENANCE_CORE.receiptId) block('activation-provenance-receipt-mismatch');
-  if (!exactClosedWorldValue(provenance.observer, EXPECTED_PROVENANCE_CORE.observer)) {
-    block('activation-provenance-observer-mismatch');
-  }
-  if (provenance.observedAtUtc !== EXPECTED_PROVENANCE_CORE.observedAtUtc) {
-    block('activation-provenance-time-mismatch');
-  }
-  if (!exactClosedWorldValue(provenance.capture, EXPECTED_PROVENANCE_CORE.capture)) {
-    block('activation-provenance-capture-mismatch');
-  }
-  if (
-    provenance.observationSha256 !== EXPECTED_PROVENANCE_CORE.observationSha256
-    || provenance.observationSha256 !== insertionOrderedSha256(observation)
-  ) {
-    block('activation-provenance-observation-digest-mismatch');
-  }
-  if (!exactClosedWorldValue(provenance.reviewArtifact, EXPECTED_PROVENANCE_CORE.reviewArtifact)) {
-    block('activation-provenance-review-artifact-mismatch');
-  }
-  if (!exactClosedWorldValue(provenance.signature, EXPECTED_SIGNATURE)) {
-    block('activation-provenance-signature-identity-mismatch');
-  }
-  if (!verifyLiveObservationSignature(evidence)) block('activation-provenance-signature-invalid');
+  const observationDigest = canonicalSha256(observation);
+  if (!observationDigest.ok) block('activation-observation-noncanonical');
 
-  const evidenceSha256 = sha256(evidence);
-  if (!blockers.length && evidenceSha256 !== EXPECTED_EVIDENCE_SHA256) {
-    block('activation-evidence-digest-mismatch');
+  const providerReceipt = evidence.providerReceipt;
+  if (providerReceipt === null || providerReceipt === undefined) {
+    block('activation-provider-proof-required');
+  } else if (!isPlainRecord(providerReceipt)) {
+    block('activation-provider-proof-malformed');
+    block('activation-provider-proof-required');
+  } else {
+    if (!exactClosedWorldValue(Object.keys(providerReceipt).sort(), Object.keys(KNOWN_SOURCE_REVIEW_RECEIPT).sort())) {
+      block('activation-provider-proof-keys-invalid');
+    }
+    if (providerReceipt.schema !== OPERATOR_PROTECTED_MERGE_CONFIGURATION_PROVIDER_RECEIPT_SCHEMA) {
+      block('activation-provider-proof-schema-mismatch');
+    }
+    if (
+      providerReceipt.provider !== KNOWN_SOURCE_REVIEW_RECEIPT.provider
+      || providerReceipt.repository !== KNOWN_SOURCE_REVIEW_RECEIPT.repository
+      || providerReceipt.observer !== KNOWN_SOURCE_REVIEW_RECEIPT.observer
+    ) {
+      block('activation-provider-proof-identity-mismatch');
+    }
+    if (
+      providerReceipt.workflowRunId !== KNOWN_SOURCE_REVIEW_RECEIPT.workflowRunId
+      || providerReceipt.workflowRunAttempt !== KNOWN_SOURCE_REVIEW_RECEIPT.workflowRunAttempt
+    ) {
+      block('activation-provider-proof-run-mismatch');
+    }
+    if (
+      providerReceipt.artifactId !== KNOWN_SOURCE_REVIEW_RECEIPT.artifactId
+      || providerReceipt.artifactName !== KNOWN_SOURCE_REVIEW_RECEIPT.artifactName
+      || providerReceipt.artifactDigest !== KNOWN_SOURCE_REVIEW_RECEIPT.artifactDigest
+      || providerReceipt.payloadSha256 !== KNOWN_SOURCE_REVIEW_RECEIPT.payloadSha256
+    ) {
+      block('activation-provider-proof-artifact-mismatch');
+    }
+    if (
+      providerReceipt.sourceHead !== KNOWN_SOURCE_REVIEW_RECEIPT.sourceHead
+      || providerReceipt.baseSha !== KNOWN_SOURCE_REVIEW_RECEIPT.baseSha
+    ) {
+      block('activation-provider-proof-source-identity-mismatch');
+    }
+    if (
+      providerReceipt.observationSha256 !== KNOWN_SOURCE_REVIEW_RECEIPT.observationSha256
+      || providerReceipt.observationSha256 !== observationDigest.sha256
+    ) {
+      block('activation-provider-proof-observation-mismatch');
+    }
+    if (providerReceipt.attestationClass !== 'source-review-only') {
+      block('activation-provider-proof-attestation-mismatch');
+    }
+
+    // The only pre-existing immutable receipt reviewed here attests source, not live configuration.
+    // Treating it as a configuration observation would recreate the self-issued trust bug.
+    block('activation-provider-proof-not-live-observation');
+    block('activation-provider-proof-required');
   }
 
-  return Object.freeze({
-    valid: blockers.length === 0,
-    blockers: Object.freeze(blockers),
-    evidenceSha256: blockers.length === 0 ? evidenceSha256 : null,
-  });
+  return result(
+    blockers,
+    blockers.includes('activation-provider-proof-required')
+      ? OPERATOR_PROTECTED_MERGE_CONFIGURATION_PROVIDER_REQUIRED
+      : 'BLOCKED',
+  );
 }

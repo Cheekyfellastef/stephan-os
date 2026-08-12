@@ -8,96 +8,168 @@ const {
   OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_SCHEMA,
   OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_SHA256,
   OPERATOR_PROTECTED_MERGE_CONFIGURATION_OBSERVATION_SCHEMA,
-  OPERATOR_PROTECTED_MERGE_CONFIGURATION_PROVENANCE_SCHEMA,
+  OPERATOR_PROTECTED_MERGE_CONFIGURATION_PROVIDER_RECEIPT_SCHEMA,
+  OPERATOR_PROTECTED_MERGE_CONFIGURATION_PROVIDER_REQUIRED,
   validateOperatorProtectedMergeConfigurationActivation,
 } = activationModule;
 
-const SIGNED_EVIDENCE = Object.freeze({
-  schema: OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_SCHEMA,
-  observation: OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION,
-  provenance: {
-    schema: OPERATOR_PROTECTED_MERGE_CONFIGURATION_PROVENANCE_SCHEMA,
-    receiptId: 'github-live-configuration-observation-pr1766-20260812T113058556Z',
-    observer: {
-      id: 'codex-desktop-battle-bridge',
-      class: 'qualified-operator-authenticated-github-live-observer',
-      independence: 'external-to-source-contract',
-      authority: 'read-only',
-    },
-    observedAtUtc: '2026-08-12T11:30:58.556Z',
-    capture: {
-      repository: 'Cheekyfellastef/stephan-os',
-      authenticated: true,
-      tlsVerified: true,
-      surfaces: [
-        'github-rest-ruleset-20640195',
-        'github-admin-installation-152662199',
-        'github-admin-app-stephanos-ruleset-proof-reader',
-        'github-admin-app-permissions-stephanos-ruleset-proof-reader',
-      ],
-    },
-    observationSha256: '316b6b76652c340dd09a7d7860a6372157be2544dfa4ce9be96def69b90251a6',
-    reviewArtifact: {
-      workflow: 'Independent Merge Security Review',
-      workflowRunId: 31591316347,
-      workflowRunAttempt: 1,
-      artifactId: 9139216442,
-      artifactName: 'stephanos-independent-review-31591316347-attempt-1',
-      artifactDigest: 'sha256:aec8620dc9e21a3cbf823bd641cede05a6872c341a2976c22cd1cc25eae3828f',
-      payloadSha256: 'f65acf7914bd1da17320438b3ac9f99f9207d357f8ed98bfdec906bb71236075',
-      sourceHead: '5ac8a414c38400f7ff631cc3842bb79150b1c400',
-      baseSha: 'ba10365b0c873398ebccc397f64358c7a01fb8cf',
-      createdAtUtc: '2026-08-12T11:19:26.603Z',
-      expired: false,
-    },
-    signature: {
-      algorithm: 'Ed25519',
-      keyId: 'sha256:6facafd823e3d3274218bbe0c7f4228b08e5fca98e057db7ae959300424b559f',
-      value: 'cNF+dYoICe1aERyaFbnbhy1g/gfKhB2B3XfOboQgTa/pyH41xTob+d31CSfFp7N1eTniNYiWFTFfVxKgrkISDA==',
-    },
-  },
+const SOURCE_REVIEW_RECEIPT = Object.freeze({
+  schema: OPERATOR_PROTECTED_MERGE_CONFIGURATION_PROVIDER_RECEIPT_SCHEMA,
+  provider: 'github-actions-immutable-artifact',
+  repository: 'Cheekyfellastef/stephan-os',
+  observer: 'Independent Merge Security Review',
+  workflowRunId: 31592716405,
+  workflowRunAttempt: 1,
+  artifactId: 9139766493,
+  artifactName: 'stephanos-independent-review-31592716405-attempt-1',
+  artifactDigest: 'sha256:03984ddf408ca7a1a5eb559f748c16be43b905d59cda54193f6e6fc8d2d6e147',
+  payloadSha256: '619c10ccf7aa18852737dfcc3a69c2c3f996cc1dbafcec02e07c4b1a2991c599',
+  sourceHead: 'b1d7e9819dc975dc750fb0d7a41ccffb565ee95e',
+  baseSha: 'ba10365b0c873398ebccc397f64358c7a01fb8cf',
+  observationSha256: OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_SHA256,
+  attestationClass: 'source-review-only',
 });
 
-function evidence() {
-  return JSON.parse(JSON.stringify(SIGNED_EVIDENCE));
+function clone(value) {
+  return structuredClone(value);
+}
+
+function evidence(providerReceipt = null) {
+  return {
+    schema: OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_SCHEMA,
+    observation: clone(OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION),
+    providerReceipt: providerReceipt === null ? null : clone(providerReceipt),
+  };
+}
+
+function validateWithoutThrow(value) {
+  let result;
+  assert.doesNotThrow(() => {
+    result = validateOperatorProtectedMergeConfigurationActivation(value);
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.evidenceSha256, null);
+  return result;
 }
 
 function assertBlocked(value, blocker) {
-  const result = validateOperatorProtectedMergeConfigurationActivation(value);
-  assert.equal(result.valid, false);
-  assert.equal(result.evidenceSha256, null);
+  const result = validateWithoutThrow(value);
   assert.ok(result.blockers.includes(blocker), `${blocker} not found in ${result.blockers.join(', ')}`);
+  return result;
 }
 
-test('accepts only the detached-signature-bound exact live observation envelope', () => {
-  const result = validateOperatorProtectedMergeConfigurationActivation(evidence());
+function assertProviderRequired(value) {
+  const result = assertBlocked(value, 'activation-provider-proof-required');
+  assert.equal(result.finalVerdict, OPERATOR_PROTECTED_MERGE_CONFIGURATION_PROVIDER_REQUIRED);
+  return result;
+}
 
-  assert.equal(SIGNED_EVIDENCE.observation.schema, OPERATOR_PROTECTED_MERGE_CONFIGURATION_OBSERVATION_SCHEMA);
-  assert.equal(OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_SHA256,
-    '316b6b76652c340dd09a7d7860a6372157be2544dfa4ce9be96def69b90251a6');
-  assert.equal(result.valid, true);
-  assert.deepEqual(result.blockers, []);
-  assert.equal(result.evidenceSha256,
-    '419b59c82679b0b5abe31606143c557413755d1a19d4f3232714f73e5aab6094');
+test('source constants and missing external proof return explicit PROVIDER_PROOF_REQUIRED', () => {
+  const result = assertProviderRequired(evidence());
+
+  assert.equal(OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION.schema,
+    OPERATOR_PROTECTED_MERGE_CONFIGURATION_OBSERVATION_SCHEMA);
+  assert.match(OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_SHA256, /^[a-f0-9]{64}$/);
+  assert.equal(activationModule.createOperatorProtectedMergeConfigurationActivationEvidence, undefined);
+  assert.equal(activationModule.OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_PUBLIC_KEY_PEM, undefined);
+  assert.equal(result.valid, false);
 });
 
-test('source constants alone cannot manufacture admissible activation evidence', () => {
-  assert.equal(activationModule.createOperatorProtectedMergeConfigurationActivationEvidence, undefined);
-  assertBlocked(OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION, 'activation-evidence-keys-invalid');
+test('a self-selected signing key and signature cannot manufacture activation proof', () => {
+  const value = evidence();
+  value.publicKey = 'source-authored-key';
+  value.signature = 'source-authored-signature';
+  const result = assertBlocked(value, 'activation-evidence-keys-invalid');
+  assert.equal(result.valid, false);
+  assert.equal(result.evidenceSha256, null);
+});
 
-  const unsigned = evidence();
-  delete unsigned.provenance.signature;
-  assertBlocked(unsigned, 'activation-provenance-keys-invalid');
-  assertBlocked(unsigned, 'activation-provenance-signature-invalid');
+test('the pre-existing immutable source-review artifact is not misrepresented as live observation proof', () => {
+  const result = assertProviderRequired(evidence(SOURCE_REVIEW_RECEIPT));
+  assert.ok(result.blockers.includes('activation-provider-proof-not-live-observation'));
+  assert.deepEqual(result.blockers.filter((blocker) => blocker.endsWith('-mismatch')), []);
+});
+
+test('rejects forged provider, repository and observer identity', () => {
+  const mutations = [
+    (receipt) => { receipt.provider = 'source-authored-provider'; },
+    (receipt) => { receipt.repository = 'Cheekyfellastef/other-repo'; },
+    (receipt) => { receipt.observer = 'source-author'; },
+  ];
+  for (const mutate of mutations) {
+    const receipt = clone(SOURCE_REVIEW_RECEIPT);
+    mutate(receipt);
+    const result = assertProviderRequired(evidence(receipt));
+    assert.ok(result.blockers.includes('activation-provider-proof-identity-mismatch'));
+  }
+});
+
+test('rejects forged provider workflow run and attempt', () => {
+  for (const mutate of [
+    (receipt) => { receipt.workflowRunId += 1; },
+    (receipt) => { receipt.workflowRunAttempt = 2; },
+  ]) {
+    const receipt = clone(SOURCE_REVIEW_RECEIPT);
+    mutate(receipt);
+    assertBlocked(evidence(receipt), 'activation-provider-proof-run-mismatch');
+  }
+});
+
+test('rejects forged provider artifact identity, digest and payload hash', () => {
+  const mutations = [
+    (receipt) => { receipt.artifactId += 1; },
+    (receipt) => { receipt.artifactName = 'lookalike'; },
+    (receipt) => { receipt.artifactDigest = `sha256:${'0'.repeat(64)}`; },
+    (receipt) => { receipt.payloadSha256 = '1'.repeat(64); },
+  ];
+  for (const mutate of mutations) {
+    const receipt = clone(SOURCE_REVIEW_RECEIPT);
+    mutate(receipt);
+    assertBlocked(evidence(receipt), 'activation-provider-proof-artifact-mismatch');
+  }
+});
+
+test('rejects forged provider head, base and observation identity', () => {
+  const cases = [
+    ['activation-provider-proof-source-identity-mismatch', (receipt) => { receipt.sourceHead = '2'.repeat(40); }],
+    ['activation-provider-proof-source-identity-mismatch', (receipt) => { receipt.baseSha = '3'.repeat(40); }],
+    ['activation-provider-proof-observation-mismatch', (receipt) => { receipt.observationSha256 = '4'.repeat(64); }],
+  ];
+  for (const [blocker, mutate] of cases) {
+    const receipt = clone(SOURCE_REVIEW_RECEIPT);
+    mutate(receipt);
+    assertBlocked(evidence(receipt), blocker);
+  }
+
+  const changedObservation = evidence(SOURCE_REVIEW_RECEIPT);
+  changedObservation.observation.app.installationId += 1;
+  assertBlocked(changedObservation, 'activation-provider-proof-observation-mismatch');
+});
+
+test('rejects malformed, widened or falsely promoted provider receipts', () => {
+  assertProviderRequired({
+    ...evidence(),
+    providerReceipt: [],
+  });
+
+  const widened = clone(SOURCE_REVIEW_RECEIPT);
+  widened.activationAuthority = true;
+  assertBlocked(evidence(widened), 'activation-provider-proof-keys-invalid');
+
+  const promoted = clone(SOURCE_REVIEW_RECEIPT);
+  promoted.attestationClass = 'live-configuration-observation';
+  const result = assertProviderRequired(evidence(promoted));
+  assert.ok(result.blockers.includes('activation-provider-proof-attestation-mismatch'));
+  assert.ok(result.blockers.includes('activation-provider-proof-not-live-observation'));
 });
 
 test('rejects malformed, missing and widened top-level evidence', () => {
   for (const malformed of [null, undefined, [], 'evidence', 1, new Date()]) {
-    assertBlocked(malformed, 'activation-evidence-malformed');
+    validateWithoutThrow(malformed);
   }
 
   const missing = evidence();
-  delete missing.provenance;
+  delete missing.providerReceipt;
   assertBlocked(missing, 'activation-evidence-keys-invalid');
 
   const widened = evidence();
@@ -109,157 +181,52 @@ test('rejects malformed, missing and widened top-level evidence', () => {
   assertBlocked(wrongSchema, 'activation-schema-mismatch');
 });
 
-test('rejects malformed, missing or widened observation and provenance records', () => {
-  const malformedObservation = evidence();
-  malformedObservation.observation = [];
-  assertBlocked(malformedObservation, 'activation-observation-malformed');
-
-  const widenedObservation = evidence();
-  widenedObservation.observation.liveAuthority = true;
-  assertBlocked(widenedObservation, 'activation-observation-keys-invalid');
-
-  const malformedProvenance = evidence();
-  malformedProvenance.provenance = [];
-  assertBlocked(malformedProvenance, 'activation-provenance-malformed');
-
-  const widenedProvenance = evidence();
-  widenedProvenance.provenance.refreshAuthority = true;
-  assertBlocked(widenedProvenance, 'activation-provenance-keys-invalid');
-});
-
-test('rejects self-issued, stale or mismatched live-observation provenance', () => {
-  const mutations = [
-    ['activation-provenance-receipt-mismatch', (value) => { value.provenance.receiptId = 'self-issued'; }],
-    ['activation-provenance-observer-mismatch', (value) => { value.provenance.observer.id = 'source-factory'; }],
-    ['activation-provenance-observer-mismatch', (value) => { value.provenance.observer.independence = 'self-issued'; }],
-    ['activation-provenance-observer-mismatch', (value) => { value.provenance.observer.authority = 'write'; }],
-    ['activation-provenance-time-mismatch', (value) => { value.provenance.observedAtUtc = '2026-08-11T11:30:58.556Z'; }],
-    ['activation-provenance-capture-mismatch', (value) => { value.provenance.capture.authenticated = false; }],
-    ['activation-provenance-capture-mismatch', (value) => { value.provenance.capture.tlsVerified = false; }],
-    ['activation-provenance-capture-mismatch', (value) => { value.provenance.capture.surfaces.pop(); }],
-  ];
-  for (const [blocker, mutate] of mutations) {
-    const value = evidence();
-    mutate(value);
-    assertBlocked(value, blocker);
-    assertBlocked(value, 'activation-provenance-signature-invalid');
-  }
-});
-
-test('rejects wrong immutable review receipt, artifact, run, attempt, digest or payload hash', () => {
-  const mutations = [
-    (value) => { value.provenance.reviewArtifact.workflow = 'Lookalike Review'; },
-    (value) => { value.provenance.reviewArtifact.workflowRunId += 1; },
-    (value) => { value.provenance.reviewArtifact.workflowRunAttempt = 2; },
-    (value) => { value.provenance.reviewArtifact.artifactId += 1; },
-    (value) => { value.provenance.reviewArtifact.artifactName = 'lookalike-artifact'; },
-    (value) => { value.provenance.reviewArtifact.artifactDigest = `sha256:${'0'.repeat(64)}`; },
-    (value) => { value.provenance.reviewArtifact.payloadSha256 = '1'.repeat(64); },
-    (value) => { value.provenance.reviewArtifact.sourceHead = '2'.repeat(40); },
-    (value) => { value.provenance.reviewArtifact.baseSha = '3'.repeat(40); },
-    (value) => { value.provenance.reviewArtifact.createdAtUtc = '2026-08-12T11:19:25.000Z'; },
-    (value) => { value.provenance.reviewArtifact.expired = true; },
-  ];
-  for (const mutate of mutations) {
-    const value = evidence();
-    mutate(value);
-    assertBlocked(value, 'activation-provenance-review-artifact-mismatch');
-    assertBlocked(value, 'activation-provenance-signature-invalid');
-  }
-});
-
-test('rejects missing, malformed or wrong detached signatures', () => {
+test('rejects wrong repository, App, installation, permissions, event and pending-update truth', () => {
   const cases = [
-    ['activation-provenance-keys-invalid', (value) => { delete value.provenance.signature; }],
-    ['activation-provenance-signature-identity-mismatch', (value) => { value.provenance.signature.algorithm = 'RSA-PSS'; }],
-    ['activation-provenance-signature-identity-mismatch', (value) => { value.provenance.signature.keyId = `sha256:${'0'.repeat(64)}`; }],
-    ['activation-provenance-signature-identity-mismatch', (value) => { value.provenance.signature.value = 'not-base64'; }],
-    ['activation-provenance-signature-identity-mismatch', (value) => { value.provenance.signature.extra = true; }],
+    ['activation-repository-mismatch', (value) => { value.observation.repository.owner = 'OtherOwner'; }],
+    ['activation-repository-mismatch', (value) => { value.observation.repository.selectionMode = 'all'; }],
+    ['activation-repository-mismatch', (value) => { value.observation.repository.selectedRepositories.push('Cheekyfellastef/other'); }],
+    ['activation-app-mismatch', (value) => { value.observation.app.name = 'Lookalike'; }],
+    ['activation-app-mismatch', (value) => { value.observation.app.appId += 1; }],
+    ['activation-app-mismatch', (value) => { value.observation.app.installationId += 1; }],
+    ['activation-app-mismatch', (value) => { value.observation.app.permissions.administration = 'read'; }],
+    ['activation-app-mismatch', (value) => { delete value.observation.app.permissions.metadata; }],
+    ['activation-app-mismatch', (value) => { value.observation.app.permissions.contents = 'read'; }],
+    ['activation-app-mismatch', (value) => { value.observation.app.events.push('repository'); }],
+    ['activation-app-mismatch', (value) => { value.observation.app.permissionUpdatePending = true; }],
   ];
   for (const [blocker, mutate] of cases) {
     const value = evidence();
     mutate(value);
     assertBlocked(value, blocker);
-    assertBlocked(value, 'activation-provenance-signature-invalid');
   }
 });
 
-test('rejects wrong repository identity, all-repository mode and any extra repository', () => {
-  const mutations = [
-    (value) => { value.observation.repository.owner = 'OtherOwner'; },
-    (value) => { value.observation.repository.name = 'other-repo'; },
-    (value) => { value.observation.repository.fullName = 'Cheekyfellastef/other-repo'; },
-    (value) => { value.observation.repository.selectionMode = 'all'; },
-    (value) => { value.observation.repository.selectedRepositories.push('Cheekyfellastef/other-repo'); },
-    (value) => { value.observation.repository.extraScope = true; },
-  ];
-  for (const mutate of mutations) {
-    const value = evidence();
-    mutate(value);
-    assertBlocked(value, 'activation-repository-mismatch');
-    assertBlocked(value, 'activation-provenance-observation-digest-mismatch');
-  }
-});
-
-test('rejects wrong App, installation, permission, event or pending-update truth', () => {
-  const mutations = [
-    (value) => { value.observation.app.name = 'Lookalike Ruleset Reader'; },
-    (value) => { value.observation.app.slug = 'lookalike-ruleset-reader'; },
-    (value) => { value.observation.app.appId += 1; },
-    (value) => { value.observation.app.installationId += 1; },
-    (value) => { value.observation.app.permissions.administration = 'read'; },
-    (value) => { delete value.observation.app.permissions.metadata; },
-    (value) => { value.observation.app.permissions.contents = 'read'; },
-    (value) => { value.observation.app.events.push('repository'); },
-    (value) => { value.observation.app.permissionUpdatePending = true; },
-  ];
-  for (const mutate of mutations) {
-    const value = evidence();
-    mutate(value);
-    assertBlocked(value, 'activation-app-mismatch');
-  }
-});
-
-test('rejects stale main and wrong ruleset, bypass or required-check truth', () => {
-  const mutations = [
+test('rejects stale main, wrong ruleset, bypass, required-check or failed-run identity', () => {
+  const cases = [
     ['activation-main-identity-mismatch', (value) => { value.observation.admissionBase.headSha = '0'.repeat(40); }],
     ['activation-main-identity-mismatch', (value) => { value.observation.admissionBase.treeSha = '1'.repeat(40); }],
     ['activation-ruleset-mismatch', (value) => { value.observation.ruleset.id += 1; }],
-    ['activation-ruleset-mismatch', (value) => { value.observation.ruleset.enforcement = 'disabled'; }],
     ['activation-ruleset-mismatch', (value) => { value.observation.ruleset.bypassActors.push({ actorId: 1 }); }],
     ['activation-ruleset-mismatch', (value) => { value.observation.ruleset.requiredStatusChecks[0].integrationId += 1; }],
-    ['activation-ruleset-mismatch', (value) => { value.observation.ruleset.requiredStatusChecks.push({ context: 'extra', integrationId: 15368 }); }],
+    ['activation-failed-dispatch-mismatch', (value) => { value.observation.failedDispatch.workflowRunId += 1; }],
+    ['activation-failed-dispatch-mismatch', (value) => { value.observation.failedDispatch.runAttempt = 2; }],
+    ['activation-failed-dispatch-mismatch', (value) => { value.observation.failedDispatch.conclusion = 'success'; }],
   ];
-  for (const [blocker, mutate] of mutations) {
+  for (const [blocker, mutate] of cases) {
     const value = evidence();
     mutate(value);
     assertBlocked(value, blocker);
   }
 });
 
-test('rejects every wrong failed-dispatch replay identity or terminal state', () => {
-  const mutations = [
-    (value) => { value.observation.failedDispatch.workflowRunId += 1; },
-    (value) => { value.observation.failedDispatch.runAttempt = 2; },
-    (value) => { value.observation.failedDispatch.event = 'pull_request'; },
-    (value) => { value.observation.failedDispatch.status = 'in_progress'; },
-    (value) => { value.observation.failedDispatch.conclusion = 'success'; },
-    (value) => { value.observation.failedDispatch.baseHeadSha = '2'.repeat(40); },
-  ];
-  for (const mutate of mutations) {
-    const value = evidence();
-    mutate(value);
-    assertBlocked(value, 'activation-failed-dispatch-mismatch');
-  }
-});
-
-test('rejects widened transport or credential handling authority', () => {
+test('preserves the exact GET-only source transport and credential boundary', () => {
   const mutations = [
     (value) => { value.observation.transportBoundary.allowedMethod = 'POST'; },
     (value) => { value.observation.transportBoundary.requestBody = {}; },
     (value) => { value.observation.transportBoundary.redirectMode = 'follow'; },
-    (value) => { value.observation.transportBoundary.allowedRepository = 'Cheekyfellastef/other-repo'; },
-    (value) => { value.observation.transportBoundary.allowedPathTemplates.push('/repos/{owner}/{repository}/contents'); },
+    (value) => { value.observation.transportBoundary.allowedRepository = 'Cheekyfellastef/other'; },
+    (value) => { value.observation.transportBoundary.allowedPathTemplates.push('/graphql'); },
     (value) => { value.observation.transportBoundary.installationPermission = 'administration:read'; },
     (value) => { value.observation.transportBoundary.environmentJobLocal = false; },
     (value) => { value.observation.transportBoundary.credentialPersistence = true; },
@@ -274,21 +241,82 @@ test('rejects widened transport or credential handling authority', () => {
   }
 });
 
-test('rejects sparse authoritative arrays instead of normalizing them', () => {
-  const cases = [
-    ['activation-repository-mismatch', (value) => { value.observation.repository.selectedRepositories = new Array(1); }],
-    ['activation-app-mismatch', (value) => { value.observation.app.events = new Array(1); }],
-    ['activation-ruleset-mismatch', (value) => { value.observation.ruleset.bypassActors = new Array(1); }],
-    ['activation-ruleset-mismatch', (value) => { value.observation.ruleset.requiredStatusChecks = new Array(1); }],
-    ['activation-transport-boundary-mismatch', (value) => { value.observation.transportBoundary.allowedPathTemplates = new Array(3); }],
-    ['activation-provenance-capture-mismatch', (value) => { value.provenance.capture.surfaces = new Array(4); }],
-  ];
+test('cyclic graphs and shared cycles are total and fail closed', () => {
+  const direct = evidence();
+  direct.self = direct;
+  const directResult = assertBlocked(direct, 'activation-evidence-noncanonical');
+  assert.ok(directResult.blockers.includes('canonical-json-cycle'));
 
-  for (const [blocker, mutate] of cases) {
+  const nested = evidence();
+  nested.observation.repository.loop = nested.observation;
+  assertBlocked(nested, 'canonical-json-cycle');
+});
+
+test('BigInt, Symbol, functions, undefined and non-finite numbers are total and fail closed', () => {
+  const cases = [1n, Symbol('authority'), () => true, undefined, Number.NaN, Number.POSITIVE_INFINITY, -0];
+  for (const unsupported of cases) {
     const value = evidence();
-    mutate(value);
-    assertBlocked(value, blocker);
+    value.providerReceipt = unsupported;
+    assertBlocked(value, 'activation-evidence-noncanonical');
   }
+
+  const symbolKey = evidence();
+  symbolKey[Symbol('authority')] = true;
+  assertBlocked(symbolKey, 'canonical-json-symbol-key-unsupported');
+});
+
+test('getters are rejected without execution and unsupported prototypes fail closed', () => {
+  let getterCalls = 0;
+  const withGetter = evidence();
+  Object.defineProperty(withGetter, 'authority', {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return true;
+    },
+  });
+  assertBlocked(withGetter, 'canonical-json-property-invalid');
+  assert.equal(getterCalls, 0);
+
+  for (const unsupported of [new Date(), new Map(), new Set(), Object.create(null)]) {
+    const value = evidence();
+    value.providerReceipt = unsupported;
+    assertBlocked(value, 'canonical-json-prototype-unsupported');
+  }
+});
+
+test('sparse arrays and bounded-serializer expansion limits fail closed', () => {
+  const sparse = evidence();
+  sparse.observation.app.events = new Array(1);
+  assertBlocked(sparse, 'canonical-json-array-not-dense');
+
+  const oversized = evidence();
+  oversized.providerReceipt = new Array(2049).fill(null);
+  assertBlocked(oversized, 'canonical-json-array-length-invalid');
+
+  const tooDeep = evidence();
+  let cursor = tooDeep;
+  for (let index = 0; index < 40; index += 1) {
+    cursor.next = {};
+    cursor = cursor.next;
+  }
+  assertBlocked(tooDeep, 'canonical-json-depth-exceeded');
+});
+
+test('hostile proxy inspection failures are caught and returned as blockers', () => {
+  const hostile = new Proxy({}, {
+    ownKeys() {
+      throw new Error('do not inspect me');
+    },
+  });
+  assertBlocked(hostile, 'canonical-json-inspection-failed');
+
+  const readHostile = new Proxy(evidence(), {
+    get() {
+      throw new Error('property reads are forbidden');
+    },
+  });
+  assertProviderRequired(readHostile);
 });
 
 test('the required protected-merge command executes this activation suite exactly once', () => {
