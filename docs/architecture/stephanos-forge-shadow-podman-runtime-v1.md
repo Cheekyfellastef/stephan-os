@@ -55,8 +55,8 @@ The runtime planner and fixed Windows adapter progress only through these states
 10. create the contained non-admin local owner if absent;
 11. create exactly one unauthenticated public pull mirror from the canonical GitHub repository;
 12. revoke the temporary local migration token;
-13. require the mirror `main` head to equal the authorised exact source head;
-14. recreate the same container from the same digest and data volume with registration, SSH, Actions, packages, migrations, push-create, forks, webhooks, Git hooks, local imports, new mirrors, periodic mirror updates, runner registration and public/Tailscale exposure disabled;
+13. require the mirror `main` head to equal the authorised exact source head; when an otherwise exact existing container is already sealed at an older well-formed head, open one fixed loopback-only refresh window for only `stephanos-shadow/stephan-os`, create and revoke a fresh contained local token around the manual mirror-sync request, require `main` to reach `ExpectedHead`, and close the window;
+14. recreate the same container from the same digest and data volume with registration, SSH, Actions, packages, migrations, push-create, forks, webhooks, Git hooks, local imports, new mirrors, periodic mirror updates, runner registration and public/Tailscale exposure disabled, including after the bounded refresh window;
 15. prove the container itself is rootless, read-only-rootfs, capability-free and `no-new-privileges`, with exactly one persistent writable data volume plus three bounded ephemeral tmpfs surfaces;
 16. prove exact Git head/tree parity;
 17. create a bounded content-addressed backup using the same digest-pinned image as the copy helper;
@@ -65,13 +65,13 @@ The runtime planner and fixed Windows adapter progress only through these states
 20. tear down the restore probe, restart the canonical shadow, and re-prove service health and privilege identity;
 21. only then return `FORGE_SHADOW_M2_READY` and permit a separate M3 runner slice.
 
-A wrong mirror head blocks. It is not silently force-updated.
+A wrong mirror head on a new or unsealed runtime blocks. An existing sealed canonical mirror at an older exact head may use the explicitly approved one-shot refresh above only after its Forge API metadata re-proves the fixed owner, repository name, pull-mirror type and canonical GitHub remote; it cannot accept another owner, repository, remote, ref, URL, schedule or target head. The same metadata is re-proved after resealing. Failure to reach `ExpectedHead`, revoke the temporary token, reseal, or re-prove exact object/tree parity blocks M2 readiness.
 
 ## Network boundary
 
 The canonical service publishes only `127.0.0.1:3340` and no SSH port. The temporary restore drill uses only `127.0.0.1:3341` and is removed before completion.
 
-Forgejo migration/mirror configuration allows only `github.com` / `*.github.com` as migration domains, rejects local-network migration targets and keeps TLS verification enabled. After the canonical mirror is created, repository migrations are disabled, the mirror service is disabled so periodic pull updates stop, and creation of new pull or push mirrors remains disabled.
+Forgejo migration/mirror configuration allows only `github.com` / `*.github.com` as migration domains, rejects local-network migration targets and keeps TLS verification enabled. After the canonical mirror is created, repository migrations are disabled, the mirror service is disabled so periodic pull updates stop, and creation of new pull or push mirrors remains disabled. A stale sealed mirror may be recreated briefly in the same fixed bootstrap posture solely to call the loopback API route for `stephanos-shadow/stephan-os` once. Cron remains disabled throughout, and the service is resealed before any readiness receipt is emitted.
 
 No generic URL input exists in the runtime contract or Windows adapter.
 
@@ -141,7 +141,7 @@ Inputs are limited to:
 - exact OCI `ForgejoImageDigest`;
 - explicit `OperatorApproved` switch.
 
-It uses PowerShell `SupportsShouldProcess`, supports a non-mutating `-WhatIf` projection, selects Git/WSL/Podman only from fixed source-controlled paths, and emits a sanitized machine receipt. It has no merge, branch, GitHub-ref, runner, public-listener or arbitrary command authority.
+It uses PowerShell `SupportsShouldProcess`, supports a non-mutating `-WhatIf` projection, selects Git/WSL/Podman only from fixed source-controlled paths, and emits a sanitized machine receipt. Its only update behaviour is the fixed one-shot refresh of the already-existing canonical mirror to the exact `ExpectedHead`; there is no generic URL, mirror owner/repository/ref input, scheduler, or continuous refresh authority. It has no merge, branch, GitHub-ref, runner, public-listener or arbitrary command authority.
 
 ## M2 acceptance
 
