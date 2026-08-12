@@ -118,7 +118,6 @@ jobs:
         id: plan
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          STEPHANOS_REVIEW_DISPATCH_TOKEN: ${{ secrets.STEPHANOS_REVIEW_DISPATCH_TOKEN }}
           STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY: 'true'
           STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ inputs.pr_number || '' }}
           STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
@@ -177,7 +176,6 @@ jobs:
         id: coordinate
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          STEPHANOS_REVIEW_DISPATCH_TOKEN: ${{ secrets.STEPHANOS_REVIEW_DISPATCH_TOKEN }}
           STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ matrix.target.prNumber }}
           STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
           STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES: '10'

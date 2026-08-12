@@ -10,6 +10,7 @@ import {
 } from './battle-bridge-github-command-mailbox.mjs';
 
 const exactHead = 'e41d7a90da563fe1e54cc6c799b0a9c275c30592';
+const readSource = (url) => readFileSync(url, 'utf8').replaceAll('\r\n', '\n');
 
 test('pre-serve freshness accepts one exact full SHA identity', () => {
   const result = evaluateDistFreshnessAgainstOrigin({
@@ -29,7 +30,7 @@ test('pre-serve freshness accepts one exact full SHA identity', () => {
 });
 
 test('pre-serve call site requests full Git identities rather than abbreviated SHAs', () => {
-  const source = readFileSync(new URL('./ignite-stephanos-local.mjs', import.meta.url), 'utf8');
+  const source = readSource(new URL('./ignite-stephanos-local.mjs', import.meta.url));
 
   assert.match(
     source,
@@ -61,12 +62,9 @@ test('mailbox comment page selection is bounded around the newest REST page', ()
 });
 
 test('mailbox source no longer paginates the complete historical issue thread', () => {
-  const source = readFileSync(
-    new URL('./battle-bridge-github-command-mailbox.mjs', import.meta.url),
-    'utf8',
-  );
+  const source = readSource(new URL('./battle-bridge-github-command-mailbox.mjs', import.meta.url));
   const commandLoad = source.match(
-    /export async function runBattleBridgeGitHubCommandMailbox[\s\S]*?const state = loadState\(\);/,
+    /export async function runBattleBridgeGitHubCommandMailbox[\s\S]*?const comments = loadBoundedMailboxComments\(\);/,
   )?.[0] || '';
 
   assert.match(commandLoad, /loadBoundedMailboxComments\(\)/);
@@ -74,26 +72,23 @@ test('mailbox source no longer paginates the complete historical issue thread', 
 });
 
 test('review coordinator has exact PR-comment publication authority', () => {
-  const workflow = readFileSync(
-    new URL('../.github/workflows/exact-head-review-dispatch.yml', import.meta.url),
-    'utf8',
-  );
+  const workflow = readSource(new URL('../.github/workflows/exact-head-review-dispatch.yml', import.meta.url));
   const coordinate = workflow.match(/  coordinate:[\s\S]*$/)?.[0] || '';
 
   assert.match(coordinate, /permissions:[\s\S]*pull-requests: write/);
 });
 
-test('pull-request verification is isolated from the shared coordinator queue', () => {
-  const workflow = readFileSync(
-    new URL('../.github/workflows/exact-head-review-dispatch.yml', import.meta.url),
-    'utf8',
-  );
+test('pull-request verification is isolated while mutations use one PR-scoped queue', () => {
+  const workflow = readSource(new URL('../.github/workflows/exact-head-review-dispatch.yml', import.meta.url));
+  const verify = workflow.match(/  verify:[\s\S]*?\n  plan:/)?.[0] || '';
+  const coordinate = workflow.match(/  coordinate:[\s\S]*$/)?.[0] || '';
 
+  assert.doesNotMatch(verify, /concurrency:/);
   assert.match(
-    workflow,
-    /group: exact-head-review-dispatch-\$\{\{ github\.repository \}\}-\$\{\{ github\.event_name == 'pull_request' && format\('pr-\{0\}', github\.event\.pull_request\.number\) \|\| 'coordinator' \}\}/,
+    coordinate,
+    /group: exact-head-review-dispatch-\$\{\{ github\.repository \}\}-pr-\$\{\{ matrix\.target\.prNumber \}\}/,
   );
-  assert.match(workflow, /cancel-in-progress: false/);
+  assert.match(coordinate, /cancel-in-progress: false/);
   assert.doesNotMatch(
     workflow,
     /group: exact-head-review-dispatch-\$\{\{ github\.repository \}\}\s*\n/,
@@ -101,7 +96,7 @@ test('pull-request verification is isolated from the shared coordinator queue', 
 });
 
 test('independent review retry scans one bounded exact-head page', () => {
-  const source = readFileSync(new URL('./retry-independent-review.mjs', import.meta.url), 'utf8');
+  const source = readSource(new URL('./retry-independent-review.mjs', import.meta.url));
   const loader = source.match(
     /async function loadRecentReviewRuns[\s\S]*?\n}\n\nasync function main/,
   )?.[0] || '';

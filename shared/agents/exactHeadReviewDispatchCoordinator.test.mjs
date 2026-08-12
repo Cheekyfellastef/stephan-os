@@ -796,8 +796,7 @@ test('wires the trusted coordinator identity through the runner and trusted work
   assert.match(workflow, /workflows:[\s\S]*Independent Merge Security Review/);
   assert.match(workflow, /GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}/);
   assert.match(workflow, /STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN:\s*\$\{\{ github\.repository_owner \}\}/);
-  assert.match(workflow, /STEPHANOS_REVIEW_DISPATCH_TOKEN:\s*\$\{\{ secrets\.STEPHANOS_REVIEW_DISPATCH_TOKEN \}\}/);
-  assert.doesNotMatch(workflow, /STEPHANOS_REVIEW_DISPATCH_TOKEN:[^\n]*\|\|/);
+  assert.doesNotMatch(workflow, /STEPHANOS_REVIEW_DISPATCH_TOKEN:/);
 });
 
 test('runs every required proof workflow for every pull request head', () => {

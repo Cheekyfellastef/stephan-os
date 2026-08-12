@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 const workflowUrl = new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url);
+const readWorkflow = () => fs.readFileSync(workflowUrl, 'utf8').replaceAll('\r\n', '\n');
 
 test('serializes every mutating coordinator trigger through one PR-scoped authority lock', () => {
-  const workflow = fs.readFileSync(workflowUrl, 'utf8');
+  const workflow = readWorkflow();
 
   assert.match(workflow, /\n  plan:\n[\s\S]*STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY:\s*'true'/);
   assert.match(workflow, /targets:\s*\$\{\{ steps\.plan\.outputs\.targets \}\}/);
@@ -26,7 +27,7 @@ test('serializes every mutating coordinator trigger through one PR-scoped author
 });
 
 test('keeps verification read-only and plans global scans before per-PR mutation', () => {
-  const workflow = fs.readFileSync(workflowUrl, 'utf8');
+  const workflow = readWorkflow();
   assert.match(workflow, /verify:\n[\s\S]*Progress: `VERIFIED_ONLY`/);
   assert.match(workflow, /plan:\n[\s\S]*Discover canonical PR targets without mutation/);
   assert.match(workflow, /coordinate:\n\s+needs: plan/);
