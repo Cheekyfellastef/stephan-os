@@ -1,21 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { deflateRawSync } from 'node:zlib';
 import {
   PERSONAL_REPOSITORY_AUTHORITY,
-  PERSONAL_REPOSITORY_ARTIFACT_UNZIP_EXECUTABLE,
+  PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES,
   PERSONAL_REPOSITORY_MODE,
   PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
   PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS,
   PERSONAL_REPOSITORY_WORKFLOW_NAME,
   PERSONAL_REPOSITORY_WORKFLOW_PATH,
-  buildPersonalRepositoryArtifactSubprocessInvocation,
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
   executeBoundedPersonalRepositoryRead,
+  extractPersonalRepositoryArtifactZip,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
-  validatePersonalRepositoryArtifactSubprocessBoundary,
   validatePersonalRepositoryConfiguration,
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
@@ -30,94 +30,197 @@ function response(status) {
   return { status, body: { cancel: async () => {} } };
 }
 
-test('artifact subprocess receives only the fixed unzip command and minimal credential-free environment', () => {
-  const secret = 'installation-token-must-not-escape';
-  const invocation = buildPersonalRepositoryArtifactSubprocessInvocation([
-    '-p',
-    '/tmp/stephanos-personal-repository-review-123/review.zip',
-    'independent-review-result.json',
-  ]);
-  assert.equal(invocation.command, PERSONAL_REPOSITORY_ARTIFACT_UNZIP_EXECUTABLE);
-  assert.equal(invocation.command, '/usr/bin/unzip');
-  assert.deepEqual(invocation.environment, { LANG: 'C', LC_ALL: 'C' });
-  assert.deepEqual(invocation.stdio, ['ignore', 'pipe', 'pipe']);
-  assert.deepEqual(invocation.args, [
-    '-p',
-    '/tmp/stephanos-personal-repository-review-123/review.zip',
-    'independent-review-result.json',
-  ]);
-  const boundary = validatePersonalRepositoryArtifactSubprocessBoundary({
-    invocation,
-    parentEnvironment: {
-      PATH: '/usr/bin:/bin',
-      STEPHANOS_RULESET_PROOF_TOKEN: secret,
-      GH_TOKEN: 'github-cli-token-must-not-escape',
-      GITHUB_TOKEN: 'actions-token-must-not-escape',
-      DATABASE_PASSWORD: 'database-password-must-not-escape',
-      SERVICE_API_KEY: 'api-key-must-not-escape',
-      SIGNING_PRIVATE_KEY: 'private-key-must-not-escape',
-      SESSION_COOKIE: 'session-cookie-must-not-escape',
-    },
-    stdout: 'independent review payload',
-    stderr: '',
+const ARTIFACT_FILE = 'independent-review-result.json';
+const TEST_CRC32_TABLE = Array.from({ length: 256 }, (_, value) => {
+  let crc = value;
+  for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  return crc >>> 0;
+});
+
+function testCrc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = TEST_CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function singleEntryZip({ payload = '{"ready":true}', fileName = ARTIFACT_FILE, method = 8, flags = 0, dataDescriptor = false } = {}) {
+  const plain = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf8');
+  const compressed = method === 8 ? deflateRawSync(plain) : Buffer.from(plain);
+  const name = Buffer.from(fileName, 'utf8');
+  const crc = testCrc32(plain);
+  const version = method === 8 ? 20 : 10;
+  const local = Buffer.alloc(30 + name.length);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(version, 4);
+  const resolvedFlags = flags | (dataDescriptor ? 0x0008 : 0);
+  local.writeUInt16LE(resolvedFlags, 6);
+  local.writeUInt16LE(method, 8);
+  local.writeUInt32LE(dataDescriptor ? 0 : crc, 14);
+  local.writeUInt32LE(dataDescriptor ? 0 : compressed.length, 18);
+  local.writeUInt32LE(dataDescriptor ? 0 : plain.length, 22);
+  local.writeUInt16LE(name.length, 26);
+  name.copy(local, 30);
+
+  const descriptor = dataDescriptor ? Buffer.alloc(16) : Buffer.alloc(0);
+  if (dataDescriptor) {
+    descriptor.writeUInt32LE(0x08074b50, 0);
+    descriptor.writeUInt32LE(crc, 4);
+    descriptor.writeUInt32LE(compressed.length, 8);
+    descriptor.writeUInt32LE(plain.length, 12);
+  }
+  const centralOffset = local.length + compressed.length + descriptor.length;
+  const central = Buffer.alloc(46 + name.length);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(version, 6);
+  central.writeUInt16LE(resolvedFlags, 8);
+  central.writeUInt16LE(method, 10);
+  central.writeUInt32LE(crc, 16);
+  central.writeUInt32LE(compressed.length, 20);
+  central.writeUInt32LE(plain.length, 24);
+  central.writeUInt16LE(name.length, 28);
+  name.copy(central, 46);
+
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(central.length, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  return Object.freeze({
+    archive: Buffer.concat([local, compressed, descriptor, central, end]),
+    compressed,
+    offsets: Object.freeze({
+      data: local.length,
+      central: centralOffset,
+      end: centralOffset + central.length,
+    }),
+    plain,
   });
-  assert.equal(boundary.valid, true);
-  assert.deepEqual(boundary.blockers, []);
-  assert.doesNotMatch(JSON.stringify(invocation), /must-not-escape/);
-});
+}
 
-test('artifact subprocess rejects credentials in arguments, environment or captured output', () => {
-  const secret = 'installation-token-must-not-escape';
-  const parentEnvironment = {
-    STEPHANOS_RULESET_PROOF_TOKEN: secret,
-    GH_TOKEN: 'github-cli-token-must-not-escape',
-  };
-  const exact = buildPersonalRepositoryArtifactSubprocessInvocation([
-    '-Z1',
-    '/tmp/stephanos-personal-repository-review-123/review.zip',
-  ]);
-  for (const [invocation, stdout, stderr, blocker] of [
-    [{ ...exact, args: ['-Z1', `/tmp/${secret}/review.zip`] }, '', '', 'personal-repository-artifact-subprocess-credential-outbound'],
-    [{ ...exact, environment: { LANG: 'C', LC_ALL: 'C', GH_TOKEN: parentEnvironment.GH_TOKEN } }, '', '', 'personal-repository-artifact-subprocess-environment-invalid'],
-    [exact, `payload ${secret}`, '', 'personal-repository-artifact-subprocess-credential-output'],
-    [exact, '', `failure ${parentEnvironment.GH_TOKEN}`, 'personal-repository-artifact-subprocess-credential-output'],
-  ]) {
-    const validation = validatePersonalRepositoryArtifactSubprocessBoundary({
-      invocation,
-      parentEnvironment,
-      stdout,
-      stderr,
-    });
-    assert.equal(validation.valid, false);
-    assert.ok(validation.blockers.includes(blocker));
-    assert.doesNotMatch(JSON.stringify(validation), /must-not-escape/);
+function mutateArchive(archive, mutate) {
+  const copy = Buffer.from(archive);
+  mutate(copy);
+  return copy;
+}
+
+function assertZipBlocked(archive, expectedReason = null) {
+  assert.throws(
+    () => extractPersonalRepositoryArtifactZip(archive, ARTIFACT_FILE),
+    (error) => {
+      assert.equal(error.code, 'PERSONAL_REPOSITORY_ARTIFACT_ZIP_INVALID');
+      if (expectedReason) assert.equal(error.reason, expectedReason);
+      assert.doesNotMatch(error.message, /token-must-not-escape|github-token-must-not-escape/);
+      return true;
+    },
+  );
+}
+
+test('in-process artifact ZIP reader accepts exact stored and deflated single-entry archives', () => {
+  for (const [method, dataDescriptor] of [[0, false], [8, false], [0, true], [8, true]]) {
+    const fixture = singleEntryZip({ method, dataDescriptor });
+    const payload = extractPersonalRepositoryArtifactZip(fixture.archive, ARTIFACT_FILE);
+    assert.deepEqual(payload, fixture.plain);
   }
 });
 
-test('artifact subprocess admits only the two fixed dense unzip operations', () => {
-  assert.doesNotThrow(() => buildPersonalRepositoryArtifactSubprocessInvocation([
-    '-Z1',
-    '/tmp/review.zip',
-  ]));
-  assert.doesNotThrow(() => buildPersonalRepositoryArtifactSubprocessInvocation([
-    '-p',
-    '/tmp/review.zip',
-    'independent-review-result.json',
-  ]));
-  const sparse = ['-p', '/tmp/review.zip', 'independent-review-result.json'];
-  delete sparse[1];
-  for (const args of [
-    sparse,
-    ['-x', '/tmp/review.zip'],
-    ['-p', '/tmp/review.zip'],
-    ['-Z1', '/tmp/review.zip', 'extra'],
-    ['-Z1', '/tmp/review.zip\n--widened'],
-  ]) {
-    assert.throws(
-      () => buildPersonalRepositoryArtifactSubprocessInvocation(args),
-      /artifact subprocess arguments/,
-    );
-  }
+test('in-process artifact ZIP reader rejects authority-widening flags, formats and entry estates', () => {
+  const exact = singleEntryZip();
+  for (const [archive, reason] of [
+    [mutateArchive(exact.archive, (bytes) => {
+      bytes.writeUInt16LE(1, 6);
+      bytes.writeUInt16LE(1, exact.offsets.central + 8);
+    }), 'flags'],
+    [mutateArchive(exact.archive, (bytes) => {
+      bytes.writeUInt16LE(4, 6);
+      bytes.writeUInt16LE(4, exact.offsets.central + 8);
+    }), 'flags'],
+    [mutateArchive(exact.archive, (bytes) => {
+      bytes.writeUInt16LE(99, 8);
+      bytes.writeUInt16LE(99, exact.offsets.central + 10);
+    }), 'compression'],
+    [mutateArchive(exact.archive, (bytes) => bytes.writeUInt32LE(0xffffffff, exact.offsets.central + 20)), 'zip64'],
+    [mutateArchive(exact.archive, (bytes) => bytes.writeUInt16LE(45, exact.offsets.central + 6)), 'version'],
+    [mutateArchive(exact.archive, (bytes) => bytes.writeUInt16LE(1, exact.offsets.end + 4)), 'multi-disk'],
+    [mutateArchive(exact.archive, (bytes) => {
+      bytes.writeUInt16LE(2, exact.offsets.end + 8);
+      bytes.writeUInt16LE(2, exact.offsets.end + 10);
+    }), 'entry-count'],
+    [mutateArchive(exact.archive, (bytes) => bytes.writeUInt16LE(1, exact.offsets.end + 20)), 'archive-comment'],
+    [mutateArchive(exact.archive, (bytes) => bytes.writeUInt16LE(1, exact.offsets.central + 30)), 'central-fields'],
+  ]) assertZipBlocked(archive, reason);
+});
+
+test('in-process artifact ZIP reader rejects unsupported or mismatched data descriptors', () => {
+  const exact = singleEntryZip({ dataDescriptor: true });
+  const descriptorOffset = exact.offsets.central - 16;
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(0, descriptorOffset)
+  )), 'descriptor-signature');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(0, descriptorOffset + 4)
+  )), 'descriptor-mismatch');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(1, 14)
+  )), 'descriptor-local-fields');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(exact.offsets.central - 1, exact.offsets.end + 16)
+  )), 'central-boundary');
+});
+
+test('in-process artifact ZIP reader rejects unsafe names, prefixes, trailing bytes and malformed boundaries', () => {
+  assertZipBlocked(singleEntryZip({ fileName: '../independent-review-result.json' }).archive, 'filename-unsafe');
+  const exact = singleEntryZip();
+  assertZipBlocked(Buffer.concat([Buffer.from([0]), exact.archive]));
+  assertZipBlocked(Buffer.concat([exact.archive, Buffer.from([0])]));
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(exact.offsets.central + 1, exact.offsets.end + 16)
+  )), 'central-boundary');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(1, exact.offsets.central + 42)
+  )), 'archive-prefix');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt16LE(0, 8)
+  )), 'local-central-mismatch');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt16LE(1, 10)
+  )), 'local-central-mismatch');
+});
+
+test('in-process artifact ZIP reader rejects size, overlap, corruption and CRC attacks', () => {
+  const exact = singleEntryZip();
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => {
+    bytes.writeUInt32LE(exact.compressed.length + 1, 18);
+    bytes.writeUInt32LE(exact.compressed.length + 1, exact.offsets.central + 20);
+  }), 'record-overlap-or-gap');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => {
+    bytes.writeUInt32LE(exact.compressed.length - 1, 18);
+    bytes.writeUInt32LE(exact.compressed.length - 1, exact.offsets.central + 20);
+  }), 'record-overlap-or-gap');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => {
+    bytes.writeUInt32LE(0, 14);
+    bytes.writeUInt32LE(0, exact.offsets.central + 16);
+  }), 'crc32');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => {
+    bytes[exact.offsets.data] ^= 0xff;
+  }));
+
+  const stored = singleEntryZip({ method: 0 });
+  assertZipBlocked(mutateArchive(stored.archive, (bytes) => {
+    bytes.writeUInt32LE(stored.plain.length + 1, 22);
+    bytes.writeUInt32LE(stored.plain.length + 1, stored.offsets.central + 24);
+  }), 'stored-size');
+
+  const oversized = singleEntryZip({ payload: Buffer.alloc(PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES + 1, 65) });
+  assertZipBlocked(oversized.archive, 'payload-size');
+});
+
+test('in-process artifact ZIP failures remain credential-free and consume no process environment', () => {
+  const secret = 'token-must-not-escape';
+  const credentialNamed = singleEntryZip({ fileName: secret });
+  assertZipBlocked(credentialNamed.archive, 'filename-mismatch');
+  assert.doesNotMatch(extractPersonalRepositoryArtifactZip.toString(), /process\.env|child_process|spawn|unzip/i);
 });
 
 test('bounded personal-repository reads recover from transient transport failures', async () => {

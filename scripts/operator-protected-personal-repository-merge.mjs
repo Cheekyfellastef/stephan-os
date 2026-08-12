@@ -3,14 +3,8 @@
 import { createHash } from 'node:crypto';
 import {
   appendFileSync,
-  mkdtempSync,
   readFileSync,
-  rmSync,
-  writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
 import {
   INDEPENDENT_REVIEW_WORKFLOW_NAME,
   INDEPENDENT_REVIEW_WORKFLOW_PATH,
@@ -25,16 +19,15 @@ import {
 } from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
 import {
   PERSONAL_REPOSITORY_APPROVAL_JOB,
-  buildPersonalRepositoryArtifactSubprocessInvocation,
   PERSONAL_REPOSITORY_EVIDENCE_JOB,
   PERSONAL_REPOSITORY_MERGE_JOB,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
   executeBoundedPersonalRepositoryRead,
+  extractPersonalRepositoryArtifactZip,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
-  validatePersonalRepositoryArtifactSubprocessBoundary,
   validatePersonalRepositoryConfiguration,
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
@@ -378,43 +371,6 @@ async function collectRulesetConfiguration(
   });
 }
 
-function runUnzip(args, message, maxBuffer = INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES + 1) {
-  const invocation = buildPersonalRepositoryArtifactSubprocessInvocation(args);
-  const boundary = validatePersonalRepositoryArtifactSubprocessBoundary({
-    invocation,
-    parentEnvironment: process.env,
-  });
-  if (!boundary.valid) {
-    fail('Independent review artifact subprocess boundary is invalid.', { blockers: boundary.blockers });
-  }
-  const result = spawnSync(invocation.command, invocation.args, {
-    encoding: 'utf8',
-    env: invocation.environment,
-    shell: false,
-    stdio: invocation.stdio,
-    windowsHide: true,
-    maxBuffer,
-  });
-  const outputBoundary = validatePersonalRepositoryArtifactSubprocessBoundary({
-    invocation,
-    parentEnvironment: process.env,
-    stdout: result.stdout,
-    stderr: result.stderr,
-  });
-  if (!outputBoundary.valid) {
-    fail('Independent review artifact subprocess output violated the credential boundary.', {
-      blockers: outputBoundary.blockers,
-    });
-  }
-  if (result.status !== 0) {
-    fail(message, {
-      exitStatus: Number.isSafeInteger(result.status) ? result.status : null,
-      errorCode: text(result.error?.code).slice(0, 80),
-    });
-  }
-  return result.stdout || '';
-}
-
 async function loadSelectedIndependentReview(context, identity) {
   const definitions = (await apiCollection(
     `/repos/${context.owner}/${context.repo}/actions/workflows`,
@@ -478,53 +434,39 @@ async function loadSelectedIndependentReview(context, identity) {
     || archiveDigest !== selected.independentReviewArtifactDigest) {
     fail('Independent review artifact archive digest changed or differs from the operator-selected identity.');
   }
-  const temporaryDirectory = mkdtempSync(join(tmpdir(), 'stephanos-personal-repository-review-'));
-  const archivePath = join(temporaryDirectory, 'review.zip');
-  try {
-    writeFileSync(archivePath, archiveBytes, { flag: 'wx', mode: 0o600 });
-    const entries = runUnzip(['-Z1', archivePath], 'Independent review artifact directory is unreadable.')
-      .split(/\r?\n/)
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-    if (entries.length !== 1 || entries[0] !== INDEPENDENT_REVIEW_ARTIFACT_FILE) {
-      fail('Independent review artifact must contain exactly the canonical result file.', { entries });
-    }
-    const artifact = parseJson(
-      runUnzip(['-p', archivePath, INDEPENDENT_REVIEW_ARTIFACT_FILE], 'Independent review artifact payload is unreadable.'),
-      'Independent review artifact payload is invalid JSON.',
-    );
-    const validation = validateIndependentReviewArtifact(artifact, {
-      repository: context.repository,
-      prNumber: identity.prNumber,
-      branch: identity.branch,
-      expectedHead: identity.sourceHead,
-      expectedBaseSha: identity.baseSha,
-      workflowRunId: selected.independentReviewWorkflowRunId,
-      workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+  const artifact = parseJson(
+    extractPersonalRepositoryArtifactZip(archiveBytes, INDEPENDENT_REVIEW_ARTIFACT_FILE).toString('utf8'),
+    'Independent review artifact payload is invalid JSON.',
+  );
+  const validation = validateIndependentReviewArtifact(artifact, {
+    repository: context.repository,
+    prNumber: identity.prNumber,
+    branch: identity.branch,
+    expectedHead: identity.sourceHead,
+    expectedBaseSha: identity.baseSha,
+    workflowRunId: selected.independentReviewWorkflowRunId,
+    workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+  });
+  if (!validation.valid
+    || artifact.payloadSha256 !== selected.independentReviewPayloadSha256
+    || artifact.reviewMode !== 'clean-independent'
+    || artifact.receipt?.verdict !== 'clean'
+    || artifact.receipt?.blocker !== ''
+    || !Array.isArray(artifact.receipt?.findings)
+    || artifact.receipt.findings.length !== 0) {
+    fail('Selected independent review payload is invalid, stale or not clean.', {
+      blockers: validation.blockers,
     });
-    if (!validation.valid
-      || artifact.payloadSha256 !== selected.independentReviewPayloadSha256
-      || artifact.reviewMode !== 'clean-independent'
-      || artifact.receipt?.verdict !== 'clean'
-      || artifact.receipt?.blocker !== ''
-      || !Array.isArray(artifact.receipt?.findings)
-      || artifact.receipt.findings.length !== 0) {
-      fail('Selected independent review payload is invalid, stale or not clean.', {
-        blockers: validation.blockers,
-      });
-    }
-    return Object.freeze({
-      workflowRunId: selected.independentReviewWorkflowRunId,
-      workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
-      artifactId: selected.independentReviewArtifactId,
-      artifactDigest: selected.independentReviewArtifactDigest,
-      payloadSha256: selected.independentReviewPayloadSha256,
-      reviewMode: artifact.reviewMode,
-      findings: Object.freeze([]),
-    });
-  } finally {
-    rmSync(temporaryDirectory, { recursive: true, force: true });
   }
+  return Object.freeze({
+    workflowRunId: selected.independentReviewWorkflowRunId,
+    workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+    artifactId: selected.independentReviewArtifactId,
+    artifactDigest: selected.independentReviewArtifactDigest,
+    payloadSha256: selected.independentReviewPayloadSha256,
+    reviewMode: artifact.reviewMode,
+    findings: Object.freeze([]),
+  });
 }
 
 async function collectEvidence(context, expected = {}) {
