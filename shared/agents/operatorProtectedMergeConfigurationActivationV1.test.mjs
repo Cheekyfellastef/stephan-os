@@ -303,6 +303,53 @@ test('sparse arrays and bounded-serializer expansion limits fail closed', () => 
   assertBlocked(tooDeep, 'canonical-json-depth-exceeded');
 });
 
+test('oversized string values and property names fail before unbounded JSON serialization', () => {
+  const oversizedValue = { value: 'x'.repeat(262_145) };
+  assertBlocked(oversizedValue, 'canonical-json-too-large');
+
+  const oversizedKey = { ['k'.repeat(262_145)]: null };
+  assertBlocked(oversizedKey, 'canonical-json-too-large');
+
+  const source = readFileSync(
+    new URL('./operatorProtectedMergeConfigurationActivationV1.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.doesNotMatch(source, /JSON\.stringify/);
+});
+
+test('cumulative canonical byte accounting blocks many individually bounded strings', () => {
+  const individuallySmall = new Array(2048).fill('x'.repeat(128));
+  assert.ok(individuallySmall.every((value) => Buffer.byteLength(value, 'utf8') < 262_144));
+  assertBlocked(individuallySmall, 'canonical-json-too-large');
+});
+
+test('canonical byte boundary is inclusive and boundary plus one fails closed', () => {
+  const exactBoundary = { x: 'a'.repeat(262_136) };
+  const exactResult = validateWithoutThrow(exactBoundary);
+  assert.ok(!exactResult.blockers.includes('canonical-json-too-large'));
+
+  const overBoundary = { x: 'a'.repeat(262_137) };
+  assertBlocked(overBoundary, 'canonical-json-too-large');
+});
+
+test('escape-heavy strings use their encoded JSON bytes at the exact boundary', () => {
+  const exactBoundary = { x: '\n'.repeat(131_068) };
+  const exactResult = validateWithoutThrow(exactBoundary);
+  assert.ok(!exactResult.blockers.includes('canonical-json-too-large'));
+
+  const overBoundary = { x: `${'\n'.repeat(131_068)}a` };
+  assertBlocked(overBoundary, 'canonical-json-too-large');
+});
+
+test('property names use the same inclusive encoded byte boundary', () => {
+  const exactBoundary = { ['k'.repeat(262_135)]: null };
+  const exactResult = validateWithoutThrow(exactBoundary);
+  assert.ok(!exactResult.blockers.includes('canonical-json-too-large'));
+
+  const overBoundary = { ['k'.repeat(262_136)]: null };
+  assertBlocked(overBoundary, 'canonical-json-too-large');
+});
+
 test('hostile proxy inspection failures are caught without reading thrown values', () => {
   const hostile = new Proxy({}, {
     ownKeys() {

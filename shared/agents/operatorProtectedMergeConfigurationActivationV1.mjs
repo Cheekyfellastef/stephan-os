@@ -17,6 +17,8 @@ const MAX_CANONICAL_NODES = 4096;
 const MAX_CANONICAL_BYTES = 262_144;
 const MAX_CANONICAL_ARRAY_LENGTH = 2048;
 const MAX_CANONICAL_OBJECT_KEYS = 512;
+const MAX_CANONICAL_STRING_CODE_UNITS = MAX_CANONICAL_BYTES;
+const CANONICAL_STRING_CHUNK_CODE_UNITS = 1024;
 const CANONICAL_FAILURE_CODES = new WeakMap();
 
 function throwCanonicalFailure(code) {
@@ -47,6 +49,52 @@ function safeCanonicalJson(value) {
     state.parts.push(part);
   };
 
+  const emitJsonString = (candidate) => {
+    if (candidate.length > MAX_CANONICAL_STRING_CODE_UNITS) {
+      throwCanonicalFailure('canonical-json-too-large');
+    }
+
+    let chunk = '';
+    const flush = () => {
+      if (!chunk) return;
+      emit(chunk);
+      chunk = '';
+    };
+    const append = (fragment) => {
+      if (chunk.length + fragment.length > CANONICAL_STRING_CHUNK_CODE_UNITS) flush();
+      chunk += fragment;
+    };
+    const escapeCodeUnit = (codeUnit) => `\\u${codeUnit.toString(16).padStart(4, '0')}`;
+
+    emit('"');
+    for (let index = 0; index < candidate.length; index += 1) {
+      const codeUnit = candidate.charCodeAt(index);
+      if (codeUnit === 0x22) append('\\"');
+      else if (codeUnit === 0x5c) append('\\\\');
+      else if (codeUnit === 0x08) append('\\b');
+      else if (codeUnit === 0x09) append('\\t');
+      else if (codeUnit === 0x0a) append('\\n');
+      else if (codeUnit === 0x0c) append('\\f');
+      else if (codeUnit === 0x0d) append('\\r');
+      else if (codeUnit <= 0x1f) append(escapeCodeUnit(codeUnit));
+      else if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+        const nextCodeUnit = index + 1 < candidate.length ? candidate.charCodeAt(index + 1) : -1;
+        if (nextCodeUnit >= 0xdc00 && nextCodeUnit <= 0xdfff) {
+          append(candidate.slice(index, index + 2));
+          index += 1;
+        } else {
+          append(escapeCodeUnit(codeUnit));
+        }
+      } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+        append(escapeCodeUnit(codeUnit));
+      } else {
+        append(candidate[index]);
+      }
+    }
+    flush();
+    emit('"');
+  };
+
   const visit = (candidate, depth) => {
     if (depth > MAX_CANONICAL_DEPTH) throwCanonicalFailure('canonical-json-depth-exceeded');
     state.nodes += 1;
@@ -61,7 +109,7 @@ function safeCanonicalJson(value) {
 
     const type = typeof candidate;
     if (type === 'string') {
-      emit(JSON.stringify(candidate));
+      emitJsonString(candidate);
       return;
     }
     if (type === 'boolean') {
@@ -72,7 +120,7 @@ function safeCanonicalJson(value) {
       if (!Number.isFinite(candidate) || Object.is(candidate, -0)) {
         throwCanonicalFailure('canonical-json-number-invalid');
       }
-      emit(JSON.stringify(candidate));
+      emit(String(candidate));
       return;
     }
     if (type !== 'object') throwCanonicalFailure('canonical-json-type-unsupported');
@@ -122,6 +170,9 @@ function safeCanonicalJson(value) {
       if (keys.length > MAX_CANONICAL_OBJECT_KEYS) {
         throwCanonicalFailure('canonical-json-object-key-limit-exceeded');
       }
+      if (keys.some((key) => key.length > MAX_CANONICAL_STRING_CODE_UNITS)) {
+        throwCanonicalFailure('canonical-json-too-large');
+      }
       const sortedKeys = [...keys].sort();
       emit('{');
       for (let index = 0; index < sortedKeys.length; index += 1) {
@@ -131,7 +182,7 @@ function safeCanonicalJson(value) {
           throwCanonicalFailure('canonical-json-property-invalid');
         }
         if (index > 0) emit(',');
-        emit(JSON.stringify(key));
+        emitJsonString(key);
         emit(':');
         visit(descriptor.value, depth + 1);
       }
