@@ -352,5 +352,26 @@ Assert-StablePathBaseline -Baseline $pathBaseline
 Write-ExclusiveUtf8Json -Path $temporaryPath -Value $request
 Assert-StablePathBaseline -Baseline $pathBaseline
 Move-Item -LiteralPath $temporaryPath -Destination $requestPath -Force
-Start-ScheduledTask -TaskName $taskName
-[pscustomobject]@{ requestId = $requestId; route = $Route; queued = $true; coordinatorTask = $taskName; arbitraryShellAllowed = $false; sourceMutationAllowed = $false } | ConvertTo-Json
+$taskStateBefore = [string]$task.State
+$startAttempted = $false
+if ($taskStateBefore -ne 'Running') {
+    $startAttempted = $true
+    try {
+        Start-ScheduledTask -TaskName $taskName
+    } catch {
+        $taskAfterFailure = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        if (-not $taskAfterFailure -or [string]$taskAfterFailure.State -ne 'Running') {
+            throw 'RECOVERY_MESH_TASK_START_FAILED'
+        }
+    }
+}
+[pscustomobject]@{
+    requestId = $requestId
+    route = $Route
+    queued = $true
+    coordinatorTask = $taskName
+    coordinatorStateBefore = $taskStateBefore
+    startAttempted = $startAttempted
+    arbitraryShellAllowed = $false
+    sourceMutationAllowed = $false
+} | ConvertTo-Json
