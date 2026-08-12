@@ -38,6 +38,7 @@ import {
   validatePersonalRepositoryDispatchWorkflowDefinition,
   validatePersonalRepositoryEvidence,
   validatePersonalRepositoryRulesetProofRequest,
+  validatePersonalRepositoryRulesetProofResponse,
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
 } from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
@@ -120,6 +121,7 @@ async function githubResponse(path, {
     body,
     request: () => fetch(`https://api.github.com${path}`, {
       method,
+      redirect: authorization === 'ruleset-proof' ? 'error' : 'follow',
       headers: {
         Accept: accept,
         ...(authorization === 'omit' ? {} : { Authorization: `Bearer ${token}` }),
@@ -129,6 +131,9 @@ async function githubResponse(path, {
       },
       ...(body === null ? {} : { body: JSON.stringify(body) }),
     }),
+    validateResponse: authorization === 'ruleset-proof'
+      ? (response) => validatePersonalRepositoryRulesetProofResponse({ path, response })
+      : null,
     consume: async (boundedResponse) => Buffer.from(await boundedResponse.arrayBuffer()),
   });
   if (bytes.length > maxBytes) {

@@ -29,6 +29,7 @@ export const PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS = 3;
 
 const PERSONAL_REPOSITORY_TRANSIENT_READ_STATUSES = new Set([502, 503, 504]);
 const PERSONAL_REPOSITORY_READ_RETRY_DELAYS_MS = Object.freeze([250, 1_000]);
+const PERSONAL_REPOSITORY_GITHUB_API_ORIGIN = 'https://api.github.com';
 
 export const PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS = Object.freeze([
   Object.freeze({ name: 'OpenClaw GitHub Operator', path: '.github/workflows/openclaw-github-operator.yml', event: 'pull_request' }),
@@ -62,15 +63,34 @@ export class PersonalRepositoryReadTransportError extends Error {
   }
 }
 
+export class PersonalRepositoryReadPolicyError extends Error {
+  constructor(path, blockers = []) {
+    const endpoint = text(path).replace(/[\r\n\t]/g, '').slice(0, 500) || 'unknown-endpoint';
+    const boundedBlockers = (Array.isArray(blockers) ? blockers : [])
+      .map(text)
+      .filter(Boolean)
+      .slice(0, 10);
+    super(`GitHub read response violated the bounded policy for ${endpoint}.`);
+    this.name = 'PersonalRepositoryReadPolicyError';
+    this.code = 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION';
+    this.endpoint = endpoint;
+    this.blockers = Object.freeze(boundedBlockers);
+  }
+}
+
 export async function executeBoundedPersonalRepositoryRead({
   path,
   method = 'GET',
   body = null,
   request,
+  validateResponse = null,
   consume = async (response) => response,
   delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
   if (typeof request !== 'function') throw new TypeError('Personal-repository request function is required.');
+  if (validateResponse !== null && typeof validateResponse !== 'function') {
+    throw new TypeError('Personal-repository response validator must be a function when supplied.');
+  }
   if (typeof consume !== 'function') throw new TypeError('Personal-repository response consumer is required.');
   if (typeof delay !== 'function') throw new TypeError('Personal-repository retry delay function is required.');
   const normalizedMethod = text(method || 'GET').toUpperCase();
@@ -81,6 +101,13 @@ export async function executeBoundedPersonalRepositoryRead({
   for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
     try {
       const response = await request();
+      if (validateResponse) {
+        const validation = await validateResponse(response);
+        if (validation?.valid !== true) {
+          await response?.body?.cancel?.();
+          throw new PersonalRepositoryReadPolicyError(path, validation?.blockers);
+        }
+      }
       const transientStatus = PERSONAL_REPOSITORY_TRANSIENT_READ_STATUSES.has(Number(response?.status));
       if (transientStatus && attempt < maximumAttempts) {
         await response?.body?.cancel?.();
@@ -89,6 +116,7 @@ export async function executeBoundedPersonalRepositoryRead({
         return Object.freeze({ response, result, attempts: attempt });
       }
     } catch (error) {
+      if (error instanceof PersonalRepositoryReadPolicyError) throw error;
       if (!readOnly) throw error;
       lastTransportError = error;
       if (attempt === maximumAttempts) {
@@ -128,6 +156,28 @@ export function validatePersonalRepositoryRulesetProofRequest(input = {}) {
     finalVerdict: blockers.length
       ? 'PERSONAL_REPOSITORY_RULESET_PROOF_REQUEST_BLOCKED'
       : 'PERSONAL_REPOSITORY_RULESET_PROOF_REQUEST_READY',
+  });
+}
+
+export function validatePersonalRepositoryRulesetProofResponse(input = {}) {
+  const path = text(input.path);
+  const response = input.response;
+  const expectedUrl = `${PERSONAL_REPOSITORY_GITHUB_API_ORIGIN}${path}`;
+  const responseUrl = text(response?.url);
+  const blockers = [];
+  if (response?.redirected !== false) {
+    blockers.push('personal-repository-ruleset-proof-response-redirected');
+  }
+  if (responseUrl !== expectedUrl) {
+    blockers.push('personal-repository-ruleset-proof-response-url-mismatch');
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    blockers: Object.freeze(blockers),
+    expectedUrl,
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_RULESET_PROOF_RESPONSE_BLOCKED'
+      : 'PERSONAL_REPOSITORY_RULESET_PROOF_RESPONSE_READY',
   });
 }
 

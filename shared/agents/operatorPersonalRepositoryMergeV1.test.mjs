@@ -18,6 +18,7 @@ import {
   validatePersonalRepositoryDispatchWorkflowDefinition,
   validatePersonalRepositoryEvidence,
   validatePersonalRepositoryRulesetProofRequest,
+  validatePersonalRepositoryRulesetProofResponse,
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
 } from './operatorPersonalRepositoryMergeV1.mjs';
@@ -165,6 +166,63 @@ test('personal-repository mutations and body-bearing requests are never retried'
     );
     assert.equal(attempts, 1);
   }
+});
+
+test('configuration-proof responses reject same-origin and cross-origin redirects without consumption', async () => {
+  const path = '/repos/Cheekyfellastef/stephan-os';
+  for (const url of [
+    'https://api.github.com/repositories/1179385578',
+    'https://example.invalid/repos/Cheekyfellastef/stephan-os',
+  ]) {
+    let cancellations = 0;
+    let consumptions = 0;
+    await assert.rejects(
+      executeBoundedPersonalRepositoryRead({
+        path,
+        request: async () => ({
+          status: 200,
+          redirected: true,
+          url,
+          body: { cancel: async () => { cancellations += 1; } },
+        }),
+        validateResponse: (redirectedResponse) => validatePersonalRepositoryRulesetProofResponse({
+          path,
+          response: redirectedResponse,
+        }),
+        consume: async () => {
+          consumptions += 1;
+          return Buffer.from('{}');
+        },
+        delay: async () => assert.fail('policy violations must not be retried'),
+      }),
+      (error) => {
+        assert.equal(error.code, 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION');
+        assert.ok(error.blockers.includes('personal-repository-ruleset-proof-response-redirected'));
+        return true;
+      },
+    );
+    assert.equal(cancellations, 1);
+    assert.equal(consumptions, 0);
+  }
+});
+
+test('configuration-proof responses require the exact requested API URL even if redirect reporting is false', async () => {
+  const path = '/repos/Cheekyfellastef/stephan-os/rulesets/20640195?includes_parents=true';
+  const exact = validatePersonalRepositoryRulesetProofResponse({
+    path,
+    response: { redirected: false, url: `https://api.github.com${path}` },
+  });
+  assert.equal(exact.valid, true);
+
+  const mismatch = validatePersonalRepositoryRulesetProofResponse({
+    path,
+    response: {
+      redirected: false,
+      url: 'https://api.github.com/repos/Cheekyfellastef/stephan-os/rulesets/20640196?includes_parents=true',
+    },
+  });
+  assert.equal(mismatch.valid, false);
+  assert.ok(mismatch.blockers.includes('personal-repository-ruleset-proof-response-url-mismatch'));
 });
 
 const repository = 'Cheekyfellastef/stephan-os';
@@ -406,7 +464,7 @@ test('dispatch inputs require an exact positive identity and immutable review ar
   }
 });
 
-test('ruleset proof authority is read-only and restricted to exact configuration GET surfaces', () => {
+test('ruleset proof authority is GET-only and restricted to exact configuration surfaces', () => {
   for (const path of [
     '/repos/Cheekyfellastef/stephan-os',
     '/repos/Cheekyfellastef/stephan-os/rules/branches/main?per_page=100&page=1',
@@ -417,8 +475,12 @@ test('ruleset proof authority is read-only and restricted to exact configuration
   }
 
   for (const input of [
-    { path: '/repos/Cheekyfellastef/stephan-os', method: 'POST' },
+    ...['POST', 'PUT', 'PATCH', 'DELETE'].map((method) => ({
+      path: '/repos/Cheekyfellastef/stephan-os',
+      method,
+    })),
     { path: '/repos/Cheekyfellastef/stephan-os', body: {} },
+    { path: '/graphql' },
     { path: '/repos/Cheekyfellastef/stephan-os/pulls/1762' },
     { path: '/repos/Cheekyfellastef/stephan-os/rules/branches/feature?per_page=100&page=1' },
     { path: '/repos/Cheekyfellastef/stephan-os/rules/branches/main?per_page=100&page=21' },
@@ -753,6 +815,19 @@ test('configuration requires the exact protected environment and an active no-by
     requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
     expectedIntegrationId: integrationId,
   }).blockers.includes('CONFIGURATION_NOT_PROVED:personal-repository-ruleset-bypass-actors:91'));
+  for (const malformedBypassActors of [null, {}, 'none']) {
+    assert.ok(validatePersonalRepositoryConfiguration(configuration({
+      rulesets: [{
+        id: 91,
+        enforcement: 'active',
+        updated_at: '2026-08-10T12:00:00Z',
+        bypass_actors: malformedBypassActors,
+      }],
+    }), {
+      requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
+      expectedIntegrationId: integrationId,
+    }).blockers.includes('CONFIGURATION_NOT_PROVED:personal-repository-ruleset-bypass-actors:91'));
+  }
   assert.ok(validatePersonalRepositoryConfiguration(configuration({
     rulesets: [{ id: 91, enforcement: 'active', bypass_actors: [] }],
   }), {
