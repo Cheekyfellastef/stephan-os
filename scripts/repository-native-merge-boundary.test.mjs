@@ -6,6 +6,7 @@ const publishScript = new URL('./repository-native-publish-merge-lane.mjs', impo
 const protectedMergeScript = new URL('./operator-protected-merge-gate-v2.mjs', import.meta.url);
 const personalRepositoryMergeScript = new URL('./operator-protected-personal-repository-merge.mjs', import.meta.url);
 const independentReviewScript = new URL('./independent-merge-security-review-v2.mjs', import.meta.url);
+const personalRepositoryMergeContract = new URL('../shared/agents/operatorPersonalRepositoryMergeV1.mjs', import.meta.url);
 const protectedWorkflow = new URL('../.github/workflows/operator-merge-approval-gate.yml', import.meta.url);
 const independentWorkflow = new URL('../.github/workflows/independent-merge-security-review.yml', import.meta.url);
 const packageFile = new URL('../package.json', import.meta.url);
@@ -113,6 +114,11 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /validatePersonalRepositoryRulesetProofResponse/);
   assert.match(source, /consume: async \(boundedResponse\) => Buffer\.from\(await boundedResponse\.arrayBuffer\(\)\)/);
   assert.equal([...source.matchAll(/executeBoundedPersonalRepositoryRead/g)].length, 2);
+  assert.match(source, /executePersonalRepositoryArtifactArchiveTransport/);
+  assert.match(source, /accept = 'application\/vnd\.github\+json'/);
+  assert.match(source, /requestApiRedirect: \(request\) => fetch\(request\.url/);
+  assert.match(source, /requestArchive: \(request\) => fetch\(request\.url/);
+  assert.doesNotMatch(source, /accept: 'application\/octet-stream'/);
   assert.match(source, /personal-repository-public-rules-api/);
   assert.match(source, /repos\/\$\{context\.owner\}\/\$\{context\.repo\}`, \{ authorization: 'ruleset-proof' \}/);
   assert.match(source, /rules\/branches\/main[\s\S]*?authorization: 'ruleset-proof'/);
@@ -139,6 +145,35 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.equal([...source.matchAll(/pulls\/\$\{receipt\.prNumber\}\/merge/g)].length, 1);
   assert.doesNotMatch(source, /delete_branch|DELETE|git\s+(?:push|reset|clean|rebase)|--force/);
   assert.doesNotMatch(source, /\b(?:eval|execSync)\s*\(|shell\s*:\s*true/);
+});
+
+test('native and personal merge executors share one bounded artifact transport contract', async () => {
+  const [nativeSource, personalSource, contractSource] = await Promise.all([
+    readFile(protectedMergeScript, 'utf8'),
+    readFile(personalRepositoryMergeScript, 'utf8'),
+    readFile(personalRepositoryMergeContract, 'utf8'),
+  ]);
+  for (const source of [nativeSource, personalSource]) {
+    assert.match(source, /executePersonalRepositoryArtifactArchiveTransport/);
+    assert.match(source, /requestApiRedirect: \(request\) => fetch\(request\.url/);
+    assert.match(source, /requestArchive: \(request\) => fetch\(request\.url/);
+    assert.doesNotMatch(source, /application\/octet-stream/);
+    const archiveRequest = source.slice(
+      source.indexOf('    requestArchive:'),
+      source.indexOf('\n    }),', source.indexOf('    requestArchive:')),
+    );
+    assert.match(archiveRequest, /\.\.\.request\.headers/);
+    assert.doesNotMatch(archiveRequest, /Authorization|GH_TOKEN|GITHUB_TOKEN|STEPHANOS_RULESET_PROOF_TOKEN/);
+    assert.match(source, /extractPersonalRepositoryArtifactZip\(archiveBytes, INDEPENDENT_REVIEW_ARTIFACT_FILE\)/);
+    assert.doesNotMatch(source, /node:child_process|\bspawn(?:Sync)?\b|\bexec(?:File|Sync)?\b|\bunzip\b|shell\s*:/i);
+  }
+  assert.match(contractSource, /buildPersonalRepositoryArtifactApiRequest/);
+  assert.match(contractSource, /Accept: 'application\/vnd\.github\+json'/);
+  assert.match(contractSource, /validatePersonalRepositoryArtifactArchiveRedirect/);
+  assert.match(contractSource, /buildPersonalRepositoryArtifactArchiveRequest/);
+  assert.match(contractSource, /validatePersonalRepositoryArtifactArchiveResponse/);
+  assert.match(contractSource, /readBoundedPersonalRepositoryResponseBody/);
+  assert.match(contractSource, /redirect: 'manual'/);
 });
 
 test('independent review binds the complete review to the exact base without merge authority', async () => {
