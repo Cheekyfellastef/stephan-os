@@ -17,6 +17,13 @@ const MAX_CANONICAL_NODES = 4096;
 const MAX_CANONICAL_BYTES = 262_144;
 const MAX_CANONICAL_ARRAY_LENGTH = 2048;
 const MAX_CANONICAL_OBJECT_KEYS = 512;
+const CANONICAL_FAILURE_CODES = new WeakMap();
+
+function throwCanonicalFailure(code) {
+  const failure = Object.create(null);
+  CANONICAL_FAILURE_CODES.set(failure, code);
+  throw failure;
+}
 
 function deepFreeze(value) {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -36,14 +43,16 @@ function safeCanonicalJson(value) {
 
   const emit = (part) => {
     state.bytes += Buffer.byteLength(part, 'utf8');
-    if (state.bytes > MAX_CANONICAL_BYTES) throw new Error('canonical-json-too-large');
+    if (state.bytes > MAX_CANONICAL_BYTES) throwCanonicalFailure('canonical-json-too-large');
     state.parts.push(part);
   };
 
   const visit = (candidate, depth) => {
-    if (depth > MAX_CANONICAL_DEPTH) throw new Error('canonical-json-depth-exceeded');
+    if (depth > MAX_CANONICAL_DEPTH) throwCanonicalFailure('canonical-json-depth-exceeded');
     state.nodes += 1;
-    if (state.nodes > MAX_CANONICAL_NODES) throw new Error('canonical-json-node-limit-exceeded');
+    if (state.nodes > MAX_CANONICAL_NODES) {
+      throwCanonicalFailure('canonical-json-node-limit-exceeded');
+    }
 
     if (candidate === null) {
       emit('null');
@@ -61,28 +70,30 @@ function safeCanonicalJson(value) {
     }
     if (type === 'number') {
       if (!Number.isFinite(candidate) || Object.is(candidate, -0)) {
-        throw new Error('canonical-json-number-invalid');
+        throwCanonicalFailure('canonical-json-number-invalid');
       }
       emit(JSON.stringify(candidate));
       return;
     }
-    if (type !== 'object') throw new Error('canonical-json-type-unsupported');
-    if (state.ancestors.has(candidate)) throw new Error('canonical-json-cycle');
+    if (type !== 'object') throwCanonicalFailure('canonical-json-type-unsupported');
+    if (state.ancestors.has(candidate)) throwCanonicalFailure('canonical-json-cycle');
 
     const prototype = Object.getPrototypeOf(candidate);
     const keys = Reflect.ownKeys(candidate);
     if (keys.some((key) => typeof key === 'symbol')) {
-      throw new Error('canonical-json-symbol-key-unsupported');
+      throwCanonicalFailure('canonical-json-symbol-key-unsupported');
     }
     const descriptors = Object.getOwnPropertyDescriptors(candidate);
     state.ancestors.add(candidate);
     try {
       if (Array.isArray(candidate)) {
-        if (prototype !== Array.prototype) throw new Error('canonical-json-prototype-unsupported');
+        if (prototype !== Array.prototype) {
+          throwCanonicalFailure('canonical-json-prototype-unsupported');
+        }
         const lengthDescriptor = descriptors.length;
         const length = lengthDescriptor?.value;
         if (!Number.isSafeInteger(length) || length < 0 || length > MAX_CANONICAL_ARRAY_LENGTH) {
-          throw new Error('canonical-json-array-length-invalid');
+          throwCanonicalFailure('canonical-json-array-length-invalid');
         }
         const expectedKeys = Array.from({ length }, (_, index) => String(index));
         const actualKeys = keys.filter((key) => key !== 'length');
@@ -90,13 +101,13 @@ function safeCanonicalJson(value) {
           actualKeys.length !== expectedKeys.length
           || actualKeys.some((key, index) => key !== expectedKeys[index])
         ) {
-          throw new Error('canonical-json-array-not-dense');
+          throwCanonicalFailure('canonical-json-array-not-dense');
         }
         emit('[');
         for (let index = 0; index < length; index += 1) {
           const descriptor = descriptors[String(index)];
           if (!descriptor || !Object.hasOwn(descriptor, 'value') || descriptor.enumerable !== true) {
-            throw new Error('canonical-json-property-invalid');
+            throwCanonicalFailure('canonical-json-property-invalid');
           }
           if (index > 0) emit(',');
           visit(descriptor.value, depth + 1);
@@ -105,15 +116,19 @@ function safeCanonicalJson(value) {
         return;
       }
 
-      if (prototype !== Object.prototype) throw new Error('canonical-json-prototype-unsupported');
-      if (keys.length > MAX_CANONICAL_OBJECT_KEYS) throw new Error('canonical-json-object-key-limit-exceeded');
+      if (prototype !== Object.prototype) {
+        throwCanonicalFailure('canonical-json-prototype-unsupported');
+      }
+      if (keys.length > MAX_CANONICAL_OBJECT_KEYS) {
+        throwCanonicalFailure('canonical-json-object-key-limit-exceeded');
+      }
       const sortedKeys = [...keys].sort();
       emit('{');
       for (let index = 0; index < sortedKeys.length; index += 1) {
         const key = sortedKeys[index];
         const descriptor = descriptors[key];
         if (!descriptor || !Object.hasOwn(descriptor, 'value') || descriptor.enumerable !== true) {
-          throw new Error('canonical-json-property-invalid');
+          throwCanonicalFailure('canonical-json-property-invalid');
         }
         if (index > 0) emit(',');
         emit(JSON.stringify(key));
@@ -129,13 +144,15 @@ function safeCanonicalJson(value) {
   try {
     visit(value, 0);
     return Object.freeze({ ok: true, json: state.parts.join(''), blocker: null });
-  } catch (error) {
+  } catch (caught) {
+    const caughtType = typeof caught;
+    const blocker = caught !== null && (caughtType === 'object' || caughtType === 'function')
+      ? CANONICAL_FAILURE_CODES.get(caught) ?? 'canonical-json-inspection-failed'
+      : 'canonical-json-inspection-failed';
     return Object.freeze({
       ok: false,
       json: null,
-      blocker: typeof error?.message === 'string' && error.message.startsWith('canonical-json-')
-        ? error.message
-        : 'canonical-json-inspection-failed',
+      blocker,
     });
   }
 }

@@ -303,7 +303,7 @@ test('sparse arrays and bounded-serializer expansion limits fail closed', () => 
   assertBlocked(tooDeep, 'canonical-json-depth-exceeded');
 });
 
-test('hostile proxy inspection failures are caught and returned as blockers', () => {
+test('hostile proxy inspection failures are caught without reading thrown values', () => {
   const hostile = new Proxy({}, {
     ownKeys() {
       throw new Error('do not inspect me');
@@ -311,12 +311,102 @@ test('hostile proxy inspection failures are caught and returned as blockers', ()
   });
   assertBlocked(hostile, 'canonical-json-inspection-failed');
 
+  let thrownProxyPropertyReads = 0;
+  const thrownProxy = new Proxy({}, {
+    get() {
+      thrownProxyPropertyReads += 1;
+      throw new Error('do not read the thrown proxy');
+    },
+  });
+  const throwsProxy = new Proxy({}, {
+    ownKeys() {
+      throw thrownProxy;
+    },
+  });
+  assertBlocked(throwsProxy, 'canonical-json-inspection-failed');
+  assert.equal(thrownProxyPropertyReads, 0);
+
+  let messageGetterCalls = 0;
+  const thrownWithGetter = {};
+  Object.defineProperty(thrownWithGetter, 'message', {
+    get() {
+      messageGetterCalls += 1;
+      throw new Error('do not read message');
+    },
+  });
+  const throwsMessageGetter = new Proxy({}, {
+    ownKeys() {
+      throw thrownWithGetter;
+    },
+  });
+  assertBlocked(throwsMessageGetter, 'canonical-json-inspection-failed');
+  assert.equal(messageGetterCalls, 0);
+
+  for (const primitive of [null, undefined, 'canonical-json-cycle', 1, true, Symbol('failure')]) {
+    const throwsPrimitive = new Proxy({}, {
+      ownKeys() {
+        throw primitive;
+      },
+    });
+    const result = assertBlocked(throwsPrimitive, 'canonical-json-inspection-failed');
+    assert.ok(!result.blockers.includes('canonical-json-cycle'));
+  }
+
+  const forgedErrorLike = new Proxy({}, {
+    ownKeys() {
+      throw { message: 'canonical-json-cycle', code: 'canonical-json-cycle' };
+    },
+  });
+  const forgedResult = assertBlocked(forgedErrorLike, 'canonical-json-inspection-failed');
+  assert.ok(!forgedResult.blockers.includes('canonical-json-cycle'));
+
   const readHostile = new Proxy(evidence(), {
     get() {
       throw new Error('property reads are forbidden');
     },
   });
   assertProviderRequired(readHostile);
+});
+
+test('private source failures retain stable canonical blocker identities', () => {
+  const cases = [
+    ['canonical-json-cycle', () => {
+      const value = evidence();
+      value.self = value;
+      return value;
+    }],
+    ['canonical-json-array-not-dense', () => {
+      const value = evidence();
+      value.observation.app.events = new Array(1);
+      return value;
+    }],
+    ['canonical-json-type-unsupported', () => {
+      const value = evidence();
+      value.providerReceipt = 1n;
+      return value;
+    }],
+    ['canonical-json-prototype-unsupported', () => {
+      const value = evidence();
+      value.providerReceipt = new Date();
+      return value;
+    }],
+    ['canonical-json-array-length-invalid', () => {
+      const value = evidence();
+      value.providerReceipt = new Array(2049).fill(null);
+      return value;
+    }],
+    ['canonical-json-depth-exceeded', () => {
+      const value = evidence();
+      let cursor = value;
+      for (let index = 0; index < 40; index += 1) {
+        cursor.next = {};
+        cursor = cursor.next;
+      }
+      return value;
+    }],
+  ];
+
+  for (const [blocker, build] of cases) assertBlocked(build(), blocker);
 });
 
 test('the required protected-merge command executes this activation suite exactly once', () => {
