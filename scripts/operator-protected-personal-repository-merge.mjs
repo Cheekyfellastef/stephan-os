@@ -30,6 +30,7 @@ import {
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
+  executeBoundedPersonalRepositoryRead,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
   validatePersonalRepositoryConfiguration,
@@ -113,16 +114,21 @@ async function githubResponse(path, {
     : text(process.env.GH_TOKEN || process.env.GITHUB_TOKEN);
   if (authorization === 'required' && !token) fail('GitHub Actions token is required.');
   if (authorization === 'ruleset-proof' && !token) fail('Protected ruleset proof token is required.');
-  const response = await fetch(`https://api.github.com${path}`, {
+  const { response } = await executeBoundedPersonalRepositoryRead({
+    path,
     method,
-    headers: {
-      Accept: accept,
-      ...(authorization === 'omit' ? {} : { Authorization: `Bearer ${token}` }),
-      'X-GitHub-Api-Version': API_VERSION,
-      'User-Agent': USER_AGENT,
-      ...(body === null ? {} : { 'Content-Type': 'application/json' }),
-    },
-    ...(body === null ? {} : { body: JSON.stringify(body) }),
+    body,
+    request: () => fetch(`https://api.github.com${path}`, {
+      method,
+      headers: {
+        Accept: accept,
+        ...(authorization === 'omit' ? {} : { Authorization: `Bearer ${token}` }),
+        'X-GitHub-Api-Version': API_VERSION,
+        'User-Agent': USER_AGENT,
+        ...(body === null ? {} : { 'Content-Type': 'application/json' }),
+      },
+      ...(body === null ? {} : { body: JSON.stringify(body) }),
+    }),
   });
   const bytes = Buffer.from(await response.arrayBuffer());
   if (bytes.length > maxBytes) {

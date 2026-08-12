@@ -25,6 +25,10 @@ export const PERSONAL_REPOSITORY_MERGE_JOB = 'operator-personal-repository-squas
 export const PERSONAL_REPOSITORY_REQUIRED_CHECK = 'protected-merge-source-proof';
 export const PERSONAL_REPOSITORY_MODE = 'user-owned-protected-squash';
 export const PERSONAL_REPOSITORY_AUTHORITY = 'github-actions-protected-environment-exact-head-squash-only';
+export const PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS = 3;
+
+const PERSONAL_REPOSITORY_TRANSIENT_READ_STATUSES = new Set([502, 503, 504]);
+const PERSONAL_REPOSITORY_READ_RETRY_DELAYS_MS = Object.freeze([250, 1_000]);
 
 export const PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS = Object.freeze([
   Object.freeze({ name: 'OpenClaw GitHub Operator', path: '.github/workflows/openclaw-github-operator.yml', event: 'pull_request' }),
@@ -38,6 +42,59 @@ export const PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS = Object.freeze([
 
 function text(value) {
   return String(value ?? '').trim();
+}
+
+function boundedTransportCode(error) {
+  const candidate = text(error?.cause?.code || error?.code).toUpperCase();
+  return /^[A-Z][A-Z0-9_]{0,39}$/.test(candidate) ? candidate : 'UNCLASSIFIED';
+}
+
+export class PersonalRepositoryReadTransportError extends Error {
+  constructor(path, attempts, error) {
+    const endpoint = text(path).replace(/[\r\n\t]/g, '').slice(0, 500) || 'unknown-endpoint';
+    const transportCode = boundedTransportCode(error);
+    super(`GitHub read transport failed for ${endpoint} after ${attempts} attempts (${transportCode}).`);
+    this.name = 'PersonalRepositoryReadTransportError';
+    this.code = 'PERSONAL_REPOSITORY_READ_TRANSPORT_EXHAUSTED';
+    this.endpoint = endpoint;
+    this.attempts = attempts;
+    this.transportCode = transportCode;
+  }
+}
+
+export async function executeBoundedPersonalRepositoryRead({
+  path,
+  method = 'GET',
+  body = null,
+  request,
+  delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+} = {}) {
+  if (typeof request !== 'function') throw new TypeError('Personal-repository request function is required.');
+  if (typeof delay !== 'function') throw new TypeError('Personal-repository retry delay function is required.');
+  const normalizedMethod = text(method || 'GET').toUpperCase();
+  const readOnly = normalizedMethod === 'GET' && body === null;
+  const maximumAttempts = readOnly ? PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS : 1;
+  let lastTransportError = null;
+
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    try {
+      const response = await request();
+      const transientStatus = PERSONAL_REPOSITORY_TRANSIENT_READ_STATUSES.has(Number(response?.status));
+      if (!transientStatus || attempt === maximumAttempts) {
+        return Object.freeze({ response, attempts: attempt });
+      }
+      await response?.body?.cancel?.();
+    } catch (error) {
+      if (!readOnly) throw error;
+      lastTransportError = error;
+      if (attempt === maximumAttempts) {
+        throw new PersonalRepositoryReadTransportError(path, attempt, error);
+      }
+    }
+    await delay(PERSONAL_REPOSITORY_READ_RETRY_DELAYS_MS[attempt - 1]);
+  }
+
+  throw new PersonalRepositoryReadTransportError(path, maximumAttempts, lastTransportError);
 }
 
 function strictPositiveInteger(value) {
