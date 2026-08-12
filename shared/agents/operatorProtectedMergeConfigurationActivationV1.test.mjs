@@ -303,6 +303,89 @@ test('sparse arrays and bounded-serializer expansion limits fail closed', () => 
   assertBlocked(tooDeep, 'canonical-json-depth-exceeded');
 });
 
+test('array cardinality is proved from length before own keys or element descriptors are inspected', () => {
+  let ownKeyCalls = 0;
+  let elementDescriptorCalls = 0;
+  const oversized = new Proxy(new Array(2049).fill(null), {
+    ownKeys() {
+      ownKeyCalls += 1;
+      throw new Error('oversized arrays must be rejected before ownKeys');
+    },
+    getOwnPropertyDescriptor(target, property) {
+      if (property === 'length') return Reflect.getOwnPropertyDescriptor(target, property);
+      elementDescriptorCalls += 1;
+      throw new Error('oversized arrays must be rejected before element descriptors');
+    },
+  });
+
+  assertBlocked(oversized, 'canonical-json-array-length-invalid');
+  assert.equal(ownKeyCalls, 0);
+  assert.equal(elementDescriptorCalls, 0);
+});
+
+test('plain-object cardinality is proved after one key collection and before property descriptors', () => {
+  let ownKeyCalls = 0;
+  let descriptorCalls = 0;
+  const target = Object.fromEntries(
+    Array.from({ length: 513 }, (_, index) => [`key-${index}`, null]),
+  );
+  const oversized = new Proxy(target, {
+    ownKeys(value) {
+      ownKeyCalls += 1;
+      return Reflect.ownKeys(value);
+    },
+    getOwnPropertyDescriptor() {
+      descriptorCalls += 1;
+      throw new Error('oversized objects must be rejected before property descriptors');
+    },
+  });
+
+  assertBlocked(oversized, 'canonical-json-object-key-limit-exceeded');
+  assert.equal(ownKeyCalls, 1);
+  assert.equal(descriptorCalls, 0);
+});
+
+test('exact array and object cardinality boundaries remain admissible to canonical inspection', () => {
+  const exactArray = validateWithoutThrow(new Array(2048).fill(null));
+  assert.ok(!exactArray.blockers.includes('canonical-json-array-length-invalid'));
+  assert.ok(!exactArray.blockers.includes('canonical-json-node-limit-exceeded'));
+
+  const exactObject = validateWithoutThrow(Object.fromEntries(
+    Array.from({ length: 512 }, (_, index) => [`key-${index}`, null]),
+  ));
+  assert.ok(!exactObject.blockers.includes('canonical-json-object-key-limit-exceeded'));
+  assert.ok(!exactObject.blockers.includes('canonical-json-node-limit-exceeded'));
+});
+
+test('array extras and malformed individual descriptors remain fail closed', () => {
+  const withExtraProperty = [null];
+  withExtraProperty.extra = true;
+  assertBlocked(withExtraProperty, 'canonical-json-array-not-dense');
+
+  let accessorCalls = 0;
+  const malformedDescriptor = new Proxy({ value: null }, {
+    getOwnPropertyDescriptor(target, property) {
+      if (property !== 'value') return Reflect.getOwnPropertyDescriptor(target, property);
+      return {
+        configurable: true,
+        enumerable: true,
+        get() {
+          accessorCalls += 1;
+          return null;
+        },
+      };
+    },
+  });
+  assertBlocked(malformedDescriptor, 'canonical-json-property-invalid');
+  assert.equal(accessorCalls, 0);
+
+  const source = readFileSync(
+    new URL('./operatorProtectedMergeConfigurationActivationV1.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.doesNotMatch(source, /getOwnPropertyDescriptors/);
+});
+
 test('oversized string values and property names fail before unbounded JSON serialization', () => {
   const oversizedValue = { value: 'x'.repeat(262_145) };
   assertBlocked(oversizedValue, 'canonical-json-too-large');
