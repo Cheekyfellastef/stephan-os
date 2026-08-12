@@ -9,6 +9,7 @@ import {
   finalizeTerminalImplementationLane,
   publishProgrammeControllerHeartbeat,
   readAuthoritativeProgrammeProjection,
+  readMissionControllerCapacityRoutingInput,
   resolveProgrammeAuthorityPaths,
 } from '../../stephanos-server/services/programmeAuthorityService.js';
 import {
@@ -110,7 +111,7 @@ function workerAdapter(action = {}) {
   return '';
 }
 
-function createExactWorkerActionGrant(projection = {}, sourceRevision = '') {
+function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capacityRouting = null) {
   const activeMission = projection?.criticalBacklog?.activeMission;
   const actionState = projectMissionWorkerActionState(activeMission, {
     now: new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString()),
@@ -128,6 +129,7 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '') {
   }
   const action = buildMissionWorkerAction(actionState, {
     now: new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString()),
+    capacityRouting,
   });
   const actionId = text(action?.actionId).toLowerCase();
   const adapter = workerAdapter(action);
@@ -145,6 +147,10 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '') {
     actionKind: text(action.actionKind),
     adapter,
     operation: text(action.operation),
+    capacityRoute: text(action.capacityRoute),
+    capacityReceiptId: text(action.capacityReceiptId) || null,
+    capacityProofRefs: freeze(list(action.capacityProofRefs)),
+    workerId: text(action.owner) || null,
     laneId: identity.laneId || null,
     repository: identity.repository || text(actionState?.repository) || null,
     issueNumber: identity.issueNumber,
@@ -390,6 +396,7 @@ function productionMachinery(overrides = {}) {
     finalizeTerminalLane: overrides.finalizeTerminalLane ?? finalizeTerminalImplementationLane,
     ensureBacklogMission: overrides.ensureBacklogMission ?? ensureCriticalBacklogMission,
     publishReceipt: overrides.publishReceipt ?? publishDurableFlywheelCycleReceipt,
+    loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readMissionControllerCapacityRoutingInput,
   });
 }
 
@@ -558,7 +565,11 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       });
     }
   } else if (result.status === 'ACTIVE') {
-    const workerActionGrant = createExactWorkerActionGrant(projection, sourceRevision);
+    const capacityRouting = await requiredFunction(
+      deps.loadCapacityRoutingInput,
+      'loadCapacityRoutingInput',
+    )(serviceOptions);
+    const workerActionGrant = createExactWorkerActionGrant(projection, sourceRevision, capacityRouting);
     if (!workerActionGrant) {
       result = holdResult('mission-worker:exact-action-grant-unavailable', {
         observedAtUtc: nowUtc,
@@ -602,7 +613,11 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
           ...projection,
           criticalBacklog: actionResult.projection,
         };
-        const workerActionGrant = createExactWorkerActionGrant(grantProjection, sourceRevision);
+        const capacityRouting = await requiredFunction(
+          deps.loadCapacityRoutingInput,
+          'loadCapacityRoutingInput',
+        )(serviceOptions);
+        const workerActionGrant = createExactWorkerActionGrant(grantProjection, sourceRevision, capacityRouting);
         if (!workerActionGrant) {
           result = holdResult('mission-worker:exact-action-grant-unavailable', {
             observedAtUtc: nowUtc,
