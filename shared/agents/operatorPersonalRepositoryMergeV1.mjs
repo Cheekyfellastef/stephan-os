@@ -67,9 +67,11 @@ export async function executeBoundedPersonalRepositoryRead({
   method = 'GET',
   body = null,
   request,
+  consume = async (response) => response,
   delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
   if (typeof request !== 'function') throw new TypeError('Personal-repository request function is required.');
+  if (typeof consume !== 'function') throw new TypeError('Personal-repository response consumer is required.');
   if (typeof delay !== 'function') throw new TypeError('Personal-repository retry delay function is required.');
   const normalizedMethod = text(method || 'GET').toUpperCase();
   const readOnly = normalizedMethod === 'GET' && body === null;
@@ -80,10 +82,12 @@ export async function executeBoundedPersonalRepositoryRead({
     try {
       const response = await request();
       const transientStatus = PERSONAL_REPOSITORY_TRANSIENT_READ_STATUSES.has(Number(response?.status));
-      if (!transientStatus || attempt === maximumAttempts) {
-        return Object.freeze({ response, attempts: attempt });
+      if (transientStatus && attempt < maximumAttempts) {
+        await response?.body?.cancel?.();
+      } else {
+        const result = await consume(response);
+        return Object.freeze({ response, result, attempts: attempt });
       }
-      await response?.body?.cancel?.();
     } catch (error) {
       if (!readOnly) throw error;
       lastTransportError = error;

@@ -114,7 +114,7 @@ async function githubResponse(path, {
     : text(process.env.GH_TOKEN || process.env.GITHUB_TOKEN);
   if (authorization === 'required' && !token) fail('GitHub Actions token is required.');
   if (authorization === 'ruleset-proof' && !token) fail('Protected ruleset proof token is required.');
-  const { response } = await executeBoundedPersonalRepositoryRead({
+  const { response, result: bytes } = await executeBoundedPersonalRepositoryRead({
     path,
     method,
     body,
@@ -129,8 +129,8 @@ async function githubResponse(path, {
       },
       ...(body === null ? {} : { body: JSON.stringify(body) }),
     }),
+    consume: async (boundedResponse) => Buffer.from(await boundedResponse.arrayBuffer()),
   });
-  const bytes = Buffer.from(await response.arrayBuffer());
   if (bytes.length > maxBytes) {
     fail('GitHub API response exceeded the bounded maximum.', {
       path,

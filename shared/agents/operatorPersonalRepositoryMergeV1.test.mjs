@@ -71,6 +71,54 @@ test('bounded personal-repository reads retry only transient gateway responses',
   assert.equal(forbidden.response.status, 403);
 });
 
+test('bounded personal-repository reads retry transport failures while consuming the response body', async () => {
+  let requests = 0;
+  let consumptions = 0;
+  const result = await executeBoundedPersonalRepositoryRead({
+    path: '/repos/Cheekyfellastef/stephan-os/pulls/1762',
+    request: async () => {
+      requests += 1;
+      return response(200);
+    },
+    consume: async () => {
+      consumptions += 1;
+      if (consumptions === 1) {
+        const error = new TypeError('terminated while reading Authorization: Bearer secret-value');
+        error.cause = { code: 'UND_ERR_SOCKET' };
+        throw error;
+      }
+      return Buffer.from('{"state":"open"}');
+    },
+    delay: async () => {},
+  });
+  assert.equal(requests, 2);
+  assert.equal(consumptions, 2);
+  assert.equal(result.attempts, 2);
+  assert.equal(result.result.toString('utf8'), '{"state":"open"}');
+});
+
+test('body-consumption exhaustion emits the same bounded secret-free transport proof', async () => {
+  await assert.rejects(
+    executeBoundedPersonalRepositoryRead({
+      path: '/repos/Cheekyfellastef/stephan-os/actions/runs/31562891459/artifacts',
+      request: async () => response(200),
+      consume: async () => {
+        const error = new TypeError('body failed with bearer secret-value');
+        error.cause = { code: 'UND_ERR_SOCKET' };
+        throw error;
+      },
+      delay: async () => {},
+    }),
+    (error) => {
+      assert.equal(error.code, 'PERSONAL_REPOSITORY_READ_TRANSPORT_EXHAUSTED');
+      assert.equal(error.attempts, PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS);
+      assert.equal(error.transportCode, 'UND_ERR_SOCKET');
+      assert.doesNotMatch(error.message, /secret-value|bearer/i);
+      return true;
+    },
+  );
+});
+
 test('bounded personal-repository reads exhaust with endpoint-specific secret-free proof', async () => {
   let attempts = 0;
   await assert.rejects(

@@ -105,6 +105,7 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /validatePersonalRepositoryRulesetProofRequest/);
   assert.match(source, /executeBoundedPersonalRepositoryRead/);
   assert.match(source, /request: \(\) => fetch/);
+  assert.match(source, /consume: async \(boundedResponse\) => Buffer\.from\(await boundedResponse\.arrayBuffer\(\)\)/);
   assert.equal([...source.matchAll(/executeBoundedPersonalRepositoryRead/g)].length, 2);
   assert.match(source, /personal-repository-public-rules-api/);
   assert.match(source, /repos\/\$\{context\.owner\}\/\$\{context\.repo\}`, \{ authorization: 'ruleset-proof' \}/);
