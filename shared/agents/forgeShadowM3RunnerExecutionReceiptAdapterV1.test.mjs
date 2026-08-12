@@ -228,8 +228,22 @@ function terminationAcknowledgement(request, patch = {}) {
     terminated: true,
     teardownAcknowledged: true,
     acknowledgedAtUtc: NOW,
+    quarantined: false,
+    quarantineAcknowledged: false,
+    quarantineReason: '',
+    quarantineProofRef: '',
     ...patch,
   };
+}
+
+function quarantineAcknowledgement(request, patch = {}) {
+  return terminationAcknowledgement(request, {
+    quarantined: true,
+    quarantineAcknowledged: true,
+    quarantineReason: 'TEARDOWN_POLICY_VIOLATION',
+    quarantineProofRef: `proofs/forge-shadow-m3/${request.runner.runnerId}/${'9'.repeat(64)}.json`,
+    ...patch,
+  });
 }
 
 function executionResult(request, observationPatch = {}, terminationPatch = {}) {
@@ -359,20 +373,45 @@ test('torn-down runner construction is historical proof and never current routab
 });
 
 test('teardown evidence is ordered and quarantined beyond the canonical five-minute ceiling', async () => {
+  const instants = [NOW, NOW, NOW, NOW, '2026-08-07T21:26:00Z'];
   const result = await executeVerified(input(), {
     platform: 'win32',
-    now: () => new Date('2026-08-07T21:26:00Z'),
-    executeRunner: async (request) => executionResult(request, {
+    now: () => new Date(instants.shift() || '2026-08-07T21:26:00Z'),
+    executeRunner: async (request) => ({
+      observation: observation(request, {
+        authorizationId: request.authorizationId,
+        invocationId: request.invocationId,
       startedAtUtc: '2026-08-07T21:20:00Z',
       teardownStartedAtUtc: '2026-08-07T21:20:00Z',
       teardownCompletedAtUtc: '2026-08-07T21:25:01Z',
       completedAtUtc: '2026-08-07T21:25:01Z',
-    }, { acknowledgedAtUtc: '2026-08-07T21:26:00Z' }),
+      }),
+      terminationAcknowledgement: quarantineAcknowledgement(request, {
+        acknowledgedAtUtc: '2026-08-07T21:26:00Z',
+      }),
+    }),
   });
   assert.equal(result.ok, false);
   assert.ok(result.blockers.includes(
     'runner-teardown-deadline-exceeded:stephanos-forge-linux-runner-01',
   ), JSON.stringify(result.blockers));
+});
+
+test('the exact inclusive five-minute teardown boundary remains admissible', async () => {
+  const completedAtUtc = '2026-08-07T21:25:00Z';
+  const instants = [NOW, NOW, NOW, NOW, completedAtUtc, NOW, completedAtUtc];
+  const result = await executeVerified(input(), {
+    platform: 'win32',
+    now: () => new Date(instants.shift() || completedAtUtc),
+    executeRunner: async (request) => executionResult(request, {
+      teardownStartedAtUtc: NOW,
+      teardownCompletedAtUtc: completedAtUtc,
+      completedAtUtc,
+    }, {
+      acknowledgedAtUtc: completedAtUtc,
+    }),
+  });
+  assert.equal(result.ok, true, JSON.stringify(result, null, 2));
 });
 
 test('each teardown timestamp ordering predicate fails closed with the exact blocker', async (t) => {
@@ -393,9 +432,20 @@ test('each teardown timestamp ordering predicate fails closed with the exact blo
 
   for (const { name, patch } of cases) {
     await t.test(name, async () => {
+      const instants = [NOW, NOW, NOW, NOW, '2026-08-07T21:26:00Z'];
       const result = await executeVerified(input(), {
-        platform: 'win32', now,
-        executeRunner: async (request) => executionResult(request, patch),
+        platform: 'win32',
+        now: () => new Date(instants.shift() || '2026-08-07T21:26:00Z'),
+        executeRunner: async (request) => ({
+          observation: observation(request, {
+            authorizationId: request.authorizationId,
+            invocationId: request.invocationId,
+            ...patch,
+          }),
+          terminationAcknowledgement: quarantineAcknowledgement(request, {
+            acknowledgedAtUtc: '2026-08-07T21:26:00Z',
+          }),
+        }),
       });
       const orderingBlocker = 'runner-teardown-time-order-invalid:stephanos-forge-linux-runner-01';
       assert.equal(result.ok, false);
@@ -405,6 +455,96 @@ test('each teardown timestamp ordering predicate fails closed with the exact blo
       );
     });
   }
+});
+
+test('teardown-policy violations remain pending until exact identity-bound quarantine proof', async () => {
+  const settledAtUtc = '2026-08-07T21:26:00Z';
+  const instants = [NOW, NOW, NOW, NOW, settledAtUtc, settledAtUtc];
+  let aborted = false;
+  const execution = executeVerified(input(), {
+    platform: 'win32',
+    now: () => new Date(instants.shift() || settledAtUtc),
+    executeRunner: async (request) => {
+      request.signal.addEventListener('abort', () => {
+        aborted = true;
+        request.acknowledgeTermination(quarantineAcknowledgement(request, {
+          invocationId: 'forge-m3-invocation-wrong',
+          acknowledgedAtUtc: settledAtUtc,
+        }));
+        setTimeout(() => {
+          request.acknowledgeTermination(quarantineAcknowledgement(request, {
+            acknowledgedAtUtc: settledAtUtc,
+          }));
+        }, 25);
+      }, { once: true });
+      return executionResult(request, {
+        teardownStartedAtUtc: NOW,
+        teardownCompletedAtUtc: '2026-08-07T21:25:01Z',
+        completedAtUtc: '2026-08-07T21:25:01Z',
+      }, {
+        acknowledgedAtUtc: settledAtUtc,
+      });
+    },
+  });
+  const early = await Promise.race([
+    execution.then(() => 'unsafe-return'),
+    new Promise((resolve) => setTimeout(() => resolve('held-pending'), 15)),
+  ]);
+  assert.equal(early, 'held-pending');
+  const result = await execution;
+  assert.equal(aborted, true);
+  assert.equal(result.ok, false);
+  assert.ok(result.blockers.some((item) => item.includes('runner-quarantine-ack-required')), JSON.stringify(result.blockers));
+  assert.ok(result.blockers.some((item) => item.includes('runner-termination-ack-invocation-mismatch')), JSON.stringify(result.blockers));
+});
+
+test('missing quarantine proof for a teardown-policy violation remains pending', async () => {
+  const settledAtUtc = '2026-08-07T21:26:00Z';
+  const instants = [NOW, NOW, NOW, NOW, settledAtUtc];
+  let aborted = false;
+  const execution = executeVerified(input(), {
+    platform: 'win32',
+    now: () => new Date(instants.shift() || settledAtUtc),
+    executeRunner: async (request) => {
+      request.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
+      return executionResult(request, {
+        teardownStartedAtUtc: NOW,
+        teardownCompletedAtUtc: '2026-08-07T21:25:01Z',
+        completedAtUtc: '2026-08-07T21:25:01Z',
+      }, {
+        acknowledgedAtUtc: settledAtUtc,
+      });
+    },
+  });
+  const state = await Promise.race([
+    execution.then(() => 'unsafe-return'),
+    new Promise((resolve) => setTimeout(() => resolve('held-pending'), 35)),
+  ]);
+  assert.equal(aborted, true);
+  assert.equal(state, 'held-pending');
+});
+
+test('quarantine proof cannot substitute for normal teardown proof on a valid observation', async () => {
+  let aborted = false;
+  const execution = executeVerified(input(), {
+    platform: 'win32', now,
+    executeRunner: async (request) => {
+      request.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
+      return {
+        observation: observation(request, {
+          authorizationId: request.authorizationId,
+          invocationId: request.invocationId,
+        }),
+        terminationAcknowledgement: quarantineAcknowledgement(request),
+      };
+    },
+  });
+  const state = await Promise.race([
+    execution.then(() => 'unsafe-return'),
+    new Promise((resolve) => setTimeout(() => resolve('held-pending'), 35)),
+  ]);
+  assert.equal(aborted, true);
+  assert.equal(state, 'held-pending');
 });
 
 test('sparse runner proof-reference arrays fail closed before receipt construction', async () => {
@@ -417,6 +557,26 @@ test('sparse runner proof-reference arrays fail closed before receipt constructi
   assert.ok(result.blockers.includes(
     'runner-proof-refs-invalid:stephanos-forge-linux-runner-01',
   ), JSON.stringify(result.blockers));
+});
+
+test('authority-bearing arrays reject every non-index own property', async () => {
+  for (const extraKey of ['command', Symbol('hidden-authority')]) {
+    const proofRefs = [`proofs/forge-shadow-m3/stephanos-forge-linux-runner-01/${'6'.repeat(64)}.json`];
+    Object.defineProperty(proofRefs, extraKey, { value: 'hidden', enumerable: true });
+    const result = await executeVerified(input(), {
+      platform: 'win32', now,
+      executeRunner: async (request) => executionResult(request, {
+        proofRefs: request.runner.runnerClass === 'linux-isolated'
+          ? proofRefs
+          : observation(request, {
+              authorizationId: request.authorizationId,
+              invocationId: request.invocationId,
+            }).proofRefs,
+      }),
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.blockers.some((item) => item.includes('runner-proof-refs-invalid')), JSON.stringify(result.blockers));
+  }
 });
 
 test('replans against the trusted execution clock so caller history cannot admit stale evidence', async () => {
@@ -659,6 +819,9 @@ test('runner proof fails closed on identity, canary, teardown, authority or proo
     const result = await executeVerified(input(), {
       platform: 'win32', now,
       executeRunner: async (request) => {
+        request.signal.addEventListener('abort', () => {
+          request.acknowledgeTermination(quarantineAcknowledgement(request));
+        }, { once: true });
         const selected = first ? patch : {};
         first = false;
         return executionResult(request, selected);
@@ -785,7 +948,7 @@ test('a rejected observation preserves its later completion boundary until delay
       request.signal.addEventListener('abort', () => {
         aborted = true;
         setTimeout(() => {
-          request.acknowledgeTermination(terminationAcknowledgement(request, {
+          request.acknowledgeTermination(quarantineAcknowledgement(request, {
             acknowledgedAtUtc: completedAtUtc,
           }));
         }, 25);
@@ -808,6 +971,47 @@ test('a rejected observation preserves its later completion boundary until delay
   assert.equal(result.ok, false);
   assert.equal(result.receipt, null);
   assert.ok(result.blockers.some((item) => item.includes('runner-teardown-incomplete')), JSON.stringify(result.blockers));
+  assert.ok(result.blockers.some((item) => item.includes('runner-quarantine-ack-required')), JSON.stringify(result.blockers));
+});
+
+test('a malformed overall completion cannot erase a safe later teardown-completion boundary', async () => {
+  const teardownCompletedAtUtc = '2026-08-07T21:20:05Z';
+  const instants = [NOW, NOW, NOW, NOW, teardownCompletedAtUtc, teardownCompletedAtUtc];
+  let aborted = false;
+  const execution = executeVerified(input(), {
+    platform: 'win32',
+    now: () => new Date(instants.shift() || teardownCompletedAtUtc),
+    executeRunner: async (request) => {
+      request.signal.addEventListener('abort', () => {
+        aborted = true;
+        setTimeout(() => {
+          request.acknowledgeTermination(quarantineAcknowledgement(request, {
+            acknowledgedAtUtc: teardownCompletedAtUtc,
+          }));
+        }, 25);
+      }, { once: true });
+      return {
+        observation: observation(request, {
+          authorizationId: request.authorizationId,
+          invocationId: request.invocationId,
+          teardownCompletedAtUtc,
+          completedAtUtc: 'not-an-instant',
+        }),
+        terminationAcknowledgement: quarantineAcknowledgement(request, {
+          acknowledgedAtUtc: NOW,
+        }),
+      };
+    },
+  });
+  const early = await Promise.race([
+    execution.then(() => 'unsafe-return'),
+    new Promise((resolve) => setTimeout(() => resolve('held-pending'), 15)),
+  ]);
+  assert.equal(early, 'held-pending');
+  const result = await execution;
+  assert.equal(aborted, true);
+  assert.equal(result.ok, false);
+  assert.ok(result.blockers.some((item) => item.includes('runner-time-invalid')), JSON.stringify(result.blockers));
   assert.ok(result.blockers.some((item) => item.includes('runner-termination-before-observation-complete')), JSON.stringify(result.blockers));
 });
 
@@ -823,7 +1027,7 @@ test('missing or permanently early teardown proof for a rejected observation rem
         request.signal.addEventListener('abort', () => {
           aborted = true;
           if (publishEarlyAfterAbort) {
-            request.acknowledgeTermination(terminationAcknowledgement(request, {
+            request.acknowledgeTermination(quarantineAcknowledgement(request, {
               acknowledgedAtUtc: NOW,
             }));
           }
@@ -871,7 +1075,7 @@ test('malformed or hostile completion evidence fails closed without throwing', a
         request.signal.addEventListener('abort', () => {
           aborted = true;
           setTimeout(() => {
-            request.acknowledgeTermination(terminationAcknowledgement(request));
+            request.acknowledgeTermination(quarantineAcknowledgement(request));
           }, 20);
         }, { once: true });
         return candidate(request);
@@ -1162,6 +1366,11 @@ test('malformed, widened or hostile acknowledgements cannot permit a rejection r
   for (const candidate of [
     { terminated: true },
     (request) => ({ ...terminationAcknowledgement(request), widenedAuthority: true }),
+    (request) => quarantineAcknowledgement(request, { quarantineAcknowledged: false }),
+    (request) => quarantineAcknowledgement(request, { quarantineReason: 'CALLER_SELECTED' }),
+    (request) => quarantineAcknowledgement(request, {
+      quarantineProofRef: `proofs/forge-shadow-m3/unrelated/${'9'.repeat(64)}.json`,
+    }),
     () => new Proxy({}, {
       ownKeys: () => { throw new Error('acknowledgement keys unavailable'); },
     }),
@@ -1294,4 +1503,50 @@ test('receipt validation detects post-issuance mutation and hidden fields', asyn
   assert.equal(validateForgeShadowM3RunnerRuntimeReceipt(mutated).ok, false);
   const widened = { ...structuredClone(result.receipt), command: 'not-allowed' };
   assert.equal(validateForgeShadowM3RunnerRuntimeReceipt(widened).ok, false);
+});
+
+test('receipt validation rejects named and symbolic properties on every authority array', async () => {
+  const result = await executeVerified(input(), {
+    platform: 'win32', now, executeRunner: async (request) => executionResult(request),
+  });
+  for (const field of ['proofRefs', 'runnerIdentities']) {
+    for (const extraKey of ['command', Symbol('hidden-authority')]) {
+      const widened = structuredClone(result.receipt);
+      Object.defineProperty(widened[field], extraKey, { value: 'hidden', enumerable: true });
+      assert.equal(validateForgeShadowM3RunnerRuntimeReceipt(widened).ok, false, `${field}:${String(extraKey)}`);
+    }
+  }
+});
+
+test('the public receipt validator is total for hostile and cyclic caller values', async () => {
+  const result = await executeVerified(input(), {
+    platform: 'win32', now, executeRunner: async (request) => executionResult(request),
+  });
+  const throwingGetter = structuredClone(result.receipt);
+  Object.defineProperty(throwingGetter, 'receiptId', {
+    enumerable: true,
+    get: () => { throw new Error('hostile receipt getter'); },
+  });
+  const cyclic = structuredClone(result.receipt);
+  cyclic.cycle = cyclic;
+  const candidates = [
+    new Proxy({}, { ownKeys: () => { throw new Error('hostile ownKeys trap'); } }),
+    throwingGetter,
+    cyclic,
+  ];
+  for (const candidate of candidates) {
+    let validation;
+    assert.doesNotThrow(() => { validation = validateForgeShadowM3RunnerRuntimeReceipt(candidate); });
+    assert.equal(validation.ok, false);
+    assert.deepEqual(validation.blockers, ['receipt-inspection-failed']);
+    assert.equal(validation.receipt, null);
+  }
+
+  let hostileExpectation;
+  assert.doesNotThrow(() => {
+    hostileExpectation = validateForgeShadowM3RunnerRuntimeReceipt(result.receipt, new Proxy({}, {
+      get: () => { throw new Error('hostile expectation getter'); },
+    }));
+  });
+  assert.deepEqual(hostileExpectation.blockers, ['receipt-inspection-failed']);
 });
