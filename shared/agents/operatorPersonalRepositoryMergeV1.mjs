@@ -11,6 +11,11 @@ const REPOSITORY_PATTERN = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const BRANCH_PATTERN = /^[a-z0-9][a-z0-9._/-]{0,239}$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const PERSONAL_REPOSITORY_ACTIVE_RUN_STATUSES = new Set(['queued', 'in_progress']);
+const PERSONAL_REPOSITORY_RULESET_PROOF_PATHS = Object.freeze([
+  /^\/repos\/[^/?]+\/[^/?]+$/,
+  /^\/repos\/[^/?]+\/[^/?]+\/rules\/branches\/main\?per_page=100&page=(?:[1-9]|1[0-9]|20)$/,
+  /^\/repos\/[^/?]+\/[^/?]+\/rulesets\/[1-9][0-9]*\?includes_parents=true$/,
+]);
 
 export const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
 export const PERSONAL_REPOSITORY_WORKFLOW_NAME = 'Protected Operator Merge Queue Boundary';
@@ -39,6 +44,32 @@ function strictPositiveInteger(value) {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : 0;
 }
 
+export function validatePersonalRepositoryRulesetProofRequest(input = {}) {
+  const path = text(input.path);
+  const method = text(input.method || 'GET').toUpperCase();
+  const body = input.body ?? null;
+  const repository = text(input.repository);
+  const pathRepository = path.match(/^\/repos\/([^/?]+)\/([^/?]+)(?:$|\/)/);
+  const blockers = [];
+  if (method !== 'GET') blockers.push('personal-repository-ruleset-proof-method-not-read-only');
+  if (body !== null) blockers.push('personal-repository-ruleset-proof-body-not-empty');
+  if (!REPOSITORY_PATTERN.test(repository)
+    || !pathRepository
+    || `${pathRepository[1]}/${pathRepository[2]}` !== repository) {
+    blockers.push('personal-repository-ruleset-proof-repository-mismatch');
+  }
+  if (!PERSONAL_REPOSITORY_RULESET_PROOF_PATHS.some((pattern) => pattern.test(path))) {
+    blockers.push('personal-repository-ruleset-proof-path-not-bounded');
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    blockers: Object.freeze(blockers),
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_RULESET_PROOF_REQUEST_BLOCKED'
+      : 'PERSONAL_REPOSITORY_RULESET_PROOF_REQUEST_READY',
+  });
+}
+
 function parsePositiveInteger(value) {
   const raw = text(value);
   if (!/^[1-9][0-9]*$/.test(raw)) return 0;
@@ -56,6 +87,58 @@ function sameKeys(value, expectedKeys) {
   const expected = [...expectedKeys].sort();
   return observed.length === expected.length
     && observed.every((key, index) => key === expected[index]);
+}
+
+function canonicalConfigurationValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalConfigurationValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => (
+      [key, canonicalConfigurationValue(value[key])]
+    )));
+  }
+  return value;
+}
+
+export function buildPersonalRepositoryConfigurationEvidence(input = {}) {
+  const repository = input.repository && typeof input.repository === 'object' ? input.repository : {};
+  const environment = input.environment && typeof input.environment === 'object' ? input.environment : {};
+  const activeRules = (Array.isArray(input.activeRules) ? input.activeRules : [])
+    .map(canonicalConfigurationValue)
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const rulesets = (Array.isArray(input.rulesets) ? input.rulesets : [])
+    .map((ruleset) => canonicalConfigurationValue({
+      id: ruleset?.id,
+      name: ruleset?.name,
+      target: ruleset?.target,
+      source_type: ruleset?.source_type,
+      source: ruleset?.source,
+      enforcement: ruleset?.enforcement,
+      created_at: ruleset?.created_at,
+      updated_at: ruleset?.updated_at,
+      conditions: ruleset?.conditions,
+      rules: ruleset?.rules,
+      bypass_actors: ruleset?.bypass_actors,
+    }))
+    .sort((left, right) => Number(left.id) - Number(right.id));
+  return Object.freeze(canonicalConfigurationValue({
+    repository: {
+      id: repository?.id,
+      owner_type: repository?.owner?.type,
+      private: repository?.private,
+      visibility: repository?.visibility,
+      default_branch: repository?.default_branch,
+      allow_squash_merge: repository?.allow_squash_merge,
+      delete_branch_on_merge: repository?.delete_branch_on_merge,
+    },
+    environment: {
+      name: environment?.name,
+      can_admins_bypass: environment?.can_admins_bypass,
+      deployment_branch_policy: environment?.deployment_branch_policy,
+      protection_rules: environment?.protection_rules,
+    },
+    activeRules,
+    rulesets,
+  }));
 }
 
 function workflowRepository(run = {}) {
@@ -531,7 +614,7 @@ export function validatePersonalRepositoryConfiguration(input = {}, options = {}
       ? 'PERSONAL_REPOSITORY_CONFIGURATION_BLOCKED'
       : requireBypassProof
         ? 'PERSONAL_REPOSITORY_CONFIGURATION_READY'
-        : 'PERSONAL_REPOSITORY_CONFIGURATION_PREAPPROVAL_READY',
+        : 'PERSONAL_REPOSITORY_CONFIGURATION_PARTIAL_PROOF_READY',
   });
 }
 

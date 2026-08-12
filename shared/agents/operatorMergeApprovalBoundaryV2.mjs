@@ -7,7 +7,7 @@ import {
 } from './operatorMergeApprovalGate.mjs';
 
 const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
-const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = '4a03e84b98855e0a8f5f631bd809d392075bd54a303097ef54093ea39e257cd2';
+const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = '7ba1ba2f7124ab82cc1dbef8073a731510742189b7dd3ab354259579abf09f77';
 const PERSONAL_REPOSITORY_WORKFLOW_SOURCE_KEYS = Object.freeze([
   'schemaVersion',
   'repository',
@@ -65,6 +65,7 @@ const PERSONAL_REPOSITORY_WORKFLOW_JOB_STEPS = Object.freeze([
     steps: Object.freeze([
       Object.freeze({ executableKey: 'uses', executableValue: 'actions/checkout@v4' }),
       Object.freeze({ executableKey: 'uses', executableValue: 'actions/setup-node@v4' }),
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/create-github-app-token@v2' }),
       Object.freeze({ executableKey: 'run', executableValue: 'node scripts/operator-protected-personal-repository-merge.mjs evidence' }),
     ]),
   }),
@@ -82,6 +83,7 @@ const PERSONAL_REPOSITORY_WORKFLOW_JOB_STEPS = Object.freeze([
     steps: Object.freeze([
       Object.freeze({ executableKey: 'uses', executableValue: 'actions/checkout@v4' }),
       Object.freeze({ executableKey: 'uses', executableValue: 'actions/setup-node@v4' }),
+      Object.freeze({ executableKey: 'uses', executableValue: 'actions/create-github-app-token@v2' }),
       Object.freeze({ executableKey: 'run', executableValue: 'node scripts/operator-protected-personal-repository-merge.mjs merge' }),
     ]),
   }),
@@ -90,6 +92,10 @@ const WORKFLOW_STEP_KEYS = Object.freeze({
   uses: Object.freeze(['id', 'name', 'uses', 'with']),
   run: Object.freeze(['env', 'id', 'name', 'run']),
 });
+const PERSONAL_REPOSITORY_EVIDENCE_ENV = Object.freeze([
+  Object.freeze(['GH_TOKEN', '${{ github.token }}']),
+  Object.freeze(['STEPHANOS_RULESET_PROOF_TOKEN', '${{ steps.ruleset-proof-token.outputs.token }}']),
+]);
 const PERSONAL_REPOSITORY_APPROVAL_ENV = Object.freeze([
   Object.freeze(['GH_TOKEN', '${{ github.token }}']),
   Object.freeze(['STEPHANOS_RULESET_PROOF_TOKEN', '${{ steps.ruleset-proof-token.outputs.token }}']),
@@ -430,8 +436,8 @@ function stepHasExactEntries(step, expectedEntries) {
     && expectedEntries.every(([key, value]) => observed.get(key) === value);
 }
 
-function personalRepositoryRulesetProofTokenIsExact(source) {
-  const parsed = yamlJobSteps(source, 'operator-personal-repository-approval');
+function personalRepositoryRulesetProofTokenForJobIsExact(source, jobName) {
+  const parsed = yamlJobSteps(source, jobName);
   if (!parsed.valid) return false;
   const mintSteps = parsed.steps.filter((step) => (
     step.entries.some((entry) => entry.key === 'uses'
@@ -457,6 +463,26 @@ function personalRepositoryRulesetProofTokenIsExact(source) {
     && stepHasExactEntries({ entries: withMapping.entries }, expectedWith);
 }
 
+function personalRepositoryRulesetProofTokenIsExact(source) {
+  return [
+    'personal-repository-evidence',
+    'operator-personal-repository-approval',
+    'operator-personal-repository-squash-merge',
+  ].every((jobName) => personalRepositoryRulesetProofTokenForJobIsExact(source, jobName));
+}
+
+function personalRepositoryProtectedStageSequenceIsExact(source) {
+  return jobHasExactNeeds(source, 'operator-personal-repository-approval', '[personal-repository-evidence]')
+    && jobHasExactNeeds(source, 'operator-personal-repository-squash-merge', '[personal-repository-evidence, operator-personal-repository-approval]')
+    && jobHasExactEnvironment(source, 'personal-repository-evidence', 'operator-merge-approval')
+    && jobHasExactEnvironment(source, 'operator-personal-repository-approval', 'operator-merge-approval')
+    && jobHasExactEnvironment(source, 'operator-personal-repository-squash-merge', 'operator-merge-approval')
+    && source.includes('      - name: Collect exact personal-repository evidence after protected admission')
+    && source.includes('      - name: Re-prove immutable evidence after protected approval')
+    && source.includes('      - name: Re-prove, squash exact head and publish the bounded receipt')
+    && !/personal-repository evidence before protected approval|PERSONAL_REPOSITORY_EVIDENCE_READY_BEFORE_PROTECTED_ENVIRONMENT|Pre-environment personal-repository evidence/u.test(source);
+}
+
 function personalRepositoryRulesetProofTokenIsBound(source) {
   const expectedJobNames = PERSONAL_REPOSITORY_WORKFLOW_JOB_STEPS.map((policy) => policy.jobName);
   const jobNames = yamlJobNames(source);
@@ -469,15 +495,31 @@ function personalRepositoryRulesetProofTokenIsBound(source) {
     || !jobHasExactNeeds(source, 'operator-personal-repository-squash-merge', '[personal-repository-evidence, operator-personal-repository-approval]')
     || !jobHasExactEnvironment(source, 'merge-group-evidence')
     || !jobHasExactEnvironment(source, 'operator-merge-queue-boundary', 'operator-merge-approval')
-    || !jobHasExactEnvironment(source, 'personal-repository-evidence')
+    || !jobHasExactEnvironment(source, 'personal-repository-evidence', 'operator-merge-approval')
     || !jobHasExactEnvironment(source, 'operator-personal-repository-approval', 'operator-merge-approval')
-    || !jobHasExactEnvironment(source, 'operator-personal-repository-squash-merge')
+    || !jobHasExactEnvironment(source, 'operator-personal-repository-squash-merge', 'operator-merge-approval')
     || expectedJobNames.some((jobName) => (
       !jobHasExactScalar(source, jobName, 'runs-on', 'ubuntu-latest')
       || !jobHasExactScalar(source, jobName, 'timeout-minutes', '20')
     ))) return false;
   const parsed = yamlJobSteps(source, 'operator-personal-repository-approval');
   if (!parsed.valid) return false;
+  const evidenceParsed = yamlJobSteps(source, 'personal-repository-evidence');
+  if (!evidenceParsed.valid) return false;
+  const evidenceSteps = evidenceParsed.steps.filter((step) => (
+    step.entries.some((entry) => entry.key === 'run'
+      && entry.value === 'node scripts/operator-protected-personal-repository-merge.mjs evidence')
+  ));
+  if (evidenceSteps.length !== 1 || !stepHasExactEntries(evidenceSteps[0], [
+    ['name', 'Collect exact personal-repository evidence after protected admission'],
+    ['id', 'evidence'],
+    ['env', ''],
+    ['run', 'node scripts/operator-protected-personal-repository-merge.mjs evidence'],
+  ])) return false;
+  const evidenceEnvMapping = yamlStepNestedMapping(evidenceSteps[0], 'env');
+  if (!evidenceEnvMapping.valid
+    || evidenceEnvMapping.entries.length !== PERSONAL_REPOSITORY_EVIDENCE_ENV.length
+    || !stepHasExactEntries({ entries: evidenceEnvMapping.entries }, PERSONAL_REPOSITORY_EVIDENCE_ENV)) return false;
   const approvalSteps = parsed.steps.filter((step) => (
     step.entries.some((entry) => entry.key === 'run'
       && entry.value === 'node scripts/operator-protected-personal-repository-merge.mjs approve')
@@ -506,8 +548,10 @@ function personalRepositoryRulesetProofTokenIsBound(source) {
       tokenBindings.push(...mapping.entries.filter((entry) => entry.key === 'STEPHANOS_RULESET_PROOF_TOKEN'));
     }
   }
-  return tokenBindings.length === 1
-    && tokenBindings[0].value === '${{ steps.ruleset-proof-token.outputs.token }}';
+  return tokenBindings.length === 3
+    && tokenBindings.every((binding) => (
+      binding.value === '${{ steps.ruleset-proof-token.outputs.token }}'
+    ));
 }
 
 function jobHasExactExecutionSteps(source, policy) {
@@ -687,6 +731,9 @@ export function validatePersonalRepositoryProtectedWorkflowSource(input = {}) {
   }
   if (!personalRepositoryRulesetProofTokenIsExact(content)) {
     blockers.push('personal-repository-workflow-ruleset-proof-token-not-exact');
+  }
+  if (!personalRepositoryProtectedStageSequenceIsExact(content)) {
+    blockers.push('personal-repository-workflow-stage-sequence-not-exact');
   }
   if (!personalRepositoryRulesetProofTokenIsBound(content)) {
     blockers.push('personal-repository-workflow-ruleset-proof-token-not-bound');
