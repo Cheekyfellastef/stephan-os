@@ -1,22 +1,767 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { deflateRawSync } from 'node:zlib';
 import {
   PERSONAL_REPOSITORY_AUTHORITY,
+  PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES,
   PERSONAL_REPOSITORY_MODE,
+  PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
   PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS,
   PERSONAL_REPOSITORY_WORKFLOW_NAME,
   PERSONAL_REPOSITORY_WORKFLOW_PATH,
+  buildPersonalRepositoryArtifactApiRequest,
+  buildPersonalRepositoryArtifactArchiveRequest,
+  buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
+  executeBoundedPersonalRepositoryRead,
+  executePersonalRepositoryArtifactArchiveTransport,
+  extractPersonalRepositoryArtifactZip,
   parsePersonalRepositoryDispatchInputs,
+  readBoundedPersonalRepositoryResponseBody,
   validatePersonalRepositoryApprovalReceipt,
+  validatePersonalRepositoryArtifactArchiveRedirect,
+  validatePersonalRepositoryArtifactArchiveResponse,
   validatePersonalRepositoryConfiguration,
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
   validatePersonalRepositoryEvidence,
+  validatePersonalRepositoryRulesetProofRequest,
+  validatePersonalRepositoryRulesetProofResponse,
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
 } from './operatorPersonalRepositoryMergeV1.mjs';
+
+function response(status) {
+  return { status, body: { cancel: async () => {} } };
+}
+
+function headers(values = {}) {
+  const normalized = Object.fromEntries(Object.entries(values).map(([key, value]) => [key.toLowerCase(), value]));
+  return { get: (name) => normalized[String(name).toLowerCase()] ?? null };
+}
+
+const ARTIFACT_API_PATH = '/repos/Cheekyfellastef/stephan-os/actions/artifacts/9140818868/zip';
+const ARTIFACT_API_URL = `https://api.github.com${ARTIFACT_API_PATH}`;
+const ARTIFACT_ARCHIVE_URL = 'https://productionresultssa17.blob.core.windows.net/actions-results/80c77559-8ff7-49a5-9d2f-08c5e8ff1b84/workflow-job-run-4d9be84b-e576-5bc3-a654-2085dc99aec3/artifacts/7fc179bd387fce1470d9f99f52fcca5a01ff1d1358562f69c71f5f1cf03b08f4.zip?rscd=attachment&rsct=application%2Fzip&se=2099-01-01T00%3A00%3A00Z&sig=signed&ske=2099-01-01T00%3A00%3A00Z&skoid=00000000-0000-0000-0000-000000000000&sks=b&skt=2099-01-01T00%3A00%3A00Z&sktid=00000000-0000-0000-0000-000000000000&skv=2025-11-05&sp=r&spr=https&sr=b&st=2099-01-01T00%3A00%3A00Z&sv=2025-11-05';
+
+function artifactRedirectResponse(overrides = {}) {
+  return {
+    status: 302,
+    redirected: false,
+    url: ARTIFACT_API_URL,
+    headers: headers({ location: ARTIFACT_ARCHIVE_URL }),
+    body: { cancel: async () => {} },
+    ...overrides,
+  };
+}
+
+function artifactArchiveResponse(overrides = {}) {
+  return {
+    status: 200,
+    redirected: false,
+    url: ARTIFACT_ARCHIVE_URL,
+    headers: headers({ 'content-type': 'application/zip', 'content-length': '1101' }),
+    body: { cancel: async () => {} },
+    ...overrides,
+  };
+}
+
+const ARTIFACT_FILE = 'independent-review-result.json';
+const TEST_CRC32_TABLE = Array.from({ length: 256 }, (_, value) => {
+  let crc = value;
+  for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  return crc >>> 0;
+});
+
+function testCrc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = TEST_CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function singleEntryZip({ payload = '{"ready":true}', fileName = ARTIFACT_FILE, method = 8, flags = 0, dataDescriptor = false } = {}) {
+  const plain = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf8');
+  const compressed = method === 8 ? deflateRawSync(plain) : Buffer.from(plain);
+  const name = Buffer.from(fileName, 'utf8');
+  const crc = testCrc32(plain);
+  const version = method === 8 ? 20 : 10;
+  const local = Buffer.alloc(30 + name.length);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(version, 4);
+  const resolvedFlags = flags | (dataDescriptor ? 0x0008 : 0);
+  local.writeUInt16LE(resolvedFlags, 6);
+  local.writeUInt16LE(method, 8);
+  local.writeUInt32LE(dataDescriptor ? 0 : crc, 14);
+  local.writeUInt32LE(dataDescriptor ? 0 : compressed.length, 18);
+  local.writeUInt32LE(dataDescriptor ? 0 : plain.length, 22);
+  local.writeUInt16LE(name.length, 26);
+  name.copy(local, 30);
+
+  const descriptor = dataDescriptor ? Buffer.alloc(16) : Buffer.alloc(0);
+  if (dataDescriptor) {
+    descriptor.writeUInt32LE(0x08074b50, 0);
+    descriptor.writeUInt32LE(crc, 4);
+    descriptor.writeUInt32LE(compressed.length, 8);
+    descriptor.writeUInt32LE(plain.length, 12);
+  }
+  const centralOffset = local.length + compressed.length + descriptor.length;
+  const central = Buffer.alloc(46 + name.length);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(version, 6);
+  central.writeUInt16LE(resolvedFlags, 8);
+  central.writeUInt16LE(method, 10);
+  central.writeUInt32LE(crc, 16);
+  central.writeUInt32LE(compressed.length, 20);
+  central.writeUInt32LE(plain.length, 24);
+  central.writeUInt16LE(name.length, 28);
+  name.copy(central, 46);
+
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(central.length, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  return Object.freeze({
+    archive: Buffer.concat([local, compressed, descriptor, central, end]),
+    compressed,
+    offsets: Object.freeze({
+      data: local.length,
+      central: centralOffset,
+      end: centralOffset + central.length,
+    }),
+    plain,
+  });
+}
+
+function mutateArchive(archive, mutate) {
+  const copy = Buffer.from(archive);
+  mutate(copy);
+  return copy;
+}
+
+function assertZipBlocked(archive, expectedReason = null) {
+  assert.throws(
+    () => extractPersonalRepositoryArtifactZip(archive, ARTIFACT_FILE),
+    (error) => {
+      assert.equal(error.code, 'PERSONAL_REPOSITORY_ARTIFACT_ZIP_INVALID');
+      if (expectedReason) assert.equal(error.reason, expectedReason);
+      assert.doesNotMatch(error.message, /token-must-not-escape|github-token-must-not-escape/);
+      return true;
+    },
+  );
+}
+
+test('in-process artifact ZIP reader accepts exact stored and deflated single-entry archives', () => {
+  for (const [method, dataDescriptor] of [[0, false], [8, false], [0, true], [8, true]]) {
+    const fixture = singleEntryZip({ method, dataDescriptor });
+    const payload = extractPersonalRepositoryArtifactZip(fixture.archive, ARTIFACT_FILE);
+    assert.deepEqual(payload, fixture.plain);
+  }
+});
+
+test('in-process artifact ZIP reader rejects authority-widening flags, formats and entry estates', () => {
+  const exact = singleEntryZip();
+  for (const [archive, reason] of [
+    [mutateArchive(exact.archive, (bytes) => {
+      bytes.writeUInt16LE(1, 6);
+      bytes.writeUInt16LE(1, exact.offsets.central + 8);
+    }), 'flags'],
+    [mutateArchive(exact.archive, (bytes) => {
+      bytes.writeUInt16LE(4, 6);
+      bytes.writeUInt16LE(4, exact.offsets.central + 8);
+    }), 'flags'],
+    [mutateArchive(exact.archive, (bytes) => {
+      bytes.writeUInt16LE(99, 8);
+      bytes.writeUInt16LE(99, exact.offsets.central + 10);
+    }), 'compression'],
+    [mutateArchive(exact.archive, (bytes) => bytes.writeUInt32LE(0xffffffff, exact.offsets.central + 20)), 'zip64'],
+    [mutateArchive(exact.archive, (bytes) => bytes.writeUInt16LE(45, exact.offsets.central + 6)), 'version'],
+    [mutateArchive(exact.archive, (bytes) => bytes.writeUInt16LE(1, exact.offsets.end + 4)), 'multi-disk'],
+    [mutateArchive(exact.archive, (bytes) => {
+      bytes.writeUInt16LE(2, exact.offsets.end + 8);
+      bytes.writeUInt16LE(2, exact.offsets.end + 10);
+    }), 'entry-count'],
+    [mutateArchive(exact.archive, (bytes) => bytes.writeUInt16LE(1, exact.offsets.end + 20)), 'archive-comment'],
+    [mutateArchive(exact.archive, (bytes) => bytes.writeUInt16LE(1, exact.offsets.central + 30)), 'central-fields'],
+  ]) assertZipBlocked(archive, reason);
+});
+
+test('in-process artifact ZIP reader rejects unsupported or mismatched data descriptors', () => {
+  const exact = singleEntryZip({ dataDescriptor: true });
+  const descriptorOffset = exact.offsets.central - 16;
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(0, descriptorOffset)
+  )), 'descriptor-signature');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(0, descriptorOffset + 4)
+  )), 'descriptor-mismatch');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(1, 14)
+  )), 'descriptor-local-fields');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(exact.offsets.central - 1, exact.offsets.end + 16)
+  )), 'central-boundary');
+});
+
+test('in-process artifact ZIP reader rejects unsafe names, prefixes, trailing bytes and malformed boundaries', () => {
+  assertZipBlocked(singleEntryZip({ fileName: '../independent-review-result.json' }).archive, 'filename-unsafe');
+  const exact = singleEntryZip();
+  assertZipBlocked(Buffer.concat([Buffer.from([0]), exact.archive]));
+  assertZipBlocked(Buffer.concat([exact.archive, Buffer.from([0])]));
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(exact.offsets.central + 1, exact.offsets.end + 16)
+  )), 'central-boundary');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(1, exact.offsets.central + 42)
+  )), 'archive-prefix');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt16LE(0, 8)
+  )), 'local-central-mismatch');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt16LE(1, 10)
+  )), 'local-central-mismatch');
+});
+
+test('in-process artifact ZIP reader rejects size, overlap, corruption and CRC attacks', () => {
+  const exact = singleEntryZip();
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => {
+    bytes.writeUInt32LE(exact.compressed.length + 1, 18);
+    bytes.writeUInt32LE(exact.compressed.length + 1, exact.offsets.central + 20);
+  }), 'record-overlap-or-gap');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => {
+    bytes.writeUInt32LE(exact.compressed.length - 1, 18);
+    bytes.writeUInt32LE(exact.compressed.length - 1, exact.offsets.central + 20);
+  }), 'record-overlap-or-gap');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => {
+    bytes.writeUInt32LE(0, 14);
+    bytes.writeUInt32LE(0, exact.offsets.central + 16);
+  }), 'crc32');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => {
+    bytes[exact.offsets.data] ^= 0xff;
+  }));
+
+  const stored = singleEntryZip({ method: 0 });
+  assertZipBlocked(mutateArchive(stored.archive, (bytes) => {
+    bytes.writeUInt32LE(stored.plain.length + 1, 22);
+    bytes.writeUInt32LE(stored.plain.length + 1, stored.offsets.central + 24);
+  }), 'stored-size');
+
+  const oversized = singleEntryZip({ payload: Buffer.alloc(PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES + 1, 65) });
+  assertZipBlocked(oversized.archive, 'payload-size');
+});
+
+test('in-process artifact ZIP failures remain credential-free and consume no process environment', () => {
+  const secret = 'token-must-not-escape';
+  const credentialNamed = singleEntryZip({ fileName: secret });
+  assertZipBlocked(credentialNamed.archive, 'filename-mismatch');
+  assert.doesNotMatch(extractPersonalRepositoryArtifactZip.toString(), /process\.env|child_process|spawn|unzip/i);
+});
+
+test('artifact archive transport accepts one exact GitHub-to-Azure redirect and builds a credential-free request', () => {
+  const apiRequest = buildPersonalRepositoryArtifactApiRequest({
+    path: ARTIFACT_API_PATH,
+    repository: 'Cheekyfellastef/stephan-os',
+  });
+  assert.equal(apiRequest.valid, true);
+  assert.deepEqual(apiRequest.request, {
+    url: ARTIFACT_API_URL,
+    method: 'GET',
+    body: null,
+    redirect: 'manual',
+    headers: { Accept: 'application/vnd.github+json' },
+  });
+  assert.deepEqual(Object.keys(apiRequest.request.headers), ['Accept']);
+  assert.doesNotMatch(JSON.stringify(apiRequest.request), /authorization|bearer|token|credential|secret/i);
+
+  const redirect = validatePersonalRepositoryArtifactArchiveRedirect({
+    path: ARTIFACT_API_PATH,
+    repository: 'Cheekyfellastef/stephan-os',
+    response: artifactRedirectResponse(),
+  });
+  assert.equal(redirect.valid, true);
+  assert.equal(redirect.location, ARTIFACT_ARCHIVE_URL);
+
+  const download = buildPersonalRepositoryArtifactArchiveRequest(redirect.location);
+  assert.equal(download.valid, true);
+  assert.deepEqual(download.request, {
+    url: ARTIFACT_ARCHIVE_URL,
+    method: 'GET',
+    body: null,
+    redirect: 'manual',
+    headers: { Accept: 'application/zip' },
+  });
+  assert.deepEqual(Object.keys(download.request.headers), ['Accept']);
+  assert.doesNotMatch(JSON.stringify(download.request), /authorization|bearer|token|credential|secret/i);
+
+  const archive = validatePersonalRepositoryArtifactArchiveResponse({
+    expectedUrl: download.request.url,
+    response: artifactArchiveResponse(),
+    maxBytes: 256 * 1024,
+  });
+  assert.equal(archive.valid, true);
+  assert.equal(archive.contentLength, 1101);
+});
+
+test('shared artifact transport executes one authenticated API hop and one credential-free archive hop', async () => {
+  const archiveBytes = Buffer.from('bounded-archive');
+  const observed = [];
+  const result = await executePersonalRepositoryArtifactArchiveTransport({
+    path: ARTIFACT_API_PATH,
+    repository: 'Cheekyfellastef/stephan-os',
+    maxBytes: 256 * 1024,
+    requestApiRedirect: async (request) => {
+      observed.push({ stage: 'api', request });
+      return artifactRedirectResponse();
+    },
+    requestArchive: async (request) => {
+      observed.push({ stage: 'archive', request });
+      let delivered = false;
+      return artifactArchiveResponse({
+        headers: headers({
+          'content-type': 'application/zip',
+          'content-length': String(archiveBytes.length),
+        }),
+        body: {
+          getReader: () => ({
+            read: async () => {
+              if (delivered) return { done: true };
+              delivered = true;
+              return { done: false, value: archiveBytes };
+            },
+            cancel: async () => {},
+            releaseLock: () => {},
+          }),
+        },
+      });
+    },
+    delay: async () => {},
+  });
+  assert.deepEqual(result, archiveBytes);
+  assert.deepEqual(observed.map(({ stage }) => stage), ['api', 'archive']);
+  assert.deepEqual(observed[0].request, {
+    url: ARTIFACT_API_URL,
+    method: 'GET',
+    body: null,
+    redirect: 'manual',
+    headers: { Accept: 'application/vnd.github+json' },
+  });
+  assert.deepEqual(observed[1].request, {
+    url: ARTIFACT_ARCHIVE_URL,
+    method: 'GET',
+    body: null,
+    redirect: 'manual',
+    headers: { Accept: 'application/zip' },
+  });
+  assert.doesNotMatch(JSON.stringify(observed[1].request), /authorization|bearer|token|credential|secret/i);
+});
+
+test('shared artifact transport rejects widened identity, redirect, response and body proofs without a second hop', async () => {
+  for (const mutation of [
+    { repository: 'Other/stephan-os' },
+    { response: artifactRedirectResponse({ status: 415 }) },
+    { response: artifactRedirectResponse({ headers: headers({ location: `${ARTIFACT_ARCHIVE_URL}&sig=repeated` }) }) },
+  ]) {
+    let archiveRequests = 0;
+    await assert.rejects(
+      executePersonalRepositoryArtifactArchiveTransport({
+        path: ARTIFACT_API_PATH,
+        repository: 'Cheekyfellastef/stephan-os',
+        maxBytes: 256 * 1024,
+        requestApiRedirect: async () => mutation.response || artifactRedirectResponse(),
+        requestArchive: async () => {
+          archiveRequests += 1;
+          return artifactArchiveResponse();
+        },
+        delay: async () => {},
+        ...mutation,
+      }),
+      (error) => error.code === 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION',
+    );
+    assert.equal(archiveRequests, 0);
+  }
+
+  const bytes = Buffer.from('short');
+  await assert.rejects(
+    executePersonalRepositoryArtifactArchiveTransport({
+      path: ARTIFACT_API_PATH,
+      repository: 'Cheekyfellastef/stephan-os',
+      maxBytes: 256 * 1024,
+      requestApiRedirect: async () => artifactRedirectResponse(),
+      requestArchive: async () => artifactArchiveResponse({
+        headers: headers({ 'content-type': 'application/zip', 'content-length': '6' }),
+        body: {
+          getReader: () => {
+            let delivered = false;
+            return {
+              read: async () => {
+                if (delivered) return { done: true };
+                delivered = true;
+                return { done: false, value: bytes };
+              },
+              cancel: async () => {},
+              releaseLock: () => {},
+            };
+          },
+        },
+      }),
+      delay: async () => {},
+    }),
+    (error) => error.code === 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION'
+      && error.blockers.includes('personal-repository-artifact-archive-body-length-mismatch'),
+  );
+});
+
+test('artifact archive redirect rejects missing, malformed, repeated, widened, and credential-bearing locations', () => {
+  const mutations = [
+    '',
+    'not-a-url',
+    ARTIFACT_ARCHIVE_URL.replace('https://', 'http://'),
+    ARTIFACT_ARCHIVE_URL.replace('https://', 'https://user:password@'),
+    ARTIFACT_ARCHIVE_URL.replace('productionresultssa17.blob.core.windows.net', 'api.github.com'),
+    ARTIFACT_ARCHIVE_URL.replace('productionresultssa17.blob.core.windows.net', 'attacker.blob.core.windows.net'),
+    ARTIFACT_ARCHIVE_URL.replace('/actions-results/', '/other-results/'),
+    `${ARTIFACT_ARCHIVE_URL}&sig=duplicate`,
+    `${ARTIFACT_ARCHIVE_URL}&widened=true`,
+    `${ARTIFACT_ARCHIVE_URL}#fragment`,
+    ARTIFACT_ARCHIVE_URL.replace('spr=https', 'spr=http'),
+    ARTIFACT_ARCHIVE_URL.replace('sp=r', 'sp=rw'),
+    ARTIFACT_ARCHIVE_URL.replace('sr=b', 'sr=c'),
+  ];
+  for (const location of mutations) {
+    const responseValue = artifactRedirectResponse({ headers: headers({ location }) });
+    const verdict = validatePersonalRepositoryArtifactArchiveRedirect({
+      path: ARTIFACT_API_PATH,
+      repository: 'Cheekyfellastef/stephan-os',
+      response: responseValue,
+    });
+    assert.equal(verdict.valid, false, location || 'missing location');
+    assert.equal(buildPersonalRepositoryArtifactArchiveRequest(location).valid, false, location || 'missing location');
+  }
+});
+
+test('artifact archive redirect binds repository, API response identity, and one manual hop', () => {
+  for (const input of [
+    { repository: 'Other/stephan-os' },
+    { path: '/repos/Cheekyfellastef/stephan-os/actions/artifacts/0/zip' },
+    { response: artifactRedirectResponse({ status: 200 }) },
+    { response: artifactRedirectResponse({ status: 415, headers: headers({ 'content-type': 'application/json' }) }) },
+    { response: artifactRedirectResponse({ redirected: true }) },
+    { response: artifactRedirectResponse({ url: 'https://api.github.com/repos/Other/stephan-os/actions/artifacts/9140818868/zip' }) },
+  ]) {
+    const verdict = validatePersonalRepositoryArtifactArchiveRedirect({
+      path: ARTIFACT_API_PATH,
+      repository: 'Cheekyfellastef/stephan-os',
+      response: artifactRedirectResponse(),
+      ...input,
+    });
+    assert.equal(verdict.valid, false);
+    assert.equal(verdict.location, '');
+  }
+});
+
+test('artifact archive response rejects every further redirect and malformed binary proof before consumption', async () => {
+  const responses = [
+    artifactArchiveResponse({ status: 302, headers: headers({ location: ARTIFACT_ARCHIVE_URL }) }),
+    artifactArchiveResponse({ redirected: true }),
+    artifactArchiveResponse({ url: ARTIFACT_ARCHIVE_URL.replace('sig=signed', 'sig=changed') }),
+    artifactArchiveResponse({ headers: headers({ 'content-type': 'application/json', 'content-length': '1101' }) }),
+    artifactArchiveResponse({ headers: headers({ 'content-type': 'application/zip' }) }),
+    artifactArchiveResponse({ headers: headers({ 'content-type': 'application/zip', 'content-length': String(256 * 1024 + 1) }) }),
+  ];
+  for (const responseValue of responses) {
+    let consumed = false;
+    await assert.rejects(
+      executeBoundedPersonalRepositoryRead({
+        path: `${ARTIFACT_API_PATH}#credential-free-archive-download`,
+        request: async () => responseValue,
+        validateResponse: (boundedResponse) => validatePersonalRepositoryArtifactArchiveResponse({
+          expectedUrl: ARTIFACT_ARCHIVE_URL,
+          response: boundedResponse,
+          maxBytes: 256 * 1024,
+        }),
+        consume: async () => {
+          consumed = true;
+          return Buffer.alloc(0);
+        },
+        delay: async () => assert.fail('policy violations must not be retried'),
+      }),
+      (error) => error.code === 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION',
+    );
+    assert.equal(consumed, false);
+  }
+});
+
+test('artifact archive body reader bounds streamed bytes independently of declared length', async () => {
+  let cancelled = 0;
+  let released = 0;
+  const chunks = [Buffer.alloc(4, 1), Buffer.alloc(5, 2)];
+  const exact = await readBoundedPersonalRepositoryResponseBody({
+    body: {
+      getReader: () => ({
+        read: async () => (chunks.length ? { done: false, value: chunks.shift() } : { done: true }),
+        cancel: async () => { cancelled += 1; },
+        releaseLock: () => { released += 1; },
+      }),
+    },
+  }, 9);
+  assert.equal(exact.length, 9);
+  assert.equal(cancelled, 0);
+  assert.equal(released, 1);
+
+  let overrunCancelled = 0;
+  await assert.rejects(
+    readBoundedPersonalRepositoryResponseBody({
+      body: {
+        getReader: () => ({
+          read: async () => ({ done: false, value: Buffer.alloc(10, 3) }),
+          cancel: async () => { overrunCancelled += 1; },
+          releaseLock: () => {},
+        }),
+      },
+    }, 9),
+    (error) => error.code === 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION'
+      && error.blockers.includes('personal-repository-artifact-archive-body-size-exceeded'),
+  );
+  assert.equal(overrunCancelled, 1);
+});
+
+test('artifact archive body reader rejects empty, malformed and unavailable streams without throwing secrets', async () => {
+  for (const responseValue of [
+    {},
+    { body: { getReader: () => ({ read: async () => ({ done: true }), releaseLock: () => {} }) } },
+    { body: { getReader: () => ({ read: async () => ({ done: false, value: 'not-bytes' }), cancel: async () => {}, releaseLock: () => {} }) } },
+  ]) {
+    await assert.rejects(
+      readBoundedPersonalRepositoryResponseBody(responseValue, 9),
+      (error) => {
+        assert.equal(error.code, 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION');
+        assert.doesNotMatch(error.message, /token|authorization|bearer|secret/i);
+        return true;
+      },
+    );
+  }
+});
+
+test('artifact archive transport retries genuine transient reads before applying terminal response policy', async () => {
+  const statuses = [503, 502, 200];
+  let validations = 0;
+  const result = await executeBoundedPersonalRepositoryRead({
+    path: `${ARTIFACT_API_PATH}#credential-free-archive-download`,
+    request: async () => artifactArchiveResponse({ status: statuses.shift() }),
+    validateResponse: (boundedResponse) => {
+      validations += 1;
+      return validatePersonalRepositoryArtifactArchiveResponse({
+        expectedUrl: ARTIFACT_ARCHIVE_URL,
+        response: boundedResponse,
+        maxBytes: 256 * 1024,
+      });
+    },
+    delay: async () => {},
+  });
+  assert.equal(result.attempts, 3);
+  assert.equal(validations, 1);
+});
+
+test('bounded personal-repository reads recover from transient transport failures', async () => {
+  let attempts = 0;
+  const delays = [];
+  const result = await executeBoundedPersonalRepositoryRead({
+    path: '/repos/Cheekyfellastef/stephan-os',
+    request: async () => {
+      attempts += 1;
+      if (attempts < PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS) {
+        const error = new TypeError('fetch failed: bearer secret-must-not-escape');
+        error.cause = { code: attempts === 1 ? 'EAI_AGAIN' : 'ECONNRESET' };
+        throw error;
+      }
+      return response(200);
+    },
+    delay: async (milliseconds) => delays.push(milliseconds),
+  });
+  assert.equal(attempts, 3);
+  assert.equal(result.attempts, 3);
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(delays, [250, 1_000]);
+});
+
+test('bounded personal-repository reads retry only transient gateway responses', async () => {
+  const statuses = [503, 200];
+  const result = await executeBoundedPersonalRepositoryRead({
+    path: '/repos/Cheekyfellastef/stephan-os/git/ref/heads/main',
+    request: async () => response(statuses.shift()),
+    delay: async () => {},
+  });
+  assert.equal(result.attempts, 2);
+  assert.equal(result.response.status, 200);
+
+  let forbiddenAttempts = 0;
+  const forbidden = await executeBoundedPersonalRepositoryRead({
+    path: '/repos/Cheekyfellastef/stephan-os',
+    request: async () => {
+      forbiddenAttempts += 1;
+      return response(403);
+    },
+    delay: async () => assert.fail('403 responses must not be retried'),
+  });
+  assert.equal(forbiddenAttempts, 1);
+  assert.equal(forbidden.response.status, 403);
+});
+
+test('bounded personal-repository reads retry transport failures while consuming the response body', async () => {
+  let requests = 0;
+  let consumptions = 0;
+  const result = await executeBoundedPersonalRepositoryRead({
+    path: '/repos/Cheekyfellastef/stephan-os/pulls/1762',
+    request: async () => {
+      requests += 1;
+      return response(200);
+    },
+    consume: async () => {
+      consumptions += 1;
+      if (consumptions === 1) {
+        const error = new TypeError('terminated while reading Authorization: Bearer secret-value');
+        error.cause = { code: 'UND_ERR_SOCKET' };
+        throw error;
+      }
+      return Buffer.from('{"state":"open"}');
+    },
+    delay: async () => {},
+  });
+  assert.equal(requests, 2);
+  assert.equal(consumptions, 2);
+  assert.equal(result.attempts, 2);
+  assert.equal(result.result.toString('utf8'), '{"state":"open"}');
+});
+
+test('body-consumption exhaustion emits the same bounded secret-free transport proof', async () => {
+  await assert.rejects(
+    executeBoundedPersonalRepositoryRead({
+      path: '/repos/Cheekyfellastef/stephan-os/actions/runs/31562891459/artifacts',
+      request: async () => response(200),
+      consume: async () => {
+        const error = new TypeError('body failed with bearer secret-value');
+        error.cause = { code: 'UND_ERR_SOCKET' };
+        throw error;
+      },
+      delay: async () => {},
+    }),
+    (error) => {
+      assert.equal(error.code, 'PERSONAL_REPOSITORY_READ_TRANSPORT_EXHAUSTED');
+      assert.equal(error.attempts, PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS);
+      assert.equal(error.transportCode, 'UND_ERR_SOCKET');
+      assert.doesNotMatch(error.message, /secret-value|bearer/i);
+      return true;
+    },
+  );
+});
+
+test('bounded personal-repository reads exhaust with endpoint-specific secret-free proof', async () => {
+  let attempts = 0;
+  await assert.rejects(
+    executeBoundedPersonalRepositoryRead({
+      path: '/repos/Cheekyfellastef/stephan-os/actions/runs/31562891459',
+      request: async () => {
+        attempts += 1;
+        const error = new TypeError('fetch failed with Authorization: Bearer secret-value');
+        error.cause = { code: 'ECONNRESET' };
+        throw error;
+      },
+      delay: async () => {},
+    }),
+    (error) => {
+      assert.equal(error.code, 'PERSONAL_REPOSITORY_READ_TRANSPORT_EXHAUSTED');
+      assert.equal(error.endpoint, '/repos/Cheekyfellastef/stephan-os/actions/runs/31562891459');
+      assert.equal(error.attempts, PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS);
+      assert.equal(error.transportCode, 'ECONNRESET');
+      assert.doesNotMatch(error.message, /secret-value|Authorization|Bearer/);
+      return true;
+    },
+  );
+  assert.equal(attempts, PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS);
+});
+
+test('personal-repository mutations and body-bearing requests are never retried', async () => {
+  for (const requestShape of [
+    { method: 'PUT', body: { merge_method: 'squash' } },
+    { method: 'POST', body: { body: 'completion' } },
+    { method: 'GET', body: { widened: true } },
+  ]) {
+    let attempts = 0;
+    await assert.rejects(
+      executeBoundedPersonalRepositoryRead({
+        path: '/repos/Cheekyfellastef/stephan-os/pulls/1762/merge',
+        ...requestShape,
+        request: async () => {
+          attempts += 1;
+          throw new TypeError('fetch failed');
+        },
+        delay: async () => assert.fail('mutating or body-bearing requests must not be delayed'),
+      }),
+      /fetch failed/,
+    );
+    assert.equal(attempts, 1);
+  }
+});
+
+test('configuration-proof responses reject same-origin and cross-origin redirects without consumption', async () => {
+  const path = '/repos/Cheekyfellastef/stephan-os';
+  for (const url of [
+    'https://api.github.com/repositories/1179385578',
+    'https://example.invalid/repos/Cheekyfellastef/stephan-os',
+  ]) {
+    let cancellations = 0;
+    let consumptions = 0;
+    await assert.rejects(
+      executeBoundedPersonalRepositoryRead({
+        path,
+        request: async () => ({
+          status: 200,
+          redirected: true,
+          url,
+          body: { cancel: async () => { cancellations += 1; } },
+        }),
+        validateResponse: (redirectedResponse) => validatePersonalRepositoryRulesetProofResponse({
+          path,
+          response: redirectedResponse,
+        }),
+        consume: async () => {
+          consumptions += 1;
+          return Buffer.from('{}');
+        },
+        delay: async () => assert.fail('policy violations must not be retried'),
+      }),
+      (error) => {
+        assert.equal(error.code, 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION');
+        assert.ok(error.blockers.includes('personal-repository-ruleset-proof-response-redirected'));
+        return true;
+      },
+    );
+    assert.equal(cancellations, 1);
+    assert.equal(consumptions, 0);
+  }
+});
+
+test('configuration-proof responses require the exact requested API URL even if redirect reporting is false', async () => {
+  const path = '/repos/Cheekyfellastef/stephan-os/rulesets/20640195?includes_parents=true';
+  const exact = validatePersonalRepositoryRulesetProofResponse({
+    path,
+    response: { redirected: false, url: `https://api.github.com${path}` },
+  });
+  assert.equal(exact.valid, true);
+
+  const mismatch = validatePersonalRepositoryRulesetProofResponse({
+    path,
+    response: {
+      redirected: false,
+      url: 'https://api.github.com/repos/Cheekyfellastef/stephan-os/rulesets/20640196?includes_parents=true',
+    },
+  });
+  assert.equal(mismatch.valid, false);
+  assert.ok(mismatch.blockers.includes('personal-repository-ruleset-proof-response-url-mismatch'));
+});
 
 const repository = 'Cheekyfellastef/stephan-os';
 const prNumber = 1739;
@@ -254,6 +999,36 @@ test('dispatch inputs require an exact positive identity and immutable review ar
   ]) {
     const result = parsePersonalRepositoryDispatchInputs(dispatchInputs({ [key]: value }));
     assert.ok(result.blockers.includes(blocker), `${key} should produce ${blocker}`);
+  }
+});
+
+test('ruleset proof authority is GET-only and restricted to exact configuration surfaces', () => {
+  for (const path of [
+    '/repos/Cheekyfellastef/stephan-os',
+    '/repos/Cheekyfellastef/stephan-os/rules/branches/main?per_page=100&page=1',
+    '/repos/Cheekyfellastef/stephan-os/rules/branches/main?per_page=100&page=20',
+    '/repos/Cheekyfellastef/stephan-os/rulesets/20640195?includes_parents=true',
+  ]) {
+    assert.equal(validatePersonalRepositoryRulesetProofRequest({ path, repository }).valid, true, path);
+  }
+
+  for (const input of [
+    ...['POST', 'PUT', 'PATCH', 'DELETE'].map((method) => ({
+      path: '/repos/Cheekyfellastef/stephan-os',
+      method,
+    })),
+    { path: '/repos/Cheekyfellastef/stephan-os', body: {} },
+    { path: '/graphql' },
+    { path: '/repos/Cheekyfellastef/stephan-os/pulls/1762' },
+    { path: '/repos/Cheekyfellastef/stephan-os/rules/branches/feature?per_page=100&page=1' },
+    { path: '/repos/Cheekyfellastef/stephan-os/rules/branches/main?per_page=100&page=21' },
+    { path: '/repos/Cheekyfellastef/stephan-os/rules/branches/main?page=1&per_page=100' },
+    { path: '/repos/Cheekyfellastef/stephan-os/rulesets/20640195' },
+    { path: '/repos/Cheekyfellastef/other', repository },
+  ]) {
+    const blocked = validatePersonalRepositoryRulesetProofRequest({ repository, ...input });
+    assert.equal(blocked.valid, false, JSON.stringify(input));
+    assert.ok(blocked.blockers.length > 0, JSON.stringify(input));
   }
 });
 
@@ -508,6 +1283,27 @@ test('configuration requires the exact protected environment and an active no-by
   });
   assert.equal(ready.valid, true);
 
+  const restrictedTokenRepository = { ...configuration().repository };
+  delete restrictedTokenRepository.allow_squash_merge;
+  delete restrictedTokenRepository.delete_branch_on_merge;
+  const hiddenSettings = validatePersonalRepositoryConfiguration(configuration({
+    repository: restrictedTokenRepository,
+  }), {
+    requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
+    expectedIntegrationId: integrationId,
+  });
+  assert.ok(hiddenSettings.blockers.includes('personal-repository-squash-not-enabled'));
+  assert.ok(hiddenSettings.blockers.includes('personal-repository-auto-delete-not-disabled'));
+
+  const contextOnlyRules = activeRules();
+  delete contextOnlyRules[3].parameters.required_status_checks[0].integration_id;
+  assert.ok(validatePersonalRepositoryConfiguration(configuration({
+    activeRules: contextOnlyRules,
+  }), {
+    requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
+    expectedIntegrationId: integrationId,
+  }).blockers.includes('personal-repository-required-check-not-exact'));
+
   for (const repositoryOverride of [
     { ...configuration().repository, private: true, visibility: 'private' },
     { ...configuration().repository, visibility: '' },
@@ -538,18 +1334,18 @@ test('configuration requires the exact protected environment and an active no-by
   });
   assert.ok(bypass.blockers.includes('personal-repository-ruleset-bypass-present:91'));
 
-  const publicPreapproval = validatePersonalRepositoryConfiguration(configuration({
+  const partialProof = validatePersonalRepositoryConfiguration(configuration({
     rulesets: [{ id: 91, enforcement: 'active', updated_at: '2026-08-10T12:00:00Z' }],
   }), {
     requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
     expectedIntegrationId: integrationId,
     requireBypassProof: false,
   });
-  assert.equal(publicPreapproval.valid, true);
-  assert.equal(publicPreapproval.bypassProven, false);
+  assert.equal(partialProof.valid, true);
+  assert.equal(partialProof.bypassProven, false);
   assert.equal(
-    publicPreapproval.finalVerdict,
-    'PERSONAL_REPOSITORY_CONFIGURATION_PREAPPROVAL_READY',
+    partialProof.finalVerdict,
+    'PERSONAL_REPOSITORY_CONFIGURATION_PARTIAL_PROOF_READY',
   );
   assert.ok(validatePersonalRepositoryConfiguration(configuration({
     rulesets: [{ id: 91, enforcement: 'active', updated_at: '2026-08-10T12:00:00Z' }],
@@ -557,6 +1353,19 @@ test('configuration requires the exact protected environment and an active no-by
     requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
     expectedIntegrationId: integrationId,
   }).blockers.includes('CONFIGURATION_NOT_PROVED:personal-repository-ruleset-bypass-actors:91'));
+  for (const malformedBypassActors of [null, {}, 'none']) {
+    assert.ok(validatePersonalRepositoryConfiguration(configuration({
+      rulesets: [{
+        id: 91,
+        enforcement: 'active',
+        updated_at: '2026-08-10T12:00:00Z',
+        bypass_actors: malformedBypassActors,
+      }],
+    }), {
+      requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
+      expectedIntegrationId: integrationId,
+    }).blockers.includes('CONFIGURATION_NOT_PROVED:personal-repository-ruleset-bypass-actors:91'));
+  }
   assert.ok(validatePersonalRepositoryConfiguration(configuration({
     rulesets: [{ id: 91, enforcement: 'active', bypass_actors: [] }],
   }), {
@@ -571,6 +1380,63 @@ test('configuration requires the exact protected environment and an active no-by
     expectedIntegrationId: integrationId,
   });
   assert.ok(queueRule.blockers.includes('personal-repository-unavailable-merge-queue-rule-present'));
+});
+
+test('configuration evidence binds repository merge settings and exact bypass actors', () => {
+  const exact = configuration();
+  exact.repository.id = 1179385578;
+  const baseline = buildPersonalRepositoryConfigurationEvidence(exact);
+  assert.equal(baseline.repository.allow_squash_merge, true);
+  assert.equal(baseline.repository.delete_branch_on_merge, false);
+  assert.equal(baseline.environment.name, 'operator-merge-approval');
+  assert.equal(baseline.environment.can_admins_bypass, false);
+  assert.equal(baseline.environment.protection_rules[0].reviewers[0].reviewer.login, 'Cheekyfellastef');
+  assert.deepEqual(baseline.rulesets[0].bypass_actors, []);
+
+  for (const changed of [
+    configuration({ repository: { ...exact.repository, allow_squash_merge: false } }),
+    configuration({ repository: { ...exact.repository, delete_branch_on_merge: true } }),
+    configuration({
+      repository: exact.repository,
+      rulesets: [{ ...exact.rulesets[0], bypass_actors: [{ actor_id: 1 }] }],
+    }),
+    configuration({
+      repository: exact.repository,
+      environment: { ...exact.environment, can_admins_bypass: true },
+    }),
+    configuration({
+      repository: exact.repository,
+      environment: {
+        ...exact.environment,
+        deployment_branch_policy: {
+          ...exact.environment.deployment_branch_policy,
+          protected_branches: false,
+        },
+      },
+    }),
+    configuration({
+      repository: exact.repository,
+      environment: {
+        ...exact.environment,
+        protection_rules: [{
+          ...exact.environment.protection_rules[0],
+          prevent_self_review: true,
+        }],
+      },
+    }),
+    configuration({
+      repository: exact.repository,
+      environment: {
+        ...exact.environment,
+        protection_rules: [{
+          ...exact.environment.protection_rules[0],
+          reviewers: [{ type: 'User', reviewer: { login: 'lookalike-operator' } }],
+        }],
+      },
+    }),
+  ]) {
+    assert.notDeepEqual(buildPersonalRepositoryConfigurationEvidence(changed), baseline);
+  }
 });
 
 test('approval receipt is exact-head, exact-base, immutable-review and squash-only', () => {
