@@ -614,7 +614,7 @@ export function validatePersonalRepositoryConfiguration(input = {}, options = {}
       ? 'PERSONAL_REPOSITORY_CONFIGURATION_BLOCKED'
       : requireBypassProof
         ? 'PERSONAL_REPOSITORY_CONFIGURATION_READY'
-        : 'PERSONAL_REPOSITORY_CONFIGURATION_PREAPPROVAL_READY',
+        : 'PERSONAL_REPOSITORY_CONFIGURATION_PARTIAL_PROOF_READY',
   });
 }
 

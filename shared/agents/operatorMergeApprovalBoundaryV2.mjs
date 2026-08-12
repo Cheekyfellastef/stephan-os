@@ -7,7 +7,7 @@ import {
 } from './operatorMergeApprovalGate.mjs';
 
 const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
-const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = '384cd389d71e64c737fa6b37f13adee73bf96918f7f8fbcb908ad62949cecf2d';
+const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = '7ba1ba2f7124ab82cc1dbef8073a731510742189b7dd3ab354259579abf09f77';
 const PERSONAL_REPOSITORY_WORKFLOW_SOURCE_KEYS = Object.freeze([
   'schemaVersion',
   'repository',
@@ -471,6 +471,18 @@ function personalRepositoryRulesetProofTokenIsExact(source) {
   ].every((jobName) => personalRepositoryRulesetProofTokenForJobIsExact(source, jobName));
 }
 
+function personalRepositoryProtectedStageSequenceIsExact(source) {
+  return jobHasExactNeeds(source, 'operator-personal-repository-approval', '[personal-repository-evidence]')
+    && jobHasExactNeeds(source, 'operator-personal-repository-squash-merge', '[personal-repository-evidence, operator-personal-repository-approval]')
+    && jobHasExactEnvironment(source, 'personal-repository-evidence', 'operator-merge-approval')
+    && jobHasExactEnvironment(source, 'operator-personal-repository-approval', 'operator-merge-approval')
+    && jobHasExactEnvironment(source, 'operator-personal-repository-squash-merge', 'operator-merge-approval')
+    && source.includes('      - name: Collect exact personal-repository evidence after protected admission')
+    && source.includes('      - name: Re-prove immutable evidence after protected approval')
+    && source.includes('      - name: Re-prove, squash exact head and publish the bounded receipt')
+    && !/personal-repository evidence before protected approval|PERSONAL_REPOSITORY_EVIDENCE_READY_BEFORE_PROTECTED_ENVIRONMENT|Pre-environment personal-repository evidence/u.test(source);
+}
+
 function personalRepositoryRulesetProofTokenIsBound(source) {
   const expectedJobNames = PERSONAL_REPOSITORY_WORKFLOW_JOB_STEPS.map((policy) => policy.jobName);
   const jobNames = yamlJobNames(source);
@@ -499,7 +511,7 @@ function personalRepositoryRulesetProofTokenIsBound(source) {
       && entry.value === 'node scripts/operator-protected-personal-repository-merge.mjs evidence')
   ));
   if (evidenceSteps.length !== 1 || !stepHasExactEntries(evidenceSteps[0], [
-    ['name', 'Prove exact personal-repository evidence before protected approval'],
+    ['name', 'Collect exact personal-repository evidence after protected admission'],
     ['id', 'evidence'],
     ['env', ''],
     ['run', 'node scripts/operator-protected-personal-repository-merge.mjs evidence'],
@@ -719,6 +731,9 @@ export function validatePersonalRepositoryProtectedWorkflowSource(input = {}) {
   }
   if (!personalRepositoryRulesetProofTokenIsExact(content)) {
     blockers.push('personal-repository-workflow-ruleset-proof-token-not-exact');
+  }
+  if (!personalRepositoryProtectedStageSequenceIsExact(content)) {
+    blockers.push('personal-repository-workflow-stage-sequence-not-exact');
   }
   if (!personalRepositoryRulesetProofTokenIsBound(content)) {
     blockers.push('personal-repository-workflow-ruleset-proof-token-not-bound');

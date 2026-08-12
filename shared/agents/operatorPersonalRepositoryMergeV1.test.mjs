@@ -587,18 +587,18 @@ test('configuration requires the exact protected environment and an active no-by
   });
   assert.ok(bypass.blockers.includes('personal-repository-ruleset-bypass-present:91'));
 
-  const publicPreapproval = validatePersonalRepositoryConfiguration(configuration({
+  const partialProof = validatePersonalRepositoryConfiguration(configuration({
     rulesets: [{ id: 91, enforcement: 'active', updated_at: '2026-08-10T12:00:00Z' }],
   }), {
     requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
     expectedIntegrationId: integrationId,
     requireBypassProof: false,
   });
-  assert.equal(publicPreapproval.valid, true);
-  assert.equal(publicPreapproval.bypassProven, false);
+  assert.equal(partialProof.valid, true);
+  assert.equal(partialProof.bypassProven, false);
   assert.equal(
-    publicPreapproval.finalVerdict,
-    'PERSONAL_REPOSITORY_CONFIGURATION_PREAPPROVAL_READY',
+    partialProof.finalVerdict,
+    'PERSONAL_REPOSITORY_CONFIGURATION_PARTIAL_PROOF_READY',
   );
   assert.ok(validatePersonalRepositoryConfiguration(configuration({
     rulesets: [{ id: 91, enforcement: 'active', updated_at: '2026-08-10T12:00:00Z' }],

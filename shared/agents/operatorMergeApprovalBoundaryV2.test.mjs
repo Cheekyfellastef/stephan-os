@@ -106,6 +106,25 @@ test('admits only the exact personal-repository fallback workflow source', () =>
   assert.equal(validation.valid, true, validation.blockers.join(','));
   assert.match(validation.proofRef, /^proofs\/personal-repository-workflow-source\//);
 
+  for (const altered of [
+    content.replace(
+      'Collect exact personal-repository evidence after protected admission',
+      'Prove exact personal-repository evidence before protected approval',
+    ),
+    content.replace('    needs: [personal-repository-evidence]\n', ''),
+    content.replace(
+      '    needs: [personal-repository-evidence, operator-personal-repository-approval]',
+      '    needs: [operator-personal-repository-approval]',
+    ),
+  ]) {
+    const stageValidation = validatePersonalRepositoryProtectedWorkflowSource({
+      ...exact,
+      protectedWorkflowSources: [workflowSource(path, { content: altered })],
+    });
+    assert.equal(stageValidation.valid, false);
+    assert.ok(stageValidation.blockers.includes('personal-repository-workflow-stage-sequence-not-exact'));
+  }
+
   const legacyContent = content.replace(
     'inputs.expected_head || github.run_id',
     "format('PR #{0} at {1}', inputs.pr_number, inputs.expected_head)",

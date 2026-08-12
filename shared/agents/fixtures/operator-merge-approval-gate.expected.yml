@@ -171,7 +171,7 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: stephan-os
           permission-administration: read
-      - name: Prove exact personal-repository evidence before protected approval
+      - name: Collect exact personal-repository evidence after protected admission
         id: evidence
         env:
           GH_TOKEN: ${{ github.token }}

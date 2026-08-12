@@ -73,10 +73,18 @@ test('protected boundary keeps the native queue and adds only the exact user-own
   );
   assert.match(evidenceJob, /actions\/create-github-app-token@v2/);
   assert.match(evidenceJob, /STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}/);
+  assert.match(evidenceJob, /environment:\s*\n      name: operator-merge-approval/);
+  assert.match(evidenceJob, /Collect exact personal-repository evidence after protected admission/);
+  assert.doesNotMatch(evidenceJob, /contents: write|issues: write|pull-requests: write/);
   assert.match(approvalJob, /actions\/create-github-app-token@v2/);
   assert.match(approvalJob, /STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}/);
+  assert.match(approvalJob, /needs: \[personal-repository-evidence\]/);
+  assert.match(approvalJob, /Re-prove immutable evidence after protected approval/);
+  assert.doesNotMatch(approvalJob, /contents: write|issues: write|pull-requests: write/);
   assert.match(mergeJob, /actions\/create-github-app-token@v2/);
   assert.match(mergeJob, /STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}/);
+  assert.match(mergeJob, /needs: \[personal-repository-evidence, operator-personal-repository-approval\]/);
+  assert.match(mergeJob, /Re-prove, squash exact head and publish the bounded receipt/);
   assert.doesNotMatch(protectedSource, /\b(?:actions|deployments|statuses|checks): write\b/);
   assert.doesNotMatch(protectedSource, /recover|repository_dispatch|workflow_call|continue-on-error/);
 
@@ -109,6 +117,10 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /mismatches: runIdentityMismatches/);
   assert.doesNotMatch(source, /mismatches:[^\n]*run\?\./);
   assert.match(source, /validatePersonalRepositoryApprovalReceipt/);
+  assert.match(source, /PERSONAL_REPOSITORY_EVIDENCE_READY_AFTER_PROTECTED_ADMISSION/);
+  assert.match(source, /PERSONAL_REPOSITORY_PROTECTED_APPROVAL_READY/);
+  assert.match(source, /PERSONAL_REPOSITORY_PROTECTED_SQUASH_MERGED/);
+  assert.doesNotMatch(source, /PREAPPROVAL|BEFORE_PROTECTED_ENVIRONMENT|Pre-environment|before protected approval/i);
   assert.match(source, /method: 'PUT',[\s\S]*?merge_method: 'squash',[\s\S]*?sha: receipt\.sourceHead/);
   assert.equal([...source.matchAll(/pulls\/\$\{receipt\.prNumber\}\/merge/g)].length, 1);
   assert.doesNotMatch(source, /delete_branch|DELETE|git\s+(?:push|reset|clean|rebase)|--force/);

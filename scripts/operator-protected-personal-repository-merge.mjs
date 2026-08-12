@@ -565,7 +565,7 @@ async function collectEvidence(context, expected = {}) {
   return { evidence, workflows, configuration, independentReview, packet, evidenceSha256 };
 }
 
-function expectedProtectedEvidence() {
+function expectedAdmittedEvidence() {
   const expected = {
     repository: text(process.env.STEPHANOS_EXPECTED_REPOSITORY),
     prNumber: positiveInteger(process.env.STEPHANOS_EXPECTED_PR_NUMBER),
@@ -583,7 +583,7 @@ function expectedProtectedEvidence() {
     || !/^[a-f0-9]{40}$/.test(expected.baseSha)
     || !expected.workflowRunId || !expected.workflowRunAttempt
     || !/^[a-f0-9]{64}$/.test(expected.evidenceSha256)) {
-    fail('Pre-environment personal-repository evidence identity is incomplete or unsafe.');
+    fail('Protected evidence-admission identity is incomplete or unsafe.');
   }
   return expected;
 }
@@ -662,7 +662,7 @@ async function main() {
       evidence_sha256: collected.evidenceSha256,
     });
     process.stdout.write(`${JSON.stringify({
-      finalStatus: 'PERSONAL_REPOSITORY_EVIDENCE_READY_BEFORE_PROTECTED_ENVIRONMENT',
+      finalStatus: 'PERSONAL_REPOSITORY_EVIDENCE_READY_AFTER_PROTECTED_ADMISSION',
       mutationAuthority: false,
       evidenceSha256: collected.evidenceSha256,
       ...identity,
@@ -673,10 +673,10 @@ async function main() {
     return;
   }
 
-  const expected = expectedProtectedEvidence();
+  const expected = expectedAdmittedEvidence();
   const collected = await collectEvidence(context, expected);
   if (collected.evidenceSha256 !== expected.evidenceSha256) {
-    fail('Personal-repository evidence changed after protected approval was requested.', {
+    fail('Personal-repository evidence changed after protected evidence admission.', {
       blockers: ['personal-repository-evidence-digest-mismatch'],
       expectedEvidenceSha256: expected.evidenceSha256,
       observedEvidenceSha256: collected.evidenceSha256,
