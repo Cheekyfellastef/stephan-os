@@ -3,12 +3,14 @@ import test from 'node:test';
 import {
   PERSONAL_REPOSITORY_AUTHORITY,
   PERSONAL_REPOSITORY_MODE,
+  PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
   PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS,
   PERSONAL_REPOSITORY_WORKFLOW_NAME,
   PERSONAL_REPOSITORY_WORKFLOW_PATH,
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
+  executeBoundedPersonalRepositoryRead,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
   validatePersonalRepositoryConfiguration,
@@ -19,6 +21,151 @@ import {
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
 } from './operatorPersonalRepositoryMergeV1.mjs';
+
+function response(status) {
+  return { status, body: { cancel: async () => {} } };
+}
+
+test('bounded personal-repository reads recover from transient transport failures', async () => {
+  let attempts = 0;
+  const delays = [];
+  const result = await executeBoundedPersonalRepositoryRead({
+    path: '/repos/Cheekyfellastef/stephan-os',
+    request: async () => {
+      attempts += 1;
+      if (attempts < PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS) {
+        const error = new TypeError('fetch failed: bearer secret-must-not-escape');
+        error.cause = { code: attempts === 1 ? 'EAI_AGAIN' : 'ECONNRESET' };
+        throw error;
+      }
+      return response(200);
+    },
+    delay: async (milliseconds) => delays.push(milliseconds),
+  });
+  assert.equal(attempts, 3);
+  assert.equal(result.attempts, 3);
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(delays, [250, 1_000]);
+});
+
+test('bounded personal-repository reads retry only transient gateway responses', async () => {
+  const statuses = [503, 200];
+  const result = await executeBoundedPersonalRepositoryRead({
+    path: '/repos/Cheekyfellastef/stephan-os/git/ref/heads/main',
+    request: async () => response(statuses.shift()),
+    delay: async () => {},
+  });
+  assert.equal(result.attempts, 2);
+  assert.equal(result.response.status, 200);
+
+  let forbiddenAttempts = 0;
+  const forbidden = await executeBoundedPersonalRepositoryRead({
+    path: '/repos/Cheekyfellastef/stephan-os',
+    request: async () => {
+      forbiddenAttempts += 1;
+      return response(403);
+    },
+    delay: async () => assert.fail('403 responses must not be retried'),
+  });
+  assert.equal(forbiddenAttempts, 1);
+  assert.equal(forbidden.response.status, 403);
+});
+
+test('bounded personal-repository reads retry transport failures while consuming the response body', async () => {
+  let requests = 0;
+  let consumptions = 0;
+  const result = await executeBoundedPersonalRepositoryRead({
+    path: '/repos/Cheekyfellastef/stephan-os/pulls/1762',
+    request: async () => {
+      requests += 1;
+      return response(200);
+    },
+    consume: async () => {
+      consumptions += 1;
+      if (consumptions === 1) {
+        const error = new TypeError('terminated while reading Authorization: Bearer secret-value');
+        error.cause = { code: 'UND_ERR_SOCKET' };
+        throw error;
+      }
+      return Buffer.from('{"state":"open"}');
+    },
+    delay: async () => {},
+  });
+  assert.equal(requests, 2);
+  assert.equal(consumptions, 2);
+  assert.equal(result.attempts, 2);
+  assert.equal(result.result.toString('utf8'), '{"state":"open"}');
+});
+
+test('body-consumption exhaustion emits the same bounded secret-free transport proof', async () => {
+  await assert.rejects(
+    executeBoundedPersonalRepositoryRead({
+      path: '/repos/Cheekyfellastef/stephan-os/actions/runs/31562891459/artifacts',
+      request: async () => response(200),
+      consume: async () => {
+        const error = new TypeError('body failed with bearer secret-value');
+        error.cause = { code: 'UND_ERR_SOCKET' };
+        throw error;
+      },
+      delay: async () => {},
+    }),
+    (error) => {
+      assert.equal(error.code, 'PERSONAL_REPOSITORY_READ_TRANSPORT_EXHAUSTED');
+      assert.equal(error.attempts, PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS);
+      assert.equal(error.transportCode, 'UND_ERR_SOCKET');
+      assert.doesNotMatch(error.message, /secret-value|bearer/i);
+      return true;
+    },
+  );
+});
+
+test('bounded personal-repository reads exhaust with endpoint-specific secret-free proof', async () => {
+  let attempts = 0;
+  await assert.rejects(
+    executeBoundedPersonalRepositoryRead({
+      path: '/repos/Cheekyfellastef/stephan-os/actions/runs/31562891459',
+      request: async () => {
+        attempts += 1;
+        const error = new TypeError('fetch failed with Authorization: Bearer secret-value');
+        error.cause = { code: 'ECONNRESET' };
+        throw error;
+      },
+      delay: async () => {},
+    }),
+    (error) => {
+      assert.equal(error.code, 'PERSONAL_REPOSITORY_READ_TRANSPORT_EXHAUSTED');
+      assert.equal(error.endpoint, '/repos/Cheekyfellastef/stephan-os/actions/runs/31562891459');
+      assert.equal(error.attempts, PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS);
+      assert.equal(error.transportCode, 'ECONNRESET');
+      assert.doesNotMatch(error.message, /secret-value|Authorization|Bearer/);
+      return true;
+    },
+  );
+  assert.equal(attempts, PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS);
+});
+
+test('personal-repository mutations and body-bearing requests are never retried', async () => {
+  for (const requestShape of [
+    { method: 'PUT', body: { merge_method: 'squash' } },
+    { method: 'POST', body: { body: 'completion' } },
+    { method: 'GET', body: { widened: true } },
+  ]) {
+    let attempts = 0;
+    await assert.rejects(
+      executeBoundedPersonalRepositoryRead({
+        path: '/repos/Cheekyfellastef/stephan-os/pulls/1762/merge',
+        ...requestShape,
+        request: async () => {
+          attempts += 1;
+          throw new TypeError('fetch failed');
+        },
+        delay: async () => assert.fail('mutating or body-bearing requests must not be delayed'),
+      }),
+      /fetch failed/,
+    );
+    assert.equal(attempts, 1);
+  }
+});
 
 const repository = 'Cheekyfellastef/stephan-os';
 const prNumber = 1739;
