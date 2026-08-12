@@ -84,6 +84,8 @@ test('internal probe permits only inspect or exact-head canonical worker restart
   assert.match(source, /'mission-worker'/);
   assert.match(source, /'-ExpectedHead'/);
   assert.match(source, /\$repositoryHead/);
+  assert.match(source, /status '--porcelain=v1' '--untracked-files=no'/);
+  assert.match(source, /sourceTrackedClean = \$true/);
   assert.match(source, /APPROVED_RUNTIME_RESTART_PASS/);
   assert.match(source, /Get-CimInstance Win32_Process/);
   assert.match(source, /CommandLineToArgvW/);

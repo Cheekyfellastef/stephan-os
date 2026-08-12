@@ -40,6 +40,7 @@ function workerObservation({
       branch: 'main',
       headSha: repositoryHead,
       remoteMainHeadSha: repositoryHead,
+      trackedClean: true,
     },
     process: {
       running: healthy,
@@ -80,6 +81,7 @@ function exactHeadRestartProof(headSha, terminatedVerifiedOwnedProcess = false) 
     taskName: APPROVED_WORKER_TASK,
     sourceHead: headSha,
     exactHeadProofOk: true,
+    sourceTrackedClean: true,
     proofFresh: true,
     terminatedVerifiedOwnedProcess,
     restartVerdict: 'APPROVED_RUNTIME_RESTART_PASS',

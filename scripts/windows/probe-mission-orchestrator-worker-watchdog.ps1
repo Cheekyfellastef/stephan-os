@@ -147,6 +147,7 @@ $taskActionMatchesCanonicalWorker = Test-CanonicalWorkerTaskAction -ScheduledTas
 
 $repositoryBranch = ''
 $repositoryHead = ''
+$repositoryTrackedClean = $false
 $repositoryHeadReadError = ''
 $remoteMainHead = ''
 $remoteMainHeadReadError = ''
@@ -171,10 +172,19 @@ try {
     if ($repositoryBranch -ne 'main' -or $repositoryHead -notmatch '^[0-9a-f]{40}$') {
         throw 'Canonical repository branch/head proof is invalid.'
     }
+    $trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw ('git status failed: {0}' -f (($trackedStatus | ForEach-Object { [string]$_ }) -join ' '))
+    }
+    if ($trackedStatus.Count -ne 0) {
+        throw 'Canonical repository tracked source is dirty.'
+    }
+    $repositoryTrackedClean = $true
 }
 catch {
     $repositoryBranch = ''
     $repositoryHead = ''
+    $repositoryTrackedClean = $false
     $repositoryHeadReadError = $_.Exception.Message
 }
 if ($gitAvailable) {
@@ -195,6 +205,7 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
         throw 'The fixed Mission Orchestrator worker task action is not canonical.'
     }
     if ($repositoryBranch -ne 'main' -or $repositoryHead -notmatch '^[0-9a-f]{40}$' `
+        -or -not $repositoryTrackedClean `
         -or $remoteMainHead -notmatch '^[0-9a-f]{40}$' -or $repositoryHead -ne $remoteMainHead) {
         throw 'The canonical repository head is not proven as exact current public main for fixed worker restart.'
     }
@@ -238,7 +249,18 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
         throw 'The approved runtime restart receipt is invalid.'
     }
     $remoteMainHeadAfterRestart = Read-PublicMainHead -GitExecutable $canonicalGit
-    if ($remoteMainHeadAfterRestart -ne $remoteMainHead -or $remoteMainHeadAfterRestart -ne $repositoryHead) {
+    $repositoryBranchAfterRestart = ([string](@(& $canonicalGit -C $repositoryRoot symbolic-ref --quiet --short HEAD 2>&1))[0]).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Canonical repository branch could not be re-proved after restart.' }
+    $repositoryHeadAfterRestart = ([string](@(& $canonicalGit -C $repositoryRoot rev-parse --verify HEAD 2>&1))[0]).Trim().ToLowerInvariant()
+    if ($LASTEXITCODE -ne 0) { throw 'Canonical repository head could not be re-proved after restart.' }
+    $trackedStatusAfterRestart = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
+    if ($LASTEXITCODE -ne 0 -or $trackedStatusAfterRestart.Count -ne 0) {
+        throw 'Canonical repository tracked source changed during the fixed worker restart.'
+    }
+    if ($repositoryBranchAfterRestart -ne 'main' `
+        -or $repositoryHeadAfterRestart -ne $repositoryHead `
+        -or $remoteMainHeadAfterRestart -ne $remoteMainHead `
+        -or $remoteMainHeadAfterRestart -ne $repositoryHead) {
         throw 'Public main changed during the fixed worker restart.'
     }
     [pscustomobject]@{
@@ -250,6 +272,7 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
         sourceHead = $repositoryHead
         remoteMainHead = $remoteMainHeadAfterRestart
         exactHeadProofOk = $true
+        sourceTrackedClean = $true
         proofFresh = $true
         terminatedVerifiedOwnedProcess = [bool]$restartReceipt.terminatedVerifiedOwnedProcess
         verifiedOwnedProcessTerminationOnly = $true
@@ -298,6 +321,7 @@ $commandLineMatchesCanonicalWorker = Test-CanonicalWorkerProcessCommandLine `
         branch = $repositoryBranch
         headSha = $repositoryHead
         remoteMainHeadSha = $remoteMainHead
+        trackedClean = [bool]$repositoryTrackedClean
         headMatchesRemoteMain = (
             $repositoryHead -match '^[0-9a-f]{40}$' -and
             $remoteMainHead -match '^[0-9a-f]{40}$' -and

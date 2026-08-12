@@ -46,9 +46,11 @@ export function assessMissionOrchestratorWorker(input = {}) {
   const canonicalRepositoryBranch = text(input.repository?.branch).toLowerCase();
   const canonicalRepositoryHead = text(input.repository?.headSha).toLowerCase();
   const remoteMainHead = text(input.repository?.remoteMainHeadSha).toLowerCase();
+  const canonicalRepositoryTrackedClean = input.repository?.trackedClean === true;
   const localRepositoryIdentityProven = canonicalRepositoryRoot.endsWith(CANONICAL_REPOSITORY_SUFFIX)
     && canonicalRepositoryBranch === 'main'
-    && SHA_40.test(canonicalRepositoryHead);
+    && SHA_40.test(canonicalRepositoryHead)
+    && canonicalRepositoryTrackedClean;
   const remoteMainHeadProven = SHA_40.test(remoteMainHead);
   const canonicalRepositoryHeadProven = localRepositoryIdentityProven
     && remoteMainHeadProven
@@ -98,6 +100,7 @@ export function assessMissionOrchestratorWorker(input = {}) {
   if (!Number.isFinite(heartbeatTimestamp)) blockers.push('worker-heartbeat-malformed');
   else if (!heartbeatFresh) blockers.push('worker-heartbeat-stale');
   if (!remoteMainHeadProven) blockers.push('remote-main-head-unproven');
+  if (!canonicalRepositoryTrackedClean) blockers.push('canonical-repository-tracked-dirty');
   if (localRepositoryIdentityProven && remoteMainHeadProven && canonicalRepositoryHead !== remoteMainHead) {
     blockers.push('canonical-repository-head-stale');
   }
@@ -125,6 +128,7 @@ export function assessMissionOrchestratorWorker(input = {}) {
     heartbeatPidMatchesProcess,
     repositoryFromCanonicalMain,
     canonicalRepositoryHead,
+    canonicalRepositoryTrackedClean,
     remoteMainHead,
     remoteMainHeadProven,
     canonicalRepositoryHeadProven,

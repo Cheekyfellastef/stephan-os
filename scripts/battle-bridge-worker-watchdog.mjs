@@ -374,6 +374,7 @@ export async function runBattleBridgeWorkerWatchdog({
       || startResult.data?.taskName !== APPROVED_WORKER_TASK
       || startResult.data?.sourceHead !== initialAssessment.canonicalRepositoryHead
       || startResult.data?.exactHeadProofOk !== true
+      || startResult.data?.sourceTrackedClean !== true
       || startResult.data?.proofFresh !== true
       || startResult.data?.restartVerdict !== 'APPROVED_RUNTIME_RESTART_PASS') {
       const publication = await publishWatchdogRecords({

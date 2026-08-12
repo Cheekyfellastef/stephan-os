@@ -28,6 +28,7 @@ function healthyInput() {
       branch: 'main',
       headSha: 'a'.repeat(40),
       remoteMainHeadSha: 'a'.repeat(40),
+      trackedClean: true,
     },
     process: {
       running: true,
@@ -169,6 +170,17 @@ test('missing, malformed or different remote main truth blocks restart authority
   }
 });
 
+test('tracked source drift blocks healthy and restart verdicts', () => {
+  const input = healthyInput();
+  input.repository.trackedClean = false;
+  const result = buildWorkerWatchdogRecoveryDecision(input);
+  assert.equal(result.assessment.canonicalRepositoryTrackedClean, false);
+  assert.equal(result.assessment.healthy, false);
+  assert.equal(result.assessment.restartPermitted, false);
+  assert.equal(result.action, 'BLOCKED');
+  assert.ok(result.blockers.includes('canonical-repository-tracked-dirty'));
+});
+
 test('command line and heartbeat pid must bind to the canonical worker process', () => {
   const commandLineInput = healthyInput();
   commandLineInput.process.commandLineMatchesCanonicalWorker = false;
@@ -216,6 +228,8 @@ test('Windows probe binds repository truth to fixed read-only git commands', () 
   assert.doesNotMatch(PROBE_SCRIPT, /Get-Command (?:git|powershell)(?:\.exe)?\b/i);
   assert.match(PROBE_SCRIPT, /-C \$repositoryRoot symbolic-ref --quiet --short HEAD/);
   assert.match(PROBE_SCRIPT, /-C \$repositoryRoot rev-parse --verify HEAD/);
+  assert.match(PROBE_SCRIPT, /status '--porcelain=v1' '--untracked-files=no'/);
+  assert.match(PROBE_SCRIPT, /\$trackedStatusAfterRestart\.Count -ne 0/);
   assert.match(PROBE_SCRIPT, /https:\/\/github\.com\/Cheekyfellastef\/stephan-os\.git/);
   assert.match(PROBE_SCRIPT, /& \$GitExecutable 'ls-remote' '--exit-code' \$publicRemote 'refs\/heads\/main'/);
   assert.match(PROBE_SCRIPT, /\$repositoryHead -ne \$remoteMainHead/);
