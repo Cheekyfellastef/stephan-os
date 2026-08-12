@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import {
   CANONICAL_WINDOWS_POWERSHELL,
+  WORKER_WATCHDOG_PROBE_TIMEOUT_MS,
   createFixedWorkerProbeAdapter,
   runBattleBridgeWorkerWatchdog,
 } from './battle-bridge-worker-watchdog.mjs';
@@ -322,5 +323,6 @@ test('fixed probe adapter uses one script, two modes, no shell and hidden PowerS
   assert.equal(calls[0].executable, CANONICAL_WINDOWS_POWERSHELL);
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.windowsHide, true);
+  assert.equal(calls[0].options.timeout, WORKER_WATCHDOG_PROBE_TIMEOUT_MS);
   assert.deepEqual(calls.map((call) => call.args.at(-1)), ['Inspect', 'StartApprovedWorkerTask']);
 });

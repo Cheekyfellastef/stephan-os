@@ -242,6 +242,7 @@ test('Windows probe binds repository truth to fixed read-only git commands', () 
   assert.match(PROBE_SCRIPT, /'mission-worker'/);
   assert.match(PROBE_SCRIPT, /'-ExpectedHead'/);
   assert.match(PROBE_SCRIPT, /\$repositoryHead/);
+  assert.match(PROBE_SCRIPT, /'-TimeoutSeconds',[\s\S]*'30'/);
   assert.match(PROBE_SCRIPT, /stephanos\.approved-runtime-restart\.v1/);
   assert.match(PROBE_SCRIPT, /APPROVED_RUNTIME_RESTART_PASS/);
   assert.match(PROBE_SCRIPT, /terminatedVerifiedOwnedProcess/);

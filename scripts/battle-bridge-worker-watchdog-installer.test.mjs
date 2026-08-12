@@ -84,6 +84,7 @@ test('internal probe permits only inspect or exact-head canonical worker restart
   assert.match(source, /'mission-worker'/);
   assert.match(source, /'-ExpectedHead'/);
   assert.match(source, /\$repositoryHead/);
+  assert.match(source, /'-TimeoutSeconds',[\s\S]*'30'/);
   assert.match(source, /status '--porcelain=v1' '--untracked-files=no'/);
   assert.match(source, /sourceTrackedClean = \$true/);
   assert.match(source, /APPROVED_RUNTIME_RESTART_PASS/);

@@ -224,7 +224,7 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
         '-ExpectedHead',
         $repositoryHead,
         '-TimeoutSeconds',
-        '90'
+        '30'
     )
     $restartOutput = @(& $canonicalPowerShell @restartArguments 2>&1)
     if ($LASTEXITCODE -ne 0) {
