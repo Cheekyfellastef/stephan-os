@@ -77,7 +77,10 @@ test('internal probe permits only inspect or exact-head canonical worker restart
   assert.match(source, /actionMatchesCanonicalWorker/);
   assert.match(source, /The fixed Mission Orchestrator worker task action is not canonical/);
   assert.match(source, /restart-approved-stephanos-runtime\.ps1/);
-  assert.match(source, /Get-Command powershell\.exe -ErrorAction Stop/);
+  assert.match(source, /\$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git\.exe'/);
+  assert.match(source, /\$canonicalPowerShell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe'/);
+  assert.match(source, /& \$canonicalPowerShell @restartArguments/);
+  assert.doesNotMatch(source, /Get-Command (?:git|powershell)(?:\.exe)?\b/i);
   assert.match(source, /'mission-worker'/);
   assert.match(source, /'-ExpectedHead'/);
   assert.match(source, /\$repositoryHead/);

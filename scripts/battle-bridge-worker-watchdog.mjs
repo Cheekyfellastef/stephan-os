@@ -23,6 +23,7 @@ export const BATTLE_BRIDGE_WORKER_WATCHDOG_SCHEMA = 'stephanos.battle-bridge-wor
 export const BATTLE_BRIDGE_WORKER_WATCHDOG_TASK_NAME = 'Stephanos Mission Orchestrator Worker Watchdog';
 export const WORKER_WATCHDOG_LOCK_STALE_AFTER_MS = 2 * 60 * 1000;
 export const WORKER_WATCHDOG_RESTART_COOLDOWN_MS = 5 * 60 * 1000;
+export const CANONICAL_WINDOWS_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 export const WORKER_WATCHDOG_AUTHORITY = Object.freeze({
   approvedWorkerTask: APPROVED_WORKER_TASK,
   arbitraryShellAllowed: false,
@@ -89,7 +90,7 @@ export function validateCanonicalWorkerWatchdogPaths({ paths, expectedPaths }) {
 export function createFixedWorkerProbeAdapter({
   probeScriptPath,
   spawnSyncFn = spawnSync,
-  powerShellExecutable = 'powershell.exe',
+  powerShellExecutable = CANONICAL_WINDOWS_POWERSHELL,
 } = {}) {
   const fixedProbePath = path.resolve(text(probeScriptPath));
   return Object.freeze({

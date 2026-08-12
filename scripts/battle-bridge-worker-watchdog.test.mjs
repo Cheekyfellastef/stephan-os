@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  CANONICAL_WINDOWS_POWERSHELL,
   createFixedWorkerProbeAdapter,
   runBattleBridgeWorkerWatchdog,
 } from './battle-bridge-worker-watchdog.mjs';
@@ -316,7 +317,7 @@ test('fixed probe adapter uses one script, two modes, no shell and hidden PowerS
   assert.equal(adapter.run('StartApprovedWorkerTask').ok, true);
   assert.throws(() => adapter.run('ArbitraryMode'), /Unsupported/);
   assert.equal(calls.length, 2);
-  assert.equal(calls[0].executable, 'powershell.exe');
+  assert.equal(calls[0].executable, CANONICAL_WINDOWS_POWERSHELL);
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.windowsHide, true);
   assert.deepEqual(calls.map((call) => call.args.at(-1)), ['Inspect', 'StartApprovedWorkerTask']);

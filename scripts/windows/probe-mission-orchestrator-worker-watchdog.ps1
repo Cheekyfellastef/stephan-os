@@ -17,6 +17,8 @@ $workerPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\
 $workerLauncherPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\start-mission-orchestrator-worker.ps1'))
 $runtimeRestartPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\restart-approved-stephanos-runtime.ps1'))
 $windowlessLauncherPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'))
+$canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
+$canonicalPowerShell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $publicRemote = 'https://github.com/Cheekyfellastef/stephan-os.git'
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'))
 $heartbeatPath = Join-Path $workspaceRoot 'status\mission-orchestrator-worker-heartbeat.json'
@@ -124,9 +126,9 @@ function Test-CanonicalWorkerProcessCommandLine {
 }
 
 function Read-PublicMainHead {
-    param([System.Management.Automation.CommandInfo]$GitCommand)
+    param([string]$GitExecutable)
 
-    $output = @(& $GitCommand.Source 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>&1)
+    $output = @(& $GitExecutable 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>&1)
     if ($LASTEXITCODE -ne 0) {
         throw ('git ls-remote failed: {0}' -f (($output | ForEach-Object { [string]$_ }) -join ' '))
     }
@@ -148,15 +150,20 @@ $repositoryHead = ''
 $repositoryHeadReadError = ''
 $remoteMainHead = ''
 $remoteMainHeadReadError = ''
-$gitCommand = $null
+$gitAvailable = $false
 try {
-    $gitCommand = Get-Command git.exe -ErrorAction Stop
-    $repositoryBranchOutput = @(& $gitCommand.Source -C $repositoryRoot symbolic-ref --quiet --short HEAD 2>&1)
+    foreach ($requiredExecutable in @($canonicalGit, $canonicalPowerShell)) {
+        if (-not (Test-Path -LiteralPath $requiredExecutable -PathType Leaf)) {
+            throw ('Required canonical executable is missing: {0}' -f $requiredExecutable)
+        }
+    }
+    $gitAvailable = $true
+    $repositoryBranchOutput = @(& $canonicalGit -C $repositoryRoot symbolic-ref --quiet --short HEAD 2>&1)
     if ($LASTEXITCODE -ne 0) {
         throw ('git symbolic-ref failed: {0}' -f (($repositoryBranchOutput | ForEach-Object { [string]$_ }) -join ' '))
     }
     $repositoryBranch = ([string]$repositoryBranchOutput[0]).Trim()
-    $repositoryHeadOutput = @(& $gitCommand.Source -C $repositoryRoot rev-parse --verify HEAD 2>&1)
+    $repositoryHeadOutput = @(& $canonicalGit -C $repositoryRoot rev-parse --verify HEAD 2>&1)
     if ($LASTEXITCODE -ne 0) {
         throw ('git rev-parse failed: {0}' -f (($repositoryHeadOutput | ForEach-Object { [string]$_ }) -join ' '))
     }
@@ -170,9 +177,9 @@ catch {
     $repositoryHead = ''
     $repositoryHeadReadError = $_.Exception.Message
 }
-if ($gitCommand) {
+if ($gitAvailable) {
     try {
-        $remoteMainHead = Read-PublicMainHead -GitCommand $gitCommand
+        $remoteMainHead = Read-PublicMainHead -GitExecutable $canonicalGit
     }
     catch {
         $remoteMainHead = ''
@@ -194,7 +201,6 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
     if (-not (Test-Path -LiteralPath $runtimeRestartPath -PathType Leaf)) {
         throw 'The approved runtime restart adapter is missing.'
     }
-    $powerShellCommand = Get-Command powershell.exe -ErrorAction Stop
     $restartArguments = @(
         '-NoProfile',
         '-NonInteractive',
@@ -209,7 +215,7 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
         '-TimeoutSeconds',
         '90'
     )
-    $restartOutput = @(& $powerShellCommand.Source @restartArguments 2>&1)
+    $restartOutput = @(& $canonicalPowerShell @restartArguments 2>&1)
     if ($LASTEXITCODE -ne 0) {
         throw 'The approved runtime restart adapter failed.'
     }
@@ -231,7 +237,7 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
     if (-not $restartReceiptValid) {
         throw 'The approved runtime restart receipt is invalid.'
     }
-    $remoteMainHeadAfterRestart = Read-PublicMainHead -GitCommand $gitCommand
+    $remoteMainHeadAfterRestart = Read-PublicMainHead -GitExecutable $canonicalGit
     if ($remoteMainHeadAfterRestart -ne $remoteMainHead -or $remoteMainHeadAfterRestart -ne $repositoryHead) {
         throw 'Public main changed during the fixed worker restart.'
     }

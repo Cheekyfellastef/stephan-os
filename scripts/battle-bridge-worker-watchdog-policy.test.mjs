@@ -211,18 +211,20 @@ test('invalid correlation blocks restart authorization and clears task target', 
 });
 
 test('Windows probe binds repository truth to fixed read-only git commands', () => {
-  assert.match(PROBE_SCRIPT, /Get-Command git\.exe -ErrorAction Stop/);
+  assert.match(PROBE_SCRIPT, /\$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git\.exe'/);
+  assert.match(PROBE_SCRIPT, /\$canonicalPowerShell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe'/);
+  assert.doesNotMatch(PROBE_SCRIPT, /Get-Command (?:git|powershell)(?:\.exe)?\b/i);
   assert.match(PROBE_SCRIPT, /-C \$repositoryRoot symbolic-ref --quiet --short HEAD/);
   assert.match(PROBE_SCRIPT, /-C \$repositoryRoot rev-parse --verify HEAD/);
   assert.match(PROBE_SCRIPT, /https:\/\/github\.com\/Cheekyfellastef\/stephan-os\.git/);
-  assert.match(PROBE_SCRIPT, /\$GitCommand\.Source 'ls-remote' '--exit-code' \$publicRemote 'refs\/heads\/main'/);
+  assert.match(PROBE_SCRIPT, /& \$GitExecutable 'ls-remote' '--exit-code' \$publicRemote 'refs\/heads\/main'/);
   assert.match(PROBE_SCRIPT, /\$repositoryHead -ne \$remoteMainHead/);
   assert.match(PROBE_SCRIPT, /\$remoteMainHeadAfterRestart -ne \$remoteMainHead/);
   assert.match(PROBE_SCRIPT, /repositoryRoot = \$repositoryRoot/);
   assert.match(PROBE_SCRIPT, /headSha = \$repositoryHead/);
   assert.match(PROBE_SCRIPT, /remoteMainHeadSha = \$remoteMainHead/);
   assert.match(PROBE_SCRIPT, /restart-approved-stephanos-runtime\.ps1/);
-  assert.match(PROBE_SCRIPT, /Get-Command powershell\.exe -ErrorAction Stop/);
+  assert.match(PROBE_SCRIPT, /& \$canonicalPowerShell @restartArguments/);
   assert.match(PROBE_SCRIPT, /'mission-worker'/);
   assert.match(PROBE_SCRIPT, /'-ExpectedHead'/);
   assert.match(PROBE_SCRIPT, /\$repositoryHead/);
