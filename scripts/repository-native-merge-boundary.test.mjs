@@ -58,7 +58,10 @@ test('protected boundary keeps the native queue and adds only the exact user-own
   assert.equal([...protectedSource.matchAll(/secrets\.STEPHANOS_RULESET_PROOF_APP_ID/g)].length, 3);
   assert.equal([...protectedSource.matchAll(/secrets\.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY/g)].length, 3);
   assert.equal([...protectedSource.matchAll(/STEPHANOS_RULESET_PROOF_TOKEN:/g)].length, 3);
-  assert.equal([...protectedSource.matchAll(/permission-administration: read/g)].length, 3);
+  assert.equal([...protectedSource.matchAll(/permission-administration: write/g)].length, 3);
+  assert.equal([...protectedSource.matchAll(/steps\.ruleset-proof-token\.outputs\.token/g)].length, 3);
+  assert.doesNotMatch(protectedSource, /permission-(?!administration: write)/);
+  assert.doesNotMatch(protectedSource, /skip-token-revoke:/);
   assert.equal([...protectedSource.matchAll(/name: operator-merge-approval/g)].length, 4);
   const evidenceJob = protectedSource.slice(
     protectedSource.indexOf('  personal-repository-evidence:'),
@@ -87,6 +90,7 @@ test('protected boundary keeps the native queue and adds only the exact user-own
   assert.match(mergeJob, /Re-prove, squash exact head and publish the bounded receipt/);
   assert.doesNotMatch(protectedSource, /\b(?:actions|deployments|statuses|checks): write\b/);
   assert.doesNotMatch(protectedSource, /recover|repository_dispatch|workflow_call|continue-on-error/);
+  assert.doesNotMatch(protectedSource, /STEPHANOS_RULESET_PROOF_TOKEN[^\n]*(?:GITHUB_OUTPUT|GITHUB_ENV|upload-artifact)/i);
 
   assert.match(independentSource, /pull_request_target:/);
   assert.match(independentSource, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
@@ -105,6 +109,8 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /validatePersonalRepositoryRulesetProofRequest/);
   assert.match(source, /executeBoundedPersonalRepositoryRead/);
   assert.match(source, /request: \(\) => fetch/);
+  assert.match(source, /redirect: authorization === 'ruleset-proof' \? 'error' : 'follow'/);
+  assert.match(source, /validatePersonalRepositoryRulesetProofResponse/);
   assert.match(source, /consume: async \(boundedResponse\) => Buffer\.from\(await boundedResponse\.arrayBuffer\(\)\)/);
   assert.equal([...source.matchAll(/executeBoundedPersonalRepositoryRead/g)].length, 2);
   assert.match(source, /personal-repository-public-rules-api/);
@@ -112,6 +118,10 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /rules\/branches\/main[\s\S]*?authorization: 'ruleset-proof'/);
   assert.match(source, /rulesets\/\$\{rulesetId\}[\s\S]*?authorization: 'ruleset-proof'/);
   assert.match(source, /STEPHANOS_RULESET_PROOF_TOKEN/);
+  assert.match(source, /extractPersonalRepositoryArtifactZip\(archiveBytes, INDEPENDENT_REVIEW_ARTIFACT_FILE\)/);
+  assert.doesNotMatch(source, /node:child_process|\bspawn(?:Sync)?\b|\bexec(?:File|Sync)?\b|\bunzip\b|shell\s*:/i);
+  assert.doesNotMatch(source, /mkdtempSync|writeFileSync|rmSync|node:os|node:path/);
+  assert.doesNotMatch(source, /adm-zip|jszip|yauzl|unzipper|node-stream-zip/i);
   assert.match(source, /Ruleset proof token is restricted to bounded repository-configuration GET requests/);
   assert.doesNotMatch(source, /GH_TOKEN[^\n]*rules|GITHUB_TOKEN[^\n]*rules/);
   assert.match(source, /loadSelectedIndependentReview/);
