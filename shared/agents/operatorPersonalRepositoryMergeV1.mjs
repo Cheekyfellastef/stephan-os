@@ -1,3 +1,4 @@
+import { inflateRawSync } from 'node:zlib';
 import {
   OPERATOR_MERGE_ENVIRONMENT,
   OPERATOR_MERGE_REVIEWER,
@@ -26,9 +27,25 @@ export const PERSONAL_REPOSITORY_REQUIRED_CHECK = 'protected-merge-source-proof'
 export const PERSONAL_REPOSITORY_MODE = 'user-owned-protected-squash';
 export const PERSONAL_REPOSITORY_AUTHORITY = 'github-actions-protected-environment-exact-head-squash-only';
 export const PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS = 3;
+export const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES = 256 * 1024;
+export const PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES = 256 * 1024;
+
+const ZIP_LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
+const ZIP_CENTRAL_DIRECTORY_HEADER_SIGNATURE = 0x02014b50;
+const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
+const ZIP_LOCAL_FILE_HEADER_BYTES = 30;
+const ZIP_CENTRAL_DIRECTORY_HEADER_BYTES = 46;
+const ZIP_END_OF_CENTRAL_DIRECTORY_BYTES = 22;
+const ZIP_DATA_DESCRIPTOR_SIGNATURE = 0x08074b50;
+const ZIP_DATA_DESCRIPTOR_BYTES = 16;
+const ZIP_DATA_DESCRIPTOR_FLAG = 0x0008;
+const ZIP_UTF8_FLAG = 0x0800;
+const ZIP_STORED_METHOD = 0;
+const ZIP_DEFLATED_METHOD = 8;
 
 const PERSONAL_REPOSITORY_TRANSIENT_READ_STATUSES = new Set([502, 503, 504]);
 const PERSONAL_REPOSITORY_READ_RETRY_DELAYS_MS = Object.freeze([250, 1_000]);
+const PERSONAL_REPOSITORY_GITHUB_API_ORIGIN = 'https://api.github.com';
 
 export const PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS = Object.freeze([
   Object.freeze({ name: 'OpenClaw GitHub Operator', path: '.github/workflows/openclaw-github-operator.yml', event: 'pull_request' }),
@@ -49,6 +66,209 @@ function boundedTransportCode(error) {
   return /^[A-Z][A-Z0-9_]{0,39}$/.test(candidate) ? candidate : 'UNCLASSIFIED';
 }
 
+const ZIP_CRC32_TABLE = Object.freeze(Array.from({ length: 256 }, (_, value) => {
+  let crc = value;
+  for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  return crc >>> 0;
+}));
+
+function zipCrc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = ZIP_CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+export class PersonalRepositoryArtifactZipError extends Error {
+  constructor(reason) {
+    super(`Independent review artifact ZIP is invalid (${reason}).`);
+    this.name = 'PersonalRepositoryArtifactZipError';
+    this.code = 'PERSONAL_REPOSITORY_ARTIFACT_ZIP_INVALID';
+    this.reason = reason;
+  }
+}
+
+function invalidArtifactZip(reason) {
+  throw new PersonalRepositoryArtifactZipError(reason);
+}
+
+function uint16(bytes, offset, reason) {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset + 2 > bytes.length) invalidArtifactZip(reason);
+  return bytes.readUInt16LE(offset);
+}
+
+function uint32(bytes, offset, reason) {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset + 4 > bytes.length) invalidArtifactZip(reason);
+  return bytes.readUInt32LE(offset);
+}
+
+function exactArtifactName(bytes, expectedFileName) {
+  const expected = Buffer.from(expectedFileName, 'utf8');
+  const decoded = bytes.toString('utf8');
+  if (!Buffer.from(decoded, 'utf8').equals(bytes)) invalidArtifactZip('filename-encoding');
+  if (decoded.includes('/')
+    || decoded.includes('\\')
+    || decoded === '.'
+    || decoded === '..'
+    || decoded.includes('\0')
+    || /[\r\n]/.test(decoded)) {
+    invalidArtifactZip('filename-unsafe');
+  }
+  if (!bytes.equals(expected)) invalidArtifactZip('filename-mismatch');
+}
+
+export function extractPersonalRepositoryArtifactZip(archiveBytes, expectedFileName) {
+  if (!(Buffer.isBuffer(archiveBytes) || archiveBytes instanceof Uint8Array)) {
+    invalidArtifactZip('archive-type');
+  }
+  if (typeof expectedFileName !== 'string'
+    || expectedFileName.length === 0
+    || expectedFileName.length > 255
+    || !/^[A-Za-z0-9._-]+$/.test(expectedFileName)) {
+    invalidArtifactZip('expected-filename');
+  }
+  const archive = Buffer.from(archiveBytes);
+  if (archive.length < ZIP_LOCAL_FILE_HEADER_BYTES
+      + ZIP_CENTRAL_DIRECTORY_HEADER_BYTES
+      + ZIP_END_OF_CENTRAL_DIRECTORY_BYTES
+    || archive.length > PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES) {
+    invalidArtifactZip('archive-size');
+  }
+
+  const endOffset = archive.length - ZIP_END_OF_CENTRAL_DIRECTORY_BYTES;
+  if (uint32(archive, endOffset, 'end-record') !== ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE) {
+    invalidArtifactZip('end-signature');
+  }
+  const diskNumber = uint16(archive, endOffset + 4, 'end-record');
+  const centralDisk = uint16(archive, endOffset + 6, 'end-record');
+  const entriesOnDisk = uint16(archive, endOffset + 8, 'end-record');
+  const totalEntries = uint16(archive, endOffset + 10, 'end-record');
+  const centralSize = uint32(archive, endOffset + 12, 'end-record');
+  const centralOffset = uint32(archive, endOffset + 16, 'end-record');
+  const commentLength = uint16(archive, endOffset + 20, 'end-record');
+  if (diskNumber !== 0 || centralDisk !== 0) invalidArtifactZip('multi-disk');
+  if (entriesOnDisk !== 1 || totalEntries !== 1) invalidArtifactZip('entry-count');
+  if (commentLength !== 0) invalidArtifactZip('archive-comment');
+  if (centralOffset === 0xffffffff || centralSize === 0xffffffff) invalidArtifactZip('zip64');
+  if (centralOffset < ZIP_LOCAL_FILE_HEADER_BYTES
+    || centralSize < ZIP_CENTRAL_DIRECTORY_HEADER_BYTES
+    || centralOffset + centralSize !== endOffset) {
+    invalidArtifactZip('central-boundary');
+  }
+
+  if (uint32(archive, centralOffset, 'central-record') !== ZIP_CENTRAL_DIRECTORY_HEADER_SIGNATURE) {
+    invalidArtifactZip('central-signature');
+  }
+  const centralVersionNeeded = uint16(archive, centralOffset + 6, 'central-record');
+  const centralFlags = uint16(archive, centralOffset + 8, 'central-record');
+  const centralMethod = uint16(archive, centralOffset + 10, 'central-record');
+  const centralModifiedTime = uint16(archive, centralOffset + 12, 'central-record');
+  const centralModifiedDate = uint16(archive, centralOffset + 14, 'central-record');
+  const centralCrc32 = uint32(archive, centralOffset + 16, 'central-record');
+  const centralCompressedSize = uint32(archive, centralOffset + 20, 'central-record');
+  const centralUncompressedSize = uint32(archive, centralOffset + 24, 'central-record');
+  const centralNameLength = uint16(archive, centralOffset + 28, 'central-record');
+  const centralExtraLength = uint16(archive, centralOffset + 30, 'central-record');
+  const centralCommentLength = uint16(archive, centralOffset + 32, 'central-record');
+  const centralDiskStart = uint16(archive, centralOffset + 34, 'central-record');
+  const localOffset = uint32(archive, centralOffset + 42, 'central-record');
+  const centralRecordBytes = ZIP_CENTRAL_DIRECTORY_HEADER_BYTES
+    + centralNameLength
+    + centralExtraLength
+    + centralCommentLength;
+  if (centralVersionNeeded < 10 || centralVersionNeeded > 20) invalidArtifactZip('version');
+  if ((centralFlags & ~(ZIP_UTF8_FLAG | ZIP_DATA_DESCRIPTOR_FLAG)) !== 0) invalidArtifactZip('flags');
+  if (![ZIP_STORED_METHOD, ZIP_DEFLATED_METHOD].includes(centralMethod)) invalidArtifactZip('compression');
+  if (centralCompressedSize === 0xffffffff || centralUncompressedSize === 0xffffffff) invalidArtifactZip('zip64');
+  if (centralUncompressedSize > PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES) {
+    invalidArtifactZip('payload-size');
+  }
+  if (centralNameLength === 0 || centralExtraLength !== 0 || centralCommentLength !== 0) {
+    invalidArtifactZip('central-fields');
+  }
+  if (centralDiskStart !== 0) invalidArtifactZip('multi-disk');
+  if (localOffset !== 0) invalidArtifactZip('archive-prefix');
+  if (centralRecordBytes !== centralSize) invalidArtifactZip('central-size');
+  const centralNameOffset = centralOffset + ZIP_CENTRAL_DIRECTORY_HEADER_BYTES;
+  const centralNameEnd = centralNameOffset + centralNameLength;
+  if (centralNameEnd > endOffset) invalidArtifactZip('central-name-boundary');
+  const centralName = archive.subarray(centralNameOffset, centralNameEnd);
+  exactArtifactName(centralName, expectedFileName);
+
+  if (uint32(archive, 0, 'local-record') !== ZIP_LOCAL_FILE_HEADER_SIGNATURE) {
+    invalidArtifactZip('local-signature');
+  }
+  const localVersionNeeded = uint16(archive, 4, 'local-record');
+  const localFlags = uint16(archive, 6, 'local-record');
+  const localMethod = uint16(archive, 8, 'local-record');
+  const localModifiedTime = uint16(archive, 10, 'local-record');
+  const localModifiedDate = uint16(archive, 12, 'local-record');
+  const localCrc32 = uint32(archive, 14, 'local-record');
+  const localCompressedSize = uint32(archive, 18, 'local-record');
+  const localUncompressedSize = uint32(archive, 22, 'local-record');
+  const localNameLength = uint16(archive, 26, 'local-record');
+  const localExtraLength = uint16(archive, 28, 'local-record');
+  const usesDataDescriptor = (centralFlags & ZIP_DATA_DESCRIPTOR_FLAG) !== 0;
+  if (localVersionNeeded !== centralVersionNeeded
+    || localFlags !== centralFlags
+    || localMethod !== centralMethod
+    || localModifiedTime !== centralModifiedTime
+    || localModifiedDate !== centralModifiedDate
+    || localNameLength !== centralNameLength
+    || localExtraLength !== 0) {
+    invalidArtifactZip('local-central-mismatch');
+  }
+  if (usesDataDescriptor) {
+    if (localCrc32 !== 0 || localCompressedSize !== 0 || localUncompressedSize !== 0) {
+      invalidArtifactZip('descriptor-local-fields');
+    }
+  } else if (localCrc32 !== centralCrc32
+    || localCompressedSize !== centralCompressedSize
+    || localUncompressedSize !== centralUncompressedSize) {
+    invalidArtifactZip('local-central-mismatch');
+  }
+  const localNameOffset = ZIP_LOCAL_FILE_HEADER_BYTES;
+  const localNameEnd = localNameOffset + localNameLength;
+  if (localNameEnd > centralOffset) invalidArtifactZip('local-name-boundary');
+  const localName = archive.subarray(localNameOffset, localNameEnd);
+  if (!localName.equals(centralName)) invalidArtifactZip('local-central-name-mismatch');
+  exactArtifactName(localName, expectedFileName);
+
+  const dataOffset = localNameEnd;
+  const dataEnd = dataOffset + centralCompressedSize;
+  if (usesDataDescriptor) {
+    const descriptorEnd = dataEnd + ZIP_DATA_DESCRIPTOR_BYTES;
+    if (descriptorEnd !== centralOffset) invalidArtifactZip('descriptor-boundary');
+    if (uint32(archive, dataEnd, 'descriptor') !== ZIP_DATA_DESCRIPTOR_SIGNATURE) {
+      invalidArtifactZip('descriptor-signature');
+    }
+    if (uint32(archive, dataEnd + 4, 'descriptor') !== centralCrc32
+      || uint32(archive, dataEnd + 8, 'descriptor') !== centralCompressedSize
+      || uint32(archive, dataEnd + 12, 'descriptor') !== centralUncompressedSize) {
+      invalidArtifactZip('descriptor-mismatch');
+    }
+  } else if (dataEnd !== centralOffset) {
+    invalidArtifactZip('record-overlap-or-gap');
+  }
+  if (localMethod === ZIP_STORED_METHOD && centralCompressedSize !== centralUncompressedSize) {
+    invalidArtifactZip('stored-size');
+  }
+  const compressed = archive.subarray(dataOffset, dataEnd);
+  let payload;
+  try {
+    payload = localMethod === ZIP_STORED_METHOD
+      ? Buffer.from(compressed)
+      : inflateRawSync(compressed, { maxOutputLength: PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES });
+  } catch {
+    invalidArtifactZip('decompression');
+  }
+  if (payload.length !== centralUncompressedSize
+    || payload.length > PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES) {
+    invalidArtifactZip('payload-size-mismatch');
+  }
+  if (zipCrc32(payload) !== centralCrc32) invalidArtifactZip('crc32');
+  return Buffer.from(payload);
+}
+
 export class PersonalRepositoryReadTransportError extends Error {
   constructor(path, attempts, error) {
     const endpoint = text(path).replace(/[\r\n\t]/g, '').slice(0, 500) || 'unknown-endpoint';
@@ -62,15 +282,34 @@ export class PersonalRepositoryReadTransportError extends Error {
   }
 }
 
+export class PersonalRepositoryReadPolicyError extends Error {
+  constructor(path, blockers = []) {
+    const endpoint = text(path).replace(/[\r\n\t]/g, '').slice(0, 500) || 'unknown-endpoint';
+    const boundedBlockers = (Array.isArray(blockers) ? blockers : [])
+      .map(text)
+      .filter(Boolean)
+      .slice(0, 10);
+    super(`GitHub read response violated the bounded policy for ${endpoint}.`);
+    this.name = 'PersonalRepositoryReadPolicyError';
+    this.code = 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION';
+    this.endpoint = endpoint;
+    this.blockers = Object.freeze(boundedBlockers);
+  }
+}
+
 export async function executeBoundedPersonalRepositoryRead({
   path,
   method = 'GET',
   body = null,
   request,
+  validateResponse = null,
   consume = async (response) => response,
   delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
   if (typeof request !== 'function') throw new TypeError('Personal-repository request function is required.');
+  if (validateResponse !== null && typeof validateResponse !== 'function') {
+    throw new TypeError('Personal-repository response validator must be a function when supplied.');
+  }
   if (typeof consume !== 'function') throw new TypeError('Personal-repository response consumer is required.');
   if (typeof delay !== 'function') throw new TypeError('Personal-repository retry delay function is required.');
   const normalizedMethod = text(method || 'GET').toUpperCase();
@@ -81,6 +320,13 @@ export async function executeBoundedPersonalRepositoryRead({
   for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
     try {
       const response = await request();
+      if (validateResponse) {
+        const validation = await validateResponse(response);
+        if (validation?.valid !== true) {
+          await response?.body?.cancel?.();
+          throw new PersonalRepositoryReadPolicyError(path, validation?.blockers);
+        }
+      }
       const transientStatus = PERSONAL_REPOSITORY_TRANSIENT_READ_STATUSES.has(Number(response?.status));
       if (transientStatus && attempt < maximumAttempts) {
         await response?.body?.cancel?.();
@@ -89,6 +335,7 @@ export async function executeBoundedPersonalRepositoryRead({
         return Object.freeze({ response, result, attempts: attempt });
       }
     } catch (error) {
+      if (error instanceof PersonalRepositoryReadPolicyError) throw error;
       if (!readOnly) throw error;
       lastTransportError = error;
       if (attempt === maximumAttempts) {
@@ -128,6 +375,28 @@ export function validatePersonalRepositoryRulesetProofRequest(input = {}) {
     finalVerdict: blockers.length
       ? 'PERSONAL_REPOSITORY_RULESET_PROOF_REQUEST_BLOCKED'
       : 'PERSONAL_REPOSITORY_RULESET_PROOF_REQUEST_READY',
+  });
+}
+
+export function validatePersonalRepositoryRulesetProofResponse(input = {}) {
+  const path = text(input.path);
+  const response = input.response;
+  const expectedUrl = `${PERSONAL_REPOSITORY_GITHUB_API_ORIGIN}${path}`;
+  const responseUrl = text(response?.url);
+  const blockers = [];
+  if (response?.redirected !== false) {
+    blockers.push('personal-repository-ruleset-proof-response-redirected');
+  }
+  if (responseUrl !== expectedUrl) {
+    blockers.push('personal-repository-ruleset-proof-response-url-mismatch');
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    blockers: Object.freeze(blockers),
+    expectedUrl,
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_RULESET_PROOF_RESPONSE_BLOCKED'
+      : 'PERSONAL_REPOSITORY_RULESET_PROOF_RESPONSE_READY',
   });
 }
 

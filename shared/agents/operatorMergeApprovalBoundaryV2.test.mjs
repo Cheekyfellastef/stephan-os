@@ -175,11 +175,14 @@ test('admits only the exact personal-repository fallback workflow source', () =>
     content.replace('cancel-in-progress: false', 'cancel-in-progress: true'),
     content.replace("github.event_name == 'workflow_dispatch'", "github.event_name == 'merge_group'"),
     content.replace('persist-credentials: false', 'persist-credentials: true'),
-    content.replace('permission-administration: read', 'permission-administration: write'),
+    content.replace('permission-administration: write', 'permission-administration: read'),
+    content.replace('          permission-administration: write\n', ''),
     content.replace(
-      '          permission-administration: read',
-      '          permission-administration: read\n          permission-contents: write',
+      '          permission-administration: write',
+      '          permission-administration: write\n          permission-contents: read',
     ),
+    content.replace('          owner: ${{ github.repository_owner }}', '          owner: another-owner'),
+    content.replace('          repositories: stephan-os', '          repositories: stephan-os, another-repository'),
     content.replace(
       'STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
       'STEPHANOS_RULESET_PROOF_TOKEN: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}',
@@ -204,6 +207,14 @@ test('admits only the exact personal-repository fallback workflow source', () =>
     content.replace(
       '          GH_TOKEN: ${{ github.token }}',
       '          GH_TOKEN: ${{ github.token }}\n          NODE_OPTIONS: --import=./arbitrary.mjs',
+    ),
+    content.replace(
+      '      evidence_sha256: ${{ steps.evidence.outputs.evidence_sha256 }}',
+      '      evidence_sha256: ${{ steps.evidence.outputs.evidence_sha256 }}\n      configuration_token: ${{ steps.ruleset-proof-token.outputs.token }}',
+    ),
+    content.replace(
+      '        run: node scripts/operator-protected-personal-repository-merge.mjs evidence',
+      '        run: node scripts/operator-protected-personal-repository-merge.mjs evidence\n      - uses: actions/upload-artifact@v4\n        with:\n          name: leaked-token\n          path: ${{ steps.ruleset-proof-token.outputs.token }}',
     ),
     content.replace(
       'permissions: {}',

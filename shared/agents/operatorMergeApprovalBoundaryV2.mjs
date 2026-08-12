@@ -7,7 +7,7 @@ import {
 } from './operatorMergeApprovalGate.mjs';
 
 const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
-const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = '7ba1ba2f7124ab82cc1dbef8073a731510742189b7dd3ab354259579abf09f77';
+const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = '99f1db1892ec1dc57fa5d7a578ed9b411a1fcc3e04eb0a823794da10246bebcb';
 const PERSONAL_REPOSITORY_WORKFLOW_SOURCE_KEYS = Object.freeze([
   'schemaVersion',
   'repository',
@@ -444,7 +444,7 @@ function personalRepositoryRulesetProofTokenForJobIsExact(source, jobName) {
       && entry.value === 'actions/create-github-app-token@v2')
   ));
   if (mintSteps.length !== 1 || !stepHasExactEntries(mintSteps[0], [
-    ['name', 'Mint exact read-only ruleset proof token'],
+    ['name', 'Mint exact GET-only configuration proof token'],
     ['id', 'ruleset-proof-token'],
     ['uses', 'actions/create-github-app-token@v2'],
     ['with', ''],
@@ -456,7 +456,7 @@ function personalRepositoryRulesetProofTokenForJobIsExact(source, jobName) {
     ['private-key', '${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}'],
     ['owner', '${{ github.repository_owner }}'],
     ['repositories', 'stephan-os'],
-    ['permission-administration', 'read'],
+    ['permission-administration', 'write'],
   ];
   return withMapping.valid
     && withMapping.entries.length === expectedWith.length

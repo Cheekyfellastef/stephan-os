@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { deflateRawSync } from 'node:zlib';
 import {
   PERSONAL_REPOSITORY_AUTHORITY,
+  PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES,
   PERSONAL_REPOSITORY_MODE,
   PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
@@ -11,6 +13,7 @@ import {
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
   executeBoundedPersonalRepositoryRead,
+  extractPersonalRepositoryArtifactZip,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
   validatePersonalRepositoryConfiguration,
@@ -18,6 +21,7 @@ import {
   validatePersonalRepositoryDispatchWorkflowDefinition,
   validatePersonalRepositoryEvidence,
   validatePersonalRepositoryRulesetProofRequest,
+  validatePersonalRepositoryRulesetProofResponse,
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
 } from './operatorPersonalRepositoryMergeV1.mjs';
@@ -25,6 +29,199 @@ import {
 function response(status) {
   return { status, body: { cancel: async () => {} } };
 }
+
+const ARTIFACT_FILE = 'independent-review-result.json';
+const TEST_CRC32_TABLE = Array.from({ length: 256 }, (_, value) => {
+  let crc = value;
+  for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  return crc >>> 0;
+});
+
+function testCrc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = TEST_CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function singleEntryZip({ payload = '{"ready":true}', fileName = ARTIFACT_FILE, method = 8, flags = 0, dataDescriptor = false } = {}) {
+  const plain = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf8');
+  const compressed = method === 8 ? deflateRawSync(plain) : Buffer.from(plain);
+  const name = Buffer.from(fileName, 'utf8');
+  const crc = testCrc32(plain);
+  const version = method === 8 ? 20 : 10;
+  const local = Buffer.alloc(30 + name.length);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(version, 4);
+  const resolvedFlags = flags | (dataDescriptor ? 0x0008 : 0);
+  local.writeUInt16LE(resolvedFlags, 6);
+  local.writeUInt16LE(method, 8);
+  local.writeUInt32LE(dataDescriptor ? 0 : crc, 14);
+  local.writeUInt32LE(dataDescriptor ? 0 : compressed.length, 18);
+  local.writeUInt32LE(dataDescriptor ? 0 : plain.length, 22);
+  local.writeUInt16LE(name.length, 26);
+  name.copy(local, 30);
+
+  const descriptor = dataDescriptor ? Buffer.alloc(16) : Buffer.alloc(0);
+  if (dataDescriptor) {
+    descriptor.writeUInt32LE(0x08074b50, 0);
+    descriptor.writeUInt32LE(crc, 4);
+    descriptor.writeUInt32LE(compressed.length, 8);
+    descriptor.writeUInt32LE(plain.length, 12);
+  }
+  const centralOffset = local.length + compressed.length + descriptor.length;
+  const central = Buffer.alloc(46 + name.length);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(version, 6);
+  central.writeUInt16LE(resolvedFlags, 8);
+  central.writeUInt16LE(method, 10);
+  central.writeUInt32LE(crc, 16);
+  central.writeUInt32LE(compressed.length, 20);
+  central.writeUInt32LE(plain.length, 24);
+  central.writeUInt16LE(name.length, 28);
+  name.copy(central, 46);
+
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(central.length, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  return Object.freeze({
+    archive: Buffer.concat([local, compressed, descriptor, central, end]),
+    compressed,
+    offsets: Object.freeze({
+      data: local.length,
+      central: centralOffset,
+      end: centralOffset + central.length,
+    }),
+    plain,
+  });
+}
+
+function mutateArchive(archive, mutate) {
+  const copy = Buffer.from(archive);
+  mutate(copy);
+  return copy;
+}
+
+function assertZipBlocked(archive, expectedReason = null) {
+  assert.throws(
+    () => extractPersonalRepositoryArtifactZip(archive, ARTIFACT_FILE),
+    (error) => {
+      assert.equal(error.code, 'PERSONAL_REPOSITORY_ARTIFACT_ZIP_INVALID');
+      if (expectedReason) assert.equal(error.reason, expectedReason);
+      assert.doesNotMatch(error.message, /token-must-not-escape|github-token-must-not-escape/);
+      return true;
+    },
+  );
+}
+
+test('in-process artifact ZIP reader accepts exact stored and deflated single-entry archives', () => {
+  for (const [method, dataDescriptor] of [[0, false], [8, false], [0, true], [8, true]]) {
+    const fixture = singleEntryZip({ method, dataDescriptor });
+    const payload = extractPersonalRepositoryArtifactZip(fixture.archive, ARTIFACT_FILE);
+    assert.deepEqual(payload, fixture.plain);
+  }
+});
+
+test('in-process artifact ZIP reader rejects authority-widening flags, formats and entry estates', () => {
+  const exact = singleEntryZip();
+  for (const [archive, reason] of [
+    [mutateArchive(exact.archive, (bytes) => {
+      bytes.writeUInt16LE(1, 6);
+      bytes.writeUInt16LE(1, exact.offsets.central + 8);
+    }), 'flags'],
+    [mutateArchive(exact.archive, (bytes) => {
+      bytes.writeUInt16LE(4, 6);
+      bytes.writeUInt16LE(4, exact.offsets.central + 8);
+    }), 'flags'],
+    [mutateArchive(exact.archive, (bytes) => {
+      bytes.writeUInt16LE(99, 8);
+      bytes.writeUInt16LE(99, exact.offsets.central + 10);
+    }), 'compression'],
+    [mutateArchive(exact.archive, (bytes) => bytes.writeUInt32LE(0xffffffff, exact.offsets.central + 20)), 'zip64'],
+    [mutateArchive(exact.archive, (bytes) => bytes.writeUInt16LE(45, exact.offsets.central + 6)), 'version'],
+    [mutateArchive(exact.archive, (bytes) => bytes.writeUInt16LE(1, exact.offsets.end + 4)), 'multi-disk'],
+    [mutateArchive(exact.archive, (bytes) => {
+      bytes.writeUInt16LE(2, exact.offsets.end + 8);
+      bytes.writeUInt16LE(2, exact.offsets.end + 10);
+    }), 'entry-count'],
+    [mutateArchive(exact.archive, (bytes) => bytes.writeUInt16LE(1, exact.offsets.end + 20)), 'archive-comment'],
+    [mutateArchive(exact.archive, (bytes) => bytes.writeUInt16LE(1, exact.offsets.central + 30)), 'central-fields'],
+  ]) assertZipBlocked(archive, reason);
+});
+
+test('in-process artifact ZIP reader rejects unsupported or mismatched data descriptors', () => {
+  const exact = singleEntryZip({ dataDescriptor: true });
+  const descriptorOffset = exact.offsets.central - 16;
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(0, descriptorOffset)
+  )), 'descriptor-signature');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(0, descriptorOffset + 4)
+  )), 'descriptor-mismatch');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(1, 14)
+  )), 'descriptor-local-fields');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(exact.offsets.central - 1, exact.offsets.end + 16)
+  )), 'central-boundary');
+});
+
+test('in-process artifact ZIP reader rejects unsafe names, prefixes, trailing bytes and malformed boundaries', () => {
+  assertZipBlocked(singleEntryZip({ fileName: '../independent-review-result.json' }).archive, 'filename-unsafe');
+  const exact = singleEntryZip();
+  assertZipBlocked(Buffer.concat([Buffer.from([0]), exact.archive]));
+  assertZipBlocked(Buffer.concat([exact.archive, Buffer.from([0])]));
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(exact.offsets.central + 1, exact.offsets.end + 16)
+  )), 'central-boundary');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt32LE(1, exact.offsets.central + 42)
+  )), 'archive-prefix');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt16LE(0, 8)
+  )), 'local-central-mismatch');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => (
+    bytes.writeUInt16LE(1, 10)
+  )), 'local-central-mismatch');
+});
+
+test('in-process artifact ZIP reader rejects size, overlap, corruption and CRC attacks', () => {
+  const exact = singleEntryZip();
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => {
+    bytes.writeUInt32LE(exact.compressed.length + 1, 18);
+    bytes.writeUInt32LE(exact.compressed.length + 1, exact.offsets.central + 20);
+  }), 'record-overlap-or-gap');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => {
+    bytes.writeUInt32LE(exact.compressed.length - 1, 18);
+    bytes.writeUInt32LE(exact.compressed.length - 1, exact.offsets.central + 20);
+  }), 'record-overlap-or-gap');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => {
+    bytes.writeUInt32LE(0, 14);
+    bytes.writeUInt32LE(0, exact.offsets.central + 16);
+  }), 'crc32');
+  assertZipBlocked(mutateArchive(exact.archive, (bytes) => {
+    bytes[exact.offsets.data] ^= 0xff;
+  }));
+
+  const stored = singleEntryZip({ method: 0 });
+  assertZipBlocked(mutateArchive(stored.archive, (bytes) => {
+    bytes.writeUInt32LE(stored.plain.length + 1, 22);
+    bytes.writeUInt32LE(stored.plain.length + 1, stored.offsets.central + 24);
+  }), 'stored-size');
+
+  const oversized = singleEntryZip({ payload: Buffer.alloc(PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES + 1, 65) });
+  assertZipBlocked(oversized.archive, 'payload-size');
+});
+
+test('in-process artifact ZIP failures remain credential-free and consume no process environment', () => {
+  const secret = 'token-must-not-escape';
+  const credentialNamed = singleEntryZip({ fileName: secret });
+  assertZipBlocked(credentialNamed.archive, 'filename-mismatch');
+  assert.doesNotMatch(extractPersonalRepositoryArtifactZip.toString(), /process\.env|child_process|spawn|unzip/i);
+});
 
 test('bounded personal-repository reads recover from transient transport failures', async () => {
   let attempts = 0;
@@ -165,6 +362,63 @@ test('personal-repository mutations and body-bearing requests are never retried'
     );
     assert.equal(attempts, 1);
   }
+});
+
+test('configuration-proof responses reject same-origin and cross-origin redirects without consumption', async () => {
+  const path = '/repos/Cheekyfellastef/stephan-os';
+  for (const url of [
+    'https://api.github.com/repositories/1179385578',
+    'https://example.invalid/repos/Cheekyfellastef/stephan-os',
+  ]) {
+    let cancellations = 0;
+    let consumptions = 0;
+    await assert.rejects(
+      executeBoundedPersonalRepositoryRead({
+        path,
+        request: async () => ({
+          status: 200,
+          redirected: true,
+          url,
+          body: { cancel: async () => { cancellations += 1; } },
+        }),
+        validateResponse: (redirectedResponse) => validatePersonalRepositoryRulesetProofResponse({
+          path,
+          response: redirectedResponse,
+        }),
+        consume: async () => {
+          consumptions += 1;
+          return Buffer.from('{}');
+        },
+        delay: async () => assert.fail('policy violations must not be retried'),
+      }),
+      (error) => {
+        assert.equal(error.code, 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION');
+        assert.ok(error.blockers.includes('personal-repository-ruleset-proof-response-redirected'));
+        return true;
+      },
+    );
+    assert.equal(cancellations, 1);
+    assert.equal(consumptions, 0);
+  }
+});
+
+test('configuration-proof responses require the exact requested API URL even if redirect reporting is false', async () => {
+  const path = '/repos/Cheekyfellastef/stephan-os/rulesets/20640195?includes_parents=true';
+  const exact = validatePersonalRepositoryRulesetProofResponse({
+    path,
+    response: { redirected: false, url: `https://api.github.com${path}` },
+  });
+  assert.equal(exact.valid, true);
+
+  const mismatch = validatePersonalRepositoryRulesetProofResponse({
+    path,
+    response: {
+      redirected: false,
+      url: 'https://api.github.com/repos/Cheekyfellastef/stephan-os/rulesets/20640196?includes_parents=true',
+    },
+  });
+  assert.equal(mismatch.valid, false);
+  assert.ok(mismatch.blockers.includes('personal-repository-ruleset-proof-response-url-mismatch'));
 });
 
 const repository = 'Cheekyfellastef/stephan-os';
@@ -406,7 +660,7 @@ test('dispatch inputs require an exact positive identity and immutable review ar
   }
 });
 
-test('ruleset proof authority is read-only and restricted to exact configuration GET surfaces', () => {
+test('ruleset proof authority is GET-only and restricted to exact configuration surfaces', () => {
   for (const path of [
     '/repos/Cheekyfellastef/stephan-os',
     '/repos/Cheekyfellastef/stephan-os/rules/branches/main?per_page=100&page=1',
@@ -417,8 +671,12 @@ test('ruleset proof authority is read-only and restricted to exact configuration
   }
 
   for (const input of [
-    { path: '/repos/Cheekyfellastef/stephan-os', method: 'POST' },
+    ...['POST', 'PUT', 'PATCH', 'DELETE'].map((method) => ({
+      path: '/repos/Cheekyfellastef/stephan-os',
+      method,
+    })),
     { path: '/repos/Cheekyfellastef/stephan-os', body: {} },
+    { path: '/graphql' },
     { path: '/repos/Cheekyfellastef/stephan-os/pulls/1762' },
     { path: '/repos/Cheekyfellastef/stephan-os/rules/branches/feature?per_page=100&page=1' },
     { path: '/repos/Cheekyfellastef/stephan-os/rules/branches/main?per_page=100&page=21' },
@@ -753,6 +1011,19 @@ test('configuration requires the exact protected environment and an active no-by
     requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
     expectedIntegrationId: integrationId,
   }).blockers.includes('CONFIGURATION_NOT_PROVED:personal-repository-ruleset-bypass-actors:91'));
+  for (const malformedBypassActors of [null, {}, 'none']) {
+    assert.ok(validatePersonalRepositoryConfiguration(configuration({
+      rulesets: [{
+        id: 91,
+        enforcement: 'active',
+        updated_at: '2026-08-10T12:00:00Z',
+        bypass_actors: malformedBypassActors,
+      }],
+    }), {
+      requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
+      expectedIntegrationId: integrationId,
+    }).blockers.includes('CONFIGURATION_NOT_PROVED:personal-repository-ruleset-bypass-actors:91'));
+  }
   assert.ok(validatePersonalRepositoryConfiguration(configuration({
     rulesets: [{ id: 91, enforcement: 'active', bypass_actors: [] }],
   }), {
