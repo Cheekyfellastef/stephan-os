@@ -25,6 +25,7 @@ import {
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
   executeBoundedPersonalRepositoryRead,
+  executePersonalRepositoryArtifactArchiveTransport,
   extractPersonalRepositoryArtifactZip,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
@@ -150,12 +151,34 @@ async function apiJson(path, options = {}) {
   return raw ? parseJson(raw, `GitHub JSON response for ${path} was invalid.`) : null;
 }
 
-async function apiBytes(path, maxBytes) {
-  const { bytes } = await githubResponse(path, {
-    accept: 'application/octet-stream',
+async function apiArtifactArchive(path, repository, maxBytes) {
+  const token = text(process.env.GH_TOKEN || process.env.GITHUB_TOKEN);
+  if (!token) fail('GitHub Actions token is required.');
+  return executePersonalRepositoryArtifactArchiveTransport({
+    path,
+    repository,
     maxBytes,
+    requestApiRedirect: (request) => fetch(request.url, {
+      method: request.method,
+      body: request.body,
+      redirect: request.redirect,
+      headers: {
+        ...request.headers,
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': API_VERSION,
+        'User-Agent': USER_AGENT,
+      },
+    }),
+    requestArchive: (request) => fetch(request.url, {
+      method: request.method,
+      body: request.body,
+      redirect: request.redirect,
+      headers: {
+        ...request.headers,
+        'User-Agent': USER_AGENT,
+      },
+    }),
   });
-  return bytes;
 }
 
 async function apiCollection(path, itemKey = null, options = {}) {
@@ -424,8 +447,9 @@ async function loadSelectedIndependentReview(context, identity) {
       blockers: [...artifactSet.blockers, 'personal-repository-selected-review-artifact-mismatch'],
     });
   }
-  const archiveBytes = await apiBytes(
+  const archiveBytes = await apiArtifactArchive(
     `/repos/${context.owner}/${context.repo}/actions/artifacts/${artifactSet.artifactId}/zip`,
+    context.repository,
     INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES,
   );
   if (archiveBytes.length !== artifactSet.sizeInBytes) fail('Independent review artifact archive size changed.');
