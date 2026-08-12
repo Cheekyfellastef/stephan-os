@@ -118,6 +118,13 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /rules\/branches\/main[\s\S]*?authorization: 'ruleset-proof'/);
   assert.match(source, /rulesets\/\$\{rulesetId\}[\s\S]*?authorization: 'ruleset-proof'/);
   assert.match(source, /STEPHANOS_RULESET_PROOF_TOKEN/);
+  assert.match(source, /buildPersonalRepositoryArtifactSubprocessInvocation/);
+  assert.match(source, /validatePersonalRepositoryArtifactSubprocessBoundary/);
+  assert.match(source, /spawnSync\(invocation\.command, invocation\.args/);
+  assert.match(source, /env: invocation\.environment/);
+  assert.match(source, /stdio: invocation\.stdio/);
+  assert.doesNotMatch(source, /spawnSync\(['"]unzip['"]/);
+  assert.doesNotMatch(source, /fail\(message,\s*\{\s*stderr:|result\.error\?\.message/);
   assert.match(source, /Ruleset proof token is restricted to bounded repository-configuration GET requests/);
   assert.doesNotMatch(source, /GH_TOKEN[^\n]*rules|GITHUB_TOKEN[^\n]*rules/);
   assert.match(source, /loadSelectedIndependentReview/);

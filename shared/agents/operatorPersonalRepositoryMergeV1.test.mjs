@@ -2,17 +2,20 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   PERSONAL_REPOSITORY_AUTHORITY,
+  PERSONAL_REPOSITORY_ARTIFACT_UNZIP_EXECUTABLE,
   PERSONAL_REPOSITORY_MODE,
   PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
   PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS,
   PERSONAL_REPOSITORY_WORKFLOW_NAME,
   PERSONAL_REPOSITORY_WORKFLOW_PATH,
+  buildPersonalRepositoryArtifactSubprocessInvocation,
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
   executeBoundedPersonalRepositoryRead,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
+  validatePersonalRepositoryArtifactSubprocessBoundary,
   validatePersonalRepositoryConfiguration,
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
@@ -26,6 +29,96 @@ import {
 function response(status) {
   return { status, body: { cancel: async () => {} } };
 }
+
+test('artifact subprocess receives only the fixed unzip command and minimal credential-free environment', () => {
+  const secret = 'installation-token-must-not-escape';
+  const invocation = buildPersonalRepositoryArtifactSubprocessInvocation([
+    '-p',
+    '/tmp/stephanos-personal-repository-review-123/review.zip',
+    'independent-review-result.json',
+  ]);
+  assert.equal(invocation.command, PERSONAL_REPOSITORY_ARTIFACT_UNZIP_EXECUTABLE);
+  assert.equal(invocation.command, '/usr/bin/unzip');
+  assert.deepEqual(invocation.environment, { LANG: 'C', LC_ALL: 'C' });
+  assert.deepEqual(invocation.stdio, ['ignore', 'pipe', 'pipe']);
+  assert.deepEqual(invocation.args, [
+    '-p',
+    '/tmp/stephanos-personal-repository-review-123/review.zip',
+    'independent-review-result.json',
+  ]);
+  const boundary = validatePersonalRepositoryArtifactSubprocessBoundary({
+    invocation,
+    parentEnvironment: {
+      PATH: '/usr/bin:/bin',
+      STEPHANOS_RULESET_PROOF_TOKEN: secret,
+      GH_TOKEN: 'github-cli-token-must-not-escape',
+      GITHUB_TOKEN: 'actions-token-must-not-escape',
+      DATABASE_PASSWORD: 'database-password-must-not-escape',
+      SERVICE_API_KEY: 'api-key-must-not-escape',
+      SIGNING_PRIVATE_KEY: 'private-key-must-not-escape',
+      SESSION_COOKIE: 'session-cookie-must-not-escape',
+    },
+    stdout: 'independent review payload',
+    stderr: '',
+  });
+  assert.equal(boundary.valid, true);
+  assert.deepEqual(boundary.blockers, []);
+  assert.doesNotMatch(JSON.stringify(invocation), /must-not-escape/);
+});
+
+test('artifact subprocess rejects credentials in arguments, environment or captured output', () => {
+  const secret = 'installation-token-must-not-escape';
+  const parentEnvironment = {
+    STEPHANOS_RULESET_PROOF_TOKEN: secret,
+    GH_TOKEN: 'github-cli-token-must-not-escape',
+  };
+  const exact = buildPersonalRepositoryArtifactSubprocessInvocation([
+    '-Z1',
+    '/tmp/stephanos-personal-repository-review-123/review.zip',
+  ]);
+  for (const [invocation, stdout, stderr, blocker] of [
+    [{ ...exact, args: ['-Z1', `/tmp/${secret}/review.zip`] }, '', '', 'personal-repository-artifact-subprocess-credential-outbound'],
+    [{ ...exact, environment: { LANG: 'C', LC_ALL: 'C', GH_TOKEN: parentEnvironment.GH_TOKEN } }, '', '', 'personal-repository-artifact-subprocess-environment-invalid'],
+    [exact, `payload ${secret}`, '', 'personal-repository-artifact-subprocess-credential-output'],
+    [exact, '', `failure ${parentEnvironment.GH_TOKEN}`, 'personal-repository-artifact-subprocess-credential-output'],
+  ]) {
+    const validation = validatePersonalRepositoryArtifactSubprocessBoundary({
+      invocation,
+      parentEnvironment,
+      stdout,
+      stderr,
+    });
+    assert.equal(validation.valid, false);
+    assert.ok(validation.blockers.includes(blocker));
+    assert.doesNotMatch(JSON.stringify(validation), /must-not-escape/);
+  }
+});
+
+test('artifact subprocess admits only the two fixed dense unzip operations', () => {
+  assert.doesNotThrow(() => buildPersonalRepositoryArtifactSubprocessInvocation([
+    '-Z1',
+    '/tmp/review.zip',
+  ]));
+  assert.doesNotThrow(() => buildPersonalRepositoryArtifactSubprocessInvocation([
+    '-p',
+    '/tmp/review.zip',
+    'independent-review-result.json',
+  ]));
+  const sparse = ['-p', '/tmp/review.zip', 'independent-review-result.json'];
+  delete sparse[1];
+  for (const args of [
+    sparse,
+    ['-x', '/tmp/review.zip'],
+    ['-p', '/tmp/review.zip'],
+    ['-Z1', '/tmp/review.zip', 'extra'],
+    ['-Z1', '/tmp/review.zip\n--widened'],
+  ]) {
+    assert.throws(
+      () => buildPersonalRepositoryArtifactSubprocessInvocation(args),
+      /artifact subprocess arguments/,
+    );
+  }
+});
 
 test('bounded personal-repository reads recover from transient transport failures', async () => {
   let attempts = 0;

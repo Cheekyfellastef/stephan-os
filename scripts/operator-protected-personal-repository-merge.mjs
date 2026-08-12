@@ -25,6 +25,7 @@ import {
 } from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
 import {
   PERSONAL_REPOSITORY_APPROVAL_JOB,
+  buildPersonalRepositoryArtifactSubprocessInvocation,
   PERSONAL_REPOSITORY_EVIDENCE_JOB,
   PERSONAL_REPOSITORY_MERGE_JOB,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
@@ -33,6 +34,7 @@ import {
   executeBoundedPersonalRepositoryRead,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
+  validatePersonalRepositoryArtifactSubprocessBoundary,
   validatePersonalRepositoryConfiguration,
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
@@ -377,13 +379,39 @@ async function collectRulesetConfiguration(
 }
 
 function runUnzip(args, message, maxBuffer = INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES + 1) {
-  const result = spawnSync('unzip', args, {
+  const invocation = buildPersonalRepositoryArtifactSubprocessInvocation(args);
+  const boundary = validatePersonalRepositoryArtifactSubprocessBoundary({
+    invocation,
+    parentEnvironment: process.env,
+  });
+  if (!boundary.valid) {
+    fail('Independent review artifact subprocess boundary is invalid.', { blockers: boundary.blockers });
+  }
+  const result = spawnSync(invocation.command, invocation.args, {
     encoding: 'utf8',
+    env: invocation.environment,
     shell: false,
+    stdio: invocation.stdio,
     windowsHide: true,
     maxBuffer,
   });
-  if (result.status !== 0) fail(message, { stderr: result.stderr || result.error?.message || '' });
+  const outputBoundary = validatePersonalRepositoryArtifactSubprocessBoundary({
+    invocation,
+    parentEnvironment: process.env,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  });
+  if (!outputBoundary.valid) {
+    fail('Independent review artifact subprocess output violated the credential boundary.', {
+      blockers: outputBoundary.blockers,
+    });
+  }
+  if (result.status !== 0) {
+    fail(message, {
+      exitStatus: Number.isSafeInteger(result.status) ? result.status : null,
+      errorCode: text(result.error?.code).slice(0, 80),
+    });
+  }
   return result.stdout || '';
 }
 

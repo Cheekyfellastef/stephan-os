@@ -26,6 +26,14 @@ export const PERSONAL_REPOSITORY_REQUIRED_CHECK = 'protected-merge-source-proof'
 export const PERSONAL_REPOSITORY_MODE = 'user-owned-protected-squash';
 export const PERSONAL_REPOSITORY_AUTHORITY = 'github-actions-protected-environment-exact-head-squash-only';
 export const PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS = 3;
+export const PERSONAL_REPOSITORY_ARTIFACT_UNZIP_EXECUTABLE = '/usr/bin/unzip';
+
+const PERSONAL_REPOSITORY_ARTIFACT_SUBPROCESS_ENVIRONMENT = Object.freeze({
+  LANG: 'C',
+  LC_ALL: 'C',
+});
+const PERSONAL_REPOSITORY_ARTIFACT_SUBPROCESS_STDIO = Object.freeze(['ignore', 'pipe', 'pipe']);
+const PERSONAL_REPOSITORY_CREDENTIAL_ENVIRONMENT_KEY = /(?:token|secret|password|passwd|private[_-]?key|api[_-]?key|authorization|credential|cookie|session)/i;
 
 const PERSONAL_REPOSITORY_TRANSIENT_READ_STATUSES = new Set([502, 503, 504]);
 const PERSONAL_REPOSITORY_READ_RETRY_DELAYS_MS = Object.freeze([250, 1_000]);
@@ -48,6 +56,97 @@ function text(value) {
 function boundedTransportCode(error) {
   const candidate = text(error?.cause?.code || error?.code).toUpperCase();
   return /^[A-Z][A-Z0-9_]{0,39}$/.test(candidate) ? candidate : 'UNCLASSIFIED';
+}
+
+function denseBoundedStringArray(value, maximumLength = 3) {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.length <= maximumLength
+    && Array.from({ length: value.length }, (_, index) => (
+      Object.hasOwn(value, index)
+      && typeof value[index] === 'string'
+      && value[index].length > 0
+      && value[index].length <= 4_096
+      && !/[\0\r\n]/.test(value[index])
+    )).every(Boolean);
+}
+
+function credentialEnvironmentValues(environment) {
+  if (!environment || typeof environment !== 'object' || Array.isArray(environment)) return [];
+  return [...new Set(Object.entries(environment)
+    .filter(([key, value]) => PERSONAL_REPOSITORY_CREDENTIAL_ENVIRONMENT_KEY.test(key)
+      && typeof value === 'string'
+      && value.length > 0)
+    .map(([, value]) => value))];
+}
+
+export function buildPersonalRepositoryArtifactSubprocessInvocation(args) {
+  if (!denseBoundedStringArray(args)) {
+    throw new TypeError('Personal-repository artifact subprocess arguments must be a dense bounded string array.');
+  }
+  const supportedShape = (args.length === 2 && args[0] === '-Z1')
+    || (args.length === 3 && args[0] === '-p');
+  if (!supportedShape) {
+    throw new TypeError('Personal-repository artifact subprocess arguments are outside the fixed unzip operations.');
+  }
+  return Object.freeze({
+    command: PERSONAL_REPOSITORY_ARTIFACT_UNZIP_EXECUTABLE,
+    args: Object.freeze([...args]),
+    environment: PERSONAL_REPOSITORY_ARTIFACT_SUBPROCESS_ENVIRONMENT,
+    stdio: PERSONAL_REPOSITORY_ARTIFACT_SUBPROCESS_STDIO,
+  });
+}
+
+export function validatePersonalRepositoryArtifactSubprocessBoundary(input = {}) {
+  const invocation = input.invocation;
+  const blockers = [];
+  if (!sameKeys(invocation, ['command', 'args', 'environment', 'stdio'])) {
+    blockers.push('personal-repository-artifact-subprocess-shape-invalid');
+  }
+  if (invocation?.command !== PERSONAL_REPOSITORY_ARTIFACT_UNZIP_EXECUTABLE) {
+    blockers.push('personal-repository-artifact-subprocess-command-invalid');
+  }
+  if (!denseBoundedStringArray(invocation?.args)
+    || !((invocation.args.length === 2 && invocation.args[0] === '-Z1')
+      || (invocation.args.length === 3 && invocation.args[0] === '-p'))) {
+    blockers.push('personal-repository-artifact-subprocess-arguments-invalid');
+  }
+  if (!sameKeys(invocation?.environment, ['LANG', 'LC_ALL'])
+    || invocation.environment.LANG !== 'C'
+    || invocation.environment.LC_ALL !== 'C') {
+    blockers.push('personal-repository-artifact-subprocess-environment-invalid');
+  }
+  if (!Array.isArray(invocation?.stdio)
+    || invocation.stdio.length !== 3
+    || !invocation.stdio.every((entry, index) => (
+      Object.hasOwn(invocation.stdio, index)
+      && entry === PERSONAL_REPOSITORY_ARTIFACT_SUBPROCESS_STDIO[index]
+    ))) {
+    blockers.push('personal-repository-artifact-subprocess-stdio-invalid');
+  }
+
+  const credentialValues = credentialEnvironmentValues(input.parentEnvironment);
+  const outboundValues = [
+    invocation?.command,
+    ...(Array.isArray(invocation?.args) ? invocation.args : []),
+    ...Object.entries(invocation?.environment && typeof invocation.environment === 'object'
+      ? invocation.environment
+      : {}).flat(),
+  ].filter((value) => typeof value === 'string');
+  const outputValues = [input.stdout, input.stderr].filter((value) => typeof value === 'string');
+  if (credentialValues.some((credential) => outboundValues.some((value) => value.includes(credential)))) {
+    blockers.push('personal-repository-artifact-subprocess-credential-outbound');
+  }
+  if (credentialValues.some((credential) => outputValues.some((value) => value.includes(credential)))) {
+    blockers.push('personal-repository-artifact-subprocess-credential-output');
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    blockers: Object.freeze(blockers),
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_ARTIFACT_SUBPROCESS_BLOCKED'
+      : 'PERSONAL_REPOSITORY_ARTIFACT_SUBPROCESS_READY',
+  });
 }
 
 export class PersonalRepositoryReadTransportError extends Error {
