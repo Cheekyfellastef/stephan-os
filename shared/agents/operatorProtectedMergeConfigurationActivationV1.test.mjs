@@ -42,18 +42,48 @@ function evidence(providerReceipt = null) {
   };
 }
 
-function validateWithoutThrow(value) {
+function canonicalJson(value) {
+  if (value === null) return 'null';
+  const type = typeof value;
+  if (type === 'string' || type === 'boolean') return JSON.stringify(value);
+  if (type === 'number' && Number.isFinite(value) && !Object.is(value, -0)) return String(value);
+  if (type !== 'object') throw new TypeError('test value is not canonical JSON');
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.hasOwn(value, index)) throw new TypeError('test array is sparse');
+    }
+    return `[${value.map((entry) => canonicalJson(entry)).join(',')}]`;
+  }
+  if (Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new TypeError('test value has an unsupported prototype');
+  }
+  return `{${Object.keys(value).sort().map((key) => (
+    `${JSON.stringify(key)}:${canonicalJson(value[key])}`
+  )).join(',')}}`;
+}
+
+function validateCanonicalWithoutThrow(canonicalEvidenceJson) {
   let result;
   assert.doesNotThrow(() => {
-    result = validateOperatorProtectedMergeConfigurationActivation(value);
+    result = validateOperatorProtectedMergeConfigurationActivation(canonicalEvidenceJson);
   });
   assert.equal(result.valid, false);
   assert.equal(result.evidenceSha256, null);
   return result;
 }
 
+function validateWithoutThrow(value) {
+  return validateCanonicalWithoutThrow(canonicalJson(value));
+}
+
 function assertBlocked(value, blocker) {
   const result = validateWithoutThrow(value);
+  assert.ok(result.blockers.includes(blocker), `${blocker} not found in ${result.blockers.join(', ')}`);
+  return result;
+}
+
+function assertInputBlocked(value, blocker) {
+  const result = validateCanonicalWithoutThrow(value);
   assert.ok(result.blockers.includes(blocker), `${blocker} not found in ${result.blockers.join(', ')}`);
   return result;
 }
@@ -73,6 +103,97 @@ test('source constants and missing external proof return explicit PROVIDER_PROOF
   assert.equal(activationModule.createOperatorProtectedMergeConfigurationActivationEvidence, undefined);
   assert.equal(activationModule.OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_PUBLIC_KEY_PEM, undefined);
   assert.equal(result.valid, false);
+});
+
+test('the exported boundary accepts only bounded primitive canonical JSON', () => {
+  const encoded = canonicalJson(evidence());
+  const result = validateCanonicalWithoutThrow(encoded);
+  assert.ok(result.blockers.includes('activation-provider-proof-required'));
+  assert.equal(result.finalVerdict, OPERATOR_PROTECTED_MERGE_CONFIGURATION_PROVIDER_REQUIRED);
+
+  for (const nonPrimitive of [evidence(), new String(encoded), Buffer.from(encoded)]) {
+    assertInputBlocked(nonPrimitive, 'activation-evidence-encoding-required');
+  }
+});
+
+test('large caller objects and every Proxy inspection surface are refused without access', () => {
+  const calls = {
+    get: 0,
+    getOwnPropertyDescriptor: 0,
+    getPrototypeOf: 0,
+    ownKeys: 0,
+  };
+  const target = Object.fromEntries(
+    Array.from({ length: 4096 }, (_, index) => [`key-${index}`, null]),
+  );
+  const hostile = new Proxy(target, {
+    get() {
+      calls.get += 1;
+      throw new Error('caller properties must not be read');
+    },
+    getOwnPropertyDescriptor() {
+      calls.getOwnPropertyDescriptor += 1;
+      throw new Error('caller descriptors must not be read');
+    },
+    getPrototypeOf() {
+      calls.getPrototypeOf += 1;
+      throw new Error('caller prototypes must not be read');
+    },
+    ownKeys() {
+      calls.ownKeys += 1;
+      throw new Error('caller keys must not be read');
+    },
+  });
+
+  assertInputBlocked(hostile, 'activation-evidence-encoding-required');
+  assert.deepEqual(calls, {
+    get: 0,
+    getOwnPropertyDescriptor: 0,
+    getPrototypeOf: 0,
+    ownKeys: 0,
+  });
+});
+
+test('noncanonical, duplicate, malformed and unsupported JSON encodings fail closed', () => {
+  const exact = canonicalJson(evidence());
+  const observation = canonicalJson(evidence().observation);
+  const schema = JSON.stringify(OPERATOR_PROTECTED_MERGE_CONFIGURATION_ACTIVATION_SCHEMA);
+  const duplicateKey = `{"observation":${observation},"providerReceipt":null,"providerReceipt":null,"schema":${schema}}`;
+  const unsupportedEscape = exact.replace('"schema"', '"\\u0073chema"');
+  const insertionOrdered = JSON.stringify(evidence());
+
+  for (const widenedEncoding of [
+    ` ${exact}`,
+    `${exact}\n`,
+    duplicateKey,
+    unsupportedEscape,
+    insertionOrdered,
+  ]) {
+    assertInputBlocked(widenedEncoding, 'activation-evidence-canonical-json-mismatch');
+  }
+  for (const malformed of ['{', '', 'not-json']) {
+    assertInputBlocked(malformed, 'activation-evidence-json-invalid');
+  }
+
+  const widenedRecord = evidence();
+  widenedRecord.runtimeAuthority = true;
+  assertBlocked(widenedRecord, 'activation-evidence-keys-invalid');
+});
+
+test('primitive JSON size is bounded before parsing by code units and UTF-8 bytes', () => {
+  assertInputBlocked('x'.repeat(262_145), 'canonical-json-too-large');
+  assertInputBlocked(`"${'\u00e9'.repeat(131_072)}"`, 'canonical-json-too-large');
+
+  const exactBoundary = canonicalJson({ x: 'a'.repeat(262_136) });
+  assert.equal(Buffer.byteLength(exactBoundary, 'utf8'), 262_144);
+  const exactResult = validateCanonicalWithoutThrow(exactBoundary);
+  assert.ok(!exactResult.blockers.includes('canonical-json-too-large'));
+  assert.ok(!exactResult.blockers.includes('activation-evidence-json-invalid'));
+  assert.ok(!exactResult.blockers.includes('activation-evidence-canonical-json-mismatch'));
+
+  const boundaryPlusOne = canonicalJson({ x: 'a'.repeat(262_137) });
+  assert.equal(Buffer.byteLength(boundaryPlusOne, 'utf8'), 262_145);
+  assertInputBlocked(boundaryPlusOne, 'canonical-json-too-large');
 });
 
 test('a self-selected signing key and signature cannot manufacture activation proof', () => {
@@ -164,8 +285,11 @@ test('rejects malformed, widened or falsely promoted provider receipts', () => {
 });
 
 test('rejects malformed, missing and widened top-level evidence', () => {
-  for (const malformed of [null, undefined, [], 'evidence', 1, new Date()]) {
+  for (const malformed of [null, [], 'evidence', 1]) {
     validateWithoutThrow(malformed);
+  }
+  for (const nonEncoded of [undefined, new Date()]) {
+    assertInputBlocked(nonEncoded, 'activation-evidence-encoding-required');
   }
 
   const missing = evidence();
@@ -241,31 +365,30 @@ test('preserves the exact GET-only source transport and credential boundary', ()
   }
 });
 
-test('cyclic graphs and shared cycles are total and fail closed', () => {
+test('caller-owned cyclic graphs are rejected without canonical inspection', () => {
   const direct = evidence();
   direct.self = direct;
-  const directResult = assertBlocked(direct, 'activation-evidence-noncanonical');
-  assert.ok(directResult.blockers.includes('canonical-json-cycle'));
+  assertInputBlocked(direct, 'activation-evidence-encoding-required');
 
   const nested = evidence();
   nested.observation.repository.loop = nested.observation;
-  assertBlocked(nested, 'canonical-json-cycle');
+  assertInputBlocked(nested, 'activation-evidence-encoding-required');
 });
 
-test('BigInt, Symbol, functions, undefined and non-finite numbers are total and fail closed', () => {
+test('non-JSON caller values are rejected at the primitive encoding boundary', () => {
   const cases = [1n, Symbol('authority'), () => true, undefined, Number.NaN, Number.POSITIVE_INFINITY, -0];
   for (const unsupported of cases) {
     const value = evidence();
     value.providerReceipt = unsupported;
-    assertBlocked(value, 'activation-evidence-noncanonical');
+    assertInputBlocked(value, 'activation-evidence-encoding-required');
   }
 
   const symbolKey = evidence();
   symbolKey[Symbol('authority')] = true;
-  assertBlocked(symbolKey, 'canonical-json-symbol-key-unsupported');
+  assertInputBlocked(symbolKey, 'activation-evidence-encoding-required');
 });
 
-test('getters are rejected without execution and unsupported prototypes fail closed', () => {
+test('getters and unsupported prototypes are rejected without inspection', () => {
   let getterCalls = 0;
   const withGetter = evidence();
   Object.defineProperty(withGetter, 'authority', {
@@ -275,20 +398,18 @@ test('getters are rejected without execution and unsupported prototypes fail clo
       return true;
     },
   });
-  assertBlocked(withGetter, 'canonical-json-property-invalid');
+  assertInputBlocked(withGetter, 'activation-evidence-encoding-required');
   assert.equal(getterCalls, 0);
 
   for (const unsupported of [new Date(), new Map(), new Set(), Object.create(null)]) {
-    const value = evidence();
-    value.providerReceipt = unsupported;
-    assertBlocked(value, 'canonical-json-prototype-unsupported');
+    assertInputBlocked(unsupported, 'activation-evidence-encoding-required');
   }
 });
 
 test('sparse arrays and bounded-serializer expansion limits fail closed', () => {
   const sparse = evidence();
   sparse.observation.app.events = new Array(1);
-  assertBlocked(sparse, 'canonical-json-array-not-dense');
+  assertInputBlocked(sparse, 'activation-evidence-encoding-required');
 
   const oversized = evidence();
   oversized.providerReceipt = new Array(2049).fill(null);
@@ -303,7 +424,7 @@ test('sparse arrays and bounded-serializer expansion limits fail closed', () => 
   assertBlocked(tooDeep, 'canonical-json-depth-exceeded');
 });
 
-test('array cardinality is proved from length before own keys or element descriptors are inspected', () => {
+test('caller-owned arrays are rejected before own keys or element descriptors are inspected', () => {
   let ownKeyCalls = 0;
   let elementDescriptorCalls = 0;
   const oversized = new Proxy(new Array(2049).fill(null), {
@@ -318,12 +439,12 @@ test('array cardinality is proved from length before own keys or element descrip
     },
   });
 
-  assertBlocked(oversized, 'canonical-json-array-length-invalid');
+  assertInputBlocked(oversized, 'activation-evidence-encoding-required');
   assert.equal(ownKeyCalls, 0);
   assert.equal(elementDescriptorCalls, 0);
 });
 
-test('plain-object cardinality is proved after one key collection and before property descriptors', () => {
+test('caller-owned objects are rejected before key collection or property descriptors', () => {
   let ownKeyCalls = 0;
   let descriptorCalls = 0;
   const target = Object.fromEntries(
@@ -340,8 +461,8 @@ test('plain-object cardinality is proved after one key collection and before pro
     },
   });
 
-  assertBlocked(oversized, 'canonical-json-object-key-limit-exceeded');
-  assert.equal(ownKeyCalls, 1);
+  assertInputBlocked(oversized, 'activation-evidence-encoding-required');
+  assert.equal(ownKeyCalls, 0);
   assert.equal(descriptorCalls, 0);
 });
 
@@ -360,7 +481,7 @@ test('exact array and object cardinality boundaries remain admissible to canonic
 test('array extras and malformed individual descriptors remain fail closed', () => {
   const withExtraProperty = [null];
   withExtraProperty.extra = true;
-  assertBlocked(withExtraProperty, 'canonical-json-array-not-dense');
+  assertInputBlocked(withExtraProperty, 'activation-evidence-encoding-required');
 
   let accessorCalls = 0;
   const malformedDescriptor = new Proxy({ value: null }, {
@@ -376,7 +497,7 @@ test('array extras and malformed individual descriptors remain fail closed', () 
       };
     },
   });
-  assertBlocked(malformedDescriptor, 'canonical-json-property-invalid');
+  assertInputBlocked(malformedDescriptor, 'activation-evidence-encoding-required');
   assert.equal(accessorCalls, 0);
 
   const source = readFileSync(
@@ -433,13 +554,16 @@ test('property names use the same inclusive encoded byte boundary', () => {
   assertBlocked(overBoundary, 'canonical-json-too-large');
 });
 
-test('hostile proxy inspection failures are caught without reading thrown values', () => {
+test('hostile proxies are refused without invoking traps or reading thrown values', () => {
+  let hostileOwnKeyCalls = 0;
   const hostile = new Proxy({}, {
     ownKeys() {
+      hostileOwnKeyCalls += 1;
       throw new Error('do not inspect me');
     },
   });
-  assertBlocked(hostile, 'canonical-json-inspection-failed');
+  assertInputBlocked(hostile, 'activation-evidence-encoding-required');
+  assert.equal(hostileOwnKeyCalls, 0);
 
   let thrownProxyPropertyReads = 0;
   const thrownProxy = new Proxy({}, {
@@ -453,7 +577,7 @@ test('hostile proxy inspection failures are caught without reading thrown values
       throw thrownProxy;
     },
   });
-  assertBlocked(throwsProxy, 'canonical-json-inspection-failed');
+  assertInputBlocked(throwsProxy, 'activation-evidence-encoding-required');
   assert.equal(thrownProxyPropertyReads, 0);
 
   let messageGetterCalls = 0;
@@ -469,7 +593,7 @@ test('hostile proxy inspection failures are caught without reading thrown values
       throw thrownWithGetter;
     },
   });
-  assertBlocked(throwsMessageGetter, 'canonical-json-inspection-failed');
+  assertInputBlocked(throwsMessageGetter, 'activation-evidence-encoding-required');
   assert.equal(messageGetterCalls, 0);
 
   for (const primitive of [null, undefined, 'canonical-json-cycle', 1, true, Symbol('failure')]) {
@@ -478,7 +602,7 @@ test('hostile proxy inspection failures are caught without reading thrown values
         throw primitive;
       },
     });
-    const result = assertBlocked(throwsPrimitive, 'canonical-json-inspection-failed');
+    const result = assertInputBlocked(throwsPrimitive, 'activation-evidence-encoding-required');
     assert.ok(!result.blockers.includes('canonical-json-cycle'));
   }
 
@@ -487,7 +611,7 @@ test('hostile proxy inspection failures are caught without reading thrown values
       throw { message: 'canonical-json-cycle', code: 'canonical-json-cycle' };
     },
   });
-  const forgedResult = assertBlocked(forgedErrorLike, 'canonical-json-inspection-failed');
+  const forgedResult = assertInputBlocked(forgedErrorLike, 'activation-evidence-encoding-required');
   assert.ok(!forgedResult.blockers.includes('canonical-json-cycle'));
 
   const readHostile = new Proxy(evidence(), {
@@ -495,31 +619,11 @@ test('hostile proxy inspection failures are caught without reading thrown values
       throw new Error('property reads are forbidden');
     },
   });
-  assertProviderRequired(readHostile);
+  assertInputBlocked(readHostile, 'activation-evidence-encoding-required');
 });
 
-test('private source failures retain stable canonical blocker identities', () => {
+test('bounded parsed structures retain stable canonical blocker identities', () => {
   const cases = [
-    ['canonical-json-cycle', () => {
-      const value = evidence();
-      value.self = value;
-      return value;
-    }],
-    ['canonical-json-array-not-dense', () => {
-      const value = evidence();
-      value.observation.app.events = new Array(1);
-      return value;
-    }],
-    ['canonical-json-type-unsupported', () => {
-      const value = evidence();
-      value.providerReceipt = 1n;
-      return value;
-    }],
-    ['canonical-json-prototype-unsupported', () => {
-      const value = evidence();
-      value.providerReceipt = new Date();
-      return value;
-    }],
     ['canonical-json-array-length-invalid', () => {
       const value = evidence();
       value.providerReceipt = new Array(2049).fill(null);

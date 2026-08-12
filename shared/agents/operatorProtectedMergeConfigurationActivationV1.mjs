@@ -343,22 +343,74 @@ function result(blockers, finalVerdict = 'BLOCKED') {
   });
 }
 
-export function validateOperatorProtectedMergeConfigurationActivation(evidence) {
-  const canonicalEvidence = safeCanonicalJson(evidence);
-  if (!canonicalEvidence.ok) {
-    return result([
-      'activation-evidence-noncanonical',
-      canonicalEvidence.blocker,
-    ]);
+function parseBoundedCanonicalEvidence(canonicalEvidenceJson) {
+  // The exported boundary accepts only a primitive string. This typeof check cannot invoke
+  // caller-controlled Proxy, getter, prototype, ownKeys, or descriptor behavior.
+  if (typeof canonicalEvidenceJson !== 'string') {
+    return Object.freeze({
+      ok: false,
+      value: null,
+      blockers: Object.freeze(['activation-evidence-encoding-required']),
+    });
   }
-  let normalizedEvidence;
+  if (
+    canonicalEvidenceJson.length > MAX_CANONICAL_STRING_CODE_UNITS
+    || Buffer.byteLength(canonicalEvidenceJson, 'utf8') > MAX_CANONICAL_BYTES
+  ) {
+    return Object.freeze({
+      ok: false,
+      value: null,
+      blockers: Object.freeze([
+        'activation-evidence-noncanonical',
+        'canonical-json-too-large',
+      ]),
+    });
+  }
+
+  let value;
   try {
-    normalizedEvidence = JSON.parse(canonicalEvidence.json);
+    value = JSON.parse(canonicalEvidenceJson);
   } catch {
-    return result(['activation-evidence-canonicalization-failed']);
+    return Object.freeze({
+      ok: false,
+      value: null,
+      blockers: Object.freeze(['activation-evidence-json-invalid']),
+    });
   }
-  if (!isPlainRecord(normalizedEvidence)) return result(['activation-evidence-malformed']);
-  evidence = normalizedEvidence;
+
+  // Only JSON.parse-produced data reaches key and descriptor inspection. Its complete source
+  // representation has already been bounded to 256 KiB, so every derived container is bounded.
+  const canonicalEvidence = safeCanonicalJson(value);
+  if (!canonicalEvidence.ok) {
+    return Object.freeze({
+      ok: false,
+      value: null,
+      blockers: Object.freeze([
+        'activation-evidence-noncanonical',
+        canonicalEvidence.blocker,
+      ]),
+    });
+  }
+  if (canonicalEvidence.json !== canonicalEvidenceJson) {
+    return Object.freeze({
+      ok: false,
+      value: null,
+      blockers: Object.freeze(['activation-evidence-canonical-json-mismatch']),
+    });
+  }
+
+  return Object.freeze({
+    ok: true,
+    value,
+    blockers: Object.freeze([]),
+  });
+}
+
+export function validateOperatorProtectedMergeConfigurationActivation(canonicalEvidenceJson) {
+  const parsedEvidence = parseBoundedCanonicalEvidence(canonicalEvidenceJson);
+  if (!parsedEvidence.ok) return result(parsedEvidence.blockers);
+  const evidence = parsedEvidence.value;
+  if (!isPlainRecord(evidence)) return result(['activation-evidence-malformed']);
 
   const blockers = [];
   const block = (code) => {
