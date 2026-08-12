@@ -352,7 +352,9 @@ function validateAuthorization(authorization, plan, planDigest, nowMs, blockers)
   });
 }
 
-function validateObservation(value, runner, artifact, plan, authorization, invocation, settledMs, blockers) {
+function validateObservation(
+  value, runner, artifact, plan, authorization, invocation, settledMs, completedMs, blockers,
+) {
   const prefix = text(runner?.runnerId) || 'unknown-runner';
   if (!exactKeys(value, OBSERVATION_KEYS)) {
     blockers.push(`runner-observation-fields-invalid:${prefix}`);
@@ -363,7 +365,6 @@ function validateObservation(value, runner, artifact, plan, authorization, invoc
   const startedMs = instant(value.startedAtUtc);
   const teardownStartedMs = instant(value.teardownStartedAtUtc);
   const teardownCompletedMs = instant(value.teardownCompletedAtUtc);
-  const completedMs = instant(value.completedAtUtc);
   const refs = safeProofRefs(value.proofRefs, prefix);
   if (value.schemaVersion !== FORGE_SHADOW_M3_EXECUTION_OBSERVATION_SCHEMA) blockers.push(`runner-observation-schema-invalid:${prefix}`);
   if (value.authorizationId !== authorization.authorizationId) blockers.push(`runner-authorization-identity-mismatch:${prefix}`);
@@ -448,6 +449,11 @@ function validateObservation(value, runner, artifact, plan, authorization, invoc
     zeroResidualWorkspace: true,
     proofRefs: refs,
   });
+}
+
+function safelyObservedCompletionMs(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return Number.NaN;
+  return instant(value.completedAtUtc);
 }
 
 function validateTerminationAcknowledgement(value, runner, authorization, invocation, settledMs, deadlineMs, blockers) {
@@ -812,6 +818,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
       return blocked([...runnerBlockers, ...terminationGate.blockers()], planDigest);
     }
 
+    let minimumAcknowledgedMs = invocation.startedMs;
     try {
       const executionResult = settled.value;
       if (!exactKeys(executionResult, EXECUTION_RESULT_KEYS)) {
@@ -822,6 +829,10 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
       }
 
       terminationGate.publish(executionResult.terminationAcknowledgement, settledNowMs);
+      const observedCompletedMs = safelyObservedCompletionMs(executionResult.observation);
+      if (Number.isFinite(observedCompletedMs)) {
+        minimumAcknowledgedMs = Math.max(invocation.startedMs, observedCompletedMs);
+      }
       const observation = validateObservation(
         executionResult.observation,
         runner,
@@ -830,11 +841,9 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
         liveAuthorization,
         invocation,
         settledNowMs,
+        observedCompletedMs,
         runnerBlockers,
       );
-      const minimumAcknowledgedMs = observation
-        ? instant(observation.completedAtUtc)
-        : invocation.startedMs;
       let termination = terminationGate.proofFor(minimumAcknowledgedMs);
       const invalidTerminationProof = terminationGate.blockers().length > 0;
       if (!termination || !observation || runnerBlockers.length || invalidTerminationProof) {
@@ -849,7 +858,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
       observations.push(observation);
     } catch {
       controller.abort();
-      await terminationGate.waitFor(invocation.startedMs);
+      await terminationGate.waitFor(minimumAcknowledgedMs);
       return blocked([
         ...runnerBlockers,
         `runner-execution-result-inspection-threw:${runner.runnerId}`,

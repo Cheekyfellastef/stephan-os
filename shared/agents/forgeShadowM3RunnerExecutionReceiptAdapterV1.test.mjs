@@ -713,18 +713,23 @@ test('runner observations are bound to both authorization and fresh invocation i
 });
 
 test('future-dated observations and teardown acknowledgements cannot outrun trusted settlement', async () => {
+  const completedAtUtc = '2026-08-07T21:20:01Z';
+  const instants = [NOW, NOW, NOW, NOW, NOW, completedAtUtc];
   let calls = 0;
   const result = await executeVerified(input(), {
-    platform: 'win32', now,
+    platform: 'win32',
+    now: () => new Date(instants.shift() || completedAtUtc),
     executeRunner: async (request) => {
       calls += 1;
       request.signal.addEventListener('abort', () => {
-        request.acknowledgeTermination(terminationAcknowledgement(request));
+        request.acknowledgeTermination(terminationAcknowledgement(request, {
+          acknowledgedAtUtc: completedAtUtc,
+        }));
       }, { once: true });
       return executionResult(request, {
-        completedAtUtc: '2026-08-07T21:20:01Z',
+        completedAtUtc,
       }, {
-        acknowledgedAtUtc: '2026-08-07T21:20:01Z',
+        acknowledgedAtUtc: completedAtUtc,
       });
     },
   });
@@ -767,6 +772,120 @@ test('termination acknowledgement cannot predate observed completion', async () 
   });
   assert.equal(result.ok, false);
   assert.ok(result.blockers.some((item) => item.includes('runner-termination-before-observation-complete')), JSON.stringify(result.blockers));
+});
+
+test('a rejected observation preserves its later completion boundary until delayed teardown proof', async () => {
+  const completedAtUtc = '2026-08-07T21:20:05Z';
+  const instants = [NOW, NOW, NOW, NOW, completedAtUtc, completedAtUtc];
+  let aborted = false;
+  const execution = executeVerified(input(), {
+    platform: 'win32',
+    now: () => new Date(instants.shift() || completedAtUtc),
+    executeRunner: async (request) => {
+      request.signal.addEventListener('abort', () => {
+        aborted = true;
+        setTimeout(() => {
+          request.acknowledgeTermination(terminationAcknowledgement(request, {
+            acknowledgedAtUtc: completedAtUtc,
+          }));
+        }, 25);
+      }, { once: true });
+      return executionResult(request, {
+        completedAtUtc,
+        unregistered: false,
+      }, {
+        acknowledgedAtUtc: NOW,
+      });
+    },
+  });
+  const early = await Promise.race([
+    execution.then(() => 'unsafe-return'),
+    new Promise((resolve) => setTimeout(() => resolve('held-pending'), 15)),
+  ]);
+  assert.equal(early, 'held-pending');
+  const result = await execution;
+  assert.equal(aborted, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.receipt, null);
+  assert.ok(result.blockers.some((item) => item.includes('runner-teardown-incomplete')), JSON.stringify(result.blockers));
+  assert.ok(result.blockers.some((item) => item.includes('runner-termination-before-observation-complete')), JSON.stringify(result.blockers));
+});
+
+test('missing or permanently early teardown proof for a rejected observation remains pending', async () => {
+  const completedAtUtc = '2026-08-07T21:20:05Z';
+  for (const publishEarlyAfterAbort of [false, true]) {
+    const instants = [NOW, NOW, NOW, NOW, completedAtUtc, completedAtUtc];
+    let aborted = false;
+    const execution = executeVerified(input(), {
+      platform: 'win32',
+      now: () => new Date(instants.shift() || completedAtUtc),
+      executeRunner: async (request) => {
+        request.signal.addEventListener('abort', () => {
+          aborted = true;
+          if (publishEarlyAfterAbort) {
+            request.acknowledgeTermination(terminationAcknowledgement(request, {
+              acknowledgedAtUtc: NOW,
+            }));
+          }
+        }, { once: true });
+        const result = executionResult(request, {
+          completedAtUtc,
+          unregistered: false,
+        }, {
+          acknowledgedAtUtc: NOW,
+        });
+        if (!publishEarlyAfterAbort) result.terminationAcknowledgement = undefined;
+        return result;
+      },
+    });
+    const state = await Promise.race([
+      execution.then(() => 'unsafe-return'),
+      new Promise((resolve) => setTimeout(() => resolve('held-pending'), 35)),
+    ]);
+    assert.equal(aborted, true);
+    assert.equal(state, 'held-pending');
+  }
+});
+
+test('malformed or hostile completion evidence fails closed without throwing', async () => {
+  const candidates = [
+    (request) => executionResult(request, {
+      completedAtUtc: 'not-an-instant',
+    }, {
+      terminated: false,
+    }),
+    (request) => {
+      const result = executionResult(request, {}, { terminated: false });
+      Object.defineProperty(result.observation, 'completedAtUtc', {
+        enumerable: true,
+        get: () => { throw new Error('hostile completion getter'); },
+      });
+      return result;
+    },
+  ];
+  for (const candidate of candidates) {
+    let aborted = false;
+    const execution = executeVerified(input(), {
+      platform: 'win32', now,
+      executeRunner: async (request) => {
+        request.signal.addEventListener('abort', () => {
+          aborted = true;
+          setTimeout(() => {
+            request.acknowledgeTermination(terminationAcknowledgement(request));
+          }, 20);
+        }, { once: true });
+        return candidate(request);
+      },
+    });
+    const result = await execution;
+    assert.equal(aborted, true);
+    assert.equal(result.ok, false);
+    assert.equal(result.receipt, null);
+    assert.ok(result.blockers.some((item) => (
+      item.includes('runner-time-invalid')
+      || item.includes('runner-execution-result-inspection-threw')
+    )), JSON.stringify(result.blockers));
+  }
 });
 
 test('two runner proof estates may safely fill the aggregate sixteen-reference receipt bound', async () => {
