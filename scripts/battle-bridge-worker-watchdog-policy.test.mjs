@@ -27,6 +27,7 @@ function healthyInput() {
       repositoryRoot: 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os',
       branch: 'main',
       headSha: 'a'.repeat(40),
+      remoteMainHeadSha: 'a'.repeat(40),
     },
     process: {
       running: true,
@@ -148,6 +149,26 @@ test('unproven repository head fails closed without restart authority', () => {
   }
 });
 
+test('missing, malformed or different remote main truth blocks restart authority', () => {
+  for (const remoteMainHeadSha of ['', 'not-a-sha', 'b'.repeat(40)]) {
+    const input = healthyInput();
+    input.repository.remoteMainHeadSha = remoteMainHeadSha;
+    input.process.running = false;
+    input.process.commandLineMatchesCanonicalWorker = false;
+    const result = buildWorkerWatchdogRecoveryDecision(input);
+    assert.equal(result.assessment.canonicalRepositoryHeadProven, false);
+    assert.equal(result.assessment.restartPermitted, false);
+    assert.equal(result.action, 'BLOCKED');
+    assert.equal(result.restartTaskName, '');
+    assert.ok(result.blockers.includes('canonical-repository-head-unproven'));
+    if (remoteMainHeadSha === 'b'.repeat(40)) {
+      assert.ok(result.blockers.includes('canonical-repository-head-stale'));
+    } else {
+      assert.ok(result.blockers.includes('remote-main-head-unproven'));
+    }
+  }
+});
+
 test('command line and heartbeat pid must bind to the canonical worker process', () => {
   const commandLineInput = healthyInput();
   commandLineInput.process.commandLineMatchesCanonicalWorker = false;
@@ -193,8 +214,13 @@ test('Windows probe binds repository truth to fixed read-only git commands', () 
   assert.match(PROBE_SCRIPT, /Get-Command git\.exe -ErrorAction Stop/);
   assert.match(PROBE_SCRIPT, /-C \$repositoryRoot symbolic-ref --quiet --short HEAD/);
   assert.match(PROBE_SCRIPT, /-C \$repositoryRoot rev-parse --verify HEAD/);
+  assert.match(PROBE_SCRIPT, /https:\/\/github\.com\/Cheekyfellastef\/stephan-os\.git/);
+  assert.match(PROBE_SCRIPT, /\$GitCommand\.Source 'ls-remote' '--exit-code' \$publicRemote 'refs\/heads\/main'/);
+  assert.match(PROBE_SCRIPT, /\$repositoryHead -ne \$remoteMainHead/);
+  assert.match(PROBE_SCRIPT, /\$remoteMainHeadAfterRestart -ne \$remoteMainHead/);
   assert.match(PROBE_SCRIPT, /repositoryRoot = \$repositoryRoot/);
   assert.match(PROBE_SCRIPT, /headSha = \$repositoryHead/);
+  assert.match(PROBE_SCRIPT, /remoteMainHeadSha = \$remoteMainHead/);
   assert.match(PROBE_SCRIPT, /restart-approved-stephanos-runtime\.ps1/);
   assert.match(PROBE_SCRIPT, /Get-Command powershell\.exe -ErrorAction Stop/);
   assert.match(PROBE_SCRIPT, /'mission-worker'/);

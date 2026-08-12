@@ -17,6 +17,7 @@ $workerPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\
 $workerLauncherPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\start-mission-orchestrator-worker.ps1'))
 $runtimeRestartPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\restart-approved-stephanos-runtime.ps1'))
 $windowlessLauncherPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'))
+$publicRemote = 'https://github.com/Cheekyfellastef/stephan-os.git'
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'))
 $heartbeatPath = Join-Path $workspaceRoot 'status\mission-orchestrator-worker-heartbeat.json'
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
@@ -122,11 +123,32 @@ function Test-CanonicalWorkerProcessCommandLine {
     )
 }
 
+function Read-PublicMainHead {
+    param([System.Management.Automation.CommandInfo]$GitCommand)
+
+    $output = @(& $GitCommand.Source 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw ('git ls-remote failed: {0}' -f (($output | ForEach-Object { [string]$_ }) -join ' '))
+    }
+    $matchingLines = @($output | Where-Object { [string]$_ -match '^[0-9a-fA-F]{40}\s+refs/heads/main$' })
+    if ($matchingLines.Count -ne 1) {
+        throw 'The public main reference did not resolve to exactly one commit.'
+    }
+    $fields = ([string]$matchingLines[0]).Trim() -split '\s+'
+    if ($fields.Count -ne 2 -or $fields[1] -ne 'refs/heads/main' -or $fields[0] -notmatch '^[0-9a-fA-F]{40}$') {
+        throw 'The public main reference response is malformed.'
+    }
+    return $fields[0].ToLowerInvariant()
+}
+
 $taskActionMatchesCanonicalWorker = Test-CanonicalWorkerTaskAction -ScheduledTask $task
 
 $repositoryBranch = ''
 $repositoryHead = ''
 $repositoryHeadReadError = ''
+$remoteMainHead = ''
+$remoteMainHeadReadError = ''
+$gitCommand = $null
 try {
     $gitCommand = Get-Command git.exe -ErrorAction Stop
     $repositoryBranchOutput = @(& $gitCommand.Source -C $repositoryRoot symbolic-ref --quiet --short HEAD 2>&1)
@@ -148,6 +170,15 @@ catch {
     $repositoryHead = ''
     $repositoryHeadReadError = $_.Exception.Message
 }
+if ($gitCommand) {
+    try {
+        $remoteMainHead = Read-PublicMainHead -GitCommand $gitCommand
+    }
+    catch {
+        $remoteMainHead = ''
+        $remoteMainHeadReadError = $_.Exception.Message
+    }
+}
 
 if ($Mode -eq 'StartApprovedWorkerTask') {
     if (-not $task -or [string]$task.TaskName -ne $taskName) {
@@ -156,8 +187,9 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
     if (-not $taskActionMatchesCanonicalWorker) {
         throw 'The fixed Mission Orchestrator worker task action is not canonical.'
     }
-    if ($repositoryBranch -ne 'main' -or $repositoryHead -notmatch '^[0-9a-f]{40}$') {
-        throw 'The canonical repository head is not proven for fixed worker restart.'
+    if ($repositoryBranch -ne 'main' -or $repositoryHead -notmatch '^[0-9a-f]{40}$' `
+        -or $remoteMainHead -notmatch '^[0-9a-f]{40}$' -or $repositoryHead -ne $remoteMainHead) {
+        throw 'The canonical repository head is not proven as exact current public main for fixed worker restart.'
     }
     if (-not (Test-Path -LiteralPath $runtimeRestartPath -PathType Leaf)) {
         throw 'The approved runtime restart adapter is missing.'
@@ -199,6 +231,10 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
     if (-not $restartReceiptValid) {
         throw 'The approved runtime restart receipt is invalid.'
     }
+    $remoteMainHeadAfterRestart = Read-PublicMainHead -GitCommand $gitCommand
+    if ($remoteMainHeadAfterRestart -ne $remoteMainHead -or $remoteMainHeadAfterRestart -ne $repositoryHead) {
+        throw 'Public main changed during the fixed worker restart.'
+    }
     [pscustomobject]@{
         mode = $Mode
         taskName = $taskName
@@ -206,6 +242,7 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
         started = $true
         restarted = $true
         sourceHead = $repositoryHead
+        remoteMainHead = $remoteMainHeadAfterRestart
         exactHeadProofOk = $true
         proofFresh = $true
         terminatedVerifiedOwnedProcess = [bool]$restartReceipt.terminatedVerifiedOwnedProcess
@@ -254,8 +291,15 @@ $commandLineMatchesCanonicalWorker = Test-CanonicalWorkerProcessCommandLine `
         repositoryRoot = $repositoryRoot
         branch = $repositoryBranch
         headSha = $repositoryHead
+        remoteMainHeadSha = $remoteMainHead
+        headMatchesRemoteMain = (
+            $repositoryHead -match '^[0-9a-f]{40}$' -and
+            $remoteMainHead -match '^[0-9a-f]{40}$' -and
+            $repositoryHead -eq $remoteMainHead
+        )
         headProven = (-not [string]::IsNullOrWhiteSpace($repositoryHead))
         headReadError = $repositoryHeadReadError
+        remoteMainHeadReadError = $remoteMainHeadReadError
     }
     process = [pscustomobject]@{
         running = [bool]$workerProcess

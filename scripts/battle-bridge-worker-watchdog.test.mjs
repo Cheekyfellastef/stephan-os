@@ -38,6 +38,7 @@ function workerObservation({
       repositoryRoot: paths.repoRoot,
       branch: 'main',
       headSha: repositoryHead,
+      remoteMainHeadSha: repositoryHead,
     },
     process: {
       running: healthy,

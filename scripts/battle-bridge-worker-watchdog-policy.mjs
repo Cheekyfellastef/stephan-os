@@ -45,9 +45,14 @@ export function assessMissionOrchestratorWorker(input = {}) {
   const canonicalRepositoryRoot = normalizePath(input.repository?.repositoryRoot);
   const canonicalRepositoryBranch = text(input.repository?.branch).toLowerCase();
   const canonicalRepositoryHead = text(input.repository?.headSha).toLowerCase();
-  const canonicalRepositoryHeadProven = canonicalRepositoryRoot.endsWith(CANONICAL_REPOSITORY_SUFFIX)
+  const remoteMainHead = text(input.repository?.remoteMainHeadSha).toLowerCase();
+  const localRepositoryIdentityProven = canonicalRepositoryRoot.endsWith(CANONICAL_REPOSITORY_SUFFIX)
     && canonicalRepositoryBranch === 'main'
     && SHA_40.test(canonicalRepositoryHead);
+  const remoteMainHeadProven = SHA_40.test(remoteMainHead);
+  const canonicalRepositoryHeadProven = localRepositoryIdentityProven
+    && remoteMainHeadProven
+    && canonicalRepositoryHead === remoteMainHead;
   const heartbeatTaskName = text(input.heartbeat?.taskName);
   const processPid = positiveInteger(input.process?.pid);
   const heartbeatPid = positiveInteger(input.heartbeat?.pid);
@@ -92,6 +97,10 @@ export function assessMissionOrchestratorWorker(input = {}) {
   if (input.process?.running === true && !processCommandLineVerified) blockers.push('worker-command-line-not-canonical');
   if (!Number.isFinite(heartbeatTimestamp)) blockers.push('worker-heartbeat-malformed');
   else if (!heartbeatFresh) blockers.push('worker-heartbeat-stale');
+  if (!remoteMainHeadProven) blockers.push('remote-main-head-unproven');
+  if (localRepositoryIdentityProven && remoteMainHeadProven && canonicalRepositoryHead !== remoteMainHead) {
+    blockers.push('canonical-repository-head-stale');
+  }
   if (!canonicalRepositoryHeadProven) blockers.push('canonical-repository-head-unproven');
   if (!repositoryFromCanonicalMain) blockers.push('worker-not-proven-from-canonical-main');
   else if (canonicalRepositoryHeadProven && !heartbeatMatchesCanonicalRepositoryHead) {
@@ -116,6 +125,8 @@ export function assessMissionOrchestratorWorker(input = {}) {
     heartbeatPidMatchesProcess,
     repositoryFromCanonicalMain,
     canonicalRepositoryHead,
+    remoteMainHead,
+    remoteMainHeadProven,
     canonicalRepositoryHeadProven,
     heartbeatMatchesCanonicalRepositoryHead,
     sourceHead,
