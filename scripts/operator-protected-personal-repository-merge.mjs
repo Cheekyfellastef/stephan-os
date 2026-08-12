@@ -22,16 +22,13 @@ import {
   PERSONAL_REPOSITORY_EVIDENCE_JOB,
   PERSONAL_REPOSITORY_MERGE_JOB,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
-  buildPersonalRepositoryArtifactArchiveRequest,
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
   executeBoundedPersonalRepositoryRead,
+  executePersonalRepositoryArtifactArchiveTransport,
   extractPersonalRepositoryArtifactZip,
   parsePersonalRepositoryDispatchInputs,
-  readBoundedPersonalRepositoryResponseBody,
   validatePersonalRepositoryApprovalReceipt,
-  validatePersonalRepositoryArtifactArchiveRedirect,
-  validatePersonalRepositoryArtifactArchiveResponse,
   validatePersonalRepositoryConfiguration,
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
@@ -154,63 +151,34 @@ async function apiJson(path, options = {}) {
   return raw ? parseJson(raw, `GitHub JSON response for ${path} was invalid.`) : null;
 }
 
-async function apiArtifactArchive(path, maxBytes) {
+async function apiArtifactArchive(path, repository, maxBytes) {
   const token = text(process.env.GH_TOKEN || process.env.GITHUB_TOKEN);
   if (!token) fail('GitHub Actions token is required.');
-  const apiUrl = `https://api.github.com${path}`;
-  const { response: redirectResponse } = await executeBoundedPersonalRepositoryRead({
+  return executePersonalRepositoryArtifactArchiveTransport({
     path,
-    request: () => fetch(apiUrl, {
-      method: 'GET',
-      redirect: 'manual',
+    repository,
+    maxBytes,
+    requestApiRedirect: (request) => fetch(request.url, {
+      method: request.method,
+      body: request.body,
+      redirect: request.redirect,
       headers: {
-        Accept: 'application/vnd.github+json',
+        ...request.headers,
         Authorization: `Bearer ${token}`,
         'X-GitHub-Api-Version': API_VERSION,
         'User-Agent': USER_AGENT,
       },
     }),
-    validateResponse: (response) => validatePersonalRepositoryArtifactArchiveRedirect({
-      path,
-      repository: process.env.GITHUB_REPOSITORY,
-      response,
-    }),
-  });
-  const download = buildPersonalRepositoryArtifactArchiveRequest(
-    redirectResponse.headers.get('location'),
-  );
-  if (!download.valid) {
-    fail('Independent review artifact archive redirect is invalid.', { blockers: download.blockers });
-  }
-  const { response, result: bytes } = await executeBoundedPersonalRepositoryRead({
-    path: `${path}#credential-free-archive-download`,
-    request: () => fetch(download.request.url, {
-      method: download.request.method,
-      body: download.request.body,
-      redirect: download.request.redirect,
+    requestArchive: (request) => fetch(request.url, {
+      method: request.method,
+      body: request.body,
+      redirect: request.redirect,
       headers: {
-        ...download.request.headers,
+        ...request.headers,
         'User-Agent': USER_AGENT,
       },
     }),
-    validateResponse: (archiveResponse) => validatePersonalRepositoryArtifactArchiveResponse({
-      expectedUrl: download.request.url,
-      response: archiveResponse,
-      maxBytes,
-    }),
-    consume: (boundedResponse) => readBoundedPersonalRepositoryResponseBody(boundedResponse, maxBytes),
   });
-  if (bytes.length > maxBytes) {
-    fail('Independent review artifact archive exceeded the bounded maximum.', {
-      observedBytes: bytes.length,
-      maxBytes,
-    });
-  }
-  const declaredLength = Number(response.headers.get('content-length'));
-  if (bytes.length !== declaredLength) {
-    fail('Independent review artifact archive length differed from its bounded response proof.');
-  }
-  return bytes;
 }
 
 async function apiCollection(path, itemKey = null, options = {}) {
@@ -481,6 +449,7 @@ async function loadSelectedIndependentReview(context, identity) {
   }
   const archiveBytes = await apiArtifactArchive(
     `/repos/${context.owner}/${context.repo}/actions/artifacts/${artifactSet.artifactId}/zip`,
+    context.repository,
     INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES,
   );
   if (archiveBytes.length !== artifactSet.sizeInBytes) fail('Independent review artifact archive size changed.');

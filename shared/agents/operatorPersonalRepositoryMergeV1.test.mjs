@@ -10,10 +10,12 @@ import {
   PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS,
   PERSONAL_REPOSITORY_WORKFLOW_NAME,
   PERSONAL_REPOSITORY_WORKFLOW_PATH,
+  buildPersonalRepositoryArtifactApiRequest,
   buildPersonalRepositoryArtifactArchiveRequest,
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
   executeBoundedPersonalRepositoryRead,
+  executePersonalRepositoryArtifactArchiveTransport,
   extractPersonalRepositoryArtifactZip,
   parsePersonalRepositoryDispatchInputs,
   readBoundedPersonalRepositoryResponseBody,
@@ -259,6 +261,21 @@ test('in-process artifact ZIP failures remain credential-free and consume no pro
 });
 
 test('artifact archive transport accepts one exact GitHub-to-Azure redirect and builds a credential-free request', () => {
+  const apiRequest = buildPersonalRepositoryArtifactApiRequest({
+    path: ARTIFACT_API_PATH,
+    repository: 'Cheekyfellastef/stephan-os',
+  });
+  assert.equal(apiRequest.valid, true);
+  assert.deepEqual(apiRequest.request, {
+    url: ARTIFACT_API_URL,
+    method: 'GET',
+    body: null,
+    redirect: 'manual',
+    headers: { Accept: 'application/vnd.github+json' },
+  });
+  assert.deepEqual(Object.keys(apiRequest.request.headers), ['Accept']);
+  assert.doesNotMatch(JSON.stringify(apiRequest.request), /authorization|bearer|token|credential|secret/i);
+
   const redirect = validatePersonalRepositoryArtifactArchiveRedirect({
     path: ARTIFACT_API_PATH,
     repository: 'Cheekyfellastef/stephan-os',
@@ -286,6 +303,115 @@ test('artifact archive transport accepts one exact GitHub-to-Azure redirect and 
   });
   assert.equal(archive.valid, true);
   assert.equal(archive.contentLength, 1101);
+});
+
+test('shared artifact transport executes one authenticated API hop and one credential-free archive hop', async () => {
+  const archiveBytes = Buffer.from('bounded-archive');
+  const observed = [];
+  const result = await executePersonalRepositoryArtifactArchiveTransport({
+    path: ARTIFACT_API_PATH,
+    repository: 'Cheekyfellastef/stephan-os',
+    maxBytes: 256 * 1024,
+    requestApiRedirect: async (request) => {
+      observed.push({ stage: 'api', request });
+      return artifactRedirectResponse();
+    },
+    requestArchive: async (request) => {
+      observed.push({ stage: 'archive', request });
+      let delivered = false;
+      return artifactArchiveResponse({
+        headers: headers({
+          'content-type': 'application/zip',
+          'content-length': String(archiveBytes.length),
+        }),
+        body: {
+          getReader: () => ({
+            read: async () => {
+              if (delivered) return { done: true };
+              delivered = true;
+              return { done: false, value: archiveBytes };
+            },
+            cancel: async () => {},
+            releaseLock: () => {},
+          }),
+        },
+      });
+    },
+    delay: async () => {},
+  });
+  assert.deepEqual(result, archiveBytes);
+  assert.deepEqual(observed.map(({ stage }) => stage), ['api', 'archive']);
+  assert.deepEqual(observed[0].request, {
+    url: ARTIFACT_API_URL,
+    method: 'GET',
+    body: null,
+    redirect: 'manual',
+    headers: { Accept: 'application/vnd.github+json' },
+  });
+  assert.deepEqual(observed[1].request, {
+    url: ARTIFACT_ARCHIVE_URL,
+    method: 'GET',
+    body: null,
+    redirect: 'manual',
+    headers: { Accept: 'application/zip' },
+  });
+  assert.doesNotMatch(JSON.stringify(observed[1].request), /authorization|bearer|token|credential|secret/i);
+});
+
+test('shared artifact transport rejects widened identity, redirect, response and body proofs without a second hop', async () => {
+  for (const mutation of [
+    { repository: 'Other/stephan-os' },
+    { response: artifactRedirectResponse({ status: 415 }) },
+    { response: artifactRedirectResponse({ headers: headers({ location: `${ARTIFACT_ARCHIVE_URL}&sig=repeated` }) }) },
+  ]) {
+    let archiveRequests = 0;
+    await assert.rejects(
+      executePersonalRepositoryArtifactArchiveTransport({
+        path: ARTIFACT_API_PATH,
+        repository: 'Cheekyfellastef/stephan-os',
+        maxBytes: 256 * 1024,
+        requestApiRedirect: async () => mutation.response || artifactRedirectResponse(),
+        requestArchive: async () => {
+          archiveRequests += 1;
+          return artifactArchiveResponse();
+        },
+        delay: async () => {},
+        ...mutation,
+      }),
+      (error) => error.code === 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION',
+    );
+    assert.equal(archiveRequests, 0);
+  }
+
+  const bytes = Buffer.from('short');
+  await assert.rejects(
+    executePersonalRepositoryArtifactArchiveTransport({
+      path: ARTIFACT_API_PATH,
+      repository: 'Cheekyfellastef/stephan-os',
+      maxBytes: 256 * 1024,
+      requestApiRedirect: async () => artifactRedirectResponse(),
+      requestArchive: async () => artifactArchiveResponse({
+        headers: headers({ 'content-type': 'application/zip', 'content-length': '6' }),
+        body: {
+          getReader: () => {
+            let delivered = false;
+            return {
+              read: async () => {
+                if (delivered) return { done: true };
+                delivered = true;
+                return { done: false, value: bytes };
+              },
+              cancel: async () => {},
+              releaseLock: () => {},
+            };
+          },
+        },
+      }),
+      delay: async () => {},
+    }),
+    (error) => error.code === 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION'
+      && error.blockers.includes('personal-repository-artifact-archive-body-length-mismatch'),
+  );
 });
 
 test('artifact archive redirect rejects missing, malformed, repeated, widened, and credential-bearing locations', () => {

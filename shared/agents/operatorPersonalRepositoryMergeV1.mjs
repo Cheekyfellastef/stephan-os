@@ -499,6 +499,32 @@ function artifactArchiveUrlBlockers(location) {
   return blockers;
 }
 
+export function buildPersonalRepositoryArtifactApiRequest(input = {}) {
+  const path = typeof input.path === 'string' ? input.path.trim() : '';
+  const repository = typeof input.repository === 'string' ? input.repository.trim() : '';
+  const pathMatch = path.match(PERSONAL_REPOSITORY_ARTIFACT_API_PATH);
+  const blockers = [];
+  if (!pathMatch || `${pathMatch?.[1]}/${pathMatch?.[2]}` !== repository) {
+    blockers.push('personal-repository-artifact-api-path-mismatch');
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    blockers: Object.freeze(blockers),
+    request: blockers.length
+      ? null
+      : Object.freeze({
+        url: `${PERSONAL_REPOSITORY_GITHUB_API_ORIGIN}${path}`,
+        method: 'GET',
+        body: null,
+        redirect: 'manual',
+        headers: Object.freeze({ Accept: 'application/vnd.github+json' }),
+      }),
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_ARTIFACT_API_REQUEST_BLOCKED'
+      : 'PERSONAL_REPOSITORY_ARTIFACT_API_REQUEST_READY',
+  });
+}
+
 export function validatePersonalRepositoryArtifactArchiveRedirect(input = {}) {
   const path = typeof input.path === 'string' ? input.path.trim() : '';
   const repository = typeof input.repository === 'string' ? input.repository.trim() : '';
@@ -576,6 +602,71 @@ export function validatePersonalRepositoryArtifactArchiveResponse(input = {}) {
       ? 'PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_RESPONSE_BLOCKED'
       : 'PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_RESPONSE_READY',
   });
+}
+
+export async function executePersonalRepositoryArtifactArchiveTransport(input = {}) {
+  const path = typeof input.path === 'string' ? input.path.trim() : '';
+  const repository = typeof input.repository === 'string' ? input.repository.trim() : '';
+  const maxBytes = strictPositiveInteger(input.maxBytes);
+  const requestApiRedirect = input.requestApiRedirect;
+  const requestArchive = input.requestArchive;
+  const delayOptions = input.delay === undefined ? {} : { delay: input.delay };
+  const apiRequest = buildPersonalRepositoryArtifactApiRequest({ path, repository });
+  const inputBlockers = [...apiRequest.blockers];
+  if (!maxBytes || maxBytes > PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES) {
+    inputBlockers.push('personal-repository-artifact-archive-max-bytes-invalid');
+  }
+  if (typeof requestApiRedirect !== 'function') {
+    inputBlockers.push('personal-repository-artifact-api-request-function-invalid');
+  }
+  if (typeof requestArchive !== 'function') {
+    inputBlockers.push('personal-repository-artifact-archive-request-function-invalid');
+  }
+  if (input.delay !== undefined && typeof input.delay !== 'function') {
+    inputBlockers.push('personal-repository-artifact-delay-function-invalid');
+  }
+  if (inputBlockers.length) throw new PersonalRepositoryReadPolicyError(path, inputBlockers);
+
+  const { response: redirectResponse } = await executeBoundedPersonalRepositoryRead({
+    path,
+    request: () => requestApiRedirect(apiRequest.request),
+    validateResponse: (response) => validatePersonalRepositoryArtifactArchiveRedirect({
+      path,
+      repository,
+      response,
+    }),
+    ...delayOptions,
+  });
+  const download = buildPersonalRepositoryArtifactArchiveRequest(
+    responseHeader(redirectResponse, 'location'),
+  );
+  if (!download.valid) throw new PersonalRepositoryReadPolicyError(path, download.blockers);
+
+  let declaredContentLength = 0;
+  const { result: bytes } = await executeBoundedPersonalRepositoryRead({
+    path: `${path}#credential-free-archive-download`,
+    request: () => requestArchive(download.request),
+    validateResponse: (response) => {
+      const validation = validatePersonalRepositoryArtifactArchiveResponse({
+        expectedUrl: download.request.url,
+        response,
+        maxBytes,
+      });
+      if (validation.valid) declaredContentLength = validation.contentLength;
+      return validation;
+    },
+    consume: (response) => readBoundedPersonalRepositoryResponseBody(response, maxBytes),
+    ...delayOptions,
+  });
+  if (!Buffer.isBuffer(bytes)
+    || bytes.length < 1
+    || bytes.length > maxBytes
+    || bytes.length !== declaredContentLength) {
+    throw new PersonalRepositoryReadPolicyError(path, [
+      'personal-repository-artifact-archive-body-length-mismatch',
+    ]);
+  }
+  return Buffer.from(bytes);
 }
 
 function parsePositiveInteger(value) {
