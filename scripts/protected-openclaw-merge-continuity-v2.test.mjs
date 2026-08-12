@@ -81,9 +81,17 @@ test('review coordinator has exact PR-comment publication authority', () => {
 test('pull-request verification is isolated while mutations use one PR-scoped queue', () => {
   const workflow = readSource(new URL('../.github/workflows/exact-head-review-dispatch.yml', import.meta.url));
   const verify = workflow.match(/  verify:[\s\S]*?\n  plan:/)?.[0] || '';
+  const plan = workflow.match(/  plan:[\s\S]*?\n  coordinate:/)?.[0] || '';
   const coordinate = workflow.match(/  coordinate:[\s\S]*$/)?.[0] || '';
 
   assert.doesNotMatch(verify, /concurrency:/);
+  assert.match(plan, /Publish pull-request neutral planning truth\n        if: github\.event_name == 'pull_request'/);
+  assert.match(plan, /Progress: `PULL_REQUEST_PLAN_NEUTRAL`/);
+  assert.match(
+    plan,
+    /Discover canonical PR targets without mutation\n        id: plan\n        if: >-\n          github\.event_name != 'pull_request'/,
+  );
+  assert.doesNotMatch(plan, /actions: write|issues: write|pull-requests: write|STEPHANOS_REVIEW_DISPATCH_TOKEN/);
   assert.match(
     coordinate,
     /group: exact-head-review-dispatch-\$\{\{ github\.repository \}\}-pr-\$\{\{ matrix\.target\.prNumber \}\}/,

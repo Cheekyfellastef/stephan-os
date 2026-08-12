@@ -77,9 +77,6 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   plan:
-    if: >-
-      github.event_name != 'pull_request' &&
-      (github.event_name != 'issue_comment' || github.event.issue.pull_request != null)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -90,7 +87,21 @@ jobs:
     outputs:
       targets: ${{ steps.plan.outputs.targets }}
     steps:
+      - name: Publish pull-request neutral planning truth
+        if: github.event_name == 'pull_request'
+        run: |
+          {
+            echo '## Exact-head review planning'
+            echo
+            echo 'Progress: `PULL_REQUEST_PLAN_NEUTRAL`'
+            echo
+            echo 'Canonical-target discovery and every coordinator mutation are disabled for pull-request verification.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Check out trusted default-branch planner
+        if: >-
+          github.event_name != 'pull_request' &&
+          (github.event_name != 'issue_comment' || github.event.issue.pull_request != null)
         uses: actions/checkout@v4
         with:
           ref: main
@@ -98,6 +109,9 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
+        if: >-
+          github.event_name != 'pull_request' &&
+          (github.event_name != 'issue_comment' || github.event.issue.pull_request != null)
         uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -116,6 +130,9 @@ jobs:
 
       - name: Discover canonical PR targets without mutation
         id: plan
+        if: >-
+          github.event_name != 'pull_request' &&
+          (github.event_name != 'issue_comment' || github.event.issue.pull_request != null)
         env:
           GITHUB_TOKEN: ${{ github.token }}
           STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY: 'true'

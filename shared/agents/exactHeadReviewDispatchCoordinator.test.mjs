@@ -793,6 +793,11 @@ test('wires the trusted coordinator identity through the runner and trusted work
   assert.match(workflow, /STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED/);
   assert.doesNotMatch(workflow, /steps\.coordinate\.outputs\.decision ==/);
   assert.match(workflow, /Progress: `VERIFIED_ONLY`/);
+  assert.match(workflow, /Progress: `PULL_REQUEST_PLAN_NEUTRAL`/);
+  assert.match(
+    workflow,
+    /Discover canonical PR targets without mutation\n        id: plan\n        if: >-\n          github\.event_name != 'pull_request'/,
+  );
   assert.match(workflow, /workflows:[\s\S]*Independent Merge Security Review/);
   assert.match(workflow, /GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}/);
   assert.match(workflow, /STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN:\s*\$\{\{ github\.repository_owner \}\}/);

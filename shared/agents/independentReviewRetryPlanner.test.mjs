@@ -378,6 +378,19 @@ test('trusted workflow serializes every bounded retry under the same PR authorit
   assert.match(retryStep, /run: node scripts\/retry-independent-review\.mjs/);
   assert.doesNotMatch(retryStep, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_(?:RUN|WORKFLOW)_ID/);
 });
+test('pull-request planning remains a successful read-only neutral gate', () => {
+  const planJob = COORDINATOR_WORKFLOW.match(/^  plan:\n[\s\S]*?^  coordinate:/m)?.[0] || '';
+  const neutralStep = planJob.match(
+    /^      - name: Publish pull-request neutral planning truth\n[\s\S]*?^      - name: Check out trusted default-branch planner/m,
+  )?.[0] || '';
+  assert.match(planJob, /^  plan:\n    runs-on: ubuntu-latest/m);
+  assert.match(neutralStep, /if: github\.event_name == 'pull_request'/);
+  assert.doesNotMatch(neutralStep, /GITHUB_TOKEN|STEPHANOS_|actions: write|issues: write|pull-requests: write/);
+  assert.match(
+    planJob,
+    /Discover canonical PR targets without mutation\n        id: plan\n        if: >-\n          github\.event_name != 'pull_request'/,
+  );
+});
 test('workflow and runner wire repository fallback, owner lane authority and sentinel marker continuity', () => {
   assert.ok(COORDINATOR_WORKFLOW.includes('GITHUB_TOKEN: ${{ github.token }}'));
   assert.ok(COORDINATOR_WORKFLOW.includes('STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}'));
