@@ -39,6 +39,9 @@ $logRoot = Join-Path $missionRunnerRoot 'logs\mission-orchestrator-worker'
 $logPath = Join-Path $logRoot 'worker.log'
 $workspaceRoot = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'
 $heartbeatPath = Join-Path $workspaceRoot 'status\mission-orchestrator-worker-heartbeat.json'
+$canonicalNode = 'C:\Program Files\nodejs\node.exe'
+$canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
+$publicRemote = 'https://github.com/Cheekyfellastef/stephan-os.git'
 
 foreach ($requiredFile in @($workerScript, $privateKeyPath, $publicKeyPath)) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
@@ -46,17 +49,28 @@ foreach ($requiredFile in @($workerScript, $privateKeyPath, $publicKeyPath)) {
     }
 }
 
-$node = Get-Command node.exe -ErrorAction SilentlyContinue
-if (-not $node) { $node = Get-Command node -ErrorAction Stop }
-$git = Get-Command git.exe -ErrorAction SilentlyContinue
-if (-not $git) { $git = Get-Command git -ErrorAction Stop }
-$branch = (& $git.Source -C $repositoryRoot branch --show-current).Trim()
+foreach ($requiredExecutable in @($canonicalNode, $canonicalGit)) {
+    if (-not (Test-Path -LiteralPath $requiredExecutable -PathType Leaf)) {
+        throw "Required canonical executable is missing: $requiredExecutable"
+    }
+}
+$branch = (& $canonicalGit -C $repositoryRoot branch --show-current).Trim()
 if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') {
     throw 'Mission Orchestrator worker requires the canonical checkout on branch main.'
 }
-$headSha = (& $git.Source -C $repositoryRoot rev-parse HEAD).Trim().ToLowerInvariant()
+$headSha = (& $canonicalGit -C $repositoryRoot rev-parse HEAD).Trim().ToLowerInvariant()
 if ($LASTEXITCODE -ne 0 -or $headSha -notmatch '^[0-9a-f]{40}$') {
     throw 'Mission Orchestrator worker could not prove a canonical 40-character Git head.'
+}
+$trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
+if ($LASTEXITCODE -ne 0 -or $trackedStatus.Count -ne 0) {
+    throw 'Mission Orchestrator worker requires tracked-clean exact-head source.'
+}
+$remoteMain = @(& $canonicalGit 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>&1)
+if ($LASTEXITCODE -ne 0 -or $remoteMain.Count -ne 1 `
+    -or [string]$remoteMain[0] -notmatch '^([0-9a-fA-F]{40})\s+refs/heads/main$' `
+    -or $Matches[1].ToLowerInvariant() -ne $headSha) {
+    throw 'Mission Orchestrator worker requires the exact current public main head.'
 }
 
 [System.IO.Directory]::CreateDirectory($receiptRoot) | Out-Null
@@ -75,7 +89,7 @@ $env:STEPHANOS_MISSION_WORKER_HEAD_SHA = $headSha
 $env:STEPHANOS_MISSION_WORKER_TASK_NAME = 'Stephanos Mission Orchestrator Worker'
 
 "[$([DateTime]::UtcNow.ToString('o'))] Mission Orchestrator worker starting from canonical main $headSha" | Out-File -LiteralPath $logPath -Append -Encoding utf8
-& $node.Source $workerScript 2>&1 | ForEach-Object {
+& $canonicalNode $workerScript 2>&1 | ForEach-Object {
     [string]$_ | Out-File -LiteralPath $logPath -Append -Encoding utf8
 }
 $exitCode = $LASTEXITCODE

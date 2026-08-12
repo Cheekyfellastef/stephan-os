@@ -220,10 +220,21 @@ try {
                 -not (Get-CimInstance Win32_Process -Filter "ProcessId = $($oldWorker.ProcessId)" -ErrorAction SilentlyContinue)
             })) { Stop-WithBlocker 'MISSION_WORKER_VERIFIED_PROCESS_DID_NOT_STOP' }
         }
+        $canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
+        if (-not (Test-Path -LiteralPath $canonicalGit -PathType Leaf)) { Stop-WithBlocker 'CANONICAL_GIT_MISSING' }
+        $trackedStatus = @(& $canonicalGit -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
+        if ($LASTEXITCODE -ne 0 -or $trackedStatus.Count -ne 0) { Stop-WithBlocker 'CANONICAL_TRACKED_SOURCE_DIRTY' }
         Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
         if (-not (Wait-Until -Seconds $TimeoutSeconds -Condition {
             $null -ne (Read-FreshWorkerHeartbeat -HeartbeatPath $heartbeatPath -StartedAfterUtc $startedAtUtc -ExpectedSourceHead $ExpectedHead)
         })) { Stop-WithBlocker 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT' }
+        $trackedStatusAfterStart = @(& $canonicalGit -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
+        if ($LASTEXITCODE -ne 0 -or $trackedStatusAfterStart.Count -ne 0) {
+            Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction SilentlyContinue
+            $startedWorker = Get-VerifiedWorkerProcessFromHeartbeat -HeartbeatPath $heartbeatPath
+            if ($startedWorker) { Stop-Process -Id $startedWorker.ProcessId -Force -ErrorAction SilentlyContinue }
+            Stop-WithBlocker 'CANONICAL_TRACKED_SOURCE_CHANGED_DURING_WORKER_START'
+        }
         $proofKind = 'mission-worker-heartbeat'
         $proofFresh = $true
     }

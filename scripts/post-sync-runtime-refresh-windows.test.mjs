@@ -39,6 +39,9 @@ test('worker restart requires task-owned process stop and a fresh exact-head hea
   assert.match(restartSource, /Stop-Process -Id \$oldWorker\.ProcessId -Force/);
   assert.doesNotMatch(restartSource, /MISSION_WORKER_TASK_OR_PROCESS_DID_NOT_STOP|MISSION_WORKER_PROCESS_OUTSIDE_RUNNING_TASK/);
   assert.match(restartSource, /unrelatedTasksChanged = \$false/);
+  assert.match(restartSource, /CANONICAL_TRACKED_SOURCE_DIRTY/);
+  assert.match(restartSource, /CANONICAL_TRACKED_SOURCE_CHANGED_DURING_WORKER_START/);
+  assert.match(restartSource, /Stop-ScheduledTask -TaskName \$plan\.TaskName -TaskPath '\\' -ErrorAction SilentlyContinue/);
 });
 
 test('backend starter proves canonical main and writes a bounded exact-head runtime receipt', () => {

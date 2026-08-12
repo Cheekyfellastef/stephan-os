@@ -106,5 +106,9 @@ test('worker launcher is pinned to canonical main and supervised heartbeat loop'
   assert.match(source, /\$branch -ne 'main'/);
   assert.match(source, /STEPHANOS_MISSION_WORKER_HEAD_SHA/);
   assert.match(source, /STEPHANOS_MISSION_WORKER_TASK_NAME/);
+  assert.match(source, /status '--porcelain=v1' '--untracked-files=no'/);
+  assert.match(source, /ls-remote' '--exit-code' \$publicRemote 'refs\/heads\/main'/);
+  assert.match(source, /& \$canonicalNode \$workerScript/);
+  assert.doesNotMatch(source, /Get-Command (?:git|node)(?:\.exe)?\b/i);
   assert.doesNotMatch(source, /Start-Process|Invoke-Expression|git reset|git checkout|git clean|git push/i);
 });

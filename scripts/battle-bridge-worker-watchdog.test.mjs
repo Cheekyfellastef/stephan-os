@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import {
   CANONICAL_WINDOWS_POWERSHELL,
-  WORKER_WATCHDOG_PROBE_TIMEOUT_MS,
+  WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS,
   createFixedWorkerProbeAdapter,
   runBattleBridgeWorkerWatchdog,
 } from './battle-bridge-worker-watchdog.mjs';
@@ -241,6 +241,43 @@ test('recovery starts at most once and fails after exactly three probes without 
   });
 });
 
+test('one global run budget stops recovery probes in time to publish bounded failure', async () => {
+  await withFixture(async ({ paths }) => {
+    const startedAt = new Date('2026-08-12T20:00:00.000Z');
+    let elapsedMs = 0;
+    let inspections = 0;
+    const observedTimeouts = [];
+    const probeAdapter = {
+      run(mode, options = {}) {
+        observedTimeouts.push({ mode, timeoutMs: options.timeoutMs });
+        if (mode === 'StartApprovedWorkerTask') {
+          elapsedMs = 106_000;
+          return { ok: true, data: exactHeadRestartProof('a'.repeat(40)) };
+        }
+        inspections += 1;
+        return { ok: true, data: workerObservation({ paths, healthy: false }) };
+      },
+    };
+    const result = await runBattleBridgeWorkerWatchdog({
+      paths,
+      expectedPaths: paths,
+      probeAdapter,
+      now: startedAt,
+      clock: () => startedAt.getTime() + elapsedMs,
+      sleep: async () => {},
+    });
+    assert.equal(result.classification, 'WORKER_WATCHDOG_RECOVERY_FAILED');
+    assert.equal(result.recoveryProbeCount, 0);
+    assert.equal(inspections, 1);
+    assert.deepEqual(observedTimeouts.map((item) => item.mode), ['Inspect', 'StartApprovedWorkerTask']);
+    assert.equal(observedTimeouts[0].timeoutMs, WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS);
+    assert.ok(observedTimeouts[1].timeoutMs > 0 && observedTimeouts[1].timeoutMs <= 95_000);
+    const status = await readCurrentStatus(paths);
+    assert.equal(status.workerRecovered, false);
+    assert.match(status.probeError, /run budget exhausted/);
+  });
+});
+
 test('live lock blocks a second watchdog without starting the worker', async () => {
   await withFixture(async ({ paths }) => {
     const lockPath = path.join(paths.workspaceRoot, 'locks', 'battle-bridge-worker-watchdog.lock');
@@ -323,6 +360,6 @@ test('fixed probe adapter uses one script, two modes, no shell and hidden PowerS
   assert.equal(calls[0].executable, CANONICAL_WINDOWS_POWERSHELL);
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.windowsHide, true);
-  assert.equal(calls[0].options.timeout, WORKER_WATCHDOG_PROBE_TIMEOUT_MS);
+  assert.equal(calls[0].options.timeout, WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS);
   assert.deepEqual(calls.map((call) => call.args.at(-1)), ['Inspect', 'StartApprovedWorkerTask']);
 });
