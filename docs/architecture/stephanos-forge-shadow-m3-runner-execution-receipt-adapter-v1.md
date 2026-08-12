@@ -4,7 +4,7 @@
 
 This source-only adapter closes the truth boundary between the existing deterministic M3 runtime plan and a future separately authorised Battle Bridge runner executor.
 
-It does not install, register, connect or execute a runner by itself. It orchestrates only a fixed host executor supplied by the connected Windows Battle Bridge and refuses to mint the canonical `FORGE_SHADOW_M3_RUNNER_RUNTIME_READY` routing receipt until every planned runner returns a closed-world observation proving exact source identity, immutable artifact identity, the fixed isolation canary, complete teardown and zero residual authority.
+It does not install, register, connect or execute a runner by itself. It orchestrates only a fixed host executor supplied by the connected Windows Battle Bridge and emits `FORGE_SHADOW_M3_RUNNER_CONSTRUCTION_PROVEN` with `canCarryRealWork: false` only after every planned runner returns a closed-world observation proving exact source identity, immutable artifact identity, the fixed isolation canary, complete teardown and zero residual authority. That receipt is historical construction-and-teardown proof, not current runtime-ready capacity, and is never routable as authority to carry work.
 
 ## Canonical inputs
 
@@ -77,7 +77,7 @@ The receipt includes the exact source head and tree, artifact-set digest, fixed 
 
 `validateForgeShadowM3RunnerRuntimeReceipt()` revalidates the closed-world shape and content digest so later Forge-aware routing cannot promote a mutated or widened receipt.
 
-The receipt grants no continuing mutation authority. `canCarryRealWork: true` means the exact authorised ephemeral construction path has been proven; each future job still requires fresh bounded execution and teardown.
+The receipt grants no continuing mutation authority. Its verdict is `FORGE_SHADOW_M3_RUNNER_CONSTRUCTION_PROVEN` and `canCarryRealWork` is always `false`: it records only that the exact authorised ephemeral construction-and-teardown path succeeded historically. It never represents current runtime-ready capacity and cannot route a future job; each future job requires fresh bounded execution and teardown.
 
 ## Security basis
 

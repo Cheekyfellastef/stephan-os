@@ -375,6 +375,38 @@ test('teardown evidence is ordered and quarantined beyond the canonical five-min
   ), JSON.stringify(result.blockers));
 });
 
+test('each teardown timestamp ordering predicate fails closed with the exact blocker', async (t) => {
+  const cases = [
+    {
+      name: 'teardown starts before execution',
+      patch: { teardownStartedAtUtc: '2026-08-07T21:19:59Z' },
+    },
+    {
+      name: 'teardown completes before teardown starts',
+      patch: { teardownStartedAtUtc: '2026-08-07T21:20:01Z' },
+    },
+    {
+      name: 'teardown completion differs from overall completion',
+      patch: { teardownCompletedAtUtc: '2026-08-07T21:20:01Z' },
+    },
+  ];
+
+  for (const { name, patch } of cases) {
+    await t.test(name, async () => {
+      const result = await executeVerified(input(), {
+        platform: 'win32', now,
+        executeRunner: async (request) => executionResult(request, patch),
+      });
+      const orderingBlocker = 'runner-teardown-time-order-invalid:stephanos-forge-linux-runner-01';
+      assert.equal(result.ok, false);
+      assert.deepEqual(
+        result.blockers.filter((blocker) => blocker.includes('runner-teardown-time-order-invalid')),
+        [orderingBlocker],
+      );
+    });
+  }
+});
+
 test('sparse runner proof-reference arrays fail closed before receipt construction', async () => {
   const sparseProofRefs = new Array(1);
   const result = await executeVerified(input(), {
