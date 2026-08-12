@@ -3,12 +3,14 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import { planForgeShadowM3RunnerRuntime } from './forgeShadowM3RunnerRuntimePlanV1.mjs';
+import { adjudicateForgeSidecarCapacity } from './stallSentinelReviewPipelineV1.mjs';
 import {
   FORGE_SHADOW_M3_CANARY_SCENARIO,
   FORGE_SHADOW_M3_CANARY_WORKFLOW,
   FORGE_SHADOW_M3_AUTHORIZATION_RESERVATION_SCHEMA,
   FORGE_SHADOW_M3_EXECUTION_BLOCKED,
   FORGE_SHADOW_M3_EXECUTION_OBSERVATION_SCHEMA,
+  FORGE_SHADOW_M3_EXECUTION_PROVEN,
   FORGE_SHADOW_M3_EXECUTION_READY,
   FORGE_SHADOW_M3_EXECUTION_SURFACE,
   FORGE_SHADOW_M3_OPERATOR_APPROVAL_SCHEMA,
@@ -41,6 +43,19 @@ function stable(value) {
 
 function contentDigest(value) {
   return createHash('sha256').update(stable(value), 'utf8').digest('hex');
+}
+
+function forgeM2RuntimeReceipt() {
+  const body = {
+    schemaVersion: 'stephanos.forge-shadow-m2-runtime-receipt.v1',
+    receiptId: 'forge-m2-runtime-receipt-001',
+    repository: 'Cheekyfellastef/stephan-os',
+    sourceHead: HEAD, sourceTree: TREE, mirrorHead: HEAD, mirrorTree: TREE,
+    operation: 'INSTALL_FORGE_SHADOW_M2', state: 'DONE',
+    finalVerdict: 'FORGE_SHADOW_M2_READY', completedAt: NOW,
+    proofRefs: ['receipts/forge/m2-runtime-receipt-001.json'],
+  };
+  return { ...body, payloadSha256: contentDigest(body) };
 }
 
 function m2() {
@@ -173,6 +188,7 @@ function input(planInput = runtimePlanInput(), authorizationPatch = {}) {
 function observation({ runner, artifact, runtimePlan }, patch = {}) {
   const proofDigest = runner.runnerClass === 'linux-isolated' ? '6'.repeat(64) : '7'.repeat(64);
   const registrationProofRef = `proofs/forge-shadow-m3/${runner.runnerId}/${proofDigest}.json`;
+  const completedAtUtc = patch.completedAtUtc || NOW;
   return {
     schemaVersion: FORGE_SHADOW_M3_EXECUTION_OBSERVATION_SCHEMA,
     authorizationId: patch.authorizationId,
@@ -183,7 +199,10 @@ function observation({ runner, artifact, runtimePlan }, patch = {}) {
     registrationRepository: 'Cheekyfellastef/stephan-os', registrationScope: 'repository',
     registrationMode: runner.registrationMode, oneJobMode: true, registrationProofRef,
     artifactDigest: artifact.artifactDigest, artifactSetDigest: runtimePlan.artifactSetDigest,
-    startedAtUtc: NOW, completedAtUtc: NOW,
+    startedAtUtc: NOW,
+    teardownStartedAtUtc: patch.teardownStartedAtUtc || completedAtUtc,
+    teardownCompletedAtUtc: patch.teardownCompletedAtUtc || completedAtUtc,
+    completedAtUtc,
     installed: true, registered: true, connected: true, ephemeralRegistration: true,
     canaryWorkflowId: FORGE_SHADOW_M3_CANARY_WORKFLOW,
     canaryScenario: FORGE_SHADOW_M3_CANARY_SCENARIO,
@@ -282,12 +301,12 @@ test('executes only the canonical runner estate and emits a content-addressed M3
     },
   });
   assert.equal(result.ok, true, JSON.stringify(result, null, 2));
-  assert.equal(result.finalVerdict, FORGE_SHADOW_M3_EXECUTION_READY);
+  assert.equal(result.finalVerdict, FORGE_SHADOW_M3_EXECUTION_PROVEN);
   assert.deepEqual(calls.map((call) => call.runner.runnerId), [
     'stephanos-forge-linux-runner-01',
     'stephanos-forge-windows-proof-runner-01',
   ]);
-  assert.equal(result.receipt.canCarryRealWork, true);
+  assert.equal(result.receipt.canCarryRealWork, false);
   assert.deepEqual(result.receipt.runnerIdentities, [
     'stephanos-forge-linux-runner-01',
     'stephanos-forge-windows-proof-runner-01',
@@ -314,7 +333,58 @@ test('emits the exact canonical Forge routing receipt contract', async () => {
     'teardownComplete', 'windowsProofRunnerConnected', 'zeroResidualCredential',
     'zeroResidualRegistration', 'zeroResidualWorkspace',
   ].sort());
-  assert.equal(result.receipt.finalVerdict, 'FORGE_SHADOW_M3_RUNNER_RUNTIME_READY');
+  assert.equal(result.receipt.finalVerdict, 'FORGE_SHADOW_M3_RUNNER_CONSTRUCTION_PROVEN');
+});
+
+test('torn-down runner construction is historical proof and never current routable capacity', async () => {
+  const result = await executeVerified(input(), {
+    platform: 'win32', now, executeRunner: async (request) => executionResult(request),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.receipt.teardownComplete, true);
+  assert.equal(result.receipt.canCarryRealWork, false);
+  assert.notEqual(result.receipt.finalVerdict, FORGE_SHADOW_M3_EXECUTION_READY);
+  const m2Receipt = forgeM2RuntimeReceipt();
+  const capacity = adjudicateForgeSidecarCapacity({
+    goalId: '#1671', repository: 'Cheekyfellastef/stephan-os',
+    canonicalMainHead: HEAD, canonicalMainTree: TREE, mirrorHead: HEAD, mirrorTree: TREE,
+    sourceReady: true, m2Receipt, m3RuntimeReceipt: result.receipt,
+    evidenceRefs: [...m2Receipt.proofRefs, ...result.receipt.proofRefs].sort(),
+  }, { nowUtc: NOW });
+  assert.equal(capacity.m2ReceiptValid, true);
+  assert.equal(capacity.m3RuntimeReceiptValid, false);
+  assert.equal(capacity.runtimeReady, false);
+  assert.equal(capacity.exactHeadReviewReady, false);
+  assert.equal(capacity.canCarryRealWork, false);
+});
+
+test('teardown evidence is ordered and quarantined beyond the canonical five-minute ceiling', async () => {
+  const result = await executeVerified(input(), {
+    platform: 'win32',
+    now: () => new Date('2026-08-07T21:26:00Z'),
+    executeRunner: async (request) => executionResult(request, {
+      startedAtUtc: '2026-08-07T21:20:00Z',
+      teardownStartedAtUtc: '2026-08-07T21:20:00Z',
+      teardownCompletedAtUtc: '2026-08-07T21:25:01Z',
+      completedAtUtc: '2026-08-07T21:25:01Z',
+    }, { acknowledgedAtUtc: '2026-08-07T21:26:00Z' }),
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.blockers.includes(
+    'runner-teardown-deadline-exceeded:stephanos-forge-linux-runner-01',
+  ), JSON.stringify(result.blockers));
+});
+
+test('sparse runner proof-reference arrays fail closed before receipt construction', async () => {
+  const sparseProofRefs = new Array(1);
+  const result = await executeVerified(input(), {
+    platform: 'win32', now,
+    executeRunner: async (request) => executionResult(request, { proofRefs: sparseProofRefs }),
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.blockers.includes(
+    'runner-proof-refs-invalid:stephanos-forge-linux-runner-01',
+  ), JSON.stringify(result.blockers));
 });
 
 test('replans against the trusted execution clock so caller history cannot admit stale evidence', async () => {
@@ -1069,7 +1139,7 @@ test('receipt validation detects post-issuance mutation and hidden fields', asyn
     platform: 'win32', now, executeRunner: async (request) => executionResult(request),
   });
   const mutated = structuredClone(result.receipt);
-  mutated.canCarryRealWork = false;
+  mutated.canCarryRealWork = true;
   assert.equal(validateForgeShadowM3RunnerRuntimeReceipt(mutated).ok, false);
   const widened = { ...structuredClone(result.receipt), command: 'not-allowed' };
   assert.equal(validateForgeShadowM3RunnerRuntimeReceipt(widened).ok, false);

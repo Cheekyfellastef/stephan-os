@@ -15,6 +15,7 @@ const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const PROOF_REF = /^proofs\/forge-shadow-m3\/[a-z0-9][a-z0-9._:-]{2,127}\/[0-9a-f]{64}\.json$/i;
 const MAX_AUTHORIZATION_MS = 2 * 60 * 60 * 1000;
 const MAX_RUNNER_EXECUTION_MS = 60 * 60 * 1000;
+const MAX_RUNNER_TEARDOWN_MS = 300 * 1000;
 const MAX_RUNNER_PROOF_REFS = 8;
 const MAX_RECEIPT_PROOF_REFS = 16;
 
@@ -33,6 +34,7 @@ export const FORGE_SHADOW_M3_AUTHORIZATION_RESERVATION_SCHEMA =
 export const FORGE_SHADOW_M3_TERMINATION_ACK_SCHEMA =
   'stephanos.forge-shadow-m3-runner-termination-acknowledgement.v1';
 export const FORGE_SHADOW_M3_EXECUTION_READY = 'FORGE_SHADOW_M3_RUNNER_RUNTIME_READY';
+export const FORGE_SHADOW_M3_EXECUTION_PROVEN = 'FORGE_SHADOW_M3_RUNNER_CONSTRUCTION_PROVEN';
 export const FORGE_SHADOW_M3_EXECUTION_BLOCKED = 'FORGE_SHADOW_M3_RUNNER_EXECUTION_BLOCKED';
 export const FORGE_SHADOW_M3_EXECUTION_SURFACE = 'CONNECTED_WINDOWS_BATTLE_BRIDGE';
 export const FORGE_SHADOW_M3_CANARY_WORKFLOW = 'forge-shadow-m3-isolation-canary-v1';
@@ -65,7 +67,8 @@ const OBSERVATION_KEYS = [
   'forgeService', 'forgeListener', 'registrationRepository', 'registrationScope',
   'registrationMode', 'oneJobMode', 'registrationProofRef',
   'sourceHead', 'sourceTree', 'artifactDigest', 'artifactSetDigest',
-  'startedAtUtc', 'completedAtUtc', 'installed', 'registered', 'connected',
+  'startedAtUtc', 'teardownStartedAtUtc', 'teardownCompletedAtUtc', 'completedAtUtc',
+  'installed', 'registered', 'connected',
   'ephemeralRegistration', 'canaryWorkflowId', 'canaryScenario', 'canaryHead',
   'canaryTree', 'canarySucceeded', 'unregistered',
   'registrationCredentialDestroyed', 'workspaceDestroyed', 'runtimeBoundaryDestroyed',
@@ -164,6 +167,9 @@ function findForbidden(value, trail = [], seen = new WeakSet()) {
 
 function safeProofRefs(value, runnerId = '', maximum = MAX_RUNNER_PROOF_REFS) {
   if (!Array.isArray(value) || value.length < 1 || value.length > maximum) return null;
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index)) return null;
+  }
   const refs = value.map(text);
   if (new Set(refs).size !== refs.length) return null;
   if (!refs.every((ref) => PROOF_REF.test(ref) && !ref.includes('..'))) return null;
@@ -355,6 +361,8 @@ function validateObservation(value, runner, artifact, plan, authorization, invoc
   const unsafe = findForbidden(value);
   if (unsafe) blockers.push(`runner-observation-unsafe-field:${prefix}:${unsafe}`);
   const startedMs = instant(value.startedAtUtc);
+  const teardownStartedMs = instant(value.teardownStartedAtUtc);
+  const teardownCompletedMs = instant(value.teardownCompletedAtUtc);
   const completedMs = instant(value.completedAtUtc);
   const refs = safeProofRefs(value.proofRefs, prefix);
   if (value.schemaVersion !== FORGE_SHADOW_M3_EXECUTION_OBSERVATION_SCHEMA) blockers.push(`runner-observation-schema-invalid:${prefix}`);
@@ -375,6 +383,16 @@ function validateObservation(value, runner, artifact, plan, authorization, invoc
         || completedMs > authorization.expiresMs
         || completedMs > settledMs) blockers.push(`runner-time-outside-invocation:${prefix}`);
     if (completedMs < startedMs || completedMs - startedMs > MAX_RUNNER_EXECUTION_MS) blockers.push(`runner-duration-invalid:${prefix}`);
+  }
+  if (!Number.isFinite(teardownStartedMs) || !Number.isFinite(teardownCompletedMs)) {
+    blockers.push(`runner-teardown-time-invalid:${prefix}`);
+  } else {
+    if (teardownStartedMs < startedMs
+        || teardownCompletedMs < teardownStartedMs
+        || teardownCompletedMs !== completedMs) blockers.push(`runner-teardown-time-order-invalid:${prefix}`);
+    if (teardownCompletedMs - teardownStartedMs > MAX_RUNNER_TEARDOWN_MS) {
+      blockers.push(`runner-teardown-deadline-exceeded:${prefix}`);
+    }
   }
   if (value.installed !== true || value.registered !== true || value.connected !== true) blockers.push(`runner-execution-incomplete:${prefix}`);
   if (value.ephemeralRegistration !== true) blockers.push(`runner-registration-not-ephemeral:${prefix}`);
@@ -413,6 +431,8 @@ function validateObservation(value, runner, artifact, plan, authorization, invoc
     registrationProofRef: value.registrationProofRef,
     artifactDigest: artifact.artifactDigest,
     startedAtUtc: new Date(startedMs).toISOString(),
+    teardownStartedAtUtc: new Date(teardownStartedMs).toISOString(),
+    teardownCompletedAtUtc: new Date(teardownCompletedMs).toISOString(),
     completedAtUtc: new Date(completedMs).toISOString(),
     installed: true,
     registered: true,
@@ -536,8 +556,8 @@ function buildReceipt(plan, authorization, observations) {
     zeroResidualRegistration: observations.every((item) => item.zeroResidualRegistration),
     zeroResidualCredential: observations.every((item) => item.zeroResidualCredential),
     zeroResidualWorkspace: observations.every((item) => item.zeroResidualWorkspace),
-    canCarryRealWork: true,
-    finalVerdict: FORGE_SHADOW_M3_EXECUTION_READY,
+    canCarryRealWork: false,
+    finalVerdict: FORGE_SHADOW_M3_EXECUTION_PROVEN,
     completedAt,
     proofRefs,
   };
@@ -554,7 +574,7 @@ export function validateForgeShadowM3RunnerRuntimeReceipt(receipt, {
   if (!exactKeys(receipt, RECEIPT_KEYS)) blockers.push('receipt-fields-invalid');
   if (receipt?.schemaVersion !== FORGE_SHADOW_M3_RUNTIME_RECEIPT_SCHEMA) blockers.push('receipt-schema-invalid');
   if (!SAFE_ID.test(text(receipt?.receiptId))) blockers.push('receipt-id-invalid');
-  if (receipt?.finalVerdict !== FORGE_SHADOW_M3_EXECUTION_READY) blockers.push('receipt-verdict-invalid');
+  if (receipt?.finalVerdict !== FORGE_SHADOW_M3_EXECUTION_PROVEN) blockers.push('receipt-verdict-invalid');
   if (expectedRepository && receipt?.repository !== expectedRepository) blockers.push('receipt-repository-mismatch');
   if (expectedHead && text(receipt?.sourceHead).toLowerCase() !== text(expectedHead).toLowerCase()) blockers.push('receipt-head-mismatch');
   if (expectedTree && text(receipt?.sourceTree).toLowerCase() !== text(expectedTree).toLowerCase()) blockers.push('receipt-tree-mismatch');
@@ -572,15 +592,15 @@ export function validateForgeShadowM3RunnerRuntimeReceipt(receipt, {
   for (const field of [
     'linuxReviewRunnerConnected', 'windowsProofRunnerConnected', 'teardownComplete',
     'zeroResidualRegistration', 'zeroResidualCredential', 'zeroResidualWorkspace',
-    'canCarryRealWork',
   ]) if (receipt?.[field] !== true) blockers.push(`receipt-runtime-proof-incomplete:${field}`);
+  if (receipt?.canCarryRealWork !== false) blockers.push('receipt-current-capacity-invalid');
   if (!safeProofRefs(receipt?.proofRefs, '', MAX_RECEIPT_PROOF_REFS)) blockers.push('receipt-proof-refs-invalid');
   if (!Number.isFinite(instant(receipt?.completedAt))) blockers.push('receipt-completion-time-invalid');
   const { payloadSha256, ...body } = receipt || {};
   if (!SHA256_HEX.test(text(payloadSha256).toLowerCase()) || sha256Hex(body) !== text(payloadSha256).toLowerCase()) blockers.push('receipt-content-digest-invalid');
   return Object.freeze({
     ok: blockers.length === 0,
-    finalVerdict: blockers.length === 0 ? FORGE_SHADOW_M3_EXECUTION_READY : FORGE_SHADOW_M3_EXECUTION_BLOCKED,
+    finalVerdict: blockers.length === 0 ? FORGE_SHADOW_M3_EXECUTION_PROVEN : FORGE_SHADOW_M3_EXECUTION_BLOCKED,
     blockers: Object.freeze(unique(blockers)),
     receipt: blockers.length === 0 ? receipt : null,
   });
@@ -849,7 +869,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   return Object.freeze({
     schemaVersion: FORGE_SHADOW_M3_EXECUTION_ADAPTER_SCHEMA,
     ok: true,
-    finalVerdict: FORGE_SHADOW_M3_EXECUTION_READY,
+    finalVerdict: FORGE_SHADOW_M3_EXECUTION_PROVEN,
     blockers: Object.freeze([]),
     runtimePlanDigest: planDigest,
     receipt,
