@@ -45,13 +45,14 @@ const fixedGitInvocationEstate = [
 
 const fixtures = Object.freeze({
   [WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[0]]: [
-    "[ValidateSet('Inspect', 'StartApprovedWorkerTask')]", "$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'", "$canonicalPowerShell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'", '$runtimeRestartPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot \'scripts\\windows\\restart-approved-stephanos-runtime.ps1\'))', "$publicRemote = 'https://github.com/Cheekyfellastef/stephan-os.git'", 'foreach ($requiredExecutable in @($canonicalGit, $canonicalPowerShell)) {}', fixedGitInvocationEstate, 'Test-Path -LiteralPath $runtimeRestartPath -PathType Leaf', fixedPowerShellInvocation, '$restartReceipt.exactHeadProofOk -eq $true', '$restartReceipt.proofFresh -eq $true',
+    "[ValidateSet('Inspect', 'StartApprovedWorkerTask')]", "$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'", "$canonicalPowerShell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'", '$runtimeRestartPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot \'scripts\\windows\\restart-approved-stephanos-runtime.ps1\'))', "$publicRemote = 'https://github.com/Cheekyfellastef/stephan-os.git'", 'function Test-CanonicalWorkerTaskAction {}', 'function ConvertFrom-WindowsCommandLine {}', 'function Test-CanonicalWorkerProcessCommandLine {}', 'foreach ($requiredExecutable in @($canonicalGit, $canonicalPowerShell)) {}', fixedGitInvocationEstate, 'Test-Path -LiteralPath $runtimeRestartPath -PathType Leaf', fixedPowerShellInvocation, '$restartReceipt.exactHeadProofOk -eq $true', '$restartReceipt.proofFresh -eq $true',
   ].join('\n'),
   [WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[1]]: [
-    "[ValidateSet('backend', 'mission-worker')]", "$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'", 'CANONICAL_TRACKED_SOURCE_DIRTY', "Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\'", 'CANONICAL_TRACKED_SOURCE_CHANGED_DURING_WORKER_START', "Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\' -ErrorAction SilentlyContinue", 'Get-VerifiedWorkerProcessFromHeartbeat', 'Stop-Process -Id $startedWorker.ProcessId', 'headSha -ne $ExpectedSourceHead', 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT',
+    'if (-not $git) { $git = Get-Command git }',
+    "[ValidateSet('backend', 'mission-worker')]", '$git = Get-Command git.exe', "$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'", 'function Stop-WithBlocker {}', 'function Get-CanonicalTaskPlan {}', 'function Wait-Until { param($Condition); if (& $Condition) {} }', 'function Test-BackendHealth {}', 'function Get-VerifiedBackendListener {}', 'function Read-FreshBackendReceipt {}', 'function Get-VerifiedWorkerProcessFromHeartbeat {}', 'function Read-FreshWorkerHeartbeat {}', '& $git.Source -C $repoRoot branch --show-current', '& $git.Source -C $repoRoot rev-parse HEAD', "@(& $canonicalGit -C $repoRoot status '--porcelain=v1' '--untracked-files=no')", 'CANONICAL_TRACKED_SOURCE_DIRTY', "Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\'", 'CANONICAL_TRACKED_SOURCE_CHANGED_DURING_WORKER_START', "Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\' -ErrorAction SilentlyContinue", 'Get-VerifiedWorkerProcessFromHeartbeat', 'Stop-Process -Id $startedWorker.ProcessId', "@(& $canonicalGit -C $repoRoot status '--porcelain=v1' '--untracked-files=no')", 'headSha -ne $ExpectedSourceHead', 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT',
   ].join('\n'),
   [WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[2]]: [
-    "$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'", "$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'", 'branch --show-current', "$branch -ne 'main'", "status '--porcelain=v1' '--untracked-files=no'", 'tracked-clean exact-head source', "ls-remote' '--exit-code' $publicRemote 'refs/heads/main'", 'exact current public main head', '& $canonicalNode $workerScript',
+    "$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'", "$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'", "$workerScript = Join-Path $repositoryRoot 'scripts\\mission-orchestrator-worker-supervised.mjs'", '@(& $canonicalGit -C $repositoryRoot branch --show-current)', "$branch -ne 'main'", '@(& $canonicalGit -C $repositoryRoot rev-parse HEAD)', "@(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no')", 'tracked-clean exact-head source', "@(& $canonicalGit 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main')", 'exact current public main head', '& $canonicalNode $workerScript',
   ].join('\n'),
 });
 
@@ -60,6 +61,10 @@ const codes = (result) => result.findings.map((item) => item.code);
 const withProbe = (probe) => Object.entries({
   ...fixtures,
   [WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[0]]: probe,
+}).map(([path, content]) => record(path, content));
+const withPath = (index, source) => Object.entries({
+  ...fixtures,
+  [WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[index]]: source,
 }).map(([path, content]) => record(path, content));
 
 test('owns exactly the three worker-watchdog authority paths and accepts their bounded contract', () => {
@@ -168,6 +173,7 @@ test('rejects malformed, interpolated or unsupported PowerShell lexical forms', 
     '<# unterminated',
     '@\'unsupported here string',
     '"$(& $canonicalPowerShell -Command $Command)"',
+    '"$(\')\' + (& $env:CALLER_COMMAND))"',
     '`',
   ]) {
     const result = review({ sources: withProbe(`${probe}\n${widened}`) });
@@ -221,9 +227,64 @@ test('accepts exactly one fixed reviewed PowerShell -File adapter invocation', (
   assert.match(probe, /'-File',\s*\$runtimeRestartPath/);
 });
 
+test('applies one positive execution estate to probe, restart adapter and launcher', () => {
+  const attacks = [
+    '& $env:CALLER_COMMAND',
+    '& $additionalTarget',
+    'Set-Variable -Name canonicalPowerShell -Value $env:CALLER_COMMAND',
+    'Set-Item variable:canonicalGit $env:CALLER_COMMAND',
+    'New-Variable -Name canonicalNode -Value $env:CALLER_COMMAND',
+    '$script:canonicalGit = $env:CALLER_COMMAND',
+    'Set-Alias approved $env:CALLER_COMMAND',
+    '$ExecutionContext.InvokeCommand.InvokeScript($env:CALLER_COMMAND)',
+    'Get-Variable canonicalGit | ForEach-Object { $_.Value = $env:CALLER_COMMAND }',
+    'cmd.exe /c $env:CALLER_COMMAND',
+  ];
+  for (let index = 0; index < WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1.length; index += 1) {
+    const original = fixtures[WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[index]];
+    for (const attack of attacks) {
+      const result = review({ sources: withPath(index, `${original}\n${attack}`) });
+      assert.ok(codes(result).includes('watchdog-powershell-execution-estate-invalid'), `${index}: ${attack}`);
+    }
+  }
+});
+
+test('rejects copied, cast, constructed and extra invocation routes in restart and launcher', () => {
+  for (const index of [1, 2]) {
+    const original = fixtures[WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[index]];
+    for (const attack of [
+      '$shell = [string]$canonicalPowerShell\n$mode = [string]::Concat(\'-\', \'Command\')\n& $shell $mode $Command',
+      '$copy = $canonicalNode\n& $copy $env:CALLER_SCRIPT',
+      '& ([string]$canonicalGit) $env:CALLER_ARGUMENTS',
+      'if ($false) { & $env:CALLER_COMMAND }',
+    ]) {
+      const result = review({ sources: withPath(index, `${original}\n${attack}`) });
+      assert.ok(codes(result).includes('watchdog-powershell-execution-estate-invalid'), `${index}: ${attack}`);
+    }
+    const bindingAttack = index === 1
+      ? '$canonicalGit = $env:CALLER_COMMAND'
+      : '$workerScript = $env:CALLER_SCRIPT';
+    const result = review({ sources: withPath(index, `${original}\n${bindingAttack}`) });
+    assert.ok(codes(result).includes('watchdog-powershell-execution-estate-invalid'), `${index}: ${bindingAttack}`);
+  }
+});
+
+test('rejects function wrappers, malformed syntax and mutation hidden beside inert text', () => {
+  const restart = fixtures[WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[1]];
+  for (const attack of [
+    'function Invoke-Caller { & $env:CALLER_COMMAND }',
+    "'unterminated",
+    '<# unterminated',
+    '"fixed invocation"\nSet-Variable -Name canonicalGit -Value $env:CALLER_COMMAND',
+  ]) {
+    const result = review({ sources: withPath(1, `${restart}\n${attack}`) });
+    assert.ok(codes(result).includes('watchdog-powershell-execution-estate-invalid'), attack);
+  }
+});
+
 test('top-level specialist pins and routes the watchdog reviewer before the legacy core', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
-  assert.match(source, /WORKER_WATCHDOG_BLOB_SHA = 'fc1e366d47d94e8f7152ebdc72e666e42807d889'/);
+  assert.match(source, /WORKER_WATCHDOG_BLOB_SHA = '6f1bcf124717e587acc2d6cf1736a7fc4a20913f'/);
   assert.ok(source.indexOf('analyzeWindowsAuthorityWorkerWatchdogReview') < source.indexOf('core.analyzeWindowsAuthoritySpecialistReview'));
 });
