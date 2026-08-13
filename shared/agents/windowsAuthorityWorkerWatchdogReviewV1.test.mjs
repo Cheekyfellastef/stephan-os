@@ -28,10 +28,24 @@ const fixedPowerShellInvocation = [
   ')',
   '$restartOutput = @(& $canonicalPowerShell @restartArguments 2>&1)',
 ].join('\n');
+const fixedGitInvocationEstate = [
+  'function Read-PublicMainHead {',
+  '  param([string]$GitExecutable)',
+  "  $output = @(& $GitExecutable 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>&1)",
+  '}',
+  '$remoteMainHead = Read-PublicMainHead -GitExecutable $canonicalGit',
+  "$repositoryBranchOutput = @(& $canonicalGit -C $repositoryRoot symbolic-ref --quiet --short HEAD 2>&1)",
+  "$repositoryHeadOutput = @(& $canonicalGit -C $repositoryRoot rev-parse --verify HEAD 2>&1)",
+  "$trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)",
+  '$remoteMainHeadAfterRestart = Read-PublicMainHead -GitExecutable $canonicalGit',
+  "$repositoryBranchAfterRestart = ([string](@(& $canonicalGit -C $repositoryRoot symbolic-ref --quiet --short HEAD 2>&1))[0]).Trim()",
+  "$repositoryHeadAfterRestart = ([string](@(& $canonicalGit -C $repositoryRoot rev-parse --verify HEAD 2>&1))[0]).Trim().ToLowerInvariant()",
+  "$trackedStatusAfterRestart = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)",
+].join('\n');
 
 const fixtures = Object.freeze({
   [WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[0]]: [
-    "[ValidateSet('Inspect', 'StartApprovedWorkerTask')]", "$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'", "$canonicalPowerShell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'", "$publicRemote = 'https://github.com/Cheekyfellastef/stephan-os.git'", "status '--porcelain=v1' '--untracked-files=no'", '$trackedStatusAfterRestart', fixedPowerShellInvocation, '$restartReceipt.exactHeadProofOk -eq $true', '$restartReceipt.proofFresh -eq $true',
+    "[ValidateSet('Inspect', 'StartApprovedWorkerTask')]", "$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'", "$canonicalPowerShell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'", '$runtimeRestartPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot \'scripts\\windows\\restart-approved-stephanos-runtime.ps1\'))', "$publicRemote = 'https://github.com/Cheekyfellastef/stephan-os.git'", 'foreach ($requiredExecutable in @($canonicalGit, $canonicalPowerShell)) {}', fixedGitInvocationEstate, 'Test-Path -LiteralPath $runtimeRestartPath -PathType Leaf', fixedPowerShellInvocation, '$restartReceipt.exactHeadProofOk -eq $true', '$restartReceipt.proofFresh -eq $true',
   ].join('\n'),
   [WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[1]]: [
     "[ValidateSet('backend', 'mission-worker')]", "$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'", 'CANONICAL_TRACKED_SOURCE_DIRTY', "Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\'", 'CANONICAL_TRACKED_SOURCE_CHANGED_DURING_WORKER_START', "Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\' -ErrorAction SilentlyContinue", 'Get-VerifiedWorkerProcessFromHeartbeat', 'Stop-Process -Id $startedWorker.ProcessId', 'headSha -ne $ExpectedSourceHead', 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT',
@@ -100,6 +114,15 @@ test('rejects caller-controlled PowerShell command and script-block execution', 
     'param([scriptblock]$Action)\n& $Action',
     "$switch = '-' + 'Command'\n& $canonicalPowerShell $switch $Command",
     '$shell = $canonicalPowerShell\n& $shell $Command',
+    "param([string]$Command)\n$shell = [string]$canonicalPowerShell\n$mode = [string]::Concat('-', 'Command')\n& $shell $mode $Command",
+    '$copy = $canonicalPowerShell\n$alias = [string]$copy\n& $alias $Command',
+    '& ([string]$canonicalPowerShell) -Command $Command',
+    '. $canonicalPowerShell -Command $Command',
+    'Set-Alias -Name approved -Value $canonicalPowerShell\napproved -Command $Command',
+    'iex $Command',
+    'icm $Action',
+    '[System.Diagnostics.Process]::Start($Command)',
+    '(New-Object -ComObject WScript.Shell).Run($Command)',
   ]) {
     const result = review({ sources: withProbe(`${probe}\n${widened}`) });
     assert.ok(
@@ -123,6 +146,73 @@ test('required literals in comments or dead code cannot conceal widened executio
   }
 });
 
+test('rejects every executable call-operator addition outside the fixed invocation estate', () => {
+  const probe = fixtures[WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[0]];
+  for (const widened of [
+    '& $canonicalGit --version',
+    '& $GitExecutable --version',
+    '& $runtimeRestartPath',
+    '& ${canonicalPowerShell} -File $runtimeRestartPath',
+    '& "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command $Command',
+  ]) {
+    const result = review({ sources: withProbe(`${probe}\n${widened}`) });
+    assert.ok(codes(result).includes('watchdog-probe-powershell-execution-widened'), widened);
+  }
+});
+
+test('rejects malformed, interpolated or unsupported PowerShell lexical forms', () => {
+  const probe = fixtures[WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[0]];
+  for (const widened of [
+    "'unterminated",
+    '"unterminated',
+    '<# unterminated',
+    '@\'unsupported here string',
+    '"$(& $canonicalPowerShell -Command $Command)"',
+    '`',
+  ]) {
+    const result = review({ sources: withProbe(`${probe}\n${widened}`) });
+    assert.ok(codes(result).includes('watchdog-probe-powershell-execution-widened'), widened);
+  }
+});
+
+test('accepts inert single-quoted here strings but rejects expandable here strings', () => {
+  const probe = fixtures[WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[0]];
+  const inert = `${probe}\n$definition = @'\nliteral C# & $notExecutable\n'@`;
+  assert.equal(review({ sources: withProbe(inert) }).clean, true);
+  const expandable = `${probe}\n$definition = @\"\n$(& $canonicalPowerShell -Command $Command)\n\"@`;
+  assert.ok(codes(review({ sources: withProbe(expandable) })).includes('watchdog-probe-powershell-execution-widened'));
+});
+
+test('rejects reassignment or mutation of fixed executable and argument bindings', () => {
+  const probe = fixtures[WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[0]];
+  for (const widened of [
+    '$canonicalGit = $canonicalPowerShell',
+    '$canonicalPowerShell = $canonicalGit',
+    '$runtimeRestartPath = $Command',
+    '$restartArguments += $Command',
+    '$restartArguments = @($Command)',
+    '$GitExecutable = $canonicalPowerShell',
+    'Read-PublicMainHead -GitExecutable $canonicalPowerShell',
+  ]) {
+    const result = review({ sources: withProbe(`${probe}\n${widened}`) });
+    assert.ok(codes(result).includes('watchdog-probe-powershell-execution-widened'), widened);
+  }
+});
+
+test('rejects rewiring any fixed call while preserving raw variable counts', () => {
+  const probe = fixtures[WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[0]];
+  for (const changed of [
+    probe.replace("@($canonicalGit, $canonicalPowerShell)", '@($canonicalPowerShell, $canonicalGit)'),
+    probe.replace("symbolic-ref --quiet --short HEAD", 'rev-parse --verify $Command'),
+    probe.replace("status '--porcelain=v1' '--untracked-files=no'", 'status $Command'),
+    probe.replace("'scripts\\windows\\restart-approved-stephanos-runtime.ps1'", '$Command'),
+    probe.replace('Test-Path -LiteralPath $runtimeRestartPath -PathType Leaf', 'Test-Path -LiteralPath $Command -PathType Leaf'),
+  ]) {
+    const result = review({ sources: withProbe(changed) });
+    assert.ok(codes(result).includes('watchdog-probe-powershell-execution-widened'));
+  }
+});
+
 test('accepts exactly one fixed reviewed PowerShell -File adapter invocation', () => {
   const probe = fixtures[WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[0]];
   const result = review({ sources: withProbe(probe) });
@@ -134,6 +224,6 @@ test('accepts exactly one fixed reviewed PowerShell -File adapter invocation', (
 test('top-level specialist pins and routes the watchdog reviewer before the legacy core', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
-  assert.match(source, /WORKER_WATCHDOG_BLOB_SHA = '7fe830d1e8b1fdfc01b98c4f68a3ceb8404930d7'/);
+  assert.match(source, /WORKER_WATCHDOG_BLOB_SHA = 'fc1e366d47d94e8f7152ebdc72e666e42807d889'/);
   assert.ok(source.indexOf('analyzeWindowsAuthorityWorkerWatchdogReview') < source.indexOf('core.analyzeWindowsAuthoritySpecialistReview'));
 });
