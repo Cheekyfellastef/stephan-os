@@ -10,7 +10,7 @@ import {
 const repository = 'Cheekyfellastef/stephan-os';
 const prNumber = 1732;
 const branch = 'agent/watchdog-control-plane-bootstrap-recovery-v1';
-const head = '707f7db9964b5e100aab21d6735108a4c5e53457';
+const head = 'a552b13c0a3e6a338d21e8d395dfcf12d12a3475';
 const blob = (content) => { const bytes = Buffer.from(content); return createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'); };
 const record = (path, content) => ({ schemaVersion: 'stephanos.windows-authority-source.v1', repository, path, ref: head, exists: true, size: Buffer.byteLength(content), blobSha: blob(content), content });
 const analysis = { findings: WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1.map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })) };
@@ -101,6 +101,7 @@ test('jointly binds the exact independently supplied PR identity and prepared so
     { prNumber: '1732' },
     { branch: 'agent/watchdog-control-plane-bootstrap-recovery-v2' },
     { sourceHead: 'a'.repeat(40) },
+    { sourceHead: '707f7db9964b5e100aab21d6735108a4c5e53457' },
     { sourceHead: 'a840305054393a8bd50966d2c3b500e0b4816bfb' },
     { sourceHead: 'bdae956a7e6e448c67728aea53d3d6e77ff4d61f' },
   ];
@@ -482,6 +483,6 @@ test('rejects widened source records and provides no alternate manifest identity
 test('top-level specialist pins and routes the watchdog reviewer before the legacy core', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
-  assert.match(source, /WORKER_WATCHDOG_BLOB_SHA = '8b7ed1328af57cf00792dc4ce2ecc03bf43e9c7a'/);
+  assert.match(source, /WORKER_WATCHDOG_BLOB_SHA = '755d80360b9ae55877c3aba880b446ba1e4e4764'/);
   assert.ok(source.indexOf('analyzeWindowsAuthorityWorkerWatchdogReview') < source.indexOf('core.analyzeWindowsAuthoritySpecialistReview'));
 });

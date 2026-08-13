@@ -14,7 +14,7 @@ const REVIEWED_IDENTITY = Object.freeze({
   repository: 'Cheekyfellastef/stephan-os',
   prNumber: 1732,
   branch: 'agent/watchdog-control-plane-bootstrap-recovery-v1',
-  sourceHead: '707f7db9964b5e100aab21d6735108a4c5e53457',
+  sourceHead: 'a552b13c0a3e6a338d21e8d395dfcf12d12a3475',
 });
 const REVIEWED_SOURCE_MANIFEST = Object.freeze({
   'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1': Object.freeze({
