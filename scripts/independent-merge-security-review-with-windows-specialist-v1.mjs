@@ -58,7 +58,9 @@ function counts(findings) {
 async function githubJson(path, maxBytes = WINDOWS_AUTHORITY_SOURCE_MAX_BYTES * 2) {
   const token = text(process.env.GH_TOKEN || process.env.GITHUB_TOKEN);
   if (!token) throw new Error('GitHub token is required for specialist exact-head source retrieval.');
-  const response = await fetch(`https://api.github.com${path}`, {
+  const url = `https://api.github.com${path}`;
+  const response = await fetch(url, {
+    redirect: 'error',
     headers: {
       Accept: 'application/vnd.github+json',
       Authorization: `Bearer ${token}`,
@@ -66,6 +68,7 @@ async function githubJson(path, maxBytes = WINDOWS_AUTHORITY_SOURCE_MAX_BYTES * 
       'User-Agent': USER_AGENT,
     },
   });
+  if (response.url !== url) throw new Error('GitHub specialist read response URL did not remain exact.');
   const bytes = Buffer.from(await response.arrayBuffer());
   if (bytes.length > maxBytes) throw new Error(`GitHub response exceeded ${maxBytes} bytes.`);
   const raw = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -114,6 +117,39 @@ async function exactHeadSource(repository, path, sourceHead) {
   });
 }
 
+async function exactReconciliationLineage(repository, sourceHead, baseSha) {
+  const [owner, repo] = repository.split('/');
+  const liveMainBefore = await githubJson(`/repos/${owner}/${repo}/git/ref/heads/main`, 65_536);
+  const [sourceCommit, comparison] = await Promise.all([
+    githubJson(`/repos/${owner}/${repo}/git/commits/${encodeURIComponent(sourceHead)}`, 65_536),
+    githubJson(
+      `/repos/${owner}/${repo}/compare/${encodeURIComponent(baseSha)}...${encodeURIComponent(sourceHead)}`,
+      2 * 1024 * 1024,
+    ),
+  ]);
+  const liveMainAfter = await githubJson(`/repos/${owner}/${repo}/git/ref/heads/main`, 65_536);
+  const parents = Array.isArray(sourceCommit?.parents)
+    ? sourceCommit.parents.map((parent) => text(parent?.sha).toLowerCase())
+    : [];
+  return Object.freeze({
+    schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1',
+    repository,
+    sourceHead,
+    sourceCommitSha: text(sourceCommit?.sha).toLowerCase(),
+    baseSha,
+    liveMainBeforeSha: text(liveMainBefore?.object?.sha).toLowerCase(),
+    liveMainAfterSha: text(liveMainAfter?.object?.sha).toLowerCase(),
+    parents: Object.freeze(parents),
+    comparison: Object.freeze({
+      status: text(comparison?.status).toLowerCase(),
+      aheadBy: comparison?.ahead_by,
+      behindBy: comparison?.behind_by,
+      baseCommitSha: text(comparison?.base_commit?.sha).toLowerCase(),
+      mergeBaseCommitSha: text(comparison?.merge_base_commit?.sha).toLowerCase(),
+    }),
+  });
+}
+
 function validateFindingsArtifact(artifact) {
   if (artifact?.schemaVersion !== 'stephanos.independent-review-findings-artifact.v1'
     || artifact?.kind !== 'stephanos.independent-review.findings-artifact'
@@ -148,16 +184,21 @@ async function main() {
   const artifact = validateFindingsArtifact(JSON.parse(fs.readFileSync(artifactPath, 'utf8')));
   const findings = Array.isArray(artifact?.analysis?.findings) ? artifact.analysis.findings : [];
   const paths = unique(findings.map((item) => text(item?.path)).filter(Boolean));
-  const sources = await Promise.all(paths.map((path) => exactHeadSource(
-    artifact.repository,
-    path,
-    artifact.sourceHead,
-  )));
+  const [sources, lineageEvidence] = await Promise.all([
+    Promise.all(paths.map((path) => exactHeadSource(
+      artifact.repository,
+      path,
+      artifact.sourceHead,
+    ))),
+    exactReconciliationLineage(artifact.repository, artifact.sourceHead, artifact.baseSha),
+  ]);
   const specialist = analyzeWindowsAuthoritySpecialistReview({
     repository: artifact.repository,
     prNumber: artifact.prNumber,
     branch: artifact.branch,
     sourceHead: artifact.sourceHead,
+    baseSha: artifact.baseSha,
+    lineageEvidence,
     analysis: artifact.analysis,
     sources,
   });
