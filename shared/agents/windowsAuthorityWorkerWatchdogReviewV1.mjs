@@ -10,6 +10,12 @@ const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
 const SOURCE_SCHEMA = 'stephanos.windows-authority-source.v1';
 const SHA = /^[a-f0-9]{40}$/;
 const MAX_SOURCE_BYTES = 256 * 1024;
+const REVIEWED_IDENTITY = Object.freeze({
+  repository: 'Cheekyfellastef/stephan-os',
+  prNumber: 1732,
+  branch: 'agent/watchdog-control-plane-bootstrap-recovery-v1',
+  sourceHead: '707f7db9964b5e100aab21d6735108a4c5e53457',
+});
 const REVIEWED_SOURCE_MANIFEST = Object.freeze({
   'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1': Object.freeze({
     blobSha: '4167e76e0b79d3986712b590c6fe49fe9bb3ba85',
@@ -105,6 +111,24 @@ function exactReviewedSource(source, path) {
   return Boolean(expected
     && source.size === expected.size
     && source.blobSha === expected.blobSha);
+}
+
+function exactReviewedIdentity(input) {
+  try {
+    return Boolean(input
+      && typeof input === 'object'
+      && !Array.isArray(input)
+      && typeof input.repository === 'string'
+      && input.repository === REVIEWED_IDENTITY.repository
+      && Number.isSafeInteger(input.prNumber)
+      && input.prNumber === REVIEWED_IDENTITY.prNumber
+      && typeof input.branch === 'string'
+      && input.branch === REVIEWED_IDENTITY.branch
+      && typeof input.sourceHead === 'string'
+      && input.sourceHead === REVIEWED_IDENTITY.sourceHead);
+  } catch {
+    return false;
+  }
 }
 
 function exactSourceEstate(sources) {
@@ -476,15 +500,22 @@ function reviewLauncher(source, path, findings) {
 }
 
 export function analyzeWindowsAuthorityWorkerWatchdogReview(input = {}) {
-  const repository = text(input.repository);
-  const sourceHead = text(input.sourceHead).toLowerCase();
   const paths = escalationPaths(input.analysis);
-  if (repository !== 'Cheekyfellastef/stephan-os' || !SHA.test(sourceHead) || paths.length === 0) {
+  if (paths.length === 0) {
     return Object.freeze({ schemaVersion: SCHEMA, eligible: false, clean: false, reviewedPaths: Object.freeze([]), findings: Object.freeze([]), proofRefs: Object.freeze([]), finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_NOT_APPLICABLE' });
   }
 
+  const repository = typeof input.repository === 'string' ? input.repository : '';
+  const sourceHead = typeof input.sourceHead === 'string' ? input.sourceHead : '';
   const findings = [];
   const proofRefs = [];
+  if (!exactReviewedIdentity(input)) {
+    findings.push(finding(
+      'windows-authority-reviewed-identity-mismatch',
+      'Specialist review requires the exact independently supplied repository, PR, branch and prepared source head.',
+      '',
+    ));
+  }
   const sources = input.sources;
   const sourceEstateExact = exactSourceEstate(sources);
   if (!sourceEstateExact) {
