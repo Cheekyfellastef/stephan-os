@@ -14,8 +14,17 @@ const REVIEWED_IDENTITY = Object.freeze({
   repository: 'Cheekyfellastef/stephan-os',
   prNumber: 1732,
   branch: 'agent/watchdog-control-plane-bootstrap-recovery-v1',
-  sourceHead: 'a552b13c0a3e6a338d21e8d395dfcf12d12a3475',
 });
+const REVIEWED_LINEAGE_ANCHOR = 'a552b13c0a3e6a338d21e8d395dfcf12d12a3475';
+const SUPERSEDED_PUBLISHED_HEAD = '707f7db9964b5e100aab21d6735108a4c5e53457';
+const LINEAGE_SCHEMA = 'stephanos.windows-authority-reconciliation-lineage.v1';
+const LINEAGE_KEYS = Object.freeze([
+  'baseSha', 'comparison', 'liveMainAfterSha', 'liveMainBeforeSha', 'parents',
+  'repository', 'schemaVersion', 'sourceCommitSha', 'sourceHead',
+]);
+const COMPARISON_KEYS = Object.freeze([
+  'aheadBy', 'baseCommitSha', 'behindBy', 'mergeBaseCommitSha', 'status',
+]);
 const REVIEWED_SOURCE_MANIFEST = Object.freeze({
   'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1': Object.freeze({
     blobSha: '4167e76e0b79d3986712b590c6fe49fe9bb3ba85',
@@ -123,9 +132,67 @@ function exactReviewedIdentity(input) {
       && Number.isSafeInteger(input.prNumber)
       && input.prNumber === REVIEWED_IDENTITY.prNumber
       && typeof input.branch === 'string'
-      && input.branch === REVIEWED_IDENTITY.branch
-      && typeof input.sourceHead === 'string'
-      && input.sourceHead === REVIEWED_IDENTITY.sourceHead);
+      && input.branch === REVIEWED_IDENTITY.branch);
+  } catch {
+    return false;
+  }
+}
+
+function exactDataRecord(value, expectedKeys) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.getPrototypeOf(value) !== Object.prototype) return false;
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key !== 'string') || keys.length !== expectedKeys.length) return false;
+  const sorted = keys.map(String).sort();
+  if (sorted.some((key, index) => key !== expectedKeys[index])) return false;
+  return keys.every((key) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && Object.hasOwn(descriptor, 'value') && descriptor.enumerable === true;
+  });
+}
+
+function exactParentEstate(parents) {
+  if (!Array.isArray(parents) || parents.length !== 2) return false;
+  const keys = Reflect.ownKeys(parents).map(String);
+  if (keys.length !== 3 || keys[0] !== '0' || keys[1] !== '1' || keys[2] !== 'length') return false;
+  const first = Object.getOwnPropertyDescriptor(parents, '0');
+  const second = Object.getOwnPropertyDescriptor(parents, '1');
+  const length = Object.getOwnPropertyDescriptor(parents, 'length');
+  return Boolean(first && second && length
+    && Object.hasOwn(first, 'value') && Object.hasOwn(second, 'value') && Object.hasOwn(length, 'value')
+    && first.enumerable === true && second.enumerable === true && length.value === 2
+    && typeof first.value === 'string' && SHA.test(first.value)
+    && typeof second.value === 'string' && SHA.test(second.value));
+}
+
+function exactReviewedLineage(input) {
+  try {
+    const sourceHead = typeof input.sourceHead === 'string' ? input.sourceHead : '';
+    const baseSha = typeof input.baseSha === 'string' ? input.baseSha : '';
+    const lineage = input.lineageEvidence;
+    if (!SHA.test(sourceHead) || !SHA.test(baseSha)
+      || sourceHead === REVIEWED_LINEAGE_ANCHOR
+      || sourceHead === SUPERSEDED_PUBLISHED_HEAD
+      || sourceHead === baseSha
+      || !exactDataRecord(lineage, LINEAGE_KEYS)
+      || lineage.schemaVersion !== LINEAGE_SCHEMA
+      || lineage.repository !== REVIEWED_IDENTITY.repository
+      || lineage.sourceHead !== sourceHead
+      || lineage.sourceCommitSha !== sourceHead
+      || lineage.baseSha !== baseSha
+      || lineage.liveMainBeforeSha !== baseSha
+      || lineage.liveMainAfterSha !== baseSha
+      || !exactParentEstate(lineage.parents)
+      || lineage.parents[0] !== REVIEWED_LINEAGE_ANCHOR
+      || lineage.parents[1] !== baseSha
+      || !exactDataRecord(lineage.comparison, COMPARISON_KEYS)) return false;
+    const comparison = lineage.comparison;
+    return comparison.status === 'ahead'
+      && Number.isSafeInteger(comparison.aheadBy)
+      && comparison.aheadBy >= 1
+      && comparison.behindBy === 0
+      && comparison.baseCommitSha === baseSha
+      && comparison.mergeBaseCommitSha === baseSha;
   } catch {
     return false;
   }
@@ -513,6 +580,13 @@ export function analyzeWindowsAuthorityWorkerWatchdogReview(input = {}) {
     findings.push(finding(
       'windows-authority-reviewed-identity-mismatch',
       'Specialist review requires the exact independently supplied repository, PR, branch and prepared source head.',
+      '',
+    ));
+  }
+  if (!exactReviewedLineage(input)) {
+    findings.push(finding(
+      'windows-authority-reviewed-lineage-mismatch',
+      'Specialist review requires one independently verified exact-current-main reconciliation from the reviewed repair lineage anchor.',
       '',
     ));
   }

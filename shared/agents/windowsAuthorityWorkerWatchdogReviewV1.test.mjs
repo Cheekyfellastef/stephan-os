@@ -10,7 +10,28 @@ import {
 const repository = 'Cheekyfellastef/stephan-os';
 const prNumber = 1732;
 const branch = 'agent/watchdog-control-plane-bootstrap-recovery-v1';
-const head = 'a552b13c0a3e6a338d21e8d395dfcf12d12a3475';
+const anchor = 'a552b13c0a3e6a338d21e8d395dfcf12d12a3475';
+const oldHead = '707f7db9964b5e100aab21d6735108a4c5e53457';
+const head = 'f'.repeat(40);
+const baseSha = 'e'.repeat(40);
+const lineage = (overrides = {}) => ({
+  schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1',
+  repository,
+  sourceHead: head,
+  sourceCommitSha: head,
+  baseSha,
+  liveMainBeforeSha: baseSha,
+  liveMainAfterSha: baseSha,
+  parents: [anchor, baseSha],
+  comparison: {
+    status: 'ahead',
+    aheadBy: 2,
+    behindBy: 0,
+    baseCommitSha: baseSha,
+    mergeBaseCommitSha: baseSha,
+  },
+  ...overrides,
+});
 const blob = (content) => { const bytes = Buffer.from(content); return createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'); };
 const record = (path, content) => ({ schemaVersion: 'stephanos.windows-authority-source.v1', repository, path, ref: head, exists: true, size: Buffer.byteLength(content), blobSha: blob(content), content });
 const analysis = { findings: WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1.map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })) };
@@ -71,7 +92,7 @@ const supersededFixtures = Object.freeze({
   'scripts/windows/restart-approved-stephanos-runtime.ps1': canonicalSource('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'),
 });
 
-const review = (overrides = {}) => analyzeWindowsAuthorityWorkerWatchdogReview({ repository, prNumber, branch, sourceHead: head, analysis, sources: Object.entries(fixtures).map(([path, content]) => record(path, content)), ...overrides });
+const review = (overrides = {}) => analyzeWindowsAuthorityWorkerWatchdogReview({ repository, prNumber, branch, sourceHead: head, baseSha, lineageEvidence: lineage(), analysis, sources: Object.entries(fixtures).map(([path, content]) => record(path, content)), ...overrides });
 const codes = (result) => result.findings.map((item) => item.code);
 const withProbe = (probe) => Object.entries({
   ...fixtures,
@@ -100,10 +121,6 @@ test('jointly binds the exact independently supplied PR identity and prepared so
     { prNumber: 1731 },
     { prNumber: '1732' },
     { branch: 'agent/watchdog-control-plane-bootstrap-recovery-v2' },
-    { sourceHead: 'a'.repeat(40) },
-    { sourceHead: '707f7db9964b5e100aab21d6735108a4c5e53457' },
-    { sourceHead: 'a840305054393a8bd50966d2c3b500e0b4816bfb' },
-    { sourceHead: 'bdae956a7e6e448c67728aea53d3d6e77ff4d61f' },
   ];
   for (const mismatch of mismatches) {
     const result = review(mismatch);
@@ -119,7 +136,6 @@ test('missing, coerced or caller-manufactured identity values fail closed withou
     { branch: undefined },
     { repository: new String(repository) },
     { branch: new String(branch) },
-    { sourceHead: { toString: () => head } },
   ];
   for (const candidate of cases) {
     const result = review(candidate);
@@ -138,9 +154,61 @@ test('identity and exact content are jointly required and cannot override one an
   assert.equal(changedContent.clean, false);
   assert.ok(codes(changedContent).includes('windows-authority-source-not-reviewed'));
 
-  const changedIdentity = review({ sourceHead: 'a'.repeat(40) });
+  const changedIdentity = review({ repository: 'Cheekyfellastef/other-repository' });
   assert.equal(changedIdentity.clean, false);
   assert.ok(codes(changedIdentity).includes('windows-authority-reviewed-identity-mismatch'));
+});
+
+test('admits only one exact current-main reconciliation from the reviewed lineage anchor', () => {
+  assert.equal(review().clean, true);
+  const invalid = [
+    { sourceHead: oldHead, lineageEvidence: lineage({ sourceHead: oldHead, sourceCommitSha: oldHead }) },
+    { sourceHead: anchor, lineageEvidence: lineage({ sourceHead: anchor, sourceCommitSha: anchor }) },
+    { lineageEvidence: lineage({ parents: [baseSha, anchor] }) },
+    { lineageEvidence: lineage({ parents: [anchor] }) },
+    { lineageEvidence: lineage({ parents: [anchor, baseSha, 'd'.repeat(40)] }) },
+    { lineageEvidence: lineage({ parents: ['d'.repeat(40), baseSha] }) },
+    { lineageEvidence: lineage({ parents: [anchor, 'd'.repeat(40)] }) },
+    { lineageEvidence: lineage({ liveMainBeforeSha: 'd'.repeat(40) }) },
+    { lineageEvidence: lineage({ liveMainAfterSha: 'd'.repeat(40) }) },
+    { lineageEvidence: lineage({ sourceCommitSha: 'd'.repeat(40) }) },
+    { lineageEvidence: lineage({ comparison: { ...lineage().comparison, status: 'diverged' } }) },
+    { lineageEvidence: lineage({ comparison: { ...lineage().comparison, behindBy: 1 } }) },
+    { lineageEvidence: lineage({ comparison: { ...lineage().comparison, baseCommitSha: 'd'.repeat(40) } }) },
+    { lineageEvidence: lineage({ comparison: { ...lineage().comparison, mergeBaseCommitSha: 'd'.repeat(40) } }) },
+  ];
+  for (const candidate of invalid) {
+    const result = review(candidate);
+    assert.equal(result.eligible, true);
+    assert.equal(result.clean, false);
+    assert.ok(codes(result).includes('windows-authority-reviewed-lineage-mismatch'));
+  }
+});
+
+test('lineage, immutable identity and exact source content are jointly mandatory', () => {
+  const mismatches = [
+    { repository: 'Cheekyfellastef/other-repository' },
+    { prNumber: 1731 },
+    { branch: 'agent/other' },
+    { baseSha: 'd'.repeat(40) },
+    { sourceHead: 'c'.repeat(40) },
+    { lineageEvidence: lineage({ repository: 'Cheekyfellastef/other-repository' }) },
+    { lineageEvidence: lineage({ sourceHead: 'c'.repeat(40) }) },
+    { lineageEvidence: lineage({ baseSha: 'd'.repeat(40) }) },
+  ];
+  for (const mismatch of mismatches) {
+    const result = review(mismatch);
+    assert.equal(result.clean, false);
+    assert.ok(codes(result).includes('windows-authority-reviewed-identity-mismatch')
+      || codes(result).includes('windows-authority-reviewed-lineage-mismatch'));
+  }
+  const changedSources = Object.entries(fixtures).map(([path, content]) => record(path, content));
+  changedSources[0].content += '\n# changed';
+  changedSources[0].size = Buffer.byteLength(changedSources[0].content);
+  changedSources[0].blobSha = blob(changedSources[0].content);
+  const changed = review({ sources: changedSources });
+  assert.equal(changed.clean, false);
+  assert.ok(codes(changed).includes('windows-authority-source-not-reviewed'));
 });
 
 test('rejects partial, widened or non-watchdog escalation estates', () => {
@@ -483,6 +551,6 @@ test('rejects widened source records and provides no alternate manifest identity
 test('top-level specialist pins and routes the watchdog reviewer before the legacy core', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
-  assert.match(source, /WORKER_WATCHDOG_BLOB_SHA = '755d80360b9ae55877c3aba880b446ba1e4e4764'/);
+  assert.match(source, /WORKER_WATCHDOG_BLOB_SHA = 'f050ae09a3c423051ba680be25ed9b56884ca51f'/);
   assert.ok(source.indexOf('analyzeWindowsAuthorityWorkerWatchdogReview') < source.indexOf('core.analyzeWindowsAuthoritySpecialistReview'));
 });
