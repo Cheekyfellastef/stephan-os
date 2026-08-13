@@ -81,9 +81,15 @@ function exactHeadRestartProof(headSha, terminatedVerifiedOwnedProcess = false) 
     restarted: true,
     taskName: APPROVED_WORKER_TASK,
     sourceHead: headSha,
+    remoteMainHead: headSha,
     exactHeadProofOk: true,
+    postStartSourceProofOk: true,
     sourceTrackedClean: true,
     proofFresh: true,
+    startedWorkerPid: 1291,
+    workerStartedAtUtc: '2026-08-12T20:00:01.000Z',
+    cleanupAttempted: false,
+    cleanupCompleted: false,
     terminatedVerifiedOwnedProcess,
     restartVerdict: 'APPROVED_RUNTIME_RESTART_PASS',
   };
@@ -342,6 +348,39 @@ test('restart without a fresh exact-head adapter receipt fails closed', async ()
     assert.equal(status.restartProofFresh, false);
     assert.equal(status.restartSourceHead, '');
   });
+});
+
+test('restart proof cannot claim success without post-start source and cleanup truth', async () => {
+  const mutations = [
+    (proof) => { proof.remoteMainHead = 'b'.repeat(40); },
+    (proof) => { proof.postStartSourceProofOk = false; },
+    (proof) => { proof.startedWorkerPid = 0; },
+    (proof) => { proof.workerStartedAtUtc = 'not-a-timestamp'; },
+    (proof) => { proof.cleanupAttempted = true; },
+    (proof) => { proof.cleanupCompleted = true; },
+  ];
+  for (const mutate of mutations) {
+    await withFixture(async ({ paths }) => {
+      const proof = exactHeadRestartProof('a'.repeat(40));
+      mutate(proof);
+      const probeAdapter = {
+        run(mode) {
+          return mode === 'Inspect'
+            ? { ok: true, data: workerObservation({ paths, healthy: false }) }
+            : { ok: true, data: proof };
+        },
+      };
+      const result = await runBattleBridgeWorkerWatchdog({
+        paths,
+        expectedPaths: paths,
+        probeAdapter,
+        now: new Date('2026-08-12T20:00:00.000Z'),
+        sleep: async () => {},
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.classification, 'WORKER_WATCHDOG_START_FAILED');
+    });
+  }
 });
 
 test('fixed probe adapter uses one script, two modes, no shell and hidden PowerShell', () => {

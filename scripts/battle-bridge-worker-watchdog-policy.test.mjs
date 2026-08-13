@@ -229,11 +229,9 @@ test('Windows probe binds repository truth to fixed read-only git commands', () 
   assert.match(PROBE_SCRIPT, /-C \$repositoryRoot symbolic-ref --quiet --short HEAD/);
   assert.match(PROBE_SCRIPT, /-C \$repositoryRoot rev-parse --verify HEAD/);
   assert.match(PROBE_SCRIPT, /status '--porcelain=v1' '--untracked-files=no'/);
-  assert.match(PROBE_SCRIPT, /\$trackedStatusAfterRestart\.Count -ne 0/);
   assert.match(PROBE_SCRIPT, /https:\/\/github\.com\/Cheekyfellastef\/stephan-os\.git/);
   assert.match(PROBE_SCRIPT, /& \$GitExecutable 'ls-remote' '--exit-code' \$publicRemote 'refs\/heads\/main'/);
   assert.match(PROBE_SCRIPT, /\$repositoryHead -ne \$remoteMainHead/);
-  assert.match(PROBE_SCRIPT, /\$remoteMainHeadAfterRestart -ne \$remoteMainHead/);
   assert.match(PROBE_SCRIPT, /repositoryRoot = \$repositoryRoot/);
   assert.match(PROBE_SCRIPT, /headSha = \$repositoryHead/);
   assert.match(PROBE_SCRIPT, /remoteMainHeadSha = \$remoteMainHead/);
@@ -246,6 +244,13 @@ test('Windows probe binds repository truth to fixed read-only git commands', () 
   assert.match(PROBE_SCRIPT, /stephanos\.approved-runtime-restart\.v1/);
   assert.match(PROBE_SCRIPT, /APPROVED_RUNTIME_RESTART_PASS/);
   assert.match(PROBE_SCRIPT, /terminatedVerifiedOwnedProcess/);
+  assert.match(PROBE_SCRIPT, /\[string\]\$restartReceipt\.publicMainHead -eq \$repositoryHead/);
+  assert.match(PROBE_SCRIPT, /\$restartReceipt\.postStartSourceProofOk -eq \$true/);
+  assert.match(PROBE_SCRIPT, /\$restartReceipt\.sourceTrackedClean -eq \$true/);
+  assert.match(PROBE_SCRIPT, /\$restartReceipt\.cleanupAttempted -eq \$false/);
+  assert.match(PROBE_SCRIPT, /\$restartReceipt\.cleanupCompleted -eq \$false/);
+  assert.match(PROBE_SCRIPT, /\$restartStartedWorkerPid -gt 0/);
+  assert.doesNotMatch(PROBE_SCRIPT, /trackedStatusAfterRestart|remoteMainHeadAfterRestart|repositoryHeadAfterRestart|repositoryBranchAfterRestart/);
   assert.doesNotMatch(PROBE_SCRIPT, /Stop-ScheduledTask|Stop-Process/);
   assert.doesNotMatch(PROBE_SCRIPT, /Invoke-Expression|Start-Process/);
 });

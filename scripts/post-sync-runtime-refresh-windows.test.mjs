@@ -5,6 +5,32 @@ import { readFile } from 'node:fs/promises';
 const restartSource = await readFile(new URL('./windows/restart-approved-stephanos-runtime.ps1', import.meta.url), 'utf8');
 const backendStartSource = await readFile(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
 
+function canonicalRestartGitBoundary(source) {
+  return source.includes("$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'")
+    && source.includes('Test-Path -LiteralPath $canonicalGit -PathType Leaf')
+    && source.includes('Get-Item -LiteralPath $canonicalGit -Force')
+    && source.includes('$canonicalGitItem.LinkType')
+    && source.includes('[System.IO.FileAttributes]::ReparsePoint')
+    && source.includes('CANONICAL_GIT_IDENTITY_INVALID')
+    && source.includes('& $canonicalGit -C $repoRoot symbolic-ref --quiet --short HEAD')
+    && source.includes('& $canonicalGit -C $repoRoot rev-parse --verify HEAD')
+    && !/Get-Command (?:git|git\.exe)\b|\$git\.Source|& \$env:(?:PATH|GIT)/i.test(source);
+}
+
+function mandatoryWorkerCleanupBoundary(source) {
+  const postProof = source.indexOf("-Phase 'POST_START'");
+  const blockerGate = source.indexOf('if ($startupBlocker)', postProof);
+  const cleanup = source.indexOf('Stop-NewlyStartedOwnedWorker', blockerGate);
+  const terminalBlock = source.indexOf('Stop-WithBlocker $startupBlocker', cleanup);
+  return postProof >= 0
+    && blockerGate > postProof
+    && cleanup > blockerGate
+    && terminalBlock > cleanup
+    && source.includes("[string]$Plan.TaskName -ne 'Stephanos Mission Orchestrator Worker'")
+    && source.includes('$processStartedAtUtc -le $StartedAfterUtc')
+    && source.includes('$verifiedWorker.ProcessId -ne $ExpectedProcessId');
+}
+
 test('restart helper accepts only backend and mission-worker', () => {
   assert.match(restartSource, /ValidateSet\('backend', 'mission-worker'\)/);
   assert.match(restartSource, /Stephanos Battle Bridge Backend/);
@@ -41,7 +67,115 @@ test('worker restart requires task-owned process stop and a fresh exact-head hea
   assert.match(restartSource, /unrelatedTasksChanged = \$false/);
   assert.match(restartSource, /CANONICAL_TRACKED_SOURCE_DIRTY/);
   assert.match(restartSource, /CANONICAL_TRACKED_SOURCE_CHANGED_DURING_WORKER_START/);
-  assert.match(restartSource, /Stop-ScheduledTask -TaskName \$plan\.TaskName -TaskPath '\\' -ErrorAction SilentlyContinue/);
+  assert.match(restartSource, /Stop-NewlyStartedOwnedWorker/);
+  assert.match(restartSource, /Stop-ScheduledTask -TaskName \$Plan\.TaskName -TaskPath '\\' -ErrorAction Stop/);
+});
+
+test('restart helper pins every authority-bearing Git read to the canonical executable', () => {
+  assert.equal(canonicalRestartGitBoundary(restartSource), true);
+  assert.match(restartSource, /\$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git\.exe'/);
+  assert.match(restartSource, /Get-Item -LiteralPath \$canonicalGit -Force/);
+  assert.match(restartSource, /CANONICAL_GIT_IDENTITY_INVALID/);
+  assert.match(restartSource, /CANONICAL_GIT_MISSING/);
+  assert.match(restartSource, /CANONICAL_GIT_PATH_MISMATCH/);
+  assert.match(restartSource, /& \$canonicalGit -C \$repoRoot symbolic-ref --quiet --short HEAD/);
+  assert.match(restartSource, /& \$canonicalGit -C \$repoRoot rev-parse --verify HEAD/);
+  assert.match(restartSource, /-GitExecutable \$canonicalGit/);
+  assert.doesNotMatch(restartSource, /Get-Command (?:git|git\.exe)\b|\$git\.Source|\bbranch --show-current\b/i);
+});
+
+test('PATH, missing-canonical-Git and substituted-executable mutations fail the source guard', () => {
+  assert.equal(canonicalRestartGitBoundary(
+    restartSource.replace(
+      "$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'",
+      '$canonicalGit = $env:PATH',
+    ),
+  ), false);
+  assert.equal(canonicalRestartGitBoundary(
+    restartSource.replace('Test-Path -LiteralPath $canonicalGit -PathType Leaf', '$true'),
+  ), false);
+  assert.equal(canonicalRestartGitBoundary(
+    restartSource.replace('Get-Item -LiteralPath $canonicalGit -Force', 'Get-Item -LiteralPath $env:GIT -Force'),
+  ), false);
+  assert.equal(canonicalRestartGitBoundary(
+    restartSource.replace('$canonicalGitItem.LinkType', '$false'),
+  ), false);
+  assert.equal(canonicalRestartGitBoundary(
+    restartSource.replace(
+      '& $canonicalGit -C $repoRoot symbolic-ref --quiet --short HEAD',
+      '& $env:GIT -C $repoRoot symbolic-ref --quiet --short HEAD',
+    ),
+  ), false);
+  assert.equal(canonicalRestartGitBoundary(`${restartSource}\n$git = Get-Command git.exe`), false);
+});
+
+test('worker post-start source proof has one mandatory bounded cleanup path', () => {
+  assert.equal(mandatoryWorkerCleanupBoundary(restartSource), true);
+  assert.match(restartSource, /Read-CanonicalWorkerSourceProof[\s\S]*-Phase 'PRE_START'/);
+  assert.match(restartSource, /Read-CanonicalWorkerSourceProof[\s\S]*-Phase 'POST_START'/);
+  for (const blocker of [
+    'CANONICAL_BRANCH_CHANGED_DURING_WORKER_START',
+    'CANONICAL_HEAD_CHANGED_DURING_WORKER_START',
+    'CANONICAL_PUBLIC_MAIN_CHANGED_DURING_WORKER_START',
+    'CANONICAL_TRACKED_SOURCE_CHANGED_DURING_WORKER_START',
+    'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT',
+    'MISSION_WORKER_FRESH_INSTANCE_NOT_PROVEN',
+  ]) {
+    assert.ok(restartSource.includes(blocker), blocker);
+  }
+  assert.match(
+    restartSource,
+    /if \(\$startupBlocker\) \{[\s\S]*Stop-NewlyStartedOwnedWorker[\s\S]*Stop-WithBlocker \$startupBlocker/,
+  );
+  assert.match(restartSource, /MISSION_WORKER_POST_START_CLEANUP_FAILED/);
+  assert.match(restartSource, /Stop-WithBlocker \$cleanupBlocker/);
+  assert.match(restartSource, /\$missionWorkerStopTimeoutSeconds = 15/);
+  assert.match(restartSource, /\$missionWorkerCleanupTimeoutSeconds = 10/);
+  assert.match(restartSource, /Wait-Until -Seconds \$missionWorkerStopTimeoutSeconds/);
+  assert.match(restartSource, /Wait-Until -Seconds \$missionWorkerCleanupTimeoutSeconds/);
+});
+
+test('removing or widening any owned-cleanup identity edge fails the source guard', () => {
+  for (const mutation of [
+    restartSource.replace('Stop-NewlyStartedOwnedWorker `', '# cleanup removed'),
+    restartSource.replace("[string]$Plan.TaskName -ne 'Stephanos Mission Orchestrator Worker'", '$false'),
+    restartSource.replace('$processStartedAtUtc -le $StartedAfterUtc', '$false'),
+    restartSource.replace('$verifiedWorker.ProcessId -ne $ExpectedProcessId', '$false'),
+  ]) {
+    assert.equal(mandatoryWorkerCleanupBoundary(mutation), false);
+  }
+});
+
+test('worker cleanup can target only the exact fresh owned process and fixed task', () => {
+  assert.match(restartSource, /\[string\]\$Plan\.TaskName -ne 'Stephanos Mission Orchestrator Worker'/);
+  assert.match(restartSource, /MISSION_WORKER_CLEANUP_TASK_NOT_ALLOWLISTED/);
+  assert.match(restartSource, /\$processStartedAtUtc -le \$StartedAfterUtc/);
+  assert.match(restartSource, /\[string\]\$heartbeat\.repositoryRoot -ne \$ExpectedRepoRoot/);
+  assert.match(restartSource, /\[string\]\$heartbeat\.headSha -ne \$ExpectedSourceHead/);
+  assert.match(restartSource, /\$verifiedWorker\.ProcessId -ne \$ExpectedProcessId/);
+  assert.match(restartSource, /MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN/);
+  assert.match(restartSource, /MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED/);
+  assert.match(
+    restartSource,
+    /\$cleanupProcessBlocker = 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN'[\s\S]*Stop-ScheduledTask[\s\S]*if \(\$cleanupProcessBlocker\) \{ Stop-WithBlocker \$cleanupProcessBlocker \}/,
+  );
+  assert.doesNotMatch(restartSource, /Stop-Process\s+-Name|taskkill|killall/);
+});
+
+test('success and blocked receipts expose exact startup and cleanup truth', () => {
+  for (const field of [
+    'sourceTrackedClean',
+    'publicMainHead',
+    'postStartSourceProofOk',
+    'startedWorkerPid',
+    'workerStartedAtUtc',
+    'cleanupAttempted',
+    'cleanupCompleted',
+  ]) {
+    assert.match(restartSource, new RegExp(`${field}\\s*=`));
+  }
+  assert.match(restartSource, /postStartSourceProofOk = if \(\$Target -eq 'mission-worker'\) \{ \$postStartSourceProofOk \}/);
+  assert.match(restartSource, /exactHeadProofOk = \$false[\s\S]*cleanupAttempted = \$cleanupAttempted[\s\S]*cleanupCompleted = \$cleanupCompleted/);
 });
 
 test('backend starter proves canonical main and writes a bounded exact-head runtime receipt', () => {

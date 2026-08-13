@@ -226,12 +226,17 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
         '-TimeoutSeconds',
         '30'
     )
+    $restartStartedAtUtc = [datetime]::UtcNow
     $restartOutput = @(& $canonicalPowerShell @restartArguments 2>&1)
     if ($LASTEXITCODE -ne 0) {
         throw 'The approved runtime restart adapter failed.'
     }
     $restartJson = ($restartOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
     $restartReceipt = $restartJson | ConvertFrom-Json
+    $restartStartedWorkerPid = 0
+    $restartWorkerStartedAtUtc = [datetime]::MinValue
+    $restartWorkerPidValid = [int]::TryParse([string]$restartReceipt.startedWorkerPid, [ref]$restartStartedWorkerPid)
+    $restartWorkerStartedAtValid = [datetime]::TryParse([string]$restartReceipt.workerStartedAtUtc, [ref]$restartWorkerStartedAtUtc)
     $restartReceiptValid = (
         $restartReceipt -and
         [string]$restartReceipt.schemaVersion -eq 'stephanos.approved-runtime-restart.v1' -and
@@ -239,29 +244,23 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
         [string]$restartReceipt.taskName -eq $taskName -and
         [string]$restartReceipt.expectedHead -eq $repositoryHead -and
         [string]$restartReceipt.sourceHead -eq $repositoryHead -and
+        [string]$restartReceipt.publicMainHead -eq $repositoryHead -and
         $restartReceipt.canonicalActionVerified -eq $true -and
         $restartReceipt.exactHeadProofOk -eq $true -and
+        $restartReceipt.postStartSourceProofOk -eq $true -and
+        $restartReceipt.sourceTrackedClean -eq $true -and
         $restartReceipt.proofFresh -eq $true -and
+        $restartWorkerPidValid -and
+        $restartStartedWorkerPid -gt 0 -and
+        $restartWorkerStartedAtValid -and
+        $restartWorkerStartedAtUtc.ToUniversalTime() -ge $restartStartedAtUtc -and
+        $restartReceipt.cleanupAttempted -eq $false -and
+        $restartReceipt.cleanupCompleted -eq $false -and
         $restartReceipt.ok -eq $true -and
         [string]$restartReceipt.finalVerdict -eq 'APPROVED_RUNTIME_RESTART_PASS'
     )
     if (-not $restartReceiptValid) {
         throw 'The approved runtime restart receipt is invalid.'
-    }
-    $remoteMainHeadAfterRestart = Read-PublicMainHead -GitExecutable $canonicalGit
-    $repositoryBranchAfterRestart = ([string](@(& $canonicalGit -C $repositoryRoot symbolic-ref --quiet --short HEAD 2>&1))[0]).Trim()
-    if ($LASTEXITCODE -ne 0) { throw 'Canonical repository branch could not be re-proved after restart.' }
-    $repositoryHeadAfterRestart = ([string](@(& $canonicalGit -C $repositoryRoot rev-parse --verify HEAD 2>&1))[0]).Trim().ToLowerInvariant()
-    if ($LASTEXITCODE -ne 0) { throw 'Canonical repository head could not be re-proved after restart.' }
-    $trackedStatusAfterRestart = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
-    if ($LASTEXITCODE -ne 0 -or $trackedStatusAfterRestart.Count -ne 0) {
-        throw 'Canonical repository tracked source changed during the fixed worker restart.'
-    }
-    if ($repositoryBranchAfterRestart -ne 'main' `
-        -or $repositoryHeadAfterRestart -ne $repositoryHead `
-        -or $remoteMainHeadAfterRestart -ne $remoteMainHead `
-        -or $remoteMainHeadAfterRestart -ne $repositoryHead) {
-        throw 'Public main changed during the fixed worker restart.'
     }
     [pscustomobject]@{
         mode = $Mode
@@ -270,10 +269,15 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
         started = $true
         restarted = $true
         sourceHead = $repositoryHead
-        remoteMainHead = $remoteMainHeadAfterRestart
+        remoteMainHead = [string]$restartReceipt.publicMainHead
         exactHeadProofOk = $true
         sourceTrackedClean = $true
         proofFresh = $true
+        startedWorkerPid = $restartStartedWorkerPid
+        workerStartedAtUtc = $restartWorkerStartedAtUtc.ToUniversalTime().ToString('o')
+        postStartSourceProofOk = $true
+        cleanupAttempted = $false
+        cleanupCompleted = $false
         terminatedVerifiedOwnedProcess = [bool]$restartReceipt.terminatedVerifiedOwnedProcess
         verifiedOwnedProcessTerminationOnly = $true
         restartVerdict = [string]$restartReceipt.finalVerdict

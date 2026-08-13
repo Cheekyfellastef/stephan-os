@@ -16,6 +16,16 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
 
+$canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
+$publicRemote = 'https://github.com/Cheekyfellastef/stephan-os.git'
+$cleanupAttempted = $false
+$cleanupCompleted = $false
+$startedWorkerPid = 0
+$workerStartedAtUtc = ''
+$postStartSourceProofOk = $false
+$missionWorkerStopTimeoutSeconds = 15
+$missionWorkerCleanupTimeoutSeconds = 10
+
 function Stop-WithBlocker {
     param([Parameter(Mandatory = $true)][string]$Code)
     throw $Code
@@ -53,6 +63,74 @@ function Wait-Until {
         Start-Sleep -Milliseconds 500
     } while ((Get-Date) -lt $deadline)
     return $false
+}
+
+function Read-PublicMainHead {
+    param([Parameter(Mandatory = $true)][string]$GitExecutable)
+
+    $output = @(& $GitExecutable 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>&1)
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) { Stop-WithBlocker 'CANONICAL_PUBLIC_MAIN_READ_FAILED' }
+    $matchingLines = @($output | Where-Object { [string]$_ -match '^[0-9a-fA-F]{40}\s+refs/heads/main$' })
+    if ($matchingLines.Count -ne 1) { Stop-WithBlocker 'CANONICAL_PUBLIC_MAIN_RESPONSE_INVALID' }
+    $fields = ([string]$matchingLines[0]).Trim() -split '\s+'
+    if ($fields.Count -ne 2 -or $fields[1] -ne 'refs/heads/main' -or $fields[0] -notmatch '^[0-9a-fA-F]{40}$') {
+        Stop-WithBlocker 'CANONICAL_PUBLIC_MAIN_RESPONSE_INVALID'
+    }
+    return $fields[0].ToLowerInvariant()
+}
+
+function Read-CanonicalWorkerSourceProof {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$GitExecutable,
+        [Parameter(Mandatory = $true)][string]$ExpectedSourceHead,
+        [Parameter(Mandatory = $true)][ValidateSet('PRE_START', 'POST_START')][string]$Phase
+    )
+
+    $branchOutput = @(& $GitExecutable -C $RepositoryRoot symbolic-ref --quiet --short HEAD 2>&1)
+    $branchExitCode = $LASTEXITCODE
+    if ($branchExitCode -ne 0 -or $branchOutput.Count -ne 1) {
+        if ($Phase -eq 'POST_START') { Stop-WithBlocker 'CANONICAL_BRANCH_CHANGED_DURING_WORKER_START' }
+        Stop-WithBlocker 'CANONICAL_MAIN_REQUIRED'
+    }
+    $branch = ([string]$branchOutput[0]).Trim()
+    if ($branch -ne 'main') {
+        if ($Phase -eq 'POST_START') { Stop-WithBlocker 'CANONICAL_BRANCH_CHANGED_DURING_WORKER_START' }
+        Stop-WithBlocker 'CANONICAL_MAIN_REQUIRED'
+    }
+
+    $headOutput = @(& $GitExecutable -C $RepositoryRoot rev-parse --verify HEAD 2>&1)
+    $headExitCode = $LASTEXITCODE
+    if ($headExitCode -ne 0 -or $headOutput.Count -ne 1) {
+        if ($Phase -eq 'POST_START') { Stop-WithBlocker 'CANONICAL_HEAD_CHANGED_DURING_WORKER_START' }
+        Stop-WithBlocker 'EXPECTED_HEAD_MISMATCH'
+    }
+    $head = ([string]$headOutput[0]).Trim().ToLowerInvariant()
+    if ($head -notmatch '^[0-9a-f]{40}$' -or $head -ne $ExpectedSourceHead) {
+        if ($Phase -eq 'POST_START') { Stop-WithBlocker 'CANONICAL_HEAD_CHANGED_DURING_WORKER_START' }
+        Stop-WithBlocker 'EXPECTED_HEAD_MISMATCH'
+    }
+
+    $trackedStatus = @(& $GitExecutable -C $RepositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
+    $trackedStatusExitCode = $LASTEXITCODE
+    if ($trackedStatusExitCode -ne 0 -or $trackedStatus.Count -ne 0) {
+        if ($Phase -eq 'POST_START') { Stop-WithBlocker 'CANONICAL_TRACKED_SOURCE_CHANGED_DURING_WORKER_START' }
+        Stop-WithBlocker 'CANONICAL_TRACKED_SOURCE_DIRTY'
+    }
+
+    $publicMainHead = Read-PublicMainHead -GitExecutable $GitExecutable
+    if ($publicMainHead -ne $ExpectedSourceHead) {
+        if ($Phase -eq 'POST_START') { Stop-WithBlocker 'CANONICAL_PUBLIC_MAIN_CHANGED_DURING_WORKER_START' }
+        Stop-WithBlocker 'EXPECTED_HEAD_NOT_PUBLIC_MAIN'
+    }
+
+    return [PSCustomObject]@{
+        Branch = $branch
+        Head = $head
+        PublicMainHead = $publicMainHead
+        TrackedClean = $true
+    }
 }
 
 function Test-BackendHealth {
@@ -105,27 +183,34 @@ function Read-FreshBackendReceipt {
 }
 
 function Get-VerifiedWorkerProcessFromHeartbeat {
-    param([string]$HeartbeatPath)
+    param(
+        [string]$HeartbeatPath,
+        [string]$ExpectedRepoRoot
+    )
     if (-not (Test-Path -LiteralPath $HeartbeatPath -PathType Leaf)) { return $null }
     try {
         $heartbeat = Get-Content -LiteralPath $HeartbeatPath -Raw | ConvertFrom-Json
         if ([string]$heartbeat.taskName -ne 'Stephanos Mission Orchestrator Worker') { return $null }
+        if ([string]$heartbeat.repositoryRoot -ne $ExpectedRepoRoot) { return $null }
         $processId = [int]$heartbeat.pid
         if ($processId -le 0) { return $null }
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
+        $name = ([string]$process.Name).ToLowerInvariant()
         $commandLine = ([string]$process.CommandLine).Replace('\', '/').ToLowerInvariant()
-        if (-not $commandLine.Contains('scripts/mission-orchestrator-worker-supervised.mjs')) { return $null }
+        $expectedWorkerPath = ([System.IO.Path]::GetFullPath((Join-Path $ExpectedRepoRoot 'scripts\mission-orchestrator-worker-supervised.mjs'))).Replace('\', '/').ToLowerInvariant()
+        if ($name -notin @('node.exe', 'node') -or -not $commandLine.Contains($expectedWorkerPath)) { return $null }
         return [PSCustomObject]@{ ProcessId = $processId }
     }
     catch { return $null }
 }
 
-function Read-FreshWorkerHeartbeat {
+function Get-VerifiedFreshWorkerInstance {
     param(
         [string]$HeartbeatPath,
         [datetime]$StartedAfterUtc,
-        [string]$ExpectedSourceHead
+        [string]$ExpectedSourceHead,
+        [string]$ExpectedRepoRoot
     )
     if (-not (Test-Path -LiteralPath $HeartbeatPath -PathType Leaf)) { return $null }
     try {
@@ -135,15 +220,85 @@ function Read-FreshWorkerHeartbeat {
         if ([string]$heartbeat.branch -ne 'main') { return $null }
         if ([string]$heartbeat.headSha -ne $ExpectedSourceHead) { return $null }
         if ([string]$heartbeat.taskName -ne 'Stephanos Mission Orchestrator Worker') { return $null }
+        if ([string]$heartbeat.repositoryRoot -ne $ExpectedRepoRoot) { return $null }
         $processId = [int]$heartbeat.pid
         if ($processId -le 0) { return $null }
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
+        $processStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
+        if ($processStartedAtUtc -le $StartedAfterUtc) { return $null }
+        $name = ([string]$process.Name).ToLowerInvariant()
         $commandLine = ([string]$process.CommandLine).Replace('\', '/').ToLowerInvariant()
-        if (-not $commandLine.Contains('scripts/mission-orchestrator-worker-supervised.mjs')) { return $null }
-        return $heartbeat
+        $expectedWorkerPath = ([System.IO.Path]::GetFullPath((Join-Path $ExpectedRepoRoot 'scripts\mission-orchestrator-worker-supervised.mjs'))).Replace('\', '/').ToLowerInvariant()
+        if ($name -notin @('node.exe', 'node') -or -not $commandLine.Contains($expectedWorkerPath)) { return $null }
+        return [PSCustomObject]@{
+            ProcessId = $processId
+            ProcessStartedAtUtc = $processStartedAtUtc
+            HeartbeatTimestampUtc = $timestamp
+            Heartbeat = $heartbeat
+        }
     }
     catch { return $null }
+}
+
+function Stop-NewlyStartedOwnedWorker {
+    param(
+        [Parameter(Mandatory = $true)][object]$Plan,
+        [Parameter(Mandatory = $true)][string]$HeartbeatPath,
+        [Parameter(Mandatory = $true)][datetime]$StartedAfterUtc,
+        [Parameter(Mandatory = $true)][string]$ExpectedSourceHead,
+        [Parameter(Mandatory = $true)][string]$ExpectedRepoRoot,
+        [int]$ExpectedProcessId = 0
+    )
+
+    if ([string]$Plan.TaskName -ne 'Stephanos Mission Orchestrator Worker') {
+        Stop-WithBlocker 'MISSION_WORKER_CLEANUP_TASK_NOT_ALLOWLISTED'
+    }
+    $script:cleanupAttempted = $true
+    $verifiedWorker = $null
+    $cleanupProcessBlocker = ''
+    if ($ExpectedProcessId -gt 0) {
+        $observedProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $ExpectedProcessId" -ErrorAction SilentlyContinue
+        if ($observedProcess) {
+            $verifiedWorker = Get-VerifiedFreshWorkerInstance `
+                -HeartbeatPath $HeartbeatPath `
+                -StartedAfterUtc $StartedAfterUtc `
+                -ExpectedSourceHead $ExpectedSourceHead `
+                -ExpectedRepoRoot $ExpectedRepoRoot
+            if (-not $verifiedWorker -or $verifiedWorker.ProcessId -ne $ExpectedProcessId) {
+                $verifiedWorker = $null
+                $cleanupProcessBlocker = 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN'
+            }
+        }
+    }
+    $cleanupTask = Get-ScheduledTask -TaskName $Plan.TaskName -TaskPath '\' -ErrorAction SilentlyContinue
+    if (-not $cleanupTask) { Stop-WithBlocker 'MISSION_WORKER_CLEANUP_TASK_MISSING' }
+    if ([string]$cleanupTask.State -eq 'Running') {
+        Stop-ScheduledTask -TaskName $Plan.TaskName -TaskPath '\' -ErrorAction Stop
+        if (-not (Wait-Until -Seconds $missionWorkerCleanupTimeoutSeconds -Condition {
+            [string](Get-ScheduledTask -TaskName $Plan.TaskName -TaskPath '\').State -ne 'Running'
+        })) { Stop-WithBlocker 'MISSION_WORKER_CLEANUP_TASK_DID_NOT_STOP' }
+    }
+    if ($cleanupProcessBlocker) { Stop-WithBlocker $cleanupProcessBlocker }
+
+    if ($verifiedWorker) {
+        $stillRunning = Get-CimInstance Win32_Process -Filter "ProcessId = $($verifiedWorker.ProcessId)" -ErrorAction SilentlyContinue
+        if ($stillRunning) {
+            $reverifiedWorker = Get-VerifiedFreshWorkerInstance `
+                -HeartbeatPath $HeartbeatPath `
+                -StartedAfterUtc $StartedAfterUtc `
+                -ExpectedSourceHead $ExpectedSourceHead `
+                -ExpectedRepoRoot $ExpectedRepoRoot
+            if (-not $reverifiedWorker -or $reverifiedWorker.ProcessId -ne $verifiedWorker.ProcessId) {
+                Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED'
+            }
+            Stop-Process -Id $verifiedWorker.ProcessId -Force -ErrorAction Stop
+            if (-not (Wait-Until -Seconds $missionWorkerCleanupTimeoutSeconds -Condition {
+                -not (Get-CimInstance Win32_Process -Filter "ProcessId = $($verifiedWorker.ProcessId)" -ErrorAction SilentlyContinue)
+            })) { Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_DID_NOT_STOP' }
+        }
+    }
+    $script:cleanupCompleted = $true
 }
 
 try {
@@ -153,12 +308,27 @@ try {
     $expectedRepoRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'))
     if ($repoRoot -ne $expectedRepoRoot) { Stop-WithBlocker 'NON_CANONICAL_REPOSITORY_PATH' }
 
-    $git = Get-Command git.exe -ErrorAction SilentlyContinue
-    if (-not $git) { $git = Get-Command git -ErrorAction Stop }
-    $branch = (& $git.Source -C $repoRoot branch --show-current).Trim()
-    $head = (& $git.Source -C $repoRoot rev-parse HEAD).Trim().ToLowerInvariant()
-    if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') { Stop-WithBlocker 'CANONICAL_MAIN_REQUIRED' }
-    if ($head -ne $ExpectedHead.ToLowerInvariant()) { Stop-WithBlocker 'EXPECTED_HEAD_MISMATCH' }
+    if (-not (Test-Path -LiteralPath $canonicalGit -PathType Leaf)) { Stop-WithBlocker 'CANONICAL_GIT_MISSING' }
+    $canonicalGitItem = Get-Item -LiteralPath $canonicalGit -Force
+    if ($canonicalGitItem.PSIsContainer `
+        -or $canonicalGitItem.LinkType `
+        -or (($canonicalGitItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        Stop-WithBlocker 'CANONICAL_GIT_IDENTITY_INVALID'
+    }
+    $resolvedCanonicalGit = [System.IO.Path]::GetFullPath($canonicalGitItem.FullName)
+    if (-not [string]::Equals($resolvedCanonicalGit, $canonicalGit, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Stop-WithBlocker 'CANONICAL_GIT_PATH_MISMATCH'
+    }
+    $branchOutput = @(& $canonicalGit -C $repoRoot symbolic-ref --quiet --short HEAD 2>&1)
+    $branchExitCode = $LASTEXITCODE
+    if ($branchExitCode -ne 0 -or $branchOutput.Count -ne 1) { Stop-WithBlocker 'CANONICAL_MAIN_REQUIRED' }
+    $branch = ([string]$branchOutput[0]).Trim()
+    $headOutput = @(& $canonicalGit -C $repoRoot rev-parse --verify HEAD 2>&1)
+    $headExitCode = $LASTEXITCODE
+    if ($headExitCode -ne 0 -or $headOutput.Count -ne 1) { Stop-WithBlocker 'EXPECTED_HEAD_MISMATCH' }
+    $head = ([string]$headOutput[0]).Trim().ToLowerInvariant()
+    if ($branch -ne 'main') { Stop-WithBlocker 'CANONICAL_MAIN_REQUIRED' }
+    if ($head -notmatch '^[0-9a-f]{40}$' -or $head -ne $ExpectedHead.ToLowerInvariant()) { Stop-WithBlocker 'EXPECTED_HEAD_MISMATCH' }
     $ExpectedHead = $head
 
     $plan = Get-CanonicalTaskPlan -Id $Target
@@ -206,35 +376,93 @@ try {
     }
     else {
         $heartbeatPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\mission-orchestrator-worker-heartbeat.json'
-        $oldWorker = Get-VerifiedWorkerProcessFromHeartbeat -HeartbeatPath $heartbeatPath
+        $oldWorker = Get-VerifiedWorkerProcessFromHeartbeat -HeartbeatPath $heartbeatPath -ExpectedRepoRoot $repoRoot
         if ([string]$task.State -eq 'Running') {
             Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
-            if (-not (Wait-Until -Seconds 30 -Condition {
+            if (-not (Wait-Until -Seconds $missionWorkerStopTimeoutSeconds -Condition {
                 [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -ne 'Running'
             })) { Stop-WithBlocker 'MISSION_WORKER_TASK_DID_NOT_STOP' }
         }
         if ($oldWorker -and (Get-CimInstance Win32_Process -Filter "ProcessId = $($oldWorker.ProcessId)" -ErrorAction SilentlyContinue)) {
             Stop-Process -Id $oldWorker.ProcessId -Force -ErrorAction Stop
             $terminatedVerifiedOwnedProcess = $true
-            if (-not (Wait-Until -Seconds 30 -Condition {
+            if (-not (Wait-Until -Seconds $missionWorkerStopTimeoutSeconds -Condition {
                 -not (Get-CimInstance Win32_Process -Filter "ProcessId = $($oldWorker.ProcessId)" -ErrorAction SilentlyContinue)
             })) { Stop-WithBlocker 'MISSION_WORKER_VERIFIED_PROCESS_DID_NOT_STOP' }
         }
-        $canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
-        if (-not (Test-Path -LiteralPath $canonicalGit -PathType Leaf)) { Stop-WithBlocker 'CANONICAL_GIT_MISSING' }
-        $trackedStatus = @(& $canonicalGit -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
-        if ($LASTEXITCODE -ne 0 -or $trackedStatus.Count -ne 0) { Stop-WithBlocker 'CANONICAL_TRACKED_SOURCE_DIRTY' }
-        Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
-        if (-not (Wait-Until -Seconds $TimeoutSeconds -Condition {
-            $null -ne (Read-FreshWorkerHeartbeat -HeartbeatPath $heartbeatPath -StartedAfterUtc $startedAtUtc -ExpectedSourceHead $ExpectedHead)
-        })) { Stop-WithBlocker 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT' }
-        $trackedStatusAfterStart = @(& $canonicalGit -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
-        if ($LASTEXITCODE -ne 0 -or $trackedStatusAfterStart.Count -ne 0) {
-            Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction SilentlyContinue
-            $startedWorker = Get-VerifiedWorkerProcessFromHeartbeat -HeartbeatPath $heartbeatPath
-            if ($startedWorker) { Stop-Process -Id $startedWorker.ProcessId -Force -ErrorAction SilentlyContinue }
-            Stop-WithBlocker 'CANONICAL_TRACKED_SOURCE_CHANGED_DURING_WORKER_START'
+        $preStartSourceProof = Read-CanonicalWorkerSourceProof `
+            -RepositoryRoot $repoRoot `
+            -GitExecutable $canonicalGit `
+            -ExpectedSourceHead $ExpectedHead `
+            -Phase 'PRE_START'
+
+        $workerTaskStarted = $false
+        $startupBlocker = ''
+        $startedWorker = $null
+        $postStartSourceProof = $null
+        try {
+            Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
+            $workerTaskStarted = $true
+            if (-not (Wait-Until -Seconds $TimeoutSeconds -Condition {
+                $candidateWorker = Get-VerifiedFreshWorkerInstance `
+                    -HeartbeatPath $heartbeatPath `
+                    -StartedAfterUtc $startedAtUtc `
+                    -ExpectedSourceHead $ExpectedHead `
+                    -ExpectedRepoRoot $repoRoot
+                if ($candidateWorker) {
+                    $script:startedWorkerPid = [int]$candidateWorker.ProcessId
+                    $script:workerStartedAtUtc = $candidateWorker.ProcessStartedAtUtc.ToString('o')
+                    return $true
+                }
+                return $false
+            })) { throw 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT' }
+
+            $startedWorker = Get-VerifiedFreshWorkerInstance `
+                -HeartbeatPath $heartbeatPath `
+                -StartedAfterUtc $startedAtUtc `
+                -ExpectedSourceHead $ExpectedHead `
+                -ExpectedRepoRoot $repoRoot
+            if (-not $startedWorker) { throw 'MISSION_WORKER_FRESH_INSTANCE_NOT_PROVEN' }
+            $script:startedWorkerPid = [int]$startedWorker.ProcessId
+            $script:workerStartedAtUtc = $startedWorker.ProcessStartedAtUtc.ToString('o')
+
+            $postStartSourceProof = Read-CanonicalWorkerSourceProof `
+                -RepositoryRoot $repoRoot `
+                -GitExecutable $canonicalGit `
+                -ExpectedSourceHead $ExpectedHead `
+                -Phase 'POST_START'
+            $script:postStartSourceProofOk = $true
         }
+        catch {
+            $startupBlocker = [string]$_.Exception.Message
+            if ($startupBlocker -notmatch '^[A-Z0-9_:-]{3,120}$') {
+                $startupBlocker = 'MISSION_WORKER_POST_START_PROOF_FAILED'
+            }
+        }
+
+        if ($startupBlocker) {
+            if ($workerTaskStarted) {
+                try {
+                    Stop-NewlyStartedOwnedWorker `
+                        -Plan $plan `
+                        -HeartbeatPath $heartbeatPath `
+                        -StartedAfterUtc $startedAtUtc `
+                        -ExpectedSourceHead $ExpectedHead `
+                        -ExpectedRepoRoot $repoRoot `
+                        -ExpectedProcessId $startedWorkerPid
+                }
+                catch {
+                    $cleanupBlocker = [string]$_.Exception.Message
+                    if ($cleanupBlocker -notmatch '^[A-Z0-9_:-]{3,120}$') {
+                        $cleanupBlocker = 'MISSION_WORKER_POST_START_CLEANUP_FAILED'
+                    }
+                    Stop-WithBlocker $cleanupBlocker
+                }
+            }
+            Stop-WithBlocker $startupBlocker
+        }
+        $sourceTrackedClean = [bool]($preStartSourceProof.TrackedClean -and $postStartSourceProof.TrackedClean)
+        $publicMainHead = [string]$postStartSourceProof.PublicMainHead
         $proofKind = 'mission-worker-heartbeat'
         $proofFresh = $true
     }
@@ -252,6 +480,13 @@ try {
         exactHeadProofOk = $true
         proofKind = $proofKind
         proofFresh = $proofFresh
+        sourceTrackedClean = if ($Target -eq 'mission-worker') { $sourceTrackedClean } else { $false }
+        publicMainHead = if ($Target -eq 'mission-worker') { $publicMainHead } else { '' }
+        postStartSourceProofOk = if ($Target -eq 'mission-worker') { $postStartSourceProofOk } else { $false }
+        startedWorkerPid = if ($Target -eq 'mission-worker') { $startedWorkerPid } else { 0 }
+        workerStartedAtUtc = if ($Target -eq 'mission-worker') { $workerStartedAtUtc } else { '' }
+        cleanupAttempted = $cleanupAttempted
+        cleanupCompleted = $cleanupCompleted
         terminatedVerifiedOwnedProcess = $terminatedVerifiedOwnedProcess
         unrelatedTasksChanged = $false
         arbitraryTaskTargetAllowed = $false
@@ -271,6 +506,11 @@ catch {
         target = $Target
         expectedHead = $ExpectedHead.ToLowerInvariant()
         exactHeadProofOk = $false
+        postStartSourceProofOk = $false
+        startedWorkerPid = $startedWorkerPid
+        workerStartedAtUtc = $workerStartedAtUtc
+        cleanupAttempted = $cleanupAttempted
+        cleanupCompleted = $cleanupCompleted
         unrelatedTasksChanged = $false
         arbitraryTaskTargetAllowed = $false
         arbitraryProcessKillAllowed = $false

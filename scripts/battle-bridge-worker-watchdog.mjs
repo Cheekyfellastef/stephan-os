@@ -393,9 +393,16 @@ export async function runBattleBridgeWorkerWatchdog({
       || startResult.data?.restarted !== true
       || startResult.data?.taskName !== APPROVED_WORKER_TASK
       || startResult.data?.sourceHead !== initialAssessment.canonicalRepositoryHead
+      || startResult.data?.remoteMainHead !== initialAssessment.canonicalRepositoryHead
       || startResult.data?.exactHeadProofOk !== true
+      || startResult.data?.postStartSourceProofOk !== true
       || startResult.data?.sourceTrackedClean !== true
       || startResult.data?.proofFresh !== true
+      || !Number.isSafeInteger(startResult.data?.startedWorkerPid)
+      || startResult.data.startedWorkerPid <= 0
+      || !Number.isFinite(Date.parse(text(startResult.data?.workerStartedAtUtc)))
+      || startResult.data?.cleanupAttempted !== false
+      || startResult.data?.cleanupCompleted !== false
       || startResult.data?.restartVerdict !== 'APPROVED_RUNTIME_RESTART_PASS') {
       const publication = await publishWatchdogRecords({
         workspaceRoot: paths.workspaceRoot,

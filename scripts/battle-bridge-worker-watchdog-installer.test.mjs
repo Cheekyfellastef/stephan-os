@@ -87,6 +87,12 @@ test('internal probe permits only inspect or exact-head canonical worker restart
   assert.match(source, /'-TimeoutSeconds',[\s\S]*'30'/);
   assert.match(source, /status '--porcelain=v1' '--untracked-files=no'/);
   assert.match(source, /sourceTrackedClean = \$true/);
+  assert.match(source, /\[string\]\$restartReceipt\.publicMainHead -eq \$repositoryHead/);
+  assert.match(source, /\$restartReceipt\.postStartSourceProofOk -eq \$true/);
+  assert.match(source, /\$restartReceipt\.cleanupAttempted -eq \$false/);
+  assert.match(source, /\$restartReceipt\.cleanupCompleted -eq \$false/);
+  assert.match(source, /\$restartStartedWorkerPid -gt 0/);
+  assert.doesNotMatch(source, /trackedStatusAfterRestart|remoteMainHeadAfterRestart|repositoryHeadAfterRestart|repositoryBranchAfterRestart/);
   assert.match(source, /APPROVED_RUNTIME_RESTART_PASS/);
   assert.match(source, /Get-CimInstance Win32_Process/);
   assert.match(source, /CommandLineToArgvW/);
