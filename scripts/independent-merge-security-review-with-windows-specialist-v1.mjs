@@ -118,6 +118,13 @@ function validateFindingsArtifact(artifact) {
   if (artifact?.schemaVersion !== 'stephanos.independent-review-findings-artifact.v1'
     || artifact?.kind !== 'stephanos.independent-review.findings-artifact'
     || artifact?.artifactFile !== INDEPENDENT_REVIEW_ARTIFACT_FILE
+    || typeof artifact?.repository !== 'string'
+    || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(artifact.repository)
+    || !Number.isSafeInteger(artifact?.prNumber)
+    || artifact.prNumber <= 0
+    || typeof artifact?.branch !== 'string'
+    || artifact.branch.length === 0
+    || artifact.branch.length > 255
     || !/^[a-f0-9]{40}$/.test(text(artifact?.sourceHead))
     || !/^[a-f0-9]{40}$/.test(text(artifact?.baseSha))
     || artifact?.payloadSha256 !== independentReviewFindingsArtifactPayloadSha256(artifact)) {
@@ -148,6 +155,8 @@ async function main() {
   )));
   const specialist = analyzeWindowsAuthoritySpecialistReview({
     repository: artifact.repository,
+    prNumber: artifact.prNumber,
+    branch: artifact.branch,
     sourceHead: artifact.sourceHead,
     analysis: artifact.analysis,
     sources,

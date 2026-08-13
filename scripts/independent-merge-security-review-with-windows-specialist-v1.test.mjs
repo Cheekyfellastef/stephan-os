@@ -35,6 +35,15 @@ test('original findings artifact remains exact-head and digest bound', async () 
   assert.match(text, /artifact\?\.artifactFile !== INDEPENDENT_REVIEW_ARTIFACT_FILE/);
   assert.match(text, /artifact\?\.payloadSha256 !== independentReviewFindingsArtifactPayloadSha256\(artifact\)/);
   assert.match(text, /\^\[a-f0-9\]\{40\}\$/);
+  assert.match(text, /typeof artifact\?\.repository !== 'string'/);
+  assert.match(text, /Number\.isSafeInteger\(artifact\?\.prNumber\)/);
+  assert.match(text, /typeof artifact\?\.branch !== 'string'/);
+});
+
+test('production wrapper forwards immutable artifact identity without substitution', async () => {
+  const text = await source();
+  assert.match(text, /analyzeWindowsAuthoritySpecialistReview\(\{\s*repository: artifact\.repository,\s*prNumber: artifact\.prNumber,\s*branch: artifact\.branch,\s*sourceHead: artifact\.sourceHead,/s);
+  assert.doesNotMatch(text, /prNumber:\s*1732|branch:\s*['"]agent\/watchdog-control-plane-bootstrap-recovery-v1['"]|sourceHead:\s*['"]707f7db9964b5e100aab21d6735108a4c5e53457['"]/);
 });
 
 test('source retrieval is one bounded exact-head GitHub Contents GET', async () => {
