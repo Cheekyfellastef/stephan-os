@@ -10,6 +10,23 @@ const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
 const SOURCE_SCHEMA = 'stephanos.windows-authority-source.v1';
 const SHA = /^[a-f0-9]{40}$/;
 const MAX_SOURCE_BYTES = 256 * 1024;
+const REVIEWED_SOURCE_MANIFEST = Object.freeze({
+  'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1': Object.freeze({
+    blobSha: '5d1792a8e6090f38b0013670af717b3e07f98fa5',
+    size: 15403,
+  }),
+  'scripts/windows/restart-approved-stephanos-runtime.ps1': Object.freeze({
+    blobSha: 'a8a96092a22ad6f40e33e8bbe4c04a90e880ab85',
+    size: 14058,
+  }),
+  'scripts/windows/start-mission-orchestrator-worker.ps1': Object.freeze({
+    blobSha: 'cac4b824c6656e4f45cda405cf807afddb8b1441',
+    size: 5213,
+  }),
+});
+const SOURCE_RECORD_KEYS = Object.freeze([
+  'blobSha', 'content', 'exists', 'path', 'ref', 'repository', 'schemaVersion', 'size',
+]);
 const FIXED_PROBE_POWERSHELL_INVOCATION = /\$restartArguments = @\(\s*'-NoProfile',\s*'-NonInteractive',\s*'-ExecutionPolicy',\s*'Bypass',\s*'-File',\s*\$runtimeRestartPath,\s*'-Target',\s*'mission-worker',\s*'-ExpectedHead',\s*\$repositoryHead,\s*'-TimeoutSeconds',\s*'30'\s*\)\s*\$restartOutput = @\(& \$canonicalPowerShell @restartArguments 2>&1\)/;
 const EXECUTION_ESTATE_BY_PATH = Object.freeze({
   'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1': Object.freeze({
@@ -51,20 +68,56 @@ const blobSha = (content) => {
 };
 
 function exactSource(source, repository, sourceHead, path) {
-  const content = typeof source?.content === 'string' ? source.content : '';
-  const size = Buffer.byteLength(content, 'utf8');
-  return Boolean(source && typeof source === 'object' && !Array.isArray(source)
-    && source.schemaVersion === SOURCE_SCHEMA
-    && source.repository === repository
-    && source.path === path
-    && source.ref === sourceHead
-    && source.exists === true
-    && Number.isSafeInteger(source.size)
-    && source.size === size
-    && size > 0
-    && size <= MAX_SOURCE_BYTES
-    && SHA.test(text(source.blobSha))
-    && source.blobSha === blobSha(content));
+  try {
+    if (!source || typeof source !== 'object' || Array.isArray(source)
+      || Object.getPrototypeOf(source) !== Object.prototype) return false;
+    const keys = Reflect.ownKeys(source);
+    if (keys.some((key) => typeof key !== 'string')
+      || keys.length !== SOURCE_RECORD_KEYS.length
+      || keys.map(String).sort().some((key, index) => key !== SOURCE_RECORD_KEYS[index])) return false;
+    const descriptors = Object.fromEntries(keys.map((key) => [key, Object.getOwnPropertyDescriptor(source, key)]));
+    if (Object.values(descriptors).some((descriptor) => !descriptor
+      || !Object.hasOwn(descriptor, 'value') || descriptor.enumerable !== true)) return false;
+    const value = (key) => descriptors[key].value;
+    const content = typeof value('content') === 'string' ? value('content') : '';
+    const size = Buffer.byteLength(content, 'utf8');
+    return Boolean(value('schemaVersion') === SOURCE_SCHEMA
+      && value('repository') === repository
+      && value('path') === path
+      && value('ref') === sourceHead
+      && value('exists') === true
+      && Number.isSafeInteger(value('size'))
+      && value('size') === size
+      && size > 0
+      && size <= MAX_SOURCE_BYTES
+      && SHA.test(text(value('blobSha')))
+      && value('blobSha') === blobSha(content));
+  } catch {
+    return false;
+  }
+}
+
+function exactReviewedSource(source, path) {
+  const expected = REVIEWED_SOURCE_MANIFEST[path];
+  return Boolean(expected
+    && source.size === expected.size
+    && source.blobSha === expected.blobSha);
+}
+
+function exactSourceEstate(sources) {
+  try {
+    if (!Array.isArray(sources) || sources.length !== WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1.length) return false;
+    const ownKeys = Reflect.ownKeys(sources);
+    const expectedKeys = [...sources.keys()].map(String).concat('length');
+    if (ownKeys.length !== expectedKeys.length || ownKeys.some((key, index) => String(key) !== expectedKeys[index])) return false;
+    return sources.every((source, index) => {
+      const descriptor = Object.getOwnPropertyDescriptor(source, 'path');
+      return descriptor && Object.hasOwn(descriptor, 'value')
+        && descriptor.value === WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1[index];
+    });
+  } catch {
+    return false;
+  }
 }
 
 function escalationPaths(analysis = {}) {
@@ -425,11 +478,27 @@ export function analyzeWindowsAuthorityWorkerWatchdogReview(input = {}) {
 
   const findings = [];
   const proofRefs = [];
-  for (const path of paths) {
-    const candidates = (Array.isArray(input.sources) ? input.sources : []).filter((source) => source?.path === path);
+  const sources = input.sources;
+  const sourceEstateExact = exactSourceEstate(sources);
+  if (!sourceEstateExact) {
+    findings.push(finding(
+      'windows-authority-source-estate-invalid',
+      'Specialist review requires the exact ordered three-source closed-world estate.',
+      '',
+    ));
+  }
+  for (const [sourceIndex, path] of paths.entries()) {
+    const candidates = sourceEstateExact ? [sources[sourceIndex]] : [];
     if (candidates.length !== 1 || !exactSource(candidates[0], repository, sourceHead, path)) {
       findings.push(finding('windows-authority-source-evidence-invalid', 'Specialist review requires one exact blob-bound source.', path));
       continue;
+    }
+    if (!exactReviewedSource(candidates[0], path)) {
+      findings.push(finding(
+        'windows-authority-source-not-reviewed',
+        'Specialist review admits only the exact independently reviewed watchdog source manifest.',
+        path,
+      ));
     }
     const source = candidates[0].content;
     if (path.endsWith('probe-mission-orchestrator-worker-watchdog.ps1')) reviewProbe(source, path, findings);
