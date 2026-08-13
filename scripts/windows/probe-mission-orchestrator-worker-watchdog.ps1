@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Inspect', 'StartApprovedWorkerTask')]
-    [string]$Mode = 'Inspect'
+    [string]$Mode = 'Inspect',
+
+    [string]$DeadlineUtc = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,11 +20,16 @@ $workerLauncherPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot '
 $runtimeRestartPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\restart-approved-stephanos-runtime.ps1'))
 $windowlessLauncherPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'))
 $canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
+$canonicalNode = 'C:\Program Files\nodejs\node.exe'
 $canonicalPowerShell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $publicRemote = 'https://github.com/Cheekyfellastef/stephan-os.git'
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'))
 $heartbeatPath = Join-Path $workspaceRoot 'status\mission-orchestrator-worker-heartbeat.json'
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+
+if ($Mode -eq 'Inspect' -and -not [string]::IsNullOrWhiteSpace($DeadlineUtc)) {
+    throw 'Inspect mode cannot receive restart authority.'
+}
 
 function Test-CanonicalWorkerTaskAction {
     param([object]$ScheduledTask)
@@ -101,15 +108,18 @@ function Test-CanonicalWorkerProcessCommandLine {
 
     if (-not $Process -or [string]::IsNullOrWhiteSpace($CommandLine)) { return $false }
     $arguments = @(ConvertFrom-WindowsCommandLine -CommandLine $CommandLine)
-    if ($arguments.Count -lt 2) { return $false }
+    if ($arguments.Count -ne 2) { return $false }
 
-    $executePath = if (-not [string]::IsNullOrWhiteSpace([string]$Process.ExecutablePath)) {
-        [string]$Process.ExecutablePath
-    } else {
-        [string]$arguments[0]
+    if ([string]::IsNullOrWhiteSpace([string]$Process.ExecutablePath)) { return $false }
+    try {
+        $resolvedExecutePath = [System.IO.Path]::GetFullPath([string]$Process.ExecutablePath)
+        $commandExecutable = [System.IO.Path]::GetFullPath([string]$arguments[0])
     }
-    $executeLeaf = [System.IO.Path]::GetFileName($executePath)
-    if ($executeLeaf -notin @('node.exe', 'node')) { return $false }
+    catch {
+        return $false
+    }
+    if (-not [string]::Equals($resolvedExecutePath, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+    if (-not [string]::Equals($commandExecutable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
 
     try {
         $scriptArgument = [System.IO.Path]::GetFullPath([string]$arguments[1])
@@ -153,7 +163,7 @@ $remoteMainHead = ''
 $remoteMainHeadReadError = ''
 $gitAvailable = $false
 try {
-    foreach ($requiredExecutable in @($canonicalGit, $canonicalPowerShell)) {
+    foreach ($requiredExecutable in @($canonicalGit, $canonicalNode, $canonicalPowerShell)) {
         if (-not (Test-Path -LiteralPath $requiredExecutable -PathType Leaf)) {
             throw ('Required canonical executable is missing: {0}' -f $requiredExecutable)
         }
@@ -198,6 +208,15 @@ if ($gitAvailable) {
 }
 
 if ($Mode -eq 'StartApprovedWorkerTask') {
+    $parsedDeadlineUtc = [datetime]::MinValue
+    if (-not [datetime]::TryParse($DeadlineUtc, [ref]$parsedDeadlineUtc)) {
+        throw 'The worker restart deadline is missing or malformed.'
+    }
+    $parsedDeadlineUtc = $parsedDeadlineUtc.ToUniversalTime()
+    if ($parsedDeadlineUtc -le [datetime]::UtcNow -or $parsedDeadlineUtc -gt [datetime]::UtcNow.AddSeconds(95)) {
+        throw 'The worker restart deadline is outside the bounded watchdog window.'
+    }
+    $canonicalDeadlineUtc = $parsedDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
     if (-not $task -or [string]$task.TaskName -ne $taskName) {
         throw 'The fixed Mission Orchestrator worker task is not installed.'
     }
@@ -224,7 +243,9 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
         '-ExpectedHead',
         $repositoryHead,
         '-TimeoutSeconds',
-        '30'
+        '30',
+        '-DeadlineUtc',
+        $canonicalDeadlineUtc
     )
     $restartStartedAtUtc = [datetime]::UtcNow
     $restartOutput = @(& $canonicalPowerShell @restartArguments 2>&1)
@@ -245,6 +266,10 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
         [string]$restartReceipt.expectedHead -eq $repositoryHead -and
         [string]$restartReceipt.sourceHead -eq $repositoryHead -and
         [string]$restartReceipt.publicMainHead -eq $repositoryHead -and
+        [string]$restartReceipt.deadlineUtc -eq $canonicalDeadlineUtc -and
+        [string]$restartReceipt.invocationId -match '^[0-9a-f]{64}$' -and
+        $restartReceipt.invocationBound -eq $true -and
+        $restartReceipt.canonicalWorkerCommandVerified -eq $true -and
         $restartReceipt.canonicalActionVerified -eq $true -and
         $restartReceipt.exactHeadProofOk -eq $true -and
         $restartReceipt.postStartSourceProofOk -eq $true -and
@@ -275,6 +300,10 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
         proofFresh = $true
         startedWorkerPid = $restartStartedWorkerPid
         workerStartedAtUtc = $restartWorkerStartedAtUtc.ToUniversalTime().ToString('o')
+        invocationId = [string]$restartReceipt.invocationId
+        deadlineUtc = [string]$restartReceipt.deadlineUtc
+        invocationBound = $true
+        canonicalWorkerCommandVerified = $true
         postStartSourceProofOk = $true
         cleanupAttempted = $false
         cleanupCompleted = $false

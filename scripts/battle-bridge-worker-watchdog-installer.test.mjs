@@ -6,12 +6,41 @@ const installPath = new URL('./windows/install-battle-bridge-worker-watchdog.ps1
 const statusPath = new URL('./windows/status-battle-bridge-worker-watchdog.ps1', import.meta.url);
 const uninstallPath = new URL('./windows/uninstall-battle-bridge-worker-watchdog.ps1', import.meta.url);
 const probePath = new URL('./windows/probe-mission-orchestrator-worker-watchdog.ps1', import.meta.url);
+const restartPath = new URL('./windows/restart-approved-stephanos-runtime.ps1', import.meta.url);
 const workerStartPath = new URL('./windows/start-mission-orchestrator-worker.ps1', import.meta.url);
 const hiddenLauncherPath = new URL('./windows/run-battle-bridge-worker-watchdog-hidden.ps1', import.meta.url);
 
 function parameterBlock(source) {
   const match = source.match(/param\(([^)]*)\)/s);
   return match?.[1] || '';
+}
+
+function strictRestartInvocationBoundary({ probe, restart, launcher }) {
+  return probe.includes("$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'")
+    && probe.includes('$arguments.Count -ne 2')
+    && probe.includes('CommandLineToArgvW')
+    && probe.includes('if ([string]::IsNullOrWhiteSpace([string]$Process.ExecutablePath)) { return $false }')
+    && probe.includes('$resolvedExecutePath, $canonicalNode')
+    && probe.includes('$commandExecutable, $canonicalNode')
+    && probe.includes('$scriptArgument = [System.IO.Path]::GetFullPath([string]$arguments[1])')
+    && /\$scriptArgument,\r?\n\s*\$workerPath,/.test(probe)
+    && probe.includes("$restartReceipt.invocationId -match '^[0-9a-f]{64}$'")
+    && probe.includes('$restartReceipt.deadlineUtc -eq $canonicalDeadlineUtc')
+    && restart.includes('mission-orchestrator-worker-restart-heartbeat-$ExpectedInvocationId.json')
+    && restart.includes('$invocationHeartbeat.invocationId -ne $ExpectedInvocationId')
+    && restart.includes('$boundHeartbeatTimestampUtc.Ticks -ne $timestamp.Ticks')
+    && restart.includes('$processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks')
+    && restart.includes('$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks')
+    && restart.includes('$reverifiedWorker.ProcessStartedAtUtc.Ticks -ne $verifiedWorker.ProcessStartedAtUtc.Ticks')
+    && restart.includes('Assert-BeforeOperationDeadline -RequiredReserveSeconds 1')
+    && launcher.includes('$processStartInfo.FileName = $canonicalNode')
+    && launcher.includes('$processStartInfo.Arguments = \'"\' + $workerScript + \'"\'')
+    && launcher.includes('$workerHeartbeat.pid -eq $workerProcess.Id')
+    && launcher.includes('$heartbeatTimestampUtc -gt $workerStartedAtUtc')
+    && launcher.includes('$workerProcess.StartTime.ToUniversalTime().Ticks -eq $workerStartedAtUtc.Ticks')
+    && launcher.includes('if ($confirmation -and $invocationHeartbeatBound)')
+    && launcher.includes('$workerProcess.Kill()')
+    && !launcher.includes('$processStartInfo.Arguments +=');
 }
 
 test('installer exposes only StartNow and registers hidden limited fixed watchdog plus visibility reconciler', async () => {
@@ -85,6 +114,12 @@ test('internal probe permits only inspect or exact-head canonical worker restart
   assert.match(source, /'-ExpectedHead'/);
   assert.match(source, /\$repositoryHead/);
   assert.match(source, /'-TimeoutSeconds',[\s\S]*'30'/);
+  assert.match(source, /'-DeadlineUtc',[\s\S]*\$canonicalDeadlineUtc/);
+  assert.match(source, /\$parsedDeadlineUtc -le \[datetime\]::UtcNow/);
+  assert.match(source, /\$restartReceipt\.invocationId -match '\^\[0-9a-f\]\{64\}\$'/);
+  assert.match(source, /\$restartReceipt\.deadlineUtc -eq \$canonicalDeadlineUtc/);
+  assert.match(source, /\$restartReceipt\.invocationBound -eq \$true/);
+  assert.match(source, /\$restartReceipt\.canonicalWorkerCommandVerified -eq \$true/);
   assert.match(source, /status '--porcelain=v1' '--untracked-files=no'/);
   assert.match(source, /sourceTrackedClean = \$true/);
   assert.match(source, /\[string\]\$restartReceipt\.publicMainHead -eq \$repositoryHead/);
@@ -97,6 +132,8 @@ test('internal probe permits only inspect or exact-head canonical worker restart
   assert.match(source, /Get-CimInstance Win32_Process/);
   assert.match(source, /CommandLineToArgvW/);
   assert.match(source, /Test-CanonicalWorkerProcessCommandLine/);
+  assert.match(source, /\$arguments\.Count -ne 2/);
+  assert.match(source, /\$canonicalNode = 'C:\\Program Files\\nodejs\\node\.exe'/);
   assert.match(source, /\$arguments\[1\]/);
   assert.match(source, /\$arguments\[2\]/);
   assert.match(source, /\$arguments\[3\]\s*-eq 'mission-worker'/);
@@ -115,6 +152,57 @@ test('worker launcher is pinned to canonical main and supervised heartbeat loop'
   assert.match(source, /status '--porcelain=v1' '--untracked-files=no'/);
   assert.match(source, /ls-remote' '--exit-code' \$publicRemote 'refs\/heads\/main'/);
   assert.match(source, /& \$canonicalNode \$workerScript/);
+  assert.match(source, /stephanos\.mission-worker-restart-request\.v1/);
+  assert.match(source, /mission-orchestrator-worker-restart-claim-\$invocationId\.json/);
+  assert.match(source, /mission-orchestrator-worker-restart-receipt-\$invocationId\.json/);
+  assert.match(source, /mission-orchestrator-worker-restart-heartbeat-\$invocationId\.json/);
+  assert.match(source, /mission-orchestrator-worker-restart-confirm-\$invocationId\.json/);
+  assert.match(source, /mission-orchestrator-worker-restart-cancel-\$invocationId\.json/);
+  assert.match(source, /New-Object System\.Diagnostics\.ProcessStartInfo/);
+  assert.match(source, /\$processStartInfo\.FileName = \$canonicalNode/);
+  assert.match(source, /\$processStartInfo\.Arguments = '"' \+ \$workerScript \+ '"'/);
+  assert.match(source, /\$workerProcess\.StartTime\.ToUniversalTime\(\)/);
+  assert.match(source, /\$workerHeartbeat\.pid -eq \$workerProcess\.Id/);
+  assert.match(source, /\$heartbeatTimestampUtc -gt \$workerStartedAtUtc/);
+  assert.match(source, /if \(\$confirmation -and \$invocationHeartbeatBound\)/);
+  assert.match(source, /\$workerProcess\.Kill\(\)/);
+  assert.match(source, /\$restartDeadlineUtc/);
+  assert.doesNotMatch(source, /\$processStartInfo\.Arguments\s*\+=|\$env:[A-Z_]+_COMMAND|Invoke-Expression/);
   assert.doesNotMatch(source, /Get-Command (?:git|node)(?:\.exe)?\b/i);
   assert.doesNotMatch(source, /Start-Process|Invoke-Expression|git reset|git checkout|git clean|git push/i);
+});
+
+test('restart invocation binds exact command, heartbeat, deadline and process creation identity', async () => {
+  const [probe, restart, launcher] = await Promise.all([
+    readFile(probePath, 'utf8'),
+    readFile(restartPath, 'utf8'),
+    readFile(workerStartPath, 'utf8'),
+  ]);
+  const canonical = { probe, restart, launcher };
+  assert.equal(strictRestartInvocationBoundary(canonical), true);
+
+  const attacks = [
+    { ...canonical, probe: probe.replace("$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'", '$canonicalNode = $env:NODE') },
+    { ...canonical, probe: probe.replace('$arguments.Count -ne 2', '$arguments.Count -lt 2') },
+    { ...canonical, probe: probe.replaceAll('CommandLineToArgvW', 'Split-Path') },
+    { ...canonical, probe: probe.replace('if ([string]::IsNullOrWhiteSpace([string]$Process.ExecutablePath)) { return $false }', '# executable identity omitted') },
+    { ...canonical, probe: probe.replace('$scriptArgument = [System.IO.Path]::GetFullPath([string]$arguments[1])', '$scriptArgument = [string]$arguments[0]') },
+    { ...canonical, probe: probe.replace(/\$scriptArgument,\r?\n\s*\$workerPath,/, '$scriptArgument.StartsWith($workerPath),\n        $true,') },
+    { ...canonical, probe: probe.replace("$restartReceipt.invocationId -match '^[0-9a-f]{64}$'", '$true') },
+    { ...canonical, probe: probe.replace('$restartReceipt.deadlineUtc -eq $canonicalDeadlineUtc', '$true') },
+    { ...canonical, restart: restart.replace('$invocationHeartbeat.invocationId -ne $ExpectedInvocationId', '$false') },
+    { ...canonical, restart: restart.replace('$boundHeartbeatTimestampUtc.Ticks -ne $timestamp.Ticks', '$false') },
+    { ...canonical, restart: restart.replace('$processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks', '$false') },
+    { ...canonical, restart: restart.replace('$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks', '$false') },
+    { ...canonical, restart: restart.replaceAll('Assert-BeforeOperationDeadline -RequiredReserveSeconds 1', '# deadline check removed') },
+    { ...canonical, launcher: launcher.replace('$processStartInfo.FileName = $canonicalNode', '$processStartInfo.FileName = $env:NODE') },
+    { ...canonical, launcher: launcher.replace('$processStartInfo.Arguments = \'"\' + $workerScript + \'"\'', '$processStartInfo.Arguments = $env:WORKER_ARGS') },
+    { ...canonical, launcher: launcher.replace('$workerHeartbeat.pid -eq $workerProcess.Id', '$workerHeartbeat.pid -gt 0') },
+    { ...canonical, launcher: launcher.replace('$workerProcess.StartTime.ToUniversalTime().Ticks -eq $workerStartedAtUtc.Ticks', '$true') },
+    { ...canonical, launcher: launcher.replace('if ($confirmation -and $invocationHeartbeatBound)', 'if ($confirmation)') },
+    { ...canonical, launcher: `${launcher}\n$processStartInfo.Arguments += ' --caller-selected'` },
+  ];
+  for (const [index, attack] of attacks.entries()) {
+    assert.equal(strictRestartInvocationBoundary(attack), false, `attack ${index} must fail closed`);
+  }
 });

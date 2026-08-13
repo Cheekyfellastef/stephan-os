@@ -28,6 +28,7 @@ export const WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS = 5_000;
 export const WORKER_WATCHDOG_START_TIMEOUT_MS = 95_000;
 export const WORKER_WATCHDOG_RECOVERY_PROBE_TIMEOUT_MS = 5_000;
 export const WORKER_WATCHDOG_PUBLICATION_RESERVE_MS = 5_000;
+export const WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS = 10_000;
 export const CANONICAL_WINDOWS_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 export const WORKER_WATCHDOG_AUTHORITY = Object.freeze({
   approvedWorkerTask: APPROVED_WORKER_TASK,
@@ -43,6 +44,8 @@ export const WORKER_WATCHDOG_AUTHORITY = Object.freeze({
 });
 
 const FIXED_PROBE_MODES = new Set(['Inspect', 'StartApprovedWorkerTask']);
+const EXPLICIT_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+const INVOCATION_ID = /^[0-9a-f]{64}$/;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -99,14 +102,21 @@ export function createFixedWorkerProbeAdapter({
 } = {}) {
   const fixedProbePath = path.resolve(text(probeScriptPath));
   return Object.freeze({
-    run(mode, { timeoutMs } = {}) {
+    run(mode, { timeoutMs, deadlineUtc = '' } = {}) {
       if (!FIXED_PROBE_MODES.has(mode)) throw new Error(`Unsupported worker watchdog probe mode: ${mode}`);
       const boundedTimeoutMs = Number.isSafeInteger(timeoutMs) && timeoutMs > 0
         ? timeoutMs
         : (mode === 'StartApprovedWorkerTask'
           ? WORKER_WATCHDOG_START_TIMEOUT_MS
           : WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS);
-      const result = spawnSyncFn(powerShellExecutable, [
+      const boundedDeadlineUtc = text(deadlineUtc);
+      if (mode === 'StartApprovedWorkerTask' && !EXPLICIT_UTC.test(boundedDeadlineUtc)) {
+        throw new Error('Worker watchdog restart deadline must be an explicit UTC timestamp.');
+      }
+      if (mode === 'Inspect' && boundedDeadlineUtc) {
+        throw new Error('Worker watchdog inspect mode cannot receive restart authority.');
+      }
+      const argumentsList = [
         '-NoProfile',
         '-NonInteractive',
         '-ExecutionPolicy',
@@ -115,7 +125,9 @@ export function createFixedWorkerProbeAdapter({
         fixedProbePath,
         '-Mode',
         mode,
-      ], {
+      ];
+      if (mode === 'StartApprovedWorkerTask') argumentsList.push('-DeadlineUtc', boundedDeadlineUtc);
+      const result = spawnSyncFn(powerShellExecutable, argumentsList, {
         encoding: 'utf8',
         shell: false,
         windowsHide: true,
@@ -386,7 +398,13 @@ export async function runBattleBridgeWorkerWatchdog({
       WORKER_WATCHDOG_START_TIMEOUT_MS,
       Math.max(1, remainingRunBudgetMs() - WORKER_WATCHDOG_PUBLICATION_RESERVE_MS),
     );
-    const startResult = probeAdapter.run('StartApprovedWorkerTask', { timeoutMs: startTimeoutMs });
+    const restartDeadlineMs = (Number(clock()) || Date.now())
+      + Math.max(1, startTimeoutMs - WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS);
+    const restartDeadlineUtc = new Date(restartDeadlineMs).toISOString();
+    const startResult = probeAdapter.run('StartApprovedWorkerTask', {
+      timeoutMs: startTimeoutMs,
+      deadlineUtc: restartDeadlineUtc,
+    });
     const restartAttemptedAtUtc = now.toISOString();
     if (!startResult.ok
       || startResult.data?.started !== true
@@ -401,6 +419,10 @@ export async function runBattleBridgeWorkerWatchdog({
       || !Number.isSafeInteger(startResult.data?.startedWorkerPid)
       || startResult.data.startedWorkerPid <= 0
       || !Number.isFinite(Date.parse(text(startResult.data?.workerStartedAtUtc)))
+      || !INVOCATION_ID.test(text(startResult.data?.invocationId))
+      || startResult.data?.deadlineUtc !== restartDeadlineUtc
+      || startResult.data?.invocationBound !== true
+      || startResult.data?.canonicalWorkerCommandVerified !== true
       || startResult.data?.cleanupAttempted !== false
       || startResult.data?.cleanupCompleted !== false
       || startResult.data?.restartVerdict !== 'APPROVED_RUNTIME_RESTART_PASS') {

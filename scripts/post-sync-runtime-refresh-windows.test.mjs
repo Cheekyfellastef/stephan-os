@@ -27,8 +27,13 @@ function mandatoryWorkerCleanupBoundary(source) {
     && cleanup > blockerGate
     && terminalBlock > cleanup
     && source.includes("[string]$Plan.TaskName -ne 'Stephanos Mission Orchestrator Worker'")
-    && source.includes('$processStartedAtUtc -le $StartedAfterUtc')
-    && source.includes('$verifiedWorker.ProcessId -ne $ExpectedProcessId');
+    && source.includes('[string]$ExpectedInvocationId')
+    && source.includes('Get-VerifiedInvocationProcessFromLaunchReceipt')
+    && source.includes('Get-VerifiedFreshWorkerInstance')
+    && source.includes('mission-orchestrator-worker-restart-heartbeat-$ExpectedInvocationId.json')
+    && source.includes('$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks')
+    && source.includes('$reverifiedWorker.ProcessStartedAtUtc.Ticks -ne $verifiedWorker.ProcessStartedAtUtc.Ticks')
+    && source.includes('mission-orchestrator-worker-restart-cancel-$ExpectedInvocationId.json');
 }
 
 test('restart helper accepts only backend and mission-worker', () => {
@@ -68,7 +73,8 @@ test('worker restart requires task-owned process stop and a fresh exact-head hea
   assert.match(restartSource, /CANONICAL_TRACKED_SOURCE_DIRTY/);
   assert.match(restartSource, /CANONICAL_TRACKED_SOURCE_CHANGED_DURING_WORKER_START/);
   assert.match(restartSource, /Stop-NewlyStartedOwnedWorker/);
-  assert.match(restartSource, /Stop-ScheduledTask -TaskName \$Plan\.TaskName -TaskPath '\\' -ErrorAction Stop/);
+  assert.match(restartSource, /mission-orchestrator-worker-restart-cancel-\$ExpectedInvocationId\.json/);
+  assert.match(restartSource, /Wait-UntilOperationDeadline/);
 });
 
 test('restart helper pins every authority-bearing Git read to the canonical executable', () => {
@@ -129,18 +135,21 @@ test('worker post-start source proof has one mandatory bounded cleanup path', ()
   );
   assert.match(restartSource, /MISSION_WORKER_POST_START_CLEANUP_FAILED/);
   assert.match(restartSource, /Stop-WithBlocker \$cleanupBlocker/);
-  assert.match(restartSource, /\$missionWorkerStopTimeoutSeconds = 15/);
-  assert.match(restartSource, /\$missionWorkerCleanupTimeoutSeconds = 10/);
-  assert.match(restartSource, /Wait-Until -Seconds \$missionWorkerStopTimeoutSeconds/);
-  assert.match(restartSource, /Wait-Until -Seconds \$missionWorkerCleanupTimeoutSeconds/);
+  assert.match(restartSource, /\[string\]\$DeadlineUtc/);
+  assert.match(restartSource, /Assert-BeforeOperationDeadline/);
+  assert.match(restartSource, /Wait-UntilOperationDeadline/);
+  assert.match(restartSource, /mission-orchestrator-worker-restart-confirm-/);
+  assert.match(restartSource, /mission-orchestrator-worker-restart-cancel-/);
 });
 
 test('removing or widening any owned-cleanup identity edge fails the source guard', () => {
   for (const mutation of [
-    restartSource.replace('Stop-NewlyStartedOwnedWorker `', '# cleanup removed'),
+    restartSource.replaceAll('Stop-NewlyStartedOwnedWorker `', '# cleanup removed'),
     restartSource.replace("[string]$Plan.TaskName -ne 'Stephanos Mission Orchestrator Worker'", '$false'),
-    restartSource.replace('$processStartedAtUtc -le $StartedAfterUtc', '$false'),
-    restartSource.replace('$verifiedWorker.ProcessId -ne $ExpectedProcessId', '$false'),
+    restartSource.replaceAll('[string]$ExpectedInvocationId', '[string]$CallerSelectedInvocationId'),
+    restartSource.replaceAll('Get-VerifiedInvocationProcessFromLaunchReceipt', 'Get-Process'),
+    restartSource.replaceAll('$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks', '$false'),
+    restartSource.replaceAll('$reverifiedWorker.ProcessStartedAtUtc.Ticks -ne $verifiedWorker.ProcessStartedAtUtc.Ticks', '$false'),
   ]) {
     assert.equal(mandatoryWorkerCleanupBoundary(mutation), false);
   }
@@ -149,16 +158,22 @@ test('removing or widening any owned-cleanup identity edge fails the source guar
 test('worker cleanup can target only the exact fresh owned process and fixed task', () => {
   assert.match(restartSource, /\[string\]\$Plan\.TaskName -ne 'Stephanos Mission Orchestrator Worker'/);
   assert.match(restartSource, /MISSION_WORKER_CLEANUP_TASK_NOT_ALLOWLISTED/);
-  assert.match(restartSource, /\$processStartedAtUtc -le \$StartedAfterUtc/);
+  assert.match(restartSource, /\$ExpectedInvocationId -notmatch '\^\[0-9a-f\]\{64\}\$'/);
+  assert.match(restartSource, /Get-VerifiedInvocationProcessFromLaunchReceipt/);
+  assert.match(restartSource, /mission-orchestrator-worker-restart-heartbeat-\$ExpectedInvocationId\.json/);
+  assert.match(restartSource, /\$invocationHeartbeat\.invocationId -ne \$ExpectedInvocationId/);
+  assert.match(restartSource, /\$boundHeartbeatTimestampUtc\.Ticks -ne \$timestamp\.Ticks/);
   assert.match(restartSource, /\[string\]\$heartbeat\.repositoryRoot -ne \$ExpectedRepoRoot/);
   assert.match(restartSource, /\[string\]\$heartbeat\.headSha -ne \$ExpectedSourceHead/);
-  assert.match(restartSource, /\$verifiedWorker\.ProcessId -ne \$ExpectedProcessId/);
+  assert.match(restartSource, /\$verifiedInvocationProcess\.ProcessId -ne \$ExpectedProcessId/);
+  assert.match(restartSource, /\$verifiedInvocationProcess\.ProcessStartedAtUtc\.Ticks -ne \$ExpectedProcessStartedAtUtc\.ToUniversalTime\(\)\.Ticks/);
+  assert.match(restartSource, /Test-ExactCanonicalWorkerProcess/);
   assert.match(restartSource, /MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN/);
   assert.match(restartSource, /MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED/);
-  assert.match(
-    restartSource,
-    /\$cleanupProcessBlocker = 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN'[\s\S]*Stop-ScheduledTask[\s\S]*if \(\$cleanupProcessBlocker\) \{ Stop-WithBlocker \$cleanupProcessBlocker \}/,
-  );
+  assert.match(restartSource, /schemaVersion = 'stephanos\.mission-worker-restart-cancel\.v1'/);
+  assert.match(restartSource, /workerPid = \$ExpectedProcessId/);
+  assert.match(restartSource, /workerStartedAtUtc = \$ExpectedProcessStartedAtUtc\.ToUniversalTime\(\)\.ToString\('o'\)/);
+  assert.doesNotMatch(restartSource, /Stop-Process -Id \$verifiedWorker\.ProcessId/);
   assert.doesNotMatch(restartSource, /Stop-Process\s+-Name|taskkill|killall/);
 });
 
@@ -171,6 +186,10 @@ test('success and blocked receipts expose exact startup and cleanup truth', () =
     'workerStartedAtUtc',
     'cleanupAttempted',
     'cleanupCompleted',
+    'invocationId',
+    'deadlineUtc',
+    'invocationBound',
+    'canonicalWorkerCommandVerified',
   ]) {
     assert.match(restartSource, new RegExp(`${field}\\s*=`));
   }

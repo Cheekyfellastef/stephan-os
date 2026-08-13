@@ -75,7 +75,7 @@ function assertOrdinaryWatchdogDidNotClaimCanaryKill(status) {
   assert.equal(status.workerKilledObserved, false);
 }
 
-function exactHeadRestartProof(headSha, terminatedVerifiedOwnedProcess = false) {
+function exactHeadRestartProof(headSha, deadlineUtc, terminatedVerifiedOwnedProcess = false) {
   return {
     started: true,
     restarted: true,
@@ -88,6 +88,10 @@ function exactHeadRestartProof(headSha, terminatedVerifiedOwnedProcess = false) 
     proofFresh: true,
     startedWorkerPid: 1291,
     workerStartedAtUtc: '2026-08-12T20:00:01.000Z',
+    invocationId: '1'.repeat(64),
+    deadlineUtc,
+    invocationBound: true,
+    canonicalWorkerCommandVerified: true,
     cleanupAttempted: false,
     cleanupCompleted: false,
     terminatedVerifiedOwnedProcess,
@@ -151,10 +155,10 @@ test('old-head live worker is restarted once and recovery requires a current-hea
     const currentHead = 'a'.repeat(40);
     const oldHead = 'b'.repeat(40);
     const probeAdapter = {
-      run(mode) {
+      run(mode, options = {}) {
         if (mode === 'StartApprovedWorkerTask') {
           starts += 1;
-          return { ok: true, data: exactHeadRestartProof(currentHead, true) };
+          return { ok: true, data: exactHeadRestartProof(currentHead, options.deadlineUtc, true) };
         }
         inspections += 1;
         return {
@@ -196,10 +200,10 @@ test('unhealthy fixed worker is started once and bounded probes can prove recove
     let starts = 0;
     let inspections = 0;
     const probeAdapter = {
-      run(mode) {
+      run(mode, options = {}) {
         if (mode === 'StartApprovedWorkerTask') {
           starts += 1;
-          return { ok: true, data: exactHeadRestartProof('a'.repeat(40)) };
+          return { ok: true, data: exactHeadRestartProof('a'.repeat(40), options.deadlineUtc) };
         }
         inspections += 1;
         return { ok: true, data: workerObservation({ paths, healthy: inspections > 1 }) };
@@ -224,10 +228,10 @@ test('recovery starts at most once and fails after exactly three probes without 
     let starts = 0;
     let inspections = 0;
     const probeAdapter = {
-      run(mode) {
+      run(mode, options = {}) {
         if (mode === 'StartApprovedWorkerTask') {
           starts += 1;
-          return { ok: true, data: exactHeadRestartProof('a'.repeat(40)) };
+          return { ok: true, data: exactHeadRestartProof('a'.repeat(40), options.deadlineUtc) };
         }
         inspections += 1;
         return { ok: true, data: workerObservation({ paths, healthy: false }) };
@@ -255,10 +259,10 @@ test('one global run budget stops recovery probes in time to publish bounded fai
     const observedTimeouts = [];
     const probeAdapter = {
       run(mode, options = {}) {
-        observedTimeouts.push({ mode, timeoutMs: options.timeoutMs });
+        observedTimeouts.push({ mode, timeoutMs: options.timeoutMs, deadlineUtc: options.deadlineUtc });
         if (mode === 'StartApprovedWorkerTask') {
           elapsedMs = 106_000;
-          return { ok: true, data: exactHeadRestartProof('a'.repeat(40)) };
+          return { ok: true, data: exactHeadRestartProof('a'.repeat(40), options.deadlineUtc) };
         }
         inspections += 1;
         return { ok: true, data: workerObservation({ paths, healthy: false }) };
@@ -278,6 +282,8 @@ test('one global run budget stops recovery probes in time to publish bounded fai
     assert.deepEqual(observedTimeouts.map((item) => item.mode), ['Inspect', 'StartApprovedWorkerTask']);
     assert.equal(observedTimeouts[0].timeoutMs, WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS);
     assert.ok(observedTimeouts[1].timeoutMs > 0 && observedTimeouts[1].timeoutMs <= 95_000);
+    assert.equal(observedTimeouts[0].deadlineUtc, undefined);
+    assert.equal(observedTimeouts[1].deadlineUtc, '2026-08-12T20:01:25.000Z');
     const status = await readCurrentStatus(paths);
     assert.equal(status.workerRecovered, false);
     assert.match(status.probeError, /run budget exhausted/);
@@ -311,9 +317,9 @@ test('restart cooldown prevents repeated starts without claiming canary kill evi
     await writeFile(paths.currentStatusPath, `${JSON.stringify({ restartAttemptedAtUtc: new Date(now.getTime() - 1_000).toISOString() })}\n`);
     let starts = 0;
     const probeAdapter = {
-      run(mode) {
+      run(mode, options = {}) {
         if (mode === 'StartApprovedWorkerTask') starts += 1;
-        return { ok: true, data: mode === 'Inspect' ? workerObservation({ paths, healthy: false }) : exactHeadRestartProof('a'.repeat(40)) };
+        return { ok: true, data: mode === 'Inspect' ? workerObservation({ paths, healthy: false }) : exactHeadRestartProof('a'.repeat(40), options.deadlineUtc) };
       },
     };
     const result = await runBattleBridgeWorkerWatchdog({ paths, expectedPaths: paths, probeAdapter, now, sleep: async () => {} });
@@ -358,16 +364,19 @@ test('restart proof cannot claim success without post-start source and cleanup t
     (proof) => { proof.workerStartedAtUtc = 'not-a-timestamp'; },
     (proof) => { proof.cleanupAttempted = true; },
     (proof) => { proof.cleanupCompleted = true; },
+    (proof) => { proof.invocationId = 'not-an-invocation'; },
+    (proof) => { proof.deadlineUtc = '2026-08-12T20:00:00.000Z'; },
+    (proof) => { proof.invocationBound = false; },
+    (proof) => { proof.canonicalWorkerCommandVerified = false; },
   ];
   for (const mutate of mutations) {
     await withFixture(async ({ paths }) => {
-      const proof = exactHeadRestartProof('a'.repeat(40));
-      mutate(proof);
       const probeAdapter = {
-        run(mode) {
-          return mode === 'Inspect'
-            ? { ok: true, data: workerObservation({ paths, healthy: false }) }
-            : { ok: true, data: proof };
+        run(mode, options = {}) {
+          if (mode === 'Inspect') return { ok: true, data: workerObservation({ paths, healthy: false }) };
+          const proof = exactHeadRestartProof('a'.repeat(40), options.deadlineUtc);
+          mutate(proof);
+          return { ok: true, data: proof };
         },
       };
       const result = await runBattleBridgeWorkerWatchdog({
@@ -393,12 +402,15 @@ test('fixed probe adapter uses one script, two modes, no shell and hidden PowerS
     },
   });
   assert.equal(adapter.run('Inspect').ok, true);
-  assert.equal(adapter.run('StartApprovedWorkerTask').ok, true);
+  assert.equal(adapter.run('StartApprovedWorkerTask', { deadlineUtc: '2026-08-12T20:01:00.000Z' }).ok, true);
   assert.throws(() => adapter.run('ArbitraryMode'), /Unsupported/);
   assert.equal(calls.length, 2);
   assert.equal(calls[0].executable, CANONICAL_WINDOWS_POWERSHELL);
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.windowsHide, true);
   assert.equal(calls[0].options.timeout, WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS);
-  assert.deepEqual(calls.map((call) => call.args.at(-1)), ['Inspect', 'StartApprovedWorkerTask']);
+  assert.deepEqual(calls[0].args.slice(-2), ['-Mode', 'Inspect']);
+  assert.deepEqual(calls[1].args.slice(-4), ['-Mode', 'StartApprovedWorkerTask', '-DeadlineUtc', '2026-08-12T20:01:00.000Z']);
+  assert.throws(() => adapter.run('StartApprovedWorkerTask'), /deadline/);
+  assert.throws(() => adapter.run('Inspect', { deadlineUtc: '2026-08-12T20:01:00.000Z' }), /cannot receive/);
 });
