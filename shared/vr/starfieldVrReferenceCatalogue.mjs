@@ -1,6 +1,58 @@
 export const STARFIELD_VR_REFERENCE_CATALOGUE_SCHEMA = 'stephanos.starfield-vr-reference-catalogue.v1';
 
-export const STARFIELD_VR_EVIDENCE_BOUNDARY = Object.freeze({
+const MAX_RECIPE_REFERENCE_IDS = 64;
+const SAFE_REFERENCE_ID = /^[a-z0-9](?:[a-z0-9-]{0,94}[a-z0-9])?$/;
+
+function deepFreezeOwned(value, seen = new Set()) {
+  if (!value || typeof value !== 'object' || seen.has(value)) return value;
+  seen.add(value);
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor && Object.hasOwn(descriptor, 'value')) {
+      deepFreezeOwned(descriptor.value, seen);
+    }
+  }
+  return Object.freeze(value);
+}
+
+function snapshotRecipeReferenceIds(value) {
+  try {
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Reflect.ownKeys(descriptors);
+    if (keys.some((key) => typeof key !== 'string')) return null;
+    const lengthDescriptor = descriptors.length;
+    if (!lengthDescriptor || !Object.hasOwn(lengthDescriptor, 'value')) return null;
+    const length = lengthDescriptor.value;
+    if (!Number.isSafeInteger(length) || length < 0 || length > MAX_RECIPE_REFERENCE_IDS) return null;
+    if (keys.length !== length + 1) return null;
+
+    const output = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor || !descriptor.enumerable || descriptor.get || descriptor.set || !Object.hasOwn(descriptor, 'value')) return null;
+      if (typeof descriptor.value !== 'string' || !SAFE_REFERENCE_ID.test(descriptor.value)) return null;
+      output.push(descriptor.value);
+    }
+    return Object.freeze(output);
+  } catch {
+    return null;
+  }
+}
+
+function buildRecipeResult(references, status) {
+  return deepFreezeOwned({
+    schema: STARFIELD_VR_REFERENCE_CATALOGUE_SCHEMA,
+    recipeId: STARFIELD_VR_RECOMMENDED_RECIPE.id,
+    status,
+    referenceIds: references.map((entry) => entry.id),
+    capabilityLine: references.map((entry) => entry.strapline.replace(/ reference$/i, '')).join(' + '),
+    acceptanceTests: [...new Set(references.flatMap((entry) => entry.acceptanceTests))],
+    evidenceBoundary: STARFIELD_VR_EVIDENCE_BOUNDARY,
+  });
+}
+
+export const STARFIELD_VR_EVIDENCE_BOUNDARY = deepFreezeOwned({
   authority: 'reference-only',
   summary: 'Design references do not prove implementation, compatibility, performance, comfort, or permission to reuse code or assets.',
   requiredPromotionEvidence: [
@@ -12,7 +64,7 @@ export const STARFIELD_VR_EVIDENCE_BOUNDARY = Object.freeze({
   ],
 });
 
-export const STARFIELD_VR_REFERENCE_DOMAINS = Object.freeze([
+export const STARFIELD_VR_REFERENCE_DOMAINS = deepFreezeOwned([
   { id: 'foundation', label: 'Foundation' },
   { id: 'embodiment', label: 'Body & hands' },
   { id: 'interaction', label: 'Interaction' },
@@ -23,7 +75,7 @@ export const STARFIELD_VR_REFERENCE_DOMAINS = Object.freeze([
   { id: 'atmosphere', label: 'Atmosphere' },
 ]);
 
-export const STARFIELD_VR_REFERENCES = Object.freeze([
+export const STARFIELD_VR_REFERENCES = deepFreezeOwned([
   {
     id: 'starfield-creation-engine-2',
     title: 'Starfield + Creation Kit',
@@ -201,7 +253,7 @@ export const STARFIELD_VR_REFERENCES = Object.freeze([
   },
 ]);
 
-export const STARFIELD_VR_RECOMMENDED_RECIPE = Object.freeze({
+export const STARFIELD_VR_RECOMMENDED_RECIPE = deepFreezeOwned({
   id: 'living-starship-vertical-slice-v1',
   title: 'Living Starship vertical slice',
   outcome: 'One extraordinary, comfortable and reversible hero ship that proves embodied presence, physical interaction, zero-G movement, readable cockpit systems and Stephanos atmosphere.',
@@ -228,28 +280,24 @@ export function getStarfieldVrReference(referenceId) {
 }
 
 export function filterStarfieldVrReferences(domain = 'all') {
-  if (!domain || domain === 'all') return [...STARFIELD_VR_REFERENCES];
-  return STARFIELD_VR_REFERENCES.filter((entry) => entry.domains.includes(domain));
+  if (!domain || domain === 'all') return Object.freeze([...STARFIELD_VR_REFERENCES]);
+  return Object.freeze(STARFIELD_VR_REFERENCES.filter((entry) => entry.domains.includes(domain)));
 }
 
 export function buildStarfieldVrRecipe(referenceIds = STARFIELD_VR_RECOMMENDED_RECIPE.referenceIds) {
+  const safeReferenceIds = snapshotRecipeReferenceIds(referenceIds);
+  if (!safeReferenceIds) return buildRecipeResult([], 'INVALID_INPUT');
+
   const seen = new Set();
   const references = [];
-  for (const referenceId of referenceIds) {
+  for (const referenceId of safeReferenceIds) {
     if (seen.has(referenceId)) continue;
     seen.add(referenceId);
     const reference = getStarfieldVrReference(referenceId);
     if (reference) references.push(reference);
   }
 
-  return {
-    schema: STARFIELD_VR_REFERENCE_CATALOGUE_SCHEMA,
-    recipeId: STARFIELD_VR_RECOMMENDED_RECIPE.id,
-    referenceIds: references.map((entry) => entry.id),
-    capabilityLine: references.map((entry) => entry.strapline.replace(/ reference$/i, '')).join(' + '),
-    acceptanceTests: [...new Set(references.flatMap((entry) => entry.acceptanceTests))],
-    evidenceBoundary: STARFIELD_VR_EVIDENCE_BOUNDARY,
-  };
+  return buildRecipeResult(references, references.length > 0 ? 'READY' : 'EMPTY');
 }
 
 export function validateStarfieldVrReferenceCatalogue() {
@@ -267,6 +315,12 @@ export function validateStarfieldVrReferenceCatalogue() {
     }
     if (!Array.isArray(reference.attachPoints) || reference.attachPoints.length === 0) issues.push(`missing-attach-points:${reference.id}`);
     if (!Array.isArray(reference.acceptanceTests) || reference.acceptanceTests.length === 0) issues.push(`missing-acceptance-tests:${reference.id}`);
+    if (!Array.isArray(reference.localReferences)) issues.push(`invalid-local-references:${reference.id}`);
+    for (const localReference of reference.localReferences || []) {
+      if (typeof localReference !== 'string' || !localReference || localReference.startsWith('/') || localReference.includes('..') || localReference.includes('://')) {
+        issues.push(`invalid-local-reference:${reference.id}`);
+      }
+    }
     if (!Array.isArray(reference.sources) || reference.sources.length === 0) issues.push(`missing-sources:${reference.id}`);
     for (const source of reference.sources || []) {
       if (!source.label || !/^https:\/\//.test(source.url || '')) issues.push(`invalid-source:${reference.id}`);
@@ -278,5 +332,5 @@ export function validateStarfieldVrReferenceCatalogue() {
     if (!ids.has(referenceId)) issues.push(`unknown-recipe-reference:${referenceId}`);
   }
 
-  return { ok: issues.length === 0, issues };
+  return deepFreezeOwned({ ok: issues.length === 0, issues });
 }
