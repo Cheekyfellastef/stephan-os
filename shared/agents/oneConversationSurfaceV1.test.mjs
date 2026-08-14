@@ -183,6 +183,27 @@ test('malformed observation evidence lists fail closed without throwing', () => 
   assert.equal(buildOneConversationProjectionV1(input, { nowMs: Date.parse(NOW) }).status, 'UNKNOWN');
 });
 
+test('null observations fail closed without throwing', () => {
+  const input = baseInput({ surfaceObservations: [null] });
+  const validation = validateOneConversationInputV1(input);
+  assert.equal(validation.valid, false);
+  assert.ok(validation.errors.includes('observation-must-be-record:0'));
+  assert.doesNotThrow(() => buildOneConversationProjectionV1(input, { nowMs: Date.parse(NOW) }));
+  assert.equal(buildOneConversationProjectionV1(input, { nowMs: Date.parse(NOW) }).status, 'UNKNOWN');
+});
+
+test('non-string observation proof elements fail closed instead of stringifying into evidence', () => {
+  const input = baseInput();
+  input.surfaceObservations[0] = {
+    ...input.surfaceObservations[0],
+    evidenceRefs: [null],
+  };
+  const validation = validateOneConversationInputV1(input);
+  assert.equal(validation.valid, false);
+  assert.ok(validation.errors.includes('observation-evidenceRefs-invalid:0'));
+  assert.equal(buildOneConversationProjectionV1(input, { nowMs: Date.parse(NOW) }).status, 'UNKNOWN');
+});
+
 test('authority widening in a conversation projection is rejected', () => {
   const validation = validateOneConversationInputV1(baseInput({ mergeAllowed: true }));
   assert.equal(validation.valid, false);
@@ -339,6 +360,56 @@ test('future-dated Shared Workspace continuity envelopes fail closed', () => {
   });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'ONE_CONVERSATION_WORKSPACE_RECORD_FUTURE_DATED');
+});
+
+test('workspace publication rejects non-string caller proof refs', () => {
+  const projection = buildOneConversationProjectionV1(baseInput(), { nowMs: Date.parse(NOW) });
+  const result = projectOneConversationWorkspaceMessageV1(projection, {
+    timestampUtc: NOW,
+    correlationId: 'intent-product-1776',
+    messageId: 'one-conversation-invalid-caller-proof',
+    relatedIssue: '#1630',
+    proofRefs: [null],
+    workspaceValidationOptions: { nowMs: Date.parse(NOW) },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'ONE_CONVERSATION_MESSAGE_PROOF_REFS_INVALID');
+});
+
+test('workspace publication rejects non-string retained projection proof refs', () => {
+  const projection = buildOneConversationProjectionV1(baseInput(), { nowMs: Date.parse(NOW) });
+  const tampered = { ...projection, evidenceRefs: [null] };
+  const result = projectOneConversationWorkspaceMessageV1(tampered, {
+    timestampUtc: NOW,
+    correlationId: 'intent-product-1776',
+    messageId: 'one-conversation-invalid-projection-proof',
+    relatedIssue: '#1630',
+    workspaceValidationOptions: { nowMs: Date.parse(NOW) },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'ONE_CONVERSATION_PROJECTION_PROOF_REFS_INVALID');
+});
+
+test('publication rejects freshness timestamps for surfaces not retained by the projection', () => {
+  const projection = buildOneConversationProjectionV1(baseInput(), { nowMs: Date.parse(NOW) });
+  const tampered = {
+    ...projection,
+    activeSurfaces: ['CHATGPT_WEB'],
+    surfaceThreadRefs: { CHATGPT_WEB: projection.surfaceThreadRefs.CHATGPT_WEB },
+    surfaceObservedAt: {
+      CHATGPT_WEB: '2026-08-14T10:00:00.000Z',
+      PHONE: '2026-08-14T12:29:59.000Z',
+    },
+  };
+  const result = projectOneConversationWorkspaceMessageV1(tampered, {
+    timestampUtc: NOW,
+    correlationId: 'intent-product-1776',
+    messageId: 'one-conversation-injected-freshness',
+    relatedIssue: '#1630',
+    workspaceValidationOptions: { nowMs: Date.parse(NOW) },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'ONE_CONVERSATION_PROJECTION_SURFACE_SET_INCONSISTENT');
 });
 
 test('stale Shared Workspace continuity messages are not reported ready', () => {
