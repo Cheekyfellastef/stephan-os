@@ -48,6 +48,11 @@ const METRICS_KEYS = [
   'reviewIntegrationSeconds', 'successRate', 'reworkRate', 'authorityReceiptIds',
   'proofRefs', 'payloadSha256',
 ];
+const SCHEDULER_DECISION_KEYS = [
+  'correlationId', 'decidedAt', 'status', 'failClosed', 'contradictionCodes',
+  'selectedIssue', 'selectedIssues', 'selectedLifecycle', 'activeIssue', 'activeIssues',
+  'route', 'proofRefs', 'proofHeadShas', 'proofReceipts',
+];
 
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
@@ -217,11 +222,17 @@ function normalizeScheduler(projection, host, blockers) {
     blockers.push('scheduler-decision-receipt-invalid');
     return null;
   }
+  if (!exactKeys(decision, SCHEDULER_DECISION_KEYS)) blockers.push('scheduler-decision-receipt-shape-invalid');
   const decidedAtMs = instant(decision.decidedAt);
-  if (decision.failClosed !== false || !Number.isFinite(decidedAtMs)
+  if (decision.failClosed !== false || decision.status === 'BLOCKED_FAIL_CLOSED'
+    || !dense(decision.contradictionCodes) || decision.contradictionCodes.length !== 0
+    || !Number.isFinite(decidedAtMs)
     || decidedAtMs > host.nowMs || host.nowMs - decidedAtMs > host.freshnessSeconds * 1000) {
     blockers.push('scheduler-decision-stale-or-invalid');
   }
+  if (!dense(decision.proofRefs) || !dense(decision.proofHeadShas) || !dense(decision.proofReceipts)
+    || decision.proofRefs.length > MAX_LIST || decision.proofHeadShas.length > MAX_LIST
+    || decision.proofReceipts.length > MAX_LIST) blockers.push('scheduler-decision-proof-inventory-invalid');
   if (!dense(decision.selectedIssues) || decision.selectedIssues.length > MAX_CANDIDATES
     || !dense(decision.activeIssues) || decision.activeIssues.length > MAX_CANDIDATES) {
     blockers.push('scheduler-decision-issues-invalid');
