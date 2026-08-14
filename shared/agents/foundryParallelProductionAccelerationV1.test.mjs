@@ -224,6 +224,18 @@ test('canonical active ownership blocks an omitted caller conflict', () => {
   assert.ok(result.blockers.includes('scheduler-candidate-active-resource-conflict:#1737'));
 });
 
+test('ACTIVE_LANE binds route and null selected tuple to the primary active portfolio row', () => {
+  const active = portfolioItem(1700, { lifecycle:'ACTIVE' });
+  const projection = scheduler({ active:[active], selected:[] });
+  assert.equal(planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection })).valid, true);
+  projection.decisionReceipt.route = 'OPENCLAW_LOCAL';
+  assert.equal(planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection })).valid, false);
+  projection.decisionReceipt.route = active.route;
+  projection.decisionReceipt.selectedIssue = active.issue;
+  projection.decisionReceipt.selectedLifecycle = 'ACTIVE';
+  assert.equal(planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection })).valid, false);
+});
+
 test('scheduler inventory fails closed on omitted active rows or partial resource scopes', async (t) => {
   await t.test('unlisted ACTIVE portfolio row', () => {
     const hidden = portfolioItem(1700, { lifecycle:'ACTIVE', resourceIds:['repo:hidden'] });
@@ -239,6 +251,18 @@ test('scheduler inventory fails closed on omitted active rows or partial resourc
     const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
     assert.equal(result.valid, false);
     assert.ok(result.blockers.includes('scheduler-candidate-resource-mismatch:#1737'));
+  });
+  await t.test('unrelated unscoped portfolio row is allowed', () => {
+    const unrelated = portfolioItem(1600, { lifecycle:'BLOCKED', resourceIds:[] });
+    const projection = scheduler({ portfolio:[unrelated, portfolioItem(1737)] });
+    assert.equal(planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection })).valid, true);
+  });
+  await t.test('active ownership must remain resource scoped', () => {
+    const active = portfolioItem(1700, { lifecycle:'ACTIVE', resourceIds:[] });
+    const projection = scheduler({ active:[active], selected:[] });
+    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('scheduler-active-portfolio-invalid:#1700'));
   });
 });
 
@@ -358,6 +382,18 @@ test('positive candidates held after Foundry slots are consumed report slot exha
   assert.equal(result.heldCandidates.length, 1);
   assert.equal(result.heldCandidates[0].candidateId, '#1738');
   assert.equal(result.heldCandidates[0].reason, 'NO_AVAILABLE_FOUNDRY_SLOT_USE_GITHUB');
+});
+
+test('assignment admission preserves canonical scheduler candidate order', () => {
+  const selected = [portfolioItem(1737, { criticalPathWeight:1 }), portfolioItem(1738, { criticalPathWeight:1000 })];
+  const foundry = evidence('foundry', 'FOUNDRY_FORGE', { metrics:{ availableSlots:1 } });
+  const result = planFoundryParallelProductionAcceleration({}, host({
+    schedulerProjection:scheduler({ selected }),
+    providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), foundry],
+  }));
+  assert.equal(result.valid, true);
+  assert.equal(result.assignments[0].candidateId, '#1737');
+  assert.equal(result.heldCandidates[0].candidateId, '#1738');
 });
 
 test('a proven zero-slot Foundry lane reports current capacity exhaustion, not missing proof', () => {
