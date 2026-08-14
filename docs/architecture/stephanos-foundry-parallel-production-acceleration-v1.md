@@ -50,7 +50,7 @@ Foundry is additionally eligible only when a direct call to `adjudicateForgeSide
 The planner accepts candidates only from `parallelCandidateDetails`. It verifies:
 
 - top-level and decision-receipt fail-closed state is false with zero contradictions;
-- the decision receipt has the exact canonical field inventory, a non-blocked status and empty contradiction codes;
+- the decision receipt has the exact canonical field inventory, an allowed status consistent with its active/selected state and empty contradiction codes;
 - decision freshness;
 - exact equality between active-goal, active-issue and ACTIVE portfolio inventories;
 - exact equality between selected-issue, parallel-candidate and detail inventories;
@@ -72,7 +72,7 @@ p95 start latency
 + execution × failure rate
 ```
 
-GitHub is the measured baseline. Foundry is recommended only when it has a measured free slot and:
+GitHub is the measured duration baseline. A valid zero-slot GitHub lane remains usable as the baseline when it is saturated; only Foundry needs a measured free assignment slot. Foundry is recommended only when:
 
 ```text
 netSecondsSaved > 0
