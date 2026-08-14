@@ -45,6 +45,31 @@ function issueNumber(value) {
 function sha(value) { return typeof value === 'string' && SHA_RE.test(value.trim()) ? value.trim().toLowerCase() : null; }
 function positiveNumber(value, fallback = 0) { return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback; }
 function hasOwn(object, key) { return Object.prototype.hasOwnProperty.call(object, key); }
+function ownDataSlot(object, key) {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(object, key);
+    if (!descriptor) return { present:false, value:undefined, inspectionFailed:false };
+    if (!Object.prototype.hasOwnProperty.call(descriptor, 'value')) return { present:true, value:undefined, inspectionFailed:true };
+    return { present:true, value:descriptor.value, inspectionFailed:false };
+  } catch {
+    return { present:true, value:undefined, inspectionFailed:true };
+  }
+}
+function arrayLengthMetadata(value) {
+  if (!Array.isArray(value)) return { isArray:false, length:0, inspectionFailed:false };
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, 'length');
+    const valid = descriptor
+      && Object.prototype.hasOwnProperty.call(descriptor, 'value')
+      && Number.isSafeInteger(descriptor.value)
+      && descriptor.value >= 0;
+    return valid
+      ? { isArray:true, length:descriptor.value, inspectionFailed:false }
+      : { isArray:true, length:0, inspectionFailed:true };
+  } catch {
+    return { isArray:true, length:0, inspectionFailed:true };
+  }
+}
 function normalizeStringEvidenceArray(object, key) {
   const present = hasOwn(object, key);
   const container = present ? object[key] : undefined;
@@ -93,7 +118,7 @@ function explicitTimestampMs(value) {
   return Number.isFinite(parsed) ? parsed : NaN;
 }
 
-function normalizeGoal(candidate = {}) {
+function normalizeGoal(candidate = {}, capturedEvidence = null) {
   const goal = candidate && typeof candidate === 'object' && !Array.isArray(candidate) ? candidate : {};
   const number = issueNumber(goal.issue ?? goal.issueNumber);
   const prerequisitesPresent = hasOwn(goal, 'prerequisites');
@@ -120,10 +145,21 @@ function normalizeGoal(candidate = {}) {
   const repairCycleCountPresent = hasOwn(goal, 'repairCycleCount');
   const invalidRepairCycleCount = repairCycleCountPresent && (!Number.isSafeInteger(goal.repairCycleCount) || goal.repairCycleCount < 0);
   const repairCycleCount = invalidRepairCycleCount || !repairCycleCountPresent ? 0 : goal.repairCycleCount;
-  const resultEvidence = normalizeStringEvidenceArray(goal, 'resultProofRefs');
-  const structuralEvidence = normalizeStringEvidenceArray(goal, 'structuralReviewProofRefs');
-  const modelEvidence = normalizeStringEvidenceArray(goal, 'modelTestProofRefs');
-  const resourceEvidence = normalizeStringEvidenceArray(goal, 'resourceIds');
+  const evidenceSource = (key) => capturedEvidence?.[key]?.present
+    ? { [key]:capturedEvidence[key].value }
+    : {};
+  const resultEvidence = capturedEvidence
+    ? normalizeStringEvidenceArray(evidenceSource('resultProofRefs'), 'resultProofRefs')
+    : normalizeStringEvidenceArray(goal, 'resultProofRefs');
+  const structuralEvidence = capturedEvidence
+    ? normalizeStringEvidenceArray(evidenceSource('structuralReviewProofRefs'), 'structuralReviewProofRefs')
+    : normalizeStringEvidenceArray(goal, 'structuralReviewProofRefs');
+  const modelEvidence = capturedEvidence
+    ? normalizeStringEvidenceArray(evidenceSource('modelTestProofRefs'), 'modelTestProofRefs')
+    : normalizeStringEvidenceArray(goal, 'modelTestProofRefs');
+  const resourceEvidence = capturedEvidence
+    ? normalizeStringEvidenceArray(evidenceSource('resourceIds'), 'resourceIds')
+    : normalizeStringEvidenceArray(goal, 'resourceIds');
   const resultProofRefs = resultEvidence.values;
   const structuralReviewProofRefs = structuralEvidence.values;
   const modelTestProofRefs = modelEvidence.values;
@@ -317,17 +353,66 @@ export function buildMissionScheduler(input = {}) {
     readyIndependentWorkCount:0,
     availableExecutorSlots,
   });
-  const goalsContainerInvalid = hasOwn(source, 'goals') && !Array.isArray(source.goals);
-  const proofHeadsContainerInvalid = hasOwn(source, 'proofHeadShas') && !Array.isArray(source.proofHeadShas);
-  const proofHeadsBoundExceeded = Array.isArray(source.proofHeadShas) && source.proofHeadShas.length > MAX_EVIDENCE_ITEMS;
-  const rawProofHeads = Array.isArray(source.proofHeadShas) && !proofHeadsBoundExceeded ? source.proofHeadShas : [];
+  const goalsSlot = ownDataSlot(source, 'goals');
+  const proofHeadsSlot = ownDataSlot(source, 'proofHeadShas');
+  const proofReceiptsSlot = ownDataSlot(source, 'proofReceipts');
+  const proofRefsSlot = ownDataSlot(source, 'proofRefs');
+  const goalsMetadata = arrayLengthMetadata(goalsSlot.value);
+  const proofHeadsMetadata = arrayLengthMetadata(proofHeadsSlot.value);
+  const proofReceiptsMetadata = arrayLengthMetadata(proofReceiptsSlot.value);
+  const proofRefsMetadata = arrayLengthMetadata(proofRefsSlot.value);
+  const goalsContainerInvalid = goalsSlot.inspectionFailed || (goalsSlot.present && !goalsMetadata.isArray);
+  const rawGoals = goalsMetadata.isArray && !goalsMetadata.inspectionFailed ? goalsSlot.value : [];
+  const portfolioBoundExceeded = goalsMetadata.length > MAX_PORTFOLIO_GOALS;
+  let totalPrerequisites = 0;
+  let totalPrerequisiteBoundExceeded = false;
+  let evidencePreflightInspectionFailed = goalsMetadata.inspectionFailed
+    || proofHeadsSlot.inspectionFailed
+    || proofReceiptsSlot.inspectionFailed
+    || proofRefsSlot.inspectionFailed
+    || proofHeadsMetadata.inspectionFailed
+    || proofReceiptsMetadata.inspectionFailed
+    || proofRefsMetadata.inspectionFailed;
+  let totalEvidenceItems = proofHeadsMetadata.length + proofReceiptsMetadata.length + proofRefsMetadata.length;
+  let totalEvidenceBoundExceeded = totalEvidenceItems > MAX_TOTAL_EVIDENCE_ITEMS;
+  const goalPreflights = [];
+  if (!portfolioBoundExceeded) {
+    for (let index = 0; index < goalsMetadata.length; index += 1) {
+      const candidateSlot = ownDataSlot(rawGoals, String(index));
+      if (candidateSlot.inspectionFailed) evidencePreflightInspectionFailed = true;
+      const candidate = candidateSlot.value;
+      const candidateObject = candidate && typeof candidate === 'object' && !Array.isArray(candidate) ? candidate : null;
+      const prerequisitesSlot = candidateObject ? ownDataSlot(candidateObject, 'prerequisites') : { present:false, value:undefined, inspectionFailed:false };
+      const prerequisitesMetadata = arrayLengthMetadata(prerequisitesSlot.value);
+      if (prerequisitesSlot.inspectionFailed || prerequisitesMetadata.inspectionFailed) evidencePreflightInspectionFailed = true;
+      totalPrerequisites += prerequisitesMetadata.length;
+      const evidenceSlots = {};
+      for (const key of ['resourceIds', 'resultProofRefs', 'structuralReviewProofRefs', 'modelTestProofRefs']) {
+        const slot = candidateObject ? ownDataSlot(candidateObject, key) : { present:false, value:undefined, inspectionFailed:false };
+        const metadata = arrayLengthMetadata(slot.value);
+        if (slot.inspectionFailed || metadata.inspectionFailed) evidencePreflightInspectionFailed = true;
+        totalEvidenceItems += metadata.length;
+        evidenceSlots[key] = slot;
+      }
+      goalPreflights.push({ candidate, evidenceSlots });
+    }
+    totalPrerequisiteBoundExceeded = totalPrerequisites > MAX_TOTAL_PREREQUISITES;
+    totalEvidenceBoundExceeded = totalEvidenceItems > MAX_TOTAL_EVIDENCE_ITEMS;
+  }
+  const proofHeadsContainerInvalid = proofHeadsSlot.inspectionFailed || (proofHeadsSlot.present && !proofHeadsMetadata.isArray);
+  const proofHeadsBoundExceeded = proofHeadsMetadata.length > MAX_EVIDENCE_ITEMS;
+  const rawProofHeads = proofHeadsMetadata.isArray && !proofHeadsBoundExceeded && !totalEvidenceBoundExceeded && !evidencePreflightInspectionFailed
+    ? proofHeadsSlot.value
+    : [];
   const normalizedProofHeads = Array.from({ length:rawProofHeads.length }, (_, index) => sha(rawProofHeads[index]));
   const invalidProofHeads = [];
   for (let index = 0; index < rawProofHeads.length; index += 1) if (!hasOwn(rawProofHeads, index) || !normalizedProofHeads[index]) invalidProofHeads.push({ index });
   const provenHeads = new Set(normalizedProofHeads.filter(Boolean));
-  const proofReceiptsContainerInvalid = hasOwn(source, 'proofReceipts') && !Array.isArray(source.proofReceipts);
-  const proofReceiptsBoundExceeded = Array.isArray(source.proofReceipts) && source.proofReceipts.length > MAX_EVIDENCE_ITEMS;
-  const rawProofReceipts = Array.isArray(source.proofReceipts) && !proofReceiptsBoundExceeded ? source.proofReceipts : [];
+  const proofReceiptsContainerInvalid = proofReceiptsSlot.inspectionFailed || (proofReceiptsSlot.present && !proofReceiptsMetadata.isArray);
+  const proofReceiptsBoundExceeded = proofReceiptsMetadata.length > MAX_EVIDENCE_ITEMS;
+  const rawProofReceipts = proofReceiptsMetadata.isArray && !proofReceiptsBoundExceeded && !totalEvidenceBoundExceeded && !evidencePreflightInspectionFailed
+    ? proofReceiptsSlot.value
+    : [];
   const proofReceipts = [];
   const invalidProofReceipts = [];
   for (let index = 0; index < rawProofReceipts.length; index += 1) {
@@ -343,32 +428,25 @@ export function buildMissionScheduler(input = {}) {
     receipt.repository,
     receipt.branch,
   )));
-  const proofRefEvidence = normalizeStringEvidenceArray(source, 'proofRefs');
-  const proofRefsContainerInvalid = proofRefEvidence.invalidContainer;
+  const proofRefsContainerInvalid = proofRefsSlot.inspectionFailed || (proofRefsSlot.present && !proofRefsMetadata.isArray);
+  const proofRefEvidence = totalEvidenceBoundExceeded || evidencePreflightInspectionFailed
+    ? {
+        values:[],
+        invalidContainer:proofRefsContainerInvalid,
+        invalidEntries:[],
+        boundExceeded:proofRefsMetadata.length > MAX_EVIDENCE_ITEMS,
+        suppliedCount:proofRefsMetadata.length,
+      }
+    : normalizeStringEvidenceArray(proofRefsSlot.present ? { proofRefs:proofRefsSlot.value } : {}, 'proofRefs');
   const proofRefsBoundExceeded = proofRefEvidence.boundExceeded;
   const invalidProofRefs = proofRefEvidence.invalidEntries;
   const proofRefs = proofRefEvidence.values;
-  const rawGoals = Array.isArray(source.goals) ? source.goals : [];
-  const portfolioBoundExceeded = rawGoals.length > MAX_PORTFOLIO_GOALS;
-  let totalPrerequisites = 0;
-  let totalPrerequisiteBoundExceeded = false;
-  let totalEvidenceItems = [source.proofHeadShas, source.proofReceipts, source.proofRefs]
-    .reduce((total, value) => total + (Array.isArray(value) ? value.length : 0), 0);
-  let totalEvidenceBoundExceeded = totalEvidenceItems > MAX_TOTAL_EVIDENCE_ITEMS;
-  if (!portfolioBoundExceeded) {
-    for (const candidate of rawGoals) {
-      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
-      if (Array.isArray(candidate.prerequisites)) totalPrerequisites += candidate.prerequisites.length;
-      for (const key of ['resourceIds', 'resultProofRefs', 'structuralReviewProofRefs', 'modelTestProofRefs']) {
-        if (Array.isArray(candidate[key])) totalEvidenceItems += candidate[key].length;
-      }
-    }
-    totalPrerequisiteBoundExceeded = totalPrerequisites > MAX_TOTAL_PREREQUISITES;
-    totalEvidenceBoundExceeded = totalEvidenceItems > MAX_TOTAL_EVIDENCE_ITEMS;
-  }
-  const goals = portfolioBoundExceeded || totalPrerequisiteBoundExceeded || totalEvidenceBoundExceeded
+  const goals = portfolioBoundExceeded || totalPrerequisiteBoundExceeded || totalEvidenceBoundExceeded || evidencePreflightInspectionFailed
     ? []
-    : Array.from({ length:rawGoals.length }, (_, index) => normalizeGoal(rawGoals[index]));
+    : Array.from({ length:goalsMetadata.length }, (_, index) => normalizeGoal(
+        goalPreflights[index].candidate,
+        goalPreflights[index].evidenceSlots,
+      ));
   const issueCounts = new Map();
   for (const goal of goals) if (goal.issue) issueCounts.set(goal.issue, (issueCounts.get(goal.issue) ?? 0) + 1);
   const duplicateIssueIds = [...issueCounts].filter(([, count]) => count > 1).map(([issue]) => issue);
@@ -381,11 +459,12 @@ export function buildMissionScheduler(input = {}) {
   if (nowInvalid || freshnessInvalid) contradictions.push({ code:'INVALID_SCHEDULER_CLOCK', invalidNow:nowInvalid, invalidFreshnessMs:freshnessInvalid });
   if (capacityPolicy.status === 'SAFE_HOLD_INVALID_CAPACITY') contradictions.push({ code:'INVALID_PARALLEL_CAPACITY_POLICY' });
   if (goalsContainerInvalid) contradictions.push({ code:'INVALID_GOALS_CONTAINER' });
-  if (portfolioBoundExceeded) contradictions.push({ code:'PORTFOLIO_BOUND_EXCEEDED', suppliedGoalCount:rawGoals.length, maximumGoalCount:MAX_PORTFOLIO_GOALS });
+  if (portfolioBoundExceeded) contradictions.push({ code:'PORTFOLIO_BOUND_EXCEEDED', suppliedGoalCount:goalsMetadata.length, maximumGoalCount:MAX_PORTFOLIO_GOALS });
   if (totalPrerequisiteBoundExceeded) contradictions.push({ code:'TOTAL_PREREQUISITE_BOUND_EXCEEDED', suppliedPrerequisiteCount:totalPrerequisites, maximumPrerequisiteCount:MAX_TOTAL_PREREQUISITES });
   if (totalEvidenceBoundExceeded) contradictions.push({ code:'TOTAL_EVIDENCE_BOUND_EXCEEDED', suppliedEvidenceCount:totalEvidenceItems, maximumCount:MAX_TOTAL_EVIDENCE_ITEMS });
-  if (proofHeadsContainerInvalid || invalidProofHeads.length || proofHeadsBoundExceeded) contradictions.push({ code:'INVALID_PROOF_HEAD_EVIDENCE', invalidProofHeads, boundExceeded:proofHeadsBoundExceeded, suppliedCount:Array.isArray(source.proofHeadShas) ? source.proofHeadShas.length : 0, maximumCount:MAX_EVIDENCE_ITEMS });
-  if (proofReceiptsContainerInvalid || invalidProofReceipts.length || proofReceiptsBoundExceeded) contradictions.push({ code:'INVALID_PROOF_RECEIPT_EVIDENCE', invalidProofReceipts, boundExceeded:proofReceiptsBoundExceeded, suppliedCount:Array.isArray(source.proofReceipts) ? source.proofReceipts.length : 0, maximumCount:MAX_EVIDENCE_ITEMS });
+  if (evidencePreflightInspectionFailed) contradictions.push({ code:'EVIDENCE_PREFLIGHT_INSPECTION_FAILED' });
+  if (proofHeadsContainerInvalid || invalidProofHeads.length || proofHeadsBoundExceeded) contradictions.push({ code:'INVALID_PROOF_HEAD_EVIDENCE', invalidProofHeads, boundExceeded:proofHeadsBoundExceeded, suppliedCount:proofHeadsMetadata.length, maximumCount:MAX_EVIDENCE_ITEMS });
+  if (proofReceiptsContainerInvalid || invalidProofReceipts.length || proofReceiptsBoundExceeded) contradictions.push({ code:'INVALID_PROOF_RECEIPT_EVIDENCE', invalidProofReceipts, boundExceeded:proofReceiptsBoundExceeded, suppliedCount:proofReceiptsMetadata.length, maximumCount:MAX_EVIDENCE_ITEMS });
   if (proofRefsContainerInvalid || invalidProofRefs.length || proofRefsBoundExceeded) contradictions.push({ code:'INVALID_PROOF_REFERENCE_EVIDENCE', invalidProofRefs, boundExceeded:proofRefsBoundExceeded, suppliedCount:proofRefEvidence.suppliedCount, maximumCount:MAX_EVIDENCE_ITEMS });
   for (const issue of duplicateIssueIds) contradictions.push({ code:'DUPLICATE_GOAL_IDENTITY', issue });
   for (const [index, goal] of goals.entries()) if (!goal.issue) contradictions.push({ code:'INVALID_GOAL_IDENTITY', index });
