@@ -73,41 +73,11 @@ const CANONICAL_PRODUCT_SURFACE_IDS = Object.freeze([
 ]);
 
 export const UI_AGENT_M2_SHARED_PRIMITIVES = Object.freeze([
-  Object.freeze({
-    schemaVersion: UI_AGENT_SHARED_PRIMITIVE_SCHEMA_VERSION,
-    primitiveId: 'workspace-canvas',
-    sourceRef: 'stephanos-ui/src/styles.css',
-    selectorOrExport: '.stephanos-workspace-canvas',
-    role: 'responsive bounded workspace layout',
-  }),
-  Object.freeze({
-    schemaVersion: UI_AGENT_SHARED_PRIMITIVE_SCHEMA_VERSION,
-    primitiveId: 'workspace-lane',
-    sourceRef: 'stephanos-ui/src/styles.css',
-    selectorOrExport: '.stephanos-workspace-lane',
-    role: 'primary content lane',
-  }),
-  Object.freeze({
-    schemaVersion: UI_AGENT_SHARED_PRIMITIVE_SCHEMA_VERSION,
-    primitiveId: 'workspace-gutter',
-    sourceRef: 'stephanos-ui/src/styles.css',
-    selectorOrExport: '.stephanos-workspace-gutter',
-    role: 'spatial breathing room and depth boundary',
-  }),
-  Object.freeze({
-    schemaVersion: UI_AGENT_SHARED_PRIMITIVE_SCHEMA_VERSION,
-    primitiveId: 'panel-card-shell',
-    sourceRef: 'stephanos-ui/src/styles.css',
-    selectorOrExport: '.panel,.provider-dock,.result-card,.graph-card,.simulation-result-card,.api-banner,.api-connection-banner,.custom-provider-panel,.provider-card',
-    role: 'shared thin-border card and panel surface language',
-  }),
-  Object.freeze({
-    schemaVersion: UI_AGENT_SHARED_PRIMITIVE_SCHEMA_VERSION,
-    primitiveId: 'reduced-motion-contract',
-    sourceRef: 'stephanos-ui/src/styles.css',
-    selectorOrExport: '@media (prefers-reduced-motion: reduce)',
-    role: 'motion accessibility boundary',
-  }),
+  Object.freeze({ schemaVersion:UI_AGENT_SHARED_PRIMITIVE_SCHEMA_VERSION, primitiveId:'workspace-canvas', sourceRef:'stephanos-ui/src/styles.css', selectorOrExport:'.stephanos-workspace-canvas', role:'responsive bounded workspace layout' }),
+  Object.freeze({ schemaVersion:UI_AGENT_SHARED_PRIMITIVE_SCHEMA_VERSION, primitiveId:'workspace-lane', sourceRef:'stephanos-ui/src/styles.css', selectorOrExport:'.stephanos-workspace-lane', role:'primary content lane' }),
+  Object.freeze({ schemaVersion:UI_AGENT_SHARED_PRIMITIVE_SCHEMA_VERSION, primitiveId:'workspace-gutter', sourceRef:'stephanos-ui/src/styles.css', selectorOrExport:'.stephanos-workspace-gutter', role:'spatial breathing room and depth boundary' }),
+  Object.freeze({ schemaVersion:UI_AGENT_SHARED_PRIMITIVE_SCHEMA_VERSION, primitiveId:'panel-card-shell', sourceRef:'stephanos-ui/src/styles.css', selectorOrExport:'.panel,.provider-dock,.result-card,.graph-card,.simulation-result-card,.api-banner,.api-connection-banner,.custom-provider-panel,.provider-card', role:'shared thin-border card and panel surface language' }),
+  Object.freeze({ schemaVersion:UI_AGENT_SHARED_PRIMITIVE_SCHEMA_VERSION, primitiveId:'reduced-motion-contract', sourceRef:'stephanos-ui/src/styles.css', selectorOrExport:'@media (prefers-reduced-motion: reduce)', role:'motion accessibility boundary' }),
 ]);
 
 function text(value, fallback = '') {
@@ -115,84 +85,35 @@ function text(value, fallback = '') {
   const output = String(value).trim();
   return output || fallback;
 }
-
-function list(value) {
-  return Array.isArray(value) ? value.map((item) => text(item)).filter(Boolean) : [];
-}
-
-function safeId(value) {
-  return SAFE_ID.test(text(value));
-}
-
+function list(value) { return Array.isArray(value) ? value.map((item) => text(item)).filter(Boolean) : []; }
+function safeId(value) { return SAFE_ID.test(text(value)); }
 function sourceRef(value) {
   const candidate = text(value);
   return Boolean(candidate && !ABSOLUTE_SOURCE_REF.test(candidate) && !candidate.split(/[\\/]/).includes('..') && SAFE_SOURCE_REF.test(candidate));
 }
-
-function registrationRef(value) {
-  const candidate = text(value);
-  return SAFE_PRESENTATION_REF.test(candidate) || sourceRef(candidate);
-}
-
-function timestamp(value) {
-  const candidate = text(value);
-  const ms = Date.parse(candidate);
-  return Boolean(candidate && Number.isFinite(ms) && new Date(ms).toISOString() === candidate);
-}
-
-function hash(value) {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
-}
-
-function freezeList(value) {
-  return Object.freeze([...value]);
-}
-
-function normalizedExperienceDebt(value) {
-  const debt = list(value);
-  return debt.length > 0 ? debt : ['UNKNOWN'];
-}
+function registrationRef(value) { const candidate = text(value); return SAFE_PRESENTATION_REF.test(candidate) || sourceRef(candidate); }
+function timestamp(value) { const candidate = text(value); const ms = Date.parse(candidate); return Boolean(candidate && Number.isFinite(ms) && new Date(ms).toISOString() === candidate); }
+function hash(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
+function freezeList(value) { return Object.freeze([...value]); }
+function normalizedExperienceDebt(value) { const debt = list(value); return debt.length > 0 ? debt : ['UNKNOWN']; }
 
 function surface(input = {}) {
   return Object.freeze({
     schemaVersion: UI_AGENT_EXPERIENCE_SURFACE_SCHEMA_VERSION,
-    surfaceId: text(input.surfaceId),
-    surfaceClass: text(input.surfaceClass),
-    ownerGoal: text(input.ownerGoal),
-    registrationRef: text(input.registrationRef),
-    experienceVersion: text(input.experienceVersion, 'UNASSESSED'),
-    componentVersion: text(input.componentVersion, 'UNASSESSED'),
-    responsiveCoverage: text(input.responsiveCoverage, 'UNKNOWN'),
-    accessibilityCoverage: text(input.accessibilityCoverage, 'UNKNOWN'),
-    motionCoverage: text(input.motionCoverage, 'UNKNOWN'),
-    loadingEmptyErrorCoverage: text(input.loadingEmptyErrorCoverage, 'UNKNOWN'),
-    inputMethods: freezeList(list(input.inputMethods)),
-    lastVisualProof: text(input.lastVisualProof),
-    lastInteractionProof: text(input.lastInteractionProof),
-    knownExperienceDebt: freezeList(normalizedExperienceDebt(input.knownExperienceDebt)),
-    severity: text(input.severity, 'UNKNOWN'),
+    surfaceId: text(input.surfaceId), surfaceClass: text(input.surfaceClass), ownerGoal: text(input.ownerGoal), registrationRef: text(input.registrationRef),
+    experienceVersion: text(input.experienceVersion, 'UNASSESSED'), componentVersion: text(input.componentVersion, 'UNASSESSED'),
+    responsiveCoverage: text(input.responsiveCoverage, 'UNKNOWN'), accessibilityCoverage: text(input.accessibilityCoverage, 'UNKNOWN'),
+    motionCoverage: text(input.motionCoverage, 'UNKNOWN'), loadingEmptyErrorCoverage: text(input.loadingEmptyErrorCoverage, 'UNKNOWN'),
+    inputMethods: freezeList(list(input.inputMethods)), lastVisualProof: text(input.lastVisualProof), lastInteractionProof: text(input.lastInteractionProof),
+    knownExperienceDebt: freezeList(normalizedExperienceDebt(input.knownExperienceDebt)), severity: text(input.severity, 'UNKNOWN'),
     recommendedNextImprovement: text(input.recommendedNextImprovement, 'AUDIT_REQUIRED'),
   });
 }
 
 function inferredSurfaceFromRegisteredApp(appId) {
   const normalized = text(appId);
-  const surfaceId = ({
-    stephanos: 'stephanos-landing-page',
-    'goal-dashboard': 'goal-dashboard',
-    'music-tile': 'music-tile',
-    'vr-research-lab': 'vr-research-lab',
-    wealthapp: 'wealth',
-    cockpit: 'command-deck',
-  })[normalized] || `app:${normalized}`;
-  return surface({
-    surfaceId,
-    surfaceClass: 'REGISTERED_APP',
-    ownerGoal: 'UNKNOWN',
-    registrationRef: 'apps/index.json',
-    inputMethods: ['POINTER', 'KEYBOARD'],
-    knownExperienceDebt: ['UNKNOWN'],
-  });
+  const surfaceId = ({ stephanos:'stephanos-landing-page', 'goal-dashboard':'goal-dashboard', 'music-tile':'music-tile', 'vr-research-lab':'vr-research-lab', wealthapp:'wealth', cockpit:'command-deck' })[normalized] || `app:${normalized}`;
+  return surface({ surfaceId, surfaceClass:'REGISTERED_APP', ownerGoal:'UNKNOWN', registrationRef:'apps/index.json', inputMethods:['POINTER','KEYBOARD'], knownExperienceDebt:['UNKNOWN'] });
 }
 
 export function validateUiAgentSharedPrimitive(record) {
@@ -217,9 +138,7 @@ export function validateUiAgentExperienceSurface(record) {
   const debtValues = Array.isArray(record.knownExperienceDebt) ? record.knownExperienceDebt : [];
   if (!Array.isArray(record.knownExperienceDebt)) errors.push('knownExperienceDebt-must-be-array');
   else if (record.knownExperienceDebt.length === 0) errors.push('knownExperienceDebt-must-not-be-empty');
-  for (const debt of debtValues) {
-    if (!UI_AGENT_EXPERIENCE_DEBT_CLASSES.includes(text(debt))) errors.push(`experience-debt-invalid:${debt}`);
-  }
+  for (const debt of debtValues) if (!UI_AGENT_EXPERIENCE_DEBT_CLASSES.includes(text(debt))) errors.push(`experience-debt-invalid:${debt}`);
   return Object.freeze({ valid:errors.length === 0, errors:Object.freeze(errors) });
 }
 
@@ -230,8 +149,14 @@ export function buildUiAgentExperienceInventory(input = {}) {
   const byId = new Map();
   for (const candidate of [...inferred, ...explicitSurfaces]) byId.set(candidate.surfaceId, candidate);
   const surfaces = freezeList([...byId.values()].sort((a, b) => a.surfaceId.localeCompare(b.surfaceId)));
-  const sharedPrimitives = freezeList((input.sharedPrimitives || UI_AGENT_M2_SHARED_PRIMITIVES).map((item) => Object.freeze({ ...item })));
-  const validationErrors = [];
+  const malformedSharedPrimitives = input.sharedPrimitives !== undefined && !Array.isArray(input.sharedPrimitives);
+  const sharedPrimitiveInput = input.sharedPrimitives === undefined
+    ? UI_AGENT_M2_SHARED_PRIMITIVES
+    : Array.isArray(input.sharedPrimitives)
+      ? input.sharedPrimitives
+      : [];
+  const sharedPrimitives = freezeList(sharedPrimitiveInput.map((item) => Object.freeze({ ...item })));
+  const validationErrors = malformedSharedPrimitives ? ['sharedPrimitives-must-be-array'] : [];
   const validSurfaceIds = new Set();
   for (const record of surfaces) {
     const verdict = validateUiAgentExperienceSurface(record);
@@ -246,41 +171,17 @@ export function buildUiAgentExperienceInventory(input = {}) {
   const missingCanonical = CANONICAL_PRODUCT_SURFACE_IDS.filter((id) => !validSurfaceIds.has(id));
   const observedAtUtc = text(input.observedAtUtc);
   const observedAtMs = Date.parse(observedAtUtc);
-  const nowMs = Number.isFinite(input.validationOptions?.nowMs)
-    ? input.validationOptions.nowMs
-    : Number.isFinite(input.nowMs)
-      ? input.nowMs
-      : Date.now();
+  const nowMs = Number.isFinite(input.validationOptions?.nowMs) ? input.validationOptions.nowMs : Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   if (!timestamp(observedAtUtc)) validationErrors.push('observedAtUtc-invalid');
   else if (observedAtMs > nowMs) validationErrors.push('observedAtUtc-future-dated');
   const inventoryId = `ui-inventory-${hash({ registeredApps, surfaces, sharedPrimitives, observedAtUtc }).slice(0, 24)}`;
   return Object.freeze({
-    schemaVersion: UI_AGENT_EXPERIENCE_INVENTORY_SCHEMA_VERSION,
-    inventoryId,
-    participantId: 'user-interface-agent',
-    lifecycleState: 'READ_ONLY_CANDIDATE',
-    observedAtUtc,
-    registeredApps,
-    surfaces,
-    sharedPrimitives,
-    coverage: Object.freeze({
-      canonicalTargetCount: CANONICAL_PRODUCT_SURFACE_IDS.length,
-      coveredCanonicalCount: coveredCanonical.length,
-      coveredCanonical: freezeList(coveredCanonical),
-      missingCanonical: freezeList(missingCanonical),
-    }),
-    nextMilestone: missingCanonical.length > 0
-      ? 'M2_COMPLETE_SOURCE_AND_PRESENTATION_SURFACE_DISCOVERY'
-      : 'M3_PUBLISH_CANONICAL_EXPERIENCE_CONTRACT_AND_DESIGN_MAP',
-    authority: Object.freeze({
-      sourceMutationAllowed:false,
-      implementationAllowed:false,
-      mergeAllowed:false,
-      deploymentAllowed:false,
-      productAuthority:false,
-    }),
-    valid: validationErrors.length === 0,
-    validationErrors: freezeList(validationErrors),
+    schemaVersion: UI_AGENT_EXPERIENCE_INVENTORY_SCHEMA_VERSION, inventoryId, participantId:'user-interface-agent', lifecycleState:'READ_ONLY_CANDIDATE', observedAtUtc,
+    registeredApps, surfaces, sharedPrimitives,
+    coverage:Object.freeze({ canonicalTargetCount:CANONICAL_PRODUCT_SURFACE_IDS.length, coveredCanonicalCount:coveredCanonical.length, coveredCanonical:freezeList(coveredCanonical), missingCanonical:freezeList(missingCanonical) }),
+    nextMilestone: missingCanonical.length > 0 ? 'M2_COMPLETE_SOURCE_AND_PRESENTATION_SURFACE_DISCOVERY' : 'M3_PUBLISH_CANONICAL_EXPERIENCE_CONTRACT_AND_DESIGN_MAP',
+    authority:Object.freeze({ sourceMutationAllowed:false, implementationAllowed:false, mergeAllowed:false, deploymentAllowed:false, productAuthority:false }),
+    valid:validationErrors.length === 0, validationErrors:freezeList(validationErrors),
   });
 }
 
