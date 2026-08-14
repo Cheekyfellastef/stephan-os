@@ -15,8 +15,12 @@ const REVIEWED_IDENTITY = Object.freeze({
   prNumber: 1732,
   branch: 'agent/watchdog-control-plane-bootstrap-recovery-v1',
 });
-const REVIEWED_LINEAGE_ANCHOR = 'a552b13c0a3e6a338d21e8d395dfcf12d12a3475';
-const SUPERSEDED_PUBLISHED_HEAD = '707f7db9964b5e100aab21d6735108a4c5e53457';
+const REVIEWED_LINEAGE_ANCHOR = '4b890bf8d943beadb5a3a904d5016beb8160235f';
+const SUPERSEDED_LINEAGE_HEADS = new Set([
+  '707f7db9964b5e100aab21d6735108a4c5e53457',
+  'a552b13c0a3e6a338d21e8d395dfcf12d12a3475',
+  '9b6f2bc8964440fe6ff9f228426372c0e8f2069e',
+]);
 const LINEAGE_SCHEMA = 'stephanos.windows-authority-reconciliation-lineage.v1';
 const LINEAGE_KEYS = Object.freeze([
   'baseSha', 'comparison', 'liveMainAfterSha', 'liveMainBeforeSha', 'parents',
@@ -27,22 +31,22 @@ const COMPARISON_KEYS = Object.freeze([
 ]);
 const REVIEWED_SOURCE_MANIFEST = Object.freeze({
   'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1': Object.freeze({
-    blobSha: '4167e76e0b79d3986712b590c6fe49fe9bb3ba85',
-    size: 15375,
+    blobSha: '6ccecd4c01debe3823a7be28e7b593a7350bc633',
+    size: 16961,
   }),
   'scripts/windows/restart-approved-stephanos-runtime.ps1': Object.freeze({
-    blobSha: '98223fd525f4777de0dee009540238d9fdfe3487',
-    size: 25782,
+    blobSha: '9d4580826f70ad4403fa166cf3fd406755a5815c',
+    size: 45167,
   }),
   'scripts/windows/start-mission-orchestrator-worker.ps1': Object.freeze({
-    blobSha: 'cac4b824c6656e4f45cda405cf807afddb8b1441',
-    size: 5213,
+    blobSha: 'eb3d66871bccd60caf3ebd9946f9bcd47dfa4ba8',
+    size: 15445,
   }),
 });
 const SOURCE_RECORD_KEYS = Object.freeze([
   'blobSha', 'content', 'exists', 'path', 'ref', 'repository', 'schemaVersion', 'size',
 ]);
-const FIXED_PROBE_POWERSHELL_INVOCATION = /\$restartArguments = @\(\s*'-NoProfile',\s*'-NonInteractive',\s*'-ExecutionPolicy',\s*'Bypass',\s*'-File',\s*\$runtimeRestartPath,\s*'-Target',\s*'mission-worker',\s*'-ExpectedHead',\s*\$repositoryHead,\s*'-TimeoutSeconds',\s*'30'\s*\)\s*\$restartStartedAtUtc = \[datetime\]::UtcNow\s*\$restartOutput = @\(& \$canonicalPowerShell @restartArguments 2>&1\)/;
+const FIXED_PROBE_POWERSHELL_INVOCATION = /\$restartArguments = @\(\s*'-NoProfile',\s*'-NonInteractive',\s*'-ExecutionPolicy',\s*'Bypass',\s*'-File',\s*\$runtimeRestartPath,\s*'-Target',\s*'mission-worker',\s*'-ExpectedHead',\s*\$repositoryHead,\s*'-TimeoutSeconds',\s*'30',\s*'-DeadlineUtc',\s*\$canonicalDeadlineUtc\s*\)\s*\$restartStartedAtUtc = \[datetime\]::UtcNow\s*\$restartOutput = @\(& \$canonicalPowerShell @restartArguments 2>&1\)/;
 const EXECUTION_ESTATE_BY_PATH = Object.freeze({
   'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1': Object.freeze({
     callTargets: Object.freeze({ '$canonicalgit': 3, '$canonicalpowershell': 1, '$gitexecutable': 1 }),
@@ -50,19 +54,19 @@ const EXECUTION_ESTATE_BY_PATH = Object.freeze({
     fixedBindings: Object.freeze({ canonicalgit: 1, canonicalpowershell: 1, runtimerestartpath: 1, restartarguments: 1 }),
   }),
   'scripts/windows/restart-approved-stephanos-runtime.ps1': Object.freeze({
-    callTargets: Object.freeze({ '$canonicalgit': 2, '$condition': 1, '$gitexecutable': 4 }),
-    functions: Object.freeze(['get-canonicaltaskplan', 'get-verifiedbackendlistener', 'get-verifiedfreshworkerinstance', 'get-verifiedworkerprocessfromheartbeat', 'read-canonicalworkersourceproof', 'read-freshbackendreceipt', 'read-publicmainhead', 'stop-newlystartedownedworker', 'stop-withblocker', 'test-backendhealth', 'wait-until']),
+    callTargets: Object.freeze({ '$canonicalgit': 2, '$condition': 2, '$gitexecutable': 4 }),
+    functions: Object.freeze(['assert-beforeoperationdeadline', 'convertfrom-windowscommandline', 'get-canonicaltaskplan', 'get-verifiedbackendlistener', 'get-verifiedfreshworkerinstance', 'get-verifiedinvocationprocessfromlaunchreceipt', 'get-verifiedworkerprocessfromheartbeat', 'new-cryptographicinvocationid', 'read-canonicalworkersourceproof', 'read-freshbackendreceipt', 'read-publicmainhead', 'stop-newlystartedownedworker', 'stop-withblocker', 'test-backendhealth', 'test-exactcanonicalworkerprocess', 'wait-until', 'wait-untiloperationdeadline', 'write-boundedatomicjson']),
     fixedBindings: Object.freeze({ canonicalgit: 1, missionworkercleanuptimeoutseconds: 1, missionworkerstoptimeoutseconds: 1, publicremote: 1 }),
   }),
   'scripts/windows/start-mission-orchestrator-worker.ps1': Object.freeze({
     callTargets: Object.freeze({ '$canonicalgit': 4, '$canonicalnode': 1 }),
-    functions: Object.freeze([]),
+    functions: Object.freeze(['read-exactinvocationsignal', 'write-boundedatomicjson']),
     fixedBindings: Object.freeze({ canonicalgit: 1, canonicalnode: 1, workerscript: 1 }),
   }),
 });
 const FIXED_PROBE_EXECUTION_ESTATE = Object.freeze([
   /\$runtimeRestartPath\s*=\s*\[System\.IO\.Path\]::GetFullPath\(\(Join-Path \$repositoryRoot 'scripts\\windows\\restart-approved-stephanos-runtime\.ps1'\)\)/,
-  /foreach\s*\(\$requiredExecutable in @\(\$canonicalGit, \$canonicalPowerShell\)\)/,
+  /foreach\s*\(\$requiredExecutable in @\(\$canonicalGit, \$canonicalNode, \$canonicalPowerShell\)\)/,
   /function Read-PublicMainHead\s*\{[\s\S]*?param\(\[string\]\$GitExecutable\)[\s\S]*?\$output\s*=\s*@\(& \$GitExecutable 'ls-remote' '--exit-code' \$publicRemote 'refs\/heads\/main' 2>&1\)[\s\S]*?\}/,
   /\$repositoryBranchOutput\s*=\s*@\(& \$canonicalGit -C \$repositoryRoot symbolic-ref --quiet --short HEAD 2>&1\)/,
   /\$repositoryHeadOutput\s*=\s*@\(& \$canonicalGit -C \$repositoryRoot rev-parse --verify HEAD 2>&1\)/,
@@ -172,7 +176,7 @@ function exactReviewedLineage(input) {
     const lineage = input.lineageEvidence;
     if (!SHA.test(sourceHead) || !SHA.test(baseSha)
       || sourceHead === REVIEWED_LINEAGE_ANCHOR
-      || sourceHead === SUPERSEDED_PUBLISHED_HEAD
+      || SUPERSEDED_LINEAGE_HEADS.has(sourceHead)
       || sourceHead === baseSha
       || !exactDataRecord(lineage, LINEAGE_KEYS)
       || lineage.schemaVersion !== LINEAGE_SCHEMA
@@ -545,9 +549,9 @@ function reviewRestart(source, path, findings) {
   requirePattern(findings, executableSource, /Get-Item -LiteralPath \$canonicalGit -Force[\s\S]*\$canonicalGitItem\.LinkType[\s\S]*\[System\.IO\.FileAttributes\]::ReparsePoint[\s\S]*CANONICAL_GIT_IDENTITY_INVALID/, 'watchdog-restart-git-identity-incomplete', 'Worker restart must reject linked, substituted or non-file Git identities.', path);
   requirePattern(findings, executableSource, /\$preStartSourceProof = Read-CanonicalWorkerSourceProof[\s\S]*-Phase 'PRE_START'[\s\S]*Start-ScheduledTask[\s\S]*\$postStartSourceProof = Read-CanonicalWorkerSourceProof[\s\S]*-Phase 'POST_START'/, 'watchdog-restart-clean-boundary-incomplete', 'Worker restart must bracket task start with canonical branch, head, public-main and tracked-clean proof.', path);
   requirePattern(findings, executableSource, /function Read-CanonicalWorkerSourceProof[\s\S]*symbolic-ref --quiet --short HEAD[\s\S]*rev-parse --verify HEAD[\s\S]*status '--porcelain=v1' '--untracked-files=no'[\s\S]*Read-PublicMainHead/, 'watchdog-restart-source-proof-incomplete', 'Worker restart source proof must bind branch, head, tracked source and public main through fixed Git.', path);
-  requirePattern(findings, executableSource, /function Get-VerifiedFreshWorkerInstance[\s\S]*\[string\]\$heartbeat\.headSha -ne \$ExpectedSourceHead[\s\S]*\[string\]\$heartbeat\.repositoryRoot -ne \$ExpectedRepoRoot[\s\S]*\$processStartedAtUtc -le \$StartedAfterUtc[\s\S]*\$expectedWorkerPath[\s\S]*\$commandLine\.Contains\(\$expectedWorkerPath\)/, 'watchdog-restart-worker-identity-incomplete', 'Fresh worker identity must bind repository, head, process start time and canonical command.', path);
+  requirePattern(findings, executableSource, /function Get-VerifiedFreshWorkerInstance[\s\S]*\$launchReceipt\.invocationId -ne \$ExpectedInvocationId[\s\S]*\$launchReceipt\.repositoryRoot -ne \$ExpectedRepoRoot[\s\S]*\$launchReceipt\.headSha -ne \$ExpectedSourceHead[\s\S]*\$receiptProcessStartedAtUtc -le \$StartedAfterUtc[\s\S]*\$invocationHeartbeat\.invocationId -ne \$ExpectedInvocationId[\s\S]*Test-ExactCanonicalWorkerProcess/, 'watchdog-restart-worker-identity-incomplete', 'Fresh worker identity must bind invocation, repository, head, process start time and canonical command.', path);
   requirePattern(findings, executableSource, /if \(\$startupBlocker\) \{[\s\S]*Stop-NewlyStartedOwnedWorker[\s\S]*Stop-WithBlocker \$cleanupBlocker[\s\S]*Stop-WithBlocker \$startupBlocker/, 'watchdog-restart-dirty-cleanup-missing', 'Every post-start failure must enter the bounded owned-worker cleanup path before terminal blocking.', path);
-  requirePattern(findings, executableSource, /function Stop-NewlyStartedOwnedWorker[\s\S]*\[string\]\$Plan\.TaskName -ne 'Stephanos Mission Orchestrator Worker'[\s\S]*Get-VerifiedFreshWorkerInstance[\s\S]*\$verifiedWorker\.ProcessId -ne \$ExpectedProcessId[\s\S]*Stop-ScheduledTask[\s\S]*Stop-Process -Id \$verifiedWorker\.ProcessId -Force/, 'watchdog-restart-cleanup-identity-incomplete', 'Cleanup must remain fixed-task and fresh-worker identity bound.', path);
+  requirePattern(findings, executableSource, /function Stop-NewlyStartedOwnedWorker[\s\S]*\[string\]\$Plan\.TaskName -ne 'Stephanos Mission Orchestrator Worker'[\s\S]*\[string\]\$candidateClaim\.invocationId -ne \$ExpectedInvocationId[\s\S]*Get-VerifiedInvocationProcessFromLaunchReceipt[\s\S]*\$verifiedInvocationProcess\.ProcessId -ne \$ExpectedProcessId[\s\S]*Get-VerifiedFreshWorkerInstance[\s\S]*mission-orchestrator-worker-restart-cancel-\$ExpectedInvocationId\.json[\s\S]*MISSION_WORKER_CLEANUP_PROCESS_DID_NOT_STOP[\s\S]*MISSION_WORKER_CLEANUP_TASK_DID_NOT_STOP/, 'watchdog-restart-cleanup-identity-incomplete', 'Cleanup must remain fixed-task, fresh-invocation and verified-process identity bound.', path);
   requirePattern(findings, executableSource, /headSha -ne \$ExpectedSourceHead[\s\S]*MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT/, 'watchdog-restart-heartbeat-binding-incomplete', 'Worker restart must require a fresh exact-head heartbeat.', path);
   forbidPattern(findings, executableSource, /\[string\]\$TaskName|Get-Command\s+git(?:\.exe)?|Invoke-Expression|Start-Process|Restart-Computer|shutdown\.exe|Stop-Process\s+-Name/i, 'watchdog-restart-arbitrary-authority-forbidden', 'Approved restart must not gain arbitrary target, executable or execution authority.', path);
   reviewSharedPowerShellExecutionEstate(inspection, path, findings);
@@ -561,6 +565,9 @@ function reviewLauncher(source, path, findings) {
   requirePattern(findings, executableSource, /branch --show-current[\s\S]*\$branch -ne 'main'/, 'watchdog-launcher-main-branch-unproven', 'Worker launcher must require canonical main.', path);
   requirePattern(findings, executableSource, /status '--porcelain=v1' '--untracked-files=no'[\s\S]*tracked-clean exact-head source/, 'watchdog-launcher-clean-proof-missing', 'Worker launcher must reject tracked source drift before Node starts.', path);
   requirePattern(findings, executableSource, /ls-remote' '--exit-code' \$publicRemote 'refs\/heads\/main'[\s\S]*exact current public main head/, 'watchdog-launcher-public-main-proof-missing', 'Worker launcher must bind execution to current public main.', path);
+  requirePattern(findings, executableSource, /stephanos\.mission-worker-restart-request\.v1[\s\S]*\$restartRequest\.repositoryRoot -ne \$repositoryRoot[\s\S]*\$restartRequest\.headSha -ne \$headSha[\s\S]*mission-orchestrator-worker-restart-claim-\$invocationId\.json/, 'watchdog-launcher-invocation-request-incomplete', 'Worker launcher must claim one exact repository, head and invocation-bound restart request.', path);
+  requirePattern(findings, executableSource, /New-Object System\.Diagnostics\.ProcessStartInfo[\s\S]*\$processStartInfo\.FileName = \$canonicalNode[\s\S]*\$processStartInfo\.Arguments = '"' \+ \$workerScript \+ '"'[\s\S]*\$processStartInfo\.UseShellExecute = \$false[\s\S]*\$processStartInfo\.CreateNoWindow = \$true[\s\S]*\$workerProcess\.Start\(\)/, 'watchdog-launcher-owned-process-start-incomplete', 'Restart launch must use canonical Node, the fixed worker path and a non-shell owned process.', path);
+  requirePattern(findings, executableSource, /Read-ExactInvocationSignal[\s\S]*stephanos\.mission-worker-restart-confirmation\.v1[\s\S]*stephanos\.mission-worker-restart-cancel\.v1[\s\S]*\$workerProcess\.Id -le 0[\s\S]*\$workerProcess\.StartTime\.ToUniversalTime\(\)\.Ticks -ne \$workerStartedAtUtc\.Ticks[\s\S]*\$workerProcess\.Kill\(\)/, 'watchdog-launcher-owned-cleanup-incomplete', 'Launcher cleanup must require exact confirmation or cancellation and reverify the owned process before termination.', path);
   requirePattern(findings, executableSource, /& \$canonicalNode \$workerScript/, 'watchdog-launcher-node-invocation-not-fixed', 'Worker launcher must invoke only canonical Node and the fixed worker.', path);
   forbidPattern(findings, executableSource, /Get-Command\s+(?:git|node)(?:\.exe)?|Invoke-Expression|Start-Process|git\s+(?:reset|clean|checkout|switch|push)/i, 'watchdog-launcher-dynamic-authority-forbidden', 'Worker launcher must not gain path resolution or source mutation authority.', path);
   reviewSharedPowerShellExecutionEstate(inspection, path, findings);
