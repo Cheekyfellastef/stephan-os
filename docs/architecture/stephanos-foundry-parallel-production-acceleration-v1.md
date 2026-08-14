@@ -50,7 +50,7 @@ Foundry is additionally eligible only when a direct call to `adjudicateForgeSide
 The planner accepts candidates only from `parallelCandidateDetails`. It verifies:
 
 - top-level and decision-receipt fail-closed state is false with zero contradictions;
-- the decision receipt has the exact canonical field inventory, an allowed status consistent with its active/selected state, no candidates while `WAITING` or `APPROVAL_REQUIRED`, and empty contradiction codes;
+- the decision receipt has the exact canonical field inventory, an allowed status consistent with its active/selected state, a `LANE_SELECTED` issue contained in the canonical selected inventory, no candidates while `WAITING` or `APPROVAL_REQUIRED`, and empty contradiction codes;
 - decision freshness;
 - exact equality between active-goal, active-issue and ACTIVE portfolio inventories;
 - exact equality between selected-issue, parallel-candidate and detail inventories;
