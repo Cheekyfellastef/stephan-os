@@ -63,6 +63,11 @@ test('same intent on ChatGPT web and Battle Bridge becomes one current Stephanos
     BATTLE_BRIDGE_DESKTOP: 'CURRENT',
     CHATGPT_WEB: 'CURRENT',
   });
+  assert.deepEqual(projection.surfaceObservedAt, {
+    BATTLE_BRIDGE_DESKTOP: '2026-08-14T12:28:00.000Z',
+    CHATGPT_WEB: '2026-08-14T12:29:00.000Z',
+  });
+  assert.equal(projection.evaluatedAtUtc, NOW);
   assert.equal(projection.routeVisibility, 'HIDDEN_BY_DEFAULT');
   assert.equal('routeAudit' in projection, false);
   assert.equal(projection.operatorAction, 'NO_OPERATOR_ACTION_REQUIRED');
@@ -165,6 +170,19 @@ test('surface observations must prove all five continuity identities', () => {
   assert.equal(projection.status, 'UNKNOWN');
 });
 
+test('malformed observation evidence lists fail closed without throwing', () => {
+  const input = baseInput();
+  input.surfaceObservations[0] = {
+    ...input.surfaceObservations[0],
+    evidenceRefs: 'proofs/not-an-array',
+  };
+  const validation = validateOneConversationInputV1(input);
+  assert.equal(validation.valid, false);
+  assert.ok(validation.errors.includes('observation-evidenceRefs-must-be-array:0'));
+  assert.doesNotThrow(() => buildOneConversationProjectionV1(input, { nowMs: Date.parse(NOW) }));
+  assert.equal(buildOneConversationProjectionV1(input, { nowMs: Date.parse(NOW) }).status, 'UNKNOWN');
+});
+
 test('authority widening in a conversation projection is rejected', () => {
   const validation = validateOneConversationInputV1(baseInput({ mergeAllowed: true }));
   assert.equal(validation.valid, false);
@@ -219,6 +237,20 @@ test('a fresh surface cannot make a stale source thread eligible for continuatio
   assert.equal(blocked.verdict, 'CONTINUATION_BLOCKED_SOURCE_THREAD_STALE_OR_UNKNOWN');
 });
 
+test('persisted current projections require all five identities before continuation', () => {
+  const projection = buildOneConversationProjectionV1(baseInput(), { nowMs: Date.parse(NOW) });
+  const missingRelationship = { ...projection, operatorRelationshipContextRef: undefined };
+  const missingMemory = { ...projection, memoryAuthorityRef: undefined };
+  for (const candidate of [missingRelationship, missingMemory]) {
+    const result = planCrossSurfaceContinuationV1(candidate, {
+      fromSurface: 'CHATGPT_WEB',
+      toSurface: 'PHONE',
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.verdict, 'CONTINUATION_BLOCKED_IDENTITY_INCOMPLETE');
+  }
+});
+
 test('omitting nowMs evaluates freshness against the current clock instead of the payload timestamp', () => {
   const old = baseInput({
     timestampUtc: '2000-01-01T00:10:00.000Z',
@@ -270,9 +302,43 @@ test('current projection becomes a valid read-only Shared Workspace message', ()
   const body = JSON.parse(result.record.body);
   assert.equal(body.intentId, 'intent-product-1776');
   assert.equal(body.surfaceFreshness.CHATGPT_WEB, 'CURRENT');
+  assert.equal(body.evaluatedAtUtc, NOW);
   assert.equal(body.authority.commandExecutionAllowed, false);
   assert.equal(body.authority.mergeAllowed, false);
   assert.equal(body.authority.runtimeMutationAllowed, false);
+});
+
+test('publication rechecks retained projection evidence rather than laundering stale continuity', () => {
+  const projection = buildOneConversationProjectionV1(baseInput(), {
+    nowMs: Date.parse(NOW),
+    staleAfterMs: 60 * 60 * 1000,
+  });
+  const publicationNow = '2026-08-14T15:00:00.000Z';
+  const result = projectOneConversationWorkspaceMessageV1(projection, {
+    timestampUtc: publicationNow,
+    correlationId: 'intent-product-1776',
+    messageId: 'one-conversation-late-publication',
+    relatedIssue: '#1630',
+    proofRefs: ['proofs/one-conversation-m1'],
+    workspaceValidationOptions: { nowMs: Date.parse(publicationNow), staleAfterMs: 60 * 60 * 1000 },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'ONE_CONVERSATION_PROJECTION_EVIDENCE_STALE_AT_PUBLICATION');
+});
+
+test('future-dated Shared Workspace continuity envelopes fail closed', () => {
+  const projection = buildOneConversationProjectionV1(baseInput(), { nowMs: Date.parse(NOW) });
+  const result = projectOneConversationWorkspaceMessageV1(projection, {
+    timestampUtc: '2027-08-14T12:30:00.000Z',
+    correlationId: 'intent-product-1776',
+    messageId: 'one-conversation-future-envelope',
+    relatedIssue: '#1630',
+    proofRefs: ['proofs/one-conversation-m1'],
+    workspaceValidationOptions: { nowMs: Date.parse(NOW) },
+    maxFutureSkewMs: 5 * 60 * 1000,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'ONE_CONVERSATION_WORKSPACE_RECORD_FUTURE_DATED');
 });
 
 test('stale Shared Workspace continuity messages are not reported ready', () => {
