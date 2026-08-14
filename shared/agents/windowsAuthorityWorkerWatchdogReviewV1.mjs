@@ -15,12 +15,13 @@ const REVIEWED_IDENTITY = Object.freeze({
   prNumber: 1732,
   branch: 'agent/watchdog-control-plane-bootstrap-recovery-v1',
 });
-const REVIEWED_LINEAGE_ANCHOR = 'f28494ac9fcb34bef03582ee436ac9a7f9398a65';
+const REVIEWED_LINEAGE_ANCHOR = 'edf1ffa303f7583ea73ab11d018f23a4ab73c7be';
 const SUPERSEDED_LINEAGE_HEADS = new Set([
   '707f7db9964b5e100aab21d6735108a4c5e53457',
   'a552b13c0a3e6a338d21e8d395dfcf12d12a3475',
   '9b6f2bc8964440fe6ff9f228426372c0e8f2069e',
   '4b890bf8d943beadb5a3a904d5016beb8160235f',
+  'f28494ac9fcb34bef03582ee436ac9a7f9398a65',
 ]);
 const LINEAGE_SCHEMA = 'stephanos.windows-authority-reconciliation-lineage.v1';
 const LINEAGE_KEYS = Object.freeze([
@@ -36,8 +37,8 @@ const REVIEWED_SOURCE_MANIFEST = Object.freeze({
     size: 16961,
   }),
   'scripts/windows/restart-approved-stephanos-runtime.ps1': Object.freeze({
-    blobSha: 'bbdfbdd51f02c05016db48e435931585d4dd9b88',
-    size: 45190,
+    blobSha: 'e209b3a2ad2a7b642ffabcfb036e3702b1da58d9',
+    size: 47132,
   }),
   'scripts/windows/start-mission-orchestrator-worker.ps1': Object.freeze({
     blobSha: 'eb3d66871bccd60caf3ebd9946f9bcd47dfa4ba8',
@@ -542,6 +543,42 @@ function reviewProbe(source, path, findings) {
   reviewSharedPowerShellExecutionEstate(inspection, path, findings);
 }
 
+function reviewFinalWorkerProofBeforeConfirmation(source, path, findings) {
+  const postProof = source.indexOf("-Phase 'POST_START'");
+  const finalTaskRead = source.indexOf(
+    "$afterTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\' -ErrorAction Stop",
+    postProof,
+  );
+  const exactTaskState = source.indexOf("if ([string]$afterTask.State -ne 'Running')", finalTaskRead);
+  const preparedReceipt = source.indexOf('$successReceiptJson = [PSCustomObject]@{', exactTaskState);
+  const finalDeadline = source.indexOf('Assert-BeforeOperationDeadline -RequiredReserveSeconds 1', preparedReceipt);
+  const confirmationWrite = source.indexOf('Write-BoundedAtomicJson -Path $confirmationPath', postProof);
+  const guardedCatch = source.indexOf('\n        catch {', confirmationWrite);
+  const blockerGate = source.indexOf('if ($startupBlocker)', guardedCatch);
+  const cleanup = source.indexOf('Stop-NewlyStartedOwnedWorker', blockerGate);
+  const successPublication = source.indexOf('Write-Output $successReceiptJson', cleanup);
+  const confirmationTail = source.slice(confirmationWrite, guardedCatch).trim();
+  const exactConfirmationTail = /^Write-BoundedAtomicJson -Path \$confirmationPath -Value \(\[PSCustomObject\]@\{\s*schemaVersion = 'stephanos\.mission-worker-restart-confirmation\.v1'\s*invocationId = \$script:invocationId\s*taskName = \$plan\.TaskName\s*repositoryRoot = \$repoRoot\s*headSha = \$ExpectedHead\s*workerPid = \$startedWorker\.ProcessId\s*workerStartedAtUtc = \$startedWorker\.ProcessStartedAtUtc\.ToUniversalTime\(\)\.ToString\('o'\)\s*confirmedAtUtc = \[datetime\]::UtcNow\.ToString\('o'\)\s*deadlineUtc = \$script:operationDeadlineUtc\.ToString\('yyyy-MM-ddTHH:mm:ss\.fffZ'\)\s*\}\)\s*}$/s.test(confirmationTail);
+
+  if (postProof < 0
+    || finalTaskRead <= postProof
+    || exactTaskState <= finalTaskRead
+    || preparedReceipt <= exactTaskState
+    || finalDeadline <= preparedReceipt
+    || confirmationWrite <= finalDeadline
+    || guardedCatch <= confirmationWrite
+    || blockerGate <= guardedCatch
+    || cleanup <= blockerGate
+    || successPublication <= cleanup
+    || !exactConfirmationTail) {
+    findings.push(finding(
+      'watchdog-restart-confirmation-ordering-invalid',
+      'Worker confirmation must be the final handoff after exact task state, terminal receipt construction and deadline proof, with every earlier failure routed through bounded cleanup.',
+      path,
+    ));
+  }
+}
+
 function reviewRestart(source, path, findings) {
   const inspection = inspectPowerShellLexically(source);
   const executableSource = inspection?.commentsRemoved ?? '';
@@ -554,6 +591,7 @@ function reviewRestart(source, path, findings) {
   requirePattern(findings, executableSource, /if \(\$startupBlocker\) \{[\s\S]*Stop-NewlyStartedOwnedWorker[\s\S]*Stop-WithBlocker \$cleanupBlocker[\s\S]*Stop-WithBlocker \$startupBlocker/, 'watchdog-restart-dirty-cleanup-missing', 'Every post-start failure must enter the bounded owned-worker cleanup path before terminal blocking.', path);
   requirePattern(findings, executableSource, /function Stop-NewlyStartedOwnedWorker[\s\S]*\[string\]\$Plan\.TaskName -ne 'Stephanos Mission Orchestrator Worker'[\s\S]*\[string\]\$candidateClaim\.invocationId -ne \$ExpectedInvocationId[\s\S]*Get-VerifiedInvocationProcessFromLaunchReceipt[\s\S]*\$verifiedInvocationProcess\.ProcessId -ne \$ExpectedProcessId[\s\S]*Get-VerifiedFreshWorkerInstance[\s\S]*mission-orchestrator-worker-restart-cancel-\$ExpectedInvocationId\.json[\s\S]*MISSION_WORKER_CLEANUP_PROCESS_DID_NOT_STOP[\s\S]*MISSION_WORKER_CLEANUP_TASK_DID_NOT_STOP/, 'watchdog-restart-cleanup-identity-incomplete', 'Cleanup must remain fixed-task, fresh-invocation and verified-process identity bound.', path);
   requirePattern(findings, executableSource, /schemaVersion = 'stephanos\.mission-worker-restart-cancel\.v1'[\s\S]*deadlineUtc = \$script:operationDeadlineUtc\.ToString\('yyyy-MM-ddTHH:mm:ss\.fffZ'\)[\s\S]*workerPid = \$ExpectedProcessId/, 'watchdog-restart-cancellation-deadline-mismatch', 'Cancellation must carry the unchanged operation deadline in the launcher\'s one canonical UTC representation.', path);
+  reviewFinalWorkerProofBeforeConfirmation(executableSource, path, findings);
   requirePattern(findings, executableSource, /headSha -ne \$ExpectedSourceHead[\s\S]*MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT/, 'watchdog-restart-heartbeat-binding-incomplete', 'Worker restart must require a fresh exact-head heartbeat.', path);
   forbidPattern(findings, executableSource, /\[string\]\$TaskName|Get-Command\s+git(?:\.exe)?|Invoke-Expression|Start-Process|Restart-Computer|shutdown\.exe|Stop-Process\s+-Name/i, 'watchdog-restart-arbitrary-authority-forbidden', 'Approved restart must not gain arbitrary target, executable or execution authority.', path);
   reviewSharedPowerShellExecutionEstate(inspection, path, findings);
