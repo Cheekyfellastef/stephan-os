@@ -15,7 +15,7 @@ const REVIEWED_IDENTITY = Object.freeze({
   prNumber: 1732,
   branch: 'agent/watchdog-control-plane-bootstrap-recovery-v1',
 });
-const REVIEWED_LINEAGE_ANCHOR = 'd1508b4d7f2bf30d8db47784505e2d509c8e36b1';
+const REVIEWED_LINEAGE_ANCHOR = '757207619910a6fb8d69524408c0c26fcab4d846';
 const SUPERSEDED_LINEAGE_HEADS = new Set([
   '44db9156eeee26f1ab146fb447c0c59851ca3dcb',
   '707f7db9964b5e100aab21d6735108a4c5e53457',
@@ -26,6 +26,8 @@ const SUPERSEDED_LINEAGE_HEADS = new Set([
   'edf1ffa303f7583ea73ab11d018f23a4ab73c7be',
   '762acc04cab685bad2cb635f928596d0c4d5d1da',
   'd3fff6197827564490d94734d2c92381297db300',
+  'd1508b4d7f2bf30d8db47784505e2d509c8e36b1',
+  '25147fe20ffe7bd00d1a8d3a0ac1af071177e04d',
 ]);
 const LINEAGE_SCHEMA = 'stephanos.windows-authority-reconciliation-lineage.v1';
 const LINEAGE_KEYS = Object.freeze([
@@ -41,12 +43,12 @@ const REVIEWED_SOURCE_MANIFEST = Object.freeze({
     size: 16961,
   }),
   'scripts/windows/restart-approved-stephanos-runtime.ps1': Object.freeze({
-    blobSha: '1a9d166be395f3b3a1246ab5f2de9a2647639f83',
-    size: 56458,
+    blobSha: 'dc4540ea91c8f15ae027c5615d7dd4ab77b34bbe',
+    size: 56462,
   }),
   'scripts/windows/start-mission-orchestrator-worker.ps1': Object.freeze({
-    blobSha: '911a9c7265668c8f9942449010b0452d1ac14aa8',
-    size: 24663,
+    blobSha: '2c5557cb27477c3eb3d5970c6185d20cabdb2585',
+    size: 24671,
   }),
 });
 const SOURCE_RECORD_KEYS = Object.freeze([
