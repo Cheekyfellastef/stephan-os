@@ -16,7 +16,7 @@ const PROOF_REF_RE = /^(?:proof|proofs|receipts|evidence\/receipts)\/[A-Za-z0-9]
 const EXPLICIT_TZ_RE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const MAX_PROVIDERS = 16;
 const MAX_CANDIDATES = 256;
-const MAX_RESOURCES = 128;
+const MAX_RESOURCES = 10_000;
 const MAX_LIST = 128;
 const MAX_SLOTS = 32;
 const MAX_DURATION_SECONDS = 30 * 24 * 60 * 60;
@@ -25,9 +25,12 @@ const MAX_SCHEDULER_GOALS = 1000;
 const MAX_SCHEDULER_ARRAY = 10_000;
 const MAX_SCHEDULER_PREREQUISITES_PER_GOAL = 1000;
 const MAX_SCHEDULER_TOTAL_PREREQUISITES = 10_000;
+const MAX_SCHEDULER_TOTAL_EVIDENCE_ITEMS = 50_000;
 const MAX_SCHEDULER_SNAPSHOT_DEPTH = 32;
-const MAX_SCHEDULER_SNAPSHOT_NODES = 50_000;
-const MAX_SCHEDULER_SNAPSHOT_STRING_CODE_UNITS = 4 * 1024 * 1024;
+const MAX_SCHEDULER_SNAPSHOT_NODES = MAX_SCHEDULER_TOTAL_EVIDENCE_ITEMS
+  + MAX_SCHEDULER_TOTAL_PREREQUISITES
+  + MAX_SCHEDULER_GOALS * 128
+  + 8192;
 
 export const FOUNDRY_ACCELERATION_SCHEMA = 'stephanos.foundry-parallel-production-acceleration.v1';
 export const FOUNDRY_ACCELERATION_HOST_CONTEXT_SCHEMA = 'stephanos.foundry-acceleration-host-context.v1';
@@ -116,10 +119,6 @@ function inertSnapshot(value, state, depth = 0) {
     return value;
   }
   if (typeof value === 'string') {
-    state.stringCodeUnits += value.length;
-    if (state.stringCodeUnits > MAX_SCHEDULER_SNAPSHOT_STRING_CODE_UNITS) {
-      throw new TypeError('scheduler source strings exceed inert snapshot bounds');
-    }
     return value;
   }
   if (!value || typeof value !== 'object') throw new TypeError('scheduler source is not JSON-like');
@@ -167,7 +166,7 @@ function inertSnapshot(value, state, depth = 0) {
 function snapshotSchedulerSource(value, blockers) {
   try {
     const snapshot = inertSnapshot(value, {
-      nodes:0, stringCodeUnits:0, visiting:new WeakSet(), snapshots:new WeakMap(),
+      nodes:0, visiting:new WeakSet(), snapshots:new WeakMap(),
     });
     if (!exactKeys(snapshot, SCHEDULER_SOURCE_KEYS)) {
       blockers.push('scheduler-source-shape-invalid');
@@ -204,7 +203,7 @@ function snapshotSchedulerSource(value, blockers) {
 function snapshotTrustedHostContext(value, blockers) {
   try {
     const snapshot = inertSnapshot(value, {
-      nodes:0, stringCodeUnits:0, visiting:new WeakSet(), snapshots:new WeakMap(),
+      nodes:0, visiting:new WeakSet(), snapshots:new WeakMap(),
     });
     if (!exactKeys(snapshot, TRUSTED_KEYS)) {
       blockers.push('trusted-host-context-shape-invalid');
@@ -363,8 +362,11 @@ function normalizeScheduler(projection, host, blockers) {
     blockers.push('scheduler-decision-stale-or-invalid');
   }
   if (!dense(decision.proofRefs) || !dense(decision.proofHeadShas) || !dense(decision.proofReceipts)
-    || decision.proofRefs.length > MAX_LIST || decision.proofHeadShas.length > MAX_LIST
-    || decision.proofReceipts.length > MAX_LIST) blockers.push('scheduler-decision-proof-inventory-invalid');
+    || decision.proofRefs.length > MAX_SCHEDULER_ARRAY
+    || decision.proofHeadShas.length > MAX_SCHEDULER_ARRAY
+    || decision.proofReceipts.length > MAX_SCHEDULER_ARRAY) {
+    blockers.push('scheduler-decision-proof-inventory-invalid');
+  }
   if (!dense(decision.selectedIssues) || decision.selectedIssues.length > MAX_CANDIDATES
     || !dense(decision.activeIssues) || decision.activeIssues.length > MAX_CANDIDATES) {
     blockers.push('scheduler-decision-issues-invalid');

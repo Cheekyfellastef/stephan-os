@@ -231,19 +231,22 @@ export function createFoundryAccelerationWorkspaceSlice(trustedHostContext = {})
       || left.providerId.localeCompare(right.providerId));
   const compactTelemetry = compactFoundryTelemetry(plan?.foundryTelemetry);
   const planTruth = truthFor(plan);
+  const repositoryText = text(plan?.repository);
+  const repositoryCompatible = plan?.valid !== true
+    || (SAFE_REPOSITORY.test(repositoryText) && !WORKSPACE_FORBIDDEN_VALUE.test(repositoryText));
   const structurallyComplete = compactAssignments.length === rawAssignments.length
     && compactHeldCandidates.length === rawHeld.length
     && compactProviders.length === rawProviders.length
     && (planTruth !== FOUNDRY_ACCELERATION_WORKSPACE_TRUTH.CURRENT_READY
-      || compactTelemetry !== null);
+      || (compactTelemetry !== null && repositoryCompatible));
   const truthState = structurallyComplete
     ? planTruth
     : FOUNDRY_ACCELERATION_WORKSPACE_TRUTH.BLOCKED;
   const timestampUtc = plan?.valid === true && Number.isFinite(Date.parse(plan.observedAtUtc))
     ? new Date(Date.parse(plan.observedAtUtc)).toISOString()
     : new Date(0).toISOString();
-  const repository = plan?.valid === true && SAFE_REPOSITORY.test(text(plan.repository))
-    ? text(plan.repository)
+  const repository = plan?.valid === true && repositoryCompatible
+    ? repositoryText
     : null;
   const canonicalMainHead = plan?.valid === true && SHA.test(text(plan.canonicalMainHead))
     ? text(plan.canonicalMainHead)

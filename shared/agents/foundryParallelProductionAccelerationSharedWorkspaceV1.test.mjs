@@ -261,6 +261,33 @@ test('Shared Workspace-incompatible planner identifiers fail closed before READY
   assert.doesNotMatch(JSON.stringify(records), /session\b/i);
 });
 
+test('Shared Workspace-incompatible repository values cannot retain READY truth', () => {
+  const incompatibleRepository = 'owner/session-repo';
+  const github = evidence('github', 'CHATGPT_GITHUB', {
+    build: { repository: incompatibleRepository },
+    metrics: { repository: incompatibleRepository },
+  });
+  const foundry = evidence('foundry', 'FOUNDRY_FORGE', {
+    build: { repository: incompatibleRepository },
+    metrics: { repository: incompatibleRepository },
+  });
+  const forge = forgeSidecar({ repository: incompatibleRepository });
+  forge.m2Receipt = rebindReceipt(forge.m2Receipt, { repository: incompatibleRepository });
+  forge.m3RuntimeReceipt = rebindReceipt(forge.m3RuntimeReceipt, { repository: incompatibleRepository });
+  const records = createFoundryAccelerationWorkspaceRecords(host({
+    repository: incompatibleRepository,
+    providerCapacityEvidence: [github, foundry],
+    forgeSidecar: forge,
+  }));
+  assert.equal(records.slice.truthState, FOUNDRY_ACCELERATION_WORKSPACE_TRUTH.BLOCKED);
+  assert.equal(records.slice.planValid, false);
+  assert.equal(records.slice.recommendationUsable, false);
+  assert.equal(records.slice.repository, null);
+  assert.equal(records.slice.assignmentTotal, 0);
+  assert.equal(records.validation.valid, true);
+  assert.doesNotMatch(JSON.stringify(records), /session\b/i);
+});
+
 test('event identity is idempotent for one snapshot and distinct for a changed current recommendation', () => {
   const first = createFoundryAccelerationWorkspaceRecords(host());
   const repeated = createFoundryAccelerationWorkspaceRecords(host());
