@@ -167,7 +167,9 @@ button:focus-visible, a:focus-visible {
 .workbench-grid h3, .reference-detail h3 { margin: 0 0 9px; font-size: .9rem; text-transform: uppercase; letter-spacing: .1em; color: #dae4ff; }
 .capability-line { color: #dce7ff; font-size: 1.08rem; line-height: 1.6; }
 .test-list { margin-top: 0; }
-.copy-status { min-height: 20px; margin: 10px 0 0; color: var(--mint); font-size: .8rem; }
+.copy-status { min-height: 20px; margin: 10px 0 0; color: var(--muted); font-size: .8rem; }
+.copy-status.is-success { color: var(--mint); }
+.copy-status.is-error { color: #ffb4b4; }
 
 .atlas-section { margin-top: 52px; }
 .atlas-heading { align-items: end; }
