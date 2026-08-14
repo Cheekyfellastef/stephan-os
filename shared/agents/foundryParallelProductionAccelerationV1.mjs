@@ -105,7 +105,7 @@ function exactKeys(value, keys) {
   const expected = [...keys].sort();
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
 }
-function inertSchedulerSnapshot(value, state, depth = 0) {
+function inertSnapshot(value, state, depth = 0) {
   state.nodes += 1;
   if (state.nodes > MAX_SCHEDULER_SNAPSHOT_NODES || depth > MAX_SCHEDULER_SNAPSHOT_DEPTH) {
     throw new TypeError('scheduler source exceeds inert snapshot bounds');
@@ -155,7 +155,7 @@ function inertSchedulerSnapshot(value, state, depth = 0) {
     if (!descriptor || !Object.hasOwn(descriptor, 'value') || descriptor.enumerable !== true) {
       throw new TypeError('scheduler source contains accessors or hidden fields');
     }
-    const entry = inertSchedulerSnapshot(descriptor.value, state, depth + 1);
+    const entry = inertSnapshot(descriptor.value, state, depth + 1);
     if (array) snapshot[Number(key)] = entry;
     else Object.defineProperty(snapshot, key, {
       value:entry, enumerable:true, configurable:false, writable:false,
@@ -166,7 +166,7 @@ function inertSchedulerSnapshot(value, state, depth = 0) {
 }
 function snapshotSchedulerSource(value, blockers) {
   try {
-    const snapshot = inertSchedulerSnapshot(value, {
+    const snapshot = inertSnapshot(value, {
       nodes:0, stringCodeUnits:0, visiting:new WeakSet(), snapshots:new WeakMap(),
     });
     if (!exactKeys(snapshot, SCHEDULER_SOURCE_KEYS)) {
@@ -198,6 +198,21 @@ function snapshotSchedulerSource(value, blockers) {
     return snapshot;
   } catch {
     blockers.push('scheduler-source-inspection-failed');
+    return null;
+  }
+}
+function snapshotTrustedHostContext(value, blockers) {
+  try {
+    const snapshot = inertSnapshot(value, {
+      nodes:0, stringCodeUnits:0, visiting:new WeakSet(), snapshots:new WeakMap(),
+    });
+    if (!exactKeys(snapshot, TRUSTED_KEYS)) {
+      blockers.push('trusted-host-context-shape-invalid');
+      return null;
+    }
+    return snapshot;
+  } catch {
+    blockers.push('trusted-host-context-inspection-failed');
     return null;
   }
 }
@@ -503,16 +518,17 @@ function telemetry(foundry, forge, activePackets) {
  */
 export function planFoundryParallelProductionAcceleration(_request = {}, trustedContext = {}) {
   try {
-    if (!exactKeys(trustedContext, TRUSTED_KEYS)) return blockedResult(['trusted-host-context-shape-invalid']);
     const hostBlockers = [];
-    const repository = text(trustedContext.repository);
-    const canonicalMainHead = text(trustedContext.canonicalMainHead).toLowerCase();
-    const canonicalMainTree = text(trustedContext.canonicalMainTree).toLowerCase();
-    const nowMs = instant(trustedContext.nowUtc);
-    const taskClass = text(trustedContext.taskClass);
-    const minimumNetSavingsSeconds = integer(trustedContext.minimumNetSavingsSeconds);
-    const freshnessSeconds = integer(trustedContext.receiptFreshnessSeconds);
-    if (trustedContext.schemaVersion !== FOUNDRY_ACCELERATION_HOST_CONTEXT_SCHEMA) hostBlockers.push('trusted-host-schema-invalid');
+    const context = snapshotTrustedHostContext(trustedContext, hostBlockers);
+    if (!context) return blockedResult(hostBlockers);
+    const repository = text(context.repository);
+    const canonicalMainHead = text(context.canonicalMainHead).toLowerCase();
+    const canonicalMainTree = text(context.canonicalMainTree).toLowerCase();
+    const nowMs = instant(context.nowUtc);
+    const taskClass = text(context.taskClass);
+    const minimumNetSavingsSeconds = integer(context.minimumNetSavingsSeconds);
+    const freshnessSeconds = integer(context.receiptFreshnessSeconds);
+    if (context.schemaVersion !== FOUNDRY_ACCELERATION_HOST_CONTEXT_SCHEMA) hostBlockers.push('trusted-host-schema-invalid');
     if (!REPOSITORY_RE.test(repository)) hostBlockers.push('trusted-repository-invalid');
     if (!SHA_RE.test(canonicalMainHead)) hostBlockers.push('trusted-main-head-invalid');
     if (!SHA_RE.test(canonicalMainTree)) hostBlockers.push('trusted-main-tree-invalid');
@@ -520,14 +536,14 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
     if (!SAFE_ID_RE.test(taskClass)) hostBlockers.push('trusted-task-class-invalid');
     if (minimumNetSavingsSeconds === null || minimumNetSavingsSeconds > MAX_DURATION_SECONDS) hostBlockers.push('trusted-minimum-savings-invalid');
     if (freshnessSeconds === null || freshnessSeconds < 1 || freshnessSeconds > MAX_FRESHNESS_SECONDS) hostBlockers.push('trusted-freshness-invalid');
-    if (!dense(trustedContext.providerCapacityEvidence)
-      || trustedContext.providerCapacityEvidence.length > MAX_PROVIDERS) hostBlockers.push('provider-evidence-inventory-invalid');
+    if (!dense(context.providerCapacityEvidence)
+      || context.providerCapacityEvidence.length > MAX_PROVIDERS) hostBlockers.push('provider-evidence-inventory-invalid');
     if (hostBlockers.length) return blockedResult(hostBlockers);
     const host = { repository, canonicalMainHead, canonicalMainTree, nowMs,
       nowUtc:new Date(nowMs).toISOString(), taskClass, minimumNetSavingsSeconds, freshnessSeconds };
 
     const schedulerBlockers = [];
-    const schedulerSource = snapshotSchedulerSource(trustedContext.schedulerSource, schedulerBlockers);
+    const schedulerSource = snapshotSchedulerSource(context.schedulerSource, schedulerBlockers);
     if (!schedulerSource) return blockedResult(schedulerBlockers);
     const schedulerProjection = buildMissionScheduler({
       ...schedulerSource,
@@ -542,7 +558,7 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
     const routes = new Set();
     const capacityReceiptIds = new Set();
     const metricsReceiptIds = new Set();
-    for (const rawEvidence of trustedContext.providerCapacityEvidence) {
+    for (const rawEvidence of context.providerCapacityEvidence) {
       const evidence = rawEvidence && typeof rawEvidence === 'object' && !Array.isArray(rawEvidence) ? rawEvidence : {};
       const blockers = [];
       const providerId = text(evidence.providerId).toLowerCase();
@@ -584,7 +600,7 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
     let forge = null;
     if (foundry) {
       const forgeBlockers = [];
-      const adjudication = adjudicateForgeSidecarCapacity(trustedContext.forgeSidecar, { nowUtc:host.nowUtc });
+      const adjudication = adjudicateForgeSidecarCapacity(context.forgeSidecar, { nowUtc:host.nowUtc });
       forge = forgeProof(adjudication, foundry, host, forgeBlockers);
       if (!forge) {
         foundry.blockers.push(...forgeBlockers);
