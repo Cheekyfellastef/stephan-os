@@ -50,13 +50,15 @@ Foundry is additionally eligible only when a direct call to `adjudicateForgeSide
 The planner accepts candidates only from `parallelCandidateDetails`. It verifies:
 
 - top-level and decision-receipt fail-closed state is false with zero contradictions;
-- the decision receipt has the exact canonical field inventory, an allowed status consistent with its active/selected state, a `LANE_SELECTED`, `MERGE_READY` or `CLOSE_READY` issue/route/lifecycle tuple matching one canonical portfolio row, no candidates while `WAITING` or `APPROVAL_REQUIRED`, and empty contradiction codes;
+- the decision receipt has the exact canonical field inventory, empty contradiction codes, no candidates while `WAITING` or `APPROVAL_REQUIRED`, an allowed status consistent with its active/selected state, a `LANE_SELECTED`, `MERGE_READY` or `CLOSE_READY` issue/route/lifecycle tuple matching one canonical portfolio row, and an `ACTIVE_LANE(S)` route matching the primary canonical active row with null selected issue/lifecycle;
 - decision freshness;
 - exact equality between active-goal, active-issue and ACTIVE portfolio inventories;
 - exact equality between selected-issue, parallel-candidate and detail inventories;
-- one fresh READY portfolio row per selected candidate;
+- one fresh, resource-scoped READY portfolio row per selected candidate, while unrelated non-authoritative portfolio rows may remain canonically unscoped;
 - exact canonical route and complete byte-preserved resource set;
 - no active/selected or selected/selected resource overlap.
+
+Candidate admission preserves the canonical order emitted by Mission Scheduler; the planner does not re-rank that authority-bearing sequence from critical-path weights.
 
 V1 accelerates only candidates whose canonical scheduler route is `CHATGPT_GITHUB`. Dispatch must re-read the Mission Scheduler/lease projection at action time; this read-only plan never claims a lease.
 
