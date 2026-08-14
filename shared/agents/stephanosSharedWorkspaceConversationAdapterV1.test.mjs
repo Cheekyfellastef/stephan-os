@@ -25,7 +25,7 @@ import {
 const createdAtUtc = '2026-08-14T10:30:00.000Z';
 const answeredAtUtc = '2026-08-14T10:31:00.000Z';
 
-function question(index, questionClass = STEPHANOS_INITIAL_QUESTION_CLASSES[index]) {
+function question(index, questionClass = STEPHANOS_INITIAL_QUESTION_CLASSES[index], overrides = {}) {
   const number = index + 1;
   return {
     schemaVersion: STEPHANOS_CAPABILITY_QUESTION_SCHEMA_VERSION,
@@ -40,6 +40,7 @@ function question(index, questionClass = STEPHANOS_INITIAL_QUESTION_CLASSES[inde
     contextRefs: ['goal-1308'],
     expectedEvidenceClass: 'CANONICAL_EVIDENCE',
     createdAtUtc,
+    ...overrides,
   };
 }
 
@@ -52,6 +53,28 @@ function round() {
     targetParticipantId: 'stephanos',
     questions: STEPHANOS_INITIAL_QUESTION_CLASSES.map((questionClass, index) => question(index, questionClass)),
     createdAtUtc,
+  };
+}
+
+function laterRound() {
+  const prior = round().questions.map((item) => item.intentFingerprint);
+  return {
+    prior,
+    capabilityRound: {
+      schemaVersion: STEPHANOS_CAPABILITY_ROUND_SCHEMA_VERSION,
+      roundId: 'round-002',
+      roundNumber: 2,
+      askerParticipantId: 'chatgpt-bridge',
+      targetParticipantId: 'stephanos',
+      questions: STEPHANOS_INITIAL_QUESTION_CLASSES.map((questionClass, index) => question(index, questionClass, {
+        roundId: 'round-002',
+        questionId: `transfer-question-${String(index + 1).padStart(2, '0')}`,
+        questionText: `Transfer capability question ${index + 1} for ${questionClass}.`,
+        intentFingerprint: `transfer-intent-${String(index + 1).padStart(2, '0')}-${questionClass.toLowerCase()}`,
+        noveltyRefs: [`previous-round:${prior[index]}`],
+      })),
+      createdAtUtc,
+    },
   };
 }
 
@@ -118,6 +141,21 @@ test('one initial ten-question round fans out to exactly ten correlated Shared W
   assert.equal(built.records.every((record) => record.correlationId === 'round-001'), true);
   assert.equal(built.records.every((record) => record.recipientParticipantId === 'stephanos'), true);
   assert.equal(built.authority.commandExecutionAllowed, false);
+});
+
+test('later-round fan-out preserves exact prior fingerprint lineage and fails closed without it', () => {
+  const { capabilityRound, prior } = laterRound();
+  const missing = buildStephanosWorkspaceQuestionRound(capabilityRound, { relatedIssue: '#1308' });
+  assert.equal(missing.valid, false);
+  assert.match(missing.errors.join('\n'), /priorRoundIntentFingerprints/);
+
+  const built = buildStephanosWorkspaceQuestionRound(capabilityRound, {
+    relatedIssue: '#1308',
+    priorRoundIntentFingerprints: prior,
+  });
+  assert.equal(built.valid, true, built.errors.join(', '));
+  assert.equal(built.records.length, 10);
+  assert.equal(built.records.every((record) => record.correlationId === 'round-002'), true);
 });
 
 test('a valid Stephanos answer becomes a correlated Shared Workspace response and round-trips', () => {

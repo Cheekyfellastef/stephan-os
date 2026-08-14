@@ -13,6 +13,7 @@ import {
 } from './stephanosConversationalCapabilityLadderV1.mjs';
 
 const CREATED_AT = '2026-08-14T10:45:00.000Z';
+const PRIOR_FINGERPRINTS = Object.freeze(Array.from({ length: 10 }, (_, index) => `intent-fingerprint-${String(index + 1).padStart(2, '0')}`));
 
 const QUESTION_TEXT = Object.freeze({
   CURRENT_PROGRAMME_TRUTH: 'What is the current Stephanos programme state and what evidence makes that current?',
@@ -78,6 +79,20 @@ function answer(questionRecord, overrides = {}) {
   };
 }
 
+function laterRound() {
+  const questions = STEPHANOS_INITIAL_QUESTION_CLASSES.map((questionClass, index) => question(questionClass, index, {
+    roundId: 'stephanos-round-002',
+    questionId: `transfer-question-${String(index + 1).padStart(2, '0')}`,
+    intentFingerprint: `transfer-fingerprint-${String(index + 1).padStart(2, '0')}`,
+    questionText: `Novel transfer scenario ${index + 1} for ${questionClass}.`,
+  }));
+  return round({
+    roundId: 'stephanos-round-002',
+    roundNumber: 2,
+    questions,
+  });
+}
+
 test('initial Stephanos round requires exactly ten materially diverse question classes', () => {
   const verdict = validateStephanosCapabilityRound(round());
   assert.equal(verdict.valid, true);
@@ -100,25 +115,41 @@ test('round rejects duplicate intent fingerprints so ten paraphrases cannot game
   assert.ok(verdict.errors.includes('intentFingerprints-must-be-unique'));
 });
 
-test('later rounds require novelty lineage rather than replaying the memorized first set', () => {
-  const questions = STEPHANOS_INITIAL_QUESTION_CLASSES.map((questionClass, index) => question(questionClass, index, {
-    roundId: 'stephanos-round-002',
-    questionId: `transfer-question-${String(index + 1).padStart(2, '0')}`,
-    intentFingerprint: `transfer-fingerprint-${String(index + 1).padStart(2, '0')}`,
-    questionText: `Novel transfer scenario ${index + 1} for ${questionClass}.`,
-  }));
-  const candidate = round({
-    roundId: 'stephanos-round-002',
-    roundNumber: 2,
-    questions,
-  });
-  assert.equal(validateStephanosCapabilityRound(candidate).valid, false);
+test('later rounds require novelty lineage bound to exact prior-round fingerprints', () => {
+  const candidate = laterRound();
+  assert.equal(validateStephanosCapabilityRound(candidate, { priorRoundIntentFingerprints: PRIOR_FINGERPRINTS }).valid, false);
 
   candidate.questions = candidate.questions.map((item, index) => ({
     ...item,
-    noveltyRefs: [`previous-round:intent-fingerprint-${String(index + 1).padStart(2, '0')}`],
+    noveltyRefs: [`previous-round:${PRIOR_FINGERPRINTS[index]}`],
   }));
-  assert.equal(validateStephanosCapabilityRound(candidate).valid, true);
+  assert.equal(validateStephanosCapabilityRound(candidate, { priorRoundIntentFingerprints: PRIOR_FINGERPRINTS }).valid, true);
+
+  const arbitraryRefs = laterRound();
+  arbitraryRefs.questions = arbitraryRefs.questions.map((item) => ({ ...item, noveltyRefs: ['anything'] }));
+  const arbitraryVerdict = validateStephanosCapabilityRound(arbitraryRefs, { priorRoundIntentFingerprints: PRIOR_FINGERPRINTS });
+  assert.equal(arbitraryVerdict.valid, false);
+  assert.ok(arbitraryVerdict.errors.some((error) => error.includes('noveltyRefs-must-bind-prior-round-fingerprints')));
+
+  const replay = laterRound();
+  replay.questions = replay.questions.map((item, index) => ({
+    ...item,
+    intentFingerprint: PRIOR_FINGERPRINTS[index],
+    noveltyRefs: [`previous-round:${PRIOR_FINGERPRINTS[index]}`],
+  }));
+  const replayVerdict = validateStephanosCapabilityRound(replay, { priorRoundIntentFingerprints: PRIOR_FINGERPRINTS });
+  assert.equal(replayVerdict.valid, false);
+  assert.ok(replayVerdict.errors.some((error) => error.includes('intentFingerprint-replays-prior-round')));
+});
+
+test('later rounds fail closed when the prior fingerprint estate is absent or malformed', () => {
+  const candidate = laterRound();
+  candidate.questions = candidate.questions.map((item, index) => ({
+    ...item,
+    noveltyRefs: [`previous-round:${PRIOR_FINGERPRINTS[index]}`],
+  }));
+  assert.equal(validateStephanosCapabilityRound(candidate).valid, false);
+  assert.equal(validateStephanosCapabilityRound(candidate, { priorRoundIntentFingerprints: ['too-few'] }).valid, false);
 });
 
 test('grounded answers require evidence, consulted sources and fresh-enough epistemic state', () => {
@@ -136,6 +167,24 @@ test('grounded answers require evidence, consulted sources and fresh-enough epis
   assert.equal(stale.valid, false);
   assert.ok(stale.errors.includes('grounded-answer-epistemic-state-insufficient'));
   assert.ok(stale.errors.includes('grounded-answer-freshness-insufficient'));
+});
+
+test('boundary verdicts require adjudicated evidence, sources and fresh grounded epistemic state', () => {
+  const q = round().questions[0];
+  const selfDeclared = validateStephanosCapabilityAnswer(answer(q, {
+    answerText: 'I declare this outside my authority.',
+    epistemicState: 'UNKNOWN',
+    evidenceRefs: [],
+    freshness: 'UNKNOWN',
+    sourcesConsulted: [],
+    cannotAnswerReason: 'Self-declared boundary.',
+    answerVerdict: 'UNSAFE_OR_AUTHORITY_BOUNDARY',
+  }));
+  assert.equal(selfDeclared.valid, false);
+  assert.ok(selfDeclared.errors.includes('boundary-answer-epistemic-state-insufficient'));
+  assert.ok(selfDeclared.errors.includes('boundary-answer-freshness-insufficient'));
+  assert.ok(selfDeclared.errors.includes('boundary-answer-requires-evidence'));
+  assert.ok(selfDeclared.errors.includes('boundary-answer-requires-sources'));
 });
 
 test('a buildable miss becomes one deterministic gap observation linked to existing owners first', () => {
@@ -156,6 +205,23 @@ test('a buildable miss becomes one deterministic gap observation linked to exist
   assert.ok(first.gap.existingGoalCandidates.includes('#1645'));
   assert.equal(first.gap.repairGoalRef, null);
   assert.equal(first.gap.status, 'OBSERVED_NEEDS_DEDUPLICATION');
+});
+
+test('gap observation rejects responder identity that does not match the targeted participant', () => {
+  const q = round().questions[2];
+  const gapAnswer = answer(q, {
+    responderParticipantId: 'openclaw',
+    answerText: 'I cannot retrieve memory.',
+    epistemicState: 'UNKNOWN',
+    evidenceRefs: [],
+    freshness: 'UNKNOWN',
+    sourcesConsulted: ['shared-workspace'],
+    cannotAnswerReason: 'No durable memory retrieval.',
+    answerVerdict: 'GAP_MEMORY',
+  });
+  const gap = createStephanosCapabilityGapObservation(q, gapAnswer);
+  assert.equal(gap.valid, false);
+  assert.deepEqual(gap.errors, ['question-answer-participant-mismatch']);
 });
 
 test('a ten-question round with one buildable miss cannot advance until repair replay', () => {
@@ -198,13 +264,13 @@ test('ten grounded answers settle the round and unlock a materially different ro
   assert.equal(verdict.requiresRepairReplay, false);
 });
 
-test('an explicit authority boundary is retained as a boundary rather than misclassified as build debt', () => {
+test('an evidence-backed authority boundary is retained rather than misclassified as build debt', () => {
   const capabilityRound = round();
   const answers = capabilityRound.questions.map((item) => answer(item));
   answers[9] = answer(capabilityRound.questions[9], {
     answerText: 'I cannot self-grant new runtime mutation authority.',
-    epistemicState: 'UNSUPPORTED_BY_THIS_PARTICIPANT',
-    evidenceRefs: [],
+    epistemicState: 'KNOWN_FROM_CANONICAL_STATE',
+    evidenceRefs: ['evidence:governing-authority-policy'],
     freshness: 'FRESH',
     sourcesConsulted: ['programme-authority'],
     cannotAnswerReason: 'Authority remains reserved to the governing policy and operator.',

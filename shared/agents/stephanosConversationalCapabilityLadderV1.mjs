@@ -183,6 +183,19 @@ function stringList(value, field, errors, minimum = 0) {
   return normalized;
 }
 
+function priorRoundFingerprints(value, errors) {
+  const normalized = stringList(value, 'priorRoundIntentFingerprints', errors, 10);
+  if (normalized.length !== 10) errors.push('priorRoundIntentFingerprints-must-contain-exactly-10');
+  if (normalized.some((entry) => !SAFE_FINGERPRINT.test(entry))) errors.push('priorRoundIntentFingerprints-contains-invalid-fingerprint');
+  return normalized;
+}
+
+function noveltyFingerprint(value) {
+  const prefix = 'previous-round:';
+  const normalized = text(value);
+  return normalized.startsWith(prefix) ? normalized.slice(prefix.length) : '';
+}
+
 function boundedText(value, field, errors, maximum = 16_384) {
   const normalized = text(value);
   if (!normalized) errors.push(`${field}-required`);
@@ -240,7 +253,7 @@ export function validateStephanosCapabilityQuestion(question, options = {}) {
   return result(errors);
 }
 
-export function validateStephanosCapabilityRound(round) {
+export function validateStephanosCapabilityRound(round, options = {}) {
   const errors = [];
   if (!exactRecordShape(round, ROUND_KEYS, errors)) return result(errors);
   if (round.schemaVersion !== STEPHANOS_CAPABILITY_ROUND_SCHEMA_VERSION) errors.push('schema-version-mismatch');
@@ -253,6 +266,10 @@ export function validateStephanosCapabilityRound(round) {
     errors.push('questions-must-contain-exactly-10-dense-records');
     return result(errors);
   }
+  const priorFingerprints = round.roundNumber > 1
+    ? priorRoundFingerprints(options.priorRoundIntentFingerprints, errors)
+    : [];
+  const priorFingerprintSet = new Set(priorFingerprints);
   const questionIds = [];
   const fingerprints = [];
   const classes = [];
@@ -265,8 +282,16 @@ export function validateStephanosCapabilityRound(round) {
     if (question?.roundId !== round.roundId) errors.push(`question-${index + 1}:roundId-mismatch`);
     if (question?.askerParticipantId !== round.askerParticipantId) errors.push(`question-${index + 1}:askerParticipantId-mismatch`);
     if (question?.targetParticipantId !== round.targetParticipantId) errors.push(`question-${index + 1}:targetParticipantId-mismatch`);
+    const fingerprint = text(question?.intentFingerprint);
+    if (round.roundNumber > 1) {
+      if (priorFingerprintSet.has(fingerprint)) errors.push(`question-${index + 1}:intentFingerprint-replays-prior-round`);
+      const noveltyRefs = denseArray(question?.noveltyRefs) ? question.noveltyRefs.map(noveltyFingerprint) : [];
+      if (noveltyRefs.some((reference) => !reference || !priorFingerprintSet.has(reference))) {
+        errors.push(`question-${index + 1}:noveltyRefs-must-bind-prior-round-fingerprints`);
+      }
+    }
     questionIds.push(text(question?.questionId));
-    fingerprints.push(text(question?.intentFingerprint));
+    fingerprints.push(fingerprint);
     classes.push(text(question?.questionClass).toUpperCase());
   }
   if (new Set(questionIds).size !== 10) errors.push('questionIds-must-be-unique');
@@ -306,6 +331,12 @@ export function validateStephanosCapabilityAnswer(answer) {
     if (sourcesConsulted.length === 0) errors.push('grounded-answer-requires-sources');
     if (cannotAnswerReason) errors.push('grounded-answer-cannot-have-cannotAnswerReason');
   }
+  if (SETTLED_BOUNDARY_VERDICTS.has(verdict)) {
+    if (!GROUNDED_EPISTEMIC_STATES.has(epistemicState)) errors.push('boundary-answer-epistemic-state-insufficient');
+    if (!['FRESH', 'RECENT'].includes(freshness)) errors.push('boundary-answer-freshness-insufficient');
+    if (evidenceRefs.length === 0) errors.push('boundary-answer-requires-evidence');
+    if (sourcesConsulted.length === 0) errors.push('boundary-answer-requires-sources');
+  }
   if (BUILDABLE_GAPS.has(verdict) || SETTLED_BOUNDARY_VERDICTS.has(verdict)) {
     if (!cannotAnswerReason) errors.push('non-grounded-terminal-answer-requires-reason');
   }
@@ -331,6 +362,9 @@ export function createStephanosCapabilityGapObservation(question, answer) {
   }
   if (question.questionId !== answer.questionId || question.roundId !== answer.roundId) {
     return Object.freeze({ valid:false, gap:null, errors:Object.freeze(['question-answer-lineage-mismatch']) });
+  }
+  if (question.targetParticipantId !== answer.responderParticipantId) {
+    return Object.freeze({ valid:false, gap:null, errors:Object.freeze(['question-answer-participant-mismatch']) });
   }
   const participantId = answer.responderParticipantId;
   const existingGoalCandidates = existingGoalCandidatesForGap(verdict);
@@ -370,7 +404,9 @@ function classifyAnswerForEvaluation(answer) {
 export function evaluateStephanosCapabilityRound(input = {}) {
   const round = input.round;
   const answers = input.answers;
-  const roundValidation = validateStephanosCapabilityRound(round);
+  const roundValidation = validateStephanosCapabilityRound(round, {
+    priorRoundIntentFingerprints: input.priorRoundIntentFingerprints,
+  });
   const errors = [...roundValidation.errors.map((error) => `round:${error}`)];
   if (!denseArray(answers)) errors.push('answers-must-be-dense-array');
   if (errors.length > 0) {
