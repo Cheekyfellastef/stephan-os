@@ -28,6 +28,7 @@ export const VR_RESEARCH_QUESTION_CLASSES = Object.freeze([
 
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
 const WORKSPACE_SAFE_ID = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
+const SAFE_PROOF_REF = /^(?:proof|proofs|receipts|evidence\/receipts)\/[A-Za-z0-9][A-Za-z0-9._/@:#-]{0,239}$/;
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -74,16 +75,35 @@ function sourceMatches(source, needle) {
   return `${text(source?.sourceId)} ${text(source?.title)}`.toLowerCase().includes(target);
 }
 
-function evidenceRefs(projection = {}) {
-  return list(projection.proofRefs).map(String).map((ref) => ref.trim()).filter(Boolean);
+function canonicalProofRefs(value) {
+  if (!Array.isArray(value)) return [];
+  const refs = [];
+  for (const entry of value) {
+    if (typeof entry !== 'string') return [];
+    const ref = entry.trim();
+    if (!ref || ref.includes('..') || !SAFE_PROOF_REF.test(ref)) return [];
+    refs.push(ref);
+  }
+  return refs.length === new Set(refs).size ? refs : [];
+}
+
+function proofRefsVerified(refs, input = {}) {
+  if (refs.length === 0 || typeof input.proofVerifier !== 'function') return false;
+  try {
+    return refs.every((ref) => input.proofVerifier(ref) === true);
+  } catch {
+    return false;
+  }
 }
 
 function answerEnvelope(request, projection, input, values = {}) {
   const freshness = projectionFreshness(projection, Number.isFinite(input.nowMs) ? input.nowMs : Date.now());
-  const projectionEvidenceRefs = evidenceRefs(projection);
+  const projectionEvidenceRefs = canonicalProofRefs(projection?.proofRefs);
   const requestedGrounded = values.grounded === true;
-  const grounded = requestedGrounded && freshness === 'FRESH' && projectionEvidenceRefs.length > 0;
-  const evidenceGap = requestedGrounded && freshness === 'FRESH' && projectionEvidenceRefs.length === 0;
+  const evidencePresent = projectionEvidenceRefs.length > 0;
+  const evidenceVerified = evidencePresent && proofRefsVerified(projectionEvidenceRefs, input);
+  const grounded = requestedGrounded && freshness === 'FRESH' && evidenceVerified;
+  const evidenceGap = requestedGrounded && freshness === 'FRESH' && !grounded;
   const verdict = freshness !== 'FRESH'
     ? 'GAP_FRESHNESS'
     : grounded
@@ -100,7 +120,9 @@ function answerEnvelope(request, projection, input, values = {}) {
   const cannotAnswerReason = grounded
     ? null
     : text(values.cannotAnswerReason || (evidenceGap
-      ? 'Canonical VR research projection does not carry proof references required to ground this answer.'
+      ? evidencePresent
+        ? 'Canonical VR research projection proof references are not verified by the trusted proof authority.'
+        : 'Canonical VR research projection does not carry proof references required to ground this answer.'
       : freshness !== 'FRESH'
         ? 'Canonical VR research projection is stale or missing trustworthy freshness evidence.'
         : 'Canonical VR research projection does not currently contain enough evidence for this question.'));
@@ -111,7 +133,7 @@ function answerEnvelope(request, projection, input, values = {}) {
     responderParticipantId: VR_RESEARCH_PARTICIPANT_ID,
     answerText: text(values.answerText || cannotAnswerReason),
     epistemicState,
-    evidenceRefs: Object.freeze(grounded ? projectionEvidenceRefs : list(values.evidenceRefs).map(String).filter(Boolean)),
+    evidenceRefs: Object.freeze(grounded ? projectionEvidenceRefs : canonicalProofRefs(values.evidenceRefs)),
     freshness,
     cannotAnswerReason,
     answerVerdict: verdict,
@@ -120,15 +142,29 @@ function answerEnvelope(request, projection, input, values = {}) {
   });
 }
 
+function normalizeRequest(request = {}) {
+  return Object.freeze({
+    schemaVersion: text(request.schemaVersion),
+    questionId: text(request.questionId),
+    askerParticipantId: text(request.askerParticipantId),
+    targetParticipantId: text(request.targetParticipantId),
+    questionClass: text(request.questionClass).toUpperCase(),
+    questionText: text(request.questionText),
+    subjectRef: text(request.subjectRef),
+    createdAtUtc: text(request.createdAtUtc),
+  });
+}
+
 function validateRequest(request = {}) {
+  const normalized = normalizeRequest(request);
   const errors = [];
-  if (request.schemaVersion !== VR_RESEARCH_PARTICIPANT_QA_SCHEMA_VERSION) errors.push('schema-version-mismatch');
-  for (const field of ['questionId', 'askerParticipantId', 'targetParticipantId']) if (!safeId(request[field])) errors.push(`${field}-invalid`);
-  if (request.targetParticipantId !== VR_RESEARCH_PARTICIPANT_ID) errors.push('target-participant-mismatch');
-  if (!VR_RESEARCH_QUESTION_CLASSES.includes(text(request.questionClass).toUpperCase())) errors.push('questionClass-invalid');
-  if (!text(request.questionText)) errors.push('questionText-required');
-  if (!timestamp(request.createdAtUtc)) errors.push('createdAtUtc-invalid');
-  return Object.freeze({ valid: errors.length === 0, errors: Object.freeze(errors) });
+  if (normalized.schemaVersion !== VR_RESEARCH_PARTICIPANT_QA_SCHEMA_VERSION) errors.push('schema-version-mismatch');
+  for (const field of ['questionId', 'askerParticipantId', 'targetParticipantId']) if (!safeId(normalized[field])) errors.push(`${field}-invalid`);
+  if (normalized.targetParticipantId !== VR_RESEARCH_PARTICIPANT_ID) errors.push('target-participant-mismatch');
+  if (!VR_RESEARCH_QUESTION_CLASSES.includes(normalized.questionClass)) errors.push('questionClass-invalid');
+  if (!normalized.questionText) errors.push('questionText-required');
+  if (!timestamp(normalized.createdAtUtc)) errors.push('createdAtUtc-invalid');
+  return Object.freeze({ valid: errors.length === 0, errors: Object.freeze(errors), normalized });
 }
 
 export function createVrResearchQuestion(input = {}) {
@@ -248,23 +284,24 @@ function unknownsAnswer(request, projection, input) {
 export function answerVrResearchQuestion(request = {}, projection = {}, input = {}) {
   const validation = validateRequest(request);
   if (!validation.valid) return Object.freeze({ valid: false, errors: validation.errors, answer: null, gapObservation: null });
+  const normalizedRequest = validation.normalized;
   if (!projection || projection.schemaVersion !== VR_RESEARCH_WORKSPACE_SCHEMA_VERSION) {
-    const answer = answerEnvelope(request, projection || {}, input, { cannotAnswerReason: 'Canonical VR research workspace projection is missing or incompatible.' });
-    return Object.freeze({ valid: true, errors: Object.freeze([]), answer, gapObservation: createVrResearchQaGapObservation(request, answer) });
+    const answer = answerEnvelope(normalizedRequest, projection || {}, input, { cannotAnswerReason: 'Canonical VR research workspace projection is missing or incompatible.' });
+    return Object.freeze({ valid: true, errors: Object.freeze([]), answer, gapObservation: createVrResearchQaGapObservation(normalizedRequest, answer) });
   }
-  const questionClass = text(request.questionClass).toUpperCase();
+  const questionClass = normalizedRequest.questionClass;
   let answer;
-  if (questionClass === 'SOURCE_STACK') answer = sourceStackAnswer(request, projection, input);
-  else if (questionClass === 'NEXT_EXPERIMENT') answer = nextExperimentAnswer(request, projection, input);
-  else if (questionClass === 'EVIDENCE_PLANE') answer = evidencePlaneAnswer(request, projection, input);
-  else if (questionClass === 'AUTHORING_VS_RUNTIME') answer = authoringVsRuntimeAnswer(request, projection, input);
-  else if (questionClass === 'VORPX_BASELINE') answer = namedSourceAnswer(request, projection, input, 'vorpx', 'vorpX baseline');
-  else if (questionClass === 'SKYRIM_PARITY') answer = namedSourceAnswer(request, projection, input, 'skyrim', 'Skyrim VR parity source');
-  else if (questionClass === 'LICENCE_BOUNDARIES') answer = licenceAnswer(request, projection, input);
-  else if (questionClass === 'SPATIAL_BRIDGE_BLOCKERS') answer = spatialBlockerAnswer(request, projection, input);
-  else if (questionClass === 'NEXT_BOUNDED_GOAL') answer = nextGoalAnswer(request, projection, input);
-  else answer = unknownsAnswer(request, projection, input);
-  const gapObservation = answer.answerVerdict.startsWith('GAP_') ? createVrResearchQaGapObservation({ ...request, questionClass }, answer) : null;
+  if (questionClass === 'SOURCE_STACK') answer = sourceStackAnswer(normalizedRequest, projection, input);
+  else if (questionClass === 'NEXT_EXPERIMENT') answer = nextExperimentAnswer(normalizedRequest, projection, input);
+  else if (questionClass === 'EVIDENCE_PLANE') answer = evidencePlaneAnswer(normalizedRequest, projection, input);
+  else if (questionClass === 'AUTHORING_VS_RUNTIME') answer = authoringVsRuntimeAnswer(normalizedRequest, projection, input);
+  else if (questionClass === 'VORPX_BASELINE') answer = namedSourceAnswer(normalizedRequest, projection, input, 'vorpx', 'vorpX baseline');
+  else if (questionClass === 'SKYRIM_PARITY') answer = namedSourceAnswer(normalizedRequest, projection, input, 'skyrim', 'Skyrim VR parity source');
+  else if (questionClass === 'LICENCE_BOUNDARIES') answer = licenceAnswer(normalizedRequest, projection, input);
+  else if (questionClass === 'SPATIAL_BRIDGE_BLOCKERS') answer = spatialBlockerAnswer(normalizedRequest, projection, input);
+  else if (questionClass === 'NEXT_BOUNDED_GOAL') answer = nextGoalAnswer(normalizedRequest, projection, input);
+  else answer = unknownsAnswer(normalizedRequest, projection, input);
+  const gapObservation = answer.answerVerdict.startsWith('GAP_') ? createVrResearchQaGapObservation(normalizedRequest, answer) : null;
   return Object.freeze({ valid: true, errors: Object.freeze([]), answer, gapObservation });
 }
 
@@ -296,26 +333,47 @@ export function createVrResearchQaGapObservation(request = {}, answer = {}) {
   });
 }
 
+function normalizeWorkspaceAnswer(answer = {}) {
+  return Object.freeze({
+    schemaVersion: text(answer.schemaVersion),
+    answerId: text(answer.answerId),
+    questionId: text(answer.questionId),
+    responderParticipantId: text(answer.responderParticipantId),
+    answerText: text(answer.answerText),
+    epistemicState: text(answer.epistemicState),
+    evidenceRefs: Object.freeze(canonicalProofRefs(answer.evidenceRefs)),
+    freshness: text(answer.freshness),
+    cannotAnswerReason: answer.cannotAnswerReason === null ? null : text(answer.cannotAnswerReason),
+    answerVerdict: text(answer.answerVerdict),
+    facts: Object.freeze(list(answer.facts)),
+    answeredAtUtc: text(answer.answeredAtUtc),
+  });
+}
+
 export function createVrResearchQaWorkspaceAnswerRecord(request = {}, answer = {}, input = {}) {
-  const messageId = `vr-qa-${hash({ questionId: request.questionId, answerId: answer.answerId }).slice(0, 20)}`;
-  const proofRefs = answer.evidenceRefs.length > 0
-    ? [...answer.evidenceRefs]
-    : list(input.proofRefs).map(String).map((ref) => ref.trim()).filter(Boolean);
+  const requestValidation = validateRequest(request);
+  const normalizedRequest = requestValidation.normalized;
+  const normalizedAnswer = normalizeWorkspaceAnswer(answer);
+  const messageId = `vr-qa-${hash({ questionId: normalizedRequest.questionId, answerId: normalizedAnswer.answerId }).slice(0, 20)}`;
+  const answerProofRefs = canonicalProofRefs(normalizedAnswer.evidenceRefs);
+  const suppliedProofRefs = canonicalProofRefs(input.proofRefs);
+  const candidateProofRefs = answerProofRefs.length > 0 ? answerProofRefs : suppliedProofRefs;
+  const proofRefs = requestValidation.valid && proofRefsVerified(candidateProofRefs, input) ? candidateProofRefs : [];
   const record = Object.freeze({
     schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
     kind: SHARED_WORKSPACE_RECORD_KINDS.MESSAGE,
     messageId,
     participantId: VR_RESEARCH_PARTICIPANT_ID,
-    recipientParticipantId: request.askerParticipantId,
-    timestampUtc: answer.answeredAtUtc,
-    correlationId: workspaceSafeId(input.correlationId || request.questionId),
+    recipientParticipantId: normalizedRequest.askerParticipantId,
+    timestampUtc: normalizedAnswer.answeredAtUtc,
+    correlationId: workspaceSafeId(input.correlationId || normalizedRequest.questionId),
     relatedIssue: '#1723',
     proofRefs,
     channel: 'vr-research-qa',
     recordSubtype: 'conversation-answer',
-    subjectId: request.questionId,
-    summary: `VR research answer ${request.questionId}: ${answer.answerVerdict}`,
-    body: JSON.stringify({ request, answer }),
+    subjectId: normalizedRequest.questionId,
+    summary: `VR research answer ${normalizedRequest.questionId}: ${normalizedAnswer.answerVerdict}`,
+    body: JSON.stringify({ request: normalizedRequest, answer: normalizedAnswer }),
     sourceMutationAllowed: false,
     commandExecutionAllowed: false,
     mergeAllowed: false,
