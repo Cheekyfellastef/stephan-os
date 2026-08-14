@@ -53,6 +53,8 @@ Foundry is additionally eligible only when a direct call to `adjudicateForgeSide
 
 The planner does not accept a host-authored scheduler projection. It runs the canonical Mission Scheduler from the inert bounded source and accepts candidates only from that invocation's `parallelCandidateDetails`. The canonical producer therefore remains responsible for priority ordering, complete selected/active tuples, resource-disjoint admission and `elasticCapacity.remainingAdmissionSlots`; a caller cannot consistently rewrite several output inventories to manufacture another admissible selection.
 
+Scheduler proof references, proof heads and proof receipts retain the canonical Mission Scheduler evidence bound of 10,000 items. The smaller provider-receipt list bound does not reject an otherwise valid large programme proof inventory.
+
 As defense in depth, the adapter also verifies:
 
 - top-level and decision-receipt fail-closed state is false with zero contradictions;
