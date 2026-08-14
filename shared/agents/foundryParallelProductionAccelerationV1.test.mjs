@@ -272,6 +272,17 @@ test('canonical scheduler owns priority, resource-disjoint admission and capacit
   });
 });
 
+test('canonical Mission Scheduler proof inventories remain valid above provider receipt bounds', () => {
+  const proofRefs = Array.from({ length:129 }, (_, index) =>
+    `proofs/scheduler-evidence-${String(index).padStart(3, '0')}.json`);
+  const result = planFoundryParallelProductionAcceleration({}, host({
+    schedulerSource:scheduler({ proofRefs }),
+  }));
+  assert.equal(result.valid, true);
+  assert.equal(result.decision, FOUNDRY_ACCELERATION_DECISIONS.READY);
+  assert.equal(result.assignments.length, 1);
+});
+
 test('trusted scheduler source is snapshotted once and fails closed on hidden authority', async (t) => {
   await t.test('stateful descriptors are observed once before canonical scheduling', () => {
     let priorityReads = 0;
