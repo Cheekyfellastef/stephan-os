@@ -220,6 +220,9 @@ test('default GitHub workflow evidence can prove a PR only when all canonical ro
   assert.equal(projection.goals[0].proofTruth, 'CURRENT');
   assert.match(projection.goals[0].summary, /checks passed/);
   assert.equal(projection.goals[0].blockers.includes('GITHUB_CHECKS_UNKNOWN'), false);
+  assert.equal(projection.goals[0].blockers.includes('checks_not_passed_or_unknown'), false);
+  assert.deepEqual(projection.operatorAttention.blockers, []);
+  assert.equal(projection.finalVerdict, 'LANDING_GOAL_DASHBOARD_CURRENT');
 });
 
 test('workflow proof on another head never upgrades the current PR', () => {
