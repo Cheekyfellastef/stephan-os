@@ -109,30 +109,22 @@ function forgeSidecar(overrides = {}) {
 }
 
 function portfolioItem(issue, overrides = {}) {
-  return { issue, route:'CHATGPT_GITHUB', resourceIds:[`goal:${issue}`],
-    criticalPathWeight:500, lifecycle:'READY', evidenceFreshness:'FRESH', ...overrides };
+  return { issue, title:`Goal #${issue}`, state:'READY', prerequisites:[], priority:500,
+    criticalPathWeight:500, reversibility:'HIGH', route:'CHATGPT_GITHUB',
+    resourceIds:[`goal:${issue}`], evidenceAt:'2026-08-14T14:59:30Z', ...overrides };
 }
 function scheduler(options = {}) {
   const selected = options.selected ?? [portfolioItem(1737)];
   const active = options.active ?? [];
-  const portfolio = options.portfolio ?? [...active, ...selected];
   return {
-    schemaVersion:'stephanos.mission-scheduler.v1', readOnly:true, failClosed:false,
-    contradictions:[], contradictionsTotal:0,
-    activeGoals:active.map(({ issue }) => `#${issue}`),
-    parallelCandidates:selected.map(({ issue }) => `#${issue}`),
-    parallelCandidateDetails:selected.map(({ issue, route, resourceIds }) =>
-      ({ candidateId:`#${issue}`, issue, route, resourceIds:[...resourceIds] })),
-    portfolio,
-    decisionReceipt:{ correlationId:'scheduler-test-001', decidedAt:'2026-08-14T14:59:30Z',
-      status:active.length ? (active.length === 1 ? 'ACTIVE_LANE' : 'ACTIVE_LANES')
-        : selected.length ? 'LANE_SELECTED' : 'WAITING',
-      failClosed:false, contradictionCodes:[], selectedIssue:active.length || !selected.length ? null : selected[0].issue,
-      selectedIssues:selected.map(({ issue }) => issue), selectedLifecycle:active.length || !selected.length ? null : 'READY',
-      activeIssue:active[0]?.issue ?? null, activeIssues:active.map(({ issue }) => issue),
-      route:active[0]?.route ?? selected[0]?.route ?? 'WAITING_FOR_EXTERNAL_CONDITION',
-      proofRefs:[], proofHeadShas:[], proofReceipts:[] },
-    ...options.projection,
+    correlationId:'scheduler-test-001',
+    goals:options.goals ?? [...active, ...selected],
+    proofHeadShas:options.proofHeadShas ?? [],
+    proofReceipts:options.proofReceipts ?? [],
+    proofRefs:options.proofRefs ?? [],
+    minimumActiveLanes:options.minimumActiveLanes ?? 5,
+    maximumActiveLanes:options.maximumActiveLanes ?? 16,
+    availableExecutorSlots:options.availableExecutorSlots ?? 8,
   };
 }
 
@@ -146,7 +138,7 @@ function host(overrides = {}) {
     taskClass:TASK_CLASS,
     minimumNetSavingsSeconds:60,
     receiptFreshnessSeconds:300,
-    schedulerProjection:scheduler(),
+    schedulerSource:scheduler(),
     providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), evidence('foundry', 'FOUNDRY_FORGE')],
     forgeSidecar:forgeSidecar(),
     ...overrides,
@@ -194,7 +186,10 @@ test('a fake legacy M3 receipt cannot replace canonical Forge sidecar adjudicati
   assert.equal(result.valid, true);
   assert.equal(result.decision, FOUNDRY_ACCELERATION_DECISIONS.WAITING_FOR_M3);
   assert.equal(result.assignments.length, 0);
-  assert.ok(result.providerStatus.find(({ providerId }) => providerId === 'foundry').blockers.includes('forge-m3-runtime-invalid'));
+  const provider = result.providerStatus.find(({ providerId }) => providerId === 'foundry');
+  assert.ok(provider.blockers.includes('forge-m3-runtime-invalid'));
+  assert.equal(provider.evidenceValid, false);
+  assert.equal(provider.eligible, false);
 });
 
 test('forged root performance numbers cannot influence receipt-bound routing', () => {
@@ -214,162 +209,121 @@ test('trusted head and clock bind receipts despite replayed caller values', () =
   assert.equal(planFoundryParallelProductionAcceleration({}, host({ nowUtc:'2026-08-14T16:00:00Z' })).valid, false);
 });
 
-test('canonical active ownership blocks an omitted caller conflict', () => {
-  const active = portfolioItem(1700, { lifecycle:'ACTIVE', resourceIds:['repo:shared/agents/owned.mjs'] });
-  const selected = portfolioItem(1737, { resourceIds:['repo:shared/agents/owned.mjs'] });
-  const result = planFoundryParallelProductionAcceleration({ activeResourceIds:[] }, host({
-    schedulerProjection:scheduler({ active:[active], selected:[selected] }),
-  }));
-  assert.equal(result.valid, false);
-  assert.ok(result.blockers.includes('scheduler-candidate-active-resource-conflict:#1737'));
-});
+test('canonical scheduler owns priority, resource-disjoint admission and capacity', async (t) => {
+  await t.test('caller ordering cannot promote the lower-priority candidate', () => {
+    const low = portfolioItem(1738, { priority:1, criticalPathWeight:1 });
+    const high = portfolioItem(1737, { operatorPriority:true, priority:1, criticalPathWeight:1 });
+    const foundry = evidence('foundry', 'FOUNDRY_FORGE', { metrics:{ availableSlots:1 } });
+    const result = planFoundryParallelProductionAcceleration({}, host({
+      schedulerSource:scheduler({ selected:[low, high] }),
+      providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), foundry],
+    }));
+    assert.equal(result.valid, true);
+    assert.equal(result.assignments[0].candidateId, '#1737');
+    assert.equal(result.heldCandidates[0].candidateId, '#1738');
+  });
 
-test('ACTIVE_LANE binds route and null selected tuple to the primary active portfolio row', () => {
-  const active = portfolioItem(1700, { lifecycle:'ACTIVE' });
-  const projection = scheduler({ active:[active], selected:[] });
-  assert.equal(planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection })).valid, true);
-  projection.decisionReceipt.route = 'OPENCLAW_LOCAL';
-  assert.equal(planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection })).valid, false);
-  projection.decisionReceipt.route = active.route;
-  projection.decisionReceipt.selectedIssue = active.issue;
-  projection.decisionReceipt.selectedLifecycle = 'ACTIVE';
-  assert.equal(planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection })).valid, false);
-});
+  await t.test('canonical remainingAdmissionSlots caps recommendations even when Foundry has more slots', () => {
+    const active = Array.from({ length:4 }, (_, index) => portfolioItem(1600 + index, {
+      state:'ACTIVE', activePr:2600 + index, resourceIds:[`active:${index}`],
+    }));
+    const selected = [
+      portfolioItem(1737, { operatorPriority:true }),
+      portfolioItem(1738),
+    ];
+    const foundry = evidence('foundry', 'FOUNDRY_FORGE', { metrics:{ availableSlots:2 } });
+    const result = planFoundryParallelProductionAcceleration({}, host({
+      schedulerSource:scheduler({ active, selected, availableExecutorSlots:5 }),
+      providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), foundry],
+    }));
+    assert.equal(result.valid, true);
+    assert.deepEqual(result.assignments.map(({ candidateId }) => candidateId), ['#1737']);
+  });
 
-test('scheduler inventory fails closed on omitted active rows or partial resource scopes', async (t) => {
-  await t.test('unlisted ACTIVE portfolio row', () => {
-    const hidden = portfolioItem(1700, { lifecycle:'ACTIVE', resourceIds:['repo:hidden'] });
-    const projection = scheduler({ portfolio:[hidden, portfolioItem(1737)] });
-    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
-    assert.equal(result.valid, false);
-    assert.ok(result.blockers.includes('scheduler-active-portfolio-inventory-mismatch'));
-  });
-  await t.test('candidate detail omits a portfolio resource', () => {
-    const selected = portfolioItem(1737, { resourceIds:['repo:one', 'repo:two'] });
-    const projection = scheduler({ selected:[selected] });
-    projection.parallelCandidateDetails[0].resourceIds = ['repo:one'];
-    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
-    assert.equal(result.valid, false);
-    assert.ok(result.blockers.includes('scheduler-candidate-resource-mismatch:#1737'));
-  });
-  await t.test('unrelated unscoped portfolio row is allowed', () => {
-    const unrelated = portfolioItem(1600, { lifecycle:'BLOCKED', resourceIds:[] });
-    const projection = scheduler({ portfolio:[unrelated, portfolioItem(1737)] });
-    assert.equal(planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection })).valid, true);
-  });
-  await t.test('active ownership must remain resource scoped', () => {
-    const active = portfolioItem(1700, { lifecycle:'ACTIVE', resourceIds:[] });
-    const projection = scheduler({ active:[active], selected:[] });
-    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
-    assert.equal(result.valid, false);
-    assert.ok(result.blockers.includes('scheduler-active-portfolio-invalid:#1700'));
-  });
-});
-
-test('scheduler rejects overlapping selections, set mismatches and non-GitHub routes', async (t) => {
-  await t.test('pairwise selected overlap', () => {
-    const selected = [portfolioItem(1737, { resourceIds:['repo:shared'] }), portfolioItem(1738, { resourceIds:['repo:shared'] })];
-    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:scheduler({ selected }) }));
-    assert.equal(result.valid, false);
-    assert.ok(result.blockers.includes('scheduler-candidate-parallel-resource-conflict:#1738'));
-  });
-  await t.test('decision/detail mismatch', () => {
-    const projection = scheduler();
-    projection.decisionReceipt.selectedIssues = [];
-    assert.equal(planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection })).valid, false);
-  });
-  await t.test('parallel candidate references cannot reorder scheduler priority', () => {
-    const selected = [portfolioItem(1737), portfolioItem(1738)];
-    const projection = scheduler({ selected });
-    projection.parallelCandidates.reverse();
-    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
-    assert.equal(result.valid, false);
-    assert.ok(result.blockers.includes('scheduler-parallel-candidate-refs-mismatch'));
-  });
-  await t.test('decision selected issues cannot reorder scheduler priority', () => {
-    const selected = [portfolioItem(1737), portfolioItem(1738)];
-    const projection = scheduler({ selected });
-    projection.decisionReceipt.selectedIssues.reverse();
-    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
-    assert.equal(result.valid, false);
-    assert.ok(result.blockers.includes('scheduler-selected-issues-mismatch'));
-  });
-  await t.test('LANE_SELECTED issue is outside the canonical selected inventory', () => {
-    const projection = scheduler();
-    projection.decisionReceipt.selectedIssue = 9999;
-    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
-    assert.equal(result.valid, false);
-    assert.ok(result.blockers.includes('scheduler-decision-status-inconsistent'));
-  });
-  await t.test('LANE_SELECTED route contradicts the canonical selected portfolio row', () => {
-    const projection = scheduler();
-    projection.decisionReceipt.route = 'OPENCLAW_LOCAL';
-    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
-    assert.equal(result.valid, false);
-    assert.ok(result.blockers.includes('scheduler-decision-status-inconsistent'));
-  });
-  for (const lifecycle of ['MERGE_READY', 'CLOSE_READY']) {
-    await t.test(`${lifecycle} binds issue, route and lifecycle to one canonical portfolio row`, () => {
-      const selected = portfolioItem(1737, { lifecycle });
-      const projection = scheduler({ selected:[], portfolio:[selected] });
-      projection.decisionReceipt.status = lifecycle;
-      projection.decisionReceipt.selectedIssue = selected.issue;
-      projection.decisionReceipt.selectedLifecycle = lifecycle;
-      projection.decisionReceipt.route = selected.route;
-      assert.equal(planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection })).valid, true);
-      projection.decisionReceipt.route = 'OPENCLAW_LOCAL';
-      const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
-      assert.equal(result.valid, false);
-      assert.ok(result.blockers.includes('scheduler-decision-status-inconsistent'));
+  await t.test('active ownership prevents a conflicting candidate from entering the canonical projection', () => {
+    const active = portfolioItem(1700, {
+      state:'ACTIVE', activePr:2700, resourceIds:['repo:shared/agents/owned.mjs'],
     });
-  }
-  await t.test('non-GitHub route', () => {
-    const selected = [portfolioItem(1737, { route:'OPENCLAW_LOCAL' })];
-    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:scheduler({ selected }) }));
-    assert.equal(result.valid, false);
-    assert.ok(result.blockers.includes('scheduler-candidate-route-not-accelerable:#1737'));
+    const selected = portfolioItem(1737, { resourceIds:['repo:shared/agents/owned.mjs'] });
+    const result = planFoundryParallelProductionAcceleration({ activeResourceIds:[] }, host({
+      schedulerSource:scheduler({ active:[active], selected:[selected] }),
+    }));
+    assert.equal(result.valid, true);
+    assert.equal(result.assignments.length, 0);
   });
-  await t.test('contradictory decision status and codes', () => {
-    const projection = scheduler();
-    projection.decisionReceipt.status = 'BLOCKED_FAIL_CLOSED';
-    projection.decisionReceipt.contradictionCodes = ['ACTIVE_RESOURCE_CONFLICT'];
-    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
-    assert.equal(result.valid, false);
-    assert.ok(result.blockers.includes('scheduler-decision-stale-or-invalid'));
+
+  await t.test('pairwise resource overlap admits only the canonical first owner', () => {
+    const selected = [
+      portfolioItem(1737, { operatorPriority:true, resourceIds:['repo:shared'] }),
+      portfolioItem(1738, { resourceIds:['repo:shared'] }),
+    ];
+    const result = planFoundryParallelProductionAcceleration({}, host({
+      schedulerSource:scheduler({ selected }),
+    }));
+    assert.deepEqual(result.assignments.map(({ candidateId }) => candidateId), ['#1737']);
   });
-  await t.test('truncated decision receipt shape', () => {
-    const projection = scheduler();
-    delete projection.decisionReceipt.contradictionCodes;
-    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
+
+  await t.test('a caller-shaped scheduler projection is outside the trusted contract', () => {
+    const result = planFoundryParallelProductionAcceleration({}, host({
+      schedulerProjection:{ parallelCandidates:['#9999'] },
+    }));
     assert.equal(result.valid, false);
-    assert.ok(result.blockers.includes('scheduler-decision-receipt-shape-invalid'));
+    assert.ok(result.blockers.includes('trusted-host-context-shape-invalid'));
   });
-  for (const invalidStatus of [null, { state:'LANE_SELECTED' }, 'INVENTED_READY']) {
-    await t.test(`noncanonical decision status ${JSON.stringify(invalidStatus)}`, () => {
-      const projection = scheduler();
-      projection.decisionReceipt.status = invalidStatus;
-      const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
-      assert.equal(result.valid, false);
-      assert.ok(result.blockers.includes('scheduler-decision-stale-or-invalid'));
+});
+
+test('trusted scheduler source is snapshotted once and fails closed on hidden authority', async (t) => {
+  await t.test('stateful descriptors are observed once before canonical scheduling', () => {
+    let priorityReads = 0;
+    const target = portfolioItem(1737, { priority:1 });
+    const stateful = new Proxy(target, {
+      getOwnPropertyDescriptor(object, key) {
+        const descriptor = Reflect.getOwnPropertyDescriptor(object, key);
+        if (key !== 'priority') return descriptor;
+        priorityReads += 1;
+        return { ...descriptor, value:priorityReads === 1 ? 1000 : 0 };
+      },
     });
-  }
-  await t.test('WAITING status with selected candidates', () => {
-    const projection = scheduler();
-    projection.decisionReceipt.status = 'WAITING';
-    projection.decisionReceipt.selectedIssue = null;
-    projection.decisionReceipt.selectedLifecycle = null;
-    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
-    assert.equal(result.valid, false);
-    assert.ok(result.blockers.includes('scheduler-decision-status-inconsistent'));
+    const result = planFoundryParallelProductionAcceleration({}, host({
+      schedulerSource:scheduler({ selected:[stateful, portfolioItem(1738, { priority:500 })] }),
+    }));
+    assert.equal(result.valid, true);
+    assert.equal(result.assignments[0].candidateId, '#1737');
+    assert.equal(priorityReads, 1);
   });
-  await t.test('APPROVAL_REQUIRED status with selected candidates', () => {
-    const projection = scheduler();
-    projection.decisionReceipt.status = 'APPROVAL_REQUIRED';
-    projection.decisionReceipt.selectedIssue = null;
-    projection.decisionReceipt.selectedLifecycle = null;
-    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
+
+  await t.test('accessors are rejected without invocation', () => {
+    let reads = 0;
+    const source = scheduler();
+    Object.defineProperty(source.goals[0], 'priority', {
+      enumerable:true, configurable:true,
+      get() { reads += 1; return 1000; },
+    });
+    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerSource:source }));
     assert.equal(result.valid, false);
-    assert.ok(result.blockers.includes('scheduler-decision-status-inconsistent'));
+    assert.ok(result.blockers.includes('scheduler-source-inspection-failed'));
+    assert.equal(reads, 0);
+  });
+
+  await t.test('symbol and widened array keys are rejected', () => {
+    const symbolic = scheduler();
+    symbolic[Symbol('hidden-authority')] = 'CHATGPT_GITHUB';
+    const symbolResult = planFoundryParallelProductionAcceleration({}, host({ schedulerSource:symbolic }));
+    assert.equal(symbolResult.valid, false);
+    assert.ok(symbolResult.blockers.includes('scheduler-source-inspection-failed'));
+
+    const widened = scheduler();
+    widened.goals.hiddenRoute = 'CHATGPT_GITHUB';
+    const widenedResult = planFoundryParallelProductionAcceleration({}, host({ schedulerSource:widened }));
+    assert.equal(widenedResult.valid, false);
+    assert.ok(widenedResult.blockers.includes('scheduler-source-inspection-failed'));
+  });
+
+  await t.test('source clocks and freshness cannot override the trusted host', () => {
+    const source = { ...scheduler(), now:'2020-01-01T00:00:00Z' };
+    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerSource:source }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('scheduler-source-shape-invalid'));
   });
 });
 
@@ -390,7 +344,7 @@ test('positive candidates held after Foundry slots are consumed report slot exha
   const selected = [portfolioItem(1737, { criticalPathWeight:1000 }), portfolioItem(1738)];
   const foundry = evidence('foundry', 'FOUNDRY_FORGE', { metrics:{ availableSlots:1 } });
   const result = planFoundryParallelProductionAcceleration({}, host({
-    schedulerProjection:scheduler({ selected }),
+    schedulerSource:scheduler({ selected }),
     providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), foundry],
   }));
   assert.equal(result.valid, true);
@@ -401,10 +355,13 @@ test('positive candidates held after Foundry slots are consumed report slot exha
 });
 
 test('assignment admission preserves canonical scheduler candidate order', () => {
-  const selected = [portfolioItem(1737, { criticalPathWeight:1 }), portfolioItem(1738, { criticalPathWeight:1000 })];
+  const selected = [
+    portfolioItem(1738, { criticalPathWeight:1000 }),
+    portfolioItem(1737, { operatorPriority:true, criticalPathWeight:1 }),
+  ];
   const foundry = evidence('foundry', 'FOUNDRY_FORGE', { metrics:{ availableSlots:1 } });
   const result = planFoundryParallelProductionAcceleration({}, host({
-    schedulerProjection:scheduler({ selected }),
+    schedulerSource:scheduler({ selected }),
     providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), foundry],
   }));
   assert.equal(result.valid, true);
@@ -487,7 +444,10 @@ test('Foundry capacity must carry both canonical M2 and M3 authority identities'
   }));
   assert.equal(result.valid, true);
   assert.equal(result.decision, FOUNDRY_ACCELERATION_DECISIONS.WAITING_FOR_M3);
-  assert.ok(result.providerStatus.find(({ providerId }) => providerId === 'foundry').blockers.includes('foundry-forge-authority-binding-invalid'));
+  const provider = result.providerStatus.find(({ providerId }) => providerId === 'foundry');
+  assert.ok(provider.blockers.includes('foundry-forge-authority-binding-invalid'));
+  assert.equal(provider.evidenceValid, false);
+  assert.equal(provider.eligible, false);
 });
 
 test('fractional canonical p95 latency remains valid and duplicate lane identities do not', () => {
@@ -495,7 +455,7 @@ test('fractional canonical p95 latency remains valid and duplicate lane identiti
   const fractionalScheduler = scheduler({ selected:[portfolioItem(1737, { criticalPathWeight:0.5 })] });
   assert.equal(planFoundryParallelProductionAcceleration({}, host({
     providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), foundry],
-    schedulerProjection:fractionalScheduler,
+    schedulerSource:fractionalScheduler,
   })).valid, true);
   const duplicate = evidence('github-two', 'CHATGPT_GITHUB');
   const blocked = planFoundryParallelProductionAcceleration({}, host({
@@ -514,8 +474,8 @@ test('authority is always recommendation-only on success and failure', () => {
 });
 
 test('empty canonical inventory is idle and sparse or hostile trusted observations fail closed', () => {
-  const idleProjection = scheduler({ selected:[], portfolio:[] });
-  const idle = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:idleProjection }));
+  const idleSource = scheduler({ selected:[], goals:[] });
+  const idle = planFoundryParallelProductionAcceleration({}, host({ schedulerSource:idleSource }));
   assert.equal(idle.valid, true);
   assert.equal(idle.decision, FOUNDRY_ACCELERATION_DECISIONS.IDLE);
   assert.equal(idle.totalCriticalPathSecondsSaved, 0);
