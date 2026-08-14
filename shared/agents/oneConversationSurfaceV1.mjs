@@ -55,7 +55,12 @@ function isTimestamp(value) {
 }
 
 function unique(values = []) {
+  if (!Array.isArray(values)) return [];
   return [...new Set(values.map(String).map((value) => value.trim()).filter(Boolean))];
+}
+
+function boundedDuration(value, fallback) {
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
 function authorityBoundary() {
@@ -70,6 +75,16 @@ function authorityBoundary() {
   });
 }
 
+function continuityIdentityComplete(value = {}) {
+  return Boolean(
+    safeId(value.stephanosIdentityVersion)
+    && safeId(value.operatorRelationshipContextRef)
+    && safeId(value.intentId)
+    && safeId(value.missionId)
+    && safeId(value.memoryAuthorityRef)
+  );
+}
+
 function normalizeObservation(observation = {}) {
   return Object.freeze({
     surface: text(observation.surface),
@@ -81,8 +96,36 @@ function normalizeObservation(observation = {}) {
     memoryAuthorityRef: safeId(observation.memoryAuthorityRef),
     timestampUtc: text(observation.timestampUtc),
     evidenceRefs: unique(observation.evidenceRefs),
+    evidenceRefsWasArray: Array.isArray(observation.evidenceRefs),
     underlyingMind: text(observation.underlyingMind),
     executionSurface: text(observation.executionSurface),
+  });
+}
+
+function classifyObservedAt(observedAt = {}, nowMs, staleAfterMs, maxFutureSkewMs) {
+  const freshness = {};
+  const invalid = [];
+  const future = [];
+  for (const [surface, timestampUtc] of Object.entries(observedAt || {})) {
+    if (!ONE_CONVERSATION_SURFACES.includes(surface) || !isTimestamp(timestampUtc)) {
+      invalid.push(surface || 'unknown');
+      continue;
+    }
+    const observationMs = Date.parse(timestampUtc);
+    if (observationMs > nowMs + maxFutureSkewMs) {
+      freshness[surface] = 'UNKNOWN';
+      future.push(surface);
+    } else if (nowMs - observationMs > staleAfterMs) {
+      freshness[surface] = 'STALE';
+    } else {
+      freshness[surface] = 'CURRENT';
+    }
+  }
+  return Object.freeze({
+    freshness: Object.freeze(freshness),
+    invalid: Object.freeze(invalid),
+    future: Object.freeze(future),
+    currentCount: Object.values(freshness).filter((value) => value === 'CURRENT').length,
   });
 }
 
@@ -104,6 +147,7 @@ export function validateOneConversationInputV1(input = {}) {
   if (!missionId) errors.push('invalid-mission-id');
   if (!memoryAuthorityRef) errors.push('invalid-memory-authority-ref');
   if (!isTimestamp(timestampUtc)) errors.push('invalid-timestamp-utc');
+  if (!Array.isArray(input.surfaceObservations)) errors.push('surface-observations-must-be-array');
   if (observations.length === 0) errors.push('missing-surface-observations');
 
   for (const [index, observation] of observations.entries()) {
@@ -115,7 +159,8 @@ export function validateOneConversationInputV1(input = {}) {
     if (!observation.operatorRelationshipContextRef) errors.push(`missing-observation-relationship-context-ref:${index}`);
     if (!observation.memoryAuthorityRef) errors.push(`missing-observation-memory-authority-ref:${index}`);
     if (!isTimestamp(observation.timestampUtc)) errors.push(`invalid-observation-timestamp:${index}`);
-    if (observation.evidenceRefs.length === 0) errors.push(`missing-observation-evidence:${index}`);
+    if (!observation.evidenceRefsWasArray) errors.push(`observation-evidenceRefs-must-be-array:${index}`);
+    else if (observation.evidenceRefs.length === 0) errors.push(`missing-observation-evidence:${index}`);
     if (observation.stephanosIdentityVersion && observation.stephanosIdentityVersion !== stephanosIdentityVersion) errors.push(`identity-conflict:${index}`);
     if (observation.intentId && observation.intentId !== intentId) errors.push(`intent-conflict:${index}`);
     if (observation.missionId && observation.missionId !== missionId) errors.push(`mission-conflict:${index}`);
@@ -168,38 +213,34 @@ export function buildOneConversationProjectionV1(input = {}, options = {}) {
 
   const observations = [...bySurface.values()].sort((left, right) => left.surface.localeCompare(right.surface));
   const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
-  const staleAfterMs = Number.isFinite(options.staleAfterMs) && options.staleAfterMs >= 0
-    ? options.staleAfterMs
-    : DEFAULT_STALE_AFTER_MS;
-  const maxFutureSkewMs = Number.isFinite(options.maxFutureSkewMs) && options.maxFutureSkewMs >= 0
-    ? options.maxFutureSkewMs
-    : DEFAULT_MAX_FUTURE_SKEW_MS;
-
-  const surfaceFreshness = Object.freeze(Object.fromEntries(observations.map((observation) => {
-    const observationMs = Date.parse(observation.timestampUtc);
-    let freshness = 'CURRENT';
-    if (observationMs > nowMs + maxFutureSkewMs) freshness = 'UNKNOWN';
-    else if (nowMs - observationMs > staleAfterMs) freshness = 'STALE';
-    return [observation.surface, freshness];
-  })));
-  const futureSurfaces = observations
-    .filter((observation) => Date.parse(observation.timestampUtc) > nowMs + maxFutureSkewMs)
-    .map((observation) => observation.surface);
-  const currentSurfaceCount = Object.values(surfaceFreshness).filter((freshness) => freshness === 'CURRENT').length;
-  const status = futureSurfaces.length > 0 ? 'UNKNOWN' : (currentSurfaceCount > 0 ? 'CURRENT' : 'STALE');
+  const staleAfterMs = boundedDuration(options.staleAfterMs, DEFAULT_STALE_AFTER_MS);
+  const maxFutureSkewMs = boundedDuration(options.maxFutureSkewMs, DEFAULT_MAX_FUTURE_SKEW_MS);
+  const surfaceObservedAt = Object.freeze(Object.fromEntries(
+    observations.map((observation) => [observation.surface, observation.timestampUtc]),
+  ));
+  const freshnessEvaluation = classifyObservedAt(surfaceObservedAt, nowMs, staleAfterMs, maxFutureSkewMs);
+  const status = freshnessEvaluation.future.length > 0
+    ? 'UNKNOWN'
+    : (freshnessEvaluation.currentCount > 0 ? 'CURRENT' : 'STALE');
 
   const projection = {
     schemaVersion: ONE_CONVERSATION_SURFACE_SCHEMA_VERSION,
     projectionKind: 'stephanos.one-conversation.projection',
     status,
-    reason: futureSurfaces.length > 0 ? 'FUTURE_DATED_OBSERVATION' : (status === 'STALE' ? 'ALL_SURFACE_EVIDENCE_STALE' : 'CURRENT_SURFACE_EVIDENCE_PROVEN'),
+    reason: freshnessEvaluation.future.length > 0
+      ? 'FUTURE_DATED_OBSERVATION'
+      : (status === 'STALE' ? 'ALL_SURFACE_EVIDENCE_STALE' : 'CURRENT_SURFACE_EVIDENCE_PROVEN'),
     stephanosIdentityVersion: normalized.stephanosIdentityVersion,
     operatorRelationshipContextRef: normalized.operatorRelationshipContextRef,
     intentId: normalized.intentId,
     missionId: normalized.missionId,
     memoryAuthorityRef: normalized.memoryAuthorityRef,
     surfaceThreadRefs: Object.freeze(Object.fromEntries(observations.map((observation) => [observation.surface, observation.surfaceThreadRef]))),
-    surfaceFreshness,
+    surfaceObservedAt,
+    surfaceFreshness: freshnessEvaluation.freshness,
+    evaluatedAtUtc: new Date(nowMs).toISOString(),
+    staleAfterMs,
+    maxFutureSkewMs,
     activeSurfaces: Object.freeze(observations.map((observation) => observation.surface)),
     evidenceRefs: Object.freeze(unique(observations.flatMap((observation) => observation.evidenceRefs))),
     routeVisibility: options.includeRouteAudit === true ? 'AUDIT_VISIBLE' : 'HIDDEN_BY_DEFAULT',
@@ -231,7 +272,7 @@ export function planCrossSurfaceContinuationV1(projection = {}, input = {}) {
   if (projection.status !== 'CURRENT') {
     return Object.freeze({ ok: false, verdict: 'CONTINUATION_BLOCKED_STALE_OR_UNKNOWN', operatorNeeded: false });
   }
-  if (!safeId(projection.stephanosIdentityVersion) || !safeId(projection.intentId) || !safeId(projection.missionId)) {
+  if (!continuityIdentityComplete(projection)) {
     return Object.freeze({ ok: false, verdict: 'CONTINUATION_BLOCKED_IDENTITY_INCOMPLETE', operatorNeeded: false });
   }
   if (!projection.surfaceThreadRefs?.[fromSurface]) {
@@ -264,12 +305,44 @@ export function projectOneConversationWorkspaceMessageV1(projection = {}, input 
   if (projection.status !== 'CURRENT') {
     return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_NOT_CURRENT' });
   }
+  if (!continuityIdentityComplete(projection)) {
+    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_IDENTITY_INCOMPLETE' });
+  }
+
+  const nowMs = Number.isFinite(input.workspaceValidationOptions?.nowMs)
+    ? input.workspaceValidationOptions.nowMs
+    : Date.now();
+  const staleAfterMs = boundedDuration(projection.staleAfterMs, DEFAULT_STALE_AFTER_MS);
+  const maxFutureSkewMs = boundedDuration(input.maxFutureSkewMs, boundedDuration(projection.maxFutureSkewMs, DEFAULT_MAX_FUTURE_SKEW_MS));
+  const observedAt = projection.surfaceObservedAt;
+  if (!observedAt || typeof observedAt !== 'object' || Array.isArray(observedAt) || Object.keys(observedAt).length === 0) {
+    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_FRESHNESS_EVIDENCE_INCOMPLETE' });
+  }
+  const publicationFreshness = classifyObservedAt(observedAt, nowMs, staleAfterMs, maxFutureSkewMs);
+  if (publicationFreshness.invalid.length > 0) {
+    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_FRESHNESS_EVIDENCE_INVALID' });
+  }
+  if (publicationFreshness.future.length > 0) {
+    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_EVIDENCE_FUTURE_DATED' });
+  }
+  if (publicationFreshness.currentCount === 0) {
+    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_EVIDENCE_STALE_AT_PUBLICATION' });
+  }
+
   const timestampUtc = text(input.timestampUtc);
+  const timestampMs = Date.parse(timestampUtc);
+  if (!isTimestamp(timestampUtc)) {
+    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_MESSAGE_IDENTITY_INCOMPLETE' });
+  }
+  if (timestampMs > nowMs + maxFutureSkewMs) {
+    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_WORKSPACE_RECORD_FUTURE_DATED' });
+  }
   const correlationId = safeId(input.correlationId || projection.intentId);
   const messageId = safeId(input.messageId || `one-conversation-${projection.intentId}`);
   const relatedIssue = text(input.relatedIssue, '#1630');
-  const proofRefs = unique(input.proofRefs?.length ? input.proofRefs : projection.evidenceRefs);
-  if (!isTimestamp(timestampUtc) || !correlationId || !messageId || proofRefs.length === 0) {
+  const suppliedProofRefs = Array.isArray(input.proofRefs) ? unique(input.proofRefs) : [];
+  const proofRefs = suppliedProofRefs.length > 0 ? suppliedProofRefs : unique(projection.evidenceRefs);
+  if (!correlationId || !messageId || proofRefs.length === 0) {
     return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_MESSAGE_IDENTITY_INCOMPLETE' });
   }
 
@@ -286,21 +359,24 @@ export function projectOneConversationWorkspaceMessageV1(projection = {}, input 
     summary: `Stephanos conversation continuity for ${projection.intentId}`,
     body: JSON.stringify({
       schemaVersion: ONE_CONVERSATION_SURFACE_SCHEMA_VERSION,
-      status: projection.status,
+      status: 'CURRENT',
       stephanosIdentityVersion: projection.stephanosIdentityVersion,
       operatorRelationshipContextRef: projection.operatorRelationshipContextRef,
       intentId: projection.intentId,
       missionId: projection.missionId,
       memoryAuthorityRef: projection.memoryAuthorityRef,
       surfaceThreadRefs: projection.surfaceThreadRefs,
-      surfaceFreshness: projection.surfaceFreshness,
+      surfaceObservedAt: projection.surfaceObservedAt,
+      surfaceFreshness: publicationFreshness.freshness,
+      evaluatedAtUtc: new Date(nowMs).toISOString(),
       activeSurfaces: projection.activeSurfaces,
       operatorNeeded: false,
       authority: authorityBoundary(),
     }),
   };
 
-  const workspaceValidation = validateSharedWorkspaceRecord(record, input.workspaceValidationOptions);
+  const workspaceValidationOptions = { ...(input.workspaceValidationOptions || {}), nowMs };
+  const workspaceValidation = validateSharedWorkspaceRecord(record, workspaceValidationOptions);
   if (!workspaceValidation.valid) {
     return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_WORKSPACE_RECORD_INVALID', record, workspaceValidation });
   }
