@@ -214,9 +214,10 @@ export function validateUiAgentExperienceSurface(record) {
   if (!UI_AGENT_SURFACE_CLASSES.includes(text(record.surfaceClass))) errors.push('surfaceClass-invalid');
   if (!registrationRef(record.registrationRef)) errors.push('registrationRef-invalid');
   if (!Array.isArray(record.inputMethods) || record.inputMethods.length === 0) errors.push('inputMethods-required');
+  const debtValues = Array.isArray(record.knownExperienceDebt) ? record.knownExperienceDebt : [];
   if (!Array.isArray(record.knownExperienceDebt)) errors.push('knownExperienceDebt-must-be-array');
   else if (record.knownExperienceDebt.length === 0) errors.push('knownExperienceDebt-must-not-be-empty');
-  for (const debt of record.knownExperienceDebt || []) {
+  for (const debt of debtValues) {
     if (!UI_AGENT_EXPERIENCE_DEBT_CLASSES.includes(text(debt))) errors.push(`experience-debt-invalid:${debt}`);
   }
   return Object.freeze({ valid:errors.length === 0, errors:Object.freeze(errors) });
