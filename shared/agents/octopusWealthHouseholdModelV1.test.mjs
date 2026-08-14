@@ -289,12 +289,24 @@ test('secret and authority-shaped extra fields fail closed and are never returne
   assert.equal(JSON.stringify(result).includes('synthetic-secret-value'), false);
 });
 
-test('invalid projections redact sensitive top-level model identity', () => {
-  const result = model([], { modelId: 'client-secret' });
-  assert.equal(result.valid, false);
-  assert.equal(result.modelId, '');
-  assert.ok(result.validationErrors.includes('sensitive-content-rejected'));
-  assert.equal(JSON.stringify(result).includes('client-secret'), false);
+test('invalid projections redact sensitive or identifier-like top-level model identity', () => {
+  for (const modelId of ['client-secret', '12345678']) {
+    const result = model([], { modelId });
+    assert.equal(result.valid, false);
+    assert.equal(result.modelId, '');
+    assert.equal(JSON.stringify(result).includes(modelId), false);
+  }
+});
+
+test('identity and source-name fields cannot carry account-like digit strings', () => {
+  const badRecords = [
+    datum({ datumId: '12345678' }),
+    datum({ metricId: 'metric-12345678' }),
+    datum({ sourceName: '12345678' }),
+  ];
+  for (const record of badRecords) {
+    assert.equal(validateOctopusWealthDatumV1(record, VALIDATION_OPTIONS).valid, false);
+  }
 });
 
 test('record accessors fail closed without invoking getters', () => {
@@ -380,6 +392,21 @@ test('known evidence with unresolved ownership remains reconciliation-required',
   assert.equal(result.valid, true, result.validationErrors.join(', '));
   assert.equal(result.evidenceCoverage.unresolvedOwnershipDatumCount, 1);
   assert.equal(result.readiness, 'M1_MANUAL_RECONCILIATION_REQUIRED');
+});
+
+test('external-reference evidence counts only for the external-environment tentacle', () => {
+  const unresolved = model(allTentacleRecords((index) => index === 0 ? { ownershipBoundary: 'EXTERNAL_REFERENCE' } : {}));
+  assert.equal(unresolved.valid, true, unresolved.validationErrors.join(', '));
+  assert.equal(unresolved.evidenceCoverage.unresolvedOwnershipDatumCount, 1);
+  assert.equal(unresolved.evidenceCoverage.currentKnownTentacleCount, 7);
+  assert.equal(unresolved.readiness, 'M1_MANUAL_RECONCILIATION_REQUIRED');
+
+  const externalEnvironmentIndex = OCTOPUS_WEALTH_TENTACLES.indexOf('EXTERNAL_ENVIRONMENT');
+  const resolved = model(allTentacleRecords((index) => index === externalEnvironmentIndex ? { ownershipBoundary: 'EXTERNAL_REFERENCE' } : {}));
+  assert.equal(resolved.valid, true, resolved.validationErrors.join(', '));
+  assert.equal(resolved.evidenceCoverage.unresolvedOwnershipDatumCount, 0);
+  assert.equal(resolved.evidenceCoverage.currentKnownTentacleCount, 8);
+  assert.equal(resolved.readiness, 'M1_MANUAL_EVIDENCE_MODEL_READY');
 });
 
 test('mixed known and explicit UNKNOWN evidence remains reconciliation-required', () => {
