@@ -130,6 +130,12 @@ function workspaceValidation(record, options = {}) {
   };
 }
 
+function roundValidationOptions(options = {}) {
+  return {
+    priorRoundIntentFingerprints: options.priorRoundIntentFingerprints,
+  };
+}
+
 export function createStephanosWorkspaceQuestionRecord(question, options = {}) {
   const validation = validateStephanosCapabilityQuestion(question, options.questionValidationOptions);
   if (!validation.valid) {
@@ -247,7 +253,7 @@ export function decodeStephanosWorkspaceAnswerRecord(record, options = {}) {
 }
 
 export function buildStephanosWorkspaceQuestionRound(round, options = {}) {
-  const validation = validateStephanosCapabilityRound(round);
+  const validation = validateStephanosCapabilityRound(round, roundValidationOptions(options));
   if (!validation.valid) {
     return Object.freeze({ valid: false, roundId: text(round?.roundId), records: Object.freeze([]), errors: Object.freeze(validation.errors.map((error) => `round:${error}`)) });
   }
@@ -269,7 +275,7 @@ export function buildStephanosWorkspaceQuestionRound(round, options = {}) {
 
 export function evaluateStephanosWorkspaceConversation(input = {}) {
   const round = input.round;
-  const roundValidation = validateStephanosCapabilityRound(round);
+  const roundValidation = validateStephanosCapabilityRound(round, roundValidationOptions(input));
   const errors = roundValidation.errors.map((error) => `round:${error}`);
   const answerRecords = Array.isArray(input.answerRecords) ? input.answerRecords : [];
   if (answerRecords.length !== 10) errors.push('answer-records-must-contain-exactly-10');
@@ -296,7 +302,11 @@ export function evaluateStephanosWorkspaceConversation(input = {}) {
       authority: authorityBoundary(),
     });
   }
-  const evaluation = evaluateStephanosCapabilityRound({ round, answers });
+  const evaluation = evaluateStephanosCapabilityRound({
+    round,
+    answers,
+    priorRoundIntentFingerprints: input.priorRoundIntentFingerprints,
+  });
   return Object.freeze({
     schemaVersion: STEPHANOS_SHARED_WORKSPACE_CONVERSATION_ADAPTER_SCHEMA_VERSION,
     valid: evaluation.valid,
