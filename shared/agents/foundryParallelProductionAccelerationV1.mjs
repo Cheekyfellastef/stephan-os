@@ -5,6 +5,7 @@ import {
   validateBuildLaneCapacityReceipt,
 } from './missionControllerCapacityRouterV1.mjs';
 import { adjudicateForgeSidecarCapacity } from './stallSentinelReviewPipelineV1.mjs';
+import { buildMissionScheduler } from '../runtime/missionScheduler.mjs';
 
 const SHA_RE = /^[a-f0-9]{40}$/;
 const SHA256_RE = /^[a-f0-9]{64}$/;
@@ -20,6 +21,13 @@ const MAX_LIST = 128;
 const MAX_SLOTS = 32;
 const MAX_DURATION_SECONDS = 30 * 24 * 60 * 60;
 const MAX_FRESHNESS_SECONDS = 60 * 60;
+const MAX_SCHEDULER_GOALS = 1000;
+const MAX_SCHEDULER_ARRAY = 10_000;
+const MAX_SCHEDULER_PREREQUISITES_PER_GOAL = 1000;
+const MAX_SCHEDULER_TOTAL_PREREQUISITES = 10_000;
+const MAX_SCHEDULER_SNAPSHOT_DEPTH = 32;
+const MAX_SCHEDULER_SNAPSHOT_NODES = 50_000;
+const MAX_SCHEDULER_SNAPSHOT_STRING_CODE_UNITS = 4 * 1024 * 1024;
 
 export const FOUNDRY_ACCELERATION_SCHEMA = 'stephanos.foundry-parallel-production-acceleration.v1';
 export const FOUNDRY_ACCELERATION_HOST_CONTEXT_SCHEMA = 'stephanos.foundry-acceleration-host-context.v1';
@@ -38,7 +46,11 @@ export const FOUNDRY_ACCELERATION_DECISIONS = Object.freeze({
 const TRUSTED_KEYS = [
   'schemaVersion', 'repository', 'canonicalMainHead', 'canonicalMainTree', 'nowUtc',
   'taskClass', 'minimumNetSavingsSeconds', 'receiptFreshnessSeconds',
-  'schedulerProjection', 'providerCapacityEvidence', 'forgeSidecar',
+  'schedulerSource', 'providerCapacityEvidence', 'forgeSidecar',
+];
+const SCHEDULER_SOURCE_KEYS = [
+  'correlationId', 'goals', 'proofHeadShas', 'proofReceipts', 'proofRefs',
+  'minimumActiveLanes', 'maximumActiveLanes', 'availableExecutorSlots',
 ];
 const EVIDENCE_KEYS = ['providerId', 'buildLaneReceipt', 'metricsReceipt'];
 const METRICS_KEYS = [
@@ -92,6 +104,102 @@ function exactKeys(value, keys) {
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+function inertSchedulerSnapshot(value, state, depth = 0) {
+  state.nodes += 1;
+  if (state.nodes > MAX_SCHEDULER_SNAPSHOT_NODES || depth > MAX_SCHEDULER_SNAPSHOT_DEPTH) {
+    throw new TypeError('scheduler source exceeds inert snapshot bounds');
+  }
+  if (value === null || typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new TypeError('scheduler source number is not finite');
+    return value;
+  }
+  if (typeof value === 'string') {
+    state.stringCodeUnits += value.length;
+    if (state.stringCodeUnits > MAX_SCHEDULER_SNAPSHOT_STRING_CODE_UNITS) {
+      throw new TypeError('scheduler source strings exceed inert snapshot bounds');
+    }
+    return value;
+  }
+  if (!value || typeof value !== 'object') throw new TypeError('scheduler source is not JSON-like');
+  if (state.visiting.has(value)) throw new TypeError('scheduler source is cyclic');
+  if (state.snapshots.has(value)) return state.snapshots.get(value);
+  const prototype = Object.getPrototypeOf(value);
+  const array = Array.isArray(value);
+  if (array ? prototype !== Array.prototype : (prototype !== Object.prototype && prototype !== null)) {
+    throw new TypeError('scheduler source prototype is not inert');
+  }
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key !== 'string')) throw new TypeError('scheduler source contains symbol keys');
+  const lengthDescriptor = array ? Object.getOwnPropertyDescriptor(value, 'length') : null;
+  const arrayLength = lengthDescriptor && Object.hasOwn(lengthDescriptor, 'value')
+    && Number.isSafeInteger(lengthDescriptor.value) && lengthDescriptor.value >= 0
+    ? lengthDescriptor.value
+    : null;
+  if (array && (arrayLength === null || arrayLength > MAX_SCHEDULER_ARRAY)) {
+    throw new TypeError('scheduler source array exceeds bounds');
+  }
+  const expectedArrayKeys = array
+    ? new Set(['length', ...Array.from({ length:arrayLength }, (_, index) => String(index))])
+    : null;
+  if (array && (keys.length !== expectedArrayKeys.size || keys.some((key) => !expectedArrayKeys.has(key)))) {
+    throw new TypeError('scheduler source array is sparse or widened');
+  }
+  const snapshot = array ? [] : Object.create(null);
+  state.snapshots.set(value, snapshot);
+  state.visiting.add(value);
+  for (const key of keys) {
+    if (array && key === 'length') continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || descriptor.enumerable !== true) {
+      throw new TypeError('scheduler source contains accessors or hidden fields');
+    }
+    const entry = inertSchedulerSnapshot(descriptor.value, state, depth + 1);
+    if (array) snapshot[Number(key)] = entry;
+    else Object.defineProperty(snapshot, key, {
+      value:entry, enumerable:true, configurable:false, writable:false,
+    });
+  }
+  state.visiting.delete(value);
+  return Object.freeze(snapshot);
+}
+function snapshotSchedulerSource(value, blockers) {
+  try {
+    const snapshot = inertSchedulerSnapshot(value, {
+      nodes:0, stringCodeUnits:0, visiting:new WeakSet(), snapshots:new WeakMap(),
+    });
+    if (!exactKeys(snapshot, SCHEDULER_SOURCE_KEYS)) {
+      blockers.push('scheduler-source-shape-invalid');
+      return null;
+    }
+    if (!dense(snapshot.goals) || snapshot.goals.length > MAX_SCHEDULER_GOALS
+      || !dense(snapshot.proofHeadShas) || snapshot.proofHeadShas.length > MAX_SCHEDULER_ARRAY
+      || !dense(snapshot.proofReceipts) || snapshot.proofReceipts.length > MAX_SCHEDULER_ARRAY
+      || !dense(snapshot.proofRefs) || snapshot.proofRefs.length > MAX_SCHEDULER_ARRAY) {
+      blockers.push('scheduler-source-inventory-invalid');
+      return null;
+    }
+    let totalPrerequisites = 0;
+    for (const goal of snapshot.goals) {
+      if (goal && typeof goal === 'object' && Object.hasOwn(goal, 'prerequisites')) {
+        if (!dense(goal.prerequisites)
+          || goal.prerequisites.length > MAX_SCHEDULER_PREREQUISITES_PER_GOAL) {
+          blockers.push('scheduler-source-prerequisites-invalid');
+          return null;
+        }
+        totalPrerequisites += goal.prerequisites.length;
+        if (totalPrerequisites > MAX_SCHEDULER_TOTAL_PREREQUISITES) {
+          blockers.push('scheduler-source-prerequisites-invalid');
+          return null;
+        }
+      }
+    }
+    return snapshot;
+  } catch {
+    blockers.push('scheduler-source-inspection-failed');
+    return null;
+  }
 }
 function normalizedStrings(value, maximum = MAX_LIST, pattern = SAFE_ID_RE, allowEmpty = true) {
   if (!dense(value) || value.length > maximum || (!allowEmpty && value.length === 0)) return null;
@@ -282,7 +390,7 @@ function normalizeScheduler(projection, host, blockers) {
     || (!expectedActiveStatus && decision.activeIssue !== null)
     || (decisionStatus === 'LANE_SELECTED'
       && (!selectedDecisionIssue
-        || !decision.selectedIssues.map(issueNumber).includes(selectedDecisionIssue)
+        || decision.selectedIssues.map(issueNumber)[0] !== selectedDecisionIssue
         || selectedDecisionPortfolio?.lifecycle !== 'READY'
         || selectedDecisionPortfolio?.route !== text(decision.route)
         || decision.selectedLifecycle !== 'READY'))
@@ -390,8 +498,8 @@ function telemetry(foundry, forge, activePackets) {
 /**
  * Returns a recommendation only. The first argument is intentionally never
  * observed. The host must inject its current main snapshot, canonical Mission
- * Scheduler projection, capacity receipts and Forge sidecar evidence in the
- * second argument. Dispatch must re-read the scheduler/lease projection.
+ * Scheduler source, capacity receipts and Forge sidecar evidence in the second
+ * argument. Dispatch must re-read the scheduler/lease projection.
  */
 export function planFoundryParallelProductionAcceleration(_request = {}, trustedContext = {}) {
   try {
@@ -419,7 +527,14 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
       nowUtc:new Date(nowMs).toISOString(), taskClass, minimumNetSavingsSeconds, freshnessSeconds };
 
     const schedulerBlockers = [];
-    const candidates = normalizeScheduler(trustedContext.schedulerProjection, host, schedulerBlockers);
+    const schedulerSource = snapshotSchedulerSource(trustedContext.schedulerSource, schedulerBlockers);
+    if (!schedulerSource) return blockedResult(schedulerBlockers);
+    const schedulerProjection = buildMissionScheduler({
+      ...schedulerSource,
+      now:host.nowUtc,
+      freshnessMs:host.freshnessSeconds * 1000,
+    });
+    const candidates = normalizeScheduler(schedulerProjection, host, schedulerBlockers);
     if (!candidates) return blockedResult(schedulerBlockers);
 
     const providers = [];
@@ -471,7 +586,11 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
       const forgeBlockers = [];
       const adjudication = adjudicateForgeSidecarCapacity(trustedContext.forgeSidecar, { nowUtc:host.nowUtc });
       forge = forgeProof(adjudication, foundry, host, forgeBlockers);
-      if (!forge) { foundry.blockers.push(...forgeBlockers); foundry.eligible = false; }
+      if (!forge) {
+        foundry.blockers.push(...forgeBlockers);
+        foundry.evidenceValid = false;
+        foundry.eligible = false;
+      }
     }
 
     const assignments = [];
