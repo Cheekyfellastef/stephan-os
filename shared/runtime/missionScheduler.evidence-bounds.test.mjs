@@ -50,6 +50,31 @@ test('oversized goal proof-reference evidence fails closed before iteration', ()
   assert.equal(contradiction?.maximumCount, 10000);
 });
 
+test('aggregate scheduler evidence fails closed at an operational bound before normalization', () => {
+  const goals = Array.from({ length:6 }, (_, goalIndex) => goal(goalIndex + 1, {
+    resourceIds:new Array(10000),
+  }));
+  const result = buildMissionScheduler({ now: NOW, goals });
+  const contradiction = result.contradictions.find(({ code }) => code === 'TOTAL_EVIDENCE_BOUND_EXCEEDED');
+
+  assert.equal(result.failClosed, true);
+  assert.equal(result.portfolio.length, 0);
+  assert.equal(contradiction?.suppliedEvidenceCount, 60000);
+  assert.equal(contradiction?.maximumCount, 50000);
+});
+
+test('five canonical maximum resource scopes remain within the aggregate evidence bound', () => {
+  const goals = Array.from({ length:5 }, (_, goalIndex) => goal(goalIndex + 1, {
+    resourceIds:Array.from({ length:10000 }, (_, resourceIndex) =>
+      `goal:${goalIndex + 1}:resource:${String(resourceIndex).padStart(5, '0')}`),
+  }));
+  const result = buildMissionScheduler({ now: NOW, goals });
+
+  assert.equal(result.failClosed, false);
+  assert.equal(result.parallelCandidateDetails.length, 5);
+  assert.ok(result.parallelCandidateDetails.every(({ resourceIds }) => resourceIds.length === 10000));
+});
+
 test('hostile numeric advisory scores degrade safely without coercion', () => {
   const hostile = { valueOf() { throw new Error('must not coerce'); } };
   const result = buildMissionScheduler({
