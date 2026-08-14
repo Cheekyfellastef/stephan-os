@@ -124,8 +124,14 @@ function scheduler(options = {}) {
     parallelCandidateDetails:selected.map(({ issue, route, resourceIds }) =>
       ({ candidateId:`#${issue}`, issue, route, resourceIds:[...resourceIds] })),
     portfolio,
-    decisionReceipt:{ decidedAt:'2026-08-14T14:59:30Z', failClosed:false,
-      selectedIssues:selected.map(({ issue }) => issue), activeIssues:active.map(({ issue }) => issue) },
+    decisionReceipt:{ correlationId:'scheduler-test-001', decidedAt:'2026-08-14T14:59:30Z',
+      status:active.length ? (active.length === 1 ? 'ACTIVE_LANE' : 'ACTIVE_LANES')
+        : selected.length ? 'LANE_SELECTED' : 'WAITING',
+      failClosed:false, contradictionCodes:[], selectedIssue:active.length || !selected.length ? null : selected[0].issue,
+      selectedIssues:selected.map(({ issue }) => issue), selectedLifecycle:active.length || !selected.length ? null : 'READY',
+      activeIssue:active[0]?.issue ?? null, activeIssues:active.map(({ issue }) => issue),
+      route:active[0]?.route ?? selected[0]?.route ?? 'WAITING_FOR_EXTERNAL_CONDITION',
+      proofRefs:[], proofHeadShas:[], proofReceipts:[] },
     ...options.projection,
   };
 }
@@ -253,6 +259,21 @@ test('scheduler rejects overlapping selections, set mismatches and non-GitHub ro
     const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:scheduler({ selected }) }));
     assert.equal(result.valid, false);
     assert.ok(result.blockers.includes('scheduler-candidate-route-not-accelerable:#1737'));
+  });
+  await t.test('contradictory decision status and codes', () => {
+    const projection = scheduler();
+    projection.decisionReceipt.status = 'BLOCKED_FAIL_CLOSED';
+    projection.decisionReceipt.contradictionCodes = ['ACTIVE_RESOURCE_CONFLICT'];
+    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('scheduler-decision-stale-or-invalid'));
+  });
+  await t.test('truncated decision receipt shape', () => {
+    const projection = scheduler();
+    delete projection.decisionReceipt.contradictionCodes;
+    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('scheduler-decision-receipt-shape-invalid'));
   });
 });
 
