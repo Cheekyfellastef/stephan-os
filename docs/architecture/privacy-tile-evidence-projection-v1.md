@@ -78,7 +78,7 @@ The projection emits one of:
 - `HIGH_RISK`
 - `UNKNOWN`
 
-`PROTECTED` requires complete current domain coverage with no unknown, stale, unproven-consent or open-rights state. Inadequate evidence is `UNKNOWN`, never optimistic.
+`PROTECTED` requires complete current domain coverage with confirmed evidence and no inference, unknown, stale, unproven-consent, open-rights or synthetic-fixture state. Inadequate evidence is `UNKNOWN`, never optimistic. A no-contact observation is not proof that no communication or processing occurred.
 
 ## Authority invariant
 
@@ -109,6 +109,20 @@ git diff --check
 ```
 
 The focused suite covers truth-bucket separation, unproven consent, network-contact overclaim rejection, unknown display settings, provider no-record semantics, stale/future evidence, freshness-policy override rejection, duplicate IDs, bounded collections, unsupported states, sensitive/raw/local-path rejection, rights-deadline projection, unknown posture, zero authority and deterministic provider-neutral output.
+
+## Exact evidence and fixture boundary
+
+A truth classification is accepted only with a compatible evidence-source class. In particular, a confirmed privacy claim cannot use `UNKNOWN` as its source. Operator-supplied material must either carry a specific supported claim classification with an appropriate visible-evidence source or remain the evidence-only `OPERATOR_SUPPLIED_EVIDENCE` class, which is projected as `UNKNOWN` rather than silently promoted.
+
+`SYNTHETIC_TEST_FIXTURE` is supported for deterministic hostile tests only. Synthetic records remain visibly non-live, do not count as current domain coverage, cannot create a material latest-event claim and cannot establish `PROTECTED`, `ATTENTION` or `HIGH_RISK` posture.
+
+## Data-only and immutability boundary
+
+Top-level record collections, evidence-reference lists and limitation lists must be dense standard arrays containing data properties only. Sparse arrays, accessor-bearing arrays, custom array prototypes, symbols, proxies that cannot be safely inspected and unexpected fields fail closed without executing caller code.
+
+Accepted arrays are detached and frozen before projection. Later caller mutation cannot alter a published record, evidence list, projection identity or posture.
+
+Evaluation clocks must be safe canonical JavaScript date values. Out-of-range clocks fail closed rather than throwing.
 
 ## Later milestones
 
