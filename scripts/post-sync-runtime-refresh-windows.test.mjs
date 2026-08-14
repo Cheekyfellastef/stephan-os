@@ -59,7 +59,8 @@ function verifiedExistingWorkerIdentityBoundary(source) {
     && source.includes('Test-ExactJsonPropertyEstate -Record $heartbeat')
     && source.includes('Test-ExactJsonPropertyEstate -Record $launchReceipt')
     && source.includes('$heartbeatTimestampUtc -le $heartbeatProcessStartedAtUtc')
-    && source.includes('$heartbeatTimestampUtc -gt $observedAtUtc.AddSeconds(60)')
+    && source.includes('$heartbeatTimestampUtc -gt $observedAtUtc')
+    && !source.includes('$heartbeatTimestampUtc -gt $observedAtUtc.AddSeconds(60)')
     && source.includes('($observedAtUtc - $heartbeatTimestampUtc).TotalSeconds -gt 120')
     && source.includes('$receiptProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks')
     && source.includes('$liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks')
@@ -67,6 +68,38 @@ function verifiedExistingWorkerIdentityBoundary(source) {
     && source.includes('$oldWorkerRecheck.LaunchReceiptDigest -ne $oldWorker.LaunchReceiptDigest')
     && source.includes('$oldWorkerRecheck.HeadSha -ne $oldWorker.HeadSha')
     && source.includes('$oldWorkerRecheck.HeartbeatTimestampUtc -lt $oldWorker.HeartbeatTimestampUtc');
+}
+
+function exactExistingWorkerProcessCapabilityBoundary(source) {
+  const verifier = source.slice(
+    source.indexOf('function Get-VerifiedWorkerProcessFromHeartbeat'),
+    source.indexOf('function Get-VerifiedFreshWorkerInstance'),
+  );
+  const missionWorkerStop = source.slice(
+    source.indexOf("$heartbeatPath = Join-Path $env:USERPROFILE 'Documents\\Stephanos-openclaw-workspace\\status\\mission-orchestrator-worker-heartbeat.json'"),
+    source.indexOf('$preStartSourceProof = Read-CanonicalWorkerSourceProof'),
+  );
+  return verifier.includes('[System.Diagnostics.Process]::GetProcessById($processId)')
+    && verifier.includes('$null = $processCapability.Handle')
+    && verifier.includes('$processCapability.StartTime.ToUniversalTime()')
+    && verifier.includes('ProcessCapability = $processCapability')
+    && missionWorkerStop.includes('$reverifiedProcessCapability = $oldWorkerRecheck.ProcessCapability')
+    && missionWorkerStop.includes('$reverifiedProcessCapability.HasExited')
+    && missionWorkerStop.includes('$null = $reverifiedProcessCapability.Handle')
+    && missionWorkerStop.includes('$reverifiedProcessCapability.StartTime.ToUniversalTime()')
+    && missionWorkerStop.includes('$reverifiedProcessCapability.Kill()')
+    && missionWorkerStop.includes('$reverifiedProcessCapability.WaitForExit(10000)')
+    && !missionWorkerStop.includes('Stop-Process -Id')
+    && !missionWorkerStop.includes('Get-Process -Id');
+}
+
+function heartbeatTimestampAdmissible({ timestampMs, processStartedMs, observedMs }) {
+  return Number.isFinite(timestampMs)
+    && Number.isFinite(processStartedMs)
+    && Number.isFinite(observedMs)
+    && timestampMs > processStartedMs
+    && timestampMs <= observedMs
+    && observedMs - timestampMs <= 120_000;
 }
 
 function exactOwnedLauncherCleanupBoundary(source) {
@@ -171,7 +204,8 @@ test('worker restart requires task-owned process stop and a fresh exact-head hea
   assert.match(restartSource, /MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT/);
   assert.match(restartSource, /MISSION_WORKER_TASK_DID_NOT_STOP/);
   assert.match(restartSource, /MISSION_WORKER_VERIFIED_PROCESS_DID_NOT_STOP/);
-  assert.match(restartSource, /Stop-Process -Id \$oldWorker\.ProcessId -Force/);
+  assert.match(restartSource, /\$reverifiedProcessCapability\.Kill\(\)/);
+  assert.doesNotMatch(restartSource, /Stop-Process -Id \$oldWorker(?:Recheck)?\.ProcessId/);
   assert.doesNotMatch(restartSource, /MISSION_WORKER_TASK_OR_PROCESS_DID_NOT_STOP|MISSION_WORKER_PROCESS_OUTSIDE_RUNNING_TASK/);
   assert.match(restartSource, /unrelatedTasksChanged = \$false/);
   assert.match(restartSource, /CANONICAL_TRACKED_SOURCE_DIRTY/);
@@ -347,7 +381,7 @@ test('existing-worker termination requires a fresh heartbeat-recorded process-st
     restartSource.replace('Test-ExactJsonPropertyEstate -Record $heartbeat', '$true #'),
     restartSource.replace('Test-ExactJsonPropertyEstate -Record $launchReceipt', '$true #'),
     restartSource.replace('$heartbeatTimestampUtc -le $heartbeatProcessStartedAtUtc', '$false'),
-    restartSource.replace('$heartbeatTimestampUtc -gt $observedAtUtc.AddSeconds(60)', '$false'),
+    restartSource.replace('$heartbeatTimestampUtc -gt $observedAtUtc', '$false'),
     restartSource.replace('($observedAtUtc - $heartbeatTimestampUtc).TotalSeconds -gt 120', '$false'),
     restartSource.replace('$receiptProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks', '$false'),
     restartSource.replace('$liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks', '$false'),
@@ -357,6 +391,37 @@ test('existing-worker termination requires a fresh heartbeat-recorded process-st
     restartSource.replace('$oldWorkerRecheck.HeartbeatTimestampUtc -lt $oldWorker.HeartbeatTimestampUtc', '$false'),
   ]) {
     assert.equal(verifiedExistingWorkerIdentityBoundary(mutation), false);
+  }
+});
+
+test('existing-worker heartbeat rejects every future instant while retaining the fixed freshness window', () => {
+  const observedMs = Date.parse('2026-08-14T12:00:00.000Z');
+  const processStartedMs = observedMs - 180_000;
+  assert.equal(heartbeatTimestampAdmissible({ timestampMs: observedMs + 1, processStartedMs, observedMs }), false);
+  assert.equal(heartbeatTimestampAdmissible({ timestampMs: observedMs + 1_000, processStartedMs, observedMs }), false);
+  assert.equal(heartbeatTimestampAdmissible({ timestampMs: observedMs, processStartedMs, observedMs }), true);
+  assert.equal(heartbeatTimestampAdmissible({ timestampMs: observedMs - 120_000, processStartedMs, observedMs }), true);
+  assert.equal(heartbeatTimestampAdmissible({ timestampMs: observedMs - 120_001, processStartedMs, observedMs }), false);
+  assert.equal(heartbeatTimestampAdmissible({ timestampMs: processStartedMs, processStartedMs, observedMs }), false);
+  assert.equal(heartbeatTimestampAdmissible({ timestampMs: Number.NaN, processStartedMs, observedMs }), false);
+  assert.match(restartSource, /\$heartbeatTimestampUtc -gt \$observedAtUtc/);
+  assert.doesNotMatch(restartSource, /\$heartbeatTimestampUtc -gt \$observedAtUtc\.AddSeconds\(60\)/);
+});
+
+test('existing-worker cleanup terminates only through the exact final process capability', () => {
+  assert.equal(exactExistingWorkerProcessCapabilityBoundary(restartSource), true);
+  for (const mutation of [
+    restartSource.replace('[System.Diagnostics.Process]::GetProcessById($processId)', 'Get-Process -Id $processId'),
+    restartSource.replace('$null = $processCapability.Handle', '$null = $processId'),
+    restartSource.replace('$processCapability.StartTime.ToUniversalTime()', '$heartbeatProcessStartedAtUtc'),
+    restartSource.replace('ProcessCapability = $processCapability', 'ProcessCapability = $processId'),
+    restartSource.replace('$reverifiedProcessCapability.HasExited', '$false'),
+    restartSource.replace('$null = $reverifiedProcessCapability.Handle', '$null = $oldWorker.ProcessId'),
+    restartSource.replace('$reverifiedProcessCapability.StartTime.ToUniversalTime()', '$oldWorker.ProcessStartedAtUtc'),
+    restartSource.replace('$reverifiedProcessCapability.Kill()', 'Stop-Process -Id $oldWorker.ProcessId -Force'),
+    restartSource.replace('$reverifiedProcessCapability.WaitForExit(10000)', '$true'),
+  ]) {
+    assert.equal(exactExistingWorkerProcessCapabilityBoundary(mutation), false);
   }
 });
 

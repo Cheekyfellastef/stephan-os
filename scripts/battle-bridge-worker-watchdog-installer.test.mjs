@@ -109,7 +109,17 @@ function strictRestartInvocationBoundary({ probe, restart, launcher }) {
     && launcher.includes("[string]$record.deadlineUtc -ne $restartDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')")
     && restart.includes('$receiptProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks')
     && restart.includes('$liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks')
+    && restart.includes('$heartbeatTimestampUtc -gt $observedAtUtc')
+    && !restart.includes('$heartbeatTimestampUtc -gt $observedAtUtc.AddSeconds(60)')
     && restart.includes('($observedAtUtc - $heartbeatTimestampUtc).TotalSeconds -gt 120')
+    && restart.includes('[System.Diagnostics.Process]::GetProcessById($processId)')
+    && restart.includes('$null = $processCapability.Handle')
+    && restart.includes('ProcessCapability = $processCapability')
+    && restart.includes('$reverifiedProcessCapability = $oldWorkerRecheck.ProcessCapability')
+    && restart.includes('$reverifiedProcessCapability.StartTime.ToUniversalTime()')
+    && restart.includes('$reverifiedProcessCapability.Kill()')
+    && restart.includes('$reverifiedProcessCapability.WaitForExit(10000)')
+    && !restart.includes('Stop-Process -Id $oldWorker.ProcessId')
     && restart.includes('$oldWorkerRecheck.LaunchIdentityId -ne $oldWorker.LaunchIdentityId')
     && restart.includes('$oldWorkerRecheck.LaunchReceiptDigest -ne $oldWorker.LaunchReceiptDigest')
     && restart.includes('$oldWorkerRecheck.HeartbeatTimestampUtc -lt $oldWorker.HeartbeatTimestampUtc')
@@ -274,7 +284,14 @@ test('restart invocation binds exact command, heartbeat, deadline and process cr
     { ...canonical, restart: restart.replace('$timestamp -lt $boundHeartbeatTimestampUtc', '$false') },
     { ...canonical, restart: restart.replace('$processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks', '$false') },
     { ...canonical, restart: restart.replace('$liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks', '$false') },
+    { ...canonical, restart: restart.replace('$heartbeatTimestampUtc -gt $observedAtUtc', '$false') },
     { ...canonical, restart: restart.replace('($observedAtUtc - $heartbeatTimestampUtc).TotalSeconds -gt 120', '$false') },
+    { ...canonical, restart: restart.replace('[System.Diagnostics.Process]::GetProcessById($processId)', 'Get-Process -Id $processId') },
+    { ...canonical, restart: restart.replace('$null = $processCapability.Handle', '$null = $processId') },
+    { ...canonical, restart: restart.replace('ProcessCapability = $processCapability', 'ProcessCapability = $processId') },
+    { ...canonical, restart: restart.replace('$reverifiedProcessCapability.StartTime.ToUniversalTime()', '$oldWorker.ProcessStartedAtUtc') },
+    { ...canonical, restart: restart.replace('$reverifiedProcessCapability.Kill()', 'Stop-Process -Id $oldWorker.ProcessId -Force') },
+    { ...canonical, restart: restart.replace('$reverifiedProcessCapability.WaitForExit(10000)', '$true') },
     { ...canonical, restart: restart.replace('$oldWorkerRecheck.LaunchIdentityId -ne $oldWorker.LaunchIdentityId', '$false') },
     { ...canonical, restart: restart.replace('$oldWorkerRecheck.LaunchReceiptDigest -ne $oldWorker.LaunchReceiptDigest', '$false') },
     { ...canonical, restart: restart.replace('$oldWorkerRecheck.HeartbeatTimestampUtc -lt $oldWorker.HeartbeatTimestampUtc', '$false') },

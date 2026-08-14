@@ -302,6 +302,8 @@ function Get-VerifiedWorkerProcessFromHeartbeat {
         [string]$ExpectedRepoRoot
     )
     if (-not (Test-Path -LiteralPath $HeartbeatPath -PathType Leaf)) { return $null }
+    $processCapability = $null
+    $retainProcessCapability = $false
     try {
         $heartbeatItem = Get-Item -LiteralPath $HeartbeatPath -Force
         if ($heartbeatItem.PSIsContainer `
@@ -332,7 +334,7 @@ function Get-VerifiedWorkerProcessFromHeartbeat {
         $heartbeatProcessStartedAtUtc = [datetime]::Parse([string]$heartbeat.workerStartedAtUtc).ToUniversalTime()
         $observedAtUtc = [datetime]::UtcNow
         if ($heartbeatTimestampUtc -le $heartbeatProcessStartedAtUtc `
-            -or $heartbeatTimestampUtc -gt $observedAtUtc.AddSeconds(60) `
+            -or $heartbeatTimestampUtc -gt $observedAtUtc `
             -or ($observedAtUtc - $heartbeatTimestampUtc).TotalSeconds -gt 120) { return $null }
 
         $statusRoot = Split-Path -Parent $HeartbeatPath
@@ -386,6 +388,21 @@ function Get-VerifiedWorkerProcessFromHeartbeat {
         if (-not (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot)) { return $null }
         $liveProcessStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
         if ($liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks) { return $null }
+        $processCapability = [System.Diagnostics.Process]::GetProcessById($processId)
+        try {
+            if ($processCapability.HasExited -or $processCapability.Id -ne $processId) {
+                throw 'PROCESS_CAPABILITY_IDENTITY_MISMATCH'
+            }
+            $null = $processCapability.Handle
+            $capabilityProcessStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+            if ($capabilityProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks) {
+                throw 'PROCESS_CAPABILITY_IDENTITY_MISMATCH'
+            }
+        }
+        catch {
+            return $null
+        }
+        $retainProcessCapability = $true
         return [PSCustomObject]@{
             ProcessId = $processId
             ProcessStartedAtUtc = $heartbeatProcessStartedAtUtc
@@ -394,9 +411,13 @@ function Get-VerifiedWorkerProcessFromHeartbeat {
             LaunchReceiptPath = $launchReceiptPath
             LaunchReceiptDigest = $launchReceiptDigest
             HeadSha = [string]$heartbeat.headSha
+            ProcessCapability = $processCapability
         }
     }
     catch { return $null }
+    finally {
+        if ($processCapability -and -not $retainProcessCapability) { $processCapability.Dispose() }
+    }
 }
 
 function Get-VerifiedFreshWorkerInstance {
@@ -736,23 +757,46 @@ try {
                 [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -ne 'Running'
             })) { Stop-WithBlocker 'MISSION_WORKER_TASK_DID_NOT_STOP' }
         }
-        if ($oldWorker -and (Get-CimInstance Win32_Process -Filter "ProcessId = $($oldWorker.ProcessId)" -ErrorAction SilentlyContinue)) {
-            $oldWorkerRecheck = Get-VerifiedWorkerProcessFromHeartbeat -HeartbeatPath $heartbeatPath -ExpectedRepoRoot $repoRoot
-            if (-not $oldWorkerRecheck `
-                -or $oldWorkerRecheck.ProcessId -ne $oldWorker.ProcessId `
-                -or $oldWorkerRecheck.ProcessStartedAtUtc.Ticks -ne $oldWorker.ProcessStartedAtUtc.Ticks `
-                -or $oldWorkerRecheck.LaunchIdentityId -ne $oldWorker.LaunchIdentityId `
-                -or $oldWorkerRecheck.LaunchReceiptPath -ne $oldWorker.LaunchReceiptPath `
-                -or $oldWorkerRecheck.LaunchReceiptDigest -ne $oldWorker.LaunchReceiptDigest `
-                -or $oldWorkerRecheck.HeadSha -ne $oldWorker.HeadSha `
-                -or $oldWorkerRecheck.HeartbeatTimestampUtc -lt $oldWorker.HeartbeatTimestampUtc) {
-                Stop-WithBlocker 'MISSION_WORKER_EXISTING_PROCESS_IDENTITY_CHANGED'
+        if ($oldWorker) {
+            $oldWorkerRecheck = $null
+            $reverifiedProcessCapability = $null
+            try {
+                $oldWorkerRecheck = Get-VerifiedWorkerProcessFromHeartbeat -HeartbeatPath $heartbeatPath -ExpectedRepoRoot $repoRoot
+                if (-not $oldWorkerRecheck `
+                    -or $oldWorkerRecheck.ProcessId -ne $oldWorker.ProcessId `
+                    -or $oldWorkerRecheck.ProcessStartedAtUtc.Ticks -ne $oldWorker.ProcessStartedAtUtc.Ticks `
+                    -or $oldWorkerRecheck.LaunchIdentityId -ne $oldWorker.LaunchIdentityId `
+                    -or $oldWorkerRecheck.LaunchReceiptPath -ne $oldWorker.LaunchReceiptPath `
+                    -or $oldWorkerRecheck.LaunchReceiptDigest -ne $oldWorker.LaunchReceiptDigest `
+                    -or $oldWorkerRecheck.HeadSha -ne $oldWorker.HeadSha `
+                    -or $oldWorkerRecheck.HeartbeatTimestampUtc -lt $oldWorker.HeartbeatTimestampUtc) {
+                    Stop-WithBlocker 'MISSION_WORKER_EXISTING_PROCESS_IDENTITY_CHANGED'
+                }
+                $reverifiedProcessCapability = $oldWorkerRecheck.ProcessCapability
+                if ($reverifiedProcessCapability.HasExited `
+                    -or $reverifiedProcessCapability.Id -ne $oldWorker.ProcessId) {
+                    Stop-WithBlocker 'MISSION_WORKER_EXISTING_PROCESS_CAPABILITY_CHANGED'
+                }
+                $null = $reverifiedProcessCapability.Handle
+                $capabilityProcessStartedAtUtc = $reverifiedProcessCapability.StartTime.ToUniversalTime()
+                if ($capabilityProcessStartedAtUtc.Ticks -ne $oldWorker.ProcessStartedAtUtc.Ticks) {
+                    Stop-WithBlocker 'MISSION_WORKER_EXISTING_PROCESS_CAPABILITY_CHANGED'
+                }
+                Assert-BeforeOperationDeadline -RequiredReserveSeconds 12
+                $reverifiedProcessCapability.Kill()
+                $terminatedVerifiedOwnedProcess = $true
+                if (-not $reverifiedProcessCapability.WaitForExit(10000)) {
+                    Stop-WithBlocker 'MISSION_WORKER_VERIFIED_PROCESS_DID_NOT_STOP'
+                }
             }
-            Stop-Process -Id $oldWorker.ProcessId -Force -ErrorAction Stop
-            $terminatedVerifiedOwnedProcess = $true
-            if (-not (Wait-UntilOperationDeadline -ReserveSeconds 12 -Condition {
-                -not (Get-CimInstance Win32_Process -Filter "ProcessId = $($oldWorker.ProcessId)" -ErrorAction SilentlyContinue)
-            })) { Stop-WithBlocker 'MISSION_WORKER_VERIFIED_PROCESS_DID_NOT_STOP' }
+            catch {
+                if ([string]$_.Exception.Message -like 'MISSION_WORKER_*') { throw }
+                Stop-WithBlocker 'MISSION_WORKER_EXISTING_PROCESS_CAPABILITY_CHANGED'
+            }
+            finally {
+                if ($oldWorker.ProcessCapability) { $oldWorker.ProcessCapability.Dispose() }
+                if ($reverifiedProcessCapability) { $reverifiedProcessCapability.Dispose() }
+            }
         }
         $preStartSourceProof = Read-CanonicalWorkerSourceProof `
             -RepositoryRoot $repoRoot `
