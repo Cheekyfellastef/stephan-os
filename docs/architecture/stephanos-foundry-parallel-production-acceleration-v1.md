@@ -87,9 +87,9 @@ netSecondsSaved > 0
 
 The strict positive check is independent of the configurable minimum, so a zero-second “saving” never routes work merely to keep Foundry busy.
 
-When eligible candidates outnumber measured Foundry slots, unassigned candidates are held with `NO_AVAILABLE_FOUNDRY_SLOT_USE_GITHUB`; this is distinct from nonpositive acceleration and from absent proven Foundry capacity.
+Expected-time reliability and rework terms retain their fractional precision; the planner does not round each penalty into invented whole seconds. When eligible candidates outnumber measured Foundry slots, unassigned candidates are held with `NO_AVAILABLE_FOUNDRY_SLOT_USE_GITHUB`; this is distinct from nonpositive acceleration and from absent proven Foundry capacity.
 
-A canonically proven Foundry lane with zero current slots remains proof-valid but not assignment-eligible. It reports `FOUNDRY_ACCELERATION_WAITING_FOR_CAPACITY`, `CAPACITY_EXHAUSTED` telemetry and the same explicit slot-exhaustion hold reason; it is not mislabeled as missing proof or nonpositive acceleration.
+A canonically proven Foundry lane with zero current slots remains proof-valid but not assignment-eligible. It reports `FOUNDRY_ACCELERATION_WAITING_FOR_CAPACITY` only when at least one candidate has a qualifying positive measured gain; otherwise it truthfully reports `FOUNDRY_ACCELERATION_NO_POSITIVE_GAIN`. Capacity exhaustion telemetry remains distinct from proof validity.
 
 ## Decisions
 
