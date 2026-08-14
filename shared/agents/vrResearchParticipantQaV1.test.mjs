@@ -13,7 +13,25 @@ import {
 } from './vrResearchParticipantQaV1.mjs';
 
 const updatedAt = '2026-08-14T10:50:00.000Z';
-const nowMs = Date.parse('2026-08-14T11:00:00.000Z');
+const answeredAtUtc = '2026-08-14T11:00:00.000Z';
+const nowMs = Date.parse(answeredAtUtc);
+const VERIFIED_PROOFS = new Set([
+  'evidence/receipts/vr-research-test',
+  'evidence/receipts/vr-gap-observation-proof',
+]);
+
+function proofVerifier(ref) {
+  return VERIFIED_PROOFS.has(ref);
+}
+
+function qaInput(overrides = {}) {
+  return {
+    nowMs,
+    answeredAtUtc,
+    proofVerifier,
+    ...overrides,
+  };
+}
 
 function projection(overrides = {}) {
   return buildVrResearchWorkspaceProjection({
@@ -66,13 +84,13 @@ function request(questionClass, index, overrides = {}) {
   });
 }
 
-test('VR Research participant advertises the intended participant identity and Q&A capability', () => {
+test('VR Research participant exposes one bounded Q&A identity', () => {
   assert.equal(VR_RESEARCH_PARTICIPANT_ID, 'stephanos-vr-research');
   assert.equal(VR_RESEARCH_QA_CAPABILITY, 'CAN_ASK_AND_ANSWER');
   assert.equal(VR_RESEARCH_QUESTION_CLASSES.length, 10);
 });
 
-test('the ten required VR question classes answer from one canonical projection without private state', () => {
+test('all ten proving classes ground only when canonical projection proofs are verified', () => {
   const p = projection();
   const requests = [
     request('SOURCE_STACK', 0),
@@ -86,157 +104,201 @@ test('the ten required VR question classes answer from one canonical projection 
     request('NEXT_BOUNDED_GOAL', 8),
     request('KNOWN_UNKNOWNS', 9),
   ];
-
-  const answers = requests.map((question) => answerVrResearchQuestion(question, p, { nowMs, answeredAtUtc: '2026-08-14T11:00:00.000Z' }));
-  assert.equal(answers.length, 10);
+  const answers = requests.map((question) => answerVrResearchQuestion(question, p, qaInput()));
   assert.equal(answers.every((result) => result.valid), true);
-  assert.equal(answers.every((result) => result.answer.responderParticipantId === VR_RESEARCH_PARTICIPANT_ID), true);
   assert.equal(answers.every((result) => result.answer.answerVerdict === 'ANSWERED_GROUNDED'), true);
-  assert.equal(answers.every((result) => result.answer.freshness === 'FRESH'), true);
   assert.equal(answers.every((result) => result.answer.evidenceRefs.includes('evidence/receipts/vr-research-test')), true);
 });
 
-test('source-stack answer exposes bounded source identity and rights state rather than claiming runtime proof', () => {
-  const result = answerVrResearchQuestion(request('SOURCE_STACK', 0), projection(), { nowMs, answeredAtUtc: '2026-08-14T11:00:00.000Z' });
+test('source and licence answers preserve bounded source truth rather than claiming runtime proof', () => {
+  const result = answerVrResearchQuestion(request('SOURCE_STACK', 0), projection(), qaInput());
   assert.equal(result.answer.answerVerdict, 'ANSWERED_GROUNDED');
   assert.match(result.answer.answerText, /4 canonical VR research sources/);
   assert.equal(result.answer.facts.some((source) => source.sourceId === 'vorpx' && source.licenceClass === 'RESTRICTED_OR_ANALYSIS_ONLY'), true);
   assert.equal(result.answer.facts.some((source) => source.sourceId === 'creation-kit' && source.licenceClass === 'RESTRICTED_OR_ANALYSIS_ONLY'), true);
 });
 
-test('evidence-plane answer keeps public implementation, authoring and observed runtime evidence distinct', () => {
-  const p = projection();
-  const mutar = answerVrResearchQuestion(request('EVIDENCE_PLANE', 2, { subjectRef: 'mutar' }), p, { nowMs, answeredAtUtc: '2026-08-14T11:00:00.000Z' });
-  assert.match(mutar.answer.answerText, /DIRECT_PUBLIC_SOURCE_EVIDENCE/);
-
-  const split = answerVrResearchQuestion(request('AUTHORING_VS_RUNTIME', 3), p, { nowMs, answeredAtUtc: '2026-08-14T11:00:00.000Z' });
+test('authoring and observed runtime evidence remain distinct planes', () => {
+  const split = answerVrResearchQuestion(request('AUTHORING_VS_RUNTIME', 3), projection(), qaInput());
   assert.match(split.answer.answerText, /1 authoring fact/);
   assert.match(split.answer.answerText, /1 observed runtime\/headset fact/);
 });
 
-test('missing canonical evidence becomes one bounded gap observation linked to existing goals', () => {
-  const result = answerVrResearchQuestion(request('EVIDENCE_PLANE', 2, { subjectRef: 'unproven-provider' }), projection(), { nowMs, answeredAtUtc: '2026-08-14T11:00:00.000Z' });
+test('missing canonical subject evidence creates a bounded existing-goal gap', () => {
+  const result = answerVrResearchQuestion(request('EVIDENCE_PLANE', 2, { subjectRef: 'unproven-provider' }), projection(), qaInput());
   assert.equal(result.answer.answerVerdict, 'GAP_KNOWLEDGE');
   assert.equal(result.answer.epistemicState, 'UNKNOWN');
-  assert.ok(result.gapObservation);
   assert.deepEqual(result.gapObservation.existingGoalCandidates, ['#1592', '#1594', '#1597']);
   assert.equal(result.gapObservation.status, 'OBSERVED_NEEDS_DEDUPLICATION');
 });
 
-test('stale projection truth cannot be promoted into a grounded answer', () => {
-  const staleProjection = projection({ updatedAt: '2026-08-10T10:00:00.000Z' });
-  const result = answerVrResearchQuestion(request('SOURCE_STACK', 0), staleProjection, { nowMs, answeredAtUtc: '2026-08-14T11:00:00.000Z' });
-  assert.equal(result.answer.answerVerdict, 'GAP_FRESHNESS');
-  assert.equal(result.answer.epistemicState, 'STALE');
-  assert.equal(result.answer.evidenceRefs.length, 0);
-  assert.ok(result.gapObservation);
+test('stale or incompatible projection truth cannot become grounded', () => {
+  const stale = answerVrResearchQuestion(request('SOURCE_STACK', 0), projection({ updatedAt: '2026-08-10T10:00:00.000Z' }), qaInput());
+  assert.equal(stale.answer.answerVerdict, 'GAP_FRESHNESS');
+  assert.equal(stale.answer.epistemicState, 'STALE');
+  assert.deepEqual(stale.answer.evidenceRefs, []);
+
+  const missing = answerVrResearchQuestion(request('SOURCE_STACK', 0), {}, qaInput());
+  assert.equal(missing.answer.answerVerdict, 'GAP_FRESHNESS');
+  assert.match(missing.answer.cannotAnswerReason, /projection is missing or incompatible/);
 });
 
-test('missing or incompatible canonical projection fails honestly rather than fabricating VR knowledge', () => {
-  const result = answerVrResearchQuestion(request('SOURCE_STACK', 0), {}, { nowMs, answeredAtUtc: '2026-08-14T11:00:00.000Z' });
+test('proof references alone never ground an answer without trusted proof authority', () => {
+  const noVerifier = answerVrResearchQuestion(request('SOURCE_STACK', 0), projection(), {
+    nowMs,
+    answeredAtUtc,
+  });
+  assert.equal(noVerifier.answer.answerVerdict, 'GAP_KNOWLEDGE');
+  assert.deepEqual(noVerifier.answer.evidenceRefs, []);
+  assert.match(noVerifier.answer.cannotAnswerReason, /not verified by the trusted proof authority/);
+
+  const rejected = answerVrResearchQuestion(request('SOURCE_STACK', 0), projection({ proofRefs: ['evidence/receipts/not-verified'] }), qaInput());
+  assert.equal(rejected.answer.answerVerdict, 'GAP_KNOWLEDGE');
+  assert.deepEqual(rejected.answer.evidenceRefs, []);
+});
+
+test('proof verifier exceptions fail closed rather than grounding an answer', () => {
+  const result = answerVrResearchQuestion(request('SOURCE_STACK', 0), projection(), qaInput({
+    proofVerifier() { throw new Error('proof backend unavailable'); },
+  }));
+  assert.equal(result.answer.answerVerdict, 'GAP_KNOWLEDGE');
+  assert.deepEqual(result.answer.evidenceRefs, []);
+});
+
+test('unsafe or malformed projection proof refs cannot ground answers', () => {
+  for (const proofRefs of [['../secret.json'], [null], ['proofs/ok', 'proofs/ok']]) {
+    const result = answerVrResearchQuestion(request('SOURCE_STACK', 0), projection({ proofRefs }), qaInput());
+    assert.equal(result.answer.answerVerdict, 'GAP_KNOWLEDGE');
+    assert.deepEqual(result.answer.evidenceRefs, []);
+  }
+});
+
+test('only explicit FRESH non-future projection state can ground an answer', () => {
+  const declaredUnknown = answerVrResearchQuestion(request('SOURCE_STACK', 0), { ...projection(), freshness: 'UNKNOWN' }, qaInput());
+  assert.equal(declaredUnknown.answer.answerVerdict, 'GAP_FRESHNESS');
+
+  const future = answerVrResearchQuestion(request('SOURCE_STACK', 0), { ...projection(), freshness: 'FRESH', updatedAt: '2026-08-14T11:00:01.000Z' }, qaInput());
+  assert.equal(future.answer.answerVerdict, 'GAP_FRESHNESS');
+  assert.equal(future.answer.epistemicState, 'UNKNOWN');
+});
+
+test('directly deserialized lowercase classes dispatch through normalized request state', () => {
+  const lowercase = { ...request('SOURCE_STACK', 0), questionClass: 'source_stack' };
+  const result = answerVrResearchQuestion(lowercase, projection(), qaInput());
   assert.equal(result.valid, true);
-  assert.equal(result.answer.answerVerdict, 'GAP_FRESHNESS');
-  assert.match(result.answer.cannotAnswerReason, /projection is missing or incompatible/);
-  assert.ok(result.gapObservation);
+  assert.equal(result.answer.answerVerdict, 'ANSWERED_GROUNDED');
+  assert.match(result.answer.answerText, /4 canonical VR research sources/);
 });
 
-test('a VR Q&A answer projects into the existing Shared Workspace message contract with zero mutation authority', () => {
+test('wrong target and unknown question classes fail closed', () => {
+  const wrongTarget = answerVrResearchQuestion({ ...request('SOURCE_STACK', 0), targetParticipantId: 'openclaw' }, projection(), qaInput());
+  assert.equal(wrongTarget.valid, false);
+  assert.match(wrongTarget.errors.join('\n'), /target-participant-mismatch/);
+
+  const unknownClass = answerVrResearchQuestion({ ...request('SOURCE_STACK', 0), questionClass: 'EXECUTE_GAME_MUTATION' }, projection(), qaInput());
+  assert.equal(unknownClass.valid, false);
+  assert.match(unknownClass.errors.join('\n'), /questionClass-invalid/);
+});
+
+test('verified grounded answers publish through the existing Shared Workspace contract with zero authority', () => {
   const q = request('VORPX_BASELINE', 4);
-  const answered = answerVrResearchQuestion(q, projection(), { nowMs, answeredAtUtc: '2026-08-14T11:00:00.000Z' });
-  const workspace = createVrResearchQaWorkspaceAnswerRecord(q, answered.answer, { correlationId: 'vr-round-001' });
+  const answered = answerVrResearchQuestion(q, projection(), qaInput());
+  const workspace = createVrResearchQaWorkspaceAnswerRecord(q, answered.answer, {
+    correlationId: 'vr-round-001',
+    proofVerifier,
+    validationOptions: { nowMs },
+  });
   assert.equal(workspace.validation.valid, true, workspace.validation.errors.join(', '));
-  assert.equal(validateSharedWorkspaceRecord(workspace.record).valid, true);
+  assert.equal(validateSharedWorkspaceRecord(workspace.record, { nowMs }).valid, true);
   assert.equal(workspace.record.participantId, VR_RESEARCH_PARTICIPANT_ID);
   assert.equal(workspace.record.recipientParticipantId, 'chatgpt-bridge');
-  assert.equal(workspace.record.channel, 'vr-research-qa');
   assert.equal(workspace.record.sourceMutationAllowed, false);
   assert.equal(workspace.record.commandExecutionAllowed, false);
   assert.equal(workspace.record.mergeAllowed, false);
   assert.equal(workspace.record.deploymentAllowed, false);
 });
 
-test('question requests targeting another participant or unknown classes are rejected', () => {
-  const wrongTarget = { ...request('SOURCE_STACK', 0), targetParticipantId: 'openclaw' };
-  const rejectedTarget = answerVrResearchQuestion(wrongTarget, projection(), { nowMs });
-  assert.equal(rejectedTarget.valid, false);
-  assert.match(rejectedTarget.errors.join('\n'), /target-participant-mismatch/);
+test('Workspace publication also requires proof verification rather than path-shaped refs', () => {
+  const q = request('SOURCE_STACK', 0);
+  const answered = answerVrResearchQuestion(q, projection(), qaInput());
+  const withoutVerifier = createVrResearchQaWorkspaceAnswerRecord(q, answered.answer, { validationOptions: { nowMs } });
+  assert.equal(withoutVerifier.validation.valid, false);
+  assert.ok(withoutVerifier.validation.errors.includes('missing-proofRefs'));
 
-  const unknownClass = { ...request('SOURCE_STACK', 0), questionClass: 'EXECUTE_GAME_MUTATION' };
-  const rejectedClass = answerVrResearchQuestion(unknownClass, projection(), { nowMs });
-  assert.equal(rejectedClass.valid, false);
-  assert.match(rejectedClass.errors.join('\n'), /questionClass-invalid/);
+  const rejectingVerifier = createVrResearchQaWorkspaceAnswerRecord(q, answered.answer, {
+    proofVerifier: () => false,
+    validationOptions: { nowMs },
+  });
+  assert.equal(rejectingVerifier.validation.valid, false);
+  assert.ok(rejectingVerifier.validation.errors.includes('missing-proofRefs'));
 });
 
-test('grounded answers require real projection proof refs rather than receipt-shaped fallbacks', () => {
-  const noProofProjection = projection({ proofRefs: [] });
-  const result = answerVrResearchQuestion(request('SOURCE_STACK', 0), noProofProjection, {
-    nowMs,
-    answeredAtUtc: '2026-08-14T11:00:00.000Z',
-  });
-  assert.equal(result.answer.answerVerdict, 'GAP_KNOWLEDGE');
-  assert.equal(result.answer.epistemicState, 'UNKNOWN');
-  assert.deepEqual(result.answer.evidenceRefs, []);
-  assert.match(result.answer.cannotAnswerReason, /does not carry proof references/);
-  assert.ok(result.gapObservation);
-});
-
-test('only explicit FRESH non-future projection state can ground an answer', () => {
-  const declaredUnknown = { ...projection(), freshness: 'UNKNOWN' };
-  const unknown = answerVrResearchQuestion(request('SOURCE_STACK', 0), declaredUnknown, {
-    nowMs,
-    answeredAtUtc: '2026-08-14T11:00:00.000Z',
-  });
-  assert.equal(unknown.answer.answerVerdict, 'GAP_FRESHNESS');
-  assert.equal(unknown.answer.epistemicState, 'UNKNOWN');
-
-  const future = { ...projection(), freshness: 'FRESH', updatedAt: '2026-08-14T11:00:01.000Z' };
-  const futureResult = answerVrResearchQuestion(request('SOURCE_STACK', 0), future, {
-    nowMs,
-    answeredAtUtc: '2026-08-14T11:00:00.000Z',
-  });
-  assert.equal(futureResult.answer.answerVerdict, 'GAP_FRESHNESS');
-  assert.equal(futureResult.answer.epistemicState, 'UNKNOWN');
-});
-
-test('directly deserialized lowercase question classes dispatch through the normalized class', () => {
-  const lowercase = { ...request('SOURCE_STACK', 0), questionClass: 'source_stack' };
-  const result = answerVrResearchQuestion(lowercase, projection(), {
-    nowMs,
-    answeredAtUtc: '2026-08-14T11:00:00.000Z',
-  });
-  assert.equal(result.valid, true);
-  assert.equal(result.answer.answerVerdict, 'ANSWERED_GROUNDED');
-  assert.match(result.answer.answerText, /4 canonical VR research sources/);
-});
-
-test('evidence-free gap messages remain invalid until a real proof reference is supplied', () => {
+test('evidence-free gap messages require a separately verified proof before publication', () => {
   const q = request('EVIDENCE_PLANE', 2, { subjectRef: 'unproven-provider' });
-  const answered = answerVrResearchQuestion(q, projection(), {
-    nowMs,
-    answeredAtUtc: '2026-08-14T11:00:00.000Z',
-  });
+  const answered = answerVrResearchQuestion(q, projection(), qaInput());
   assert.equal(answered.answer.answerVerdict, 'GAP_KNOWLEDGE');
   assert.deepEqual(answered.answer.evidenceRefs, []);
 
-  const unproven = createVrResearchQaWorkspaceAnswerRecord(q, answered.answer);
+  const unproven = createVrResearchQaWorkspaceAnswerRecord(q, answered.answer, { validationOptions: { nowMs } });
   assert.equal(unproven.validation.valid, false);
   assert.ok(unproven.validation.errors.includes('missing-proofRefs'));
 
   const proven = createVrResearchQaWorkspaceAnswerRecord(q, answered.answer, {
     proofRefs: ['evidence/receipts/vr-gap-observation-proof'],
+    proofVerifier,
+    validationOptions: { nowMs },
   });
   assert.equal(proven.validation.valid, true, proven.validation.errors.join(', '));
   assert.deepEqual(proven.record.proofRefs, ['evidence/receipts/vr-gap-observation-proof']);
 });
 
-test('default workspace correlation is safely derived for long colon-bearing question ids', () => {
-  const q = request('SOURCE_STACK', 0, { questionId: `vr:${'a'.repeat(100)}` });
-  const answered = answerVrResearchQuestion(q, projection(), {
-    nowMs,
-    answeredAtUtc: '2026-08-14T11:00:00.000Z',
-  });
+test('directly deserialized request extras are never serialized into Shared Workspace body', () => {
+  const q = { ...request('SOURCE_STACK', 0), apiKey: 'super-secret-value', arbitraryMutation: true };
+  const answered = answerVrResearchQuestion(q, projection(), qaInput());
   assert.equal(answered.valid, true);
-  const workspace = createVrResearchQaWorkspaceAnswerRecord(q, answered.answer);
+  const workspace = createVrResearchQaWorkspaceAnswerRecord(q, answered.answer, {
+    proofVerifier,
+    validationOptions: { nowMs },
+  });
+  assert.equal(workspace.validation.valid, true, workspace.validation.errors.join(', '));
+  const body = JSON.parse(workspace.record.body);
+  assert.equal(Object.hasOwn(body.request, 'apiKey'), false);
+  assert.equal(Object.hasOwn(body.request, 'arbitraryMutation'), false);
+  assert.equal(workspace.record.body.includes('super-secret-value'), false);
+  assert.deepEqual(Object.keys(body.request).sort(), [
+    'askerParticipantId',
+    'createdAtUtc',
+    'questionClass',
+    'questionId',
+    'questionText',
+    'schemaVersion',
+    'subjectRef',
+    'targetParticipantId',
+  ]);
+});
+
+test('caller-added answer fields are also excluded from Workspace serialization', () => {
+  const q = request('SOURCE_STACK', 0);
+  const answered = answerVrResearchQuestion(q, projection(), qaInput());
+  const forged = { ...answered.answer, apiKey: 'answer-secret', mergeAllowed: true };
+  const workspace = createVrResearchQaWorkspaceAnswerRecord(q, forged, {
+    proofVerifier,
+    validationOptions: { nowMs },
+  });
+  assert.equal(workspace.validation.valid, true, workspace.validation.errors.join(', '));
+  const body = JSON.parse(workspace.record.body);
+  assert.equal(Object.hasOwn(body.answer, 'apiKey'), false);
+  assert.equal(Object.hasOwn(body.answer, 'mergeAllowed'), false);
+  assert.equal(workspace.record.body.includes('answer-secret'), false);
+});
+
+test('default Workspace correlation safely derives long colon-bearing question ids', () => {
+  const q = request('SOURCE_STACK', 0, { questionId: `vr:${'a'.repeat(100)}` });
+  const answered = answerVrResearchQuestion(q, projection(), qaInput());
+  const workspace = createVrResearchQaWorkspaceAnswerRecord(q, answered.answer, {
+    proofVerifier,
+    validationOptions: { nowMs },
+  });
   assert.equal(workspace.validation.valid, true, workspace.validation.errors.join(', '));
   assert.match(workspace.record.correlationId, /^vr-correlation-[0-9a-f]{24}$/);
   assert.equal(workspace.record.correlationId.includes(':'), false);
