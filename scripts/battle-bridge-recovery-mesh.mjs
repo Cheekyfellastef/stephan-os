@@ -17,6 +17,7 @@ import {
   BATTLE_BRIDGE_RECOVERY_ROUTES,
   adjudicateBattleBridgeRecoveryMesh,
 } from '../shared/agents/battleBridgeRecoveryMeshV1.mjs';
+import { reconcileBattleBridgeGitHubSyncTask } from '../shared/agents/battleBridgeGitHubSyncSelfRepairV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import {
   appendWorkspaceJsonl,
@@ -541,6 +542,8 @@ export async function runBattleBridgeRecoveryMesh({
   recoveryProbeDelayMs = 5_000,
   maximumRecoveryProbes = 3,
   sourceHeadReader = defaultSourceHeadReader,
+  platform = process.platform,
+  githubSyncSelfRepairFn = reconcileBattleBridgeGitHubSyncTask,
 } = {}) {
   const mutexVerification = verifyCurrentRecoveryMeshMutexAuthority(env);
   if (!mutexVerification.ok) return Object.freeze({ ok: false, classification: mutexVerification.blocker, mutexVerification });
@@ -646,18 +649,52 @@ export async function runBattleBridgeRecoveryMesh({
       ...decision.accepted.map((request) => request.idempotencyKey),
     ])].slice(-500);
     await writeStateAtomically(paths.statePath, { schemaVersion: BATTLE_BRIDGE_RECOVERY_MESH_RUNNER_SCHEMA, updatedAtUtc: now.toISOString(), activeLease: null, consumedIdempotencyKeys });
+
     const coreHealthy = final.workerHealthy && final.mailboxHealthy;
+    const syncRepairExpectedHead = text(sourceHeadReader(paths.repoRoot)).toLowerCase();
+    let githubSyncSelfRepair;
+    if (platform === 'win32') {
+      try {
+        githubSyncSelfRepair = githubSyncSelfRepairFn({
+          repoRoot: paths.repoRoot,
+          expectedHead: syncRepairExpectedHead,
+          platform,
+          now,
+        });
+      } catch (error) {
+        githubSyncSelfRepair = Object.freeze({
+          ok: false,
+          blocker: 'RECOVERY_MESH_GITHUB_SYNC_SELF_REPAIR_EXCEPTION',
+          error: error?.message || String(error),
+          codexRequired: false,
+          mutationPerformed: false,
+        });
+      }
+    } else {
+      githubSyncSelfRepair = Object.freeze({
+        ok: true,
+        skipped: true,
+        blocker: '',
+        finalVerdict: 'BATTLE_BRIDGE_GITHUB_SYNC_SELF_REPAIR_NON_WINDOWS_TEST_SURFACE',
+        codexRequired: false,
+        mutationPerformed: false,
+      });
+    }
+    const syncHealthy = githubSyncSelfRepair?.ok === true;
     return Object.freeze({
-      ok: coreHealthy && publication.ok,
-      classification: publication.classification,
+      ok: coreHealthy && publication.ok && syncHealthy,
+      classification: syncHealthy
+        ? publication.classification
+        : (githubSyncSelfRepair?.blocker || 'RECOVERY_MESH_GITHUB_SYNC_SELF_REPAIR_BLOCKED'),
       decision,
       initial,
       final,
       recoveryAttempted,
       recoveryProbeCount,
       publication,
+      githubSyncSelfRepair,
       lock,
-      acceptsRuntimeWork: coreHealthy,
+      acceptsRuntimeWork: coreHealthy && syncHealthy,
       bulletproofAcceptanceClaimed: false,
     });
   } finally {

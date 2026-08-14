@@ -47,6 +47,7 @@ export function assessMissionOrchestratorWorker(input = {}) {
   const repositoryFromCanonicalMain = repositoryRoot.endsWith(CANONICAL_REPOSITORY_SUFFIX)
     && text(input.heartbeat?.branch).toLowerCase() === 'main'
     && SHA_40.test(text(input.heartbeat?.headSha));
+  const sourceHead = repositoryFromCanonicalMain ? text(input.heartbeat?.headSha).toLowerCase() : '';
   const taskIdentityObserved = Boolean(observedTaskName);
   const taskApproved = taskIdentityObserved && observedTaskName === APPROVED_WORKER_TASK;
   const taskActionMatchesCanonicalWorker = input.scheduledTask?.actionMatchesCanonicalWorker === true;
@@ -99,6 +100,7 @@ export function assessMissionOrchestratorWorker(input = {}) {
     heartbeatTaskApproved,
     heartbeatPidMatchesProcess,
     repositoryFromCanonicalMain,
+    sourceHead,
     heartbeatAgeMs,
     healthy,
     restartPermitted: !healthy && taskApproved && taskActionMatchesCanonicalWorker,

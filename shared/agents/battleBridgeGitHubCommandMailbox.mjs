@@ -8,6 +8,12 @@ import {
   CODEX_BANKED_RESET_STATUS_OPERATION,
   readCodexBankedResetStatusOnBattleBridge,
 } from './codexBankedResetStatusBattleBridgeReader.mjs';
+import {
+  FORGE_SHADOW_BATTLE_BRIDGE_OPERATION,
+  executeForgeShadowM2OnBattleBridge,
+  forgeShadowBattleBridgeFields,
+  validateForgeShadowBattleBridgeCommand,
+} from './forgeShadowBattleBridgeAdapterV1.mjs';
 import { MUSIC_SPOTIFY_LINK_OPERATION, MUSIC_SPOTIFY_LINK_SOURCE, validateMusicSpotifyLinkCandidate } from './musicSpotifyLinkBridge.mjs';
 import {
   PROTECTED_OPENCLAW_MERGE_OPERATION,
@@ -36,10 +42,27 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
   'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+  FORGE_SHADOW_BATTLE_BRIDGE_OPERATION,
   PROTECTED_OPENCLAW_MERGE_OPERATION,
   MUSIC_SPOTIFY_LINK_OPERATION,
   CODEX_BANKED_RESET_STATUS_OPERATION,
   CODEX_BANKED_RESET_OPERATION,
+]);
+
+export const BATTLE_BRIDGE_MAILBOX_MAX_BATCH = 4;
+export const BATTLE_BRIDGE_MAILBOX_PARTITION = Object.freeze({
+  CONTROL: 'CONTROL',
+  OBSERVATION: 'OBSERVATION',
+});
+
+const OBSERVATION_OPERATIONS = new Set([
+  'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
+  'READ_DEPLOYMENT_STATUS',
+  'READ_CAPABILITY_REGISTRY',
+  'READ_SHARED_WORKSPACE_STATUS',
+  'READ_CRITICAL_BACKLOG_STATUS',
+  'READ_MAILBOX_RECEIPT',
+  CODEX_BANKED_RESET_STATUS_OPERATION,
 ]);
 
 export const WINDOWS_BROWSER_PROOF_SCENARIOS = Object.freeze([
@@ -69,6 +92,92 @@ const FORBIDDEN_RESET_COMMAND_FIELDS = Object.freeze([
   'args', 'arguments', 'profilePath', 'userDataDir', 'cookie', 'cookies', 'token', 'credential',
 ]);
 const MUSIC_SPOTIFY_FIELDS = Object.freeze(['source', 'spotifyUri', 'targetTrackId', 'targetArtist', 'targetTitle', 'requestedAtUtc']);
+const SCOPED_DELIVERY_ALLOWED_OPERATIONS = new Set([
+  'UPDATE_STEPHANOS_FROM_CHAT',
+  'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+]);
+const SCOPED_DELIVERY_FIELDS = new Set([
+  'prNumber',
+  'mergeCommit',
+  'deploymentRequestId',
+  'featureId',
+]);
+const SCOPED_DELIVERY_FEATURE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,120}$/;
+const TERMINALIZABLE_OWNER_COMMAND_BLOCKERS = new Set([
+  'COMMAND_BRANCH_NOT_ALLOWED',
+  'COMMAND_EXPECTED_HEAD_INVALID',
+  'COMMAND_EXPIRED',
+  'COMMAND_EXPIRY_INVALID',
+  'COMMAND_EXPIRY_TOO_FAR_AHEAD',
+  'COMMAND_ISSUE_MISMATCH',
+  'COMMAND_OPERATION_NOT_ALLOWED',
+  'COMMAND_OPERATOR_APPROVAL_REQUIRED',
+  'COMMAND_REPOSITORY_MISMATCH',
+  'COMMAND_REQUEST_ID_INVALID',
+  'COMMAND_SCHEMA_MISMATCH',
+  'COMMAND_TARGET_REQUEST_ID_INVALID',
+  'COMMAND_TARGET_REQUEST_ID_NOT_ALLOWED',
+  'FORGE_SHADOW_COMMAND_EXPECTED_HEAD_INVALID',
+  'FORGE_SHADOW_COMMAND_IMAGE_DIGEST_INVALID',
+  'FORGE_SHADOW_COMMAND_M2_ONLY_REQUIRED',
+  'FORGE_SHADOW_COMMAND_REPOSITORY_MISMATCH',
+  'FORGE_SHADOW_COMMAND_RUNTIME_BOUNDARY_INVALID',
+  'FORGE_SHADOW_COMMAND_UNSAFE_FIELD_PRESENT',
+  'FORGE_SHADOW_COMMAND_VERSION_MISMATCH',
+  'FORGE_SHADOW_FIELD_NOT_ALLOWED',
+  'MUSIC_SPOTIFY_EXPECTED_HEAD_REQUIRED',
+  'MUSIC_SPOTIFY_FIELD_NOT_ALLOWED',
+  'MUSIC_SPOTIFY_REQUEST_ID_INVALID',
+  'MUSIC_SPOTIFY_REQUEST_TIME_INVALID',
+  'MUSIC_SPOTIFY_SOURCE_NOT_ALLOWED',
+  'MUSIC_SPOTIFY_TARGET_IDENTITY_REQUIRED',
+  'MUSIC_SPOTIFY_TARGET_TRACK_ID_INVALID',
+  'MUSIC_SPOTIFY_TRACK_URI_INVALID',
+  'MUSIC_SPOTIFY_UNSAFE_FIELD_PRESENT',
+  'PROTECTED_MERGE_APPROVAL_TOKEN_INVALID',
+  'PROTECTED_MERGE_ARTIFACT_DIGEST_INVALID',
+  'PROTECTED_MERGE_BASE_INVALID',
+  'PROTECTED_MERGE_EXPIRED',
+  'PROTECTED_MERGE_FINDING_INVALID',
+  'PROTECTED_MERGE_HEAD_INVALID',
+  'PROTECTED_MERGE_METHOD_INVALID',
+  'PROTECTED_MERGE_PAYLOAD_DIGEST_INVALID',
+  'PROTECTED_MERGE_PR_NUMBER_INVALID',
+  'PROTECTED_MERGE_REVIEW_IDENTITY_INVALID',
+  'PROTECTED_MERGE_REVIEW_MODE_INVALID',
+  'PROTECTED_MERGE_UNSAFE_FIELD_PRESENT',
+  'PROTECTED_MERGE_FIELD_NOT_ALLOWED',
+  'RECOVERY_MESH_EXPECTED_HEAD_REQUIRED',
+  'RESET_COMMAND_ACTION_EXPIRED',
+  'RESET_COMMAND_EXECUTION_SURFACE_MISMATCH',
+  'RESET_COMMAND_FIELD_NOT_ALLOWED',
+  'RESET_COMMAND_FIXED_UI_ACTION_REQUIRED',
+  'RESET_COMMAND_LATEST_SAFE_AFTER_COMMAND_EXPIRY',
+  'RESET_COMMAND_LATEST_SAFE_AFTER_RESET_EXPIRY',
+  'RESET_COMMAND_POLICY_MISMATCH',
+  'RESET_COMMAND_RESET_ID_INVALID',
+  'RESET_COMMAND_SELECTED_RESET_EXPIRED',
+  'RESET_COMMAND_SINGLE_PRESS_REQUIRED',
+  'RESET_COMMAND_TIME_INVALID',
+  'RESET_COMMAND_UNSAFE_FIELD_PRESENT',
+  'RESET_STATUS_COMMAND_UNSAFE_FIELD_PRESENT',
+  'SCOPED_DELIVERY_DEPLOYMENT_HEAD_REQUIRED',
+  'SCOPED_DELIVERY_FEATURE_ID_INVALID',
+  'SCOPED_DELIVERY_FIELD_NOT_ALLOWED',
+  'SCOPED_DELIVERY_INVALID',
+  'SCOPED_DELIVERY_MERGE_COMMIT_INVALID',
+  'SCOPED_DELIVERY_PR_NUMBER_INVALID',
+  'SCOPED_DELIVERY_PR_NUMBER_MISMATCH',
+  'SCOPED_DELIVERY_REQUEST_ID_INVALID',
+  'SCOPED_DELIVERY_REQUEST_ID_MISMATCH',
+  'WINDOWS_BROWSER_PROOF_EXPECTED_HEAD_REQUIRED',
+  'WINDOWS_BROWSER_PROOF_FIELD_NOT_ALLOWED',
+  'WINDOWS_BROWSER_PROOF_PR_NUMBER_INVALID',
+  'WINDOWS_BROWSER_PROOF_PR_PROVENANCE_HEAD_NOT_ALLOWED',
+  'WINDOWS_BROWSER_PROOF_PR_PROVENANCE_HEAD_REQUIRED',
+  'WINDOWS_BROWSER_PROOF_SCENARIO_NOT_ALLOWED',
+  'WINDOWS_BROWSER_PROOF_TARGET_NOT_ALLOWED',
+]);
 
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
@@ -76,6 +185,55 @@ function fail(blocker, details = {}) {
 
 function hasValue(value) {
   return value !== undefined && value !== null && value !== '';
+}
+
+function plainObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function validateScopedDelivery(command = {}) {
+  if (!hasValue(command.scopedDelivery)) return Object.freeze({ ok: true, scopedDelivery: null });
+  if (!SCOPED_DELIVERY_ALLOWED_OPERATIONS.has(command.operation)) {
+    return fail('SCOPED_DELIVERY_FIELD_NOT_ALLOWED');
+  }
+  if (!plainObject(command.scopedDelivery)) return fail('SCOPED_DELIVERY_INVALID');
+
+  const unexpectedField = Object.keys(command.scopedDelivery)
+    .find((field) => !SCOPED_DELIVERY_FIELDS.has(field));
+  if (unexpectedField) {
+    return fail('SCOPED_DELIVERY_FIELD_NOT_ALLOWED', { field: 'scopedDelivery.' + unexpectedField });
+  }
+
+  const prNumber = Number(command.scopedDelivery.prNumber);
+  const mergeCommit = String(command.scopedDelivery.mergeCommit || '').toLowerCase();
+  const deploymentRequestId = String(command.scopedDelivery.deploymentRequestId || '');
+  const featureId = String(command.scopedDelivery.featureId || '');
+  const deploymentHead = String(command.expectedHead || '').toLowerCase();
+
+  if (!PR_NUMBER_PATTERN.test(String(prNumber))) return fail('SCOPED_DELIVERY_PR_NUMBER_INVALID');
+  if (!SHA_PATTERN.test(mergeCommit)) return fail('SCOPED_DELIVERY_MERGE_COMMIT_INVALID');
+  if (!SHA_PATTERN.test(deploymentHead)) return fail('SCOPED_DELIVERY_DEPLOYMENT_HEAD_REQUIRED');
+  if (!REQUEST_ID_PATTERN.test(deploymentRequestId)) return fail('SCOPED_DELIVERY_REQUEST_ID_INVALID');
+  if (!SCOPED_DELIVERY_FEATURE_ID_PATTERN.test(featureId)) return fail('SCOPED_DELIVERY_FEATURE_ID_INVALID');
+  if (command.operation === 'UPDATE_STEPHANOS_FROM_CHAT' && deploymentRequestId !== String(command.requestId)) {
+    return fail('SCOPED_DELIVERY_REQUEST_ID_MISMATCH');
+  }
+  if (command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF' && prNumber !== Number(command.prNumber)) {
+    return fail('SCOPED_DELIVERY_PR_NUMBER_MISMATCH');
+  }
+
+  return Object.freeze({
+    ok: true,
+    scopedDelivery: Object.freeze({
+      repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+      relatedPr: '#' + prNumber,
+      prNumber,
+      mergeCommit,
+      deploymentHead,
+      deploymentRequestId,
+      featureId,
+    }),
+  });
 }
 
 function unsafeAutomationField(command) {
@@ -132,6 +290,7 @@ export function extractBattleBridgeGitHubCommand(body = '') {
 export function validateBattleBridgeGitHubCommand(command = {}, {
   authorLogin = '',
   now = new Date(),
+  authoredAt = now,
 } = {}) {
   if (authorLogin !== BATTLE_BRIDGE_GITHUB_COMMAND_AUTHOR) {
     return fail('COMMAND_AUTHOR_NOT_ALLOWED', { authorLogin });
@@ -161,6 +320,15 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
   if (['INSTALL_BATTLE_BRIDGE_RECOVERY_MESH', 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'].includes(command.operation)
     && !SHA_PATTERN.test(String(command.expectedHead || ''))) {
     return fail('RECOVERY_MESH_EXPECTED_HEAD_REQUIRED');
+  }
+  let forgeShadow = null;
+  if (command.operation === FORGE_SHADOW_BATTLE_BRIDGE_OPERATION) {
+    const validation = validateForgeShadowBattleBridgeCommand(command);
+    if (!validation.ok) return fail(validation.blocker, validation.details || {});
+    forgeShadow = validation.command;
+  } else {
+    const unexpectedForgeField = forgeShadowBattleBridgeFields().find((field) => hasValue(command[field]));
+    if (unexpectedForgeField) return fail('FORGE_SHADOW_FIELD_NOT_ALLOWED', { field: unexpectedForgeField });
   }
   let protectedMerge = null;
   if (command.operation === PROTECTED_OPENCLAW_MERGE_OPERATION) {
@@ -218,6 +386,9 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
     const unsafeField = unsafeAutomationField(command);
     if (unsafeField) return fail('RESET_STATUS_COMMAND_UNSAFE_FIELD_PRESENT', { field: unsafeField });
   }
+  const scopedDeliveryValidation = validateScopedDelivery(command);
+  if (!scopedDeliveryValidation.ok) return scopedDeliveryValidation;
+
   const targetRequestId = String(command.targetRequestId || '');
   if (command.operation === 'READ_MAILBOX_RECEIPT' && !REQUEST_ID_PATTERN.test(targetRequestId)) {
     return fail('COMMAND_TARGET_REQUEST_ID_INVALID');
@@ -227,12 +398,13 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
   }
 
   const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  const authoredAtMs = authoredAt instanceof Date ? authoredAt.getTime() : new Date(authoredAt).getTime();
   const expiresAtMs = new Date(command.expiresAt || '').getTime();
-  if (!Number.isFinite(nowMs) || !Number.isFinite(expiresAtMs)) {
+  if (!Number.isFinite(nowMs) || !Number.isFinite(authoredAtMs) || !Number.isFinite(expiresAtMs)) {
     return fail('COMMAND_EXPIRY_INVALID');
   }
-  if (expiresAtMs <= nowMs) return fail('COMMAND_EXPIRED');
-  if (expiresAtMs - nowMs > MAX_FUTURE_WINDOW_MS) {
+  if (expiresAtMs <= authoredAtMs || expiresAtMs <= nowMs) return fail('COMMAND_EXPIRED');
+  if (expiresAtMs - authoredAtMs > MAX_FUTURE_WINDOW_MS) {
     return fail('COMMAND_EXPIRY_TOO_FAR_AHEAD');
   }
 
@@ -269,6 +441,10 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
       pullRequestHead: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
         ? String(command.pullRequestHead || '').toLowerCase()
         : '',
+      ...(scopedDeliveryValidation.scopedDelivery
+        ? { scopedDelivery: scopedDeliveryValidation.scopedDelivery }
+        : {}),
+      ...(forgeShadow || {}),
       ...(protectedMerge || {}),
       ...(musicSpotifyCandidate ? {
         source: MUSIC_SPOTIFY_LINK_SOURCE,
@@ -284,34 +460,270 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
   });
 }
 
-export function selectNextBattleBridgeGitHubCommand(comments = [], {
+export function classifyBattleBridgeMailboxOperation(operation = '') {
+  return OBSERVATION_OPERATIONS.has(String(operation || ''))
+    ? BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION
+    : BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
+}
+
+function projectTerminalMailboxRejection(comment = {}, command = {}, validation = {}) {
+  const requestId = String(command?.requestId || '');
+  const operation = String(command?.operation || '');
+  const expectedHead = String(command?.expectedHead || '').toLowerCase();
+  const blocker = String(validation?.blocker || '').toUpperCase();
+  const commentId = Number(comment?.id || 0);
+  if (comment?.user?.login !== BATTLE_BRIDGE_GITHUB_COMMAND_AUTHOR
+    || !Number.isSafeInteger(commentId) || commentId < 1
+    || !REQUEST_ID_PATTERN.test(requestId)
+    || !BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation)
+    || command?.repository !== BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY
+    || Number(command?.issueNumber) !== BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE
+    || command?.branch !== 'main'
+    || command?.operatorApproval !== 'operator-approved'
+    || (expectedHead && !SHA_PATTERN.test(expectedHead))
+    || !TERMINALIZABLE_OWNER_COMMAND_BLOCKERS.has(blocker)) {
+    return null;
+  }
+  return Object.freeze({
+    commentId,
+    commentUrl: String(comment?.html_url || comment?.url || ''),
+    blocker,
+    command: Object.freeze({
+      schemaVersion: BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA,
+      requestId,
+      operation,
+      repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+      issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
+      branch: 'main',
+      operatorApproval: 'operator-approved',
+      expectedHead,
+      expiresAt: Number.isFinite(Date.parse(String(command?.expiresAt || '')))
+        ? new Date(command.expiresAt).toISOString()
+        : '',
+    }),
+  });
+}
+
+export function selectBattleBridgeGitHubCommandBatch(comments = [], {
   consumedRequestIds = new Set(),
   now = new Date(),
+  maxBatch = BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
 } = {}) {
+  const boundedMaxBatch = Number(maxBatch);
+  if (!Number.isSafeInteger(boundedMaxBatch) || boundedMaxBatch < 1 || boundedMaxBatch > BATTLE_BRIDGE_MAILBOX_MAX_BATCH) {
+    return fail('MAILBOX_BATCH_SIZE_INVALID', { maxBatch });
+  }
   const ordered = [...comments].sort((a, b) => Number(a?.id || 0) - Number(b?.id || 0));
   const rejected = [];
+  const terminalRejections = [];
+  const ready = [];
+  const seenRequestIds = new Set();
   for (const comment of ordered) {
     const extracted = extractBattleBridgeGitHubCommand(comment?.body || '');
     if (!extracted.ok) continue;
     const validated = validateBattleBridgeGitHubCommand(extracted.command, {
       authorLogin: comment?.user?.login || '',
       now,
+      authoredAt: comment?.created_at || now,
     });
     if (!validated.ok) {
       rejected.push(Object.freeze({ commentId: comment?.id || null, ...validated }));
+      const terminal = projectTerminalMailboxRejection(comment, extracted.command, validated);
+      if (terminal && !consumedRequestIds.has(terminal.command.requestId)
+        && !seenRequestIds.has(terminal.command.requestId)) {
+        seenRequestIds.add(terminal.command.requestId);
+        terminalRejections.push(terminal);
+      }
       continue;
     }
     if (consumedRequestIds.has(validated.command.requestId)) continue;
-    return Object.freeze({
-      ok: true,
-      verdict: 'COMMAND_READY',
+    if (seenRequestIds.has(validated.command.requestId)) continue;
+    seenRequestIds.add(validated.command.requestId);
+    ready.push(Object.freeze({
       commentId: comment?.id || null,
       commentUrl: comment?.html_url || comment?.url || '',
       command: validated.command,
-      rejected,
+      partition: classifyBattleBridgeMailboxOperation(validated.command.operation),
+    }));
+  }
+  if (ready.length === 0) return Object.freeze({
+    ok: true,
+    verdict: 'NO_COMMAND_READY',
+    rejected,
+    terminalRejections: Object.freeze(terminalRejections),
+  });
+  const commands = Object.freeze(ready.slice(0, boundedMaxBatch));
+  const controlCount = commands.filter((entry) => entry.partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL).length;
+  const observationCount = commands.length - controlCount;
+  return Object.freeze({
+    ok: true,
+    verdict: 'COMMAND_BATCH_READY',
+    commands,
+    selectedCount: commands.length,
+    readyCount: ready.length,
+    deferredCount: Math.max(0, ready.length - commands.length),
+    controlCount,
+    observationCount,
+    maximumBatchSize: BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
+    controlSerialized: true,
+    duplicateWorkerAllowed: false,
+    rejected,
+    terminalRejections: Object.freeze(terminalRejections),
+  });
+}
+
+export function selectNextBattleBridgeGitHubCommand(comments = [], options = {}) {
+  const batch = selectBattleBridgeGitHubCommandBatch(comments, { ...options, maxBatch: 1 });
+  if (!batch.ok || batch.verdict === 'NO_COMMAND_READY') return batch;
+  const selected = batch.commands[0];
+  return Object.freeze({
+    ok: true,
+    verdict: 'COMMAND_READY',
+    commentId: selected.commentId,
+    commentUrl: selected.commentUrl,
+    command: selected.command,
+    partition: selected.partition,
+    rejected: batch.rejected,
+    terminalRejections: batch.terminalRejections,
+  });
+}
+
+export function revalidateBattleBridgeGitHubCommandForExecution(command = {}, {
+  now = new Date(),
+} = {}) {
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
+  const expiresAtMs = Date.parse(String(command?.expiresAt || ''));
+  if (!Number.isFinite(nowMs) || !Number.isFinite(expiresAtMs)) {
+    return fail('COMMAND_REVALIDATION_FAILED', {
+      requestId: String(command?.requestId || ''),
+      operation: String(command?.operation || ''),
+      validationBlocker: 'COMMAND_EXPIRY_INVALID',
     });
   }
-  return Object.freeze({ ok: true, verdict: 'NO_COMMAND_READY', rejected });
+  if (expiresAtMs <= nowMs) {
+    return fail('COMMAND_EXPIRED_BEFORE_EXECUTION', {
+      requestId: String(command?.requestId || ''),
+      operation: String(command?.operation || ''),
+    });
+  }
+  return Object.freeze({
+    ok: true,
+    verdict: 'COMMAND_EXECUTION_SLOT_READY',
+    command,
+  });
+}
+
+export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
+  now = () => new Date(),
+  preflightCommand,
+  beforeExecute,
+  executeCommand,
+  onTerminal,
+} = {}) {
+  const entries = Array.isArray(batch?.commands) ? batch.commands : [];
+  if (batch?.verdict !== 'COMMAND_BATCH_READY' || entries.length < 1
+    || entries.length > BATTLE_BRIDGE_MAILBOX_MAX_BATCH || typeof now !== 'function'
+    || typeof executeCommand !== 'function'
+    || (preflightCommand !== undefined && typeof preflightCommand !== 'function')
+    || (beforeExecute !== undefined && typeof beforeExecute !== 'function')
+    || (onTerminal !== undefined && typeof onTerminal !== 'function')) {
+    return fail('MAILBOX_BATCH_EXECUTION_INVALID');
+  }
+  const results = new Array(entries.length);
+  let activeExecutions = 0;
+  let maxConcurrencyObserved = 0;
+  let terminalCheckpoint = Promise.resolve();
+  const checkpointTerminal = (entry, result) => {
+    if (!onTerminal) return Promise.resolve(result);
+    terminalCheckpoint = terminalCheckpoint
+      .catch(() => undefined)
+      .then(() => onTerminal(entry, result));
+    return terminalCheckpoint;
+  };
+  const executeEntry = async (entry, index) => {
+    const executionValidation = revalidateBattleBridgeGitHubCommandForExecution(entry.command, {
+      now: now(),
+    });
+    if (!executionValidation.ok) {
+      results[index] = Object.freeze({
+        entry,
+        result: await checkpointTerminal(entry, executionValidation),
+      });
+      return;
+    }
+    if (preflightCommand) {
+      const preflight = await preflightCommand(entry);
+      if (!preflight?.ok) {
+        results[index] = Object.freeze({
+          entry,
+          result: await checkpointTerminal(entry, preflight || fail('COMMAND_PREFLIGHT_FAILED')),
+        });
+        return;
+      }
+    }
+    activeExecutions += 1;
+    maxConcurrencyObserved = Math.max(maxConcurrencyObserved, activeExecutions);
+    try {
+      if (beforeExecute) await beforeExecute(entry);
+      const execution = await executeCommand(entry);
+      results[index] = Object.freeze({
+        entry,
+        result: await checkpointTerminal(entry, execution),
+      });
+    } finally {
+      activeExecutions -= 1;
+    }
+  };
+
+  let index = 0;
+  while (index < entries.length) {
+    if (entries[index].partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL) {
+      await executeEntry(entries[index], index);
+      index += 1;
+      continue;
+    }
+    const observationStart = index;
+    while (index < entries.length && entries[index].partition === BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION) index += 1;
+    await Promise.all(entries.slice(observationStart, index).map((entry, offset) => executeEntry(entry, observationStart + offset)));
+  }
+
+  return Object.freeze({
+    ok: true,
+    verdict: 'COMMAND_BATCH_EXECUTION_COMPLETE',
+    results: Object.freeze(results),
+    selectedCount: entries.length,
+    maxConcurrencyObserved,
+    controlSerialized: true,
+    observationParallelismBounded: true,
+    duplicateWorkerAllowed: false,
+  });
+}
+
+function validateScopedDeliveryExecution(command = {}, result = {}) {
+  const scopedDelivery = command?.scopedDelivery;
+  if (!scopedDelivery || result?.ok === false) return null;
+
+  const sourceHead = String(result?.sourceHead || result?.expectedHead || '').toLowerCase();
+  if (sourceHead && sourceHead !== scopedDelivery.deploymentHead) {
+    return fail('SCOPED_DELIVERY_DEPLOYMENT_HEAD_MISMATCH', { sourceHead });
+  }
+
+  if (command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF') {
+    const mergeCommitHead = String(result?.mergeCommitHead || '').toLowerCase();
+    const githubMainHead = String(result?.githubMainHead || '').toLowerCase();
+    const localHead = String(result?.localHead || '').toLowerCase();
+    if (mergeCommitHead !== scopedDelivery.mergeCommit) {
+      return fail('SCOPED_DELIVERY_MERGE_COMMIT_MISMATCH', { mergeCommitHead });
+    }
+    if (githubMainHead && githubMainHead !== scopedDelivery.deploymentHead) {
+      return fail('SCOPED_DELIVERY_DEPLOYMENT_HEAD_MISMATCH', { sourceHead: githubMainHead });
+    }
+    if (localHead && localHead !== scopedDelivery.deploymentHead) {
+      return fail('SCOPED_DELIVERY_DEPLOYMENT_HEAD_MISMATCH', { sourceHead: localHead });
+    }
+  }
+
+  return null;
 }
 
 export async function executeBattleBridgeGitHubCommand(command, {
@@ -329,9 +741,14 @@ export async function executeBattleBridgeGitHubCommand(command, {
   runMonitorMultiplexerAcceptance,
   runExactHeadWindowsBrowserProof,
   queueVerifiedSpotifyLink,
+  executeForgeShadowM2 = executeForgeShadowM2OnBattleBridge,
   executeProtectedOpenClawMerge = executeProtectedOpenClawMergeOnBattleBridge,
   readCodexBankedResetStatus = readCodexBankedResetStatusOnBattleBridge,
   redeemBankedCodexReset = executeCodexBankedResetOnBattleBridge,
+  publishCodexCapacityStatus,
+  sharedWorkspaceRoot = '',
+  repoRoot = '',
+  capacityPublicationTimestampUtc = new Date().toISOString(),
 } = {}) {
   const handlers = {
     UPDATE_STEPHANOS_FROM_CHAT: updateStephanos,
@@ -347,6 +764,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
     WAKE_BATTLE_BRIDGE_RECOVERY_MESH: wakeRecoveryMesh,
     RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
     RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF: runExactHeadWindowsBrowserProof,
+    [FORGE_SHADOW_BATTLE_BRIDGE_OPERATION]: executeForgeShadowM2,
     [PROTECTED_OPENCLAW_MERGE_OPERATION]: executeProtectedOpenClawMerge,
     [MUSIC_SPOTIFY_LINK_OPERATION]: queueVerifiedSpotifyLink,
     [CODEX_BANKED_RESET_STATUS_OPERATION]: readCodexBankedResetStatus,
@@ -358,12 +776,56 @@ export async function executeBattleBridgeGitHubCommand(command, {
   }
   try {
     const result = await handler(command);
+    const scopedDeliveryBlocker = validateScopedDeliveryExecution(command, result);
+    if (scopedDeliveryBlocker) {
+      return Object.freeze({
+        ...scopedDeliveryBlocker,
+        operation: command.operation,
+        requestId: command.requestId,
+        result,
+      });
+    }
+    let sharedWorkspacePublication = null;
+    if (command.operation === CODEX_BANKED_RESET_STATUS_OPERATION && typeof publishCodexCapacityStatus === 'function') {
+      const publication = await publishCodexCapacityStatus(sharedWorkspaceRoot, {
+        statusResult: result,
+        timestampUtc: capacityPublicationTimestampUtc,
+        proofRefs: result?.proofRefs,
+      }, {
+        repoRoot,
+        nowMs: Date.parse(capacityPublicationTimestampUtc),
+      });
+      const publishedRemainingPercent = publication?.slice?.remainingPercent;
+      sharedWorkspacePublication = Object.freeze({
+        ok: publication?.ok === true,
+        reason: String(publication?.reason || 'CODEX_CAPACITY_WORKSPACE_PUBLISH_UNKNOWN'),
+        truthState: String(publication?.slice?.truthState || 'UNKNOWN'),
+        observedAtUtc: String(publication?.slice?.observedAtUtc || ''),
+        remainingPercent: publishedRemainingPercent !== null
+          && publishedRemainingPercent !== undefined
+          && publishedRemainingPercent !== ''
+          && Number.isFinite(Number(publishedRemainingPercent))
+          ? Number(publishedRemainingPercent)
+          : null,
+        capacityUsable: publication?.slice?.capacityUsable === true,
+        finalVerdict: String(publication?.finalVerdict || 'CODEX_CAPACITY_WORKSPACE_PUBLISH_BLOCKED'),
+      });
+      if (!sharedWorkspacePublication.ok) {
+        return fail('CODEX_CAPACITY_WORKSPACE_PUBLISH_FAILED', {
+          operation: command.operation,
+          requestId: command.requestId,
+          result,
+          sharedWorkspacePublication,
+        });
+      }
+    }
     return Object.freeze({
       ok: result?.ok !== false,
       verdict: result?.ok === false ? 'COMMAND_EXECUTION_BLOCKED' : 'COMMAND_EXECUTION_COMPLETE',
       operation: command.operation,
       requestId: command.requestId,
       result,
+      ...(sharedWorkspacePublication ? { sharedWorkspacePublication } : {}),
     });
   } catch (error) {
     return fail('COMMAND_EXECUTION_FAILED', {
@@ -384,6 +846,7 @@ export function buildBattleBridgeGitHubCommandReceipt({
   blocker = '',
   proofRefs = [],
 } = {}) {
+  const scopedDelivery = command?.scopedDelivery || null;
   return Object.freeze({
     schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
     requestId: String(command?.requestId || ''),
@@ -392,6 +855,15 @@ export function buildBattleBridgeGitHubCommandReceipt({
     issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
     expectedHead: String(command?.expectedHead || ''),
+    relatedPr: scopedDelivery ? String(scopedDelivery.relatedPr || '') : '',
+    mergeCommit: scopedDelivery ? String(scopedDelivery.mergeCommit || '') : '',
+    deploymentHead: scopedDelivery ? String(scopedDelivery.deploymentHead || '') : '',
+    deploymentRequestId: scopedDelivery ? String(scopedDelivery.deploymentRequestId || '') : '',
+    featureId: scopedDelivery ? String(scopedDelivery.featureId || '') : '',
+    forgejoVersion: command?.operation === FORGE_SHADOW_BATTLE_BRIDGE_OPERATION ? String(command?.forgejoVersion || '') : '',
+    forgejoImageDigest: command?.operation === FORGE_SHADOW_BATTLE_BRIDGE_OPERATION ? String(command?.forgejoImageDigest || '') : '',
+    runtimeBoundary: command?.operation === FORGE_SHADOW_BATTLE_BRIDGE_OPERATION ? String(command?.runtimeBoundary || '') : '',
+    m2Only: command?.operation === FORGE_SHADOW_BATTLE_BRIDGE_OPERATION ? command?.m2Only === true : false,
     prNumber: ['RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF', PROTECTED_OPENCLAW_MERGE_OPERATION].includes(command?.operation)
       ? Number(command?.prNumber || 0)
       : 0,

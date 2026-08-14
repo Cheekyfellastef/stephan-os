@@ -1,6 +1,14 @@
+import {
+  MAXIMUM_BUILD_LANES,
+  MINIMUM_BUILD_LANES,
+  deriveElasticBuildWidth,
+  selectResourceDisjointCandidates,
+} from '../agents/elasticBuildCapacityV1.mjs';
+
 const SHA_RE = /^[0-9a-f]{40}$/i;
 const REPOSITORY_RE = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const BRANCH_RE = /^[a-z0-9][a-z0-9._/-]{0,239}$/i;
+const RESOURCE_ID_RE = /^[a-z0-9][a-z0-9._:/-]{0,239}$/i;
 const EXPLICIT_TZ_RE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const ACTIVE_STATES = new Set(['ACTIVE', 'IMPLEMENTING', 'CI_REVIEW', 'PROOF_RUNNING']);
 const RUNNABLE_STATES = new Set(['QUEUED', 'READY']);
@@ -114,9 +122,12 @@ function normalizeGoal(candidate = {}) {
   const resultEvidence = normalizeStringEvidenceArray(goal, 'resultProofRefs');
   const structuralEvidence = normalizeStringEvidenceArray(goal, 'structuralReviewProofRefs');
   const modelEvidence = normalizeStringEvidenceArray(goal, 'modelTestProofRefs');
+  const resourceEvidence = normalizeStringEvidenceArray(goal, 'resourceIds');
   const resultProofRefs = resultEvidence.values;
   const structuralReviewProofRefs = structuralEvidence.values;
   const modelTestProofRefs = modelEvidence.values;
+  const resourceIds = [...new Set(resourceEvidence.values.map((value) => value.toLowerCase()))].sort();
+  const invalidResourceIds = resourceIds.filter((value) => !RESOURCE_ID_RE.test(value));
   const invalidFlywheelEvidenceContainers = [
     ...(resultEvidence.invalidContainer ? ['resultProofRefs'] : []),
     ...(structuralEvidence.invalidContainer ? ['structuralReviewProofRefs'] : []),
@@ -161,7 +172,7 @@ function normalizeGoal(candidate = {}) {
       operatorApprovalReceipt.branch,
     ) === proofBindingKey(number, activePr, headSha, repository, branch)
   );
-  return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, prerequisiteBoundExceeded, suppliedPrerequisiteCount, invalidInvalidationClaims, invalidApprovalRequired, invalidOperatorPriority, invalidRepairCycleCount, invalidFlywheelEvidenceContainers, boundExceededFlywheelEvidence, invalidFlywheelEvidenceEntries, invalidOperatorApprovalReceipt, branchBoundExceeded, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr, repository, branch, headSha, proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, operatorApprovalReceipt, exactHeadApprovalSatisfied, duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null, resultProofRefs, reusableCapabilityId, sharedLessonId, flywheelOutputsComplete, repairCycleCount, convergenceReviewRequired, structuralReviewProofRefs, modelTestProofRefs, convergenceEvidenceComplete });
+  return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, prerequisiteBoundExceeded, suppliedPrerequisiteCount, invalidInvalidationClaims, invalidApprovalRequired, invalidOperatorPriority, invalidRepairCycleCount, invalidFlywheelEvidenceContainers, boundExceededFlywheelEvidence, invalidFlywheelEvidenceEntries, invalidOperatorApprovalReceipt, branchBoundExceeded, invalidResourceIds, invalidResourceContainer:resourceEvidence.invalidContainer, invalidResourceEntries:resourceEvidence.invalidEntries, resourceIdsBoundExceeded:resourceEvidence.boundExceeded, resourceIds, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr, repository, branch, headSha, proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, operatorApprovalReceipt, exactHeadApprovalSatisfied, duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null, resultProofRefs, reusableCapabilityId, sharedLessonId, flywheelOutputsComplete, repairCycleCount, convergenceReviewRequired, structuralReviewProofRefs, modelTestProofRefs, convergenceEvidenceComplete });
 }
 
 function cycleEvidence(path, start, dependency) {
@@ -204,7 +215,7 @@ function detectCycles(goalsByIssue) {
   return { cycles, detectedBackEdges };
 }
 function hasMalformedRelations(goal) { return goal.invalidPrerequisiteContainer || goal.prerequisiteBoundExceeded || goal.invalidPrerequisites.length || goal.invalidInvalidationClaims.length; }
-function hasMalformedEvidence(goal) { return hasMalformedRelations(goal) || goal.invalidApprovalRequired || goal.invalidOperatorPriority || goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length || goal.boundExceededFlywheelEvidence.length || goal.invalidFlywheelEvidenceEntries.length || goal.invalidOperatorApprovalReceipt || goal.branchBoundExceeded; }
+function hasMalformedEvidence(goal) { return hasMalformedRelations(goal) || goal.invalidApprovalRequired || goal.invalidOperatorPriority || goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length || goal.boundExceededFlywheelEvidence.length || goal.invalidFlywheelEvidenceEntries.length || goal.invalidOperatorApprovalReceipt || goal.branchBoundExceeded || goal.invalidResourceContainer || goal.invalidResourceEntries.length || goal.resourceIdsBoundExceeded || goal.invalidResourceIds.length; }
 function completionOutputsSatisfied(goal) { return goal.flywheelOutputsComplete && goal.convergenceEvidenceComplete; }
 function createDependencyAdjudicator(goalsByIssue, staleByGoal) {
   const memo = new Map(); const visiting = new Set();
@@ -295,6 +306,16 @@ export function buildMissionScheduler(input = {}) {
   const freshnessPresent = hasOwn(source, 'freshnessMs');
   const freshnessInvalid = freshnessPresent && (typeof source.freshnessMs !== 'number' || !Number.isFinite(source.freshnessMs) || source.freshnessMs <= 0);
   const freshnessMs = freshnessInvalid || !freshnessPresent ? 15 * 60 * 1000 : source.freshnessMs;
+  const minimumActiveLanes = hasOwn(source, 'minimumActiveLanes') ? source.minimumActiveLanes : MINIMUM_BUILD_LANES;
+  const maximumActiveLanes = hasOwn(source, 'maximumActiveLanes') ? source.maximumActiveLanes : MAXIMUM_BUILD_LANES;
+  const availableExecutorSlots = hasOwn(source, 'availableExecutorSlots') ? source.availableExecutorSlots : MAXIMUM_BUILD_LANES;
+  const capacityPolicy = deriveElasticBuildWidth({
+    minimumLanes:minimumActiveLanes,
+    maximumLanes:maximumActiveLanes,
+    activeLaneCount:0,
+    readyIndependentWorkCount:0,
+    availableExecutorSlots,
+  });
   const goalsContainerInvalid = hasOwn(source, 'goals') && !Array.isArray(source.goals);
   const proofHeadsContainerInvalid = hasOwn(source, 'proofHeadShas') && !Array.isArray(source.proofHeadShas);
   const proofHeadsBoundExceeded = Array.isArray(source.proofHeadShas) && source.proofHeadShas.length > MAX_EVIDENCE_ITEMS;
@@ -348,6 +369,7 @@ export function buildMissionScheduler(input = {}) {
   const authoritative = []; const rejectedActiveClaims = new Set(); const contradictions = [];
   if (publicInputInvalid) contradictions.push({ code:'INVALID_PUBLIC_INPUT' });
   if (nowInvalid || freshnessInvalid) contradictions.push({ code:'INVALID_SCHEDULER_CLOCK', invalidNow:nowInvalid, invalidFreshnessMs:freshnessInvalid });
+  if (capacityPolicy.status === 'SAFE_HOLD_INVALID_CAPACITY') contradictions.push({ code:'INVALID_PARALLEL_CAPACITY_POLICY' });
   if (goalsContainerInvalid) contradictions.push({ code:'INVALID_GOALS_CONTAINER' });
   if (portfolioBoundExceeded) contradictions.push({ code:'PORTFOLIO_BOUND_EXCEEDED', suppliedGoalCount:rawGoals.length, maximumGoalCount:MAX_PORTFOLIO_GOALS });
   if (totalPrerequisiteBoundExceeded) contradictions.push({ code:'TOTAL_PREREQUISITE_BOUND_EXCEEDED', suppliedPrerequisiteCount:totalPrerequisites, maximumPrerequisiteCount:MAX_TOTAL_PREREQUISITES });
@@ -371,6 +393,7 @@ export function buildMissionScheduler(input = {}) {
     else if (goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length || goal.boundExceededFlywheelEvidence.length || goal.invalidFlywheelEvidenceEntries.length) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_FLYWHEEL_EVIDENCE_INVALID', issue:goal.issue }); }
     else if (!goal.convergenceEvidenceComplete) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_STRUCTURAL_REVIEW_REQUIRED', issue:goal.issue }); }
     else if (hasMalformedRelations(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_RELATION_EVIDENCE_INVALID', issue:goal.issue }); }
+    else if (goal.invalidResourceContainer || goal.invalidResourceEntries.length || goal.resourceIdsBoundExceeded || goal.invalidResourceIds.length) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_RESOURCE_EVIDENCE_INVALID', issue:goal.issue }); }
     else if (goal.duplicateOf || goal.supersededBy) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_GOAL_INVALIDATED', issue:goal.issue }); }
     else if (staleByGoal.get(goal)) { rejectedActiveClaims.add(goal); contradictions.push({ code:'STALE_ACTIVE_EVIDENCE', issue:goal.issue }); }
     else if (!goal.activePr && !goal.branch) { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_LANE_IDENTITY_MISSING', issue:goal.issue }); }
@@ -378,27 +401,62 @@ export function buildMissionScheduler(input = {}) {
     else if (dependencyStatus(goal, goalsByIssue, dependencyComplete) !== 'SATISFIED') { rejectedActiveClaims.add(goal); contradictions.push({ code:'ACTIVE_DEPENDENCY_UNSATISFIED', issue:goal.issue }); }
     else authoritative.push(goal);
   }
-  if (authoritative.length > 1) contradictions.push({ code:'MULTIPLE_ACTIVE_LANES', issues:authoritative.map((goal) => goal.issue) });
+  if (capacityPolicy.status !== 'SAFE_HOLD_INVALID_CAPACITY' && authoritative.length > maximumActiveLanes) {
+    contradictions.push({ code:'ACTIVE_LANE_CAPACITY_EXCEEDED', issues:authoritative.map((goal) => goal.issue), maximumActiveLanes });
+  }
+  if (authoritative.length > 1) {
+    const unscoped = authoritative.filter((goal) => goal.resourceIds.length === 0).map((goal) => goal.issue);
+    if (unscoped.length) contradictions.push({ code:'ACTIVE_RESOURCE_SCOPE_MISSING', issues:unscoped });
+    const owners = new Map();
+    for (const goal of authoritative) {
+      for (const resourceId of goal.resourceIds) {
+        const owner = owners.get(resourceId);
+        if (owner) contradictions.push({ code:'ACTIVE_RESOURCE_CONFLICT', resourceId, issues:[owner, goal.issue] });
+        else owners.set(resourceId, goal.issue);
+      }
+    }
+  }
   if (!portfolioBoundExceeded && !totalPrerequisiteBoundExceeded) {
     const cycleEvidenceResult = detectCycles(goalsByIssue);
     if (cycleEvidenceResult.detectedBackEdges > 0) contradictions.push({ code:'DEPENDENCY_CYCLE', cycles:cycleEvidenceResult.cycles, detectedBackEdges:cycleEvidenceResult.detectedBackEdges, cycleEvidenceSemantics:'DFS_BACK_EDGES_LOWER_BOUND', cyclesShown:cycleEvidenceResult.cycles.length, maximumCyclesShown:MAX_CYCLE_EVIDENCE, maximumIssuesPerCycle:MAX_CYCLE_PATH_ISSUES });
   }
   const failClosed = contradictions.length > 0;
-  const activeGoals = new Set(!failClosed && authoritative.length === 1 ? authoritative : []);
+  const activeGoals = new Set(!failClosed ? authoritative : []);
   const classifiedPortfolio = goals.map((goal) => freeze({ ...goal, lifecycle:classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleByGoal.get(goal), provenBindings, dependencyComplete), evidenceFreshness:staleByGoal.get(goal) ? 'STALE' : 'FRESH' }));
   const portfolio = failClosed ? classifiedPortfolio.map((goal) => AUTHORITY_BEARING_LIFECYCLES.has(goal.lifecycle) ? freeze({ ...goal, candidateLifecycle:goal.lifecycle, lifecycle:'BLOCKED' }) : goal) : classifiedPortfolio;
   const ready = portfolio.filter((goal) => goal.lifecycle === 'READY').sort(compareReady);
   const mergeReady = portfolio.filter((goal) => goal.lifecycle === 'MERGE_READY').sort(compareReady);
   const closeReady = portfolio.filter((goal) => goal.lifecycle === 'CLOSE_READY').sort(compareReady);
   const approvalGoals = portfolio.filter((goal) => goal.lifecycle === 'APPROVAL_REQUIRED');
-  const activeClaim = !failClosed && authoritative.length === 1 ? authoritative[0] : null;
+  const activeClaims = !failClosed ? authoritative : [];
+  const activeClaim = activeClaims[0] ?? null;
   const active = activeClaim ? portfolio[goals.indexOf(activeClaim)] : null;
-  const action = failClosed || active ? null : mergeReady[0] ?? ready[0] ?? closeReady[0] ?? null;
+  const capacity = deriveElasticBuildWidth({
+    minimumLanes:minimumActiveLanes,
+    maximumLanes:maximumActiveLanes,
+    activeLaneCount:activeClaims.length,
+    readyIndependentWorkCount:ready.length,
+    availableExecutorSlots,
+  });
+  const capacitySafeHold = capacity.scaleAction === 'SAFE_HOLD';
+  const admissionReady = capacitySafeHold ? [] : ready;
+  const actionable = [...mergeReady, ...admissionReady, ...closeReady];
+  const action = failClosed || active ? null : actionable[0] ?? null;
   const operatorNeeded = approvalGoals.length > 0 || Boolean(active?.approvalRequired || active?.route === 'OPERATOR_APPROVAL' || action?.route === 'OPERATOR_APPROVAL');
   const blockers = freeze([...contradictions, ...lifecycleBlockers(portfolio)]);
   const programmeStatus = failClosed ? 'BLOCKED' : active ? 'IN_PROGRESS' : action?.lifecycle === 'MERGE_READY' ? 'MERGE_READY' : action?.lifecycle === 'CLOSE_READY' ? 'CLOSE_READY' : action ? 'READY_TO_ADVANCE' : operatorNeeded ? 'APPROVAL_REQUIRED' : 'WAITING';
-  const actionable = [...mergeReady, ...ready, ...closeReady];
-  return freeze({ schemaVersion:'stephanos.mission-scheduler.v1', readOnly:true, failClosed, contradictions, contradictionsTotal:contradictions.length, blockers, programmeStatus, activeGoal:active?.issue ? `#${active.issue}` : null, activeLane:active?.activePr ? `PR #${active.activePr}` : active?.branch ? compactString(active.branch) : null, whyNow:failClosed ? contradictionRationale(contradictions) : active ? 'Existing fresh, identified active lane remains authoritative.' : action?.lifecycle === 'MERGE_READY' ? 'Exact-head-proven and exact-head-approved implementation is ready for guarded merge.' : action?.lifecycle === 'CLOSE_READY' ? 'Completed goal is ready for guarded closure.' : action ? selectionRationale(action) : operatorNeeded ? 'Operator approval is required before work can advance.' : 'No eligible lane is currently available.', selectedGoal:action?.issue ? `#${action.issue}` : null, selectedRoute:action?.route ?? null, selectedLifecycle:action?.lifecycle ?? null, nextEligible:failClosed ? [] : actionable.filter((goal) => goal !== action).slice(0,3).map((goal) => `#${goal.issue}`), operatorNeeded, operatorAction:operatorNeeded ? 'OPERATOR_APPROVAL_REQUIRED' : 'NO_OPERATOR_ACTION_REQUIRED', portfolio, decisionReceipt:{ correlationId:text(source.correlationId, `scheduler-${nowMs}`), decidedAt:new Date(nowMs).toISOString(), status:failClosed ? 'BLOCKED_FAIL_CLOSED' : active ? 'ACTIVE_LANE' : action?.lifecycle === 'MERGE_READY' ? 'MERGE_READY' : action?.lifecycle === 'CLOSE_READY' ? 'CLOSE_READY' : action ? 'LANE_SELECTED' : operatorNeeded ? 'APPROVAL_REQUIRED' : 'WAITING', failClosed, contradictionCodes:contradictions.map(({code}) => code), selectedIssue:action?.issue ?? null, selectedLifecycle:action?.lifecycle ?? null, activeIssue:active?.issue ?? null, route:failClosed ? 'BLOCKED_UNSAFE_OR_UNKNOWN' : action?.route ?? active?.route ?? (operatorNeeded ? 'OPERATOR_APPROVAL' : 'WAITING_FOR_EXTERNAL_CONDITION'), proofRefs, proofHeadShas:[...provenHeads], proofReceipts } });
+  const parallelSelection = failClosed
+    ? { selected:[], held:[], reasonCodes:[] }
+    : capacitySafeHold
+      ? { selected:[], held:ready.map((goal) => ({ candidateId:`#${goal.issue}`, reasonCode:'CAPACITY_SAFE_HOLD' })), reasonCodes:['CAPACITY_SAFE_HOLD'] }
+      : selectResourceDisjointCandidates(
+    ready.map((goal) => ({ candidateId:`#${goal.issue}`, issue:goal.issue, route:goal.route, resourceIds:goal.resourceIds })),
+    { limit:capacity.remainingAdmissionSlots, activeResourceIds:activeClaims.flatMap((goal) => goal.resourceIds) },
+  );
+  const activeGoalRefs = activeClaims.map((goal) => `#${goal.issue}`);
+  const activeLaneRefs = activeClaims.map((goal) => goal.activePr ? `PR #${goal.activePr}` : compactString(goal.branch));
+  const parallelCandidateRefs = parallelSelection.selected.map(({ candidateId }) => candidateId);
+  return freeze({ schemaVersion:'stephanos.mission-scheduler.v1', readOnly:true, failClosed, contradictions, contradictionsTotal:contradictions.length, blockers, programmeStatus, activeGoal:activeGoalRefs[0] ?? null, activeGoals:activeGoalRefs, activeLane:activeLaneRefs[0] ?? null, activeLanes:activeLaneRefs, whyNow:failClosed ? contradictionRationale(contradictions) : active ? `${activeClaims.length} fresh, resource-scoped active lane${activeClaims.length === 1 ? ' remains' : 's remain'} authoritative.` : action?.lifecycle === 'MERGE_READY' ? 'Exact-head-proven and exact-head-approved implementation is ready for guarded merge.' : action?.lifecycle === 'CLOSE_READY' ? 'Completed goal is ready for guarded closure.' : action ? selectionRationale(action) : capacitySafeHold ? 'New build admission is held because elastic capacity is below the healthy baseline.' : operatorNeeded ? 'Operator approval is required before work can advance.' : 'No eligible lane is currently available.', selectedGoal:action?.issue ? `#${action.issue}` : null, selectedRoute:action?.route ?? null, selectedLifecycle:action?.lifecycle ?? null, parallelCandidates:parallelCandidateRefs, parallelCandidateDetails:parallelSelection.selected, parallelHeld:parallelSelection.held, elasticCapacity:capacity, nextEligible:failClosed ? [] : actionable.filter((goal) => goal !== action).slice(0,maximumActiveLanes).map((goal) => `#${goal.issue}`), operatorNeeded, operatorAction:operatorNeeded ? 'OPERATOR_APPROVAL_REQUIRED' : 'NO_OPERATOR_ACTION_REQUIRED', portfolio, decisionReceipt:{ correlationId:text(source.correlationId, `scheduler-${nowMs}`), decidedAt:new Date(nowMs).toISOString(), status:failClosed ? 'BLOCKED_FAIL_CLOSED' : active ? (activeClaims.length === 1 ? 'ACTIVE_LANE' : 'ACTIVE_LANES') : action?.lifecycle === 'MERGE_READY' ? 'MERGE_READY' : action?.lifecycle === 'CLOSE_READY' ? 'CLOSE_READY' : action ? 'LANE_SELECTED' : operatorNeeded ? 'APPROVAL_REQUIRED' : 'WAITING', failClosed, contradictionCodes:contradictions.map(({code}) => code), selectedIssue:action?.issue ?? null, selectedIssues:parallelSelection.selected.map(({ issue }) => issue), selectedLifecycle:action?.lifecycle ?? null, activeIssue:active?.issue ?? null, activeIssues:activeClaims.map((goal) => goal.issue), route:failClosed ? 'BLOCKED_UNSAFE_OR_UNKNOWN' : action?.route ?? active?.route ?? (operatorNeeded ? 'OPERATOR_APPROVAL' : 'WAITING_FOR_EXTERNAL_CONDITION'), proofRefs, proofHeadShas:[...provenHeads], proofReceipts } });
 }
 
 export function answerMissionQuery(input = {}, query = '') {
@@ -406,7 +464,7 @@ export function answerMissionQuery(input = {}, query = '') {
   const evidenceFreshness = scheduler.portfolio.length === 0 ? 'NO_EVIDENCE' : scheduler.portfolio.some((goal) => goal.evidenceFreshness === 'STALE') ? 'MIXED_OR_STALE' : 'FRESH';
   const blockersTotal = scheduler.blockers.length;
   const proofRefsTotal = scheduler.decisionReceipt.proofRefs.length;
-  const base = { programmeStatus:scheduler.programmeStatus, activeGoal:scheduler.activeGoal, activeLane:scheduler.activeLane, whyNow:compactString(scheduler.whyNow), selectedGoal:scheduler.selectedGoal, selectedRoute:scheduler.selectedRoute, selectedLifecycle:scheduler.selectedLifecycle, contradictionsTotal:scheduler.contradictionsTotal, blockers:scheduler.blockers.slice(0, CHAT_EVIDENCE_LIMIT).map(compactBlocker), blockersTotal, nextEligible:scheduler.nextEligible, operatorNeeded:scheduler.operatorNeeded, operatorAction:scheduler.operatorAction, evidenceFreshness, proofRefs:scheduler.decisionReceipt.proofRefs.slice(0, CHAT_EVIDENCE_LIMIT).map(compactString), proofRefsTotal };
+  const base = { programmeStatus:scheduler.programmeStatus, activeGoal:scheduler.activeGoal, activeGoals:scheduler.activeGoals, activeLane:scheduler.activeLane, activeLanes:scheduler.activeLanes, whyNow:compactString(scheduler.whyNow), selectedGoal:scheduler.selectedGoal, parallelCandidates:scheduler.parallelCandidates, elasticCapacity:scheduler.elasticCapacity, selectedRoute:scheduler.selectedRoute, selectedLifecycle:scheduler.selectedLifecycle, contradictionsTotal:scheduler.contradictionsTotal, blockers:scheduler.blockers.slice(0, CHAT_EVIDENCE_LIMIT).map(compactBlocker), blockersTotal, nextEligible:scheduler.nextEligible, operatorNeeded:scheduler.operatorNeeded, operatorAction:scheduler.operatorAction, evidenceFreshness, proofRefs:scheduler.decisionReceipt.proofRefs.slice(0, CHAT_EVIDENCE_LIMIT).map(compactString), proofRefsTotal };
   if (normalized.includes('blocked')) return freeze({ ...base, focus:'BLOCKERS' });
   if (normalized.includes('next')) return freeze({ ...base, focus:'NEXT_ELIGIBLE' });
   if (normalized.includes('need anything') || normalized.includes('operator')) return freeze({ ...base, focus:'OPERATOR_ACTION' });
