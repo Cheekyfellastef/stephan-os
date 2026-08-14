@@ -261,6 +261,26 @@ test('canonical build-lane receipt invariants gate Sovereignty capacity', () => 
   }
 });
 
+test('caller options cannot override the canonical build-lane repository or task baseline', () => {
+  const githubLaneStatus = mutateReceipt('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', {
+    repository: 'Other/repo',
+    supportedTaskClasses: ['MULTI_MODULE_IMPLEMENTATION'],
+  });
+  const observations = createSovereigntyCapacityObservationsV1(
+    { githubLaneStatus },
+    {
+      nowMs: NOW_MS,
+      repository: 'Other/repo',
+      buildTaskClass: 'MULTI_MODULE_IMPLEMENTATION',
+    },
+  );
+  const github = observations[1];
+  assert.equal(github.truthState, 'UNKNOWN');
+  assert.equal(github.capacityState, 'UNKNOWN');
+  assert.equal(github.metrics.queueDepth, null);
+  assert.equal(github.metrics.p95StartLatencySeconds, null);
+});
+
 test('Sovereignty rejects build-lane observations from even the canonical one-minute future tolerance', () => {
   const githubLaneStatus = mutateReceipt('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', {
     observedAtUtc: '2026-08-14T12:00:30.000Z',
