@@ -275,6 +275,28 @@ test('scheduler rejects overlapping selections, set mismatches and non-GitHub ro
     assert.equal(result.valid, false);
     assert.ok(result.blockers.includes('scheduler-decision-receipt-shape-invalid'));
   });
+  for (const invalidStatus of [null, { state:'LANE_SELECTED' }, 'INVENTED_READY']) {
+    await t.test(`noncanonical decision status ${JSON.stringify(invalidStatus)}`, () => {
+      const projection = scheduler();
+      projection.decisionReceipt.status = invalidStatus;
+      const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
+      assert.equal(result.valid, false);
+      assert.ok(result.blockers.includes('scheduler-decision-stale-or-invalid'));
+    });
+  }
+});
+
+test('a zero-slot GitHub lane remains a valid measured baseline for healthy Foundry capacity', () => {
+  const github = evidence('github', 'CHATGPT_GITHUB', { metrics:{ availableSlots:0 } });
+  const result = planFoundryParallelProductionAcceleration({}, host({
+    providerCapacityEvidence:[github, evidence('foundry', 'FOUNDRY_FORGE')],
+  }));
+  assert.equal(result.valid, true);
+  assert.equal(result.decision, FOUNDRY_ACCELERATION_DECISIONS.READY);
+  assert.equal(result.assignments[0].providerId, 'foundry');
+  const baseline = result.providerStatus.find(({ providerId }) => providerId === 'github');
+  assert.equal(baseline.evidenceValid, true);
+  assert.equal(baseline.eligible, false);
 });
 
 test('zero and negative savings never route even when the trusted minimum is zero', async (t) => {
