@@ -261,6 +261,13 @@ test('scheduler rejects overlapping selections, set mismatches and non-GitHub ro
     assert.equal(result.valid, false);
     assert.ok(result.blockers.includes('scheduler-decision-status-inconsistent'));
   });
+  await t.test('LANE_SELECTED route contradicts the canonical selected portfolio row', () => {
+    const projection = scheduler();
+    projection.decisionReceipt.route = 'OPENCLAW_LOCAL';
+    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('scheduler-decision-status-inconsistent'));
+  });
   await t.test('non-GitHub route', () => {
     const selected = [portfolioItem(1737, { route:'OPENCLAW_LOCAL' })];
     const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:scheduler({ selected }) }));
@@ -322,6 +329,20 @@ test('a zero-slot GitHub lane remains a valid measured baseline for healthy Foun
   const baseline = result.providerStatus.find(({ providerId }) => providerId === 'github');
   assert.equal(baseline.evidenceValid, true);
   assert.equal(baseline.eligible, false);
+});
+
+test('positive candidates held after Foundry slots are consumed report slot exhaustion', () => {
+  const selected = [portfolioItem(1737, { criticalPathWeight:1000 }), portfolioItem(1738)];
+  const foundry = evidence('foundry', 'FOUNDRY_FORGE', { metrics:{ availableSlots:1 } });
+  const result = planFoundryParallelProductionAcceleration({}, host({
+    schedulerProjection:scheduler({ selected }),
+    providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), foundry],
+  }));
+  assert.equal(result.valid, true);
+  assert.equal(result.assignments.length, 1);
+  assert.equal(result.heldCandidates.length, 1);
+  assert.equal(result.heldCandidates[0].candidateId, '#1738');
+  assert.equal(result.heldCandidates[0].reason, 'NO_AVAILABLE_FOUNDRY_SLOT_USE_GITHUB');
 });
 
 test('zero and negative savings never route even when the trusted minimum is zero', async (t) => {
