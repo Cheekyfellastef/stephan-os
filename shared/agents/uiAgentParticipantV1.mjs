@@ -110,6 +110,13 @@ function timestampFutureDated(timestampUtc, validationOptions = {}) {
   return observedMs > nowMs + maxFutureSkewMs;
 }
 
+function statusTimestampFutureDated(timestampUtc, validationOptions = {}) {
+  const observedMs = Date.parse(text(timestampUtc));
+  if (!Number.isFinite(observedMs)) return false;
+  const nowMs = Number.isFinite(validationOptions.nowMs) ? validationOptions.nowMs : Date.now();
+  return observedMs > nowMs;
+}
+
 function capabilityFutureDated(capability, validationOptions = {}) {
   return timestampFutureDated(capability?.timestampUtc, validationOptions);
 }
@@ -192,7 +199,7 @@ export function createUiAgentParticipantStatusRecord(input = {}) {
     : ['evidence/receipts/ui-agent-participant-v1'];
   const capability = input.capability || createUiAgentCapabilityRecord({ ...input, timestampUtc, proofRefs });
   const readiness = buildUiAgentReadiness({ ...input, capability, timestampUtc, proofRefs });
-  const statusTimestampFuture = timestampFutureDated(timestampUtc, input.validationOptions || {});
+  const statusTimestampFuture = statusTimestampFutureDated(timestampUtc, input.validationOptions || {});
   const statusReady = readiness.readyForSharedWorkspaceRegistration && !statusTimestampFuture;
   const nextMilestone = statusReady
     ? readiness.nextMilestone
