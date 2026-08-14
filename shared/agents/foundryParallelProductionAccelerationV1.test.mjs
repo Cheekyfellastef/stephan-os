@@ -212,6 +212,21 @@ test('malformed, sparse and hostile observations fail closed without throwing', 
   assert.ok(hostileResult.blockers.includes('hostile-input-observation-failed'));
 });
 
+test('unsafe M3 receipt references block routing and are not projected into telemetry', () => {
+  const foundry = provider('foundry');
+  foundry.m3RuntimeReceipt = {
+    ...foundry.m3RuntimeReceipt,
+    receiptRef: 'https://hostile.invalid/runtime-receipt',
+  };
+  const result = planFoundryParallelProductionAcceleration(input({ providers: [provider('github'), foundry] }));
+  const status = result.providerStatus.find(({ providerId }) => providerId === 'foundry');
+
+  assert.equal(result.assignments.length, 0);
+  assert.ok(status.blockers.includes('foundry-m3-runtime-receipt-ref-invalid'));
+  assert.equal(status.m3Runtime.receiptRef, null);
+  assert.equal(result.foundryTelemetry.lastRuntimeReceipt, null);
+});
+
 test('planner never grants dispatch, mutation, merge, runtime or credential authority', () => {
   const result = planFoundryParallelProductionAcceleration(input());
   assert.deepEqual(result.authority, {
