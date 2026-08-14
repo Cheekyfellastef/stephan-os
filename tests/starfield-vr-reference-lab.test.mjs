@@ -48,6 +48,31 @@ test('truth boundary renders every mandatory promotion-evidence gate', () => {
   assert.doesNotMatch(source, /requiredPromotionEvidence\.slice/);
 });
 
+test('reference details expose pinned local evidence alongside external sources', () => {
+  const source = fs.readFileSync(path.join(appRoot, 'reference-lab.js'), 'utf8');
+  assert.match(source, /reference\.localReferences \|\| \[\]/);
+  assert.match(source, /localReferenceHref\(localReference\)/);
+  assert.match(source, /pinned local evidence/);
+  assert.match(source, /normalized\.includes\('\.\.'\)/);
+});
+
+test('copied build brief carries the selected measurable acceptance tests', () => {
+  const source = fs.readFileSync(path.join(appRoot, 'reference-lab.js'), 'utf8');
+  assert.match(source, /Selected acceptance tests:/);
+  assert.match(source, /recipe\.acceptanceTests\.map/);
+});
+
+test('copy feedback distinguishes success from failure instead of painting every outcome green', () => {
+  const source = fs.readFileSync(path.join(appRoot, 'reference-lab.js'), 'utf8');
+  const css = fs.readFileSync(path.join(appRoot, 'styles.css'), 'utf8');
+  assert.match(source, /setCopyStatus\('Build brief copied\.', 'success'\)/);
+  assert.match(source, /setCopyStatus\('Clipboard unavailable in this browser context\.', 'error'\)/);
+  assert.match(source, /setCopyStatus\('Copy failed\. The workbench remains unchanged\.', 'error'\)/);
+  assert.match(css, /\.copy-status \{[^}]*color: var\(--muted\)/s);
+  assert.match(css, /\.copy-status\.is-success \{ color: var\(--mint\); \}/);
+  assert.match(css, /\.copy-status\.is-error \{ color: #[0-9a-f]{6}; \}/i);
+});
+
 test('workspace is responsive, reduced-motion safe and has no remote runtime asset dependency', () => {
   const html = fs.readFileSync(path.join(appRoot, 'index.html'), 'utf8');
   const css = fs.readFileSync(path.join(appRoot, 'styles.css'), 'utf8');
