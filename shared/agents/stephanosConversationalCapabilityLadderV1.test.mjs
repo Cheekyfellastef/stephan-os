@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  STEPHANOS_BOUNDARY_ADJUDICATION_SCHEMA_VERSION,
   STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION,
   STEPHANOS_CAPABILITY_QUESTION_SCHEMA_VERSION,
   STEPHANOS_CAPABILITY_ROUND_SCHEMA_VERSION,
   STEPHANOS_INITIAL_QUESTION_CLASSES,
+  canonicalStephanosQuestionIntentFingerprint,
   createStephanosCapabilityGapObservation,
   evaluateStephanosCapabilityRound,
   validateStephanosCapabilityAnswer,
@@ -79,18 +81,41 @@ function answer(questionRecord, overrides = {}) {
   };
 }
 
-function laterRound() {
-  const questions = STEPHANOS_INITIAL_QUESTION_CLASSES.map((questionClass, index) => question(questionClass, index, {
+function canonicalLaterQuestion(questionClass, index, overrides = {}) {
+  const candidate = question(questionClass, index, {
     roundId: 'stephanos-round-002',
     questionId: `transfer-question-${String(index + 1).padStart(2, '0')}`,
-    intentFingerprint: `transfer-fingerprint-${String(index + 1).padStart(2, '0')}`,
     questionText: `Novel transfer scenario ${index + 1} for ${questionClass}.`,
-  }));
+    noveltyRefs: [`previous-round:${PRIOR_FINGERPRINTS[index]}`],
+    ...overrides,
+  });
+  return {
+    ...candidate,
+    intentFingerprint: canonicalStephanosQuestionIntentFingerprint(candidate),
+  };
+}
+
+function laterRound() {
   return round({
     roundId: 'stephanos-round-002',
     roundNumber: 2,
-    questions,
+    questions: STEPHANOS_INITIAL_QUESTION_CLASSES.map((questionClass, index) => canonicalLaterQuestion(questionClass, index)),
   });
+}
+
+function boundaryAdjudication(answerRecord, overrides = {}) {
+  return {
+    schemaVersion: STEPHANOS_BOUNDARY_ADJUDICATION_SCHEMA_VERSION,
+    answerId: answerRecord.answerId,
+    answerVerdict: answerRecord.answerVerdict,
+    status: 'CURRENT',
+    freshness: 'FRESH',
+    evidenceRefs: [...answerRecord.evidenceRefs],
+    sourcesConsulted: [...answerRecord.sourcesConsulted],
+    proofRefs: ['evidence:boundary-adjudication'],
+    adjudicatedAtUtc: CREATED_AT,
+    ...overrides,
+  };
 }
 
 test('initial Stephanos round requires exactly ten materially diverse question classes', () => {
@@ -107,7 +132,7 @@ test('initial Stephanos round requires exactly ten materially diverse question c
   assert.ok(missingVerdict.errors.some((error) => error.startsWith('initial-round-missing-classes:')));
 });
 
-test('round rejects duplicate intent fingerprints so ten paraphrases cannot game the ladder', () => {
+test('round rejects duplicate intent fingerprints so ten labels cannot game the ladder', () => {
   const candidate = round();
   candidate.questions[9] = { ...candidate.questions[9], intentFingerprint: candidate.questions[0].intentFingerprint };
   const verdict = validateStephanosCapabilityRound(candidate);
@@ -115,41 +140,64 @@ test('round rejects duplicate intent fingerprints so ten paraphrases cannot game
   assert.ok(verdict.errors.includes('intentFingerprints-must-be-unique'));
 });
 
-test('later rounds require novelty lineage bound to exact prior-round fingerprints', () => {
+test('later rounds bind novelty to canonical prior question intent and exact prior fingerprints', () => {
+  const prior = round();
   const candidate = laterRound();
-  assert.equal(validateStephanosCapabilityRound(candidate, { priorRoundIntentFingerprints: PRIOR_FINGERPRINTS }).valid, false);
-
-  candidate.questions = candidate.questions.map((item, index) => ({
-    ...item,
-    noveltyRefs: [`previous-round:${PRIOR_FINGERPRINTS[index]}`],
-  }));
-  assert.equal(validateStephanosCapabilityRound(candidate, { priorRoundIntentFingerprints: PRIOR_FINGERPRINTS }).valid, true);
+  const verdict = validateStephanosCapabilityRound(candidate, {
+    priorRoundQuestions: prior.questions,
+    priorRoundIntentFingerprints: PRIOR_FINGERPRINTS,
+  });
+  assert.equal(verdict.valid, true, verdict.errors.join(', '));
 
   const arbitraryRefs = laterRound();
   arbitraryRefs.questions = arbitraryRefs.questions.map((item) => ({ ...item, noveltyRefs: ['anything'] }));
-  const arbitraryVerdict = validateStephanosCapabilityRound(arbitraryRefs, { priorRoundIntentFingerprints: PRIOR_FINGERPRINTS });
+  const arbitraryVerdict = validateStephanosCapabilityRound(arbitraryRefs, {
+    priorRoundQuestions: prior.questions,
+    priorRoundIntentFingerprints: PRIOR_FINGERPRINTS,
+  });
   assert.equal(arbitraryVerdict.valid, false);
   assert.ok(arbitraryVerdict.errors.some((error) => error.includes('noveltyRefs-must-bind-prior-round-fingerprints')));
-
-  const replay = laterRound();
-  replay.questions = replay.questions.map((item, index) => ({
-    ...item,
-    intentFingerprint: PRIOR_FINGERPRINTS[index],
-    noveltyRefs: [`previous-round:${PRIOR_FINGERPRINTS[index]}`],
-  }));
-  const replayVerdict = validateStephanosCapabilityRound(replay, { priorRoundIntentFingerprints: PRIOR_FINGERPRINTS });
-  assert.equal(replayVerdict.valid, false);
-  assert.ok(replayVerdict.errors.some((error) => error.includes('intentFingerprint-replays-prior-round')));
 });
 
-test('later rounds fail closed when the prior fingerprint estate is absent or malformed', () => {
-  const candidate = laterRound();
-  candidate.questions = candidate.questions.map((item, index) => ({
+test('later rounds reject verbatim prior intent even when caller invents new fingerprint labels', () => {
+  const prior = round();
+  const replay = laterRound();
+  replay.questions = replay.questions.map((item, index) => {
+    const repeated = {
+      ...item,
+      questionText: prior.questions[index].questionText,
+      intentFingerprint: `invented-transfer-${String(index + 1).padStart(2, '0')}`,
+    };
+    return repeated;
+  });
+  const verdict = validateStephanosCapabilityRound(replay, {
+    priorRoundQuestions: prior.questions,
+    priorRoundIntentFingerprints: PRIOR_FINGERPRINTS,
+  });
+  assert.equal(verdict.valid, false);
+  assert.ok(verdict.errors.some((error) => error.includes('intentFingerprint-must-match-canonical-question-intent')));
+
+  replay.questions = replay.questions.map((item) => ({
     ...item,
-    noveltyRefs: [`previous-round:${PRIOR_FINGERPRINTS[index]}`],
+    intentFingerprint: canonicalStephanosQuestionIntentFingerprint(item),
   }));
+  const canonicalReplay = validateStephanosCapabilityRound(replay, {
+    priorRoundQuestions: prior.questions,
+    priorRoundIntentFingerprints: PRIOR_FINGERPRINTS,
+  });
+  assert.equal(canonicalReplay.valid, false);
+  assert.ok(canonicalReplay.errors.some((error) => error.includes('canonical-intent-replays-prior-round')));
+});
+
+test('later rounds fail closed without the canonical prior question estate', () => {
+  const candidate = laterRound();
   assert.equal(validateStephanosCapabilityRound(candidate).valid, false);
-  assert.equal(validateStephanosCapabilityRound(candidate, { priorRoundIntentFingerprints: ['too-few'] }).valid, false);
+  const mismatch = validateStephanosCapabilityRound(candidate, {
+    priorRoundQuestions: round().questions,
+    priorRoundIntentFingerprints: ['wrong-fingerprint-01', ...PRIOR_FINGERPRINTS.slice(1)],
+  });
+  assert.equal(mismatch.valid, false);
+  assert.ok(mismatch.errors.includes('priorRoundIntentFingerprints-do-not-match-priorRoundQuestions'));
 });
 
 test('grounded answers require evidence, consulted sources and fresh-enough epistemic state', () => {
@@ -169,7 +217,7 @@ test('grounded answers require evidence, consulted sources and fresh-enough epis
   assert.ok(stale.errors.includes('grounded-answer-freshness-insufficient'));
 });
 
-test('boundary verdicts require adjudicated evidence, sources and fresh grounded epistemic state', () => {
+test('boundary verdicts require evidence, sources and fresh grounded epistemic state before adjudication', () => {
   const q = round().questions[0];
   const selfDeclared = validateStephanosCapabilityAnswer(answer(q, {
     answerText: 'I declare this outside my authority.',
@@ -262,9 +310,10 @@ test('ten grounded answers settle the round and unlock a materially different ro
   });
   assert.equal(verdict.mayAdvanceToNovelRound, true);
   assert.equal(verdict.requiresRepairReplay, false);
+  assert.equal(verdict.requiresBoundaryAdjudication, false);
 });
 
-test('an evidence-backed authority boundary is retained rather than misclassified as build debt', () => {
+test('evidence-backed boundary remains safe-held until canonical evidence adjudication is proven', () => {
   const capabilityRound = round();
   const answers = capabilityRound.questions.map((item) => answer(item));
   answers[9] = answer(capabilityRound.questions[9], {
@@ -278,8 +327,66 @@ test('an evidence-backed authority boundary is retained rather than misclassifie
   });
   const verdict = evaluateStephanosCapabilityRound({ round: capabilityRound, answers });
   assert.equal(verdict.valid, true);
+  assert.equal(verdict.state, 'SAFE_HOLD');
+  assert.equal(verdict.counts.retainedBoundaries, 0);
+  assert.equal(verdict.mayAdvanceToNovelRound, false);
+  assert.equal(verdict.requiresBoundaryAdjudication, true);
+  assert.equal(verdict.boundaryAdjudicationBlockers.length, 1);
+});
+
+test('fabricated boundary references cannot settle even with a self-authored adjudication object', () => {
+  const capabilityRound = round();
+  const answers = capabilityRound.questions.map((item) => answer(item));
+  const boundary = answer(capabilityRound.questions[9], {
+    answerText: 'I cannot self-grant new runtime mutation authority.',
+    epistemicState: 'KNOWN_FROM_CANONICAL_STATE',
+    evidenceRefs: ['fabricated-evidence'],
+    freshness: 'FRESH',
+    sourcesConsulted: ['fabricated-source'],
+    cannotAnswerReason: 'Claimed authority boundary.',
+    answerVerdict: 'UNSAFE_OR_AUTHORITY_BOUNDARY',
+  });
+  answers[9] = boundary;
+  const verdict = evaluateStephanosCapabilityRound({
+    round: capabilityRound,
+    answers,
+    boundaryAdjudications: [boundaryAdjudication(boundary)],
+    authoritativeEvidenceRefs: [],
+    authoritativeSourceRefs: [],
+    authoritativeAdjudicationProofRefs: [],
+    evaluationNowMs: Date.parse(CREATED_AT),
+  });
+  assert.equal(verdict.state, 'SAFE_HOLD');
+  assert.equal(verdict.requiresBoundaryAdjudication, true);
+  assert.match(verdict.boundaryAdjudicationBlockers[0].errors.join('\n'), /authoritative-registry/);
+});
+
+test('canonical boundary adjudication may retain a genuine boundary and settle the round', () => {
+  const capabilityRound = round();
+  const answers = capabilityRound.questions.map((item) => answer(item));
+  const boundary = answer(capabilityRound.questions[9], {
+    answerText: 'I cannot self-grant new runtime mutation authority.',
+    epistemicState: 'KNOWN_FROM_CANONICAL_STATE',
+    evidenceRefs: ['evidence:governing-authority-policy'],
+    freshness: 'FRESH',
+    sourcesConsulted: ['programme-authority'],
+    cannotAnswerReason: 'Authority remains reserved to the governing policy and operator.',
+    answerVerdict: 'UNSAFE_OR_AUTHORITY_BOUNDARY',
+  });
+  answers[9] = boundary;
+  const verdict = evaluateStephanosCapabilityRound({
+    round: capabilityRound,
+    answers,
+    boundaryAdjudications: [boundaryAdjudication(boundary)],
+    authoritativeEvidenceRefs: ['evidence:governing-authority-policy'],
+    authoritativeSourceRefs: ['programme-authority'],
+    authoritativeAdjudicationProofRefs: ['evidence:boundary-adjudication'],
+    evaluationNowMs: Date.parse(CREATED_AT),
+  });
+  assert.equal(verdict.valid, true);
   assert.equal(verdict.counts.retainedBoundaries, 1);
   assert.equal(verdict.counts.buildableGaps, 0);
   assert.equal(verdict.state, 'SETTLED');
   assert.equal(verdict.mayAdvanceToNovelRound, true);
+  assert.equal(verdict.requiresBoundaryAdjudication, false);
 });
