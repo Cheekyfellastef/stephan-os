@@ -30,10 +30,12 @@ The host context must be assembled from one current canonical snapshot and conta
 
 - repository, canonical `main` head/tree and explicit current time;
 - the trusted task class and minimum net-saving threshold;
-- a fresh canonical Mission Scheduler projection;
+- one bounded raw Mission Scheduler source snapshot from the trusted host;
 - canonical GitHub and optional Foundry build-lane receipts;
 - identity-bound measurement receipts contained inside the build receipts’ validity windows;
 - raw Forge sidecar evidence for direct canonical adjudication.
+
+The scheduler source has one exact root shape and cannot carry `now` or `freshnessMs`. Before the canonical scheduler runs, the adapter observes that source exactly once into a recursively frozen inert projection. Accessors, symbols, sparse or widened arrays, cycles, non-plain prototypes and inputs outside the canonical portfolio/evidence/prerequisite bounds fail closed. The adapter then calls `buildMissionScheduler()` directly and forces the trusted host clock and freshness window after the snapshot, so caller-shaped scheduler output, tuple rewrites and capacity rewrites never enter the recommendation path.
 
 Malformed, sparse, duplicate, stale, future, expired, wrong-repository, wrong-head, wrong-tree or internally contradictory evidence fails closed.
 
@@ -43,14 +45,16 @@ Every lane first passes `validateBuildLaneCapacityReceipt()` for the trusted rep
 
 The metrics receipt is payload-digest bound and repeats the exact build receipt identity, route, repository, worker, state, supported operations, supported task classes, queue depth and p95 start latency. Its authority IDs and proof refs must carry the build receipt chain, and its observation/expiry interval must be contained within the build receipt interval. Execution, integration, success, rework and available-slot measurements are consumed only from this host-provided receipt; root request values never participate.
 
-Foundry is additionally eligible only when a direct call to `adjudicateForgeSidecarCapacity()` proves exact repository/head/tree/mirror parity, fresh valid M2 and M3 receipts, evidence binding, no pending activation and `canCarryRealWork=true`. Both the build and metrics receipts must carry the canonical M2 and M3 receipt identities. The removed legacy six-field “M3 live” object is not authority evidence.
+Foundry is additionally eligible only when a direct call to `adjudicateForgeSidecarCapacity()` proves exact repository/head/tree/mirror parity, fresh valid M2 and M3 receipts, evidence binding, no pending activation and `canCarryRealWork=true`. Both the build and metrics receipts must carry the canonical M2 and M3 receipt identities. A failed Forge adjudication makes the final Foundry provider evidence invalid as well as ineligible; provider status cannot report valid evidence alongside Forge blockers. The removed legacy six-field “M3 live” object is not authority evidence.
 
 ## Scheduler and lease binding
 
-The planner accepts candidates only from `parallelCandidateDetails`. It verifies:
+The planner does not accept a host-authored scheduler projection. It runs the canonical Mission Scheduler from the inert bounded source and accepts candidates only from that invocation's `parallelCandidateDetails`. The canonical producer therefore remains responsible for priority ordering, complete selected/active tuples, resource-disjoint admission and `elasticCapacity.remainingAdmissionSlots`; a caller cannot consistently rewrite several output inventories to manufacture another admissible selection.
+
+As defense in depth, the adapter also verifies:
 
 - top-level and decision-receipt fail-closed state is false with zero contradictions;
-- the decision receipt has the exact canonical field inventory, empty contradiction codes, no candidates while `WAITING` or `APPROVAL_REQUIRED`, an allowed status consistent with its active/selected state, a `LANE_SELECTED`, `MERGE_READY` or `CLOSE_READY` issue/route/lifecycle tuple matching one canonical portfolio row, and an `ACTIVE_LANE(S)` route matching the primary canonical active row with null selected issue/lifecycle;
+- the decision receipt has the exact canonical field inventory, empty contradiction codes, no candidates while `WAITING` or `APPROVAL_REQUIRED`, an allowed status consistent with its active/selected state, a `LANE_SELECTED` issue equal to the first emitted selected candidate with a matching canonical route/lifecycle, a `MERGE_READY` or `CLOSE_READY` tuple matching one canonical portfolio row, and an `ACTIVE_LANE(S)` route matching the primary canonical active row with null selected issue/lifecycle;
 - decision freshness;
 - exact equality between active-goal, active-issue and ACTIVE portfolio inventories;
 - exact ordered equality between selected-issue, parallel-candidate and detail inventories;
@@ -104,12 +108,13 @@ Telemetry exposes only bounded identities and measurements: lane/worker identity
 
 Focused and hostile tests prove that:
 
-1. caller-shaped clocks, heads, metrics, candidates, resources and legacy M3 objects are ignored;
+1. caller-shaped clocks, heads, metrics, candidates, resources, scheduler projections and legacy M3 objects are ignored;
 2. all routing metrics are bound to canonical capacity receipts;
 3. only canonical Forge M2/M3 adjudication can make Foundry routable;
 4. replayed, stale, future, expired, wrong-head/tree/repository and validity-window evidence fails closed;
-5. omitted or partial scheduler resource ownership cannot create unsafe parallel work;
-6. zero or negative net savings never route, even when the trusted minimum is zero;
-7. every dispatch, mutation, publication, merge, deployment, runtime and credential authority flag remains false.
+5. stateful, accessor-bearing, symbolic, sparse, widened or over-bounded scheduler sources fail closed before canonical scheduling;
+6. canonical priority, resource-disjoint selection and admission capacity cannot be replaced by consistent output-inventory rewrites;
+7. zero or negative net savings never route, even when the trusted minimum is zero;
+8. every dispatch, mutation, publication, merge, deployment, runtime and credential authority flag remains false.
 
 Live M3 activation, dispatch adapter integration, Shared Workspace publication and protected merge remain separate exact-head-reviewed actions.
