@@ -283,11 +283,14 @@ function validateMetricsReceipt(receipt, evidence, build, host, blockers) {
   const buildObservedAtMs = instant(build.observedAtUtc);
   const buildExpiresAtMs = instant(build.expiresAtUtc);
   const providerId = text(receipt.providerId).toLowerCase();
+  const buildReceiptId = text(build.receiptId);
+  const metricsReceiptId = text(receipt.receiptId);
+  const boundBuildReceiptId = text(receipt.buildLaneCapacityReceiptId);
 
   if (receipt.schemaVersion !== FOUNDRY_ACCELERATION_METRICS_RECEIPT_SCHEMA) blockers.push('metrics-schema-invalid');
   if (!SAFE_ID_RE.test(providerId) || providerId !== text(evidence.providerId).toLowerCase()) blockers.push('metrics-provider-mismatch');
-  if (!SAFE_ID_RE.test(text(receipt.receiptId))) blockers.push('metrics-receipt-id-invalid');
-  if (receipt.buildLaneCapacityReceiptId !== build.receiptId) blockers.push('metrics-build-receipt-mismatch');
+  if (!SAFE_ID_RE.test(metricsReceiptId)) blockers.push('metrics-receipt-id-invalid');
+  if (boundBuildReceiptId !== buildReceiptId) blockers.push('metrics-build-receipt-mismatch');
   if (receipt.route !== build.route) blockers.push('metrics-route-mismatch');
   if (receipt.repository !== host.repository || receipt.repository !== build.repository) blockers.push('metrics-repository-mismatch');
   if (receipt.workerId !== build.workerId) blockers.push('metrics-worker-mismatch');
@@ -318,7 +321,7 @@ function validateMetricsReceipt(receipt, evidence, build, host, blockers) {
     + (medianExecutionSeconds * (1 - successRate));
   return { providerId, route:build.route, workerId:build.workerId, supportedOperations:operations,
     availableSlots, queueDepth, predictedSeconds, authorityReceiptIds:authorities,
-    proofRefs, capacityReceiptId:build.receiptId, metricsReceiptId:receipt.receiptId,
+    proofRefs, capacityReceiptId:buildReceiptId, metricsReceiptId,
     observedAtUtc:receipt.observedAtUtc };
 }
 
@@ -448,7 +451,6 @@ function normalizeScheduler(projection, host, blockers) {
     if (text(detail.route) !== item.route || item.lifecycle !== 'READY' || item.evidenceFreshness !== 'FRESH') {
       blockers.push(`scheduler-candidate-route-or-lifecycle-invalid:#${issue}`);
     }
-    if (item.route !== 'CHATGPT_GITHUB') blockers.push(`scheduler-candidate-route-not-accelerable:#${issue}`);
     if (!sameSet(resourceIds, item.resourceIds)) blockers.push(`scheduler-candidate-resource-mismatch:#${issue}`);
     if (resourceIds.some((resourceId) => activeResources.has(resourceId))) {
       blockers.push(`scheduler-candidate-active-resource-conflict:#${issue}`);
@@ -472,7 +474,7 @@ function normalizeScheduler(projection, host, blockers) {
   const detailRefs = candidates.map(({ candidateId }) => candidateId);
   if (!sameSet(parallelRefs, detailRefs)) blockers.push('scheduler-parallel-candidate-refs-mismatch');
   if (blockers.length) return null;
-  return candidates;
+  return candidates.filter(({ route }) => route === 'CHATGPT_GITHUB');
 }
 
 function forgeProof(forge, foundry, host, blockers) {
@@ -570,6 +572,7 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
       });
       if (!validation.valid) blockers.push('canonical-build-capacity-receipt-invalid');
       const build = validation.receipt;
+      const capacityReceiptId = text(build?.receiptId);
       if (build && build.route !== validation.route) blockers.push('provider-route-not-canonical');
       const allowedRoute = validation.route === MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB
         || validation.route === MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE;
@@ -577,10 +580,10 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
       const metrics = build ? validateMetricsReceipt(evidence.metricsReceipt, evidence, build, host, blockers) : null;
       if (providerIds.has(providerId)) blockers.push('provider-id-duplicate');
       if (build && routes.has(validation.route)) blockers.push('provider-route-duplicate');
-      if (build && capacityReceiptIds.has(build.receiptId)) blockers.push('capacity-receipt-id-duplicate');
+      if (build && capacityReceiptIds.has(capacityReceiptId)) blockers.push('capacity-receipt-id-duplicate');
       if (metrics && metricsReceiptIds.has(metrics.metricsReceiptId)) blockers.push('metrics-receipt-id-duplicate');
       providerIds.add(providerId);
-      if (build) { routes.add(validation.route); capacityReceiptIds.add(build.receiptId); }
+      if (build) { routes.add(validation.route); capacityReceiptIds.add(capacityReceiptId); }
       if (metrics) metricsReceiptIds.add(metrics.metricsReceiptId);
       providers.push({ providerId, route:build ? validation.route : null, workerId:build?.workerId ?? null,
         availableSlots:metrics?.availableSlots ?? null, queueDepth:metrics?.queueDepth ?? null,
