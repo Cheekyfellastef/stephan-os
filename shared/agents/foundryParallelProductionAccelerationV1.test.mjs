@@ -301,7 +301,7 @@ test('trusted scheduler source is snapshotted once and fails closed on hidden au
     });
     const result = planFoundryParallelProductionAcceleration({}, host({ schedulerSource:source }));
     assert.equal(result.valid, false);
-    assert.ok(result.blockers.includes('scheduler-source-inspection-failed'));
+    assert.ok(result.blockers.includes('trusted-host-context-inspection-failed'));
     assert.equal(reads, 0);
   });
 
@@ -310,13 +310,13 @@ test('trusted scheduler source is snapshotted once and fails closed on hidden au
     symbolic[Symbol('hidden-authority')] = 'CHATGPT_GITHUB';
     const symbolResult = planFoundryParallelProductionAcceleration({}, host({ schedulerSource:symbolic }));
     assert.equal(symbolResult.valid, false);
-    assert.ok(symbolResult.blockers.includes('scheduler-source-inspection-failed'));
+    assert.ok(symbolResult.blockers.includes('trusted-host-context-inspection-failed'));
 
     const widened = scheduler();
     widened.goals.hiddenRoute = 'CHATGPT_GITHUB';
     const widenedResult = planFoundryParallelProductionAcceleration({}, host({ schedulerSource:widened }));
     assert.equal(widenedResult.valid, false);
-    assert.ok(widenedResult.blockers.includes('scheduler-source-inspection-failed'));
+    assert.ok(widenedResult.blockers.includes('trusted-host-context-inspection-failed'));
   });
 
   await t.test('source clocks and freshness cannot override the trusted host', () => {
@@ -324,6 +324,46 @@ test('trusted scheduler source is snapshotted once and fails closed on hidden au
     const result = planFoundryParallelProductionAcceleration({}, host({ schedulerSource:source }));
     assert.equal(result.valid, false);
     assert.ok(result.blockers.includes('scheduler-source-shape-invalid'));
+  });
+});
+
+test('provider metrics are snapshotted once before digest validation and routing', async (t) => {
+  await t.test('stateful metric descriptors cannot drift after the digest-bound value', () => {
+    const normalFoundry = evidence('foundry', 'FOUNDRY_FORGE');
+    const expected = planFoundryParallelProductionAcceleration({}, host({
+      providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), normalFoundry],
+    }));
+    const foundry = evidence('foundry', 'FOUNDRY_FORGE');
+    const receipt = foundry.metricsReceipt;
+    let reads = 0;
+    foundry.metricsReceipt = new Proxy(receipt, {
+      getOwnPropertyDescriptor(target, key) {
+        const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+        if (key !== 'medianExecutionSeconds') return descriptor;
+        reads += 1;
+        return { ...descriptor, value:reads === 1 ? descriptor.value : 0 };
+      },
+    });
+    const result = planFoundryParallelProductionAcceleration({}, host({
+      providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), foundry],
+    }));
+    assert.deepEqual(result, expected);
+    assert.equal(reads, 1);
+  });
+
+  await t.test('metric accessors fail closed without invocation', () => {
+    const foundry = evidence('foundry', 'FOUNDRY_FORGE');
+    let reads = 0;
+    Object.defineProperty(foundry.metricsReceipt, 'medianExecutionSeconds', {
+      enumerable:true, configurable:true,
+      get() { reads += 1; return 0; },
+    });
+    const result = planFoundryParallelProductionAcceleration({}, host({
+      providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), foundry],
+    }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('trusted-host-context-inspection-failed'));
+    assert.equal(reads, 0);
   });
 });
 
@@ -485,5 +525,5 @@ test('empty canonical inventory is idle and sparse or hostile trusted observatio
   const hostile = new Proxy({}, { get() { throw new Error('hostile host getter'); }, ownKeys() { throw new Error('hostile host keys'); } });
   const blocked = planFoundryParallelProductionAcceleration({}, hostile);
   assert.equal(blocked.valid, false);
-  assert.ok(blocked.blockers.includes('trusted-host-context-observation-failed'));
+  assert.ok(blocked.blockers.includes('trusted-host-context-inspection-failed'));
 });
