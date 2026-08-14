@@ -96,3 +96,64 @@ test('hostile evidence records are ignored rather than executed or trusted', () 
   assert.equal(getterCalls, 0);
   assert.ok(result.connections.every((item) => item.externallyVerified === false));
 });
+
+test('top-level accessors fail closed without being invoked', () => {
+  let getterCalls = 0;
+  const hostileInput = {};
+  Object.defineProperty(hostileInput, 'artistName', {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      throw new Error('must not execute');
+    },
+  });
+  const result = buildMusicDiscoveryConnections(hostileInput);
+  assert.equal(getterCalls, 0);
+  assert.equal(result.status, 'EVIDENCE_UNAVAILABLE');
+  assert.deepEqual(result.connections, []);
+  assert.match(result.message, /could not be inspected safely/i);
+});
+
+test('accessor-bearing evidence arrays fail closed without invoking entries', () => {
+  let getterCalls = 0;
+  const hostileEvidence = [];
+  Object.defineProperty(hostileEvidence, '0', {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      throw new Error('must not execute');
+    },
+  });
+  const result = buildMusicDiscoveryConnections({
+    artistName: 'Anyma',
+    catalogueEvidence: hostileEvidence,
+  });
+  assert.equal(getterCalls, 0);
+  assert.ok(result.connections.every((item) => item.evidenceClass === 'LOCAL_SEED_INFERENCE'));
+});
+
+test('revoked proxies and malformed top-level inputs never escape exceptions', () => {
+  const { proxy, revoke } = Proxy.revocable([], {});
+  revoke();
+  assert.doesNotThrow(() => buildMusicDiscoveryConnections({ artistName: 'Anyma', catalogueEvidence: proxy }));
+  assert.doesNotThrow(() => buildMusicDiscoveryConnections(null));
+  assert.equal(buildMusicDiscoveryConnections(null).status, 'EVIDENCE_UNAVAILABLE');
+});
+
+test('oversized and duplicate evidence estates cannot upgrade an inference', () => {
+  const oversized = Array.from({ length: 129 }, () => ({ artistName: 'Sevdaliza', verified: true }));
+  const oversizedResult = buildMusicDiscoveryConnections({ artistName: 'Anyma', catalogueEvidence: oversized });
+  const oversizedSevdaliza = oversizedResult.connections.find((item) => item.artistName === 'Sevdaliza');
+  assert.equal(oversizedSevdaliza.evidenceClass, 'LOCAL_SEED_INFERENCE');
+
+  const duplicateResult = buildMusicDiscoveryConnections({
+    artistName: 'Anyma',
+    catalogueEvidence: [
+      { artistName: 'Sevdaliza', verified: true, sourceRef: 'catalogue:first' },
+      { artistName: 'sevdaliza', verified: true, sourceRef: 'catalogue:second' },
+    ],
+  });
+  const duplicateSevdaliza = duplicateResult.connections.find((item) => item.artistName === 'Sevdaliza');
+  assert.equal(duplicateSevdaliza.evidenceClass, 'LOCAL_SEED_INFERENCE');
+  assert.equal(duplicateSevdaliza.externallyVerified, false);
+});
