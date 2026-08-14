@@ -226,3 +226,24 @@ test('invalid or future observation timestamps fail closed against trusted clock
     assert.ok(future.validationErrors.includes('observedAtUtc-future-dated'));
   }
 });
+
+test('invalid canonical surfaces remain missing rather than inflating coverage', () => {
+  const inventory = buildUiAgentExperienceInventory({
+    registeredApps: [],
+    observedAtUtc: OBSERVED_AT,
+    validationOptions: { nowMs: NOW_MS },
+    explicitSurfaces: [{
+      surfaceId:'privacy',
+      surfaceClass:'REGISTERED_APP',
+      ownerGoal:'#1722',
+      registrationRef:'../secret',
+      inputMethods:['POINTER'],
+      knownExperienceDebt:['UNKNOWN'],
+    }],
+  });
+  assert.equal(inventory.valid, false);
+  assert.ok(inventory.validationErrors.includes('privacy:registrationRef-invalid'));
+  assert.equal(inventory.coverage.coveredCanonical.includes('privacy'), false);
+  assert.ok(inventory.coverage.missingCanonical.includes('privacy'));
+  assert.equal(inventory.coverage.coveredCanonicalCount, 0);
+});
