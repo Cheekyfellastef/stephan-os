@@ -15,6 +15,10 @@ const timestampUtc = '2026-08-14T11:00:00.000Z';
 const proofRefs = ['evidence/receipts/ui-agent-participant-v1'];
 const validationOptions = { nowMs: Date.parse(timestampUtc) };
 
+function readinessForCapability(capability, options = validationOptions) {
+  return buildUiAgentReadiness({ capability, timestampUtc, proofRefs, validationOptions: options });
+}
+
 test('UI Agent capability card registers one read-only candidate with bounded authority', () => {
   const record = createUiAgentCapabilityRecord({ timestampUtc, proofRefs });
   const validation = validateSharedWorkspaceRecord(record, validationOptions);
@@ -23,14 +27,19 @@ test('UI Agent capability card registers one read-only candidate with bounded au
   assert.equal(record.agentClass, 'USER_INTERFACE_AND_EXPERIENCE_SPECIALIST');
   assert.equal(record.qaCapability, UI_AGENT_QA_CAPABILITY);
   assert.equal(record.lifecycleState, 'READ_ONLY_CANDIDATE');
+  assert.equal(record.mode, 'read_first');
+  assert.equal(record.boundedWritePath, 'shared-workspace/ui/proposals');
   assert.equal(record.mutationAuthority, 'NONE_BY_PARTICIPATION');
   assert.equal(record.implementationAuthority, 'GOVERNED_TASK_CONTRACT_REQUIRED');
   assert.equal(record.trustedBuilder, false);
   assert.equal(record.mergeAuthority, false);
   assert.equal(record.arbitraryShellAllowed, false);
   assert.equal(record.deploymentAuthority, false);
+  assert.equal(record.productAuthority, false);
+  assert.equal(record.personalDataAuthority, false);
   assert.equal(record.selfPromotionAllowed, false);
   assert.equal(validation.valid, true, validation.errors.join(','));
+  assert.equal(validation.stale, false);
 });
 
 test('UI Agent advertises the required shared-workspace Q&A and knowledge domains', () => {
@@ -107,16 +116,67 @@ test('shared workspace rejects a UI capability card that tries to gain merge aut
   assert.ok(validation.errors.includes('merge-authority-forbidden'));
 });
 
-test('readiness fails closed if participation tries to widen mutation authority', () => {
-  const capability = {
-    ...createUiAgentCapabilityRecord({ timestampUtc, proofRefs }),
-    mutationAuthority: 'DIRECT_SOURCE_WRITE',
-  };
-  const readiness = buildUiAgentReadiness({ capability, timestampUtc, proofRefs, validationOptions });
+test('readiness enforces every canonical read-only identity, mode, task and authority invariant', () => {
+  const canonical = createUiAgentCapabilityRecord({ timestampUtc, proofRefs });
+  const cases = [
+    ['participantSchemaVersion', 'wrong-schema', 'participant-schema-version-mismatch'],
+    ['agentClass', 'UNRELATED_AGENT', 'agent-class-mismatch'],
+    ['qaCapability', 'CAN_ASK_ONLY', 'qa-capability-missing'],
+    ['knowledgeDomains', ['ui'], 'knowledge-domains-mismatch'],
+    ['acceptedTaskTypes', [...canonical.acceptedTaskTypes, 'UI_IMPLEMENTATION'], 'advisory-task-set-mismatch'],
+    ['lifecycleState', 'BOUNDED_EXECUTOR', 'unexpected-lifecycle-state'],
+    ['mode', 'write_enabled', 'mode-not-read-first'],
+    ['boundedWritePath', 'src/ui', 'proposal-path-mismatch'],
+    ['trustedBuilder', true, 'trusted-builder-widened'],
+    ['mergeAuthority', undefined, 'merge-authority-widened'],
+    ['arbitraryShellAllowed', 'false', 'arbitrary-shell-widened'],
+    ['mutationAuthority', 'DIRECT_SOURCE_WRITE', 'mutation-authority-widened'],
+    ['implementationAuthority', 'DIRECT_IMPLEMENTATION', 'implementation-authority-widened'],
+    ['productAuthority', true, 'product-authority-widened'],
+    ['deploymentAuthority', true, 'deployment-authority-widened'],
+    ['personalDataAuthority', true, 'personal-data-authority-widened'],
+    ['selfPromotionAllowed', true, 'self-promotion-widened'],
+  ];
 
+  for (const [field, value, expectedBlocker] of cases) {
+    const capability = { ...canonical, [field]: value };
+    const readiness = readinessForCapability(capability);
+    assert.equal(readiness.readyForSharedWorkspaceRegistration, false, `${field} must fail closed`);
+    assert.ok(readiness.blockers.includes(expectedBlocker), `${field} should emit ${expectedBlocker}`);
+    assert.equal(readiness.productionEligible, false);
+    assert.equal(readiness.implementationEligible, false);
+  }
+});
+
+test('readiness blocks structurally valid but stale capability evidence', () => {
+  const capability = createUiAgentCapabilityRecord({ timestampUtc, proofRefs });
+  const staleValidationOptions = {
+    nowMs: Date.parse('2026-08-14T13:00:01.000Z'),
+    staleAfterMs: 60 * 60 * 1000,
+  };
+  const validation = validateSharedWorkspaceRecord(capability, staleValidationOptions);
+  assert.equal(validation.valid, true);
+  assert.equal(validation.stale, true);
+
+  const readiness = readinessForCapability(capability, staleValidationOptions);
   assert.equal(readiness.readyForSharedWorkspaceRegistration, false);
-  assert.equal(readiness.productionEligible, false);
-  assert.equal(readiness.implementationEligible, false);
-  assert.ok(readiness.blockers.includes('mutation-authority-widened'));
+  assert.ok(readiness.blockers.includes('capability-stale'));
   assert.equal(readiness.nextMilestone, 'M1_REPAIR_UI_AGENT_PARTICIPANT_CONTRACT');
+});
+
+test('readiness rejects duplicate or substituted advisory capability sets', () => {
+  const canonical = createUiAgentCapabilityRecord({ timestampUtc, proofRefs });
+  const duplicateTask = readinessForCapability({
+    ...canonical,
+    acceptedTaskTypes: [...canonical.acceptedTaskTypes.slice(0, -1), canonical.acceptedTaskTypes[0]],
+  });
+  assert.equal(duplicateTask.readyForSharedWorkspaceRegistration, false);
+  assert.ok(duplicateTask.blockers.includes('advisory-task-set-mismatch'));
+
+  const substitutedDomain = readinessForCapability({
+    ...canonical,
+    knowledgeDomains: [...canonical.knowledgeDomains.slice(0, -1), 'source-implementation'],
+  });
+  assert.equal(substitutedDomain.readyForSharedWorkspaceRegistration, false);
+  assert.ok(substitutedDomain.blockers.includes('knowledge-domains-mismatch'));
 });
