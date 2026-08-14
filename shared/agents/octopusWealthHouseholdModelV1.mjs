@@ -143,8 +143,10 @@ function canonicalDataOnly(value, state = null, depth = 0) {
   if (isArray) {
     try {
       if (Object.getPrototypeOf(value) !== Array.prototype) return INVALID;
-      if (Object.getOwnPropertySymbols(value).length > 0 || traversal.seen.has(value)) return INVALID;
+      if (traversal.seen.has(value)) return INVALID;
       const descriptors = Object.getOwnPropertyDescriptors(value);
+      const descriptorKeys = Reflect.ownKeys(descriptors);
+      if (descriptorKeys.some((key) => typeof key !== 'string')) return INVALID;
       const lengthDescriptor = descriptors.length;
       const length = lengthDescriptor?.value;
       if (!lengthDescriptor
@@ -154,7 +156,7 @@ function canonicalDataOnly(value, state = null, depth = 0) {
         || length < 0
         || length > MAX_CANONICAL_ARRAY_LENGTH) return INVALID;
       const expectedKeys = new Set(['length', ...Array.from({ length }, (_, index) => String(index))]);
-      if (Object.keys(descriptors).some((key) => !expectedKeys.has(key))) return INVALID;
+      if (descriptorKeys.some((key) => !expectedKeys.has(key))) return INVALID;
 
       traversal.seen.add(value);
       const output = [];
@@ -181,9 +183,10 @@ function canonicalDataOnly(value, state = null, depth = 0) {
   try {
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) return INVALID;
-    if (Object.getOwnPropertySymbols(value).length > 0 || traversal.seen.has(value)) return INVALID;
+    if (traversal.seen.has(value)) return INVALID;
     const descriptors = Object.getOwnPropertyDescriptors(value);
-    const descriptorKeys = Object.keys(descriptors);
+    const descriptorKeys = Reflect.ownKeys(descriptors);
+    if (descriptorKeys.some((key) => typeof key !== 'string')) return INVALID;
     if (descriptorKeys.length > MAX_CANONICAL_OBJECT_KEYS) return INVALID;
 
     traversal.seen.add(value);
@@ -306,6 +309,14 @@ function datumIdentity(record) {
   return `${record.tentacleId}:${record.metricId}:${record.ownershipBoundary}`;
 }
 
+function ownershipResolvedForTentacle(record) {
+  if (record.ownershipBoundary === 'UNKNOWN') return false;
+  if (record.ownershipBoundary === 'EXTERNAL_REFERENCE') {
+    return record.tentacleId === 'EXTERNAL_ENVIRONMENT';
+  }
+  return true;
+}
+
 function hash(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
@@ -375,9 +386,9 @@ function validateDatumSnapshot(record, { observedAtMs, nowMs }) {
   const errors = [];
   if (!exactKeys(record, DATUM_KEYS)) errors.push('datum-fields-mismatch');
   if (record.schemaVersion !== OCTOPUS_WEALTH_DATUM_SCHEMA_VERSION) errors.push('datum-schema-version-mismatch');
-  if (!LOWER_ID.test(record.datumId || '')) errors.push('datumId-invalid');
+  if (!LOWER_ID.test(record.datumId || '') || containsIdentifierLikeText(record.datumId)) errors.push('datumId-invalid');
   if (!OCTOPUS_WEALTH_TENTACLES.includes(record.tentacleId)) errors.push('tentacleId-invalid');
-  if (!LOWER_ID.test(record.metricId || '')) errors.push('metricId-invalid');
+  if (!LOWER_ID.test(record.metricId || '') || containsIdentifierLikeText(record.metricId)) errors.push('metricId-invalid');
   if (!OCTOPUS_WEALTH_UNITS.includes(record.unit)) errors.push('unit-invalid');
 
   const asOfMs = canonicalTimestamp(record.asOfUtc);
@@ -388,7 +399,7 @@ function validateDatumSnapshot(record, { observedAtMs, nowMs }) {
   }
 
   if (!OCTOPUS_WEALTH_SOURCE_TYPES.includes(record.sourceType)) errors.push('sourceType-invalid');
-  if (!boundedText(record.sourceName, 120)) errors.push('sourceName-invalid');
+  if (!boundedText(record.sourceName, 120) || containsIdentifierLikeText(record.sourceName)) errors.push('sourceName-invalid');
   if (!validSourceRef(record.sourceRef)) errors.push('sourceRef-invalid');
   if (!OCTOPUS_WEALTH_CONFIDENCE.includes(record.confidence)) errors.push('confidence-invalid');
   if (!OCTOPUS_WEALTH_EPISTEMIC_STATUS.includes(record.epistemicStatus)) errors.push('epistemicStatus-invalid');
@@ -455,7 +466,9 @@ export function buildOctopusWealthHouseholdModelV1(input = {}) {
   const errors = [];
   if (!exactKeys(snapshot, TOP_LEVEL_KEYS)) errors.push('model-fields-mismatch');
   if (snapshot.schemaVersion !== OCTOPUS_WEALTH_HOUSEHOLD_MODEL_SCHEMA_VERSION) errors.push('model-schema-version-mismatch');
-  if (!LOWER_ID.test(snapshot.modelId || '')) errors.push('modelId-invalid');
+  if (!LOWER_ID.test(snapshot.modelId || '')
+    || SENSITIVE_TEXT.test(snapshot.modelId || '')
+    || containsIdentifierLikeText(snapshot.modelId)) errors.push('modelId-invalid');
   const observedAtMs = canonicalTimestamp(snapshot.observedAtUtc);
   if (observedAtMs === null) errors.push('observedAtUtc-invalid');
   else if (observedAtMs > nowMs) errors.push('observedAtUtc-future-dated');
@@ -504,9 +517,11 @@ export function buildOctopusWealthHouseholdModelV1(input = {}) {
     const records = validRecords.filter((record) => record.tentacleId === tentacleId);
     const count = (status) => records.filter((record) => record.epistemicStatus === status).length;
     const knownRecords = records.filter((record) => record.epistemicStatus !== 'UNKNOWN');
-    const currentCount = projectionIsCurrent
-      ? knownRecords.filter((record) => ['FRESH', 'AGING'].includes(record.freshness)).length
-      : 0;
+    const currentRecords = projectionIsCurrent
+      ? knownRecords.filter((record) => ['FRESH', 'AGING'].includes(record.freshness))
+      : [];
+    const currentCount = currentRecords.length;
+    const currentResolvedCount = currentRecords.filter(ownershipResolvedForTentacle).length;
     const staleCount = knownRecords.filter((record) => ['STALE', 'EXPIRED'].includes(record.freshness)).length;
     return Object.freeze({
       tentacleId,
@@ -518,7 +533,7 @@ export function buildOctopusWealthHouseholdModelV1(input = {}) {
       currentCount,
       staleCount,
       knownEvidenceAvailable: knownRecords.length > 0,
-      currentKnownEvidenceAvailable: currentCount > 0,
+      currentKnownEvidenceAvailable: currentResolvedCount > 0,
     });
   });
 
@@ -526,7 +541,7 @@ export function buildOctopusWealthHouseholdModelV1(input = {}) {
   const knownTentacleCount = summaries.filter((summary) => summary.knownEvidenceAvailable).length;
   const currentKnownTentacleCount = summaries.filter((summary) => summary.currentKnownEvidenceAvailable).length;
   const staleKnownTentacleCount = summaries.filter((summary) => summary.staleCount > 0).length;
-  const unresolvedOwnershipDatumCount = validRecords.filter((record) => record.epistemicStatus !== 'UNKNOWN' && record.ownershipBoundary === 'UNKNOWN').length;
+  const unresolvedOwnershipDatumCount = validRecords.filter((record) => record.epistemicStatus !== 'UNKNOWN' && !ownershipResolvedForTentacle(record)).length;
   const countAll = (status) => validRecords.filter((record) => record.epistemicStatus === status).length;
   const unknownDatumCount = countAll('UNKNOWN');
 
@@ -534,8 +549,8 @@ export function buildOctopusWealthHouseholdModelV1(input = {}) {
   if (representedTentacleCount < OCTOPUS_WEALTH_TENTACLES.length) readiness = 'M1_EVIDENCE_INCOMPLETE';
   else if (projectionFreshness !== 'FRESH') readiness = 'M1_EVIDENCE_REFRESH_REQUIRED';
   else if (knownTentacleCount === 0) readiness = 'M1_MANUAL_SEED_READY';
-  else if (currentKnownTentacleCount < knownTentacleCount) readiness = 'M1_EVIDENCE_REFRESH_REQUIRED';
   else if (unknownDatumCount > 0 || unresolvedOwnershipDatumCount > 0) readiness = 'M1_MANUAL_RECONCILIATION_REQUIRED';
+  else if (currentKnownTentacleCount < knownTentacleCount) readiness = 'M1_EVIDENCE_REFRESH_REQUIRED';
   else if (currentKnownTentacleCount === OCTOPUS_WEALTH_TENTACLES.length) readiness = 'M1_MANUAL_EVIDENCE_MODEL_READY';
   else readiness = 'M1_MANUAL_RECONCILIATION_REQUIRED';
 
