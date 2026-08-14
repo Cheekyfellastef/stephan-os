@@ -30,6 +30,7 @@ export const FOUNDRY_ACCELERATION_DECISIONS = Object.freeze({
   BLOCKED: 'FOUNDRY_ACCELERATION_BLOCKED',
   IDLE: 'FOUNDRY_ACCELERATION_IDLE',
   WAITING_FOR_M3: 'FOUNDRY_ACCELERATION_WAITING_FOR_M3',
+  WAITING_FOR_CAPACITY: 'FOUNDRY_ACCELERATION_WAITING_FOR_CAPACITY',
   NO_POSITIVE_GAIN: 'FOUNDRY_ACCELERATION_NO_POSITIVE_GAIN',
   READY: 'FOUNDRY_ACCELERATION_READY_MODEL_ONLY',
 });
@@ -282,8 +283,14 @@ function normalizeScheduler(projection, host, blockers) {
         || selectedDecisionPortfolio?.lifecycle !== 'READY'
         || selectedDecisionPortfolio?.route !== text(decision.route)
         || decision.selectedLifecycle !== 'READY'))
-    || (decisionStatus === 'MERGE_READY' && decision.selectedLifecycle !== 'MERGE_READY')
-    || (decisionStatus === 'CLOSE_READY' && decision.selectedLifecycle !== 'CLOSE_READY')
+    || (decisionStatus === 'MERGE_READY'
+      && (!selectedDecisionIssue || selectedDecisionPortfolio?.lifecycle !== 'MERGE_READY'
+        || selectedDecisionPortfolio?.route !== text(decision.route)
+        || decision.selectedLifecycle !== 'MERGE_READY'))
+    || (decisionStatus === 'CLOSE_READY'
+      && (!selectedDecisionIssue || selectedDecisionPortfolio?.lifecycle !== 'CLOSE_READY'
+        || selectedDecisionPortfolio?.route !== text(decision.route)
+        || decision.selectedLifecycle !== 'CLOSE_READY'))
     || ((decisionStatus === 'WAITING' || decisionStatus === 'APPROVAL_REQUIRED')
       && (decision.selectedIssue !== null
       || decision.selectedIssues.length > 0 || projection.parallelCandidates.length > 0
@@ -369,11 +376,13 @@ function telemetry(foundry, forge, activePackets) {
   if (!foundry) return freeze({ status:'NOT_OBSERVED', queueDepth:null, availableSlots:null,
     activePackets:0, capacityReceiptId:null, metricsReceiptId:null, m2ReceiptId:null,
     m3RuntimeReceiptId:null, operatorRequired:true });
-  return freeze({ status:foundry.eligible && forge ? 'READY' : 'HELD', queueDepth:foundry.queueDepth,
+  const proven = foundry.evidenceValid && Boolean(forge);
+  const status = !proven ? 'HELD_UNPROVEN' : foundry.availableSlots > 0 ? 'READY' : 'CAPACITY_EXHAUSTED';
+  return freeze({ status, queueDepth:foundry.queueDepth,
     availableSlots:foundry.availableSlots, activePackets, capacityReceiptId:foundry.capacityReceiptId,
     metricsReceiptId:foundry.metricsReceiptId, m2ReceiptId:forge?.m2ReceiptId ?? null,
     m3RuntimeReceiptId:forge?.m3RuntimeReceiptId ?? null,
-    operatorRequired:!(foundry.eligible && forge) });
+    operatorRequired:!proven });
 }
 
 /**
@@ -465,9 +474,10 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
 
     const assignments = [];
     const heldCandidates = [];
-    let foundrySlots = foundry?.eligible ? foundry.availableSlots : 0;
+    const foundryProven = Boolean(foundry?.evidenceValid && forge);
+    let foundrySlots = foundryProven ? foundry.availableSlots : 0;
     for (const candidate of candidates) {
-      const netSecondsSaved = foundry?.eligible ? github.predictedSeconds - foundry.predictedSeconds : null;
+      const netSecondsSaved = foundryProven ? github.predictedSeconds - foundry.predictedSeconds : null;
       if (foundrySlots > 0 && netSecondsSaved > 0 && netSecondsSaved >= minimumNetSavingsSeconds) {
         foundrySlots -= 1;
         assignments.push({ candidateId:candidate.candidateId, issue:candidate.issue,
@@ -478,7 +488,7 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
           capacityReceiptId:foundry.capacityReceiptId, metricsReceiptId:foundry.metricsReceiptId,
           dispatchAuthority:false });
       } else {
-        const reason = !foundry?.eligible ? 'NO_PROVEN_FOUNDRY_CAPACITY'
+        const reason = !foundryProven ? 'NO_PROVEN_FOUNDRY_CAPACITY'
           : !(netSecondsSaved > 0 && netSecondsSaved >= minimumNetSavingsSeconds)
             ? 'NO_POSITIVE_NET_ACCELERATION_USE_GITHUB'
             : 'NO_AVAILABLE_FOUNDRY_SLOT_USE_GITHUB';
@@ -488,8 +498,10 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
     }
     const decision = candidates.length === 0 ? FOUNDRY_ACCELERATION_DECISIONS.IDLE
       : assignments.length ? FOUNDRY_ACCELERATION_DECISIONS.READY
-        : foundry && !forge ? FOUNDRY_ACCELERATION_DECISIONS.WAITING_FOR_M3
-          : FOUNDRY_ACCELERATION_DECISIONS.NO_POSITIVE_GAIN;
+        : !foundryProven ? FOUNDRY_ACCELERATION_DECISIONS.WAITING_FOR_M3
+          : foundrySlots === 0 && foundry.availableSlots === 0
+            ? FOUNDRY_ACCELERATION_DECISIONS.WAITING_FOR_CAPACITY
+            : FOUNDRY_ACCELERATION_DECISIONS.NO_POSITIVE_GAIN;
     return freeze({ schemaVersion:FOUNDRY_ACCELERATION_SCHEMA, valid:true, decision,
       repository, canonicalMainHead, canonicalMainTree, observedAtUtc:host.nowUtc,
       minimumNetSavingsSeconds, baselineProviderId:github.providerId,
