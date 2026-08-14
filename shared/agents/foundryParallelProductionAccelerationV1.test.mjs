@@ -409,6 +409,20 @@ test('assignment admission preserves canonical scheduler candidate order', () =>
   assert.equal(result.heldCandidates[0].candidateId, '#1738');
 });
 
+test('valid non-GitHub scheduler work is filtered without blocking GitHub acceleration', () => {
+  const selected = [
+    portfolioItem(1737),
+    portfolioItem(1738, { route:'OPENCLAW_LOCAL' }),
+  ];
+  const result = planFoundryParallelProductionAcceleration({}, host({
+    schedulerSource:scheduler({ selected }),
+  }));
+  assert.equal(result.valid, true);
+  assert.equal(result.decision, FOUNDRY_ACCELERATION_DECISIONS.READY);
+  assert.deepEqual(result.assignments.map(({ candidateId }) => candidateId), ['#1737']);
+  assert.deepEqual(result.heldCandidates, []);
+});
+
 test('a proven zero-slot Foundry lane reports current capacity exhaustion, not missing proof', () => {
   const foundry = evidence('foundry', 'FOUNDRY_FORGE', { metrics:{ availableSlots:0 } });
   const result = planFoundryParallelProductionAcceleration({}, host({
@@ -557,6 +571,36 @@ test('fractional canonical p95 latency remains valid and duplicate lane identiti
   }));
   assert.equal(blocked.valid, false);
   assert.ok(blocked.blockers.includes('provider-route-duplicate'));
+});
+
+test('canonical-equivalent receipt IDs cannot evade duplicate detection with whitespace', async (t) => {
+  await t.test('build capacity receipt IDs', () => {
+    const github = evidence('github', 'CHATGPT_GITHUB', {
+      build:{ receiptId:' shared-capacity-receipt-001 ' },
+    });
+    const foundry = evidence('foundry', 'FOUNDRY_FORGE', {
+      build:{ receiptId:'shared-capacity-receipt-001' },
+    });
+    const result = planFoundryParallelProductionAcceleration({}, host({
+      providerCapacityEvidence:[github, foundry],
+    }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('capacity-receipt-id-duplicate'));
+  });
+
+  await t.test('metrics receipt IDs', () => {
+    const github = evidence('github', 'CHATGPT_GITHUB', {
+      metrics:{ receiptId:' shared-metrics-receipt-001 ' },
+    });
+    const foundry = evidence('foundry', 'FOUNDRY_FORGE', {
+      metrics:{ receiptId:'shared-metrics-receipt-001' },
+    });
+    const result = planFoundryParallelProductionAcceleration({}, host({
+      providerCapacityEvidence:[github, foundry],
+    }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('metrics-receipt-id-duplicate'));
+  });
 });
 
 test('authority is always recommendation-only on success and failure', () => {
