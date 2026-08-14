@@ -254,6 +254,13 @@ test('scheduler rejects overlapping selections, set mismatches and non-GitHub ro
     projection.decisionReceipt.selectedIssues = [];
     assert.equal(planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection })).valid, false);
   });
+  await t.test('LANE_SELECTED issue is outside the canonical selected inventory', () => {
+    const projection = scheduler();
+    projection.decisionReceipt.selectedIssue = 9999;
+    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('scheduler-decision-status-inconsistent'));
+  });
   await t.test('non-GitHub route', () => {
     const selected = [portfolioItem(1737, { route:'OPENCLAW_LOCAL' })];
     const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:scheduler({ selected }) }));
