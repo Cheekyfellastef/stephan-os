@@ -284,6 +284,15 @@ test('scheduler rejects overlapping selections, set mismatches and non-GitHub ro
       assert.ok(result.blockers.includes('scheduler-decision-stale-or-invalid'));
     });
   }
+  await t.test('WAITING status with selected candidates', () => {
+    const projection = scheduler();
+    projection.decisionReceipt.status = 'WAITING';
+    projection.decisionReceipt.selectedIssue = null;
+    projection.decisionReceipt.selectedLifecycle = null;
+    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('scheduler-decision-status-inconsistent'));
+  });
 });
 
 test('a zero-slot GitHub lane remains a valid measured baseline for healthy Foundry capacity', () => {
