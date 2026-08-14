@@ -1,3 +1,5 @@
+import { validateBuildLaneCapacityReceipt } from './missionControllerCapacityRouterV1.mjs';
+
 export const SOVEREIGNTY_WORKSPACE_SCHEMA_VERSION = 'stephanos.sovereignty-workspace-projection.v1';
 export const SOVEREIGNTY_SYSTEM_OBSERVATION_SCHEMA_VERSION = 'stephanos.sovereignty-system-observation.v1';
 export const SOVEREIGNTY_CAPABILITY_SCHEMA_VERSION = 'stephanos.sovereignty-capability-dependency.v1';
@@ -10,7 +12,8 @@ export const SOVEREIGNTY_CRITICALITIES = Object.freeze(['LOW', 'MEDIUM', 'HIGH']
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
 const SAFE_PROOF_REF = /^(?:proof|proofs|receipts|evidence\/receipts)\/[A-Za-z0-9][A-Za-z0-9._/@:#-]{0,239}$/;
 const DEFAULT_STALE_AFTER_MS = 60 * 60 * 1000;
-const DEFAULT_MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
+const DEFAULT_REPOSITORY = 'Cheekyfellastef/stephan-os';
+const DEFAULT_BUILD_TASK_CLASS = 'FOCUSED_REPAIR';
 const CRITICALITY_WEIGHT = Object.freeze({ LOW: 1, MEDIUM: 2, HIGH: 3 });
 const AUTHORITY_KEYS = Object.freeze([
   'installAllowed',
@@ -37,6 +40,11 @@ function denseArray(value) {
 
 function safeId(value) {
   return SAFE_ID.test(text(value));
+}
+
+function canonicalProviderId(value) {
+  const normalized = text(value).toLowerCase();
+  return SAFE_ID.test(normalized) ? normalized : '';
 }
 
 function timestampMs(value) {
@@ -103,7 +111,9 @@ function normalizeMetrics(metrics = {}, errors, prefix) {
 export function validateSovereigntySystemObservationV1(observation = {}, options = {}) {
   const errors = [];
   if (observation.schemaVersion !== SOVEREIGNTY_SYSTEM_OBSERVATION_SCHEMA_VERSION) errors.push('schema-version-mismatch');
-  for (const field of ['systemId', 'providerId', 'systemClass', 'sourceKind']) if (!safeId(observation[field])) errors.push(`${field}-invalid`);
+  for (const field of ['systemId', 'systemClass', 'sourceKind']) if (!safeId(observation[field])) errors.push(`${field}-invalid`);
+  const providerId = canonicalProviderId(observation.providerId);
+  if (!providerId) errors.push('providerId-invalid');
   const observedAtMs = timestampMs(observation.observedAtUtc);
   if (observedAtMs === null) errors.push('observedAtUtc-invalid');
   const declaredTruth = text(observation.truthState).toUpperCase();
@@ -118,9 +128,8 @@ export function validateSovereigntySystemObservationV1(observation = {}, options
 
   const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(options.staleAfterMs) && options.staleAfterMs >= 0 ? options.staleAfterMs : DEFAULT_STALE_AFTER_MS;
-  const maxFutureSkewMs = Number.isFinite(options.maxFutureSkewMs) && options.maxFutureSkewMs >= 0 ? options.maxFutureSkewMs : DEFAULT_MAX_FUTURE_SKEW_MS;
   let effectiveTruthState = declaredTruth;
-  if (observedAtMs !== null && observedAtMs > nowMs + maxFutureSkewMs) effectiveTruthState = 'UNKNOWN';
+  if (observedAtMs !== null && observedAtMs > nowMs) effectiveTruthState = 'UNKNOWN';
   else if (declaredTruth === 'CURRENT' && observedAtMs !== null && nowMs - observedAtMs > staleAfterMs) effectiveTruthState = 'STALE';
 
   return Object.freeze({
@@ -129,7 +138,7 @@ export function validateSovereigntySystemObservationV1(observation = {}, options
     normalized: errors.length === 0 ? Object.freeze({
       schemaVersion: SOVEREIGNTY_SYSTEM_OBSERVATION_SCHEMA_VERSION,
       systemId: text(observation.systemId),
-      providerId: text(observation.providerId),
+      providerId,
       systemClass: text(observation.systemClass),
       sourceKind: text(observation.sourceKind),
       observedAtUtc: text(observation.observedAtUtc),
@@ -299,38 +308,45 @@ export function buildSovereigntyWorkspaceProjectionV1(input = {}, options = {}) 
   });
 }
 
-function normalizeBuildLaneStatus(status, expectedStatusId, systemId, providerId, systemClass, nowMs) {
+function unknownBuildLaneMetrics() {
+  return {
+    remainingPercent: null,
+    queueDepth: null,
+    p95StartLatencySeconds: null,
+    throughputPerHour: null,
+    failureRatePercent: null,
+    costPerUsefulResult: null,
+    criticalPathSharePercent: null,
+  };
+}
+
+function normalizeBuildLaneStatus(status, expectedStatusId, expectedRoute, systemId, providerId, systemClass, nowMs, options = {}) {
   const receipt = status?.capacityReceipt;
-  const refs = proofRefs(status?.proofRefs || receipt?.proofRefs) || [];
-  const observedAtUtc = text(receipt?.observedAtUtc || status?.timestampUtc);
-  const expiresAtMs = timestampMs(receipt?.expiresAtUtc);
+  const repository = text(options.repository) || DEFAULT_REPOSITORY;
+  const taskClass = text(options.buildTaskClass).toUpperCase() || DEFAULT_BUILD_TASK_CLASS;
+  const nowUtc = new Date(nowMs).toISOString();
+  const validation = validateBuildLaneCapacityReceipt(receipt, { repository, taskClass, nowUtc });
   const current = status?.schemaVersion === 'shared-agent-workspace-record.v1'
     && status?.statusId === expectedStatusId
-    && receipt?.state === 'READY'
-    && timestampMs(observedAtUtc) !== null
-    && expiresAtMs !== null
-    && expiresAtMs > nowMs
-    && refs.length > 0;
+    && validation.valid
+    && validation.route === expectedRoute;
+  const refs = current ? proofRefs(receipt.proofRefs) || [] : [];
   return {
     schemaVersion: SOVEREIGNTY_SYSTEM_OBSERVATION_SCHEMA_VERSION,
     systemId,
-    providerId,
+    providerId: canonicalProviderId(providerId),
     systemClass,
     sourceKind: 'BUILD_LANE_CAPACITY_RECEIPT',
-    observedAtUtc: observedAtUtc || new Date(0).toISOString(),
+    observedAtUtc: current ? receipt.observedAtUtc : new Date(0).toISOString(),
     truthState: current ? 'CURRENT' : 'UNKNOWN',
-    capacityState: current ? (Number(receipt.queueDepth) === 0 && Number(receipt.p95StartLatencySeconds) <= 60 ? 'AVAILABLE_NOW' : 'CONSTRAINED') : 'UNKNOWN',
+    capacityState: current ? (receipt.queueDepth === 0 && receipt.p95StartLatencySeconds <= 60 ? 'AVAILABLE_NOW' : 'CONSTRAINED') : 'UNKNOWN',
     evidenceRefs: refs,
-    metrics: {
-      remainingPercent: null,
-      queueDepth: boundedNumber(receipt?.queueDepth, 0, 100000) ?? null,
-      p95StartLatencySeconds: boundedNumber(receipt?.p95StartLatencySeconds, 0, 7 * 24 * 60 * 60) ?? null,
-      throughputPerHour: null,
-      failureRatePercent: null,
-      costPerUsefulResult: null,
-      criticalPathSharePercent: null,
-    },
-    explanation: current ? `${systemId} has a fresh bounded capacity receipt.` : `${systemId} capacity is unproven or stale.`,
+    metrics: current ? {
+      ...unknownBuildLaneMetrics(),
+      queueDepth: receipt.queueDepth,
+      p95StartLatencySeconds: receipt.p95StartLatencySeconds,
+    } : unknownBuildLaneMetrics(),
+    explanation: current ? `${systemId} has a canonical fresh bounded focused-repair capacity receipt.` : `${systemId} capacity is UNKNOWN because the canonical build-lane receipt did not validate.`,
   };
 }
 
@@ -344,7 +360,7 @@ export function createSovereigntyCapacityObservationsV1(input = {}, options = {}
     && codex.truthState === 'CURRENT'
     && codex.meterTruthUsable === true
     && codexObservedMs !== null
-    && codexObservedMs <= nowMs + DEFAULT_MAX_FUTURE_SKEW_MS
+    && codexObservedMs <= nowMs
     && nowMs - codexObservedMs <= 15 * 60 * 1000
     && codexRefs.length > 0;
   const remaining = boundedNumber(codex.remainingPercent, 0, 100);
@@ -377,7 +393,7 @@ export function createSovereigntyCapacityObservationsV1(input = {}, options = {}
       }),
       explanation: codexCurrent ? 'Codex capacity is derived from the canonical authenticated meter publication.' : 'Codex capacity is UNKNOWN because canonical fresh meter evidence is unavailable.',
     }),
-    Object.freeze(normalizeBuildLaneStatus(input.githubLaneStatus, 'chatgpt-github-build-capacity-current', 'chatgpt-github', 'github', 'HOSTED_BUILD_LANE', nowMs)),
-    Object.freeze(normalizeBuildLaneStatus(input.forgeLaneStatus, 'foundry-forge-build-capacity-current', 'foundry-forge', 'stephanos-local', 'LOCAL_OR_SELF_HOSTED_BUILD_LANE', nowMs)),
+    Object.freeze(normalizeBuildLaneStatus(input.githubLaneStatus, 'chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', 'chatgpt-github', 'github', 'HOSTED_BUILD_LANE', nowMs, options)),
+    Object.freeze(normalizeBuildLaneStatus(input.forgeLaneStatus, 'foundry-forge-build-capacity-current', 'FOUNDRY_FORGE', 'foundry-forge', 'stephanos-local', 'LOCAL_OR_SELF_HOSTED_BUILD_LANE', nowMs, options)),
   ]);
 }
