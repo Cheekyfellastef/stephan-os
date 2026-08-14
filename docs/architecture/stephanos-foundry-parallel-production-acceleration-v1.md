@@ -53,7 +53,7 @@ The planner accepts candidates only from `parallelCandidateDetails`. It verifies
 - the decision receipt has the exact canonical field inventory, empty contradiction codes, no candidates while `WAITING` or `APPROVAL_REQUIRED`, an allowed status consistent with its active/selected state, a `LANE_SELECTED`, `MERGE_READY` or `CLOSE_READY` issue/route/lifecycle tuple matching one canonical portfolio row, and an `ACTIVE_LANE(S)` route matching the primary canonical active row with null selected issue/lifecycle;
 - decision freshness;
 - exact equality between active-goal, active-issue and ACTIVE portfolio inventories;
-- exact equality between selected-issue, parallel-candidate and detail inventories;
+- exact ordered equality between selected-issue, parallel-candidate and detail inventories;
 - one fresh, resource-scoped READY portfolio row per selected candidate, while unrelated non-authoritative portfolio rows may remain canonically unscoped;
 - exact canonical route and complete byte-preserved resource set;
 - no active/selected or selected/selected resource overlap.
