@@ -295,6 +295,24 @@ test('canonical Mission Scheduler resource inventories remain valid above provid
   assert.equal(result.assignments[0].resourceIds.length, 129);
 });
 
+test('trusted snapshot capacity covers canonical multi-goal maximum resource scopes', () => {
+  const selected = Array.from({ length:5 }, (_, goalIndex) => portfolioItem(1800 + goalIndex, {
+    resourceIds:Array.from({ length:10_000 }, (_, resourceIndex) =>
+      `goal:${1800 + goalIndex}:resource:${String(resourceIndex).padStart(5, '0')}`),
+  }));
+  const result = planFoundryParallelProductionAcceleration({}, host({
+    schedulerSource:scheduler({ selected }),
+    providerCapacityEvidence:[
+      evidence('github', 'CHATGPT_GITHUB'),
+      evidence('foundry', 'FOUNDRY_FORGE', { metrics:{ availableSlots:5 } }),
+    ],
+  }));
+  assert.equal(result.valid, true);
+  assert.equal(result.decision, FOUNDRY_ACCELERATION_DECISIONS.READY);
+  assert.equal(result.assignments.length, 5);
+  assert.ok(result.assignments.every(({ resourceIds }) => resourceIds.length === 10_000));
+});
+
 test('trusted scheduler source is snapshotted once and fails closed on hidden authority', async (t) => {
   await t.test('stateful descriptors are observed once before canonical scheduling', () => {
     let priorityReads = 0;
