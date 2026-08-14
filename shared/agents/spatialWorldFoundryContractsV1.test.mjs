@@ -230,4 +230,40 @@ test('bundle validation catches cross-record lineage substitution', () => {
   });
   assert.equal(creatorMismatch.valid, false);
   assert.ok(creatorMismatch.errors.includes('lineage-provenance-creator-mismatch'));
+
+  const regionMismatch = validateSpatialWorldFoundryBundle({
+    buildOrder: buildOrder(),
+    asset: asset({ regionId: 'other-region' }),
+    provenance: provenance(),
+    snapshot: snapshot(),
+  });
+  assert.equal(regionMismatch.valid, false);
+  assert.ok(regionMismatch.errors.includes('lineage-region-mismatch'));
+
+  const snapshotRegionMismatch = validateSpatialWorldFoundryBundle({
+    buildOrder: buildOrder(),
+    asset: asset(),
+    provenance: provenance(),
+    snapshot: snapshot({ scopeId: 'other-region' }),
+  });
+  assert.equal(snapshotRegionMismatch.valid, false);
+  assert.ok(snapshotRegionMismatch.errors.includes('lineage-snapshot-region-mismatch'));
+
+  const intentMismatch = validateSpatialWorldFoundryBundle({
+    buildOrder: buildOrder(),
+    asset: asset(),
+    provenance: provenance({ operatorIntentRef: 'shared-workspace/intents/other-intent' }),
+    snapshot: snapshot(),
+  });
+  assert.equal(intentMismatch.valid, false);
+  assert.ok(intentMismatch.errors.includes('lineage-provenance-intent-mismatch'));
+
+  const genomeMismatch = validateSpatialWorldFoundryBundle({
+    buildOrder: buildOrder(),
+    asset: asset(),
+    provenance: provenance({ designGenomeVersion: 'planet-genome.v2' }),
+    snapshot: snapshot(),
+  });
+  assert.equal(genomeMismatch.valid, false);
+  assert.ok(genomeMismatch.errors.includes('lineage-provenance-design-genome-mismatch'));
 });
