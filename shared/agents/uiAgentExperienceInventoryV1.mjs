@@ -6,7 +6,7 @@ export const UI_AGENT_SHARED_PRIMITIVE_SCHEMA_VERSION = 'stephanos.ui-agent.shar
 
 export const UI_AGENT_SURFACE_CLASSES = Object.freeze([
   'REGISTERED_APP',
-  'EMBEDDED_STEPhANOS_SURFACE'.replace('hANOS', 'HANOS'),
+  'EMBEDDED_STEPHANOS_SURFACE',
   'DEVICE_PRESENTATION',
   'TEXT_OR_MESSAGING_PRESENTATION',
   'VOICE_PRESENTATION',
@@ -45,7 +45,8 @@ export const UI_AGENT_REQUIRED_PROOF_CLASSES = Object.freeze([
 ]);
 
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
-const SAFE_SOURCE_REF = /^[a-z0-9][a-z0-9._/:-]{0,255}$/i;
+const SAFE_SOURCE_REF = /^[a-z0-9][a-z0-9._/-]{0,255}$/i;
+const ABSOLUTE_SOURCE_REF = /^(?:[a-z]:[\\/]|[\\/]{1,2})/i;
 
 const CANONICAL_PRODUCT_SURFACE_IDS = Object.freeze([
   'stephanos-landing-page',
@@ -108,12 +109,14 @@ export const UI_AGENT_M2_SHARED_PRIMITIVES = Object.freeze([
   }),
 ]);
 
-function text(value) {
-  return typeof value === 'string' ? value.trim() : '';
+function text(value, fallback = '') {
+  if (value === null || value === undefined) return fallback;
+  const output = String(value).trim();
+  return output || fallback;
 }
 
 function list(value) {
-  return Array.isArray(value) ? value.map(text).filter(Boolean) : [];
+  return Array.isArray(value) ? value.map((item) => text(item)).filter(Boolean) : [];
 }
 
 function safeId(value) {
@@ -121,7 +124,8 @@ function safeId(value) {
 }
 
 function sourceRef(value) {
-  return SAFE_SOURCE_REF.test(text(value));
+  const candidate = text(value);
+  return Boolean(candidate && !ABSOLUTE_SOURCE_REF.test(candidate) && !candidate.split('/').includes('..') && SAFE_SOURCE_REF.test(candidate));
 }
 
 function timestamp(value) {
