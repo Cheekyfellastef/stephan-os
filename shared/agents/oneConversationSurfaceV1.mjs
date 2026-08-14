@@ -28,6 +28,7 @@ export const ONE_CONVERSATION_STATUSES = Object.freeze([
 ]);
 
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]{0,120}$/i;
+const SAFE_PROOF_REF = /^(?:proof|proofs|receipts|evidence\/receipts)\/[A-Za-z0-9][A-Za-z0-9._/@:#-]{0,239}$/;
 const DEFAULT_STALE_AFTER_MS = 60 * 60 * 1000;
 const DEFAULT_MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const AUTHORITY_KEYS = Object.freeze([
@@ -46,12 +47,13 @@ function text(value, fallback = '') {
 }
 
 function safeId(value) {
-  const result = text(value);
+  if (typeof value !== 'string') return '';
+  const result = value.trim();
   return SAFE_ID.test(result) ? result : '';
 }
 
 function isTimestamp(value) {
-  return Number.isFinite(Date.parse(text(value)));
+  return typeof value === 'string' && value.trim() !== '' && Number.isFinite(Date.parse(value.trim()));
 }
 
 function strictStringList(values) {
@@ -63,11 +65,25 @@ function strictStringList(values) {
     if (!candidate) return Object.freeze({ valid: false, values: Object.freeze([]) });
     normalized.push(candidate);
   }
-  return Object.freeze({ valid: true, values: Object.freeze([...new Set(normalized)]) });
+  if (new Set(normalized).size !== normalized.length) return Object.freeze({ valid: false, values: Object.freeze([]) });
+  return Object.freeze({ valid: true, values: Object.freeze(normalized) });
+}
+
+function strictProofRefList(values) {
+  const parsed = strictStringList(values);
+  if (!parsed.valid) return parsed;
+  if (parsed.values.some((value) => !SAFE_PROOF_REF.test(value) || value.includes('..'))) {
+    return Object.freeze({ valid: false, values: Object.freeze([]) });
+  }
+  return parsed;
 }
 
 function boundedDuration(value, fallback) {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function retainedDuration(value, fallback) {
+  return Math.min(boundedDuration(value, fallback), fallback);
 }
 
 function sameStringSet(left, right) {
@@ -102,7 +118,7 @@ function continuityIdentityComplete(value = {}) {
 function normalizeObservation(observation) {
   const observationWasRecord = Boolean(observation && typeof observation === 'object' && !Array.isArray(observation));
   const candidate = observationWasRecord ? observation : {};
-  const evidence = strictStringList(candidate.evidenceRefs);
+  const evidence = strictProofRefList(candidate.evidenceRefs);
   return Object.freeze({
     observationWasRecord,
     surface: text(candidate.surface),
@@ -112,7 +128,7 @@ function normalizeObservation(observation) {
     missionId: safeId(candidate.missionId),
     operatorRelationshipContextRef: safeId(candidate.operatorRelationshipContextRef),
     memoryAuthorityRef: safeId(candidate.memoryAuthorityRef),
-    timestampUtc: text(candidate.timestampUtc),
+    timestampUtc: typeof candidate.timestampUtc === 'string' ? candidate.timestampUtc.trim() : '',
     evidenceRefs: evidence.values,
     evidenceRefsWasArray: Array.isArray(candidate.evidenceRefs),
     evidenceRefsValid: evidence.valid,
@@ -155,7 +171,40 @@ function validateRetainedSurfaceSet(projection, observedAt) {
   const observedSurfaces = Object.keys(observedAt);
   const threadSurfaces = Object.keys(projection.surfaceThreadRefs);
   if (!sameStringSet([...active.values], observedSurfaces) || !sameStringSet([...active.values], threadSurfaces)) return false;
-  return active.values.every((surface) => safeId(projection.surfaceThreadRefs[surface]));
+  return active.values.every((surface) => Boolean(safeId(projection.surfaceThreadRefs[surface])));
+}
+
+function evaluateRetainedProjection(projection = {}, options = {}) {
+  if (!continuityIdentityComplete(projection)) {
+    return Object.freeze({ ok: false, reason: 'IDENTITY_INCOMPLETE', freshness: null });
+  }
+  const evidence = strictProofRefList(projection.evidenceRefs);
+  if (!evidence.valid || evidence.values.length === 0) {
+    return Object.freeze({ ok: false, reason: 'PROOF_REFS_INVALID', freshness: null });
+  }
+  const observedAt = projection.surfaceObservedAt;
+  if (!observedAt || typeof observedAt !== 'object' || Array.isArray(observedAt) || Object.keys(observedAt).length === 0) {
+    return Object.freeze({ ok: false, reason: 'FRESHNESS_EVIDENCE_INCOMPLETE', freshness: null });
+  }
+  if (!validateRetainedSurfaceSet(projection, observedAt)) {
+    return Object.freeze({ ok: false, reason: 'SURFACE_SET_INCONSISTENT', freshness: null });
+  }
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+  const staleAfterMs = retainedDuration(options.staleAfterMs ?? projection.staleAfterMs, DEFAULT_STALE_AFTER_MS);
+  const maxFutureSkewMs = retainedDuration(options.maxFutureSkewMs ?? projection.maxFutureSkewMs, DEFAULT_MAX_FUTURE_SKEW_MS);
+  const freshness = classifyObservedAt(observedAt, nowMs, staleAfterMs, maxFutureSkewMs);
+  if (freshness.invalid.length > 0) return Object.freeze({ ok: false, reason: 'FRESHNESS_EVIDENCE_INVALID', freshness });
+  if (freshness.future.length > 0) return Object.freeze({ ok: false, reason: 'EVIDENCE_FUTURE_DATED', freshness });
+  if (freshness.currentCount === 0) return Object.freeze({ ok: false, reason: 'EVIDENCE_STALE', freshness });
+  return Object.freeze({
+    ok: true,
+    reason: 'CURRENT',
+    freshness,
+    evidenceRefs: evidence.values,
+    nowMs,
+    staleAfterMs,
+    maxFutureSkewMs,
+  });
 }
 
 export function validateOneConversationInputV1(input = {}) {
@@ -165,7 +214,7 @@ export function validateOneConversationInputV1(input = {}) {
   const intentId = safeId(input.intentId);
   const missionId = safeId(input.missionId);
   const memoryAuthorityRef = safeId(input.memoryAuthorityRef);
-  const timestampUtc = text(input.timestampUtc);
+  const timestampUtc = typeof input.timestampUtc === 'string' ? input.timestampUtc.trim() : '';
   const observations = Array.isArray(input.surfaceObservations)
     ? input.surfaceObservations.map(normalizeObservation)
     : [];
@@ -291,7 +340,7 @@ export function buildOneConversationProjectionV1(input = {}, options = {}) {
   return Object.freeze(projection);
 }
 
-export function planCrossSurfaceContinuationV1(projection = {}, input = {}) {
+export function planCrossSurfaceContinuationV1(projection = {}, input = {}, options = {}) {
   const fromSurface = text(input.fromSurface);
   const toSurface = text(input.toSurface);
   if (!ONE_CONVERSATION_SURFACES.includes(fromSurface) || !ONE_CONVERSATION_SURFACES.includes(toSurface)) {
@@ -303,13 +352,23 @@ export function planCrossSurfaceContinuationV1(projection = {}, input = {}) {
   if (projection.status !== 'CURRENT') {
     return Object.freeze({ ok: false, verdict: 'CONTINUATION_BLOCKED_STALE_OR_UNKNOWN', operatorNeeded: false });
   }
-  if (!continuityIdentityComplete(projection)) {
-    return Object.freeze({ ok: false, verdict: 'CONTINUATION_BLOCKED_IDENTITY_INCOMPLETE', operatorNeeded: false });
+  const retained = evaluateRetainedProjection(projection, options);
+  if (!retained.ok) {
+    const verdictByReason = {
+      IDENTITY_INCOMPLETE: 'CONTINUATION_BLOCKED_IDENTITY_INCOMPLETE',
+      PROOF_REFS_INVALID: 'CONTINUATION_BLOCKED_PROOF_EVIDENCE_INVALID',
+      FRESHNESS_EVIDENCE_INCOMPLETE: 'CONTINUATION_BLOCKED_FRESHNESS_EVIDENCE_INCOMPLETE',
+      SURFACE_SET_INCONSISTENT: 'CONTINUATION_BLOCKED_SURFACE_SET_INCONSISTENT',
+      FRESHNESS_EVIDENCE_INVALID: 'CONTINUATION_BLOCKED_FRESHNESS_EVIDENCE_INVALID',
+      EVIDENCE_FUTURE_DATED: 'CONTINUATION_BLOCKED_STALE_OR_UNKNOWN',
+      EVIDENCE_STALE: 'CONTINUATION_BLOCKED_STALE_OR_UNKNOWN',
+    };
+    return Object.freeze({ ok: false, verdict: verdictByReason[retained.reason] || 'CONTINUATION_BLOCKED_STALE_OR_UNKNOWN', operatorNeeded: false });
   }
   if (!projection.surfaceThreadRefs?.[fromSurface]) {
     return Object.freeze({ ok: false, verdict: 'CONTINUATION_BLOCKED_SOURCE_THREAD_UNPROVEN', operatorNeeded: false });
   }
-  if (projection.surfaceFreshness?.[fromSurface] !== 'CURRENT') {
+  if (retained.freshness.freshness?.[fromSurface] !== 'CURRENT') {
     return Object.freeze({ ok: false, verdict: 'CONTINUATION_BLOCKED_SOURCE_THREAD_STALE_OR_UNKNOWN', operatorNeeded: false });
   }
 
@@ -336,56 +395,47 @@ export function projectOneConversationWorkspaceMessageV1(projection = {}, input 
   if (projection.status !== 'CURRENT') {
     return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_NOT_CURRENT' });
   }
-  if (!continuityIdentityComplete(projection)) {
-    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_IDENTITY_INCOMPLETE' });
-  }
 
   const nowMs = Number.isFinite(input.workspaceValidationOptions?.nowMs)
     ? input.workspaceValidationOptions.nowMs
     : Date.now();
-  const staleAfterMs = boundedDuration(projection.staleAfterMs, DEFAULT_STALE_AFTER_MS);
-  const maxFutureSkewMs = boundedDuration(input.maxFutureSkewMs, boundedDuration(projection.maxFutureSkewMs, DEFAULT_MAX_FUTURE_SKEW_MS));
-  const observedAt = projection.surfaceObservedAt;
-  if (!observedAt || typeof observedAt !== 'object' || Array.isArray(observedAt) || Object.keys(observedAt).length === 0) {
-    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_FRESHNESS_EVIDENCE_INCOMPLETE' });
-  }
-  if (!validateRetainedSurfaceSet(projection, observedAt)) {
-    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_SURFACE_SET_INCONSISTENT' });
-  }
-  const publicationFreshness = classifyObservedAt(observedAt, nowMs, staleAfterMs, maxFutureSkewMs);
-  if (publicationFreshness.invalid.length > 0) {
-    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_FRESHNESS_EVIDENCE_INVALID' });
-  }
-  if (publicationFreshness.future.length > 0) {
-    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_EVIDENCE_FUTURE_DATED' });
-  }
-  if (publicationFreshness.currentCount === 0) {
-    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_EVIDENCE_STALE_AT_PUBLICATION' });
+  const retained = evaluateRetainedProjection(projection, {
+    nowMs,
+    staleAfterMs: input.workspaceValidationOptions?.staleAfterMs,
+    maxFutureSkewMs: input.maxFutureSkewMs,
+  });
+  if (!retained.ok) {
+    const reasonByFailure = {
+      IDENTITY_INCOMPLETE: 'ONE_CONVERSATION_PROJECTION_IDENTITY_INCOMPLETE',
+      PROOF_REFS_INVALID: 'ONE_CONVERSATION_PROJECTION_PROOF_REFS_INVALID',
+      FRESHNESS_EVIDENCE_INCOMPLETE: 'ONE_CONVERSATION_PROJECTION_FRESHNESS_EVIDENCE_INCOMPLETE',
+      SURFACE_SET_INCONSISTENT: 'ONE_CONVERSATION_PROJECTION_SURFACE_SET_INCONSISTENT',
+      FRESHNESS_EVIDENCE_INVALID: 'ONE_CONVERSATION_PROJECTION_FRESHNESS_EVIDENCE_INVALID',
+      EVIDENCE_FUTURE_DATED: 'ONE_CONVERSATION_PROJECTION_EVIDENCE_FUTURE_DATED',
+      EVIDENCE_STALE: 'ONE_CONVERSATION_PROJECTION_EVIDENCE_STALE_AT_PUBLICATION',
+    };
+    return Object.freeze({ ok: false, reason: reasonByFailure[retained.reason] || 'ONE_CONVERSATION_PROJECTION_NOT_CURRENT' });
   }
 
-  const timestampUtc = text(input.timestampUtc);
+  const timestampUtc = typeof input.timestampUtc === 'string' ? input.timestampUtc.trim() : '';
   const timestampMs = Date.parse(timestampUtc);
   if (!isTimestamp(timestampUtc)) {
     return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_MESSAGE_IDENTITY_INCOMPLETE' });
   }
-  if (timestampMs > nowMs + maxFutureSkewMs) {
+  if (timestampMs > nowMs + retained.maxFutureSkewMs) {
     return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_WORKSPACE_RECORD_FUTURE_DATED' });
   }
   const correlationId = safeId(input.correlationId || projection.intentId);
   const messageId = safeId(input.messageId || `one-conversation-${projection.intentId}`);
   const relatedIssue = text(input.relatedIssue, '#1630');
-  const projectedProofRefs = strictStringList(projection.evidenceRefs);
-  if (!projectedProofRefs.valid) {
-    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_PROOF_REFS_INVALID' });
-  }
   let suppliedProofRefs = Object.freeze({ valid: true, values: Object.freeze([]) });
   if (input.proofRefs !== undefined) {
-    suppliedProofRefs = strictStringList(input.proofRefs);
+    suppliedProofRefs = strictProofRefList(input.proofRefs);
     if (!suppliedProofRefs.valid) {
       return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_MESSAGE_PROOF_REFS_INVALID' });
     }
   }
-  const proofRefs = suppliedProofRefs.values.length > 0 ? [...suppliedProofRefs.values] : [...projectedProofRefs.values];
+  const proofRefs = suppliedProofRefs.values.length > 0 ? [...suppliedProofRefs.values] : [...retained.evidenceRefs];
   if (!correlationId || !messageId || proofRefs.length === 0) {
     return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_MESSAGE_IDENTITY_INCOMPLETE' });
   }
@@ -411,7 +461,7 @@ export function projectOneConversationWorkspaceMessageV1(projection = {}, input 
       memoryAuthorityRef: projection.memoryAuthorityRef,
       surfaceThreadRefs: projection.surfaceThreadRefs,
       surfaceObservedAt: projection.surfaceObservedAt,
-      surfaceFreshness: publicationFreshness.freshness,
+      surfaceFreshness: retained.freshness.freshness,
       evaluatedAtUtc: new Date(nowMs).toISOString(),
       activeSurfaces: projection.activeSurfaces,
       operatorNeeded: false,
