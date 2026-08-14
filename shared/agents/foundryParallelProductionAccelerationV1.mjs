@@ -605,6 +605,13 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
       const forgeBlockers = [];
       const adjudication = adjudicateForgeSidecarCapacity(context.forgeSidecar, { nowUtc:host.nowUtc });
       forge = forgeProof(adjudication, foundry, host, forgeBlockers);
+      if (forge && [forge.m2ReceiptId, forge.m3RuntimeReceiptId].some((receiptId) => receiptIds.has(receiptId))) {
+        return blockedResult(['forge-receipt-id-duplicate']);
+      }
+      if (forge) {
+        receiptIds.add(forge.m2ReceiptId);
+        receiptIds.add(forge.m3RuntimeReceiptId);
+      }
       if (!forge) {
         foundry.blockers.push(...forgeBlockers);
         foundry.evidenceValid = false;
