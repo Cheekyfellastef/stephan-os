@@ -365,6 +365,20 @@ test('stale Shared Workspace envelopes are not reported ready', () => {
   assert.equal(result.reason, 'ONE_CONVERSATION_WORKSPACE_RECORD_STALE');
 });
 
+test('caller cannot widen stale Shared Workspace envelope window', () => {
+  const result = projectOneConversationWorkspaceMessageV1(currentProjection(), {
+    timestampUtc: '2026-08-14T10:00:00.000Z',
+    correlationId: 'intent-product-1776',
+    messageId: 'one-conversation-stale-widened-window',
+    proofRefs: ['proofs/one-conversation-m1'],
+    workspaceValidationOptions: { nowMs: NOW_MS, staleAfterMs: 24 * 60 * 60 * 1000 },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'ONE_CONVERSATION_WORKSPACE_RECORD_STALE');
+  assert.equal(result.workspaceValidation.valid, true);
+  assert.equal(result.workspaceValidation.stale, true);
+});
+
 test('unsupported surfaces are rejected without inventing another front door', () => {
   const input = baseInput();
   input.surfaceObservations[0] = { ...input.surfaceObservations[0], surface: 'UNREGISTERED_CHAT' };
