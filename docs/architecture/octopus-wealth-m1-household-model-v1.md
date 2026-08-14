@@ -19,7 +19,7 @@ The complete estate remains visible from the first seed:
 7. `DEBT_AND_CREDIT`
 8. `EXTERNAL_ENVIRONMENT`
 
-A tentacle with no known value remains explicit and `UNKNOWN`. Missing evidence is not interpreted as zero, healthy, paid, current or complete.
+A tentacle with no known value remains explicit and `UNKNOWN`. Missing evidence is never interpreted as zero, healthy, paid, current or complete.
 
 ## Datum contract
 
@@ -55,13 +55,26 @@ UNKNOWN
 
 `UNKNOWN` requires `value=null`, `confidence=UNKNOWN` and `freshness=UNKNOWN`; it never contributes to current-evidence counts.
 
-Known evidence requires a value compatible with its declared unit and a source class compatible with its epistemic claim. A model assumption cannot become `ACTUAL`. A provider observation cannot become `PROJECTED`. Count values must be non-negative integers, date values must be canonical timestamps, and text values reject sensitive or identifier-like content.
+Known evidence requires a value compatible with its declared unit and a source class compatible with its epistemic claim. A model assumption cannot become `ACTUAL`. A provider observation cannot become `PROJECTED`. Count values must be bounded non-negative integers, year values must remain within a human planning range, percentages and currency values must be finite and bounded, dates must be canonical timestamps, and text values reject sensitive, control-character or identifier-like content.
 
-The ownership boundary is retained independently for Stephan, spouse, joint, household, external-reference and unknown evidence. M1 never collapses those owners into one implied authority domain.
+The ownership boundary is retained independently for Stephan, spouse, joint, household, external-reference and unknown evidence. A known record with unresolved ownership can remain visible but keeps the model in reconciliation-required state.
+
+## Validation context
+
+A datum cannot self-certify freshness.
+
+`validateOctopusWealthDatumV1()` requires an explicit canonical `observedAtUtc` validation context. The public validator uses the trusted current process clock and checks:
+
+- observation time is not in the future;
+- datum `asOfUtc` is not in the future;
+- datum `asOfUtc` is not later than the observation;
+- declared freshness exactly matches the derived evidence age.
+
+The complete model builder captures one trusted current clock and applies it consistently to every record. Caller-supplied `nowMs`, stale-window or freshness-authority options are not accepted.
 
 ## Freshness truth
 
-Datum freshness is reconciled against `asOfUtc` and the model's `observedAtUtc` using one bounded vocabulary:
+Datum freshness is reconciled against `asOfUtc` and the model's `observedAtUtc`:
 
 ```text
 FRESH    <= 24 hours
@@ -70,9 +83,9 @@ STALE    <= 365 days
 EXPIRED  > 365 days
 ```
 
-A caller cannot label arbitrarily old evidence `FRESH`, and evidence dated after the model observation fails closed.
+A caller cannot label arbitrarily old evidence `FRESH`.
 
-The projection itself is also evaluated against the trusted current clock:
+The projection itself is evaluated against the trusted current clock:
 
 ```text
 FRESH    <= 1 hour
@@ -81,23 +94,38 @@ STALE    <= 30 days
 EXPIRED  > 30 days
 ```
 
+Every result carries:
+
+```text
+evaluatedAtUtc
+freshnessValidUntilUtc
+projectionFreshness
+```
+
 Only a `FRESH` projection can report current evidence. Older otherwise valid snapshots remain inspectable but return `M1_EVIDENCE_REFRESH_REQUIRED` and zero current counts.
+
+A freshly rebuilt projection does not make expired underlying evidence current. If any known tentacle lacks current known evidence, the complete estate remains refresh-required rather than becoming `M1_MANUAL_EVIDENCE_MODEL_READY`.
 
 ## Evidence identity and conflict handling
 
-The canonical datum identity is:
+The canonical semantic datum identity is:
 
 ```text
 tentacleId + metricId + ownershipBoundary
 ```
 
-Two records with the same identity do not overwrite each other:
+`datumId` is also globally unique within a model.
 
-- byte-equivalent records are duplicate evidence;
-- materially different records are conflicting evidence;
-- either condition returns `SAFE_HOLD` with an empty evidence projection and zero coverage counts.
+The model fails closed when:
 
-No order-selected winner survives a conflict. Accepted records are sorted by canonical identity before the stable projection ID is calculated, so equivalent evidence sets receive the same identity regardless of caller order.
+- two records share one semantic identity;
+- one `datumId` is reused across different semantic identities;
+- identical evidence is duplicated;
+- materially different evidence competes for the same identity.
+
+Any such condition returns `SAFE_HOLD` with an empty evidence projection and zero coverage counts. No order-selected winner survives a conflict.
+
+Accepted records are sorted with a fixed code-point comparator before projection identity is calculated, so equivalent evidence sets receive one stable ID regardless of caller order or host locale.
 
 ## Manual seed
 
@@ -117,11 +145,12 @@ Objects reject:
 - symbol keys;
 - non-enumerable or non-data fields;
 - prototype-shaping keys such as `__proto__`, `prototype` and `constructor`;
-- non-finite numbers.
+- non-finite numbers;
+- over-deep, over-large or over-wide structures.
 
-Arrays are inspected through own property descriptors before iteration. Sparse arrays, accessor-backed indexes, symbol keys, custom properties such as `mergeAllowed`, custom prototypes and cycles fail closed without executing caller code.
+Arrays are inspected through own property descriptors before iteration. Sparse arrays, accessor-backed indexes, symbol keys, custom properties such as `mergeAllowed`, custom prototypes and cycles fail closed without executing getters.
 
-The public seed-options entry point uses the same boundary before reading `modelId` or `observedAtUtc`.
+The public seed and standalone-validation option entry points use the same descriptor-safe boundary before reading their fields.
 
 ## Source and privacy boundary
 
@@ -135,7 +164,7 @@ public://
 dataset://
 ```
 
-Raw web URLs, traversal, backslashes, drive/path disguises, long identifier-like digit strings and credential/account-shaped references are rejected.
+Raw web URLs, traversal, backslashes, drive/path disguises, account-like digit sequences, sort-code shapes, IBAN shapes and credential/account-shaped references are rejected.
 
 Sensitive detection covers separator, underscore and camel-style forms, including examples such as:
 
@@ -144,12 +173,52 @@ client_secret
 db_password
 apiKey
 access_token
+oauth_token
+session_token
+credential
 bank_account_number
 sort_code
 IBAN
 ```
 
-Invalid or sensitive records are never echoed into the output projection.
+Invalid evidence is never echoed into the output. Even a sensitive top-level `modelId` is redacted from the invalid projection.
+
+## Bounded estate
+
+M1 accepts at most 256 evidence records. Canonicalization also enforces bounded array length, object width, traversal depth, node count and string size before evidence is projected.
+
+This is a product truth boundary, not an arbitrary document store.
+
+## Coverage and readiness
+
+Coverage keeps separate counts for:
+
+```text
+representedTentacleCount
+knownTentacleCount
+currentKnownTentacleCount
+staleKnownTentacleCount
+unresolvedOwnershipDatumCount
+actualDatumCount
+estimatedDatumCount
+projectedDatumCount
+unknownDatumCount
+```
+
+Readiness states are:
+
+```text
+SAFE_HOLD
+M1_EVIDENCE_INCOMPLETE
+M1_EVIDENCE_REFRESH_REQUIRED
+M1_MANUAL_SEED_READY
+M1_MANUAL_RECONCILIATION_REQUIRED
+M1_MANUAL_EVIDENCE_MODEL_READY
+```
+
+`M1_MANUAL_EVIDENCE_MODEL_READY` requires all eight tentacles to have current known evidence, no explicit unknown data remaining in the accepted estate and no unresolved known-evidence ownership.
+
+These states describe source evidence-model readiness only. They are not a claim that the tile is rendered, connected, running, operator-visible or accepted.
 
 ## Authority boundary
 
@@ -172,28 +241,15 @@ spendAllowed=false
 
 A model, datum, note, scenario or recommendation can never grant financial or platform authority.
 
-## Readiness states
-
-```text
-SAFE_HOLD
-M1_EVIDENCE_INCOMPLETE
-M1_EVIDENCE_REFRESH_REQUIRED
-M1_MANUAL_SEED_READY
-M1_MANUAL_RECONCILIATION_REQUIRED
-M1_MANUAL_EVIDENCE_MODEL_READY
-```
-
-These states describe source evidence-model readiness only. They are not a claim that the tile is rendered, connected, running, operator-visible or accepted.
-
 ## Focused proof
 
 ```bash
 node --test shared/agents/octopusWealthHouseholdModelV1.test.mjs
 ```
 
-The focused suite covers all eight tentacles, deterministic explicit seeds, UNKNOWN preservation, actual/estimated/projected separation, derived freshness, duplicate/conflicting identity clearing, source and sensitive-data rejection, descriptor-safe objects and arrays, ownership boundaries, stable projection identity and zero authority.
+The focused suite covers all eight tentacles, deterministic explicit seeds, observation-bound direct validation, UNKNOWN preservation, actual/estimated/projected separation, derived freshness, complete expired-estate handling, semantic and datum-ID conflicts, source and sensitive-data rejection, descriptor-safe objects and arrays, structural bounds, ownership reconciliation, stable projection identity and zero authority.
 
-Hosted exact-head checks and independent semantic review remain authoritative.
+Hosted exact-head checks and provider-neutral independent review remain authoritative.
 
 ## Next bounded milestone
 
