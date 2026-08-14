@@ -231,16 +231,18 @@ export function buildUiAgentExperienceInventory(input = {}) {
   const surfaces = freezeList([...byId.values()].sort((a, b) => a.surfaceId.localeCompare(b.surfaceId)));
   const sharedPrimitives = freezeList((input.sharedPrimitives || UI_AGENT_M2_SHARED_PRIMITIVES).map((item) => Object.freeze({ ...item })));
   const validationErrors = [];
+  const validSurfaceIds = new Set();
   for (const record of surfaces) {
     const verdict = validateUiAgentExperienceSurface(record);
+    if (verdict.valid) validSurfaceIds.add(record.surfaceId);
     validationErrors.push(...verdict.errors.map((error) => `${record.surfaceId}:${error}`));
   }
   for (const record of sharedPrimitives) {
     const verdict = validateUiAgentSharedPrimitive(record);
     validationErrors.push(...verdict.errors.map((error) => `${record.primitiveId}:${error}`));
   }
-  const coveredCanonical = CANONICAL_PRODUCT_SURFACE_IDS.filter((id) => byId.has(id));
-  const missingCanonical = CANONICAL_PRODUCT_SURFACE_IDS.filter((id) => !byId.has(id));
+  const coveredCanonical = CANONICAL_PRODUCT_SURFACE_IDS.filter((id) => validSurfaceIds.has(id));
+  const missingCanonical = CANONICAL_PRODUCT_SURFACE_IDS.filter((id) => !validSurfaceIds.has(id));
   const observedAtUtc = text(input.observedAtUtc);
   const observedAtMs = Date.parse(observedAtUtc);
   const nowMs = Number.isFinite(input.validationOptions?.nowMs)
