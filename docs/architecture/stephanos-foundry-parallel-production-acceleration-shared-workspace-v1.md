@@ -1,8 +1,8 @@
 # Foundry Parallel Production Acceleration Shared Workspace V1
 
 Parent goal: #1671
-Planner dependency: PR #1786 exact head `5381d436faeec6b4bf6c78d4d3d07613c07313ea`
-Prerequisite base: `b5207c5147161b1d384d4badab04144f704047c5`
+Planner dependency: PR #1786 exact canonical-main convergence head `9bc763e957f2a6d2ddcad6873a0f68b2bc4f4037`
+Canonical base: `main` at `2917862c8eb4b8ccde12bce7f4da381de2592aef`
 
 ## Purpose
 
@@ -78,7 +78,7 @@ CURRENT_HELD
 CURRENT_IDLE
 ```
 
-`recommendationUsable=true` only when the canonical planner is valid, returns `FOUNDRY_ACCELERATION_READY_MODEL_ONLY`, and contains at least one structurally complete assignment.
+`recommendationUsable=true` only when the canonical planner is valid, returns `FOUNDRY_ACCELERATION_READY_MODEL_ONLY`, contains at least one structurally complete assignment, and every projected identifier is compatible with the canonical Shared Workspace validator. Validator-forbidden or otherwise unprojectable identifiers fail the slice closed to `BLOCKED`, clear every assignment/provider/telemetry inventory and cannot survive in either record.
 
 Invalid evidence projects `BLOCKED`, zero assignments and the Unix epoch as its non-current timestamp. Waiting-for-M3, no-positive-gain and other valid held decisions remain visible as `CURRENT_HELD` but never become usable capacity. An empty canonical candidate inventory projects `CURRENT_IDLE`.
 
