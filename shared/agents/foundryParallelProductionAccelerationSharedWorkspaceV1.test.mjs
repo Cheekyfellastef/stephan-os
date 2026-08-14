@@ -241,6 +241,26 @@ test('status and event records validate through the canonical Shared Workspace v
   }
 });
 
+test('Shared Workspace-incompatible planner identifiers fail closed before READY projection', () => {
+  const incompatibleM2Id = 'forge-m2-session';
+  const forge = forgeSidecar();
+  forge.m2Receipt = rebindReceipt(forge.m2Receipt, { receiptId: incompatibleM2Id });
+  const foundry = evidence('foundry', 'FOUNDRY_FORGE', {
+    build: { authorityReceiptIds: [incompatibleM2Id, M3_ID] },
+  });
+  const records = createFoundryAccelerationWorkspaceRecords(host({
+    forgeSidecar: forge,
+    providerCapacityEvidence: [evidence('github', 'CHATGPT_GITHUB'), foundry],
+  }));
+  assert.equal(records.slice.truthState, FOUNDRY_ACCELERATION_WORKSPACE_TRUTH.BLOCKED);
+  assert.equal(records.slice.planValid, false);
+  assert.equal(records.slice.recommendationUsable, false);
+  assert.equal(records.slice.assignmentTotal, 0);
+  assert.deepEqual(records.slice.assignments, []);
+  assert.equal(records.validation.valid, true);
+  assert.doesNotMatch(JSON.stringify(records), /session\b/i);
+});
+
 test('event identity is idempotent for one snapshot and distinct for a changed current recommendation', () => {
   const first = createFoundryAccelerationWorkspaceRecords(host());
   const repeated = createFoundryAccelerationWorkspaceRecords(host());
