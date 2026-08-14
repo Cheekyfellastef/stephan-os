@@ -524,6 +524,77 @@ test('one inert observation snapshot drives both teardown validation and quarant
   ), JSON.stringify(result.blockers));
 });
 
+test('every teardown-policy blocker remains pending until exact quarantine proof arrives', async (t) => {
+  const settledAtUtc = '2026-08-07T21:26:00Z';
+  const cases = [
+    {
+      name: 'malformed teardown time',
+      patch: { teardownStartedAtUtc: 'not-an-instant' },
+      blocker: 'runner-teardown-time-invalid',
+    },
+    {
+      name: 'teardown ordering violation',
+      patch: {
+        teardownStartedAtUtc: '2026-08-07T21:20:02Z',
+        teardownCompletedAtUtc: '2026-08-07T21:20:01Z',
+        completedAtUtc: '2026-08-07T21:20:01Z',
+      },
+      blocker: 'runner-teardown-time-order-invalid',
+    },
+    {
+      name: 'teardown deadline overrun',
+      patch: {
+        teardownStartedAtUtc: NOW,
+        teardownCompletedAtUtc: '2026-08-07T21:25:01Z',
+        completedAtUtc: '2026-08-07T21:25:01Z',
+      },
+      blocker: 'runner-teardown-deadline-exceeded',
+    },
+    {
+      name: 'incomplete destruction',
+      patch: { runtimeBoundaryDestroyed: false },
+      blocker: 'runner-teardown-incomplete',
+    },
+    {
+      name: 'non-zero residual state',
+      patch: { zeroResidualWorkspace: false },
+      blocker: 'runner-teardown-incomplete',
+    },
+  ];
+
+  for (const { name, patch, blocker } of cases) {
+    await t.test(name, async () => {
+      const instants = [NOW, NOW, NOW, NOW, settledAtUtc, settledAtUtc];
+      let aborted = false;
+      const execution = executeVerified(input(), {
+        platform: 'win32',
+        now: () => new Date(instants.shift() || settledAtUtc),
+        executeRunner: async (request) => {
+          request.signal.addEventListener('abort', () => {
+            aborted = true;
+            setTimeout(() => {
+              request.acknowledgeTermination(quarantineAcknowledgement(request, {
+                acknowledgedAtUtc: settledAtUtc,
+              }));
+            }, 20);
+          }, { once: true });
+          return executionResult(request, patch, { acknowledgedAtUtc: settledAtUtc });
+        },
+      });
+      const early = await Promise.race([
+        execution.then(() => 'unsafe-return'),
+        new Promise((resolve) => setTimeout(() => resolve('held-pending'), 10)),
+      ]);
+      assert.equal(early, 'held-pending');
+      const result = await execution;
+      assert.equal(aborted, true);
+      assert.equal(result.ok, false);
+      assert.ok(result.blockers.some((item) => item.includes(blocker)), JSON.stringify(result.blockers));
+      assert.ok(result.blockers.some((item) => item.includes('runner-quarantine-ack-required')), JSON.stringify(result.blockers));
+    });
+  }
+});
+
 test('quarantine proof references bind runner, authorization and invocation identities', async () => {
   const wrongSegments = ['runner', 'authorization', 'invocation'];
   for (const wrongSegment of wrongSegments) {
@@ -1612,6 +1683,24 @@ test('receipt validation returns one immutable inert projection', async () => {
   assert.equal(Object.isFrozen(validation.receipt), true);
   assert.equal(Object.isFrozen(validation.receipt.runnerIdentities), true);
   assert.equal(Object.isFrozen(validation.receipt.proofRefs), true);
+});
+
+test('receipt projection rejects caller-owned boxed or object array elements', async () => {
+  const executed = await executeVerified(input(), {
+    platform: 'win32', now, executeRunner: async (request) => executionResult(request),
+  });
+  for (const field of ['runnerIdentities', 'proofRefs']) {
+    const hostile = structuredClone(executed.receipt);
+    hostile[field][0] = Object(hostile[field][0]);
+    const body = { ...hostile };
+    delete body.payloadSha256;
+    hostile.payloadSha256 = contentDigest(body);
+    const validation = validateForgeShadowM3RunnerRuntimeReceipt(hostile);
+    assert.equal(validation.ok, false, field);
+    assert.equal(validation.receipt, null, field);
+    assert.deepEqual(validation.blockers, ['receipt-inspection-failed'], field);
+    hostile[field][0].callerMutation = true;
+  }
 });
 
 test('receipt validation rejects named and symbolic properties on every authority array', async () => {

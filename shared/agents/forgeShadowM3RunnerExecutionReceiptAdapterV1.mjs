@@ -156,8 +156,12 @@ function inertArraySnapshot(value) {
   const snapshot = new Array(value.length);
   for (const key of Reflect.ownKeys(value)) {
     if (key === 'length') continue;
+    const field = value[key];
+    if (typeof field !== 'string') {
+      throw new TypeError('array-element-must-be-primitive-string');
+    }
     Object.defineProperty(snapshot, key, {
-      value: value[key],
+      value: field,
       enumerable: true,
       configurable: false,
       writable: false,
@@ -417,6 +421,7 @@ function validateAuthorization(authorization, plan, planDigest, nowMs, blockers)
 function validateObservation(
   value, runner, artifact, plan, authorization, invocation, settledMs, lifecycle, blockers,
 ) {
+  const initialBlockerCount = blockers.length;
   const prefix = text(runner?.runnerId) || 'unknown-runner';
   if (!exactKeys(value, OBSERVATION_KEYS)) {
     blockers.push(`runner-observation-fields-invalid:${prefix}`);
@@ -447,28 +452,12 @@ function validateObservation(
         || completedMs > settledMs) blockers.push(`runner-time-outside-invocation:${prefix}`);
     if (completedMs < startedMs || completedMs - startedMs > MAX_RUNNER_EXECUTION_MS) blockers.push(`runner-duration-invalid:${prefix}`);
   }
-  if (!Number.isFinite(teardownStartedMs) || !Number.isFinite(teardownCompletedMs)) {
-    blockers.push(`runner-teardown-time-invalid:${prefix}`);
-  } else {
-    if (teardownStartedMs < startedMs
-        || teardownCompletedMs < teardownStartedMs
-        || teardownCompletedMs !== completedMs) blockers.push(`runner-teardown-time-order-invalid:${prefix}`);
-    if (teardownCompletedMs - teardownStartedMs > MAX_RUNNER_TEARDOWN_MS) {
-      blockers.push(`runner-teardown-deadline-exceeded:${prefix}`);
-    }
-  }
+  const quarantineRequired = validateTeardownPolicy(value, lifecycle, prefix, blockers);
   if (value.installed !== true || value.registered !== true || value.connected !== true) blockers.push(`runner-execution-incomplete:${prefix}`);
   if (value.ephemeralRegistration !== true) blockers.push(`runner-registration-not-ephemeral:${prefix}`);
   if (value.canaryWorkflowId !== FORGE_SHADOW_M3_CANARY_WORKFLOW || value.canaryScenario !== FORGE_SHADOW_M3_CANARY_SCENARIO) blockers.push(`runner-canary-identity-mismatch:${prefix}`);
   if (text(value.canaryHead).toLowerCase() !== plan.canonicalMainHead || text(value.canaryTree).toLowerCase() !== plan.canonicalMainTree) blockers.push(`runner-canary-source-mismatch:${prefix}`);
   if (value.canarySucceeded !== true) blockers.push(`runner-canary-failed:${prefix}`);
-  for (const field of [
-    'unregistered', 'registrationCredentialDestroyed', 'workspaceDestroyed',
-    'runtimeBoundaryDestroyed', 'zeroResidualRegistration', 'zeroResidualCredential',
-    'zeroResidualWorkspace',
-  ]) {
-    if (value[field] !== true) blockers.push(`runner-teardown-incomplete:${prefix}:${field}`);
-  }
   for (const field of [
     'credentialLogged', 'credentialPersisted', 'publicExposure', 'tailscaleExposure',
     'canonicalCheckoutMounted', 'containerSocketMounted', 'hostProcessAccess',
@@ -479,8 +468,10 @@ function validateObservation(
   }
   if (!refs) blockers.push(`runner-proof-refs-invalid:${prefix}`);
   if (!refs || !refs.includes(value.registrationProofRef)) blockers.push(`runner-registration-proof-ref-invalid:${prefix}`);
-  if (blockers.length) return null;
-  return Object.freeze({
+  if (blockers.length !== initialBlockerCount) {
+    return Object.freeze({ observation: null, quarantineRequired });
+  }
+  const observation = Object.freeze({
     runnerId: runner.runnerId,
     poolId: runner.poolId,
     runnerClass: runner.runnerClass,
@@ -511,6 +502,7 @@ function validateObservation(
     zeroResidualWorkspace: true,
     proofRefs: refs,
   });
+  return Object.freeze({ observation, quarantineRequired });
 }
 
 function safelyObservedLifecycle(value, invocationStartedMs) {
@@ -538,31 +530,39 @@ function safelyObservedLifecycle(value, invocationStartedMs) {
   });
 }
 
-function teardownQuarantineRequired(value, lifecycle) {
-  try {
-    const {
-      startedMs, teardownStartedMs, teardownCompletedMs, completedMs,
-    } = lifecycle;
-    if (![startedMs, teardownStartedMs, teardownCompletedMs, completedMs].every(Number.isFinite)) {
-      return true;
-    }
-    if (teardownStartedMs < startedMs
+function validateTeardownPolicy(value, lifecycle, prefix, blockers) {
+  let quarantineRequired = false;
+  const quarantineBlock = (blocker) => {
+    quarantineRequired = true;
+    blockers.push(blocker);
+  };
+  const {
+    startedMs, teardownStartedMs, teardownCompletedMs, completedMs,
+  } = lifecycle;
+  if (!Number.isFinite(teardownStartedMs) || !Number.isFinite(teardownCompletedMs)) {
+    quarantineBlock(`runner-teardown-time-invalid:${prefix}`);
+  } else {
+    if (!Number.isFinite(startedMs)
+        || !Number.isFinite(completedMs)
+        || teardownStartedMs < startedMs
         || teardownCompletedMs < teardownStartedMs
-        || teardownCompletedMs !== completedMs
-        || teardownCompletedMs - teardownStartedMs > MAX_RUNNER_TEARDOWN_MS) {
-      return true;
+        || teardownCompletedMs !== completedMs) {
+      quarantineBlock(`runner-teardown-time-order-invalid:${prefix}`);
     }
-    for (const field of [
-      'unregistered', 'registrationCredentialDestroyed', 'workspaceDestroyed',
-      'runtimeBoundaryDestroyed', 'zeroResidualRegistration', 'zeroResidualCredential',
-      'zeroResidualWorkspace',
-    ]) {
-      if (value?.[field] !== true) return true;
+    if (teardownCompletedMs - teardownStartedMs > MAX_RUNNER_TEARDOWN_MS) {
+      quarantineBlock(`runner-teardown-deadline-exceeded:${prefix}`);
     }
-    return false;
-  } catch {
-    return true;
   }
+  for (const field of [
+    'unregistered', 'registrationCredentialDestroyed', 'workspaceDestroyed',
+    'runtimeBoundaryDestroyed', 'zeroResidualRegistration', 'zeroResidualCredential',
+    'zeroResidualWorkspace',
+  ]) {
+    if (value[field] !== true) {
+      quarantineBlock(`runner-teardown-incomplete:${prefix}:${field}`);
+    }
+  }
+  return quarantineRequired;
 }
 
 function validateTerminationAcknowledgement(value, runner, authorization, invocation, settledMs, deadlineMs, blockers) {
@@ -1003,8 +1003,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
       const observationSnapshot = inertRecordSnapshot(executionResult.observation);
       const lifecycle = safelyObservedLifecycle(observationSnapshot, invocation.startedMs);
       minimumAcknowledgedMs = lifecycle.minimumAcknowledgedMs;
-      quarantineRequired = teardownQuarantineRequired(observationSnapshot, lifecycle);
-      const observation = validateObservation(
+      const observationAssessment = validateObservation(
         observationSnapshot,
         runner,
         artifact,
@@ -1015,6 +1014,8 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
         lifecycle,
         runnerBlockers,
       );
+      quarantineRequired = observationAssessment.quarantineRequired;
+      const { observation } = observationAssessment;
       let termination = terminationGate.proofFor(minimumAcknowledgedMs, quarantineRequired);
       const invalidTerminationProof = terminationGate.blockers().length > 0;
       if (!termination || !observation || runnerBlockers.length || invalidTerminationProof) {
