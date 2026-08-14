@@ -53,6 +53,10 @@ const SCHEDULER_DECISION_KEYS = [
   'selectedIssue', 'selectedIssues', 'selectedLifecycle', 'activeIssue', 'activeIssues',
   'route', 'proofRefs', 'proofHeadShas', 'proofReceipts',
 ];
+const SCHEDULER_DECISION_STATUSES = new Set([
+  'ACTIVE_LANE', 'ACTIVE_LANES', 'MERGE_READY', 'CLOSE_READY',
+  'LANE_SELECTED', 'APPROVAL_REQUIRED', 'WAITING',
+]);
 
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
@@ -224,7 +228,8 @@ function normalizeScheduler(projection, host, blockers) {
   }
   if (!exactKeys(decision, SCHEDULER_DECISION_KEYS)) blockers.push('scheduler-decision-receipt-shape-invalid');
   const decidedAtMs = instant(decision.decidedAt);
-  if (decision.failClosed !== false || decision.status === 'BLOCKED_FAIL_CLOSED'
+  const decisionStatus = text(decision.status);
+  if (decision.failClosed !== false || !SCHEDULER_DECISION_STATUSES.has(decisionStatus)
     || !dense(decision.contradictionCodes) || decision.contradictionCodes.length !== 0
     || !Number.isFinite(decidedAtMs)
     || decidedAtMs > host.nowMs || host.nowMs - decidedAtMs > host.freshnessSeconds * 1000) {
@@ -262,6 +267,19 @@ function normalizeScheduler(projection, host, blockers) {
   }
   if (!sameSet([...activeFromReceipt].sort((a, b) => a - b), activeFromPortfolio)) {
     blockers.push('scheduler-active-portfolio-inventory-mismatch');
+  }
+  const expectedActiveStatus = activeFromReceipt.length === 1 ? 'ACTIVE_LANE'
+    : activeFromReceipt.length > 1 ? 'ACTIVE_LANES' : null;
+  if ((expectedActiveStatus && decisionStatus !== expectedActiveStatus)
+    || (!expectedActiveStatus && (decisionStatus === 'ACTIVE_LANE' || decisionStatus === 'ACTIVE_LANES'))
+    || (expectedActiveStatus && issueNumber(decision.activeIssue) !== activeFromReceipt[0])
+    || (!expectedActiveStatus && decision.activeIssue !== null)
+    || (decisionStatus === 'LANE_SELECTED'
+      && (!issueNumber(decision.selectedIssue) || decision.selectedLifecycle !== 'READY'))
+    || (decisionStatus === 'MERGE_READY' && decision.selectedLifecycle !== 'MERGE_READY')
+    || (decisionStatus === 'CLOSE_READY' && decision.selectedLifecycle !== 'CLOSE_READY')
+    || (decisionStatus === 'WAITING' && decision.selectedIssue !== null)) {
+    blockers.push('scheduler-decision-status-inconsistent');
   }
   const activeResources = new Set();
   for (const issue of activeFromReceipt.filter(Boolean)) {
@@ -418,6 +436,7 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
         metricsReceiptId:metrics?.metricsReceiptId ?? null, authorityReceiptIds:metrics?.authorityReceiptIds ?? [],
         buildAuthorityReceiptIds:normalizedStrings(build?.authorityReceiptIds) ?? [],
         observedAtUtc:metrics?.observedAtUtc ?? null, blockers,
+        evidenceValid:blockers.length === 0,
         eligible:blockers.length === 0 && metrics?.availableSlots > 0 });
     }
     const identityFailure = providers.flatMap(({ blockers }) => blockers).filter((blocker) => blocker.endsWith('-duplicate'));
@@ -425,7 +444,7 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
     const providerFailures = providers.flatMap(({ blockers }) => blockers);
     if (providerFailures.length) return blockedResult(providerFailures);
     const github = providers.find(({ route }) => route === MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
-    if (!github?.eligible) return blockedResult(['github-baseline-capacity-invalid', ...(github?.blockers ?? [])]);
+    if (!github?.evidenceValid) return blockedResult(['github-baseline-capacity-invalid', ...(github?.blockers ?? [])]);
     const foundry = providers.find(({ route }) => route === MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE);
     let forge = null;
     if (foundry) {
@@ -463,7 +482,8 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
       minimumNetSavingsSeconds, baselineProviderId:github.providerId,
       assignments, heldCandidates,
       providerStatus:providers.map((provider) => ({ providerId:provider.providerId, route:provider.route,
-        eligible:provider.eligible, availableSlots:provider.availableSlots, queueDepth:provider.queueDepth,
+        evidenceValid:provider.evidenceValid, eligible:provider.eligible,
+        availableSlots:provider.availableSlots, queueDepth:provider.queueDepth,
         predictedSeconds:provider.predictedSeconds, capacityReceiptId:provider.capacityReceiptId,
         metricsReceiptId:provider.metricsReceiptId, observedAtUtc:provider.observedAtUtc,
         blockers:[...new Set(provider.blockers)] })),
