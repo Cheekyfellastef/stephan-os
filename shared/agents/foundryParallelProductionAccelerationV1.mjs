@@ -363,8 +363,11 @@ function normalizeScheduler(projection, host, blockers) {
     blockers.push('scheduler-decision-stale-or-invalid');
   }
   if (!dense(decision.proofRefs) || !dense(decision.proofHeadShas) || !dense(decision.proofReceipts)
-    || decision.proofRefs.length > MAX_LIST || decision.proofHeadShas.length > MAX_LIST
-    || decision.proofReceipts.length > MAX_LIST) blockers.push('scheduler-decision-proof-inventory-invalid');
+    || decision.proofRefs.length > MAX_SCHEDULER_ARRAY
+    || decision.proofHeadShas.length > MAX_SCHEDULER_ARRAY
+    || decision.proofReceipts.length > MAX_SCHEDULER_ARRAY) {
+    blockers.push('scheduler-decision-proof-inventory-invalid');
+  }
   if (!dense(decision.selectedIssues) || decision.selectedIssues.length > MAX_CANDIDATES
     || !dense(decision.activeIssues) || decision.activeIssues.length > MAX_CANDIDATES) {
     blockers.push('scheduler-decision-issues-invalid');
