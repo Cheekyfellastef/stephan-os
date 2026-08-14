@@ -278,7 +278,8 @@ function normalizeScheduler(projection, host, blockers) {
       && (!issueNumber(decision.selectedIssue) || decision.selectedLifecycle !== 'READY'))
     || (decisionStatus === 'MERGE_READY' && decision.selectedLifecycle !== 'MERGE_READY')
     || (decisionStatus === 'CLOSE_READY' && decision.selectedLifecycle !== 'CLOSE_READY')
-    || (decisionStatus === 'WAITING' && (decision.selectedIssue !== null
+    || ((decisionStatus === 'WAITING' || decisionStatus === 'APPROVAL_REQUIRED')
+      && (decision.selectedIssue !== null
       || decision.selectedIssues.length > 0 || projection.parallelCandidates.length > 0
       || projection.parallelCandidateDetails.length > 0))) {
     blockers.push('scheduler-decision-status-inconsistent');
