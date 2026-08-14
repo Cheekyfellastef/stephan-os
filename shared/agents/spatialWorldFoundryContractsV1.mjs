@@ -62,20 +62,15 @@ export const SPATIAL_LICENCE_STATES = Object.freeze([
 ]);
 
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
+const SAFE_SCOPE_SEGMENT = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 const SAFE_VERSION = /^[a-z0-9][a-z0-9._+:-]{0,127}$/i;
 const EXACT_SOURCE_HEAD = /^[0-9a-f]{40}$/i;
 const CONTENT_HASH = /^sha256:[0-9a-f]{64}$/i;
-const SAFE_RESOURCE_SCOPE = /^(?:planet|region|object|world-system|asset):[a-z0-9][a-z0-9._:/-]{0,255}$/i;
 const ABSOLUTE_OR_UNSAFE_PATH = /^(?:[a-z]:[\\/]|[\\/]{1,2}|\.{2}(?:[\\/]|$))/i;
-const FORBIDDEN_ALLOWED_OPERATIONS = new Set([
-  'APPROVE',
-  'ARBITRARY_SHELL',
-  'DEPLOY',
-  'LEASE_SEIZE',
-  'MERGE',
-  'RUNTIME_MUTATE',
-  'SELF_PROMOTE',
-  'VOICE_EXECUTE',
+const SAFE_ALLOWED_OPERATIONS = new Set([
+  'GENERATE_ASSET',
+  'WRITE_SANDBOX',
+  'RUN_VALIDATION',
 ]);
 
 const BUILD_ORDER_KEYS = Object.freeze([
@@ -200,6 +195,22 @@ function safeVersion(value) {
   return SAFE_VERSION.test(text(value));
 }
 
+function validResourceScope(value) {
+  const candidate = text(value);
+  const separator = candidate.indexOf(':');
+  if (separator <= 0 || candidate.indexOf(':', separator + 1) !== -1) return false;
+  const type = candidate.slice(0, separator).toLowerCase();
+  const identity = candidate.slice(separator + 1);
+  if (type === 'region') {
+    const segments = identity.split('/');
+    return segments.length === 2 && segments.every((segment) => SAFE_SCOPE_SEGMENT.test(segment));
+  }
+  if (['planet', 'object', 'world-system', 'asset'].includes(type)) {
+    return SAFE_SCOPE_SEGMENT.test(identity);
+  }
+  return false;
+}
+
 function exactRecordShape(record, keys, errors) {
   if (!plainRecord(record)) {
     errors.push('record-must-be-plain-object');
@@ -228,7 +239,7 @@ function stringList(value, field, errors, options = {}) {
   const normalized = value.map(text);
   if (normalized.some((item) => !item)) errors.push(`${field}-contains-empty-value`);
   if (options.safeIds && normalized.some((item) => !SAFE_ID.test(item))) errors.push(`${field}-contains-unsafe-id`);
-  if (options.resourceScopes && normalized.some((item) => !SAFE_RESOURCE_SCOPE.test(item))) {
+  if (options.resourceScopes && normalized.some((item) => !validResourceScope(item))) {
     errors.push(`${field}-contains-invalid-resource-scope`);
   }
   if (new Set(normalized).size !== normalized.length) errors.push(`${field}-contains-duplicate`);
@@ -281,16 +292,27 @@ function validateRollbackTarget(value, errors) {
   if (value.snapshotId !== null && !safeId(value.snapshotId)) errors.push('rollbackTarget-snapshotId-invalid');
 }
 
-function safeStorageLocation(value) {
+function hasTraversalSegment(value) {
+  return text(value).split(/[\\/]/).some((segment) => segment === '.' || segment === '..');
+}
+
+function safeGovernedStorageLocation(value) {
   if (value === null) return true;
   const candidate = text(value);
-  if (!candidate || candidate.length > 1024 || ABSOLUTE_OR_UNSAFE_PATH.test(candidate)) return false;
-  return /^(?:cas|lfs|object):\/\//i.test(candidate) || /^[a-z0-9._/-]+$/i.test(candidate);
+  if (!candidate || candidate.length > 1024 || hasTraversalSegment(candidate)) return false;
+  return /^(?:cas|lfs|object):\/\/[a-z0-9][a-z0-9._~:/+-]{0,1000}$/i.test(candidate);
+}
+
+function safeSourceLocation(value) {
+  if (value === null) return true;
+  const candidate = text(value);
+  if (!candidate || candidate.length > 1024 || ABSOLUTE_OR_UNSAFE_PATH.test(candidate) || hasTraversalSegment(candidate)) return false;
+  return safeGovernedStorageLocation(candidate) || /^[a-z0-9._/-]+$/i.test(candidate);
 }
 
 function safeReference(value) {
   const candidate = text(value);
-  return Boolean(candidate && candidate.length <= 1024 && !ABSOLUTE_OR_UNSAFE_PATH.test(candidate));
+  return Boolean(candidate && candidate.length <= 1024 && !ABSOLUTE_OR_UNSAFE_PATH.test(candidate) && !hasTraversalSegment(candidate));
 }
 
 export function validateSpatialBuildOrder(record) {
@@ -312,8 +334,8 @@ export function validateSpatialBuildOrder(record) {
   stringList(record.ownedResourceScopes, 'ownedResourceScopes', errors, { resourceScopes:true, minimum:1 });
   const allowed = stringList(record.allowedOperations, 'allowedOperations', errors).map((value) => value.toUpperCase());
   stringList(record.forbiddenOperations, 'forbiddenOperations', errors);
-  if (allowed.some((operation) => FORBIDDEN_ALLOWED_OPERATIONS.has(operation))) {
-    errors.push('allowedOperations-contains-authority-bypass');
+  if (allowed.some((operation) => !SAFE_ALLOWED_OPERATIONS.has(operation))) {
+    errors.push('allowedOperations-contains-unknown-operation');
   }
   stringList(record.requiredAgents, 'requiredAgents', errors, { safeIds:true, minimum:1 });
   validateBudget(record.performanceBudget, 'performanceBudget', errors);
@@ -341,8 +363,8 @@ export function validateSpatialAssetRecord(record) {
   }
   if (!safeVersion(record.version)) errors.push('version-invalid');
   if (!CONTENT_HASH.test(text(record.contentHash))) errors.push('contentHash-invalid');
-  if (!safeStorageLocation(record.sourceLocation)) errors.push('sourceLocation-invalid');
-  if (!safeStorageLocation(record.largeAssetLocation)) errors.push('largeAssetLocation-invalid');
+  if (!safeSourceLocation(record.sourceLocation)) errors.push('sourceLocation-invalid');
+  if (!safeGovernedStorageLocation(record.largeAssetLocation)) errors.push('largeAssetLocation-invalid');
   if (record.parentVersion !== null && !safeVersion(record.parentVersion)) errors.push('parentVersion-invalid');
   stringList(record.sourceAndInfluenceRefs, 'sourceAndInfluenceRefs', errors);
   if (!SPATIAL_LICENCE_STATES.includes(text(record.licenceAndRightsState).toUpperCase())) {
@@ -448,6 +470,7 @@ export function validateSpatialWorldFoundryBundle(bundle = {}) {
     if (bundle.provenance.buildOrderId !== bundle.buildOrder.spatialBuildOrderId) errors.push('lineage-provenance-build-order-mismatch');
     if (bundle.provenance.assetId !== bundle.asset.assetId) errors.push('lineage-provenance-asset-mismatch');
     if (bundle.provenance.assetVersion !== bundle.asset.version) errors.push('lineage-provenance-version-mismatch');
+    if (bundle.provenance.creatorAgentId !== bundle.asset.creatorAgentId) errors.push('lineage-provenance-creator-mismatch');
     if (bundle.asset.planetId !== bundle.buildOrder.planetId || bundle.snapshot.planetId !== bundle.buildOrder.planetId) {
       errors.push('lineage-planet-mismatch');
     }
