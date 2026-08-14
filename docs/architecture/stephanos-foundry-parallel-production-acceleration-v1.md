@@ -35,7 +35,7 @@ The host context must be assembled from one current canonical snapshot and conta
 - identity-bound measurement receipts contained inside the build receipts’ validity windows;
 - raw Forge sidecar evidence for direct canonical adjudication.
 
-The scheduler source has one exact root shape and cannot carry `now` or `freshnessMs`. Before the canonical scheduler runs, the adapter observes that source exactly once into a recursively frozen inert projection. Accessors, symbols, sparse or widened arrays, cycles, non-plain prototypes and inputs outside the canonical portfolio/evidence/prerequisite bounds fail closed. The adapter then calls `buildMissionScheduler()` directly and forces the trusted host clock and freshness window after the snapshot, so caller-shaped scheduler output, tuple rewrites and capacity rewrites never enter the recommendation path.
+The complete trusted host context is first observed exactly once into a recursively frozen inert snapshot, so stateful provider/metrics receipts cannot diverge between digest validation and routing. The nested scheduler source has one exact root shape and cannot carry `now` or `freshnessMs`; it is independently bounded before the canonical scheduler runs. Accessors, symbols, sparse or widened arrays, cycles, non-plain prototypes and inputs outside the canonical portfolio/evidence/prerequisite bounds fail closed. The adapter then calls `buildMissionScheduler()` directly and forces the trusted host clock and freshness window after the snapshot, so caller-shaped scheduler output, tuple rewrites and capacity rewrites never enter the recommendation path.
 
 Malformed, sparse, duplicate, stale, future, expired, wrong-repository, wrong-head, wrong-tree or internally contradictory evidence fails closed.
 
@@ -109,7 +109,7 @@ Telemetry exposes only bounded identities and measurements: lane/worker identity
 Focused and hostile tests prove that:
 
 1. caller-shaped clocks, heads, metrics, candidates, resources, scheduler projections and legacy M3 objects are ignored;
-2. all routing metrics are bound to canonical capacity receipts;
+2. all routing metrics are consumed from one inert host snapshot and digest-bound to canonical capacity receipts;
 3. only canonical Forge M2/M3 adjudication can make Foundry routable;
 4. replayed, stale, future, expired, wrong-head/tree/repository and validity-window evidence fails closed;
 5. stateful, accessor-bearing, symbolic, sparse, widened or over-bounded scheduler sources fail closed before canonical scheduling;
