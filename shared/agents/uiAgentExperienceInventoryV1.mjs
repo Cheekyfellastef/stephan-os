@@ -46,6 +46,7 @@ export const UI_AGENT_REQUIRED_PROOF_CLASSES = Object.freeze([
 
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
 const SAFE_SOURCE_REF = /^[a-z0-9][a-z0-9._/-]{0,255}$/i;
+const SAFE_PRESENTATION_REF = /^presentation:[a-z0-9][a-z0-9._-]{0,127}$/i;
 const ABSOLUTE_SOURCE_REF = /^(?:[a-z]:[\\/]|[\\/]{1,2})/i;
 
 const CANONICAL_PRODUCT_SURFACE_IDS = Object.freeze([
@@ -125,7 +126,12 @@ function safeId(value) {
 
 function sourceRef(value) {
   const candidate = text(value);
-  return Boolean(candidate && !ABSOLUTE_SOURCE_REF.test(candidate) && !candidate.split('/').includes('..') && SAFE_SOURCE_REF.test(candidate));
+  return Boolean(candidate && !ABSOLUTE_SOURCE_REF.test(candidate) && !candidate.split(/[\\/]/).includes('..') && SAFE_SOURCE_REF.test(candidate));
+}
+
+function registrationRef(value) {
+  const candidate = text(value);
+  return SAFE_PRESENTATION_REF.test(candidate) || sourceRef(candidate);
 }
 
 function timestamp(value) {
@@ -140,6 +146,11 @@ function hash(value) {
 
 function freezeList(value) {
   return Object.freeze([...value]);
+}
+
+function normalizedExperienceDebt(value) {
+  const debt = list(value);
+  return debt.length > 0 ? debt : ['UNKNOWN'];
 }
 
 function surface(input = {}) {
@@ -158,7 +169,7 @@ function surface(input = {}) {
     inputMethods: freezeList(list(input.inputMethods)),
     lastVisualProof: text(input.lastVisualProof),
     lastInteractionProof: text(input.lastInteractionProof),
-    knownExperienceDebt: freezeList(list(input.knownExperienceDebt)),
+    knownExperienceDebt: freezeList(normalizedExperienceDebt(input.knownExperienceDebt)),
     severity: text(input.severity, 'UNKNOWN'),
     recommendedNextImprovement: text(input.recommendedNextImprovement, 'AUDIT_REQUIRED'),
   });
@@ -201,9 +212,10 @@ export function validateUiAgentExperienceSurface(record) {
   if (record.schemaVersion !== UI_AGENT_EXPERIENCE_SURFACE_SCHEMA_VERSION) errors.push('schema-version-mismatch');
   if (!safeId(record.surfaceId) && !/^app:[a-z0-9][a-z0-9._-]{0,100}$/i.test(text(record.surfaceId))) errors.push('surfaceId-invalid');
   if (!UI_AGENT_SURFACE_CLASSES.includes(text(record.surfaceClass))) errors.push('surfaceClass-invalid');
-  if (!text(record.registrationRef)) errors.push('registrationRef-required');
+  if (!registrationRef(record.registrationRef)) errors.push('registrationRef-invalid');
   if (!Array.isArray(record.inputMethods) || record.inputMethods.length === 0) errors.push('inputMethods-required');
   if (!Array.isArray(record.knownExperienceDebt)) errors.push('knownExperienceDebt-must-be-array');
+  else if (record.knownExperienceDebt.length === 0) errors.push('knownExperienceDebt-must-not-be-empty');
   for (const debt of record.knownExperienceDebt || []) {
     if (!UI_AGENT_EXPERIENCE_DEBT_CLASSES.includes(text(debt))) errors.push(`experience-debt-invalid:${debt}`);
   }
@@ -230,7 +242,14 @@ export function buildUiAgentExperienceInventory(input = {}) {
   const coveredCanonical = CANONICAL_PRODUCT_SURFACE_IDS.filter((id) => byId.has(id));
   const missingCanonical = CANONICAL_PRODUCT_SURFACE_IDS.filter((id) => !byId.has(id));
   const observedAtUtc = text(input.observedAtUtc);
+  const observedAtMs = Date.parse(observedAtUtc);
+  const nowMs = Number.isFinite(input.validationOptions?.nowMs)
+    ? input.validationOptions.nowMs
+    : Number.isFinite(input.nowMs)
+      ? input.nowMs
+      : Date.now();
   if (!timestamp(observedAtUtc)) validationErrors.push('observedAtUtc-invalid');
+  else if (observedAtMs > nowMs) validationErrors.push('observedAtUtc-future-dated');
   const inventoryId = `ui-inventory-${hash({ registeredApps, surfaces, sharedPrimitives, observedAtUtc }).slice(0, 24)}`;
   return Object.freeze({
     schemaVersion: UI_AGENT_EXPERIENCE_INVENTORY_SCHEMA_VERSION,
