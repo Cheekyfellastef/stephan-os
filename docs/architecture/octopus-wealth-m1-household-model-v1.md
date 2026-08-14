@@ -57,7 +57,7 @@ UNKNOWN
 
 Known evidence requires a value compatible with its declared unit and a source class compatible with its epistemic claim. A model assumption cannot become `ACTUAL`. A provider observation cannot become `PROJECTED`. Count values must be bounded non-negative integers, year values must remain within a human planning range, percentages and currency values must be finite and bounded, dates must be canonical timestamps, and text values reject sensitive, control-character or identifier-like content.
 
-The ownership boundary is retained independently for Stephan, spouse, joint, household, external-reference and unknown evidence. A known record with unresolved ownership can remain visible but keeps the model in reconciliation-required state.
+The ownership boundary is retained independently for Stephan, spouse, joint, household, external-reference and unknown evidence. A known record with unresolved ownership can remain visible but keeps the model in reconciliation-required state. `EXTERNAL_REFERENCE` is resolved evidence only for the `EXTERNAL_ENVIRONMENT` tentacle; it cannot satisfy household cash, ISA, pension, home, caravan, employment or debt coverage.
 
 ## Validation context
 
@@ -148,7 +148,7 @@ Objects reject:
 - non-finite numbers;
 - over-deep, over-large or over-wide structures.
 
-Arrays are inspected through own property descriptors before iteration. Sparse arrays, accessor-backed indexes, symbol keys, custom properties such as `mergeAllowed`, custom prototypes and cycles fail closed without executing getters.
+Arrays are inspected through one own-descriptor snapshot before iteration. Sparse arrays, accessor-backed indexes, symbol keys, custom properties such as `mergeAllowed`, custom prototypes and cycles fail closed without executing getters. Object and array descriptor snapshots reject symbol-keyed entries directly rather than relying on a separate, state-drifting property scan.
 
 The public seed and standalone-validation option entry points use the same descriptor-safe boundary before reading their fields.
 
@@ -164,7 +164,7 @@ public://
 dataset://
 ```
 
-Raw web URLs, traversal, backslashes, drive/path disguises, account-like digit sequences, sort-code shapes, IBAN shapes and credential/account-shaped references are rejected.
+Raw web URLs, traversal, backslashes, drive/path disguises, account-like digit sequences, sort-code shapes, IBAN shapes and credential/account-shaped references are rejected. Account-like identifiers are also rejected from `modelId`, `datumId`, `metricId` and `sourceName`, so moving a sensitive identifier out of `sourceRef` cannot bypass the privacy boundary.
 
 Sensitive detection covers separator, underscore and camel-style forms, including examples such as:
 
