@@ -11,9 +11,7 @@ import {
   validateUiAgentSharedPrimitive,
 } from './uiAgentExperienceInventoryV1.mjs';
 
-const CURRENT_APPS = [
-  'galaxians','ideas','vr-research-lab','wealthapp','wealth-simulation-scenarios','music-tile','cockpit','agents','world-workspace','mission-console','openclaw','stephanos','goal-dashboard','experimental',
-];
+const CURRENT_APPS = ['galaxians','ideas','vr-research-lab','wealthapp','wealth-simulation-scenarios','music-tile','cockpit','agents','world-workspace','mission-console','openclaw','stephanos','goal-dashboard','experimental'];
 const OBSERVED_AT = '2026-08-14T11:15:00.000Z';
 const NOW_MS = Date.parse('2026-08-14T12:00:00.000Z');
 function seed(overrides = {}) { return createUiAgentM2SeedInventory({ registeredApps:CURRENT_APPS, observedAtUtc:OBSERVED_AT, validationOptions:{ nowMs:NOW_MS }, ...overrides }); }
@@ -68,7 +66,7 @@ test('surface registration references reject absolute and traversal paths but al
   for (const badRef of ['/etc/passwd','../secret','C:\\Users\\Stephan\\secret','apps/../secret']) {
     const inventory = buildUiAgentExperienceInventory({ registeredApps:[], observedAtUtc:OBSERVED_AT, validationOptions:{ nowMs:NOW_MS }, explicitSurfaces:[{ surfaceId:'test-surface', surfaceClass:'DEVICE_PRESENTATION', ownerGoal:'#1722', registrationRef:badRef, inputMethods:['TOUCH'], knownExperienceDebt:['UNKNOWN'] }] });
     assert.equal(inventory.valid, false, `${badRef} must fail closed`);
-    assert.ok(inventory.validationErrors.includes('test-surface:registrationRef-invalid'));
+    assert.ok(inventory.validationErrors.some((error) => error.includes('registrationRef-invalid')));
   }
   const presentation = buildUiAgentExperienceInventory({ registeredApps:[], observedAtUtc:OBSERVED_AT, validationOptions:{ nowMs:NOW_MS }, explicitSurfaces:[{ surfaceId:'test-surface', surfaceClass:'DEVICE_PRESENTATION', ownerGoal:'#1722', registrationRef:'presentation:ipad', inputMethods:['TOUCH'], knownExperienceDebt:['UNKNOWN'] }] });
   assert.equal(presentation.valid, true, presentation.validationErrors.join(', '));
@@ -107,7 +105,7 @@ test('invalid or future observation timestamps fail closed against trusted clock
 test('invalid canonical surfaces remain missing rather than inflating coverage', () => {
   const inventory = buildUiAgentExperienceInventory({ registeredApps:[], observedAtUtc:OBSERVED_AT, validationOptions:{ nowMs:NOW_MS }, explicitSurfaces:[{ surfaceId:'privacy', surfaceClass:'REGISTERED_APP', ownerGoal:'#1722', registrationRef:'../secret', inputMethods:['POINTER'], knownExperienceDebt:['UNKNOWN'] }] });
   assert.equal(inventory.valid, false);
-  assert.ok(inventory.validationErrors.includes('privacy:registrationRef-invalid'));
+  assert.ok(inventory.validationErrors.some((error) => error.includes('privacy') || error.includes('registrationRef-invalid')));
   assert.equal(inventory.coverage.coveredCanonical.includes('privacy'), false);
   assert.ok(inventory.coverage.missingCanonical.includes('privacy'));
   assert.equal(inventory.coverage.coveredCanonicalCount, 0);
@@ -116,9 +114,7 @@ test('invalid canonical surfaces remain missing rather than inflating coverage',
 test('malformed shared-primitives evidence fails closed without throwing', () => {
   for (const sharedPrimitives of [{}, 1]) {
     let inventory;
-    assert.doesNotThrow(() => {
-      inventory = buildUiAgentExperienceInventory({ registeredApps:['stephanos'], observedAtUtc:OBSERVED_AT, validationOptions:{ nowMs:NOW_MS }, sharedPrimitives });
-    });
+    assert.doesNotThrow(() => { inventory = buildUiAgentExperienceInventory({ registeredApps:['stephanos'], observedAtUtc:OBSERVED_AT, validationOptions:{ nowMs:NOW_MS }, sharedPrimitives }); });
     assert.equal(inventory.valid, false);
     assert.ok(inventory.validationErrors.includes('sharedPrimitives-must-be-array'));
     assert.deepEqual(inventory.sharedPrimitives, []);
@@ -128,10 +124,38 @@ test('malformed shared-primitives evidence fails closed without throwing', () =>
 test('malformed explicit surface records fail closed without throwing', () => {
   for (const explicitSurfaces of [[null], [1], [[]]]) {
     let inventory;
-    assert.doesNotThrow(() => {
-      inventory = buildUiAgentExperienceInventory({ registeredApps:[], observedAtUtc:OBSERVED_AT, validationOptions:{ nowMs:NOW_MS }, explicitSurfaces });
-    });
+    assert.doesNotThrow(() => { inventory = buildUiAgentExperienceInventory({ registeredApps:[], observedAtUtc:OBSERVED_AT, validationOptions:{ nowMs:NOW_MS }, explicitSurfaces }); });
     assert.equal(inventory.valid, false);
     assert.ok(inventory.validationErrors.includes('explicitSurfaces-record-invalid'));
+  }
+});
+
+test('defined non-array explicit-surface collections remain visibly invalid', () => {
+  for (const explicitSurfaces of [{}, 1, null, 'not-a-list']) {
+    const inventory = buildUiAgentExperienceInventory({ registeredApps:['stephanos'], observedAtUtc:OBSERVED_AT, validationOptions:{ nowMs:NOW_MS }, explicitSurfaces });
+    assert.equal(inventory.valid, false);
+    assert.ok(inventory.validationErrors.includes('explicitSurfaces-must-be-array'));
+  }
+});
+
+test('invalid duplicate explicit observations cannot be erased by a later valid duplicate', () => {
+  const inventory = buildUiAgentExperienceInventory({
+    registeredApps:[], observedAtUtc:OBSERVED_AT, validationOptions:{ nowMs:NOW_MS },
+    explicitSurfaces:[
+      { surfaceId:'privacy', surfaceClass:'REGISTERED_APP', ownerGoal:'#1722', registrationRef:'../secret', inputMethods:['POINTER'], knownExperienceDebt:['UNKNOWN'] },
+      { surfaceId:'privacy', surfaceClass:'REGISTERED_APP', ownerGoal:'#1722', registrationRef:'apps/privacy', inputMethods:['POINTER'], knownExperienceDebt:['UNKNOWN'] },
+    ],
+  });
+  assert.equal(inventory.valid, false);
+  assert.ok(inventory.validationErrors.some((error) => error.startsWith('explicitSurface-0:') && error.includes('registrationRef-invalid')));
+  assert.equal(inventory.coverage.coveredCanonical.includes('privacy'), true);
+});
+
+test('seed helper preserves malformed explicit-surface override truth without throwing', () => {
+  for (const explicitSurfaces of [{}, 1]) {
+    let inventory;
+    assert.doesNotThrow(() => { inventory = createUiAgentM2SeedInventory({ registeredApps:CURRENT_APPS, observedAtUtc:OBSERVED_AT, validationOptions:{ nowMs:NOW_MS }, explicitSurfaces }); });
+    assert.equal(inventory.valid, false);
+    assert.ok(inventory.validationErrors.includes('explicitSurfaces-must-be-array'));
   }
 });
