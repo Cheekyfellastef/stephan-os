@@ -425,6 +425,42 @@ test('a proven zero-slot Foundry lane reports current capacity exhaustion, not m
   assert.equal(provider.eligible, false);
 });
 
+test('zero Foundry slots do not mask a nonpositive acceleration comparison', () => {
+  const foundry = evidence('foundry', 'FOUNDRY_FORGE', {
+    build:{ p95StartLatencySeconds:180 },
+    metrics:{ availableSlots:0, medianExecutionSeconds:600, reviewIntegrationSeconds:120,
+      successRate:0.95, reworkRate:0.05 },
+  });
+  const result = planFoundryParallelProductionAcceleration({}, host({
+    minimumNetSavingsSeconds:0,
+    providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), foundry],
+  }));
+  assert.equal(result.valid, true);
+  assert.equal(result.decision, FOUNDRY_ACCELERATION_DECISIONS.NO_POSITIVE_GAIN);
+  assert.equal(result.heldCandidates[0].reason, 'NO_POSITIVE_NET_ACCELERATION_USE_GITHUB');
+});
+
+test('fractional reliability penalties are not independently rounded into false savings', () => {
+  const github = evidence('github', 'CHATGPT_GITHUB', {
+    build:{ p95StartLatencySeconds:0 },
+    metrics:{ medianExecutionSeconds:1, reviewIntegrationSeconds:0,
+      successRate:0.99, reworkRate:0.01 },
+  });
+  const foundry = evidence('foundry', 'FOUNDRY_FORGE', {
+    build:{ p95StartLatencySeconds:0 },
+    metrics:{ medianExecutionSeconds:2, reviewIntegrationSeconds:0,
+      successRate:1, reworkRate:0 },
+  });
+  const result = planFoundryParallelProductionAcceleration({}, host({
+    minimumNetSavingsSeconds:0,
+    providerCapacityEvidence:[github, foundry],
+  }));
+  assert.equal(result.valid, true);
+  assert.equal(result.decision, FOUNDRY_ACCELERATION_DECISIONS.NO_POSITIVE_GAIN);
+  const baseline = result.providerStatus.find(({ providerId }) => providerId === 'github');
+  assert.ok(Math.abs(baseline.predictedSeconds - 1.02) < Number.EPSILON * 4);
+});
+
 test('zero and negative savings never route even when the trusted minimum is zero', async (t) => {
   const zeroFoundry = evidence('foundry', 'FOUNDRY_FORGE', {
     build:{ p95StartLatencySeconds:180 },
