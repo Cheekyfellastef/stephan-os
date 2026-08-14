@@ -43,6 +43,8 @@ Malformed, sparse, duplicate, stale, future, expired, wrong-repository, wrong-he
 
 Every lane first passes `validateBuildLaneCapacityReceipt()` for the trusted repository, task class and clock. V1 accepts exactly one `CHATGPT_GITHUB` baseline and at most one `FOUNDRY_FORGE` lane. Duplicate providers, routes, build receipts or metrics receipts fail the inventory.
 
+Receipt identities are compared in their canonical trimmed form. Lexically different raw strings cannot represent the same canonical receipt and evade duplicate detection.
+
 The metrics receipt is payload-digest bound and repeats the exact build receipt identity, route, repository, worker, state, supported operations, supported task classes, queue depth and p95 start latency. Its authority IDs and proof refs must carry the build receipt chain, and its observation/expiry interval must be contained within the build receipt interval. Execution, integration, success, rework and available-slot measurements are consumed only from this host-provided receipt; root request values never participate.
 
 Foundry is additionally eligible only when a direct call to `adjudicateForgeSidecarCapacity()` proves exact repository/head/tree/mirror parity, fresh valid M2 and M3 receipts, evidence binding, no pending activation and `canCarryRealWork=true`. The M2 and M3 receipt identities must be distinct, and both the build and metrics receipts must carry both identities; one shared authority entry cannot collapse the two-stage chain. A failed Forge adjudication makes the final Foundry provider evidence invalid as well as ineligible; provider status cannot report valid evidence alongside Forge blockers. The removed legacy six-field “M3 live” object is not authority evidence.
@@ -64,7 +66,7 @@ As defense in depth, the adapter also verifies:
 
 Candidate admission preserves the canonical order emitted by Mission Scheduler; the planner does not re-rank that authority-bearing sequence from critical-path weights.
 
-V1 accelerates only candidates whose canonical scheduler route is `CHATGPT_GITHUB`. Dispatch must re-read the Mission Scheduler/lease projection at action time; this read-only plan never claims a lease.
+V1 validates the complete canonical selected inventory, then accelerates only candidates whose canonical scheduler route is `CHATGPT_GITHUB`. Valid work on other routes remains scheduler-owned and is filtered from this Foundry recommendation without invalidating otherwise eligible GitHub candidates. Dispatch must re-read the Mission Scheduler/lease projection at action time; this read-only plan never claims a lease.
 
 ## Routing calculation
 
