@@ -33,6 +33,7 @@ const MAX_BLOCKERS_SHOWN = 12;
 const SAFE_CODE = /^[a-z0-9][a-z0-9._:@#/-]{0,239}$/i;
 const SAFE_REPOSITORY = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const SHA = /^[a-f0-9]{40}$/;
+const WORKSPACE_FORBIDDEN_VALUE = /BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY|\.env\b|node_modules|apps\/stephanos\/dist|runtime-data|session\b/i;
 
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
@@ -48,6 +49,7 @@ function text(value) {
 function safeCode(value) {
   const normalized = text(value);
   return normalized && SAFE_CODE.test(normalized) && !normalized.includes('..')
+    && !WORKSPACE_FORBIDDEN_VALUE.test(normalized)
     ? normalized
     : null;
 }
@@ -227,10 +229,13 @@ export function createFoundryAccelerationWorkspaceSlice(trustedHostContext = {})
   const compactProviders = rawProviders.map(compactProvider).filter(Boolean)
     .sort((left, right) => left.route.localeCompare(right.route)
       || left.providerId.localeCompare(right.providerId));
+  const compactTelemetry = compactFoundryTelemetry(plan?.foundryTelemetry);
+  const planTruth = truthFor(plan);
   const structurallyComplete = compactAssignments.length === rawAssignments.length
     && compactHeldCandidates.length === rawHeld.length
-    && compactProviders.length === rawProviders.length;
-  const planTruth = truthFor(plan);
+    && compactProviders.length === rawProviders.length
+    && (planTruth !== FOUNDRY_ACCELERATION_WORKSPACE_TRUTH.CURRENT_READY
+      || compactTelemetry !== null);
   const truthState = structurallyComplete
     ? planTruth
     : FOUNDRY_ACCELERATION_WORKSPACE_TRUTH.BLOCKED;
@@ -261,19 +266,19 @@ export function createFoundryAccelerationWorkspaceSlice(trustedHostContext = {})
     canonicalMainHead,
     canonicalMainTree,
     baselineProviderId: safeCode(plan?.baselineProviderId),
-    assignmentTotal: rawAssignments.length,
-    assignmentsShown: Math.min(compactAssignments.length, MAX_ASSIGNMENTS_SHOWN),
-    assignmentsTruncated: compactAssignments.length > MAX_ASSIGNMENTS_SHOWN,
-    assignments: compactAssignments.slice(0, MAX_ASSIGNMENTS_SHOWN),
-    heldCandidateTotal: rawHeld.length,
-    heldCandidatesShown: Math.min(compactHeldCandidates.length, MAX_HELD_SHOWN),
-    heldCandidatesTruncated: compactHeldCandidates.length > MAX_HELD_SHOWN,
-    heldCandidates: compactHeldCandidates.slice(0, MAX_HELD_SHOWN),
-    providerTotal: rawProviders.length,
-    providersShown: Math.min(compactProviders.length, MAX_PROVIDERS_SHOWN),
-    providersTruncated: compactProviders.length > MAX_PROVIDERS_SHOWN,
-    providers: compactProviders.slice(0, MAX_PROVIDERS_SHOWN),
-    foundryTelemetry: compactFoundryTelemetry(plan?.foundryTelemetry),
+    assignmentTotal: structurallyComplete ? rawAssignments.length : 0,
+    assignmentsShown: structurallyComplete ? Math.min(compactAssignments.length, MAX_ASSIGNMENTS_SHOWN) : 0,
+    assignmentsTruncated: structurallyComplete && compactAssignments.length > MAX_ASSIGNMENTS_SHOWN,
+    assignments: structurallyComplete ? compactAssignments.slice(0, MAX_ASSIGNMENTS_SHOWN) : [],
+    heldCandidateTotal: structurallyComplete ? rawHeld.length : 0,
+    heldCandidatesShown: structurallyComplete ? Math.min(compactHeldCandidates.length, MAX_HELD_SHOWN) : 0,
+    heldCandidatesTruncated: structurallyComplete && compactHeldCandidates.length > MAX_HELD_SHOWN,
+    heldCandidates: structurallyComplete ? compactHeldCandidates.slice(0, MAX_HELD_SHOWN) : [],
+    providerTotal: structurallyComplete ? rawProviders.length : 0,
+    providersShown: structurallyComplete ? Math.min(compactProviders.length, MAX_PROVIDERS_SHOWN) : 0,
+    providersTruncated: structurallyComplete && compactProviders.length > MAX_PROVIDERS_SHOWN,
+    providers: structurallyComplete ? compactProviders.slice(0, MAX_PROVIDERS_SHOWN) : [],
+    foundryTelemetry: structurallyComplete ? compactTelemetry : null,
     blockerCodes: blockerCodes(plan?.blockers),
     totalCriticalPathSecondsSaved,
     recommendationUsable,
