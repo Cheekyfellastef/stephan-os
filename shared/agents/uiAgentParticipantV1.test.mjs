@@ -262,3 +262,54 @@ test('future-dated participant status can never publish a ready verdict', () => 
     assert.equal(body.nextMilestone, 'M1_REPAIR_UI_AGENT_PARTICIPANT_CONTRACT');
   }
 });
+
+test('complete participant status must be valid and fresh before publishing ready', () => {
+  const nowUtc = '2026-08-14T13:00:00.000Z';
+  const capability = createUiAgentCapabilityRecord({ timestampUtc: nowUtc, proofRefs });
+  const staleOptions = {
+    nowMs: Date.parse(nowUtc),
+    staleAfterMs: 60 * 60 * 1000,
+  };
+  const staleStatus = createUiAgentParticipantStatusRecord({
+    timestampUtc,
+    capability,
+    proofRefs,
+    validationOptions: staleOptions,
+  });
+  const staleValidation = validateSharedWorkspaceRecord(staleStatus, staleOptions);
+
+  assert.equal(staleStatus.status, 'UI_AGENT_PARTICIPANT_BLOCKED');
+  assert.match(staleStatus.summary, /stale/);
+  assert.equal(staleValidation.valid, true);
+  assert.equal(staleValidation.stale, true);
+
+  const unsafeStatus = createUiAgentParticipantStatusRecord({
+    timestampUtc: nowUtc,
+    capability,
+    proofRefs: ['../escape'],
+    validationOptions: staleOptions,
+  });
+  const unsafeValidation = validateSharedWorkspaceRecord(unsafeStatus, staleOptions);
+
+  assert.equal(unsafeStatus.status, 'UI_AGENT_PARTICIPANT_BLOCKED');
+  assert.match(unsafeStatus.summary, /invalid/);
+  assert.equal(unsafeValidation.valid, false);
+  assert.ok(unsafeValidation.errors.includes('unsafe-proof-ref'));
+});
+
+test('workspace registration never invents a proof reference when none is supplied', () => {
+  const bundle = createUiAgentWorkspaceRecords({
+    timestampUtc,
+    correlationId: 'ui-agent-no-proof',
+    validationOptions,
+  });
+
+  assert.deepEqual(bundle.capability.proofRefs, []);
+  assert.deepEqual(bundle.status.proofRefs, []);
+  assert.equal(bundle.readiness.readyForSharedWorkspaceRegistration, false);
+  assert.ok(bundle.readiness.blockers.includes('participant-proof-required'));
+  assert.equal(bundle.status.status, 'UI_AGENT_PARTICIPANT_BLOCKED');
+  assert.match(bundle.status.summary, /no caller-supplied proof/);
+  assert.equal(bundle.validations.status.valid, false);
+  assert.ok(bundle.validations.status.errors.includes('missing-proofRefs'));
+});
