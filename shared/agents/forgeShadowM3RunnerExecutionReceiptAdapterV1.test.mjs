@@ -1743,6 +1743,41 @@ test('receipt projection rejects caller-owned boxed or object array elements', a
   }
 });
 
+test('receipt projection rejects zero-own-key mutable scalar coercion authority', async () => {
+  const executed = await executeVerified(input(), {
+    platform: 'win32', now, executeRunner: async (request) => executionResult(request),
+  });
+  let projectedHead = executed.receipt.sourceHead;
+  const mutableHead = Object.create({
+    toString() {
+      return projectedHead;
+    },
+  });
+  assert.deepEqual(Reflect.ownKeys(mutableHead), []);
+
+  const hostile = structuredClone(executed.receipt);
+  hostile.sourceHead = mutableHead;
+  const body = { ...hostile };
+  delete body.payloadSha256;
+  hostile.payloadSha256 = contentDigest(body);
+
+  const validation = validateForgeShadowM3RunnerRuntimeReceipt(hostile);
+  assert.equal(validation.ok, false);
+  assert.equal(validation.receipt, null);
+  assert.deepEqual(validation.blockers, ['receipt-inspection-failed']);
+
+  projectedHead = 'f'.repeat(40);
+  assert.equal(String(mutableHead), projectedHead);
+
+  const hostileExpectation = validateForgeShadowM3RunnerRuntimeReceipt(
+    executed.receipt,
+    { expectedHead: mutableHead },
+  );
+  assert.equal(hostileExpectation.ok, false);
+  assert.equal(hostileExpectation.receipt, null);
+  assert.deepEqual(hostileExpectation.blockers, ['receipt-inspection-failed']);
+});
+
 test('unsupported runtime-plan digest expectations fail closed instead of being ignored', async () => {
   const executed = await executeVerified(input(), {
     platform: 'win32', now, executeRunner: async (request) => executionResult(request),

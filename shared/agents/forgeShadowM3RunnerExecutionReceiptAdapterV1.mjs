@@ -169,7 +169,7 @@ function inertArraySnapshot(value) {
   return Object.freeze(snapshot);
 }
 
-function inertRecordSnapshot(value, { arrays = true } = {}) {
+function inertRecordSnapshot(value, { arrays = true, primitiveScalars = false } = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new TypeError('record-required');
   }
@@ -180,7 +180,15 @@ function inertRecordSnapshot(value, { arrays = true } = {}) {
   const snapshot = {};
   for (const key of keys) {
     const field = value[key];
-    snapshot[key] = arrays && Array.isArray(field) ? inertArraySnapshot(field) : field;
+    if (arrays && Array.isArray(field)) {
+      snapshot[key] = inertArraySnapshot(field);
+      continue;
+    }
+    if (primitiveScalars && field !== null
+        && !['string', 'number', 'boolean', 'undefined'].includes(typeof field)) {
+      throw new TypeError('record-scalar-must-be-primitive');
+    }
+    snapshot[key] = field;
   }
   return Object.freeze(snapshot);
 }
@@ -740,8 +748,8 @@ function buildReceipt(plan, authorization, observations) {
 
 export function validateForgeShadowM3RunnerRuntimeReceipt(receipt, expectations = {}) {
   try {
-    const projectedReceipt = inertRecordSnapshot(receipt);
-    const projectedExpectations = inertRecordSnapshot(expectations);
+    const projectedReceipt = inertRecordSnapshot(receipt, { primitiveScalars: true });
+    const projectedExpectations = inertRecordSnapshot(expectations, { primitiveScalars: true });
     const blockers = [];
     if (!subsetKeys(projectedExpectations, RECEIPT_EXPECTATION_KEYS)) {
       blockers.push('receipt-expectation-fields-invalid');
