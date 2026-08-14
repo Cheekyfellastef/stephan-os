@@ -48,6 +48,18 @@ function createTextElement(tag, text, className = '') {
   return element;
 }
 
+function setCopyStatus(message = '', stateName = '') {
+  nodes.copyStatus.textContent = message;
+  nodes.copyStatus.classList.toggle('is-success', stateName === 'success');
+  nodes.copyStatus.classList.toggle('is-error', stateName === 'error');
+}
+
+function localReferenceHref(pathRef = '') {
+  const normalized = String(pathRef || '').trim();
+  if (!normalized || normalized.startsWith('/') || normalized.includes('..') || normalized.includes('://')) return '';
+  return `../../${normalized}`;
+}
+
 function renderTruthBoundary() {
   nodes.truthSummary.textContent = STARFIELD_VR_EVIDENCE_BOUNDARY.summary;
   appendTextList(nodes.truthGates, STARFIELD_VR_EVIDENCE_BOUNDARY.requiredPromotionEvidence);
@@ -128,6 +140,18 @@ function detailSection(title, content) {
   return section;
 }
 
+function appendReferenceLink(container, label, href, typeLabel, { external = false } = {}) {
+  const link = document.createElement('a');
+  link.className = 'source-link';
+  link.href = href;
+  if (external) {
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+  }
+  link.append(createTextElement('span', label), createTextElement('span', typeLabel, 'source-type'));
+  container.appendChild(link);
+}
+
 function renderReferenceDetail() {
   const reference = getStarfieldVrReference(state.activeReferenceId) || STARFIELD_VR_REFERENCES[0];
   nodes.referenceDetail.replaceChildren();
@@ -146,13 +170,12 @@ function renderReferenceDetail() {
   const sourceLinks = document.createElement('div');
   sourceLinks.className = 'source-links';
   for (const source of reference.sources) {
-    const link = document.createElement('a');
-    link.className = 'source-link';
-    link.href = source.url;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.append(createTextElement('span', source.label), createTextElement('span', source.type.replaceAll('-', ' '), 'source-type'));
-    sourceLinks.appendChild(link);
+    appendReferenceLink(sourceLinks, source.label, source.url, source.type.replaceAll('-', ' '), { external: true });
+  }
+  for (const localReference of reference.localReferences || []) {
+    const href = localReferenceHref(localReference);
+    if (!href) continue;
+    appendReferenceLink(sourceLinks, localReference, href, 'pinned local evidence');
   }
   sources.appendChild(sourceLinks);
   nodes.referenceDetail.appendChild(sources);
@@ -164,7 +187,7 @@ function renderReferenceDetail() {
   toggle.addEventListener('click', () => {
     if (state.selectedReferenceIds.has(reference.id)) state.selectedReferenceIds.delete(reference.id);
     else state.selectedReferenceIds.add(reference.id);
-    nodes.copyStatus.textContent = '';
+    setCopyStatus();
     renderAtlas();
     renderReferenceDetail();
     renderRecipe();
@@ -204,6 +227,9 @@ function buildRecipeBrief() {
     'Selected references:',
     ...selected.map((reference) => `- ${reference.title}: ${reference.contribution}`),
     '',
+    'Selected acceptance tests:',
+    ...recipe.acceptanceTests.map((acceptanceTest) => `- ${acceptanceTest}`),
+    '',
     'Programme gates:',
     ...STARFIELD_VR_RECOMMENDED_RECIPE.gates.map((gate) => `- ${gate}`),
     '',
@@ -214,22 +240,22 @@ function buildRecipeBrief() {
 
 async function copyRecipeBrief() {
   if (!navigator.clipboard?.writeText) {
-    nodes.copyStatus.textContent = 'Clipboard unavailable in this browser context.';
+    setCopyStatus('Clipboard unavailable in this browser context.', 'error');
     return;
   }
   try {
     await navigator.clipboard.writeText(buildRecipeBrief());
-    nodes.copyStatus.textContent = 'Build brief copied.';
+    setCopyStatus('Build brief copied.', 'success');
     nodes.copyRecipe.textContent = 'Copied ✓';
     window.setTimeout(() => { nodes.copyRecipe.textContent = 'Copy build brief'; }, 1800);
   } catch {
-    nodes.copyStatus.textContent = 'Copy failed. The workbench remains unchanged.';
+    setCopyStatus('Copy failed. The workbench remains unchanged.', 'error');
   }
 }
 
 nodes.loadRecipe.addEventListener('click', () => {
   state.selectedReferenceIds = new Set(STARFIELD_VR_RECOMMENDED_RECIPE.referenceIds);
-  nodes.copyStatus.textContent = '';
+  setCopyStatus();
   renderAtlas();
   renderReferenceDetail();
   renderRecipe();
@@ -237,7 +263,7 @@ nodes.loadRecipe.addEventListener('click', () => {
 
 nodes.clearRecipe.addEventListener('click', () => {
   state.selectedReferenceIds.clear();
-  nodes.copyStatus.textContent = '';
+  setCopyStatus();
   renderAtlas();
   renderReferenceDetail();
   renderRecipe();
