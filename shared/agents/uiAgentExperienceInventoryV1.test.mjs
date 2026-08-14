@@ -125,6 +125,35 @@ test('surface validation rejects unknown experience-debt classes', () => {
   assert.ok(verdict.errors.includes('experience-debt-invalid:MAGIC_BEAUTY_SCORE'));
 });
 
+test('surface validation returns invalid instead of throwing on non-array debt', () => {
+  for (const knownExperienceDebt of [{}, 1]) {
+    let verdict;
+    assert.doesNotThrow(() => {
+      verdict = validateUiAgentExperienceSurface({
+        schemaVersion: UI_AGENT_EXPERIENCE_SURFACE_SCHEMA_VERSION,
+        surfaceId:'malformed-debt-surface',
+        surfaceClass:'REGISTERED_APP',
+        ownerGoal:'#1722',
+        registrationRef:'apps/test',
+        experienceVersion:'UNASSESSED',
+        componentVersion:'UNASSESSED',
+        responsiveCoverage:'UNKNOWN',
+        accessibilityCoverage:'UNKNOWN',
+        motionCoverage:'UNKNOWN',
+        loadingEmptyErrorCoverage:'UNKNOWN',
+        inputMethods:['POINTER'],
+        lastVisualProof:'',
+        lastInteractionProof:'',
+        knownExperienceDebt,
+        severity:'UNKNOWN',
+        recommendedNextImprovement:'AUDIT_REQUIRED',
+      });
+    });
+    assert.equal(verdict.valid, false);
+    assert.ok(verdict.errors.includes('knownExperienceDebt-must-be-array'));
+  }
+});
+
 test('surface registration references reject absolute and traversal paths but allow bounded presentation refs', () => {
   for (const badRef of ['/etc/passwd', '../secret', 'C:\\Users\\Stephan\\secret', 'apps/../secret']) {
     const inventory = buildUiAgentExperienceInventory({
