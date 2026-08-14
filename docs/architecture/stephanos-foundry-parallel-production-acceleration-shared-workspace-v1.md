@@ -1,7 +1,7 @@
 # Foundry Parallel Production Acceleration Shared Workspace V1
 
-Parent goal: #1671  
-Planner dependency: PR #1786 exact head `5381d436faeec6b4bf6c78d4d3d07613c07313ea`  
+Parent goal: #1671
+Planner dependency: PR #1786 exact head `5381d436faeec6b4bf6c78d4d3d07613c07313ea`
 Prerequisite base: `b5207c5147161b1d384d4badab04144f704047c5`
 
 ## Purpose
