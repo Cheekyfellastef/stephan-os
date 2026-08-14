@@ -603,6 +603,33 @@ test('canonical-equivalent receipt IDs cannot evade duplicate detection with whi
   });
 });
 
+test('one canonical receipt identity cannot be reused across build and metrics stages', async (t) => {
+  await t.test('within one provider entry', () => {
+    const github = evidence('github', 'CHATGPT_GITHUB', {
+      metrics:{ receiptId:'github-capacity-receipt-001' },
+    });
+    const result = planFoundryParallelProductionAcceleration({}, host({
+      providerCapacityEvidence:[github, evidence('foundry', 'FOUNDRY_FORGE')],
+    }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('metrics-receipt-id-duplicate'));
+  });
+
+  await t.test('when a later build reuses an earlier metrics identity', () => {
+    const github = evidence('github', 'CHATGPT_GITHUB', {
+      metrics:{ receiptId:'shared-cross-stage-receipt-001' },
+    });
+    const foundry = evidence('foundry', 'FOUNDRY_FORGE', {
+      build:{ receiptId:' shared-cross-stage-receipt-001 ' },
+    });
+    const result = planFoundryParallelProductionAcceleration({}, host({
+      providerCapacityEvidence:[github, foundry],
+    }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('capacity-receipt-id-duplicate'));
+  });
+});
+
 test('authority is always recommendation-only on success and failure', () => {
   const expected = { dispatch:false, sourceMutation:false, branchMutation:false, publication:false,
     merge:false, deployment:false, runtimeMutation:false, credentialAccess:false,
