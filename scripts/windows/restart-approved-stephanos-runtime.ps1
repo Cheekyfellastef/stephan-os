@@ -362,7 +362,8 @@ function Get-VerifiedFreshWorkerInstance {
         $boundWorkerStartedAtUtc = [datetime]::Parse([string]$invocationHeartbeat.workerStartedAtUtc).ToUniversalTime()
         $boundHeartbeatTimestampUtc = [datetime]::Parse([string]$invocationHeartbeat.heartbeatTimestampUtc).ToUniversalTime()
         if ($boundWorkerStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks) { return $null }
-        if ($boundHeartbeatTimestampUtc.Ticks -ne $timestamp.Ticks -or $boundHeartbeatTimestampUtc -le $receiptProcessStartedAtUtc) { return $null }
+        if ($boundHeartbeatTimestampUtc -le $receiptProcessStartedAtUtc `
+            -or $timestamp -lt $boundHeartbeatTimestampUtc) { return $null }
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
         $processStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()

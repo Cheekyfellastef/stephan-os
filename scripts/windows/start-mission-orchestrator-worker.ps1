@@ -85,6 +85,41 @@ function Read-ExactInvocationSignal {
     catch { return $null }
 }
 
+function Stop-ExactOwnedWorkerProcess {
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process]$OwnedProcess,
+        [Parameter(Mandatory = $true)][string]$ExpectedNode,
+        [Parameter(Mandatory = $true)][string]$ExpectedWorkerScript,
+        [datetime]$ExpectedStartedAtUtc = [datetime]::MinValue
+    )
+
+    if (-not [object]::ReferenceEquals($Process, $OwnedProcess)) {
+        throw 'Mission worker launcher cleanup process capability changed.'
+    }
+    if (-not [string]::Equals([System.IO.Path]::GetFullPath([string]$Process.StartInfo.FileName), $ExpectedNode, [System.StringComparison]::OrdinalIgnoreCase) `
+        -or [string]$Process.StartInfo.Arguments -ne ('"' + $ExpectedWorkerScript + '"') `
+        -or -not [string]::Equals([System.IO.Path]::GetFullPath([string]$Process.StartInfo.WorkingDirectory), $repositoryRoot, [System.StringComparison]::OrdinalIgnoreCase) `
+        -or $Process.StartInfo.UseShellExecute `
+        -or -not $Process.StartInfo.CreateNoWindow) {
+        throw 'Mission worker launcher cleanup command identity changed.'
+    }
+    if ($Process.HasExited) { return }
+    if ($Process.Id -le 0) {
+        throw 'Mission worker launcher cleanup process identity is invalid.'
+    }
+    if ($ExpectedStartedAtUtc -ne [datetime]::MinValue) {
+        $observedStartedAtUtc = $Process.StartTime.ToUniversalTime()
+        if ($observedStartedAtUtc.Ticks -ne $ExpectedStartedAtUtc.ToUniversalTime().Ticks) {
+            throw 'Mission worker launcher cleanup process start identity changed.'
+        }
+    }
+    $Process.Kill()
+    if (-not $Process.WaitForExit(5000)) {
+        throw 'Mission worker launcher cleanup timed out.'
+    }
+}
+
 foreach ($requiredFile in @($workerScript, $privateKeyPath, $publicKeyPath)) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw "Required Mission Orchestrator worker file is missing: $requiredFile"
@@ -182,88 +217,105 @@ if (Test-Path -LiteralPath $restartRequestPath -PathType Leaf) {
     $processStartInfo.CreateNoWindow = $true
     $workerProcess = New-Object System.Diagnostics.Process
     $workerProcess.StartInfo = $processStartInfo
-    if (-not $workerProcess.Start()) { throw 'Mission worker process did not start.' }
-    $workerStartedAtUtc = $workerProcess.StartTime.ToUniversalTime()
-    $receiptPath = Join-Path $statusRoot "mission-orchestrator-worker-restart-receipt-$invocationId.json"
-    Write-BoundedAtomicJson -Path $receiptPath -Value ([PSCustomObject]@{
-        schemaVersion = 'stephanos.mission-worker-restart-receipt.v1'
-        invocationId = $invocationId
-        taskName = 'Stephanos Mission Orchestrator Worker'
-        repositoryRoot = $repositoryRoot
-        headSha = $headSha
-        launcherPid = $PID
-        launcherStartedAtUtc = $launcherStartedAtUtc.ToString('o')
-        workerPid = $workerProcess.Id
-        workerStartedAtUtc = $workerStartedAtUtc.ToString('o')
-        canonicalNode = $canonicalNode
-        canonicalWorkerScript = $workerScript
-        deadlineUtc = $restartDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
-    })
-
-    $confirmationPath = Join-Path $statusRoot "mission-orchestrator-worker-restart-confirm-$invocationId.json"
-    $cancelPath = Join-Path $statusRoot "mission-orchestrator-worker-restart-cancel-$invocationId.json"
-    $invocationHeartbeatPath = Join-Path $statusRoot "mission-orchestrator-worker-restart-heartbeat-$invocationId.json"
+    $workerProcessStarted = $false
+    $ownedWorkerProcess = $null
+    $workerStartedAtUtc = [datetime]::MinValue
     $restartConfirmed = $false
-    $invocationHeartbeatBound = $false
-    while (-not $workerProcess.HasExited -and [datetime]::UtcNow -lt $restartDeadlineUtc) {
-        if (-not $invocationHeartbeatBound -and (Test-Path -LiteralPath $heartbeatPath -PathType Leaf)) {
-            try {
-                $workerHeartbeat = Get-Content -LiteralPath $heartbeatPath -Raw | ConvertFrom-Json
-                $heartbeatTimestampUtc = [datetime]::Parse([string]$workerHeartbeat.timestampUtc).ToUniversalTime()
-                if ([string]$workerHeartbeat.schemaVersion -eq 'stephanos.mission-orchestrator-worker-heartbeat.v1' `
-                    -and [string]$workerHeartbeat.repositoryRoot -eq $repositoryRoot `
-                    -and [string]$workerHeartbeat.branch -eq 'main' `
-                    -and [string]$workerHeartbeat.headSha -eq $headSha `
-                    -and [string]$workerHeartbeat.taskName -eq 'Stephanos Mission Orchestrator Worker' `
-                    -and [int]$workerHeartbeat.pid -eq $workerProcess.Id `
-                    -and $heartbeatTimestampUtc -gt $workerStartedAtUtc `
-                    -and $workerProcess.StartTime.ToUniversalTime().Ticks -eq $workerStartedAtUtc.Ticks) {
-                    Write-BoundedAtomicJson -Path $invocationHeartbeatPath -Value ([PSCustomObject]@{
-                        schemaVersion = 'stephanos.mission-worker-restart-heartbeat.v1'
-                        invocationId = $invocationId
-                        taskName = 'Stephanos Mission Orchestrator Worker'
-                        repositoryRoot = $repositoryRoot
-                        headSha = $headSha
-                        workerPid = $workerProcess.Id
-                        workerStartedAtUtc = $workerStartedAtUtc.ToString('o')
-                        heartbeatTimestampUtc = $heartbeatTimestampUtc.ToString('o')
-                        deadlineUtc = $restartDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
-                    })
-                    $invocationHeartbeatBound = $true
+    try {
+        if (-not $workerProcess.Start()) { throw 'Mission worker process did not start.' }
+        $workerProcessStarted = $true
+        $ownedWorkerProcess = $workerProcess
+        $workerStartedAtUtc = $workerProcess.StartTime.ToUniversalTime()
+        $receiptPath = Join-Path $statusRoot "mission-orchestrator-worker-restart-receipt-$invocationId.json"
+        Write-BoundedAtomicJson -Path $receiptPath -Value ([PSCustomObject]@{
+            schemaVersion = 'stephanos.mission-worker-restart-receipt.v1'
+            invocationId = $invocationId
+            taskName = 'Stephanos Mission Orchestrator Worker'
+            repositoryRoot = $repositoryRoot
+            headSha = $headSha
+            launcherPid = $PID
+            launcherStartedAtUtc = $launcherStartedAtUtc.ToString('o')
+            workerPid = $workerProcess.Id
+            workerStartedAtUtc = $workerStartedAtUtc.ToString('o')
+            canonicalNode = $canonicalNode
+            canonicalWorkerScript = $workerScript
+            deadlineUtc = $restartDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+        })
+
+        $confirmationPath = Join-Path $statusRoot "mission-orchestrator-worker-restart-confirm-$invocationId.json"
+        $cancelPath = Join-Path $statusRoot "mission-orchestrator-worker-restart-cancel-$invocationId.json"
+        $invocationHeartbeatPath = Join-Path $statusRoot "mission-orchestrator-worker-restart-heartbeat-$invocationId.json"
+        $invocationHeartbeatBound = $false
+        while (-not $workerProcess.HasExited -and [datetime]::UtcNow -lt $restartDeadlineUtc) {
+            if (-not $invocationHeartbeatBound -and (Test-Path -LiteralPath $heartbeatPath -PathType Leaf)) {
+                try {
+                    $workerHeartbeat = Get-Content -LiteralPath $heartbeatPath -Raw | ConvertFrom-Json
+                    $heartbeatTimestampUtc = [datetime]::Parse([string]$workerHeartbeat.timestampUtc).ToUniversalTime()
+                    if ([string]$workerHeartbeat.schemaVersion -eq 'stephanos.mission-orchestrator-worker-heartbeat.v1' `
+                        -and [string]$workerHeartbeat.repositoryRoot -eq $repositoryRoot `
+                        -and [string]$workerHeartbeat.branch -eq 'main' `
+                        -and [string]$workerHeartbeat.headSha -eq $headSha `
+                        -and [string]$workerHeartbeat.taskName -eq 'Stephanos Mission Orchestrator Worker' `
+                        -and [int]$workerHeartbeat.pid -eq $workerProcess.Id `
+                        -and $heartbeatTimestampUtc -gt $workerStartedAtUtc `
+                        -and $workerProcess.StartTime.ToUniversalTime().Ticks -eq $workerStartedAtUtc.Ticks) {
+                        Write-BoundedAtomicJson -Path $invocationHeartbeatPath -Value ([PSCustomObject]@{
+                            schemaVersion = 'stephanos.mission-worker-restart-heartbeat.v1'
+                            invocationId = $invocationId
+                            taskName = 'Stephanos Mission Orchestrator Worker'
+                            repositoryRoot = $repositoryRoot
+                            headSha = $headSha
+                            workerPid = $workerProcess.Id
+                            workerStartedAtUtc = $workerStartedAtUtc.ToString('o')
+                            heartbeatTimestampUtc = $heartbeatTimestampUtc.ToString('o')
+                            deadlineUtc = $restartDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+                        })
+                        $invocationHeartbeatBound = $true
+                    }
+                }
+                catch {
+                    $invocationHeartbeatBound = $false
                 }
             }
+            $confirmation = Read-ExactInvocationSignal `
+                -Path $confirmationPath `
+                -SchemaVersion 'stephanos.mission-worker-restart-confirmation.v1' `
+                -InvocationId $invocationId `
+                -WorkerPid $workerProcess.Id `
+                -WorkerStartedAtUtc $workerStartedAtUtc
+            if ($confirmation -and $invocationHeartbeatBound) { $restartConfirmed = $true; break }
+            $cancel = Read-ExactInvocationSignal `
+                -Path $cancelPath `
+                -SchemaVersion 'stephanos.mission-worker-restart-cancel.v1' `
+                -InvocationId $invocationId `
+                -WorkerPid $workerProcess.Id `
+                -WorkerStartedAtUtc $workerStartedAtUtc
+            if ($cancel) { break }
+            [void]$workerProcess.WaitForExit(250)
+        }
+        if (-not $restartConfirmed) {
+            throw 'Mission worker restart was not confirmed before its deadline.'
+        }
+        $workerProcess.WaitForExit()
+        $exitCode = $workerProcess.ExitCode
+    }
+    catch {
+        $launchFailure = $_
+        if ($workerProcessStarted -and -not $restartConfirmed) {
+            try {
+                Stop-ExactOwnedWorkerProcess `
+                    -Process $workerProcess `
+                    -OwnedProcess $ownedWorkerProcess `
+                    -ExpectedNode $canonicalNode `
+                    -ExpectedWorkerScript $workerScript `
+                    -ExpectedStartedAtUtc $workerStartedAtUtc
+            }
             catch {
-                $invocationHeartbeatBound = $false
+                throw "Mission worker launcher owned cleanup failed: $($_.Exception.Message)"
             }
         }
-        $confirmation = Read-ExactInvocationSignal `
-            -Path $confirmationPath `
-            -SchemaVersion 'stephanos.mission-worker-restart-confirmation.v1' `
-            -InvocationId $invocationId `
-            -WorkerPid $workerProcess.Id `
-            -WorkerStartedAtUtc $workerStartedAtUtc
-        if ($confirmation -and $invocationHeartbeatBound) { $restartConfirmed = $true; break }
-        $cancel = Read-ExactInvocationSignal `
-            -Path $cancelPath `
-            -SchemaVersion 'stephanos.mission-worker-restart-cancel.v1' `
-            -InvocationId $invocationId `
-            -WorkerPid $workerProcess.Id `
-            -WorkerStartedAtUtc $workerStartedAtUtc
-        if ($cancel) { break }
-        [void]$workerProcess.WaitForExit(250)
+        throw $launchFailure
     }
-    if (-not $restartConfirmed) {
-        if (-not $workerProcess.HasExited) {
-            if ($workerProcess.Id -le 0 -or $workerProcess.StartTime.ToUniversalTime().Ticks -ne $workerStartedAtUtc.Ticks) {
-                throw 'Mission worker process identity changed before launcher cleanup.'
-            }
-            $workerProcess.Kill()
-            if (-not $workerProcess.WaitForExit(5000)) { throw 'Mission worker launcher cleanup timed out.' }
-        }
-        throw 'Mission worker restart was not confirmed before its deadline.'
-    }
-    $workerProcess.WaitForExit()
-    $exitCode = $workerProcess.ExitCode
 }
 else {
     & $canonicalNode $workerScript 2>&1 | ForEach-Object {

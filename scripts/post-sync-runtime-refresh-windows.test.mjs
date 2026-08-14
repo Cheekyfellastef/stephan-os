@@ -41,9 +41,41 @@ function mandatoryWorkerCleanupBoundary(source) {
     && source.includes('Get-VerifiedInvocationProcessFromLaunchReceipt')
     && source.includes('Get-VerifiedFreshWorkerInstance')
     && source.includes('mission-orchestrator-worker-restart-heartbeat-$ExpectedInvocationId.json')
+    && source.includes('$timestamp -lt $boundHeartbeatTimestampUtc')
+    && !source.includes('$boundHeartbeatTimestampUtc.Ticks -ne $timestamp.Ticks')
+    && source.includes('$boundHeartbeatTimestampUtc -le $receiptProcessStartedAtUtc')
+    && source.includes('$processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks')
+    && source.includes('Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot')
     && source.includes('$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks')
     && source.includes('$reverifiedWorker.ProcessStartedAtUtc.Ticks -ne $verifiedWorker.ProcessStartedAtUtc.Ticks')
     && source.includes('mission-orchestrator-worker-restart-cancel-$ExpectedInvocationId.json');
+}
+
+function exactOwnedLauncherCleanupBoundary(source) {
+  const guardedStart = source.indexOf('if (-not $workerProcess.Start())');
+  const startedCapability = source.indexOf('$workerProcessStarted = $true', guardedStart);
+  const ownedCapability = source.indexOf('$ownedWorkerProcess = $workerProcess', startedCapability);
+  const startTimeRead = source.indexOf('$workerStartedAtUtc = $workerProcess.StartTime.ToUniversalTime()', ownedCapability);
+  const receiptWrite = source.indexOf('Write-BoundedAtomicJson -Path $receiptPath', startTimeRead);
+  const guardedCatch = source.indexOf('\n    catch {', receiptWrite);
+  const cleanup = source.indexOf('Stop-ExactOwnedWorkerProcess `', guardedCatch);
+  const rethrow = source.indexOf('throw $launchFailure', cleanup);
+  return guardedStart >= 0
+    && startedCapability > guardedStart
+    && ownedCapability > startedCapability
+    && startTimeRead > ownedCapability
+    && receiptWrite > startTimeRead
+    && guardedCatch > receiptWrite
+    && cleanup > guardedCatch
+    && rethrow > cleanup
+    && source.includes('[object]::ReferenceEquals($Process, $OwnedProcess)')
+    && source.includes('[System.IO.Path]::GetFullPath([string]$Process.StartInfo.FileName)')
+    && source.includes("[string]$Process.StartInfo.Arguments -ne ('\"' + $ExpectedWorkerScript + '\"')")
+    && source.includes('$ExpectedStartedAtUtc -ne [datetime]::MinValue')
+    && source.includes('$observedStartedAtUtc.Ticks -ne $ExpectedStartedAtUtc.ToUniversalTime().Ticks')
+    && source.includes('$Process.Kill()')
+    && source.includes('$Process.WaitForExit(5000)')
+    && source.includes('if ($workerProcessStarted -and -not $restartConfirmed)');
 }
 
 function finalWorkerProofPrecedesConfirmation(source) {
@@ -232,15 +264,15 @@ test('deadline expiry, final task failure and post-confirmation widening cannot 
 });
 
 test('removing or widening any owned-cleanup identity edge fails the source guard', () => {
-  for (const mutation of [
+  for (const [index, mutation] of [
     restartSource.replaceAll('Stop-NewlyStartedOwnedWorker `', '# cleanup removed'),
     restartSource.replace("[string]$Plan.TaskName -ne 'Stephanos Mission Orchestrator Worker'", '$false'),
     restartSource.replaceAll('[string]$ExpectedInvocationId', '[string]$CallerSelectedInvocationId'),
     restartSource.replaceAll('Get-VerifiedInvocationProcessFromLaunchReceipt', 'Get-Process'),
     restartSource.replaceAll('$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks', '$false'),
     restartSource.replaceAll('$reverifiedWorker.ProcessStartedAtUtc.Ticks -ne $verifiedWorker.ProcessStartedAtUtc.Ticks', '$false'),
-  ]) {
-    assert.equal(mandatoryWorkerCleanupBoundary(mutation), false);
+  ].entries()) {
+    assert.equal(mandatoryWorkerCleanupBoundary(mutation), false, `heartbeat mutation ${index} must fail closed`);
   }
 });
 
@@ -251,7 +283,8 @@ test('worker cleanup can target only the exact fresh owned process and fixed tas
   assert.match(restartSource, /Get-VerifiedInvocationProcessFromLaunchReceipt/);
   assert.match(restartSource, /mission-orchestrator-worker-restart-heartbeat-\$ExpectedInvocationId\.json/);
   assert.match(restartSource, /\$invocationHeartbeat\.invocationId -ne \$ExpectedInvocationId/);
-  assert.match(restartSource, /\$boundHeartbeatTimestampUtc\.Ticks -ne \$timestamp\.Ticks/);
+  assert.match(restartSource, /\$timestamp -lt \$boundHeartbeatTimestampUtc/);
+  assert.doesNotMatch(restartSource, /\$boundHeartbeatTimestampUtc\.Ticks -ne \$timestamp\.Ticks/);
   assert.match(restartSource, /\[string\]\$heartbeat\.repositoryRoot -ne \$ExpectedRepoRoot/);
   assert.match(restartSource, /\[string\]\$heartbeat\.headSha -ne \$ExpectedSourceHead/);
   assert.match(restartSource, /\$verifiedInvocationProcess\.ProcessId -ne \$ExpectedProcessId/);
@@ -264,6 +297,56 @@ test('worker cleanup can target only the exact fresh owned process and fixed tas
   assert.match(restartSource, /workerStartedAtUtc = \$ExpectedProcessStartedAtUtc\.ToUniversalTime\(\)\.ToString\('o'\)/);
   assert.doesNotMatch(restartSource, /Stop-Process -Id \$verifiedWorker\.ProcessId/);
   assert.doesNotMatch(restartSource, /Stop-Process\s+-Name|taskkill|killall/);
+});
+
+test('shared heartbeat time may advance without weakening immutable invocation cleanup identity', () => {
+  assert.equal(mandatoryWorkerCleanupBoundary(restartSource), true);
+  assert.match(
+    restartSource,
+    /\$boundHeartbeatTimestampUtc -le \$receiptProcessStartedAtUtc\s*`?\r?\n\s*-or \$timestamp -lt \$boundHeartbeatTimestampUtc/,
+  );
+  for (const mutation of [
+    restartSource.replace('$timestamp -lt $boundHeartbeatTimestampUtc', '$timestamp -ne $boundHeartbeatTimestampUtc'),
+    restartSource.replace('$timestamp -lt $boundHeartbeatTimestampUtc', '$false'),
+    restartSource.replace('$boundHeartbeatTimestampUtc -le $receiptProcessStartedAtUtc', '$false'),
+    restartSource.replace('$processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks', '$false'),
+    restartSource.replaceAll('Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot', '$true'),
+  ]) {
+    assert.equal(mandatoryWorkerCleanupBoundary(mutation), false);
+  }
+});
+
+test('launcher owns every failure from process start through immutable receipt publication', () => {
+  assert.equal(exactOwnedLauncherCleanupBoundary(workerStartSource), true);
+  for (const mutation of [
+    workerStartSource.replace('$workerProcessStarted = $true', '$workerProcessStarted = $false'),
+    workerStartSource.replace('$ownedWorkerProcess = $workerProcess', '$ownedWorkerProcess = $null'),
+    workerStartSource.replace('[object]::ReferenceEquals($Process, $OwnedProcess)', '$true'),
+    workerStartSource.replace('$ExpectedStartedAtUtc -ne [datetime]::MinValue', '$false'),
+    workerStartSource.replace('$observedStartedAtUtc.Ticks -ne $ExpectedStartedAtUtc.ToUniversalTime().Ticks', '$false'),
+    workerStartSource.replace('Stop-ExactOwnedWorkerProcess `', '# cleanup omitted'),
+    workerStartSource.replace('if ($workerProcessStarted -and -not $restartConfirmed)', 'if ($false)'),
+    workerStartSource.replace('$Process.Kill()', '# kill omitted'),
+    workerStartSource.replace('$Process.WaitForExit(5000)', '$true'),
+  ]) {
+    assert.equal(exactOwnedLauncherCleanupBoundary(mutation), false);
+  }
+});
+
+test('pre-receipt cleanup uses only the exact in-memory process capability and cannot publish success', () => {
+  const start = workerStartSource.indexOf('if (-not $workerProcess.Start())');
+  const receipt = workerStartSource.indexOf('Write-BoundedAtomicJson -Path $receiptPath', start);
+  const cleanup = workerStartSource.indexOf('Stop-ExactOwnedWorkerProcess `', receipt);
+  assert.ok(start >= 0 && receipt > start && cleanup > receipt);
+  assert.match(workerStartSource, /\$workerProcessStarted = \$true[\s\S]*\$ownedWorkerProcess = \$workerProcess[\s\S]*\$workerStartedAtUtc = \$workerProcess\.StartTime\.ToUniversalTime\(\)/);
+  assert.match(workerStartSource, /-ExpectedStartedAtUtc \$workerStartedAtUtc/);
+  assert.match(workerStartSource, /throw "Mission worker launcher owned cleanup failed:/);
+  assert.match(workerStartSource, /throw \$launchFailure/);
+  const guardedCatch = workerStartSource.slice(
+    workerStartSource.indexOf('\n    catch {', receipt),
+    workerStartSource.indexOf('throw $launchFailure', cleanup),
+  );
+  assert.doesNotMatch(guardedCatch, /restartConfirmed = \$true/);
 });
 
 test('cancellation uses the one canonical absolute deadline representation accepted by the launcher', () => {

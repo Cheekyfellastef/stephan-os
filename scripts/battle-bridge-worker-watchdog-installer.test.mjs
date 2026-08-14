@@ -43,6 +43,32 @@ function finalWorkerProofPrecedesConfirmation(source) {
     && !/Assert-BeforeOperationDeadline|Get-ScheduledTask|ConvertTo-Json/.test(afterConfirmationBeforeCatch);
 }
 
+function exactOwnedLauncherCleanupBoundary(source) {
+  const guardedStart = source.indexOf('if (-not $workerProcess.Start())');
+  const startedCapability = source.indexOf('$workerProcessStarted = $true', guardedStart);
+  const ownedCapability = source.indexOf('$ownedWorkerProcess = $workerProcess', startedCapability);
+  const startTimeRead = source.indexOf('$workerStartedAtUtc = $workerProcess.StartTime.ToUniversalTime()', ownedCapability);
+  const receiptWrite = source.indexOf('Write-BoundedAtomicJson -Path $receiptPath', startTimeRead);
+  const guardedCatch = source.indexOf('\n    catch {', receiptWrite);
+  const cleanup = source.indexOf('Stop-ExactOwnedWorkerProcess `', guardedCatch);
+  return guardedStart >= 0
+    && startedCapability > guardedStart
+    && ownedCapability > startedCapability
+    && startTimeRead > ownedCapability
+    && receiptWrite > startTimeRead
+    && guardedCatch > receiptWrite
+    && cleanup > guardedCatch
+    && source.includes('[object]::ReferenceEquals($Process, $OwnedProcess)')
+    && source.includes('[System.IO.Path]::GetFullPath([string]$Process.StartInfo.FileName)')
+    && source.includes("[string]$Process.StartInfo.Arguments -ne ('\"' + $ExpectedWorkerScript + '\"')")
+    && source.includes('$ExpectedStartedAtUtc -ne [datetime]::MinValue')
+    && source.includes('$observedStartedAtUtc.Ticks -ne $ExpectedStartedAtUtc.ToUniversalTime().Ticks')
+    && source.includes('$Process.Kill()')
+    && source.includes('$Process.WaitForExit(5000)')
+    && source.includes('if ($workerProcessStarted -and -not $restartConfirmed)')
+    && source.includes('throw $launchFailure');
+}
+
 function strictRestartInvocationBoundary({ probe, restart, launcher }) {
   return probe.includes("$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'")
     && probe.includes('$arguments.Count -ne 2')
@@ -56,7 +82,8 @@ function strictRestartInvocationBoundary({ probe, restart, launcher }) {
     && probe.includes('$restartReceipt.deadlineUtc -eq $canonicalDeadlineUtc')
     && restart.includes('mission-orchestrator-worker-restart-heartbeat-$ExpectedInvocationId.json')
     && restart.includes('$invocationHeartbeat.invocationId -ne $ExpectedInvocationId')
-    && restart.includes('$boundHeartbeatTimestampUtc.Ticks -ne $timestamp.Ticks')
+    && restart.includes('$timestamp -lt $boundHeartbeatTimestampUtc')
+    && !restart.includes('$boundHeartbeatTimestampUtc.Ticks -ne $timestamp.Ticks')
     && restart.includes('$processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks')
     && restart.includes('$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks')
     && restart.includes('$reverifiedWorker.ProcessStartedAtUtc.Ticks -ne $verifiedWorker.ProcessStartedAtUtc.Ticks')
@@ -71,7 +98,7 @@ function strictRestartInvocationBoundary({ probe, restart, launcher }) {
     && launcher.includes('$workerProcess.StartTime.ToUniversalTime().Ticks -eq $workerStartedAtUtc.Ticks')
     && launcher.includes('if ($confirmation -and $invocationHeartbeatBound)')
     && launcher.includes("[string]$record.deadlineUtc -ne $restartDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')")
-    && launcher.includes('$workerProcess.Kill()')
+    && exactOwnedLauncherCleanupBoundary(launcher)
     && !launcher.includes('$processStartInfo.Arguments +=');
 }
 
@@ -197,7 +224,7 @@ test('worker launcher is pinned to canonical main and supervised heartbeat loop'
   assert.match(source, /\$workerHeartbeat\.pid -eq \$workerProcess\.Id/);
   assert.match(source, /\$heartbeatTimestampUtc -gt \$workerStartedAtUtc/);
   assert.match(source, /if \(\$confirmation -and \$invocationHeartbeatBound\)/);
-  assert.match(source, /\$workerProcess\.Kill\(\)/);
+  assert.match(source, /function Stop-ExactOwnedWorkerProcess[\s\S]*\$Process\.Kill\(\)/);
   assert.match(source, /\$restartDeadlineUtc/);
   assert.doesNotMatch(source, /\$processStartInfo\.Arguments\s*\+=|\$env:[A-Z_]+_COMMAND|Invoke-Expression/);
   assert.doesNotMatch(source, /Get-Command (?:git|node)(?:\.exe)?\b/i);
@@ -223,7 +250,7 @@ test('restart invocation binds exact command, heartbeat, deadline and process cr
     { ...canonical, probe: probe.replace("$restartReceipt.invocationId -match '^[0-9a-f]{64}$'", '$true') },
     { ...canonical, probe: probe.replace('$restartReceipt.deadlineUtc -eq $canonicalDeadlineUtc', '$true') },
     { ...canonical, restart: restart.replace('$invocationHeartbeat.invocationId -ne $ExpectedInvocationId', '$false') },
-    { ...canonical, restart: restart.replace('$boundHeartbeatTimestampUtc.Ticks -ne $timestamp.Ticks', '$false') },
+    { ...canonical, restart: restart.replace('$timestamp -lt $boundHeartbeatTimestampUtc', '$false') },
     { ...canonical, restart: restart.replace('$processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks', '$false') },
     { ...canonical, restart: restart.replace('$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks', '$false') },
     { ...canonical, restart: restart.replaceAll('Assert-BeforeOperationDeadline -RequiredReserveSeconds 1', '# deadline check removed') },
@@ -238,6 +265,11 @@ test('restart invocation binds exact command, heartbeat, deadline and process cr
     { ...canonical, launcher: launcher.replace('$workerHeartbeat.pid -eq $workerProcess.Id', '$workerHeartbeat.pid -gt 0') },
     { ...canonical, launcher: launcher.replace('$workerProcess.StartTime.ToUniversalTime().Ticks -eq $workerStartedAtUtc.Ticks', '$true') },
     { ...canonical, launcher: launcher.replace('if ($confirmation -and $invocationHeartbeatBound)', 'if ($confirmation)') },
+    { ...canonical, launcher: launcher.replace('$workerProcessStarted = $true', '$workerProcessStarted = $false') },
+    { ...canonical, launcher: launcher.replace('$ownedWorkerProcess = $workerProcess', '$ownedWorkerProcess = $null') },
+    { ...canonical, launcher: launcher.replace('[object]::ReferenceEquals($Process, $OwnedProcess)', '$true') },
+    { ...canonical, launcher: launcher.replace('Stop-ExactOwnedWorkerProcess `', '# cleanup omitted') },
+    { ...canonical, launcher: launcher.replace('$Process.Kill()', '# kill omitted') },
     { ...canonical, launcher: launcher.replace("[string]$record.deadlineUtc -ne $restartDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')", '$false') },
     { ...canonical, launcher: `${launcher}\n$processStartInfo.Arguments += ' --caller-selected'` },
   ];
