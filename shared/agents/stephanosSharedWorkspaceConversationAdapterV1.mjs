@@ -132,6 +132,7 @@ function workspaceValidation(record, options = {}) {
 
 function roundValidationOptions(options = {}) {
   return {
+    priorRoundQuestions: options.priorRoundQuestions,
     priorRoundIntentFingerprints: options.priorRoundIntentFingerprints,
   };
 }
@@ -305,7 +306,14 @@ export function evaluateStephanosWorkspaceConversation(input = {}) {
   const evaluation = evaluateStephanosCapabilityRound({
     round,
     answers,
+    priorRoundQuestions: input.priorRoundQuestions,
     priorRoundIntentFingerprints: input.priorRoundIntentFingerprints,
+    boundaryAdjudications: input.boundaryAdjudications,
+    authoritativeEvidenceRefs: input.authoritativeEvidenceRefs,
+    authoritativeSourceRefs: input.authoritativeSourceRefs,
+    authoritativeAdjudicationProofRefs: input.authoritativeAdjudicationProofRefs,
+    evaluationNowMs: input.evaluationNowMs,
+    boundaryAdjudicationStaleAfterMs: input.boundaryAdjudicationStaleAfterMs,
   });
   return Object.freeze({
     schemaVersion: STEPHANOS_SHARED_WORKSPACE_CONVERSATION_ADAPTER_SCHEMA_VERSION,
