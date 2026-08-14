@@ -458,7 +458,11 @@ export function projectOneConversationWorkspaceMessageV1(projection = {}, input 
     }),
   };
 
-  const workspaceValidationOptions = { ...(input.workspaceValidationOptions || {}), nowMs };
+  const workspaceValidationOptions = {
+    ...(input.workspaceValidationOptions || {}),
+    nowMs,
+    staleAfterMs: DEFAULT_STALE_AFTER_MS,
+  };
   const workspaceValidation = validateSharedWorkspaceRecord(record, workspaceValidationOptions);
   if (!workspaceValidation.valid) {
     return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_WORKSPACE_RECORD_INVALID', record, workspaceValidation });
