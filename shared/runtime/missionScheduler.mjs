@@ -158,6 +158,25 @@ function inertProofReceiptSnapshot(value, state, depth) {
   }
   return Object.freeze(clone);
 }
+function inertProofReceiptArraySnapshot(value, state, depth = 0) {
+  state.nodes += 1;
+  if (state.nodes > MAX_INPUT_SNAPSHOT_NODES || depth > MAX_INPUT_SNAPSHOT_DEPTH) throw new Error('snapshot-bound-exceeded');
+  const metadata = arrayLengthMetadata(value);
+  if (!metadata.isArray || metadata.inspectionFailed || metadata.length > MAX_INPUT_SNAPSHOT_NODES) throw new Error('snapshot-proof-receipts-invalid');
+  const keys = Reflect.ownKeys(value);
+  if (keys.length > metadata.length + 1) throw new Error('snapshot-proof-receipts-keys-invalid');
+  for (const key of keys) {
+    if (key === 'length') continue;
+    if (typeof key !== 'string' || !/^(?:0|[1-9]\d*)$/.test(key) || Number(key) >= metadata.length) throw new Error('snapshot-proof-receipts-key-invalid');
+  }
+  const clone = new Array(metadata.length);
+  for (let index = 0; index < metadata.length; index += 1) {
+    const slot = ownDataSlot(value, String(index));
+    if (slot.inspectionFailed) throw new Error('snapshot-proof-receipt-entry-invalid');
+    if (slot.present) clone[index] = inertProofReceiptSnapshot(slot.value, state, depth + 1);
+  }
+  return Object.freeze(clone);
+}
 function inertGoalSnapshot(value, state, depth = 0) {
   state.nodes += 1;
   if (state.nodes > MAX_INPUT_SNAPSHOT_NODES || depth > MAX_INPUT_SNAPSHOT_DEPTH) throw new Error('snapshot-bound-exceeded');
@@ -529,7 +548,7 @@ function buildMissionSchedulerInternal(input = {}, inspectionFailure = false) {
         ? inertInputSnapshot(proofHeadsSlot.value, snapshotState)
         : [];
       snapshottedProofReceipts = proofReceiptsMetadata.isArray
-        ? inertInputSnapshot(proofReceiptsSlot.value, snapshotState)
+        ? inertProofReceiptArraySnapshot(proofReceiptsSlot.value, snapshotState)
         : [];
       snapshottedProofRefs = proofRefsMetadata.isArray
         ? inertInputSnapshot(proofRefsSlot.value, snapshotState)

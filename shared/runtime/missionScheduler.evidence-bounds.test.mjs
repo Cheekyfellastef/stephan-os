@@ -387,3 +387,30 @@ test('hostile advisory scalars and ignored extensions cannot block valid work', 
   assert.equal(result.selectedGoal, '#1');
   assert.equal(result.portfolio[0].reversibility, 'UNKNOWN');
 });
+
+test('ignored top-level proof-receipt extensions cannot block valid work', () => {
+  let ignoredReads = 0;
+  const receipt = {
+    issue:1,
+    activePr:1,
+    headSha:'a'.repeat(40),
+    repository:'owner/repo',
+    branch:'agent/exact-head',
+    ignoredExtension:Symbol('ignored'),
+  };
+  Object.defineProperty(receipt, 'ignoredAccessor', {
+    configurable:true,
+    enumerable:true,
+    get() {
+      ignoredReads += 1;
+      throw new Error('ignored receipt extension getter must not run');
+    },
+  });
+
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(1)], proofReceipts:[receipt] });
+
+  assert.equal(ignoredReads, 0);
+  assert.equal(result.failClosed, false);
+  assert.equal(result.selectedGoal, '#1');
+  assert.equal(result.decisionReceipt.proofReceipts.length, 1);
+});
