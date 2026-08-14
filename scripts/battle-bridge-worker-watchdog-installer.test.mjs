@@ -44,14 +44,16 @@ function finalWorkerProofPrecedesConfirmation(source) {
 }
 
 function exactOwnedLauncherCleanupBoundary(source) {
-  const guardedStart = source.indexOf('if (-not $workerProcess.Start())');
+  const launchFunction = source.indexOf('function Start-ExactWorkerWithLaunchIdentity');
+  const guardedStart = source.indexOf('if (-not $workerProcess.Start())', launchFunction);
   const startedCapability = source.indexOf('$workerProcessStarted = $true', guardedStart);
   const ownedCapability = source.indexOf('$ownedWorkerProcess = $workerProcess', startedCapability);
   const startTimeRead = source.indexOf('$workerStartedAtUtc = $workerProcess.StartTime.ToUniversalTime()', ownedCapability);
-  const receiptWrite = source.indexOf('Write-BoundedAtomicJson -Path $receiptPath', startTimeRead);
+  const receiptWrite = source.indexOf('Write-BoundedCreateOnlyJson -Path $launchReceiptPath', startTimeRead);
   const guardedCatch = source.indexOf('\n    catch {', receiptWrite);
   const cleanup = source.indexOf('Stop-ExactOwnedWorkerProcess `', guardedCatch);
-  return guardedStart >= 0
+  return launchFunction >= 0
+    && guardedStart > launchFunction
     && startedCapability > guardedStart
     && ownedCapability > startedCapability
     && startTimeRead > ownedCapability
@@ -65,7 +67,12 @@ function exactOwnedLauncherCleanupBoundary(source) {
     && source.includes('$observedStartedAtUtc.Ticks -ne $ExpectedStartedAtUtc.ToUniversalTime().Ticks')
     && source.includes('$Process.Kill()')
     && source.includes('$Process.WaitForExit(5000)')
-    && source.includes('if ($workerProcessStarted -and -not $restartConfirmed)')
+    && source.includes('if ($workerProcessStarted)')
+    && source.includes("schemaVersion = 'stephanos.mission-worker-launch-identity.v1'")
+    && source.includes("$processStartInfo.EnvironmentVariables['STEPHANOS_MISSION_WORKER_LAUNCH_ID'] = $LaunchIdentityId")
+    && source.includes("$processStartInfo.EnvironmentVariables['STEPHANOS_MISSION_WORKER_LAUNCH_RECEIPT_PATH'] = $launchReceiptPath")
+    && /Start-ExactWorkerWithLaunchIdentity[\s\S]*-LaunchKind 'guarded-restart'/.test(source)
+    && /Start-ExactWorkerWithLaunchIdentity[\s\S]*-LaunchKind 'ordinary'/.test(source)
     && source.includes('throw $launchFailure');
 }
 
@@ -94,10 +101,18 @@ function strictRestartInvocationBoundary({ probe, restart, launcher }) {
     && launcher.includes('$processStartInfo.FileName = $canonicalNode')
     && launcher.includes('$processStartInfo.Arguments = \'"\' + $workerScript + \'"\'')
     && launcher.includes('$workerHeartbeat.pid -eq $workerProcess.Id')
+    && launcher.includes('$workerHeartbeat.launchIdentityId -eq $invocationId')
+    && launcher.includes('$workerHeartbeat.workerStartedAtUtc')
     && launcher.includes('$heartbeatTimestampUtc -gt $workerStartedAtUtc')
     && launcher.includes('$workerProcess.StartTime.ToUniversalTime().Ticks -eq $workerStartedAtUtc.Ticks')
     && launcher.includes('if ($confirmation -and $invocationHeartbeatBound)')
     && launcher.includes("[string]$record.deadlineUtc -ne $restartDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')")
+    && restart.includes('$receiptProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks')
+    && restart.includes('$liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks')
+    && restart.includes('($observedAtUtc - $heartbeatTimestampUtc).TotalSeconds -gt 120')
+    && restart.includes('$oldWorkerRecheck.LaunchIdentityId -ne $oldWorker.LaunchIdentityId')
+    && restart.includes('$oldWorkerRecheck.LaunchReceiptDigest -ne $oldWorker.LaunchReceiptDigest')
+    && restart.includes('$oldWorkerRecheck.HeartbeatTimestampUtc -lt $oldWorker.HeartbeatTimestampUtc')
     && exactOwnedLauncherCleanupBoundary(launcher)
     && !launcher.includes('$processStartInfo.Arguments +=');
 }
@@ -210,7 +225,7 @@ test('worker launcher is pinned to canonical main and supervised heartbeat loop'
   assert.match(source, /STEPHANOS_MISSION_WORKER_TASK_NAME/);
   assert.match(source, /status '--porcelain=v1' '--untracked-files=no'/);
   assert.match(source, /ls-remote' '--exit-code' \$publicRemote 'refs\/heads\/main'/);
-  assert.match(source, /& \$canonicalNode \$workerScript/);
+  assert.doesNotMatch(source, /& \$canonicalNode \$workerScript/);
   assert.match(source, /stephanos\.mission-worker-restart-request\.v1/);
   assert.match(source, /mission-orchestrator-worker-restart-claim-\$invocationId\.json/);
   assert.match(source, /mission-orchestrator-worker-restart-receipt-\$invocationId\.json/);
@@ -220,6 +235,12 @@ test('worker launcher is pinned to canonical main and supervised heartbeat loop'
   assert.match(source, /New-Object System\.Diagnostics\.ProcessStartInfo/);
   assert.match(source, /\$processStartInfo\.FileName = \$canonicalNode/);
   assert.match(source, /\$processStartInfo\.Arguments = '"' \+ \$workerScript \+ '"'/);
+  assert.match(source, /mission-orchestrator-worker-launch-identity-\$LaunchIdentityId\.json/);
+  assert.match(source, /stephanos\.mission-worker-launch-identity\.v1/);
+  assert.match(source, /STEPHANOS_MISSION_WORKER_LAUNCH_ID/);
+  assert.match(source, /STEPHANOS_MISSION_WORKER_LAUNCH_RECEIPT_PATH/);
+  assert.match(source, /-LaunchKind 'guarded-restart'/);
+  assert.match(source, /-LaunchKind 'ordinary'/);
   assert.match(source, /\$workerProcess\.StartTime\.ToUniversalTime\(\)/);
   assert.match(source, /\$workerHeartbeat\.pid -eq \$workerProcess\.Id/);
   assert.match(source, /\$heartbeatTimestampUtc -gt \$workerStartedAtUtc/);
@@ -252,6 +273,11 @@ test('restart invocation binds exact command, heartbeat, deadline and process cr
     { ...canonical, restart: restart.replace('$invocationHeartbeat.invocationId -ne $ExpectedInvocationId', '$false') },
     { ...canonical, restart: restart.replace('$timestamp -lt $boundHeartbeatTimestampUtc', '$false') },
     { ...canonical, restart: restart.replace('$processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks', '$false') },
+    { ...canonical, restart: restart.replace('$liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks', '$false') },
+    { ...canonical, restart: restart.replace('($observedAtUtc - $heartbeatTimestampUtc).TotalSeconds -gt 120', '$false') },
+    { ...canonical, restart: restart.replace('$oldWorkerRecheck.LaunchIdentityId -ne $oldWorker.LaunchIdentityId', '$false') },
+    { ...canonical, restart: restart.replace('$oldWorkerRecheck.LaunchReceiptDigest -ne $oldWorker.LaunchReceiptDigest', '$false') },
+    { ...canonical, restart: restart.replace('$oldWorkerRecheck.HeartbeatTimestampUtc -lt $oldWorker.HeartbeatTimestampUtc', '$false') },
     { ...canonical, restart: restart.replace('$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks', '$false') },
     { ...canonical, restart: restart.replaceAll('Assert-BeforeOperationDeadline -RequiredReserveSeconds 1', '# deadline check removed') },
     { ...canonical, restart: restart.replace("$afterTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\' -ErrorAction Stop", '$afterTask = $task') },
@@ -268,7 +294,7 @@ test('restart invocation binds exact command, heartbeat, deadline and process cr
     { ...canonical, launcher: launcher.replace('$workerProcessStarted = $true', '$workerProcessStarted = $false') },
     { ...canonical, launcher: launcher.replace('$ownedWorkerProcess = $workerProcess', '$ownedWorkerProcess = $null') },
     { ...canonical, launcher: launcher.replace('[object]::ReferenceEquals($Process, $OwnedProcess)', '$true') },
-    { ...canonical, launcher: launcher.replace('Stop-ExactOwnedWorkerProcess `', '# cleanup omitted') },
+    { ...canonical, launcher: launcher.replaceAll('Stop-ExactOwnedWorkerProcess `', '# cleanup omitted') },
     { ...canonical, launcher: launcher.replace('$Process.Kill()', '# kill omitted') },
     { ...canonical, launcher: launcher.replace("[string]$record.deadlineUtc -ne $restartDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')", '$false') },
     { ...canonical, launcher: `${launcher}\n$processStartInfo.Arguments += ' --caller-selected'` },

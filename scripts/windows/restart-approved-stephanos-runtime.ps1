@@ -282,6 +282,20 @@ function Read-FreshBackendReceipt {
     catch { return $null }
 }
 
+function Test-ExactJsonPropertyEstate {
+    param(
+        [Parameter(Mandatory = $true)][object]$Record,
+        [Parameter(Mandatory = $true)][string[]]$ExpectedProperties
+    )
+    if (-not $Record -or -not $Record.PSObject) { return $false }
+    $actualProperties = @($Record.PSObject.Properties.Name)
+    if ($actualProperties.Count -ne $ExpectedProperties.Count) { return $false }
+    for ($index = 0; $index -lt $ExpectedProperties.Count; $index += 1) {
+        if ([string]$actualProperties[$index] -ne [string]$ExpectedProperties[$index]) { return $false }
+    }
+    return $true
+}
+
 function Get-VerifiedWorkerProcessFromHeartbeat {
     param(
         [string]$HeartbeatPath,
@@ -289,17 +303,97 @@ function Get-VerifiedWorkerProcessFromHeartbeat {
     )
     if (-not (Test-Path -LiteralPath $HeartbeatPath -PathType Leaf)) { return $null }
     try {
-        $heartbeat = Get-Content -LiteralPath $HeartbeatPath -Raw | ConvertFrom-Json
+        $heartbeatItem = Get-Item -LiteralPath $HeartbeatPath -Force
+        if ($heartbeatItem.PSIsContainer `
+            -or $heartbeatItem.LinkType `
+            -or (($heartbeatItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) `
+            -or $heartbeatItem.Length -le 0 `
+            -or $heartbeatItem.Length -gt 8192) { return $null }
+        $heartbeatRaw = Get-Content -LiteralPath $HeartbeatPath -Raw
+        if ([Text.Encoding]::UTF8.GetByteCount($heartbeatRaw) -gt 8192) { return $null }
+        $heartbeat = $heartbeatRaw | ConvertFrom-Json
+        $expectedHeartbeatProperties = @(
+            'schemaVersion', 'timestampUtc', 'repositoryRoot', 'branch', 'headSha', 'taskName',
+            'pid', 'launchIdentityId', 'workerStartedAtUtc', 'lastTickVerdict',
+            'arbitraryShellAllowed', 'sourceMutationAllowed'
+        )
+        if (-not (Test-ExactJsonPropertyEstate -Record $heartbeat -ExpectedProperties $expectedHeartbeatProperties)) { return $null }
+        if ([string]$heartbeat.schemaVersion -ne 'stephanos.mission-orchestrator-worker-heartbeat.v1') { return $null }
         if ([string]$heartbeat.taskName -ne 'Stephanos Mission Orchestrator Worker') { return $null }
         if ([string]$heartbeat.repositoryRoot -ne $ExpectedRepoRoot) { return $null }
+        if ([string]$heartbeat.branch -ne 'main') { return $null }
+        if ([string]$heartbeat.headSha -notmatch '^[0-9a-f]{40}$') { return $null }
+        if ([bool]$heartbeat.arbitraryShellAllowed -ne $false -or [bool]$heartbeat.sourceMutationAllowed -ne $false) { return $null }
         $processId = [int]$heartbeat.pid
         if ($processId -le 0) { return $null }
+        $launchIdentityId = [string]$heartbeat.launchIdentityId
+        if ($launchIdentityId -notmatch '^[0-9a-f]{64}$') { return $null }
+        $heartbeatTimestampUtc = [datetime]::Parse([string]$heartbeat.timestampUtc).ToUniversalTime()
+        $heartbeatProcessStartedAtUtc = [datetime]::Parse([string]$heartbeat.workerStartedAtUtc).ToUniversalTime()
+        $observedAtUtc = [datetime]::UtcNow
+        if ($heartbeatTimestampUtc -le $heartbeatProcessStartedAtUtc `
+            -or $heartbeatTimestampUtc -gt $observedAtUtc.AddSeconds(60) `
+            -or ($observedAtUtc - $heartbeatTimestampUtc).TotalSeconds -gt 120) { return $null }
+
+        $statusRoot = Split-Path -Parent $HeartbeatPath
+        $launchReceiptPath = Join-Path $statusRoot "mission-orchestrator-worker-launch-identity-$launchIdentityId.json"
+        if (-not (Test-Path -LiteralPath $launchReceiptPath -PathType Leaf)) { return $null }
+        $launchReceiptItem = Get-Item -LiteralPath $launchReceiptPath -Force
+        if ($launchReceiptItem.PSIsContainer `
+            -or $launchReceiptItem.LinkType `
+            -or (($launchReceiptItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) `
+            -or $launchReceiptItem.Length -le 0 `
+            -or $launchReceiptItem.Length -gt 8192) { return $null }
+        $launchReceiptRaw = Get-Content -LiteralPath $launchReceiptPath -Raw
+        if ([Text.Encoding]::UTF8.GetByteCount($launchReceiptRaw) -gt 8192) { return $null }
+        $launchReceipt = $launchReceiptRaw | ConvertFrom-Json
+        $expectedLaunchReceiptProperties = @(
+            'schemaVersion', 'launchIdentityId', 'launchKind', 'restartInvocationId', 'taskName',
+            'repositoryRoot', 'branch', 'headSha', 'workerPid', 'workerStartedAtUtc',
+            'canonicalNode', 'canonicalWorkerScript', 'createdAtUtc'
+        )
+        if (-not (Test-ExactJsonPropertyEstate -Record $launchReceipt -ExpectedProperties $expectedLaunchReceiptProperties)) { return $null }
+        if ([string]$launchReceipt.schemaVersion -ne 'stephanos.mission-worker-launch-identity.v1' `
+            -or [string]$launchReceipt.launchIdentityId -ne $launchIdentityId `
+            -or [string]$launchReceipt.taskName -ne 'Stephanos Mission Orchestrator Worker' `
+            -or [string]$launchReceipt.repositoryRoot -ne $ExpectedRepoRoot `
+            -or [string]$launchReceipt.branch -ne 'main' `
+            -or [string]$launchReceipt.headSha -ne [string]$heartbeat.headSha `
+            -or [int]$launchReceipt.workerPid -ne $processId `
+            -or -not [string]::Equals([string]$launchReceipt.canonicalNode, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
+        if ([string]$launchReceipt.launchKind -eq 'guarded-restart') {
+            if ([string]$launchReceipt.restartInvocationId -ne $launchIdentityId) { return $null }
+        }
+        elseif ([string]$launchReceipt.launchKind -eq 'ordinary') {
+            if (-not [string]::IsNullOrEmpty([string]$launchReceipt.restartInvocationId)) { return $null }
+        }
+        else { return $null }
+        $expectedWorkerScript = [System.IO.Path]::GetFullPath((Join-Path $ExpectedRepoRoot 'scripts\mission-orchestrator-worker-supervised.mjs'))
+        if (-not [string]::Equals([System.IO.Path]::GetFullPath([string]$launchReceipt.canonicalWorkerScript), $expectedWorkerScript, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
+        $receiptProcessStartedAtUtc = [datetime]::Parse([string]$launchReceipt.workerStartedAtUtc).ToUniversalTime()
+        $receiptCreatedAtUtc = [datetime]::Parse([string]$launchReceipt.createdAtUtc).ToUniversalTime()
+        if ($receiptProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks `
+            -or $receiptCreatedAtUtc -lt $receiptProcessStartedAtUtc `
+            -or $receiptCreatedAtUtc -gt $heartbeatTimestampUtc) { return $null }
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try {
+            $launchReceiptHash = $sha256.ComputeHash([Text.Encoding]::UTF8.GetBytes($launchReceiptRaw))
+        }
+        finally { $sha256.Dispose() }
+        $launchReceiptDigest = ([BitConverter]::ToString($launchReceiptHash)).Replace('-', '').ToLowerInvariant()
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
         if (-not (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot)) { return $null }
+        $liveProcessStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
+        if ($liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks) { return $null }
         return [PSCustomObject]@{
             ProcessId = $processId
-            ProcessStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
+            ProcessStartedAtUtc = $heartbeatProcessStartedAtUtc
+            HeartbeatTimestampUtc = $heartbeatTimestampUtc
+            LaunchIdentityId = $launchIdentityId
+            LaunchReceiptPath = $launchReceiptPath
+            LaunchReceiptDigest = $launchReceiptDigest
+            HeadSha = [string]$heartbeat.headSha
         }
     }
     catch { return $null }
@@ -646,7 +740,12 @@ try {
             $oldWorkerRecheck = Get-VerifiedWorkerProcessFromHeartbeat -HeartbeatPath $heartbeatPath -ExpectedRepoRoot $repoRoot
             if (-not $oldWorkerRecheck `
                 -or $oldWorkerRecheck.ProcessId -ne $oldWorker.ProcessId `
-                -or $oldWorkerRecheck.ProcessStartedAtUtc.Ticks -ne $oldWorker.ProcessStartedAtUtc.Ticks) {
+                -or $oldWorkerRecheck.ProcessStartedAtUtc.Ticks -ne $oldWorker.ProcessStartedAtUtc.Ticks `
+                -or $oldWorkerRecheck.LaunchIdentityId -ne $oldWorker.LaunchIdentityId `
+                -or $oldWorkerRecheck.LaunchReceiptPath -ne $oldWorker.LaunchReceiptPath `
+                -or $oldWorkerRecheck.LaunchReceiptDigest -ne $oldWorker.LaunchReceiptDigest `
+                -or $oldWorkerRecheck.HeadSha -ne $oldWorker.HeadSha `
+                -or $oldWorkerRecheck.HeartbeatTimestampUtc -lt $oldWorker.HeartbeatTimestampUtc) {
                 Stop-WithBlocker 'MISSION_WORKER_EXISTING_PROCESS_IDENTITY_CHANGED'
             }
             Stop-Process -Id $oldWorker.ProcessId -Force -ErrorAction Stop

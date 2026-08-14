@@ -51,16 +51,36 @@ function mandatoryWorkerCleanupBoundary(source) {
     && source.includes('mission-orchestrator-worker-restart-cancel-$ExpectedInvocationId.json');
 }
 
+function verifiedExistingWorkerIdentityBoundary(source) {
+  return source.includes("schemaVersion -ne 'stephanos.mission-orchestrator-worker-heartbeat.v1'")
+    && source.includes("$launchIdentityId -notmatch '^[0-9a-f]{64}$'")
+    && source.includes('mission-orchestrator-worker-launch-identity-$launchIdentityId.json')
+    && source.includes("schemaVersion -ne 'stephanos.mission-worker-launch-identity.v1'")
+    && source.includes('Test-ExactJsonPropertyEstate -Record $heartbeat')
+    && source.includes('Test-ExactJsonPropertyEstate -Record $launchReceipt')
+    && source.includes('$heartbeatTimestampUtc -le $heartbeatProcessStartedAtUtc')
+    && source.includes('$heartbeatTimestampUtc -gt $observedAtUtc.AddSeconds(60)')
+    && source.includes('($observedAtUtc - $heartbeatTimestampUtc).TotalSeconds -gt 120')
+    && source.includes('$receiptProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks')
+    && source.includes('$liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks')
+    && source.includes('$oldWorkerRecheck.LaunchIdentityId -ne $oldWorker.LaunchIdentityId')
+    && source.includes('$oldWorkerRecheck.LaunchReceiptDigest -ne $oldWorker.LaunchReceiptDigest')
+    && source.includes('$oldWorkerRecheck.HeadSha -ne $oldWorker.HeadSha')
+    && source.includes('$oldWorkerRecheck.HeartbeatTimestampUtc -lt $oldWorker.HeartbeatTimestampUtc');
+}
+
 function exactOwnedLauncherCleanupBoundary(source) {
-  const guardedStart = source.indexOf('if (-not $workerProcess.Start())');
+  const launchFunction = source.indexOf('function Start-ExactWorkerWithLaunchIdentity');
+  const guardedStart = source.indexOf('if (-not $workerProcess.Start())', launchFunction);
   const startedCapability = source.indexOf('$workerProcessStarted = $true', guardedStart);
   const ownedCapability = source.indexOf('$ownedWorkerProcess = $workerProcess', startedCapability);
   const startTimeRead = source.indexOf('$workerStartedAtUtc = $workerProcess.StartTime.ToUniversalTime()', ownedCapability);
-  const receiptWrite = source.indexOf('Write-BoundedAtomicJson -Path $receiptPath', startTimeRead);
+  const receiptWrite = source.indexOf('Write-BoundedCreateOnlyJson -Path $launchReceiptPath', startTimeRead);
   const guardedCatch = source.indexOf('\n    catch {', receiptWrite);
   const cleanup = source.indexOf('Stop-ExactOwnedWorkerProcess `', guardedCatch);
   const rethrow = source.indexOf('throw $launchFailure', cleanup);
-  return guardedStart >= 0
+  return launchFunction >= 0
+    && guardedStart > launchFunction
     && startedCapability > guardedStart
     && ownedCapability > startedCapability
     && startTimeRead > ownedCapability
@@ -75,7 +95,11 @@ function exactOwnedLauncherCleanupBoundary(source) {
     && source.includes('$observedStartedAtUtc.Ticks -ne $ExpectedStartedAtUtc.ToUniversalTime().Ticks')
     && source.includes('$Process.Kill()')
     && source.includes('$Process.WaitForExit(5000)')
-    && source.includes('if ($workerProcessStarted -and -not $restartConfirmed)');
+    && source.includes('if ($workerProcessStarted)')
+    && source.includes("schemaVersion = 'stephanos.mission-worker-launch-identity.v1'")
+    && source.includes("$processStartInfo.EnvironmentVariables['STEPHANOS_MISSION_WORKER_LAUNCH_ID'] = $LaunchIdentityId")
+    && /Start-ExactWorkerWithLaunchIdentity[\s\S]*-LaunchKind 'guarded-restart'/.test(source)
+    && /Start-ExactWorkerWithLaunchIdentity[\s\S]*-LaunchKind 'ordinary'/.test(source);
 }
 
 function finalWorkerProofPrecedesConfirmation(source) {
@@ -316,6 +340,43 @@ test('shared heartbeat time may advance without weakening immutable invocation c
   }
 });
 
+test('existing-worker termination requires a fresh heartbeat-recorded process-start identity on both live reads', () => {
+  assert.equal(verifiedExistingWorkerIdentityBoundary(restartSource), true);
+  for (const mutation of [
+    restartSource.replace("$launchIdentityId -notmatch '^[0-9a-f]{64}$'", '$false'),
+    restartSource.replace('Test-ExactJsonPropertyEstate -Record $heartbeat', '$true #'),
+    restartSource.replace('Test-ExactJsonPropertyEstate -Record $launchReceipt', '$true #'),
+    restartSource.replace('$heartbeatTimestampUtc -le $heartbeatProcessStartedAtUtc', '$false'),
+    restartSource.replace('$heartbeatTimestampUtc -gt $observedAtUtc.AddSeconds(60)', '$false'),
+    restartSource.replace('($observedAtUtc - $heartbeatTimestampUtc).TotalSeconds -gt 120', '$false'),
+    restartSource.replace('$receiptProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks', '$false'),
+    restartSource.replace('$liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks', '$false'),
+    restartSource.replace('$oldWorkerRecheck.LaunchIdentityId -ne $oldWorker.LaunchIdentityId', '$false'),
+    restartSource.replace('$oldWorkerRecheck.LaunchReceiptDigest -ne $oldWorker.LaunchReceiptDigest', '$false'),
+    restartSource.replace('$oldWorkerRecheck.HeadSha -ne $oldWorker.HeadSha', '$false'),
+    restartSource.replace('$oldWorkerRecheck.HeartbeatTimestampUtc -lt $oldWorker.HeartbeatTimestampUtc', '$false'),
+  ]) {
+    assert.equal(verifiedExistingWorkerIdentityBoundary(mutation), false);
+  }
+});
+
+test('advanced heartbeat timestamps cannot transfer cleanup authority to a recycled pid', () => {
+  const oldWorkerVerifier = restartSource.slice(
+    restartSource.indexOf('function Get-VerifiedWorkerProcessFromHeartbeat'),
+    restartSource.indexOf('function Get-VerifiedFreshWorkerInstance'),
+  );
+  assert.match(restartSource, /ProcessStartedAtUtc = \$heartbeatProcessStartedAtUtc/);
+  assert.match(restartSource, /LaunchReceiptDigest = \$launchReceiptDigest/);
+  assert.match(
+    restartSource,
+    /\$oldWorkerRecheck\.ProcessStartedAtUtc\.Ticks -ne \$oldWorker\.ProcessStartedAtUtc\.Ticks[\s\S]*\$oldWorkerRecheck\.LaunchIdentityId -ne \$oldWorker\.LaunchIdentityId[\s\S]*\$oldWorkerRecheck\.LaunchReceiptDigest -ne \$oldWorker\.LaunchReceiptDigest[\s\S]*\$oldWorkerRecheck\.HeartbeatTimestampUtc -lt \$oldWorker\.HeartbeatTimestampUtc/,
+  );
+  assert.doesNotMatch(
+    oldWorkerVerifier,
+    /^\s*ProcessStartedAtUtc = \(\[datetime\]\$process\.CreationDate\)\.ToUniversalTime\(\)/m,
+  );
+});
+
 test('launcher owns every failure from process start through immutable receipt publication', () => {
   assert.equal(exactOwnedLauncherCleanupBoundary(workerStartSource), true);
   for (const mutation of [
@@ -324,8 +385,8 @@ test('launcher owns every failure from process start through immutable receipt p
     workerStartSource.replace('[object]::ReferenceEquals($Process, $OwnedProcess)', '$true'),
     workerStartSource.replace('$ExpectedStartedAtUtc -ne [datetime]::MinValue', '$false'),
     workerStartSource.replace('$observedStartedAtUtc.Ticks -ne $ExpectedStartedAtUtc.ToUniversalTime().Ticks', '$false'),
-    workerStartSource.replace('Stop-ExactOwnedWorkerProcess `', '# cleanup omitted'),
-    workerStartSource.replace('if ($workerProcessStarted -and -not $restartConfirmed)', 'if ($false)'),
+    workerStartSource.replaceAll('Stop-ExactOwnedWorkerProcess `', '# cleanup omitted'),
+    workerStartSource.replace('if ($workerProcessStarted)', 'if ($false)'),
     workerStartSource.replace('$Process.Kill()', '# kill omitted'),
     workerStartSource.replace('$Process.WaitForExit(5000)', '$true'),
   ]) {
@@ -334,13 +395,14 @@ test('launcher owns every failure from process start through immutable receipt p
 });
 
 test('pre-receipt cleanup uses only the exact in-memory process capability and cannot publish success', () => {
-  const start = workerStartSource.indexOf('if (-not $workerProcess.Start())');
-  const receipt = workerStartSource.indexOf('Write-BoundedAtomicJson -Path $receiptPath', start);
+  const launchFunction = workerStartSource.indexOf('function Start-ExactWorkerWithLaunchIdentity');
+  const start = workerStartSource.indexOf('if (-not $workerProcess.Start())', launchFunction);
+  const receipt = workerStartSource.indexOf('Write-BoundedCreateOnlyJson -Path $launchReceiptPath', start);
   const cleanup = workerStartSource.indexOf('Stop-ExactOwnedWorkerProcess `', receipt);
   assert.ok(start >= 0 && receipt > start && cleanup > receipt);
   assert.match(workerStartSource, /\$workerProcessStarted = \$true[\s\S]*\$ownedWorkerProcess = \$workerProcess[\s\S]*\$workerStartedAtUtc = \$workerProcess\.StartTime\.ToUniversalTime\(\)/);
   assert.match(workerStartSource, /-ExpectedStartedAtUtc \$workerStartedAtUtc/);
-  assert.match(workerStartSource, /throw "Mission worker launcher owned cleanup failed:/);
+  assert.match(workerStartSource, /throw "Mission worker launch-identity cleanup failed:/);
   assert.match(workerStartSource, /throw \$launchFailure/);
   const guardedCatch = workerStartSource.slice(
     workerStartSource.indexOf('\n    catch {', receipt),

@@ -59,6 +59,36 @@ function Write-BoundedAtomicJson {
     Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
 }
 
+function Write-BoundedCreateOnlyJson {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][object]$Value
+    )
+    $json = $Value | ConvertTo-Json -Depth 6 -Compress
+    if ([Text.Encoding]::UTF8.GetByteCount($json) -gt 8192) { throw 'Mission worker immutable launch record exceeds the fixed bound.' }
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $Path)) | Out-Null
+    if (Test-Path -LiteralPath $Path) { throw 'Mission worker immutable launch record already exists.' }
+    $temporaryPath = "$Path.$PID.$([guid]::NewGuid().ToString('N')).tmp"
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    try {
+        [System.IO.File]::WriteAllText($temporaryPath, "$json`n", $encoding)
+        [System.IO.File]::Move($temporaryPath, $Path)
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath) {
+            Remove-Item -LiteralPath $temporaryPath -Force
+        }
+    }
+}
+
+function New-CryptographicLaunchIdentityId {
+    $bytes = New-Object byte[] 32
+    $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $generator.GetBytes($bytes) }
+    finally { $generator.Dispose() }
+    return ([System.BitConverter]::ToString($bytes)).Replace('-', '').ToLowerInvariant()
+}
+
 function Read-ExactInvocationSignal {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -117,6 +147,95 @@ function Stop-ExactOwnedWorkerProcess {
     $Process.Kill()
     if (-not $Process.WaitForExit(5000)) {
         throw 'Mission worker launcher cleanup timed out.'
+    }
+}
+
+function Start-ExactWorkerWithLaunchIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$LaunchIdentityId,
+        [Parameter(Mandatory = $true)][ValidateSet('ordinary', 'guarded-restart')][string]$LaunchKind,
+        [string]$RestartInvocationId = '',
+        [switch]$CaptureOutput
+    )
+
+    if ($LaunchIdentityId -notmatch '^[0-9a-f]{64}$') {
+        throw 'Mission worker launch identity is invalid.'
+    }
+    if (($LaunchKind -eq 'guarded-restart' -and $RestartInvocationId -ne $LaunchIdentityId) `
+        -or ($LaunchKind -eq 'ordinary' -and -not [string]::IsNullOrEmpty($RestartInvocationId))) {
+        throw 'Mission worker launch identity kind is invalid.'
+    }
+    $launchReceiptPath = Join-Path $statusRoot "mission-orchestrator-worker-launch-identity-$LaunchIdentityId.json"
+    if (Test-Path -LiteralPath $launchReceiptPath) {
+        throw 'Mission worker launch identity was already used.'
+    }
+    if ($workerScript.Contains('"')) { throw 'Canonical worker path contains an unsupported quote.' }
+    $processStartInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $processStartInfo.FileName = $canonicalNode
+    $processStartInfo.Arguments = '"' + $workerScript + '"'
+    $processStartInfo.WorkingDirectory = $repositoryRoot
+    $processStartInfo.UseShellExecute = $false
+    $processStartInfo.CreateNoWindow = $true
+    $processStartInfo.RedirectStandardOutput = [bool]$CaptureOutput
+    $processStartInfo.RedirectStandardError = [bool]$CaptureOutput
+    $processStartInfo.EnvironmentVariables['STEPHANOS_MISSION_WORKER_LAUNCH_ID'] = $LaunchIdentityId
+    $processStartInfo.EnvironmentVariables['STEPHANOS_MISSION_WORKER_LAUNCH_RECEIPT_PATH'] = $launchReceiptPath
+    if ($LaunchKind -eq 'guarded-restart') {
+        $processStartInfo.EnvironmentVariables['STEPHANOS_MISSION_WORKER_INVOCATION_ID'] = $RestartInvocationId
+    }
+    else {
+        [void]$processStartInfo.EnvironmentVariables.Remove('STEPHANOS_MISSION_WORKER_INVOCATION_ID')
+    }
+
+    $workerProcess = New-Object System.Diagnostics.Process
+    $workerProcess.StartInfo = $processStartInfo
+    $workerProcessStarted = $false
+    $ownedWorkerProcess = $null
+    $workerStartedAtUtc = [datetime]::MinValue
+    try {
+        if (-not $workerProcess.Start()) { throw 'Mission worker process did not start.' }
+        $workerProcessStarted = $true
+        $ownedWorkerProcess = $workerProcess
+        $workerStartedAtUtc = $workerProcess.StartTime.ToUniversalTime()
+        Write-BoundedCreateOnlyJson -Path $launchReceiptPath -Value ([PSCustomObject]@{
+            schemaVersion = 'stephanos.mission-worker-launch-identity.v1'
+            launchIdentityId = $LaunchIdentityId
+            launchKind = $LaunchKind
+            restartInvocationId = $RestartInvocationId
+            taskName = 'Stephanos Mission Orchestrator Worker'
+            repositoryRoot = $repositoryRoot
+            branch = $branch
+            headSha = $headSha
+            workerPid = $workerProcess.Id
+            workerStartedAtUtc = $workerStartedAtUtc.ToString('o')
+            canonicalNode = $canonicalNode
+            canonicalWorkerScript = $workerScript
+            createdAtUtc = [datetime]::UtcNow.ToString('o')
+        })
+        return [PSCustomObject]@{
+            Process = $workerProcess
+            OwnedProcess = $ownedWorkerProcess
+            StartedAtUtc = $workerStartedAtUtc
+            LaunchIdentityId = $LaunchIdentityId
+            LaunchReceiptPath = $launchReceiptPath
+        }
+    }
+    catch {
+        $launchFailure = $_
+        if ($workerProcessStarted) {
+            try {
+                Stop-ExactOwnedWorkerProcess `
+                    -Process $workerProcess `
+                    -OwnedProcess $ownedWorkerProcess `
+                    -ExpectedNode $canonicalNode `
+                    -ExpectedWorkerScript $workerScript `
+                    -ExpectedStartedAtUtc $workerStartedAtUtc
+            }
+            catch {
+                throw "Mission worker launch-identity cleanup failed: $($_.Exception.Message)"
+            }
+        }
+        throw $launchFailure
     }
 }
 
@@ -207,25 +326,20 @@ if (Test-Path -LiteralPath $restartRequestPath -PathType Leaf) {
         deadlineUtc = $restartDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
     })
 
-    $env:STEPHANOS_MISSION_WORKER_INVOCATION_ID = $invocationId
-    if ($workerScript.Contains('"')) { throw 'Canonical worker path contains an unsupported quote.' }
-    $processStartInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $processStartInfo.FileName = $canonicalNode
-    $processStartInfo.Arguments = '"' + $workerScript + '"'
-    $processStartInfo.WorkingDirectory = $repositoryRoot
-    $processStartInfo.UseShellExecute = $false
-    $processStartInfo.CreateNoWindow = $true
-    $workerProcess = New-Object System.Diagnostics.Process
-    $workerProcess.StartInfo = $processStartInfo
+    $workerProcess = $null
     $workerProcessStarted = $false
     $ownedWorkerProcess = $null
     $workerStartedAtUtc = [datetime]::MinValue
     $restartConfirmed = $false
     try {
-        if (-not $workerProcess.Start()) { throw 'Mission worker process did not start.' }
+        $launchedWorker = Start-ExactWorkerWithLaunchIdentity `
+            -LaunchIdentityId $invocationId `
+            -LaunchKind 'guarded-restart' `
+            -RestartInvocationId $invocationId
+        $workerProcess = $launchedWorker.Process
         $workerProcessStarted = $true
-        $ownedWorkerProcess = $workerProcess
-        $workerStartedAtUtc = $workerProcess.StartTime.ToUniversalTime()
+        $ownedWorkerProcess = $launchedWorker.OwnedProcess
+        $workerStartedAtUtc = $launchedWorker.StartedAtUtc
         $receiptPath = Join-Path $statusRoot "mission-orchestrator-worker-restart-receipt-$invocationId.json"
         Write-BoundedAtomicJson -Path $receiptPath -Value ([PSCustomObject]@{
             schemaVersion = 'stephanos.mission-worker-restart-receipt.v1'
@@ -257,6 +371,8 @@ if (Test-Path -LiteralPath $restartRequestPath -PathType Leaf) {
                         -and [string]$workerHeartbeat.headSha -eq $headSha `
                         -and [string]$workerHeartbeat.taskName -eq 'Stephanos Mission Orchestrator Worker' `
                         -and [int]$workerHeartbeat.pid -eq $workerProcess.Id `
+                        -and [string]$workerHeartbeat.launchIdentityId -eq $invocationId `
+                        -and ([datetime]::Parse([string]$workerHeartbeat.workerStartedAtUtc).ToUniversalTime()).Ticks -eq $workerStartedAtUtc.Ticks `
                         -and $heartbeatTimestampUtc -gt $workerStartedAtUtc `
                         -and $workerProcess.StartTime.ToUniversalTime().Ticks -eq $workerStartedAtUtc.Ticks) {
                         Write-BoundedAtomicJson -Path $invocationHeartbeatPath -Value ([PSCustomObject]@{
@@ -318,10 +434,42 @@ if (Test-Path -LiteralPath $restartRequestPath -PathType Leaf) {
     }
 }
 else {
-    & $canonicalNode $workerScript 2>&1 | ForEach-Object {
-        [string]$_ | Out-File -LiteralPath $logPath -Append -Encoding utf8
+    $ordinaryLaunchId = New-CryptographicLaunchIdentityId
+    $ordinaryWorker = $null
+    try {
+        $ordinaryWorker = Start-ExactWorkerWithLaunchIdentity `
+            -LaunchIdentityId $ordinaryLaunchId `
+            -LaunchKind 'ordinary' `
+            -CaptureOutput
+        $stdoutRead = $ordinaryWorker.Process.StandardOutput.ReadToEndAsync()
+        $stderrRead = $ordinaryWorker.Process.StandardError.ReadToEndAsync()
+        $ordinaryWorker.Process.WaitForExit()
+        $stdoutText = $stdoutRead.GetAwaiter().GetResult()
+        $stderrText = $stderrRead.GetAwaiter().GetResult()
+        foreach ($line in @($stdoutText, $stderrText)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
+                [string]$line | Out-File -LiteralPath $logPath -Append -Encoding utf8
+            }
+        }
+        $exitCode = $ordinaryWorker.Process.ExitCode
     }
-    $exitCode = $LASTEXITCODE
+    catch {
+        $ordinaryFailure = $_
+        if ($ordinaryWorker -and $ordinaryWorker.Process) {
+            try {
+                Stop-ExactOwnedWorkerProcess `
+                    -Process $ordinaryWorker.Process `
+                    -OwnedProcess $ordinaryWorker.OwnedProcess `
+                    -ExpectedNode $canonicalNode `
+                    -ExpectedWorkerScript $workerScript `
+                    -ExpectedStartedAtUtc $ordinaryWorker.StartedAtUtc
+            }
+            catch {
+                throw "Mission worker ordinary-launch cleanup failed: $($_.Exception.Message)"
+            }
+        }
+        throw $ordinaryFailure
+    }
 }
 "[$([DateTime]::UtcNow.ToString('o'))] Mission Orchestrator worker exited with code $exitCode" | Out-File -LiteralPath $logPath -Append -Encoding utf8
 exit $exitCode
