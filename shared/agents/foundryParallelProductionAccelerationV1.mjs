@@ -1,20 +1,30 @@
+import { createHash } from 'node:crypto';
+import {
+  BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
+  MISSION_CONTROLLER_ROUTE,
+  validateBuildLaneCapacityReceipt,
+} from './missionControllerCapacityRouterV1.mjs';
+import { adjudicateForgeSidecarCapacity } from './stallSentinelReviewPipelineV1.mjs';
+
 const SHA_RE = /^[a-f0-9]{40}$/;
-const SAFE_ID_RE = /^[a-z0-9][a-z0-9._:/-]{0,239}$/i;
-const SAFE_REPOSITORY_RE = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
+const SHA256_RE = /^[a-f0-9]{64}$/;
+const SAFE_ID_RE = /^[a-z0-9][a-z0-9._:@/-]{2,239}$/i;
+const REPOSITORY_RE = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
+const RESOURCE_ID_RE = /^[a-z0-9][a-z0-9._:/-]{0,239}$/;
+const PROOF_REF_RE = /^(?:proof|proofs|receipts|evidence\/receipts)\/[A-Za-z0-9][A-Za-z0-9._/@:#-]{0,239}$/;
 const EXPLICIT_TZ_RE = /(?:Z|[+-]\d{2}:\d{2})$/i;
-const SAFE_RECEIPT_PREFIXES = ['receipts/', 'evidence/receipts/', 'proofs/'];
-const PROVIDER_STATES = new Set(['READY', 'BUSY', 'BLOCKED', 'UNKNOWN', 'QUARANTINED']);
 const MAX_PROVIDERS = 16;
 const MAX_CANDIDATES = 256;
 const MAX_RESOURCES = 128;
-const MAX_CAPABILITIES = 64;
+const MAX_LIST = 128;
 const MAX_SLOTS = 32;
 const MAX_DURATION_SECONDS = 30 * 24 * 60 * 60;
+const MAX_FRESHNESS_SECONDS = 60 * 60;
 
 export const FOUNDRY_ACCELERATION_SCHEMA = 'stephanos.foundry-parallel-production-acceleration.v1';
-export const FOUNDRY_CAPACITY_SCHEMA = 'stephanos.foundry-measured-capacity.v1';
-export const FOUNDRY_M3_LIVE_SCHEMA = 'stephanos.forge-shadow-m3-live-capacity.v1';
-export const PROVIDER_CAPACITY_SCHEMA = 'stephanos.provider-measured-capacity.v1';
+export const FOUNDRY_ACCELERATION_HOST_CONTEXT_SCHEMA = 'stephanos.foundry-acceleration-host-context.v1';
+export const FOUNDRY_ACCELERATION_METRICS_RECEIPT_SCHEMA = 'stephanos.foundry-acceleration-metrics-receipt.v1';
+export const MISSION_SCHEDULER_SCHEMA = 'stephanos.mission-scheduler.v1';
 
 export const FOUNDRY_ACCELERATION_DECISIONS = Object.freeze({
   BLOCKED: 'FOUNDRY_ACCELERATION_BLOCKED',
@@ -24,371 +34,433 @@ export const FOUNDRY_ACCELERATION_DECISIONS = Object.freeze({
   READY: 'FOUNDRY_ACCELERATION_READY_MODEL_ONLY',
 });
 
+const TRUSTED_KEYS = [
+  'schemaVersion', 'repository', 'canonicalMainHead', 'canonicalMainTree', 'nowUtc',
+  'taskClass', 'minimumNetSavingsSeconds', 'receiptFreshnessSeconds',
+  'schedulerProjection', 'providerCapacityEvidence', 'forgeSidecar',
+];
+const EVIDENCE_KEYS = ['providerId', 'buildLaneReceipt', 'metricsReceipt'];
+const METRICS_KEYS = [
+  'schemaVersion', 'receiptId', 'providerId', 'buildLaneCapacityReceiptId', 'route',
+  'repository', 'workerId', 'canonicalMainHead', 'canonicalMainTree', 'taskClass',
+  'state', 'supportedOperations', 'supportedTaskClasses', 'observedAtUtc', 'expiresAtUtc',
+  'availableSlots', 'queueDepth', 'p95StartLatencySeconds', 'medianExecutionSeconds',
+  'reviewIntegrationSeconds', 'successRate', 'reworkRate', 'authorityReceiptIds',
+  'proofRefs', 'payloadSha256',
+];
+
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
   if (Array.isArray(value)) return Object.freeze(value.map(freeze));
   for (const key of Object.keys(value)) value[key] = freeze(value[key]);
   return Object.freeze(value);
 }
-
-function text(value) {
-  return typeof value === 'string' ? value.trim() : '';
+function text(value) { return typeof value === 'string' ? value.trim() : ''; }
+function integer(value) { return Number.isSafeInteger(value) && value >= 0 ? value : null; }
+function boundedNumber(value, maximum = MAX_DURATION_SECONDS) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= maximum ? value : null;
 }
-
-function integer(value) {
-  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+function nonnegativeNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
-
 function ratio(value) {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
-    ? value
-    : null;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
 }
-
-function explicitInstant(value) {
+function instant(value) {
   const normalized = text(value);
   if (!normalized || !EXPLICIT_TZ_RE.test(normalized)) return Number.NaN;
   const parsed = Date.parse(normalized);
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
-
-function denseArray(value) {
+function dense(value) {
   if (!Array.isArray(value)) return false;
-  for (let index = 0; index < value.length; index += 1) {
-    if (!Object.hasOwn(value, index)) return false;
-  }
+  for (let index = 0; index < value.length; index += 1) if (!Object.hasOwn(value, index)) return false;
   return true;
 }
-
-function normalizeSafeIds(value, maximum) {
-  if (!denseArray(value) || value.length > maximum) return null;
-  const normalized = value.map((entry) => text(entry).toLowerCase());
-  if (normalized.some((entry) => !SAFE_ID_RE.test(entry))) return null;
-  return [...new Set(normalized)].sort();
+function exactKeys(value, keys) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
 }
-
-function safeReceiptRef(value) {
-  const normalized = text(value).replaceAll('\\', '/');
-  return Boolean(
-    normalized
-    && normalized.length <= 512
-    && SAFE_RECEIPT_PREFIXES.some((prefix) => normalized.startsWith(prefix))
-    && !normalized.startsWith('/')
-    && !/^[a-z]:\//i.test(normalized)
-    && normalized.split('/').every((segment) => segment && segment !== '.' && segment !== '..')
-  );
+function normalizedStrings(value, maximum = MAX_LIST, pattern = SAFE_ID_RE, allowEmpty = true) {
+  if (!dense(value) || value.length > maximum || (!allowEmpty && value.length === 0)) return null;
+  const result = value.map(text);
+  if (result.some((entry) => !pattern.test(entry)) || new Set(result).size !== result.length) return null;
+  return [...result].sort();
 }
-
+function normalizedProofRefs(value) {
+  const refs = normalizedStrings(value, MAX_LIST, PROOF_REF_RE);
+  return refs && refs.every((ref) => !ref.includes('..')) ? refs : null;
+}
+function sameSet(left, right) {
+  return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+function payloadDigest(receipt) {
+  const core = { ...receipt };
+  delete core.payloadSha256;
+  return createHash('sha256').update(canonicalJson(core)).digest('hex');
+}
+function issueNumber(value) {
+  const match = String(value ?? '').trim().match(/^#?([1-9]\d*)$/);
+  const issue = match ? Number(match[1]) : Number.NaN;
+  return Number.isSafeInteger(issue) && issue > 0 ? issue : null;
+}
 function authorityProjection() {
-  return freeze({
-    dispatch: false,
-    sourceMutation: false,
-    branchMutation: false,
-    publication: false,
-    merge: false,
-    deployment: false,
-    runtimeMutation: false,
-    credentialAccess: false,
-    arbitraryCommand: false,
-    recommendationOnly: true,
-  });
+  return freeze({ dispatch:false, sourceMutation:false, branchMutation:false, publication:false,
+    merge:false, deployment:false, runtimeMutation:false, credentialAccess:false,
+    arbitraryCommand:false, recommendationOnly:true });
+}
+function blockedResult(blockers = ['trusted-host-context-invalid']) {
+  return freeze({ schemaVersion:FOUNDRY_ACCELERATION_SCHEMA, valid:false,
+    decision:FOUNDRY_ACCELERATION_DECISIONS.BLOCKED, blockers:[...new Set(blockers)],
+    assignments:[], heldCandidates:[], providerStatus:[], foundryTelemetry:null,
+    totalCriticalPathSecondsSaved:0, authority:authorityProjection() });
 }
 
-function blockedResult(blockers = ['hostile-input-observation-failed']) {
-  return freeze({
-    schemaVersion: FOUNDRY_ACCELERATION_SCHEMA,
-    valid: false,
-    decision: FOUNDRY_ACCELERATION_DECISIONS.BLOCKED,
-    blockers: [...new Set(blockers)],
-    assignments: [],
-    heldCandidates: [],
-    providerStatus: [],
-    foundryTelemetry: null,
-    authority: authorityProjection(),
-  });
-}
-
-function normalizeProvider(raw, canonicalMainHead, nowMs, freshnessSeconds) {
-  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-  const providerId = text(source.providerId).toLowerCase();
-  const state = text(source.state).toUpperCase();
-  const capabilities = normalizeSafeIds(source.capabilities, MAX_CAPABILITIES);
-  const availableSlots = integer(source.availableSlots);
-  const queueDepth = integer(source.queueDepth);
-  const medianStartDelaySeconds = integer(source.medianStartDelaySeconds);
-  const medianExecutionSeconds = integer(source.medianExecutionSeconds);
-  const reviewIntegrationSeconds = integer(source.reviewIntegrationSeconds);
-  const successRate = ratio(source.successRate);
-  const reworkRate = ratio(source.reworkRate);
-  const receipt = source.capacityReceipt && typeof source.capacityReceipt === 'object' && !Array.isArray(source.capacityReceipt)
-    ? source.capacityReceipt
-    : {};
-  const observedAtMs = explicitInstant(receipt.observedAtUtc);
-  const expectedCapacitySchema = providerId === 'foundry' ? FOUNDRY_CAPACITY_SCHEMA : PROVIDER_CAPACITY_SCHEMA;
-  const blockers = [];
-
-  if (!SAFE_ID_RE.test(providerId)) blockers.push('provider-id-invalid');
-  if (!PROVIDER_STATES.has(state)) blockers.push('provider-state-invalid');
-  if (!capabilities) blockers.push('provider-capabilities-invalid');
-  if (availableSlots === null || availableSlots > MAX_SLOTS) blockers.push('provider-slots-invalid');
-  if (queueDepth === null || queueDepth > 10000) blockers.push('provider-queue-depth-invalid');
-  for (const [key, value] of [
-    ['provider-start-delay-invalid', medianStartDelaySeconds],
-    ['provider-execution-duration-invalid', medianExecutionSeconds],
-    ['provider-integration-duration-invalid', reviewIntegrationSeconds],
-  ]) if (value === null || value > MAX_DURATION_SECONDS) blockers.push(key);
-  if (successRate === null) blockers.push('provider-success-rate-invalid');
-  if (reworkRate === null) blockers.push('provider-rework-rate-invalid');
-  if (text(receipt.schemaVersion) !== expectedCapacitySchema) blockers.push('provider-capacity-schema-invalid');
-  if (text(receipt.providerId).toLowerCase() !== providerId) blockers.push('provider-capacity-identity-mismatch');
-  if (text(receipt.exactMainHead).toLowerCase() !== canonicalMainHead) blockers.push('provider-capacity-head-mismatch');
-  if (!safeReceiptRef(receipt.receiptRef)) blockers.push('provider-capacity-receipt-ref-invalid');
-  if (!Number.isFinite(observedAtMs)) blockers.push('provider-capacity-observed-at-invalid');
-  else if (observedAtMs > nowMs || nowMs - observedAtMs > freshnessSeconds * 1000) blockers.push('provider-capacity-stale');
-  if (receipt.availableSlots !== availableSlots || receipt.queueDepth !== queueDepth) blockers.push('provider-capacity-measurement-mismatch');
-
-  let m3Runtime = null;
-  if (providerId === 'foundry') {
-    const rawM3 = source.m3RuntimeReceipt && typeof source.m3RuntimeReceipt === 'object' && !Array.isArray(source.m3RuntimeReceipt)
-      ? source.m3RuntimeReceipt
-      : {};
-    m3Runtime = freeze({
-      schemaVersion: text(rawM3.schemaVersion),
-      exactMainHead: text(rawM3.exactMainHead).toLowerCase(),
-      observedAtUtc: text(rawM3.observedAtUtc),
-      canCarryRealWork: rawM3.canCarryRealWork === true,
-      teardownVerdict: text(rawM3.teardownVerdict),
-      receiptRef: safeReceiptRef(rawM3.receiptRef) ? text(rawM3.receiptRef) : null,
-    });
-    const m3ObservedAtMs = explicitInstant(m3Runtime.observedAtUtc);
-    if (m3Runtime.schemaVersion !== FOUNDRY_M3_LIVE_SCHEMA) blockers.push('foundry-m3-runtime-schema-invalid');
-    if (m3Runtime.exactMainHead !== canonicalMainHead) blockers.push('foundry-m3-runtime-head-mismatch');
-    if (!m3Runtime.canCarryRealWork) blockers.push('foundry-m3-not-routable');
-    if (m3Runtime.teardownVerdict !== 'ZERO_RESIDUAL_AUTHORITY') blockers.push('foundry-m3-teardown-unproven');
-    if (!m3Runtime.receiptRef) blockers.push('foundry-m3-runtime-receipt-ref-invalid');
-    if (!Number.isFinite(m3ObservedAtMs)) blockers.push('foundry-m3-runtime-observed-at-invalid');
-    else if (m3ObservedAtMs > nowMs || nowMs - m3ObservedAtMs > freshnessSeconds * 1000) blockers.push('foundry-m3-runtime-stale');
+function validateMetricsReceipt(receipt, evidence, build, host, blockers) {
+  if (!exactKeys(receipt, METRICS_KEYS)) {
+    blockers.push('metrics-receipt-shape-invalid');
+    return null;
   }
+  const operations = normalizedStrings(receipt.supportedOperations);
+  const classes = normalizedStrings(receipt.supportedTaskClasses);
+  const authorities = normalizedStrings(receipt.authorityReceiptIds);
+  const proofRefs = normalizedProofRefs(receipt.proofRefs);
+  const buildOperations = normalizedStrings(build.supportedOperations);
+  const buildClasses = normalizedStrings(build.supportedTaskClasses);
+  const buildAuthorities = normalizedStrings(build.authorityReceiptIds);
+  const buildProofRefs = normalizedProofRefs(build.proofRefs);
+  const availableSlots = integer(receipt.availableSlots);
+  const queueDepth = integer(receipt.queueDepth);
+  const p95StartLatencySeconds = boundedNumber(receipt.p95StartLatencySeconds);
+  const medianExecutionSeconds = integer(receipt.medianExecutionSeconds);
+  const reviewIntegrationSeconds = integer(receipt.reviewIntegrationSeconds);
+  const successRate = ratio(receipt.successRate);
+  const reworkRate = ratio(receipt.reworkRate);
+  const observedAtMs = instant(receipt.observedAtUtc);
+  const expiresAtMs = instant(receipt.expiresAtUtc);
+  const buildObservedAtMs = instant(build.observedAtUtc);
+  const buildExpiresAtMs = instant(build.expiresAtUtc);
+  const providerId = text(receipt.providerId).toLowerCase();
 
-  const predictedSeconds = blockers.length ? null : (
-    medianStartDelaySeconds
-    + medianExecutionSeconds
-    + reviewIntegrationSeconds
+  if (receipt.schemaVersion !== FOUNDRY_ACCELERATION_METRICS_RECEIPT_SCHEMA) blockers.push('metrics-schema-invalid');
+  if (!SAFE_ID_RE.test(providerId) || providerId !== text(evidence.providerId).toLowerCase()) blockers.push('metrics-provider-mismatch');
+  if (!SAFE_ID_RE.test(text(receipt.receiptId))) blockers.push('metrics-receipt-id-invalid');
+  if (receipt.buildLaneCapacityReceiptId !== build.receiptId) blockers.push('metrics-build-receipt-mismatch');
+  if (receipt.route !== build.route) blockers.push('metrics-route-mismatch');
+  if (receipt.repository !== host.repository || receipt.repository !== build.repository) blockers.push('metrics-repository-mismatch');
+  if (receipt.workerId !== build.workerId) blockers.push('metrics-worker-mismatch');
+  if (text(receipt.canonicalMainHead).toLowerCase() !== host.canonicalMainHead) blockers.push('metrics-head-mismatch');
+  if (text(receipt.canonicalMainTree).toLowerCase() !== host.canonicalMainTree) blockers.push('metrics-tree-mismatch');
+  if (receipt.taskClass !== host.taskClass || !buildClasses?.includes(host.taskClass)) blockers.push('metrics-task-class-mismatch');
+  if (receipt.state !== build.state || receipt.state !== 'READY') blockers.push('metrics-state-mismatch');
+  if (!operations || !buildOperations || !sameSet(operations, buildOperations)) blockers.push('metrics-operations-mismatch');
+  if (!classes || !buildClasses || !sameSet(classes, buildClasses)) blockers.push('metrics-task-classes-mismatch');
+  if (!authorities || !buildAuthorities || buildAuthorities.some((id) => !authorities.includes(id))) blockers.push('metrics-authority-binding-invalid');
+  if (!proofRefs || !buildProofRefs || buildProofRefs.some((ref) => !proofRefs.includes(ref))) blockers.push('metrics-proof-binding-invalid');
+  if (availableSlots === null || availableSlots > MAX_SLOTS) blockers.push('metrics-slots-invalid');
+  if (queueDepth === null || queueDepth !== build.queueDepth) blockers.push('metrics-queue-mismatch');
+  if (p95StartLatencySeconds === null || p95StartLatencySeconds !== build.p95StartLatencySeconds) blockers.push('metrics-start-latency-mismatch');
+  if (medianExecutionSeconds === null || medianExecutionSeconds > MAX_DURATION_SECONDS) blockers.push('metrics-execution-invalid');
+  if (reviewIntegrationSeconds === null || reviewIntegrationSeconds > MAX_DURATION_SECONDS) blockers.push('metrics-integration-invalid');
+  if (successRate === null) blockers.push('metrics-success-rate-invalid');
+  if (reworkRate === null) blockers.push('metrics-rework-rate-invalid');
+  if (!Number.isFinite(observedAtMs) || !Number.isFinite(expiresAtMs)
+    || observedAtMs < buildObservedAtMs || expiresAtMs > buildExpiresAtMs
+    || observedAtMs > host.nowMs + 60_000 || host.nowMs - observedAtMs > host.freshnessSeconds * 1000
+    || expiresAtMs <= host.nowMs || expiresAtMs <= observedAtMs) blockers.push('metrics-validity-window-invalid');
+  if (!SHA256_RE.test(text(receipt.payloadSha256).toLowerCase())
+    || payloadDigest(receipt) !== text(receipt.payloadSha256).toLowerCase()) blockers.push('metrics-payload-digest-invalid');
+  if (blockers.length) return null;
+  const predictedSeconds = p95StartLatencySeconds + medianExecutionSeconds + reviewIntegrationSeconds
     + Math.ceil(medianExecutionSeconds * reworkRate)
-    + Math.ceil(medianExecutionSeconds * (1 - successRate))
-  );
-  const eligible = blockers.length === 0 && state === 'READY' && availableSlots > 0;
-  return freeze({
-    providerId,
-    state,
-    capabilities: capabilities ?? [],
-    availableSlots,
-    queueDepth,
-    medianStartDelaySeconds,
-    medianExecutionSeconds,
-    reviewIntegrationSeconds,
-    successRate,
-    reworkRate,
-    predictedSeconds,
-    eligible,
-    blockers,
-    capacityReceiptRef: safeReceiptRef(receipt.receiptRef) ? text(receipt.receiptRef) : null,
-    capacityObservedAtUtc: Number.isFinite(observedAtMs) ? new Date(observedAtMs).toISOString() : null,
-    m3Runtime,
-  });
+    + Math.ceil(medianExecutionSeconds * (1 - successRate));
+  return { providerId, route:build.route, workerId:build.workerId, supportedOperations:operations,
+    availableSlots, queueDepth, predictedSeconds, authorityReceiptIds:authorities,
+    proofRefs, capacityReceiptId:build.receiptId, metricsReceiptId:receipt.receiptId,
+    observedAtUtc:receipt.observedAtUtc };
 }
 
-function normalizeCandidate(raw, canonicalMainHead) {
-  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-  const candidateId = text(source.candidateId).toLowerCase();
-  const goalId = text(source.goalId).toLowerCase();
-  const baseHead = text(source.baseHead).toLowerCase();
-  const resourceIds = normalizeSafeIds(source.resourceIds, MAX_RESOURCES);
-  const requiredCapabilities = normalizeSafeIds(source.requiredCapabilities, MAX_CAPABILITIES);
-  const criticalPathWeight = integer(source.criticalPathWeight);
-  const blockers = [];
-  if (!SAFE_ID_RE.test(candidateId)) blockers.push('candidate-id-invalid');
-  if (!SAFE_ID_RE.test(goalId)) blockers.push('candidate-goal-invalid');
-  if (!SHA_RE.test(baseHead) || baseHead !== canonicalMainHead) blockers.push('candidate-base-head-stale-or-invalid');
-  if (!resourceIds || resourceIds.length === 0) blockers.push('candidate-resource-scope-invalid');
-  if (!requiredCapabilities) blockers.push('candidate-capabilities-invalid');
-  if (criticalPathWeight === null || criticalPathWeight > 1000) blockers.push('candidate-critical-path-weight-invalid');
-  return freeze({
-    candidateId,
-    goalId,
-    baseHead,
-    resourceIds: resourceIds ?? [],
-    requiredCapabilities: requiredCapabilities ?? [],
-    criticalPathWeight,
-    blockers,
-  });
-}
-
-function providerSupports(provider, candidate) {
-  const capabilities = new Set(provider.capabilities);
-  return candidate.requiredCapabilities.every((capability) => capabilities.has(capability));
-}
-
-function foundryTelemetry(foundry, assignmentCount) {
-  if (!foundry) return freeze({
-    status: 'NOT_OBSERVED',
-    queueDepth: null,
-    availableSlots: null,
-    activePackets: 0,
-    lastCapacityReceipt: null,
-    lastRuntimeReceipt: null,
-    lastTeardownVerdict: null,
-    successRate: null,
-    reworkRate: null,
-    medianStartDelaySeconds: null,
-    medianExecutionSeconds: null,
-    operatorRequired: true,
-  });
-  return freeze({
-    status: foundry.eligible ? 'READY' : (foundry.state === 'QUARANTINED' ? 'QUARANTINED' : 'WAITING_FOR_M3_OR_CAPACITY_PROOF'),
-    queueDepth: foundry.queueDepth,
-    availableSlots: foundry.availableSlots,
-    activePackets: assignmentCount,
-    lastCapacityReceipt: foundry.capacityReceiptRef,
-    lastRuntimeReceipt: foundry.m3Runtime?.receiptRef ?? null,
-    lastTeardownVerdict: foundry.m3Runtime?.teardownVerdict ?? null,
-    successRate: foundry.successRate,
-    reworkRate: foundry.reworkRate,
-    medianStartDelaySeconds: foundry.medianStartDelaySeconds,
-    medianExecutionSeconds: foundry.medianExecutionSeconds,
-    operatorRequired: !foundry.eligible,
-  });
-}
-
-function plan(source = {}) {
-  const repository = text(source.repository);
-  const canonicalMainHead = text(source.canonicalMainHead).toLowerCase();
-  const nowUtc = text(source.nowUtc);
-  const nowMs = explicitInstant(nowUtc);
-  const capacityFreshnessSeconds = integer(source.capacityFreshnessSeconds ?? 300);
-  const minimumNetSavingsSeconds = integer(source.minimumNetSavingsSeconds ?? 60);
-  const providersRaw = source.providers;
-  const candidatesRaw = source.candidates;
-  const activeResourceIds = normalizeSafeIds(source.activeResourceIds ?? [], MAX_RESOURCES);
-  const blockers = [];
-
-  if (!SAFE_REPOSITORY_RE.test(repository)) blockers.push('repository-invalid');
-  if (!SHA_RE.test(canonicalMainHead)) blockers.push('canonical-main-head-invalid');
-  if (!Number.isFinite(nowMs)) blockers.push('now-invalid');
-  if (capacityFreshnessSeconds === null || capacityFreshnessSeconds < 30 || capacityFreshnessSeconds > 3600) blockers.push('capacity-freshness-invalid');
-  if (minimumNetSavingsSeconds === null || minimumNetSavingsSeconds > MAX_DURATION_SECONDS) blockers.push('minimum-net-savings-invalid');
-  if (!denseArray(providersRaw) || providersRaw.length === 0 || providersRaw.length > MAX_PROVIDERS) blockers.push('providers-invalid-or-out-of-bound');
-  if (!denseArray(candidatesRaw) || candidatesRaw.length > MAX_CANDIDATES) blockers.push('candidates-invalid-or-out-of-bound');
-  if (!activeResourceIds) blockers.push('active-resource-inventory-invalid');
-  if (blockers.length) return blockedResult(blockers);
-
-  const providers = providersRaw.map((provider) => normalizeProvider(provider, canonicalMainHead, nowMs, capacityFreshnessSeconds));
-  const providerIds = providers.map(({ providerId }) => providerId);
-  if (new Set(providerIds).size !== providerIds.length) blockers.push('provider-id-duplicate');
-  const candidates = candidatesRaw.map((candidate) => normalizeCandidate(candidate, canonicalMainHead));
-  const candidateIds = candidates.map(({ candidateId }) => candidateId);
-  if (new Set(candidateIds).size !== candidateIds.length) blockers.push('candidate-id-duplicate');
-  for (const candidate of candidates) blockers.push(...candidate.blockers.map((blocker) => `${blocker}:${candidate.candidateId || 'unknown'}`));
-  if (blockers.length) return blockedResult(blockers);
-
-  const foundry = providers.find(({ providerId }) => providerId === 'foundry') ?? null;
-  if (candidates.length === 0) return freeze({
-    schemaVersion: FOUNDRY_ACCELERATION_SCHEMA,
-    valid: true,
-    repository,
-    canonicalMainHead,
-    decision: FOUNDRY_ACCELERATION_DECISIONS.IDLE,
-    blockers: [],
-    assignments: [],
-    heldCandidates: [],
-    providerStatus: providers,
-    foundryTelemetry: foundryTelemetry(foundry, 0),
-    totalCriticalPathSecondsSaved: 0,
-    authority: authorityProjection(),
-  });
-
-  const baseline = providers.find(({ providerId }) => providerId === 'github');
-  const heldCandidates = [];
-  const assignments = [];
-  const ownedResources = new Set(activeResourceIds);
-  const slots = new Map(providers.map((provider) => [provider.providerId, provider.eligible ? provider.availableSlots : 0]));
-  const orderedCandidates = [...candidates].sort((left, right) => (
-    right.criticalPathWeight - left.criticalPathWeight
-    || left.candidateId.localeCompare(right.candidateId)
-  ));
-
-  for (const candidate of orderedCandidates) {
-    const conflicts = candidate.resourceIds.filter((resourceId) => ownedResources.has(resourceId));
-    if (conflicts.length) {
-      heldCandidates.push(freeze({ candidateId: candidate.candidateId, reason: 'RESOURCE_CONFLICT', conflictingResourceIds: conflicts }));
-      continue;
-    }
-    if (!baseline?.eligible || !providerSupports(baseline, candidate)) {
-      heldCandidates.push(freeze({ candidateId: candidate.candidateId, reason: 'GITHUB_BASELINE_UNAVAILABLE' }));
-      continue;
-    }
-    const alternatives = providers
-      .filter((provider) => provider.providerId !== 'github' && provider.eligible && (slots.get(provider.providerId) ?? 0) > 0 && providerSupports(provider, candidate))
-      .map((provider) => ({
-        provider,
-        netSecondsSaved: baseline.predictedSeconds - provider.predictedSeconds,
-      }))
-      .filter(({ netSecondsSaved }) => netSecondsSaved >= minimumNetSavingsSeconds)
-      .sort((left, right) => (
-        right.netSecondsSaved - left.netSecondsSaved
-        || left.provider.predictedSeconds - right.provider.predictedSeconds
-        || left.provider.providerId.localeCompare(right.provider.providerId)
-      ));
-    const selected = alternatives[0];
-    if (!selected) {
-      heldCandidates.push(freeze({ candidateId: candidate.candidateId, reason: 'NO_POSITIVE_NET_ACCELERATION_USE_GITHUB' }));
-      continue;
-    }
-    assignments.push(freeze({
-      candidateId: candidate.candidateId,
-      goalId: candidate.goalId,
-      providerId: selected.provider.providerId,
-      resourceIds: candidate.resourceIds,
-      criticalPathWeight: candidate.criticalPathWeight,
-      githubBaselineSeconds: baseline.predictedSeconds,
-      predictedProviderSeconds: selected.provider.predictedSeconds,
-      predictedNetSecondsSaved: selected.netSecondsSaved,
-      capacityReceiptRef: selected.provider.capacityReceiptRef,
-      runtimeReceiptRef: selected.provider.m3Runtime?.receiptRef ?? null,
-      dispatchAuthority: false,
-    }));
-    slots.set(selected.provider.providerId, slots.get(selected.provider.providerId) - 1);
-    for (const resourceId of candidate.resourceIds) ownedResources.add(resourceId);
+function normalizeScheduler(projection, host, blockers) {
+  if (!projection || typeof projection !== 'object' || Array.isArray(projection)) {
+    blockers.push('scheduler-projection-missing');
+    return null;
+  }
+  if (projection.schemaVersion !== MISSION_SCHEDULER_SCHEMA) blockers.push('scheduler-schema-invalid');
+  if (projection.readOnly !== true) blockers.push('scheduler-not-read-only');
+  if (projection.failClosed !== false || projection.contradictionsTotal !== 0
+    || !dense(projection.contradictions) || projection.contradictions.length !== 0) {
+    blockers.push('scheduler-contradiction-state-invalid');
+  }
+  if (!dense(projection.parallelCandidateDetails) || projection.parallelCandidateDetails.length > MAX_CANDIDATES) {
+    blockers.push('scheduler-candidates-invalid');
+    return null;
+  }
+  if (!dense(projection.portfolio) || projection.portfolio.length > 1000) {
+    blockers.push('scheduler-portfolio-invalid');
+    return null;
+  }
+  if (!dense(projection.activeGoals) || projection.activeGoals.length > MAX_CANDIDATES) blockers.push('scheduler-active-goals-invalid');
+  if (!dense(projection.parallelCandidates) || projection.parallelCandidates.length > MAX_CANDIDATES) {
+    blockers.push('scheduler-parallel-candidate-refs-invalid');
+  }
+  const decision = projection.decisionReceipt;
+  if (!decision || typeof decision !== 'object' || Array.isArray(decision)) {
+    blockers.push('scheduler-decision-receipt-invalid');
+    return null;
+  }
+  const decidedAtMs = instant(decision.decidedAt);
+  if (decision.failClosed !== false || !Number.isFinite(decidedAtMs)
+    || decidedAtMs > host.nowMs || host.nowMs - decidedAtMs > host.freshnessSeconds * 1000) {
+    blockers.push('scheduler-decision-stale-or-invalid');
+  }
+  if (!dense(decision.selectedIssues) || decision.selectedIssues.length > MAX_CANDIDATES
+    || !dense(decision.activeIssues) || decision.activeIssues.length > MAX_CANDIDATES) {
+    blockers.push('scheduler-decision-issues-invalid');
+    return null;
   }
 
-  const foundryAssignments = assignments.filter(({ providerId }) => providerId === 'foundry');
-  const waitingForM3 = Boolean(foundry && !foundry.eligible && foundry.blockers.some((blocker) => blocker.startsWith('foundry-m3-')));
-  const decision = assignments.length
-    ? FOUNDRY_ACCELERATION_DECISIONS.READY
-    : waitingForM3
-      ? FOUNDRY_ACCELERATION_DECISIONS.WAITING_FOR_M3
-      : FOUNDRY_ACCELERATION_DECISIONS.NO_POSITIVE_GAIN;
-  return freeze({
-    schemaVersion: FOUNDRY_ACCELERATION_SCHEMA,
-    valid: true,
-    repository,
-    canonicalMainHead,
-    decision,
-    blockers: [],
-    assignments,
-    heldCandidates,
-    providerStatus: providers,
-    foundryTelemetry: foundryTelemetry(foundry, foundryAssignments.length),
-    totalCriticalPathSecondsSaved: assignments.reduce((total, assignment) => total + assignment.predictedNetSecondsSaved, 0),
-    authority: authorityProjection(),
-  });
+  const portfolioByIssue = new Map();
+  for (const item of projection.portfolio) {
+    const issue = issueNumber(item?.issue);
+    const resourceIds = normalizedStrings(item?.resourceIds, MAX_RESOURCES, RESOURCE_ID_RE, false);
+    const weight = nonnegativeNumber(item?.criticalPathWeight);
+    if (!issue || !resourceIds || weight === null || portfolioByIssue.has(issue)) {
+      blockers.push('scheduler-portfolio-item-invalid');
+      continue;
+    }
+    portfolioByIssue.set(issue, { issue, route:text(item.route), lifecycle:text(item.lifecycle),
+      evidenceFreshness:text(item.evidenceFreshness), resourceIds, criticalPathWeight:weight });
+  }
+
+  const activeFromProjection = projection.activeGoals.map(issueNumber);
+  const activeFromReceipt = decision.activeIssues.map(issueNumber);
+  const activeFromPortfolio = [...portfolioByIssue.values()]
+    .filter(({ lifecycle }) => lifecycle === 'ACTIVE').map(({ issue }) => issue).sort((a, b) => a - b);
+  if (activeFromProjection.some((issue) => issue === null) || activeFromReceipt.some((issue) => issue === null)
+    || !sameSet([...activeFromProjection].sort((a, b) => a - b), [...activeFromReceipt].sort((a, b) => a - b))) {
+    blockers.push('scheduler-active-issues-mismatch');
+  }
+  if (!sameSet([...activeFromReceipt].sort((a, b) => a - b), activeFromPortfolio)) {
+    blockers.push('scheduler-active-portfolio-inventory-mismatch');
+  }
+  const activeResources = new Set();
+  for (const issue of activeFromReceipt.filter(Boolean)) {
+    const item = portfolioByIssue.get(issue);
+    if (!item || item.lifecycle !== 'ACTIVE' || item.evidenceFreshness !== 'FRESH') {
+      blockers.push(`scheduler-active-portfolio-invalid:#${issue}`);
+      continue;
+    }
+    item.resourceIds.forEach((resourceId) => activeResources.add(resourceId));
+  }
+
+  const candidates = [];
+  const selectedIssues = new Set();
+  const selectedResources = new Set();
+  for (const detail of projection.parallelCandidateDetails) {
+    const issue = issueNumber(detail?.issue);
+    const resourceIds = normalizedStrings(detail?.resourceIds, MAX_RESOURCES, RESOURCE_ID_RE, false);
+    const item = issue ? portfolioByIssue.get(issue) : null;
+    if (!issue || detail?.candidateId !== `#${issue}` || !resourceIds || !item || selectedIssues.has(issue)) {
+      blockers.push('scheduler-candidate-detail-invalid');
+      continue;
+    }
+    if (text(detail.route) !== item.route || item.lifecycle !== 'READY' || item.evidenceFreshness !== 'FRESH') {
+      blockers.push(`scheduler-candidate-route-or-lifecycle-invalid:#${issue}`);
+    }
+    if (item.route !== 'CHATGPT_GITHUB') blockers.push(`scheduler-candidate-route-not-accelerable:#${issue}`);
+    if (!sameSet(resourceIds, item.resourceIds)) blockers.push(`scheduler-candidate-resource-mismatch:#${issue}`);
+    if (resourceIds.some((resourceId) => activeResources.has(resourceId))) {
+      blockers.push(`scheduler-candidate-active-resource-conflict:#${issue}`);
+    }
+    if (resourceIds.some((resourceId) => selectedResources.has(resourceId))) {
+      blockers.push(`scheduler-candidate-parallel-resource-conflict:#${issue}`);
+    }
+    resourceIds.forEach((resourceId) => selectedResources.add(resourceId));
+    selectedIssues.add(issue);
+    candidates.push({ candidateId:`#${issue}`, issue, route:item.route, resourceIds,
+      criticalPathWeight:item.criticalPathWeight });
+  }
+  const receiptSelected = decision.selectedIssues.map(issueNumber).sort((a, b) => (a ?? 0) - (b ?? 0));
+  const detailSelected = [...selectedIssues].sort((a, b) => a - b);
+  if (receiptSelected.some((issue) => issue === null) || !sameSet(receiptSelected, detailSelected)) {
+    blockers.push('scheduler-selected-issues-mismatch');
+  }
+  const parallelRefs = dense(projection.parallelCandidates)
+    ? [...projection.parallelCandidates].map(text).sort()
+    : [];
+  const detailRefs = candidates.map(({ candidateId }) => candidateId).sort();
+  if (!sameSet(parallelRefs, detailRefs)) blockers.push('scheduler-parallel-candidate-refs-mismatch');
+  if (blockers.length) return null;
+  return candidates.sort((left, right) => (
+    right.criticalPathWeight - left.criticalPathWeight || left.candidateId.localeCompare(right.candidateId)
+  ));
 }
 
-export function planFoundryParallelProductionAcceleration(input = {}) {
+function forgeProof(forge, foundry, host, blockers) {
+  const m2ReceiptId = text(forge?.m2ReceiptId);
+  const m3RuntimeReceiptId = text(forge?.m3RuntimeReceiptId);
+  if (forge?.repository !== host.repository) blockers.push('forge-repository-mismatch');
+  if (text(forge?.canonicalMainHead).toLowerCase() !== host.canonicalMainHead) blockers.push('forge-head-mismatch');
+  if (text(forge?.canonicalMainTree).toLowerCase() !== host.canonicalMainTree) blockers.push('forge-tree-mismatch');
+  if (text(forge?.mirrorHead).toLowerCase() !== host.canonicalMainHead
+    || text(forge?.mirrorTree).toLowerCase() !== host.canonicalMainTree) blockers.push('forge-mirror-mismatch');
+  for (const [field, blocker] of [
+    ['sourceReady', 'forge-source-not-ready'], ['runtimeReady', 'forge-runtime-not-ready'],
+    ['canCarryRealWork', 'forge-cannot-carry-real-work'], ['m2ReceiptValid', 'forge-m2-invalid'],
+    ['m3RuntimeReceiptValid', 'forge-m3-runtime-invalid'], ['evidenceBound', 'forge-evidence-unbound'],
+  ]) if (forge?.[field] !== true) blockers.push(blocker);
+  if (forge?.activationRequired === true) blockers.push('forge-activation-required');
+  if (!SAFE_ID_RE.test(m2ReceiptId) || !SAFE_ID_RE.test(m3RuntimeReceiptId)) blockers.push('forge-receipt-identity-invalid');
+  for (const receiptId of [m2ReceiptId, m3RuntimeReceiptId]) {
+    if (!foundry?.buildAuthorityReceiptIds.includes(receiptId)
+      || !foundry?.authorityReceiptIds.includes(receiptId)) blockers.push('foundry-forge-authority-binding-invalid');
+  }
+  return blockers.length ? null : { m2ReceiptId, m3RuntimeReceiptId };
+}
+
+function telemetry(foundry, forge, activePackets) {
+  if (!foundry) return freeze({ status:'NOT_OBSERVED', queueDepth:null, availableSlots:null,
+    activePackets:0, capacityReceiptId:null, metricsReceiptId:null, m2ReceiptId:null,
+    m3RuntimeReceiptId:null, operatorRequired:true });
+  return freeze({ status:foundry.eligible && forge ? 'READY' : 'HELD', queueDepth:foundry.queueDepth,
+    availableSlots:foundry.availableSlots, activePackets, capacityReceiptId:foundry.capacityReceiptId,
+    metricsReceiptId:foundry.metricsReceiptId, m2ReceiptId:forge?.m2ReceiptId ?? null,
+    m3RuntimeReceiptId:forge?.m3RuntimeReceiptId ?? null,
+    operatorRequired:!(foundry.eligible && forge) });
+}
+
+/**
+ * Returns a recommendation only. The first argument is intentionally never
+ * observed. The host must inject its current main snapshot, canonical Mission
+ * Scheduler projection, capacity receipts and Forge sidecar evidence in the
+ * second argument. Dispatch must re-read the scheduler/lease projection.
+ */
+export function planFoundryParallelProductionAcceleration(_request = {}, trustedContext = {}) {
   try {
-    const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-    return plan(source);
+    if (!exactKeys(trustedContext, TRUSTED_KEYS)) return blockedResult(['trusted-host-context-shape-invalid']);
+    const hostBlockers = [];
+    const repository = text(trustedContext.repository);
+    const canonicalMainHead = text(trustedContext.canonicalMainHead).toLowerCase();
+    const canonicalMainTree = text(trustedContext.canonicalMainTree).toLowerCase();
+    const nowMs = instant(trustedContext.nowUtc);
+    const taskClass = text(trustedContext.taskClass);
+    const minimumNetSavingsSeconds = integer(trustedContext.minimumNetSavingsSeconds);
+    const freshnessSeconds = integer(trustedContext.receiptFreshnessSeconds);
+    if (trustedContext.schemaVersion !== FOUNDRY_ACCELERATION_HOST_CONTEXT_SCHEMA) hostBlockers.push('trusted-host-schema-invalid');
+    if (!REPOSITORY_RE.test(repository)) hostBlockers.push('trusted-repository-invalid');
+    if (!SHA_RE.test(canonicalMainHead)) hostBlockers.push('trusted-main-head-invalid');
+    if (!SHA_RE.test(canonicalMainTree)) hostBlockers.push('trusted-main-tree-invalid');
+    if (!Number.isFinite(nowMs)) hostBlockers.push('trusted-clock-invalid');
+    if (!SAFE_ID_RE.test(taskClass)) hostBlockers.push('trusted-task-class-invalid');
+    if (minimumNetSavingsSeconds === null || minimumNetSavingsSeconds > MAX_DURATION_SECONDS) hostBlockers.push('trusted-minimum-savings-invalid');
+    if (freshnessSeconds === null || freshnessSeconds < 1 || freshnessSeconds > MAX_FRESHNESS_SECONDS) hostBlockers.push('trusted-freshness-invalid');
+    if (!dense(trustedContext.providerCapacityEvidence)
+      || trustedContext.providerCapacityEvidence.length > MAX_PROVIDERS) hostBlockers.push('provider-evidence-inventory-invalid');
+    if (hostBlockers.length) return blockedResult(hostBlockers);
+    const host = { repository, canonicalMainHead, canonicalMainTree, nowMs,
+      nowUtc:new Date(nowMs).toISOString(), taskClass, minimumNetSavingsSeconds, freshnessSeconds };
+
+    const schedulerBlockers = [];
+    const candidates = normalizeScheduler(trustedContext.schedulerProjection, host, schedulerBlockers);
+    if (!candidates) return blockedResult(schedulerBlockers);
+
+    const providers = [];
+    const providerIds = new Set();
+    const routes = new Set();
+    const capacityReceiptIds = new Set();
+    const metricsReceiptIds = new Set();
+    for (const rawEvidence of trustedContext.providerCapacityEvidence) {
+      const evidence = rawEvidence && typeof rawEvidence === 'object' && !Array.isArray(rawEvidence) ? rawEvidence : {};
+      const blockers = [];
+      const providerId = text(evidence.providerId).toLowerCase();
+      if (!exactKeys(evidence, EVIDENCE_KEYS)) blockers.push('provider-evidence-shape-invalid');
+      if (!SAFE_ID_RE.test(providerId)) blockers.push('provider-id-invalid');
+      const validation = validateBuildLaneCapacityReceipt(evidence.buildLaneReceipt, {
+        repository:host.repository, taskClass:host.taskClass, nowUtc:host.nowUtc,
+      });
+      if (!validation.valid) blockers.push('canonical-build-capacity-receipt-invalid');
+      const build = validation.receipt;
+      if (build && build.route !== validation.route) blockers.push('provider-route-not-canonical');
+      const allowedRoute = validation.route === MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB
+        || validation.route === MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE;
+      if (!allowedRoute) blockers.push('provider-route-not-acceleration-lane');
+      const metrics = build ? validateMetricsReceipt(evidence.metricsReceipt, evidence, build, host, blockers) : null;
+      if (providerIds.has(providerId)) blockers.push('provider-id-duplicate');
+      if (build && routes.has(validation.route)) blockers.push('provider-route-duplicate');
+      if (build && capacityReceiptIds.has(build.receiptId)) blockers.push('capacity-receipt-id-duplicate');
+      if (metrics && metricsReceiptIds.has(metrics.metricsReceiptId)) blockers.push('metrics-receipt-id-duplicate');
+      providerIds.add(providerId);
+      if (build) { routes.add(validation.route); capacityReceiptIds.add(build.receiptId); }
+      if (metrics) metricsReceiptIds.add(metrics.metricsReceiptId);
+      providers.push({ providerId, route:build ? validation.route : null, workerId:build?.workerId ?? null,
+        availableSlots:metrics?.availableSlots ?? null, queueDepth:metrics?.queueDepth ?? null,
+        predictedSeconds:metrics?.predictedSeconds ?? null, capacityReceiptId:metrics?.capacityReceiptId ?? null,
+        metricsReceiptId:metrics?.metricsReceiptId ?? null, authorityReceiptIds:metrics?.authorityReceiptIds ?? [],
+        buildAuthorityReceiptIds:normalizedStrings(build?.authorityReceiptIds) ?? [],
+        observedAtUtc:metrics?.observedAtUtc ?? null, blockers,
+        eligible:blockers.length === 0 && metrics?.availableSlots > 0 });
+    }
+    const identityFailure = providers.flatMap(({ blockers }) => blockers).filter((blocker) => blocker.endsWith('-duplicate'));
+    if (identityFailure.length) return blockedResult(identityFailure);
+    const providerFailures = providers.flatMap(({ blockers }) => blockers);
+    if (providerFailures.length) return blockedResult(providerFailures);
+    const github = providers.find(({ route }) => route === MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
+    if (!github?.eligible) return blockedResult(['github-baseline-capacity-invalid', ...(github?.blockers ?? [])]);
+    const foundry = providers.find(({ route }) => route === MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE);
+    let forge = null;
+    if (foundry) {
+      const forgeBlockers = [];
+      const adjudication = adjudicateForgeSidecarCapacity(trustedContext.forgeSidecar, { nowUtc:host.nowUtc });
+      forge = forgeProof(adjudication, foundry, host, forgeBlockers);
+      if (!forge) { foundry.blockers.push(...forgeBlockers); foundry.eligible = false; }
+    }
+
+    const assignments = [];
+    const heldCandidates = [];
+    let foundrySlots = foundry?.eligible ? foundry.availableSlots : 0;
+    for (const candidate of candidates) {
+      const netSecondsSaved = foundry?.eligible ? github.predictedSeconds - foundry.predictedSeconds : null;
+      if (foundrySlots > 0 && netSecondsSaved > 0 && netSecondsSaved >= minimumNetSavingsSeconds) {
+        foundrySlots -= 1;
+        assignments.push({ candidateId:candidate.candidateId, issue:candidate.issue,
+          providerId:foundry.providerId, route:foundry.route, workerId:foundry.workerId,
+          resourceIds:candidate.resourceIds, criticalPathWeight:candidate.criticalPathWeight,
+          baselineProviderId:github.providerId, baselinePredictedSeconds:github.predictedSeconds,
+          providerPredictedSeconds:foundry.predictedSeconds, predictedNetSecondsSaved:netSecondsSaved,
+          capacityReceiptId:foundry.capacityReceiptId, metricsReceiptId:foundry.metricsReceiptId,
+          dispatchAuthority:false });
+      } else {
+        heldCandidates.push({ candidateId:candidate.candidateId, issue:candidate.issue,
+          reason:foundry?.eligible ? 'NO_POSITIVE_NET_ACCELERATION_USE_GITHUB' : 'NO_PROVEN_FOUNDRY_CAPACITY' });
+      }
+    }
+    const decision = candidates.length === 0 ? FOUNDRY_ACCELERATION_DECISIONS.IDLE
+      : assignments.length ? FOUNDRY_ACCELERATION_DECISIONS.READY
+        : foundry && !forge ? FOUNDRY_ACCELERATION_DECISIONS.WAITING_FOR_M3
+          : FOUNDRY_ACCELERATION_DECISIONS.NO_POSITIVE_GAIN;
+    return freeze({ schemaVersion:FOUNDRY_ACCELERATION_SCHEMA, valid:true, decision,
+      repository, canonicalMainHead, canonicalMainTree, observedAtUtc:host.nowUtc,
+      minimumNetSavingsSeconds, baselineProviderId:github.providerId,
+      assignments, heldCandidates,
+      providerStatus:providers.map((provider) => ({ providerId:provider.providerId, route:provider.route,
+        eligible:provider.eligible, availableSlots:provider.availableSlots, queueDepth:provider.queueDepth,
+        predictedSeconds:provider.predictedSeconds, capacityReceiptId:provider.capacityReceiptId,
+        metricsReceiptId:provider.metricsReceiptId, observedAtUtc:provider.observedAtUtc,
+        blockers:[...new Set(provider.blockers)] })),
+      foundryTelemetry:telemetry(foundry, forge, assignments.length),
+      totalCriticalPathSecondsSaved:assignments.reduce((sum, assignment) =>
+        sum + assignment.predictedNetSecondsSaved, 0),
+      authority:authorityProjection() });
   } catch {
-    return blockedResult();
+    return blockedResult(['trusted-host-context-observation-failed']);
   }
 }
