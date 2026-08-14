@@ -630,6 +630,30 @@ test('one canonical receipt identity cannot be reused across build and metrics s
   });
 });
 
+test('Forge authority IDs cannot reuse build or metrics receipt identities', async (t) => {
+  await t.test('M2 identity reused by a build receipt', () => {
+    const foundry = evidence('foundry', 'FOUNDRY_FORGE', {
+      build:{ receiptId:M2_ID },
+    });
+    const result = planFoundryParallelProductionAcceleration({}, host({
+      providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), foundry],
+    }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('forge-receipt-id-duplicate'));
+  });
+
+  await t.test('M3 identity reused by a metrics receipt', () => {
+    const foundry = evidence('foundry', 'FOUNDRY_FORGE', {
+      metrics:{ receiptId:M3_ID },
+    });
+    const result = planFoundryParallelProductionAcceleration({}, host({
+      providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), foundry],
+    }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('forge-receipt-id-duplicate'));
+  });
+});
+
 test('authority is always recommendation-only on success and failure', () => {
   const expected = { dispatch:false, sourceMutation:false, branchMutation:false, publication:false,
     merge:false, deployment:false, runtimeMutation:false, credentialAccess:false,
