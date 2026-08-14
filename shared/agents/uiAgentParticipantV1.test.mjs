@@ -236,3 +236,23 @@ test('future-dated capability evidence cannot register as current readiness', ()
   assert.ok(readiness.blockers.includes('capability-future-dated'));
   assert.equal(readiness.nextMilestone, 'M1_REPAIR_UI_AGENT_PARTICIPANT_CONTRACT');
 });
+
+test('future-dated participant status can never publish a ready verdict', () => {
+  const capability = createUiAgentCapabilityRecord({ timestampUtc, proofRefs });
+  const status = createUiAgentParticipantStatusRecord({
+    timestampUtc: '2026-08-14T11:10:01.000Z',
+    capability,
+    proofRefs,
+    validationOptions: {
+      nowMs: Date.parse(timestampUtc),
+      maxFutureSkewMs: 5 * 60 * 1000,
+    },
+  });
+  const body = JSON.parse(status.body);
+
+  assert.equal(status.status, 'UI_AGENT_PARTICIPANT_BLOCKED');
+  assert.match(status.summary, /future-dated/);
+  assert.equal(body.productionEligible, false);
+  assert.equal(body.implementationEligible, false);
+  assert.equal(body.nextMilestone, 'M1_REPAIR_UI_AGENT_PARTICIPANT_CONTRACT');
+});
