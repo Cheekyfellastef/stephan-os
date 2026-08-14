@@ -159,3 +159,24 @@ test('seed helper preserves malformed explicit-surface override truth without th
     assert.ok(inventory.validationErrors.includes('explicitSurfaces-must-be-array'));
   }
 });
+
+test('M3 advancement remains blocked when complete coverage contains any invalid explicit evidence', () => {
+  const canonicalSurfaceIds = ['stephanos-landing-page','ai-console','goal-dashboard','music-tile','vr-research-lab','vr-link','sovereignty','wealth','privacy','trading-laboratory','autonomous-build-controls','command-deck','ignition-splash','desktop-browser','windows-edge','ipad','iphone','whatsapp','voice','quest3-spatial'];
+  const explicitSurfaces = [
+    { surfaceId:'privacy', surfaceClass:'REGISTERED_APP', ownerGoal:'#1722', registrationRef:'../secret', inputMethods:['POINTER'], knownExperienceDebt:['UNKNOWN'] },
+    ...canonicalSurfaceIds.map((surfaceId) => ({
+      surfaceId,
+      surfaceClass:'FUTURE_PRODUCT_SURFACE',
+      ownerGoal:'#1722',
+      registrationRef:`presentation:${surfaceId}`,
+      inputMethods:['POINTER'],
+      knownExperienceDebt:['UNKNOWN'],
+    })),
+  ];
+  const inventory = buildUiAgentExperienceInventory({ registeredApps:[], observedAtUtc:OBSERVED_AT, validationOptions:{ nowMs:NOW_MS }, explicitSurfaces });
+
+  assert.equal(inventory.coverage.missingCanonical.length, 0);
+  assert.equal(inventory.valid, false);
+  assert.ok(inventory.validationErrors.some((error) => error.startsWith('explicitSurface-0:') && error.includes('registrationRef-invalid')));
+  assert.equal(inventory.nextMilestone, 'M2_COMPLETE_SOURCE_AND_PRESENTATION_SURFACE_DISCOVERY');
+});
