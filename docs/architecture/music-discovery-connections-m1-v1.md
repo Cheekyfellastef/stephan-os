@@ -43,15 +43,18 @@ Rendering/acting on a future card must reuse existing catalogue-search and playe
 
 ## Security boundary
 
-Caller-supplied catalogue/taste evidence is accepted only through a small plain-record descriptor snapshot. Accessors, exotic prototypes, unexpected fields and malformed records are ignored rather than executed or promoted into evidence.
+The complete public request is captured as one closed-world plain-data descriptor snapshot before any request field is read. Top-level accessors, symbols, unexpected fields, arrays, exotic prototypes and revoked or uninspectable proxies fail closed as `EVIDENCE_UNAVAILABLE` rather than executing caller code or escaping an exception.
+
+Catalogue and taste evidence accept at most 128 records through dense, plain-array descriptor snapshots. Sparse, accessor-bearing, custom-property, custom-prototype, oversized and uninspectable arrays are ignored as unusable evidence. Each accepted record is separately restricted to the four data fields `artistName`, `verified`, `sourceRef` and `reason`; accessors and exotic records are never promoted. Repeated normalized artist identities are treated as conflicting evidence and cannot upgrade a local inference.
 
 ## Focused proof
 
 ```bash
+node --check apps/music-tile/engine/musicDiscoveryConnections.js
 node --test tests/music-discovery-connections.test.mjs
 ```
 
-The focused suite proves labelled seed inference, verified-catalogue upgrade rules, separate operator-taste evidence, provider/unverified fallback, no fabricated unknown-artist connections, playback/rating/teaching non-authority and hostile accessor rejection.
+The focused suite proves labelled seed inference, verified-catalogue upgrade rules, separate operator-taste evidence, provider/unverified fallback, no fabricated unknown-artist connections, playback/rating/teaching non-authority, hostile record and top-level accessor rejection, accessor-bearing array rejection, revoked-proxy exception safety, aggregate evidence bounds and duplicate-identity fail-closed behavior.
 
 ## Acceptance sequence
 
