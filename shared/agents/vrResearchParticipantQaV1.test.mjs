@@ -197,6 +197,28 @@ test('accessor-backed facts fail closed without invoking getters', () => {
   assert.deepEqual(result.answer.facts, []);
 });
 
+test('accessor-backed projection route fields fail closed before predicates run', () => {
+  const base = projection();
+  for (const field of ['subjectRef','sourceId']) {
+    let getterCalls = 0;
+    const accessorRecord = field === 'subjectRef'
+      ? { evidencePlane:'DIRECT_PUBLIC_SOURCE_EVIDENCE', claim:'must remain unread' }
+      : { title:'Accessor source', revision:'test', health:'CURRENT', licenceClass:'DIRECT_PUBLIC_IMPLEMENTATION' };
+    Object.defineProperty(accessorRecord, field, { enumerable:true, get() { getterCalls += 1; throw new Error(`${field} getter must not run`); } });
+    const suppliedProjection = field === 'subjectRef'
+      ? { ...base, facts:[accessorRecord] }
+      : { ...base, sourceRegistry:{ ...base.sourceRegistry, sources:[accessorRecord] } };
+    const question = field === 'subjectRef'
+      ? request('EVIDENCE_PLANE',2,{ subjectRef:'mutar' })
+      : request('SOURCE_STACK',0);
+    let result;
+    assert.doesNotThrow(() => { result = answerVrResearchQuestion(question, suppliedProjection, qaInput()); });
+    assert.equal(getterCalls, 0, field);
+    assert.equal(result.answer.answerVerdict, 'GAP_FRESHNESS', field);
+    assert.deepEqual(result.answer.facts, [], field);
+  }
+});
+
 test('verified grounded answers publish through the existing Shared Workspace contract with zero authority', () => {
   const q = request('VORPX_BASELINE',4);
   const answered = answerVrResearchQuestion(q, projection(), qaInput());
