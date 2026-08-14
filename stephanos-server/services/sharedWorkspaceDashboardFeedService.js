@@ -48,14 +48,42 @@ async function resolveLiveProjection(input, nowMs) {
     return { projection: input.liveProjection || null, state: input.liveProjection ? 'ready' : 'unavailable', reason: input.liveProjection ? 'INJECTED_LIVE_PROJECTION' : 'LIVE_PROJECTION_DISABLED' };
   }
   try {
+    const configured = input.liveGoalProjectionOptions || {};
     const projection = await readLiveGoalProjection({
-      ...(input.liveGoalProjectionOptions || {}),
+      ...configured,
       now: new Date(nowMs),
+      githubTelemetryOptions: {
+        ...(configured.githubTelemetryOptions || {}),
+        env: configured.githubTelemetryOptions?.env || input.env,
+      },
     });
     return { projection, state: projection ? 'ready' : 'unavailable', reason: projection ? 'LIVE_PROJECTION_READ' : 'LIVE_PROJECTION_EMPTY' };
   } catch (error) {
     return { projection: null, state: 'unavailable', reason: `LIVE_PROJECTION_READ_FAILED:${error?.message || 'unknown'}` };
   }
+}
+
+function effectiveFeedClassification(feed, projection) {
+  const dynamic = projection?.portfolioSource && projection.portfolioSource !== 'BASE_PROJECTION_FALLBACK';
+  if (dynamic && projection.sourceTruth === 'CURRENT') {
+    return {
+      state: 'ready',
+      reason: 'LIVE_PROGRAMME_PORTFOLIO_CURRENT',
+      exactNextAction: projection.operatorAttention?.exactNextAction || feed.exactNextAction,
+    };
+  }
+  if (dynamic && projection.sourceTruth === 'STALE') {
+    return {
+      state: 'stale',
+      reason: 'LIVE_PROGRAMME_PORTFOLIO_STALE',
+      exactNextAction: projection.operatorAttention?.exactNextAction || 'Refresh the stale programme evidence before claiming current progress.',
+    };
+  }
+  return {
+    state: feed.state,
+    reason: feed.reason,
+    exactNextAction: feed.exactNextAction,
+  };
 }
 
 export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
@@ -84,17 +112,21 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
       },
     },
   });
+  const classification = effectiveFeedClassification(feed, projection);
   const recordCount = Object.values(records).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
   const diagnosticTrace = [
     { hop: 'resolver', state: 'ready', owner: 'Battle Bridge runtime configuration', workspaceRoot: validation.safeDisplayPath },
     { hop: 'publisher-loop', state: recordCount ? 'ready' : 'blocked', owner: 'Battle Bridge Publisher', reason: recordCount ? 'PUBLISHER_RECORDS_VISIBLE' : 'NO_WORKSPACE_RECORDS' },
     { hop: 'workspace-latest-records', state: recordCount ? 'ready' : 'blocked', owner: 'Shared Agent Workspace', recordCount },
     { hop: 'live-programme-projection', state: live.state, owner: 'Mission Scheduler / GitHub read model', reason: live.reason, portfolioSource: projection.portfolioSource || 'BASE_PROJECTION_FALLBACK' },
-    { hop: 'backend-feed-response', state: feed.state, owner: 'Backend API', reason: feed.reason },
-    { hop: 'dashboard-feed-rendering-state', state: ['ready', 'stale'].includes(feed.state) ? 'renderable' : 'honest-unavailable', owner: 'Goal Dashboard', reason: feed.reason },
+    { hop: 'backend-feed-response', state: classification.state, owner: 'Backend API', reason: classification.reason },
+    { hop: 'dashboard-feed-rendering-state', state: ['ready', 'stale'].includes(classification.state) ? 'renderable' : 'honest-unavailable', owner: 'Goal Dashboard', reason: classification.reason },
   ];
   return Object.freeze({
     ...feed,
+    state: classification.state,
+    reason: classification.reason,
+    exactNextAction: classification.exactNextAction,
     route: SHARED_WORKSPACE_DASHBOARD_FEED_ROUTE,
     backendAdapter: 'shared-workspace-dashboard-feed-reader',
     safeWorkspaceRoot: validation.safeDisplayPath,
