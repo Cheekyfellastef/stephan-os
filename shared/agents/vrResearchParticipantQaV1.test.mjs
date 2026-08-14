@@ -20,7 +20,7 @@ const VERIFIED_PROOFS = new Set(['evidence/receipts/vr-research-test','evidence/
 function proofVerifier(ref, binding) {
   if (!VERIFIED_PROOFS.has(ref)) return false;
   if (!binding) return true;
-  return Object.freeze({ verified:true, proofRef:ref, schemaVersion:binding.schemaVersion, projectionId:binding.projectionId, projectionHash:binding.projectionHash });
+  return Object.freeze({ verified:true, proofRef:ref, ...binding });
 }
 function qaInput(overrides = {}) { return { nowMs, answeredAtUtc, proofVerifier, ...overrides }; }
 function projection(overrides = {}) {
@@ -125,7 +125,7 @@ test('a projection-bound proof ref cannot be replayed after projection content c
     if (!VERIFIED_PROOFS.has(ref)) return false;
     if (!binding) return true;
     if (!expectedBinding) expectedBinding = { ...binding };
-    if (binding.schemaVersion !== expectedBinding.schemaVersion || binding.projectionId !== expectedBinding.projectionId || binding.projectionHash !== expectedBinding.projectionHash) return false;
+    if (JSON.stringify(binding) !== JSON.stringify(expectedBinding)) return false;
     return { verified:true, proofRef:ref, ...binding };
   };
   const original = projection();
@@ -135,6 +135,13 @@ test('a projection-bound proof ref cannot be replayed after projection content c
   const replay = answerVrResearchQuestion(request('SOURCE_STACK',0), tampered, qaInput({ proofVerifier:pinnedVerifier }));
   assert.equal(replay.answer.answerVerdict, 'GAP_KNOWLEDGE');
   assert.deepEqual(replay.answer.evidenceRefs, []);
+});
+
+test('noncanonical projection IDs cannot be grounded', () => {
+  const bad = { ...projection(), projectionId:'bad:projection:id' };
+  const result = answerVrResearchQuestion(request('SOURCE_STACK',0), bad, qaInput());
+  assert.equal(result.answer.answerVerdict, 'GAP_KNOWLEDGE');
+  assert.deepEqual(result.answer.evidenceRefs, []);
 });
 
 test('unsafe or malformed projection proof refs cannot ground answers', () => {
@@ -178,6 +185,18 @@ test('direct answer facts are sanitized before returning to Q&A consumers', () =
   assert.equal(JSON.stringify(result.answer).includes('nested-secret'), false);
 });
 
+test('accessor-backed facts fail closed without invoking getters', () => {
+  let getterCalls = 0;
+  const fact = { subjectRef:'mutar', evidencePlane:'DIRECT_PUBLIC_SOURCE_EVIDENCE' };
+  Object.defineProperty(fact, 'claim', { enumerable:true, get() { getterCalls += 1; throw new Error('must not run'); } });
+  const p = projection({ facts:[fact] });
+  let result;
+  assert.doesNotThrow(() => { result = answerVrResearchQuestion(request('EVIDENCE_PLANE',2,{ subjectRef:'mutar' }), p, qaInput()); });
+  assert.equal(getterCalls, 0);
+  assert.equal(result.answer.answerVerdict, 'GAP_KNOWLEDGE');
+  assert.deepEqual(result.answer.facts, []);
+});
+
 test('verified grounded answers publish through the existing Shared Workspace contract with zero authority', () => {
   const q = request('VORPX_BASELINE',4);
   const answered = answerVrResearchQuestion(q, projection(), qaInput());
@@ -189,6 +208,33 @@ test('verified grounded answers publish through the existing Shared Workspace co
   assert.equal(workspace.record.commandExecutionAllowed, false);
   assert.equal(workspace.record.mergeAllowed, false);
   assert.equal(workspace.record.deploymentAllowed, false);
+});
+
+test('grounded Workspace answers cannot borrow a separate proof receipt', () => {
+  const q = request('SOURCE_STACK',0);
+  const answered = answerVrResearchQuestion(q, projection(), qaInput());
+  const forged = { ...answered.answer, evidenceRefs:[], facts:[{ sourceId:'fabricated', title:'fabricated fact' }] };
+  const workspace = createVrResearchQaWorkspaceAnswerRecord(q, forged, { proofRefs:['evidence/receipts/vr-gap-observation-proof'], proofVerifier, validationOptions:{ nowMs } });
+  assert.equal(workspace.validation.valid, false);
+  assert.ok(workspace.validation.errors.includes('missing-proofRefs'));
+});
+
+test('Workspace receipts are bound to exact normalized answer content', () => {
+  const q = request('SOURCE_STACK',0);
+  const answered = answerVrResearchQuestion(q, projection(), qaInput());
+  let expectedBinding = null;
+  const pinnedVerifier = (ref, binding) => {
+    if (!VERIFIED_PROOFS.has(ref)) return false;
+    if (!expectedBinding) expectedBinding = { ...binding };
+    if (JSON.stringify(binding) !== JSON.stringify(expectedBinding)) return false;
+    return { verified:true, proofRef:ref, ...binding };
+  };
+  const original = createVrResearchQaWorkspaceAnswerRecord(q, answered.answer, { proofVerifier:pinnedVerifier, validationOptions:{ nowMs } });
+  assert.equal(original.validation.valid, true, original.validation.errors.join(', '));
+  const forged = { ...answered.answer, facts:[{ sourceId:'fabricated', title:'different answer content' }] };
+  const replay = createVrResearchQaWorkspaceAnswerRecord(q, forged, { proofVerifier:pinnedVerifier, validationOptions:{ nowMs } });
+  assert.equal(replay.validation.valid, false);
+  assert.ok(replay.validation.errors.includes('missing-proofRefs'));
 });
 
 test('Workspace publication also requires proof verification rather than path-shaped refs', () => {
