@@ -106,15 +106,22 @@ function inertInputSnapshot(value, state = { nodes:0, active:new WeakSet() }, de
     if (prototype !== Object.prototype && prototype !== null) throw new Error('snapshot-prototype-invalid');
     const keys = Reflect.ownKeys(value);
     if (keys.length > MAX_INPUT_SNAPSHOT_KEYS || keys.some((key) => typeof key !== 'string')) throw new Error('snapshot-object-keys-invalid');
-    const clone = {};
+    const clone = Object.create(null);
     for (const key of keys) {
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
       if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value') || descriptor.enumerable !== true) throw new Error('snapshot-object-entry-invalid');
-      if ((key === 'priority' || key === 'criticalPathWeight')
+      if (key === 'title' && typeof descriptor.value !== 'string') {
+        Object.defineProperty(clone, key, { value:null, enumerable:true, writable:true, configurable:true });
+      } else if ((key === 'priority' || key === 'criticalPathWeight')
         && (typeof descriptor.value !== 'number' || !Number.isFinite(descriptor.value))) {
-        clone[key] = null;
+        Object.defineProperty(clone, key, { value:null, enumerable:true, writable:true, configurable:true });
       } else {
-        clone[key] = inertInputSnapshot(descriptor.value, state, depth + 1);
+        Object.defineProperty(clone, key, {
+          value:inertInputSnapshot(descriptor.value, state, depth + 1),
+          enumerable:true,
+          writable:true,
+          configurable:true,
+        });
       }
     }
     return Object.freeze(clone);
@@ -385,7 +392,7 @@ function compactString(value) { const normalized = String(value); return normali
 function compactArray(values) { return Array.isArray(values) ? values.slice(0, CHAT_NESTED_LIMIT).map((entry) => typeof entry === 'string' ? compactString(entry) : entry) : values; }
 function compactBlocker(blocker) { return Object.fromEntries(Object.entries(blocker).map(([key, value]) => [key, Array.isArray(value) ? compactArray(value) : typeof value === 'string' ? compactString(value) : value])); }
 
-export function buildMissionScheduler(input = {}) {
+function buildMissionSchedulerInternal(input = {}, inspectionFailure = false) {
   const publicInputInvalid = !input || typeof input !== 'object' || Array.isArray(input);
   const source = publicInputInvalid ? {} : input;
   const nowPresent = hasOwn(source, 'now');
@@ -439,14 +446,16 @@ export function buildMissionScheduler(input = {}) {
       if (prerequisitesSlot.inspectionFailed || prerequisitesMetadata.inspectionFailed) evidencePreflightInspectionFailed = true;
       totalPrerequisites += prerequisitesMetadata.length;
       const evidenceSlots = {};
+      const evidenceMetadata = {};
       for (const key of ['resourceIds', 'resultProofRefs', 'structuralReviewProofRefs', 'modelTestProofRefs']) {
         const slot = candidateObject ? ownDataSlot(candidateObject, key) : { present:false, value:undefined, inspectionFailed:false };
         const metadata = arrayLengthMetadata(slot.value);
         if (slot.inspectionFailed || metadata.inspectionFailed) evidencePreflightInspectionFailed = true;
         totalEvidenceItems += metadata.length;
         evidenceSlots[key] = slot;
+        evidenceMetadata[key] = metadata;
       }
-      goalPreflights.push({ candidate, evidenceSlots });
+      goalPreflights.push({ candidate, prerequisitesSlot, prerequisitesMetadata, evidenceSlots, evidenceMetadata });
     }
     totalPrerequisiteBoundExceeded = totalPrerequisites > MAX_TOTAL_PREREQUISITES;
     totalEvidenceBoundExceeded = totalEvidenceItems > MAX_TOTAL_EVIDENCE_ITEMS;
@@ -468,6 +477,28 @@ export function buildMissionScheduler(input = {}) {
         ? inertInputSnapshot(proofRefsSlot.value, snapshotState)
         : [];
       snapshottedGoals = goalPreflights.map(({ candidate }) => inertInputSnapshot(candidate, snapshotState));
+      for (const [snapshot, metadata] of [
+        [snapshottedProofHeads, proofHeadsMetadata],
+        [snapshottedProofReceipts, proofReceiptsMetadata],
+        [snapshottedProofRefs, proofRefsMetadata],
+      ]) {
+        if (metadata.isArray && arrayLengthMetadata(snapshot).length !== metadata.length) throw new Error('snapshot-top-level-length-drift');
+      }
+      for (let index = 0; index < snapshottedGoals.length; index += 1) {
+        const snapshot = snapshottedGoals[index];
+        const preflight = goalPreflights[index];
+        if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) continue;
+        for (const [key, slot, metadata] of [
+          ['prerequisites', preflight.prerequisitesSlot, preflight.prerequisitesMetadata],
+          ...Object.keys(preflight.evidenceSlots).map((key) => [key, preflight.evidenceSlots[key], preflight.evidenceMetadata[key]]),
+        ]) {
+          const snapshotSlot = ownDataSlot(snapshot, key);
+          const snapshotMetadata = arrayLengthMetadata(snapshotSlot.value);
+          if (snapshotSlot.present !== slot.present
+            || snapshotMetadata.isArray !== metadata.isArray
+            || snapshotMetadata.length !== metadata.length) throw new Error('snapshot-goal-container-drift');
+        }
+      }
     } catch {
       evidencePreflightInspectionFailed = true;
       snapshottedProofHeads = [];
@@ -529,6 +560,7 @@ export function buildMissionScheduler(input = {}) {
   const dependencyComplete = createDependencyAdjudicator(goalsByIssue, staleByGoal);
   const claimed = goals.filter((goal) => ACTIVE_STATES.has(goal.state));
   const authoritative = []; const rejectedActiveClaims = new Set(); const contradictions = [];
+  if (inspectionFailure) contradictions.push({ code:'SCHEDULER_INPUT_INSPECTION_FAILED' });
   if (publicInputInvalid) contradictions.push({ code:'INVALID_PUBLIC_INPUT' });
   if (nowInvalid || freshnessInvalid) contradictions.push({ code:'INVALID_SCHEDULER_CLOCK', invalidNow:nowInvalid, invalidFreshnessMs:freshnessInvalid });
   if (capacityPolicy.status === 'SAFE_HOLD_INVALID_CAPACITY') contradictions.push({ code:'INVALID_PARALLEL_CAPACITY_POLICY' });
@@ -621,6 +653,14 @@ export function buildMissionScheduler(input = {}) {
   const activeLaneRefs = activeClaims.map((goal) => goal.activePr ? `PR #${goal.activePr}` : compactString(goal.branch));
   const parallelCandidateRefs = parallelSelection.selected.map(({ candidateId }) => candidateId);
   return freeze({ schemaVersion:'stephanos.mission-scheduler.v1', readOnly:true, failClosed, contradictions, contradictionsTotal:contradictions.length, blockers, programmeStatus, activeGoal:activeGoalRefs[0] ?? null, activeGoals:activeGoalRefs, activeLane:activeLaneRefs[0] ?? null, activeLanes:activeLaneRefs, whyNow:failClosed ? contradictionRationale(contradictions) : active ? `${activeClaims.length} fresh, resource-scoped active lane${activeClaims.length === 1 ? ' remains' : 's remain'} authoritative.` : action?.lifecycle === 'MERGE_READY' ? 'Exact-head-proven and exact-head-approved implementation is ready for guarded merge.' : action?.lifecycle === 'CLOSE_READY' ? 'Completed goal is ready for guarded closure.' : action ? selectionRationale(action) : capacitySafeHold ? 'New build admission is held because elastic capacity is below the healthy baseline.' : operatorNeeded ? 'Operator approval is required before work can advance.' : 'No eligible lane is currently available.', selectedGoal:action?.issue ? `#${action.issue}` : null, selectedRoute:action?.route ?? null, selectedLifecycle:action?.lifecycle ?? null, parallelCandidates:parallelCandidateRefs, parallelCandidateDetails:parallelSelection.selected, parallelHeld:parallelSelection.held, elasticCapacity:capacity, nextEligible:failClosed ? [] : actionable.filter((goal) => goal !== action).slice(0,maximumActiveLanes).map((goal) => `#${goal.issue}`), operatorNeeded, operatorAction:operatorNeeded ? 'OPERATOR_APPROVAL_REQUIRED' : 'NO_OPERATOR_ACTION_REQUIRED', portfolio, decisionReceipt:{ correlationId:text(source.correlationId, `scheduler-${nowMs}`), decidedAt:new Date(nowMs).toISOString(), status:failClosed ? 'BLOCKED_FAIL_CLOSED' : active ? (activeClaims.length === 1 ? 'ACTIVE_LANE' : 'ACTIVE_LANES') : action?.lifecycle === 'MERGE_READY' ? 'MERGE_READY' : action?.lifecycle === 'CLOSE_READY' ? 'CLOSE_READY' : action ? 'LANE_SELECTED' : operatorNeeded ? 'APPROVAL_REQUIRED' : 'WAITING', failClosed, contradictionCodes:contradictions.map(({code}) => code), selectedIssue:action?.issue ?? null, selectedIssues:parallelSelection.selected.map(({ issue }) => issue), selectedLifecycle:action?.lifecycle ?? null, activeIssue:active?.issue ?? null, activeIssues:activeClaims.map((goal) => goal.issue), route:failClosed ? 'BLOCKED_UNSAFE_OR_UNKNOWN' : action?.route ?? active?.route ?? (operatorNeeded ? 'OPERATOR_APPROVAL' : 'WAITING_FOR_EXTERNAL_CONDITION'), proofRefs, proofHeadShas:[...provenHeads], proofReceipts } });
+}
+
+export function buildMissionScheduler(input = {}) {
+  try {
+    return buildMissionSchedulerInternal(input, false);
+  } catch {
+    return buildMissionSchedulerInternal({}, true);
+  }
 }
 
 export function answerMissionQuery(input = {}, query = '') {

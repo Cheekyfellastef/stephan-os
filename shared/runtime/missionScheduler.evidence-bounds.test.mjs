@@ -214,6 +214,23 @@ test('revoked evidence proxies return a fail-closed result', () => {
   assert.ok(result.contradictions.some(({ code }) => code === 'EVIDENCE_PREFLIGHT_INSPECTION_FAILED'));
 });
 
+test('uninspectable top-level scheduler proxies return fail closed', () => {
+  const revocable = Proxy.revocable({}, {});
+  revocable.revoke();
+
+  const revokedResult = buildMissionScheduler(revocable.proxy);
+  const throwingResult = buildMissionScheduler(new Proxy({}, {
+    getOwnPropertyDescriptor() {
+      throw new Error('top-level descriptor trap');
+    },
+  }));
+
+  for (const result of [revokedResult, throwingResult]) {
+    assert.equal(result.failClosed, true);
+    assert.ok(result.contradictions.some(({ code }) => code === 'SCHEDULER_INPUT_INSPECTION_FAILED'));
+  }
+});
+
 test('accepted evidence and goal proxies are never re-entered through get traps', () => {
   let reads = 0;
   const proofRefs = new Proxy(['proofs/exact-head'], {
@@ -234,6 +251,44 @@ test('accepted evidence and goal proxies are never re-entered through get traps'
   assert.equal(reads, 0);
   assert.equal(result.failClosed, false);
   assert.equal(result.selectedGoal, '#1');
+});
+
+test('stateful goal descriptors cannot add evidence after aggregate preflight', () => {
+  const goals = Array.from({ length:6 }, (_, goalIndex) => {
+    const target = goal(goalIndex + 1, { resourceIds:[] });
+    let resourceDescriptorReads = 0;
+    return new Proxy(target, {
+      getOwnPropertyDescriptor(object, key) {
+        if (key !== 'resourceIds') return Reflect.getOwnPropertyDescriptor(object, key);
+        resourceDescriptorReads += 1;
+        return {
+          configurable:true,
+          enumerable:true,
+          writable:true,
+          value:resourceDescriptorReads === 1
+            ? []
+            : Array.from({ length:10000 }, (_, resourceIndex) =>
+                `drift:${goalIndex + 1}:resource:${String(resourceIndex).padStart(5, '0')}`),
+        };
+      },
+    });
+  });
+
+  const result = buildMissionScheduler({ now:NOW, goals });
+
+  assert.equal(result.failClosed, true);
+  assert.equal(result.portfolio.length, 0);
+  assert.ok(result.contradictions.some(({ code }) => code === 'EVIDENCE_PREFLIGHT_INSPECTION_FAILED'));
+});
+
+test('own __proto__ evidence cannot manufacture inherited scheduling authority', () => {
+  const hostileGoal = JSON.parse('{"__proto__":{"issue":31337,"state":"READY","prerequisites":[],"priority":999,"criticalPathWeight":999,"reversibility":"HIGH","route":"CHATGPT_GITHUB","evidenceAt":"2026-07-24T20:55:00.000Z"}}');
+
+  const result = buildMissionScheduler({ now:NOW, goals:[hostileGoal] });
+
+  assert.equal(result.failClosed, true);
+  assert.equal(result.selectedGoal, null);
+  assert.ok(result.contradictions.some(({ code }) => code === 'INVALID_GOAL_IDENTITY'));
 });
 
 test('five canonical maximum resource scopes remain within the aggregate evidence bound', () => {
@@ -297,4 +352,15 @@ test('hostile numeric advisory scores degrade safely without coercion', () => {
   assert.equal(result.selectedGoal, '#2');
   assert.equal(result.portfolio.find(({ issue }) => issue === 1).priority, 0);
   assert.equal(result.portfolio.find(({ issue }) => issue === 1).criticalPathWeight, 0);
+});
+
+test('hostile presentation titles degrade without blocking scheduling authority', () => {
+  const result = buildMissionScheduler({
+    now:NOW,
+    goals:[goal(1, { title:Symbol('presentation-only') })],
+  });
+
+  assert.equal(result.failClosed, false);
+  assert.equal(result.selectedGoal, '#1');
+  assert.equal(result.portfolio[0].title, 'Goal #1');
 });
