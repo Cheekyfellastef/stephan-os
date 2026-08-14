@@ -270,13 +270,17 @@ function normalizeScheduler(projection, host, blockers) {
   }
   const expectedActiveStatus = activeFromReceipt.length === 1 ? 'ACTIVE_LANE'
     : activeFromReceipt.length > 1 ? 'ACTIVE_LANES' : null;
+  const selectedDecisionIssue = issueNumber(decision.selectedIssue);
+  const selectedDecisionPortfolio = selectedDecisionIssue ? portfolioByIssue.get(selectedDecisionIssue) : null;
   if ((expectedActiveStatus && decisionStatus !== expectedActiveStatus)
     || (!expectedActiveStatus && (decisionStatus === 'ACTIVE_LANE' || decisionStatus === 'ACTIVE_LANES'))
     || (expectedActiveStatus && issueNumber(decision.activeIssue) !== activeFromReceipt[0])
     || (!expectedActiveStatus && decision.activeIssue !== null)
     || (decisionStatus === 'LANE_SELECTED'
-      && (!issueNumber(decision.selectedIssue)
-        || !decision.selectedIssues.map(issueNumber).includes(issueNumber(decision.selectedIssue))
+      && (!selectedDecisionIssue
+        || !decision.selectedIssues.map(issueNumber).includes(selectedDecisionIssue)
+        || selectedDecisionPortfolio?.lifecycle !== 'READY'
+        || selectedDecisionPortfolio?.route !== text(decision.route)
         || decision.selectedLifecycle !== 'READY'))
     || (decisionStatus === 'MERGE_READY' && decision.selectedLifecycle !== 'MERGE_READY')
     || (decisionStatus === 'CLOSE_READY' && decision.selectedLifecycle !== 'CLOSE_READY')
@@ -474,8 +478,12 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
           capacityReceiptId:foundry.capacityReceiptId, metricsReceiptId:foundry.metricsReceiptId,
           dispatchAuthority:false });
       } else {
+        const reason = !foundry?.eligible ? 'NO_PROVEN_FOUNDRY_CAPACITY'
+          : !(netSecondsSaved > 0 && netSecondsSaved >= minimumNetSavingsSeconds)
+            ? 'NO_POSITIVE_NET_ACCELERATION_USE_GITHUB'
+            : 'NO_AVAILABLE_FOUNDRY_SLOT_USE_GITHUB';
         heldCandidates.push({ candidateId:candidate.candidateId, issue:candidate.issue,
-          reason:foundry?.eligible ? 'NO_POSITIVE_NET_ACCELERATION_USE_GITHUB' : 'NO_PROVEN_FOUNDRY_CAPACITY' });
+          reason });
       }
     }
     const decision = candidates.length === 0 ? FOUNDRY_ACCELERATION_DECISIONS.IDLE
