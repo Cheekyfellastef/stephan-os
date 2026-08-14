@@ -248,7 +248,7 @@ function normalizeScheduler(projection, host, blockers) {
   const portfolioByIssue = new Map();
   for (const item of projection.portfolio) {
     const issue = issueNumber(item?.issue);
-    const resourceIds = normalizedStrings(item?.resourceIds, MAX_RESOURCES, RESOURCE_ID_RE, false);
+    const resourceIds = normalizedStrings(item?.resourceIds, MAX_RESOURCES, RESOURCE_ID_RE);
     const weight = nonnegativeNumber(item?.criticalPathWeight);
     if (!issue || !resourceIds || weight === null || portfolioByIssue.has(issue)) {
       blockers.push('scheduler-portfolio-item-invalid');
@@ -273,9 +273,12 @@ function normalizeScheduler(projection, host, blockers) {
     : activeFromReceipt.length > 1 ? 'ACTIVE_LANES' : null;
   const selectedDecisionIssue = issueNumber(decision.selectedIssue);
   const selectedDecisionPortfolio = selectedDecisionIssue ? portfolioByIssue.get(selectedDecisionIssue) : null;
+  const primaryActivePortfolio = activeFromReceipt[0] ? portfolioByIssue.get(activeFromReceipt[0]) : null;
   if ((expectedActiveStatus && decisionStatus !== expectedActiveStatus)
     || (!expectedActiveStatus && (decisionStatus === 'ACTIVE_LANE' || decisionStatus === 'ACTIVE_LANES'))
     || (expectedActiveStatus && issueNumber(decision.activeIssue) !== activeFromReceipt[0])
+    || (expectedActiveStatus && (decision.selectedIssue !== null || decision.selectedLifecycle !== null
+      || text(decision.route) !== primaryActivePortfolio?.route))
     || (!expectedActiveStatus && decision.activeIssue !== null)
     || (decisionStatus === 'LANE_SELECTED'
       && (!selectedDecisionIssue
@@ -300,7 +303,8 @@ function normalizeScheduler(projection, host, blockers) {
   const activeResources = new Set();
   for (const issue of activeFromReceipt.filter(Boolean)) {
     const item = portfolioByIssue.get(issue);
-    if (!item || item.lifecycle !== 'ACTIVE' || item.evidenceFreshness !== 'FRESH') {
+    if (!item || item.lifecycle !== 'ACTIVE' || item.evidenceFreshness !== 'FRESH'
+      || item.resourceIds.length === 0) {
       blockers.push(`scheduler-active-portfolio-invalid:#${issue}`);
       continue;
     }
@@ -345,9 +349,7 @@ function normalizeScheduler(projection, host, blockers) {
   const detailRefs = candidates.map(({ candidateId }) => candidateId).sort();
   if (!sameSet(parallelRefs, detailRefs)) blockers.push('scheduler-parallel-candidate-refs-mismatch');
   if (blockers.length) return null;
-  return candidates.sort((left, right) => (
-    right.criticalPathWeight - left.criticalPathWeight || left.candidateId.localeCompare(right.candidateId)
-  ));
+  return candidates;
 }
 
 function forgeProof(forge, foundry, host, blockers) {
