@@ -559,8 +559,7 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
     const providers = [];
     const providerIds = new Set();
     const routes = new Set();
-    const capacityReceiptIds = new Set();
-    const metricsReceiptIds = new Set();
+    const receiptIds = new Set();
     for (const rawEvidence of context.providerCapacityEvidence) {
       const evidence = rawEvidence && typeof rawEvidence === 'object' && !Array.isArray(rawEvidence) ? rawEvidence : {};
       const blockers = [];
@@ -580,11 +579,11 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
       const metrics = build ? validateMetricsReceipt(evidence.metricsReceipt, evidence, build, host, blockers) : null;
       if (providerIds.has(providerId)) blockers.push('provider-id-duplicate');
       if (build && routes.has(validation.route)) blockers.push('provider-route-duplicate');
-      if (build && capacityReceiptIds.has(capacityReceiptId)) blockers.push('capacity-receipt-id-duplicate');
-      if (metrics && metricsReceiptIds.has(metrics.metricsReceiptId)) blockers.push('metrics-receipt-id-duplicate');
+      if (build && receiptIds.has(capacityReceiptId)) blockers.push('capacity-receipt-id-duplicate');
       providerIds.add(providerId);
-      if (build) { routes.add(validation.route); capacityReceiptIds.add(capacityReceiptId); }
-      if (metrics) metricsReceiptIds.add(metrics.metricsReceiptId);
+      if (build) { routes.add(validation.route); receiptIds.add(capacityReceiptId); }
+      if (metrics && receiptIds.has(metrics.metricsReceiptId)) blockers.push('metrics-receipt-id-duplicate');
+      if (metrics) receiptIds.add(metrics.metricsReceiptId);
       providers.push({ providerId, route:build ? validation.route : null, workerId:build?.workerId ?? null,
         availableSlots:metrics?.availableSlots ?? null, queueDepth:metrics?.queueDepth ?? null,
         predictedSeconds:metrics?.predictedSeconds ?? null, capacityReceiptId:metrics?.capacityReceiptId ?? null,
