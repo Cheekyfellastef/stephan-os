@@ -1,0 +1,192 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  SPATIAL_ASSET_RECORD_SCHEMA_VERSION,
+  SPATIAL_BUILD_ORDER_SCHEMA_VERSION,
+  SPATIAL_PROVENANCE_SCHEMA_VERSION,
+  SPATIAL_WORLD_SNAPSHOT_SCHEMA_VERSION,
+  validateSpatialAssetRecord,
+  validateSpatialBuildOrder,
+  validateSpatialProvenanceRecord,
+  validateSpatialWorldFoundryBundle,
+  validateSpatialWorldSnapshot,
+} from './spatialWorldFoundryContractsV1.mjs';
+
+const HASH_A = `sha256:${'a'.repeat(64)}`;
+const HASH_B = `sha256:${'b'.repeat(64)}`;
+const SOURCE_HEAD = '9284b9ff4e2db890c7134aa6dca142453eedf13b';
+const CREATED_AT = '2026-08-14T10:30:00.000Z';
+
+function buildOrder(overrides = {}) {
+  return {
+    schemaVersion: SPATIAL_BUILD_ORDER_SCHEMA_VERSION,
+    spatialBuildOrderId: 'sbo.idea-planet-001.crate-001',
+    intentId: 'intent.idea-planet-001',
+    missionId: 'mission.spatial-world-foundry-001',
+    planetId: 'idea-planet-001',
+    regionId: 'landing-bay',
+    objectIds: ['crate-001'],
+    operatorRequest: 'Create a small interactive storage crate for the landing bay preview.',
+    interpretationSummary: 'Generate one original low-cost test asset in an isolated candidate state.',
+    designGenomeVersion: 'planet-genome.v1',
+    researchRefs: ['vr-research/spatial-foundry/primitive-assets'],
+    requiredOutcome: 'One previewable crate asset with provenance, validation and rollback identity.',
+    assetClasses: ['mesh', 'material'],
+    codeClasses: ['interaction'],
+    dependencies: [],
+    ownedResourceScopes: ['region:idea-planet-001/landing-bay', 'object:crate-001'],
+    allowedOperations: ['GENERATE_ASSET', 'WRITE_SANDBOX', 'RUN_VALIDATION'],
+    forbiddenOperations: ['MERGE', 'DEPLOY', 'VOICE_EXECUTE', 'LEASE_SEIZE'],
+    requiredAgents: ['mesh-agent', 'validation-agent'],
+    performanceBudget: { maxTriangles: 5000, maxTextureMb: 8 },
+    comfortBudget: { flashingForbidden: true, maxAngularMotionDegPerSec: 0 },
+    licenceAndProvenanceRequirements: 'Original generated content only; retain source and influence references.',
+    previewRequirement: 'REQUIRED',
+    verificationContract: 'spatial-world-foundry-primitive-preview-v1',
+    approvalRequirement: 'POLICY_GATED',
+    rollbackTarget: { scope: 'REGION', targetId: 'landing-bay', snapshotId: null },
+    status: 'DRAFT',
+    createdAtUtc: CREATED_AT,
+    ...overrides,
+  };
+}
+
+function asset(overrides = {}) {
+  return {
+    schemaVersion: SPATIAL_ASSET_RECORD_SCHEMA_VERSION,
+    assetId: 'asset.crate-001',
+    assetType: 'mesh',
+    version: 'v1',
+    contentHash: HASH_A,
+    sourceLocation: 'assets/manifests/crate-001.json',
+    largeAssetLocation: `cas://sha256/${'a'.repeat(64)}`,
+    creatorAgentId: 'mesh-agent',
+    creatingBuildOrderId: 'sbo.idea-planet-001.crate-001',
+    planetId: 'idea-planet-001',
+    regionId: 'landing-bay',
+    parentVersion: null,
+    sourceAndInfluenceRefs: ['vr-research/spatial-foundry/primitive-assets'],
+    licenceAndRightsState: 'GENERATED_WITH_PROVENANCE',
+    dependencies: [],
+    dependents: [],
+    engineOrRuntimeCompatibility: ['engine-neutral-gltf-candidate'],
+    performanceClass: 'quest3-light',
+    validationState: 'schema-valid',
+    integrationState: 'DRAFT',
+    liveState: 'NOT_LIVE',
+    rollbackRefs: ['snapshot:world-pre-crate-001'],
+    createdAtUtc: CREATED_AT,
+    ...overrides,
+  };
+}
+
+function provenance(overrides = {}) {
+  return {
+    schemaVersion: SPATIAL_PROVENANCE_SCHEMA_VERSION,
+    provenanceId: 'prov.asset.crate-001.v1',
+    assetId: 'asset.crate-001',
+    assetVersion: 'v1',
+    buildOrderId: 'sbo.idea-planet-001.crate-001',
+    creatorAgentId: 'mesh-agent',
+    operatorIntentRef: 'shared-workspace/intents/intent.idea-planet-001',
+    designGenomeVersion: 'planet-genome.v1',
+    researchRefs: ['vr-research/spatial-foundry/primitive-assets'],
+    sourceAndInfluenceRefs: ['design-principle:compact-industrial-storage'],
+    licenceAndRightsState: 'GENERATED_WITH_PROVENANCE',
+    evidenceRefs: ['evidence/receipts/spatial-crate-001-generation'],
+    createdAtUtc: CREATED_AT,
+    ...overrides,
+  };
+}
+
+function snapshot(overrides = {}) {
+  return {
+    schemaVersion: SPATIAL_WORLD_SNAPSHOT_SCHEMA_VERSION,
+    snapshotId: 'snapshot.idea-planet-001.crate-001-candidate',
+    planetId: 'idea-planet-001',
+    scope: 'REGION',
+    scopeId: 'landing-bay',
+    worldStateVersion: 'world.v1',
+    sourceHead: SOURCE_HEAD,
+    worldManifestHash: HASH_B,
+    assetVersions: [
+      { assetId: 'asset.crate-001', version: 'v1', contentHash: HASH_A },
+    ],
+    runtimeCompatibility: ['webxr-candidate', 'quest3-budget-unproven'],
+    knownGood: false,
+    rollbackParentSnapshotId: 'world-pre-crate-001',
+    proofRefs: ['evidence/receipts/spatial-crate-001-snapshot'],
+    createdAtUtc: CREATED_AT,
+    ...overrides,
+  };
+}
+
+test('M1 contracts accept one bounded candidate asset lineage', () => {
+  assert.deepEqual(validateSpatialBuildOrder(buildOrder()), {
+    valid: true,
+    errors: [],
+    refusalReason: '',
+  });
+  assert.equal(validateSpatialAssetRecord(asset()).valid, true);
+  assert.equal(validateSpatialProvenanceRecord(provenance()).valid, true);
+  assert.equal(validateSpatialWorldSnapshot(snapshot()).valid, true);
+  assert.equal(validateSpatialWorldFoundryBundle({
+    buildOrder: buildOrder(),
+    asset: asset(),
+    provenance: provenance(),
+    snapshot: snapshot(),
+  }).valid, true);
+});
+
+test('voice or authority-bearing operations cannot hide inside allowedOperations', () => {
+  for (const forbidden of ['VOICE_EXECUTE', 'MERGE', 'DEPLOY', 'APPROVE', 'LEASE_SEIZE', 'RUNTIME_MUTATE']) {
+    const verdict = validateSpatialBuildOrder(buildOrder({ allowedOperations: ['GENERATE_ASSET', forbidden] }));
+    assert.equal(verdict.valid, false);
+    assert.ok(verdict.errors.includes('allowedOperations-contains-authority-bypass'));
+  }
+});
+
+test('build orders require explicit non-overlapping-style resource scope syntax', () => {
+  const verdict = validateSpatialBuildOrder(buildOrder({ ownedResourceScopes: ['C:\\worlds\\idea-planet-001'] }));
+  assert.equal(verdict.valid, false);
+  assert.ok(verdict.errors.includes('ownedResourceScopes-contains-invalid-resource-scope'));
+});
+
+test('contract records fail closed on undeclared fields', () => {
+  const candidate = buildOrder();
+  candidate.rawVoiceCommand = 'run this now';
+  const verdict = validateSpatialBuildOrder(candidate);
+  assert.equal(verdict.valid, false);
+  assert.ok(verdict.errors.includes('unknown-field:rawVoiceCommand'));
+});
+
+test('large asset identity rejects an absolute personal filesystem location', () => {
+  const verdict = validateSpatialAssetRecord(asset({ largeAssetLocation: 'C:\\Users\\Stephan\\Downloads\\crate.glb' }));
+  assert.equal(verdict.valid, false);
+  assert.ok(verdict.errors.includes('largeAssetLocation-invalid'));
+});
+
+test('world snapshots are exact-source and asset-identity bound', () => {
+  assert.equal(validateSpatialWorldSnapshot(snapshot({ sourceHead: 'not-a-head' })).valid, false);
+  const duplicate = snapshot({
+    assetVersions: [
+      { assetId: 'asset.crate-001', version: 'v1', contentHash: HASH_A },
+      { assetId: 'asset.crate-001', version: 'v2', contentHash: HASH_B },
+    ],
+  });
+  const duplicateVerdict = validateSpatialWorldSnapshot(duplicate);
+  assert.equal(duplicateVerdict.valid, false);
+  assert.ok(duplicateVerdict.errors.includes('assetVersions-duplicate-asset'));
+});
+
+test('bundle validation catches cross-record lineage substitution', () => {
+  const verdict = validateSpatialWorldFoundryBundle({
+    buildOrder: buildOrder(),
+    asset: asset({ creatingBuildOrderId: 'sbo.other-build-order' }),
+    provenance: provenance(),
+    snapshot: snapshot(),
+  });
+  assert.equal(verdict.valid, false);
+  assert.ok(verdict.errors.includes('lineage-build-order-mismatch'));
+});
