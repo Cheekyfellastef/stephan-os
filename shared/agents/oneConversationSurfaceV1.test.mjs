@@ -59,6 +59,10 @@ test('same intent on ChatGPT web and Battle Bridge becomes one current Stephanos
   assert.equal(projection.intentId, 'intent-product-1776');
   assert.equal(projection.missionId, 'mission-product-completion-v1');
   assert.deepEqual(projection.activeSurfaces, ['BATTLE_BRIDGE_DESKTOP', 'CHATGPT_WEB']);
+  assert.deepEqual(projection.surfaceFreshness, {
+    BATTLE_BRIDGE_DESKTOP: 'CURRENT',
+    CHATGPT_WEB: 'CURRENT',
+  });
   assert.equal(projection.routeVisibility, 'HIDDEN_BY_DEFAULT');
   assert.equal('routeAudit' in projection, false);
   assert.equal(projection.operatorAction, 'NO_OPERATOR_ACTION_REQUIRED');
@@ -141,6 +145,26 @@ test('conflicting mission evidence fails closed instead of merging chat-local re
   assert.equal(projection.authority.mergeAllowed, false);
 });
 
+test('surface observations must prove all five continuity identities', () => {
+  const input = baseInput();
+  delete input.surfaceObservations[0].stephanosIdentityVersion;
+  delete input.surfaceObservations[0].intentId;
+  delete input.surfaceObservations[0].missionId;
+  delete input.surfaceObservations[0].operatorRelationshipContextRef;
+  delete input.surfaceObservations[0].memoryAuthorityRef;
+
+  const validation = validateOneConversationInputV1(input);
+  const projection = buildOneConversationProjectionV1(input, { nowMs: Date.parse(NOW) });
+
+  assert.equal(validation.valid, false);
+  assert.ok(validation.errors.includes('missing-observation-stephanos-identity-version:0'));
+  assert.ok(validation.errors.includes('missing-observation-intent-id:0'));
+  assert.ok(validation.errors.includes('missing-observation-mission-id:0'));
+  assert.ok(validation.errors.includes('missing-observation-relationship-context-ref:0'));
+  assert.ok(validation.errors.includes('missing-observation-memory-authority-ref:0'));
+  assert.equal(projection.status, 'UNKNOWN');
+});
+
 test('authority widening in a conversation projection is rejected', () => {
   const validation = validateOneConversationInputV1(baseInput({ mergeAllowed: true }));
   assert.equal(validation.valid, false);
@@ -169,6 +193,64 @@ test('stale evidence blocks continuation rather than pretending continuity is cu
   assert.equal(continuation.verdict, 'CONTINUATION_BLOCKED_STALE_OR_UNKNOWN');
 });
 
+test('a fresh surface cannot make a stale source thread eligible for continuation', () => {
+  const input = baseInput();
+  input.surfaceObservations[1] = {
+    ...input.surfaceObservations[1],
+    timestampUtc: '2026-08-14T10:00:00.000Z',
+  };
+  const projection = buildOneConversationProjectionV1(input, {
+    nowMs: Date.parse(NOW),
+    staleAfterMs: 60 * 60 * 1000,
+  });
+
+  assert.equal(projection.status, 'CURRENT');
+  assert.equal(projection.surfaceFreshness.CHATGPT_WEB, 'CURRENT');
+  assert.equal(projection.surfaceFreshness.BATTLE_BRIDGE_DESKTOP, 'STALE');
+  assert.equal(planCrossSurfaceContinuationV1(projection, {
+    fromSurface: 'CHATGPT_WEB',
+    toSurface: 'PHONE',
+  }).ok, true);
+  const blocked = planCrossSurfaceContinuationV1(projection, {
+    fromSurface: 'BATTLE_BRIDGE_DESKTOP',
+    toSurface: 'PHONE',
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.verdict, 'CONTINUATION_BLOCKED_SOURCE_THREAD_STALE_OR_UNKNOWN');
+});
+
+test('omitting nowMs evaluates freshness against the current clock instead of the payload timestamp', () => {
+  const old = baseInput({
+    timestampUtc: '2000-01-01T00:10:00.000Z',
+    surfaceObservations: baseInput().surfaceObservations.map((observation, index) => ({
+      ...observation,
+      timestampUtc: `2000-01-01T00:0${index + 1}:00.000Z`,
+    })),
+  });
+  const projection = buildOneConversationProjectionV1(old, { staleAfterMs: 60 * 60 * 1000 });
+  assert.equal(projection.status, 'STALE');
+});
+
+test('materially future-dated evidence fails closed instead of extending freshness', () => {
+  const input = baseInput();
+  input.surfaceObservations[0] = {
+    ...input.surfaceObservations[0],
+    timestampUtc: '2026-08-14T13:30:01.000Z',
+  };
+  const projection = buildOneConversationProjectionV1(input, {
+    nowMs: Date.parse(NOW),
+    maxFutureSkewMs: 5 * 60 * 1000,
+  });
+
+  assert.equal(projection.status, 'UNKNOWN');
+  assert.equal(projection.reason, 'FUTURE_DATED_OBSERVATION');
+  assert.equal(projection.surfaceFreshness.CHATGPT_WEB, 'UNKNOWN');
+  assert.equal(planCrossSurfaceContinuationV1(projection, {
+    fromSurface: 'BATTLE_BRIDGE_DESKTOP',
+    toSurface: 'PHONE',
+  }).ok, false);
+});
+
 test('current projection becomes a valid read-only Shared Workspace message', () => {
   const projection = buildOneConversationProjectionV1(baseInput(), { nowMs: Date.parse(NOW) });
   const result = projectOneConversationWorkspaceMessageV1(projection, {
@@ -182,13 +264,35 @@ test('current projection becomes a valid read-only Shared Workspace message', ()
 
   assert.equal(result.ok, true);
   assert.equal(result.workspaceValidation.valid, true);
+  assert.equal(result.workspaceValidation.stale, false);
   assert.equal(result.record.participantId, 'stephanos');
   assert.equal(result.record.channel, 'one-conversation-surface');
   const body = JSON.parse(result.record.body);
   assert.equal(body.intentId, 'intent-product-1776');
+  assert.equal(body.surfaceFreshness.CHATGPT_WEB, 'CURRENT');
   assert.equal(body.authority.commandExecutionAllowed, false);
   assert.equal(body.authority.mergeAllowed, false);
   assert.equal(body.authority.runtimeMutationAllowed, false);
+});
+
+test('stale Shared Workspace continuity messages are not reported ready', () => {
+  const projection = buildOneConversationProjectionV1(baseInput(), { nowMs: Date.parse(NOW) });
+  const result = projectOneConversationWorkspaceMessageV1(projection, {
+    timestampUtc: '2026-08-14T10:00:00.000Z',
+    correlationId: 'intent-product-1776',
+    messageId: 'one-conversation-stale-intent-product-1776',
+    relatedIssue: '#1630',
+    proofRefs: ['proofs/one-conversation-m1'],
+    workspaceValidationOptions: {
+      nowMs: Date.parse(NOW),
+      staleAfterMs: 60 * 60 * 1000,
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'ONE_CONVERSATION_WORKSPACE_RECORD_STALE');
+  assert.equal(result.workspaceValidation.valid, true);
+  assert.equal(result.workspaceValidation.stale, true);
 });
 
 test('unsupported surfaces are rejected without inventing another front door', () => {
