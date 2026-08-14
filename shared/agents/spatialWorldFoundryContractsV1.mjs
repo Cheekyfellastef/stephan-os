@@ -466,13 +466,20 @@ export function validateSpatialWorldFoundryBundle(bundle = {}) {
     for (const error of result.errors) errors.push(`${prefix}:${error}`);
   }
   if (buildOrder.valid && asset.valid && provenance.valid && snapshot.valid) {
+    const expectedOperatorIntentRef = `shared-workspace/intents/${bundle.buildOrder.intentId}`;
     if (bundle.asset.creatingBuildOrderId !== bundle.buildOrder.spatialBuildOrderId) errors.push('lineage-build-order-mismatch');
     if (bundle.provenance.buildOrderId !== bundle.buildOrder.spatialBuildOrderId) errors.push('lineage-provenance-build-order-mismatch');
     if (bundle.provenance.assetId !== bundle.asset.assetId) errors.push('lineage-provenance-asset-mismatch');
     if (bundle.provenance.assetVersion !== bundle.asset.version) errors.push('lineage-provenance-version-mismatch');
     if (bundle.provenance.creatorAgentId !== bundle.asset.creatorAgentId) errors.push('lineage-provenance-creator-mismatch');
+    if (bundle.provenance.operatorIntentRef !== expectedOperatorIntentRef) errors.push('lineage-provenance-intent-mismatch');
+    if (bundle.provenance.designGenomeVersion !== bundle.buildOrder.designGenomeVersion) errors.push('lineage-provenance-design-genome-mismatch');
     if (bundle.asset.planetId !== bundle.buildOrder.planetId || bundle.snapshot.planetId !== bundle.buildOrder.planetId) {
       errors.push('lineage-planet-mismatch');
+    }
+    if (bundle.asset.regionId !== bundle.buildOrder.regionId) errors.push('lineage-region-mismatch');
+    if (text(bundle.snapshot.scope).toUpperCase() === 'REGION' && bundle.snapshot.scopeId !== bundle.buildOrder.regionId) {
+      errors.push('lineage-snapshot-region-mismatch');
     }
     const snapshotAsset = bundle.snapshot.assetVersions.find((entry) => entry.assetId === bundle.asset.assetId);
     if (!snapshotAsset) errors.push('snapshot-missing-asset');
