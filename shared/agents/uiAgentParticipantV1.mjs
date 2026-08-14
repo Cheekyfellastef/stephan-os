@@ -121,6 +121,59 @@ function capabilityFutureDated(capability, validationOptions = {}) {
   return timestampFutureDated(capability?.timestampUtc, validationOptions);
 }
 
+function participantStatusSummary({
+  ready,
+  statusTimestampFuture,
+  proofRefs,
+  validation,
+}) {
+  if (ready) return 'UI Agent capability card and Shared Workspace participant contract are ready for governed registration.';
+  if (statusTimestampFuture) return 'UI Agent participant status timestamp is future-dated relative to the trusted evaluation clock.';
+  if (proofRefs.length === 0) return 'UI Agent participant status is blocked because no caller-supplied proof reference was provided.';
+  if (validation?.stale === true) return 'UI Agent participant status is stale and cannot publish a ready registration verdict.';
+  if (validation && !validation.valid) return 'UI Agent participant status is invalid and cannot publish a ready registration verdict.';
+  return 'UI Agent participant contract requires repair before registration.';
+}
+
+function createParticipantStatusEnvelope({
+  timestampUtc,
+  correlationId,
+  proofRefs,
+  readiness,
+  ready,
+  summary,
+  participantStatusId,
+}) {
+  return Object.freeze({
+    schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
+    kind: SHARED_WORKSPACE_RECORD_KINDS.PARTICIPANT_STATUS,
+    participantStatusId,
+    participantId: UI_AGENT_ID,
+    timestampUtc,
+    correlationId,
+    relatedIssue: '#1722',
+    status: ready
+      ? 'UI_AGENT_READ_ONLY_CANDIDATE_READY'
+      : 'UI_AGENT_PARTICIPANT_BLOCKED',
+    summary,
+    body: JSON.stringify({
+      participantSchemaVersion: UI_AGENT_PARTICIPANT_SCHEMA_VERSION,
+      agentClass: UI_AGENT_CLASS,
+      qaCapability: readiness.qaCapability,
+      lifecycleState: readiness.lifecycleState,
+      productionEligible: readiness.productionEligible,
+      implementationEligible: readiness.implementationEligible,
+      nextMilestone: ready
+        ? readiness.nextMilestone
+        : 'M1_REPAIR_UI_AGENT_PARTICIPANT_CONTRACT',
+      mutationAuthority: 'NONE_BY_PARTICIPATION',
+      mergeAuthority: false,
+      deploymentAuthority: false,
+    }),
+    proofRefs,
+  });
+}
+
 export function createUiAgentCapabilityRecord(input = {}) {
   const base = createAgentCapabilityRecord({
     agentId: UI_AGENT_ID,
@@ -157,6 +210,7 @@ export function buildUiAgentReadiness(input = {}) {
   if (!validation.valid) blockers.push(`capability-invalid:${validation.refusalReason || 'unknown'}`);
   if (validation.stale === true) blockers.push('capability-stale');
   if (capabilityFutureDated(capability, validationOptions)) blockers.push('capability-future-dated');
+  if (list(capability.proofRefs).length === 0) blockers.push('participant-proof-required');
   if (capability.agentId !== UI_AGENT_ID) blockers.push('participant-id-mismatch');
   if (capability.participantSchemaVersion !== UI_AGENT_PARTICIPANT_SCHEMA_VERSION) blockers.push('participant-schema-version-mismatch');
   if (capability.agentClass !== UI_AGENT_CLASS) blockers.push('agent-class-mismatch');
@@ -176,16 +230,17 @@ export function buildUiAgentReadiness(input = {}) {
   if (capability.personalDataAuthority !== false) blockers.push('personal-data-authority-widened');
   if (capability.selfPromotionAllowed !== false) blockers.push('self-promotion-widened');
 
+  const uniqueBlockers = Object.freeze([...new Set(blockers)]);
   return Object.freeze({
     schemaVersion: UI_AGENT_PARTICIPANT_SCHEMA_VERSION,
     participantId: UI_AGENT_ID,
     lifecycleState: capability.lifecycleState,
     qaCapability: capability.qaCapability,
-    readyForSharedWorkspaceRegistration: blockers.length === 0,
+    readyForSharedWorkspaceRegistration: uniqueBlockers.length === 0,
     productionEligible: false,
     implementationEligible: false,
-    blockers: Object.freeze(blockers),
-    nextMilestone: blockers.length === 0
+    blockers: uniqueBlockers,
+    nextMilestone: uniqueBlockers.length === 0
       ? 'M2_INVENTORY_USER_FACING_SURFACES_AND_SHARED_VISUAL_PRIMITIVES'
       : 'M1_REPAIR_UI_AGENT_PARTICIPANT_CONTRACT',
   });
@@ -194,54 +249,56 @@ export function buildUiAgentReadiness(input = {}) {
 export function createUiAgentParticipantStatusRecord(input = {}) {
   const timestampUtc = text(input.timestampUtc, new Date().toISOString());
   const correlationId = safeId(input.correlationId, 'ui-agent-participant-v1');
-  const proofRefs = list(input.proofRefs).length > 0
-    ? list(input.proofRefs)
-    : ['evidence/receipts/ui-agent-participant-v1'];
+  const participantStatusId = safeId(input.participantStatusId, 'ui-agent-participant-v1');
+  const proofRefs = list(input.proofRefs);
   const capability = input.capability || createUiAgentCapabilityRecord({ ...input, timestampUtc, proofRefs });
   const readiness = buildUiAgentReadiness({ ...input, capability, timestampUtc, proofRefs });
-  const statusTimestampFuture = statusTimestampFutureDated(timestampUtc, input.validationOptions || {});
-  const statusReady = readiness.readyForSharedWorkspaceRegistration && !statusTimestampFuture;
-  const nextMilestone = statusReady
-    ? readiness.nextMilestone
-    : 'M1_REPAIR_UI_AGENT_PARTICIPANT_CONTRACT';
+  const validationOptions = input.validationOptions || {};
+  const statusTimestampFuture = statusTimestampFutureDated(timestampUtc, validationOptions);
+  const preliminaryReady = readiness.readyForSharedWorkspaceRegistration
+    && !statusTimestampFuture
+    && proofRefs.length > 0;
 
-  return Object.freeze({
-    schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
-    kind: SHARED_WORKSPACE_RECORD_KINDS.PARTICIPANT_STATUS,
-    participantStatusId: safeId(input.participantStatusId, 'ui-agent-participant-v1'),
-    participantId: UI_AGENT_ID,
+  const candidate = createParticipantStatusEnvelope({
     timestampUtc,
     correlationId,
-    relatedIssue: '#1722',
-    status: statusReady
-      ? 'UI_AGENT_READ_ONLY_CANDIDATE_READY'
-      : 'UI_AGENT_PARTICIPANT_BLOCKED',
-    summary: statusReady
-      ? 'UI Agent capability card and Shared Workspace participant contract are ready for governed registration.'
-      : statusTimestampFuture
-        ? 'UI Agent participant status timestamp is future-dated relative to the trusted evaluation clock.'
-        : 'UI Agent participant contract requires repair before registration.',
-    body: JSON.stringify({
-      participantSchemaVersion: UI_AGENT_PARTICIPANT_SCHEMA_VERSION,
-      agentClass: UI_AGENT_CLASS,
-      qaCapability: readiness.qaCapability,
-      lifecycleState: readiness.lifecycleState,
-      productionEligible: readiness.productionEligible,
-      implementationEligible: readiness.implementationEligible,
-      nextMilestone,
-      mutationAuthority: 'NONE_BY_PARTICIPATION',
-      mergeAuthority: false,
-      deploymentAuthority: false,
-    }),
     proofRefs,
+    readiness,
+    ready: preliminaryReady,
+    summary: participantStatusSummary({
+      ready: preliminaryReady,
+      statusTimestampFuture,
+      proofRefs,
+      validation: null,
+    }),
+    participantStatusId,
+  });
+  const candidateValidation = validateSharedWorkspaceRecord(candidate, validationOptions);
+  const statusReady = preliminaryReady
+    && candidateValidation.valid
+    && candidateValidation.stale !== true;
+
+  if (statusReady) return candidate;
+
+  return createParticipantStatusEnvelope({
+    timestampUtc,
+    correlationId,
+    proofRefs,
+    readiness,
+    ready: false,
+    summary: participantStatusSummary({
+      ready: false,
+      statusTimestampFuture,
+      proofRefs,
+      validation: candidateValidation,
+    }),
+    participantStatusId,
   });
 }
 
 export function createUiAgentWorkspaceRecords(input = {}) {
   const timestampUtc = text(input.timestampUtc, new Date().toISOString());
-  const proofRefs = list(input.proofRefs).length > 0
-    ? list(input.proofRefs)
-    : ['evidence/receipts/ui-agent-participant-v1'];
+  const proofRefs = list(input.proofRefs);
   const capability = createUiAgentCapabilityRecord({ ...input, timestampUtc, proofRefs });
   const readiness = buildUiAgentReadiness({ ...input, capability, timestampUtc, proofRefs });
   const status = createUiAgentParticipantStatusRecord({ ...input, capability, timestampUtc, proofRefs });
