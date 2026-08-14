@@ -6,10 +6,12 @@ import {
   validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
 import {
+  STEPHANOS_BOUNDARY_ADJUDICATION_SCHEMA_VERSION,
   STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION,
   STEPHANOS_CAPABILITY_QUESTION_SCHEMA_VERSION,
   STEPHANOS_CAPABILITY_ROUND_SCHEMA_VERSION,
   STEPHANOS_INITIAL_QUESTION_CLASSES,
+  canonicalStephanosQuestionIntentFingerprint,
 } from './stephanosConversationalCapabilityLadderV1.mjs';
 import {
   STEPHANOS_SHARED_WORKSPACE_CONVERSATION_CHANNEL,
@@ -57,22 +59,27 @@ function round() {
 }
 
 function laterRound() {
-  const prior = round().questions.map((item) => item.intentFingerprint);
+  const priorQuestions = round().questions;
+  const prior = priorQuestions.map((item) => item.intentFingerprint);
+  const questions = STEPHANOS_INITIAL_QUESTION_CLASSES.map((questionClass, index) => {
+    const candidate = question(index, questionClass, {
+      roundId: 'round-002',
+      questionId: `transfer-question-${String(index + 1).padStart(2, '0')}`,
+      questionText: `Transfer capability question ${index + 1} for ${questionClass}.`,
+      noveltyRefs: [`previous-round:${prior[index]}`],
+    });
+    return { ...candidate, intentFingerprint: canonicalStephanosQuestionIntentFingerprint(candidate) };
+  });
   return {
     prior,
+    priorQuestions,
     capabilityRound: {
       schemaVersion: STEPHANOS_CAPABILITY_ROUND_SCHEMA_VERSION,
       roundId: 'round-002',
       roundNumber: 2,
       askerParticipantId: 'chatgpt-bridge',
       targetParticipantId: 'stephanos',
-      questions: STEPHANOS_INITIAL_QUESTION_CLASSES.map((questionClass, index) => question(index, questionClass, {
-        roundId: 'round-002',
-        questionId: `transfer-question-${String(index + 1).padStart(2, '0')}`,
-        questionText: `Transfer capability question ${index + 1} for ${questionClass}.`,
-        intentFingerprint: `transfer-intent-${String(index + 1).padStart(2, '0')}-${questionClass.toLowerCase()}`,
-        noveltyRefs: [`previous-round:${prior[index]}`],
-      })),
+      questions,
       createdAtUtc,
     },
   };
@@ -143,14 +150,18 @@ test('one initial ten-question round fans out to exactly ten correlated Shared W
   assert.equal(built.authority.commandExecutionAllowed, false);
 });
 
-test('later-round fan-out preserves exact prior fingerprint lineage and fails closed without it', () => {
-  const { capabilityRound, prior } = laterRound();
-  const missing = buildStephanosWorkspaceQuestionRound(capabilityRound, { relatedIssue: '#1308' });
+test('later-round fan-out requires canonical prior questions as well as their exact fingerprint lineage', () => {
+  const { capabilityRound, prior, priorQuestions } = laterRound();
+  const missing = buildStephanosWorkspaceQuestionRound(capabilityRound, {
+    relatedIssue: '#1308',
+    priorRoundIntentFingerprints: prior,
+  });
   assert.equal(missing.valid, false);
-  assert.match(missing.errors.join('\n'), /priorRoundIntentFingerprints/);
+  assert.match(missing.errors.join('\n'), /priorRoundQuestions/);
 
   const built = buildStephanosWorkspaceQuestionRound(capabilityRound, {
     relatedIssue: '#1308',
+    priorRoundQuestions: priorQuestions,
     priorRoundIntentFingerprints: prior,
   });
   assert.equal(built.valid, true, built.errors.join(', '));
@@ -198,6 +209,53 @@ test('a buildable unanswered capability remains a durable gap rather than being 
   assert.equal(result.evaluation.requiresRepairReplay, true);
   assert.equal(result.evaluation.gapObservations.length, 1);
   assert.deepEqual(result.evaluation.gapObservations[0].existingGoalCandidates, ['#1556', '#1308']);
+});
+
+test('boundary evidence stays safe-held through the adapter until canonical adjudication context is forwarded', () => {
+  const records = STEPHANOS_INITIAL_QUESTION_CLASSES.map((_, index) => answerRecord(index));
+  const boundaryAnswer = answer(9, {
+    answerText: 'Runtime mutation authority remains outside this participant.',
+    epistemicState: 'KNOWN_FROM_CANONICAL_STATE',
+    evidenceRefs: ['proof/governing-authority-policy'],
+    freshness: 'FRESH',
+    sourcesConsulted: ['programme-authority'],
+    cannotAnswerReason: 'Authority remains reserved to governing policy.',
+    answerVerdict: 'UNSAFE_OR_AUTHORITY_BOUNDARY',
+  });
+  const boundaryRecord = createStephanosWorkspaceAnswerRecord(boundaryAnswer, {
+    recipientParticipantId: 'chatgpt-bridge',
+    relatedIssue: '#1308',
+  });
+  assert.equal(boundaryRecord.valid, true, boundaryRecord.errors.join(', '));
+  records[9] = boundaryRecord.record;
+
+  const held = evaluateStephanosWorkspaceConversation({ round: round(), answerRecords: records });
+  assert.equal(held.state, 'SAFE_HOLD');
+  assert.equal(held.evaluation.requiresBoundaryAdjudication, true);
+
+  const adjudication = {
+    schemaVersion: STEPHANOS_BOUNDARY_ADJUDICATION_SCHEMA_VERSION,
+    answerId: boundaryAnswer.answerId,
+    answerVerdict: boundaryAnswer.answerVerdict,
+    status: 'CURRENT',
+    freshness: 'FRESH',
+    evidenceRefs: [...boundaryAnswer.evidenceRefs],
+    sourcesConsulted: [...boundaryAnswer.sourcesConsulted],
+    proofRefs: ['proof/boundary-adjudication'],
+    adjudicatedAtUtc: answeredAtUtc,
+  };
+  const settled = evaluateStephanosWorkspaceConversation({
+    round: round(),
+    answerRecords: records,
+    boundaryAdjudications: [adjudication],
+    authoritativeEvidenceRefs: ['proof/governing-authority-policy'],
+    authoritativeSourceRefs: ['programme-authority'],
+    authoritativeAdjudicationProofRefs: ['proof/boundary-adjudication'],
+    evaluationNowMs: Date.parse(answeredAtUtc),
+  });
+  assert.equal(settled.state, 'SETTLED');
+  assert.equal(settled.evaluation.counts.retainedBoundaries, 1);
+  assert.equal(settled.evaluation.requiresBoundaryAdjudication, false);
 });
 
 test('recipient or participant lineage tampering fails closed', () => {
