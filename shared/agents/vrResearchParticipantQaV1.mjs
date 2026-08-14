@@ -29,6 +29,17 @@ export const VR_RESEARCH_QUESTION_CLASSES = Object.freeze([
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
 const WORKSPACE_SAFE_ID = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 const SAFE_PROOF_REF = /^(?:proof|proofs|receipts|evidence\/receipts)\/[A-Za-z0-9][A-Za-z0-9._/@:#-]{0,239}$/;
+const MAX_FACT_COUNT = 64;
+const MAX_FACT_ARRAY_LENGTH = 32;
+const MAX_FACT_STRING_LENGTH = 2048;
+const VR_FACT_ALLOWED_FIELDS = new Set([
+  'sourceId', 'title', 'revision', 'health', 'licenceClass', 'priority',
+  'id', 'name', 'status', 'state', 'type', 'category',
+  'subjectRef', 'evidencePlane', 'claim', 'summary', 'owner',
+  'nextAuthorisedAction', 'existingGoalCandidates',
+  'hypothesis', 'relatedTechniques', 'requiredEvidence', 'evidenceRefs',
+  'sourceRef', 'runtimeRef', 'providerId', 'version',
+]);
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -85,6 +96,46 @@ function canonicalProofRefs(value) {
     refs.push(ref);
   }
   return refs.length === new Set(refs).size ? refs : [];
+}
+
+function normalizeFactScalar(value) {
+  if (value === null) return null;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    return normalized && normalized.length <= MAX_FACT_STRING_LENGTH ? normalized : undefined;
+  }
+  return undefined;
+}
+
+function normalizeFactValue(value) {
+  const scalar = normalizeFactScalar(value);
+  if (scalar !== undefined) return scalar;
+  if (!Array.isArray(value) || value.length > MAX_FACT_ARRAY_LENGTH) return undefined;
+  const normalized = [];
+  for (const item of value) {
+    const itemValue = normalizeFactScalar(item);
+    if (itemValue === undefined) return undefined;
+    normalized.push(itemValue);
+  }
+  return Object.freeze(normalized);
+}
+
+function normalizeWorkspaceFacts(value) {
+  if (!Array.isArray(value)) return Object.freeze([]);
+  const normalizedFacts = [];
+  for (const rawFact of value.slice(0, MAX_FACT_COUNT)) {
+    if (!rawFact || typeof rawFact !== 'object' || Array.isArray(rawFact) || Object.getPrototypeOf(rawFact) !== Object.prototype) continue;
+    const normalizedFact = {};
+    for (const [key, rawValue] of Object.entries(rawFact)) {
+      if (!VR_FACT_ALLOWED_FIELDS.has(key)) continue;
+      const normalizedValue = normalizeFactValue(rawValue);
+      if (normalizedValue !== undefined) normalizedFact[key] = normalizedValue;
+    }
+    if (Object.keys(normalizedFact).length > 0) normalizedFacts.push(Object.freeze(normalizedFact));
+  }
+  return Object.freeze(normalizedFacts);
 }
 
 function proofRefsVerified(refs, input = {}) {
@@ -345,7 +396,7 @@ function normalizeWorkspaceAnswer(answer = {}) {
     freshness: text(answer.freshness),
     cannotAnswerReason: answer.cannotAnswerReason === null ? null : text(answer.cannotAnswerReason),
     answerVerdict: text(answer.answerVerdict),
-    facts: Object.freeze(list(answer.facts)),
+    facts: normalizeWorkspaceFacts(answer.facts),
     answeredAtUtc: text(answer.answeredAtUtc),
   });
 }
