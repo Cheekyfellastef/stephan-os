@@ -275,7 +275,9 @@ function normalizeScheduler(projection, host, blockers) {
     || (expectedActiveStatus && issueNumber(decision.activeIssue) !== activeFromReceipt[0])
     || (!expectedActiveStatus && decision.activeIssue !== null)
     || (decisionStatus === 'LANE_SELECTED'
-      && (!issueNumber(decision.selectedIssue) || decision.selectedLifecycle !== 'READY'))
+      && (!issueNumber(decision.selectedIssue)
+        || !decision.selectedIssues.map(issueNumber).includes(issueNumber(decision.selectedIssue))
+        || decision.selectedLifecycle !== 'READY'))
     || (decisionStatus === 'MERGE_READY' && decision.selectedLifecycle !== 'MERGE_READY')
     || (decisionStatus === 'CLOSE_READY' && decision.selectedLifecycle !== 'CLOSE_READY')
     || ((decisionStatus === 'WAITING' || decisionStatus === 'APPROVAL_REQUIRED')
