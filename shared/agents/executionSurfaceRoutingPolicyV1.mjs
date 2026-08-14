@@ -19,9 +19,11 @@ export const EXECUTION_SURFACE_BLOCKER = Object.freeze({
 });
 
 const WINDOWS_RUNTIME_PATTERN = /(?:\bbattle bridge\b|\bwindows\b|\bpowershell\b|\bscheduled task\b|\btask scheduler\b|\bwatchdog\b|\blocalhost\b|127\.0\.0\.1|\b4173\b|\b8787\b|\b18789\b|\bservice control\b|\bregistry\b|\bcanonical checkout\b|\blocal runtime\b|\bserved runtime\b|\bexact runtime head\b)/i;
-const REPOSITORY_WORK_PATTERN = /(?:\bsource\s+(?:change|repair|work|file|files|code)\b|\brepository\b|\brepo\b|\bcodebase\b|\bpull request\b|\bopen\s+(?:a\s+)?pr\b|\bbranch\b|\bcommit\b|\bimplement(?:ation)?\b|\brefactor\b|\bpatch\b|\bmodify\s+(?:source|repository|repo|codebase)\b)/i;
+const REPOSITORY_WORK_PATTERN = /(?:\bsource\s+(?:change|repair|work|file|files|code|branch|commit|patch|refactor|implementation)\b|\brepository\b|\brepo\b|\bcodebase\b|\bpull request\b|\bopen\s+(?:a\s+)?pr\b|\b(?:implement|implementation|refactor|patch|branch|commit)\s+(?:source|repository|repo|codebase|source\s+code)\b|\b(?:source|repository|repo|codebase)\s+(?:branch|commit|patch|refactor)\b|\bmodify\s+(?:source|repository|repo|codebase)\b)/i;
 const CLOUD_CODEX_PATTERN = /(?:github\s+@codex|plain\s+@codex|default\s+linux|cloud\s+codex|linux\s+workspace)/i;
 const SAFE_RECEIPT_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
+const CANONICAL_WORK_SURFACE_ID = 'chatgpt-work';
+const REQUIRED_WORK_CAPABILITY = 'can_write_repo';
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -64,31 +66,57 @@ function normalizeOpenClawLocal(surfaces = {}) {
   return Object.freeze({ ...handshake, adapterCanExecute:adjudication?.adapterCanExecute === true, adapterReadiness:text(adjudication?.adapterReadiness,'unknown'), adjudication });
 }
 
-function normalizeWorkReceipt(receipt, expectedSurfaceId) {
-  if (!plainRecord(receipt)) return Object.freeze({ valid:false, receiptId:'', capabilities:Object.freeze([]) });
+function normalizeWorkReceipt(receipt) {
+  if (!plainRecord(receipt)) return Object.freeze({ structurallyValid:false, receiptId:'', surfaceId:'', status:'', capabilities:Object.freeze([]), executionEligible:false });
   const receiptId = text(receipt.receiptId || receipt.capabilityReceiptId);
   const surfaceId = text(receipt.surfaceId);
   const status = text(receipt.status || receipt.freshness).toUpperCase();
   const capabilities = Object.freeze(list(receipt.capabilities).map((value)=>text(value).toLowerCase()).filter(Boolean));
-  const valid = receipt.schemaVersion === CHATGPT_WORK_CAPABILITY_RECEIPT_SCHEMA
+  const structurallyValid = receipt.schemaVersion === CHATGPT_WORK_CAPABILITY_RECEIPT_SCHEMA
     && SAFE_RECEIPT_ID.test(receiptId)
-    && surfaceId === expectedSurfaceId
+    && surfaceId === CANONICAL_WORK_SURFACE_ID
     && status === 'CURRENT'
     && receipt.executionEligible === true
-    && capabilities.includes('can_write_repo');
-  return Object.freeze({ valid, receiptId, surfaceId, status, capabilities, executionEligible:receipt.executionEligible === true });
+    && capabilities.includes(REQUIRED_WORK_CAPABILITY);
+  return Object.freeze({ structurallyValid, receiptId, surfaceId, status, capabilities, executionEligible:receipt.executionEligible === true, schemaVersion:text(receipt.schemaVersion) });
 }
 
-function normalizeWorkSurface(surfaces = {}) {
+function verifyWorkReceiptWithHost(receipt, trustedHost = {}) {
+  if (!receipt.structurallyValid || typeof trustedHost.verifyChatGPTWorkCapabilityReceipt !== 'function') return false;
+  const expected = Object.freeze({
+    schemaVersion: CHATGPT_WORK_CAPABILITY_RECEIPT_SCHEMA,
+    receiptId: receipt.receiptId,
+    surfaceId: CANONICAL_WORK_SURFACE_ID,
+    requiredCapability: REQUIRED_WORK_CAPABILITY,
+  });
+  try {
+    const attestation = trustedHost.verifyChatGPTWorkCapabilityReceipt(receipt, expected);
+    return Boolean(
+      attestation && typeof attestation === 'object' && !Array.isArray(attestation)
+      && attestation.verified === true
+      && attestation.schemaVersion === expected.schemaVersion
+      && attestation.receiptId === expected.receiptId
+      && attestation.surfaceId === expected.surfaceId
+      && attestation.requiredCapability === expected.requiredCapability
+    );
+  } catch {
+    return false;
+  }
+}
+
+function normalizeWorkSurface(surfaces = {}, trustedHost = {}) {
   const source = plainRecord(surfaces.chatgptWork) ? surfaces.chatgptWork : plainRecord(surfaces.work) ? surfaces.work : {};
-  const surfaceId = text(source.surfaceId || source.integrationId, 'chatgpt-work');
-  const capabilityReceipt = normalizeWorkReceipt(source.capabilityReceipt, surfaceId);
+  const claimedSurfaceId = text(source.surfaceId || source.integrationId, CANONICAL_WORK_SURFACE_ID);
+  const capabilityReceipt = normalizeWorkReceipt(source.capabilityReceipt);
+  const hostVerified = claimedSurfaceId === CANONICAL_WORK_SURFACE_ID && verifyWorkReceiptWithHost(capabilityReceipt, trustedHost);
   return Object.freeze({
-    surfaceId,
-    available: capabilityReceipt.valid,
-    canRepositoryWork: capabilityReceipt.valid,
+    surfaceId: CANONICAL_WORK_SURFACE_ID,
+    claimedSurfaceId,
+    available: hostVerified,
+    canRepositoryWork: hostVerified,
     capabilityReceiptId: capabilityReceipt.receiptId,
     capabilityReceipt,
+    hostVerified,
   });
 }
 
@@ -97,8 +125,8 @@ function windowsHandshakeValid(surface) {
 }
 function openClawRouteValid(surface) { return windowsHandshakeValid(surface) && surface.adapterCanExecute === true; }
 
-function sourceRouteFor(surfaces = {}) {
-  const work = normalizeWorkSurface(surfaces);
+function sourceRouteFor(surfaces = {}, trustedHost = {}) {
+  const work = normalizeWorkSurface(surfaces, trustedHost);
   return Object.freeze({ selectedRoute:work.canRepositoryWork ? EXECUTION_SURFACE_ROUTE.CHATGPT_WORK_GITHUB : EXECUTION_SURFACE_ROUTE.CHATGPT_GITHUB_FIRST, routeReady:true, work });
 }
 
@@ -127,9 +155,9 @@ export function classifyExecutionSurfaceRequirement(input = {}) {
   });
 }
 
-export function buildExecutionSurfaceRouteV1({ goal = {}, surfaces = {} } = {}) {
+export function buildExecutionSurfaceRouteV1({ goal = {}, surfaces = {} } = {}, trustedHost = {}) {
   const requirement = classifyExecutionSurfaceRequirement(goal);
-  const sourceRoute = sourceRouteFor(surfaces);
+  const sourceRoute = sourceRouteFor(surfaces, trustedHost);
   const localRoute = localRouteFor(surfaces);
   const forbiddenRoutes = requirement.requiresLocalWindowsProof ? Object.freeze(['GITHUB_CODEX_MENTION','DEFAULT_LINUX_CODEX_WORKSPACE']) : Object.freeze([]);
 
@@ -145,11 +173,11 @@ export function buildExecutionSurfaceRouteV1({ goal = {}, surfaces = {} } = {}) 
     return Object.freeze({ schemaVersion:EXECUTION_SURFACE_ROUTING_POLICY_V1_SCHEMA, requirement, selectedRoute:localRoute.selectedRoute, selectedRoutes:Object.freeze([localRoute.selectedRoute]), sourceRoute:EXECUTION_SURFACE_ROUTE.NONE, localRoute:localRoute.selectedRoute, routeReady:true, missionReady:true, sourceSubtaskReady:false, localSubtaskReady:true, partialProgressAllowed:false, dispatchAllowed:true, cloudFallbackAllowed:false, forbiddenRoutes, work:sourceRoute.work, battleBridge:localRoute.surface, localSurfaces:Object.freeze({openClaw:localRoute.openClaw,remoteCodex:localRoute.remoteCodex}), blocker:'', exactNextAction:`Dispatch exactly one bounded local task through ${localRoute.selectedRoute} and require a real task receipt plus heartbeat.`, finalVerdict:'EXECUTION_SURFACE_ROUTE_READY' });
   }
 
-  return Object.freeze({ schemaVersion:EXECUTION_SURFACE_ROUTING_POLICY_V1_SCHEMA, requirement, selectedRoute:sourceRoute.selectedRoute, selectedRoutes:Object.freeze([sourceRoute.selectedRoute]), sourceRoute:sourceRoute.selectedRoute, localRoute:EXECUTION_SURFACE_ROUTE.NONE, routeReady:true, missionReady:true, sourceSubtaskReady:true, localSubtaskReady:false, partialProgressAllowed:false, dispatchAllowed:false, cloudFallbackAllowed:false, forbiddenRoutes, work:sourceRoute.work, battleBridge:null, localSurfaces:Object.freeze({openClaw:localRoute.openClaw,remoteCodex:localRoute.remoteCodex}), blocker:'', exactNextAction:sourceRoute.selectedRoute===EXECUTION_SURFACE_ROUTE.CHATGPT_WORK_GITHUB ? 'Use receipt-proven ChatGPT Work plus GitHub for repository work. Keep local Windows execution separate unless the mission requires it.' : 'Use ChatGPT plus GitHub for source work; preserve local Windows execution capacity for tasks that genuinely require the Battle Bridge.', finalVerdict:'EXECUTION_SURFACE_ROUTE_READY' });
+  return Object.freeze({ schemaVersion:EXECUTION_SURFACE_ROUTING_POLICY_V1_SCHEMA, requirement, selectedRoute:sourceRoute.selectedRoute, selectedRoutes:Object.freeze([sourceRoute.selectedRoute]), sourceRoute:sourceRoute.selectedRoute, localRoute:EXECUTION_SURFACE_ROUTE.NONE, routeReady:true, missionReady:true, sourceSubtaskReady:true, localSubtaskReady:false, partialProgressAllowed:false, dispatchAllowed:false, cloudFallbackAllowed:false, forbiddenRoutes, work:sourceRoute.work, battleBridge:null, localSurfaces:Object.freeze({openClaw:localRoute.openClaw,remoteCodex:localRoute.remoteCodex}), blocker:'', exactNextAction:sourceRoute.selectedRoute===EXECUTION_SURFACE_ROUTE.CHATGPT_WORK_GITHUB ? 'Use host-verified ChatGPT Work plus GitHub for repository work. Keep local Windows execution separate unless the mission requires it.' : 'Use ChatGPT plus GitHub for source work; preserve local Windows execution capacity for tasks that genuinely require the Battle Bridge.', finalVerdict:'EXECUTION_SURFACE_ROUTE_READY' });
 }
 
-export function assertExecutionSurfaceRouteV1(input = {}) {
-  const route = buildExecutionSurfaceRouteV1(input);
+export function assertExecutionSurfaceRouteV1(input = {}, trustedHost = {}) {
+  const route = buildExecutionSurfaceRouteV1(input, trustedHost);
   if (!route.routeReady) { const error=new Error(route.blocker); error.code=route.blocker; error.route=route; throw error; }
   return route;
 }
