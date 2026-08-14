@@ -314,8 +314,8 @@ function validateMetricsReceipt(receipt, evidence, build, host, blockers) {
     || payloadDigest(receipt) !== text(receipt.payloadSha256).toLowerCase()) blockers.push('metrics-payload-digest-invalid');
   if (blockers.length) return null;
   const predictedSeconds = p95StartLatencySeconds + medianExecutionSeconds + reviewIntegrationSeconds
-    + Math.ceil(medianExecutionSeconds * reworkRate)
-    + Math.ceil(medianExecutionSeconds * (1 - successRate));
+    + (medianExecutionSeconds * reworkRate)
+    + (medianExecutionSeconds * (1 - successRate));
   return { providerId, route:build.route, workerId:build.workerId, supportedOperations:operations,
     availableSlots, queueDepth, predictedSeconds, authorityReceiptIds:authorities,
     proofRefs, capacityReceiptId:build.receiptId, metricsReceiptId:receipt.receiptId,
@@ -614,9 +614,12 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
     const heldCandidates = [];
     const foundryProven = Boolean(foundry?.evidenceValid && forge);
     let foundrySlots = foundryProven ? foundry.availableSlots : 0;
+    let hasQualifyingGain = false;
     for (const candidate of candidates) {
       const netSecondsSaved = foundryProven ? github.predictedSeconds - foundry.predictedSeconds : null;
-      if (foundrySlots > 0 && netSecondsSaved > 0 && netSecondsSaved >= minimumNetSavingsSeconds) {
+      const qualifyingGain = netSecondsSaved > 0 && netSecondsSaved >= minimumNetSavingsSeconds;
+      if (qualifyingGain) hasQualifyingGain = true;
+      if (foundrySlots > 0 && qualifyingGain) {
         foundrySlots -= 1;
         assignments.push({ candidateId:candidate.candidateId, issue:candidate.issue,
           providerId:foundry.providerId, route:foundry.route, workerId:foundry.workerId,
@@ -637,7 +640,7 @@ export function planFoundryParallelProductionAcceleration(_request = {}, trusted
     const decision = candidates.length === 0 ? FOUNDRY_ACCELERATION_DECISIONS.IDLE
       : assignments.length ? FOUNDRY_ACCELERATION_DECISIONS.READY
         : !foundryProven ? FOUNDRY_ACCELERATION_DECISIONS.WAITING_FOR_M3
-          : foundrySlots === 0 && foundry.availableSlots === 0
+          : foundry.availableSlots === 0 && hasQualifyingGain
             ? FOUNDRY_ACCELERATION_DECISIONS.WAITING_FOR_CAPACITY
             : FOUNDRY_ACCELERATION_DECISIONS.NO_POSITIVE_GAIN;
     return freeze({ schemaVersion:FOUNDRY_ACCELERATION_SCHEMA, valid:true, decision,
