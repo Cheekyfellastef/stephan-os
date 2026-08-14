@@ -40,6 +40,8 @@ export const UI_AGENT_LIFECYCLE_STATES = Object.freeze([
 ]);
 
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
+const UI_AGENT_READ_ONLY_MODE = 'read_first';
+const UI_AGENT_PROPOSAL_PATH = 'shared-workspace/ui/proposals';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -56,12 +58,19 @@ function safeId(value, fallback = '') {
   return SAFE_ID.test(output) ? output : fallback;
 }
 
+function sameStringSet(value, expected) {
+  const actual = list(value);
+  return actual.length === expected.length
+    && new Set(actual).size === actual.length
+    && expected.every((item) => actual.includes(item));
+}
+
 export function createUiAgentCapabilityRecord(input = {}) {
   const base = createAgentCapabilityRecord({
     agentId: UI_AGENT_ID,
     timestampUtc: text(input.timestampUtc, new Date().toISOString()),
-    mode: 'read_first',
-    boundedWritePath: 'shared-workspace/ui/proposals',
+    mode: UI_AGENT_READ_ONLY_MODE,
+    boundedWritePath: UI_AGENT_PROPOSAL_PATH,
     trustedBuilder: false,
     proofRefs: list(input.proofRefs),
   });
@@ -89,11 +98,24 @@ export function buildUiAgentReadiness(input = {}) {
   const blockers = [];
 
   if (!validation.valid) blockers.push(`capability-invalid:${validation.refusalReason || 'unknown'}`);
+  if (validation.stale === true) blockers.push('capability-stale');
   if (capability.agentId !== UI_AGENT_ID) blockers.push('participant-id-mismatch');
+  if (capability.participantSchemaVersion !== UI_AGENT_PARTICIPANT_SCHEMA_VERSION) blockers.push('participant-schema-version-mismatch');
+  if (capability.agentClass !== UI_AGENT_CLASS) blockers.push('agent-class-mismatch');
   if (capability.qaCapability !== UI_AGENT_QA_CAPABILITY) blockers.push('qa-capability-missing');
+  if (!sameStringSet(capability.knowledgeDomains, UI_AGENT_KNOWLEDGE_DOMAINS)) blockers.push('knowledge-domains-mismatch');
+  if (!sameStringSet(capability.acceptedTaskTypes, UI_AGENT_ADVISORY_TASK_TYPES)) blockers.push('advisory-task-set-mismatch');
   if (capability.lifecycleState !== 'READ_ONLY_CANDIDATE') blockers.push('unexpected-lifecycle-state');
-  if (capability.mergeAuthority === true || capability.arbitraryShellAllowed === true) blockers.push('unsafe-authority');
+  if (capability.mode !== UI_AGENT_READ_ONLY_MODE) blockers.push('mode-not-read-first');
+  if (capability.boundedWritePath !== UI_AGENT_PROPOSAL_PATH) blockers.push('proposal-path-mismatch');
+  if (capability.trustedBuilder !== false) blockers.push('trusted-builder-widened');
+  if (capability.mergeAuthority !== false) blockers.push('merge-authority-widened');
+  if (capability.arbitraryShellAllowed !== false) blockers.push('arbitrary-shell-widened');
   if (capability.mutationAuthority !== 'NONE_BY_PARTICIPATION') blockers.push('mutation-authority-widened');
+  if (capability.implementationAuthority !== 'GOVERNED_TASK_CONTRACT_REQUIRED') blockers.push('implementation-authority-widened');
+  if (capability.productAuthority !== false) blockers.push('product-authority-widened');
+  if (capability.deploymentAuthority !== false) blockers.push('deployment-authority-widened');
+  if (capability.personalDataAuthority !== false) blockers.push('personal-data-authority-widened');
   if (capability.selfPromotionAllowed !== false) blockers.push('self-promotion-widened');
 
   return Object.freeze({
