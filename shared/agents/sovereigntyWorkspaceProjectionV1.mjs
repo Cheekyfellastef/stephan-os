@@ -326,8 +326,11 @@ function normalizeBuildLaneStatus(status, expectedStatusId, expectedRoute, syste
   const taskClass = text(options.buildTaskClass).toUpperCase() || DEFAULT_BUILD_TASK_CLASS;
   const nowUtc = new Date(nowMs).toISOString();
   const validation = validateBuildLaneCapacityReceipt(receipt, { repository, taskClass, nowUtc });
+  const observedAtMs = timestampMs(receipt?.observedAtUtc);
   const current = status?.schemaVersion === 'shared-agent-workspace-record.v1'
     && status?.statusId === expectedStatusId
+    && observedAtMs !== null
+    && observedAtMs <= nowMs
     && validation.valid
     && validation.route === expectedRoute;
   const refs = current ? proofRefs(receipt.proofRefs) || [] : [];
