@@ -27,6 +27,7 @@ export const VR_RESEARCH_QUESTION_CLASSES = Object.freeze([
 ]);
 
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
+const WORKSPACE_SAFE_ID = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -51,10 +52,18 @@ function hash(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
+function workspaceSafeId(value) {
+  const normalized = text(value);
+  if (WORKSPACE_SAFE_ID.test(normalized)) return normalized;
+  return safeId(normalized) ? `vr-correlation-${hash(normalized).slice(0, 24)}` : '';
+}
+
 function projectionFreshness(projection = {}, nowMs = Date.now()) {
-  if (text(projection.freshness).toUpperCase() === 'STALE') return 'STALE';
+  const declared = text(projection.freshness).toUpperCase();
+  if (declared !== 'FRESH') return declared === 'STALE' ? 'STALE' : 'UNKNOWN';
+  if (!Number.isFinite(nowMs)) return 'UNKNOWN';
   const observed = Date.parse(text(projection.updatedAt));
-  if (!Number.isFinite(observed)) return 'UNKNOWN';
+  if (!Number.isFinite(observed) || observed > nowMs) return 'UNKNOWN';
   const staleAfterMs = Number.isFinite(projection.staleAfterMs) ? projection.staleAfterMs : 24 * 60 * 60 * 1000;
   return nowMs - observed > staleAfterMs ? 'STALE' : 'FRESH';
 }
@@ -66,26 +75,35 @@ function sourceMatches(source, needle) {
 }
 
 function evidenceRefs(projection = {}) {
-  const refs = list(projection.proofRefs).map(String).filter(Boolean);
-  if (refs.length > 0) return refs;
-  return projection.projectionId ? [`evidence/receipts/${projection.projectionId}`] : [];
+  return list(projection.proofRefs).map(String).map((ref) => ref.trim()).filter(Boolean);
 }
 
 function answerEnvelope(request, projection, input, values = {}) {
   const freshness = projectionFreshness(projection, Number.isFinite(input.nowMs) ? input.nowMs : Date.now());
-  const grounded = values.grounded === true && freshness === 'FRESH';
+  const projectionEvidenceRefs = evidenceRefs(projection);
+  const requestedGrounded = values.grounded === true;
+  const grounded = requestedGrounded && freshness === 'FRESH' && projectionEvidenceRefs.length > 0;
+  const evidenceGap = requestedGrounded && freshness === 'FRESH' && projectionEvidenceRefs.length === 0;
   const verdict = freshness !== 'FRESH'
     ? 'GAP_FRESHNESS'
     : grounded
       ? 'ANSWERED_GROUNDED'
       : values.verdict || 'GAP_KNOWLEDGE';
-  const epistemicState = freshness !== 'FRESH'
+  const epistemicState = freshness === 'STALE'
     ? 'STALE'
-    : grounded
-      ? values.epistemicState || 'KNOWN_FROM_CANONICAL_STATE'
-      : values.epistemicState || 'UNKNOWN';
+    : freshness !== 'FRESH'
+      ? 'UNKNOWN'
+      : grounded
+        ? values.epistemicState || 'KNOWN_FROM_CANONICAL_STATE'
+        : values.epistemicState || 'UNKNOWN';
   const answerId = `vr-answer-${hash({ questionId: request.questionId, verdict, projectionId: projection.projectionId }).slice(0, 20)}`;
-  const cannotAnswerReason = grounded ? null : text(values.cannotAnswerReason || (freshness !== 'FRESH' ? 'Canonical VR research projection is stale or missing freshness evidence.' : 'Canonical VR research projection does not currently contain enough evidence for this question.'));
+  const cannotAnswerReason = grounded
+    ? null
+    : text(values.cannotAnswerReason || (evidenceGap
+      ? 'Canonical VR research projection does not carry proof references required to ground this answer.'
+      : freshness !== 'FRESH'
+        ? 'Canonical VR research projection is stale or missing trustworthy freshness evidence.'
+        : 'Canonical VR research projection does not currently contain enough evidence for this question.'));
   return Object.freeze({
     schemaVersion: VR_RESEARCH_PARTICIPANT_QA_SCHEMA_VERSION,
     answerId,
@@ -93,7 +111,7 @@ function answerEnvelope(request, projection, input, values = {}) {
     responderParticipantId: VR_RESEARCH_PARTICIPANT_ID,
     answerText: text(values.answerText || cannotAnswerReason),
     epistemicState,
-    evidenceRefs: Object.freeze(grounded ? evidenceRefs(projection) : list(values.evidenceRefs).map(String).filter(Boolean)),
+    evidenceRefs: Object.freeze(grounded ? projectionEvidenceRefs : list(values.evidenceRefs).map(String).filter(Boolean)),
     freshness,
     cannotAnswerReason,
     answerVerdict: verdict,
@@ -234,7 +252,7 @@ export function answerVrResearchQuestion(request = {}, projection = {}, input = 
     const answer = answerEnvelope(request, projection || {}, input, { cannotAnswerReason: 'Canonical VR research workspace projection is missing or incompatible.' });
     return Object.freeze({ valid: true, errors: Object.freeze([]), answer, gapObservation: createVrResearchQaGapObservation(request, answer) });
   }
-  const questionClass = request.questionClass;
+  const questionClass = text(request.questionClass).toUpperCase();
   let answer;
   if (questionClass === 'SOURCE_STACK') answer = sourceStackAnswer(request, projection, input);
   else if (questionClass === 'NEXT_EXPERIMENT') answer = nextExperimentAnswer(request, projection, input);
@@ -246,12 +264,13 @@ export function answerVrResearchQuestion(request = {}, projection = {}, input = 
   else if (questionClass === 'SPATIAL_BRIDGE_BLOCKERS') answer = spatialBlockerAnswer(request, projection, input);
   else if (questionClass === 'NEXT_BOUNDED_GOAL') answer = nextGoalAnswer(request, projection, input);
   else answer = unknownsAnswer(request, projection, input);
-  const gapObservation = answer.answerVerdict.startsWith('GAP_') ? createVrResearchQaGapObservation(request, answer) : null;
+  const gapObservation = answer.answerVerdict.startsWith('GAP_') ? createVrResearchQaGapObservation({ ...request, questionClass }, answer) : null;
   return Object.freeze({ valid: true, errors: Object.freeze([]), answer, gapObservation });
 }
 
 export function createVrResearchQaGapObservation(request = {}, answer = {}) {
-  const gapId = `vr-qgap-${hash({ questionId: request.questionId, questionClass: request.questionClass, verdict: answer.answerVerdict }).slice(0, 20)}`;
+  const questionClass = text(request.questionClass).toUpperCase();
+  const gapId = `vr-qgap-${hash({ questionId: request.questionId, questionClass, verdict: answer.answerVerdict }).slice(0, 20)}`;
   const goalCandidatesByClass = {
     SOURCE_STACK: ['#1596', '#1597'],
     NEXT_EXPERIMENT: ['#1593', '#1597'],
@@ -271,7 +290,7 @@ export function createVrResearchQaGapObservation(request = {}, answer = {}) {
     gapClass: answer.answerVerdict,
     summary: answer.cannotAnswerReason,
     evidenceRefs: answer.evidenceRefs,
-    existingGoalCandidates: Object.freeze(goalCandidatesByClass[request.questionClass] || ['#1597', '#1723']),
+    existingGoalCandidates: Object.freeze(goalCandidatesByClass[questionClass] || ['#1597', '#1723']),
     repairGoalRef: null,
     status: 'OBSERVED_NEEDS_DEDUPLICATION',
   });
@@ -279,7 +298,9 @@ export function createVrResearchQaGapObservation(request = {}, answer = {}) {
 
 export function createVrResearchQaWorkspaceAnswerRecord(request = {}, answer = {}, input = {}) {
   const messageId = `vr-qa-${hash({ questionId: request.questionId, answerId: answer.answerId }).slice(0, 20)}`;
-  const proofRefs = answer.evidenceRefs.length > 0 ? [...answer.evidenceRefs] : [`receipts/${messageId}`];
+  const proofRefs = answer.evidenceRefs.length > 0
+    ? [...answer.evidenceRefs]
+    : list(input.proofRefs).map(String).map((ref) => ref.trim()).filter(Boolean);
   const record = Object.freeze({
     schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
     kind: SHARED_WORKSPACE_RECORD_KINDS.MESSAGE,
@@ -287,7 +308,7 @@ export function createVrResearchQaWorkspaceAnswerRecord(request = {}, answer = {
     participantId: VR_RESEARCH_PARTICIPANT_ID,
     recipientParticipantId: request.askerParticipantId,
     timestampUtc: answer.answeredAtUtc,
-    correlationId: safeId(input.correlationId || request.questionId),
+    correlationId: workspaceSafeId(input.correlationId || request.questionId),
     relatedIssue: '#1723',
     proofRefs,
     channel: 'vr-research-qa',
