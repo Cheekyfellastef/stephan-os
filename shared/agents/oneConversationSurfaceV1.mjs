@@ -54,13 +54,27 @@ function isTimestamp(value) {
   return Number.isFinite(Date.parse(text(value)));
 }
 
-function unique(values = []) {
-  if (!Array.isArray(values)) return [];
-  return [...new Set(values.map(String).map((value) => value.trim()).filter(Boolean))];
+function strictStringList(values) {
+  if (!Array.isArray(values)) return Object.freeze({ valid: false, values: Object.freeze([]) });
+  const normalized = [];
+  for (const value of values) {
+    if (typeof value !== 'string') return Object.freeze({ valid: false, values: Object.freeze([]) });
+    const candidate = value.trim();
+    if (!candidate) return Object.freeze({ valid: false, values: Object.freeze([]) });
+    normalized.push(candidate);
+  }
+  return Object.freeze({ valid: true, values: Object.freeze([...new Set(normalized)]) });
 }
 
 function boundedDuration(value, fallback) {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function sameStringSet(left, right) {
+  return left.length === right.length
+    && new Set(left).size === left.length
+    && new Set(right).size === right.length
+    && left.every((value) => right.includes(value));
 }
 
 function authorityBoundary() {
@@ -85,20 +99,25 @@ function continuityIdentityComplete(value = {}) {
   );
 }
 
-function normalizeObservation(observation = {}) {
+function normalizeObservation(observation) {
+  const observationWasRecord = Boolean(observation && typeof observation === 'object' && !Array.isArray(observation));
+  const candidate = observationWasRecord ? observation : {};
+  const evidence = strictStringList(candidate.evidenceRefs);
   return Object.freeze({
-    surface: text(observation.surface),
-    surfaceThreadRef: safeId(observation.surfaceThreadRef),
-    stephanosIdentityVersion: safeId(observation.stephanosIdentityVersion),
-    intentId: safeId(observation.intentId),
-    missionId: safeId(observation.missionId),
-    operatorRelationshipContextRef: safeId(observation.operatorRelationshipContextRef),
-    memoryAuthorityRef: safeId(observation.memoryAuthorityRef),
-    timestampUtc: text(observation.timestampUtc),
-    evidenceRefs: unique(observation.evidenceRefs),
-    evidenceRefsWasArray: Array.isArray(observation.evidenceRefs),
-    underlyingMind: text(observation.underlyingMind),
-    executionSurface: text(observation.executionSurface),
+    observationWasRecord,
+    surface: text(candidate.surface),
+    surfaceThreadRef: safeId(candidate.surfaceThreadRef),
+    stephanosIdentityVersion: safeId(candidate.stephanosIdentityVersion),
+    intentId: safeId(candidate.intentId),
+    missionId: safeId(candidate.missionId),
+    operatorRelationshipContextRef: safeId(candidate.operatorRelationshipContextRef),
+    memoryAuthorityRef: safeId(candidate.memoryAuthorityRef),
+    timestampUtc: text(candidate.timestampUtc),
+    evidenceRefs: evidence.values,
+    evidenceRefsWasArray: Array.isArray(candidate.evidenceRefs),
+    evidenceRefsValid: evidence.valid,
+    underlyingMind: text(candidate.underlyingMind),
+    executionSurface: text(candidate.executionSurface),
   });
 }
 
@@ -129,6 +148,16 @@ function classifyObservedAt(observedAt = {}, nowMs, staleAfterMs, maxFutureSkewM
   });
 }
 
+function validateRetainedSurfaceSet(projection, observedAt) {
+  const active = strictStringList(projection.activeSurfaces);
+  if (!active.valid || active.values.length === 0 || active.values.some((surface) => !ONE_CONVERSATION_SURFACES.includes(surface))) return false;
+  if (!projection.surfaceThreadRefs || typeof projection.surfaceThreadRefs !== 'object' || Array.isArray(projection.surfaceThreadRefs)) return false;
+  const observedSurfaces = Object.keys(observedAt);
+  const threadSurfaces = Object.keys(projection.surfaceThreadRefs);
+  if (!sameStringSet([...active.values], observedSurfaces) || !sameStringSet([...active.values], threadSurfaces)) return false;
+  return active.values.every((surface) => safeId(projection.surfaceThreadRefs[surface]));
+}
+
 export function validateOneConversationInputV1(input = {}) {
   const errors = [];
   const stephanosIdentityVersion = safeId(input.stephanosIdentityVersion);
@@ -151,6 +180,7 @@ export function validateOneConversationInputV1(input = {}) {
   if (observations.length === 0) errors.push('missing-surface-observations');
 
   for (const [index, observation] of observations.entries()) {
+    if (!observation.observationWasRecord) errors.push(`observation-must-be-record:${index}`);
     if (!ONE_CONVERSATION_SURFACES.includes(observation.surface)) errors.push(`unsupported-surface:${index}`);
     if (!observation.surfaceThreadRef) errors.push(`invalid-surface-thread-ref:${index}`);
     if (!observation.stephanosIdentityVersion) errors.push(`missing-observation-stephanos-identity-version:${index}`);
@@ -160,6 +190,7 @@ export function validateOneConversationInputV1(input = {}) {
     if (!observation.memoryAuthorityRef) errors.push(`missing-observation-memory-authority-ref:${index}`);
     if (!isTimestamp(observation.timestampUtc)) errors.push(`invalid-observation-timestamp:${index}`);
     if (!observation.evidenceRefsWasArray) errors.push(`observation-evidenceRefs-must-be-array:${index}`);
+    else if (!observation.evidenceRefsValid) errors.push(`observation-evidenceRefs-invalid:${index}`);
     else if (observation.evidenceRefs.length === 0) errors.push(`missing-observation-evidence:${index}`);
     if (observation.stephanosIdentityVersion && observation.stephanosIdentityVersion !== stephanosIdentityVersion) errors.push(`identity-conflict:${index}`);
     if (observation.intentId && observation.intentId !== intentId) errors.push(`intent-conflict:${index}`);
@@ -242,7 +273,7 @@ export function buildOneConversationProjectionV1(input = {}, options = {}) {
     staleAfterMs,
     maxFutureSkewMs,
     activeSurfaces: Object.freeze(observations.map((observation) => observation.surface)),
-    evidenceRefs: Object.freeze(unique(observations.flatMap((observation) => observation.evidenceRefs))),
+    evidenceRefs: Object.freeze([...new Set(observations.flatMap((observation) => observation.evidenceRefs))]),
     routeVisibility: options.includeRouteAudit === true ? 'AUDIT_VISIBLE' : 'HIDDEN_BY_DEFAULT',
     operatorNeeded: false,
     operatorAction: 'NO_OPERATOR_ACTION_REQUIRED',
@@ -318,6 +349,9 @@ export function projectOneConversationWorkspaceMessageV1(projection = {}, input 
   if (!observedAt || typeof observedAt !== 'object' || Array.isArray(observedAt) || Object.keys(observedAt).length === 0) {
     return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_FRESHNESS_EVIDENCE_INCOMPLETE' });
   }
+  if (!validateRetainedSurfaceSet(projection, observedAt)) {
+    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_SURFACE_SET_INCONSISTENT' });
+  }
   const publicationFreshness = classifyObservedAt(observedAt, nowMs, staleAfterMs, maxFutureSkewMs);
   if (publicationFreshness.invalid.length > 0) {
     return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_FRESHNESS_EVIDENCE_INVALID' });
@@ -340,8 +374,18 @@ export function projectOneConversationWorkspaceMessageV1(projection = {}, input 
   const correlationId = safeId(input.correlationId || projection.intentId);
   const messageId = safeId(input.messageId || `one-conversation-${projection.intentId}`);
   const relatedIssue = text(input.relatedIssue, '#1630');
-  const suppliedProofRefs = Array.isArray(input.proofRefs) ? unique(input.proofRefs) : [];
-  const proofRefs = suppliedProofRefs.length > 0 ? suppliedProofRefs : unique(projection.evidenceRefs);
+  const projectedProofRefs = strictStringList(projection.evidenceRefs);
+  if (!projectedProofRefs.valid) {
+    return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_PROJECTION_PROOF_REFS_INVALID' });
+  }
+  let suppliedProofRefs = Object.freeze({ valid: true, values: Object.freeze([]) });
+  if (input.proofRefs !== undefined) {
+    suppliedProofRefs = strictStringList(input.proofRefs);
+    if (!suppliedProofRefs.valid) {
+      return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_MESSAGE_PROOF_REFS_INVALID' });
+    }
+  }
+  const proofRefs = suppliedProofRefs.values.length > 0 ? [...suppliedProofRefs.values] : [...projectedProofRefs.values];
   if (!correlationId || !messageId || proofRefs.length === 0) {
     return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_MESSAGE_IDENTITY_INCOMPLETE' });
   }
