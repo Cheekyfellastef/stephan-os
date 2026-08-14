@@ -490,6 +490,24 @@ test('Foundry capacity must carry both canonical M2 and M3 authority identities'
   assert.equal(provider.eligible, false);
 });
 
+test('Forge M2 and M3 authority stages require distinct receipt identities', () => {
+  const sidecar = forgeSidecar();
+  sidecar.m3RuntimeReceipt = resign(sidecar.m3RuntimeReceipt, { receiptId:M2_ID });
+  const foundry = evidence('foundry', 'FOUNDRY_FORGE', {
+    build:{ authorityReceiptIds:[M2_ID] },
+  });
+  const result = planFoundryParallelProductionAcceleration({}, host({
+    forgeSidecar:sidecar,
+    providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), foundry],
+  }));
+  assert.equal(result.valid, true);
+  assert.equal(result.decision, FOUNDRY_ACCELERATION_DECISIONS.WAITING_FOR_M3);
+  const provider = result.providerStatus.find(({ providerId }) => providerId === 'foundry');
+  assert.ok(provider.blockers.includes('forge-receipt-identities-not-distinct'));
+  assert.equal(provider.evidenceValid, false);
+  assert.equal(provider.eligible, false);
+});
+
 test('fractional canonical p95 latency remains valid and duplicate lane identities do not', () => {
   const foundry = evidence('foundry', 'FOUNDRY_FORGE', { build:{ p95StartLatencySeconds:0.5 } });
   const fractionalScheduler = scheduler({ selected:[portfolioItem(1737, { criticalPathWeight:0.5 })] });
