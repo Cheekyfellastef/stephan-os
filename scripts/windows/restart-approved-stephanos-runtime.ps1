@@ -519,7 +519,7 @@ function Stop-NewlyStartedOwnedWorker {
         repositoryRoot = $ExpectedRepoRoot
         headSha = $ExpectedSourceHead
         requestedAtUtc = [datetime]::UtcNow.ToString('o')
-        deadlineUtc = $script:operationDeadlineUtc.ToString('o')
+        deadlineUtc = $script:operationDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
         workerPid = $ExpectedProcessId
         workerStartedAtUtc = $ExpectedProcessStartedAtUtc.ToUniversalTime().ToString('o')
     })

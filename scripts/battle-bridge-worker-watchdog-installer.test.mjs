@@ -33,12 +33,15 @@ function strictRestartInvocationBoundary({ probe, restart, launcher }) {
     && restart.includes('$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks')
     && restart.includes('$reverifiedWorker.ProcessStartedAtUtc.Ticks -ne $verifiedWorker.ProcessStartedAtUtc.Ticks')
     && restart.includes('Assert-BeforeOperationDeadline -RequiredReserveSeconds 1')
+    && restart.includes("deadlineUtc = $script:operationDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')")
+    && !restart.includes("deadlineUtc = $script:operationDeadlineUtc.ToString('o')")
     && launcher.includes('$processStartInfo.FileName = $canonicalNode')
     && launcher.includes('$processStartInfo.Arguments = \'"\' + $workerScript + \'"\'')
     && launcher.includes('$workerHeartbeat.pid -eq $workerProcess.Id')
     && launcher.includes('$heartbeatTimestampUtc -gt $workerStartedAtUtc')
     && launcher.includes('$workerProcess.StartTime.ToUniversalTime().Ticks -eq $workerStartedAtUtc.Ticks')
     && launcher.includes('if ($confirmation -and $invocationHeartbeatBound)')
+    && launcher.includes("[string]$record.deadlineUtc -ne $restartDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')")
     && launcher.includes('$workerProcess.Kill()')
     && !launcher.includes('$processStartInfo.Arguments +=');
 }
@@ -195,11 +198,14 @@ test('restart invocation binds exact command, heartbeat, deadline and process cr
     { ...canonical, restart: restart.replace('$processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks', '$false') },
     { ...canonical, restart: restart.replace('$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks', '$false') },
     { ...canonical, restart: restart.replaceAll('Assert-BeforeOperationDeadline -RequiredReserveSeconds 1', '# deadline check removed') },
+    { ...canonical, restart: restart.replaceAll("deadlineUtc = $script:operationDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')", "deadlineUtc = $script:operationDeadlineUtc.ToString('o')") },
+    { ...canonical, restart: restart.replaceAll("deadlineUtc = $script:operationDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')", "deadlineUtc = [datetime]::UtcNow.AddMinutes(5).ToString('yyyy-MM-ddTHH:mm:ss.fffZ')") },
     { ...canonical, launcher: launcher.replace('$processStartInfo.FileName = $canonicalNode', '$processStartInfo.FileName = $env:NODE') },
     { ...canonical, launcher: launcher.replace('$processStartInfo.Arguments = \'"\' + $workerScript + \'"\'', '$processStartInfo.Arguments = $env:WORKER_ARGS') },
     { ...canonical, launcher: launcher.replace('$workerHeartbeat.pid -eq $workerProcess.Id', '$workerHeartbeat.pid -gt 0') },
     { ...canonical, launcher: launcher.replace('$workerProcess.StartTime.ToUniversalTime().Ticks -eq $workerStartedAtUtc.Ticks', '$true') },
     { ...canonical, launcher: launcher.replace('if ($confirmation -and $invocationHeartbeatBound)', 'if ($confirmation)') },
+    { ...canonical, launcher: launcher.replace("[string]$record.deadlineUtc -ne $restartDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')", '$false') },
     { ...canonical, launcher: `${launcher}\n$processStartInfo.Arguments += ' --caller-selected'` },
   ];
   for (const [index, attack] of attacks.entries()) {

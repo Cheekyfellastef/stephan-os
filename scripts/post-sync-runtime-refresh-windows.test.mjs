@@ -3,7 +3,17 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const restartSource = await readFile(new URL('./windows/restart-approved-stephanos-runtime.ps1', import.meta.url), 'utf8');
+const workerStartSource = await readFile(new URL('./windows/start-mission-orchestrator-worker.ps1', import.meta.url), 'utf8');
 const backendStartSource = await readFile(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
+
+const canonicalDeadlineFormat = 'yyyy-MM-ddTHH:mm:ss.fffZ';
+
+function exactCancellationDeadlineTransport(writer, reader) {
+  const cancellationRecord = writer.match(/schemaVersion = 'stephanos\.mission-worker-restart-cancel\.v1'[\s\S]*?\n\s*\}\)/)?.[0] || '';
+  return cancellationRecord.includes(`deadlineUtc = $script:operationDeadlineUtc.ToString('${canonicalDeadlineFormat}')`)
+    && !cancellationRecord.includes("deadlineUtc = $script:operationDeadlineUtc.ToString('o')")
+    && reader.includes(`[string]$record.deadlineUtc -ne $restartDeadlineUtc.ToString('${canonicalDeadlineFormat}')`);
+}
 
 function canonicalRestartGitBoundary(source) {
   return source.includes("$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'")
@@ -175,6 +185,49 @@ test('worker cleanup can target only the exact fresh owned process and fixed tas
   assert.match(restartSource, /workerStartedAtUtc = \$ExpectedProcessStartedAtUtc\.ToUniversalTime\(\)\.ToString\('o'\)/);
   assert.doesNotMatch(restartSource, /Stop-Process -Id \$verifiedWorker\.ProcessId/);
   assert.doesNotMatch(restartSource, /Stop-Process\s+-Name|taskkill|killall/);
+});
+
+test('cancellation uses the one canonical absolute deadline representation accepted by the launcher', () => {
+  assert.equal(exactCancellationDeadlineTransport(restartSource, workerStartSource), true);
+  for (const [writer, reader] of [
+    [restartSource.replaceAll(
+      `deadlineUtc = $script:operationDeadlineUtc.ToString('${canonicalDeadlineFormat}')`,
+      "deadlineUtc = $script:operationDeadlineUtc.ToString('o')",
+    ), workerStartSource],
+    [restartSource.replaceAll(
+      `deadlineUtc = $script:operationDeadlineUtc.ToString('${canonicalDeadlineFormat}')`,
+      `deadlineUtc = [datetime]::UtcNow.AddMinutes(5).ToString('${canonicalDeadlineFormat}')`,
+    ), workerStartSource],
+    [restartSource, workerStartSource.replace(
+      `[string]$record.deadlineUtc -ne $restartDeadlineUtc.ToString('${canonicalDeadlineFormat}')`,
+      '[string]$record.deadlineUtc -ne [string]$restartDeadlineUtc',
+    )],
+    [restartSource, workerStartSource.replace(canonicalDeadlineFormat, 'o')],
+  ]) {
+    assert.equal(exactCancellationDeadlineTransport(writer, reader), false);
+  }
+});
+
+test('cancellation remains exact-invocation, exact-worker and fail-closed bound', () => {
+  for (const exactBinding of [
+    '$candidateClaim.invocationId -ne $ExpectedInvocationId',
+    '$candidateClaim.repositoryRoot -ne $ExpectedRepoRoot',
+    '$candidateClaim.headSha -ne $ExpectedSourceHead',
+    '$receiptProcessId -ne $ExpectedProcessId',
+    '$receiptProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks',
+    '$verifiedInvocationProcess.ProcessId -ne $ExpectedProcessId',
+    '$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks',
+    'MISSION_WORKER_CLEANUP_PROCESS_DID_NOT_STOP',
+    'MISSION_WORKER_POST_START_CLEANUP_FAILED',
+  ]) {
+    assert.ok(restartSource.includes(exactBinding), exactBinding);
+  }
+  assert.match(workerStartSource, /\$restartDeadlineUtc -le \[datetime\]::UtcNow -or \$restartDeadlineUtc -gt \[datetime\]::UtcNow\.AddSeconds\(95\)/);
+  assert.match(workerStartSource, /Mission worker restart request deadline is invalid/);
+  assert.match(workerStartSource, /\$record\.deadlineUtc -ne \$restartDeadlineUtc\.ToString\('yyyy-MM-ddTHH:mm:ss\.fffZ'\)/);
+  assert.match(workerStartSource, /\$record\.invocationId -ne \$InvocationId/);
+  assert.match(workerStartSource, /\$recordPid -ne \$WorkerPid/);
+  assert.match(workerStartSource, /\$recordStartedAtUtc\.Ticks -ne \$WorkerStartedAtUtc\.ToUniversalTime\(\)\.Ticks/);
 });
 
 test('success and blocked receipts expose exact startup and cleanup truth', () => {
