@@ -25,13 +25,12 @@ const MAX_SCHEDULER_GOALS = 1000;
 const MAX_SCHEDULER_ARRAY = 10_000;
 const MAX_SCHEDULER_PREREQUISITES_PER_GOAL = 1000;
 const MAX_SCHEDULER_TOTAL_PREREQUISITES = 10_000;
+const MAX_SCHEDULER_TOTAL_EVIDENCE_ITEMS = 50_000;
 const MAX_SCHEDULER_SNAPSHOT_DEPTH = 32;
-const MAX_SCHEDULER_EVIDENCE_ARRAYS_PER_GOAL = 4;
-const MAX_SCHEDULER_SNAPSHOT_NODES = MAX_SCHEDULER_GOALS
-  * (MAX_SCHEDULER_PREREQUISITES_PER_GOAL
-    + MAX_SCHEDULER_EVIDENCE_ARRAYS_PER_GOAL * MAX_SCHEDULER_ARRAY + 128)
-  + 3 * MAX_SCHEDULER_ARRAY + 1024;
-const MAX_SCHEDULER_SNAPSHOT_STRING_CODE_UNITS = MAX_SCHEDULER_SNAPSHOT_NODES * 512;
+const MAX_SCHEDULER_SNAPSHOT_NODES = MAX_SCHEDULER_TOTAL_EVIDENCE_ITEMS
+  + MAX_SCHEDULER_TOTAL_PREREQUISITES
+  + MAX_SCHEDULER_GOALS * 128
+  + 8192;
 
 export const FOUNDRY_ACCELERATION_SCHEMA = 'stephanos.foundry-parallel-production-acceleration.v1';
 export const FOUNDRY_ACCELERATION_HOST_CONTEXT_SCHEMA = 'stephanos.foundry-acceleration-host-context.v1';
@@ -120,10 +119,6 @@ function inertSnapshot(value, state, depth = 0) {
     return value;
   }
   if (typeof value === 'string') {
-    state.stringCodeUnits += value.length;
-    if (state.stringCodeUnits > MAX_SCHEDULER_SNAPSHOT_STRING_CODE_UNITS) {
-      throw new TypeError('scheduler source strings exceed inert snapshot bounds');
-    }
     return value;
   }
   if (!value || typeof value !== 'object') throw new TypeError('scheduler source is not JSON-like');
@@ -171,7 +166,7 @@ function inertSnapshot(value, state, depth = 0) {
 function snapshotSchedulerSource(value, blockers) {
   try {
     const snapshot = inertSnapshot(value, {
-      nodes:0, stringCodeUnits:0, visiting:new WeakSet(), snapshots:new WeakMap(),
+      nodes:0, visiting:new WeakSet(), snapshots:new WeakMap(),
     });
     if (!exactKeys(snapshot, SCHEDULER_SOURCE_KEYS)) {
       blockers.push('scheduler-source-shape-invalid');
@@ -208,7 +203,7 @@ function snapshotSchedulerSource(value, blockers) {
 function snapshotTrustedHostContext(value, blockers) {
   try {
     const snapshot = inertSnapshot(value, {
-      nodes:0, stringCodeUnits:0, visiting:new WeakSet(), snapshots:new WeakMap(),
+      nodes:0, visiting:new WeakSet(), snapshots:new WeakMap(),
     });
     if (!exactKeys(snapshot, TRUSTED_KEYS)) {
       blockers.push('trusted-host-context-shape-invalid');

@@ -313,6 +313,19 @@ test('trusted snapshot capacity covers canonical multi-goal maximum resource sco
   assert.ok(result.assignments.every(({ resourceIds }) => resourceIds.length === 10_000));
 });
 
+test('canonical aggregate evidence excess reaches Mission Scheduler and fails closed there', () => {
+  const selected = Array.from({ length:6 }, (_, goalIndex) => portfolioItem(1900 + goalIndex, {
+    resourceIds:Array.from({ length:10_000 }, (_, resourceIndex) =>
+      `goal:${1900 + goalIndex}:resource:${String(resourceIndex).padStart(5, '0')}`),
+  }));
+  const result = planFoundryParallelProductionAcceleration({}, host({
+    schedulerSource:scheduler({ selected }),
+  }));
+  assert.equal(result.valid, false);
+  assert.ok(result.blockers.includes('scheduler-contradiction-state-invalid'));
+  assert.equal(result.blockers.includes('trusted-host-context-inspection-failed'), false);
+});
+
 test('trusted scheduler source is snapshotted once and fails closed on hidden authority', async (t) => {
   await t.test('stateful descriptors are observed once before canonical scheduling', () => {
     let priorityReads = 0;
