@@ -50,7 +50,7 @@ Foundry is additionally eligible only when a direct call to `adjudicateForgeSide
 The planner accepts candidates only from `parallelCandidateDetails`. It verifies:
 
 - top-level and decision-receipt fail-closed state is false with zero contradictions;
-- the decision receipt has the exact canonical field inventory, an allowed status consistent with its active/selected state, a `LANE_SELECTED` issue/route/lifecycle tuple matching its canonical selected portfolio row, no candidates while `WAITING` or `APPROVAL_REQUIRED`, and empty contradiction codes;
+- the decision receipt has the exact canonical field inventory, an allowed status consistent with its active/selected state, a `LANE_SELECTED`, `MERGE_READY` or `CLOSE_READY` issue/route/lifecycle tuple matching one canonical portfolio row, no candidates while `WAITING` or `APPROVAL_REQUIRED`, and empty contradiction codes;
 - decision freshness;
 - exact equality between active-goal, active-issue and ACTIVE portfolio inventories;
 - exact equality between selected-issue, parallel-candidate and detail inventories;
@@ -83,12 +83,15 @@ The strict positive check is independent of the configurable minimum, so a zero-
 
 When eligible candidates outnumber measured Foundry slots, unassigned candidates are held with `NO_AVAILABLE_FOUNDRY_SLOT_USE_GITHUB`; this is distinct from nonpositive acceleration and from absent proven Foundry capacity.
 
+A canonically proven Foundry lane with zero current slots remains proof-valid but not assignment-eligible. It reports `FOUNDRY_ACCELERATION_WAITING_FOR_CAPACITY`, `CAPACITY_EXHAUSTED` telemetry and the same explicit slot-exhaustion hold reason; it is not mislabeled as missing proof or nonpositive acceleration.
+
 ## Decisions
 
 ```text
 FOUNDRY_ACCELERATION_BLOCKED
 FOUNDRY_ACCELERATION_IDLE
 FOUNDRY_ACCELERATION_WAITING_FOR_M3
+FOUNDRY_ACCELERATION_WAITING_FOR_CAPACITY
 FOUNDRY_ACCELERATION_NO_POSITIVE_GAIN
 FOUNDRY_ACCELERATION_READY_MODEL_ONLY
 ```
