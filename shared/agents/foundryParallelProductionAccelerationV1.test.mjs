@@ -283,6 +283,18 @@ test('canonical Mission Scheduler proof inventories remain valid above provider 
   assert.equal(result.assignments.length, 1);
 });
 
+test('canonical Mission Scheduler resource inventories remain valid above provider list bounds', () => {
+  const resourceIds = Array.from({ length:129 }, (_, index) =>
+    `goal:1737:resource:${String(index).padStart(3, '0')}`);
+  const result = planFoundryParallelProductionAcceleration({}, host({
+    schedulerSource:scheduler({ selected:[portfolioItem(1737, { resourceIds })] }),
+  }));
+  assert.equal(result.valid, true);
+  assert.equal(result.decision, FOUNDRY_ACCELERATION_DECISIONS.READY);
+  assert.equal(result.assignments.length, 1);
+  assert.equal(result.assignments[0].resourceIds.length, 129);
+});
+
 test('trusted scheduler source is snapshotted once and fails closed on hidden authority', async (t) => {
   await t.test('stateful descriptors are observed once before canonical scheduling', () => {
     let priorityReads = 0;
