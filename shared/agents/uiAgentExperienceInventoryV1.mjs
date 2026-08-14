@@ -27,8 +27,9 @@ function timestamp(value) { const candidate = text(value); const ms = Date.parse
 function hash(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
 function freezeList(value) { return Object.freeze([...value]); }
 function normalizedExperienceDebt(value) { const debt = list(value); return debt.length > 0 ? debt : ['UNKNOWN']; }
+function plainRecord(value) { return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype); }
 function surface(input = {}) {
-  const record = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const record = plainRecord(input) ? input : {};
   return Object.freeze({
     schemaVersion:UI_AGENT_EXPERIENCE_SURFACE_SCHEMA_VERSION,
     surfaceId:text(record.surfaceId), surfaceClass:text(record.surfaceClass), ownerGoal:text(record.ownerGoal), registrationRef:text(record.registrationRef),
@@ -40,14 +41,30 @@ export function validateUiAgentSharedPrimitive(record) { const errors=[]; if (!r
 export function validateUiAgentExperienceSurface(record) { const errors=[]; if (!record || typeof record !== 'object' || Array.isArray(record)) return { valid:false, errors:['record-must-be-object'] }; if (record.schemaVersion !== UI_AGENT_EXPERIENCE_SURFACE_SCHEMA_VERSION) errors.push('schema-version-mismatch'); if (!safeId(record.surfaceId) && !/^app:[a-z0-9][a-z0-9._-]{0,100}$/i.test(text(record.surfaceId))) errors.push('surfaceId-invalid'); if (!UI_AGENT_SURFACE_CLASSES.includes(text(record.surfaceClass))) errors.push('surfaceClass-invalid'); if (!registrationRef(record.registrationRef)) errors.push('registrationRef-invalid'); if (!Array.isArray(record.inputMethods) || record.inputMethods.length===0) errors.push('inputMethods-required'); const debtValues=Array.isArray(record.knownExperienceDebt)?record.knownExperienceDebt:[]; if (!Array.isArray(record.knownExperienceDebt)) errors.push('knownExperienceDebt-must-be-array'); else if (record.knownExperienceDebt.length===0) errors.push('knownExperienceDebt-must-not-be-empty'); for (const debt of debtValues) if (!UI_AGENT_EXPERIENCE_DEBT_CLASSES.includes(text(debt))) errors.push(`experience-debt-invalid:${debt}`); return Object.freeze({ valid:errors.length===0, errors:Object.freeze(errors) }); }
 export function buildUiAgentExperienceInventory(input = {}) {
   const registeredApps=freezeList(list(input.registeredApps));
-  const malformedExplicitSurfaces=Array.isArray(input.explicitSurfaces) && input.explicitSurfaces.some((item)=>!item || typeof item!=='object' || Array.isArray(item));
-  const explicitSurfaces=Array.isArray(input.explicitSurfaces)?input.explicitSurfaces.map((item)=>surface(item)):[];
-  const inferred=registeredApps.map(inferredSurfaceFromRegisteredApp); const byId=new Map(); for (const candidate of [...inferred,...explicitSurfaces]) byId.set(candidate.surfaceId,candidate);
+  const explicitCollectionDefined=input.explicitSurfaces!==undefined;
+  const malformedExplicitCollection=explicitCollectionDefined && !Array.isArray(input.explicitSurfaces);
+  const rawExplicitSurfaces=Array.isArray(input.explicitSurfaces)?input.explicitSurfaces:[];
+  const malformedExplicitRecords=rawExplicitSurfaces.some((item)=>!plainRecord(item));
+  const explicitSurfaces=rawExplicitSurfaces.map((item)=>surface(item));
+  const validationErrors=[];
+  if (malformedExplicitCollection || input.explicitSurfacesMalformed===true) validationErrors.push('explicitSurfaces-must-be-array');
+  if (malformedExplicitRecords) validationErrors.push('explicitSurfaces-record-invalid');
+  for (let index=0; index<explicitSurfaces.length; index+=1) {
+    const verdict=validateUiAgentExperienceSurface(explicitSurfaces[index]);
+    validationErrors.push(...verdict.errors.map((error)=>`explicitSurface-${index}:${error}`));
+  }
+  const inferred=registeredApps.map(inferredSurfaceFromRegisteredApp);
+  const byId=new Map();
+  for (const candidate of inferred) byId.set(candidate.surfaceId,candidate);
+  for (const candidate of explicitSurfaces) {
+    const verdict=validateUiAgentExperienceSurface(candidate);
+    if (verdict.valid) byId.set(candidate.surfaceId,candidate);
+  }
   const surfaces=freezeList([...byId.values()].sort((a,b)=>a.surfaceId.localeCompare(b.surfaceId)));
   const malformedSharedPrimitives=input.sharedPrimitives!==undefined && !Array.isArray(input.sharedPrimitives);
   const sharedPrimitiveInput=input.sharedPrimitives===undefined?UI_AGENT_M2_SHARED_PRIMITIVES:Array.isArray(input.sharedPrimitives)?input.sharedPrimitives:[];
   const sharedPrimitives=freezeList(sharedPrimitiveInput.map((item)=>Object.freeze({ ...item })));
-  const validationErrors=[]; if (malformedExplicitSurfaces) validationErrors.push('explicitSurfaces-record-invalid'); if (malformedSharedPrimitives) validationErrors.push('sharedPrimitives-must-be-array');
+  if (malformedSharedPrimitives) validationErrors.push('sharedPrimitives-must-be-array');
   const validSurfaceIds=new Set(); for (const record of surfaces) { const verdict=validateUiAgentExperienceSurface(record); if (verdict.valid) validSurfaceIds.add(record.surfaceId); validationErrors.push(...verdict.errors.map((error)=>`${record.surfaceId}:${error}`)); }
   for (const record of sharedPrimitives) { const verdict=validateUiAgentSharedPrimitive(record); validationErrors.push(...verdict.errors.map((error)=>`${record.primitiveId}:${error}`)); }
   const coveredCanonical=CANONICAL_PRODUCT_SURFACE_IDS.filter((id)=>validSurfaceIds.has(id)); const missingCanonical=CANONICAL_PRODUCT_SURFACE_IDS.filter((id)=>!validSurfaceIds.has(id));
@@ -55,4 +72,10 @@ export function buildUiAgentExperienceInventory(input = {}) {
   const inventoryId=`ui-inventory-${hash({ registeredApps,surfaces,sharedPrimitives,observedAtUtc }).slice(0,24)}`;
   return Object.freeze({ schemaVersion:UI_AGENT_EXPERIENCE_INVENTORY_SCHEMA_VERSION, inventoryId, participantId:'user-interface-agent', lifecycleState:'READ_ONLY_CANDIDATE', observedAtUtc, registeredApps, surfaces, sharedPrimitives, coverage:Object.freeze({ canonicalTargetCount:CANONICAL_PRODUCT_SURFACE_IDS.length, coveredCanonicalCount:coveredCanonical.length, coveredCanonical:freezeList(coveredCanonical), missingCanonical:freezeList(missingCanonical) }), nextMilestone:missingCanonical.length>0?'M2_COMPLETE_SOURCE_AND_PRESENTATION_SURFACE_DISCOVERY':'M3_PUBLISH_CANONICAL_EXPERIENCE_CONTRACT_AND_DESIGN_MAP', authority:Object.freeze({ sourceMutationAllowed:false, implementationAllowed:false, mergeAllowed:false, deploymentAllowed:false, productAuthority:false }), valid:validationErrors.length===0, validationErrors:freezeList(validationErrors) });
 }
-export function createUiAgentM2SeedInventory(input = {}) { const registeredApps=input.registeredApps||[]; const explicitSurfaces=[{ surfaceId:'ai-console',surfaceClass:'EMBEDDED_STEPHANOS_SURFACE',ownerGoal:'#1308',registrationRef:'stephanos-ui/src/components/AIConsole.jsx',inputMethods:['KEYBOARD','POINTER','TOUCH'],knownExperienceDebt:['UNKNOWN'] },{ surfaceId:'desktop-browser',surfaceClass:'DEVICE_PRESENTATION',ownerGoal:'#1722',registrationRef:'presentation:desktop-browser',inputMethods:['KEYBOARD','POINTER'],knownExperienceDebt:['UNKNOWN'] },{ surfaceId:'windows-edge',surfaceClass:'DEVICE_PRESENTATION',ownerGoal:'#1722',registrationRef:'presentation:windows-edge',inputMethods:['KEYBOARD','POINTER'],knownExperienceDebt:['UNKNOWN'] },{ surfaceId:'ipad',surfaceClass:'DEVICE_PRESENTATION',ownerGoal:'#1722',registrationRef:'presentation:ipad',inputMethods:['TOUCH'],knownExperienceDebt:['UNKNOWN'] },{ surfaceId:'iphone',surfaceClass:'DEVICE_PRESENTATION',ownerGoal:'#1722',registrationRef:'presentation:iphone',inputMethods:['TOUCH'],knownExperienceDebt:['UNKNOWN'] },{ surfaceId:'whatsapp',surfaceClass:'TEXT_OR_MESSAGING_PRESENTATION',ownerGoal:'#1280',registrationRef:'presentation:whatsapp',inputMethods:['TEXT'],knownExperienceDebt:['UNKNOWN'] },{ surfaceId:'voice',surfaceClass:'VOICE_PRESENTATION',ownerGoal:'#1308',registrationRef:'presentation:future-voice',inputMethods:['VOICE'],knownExperienceDebt:['UNKNOWN'] },{ surfaceId:'quest3-spatial',surfaceClass:'SPATIAL_PRESENTATION',ownerGoal:'#1760',registrationRef:'presentation:quest3-spatial',inputMethods:['GAZE','CONTROLLER','VOICE'],knownExperienceDebt:['SPATIAL_READINESS_GAP'] },...(input.explicitSurfaces||[])]; return buildUiAgentExperienceInventory({ ...input,registeredApps,explicitSurfaces }); }
+export function createUiAgentM2SeedInventory(input = {}) {
+  const registeredApps=input.registeredApps||[];
+  const malformedOverride=input.explicitSurfaces!==undefined && !Array.isArray(input.explicitSurfaces);
+  const userExplicitSurfaces=Array.isArray(input.explicitSurfaces)?input.explicitSurfaces:[];
+  const explicitSurfaces=[{ surfaceId:'ai-console',surfaceClass:'EMBEDDED_STEPHANOS_SURFACE',ownerGoal:'#1308',registrationRef:'stephanos-ui/src/components/AIConsole.jsx',inputMethods:['KEYBOARD','POINTER','TOUCH'],knownExperienceDebt:['UNKNOWN'] },{ surfaceId:'desktop-browser',surfaceClass:'DEVICE_PRESENTATION',ownerGoal:'#1722',registrationRef:'presentation:desktop-browser',inputMethods:['KEYBOARD','POINTER'],knownExperienceDebt:['UNKNOWN'] },{ surfaceId:'windows-edge',surfaceClass:'DEVICE_PRESENTATION',ownerGoal:'#1722',registrationRef:'presentation:windows-edge',inputMethods:['KEYBOARD','POINTER'],knownExperienceDebt:['UNKNOWN'] },{ surfaceId:'ipad',surfaceClass:'DEVICE_PRESENTATION',ownerGoal:'#1722',registrationRef:'presentation:ipad',inputMethods:['TOUCH'],knownExperienceDebt:['UNKNOWN'] },{ surfaceId:'iphone',surfaceClass:'DEVICE_PRESENTATION',ownerGoal:'#1722',registrationRef:'presentation:iphone',inputMethods:['TOUCH'],knownExperienceDebt:['UNKNOWN'] },{ surfaceId:'whatsapp',surfaceClass:'TEXT_OR_MESSAGING_PRESENTATION',ownerGoal:'#1280',registrationRef:'presentation:whatsapp',inputMethods:['TEXT'],knownExperienceDebt:['UNKNOWN'] },{ surfaceId:'voice',surfaceClass:'VOICE_PRESENTATION',ownerGoal:'#1308',registrationRef:'presentation:future-voice',inputMethods:['VOICE'],knownExperienceDebt:['UNKNOWN'] },{ surfaceId:'quest3-spatial',surfaceClass:'SPATIAL_PRESENTATION',ownerGoal:'#1760',registrationRef:'presentation:quest3-spatial',inputMethods:['GAZE','CONTROLLER','VOICE'],knownExperienceDebt:['SPATIAL_READINESS_GAP'] },...userExplicitSurfaces];
+  return buildUiAgentExperienceInventory({ ...input,registeredApps,explicitSurfaces,explicitSurfacesMalformed:malformedOverride });
+}
