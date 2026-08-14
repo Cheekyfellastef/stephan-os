@@ -178,7 +178,11 @@ function githubPrCard(pr, githubFreshness, workflows) {
   if (githubFreshness.truth !== CURRENT) blockers.push(`${githubFreshness.truth}_GITHUB_TELEMETRY`);
   if (!exactPrHead(pr)) blockers.push('GITHUB_HEAD_UNKNOWN');
   if (checksStatus !== 'passed') blockers.push(`GITHUB_CHECKS_${checksStatus.toUpperCase()}`);
-  for (const blocker of list(pr.blockers)) blockers.push(text(blocker));
+  for (const blocker of list(pr.blockers)) {
+    const normalized = text(blocker);
+    if (checksStatus === 'passed' && normalized === 'checks_not_passed_or_unknown') continue;
+    blockers.push(normalized);
+  }
   const proofTruth = githubFreshness.truth === STALE
     ? STALE
     : (githubFreshness.truth === CURRENT && exactPrHead(pr) && checksStatus === 'passed' ? CURRENT : UNKNOWN);
