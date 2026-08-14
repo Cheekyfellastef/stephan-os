@@ -490,6 +490,7 @@ function forgeProof(forge, foundry, host, blockers) {
   ]) if (forge?.[field] !== true) blockers.push(blocker);
   if (forge?.activationRequired === true) blockers.push('forge-activation-required');
   if (!SAFE_ID_RE.test(m2ReceiptId) || !SAFE_ID_RE.test(m3RuntimeReceiptId)) blockers.push('forge-receipt-identity-invalid');
+  if (m2ReceiptId && m2ReceiptId === m3RuntimeReceiptId) blockers.push('forge-receipt-identities-not-distinct');
   for (const receiptId of [m2ReceiptId, m3RuntimeReceiptId]) {
     if (!foundry?.buildAuthorityReceiptIds.includes(receiptId)
       || !foundry?.authorityReceiptIds.includes(receiptId)) blockers.push('foundry-forge-authority-binding-invalid');
