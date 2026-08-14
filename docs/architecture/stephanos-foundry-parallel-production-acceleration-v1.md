@@ -43,7 +43,7 @@ Malformed, sparse, duplicate, stale, future, expired, wrong-repository, wrong-he
 
 Every lane first passes `validateBuildLaneCapacityReceipt()` for the trusted repository, task class and clock. V1 accepts exactly one `CHATGPT_GITHUB` baseline and at most one `FOUNDRY_FORGE` lane. Duplicate providers, routes, build receipts or metrics receipts fail the inventory.
 
-Receipt identities are compared in their canonical trimmed form through one shared build-and-metrics inventory. Lexically different raw strings, cross-provider reuse and cross-stage reuse cannot represent the same canonical receipt and evade duplicate detection.
+Receipt identities are compared in their canonical trimmed form through one shared build, metrics and adjudicated Forge-stage inventory. Lexically different raw strings, cross-provider reuse and cross-stage reuse—including reuse of an M2 or M3 authority identity—cannot represent the same canonical receipt and evade duplicate detection.
 
 The metrics receipt is payload-digest bound and repeats the exact build receipt identity, route, repository, worker, state, supported operations, supported task classes, queue depth and p95 start latency. Its authority IDs and proof refs must carry the build receipt chain, and its observation/expiry interval must be contained within the build receipt interval. Execution, integration, success, rework and available-slot measurements are consumed only from this host-provided receipt; root request values never participate.
 
