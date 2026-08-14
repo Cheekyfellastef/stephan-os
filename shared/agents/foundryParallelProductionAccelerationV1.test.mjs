@@ -268,6 +268,21 @@ test('scheduler rejects overlapping selections, set mismatches and non-GitHub ro
     assert.equal(result.valid, false);
     assert.ok(result.blockers.includes('scheduler-decision-status-inconsistent'));
   });
+  for (const lifecycle of ['MERGE_READY', 'CLOSE_READY']) {
+    await t.test(`${lifecycle} binds issue, route and lifecycle to one canonical portfolio row`, () => {
+      const selected = portfolioItem(1737, { lifecycle });
+      const projection = scheduler({ selected:[], portfolio:[selected] });
+      projection.decisionReceipt.status = lifecycle;
+      projection.decisionReceipt.selectedIssue = selected.issue;
+      projection.decisionReceipt.selectedLifecycle = lifecycle;
+      projection.decisionReceipt.route = selected.route;
+      assert.equal(planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection })).valid, true);
+      projection.decisionReceipt.route = 'OPENCLAW_LOCAL';
+      const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
+      assert.equal(result.valid, false);
+      assert.ok(result.blockers.includes('scheduler-decision-status-inconsistent'));
+    });
+  }
   await t.test('non-GitHub route', () => {
     const selected = [portfolioItem(1737, { route:'OPENCLAW_LOCAL' })];
     const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:scheduler({ selected }) }));
@@ -343,6 +358,22 @@ test('positive candidates held after Foundry slots are consumed report slot exha
   assert.equal(result.heldCandidates.length, 1);
   assert.equal(result.heldCandidates[0].candidateId, '#1738');
   assert.equal(result.heldCandidates[0].reason, 'NO_AVAILABLE_FOUNDRY_SLOT_USE_GITHUB');
+});
+
+test('a proven zero-slot Foundry lane reports current capacity exhaustion, not missing proof', () => {
+  const foundry = evidence('foundry', 'FOUNDRY_FORGE', { metrics:{ availableSlots:0 } });
+  const result = planFoundryParallelProductionAcceleration({}, host({
+    providerCapacityEvidence:[evidence('github', 'CHATGPT_GITHUB'), foundry],
+  }));
+  assert.equal(result.valid, true);
+  assert.equal(result.decision, FOUNDRY_ACCELERATION_DECISIONS.WAITING_FOR_CAPACITY);
+  assert.equal(result.assignments.length, 0);
+  assert.equal(result.heldCandidates[0].reason, 'NO_AVAILABLE_FOUNDRY_SLOT_USE_GITHUB');
+  assert.equal(result.foundryTelemetry.status, 'CAPACITY_EXHAUSTED');
+  assert.equal(result.foundryTelemetry.operatorRequired, false);
+  const provider = result.providerStatus.find(({ providerId }) => providerId === 'foundry');
+  assert.equal(provider.evidenceValid, true);
+  assert.equal(provider.eligible, false);
 });
 
 test('zero and negative savings never route even when the trusted minimum is zero', async (t) => {
