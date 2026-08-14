@@ -350,15 +350,29 @@ function normalizeWorkspaceAnswer(answer = {}) {
   });
 }
 
+function validateWorkspaceAnswerForRequest(answer, request) {
+  const errors = [];
+  if (answer.schemaVersion !== VR_RESEARCH_PARTICIPANT_QA_SCHEMA_VERSION) errors.push('answer-schema-version-mismatch');
+  if (!safeId(answer.answerId)) errors.push('answerId-invalid');
+  if (!safeId(answer.questionId)) errors.push('answer-questionId-invalid');
+  if (answer.questionId !== request.questionId) errors.push('answer-questionId-mismatch');
+  if (answer.responderParticipantId !== VR_RESEARCH_PARTICIPANT_ID) errors.push('answer-responder-mismatch');
+  if (!timestamp(answer.answeredAtUtc)) errors.push('answer-answeredAtUtc-invalid');
+  if (!text(answer.answerVerdict)) errors.push('answer-verdict-required');
+  if (!text(answer.freshness)) errors.push('answer-freshness-required');
+  return Object.freeze({ valid: errors.length === 0, errors: Object.freeze(errors) });
+}
+
 export function createVrResearchQaWorkspaceAnswerRecord(request = {}, answer = {}, input = {}) {
   const requestValidation = validateRequest(request);
   const normalizedRequest = requestValidation.normalized;
   const normalizedAnswer = normalizeWorkspaceAnswer(answer);
+  const answerValidation = validateWorkspaceAnswerForRequest(normalizedAnswer, normalizedRequest);
   const messageId = `vr-qa-${hash({ questionId: normalizedRequest.questionId, answerId: normalizedAnswer.answerId }).slice(0, 20)}`;
   const answerProofRefs = canonicalProofRefs(normalizedAnswer.evidenceRefs);
   const suppliedProofRefs = canonicalProofRefs(input.proofRefs);
   const candidateProofRefs = answerProofRefs.length > 0 ? answerProofRefs : suppliedProofRefs;
-  const proofRefs = requestValidation.valid && proofRefsVerified(candidateProofRefs, input) ? candidateProofRefs : [];
+  const proofRefs = requestValidation.valid && answerValidation.valid && proofRefsVerified(candidateProofRefs, input) ? candidateProofRefs : [];
   const record = Object.freeze({
     schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
     kind: SHARED_WORKSPACE_RECORD_KINDS.MESSAGE,
@@ -379,5 +393,9 @@ export function createVrResearchQaWorkspaceAnswerRecord(request = {}, answer = {
     mergeAllowed: false,
     deploymentAllowed: false,
   });
-  return Object.freeze({ record, validation: validateSharedWorkspaceRecord(record, input.validationOptions) });
+  return Object.freeze({
+    record,
+    answerValidation,
+    validation: validateSharedWorkspaceRecord(record, input.validationOptions),
+  });
 }
