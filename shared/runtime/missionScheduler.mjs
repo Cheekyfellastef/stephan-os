@@ -23,6 +23,7 @@ const MAX_PORTFOLIO_GOALS = 1000;
 const MAX_PREREQUISITES_PER_GOAL = 1000;
 const MAX_TOTAL_PREREQUISITES = 10000;
 const MAX_EVIDENCE_ITEMS = 10000;
+const MAX_TOTAL_EVIDENCE_ITEMS = 50000;
 const MAX_CYCLE_EVIDENCE = 20;
 const MAX_CYCLE_PATH_ISSUES = 20;
 const MAX_LANE_IDENTITY_LENGTH = CHAT_STRING_LIMIT;
@@ -351,14 +352,23 @@ export function buildMissionScheduler(input = {}) {
   const portfolioBoundExceeded = rawGoals.length > MAX_PORTFOLIO_GOALS;
   let totalPrerequisites = 0;
   let totalPrerequisiteBoundExceeded = false;
+  let totalEvidenceItems = [source.proofHeadShas, source.proofReceipts, source.proofRefs]
+    .reduce((total, value) => total + (Array.isArray(value) ? value.length : 0), 0);
+  let totalEvidenceBoundExceeded = totalEvidenceItems > MAX_TOTAL_EVIDENCE_ITEMS;
   if (!portfolioBoundExceeded) {
     for (const candidate of rawGoals) {
-      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || !Array.isArray(candidate.prerequisites)) continue;
-      totalPrerequisites += candidate.prerequisites.length;
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+      if (Array.isArray(candidate.prerequisites)) totalPrerequisites += candidate.prerequisites.length;
+      for (const key of ['resourceIds', 'resultProofRefs', 'structuralReviewProofRefs', 'modelTestProofRefs']) {
+        if (Array.isArray(candidate[key])) totalEvidenceItems += candidate[key].length;
+      }
     }
     totalPrerequisiteBoundExceeded = totalPrerequisites > MAX_TOTAL_PREREQUISITES;
+    totalEvidenceBoundExceeded = totalEvidenceItems > MAX_TOTAL_EVIDENCE_ITEMS;
   }
-  const goals = portfolioBoundExceeded || totalPrerequisiteBoundExceeded ? [] : Array.from({ length:rawGoals.length }, (_, index) => normalizeGoal(rawGoals[index]));
+  const goals = portfolioBoundExceeded || totalPrerequisiteBoundExceeded || totalEvidenceBoundExceeded
+    ? []
+    : Array.from({ length:rawGoals.length }, (_, index) => normalizeGoal(rawGoals[index]));
   const issueCounts = new Map();
   for (const goal of goals) if (goal.issue) issueCounts.set(goal.issue, (issueCounts.get(goal.issue) ?? 0) + 1);
   const duplicateIssueIds = [...issueCounts].filter(([, count]) => count > 1).map(([issue]) => issue);
@@ -373,6 +383,7 @@ export function buildMissionScheduler(input = {}) {
   if (goalsContainerInvalid) contradictions.push({ code:'INVALID_GOALS_CONTAINER' });
   if (portfolioBoundExceeded) contradictions.push({ code:'PORTFOLIO_BOUND_EXCEEDED', suppliedGoalCount:rawGoals.length, maximumGoalCount:MAX_PORTFOLIO_GOALS });
   if (totalPrerequisiteBoundExceeded) contradictions.push({ code:'TOTAL_PREREQUISITE_BOUND_EXCEEDED', suppliedPrerequisiteCount:totalPrerequisites, maximumPrerequisiteCount:MAX_TOTAL_PREREQUISITES });
+  if (totalEvidenceBoundExceeded) contradictions.push({ code:'TOTAL_EVIDENCE_BOUND_EXCEEDED', suppliedEvidenceCount:totalEvidenceItems, maximumCount:MAX_TOTAL_EVIDENCE_ITEMS });
   if (proofHeadsContainerInvalid || invalidProofHeads.length || proofHeadsBoundExceeded) contradictions.push({ code:'INVALID_PROOF_HEAD_EVIDENCE', invalidProofHeads, boundExceeded:proofHeadsBoundExceeded, suppliedCount:Array.isArray(source.proofHeadShas) ? source.proofHeadShas.length : 0, maximumCount:MAX_EVIDENCE_ITEMS });
   if (proofReceiptsContainerInvalid || invalidProofReceipts.length || proofReceiptsBoundExceeded) contradictions.push({ code:'INVALID_PROOF_RECEIPT_EVIDENCE', invalidProofReceipts, boundExceeded:proofReceiptsBoundExceeded, suppliedCount:Array.isArray(source.proofReceipts) ? source.proofReceipts.length : 0, maximumCount:MAX_EVIDENCE_ITEMS });
   if (proofRefsContainerInvalid || invalidProofRefs.length || proofRefsBoundExceeded) contradictions.push({ code:'INVALID_PROOF_REFERENCE_EVIDENCE', invalidProofRefs, boundExceeded:proofRefsBoundExceeded, suppliedCount:proofRefEvidence.suppliedCount, maximumCount:MAX_EVIDENCE_ITEMS });
