@@ -91,6 +91,17 @@ function laneStatus(statusId, route, overrides = {}) {
   };
 }
 
+function mutateReceipt(statusId, route, mutation) {
+  const original = laneStatus(statusId, route);
+  return {
+    ...original,
+    capacityReceipt: {
+      ...original.capacityReceipt,
+      ...mutation,
+    },
+  };
+}
+
 test('canonical Codex, GitHub and Forge capacity evidence normalize without inventing unsupported metrics', () => {
   const observations = createSovereigntyCapacityObservationsV1({
     codexStatus: codexStatus(),
@@ -133,6 +144,19 @@ test('two routes on the same provider remain concentrated rather than gaming div
   assert.equal(projection.diversificationCoveragePercent, 0);
 });
 
+test('provider aliases are canonicalized before concentration is computed', () => {
+  const projection = buildSovereigntyWorkspaceProjectionV1({
+    systemObservations: [system('route-a', 'openai'), system('route-b', 'OpenAI')],
+    capabilities: [capability('source-construction', 'route-a', { alternativeSystemIds: ['route-b'] })],
+  }, { nowMs: NOW_MS });
+
+  assert.equal(projection.status, 'CURRENT');
+  assert.deepEqual(projection.systems.map((item) => item.providerId), ['openai', 'openai']);
+  assert.equal(projection.posture, 'CONCENTRATED');
+  assert.equal(projection.capabilityPostures[0].currentViableProviderCount, 1);
+  assert.equal(projection.diversificationCoveragePercent, 0);
+});
+
 test('one declared provider is explicitly a single point of failure', () => {
   const projection = buildSovereigntyWorkspaceProjectionV1({
     systemObservations: [system('only-builder', 'only-provider')],
@@ -145,11 +169,11 @@ test('one declared provider is explicitly a single point of failure', () => {
 });
 
 test('stale or future primary evidence makes capability posture UNKNOWN instead of green', () => {
-  for (const observedAtUtc of ['2026-08-14T09:00:00.000Z', '2026-08-14T13:00:01.000Z']) {
+  for (const observedAtUtc of ['2026-08-14T09:00:00.000Z', '2026-08-14T12:00:00.001Z', '2026-08-14T13:00:01.000Z']) {
     const projection = buildSovereigntyWorkspaceProjectionV1({
       systemObservations: [system('primary', 'provider-one', { observedAtUtc })],
       capabilities: [capability('source-construction', 'primary')],
-    }, { nowMs: NOW_MS, staleAfterMs: 60 * 60 * 1000, maxFutureSkewMs: 5 * 60 * 1000 });
+    }, { nowMs: NOW_MS, staleAfterMs: 60 * 60 * 1000 });
     assert.equal(projection.status, 'CURRENT');
     assert.equal(projection.posture, 'UNKNOWN');
     assert.equal(projection.evidenceCoveragePercent, 0);
@@ -215,21 +239,46 @@ test('caller input cannot turn Sovereignty advice into install, spend, routing, 
   }
 });
 
+test('canonical build-lane receipt invariants gate Sovereignty capacity', () => {
+  const cases = [
+    mutateReceipt('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', { schemaVersion: 'wrong-schema' }),
+    mutateReceipt('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', { route: 'FOUNDRY_FORGE' }),
+    mutateReceipt('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', { supportedOperations: ['SOURCE_CONSTRUCTION'] }),
+    mutateReceipt('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', { supportedTaskClasses: ['MULTI_MODULE_IMPLEMENTATION'] }),
+    mutateReceipt('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', { queueDepth: null }),
+    mutateReceipt('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', { p95StartLatencySeconds: null }),
+    mutateReceipt('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', { expiresAtUtc: '2026-08-14T13:30:00.000Z' }),
+    mutateReceipt('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', { repository: 'Other/repo' }),
+  ];
+
+  for (const githubLaneStatus of cases) {
+    const observations = createSovereigntyCapacityObservationsV1({ githubLaneStatus }, { nowMs: NOW_MS });
+    const github = observations[1];
+    assert.equal(github.truthState, 'UNKNOWN');
+    assert.equal(github.capacityState, 'UNKNOWN');
+    assert.equal(github.metrics.queueDepth, null);
+    assert.equal(github.metrics.p95StartLatencySeconds, null);
+  }
+});
+
+test('Sovereignty rejects build-lane observations from even the canonical one-minute future tolerance', () => {
+  const githubLaneStatus = mutateReceipt('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', {
+    observedAtUtc: '2026-08-14T12:00:30.000Z',
+    expiresAtUtc: '2026-08-14T12:15:30.000Z',
+  });
+  const observations = createSovereigntyCapacityObservationsV1({ githubLaneStatus }, { nowMs: NOW_MS });
+  assert.equal(observations[1].truthState, 'UNKNOWN');
+  assert.equal(observations[1].capacityState, 'UNKNOWN');
+});
+
 test('canonical capacity adapters fail closed when receipts are expired, proofless or future meter evidence is supplied', () => {
   const observations = createSovereigntyCapacityObservationsV1({
-    codexStatus: codexStatus({ observedAtUtc: '2026-08-14T12:10:01.000Z' }),
-    githubLaneStatus: laneStatus('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', {
+    codexStatus: codexStatus({ observedAtUtc: '2026-08-14T12:00:00.001Z' }),
+    githubLaneStatus: mutateReceipt('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', {
       proofRefs: [],
-      capacityReceipt: {
-        ...laneStatus('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB').capacityReceipt,
-        proofRefs: [],
-      },
     }),
-    forgeLaneStatus: laneStatus('foundry-forge-build-capacity-current', 'FOUNDRY_FORGE', {
-      capacityReceipt: {
-        ...laneStatus('foundry-forge-build-capacity-current', 'FOUNDRY_FORGE').capacityReceipt,
-        expiresAtUtc: '2026-08-14T11:59:00.000Z',
-      },
+    forgeLaneStatus: mutateReceipt('foundry-forge-build-capacity-current', 'FOUNDRY_FORGE', {
+      expiresAtUtc: '2026-08-14T11:59:00.000Z',
     }),
   }, { nowMs: NOW_MS });
 
