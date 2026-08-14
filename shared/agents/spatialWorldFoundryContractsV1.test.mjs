@@ -139,18 +139,38 @@ test('M1 contracts accept one bounded candidate asset lineage', () => {
   }).valid, true);
 });
 
-test('voice or authority-bearing operations cannot hide inside allowedOperations', () => {
-  for (const forbidden of ['VOICE_EXECUTE', 'MERGE', 'DEPLOY', 'APPROVE', 'LEASE_SEIZE', 'RUNTIME_MUTATE']) {
-    const verdict = validateSpatialBuildOrder(buildOrder({ allowedOperations: ['GENERATE_ASSET', forbidden] }));
-    assert.equal(verdict.valid, false);
-    assert.ok(verdict.errors.includes('allowedOperations-contains-authority-bypass'));
+test('allowedOperations is an explicit safe allowlist rather than a bypass blacklist', () => {
+  for (const unsafe of ['VOICE_EXECUTE', 'MERGE', 'DEPLOY', 'APPROVE', 'LEASE_SEIZE', 'RUNTIME_MUTATE', 'SHELL_EXECUTE', 'RUN_ARBITRARY_COMMAND']) {
+    const verdict = validateSpatialBuildOrder(buildOrder({ allowedOperations: ['GENERATE_ASSET', unsafe] }));
+    assert.equal(verdict.valid, false, `${unsafe} must fail closed`);
+    assert.ok(verdict.errors.includes('allowedOperations-contains-unknown-operation'));
   }
+  assert.equal(validateSpatialBuildOrder(buildOrder({
+    allowedOperations: ['GENERATE_ASSET', 'WRITE_SANDBOX', 'RUN_VALIDATION'],
+  })).valid, true);
 });
 
-test('build orders require explicit non-overlapping-style resource scope syntax', () => {
-  const verdict = validateSpatialBuildOrder(buildOrder({ ownedResourceScopes: ['C:\\worlds\\idea-planet-001'] }));
-  assert.equal(verdict.valid, false);
-  assert.ok(verdict.errors.includes('ownedResourceScopes-contains-invalid-resource-scope'));
+test('build orders enforce the typed resource-scope grammar', () => {
+  for (const invalidScope of [
+    'C:\\worlds\\idea-planet-001',
+    'region:landing-bay',
+    'region:idea-planet-001/landing-bay/extra',
+    'planet:idea-planet-001/landing-bay',
+    'object:idea-planet-001/crate-001',
+  ]) {
+    const verdict = validateSpatialBuildOrder(buildOrder({ ownedResourceScopes: [invalidScope] }));
+    assert.equal(verdict.valid, false, `${invalidScope} must fail closed`);
+    assert.ok(verdict.errors.includes('ownedResourceScopes-contains-invalid-resource-scope'));
+  }
+  assert.equal(validateSpatialBuildOrder(buildOrder({
+    ownedResourceScopes: [
+      'planet:idea-planet-001',
+      'region:idea-planet-001/landing-bay',
+      'object:crate-001',
+      'world-system:lighting-001',
+      'asset:asset.crate-001',
+    ],
+  })).valid, true);
 });
 
 test('contract records fail closed on undeclared fields', () => {
@@ -161,10 +181,22 @@ test('contract records fail closed on undeclared fields', () => {
   assert.ok(verdict.errors.includes('unknown-field:rawVoiceCommand'));
 });
 
-test('large asset identity rejects an absolute personal filesystem location', () => {
-  const verdict = validateSpatialAssetRecord(asset({ largeAssetLocation: 'C:\\Users\\Stephan\\Downloads\\crate.glb' }));
-  assert.equal(verdict.valid, false);
-  assert.ok(verdict.errors.includes('largeAssetLocation-invalid'));
+test('large binaries require governed schemes and repository source locations reject traversal', () => {
+  for (const badLargeAsset of [
+    'C:\\Users\\Stephan\\Downloads\\crate.glb',
+    'assets/crate.glb',
+    'assets/../../outside.glb',
+    'object://bucket/../outside.glb',
+  ]) {
+    const verdict = validateSpatialAssetRecord(asset({ largeAssetLocation: badLargeAsset }));
+    assert.equal(verdict.valid, false, `${badLargeAsset} must fail closed`);
+    assert.ok(verdict.errors.includes('largeAssetLocation-invalid'));
+  }
+  const sourceTraversal = validateSpatialAssetRecord(asset({ sourceLocation: 'assets/../../outside.json' }));
+  assert.equal(sourceTraversal.valid, false);
+  assert.ok(sourceTraversal.errors.includes('sourceLocation-invalid'));
+  assert.equal(validateSpatialAssetRecord(asset({ largeAssetLocation: `lfs://objects/${'a'.repeat(64)}` })).valid, true);
+  assert.equal(validateSpatialAssetRecord(asset({ largeAssetLocation: 'object://world-assets/crate-001.glb' })).valid, true);
 });
 
 test('world snapshots are exact-source and asset-identity bound', () => {
@@ -181,12 +213,21 @@ test('world snapshots are exact-source and asset-identity bound', () => {
 });
 
 test('bundle validation catches cross-record lineage substitution', () => {
-  const verdict = validateSpatialWorldFoundryBundle({
+  const buildOrderMismatch = validateSpatialWorldFoundryBundle({
     buildOrder: buildOrder(),
     asset: asset({ creatingBuildOrderId: 'sbo.other-build-order' }),
     provenance: provenance(),
     snapshot: snapshot(),
   });
-  assert.equal(verdict.valid, false);
-  assert.ok(verdict.errors.includes('lineage-build-order-mismatch'));
+  assert.equal(buildOrderMismatch.valid, false);
+  assert.ok(buildOrderMismatch.errors.includes('lineage-build-order-mismatch'));
+
+  const creatorMismatch = validateSpatialWorldFoundryBundle({
+    buildOrder: buildOrder(),
+    asset: asset(),
+    provenance: provenance({ creatorAgentId: 'unrelated-agent' }),
+    snapshot: snapshot(),
+  });
+  assert.equal(creatorMismatch.valid, false);
+  assert.ok(creatorMismatch.errors.includes('lineage-provenance-creator-mismatch'));
 });
