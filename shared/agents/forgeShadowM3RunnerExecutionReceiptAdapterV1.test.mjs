@@ -1778,6 +1778,28 @@ test('receipt projection rejects zero-own-key mutable scalar coercion authority'
   assert.deepEqual(hostileExpectation.blockers, ['receipt-inspection-failed']);
 });
 
+test('receipt validation requires aggregate proof coverage for both canonical runners', async () => {
+  const executed = await executeVerified(input(), {
+    platform: 'win32', now, executeRunner: async (request) => executionResult(request),
+  });
+  const hostileProofEstates = [
+    [`proofs/forge-shadow-m3/unrelated-runner/${'8'.repeat(64)}.json`],
+    [`proofs/forge-shadow-m3/stephanos-forge-linux-runner-01/${'6'.repeat(64)}.json`],
+  ];
+  for (const proofRefs of hostileProofEstates) {
+    const hostile = structuredClone(executed.receipt);
+    hostile.proofRefs = proofRefs;
+    const body = { ...hostile };
+    delete body.payloadSha256;
+    hostile.payloadSha256 = contentDigest(body);
+
+    const validation = validateForgeShadowM3RunnerRuntimeReceipt(hostile);
+    assert.equal(validation.ok, false, JSON.stringify(proofRefs));
+    assert.equal(validation.receipt, null, JSON.stringify(proofRefs));
+    assert.ok(validation.blockers.includes('receipt-proof-refs-invalid'), JSON.stringify(validation));
+  }
+});
+
 test('unsupported runtime-plan digest expectations fail closed instead of being ignored', async () => {
   const executed = await executeVerified(input(), {
     platform: 'win32', now, executeRunner: async (request) => executionResult(request),

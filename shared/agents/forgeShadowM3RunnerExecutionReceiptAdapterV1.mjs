@@ -20,6 +20,10 @@ const MAX_RUNNER_TEARDOWN_MS = 300 * 1000;
 const MAX_RUNNER_PROOF_REFS = 8;
 const MAX_RECEIPT_PROOF_REFS = 16;
 const TEARDOWN_QUARANTINE_REASON = 'TEARDOWN_POLICY_VIOLATION';
+const CANONICAL_RUNNER_IDENTITIES = Object.freeze([
+  'stephanos-forge-linux-runner-01',
+  'stephanos-forge-windows-proof-runner-01',
+]);
 
 export const FORGE_SHADOW_M3_EXECUTION_ADAPTER_SCHEMA =
   'stephanos.forge-shadow-m3-runner-execution-adapter.v1';
@@ -266,6 +270,14 @@ function safeProofRefs(value, runnerId = '', maximum = MAX_RUNNER_PROOF_REFS) {
   if (!refs.every((ref) => PROOF_REF.test(ref) && !ref.includes('..'))) return null;
   if (runnerId && !refs.every((ref) => ref.startsWith(`proofs/forge-shadow-m3/${runnerId}/`))) return null;
   return Object.freeze([...refs].sort());
+}
+
+function safeAggregateProofRefs(value) {
+  const refs = safeProofRefs(value, '', MAX_RECEIPT_PROOF_REFS);
+  if (!refs || !CANONICAL_RUNNER_IDENTITIES.every((runnerId) => (
+    refs.some((ref) => ref.startsWith(`proofs/forge-shadow-m3/${runnerId}/`))
+  ))) return null;
+  return refs;
 }
 
 function supportedRunnerEstate(plan) {
@@ -783,7 +795,7 @@ export function validateForgeShadowM3RunnerRuntimeReceipt(receipt, expectations 
       'zeroResidualRegistration', 'zeroResidualCredential', 'zeroResidualWorkspace',
     ]) if (projectedReceipt[field] !== true) blockers.push(`receipt-runtime-proof-incomplete:${field}`);
     if (projectedReceipt.canCarryRealWork !== false) blockers.push('receipt-current-capacity-invalid');
-    if (!safeProofRefs(projectedReceipt.proofRefs, '', MAX_RECEIPT_PROOF_REFS)) blockers.push('receipt-proof-refs-invalid');
+    if (!safeAggregateProofRefs(projectedReceipt.proofRefs)) blockers.push('receipt-proof-refs-invalid');
     if (!Number.isFinite(instant(projectedReceipt.completedAt))) blockers.push('receipt-completion-time-invalid');
     const { payloadSha256, ...body } = projectedReceipt;
     if (!SHA256_HEX.test(text(payloadSha256).toLowerCase()) || sha256Hex(body) !== text(payloadSha256).toLowerCase()) blockers.push('receipt-content-digest-invalid');
