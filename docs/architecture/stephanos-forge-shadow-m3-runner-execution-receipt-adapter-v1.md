@@ -13,7 +13,7 @@ The adapter accepts exactly:
 1. the complete input to `planForgeShadowM3RunnerRuntime()`; and
 2. one exact runtime authorization containing a canonical operator-approval receipt.
 
-The adapter reruns the merged M3 admission and runtime planners. It never accepts a caller-authored object merely claiming that those plans are ready.
+The adapter reruns the merged M3 admission and runtime planners. It never accepts a caller-authored object merely claiming that those plans are ready. Before validation, it materializes the complete runtime authorization and nested approval receipt exactly once into one recursively frozen inert projection. Preflight validation, independent verification, atomic reservation and every executor request consume only that projection; stateful caller accessors cannot present canonical values to a gate and drift afterward at the host boundary.
 
 The runtime authorization and its closed-world approval receipt are bound to:
 
@@ -77,7 +77,7 @@ A successful result emits:
 
 The receipt includes the exact source head and tree, artifact-set digest, fixed runner identities, immutable proof references, teardown proof, zero-residual-authority proof and its own content digest. Its identifier is derived from the validated authorization ID.
 
-`validateForgeShadowM3RunnerRuntimeReceipt()` materializes one inert receipt projection, revalidates its complete own-key estate, dense arrays and content digest, and returns only that deeply frozen projection. Later Forge-aware routing therefore never receives the caller-owned object or rereads stateful accessors that could promote a mutated or widened receipt. Its exported inspection boundary is total: hostile proxies, getters, cyclic records and other caller-controlled inspection failures return `receipt-inspection-failed` rather than throwing into a router or adjudicator.
+`validateForgeShadowM3RunnerRuntimeReceipt()` materializes one inert receipt projection, revalidates its complete own-key estate, dense arrays and content digest, and returns only that deeply frozen projection. Its supported expectation surface is limited to repository, source head, source tree and artifact-set digest because those identities exist in this canonical receipt. `expectedRuntimePlanDigest` is deliberately rejected rather than silently accepted: the construction receipt does not carry that field, so a validator cannot truthfully enforce it. Later Forge-aware routing therefore never receives the caller-owned object or rereads stateful accessors that could promote a mutated or widened receipt. Its exported inspection boundary is total: hostile proxies, getters, cyclic records and other caller-controlled inspection failures return `receipt-inspection-failed` rather than throwing into a router or adjudicator.
 
 The receipt grants no continuing mutation authority. Its verdict is `FORGE_SHADOW_M3_RUNNER_CONSTRUCTION_PROVEN` and `canCarryRealWork` is always `false`: it records only that the exact authorised ephemeral construction-and-teardown path succeeded historically. It never represents current runtime-ready capacity and cannot route a future job; each future job requires fresh bounded execution and teardown.
 

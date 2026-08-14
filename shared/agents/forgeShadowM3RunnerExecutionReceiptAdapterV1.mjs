@@ -95,7 +95,6 @@ const RECEIPT_KEYS = [
 ];
 const RECEIPT_EXPECTATION_KEYS = [
   'expectedRepository', 'expectedHead', 'expectedTree', 'expectedArtifactSetDigest',
-  'expectedRuntimePlanDigest',
 ];
 const FORBIDDEN_FIELDS = new Set([
   'command', 'commands', 'executable', 'args', 'arguments', 'shell', 'powershell',
@@ -183,6 +182,24 @@ function inertRecordSnapshot(value, { arrays = true } = {}) {
     const field = value[key];
     snapshot[key] = arrays && Array.isArray(field) ? inertArraySnapshot(field) : field;
   }
+  return Object.freeze(snapshot);
+}
+
+function inertDeepSnapshot(value, seen = new WeakSet()) {
+  if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) return value;
+  if (!value || typeof value !== 'object') {
+    throw new TypeError('inert-value-type-invalid');
+  }
+  if (Array.isArray(value)) return inertArraySnapshot(value);
+  if (seen.has(value)) throw new TypeError('inert-value-cycle-invalid');
+  seen.add(value);
+  const keys = Reflect.ownKeys(value);
+  if (!keys.every((key) => typeof key === 'string')) {
+    throw new TypeError('inert-record-symbol-key-invalid');
+  }
+  const snapshot = {};
+  for (const key of keys) snapshot[key] = inertDeepSnapshot(value[key], seen);
+  seen.delete(value);
   return Object.freeze(snapshot);
 }
 
@@ -725,14 +742,14 @@ export function validateForgeShadowM3RunnerRuntimeReceipt(receipt, expectations 
   try {
     const projectedReceipt = inertRecordSnapshot(receipt);
     const projectedExpectations = inertRecordSnapshot(expectations);
+    const blockers = [];
     if (!subsetKeys(projectedExpectations, RECEIPT_EXPECTATION_KEYS)) {
-      throw new TypeError('receipt-expectation-key-estate-invalid');
+      blockers.push('receipt-expectation-fields-invalid');
     }
     const expectedRepository = projectedExpectations.expectedRepository ?? '';
     const expectedHead = projectedExpectations.expectedHead ?? '';
     const expectedTree = projectedExpectations.expectedTree ?? '';
     const expectedArtifactSetDigest = projectedExpectations.expectedArtifactSetDigest ?? '';
-    const blockers = [];
     if (!exactKeys(projectedReceipt, RECEIPT_KEYS)) blockers.push('receipt-fields-invalid');
     if (projectedReceipt.schemaVersion !== FORGE_SHADOW_M3_RUNTIME_RECEIPT_SCHEMA) blockers.push('receipt-schema-invalid');
     if (!SAFE_ID.test(text(projectedReceipt.receiptId))) blockers.push('receipt-id-invalid');
@@ -787,14 +804,24 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   createInvocationId = () => `forge-m3-invocation-${randomUUID()}`,
 } = {}) {
   const blockers = [];
-  if (!exactKeys(input, INPUT_KEYS)) blockers.push('input-fields-invalid');
-  const unsafe = findForbidden(input);
-  if (unsafe) blockers.push(`unsafe-field:${unsafe}`);
+  let inputSnapshot = {};
+  let runtimeAuthorization = null;
+  try {
+    inputSnapshot = inertRecordSnapshot(input, { arrays: false });
+    runtimeAuthorization = inertDeepSnapshot(inputSnapshot.runtimeAuthorization);
+  } catch {
+    blockers.push('runtime-authorization-inspection-failed');
+  }
+  if (!exactKeys(inputSnapshot, INPUT_KEYS)) blockers.push('input-fields-invalid');
+  const planUnsafe = findForbidden(inputSnapshot.runtimePlanInput, ['runtimePlanInput']);
+  if (planUnsafe) blockers.push(`unsafe-field:${planUnsafe}`);
+  const authorizationUnsafe = findForbidden(runtimeAuthorization, ['runtimeAuthorization']);
+  if (authorizationUnsafe) blockers.push(`unsafe-field:${authorizationUnsafe}`);
   if (platform !== 'win32') blockers.push('connected-windows-battle-bridge-required');
   const nowMs = trustedNowMs(now);
   if (!Number.isFinite(nowMs)) blockers.push('execution-now-invalid');
   const trustedNowUtc = Number.isFinite(nowMs) ? new Date(nowMs).toISOString() : '';
-  const suppliedPlanInput = input.runtimePlanInput;
+  const suppliedPlanInput = inputSnapshot.runtimePlanInput;
   const trustedPlanInput = suppliedPlanInput && typeof suppliedPlanInput === 'object'
     && !Array.isArray(suppliedPlanInput)
     ? {
@@ -814,7 +841,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   if (plan && !supportedRunnerEstate(plan)) blockers.push('runtime-plan-runner-estate-unsupported');
   const planDigest = plan ? buildForgeShadowM3RuntimePlanDigest(plan) : '';
   let authorization = plan && Number.isFinite(nowMs)
-    ? validateAuthorization(input.runtimeAuthorization, plan, planDigest, nowMs, blockers)
+    ? validateAuthorization(runtimeAuthorization, plan, planDigest, nowMs, blockers)
     : null;
   if (typeof executeRunner !== 'function') blockers.push('fixed-runner-executor-not-configured');
   if (typeof verifyOperatorApproval !== 'function') blockers.push('operator-approval-verifier-not-configured');
@@ -825,13 +852,13 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   let approvalVerification;
   try {
     approvalVerification = await verifyOperatorApproval(Object.freeze({
-      approvalReceipt: input.runtimeAuthorization.approvalReceipt,
+      approvalReceipt: runtimeAuthorization.approvalReceipt,
       authorizationId: authorization.authorizationId,
       repository: plan.repository,
       expectedHead: plan.canonicalMainHead,
       expectedTree: plan.canonicalMainTree,
       runtimePlanDigest: planDigest,
-      executionSurface: input.runtimeAuthorization.executionSurface,
+      executionSurface: runtimeAuthorization.executionSurface,
       nowUtc: new Date(nowMs).toISOString(),
     }));
   } catch {
@@ -840,12 +867,12 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   const verificationNowMs = trustedNowMs(now);
   if (!Number.isFinite(verificationNowMs)) blockers.push('operator-approval-verification-now-invalid');
   const verifiedAuthorization = plan && Number.isFinite(verificationNowMs)
-    ? validateAuthorization(input.runtimeAuthorization, plan, planDigest, verificationNowMs, blockers)
+    ? validateAuthorization(runtimeAuthorization, plan, planDigest, verificationNowMs, blockers)
     : null;
   const verifiedApproval = approvalVerification && validateApprovalVerification(
     approvalVerification,
-    input.runtimeAuthorization.approvalReceipt,
-    input.runtimeAuthorization,
+    runtimeAuthorization.approvalReceipt,
+    runtimeAuthorization,
     plan,
     planDigest,
     verificationNowMs,
@@ -872,12 +899,12 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
   const reservationNowMs = trustedNowMs(now);
   if (!Number.isFinite(reservationNowMs)) blockers.push('runtime-authorization-reservation-now-invalid');
   const reservedAuthorization = plan && Number.isFinite(reservationNowMs)
-    ? validateAuthorization(input.runtimeAuthorization, plan, planDigest, reservationNowMs, blockers)
+    ? validateAuthorization(runtimeAuthorization, plan, planDigest, reservationNowMs, blockers)
     : null;
   const validatedReservation = reservation && validateAuthorizationReservation(
     reservation,
-    input.runtimeAuthorization.approvalReceipt,
-    input.runtimeAuthorization,
+    runtimeAuthorization.approvalReceipt,
+    runtimeAuthorization,
     plan,
     planDigest,
     reservationNowMs,
@@ -894,7 +921,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
     const runnerNowMs = trustedNowMs(now);
     const runnerAuthorizationBlockers = [];
     const liveAuthorization = Number.isFinite(runnerNowMs)
-      ? validateAuthorization(input.runtimeAuthorization, plan, planDigest, runnerNowMs, runnerAuthorizationBlockers)
+      ? validateAuthorization(runtimeAuthorization, plan, planDigest, runnerNowMs, runnerAuthorizationBlockers)
       : null;
     if (!Number.isFinite(runnerNowMs)) runnerAuthorizationBlockers.push(`runner-execution-now-invalid:${runner.runnerId}`);
     if (!liveAuthorization) return blocked(runnerAuthorizationBlockers, planDigest);
@@ -928,7 +955,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
     let outcome;
     try {
       const executionRequest = Object.freeze({
-        authorization: input.runtimeAuthorization,
+        authorization: runtimeAuthorization,
         authorizationId: liveAuthorization.authorizationId,
         invocationId,
         runtimePlan: plan,

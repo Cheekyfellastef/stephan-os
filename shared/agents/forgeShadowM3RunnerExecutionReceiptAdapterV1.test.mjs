@@ -331,7 +331,6 @@ test('executes only the canonical runner estate and emits a content-addressed M3
   assert.equal(Object.values(result.authority).every((value) => value === false), true);
   assert.equal(validateForgeShadowM3RunnerRuntimeReceipt(result.receipt, {
     expectedRepository: 'Cheekyfellastef/stephan-os', expectedHead: HEAD, expectedTree: TREE,
-    expectedRuntimePlanDigest: result.runtimePlanDigest,
     expectedArtifactSetDigest: result.receipt.artifactSetDigest,
   }).ok, true);
 });
@@ -808,6 +807,47 @@ test('operator approval requires an independent host verifier bound to the immut
     assert.equal(calls, 0, `${blocker} reached the executor`);
     assert.ok(result.blockers.includes(blocker), JSON.stringify(result.blockers));
   }
+});
+
+test('one inert authorization snapshot crosses verifier, reserver and executor boundaries', async () => {
+  const candidate = input();
+  const canonicalApproval = structuredClone(candidate.runtimeAuthorization.approvalReceipt);
+  const driftedApproval = {
+    ...canonicalApproval,
+    decision: 'DENIED',
+    command: 'caller-selected-after-validation',
+  };
+  let authorizationReads = 0;
+  let drift = false;
+  Object.defineProperty(candidate.runtimeAuthorization, 'approvalReceipt', {
+    enumerable: true,
+    configurable: true,
+    get: () => {
+      authorizationReads += 1;
+      return drift ? driftedApproval : canonicalApproval;
+    },
+  });
+
+  let executorAuthorization = null;
+  const result = await executeVerified(candidate, {
+    platform: 'win32',
+    now,
+    verifyOperatorApproval: async (request) => {
+      drift = true;
+      return approvalVerification(request);
+    },
+    executeRunner: async (request) => {
+      executorAuthorization = request.authorization;
+      assert.equal(request.authorization.approvalReceipt.decision, 'APPROVED');
+      assert.equal(Object.hasOwn(request.authorization.approvalReceipt, 'command'), false);
+      assert.equal(Object.isFrozen(request.authorization), true);
+      assert.equal(Object.isFrozen(request.authorization.approvalReceipt), true);
+      return executionResult(request);
+    },
+  });
+  assert.equal(result.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(authorizationReads, 1);
+  assert.notEqual(executorAuthorization, candidate.runtimeAuthorization);
 });
 
 test('asynchronous approval verification is checked against a fresh trusted settlement clock', async () => {
@@ -1700,6 +1740,23 @@ test('receipt projection rejects caller-owned boxed or object array elements', a
     assert.equal(validation.receipt, null, field);
     assert.deepEqual(validation.blockers, ['receipt-inspection-failed'], field);
     hostile[field][0].callerMutation = true;
+  }
+});
+
+test('unsupported runtime-plan digest expectations fail closed instead of being ignored', async () => {
+  const executed = await executeVerified(input(), {
+    platform: 'win32', now, executeRunner: async (request) => executionResult(request),
+  });
+  for (const expectedRuntimePlanDigest of [
+    executed.runtimePlanDigest,
+    `sha256:${'0'.repeat(64)}`,
+  ]) {
+    const validation = validateForgeShadowM3RunnerRuntimeReceipt(executed.receipt, {
+      expectedRuntimePlanDigest,
+    });
+    assert.equal(validation.ok, false);
+    assert.equal(validation.receipt, null);
+    assert.ok(validation.blockers.includes('receipt-expectation-fields-invalid'));
   }
 });
 
