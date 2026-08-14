@@ -27,6 +27,16 @@ const MAX_TOTAL_EVIDENCE_ITEMS = 50000;
 const MAX_INPUT_SNAPSHOT_DEPTH = 32;
 const MAX_INPUT_SNAPSHOT_KEYS = 256;
 const MAX_INPUT_SNAPSHOT_NODES = MAX_TOTAL_EVIDENCE_ITEMS + MAX_TOTAL_PREREQUISITES + MAX_PORTFOLIO_GOALS * 128 + 8192;
+const GOAL_ARRAY_FIELDS = new Set(['prerequisites', 'resourceIds', 'resultProofRefs', 'structuralReviewProofRefs', 'modelTestProofRefs']);
+const GOAL_NUMERIC_ADVISORY_FIELDS = new Set(['priority', 'criticalPathWeight']);
+const GOAL_INPUT_FIELDS = [
+  'issue', 'issueNumber', 'title', 'state', 'prerequisites', 'duplicateOf', 'supersededBy',
+  'approvalRequired', 'operatorPriority', 'repairCycleCount', 'resourceIds', 'resultProofRefs',
+  'structuralReviewProofRefs', 'modelTestProofRefs', 'reusableCapabilityId', 'sharedLessonId',
+  'route', 'activePr', 'headSha', 'repository', 'branch', 'operatorApprovalReceipt', 'priority',
+  'criticalPathWeight', 'reversibility', 'proofState', 'evidenceAt',
+];
+const PROOF_RECEIPT_INPUT_FIELDS = ['issue', 'issueNumber', 'activePr', 'pr', 'headSha', 'repository', 'branch'];
 const MAX_CYCLE_EVIDENCE = 20;
 const MAX_CYCLE_PATH_ISSUES = 20;
 const MAX_LANE_IDENTITY_LENGTH = CHAT_STRING_LIMIT;
@@ -128,6 +138,54 @@ function inertInputSnapshot(value, state = { nodes:0, active:new WeakSet() }, de
   } finally {
     state.active.delete(value);
   }
+}
+function defineSnapshotProperty(object, key, value) {
+  Object.defineProperty(object, key, { value, enumerable:true, writable:true, configurable:true });
+}
+function safeScalarSnapshot(value) {
+  if (value === null || value === undefined || typeof value === 'string' || typeof value === 'boolean') return value;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+function inertProofReceiptSnapshot(value, state, depth) {
+  state.nodes += 1;
+  if (state.nodes > MAX_INPUT_SNAPSHOT_NODES || depth > MAX_INPUT_SNAPSHOT_DEPTH) throw new Error('snapshot-bound-exceeded');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return Object.freeze(Object.create(null));
+  const clone = Object.create(null);
+  for (const key of PROOF_RECEIPT_INPUT_FIELDS) {
+    const slot = ownDataSlot(value, key);
+    if (slot.inspectionFailed) throw new Error('snapshot-proof-receipt-entry-invalid');
+    if (slot.present) defineSnapshotProperty(clone, key, safeScalarSnapshot(slot.value));
+  }
+  return Object.freeze(clone);
+}
+function inertGoalSnapshot(value, state, depth = 0) {
+  state.nodes += 1;
+  if (state.nodes > MAX_INPUT_SNAPSHOT_NODES || depth > MAX_INPUT_SNAPSHOT_DEPTH) throw new Error('snapshot-bound-exceeded');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const clone = Object.create(null);
+  for (const key of GOAL_INPUT_FIELDS) {
+    const slot = ownDataSlot(value, key);
+    if (slot.inspectionFailed) throw new Error('snapshot-goal-entry-invalid');
+    if (!slot.present) continue;
+    let snapshotted;
+    if (GOAL_ARRAY_FIELDS.has(key)) {
+      snapshotted = Array.isArray(slot.value)
+        ? inertInputSnapshot(slot.value, state, depth + 1)
+        : null;
+    } else if (key === 'operatorApprovalReceipt') {
+      snapshotted = slot.value === null || slot.value === undefined
+        ? slot.value
+        : inertProofReceiptSnapshot(slot.value, state, depth + 1);
+    } else if (key === 'title') {
+      snapshotted = typeof slot.value === 'string' ? slot.value : null;
+    } else if (GOAL_NUMERIC_ADVISORY_FIELDS.has(key)) {
+      snapshotted = typeof slot.value === 'number' && Number.isFinite(slot.value) ? slot.value : null;
+    } else {
+      snapshotted = safeScalarSnapshot(slot.value);
+    }
+    defineSnapshotProperty(clone, key, snapshotted);
+  }
+  return Object.freeze(clone);
 }
 function normalizeStringEvidenceArray(object, key) {
   const present = hasOwn(object, key);
@@ -476,7 +534,7 @@ function buildMissionSchedulerInternal(input = {}, inspectionFailure = false) {
       snapshottedProofRefs = proofRefsMetadata.isArray
         ? inertInputSnapshot(proofRefsSlot.value, snapshotState)
         : [];
-      snapshottedGoals = goalPreflights.map(({ candidate }) => inertInputSnapshot(candidate, snapshotState));
+      snapshottedGoals = goalPreflights.map(({ candidate }) => inertGoalSnapshot(candidate, snapshotState));
       for (const [snapshot, metadata] of [
         [snapshottedProofHeads, proofHeadsMetadata],
         [snapshottedProofReceipts, proofReceiptsMetadata],

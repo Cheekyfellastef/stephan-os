@@ -364,3 +364,26 @@ test('hostile presentation titles degrade without blocking scheduling authority'
   assert.equal(result.selectedGoal, '#1');
   assert.equal(result.portfolio[0].title, 'Goal #1');
 });
+
+test('hostile advisory scalars and ignored extensions cannot block valid work', () => {
+  let ignoredReads = 0;
+  const candidate = goal(1, {
+    reversibility:Symbol('advisory'),
+    ignoredExtension() {},
+  });
+  Object.defineProperty(candidate, 'ignoredAccessor', {
+    configurable:true,
+    enumerable:true,
+    get() {
+      ignoredReads += 1;
+      throw new Error('ignored extension getter must not run');
+    },
+  });
+
+  const result = buildMissionScheduler({ now:NOW, goals:[candidate] });
+
+  assert.equal(ignoredReads, 0);
+  assert.equal(result.failClosed, false);
+  assert.equal(result.selectedGoal, '#1');
+  assert.equal(result.portfolio[0].reversibility, 'UNKNOWN');
+});
