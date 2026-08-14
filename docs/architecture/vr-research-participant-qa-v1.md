@@ -45,7 +45,7 @@ Questions outside this role are rejected rather than converted into generic exec
 
 ## Evidence behavior
 
-A grounded answer must come from a fresh `stephanos.vr-research.workspace.v1` projection.
+A grounded answer must come from a fresh `stephanos.vr-research.workspace.v1` projection with a canonical projection ID and a proof attestation bound to the exact projection hash.
 
 The adapter can surface:
 
@@ -62,6 +62,63 @@ The adapter can surface:
 
 The adapter never treats creator/public evidence as installed-runtime proof merely because both are VR-related.
 
+## Reconstructed-record boundary
+
+Before any route predicate, source lookup, fact lookup, proof binding or Workspace serialization reads caller-owned projection data, the complete value is converted into one recursively frozen data-only snapshot.
+
+The boundary rejects, without invoking getters:
+
+- accessor-backed object fields or array indexes;
+- sparse arrays and arrays with hidden/custom properties;
+- symbol-keyed values;
+- custom prototypes;
+- cycles;
+- revoked or throwing proxies;
+- prototype-shaping keys such as `__proto__`, `prototype` and `constructor`;
+- non-finite values;
+- over-deep, over-wide or over-large structures.
+
+Canonical objects are constructed with null prototypes and explicit own data properties. This prevents JSON-deserialized `__proto__` records from changing object prototypes or leaking inherited route fields.
+
+Malformed or incompatible reconstructed projections return a bounded `GAP_FRESHNESS`/`UNKNOWN` answer with no facts. They never throw through the public Q&A boundary and never become grounded evidence.
+
+## Proof attestation boundary
+
+A syntactically safe proof path is not proof.
+
+Every projection or Workspace proof must be checked by the supplied trusted verifier against an exact binding:
+
+```text
+projection proof:
+  schemaVersion
+  projectionId
+  projectionHash
+
+Workspace answer proof:
+  schemaVersion
+  questionId
+  answerId
+  answerHash
+```
+
+Verifier output is itself canonicalized through the same descriptor-safe data-only boundary. An accepted attestation must contain exactly the expected own enumerable data fields:
+
+```text
+verified=true
+proofRef=<exact requested ref>
+<every exact binding field>
+```
+
+Inherited fields, accessor-backed fields, extra fields, missing fields, booleans without a binding, replayed hashes and verifier exceptions fail closed. Getter-backed attestations are rejected with zero getter invocations.
+
+A grounded answer cannot borrow an unrelated proof reference at Workspace publication time. The answer receipt remains bound to the exact normalized request and answer content.
+
+## Fact and message sanitization
+
+Only a bounded VR fact allowlist may leave the adapter. Caller-added credentials, arbitrary authority fields and nested object payloads are removed from direct answers and Shared Workspace serialization.
+
+Request and answer extras may be present in decoded caller input, but they are never serialized into the canonical conversation body. Invalid accessor- or proxy-backed request/answer records fail closed rather than being partially read.
+
 ## Epistemic states
 
 Answers use explicit states such as:
@@ -73,15 +130,15 @@ UNKNOWN
 STALE
 ```
 
-Grounded answers return projection proof references.
+Grounded answers return only verified projection proof references.
 
-Missing evidence returns a buildable gap rather than confident filler.
+Missing knowledge with a fresh compatible projection returns a buildable `GAP_KNOWLEDGE`.
 
-A stale projection returns:
+A stale, malformed, future-dated or incompatible projection returns:
 
 ```text
 answerVerdict = GAP_FRESHNESS
-epistemicState = STALE
+epistemicState = STALE | UNKNOWN
 ```
 
 and cannot be promoted into a grounded answer.
@@ -116,6 +173,8 @@ relatedIssue = #1723
 
 The record explicitly carries no source, command, merge or deployment authority.
 
+Evidence-free gap messages require a separately verified answer-bound receipt before publication. Fabricated fallback receipt paths are never invented.
+
 ## Safety boundaries
 
 The Q&A adapter does not:
@@ -127,7 +186,9 @@ The Q&A adapter does not:
 - merge or deploy source;
 - grant runtime mutation authority;
 - promote a source claim into headset proof;
-- bypass provenance or licence boundaries.
+- bypass provenance or licence boundaries;
+- trust inherited/accessor/proxy-backed evidence;
+- manufacture proof receipts.
 
 ## Focused proof
 
@@ -135,16 +196,22 @@ The Q&A adapter does not:
 node --test shared/agents/vrResearchWorkspaceProjectionV1.test.mjs shared/agents/vrResearchAgentV1.test.mjs shared/agents/vrResearchParticipantQaV1.test.mjs
 ```
 
-The new test suite proves:
+The complete focused estate proves:
 
 - all ten bounded question classes use one canonical projection;
 - source and licence boundaries remain visible;
 - authoring/public/runtime evidence stays separated;
 - missing evidence becomes a deduplicatable gap;
-- stale projection truth cannot pass as grounded;
-- absent projection fails honestly;
+- stale or incompatible projection truth cannot pass as grounded;
+- projection and answer proofs bind exact normalized content;
+- JSON `__proto__`, inherited attestations, accessor attestations, revoked proxies and throwing traps fail closed;
+- route-field and fact getters are never invoked;
+- request, answer and nested fact extras are sanitized;
 - answer records validate through the existing Shared Workspace contract;
-- out-of-role questions are rejected.
+- out-of-role questions are rejected;
+- source, command, merge and deployment authority remain false.
+
+Hosted exact-head checks and provider-neutral review remain authoritative for the published branch.
 
 ## Truth boundary
 
