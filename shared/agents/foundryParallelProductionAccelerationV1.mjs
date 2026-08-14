@@ -158,14 +158,14 @@ function normalizeProvider(raw, canonicalMainHead, nowMs, freshnessSeconds) {
       observedAtUtc: text(rawM3.observedAtUtc),
       canCarryRealWork: rawM3.canCarryRealWork === true,
       teardownVerdict: text(rawM3.teardownVerdict),
-      receiptRef: text(rawM3.receiptRef),
+      receiptRef: safeReceiptRef(rawM3.receiptRef) ? text(rawM3.receiptRef) : null,
     });
     const m3ObservedAtMs = explicitInstant(m3Runtime.observedAtUtc);
     if (m3Runtime.schemaVersion !== FOUNDRY_M3_LIVE_SCHEMA) blockers.push('foundry-m3-runtime-schema-invalid');
     if (m3Runtime.exactMainHead !== canonicalMainHead) blockers.push('foundry-m3-runtime-head-mismatch');
     if (!m3Runtime.canCarryRealWork) blockers.push('foundry-m3-not-routable');
     if (m3Runtime.teardownVerdict !== 'ZERO_RESIDUAL_AUTHORITY') blockers.push('foundry-m3-teardown-unproven');
-    if (!safeReceiptRef(m3Runtime.receiptRef)) blockers.push('foundry-m3-runtime-receipt-ref-invalid');
+    if (!m3Runtime.receiptRef) blockers.push('foundry-m3-runtime-receipt-ref-invalid');
     if (!Number.isFinite(m3ObservedAtMs)) blockers.push('foundry-m3-runtime-observed-at-invalid');
     else if (m3ObservedAtMs > nowMs || nowMs - m3ObservedAtMs > freshnessSeconds * 1000) blockers.push('foundry-m3-runtime-stale');
   }
