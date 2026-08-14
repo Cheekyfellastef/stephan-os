@@ -187,13 +187,15 @@ export function planSpatialIsolatedLaneAdmission(buildOrder = {}, input = {}) {
   });
 }
 
-export function assertSpatialAgentWriteMayBegin(plan = {}, lease = {}) {
+export function assertSpatialAgentWriteMayBegin(plan = {}, lease = {}, options = {}) {
   if (plan?.schemaVersion !== SPATIAL_ISOLATED_LANE_PLAN_SCHEMA_VERSION
     || plan.status !== 'ADMITTED_TO_CANONICAL_LEASE_AUTHORITY'
     || plan.leaseIssueRequired !== true
     || plan.mayBeginAgentWrites !== false) {
     throw new TypeError('spatial lane must first be admitted to the canonical lease authority');
   }
+  const expiresAtMs = Date.parse(text(lease?.expiresAt));
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
   if (lease?.schema !== 'Stephanos Bounded Construction Lease V1'
     || lease.laneId !== plan.laneId
     || lease.branch !== plan.branch
@@ -207,7 +209,9 @@ export function assertSpatialAgentWriteMayBegin(plan = {}, lease = {}) {
     || !Array.isArray(lease.ownedContracts)
     || JSON.stringify([...lease.ownedContracts].sort()) !== JSON.stringify([...plan.resourceScopes].sort())
     || !text(lease.reservationId)
-    || !text(lease.expiresAt)) {
+    || !Number.isFinite(expiresAtMs)
+    || !Number.isFinite(nowMs)
+    || expiresAtMs <= nowMs) {
     throw new TypeError('exact active canonical construction lease required before spatial agent writes');
   }
   return freeze({
