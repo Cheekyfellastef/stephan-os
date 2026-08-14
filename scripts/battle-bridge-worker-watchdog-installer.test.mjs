@@ -90,6 +90,10 @@ function strictRestartInvocationBoundary({ probe, restart, launcher }) {
     && restart.includes('mission-orchestrator-worker-restart-heartbeat-$ExpectedInvocationId.json')
     && restart.includes('$invocationHeartbeat.invocationId -ne $ExpectedInvocationId')
     && restart.includes('$timestamp -lt $boundHeartbeatTimestampUtc')
+    && restart.includes('$sharedHeartbeatObservedAtUtc = [datetime]::UtcNow')
+    && restart.includes('$timestamp -gt $sharedHeartbeatObservedAtUtc')
+    && restart.includes('$invocationHeartbeatObservedAtUtc = [datetime]::UtcNow')
+    && restart.includes('$boundHeartbeatTimestampUtc -gt $invocationHeartbeatObservedAtUtc')
     && !restart.includes('$boundHeartbeatTimestampUtc.Ticks -ne $timestamp.Ticks')
     && restart.includes('$processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks')
     && restart.includes('$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks')
@@ -104,6 +108,8 @@ function strictRestartInvocationBoundary({ probe, restart, launcher }) {
     && launcher.includes('$workerHeartbeat.launchIdentityId -eq $invocationId')
     && launcher.includes('$workerHeartbeat.workerStartedAtUtc')
     && launcher.includes('$heartbeatTimestampUtc -gt $workerStartedAtUtc')
+    && launcher.includes('$heartbeatObservedAtUtc = [datetime]::UtcNow')
+    && launcher.includes('$heartbeatTimestampUtc -le $heartbeatObservedAtUtc')
     && launcher.includes('$workerProcess.StartTime.ToUniversalTime().Ticks -eq $workerStartedAtUtc.Ticks')
     && launcher.includes('if ($confirmation -and $invocationHeartbeatBound)')
     && launcher.includes("[string]$record.deadlineUtc -ne $restartDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')")
@@ -282,6 +288,8 @@ test('restart invocation binds exact command, heartbeat, deadline and process cr
     { ...canonical, probe: probe.replace('$restartReceipt.deadlineUtc -eq $canonicalDeadlineUtc', '$true') },
     { ...canonical, restart: restart.replace('$invocationHeartbeat.invocationId -ne $ExpectedInvocationId', '$false') },
     { ...canonical, restart: restart.replace('$timestamp -lt $boundHeartbeatTimestampUtc', '$false') },
+    { ...canonical, restart: restart.replace('$timestamp -gt $sharedHeartbeatObservedAtUtc', '$false') },
+    { ...canonical, restart: restart.replace('$boundHeartbeatTimestampUtc -gt $invocationHeartbeatObservedAtUtc', '$false') },
     { ...canonical, restart: restart.replace('$processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks', '$false') },
     { ...canonical, restart: restart.replace('$liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks', '$false') },
     { ...canonical, restart: restart.replace('$heartbeatTimestampUtc -gt $observedAtUtc', '$false') },
@@ -306,6 +314,7 @@ test('restart invocation binds exact command, heartbeat, deadline and process cr
     { ...canonical, launcher: launcher.replace('$processStartInfo.FileName = $canonicalNode', '$processStartInfo.FileName = $env:NODE') },
     { ...canonical, launcher: launcher.replace('$processStartInfo.Arguments = \'"\' + $workerScript + \'"\'', '$processStartInfo.Arguments = $env:WORKER_ARGS') },
     { ...canonical, launcher: launcher.replace('$workerHeartbeat.pid -eq $workerProcess.Id', '$workerHeartbeat.pid -gt 0') },
+    { ...canonical, launcher: launcher.replace('$heartbeatTimestampUtc -le $heartbeatObservedAtUtc', '$true') },
     { ...canonical, launcher: launcher.replace('$workerProcess.StartTime.ToUniversalTime().Ticks -eq $workerStartedAtUtc.Ticks', '$true') },
     { ...canonical, launcher: launcher.replace('if ($confirmation -and $invocationHeartbeatBound)', 'if ($confirmation)') },
     { ...canonical, launcher: launcher.replace('$workerProcessStarted = $true', '$workerProcessStarted = $false') },

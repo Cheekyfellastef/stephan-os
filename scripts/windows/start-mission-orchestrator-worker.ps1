@@ -363,6 +363,7 @@ if (Test-Path -LiteralPath $restartRequestPath -PathType Leaf) {
         while (-not $workerProcess.HasExited -and [datetime]::UtcNow -lt $restartDeadlineUtc) {
             if (-not $invocationHeartbeatBound -and (Test-Path -LiteralPath $heartbeatPath -PathType Leaf)) {
                 try {
+                    $heartbeatObservedAtUtc = [datetime]::UtcNow
                     $workerHeartbeat = Get-Content -LiteralPath $heartbeatPath -Raw | ConvertFrom-Json
                     $heartbeatTimestampUtc = [datetime]::Parse([string]$workerHeartbeat.timestampUtc).ToUniversalTime()
                     if ([string]$workerHeartbeat.schemaVersion -eq 'stephanos.mission-orchestrator-worker-heartbeat.v1' `
@@ -374,6 +375,7 @@ if (Test-Path -LiteralPath $restartRequestPath -PathType Leaf) {
                         -and [string]$workerHeartbeat.launchIdentityId -eq $invocationId `
                         -and ([datetime]::Parse([string]$workerHeartbeat.workerStartedAtUtc).ToUniversalTime()).Ticks -eq $workerStartedAtUtc.Ticks `
                         -and $heartbeatTimestampUtc -gt $workerStartedAtUtc `
+                        -and $heartbeatTimestampUtc -le $heartbeatObservedAtUtc `
                         -and $workerProcess.StartTime.ToUniversalTime().Ticks -eq $workerStartedAtUtc.Ticks) {
                         Write-BoundedAtomicJson -Path $invocationHeartbeatPath -Value ([PSCustomObject]@{
                             schemaVersion = 'stephanos.mission-worker-restart-heartbeat.v1'

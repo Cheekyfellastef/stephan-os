@@ -102,6 +102,32 @@ function heartbeatTimestampAdmissible({ timestampMs, processStartedMs, observedM
     && observedMs - timestampMs <= 120_000;
 }
 
+function freshHeartbeatTimestampAdmissible({ timestampMs, processStartedMs, observedMs }) {
+  return Number.isFinite(timestampMs)
+    && Number.isFinite(processStartedMs)
+    && Number.isFinite(observedMs)
+    && timestampMs > processStartedMs
+    && timestampMs <= observedMs;
+}
+
+function exactFreshWorkerHeartbeatObservationBoundary(restart, launcher) {
+  const freshVerifier = restart.slice(
+    restart.indexOf('function Get-VerifiedFreshWorkerInstance'),
+    restart.indexOf('function Get-VerifiedInvocationProcessFromLaunchReceipt'),
+  );
+  const guardedLauncher = launcher.slice(
+    launcher.indexOf('$invocationHeartbeatBound = $false'),
+    launcher.indexOf("throw 'Mission worker restart was not confirmed before its deadline.'"),
+  );
+  return /\$sharedHeartbeatObservedAtUtc = \[datetime\]::UtcNow\s+\$heartbeat = Get-Content -LiteralPath \$HeartbeatPath -Raw \| ConvertFrom-Json/.test(freshVerifier)
+    && freshVerifier.includes('$timestamp -gt $sharedHeartbeatObservedAtUtc')
+    && /\$invocationHeartbeatObservedAtUtc = \[datetime\]::UtcNow\s+\$invocationHeartbeat = Get-Content -LiteralPath \$invocationHeartbeatPath -Raw \| ConvertFrom-Json/.test(freshVerifier)
+    && freshVerifier.includes('$boundHeartbeatTimestampUtc -gt $invocationHeartbeatObservedAtUtc')
+    && /\$heartbeatObservedAtUtc = \[datetime\]::UtcNow\s+\$workerHeartbeat = Get-Content -LiteralPath \$heartbeatPath -Raw \| ConvertFrom-Json/.test(guardedLauncher)
+    && guardedLauncher.includes('$heartbeatTimestampUtc -le $heartbeatObservedAtUtc')
+    && guardedLauncher.includes('if ($confirmation -and $invocationHeartbeatBound)');
+}
+
 function exactOwnedLauncherCleanupBoundary(source) {
   const launchFunction = source.indexOf('function Start-ExactWorkerWithLaunchIdentity');
   const guardedStart = source.indexOf('if (-not $workerProcess.Start())', launchFunction);
@@ -361,7 +387,7 @@ test('shared heartbeat time may advance without weakening immutable invocation c
   assert.equal(mandatoryWorkerCleanupBoundary(restartSource), true);
   assert.match(
     restartSource,
-    /\$boundHeartbeatTimestampUtc -le \$receiptProcessStartedAtUtc\s*`?\r?\n\s*-or \$timestamp -lt \$boundHeartbeatTimestampUtc/,
+    /\$boundHeartbeatTimestampUtc -le \$receiptProcessStartedAtUtc\s*`?\r?\n\s*-or \$boundHeartbeatTimestampUtc -gt \$invocationHeartbeatObservedAtUtc\s*`?\r?\n\s*-or \$timestamp -lt \$boundHeartbeatTimestampUtc/,
   );
   for (const mutation of [
     restartSource.replace('$timestamp -lt $boundHeartbeatTimestampUtc', '$timestamp -ne $boundHeartbeatTimestampUtc'),
@@ -406,6 +432,30 @@ test('existing-worker heartbeat rejects every future instant while retaining the
   assert.equal(heartbeatTimestampAdmissible({ timestampMs: Number.NaN, processStartedMs, observedMs }), false);
   assert.match(restartSource, /\$heartbeatTimestampUtc -gt \$observedAtUtc/);
   assert.doesNotMatch(restartSource, /\$heartbeatTimestampUtc -gt \$observedAtUtc\.AddSeconds\(60\)/);
+});
+
+test('fresh-worker and launcher heartbeat proof reject every future instant before confirmation', () => {
+  const observedMs = 10_000;
+  const processStartedMs = observedMs - 1;
+  assert.equal(freshHeartbeatTimestampAdmissible({ timestampMs: observedMs, processStartedMs, observedMs }), true);
+  assert.equal(freshHeartbeatTimestampAdmissible({ timestampMs: observedMs + 0.0001, processStartedMs, observedMs }), false);
+  assert.equal(freshHeartbeatTimestampAdmissible({ timestampMs: observedMs + 1, processStartedMs, observedMs }), false);
+  assert.equal(freshHeartbeatTimestampAdmissible({ timestampMs: processStartedMs, processStartedMs, observedMs }), false);
+  assert.equal(freshHeartbeatTimestampAdmissible({ timestampMs: Number.NaN, processStartedMs, observedMs }), false);
+  assert.equal(exactFreshWorkerHeartbeatObservationBoundary(restartSource, workerStartSource), true);
+
+  const mutations = [
+    [restartSource.replace('$sharedHeartbeatObservedAtUtc = [datetime]::UtcNow', '$sharedHeartbeatObservedAtUtc = [datetime]::MaxValue'), workerStartSource],
+    [restartSource.replace('$timestamp -gt $sharedHeartbeatObservedAtUtc', '$false'), workerStartSource],
+    [restartSource.replace('$invocationHeartbeatObservedAtUtc = [datetime]::UtcNow', '$invocationHeartbeatObservedAtUtc = [datetime]::MaxValue'), workerStartSource],
+    [restartSource.replace('$boundHeartbeatTimestampUtc -gt $invocationHeartbeatObservedAtUtc', '$false'), workerStartSource],
+    [restartSource, workerStartSource.replace('$heartbeatObservedAtUtc = [datetime]::UtcNow', '$heartbeatObservedAtUtc = [datetime]::MaxValue')],
+    [restartSource, workerStartSource.replace('$heartbeatTimestampUtc -le $heartbeatObservedAtUtc', '$true')],
+    [restartSource, workerStartSource.replace('if ($confirmation -and $invocationHeartbeatBound)', 'if ($confirmation)')],
+  ];
+  for (const [restart, launcher] of mutations) {
+    assert.equal(exactFreshWorkerHeartbeatObservationBoundary(restart, launcher), false);
+  }
 });
 
 test('existing-worker cleanup terminates only through the exact final process capability', () => {

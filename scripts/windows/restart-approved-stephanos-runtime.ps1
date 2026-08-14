@@ -456,9 +456,11 @@ function Get-VerifiedFreshWorkerInstance {
         if ($ExpectedProcessStartedAtUtc -ne [datetime]::MinValue `
             -and $receiptProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks) { return $null }
 
+        $sharedHeartbeatObservedAtUtc = [datetime]::UtcNow
         $heartbeat = Get-Content -LiteralPath $HeartbeatPath -Raw | ConvertFrom-Json
         $timestamp = [datetime]::Parse([string]$heartbeat.timestampUtc).ToUniversalTime()
-        if ($timestamp -le $StartedAfterUtc) { return $null }
+        if ($timestamp -le $StartedAfterUtc `
+            -or $timestamp -gt $sharedHeartbeatObservedAtUtc) { return $null }
         if ([string]$heartbeat.branch -ne 'main') { return $null }
         if ([string]$heartbeat.headSha -ne $ExpectedSourceHead) { return $null }
         if ([string]$heartbeat.taskName -ne 'Stephanos Mission Orchestrator Worker') { return $null }
@@ -466,6 +468,7 @@ function Get-VerifiedFreshWorkerInstance {
         $processId = [int]$heartbeat.pid
         if ($processId -le 0) { return $null }
         if ($processId -ne $receiptProcessId) { return $null }
+        $invocationHeartbeatObservedAtUtc = [datetime]::UtcNow
         $invocationHeartbeat = Get-Content -LiteralPath $invocationHeartbeatPath -Raw | ConvertFrom-Json
         if ([string]$invocationHeartbeat.schemaVersion -ne 'stephanos.mission-worker-restart-heartbeat.v1') { return $null }
         if ([string]$invocationHeartbeat.invocationId -ne $ExpectedInvocationId) { return $null }
@@ -478,6 +481,7 @@ function Get-VerifiedFreshWorkerInstance {
         $boundHeartbeatTimestampUtc = [datetime]::Parse([string]$invocationHeartbeat.heartbeatTimestampUtc).ToUniversalTime()
         if ($boundWorkerStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks) { return $null }
         if ($boundHeartbeatTimestampUtc -le $receiptProcessStartedAtUtc `
+            -or $boundHeartbeatTimestampUtc -gt $invocationHeartbeatObservedAtUtc `
             -or $timestamp -lt $boundHeartbeatTimestampUtc) { return $null }
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
