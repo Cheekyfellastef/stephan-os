@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -11,6 +12,78 @@ import {
 
 const NOW = '2026-08-14T12:00:00.000Z';
 const NOW_MS = Date.parse(NOW);
+const FORGE_HEAD = 'a'.repeat(40);
+const FORGE_TREE = 'b'.repeat(40);
+const FORGE_M2_RECEIPT_ID = 'forge-m2-runtime-proof';
+const FORGE_M3_RECEIPT_ID = 'forge-m3-runtime-proof';
+
+function canonicalJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+}
+
+function withPayloadSha256(receipt) {
+  return {
+    ...receipt,
+    payloadSha256: createHash('sha256').update(canonicalJson(receipt), 'utf8').digest('hex'),
+  };
+}
+
+function forgeSidecar(overrides = {}) {
+  const m2Receipt = withPayloadSha256({
+    schemaVersion: 'stephanos.forge-shadow-m2-runtime-receipt.v1',
+    receiptId: FORGE_M2_RECEIPT_ID,
+    repository: 'Cheekyfellastef/stephan-os',
+    sourceHead: FORGE_HEAD,
+    sourceTree: FORGE_TREE,
+    mirrorHead: FORGE_HEAD,
+    mirrorTree: FORGE_TREE,
+    operation: 'INSTALL_FORGE_SHADOW_M2',
+    state: 'DONE',
+    finalVerdict: 'FORGE_SHADOW_M2_READY',
+    completedAt: '2026-08-14T11:57:00.000Z',
+    proofRefs: ['receipts/forge/m2-runtime.json'],
+  });
+  const m3RuntimeReceipt = withPayloadSha256({
+    schemaVersion: 'stephanos.forge-shadow-m3-runner-runtime-receipt.v1',
+    receiptId: FORGE_M3_RECEIPT_ID,
+    repository: 'Cheekyfellastef/stephan-os',
+    sourceHead: FORGE_HEAD,
+    sourceTree: FORGE_TREE,
+    artifactSetDigest: `sha256:${'c'.repeat(64)}`,
+    runnerIdentities: [
+      'stephanos-forge-linux-runner-01',
+      'stephanos-forge-windows-proof-runner-01',
+    ],
+    linuxReviewRunnerConnected: true,
+    windowsProofRunnerConnected: true,
+    teardownComplete: true,
+    zeroResidualRegistration: true,
+    zeroResidualCredential: true,
+    zeroResidualWorkspace: true,
+    canCarryRealWork: true,
+    finalVerdict: 'FORGE_SHADOW_M3_RUNNER_RUNTIME_READY',
+    completedAt: '2026-08-14T11:58:00.000Z',
+    proofRefs: ['receipts/forge/m3-runtime.json'],
+  });
+  return {
+    goalId: '#1671',
+    repository: 'Cheekyfellastef/stephan-os',
+    canonicalMainHead: FORGE_HEAD,
+    canonicalMainTree: FORGE_TREE,
+    mirrorHead: FORGE_HEAD,
+    mirrorTree: FORGE_TREE,
+    sourceReady: true,
+    m2Receipt,
+    m3RuntimeReceipt,
+    evidenceRefs: [
+      'receipts/forge/m2-runtime.json',
+      'receipts/forge/m3-runtime.json',
+    ],
+    ...overrides,
+  };
+}
 
 function system(systemId, providerId, overrides = {}) {
   return {
@@ -84,7 +157,9 @@ function laneStatus(statusId, route, overrides = {}) {
       expiresAtUtc: '2026-08-14T12:13:00.000Z',
       queueDepth: 0,
       p95StartLatencySeconds: 20,
-      authorityReceiptIds: [],
+      authorityReceiptIds: route === 'FOUNDRY_FORGE'
+        ? [FORGE_M2_RECEIPT_ID, FORGE_M3_RECEIPT_ID]
+        : [],
       proofRefs: [`receipts/${route.toLowerCase()}/capacity.json`],
     },
     ...overrides,
@@ -102,11 +177,12 @@ function mutateReceipt(statusId, route, mutation) {
   };
 }
 
-test('canonical Codex, GitHub and Forge capacity evidence normalize without inventing unsupported metrics', () => {
+test('canonical Codex, GitHub and authority-proven Forge capacity evidence normalize without inventing unsupported metrics', () => {
   const observations = createSovereigntyCapacityObservationsV1({
     codexStatus: codexStatus(),
     githubLaneStatus: laneStatus('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB'),
     forgeLaneStatus: laneStatus('foundry-forge-build-capacity-current', 'FOUNDRY_FORGE'),
+    forgeSidecar: forgeSidecar(),
   }, { nowMs: NOW_MS });
 
   assert.equal(observations.length, 3);
@@ -300,8 +376,66 @@ test('canonical capacity adapters fail closed when receipts are expired, proofle
     forgeLaneStatus: mutateReceipt('foundry-forge-build-capacity-current', 'FOUNDRY_FORGE', {
       expiresAtUtc: '2026-08-14T11:59:00.000Z',
     }),
+    forgeSidecar: forgeSidecar(),
   }, { nowMs: NOW_MS });
 
   assert.deepEqual(observations.map((item) => item.truthState), ['UNKNOWN', 'UNKNOWN', 'UNKNOWN']);
   assert.deepEqual(observations.map((item) => item.capacityState), ['UNKNOWN', 'UNKNOWN', 'UNKNOWN']);
+});
+
+test('Forge capacity stays UNKNOWN without valid distinct M2 and M3 authority bound into the lane receipt', () => {
+  const noSidecar = createSovereigntyCapacityObservationsV1({
+    forgeLaneStatus: laneStatus('foundry-forge-build-capacity-current', 'FOUNDRY_FORGE'),
+  }, { nowMs: NOW_MS })[2];
+  assert.equal(noSidecar.truthState, 'UNKNOWN');
+  assert.equal(noSidecar.capacityState, 'UNKNOWN');
+  assert.match(noSidecar.explanation, /authority is unproven/);
+
+  const missingM3Binding = createSovereigntyCapacityObservationsV1({
+    forgeLaneStatus: mutateReceipt('foundry-forge-build-capacity-current', 'FOUNDRY_FORGE', {
+      authorityReceiptIds: [FORGE_M2_RECEIPT_ID],
+    }),
+    forgeSidecar: forgeSidecar(),
+  }, { nowMs: NOW_MS })[2];
+  assert.equal(missingM3Binding.truthState, 'UNKNOWN');
+  assert.equal(missingM3Binding.capacityState, 'UNKNOWN');
+});
+
+test('current but unusable primary capacity is excluded from evidence and diversification scoring', () => {
+  for (const capacityState of ['UNAVAILABLE', 'UNKNOWN']) {
+    const projection = buildSovereigntyWorkspaceProjectionV1({
+      systemObservations: [
+        system('primary', 'provider-one', { capacityState }),
+        system('alternative-a', 'provider-two'),
+        system('alternative-b', 'provider-three'),
+      ],
+      capabilities: [capability('source-construction', 'primary', {
+        alternativeSystemIds: ['alternative-a', 'alternative-b'],
+      })],
+    }, { nowMs: NOW_MS });
+
+    assert.equal(projection.status, 'CURRENT');
+    assert.equal(projection.posture, 'UNKNOWN');
+    assert.equal(projection.capabilityPostures[0].posture, 'UNKNOWN');
+    assert.equal(projection.capabilityPostures[0].currentViableSystemIds.includes('primary'), false);
+    assert.equal(projection.evidenceCoveragePercent, 0);
+    assert.equal(projection.diversificationCoveragePercent, null);
+  }
+});
+
+test('malformed Codex percentages and noncanonical availability never become CURRENT evidence', () => {
+  for (const overrides of [
+    { remainingPercent: 101 },
+    { remainingPercent: -1 },
+    { remainingPercent: null },
+    { availability: 'SOMETHING_ELSE' },
+  ]) {
+    const codex = createSovereigntyCapacityObservationsV1({
+      codexStatus: codexStatus(overrides),
+    }, { nowMs: NOW_MS })[0];
+    assert.equal(codex.truthState, 'UNKNOWN');
+    assert.equal(codex.capacityState, 'UNKNOWN');
+    assert.equal(codex.metrics.remainingPercent, null);
+    assert.deepEqual(codex.evidenceRefs, []);
+  }
 });
