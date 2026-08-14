@@ -241,7 +241,7 @@ function quarantineAcknowledgement(request, patch = {}) {
     quarantined: true,
     quarantineAcknowledged: true,
     quarantineReason: 'TEARDOWN_POLICY_VIOLATION',
-    quarantineProofRef: `proofs/forge-shadow-m3/${request.runner.runnerId}/${'9'.repeat(64)}.json`,
+    quarantineProofRef: `proofs/forge-shadow-m3-quarantine/${request.runner.runnerId}/${request.authorizationId}/${request.invocationId}/${'9'.repeat(64)}.json`,
     ...patch,
   });
 }
@@ -496,6 +496,59 @@ test('teardown-policy violations remain pending until exact identity-bound quara
   assert.equal(result.ok, false);
   assert.ok(result.blockers.some((item) => item.includes('runner-quarantine-ack-required')), JSON.stringify(result.blockers));
   assert.ok(result.blockers.some((item) => item.includes('runner-termination-ack-invocation-mismatch')), JSON.stringify(result.blockers));
+});
+
+test('one inert observation snapshot drives both teardown validation and quarantine classification', async () => {
+  let lifecycleReads = 0;
+  const result = await executeVerified(input(), {
+    platform: 'win32',
+    now,
+    executeRunner: async (request) => {
+      const returned = executionResult(request);
+      Object.defineProperty(returned.observation, 'unregistered', {
+        enumerable: true,
+        configurable: true,
+        get: () => {
+          lifecycleReads += 1;
+          return lifecycleReads > 1;
+        },
+      });
+      returned.terminationAcknowledgement = quarantineAcknowledgement(request);
+      return returned;
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(lifecycleReads, 1);
+  assert.ok(result.blockers.includes(
+    'runner-teardown-incomplete:stephanos-forge-linux-runner-01:unregistered',
+  ), JSON.stringify(result.blockers));
+});
+
+test('quarantine proof references bind runner, authorization and invocation identities', async () => {
+  const wrongSegments = ['runner', 'authorization', 'invocation'];
+  for (const wrongSegment of wrongSegments) {
+    const execution = executeVerified(input(), {
+      platform: 'win32',
+      now,
+      executeRunner: async (request) => {
+        const identities = {
+          runner: request.runner.runnerId,
+          authorization: request.authorizationId,
+          invocation: request.invocationId,
+        };
+        identities[wrongSegment] = `forge-m3-wrong-${wrongSegment}`;
+        return executionResult(request, { unregistered: false }, {
+          ...quarantineAcknowledgement(request),
+          quarantineProofRef: `proofs/forge-shadow-m3-quarantine/${identities.runner}/${identities.authorization}/${identities.invocation}/${'9'.repeat(64)}.json`,
+        });
+      },
+    });
+    const state = await Promise.race([
+      execution.then(() => 'unsafe-return'),
+      new Promise((resolve) => setTimeout(() => resolve('held-pending'), 25)),
+    ]);
+    assert.equal(state, 'held-pending', wrongSegment);
+  }
 });
 
 test('missing quarantine proof for a teardown-policy violation remains pending', async () => {
@@ -1232,6 +1285,7 @@ test('hostile fulfilled values abort and wait for valid teardown proof', async (
           aborted = true;
           setTimeout(() => {
             request.acknowledgeTermination(terminationAcknowledgement(request));
+            request.acknowledgeTermination(quarantineAcknowledgement(request));
           }, 25);
         }, { once: true });
         return candidate(request);
@@ -1505,6 +1559,61 @@ test('receipt validation detects post-issuance mutation and hidden fields', asyn
   assert.equal(validateForgeShadowM3RunnerRuntimeReceipt(widened).ok, false);
 });
 
+test('closed-world records include non-enumerable and symbolic own keys', async () => {
+  for (const extraKey of ['command', Symbol('hidden-authority')]) {
+    const candidate = structuredClone(input());
+    Object.defineProperty(candidate.runtimeAuthorization, extraKey, {
+      value: 'hidden',
+      enumerable: false,
+    });
+    let executorCalls = 0;
+    const result = await executeVerified(candidate, {
+      platform: 'win32',
+      now,
+      executeRunner: async (request) => {
+        executorCalls += 1;
+        return executionResult(request);
+      },
+    });
+    assert.equal(result.ok, false, String(extraKey));
+    assert.equal(executorCalls, 0, String(extraKey));
+    assert.ok(result.blockers.includes('runtime-authorization-fields-invalid'), JSON.stringify(result.blockers));
+  }
+
+  const valid = await executeVerified(input(), {
+    platform: 'win32', now, executeRunner: async (request) => executionResult(request),
+  });
+  for (const extraKey of ['command', Symbol('hidden-authority')]) {
+    const widened = structuredClone(valid.receipt);
+    Object.defineProperty(widened, extraKey, { value: 'hidden', enumerable: false });
+    assert.equal(validateForgeShadowM3RunnerRuntimeReceipt(widened).ok, false, String(extraKey));
+  }
+});
+
+test('receipt validation returns one immutable inert projection', async () => {
+  const executed = await executeVerified(input(), {
+    platform: 'win32', now, executeRunner: async (request) => executionResult(request),
+  });
+  const hostile = structuredClone(executed.receipt);
+  let capacityReads = 0;
+  Object.defineProperty(hostile, 'canCarryRealWork', {
+    enumerable: true,
+    configurable: true,
+    get: () => {
+      capacityReads += 1;
+      return capacityReads > 1;
+    },
+  });
+  const validation = validateForgeShadowM3RunnerRuntimeReceipt(hostile);
+  assert.equal(validation.ok, true, JSON.stringify(validation.blockers));
+  assert.equal(capacityReads, 1);
+  assert.notEqual(validation.receipt, hostile);
+  assert.equal(validation.receipt.canCarryRealWork, false);
+  assert.equal(Object.isFrozen(validation.receipt), true);
+  assert.equal(Object.isFrozen(validation.receipt.runnerIdentities), true);
+  assert.equal(Object.isFrozen(validation.receipt.proofRefs), true);
+});
+
 test('receipt validation rejects named and symbolic properties on every authority array', async () => {
   const result = await executeVerified(input(), {
     platform: 'win32', now, executeRunner: async (request) => executionResult(request),
@@ -1544,7 +1653,9 @@ test('the public receipt validator is total for hostile and cyclic caller values
 
   let hostileExpectation;
   assert.doesNotThrow(() => {
-    hostileExpectation = validateForgeShadowM3RunnerRuntimeReceipt(result.receipt, new Proxy({}, {
+    hostileExpectation = validateForgeShadowM3RunnerRuntimeReceipt(result.receipt, new Proxy({
+      expectedRepository: 'Cheekyfellastef/stephan-os',
+    }, {
       get: () => { throw new Error('hostile expectation getter'); },
     }));
   });

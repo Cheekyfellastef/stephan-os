@@ -13,6 +13,7 @@ const SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{7,127}$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const PROOF_REF = /^proofs\/forge-shadow-m3\/[a-z0-9][a-z0-9._:-]{2,127}\/[0-9a-f]{64}\.json$/i;
+const QUARANTINE_PROOF_REF = /^proofs\/forge-shadow-m3-quarantine\/[a-z0-9][a-z0-9._:-]{7,127}\/[a-z0-9][a-z0-9._:-]{7,127}\/[a-z0-9][a-z0-9._:-]{7,127}\/[0-9a-f]{64}\.json$/i;
 const MAX_AUTHORIZATION_MS = 2 * 60 * 60 * 1000;
 const MAX_RUNNER_EXECUTION_MS = 60 * 60 * 1000;
 const MAX_RUNNER_TEARDOWN_MS = 300 * 1000;
@@ -92,6 +93,10 @@ const RECEIPT_KEYS = [
   'zeroResidualCredential', 'zeroResidualWorkspace', 'canCarryRealWork',
   'finalVerdict', 'completedAt', 'proofRefs', 'payloadSha256',
 ];
+const RECEIPT_EXPECTATION_KEYS = [
+  'expectedRepository', 'expectedHead', 'expectedTree', 'expectedArtifactSetDigest',
+  'expectedRuntimePlanDigest',
+];
 const FORBIDDEN_FIELDS = new Set([
   'command', 'commands', 'executable', 'args', 'arguments', 'shell', 'powershell',
   'script', 'path', 'url', 'uri', 'environment', 'env', 'token', 'credential',
@@ -125,10 +130,56 @@ function sha256Hex(value) {
 }
 
 function exactKeys(value, expected) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const actual = Reflect.ownKeys(value);
+    if (!actual.every((key) => typeof key === 'string')) return false;
+    const normalized = actual.sort();
+    const wanted = [...expected].sort();
+    return normalized.length === wanted.length
+      && normalized.every((key, index) => key === wanted[index]);
+  } catch {
+    return false;
+  }
+}
+
+function subsetKeys(value, allowed) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
+  const actual = Reflect.ownKeys(value);
+  return actual.every((key) => typeof key === 'string' && allowed.includes(key));
+}
+
+function inertArraySnapshot(value) {
+  if (!Array.isArray(value) || !Number.isSafeInteger(value.length) || value.length > 1_024) {
+    throw new TypeError('array-snapshot-bound-invalid');
+  }
+  const snapshot = new Array(value.length);
+  for (const key of Reflect.ownKeys(value)) {
+    if (key === 'length') continue;
+    Object.defineProperty(snapshot, key, {
+      value: value[key],
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+  }
+  return Object.freeze(snapshot);
+}
+
+function inertRecordSnapshot(value, { arrays = true } = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('record-required');
+  }
+  const keys = Reflect.ownKeys(value);
+  if (!keys.every((key) => typeof key === 'string')) {
+    throw new TypeError('record-symbol-key-invalid');
+  }
+  const snapshot = {};
+  for (const key of keys) {
+    const field = value[key];
+    snapshot[key] = arrays && Array.isArray(field) ? inertArraySnapshot(field) : field;
+  }
+  return Object.freeze(snapshot);
 }
 
 function instant(value) {
@@ -147,24 +198,26 @@ function trustedNowMs(now) {
 }
 
 function findForbidden(value, trail = [], seen = new WeakSet()) {
-  if (!value || typeof value !== 'object') return '';
-  if (seen.has(value)) return [...trail, 'cyclic-reference'].join('.');
-  seen.add(value);
-  for (const [key, nested] of Object.entries(value)) {
-    const next = [...trail, key];
-    if (FORBIDDEN_FIELDS.has(key.toLowerCase())) return next.join('.');
-    if (Array.isArray(nested)) {
-      for (let index = 0; index < nested.length; index += 1) {
-        const found = findForbidden(nested[index], [...next, String(index)], seen);
-        if (found) return found;
+  try {
+    if (!value || typeof value !== 'object') return '';
+    if (seen.has(value)) return [...trail, 'cyclic-reference'].join('.');
+    seen.add(value);
+    for (const key of Reflect.ownKeys(value)) {
+      const keyText = typeof key === 'string' ? key : `[${String(key)}]`;
+      const next = [...trail, keyText];
+      if (typeof key !== 'string' || FORBIDDEN_FIELDS.has(key.toLowerCase())) {
+        return next.join('.');
       }
-    } else {
+      if (Array.isArray(value) && key === 'length') continue;
+      const nested = value[key];
       const found = findForbidden(nested, next, seen);
       if (found) return found;
     }
+    seen.delete(value);
+    return '';
+  } catch {
+    return [...trail, 'inspection-failed'].join('.');
   }
-  seen.delete(value);
-  return '';
 }
 
 function isDenseClosedWorldArray(value, minimum, maximum) {
@@ -532,8 +585,10 @@ function validateTerminationAcknowledgement(value, runner, authorization, invoca
   const quarantinedTermination = value.quarantined === true
     && value.quarantineAcknowledged === true
     && value.quarantineReason === TEARDOWN_QUARANTINE_REASON
-    && PROOF_REF.test(quarantineProofRef)
-    && quarantineProofRef.startsWith(`proofs/forge-shadow-m3/${runner.runnerId}/`);
+    && QUARANTINE_PROOF_REF.test(quarantineProofRef)
+    && quarantineProofRef.startsWith(
+      `proofs/forge-shadow-m3-quarantine/${runner.runnerId}/${authorization.authorizationId}/${invocation.invocationId}/`,
+    );
   if (!normalTermination && !quarantinedTermination) {
     blockers.push(`runner-quarantine-ack-invalid:${prefix}`);
   }
@@ -542,6 +597,9 @@ function validateTerminationAcknowledgement(value, runner, authorization, invoca
       || acknowledgedMs > settledMs
       || acknowledgedMs > deadlineMs) blockers.push(`runner-termination-ack-time-invalid:${prefix}`);
   return blockers.length ? null : Object.freeze({
+    authorizationId: authorization.authorizationId,
+    invocationId: invocation.invocationId,
+    runnerId: runner.runnerId,
     acknowledgedAtUtc: new Date(acknowledgedMs).toISOString(),
     quarantined: quarantinedTermination,
     quarantineAcknowledged: quarantinedTermination,
@@ -665,27 +723,32 @@ function buildReceipt(plan, authorization, observations) {
 
 export function validateForgeShadowM3RunnerRuntimeReceipt(receipt, expectations = {}) {
   try {
-    const expectedRepository = expectations?.expectedRepository ?? '';
-    const expectedHead = expectations?.expectedHead ?? '';
-    const expectedTree = expectations?.expectedTree ?? '';
-    const expectedArtifactSetDigest = expectations?.expectedArtifactSetDigest ?? '';
+    const projectedReceipt = inertRecordSnapshot(receipt);
+    const projectedExpectations = inertRecordSnapshot(expectations);
+    if (!subsetKeys(projectedExpectations, RECEIPT_EXPECTATION_KEYS)) {
+      throw new TypeError('receipt-expectation-key-estate-invalid');
+    }
+    const expectedRepository = projectedExpectations.expectedRepository ?? '';
+    const expectedHead = projectedExpectations.expectedHead ?? '';
+    const expectedTree = projectedExpectations.expectedTree ?? '';
+    const expectedArtifactSetDigest = projectedExpectations.expectedArtifactSetDigest ?? '';
     const blockers = [];
-    if (!exactKeys(receipt, RECEIPT_KEYS)) blockers.push('receipt-fields-invalid');
-    if (receipt?.schemaVersion !== FORGE_SHADOW_M3_RUNTIME_RECEIPT_SCHEMA) blockers.push('receipt-schema-invalid');
-    if (!SAFE_ID.test(text(receipt?.receiptId))) blockers.push('receipt-id-invalid');
-    if (receipt?.finalVerdict !== FORGE_SHADOW_M3_EXECUTION_PROVEN) blockers.push('receipt-verdict-invalid');
-    if (expectedRepository && receipt?.repository !== expectedRepository) blockers.push('receipt-repository-mismatch');
-    if (expectedHead && text(receipt?.sourceHead).toLowerCase() !== text(expectedHead).toLowerCase()) blockers.push('receipt-head-mismatch');
-    if (expectedTree && text(receipt?.sourceTree).toLowerCase() !== text(expectedTree).toLowerCase()) blockers.push('receipt-tree-mismatch');
-    if (!SHA40.test(text(receipt?.sourceHead).toLowerCase()) || !SHA40.test(text(receipt?.sourceTree).toLowerCase())) blockers.push('receipt-source-identity-invalid');
+    if (!exactKeys(projectedReceipt, RECEIPT_KEYS)) blockers.push('receipt-fields-invalid');
+    if (projectedReceipt.schemaVersion !== FORGE_SHADOW_M3_RUNTIME_RECEIPT_SCHEMA) blockers.push('receipt-schema-invalid');
+    if (!SAFE_ID.test(text(projectedReceipt.receiptId))) blockers.push('receipt-id-invalid');
+    if (projectedReceipt.finalVerdict !== FORGE_SHADOW_M3_EXECUTION_PROVEN) blockers.push('receipt-verdict-invalid');
+    if (expectedRepository && projectedReceipt.repository !== expectedRepository) blockers.push('receipt-repository-mismatch');
+    if (expectedHead && text(projectedReceipt.sourceHead).toLowerCase() !== text(expectedHead).toLowerCase()) blockers.push('receipt-head-mismatch');
+    if (expectedTree && text(projectedReceipt.sourceTree).toLowerCase() !== text(expectedTree).toLowerCase()) blockers.push('receipt-tree-mismatch');
+    if (!SHA40.test(text(projectedReceipt.sourceHead).toLowerCase()) || !SHA40.test(text(projectedReceipt.sourceTree).toLowerCase())) blockers.push('receipt-source-identity-invalid');
     const expectedArtifactDigest = text(expectedArtifactSetDigest).toLowerCase();
     const normalizedExpectedArtifactDigest = SHA256_HEX.test(expectedArtifactDigest)
       ? `sha256:${expectedArtifactDigest}`
       : expectedArtifactDigest;
-    if (normalizedExpectedArtifactDigest && text(receipt?.artifactSetDigest).toLowerCase() !== normalizedExpectedArtifactDigest) blockers.push('receipt-artifact-set-mismatch');
-    if (!DIGEST.test(text(receipt?.artifactSetDigest).toLowerCase())) blockers.push('receipt-digest-invalid');
-    const runnerIds = isDenseClosedWorldArray(receipt?.runnerIdentities, 2, 2)
-      ? receipt.runnerIdentities.map(text)
+    if (normalizedExpectedArtifactDigest && text(projectedReceipt.artifactSetDigest).toLowerCase() !== normalizedExpectedArtifactDigest) blockers.push('receipt-artifact-set-mismatch');
+    if (!DIGEST.test(text(projectedReceipt.artifactSetDigest).toLowerCase())) blockers.push('receipt-digest-invalid');
+    const runnerIds = isDenseClosedWorldArray(projectedReceipt.runnerIdentities, 2, 2)
+      ? projectedReceipt.runnerIdentities.map(text)
       : [];
     if (runnerIds.length !== 2 || new Set(runnerIds).size !== 2
         || !runnerIds.includes('stephanos-forge-linux-runner-01')
@@ -693,17 +756,17 @@ export function validateForgeShadowM3RunnerRuntimeReceipt(receipt, expectations 
     for (const field of [
       'linuxReviewRunnerConnected', 'windowsProofRunnerConnected', 'teardownComplete',
       'zeroResidualRegistration', 'zeroResidualCredential', 'zeroResidualWorkspace',
-    ]) if (receipt?.[field] !== true) blockers.push(`receipt-runtime-proof-incomplete:${field}`);
-    if (receipt?.canCarryRealWork !== false) blockers.push('receipt-current-capacity-invalid');
-    if (!safeProofRefs(receipt?.proofRefs, '', MAX_RECEIPT_PROOF_REFS)) blockers.push('receipt-proof-refs-invalid');
-    if (!Number.isFinite(instant(receipt?.completedAt))) blockers.push('receipt-completion-time-invalid');
-    const { payloadSha256, ...body } = receipt || {};
+    ]) if (projectedReceipt[field] !== true) blockers.push(`receipt-runtime-proof-incomplete:${field}`);
+    if (projectedReceipt.canCarryRealWork !== false) blockers.push('receipt-current-capacity-invalid');
+    if (!safeProofRefs(projectedReceipt.proofRefs, '', MAX_RECEIPT_PROOF_REFS)) blockers.push('receipt-proof-refs-invalid');
+    if (!Number.isFinite(instant(projectedReceipt.completedAt))) blockers.push('receipt-completion-time-invalid');
+    const { payloadSha256, ...body } = projectedReceipt;
     if (!SHA256_HEX.test(text(payloadSha256).toLowerCase()) || sha256Hex(body) !== text(payloadSha256).toLowerCase()) blockers.push('receipt-content-digest-invalid');
     return Object.freeze({
       ok: blockers.length === 0,
       finalVerdict: blockers.length === 0 ? FORGE_SHADOW_M3_EXECUTION_PROVEN : FORGE_SHADOW_M3_EXECUTION_BLOCKED,
       blockers: Object.freeze(unique(blockers)),
-      receipt: blockers.length === 0 ? receipt : null,
+      receipt: blockers.length === 0 ? projectedReceipt : null,
     });
   } catch {
     return Object.freeze({
@@ -924,7 +987,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
     let minimumAcknowledgedMs = invocation.startedMs;
     let quarantineRequired = false;
     try {
-      const executionResult = settled.value;
+      const executionResult = inertRecordSnapshot(settled.value, { arrays: false });
       if (!exactKeys(executionResult, EXECUTION_RESULT_KEYS)) {
         controller.abort();
         runnerBlockers.push(`runner-execution-result-fields-invalid:${runner.runnerId}`);
@@ -932,12 +995,17 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
         return blocked([...runnerBlockers, ...terminationGate.blockers()], planDigest);
       }
 
-      terminationGate.publish(executionResult.terminationAcknowledgement, settledNowMs);
-      const lifecycle = safelyObservedLifecycle(executionResult.observation, invocation.startedMs);
+      const terminationSnapshot = inertRecordSnapshot(
+        executionResult.terminationAcknowledgement,
+      );
+      terminationGate.publish(terminationSnapshot, settledNowMs);
+      quarantineRequired = true;
+      const observationSnapshot = inertRecordSnapshot(executionResult.observation);
+      const lifecycle = safelyObservedLifecycle(observationSnapshot, invocation.startedMs);
       minimumAcknowledgedMs = lifecycle.minimumAcknowledgedMs;
-      quarantineRequired = teardownQuarantineRequired(executionResult.observation, lifecycle);
+      quarantineRequired = teardownQuarantineRequired(observationSnapshot, lifecycle);
       const observation = validateObservation(
-        executionResult.observation,
+        observationSnapshot,
         runner,
         artifact,
         plan,
@@ -986,7 +1054,7 @@ export async function executeForgeShadowM3RunnerPlan(input = {}, {
     finalVerdict: FORGE_SHADOW_M3_EXECUTION_PROVEN,
     blockers: Object.freeze([]),
     runtimePlanDigest: planDigest,
-    receipt,
+    receipt: validation.receipt,
     authority: falseAuthority(),
   });
 }
