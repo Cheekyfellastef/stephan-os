@@ -3,7 +3,17 @@ export const LIVE_GOAL_DASHBOARD_PORTFOLIO_SCHEMA = 'stephanos.live-goal-dashboa
 const CURRENT = 'CURRENT';
 const STALE = 'STALE';
 const UNKNOWN = 'UNKNOWN';
+const SHA40 = /^[a-f0-9]{40}$/i;
 const TERMINAL_GOAL_STATES = new Set(['CLOSED', 'COMPLETE', 'COMPLETED', 'DONE', 'MERGED', 'SUPERSEDED', 'CANCELLED']);
+const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
+  'OpenClaw GitHub Operator',
+  'Protected Operator Merge Source Proof',
+  'Exact-Head Review Dispatch',
+  'PR Clean Guard',
+  'Build Stephanos UI',
+  'Battle Bridge Publisher Proof',
+  'Codex Dispatch Queue Proof',
+]);
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -27,19 +37,30 @@ function freshness(timestamp, nowMs, staleAfterMs) {
   return { truth: ageMs > staleAfterMs ? STALE : CURRENT, ageMs };
 }
 
+function combineTruth(values) {
+  const truths = list(values).map((value) => text(value, UNKNOWN).toUpperCase());
+  if (!truths.length || truths.some((truth) => truth === UNKNOWN)) return UNKNOWN;
+  if (truths.some((truth) => truth === STALE)) return STALE;
+  return truths.every((truth) => truth === CURRENT) ? CURRENT : UNKNOWN;
+}
+
+function canonicalIdentity(value) {
+  const raw = text(value);
+  if (!raw) return '';
+  if (/^#?\d+$/.test(raw)) return `#${raw.replace(/^#/, '')}`;
+  return raw.toLowerCase();
+}
+
 function goalIdentity(record = {}) {
   const raw = text(record.relatedIssue || record.issue || record.issueNumber || record.relatedGoal || record.goalId);
-  if (!raw) return '';
-  if (/^#\d+$/.test(raw)) return raw;
-  if (/^\d+$/.test(raw)) return `#${raw}`;
-  return raw;
+  return canonicalIdentity(raw);
 }
 
 function recordMatchesIdentity(record = {}, identity = '') {
-  const normalized = text(identity).replace(/^#/, '');
-  if (!normalized) return false;
+  const expected = canonicalIdentity(identity);
+  if (!expected) return false;
   return [record.relatedGoal, record.relatedIssue, record.issue, record.issueNumber, record.goalId, record.correlationId]
-    .some((value) => text(value).replace(/^#/, '').includes(normalized));
+    .some((value) => canonicalIdentity(value) === expected);
 }
 
 function latestMatching(records, identity) {
@@ -90,6 +111,44 @@ function workspaceGoalCard(record, input, options) {
   });
 }
 
+function exactPrHead(pr = {}) {
+  const head = text(pr.headSha).toLowerCase();
+  const headUnknown = list(pr.blockers).some((blocker) => text(blocker).toLowerCase() === 'head_sha_unknown');
+  return SHA40.test(head) && !headUnknown ? head : '';
+}
+
+function workflowChecksStatus(pr = {}, workflows = []) {
+  const head = exactPrHead(pr);
+  const prNumber = Number(pr.number || 0) || null;
+  if (!head || !prNumber) return 'unknown';
+  const exactRuns = list(workflows).filter((run) => (
+    Number(run.prNumber || 0) === prNumber
+    && text(run.headSha).toLowerCase() === head
+    && REQUIRED_EXACT_HEAD_WORKFLOWS.includes(text(run.name))
+  ));
+  const byName = new Map();
+  for (const run of exactRuns) {
+    if (!byName.has(run.name)) byName.set(run.name, []);
+    byName.get(run.name).push(text(run.status, 'unknown').toLowerCase());
+  }
+  if (REQUIRED_EXACT_HEAD_WORKFLOWS.some((name) => !byName.has(name))) return 'unknown';
+  const statuses = [...byName.values()].flat();
+  if (statuses.some((status) => ['failed', 'failure', 'cancelled', 'timed_out', 'action_required'].includes(status))) return 'failed';
+  if (statuses.some((status) => ['running', 'queued', 'pending', 'waiting', 'in_progress'].includes(status))) return 'pending';
+  if (REQUIRED_EXACT_HEAD_WORKFLOWS.every((name) => byName.get(name).every((status) => status === 'passed' || status === 'success'))) return 'passed';
+  return 'unknown';
+}
+
+function effectiveChecksStatus(pr = {}, workflows = []) {
+  const direct = text(pr.checksStatus, 'unknown').toLowerCase();
+  const fromWorkflows = workflowChecksStatus(pr, workflows);
+  if (direct === 'failed' || fromWorkflows === 'failed') return 'failed';
+  if (direct === 'pending' || fromWorkflows === 'pending') return 'pending';
+  if (!exactPrHead(pr)) return 'unknown';
+  if (direct === 'passed' || fromWorkflows === 'passed') return 'passed';
+  return 'unknown';
+}
+
 function prState(pr = {}) {
   const checks = text(pr.checksStatus, 'unknown').toLowerCase();
   if (pr.draft === true) return 'BUILDING';
@@ -106,32 +165,39 @@ function prNextAction(pr = {}) {
   if (checks === 'failed') return `Repair failing exact-head checks on PR #${number}, then rerun review/proof.`;
   if (checks === 'pending') return `Wait for or reconcile the current exact-head checks on PR #${number}.`;
   if (pr.draft === true) return `Continue bounded implementation and review preparation for PR #${number}.`;
+  if (!exactPrHead(pr)) return `Refresh exact-head identity for PR #${number}; proof remains unknown until the head is bound.`;
   if (checks === 'passed' && /approval/i.test(text(pr.mergeReadiness))) return `Apply the governing approval envelope to PR #${number}; request Stephan only if fresh consequential approval is required.`;
   if (checks === 'passed') return `Continue PR #${number} through independent review and protected merge readiness.`;
   return `Refresh exact-head GitHub proof for PR #${number}; unknown remains unknown.`;
 }
 
-function githubPrCard(pr, githubFreshness) {
+function githubPrCard(pr, githubFreshness, workflows) {
+  const checksStatus = effectiveChecksStatus(pr, workflows);
+  const normalizedPr = { ...pr, checksStatus };
   const blockers = [];
   if (githubFreshness.truth !== CURRENT) blockers.push(`${githubFreshness.truth}_GITHUB_TELEMETRY`);
-  if (text(pr.checksStatus, 'unknown').toLowerCase() !== 'passed') blockers.push(`GITHUB_CHECKS_${text(pr.checksStatus, 'unknown').toUpperCase()}`);
+  if (!exactPrHead(pr)) blockers.push('GITHUB_HEAD_UNKNOWN');
+  if (checksStatus !== 'passed') blockers.push(`GITHUB_CHECKS_${checksStatus.toUpperCase()}`);
   for (const blocker of list(pr.blockers)) blockers.push(text(blocker));
+  const proofTruth = githubFreshness.truth === STALE
+    ? STALE
+    : (githubFreshness.truth === CURRENT && exactPrHead(pr) && checksStatus === 'passed' ? CURRENT : UNKNOWN);
   return Object.freeze({
     issue: `PR #${pr.number || 'unknown'}`,
     title: text(pr.title, 'Open pull request'),
     statusTruth: githubFreshness.truth,
-    proofTruth: githubFreshness.truth === CURRENT && text(pr.checksStatus).toLowerCase() === 'passed' ? CURRENT : (githubFreshness.truth === STALE ? STALE : UNKNOWN),
+    proofTruth,
     capabilityTruth: 'not-required',
-    summary: `${prState(pr)} · checks ${text(pr.checksStatus, 'unknown')} · merge ${text(pr.mergeReadiness, 'unknown')} · approval ${text(pr.approvalStatus, 'unknown')}`,
+    summary: `${prState(normalizedPr)} · checks ${checksStatus} · merge ${text(pr.mergeReadiness, 'unknown')} · approval ${text(pr.approvalStatus, 'unknown')}`,
     proofRefs: [],
     blockers: [...new Set(blockers.filter(Boolean))],
-    exactNextAction: prNextAction(pr),
+    exactNextAction: prNextAction(normalizedPr),
     source: 'github-live-open-pr',
     prNumber: pr.number || null,
     branch: text(pr.branch, 'unknown'),
-    exactHead: text(pr.headSha, 'unknown'),
+    exactHead: exactPrHead(pr) || 'unknown',
     url: text(pr.url, ''),
-    state: prState(pr),
+    state: prState(normalizedPr),
   });
 }
 
@@ -150,7 +216,7 @@ export function overlayGoalDashboardWithLivePortfolio(input = {}) {
       .filter((pr) => text(pr.supersededStatus).toLowerCase() !== 'superseded')
       .sort((left, right) => Number(right.number || 0) - Number(left.number || 0))
       .slice(0, 24)
-      .map((pr) => githubPrCard(pr, githubFreshness))
+      .map((pr) => githubPrCard(pr, githubFreshness, githubTelemetry.workflows))
     : [];
 
   const workspaceCards = uniqueLatestGoalRecords(input.goalRecords)
@@ -163,6 +229,7 @@ export function overlayGoalDashboardWithLivePortfolio(input = {}) {
     return !relatedPr || !livePrNumbers.has(relatedPr);
   });
 
+  const dynamicPortfolio = githubCards.length > 0 || workspaceCards.length > 0;
   const goals = githubCards.length
     ? [...githubCards, ...dedupedWorkspaceCards].slice(0, 32)
     : (workspaceCards.length ? workspaceCards : list(baseProjection.goals));
@@ -171,15 +238,18 @@ export function overlayGoalDashboardWithLivePortfolio(input = {}) {
     ? 'LIVE_GITHUB_PLUS_SHARED_WORKSPACE'
     : (workspaceCards.length ? 'LIVE_SHARED_WORKSPACE' : 'BASE_PROJECTION_FALLBACK');
 
+  const workspaceTruth = workspaceCards.length
+    ? combineTruth(workspaceCards.flatMap((card) => [card.statusTruth, card.proofTruth]))
+    : null;
   const dynamicTruth = githubCards.length
-    ? githubFreshness.truth
-    : (workspaceCards.length
-      ? (workspaceCards.some((card) => card.statusTruth === STALE) ? STALE : (workspaceCards.some((card) => card.statusTruth === CURRENT) ? CURRENT : UNKNOWN))
-      : text(baseProjection.sourceTruth, UNKNOWN));
+    ? combineTruth([githubFreshness.truth, ...(workspaceTruth ? [workspaceTruth] : [])])
+    : (workspaceTruth || text(baseProjection.sourceTruth, UNKNOWN));
 
   const cardBlockers = [...new Set(goals.flatMap((goal) => list(goal.blockers)).filter(Boolean))];
   const baseAttention = baseProjection.operatorAttention || {};
-  const blockers = [...new Set([...list(baseAttention.blockers), ...cardBlockers])];
+  const blockers = dynamicPortfolio
+    ? cardBlockers
+    : [...new Set([...list(baseAttention.blockers), ...cardBlockers])];
   const firstAction = goals.find((goal) => text(goal.exactNextAction))?.exactNextAction || text(baseAttention.exactNextAction, 'Refresh canonical programme evidence.');
 
   return Object.freeze({
@@ -196,7 +266,7 @@ export function overlayGoalDashboardWithLivePortfolio(input = {}) {
       ...baseAttention,
       blockers,
       localProofNeeded: goals.filter((goal) => goal.proofTruth !== CURRENT).map((goal) => goal.issue),
-      exactNextAction: blockers.length ? firstAction : text(baseAttention.exactNextAction, firstAction),
+      exactNextAction: blockers.length ? firstAction : (dynamicPortfolio ? firstAction : text(baseAttention.exactNextAction, firstAction)),
     }),
     finalVerdict: blockers.length ? 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED' : (dynamicTruth === CURRENT ? 'LANDING_GOAL_DASHBOARD_CURRENT' : 'LANDING_GOAL_DASHBOARD_STALE_OR_UNKNOWN'),
   });
