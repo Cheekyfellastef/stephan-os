@@ -278,6 +278,22 @@ test('scheduler rejects overlapping selections, set mismatches and non-GitHub ro
     projection.decisionReceipt.selectedIssues = [];
     assert.equal(planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection })).valid, false);
   });
+  await t.test('parallel candidate references cannot reorder scheduler priority', () => {
+    const selected = [portfolioItem(1737), portfolioItem(1738)];
+    const projection = scheduler({ selected });
+    projection.parallelCandidates.reverse();
+    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('scheduler-parallel-candidate-refs-mismatch'));
+  });
+  await t.test('decision selected issues cannot reorder scheduler priority', () => {
+    const selected = [portfolioItem(1737), portfolioItem(1738)];
+    const projection = scheduler({ selected });
+    projection.decisionReceipt.selectedIssues.reverse();
+    const result = planFoundryParallelProductionAcceleration({}, host({ schedulerProjection:projection }));
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('scheduler-selected-issues-mismatch'));
+  });
   await t.test('LANE_SELECTED issue is outside the canonical selected inventory', () => {
     const projection = scheduler();
     projection.decisionReceipt.selectedIssue = 9999;
