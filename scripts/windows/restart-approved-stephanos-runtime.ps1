@@ -682,6 +682,7 @@ try {
         $startupBlocker = ''
         $startedWorker = $null
         $postStartSourceProof = $null
+        $successReceiptJson = ''
         try {
             Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
             $workerTaskStarted = $true
@@ -721,7 +722,49 @@ try {
                 -ExpectedSourceHead $ExpectedHead `
                 -Phase 'POST_START'
             $script:postStartSourceProofOk = $true
-            Assert-BeforeOperationDeadline -RequiredReserveSeconds 2
+            $sourceTrackedClean = [bool]($preStartSourceProof.TrackedClean -and $postStartSourceProof.TrackedClean)
+            $publicMainHead = [string]$postStartSourceProof.PublicMainHead
+            $proofKind = 'mission-worker-heartbeat'
+            $proofFresh = $true
+
+            $afterTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop
+            if ([string]$afterTask.State -ne 'Running') {
+                throw 'MISSION_WORKER_TASK_NOT_RUNNING_AFTER_START'
+            }
+            $successReceiptJson = [PSCustomObject]@{
+                schemaVersion = 'stephanos.approved-runtime-restart.v1'
+                target = $Target
+                taskName = $plan.TaskName
+                beforeState = $beforeState
+                afterState = [string]$afterTask.State
+                canonicalActionVerified = $true
+                expectedHead = $ExpectedHead
+                sourceHead = $ExpectedHead
+                exactHeadProofOk = $true
+                proofKind = $proofKind
+                proofFresh = $proofFresh
+                sourceTrackedClean = $sourceTrackedClean
+                publicMainHead = $publicMainHead
+                postStartSourceProofOk = $postStartSourceProofOk
+                startedWorkerPid = $startedWorkerPid
+                workerStartedAtUtc = $workerStartedAtUtc
+                invocationId = $invocationId
+                deadlineUtc = $operationDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+                invocationBound = $invocationBound
+                canonicalWorkerCommandVerified = $canonicalWorkerCommandVerified
+                cleanupAttempted = $cleanupAttempted
+                cleanupCompleted = $cleanupCompleted
+                terminatedVerifiedOwnedProcess = $terminatedVerifiedOwnedProcess
+                unrelatedTasksChanged = $false
+                arbitraryTaskTargetAllowed = $false
+                arbitraryProcessKillAllowed = $false
+                verifiedOwnedProcessTerminationOnly = $true
+                liveOpenClawUpdatePerformed = $false
+                ok = $true
+                finalVerdict = 'APPROVED_RUNTIME_RESTART_PASS'
+            } | ConvertTo-Json -Depth 5 -Compress
+
+            Assert-BeforeOperationDeadline -RequiredReserveSeconds 1
             $confirmationPath = Join-Path $statusRoot "mission-orchestrator-worker-restart-confirm-$($script:invocationId).json"
             Write-BoundedAtomicJson -Path $confirmationPath -Value ([PSCustomObject]@{
                 schemaVersion = 'stephanos.mission-worker-restart-confirmation.v1'
@@ -770,13 +813,11 @@ try {
             }
             Stop-WithBlocker $startupBlocker
         }
-        $sourceTrackedClean = [bool]($preStartSourceProof.TrackedClean -and $postStartSourceProof.TrackedClean)
-        $publicMainHead = [string]$postStartSourceProof.PublicMainHead
-        $proofKind = 'mission-worker-heartbeat'
-        $proofFresh = $true
+
+        Write-Output $successReceiptJson
+        exit 0
     }
 
-    if ($Target -eq 'mission-worker') { Assert-BeforeOperationDeadline -RequiredReserveSeconds 1 }
     $afterTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
     [PSCustomObject]@{
         schemaVersion = 'stephanos.approved-runtime-restart.v1'

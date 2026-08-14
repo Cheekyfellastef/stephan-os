@@ -46,6 +46,44 @@ function mandatoryWorkerCleanupBoundary(source) {
     && source.includes('mission-orchestrator-worker-restart-cancel-$ExpectedInvocationId.json');
 }
 
+function finalWorkerProofPrecedesConfirmation(source) {
+  const postProof = source.indexOf("-Phase 'POST_START'");
+  const finalTaskRead = source.indexOf(
+    "$afterTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\' -ErrorAction Stop",
+    postProof,
+  );
+  const exactTaskState = source.indexOf(
+    "if ([string]$afterTask.State -ne 'Running')",
+    finalTaskRead,
+  );
+  const preparedReceipt = source.indexOf('$successReceiptJson = [PSCustomObject]@{', exactTaskState);
+  const finalDeadline = source.indexOf(
+    'Assert-BeforeOperationDeadline -RequiredReserveSeconds 1',
+    preparedReceipt,
+  );
+  const confirmationWrite = source.indexOf(
+    'Write-BoundedAtomicJson -Path $confirmationPath',
+    postProof,
+  );
+  const guardedCatch = source.indexOf('\n        catch {', confirmationWrite);
+  const blockerGate = source.indexOf('if ($startupBlocker)', guardedCatch);
+  const cleanup = source.indexOf('Stop-NewlyStartedOwnedWorker', blockerGate);
+  const successPublication = source.indexOf('Write-Output $successReceiptJson', cleanup);
+  const afterConfirmationBeforeCatch = source.slice(confirmationWrite, guardedCatch);
+
+  return postProof >= 0
+    && finalTaskRead > postProof
+    && exactTaskState > finalTaskRead
+    && preparedReceipt > exactTaskState
+    && finalDeadline > preparedReceipt
+    && confirmationWrite > finalDeadline
+    && guardedCatch > confirmationWrite
+    && blockerGate > guardedCatch
+    && cleanup > blockerGate
+    && successPublication > cleanup
+    && !/Assert-BeforeOperationDeadline|Get-ScheduledTask|ConvertTo-Json/.test(afterConfirmationBeforeCatch);
+}
+
 test('restart helper accepts only backend and mission-worker', () => {
   assert.match(restartSource, /ValidateSet\('backend', 'mission-worker'\)/);
   assert.match(restartSource, /Stephanos Battle Bridge Backend/);
@@ -150,6 +188,47 @@ test('worker post-start source proof has one mandatory bounded cleanup path', ()
   assert.match(restartSource, /Wait-UntilOperationDeadline/);
   assert.match(restartSource, /mission-orchestrator-worker-restart-confirm-/);
   assert.match(restartSource, /mission-orchestrator-worker-restart-cancel-/);
+});
+
+test('every final mission-worker proof succeeds before atomic confirmation publication', () => {
+  assert.equal(finalWorkerProofPrecedesConfirmation(restartSource), true);
+  assert.match(
+    restartSource,
+    /\$afterTask = Get-ScheduledTask -TaskName \$plan\.TaskName -TaskPath '\\' -ErrorAction Stop[\s\S]*MISSION_WORKER_TASK_NOT_RUNNING_AFTER_START[\s\S]*\$successReceiptJson = \[PSCustomObject\]@\{[\s\S]*Assert-BeforeOperationDeadline -RequiredReserveSeconds 1[\s\S]*Write-BoundedAtomicJson -Path \$confirmationPath/,
+  );
+  assert.match(
+    restartSource,
+    /Write-BoundedAtomicJson -Path \$confirmationPath[\s\S]*catch \{[\s\S]*if \(\$startupBlocker\) \{[\s\S]*Stop-NewlyStartedOwnedWorker[\s\S]*Write-Output \$successReceiptJson/,
+  );
+});
+
+test('deadline expiry, final task failure and post-confirmation widening cannot bypass cleanup', () => {
+  const attacks = [
+    restartSource.replaceAll(
+      'Assert-BeforeOperationDeadline -RequiredReserveSeconds 1',
+      '# final deadline proof removed',
+    ),
+    restartSource.replace(
+      "$afterTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\' -ErrorAction Stop",
+      '$afterTask = $task',
+    ),
+    restartSource.replace(
+      "if ([string]$afterTask.State -ne 'Running')",
+      'if ($false)',
+    ),
+    restartSource.replace(
+      '$successReceiptJson = [PSCustomObject]@{',
+      'Write-BoundedAtomicJson -Path $confirmationPath -Value $true\n            $successReceiptJson = [PSCustomObject]@{',
+    ),
+    restartSource.replace(
+      /(schemaVersion = 'stephanos\.mission-worker-restart-confirmation\.v1'[\s\S]*?deadlineUtc = \$script:operationDeadlineUtc\.ToString\('yyyy-MM-ddTHH:mm:ss\.fffZ'\)\r?\n\s*\}\))/,
+      "$1\n            Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\' -ErrorAction Stop",
+    ),
+    restartSource.replace('Stop-NewlyStartedOwnedWorker `', '# cleanup removed'),
+  ];
+  for (const [index, attack] of attacks.entries()) {
+    assert.equal(finalWorkerProofPrecedesConfirmation(attack), false, `attack ${index} must fail closed`);
+  }
 });
 
 test('removing or widening any owned-cleanup identity edge fails the source guard', () => {

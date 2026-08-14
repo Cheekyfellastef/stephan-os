@@ -15,6 +15,34 @@ function parameterBlock(source) {
   return match?.[1] || '';
 }
 
+function finalWorkerProofPrecedesConfirmation(source) {
+  const postProof = source.indexOf("-Phase 'POST_START'");
+  const finalTaskRead = source.indexOf(
+    "$afterTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\' -ErrorAction Stop",
+    postProof,
+  );
+  const exactTaskState = source.indexOf("if ([string]$afterTask.State -ne 'Running')", finalTaskRead);
+  const preparedReceipt = source.indexOf('$successReceiptJson = [PSCustomObject]@{', exactTaskState);
+  const finalDeadline = source.indexOf('Assert-BeforeOperationDeadline -RequiredReserveSeconds 1', preparedReceipt);
+  const confirmationWrite = source.indexOf('Write-BoundedAtomicJson -Path $confirmationPath', postProof);
+  const guardedCatch = source.indexOf('\n        catch {', confirmationWrite);
+  const blockerGate = source.indexOf('if ($startupBlocker)', guardedCatch);
+  const cleanup = source.indexOf('Stop-NewlyStartedOwnedWorker', blockerGate);
+  const successPublication = source.indexOf('Write-Output $successReceiptJson', cleanup);
+  const afterConfirmationBeforeCatch = source.slice(confirmationWrite, guardedCatch);
+  return postProof >= 0
+    && finalTaskRead > postProof
+    && exactTaskState > finalTaskRead
+    && preparedReceipt > exactTaskState
+    && finalDeadline > preparedReceipt
+    && confirmationWrite > finalDeadline
+    && guardedCatch > confirmationWrite
+    && blockerGate > guardedCatch
+    && cleanup > blockerGate
+    && successPublication > cleanup
+    && !/Assert-BeforeOperationDeadline|Get-ScheduledTask|ConvertTo-Json/.test(afterConfirmationBeforeCatch);
+}
+
 function strictRestartInvocationBoundary({ probe, restart, launcher }) {
   return probe.includes("$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'")
     && probe.includes('$arguments.Count -ne 2')
@@ -33,6 +61,7 @@ function strictRestartInvocationBoundary({ probe, restart, launcher }) {
     && restart.includes('$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks')
     && restart.includes('$reverifiedWorker.ProcessStartedAtUtc.Ticks -ne $verifiedWorker.ProcessStartedAtUtc.Ticks')
     && restart.includes('Assert-BeforeOperationDeadline -RequiredReserveSeconds 1')
+    && finalWorkerProofPrecedesConfirmation(restart)
     && restart.includes("deadlineUtc = $script:operationDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')")
     && !restart.includes("deadlineUtc = $script:operationDeadlineUtc.ToString('o')")
     && launcher.includes('$processStartInfo.FileName = $canonicalNode')
@@ -198,6 +227,10 @@ test('restart invocation binds exact command, heartbeat, deadline and process cr
     { ...canonical, restart: restart.replace('$processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks', '$false') },
     { ...canonical, restart: restart.replace('$verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks', '$false') },
     { ...canonical, restart: restart.replaceAll('Assert-BeforeOperationDeadline -RequiredReserveSeconds 1', '# deadline check removed') },
+    { ...canonical, restart: restart.replace("$afterTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\' -ErrorAction Stop", '$afterTask = $task') },
+    { ...canonical, restart: restart.replace("if ([string]$afterTask.State -ne 'Running')", 'if ($false)') },
+    { ...canonical, restart: restart.replace('$successReceiptJson = [PSCustomObject]@{', 'Write-BoundedAtomicJson -Path $confirmationPath -Value $true\n            $successReceiptJson = [PSCustomObject]@{') },
+    { ...canonical, restart: restart.replace(/(schemaVersion = 'stephanos\.mission-worker-restart-confirmation\.v1'[\s\S]*?deadlineUtc = \$script:operationDeadlineUtc\.ToString\('yyyy-MM-ddTHH:mm:ss\.fffZ'\)\r?\n\s*\}\))/, "$1\n            Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\' -ErrorAction Stop") },
     { ...canonical, restart: restart.replaceAll("deadlineUtc = $script:operationDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')", "deadlineUtc = $script:operationDeadlineUtc.ToString('o')") },
     { ...canonical, restart: restart.replaceAll("deadlineUtc = $script:operationDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')", "deadlineUtc = [datetime]::UtcNow.AddMinutes(5).ToString('yyyy-MM-ddTHH:mm:ss.fffZ')") },
     { ...canonical, launcher: launcher.replace('$processStartInfo.FileName = $canonicalNode', '$processStartInfo.FileName = $env:NODE') },
