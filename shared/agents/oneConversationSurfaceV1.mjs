@@ -78,21 +78,6 @@ function strictProofRefList(values) {
   return parsed;
 }
 
-function boundedDuration(value, fallback) {
-  return Number.isFinite(value) && value >= 0 ? value : fallback;
-}
-
-function retainedDuration(value, fallback) {
-  return Math.min(boundedDuration(value, fallback), fallback);
-}
-
-function sameStringSet(left, right) {
-  return left.length === right.length
-    && new Set(left).size === left.length
-    && new Set(right).size === right.length
-    && left.every((value) => right.includes(value));
-}
-
 function authorityBoundary() {
   return Object.freeze({
     sourceMutationAllowed: false,
@@ -164,6 +149,13 @@ function classifyObservedAt(observedAt = {}, nowMs, staleAfterMs, maxFutureSkewM
   });
 }
 
+function sameStringSet(left, right) {
+  return left.length === right.length
+    && new Set(left).size === left.length
+    && new Set(right).size === right.length
+    && left.every((value) => right.includes(value));
+}
+
 function validateRetainedSurfaceSet(projection, observedAt) {
   const active = strictStringList(projection.activeSurfaces);
   if (!active.valid || active.values.length === 0 || active.values.some((surface) => !ONE_CONVERSATION_SURFACES.includes(surface))) return false;
@@ -189,10 +181,11 @@ function evaluateRetainedProjection(projection = {}, options = {}) {
   if (!validateRetainedSurfaceSet(projection, observedAt)) {
     return Object.freeze({ ok: false, reason: 'SURFACE_SET_INCONSISTENT', freshness: null });
   }
+  if (projection.staleAfterMs !== DEFAULT_STALE_AFTER_MS || projection.maxFutureSkewMs !== DEFAULT_MAX_FUTURE_SKEW_MS) {
+    return Object.freeze({ ok: false, reason: 'FRESHNESS_POLICY_INVALID', freshness: null });
+  }
   const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
-  const staleAfterMs = retainedDuration(options.staleAfterMs ?? projection.staleAfterMs, DEFAULT_STALE_AFTER_MS);
-  const maxFutureSkewMs = retainedDuration(options.maxFutureSkewMs ?? projection.maxFutureSkewMs, DEFAULT_MAX_FUTURE_SKEW_MS);
-  const freshness = classifyObservedAt(observedAt, nowMs, staleAfterMs, maxFutureSkewMs);
+  const freshness = classifyObservedAt(observedAt, nowMs, DEFAULT_STALE_AFTER_MS, DEFAULT_MAX_FUTURE_SKEW_MS);
   if (freshness.invalid.length > 0) return Object.freeze({ ok: false, reason: 'FRESHNESS_EVIDENCE_INVALID', freshness });
   if (freshness.future.length > 0) return Object.freeze({ ok: false, reason: 'EVIDENCE_FUTURE_DATED', freshness });
   if (freshness.currentCount === 0) return Object.freeze({ ok: false, reason: 'EVIDENCE_STALE', freshness });
@@ -202,8 +195,8 @@ function evaluateRetainedProjection(projection = {}, options = {}) {
     freshness,
     evidenceRefs: evidence.values,
     nowMs,
-    staleAfterMs,
-    maxFutureSkewMs,
+    staleAfterMs: DEFAULT_STALE_AFTER_MS,
+    maxFutureSkewMs: DEFAULT_MAX_FUTURE_SKEW_MS,
   });
 }
 
@@ -293,12 +286,10 @@ export function buildOneConversationProjectionV1(input = {}, options = {}) {
 
   const observations = [...bySurface.values()].sort((left, right) => left.surface.localeCompare(right.surface));
   const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
-  const staleAfterMs = boundedDuration(options.staleAfterMs, DEFAULT_STALE_AFTER_MS);
-  const maxFutureSkewMs = boundedDuration(options.maxFutureSkewMs, DEFAULT_MAX_FUTURE_SKEW_MS);
   const surfaceObservedAt = Object.freeze(Object.fromEntries(
     observations.map((observation) => [observation.surface, observation.timestampUtc]),
   ));
-  const freshnessEvaluation = classifyObservedAt(surfaceObservedAt, nowMs, staleAfterMs, maxFutureSkewMs);
+  const freshnessEvaluation = classifyObservedAt(surfaceObservedAt, nowMs, DEFAULT_STALE_AFTER_MS, DEFAULT_MAX_FUTURE_SKEW_MS);
   const status = freshnessEvaluation.future.length > 0
     ? 'UNKNOWN'
     : (freshnessEvaluation.currentCount > 0 ? 'CURRENT' : 'STALE');
@@ -319,8 +310,8 @@ export function buildOneConversationProjectionV1(input = {}, options = {}) {
     surfaceObservedAt,
     surfaceFreshness: freshnessEvaluation.freshness,
     evaluatedAtUtc: new Date(nowMs).toISOString(),
-    staleAfterMs,
-    maxFutureSkewMs,
+    staleAfterMs: DEFAULT_STALE_AFTER_MS,
+    maxFutureSkewMs: DEFAULT_MAX_FUTURE_SKEW_MS,
     activeSurfaces: Object.freeze(observations.map((observation) => observation.surface)),
     evidenceRefs: Object.freeze([...new Set(observations.flatMap((observation) => observation.evidenceRefs))]),
     routeVisibility: options.includeRouteAudit === true ? 'AUDIT_VISIBLE' : 'HIDDEN_BY_DEFAULT',
@@ -359,6 +350,7 @@ export function planCrossSurfaceContinuationV1(projection = {}, input = {}, opti
       PROOF_REFS_INVALID: 'CONTINUATION_BLOCKED_PROOF_EVIDENCE_INVALID',
       FRESHNESS_EVIDENCE_INCOMPLETE: 'CONTINUATION_BLOCKED_FRESHNESS_EVIDENCE_INCOMPLETE',
       SURFACE_SET_INCONSISTENT: 'CONTINUATION_BLOCKED_SURFACE_SET_INCONSISTENT',
+      FRESHNESS_POLICY_INVALID: 'CONTINUATION_BLOCKED_FRESHNESS_POLICY_INVALID',
       FRESHNESS_EVIDENCE_INVALID: 'CONTINUATION_BLOCKED_FRESHNESS_EVIDENCE_INVALID',
       EVIDENCE_FUTURE_DATED: 'CONTINUATION_BLOCKED_STALE_OR_UNKNOWN',
       EVIDENCE_STALE: 'CONTINUATION_BLOCKED_STALE_OR_UNKNOWN',
@@ -399,17 +391,14 @@ export function projectOneConversationWorkspaceMessageV1(projection = {}, input 
   const nowMs = Number.isFinite(input.workspaceValidationOptions?.nowMs)
     ? input.workspaceValidationOptions.nowMs
     : Date.now();
-  const retained = evaluateRetainedProjection(projection, {
-    nowMs,
-    staleAfterMs: input.workspaceValidationOptions?.staleAfterMs,
-    maxFutureSkewMs: input.maxFutureSkewMs,
-  });
+  const retained = evaluateRetainedProjection(projection, { nowMs });
   if (!retained.ok) {
     const reasonByFailure = {
       IDENTITY_INCOMPLETE: 'ONE_CONVERSATION_PROJECTION_IDENTITY_INCOMPLETE',
       PROOF_REFS_INVALID: 'ONE_CONVERSATION_PROJECTION_PROOF_REFS_INVALID',
       FRESHNESS_EVIDENCE_INCOMPLETE: 'ONE_CONVERSATION_PROJECTION_FRESHNESS_EVIDENCE_INCOMPLETE',
       SURFACE_SET_INCONSISTENT: 'ONE_CONVERSATION_PROJECTION_SURFACE_SET_INCONSISTENT',
+      FRESHNESS_POLICY_INVALID: 'ONE_CONVERSATION_PROJECTION_FRESHNESS_POLICY_INVALID',
       FRESHNESS_EVIDENCE_INVALID: 'ONE_CONVERSATION_PROJECTION_FRESHNESS_EVIDENCE_INVALID',
       EVIDENCE_FUTURE_DATED: 'ONE_CONVERSATION_PROJECTION_EVIDENCE_FUTURE_DATED',
       EVIDENCE_STALE: 'ONE_CONVERSATION_PROJECTION_EVIDENCE_STALE_AT_PUBLICATION',
@@ -422,7 +411,7 @@ export function projectOneConversationWorkspaceMessageV1(projection = {}, input 
   if (!isTimestamp(timestampUtc)) {
     return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_MESSAGE_IDENTITY_INCOMPLETE' });
   }
-  if (timestampMs > nowMs + retained.maxFutureSkewMs) {
+  if (timestampMs > nowMs + DEFAULT_MAX_FUTURE_SKEW_MS) {
     return Object.freeze({ ok: false, reason: 'ONE_CONVERSATION_WORKSPACE_RECORD_FUTURE_DATED' });
   }
   const correlationId = safeId(input.correlationId || projection.intentId);
