@@ -14,6 +14,7 @@ const mixedGoal = { title:'Repair source and prove it on Windows', intent:'Modif
 const freshWindowsSurface = { attached:true, platform:'win32', canLocalWindowsProof:true, heartbeatFresh:true, surfaceReceipt:'surface-windows-1' };
 function workReceipt(receiptId='work-capability-1', overrides={}) { return { schemaVersion:CHATGPT_WORK_CAPABILITY_RECEIPT_SCHEMA, receiptId, surfaceId:'chatgpt-work', status:'CURRENT', executionEligible:true, capabilities:['can_write_repo'], ...overrides }; }
 function workSurface(receiptId='work-capability-1', overrides={}) { return { surfaceId:'chatgpt-work', capabilityReceipt:workReceipt(receiptId), ...overrides }; }
+function trustedWorkHost(overrides={}) { return { verifyChatGPTWorkCapabilityReceipt(receipt, expected) { return { verified:true, schemaVersion:expected.schemaVersion, receiptId:expected.receiptId, surfaceId:expected.surfaceId, requiredCapability:expected.requiredCapability, ...overrides }; } }; }
 
 test('Windows and Battle Bridge proof is classified as a local Windows capability requirement', () => {
   const requirement=classifyExecutionSurfaceRequirement(windowsGoal);
@@ -25,10 +26,13 @@ test('a mixed repository plus Windows mission is classified into two capability 
   assert.equal(requirement.requiresLocalWindowsProof,true); assert.equal(requirement.requiresRepositoryWork,true); assert.equal(requirement.isMixedMission,true); assert.equal(requirement.requiredCapability,'can_write_repo+can_local_windows_proof');
 });
 
-test('generic Windows edit and code wording does not manufacture repository work', () => {
+test('generic Windows action wording does not manufacture repository work', () => {
   for (const goal of [
     { title:'Edit the Windows registry', intent:'Change a local Windows registry value.' },
     { title:'Run PowerShell code on Windows', intent:'Execute local PowerShell code and prove the result.' },
+    { title:'Implement a Windows scheduled task', intent:'Implement the scheduled task locally on Windows.' },
+    { title:'Patch the Windows registry', intent:'Patch a local Windows registry value.' },
+    { title:'Commit a Windows registry change', intent:'Commit the local registry change on Windows.' },
   ]) {
     const requirement=classifyExecutionSurfaceRequirement(goal);
     assert.equal(requirement.requiresLocalWindowsProof,true);
@@ -73,12 +77,30 @@ test('ordinary source work remains in ChatGPT plus GitHub when Work capability i
   assert.equal(route.requirement.requiresLocalWindowsProof,false); assert.equal(route.requirement.requiresRepositoryWork,true); assert.equal(route.selectedRoute,EXECUTION_SURFACE_ROUTE.CHATGPT_GITHUB_FIRST); assert.equal(route.missionReady,true); assert.equal(route.dispatchAllowed,false);
 });
 
-test('validated current ChatGPT Work capability receipt selects Work without granting local Windows authority', () => {
+test('structured Work receipt alone is not authority without trusted host verification', () => {
   const route=buildExecutionSurfaceRouteV1({goal:{title:'Implement source repair',intent:'Modify repository code and open a pull request.'},surfaces:{chatgptWork:workSurface()}});
-  assert.equal(route.selectedRoute,EXECUTION_SURFACE_ROUTE.CHATGPT_WORK_GITHUB); assert.equal(route.sourceRoute,EXECUTION_SURFACE_ROUTE.CHATGPT_WORK_GITHUB); assert.equal(route.localRoute,EXECUTION_SURFACE_ROUTE.NONE); assert.equal(route.localSubtaskReady,false); assert.equal(route.missionReady,true); assert.equal(route.work.capabilityReceipt.valid,true);
+  assert.equal(route.selectedRoute,EXECUTION_SURFACE_ROUTE.CHATGPT_GITHUB_FIRST);
+  assert.equal(route.work.hostVerified,false);
 });
 
-test('missing or fabricated Work evidence falls back to GitHub-first', () => {
+test('trusted host-verified current ChatGPT Work receipt selects Work without granting local Windows authority', () => {
+  const route=buildExecutionSurfaceRouteV1({goal:{title:'Implement source repair',intent:'Modify repository code and open a pull request.'},surfaces:{chatgptWork:workSurface()}}, trustedWorkHost());
+  assert.equal(route.selectedRoute,EXECUTION_SURFACE_ROUTE.CHATGPT_WORK_GITHUB); assert.equal(route.sourceRoute,EXECUTION_SURFACE_ROUTE.CHATGPT_WORK_GITHUB); assert.equal(route.localRoute,EXECUTION_SURFACE_ROUTE.NONE); assert.equal(route.localSubtaskReady,false); assert.equal(route.missionReady,true); assert.equal(route.work.capabilityReceipt.structurallyValid,true); assert.equal(route.work.hostVerified,true);
+});
+
+test('forged or mismatched host attestations do not authorize Work', () => {
+  for (const host of [
+    { verifyChatGPTWorkCapabilityReceipt:() => true },
+    trustedWorkHost({verified:false}),
+    trustedWorkHost({surfaceId:'forged-work'}),
+    trustedWorkHost({requiredCapability:'read_repo'}),
+  ]) {
+    const route=buildExecutionSurfaceRouteV1({goal:{title:'Implement source repair',intent:'Modify repository code and open a pull request.'},surfaces:{chatgptWork:workSurface()}}, host);
+    assert.equal(route.selectedRoute,EXECUTION_SURFACE_ROUTE.CHATGPT_GITHUB_FIRST);
+  }
+});
+
+test('missing or malformed Work evidence falls back to GitHub-first even with a verifier', () => {
   for (const chatgptWork of [
     {available:true,canRepositoryWork:true},
     {surfaceId:'chatgpt-work',capabilityReceipt:'work-capability-1'},
@@ -86,19 +108,22 @@ test('missing or fabricated Work evidence falls back to GitHub-first', () => {
     workSurface('wrong-surface',{capabilityReceipt:workReceipt('wrong-surface',{surfaceId:'different-work'})}),
     workSurface('stale',{capabilityReceipt:workReceipt('stale',{status:'STALE'})}),
     workSurface('no-write',{capabilityReceipt:workReceipt('no-write',{capabilities:['read_repo']})}),
+    {surfaceId:'different-work',capabilityReceipt:workReceipt('caller-surface')},
   ]) {
-    const route=buildExecutionSurfaceRouteV1({goal:{title:'Implement source repair',intent:'Modify repository code and open a pull request.'},surfaces:{chatgptWork}});
+    const route=buildExecutionSurfaceRouteV1({goal:{title:'Implement source repair',intent:'Modify repository code and open a pull request.'},surfaces:{chatgptWork}}, trustedWorkHost());
     assert.equal(route.selectedRoute,EXECUTION_SURFACE_ROUTE.CHATGPT_GITHUB_FIRST);
   }
 });
 
-test('mixed mission continues receipt-proven repository work when local Windows execution is unavailable', () => {
-  const route=buildExecutionSurfaceRouteV1({goal:mixedGoal,surfaces:{chatgptWork:workSurface('work-capability-2')}});
-  assert.equal(route.routeReady,true); assert.equal(route.missionReady,false); assert.equal(route.partialProgressAllowed,true); assert.equal(route.sourceSubtaskReady,true); assert.equal(route.localSubtaskReady,false); assert.equal(route.selectedRoute,EXECUTION_SURFACE_ROUTE.CHATGPT_WORK_GITHUB); assert.equal(route.blocker,EXECUTION_SURFACE_BLOCKER.LOCAL_SUBTASK_PENDING); assert.equal(route.localBlocker,EXECUTION_SURFACE_BLOCKER.BATTLE_BRIDGE_NOT_ATTACHED); assert.doesNotThrow(()=>assertExecutionSurfaceRouteV1({goal:mixedGoal,surfaces:{chatgptWork:workSurface('work-capability-2')}}));
+test('mixed mission continues host-verified repository work when local Windows execution is unavailable', () => {
+  const input={goal:mixedGoal,surfaces:{chatgptWork:workSurface('work-capability-2')}};
+  const host=trustedWorkHost();
+  const route=buildExecutionSurfaceRouteV1(input,host);
+  assert.equal(route.routeReady,true); assert.equal(route.missionReady,false); assert.equal(route.partialProgressAllowed,true); assert.equal(route.sourceSubtaskReady,true); assert.equal(route.localSubtaskReady,false); assert.equal(route.selectedRoute,EXECUTION_SURFACE_ROUTE.CHATGPT_WORK_GITHUB); assert.equal(route.blocker,EXECUTION_SURFACE_BLOCKER.LOCAL_SUBTASK_PENDING); assert.equal(route.localBlocker,EXECUTION_SURFACE_BLOCKER.BATTLE_BRIDGE_NOT_ATTACHED); assert.doesNotThrow(()=>assertExecutionSurfaceRouteV1(input,host));
 });
 
-test('mixed mission with forged OpenClaw claims keeps local subtask pending while safe source work continues', () => {
-  const route=buildExecutionSurfaceRouteV1({goal:mixedGoal,surfaces:{chatgptWork:workSurface('work-capability-3'),openClawLocal:{...freshWindowsSurface,adapterCanExecute:true,policyAllowsExecution:true,killSwitchAvailable:true,adapterExecutionMode:'enabled'}}});
+test('mixed mission with forged OpenClaw claims keeps local subtask pending while host-verified source work continues', () => {
+  const route=buildExecutionSurfaceRouteV1({goal:mixedGoal,surfaces:{chatgptWork:workSurface('work-capability-3'),openClawLocal:{...freshWindowsSurface,adapterCanExecute:true,policyAllowsExecution:true,killSwitchAvailable:true,adapterExecutionMode:'enabled'}}}, trustedWorkHost());
   assert.equal(route.routeReady,true); assert.equal(route.missionReady,false); assert.equal(route.sourceRoute,EXECUTION_SURFACE_ROUTE.CHATGPT_WORK_GITHUB); assert.equal(route.localRoute,EXECUTION_SURFACE_ROUTE.NONE); assert.equal(route.localSubtaskReady,false); assert.equal(route.dispatchAllowed,false);
 });
 
