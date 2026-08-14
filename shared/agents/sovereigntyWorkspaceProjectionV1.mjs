@@ -1,4 +1,6 @@
+import { CODEX_AVAILABILITY } from './codexCapacityGovernorV1.mjs';
 import { validateBuildLaneCapacityReceipt } from './missionControllerCapacityRouterV1.mjs';
+import { adjudicateForgeSidecarCapacity } from './stallSentinelReviewPipelineV1.mjs';
 
 export const SOVEREIGNTY_WORKSPACE_SCHEMA_VERSION = 'stephanos.sovereignty-workspace-projection.v1';
 export const SOVEREIGNTY_SYSTEM_OBSERVATION_SCHEMA_VERSION = 'stephanos.sovereignty-system-observation.v1';
@@ -199,16 +201,21 @@ function referencedSystemIds(capability) {
   ].filter(Boolean))];
 }
 
+function usableSystem(system) {
+  return system?.truthState === 'CURRENT'
+    && ['AVAILABLE_NOW', 'CONSTRAINED'].includes(system.capacityState);
+}
+
 function capabilityPosture(capability, systemsById) {
   const ids = referencedSystemIds(capability);
   const observed = ids.map((id) => systemsById.get(id)).filter(Boolean);
-  const viable = observed.filter((system) => system.truthState === 'CURRENT' && ['AVAILABLE_NOW', 'CONSTRAINED'].includes(system.capacityState));
+  const viable = observed.filter(usableSystem);
   const viableProviderIds = [...new Set(viable.map((system) => system.providerId))];
   const declaredProviderIds = [...new Set(observed.map((system) => system.providerId))];
   const missing = ids.filter((id) => !systemsById.has(id));
   const primary = systemsById.get(capability.primarySystemId);
   let posture = 'UNKNOWN';
-  if (primary?.truthState === 'CURRENT') {
+  if (usableSystem(primary)) {
     if (ids.length === 1) posture = 'SINGLE_POINT';
     else if (viableProviderIds.length >= 2) posture = 'DIVERSIFIED';
     else posture = 'CONCENTRATED';
@@ -230,7 +237,7 @@ function capabilityPosture(capability, systemsById) {
         ? `${capability.capabilityId} declares only one system, so that system is a visible single point of failure.`
         : posture === 'CONCENTRATED'
           ? `${capability.capabilityId} declares alternatives, but fewer than two currently have usable evidence.`
-          : `${capability.capabilityId} cannot be scored because the primary system lacks current evidence.`,
+          : `${capability.capabilityId} cannot be scored because the primary system lacks current usable capacity evidence.`,
   });
 }
 
@@ -296,8 +303,8 @@ export function buildSovereigntyWorkspaceProjectionV1(input = {}, options = {}) 
     evidenceCoveragePercent,
     diversificationCoveragePercent,
     scoreExplanation: diversificationCoveragePercent === null
-      ? 'Diversification coverage is withheld because no capability has current primary-system evidence.'
-      : `Diversification coverage is ${diversificationCoveragePercent}% of criticality weight among capabilities with current primary-system evidence; evidence coverage is ${evidenceCoveragePercent}% of total declared criticality weight.`,
+      ? 'Diversification coverage is withheld because no capability has current usable primary-system capacity evidence.'
+      : `Diversification coverage is ${diversificationCoveragePercent}% of criticality weight among capabilities with current usable primary-system capacity evidence; evidence coverage is ${evidenceCoveragePercent}% of total declared criticality weight.`,
     systems: Object.freeze(systems),
     capabilities: Object.freeze(capabilities),
     capabilityPostures,
@@ -320,7 +327,17 @@ function unknownBuildLaneMetrics() {
   };
 }
 
-function normalizeBuildLaneStatus(status, expectedStatusId, expectedRoute, systemId, providerId, systemClass, nowMs) {
+function forgeAuthorityBound(receipt, expectedRoute, authority) {
+  if (expectedRoute !== 'FOUNDRY_FORGE') return true;
+  return authority?.canCarryRealWork === true
+    && text(authority.m2ReceiptId) !== ''
+    && text(authority.m3RuntimeReceiptId) !== ''
+    && denseArray(receipt?.authorityReceiptIds)
+    && receipt.authorityReceiptIds.includes(authority.m2ReceiptId)
+    && receipt.authorityReceiptIds.includes(authority.m3RuntimeReceiptId);
+}
+
+function normalizeBuildLaneStatus(status, expectedStatusId, expectedRoute, systemId, providerId, systemClass, nowMs, authority = null) {
   const receipt = status?.capacityReceipt;
   const nowUtc = new Date(nowMs).toISOString();
   const validation = validateBuildLaneCapacityReceipt(receipt, {
@@ -329,13 +346,20 @@ function normalizeBuildLaneStatus(status, expectedStatusId, expectedRoute, syste
     nowUtc,
   });
   const observedAtMs = timestampMs(receipt?.observedAtUtc);
+  const authorityBound = forgeAuthorityBound(receipt, expectedRoute, authority);
   const current = status?.schemaVersion === 'shared-agent-workspace-record.v1'
     && status?.statusId === expectedStatusId
     && observedAtMs !== null
     && observedAtMs <= nowMs
     && validation.valid
-    && validation.route === expectedRoute;
+    && validation.route === expectedRoute
+    && authorityBound;
   const refs = current ? proofRefs(receipt.proofRefs) || [] : [];
+  const explanation = current
+    ? `${systemId} has a canonical fresh bounded focused-repair capacity receipt.`
+    : expectedRoute === 'FOUNDRY_FORGE' && !authorityBound
+      ? `${systemId} capacity is UNKNOWN because Forge M2 and M3 runtime authority is unproven or not bound into the lane receipt.`
+      : `${systemId} capacity is UNKNOWN because the canonical build-lane receipt did not validate.`;
   return {
     schemaVersion: SOVEREIGNTY_SYSTEM_OBSERVATION_SCHEMA_VERSION,
     systemId,
@@ -351,15 +375,19 @@ function normalizeBuildLaneStatus(status, expectedStatusId, expectedRoute, syste
       queueDepth: receipt.queueDepth,
       p95StartLatencySeconds: receipt.p95StartLatencySeconds,
     } : unknownBuildLaneMetrics(),
-    explanation: current ? `${systemId} has a canonical fresh bounded focused-repair capacity receipt.` : `${systemId} capacity is UNKNOWN because the canonical build-lane receipt did not validate.`,
+    explanation,
   };
 }
 
 export function createSovereigntyCapacityObservationsV1(input = {}, options = {}) {
   const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+  const nowUtc = new Date(nowMs).toISOString();
   const codex = input.codexStatus || {};
   const codexRefs = proofRefs(codex.proofRefs) || [];
   const codexObservedMs = timestampMs(codex.observedAtUtc);
+  const remaining = boundedNumber(codex.remainingPercent, 0, 100);
+  const availability = text(codex.availability).toUpperCase();
+  const availabilityValid = Object.values(CODEX_AVAILABILITY).includes(availability);
   const codexCurrent = codex.schemaVersion === 'shared-agent-workspace-record.v1'
     && codex.statusId === 'codex-capacity-current'
     && codex.truthState === 'CURRENT'
@@ -367,15 +395,20 @@ export function createSovereigntyCapacityObservationsV1(input = {}, options = {}
     && codexObservedMs !== null
     && codexObservedMs <= nowMs
     && nowMs - codexObservedMs <= 15 * 60 * 1000
-    && codexRefs.length > 0;
-  const remaining = boundedNumber(codex.remainingPercent, 0, 100);
-  const codexCapacityState = !codexCurrent || remaining === undefined || remaining === null
+    && codexRefs.length > 0
+    && remaining !== undefined
+    && remaining !== null
+    && availabilityValid;
+  const codexCapacityState = !codexCurrent
     ? 'UNKNOWN'
-    : codex.availability === 'AVAILABLE' && remaining > 5
+    : availability === CODEX_AVAILABILITY.AVAILABLE && remaining > 5
       ? 'AVAILABLE_NOW'
-      : codex.availability === 'AVAILABLE' || codex.availability === 'BUSY'
+      : [CODEX_AVAILABILITY.AVAILABLE, CODEX_AVAILABILITY.BUSY, CODEX_AVAILABILITY.DEGRADED].includes(availability)
         ? 'CONSTRAINED'
-        : 'UNAVAILABLE';
+        : [CODEX_AVAILABILITY.UNAVAILABLE, CODEX_AVAILABILITY.METER_STALLED].includes(availability)
+          ? 'UNAVAILABLE'
+          : 'UNKNOWN';
+  const forgeAuthority = adjudicateForgeSidecarCapacity(input.forgeSidecar, { nowUtc });
   return Object.freeze([
     Object.freeze({
       schemaVersion: SOVEREIGNTY_SYSTEM_OBSERVATION_SCHEMA_VERSION,
@@ -386,9 +419,9 @@ export function createSovereigntyCapacityObservationsV1(input = {}, options = {}
       observedAtUtc: text(codex.observedAtUtc) || new Date(0).toISOString(),
       truthState: codexCurrent ? 'CURRENT' : 'UNKNOWN',
       capacityState: codexCapacityState,
-      evidenceRefs: Object.freeze(codexRefs),
+      evidenceRefs: Object.freeze(codexCurrent ? codexRefs : []),
       metrics: Object.freeze({
-        remainingPercent: remaining ?? null,
+        remainingPercent: codexCurrent ? remaining : null,
         queueDepth: null,
         p95StartLatencySeconds: null,
         throughputPerHour: null,
@@ -396,9 +429,9 @@ export function createSovereigntyCapacityObservationsV1(input = {}, options = {}
         costPerUsefulResult: null,
         criticalPathSharePercent: null,
       }),
-      explanation: codexCurrent ? 'Codex capacity is derived from the canonical authenticated meter publication.' : 'Codex capacity is UNKNOWN because canonical fresh meter evidence is unavailable.',
+      explanation: codexCurrent ? 'Codex capacity is derived from the canonical authenticated meter publication.' : 'Codex capacity is UNKNOWN because canonical fresh well-formed meter evidence is unavailable.',
     }),
     Object.freeze(normalizeBuildLaneStatus(input.githubLaneStatus, 'chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', 'chatgpt-github', 'github', 'HOSTED_BUILD_LANE', nowMs)),
-    Object.freeze(normalizeBuildLaneStatus(input.forgeLaneStatus, 'foundry-forge-build-capacity-current', 'FOUNDRY_FORGE', 'foundry-forge', 'stephanos-local', 'LOCAL_OR_SELF_HOSTED_BUILD_LANE', nowMs)),
+    Object.freeze(normalizeBuildLaneStatus(input.forgeLaneStatus, 'foundry-forge-build-capacity-current', 'FOUNDRY_FORGE', 'foundry-forge', 'stephanos-local', 'LOCAL_OR_SELF_HOSTED_BUILD_LANE', nowMs, forgeAuthority)),
   ]);
 }
