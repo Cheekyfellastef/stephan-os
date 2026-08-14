@@ -320,12 +320,14 @@ function unknownBuildLaneMetrics() {
   };
 }
 
-function normalizeBuildLaneStatus(status, expectedStatusId, expectedRoute, systemId, providerId, systemClass, nowMs, options = {}) {
+function normalizeBuildLaneStatus(status, expectedStatusId, expectedRoute, systemId, providerId, systemClass, nowMs) {
   const receipt = status?.capacityReceipt;
-  const repository = text(options.repository) || DEFAULT_REPOSITORY;
-  const taskClass = text(options.buildTaskClass).toUpperCase() || DEFAULT_BUILD_TASK_CLASS;
   const nowUtc = new Date(nowMs).toISOString();
-  const validation = validateBuildLaneCapacityReceipt(receipt, { repository, taskClass, nowUtc });
+  const validation = validateBuildLaneCapacityReceipt(receipt, {
+    repository: DEFAULT_REPOSITORY,
+    taskClass: DEFAULT_BUILD_TASK_CLASS,
+    nowUtc,
+  });
   const observedAtMs = timestampMs(receipt?.observedAtUtc);
   const current = status?.schemaVersion === 'shared-agent-workspace-record.v1'
     && status?.statusId === expectedStatusId
@@ -396,7 +398,7 @@ export function createSovereigntyCapacityObservationsV1(input = {}, options = {}
       }),
       explanation: codexCurrent ? 'Codex capacity is derived from the canonical authenticated meter publication.' : 'Codex capacity is UNKNOWN because canonical fresh meter evidence is unavailable.',
     }),
-    Object.freeze(normalizeBuildLaneStatus(input.githubLaneStatus, 'chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', 'chatgpt-github', 'github', 'HOSTED_BUILD_LANE', nowMs, options)),
-    Object.freeze(normalizeBuildLaneStatus(input.forgeLaneStatus, 'foundry-forge-build-capacity-current', 'FOUNDRY_FORGE', 'foundry-forge', 'stephanos-local', 'LOCAL_OR_SELF_HOSTED_BUILD_LANE', nowMs, options)),
+    Object.freeze(normalizeBuildLaneStatus(input.githubLaneStatus, 'chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', 'chatgpt-github', 'github', 'HOSTED_BUILD_LANE', nowMs)),
+    Object.freeze(normalizeBuildLaneStatus(input.forgeLaneStatus, 'foundry-forge-build-capacity-current', 'FOUNDRY_FORGE', 'foundry-forge', 'stephanos-local', 'LOCAL_OR_SELF_HOSTED_BUILD_LANE', nowMs)),
   ]);
 }
