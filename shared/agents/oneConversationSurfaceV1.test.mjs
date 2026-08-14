@@ -186,7 +186,7 @@ test('stale evidence blocks continuation', () => {
     timestampUtc: '2026-08-14T15:00:00.000Z',
     surfaceObservations: baseInput().surfaceObservations.map((observation) => ({ ...observation, timestampUtc: '2026-08-14T12:00:00.000Z' })),
   });
-  const projection = buildOneConversationProjectionV1(input, { nowMs: Date.parse('2026-08-14T15:00:00.000Z'), staleAfterMs: 60 * 60 * 1000 });
+  const projection = buildOneConversationProjectionV1(input, { nowMs: Date.parse('2026-08-14T15:00:00.000Z') });
   assert.equal(projection.status, 'STALE');
   assert.equal(plan(projection, { fromSurface: 'CHATGPT_WEB', toSurface: 'PHONE' }, Date.parse('2026-08-14T15:00:00.000Z')).ok, false);
 });
@@ -194,7 +194,7 @@ test('stale evidence blocks continuation', () => {
 test('one fresh surface cannot make a stale source thread eligible', () => {
   const input = baseInput();
   input.surfaceObservations[1] = { ...input.surfaceObservations[1], timestampUtc: '2026-08-14T10:00:00.000Z' };
-  const projection = buildOneConversationProjectionV1(input, { nowMs: NOW_MS, staleAfterMs: 60 * 60 * 1000 });
+  const projection = buildOneConversationProjectionV1(input, { nowMs: NOW_MS });
   assert.equal(projection.status, 'CURRENT');
   assert.equal(plan(projection, { fromSurface: 'CHATGPT_WEB', toSurface: 'PHONE' }).ok, true);
   const blocked = plan(projection, { fromSurface: 'BATTLE_BRIDGE_DESKTOP', toSurface: 'PHONE' });
@@ -203,7 +203,7 @@ test('one fresh surface cannot make a stale source thread eligible', () => {
 });
 
 test('persisted CURRENT projections are re-evaluated before continuation', () => {
-  const projection = currentProjection({ staleAfterMs: 60 * 60 * 1000 });
+  const projection = currentProjection();
   const late = plan(projection, { fromSurface: 'CHATGPT_WEB', toSurface: 'PHONE' }, Date.parse('2026-08-14T15:00:00.000Z'));
   assert.equal(late.ok, false);
   assert.equal(late.verdict, 'CONTINUATION_BLOCKED_STALE_OR_UNKNOWN');
@@ -217,10 +217,48 @@ test('persisted projections with unsafe proof refs cannot authorize continuation
   assert.equal(result.verdict, 'CONTINUATION_BLOCKED_PROOF_EVIDENCE_INVALID');
 });
 
+test('M1 builder freshness policy is fixed and ignores caller duration overrides', () => {
+  const projection = currentProjection({ staleAfterMs: 5 * 60 * 1000, maxFutureSkewMs: 60 * 60 * 1000 });
+  assert.equal(projection.staleAfterMs, 60 * 60 * 1000);
+  assert.equal(projection.maxFutureSkewMs, 5 * 60 * 1000);
+});
+
+test('persisted stale-duration widening cannot revive a reconstructed projection', () => {
+  const projection = currentProjection();
+  const tampered = { ...projection, staleAfterMs: 24 * 60 * 60 * 1000 };
+  const continuation = plan(tampered, { fromSurface: 'CHATGPT_WEB', toSurface: 'PHONE' });
+  assert.equal(continuation.ok, false);
+  assert.equal(continuation.verdict, 'CONTINUATION_BLOCKED_FRESHNESS_POLICY_INVALID');
+  const publication = projectOneConversationWorkspaceMessageV1(tampered, {
+    timestampUtc: NOW,
+    correlationId: 'intent-product-1776',
+    messageId: 'widened-stale-policy',
+    workspaceValidationOptions: { nowMs: NOW_MS },
+  });
+  assert.equal(publication.ok, false);
+  assert.equal(publication.reason, 'ONE_CONVERSATION_PROJECTION_FRESHNESS_POLICY_INVALID');
+});
+
+test('persisted future-skew widening cannot re-admit future observations', () => {
+  const projection = currentProjection();
+  const tampered = { ...projection, maxFutureSkewMs: 60 * 60 * 1000 };
+  const continuation = plan(tampered, { fromSurface: 'CHATGPT_WEB', toSurface: 'PHONE' });
+  assert.equal(continuation.ok, false);
+  assert.equal(continuation.verdict, 'CONTINUATION_BLOCKED_FRESHNESS_POLICY_INVALID');
+  const publication = projectOneConversationWorkspaceMessageV1(tampered, {
+    timestampUtc: NOW,
+    correlationId: 'intent-product-1776',
+    messageId: 'widened-future-policy',
+    workspaceValidationOptions: { nowMs: NOW_MS },
+  });
+  assert.equal(publication.ok, false);
+  assert.equal(publication.reason, 'ONE_CONVERSATION_PROJECTION_FRESHNESS_POLICY_INVALID');
+});
+
 test('materially future-dated evidence fails closed', () => {
   const input = baseInput();
   input.surfaceObservations[0] = { ...input.surfaceObservations[0], timestampUtc: '2026-08-14T13:30:01.000Z' };
-  const projection = buildOneConversationProjectionV1(input, { nowMs: NOW_MS, maxFutureSkewMs: 5 * 60 * 1000 });
+  const projection = buildOneConversationProjectionV1(input, { nowMs: NOW_MS });
   assert.equal(projection.status, 'UNKNOWN');
   assert.equal(projection.reason, 'FUTURE_DATED_OBSERVATION');
 });
@@ -244,7 +282,7 @@ test('current projection becomes a valid read-only Shared Workspace message', ()
 });
 
 test('publication rechecks retained evidence and blocks stale continuity', () => {
-  const projection = currentProjection({ staleAfterMs: 60 * 60 * 1000 });
+  const projection = currentProjection();
   const publicationNow = '2026-08-14T15:00:00.000Z';
   const result = projectOneConversationWorkspaceMessageV1(projection, {
     timestampUtc: publicationNow,
