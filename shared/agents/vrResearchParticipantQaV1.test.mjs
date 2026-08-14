@@ -292,6 +292,46 @@ test('caller-added answer fields are also excluded from Workspace serialization'
   assert.equal(workspace.record.body.includes('answer-secret'), false);
 });
 
+test('nested fact fields are sanitized before Workspace serialization', () => {
+  const q = request('SOURCE_STACK', 0);
+  const answered = answerVrResearchQuestion(q, projection(), qaInput());
+  const forged = {
+    ...answered.answer,
+    facts: [{
+      sourceId: 'mutar-nomoreflat',
+      title: 'safe-title',
+      apiKey: 'super-secret-value',
+      summary: { token: 'nested-secret' },
+    }],
+  };
+  const workspace = createVrResearchQaWorkspaceAnswerRecord(q, forged, {
+    proofVerifier,
+    validationOptions: { nowMs },
+  });
+  assert.equal(workspace.validation.valid, true, workspace.validation.errors.join(', '));
+  const body = JSON.parse(workspace.record.body);
+  assert.deepEqual(body.answer.facts, [{ sourceId: 'mutar-nomoreflat', title: 'safe-title' }]);
+  assert.equal(workspace.record.body.includes('super-secret-value'), false);
+  assert.equal(workspace.record.body.includes('nested-secret'), false);
+  assert.equal(Object.hasOwn(body.answer.facts[0], 'apiKey'), false);
+  assert.equal(Object.hasOwn(body.answer.facts[0], 'summary'), false);
+});
+
+test('canonical source and experiment facts survive Workspace fact sanitization', () => {
+  for (const [questionClass, index] of [['SOURCE_STACK', 0], ['NEXT_EXPERIMENT', 1]]) {
+    const q = request(questionClass, index);
+    const answered = answerVrResearchQuestion(q, projection(), qaInput());
+    const workspace = createVrResearchQaWorkspaceAnswerRecord(q, answered.answer, {
+      proofVerifier,
+      validationOptions: { nowMs },
+    });
+    assert.equal(workspace.validation.valid, true, workspace.validation.errors.join(', '));
+    const body = JSON.parse(workspace.record.body);
+    assert.equal(body.answer.facts.length > 0, true);
+    assert.equal(typeof body.answer.facts[0], 'object');
+  }
+});
+
 test('default Workspace correlation safely derives long colon-bearing question ids', () => {
   const q = request('SOURCE_STACK', 0, { questionId: `vr:${'a'.repeat(100)}` });
   const answered = answerVrResearchQuestion(q, projection(), qaInput());
