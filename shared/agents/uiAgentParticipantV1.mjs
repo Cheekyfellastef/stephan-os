@@ -100,14 +100,18 @@ function capabilityShapeBlockers(capability) {
   return blockers;
 }
 
-function capabilityFutureDated(capability, validationOptions = {}) {
-  const observedMs = Date.parse(text(capability?.timestampUtc));
+function timestampFutureDated(timestampUtc, validationOptions = {}) {
+  const observedMs = Date.parse(text(timestampUtc));
   if (!Number.isFinite(observedMs)) return false;
   const nowMs = Number.isFinite(validationOptions.nowMs) ? validationOptions.nowMs : Date.now();
   const maxFutureSkewMs = Number.isFinite(validationOptions.maxFutureSkewMs) && validationOptions.maxFutureSkewMs >= 0
     ? validationOptions.maxFutureSkewMs
     : DEFAULT_MAX_FUTURE_SKEW_MS;
   return observedMs > nowMs + maxFutureSkewMs;
+}
+
+function capabilityFutureDated(capability, validationOptions = {}) {
+  return timestampFutureDated(capability?.timestampUtc, validationOptions);
 }
 
 export function createUiAgentCapabilityRecord(input = {}) {
@@ -188,6 +192,11 @@ export function createUiAgentParticipantStatusRecord(input = {}) {
     : ['evidence/receipts/ui-agent-participant-v1'];
   const capability = input.capability || createUiAgentCapabilityRecord({ ...input, timestampUtc, proofRefs });
   const readiness = buildUiAgentReadiness({ ...input, capability, timestampUtc, proofRefs });
+  const statusTimestampFuture = timestampFutureDated(timestampUtc, input.validationOptions || {});
+  const statusReady = readiness.readyForSharedWorkspaceRegistration && !statusTimestampFuture;
+  const nextMilestone = statusReady
+    ? readiness.nextMilestone
+    : 'M1_REPAIR_UI_AGENT_PARTICIPANT_CONTRACT';
 
   return Object.freeze({
     schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
@@ -197,12 +206,14 @@ export function createUiAgentParticipantStatusRecord(input = {}) {
     timestampUtc,
     correlationId,
     relatedIssue: '#1722',
-    status: readiness.readyForSharedWorkspaceRegistration
+    status: statusReady
       ? 'UI_AGENT_READ_ONLY_CANDIDATE_READY'
       : 'UI_AGENT_PARTICIPANT_BLOCKED',
-    summary: readiness.readyForSharedWorkspaceRegistration
+    summary: statusReady
       ? 'UI Agent capability card and Shared Workspace participant contract are ready for governed registration.'
-      : 'UI Agent participant contract requires repair before registration.',
+      : statusTimestampFuture
+        ? 'UI Agent participant status timestamp is future-dated relative to the trusted evaluation clock.'
+        : 'UI Agent participant contract requires repair before registration.',
     body: JSON.stringify({
       participantSchemaVersion: UI_AGENT_PARTICIPANT_SCHEMA_VERSION,
       agentClass: UI_AGENT_CLASS,
@@ -210,7 +221,7 @@ export function createUiAgentParticipantStatusRecord(input = {}) {
       lifecycleState: readiness.lifecycleState,
       productionEligible: readiness.productionEligible,
       implementationEligible: readiness.implementationEligible,
-      nextMilestone: readiness.nextMilestone,
+      nextMilestone,
       mutationAuthority: 'NONE_BY_PARTICIPATION',
       mergeAuthority: false,
       deploymentAuthority: false,
