@@ -180,3 +180,85 @@ test('readiness rejects duplicate or substituted advisory capability sets', () =
   assert.equal(substitutedDomain.readyForSharedWorkspaceRegistration, false);
   assert.ok(substitutedDomain.blockers.includes('knowledge-domains-mismatch'));
 });
+
+test('readiness rejects undeclared authority-bearing or caller-invented capability fields', () => {
+  const canonical = createUiAgentCapabilityRecord({ timestampUtc, proofRefs });
+  for (const field of ['commandExecutionAllowed', 'sourceMutationAuthority', 'destructiveGitAllowed']) {
+    const readiness = readinessForCapability({ ...canonical, [field]: false });
+    assert.equal(readiness.readyForSharedWorkspaceRegistration, false, `${field} must fail closed even when false`);
+    assert.ok(readiness.blockers.includes(`capability-unknown-field:${field}`));
+  }
+});
+
+test('participant status recomputes readiness and ignores a caller-supplied green verdict', () => {
+  const capability = {
+    ...createUiAgentCapabilityRecord({ timestampUtc, proofRefs }),
+    productAuthority: true,
+  };
+  const status = createUiAgentParticipantStatusRecord({
+    timestampUtc,
+    correlationId: 'ui-agent-forged-readiness',
+    proofRefs,
+    capability,
+    readiness: {
+      readyForSharedWorkspaceRegistration: true,
+      productionEligible: true,
+      implementationEligible: true,
+      lifecycleState: 'PRODUCTION_ELIGIBLE',
+      qaCapability: 'CAN_ASK_AND_ANSWER',
+      nextMilestone: 'SELF_PROMOTE',
+    },
+    validationOptions,
+  });
+  const body = JSON.parse(status.body);
+
+  assert.equal(status.status, 'UI_AGENT_PARTICIPANT_BLOCKED');
+  assert.equal(body.productionEligible, false);
+  assert.equal(body.implementationEligible, false);
+  assert.equal(body.lifecycleState, 'READ_ONLY_CANDIDATE');
+  assert.equal(body.nextMilestone, 'M1_REPAIR_UI_AGENT_PARTICIPANT_CONTRACT');
+});
+
+test('future-dated capability evidence cannot register as current readiness', () => {
+  const capability = createUiAgentCapabilityRecord({
+    timestampUtc: '2026-08-14T11:10:01.000Z',
+    proofRefs,
+  });
+  const genericValidation = validateSharedWorkspaceRecord(capability, validationOptions);
+  assert.equal(genericValidation.valid, true);
+  assert.equal(genericValidation.stale, false);
+
+  const readiness = readinessForCapability(capability, {
+    nowMs: Date.parse(timestampUtc),
+    maxFutureSkewMs: 5 * 60 * 1000,
+  });
+  assert.equal(readiness.readyForSharedWorkspaceRegistration, false);
+  assert.ok(readiness.blockers.includes('capability-future-dated'));
+  assert.equal(readiness.nextMilestone, 'M1_REPAIR_UI_AGENT_PARTICIPANT_CONTRACT');
+});
+
+test('future-dated participant status can never publish a ready verdict', () => {
+  const capability = createUiAgentCapabilityRecord({ timestampUtc, proofRefs });
+  for (const futureTimestampUtc of [
+    '2026-08-14T11:00:00.001Z',
+    '2026-08-14T11:04:00.000Z',
+    '2026-08-14T11:10:01.000Z',
+  ]) {
+    const status = createUiAgentParticipantStatusRecord({
+      timestampUtc: futureTimestampUtc,
+      capability,
+      proofRefs,
+      validationOptions: {
+        nowMs: Date.parse(timestampUtc),
+        maxFutureSkewMs: 5 * 60 * 1000,
+      },
+    });
+    const body = JSON.parse(status.body);
+
+    assert.equal(status.status, 'UI_AGENT_PARTICIPANT_BLOCKED', `${futureTimestampUtc} must fail closed`);
+    assert.match(status.summary, /future-dated/);
+    assert.equal(body.productionEligible, false);
+    assert.equal(body.implementationEligible, false);
+    assert.equal(body.nextMilestone, 'M1_REPAIR_UI_AGENT_PARTICIPANT_CONTRACT');
+  }
+});

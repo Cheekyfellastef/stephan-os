@@ -42,6 +42,31 @@ export const UI_AGENT_LIFECYCLE_STATES = Object.freeze([
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 const UI_AGENT_READ_ONLY_MODE = 'read_first';
 const UI_AGENT_PROPOSAL_PATH = 'shared-workspace/ui/proposals';
+const DEFAULT_MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
+const UI_AGENT_CAPABILITY_KEYS = new Set([
+  'schemaVersion',
+  'kind',
+  'agentId',
+  'timestampUtc',
+  'mode',
+  'boundedWritePath',
+  'trustedBuilder',
+  'mergeAuthority',
+  'arbitraryShellAllowed',
+  'proofRefs',
+  'participantSchemaVersion',
+  'agentClass',
+  'qaCapability',
+  'knowledgeDomains',
+  'acceptedTaskTypes',
+  'lifecycleState',
+  'mutationAuthority',
+  'implementationAuthority',
+  'productAuthority',
+  'deploymentAuthority',
+  'personalDataAuthority',
+  'selfPromotionAllowed',
+]);
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -63,6 +88,37 @@ function sameStringSet(value, expected) {
   return actual.length === expected.length
     && new Set(actual).size === actual.length
     && expected.every((item) => actual.includes(item));
+}
+
+function capabilityShapeBlockers(capability) {
+  if (!capability || typeof capability !== 'object' || Array.isArray(capability)) return ['capability-record-not-object'];
+  const blockers = [];
+  for (const key of Reflect.ownKeys(capability)) {
+    if (typeof key !== 'string') blockers.push('capability-symbol-field-forbidden');
+    else if (!UI_AGENT_CAPABILITY_KEYS.has(key)) blockers.push(`capability-unknown-field:${key}`);
+  }
+  return blockers;
+}
+
+function timestampFutureDated(timestampUtc, validationOptions = {}) {
+  const observedMs = Date.parse(text(timestampUtc));
+  if (!Number.isFinite(observedMs)) return false;
+  const nowMs = Number.isFinite(validationOptions.nowMs) ? validationOptions.nowMs : Date.now();
+  const maxFutureSkewMs = Number.isFinite(validationOptions.maxFutureSkewMs) && validationOptions.maxFutureSkewMs >= 0
+    ? validationOptions.maxFutureSkewMs
+    : DEFAULT_MAX_FUTURE_SKEW_MS;
+  return observedMs > nowMs + maxFutureSkewMs;
+}
+
+function statusTimestampFutureDated(timestampUtc, validationOptions = {}) {
+  const observedMs = Date.parse(text(timestampUtc));
+  if (!Number.isFinite(observedMs)) return false;
+  const nowMs = Number.isFinite(validationOptions.nowMs) ? validationOptions.nowMs : Date.now();
+  return observedMs > nowMs;
+}
+
+function capabilityFutureDated(capability, validationOptions = {}) {
+  return timestampFutureDated(capability?.timestampUtc, validationOptions);
 }
 
 export function createUiAgentCapabilityRecord(input = {}) {
@@ -94,11 +150,13 @@ export function createUiAgentCapabilityRecord(input = {}) {
 
 export function buildUiAgentReadiness(input = {}) {
   const capability = input.capability || createUiAgentCapabilityRecord(input);
-  const validation = validateSharedWorkspaceRecord(capability, input.validationOptions);
-  const blockers = [];
+  const validationOptions = input.validationOptions || {};
+  const validation = validateSharedWorkspaceRecord(capability, validationOptions);
+  const blockers = [...capabilityShapeBlockers(capability)];
 
   if (!validation.valid) blockers.push(`capability-invalid:${validation.refusalReason || 'unknown'}`);
   if (validation.stale === true) blockers.push('capability-stale');
+  if (capabilityFutureDated(capability, validationOptions)) blockers.push('capability-future-dated');
   if (capability.agentId !== UI_AGENT_ID) blockers.push('participant-id-mismatch');
   if (capability.participantSchemaVersion !== UI_AGENT_PARTICIPANT_SCHEMA_VERSION) blockers.push('participant-schema-version-mismatch');
   if (capability.agentClass !== UI_AGENT_CLASS) blockers.push('agent-class-mismatch');
@@ -139,7 +197,13 @@ export function createUiAgentParticipantStatusRecord(input = {}) {
   const proofRefs = list(input.proofRefs).length > 0
     ? list(input.proofRefs)
     : ['evidence/receipts/ui-agent-participant-v1'];
-  const readiness = input.readiness || buildUiAgentReadiness({ ...input, timestampUtc, proofRefs });
+  const capability = input.capability || createUiAgentCapabilityRecord({ ...input, timestampUtc, proofRefs });
+  const readiness = buildUiAgentReadiness({ ...input, capability, timestampUtc, proofRefs });
+  const statusTimestampFuture = statusTimestampFutureDated(timestampUtc, input.validationOptions || {});
+  const statusReady = readiness.readyForSharedWorkspaceRegistration && !statusTimestampFuture;
+  const nextMilestone = statusReady
+    ? readiness.nextMilestone
+    : 'M1_REPAIR_UI_AGENT_PARTICIPANT_CONTRACT';
 
   return Object.freeze({
     schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
@@ -149,12 +213,14 @@ export function createUiAgentParticipantStatusRecord(input = {}) {
     timestampUtc,
     correlationId,
     relatedIssue: '#1722',
-    status: readiness.readyForSharedWorkspaceRegistration
+    status: statusReady
       ? 'UI_AGENT_READ_ONLY_CANDIDATE_READY'
       : 'UI_AGENT_PARTICIPANT_BLOCKED',
-    summary: readiness.readyForSharedWorkspaceRegistration
+    summary: statusReady
       ? 'UI Agent capability card and Shared Workspace participant contract are ready for governed registration.'
-      : 'UI Agent participant contract requires repair before registration.',
+      : statusTimestampFuture
+        ? 'UI Agent participant status timestamp is future-dated relative to the trusted evaluation clock.'
+        : 'UI Agent participant contract requires repair before registration.',
     body: JSON.stringify({
       participantSchemaVersion: UI_AGENT_PARTICIPANT_SCHEMA_VERSION,
       agentClass: UI_AGENT_CLASS,
@@ -162,7 +228,7 @@ export function createUiAgentParticipantStatusRecord(input = {}) {
       lifecycleState: readiness.lifecycleState,
       productionEligible: readiness.productionEligible,
       implementationEligible: readiness.implementationEligible,
-      nextMilestone: readiness.nextMilestone,
+      nextMilestone,
       mutationAuthority: 'NONE_BY_PARTICIPATION',
       mergeAuthority: false,
       deploymentAuthority: false,
@@ -178,7 +244,7 @@ export function createUiAgentWorkspaceRecords(input = {}) {
     : ['evidence/receipts/ui-agent-participant-v1'];
   const capability = createUiAgentCapabilityRecord({ ...input, timestampUtc, proofRefs });
   const readiness = buildUiAgentReadiness({ ...input, capability, timestampUtc, proofRefs });
-  const status = createUiAgentParticipantStatusRecord({ ...input, readiness, timestampUtc, proofRefs });
+  const status = createUiAgentParticipantStatusRecord({ ...input, capability, timestampUtc, proofRefs });
 
   return Object.freeze({
     schemaVersion: UI_AGENT_PARTICIPANT_SCHEMA_VERSION,
