@@ -260,7 +260,7 @@ function normalizeWorkspaceFacts(value) {
   const normalizedFacts = [];
   for (const rawFact of canonical.slice(0, MAX_FACT_COUNT)) {
     if (!rawFact || typeof rawFact !== 'object' || Array.isArray(rawFact)) continue;
-    const normalizedFact = Object.create(null);
+    const normalizedFact = {};
     for (const key of Object.keys(rawFact).sort(compareCodePoints)) {
       if (!VR_FACT_ALLOWED_FIELDS.has(key)) continue;
       const normalizedValue = normalizeFactValue(rawFact[key]);
