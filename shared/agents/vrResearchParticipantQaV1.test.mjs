@@ -166,3 +166,78 @@ test('question requests targeting another participant or unknown classes are rej
   assert.equal(rejectedClass.valid, false);
   assert.match(rejectedClass.errors.join('\n'), /questionClass-invalid/);
 });
+
+test('grounded answers require real projection proof refs rather than receipt-shaped fallbacks', () => {
+  const noProofProjection = projection({ proofRefs: [] });
+  const result = answerVrResearchQuestion(request('SOURCE_STACK', 0), noProofProjection, {
+    nowMs,
+    answeredAtUtc: '2026-08-14T11:00:00.000Z',
+  });
+  assert.equal(result.answer.answerVerdict, 'GAP_KNOWLEDGE');
+  assert.equal(result.answer.epistemicState, 'UNKNOWN');
+  assert.deepEqual(result.answer.evidenceRefs, []);
+  assert.match(result.answer.cannotAnswerReason, /does not carry proof references/);
+  assert.ok(result.gapObservation);
+});
+
+test('only explicit FRESH non-future projection state can ground an answer', () => {
+  const declaredUnknown = { ...projection(), freshness: 'UNKNOWN' };
+  const unknown = answerVrResearchQuestion(request('SOURCE_STACK', 0), declaredUnknown, {
+    nowMs,
+    answeredAtUtc: '2026-08-14T11:00:00.000Z',
+  });
+  assert.equal(unknown.answer.answerVerdict, 'GAP_FRESHNESS');
+  assert.equal(unknown.answer.epistemicState, 'UNKNOWN');
+
+  const future = { ...projection(), freshness: 'FRESH', updatedAt: '2026-08-14T11:00:01.000Z' };
+  const futureResult = answerVrResearchQuestion(request('SOURCE_STACK', 0), future, {
+    nowMs,
+    answeredAtUtc: '2026-08-14T11:00:00.000Z',
+  });
+  assert.equal(futureResult.answer.answerVerdict, 'GAP_FRESHNESS');
+  assert.equal(futureResult.answer.epistemicState, 'UNKNOWN');
+});
+
+test('directly deserialized lowercase question classes dispatch through the normalized class', () => {
+  const lowercase = { ...request('SOURCE_STACK', 0), questionClass: 'source_stack' };
+  const result = answerVrResearchQuestion(lowercase, projection(), {
+    nowMs,
+    answeredAtUtc: '2026-08-14T11:00:00.000Z',
+  });
+  assert.equal(result.valid, true);
+  assert.equal(result.answer.answerVerdict, 'ANSWERED_GROUNDED');
+  assert.match(result.answer.answerText, /4 canonical VR research sources/);
+});
+
+test('evidence-free gap messages remain invalid until a real proof reference is supplied', () => {
+  const q = request('EVIDENCE_PLANE', 2, { subjectRef: 'unproven-provider' });
+  const answered = answerVrResearchQuestion(q, projection(), {
+    nowMs,
+    answeredAtUtc: '2026-08-14T11:00:00.000Z',
+  });
+  assert.equal(answered.answer.answerVerdict, 'GAP_KNOWLEDGE');
+  assert.deepEqual(answered.answer.evidenceRefs, []);
+
+  const unproven = createVrResearchQaWorkspaceAnswerRecord(q, answered.answer);
+  assert.equal(unproven.validation.valid, false);
+  assert.ok(unproven.validation.errors.includes('missing-proofRefs'));
+
+  const proven = createVrResearchQaWorkspaceAnswerRecord(q, answered.answer, {
+    proofRefs: ['evidence/receipts/vr-gap-observation-proof'],
+  });
+  assert.equal(proven.validation.valid, true, proven.validation.errors.join(', '));
+  assert.deepEqual(proven.record.proofRefs, ['evidence/receipts/vr-gap-observation-proof']);
+});
+
+test('default workspace correlation is safely derived for long colon-bearing question ids', () => {
+  const q = request('SOURCE_STACK', 0, { questionId: `vr:${'a'.repeat(100)}` });
+  const answered = answerVrResearchQuestion(q, projection(), {
+    nowMs,
+    answeredAtUtc: '2026-08-14T11:00:00.000Z',
+  });
+  assert.equal(answered.valid, true);
+  const workspace = createVrResearchQaWorkspaceAnswerRecord(q, answered.answer);
+  assert.equal(workspace.validation.valid, true, workspace.validation.errors.join(', '));
+  assert.match(workspace.record.correlationId, /^vr-correlation-[0-9a-f]{24}$/);
+  assert.equal(workspace.record.correlationId.includes(':'), false);
+});
