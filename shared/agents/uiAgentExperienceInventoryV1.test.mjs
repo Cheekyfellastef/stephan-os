@@ -124,3 +124,14 @@ test('malformed shared-primitives evidence fails closed without throwing', () =>
     assert.deepEqual(inventory.sharedPrimitives, []);
   }
 });
+
+test('malformed explicit surface records fail closed without throwing', () => {
+  for (const explicitSurfaces of [[null], [1], [[]]]) {
+    let inventory;
+    assert.doesNotThrow(() => {
+      inventory = buildUiAgentExperienceInventory({ registeredApps:[], observedAtUtc:OBSERVED_AT, validationOptions:{ nowMs:NOW_MS }, explicitSurfaces });
+    });
+    assert.equal(inventory.valid, false);
+    assert.ok(inventory.validationErrors.includes('explicitSurfaces-record-invalid'));
+  }
+});
