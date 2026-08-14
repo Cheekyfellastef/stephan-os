@@ -34,6 +34,10 @@
     "stephanos:guard:scripts": "node scripts/guard-launcher-scripts.mjs",
     "stephanos:battle-bridge:status": "node scripts/battle-bridge-status.mjs",
     "stephanos:battle-bridge:repair": "node scripts/battle-bridge-repair.mjs",
+    "stephanos:battle-bridge:recovery-mesh": "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"%USERPROFILE%\\Documents\\GitHub\\stephan-os\\scripts\\windows\\run-battle-bridge-recovery-mesh-hidden.ps1\"",
+    "stephanos:battle-bridge:recovery-mesh:install": "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File scripts/windows/install-battle-bridge-recovery-mesh.ps1 -StartNow",
+    "stephanos:battle-bridge:recovery-mesh:status": "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File scripts/windows/status-battle-bridge-recovery-mesh.ps1",
+    "stephanos:battle-bridge:recovery-mesh:uninstall": "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File scripts/windows/uninstall-battle-bridge-recovery-mesh.ps1",
     "stephanos:battle-bridge:autostart:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/install-stephanos-backend-autostart.ps1",
     "stephanos:battle-bridge:autostart:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/status-stephanos-backend-autostart.ps1",
     "stephanos:battle-bridge:autostart:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/uninstall-stephanos-backend-autostart.ps1",
@@ -50,7 +54,7 @@
     "stephanos:pr:prepare": "node scripts/guard-pr-clean.mjs --prepare",
     "stephanos:browser-proof": "node scripts/browser-proof-runner.mjs",
     "stephanos:publish-merge": "node scripts/repository-native-publish-merge-lane.mjs",
-    "stephanos:operator-merge-approval:test": "node --test shared/agents/operatorMergeApprovalGate.test.mjs shared/agents/operatorMergeBaseBindingV1.test.mjs shared/agents/operatorMergeApprovalBoundaryV2.test.mjs shared/agents/repositoryNativePublishMergeLane.test.mjs scripts/repository-native-merge-boundary.test.mjs",
+    "stephanos:operator-merge-approval:test": "node --test shared/agents/operatorMergeApprovalGate.test.mjs shared/agents/operatorMergeBaseBindingV1.test.mjs shared/agents/operatorMergeReviewArtifactV1.test.mjs shared/agents/operatorPersonalRepositoryMergeV1.test.mjs shared/agents/operatorMergeApprovalBoundaryV2.test.mjs shared/agents/operatorProtectedMergeConfigurationActivationV1.test.mjs shared/agents/repositoryNativePublishMergeLane.test.mjs scripts/repository-native-merge-boundary.test.mjs scripts/independent-review-artifact-boundary.test.mjs",
     "stephanos:battle-bridge:concierge": "node scripts/battle-bridge-build-concierge-v2.mjs",
     "stephanos:verify:pr-publication": "node scripts/verify-pr-publication.mjs",
     "ignition:readiness": "node scripts/launcher-readiness-report.mjs",
@@ -71,7 +75,11 @@
     "stephanos:exact-head-review:test": "node --test shared/agents/exactHeadReviewDispatchCoordinator.test.mjs",
     "stephanos:provider-neutral-review:test": "node --test shared/agents/providerNeutralReviewV1.test.mjs shared/agents/providerNeutralReviewV1IdentityRegression.test.mjs",
     "stephanos:pr-estate:reconcile": "node scripts/pr-estate-reconcile.mjs",
-    "stephanos:pr-estate:test": "node --test shared/agents/prEstateReconciler.test.mjs shared/agents/prEstateCurrentHeadSafetyRegression.test.mjs scripts/pr-estate-reconcile.test.mjs"
+    "stephanos:pr-estate:test": "node --test shared/agents/prEstateReconciler.test.mjs shared/agents/prEstateCurrentHeadSafetyRegression.test.mjs scripts/pr-estate-reconcile.test.mjs",
+    "music:rating-playback:browser:test": "node --test tests/music-tile-rating-playback-browser.test.mjs",
+    "starfield-vr:install-shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/install-starfield-vr-desktop-shortcut.ps1",
+    "starfield-vr:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/launch-starfield-vr.ps1 -ReadinessOnly",
+    "starfield-vr:test": "node --test shared/agents/starfieldVrLaunchPolicy.test.mjs scripts/starfield-vr-launcher-source.test.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

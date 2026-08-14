@@ -26,6 +26,28 @@ test('claims each queue item exactly once', async () => {
   assert.equal(await claimNextMissionWorkerItem('openclaw-signed', options), null);
 });
 
+test('exact action grant cannot consume another mission queue item', async () => {
+  const options = await runtime();
+  const first = await createMissionRecord(intent('claim-first'), options);
+  const second = await createMissionRecord(intent('claim-second'), options);
+  const firstPublish = await publishMissionWorkerAction(first.state, options);
+  const secondPublish = await publishMissionWorkerAction(second.state, options);
+  const granted = await claimNextMissionWorkerItem('openclaw-signed', {
+    ...options,
+    actionGrant: {
+      missionId: second.state.missionId,
+      actionId: secondPublish.action.actionId,
+      adapter: 'openclaw-signed',
+    },
+  });
+  assert.equal(granted.item.missionId, second.state.missionId);
+  assert.equal(granted.item.actionId, secondPublish.action.actionId);
+
+  const remaining = await claimNextMissionWorkerItem('openclaw-signed', options);
+  assert.equal(remaining.item.missionId, first.state.missionId);
+  assert.equal(remaining.item.actionId, firstPublish.action.actionId);
+});
+
 test('signed worktree result advances to implementation', async () => {
   const options = await runtime();
   const created = await createMissionRecord(intent('signed-test'), options);

@@ -1,5 +1,5 @@
 export const STEPHANOS_CAPABILITY_REGISTRY_SCHEMA = 'stephanos.capability-registry.v1';
-export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.1.0';
+export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.4.0';
 export const STEPHANOS_CAPABILITY_REGISTRY_REPOSITORY = 'Cheekyfellastef/stephan-os';
 
 const SAFE_CAPABILITY_ID = /^[a-z0-9][a-z0-9.-]{2,80}$/;
@@ -37,6 +37,44 @@ function compactDescriptor(capability) {
 }
 
 export const STEPHANOS_CAPABILITIES = Object.freeze([
+  descriptor({
+    capabilityId: 'source-publication-continuity-router',
+    category: 'source-publication-policy',
+    purpose: 'Discovers bounded nested checkouts and selects the first receipt-proven publication route without rebuilding verified work.',
+    ownerIssue: 1637,
+    discoveryRoute: 'capability-registry:source-publication-continuity',
+    statusSource: 'execution-surface-capability-receipts',
+    operations: ['DISCOVER_NESTED_CHECKOUTS', 'SELECT_PROVEN_PUBLISHER', 'FAIL_OVER_PRESERVING_ARTIFACT'],
+  }),
+  descriptor({
+    capabilityId: 'authenticated-git-source-publisher',
+    category: 'source-publication-adapter',
+    purpose: 'Publishes an exact existing source commit to one bounded non-protected branch when remote write authority is proven.',
+    ownerIssue: 1637,
+    discoveryRoute: 'workspace:git-remote-write-capability',
+    statusSource: 'execution-surface-capability-receipts',
+    operations: ['PUSH_EXACT_SOURCE_COMMIT'],
+    requiresOperatorApproval: true,
+  }),
+  descriptor({
+    capabilityId: 'connected-github-app-source-publisher',
+    category: 'source-publication-adapter',
+    purpose: 'Publishes exact blobs, tree, commit and branch ref through the connected GitHub App when repository write permission is proven.',
+    ownerIssue: 1637,
+    discoveryRoute: 'host-tools:github-app-repository-permissions',
+    statusSource: 'execution-surface-capability-receipts',
+    operations: ['CREATE_BLOBS', 'CREATE_TREE', 'CREATE_COMMIT', 'CREATE_BRANCH_REF', 'OPEN_DRAFT_PR'],
+    requiresOperatorApproval: true,
+  }),
+  descriptor({
+    capabilityId: 'foundry-forge-construction-sidecar',
+    category: 'parallel-construction',
+    purpose: 'Carries non-conflicting construction and focused proof when M2 and M3 runtime receipts prove isolated runner capacity.',
+    ownerIssue: 1671,
+    discoveryRoute: 'shared-workspace:forge-runtime-readiness',
+    statusSource: 'shared-agent-workspace',
+    operations: ['CONSTRUCT_NONCONFLICTING_SLICE', 'RUN_FOCUSED_TESTS', 'PREPARE_PUBLICATION_PACKET'],
+  }),
   descriptor({
     capabilityId: 'shared-agent-workspace',
     category: 'live-state-store',
@@ -81,6 +119,8 @@ export const STEPHANOS_CAPABILITIES = Object.freeze([
       'READ_SHARED_WORKSPACE_STATUS',
       'READ_MAILBOX_RECEIPT',
       'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+      'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
+      'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
     ],
     requiresOperatorApproval: true,
     runtimeMutationAllowed: true,
@@ -123,6 +163,26 @@ export const STEPHANOS_CAPABILITIES = Object.freeze([
     statusSource: 'shared-agent-workspace',
     operations: ['INSPECT_WORKER', 'START_APPROVED_WORKER_TASK'],
     runtimeMutationAllowed: true,
+  }),
+  descriptor({
+    capabilityId: 'battle-bridge-recovery-mesh',
+    category: 'runtime-supervision',
+    purpose: 'Five independently authenticated recovery entrances feed one locked coordinator that may start only fixed canonical Battle Bridge tasks.',
+    ownerIssue: 1291,
+    discoveryRoute: 'shared-workspace:battle-bridge-recovery-mesh-current',
+    statusSource: 'shared-agent-workspace',
+    operations: ['INSPECT_FIXED_SERVICES', 'RECOVER_FIXED_SERVICES', 'COALESCE_RECOVERY_WAKE', 'READ_RECOVERY_RECEIPT'],
+    requiresOperatorApproval: true,
+    runtimeMutationAllowed: true,
+  }),
+  descriptor({
+    capabilityId: 'programme-stall-monitor',
+    category: 'programme-monitoring',
+    purpose: 'Deterministically diagnoses durable programme stalls and publishes through the existing Monitor Multiplexer without scheduling or mutation.',
+    ownerIssue: 1497,
+    discoveryRoute: 'shared-workspace:monitor-programme-stall-monitor',
+    statusSource: 'monitor-multiplexer',
+    operations: ['DIAGNOSE_PROGRAMME_STALL', 'PUBLISH_MONITOR_RESULT'],
   }),
   descriptor({
     capabilityId: 'verification-harness',
@@ -193,9 +253,21 @@ export function validateStephanosCapabilityRegistry(capabilities = STEPHANOS_CAP
 function bootstrapProjection() {
   return Object.freeze({
     requiredBeforeCapabilityDenial: true,
-    sequence: Object.freeze(['READ_CAPABILITY_REGISTRY', 'READ_SHARED_WORKSPACE_STATUS', 'CHECK_ACTIVE_EXECUTION_LANE', 'SELECT_ALLOWLISTED_ROUTE']),
+    sequence: Object.freeze([
+      'DISCOVER_APPROVED_WORKSPACE_ROOTS',
+      'DISCOVER_NESTED_CHECKOUTS',
+      'READ_CAPABILITY_REGISTRY',
+      'READ_SHARED_WORKSPACE_STATUS',
+      'PROBE_AUTHENTICATED_GIT_PUBLISHER',
+      'PROBE_CONNECTED_GITHUB_APP_PUBLISHER',
+      'CHECK_FORGE_PROVIDER_NEUTRAL_CAPACITY',
+      'CHECK_ACTIVE_EXECUTION_LANE',
+      'SELECT_ALLOWLISTED_ROUTE',
+    ]),
     failClosedWhenDiscoveryUnavailable: true,
     duplicateActiveExecutionAllowed: false,
+    missingGhIsGlobalBlocker: false,
+    rebuildVerifiedWorkAfterRouteFailure: false,
   });
 }
 

@@ -66,6 +66,13 @@ Apply rules to the authority surface actually affected; do not impose high-risk 
 - PR range must be clean: `origin/main...HEAD`.
 - Explain root cause, assumptions, regression risks, applicable risk tier, and proof.
 
+## Publication capability continuity
+- Before declaring source publication blocked, discover the repository in every approved workspace root, including bounded nested checkouts, and preserve any existing commit or verified diff.
+- Discover all task-relevant publication routes before denying capability: authenticated Git, the connected GitHub App blob/tree/commit/ref API, receipt-proven Forge or provider-neutral capacity, and the existing Battle Bridge handoff.
+- A missing `gh` binary or one failed credential is a route-specific observation, never a global publication blocker while another approved route is proven available.
+- Fail over without rebuilding the source change. Preserve exact base, head, tree, branch and PR identity; never force-push, overwrite an unrelated remote branch, create a duplicate PR, or bypass review and merge protection.
+- Only report `SOURCE_PUBLICATION_CAPACITY_UNAVAILABLE` after bounded workspace discovery and every registered route has produced unavailable or invalid evidence.
+
 ## Professionalisation clause
 - Every programme goal must preserve or improve production-grade reliability, maintainability, operator trust, and reusable capability.
 - Individual bounded repairs should remain narrow when they contribute to a proven goal-level outcome; do not gold-plate or expand scope merely to appear comprehensive.

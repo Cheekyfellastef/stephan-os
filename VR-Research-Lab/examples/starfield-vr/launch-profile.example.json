@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "stephanos.starfield-vr-launch-profile.v1",
+  "goal": 1591,
+  "workerGoal": 1595,
+  "status": "blocked",
+  "selectedProvider": "mutar-openxr",
+  "transport": "meta-air-link",
+  "game": {
+    "installationRoot": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Starfield",
+    "launchExecutablePath": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Starfield\\Starfield.exe",
+    "launchExecutableSha256": "<64-lowercase-hex>"
+  },
+  "runtime": {
+    "openxrRuntime": "meta"
+  },
+  "provider": {
+    "version": "<exact-release>",
+    "files": [
+      {
+        "role": "injection-proxy",
+        "path": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Starfield\\dxgi.dll",
+        "sha256": "<64-lowercase-hex>"
+      }
+    ]
+  },
+  "evidence": {
+    "verdict": "BLOCKED_PENDING_BATTLE_BRIDGE_PROOF",
+    "packetPath": "<absolute-evidence-packet-path>",
+    "verifiedAtUtc": "<ISO-8601-UTC>"
+  }
+}
