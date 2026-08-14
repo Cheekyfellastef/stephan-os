@@ -338,15 +338,15 @@ function normalizeScheduler(projection, host, blockers) {
     candidates.push({ candidateId:`#${issue}`, issue, route:item.route, resourceIds,
       criticalPathWeight:item.criticalPathWeight });
   }
-  const receiptSelected = decision.selectedIssues.map(issueNumber).sort((a, b) => (a ?? 0) - (b ?? 0));
-  const detailSelected = [...selectedIssues].sort((a, b) => a - b);
+  const receiptSelected = decision.selectedIssues.map(issueNumber);
+  const detailSelected = candidates.map(({ issue }) => issue);
   if (receiptSelected.some((issue) => issue === null) || !sameSet(receiptSelected, detailSelected)) {
     blockers.push('scheduler-selected-issues-mismatch');
   }
   const parallelRefs = dense(projection.parallelCandidates)
-    ? [...projection.parallelCandidates].map(text).sort()
+    ? [...projection.parallelCandidates].map(text)
     : [];
-  const detailRefs = candidates.map(({ candidateId }) => candidateId).sort();
+  const detailRefs = candidates.map(({ candidateId }) => candidateId);
   if (!sameSet(parallelRefs, detailRefs)) blockers.push('scheduler-parallel-candidate-refs-mismatch');
   if (blockers.length) return null;
   return candidates;
