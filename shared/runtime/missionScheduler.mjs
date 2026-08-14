@@ -24,6 +24,9 @@ const MAX_PREREQUISITES_PER_GOAL = 1000;
 const MAX_TOTAL_PREREQUISITES = 10000;
 const MAX_EVIDENCE_ITEMS = 10000;
 const MAX_TOTAL_EVIDENCE_ITEMS = 50000;
+const MAX_INPUT_SNAPSHOT_DEPTH = 32;
+const MAX_INPUT_SNAPSHOT_KEYS = 256;
+const MAX_INPUT_SNAPSHOT_NODES = MAX_TOTAL_EVIDENCE_ITEMS + MAX_TOTAL_PREREQUISITES + MAX_PORTFOLIO_GOALS * 128 + 8192;
 const MAX_CYCLE_EVIDENCE = 20;
 const MAX_CYCLE_PATH_ISSUES = 20;
 const MAX_LANE_IDENTITY_LENGTH = CHAT_STRING_LIMIT;
@@ -56,8 +59,8 @@ function ownDataSlot(object, key) {
   }
 }
 function arrayLengthMetadata(value) {
-  if (!Array.isArray(value)) return { isArray:false, length:0, inspectionFailed:false };
   try {
+    if (!Array.isArray(value)) return { isArray:false, length:0, inspectionFailed:false };
     const descriptor = Object.getOwnPropertyDescriptor(value, 'length');
     const valid = descriptor
       && Object.prototype.hasOwnProperty.call(descriptor, 'value')
@@ -68,6 +71,55 @@ function arrayLengthMetadata(value) {
       : { isArray:true, length:0, inspectionFailed:true };
   } catch {
     return { isArray:true, length:0, inspectionFailed:true };
+  }
+}
+function inertInputSnapshot(value, state = { nodes:0, active:new WeakSet() }, depth = 0) {
+  state.nodes += 1;
+  if (state.nodes > MAX_INPUT_SNAPSHOT_NODES || depth > MAX_INPUT_SNAPSHOT_DEPTH) throw new Error('snapshot-bound-exceeded');
+  if (value === null || value === undefined || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error('snapshot-number-invalid');
+    return value;
+  }
+  if (typeof value !== 'object') throw new Error('snapshot-type-invalid');
+  if (state.active.has(value)) throw new Error('snapshot-cycle-invalid');
+  state.active.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const metadata = arrayLengthMetadata(value);
+      if (!metadata.isArray || metadata.inspectionFailed || metadata.length > MAX_INPUT_SNAPSHOT_NODES) throw new Error('snapshot-array-invalid');
+      const keys = Reflect.ownKeys(value);
+      if (keys.length > metadata.length + 1) throw new Error('snapshot-array-keys-invalid');
+      for (const key of keys) {
+        if (key === 'length') continue;
+        if (typeof key !== 'string' || !/^(?:0|[1-9]\d*)$/.test(key) || Number(key) >= metadata.length) throw new Error('snapshot-array-key-invalid');
+      }
+      const clone = new Array(metadata.length);
+      for (let index = 0; index < metadata.length; index += 1) {
+        const slot = ownDataSlot(value, String(index));
+        if (slot.inspectionFailed) throw new Error('snapshot-array-entry-invalid');
+        if (slot.present) clone[index] = inertInputSnapshot(slot.value, state, depth + 1);
+      }
+      return Object.freeze(clone);
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) throw new Error('snapshot-prototype-invalid');
+    const keys = Reflect.ownKeys(value);
+    if (keys.length > MAX_INPUT_SNAPSHOT_KEYS || keys.some((key) => typeof key !== 'string')) throw new Error('snapshot-object-keys-invalid');
+    const clone = {};
+    for (const key of keys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value') || descriptor.enumerable !== true) throw new Error('snapshot-object-entry-invalid');
+      if ((key === 'priority' || key === 'criticalPathWeight')
+        && (typeof descriptor.value !== 'number' || !Number.isFinite(descriptor.value))) {
+        clone[key] = null;
+      } else {
+        clone[key] = inertInputSnapshot(descriptor.value, state, depth + 1);
+      }
+    }
+    return Object.freeze(clone);
+  } finally {
+    state.active.delete(value);
   }
 }
 function normalizeStringEvidenceArray(object, key) {
@@ -399,10 +451,35 @@ export function buildMissionScheduler(input = {}) {
     totalPrerequisiteBoundExceeded = totalPrerequisites > MAX_TOTAL_PREREQUISITES;
     totalEvidenceBoundExceeded = totalEvidenceItems > MAX_TOTAL_EVIDENCE_ITEMS;
   }
+  let snapshottedProofHeads = [];
+  let snapshottedProofReceipts = [];
+  let snapshottedProofRefs = [];
+  let snapshottedGoals = [];
+  if (!portfolioBoundExceeded && !totalPrerequisiteBoundExceeded && !totalEvidenceBoundExceeded && !evidencePreflightInspectionFailed) {
+    try {
+      const snapshotState = { nodes:0, active:new WeakSet() };
+      snapshottedProofHeads = proofHeadsMetadata.isArray
+        ? inertInputSnapshot(proofHeadsSlot.value, snapshotState)
+        : [];
+      snapshottedProofReceipts = proofReceiptsMetadata.isArray
+        ? inertInputSnapshot(proofReceiptsSlot.value, snapshotState)
+        : [];
+      snapshottedProofRefs = proofRefsMetadata.isArray
+        ? inertInputSnapshot(proofRefsSlot.value, snapshotState)
+        : [];
+      snapshottedGoals = goalPreflights.map(({ candidate }) => inertInputSnapshot(candidate, snapshotState));
+    } catch {
+      evidencePreflightInspectionFailed = true;
+      snapshottedProofHeads = [];
+      snapshottedProofReceipts = [];
+      snapshottedProofRefs = [];
+      snapshottedGoals = [];
+    }
+  }
   const proofHeadsContainerInvalid = proofHeadsSlot.inspectionFailed || (proofHeadsSlot.present && !proofHeadsMetadata.isArray);
   const proofHeadsBoundExceeded = proofHeadsMetadata.length > MAX_EVIDENCE_ITEMS;
   const rawProofHeads = proofHeadsMetadata.isArray && !proofHeadsBoundExceeded && !totalEvidenceBoundExceeded && !evidencePreflightInspectionFailed
-    ? proofHeadsSlot.value
+    ? snapshottedProofHeads
     : [];
   const normalizedProofHeads = Array.from({ length:rawProofHeads.length }, (_, index) => sha(rawProofHeads[index]));
   const invalidProofHeads = [];
@@ -411,7 +488,7 @@ export function buildMissionScheduler(input = {}) {
   const proofReceiptsContainerInvalid = proofReceiptsSlot.inspectionFailed || (proofReceiptsSlot.present && !proofReceiptsMetadata.isArray);
   const proofReceiptsBoundExceeded = proofReceiptsMetadata.length > MAX_EVIDENCE_ITEMS;
   const rawProofReceipts = proofReceiptsMetadata.isArray && !proofReceiptsBoundExceeded && !totalEvidenceBoundExceeded && !evidencePreflightInspectionFailed
-    ? proofReceiptsSlot.value
+    ? snapshottedProofReceipts
     : [];
   const proofReceipts = [];
   const invalidProofReceipts = [];
@@ -437,16 +514,13 @@ export function buildMissionScheduler(input = {}) {
         boundExceeded:proofRefsMetadata.length > MAX_EVIDENCE_ITEMS,
         suppliedCount:proofRefsMetadata.length,
       }
-    : normalizeStringEvidenceArray(proofRefsSlot.present ? { proofRefs:proofRefsSlot.value } : {}, 'proofRefs');
+    : normalizeStringEvidenceArray(proofRefsSlot.present ? { proofRefs:snapshottedProofRefs } : {}, 'proofRefs');
   const proofRefsBoundExceeded = proofRefEvidence.boundExceeded;
   const invalidProofRefs = proofRefEvidence.invalidEntries;
   const proofRefs = proofRefEvidence.values;
   const goals = portfolioBoundExceeded || totalPrerequisiteBoundExceeded || totalEvidenceBoundExceeded || evidencePreflightInspectionFailed
     ? []
-    : Array.from({ length:goalsMetadata.length }, (_, index) => normalizeGoal(
-        goalPreflights[index].candidate,
-        goalPreflights[index].evidenceSlots,
-      ));
+    : Array.from({ length:goalsMetadata.length }, (_, index) => normalizeGoal(snapshottedGoals[index]));
   const issueCounts = new Map();
   for (const goal of goals) if (goal.issue) issueCounts.set(goal.issue, (issueCounts.get(goal.issue) ?? 0) + 1);
   const duplicateIssueIds = [...issueCounts].filter(([, count]) => count > 1).map(([issue]) => issue);

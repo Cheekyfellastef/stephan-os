@@ -164,6 +164,78 @@ test('goal entry accessors fail closed without invocation', () => {
   assert.ok(result.contradictions.some(({ code }) => code === 'EVIDENCE_PREFLIGHT_INSPECTION_FAILED'));
 });
 
+for (const topLevelKey of ['proofHeadShas', 'proofReceipts', 'proofRefs']) {
+  test(`in-bound ${topLevelKey} entry accessors fail closed without invocation`, () => {
+    let reads = 0;
+    const evidence = new Array(1);
+    Object.defineProperty(evidence, 0, {
+      configurable:true,
+      enumerable:true,
+      get() {
+        reads += 1;
+        throw new Error('in-bound evidence getter must not run');
+      },
+    });
+    const result = buildMissionScheduler({ now:NOW, goals:[goal(1)], [topLevelKey]:evidence });
+
+    assert.equal(reads, 0);
+    assert.equal(result.failClosed, true);
+    assert.ok(result.contradictions.some(({ code }) => code === 'EVIDENCE_PREFLIGHT_INSPECTION_FAILED'));
+  });
+}
+
+for (const goalEvidenceKey of ['resourceIds', 'resultProofRefs', 'structuralReviewProofRefs', 'modelTestProofRefs']) {
+  test(`in-bound ${goalEvidenceKey} entry accessors fail closed without invocation`, () => {
+    let reads = 0;
+    const evidence = new Array(1);
+    Object.defineProperty(evidence, 0, {
+      configurable:true,
+      enumerable:true,
+      get() {
+        reads += 1;
+        throw new Error('in-bound goal evidence getter must not run');
+      },
+    });
+    const result = buildMissionScheduler({ now:NOW, goals:[goal(1, { [goalEvidenceKey]:evidence })] });
+
+    assert.equal(reads, 0);
+    assert.equal(result.failClosed, true);
+    assert.ok(result.contradictions.some(({ code }) => code === 'EVIDENCE_PREFLIGHT_INSPECTION_FAILED'));
+  });
+}
+
+test('revoked evidence proxies return a fail-closed result', () => {
+  const revocable = Proxy.revocable([], {});
+  revocable.revoke();
+
+  const result = buildMissionScheduler({ now:NOW, goals:[goal(1)], proofRefs:revocable.proxy });
+
+  assert.equal(result.failClosed, true);
+  assert.ok(result.contradictions.some(({ code }) => code === 'EVIDENCE_PREFLIGHT_INSPECTION_FAILED'));
+});
+
+test('accepted evidence and goal proxies are never re-entered through get traps', () => {
+  let reads = 0;
+  const proofRefs = new Proxy(['proofs/exact-head'], {
+    get() {
+      reads += 1;
+      throw new Error('array get trap must not run');
+    },
+  });
+  const proxiedGoal = new Proxy(goal(1), {
+    get() {
+      reads += 1;
+      throw new Error('goal get trap must not run');
+    },
+  });
+
+  const result = buildMissionScheduler({ now:NOW, goals:[proxiedGoal], proofRefs });
+
+  assert.equal(reads, 0);
+  assert.equal(result.failClosed, false);
+  assert.equal(result.selectedGoal, '#1');
+});
+
 test('five canonical maximum resource scopes remain within the aggregate evidence bound', () => {
   const goals = Array.from({ length:5 }, (_, goalIndex) => goal(goalIndex + 1, {
     resourceIds:Array.from({ length:10000 }, (_, resourceIndex) =>
@@ -186,6 +258,29 @@ test('mixed top-level and goal evidence remains accepted at exactly the aggregat
 
   assert.equal(result.failClosed, false);
   assert.equal(result.parallelCandidateDetails.length, 4);
+});
+
+test('exact-bound entry accessors still return fail closed without invocation', () => {
+  let reads = 0;
+  const proofHeadShas = new Array(10000).fill('a'.repeat(40));
+  Object.defineProperty(proofHeadShas, 0, {
+    configurable:true,
+    enumerable:true,
+    get() {
+      reads += 1;
+      throw new Error('exact-bound getter must not run');
+    },
+  });
+  const goals = Array.from({ length:4 }, (_, goalIndex) => goal(goalIndex + 1, {
+    resourceIds:Array.from({ length:10000 }, (_, resourceIndex) =>
+      `exact:${goalIndex + 1}:resource:${String(resourceIndex).padStart(5, '0')}`),
+  }));
+
+  const result = buildMissionScheduler({ now:NOW, goals, proofHeadShas });
+
+  assert.equal(reads, 0);
+  assert.equal(result.failClosed, true);
+  assert.ok(result.contradictions.some(({ code }) => code === 'EVIDENCE_PREFLIGHT_INSPECTION_FAILED'));
 });
 
 test('hostile numeric advisory scores degrade safely without coercion', () => {
