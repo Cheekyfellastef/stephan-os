@@ -5,6 +5,7 @@ export const STEPHANOS_CAPABILITY_ROUND_SCHEMA_VERSION = 'stephanos.conversation
 export const STEPHANOS_CAPABILITY_QUESTION_SCHEMA_VERSION = 'stephanos.conversational-capability-question.v1';
 export const STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION = 'stephanos.conversational-capability-answer.v1';
 export const STEPHANOS_CAPABILITY_GAP_SCHEMA_VERSION = 'stephanos.conversational-capability-gap.v1';
+export const STEPHANOS_BOUNDARY_ADJUDICATION_SCHEMA_VERSION = 'stephanos.boundary-evidence-adjudication.v1';
 
 export const STEPHANOS_INITIAL_QUESTION_CLASSES = Object.freeze([
   'CURRENT_PROGRAMME_TRUTH',
@@ -83,6 +84,7 @@ const SETTLED_BOUNDARY_VERDICTS = new Set([
   'UNSAFE_OR_AUTHORITY_BOUNDARY',
 ]);
 const BUILDABLE_GAPS = new Set(STEPHANOS_BUILDABLE_GAP_VERDICTS);
+const DEFAULT_BOUNDARY_ADJUDICATION_STALE_AFTER_MS = 60 * 60 * 1000;
 
 const ROUND_KEYS = Object.freeze([
   'schemaVersion',
@@ -123,9 +125,24 @@ const ANSWER_KEYS = Object.freeze([
   'gapRefs',
   'answeredAtUtc',
 ]);
+const BOUNDARY_ADJUDICATION_KEYS = Object.freeze([
+  'schemaVersion',
+  'answerId',
+  'answerVerdict',
+  'status',
+  'freshness',
+  'evidenceRefs',
+  'sourcesConsulted',
+  'proofRefs',
+  'adjudicatedAtUtc',
+]);
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizedIntentText(value) {
+  return text(value).replace(/\s+/g, ' ').toLowerCase();
 }
 
 function plainRecord(value) {
@@ -183,11 +200,10 @@ function stringList(value, field, errors, minimum = 0) {
   return normalized;
 }
 
-function priorRoundFingerprints(value, errors) {
-  const normalized = stringList(value, 'priorRoundIntentFingerprints', errors, 10);
-  if (normalized.length !== 10) errors.push('priorRoundIntentFingerprints-must-contain-exactly-10');
-  if (normalized.some((entry) => !SAFE_FINGERPRINT.test(entry))) errors.push('priorRoundIntentFingerprints-contains-invalid-fingerprint');
-  return normalized;
+function sameStringSet(left = [], right = []) {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((value) => rightSet.has(value));
 }
 
 function noveltyFingerprint(value) {
@@ -223,6 +239,14 @@ function canonicalHash(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
+export function canonicalStephanosQuestionIntentFingerprint(question = {}) {
+  const questionClass = text(question.questionClass).toUpperCase();
+  const questionText = normalizedIntentText(question.questionText);
+  const expectedEvidenceClass = text(question.expectedEvidenceClass).toUpperCase();
+  if (!questionClass || !questionText || !expectedEvidenceClass) return '';
+  return `intent-${canonicalHash({ questionClass, questionText, expectedEvidenceClass }).slice(0, 40)}`;
+}
+
 function existingGoalCandidatesForGap(verdict) {
   return Object.freeze(({
     GAP_KNOWLEDGE: ['#1308', '#1556'],
@@ -253,6 +277,24 @@ export function validateStephanosCapabilityQuestion(question, options = {}) {
   return result(errors);
 }
 
+function priorRoundQuestionEstate(value, round, errors) {
+  if (!denseArray(value) || value.length !== 10) {
+    errors.push('priorRoundQuestions-must-contain-exactly-10-dense-records');
+    return [];
+  }
+  const fingerprints = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const question = value[index];
+    const validation = validateStephanosCapabilityQuestion(question);
+    for (const error of validation.errors) errors.push(`prior-question-${index + 1}:${error}`);
+    if (question?.askerParticipantId !== round.askerParticipantId) errors.push(`prior-question-${index + 1}:askerParticipantId-mismatch`);
+    if (question?.targetParticipantId !== round.targetParticipantId) errors.push(`prior-question-${index + 1}:targetParticipantId-mismatch`);
+    fingerprints.push(text(question?.intentFingerprint));
+  }
+  if (new Set(fingerprints).size !== 10) errors.push('priorRoundQuestions-intentFingerprints-must-be-unique');
+  return value;
+}
+
 export function validateStephanosCapabilityRound(round, options = {}) {
   const errors = [];
   if (!exactRecordShape(round, ROUND_KEYS, errors)) return result(errors);
@@ -266,10 +308,17 @@ export function validateStephanosCapabilityRound(round, options = {}) {
     errors.push('questions-must-contain-exactly-10-dense-records');
     return result(errors);
   }
-  const priorFingerprints = round.roundNumber > 1
-    ? priorRoundFingerprints(options.priorRoundIntentFingerprints, errors)
-    : [];
+
+  const priorQuestions = round.roundNumber > 1 ? priorRoundQuestionEstate(options.priorRoundQuestions, round, errors) : [];
+  const priorFingerprints = priorQuestions.map((question) => text(question.intentFingerprint));
   const priorFingerprintSet = new Set(priorFingerprints);
+  const priorCanonicalIntentSet = new Set(priorQuestions.map(canonicalStephanosQuestionIntentFingerprint).filter(Boolean));
+  if (round.roundNumber > 1 && options.priorRoundIntentFingerprints !== undefined) {
+    const suppliedPriorFingerprints = stringList(options.priorRoundIntentFingerprints, 'priorRoundIntentFingerprints', errors, 10);
+    if (suppliedPriorFingerprints.length !== 10) errors.push('priorRoundIntentFingerprints-must-contain-exactly-10');
+    if (!sameStringSet(suppliedPriorFingerprints, priorFingerprints)) errors.push('priorRoundIntentFingerprints-do-not-match-priorRoundQuestions');
+  }
+
   const questionIds = [];
   const fingerprints = [];
   const classes = [];
@@ -284,7 +333,10 @@ export function validateStephanosCapabilityRound(round, options = {}) {
     if (question?.targetParticipantId !== round.targetParticipantId) errors.push(`question-${index + 1}:targetParticipantId-mismatch`);
     const fingerprint = text(question?.intentFingerprint);
     if (round.roundNumber > 1) {
+      const canonicalFingerprint = canonicalStephanosQuestionIntentFingerprint(question);
+      if (!canonicalFingerprint || fingerprint !== canonicalFingerprint) errors.push(`question-${index + 1}:intentFingerprint-must-match-canonical-question-intent`);
       if (priorFingerprintSet.has(fingerprint)) errors.push(`question-${index + 1}:intentFingerprint-replays-prior-round`);
+      if (priorCanonicalIntentSet.has(canonicalFingerprint)) errors.push(`question-${index + 1}:canonical-intent-replays-prior-round`);
       const noveltyRefs = denseArray(question?.noveltyRefs) ? question.noveltyRefs.map(noveltyFingerprint) : [];
       if (noveltyRefs.some((reference) => !reference || !priorFingerprintSet.has(reference))) {
         errors.push(`question-${index + 1}:noveltyRefs-must-bind-prior-round-fingerprints`);
@@ -397,14 +449,52 @@ function classifyAnswerForEvaluation(answer) {
   if (verdict === 'ANSWERED_GROUNDED') return 'GROUNDED_PASS';
   if (verdict === 'ANSWERED_PARTIAL') return 'PARTIAL';
   if (BUILDABLE_GAPS.has(verdict)) return 'BUILDABLE_GAP';
-  if (SETTLED_BOUNDARY_VERDICTS.has(verdict)) return 'RETAINED_BOUNDARY';
+  if (SETTLED_BOUNDARY_VERDICTS.has(verdict)) return 'BOUNDARY_REQUIRES_ADJUDICATION';
   return 'INVALID';
+}
+
+function boundaryAdjudicationFor(answer, input = {}) {
+  return denseArray(input.boundaryAdjudications)
+    ? input.boundaryAdjudications.find((item) => item?.answerId === answer.answerId)
+    : null;
+}
+
+function validateBoundaryAdjudication(answer, adjudication, input = {}) {
+  const errors = [];
+  if (!exactRecordShape(adjudication, BOUNDARY_ADJUDICATION_KEYS, errors)) return result(errors);
+  if (adjudication.schemaVersion !== STEPHANOS_BOUNDARY_ADJUDICATION_SCHEMA_VERSION) errors.push('schema-version-mismatch');
+  if (adjudication.answerId !== answer.answerId) errors.push('answerId-mismatch');
+  if (normalizedVerdict(adjudication.answerVerdict) !== normalizedVerdict(answer.answerVerdict)) errors.push('answerVerdict-mismatch');
+  if (text(adjudication.status).toUpperCase() !== 'CURRENT') errors.push('status-not-current');
+  if (!['FRESH', 'RECENT'].includes(text(adjudication.freshness).toUpperCase())) errors.push('freshness-insufficient');
+  const adjudicatedEvidenceRefs = stringList(adjudication.evidenceRefs, 'evidenceRefs', errors, 1);
+  const adjudicatedSources = stringList(adjudication.sourcesConsulted, 'sourcesConsulted', errors, 1);
+  const adjudicationProofRefs = stringList(adjudication.proofRefs, 'proofRefs', errors, 1);
+  if (!timestamp(adjudication.adjudicatedAtUtc)) errors.push('adjudicatedAtUtc-invalid');
+  if (!sameStringSet(adjudicatedEvidenceRefs, answer.evidenceRefs)) errors.push('evidenceRefs-do-not-match-answer');
+  if (!sameStringSet(adjudicatedSources, answer.sourcesConsulted)) errors.push('sourcesConsulted-do-not-match-answer');
+
+  const authoritativeEvidenceRefs = new Set(denseArray(input.authoritativeEvidenceRefs) ? input.authoritativeEvidenceRefs.map(text) : []);
+  const authoritativeSourceRefs = new Set(denseArray(input.authoritativeSourceRefs) ? input.authoritativeSourceRefs.map(text) : []);
+  const authoritativeAdjudicationProofRefs = new Set(denseArray(input.authoritativeAdjudicationProofRefs) ? input.authoritativeAdjudicationProofRefs.map(text) : []);
+  if (answer.evidenceRefs.some((reference) => !authoritativeEvidenceRefs.has(reference))) errors.push('answer-evidence-not-in-authoritative-registry');
+  if (answer.sourcesConsulted.some((reference) => !authoritativeSourceRefs.has(reference))) errors.push('answer-source-not-in-authoritative-registry');
+  if (adjudicationProofRefs.some((reference) => !authoritativeAdjudicationProofRefs.has(reference))) errors.push('adjudication-proof-not-in-authoritative-registry');
+
+  const nowMs = Number.isFinite(input.evaluationNowMs) ? input.evaluationNowMs : Date.now();
+  const staleAfterMs = Number.isFinite(input.boundaryAdjudicationStaleAfterMs) && input.boundaryAdjudicationStaleAfterMs >= 0
+    ? input.boundaryAdjudicationStaleAfterMs
+    : DEFAULT_BOUNDARY_ADJUDICATION_STALE_AFTER_MS;
+  const adjudicatedMs = Date.parse(text(adjudication.adjudicatedAtUtc));
+  if (Number.isFinite(adjudicatedMs) && (adjudicatedMs > nowMs || nowMs - adjudicatedMs > staleAfterMs)) errors.push('adjudication-timestamp-not-current');
+  return result(errors);
 }
 
 export function evaluateStephanosCapabilityRound(input = {}) {
   const round = input.round;
   const answers = input.answers;
   const roundValidation = validateStephanosCapabilityRound(round, {
+    priorRoundQuestions: input.priorRoundQuestions,
     priorRoundIntentFingerprints: input.priorRoundIntentFingerprints,
   });
   const errors = [...roundValidation.errors.map((error) => `round:${error}`)];
@@ -418,8 +508,10 @@ export function evaluateStephanosCapabilityRound(input = {}) {
       errors:Object.freeze(errors),
       counts:Object.freeze({ total:0, grounded:0, partial:0, buildableGaps:0, retainedBoundaries:0 }),
       gapObservations:Object.freeze([]),
+      boundaryAdjudicationBlockers:Object.freeze([]),
       mayAdvanceToNovelRound:false,
       requiresRepairReplay:false,
+      requiresBoundaryAdjudication:false,
     });
   }
 
@@ -428,6 +520,7 @@ export function evaluateStephanosCapabilityRound(input = {}) {
   const seenAnswers = new Set();
   const classifications = [];
   const gapObservations = [];
+  const boundaryAdjudicationBlockers = [];
 
   for (let index = 0; index < answers.length; index += 1) {
     const answer = answers[index];
@@ -440,7 +533,21 @@ export function evaluateStephanosCapabilityRound(input = {}) {
     seenAnswers.add(answer?.questionId);
     if (validation.valid && questionById.has(answer.questionId)) {
       const classification = classifyAnswerForEvaluation(answer);
-      classifications.push(classification);
+      if (classification === 'BOUNDARY_REQUIRES_ADJUDICATION') {
+        const adjudication = boundaryAdjudicationFor(answer, input);
+        const adjudicationValidation = validateBoundaryAdjudication(answer, adjudication, input);
+        if (adjudicationValidation.valid) classifications.push('RETAINED_BOUNDARY');
+        else {
+          classifications.push('UNADJUDICATED_BOUNDARY');
+          boundaryAdjudicationBlockers.push(Object.freeze({
+            answerId: answer.answerId,
+            answerVerdict: normalizedVerdict(answer.answerVerdict),
+            errors: Object.freeze([...adjudicationValidation.errors]),
+          }));
+        }
+      } else {
+        classifications.push(classification);
+      }
       if (classification === 'BUILDABLE_GAP') {
         const gap = createStephanosCapabilityGapObservation(questionById.get(answer.questionId), answer);
         if (gap.valid) gapObservations.push(gap.gap);
@@ -461,8 +568,10 @@ export function evaluateStephanosCapabilityRound(input = {}) {
       errors:Object.freeze(errors),
       counts:Object.freeze({ total:answers.length, grounded:0, partial:0, buildableGaps:0, retainedBoundaries:0 }),
       gapObservations:Object.freeze([]),
+      boundaryAdjudicationBlockers:Object.freeze(boundaryAdjudicationBlockers),
       mayAdvanceToNovelRound:false,
       requiresRepairReplay:false,
+      requiresBoundaryAdjudication:boundaryAdjudicationBlockers.length > 0,
     });
   }
 
@@ -474,15 +583,25 @@ export function evaluateStephanosCapabilityRound(input = {}) {
     retainedBoundaries:classifications.filter((value) => value === 'RETAINED_BOUNDARY').length,
   });
   const hasRepairWork = counts.buildableGaps > 0 || counts.partial > 0;
+  const requiresBoundaryAdjudication = classifications.includes('UNADJUDICATED_BOUNDARY');
+  const state = counts.buildableGaps > 0
+    ? 'GAPS_IDENTIFIED'
+    : hasRepairWork
+      ? 'REGRESSION_PROVING'
+      : requiresBoundaryAdjudication
+        ? 'SAFE_HOLD'
+        : 'SETTLED';
   return Object.freeze({
     schemaVersion: STEPHANOS_CAPABILITY_LADDER_SCHEMA_VERSION,
     valid:true,
     roundId:round.roundId,
-    state:counts.buildableGaps > 0 ? 'GAPS_IDENTIFIED' : hasRepairWork ? 'REGRESSION_PROVING' : 'SETTLED',
+    state,
     errors:Object.freeze([]),
     counts,
     gapObservations:Object.freeze(gapObservations),
-    mayAdvanceToNovelRound:!hasRepairWork,
+    boundaryAdjudicationBlockers:Object.freeze(boundaryAdjudicationBlockers),
+    mayAdvanceToNovelRound:!hasRepairWork && !requiresBoundaryAdjudication,
     requiresRepairReplay:hasRepairWork,
+    requiresBoundaryAdjudication,
   });
 }
