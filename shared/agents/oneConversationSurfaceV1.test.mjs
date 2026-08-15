@@ -103,6 +103,7 @@ test('cross-surface continuation re-proves current source evidence and preserves
   assert.equal(continuation.memoryAuthorityRef, projection.memoryAuthorityRef);
   assert.equal(continuation.destinationThreadCreationRequired, true);
   assert.equal(continuation.authority.commandExecutionAllowed, false);
+  assert.deepEqual(continuation.sourceProofRefs, ['proofs/chatgpt-web-1776']);
 });
 
 test('voice and Quest remain presentation surfaces with zero mutation authority', () => {
@@ -385,4 +386,97 @@ test('unsupported surfaces are rejected without inventing another front door', (
   const validation = validateOneConversationInputV1(input);
   assert.equal(validation.valid, false);
   assert.ok(validation.errors.includes('unsupported-surface:0'));
+});
+
+test('production reconstructed-use boundaries ignore caller historical clocks', () => {
+  const projection = currentProjection();
+  const originalNow = Date.now;
+  const originalContext = process.env.NODE_TEST_CONTEXT;
+  Date.now = () => Date.parse('2026-08-14T15:00:00.000Z');
+  delete process.env.NODE_TEST_CONTEXT;
+  try {
+    const continuation = planCrossSurfaceContinuationV1(
+      projection,
+      { fromSurface: 'CHATGPT_WEB', toSurface: 'PHONE' },
+      { nowMs: NOW_MS },
+    );
+    assert.equal(continuation.ok, false);
+    assert.equal(continuation.verdict, 'CONTINUATION_BLOCKED_STALE_OR_UNKNOWN');
+    const publication = projectOneConversationWorkspaceMessageV1(projection, {
+      timestampUtc: '2026-08-14T15:00:00.000Z',
+      correlationId: 'intent-product-1776',
+      messageId: 'historical-clock-replay',
+      workspaceValidationOptions: { nowMs: NOW_MS },
+    });
+    assert.equal(publication.ok, false);
+    assert.equal(publication.reason, 'ONE_CONVERSATION_PROJECTION_EVIDENCE_STALE_AT_PUBLICATION');
+  } finally {
+    Date.now = originalNow;
+    if (originalContext === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = originalContext;
+  }
+});
+
+test('per-surface attestations reject substitution of every continuity identity', () => {
+  const projection = currentProjection();
+  for (const field of [
+    'stephanosIdentityVersion',
+    'operatorRelationshipContextRef',
+    'intentId',
+    'missionId',
+    'memoryAuthorityRef',
+  ]) {
+    const tampered = { ...projection, [field]: `different-${field.toLowerCase()}` };
+    const continuation = plan(tampered, { fromSurface: 'CHATGPT_WEB', toSurface: 'PHONE' });
+    assert.equal(continuation.ok, false, field);
+    assert.equal(continuation.verdict, 'CONTINUATION_BLOCKED_IDENTITY_EVIDENCE_CONFLICTING', field);
+    const publication = projectOneConversationWorkspaceMessageV1(tampered, {
+      timestampUtc: NOW,
+      correlationId: 'intent-product-1776',
+      messageId: `identity-substitution-${field.toLowerCase()}`,
+      workspaceValidationOptions: { nowMs: NOW_MS },
+    });
+    assert.equal(publication.ok, false, field);
+    assert.equal(publication.reason, 'ONE_CONVERSATION_PROJECTION_IDENTITY_EVIDENCE_CONFLICTING', field);
+  }
+});
+
+test('reconstructed schema kind and authority widening fail closed', () => {
+  const projection = currentProjection();
+  const cases = [
+    [{ ...projection, schemaVersion: 'wrong.schema' }, 'CONTINUATION_BLOCKED_PROJECTION_INVALID', 'ONE_CONVERSATION_PROJECTION_SCHEMA_INVALID'],
+    [{ ...projection, projectionKind: 'wrong.kind' }, 'CONTINUATION_BLOCKED_PROJECTION_INVALID', 'ONE_CONVERSATION_PROJECTION_KIND_INVALID'],
+    [{ ...projection, authority: { ...projection.authority, mergeAllowed: true } }, 'CONTINUATION_BLOCKED_AUTHORITY_INVALID', 'ONE_CONVERSATION_PROJECTION_AUTHORITY_INVALID'],
+    [{ ...projection, mergeAllowed: true }, 'CONTINUATION_BLOCKED_AUTHORITY_INVALID', 'ONE_CONVERSATION_PROJECTION_AUTHORITY_INVALID'],
+  ];
+  for (const [tampered, continuationVerdict, publicationReason] of cases) {
+    assert.equal(plan(tampered, { fromSurface: 'CHATGPT_WEB', toSurface: 'PHONE' }).verdict, continuationVerdict);
+    const publication = projectOneConversationWorkspaceMessageV1(tampered, {
+      timestampUtc: NOW,
+      correlationId: 'intent-product-1776',
+      messageId: 'authority-schema-smuggling',
+      workspaceValidationOptions: { nowMs: NOW_MS },
+    });
+    assert.equal(publication.ok, false);
+    assert.equal(publication.reason, publicationReason);
+  }
+});
+
+test('caller proof refs are additive and never replace canonical observation proofs', () => {
+  const result = projectOneConversationWorkspaceMessageV1(currentProjection(), {
+    timestampUtc: NOW,
+    correlationId: 'intent-product-1776',
+    messageId: 'additive-caller-proof',
+    proofRefs: ['proofs/unrelated-caller-proof'],
+    workspaceValidationOptions: { nowMs: NOW_MS },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.record.proofRefs, [
+    'proofs/battle-bridge-1776',
+    'proofs/chatgpt-web-1776',
+    'proofs/unrelated-caller-proof',
+  ]);
+  const body = JSON.parse(result.record.body);
+  assert.deepEqual(body.surfaceAttestations.CHATGPT_WEB.proofRefs, ['proofs/chatgpt-web-1776']);
+  assert.deepEqual(body.surfaceAttestations.BATTLE_BRIDGE_DESKTOP.proofRefs, ['proofs/battle-bridge-1776']);
 });
