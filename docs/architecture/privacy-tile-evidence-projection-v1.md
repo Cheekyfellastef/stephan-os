@@ -110,6 +110,8 @@ git diff --check
 
 The focused suite covers truth-bucket separation, unproven consent, network-contact overclaim rejection, unknown display settings, provider no-record semantics, stale/future evidence, freshness-policy override rejection, duplicate IDs, bounded collections, unsupported states, sensitive/raw/local-path rejection, rights-deadline projection, unknown posture, zero authority and deterministic provider-neutral output.
 
+After the recursive pre-serialization snapshot repair, the focused suite contains 29 tests. The one-shot repair and subsequent preservation-safe convergence onto canonical `main` both reran the suite successfully with 29 passed and 0 failed while preserving the repaired source and test blobs.
+
 ## Exact evidence and fixture boundary
 
 A truth classification is accepted only with a compatible evidence-source class. In particular, a confirmed privacy claim cannot use `UNKNOWN` as its source. Operator-supplied material must either carry a specific supported claim classification with an appropriate visible-evidence source or remain the evidence-only `OPERATOR_SUPPLIED_EVIDENCE` class, which is projected as `UNKNOWN` rather than silently promoted.
