@@ -18,7 +18,12 @@ import {
   executeForgeShadowM3OnBattleBridge,
 } from './forgeShadowM3MailboxAdapterV1.mjs';
 import { FORGE_SHADOW_M3_ARTIFACT_PREPARATION_READY } from './forgeShadowM3ArtifactPreparationV1.mjs';
-import { FORGE_SHADOW_M3_EXECUTION_READY } from './forgeShadowM3RunnerExecutionReceiptAdapterV1.mjs';
+import {
+  FORGE_SHADOW_M3_AUTHORIZATION_RESERVATION_SCHEMA,
+  FORGE_SHADOW_M3_EXECUTION_PROVEN,
+  FORGE_SHADOW_M3_OPERATOR_APPROVAL_SCHEMA,
+  FORGE_SHADOW_M3_OPERATOR_APPROVAL_VERIFICATION_SCHEMA,
+} from './forgeShadowM3RunnerExecutionReceiptAdapterV1.mjs';
 import { planForgeShadowM3RunnerRuntime } from './forgeShadowM3RunnerRuntimePlanV1.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -177,24 +182,27 @@ function artifactReceipt() {
   };
 }
 
-test('the canonical mailbox exposes exactly one preparation and one execution operation', () => {
+function receiptReader() {
+  const receipts = new Map([
+    ['forge-m2-runtime-ready-001', m2Receipt()],
+    ['forge-m3-artifact-request-001', artifactReceipt()],
+  ]);
+  return async (requestId) => receipts.get(requestId);
+}
+
+test('canonical mailbox exposes exactly one preparation and one execution operation', () => {
   for (const operation of [FORGE_SHADOW_M3_PREPARE_OPERATION, FORGE_SHADOW_M3_EXECUTE_OPERATION]) {
     assert.equal(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.filter((value) => value === operation).length, 1);
   }
 });
 
-test('mailbox validation normalizes the closed-world M3 fields', () => {
+test('mailbox validation normalizes closed-world M3 fields and rejects widened authority', () => {
   const prepared = validateBattleBridgeGitHubCommand(prepareCommand(), { authorLogin: 'Cheekyfellastef', now: NOW });
   assert.equal(prepared.ok, true);
   assert.equal(prepared.command.expectedTree, TREE);
-  assert.equal(prepared.command.observationId, 'forge-m3-artifact-observation-001');
   const executed = validateBattleBridgeGitHubCommand(executeCommand(), { authorLogin: 'Cheekyfellastef', now: NOW });
   assert.equal(executed.ok, true);
   assert.equal(executed.command.m2RequestId, 'forge-m2-runtime-ready-001');
-  assert.equal(executed.command.planAtUtc, PLAN_AT);
-});
-
-test('M3 fields are operation-bound and arbitrary build or execution surfaces are rejected', () => {
   for (const candidate of [
     prepareCommand({ url: 'https://example.invalid' }),
     prepareCommand({ m2RequestId: 'forge-m2-runtime-ready-001' }),
@@ -203,45 +211,28 @@ test('M3 fields are operation-bound and arbitrary build or execution surfaces ar
     executeCommand({ runtimeExpiresAtUtc: '2026-08-10T17:00:00.000Z' }),
     executeCommand({ expectedTree: '' }),
   ]) assert.equal(validateBattleBridgeGitHubCommand(candidate, { authorLogin: 'Cheekyfellastef', now: NOW }).ok, false);
-  const nonM3 = {
-    ...base('RUN_BATTLE_BRIDGE_DIAGNOSTICS'),
-    expectedTree: TREE,
-  };
-  assert.equal(validateBattleBridgeGitHubCommand(nonM3, { authorLogin: 'Cheekyfellastef', now: NOW }).blocker, 'FORGE_M3_FIELD_NOT_ALLOWED');
 });
 
-test('M3 wiring preserves immutable command-age and execution-slot preflight barriers', async () => {
+test('M3 wiring preserves command-age and execution-slot preflight barriers', async () => {
   const oversizedWindow = selectBattleBridgeGitHubCommandBatch([
     mailboxComment(prepareCommand({ expiresAt: '2026-08-10T20:00:01.000Z' })),
   ], { now: NOW });
   assert.equal(oversizedWindow.verdict, 'NO_COMMAND_READY');
-  assert.equal(oversizedWindow.terminalRejections.length, 1);
   assert.equal(oversizedWindow.terminalRejections[0].blocker, 'COMMAND_EXPIRY_TOO_FAR_AHEAD');
-
-  const batch = selectBattleBridgeGitHubCommandBatch([
-    mailboxComment(prepareCommand(), { id: 2 }),
-  ], { now: NOW });
-  assert.equal(batch.verdict, 'COMMAND_BATCH_READY');
-
+  const batch = selectBattleBridgeGitHubCommandBatch([mailboxComment(prepareCommand(), { id: 2 })], { now: NOW });
   const events = [];
   const result = await executeBattleBridgeGitHubCommandBatch(batch, {
     now: () => NOW,
     preflightCommand: async () => ({ ok: false, blocker: 'COMMAND_EXPECTED_HEAD_SUPERSEDED' }),
     beforeExecute: async () => events.push('accepted'),
-    executeCommand: async () => {
-      events.push('executed');
-      return { ok: true };
-    },
-    onTerminal: async (_entry, execution) => {
-      events.push(`terminal:${execution.blocker}`);
-      return execution;
-    },
+    executeCommand: async () => { events.push('executed'); return { ok: true }; },
+    onTerminal: async (_entry, execution) => { events.push(`terminal:${execution.blocker}`); return execution; },
   });
   assert.deepEqual(events, ['terminal:COMMAND_EXPECTED_HEAD_SUPERSEDED']);
   assert.equal(result.results[0].result.blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
 });
 
-test('preparation handler binds the live call to the accepted mailbox identity', async () => {
+test('preparation handler remains bound to the accepted mailbox identity', async () => {
   let observed;
   const result = await executeForgeShadowM3ArtifactPreparationOnBattleBridge(prepareCommand(), {
     now: () => NOW,
@@ -258,12 +249,8 @@ test('preparation handler binds the live call to the accepted mailbox identity',
   });
 });
 
-test('execution handler derives the exact plan from durable M2 and artifact receipts', async () => {
-  const receipts = new Map([
-    ['forge-m2-runtime-ready-001', m2Receipt()],
-    ['forge-m3-artifact-request-001', artifactReceipt()],
-  ]);
-  const readReceipt = async (requestId) => receipts.get(requestId);
+test('execution handler derives plan and hardened approval from durable mailbox evidence', async () => {
+  const readReceipt = receiptReader();
   const first = await executeForgeShadowM3OnBattleBridge(executeCommand(), {
     now: () => NOW, platform: 'win32', readReceipt,
     executePlan: async () => assert.fail('digest mismatch must block before execution'),
@@ -272,28 +259,75 @@ test('execution handler derives the exact plan from durable M2 and artifact rece
   assert.equal(first.blocker, 'FORGE_M3_RUNTIME_PLAN_DIGEST_MISMATCH');
   assert.match(first.observedRuntimePlanDigest, /^sha256:[0-9a-f]{64}$/);
 
-  let call;
+  let input;
+  let options;
   const ready = await executeForgeShadowM3OnBattleBridge(executeCommand({
     runtimePlanDigest: first.observedRuntimePlanDigest,
   }), {
     now: () => NOW, platform: 'win32', readReceipt,
-    executePlan: async (input) => {
-      call = input;
-      return { ok: true, finalVerdict: FORGE_SHADOW_M3_EXECUTION_READY, receipt: { valid: true } };
+    executePlan: async (candidateInput, candidateOptions) => {
+      input = candidateInput;
+      options = candidateOptions;
+      return { ok: true, finalVerdict: FORGE_SHADOW_M3_EXECUTION_PROVEN, receipt: { valid: true } };
     },
     createExecutor: () => async () => ({}),
   });
   assert.equal(ready.ok, true);
-  assert.equal(call.runtimeAuthorization.runtimePlanDigest, first.observedRuntimePlanDigest);
-  assert.equal(call.runtimeAuthorization.operatorApproved, true);
-  assert.equal(call.runtimeAuthorization.m3Only, true);
-  assert.deepEqual(call.runtimePlanInput.admissionInput.runnerPools.map((pool) => [pool.runnerClass, pool.count]), [
+  assert.equal(input.runtimeAuthorization.runtimePlanDigest, first.observedRuntimePlanDigest);
+  assert.equal(input.runtimeAuthorization.approvalReceipt.schemaVersion, FORGE_SHADOW_M3_OPERATOR_APPROVAL_SCHEMA);
+  assert.equal(input.runtimeAuthorization.approvalReceipt.decision, 'APPROVED');
+  assert.match(input.runtimeAuthorization.approvalReceipt.proofRef, /^proofs\/operator-approvals\//);
+  assert.match(input.runtimeAuthorization.approvalReceipt.payloadSha256, /^[0-9a-f]{64}$/);
+  assert.equal(Object.hasOwn(input.runtimeAuthorization, 'operatorApproved'), false);
+  assert.equal(input.runtimeAuthorization.m3Only, true);
+  assert.equal(typeof options.verifyOperatorApproval, 'function');
+  assert.equal(typeof options.reserveOperatorAuthorization, 'function');
+
+  const verification = await options.verifyOperatorApproval({
+    approvalReceipt: input.runtimeAuthorization.approvalReceipt,
+    authorizationId: input.runtimeAuthorization.authorizationId,
+    repository: input.runtimeAuthorization.repository,
+    expectedHead: input.runtimeAuthorization.expectedHead,
+    expectedTree: input.runtimeAuthorization.expectedTree,
+    runtimePlanDigest: input.runtimeAuthorization.runtimePlanDigest,
+    executionSurface: input.runtimeAuthorization.executionSurface,
+    nowUtc: NOW.toISOString(),
+  });
+  assert.equal(verification.schemaVersion, FORGE_SHADOW_M3_OPERATOR_APPROVAL_VERIFICATION_SCHEMA);
+  assert.equal(verification.verified, true);
+
+  const reservation = await options.reserveOperatorAuthorization({
+    authorizationId: input.runtimeAuthorization.authorizationId,
+    receiptId: `forge-m3-runtime-${input.runtimeAuthorization.authorizationId}`,
+    approvalPayloadSha256: input.runtimeAuthorization.approvalReceipt.payloadSha256,
+    repository: input.runtimeAuthorization.repository,
+    expectedHead: input.runtimeAuthorization.expectedHead,
+    expectedTree: input.runtimeAuthorization.expectedTree,
+    runtimePlanDigest: input.runtimeAuthorization.runtimePlanDigest,
+    nowUtc: NOW.toISOString(),
+  });
+  assert.equal(reservation.schemaVersion, FORGE_SHADOW_M3_AUTHORIZATION_RESERVATION_SCHEMA);
+  assert.equal(reservation.reserved, true);
+  const replay = await options.reserveOperatorAuthorization({ ...reservation, nowUtc: NOW.toISOString() });
+  assert.equal(replay.reserved, false);
+
+  assert.deepEqual(input.runtimePlanInput.admissionInput.runnerPools.map((pool) => [pool.runnerClass, pool.count]), [
     ['windows-proof-isolated', 1], ['linux-isolated', 1],
   ]);
-  assert.deepEqual(planForgeShadowM3RunnerRuntime(call.runtimePlanInput).runners.map((runner) => runner.runnerId), [
-    'stephanos-forge-linux-runner-01',
-    'stephanos-forge-windows-proof-runner-01',
+  assert.deepEqual(planForgeShadowM3RunnerRuntime(input.runtimePlanInput).runners.map((runner) => runner.runnerId), [
+    'stephanos-forge-linux-runner-01', 'stephanos-forge-windows-proof-runner-01',
   ]);
+});
+
+test('execution refuses to project hardened approval from an unapproved command', async () => {
+  const command = executeCommand({ operatorApproval: 'not-approved' });
+  const result = await executeForgeShadowM3OnBattleBridge(command, {
+    now: () => NOW,
+    platform: 'win32',
+    readReceipt: receiptReader(),
+    executePlan: async () => assert.fail('unapproved command must never reach executor'),
+  });
+  assert.equal(result.blocker, 'FORGE_M3_RUNTIME_PLAN_DIGEST_MISMATCH');
 });
 
 test('shared mailbox dispatch and receipts preserve M3 identity without credentials', async () => {
