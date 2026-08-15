@@ -60,10 +60,10 @@ Invoke-CanaryDispatch 'linux-isolated' $runnerId
 Invoke-CanaryDispatch 'windows-proof-isolated' $runnerId
 Assert-RunnerRegistrationAbsent $runnerId
 Stop-Process -Id $script:SandboxProcess.Id
-'gitRefWrite = $false'
-'mergeAuthority = $false'
-'deploymentAuthority = $false'
-'arbitraryCommand = $false'
+gitRefWrite = $false
+mergeAuthority = $false
+deploymentAuthority = $false
+arbitraryCommand = $false
 `;
 
 const staticTest = `
@@ -74,6 +74,32 @@ test('Windows proof uses only a disposable Sandbox exchange and an exact-address
 test('executor emits only post-teardown closed-world observations and no reusable authority', () => {});
 'FORGE_M3_EPHEMERAL_REGISTRATION_REMAINS'
 `;
+
+const authorityFindingCodes = Object.freeze([
+  'forge-m3-executor-git-authority-not-zero',
+  'forge-m3-executor-merge-authority-not-zero',
+  'forge-m3-executor-deploy-authority-not-zero',
+  'forge-m3-executor-arbitrary-authority-not-zero',
+]);
+
+function reviewExecutorSource(source) {
+  return analyzeWindowsAuthorityForgeM3ExecutorReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: escalation(),
+    sources: [
+      record(WINDOWS_AUTHORITY_FORGE_M3_EXECUTOR_PATHS_V1[0], source),
+      record(WINDOWS_AUTHORITY_FORGE_M3_EXECUTOR_PATHS_V1[1], staticTest),
+    ],
+  });
+}
+
+function authorityCodes(result) {
+  return result.findings
+    .map((item) => item.code)
+    .filter((code) => authorityFindingCodes.includes(code))
+    .sort();
+}
 
 test('qualifies exactly the Forge M3 executor and static hostile test', () => {
   const result = analyzeWindowsAuthorityForgeM3ExecutorReview({
@@ -88,6 +114,48 @@ test('qualifies exactly the Forge M3 executor and static hostile test', () => {
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true);
   assert.deepEqual(result.reviewedPaths, [...WINDOWS_AUTHORITY_FORGE_M3_EXECUTOR_PATHS_V1]);
+});
+
+test('zero-authority proof requires genuine unquoted whole-line false assignments', () => {
+  const hostileSources = [
+    executor
+      .replace('gitRefWrite = $false', "'gitRefWrite = $false'")
+      .replace('mergeAuthority = $false', "'mergeAuthority = $false'")
+      .replace('deploymentAuthority = $false', "'deploymentAuthority = $false'")
+      .replace('arbitraryCommand = $false', "'arbitraryCommand = $false'"),
+    executor
+      .replace('gitRefWrite = $false', '# gitRefWrite = $false')
+      .replace('mergeAuthority = $false', '# mergeAuthority = $false')
+      .replace('deploymentAuthority = $false', '# deploymentAuthority = $false')
+      .replace('arbitraryCommand = $false', '# arbitraryCommand = $false'),
+    executor
+      .replace('gitRefWrite = $false', 'Write-Output "gitRefWrite = $false"')
+      .replace('mergeAuthority = $false', 'Write-Output "mergeAuthority = $false"')
+      .replace('deploymentAuthority = $false', 'Write-Output "deploymentAuthority = $false"')
+      .replace('arbitraryCommand = $false', 'Write-Output "arbitraryCommand = $false"'),
+    executor
+      .replace(/^gitRefWrite = \$false\n/m, '')
+      .replace(/^mergeAuthority = \$false\n/m, '')
+      .replace(/^deploymentAuthority = \$false\n/m, '')
+      .replace(/^arbitraryCommand = \$false\n/m, ''),
+  ];
+
+  for (const source of hostileSources) {
+    const result = reviewExecutorSource(source);
+    assert.equal(result.clean, false);
+    assert.deepEqual(authorityCodes(result), [...authorityFindingCodes].sort());
+  }
+});
+
+test('true authority assignments fail closed with the exact finding codes', () => {
+  const source = executor
+    .replace('gitRefWrite = $false', 'gitRefWrite = $true')
+    .replace('mergeAuthority = $false', 'mergeAuthority = $true')
+    .replace('deploymentAuthority = $false', 'deploymentAuthority = $true')
+    .replace('arbitraryCommand = $false', 'arbitraryCommand = $true');
+  const result = reviewExecutorSource(source);
+  assert.equal(result.clean, false);
+  assert.deepEqual(authorityCodes(result), [...authorityFindingCodes].sort());
 });
 
 test('rejects widened or incomplete specialist estates', () => {
