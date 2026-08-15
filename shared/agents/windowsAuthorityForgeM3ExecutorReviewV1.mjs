@@ -89,11 +89,14 @@ function reviewExecutor(source, path, findings) {
     ["Invoke-CanaryDispatch 'linux-isolated' $runnerId", 'forge-m3-executor-linux-dispatch-not-fixed', 'Linux canary dispatch must remain exact-runner bound.'],
     ["Invoke-CanaryDispatch 'windows-proof-isolated' $runnerId", 'forge-m3-executor-windows-dispatch-not-fixed', 'Windows canary dispatch must remain exact-runner bound.'],
     ["Assert-RunnerRegistrationAbsent $runnerId", 'forge-m3-executor-registration-teardown-unproven', 'Forge M3 must negatively prove runner registration removal.'],
-    ["'gitRefWrite = $false'", 'forge-m3-executor-git-authority-not-zero', 'Forge M3 receipt authority must deny Git ref writes.'],
-    ["'mergeAuthority = $false'", 'forge-m3-executor-merge-authority-not-zero', 'Forge M3 receipt authority must deny merge authority.'],
-    ["'deploymentAuthority = $false'", 'forge-m3-executor-deploy-authority-not-zero', 'Forge M3 receipt authority must deny deployment authority.'],
-    ["'arbitraryCommand = $false'", 'forge-m3-executor-arbitrary-authority-not-zero', 'Forge M3 receipt authority must deny arbitrary command authority.'],
   ]) requireLiteral(findings, source, literal, code, summary, path);
+
+  for (const [pattern, code, summary] of [
+    [/^\s*gitRefWrite\s*=\s*\$false\s*$/m, 'forge-m3-executor-git-authority-not-zero', 'Forge M3 receipt authority must deny Git ref writes.'],
+    [/^\s*mergeAuthority\s*=\s*\$false\s*$/m, 'forge-m3-executor-merge-authority-not-zero', 'Forge M3 receipt authority must deny merge authority.'],
+    [/^\s*deploymentAuthority\s*=\s*\$false\s*$/m, 'forge-m3-executor-deploy-authority-not-zero', 'Forge M3 receipt authority must deny deployment authority.'],
+    [/^\s*arbitraryCommand\s*=\s*\$false\s*$/m, 'forge-m3-executor-arbitrary-authority-not-zero', 'Forge M3 receipt authority must deny arbitrary command authority.'],
+  ]) requirePattern(findings, source, pattern, code, summary, path);
 
   requirePattern(findings, source, /branch', '--show-current'/, 'forge-m3-executor-branch-proof-missing', 'Forge M3 must prove the canonical branch.', path);
   requirePattern(findings, source, /rev-parse', 'HEAD'/, 'forge-m3-executor-head-proof-missing', 'Forge M3 must prove the exact source head.', path);
