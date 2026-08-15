@@ -118,7 +118,7 @@ A truth classification is accepted only with a compatible evidence-source class.
 
 ## Data-only and immutability boundary
 
-Top-level record collections, evidence-reference lists and limitation lists must be dense standard arrays containing data properties only. Sparse arrays, accessor-bearing arrays, custom array prototypes, symbols, proxies that cannot be safely inspected and unexpected fields fail closed without executing caller code.
+Top-level record collections, every record object, evidence-reference lists and limitation lists are recursively descriptor-snapshotted into owned frozen data before serialization, hashing, iteration or size measurement. Dense standard arrays and exact plain records containing data properties only are required. Sparse arrays, accessor-bearing arrays or records, own `toJSON` hooks, custom prototypes, symbols, proxies that cannot be safely inspected and unexpected fields fail closed without executing caller code.
 
 Accepted arrays are detached and frozen before projection. Later caller mutation cannot alter a published record, evidence list, projection identity or posture.
 

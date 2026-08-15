@@ -393,7 +393,7 @@ function snapshotRecord(value) {
 function snapshotInput(value) {
   const input = snapshotExactObject(value, TOP_LEVEL_KEYS);
   if (input === SNAPSHOT_INVALID) return SNAPSHOT_INVALID;
-  const records = snapshotDenseArray(input.records, PRIVACY_TILE_MAX_RECORDS, (entry) => entry);
+  const records = snapshotDenseArray(input.records, PRIVACY_TILE_MAX_RECORDS, snapshotRecord);
   if (records === SNAPSHOT_INVALID) return SNAPSHOT_INVALID;
   return Object.freeze({
     schemaVersion: input.schemaVersion,

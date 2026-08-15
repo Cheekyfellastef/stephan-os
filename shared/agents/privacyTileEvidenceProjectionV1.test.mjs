@@ -441,3 +441,83 @@ test('rights deadlines cannot exist without an opened time', () => {
   assert.equal(verdict.valid, false);
   assert.ok(verdict.errors.includes('rights-deadline-without-opened-time'));
 });
+
+test('record accessors are rejected before serialization without executing caller code', () => {
+  let getterCalls = 0;
+  const hostile = record();
+  Object.defineProperty(hostile, 'summary', {
+    enumerable: true,
+    configurable: true,
+    get() {
+      getterCalls += 1;
+      throw new Error('must not execute');
+    },
+  });
+
+  let projection;
+  assert.doesNotThrow(() => {
+    projection = run([hostile]);
+  });
+  assert.equal(projection.valid, false);
+  assert.equal(getterCalls, 0);
+  assert.ok(
+    projection.validationErrors.includes(
+      'input-must-be-exact-dense-data-only-shape',
+    ),
+  );
+});
+
+test('own toJSON hooks are rejected before the input-size check without execution', () => {
+  let toJsonCalls = 0;
+  const hostile = record();
+  Object.defineProperty(hostile, 'toJSON', {
+    enumerable: true,
+    configurable: true,
+    value() {
+      toJsonCalls += 1;
+      return { summary: 'forged serialization' };
+    },
+  });
+
+  const projection = run([hostile]);
+  assert.equal(projection.valid, false);
+  assert.equal(toJsonCalls, 0);
+  assert.ok(
+    projection.validationErrors.includes(
+      'input-must-be-exact-dense-data-only-shape',
+    ),
+  );
+});
+
+test('revoked and throwing record proxies fail closed without escaping', () => {
+  const revoked = Proxy.revocable(record(), {});
+  revoked.revoke();
+  assert.doesNotThrow(() => run([revoked.proxy]));
+  assert.equal(run([revoked.proxy]).valid, false);
+
+  let trapCalls = 0;
+  const throwing = new Proxy(record(), {
+    getPrototypeOf() {
+      trapCalls += 1;
+      throw new Error('uninspectable');
+    },
+  });
+  let projection;
+  assert.doesNotThrow(() => {
+    projection = run([throwing]);
+  });
+  assert.equal(projection.valid, false);
+  assert.equal(trapCalls, 1);
+});
+
+test('record objects are detached before projection size measurement and later mutation', () => {
+  const sourceRecord = record();
+  const projection = run([sourceRecord]);
+  sourceRecord.summary = 'Caller mutation after projection.';
+  sourceRecord.subjectRef = 'provider-tampered';
+
+  assert.equal(projection.valid, true);
+  assert.equal(projection.records[0].summary, 'Visible bounded provider notice.');
+  assert.equal(projection.records[0].subjectRef, 'provider-openai');
+  assert.equal(Object.isFrozen(projection.records[0]), true);
+});
