@@ -328,13 +328,35 @@ test('fabricated or apparently canonical registries and adjudications cannot ret
     authoritativeEvidenceRefs: ['evidence:governing-authority-policy'],
     authoritativeSourceRefs: ['programme-authority'],
     authoritativeAdjudicationProofRefs: ['evidence:boundary-adjudication'],
-    verifyBoundary: () => true,
     evaluationNowMs: Date.parse(CREATED_AT),
   });
   assert.equal(verdict.valid, true);
   assert.equal(verdict.state, 'SAFE_HOLD');
   assert.equal(verdict.counts.retainedBoundaries, 0);
+  assert.equal(verdict.mayAdvanceToNovelRound, false);
+  assert.equal(verdict.requiresBoundaryAdjudication, true);
   assert.deepEqual(verdict.boundaryAdjudicationBlockers[0].errors, ['canonical-boundary-proof-authority-unresolved']);
+});
+
+test('function injection cannot become boundary authority', () => {
+  const capabilityRound = round();
+  const answers = capabilityRound.questions.map((item) => answer(item));
+  const boundary = boundaryAnswer(capabilityRound.questions[9]);
+  answers[9] = boundary;
+  const verdict = evaluateStephanosCapabilityRound({
+    round: capabilityRound,
+    answers,
+    boundaryAdjudications: [fabricatedBoundaryAdjudication(boundary)],
+    authoritativeEvidenceRefs: ['evidence:governing-authority-policy'],
+    authoritativeSourceRefs: ['programme-authority'],
+    authoritativeAdjudicationProofRefs: ['evidence:boundary-adjudication'],
+    verifyBoundary: () => true,
+    evaluationNowMs: Date.parse(CREATED_AT),
+  });
+  assert.equal(verdict.valid, false);
+  assert.equal(verdict.state, 'SAFE_HOLD');
+  assert.equal(verdict.mayAdvanceToNovelRound, false);
+  assert.deepEqual(verdict.errors, ['input-must-be-data-only']);
 });
 
 test('replayed answer adjudication IDs cannot become boundary authority', () => {
