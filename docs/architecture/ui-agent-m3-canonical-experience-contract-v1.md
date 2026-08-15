@@ -6,7 +6,9 @@ M3 turns the evidence-backed M2 experience inventory into one canonical cross-su
 
 ## Admission
 
-M3 accepts only an M2 inventory that is valid and explicitly reports `M3_PUBLISH_CANONICAL_EXPERIENCE_CONTRACT_AND_DESIGN_MAP`. All 20 canonical product/presentation surfaces must be present and the M2 coverage summary must report complete canonical coverage.
+M3 accepts only an M2 inventory that is valid and explicitly reports `M3_PUBLISH_CANONICAL_EXPERIENCE_CONTRACT_AND_DESIGN_MAP`. All 20 canonical product/presentation surfaces must be present and the M2 coverage summary must report complete canonical coverage with the exact same canonical surface identities.
+
+The caller-owned M2 packet is recursively reduced to the bounded fields M3 actually needs before any admission decision. Top-level, inventory, surface and coverage records must be ordinary data-only records. Surface lists and coverage lists must be dense standard arrays. Accessors, sparse collections, custom prototypes, symbols and revoked/uninspectable proxies fail closed without executing caller getters. The accepted snapshot is detached from later caller mutation.
 
 ## Canonical experience language
 
@@ -41,4 +43,4 @@ Later #1722 slices may turn this map into bounded implementation plans and then 
 node --test shared/agents/uiAgentCanonicalExperienceContractV1.test.mjs
 ```
 
-The suite covers deterministic mapping, explicit unsatisfied proof, zero authority, incomplete coverage, non-M3 inventory, duplicate surfaces, caller authority smuggling and hostile data-only boundaries.
+The suite covers deterministic mapping, explicit unsatisfied proof, zero authority, incomplete coverage, non-M3 inventory, duplicate surfaces, caller authority smuggling, recursive nested accessor rejection, sparse coverage arrays, hostile surface records, revoked nested proxies, coverage-identity consistency and post-build caller mutation.
