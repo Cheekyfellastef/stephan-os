@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -8,8 +9,11 @@ import {
 } from './forgeShadowM3ArtifactPreparationV1.mjs';
 import { createForgeShadowM3FixedProofExecutor } from './forgeShadowM3FixedProofExecutorV1.mjs';
 import {
-  FORGE_SHADOW_M3_EXECUTION_READY,
+  FORGE_SHADOW_M3_AUTHORIZATION_RESERVATION_SCHEMA,
+  FORGE_SHADOW_M3_EXECUTION_PROVEN,
   FORGE_SHADOW_M3_EXECUTION_SURFACE,
+  FORGE_SHADOW_M3_OPERATOR_APPROVAL_SCHEMA,
+  FORGE_SHADOW_M3_OPERATOR_APPROVAL_VERIFICATION_SCHEMA,
   FORGE_SHADOW_M3_RUNTIME_AUTHORIZATION_SCHEMA,
   buildForgeShadowM3RuntimePlanDigest,
   executeForgeShadowM3RunnerPlan,
@@ -30,6 +34,9 @@ const DIGEST = /^sha256:[0-9a-f]{64}$/i;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const RECEIPT_SCHEMA = 'stephanos.battle-bridge-github-command-receipt.v1';
 const MAX_RECEIPT_BYTES = 256 * 1024;
+const APPROVAL_ISSUER = 'STEPHANOS_OPERATOR_APPROVAL_GATE';
+const APPROVAL_VERIFIER = 'STEPHANOS_OPERATOR_APPROVAL_VERIFIER';
+const AUTHORIZATION_RESERVER = 'STEPHANOS_OPERATOR_AUTHORIZATION_RESERVER';
 const COMMON_FIELDS = new Set([
   'schemaVersion', 'requestId', 'operation', 'repository', 'issueNumber', 'branch',
   'operatorApproval', 'expectedHead', 'expiresAt',
@@ -45,6 +52,18 @@ const EXECUTE_FIELDS = new Set([
 ]);
 
 const text = (value) => String(value ?? '').trim();
+
+function stable(value) {
+  if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sha256Hex(value) {
+  return createHash('sha256').update(stable(value), 'utf8').digest('hex');
+}
 
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, blocker, ...details });
@@ -199,6 +218,96 @@ function terminalResult(receipt, operation, head, tree) {
   return receipt.result.result;
 }
 
+function buildMailboxApprovalReceipt(command, planDigest, head, tree) {
+  const proofIdentity = sha256Hex({
+    schemaVersion: command.schemaVersion,
+    requestId: command.requestId,
+    operation: command.operation,
+    repository: command.repository,
+    issueNumber: command.issueNumber,
+    branch: command.branch,
+    operatorApproval: command.operatorApproval,
+    expectedHead: head,
+    expectedTree: tree,
+    runtimeAuthorizationId: command.runtimeAuthorizationId,
+    runtimePlanDigest: planDigest,
+    planAtUtc: command.planAtUtc,
+    runtimeExpiresAtUtc: command.runtimeExpiresAtUtc,
+  });
+  const body = {
+    schemaVersion: FORGE_SHADOW_M3_OPERATOR_APPROVAL_SCHEMA,
+    issuer: APPROVAL_ISSUER,
+    decision: 'APPROVED',
+    proofRef: `proofs/operator-approvals/${command.runtimeAuthorizationId}/${proofIdentity}.json`,
+    repository: REPOSITORY,
+    expectedHead: head,
+    expectedTree: tree,
+    runtimePlanDigest: planDigest,
+    authorizationId: command.runtimeAuthorizationId,
+    executionSurface: FORGE_SHADOW_M3_EXECUTION_SURFACE,
+    issuedAtUtc: command.planAtUtc,
+    expiresAtUtc: command.runtimeExpiresAtUtc,
+  };
+  return Object.freeze({ ...body, payloadSha256: sha256Hex(body) });
+}
+
+function createMailboxApprovalVerifier(expectedReceipt) {
+  return async function verifyMailboxApproval(request) {
+    const receipt = request?.approvalReceipt;
+    const valid = Boolean(receipt
+      && receipt.payloadSha256 === expectedReceipt.payloadSha256
+      && receipt.proofRef === expectedReceipt.proofRef
+      && request.authorizationId === expectedReceipt.authorizationId
+      && request.repository === expectedReceipt.repository
+      && request.expectedHead === expectedReceipt.expectedHead
+      && request.expectedTree === expectedReceipt.expectedTree
+      && request.runtimePlanDigest === expectedReceipt.runtimePlanDigest
+      && request.executionSurface === expectedReceipt.executionSurface);
+    return Object.freeze({
+      schemaVersion: FORGE_SHADOW_M3_OPERATOR_APPROVAL_VERIFICATION_SCHEMA,
+      verifierId: APPROVAL_VERIFIER,
+      verified: valid,
+      proofRef: expectedReceipt.proofRef,
+      approvalPayloadSha256: expectedReceipt.payloadSha256,
+      authorizationId: expectedReceipt.authorizationId,
+      repository: expectedReceipt.repository,
+      expectedHead: expectedReceipt.expectedHead,
+      expectedTree: expectedReceipt.expectedTree,
+      runtimePlanDigest: expectedReceipt.runtimePlanDigest,
+      executionSurface: expectedReceipt.executionSurface,
+      verifiedAtUtc: request.nowUtc,
+    });
+  };
+}
+
+function createMailboxAuthorizationReserver(command, approvalReceipt) {
+  let consumed = false;
+  return async function reserveMailboxAuthorization(request) {
+    const reserved = !consumed
+      && request.authorizationId === approvalReceipt.authorizationId
+      && request.approvalPayloadSha256 === approvalReceipt.payloadSha256
+      && request.repository === approvalReceipt.repository
+      && request.expectedHead === approvalReceipt.expectedHead
+      && request.expectedTree === approvalReceipt.expectedTree
+      && request.runtimePlanDigest === approvalReceipt.runtimePlanDigest;
+    if (reserved) consumed = true;
+    return Object.freeze({
+      schemaVersion: FORGE_SHADOW_M3_AUTHORIZATION_RESERVATION_SCHEMA,
+      reserverId: AUTHORIZATION_RESERVER,
+      reservationId: `forge-m3-reservation-${command.requestId}`,
+      reserved,
+      authorizationId: approvalReceipt.authorizationId,
+      receiptId: `forge-m3-runtime-${approvalReceipt.authorizationId}`,
+      approvalPayloadSha256: approvalReceipt.payloadSha256,
+      repository: approvalReceipt.repository,
+      expectedHead: approvalReceipt.expectedHead,
+      expectedTree: approvalReceipt.expectedTree,
+      runtimePlanDigest: approvalReceipt.runtimePlanDigest,
+      reservedAtUtc: request.nowUtc,
+    });
+  };
+}
+
 export async function executeForgeShadowM3ArtifactPreparationOnBattleBridge(command = {}, {
   now = () => new Date(),
   prepare = prepareForgeShadowM3RunnerArtifacts,
@@ -269,6 +378,8 @@ export async function executeForgeShadowM3OnBattleBridge(command = {}, {
   if (planDigest !== text(command.runtimePlanDigest).toLowerCase()) {
     return fail('FORGE_M3_RUNTIME_PLAN_DIGEST_MISMATCH', { observedRuntimePlanDigest: planDigest });
   }
+  if (command.operatorApproval !== 'operator-approved') return fail('FORGE_M3_OPERATOR_APPROVAL_REQUIRED');
+  const approvalReceipt = buildMailboxApprovalReceipt(command, planDigest, head, tree);
   const result = await executePlan({
     runtimePlanInput,
     runtimeAuthorization: Object.freeze({
@@ -281,15 +392,17 @@ export async function executeForgeShadowM3OnBattleBridge(command = {}, {
       issuedAtUtc: command.planAtUtc,
       expiresAtUtc: command.runtimeExpiresAtUtc,
       executionSurface: FORGE_SHADOW_M3_EXECUTION_SURFACE,
-      operatorApproved: command.operatorApproval === 'operator-approved',
+      approvalReceipt,
       m3Only: command.m3Only === true,
     }),
   }, {
     platform,
     now,
     executeRunner: createExecutor(),
+    verifyOperatorApproval: createMailboxApprovalVerifier(approvalReceipt),
+    reserveOperatorAuthorization: createMailboxAuthorizationReserver(command, approvalReceipt),
   });
-  return result?.ok === true && result?.finalVerdict === FORGE_SHADOW_M3_EXECUTION_READY
+  return result?.ok === true && result?.finalVerdict === FORGE_SHADOW_M3_EXECUTION_PROVEN
     ? result
     : Object.freeze({ ...result, ok: false });
 }
