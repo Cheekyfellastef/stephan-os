@@ -58,5 +58,17 @@ test('operator review authority comes from the exact artifact, never a bot revie
   assert.match(script, /validateIndependentReviewArtifact/);
   assert.match(script, /actions\/runs\/\$\{[^}]+\}\/artifacts/);
   assert.match(script, /actions\/artifacts\/\$\{[^}]+\}\/zip/);
+  assert.match(script, /executePersonalRepositoryArtifactArchiveTransport/);
+  assert.match(script, /requestApiRedirect: \(request\) => fetch\(request\.url/);
+  assert.match(script, /requestArchive: \(request\) => fetch\(request\.url/);
+  assert.doesNotMatch(script, /application\/octet-stream/);
+  assert.match(script, /extractPersonalRepositoryArtifactZip\(archiveBytes, INDEPENDENT_REVIEW_ARTIFACT_FILE\)/);
+  assert.doesNotMatch(script, /node:child_process|\bspawn(?:Sync)?\b|\bexec(?:File|Sync)?\b|\bunzip\b|shell\s*:/i);
+  assert.doesNotMatch(script, /mkdtempSync|writeFileSync|rmSync|node:os|node:path/);
+  const archiveRequest = script.slice(
+    script.indexOf('    requestArchive:'),
+    script.indexOf('\n    }),', script.indexOf('    requestArchive:')),
+  );
+  assert.doesNotMatch(archiveRequest, /Authorization|GH_TOKEN|GITHUB_TOKEN|STEPHANOS_RULESET_PROOF_TOKEN/);
   assert.doesNotMatch(script, /function independentReviewCandidate\(/);
 });

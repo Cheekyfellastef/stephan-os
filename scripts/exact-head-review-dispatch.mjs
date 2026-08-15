@@ -503,10 +503,25 @@ async function main() {
 
   const event = readJson(text(process.env.GITHUB_EVENT_PATH));
   const triggeringArtifact = triggeringIndependentReviewArtifact();
+  const planOnly = text(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY).toLowerCase() === 'true';
   const manualPrNumber = parseOptionalManualPrNumber(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PR);
   const requestedNumbers = candidateReviewPrNumbers({ event, manualPrNumber });
   const contextLoader = requestedNumbers.length ? loadRequestedCanonicalContexts : discoverCanonicalContexts;
   const contexts = await contextLoader({ owner, repo, repository, token, laneAuthorityLogin, prNumbers: requestedNumbers, triggeringArtifact });
+
+  if (planOnly) {
+    const targets = contexts
+      .map((context) => ({ prNumber: context.pr.number }))
+      .filter((target) => Number.isSafeInteger(target.prNumber) && target.prNumber > 0)
+      .sort((left, right) => left.prNumber - right.prNumber);
+    console.log(`EXACT_HEAD_REVIEW_PLAN_TARGETS=${JSON.stringify(targets)}`);
+    appendOutput('targets', JSON.stringify(targets));
+    appendOutput('decision', targets.length ? 'PLAN_READY' : 'NO_CANONICAL_LANE');
+    return;
+  }
+  if (contexts.length > 1) {
+    throw new Error('mutation execution requires exactly one PR-scoped coordinator target');
+  }
 
   if (requestedNumbers.length && contexts.length === 0) {
     console.log('EXACT_HEAD_REVIEW_DISPATCH_DECISION=REQUESTED_PR_NOT_CANONICAL');

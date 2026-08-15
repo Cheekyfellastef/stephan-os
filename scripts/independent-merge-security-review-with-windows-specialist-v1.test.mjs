@@ -35,6 +35,15 @@ test('original findings artifact remains exact-head and digest bound', async () 
   assert.match(text, /artifact\?\.artifactFile !== INDEPENDENT_REVIEW_ARTIFACT_FILE/);
   assert.match(text, /artifact\?\.payloadSha256 !== independentReviewFindingsArtifactPayloadSha256\(artifact\)/);
   assert.match(text, /\^\[a-f0-9\]\{40\}\$/);
+  assert.match(text, /typeof artifact\?\.repository !== 'string'/);
+  assert.match(text, /Number\.isSafeInteger\(artifact\?\.prNumber\)/);
+  assert.match(text, /typeof artifact\?\.branch !== 'string'/);
+});
+
+test('production wrapper forwards immutable artifact identity without substitution', async () => {
+  const text = await source();
+  assert.match(text, /analyzeWindowsAuthoritySpecialistReview\(\{\s*repository: artifact\.repository,\s*prNumber: artifact\.prNumber,\s*branch: artifact\.branch,\s*sourceHead: artifact\.sourceHead,\s*baseSha: artifact\.baseSha,\s*lineageEvidence,/s);
+  assert.doesNotMatch(text, /prNumber:\s*1732|branch:\s*['"]agent\/watchdog-control-plane-bootstrap-recovery-v1['"]|sourceHead:\s*['"](?:707f7db9964b5e100aab21d6735108a4c5e53457|a552b13c0a3e6a338d21e8d395dfcf12d12a3475)['"]/);
 });
 
 test('source retrieval is one bounded exact-head GitHub Contents GET', async () => {
@@ -47,6 +56,23 @@ test('source retrieval is one bounded exact-head GitHub Contents GET', async () 
   assert.match(text, /bytes\.length !== payload\.size/);
   assert.match(text, /blobSha: text\(payload\.sha\)\.toLowerCase\(\)/);
   assert.doesNotMatch(text, /method\s*:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/i);
+});
+
+test('lineage proof comes only from exact GitHub commit, comparison and current-main reads', async () => {
+  const text = await source();
+  assert.match(text, /exactReconciliationLineage\(artifact\.repository, artifact\.sourceHead, artifact\.baseSha\)/);
+  assert.match(text, /\/git\/commits\/\$\{encodeURIComponent\(sourceHead\)\}/);
+  assert.match(text, /\/compare\/\$\{encodeURIComponent\(baseSha\)\}\.\.\.\$\{encodeURIComponent\(sourceHead\)\}/);
+  assert.match(text, /\/git\/ref\/heads\/main/);
+  assert.match(text, /redirect: 'error'/);
+  assert.match(text, /const response = await fetch\(url,[\s\S]*if \(response\.url !== url\)[\s\S]*response\.arrayBuffer\(\)/);
+  assert.match(text, /sourceCommitSha: text\(sourceCommit\?\.sha\)\.toLowerCase\(\)/);
+  assert.match(text, /liveMainBeforeSha: text\(liveMainBefore\?\.object\?\.sha\)\.toLowerCase\(\)/);
+  assert.match(text, /liveMainAfterSha: text\(liveMainAfter\?\.object\?\.sha\)\.toLowerCase\(\)/);
+  assert.match(text, /parents: Object\.freeze\(parents\)/);
+  assert.match(text, /baseCommitSha: text\(comparison\?\.base_commit\?\.sha\)\.toLowerCase\(\)/);
+  assert.match(text, /mergeBaseCommitSha: text\(comparison\?\.merge_base_commit\?\.sha\)\.toLowerCase\(\)/);
+  assert.doesNotMatch(text, /lineageEvidence\s*=\s*\{[^}]*a552b13c0a3e6a338d21e8d395dfcf12d12a3475/s);
 });
 
 test('wrapper has no repository, merge, deployment, shell or host mutation authority', async () => {

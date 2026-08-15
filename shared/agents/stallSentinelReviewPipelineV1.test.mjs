@@ -210,6 +210,28 @@ test('proven Forge runtime preempts quota waiting and takes the exact-head revie
   assert.equal(result.summary.forgeRouted, 1);
 });
 
+test('Forge M2 and M3 cannot share one receipt identity', () => {
+  const sidecar = forgeSidecar();
+  const m3Core = { ...sidecar.m3RuntimeReceipt,
+    receiptId:sidecar.m2Receipt.receiptId };
+  delete m3Core.payloadSha256;
+  const result = projection([lane({
+    review: {
+      independentReviewConclusion: 'failure',
+      independentReviewErrorClass: 'API_RATE_LIMIT_EXCEEDED',
+      independentReviewAttempt: 2,
+    },
+  })], { forgeSidecar:forgeSidecar({ m3RuntimeReceipt:signedReceipt(m3Core) }) });
+  assert.equal(result.forgeSidecar.m2ReceiptValid, true);
+  assert.equal(result.forgeSidecar.m3RuntimeReceiptValid, true);
+  assert.equal(result.forgeSidecar.m2ReceiptId, result.forgeSidecar.m3RuntimeReceiptId);
+  assert.equal(result.forgeSidecar.runtimeReady, false);
+  assert.equal(result.forgeSidecar.canCarryRealWork, false);
+  assert.equal(result.forgeSidecar.activationRequired, true);
+  assert.equal(result.summary.forgeRouted, 0);
+  assert.equal(result.records[0].capacityRoute, STALL_SENTINEL_CAPACITY_ROUTE.FORGE_ACTIVATION);
+});
+
 test('source-ready Forge without runtime receipts is activated but never reported available', () => {
   const result = projection([lane({
     review: {

@@ -1,3 +1,4 @@
+import { inflateRawSync } from 'node:zlib';
 import {
   OPERATOR_MERGE_ENVIRONMENT,
   OPERATOR_MERGE_REVIEWER,
@@ -10,6 +11,12 @@ const ARTIFACT_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const REPOSITORY_PATTERN = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const BRANCH_PATTERN = /^[a-z0-9][a-z0-9._/-]{0,239}$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
+const PERSONAL_REPOSITORY_ACTIVE_RUN_STATUSES = new Set(['queued', 'in_progress']);
+const PERSONAL_REPOSITORY_RULESET_PROOF_PATHS = Object.freeze([
+  /^\/repos\/[^/?]+\/[^/?]+$/,
+  /^\/repos\/[^/?]+\/[^/?]+\/rules\/branches\/main\?per_page=100&page=(?:[1-9]|1[0-9]|20)$/,
+  /^\/repos\/[^/?]+\/[^/?]+\/rulesets\/[1-9][0-9]*\?includes_parents=true$/,
+]);
 
 export const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
 export const PERSONAL_REPOSITORY_WORKFLOW_NAME = 'Protected Operator Merge Queue Boundary';
@@ -19,6 +26,32 @@ export const PERSONAL_REPOSITORY_MERGE_JOB = 'operator-personal-repository-squas
 export const PERSONAL_REPOSITORY_REQUIRED_CHECK = 'protected-merge-source-proof';
 export const PERSONAL_REPOSITORY_MODE = 'user-owned-protected-squash';
 export const PERSONAL_REPOSITORY_AUTHORITY = 'github-actions-protected-environment-exact-head-squash-only';
+export const PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS = 3;
+export const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES = 256 * 1024;
+export const PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES = 256 * 1024;
+
+const ZIP_LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
+const ZIP_CENTRAL_DIRECTORY_HEADER_SIGNATURE = 0x02014b50;
+const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
+const ZIP_LOCAL_FILE_HEADER_BYTES = 30;
+const ZIP_CENTRAL_DIRECTORY_HEADER_BYTES = 46;
+const ZIP_END_OF_CENTRAL_DIRECTORY_BYTES = 22;
+const ZIP_DATA_DESCRIPTOR_SIGNATURE = 0x08074b50;
+const ZIP_DATA_DESCRIPTOR_BYTES = 16;
+const ZIP_DATA_DESCRIPTOR_FLAG = 0x0008;
+const ZIP_UTF8_FLAG = 0x0800;
+const ZIP_STORED_METHOD = 0;
+const ZIP_DEFLATED_METHOD = 8;
+
+const PERSONAL_REPOSITORY_TRANSIENT_READ_STATUSES = new Set([502, 503, 504]);
+const PERSONAL_REPOSITORY_READ_RETRY_DELAYS_MS = Object.freeze([250, 1_000]);
+const PERSONAL_REPOSITORY_GITHUB_API_ORIGIN = 'https://api.github.com';
+const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_HOST = /^productionresultssa[0-9]+\.blob\.core\.windows\.net$/;
+const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_PATH = /^\/actions-results\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/workflow-job-run-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/artifacts\/[a-f0-9]{64}\.zip$/;
+const PERSONAL_REPOSITORY_ARTIFACT_API_PATH = /^\/repos\/([^/?]+)\/([^/?]+)\/actions\/artifacts\/([1-9][0-9]*)\/zip$/;
+const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_QUERY_KEYS = Object.freeze([
+  'rscd', 'rsct', 'se', 'sig', 'ske', 'skoid', 'sks', 'skt', 'sktid', 'skv', 'sp', 'spr', 'sr', 'st', 'sv',
+]);
 
 export const PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS = Object.freeze([
   Object.freeze({ name: 'OpenClaw GitHub Operator', path: '.github/workflows/openclaw-github-operator.yml', event: 'pull_request' }),
@@ -34,8 +67,606 @@ function text(value) {
   return String(value ?? '').trim();
 }
 
+function boundedTransportCode(error) {
+  const candidate = text(error?.cause?.code || error?.code).toUpperCase();
+  return /^[A-Z][A-Z0-9_]{0,39}$/.test(candidate) ? candidate : 'UNCLASSIFIED';
+}
+
+const ZIP_CRC32_TABLE = Object.freeze(Array.from({ length: 256 }, (_, value) => {
+  let crc = value;
+  for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  return crc >>> 0;
+}));
+
+function zipCrc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = ZIP_CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+export class PersonalRepositoryArtifactZipError extends Error {
+  constructor(reason) {
+    super(`Independent review artifact ZIP is invalid (${reason}).`);
+    this.name = 'PersonalRepositoryArtifactZipError';
+    this.code = 'PERSONAL_REPOSITORY_ARTIFACT_ZIP_INVALID';
+    this.reason = reason;
+  }
+}
+
+function invalidArtifactZip(reason) {
+  throw new PersonalRepositoryArtifactZipError(reason);
+}
+
+function uint16(bytes, offset, reason) {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset + 2 > bytes.length) invalidArtifactZip(reason);
+  return bytes.readUInt16LE(offset);
+}
+
+function uint32(bytes, offset, reason) {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset + 4 > bytes.length) invalidArtifactZip(reason);
+  return bytes.readUInt32LE(offset);
+}
+
+function exactArtifactName(bytes, expectedFileName) {
+  const expected = Buffer.from(expectedFileName, 'utf8');
+  const decoded = bytes.toString('utf8');
+  if (!Buffer.from(decoded, 'utf8').equals(bytes)) invalidArtifactZip('filename-encoding');
+  if (decoded.includes('/')
+    || decoded.includes('\\')
+    || decoded === '.'
+    || decoded === '..'
+    || decoded.includes('\0')
+    || /[\r\n]/.test(decoded)) {
+    invalidArtifactZip('filename-unsafe');
+  }
+  if (!bytes.equals(expected)) invalidArtifactZip('filename-mismatch');
+}
+
+export function extractPersonalRepositoryArtifactZip(archiveBytes, expectedFileName) {
+  if (!(Buffer.isBuffer(archiveBytes) || archiveBytes instanceof Uint8Array)) {
+    invalidArtifactZip('archive-type');
+  }
+  if (typeof expectedFileName !== 'string'
+    || expectedFileName.length === 0
+    || expectedFileName.length > 255
+    || !/^[A-Za-z0-9._-]+$/.test(expectedFileName)) {
+    invalidArtifactZip('expected-filename');
+  }
+  const archive = Buffer.from(archiveBytes);
+  if (archive.length < ZIP_LOCAL_FILE_HEADER_BYTES
+      + ZIP_CENTRAL_DIRECTORY_HEADER_BYTES
+      + ZIP_END_OF_CENTRAL_DIRECTORY_BYTES
+    || archive.length > PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES) {
+    invalidArtifactZip('archive-size');
+  }
+
+  const endOffset = archive.length - ZIP_END_OF_CENTRAL_DIRECTORY_BYTES;
+  if (uint32(archive, endOffset, 'end-record') !== ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE) {
+    invalidArtifactZip('end-signature');
+  }
+  const diskNumber = uint16(archive, endOffset + 4, 'end-record');
+  const centralDisk = uint16(archive, endOffset + 6, 'end-record');
+  const entriesOnDisk = uint16(archive, endOffset + 8, 'end-record');
+  const totalEntries = uint16(archive, endOffset + 10, 'end-record');
+  const centralSize = uint32(archive, endOffset + 12, 'end-record');
+  const centralOffset = uint32(archive, endOffset + 16, 'end-record');
+  const commentLength = uint16(archive, endOffset + 20, 'end-record');
+  if (diskNumber !== 0 || centralDisk !== 0) invalidArtifactZip('multi-disk');
+  if (entriesOnDisk !== 1 || totalEntries !== 1) invalidArtifactZip('entry-count');
+  if (commentLength !== 0) invalidArtifactZip('archive-comment');
+  if (centralOffset === 0xffffffff || centralSize === 0xffffffff) invalidArtifactZip('zip64');
+  if (centralOffset < ZIP_LOCAL_FILE_HEADER_BYTES
+    || centralSize < ZIP_CENTRAL_DIRECTORY_HEADER_BYTES
+    || centralOffset + centralSize !== endOffset) {
+    invalidArtifactZip('central-boundary');
+  }
+
+  if (uint32(archive, centralOffset, 'central-record') !== ZIP_CENTRAL_DIRECTORY_HEADER_SIGNATURE) {
+    invalidArtifactZip('central-signature');
+  }
+  const centralVersionNeeded = uint16(archive, centralOffset + 6, 'central-record');
+  const centralFlags = uint16(archive, centralOffset + 8, 'central-record');
+  const centralMethod = uint16(archive, centralOffset + 10, 'central-record');
+  const centralModifiedTime = uint16(archive, centralOffset + 12, 'central-record');
+  const centralModifiedDate = uint16(archive, centralOffset + 14, 'central-record');
+  const centralCrc32 = uint32(archive, centralOffset + 16, 'central-record');
+  const centralCompressedSize = uint32(archive, centralOffset + 20, 'central-record');
+  const centralUncompressedSize = uint32(archive, centralOffset + 24, 'central-record');
+  const centralNameLength = uint16(archive, centralOffset + 28, 'central-record');
+  const centralExtraLength = uint16(archive, centralOffset + 30, 'central-record');
+  const centralCommentLength = uint16(archive, centralOffset + 32, 'central-record');
+  const centralDiskStart = uint16(archive, centralOffset + 34, 'central-record');
+  const localOffset = uint32(archive, centralOffset + 42, 'central-record');
+  const centralRecordBytes = ZIP_CENTRAL_DIRECTORY_HEADER_BYTES
+    + centralNameLength
+    + centralExtraLength
+    + centralCommentLength;
+  if (centralVersionNeeded < 10 || centralVersionNeeded > 20) invalidArtifactZip('version');
+  if ((centralFlags & ~(ZIP_UTF8_FLAG | ZIP_DATA_DESCRIPTOR_FLAG)) !== 0) invalidArtifactZip('flags');
+  if (![ZIP_STORED_METHOD, ZIP_DEFLATED_METHOD].includes(centralMethod)) invalidArtifactZip('compression');
+  if (centralCompressedSize === 0xffffffff || centralUncompressedSize === 0xffffffff) invalidArtifactZip('zip64');
+  if (centralUncompressedSize > PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES) {
+    invalidArtifactZip('payload-size');
+  }
+  if (centralNameLength === 0 || centralExtraLength !== 0 || centralCommentLength !== 0) {
+    invalidArtifactZip('central-fields');
+  }
+  if (centralDiskStart !== 0) invalidArtifactZip('multi-disk');
+  if (localOffset !== 0) invalidArtifactZip('archive-prefix');
+  if (centralRecordBytes !== centralSize) invalidArtifactZip('central-size');
+  const centralNameOffset = centralOffset + ZIP_CENTRAL_DIRECTORY_HEADER_BYTES;
+  const centralNameEnd = centralNameOffset + centralNameLength;
+  if (centralNameEnd > endOffset) invalidArtifactZip('central-name-boundary');
+  const centralName = archive.subarray(centralNameOffset, centralNameEnd);
+  exactArtifactName(centralName, expectedFileName);
+
+  if (uint32(archive, 0, 'local-record') !== ZIP_LOCAL_FILE_HEADER_SIGNATURE) {
+    invalidArtifactZip('local-signature');
+  }
+  const localVersionNeeded = uint16(archive, 4, 'local-record');
+  const localFlags = uint16(archive, 6, 'local-record');
+  const localMethod = uint16(archive, 8, 'local-record');
+  const localModifiedTime = uint16(archive, 10, 'local-record');
+  const localModifiedDate = uint16(archive, 12, 'local-record');
+  const localCrc32 = uint32(archive, 14, 'local-record');
+  const localCompressedSize = uint32(archive, 18, 'local-record');
+  const localUncompressedSize = uint32(archive, 22, 'local-record');
+  const localNameLength = uint16(archive, 26, 'local-record');
+  const localExtraLength = uint16(archive, 28, 'local-record');
+  const usesDataDescriptor = (centralFlags & ZIP_DATA_DESCRIPTOR_FLAG) !== 0;
+  if (localVersionNeeded !== centralVersionNeeded
+    || localFlags !== centralFlags
+    || localMethod !== centralMethod
+    || localModifiedTime !== centralModifiedTime
+    || localModifiedDate !== centralModifiedDate
+    || localNameLength !== centralNameLength
+    || localExtraLength !== 0) {
+    invalidArtifactZip('local-central-mismatch');
+  }
+  if (usesDataDescriptor) {
+    if (localCrc32 !== 0 || localCompressedSize !== 0 || localUncompressedSize !== 0) {
+      invalidArtifactZip('descriptor-local-fields');
+    }
+  } else if (localCrc32 !== centralCrc32
+    || localCompressedSize !== centralCompressedSize
+    || localUncompressedSize !== centralUncompressedSize) {
+    invalidArtifactZip('local-central-mismatch');
+  }
+  const localNameOffset = ZIP_LOCAL_FILE_HEADER_BYTES;
+  const localNameEnd = localNameOffset + localNameLength;
+  if (localNameEnd > centralOffset) invalidArtifactZip('local-name-boundary');
+  const localName = archive.subarray(localNameOffset, localNameEnd);
+  if (!localName.equals(centralName)) invalidArtifactZip('local-central-name-mismatch');
+  exactArtifactName(localName, expectedFileName);
+
+  const dataOffset = localNameEnd;
+  const dataEnd = dataOffset + centralCompressedSize;
+  if (usesDataDescriptor) {
+    const descriptorEnd = dataEnd + ZIP_DATA_DESCRIPTOR_BYTES;
+    if (descriptorEnd !== centralOffset) invalidArtifactZip('descriptor-boundary');
+    if (uint32(archive, dataEnd, 'descriptor') !== ZIP_DATA_DESCRIPTOR_SIGNATURE) {
+      invalidArtifactZip('descriptor-signature');
+    }
+    if (uint32(archive, dataEnd + 4, 'descriptor') !== centralCrc32
+      || uint32(archive, dataEnd + 8, 'descriptor') !== centralCompressedSize
+      || uint32(archive, dataEnd + 12, 'descriptor') !== centralUncompressedSize) {
+      invalidArtifactZip('descriptor-mismatch');
+    }
+  } else if (dataEnd !== centralOffset) {
+    invalidArtifactZip('record-overlap-or-gap');
+  }
+  if (localMethod === ZIP_STORED_METHOD && centralCompressedSize !== centralUncompressedSize) {
+    invalidArtifactZip('stored-size');
+  }
+  const compressed = archive.subarray(dataOffset, dataEnd);
+  let payload;
+  try {
+    payload = localMethod === ZIP_STORED_METHOD
+      ? Buffer.from(compressed)
+      : inflateRawSync(compressed, { maxOutputLength: PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES });
+  } catch {
+    invalidArtifactZip('decompression');
+  }
+  if (payload.length !== centralUncompressedSize
+    || payload.length > PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES) {
+    invalidArtifactZip('payload-size-mismatch');
+  }
+  if (zipCrc32(payload) !== centralCrc32) invalidArtifactZip('crc32');
+  return Buffer.from(payload);
+}
+
+export class PersonalRepositoryReadTransportError extends Error {
+  constructor(path, attempts, error) {
+    const endpoint = text(path).replace(/[\r\n\t]/g, '').slice(0, 500) || 'unknown-endpoint';
+    const transportCode = boundedTransportCode(error);
+    super(`GitHub read transport failed for ${endpoint} after ${attempts} attempts (${transportCode}).`);
+    this.name = 'PersonalRepositoryReadTransportError';
+    this.code = 'PERSONAL_REPOSITORY_READ_TRANSPORT_EXHAUSTED';
+    this.endpoint = endpoint;
+    this.attempts = attempts;
+    this.transportCode = transportCode;
+  }
+}
+
+export class PersonalRepositoryReadPolicyError extends Error {
+  constructor(path, blockers = []) {
+    const endpoint = text(path).replace(/[\r\n\t]/g, '').slice(0, 500) || 'unknown-endpoint';
+    const boundedBlockers = (Array.isArray(blockers) ? blockers : [])
+      .map(text)
+      .filter(Boolean)
+      .slice(0, 10);
+    super(`GitHub read response violated the bounded policy for ${endpoint}.`);
+    this.name = 'PersonalRepositoryReadPolicyError';
+    this.code = 'PERSONAL_REPOSITORY_READ_POLICY_VIOLATION';
+    this.endpoint = endpoint;
+    this.blockers = Object.freeze(boundedBlockers);
+  }
+}
+
+export async function readBoundedPersonalRepositoryResponseBody(response, maxBytes) {
+  const boundedMax = strictPositiveInteger(maxBytes);
+  const reader = response?.body?.getReader?.();
+  if (!boundedMax || !reader || typeof reader.read !== 'function') {
+    await response?.body?.cancel?.();
+    throw new PersonalRepositoryReadPolicyError('artifact-archive-body', [
+      'personal-repository-artifact-archive-body-not-readable',
+    ]);
+  }
+  const chunks = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (!result || result.done === true) break;
+      if (!(result.value instanceof Uint8Array) || result.value.length < 1) {
+        throw new PersonalRepositoryReadPolicyError('artifact-archive-body', [
+          'personal-repository-artifact-archive-body-chunk-invalid',
+        ]);
+      }
+      totalBytes += result.value.length;
+      if (!Number.isSafeInteger(totalBytes) || totalBytes > boundedMax) {
+        throw new PersonalRepositoryReadPolicyError('artifact-archive-body', [
+          'personal-repository-artifact-archive-body-size-exceeded',
+        ]);
+      }
+      chunks.push(Buffer.from(result.value));
+    }
+  } catch (error) {
+    await reader.cancel?.();
+    throw error;
+  } finally {
+    reader.releaseLock?.();
+  }
+  if (totalBytes < 1) {
+    throw new PersonalRepositoryReadPolicyError('artifact-archive-body', [
+      'personal-repository-artifact-archive-body-empty',
+    ]);
+  }
+  return Buffer.concat(chunks, totalBytes);
+}
+
+export async function executeBoundedPersonalRepositoryRead({
+  path,
+  method = 'GET',
+  body = null,
+  request,
+  validateResponse = null,
+  consume = async (response) => response,
+  delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+} = {}) {
+  if (typeof request !== 'function') throw new TypeError('Personal-repository request function is required.');
+  if (validateResponse !== null && typeof validateResponse !== 'function') {
+    throw new TypeError('Personal-repository response validator must be a function when supplied.');
+  }
+  if (typeof consume !== 'function') throw new TypeError('Personal-repository response consumer is required.');
+  if (typeof delay !== 'function') throw new TypeError('Personal-repository retry delay function is required.');
+  const normalizedMethod = text(method || 'GET').toUpperCase();
+  const readOnly = normalizedMethod === 'GET' && body === null;
+  const maximumAttempts = readOnly ? PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS : 1;
+  let lastTransportError = null;
+
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    try {
+      const response = await request();
+      const transientStatus = PERSONAL_REPOSITORY_TRANSIENT_READ_STATUSES.has(Number(response?.status));
+      if (transientStatus && attempt < maximumAttempts) {
+        await response?.body?.cancel?.();
+      } else {
+        if (validateResponse) {
+          const validation = await validateResponse(response);
+          if (validation?.valid !== true) {
+            await response?.body?.cancel?.();
+            throw new PersonalRepositoryReadPolicyError(path, validation?.blockers);
+          }
+        }
+        const result = await consume(response);
+        return Object.freeze({ response, result, attempts: attempt });
+      }
+    } catch (error) {
+      if (error instanceof PersonalRepositoryReadPolicyError) throw error;
+      if (!readOnly) throw error;
+      lastTransportError = error;
+      if (attempt === maximumAttempts) {
+        throw new PersonalRepositoryReadTransportError(path, attempt, error);
+      }
+    }
+    await delay(PERSONAL_REPOSITORY_READ_RETRY_DELAYS_MS[attempt - 1]);
+  }
+
+  throw new PersonalRepositoryReadTransportError(path, maximumAttempts, lastTransportError);
+}
+
 function strictPositiveInteger(value) {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+export function validatePersonalRepositoryRulesetProofRequest(input = {}) {
+  const path = text(input.path);
+  const method = text(input.method || 'GET').toUpperCase();
+  const body = input.body ?? null;
+  const repository = text(input.repository);
+  const pathRepository = path.match(/^\/repos\/([^/?]+)\/([^/?]+)(?:$|\/)/);
+  const blockers = [];
+  if (method !== 'GET') blockers.push('personal-repository-ruleset-proof-method-not-read-only');
+  if (body !== null) blockers.push('personal-repository-ruleset-proof-body-not-empty');
+  if (!REPOSITORY_PATTERN.test(repository)
+    || !pathRepository
+    || `${pathRepository[1]}/${pathRepository[2]}` !== repository) {
+    blockers.push('personal-repository-ruleset-proof-repository-mismatch');
+  }
+  if (!PERSONAL_REPOSITORY_RULESET_PROOF_PATHS.some((pattern) => pattern.test(path))) {
+    blockers.push('personal-repository-ruleset-proof-path-not-bounded');
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    blockers: Object.freeze(blockers),
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_RULESET_PROOF_REQUEST_BLOCKED'
+      : 'PERSONAL_REPOSITORY_RULESET_PROOF_REQUEST_READY',
+  });
+}
+
+export function validatePersonalRepositoryRulesetProofResponse(input = {}) {
+  const path = text(input.path);
+  const response = input.response;
+  const expectedUrl = `${PERSONAL_REPOSITORY_GITHUB_API_ORIGIN}${path}`;
+  const responseUrl = text(response?.url);
+  const blockers = [];
+  if (response?.redirected !== false) {
+    blockers.push('personal-repository-ruleset-proof-response-redirected');
+  }
+  if (responseUrl !== expectedUrl) {
+    blockers.push('personal-repository-ruleset-proof-response-url-mismatch');
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    blockers: Object.freeze(blockers),
+    expectedUrl,
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_RULESET_PROOF_RESPONSE_BLOCKED'
+      : 'PERSONAL_REPOSITORY_RULESET_PROOF_RESPONSE_READY',
+  });
+}
+
+function responseHeader(response, name) {
+  try {
+    const value = response?.headers?.get?.(name);
+    return typeof value === 'string' ? value.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+function artifactArchiveUrl(location) {
+  const raw = typeof location === 'string' ? location.trim() : '';
+  if (!raw || raw.length > 4096 || /[\r\n\t]/.test(raw)) return null;
+  try {
+    return new URL(raw);
+  } catch {
+    return null;
+  }
+}
+
+function artifactArchiveUrlBlockers(location) {
+  const url = artifactArchiveUrl(location);
+  const blockers = [];
+  if (!url) return ['personal-repository-artifact-archive-location-invalid'];
+  if (url.protocol !== 'https:' || (url.port && url.port !== '443')) {
+    blockers.push('personal-repository-artifact-archive-scheme-invalid');
+  }
+  if (url.username || url.password) blockers.push('personal-repository-artifact-archive-credentials-present');
+  if (!PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_HOST.test(url.hostname)) {
+    blockers.push('personal-repository-artifact-archive-host-not-allowlisted');
+  }
+  if (!PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_PATH.test(url.pathname)) {
+    blockers.push('personal-repository-artifact-archive-path-not-bounded');
+  }
+  if (url.hash) blockers.push('personal-repository-artifact-archive-fragment-present');
+  const observedKeys = [...new Set(url.searchParams.keys())].sort();
+  const expectedKeys = [...PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_QUERY_KEYS].sort();
+  if (observedKeys.length !== expectedKeys.length
+    || observedKeys.some((key, index) => key !== expectedKeys[index])
+    || observedKeys.some((key) => url.searchParams.getAll(key).length !== 1
+      || !url.searchParams.get(key)
+      || url.searchParams.get(key).length > 1024)) {
+    blockers.push('personal-repository-artifact-archive-query-invalid');
+  }
+  if (url.searchParams.get('spr') !== 'https'
+    || url.searchParams.get('sp') !== 'r'
+    || url.searchParams.get('sr') !== 'b') {
+    blockers.push('personal-repository-artifact-archive-scope-invalid');
+  }
+  return blockers;
+}
+
+export function buildPersonalRepositoryArtifactApiRequest(input = {}) {
+  const path = typeof input.path === 'string' ? input.path.trim() : '';
+  const repository = typeof input.repository === 'string' ? input.repository.trim() : '';
+  const pathMatch = path.match(PERSONAL_REPOSITORY_ARTIFACT_API_PATH);
+  const blockers = [];
+  if (!pathMatch || `${pathMatch?.[1]}/${pathMatch?.[2]}` !== repository) {
+    blockers.push('personal-repository-artifact-api-path-mismatch');
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    blockers: Object.freeze(blockers),
+    request: blockers.length
+      ? null
+      : Object.freeze({
+        url: `${PERSONAL_REPOSITORY_GITHUB_API_ORIGIN}${path}`,
+        method: 'GET',
+        body: null,
+        redirect: 'manual',
+        headers: Object.freeze({ Accept: 'application/vnd.github+json' }),
+      }),
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_ARTIFACT_API_REQUEST_BLOCKED'
+      : 'PERSONAL_REPOSITORY_ARTIFACT_API_REQUEST_READY',
+  });
+}
+
+export function validatePersonalRepositoryArtifactArchiveRedirect(input = {}) {
+  const path = typeof input.path === 'string' ? input.path.trim() : '';
+  const repository = typeof input.repository === 'string' ? input.repository.trim() : '';
+  const response = input.response;
+  const pathMatch = path.match(PERSONAL_REPOSITORY_ARTIFACT_API_PATH);
+  const expectedUrl = `${PERSONAL_REPOSITORY_GITHUB_API_ORIGIN}${path}`;
+  const location = responseHeader(response, 'location');
+  const blockers = [];
+  if (!pathMatch || `${pathMatch?.[1]}/${pathMatch?.[2]}` !== repository) {
+    blockers.push('personal-repository-artifact-api-path-mismatch');
+  }
+  if (Number(response?.status) !== 302) blockers.push('personal-repository-artifact-redirect-status-invalid');
+  if (response?.redirected !== false) blockers.push('personal-repository-artifact-api-response-redirected');
+  if (typeof response?.url !== 'string' || response.url !== expectedUrl) {
+    blockers.push('personal-repository-artifact-api-response-url-mismatch');
+  }
+  blockers.push(...artifactArchiveUrlBlockers(location));
+  return Object.freeze({
+    valid: blockers.length === 0,
+    blockers: Object.freeze(blockers),
+    location: blockers.length ? '' : location,
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_REDIRECT_BLOCKED'
+      : 'PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_REDIRECT_READY',
+  });
+}
+
+export function buildPersonalRepositoryArtifactArchiveRequest(location) {
+  const blockers = artifactArchiveUrlBlockers(location);
+  if (blockers.length) {
+    return Object.freeze({
+      valid: false,
+      blockers: Object.freeze(blockers),
+      request: null,
+      finalVerdict: 'PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_REQUEST_BLOCKED',
+    });
+  }
+  const url = artifactArchiveUrl(location).toString();
+  return Object.freeze({
+    valid: true,
+    blockers: Object.freeze([]),
+    request: Object.freeze({
+      url,
+      method: 'GET',
+      body: null,
+      redirect: 'manual',
+      headers: Object.freeze({ Accept: 'application/zip' }),
+    }),
+    finalVerdict: 'PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_REQUEST_READY',
+  });
+}
+
+export function validatePersonalRepositoryArtifactArchiveResponse(input = {}) {
+  const expectedUrl = typeof input.expectedUrl === 'string' ? input.expectedUrl.trim() : '';
+  const response = input.response;
+  const maxBytes = strictPositiveInteger(input.maxBytes);
+  const contentType = responseHeader(response, 'content-type').toLowerCase().split(';', 1)[0];
+  const contentLengthRaw = responseHeader(response, 'content-length');
+  const contentLength = /^[1-9][0-9]*$/.test(contentLengthRaw) ? Number(contentLengthRaw) : 0;
+  const blockers = artifactArchiveUrlBlockers(expectedUrl);
+  if (Number(response?.status) !== 200) blockers.push('personal-repository-artifact-archive-status-invalid');
+  if (response?.redirected !== false) blockers.push('personal-repository-artifact-archive-response-redirected');
+  if (typeof response?.url !== 'string' || response.url !== expectedUrl) {
+    blockers.push('personal-repository-artifact-archive-response-url-mismatch');
+  }
+  if (contentType !== 'application/zip') blockers.push('personal-repository-artifact-archive-content-type-invalid');
+  if (!maxBytes || !Number.isSafeInteger(contentLength) || contentLength < 1 || contentLength > maxBytes) {
+    blockers.push('personal-repository-artifact-archive-content-length-invalid');
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    blockers: Object.freeze(blockers),
+    contentLength: blockers.length ? 0 : contentLength,
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_RESPONSE_BLOCKED'
+      : 'PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_RESPONSE_READY',
+  });
+}
+
+export async function executePersonalRepositoryArtifactArchiveTransport(input = {}) {
+  const path = typeof input.path === 'string' ? input.path.trim() : '';
+  const repository = typeof input.repository === 'string' ? input.repository.trim() : '';
+  const maxBytes = strictPositiveInteger(input.maxBytes);
+  const requestApiRedirect = input.requestApiRedirect;
+  const requestArchive = input.requestArchive;
+  const delayOptions = input.delay === undefined ? {} : { delay: input.delay };
+  const apiRequest = buildPersonalRepositoryArtifactApiRequest({ path, repository });
+  const inputBlockers = [...apiRequest.blockers];
+  if (!maxBytes || maxBytes > PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES) {
+    inputBlockers.push('personal-repository-artifact-archive-max-bytes-invalid');
+  }
+  if (typeof requestApiRedirect !== 'function') {
+    inputBlockers.push('personal-repository-artifact-api-request-function-invalid');
+  }
+  if (typeof requestArchive !== 'function') {
+    inputBlockers.push('personal-repository-artifact-archive-request-function-invalid');
+  }
+  if (input.delay !== undefined && typeof input.delay !== 'function') {
+    inputBlockers.push('personal-repository-artifact-delay-function-invalid');
+  }
+  if (inputBlockers.length) throw new PersonalRepositoryReadPolicyError(path, inputBlockers);
+
+  const { response: redirectResponse } = await executeBoundedPersonalRepositoryRead({
+    path,
+    request: () => requestApiRedirect(apiRequest.request),
+    validateResponse: (response) => validatePersonalRepositoryArtifactArchiveRedirect({
+      path,
+      repository,
+      response,
+    }),
+    ...delayOptions,
+  });
+  const download = buildPersonalRepositoryArtifactArchiveRequest(
+    responseHeader(redirectResponse, 'location'),
+  );
+  if (!download.valid) throw new PersonalRepositoryReadPolicyError(path, download.blockers);
+
+  let declaredContentLength = 0;
+  const { result: bytes } = await executeBoundedPersonalRepositoryRead({
+    path: `${path}#credential-free-archive-download`,
+    request: () => requestArchive(download.request),
+    validateResponse: (response) => {
+      const validation = validatePersonalRepositoryArtifactArchiveResponse({
+        expectedUrl: download.request.url,
+        response,
+        maxBytes,
+      });
+      if (validation.valid) declaredContentLength = validation.contentLength;
+      return validation;
+    },
+    consume: (response) => readBoundedPersonalRepositoryResponseBody(response, maxBytes),
+    ...delayOptions,
+  });
+  if (!Buffer.isBuffer(bytes)
+    || bytes.length < 1
+    || bytes.length > maxBytes
+    || bytes.length !== declaredContentLength) {
+    throw new PersonalRepositoryReadPolicyError(path, [
+      'personal-repository-artifact-archive-body-length-mismatch',
+    ]);
+  }
+  return Buffer.from(bytes);
 }
 
 function parsePositiveInteger(value) {
@@ -55,6 +686,58 @@ function sameKeys(value, expectedKeys) {
   const expected = [...expectedKeys].sort();
   return observed.length === expected.length
     && observed.every((key, index) => key === expected[index]);
+}
+
+function canonicalConfigurationValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalConfigurationValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => (
+      [key, canonicalConfigurationValue(value[key])]
+    )));
+  }
+  return value;
+}
+
+export function buildPersonalRepositoryConfigurationEvidence(input = {}) {
+  const repository = input.repository && typeof input.repository === 'object' ? input.repository : {};
+  const environment = input.environment && typeof input.environment === 'object' ? input.environment : {};
+  const activeRules = (Array.isArray(input.activeRules) ? input.activeRules : [])
+    .map(canonicalConfigurationValue)
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const rulesets = (Array.isArray(input.rulesets) ? input.rulesets : [])
+    .map((ruleset) => canonicalConfigurationValue({
+      id: ruleset?.id,
+      name: ruleset?.name,
+      target: ruleset?.target,
+      source_type: ruleset?.source_type,
+      source: ruleset?.source,
+      enforcement: ruleset?.enforcement,
+      created_at: ruleset?.created_at,
+      updated_at: ruleset?.updated_at,
+      conditions: ruleset?.conditions,
+      rules: ruleset?.rules,
+      bypass_actors: ruleset?.bypass_actors,
+    }))
+    .sort((left, right) => Number(left.id) - Number(right.id));
+  return Object.freeze(canonicalConfigurationValue({
+    repository: {
+      id: repository?.id,
+      owner_type: repository?.owner?.type,
+      private: repository?.private,
+      visibility: repository?.visibility,
+      default_branch: repository?.default_branch,
+      allow_squash_merge: repository?.allow_squash_merge,
+      delete_branch_on_merge: repository?.delete_branch_on_merge,
+    },
+    environment: {
+      name: environment?.name,
+      can_admins_bypass: environment?.can_admins_bypass,
+      deployment_branch_policy: environment?.deployment_branch_policy,
+      protection_rules: environment?.protection_rules,
+    },
+    activeRules,
+    rulesets,
+  }));
 }
 
 function workflowRepository(run = {}) {
@@ -79,6 +762,146 @@ function canonicalWorkflowPath(run = {}, repository = '') {
   ].filter(Boolean));
   if (!allowed.has(suffix)) return '';
   return path.slice(0, at);
+}
+
+function canonicalPersonalRepositoryDispatchWorkflowPath(run = {}, repository = '') {
+  let path = text(run?.path);
+  if (repository && path.startsWith(`${repository}/`)) path = path.slice(repository.length + 1);
+  const at = path.indexOf('@');
+  if (at === -1) return path;
+  if (at === 0 || at === path.length - 1 || path.indexOf('@', at + 1) !== -1) return '';
+  if (!['main', 'refs/heads/main'].includes(path.slice(at + 1))) return '';
+  return path.slice(0, at);
+}
+
+function personalRepositoryDispatchActor(run = {}) {
+  return text(run?.triggering_actor?.login || run?.actor?.login).toLowerCase();
+}
+
+function personalRepositoryDispatchTitle(sourceHead = '') {
+  return `Protected operator merge ${text(sourceHead).toLowerCase()}`;
+}
+
+export function validatePersonalRepositoryDispatchWorkflowDefinition(definitions = []) {
+  const blockers = [];
+  if (!Array.isArray(definitions)) {
+    blockers.push('personal-repository-workflow-definitions-invalid');
+  }
+  const matches = (Array.isArray(definitions) ? definitions : []).filter((definition) => (
+    text(definition?.path) === PERSONAL_REPOSITORY_WORKFLOW_PATH
+  ));
+  const definition = matches[0];
+  if (matches.length !== 1
+    || definition?.name !== PERSONAL_REPOSITORY_WORKFLOW_NAME
+    || definition?.state !== 'active'
+    || !strictPositiveInteger(definition?.id)) {
+    blockers.push('personal-repository-workflow-definition-not-exact');
+  }
+  const valid = blockers.length === 0;
+  return Object.freeze({
+    valid,
+    definition: valid ? Object.freeze({
+      id: definition.id,
+      name: definition.name,
+      path: definition.path,
+      state: definition.state,
+    }) : null,
+    blockers: Object.freeze(unique(blockers)),
+    finalVerdict: valid
+      ? 'PERSONAL_REPOSITORY_DISPATCH_WORKFLOW_DEFINITION_READY'
+      : 'PERSONAL_REPOSITORY_DISPATCH_WORKFLOW_DEFINITION_BLOCKED',
+  });
+}
+
+export function validatePersonalRepositoryDispatchExecution(input = {}, expected = {}) {
+  const definitionValidation = validatePersonalRepositoryDispatchWorkflowDefinition(input.definitions);
+  const definition = definitionValidation.definition;
+  const run = input?.run && typeof input.run === 'object' && !Array.isArray(input.run)
+    ? input.run
+    : {};
+  const priorRunsValid = Array.isArray(input?.priorRuns);
+  const priorRuns = priorRunsValid ? input.priorRuns : [];
+  const repository = text(expected.repository);
+  const sourceHead = text(expected.sourceHead).toLowerCase();
+  const baseSha = text(expected.baseSha).toLowerCase();
+  const workflowRunId = strictPositiveInteger(expected.workflowRunId);
+  const workflowRunAttempt = strictPositiveInteger(expected.workflowRunAttempt);
+  const expectedTitle = personalRepositoryDispatchTitle(sourceHead);
+  const expectedActor = OPERATOR_MERGE_REVIEWER.toLowerCase();
+  const currentMismatches = [
+    ['run-id', strictPositiveInteger(run?.id) === workflowRunId],
+    ['run-attempt', strictPositiveInteger(run?.run_attempt) === workflowRunAttempt],
+    ['workflow-id', Boolean(definition) && strictPositiveInteger(run?.workflow_id) === definition.id],
+    ['run-name', text(run?.name) === expectedTitle],
+    ['event', text(run?.event) === 'workflow_dispatch'],
+    ['repository', workflowRepository(run) === repository],
+    ['base-head', SHA_PATTERN.test(baseSha) && text(run?.head_sha).toLowerCase() === baseSha],
+    ['base-branch', text(run?.head_branch) === 'main'],
+    ['display-title', text(run?.display_title) === expectedTitle],
+    ['workflow-path', canonicalPersonalRepositoryDispatchWorkflowPath(run, repository) === PERSONAL_REPOSITORY_WORKFLOW_PATH],
+    ['triggering-actor', personalRepositoryDispatchActor(run) === expectedActor],
+    ['run-status', PERSONAL_REPOSITORY_ACTIVE_RUN_STATUSES.has(text(run?.status).toLowerCase())],
+  ].filter(([, matches]) => !matches).map(([field]) => field);
+
+  const malformedPriorRunIds = [];
+  const replayRunIds = [];
+  const differentBasePriorRunIds = [];
+  // GitHub keeps the workflow run ID when a run is retried and increments
+  // run_attempt. The current exact run identity therefore proves that an
+  // earlier attempt already existed even though the runs listing exposes only
+  // the retried record under the current ID.
+  if (workflowRunId && workflowRunAttempt > 1 && currentMismatches.length === 0) {
+    replayRunIds.push(workflowRunId);
+  }
+  for (const candidate of priorRuns) {
+    const candidateId = strictPositiveInteger(candidate?.id);
+    if (candidateId && candidateId === workflowRunId) continue;
+    const candidateActor = personalRepositoryDispatchActor(candidate);
+    const sourceMatching = text(candidate?.name) === expectedTitle
+      || text(candidate?.display_title) === expectedTitle;
+    if (!sourceMatching || (candidateActor && candidateActor !== expectedActor)) continue;
+    const candidateBase = text(candidate?.head_sha).toLowerCase();
+    const exactIdentity = Boolean(
+      candidateId
+      && strictPositiveInteger(candidate?.run_attempt)
+      && definition
+      && strictPositiveInteger(candidate?.workflow_id) === definition.id
+      && text(candidate?.name) === expectedTitle
+      && text(candidate?.display_title) === expectedTitle
+      && text(candidate?.event) === 'workflow_dispatch'
+      && workflowRepository(candidate) === repository
+      && SHA_PATTERN.test(candidateBase)
+      && text(candidate?.head_branch) === 'main'
+      && canonicalPersonalRepositoryDispatchWorkflowPath(candidate, repository) === PERSONAL_REPOSITORY_WORKFLOW_PATH
+      && candidateActor === expectedActor
+    );
+    if (!exactIdentity) {
+      malformedPriorRunIds.push(candidateId || 0);
+      continue;
+    }
+    if (candidateBase === baseSha) replayRunIds.push(candidateId);
+    else differentBasePriorRunIds.push(candidateId);
+  }
+
+  const blockers = [
+    ...definitionValidation.blockers,
+    ...(!priorRunsValid ? ['personal-repository-prior-runs-invalid'] : []),
+    ...(currentMismatches.length ? ['personal-repository-workflow-run-identity-mismatch'] : []),
+    ...(malformedPriorRunIds.length ? ['personal-repository-prior-attempt-invalid'] : []),
+    ...(replayRunIds.length ? ['personal-repository-prior-attempt-exists'] : []),
+  ];
+  return Object.freeze({
+    valid: blockers.length === 0,
+    definition,
+    currentMismatches: Object.freeze(currentMismatches),
+    malformedPriorRunIds: Object.freeze(malformedPriorRunIds.sort((left, right) => left - right)),
+    replayRunIds: Object.freeze(replayRunIds.sort((left, right) => left - right)),
+    differentBasePriorRunIds: Object.freeze(differentBasePriorRunIds.sort((left, right) => left - right)),
+    blockers: Object.freeze(unique(blockers)),
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_DISPATCH_EXECUTION_BLOCKED'
+      : 'PERSONAL_REPOSITORY_DISPATCH_EXECUTION_READY',
+  });
 }
 
 export function parsePersonalRepositoryDispatchInputs(inputs = {}) {
@@ -390,7 +1213,7 @@ export function validatePersonalRepositoryConfiguration(input = {}, options = {}
       ? 'PERSONAL_REPOSITORY_CONFIGURATION_BLOCKED'
       : requireBypassProof
         ? 'PERSONAL_REPOSITORY_CONFIGURATION_READY'
-        : 'PERSONAL_REPOSITORY_CONFIGURATION_PREAPPROVAL_READY',
+        : 'PERSONAL_REPOSITORY_CONFIGURATION_PARTIAL_PROOF_READY',
   });
 }
 
