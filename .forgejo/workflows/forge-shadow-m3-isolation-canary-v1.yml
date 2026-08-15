@@ -12,12 +12,19 @@ on:
       runtime_authorization_id:
         description: Bounded M3 authorization identity
         required: true
+      runner_class:
+        description: Fixed admitted runner class
+        required: true
+      runner_id:
+        description: Fixed admitted runner identity
+        required: true
 
 permissions: {}
 
 jobs:
   linux-isolation:
-    runs-on: [self-hosted, linux, x64, stephanos-forge, ephemeral]
+    if: inputs.runner_class == 'linux-isolated'
+    runs-on: [self-hosted, linux, x64, stephanos-forge, ephemeral, "${{ inputs.runner_id }}"]
     timeout-minutes: 10
     steps:
       - name: Prove exact source and outer isolation
@@ -26,11 +33,13 @@ jobs:
           EXPECTED_HEAD: ${{ inputs.expected_head }}
           EXPECTED_TREE: ${{ inputs.expected_tree }}
           AUTHORIZATION_ID: ${{ inputs.runtime_authorization_id }}
+          RUNNER_ID: ${{ inputs.runner_id }}
         run: |
           set -eu
           test "${GITHUB_SHA:-}" = "$EXPECTED_HEAD"
           test -n "$EXPECTED_TREE"
           test -n "$AUTHORIZATION_ID"
+          test "$RUNNER_ID" = "${RUNNER_NAME:-}"
           test ! -e /var/run/docker.sock
           test ! -e /run/podman/podman.sock
           test ! -e /workspace/stephan-os
@@ -39,7 +48,8 @@ jobs:
           printf '%s\n' "FORGE_M3_CANARY_OK linux $EXPECTED_HEAD $EXPECTED_TREE"
 
   windows-isolation:
-    runs-on: [self-hosted, windows, x64, stephanos-forge, proof-only, ephemeral]
+    if: inputs.runner_class == 'windows-proof-isolated'
+    runs-on: [self-hosted, windows, x64, stephanos-forge, proof-only, ephemeral, "${{ inputs.runner_id }}"]
     timeout-minutes: 10
     steps:
       - name: Prove exact source and outer isolation
@@ -48,11 +58,13 @@ jobs:
           EXPECTED_HEAD: ${{ inputs.expected_head }}
           EXPECTED_TREE: ${{ inputs.expected_tree }}
           AUTHORIZATION_ID: ${{ inputs.runtime_authorization_id }}
+          RUNNER_ID: ${{ inputs.runner_id }}
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:GITHUB_SHA -ne $env:EXPECTED_HEAD) { throw 'CANARY_HEAD_MISMATCH' }
           if (-not $env:EXPECTED_TREE) { throw 'CANARY_TREE_MISSING' }
           if (-not $env:AUTHORIZATION_ID) { throw 'CANARY_AUTHORIZATION_MISSING' }
+          if ($env:RUNNER_NAME -ne $env:RUNNER_ID) { throw 'CANARY_RUNNER_ID_MISMATCH' }
           if (Test-Path -LiteralPath "$env:USERPROFILE\Documents\GitHub\stephan-os") { throw 'CANONICAL_CHECKOUT_VISIBLE' }
           if (Test-Path -LiteralPath '\\.\pipe\docker_engine') { throw 'CONTAINER_SOCKET_VISIBLE' }
           if ($env:GITHUB_TOKEN) { throw 'GITHUB_CREDENTIAL_VISIBLE' }
