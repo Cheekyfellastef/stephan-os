@@ -67,7 +67,6 @@ Stop-Process -Id $script:SandboxProcess.Id
 `;
 
 const staticTest = `
-import { readFile } from 'node:fs/promises';
 const scriptUrl = new URL('./invoke-forge-shadow-m3-fixed-proof-executors-v1.ps1', import.meta.url);
 test('fixed host executor is exact-source, exact-artifact, exact-plan and authorization bound', () => {});
 test('Linux execution is a rootless outer Podman boundary with repository-scoped ephemeral one-job registration', () => {});
@@ -129,14 +128,14 @@ test('fails closed when execution or teardown authority widens', () => {
 });
 
 test('static specialist test cannot execute child processes', () => {
-  const insecure = `${staticTest}\nimport { spawnSync } from 'node:child_process';\n`;
+  const insecure = `${staticTest}\nconst childProcessModule = 'node:' + 'child_process';\nvoid childProcessModule;\n`;
   const result = analyzeWindowsAuthorityForgeM3ExecutorReview({
     repository: REPOSITORY,
     sourceHead: HEAD,
     analysis: escalation(),
     sources: [
       record(WINDOWS_AUTHORITY_FORGE_M3_EXECUTOR_PATHS_V1[0], executor),
-      record(WINDOWS_AUTHORITY_FORGE_M3_EXECUTOR_PATHS_V1[1], insecure),
+      record(WINDOWS_AUTHORITY_FORGE_M3_EXECUTOR_PATHS_V1[1], `${insecure}\nspawnSync(command);\n`),
     ],
   });
   assert.equal(result.clean, false);
