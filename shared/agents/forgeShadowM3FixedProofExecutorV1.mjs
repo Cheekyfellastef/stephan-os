@@ -69,6 +69,7 @@ function findForbidden(value, trail = [], seen = new WeakSet()) {
     if (typeof key !== 'string') return [...trail, String(key)].join('.');
     if (FORBIDDEN_FIELDS.has(key.toLowerCase())) return [...trail, key].join('.');
     if (Array.isArray(value) && key === 'length') continue;
+    if (trail.length === 0 && key === 'signal') continue;
     const nested = value[key];
     if (typeof nested === 'function') continue;
     const found = findForbidden(nested, [...trail, key], seen);
@@ -132,6 +133,10 @@ function sourceIdentityMatches(identity, head, tree) {
 
 function validateCall(call) {
   if (!exactKeys(call, CALL_KEYS)) throw fail('FORGE_M3_FIXED_EXECUTOR_CALL_FIELDS_INVALID');
+  if (call.signal != null
+      && (typeof AbortSignal === 'undefined' || !(call.signal instanceof AbortSignal))) {
+    throw fail('FORGE_M3_FIXED_EXECUTOR_SIGNAL_INVALID');
+  }
   const unsafe = findForbidden(call);
   if (unsafe) throw fail(`FORGE_M3_FIXED_EXECUTOR_UNSAFE_FIELD:${unsafe}`);
   const { authorization, runtimePlan, runner, artifact, canary } = call;
