@@ -1,0 +1,60 @@
+name: One-shot VR Research Timestamp Repair
+
+on:
+  push:
+    branches:
+      - agent/vr-research-participant-qa-v1
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vr-research-timestamp-repair-once
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.repository == 'Cheekyfellastef/stephan-os'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact pre-repair product blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object shared/agents/vrResearchParticipantQaV1.mjs)" = "6ffbf5bad8c34fdd6c56a4c16189d09a5aa0b398"
+          test "$(git hash-object shared/agents/vrResearchParticipantQaV1.test.mjs)" = "3a790c94d8d1c6ea7c2dfd4a1154e6bd9e7f3bb4"
+          test "$(git hash-object docs/architecture/vr-research-participant-qa-v1.md)" = "0cee88c7285d406ec57f63a5ec017ecd05e5d9cd"
+      - name: Apply timestamp boundary repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --check .github/vr-research-timestamp-boundary.patch
+          git apply .github/vr-research-timestamp-boundary.patch
+      - name: Run focused three-suite proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check shared/agents/vrResearchParticipantQaV1.mjs
+          node --test shared/agents/vrResearchWorkspaceProjectionV1.test.mjs shared/agents/vrResearchAgentV1.test.mjs shared/agents/vrResearchParticipantQaV1.test.mjs
+          git diff HEAD --check
+      - name: Remove temporary repair machinery and publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/vr-research-timestamp-boundary.patch .github/workflows/vr-research-timestamp-repair-temporary.yml
+          git add shared/agents/vrResearchParticipantQaV1.mjs shared/agents/vrResearchParticipantQaV1.test.mjs docs/architecture/vr-research-participant-qa-v1.md
+          git diff --cached --check
+          git commit -m 'Bound VR Research answer timestamps to trusted evaluation time'
+          git fetch origin refs/heads/agent/vr-research-participant-qa-v1
+          test "$(git rev-parse FETCH_HEAD)" = "${GITHUB_SHA}"
+          git push --porcelain origin HEAD:refs/heads/agent/vr-research-participant-qa-v1
