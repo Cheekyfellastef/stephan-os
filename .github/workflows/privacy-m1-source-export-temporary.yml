@@ -1,4 +1,4 @@
-name: Temporary Privacy M1 Source Export
+name: One-shot Privacy M1 Recursive Snapshot Repair
 
 on:
   push:
@@ -6,45 +6,212 @@ on:
       - agent/privacy-m1-evidence-projection-v1
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: privacy-m1-recursive-snapshot-repair
+  cancel-in-progress: false
 
 jobs:
-  export-source:
+  repair:
     if: github.repository == 'Cheekyfellastef/stephan-os'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Check out exact pushed head
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 1
-          persist-credentials: false
+          fetch-depth: 0
 
-      - name: Verify bounded source estate
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify exact pre-repair product and temporary estate
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-          test -f shared/agents/privacyTileEvidenceProjectionV1.mjs
-          test -f shared/agents/privacyTileEvidenceProjectionV1.test.mjs
-          test -f docs/architecture/privacy-tile-evidence-projection-v1.md
-          git hash-object shared/agents/privacyTileEvidenceProjectionV1.mjs > privacy-source.blob
-          git hash-object shared/agents/privacyTileEvidenceProjectionV1.test.mjs > privacy-test.blob
-          git hash-object docs/architecture/privacy-tile-evidence-projection-v1.md > privacy-doc.blob
-          printf '%s\n' "${GITHUB_SHA}" > privacy-export-head.txt
+          test "$(git hash-object shared/agents/privacyTileEvidenceProjectionV1.mjs)" = "ff5151130846836ef0ed36522e7866604ffd5fd7"
+          test "$(git hash-object shared/agents/privacyTileEvidenceProjectionV1.test.mjs)" = "865199b8b83cb7ab61a81eeb18b9db04e095c712"
+          test "$(git hash-object docs/architecture/privacy-tile-evidence-projection-v1.md)" = "0952c8bbb9784763c76780a1fca68c624d1498ba"
+          test -L stephanos-ui/public/privacy-m1-source-export/privacyTileEvidenceProjectionV1.mjs
+          test -L stephanos-ui/public/privacy-m1-source-export/privacyTileEvidenceProjectionV1.test.mjs
+          test -L stephanos-ui/public/privacy-m1-source-export/privacy-tile-evidence-projection-v1.md
 
-      - name: Upload exact source-only repair inputs
+      - name: Apply fixed recursive snapshot repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('shared/agents/privacyTileEvidenceProjectionV1.mjs')
+          text = source.read_text()
+          old = "  const records = snapshotDenseArray(input.records, PRIVACY_TILE_MAX_RECORDS, (entry) => entry);"
+          new = "  const records = snapshotDenseArray(input.records, PRIVACY_TILE_MAX_RECORDS, snapshotRecord);"
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one source replacement, found {text.count(old)}')
+          source.write_text(text.replace(old, new))
+
+          tests = Path('shared/agents/privacyTileEvidenceProjectionV1.test.mjs')
+          test_text = tests.read_text()
+          addition = r'''
+
+          test('record accessors are rejected before serialization without executing caller code', () => {
+            let getterCalls = 0;
+            const hostile = record();
+            Object.defineProperty(hostile, 'summary', {
+              enumerable: true,
+              configurable: true,
+              get() {
+                getterCalls += 1;
+                throw new Error('must not execute');
+              },
+            });
+
+            let projection;
+            assert.doesNotThrow(() => {
+              projection = run([hostile]);
+            });
+            assert.equal(projection.valid, false);
+            assert.equal(getterCalls, 0);
+            assert.ok(
+              projection.validationErrors.includes(
+                'input-must-be-exact-dense-data-only-shape',
+              ),
+            );
+          });
+
+          test('own toJSON hooks are rejected before the input-size check without execution', () => {
+            let toJsonCalls = 0;
+            const hostile = record();
+            Object.defineProperty(hostile, 'toJSON', {
+              enumerable: true,
+              configurable: true,
+              value() {
+                toJsonCalls += 1;
+                return { summary: 'forged serialization' };
+              },
+            });
+
+            const projection = run([hostile]);
+            assert.equal(projection.valid, false);
+            assert.equal(toJsonCalls, 0);
+            assert.ok(
+              projection.validationErrors.includes(
+                'input-must-be-exact-dense-data-only-shape',
+              ),
+            );
+          });
+
+          test('revoked and throwing record proxies fail closed without escaping', () => {
+            const revoked = Proxy.revocable(record(), {});
+            revoked.revoke();
+            assert.doesNotThrow(() => run([revoked.proxy]));
+            assert.equal(run([revoked.proxy]).valid, false);
+
+            let trapCalls = 0;
+            const throwing = new Proxy(record(), {
+              getPrototypeOf() {
+                trapCalls += 1;
+                throw new Error('uninspectable');
+              },
+            });
+            let projection;
+            assert.doesNotThrow(() => {
+              projection = run([throwing]);
+            });
+            assert.equal(projection.valid, false);
+            assert.equal(trapCalls, 1);
+          });
+
+          test('record objects are detached before projection size measurement and later mutation', () => {
+            const sourceRecord = record();
+            const projection = run([sourceRecord]);
+            sourceRecord.summary = 'Caller mutation after projection.';
+            sourceRecord.subjectRef = 'provider-tampered';
+
+            assert.equal(projection.valid, true);
+            assert.equal(projection.records[0].summary, 'Visible bounded provider notice.');
+            assert.equal(projection.records[0].subjectRef, 'provider-openai');
+            assert.equal(Object.isFrozen(projection.records[0]), true);
+          });
+          '''
+          if 'record accessors are rejected before serialization' in test_text:
+              raise SystemExit('repair tests already present')
+          tests.write_text(test_text.rstrip() + addition + '\n')
+
+          document = Path('docs/architecture/privacy-tile-evidence-projection-v1.md')
+          doc_text = document.read_text()
+          old_doc = "Top-level record collections, evidence-reference lists and limitation lists must be dense standard arrays containing data properties only. Sparse arrays, accessor-bearing arrays, custom array prototypes, symbols, proxies that cannot be safely inspected and unexpected fields fail closed without executing caller code."
+          new_doc = "Top-level record collections, every record object, evidence-reference lists and limitation lists are recursively descriptor-snapshotted into owned frozen data before serialization, hashing, iteration or size measurement. Dense standard arrays and exact plain records containing data properties only are required. Sparse arrays, accessor-bearing arrays or records, own `toJSON` hooks, custom prototypes, symbols, proxies that cannot be safely inspected and unexpected fields fail closed without executing caller code."
+          if doc_text.count(old_doc) != 1:
+              raise SystemExit(f'expected one document replacement, found {doc_text.count(old_doc)}')
+          document.write_text(doc_text.replace(old_doc, new_doc))
+          PY
+
+      - name: Prove exact repaired product blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object shared/agents/privacyTileEvidenceProjectionV1.mjs)" = "7e1c4dcea7b50a881ce3f5836858800d2d869bd7"
+          test "$(git hash-object shared/agents/privacyTileEvidenceProjectionV1.test.mjs)" = "e9794083531b318b9fccdd731a2382181a3a1ae9"
+          test "$(git hash-object docs/architecture/privacy-tile-evidence-projection-v1.md)" = "17c14b2da9fbbe3ce01d57f27ff39cc6f9ac2602"
+          node --check shared/agents/privacyTileEvidenceProjectionV1.mjs
+          node --test shared/agents/privacyTileEvidenceProjectionV1.test.mjs | tee privacy-m1-recursive-snapshot-proof.log
+          grep -F '# pass 29' privacy-m1-recursive-snapshot-proof.log
+          grep -F '# fail 0' privacy-m1-recursive-snapshot-proof.log
+
+      - name: Remove temporary source-export machinery from final tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm -r -- \
+            .github/workflows/privacy-m1-source-export-temporary.yml \
+            stephanos-ui/public/privacy-m1-source-export
+
+      - name: Verify exact bounded repair estate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > expected-paths.txt <<'EOF'
+          .github/workflows/privacy-m1-source-export-temporary.yml
+          docs/architecture/privacy-tile-evidence-projection-v1.md
+          shared/agents/privacyTileEvidenceProjectionV1.mjs
+          shared/agents/privacyTileEvidenceProjectionV1.test.mjs
+          stephanos-ui/public/privacy-m1-source-export/privacy-tile-evidence-projection-v1.md
+          stephanos-ui/public/privacy-m1-source-export/privacyTileEvidenceProjectionV1.mjs
+          stephanos-ui/public/privacy-m1-source-export/privacyTileEvidenceProjectionV1.test.mjs
+          EOF
+          git diff --name-only | sort > actual-paths.txt
+          diff -u expected-paths.txt actual-paths.txt
+          git diff --check
+          git fetch origin refs/heads/agent/privacy-m1-evidence-projection-v1
+          test "$(git rev-parse FETCH_HEAD)" = "${GITHUB_SHA}"
+
+      - name: Commit and non-force publish exact repair
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add --all
+          git commit -m 'Recursively snapshot Privacy records before serialization'
+          repaired_head="$(git rev-parse HEAD)"
+          repaired_tree="$(git rev-parse HEAD^{tree})"
+          git push --porcelain origin HEAD:refs/heads/agent/privacy-m1-evidence-projection-v1
+          printf 'repaired_head=%s\n' "$repaired_head" >> "$GITHUB_OUTPUT"
+          printf 'repaired_tree=%s\n' "$repaired_tree" >> "$GITHUB_OUTPUT"
+          test -z "$(git status --porcelain)"
+
+      - name: Upload terminal bounded repair receipt
         uses: actions/upload-artifact@v4
         with:
-          name: privacy-m1-source-export-${{ github.sha }}
-          path: |
-            shared/agents/privacyTileEvidenceProjectionV1.mjs
-            shared/agents/privacyTileEvidenceProjectionV1.test.mjs
-            docs/architecture/privacy-tile-evidence-projection-v1.md
-            privacy-source.blob
-            privacy-test.blob
-            privacy-doc.blob
-            privacy-export-head.txt
+          name: privacy-m1-recursive-snapshot-repair-${{ steps.publish.outputs.repaired_head }}
+          path: privacy-m1-recursive-snapshot-proof.log
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
