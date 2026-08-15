@@ -14,6 +14,15 @@ import {
   forgeShadowBattleBridgeFields,
   validateForgeShadowBattleBridgeCommand,
 } from './forgeShadowBattleBridgeAdapterV1.mjs';
+import {
+  FORGE_SHADOW_M3_EXECUTE_OPERATION,
+  FORGE_SHADOW_M3_MAILBOX_OPERATIONS,
+  FORGE_SHADOW_M3_PREPARE_OPERATION,
+  executeForgeShadowM3ArtifactPreparationOnBattleBridge,
+  executeForgeShadowM3OnBattleBridge,
+  forgeShadowM3MailboxFields,
+  validateForgeShadowM3MailboxCommand,
+} from './forgeShadowM3MailboxAdapterV1.mjs';
 import { MUSIC_SPOTIFY_LINK_OPERATION, MUSIC_SPOTIFY_LINK_SOURCE, validateMusicSpotifyLinkCandidate } from './musicSpotifyLinkBridge.mjs';
 import {
   PROTECTED_OPENCLAW_MERGE_OPERATION,
@@ -43,6 +52,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
   'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
   FORGE_SHADOW_BATTLE_BRIDGE_OPERATION,
+  ...FORGE_SHADOW_M3_MAILBOX_OPERATIONS,
   PROTECTED_OPENCLAW_MERGE_OPERATION,
   MUSIC_SPOTIFY_LINK_OPERATION,
   CODEX_BANKED_RESET_STATUS_OPERATION,
@@ -330,6 +340,15 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
     const unexpectedForgeField = forgeShadowBattleBridgeFields().find((field) => hasValue(command[field]));
     if (unexpectedForgeField) return fail('FORGE_SHADOW_FIELD_NOT_ALLOWED', { field: unexpectedForgeField });
   }
+  let forgeShadowM3 = null;
+  if (FORGE_SHADOW_M3_MAILBOX_OPERATIONS.includes(command.operation)) {
+    const validation = validateForgeShadowM3MailboxCommand(command, { now });
+    if (!validation.ok) return fail(validation.blocker, { field: validation.field || '' });
+    forgeShadowM3 = validation.command;
+  } else {
+    const unexpectedM3Field = forgeShadowM3MailboxFields().find((field) => hasValue(command[field]));
+    if (unexpectedM3Field) return fail('FORGE_M3_FIELD_NOT_ALLOWED', { field: unexpectedM3Field });
+  }
   let protectedMerge = null;
   if (command.operation === PROTECTED_OPENCLAW_MERGE_OPERATION) {
     const validation = validateProtectedOpenClawMergeCommand(command, { now });
@@ -445,6 +464,7 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
         ? { scopedDelivery: scopedDeliveryValidation.scopedDelivery }
         : {}),
       ...(forgeShadow || {}),
+      ...(forgeShadowM3 || {}),
       ...(protectedMerge || {}),
       ...(musicSpotifyCandidate ? {
         source: MUSIC_SPOTIFY_LINK_SOURCE,
@@ -742,6 +762,8 @@ export async function executeBattleBridgeGitHubCommand(command, {
   runExactHeadWindowsBrowserProof,
   queueVerifiedSpotifyLink,
   executeForgeShadowM2 = executeForgeShadowM2OnBattleBridge,
+  prepareForgeShadowM3Artifacts = executeForgeShadowM3ArtifactPreparationOnBattleBridge,
+  executeForgeShadowM3 = executeForgeShadowM3OnBattleBridge,
   executeProtectedOpenClawMerge = executeProtectedOpenClawMergeOnBattleBridge,
   readCodexBankedResetStatus = readCodexBankedResetStatusOnBattleBridge,
   redeemBankedCodexReset = executeCodexBankedResetOnBattleBridge,
@@ -765,6 +787,8 @@ export async function executeBattleBridgeGitHubCommand(command, {
     RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
     RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF: runExactHeadWindowsBrowserProof,
     [FORGE_SHADOW_BATTLE_BRIDGE_OPERATION]: executeForgeShadowM2,
+    [FORGE_SHADOW_M3_PREPARE_OPERATION]: prepareForgeShadowM3Artifacts,
+    [FORGE_SHADOW_M3_EXECUTE_OPERATION]: executeForgeShadowM3,
     [PROTECTED_OPENCLAW_MERGE_OPERATION]: executeProtectedOpenClawMerge,
     [MUSIC_SPOTIFY_LINK_OPERATION]: queueVerifiedSpotifyLink,
     [CODEX_BANKED_RESET_STATUS_OPERATION]: readCodexBankedResetStatus,
@@ -855,6 +879,9 @@ export function buildBattleBridgeGitHubCommandReceipt({
     issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
     expectedHead: String(command?.expectedHead || ''),
+    expectedTree: FORGE_SHADOW_M3_MAILBOX_OPERATIONS.includes(command?.operation)
+      ? String(command?.expectedTree || '')
+      : '',
     relatedPr: scopedDelivery ? String(scopedDelivery.relatedPr || '') : '',
     mergeCommit: scopedDelivery ? String(scopedDelivery.mergeCommit || '') : '',
     deploymentHead: scopedDelivery ? String(scopedDelivery.deploymentHead || '') : '',
@@ -864,6 +891,18 @@ export function buildBattleBridgeGitHubCommandReceipt({
     forgejoImageDigest: command?.operation === FORGE_SHADOW_BATTLE_BRIDGE_OPERATION ? String(command?.forgejoImageDigest || '') : '',
     runtimeBoundary: command?.operation === FORGE_SHADOW_BATTLE_BRIDGE_OPERATION ? String(command?.runtimeBoundary || '') : '',
     m2Only: command?.operation === FORGE_SHADOW_BATTLE_BRIDGE_OPERATION ? command?.m2Only === true : false,
+    m3Only: FORGE_SHADOW_M3_MAILBOX_OPERATIONS.includes(command?.operation) ? command?.m3Only === true : false,
+    observationId: command?.operation === FORGE_SHADOW_M3_PREPARE_OPERATION ? String(command?.observationId || '') : '',
+    m2RequestId: command?.operation === FORGE_SHADOW_M3_EXECUTE_OPERATION ? String(command?.m2RequestId || '') : '',
+    artifactRequestId: command?.operation === FORGE_SHADOW_M3_EXECUTE_OPERATION ? String(command?.artifactRequestId || '') : '',
+    runtimeAuthorizationId: command?.operation === FORGE_SHADOW_M3_EXECUTE_OPERATION
+      ? String(command?.runtimeAuthorizationId || '')
+      : '',
+    runtimePlanDigest: command?.operation === FORGE_SHADOW_M3_EXECUTE_OPERATION ? String(command?.runtimePlanDigest || '') : '',
+    planAtUtc: command?.operation === FORGE_SHADOW_M3_EXECUTE_OPERATION ? String(command?.planAtUtc || '') : '',
+    runtimeExpiresAtUtc: command?.operation === FORGE_SHADOW_M3_EXECUTE_OPERATION
+      ? String(command?.runtimeExpiresAtUtc || '')
+      : '',
     prNumber: ['RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF', PROTECTED_OPENCLAW_MERGE_OPERATION].includes(command?.operation)
       ? Number(command?.prNumber || 0)
       : 0,
