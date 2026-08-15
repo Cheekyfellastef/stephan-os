@@ -8,11 +8,14 @@ import {
 } from './stephanosConversationalCapabilityLadderV1.mjs';
 import {
   buildStephanosWorkspaceQuestionRound,
+  decodeStephanosWorkspaceAnswerRecord,
   evaluateStephanosWorkspaceConversation,
 } from './stephanosSharedWorkspaceConversationAdapterV1.mjs';
 
 export const STEPHANOS_INITIAL_TEN_QUESTION_ROUND_VERSION = 'stephanos.initial-ten-question-round.v1';
 export const STEPHANOS_INITIAL_TEN_QUESTION_ROUND_ID = 'stephanos-round-001';
+export const STEPHANOS_INITIAL_TEN_QUESTION_ASKER_ID = 'chatgpt-bridge';
+export const STEPHANOS_INITIAL_TEN_QUESTION_TARGET_ID = 'stephanos';
 
 const INITIAL_QUESTIONS = Object.freeze([
   Object.freeze({
@@ -57,7 +60,7 @@ const INITIAL_QUESTIONS = Object.freeze([
   }),
   Object.freeze({
     questionClass:'CROSS_DOMAIN_CONNECTION',
-    questionText:'How do better Stephanos conversational intelligence, VR Research and the Spatial World Foundry compound each other toward the future Idea Planets experience?',
+    questionText:'What connections, if any, can you prove among Stephanos conversational intelligence, VR Research, Spatial World Foundry and future creative or spatial experiences, and which claimed connections remain unknown or speculative?',
     expectedEvidenceClass:'CROSS_DOMAIN_EVIDENCE',
   }),
   Object.freeze({
@@ -80,11 +83,102 @@ function exactIso(value) {
   return input;
 }
 
+function topLevelData(input = {}) {
+  try {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('input must be a data-only object');
+    const prototype = Object.getPrototypeOf(input);
+    if (prototype !== Object.prototype && prototype !== null) throw new TypeError('input must be a data-only object');
+    if (Object.getOwnPropertySymbols(input).length > 0) throw new TypeError('input must be a data-only object');
+    const descriptors = Object.getOwnPropertyDescriptors(input);
+    const output = Object.create(null);
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (!descriptor.enumerable || descriptor.get || descriptor.set || !Object.hasOwn(descriptor, 'value')) {
+        throw new TypeError('input must use enumerable own data properties');
+      }
+      output[key] = descriptor.value;
+    }
+    return Object.freeze(output);
+  } catch (error) {
+    if (error instanceof TypeError) throw error;
+    throw new TypeError('input must be a data-only object');
+  }
+}
+
+function canonicalIdentity(input, key, expected) {
+  if (!Object.hasOwn(input, key)) return expected;
+  const candidate = String(input[key] || '').trim();
+  if (candidate !== expected) throw new TypeError(`${key} must remain ${expected}`);
+  return expected;
+}
+
+function denseProofRefs(value) {
+  try {
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const length = descriptors.length?.value;
+    if (!Number.isSafeInteger(length) || length < 1 || length > 64) return null;
+    const output = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor || descriptor.get || descriptor.set || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) return null;
+      const ref = typeof descriptor.value === 'string' ? descriptor.value.trim() : '';
+      if (!ref) return null;
+      output.push(ref);
+    }
+    return Object.freeze([...new Set(output)]);
+  } catch {
+    return null;
+  }
+}
+
+function issuedPacketRef(round) {
+  const digest = createHash('sha256').update(JSON.stringify(round)).digest('hex').slice(0, 32);
+  return `evidence/receipts/${STEPHANOS_INITIAL_TEN_QUESTION_ROUND_ID}-${digest}`;
+}
+
+function safeRecordProofRefs(record) {
+  try {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) return null;
+    const descriptor = Object.getOwnPropertyDescriptor(record, 'proofRefs');
+    if (!descriptor || descriptor.get || descriptor.set || !Object.hasOwn(descriptor, 'value')) return null;
+    return denseProofRefs(descriptor.value);
+  } catch {
+    return null;
+  }
+}
+
+function answerEvidenceBindingErrors(answerRecords, round, expectedIssuedPacketRef, workspaceValidationOptions) {
+  const errors = [];
+  const createdMs = Date.parse(round.createdAtUtc);
+  if (!Array.isArray(answerRecords) || answerRecords.length !== 10) return errors;
+  for (let index = 0; index < answerRecords.length; index += 1) {
+    const record = answerRecords[index];
+    const decoded = decodeStephanosWorkspaceAnswerRecord(record, {
+      expectedRecipientParticipantId: STEPHANOS_INITIAL_TEN_QUESTION_ASKER_ID,
+      workspaceValidationOptions,
+    });
+    if (!decoded.valid || !decoded.answer) continue;
+    const proofRefs = safeRecordProofRefs(record);
+    if (!proofRefs) {
+      errors.push(`answer-record-${index + 1}:proofRefs-invalid`);
+      continue;
+    }
+    if (!proofRefs.includes(expectedIssuedPacketRef)) errors.push(`answer-record-${index + 1}:issued-packet-proof-mismatch`);
+    for (const evidenceRef of decoded.answer.evidenceRefs || []) {
+      if (!proofRefs.includes(evidenceRef)) errors.push(`answer-record-${index + 1}:evidence-ref-not-bound-to-record:${evidenceRef}`);
+    }
+    const answeredMs = Date.parse(decoded.answer.answeredAtUtc);
+    if (!Number.isFinite(answeredMs) || answeredMs < createdMs) errors.push(`answer-record-${index + 1}:answer-predates-issued-round`);
+  }
+  return errors;
+}
+
 export function createInitialStephanosTenQuestionRoundV1(input = {}) {
-  const createdAtUtc = exactIso(input.createdAtUtc);
-  const roundId = String(input.roundId || STEPHANOS_INITIAL_TEN_QUESTION_ROUND_ID).trim();
-  const askerParticipantId = String(input.askerParticipantId || 'chatgpt-bridge').trim();
-  const targetParticipantId = String(input.targetParticipantId || 'stephanos').trim();
+  const data = topLevelData(input);
+  const createdAtUtc = exactIso(data.createdAtUtc);
+  const roundId = canonicalIdentity(data, 'roundId', STEPHANOS_INITIAL_TEN_QUESTION_ROUND_ID);
+  const askerParticipantId = canonicalIdentity(data, 'askerParticipantId', STEPHANOS_INITIAL_TEN_QUESTION_ASKER_ID);
+  const targetParticipantId = canonicalIdentity(data, 'targetParticipantId', STEPHANOS_INITIAL_TEN_QUESTION_TARGET_ID);
   const questions = INITIAL_QUESTIONS.map((seed, index) => Object.freeze({
     schemaVersion:STEPHANOS_CAPABILITY_QUESTION_SCHEMA_VERSION,
     roundId,
@@ -121,13 +215,29 @@ export function createInitialStephanosTenQuestionRoundV1(input = {}) {
 }
 
 export function buildInitialStephanosTenQuestionPacketV1(input = {}) {
-  const built = createInitialStephanosTenQuestionRoundV1(input);
+  const data = topLevelData(input);
+  const built = createInitialStephanosTenQuestionRoundV1(data);
   if (!built.valid) return Object.freeze({ valid:false, round:null, records:Object.freeze([]), errors:built.validation.errors });
+  const callerProofRefs = denseProofRefs(data.proofRefs);
+  if (!callerProofRefs) {
+    return Object.freeze({
+      schemaVersion:STEPHANOS_INITIAL_TEN_QUESTION_ROUND_VERSION,
+      valid:false,
+      round:built.round,
+      records:Object.freeze([]),
+      errors:Object.freeze(['proofRefs-required-from-caller']),
+      authority:null,
+      issuedPacketRef:'',
+      completionClaimAllowed:false,
+      liveConversationClaimAllowed:false,
+    });
+  }
+  const issuanceRef = issuedPacketRef(built.round);
   const packet = buildStephanosWorkspaceQuestionRound(built.round, {
     relatedIssue:'#1308',
-    relatedPr:input.relatedPr || '#1777',
-    proofRefs:Array.isArray(input.proofRefs) ? input.proofRefs : [],
-    workspaceValidationOptions:input.workspaceValidationOptions,
+    relatedPr:data.relatedPr || '#1777',
+    proofRefs:[...callerProofRefs, issuanceRef],
+    workspaceValidationOptions:data.workspaceValidationOptions,
   });
   return Object.freeze({
     schemaVersion:STEPHANOS_INITIAL_TEN_QUESTION_ROUND_VERSION,
@@ -136,13 +246,15 @@ export function buildInitialStephanosTenQuestionPacketV1(input = {}) {
     records:packet.records,
     errors:packet.errors,
     authority:packet.authority,
+    issuedPacketRef:issuanceRef,
     completionClaimAllowed:false,
     liveConversationClaimAllowed:false,
   });
 }
 
 export function evaluateInitialStephanosTenQuestionRoundV1(input = {}) {
-  const built = createInitialStephanosTenQuestionRoundV1(input);
+  const data = topLevelData(input);
+  const built = createInitialStephanosTenQuestionRoundV1(data);
   if (!built.valid) {
     return Object.freeze({
       schemaVersion:STEPHANOS_INITIAL_TEN_QUESTION_ROUND_VERSION,
@@ -152,10 +264,48 @@ export function evaluateInitialStephanosTenQuestionRoundV1(input = {}) {
       evaluation:null,
     });
   }
-  return evaluateStephanosWorkspaceConversation({
+  const expectedIssuedPacketRef = issuedPacketRef(built.round);
+  const evidenceErrors = answerEvidenceBindingErrors(
+    data.answerRecords,
+    built.round,
+    expectedIssuedPacketRef,
+    data.workspaceValidationOptions,
+  );
+  if (evidenceErrors.length > 0) {
+    return Object.freeze({
+      schemaVersion:STEPHANOS_INITIAL_TEN_QUESTION_ROUND_VERSION,
+      valid:false,
+      roundId:built.round.roundId,
+      state:'SAFE_HOLD',
+      errors:Object.freeze([...new Set(evidenceErrors)]),
+      evaluation:null,
+      issuedPacketRef:expectedIssuedPacketRef,
+      independentEvidenceResolutionRequired:true,
+    });
+  }
+  const evaluation = evaluateStephanosWorkspaceConversation({
     round:built.round,
-    answerRecords:input.answerRecords,
-    workspaceValidationOptions:input.workspaceValidationOptions,
+    answerRecords:data.answerRecords,
+    workspaceValidationOptions:data.workspaceValidationOptions,
+  });
+  if (evaluation.valid && evaluation.state === 'SETTLED') {
+    return Object.freeze({
+      ...evaluation,
+      state:'SAFE_HOLD',
+      refusalReason:'independent-evidence-resolution-required',
+      issuedPacketRef:expectedIssuedPacketRef,
+      independentEvidenceResolutionRequired:true,
+      evaluation:evaluation.evaluation ? Object.freeze({
+        ...evaluation.evaluation,
+        mayAdvanceToNovelRound:false,
+        requiresRepairReplay:true,
+      }) : null,
+    });
+  }
+  return Object.freeze({
+    ...evaluation,
+    issuedPacketRef:expectedIssuedPacketRef,
+    independentEvidenceResolutionRequired:false,
   });
 }
 
