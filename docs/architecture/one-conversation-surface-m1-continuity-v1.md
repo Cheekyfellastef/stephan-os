@@ -31,6 +31,8 @@ Changing from ChatGPT web to Battle Bridge desktop, Work, phone/tablet, WhatsApp
 - per-surface thread references;
 - explicit proof references and freshness.
 
+Each retained surface also carries a canonical attestation binding its surface identity, thread reference, observation time, canonical proof references and all five continuity identities. Reconstructed-use boundaries revalidate those attestations rather than trusting top-level caller-shaped state.
+
 Supported presentation/execution surfaces are registered as bounded names. Their presence does not grant authority.
 
 A surface observation may record the underlying model or execution organ for audit, but route identity is hidden from the normal projection by default. Provider substitution cannot replace Stephanos identity, mission, memory authority or operator relationship context.
@@ -43,13 +45,34 @@ The projection refuses to blend conflicting chat-local realities. A mismatch in 
 EVIDENCE_CONFLICTING
 ```
 
-Stale observations remain `STALE`. Missing or malformed evidence remains `UNKNOWN`. Cross-surface continuation is permitted only from a `CURRENT` projection with a proven source thread.
+Stale observations remain `STALE`. Missing or malformed evidence remains `UNKNOWN`. Cross-surface continuation is permitted only from a `CURRENT` projection with a proven current source thread.
+
+The M1 freshness policy is fixed at one hour with bounded future skew. Reconstructed continuation and publication use the trusted process clock at the exported production boundary, so a caller-supplied historical clock cannot revive stale evidence. The deterministic test suite may inject time only through the Node test context seam.
 
 No model confidence or fluent prose can override those truth states.
+
+## Reconstructed-use trust boundary
+
+Persisted projections are not trusted merely because they once reported `CURRENT`. Before continuation or Shared Workspace publication M1 now requires:
+
+- the exact M1 schema and projection kind;
+- all five continuity identities;
+- a complete all-false authority object with the canonical authority source;
+- no top-level authority widening;
+- exact agreement among active surfaces, thread references, observation timestamps and surface attestations;
+- one canonical proof-bearing attestation for every retained surface;
+- attested identities equal to the top-level identities;
+- canonical observation proofs remain present in the retained proof estate;
+- the fixed one-hour freshness and future-skew policies;
+- fresh evidence when re-evaluated against the trusted use-boundary clock.
+
+Wrong schema/kind, identity substitution, missing or unsafe proofs, inconsistent surface sets, stale/future evidence, malformed attestations or any authority widening fail closed.
 
 ## Shared Workspace reuse
 
 M1 can project the current continuity state into the existing Shared Workspace `MESSAGE` kind using the existing `sharedAgentWorkspaceStore` validator.
+
+The Workspace record always preserves the canonical observation proofs that established continuity. Valid caller proof references may be added, but can never replace the canonical proofs.
 
 The message is evidence and continuity context only. It carries no command, source-write, approval, merge, deployment or runtime-mutation authority.
 
@@ -68,7 +91,7 @@ deploymentAllowed=false
 runtimeMutationAllowed=false
 ```
 
-Any attempted widening of these fields fails validation.
+Any attempted widening of these fields fails validation, including reconstructed nested or top-level authority smuggling.
 
 Voice and Quest 3 are presentation surfaces only at M1. They gain no direct shell, Git, Battle Bridge, runtime or approval authority.
 
@@ -85,10 +108,18 @@ The focused tests cover:
 3. continuation to another authorised surface without manual summary courier work;
 4. voice and Quest presentation with zero mutation authority;
 5. fail-closed mission conflict;
-6. authority-smuggling rejection;
-7. stale evidence blocking continuation;
-8. a valid read-only Shared Workspace continuity message;
-9. rejection of unregistered competing front doors.
+6. complete five-identity observation binding;
+7. malformed/null/unsafe proof evidence rejection;
+8. stale source-thread and persisted-projection freshness re-evaluation;
+9. future-dated observation and Workspace envelope rejection;
+10. exact retained surface-set consistency;
+11. fixed freshness policy and rejection of caller widening;
+12. trusted reconstructed-use clock behavior;
+13. substitution rejection for each of the five continuity identities;
+14. wrong schema/kind and nested/top-level authority-smuggling rejection;
+15. canonical proof preservation with caller proofs additive only;
+16. a valid read-only Shared Workspace continuity message;
+17. rejection of unregistered competing front doors.
 
 ## Relationship to active product lanes
 
