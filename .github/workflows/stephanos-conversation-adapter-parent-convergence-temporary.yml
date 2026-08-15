@@ -1,0 +1,49 @@
+name: One-shot Stephanos Conversation Adapter Parent Convergence
+
+on:
+  push:
+    branches:
+      - agent/stephanos-shared-workspace-conversation-adapter-v1
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stephanos-conversation-adapter-parent-convergence-once
+  cancel-in-progress: false
+
+jobs:
+  converge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact pushed head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Verify exact child product blobs
+        run: |
+          set -euo pipefail
+          test "$(git hash-object shared/agents/stephanosSharedWorkspaceConversationAdapterV1.mjs)" = "6987a3e70fd20225fa66a017e89e189939982801"
+          test "$(git hash-object shared/agents/stephanosSharedWorkspaceConversationAdapterV1.test.mjs)" = "1686a7275eb884c9cc3d247a144baa190359e7d6"
+          test "$(git hash-object docs/architecture/stephanos-shared-workspace-conversation-adapter-v1.md)" = "60934c1667003f5ad6c6adb2176150db8fe92bac"
+      - name: Merge exact clean parent without rewriting child history
+        run: |
+          set -euo pipefail
+          git fetch origin agent/stephanos-ten-question-evaluation-contract-v1
+          test "$(git rev-parse FETCH_HEAD)" = "7460924c39afa855703eb0145e261f40b6695ee1"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git merge --no-ff --no-edit FETCH_HEAD
+          test "$(git hash-object shared/agents/stephanosSharedWorkspaceConversationAdapterV1.mjs)" = "6987a3e70fd20225fa66a017e89e189939982801"
+          test "$(git hash-object shared/agents/stephanosSharedWorkspaceConversationAdapterV1.test.mjs)" = "1686a7275eb884c9cc3d247a144baa190359e7d6"
+          test "$(git hash-object docs/architecture/stephanos-shared-workspace-conversation-adapter-v1.md)" = "60934c1667003f5ad6c6adb2176150db8fe92bac"
+      - name: Remove temporary workflow and publish
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/stephanos-conversation-adapter-parent-convergence-temporary.yml
+          git commit -m 'Remove one-shot conversation adapter parent convergence workflow'
+          git fetch origin refs/heads/agent/stephanos-shared-workspace-conversation-adapter-v1
+          test "$(git rev-parse FETCH_HEAD)" = "${GITHUB_SHA}"
+          git push --porcelain origin HEAD:refs/heads/agent/stephanos-shared-workspace-conversation-adapter-v1
