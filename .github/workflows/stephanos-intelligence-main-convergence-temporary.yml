@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: stephanos-intelligence-main-convergence-once
+  group: stephanos-intelligence-main-convergence-once-v2
   cancel-in-progress: false
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin main
-          test "$(git rev-parse origin/main)" = "e42dc932196eeffce37ed0af3e5bc367bb37212e"
+          test "$(git rev-parse origin/main)" = "ca803bd37447bb97b61e2af81de57b69f43ac8c1"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git merge --no-ff --no-edit origin/main
