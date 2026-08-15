@@ -1,6 +1,6 @@
 # One Conversation Shared Workspace Continuation M2 V1
 
-Parent product goal: #1630  
+Parent product goal: #1630
 Product umbrella: #1776
 
 ## Purpose
