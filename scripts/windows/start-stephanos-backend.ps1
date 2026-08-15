@@ -109,10 +109,14 @@ foreach ($requiredExecutable in @($canonicalGit, $canonicalNpm, $canonicalNode))
     }
 }
 
-$branchRaw = & $canonicalGit -C $repoRoot branch --show-current 2>$null | Select-Object -First 1
-if ($LASTEXITCODE -ne 0) { throw 'Backend startup could not inspect the canonical Git branch.' }
-$headRaw = & $canonicalGit -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1
-if ($LASTEXITCODE -ne 0) { throw 'Backend startup could not inspect the canonical Git head.' }
+$branchOutput = @(& $canonicalGit -C $repoRoot branch --show-current 2>$null)
+$branchExitCode = $LASTEXITCODE
+if ($branchExitCode -ne 0) { throw 'Backend startup could not inspect the canonical Git branch.' }
+$branchRaw = $branchOutput | Select-Object -First 1
+$headOutput = @(& $canonicalGit -C $repoRoot rev-parse HEAD 2>$null)
+$headExitCode = $LASTEXITCODE
+if ($headExitCode -ne 0) { throw 'Backend startup could not inspect the canonical Git head.' }
+$headRaw = $headOutput | Select-Object -First 1
 $branch = if ($branchRaw) { ([string]$branchRaw).Trim() } else { '' }
 $headSha = if ($headRaw) { ([string]$headRaw).Trim().ToLowerInvariant() } else { '' }
 if ($branch -ne 'main') { throw 'Backend startup requires canonical branch main.' }
