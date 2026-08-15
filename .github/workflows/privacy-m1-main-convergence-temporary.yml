@@ -43,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin main
-          test "$(git rev-parse origin/main)" = "87a85f3a89c4d144c88986404594e4a2773791ca"
+          test "$(git rev-parse origin/main)" = "e42dc932196eeffce37ed0af3e5bc367bb37212e"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git merge --no-ff --no-edit origin/main
