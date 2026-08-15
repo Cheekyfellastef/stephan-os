@@ -151,6 +151,21 @@ The public Q&A boundary converts the caller evaluation clock to one ECMAScript-D
 
 The same trusted instant drives freshness and the answer timestamp, preventing caller-controlled clock disagreement.
 
+## Timestamp repair proof
+
+The repaired product tree was executed through the existing GitHub Actions runner before temporary repair machinery was removed. The bounded three-suite command completed with:
+
+```text
+node --check shared/agents/vrResearchParticipantQaV1.mjs  PASS
+node --test shared/agents/vrResearchWorkspaceProjectionV1.test.mjs shared/agents/vrResearchAgentV1.test.mjs shared/agents/vrResearchParticipantQaV1.test.mjs
+49 tests
+49 pass
+0 fail
+git diff HEAD --check  PASS
+```
+
+The regressions explicitly cover `Number.MAX_VALUE`, `Infinity`, `-Infinity`, `NaN`, invalid/noncanonical/inconsistent `answeredAtUtc`, deterministic canonical timestamps and accessor-backed timestamp inputs with zero getter calls. This is source/test proof only; it grants no merge, deployment, runtime or headset authority.
+
 ## Gap observations
 
 When a bounded VR question cannot be answered, the adapter emits one deterministic gap observation with existing canonical goal candidates first.
