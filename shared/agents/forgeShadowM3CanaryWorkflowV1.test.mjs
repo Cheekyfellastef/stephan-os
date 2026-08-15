@@ -10,9 +10,14 @@ test('canary workflow is manual, permissionless, exact-source bound and has both
   assert.match(source, /^on:\n  workflow_dispatch:/m);
   assert.match(source, /^permissions: \{\}$/m);
   assert.match(source, /^  linux-isolation:/m);
-  assert.match(source, /^    runs-on: \[self-hosted, linux, x64, stephanos-forge, ephemeral\]$/m);
+  assert.match(source, /^    if: inputs\.runner_class == 'linux-isolated'$/m);
+  assert.match(source, /^    runs-on: \[self-hosted, linux, x64, stephanos-forge, ephemeral, "\$\{\{ inputs\.runner_id \}\}"\]$/m);
   assert.match(source, /^  windows-isolation:/m);
-  assert.match(source, /^    runs-on: \[self-hosted, windows, x64, stephanos-forge, proof-only, ephemeral\]$/m);
+  assert.match(source, /^    if: inputs\.runner_class == 'windows-proof-isolated'$/m);
+  assert.match(source, /^    runs-on: \[self-hosted, windows, x64, stephanos-forge, proof-only, ephemeral, "\$\{\{ inputs\.runner_id \}\}"\]$/m);
+  assert.equal((source.match(/runner_id:/g) || []).length, 1);
+  assert.match(source, /RUNNER_NAME:-/);
+  assert.match(source, /CANARY_RUNNER_ID_MISMATCH/);
   assert.match(source, /GITHUB_SHA:-.*EXPECTED_HEAD/);
   assert.match(source, /\$env:GITHUB_SHA -ne \$env:EXPECTED_HEAD/);
   assert.match(source, /CANONICAL_CHECKOUT_VISIBLE/);
