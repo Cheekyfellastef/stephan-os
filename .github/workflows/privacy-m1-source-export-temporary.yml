@@ -1,0 +1,50 @@
+name: Temporary Privacy M1 Source Export
+
+on:
+  push:
+    branches:
+      - agent/privacy-m1-evidence-projection-v1
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    if: github.repository == 'Cheekyfellastef/stephan-os'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact pushed head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify bounded source estate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test -f shared/agents/privacyTileEvidenceProjectionV1.mjs
+          test -f shared/agents/privacyTileEvidenceProjectionV1.test.mjs
+          test -f docs/architecture/privacy-tile-evidence-projection-v1.md
+          git hash-object shared/agents/privacyTileEvidenceProjectionV1.mjs > privacy-source.blob
+          git hash-object shared/agents/privacyTileEvidenceProjectionV1.test.mjs > privacy-test.blob
+          git hash-object docs/architecture/privacy-tile-evidence-projection-v1.md > privacy-doc.blob
+          printf '%s\n' "${GITHUB_SHA}" > privacy-export-head.txt
+
+      - name: Upload exact source-only repair inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: privacy-m1-source-export-${{ github.sha }}
+          path: |
+            shared/agents/privacyTileEvidenceProjectionV1.mjs
+            shared/agents/privacyTileEvidenceProjectionV1.test.mjs
+            docs/architecture/privacy-tile-evidence-projection-v1.md
+            privacy-source.blob
+            privacy-test.blob
+            privacy-doc.blob
+            privacy-export-head.txt
+          if-no-files-found: error
+          retention-days: 1
