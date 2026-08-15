@@ -177,7 +177,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat > expected-paths.txt <<'EOF'
+          cat > /tmp/expected-paths.txt <<'EOF'
           .github/workflows/privacy-m1-source-export-temporary.yml
           docs/architecture/privacy-tile-evidence-projection-v1.md
           shared/agents/privacyTileEvidenceProjectionV1.mjs
@@ -186,9 +186,9 @@ jobs:
           stephanos-ui/public/privacy-m1-source-export/privacyTileEvidenceProjectionV1.mjs
           stephanos-ui/public/privacy-m1-source-export/privacyTileEvidenceProjectionV1.test.mjs
           EOF
-          git diff --name-only | sort > actual-paths.txt
-          diff -u expected-paths.txt actual-paths.txt
-          git diff --check
+          git diff HEAD --name-only | sort > /tmp/actual-paths.txt
+          diff -u /tmp/expected-paths.txt /tmp/actual-paths.txt
+          git diff HEAD --check
           git fetch origin refs/heads/agent/privacy-m1-evidence-projection-v1
           test "$(git rev-parse FETCH_HEAD)" = "${GITHUB_SHA}"
 
