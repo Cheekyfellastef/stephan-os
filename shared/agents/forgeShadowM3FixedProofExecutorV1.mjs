@@ -7,6 +7,7 @@ import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
 import {
   FORGE_SHADOW_M3_EXECUTION_OBSERVATION_SCHEMA,
   FORGE_SHADOW_M3_RUNTIME_AUTHORIZATION_SCHEMA,
+  FORGE_SHADOW_M3_TERMINATION_ACK_SCHEMA,
   buildForgeShadowM3RuntimePlanDigest,
 } from './forgeShadowM3RunnerExecutionReceiptAdapterV1.mjs';
 
@@ -25,7 +26,10 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{7,127}$/i;
 const MAX_STDOUT_BYTES = 512 * 1024;
-const CALL_KEYS = ['authorization', 'runtimePlan', 'runner', 'artifact', 'canary'];
+const CALL_KEYS = [
+  'authorization', 'authorizationId', 'invocationId', 'runtimePlan', 'runner', 'artifact',
+  'executionDeadlineUtc', 'signal', 'acknowledgeTermination', 'canary',
+];
 const RECEIPT_KEYS = [
   'schemaVersion', 'ok', 'status', 'repository', 'sourceHead', 'sourceTree',
   'runtimeAuthorizationId', 'runtimePlanDigest', 'artifactSetDigest', 'runnerVersion',
@@ -45,29 +49,32 @@ const FORBIDDEN_FIELDS = new Set([
 ]);
 
 const text = (value) => String(value ?? '').trim();
+const instant = (value) => Date.parse(text(value));
 
 function exactKeys(value, expected) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const actual = Object.keys(value).sort();
+  const actual = Reflect.ownKeys(value);
+  if (!actual.every((key) => typeof key === 'string')) return false;
   const wanted = [...expected].sort();
-  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
+  const normalized = [...actual].sort();
+  return normalized.length === wanted.length
+    && normalized.every((key, index) => key === wanted[index]);
 }
 
-function findForbidden(value, trail = []) {
+function findForbidden(value, trail = [], seen = new WeakSet()) {
   if (!value || typeof value !== 'object') return '';
-  for (const [key, nested] of Object.entries(value)) {
-    const next = [...trail, key];
-    if (FORBIDDEN_FIELDS.has(key.toLowerCase())) return next.join('.');
-    if (Array.isArray(nested)) {
-      for (let index = 0; index < nested.length; index += 1) {
-        const found = findForbidden(nested[index], [...next, String(index)]);
-        if (found) return found;
-      }
-    } else {
-      const found = findForbidden(nested, next);
-      if (found) return found;
-    }
+  if (seen.has(value)) return [...trail, 'cycle'].join('.');
+  seen.add(value);
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== 'string') return [...trail, String(key)].join('.');
+    if (FORBIDDEN_FIELDS.has(key.toLowerCase())) return [...trail, key].join('.');
+    if (Array.isArray(value) && key === 'length') continue;
+    const nested = value[key];
+    if (typeof nested === 'function') continue;
+    const found = findForbidden(nested, [...trail, key], seen);
+    if (found) return found;
   }
+  seen.delete(value);
   return '';
 }
 
@@ -75,6 +82,10 @@ function fail(code) {
   const error = new Error(code);
   error.code = code;
   return error;
+}
+
+function defaultRun(executable, args, options) {
+  return spawnSync(executable, args, options);
 }
 
 function runExact(runCommand, executable, args, options = {}) {
@@ -92,10 +103,6 @@ function runExact(runCommand, executable, args, options = {}) {
     stdout: text(result?.stdout),
     stderr: text(result?.stderr),
   });
-}
-
-function defaultRun(executable, args, options) {
-  return spawnSync(executable, args, options);
 }
 
 function readSourceIdentity(runCommand, repositoryRoot, expectedHead, scriptPath) {
@@ -134,9 +141,13 @@ function validateCall(call) {
   if (authorization?.schemaVersion !== FORGE_SHADOW_M3_RUNTIME_AUTHORIZATION_SCHEMA
       || authorization?.repository !== REPOSITORY
       || authorization?.executionSurface !== EXECUTION_SURFACE
-      || authorization?.operatorApproved !== true
-      || authorization?.m3Only !== true) {
+      || authorization?.m3Only !== true
+      || call.authorizationId !== authorization.authorizationId
+      || !SAFE_ID.test(text(call.invocationId))) {
     throw fail('FORGE_M3_FIXED_EXECUTOR_AUTHORIZATION_INVALID');
+  }
+  if (!authorization?.approvalReceipt || authorization.approvalReceipt.decision !== 'APPROVED') {
+    throw fail('FORGE_M3_FIXED_EXECUTOR_APPROVAL_INVALID');
   }
   if (!SHA40.test(text(runtimePlan.canonicalMainHead).toLowerCase())
       || !SHA40.test(text(runtimePlan.canonicalMainTree).toLowerCase())
@@ -153,7 +164,10 @@ function validateCall(call) {
   const canonicalArtifact = runtimePlan.runnerArtifacts?.find((item) => item.runnerClass === runner?.runnerClass);
   if (!canonicalRunner || canonicalRunner.poolId !== runner.poolId
       || canonicalRunner.runnerClass !== runner.runnerClass
-      || canonicalRunner.runtimeBoundary !== runner.runtimeBoundary) {
+      || canonicalRunner.runtimeBoundary !== runner.runtimeBoundary
+      || canonicalRunner.forgeService !== runner.forgeService
+      || canonicalRunner.forgeListener !== runner.forgeListener
+      || canonicalRunner.registrationMode !== runner.registrationMode) {
     throw fail('FORGE_M3_FIXED_EXECUTOR_RUNNER_INVALID');
   }
   if (!canonicalArtifact || canonicalArtifact.artifactDigest !== artifact?.artifactDigest
@@ -165,25 +179,24 @@ function validateCall(call) {
       || canary?.tree !== runtimePlan.canonicalMainTree) {
     throw fail('FORGE_M3_FIXED_EXECUTOR_CANARY_INVALID');
   }
+  if (typeof call.acknowledgeTermination !== 'function') {
+    throw fail('FORGE_M3_FIXED_EXECUTOR_TERMINATION_ACK_REQUIRED');
+  }
+  if (!Number.isFinite(instant(call.executionDeadlineUtc))) {
+    throw fail('FORGE_M3_FIXED_EXECUTOR_DEADLINE_INVALID');
+  }
   const versions = [...new Set(runtimePlan.runnerArtifacts.map((item) => item.version))];
   const linuxArtifact = runtimePlan.runnerArtifacts.find((item) => item.runnerClass === 'linux-isolated');
   const windowsArtifact = runtimePlan.runnerArtifacts.find((item) => item.runnerClass === 'windows-proof-isolated');
   const linuxCount = runtimePlan.runners.filter((item) => item.runnerClass === 'linux-isolated').length;
   const windowsCount = runtimePlan.runners.filter((item) => item.runnerClass === 'windows-proof-isolated').length;
   if (versions.length !== 1 || !linuxArtifact || !windowsArtifact
-      || linuxCount < 1 || linuxCount > 3 || windowsCount !== 1
+      || linuxCount !== 1 || windowsCount !== 1
       || !SHA256_HEX.test(text(runtimePlan.canaryForge?.backupDigest).toLowerCase())
       || !/^stephanos-forge-shadow-backup-[0-9a-f]{16}$/.test(text(runtimePlan.canaryForge?.backupVolume))) {
     throw fail('FORGE_M3_FIXED_EXECUTOR_ESTATE_INVALID');
   }
-  return Object.freeze({
-    runtimePlanDigest,
-    linuxArtifact,
-    windowsArtifact,
-    linuxCount,
-    windowsCount,
-    runnerVersion: versions[0],
-  });
+  return Object.freeze({ runtimePlanDigest, linuxArtifact, windowsArtifact, linuxCount, runnerVersion: versions[0] });
 }
 
 export function validateForgeShadowM3FixedProofExecutionReceipt(receipt, call) {
@@ -193,20 +206,14 @@ export function validateForgeShadowM3FixedProofExecutionReceipt(receipt, call) {
   catch (error) { blockers.push(error.code || 'FORGE_M3_FIXED_EXECUTOR_CALL_INVALID'); }
   if (!exactKeys(receipt, RECEIPT_KEYS)) blockers.push('receipt-fields-invalid');
   if (receipt?.schemaVersion !== FORGE_SHADOW_M3_FIXED_EXECUTION_RECEIPT_SCHEMA
-      || receipt?.ok !== true || receipt?.status !== FORGE_SHADOW_M3_FIXED_EXECUTION_READY) {
-    blockers.push('receipt-verdict-invalid');
-  }
+      || receipt?.ok !== true || receipt?.status !== FORGE_SHADOW_M3_FIXED_EXECUTION_READY) blockers.push('receipt-verdict-invalid');
   if (receipt?.repository !== REPOSITORY
       || text(receipt?.sourceHead).toLowerCase() !== text(call?.runtimePlan?.canonicalMainHead).toLowerCase()
-      || text(receipt?.sourceTree).toLowerCase() !== text(call?.runtimePlan?.canonicalMainTree).toLowerCase()) {
-    blockers.push('receipt-source-invalid');
-  }
-  if (receipt?.runtimeAuthorizationId !== call?.authorization?.authorizationId
+      || text(receipt?.sourceTree).toLowerCase() !== text(call?.runtimePlan?.canonicalMainTree).toLowerCase()) blockers.push('receipt-source-invalid');
+  if (receipt?.runtimeAuthorizationId !== call?.authorizationId
       || text(receipt?.runtimePlanDigest).toLowerCase() !== contract?.runtimePlanDigest
       || text(receipt?.artifactSetDigest).toLowerCase() !== text(call?.runtimePlan?.artifactSetDigest).toLowerCase()
-      || receipt?.runnerVersion !== contract?.runnerVersion) {
-    blockers.push('receipt-execution-binding-invalid');
-  }
+      || receipt?.runnerVersion !== contract?.runnerVersion) blockers.push('receipt-execution-binding-invalid');
   if (!SHA256_HEX.test(text(receipt?.canonicalM2DigestBefore).toLowerCase())
       || receipt?.canonicalM2DigestAfter !== receipt?.canonicalM2DigestBefore) blockers.push('receipt-canonical-m2-mutated');
   for (const field of ['canaryForgeDestroyed', 'privateRelayDestroyed', 'registrationCredentialsDestroyed', 'workspacesDestroyed']) {
@@ -219,13 +226,88 @@ export function validateForgeShadowM3FixedProofExecutionReceipt(receipt, call) {
   const observedIds = observations.map((item) => text(item?.runnerId)).sort();
   if (observations.length !== expectedIds.length
       || JSON.stringify(observedIds) !== JSON.stringify(expectedIds)
-      || observations.some((item) => item?.schemaVersion !== FORGE_SHADOW_M3_EXECUTION_OBSERVATION_SCHEMA)) {
-    blockers.push('receipt-observation-estate-invalid');
-  }
-  if (/password|privatekey|cookie|session|registrationtoken|registrationkey/i.test(JSON.stringify(receipt || {}))) {
-    blockers.push('receipt-credential-shaped-output-forbidden');
-  }
+      || observations.some((item) => item?.schemaVersion !== FORGE_SHADOW_M3_EXECUTION_OBSERVATION_SCHEMA)) blockers.push('receipt-observation-estate-invalid');
+  if (/password|privatekey|cookie|session|registrationtoken|registrationkey/i.test(JSON.stringify(receipt || {}))) blockers.push('receipt-credential-shaped-output-forbidden');
   return Object.freeze({ ok: blockers.length === 0, blockers: Object.freeze([...new Set(blockers)]), receipt: blockers.length ? null : receipt });
+}
+
+function normalizeObservation(raw, call, teardownCompletedAtUtc) {
+  const proofRefs = Array.isArray(raw?.proofRefs) ? [...raw.proofRefs] : [];
+  if (!proofRefs.length) throw fail('FORGE_M3_FIXED_EXECUTOR_PROOF_REF_MISSING');
+  const startedAtUtc = text(raw.startedAtUtc);
+  const runnerCompletedAtUtc = text(raw.completedAtUtc);
+  if (!Number.isFinite(instant(startedAtUtc)) || !Number.isFinite(instant(runnerCompletedAtUtc))) {
+    throw fail('FORGE_M3_FIXED_EXECUTOR_OBSERVATION_TIME_INVALID');
+  }
+  return Object.freeze({
+    schemaVersion: FORGE_SHADOW_M3_EXECUTION_OBSERVATION_SCHEMA,
+    authorizationId: call.authorizationId,
+    invocationId: call.invocationId,
+    runnerId: call.runner.runnerId,
+    poolId: call.runner.poolId,
+    runnerClass: call.runner.runnerClass,
+    runtimeBoundary: call.runner.runtimeBoundary,
+    forgeService: call.runner.forgeService,
+    forgeListener: call.runner.forgeListener,
+    registrationRepository: call.runtimePlan.repository,
+    registrationScope: 'repository',
+    registrationMode: call.runner.registrationMode,
+    oneJobMode: true,
+    registrationProofRef: proofRefs[0],
+    sourceHead: call.runtimePlan.canonicalMainHead,
+    sourceTree: call.runtimePlan.canonicalMainTree,
+    artifactDigest: call.artifact.artifactDigest,
+    artifactSetDigest: call.runtimePlan.artifactSetDigest,
+    startedAtUtc,
+    teardownStartedAtUtc: runnerCompletedAtUtc,
+    teardownCompletedAtUtc,
+    completedAtUtc: teardownCompletedAtUtc,
+    installed: true,
+    registered: true,
+    connected: true,
+    ephemeralRegistration: true,
+    canaryWorkflowId: call.canary.workflowId,
+    canaryScenario: call.canary.scenario,
+    canaryHead: call.runtimePlan.canonicalMainHead,
+    canaryTree: call.runtimePlan.canonicalMainTree,
+    canarySucceeded: raw.canarySucceeded === true,
+    unregistered: raw.unregistered === true,
+    registrationCredentialDestroyed: raw.registrationCredentialDestroyed === true,
+    workspaceDestroyed: raw.workspaceDestroyed === true,
+    runtimeBoundaryDestroyed: true,
+    zeroResidualRegistration: raw.zeroResidualRegistration === true,
+    zeroResidualCredential: raw.zeroResidualCredential === true,
+    zeroResidualWorkspace: true,
+    credentialLogged: raw.credentialLogged === true,
+    credentialPersisted: raw.credentialPersisted === true,
+    publicExposure: raw.publicExposure === true,
+    tailscaleExposure: raw.tailscaleExposure === true,
+    canonicalCheckoutMounted: raw.canonicalCheckoutMounted === true,
+    containerSocketMounted: raw.containerSocketMounted === true,
+    hostProcessAccess: raw.hostProcessAccess === true,
+    sourceMutation: raw.sourceMutation === true,
+    gitRefWrite: raw.gitRefWrite === true,
+    mergeAuthority: raw.mergeAuthority === true,
+    deploymentAuthority: raw.deploymentAuthority === true,
+    arbitraryCommand: raw.arbitraryCommand === true,
+    proofRefs: Object.freeze(proofRefs),
+  });
+}
+
+function terminationAcknowledgement(call, acknowledgedAtUtc) {
+  return Object.freeze({
+    schemaVersion: FORGE_SHADOW_M3_TERMINATION_ACK_SCHEMA,
+    authorizationId: call.authorizationId,
+    invocationId: call.invocationId,
+    runnerId: call.runner.runnerId,
+    terminated: true,
+    teardownAcknowledged: true,
+    acknowledgedAtUtc,
+    quarantined: false,
+    quarantineAcknowledged: false,
+    quarantineReason: '',
+    quarantineProofRef: '',
+  });
 }
 
 export function createForgeShadowM3FixedProofExecutor({
@@ -233,21 +315,21 @@ export function createForgeShadowM3FixedProofExecutor({
   runCommand = defaultRun,
   repositoryRoot,
   userProfile,
+  now = () => new Date(),
 } = {}) {
   let session = null;
   return async function executeFixedRunner(call) {
     const contract = validateCall(call);
     if (platform !== 'win32') throw fail('FORGE_M3_FIXED_EXECUTOR_WINDOWS_REQUIRED');
+    if (call.signal?.aborted) throw fail('FORGE_M3_FIXED_EXECUTOR_ABORTED');
     const profile = resolve(userProfile || process.env.USERPROFILE || homedir());
     const root = resolve(repositoryRoot || join(profile, 'Documents', 'GitHub', 'stephan-os'));
     const scriptPath = resolve(root, ...SCRIPT_RELATIVE_PATH.split('/'));
     if (!existsSync(root) || !existsSync(scriptPath)) throw fail('FORGE_M3_FIXED_EXECUTOR_SOURCE_MISSING');
 
     const sourceBefore = readSourceIdentity(runCommand, root, call.runtimePlan.canonicalMainHead, scriptPath);
-    if (!sourceIdentityMatches(sourceBefore, call.runtimePlan.canonicalMainHead, call.runtimePlan.canonicalMainTree)) {
-      throw fail('FORGE_M3_FIXED_EXECUTOR_SOURCE_IDENTITY_CHANGED');
-    }
-    const sessionKey = `${call.authorization.authorizationId}:${contract.runtimePlanDigest}`;
+    if (!sourceIdentityMatches(sourceBefore, call.runtimePlan.canonicalMainHead, call.runtimePlan.canonicalMainTree)) throw fail('FORGE_M3_FIXED_EXECUTOR_SOURCE_IDENTITY_CHANGED');
+    const sessionKey = `${call.authorizationId}:${contract.runtimePlanDigest}`;
     if (session && session.key !== sessionKey) throw fail('FORGE_M3_FIXED_EXECUTOR_SESSION_CHANGED');
     if (!session) {
       const invocation = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
@@ -255,7 +337,7 @@ export function createForgeShadowM3FixedProofExecutor({
         '-File', scriptPath,
         '-ExpectedHead', call.runtimePlan.canonicalMainHead,
         '-ExpectedTree', call.runtimePlan.canonicalMainTree,
-        '-RuntimeAuthorizationId', call.authorization.authorizationId,
+        '-RuntimeAuthorizationId', call.authorizationId,
         '-RuntimePlanDigest', contract.runtimePlanDigest,
         '-ArtifactSetDigest', call.runtimePlan.artifactSetDigest,
         '-IssuedAtUtc', call.authorization.issuedAtUtc,
@@ -276,15 +358,22 @@ export function createForgeShadowM3FixedProofExecutor({
       catch { throw fail('FORGE_M3_FIXED_EXECUTOR_RECEIPT_INVALID_JSON'); }
       const validation = validateForgeShadowM3FixedProofExecutionReceipt(receipt, call);
       if (!validation.ok) throw fail(`FORGE_M3_FIXED_EXECUTOR_RECEIPT_INVALID:${validation.blockers[0]}`);
-      session = Object.freeze({ key: sessionKey, receipt });
+      const completedMs = now() instanceof Date ? now().getTime() : instant(now());
+      if (!Number.isFinite(completedMs) || completedMs > instant(call.executionDeadlineUtc)) {
+        throw fail('FORGE_M3_FIXED_EXECUTOR_COMPLETION_TIME_INVALID');
+      }
+      session = Object.freeze({ key: sessionKey, receipt, completedAtUtc: new Date(completedMs).toISOString() });
     }
     const sourceAfter = readSourceIdentity(runCommand, root, call.runtimePlan.canonicalMainHead, scriptPath);
     if (!sourceIdentityMatches(sourceAfter, call.runtimePlan.canonicalMainHead, call.runtimePlan.canonicalMainTree)
-        || sourceAfter.committedScript !== sourceBefore.committedScript) {
-      throw fail('FORGE_M3_FIXED_EXECUTOR_POST_EXECUTION_SOURCE_CHANGED');
+        || sourceAfter.committedScript !== sourceBefore.committedScript) throw fail('FORGE_M3_FIXED_EXECUTOR_POST_EXECUTION_SOURCE_CHANGED');
+    const raw = session.receipt.observations.find((item) => item.runnerId === call.runner.runnerId);
+    if (!raw) throw fail('FORGE_M3_FIXED_EXECUTOR_OBSERVATION_MISSING');
+    const observation = normalizeObservation(raw, call, session.completedAtUtc);
+    const acknowledgement = terminationAcknowledgement(call, session.completedAtUtc);
+    if (call.acknowledgeTermination(acknowledgement) === false) {
+      throw fail('FORGE_M3_FIXED_EXECUTOR_TERMINATION_ACK_REJECTED');
     }
-    const observation = session.receipt.observations.find((item) => item.runnerId === call.runner.runnerId);
-    if (!observation) throw fail('FORGE_M3_FIXED_EXECUTOR_OBSERVATION_MISSING');
-    return Object.freeze({ ...observation });
+    return Object.freeze({ observation, terminationAcknowledgement: acknowledgement });
   };
 }

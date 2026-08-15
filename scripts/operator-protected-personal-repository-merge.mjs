@@ -3,14 +3,8 @@
 import { createHash } from 'node:crypto';
 import {
   appendFileSync,
-  mkdtempSync,
   readFileSync,
-  rmSync,
-  writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
 import {
   INDEPENDENT_REVIEW_WORKFLOW_NAME,
   INDEPENDENT_REVIEW_WORKFLOW_PATH,
@@ -28,13 +22,19 @@ import {
   PERSONAL_REPOSITORY_EVIDENCE_JOB,
   PERSONAL_REPOSITORY_MERGE_JOB,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
-  PERSONAL_REPOSITORY_WORKFLOW_NAME,
-  PERSONAL_REPOSITORY_WORKFLOW_PATH,
+  buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
+  executeBoundedPersonalRepositoryRead,
+  executePersonalRepositoryArtifactArchiveTransport,
+  extractPersonalRepositoryArtifactZip,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
   validatePersonalRepositoryConfiguration,
+  validatePersonalRepositoryDispatchExecution,
+  validatePersonalRepositoryDispatchWorkflowDefinition,
   validatePersonalRepositoryEvidence,
+  validatePersonalRepositoryRulesetProofRequest,
+  validatePersonalRepositoryRulesetProofResponse,
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
 } from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
@@ -93,13 +93,17 @@ async function githubResponse(path, {
   if (authorization === 'omit' && (method !== 'GET' || body !== null)) {
     fail('Unauthenticated GitHub API access is restricted to bounded GET requests.', { path, method });
   }
-  if (authorization === 'ruleset-proof'
-    && (method !== 'GET'
-      || body !== null
-      || !/^\/repos\/[^/]+\/[^/]+\/rulesets\/[1-9][0-9]*\?includes_parents=true$/.test(path))) {
-    fail('Ruleset proof token is restricted to bounded repository ruleset-detail GET requests.', {
+  const rulesetProofRequest = validatePersonalRepositoryRulesetProofRequest({
+    path,
+    method,
+    body,
+    repository: process.env.GITHUB_REPOSITORY,
+  });
+  if (authorization === 'ruleset-proof' && !rulesetProofRequest.valid) {
+    fail('Ruleset proof token is restricted to bounded repository-configuration GET requests.', {
       path,
       method,
+      blockers: rulesetProofRequest.blockers,
     });
   }
   const token = authorization === 'ruleset-proof'
@@ -107,18 +111,27 @@ async function githubResponse(path, {
     : text(process.env.GH_TOKEN || process.env.GITHUB_TOKEN);
   if (authorization === 'required' && !token) fail('GitHub Actions token is required.');
   if (authorization === 'ruleset-proof' && !token) fail('Protected ruleset proof token is required.');
-  const response = await fetch(`https://api.github.com${path}`, {
+  const { response, result: bytes } = await executeBoundedPersonalRepositoryRead({
+    path,
     method,
-    headers: {
-      Accept: accept,
-      ...(authorization === 'omit' ? {} : { Authorization: `Bearer ${token}` }),
-      'X-GitHub-Api-Version': API_VERSION,
-      'User-Agent': USER_AGENT,
-      ...(body === null ? {} : { 'Content-Type': 'application/json' }),
-    },
-    ...(body === null ? {} : { body: JSON.stringify(body) }),
+    body,
+    request: () => fetch(`https://api.github.com${path}`, {
+      method,
+      redirect: authorization === 'ruleset-proof' ? 'error' : 'follow',
+      headers: {
+        Accept: accept,
+        ...(authorization === 'omit' ? {} : { Authorization: `Bearer ${token}` }),
+        'X-GitHub-Api-Version': API_VERSION,
+        'User-Agent': USER_AGENT,
+        ...(body === null ? {} : { 'Content-Type': 'application/json' }),
+      },
+      ...(body === null ? {} : { body: JSON.stringify(body) }),
+    }),
+    validateResponse: authorization === 'ruleset-proof'
+      ? (response) => validatePersonalRepositoryRulesetProofResponse({ path, response })
+      : null,
+    consume: async (boundedResponse) => Buffer.from(await boundedResponse.arrayBuffer()),
   });
-  const bytes = Buffer.from(await response.arrayBuffer());
   if (bytes.length > maxBytes) {
     fail('GitHub API response exceeded the bounded maximum.', {
       path,
@@ -138,12 +151,34 @@ async function apiJson(path, options = {}) {
   return raw ? parseJson(raw, `GitHub JSON response for ${path} was invalid.`) : null;
 }
 
-async function apiBytes(path, maxBytes) {
-  const { bytes } = await githubResponse(path, {
-    accept: 'application/octet-stream',
+async function apiArtifactArchive(path, repository, maxBytes) {
+  const token = text(process.env.GH_TOKEN || process.env.GITHUB_TOKEN);
+  if (!token) fail('GitHub Actions token is required.');
+  return executePersonalRepositoryArtifactArchiveTransport({
+    path,
+    repository,
     maxBytes,
+    requestApiRedirect: (request) => fetch(request.url, {
+      method: request.method,
+      body: request.body,
+      redirect: request.redirect,
+      headers: {
+        ...request.headers,
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': API_VERSION,
+        'User-Agent': USER_AGENT,
+      },
+    }),
+    requestArchive: (request) => fetch(request.url, {
+      method: request.method,
+      body: request.body,
+      redirect: request.redirect,
+      headers: {
+        ...request.headers,
+        'User-Agent': USER_AGENT,
+      },
+    }),
   });
-  return bytes;
 }
 
 async function apiCollection(path, itemKey = null, options = {}) {
@@ -199,66 +234,66 @@ function appendOutputs(values) {
   );
 }
 
-function canonicalDispatchWorkflowPath(run, repository) {
-  let path = text(run?.path);
-  if (path.startsWith(`${repository}/`)) path = path.slice(repository.length + 1);
-  const at = path.indexOf('@');
-  if (at === -1) return path;
-  if (at === 0 || at === path.length - 1 || path.indexOf('@', at + 1) !== -1) return '';
-  if (!['main', 'refs/heads/main'].includes(path.slice(at + 1))) return '';
-  return path.slice(0, at);
-}
-
 async function currentWorkflowExecution(context) {
   const definitions = (await apiCollection(
     `/repos/${context.owner}/${context.repo}/actions/workflows`,
     'workflows',
   )).items;
-  const matches = definitions.filter((workflow) => workflow?.path === PERSONAL_REPOSITORY_WORKFLOW_PATH);
-  const definition = matches[0];
-  if (matches.length !== 1
-    || definition?.name !== PERSONAL_REPOSITORY_WORKFLOW_NAME
-    || definition?.state !== 'active'
-    || !exactPositiveInteger(definition?.id)) {
+  const definitionValidation = validatePersonalRepositoryDispatchWorkflowDefinition(definitions);
+  if (!definitionValidation.valid) {
     fail('Protected merge workflow definition is missing, inactive or ambiguous.', {
-      blockers: ['CONFIGURATION_NOT_PROVED:personal-repository-workflow-definition'],
+      blockers: [
+        'CONFIGURATION_NOT_PROVED:personal-repository-workflow-definition',
+        ...definitionValidation.blockers,
+      ],
     });
   }
+  const definition = definitionValidation.definition;
   const run = await apiJson(`/repos/${context.owner}/${context.repo}/actions/runs/${context.runId}`);
+  const dispatchRuns = (await apiCollection(
+    `/repos/${context.owner}/${context.repo}/actions/workflows/${definition.id}/runs?event=workflow_dispatch`,
+    'workflow_runs',
+  )).items;
+  const execution = validatePersonalRepositoryDispatchExecution({
+    definitions,
+    run,
+    priorRuns: dispatchRuns,
+  }, {
+    repository: context.repository,
+    sourceHead: context.dispatch.identity.sourceHead,
+    baseSha: context.dispatch.identity.baseSha,
+    workflowRunId: context.runId,
+    workflowRunAttempt: context.runAttempt,
+  });
   const expectedDisplayTitle = `Protected operator merge ${context.dispatch.identity.sourceHead}`;
-  const runIdentityMismatches = [
-    ['run-id', exactPositiveInteger(run?.id) === context.runId],
-    ['run-attempt', exactPositiveInteger(run?.run_attempt) === context.runAttempt],
-    ['workflow-id', exactPositiveInteger(run?.workflow_id) === definition.id],
-    ['workflow-name', run?.name === PERSONAL_REPOSITORY_WORKFLOW_NAME],
-    ['event', run?.event === 'workflow_dispatch'],
-    ['repository', text(run?.repository?.full_name) === context.repository],
-    ['base-head', text(run?.head_sha).toLowerCase() === context.dispatch.identity.baseSha],
-    ['base-branch', text(run?.head_branch) === 'main'],
-    ['display-title', text(run?.display_title) === expectedDisplayTitle],
-    ['workflow-path', canonicalDispatchWorkflowPath(run, context.repository) === PERSONAL_REPOSITORY_WORKFLOW_PATH],
-    ['triggering-actor', text(run?.triggering_actor?.login || run?.actor?.login).toLowerCase() === OPERATOR_MERGE_REVIEWER.toLowerCase()],
-    ['run-status', ['queued', 'in_progress'].includes(text(run?.status).toLowerCase())],
-  ].filter(([, matches]) => !matches).map(([field]) => field);
+  const triggeringActor = text(run?.triggering_actor?.login || run?.actor?.login).toLowerCase();
+  const runIdentityMismatches = [...new Set([
+    ...execution.currentMismatches,
+    ...(text(run?.name) === expectedDisplayTitle ? [] : ['run-name']),
+    ...(text(run?.display_title) === expectedDisplayTitle ? [] : ['display-title']),
+    ...(triggeringActor === OPERATOR_MERGE_REVIEWER.toLowerCase() ? [] : ['triggering-actor']),
+  ])];
   if (runIdentityMismatches.length !== 0) {
     fail('Current workflow run is not the exact operator-dispatched trusted-main execution.', {
       blockers: ['personal-repository-workflow-run-identity-mismatch'],
       mismatches: runIdentityMismatches,
     });
   }
-  const dispatchRuns = (await apiCollection(
-    `/repos/${context.owner}/${context.repo}/actions/workflows/${definition.id}/runs?event=workflow_dispatch`,
-    'workflow_runs',
-  )).items;
-  const priorAttempts = dispatchRuns.filter((candidate) => (
-    exactPositiveInteger(candidate?.id) !== context.runId
-    && text(candidate?.display_title) === expectedDisplayTitle
-    && text(candidate?.triggering_actor?.login || candidate?.actor?.login).toLowerCase() === OPERATOR_MERGE_REVIEWER.toLowerCase()
-  ));
-  if (priorAttempts.length !== 0) {
+  if (execution.malformedPriorRunIds.length !== 0) {
+    fail('A source-matching prior dispatch has malformed or ambiguous workflow identity.', {
+      blockers: ['personal-repository-prior-attempt-invalid'],
+      priorRunIds: execution.malformedPriorRunIds.filter(Boolean),
+    });
+  }
+  if (execution.replayRunIds.length !== 0) {
     fail('A prior operator-dispatched personal-repository merge attempt already exists for this exact PR head.', {
       blockers: ['personal-repository-prior-attempt-exists'],
-      priorRunIds: priorAttempts.map((candidate) => exactPositiveInteger(candidate?.id)).filter(Boolean),
+      priorRunIds: execution.replayRunIds,
+    });
+  }
+  if (!execution.valid) {
+    fail('Protected merge workflow execution evidence is incomplete or invalid.', {
+      blockers: execution.blockers,
     });
   }
   return { definitions, definition, run };
@@ -290,27 +325,12 @@ async function pullRequestReviewState(owner, repo, prNumber) {
   };
 }
 
-function rulesetSnapshot(activeRules, rulesets) {
-  const canonicalActiveRules = (activeRules || [])
-    .map((rule) => canonicalJson(rule))
-    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
-  const canonicalRulesets = (rulesets || [])
-    .map((ruleset) => canonicalJson({
-      id: ruleset?.id,
-      name: ruleset?.name,
-      target: ruleset?.target,
-      source_type: ruleset?.source_type,
-      source: ruleset?.source,
-      enforcement: ruleset?.enforcement,
-      created_at: ruleset?.created_at,
-      updated_at: ruleset?.updated_at,
-      conditions: ruleset?.conditions,
-      rules: ruleset?.rules,
-    }))
-    .sort((left, right) => Number(left.id) - Number(right.id));
-  return sha256(JSON.stringify(canonicalJson({
-    activeRules: canonicalActiveRules,
-    rulesets: canonicalRulesets,
+function configurationSnapshot(repository, environment, activeRules, rulesets) {
+  return sha256(JSON.stringify(buildPersonalRepositoryConfigurationEvidence({
+    repository,
+    environment,
+    activeRules,
+    rulesets,
   })));
 }
 
@@ -319,7 +339,6 @@ async function collectRulesetConfiguration(
   repository,
   environment,
   integrationId,
-  { requireBypassProof = false } = {},
 ) {
   let activeRules = null;
   const rulesets = [];
@@ -333,7 +352,7 @@ async function collectRulesetConfiguration(
       activeRules = (await apiCollection(
         `/repos/${context.owner}/${context.repo}/rules/branches/main`,
         null,
-        { authorization: 'omit' },
+        { authorization: 'ruleset-proof' },
       )).items;
     } catch {
       readBlockers.push('CONFIGURATION_NOT_PROVED:personal-repository-active-main-rules-api');
@@ -346,7 +365,7 @@ async function collectRulesetConfiguration(
     try {
       rulesets.push(await apiJson(
         `/repos/${context.owner}/${context.repo}/rulesets/${rulesetId}?includes_parents=true`,
-        { authorization: requireBypassProof ? 'ruleset-proof' : 'omit' },
+        { authorization: 'ruleset-proof' },
       ));
     } catch {
       readBlockers.push(`CONFIGURATION_NOT_PROVED:personal-repository-ruleset-detail:${rulesetId}`);
@@ -360,7 +379,7 @@ async function collectRulesetConfiguration(
   }, {
     requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
     expectedIntegrationId: integrationId,
-    requireBypassProof,
+    requireBypassProof: true,
   });
   const blockers = [...new Set([...readBlockers, ...validation.blockers])];
   if (blockers.length) {
@@ -371,19 +390,8 @@ async function collectRulesetConfiguration(
   }
   return Object.freeze({
     ...validation,
-    rulesetSnapshotSha256: rulesetSnapshot(activeRules, rulesets),
+    configurationSnapshotSha256: configurationSnapshot(repository, environment, activeRules, rulesets),
   });
-}
-
-function runUnzip(args, message, maxBuffer = INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES + 1) {
-  const result = spawnSync('unzip', args, {
-    encoding: 'utf8',
-    shell: false,
-    windowsHide: true,
-    maxBuffer,
-  });
-  if (result.status !== 0) fail(message, { stderr: result.stderr || result.error?.message || '' });
-  return result.stdout || '';
 }
 
 async function loadSelectedIndependentReview(context, identity) {
@@ -439,8 +447,9 @@ async function loadSelectedIndependentReview(context, identity) {
       blockers: [...artifactSet.blockers, 'personal-repository-selected-review-artifact-mismatch'],
     });
   }
-  const archiveBytes = await apiBytes(
+  const archiveBytes = await apiArtifactArchive(
     `/repos/${context.owner}/${context.repo}/actions/artifacts/${artifactSet.artifactId}/zip`,
+    context.repository,
     INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES,
   );
   if (archiveBytes.length !== artifactSet.sizeInBytes) fail('Independent review artifact archive size changed.');
@@ -449,60 +458,46 @@ async function loadSelectedIndependentReview(context, identity) {
     || archiveDigest !== selected.independentReviewArtifactDigest) {
     fail('Independent review artifact archive digest changed or differs from the operator-selected identity.');
   }
-  const temporaryDirectory = mkdtempSync(join(tmpdir(), 'stephanos-personal-repository-review-'));
-  const archivePath = join(temporaryDirectory, 'review.zip');
-  try {
-    writeFileSync(archivePath, archiveBytes, { flag: 'wx', mode: 0o600 });
-    const entries = runUnzip(['-Z1', archivePath], 'Independent review artifact directory is unreadable.')
-      .split(/\r?\n/)
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-    if (entries.length !== 1 || entries[0] !== INDEPENDENT_REVIEW_ARTIFACT_FILE) {
-      fail('Independent review artifact must contain exactly the canonical result file.', { entries });
-    }
-    const artifact = parseJson(
-      runUnzip(['-p', archivePath, INDEPENDENT_REVIEW_ARTIFACT_FILE], 'Independent review artifact payload is unreadable.'),
-      'Independent review artifact payload is invalid JSON.',
-    );
-    const validation = validateIndependentReviewArtifact(artifact, {
-      repository: context.repository,
-      prNumber: identity.prNumber,
-      branch: identity.branch,
-      expectedHead: identity.sourceHead,
-      expectedBaseSha: identity.baseSha,
-      workflowRunId: selected.independentReviewWorkflowRunId,
-      workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+  const artifact = parseJson(
+    extractPersonalRepositoryArtifactZip(archiveBytes, INDEPENDENT_REVIEW_ARTIFACT_FILE).toString('utf8'),
+    'Independent review artifact payload is invalid JSON.',
+  );
+  const validation = validateIndependentReviewArtifact(artifact, {
+    repository: context.repository,
+    prNumber: identity.prNumber,
+    branch: identity.branch,
+    expectedHead: identity.sourceHead,
+    expectedBaseSha: identity.baseSha,
+    workflowRunId: selected.independentReviewWorkflowRunId,
+    workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+  });
+  if (!validation.valid
+    || artifact.payloadSha256 !== selected.independentReviewPayloadSha256
+    || artifact.reviewMode !== 'clean-independent'
+    || artifact.receipt?.verdict !== 'clean'
+    || artifact.receipt?.blocker !== ''
+    || !Array.isArray(artifact.receipt?.findings)
+    || artifact.receipt.findings.length !== 0) {
+    fail('Selected independent review payload is invalid, stale or not clean.', {
+      blockers: validation.blockers,
     });
-    if (!validation.valid
-      || artifact.payloadSha256 !== selected.independentReviewPayloadSha256
-      || artifact.reviewMode !== 'clean-independent'
-      || artifact.receipt?.verdict !== 'clean'
-      || artifact.receipt?.blocker !== ''
-      || !Array.isArray(artifact.receipt?.findings)
-      || artifact.receipt.findings.length !== 0) {
-      fail('Selected independent review payload is invalid, stale or not clean.', {
-        blockers: validation.blockers,
-      });
-    }
-    return Object.freeze({
-      workflowRunId: selected.independentReviewWorkflowRunId,
-      workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
-      artifactId: selected.independentReviewArtifactId,
-      artifactDigest: selected.independentReviewArtifactDigest,
-      payloadSha256: selected.independentReviewPayloadSha256,
-      reviewMode: artifact.reviewMode,
-      findings: Object.freeze([]),
-    });
-  } finally {
-    rmSync(temporaryDirectory, { recursive: true, force: true });
   }
+  return Object.freeze({
+    workflowRunId: selected.independentReviewWorkflowRunId,
+    workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+    artifactId: selected.independentReviewArtifactId,
+    artifactDigest: selected.independentReviewArtifactDigest,
+    payloadSha256: selected.independentReviewPayloadSha256,
+    reviewMode: artifact.reviewMode,
+    findings: Object.freeze([]),
+  });
 }
 
 async function collectEvidence(context, expected = {}) {
   const execution = await currentWorkflowExecution(context);
   const identity = context.dispatch.identity;
   const [repository, pullRequest, liveMainRef, headCommit, comparison, review, environment, workflowRuns] = await Promise.all([
-    apiJson(`/repos/${context.owner}/${context.repo}`),
+    apiJson(`/repos/${context.owner}/${context.repo}`, { authorization: 'ruleset-proof' }),
     apiJson(`/repos/${context.owner}/${context.repo}/pulls/${identity.prNumber}`),
     apiJson(`/repos/${context.owner}/${context.repo}/git/ref/heads/main`),
     apiJson(`/repos/${context.owner}/${context.repo}/git/commits/${identity.sourceHead}`),
@@ -558,7 +553,6 @@ async function collectEvidence(context, expected = {}) {
     repository,
     environment,
     integrationId,
-    { requireBypassProof: mode === 'approve' },
   );
   const independentReview = await loadSelectedIndependentReview(context, evidence.identity);
   const packet = Object.freeze({
@@ -568,7 +562,7 @@ async function collectEvidence(context, expected = {}) {
     requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
     requiredCheckIntegrationId: integrationId,
     activeRulesetIds: configuration.activeRulesetIds,
-    rulesetSnapshotSha256: configuration.rulesetSnapshotSha256,
+    configurationSnapshotSha256: configuration.configurationSnapshotSha256,
     workflows: workflows.evidence,
     independentReview,
   });
@@ -576,7 +570,7 @@ async function collectEvidence(context, expected = {}) {
   return { evidence, workflows, configuration, independentReview, packet, evidenceSha256 };
 }
 
-function expectedProtectedEvidence() {
+function expectedAdmittedEvidence() {
   const expected = {
     repository: text(process.env.STEPHANOS_EXPECTED_REPOSITORY),
     prNumber: positiveInteger(process.env.STEPHANOS_EXPECTED_PR_NUMBER),
@@ -594,7 +588,7 @@ function expectedProtectedEvidence() {
     || !/^[a-f0-9]{40}$/.test(expected.baseSha)
     || !expected.workflowRunId || !expected.workflowRunAttempt
     || !/^[a-f0-9]{64}$/.test(expected.evidenceSha256)) {
-    fail('Pre-environment personal-repository evidence identity is incomplete or unsafe.');
+    fail('Protected evidence-admission identity is incomplete or unsafe.');
   }
   return expected;
 }
@@ -673,7 +667,7 @@ async function main() {
       evidence_sha256: collected.evidenceSha256,
     });
     process.stdout.write(`${JSON.stringify({
-      finalStatus: 'PERSONAL_REPOSITORY_EVIDENCE_READY_BEFORE_PROTECTED_ENVIRONMENT',
+      finalStatus: 'PERSONAL_REPOSITORY_EVIDENCE_READY_AFTER_PROTECTED_ADMISSION',
       mutationAuthority: false,
       evidenceSha256: collected.evidenceSha256,
       ...identity,
@@ -684,10 +678,10 @@ async function main() {
     return;
   }
 
-  const expected = expectedProtectedEvidence();
+  const expected = expectedAdmittedEvidence();
   const collected = await collectEvidence(context, expected);
   if (collected.evidenceSha256 !== expected.evidenceSha256) {
-    fail('Personal-repository evidence changed after protected approval was requested.', {
+    fail('Personal-repository evidence changed after protected evidence admission.', {
       blockers: ['personal-repository-evidence-digest-mismatch'],
       expectedEvidenceSha256: expected.evidenceSha256,
       observedEvidenceSha256: collected.evidenceSha256,
