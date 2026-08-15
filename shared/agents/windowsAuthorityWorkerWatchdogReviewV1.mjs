@@ -15,8 +15,18 @@ const REVIEWED_IDENTITY = Object.freeze({
   prNumber: 1732,
   branch: 'agent/watchdog-control-plane-bootstrap-recovery-v1',
 });
-const REVIEWED_LINEAGE_ANCHOR = 'a552b13c0a3e6a338d21e8d395dfcf12d12a3475';
-const SUPERSEDED_PUBLISHED_HEAD = '707f7db9964b5e100aab21d6735108a4c5e53457';
+const REVIEWED_LINEAGE_ANCHOR = 'd1508b4d7f2bf30d8db47784505e2d509c8e36b1';
+const SUPERSEDED_LINEAGE_HEADS = new Set([
+  '44db9156eeee26f1ab146fb447c0c59851ca3dcb',
+  '707f7db9964b5e100aab21d6735108a4c5e53457',
+  'a552b13c0a3e6a338d21e8d395dfcf12d12a3475',
+  '9b6f2bc8964440fe6ff9f228426372c0e8f2069e',
+  '4b890bf8d943beadb5a3a904d5016beb8160235f',
+  'f28494ac9fcb34bef03582ee436ac9a7f9398a65',
+  'edf1ffa303f7583ea73ab11d018f23a4ab73c7be',
+  '762acc04cab685bad2cb635f928596d0c4d5d1da',
+  'd3fff6197827564490d94734d2c92381297db300',
+]);
 const LINEAGE_SCHEMA = 'stephanos.windows-authority-reconciliation-lineage.v1';
 const LINEAGE_KEYS = Object.freeze([
   'baseSha', 'comparison', 'liveMainAfterSha', 'liveMainBeforeSha', 'parents',
@@ -27,22 +37,22 @@ const COMPARISON_KEYS = Object.freeze([
 ]);
 const REVIEWED_SOURCE_MANIFEST = Object.freeze({
   'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1': Object.freeze({
-    blobSha: '4167e76e0b79d3986712b590c6fe49fe9bb3ba85',
-    size: 15375,
+    blobSha: '6ccecd4c01debe3823a7be28e7b593a7350bc633',
+    size: 16961,
   }),
   'scripts/windows/restart-approved-stephanos-runtime.ps1': Object.freeze({
-    blobSha: '98223fd525f4777de0dee009540238d9fdfe3487',
-    size: 25782,
+    blobSha: '1a9d166be395f3b3a1246ab5f2de9a2647639f83',
+    size: 56458,
   }),
   'scripts/windows/start-mission-orchestrator-worker.ps1': Object.freeze({
-    blobSha: 'cac4b824c6656e4f45cda405cf807afddb8b1441',
-    size: 5213,
+    blobSha: '911a9c7265668c8f9942449010b0452d1ac14aa8',
+    size: 24663,
   }),
 });
 const SOURCE_RECORD_KEYS = Object.freeze([
   'blobSha', 'content', 'exists', 'path', 'ref', 'repository', 'schemaVersion', 'size',
 ]);
-const FIXED_PROBE_POWERSHELL_INVOCATION = /\$restartArguments = @\(\s*'-NoProfile',\s*'-NonInteractive',\s*'-ExecutionPolicy',\s*'Bypass',\s*'-File',\s*\$runtimeRestartPath,\s*'-Target',\s*'mission-worker',\s*'-ExpectedHead',\s*\$repositoryHead,\s*'-TimeoutSeconds',\s*'30'\s*\)\s*\$restartStartedAtUtc = \[datetime\]::UtcNow\s*\$restartOutput = @\(& \$canonicalPowerShell @restartArguments 2>&1\)/;
+const FIXED_PROBE_POWERSHELL_INVOCATION = /\$restartArguments = @\(\s*'-NoProfile',\s*'-NonInteractive',\s*'-ExecutionPolicy',\s*'Bypass',\s*'-File',\s*\$runtimeRestartPath,\s*'-Target',\s*'mission-worker',\s*'-ExpectedHead',\s*\$repositoryHead,\s*'-TimeoutSeconds',\s*'30',\s*'-DeadlineUtc',\s*\$canonicalDeadlineUtc\s*\)\s*\$restartStartedAtUtc = \[datetime\]::UtcNow\s*\$restartOutput = @\(& \$canonicalPowerShell @restartArguments 2>&1\)/;
 const EXECUTION_ESTATE_BY_PATH = Object.freeze({
   'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1': Object.freeze({
     callTargets: Object.freeze({ '$canonicalgit': 3, '$canonicalpowershell': 1, '$gitexecutable': 1 }),
@@ -50,19 +60,19 @@ const EXECUTION_ESTATE_BY_PATH = Object.freeze({
     fixedBindings: Object.freeze({ canonicalgit: 1, canonicalpowershell: 1, runtimerestartpath: 1, restartarguments: 1 }),
   }),
   'scripts/windows/restart-approved-stephanos-runtime.ps1': Object.freeze({
-    callTargets: Object.freeze({ '$canonicalgit': 2, '$condition': 1, '$gitexecutable': 4 }),
-    functions: Object.freeze(['get-canonicaltaskplan', 'get-verifiedbackendlistener', 'get-verifiedfreshworkerinstance', 'get-verifiedworkerprocessfromheartbeat', 'read-canonicalworkersourceproof', 'read-freshbackendreceipt', 'read-publicmainhead', 'stop-newlystartedownedworker', 'stop-withblocker', 'test-backendhealth', 'wait-until']),
+    callTargets: Object.freeze({ '$canonicalgit': 2, '$condition': 2, '$gitexecutable': 4 }),
+    functions: Object.freeze(['assert-beforeoperationdeadline', 'convertfrom-windowscommandline', 'get-canonicaltaskplan', 'get-verifiedbackendlistener', 'get-verifiedfreshworkerinstance', 'get-verifiedinvocationprocessfromlaunchreceipt', 'get-verifiedworkerprocessfromheartbeat', 'new-cryptographicinvocationid', 'read-canonicalworkersourceproof', 'read-freshbackendreceipt', 'read-publicmainhead', 'stop-newlystartedownedworker', 'stop-withblocker', 'test-backendhealth', 'test-exactcanonicalworkerprocess', 'test-exactjsonpropertyestate', 'wait-until', 'wait-untiloperationdeadline', 'write-boundedatomicjson']),
     fixedBindings: Object.freeze({ canonicalgit: 1, missionworkercleanuptimeoutseconds: 1, missionworkerstoptimeoutseconds: 1, publicremote: 1 }),
   }),
   'scripts/windows/start-mission-orchestrator-worker.ps1': Object.freeze({
-    callTargets: Object.freeze({ '$canonicalgit': 4, '$canonicalnode': 1 }),
-    functions: Object.freeze([]),
+    callTargets: Object.freeze({ '$canonicalgit': 4 }),
+    functions: Object.freeze(['new-cryptographiclaunchidentityid', 'read-exactinvocationsignal', 'start-exactworkerwithlaunchidentity', 'stop-exactownedworkerprocess', 'write-boundedatomicjson', 'write-boundedcreateonlyjson']),
     fixedBindings: Object.freeze({ canonicalgit: 1, canonicalnode: 1, workerscript: 1 }),
   }),
 });
 const FIXED_PROBE_EXECUTION_ESTATE = Object.freeze([
   /\$runtimeRestartPath\s*=\s*\[System\.IO\.Path\]::GetFullPath\(\(Join-Path \$repositoryRoot 'scripts\\windows\\restart-approved-stephanos-runtime\.ps1'\)\)/,
-  /foreach\s*\(\$requiredExecutable in @\(\$canonicalGit, \$canonicalPowerShell\)\)/,
+  /foreach\s*\(\$requiredExecutable in @\(\$canonicalGit, \$canonicalNode, \$canonicalPowerShell\)\)/,
   /function Read-PublicMainHead\s*\{[\s\S]*?param\(\[string\]\$GitExecutable\)[\s\S]*?\$output\s*=\s*@\(& \$GitExecutable 'ls-remote' '--exit-code' \$publicRemote 'refs\/heads\/main' 2>&1\)[\s\S]*?\}/,
   /\$repositoryBranchOutput\s*=\s*@\(& \$canonicalGit -C \$repositoryRoot symbolic-ref --quiet --short HEAD 2>&1\)/,
   /\$repositoryHeadOutput\s*=\s*@\(& \$canonicalGit -C \$repositoryRoot rev-parse --verify HEAD 2>&1\)/,
@@ -172,7 +182,7 @@ function exactReviewedLineage(input) {
     const lineage = input.lineageEvidence;
     if (!SHA.test(sourceHead) || !SHA.test(baseSha)
       || sourceHead === REVIEWED_LINEAGE_ANCHOR
-      || sourceHead === SUPERSEDED_PUBLISHED_HEAD
+      || SUPERSEDED_LINEAGE_HEADS.has(sourceHead)
       || sourceHead === baseSha
       || !exactDataRecord(lineage, LINEAGE_KEYS)
       || lineage.schemaVersion !== LINEAGE_SCHEMA
@@ -537,6 +547,72 @@ function reviewProbe(source, path, findings) {
   reviewSharedPowerShellExecutionEstate(inspection, path, findings);
 }
 
+function reviewFinalWorkerProofBeforeConfirmation(source, path, findings) {
+  const postProof = source.indexOf("-Phase 'POST_START'");
+  const finalTaskRead = source.indexOf(
+    "$afterTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\' -ErrorAction Stop",
+    postProof,
+  );
+  const exactTaskState = source.indexOf("if ([string]$afterTask.State -ne 'Running')", finalTaskRead);
+  const preparedReceipt = source.indexOf('$successReceiptJson = [PSCustomObject]@{', exactTaskState);
+  const finalDeadline = source.indexOf('Assert-BeforeOperationDeadline -RequiredReserveSeconds 1', preparedReceipt);
+  const confirmationWrite = source.indexOf('Write-BoundedAtomicJson -Path $confirmationPath', postProof);
+  const guardedCatch = source.indexOf('\n        catch {', confirmationWrite);
+  const blockerGate = source.indexOf('if ($startupBlocker)', guardedCatch);
+  const cleanup = source.indexOf('Stop-NewlyStartedOwnedWorker', blockerGate);
+  const successPublication = source.indexOf('Write-Output $successReceiptJson', cleanup);
+  const confirmationTail = source.slice(confirmationWrite, guardedCatch).trim();
+  const exactConfirmationTail = /^Write-BoundedAtomicJson -Path \$confirmationPath -Value \(\[PSCustomObject\]@\{\s*schemaVersion = 'stephanos\.mission-worker-restart-confirmation\.v1'\s*invocationId = \$script:invocationId\s*taskName = \$plan\.TaskName\s*repositoryRoot = \$repoRoot\s*headSha = \$ExpectedHead\s*workerPid = \$startedWorker\.ProcessId\s*workerStartedAtUtc = \$startedWorker\.ProcessStartedAtUtc\.ToUniversalTime\(\)\.ToString\('o'\)\s*confirmedAtUtc = \[datetime\]::UtcNow\.ToString\('o'\)\s*deadlineUtc = \$script:operationDeadlineUtc\.ToString\('yyyy-MM-ddTHH:mm:ss\.fffZ'\)\s*\}\)\s*}$/s.test(confirmationTail);
+
+  if (postProof < 0
+    || finalTaskRead <= postProof
+    || exactTaskState <= finalTaskRead
+    || preparedReceipt <= exactTaskState
+    || finalDeadline <= preparedReceipt
+    || confirmationWrite <= finalDeadline
+    || guardedCatch <= confirmationWrite
+    || blockerGate <= guardedCatch
+    || cleanup <= blockerGate
+    || successPublication <= cleanup
+    || !exactConfirmationTail) {
+    findings.push(finding(
+      'watchdog-restart-confirmation-ordering-invalid',
+      'Worker confirmation must be the final handoff after exact task state, terminal receipt construction and deadline proof, with every earlier failure routed through bounded cleanup.',
+      path,
+    ));
+  }
+}
+
+function reviewLauncherPostStartCleanup(source, path, findings) {
+  const helperStart = source.indexOf('function Start-ExactWorkerWithLaunchIdentity');
+  const helperEnd = source.indexOf('foreach ($requiredFile', helperStart);
+  const helper = helperStart >= 0 && helperEnd > helperStart
+    ? source.slice(helperStart, helperEnd)
+    : '';
+  const started = helper.indexOf('$workerProcessStarted = $true');
+  const owned = helper.indexOf('$ownedWorkerProcess = $workerProcess', started);
+  const startTime = helper.indexOf('$workerStartedAtUtc = $workerProcess.StartTime.ToUniversalTime()', owned);
+  const receipt = helper.indexOf('Write-BoundedCreateOnlyJson -Path $launchReceiptPath', startTime);
+  const caught = helper.indexOf('catch {', receipt);
+  const cleanup = helper.indexOf('Stop-ExactOwnedWorkerProcess `', caught);
+  const propagated = helper.indexOf('throw $launchFailure', cleanup);
+  if (!helper
+    || started < 0
+    || owned <= started
+    || startTime <= owned
+    || receipt <= startTime
+    || caught <= receipt
+    || cleanup <= caught
+    || propagated <= cleanup
+    || !/if \(\$workerProcessStarted\)[\s\S]*-Process \$workerProcess[\s\S]*-OwnedProcess \$ownedWorkerProcess[\s\S]*-ExpectedNode \$canonicalNode[\s\S]*-ExpectedWorkerScript \$workerScript[\s\S]*-ExpectedStartedAtUtc \$workerStartedAtUtc[\s\S]*throw "Mission worker launch-identity cleanup failed: \$\(\$_\.Exception\.Message\)"/.test(helper)) {
+    findings.push(finding(
+      'watchdog-launcher-post-start-cleanup-guard-incomplete',
+      'Every operation after a successful child start, including StartTime inspection and immutable launch-receipt publication, must remain inside exact owned-child cleanup.',
+      path,
+    ));
+  }
+}
+
 function reviewRestart(source, path, findings) {
   const inspection = inspectPowerShellLexically(source);
   const executableSource = inspection?.commentsRemoved ?? '';
@@ -545,9 +621,16 @@ function reviewRestart(source, path, findings) {
   requirePattern(findings, executableSource, /Get-Item -LiteralPath \$canonicalGit -Force[\s\S]*\$canonicalGitItem\.LinkType[\s\S]*\[System\.IO\.FileAttributes\]::ReparsePoint[\s\S]*CANONICAL_GIT_IDENTITY_INVALID/, 'watchdog-restart-git-identity-incomplete', 'Worker restart must reject linked, substituted or non-file Git identities.', path);
   requirePattern(findings, executableSource, /\$preStartSourceProof = Read-CanonicalWorkerSourceProof[\s\S]*-Phase 'PRE_START'[\s\S]*Start-ScheduledTask[\s\S]*\$postStartSourceProof = Read-CanonicalWorkerSourceProof[\s\S]*-Phase 'POST_START'/, 'watchdog-restart-clean-boundary-incomplete', 'Worker restart must bracket task start with canonical branch, head, public-main and tracked-clean proof.', path);
   requirePattern(findings, executableSource, /function Read-CanonicalWorkerSourceProof[\s\S]*symbolic-ref --quiet --short HEAD[\s\S]*rev-parse --verify HEAD[\s\S]*status '--porcelain=v1' '--untracked-files=no'[\s\S]*Read-PublicMainHead/, 'watchdog-restart-source-proof-incomplete', 'Worker restart source proof must bind branch, head, tracked source and public main through fixed Git.', path);
-  requirePattern(findings, executableSource, /function Get-VerifiedFreshWorkerInstance[\s\S]*\[string\]\$heartbeat\.headSha -ne \$ExpectedSourceHead[\s\S]*\[string\]\$heartbeat\.repositoryRoot -ne \$ExpectedRepoRoot[\s\S]*\$processStartedAtUtc -le \$StartedAfterUtc[\s\S]*\$expectedWorkerPath[\s\S]*\$commandLine\.Contains\(\$expectedWorkerPath\)/, 'watchdog-restart-worker-identity-incomplete', 'Fresh worker identity must bind repository, head, process start time and canonical command.', path);
+  requirePattern(findings, executableSource, /function Get-VerifiedFreshWorkerInstance[\s\S]*\$launchReceipt\.invocationId -ne \$ExpectedInvocationId[\s\S]*\$launchReceipt\.repositoryRoot -ne \$ExpectedRepoRoot[\s\S]*\$launchReceipt\.headSha -ne \$ExpectedSourceHead[\s\S]*\$receiptProcessStartedAtUtc -le \$StartedAfterUtc[\s\S]*\$sharedHeartbeatObservedAtUtc = \[datetime\]::UtcNow[\s\S]*Get-Content -LiteralPath \$HeartbeatPath[\s\S]*\$timestamp -gt \$sharedHeartbeatObservedAtUtc[\s\S]*\$invocationHeartbeatObservedAtUtc = \[datetime\]::UtcNow[\s\S]*Get-Content -LiteralPath \$invocationHeartbeatPath[\s\S]*\$invocationHeartbeat\.invocationId -ne \$ExpectedInvocationId[\s\S]*\$boundHeartbeatTimestampUtc -gt \$invocationHeartbeatObservedAtUtc[\s\S]*Test-ExactCanonicalWorkerProcess/, 'watchdog-restart-fresh-heartbeat-observation-incomplete', 'Fresh worker identity must bind both heartbeats to bounded observation times plus invocation, repository, head, process start and canonical command.', path);
+  requirePattern(findings, executableSource, /\$boundWorkerStartedAtUtc\.Ticks -ne \$receiptProcessStartedAtUtc\.Ticks[\s\S]*\$boundHeartbeatTimestampUtc -le \$receiptProcessStartedAtUtc\s*`?\r?\n\s*-or \$boundHeartbeatTimestampUtc -gt \$invocationHeartbeatObservedAtUtc\s*`?\r?\n\s*-or \$timestamp -lt \$boundHeartbeatTimestampUtc[\s\S]*\$processStartedAtUtc\.Ticks -ne \$receiptProcessStartedAtUtc\.Ticks[\s\S]*Test-ExactCanonicalWorkerProcess -Process \$process -ExpectedRepoRoot \$ExpectedRepoRoot/, 'watchdog-restart-cleanup-heartbeat-proof-incomplete', 'Cleanup must accept a non-future advanced shared heartbeat only after immutable launch-receipt, process-start and canonical-command identity remains proven.', path);
+  requirePattern(findings, executableSource, /function Get-VerifiedWorkerProcessFromHeartbeat[\s\S]*Test-ExactJsonPropertyEstate -Record \$heartbeat[\s\S]*\$launchIdentityId = \[string\]\$heartbeat\.launchIdentityId[\s\S]*\$heartbeatProcessStartedAtUtc = \[datetime\]::Parse\(\[string\]\$heartbeat\.workerStartedAtUtc\)[\s\S]*\$heartbeatTimestampUtc -gt \$observedAtUtc[\s\S]*TotalSeconds -gt 120[\s\S]*mission-orchestrator-worker-launch-identity-\$launchIdentityId\.json[\s\S]*Test-ExactJsonPropertyEstate -Record \$launchReceipt[\s\S]*\$receiptProcessStartedAtUtc\.Ticks -ne \$heartbeatProcessStartedAtUtc\.Ticks[\s\S]*\$liveProcessStartedAtUtc\.Ticks -ne \$heartbeatProcessStartedAtUtc\.Ticks[\s\S]*LaunchReceiptDigest = \$launchReceiptDigest/, 'watchdog-restart-existing-worker-identity-incomplete', 'Existing-worker cleanup must bind a non-future fresh heartbeat identity to an immutable launch receipt and the live process start identity.', path);
+  requirePattern(findings, executableSource, /\$oldWorkerRecheck\.ProcessId -ne \$oldWorker\.ProcessId[\s\S]*\$oldWorkerRecheck\.ProcessStartedAtUtc\.Ticks -ne \$oldWorker\.ProcessStartedAtUtc\.Ticks[\s\S]*\$oldWorkerRecheck\.LaunchIdentityId -ne \$oldWorker\.LaunchIdentityId[\s\S]*\$oldWorkerRecheck\.LaunchReceiptPath -ne \$oldWorker\.LaunchReceiptPath[\s\S]*\$oldWorkerRecheck\.LaunchReceiptDigest -ne \$oldWorker\.LaunchReceiptDigest[\s\S]*\$oldWorkerRecheck\.HeadSha -ne \$oldWorker\.HeadSha[\s\S]*\$oldWorkerRecheck\.HeartbeatTimestampUtc -lt \$oldWorker\.HeartbeatTimestampUtc/, 'watchdog-restart-existing-worker-reread-incomplete', 'Both live reads must retain one launch, process-start, receipt-digest and monotonic-heartbeat identity before cleanup.', path);
+  requirePattern(findings, executableSource, /\[System\.Diagnostics\.Process\]::GetProcessById\(\$processId\)[\s\S]*\$null = \$processCapability\.Handle[\s\S]*\$processCapability\.StartTime\.ToUniversalTime\(\)[\s\S]*ProcessCapability = \$processCapability[\s\S]*\$reverifiedProcessCapability = \$oldWorkerRecheck\.ProcessCapability[\s\S]*\$reverifiedProcessCapability\.HasExited[\s\S]*\$null = \$reverifiedProcessCapability\.Handle[\s\S]*\$reverifiedProcessCapability\.StartTime\.ToUniversalTime\(\)[\s\S]*\$reverifiedProcessCapability\.Kill\(\)[\s\S]*\$reverifiedProcessCapability\.WaitForExit\(10000\)/, 'watchdog-restart-existing-worker-process-capability-incomplete', 'Existing-worker cleanup must terminate only through the exact final reverified System.Diagnostics.Process capability.', path);
+  forbidPattern(findings, executableSource, /\$(?:sharedHeartbeatObservedAtUtc|invocationHeartbeatObservedAtUtc|heartbeatTimestampUtc)\s*(?:=|-[gl][et])[^\r\n]*(?:Add(?:Milliseconds|Seconds|Minutes)\(|MaxValue)|Stop-Process\s+-Id\s+\$oldWorker(?:Recheck)?\.ProcessId/i, 'watchdog-restart-existing-worker-authority-widened', 'Every worker heartbeat must reject clock lead without widening an observation time, and cleanup must not re-resolve a PID for termination.', path);
   requirePattern(findings, executableSource, /if \(\$startupBlocker\) \{[\s\S]*Stop-NewlyStartedOwnedWorker[\s\S]*Stop-WithBlocker \$cleanupBlocker[\s\S]*Stop-WithBlocker \$startupBlocker/, 'watchdog-restart-dirty-cleanup-missing', 'Every post-start failure must enter the bounded owned-worker cleanup path before terminal blocking.', path);
-  requirePattern(findings, executableSource, /function Stop-NewlyStartedOwnedWorker[\s\S]*\[string\]\$Plan\.TaskName -ne 'Stephanos Mission Orchestrator Worker'[\s\S]*Get-VerifiedFreshWorkerInstance[\s\S]*\$verifiedWorker\.ProcessId -ne \$ExpectedProcessId[\s\S]*Stop-ScheduledTask[\s\S]*Stop-Process -Id \$verifiedWorker\.ProcessId -Force/, 'watchdog-restart-cleanup-identity-incomplete', 'Cleanup must remain fixed-task and fresh-worker identity bound.', path);
+  requirePattern(findings, executableSource, /function Stop-NewlyStartedOwnedWorker[\s\S]*\[string\]\$Plan\.TaskName -ne 'Stephanos Mission Orchestrator Worker'[\s\S]*\[string\]\$candidateClaim\.invocationId -ne \$ExpectedInvocationId[\s\S]*Get-VerifiedInvocationProcessFromLaunchReceipt[\s\S]*\$verifiedInvocationProcess\.ProcessId -ne \$ExpectedProcessId[\s\S]*Get-VerifiedFreshWorkerInstance[\s\S]*mission-orchestrator-worker-restart-cancel-\$ExpectedInvocationId\.json[\s\S]*MISSION_WORKER_CLEANUP_PROCESS_DID_NOT_STOP[\s\S]*MISSION_WORKER_CLEANUP_TASK_DID_NOT_STOP/, 'watchdog-restart-cleanup-identity-incomplete', 'Cleanup must remain fixed-task, fresh-invocation and verified-process identity bound.', path);
+  requirePattern(findings, executableSource, /schemaVersion = 'stephanos\.mission-worker-restart-cancel\.v1'[\s\S]*deadlineUtc = \$script:operationDeadlineUtc\.ToString\('yyyy-MM-ddTHH:mm:ss\.fffZ'\)[\s\S]*workerPid = \$ExpectedProcessId/, 'watchdog-restart-cancellation-deadline-mismatch', 'Cancellation must carry the unchanged operation deadline in the launcher\'s one canonical UTC representation.', path);
+  reviewFinalWorkerProofBeforeConfirmation(executableSource, path, findings);
   requirePattern(findings, executableSource, /headSha -ne \$ExpectedSourceHead[\s\S]*MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT/, 'watchdog-restart-heartbeat-binding-incomplete', 'Worker restart must require a fresh exact-head heartbeat.', path);
   forbidPattern(findings, executableSource, /\[string\]\$TaskName|Get-Command\s+git(?:\.exe)?|Invoke-Expression|Start-Process|Restart-Computer|shutdown\.exe|Stop-Process\s+-Name/i, 'watchdog-restart-arbitrary-authority-forbidden', 'Approved restart must not gain arbitrary target, executable or execution authority.', path);
   reviewSharedPowerShellExecutionEstate(inspection, path, findings);
@@ -561,7 +644,15 @@ function reviewLauncher(source, path, findings) {
   requirePattern(findings, executableSource, /branch --show-current[\s\S]*\$branch -ne 'main'/, 'watchdog-launcher-main-branch-unproven', 'Worker launcher must require canonical main.', path);
   requirePattern(findings, executableSource, /status '--porcelain=v1' '--untracked-files=no'[\s\S]*tracked-clean exact-head source/, 'watchdog-launcher-clean-proof-missing', 'Worker launcher must reject tracked source drift before Node starts.', path);
   requirePattern(findings, executableSource, /ls-remote' '--exit-code' \$publicRemote 'refs\/heads\/main'[\s\S]*exact current public main head/, 'watchdog-launcher-public-main-proof-missing', 'Worker launcher must bind execution to current public main.', path);
-  requirePattern(findings, executableSource, /& \$canonicalNode \$workerScript/, 'watchdog-launcher-node-invocation-not-fixed', 'Worker launcher must invoke only canonical Node and the fixed worker.', path);
+  requirePattern(findings, executableSource, /stephanos\.mission-worker-restart-request\.v1[\s\S]*\$restartRequest\.repositoryRoot -ne \$repositoryRoot[\s\S]*\$restartRequest\.headSha -ne \$headSha[\s\S]*mission-orchestrator-worker-restart-claim-\$invocationId\.json/, 'watchdog-launcher-invocation-request-incomplete', 'Worker launcher must claim one exact repository, head and invocation-bound restart request.', path);
+  requirePattern(findings, executableSource, /New-Object System\.Diagnostics\.ProcessStartInfo[\s\S]*\$processStartInfo\.FileName = \$canonicalNode[\s\S]*\$processStartInfo\.Arguments = '"' \+ \$workerScript \+ '"'[\s\S]*\$processStartInfo\.UseShellExecute = \$false[\s\S]*\$processStartInfo\.CreateNoWindow = \$true[\s\S]*\$workerProcess\.Start\(\)/, 'watchdog-launcher-owned-process-start-incomplete', 'Restart launch must use canonical Node, the fixed worker path and a non-shell owned process.', path);
+  requirePattern(findings, executableSource, /function Stop-ExactOwnedWorkerProcess[\s\S]*\[object\]::ReferenceEquals\(\$Process, \$OwnedProcess\)[\s\S]*\$Process\.StartInfo\.FileName[\s\S]*\$Process\.StartInfo\.Arguments[\s\S]*\$Process\.StartInfo\.WorkingDirectory[\s\S]*\$Process\.StartInfo\.UseShellExecute[\s\S]*\$Process\.StartInfo\.CreateNoWindow[\s\S]*\$Process\.StartTime\.ToUniversalTime\(\)[\s\S]*\$Process\.Kill\(\)[\s\S]*\$Process\.WaitForExit\(5000\)/, 'watchdog-launcher-owned-cleanup-incomplete', 'Launcher cleanup must retain the exact in-memory child capability and reverify its fixed command and process-start identity before termination.', path);
+  reviewLauncherPostStartCleanup(executableSource, path, findings);
+  requirePattern(findings, executableSource, /function Read-ExactInvocationSignal[\s\S]*\$record\.deadlineUtc -ne \$restartDeadlineUtc\.ToString\('yyyy-MM-ddTHH:mm:ss\.fffZ'\)/, 'watchdog-launcher-cancellation-deadline-mismatch', 'The launcher must accept signals only at the exact canonical restart deadline.', path);
+  requirePattern(findings, executableSource, /function Start-ExactWorkerWithLaunchIdentity[\s\S]*\$processStartInfo\.FileName = \$canonicalNode[\s\S]*\$processStartInfo\.Arguments = '"' \+ \$workerScript \+ '"'[\s\S]*\$processStartInfo\.EnvironmentVariables\['STEPHANOS_MISSION_WORKER_LAUNCH_ID'\] = \$LaunchIdentityId[\s\S]*\$processStartInfo\.EnvironmentVariables\['STEPHANOS_MISSION_WORKER_LAUNCH_RECEIPT_PATH'\] = \$launchReceiptPath[\s\S]*Write-BoundedCreateOnlyJson -Path \$launchReceiptPath[\s\S]*launchIdentityId = \$LaunchIdentityId[\s\S]*workerStartedAtUtc = \$workerStartedAtUtc\.ToString\('o'\)/, 'watchdog-launcher-launch-identity-contract-incomplete', 'Every worker launch must publish one immutable exact-process launch identity before heartbeat authority is accepted.', path);
+  requirePattern(findings, executableSource, /\$heartbeatObservedAtUtc = \[datetime\]::UtcNow\s*\r?\n\s*\$workerHeartbeat = Get-Content -LiteralPath \$heartbeatPath[\s\S]*\$heartbeatTimestampUtc -gt \$workerStartedAtUtc[\s\S]*\$heartbeatTimestampUtc -le \$heartbeatObservedAtUtc[\s\S]*\$workerProcess\.StartTime\.ToUniversalTime\(\)\.Ticks -eq \$workerStartedAtUtc\.Ticks[\s\S]*stephanos\.mission-worker-restart-confirmation\.v1[\s\S]*if \(\$confirmation -and \$invocationHeartbeatBound\)/, 'watchdog-launcher-fresh-heartbeat-observation-incomplete', 'Launcher heartbeat evidence must be observed once, reject every future timestamp, remain strictly after process start and gate confirmation.', path);
+  forbidPattern(findings, executableSource, /\$heartbeatObservedAtUtc\s*(?:=|-[gl][et])[^\r\n]*(?:Add(?:Milliseconds|Seconds|Minutes)\(|MaxValue)/i, 'watchdog-launcher-fresh-heartbeat-observation-widened', 'Launcher heartbeat observation time must not permit positive clock lead.', path);
+  requirePattern(findings, executableSource, /Start-ExactWorkerWithLaunchIdentity\s*`?[\s\S]*-LaunchIdentityId \$invocationId\s*`?[\s\S]*-LaunchKind 'guarded-restart'[\s\S]*Start-ExactWorkerWithLaunchIdentity\s*`?[\s\S]*-LaunchIdentityId \$ordinaryLaunchId\s*`?[\s\S]*-LaunchKind 'ordinary'/, 'watchdog-launcher-common-launch-boundary-incomplete', 'Guarded and ordinary launches must share the same immutable launch-identity boundary.', path);
   forbidPattern(findings, executableSource, /Get-Command\s+(?:git|node)(?:\.exe)?|Invoke-Expression|Start-Process|git\s+(?:reset|clean|checkout|switch|push)/i, 'watchdog-launcher-dynamic-authority-forbidden', 'Worker launcher must not gain path resolution or source mutation authority.', path);
   reviewSharedPowerShellExecutionEstate(inspection, path, findings);
 }

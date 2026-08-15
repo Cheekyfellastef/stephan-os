@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import {
+  DEFAULT_STALE_AFTER_MS,
   SHARED_WORKSPACE_RECORD_KINDS,
   SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
   validateSharedWorkspaceRecord,
@@ -20,6 +21,13 @@ export const STEPHANOS_SHARED_WORKSPACE_CONVERSATION_SUBTYPE = Object.freeze({
 });
 
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
+const CONVERSATION_BODY_KEYS = Object.freeze(['schemaVersion', 'subtype', 'payload']);
+const CONVERSATION_RECORD_KEYS = Object.freeze([
+  'schemaVersion', 'kind', 'messageId', 'participantId', 'recipientParticipantId',
+  'timestampUtc', 'correlationId', 'relatedIssue', 'relatedPr', 'proofRefs', 'channel',
+  'recordSubtype', 'subjectId', 'summary', 'body', 'sourceMutationAllowed',
+  'commandExecutionAllowed', 'approvalAllowed', 'mergeAllowed', 'deploymentAllowed',
+]);
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -34,9 +42,63 @@ function stableHash(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
-function uniqueRefs(values) {
-  if (!Array.isArray(values)) return [];
-  return [...new Set(values.map(text).filter(Boolean))];
+function denseStringList(value) {
+  try {
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return null;
+    if (Object.getOwnPropertySymbols(value).length > 0) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const length = descriptors.length?.value;
+    if (!Number.isSafeInteger(length) || length < 0 || length > 64) return null;
+    const actual = Object.keys(descriptors).sort();
+    const expected = ['length', ...Array.from({ length }, (_, index) => String(index))].sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) return null;
+    const output = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor || descriptor.get || descriptor.set || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) return null;
+      const normalized = text(descriptor.value);
+      if (!normalized) return null;
+      output.push(normalized);
+    }
+    return Object.freeze([...new Set(output)]);
+  } catch {
+    return null;
+  }
+}
+
+function exactDataRecord(value, expectedKeys) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return null;
+    if (Object.getOwnPropertySymbols(value).length > 0) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const actual = Object.keys(descriptors).sort();
+    const expected = [...expectedKeys].sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) return null;
+    const output = Object.create(null);
+    for (const key of expectedKeys) {
+      const descriptor = descriptors[key];
+      if (!descriptor || descriptor.get || descriptor.set || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) return null;
+      Object.defineProperty(output, key, {
+        value: descriptor.value,
+        enumerable: true,
+        writable: false,
+        configurable: false,
+      });
+    }
+    return Object.freeze(output);
+  } catch {
+    return null;
+  }
+}
+
+function snapshotConversationRecord(record) {
+  const snapshot = exactDataRecord(record, CONVERSATION_RECORD_KEYS);
+  if (!snapshot) return null;
+  const proofRefs = denseStringList(snapshot.proofRefs);
+  if (!proofRefs) return null;
+  return Object.freeze({ ...snapshot, proofRefs });
 }
 
 function authorityBoundary() {
@@ -49,8 +111,8 @@ function authorityBoundary() {
   });
 }
 
-function recordProofRefs(messageId, supplied = []) {
-  return uniqueRefs([`receipts/${messageId}`, ...supplied]);
+function suppliedProofRefs(values) {
+  return denseStringList(values) || Object.freeze([]);
 }
 
 function baseConversationRecord({
@@ -115,17 +177,33 @@ function parseConversationBody(record = {}, expectedSubtype) {
     errors.push('conversation-body-must-be-object');
     return { valid: false, errors, payload: null };
   }
+  const keys = Object.keys(parsed).sort();
+  const expected = [...CONVERSATION_BODY_KEYS].sort();
+  if (JSON.stringify(keys) !== JSON.stringify(expected)) errors.push('conversation-body-shape-mismatch');
   if (parsed.schemaVersion !== STEPHANOS_SHARED_WORKSPACE_CONVERSATION_ADAPTER_SCHEMA_VERSION) errors.push('conversation-body-schema-version-mismatch');
   if (parsed.subtype !== expectedSubtype) errors.push('conversation-body-subtype-mismatch');
   if (!parsed.payload || typeof parsed.payload !== 'object' || Array.isArray(parsed.payload)) errors.push('conversation-body-payload-invalid');
-  return { valid: errors.length === 0, errors, payload: parsed.payload || null };
+  return { valid: errors.length === 0, errors, payload: errors.length === 0 ? parsed.payload : null };
+}
+
+function workspaceNowMs(options = {}) {
+  const candidate = options.workspaceValidationOptions?.nowMs;
+  return Number.isFinite(candidate) ? candidate : Date.now();
 }
 
 function workspaceValidation(record, options = {}) {
-  const validation = validateSharedWorkspaceRecord(record, options.workspaceValidationOptions);
+  const nowMs = workspaceNowMs(options);
+  const validation = validateSharedWorkspaceRecord(record, {
+    nowMs,
+    staleAfterMs: DEFAULT_STALE_AFTER_MS,
+  });
+  const errors = [...(validation.errors || [])];
+  const recordMs = Date.parse(text(record?.timestampUtc));
+  if (validation.stale) errors.push('stale-record');
+  if (Number.isFinite(recordMs) && recordMs > nowMs) errors.push('future-record');
   return {
-    valid: validation.valid,
-    errors: validation.errors || [],
+    valid: validation.valid && errors.length === 0,
+    errors,
     validation,
   };
 }
@@ -137,11 +215,20 @@ function roundValidationOptions(options = {}) {
   };
 }
 
+function proofRefsOrError(options = {}) {
+  const proofRefs = suppliedProofRefs(options.proofRefs);
+  return proofRefs.length > 0
+    ? { valid: true, proofRefs, errors: [] }
+    : { valid: false, proofRefs, errors: ['proofRefs-required-from-caller'] };
+}
+
 export function createStephanosWorkspaceQuestionRecord(question, options = {}) {
   const validation = validateStephanosCapabilityQuestion(question, options.questionValidationOptions);
   if (!validation.valid) {
     return Object.freeze({ valid: false, record: null, errors: Object.freeze(validation.errors.map((error) => `question:${error}`)) });
   }
+  const proof = proofRefsOrError(options);
+  if (!proof.valid) return Object.freeze({ valid: false, record: null, errors: Object.freeze(proof.errors) });
 
   const relatedIssue = text(options.relatedIssue || '#1308');
   const relatedPr = text(options.relatedPr);
@@ -162,7 +249,7 @@ export function createStephanosWorkspaceQuestionRecord(question, options = {}) {
     subjectId: question.questionId,
     summary: `Question ${question.questionId} for ${question.targetParticipantId}`,
     body: conversationBody(STEPHANOS_SHARED_WORKSPACE_CONVERSATION_SUBTYPE.QUESTION, question),
-    proofRefs: recordProofRefs(messageId, options.proofRefs),
+    proofRefs: proof.proofRefs,
   });
   const workspace = workspaceValidation(record, options);
   return Object.freeze({
@@ -178,6 +265,8 @@ export function createStephanosWorkspaceAnswerRecord(answer, options = {}) {
   if (!validation.valid) {
     return Object.freeze({ valid: false, record: null, errors: Object.freeze(validation.errors.map((error) => `answer:${error}`)) });
   }
+  const proof = proofRefsOrError(options);
+  if (!proof.valid) return Object.freeze({ valid: false, record: null, errors: Object.freeze(proof.errors) });
   const recipientParticipantId = safeId(options.recipientParticipantId);
   if (!recipientParticipantId) {
     return Object.freeze({ valid: false, record: null, errors: Object.freeze(['recipientParticipantId-invalid']) });
@@ -201,7 +290,7 @@ export function createStephanosWorkspaceAnswerRecord(answer, options = {}) {
     subjectId: answer.questionId,
     summary: `Answer ${answer.answerId} to ${answer.questionId}`,
     body: conversationBody(STEPHANOS_SHARED_WORKSPACE_CONVERSATION_SUBTYPE.ANSWER, answer),
-    proofRefs: recordProofRefs(messageId, options.proofRefs),
+    proofRefs: proof.proofRefs,
   });
   const workspace = workspaceValidation(record, options);
   return Object.freeze({
@@ -212,45 +301,49 @@ export function createStephanosWorkspaceAnswerRecord(answer, options = {}) {
   });
 }
 
-export function decodeStephanosWorkspaceQuestionRecord(record, options = {}) {
+function decodeRecord(record, expectedSubtype, options = {}) {
   const errors = [];
-  const workspace = workspaceValidation(record, options);
+  const safeRecord = snapshotConversationRecord(record);
+  if (!safeRecord) return { valid: false, errors: ['record-shape-mismatch'], payload: null, record: null };
+  const workspace = workspaceValidation(safeRecord, options);
   if (!workspace.valid) errors.push(...workspace.errors.map((error) => `workspace:${error}`));
-  if (record?.kind !== SHARED_WORKSPACE_RECORD_KINDS.MESSAGE) errors.push('record-kind-mismatch');
-  if (record?.channel !== STEPHANOS_SHARED_WORKSPACE_CONVERSATION_CHANNEL) errors.push('channel-mismatch');
-  if (record?.recordSubtype !== STEPHANOS_SHARED_WORKSPACE_CONVERSATION_SUBTYPE.QUESTION) errors.push('record-subtype-mismatch');
-  errors.push(...validateAuthorityBoundary(record));
-  const body = parseConversationBody(record, STEPHANOS_SHARED_WORKSPACE_CONVERSATION_SUBTYPE.QUESTION);
+  if (safeRecord.kind !== SHARED_WORKSPACE_RECORD_KINDS.MESSAGE) errors.push('record-kind-mismatch');
+  if (safeRecord.channel !== STEPHANOS_SHARED_WORKSPACE_CONVERSATION_CHANNEL) errors.push('channel-mismatch');
+  if (safeRecord.recordSubtype !== expectedSubtype) errors.push('record-subtype-mismatch');
+  errors.push(...validateAuthorityBoundary(safeRecord));
+  const body = parseConversationBody(safeRecord, expectedSubtype);
   errors.push(...body.errors);
-  if (body.payload) {
-    const questionValidation = validateStephanosCapabilityQuestion(body.payload, options.questionValidationOptions);
+  return { valid: errors.length === 0, errors, payload: body.payload, record: safeRecord };
+}
+
+export function decodeStephanosWorkspaceQuestionRecord(record, options = {}) {
+  const decoded = decodeRecord(record, STEPHANOS_SHARED_WORKSPACE_CONVERSATION_SUBTYPE.QUESTION, options);
+  const errors = [...decoded.errors];
+  if (decoded.payload && decoded.record) {
+    const questionValidation = validateStephanosCapabilityQuestion(decoded.payload, options.questionValidationOptions);
     errors.push(...questionValidation.errors.map((error) => `question:${error}`));
-    if (record.participantId !== body.payload.askerParticipantId) errors.push('asker-participant-lineage-mismatch');
-    if (record.recipientParticipantId !== body.payload.targetParticipantId) errors.push('target-participant-lineage-mismatch');
-    if (record.correlationId !== body.payload.roundId) errors.push('round-lineage-mismatch');
-    if (record.subjectId !== body.payload.questionId) errors.push('question-lineage-mismatch');
+    if (decoded.record.participantId !== decoded.payload.askerParticipantId) errors.push('asker-participant-lineage-mismatch');
+    if (decoded.record.recipientParticipantId !== decoded.payload.targetParticipantId) errors.push('target-participant-lineage-mismatch');
+    if (decoded.record.correlationId !== decoded.payload.roundId) errors.push('round-lineage-mismatch');
+    if (decoded.record.subjectId !== decoded.payload.questionId) errors.push('question-lineage-mismatch');
   }
-  return Object.freeze({ valid: errors.length === 0, question: errors.length === 0 ? body.payload : null, errors: Object.freeze(errors) });
+  return Object.freeze({ valid: errors.length === 0, question: errors.length === 0 ? decoded.payload : null, errors: Object.freeze(errors) });
 }
 
 export function decodeStephanosWorkspaceAnswerRecord(record, options = {}) {
-  const errors = [];
-  const workspace = workspaceValidation(record, options);
-  if (!workspace.valid) errors.push(...workspace.errors.map((error) => `workspace:${error}`));
-  if (record?.kind !== SHARED_WORKSPACE_RECORD_KINDS.MESSAGE) errors.push('record-kind-mismatch');
-  if (record?.channel !== STEPHANOS_SHARED_WORKSPACE_CONVERSATION_CHANNEL) errors.push('channel-mismatch');
-  if (record?.recordSubtype !== STEPHANOS_SHARED_WORKSPACE_CONVERSATION_SUBTYPE.ANSWER) errors.push('record-subtype-mismatch');
-  errors.push(...validateAuthorityBoundary(record));
-  const body = parseConversationBody(record, STEPHANOS_SHARED_WORKSPACE_CONVERSATION_SUBTYPE.ANSWER);
-  errors.push(...body.errors);
-  if (body.payload) {
-    const answerValidation = validateStephanosCapabilityAnswer(body.payload);
+  const decoded = decodeRecord(record, STEPHANOS_SHARED_WORKSPACE_CONVERSATION_SUBTYPE.ANSWER, options);
+  const errors = [...decoded.errors];
+  const expectedRecipientParticipantId = safeId(options.expectedRecipientParticipantId || options.recipientParticipantId);
+  if (!expectedRecipientParticipantId) errors.push('expectedRecipientParticipantId-required');
+  if (decoded.payload && decoded.record) {
+    const answerValidation = validateStephanosCapabilityAnswer(decoded.payload);
     errors.push(...answerValidation.errors.map((error) => `answer:${error}`));
-    if (record.participantId !== body.payload.responderParticipantId) errors.push('responder-participant-lineage-mismatch');
-    if (record.correlationId !== body.payload.roundId) errors.push('round-lineage-mismatch');
-    if (record.subjectId !== body.payload.questionId) errors.push('question-lineage-mismatch');
+    if (decoded.record.participantId !== decoded.payload.responderParticipantId) errors.push('responder-participant-lineage-mismatch');
+    if (decoded.record.correlationId !== decoded.payload.roundId) errors.push('round-lineage-mismatch');
+    if (decoded.record.subjectId !== decoded.payload.questionId) errors.push('question-lineage-mismatch');
+    if (expectedRecipientParticipantId && decoded.record.recipientParticipantId !== expectedRecipientParticipantId) errors.push('recipient-participant-lineage-mismatch');
   }
-  return Object.freeze({ valid: errors.length === 0, answer: errors.length === 0 ? body.payload : null, errors: Object.freeze(errors) });
+  return Object.freeze({ valid: errors.length === 0, answer: errors.length === 0 ? decoded.payload : null, errors: Object.freeze(errors) });
 }
 
 export function buildStephanosWorkspaceQuestionRound(round, options = {}) {
@@ -282,14 +375,16 @@ export function evaluateStephanosWorkspaceConversation(input = {}) {
   if (answerRecords.length !== 10) errors.push('answer-records-must-contain-exactly-10');
   const answers = [];
   for (let index = 0; index < answerRecords.length; index += 1) {
-    const decoded = decodeStephanosWorkspaceAnswerRecord(answerRecords[index], input);
+    const decoded = decodeStephanosWorkspaceAnswerRecord(answerRecords[index], {
+      ...input,
+      expectedRecipientParticipantId: round?.askerParticipantId,
+    });
     if (!decoded.valid) {
       errors.push(...decoded.errors.map((error) => `answer-record-${index + 1}:${error}`));
       continue;
     }
     if (decoded.answer.roundId !== round?.roundId) errors.push(`answer-record-${index + 1}:round-mismatch`);
     if (decoded.answer.responderParticipantId !== round?.targetParticipantId) errors.push(`answer-record-${index + 1}:responder-mismatch`);
-    if (answerRecords[index].recipientParticipantId !== round?.askerParticipantId) errors.push(`answer-record-${index + 1}:recipient-mismatch`);
     answers.push(decoded.answer);
   }
   if (errors.length > 0) {
@@ -303,18 +398,7 @@ export function evaluateStephanosWorkspaceConversation(input = {}) {
       authority: authorityBoundary(),
     });
   }
-  const evaluation = evaluateStephanosCapabilityRound({
-    round,
-    answers,
-    priorRoundQuestions: input.priorRoundQuestions,
-    priorRoundIntentFingerprints: input.priorRoundIntentFingerprints,
-    boundaryAdjudications: input.boundaryAdjudications,
-    authoritativeEvidenceRefs: input.authoritativeEvidenceRefs,
-    authoritativeSourceRefs: input.authoritativeSourceRefs,
-    authoritativeAdjudicationProofRefs: input.authoritativeAdjudicationProofRefs,
-    evaluationNowMs: input.evaluationNowMs,
-    boundaryAdjudicationStaleAfterMs: input.boundaryAdjudicationStaleAfterMs,
-  });
+  const evaluation = evaluateStephanosCapabilityRound({ round, answers });
   return Object.freeze({
     schemaVersion: STEPHANOS_SHARED_WORKSPACE_CONVERSATION_ADAPTER_SCHEMA_VERSION,
     valid: evaluation.valid,

@@ -78,13 +78,15 @@ const GROUNDED_EPISTEMIC_STATES = new Set([
   'OBSERVED_FROM_RUNTIME_OR_PROOF',
   'INFERRED_FROM_EVIDENCE',
 ]);
-const SETTLED_BOUNDARY_VERDICTS = new Set([
+const BOUNDARY_VERDICTS = new Set([
   'INTENTIONALLY_UNSUPPORTED',
   'EXTERNAL_UNBUILDABLE',
   'UNSAFE_OR_AUTHORITY_BOUNDARY',
 ]);
 const BUILDABLE_GAPS = new Set(STEPHANOS_BUILDABLE_GAP_VERDICTS);
-const DEFAULT_BOUNDARY_ADJUDICATION_STALE_AFTER_MS = 60 * 60 * 1000;
+const RESERVED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+const INVALID = Symbol('invalid-data-only-capability-record');
+const LIMITS = Object.freeze({ array: 256, keys: 64, depth: 12, nodes: 4096, string: 24_000 });
 
 const ROUND_KEYS = Object.freeze([
   'schemaVersion',
@@ -125,17 +127,86 @@ const ANSWER_KEYS = Object.freeze([
   'gapRefs',
   'answeredAtUtc',
 ]);
-const BOUNDARY_ADJUDICATION_KEYS = Object.freeze([
-  'schemaVersion',
-  'answerId',
-  'answerVerdict',
-  'status',
-  'freshness',
-  'evidenceRefs',
-  'sourcesConsulted',
-  'proofRefs',
-  'adjudicatedAtUtc',
-]);
+
+function compareCodePoints(left, right) {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+function dataOnly(value, state = null, depth = 0) {
+  const traversal = state || { seen: new Set(), nodes: 0 };
+  if (value === null || typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value.length <= LIMITS.string ? value : INVALID;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : INVALID;
+  if (!value || typeof value !== 'object' || depth > LIMITS.depth) return INVALID;
+  traversal.nodes += 1;
+  if (traversal.nodes > LIMITS.nodes || traversal.seen.has(value)) return INVALID;
+
+  try {
+    const isArray = Array.isArray(value);
+    const prototype = Object.getPrototypeOf(value);
+    if (isArray ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return INVALID;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Reflect.ownKeys(descriptors);
+    if (keys.some((key) => typeof key !== 'string')) return INVALID;
+    traversal.seen.add(value);
+    try {
+      if (isArray) {
+        const lengthDescriptor = descriptors.length;
+        const length = lengthDescriptor?.value;
+        if (!lengthDescriptor
+          || lengthDescriptor.get
+          || lengthDescriptor.set
+          || !Number.isSafeInteger(length)
+          || length < 0
+          || length > LIMITS.array) return INVALID;
+        const expected = new Set(['length', ...Array.from({ length }, (_, index) => String(index))]);
+        if (keys.some((key) => !expected.has(key))) return INVALID;
+        const output = [];
+        for (let index = 0; index < length; index += 1) {
+          const descriptor = descriptors[String(index)];
+          if (!descriptor
+            || !descriptor.enumerable
+            || !Object.hasOwn(descriptor, 'value')
+            || descriptor.get
+            || descriptor.set) return INVALID;
+          const normalized = dataOnly(descriptor.value, traversal, depth + 1);
+          if (normalized === INVALID) return INVALID;
+          output.push(normalized);
+        }
+        return Object.freeze(output);
+      }
+      if (keys.length > LIMITS.keys) return INVALID;
+      const output = Object.create(null);
+      for (const key of keys.sort(compareCodePoints)) {
+        if (RESERVED_KEYS.has(key)) return INVALID;
+        const descriptor = descriptors[key];
+        if (!descriptor.enumerable
+          || !Object.hasOwn(descriptor, 'value')
+          || descriptor.get
+          || descriptor.set) return INVALID;
+        const normalized = dataOnly(descriptor.value, traversal, depth + 1);
+        if (normalized === INVALID) return INVALID;
+        Object.defineProperty(output, key, {
+          value: normalized,
+          enumerable: true,
+          configurable: false,
+          writable: false,
+        });
+      }
+      return Object.freeze(output);
+    } finally {
+      traversal.seen.delete(value);
+    }
+  } catch {
+    return INVALID;
+  }
+}
+
+function record(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -143,39 +214,6 @@ function text(value) {
 
 function normalizedIntentText(value) {
   return text(value).replace(/\s+/g, ' ').toLowerCase();
-}
-
-function plainRecord(value) {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype);
-}
-
-function denseArray(value) {
-  if (!Array.isArray(value)) return false;
-  for (let index = 0; index < value.length; index += 1) {
-    if (!Object.hasOwn(value, index)) return false;
-  }
-  return true;
-}
-
-function exactRecordShape(record, keys, errors, prefix = '') {
-  if (!plainRecord(record)) {
-    errors.push(`${prefix}record-must-be-plain-object`);
-    return false;
-  }
-  const actual = Reflect.ownKeys(record);
-  if (actual.some((key) => typeof key !== 'string')) {
-    errors.push(`${prefix}symbol-keys-forbidden`);
-    return false;
-  }
-  const expected = new Set(keys);
-  for (const key of actual) {
-    if (!expected.has(key)) errors.push(`${prefix}unknown-field:${key}`);
-  }
-  for (const key of keys) {
-    if (!Object.hasOwn(record, key)) errors.push(`${prefix}missing-field:${key}`);
-  }
-  return errors.length === 0;
 }
 
 function safeId(value) {
@@ -188,28 +226,32 @@ function timestamp(value) {
   return Boolean(candidate && Number.isFinite(parsed) && new Date(parsed).toISOString() === candidate);
 }
 
+function exactShape(value, keys, errors, prefix = '') {
+  if (!record(value)) {
+    errors.push(`${prefix}record-must-be-data-only-object`);
+    return false;
+  }
+  const actual = Object.keys(value).sort(compareCodePoints);
+  const expected = [...keys].sort(compareCodePoints);
+  for (const key of actual) if (!expected.includes(key)) errors.push(`${prefix}unknown-field:${key}`);
+  for (const key of expected) if (!actual.includes(key)) errors.push(`${prefix}missing-field:${key}`);
+  return errors.length === 0;
+}
+
 function stringList(value, field, errors, minimum = 0) {
-  if (!denseArray(value)) {
+  if (!Array.isArray(value)) {
     errors.push(`${field}-must-be-dense-array`);
     return [];
   }
-  const normalized = value.map(text);
-  if (normalized.some((entry) => !entry)) errors.push(`${field}-contains-empty-value`);
-  if (new Set(normalized).size !== normalized.length) errors.push(`${field}-contains-duplicate`);
-  if (normalized.length < minimum) errors.push(`${field}-requires-${minimum}`);
-  return normalized;
-}
-
-function sameStringSet(left = [], right = []) {
-  if (left.length !== right.length) return false;
-  const rightSet = new Set(right);
-  return left.every((value) => rightSet.has(value));
-}
-
-function noveltyFingerprint(value) {
-  const prefix = 'previous-round:';
-  const normalized = text(value);
-  return normalized.startsWith(prefix) ? normalized.slice(prefix.length) : '';
+  const entries = [];
+  for (const item of value) {
+    const normalized = text(item);
+    if (!normalized) errors.push(`${field}-contains-empty-value`);
+    entries.push(normalized);
+  }
+  if (new Set(entries).size !== entries.length) errors.push(`${field}-contains-duplicate`);
+  if (entries.length < minimum) errors.push(`${field}-requires-${minimum}`);
+  return entries;
 }
 
 function boundedText(value, field, errors, maximum = 16_384) {
@@ -220,11 +262,16 @@ function boundedText(value, field, errors, maximum = 16_384) {
 }
 
 function result(errors) {
+  const unique = [...new Set(errors)];
   return Object.freeze({
-    valid: errors.length === 0,
-    errors: Object.freeze([...errors]),
-    refusalReason: errors[0] || '',
+    valid: unique.length === 0,
+    errors: Object.freeze(unique),
+    refusalReason: unique[0] || '',
   });
+}
+
+function canonicalHash(value) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
 function normalizedVerdict(value) {
@@ -235,14 +282,20 @@ function normalizedEpistemicState(value) {
   return text(value).toUpperCase();
 }
 
-function canonicalHash(value) {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+function observeRecord(input, label) {
+  const snapshot = dataOnly(input);
+  if (snapshot === INVALID || !record(snapshot)) {
+    return Object.freeze({ snapshot: null, verdict: result([`${label}-must-be-data-only`]) });
+  }
+  return Object.freeze({ snapshot, verdict: null });
 }
 
 export function canonicalStephanosQuestionIntentFingerprint(question = {}) {
-  const questionClass = text(question.questionClass).toUpperCase();
-  const questionText = normalizedIntentText(question.questionText);
-  const expectedEvidenceClass = text(question.expectedEvidenceClass).toUpperCase();
+  const observed = observeRecord(question, 'question');
+  if (observed.verdict) return '';
+  const questionClass = text(observed.snapshot.questionClass).toUpperCase();
+  const questionText = normalizedIntentText(observed.snapshot.questionText);
+  const expectedEvidenceClass = text(observed.snapshot.expectedEvidenceClass).toUpperCase();
   if (!questionClass || !questionText || !expectedEvidenceClass) return '';
   return `intent-${canonicalHash({ questionClass, questionText, expectedEvidenceClass }).slice(0, 40)}`;
 }
@@ -260,9 +313,9 @@ function existingGoalCandidatesForGap(verdict) {
   })[verdict] || ['#1308']);
 }
 
-export function validateStephanosCapabilityQuestion(question, options = {}) {
+function validateQuestionSnapshot(question, options = {}) {
   const errors = [];
-  if (!exactRecordShape(question, QUESTION_KEYS, errors)) return result(errors);
+  if (!exactShape(question, QUESTION_KEYS, errors)) return result(errors);
   if (question.schemaVersion !== STEPHANOS_CAPABILITY_QUESTION_SCHEMA_VERSION) errors.push('schema-version-mismatch');
   for (const field of ['roundId', 'questionId', 'askerParticipantId', 'targetParticipantId']) {
     if (!safeId(question[field])) errors.push(`${field}-invalid`);
@@ -277,46 +330,23 @@ export function validateStephanosCapabilityQuestion(question, options = {}) {
   return result(errors);
 }
 
-function priorRoundQuestionEstate(value, round, errors) {
-  if (!denseArray(value) || value.length !== 10) {
-    errors.push('priorRoundQuestions-must-contain-exactly-10-dense-records');
-    return [];
-  }
-  const fingerprints = [];
-  for (let index = 0; index < value.length; index += 1) {
-    const question = value[index];
-    const validation = validateStephanosCapabilityQuestion(question);
-    for (const error of validation.errors) errors.push(`prior-question-${index + 1}:${error}`);
-    if (question?.askerParticipantId !== round.askerParticipantId) errors.push(`prior-question-${index + 1}:askerParticipantId-mismatch`);
-    if (question?.targetParticipantId !== round.targetParticipantId) errors.push(`prior-question-${index + 1}:targetParticipantId-mismatch`);
-    fingerprints.push(text(question?.intentFingerprint));
-  }
-  if (new Set(fingerprints).size !== 10) errors.push('priorRoundQuestions-intentFingerprints-must-be-unique');
-  return value;
+export function validateStephanosCapabilityQuestion(question, options = {}) {
+  const observed = observeRecord(question, 'question');
+  return observed.verdict || validateQuestionSnapshot(observed.snapshot, options);
 }
 
-export function validateStephanosCapabilityRound(round, options = {}) {
+function validateRoundSnapshot(round) {
   const errors = [];
-  if (!exactRecordShape(round, ROUND_KEYS, errors)) return result(errors);
+  if (!exactShape(round, ROUND_KEYS, errors)) return result(errors);
   if (round.schemaVersion !== STEPHANOS_CAPABILITY_ROUND_SCHEMA_VERSION) errors.push('schema-version-mismatch');
   for (const field of ['roundId', 'askerParticipantId', 'targetParticipantId']) {
     if (!safeId(round[field])) errors.push(`${field}-invalid`);
   }
   if (!Number.isSafeInteger(round.roundNumber) || round.roundNumber < 1) errors.push('roundNumber-invalid');
   if (!timestamp(round.createdAtUtc)) errors.push('createdAtUtc-invalid');
-  if (!denseArray(round.questions) || round.questions.length !== 10) {
+  if (!Array.isArray(round.questions) || round.questions.length !== 10) {
     errors.push('questions-must-contain-exactly-10-dense-records');
     return result(errors);
-  }
-
-  const priorQuestions = round.roundNumber > 1 ? priorRoundQuestionEstate(options.priorRoundQuestions, round, errors) : [];
-  const priorFingerprints = priorQuestions.map((question) => text(question.intentFingerprint));
-  const priorFingerprintSet = new Set(priorFingerprints);
-  const priorCanonicalIntentSet = new Set(priorQuestions.map(canonicalStephanosQuestionIntentFingerprint).filter(Boolean));
-  if (round.roundNumber > 1 && options.priorRoundIntentFingerprints !== undefined) {
-    const suppliedPriorFingerprints = stringList(options.priorRoundIntentFingerprints, 'priorRoundIntentFingerprints', errors, 10);
-    if (suppliedPriorFingerprints.length !== 10) errors.push('priorRoundIntentFingerprints-must-contain-exactly-10');
-    if (!sameStringSet(suppliedPriorFingerprints, priorFingerprints)) errors.push('priorRoundIntentFingerprints-do-not-match-priorRoundQuestions');
   }
 
   const questionIds = [];
@@ -324,26 +354,13 @@ export function validateStephanosCapabilityRound(round, options = {}) {
   const classes = [];
   for (let index = 0; index < round.questions.length; index += 1) {
     const question = round.questions[index];
-    const validation = validateStephanosCapabilityQuestion(question, {
-      requireNoveltyRef: round.roundNumber > 1,
-    });
+    const validation = validateQuestionSnapshot(question, { requireNoveltyRef: round.roundNumber > 1 });
     for (const error of validation.errors) errors.push(`question-${index + 1}:${error}`);
     if (question?.roundId !== round.roundId) errors.push(`question-${index + 1}:roundId-mismatch`);
     if (question?.askerParticipantId !== round.askerParticipantId) errors.push(`question-${index + 1}:askerParticipantId-mismatch`);
     if (question?.targetParticipantId !== round.targetParticipantId) errors.push(`question-${index + 1}:targetParticipantId-mismatch`);
-    const fingerprint = text(question?.intentFingerprint);
-    if (round.roundNumber > 1) {
-      const canonicalFingerprint = canonicalStephanosQuestionIntentFingerprint(question);
-      if (!canonicalFingerprint || fingerprint !== canonicalFingerprint) errors.push(`question-${index + 1}:intentFingerprint-must-match-canonical-question-intent`);
-      if (priorFingerprintSet.has(fingerprint)) errors.push(`question-${index + 1}:intentFingerprint-replays-prior-round`);
-      if (priorCanonicalIntentSet.has(canonicalFingerprint)) errors.push(`question-${index + 1}:canonical-intent-replays-prior-round`);
-      const noveltyRefs = denseArray(question?.noveltyRefs) ? question.noveltyRefs.map(noveltyFingerprint) : [];
-      if (noveltyRefs.some((reference) => !reference || !priorFingerprintSet.has(reference))) {
-        errors.push(`question-${index + 1}:noveltyRefs-must-bind-prior-round-fingerprints`);
-      }
-    }
     questionIds.push(text(question?.questionId));
-    fingerprints.push(fingerprint);
+    fingerprints.push(text(question?.intentFingerprint));
     classes.push(text(question?.questionClass).toUpperCase());
   }
   if (new Set(questionIds).size !== 10) errors.push('questionIds-must-be-unique');
@@ -353,12 +370,18 @@ export function validateStephanosCapabilityRound(round, options = {}) {
     const missing = STEPHANOS_INITIAL_QUESTION_CLASSES.filter((questionClass) => !classes.includes(questionClass));
     if (missing.length > 0) errors.push(`initial-round-missing-classes:${missing.join(',')}`);
   }
+  if (round.roundNumber > 1) errors.push('canonical-novelty-authority-unresolved');
   return result(errors);
 }
 
-export function validateStephanosCapabilityAnswer(answer) {
+export function validateStephanosCapabilityRound(round, _options = {}) {
+  const observed = observeRecord(round, 'round');
+  return observed.verdict || validateRoundSnapshot(observed.snapshot);
+}
+
+function validateAnswerSnapshot(answer) {
   const errors = [];
-  if (!exactRecordShape(answer, ANSWER_KEYS, errors)) return result(errors);
+  if (!exactShape(answer, ANSWER_KEYS, errors)) return result(errors);
   if (answer.schemaVersion !== STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION) errors.push('schema-version-mismatch');
   for (const field of ['answerId', 'questionId', 'roundId', 'responderParticipantId']) {
     if (!safeId(answer[field])) errors.push(`${field}-invalid`);
@@ -383,225 +406,194 @@ export function validateStephanosCapabilityAnswer(answer) {
     if (sourcesConsulted.length === 0) errors.push('grounded-answer-requires-sources');
     if (cannotAnswerReason) errors.push('grounded-answer-cannot-have-cannotAnswerReason');
   }
-  if (SETTLED_BOUNDARY_VERDICTS.has(verdict)) {
+  if (BOUNDARY_VERDICTS.has(verdict)) {
     if (!GROUNDED_EPISTEMIC_STATES.has(epistemicState)) errors.push('boundary-answer-epistemic-state-insufficient');
     if (!['FRESH', 'RECENT'].includes(freshness)) errors.push('boundary-answer-freshness-insufficient');
     if (evidenceRefs.length === 0) errors.push('boundary-answer-requires-evidence');
     if (sourcesConsulted.length === 0) errors.push('boundary-answer-requires-sources');
   }
-  if (BUILDABLE_GAPS.has(verdict) || SETTLED_BOUNDARY_VERDICTS.has(verdict)) {
-    if (!cannotAnswerReason) errors.push('non-grounded-terminal-answer-requires-reason');
+  if ((BUILDABLE_GAPS.has(verdict) || BOUNDARY_VERDICTS.has(verdict)) && !cannotAnswerReason) {
+    errors.push('non-grounded-terminal-answer-requires-reason');
   }
   return result(errors);
 }
 
+export function validateStephanosCapabilityAnswer(answer) {
+  const observed = observeRecord(answer, 'answer');
+  return observed.verdict || validateAnswerSnapshot(observed.snapshot);
+}
+
 export function createStephanosCapabilityGapObservation(question, answer) {
-  const questionValidation = validateStephanosCapabilityQuestion(question);
-  const answerValidation = validateStephanosCapabilityAnswer(answer);
+  const observedQuestion = observeRecord(question, 'question');
+  const observedAnswer = observeRecord(answer, 'answer');
+  const questionValidation = observedQuestion.verdict || validateQuestionSnapshot(observedQuestion.snapshot);
+  const answerValidation = observedAnswer.verdict || validateAnswerSnapshot(observedAnswer.snapshot);
   if (!questionValidation.valid || !answerValidation.valid) {
     return Object.freeze({
-      valid:false,
-      gap:null,
-      errors:Object.freeze([
+      valid: false,
+      gap: null,
+      errors: Object.freeze([
         ...questionValidation.errors.map((error) => `question:${error}`),
         ...answerValidation.errors.map((error) => `answer:${error}`),
       ]),
     });
   }
-  const verdict = normalizedVerdict(answer.answerVerdict);
+  const safeQuestion = observedQuestion.snapshot;
+  const safeAnswer = observedAnswer.snapshot;
+  const verdict = normalizedVerdict(safeAnswer.answerVerdict);
   if (!BUILDABLE_GAPS.has(verdict)) {
-    return Object.freeze({ valid:false, gap:null, errors:Object.freeze(['answer-is-not-buildable-gap']) });
+    return Object.freeze({ valid: false, gap: null, errors: Object.freeze(['answer-is-not-buildable-gap']) });
   }
-  if (question.questionId !== answer.questionId || question.roundId !== answer.roundId) {
-    return Object.freeze({ valid:false, gap:null, errors:Object.freeze(['question-answer-lineage-mismatch']) });
+  if (safeQuestion.questionId !== safeAnswer.questionId || safeQuestion.roundId !== safeAnswer.roundId) {
+    return Object.freeze({ valid: false, gap: null, errors: Object.freeze(['question-answer-lineage-mismatch']) });
   }
-  if (question.targetParticipantId !== answer.responderParticipantId) {
-    return Object.freeze({ valid:false, gap:null, errors:Object.freeze(['question-answer-participant-mismatch']) });
+  if (safeQuestion.targetParticipantId !== safeAnswer.responderParticipantId) {
+    return Object.freeze({ valid: false, gap: null, errors: Object.freeze(['question-answer-participant-mismatch']) });
   }
-  const participantId = answer.responderParticipantId;
+  const participantId = safeAnswer.responderParticipantId;
   const existingGoalCandidates = existingGoalCandidatesForGap(verdict);
   const gapSignature = canonicalHash({
     participantId,
-    gapClass:verdict,
-    intentFingerprint:question.intentFingerprint,
-    expectedEvidenceClass:question.expectedEvidenceClass,
+    gapClass: verdict,
+    intentFingerprint: safeQuestion.intentFingerprint,
+    expectedEvidenceClass: safeQuestion.expectedEvidenceClass,
   });
   const gap = Object.freeze({
     schemaVersion: STEPHANOS_CAPABILITY_GAP_SCHEMA_VERSION,
     gapId: `qgap-${gapSignature.slice(0, 24)}`,
     gapSignature,
-    questionId: question.questionId,
-    roundId: question.roundId,
+    questionId: safeQuestion.questionId,
+    roundId: safeQuestion.roundId,
     participantId,
     gapClass: verdict,
-    summary: answer.cannotAnswerReason,
+    summary: safeAnswer.cannotAnswerReason,
     rootCauseCandidate: verdict.replace(/^GAP_/, ''),
-    evidenceRefs: Object.freeze([...answer.evidenceRefs]),
+    evidenceRefs: Object.freeze([...safeAnswer.evidenceRefs]),
     existingGoalCandidates,
     repairGoalRef: null,
     status: 'OBSERVED_NEEDS_DEDUPLICATION',
   });
-  return Object.freeze({ valid:true, gap, errors:Object.freeze([]) });
+  return Object.freeze({ valid: true, gap, errors: Object.freeze([]) });
 }
 
-function classifyAnswerForEvaluation(answer) {
+function classifyAnswer(answer) {
   const verdict = normalizedVerdict(answer.answerVerdict);
   if (verdict === 'ANSWERED_GROUNDED') return 'GROUNDED_PASS';
   if (verdict === 'ANSWERED_PARTIAL') return 'PARTIAL';
   if (BUILDABLE_GAPS.has(verdict)) return 'BUILDABLE_GAP';
-  if (SETTLED_BOUNDARY_VERDICTS.has(verdict)) return 'BOUNDARY_REQUIRES_ADJUDICATION';
+  if (BOUNDARY_VERDICTS.has(verdict)) return 'UNADJUDICATED_BOUNDARY';
   return 'INVALID';
 }
 
-function boundaryAdjudicationFor(answer, input = {}) {
-  return denseArray(input.boundaryAdjudications)
-    ? input.boundaryAdjudications.find((item) => item?.answerId === answer.answerId)
-    : null;
-}
-
-function validateBoundaryAdjudication(answer, adjudication, input = {}) {
-  const errors = [];
-  if (!exactRecordShape(adjudication, BOUNDARY_ADJUDICATION_KEYS, errors)) return result(errors);
-  if (adjudication.schemaVersion !== STEPHANOS_BOUNDARY_ADJUDICATION_SCHEMA_VERSION) errors.push('schema-version-mismatch');
-  if (adjudication.answerId !== answer.answerId) errors.push('answerId-mismatch');
-  if (normalizedVerdict(adjudication.answerVerdict) !== normalizedVerdict(answer.answerVerdict)) errors.push('answerVerdict-mismatch');
-  if (text(adjudication.status).toUpperCase() !== 'CURRENT') errors.push('status-not-current');
-  if (!['FRESH', 'RECENT'].includes(text(adjudication.freshness).toUpperCase())) errors.push('freshness-insufficient');
-  const adjudicatedEvidenceRefs = stringList(adjudication.evidenceRefs, 'evidenceRefs', errors, 1);
-  const adjudicatedSources = stringList(adjudication.sourcesConsulted, 'sourcesConsulted', errors, 1);
-  const adjudicationProofRefs = stringList(adjudication.proofRefs, 'proofRefs', errors, 1);
-  if (!timestamp(adjudication.adjudicatedAtUtc)) errors.push('adjudicatedAtUtc-invalid');
-  if (!sameStringSet(adjudicatedEvidenceRefs, answer.evidenceRefs)) errors.push('evidenceRefs-do-not-match-answer');
-  if (!sameStringSet(adjudicatedSources, answer.sourcesConsulted)) errors.push('sourcesConsulted-do-not-match-answer');
-
-  const authoritativeEvidenceRefs = new Set(denseArray(input.authoritativeEvidenceRefs) ? input.authoritativeEvidenceRefs.map(text) : []);
-  const authoritativeSourceRefs = new Set(denseArray(input.authoritativeSourceRefs) ? input.authoritativeSourceRefs.map(text) : []);
-  const authoritativeAdjudicationProofRefs = new Set(denseArray(input.authoritativeAdjudicationProofRefs) ? input.authoritativeAdjudicationProofRefs.map(text) : []);
-  if (answer.evidenceRefs.some((reference) => !authoritativeEvidenceRefs.has(reference))) errors.push('answer-evidence-not-in-authoritative-registry');
-  if (answer.sourcesConsulted.some((reference) => !authoritativeSourceRefs.has(reference))) errors.push('answer-source-not-in-authoritative-registry');
-  if (adjudicationProofRefs.some((reference) => !authoritativeAdjudicationProofRefs.has(reference))) errors.push('adjudication-proof-not-in-authoritative-registry');
-
-  const nowMs = Number.isFinite(input.evaluationNowMs) ? input.evaluationNowMs : Date.now();
-  const staleAfterMs = Number.isFinite(input.boundaryAdjudicationStaleAfterMs) && input.boundaryAdjudicationStaleAfterMs >= 0
-    ? input.boundaryAdjudicationStaleAfterMs
-    : DEFAULT_BOUNDARY_ADJUDICATION_STALE_AFTER_MS;
-  const adjudicatedMs = Date.parse(text(adjudication.adjudicatedAtUtc));
-  if (Number.isFinite(adjudicatedMs) && (adjudicatedMs > nowMs || nowMs - adjudicatedMs > staleAfterMs)) errors.push('adjudication-timestamp-not-current');
-  return result(errors);
+function safeHold(roundId, errors, options = {}) {
+  return Object.freeze({
+    schemaVersion: STEPHANOS_CAPABILITY_LADDER_SCHEMA_VERSION,
+    valid: options.valid === true,
+    roundId: text(roundId),
+    state: 'SAFE_HOLD',
+    errors: Object.freeze([...new Set(errors)]),
+    counts: Object.freeze(options.counts || { total: 0, grounded: 0, partial: 0, buildableGaps: 0, retainedBoundaries: 0 }),
+    gapObservations: Object.freeze(options.gapObservations || []),
+    boundaryAdjudicationBlockers: Object.freeze(options.boundaryAdjudicationBlockers || []),
+    mayAdvanceToNovelRound: false,
+    requiresRepairReplay: options.requiresRepairReplay === true,
+    requiresBoundaryAdjudication: options.requiresBoundaryAdjudication === true,
+  });
 }
 
 export function evaluateStephanosCapabilityRound(input = {}) {
-  const round = input.round;
-  const answers = input.answers;
-  const roundValidation = validateStephanosCapabilityRound(round, {
-    priorRoundQuestions: input.priorRoundQuestions,
-    priorRoundIntentFingerprints: input.priorRoundIntentFingerprints,
-  });
-  const errors = [...roundValidation.errors.map((error) => `round:${error}`)];
-  if (!denseArray(answers)) errors.push('answers-must-be-dense-array');
-  if (errors.length > 0) {
-    return Object.freeze({
-      schemaVersion: STEPHANOS_CAPABILITY_LADDER_SCHEMA_VERSION,
-      valid:false,
-      roundId:text(round?.roundId),
-      state:'SAFE_HOLD',
-      errors:Object.freeze(errors),
-      counts:Object.freeze({ total:0, grounded:0, partial:0, buildableGaps:0, retainedBoundaries:0 }),
-      gapObservations:Object.freeze([]),
-      boundaryAdjudicationBlockers:Object.freeze([]),
-      mayAdvanceToNovelRound:false,
-      requiresRepairReplay:false,
-      requiresBoundaryAdjudication:false,
-    });
+  const safeInput = dataOnly(input);
+  if (safeInput === INVALID || !record(safeInput)) {
+    return safeHold('', ['input-must-be-data-only']);
   }
-
+  const round = safeInput.round;
+  const answers = safeInput.answers;
+  const roundValidation = validateRoundSnapshot(round);
+  const errors = [...roundValidation.errors.map((error) => `round:${error}`)];
+  if (!Array.isArray(answers)) errors.push('answers-must-be-dense-array');
+  if (errors.length > 0) return safeHold(round?.roundId, errors);
   if (answers.length !== 10) errors.push('answers-must-contain-exactly-10-records');
+
   const questionById = new Map(round.questions.map((question) => [question.questionId, question]));
-  const seenAnswers = new Set();
+  const seenQuestionAnswers = new Set();
+  const seenAnswerIds = new Set();
   const classifications = [];
   const gapObservations = [];
   const boundaryAdjudicationBlockers = [];
 
   for (let index = 0; index < answers.length; index += 1) {
     const answer = answers[index];
-    const validation = validateStephanosCapabilityAnswer(answer);
+    const validation = validateAnswerSnapshot(answer);
     for (const error of validation.errors) errors.push(`answer-${index + 1}:${error}`);
     if (answer?.roundId !== round.roundId) errors.push(`answer-${index + 1}:roundId-mismatch`);
     if (answer?.responderParticipantId !== round.targetParticipantId) errors.push(`answer-${index + 1}:responderParticipantId-mismatch`);
     if (!questionById.has(answer?.questionId)) errors.push(`answer-${index + 1}:unknown-questionId`);
-    if (seenAnswers.has(answer?.questionId)) errors.push(`answer-${index + 1}:duplicate-questionId`);
-    seenAnswers.add(answer?.questionId);
+    if (seenQuestionAnswers.has(answer?.questionId)) errors.push(`answer-${index + 1}:duplicate-questionId`);
+    if (seenAnswerIds.has(answer?.answerId)) errors.push(`answer-${index + 1}:duplicate-answerId`);
+    seenQuestionAnswers.add(answer?.questionId);
+    seenAnswerIds.add(answer?.answerId);
+
     if (validation.valid && questionById.has(answer.questionId)) {
-      const classification = classifyAnswerForEvaluation(answer);
-      if (classification === 'BOUNDARY_REQUIRES_ADJUDICATION') {
-        const adjudication = boundaryAdjudicationFor(answer, input);
-        const adjudicationValidation = validateBoundaryAdjudication(answer, adjudication, input);
-        if (adjudicationValidation.valid) classifications.push('RETAINED_BOUNDARY');
-        else {
-          classifications.push('UNADJUDICATED_BOUNDARY');
-          boundaryAdjudicationBlockers.push(Object.freeze({
-            answerId: answer.answerId,
-            answerVerdict: normalizedVerdict(answer.answerVerdict),
-            errors: Object.freeze([...adjudicationValidation.errors]),
-          }));
-        }
-      } else {
-        classifications.push(classification);
-      }
+      const classification = classifyAnswer(answer);
+      classifications.push(classification);
       if (classification === 'BUILDABLE_GAP') {
         const gap = createStephanosCapabilityGapObservation(questionById.get(answer.questionId), answer);
         if (gap.valid) gapObservations.push(gap.gap);
         else errors.push(...gap.errors.map((error) => `gap:${error}`));
       }
+      if (classification === 'UNADJUDICATED_BOUNDARY') {
+        boundaryAdjudicationBlockers.push(Object.freeze({
+          answerId: answer.answerId,
+          answerVerdict: normalizedVerdict(answer.answerVerdict),
+          errors: Object.freeze(['canonical-boundary-proof-authority-unresolved']),
+        }));
+      }
     }
   }
   for (const questionId of questionById.keys()) {
-    if (!seenAnswers.has(questionId)) errors.push(`missing-answer:${questionId}`);
+    if (!seenQuestionAnswers.has(questionId)) errors.push(`missing-answer:${questionId}`);
   }
 
-  if (errors.length > 0) {
-    return Object.freeze({
-      schemaVersion: STEPHANOS_CAPABILITY_LADDER_SCHEMA_VERSION,
-      valid:false,
-      roundId:round.roundId,
-      state:'SAFE_HOLD',
-      errors:Object.freeze(errors),
-      counts:Object.freeze({ total:answers.length, grounded:0, partial:0, buildableGaps:0, retainedBoundaries:0 }),
-      gapObservations:Object.freeze([]),
-      boundaryAdjudicationBlockers:Object.freeze(boundaryAdjudicationBlockers),
-      mayAdvanceToNovelRound:false,
-      requiresRepairReplay:false,
-      requiresBoundaryAdjudication:boundaryAdjudicationBlockers.length > 0,
-    });
-  }
+  if (errors.length > 0) return safeHold(round.roundId, errors, {
+    counts: { total: answers.length, grounded: 0, partial: 0, buildableGaps: 0, retainedBoundaries: 0 },
+    boundaryAdjudicationBlockers,
+    requiresBoundaryAdjudication: boundaryAdjudicationBlockers.length > 0,
+  });
 
   const counts = Object.freeze({
-    total:10,
-    grounded:classifications.filter((value) => value === 'GROUNDED_PASS').length,
-    partial:classifications.filter((value) => value === 'PARTIAL').length,
-    buildableGaps:classifications.filter((value) => value === 'BUILDABLE_GAP').length,
-    retainedBoundaries:classifications.filter((value) => value === 'RETAINED_BOUNDARY').length,
+    total: 10,
+    grounded: classifications.filter((value) => value === 'GROUNDED_PASS').length,
+    partial: classifications.filter((value) => value === 'PARTIAL').length,
+    buildableGaps: classifications.filter((value) => value === 'BUILDABLE_GAP').length,
+    retainedBoundaries: 0,
   });
   const hasRepairWork = counts.buildableGaps > 0 || counts.partial > 0;
-  const requiresBoundaryAdjudication = classifications.includes('UNADJUDICATED_BOUNDARY');
+  const requiresBoundaryAdjudication = boundaryAdjudicationBlockers.length > 0;
+  if (requiresBoundaryAdjudication) return safeHold(round.roundId, [], {
+    valid: true,
+    counts,
+    gapObservations,
+    boundaryAdjudicationBlockers,
+    requiresRepairReplay: hasRepairWork,
+    requiresBoundaryAdjudication: true,
+  });
+
   const state = counts.buildableGaps > 0
     ? 'GAPS_IDENTIFIED'
     : hasRepairWork
       ? 'REGRESSION_PROVING'
-      : requiresBoundaryAdjudication
-        ? 'SAFE_HOLD'
-        : 'SETTLED';
+      : 'SETTLED';
   return Object.freeze({
     schemaVersion: STEPHANOS_CAPABILITY_LADDER_SCHEMA_VERSION,
-    valid:true,
-    roundId:round.roundId,
+    valid: true,
+    roundId: round.roundId,
     state,
-    errors:Object.freeze([]),
+    errors: Object.freeze([]),
     counts,
-    gapObservations:Object.freeze(gapObservations),
-    boundaryAdjudicationBlockers:Object.freeze(boundaryAdjudicationBlockers),
-    mayAdvanceToNovelRound:!hasRepairWork && !requiresBoundaryAdjudication,
-    requiresRepairReplay:hasRepairWork,
-    requiresBoundaryAdjudication,
+    gapObservations: Object.freeze(gapObservations),
+    boundaryAdjudicationBlockers: Object.freeze([]),
+    mayAdvanceToNovelRound: !hasRepairWork,
+    requiresRepairReplay: hasRepairWork,
+    requiresBoundaryAdjudication: false,
   });
 }

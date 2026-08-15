@@ -2,138 +2,73 @@
 
 ## Purpose
 
-This slice advances the product-facing intelligence goals in #1308 and the Shared Participant Question and Answer Fabric in #1290 without creating a new transport, workspace, scheduler, dispatcher, memory store, chatbot or execution authority.
+This slice advances #1308 and the Shared Participant Question and Answer Fabric in #1290 by connecting the existing ten-question capability contract to the existing Shared Workspace `MESSAGE` record.
 
-It connects two already-defined contracts:
+It does not create another transport, workspace, scheduler, dispatcher, memory store, chatbot, receipt writer or execution authority. The adapter is a codec, evidence and lineage boundary only.
 
-1. `stephanosConversationalCapabilityLadderV1.mjs`, which defines the ten-question round, answer evaluation and capability-gap semantics.
-2. the existing `sharedAgentWorkspaceStore.mjs` message record, which already provides durable bounded Shared Workspace records.
+## Parent contract
 
-The adapter is deliberately a codec and lineage boundary. It does not deliver messages itself.
+This child is stacked on the current #1774 ten-question contract. The parent deliberately SAFE_HOLDs later-round novelty until canonical novelty authority exists and SAFE_HOLDs authority/safety boundaries until canonical boundary adjudication exists. This adapter preserves those holds rather than reintroducing caller-controlled settlement.
 
-## Operator outcome
+## Message mapping
 
-The intended flow becomes:
+A valid initial ten-question round may become exactly ten correlated Shared Workspace question messages. A valid answer may become one correlated answer message. Ask/answer participant, round, question and recipient identities remain explicit.
 
-```text
-ChatGPT participant
-  -> ten-question round contract
-  -> 10 existing Shared Workspace MESSAGE records
-  -> Stephanos answers through the same message fabric
-  -> 10 answer records
-  -> deterministic round evaluation
-  -> grounded pass, partial answer, retained boundary, or deduplicated buildable gap
-```
-
-This is a source-level step toward the live ChatGPT <-> Stephanos dialogue required by #1308. It does not claim that live transport or runtime delivery has passed yet.
-
-## Existing machinery reused
-
-The adapter imports and reuses:
-
-- `SHARED_WORKSPACE_RECORD_SCHEMA_VERSION`
-- `SHARED_WORKSPACE_RECORD_KINDS.MESSAGE`
-- `validateSharedWorkspaceRecord`
-- `validateStephanosCapabilityQuestion`
-- `validateStephanosCapabilityRound`
-- `validateStephanosCapabilityAnswer`
-- `evaluateStephanosCapabilityRound`
-
-No changes are required to the Shared Workspace store or the ChatGPT participant bridge in this slice.
-
-## Record mapping
-
-A capability question becomes one Shared Workspace message with:
+Each conversation record has one exact closed-world shape. Unknown top-level fields, including authority aliases, are rejected. The JSON conversation body also has one exact shape:
 
 ```text
-kind = stephanos.shared_workspace.record.message
-channel = shared-participant-qa
-recordSubtype = conversation-question
-participantId = askerParticipantId
-recipientParticipantId = targetParticipantId
-correlationId = roundId
-subjectId = questionId
-relatedIssue = #1308 by default
-body = versioned bounded question envelope
+schemaVersion
+subtype
+payload
 ```
 
-A Stephanos answer uses the same message kind and channel with:
+Extra command/authority/body fields are rejected rather than ignored.
 
-```text
-recordSubtype = conversation-answer
-participantId = responderParticipantId
-recipientParticipantId = original asker
-correlationId = roundId
-subjectId = questionId
-body = versioned bounded answer envelope
-```
+## Proof boundary
 
-The adapter verifies that participant, recipient, round and question identities still match the embedded contract when records are decoded.
+The adapter never invents `receipts/<messageId>` or any other proof path. Shared Workspace messages require at least one real caller-supplied safe proof reference. If no proof reference exists, publication construction fails closed with `proofRefs-required-from-caller`.
+
+The adapter does not write, verify or manufacture the referenced proof. Proof creation remains owned by existing evidence machinery.
+
+## Freshness boundary
+
+Shared Workspace message freshness uses the canonical one-hour `DEFAULT_STALE_AFTER_MS` policy from the existing workspace store. Callers may provide the evaluation clock for deterministic proof but cannot widen the stale duration through this adapter.
+
+A stale answer message cannot settle a capability round even if its embedded answer claims `FRESH`. Future-dated workspace records also fail closed.
+
+## Recipient and lineage boundary
+
+Standalone answer decode requires an expected recipient participant identity and verifies it against the record. The round evaluator supplies the round asker as that expected recipient automatically.
+
+The adapter also binds:
+
+- question record participant to the question asker;
+- question record recipient to the question target;
+- answer record participant to the answer responder;
+- round correlation to the embedded round ID;
+- subject identity to the embedded question ID.
+
+## Data-only boundary
+
+Conversation records are descriptor-snapshotted before Shared Workspace validation or body parsing. Exact own enumerable data fields are required. Record-level accessors, symbols, custom prototypes, sparse/accessor-bearing proof arrays and uninspectable shapes fail closed without executing caller getters.
 
 ## Authority boundary
 
-Conversation records explicitly carry:
+Every message retains:
 
 ```text
-sourceMutationAllowed = false
-commandExecutionAllowed = false
-approvalAllowed = false
-mergeAllowed = false
-deploymentAllowed = false
+sourceMutationAllowed=false
+commandExecutionAllowed=false
+approvalAllowed=false
+mergeAllowed=false
+deploymentAllowed=false
 ```
 
-The decoder rejects a record if any of these become true.
+A conversation question is never an executable command, approval or merge packet.
 
-A question remains a question. It is not a disguised command, approval, merge instruction or runtime mutation request.
+## Parent SAFE_HOLD preservation
 
-## Ten-question flow
-
-`buildStephanosWorkspaceQuestionRound(round)` validates the existing #1308 round contract and emits exactly ten correlated Shared Workspace messages.
-
-`evaluateStephanosWorkspaceConversation({ round, answerRecords })` decodes exactly ten answer messages and passes the resulting answer contracts into the existing capability evaluator.
-
-The adapter therefore preserves the existing outcome states:
-
-```text
-SETTLED
-REGRESSION_PROVING
-GAPS_IDENTIFIED
-SAFE_HOLD
-```
-
-Buildable gaps continue to use the existing canonical goal-candidate mapping rather than creating a second backlog.
-
-## Fail-closed behavior
-
-The adapter rejects or safe-holds on:
-
-- malformed question or answer contracts;
-- invalid Shared Workspace records;
-- corrupt JSON envelopes;
-- participant lineage mismatch;
-- recipient lineage mismatch;
-- round mismatch;
-- question mismatch;
-- missing ten-answer estate;
-- authority-bearing conversation records.
-
-Unknown or incomplete conversational capability is not converted into a false green pass.
-
-## Non-goals
-
-This slice does not:
-
-- configure a ChatGPT transport;
-- start a Battle Bridge process;
-- write directly to a live Shared Workspace path;
-- modify the existing ChatGPT participant bridge allowlist;
-- invoke a model;
-- synthesize Stephanos answers;
-- create repair goals automatically;
-- mutate source or runtime state;
-- grant any participant new authority.
-
-Those later steps remain under their existing canonical owners and proof gates.
+The adapter sends only `{ round, answers }` into the current capability evaluator. Caller-supplied adjudication-looking arrays, evidence registries or callbacks cannot restore the superseded self-certifying boundary path. Boundary answers remain `UNADJUDICATED_BOUNDARY` and later rounds remain blocked until their canonical proof authorities exist.
 
 ## Focused proof
 
@@ -141,18 +76,8 @@ Those later steps remain under their existing canonical owners and proof gates.
 node --test shared/agents/stephanosConversationalCapabilityLadderV1.test.mjs shared/agents/stephanosSharedWorkspaceConversationAdapterV1.test.mjs
 ```
 
-The adapter tests cover:
+The child suite covers real proof-ref requirements, no synthetic receipts, exact question/answer mapping, conservative later-round hold, standalone recipient binding, stale/future rejection, grounded settlement, buildable gaps, boundary SAFE_HOLD, unknown record/body fields, authority smuggling, accessor-bearing records/proof arrays and malformed bodies.
 
-- question-to-Shared-Workspace mapping;
-- question round-trip decoding;
-- exact ten-question fan-out;
-- answer mapping and decoding;
-- ten-grounded-answer settlement;
-- buildable-gap propagation;
-- recipient/participant lineage tampering;
-- authority smuggling rejection;
-- corrupt body and unknown-field fail-closed behavior.
+## Truth boundary
 
-## Next product slice
-
-After this adapter and its dependency #1774 are accepted, the next product-facing intelligence step is to bind the existing ChatGPT participant bridge and Stephanos conversational response path to these records in a faithful Shared Workspace transport/canary, then execute the first real ten-question round without the operator acting as courier.
+This source adapter does not claim that ChatGPT or Stephanos has executed a live ten-question exchange through the Shared Workspace runtime. It grants no source mutation, command execution, merge, deployment or runtime authority. Live transport and operator-visible acceptance remain later #1308/#1290 gates.
