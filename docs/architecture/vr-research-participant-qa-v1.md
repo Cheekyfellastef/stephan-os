@@ -151,7 +151,7 @@ The public Q&A boundary converts the caller evaluation clock to one ECMAScript-D
 
 The same trusted instant drives freshness and the answer timestamp, preventing caller-controlled clock disagreement.
 
-## Timestamp repair proof
+## Timestamp repair and convergence proof
 
 The repaired product tree was executed through the existing GitHub Actions runner before temporary repair machinery was removed. The bounded three-suite command completed with:
 
@@ -164,7 +164,11 @@ node --test shared/agents/vrResearchWorkspaceProjectionV1.test.mjs shared/agents
 git diff HEAD --check  PASS
 ```
 
-The regressions explicitly cover `Number.MAX_VALUE`, `Infinity`, `-Infinity`, `NaN`, invalid/noncanonical/inconsistent `answeredAtUtc`, deterministic canonical timestamps and accessor-backed timestamp inputs with zero getter calls. This is source/test proof only; it grants no merge, deployment, runtime or headset authority.
+The regressions explicitly cover `Number.MAX_VALUE`, `Infinity`, `-Infinity`, `NaN`, invalid/noncanonical/inconsistent `answeredAtUtc`, deterministic canonical timestamps and accessor-backed timestamp inputs with zero getter calls.
+
+The exact repaired product blobs were then preservation-converged onto canonical `main` `e42dc932196eeffce37ed0af3e5bc367bb37212e`. The same `node --check`, 49-test three-suite command and `git diff origin/main...HEAD --check` all passed after that merge, proving the admitted current-main ancestry did not change or break the VR product estate.
+
+This is source/test/convergence proof only; it grants no merge, deployment, runtime or headset authority.
 
 ## Gap observations
 
