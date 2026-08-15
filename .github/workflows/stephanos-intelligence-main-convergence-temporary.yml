@@ -1,0 +1,59 @@
+name: One-shot Stephanos Intelligence Main Convergence
+
+on:
+  push:
+    branches:
+      - agent/stephanos-ten-question-evaluation-contract-v1
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stephanos-intelligence-main-convergence-once
+  cancel-in-progress: false
+
+jobs:
+  converge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact pushed head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact repaired product blobs
+        run: |
+          set -euo pipefail
+          test "$(git hash-object shared/agents/stephanosConversationalCapabilityLadderV1.mjs)" = "f320433cb496817f944193017ecb46ef741e65f0"
+          test "$(git hash-object shared/agents/stephanosConversationalCapabilityLadderV1.test.mjs)" = "f5d1ca37ba25201ad09a1dc0738654cdde2bce93"
+          test "$(git hash-object docs/architecture/stephanos-ten-question-conversational-evaluation-contract-v1.md)" = "e88f525ee4ec63238ca52c85640972675cf7146c"
+      - name: Merge exact current main without rewriting product history
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "e42dc932196eeffce37ed0af3e5bc367bb37212e"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git merge --no-ff --no-edit origin/main
+          test "$(git hash-object shared/agents/stephanosConversationalCapabilityLadderV1.mjs)" = "f320433cb496817f944193017ecb46ef741e65f0"
+          test "$(git hash-object shared/agents/stephanosConversationalCapabilityLadderV1.test.mjs)" = "f5d1ca37ba25201ad09a1dc0738654cdde2bce93"
+          test "$(git hash-object docs/architecture/stephanos-ten-question-conversational-evaluation-contract-v1.md)" = "e88f525ee4ec63238ca52c85640972675cf7146c"
+      - name: Run focused product proof after convergence
+        run: |
+          set -euo pipefail
+          node --check shared/agents/stephanosConversationalCapabilityLadderV1.mjs
+          node --test shared/agents/stephanosConversationalCapabilityLadderV1.test.mjs
+          git diff origin/main...HEAD --check
+      - name: Remove temporary workflow and publish
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/stephanos-intelligence-main-convergence-temporary.yml
+          git commit -m 'Remove one-shot Stephanos intelligence main convergence workflow'
+          git fetch origin refs/heads/agent/stephanos-ten-question-evaluation-contract-v1
+          test "$(git rev-parse FETCH_HEAD)" = "${GITHUB_SHA}"
+          git push --porcelain origin HEAD:refs/heads/agent/stephanos-ten-question-evaluation-contract-v1
