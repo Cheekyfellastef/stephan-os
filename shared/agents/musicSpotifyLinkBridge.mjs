@@ -21,7 +21,7 @@ const CONTROL = /[\u0000-\u001f\u007f]/;
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_CANDIDATE_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
-const INBOX_LOCK_RETRY_COUNT = 200;
+const INBOX_LOCK_RETRY_COUNT = 1000;
 const INBOX_LOCK_RETRY_DELAY_MS = 5;
 
 function spotifyPayloadSha256(candidate) {
