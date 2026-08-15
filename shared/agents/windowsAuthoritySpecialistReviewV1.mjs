@@ -12,7 +12,7 @@ const NO_FAFF_BLOB_SHA = 'f6c2a92f4e2ffebb57e197e72ed0279a896c9ffe';
 const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '9f47c49eaab30db93897e4c5fcfce910a58ed0b9';
 const RECOVERY_GUARDIAN_BLOB_SHA = '60228170b62d8313bebece5e9e8655cfc45497a5';
 const WORKER_WATCHDOG_BLOB_SHA = 'b69e048ea9857b713e2faa17a1bbecec62fed84d';
-const FORGE_M3_EXECUTOR_BLOB_SHA = '875e20fe38f55869b3df6c6a34427acc8a2afc69';
+const FORGE_M3_EXECUTOR_BLOB_SHA = '7177c695d5a12b009785676440ce83163897f8f2';
 const EXPECTED_NO_FAFF_PATHS = Object.freeze([
   'scripts/windows/repair-battle-bridge-control-plane-now.ps1',
   'scripts/windows/Repair-Battle-Bridge-Control-Plane-Now.cmd',
