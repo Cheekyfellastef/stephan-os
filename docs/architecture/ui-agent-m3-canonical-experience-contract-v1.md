@@ -39,8 +39,17 @@ Later #1722 slices may turn this map into bounded implementation plans and then 
 
 ## Focused proof
 
-```bash
+The recursively hardened product tree was executed on GitHub Actions before the temporary proof workflow removed itself:
+
+```text
+node --check shared/agents/uiAgentCanonicalExperienceContractV1.mjs  PASS
 node --test shared/agents/uiAgentCanonicalExperienceContractV1.test.mjs
+15 tests
+15 pass
+0 fail
+git diff origin/agent/ui-agent-m2-experience-inventory-v1...HEAD --check  PASS
 ```
 
 The suite covers deterministic mapping, explicit unsatisfied proof, zero authority, incomplete coverage, non-M3 inventory, duplicate surfaces, caller authority smuggling, recursive nested accessor rejection, sparse coverage arrays, hostile surface records, revoked nested proxies, coverage-identity consistency and post-build caller mutation.
+
+This is source/test proof only. It does not satisfy the cross-device proof plan or grant implementation, merge, deployment, runtime or product authority.
