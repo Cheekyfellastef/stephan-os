@@ -94,6 +94,31 @@ The focused tests prove:
 - ten grounded answers settle the round;
 - an authority boundary is retained without manufacturing build authority.
 
+## Current-main convergence proof
+
+The repaired three-file intelligence product estate was preservation-converged without rebasing or rewriting feature history onto canonical `main` `ca803bd37447bb97b61e2af81de57b69f43ac8c1`.
+
+The convergence workflow first pinned the exact product blobs:
+
+```text
+shared/agents/stephanosConversationalCapabilityLadderV1.mjs
+  f320433cb496817f944193017ecb46ef741e65f0
+shared/agents/stephanosConversationalCapabilityLadderV1.test.mjs
+  f5d1ca37ba25201ad09a1dc0738654cdde2bce93
+docs/architecture/stephanos-ten-question-conversational-evaluation-contract-v1.md
+  e88f525ee4ec63238ca52c85640972675cf7146c
+```
+
+After merging that exact `main`, the same source/test blobs remained unchanged and the focused proof completed successfully:
+
+```text
+node --check shared/agents/stephanosConversationalCapabilityLadderV1.mjs  PASS
+node --test shared/agents/stephanosConversationalCapabilityLadderV1.test.mjs  PASS
+git diff origin/main...HEAD --check  PASS
+```
+
+The temporary convergence workflow removed itself before publication. This proof establishes source compatibility with the admitted current-main ancestry only; it does not establish a live ten-question conversation, merge authority, deployment, runtime installation or operator acceptance.
+
 ## Next integration slices
 
 After this contract is independently proven, the implementation should reuse existing machinery in this order:
