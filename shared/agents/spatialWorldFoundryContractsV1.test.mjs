@@ -122,6 +122,16 @@ function snapshot(overrides = {}) {
   };
 }
 
+function bundle(overrides = {}) {
+  return {
+    buildOrder: buildOrder(),
+    asset: asset(),
+    provenance: provenance(),
+    snapshot: snapshot(),
+    ...overrides,
+  };
+}
+
 test('M1 contracts accept one bounded candidate asset lineage', () => {
   assert.deepEqual(validateSpatialBuildOrder(buildOrder()), {
     valid: true,
@@ -131,12 +141,7 @@ test('M1 contracts accept one bounded candidate asset lineage', () => {
   assert.equal(validateSpatialAssetRecord(asset()).valid, true);
   assert.equal(validateSpatialProvenanceRecord(provenance()).valid, true);
   assert.equal(validateSpatialWorldSnapshot(snapshot()).valid, true);
-  assert.equal(validateSpatialWorldFoundryBundle({
-    buildOrder: buildOrder(),
-    asset: asset(),
-    provenance: provenance(),
-    snapshot: snapshot(),
-  }).valid, true);
+  assert.equal(validateSpatialWorldFoundryBundle(bundle()).valid, true);
 });
 
 test('allowedOperations is an explicit safe allowlist rather than a bypass blacklist', () => {
@@ -145,12 +150,10 @@ test('allowedOperations is an explicit safe allowlist rather than a bypass black
     assert.equal(verdict.valid, false, `${unsafe} must fail closed`);
     assert.ok(verdict.errors.includes('allowedOperations-contains-unknown-operation'));
   }
-  assert.equal(validateSpatialBuildOrder(buildOrder({
-    allowedOperations: ['GENERATE_ASSET', 'WRITE_SANDBOX', 'RUN_VALIDATION'],
-  })).valid, true);
+  assert.equal(validateSpatialBuildOrder(buildOrder()).valid, true);
 });
 
-test('build orders enforce the typed resource-scope grammar', () => {
+test('build orders enforce typed resource-scope grammar and exact order bindings', () => {
   for (const invalidScope of [
     'C:\\worlds\\idea-planet-001',
     'region:landing-bay',
@@ -162,15 +165,29 @@ test('build orders enforce the typed resource-scope grammar', () => {
     assert.equal(verdict.valid, false, `${invalidScope} must fail closed`);
     assert.ok(verdict.errors.includes('ownedResourceScopes-contains-invalid-resource-scope'));
   }
-  assert.equal(validateSpatialBuildOrder(buildOrder({
+
+  const valid = validateSpatialBuildOrder(buildOrder({
     ownedResourceScopes: [
       'planet:idea-planet-001',
       'region:idea-planet-001/landing-bay',
       'object:crate-001',
-      'world-system:lighting-001',
-      'asset:asset.crate-001',
     ],
-  })).valid, true);
+  }));
+  assert.equal(valid.valid, true, valid.errors.join(', '));
+
+  const mismatches = [
+    ['planet:other-planet', 'ownedResourceScopes-planet-mismatch'],
+    ['region:other-planet/landing-bay', 'ownedResourceScopes-region-mismatch'],
+    ['region:idea-planet-001/other-region', 'ownedResourceScopes-region-mismatch'],
+    ['object:unrelated-object', 'ownedResourceScopes-object-mismatch'],
+    ['asset:asset.crate-001', 'ownedResourceScopes-unbound-scope-type:asset'],
+    ['world-system:lighting-001', 'ownedResourceScopes-unbound-scope-type:world-system'],
+  ];
+  for (const [scope, expectedError] of mismatches) {
+    const verdict = validateSpatialBuildOrder(buildOrder({ ownedResourceScopes: [scope] }));
+    assert.equal(verdict.valid, false, scope);
+    assert.ok(verdict.errors.includes(expectedError), `${scope}: ${verdict.errors.join(', ')}`);
+  }
 });
 
 test('contract records fail closed on undeclared fields', () => {
@@ -212,58 +229,119 @@ test('world snapshots are exact-source and asset-identity bound', () => {
   assert.ok(duplicateVerdict.errors.includes('assetVersions-duplicate-asset'));
 });
 
-test('bundle validation catches cross-record lineage substitution', () => {
-  const buildOrderMismatch = validateSpatialWorldFoundryBundle({
-    buildOrder: buildOrder(),
-    asset: asset({ creatingBuildOrderId: 'sbo.other-build-order' }),
-    provenance: provenance(),
-    snapshot: snapshot(),
-  });
-  assert.equal(buildOrderMismatch.valid, false);
-  assert.ok(buildOrderMismatch.errors.includes('lineage-build-order-mismatch'));
+test('bundle validation catches core cross-record lineage substitution', () => {
+  const cases = [
+    [bundle({ asset: asset({ creatingBuildOrderId: 'sbo.other-build-order' }) }), 'lineage-build-order-mismatch'],
+    [bundle({ provenance: provenance({ creatorAgentId: 'unrelated-agent' }) }), 'lineage-provenance-creator-mismatch'],
+    [bundle({ asset: asset({ regionId: 'other-region' }) }), 'lineage-region-mismatch'],
+    [bundle({ snapshot: snapshot({ scopeId: 'other-region' }) }), 'lineage-snapshot-region-mismatch'],
+    [bundle({ provenance: provenance({ operatorIntentRef: 'shared-workspace/intents/other-intent' }) }), 'lineage-provenance-intent-mismatch'],
+    [bundle({ provenance: provenance({ designGenomeVersion: 'planet-genome.v2' }) }), 'lineage-provenance-design-genome-mismatch'],
+  ];
+  for (const [candidate, expectedError] of cases) {
+    const verdict = validateSpatialWorldFoundryBundle(candidate);
+    assert.equal(verdict.valid, false, expectedError);
+    assert.ok(verdict.errors.includes(expectedError), verdict.errors.join(', '));
+  }
+});
 
-  const creatorMismatch = validateSpatialWorldFoundryBundle({
-    buildOrder: buildOrder(),
-    asset: asset(),
-    provenance: provenance({ creatorAgentId: 'unrelated-agent' }),
-    snapshot: snapshot(),
-  });
-  assert.equal(creatorMismatch.valid, false);
-  assert.ok(creatorMismatch.errors.includes('lineage-provenance-creator-mismatch'));
+test('every supported snapshot scope is bound to the corresponding bundle identity', () => {
+  const validScopes = [
+    ['ASSET', 'asset.crate-001'],
+    ['OBJECT', 'crate-001'],
+    ['FEATURE', 'crate-001'],
+    ['REGION', 'landing-bay'],
+    ['PLANET', 'idea-planet-001'],
+    ['WORLD_STATE', 'world.v1'],
+  ];
+  for (const [scope, scopeId] of validScopes) {
+    const verdict = validateSpatialWorldFoundryBundle(bundle({ snapshot: snapshot({ scope, scopeId }) }));
+    assert.equal(verdict.valid, true, `${scope}: ${verdict.errors.join(', ')}`);
+  }
 
-  const regionMismatch = validateSpatialWorldFoundryBundle({
-    buildOrder: buildOrder(),
-    asset: asset({ regionId: 'other-region' }),
-    provenance: provenance(),
-    snapshot: snapshot(),
-  });
-  assert.equal(regionMismatch.valid, false);
-  assert.ok(regionMismatch.errors.includes('lineage-region-mismatch'));
+  const invalidScopes = [
+    ['ASSET', 'asset.other', 'lineage-snapshot-asset-scope-mismatch'],
+    ['OBJECT', 'other-object', 'lineage-snapshot-object-scope-mismatch'],
+    ['FEATURE', 'other-feature', 'lineage-snapshot-object-scope-mismatch'],
+    ['REGION', 'other-region', 'lineage-snapshot-region-mismatch'],
+    ['PLANET', 'other-planet', 'lineage-snapshot-planet-scope-mismatch'],
+    ['WORLD_STATE', 'world.v2', 'lineage-snapshot-world-state-scope-mismatch'],
+  ];
+  for (const [scope, scopeId, expectedError] of invalidScopes) {
+    const verdict = validateSpatialWorldFoundryBundle(bundle({ snapshot: snapshot({ scope, scopeId }) }));
+    assert.equal(verdict.valid, false, scope);
+    assert.ok(verdict.errors.includes(expectedError), `${scope}: ${verdict.errors.join(', ')}`);
+  }
+});
 
-  const snapshotRegionMismatch = validateSpatialWorldFoundryBundle({
-    buildOrder: buildOrder(),
-    asset: asset(),
-    provenance: provenance(),
-    snapshot: snapshot({ scopeId: 'other-region' }),
+test('accessor-backed records fail closed without invoking getters', () => {
+  let calls = 0;
+  const hostile = buildOrder();
+  Object.defineProperty(hostile, 'allowedOperations', {
+    enumerable: true,
+    get() {
+      calls += 1;
+      return calls === 1 ? ['GENERATE_ASSET'] : ['MERGE'];
+    },
   });
-  assert.equal(snapshotRegionMismatch.valid, false);
-  assert.ok(snapshotRegionMismatch.errors.includes('lineage-snapshot-region-mismatch'));
+  let verdict;
+  assert.doesNotThrow(() => { verdict = validateSpatialBuildOrder(hostile); });
+  assert.equal(calls, 0);
+  assert.equal(verdict.valid, false);
+  assert.ok(verdict.errors.includes('buildOrder-must-be-data-only'));
 
-  const intentMismatch = validateSpatialWorldFoundryBundle({
-    buildOrder: buildOrder(),
-    asset: asset(),
-    provenance: provenance({ operatorIntentRef: 'shared-workspace/intents/other-intent' }),
-    snapshot: snapshot(),
+  const hostileAsset = asset();
+  Object.defineProperty(hostileAsset, 'creatorAgentId', {
+    enumerable: true,
+    get() {
+      calls += 1;
+      throw new Error('creator getter must not run');
+    },
   });
-  assert.equal(intentMismatch.valid, false);
-  assert.ok(intentMismatch.errors.includes('lineage-provenance-intent-mismatch'));
+  let bundleVerdict;
+  assert.doesNotThrow(() => {
+    bundleVerdict = validateSpatialWorldFoundryBundle(bundle({ asset: hostileAsset }));
+  });
+  assert.equal(calls, 0);
+  assert.equal(bundleVerdict.valid, false);
+  assert.ok(bundleVerdict.errors.includes('bundle-must-be-data-only'));
+});
 
-  const genomeMismatch = validateSpatialWorldFoundryBundle({
-    buildOrder: buildOrder(),
-    asset: asset(),
-    provenance: provenance({ designGenomeVersion: 'planet-genome.v2' }),
-    snapshot: snapshot(),
+test('custom prototypes, symbol keys, cycles and sparse arrays fail closed', () => {
+  const inherited = Object.assign(Object.create({ mergeAllowed: true }), buildOrder());
+  assert.equal(validateSpatialBuildOrder(inherited).valid, false);
+
+  const symbolRecord = asset();
+  symbolRecord[Symbol('hidden')] = 'MERGE';
+  assert.equal(validateSpatialAssetRecord(symbolRecord).valid, false);
+
+  const cycle = buildOrder();
+  cycle.performanceBudget.loop = cycle;
+  assert.equal(validateSpatialBuildOrder(cycle).valid, false);
+
+  const sparse = buildOrder();
+  sparse.objectIds = new Array(1);
+  assert.equal(validateSpatialBuildOrder(sparse).valid, false);
+});
+
+test('identity and version spellings must already be canonical', () => {
+  const candidates = [
+    validateSpatialAssetRecord(asset({ assetId: ' asset.crate-001 ' })),
+    validateSpatialAssetRecord(asset({ assetId: 'Asset.crate-001' })),
+    validateSpatialBuildOrder(buildOrder({ planetId: 'Idea-Planet-001' })),
+    validateSpatialBuildOrder(buildOrder({ regionId: ' landing-bay ' })),
+    validateSpatialProvenanceRecord(provenance({ assetVersion: 'V1' })),
+    validateSpatialWorldSnapshot(snapshot({ scope: 'region' })),
+  ];
+  assert.equal(candidates.every((verdict) => verdict.valid === false), true);
+});
+
+test('raw voice remains context only and cannot grant mutation authority', () => {
+  const order = buildOrder({
+    operatorRequest: 'Voice transcript: create a crate preview, but do not execute or publish anything.',
+    allowedOperations: ['GENERATE_ASSET', 'WRITE_SANDBOX', 'RUN_VALIDATION'],
   });
-  assert.equal(genomeMismatch.valid, false);
-  assert.ok(genomeMismatch.errors.includes('lineage-provenance-design-genome-mismatch'));
+  assert.equal(validateSpatialBuildOrder(order).valid, true);
+  const widened = validateSpatialBuildOrder(buildOrder({ allowedOperations: ['VOICE_EXECUTE'] }));
+  assert.equal(widened.valid, false);
 });
