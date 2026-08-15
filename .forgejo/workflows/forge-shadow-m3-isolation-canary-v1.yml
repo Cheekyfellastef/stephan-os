@@ -1,0 +1,59 @@
+name: Forge Shadow M3 isolation canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_head:
+        description: Exact merged main commit
+        required: true
+      expected_tree:
+        description: Exact merged main tree
+        required: true
+      runtime_authorization_id:
+        description: Bounded M3 authorization identity
+        required: true
+
+permissions: {}
+
+jobs:
+  linux-isolation:
+    runs-on: [self-hosted, linux, x64, stephanos-forge, ephemeral]
+    timeout-minutes: 10
+    steps:
+      - name: Prove exact source and outer isolation
+        shell: sh
+        env:
+          EXPECTED_HEAD: ${{ inputs.expected_head }}
+          EXPECTED_TREE: ${{ inputs.expected_tree }}
+          AUTHORIZATION_ID: ${{ inputs.runtime_authorization_id }}
+        run: |
+          set -eu
+          test "${GITHUB_SHA:-}" = "$EXPECTED_HEAD"
+          test -n "$EXPECTED_TREE"
+          test -n "$AUTHORIZATION_ID"
+          test ! -e /var/run/docker.sock
+          test ! -e /run/podman/podman.sock
+          test ! -e /workspace/stephan-os
+          test ! -e /root/.ssh
+          test -z "${GITHUB_TOKEN:-}"
+          printf '%s\n' "FORGE_M3_CANARY_OK linux $EXPECTED_HEAD $EXPECTED_TREE"
+
+  windows-isolation:
+    runs-on: [self-hosted, windows, x64, stephanos-forge, proof-only, ephemeral]
+    timeout-minutes: 10
+    steps:
+      - name: Prove exact source and outer isolation
+        shell: powershell
+        env:
+          EXPECTED_HEAD: ${{ inputs.expected_head }}
+          EXPECTED_TREE: ${{ inputs.expected_tree }}
+          AUTHORIZATION_ID: ${{ inputs.runtime_authorization_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_SHA -ne $env:EXPECTED_HEAD) { throw 'CANARY_HEAD_MISMATCH' }
+          if (-not $env:EXPECTED_TREE) { throw 'CANARY_TREE_MISSING' }
+          if (-not $env:AUTHORIZATION_ID) { throw 'CANARY_AUTHORIZATION_MISSING' }
+          if (Test-Path -LiteralPath "$env:USERPROFILE\Documents\GitHub\stephan-os") { throw 'CANONICAL_CHECKOUT_VISIBLE' }
+          if (Test-Path -LiteralPath '\\.\pipe\docker_engine') { throw 'CONTAINER_SOCKET_VISIBLE' }
+          if ($env:GITHUB_TOKEN) { throw 'GITHUB_CREDENTIAL_VISIBLE' }
+          Write-Output "FORGE_M3_CANARY_OK windows $env:EXPECTED_HEAD $env:EXPECTED_TREE"
