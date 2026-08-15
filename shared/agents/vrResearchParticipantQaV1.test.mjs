@@ -703,3 +703,65 @@ test('default Workspace correlation safely derives long colon-bearing question i
   assert.match(workspace.record.correlationId, /^vr-correlation-[0-9a-f]{24}$/);
   assert.equal(workspace.record.correlationId.includes(':'), false);
 });
+
+
+test('out-of-range evaluation clocks cannot throw through the public answer boundary', () => {
+  for (const hostileNowMs of [Number.MAX_VALUE, Infinity, -Infinity, NaN]) {
+    let result;
+    assert.doesNotThrow(() => {
+      result = answerVrResearchQuestion(
+        request('SOURCE_STACK', 0),
+        projection(),
+        qaInput({ nowMs: hostileNowMs, answeredAtUtc: 'not-a-timestamp' }),
+      );
+    });
+    assert.equal(result.valid, true);
+    assert.equal(Number.isFinite(Date.parse(result.answer.answeredAtUtc)), true);
+    assert.equal(new Date(Date.parse(result.answer.answeredAtUtc)).toISOString(), result.answer.answeredAtUtc);
+  }
+});
+
+test('noncanonical or inconsistent answeredAtUtc falls back to the trusted evaluation timestamp', () => {
+  for (const candidate of ['2026-08-14T11:00:00Z', 'not-a-timestamp', '2026-08-14T10:59:59.000Z']) {
+    const result = answerVrResearchQuestion(
+      request('SOURCE_STACK', 0),
+      projection(),
+      qaInput({ answeredAtUtc: candidate }),
+    );
+    assert.equal(result.answer.answeredAtUtc, answeredAtUtc);
+  }
+});
+
+test('canonical answeredAtUtc consistent with nowMs remains deterministic', () => {
+  const first = answerVrResearchQuestion(request('SOURCE_STACK', 0), projection(), qaInput());
+  const second = answerVrResearchQuestion(request('SOURCE_STACK', 0), projection(), qaInput());
+  assert.equal(first.answer.answeredAtUtc, answeredAtUtc);
+  assert.equal(second.answer.answeredAtUtc, answeredAtUtc);
+});
+
+test('timestamp accessors are never invoked', () => {
+  let nowCalls = 0;
+  let answeredCalls = 0;
+  const input = { proofVerifier };
+  Object.defineProperty(input, 'nowMs', {
+    enumerable: true,
+    get() {
+      nowCalls += 1;
+      throw new Error('must not execute');
+    },
+  });
+  Object.defineProperty(input, 'answeredAtUtc', {
+    enumerable: true,
+    get() {
+      answeredCalls += 1;
+      throw new Error('must not execute');
+    },
+  });
+  let result;
+  assert.doesNotThrow(() => {
+    result = answerVrResearchQuestion(request('SOURCE_STACK', 0), projection(), input);
+  });
+  assert.equal(result.valid, true);
+  assert.equal(nowCalls, 0);
+  assert.equal(answeredCalls, 0);
+});

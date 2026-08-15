@@ -143,6 +143,14 @@ epistemicState = STALE | UNKNOWN
 
 and cannot be promoted into a grounded answer.
 
+## Trusted answer-time boundary
+
+The public Q&A boundary converts the caller evaluation clock to one ECMAScript-Date-range-safe canonical instant before freshness evaluation or answer serialization. Non-finite and out-of-range `nowMs` values cannot reach `Date#toISOString()` and therefore cannot throw through the adapter.
+
+`answeredAtUtc` is accepted only when it is a canonical ISO timestamp representing that exact trusted evaluation instant. Invalid, noncanonical, inconsistent or accessor-backed values are ignored in favour of the trusted canonical evaluation timestamp.
+
+The same trusted instant drives freshness and the answer timestamp, preventing caller-controlled clock disagreement.
+
 ## Gap observations
 
 When a bounded VR question cannot be answered, the adapter emits one deterministic gap observation with existing canonical goal candidates first.

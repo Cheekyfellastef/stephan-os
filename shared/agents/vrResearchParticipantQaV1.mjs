@@ -35,6 +35,7 @@ const MAX_CANONICAL_OBJECT_KEYS = 256;
 const MAX_CANONICAL_DEPTH = 16;
 const MAX_CANONICAL_NODES = 8192;
 const MAX_CANONICAL_STRING_LENGTH = 16_384;
+const MAX_DATE_MS = 8_640_000_000_000_000;
 const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const VR_FACT_ALLOWED_FIELDS = new Set([
   'sourceId',
@@ -114,9 +115,24 @@ function readOwnData(input, key) {
   }
 }
 
-function evaluationNowMs(input) {
+function canonicalEvaluationTime(input) {
   const candidate = readOwnData(input, 'nowMs');
-  return Number.isFinite(candidate) ? candidate : Date.now();
+  const fallback = Date.now();
+  const nowMs = typeof candidate === 'number'
+    && Number.isFinite(candidate)
+    && Math.abs(candidate) <= MAX_DATE_MS
+    ? candidate
+    : fallback;
+  try {
+    return Object.freeze({ nowMs, answeredAtUtc: new Date(nowMs).toISOString() });
+  } catch {
+    const safeNowMs = Date.now();
+    return Object.freeze({ nowMs: safeNowMs, answeredAtUtc: new Date(safeNowMs).toISOString() });
+  }
+}
+
+function evaluationNowMs(input) {
+  return canonicalEvaluationTime(input).nowMs;
 }
 
 function projectionFreshness(projection = {}, nowMs = Date.now()) {
@@ -332,7 +348,8 @@ function projectionProofRefsVerified(refs, projection, input = {}) {
 }
 
 function answerEnvelope(request, projection, input, values = {}) {
-  const nowMs = evaluationNowMs(input);
+  const evaluationTime = canonicalEvaluationTime(input);
+  const nowMs = evaluationTime.nowMs;
   const freshness = projectionFreshness(projection, nowMs);
   const projectionEvidenceRefs = canonicalProofRefs(projection?.proofRefs);
   const requestedGrounded = values.grounded === true;
@@ -367,6 +384,10 @@ function answerEnvelope(request, projection, input, values = {}) {
         ? 'Canonical VR research projection is stale or missing trustworthy freshness evidence.'
         : 'Canonical VR research projection does not currently contain enough evidence for this question.'));
   const answeredAtCandidate = readOwnData(input, 'answeredAtUtc');
+  const answeredAtUtc = timestamp(answeredAtCandidate)
+    && Date.parse(answeredAtCandidate) === nowMs
+    ? answeredAtCandidate
+    : evaluationTime.answeredAtUtc;
   return Object.freeze({
     schemaVersion: VR_RESEARCH_PARTICIPANT_QA_SCHEMA_VERSION,
     answerId,
@@ -379,7 +400,7 @@ function answerEnvelope(request, projection, input, values = {}) {
     cannotAnswerReason,
     answerVerdict: verdict,
     facts: normalizeWorkspaceFacts(values.facts),
-    answeredAtUtc: text(answeredAtCandidate || new Date(nowMs).toISOString()),
+    answeredAtUtc,
   });
 }
 
