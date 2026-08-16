@@ -36,8 +36,8 @@ test('owner request must be GitHub-host attested and replay-safe before fixed ex
   const text = await source(consumerUrl);
   const selectIndex = text.indexOf('Test-Attestation $attestationEntry');
   const claimIndex = text.indexOf('Write-CreateNewJson -Path $claimPath');
-  const executeIndex = text.indexOf('-File $actionPath -Action $request.action');
-  const consumedIndex = text.indexOf('Write-CreateNewJson -Path $consumedPath');
+  const executeIndex = text.lastIndexOf('-File $actionPath -Action $request.action');
+  const consumedIndex = text.lastIndexOf('Write-Consumed -RequestId $request.requestId');
   assert.ok(selectIndex >= 0);
   assert.ok(claimIndex > selectIndex);
   assert.ok(executeIndex > claimIndex);
@@ -48,6 +48,7 @@ test('owner request must be GitHub-host attested and replay-safe before fixed ex
   assert.match(text, /EXCLUSIVE_CLAIM_EXISTS/);
   assert.match(text, /RECOVERY_ACTION_DISPATCHED_PROOF_PENDING/);
   assert.match(text, /recoveredHealthClaimed = \$false/);
+  assert.match(text, /replayAllowed = \$false/);
 });
 
 test('network or HTML failure degrades recovery truth without leaking into arbitrary execution', async () => {
