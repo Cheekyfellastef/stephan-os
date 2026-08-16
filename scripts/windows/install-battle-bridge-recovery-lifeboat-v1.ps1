@@ -48,14 +48,17 @@ function Read-ActiveState() {
     return $state
 }
 
-function Assert-ActiveHeartbeatFresh([object]$State) {
-    if ($null -eq $State) { return }
-    $heartbeatPath = Join-Path $statusRoot "bank-$([string]$State.activeBank)-heartbeat.json"
-    if (-not (Test-Path -LiteralPath $heartbeatPath -PathType Leaf)) { throw 'Existing active lifeboat bank has no heartbeat.' }
+function Read-FreshHealthyHeartbeat([string]$BankId, [string]$ExpectedManifest = '') {
+    $heartbeatPath = Join-Path $statusRoot "bank-$BankId-heartbeat.json"
+    if (-not (Test-Path -LiteralPath $heartbeatPath -PathType Leaf)) { throw "Lifeboat bank $BankId has no heartbeat." }
     $heartbeat = Get-Content -LiteralPath $heartbeatPath -Raw | ConvertFrom-Json
-    if (-not [bool]$heartbeat.healthy) { throw 'Existing active lifeboat heartbeat is not healthy.' }
+    if ([string]$heartbeat.schemaVersion -ne 'stephanos.battle-bridge-recovery-lifeboat-heartbeat.v1') { throw "Lifeboat bank $BankId heartbeat schema is invalid." }
+    if ([string]$heartbeat.bankId -ne $BankId) { throw "Lifeboat bank $BankId heartbeat identity is invalid." }
+    if (-not [bool]$heartbeat.healthy -or -not [bool]$heartbeat.payloadVerified) { throw "Lifeboat bank $BankId heartbeat is not healthy and payload verified." }
+    if ($ExpectedManifest -and [string]$heartbeat.manifestSha256 -ne $ExpectedManifest) { throw "Lifeboat bank $BankId heartbeat manifest mismatch." }
     $completed = [DateTime]::Parse([string]$heartbeat.completedAtUtc).ToUniversalTime()
-    if (([DateTime]::UtcNow - $completed).TotalMinutes -gt 10) { throw 'Existing active lifeboat heartbeat is stale.' }
+    if (([DateTime]::UtcNow - $completed).TotalMinutes -gt 10) { throw "Lifeboat bank $BankId heartbeat is stale." }
+    return $heartbeat
 }
 
 [System.IO.Directory]::CreateDirectory($lifeboatRoot) | Out-Null
@@ -73,8 +76,8 @@ if (Test-Path -LiteralPath $installedLauncher -PathType Leaf) {
 }
 
 $activeState = Read-ActiveState
-Assert-ActiveHeartbeatFresh -State $activeState
 $activeBank = if ($null -eq $activeState) { '' } else { [string]$activeState.activeBank }
+if ($activeBank) { $null = Read-FreshHealthyHeartbeat -BankId $activeBank -ExpectedManifest ([string]$activeState.manifestSha256) }
 $targetBank = if ($activeBank -eq 'A') { 'B' } else { 'A' }
 if ($targetBank -eq $activeBank) { throw 'Lifeboat installer must never target the active bank.' }
 
@@ -84,6 +87,7 @@ $stageActions = Join-Path $stageRoot 'actions'
 [System.IO.Directory]::CreateDirectory($stageActions) | Out-Null
 Copy-Item -LiteralPath $sourceRunner -Destination (Join-Path $stageRoot 'run-battle-bridge-recovery-lifeboat-bank-v1.ps1')
 Copy-Item -LiteralPath $sourceAction -Destination (Join-Path $stageActions 'battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1')
+Set-Content -LiteralPath (Join-Path $stageRoot 'version.txt') -Value $candidateVersion -Encoding ASCII
 
 $runnerHash = Get-Sha256 (Join-Path $stageRoot 'run-battle-bridge-recovery-lifeboat-bank-v1.ps1')
 $actionHash = Get-Sha256 (Join-Path $stageActions 'battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1')
@@ -98,21 +102,24 @@ if ($null -ne $activeState -and $manifestSha256 -eq [string]$activeState.manifes
     throw 'Candidate lifeboat bank is not distinct from the active known-good bank.'
 }
 
-$probeOutput = @(& $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $stageActions 'battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1') -Action PROBE_BATTLE_BRIDGE 2>&1)
-if ($LASTEXITCODE -ne 0) {
-    Remove-Item -LiteralPath $stageRoot -Recurse -Force
-    throw "Candidate lifeboat self-test failed: $($probeOutput -join [Environment]::NewLine)"
-}
-
 $targetRoot = Join-Path $banksRoot $targetBank
 $backupInactive = $null
 if (Test-Path -LiteralPath $targetRoot -PathType Container) {
     $backupInactive = Join-Path $stagingRoot "retired-$targetBank-$([Guid]::NewGuid().ToString('N'))"
 }
 
-if ($PSCmdlet.ShouldProcess($targetRoot, "Stage candidate lifeboat into inactive bank $targetBank")) {
+if ($PSCmdlet.ShouldProcess($targetRoot, "Stage and prove candidate lifeboat in inactive bank $targetBank")) {
     if ($null -ne $backupInactive) { Move-Item -LiteralPath $targetRoot -Destination $backupInactive }
     Move-Item -LiteralPath $stageRoot -Destination $targetRoot
+
+    $candidateRunner = Join-Path $targetRoot 'run-battle-bridge-recovery-lifeboat-bank-v1.ps1'
+    $candidateOutput = @(& $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $candidateRunner 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        Remove-Item -LiteralPath $targetRoot -Recurse -Force
+        if ($null -ne $backupInactive) { Move-Item -LiteralPath $backupInactive -Destination $targetRoot }
+        throw "Candidate lifeboat bank failed its installed-bank self-test: $($candidateOutput -join [Environment]::NewLine)"
+    }
+    $null = Read-FreshHealthyHeartbeat -BankId $targetBank -ExpectedManifest $manifestSha256
 
     $newState = [ordered]@{
         schemaVersion = 'stephanos.battle-bridge-lifeboat-active-bank.v1'
@@ -149,6 +156,8 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register fixed independent Battle Bridge
     rollbackBank = $activeBank
     candidateVersion = $candidateVersion
     candidateManifestSha256 = $manifestSha256
+    candidateHeartbeatRequiredBeforePromotion = $true
+    payloadHashVerificationRequired = $true
     productionRedundancyReady = [bool]($activeBank -in @('A', 'B'))
     immutableLauncher = $true
     repoCheckoutRequiredAfterInstall = $false
