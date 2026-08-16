@@ -9,11 +9,35 @@ $bankId = Split-Path -Leaf $bankRoot
 if ($bankId -notin @('A', 'B')) { throw 'Lifeboat bank runner must execute from fixed bank A or B.' }
 $lifeboatRoot = [System.IO.Path]::GetFullPath((Join-Path $bankRoot '..\..'))
 $actionPath = Join-Path $bankRoot 'actions\battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1'
+$versionPath = Join-Path $bankRoot 'version.txt'
+$manifestPath = Join-Path $bankRoot 'manifest.sha256'
 $statusRoot = Join-Path $lifeboatRoot 'status'
 $heartbeatPath = Join-Path $statusRoot "bank-$bankId-heartbeat.json"
 
-if (-not (Test-Path -LiteralPath $actionPath -PathType Leaf)) { throw 'Fixed Battle Bridge action adapter is missing from the active lifeboat bank.' }
+foreach ($required in @($actionPath, $versionPath, $manifestPath)) {
+    if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required lifeboat bank component is missing: $required" }
+}
 [System.IO.Directory]::CreateDirectory($statusRoot) | Out-Null
+
+function Get-Sha256([string]$Path) {
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Get-TextSha256([string]$Text) {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }
+}
+
+$version = (Get-Content -LiteralPath $versionPath -Raw).Trim()
+if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Lifeboat bank version is invalid.' }
+$expectedManifest = (Get-Content -LiteralPath $manifestPath -Raw).Trim().ToLowerInvariant()
+if ($expectedManifest -notmatch '^[a-f0-9]{64}$') { throw 'Lifeboat bank manifest is invalid.' }
+$runnerHash = Get-Sha256 $PSCommandPath
+$actionHash = Get-Sha256 $actionPath
+$manifestMaterial = "runner=$runnerHash`naction=$actionHash`nversion=$version`n"
+$observedManifest = Get-TextSha256 $manifestMaterial
+if ($observedManifest -ne $expectedManifest) { throw 'Lifeboat bank payload hash does not match its immutable manifest.' }
 
 $startedAt = [DateTime]::UtcNow
 $probeOutput = @(& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $actionPath -Action PROBE_BATTLE_BRIDGE 2>&1)
@@ -26,6 +50,9 @@ $ok = $probeExitCode -eq 0 -and $null -ne $probe -and [bool]$probe.ok
 $heartbeat = [ordered]@{
     schemaVersion = 'stephanos.battle-bridge-recovery-lifeboat-heartbeat.v1'
     bankId = $bankId
+    version = $version
+    manifestSha256 = $observedManifest
+    payloadVerified = $true
     lifeboatRoot = $lifeboatRoot
     repoCheckoutRequired = $false
     openClawGatewayRequired = $false
