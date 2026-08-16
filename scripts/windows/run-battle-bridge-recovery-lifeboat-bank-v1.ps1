@@ -4,6 +4,8 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+$powershellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+if (-not (Test-Path -LiteralPath $powershellExe -PathType Leaf)) { throw 'Canonical Windows PowerShell host is missing.' }
 $bankRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
 $bankId = Split-Path -Leaf $bankRoot
 if ($bankId -notin @('A', 'B')) { throw 'Lifeboat bank runner must execute from fixed bank A or B.' }
@@ -40,7 +42,7 @@ $observedManifest = Get-TextSha256 $manifestMaterial
 if ($observedManifest -ne $expectedManifest) { throw 'Lifeboat bank payload hash does not match its immutable manifest.' }
 
 $startedAt = [DateTime]::UtcNow
-$probeOutput = @(& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $actionPath -Action PROBE_BATTLE_BRIDGE 2>&1)
+$probeOutput = @(& $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $actionPath -Action PROBE_BATTLE_BRIDGE 2>&1)
 $probeExitCode = $LASTEXITCODE
 $probeText = $probeOutput -join [Environment]::NewLine
 $probe = $null
