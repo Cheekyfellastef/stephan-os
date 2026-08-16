@@ -21,11 +21,16 @@ function updated(before = A, after = B) {
   };
 }
 
+function nonWindowsRepairArgs() {
+  return { platform: 'linux', controlPlaneReconciler() { throw new Error('must not run on non-Windows'); } };
+}
+
 test('recovers a pending old-executor refresh then converges through no-change proof', async () => {
   const calls = [];
   const result = await runBattleBridgeSyncAndRefresh({
     paths,
     expectedPaths: paths,
+    ...nonWindowsRepairArgs(),
     pendingReader: async () => ({ ok: true, beforeHead: A, afterHead: B }),
     adapter: {
       runRefresh(input) { calls.push(['refresh', input.beforeHead, input.afterHead]); return { ok: true, result: { ok: true, sourceHead: B } }; },
@@ -35,6 +40,7 @@ test('recovers a pending old-executor refresh then converges through no-change p
   assert.equal(result.ok, true);
   assert.deepEqual(calls, [['refresh', A, B], ['sync']]);
   assert.equal(result.freshCoordinatorProcessUsed, true);
+  assert.equal(result.controlPlaneRepair.classification, 'CONTROL_PLANE_REPAIR_SKIPPED_NON_WINDOWS');
 });
 
 test('new source update refreshes and then runs a second sync for current-state convergence', async () => {
@@ -43,6 +49,7 @@ test('new source update refreshes and then runs a second sync for current-state 
   const result = await runBattleBridgeSyncAndRefresh({
     paths,
     expectedPaths: paths,
+    ...nonWindowsRepairArgs(),
     pendingReader: async () => null,
     adapter: {
       runSync() { calls.push('sync'); return { ok: true, result: syncResults.shift() }; },
@@ -53,11 +60,62 @@ test('new source update refreshes and then runs a second sync for current-state 
   assert.deepEqual(calls, ['sync', `refresh:${A}:${B}`, 'sync']);
 });
 
+test('converged Windows sync reconciles the fixed recovery mesh and mailbox control plane', async () => {
+  const repairs = [];
+  const result = await runBattleBridgeSyncAndRefresh({
+    paths,
+    expectedPaths: paths,
+    platform: 'win32',
+    pendingReader: async () => null,
+    adapter: {
+      runSync() { return { ok: true, result: noChange() }; },
+      runRefresh() { throw new Error('refresh should not run'); },
+    },
+    controlPlaneReconciler(input) {
+      repairs.push(input);
+      return {
+        ok: true,
+        finalVerdict: 'BATTLE_BRIDGE_CONTROL_PLANE_RECONCILED',
+        arbitraryTaskNameAllowed: false,
+        arbitraryShellAllowed: false,
+        sourceMutationAllowed: false,
+        gitMutationAllowed: false,
+        pcRestartAllowed: false,
+      };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.controlPlaneRepair.classification, 'CONTROL_PLANE_RECONCILED');
+  assert.equal(result.controlPlaneRepair.repairAttempted, true);
+  assert.deepEqual(repairs, [{ repoRoot: paths.repoRoot, expectedHead: B, platform: 'win32' }]);
+});
+
+test('control-plane repair failure blocks sync completion instead of masking a detached mailbox', async () => {
+  const result = await runBattleBridgeSyncAndRefresh({
+    paths,
+    expectedPaths: paths,
+    platform: 'win32',
+    pendingReader: async () => null,
+    adapter: {
+      runSync() { return { ok: true, result: noChange() }; },
+      runRefresh() { throw new Error('refresh should not run'); },
+    },
+    controlPlaneReconciler() {
+      return { ok: false, blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED' };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED');
+  assert.equal(result.finalVerdict, 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED');
+  assert.equal(result.controlPlaneRepair.repairAttempted, true);
+});
+
 test('refresh blocker stops without starting another sync cycle', async () => {
   let syncCalls = 0;
   const result = await runBattleBridgeSyncAndRefresh({
     paths,
     expectedPaths: paths,
+    ...nonWindowsRepairArgs(),
     pendingReader: async () => null,
     adapter: {
       runSync() { syncCalls += 1; return { ok: true, result: updated() }; },
@@ -74,6 +132,7 @@ test('invalid pending head evidence fails closed before any execution', async ()
   const result = await runBattleBridgeSyncAndRefresh({
     paths,
     expectedPaths: paths,
+    ...nonWindowsRepairArgs(),
     pendingReader: async () => ({ ok: false, blocker: 'PENDING_POST_SYNC_HEADS_INVALID' }),
     adapter: { runSync() { calls += 1; }, runRefresh() { calls += 1; } },
   });
@@ -81,11 +140,14 @@ test('invalid pending head evidence fails closed before any execution', async ()
   assert.equal(calls, 0);
 });
 
-test('default transport launches only fixed Node scripts without a shell', async () => {
+test('default transport launches only fixed Node scripts without a shell and uses fixed control-plane reconciler', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('./battle-bridge-github-sync-and-refresh.mjs', import.meta.url), 'utf8');
   assert.match(source, /battle-bridge-github-sync-executor\.mjs/);
   assert.match(source, /battle-bridge-post-sync-refresh\.mjs/);
+  assert.match(source, /battleBridgeControlPlaneSelfRepairV1\.mjs/);
+  assert.match(source, /reconcileBattleBridgeControlPlane/);
+  assert.match(source, /platform !== 'win32'/);
   assert.match(source, /shell: false/);
   assert.doesNotMatch(source, /reset --hard|git clean|git checkout|git push|Invoke-Expression|cmd\.exe/i);
 });
