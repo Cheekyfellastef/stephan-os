@@ -1,7 +1,12 @@
 import { aggregateBattleBridgeSupervisorProbes } from './battleBridgeSupervisor.mjs';
 import { aggregateIgnitionStatusRoutes } from './ignitionConciergeStatusRouting.mjs';
 import { createCodexDispatchDecision } from './automatedCodexDispatcher.mjs';
-import { createCodexQueueItem, validateCodexQueueItem } from './codexDispatchQueue.mjs';
+import {
+  CODEX_QUEUE_STATUS,
+  createCodexQueueItem,
+  transitionCodexQueueRecord,
+  validateCodexQueueItem,
+} from './codexDispatchQueue.mjs';
 import { createOperatorAutomationBatch } from './operatorAutomationLayer.mjs';
 import { evaluatePlatformStatusProofFlow } from './platformStatusProofFlow.mjs';
 import { createOpenClawFallbackRequest } from './openClawResilience.mjs';
@@ -20,16 +25,22 @@ export const PLATFORM_LOOP_STATUS = Object.freeze({
 });
 
 const SAFE_TEXT_PATTERN = /^[a-z0-9#][a-z0-9._:/#(), -]{0,300}$/i;
+const QUEUE_PROGRESS_PATH = Object.freeze([
+  CODEX_QUEUE_STATUS.WAITING_OPERATOR_APPROVAL,
+  CODEX_QUEUE_STATUS.READY_FOR_MANUAL_DISPATCH,
+  CODEX_QUEUE_STATUS.DISPATCHED_MANUAL,
+  CODEX_QUEUE_STATUS.CLAIMED,
+  CODEX_QUEUE_STATUS.RUNNING,
+  CODEX_QUEUE_STATUS.WAITING_PROOF,
+  CODEX_QUEUE_STATUS.PROOF_RECEIVED,
+  CODEX_QUEUE_STATUS.VERIFIED,
+  CODEX_QUEUE_STATUS.DONE,
+]);
 
 function asText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
   return text || fallback;
-}
-
-function asList(value) {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => asText(item, '')).filter(Boolean);
 }
 
 function safeText(value, fallback = '') {
@@ -41,8 +52,50 @@ function firstNonEmpty(...values) {
   return values.find((value) => asText(value, '')) || '';
 }
 
+function requestedQueueStatus(value) {
+  const normalized = asText(value, CODEX_QUEUE_STATUS.QUEUED).replace(/-/g, '_').toUpperCase();
+  const legacy = {
+    QUEUED: CODEX_QUEUE_STATUS.QUEUED,
+    DISPATCHED: CODEX_QUEUE_STATUS.DISPATCHED_MANUAL,
+    SUCCEEDED: CODEX_QUEUE_STATUS.DONE,
+    COMPLETE: CODEX_QUEUE_STATUS.DONE,
+    COMPLETED: CODEX_QUEUE_STATUS.DONE,
+    WAITINGPROOF: CODEX_QUEUE_STATUS.WAITING_PROOF,
+  };
+  const status = legacy[normalized] || normalized;
+  return [CODEX_QUEUE_STATUS.QUEUED, ...QUEUE_PROGRESS_PATH, CODEX_QUEUE_STATUS.BLOCKED, CODEX_QUEUE_STATUS.FAILED].includes(status)
+    ? status
+    : CODEX_QUEUE_STATUS.QUEUED;
+}
+
+function advanceQueueItem(record, targetStatus, input = {}) {
+  if (targetStatus === CODEX_QUEUE_STATUS.QUEUED) return { valid: true, record };
+  if ([CODEX_QUEUE_STATUS.BLOCKED, CODEX_QUEUE_STATUS.FAILED].includes(targetStatus)) {
+    return transitionCodexQueueRecord(record, targetStatus, {
+      timestamp: input.now || 'pending',
+      reason: input.queueReason || 'platform-loop-explicit-terminal-state',
+      blockerMetadata: input.blockerMetadata,
+    });
+  }
+  const targetIndex = QUEUE_PROGRESS_PATH.indexOf(targetStatus);
+  if (targetIndex < 0) return { valid: false, error: 'unsupported-platform-loop-queue-status', record };
+  let current = record;
+  for (let index = 0; index <= targetIndex; index += 1) {
+    const status = QUEUE_PROGRESS_PATH[index];
+    const transition = transitionCodexQueueRecord(current, status, {
+      timestamp: input.now || 'pending',
+      approvalReceipt: status === CODEX_QUEUE_STATUS.READY_FOR_MANUAL_DISPATCH ? input.approvalReceipt : undefined,
+      reason: `platform-loop-${status.toLowerCase().replaceAll('_', '-')}`,
+      resultMetadata: status === CODEX_QUEUE_STATUS.DONE ? { proofPassed: input.proofPassed === true } : undefined,
+    });
+    if (!transition.valid) return transition;
+    current = transition.record;
+  }
+  return { valid: true, record: current };
+}
+
 function inputQueueComplete(dispatcherDecision, proofPassed) {
-  return proofPassed && dispatcherDecision.record?.status === 'succeeded';
+  return proofPassed && dispatcherDecision.record?.status === CODEX_QUEUE_STATUS.DONE;
 }
 
 function decidePlatformLoopStatus({ supervisor, ignition, queueValidation, dispatcherDecision, operatorBatch, proofPassed }) {
@@ -50,10 +103,9 @@ function decidePlatformLoopStatus({ supervisor, ignition, queueValidation, dispa
   if (ignition.finalVerdict !== 'IGNITION_CONCIERGE_STATUS_ROUTING_PASS') return PLATFORM_LOOP_STATUS.BLOCKED_WITH_EXACT_UNBLOCK_ACTION;
   if (!queueValidation.valid) return PLATFORM_LOOP_STATUS.BLOCKED_WITH_EXACT_UNBLOCK_ACTION;
   if (operatorBatch.status === 'WAITING_FOR_OPERATOR_APPROVAL') return PLATFORM_LOOP_STATUS.WAITING_FOR_OPERATOR_APPROVAL;
-  if (dispatcherDecision.canonicalDecision === 'DISPATCHED' && inputQueueComplete(dispatcherDecision, proofPassed)) return PLATFORM_LOOP_STATUS.DONE;
-  if (dispatcherDecision.decision === 'BLOCKED_BY_OPERATOR_APPROVAL') return PLATFORM_LOOP_STATUS.WAITING_FOR_OPERATOR_APPROVAL;
-  if (dispatcherDecision.decision === 'BLOCKED_BY_INVALID_QUEUE_ITEM' || dispatcherDecision.decision === 'BLOCKED_BY_MISSING_INTEGRATION') return PLATFORM_LOOP_STATUS.BLOCKED_WITH_EXACT_UNBLOCK_ACTION;
   if (inputQueueComplete(dispatcherDecision, proofPassed)) return PLATFORM_LOOP_STATUS.DONE;
+  if (dispatcherDecision.decision === 'BLOCKED_BY_OPERATOR_APPROVAL' || dispatcherDecision.decision === 'BLOCKED_BY_QUEUE_NOT_READY') return PLATFORM_LOOP_STATUS.WAITING_FOR_OPERATOR_APPROVAL;
+  if (dispatcherDecision.decision === 'BLOCKED_BY_INVALID_QUEUE_ITEM' || dispatcherDecision.decision === 'BLOCKED_BY_MISSING_INTEGRATION') return PLATFORM_LOOP_STATUS.BLOCKED_WITH_EXACT_UNBLOCK_ACTION;
   if (!proofPassed) return PLATFORM_LOOP_STATUS.BUILDING;
   if (dispatcherDecision.decision === 'DISPATCH_READY_ITEM' || dispatcherDecision.decision === 'DISPATCHED') return PLATFORM_LOOP_STATUS.BUILDING;
   return PLATFORM_LOOP_STATUS.WAITING_FOR_PROOF;
@@ -72,6 +124,7 @@ export function buildPlatformLoopIntegrationContract() {
       'supervisor',
       'ignition',
       'queueItem',
+      'queuePreparation',
       'dispatcherDecision',
       'operatorBatch',
       'openClawFallback',
@@ -93,20 +146,31 @@ export function createPlatformLoopSnapshot(input = {}) {
   const supervisor = aggregateBattleBridgeSupervisorProbes({ probes: input.serviceProbes || [] });
   const ignition = aggregateIgnitionStatusRoutes({ routes: input.ignitionRoutes || [] });
   const proofPassed = input.proofPassed === true;
-  const queueItem = createCodexQueueItem({
+  const requestedStatus = requestedQueueStatus(input.queueStatus);
+  const createdQueueItem = createCodexQueueItem({
     issueNumber: Number.parseInt(goalId.replace(/[^0-9]/g, ''), 10) || 1306,
     branch: input.branch || 'codex/platform-loop-integration',
     prompt: input.queueSummary || 'Platform loop integration work item.',
     requestedProofCommands: input.requiredTests || ['node --test shared/agents/platformLoopIntegration.test.mjs'],
-    status: input.queueStatus || 'queued',
-    resultMetadata: input.queueStatus === 'succeeded' ? { proofPassed: true } : undefined,
+    approvalRequirements: { requiresOperatorApprovalBeforeDispatch: true },
+    createdAt: input.now || 'pending',
   });
-  const queueValidation = validateCodexQueueItem(queueItem);
+  const preparationTarget = input.approvalReceipt && requestedStatus === CODEX_QUEUE_STATUS.QUEUED
+    ? CODEX_QUEUE_STATUS.READY_FOR_MANUAL_DISPATCH
+    : requestedStatus;
+  const queuePreparation = advanceQueueItem(createdQueueItem, preparationTarget, {
+    ...input,
+    proofPassed,
+  });
+  const queueItem = queuePreparation.valid ? queuePreparation.record : createdQueueItem;
+  const queueValidation = queuePreparation.valid
+    ? validateCodexQueueItem(queueItem)
+    : { valid: false, errors: [queuePreparation.error || 'queue-preparation-failed'] };
   const rawDispatcherDecision = createCodexDispatchDecision({
     queueRecord: queueItem,
     integration: input.integration || {
       capabilities: { launchCodexJob: true, returnDispatchReceipt: true, returnProofMetadata: true },
-      dispatch: (record) => ({ receiptId: `${record.jobId}-dispatch-receipt`, accepted: true }),
+      dispatch: (packet) => ({ receiptId: `${packet.jobId}-dispatch-receipt`, accepted: true, started: true, proofRefs: [`receipts/${packet.jobId}.json`] }),
     },
     now: input.now || 'pending',
     proofMetadata: proofPassed ? { proofPassed: true } : null,
@@ -161,6 +225,7 @@ export function createPlatformLoopSnapshot(input = {}) {
     supervisor.exactUnblockAction,
     ignition.summary && ignition.finalVerdict !== 'IGNITION_CONCIERGE_STATUS_ROUTING_PASS' ? ignition.summary : '',
     queueValidation.errors?.join(', '),
+    dispatcherDecision.decision === 'BLOCKED_BY_OPERATOR_APPROVAL' ? 'Provide an explicit operator approval receipt through the canonical queue transition.' : '',
     proofPassed ? '' : 'Run focused platform loop proof.'
   );
   const nextAction = status === PLATFORM_LOOP_STATUS.DONE
@@ -177,6 +242,7 @@ export function createPlatformLoopSnapshot(input = {}) {
     missionState: [
       `Supervisor: ${supervisor.finalVerdict}`,
       `Ignition: ${ignition.finalVerdict}`,
+      `Queue: ${queueItem.status}`,
       `Dispatcher: ${dispatcherDecision.decision}`,
       `PlatformProof: ${platformStatusProof.status}`,
       `ExactHeadMerge: ${exactHeadMergeHold.state}`,
@@ -211,6 +277,7 @@ export function createPlatformLoopSnapshot(input = {}) {
     supervisor,
     ignition,
     queueItem,
+    queuePreparation,
     queueValidation,
     dispatcherDecision,
     operatorBatch,

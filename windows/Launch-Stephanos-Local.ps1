@@ -50,6 +50,8 @@ $launcherRootReuseProbeCommand = 'node scripts/ignite-stephanos-local.mjs --prob
 $visiblePowerShellRequired = $false
 $canonicalSharedWorkspaceRoot = if ($SharedWorkspace -and $SharedWorkspace.Trim()) { $SharedWorkspace.Trim() } elseif ($env:STEPHANOS_SHARED_WORKSPACE -and $env:STEPHANOS_SHARED_WORKSPACE.Trim()) { $env:STEPHANOS_SHARED_WORKSPACE.Trim() } elseif ($env:STEPHANOS_OPENCLAW_WORKSPACE -and $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim()) { $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim() } else { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Stephanos-openclaw-workspace' }
 $battleBridgeSupervisorCurrentPath = Join-Path $canonicalSharedWorkspaceRoot 'status/battle-bridge-ignition-supervisor-current.json'
+$script:ignitionRunStartedAtUtc = (Get-Date).ToUniversalTime()
+$script:supervisorRecordFreshnessSkewSeconds = 2
 $ignitionProofRoot = $canonicalSharedWorkspaceRoot
 $ignitionStatusPath = Join-Path $ignitionProofRoot 'launcher-status.json'
 $ignitionSplashPath = Join-Path $ignitionProofRoot 'ignition-status.html'
@@ -179,7 +181,14 @@ function Get-BattleBridgeSupervisorCurrentRecord {
   $supervisorCurrentPath = $battleBridgeSupervisorCurrentPath
   if (-not (Test-Path -LiteralPath $supervisorCurrentPath -PathType Leaf)) { return $null }
   try {
+    $statusFile = Get-Item -LiteralPath $supervisorCurrentPath -ErrorAction Stop
+    $freshnessBoundaryUtc = $script:ignitionRunStartedAtUtc.AddSeconds(-1 * $script:supervisorRecordFreshnessSkewSeconds)
+    if ($statusFile.LastWriteTimeUtc -lt $freshnessBoundaryUtc) { return $null }
+
     $record = Get-Content -LiteralPath $supervisorCurrentPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $generatedAtUtc = [DateTimeOffset]::MinValue
+    if (-not $record.generatedAt -or -not [DateTimeOffset]::TryParse([string]$record.generatedAt, [ref]$generatedAtUtc)) { return $null }
+    if ($generatedAtUtc.UtcDateTime -lt $freshnessBoundaryUtc) { return $null }
     return $record
   }
   catch {
@@ -218,7 +227,7 @@ function Convert-SupervisorRecordToIgnitionStatus([object]$SupervisorRecord, [st
     currentStage = $stage
     ignitionStages = Get-IgnitionStageSnapshot -CurrentStageId $stage
     blocker = if ($SupervisorRecord.blockerId) { [string]$SupervisorRecord.blockerId } else { '' }
-    battleBridgeSupervisorCurrentPath = $supervisorCurrentPath
+    battleBridgeSupervisorCurrentPath = $battleBridgeSupervisorCurrentPath
     battleBridgeSupervisor = $SupervisorRecord
     destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs'); transcriptPath = $ignitionTranscriptPath; supportSnapshotPath = $ignitionSupportSnapshotPath }
   }

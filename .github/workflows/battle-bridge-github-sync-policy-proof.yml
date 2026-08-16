@@ -1,0 +1,71 @@
+name: Battle Bridge GitHub Sync Proof
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/battle-bridge-github-sync-*.mjs'
+      - 'scripts/windows/install-battle-bridge-github-sync.ps1'
+      - 'scripts/windows/status-battle-bridge-github-sync.ps1'
+      - 'scripts/windows/uninstall-battle-bridge-github-sync.ps1'
+      - '.github/workflows/battle-bridge-github-sync-policy-proof.yml'
+  push:
+    paths:
+      - 'scripts/battle-bridge-github-sync-*.mjs'
+      - 'scripts/windows/install-battle-bridge-github-sync.ps1'
+      - 'scripts/windows/status-battle-bridge-github-sync.ps1'
+      - 'scripts/windows/uninstall-battle-bridge-github-sync.ps1'
+      - '.github/workflows/battle-bridge-github-sync-policy-proof.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  sync-proof:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Parse Node sources
+        run: |
+          node --check scripts/battle-bridge-github-sync-policy.mjs
+          node --check scripts/battle-bridge-github-sync-executor.mjs
+
+      - name: Parse Windows installer scripts
+        shell: pwsh
+        run: |
+          $allErrors = @()
+          Get-ChildItem scripts/windows/*battle-bridge-github-sync.ps1 | ForEach-Object {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
+            $allErrors += $parseErrors
+          }
+          if ($allErrors.Count -gt 0) {
+            $allErrors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+
+      - name: Run deterministic sync and installer tests
+        run: |
+          node --test \
+            scripts/battle-bridge-github-sync-policy.test.mjs \
+            scripts/battle-bridge-github-sync-command-registry.test.mjs \
+            scripts/battle-bridge-github-sync-executor.test.mjs \
+            scripts/battle-bridge-github-sync-installer.test.mjs
+
+      - name: Check pull request patch whitespace
+        if: github.event_name == 'pull_request'
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+
+      - name: Check pushed patch whitespace
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        run: git diff --check "${{ github.event.before }}...${{ github.sha }}"

@@ -1,0 +1,5 @@
+{
+  "name": "stephanos-codex-dispatch",
+  "version": "1.0.0",
+  "description": "Dispatch operator-approved live Battle Bridge proof tasks to local Codex and read structured results without manual prompt moving."
+}

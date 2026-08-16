@@ -1,7 +1,37 @@
 import express from 'express';
 import { getSpotifyConfigDiagnostics, searchSpotifyCatalog } from '../services/spotifyClient.js';
+import { MAX_CATALOG_QUERY_LENGTH, searchProviderNeutralCatalog } from '../services/musicCatalogSearch.js';
+import { readMusicSpotifyLinkCandidates } from '../../shared/agents/musicSpotifyLinkBridge.mjs';
+import { fileURLToPath } from 'node:url';
+
+const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 const router = express.Router();
+
+router.get('/catalog/search', async (req, res) => {
+  const query = String(req.query.q || '').replace(/\s+/g, ' ').trim();
+  const limit = Math.min(Math.max(Number(req.query.limit || 5), 1), 10);
+  res.set('Cache-Control', 'no-store');
+  if (!query) {
+    res.status(400).json({ ok: false, error: 'Missing required query parameter: q', results: [] });
+    return;
+  }
+  if (query.length > MAX_CATALOG_QUERY_LENGTH) {
+    res.status(400).json({ ok: false, error: `Music search queries are limited to ${MAX_CATALOG_QUERY_LENGTH} characters`, results: [] });
+    return;
+  }
+  const result = await searchProviderNeutralCatalog({ query, limit });
+  res.status(result.ok ? 200 : 503).json(result);
+});
+
+router.get('/spotify/verified-links', async (_req, res) => {
+  try {
+    const result = await readMusicSpotifyLinkCandidates({ repoRoot });
+    res.status(result.ok ? 200 : 503).json(result);
+  } catch {
+    res.status(503).json({ ok: false, configured: false, blocker: 'MUSIC_SPOTIFY_LINK_FEED_UNAVAILABLE', candidates: [] });
+  }
+});
 
 function normalize(value = '') {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();

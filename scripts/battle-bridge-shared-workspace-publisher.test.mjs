@@ -5,11 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_AUTHORITY,
+  BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_CORRELATION_ID,
+  BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_RELATED_ISSUE,
   createBattleBridgeSharedWorkspaceRecords,
   refreshBattleBridgeSharedWorkspacePublisher,
 } from './battle-bridge-shared-workspace-publisher.mjs';
 import { collectLauncherReadinessLiveFacts, LIVE_COLLECTOR_AUTHORITY } from './launcher-readiness-live-facts.mjs';
 import { createLauncherReadinessReport } from './launcher-readiness-report.mjs';
+import { validateSharedWorkspaceRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 
 async function withTempDir(prefix, fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -36,6 +39,44 @@ test('fixture writes status/proof/events records into a temp shared workspace', 
   assert.equal(readRecord(workspaceRoot, 'proof').status, 'READY');
   assert.equal(readRecord(workspaceRoot, 'events').status, 'READY');
 }));
+
+test('all three current records pass the validator and write successfully', async () => withTempDir('bb-publisher-validator-', async (workspaceRoot) => {
+  const timestampUtc = '2026-07-14T19:00:00.000Z';
+  const records = createBattleBridgeSharedWorkspaceRecords({
+    facts: factsFor(['backend', 'stephanos-ui', 'openclaw-gateway']),
+    timestampUtc,
+  });
+
+  for (const [name, record] of Object.entries(records)) {
+    const validation = validateSharedWorkspaceRecord(record, { nowMs: Date.parse(timestampUtc) });
+    assert.equal(validation.valid, true, `${name}: ${validation.errors.join(',')}`);
+  }
+
+  assert.equal(records.proof.correlationId, BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_CORRELATION_ID);
+  assert.equal(records.proof.relatedIssue, BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_RELATED_ISSUE);
+  assert.deepEqual(records.proof.proofRefs, ['proof/battle-bridge-current.json']);
+
+  const result = await refreshBattleBridgeSharedWorkspacePublisher({
+    sharedWorkspace: workspaceRoot,
+    facts: factsFor(['backend', 'stephanos-ui', 'openclaw-gateway']),
+    timestampUtc,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.writes.length, 3);
+  assert.equal(result.writes.every((write) => write.ok && write.reason === 'ATOMIC_JSON_WRITTEN'), true);
+  assert.deepEqual(['status', 'proof', 'events'].map((channel) => readRecord(workspaceRoot, channel).status), ['READY', 'READY', 'READY']);
+}));
+
+test('proof correlation can point at a real pull request instead of the default issue', () => {
+  const records = createBattleBridgeSharedWorkspaceRecords({
+    facts: factsFor(['backend']),
+    timestampUtc: '2026-07-14T19:00:00.000Z',
+    relatedPr: '#1518',
+  });
+  assert.equal(records.proof.relatedPr, '#1518');
+  assert.equal('relatedIssue' in records.proof, false);
+  assert.equal(validateSharedWorkspaceRecord(records.proof, { nowMs: Date.parse(records.proof.timestampUtc) }).valid, true);
+});
 
 test('fixture fresh published records are accepted by launcher-readiness-live-facts and clear STALE_WORKSPACE', async () => withTempDir('bb-publisher-workspace-', async (workspaceRoot) => withTempDir('bb-publisher-repo-', async (repoRoot) => {
   await refreshBattleBridgeSharedWorkspacePublisher({ repoRoot, sharedWorkspace: workspaceRoot, facts: factsFor(['backend', 'stephanos-ui', 'openclaw-gateway']) });

@@ -1,0 +1,13 @@
+{
+  "name": "stephanos-local-plugins",
+  "owner": {
+    "name": "Stephanos"
+  },
+  "plugins": [
+    {
+      "name": "stephanos-codex-dispatch",
+      "source": "../../plugins/stephanos-codex-dispatch",
+      "description": "Dispatch operator-approved live Battle Bridge proof tasks to local Codex and read structured results."
+    }
+  ]
+}

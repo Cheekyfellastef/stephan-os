@@ -14,3 +14,7 @@ Establish a seated-first **Cockpit Mode** path for Starfield that can evolve int
 - Technique updates: `VR-Research-Lab/docs/vr-techniques/`
 - Experiment details: `VR-Research-Lab/docs/experiment-logs/`
 - Reusable outputs: `VR-Research-Lab/modules/`
+
+## Controlled launch surface
+
+`desktop-launcher.md` defines the fail-closed Windows shortcut named **Starfield VR**. It launches only a provider, game build and Quest 3 Meta Air Link route that #1595 has bound to exact evidence. The current VorpX experience remains a separately verified fallback while `mutar-openxr` is the preferred native-style path.
