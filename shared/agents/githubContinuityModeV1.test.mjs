@@ -12,17 +12,22 @@ import {
 import { MISSION_CONTROLLER_ROUTE } from './missionControllerCapacityRouterV1.mjs';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
-const HEAD = 'ca519431f3c57add0dfa2e7b80a6e6b26404b111';
+const HEAD = '000ef68d9eaed3715e87311f7d90df26a1203588';
+const STALE_HEAD = 'ca519431f3c57add0dfa2e7b80a6e6b26404b111';
 const NOW = '2026-08-16T15:30:00.000Z';
 
-function health({ availability = BATTLE_BRIDGE_AVAILABILITY.UNAVAILABLE, expiresAtUtc = '2026-08-16T15:35:00.000Z' } = {}) {
+function health({
+  availability = BATTLE_BRIDGE_AVAILABILITY.UNAVAILABLE,
+  expiresAtUtc = '2026-08-16T15:35:00.000Z',
+  sourceHead = HEAD,
+} = {}) {
   return {
     schemaVersion: BATTLE_BRIDGE_CONTINUITY_HEALTH_SCHEMA,
     hostId: 'battle-bridge-primary',
     repository: REPOSITORY,
     observedAtUtc: '2026-08-16T15:29:00.000Z',
     expiresAtUtc,
-    sourceHead: HEAD,
+    sourceHead,
     availability,
     capabilities: ['WINDOWS_RUNTIME', 'BATTLE_BRIDGE_CONTROL'],
     blockers: availability === BATTLE_BRIDGE_AVAILABILITY.READY ? [] : ['control-plane-unhealthy'],
@@ -80,6 +85,7 @@ function windowsMission(id = 'windows-1') {
 function input(overrides = {}) {
   return {
     repository: REPOSITORY,
+    expectedSourceHead: HEAD,
     nowUtc: NOW,
     battleBridgeHealth: health(),
     tasks: [sourceMission(), windowsMission()],
@@ -95,6 +101,7 @@ test('unavailable Battle Bridge enters continuity mode, continues source work, a
   const result = planGitHubContinuityMode(input());
 
   assert.equal(result.state, GITHUB_CONTINUITY_STATE.GITHUB_CONTINUITY);
+  assert.equal(result.expectedSourceHead, HEAD);
   assert.equal(result.battleBridgeAvailability, BATTLE_BRIDGE_AVAILABILITY.UNAVAILABLE);
   assert.equal(result.recoveryHandoffRequired, true);
   assert.equal(result.recoveryGoalIssue, 1814);
@@ -131,6 +138,7 @@ test('stale Battle Bridge health never paints the host green and still permits p
   const stale = health({ expiresAtUtc: '2026-08-16T15:29:30.000Z' });
   const validation = validateBattleBridgeContinuityHealth(stale, {
     repository: REPOSITORY,
+    expectedSourceHead: HEAD,
     nowUtc: NOW,
   });
   assert.equal(validation.valid, true);
@@ -145,6 +153,32 @@ test('stale Battle Bridge health never paints the host green and still permits p
   assert.equal(result.battleBridgeAvailability, BATTLE_BRIDGE_AVAILABILITY.UNKNOWN);
   assert.equal(result.tasks[0].disposition, CONTINUITY_TASK_DISPOSITION.CONTINUE);
   assert.ok(result.blockers.includes('BATTLE_BRIDGE_CONTINUITY_HEALTH_STALE'));
+});
+
+test('READY health from an older source head is fenced as UNKNOWN and cannot restore Windows routing', () => {
+  const staleSource = health({
+    availability: BATTLE_BRIDGE_AVAILABILITY.READY,
+    sourceHead: STALE_HEAD,
+  });
+  const validation = validateBattleBridgeContinuityHealth(staleSource, {
+    repository: REPOSITORY,
+    expectedSourceHead: HEAD,
+    nowUtc: NOW,
+  });
+  assert.equal(validation.valid, false);
+  assert.equal(validation.current, false);
+  assert.equal(validation.availability, BATTLE_BRIDGE_AVAILABILITY.UNKNOWN);
+  assert.equal(validation.blocker, 'BATTLE_BRIDGE_CONTINUITY_SOURCE_HEAD_MISMATCH');
+
+  const result = planGitHubContinuityMode(input({
+    battleBridgeHealth: staleSource,
+    tasks: [sourceMission(), windowsMission()],
+  }));
+  assert.equal(result.state, GITHUB_CONTINUITY_STATE.GITHUB_CONTINUITY);
+  assert.equal(result.battleBridgeAvailability, BATTLE_BRIDGE_AVAILABILITY.UNKNOWN);
+  assert.equal(result.counts.continue, 1);
+  assert.equal(result.counts.runtimeHold, 1);
+  assert.ok(result.blockers.includes('BATTLE_BRIDGE_CONTINUITY_SOURCE_HEAD_MISMATCH'));
 });
 
 test('missing proven source capacity holds work instead of fabricating progress', () => {
@@ -173,6 +207,7 @@ test('invalid host receipt is UNKNOWN, not READY', () => {
   const invalid = { ...health(), extra: true };
   const validation = validateBattleBridgeContinuityHealth(invalid, {
     repository: REPOSITORY,
+    expectedSourceHead: HEAD,
     nowUtc: NOW,
   });
 
@@ -190,6 +225,16 @@ test('continuity mode adds no merge, deployment, runtime, duplicate-dispatch, or
   assert.equal(result.runtimeMutationAuthorityAdded, false);
   assert.equal(result.duplicateDispatchAllowed, false);
   assert.equal(result.protectedMergeDispatchAllowed, false);
+});
+
+test('missing canonical source head makes the continuity envelope fail closed', () => {
+  const result = planGitHubContinuityMode(input({
+    expectedSourceHead: '',
+    tasks: [sourceMission()],
+  }));
+  assert.equal(result.state, GITHUB_CONTINUITY_STATE.DEGRADED_HOLD);
+  assert.equal(result.finalVerdict, 'GITHUB_CONTINUITY_BLOCKED');
+  assert.deepEqual(result.tasks, []);
 });
 
 test('oversized task inventory fails closed', () => {
