@@ -90,13 +90,17 @@ export function validateBattleBridgeContinuityHealth(receipt, options = {}) {
   const proofRefs = uniqueStrings(receipt?.proofRefs);
   const availability = text(receipt?.availability).toUpperCase();
   const repository = text(options.repository);
+  const expectedSourceHead = text(options.expectedSourceHead).toLowerCase();
+  const receiptSourceHead = text(receipt?.sourceHead).toLowerCase();
 
   const valid = exactKeys(receipt, HEALTH_KEYS)
     && receipt.schemaVersion === BATTLE_BRIDGE_CONTINUITY_HEALTH_SCHEMA
     && SAFE_ID.test(text(receipt.hostId))
     && REPOSITORY.test(text(receipt.repository))
     && receipt.repository === repository
-    && FULL_SHA.test(text(receipt.sourceHead))
+    && FULL_SHA.test(expectedSourceHead)
+    && FULL_SHA.test(receiptSourceHead)
+    && receiptSourceHead === expectedSourceHead
     && Object.values(BATTLE_BRIDGE_AVAILABILITY).includes(availability)
     && capabilities !== null
     && blockers !== null
@@ -110,12 +114,17 @@ export function validateBattleBridgeContinuityHealth(receipt, options = {}) {
     && expiresAtMs - observedAtMs <= MAX_HEALTH_LIFETIME_MS;
 
   if (!valid) {
+    const sourceHeadMismatch = FULL_SHA.test(expectedSourceHead)
+      && FULL_SHA.test(receiptSourceHead)
+      && receiptSourceHead !== expectedSourceHead;
     return frozen({
       valid: false,
       current: false,
       availability: BATTLE_BRIDGE_AVAILABILITY.UNKNOWN,
       receipt: null,
-      blocker: 'BATTLE_BRIDGE_CONTINUITY_HEALTH_INVALID',
+      blocker: sourceHeadMismatch
+        ? 'BATTLE_BRIDGE_CONTINUITY_SOURCE_HEAD_MISMATCH'
+        : 'BATTLE_BRIDGE_CONTINUITY_HEALTH_INVALID',
     });
   }
 
@@ -233,13 +242,16 @@ function taskPlan(input, item, host) {
 export function planGitHubContinuityMode(input = {}) {
   const repository = text(input.repository);
   const nowUtc = text(input.nowUtc);
+  const expectedSourceHead = text(input.expectedSourceHead).toLowerCase();
   const tasks = list(input.tasks);
   const validEnvelope = REPOSITORY.test(repository)
     && timestamp(nowUtc) !== null
+    && FULL_SHA.test(expectedSourceHead)
     && tasks.length <= MAX_TASKS;
 
   const host = validateBattleBridgeContinuityHealth(input.battleBridgeHealth, {
     repository,
+    expectedSourceHead,
     nowUtc,
   });
 
@@ -247,6 +259,7 @@ export function planGitHubContinuityMode(input = {}) {
     return frozen({
       schemaVersion: GITHUB_CONTINUITY_MODE_SCHEMA,
       repository,
+      expectedSourceHead,
       evaluatedAtUtc: nowUtc,
       state: GITHUB_CONTINUITY_STATE.DEGRADED_HOLD,
       battleBridgeAvailability: BATTLE_BRIDGE_AVAILABILITY.UNKNOWN,
@@ -291,6 +304,7 @@ export function planGitHubContinuityMode(input = {}) {
   return frozen({
     schemaVersion: GITHUB_CONTINUITY_MODE_SCHEMA,
     repository,
+    expectedSourceHead,
     evaluatedAtUtc: nowUtc,
     state,
     battleBridgeAvailability: host.availability,
