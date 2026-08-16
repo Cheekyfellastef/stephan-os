@@ -68,6 +68,28 @@ test('backend startup source tolerates only unstaged canonical durable-memory di
   assert.doesNotMatch(starter, /CommandLine -match|Invoke-Expression|Start-Process[^\n]*-ArgumentList[^\n]*\$CommandLine/i);
 });
 
+test('Recovery Mesh shares the exact runtime-memory and backend listener identity rules', async () => {
+  const probe = await readFile(new URL('./windows/probe-battle-bridge-recovery-mesh.ps1', import.meta.url), 'utf8');
+  assert.match(probe, /\$runtimeMemoryPath = 'stephanos-server\/data\/memory\/durable-memory\.json'/);
+  assert.match(probe, /\$status -eq ' M' -and \$path -eq \$runtimeMemoryPath/);
+  assert.match(probe, /RECOVERY_CANONICAL_TRACKED_SOURCE_WORKTREE_DIRTY/);
+  assert.match(probe, /runtimeMemoryDirtTolerated = \[bool\]\$afterWorktree\.RuntimeMemoryDirty/);
+  assert.match(probe, /sourceWorktreeClean = \$true/);
+  assert.match(probe, /\$receiptSourceClean/);
+  assert.match(probe, /\$receiptTrackedTruth/);
+  assert.match(probe, /-replace '\\s\+', ' '/);
+  assert.match(probe, /'node stephanos-server\/server\.js'/);
+  assert.match(probe, /'node\.exe stephanos-server\/server\.js'/);
+  assert.doesNotMatch(probe, /CommandLine -match|Invoke-Expression/i);
+});
+
+test('canonical ignition pins repository-sensitive housekeeping to the source-derived repo root', async () => {
+  const entry = await readFile(new URL('./run-battle-bridge-ignition.mjs', import.meta.url), 'utf8');
+  assert.match(entry, /const repoRoot = path\.resolve\(path\.dirname\(fileURLToPath\(import\.meta\.url\)\), '\.\.'\)/);
+  assert.match(entry, /export async function main[\s\S]*process\.chdir\(repoRoot\)/);
+  assert.doesNotMatch(entry, /process\.chdir\([^)]*process\.argv|process\.chdir\([^)]*env/i);
+});
+
 test('second press reuses an existing exact-head UI without spawning another refresh', async () => {
   const refreshCalls = [];
   const proof = { reachable: true, ready: true, currentHead: 'abc1234', proof: { ready: true } };
