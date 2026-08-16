@@ -24,6 +24,18 @@ test('M7 keeps the fixed three-action recovery boundary and performs only read-o
   assert.match(text, /recoveredHealthClaimed = \$false/);
 });
 
+test('M7 requires fresh post-wake task execution rather than accepting a stale successful result', async () => {
+  const text = await source();
+  assert.match(text, /function Get-ProbeUtc\(\[object\]\$Value\)/);
+  assert.match(text, /function Test-TaskCurrentlyHealthy\(\[object\]\$TaskSnapshot, \[object\]\$BaselineSnapshot\)/);
+  assert.match(text, /\$postRun = Get-ProbeUtc \$TaskSnapshot\.lastRunTimeUtc/);
+  assert.match(text, /\$baselineRun = Get-ProbeUtc \$BaselineSnapshot\.lastRunTimeUtc/);
+  assert.match(text, /return \$postRun -gt \$baselineRun/);
+  assert.match(text, /\$baseline = if \(\$Action -eq 'WAKE_CANONICAL_MAILBOX'\) \{ \$ActionReceipt\.mailbox\.before \} else \{ \$ActionReceipt\.recoveryMesh\.before \}/);
+  assert.match(text, /Test-TaskCurrentlyHealthy \$target \$baseline/);
+  assert.doesNotMatch(text, /return \$null -ne \$TaskSnapshot\.lastTaskResult -and \[int64\]\$TaskSnapshot\.lastTaskResult -eq 0\s*\n}/);
+});
+
 test('M7 journals execution before mutation and terminalizes every completed attempt', async () => {
   const text = await source();
   const claimIndex = text.indexOf('Write-CreateNewJson -Path $claimPath');
