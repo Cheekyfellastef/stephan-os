@@ -64,6 +64,7 @@ export const SPATIAL_LICENCE_STATES = Object.freeze([
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/;
 const SAFE_SCOPE_SEGMENT = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const SAFE_VERSION = /^[a-z0-9][a-z0-9._+:-]{0,127}$/;
+const SAFE_BUDGET_DATA_KEY = /^[a-z][A-Za-z0-9]{0,63}$/;
 const EXACT_SOURCE_HEAD = /^[0-9a-f]{40}$/;
 const CONTENT_HASH = /^sha256:[0-9a-f]{64}$/;
 const ABSOLUTE_OR_UNSAFE_PATH = /^(?:[a-z]:[\\/]|[\\/]{1,2}|\.{2}(?:[\\/]|$))/i;
@@ -273,6 +274,13 @@ function safeId(value) {
   return typeof value === 'string' && value === value.trim() && SAFE_ID.test(value);
 }
 
+function safeBudgetDataKey(value) {
+  return typeof value === 'string'
+    && value === value.trim()
+    && !RESERVED_KEYS.has(value)
+    && SAFE_BUDGET_DATA_KEY.test(value);
+}
+
 function safeVersion(value) {
   return typeof value === 'string' && value === value.trim() && SAFE_VERSION.test(value);
 }
@@ -362,7 +370,7 @@ function validateBudget(value, field, errors) {
   if (keys.length > 16) errors.push(`${field}-too-many-entries`);
   for (const key of keys) {
     const entry = value[key];
-    if (!safeId(key)) errors.push(`${field}-unsafe-key`);
+    if (!safeBudgetDataKey(key)) errors.push(`${field}-unsafe-key`);
     const type = typeof entry;
     if (!['string', 'number', 'boolean'].includes(type)) errors.push(`${field}-unsupported-value`);
     if (type === 'number' && !Number.isFinite(entry)) errors.push(`${field}-non-finite-number`);
