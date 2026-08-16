@@ -30,7 +30,6 @@ const COMMAND_FIELDS = Object.freeze([
   'forgejoImageDigest',
   'runtimeBoundary',
   'm2Only',
-  'prerequisiteOnly',
 ]);
 
 function fail(blocker, details = {}) {
@@ -58,11 +57,8 @@ export function validateForgeShadowBattleBridgeCommand(command = {}) {
   const forgejoVersion = String(command.forgejoVersion || '').trim();
   const forgejoImageDigest = String(command.forgejoImageDigest || '').trim().toLowerCase();
   const runtimeBoundary = String(command.runtimeBoundary || '').trim();
-  const prerequisiteOnly = command.prerequisiteOnly === true;
+  const prerequisiteOnly = forgejoImageDigest === '';
 
-  if (hasValue(command.prerequisiteOnly) && command.prerequisiteOnly !== true) {
-    return fail('FORGE_SHADOW_COMMAND_PREREQUISITE_ONLY_INVALID');
-  }
   if (command.repository !== FORGE_SHADOW_BATTLE_BRIDGE_REPOSITORY) {
     return fail('FORGE_SHADOW_COMMAND_REPOSITORY_MISMATCH');
   }
@@ -74,22 +70,7 @@ export function validateForgeShadowBattleBridgeCommand(command = {}) {
     return fail('FORGE_SHADOW_COMMAND_RUNTIME_BOUNDARY_INVALID');
   }
   if (command.m2Only !== true) return fail('FORGE_SHADOW_COMMAND_M2_ONLY_REQUIRED');
-
-  if (prerequisiteOnly) {
-    if (forgejoImageDigest) return fail('FORGE_SHADOW_PREREQUISITE_IMAGE_DIGEST_NOT_ALLOWED');
-    return Object.freeze({
-      ok: true,
-      command: Object.freeze({
-        forgejoVersion: FORGE_SHADOW_BATTLE_BRIDGE_VERSION,
-        forgejoImageDigest: '',
-        runtimeBoundary: FORGE_SHADOW_BATTLE_BRIDGE_BOUNDARY,
-        m2Only: true,
-        prerequisiteOnly: true,
-      }),
-    });
-  }
-
-  if (!OCI_DIGEST.test(forgejoImageDigest)) {
+  if (!prerequisiteOnly && !OCI_DIGEST.test(forgejoImageDigest)) {
     return fail('FORGE_SHADOW_COMMAND_IMAGE_DIGEST_INVALID');
   }
 
@@ -100,7 +81,7 @@ export function validateForgeShadowBattleBridgeCommand(command = {}) {
       forgejoImageDigest,
       runtimeBoundary: FORGE_SHADOW_BATTLE_BRIDGE_BOUNDARY,
       m2Only: true,
-      prerequisiteOnly: false,
+      prerequisiteOnly,
     }),
   });
 }
