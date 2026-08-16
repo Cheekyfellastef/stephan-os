@@ -171,6 +171,8 @@ function sharedWorkspaceFromArgs(argv = process.argv.slice(2)) {
 }
 
 export async function main({ platform = process.platform } = {}) {
+  process.chdir(repoRoot);
+
   if (platform === 'win32') {
     const backendReady = runStep('backend-8787-preflight', 'powershell.exe', [
       '-NoProfile',
