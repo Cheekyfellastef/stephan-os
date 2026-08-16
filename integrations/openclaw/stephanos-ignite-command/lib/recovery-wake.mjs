@@ -63,13 +63,12 @@ function writeOpenClawHostProof({ env = process.env, proof } = {}) {
 
 export function buildFixedRecoveryWakeInvocation({ env = process.env, hostProofId } = {}) {
   if (!env.USERPROFILE) throw new Error('RECOVERY_WAKE_USERPROFILE_REQUIRED');
-  const scriptPath = path.resolve(env.USERPROFILE, 'Documents', 'GitHub', 'stephan-os', 'scripts', 'windows', 'request-battle-bridge-recovery.ps1');
+  const scriptPath = path.resolve(env.USERPROFILE, 'Documents', 'GitHub', 'stephan-os', 'scripts', 'windows', 'request-battle-bridge-recovery-openclaw.ps1');
   if (!/^[a-f0-9]{32}$/.test(String(hostProofId || ''))) throw new Error('RECOVERY_WAKE_HOST_PROOF_REQUIRED');
   return Object.freeze({
     executable: BATTLE_BRIDGE_WINDOWS_HOST.powershell,
     args: Object.freeze([
       '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath,
-      '-Route', OPENCLAW_RECOVERY_ROUTE,
       '-OpenClawHostProofId', hostProofId,
     ]),
     cwd: path.resolve(env.USERPROFILE, 'Documents', 'GitHub', 'stephan-os'),
