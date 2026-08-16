@@ -134,10 +134,13 @@ test('canonical task definition beside an unrelated listener cannot establish ba
   const probe = await source('probe-battle-bridge-recovery-mesh.ps1');
   assert.match(probe, /Equals\(\$executable, \$canonicalNode/);
   assert.match(probe, /BACKEND_LISTENER_EXECUTABLE_FOREIGN/);
-  assert.match(probe, /expectedQuotedCommand = [^\r\n]*stephanos-server\/server\.js/);
-  assert.match(probe, /Equals\(\$commandLine, \$expectedQuotedCommand/);
+  assert.match(probe, /function Test-CanonicalBackendCommandLine/);
+  assert.match(probe, /-replace '\\s\+', ' '/);
+  assert.match(probe, /'node stephanos-server\/server\.js'/);
+  assert.match(probe, /'node\.exe stephanos-server\/server\.js'/);
   assert.match(probe, /BACKEND_LISTENER_COMMAND_FOREIGN/);
   assert.match(probe, /receipt\.pid -eq \$listenerAfter\.pid/);
+  assert.doesNotMatch(probe, /CommandLine -match|Invoke-Expression/i);
 });
 
 test('listener identity change between response probe and ownership recheck fails closed', async () => {
@@ -207,20 +210,27 @@ test('uninstall removes only the coordinator and preserves every underlying serv
   assert.doesNotMatch(uninstall, /Remove-Item|git\s+|Stop-Process|Restart-Computer/i);
 });
 
-test('exact-head backend authority fails closed on tracked worktree drift', async () => {
+test('exact-head backend authority tolerates only canonical unstaged runtime-memory dirt', async () => {
   const [starter, probe] = await Promise.all([
     source('start-stephanos-backend.ps1'),
     source('probe-battle-bridge-recovery-mesh.ps1'),
   ]);
   assert.match(starter, /status '--porcelain=v1' '--untracked-files=no'/);
-  assert.match(starter, /Backend startup requires an unmodified tracked worktree at exact head/);
-  assert.match(starter, /trackedWorktreeClean = \$true/);
-  assert.match(probe, /function Assert-CanonicalTrackedWorktreeClean/);
-  assert.equal((probe.match(/Assert-CanonicalTrackedWorktreeClean -GitExecutable/g) || []).length, 2);
+  assert.match(starter, /\$runtimeMemoryPath = 'stephanos-server\/data\/memory\/durable-memory\.json'/);
+  assert.match(starter, /\$status -eq ' M' -and \$path -eq \$runtimeMemoryPath/);
+  assert.match(starter, /Backend startup requires source-tracked files to be unmodified at exact head/);
+  assert.match(starter, /trackedWorktreeClean = -not \$RuntimeMemoryDirty/);
+  assert.match(starter, /sourceWorktreeClean = \$true/);
+  assert.match(starter, /runtimeMemoryDirtTolerated = \$RuntimeMemoryDirty/);
+  assert.match(probe, /function Get-CanonicalTrackedWorktreeAssessment/);
+  assert.match(probe, /function Assert-CanonicalSourceWorktreeClean/);
+  assert.equal((probe.match(/Assert-CanonicalSourceWorktreeClean -GitExecutable/g) || []).length, 2);
   assert.match(probe, /RECOVERY_CANONICAL_TRACKED_WORKTREE_INSPECTION_FAILED/);
-  assert.match(probe, /RECOVERY_CANONICAL_TRACKED_WORKTREE_DIRTY/);
-  assert.match(probe, /receipt\.trackedWorktreeClean -eq \$true/);
-  assert.match(probe, /trackedWorktreeClean = \$true/);
+  assert.match(probe, /RECOVERY_CANONICAL_TRACKED_SOURCE_WORKTREE_DIRTY/);
+  assert.match(probe, /\$receiptSourceClean/);
+  assert.match(probe, /\$receiptTrackedTruth/);
+  assert.match(probe, /sourceWorktreeClean = \$true/);
+  assert.match(probe, /runtimeMemoryDirtTolerated = \[bool\]\$afterWorktree\.RuntimeMemoryDirty/);
   assert.doesNotMatch(starter, /--untracked-files=all/);
   assert.doesNotMatch(probe, /--untracked-files=all/);
 });
