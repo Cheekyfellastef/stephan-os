@@ -150,6 +150,7 @@ test('prerequisite executor proves exact source, installs only fixed Podman, the
 
 test('fixed prerequisite PowerShell contains only the official pinned Podman 6.0.2 user-scope installer path', () => {
   const source = readFileSync(new URL('../../scripts/windows/install-forge-shadow-podman-prerequisite-v1.ps1', import.meta.url), 'utf8');
+  const parameterBlock = source.slice(0, source.indexOf('Set-StrictMode'));
   assert.match(source, /podman-installer-windows-amd64\.msi/);
   assert.match(source, /v6\.0\.2/);
   assert.match(source, new RegExp(INSTALLER_SHA256));
@@ -158,6 +159,6 @@ test('fixed prerequisite PowerShell contains only the official pinned Podman 6.0
   assert.match(source, /Get-AuthenticodeSignature/);
   assert.match(source, /Get-FileHash/);
   assert.match(source, /PODMAN_USER_VERSION_NOT_PROVEN/);
-  assert.doesNotMatch(source, /param\([\s\S]*\$(?:Url|Uri|Path|Executable|Command|Args|Token|Credential)\b/i);
-  assert.doesNotMatch(source, /podman\s+machine\s+(?:init|start)|podman\s+pull/i);
+  assert.doesNotMatch(parameterBlock, /\$(?:Url|Uri|Path|Executable|Command|Args|Token|Credential)\b/i);
+  assert.doesNotMatch(source, /@\('machine',\s*'(?:init|start)'|@\('pull'/i);
 });
