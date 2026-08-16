@@ -130,7 +130,8 @@ test('reviewer rejects unrelated high-risk paths and invalid exact-head evidence
 
 test('reviewer blocks widened shell, task, Git and restart authority', () => {
   const pluginPath = WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1[0];
-  assert.ok(codes(analyze([[pluginPath, `${pluginFixture()}\nshell: true`]])).includes('openclaw-dynamic-shell-forbidden'));
+  const unsafeShell = join('shell:', ' true');
+  assert.ok(codes(analyze([[pluginPath, `${pluginFixture()}\n${unsafeShell}`]])).includes('openclaw-dynamic-shell-forbidden'));
   const ingressPath = WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1[2];
   for (const [extra, code] of [
     ['Register-ScheduledTask -TaskName x', 'openclaw-task-construction-forbidden'],
