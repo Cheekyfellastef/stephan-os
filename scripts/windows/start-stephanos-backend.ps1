@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 $canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
 $canonicalNpm = 'C:\Program Files\nodejs\npm.cmd'
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
+$runtimeMemoryPath = 'stephanos-server/data/memory/durable-memory.json'
 
 function Test-BackendHealth {
     param([string]$Url, [string]$ExpectedSourceHead)
@@ -22,6 +23,50 @@ function Test-BackendHealth {
     catch { return $false }
 }
 
+function Test-CanonicalBackendCommandLine {
+    param([string]$CommandLine)
+    $normalized = (([string]$CommandLine -replace '\s+', ' ').Trim())
+    $allowed = @(
+        "`"$canonicalNode`" stephanos-server/server.js",
+        "$canonicalNode stephanos-server/server.js",
+        'node.exe stephanos-server/server.js',
+        'node stephanos-server/server.js'
+    )
+    return @($allowed | Where-Object {
+        [string]::Equals($normalized, $_, [System.StringComparison]::OrdinalIgnoreCase)
+    }).Count -eq 1
+}
+
+function Get-TrackedWorktreeAssessment {
+    param([string[]]$StatusLines)
+    $runtimeMemoryDirty = $false
+    $sourceDirt = @()
+    foreach ($raw in @($StatusLines)) {
+        $line = [string]$raw
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        if ($line.Length -lt 4) {
+            $sourceDirt += $line
+            continue
+        }
+        $status = $line.Substring(0, 2)
+        $pathSegment = $line.Substring(3).Trim()
+        if ($pathSegment.Contains(' -> ')) {
+            $sourceDirt += $line
+            continue
+        }
+        $path = $pathSegment.Trim('"').Replace('\', '/')
+        if ($status -eq ' M' -and $path -eq $runtimeMemoryPath) {
+            $runtimeMemoryDirty = $true
+            continue
+        }
+        $sourceDirt += $line
+    }
+    return [PSCustomObject]@{
+        RuntimeMemoryDirty = [bool]$runtimeMemoryDirty
+        SourceDirt = @($sourceDirt)
+    }
+}
+
 function Get-VerifiedBackendListener {
     try {
         $connections = @(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction Stop)
@@ -32,11 +77,7 @@ function Get-VerifiedBackendListener {
         if (-not $process) { return $null }
         $executable = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
         if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
-        $commandLine = ([string]$process.CommandLine).Trim()
-        $expectedQuotedCommand = "`"$canonicalNode`" stephanos-server/server.js"
-        $expectedUnquotedCommand = "$canonicalNode stephanos-server/server.js"
-        if (-not [string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase) `
-            -and -not [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
+        if (-not (Test-CanonicalBackendCommandLine -CommandLine ([string]$process.CommandLine))) { return $null }
         $processStartTimeUtc = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$process.CreationDate).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
         return [PSCustomObject]@{ ProcessId = $processId; ProcessStartTimeUtc = $processStartTimeUtc }
     }
@@ -50,7 +91,8 @@ function Write-BackendRuntimeReceipt {
         [string]$HeadSha,
         [int]$ProcessId,
         [string]$ProcessStartTimeUtc,
-        [string]$HealthUrl
+        [string]$HealthUrl,
+        [bool]$RuntimeMemoryDirty
     )
     $statusDir = Join-Path $WorkspaceRoot 'status'
     [System.IO.Directory]::CreateDirectory($statusDir) | Out-Null
@@ -66,7 +108,9 @@ function Write-BackendRuntimeReceipt {
         processStartTimeUtc = $ProcessStartTimeUtc
         healthUrl = 'loopback-backend-health'
         exactHeadProofOk = $true
-        trackedWorktreeClean = $true
+        trackedWorktreeClean = -not $RuntimeMemoryDirty
+        sourceWorktreeClean = $true
+        runtimeMemoryDirtTolerated = $RuntimeMemoryDirty
         arbitraryShellAllowed = $false
         sourceMutationAllowed = $false
         pathValuesPublished = $false
@@ -80,7 +124,8 @@ function Publish-VerifiedBackendRuntimeReceipt {
         [string]$WorkspaceRoot,
         [string]$Branch,
         [string]$HeadSha,
-        [string]$HealthUrl
+        [string]$HealthUrl,
+        [bool]$RuntimeMemoryDirty
     )
     if (-not $Listener) { throw 'Backend listener identity is required before publishing its runtime receipt.' }
     Write-BackendRuntimeReceipt `
@@ -89,7 +134,8 @@ function Publish-VerifiedBackendRuntimeReceipt {
         -HeadSha $HeadSha `
         -ProcessId $Listener.ProcessId `
         -ProcessStartTimeUtc $Listener.ProcessStartTimeUtc `
-        -HealthUrl $HealthUrl
+        -HealthUrl $HealthUrl `
+        -RuntimeMemoryDirty $RuntimeMemoryDirty
     $confirmedListener = Get-VerifiedBackendListener
     if (-not $confirmedListener `
         -or $confirmedListener.ProcessId -ne $Listener.ProcessId `
@@ -123,9 +169,11 @@ if ($branch -ne 'main') { throw 'Backend startup requires canonical branch main.
 if ($headSha -notmatch '^[0-9a-f]{40}$') { throw 'Backend startup could not prove a canonical 40-character Git head.' }
 $trackedStatus = @(& $canonicalGit -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
 if ($LASTEXITCODE -ne 0) { throw 'Backend startup could not inspect tracked worktree state.' }
-if (@($trackedStatus | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -ne 0) {
-    throw 'Backend startup requires an unmodified tracked worktree at exact head.'
+$trackedAssessment = Get-TrackedWorktreeAssessment -StatusLines $trackedStatus
+if ($trackedAssessment.SourceDirt.Count -ne 0) {
+    throw 'Backend startup requires source-tracked files to be unmodified at exact head.'
 }
+$runtimeMemoryDirty = [bool]$trackedAssessment.RuntimeMemoryDirty
 
 $healthUrl = 'http://127.0.0.1:8787/api/health'
 $userHome = if ($env:USERPROFILE) { $env:USERPROFILE } elseif ($env:HOME) { $env:HOME } else { throw 'USERPROFILE or HOME is required.' }
@@ -164,6 +212,7 @@ function Write-LatestBackendErrorTail {
 
 Write-Log "Stephanos Battle Bridge backend start requested from canonical main ${headSha}."
 Write-Log "Backend health endpoint: $healthUrl"
+Write-Log ("Runtime memory dirt tolerated: {0}" -f $runtimeMemoryDirty)
 Write-Log 'Frontend/dist server not started by this backend script (port 4173).'
 Write-Log 'Ensuring OpenClaw readonly adapter stub lifecycle (execution remains disabled).'
 
@@ -180,7 +229,7 @@ $existingListener = if (Test-BackendHealth -Url $healthUrl -ExpectedSourceHead $
     Get-VerifiedBackendListener
 } else { $null }
 if ($existingListener) {
-    Publish-VerifiedBackendRuntimeReceipt -Listener $existingListener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl
+    Publish-VerifiedBackendRuntimeReceipt -Listener $existingListener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl -RuntimeMemoryDirty $runtimeMemoryDirty
     Write-Log 'Backend already healthy; exact listener receipt refreshed without starting a new process.'
     exit 0
 }
@@ -214,7 +263,7 @@ while ((Get-Date) -lt $deadline) {
 }
 
 if ($listener) {
-    Publish-VerifiedBackendRuntimeReceipt -Listener $listener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl
+    Publish-VerifiedBackendRuntimeReceipt -Listener $listener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl -RuntimeMemoryDirty $runtimeMemoryDirty
     Write-Log "Backend health, stable listener identity and exact-head runtime receipt succeeded within $StartupTimeoutSeconds seconds."
     exit 0
 }
