@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const V1_PATH = './windowsAuthoritySpecialistReviewV1.mjs';
 const OPENCLAW_RECOVERY_PATH = './windowsAuthorityOpenClawRecoveryReviewV1.mjs';
-const V1_BLOB_SHA = '4a6062f5631d14ab8ec19ca47a4afcd473b8233e';
+const V1_BLOB_SHA = '9baf69cb7d4c33b4852faed44ef691ec402ca8cd';
 const OPENCLAW_RECOVERY_BLOB_SHA = 'd1a91db4fdae1ee46784133dbb42c9ec4ea99bd1';
 
 function gitBlobSha(content) {
