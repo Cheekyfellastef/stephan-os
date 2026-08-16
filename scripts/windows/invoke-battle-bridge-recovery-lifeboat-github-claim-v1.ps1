@@ -293,10 +293,21 @@ function Terminalize-InterruptedClaims() {
         $consumedPath = Join-Path $consumedRoot "$requestId.json"
         if (Test-Path -LiteralPath $consumedPath -PathType Leaf) { continue }
         $claim = $null
-        try { $claim = Get-Content -LiteralPath $claimFile.FullName -Raw | ConvertFrom-Json } catch { continue }
-        if ([string]$claim.schemaVersion -cne $claimSchema -or [string]$claim.requestId -cne $requestId -or [string]$claim.bankId -notin @('A','B')) { continue }
+        try {
+            $claim = Get-Content -LiteralPath $claimFile.FullName -Raw | ConvertFrom-Json
+        } catch {
+            Publish-Status -Verdict 'RECOVERY_LOCAL_STATE_BLOCKED' -Blocker 'INTERRUPTED_CLAIM_MALFORMED' | ConvertTo-Json -Depth 8
+            throw 'Interrupted recovery claim is malformed.'
+        }
+        if ([string]$claim.schemaVersion -cne $claimSchema -or [string]$claim.requestId -cne $requestId -or [string]$claim.bankId -notin @('A','B')) {
+            Publish-Status -Verdict 'RECOVERY_LOCAL_STATE_BLOCKED' -Blocker 'INTERRUPTED_CLAIM_IDENTITY_INVALID' | ConvertTo-Json -Depth 8
+            throw 'Interrupted recovery claim identity is invalid.'
+        }
         $action = [string]$claim.action
-        if ($allowedActions -cnotcontains $action) { continue }
+        if ($allowedActions -cnotcontains $action) {
+            Publish-Status -Verdict 'RECOVERY_LOCAL_STATE_BLOCKED' -Blocker 'INTERRUPTED_CLAIM_ACTION_INVALID' | ConvertTo-Json -Depth 8
+            throw 'Interrupted recovery claim action is invalid.'
+        }
         $journalPath = Join-Path $journalRoot "$requestId.json"
         $journal = $null
         if (Test-Path -LiteralPath $journalPath -PathType Leaf) {
