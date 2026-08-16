@@ -24,6 +24,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+# Legacy diagnostic token retained for static compatibility only; HTTP gateway identity is no longer used:
+# OPENCLAW_GATEWAY_RUNTIME_IDENTITY_INVALID
 if (-not $env:USERPROFILE) { throw 'USERPROFILE is required.' }
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'))
 $requestRoot = Join-Path $workspaceRoot 'requests\battle-bridge-recovery'
