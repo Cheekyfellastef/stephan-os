@@ -81,6 +81,23 @@ test('M7 exposes malformed interrupted claims as a fail-closed local-state block
   assert.doesNotMatch(text, /ConvertFrom-Json \} catch \{ continue \}/);
 });
 
+test('M7 trusts a terminal interrupted journal only when journal and receipt identities remain exact', async () => {
+  const text = await source();
+  assert.match(text, /INTERRUPTED_JOURNAL_MALFORMED/);
+  assert.match(text, /INTERRUPTED_JOURNAL_IDENTITY_INVALID/);
+  assert.match(text, /INTERRUPTED_JOURNAL_STATE_INVALID/);
+  assert.match(text, /INTERRUPTED_JOURNAL_TERMINAL_INVALID/);
+  assert.match(text, /INTERRUPTED_TERMINAL_RECEIPT_MISSING/);
+  assert.match(text, /INTERRUPTED_TERMINAL_RECEIPT_INVALID/);
+  assert.match(text, /\[string\]\$journal\.requestId -cne \$requestId/);
+  assert.match(text, /\[string\]\$journal\.action -cne \$action/);
+  assert.match(text, /\[string\]\$journal\.bankId -cne \[string\]\$claim\.bankId/);
+  assert.match(text, /\$terminalReceipt\.receiptId -cne \$existingReceiptId/);
+  assert.match(text, /\$terminalReceipt\.requestId -cne \$requestId/);
+  assert.match(text, /\$terminalReceipt\.action -cne \$action/);
+  assert.match(text, /\$terminalReceipt\.bankId -cne \[string\]\$claim\.bankId/);
+});
+
 test('M7 retains the closed-world no-shell no-git no-restart boundary', async () => {
   const text = await source();
   assert.doesNotMatch(text, /Invoke-Expression/i);
