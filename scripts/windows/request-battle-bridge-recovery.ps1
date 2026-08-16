@@ -219,7 +219,7 @@ if ($Route -eq 'AUTHENTICATED_BREAK_GLASS') {
         -or [string]$hostProof.proofId -ne $OpenClawHostProofId -or [string]$hostProof.route -ne 'OPENCLAW_WHATSAPP'
         -or [string]$hostProof.command -ne 'wake' -or [string]$hostProof.subject -ne 'openclaw:authenticated-operator'
         -or [string]$hostProof.commandSurface -ne 'openclaw.plugin-sdk.authenticated-command'
-        -or [string]$hostProof.runtimeId -notmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$' -or $hostProof.authenticatedByHost -ne $true
+        -or [string]$hostProof.runtimeId -notmatch '^openclaw-host-pid:[1-9][0-9]*$' -or $hostProof.authenticatedByHost -ne $true
         -or $hostIssuedAt -lt $hostNow.AddSeconds(-60) -or $hostIssuedAt -gt $hostNow.AddSeconds(30)
         -or $hostExpiresAt -le $hostNow -or $hostExpiresAt -le $hostIssuedAt -or ($hostExpiresAt - $hostIssuedAt).TotalSeconds -gt 60) {
         throw 'OPENCLAW_HOST_PROOF_INVALID'
@@ -229,15 +229,14 @@ if ($Route -eq 'AUTHENTICATED_BREAK_GLASS') {
     if (-not $hostProcess -or [int]$hostProof.hostPid -ne [int]$hostProcess.ProcessId
         -or [string]$hostProcess.Name -notin @('node.exe','node','openclaw.exe','openclaw')
         -or [string]$hostProcess.CommandLine -notmatch '(?i)openclaw') { throw 'OPENCLAW_HOST_PROCESS_IDENTITY_INVALID' }
+    $expectedRuntimeId = "openclaw-host-pid:$([int]$hostProcess.ProcessId)"
+    if (-not [string]::Equals([string]$hostProof.runtimeId, $expectedRuntimeId, [System.StringComparison]::Ordinal)) {
+        throw 'OPENCLAW_HOST_RUNTIME_BINDING_INVALID'
+    }
     $gatewayListener = Get-NetTCPConnection -State Listen -LocalPort 18789 -ErrorAction Stop | Where-Object {
         $_.OwningProcess -eq [int]$hostProof.hostPid -and $_.LocalAddress -in @('127.0.0.1','::1','0.0.0.0','::')
     } | Select-Object -First 1
     if (-not $gatewayListener) { throw 'OPENCLAW_GATEWAY_PROCESS_OWNERSHIP_INVALID' }
-    $gatewayIdentity = Invoke-RestMethod -Uri 'http://127.0.0.1:18789/identity' -Method Get -TimeoutSec 5
-    if ([string]$gatewayIdentity.product -ne 'OpenClaw'
-        -or -not [string]::Equals([string]$gatewayIdentity.runtimeId, [string]$hostProof.runtimeId, [System.StringComparison]::Ordinal)) {
-        throw 'OPENCLAW_GATEWAY_RUNTIME_IDENTITY_INVALID'
-    }
     $hostClaimPath = "$hostProofPath.claim"
     Assert-StablePathBaseline -Baseline $pathBaseline
     Assert-StablePathBaseline -Baseline $hostProofBaseline
