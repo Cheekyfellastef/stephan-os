@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#050813" />
+  <title>Starfield VR Reference Lab · Stephanos</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="space-field" aria-hidden="true"></div>
+  <main class="lab-shell">
+    <header class="lab-header">
+      <div class="brand-lockup">
+        <div class="lab-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div>
+          <p class="eyebrow">STEPHANOS · STARFIELD VR EVOLUTION</p>
+          <h1>Reference Lab</h1>
+        </div>
+      </div>
+      <nav class="header-actions" aria-label="Reference Lab navigation">
+        <a class="quiet-link" href="../vr-research-lab/index.html">Open wider VR Research Lab</a>
+        <a class="quiet-link" href="../../">Return to Stephanos</a>
+      </nav>
+    </header>
+
+    <section class="hero-grid" aria-labelledby="north-star-title">
+      <article class="hero-copy glass-panel">
+        <p class="section-kicker">THE NORTH STAR</p>
+        <h2 id="north-star-title">Build the version that could not exist until these systems met.</h2>
+        <p class="hero-lede">Skyrim embodiment. Alyx interaction. Lone Echo movement. Elite cockpit presence. Inside Starfield's universe — governed by a removable Evolution layer.</p>
+        <div class="hero-actions">
+          <button id="load-recipe" class="primary-button" type="button">Load living starship recipe</button>
+          <button id="clear-recipe" class="secondary-button" type="button">Clear workbench</button>
+        </div>
+      </article>
+      <aside class="truth-panel glass-panel" aria-labelledby="truth-title">
+        <div class="truth-orbit" aria-hidden="true"><span></span></div>
+        <p class="section-kicker">EVIDENCE BOUNDARY</p>
+        <h2 id="truth-title">Reference is not proof.</h2>
+        <p id="truth-summary"></p>
+        <ul id="truth-gates" class="compact-list"></ul>
+      </aside>
+    </section>
+
+    <section class="workbench glass-panel" aria-labelledby="workbench-title">
+      <div class="section-heading">
+        <div>
+          <p class="section-kicker">COMPOSITE WORKBENCH</p>
+          <h2 id="workbench-title">Living Starship vertical slice</h2>
+        </div>
+        <div class="workbench-actions">
+          <span id="recipe-count" class="status-pill">0 systems selected</span>
+          <button id="copy-recipe" class="secondary-button" type="button">Copy build brief</button>
+        </div>
+      </div>
+      <p id="recipe-outcome" class="muted-copy"></p>
+      <div id="recipe-flow" class="recipe-flow" aria-live="polite"></div>
+      <div class="workbench-grid">
+        <div>
+          <h3>Composite capability</h3>
+          <p id="capability-line" class="capability-line">Choose reference systems to compose the experience.</p>
+        </div>
+        <div>
+          <h3>First acceptance gates</h3>
+          <ol id="recipe-tests" class="test-list"></ol>
+        </div>
+      </div>
+      <p id="copy-status" class="copy-status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="atlas-section" aria-labelledby="atlas-title">
+      <div class="section-heading atlas-heading">
+        <div>
+          <p class="section-kicker">REFERENCE ATLAS</p>
+          <h2 id="atlas-title">Proven ideas, translated into Starfield attachment points</h2>
+        </div>
+        <div id="domain-filters" class="domain-filters" aria-label="Filter reference systems"></div>
+      </div>
+      <div class="atlas-layout">
+        <div id="reference-grid" class="reference-grid"></div>
+        <aside id="reference-detail" class="reference-detail glass-panel" aria-live="polite"></aside>
+      </div>
+    </section>
+
+    <section class="programme-strip glass-panel" aria-labelledby="programme-title">
+      <div>
+        <p class="section-kicker">ONE PROGRAMME · NO DUPLICATE LANE</p>
+        <h2 id="programme-title">This workspace feeds the existing Starfield VR goal.</h2>
+      </div>
+      <p>The broad VR Research Lab remains the evidence store. This Reference Lab is its Starfield-focused decision surface. Battle Bridge and Quest 3 results remain the only runtime authority.</p>
+    </section>
+  </main>
+  <script type="module" src="./reference-lab.js"></script>
+</body>
+</html>
