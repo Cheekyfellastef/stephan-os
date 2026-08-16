@@ -8,6 +8,11 @@ import { buildFixedRecoveryWakeInvocation, wakeBattleBridgeRecoveryMesh } from '
 
 const authenticatedContext = { authenticatedByHost: true, commandName: 'stephanos-ignite', command: 'wake' };
 const identityFetch = async () => ({ ok: true, async json() { return { product: 'OpenClaw', runtimeId: 'openclaw-runtime-001' }; } });
+const htmlControlPageFetch = async () => ({
+  ok: true,
+  headers: { get(name) { return String(name).toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : ''; } },
+  async json() { throw new SyntaxError('Unexpected token < in JSON'); },
+});
 
 test('wake invocation is fully fixed and cannot accept a command, task or route', () => {
   const invocation = buildFixedRecoveryWakeInvocation({
@@ -61,9 +66,28 @@ test('authenticated adapter binds live gateway identity and returns only a sanit
   assert.equal(writtenProof.hostPid, process.pid);
 });
 
+test('authenticated OpenClaw plugin host is a bounded fallback when /identity serves the HTML control page', async () => {
+  let writtenProof;
+  const result = await wakeBattleBridgeRecoveryMesh({
+    platform: 'win32',
+    env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    authenticatedContext,
+    hostPid: 4321,
+    now: new Date('2026-08-01T03:00:00.000Z'),
+    nonce: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    fetchFn: htmlControlPageFetch,
+    writeHostProofFn: ({ proof }) => { writtenProof = proof; return { proofId: proof.proofId }; },
+    spawnSyncFn: () => ({ status: 0, stdout: JSON.stringify({ queued: true, requestId: 'recovery-openclaw-0002', route: 'OPENCLAW_WHATSAPP', coordinatorTask: 'Stephanos Battle Bridge Recovery Mesh' }) }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.requestId, 'recovery-openclaw-0002');
+  assert.equal(writtenProof.runtimeId, 'openclaw-plugin-host:4321');
+  assert.equal(writtenProof.hostPid, 4321);
+});
+
 test('non-Windows, unauthenticated, identity-less and failed adapter calls fail closed', async () => {
   assert.equal((await wakeBattleBridgeRecoveryMesh({ platform: 'linux' })).blocker, 'RECOVERY_WAKE_WINDOWS_REQUIRED');
   assert.equal((await wakeBattleBridgeRecoveryMesh({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\Stephan Callear' }, fetchFn: identityFetch })).blocker, 'RECOVERY_WAKE_OPENCLAW_AUTH_REQUIRED');
-  assert.equal((await wakeBattleBridgeRecoveryMesh({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\Stephan Callear' }, authenticatedContext, fetchFn: async () => ({ ok: false }) })).blocker, 'RECOVERY_WAKE_GATEWAY_IDENTITY_REQUIRED');
+  assert.equal((await wakeBattleBridgeRecoveryMesh({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\Stephan Callear' }, authenticatedContext, hostPid: 0, fetchFn: async () => ({ ok: false }) })).blocker, 'RECOVERY_WAKE_GATEWAY_IDENTITY_REQUIRED');
   assert.equal((await wakeBattleBridgeRecoveryMesh({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\Stephan Callear' }, authenticatedContext, nonce: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', fetchFn: identityFetch, writeHostProofFn: ({ proof }) => ({ proofId: proof.proofId }), spawnSyncFn: () => ({ status: 5 }) })).blocker, 'RECOVERY_WAKE_FIXED_ADAPTER_FAILED');
 });
