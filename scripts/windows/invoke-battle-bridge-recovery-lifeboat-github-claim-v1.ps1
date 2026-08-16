@@ -11,6 +11,7 @@ $workflowPath = '.github/workflows/battle-bridge-mobile-recovery-attestation-v1.
 $requestSchema = 'stephanos.battle-bridge-mobile-recovery-request.v1'
 $attestationSchema = 'stephanos.battle-bridge-mobile-recovery-attestation.v1'
 $claimSchema = 'stephanos.battle-bridge-lifeboat-github-claim.v1'
+$journalSchema = 'stephanos.battle-bridge-recovery-lifeboat-execution-journal.v1'
 $statusSchema = 'stephanos.battle-bridge-recovery-lifeboat-remote-status.v1'
 $requestMarker = '<!-- stephanos-battle-bridge-mobile-recovery-request -->'
 $attestationMarker = '<!-- stephanos-battle-bridge-mobile-recovery-attestation -->'
@@ -27,6 +28,7 @@ $lifeboatRoot = [System.IO.Path]::GetFullPath((Join-Path $bankRoot '..\..'))
 $actionPath = Join-Path $bankRoot 'actions\battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1'
 $stateRoot = Join-Path $lifeboatRoot 'state'
 $claimsRoot = Join-Path $stateRoot 'claims'
+$journalRoot = Join-Path $stateRoot 'execution-journal'
 $consumedRoot = Join-Path $stateRoot 'consumed'
 $receiptRoot = Join-Path $lifeboatRoot 'receipts\github-recovery'
 $statusRoot = Join-Path $lifeboatRoot 'status'
@@ -35,7 +37,7 @@ $statusPath = Join-Path $statusRoot 'mobile-recovery-current.json'
 foreach ($required in @($powershellExe, $actionPath)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Fixed lifeboat component is missing: $required" }
 }
-foreach ($directory in @($claimsRoot, $consumedRoot, $receiptRoot, $statusRoot)) {
+foreach ($directory in @($claimsRoot, $journalRoot, $consumedRoot, $receiptRoot, $statusRoot)) {
     [System.IO.Directory]::CreateDirectory($directory) | Out-Null
 }
 
@@ -43,12 +45,12 @@ function Write-AtomicJson([string]$Path, [object]$Value) {
     $directory = Split-Path -Parent $Path
     [System.IO.Directory]::CreateDirectory($directory) | Out-Null
     $temp = "$Path.tmp-$PID-$([Guid]::NewGuid().ToString('N'))"
-    $Value | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $temp -Encoding UTF8
+    $Value | ConvertTo-Json -Depth 14 | Set-Content -LiteralPath $temp -Encoding UTF8
     Move-Item -LiteralPath $temp -Destination $Path -Force
 }
 
 function Write-CreateNewJson([string]$Path, [object]$Value) {
-    $json = ($Value | ConvertTo-Json -Depth 12) + [Environment]::NewLine
+    $json = ($Value | ConvertTo-Json -Depth 14) + [Environment]::NewLine
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
     $stream = $null
     try {
@@ -182,6 +184,152 @@ function Test-Attestation([object]$Entry, [object]$Request, [object]$SourceComme
     return $true
 }
 
+function Invoke-ReadOnlyProbe() {
+    $probeOutput = @(& $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $actionPath -Action PROBE_BATTLE_BRIDGE 2>&1)
+    $probeExitCode = $LASTEXITCODE
+    $probeText = $probeOutput -join [Environment]::NewLine
+    $probe = $null
+    try { $probe = $probeText | ConvertFrom-Json } catch { }
+    return [pscustomobject]@{
+        ok = [bool]($probeExitCode -eq 0 -and $null -ne $probe -and [bool]$probe.ok -and [string]$probe.action -ceq 'PROBE_BATTLE_BRIDGE')
+        receipt = $probe
+    }
+}
+
+function Test-TaskCurrentlyHealthy([object]$TaskSnapshot) {
+    if ($null -eq $TaskSnapshot -or -not [bool]$TaskSnapshot.present -or -not [bool]$TaskSnapshot.actionIdentityValid) { return $false }
+    if ([string]$TaskSnapshot.state -ceq 'Running') { return $true }
+    return $null -ne $TaskSnapshot.lastTaskResult -and [int64]$TaskSnapshot.lastTaskResult -eq 0
+}
+
+function Verify-PostAction([string]$Action, [object]$ActionReceipt) {
+    if ($Action -ne 'PROBE_BATTLE_BRIDGE') { Start-Sleep -Milliseconds 1500 }
+    $probeResult = Invoke-ReadOnlyProbe
+    if (-not $probeResult.ok) {
+        return [pscustomobject]@{
+            verified = $false
+            verdict = 'POST_ACTION_PROBE_INVALID'
+            blocker = 'POST_ACTION_PROBE_INVALID'
+            targetComponentHealthy = $false
+            battleBridgeHealthyClaimed = $false
+            probe = $probeResult.receipt
+        }
+    }
+    $probe = $probeResult.receipt
+    $mailbox = $probe.mailbox.after
+    $mesh = $probe.recoveryMesh.after
+    if ($Action -eq 'PROBE_BATTLE_BRIDGE') {
+        return [pscustomobject]@{
+            verified = $true
+            verdict = 'BATTLE_BRIDGE_PROBE_VERIFIED'
+            blocker = ''
+            targetComponentHealthy = $false
+            battleBridgeHealthyClaimed = $false
+            probe = $probe
+        }
+    }
+    $target = if ($Action -eq 'WAKE_CANONICAL_MAILBOX') { $mailbox } else { $mesh }
+    $healthy = Test-TaskCurrentlyHealthy $target
+    return [pscustomobject]@{
+        verified = [bool]$healthy
+        verdict = if ($healthy) { 'RECOVERY_WAKE_TARGET_COMPONENT_VERIFIED' } else { 'RECOVERY_WAKE_TARGET_COMPONENT_NOT_VERIFIED' }
+        blocker = if ($healthy) { '' } else { 'TARGET_COMPONENT_NOT_HEALTHY_AFTER_WAKE' }
+        targetComponentHealthy = [bool]$healthy
+        battleBridgeHealthyClaimed = $false
+        probe = $probe
+    }
+}
+
+function Write-Consumed([string]$RequestId, [string]$Action, [string]$ReceiptId, [string]$TerminalVerdict) {
+    $consumedPath = Join-Path $consumedRoot "$RequestId.json"
+    if (Test-Path -LiteralPath $consumedPath -PathType Leaf) { return $true }
+    $consumed = [ordered]@{
+        schemaVersion = 'stephanos.battle-bridge-recovery-lifeboat-consumed-request.v1'
+        requestId = $RequestId
+        action = $Action
+        receiptId = $ReceiptId
+        consumedAtUtc = [DateTime]::UtcNow.ToString('o')
+        bankId = $bankId
+        terminalVerdict = $TerminalVerdict
+    }
+    return Write-CreateNewJson -Path $consumedPath -Value $consumed
+}
+
+function Write-TerminalReceipt([object]$Terminal) {
+    $receiptPath = Join-Path $receiptRoot "$($Terminal.receiptId).json"
+    if (Test-Path -LiteralPath $receiptPath -PathType Leaf) { return $receiptPath }
+    if (-not (Write-CreateNewJson -Path $receiptPath -Value $Terminal)) { throw 'Recovery terminal receipt collision.' }
+    return $receiptPath
+}
+
+function Terminalize-InterruptedClaims() {
+    $claimFiles = @(Get-ChildItem -LiteralPath $claimsRoot -Filter 'mobile-recovery-*.json' -File -ErrorAction SilentlyContinue)
+    if ($claimFiles.Count -gt 100) { throw 'Recovery interrupted-claim window exceeds fixed bound.' }
+    foreach ($claimFile in $claimFiles) {
+        $requestId = [System.IO.Path]::GetFileNameWithoutExtension($claimFile.Name)
+        if ($requestId -notmatch '^mobile-recovery-[a-z0-9][a-z0-9-]{7,63}$') { continue }
+        $consumedPath = Join-Path $consumedRoot "$requestId.json"
+        if (Test-Path -LiteralPath $consumedPath -PathType Leaf) { continue }
+        $claim = $null
+        try { $claim = Get-Content -LiteralPath $claimFile.FullName -Raw | ConvertFrom-Json } catch { continue }
+        if ([string]$claim.schemaVersion -cne $claimSchema -or [string]$claim.requestId -cne $requestId -or [string]$claim.bankId -notin @('A','B')) { continue }
+        $action = [string]$claim.action
+        if ($allowedActions -cnotcontains $action) { continue }
+        $journalPath = Join-Path $journalRoot "$requestId.json"
+        $journal = $null
+        if (Test-Path -LiteralPath $journalPath -PathType Leaf) {
+            try { $journal = Get-Content -LiteralPath $journalPath -Raw | ConvertFrom-Json } catch { }
+            if ($null -ne $journal -and [string]$journal.state -ceq 'TERMINAL') {
+                $existingReceiptId = [string]$journal.receiptId
+                if ($existingReceiptId) { $null = Write-Consumed -RequestId $requestId -Action $action -ReceiptId $existingReceiptId -TerminalVerdict ([string]$journal.terminalVerdict) }
+                continue
+            }
+        }
+        $probeResult = Invoke-ReadOnlyProbe
+        $receiptId = "github-recovery-$requestId-interrupted"
+        $terminalVerdict = 'RECOVERY_INTERRUPTED_CLAIM_TERMINALIZED_NO_REPLAY'
+        $terminal = [ordered]@{
+            schemaVersion = 'stephanos.battle-bridge-recovery-lifeboat-github-execution-receipt.v1'
+            receiptId = $receiptId
+            requestId = $requestId
+            action = $action
+            bankId = $bankId
+            executedAtUtc = [DateTime]::UtcNow.ToString('o')
+            executionOk = $false
+            actionFinalVerdict = 'INTERRUPTED_EXECUTION_STATE_UNKNOWN'
+            blocker = 'PREVIOUS_LIFEBOAT_PROCESS_INTERRUPTED_AFTER_EXCLUSIVE_CLAIM'
+            startRequested = $false
+            verificationPerformed = [bool]$probeResult.ok
+            verificationVerdict = if ($probeResult.ok) { 'READ_ONLY_POST_CRASH_PROBE_COMPLETE' } else { 'READ_ONLY_POST_CRASH_PROBE_INVALID' }
+            targetComponentHealthy = $false
+            postActionProofRequired = $true
+            recoveredHealthClaimed = $false
+            replayAllowed = $false
+            arbitraryShellAllowed = $false
+            gitMutationAllowed = $false
+            sourceMutationAllowed = $false
+            mergeAllowed = $false
+            pcRestartAllowed = $false
+        }
+        $null = Write-TerminalReceipt -Terminal $terminal
+        $terminalJournal = [ordered]@{
+            schemaVersion = $journalSchema
+            requestId = $requestId
+            action = $action
+            bankId = $bankId
+            state = 'TERMINAL'
+            claimedAtUtc = [string]$claim.claimedAtUtc
+            terminalizedAtUtc = [DateTime]::UtcNow.ToString('o')
+            terminalVerdict = $terminalVerdict
+            receiptId = $receiptId
+            executionReplayAllowed = $false
+            postCrashProbePerformed = [bool]$probeResult.ok
+        }
+        Write-AtomicJson -Path $journalPath -Value $terminalJournal
+        if (-not (Write-Consumed -RequestId $requestId -Action $action -ReceiptId $receiptId -TerminalVerdict $terminalVerdict)) { throw 'Interrupted recovery request could not be terminalized.' }
+    }
+}
+
 function Publish-Status([string]$Verdict, [string]$Blocker, [object]$Request = $null, [object]$Receipt = $null) {
     $status = [ordered]@{
         schemaVersion = $statusSchema
@@ -193,7 +341,10 @@ function Publish-Status([string]$Verdict, [string]$Blocker, [object]$Request = $
         requestId = if ($null -eq $Request) { '' } else { [string]$Request.requestId }
         action = if ($null -eq $Request) { '' } else { [string]$Request.action }
         receiptId = if ($null -eq $Receipt) { '' } else { [string]$Receipt.receiptId }
+        verificationVerdict = if ($null -eq $Receipt) { '' } else { [string]$Receipt.verificationVerdict }
+        targetComponentHealthy = if ($null -eq $Receipt) { $false } else { [bool]$Receipt.targetComponentHealthy }
         postActionProofRequired = $true
+        recoveredHealthClaimed = $false
         arbitraryShellAllowed = $false
         callerSelectedUrlAllowed = $false
         callerSelectedPathAllowed = $false
@@ -207,7 +358,9 @@ function Publish-Status([string]$Verdict, [string]$Blocker, [object]$Request = $
     return $status
 }
 
-$headers = @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'Stephanos-Battle-Bridge-Recovery-Lifeboat/1.0' }
+Terminalize-InterruptedClaims
+
+$headers = @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'Stephanos-Battle-Bridge-Recovery-Lifeboat/1.1' }
 $response = $null
 try {
     $response = Invoke-WebRequest -Uri $apiUrl -UseBasicParsing -Headers $headers -Method Get -TimeoutSec 20
@@ -265,6 +418,7 @@ if ($null -eq $selected) {
 
 $request = $selected.requestEntry.request
 $claimPath = Join-Path $claimsRoot "$($request.requestId).json"
+$journalPath = Join-Path $journalRoot "$($request.requestId).json"
 $claim = [ordered]@{
     schemaVersion = $claimSchema
     repository = $repository
@@ -288,13 +442,51 @@ if (-not (Write-CreateNewJson -Path $claimPath -Value $claim)) {
     exit 0
 }
 
+$journal = [ordered]@{
+    schemaVersion = $journalSchema
+    requestId = $request.requestId
+    action = $request.action
+    bankId = $bankId
+    state = 'CLAIMED'
+    claimedAtUtc = [string]$claim.claimedAtUtc
+    actionReturnedAtUtc = ''
+    terminalizedAtUtc = ''
+    executionOk = $false
+    verificationPerformed = $false
+    verificationVerdict = ''
+    terminalVerdict = ''
+    receiptId = ''
+    executionReplayAllowed = $false
+}
+if (-not (Write-CreateNewJson -Path $journalPath -Value $journal)) { throw 'Recovery execution journal collision.' }
+
 $actionOutput = @(& $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $actionPath -Action $request.action 2>&1)
 $actionExitCode = $LASTEXITCODE
 $actionText = $actionOutput -join [Environment]::NewLine
 $actionReceipt = $null
 try { $actionReceipt = $actionText | ConvertFrom-Json } catch { }
 $executionOk = $actionExitCode -eq 0 -and $null -ne $actionReceipt -and [bool]$actionReceipt.ok -and [string]$actionReceipt.action -ceq [string]$request.action
+$journal.state = 'ACTION_RETURNED'
+$journal.actionReturnedAtUtc = [DateTime]::UtcNow.ToString('o')
+$journal.executionOk = [bool]$executionOk
+Write-AtomicJson -Path $journalPath -Value $journal
+
+$verification = $null
+if ($executionOk) { $verification = Verify-PostAction -Action $request.action -ActionReceipt $actionReceipt }
+$verificationPerformed = $null -ne $verification
+$verificationOk = $verificationPerformed -and [bool]$verification.verified
 $receiptId = "github-recovery-$($request.requestId)-$([Guid]::NewGuid().ToString('N'))"
+$terminalVerdict = if (-not $executionOk) {
+    'RECOVERY_ACTION_BLOCKED'
+} elseif ($verificationOk -and $request.action -eq 'PROBE_BATTLE_BRIDGE') {
+    'RECOVERY_PROBE_VERIFIED'
+} elseif ($verificationOk) {
+    'RECOVERY_ACTION_TARGET_VERIFIED'
+} elseif ($verificationPerformed) {
+    'RECOVERY_ACTION_DISPATCHED_VERIFICATION_FAILED'
+} else {
+    'RECOVERY_ACTION_DISPATCHED_PROOF_PENDING'
+}
 $terminal = [ordered]@{
     schemaVersion = 'stephanos.battle-bridge-recovery-lifeboat-github-execution-receipt.v1'
     receiptId = $receiptId
@@ -304,32 +496,29 @@ $terminal = [ordered]@{
     executedAtUtc = [DateTime]::UtcNow.ToString('o')
     executionOk = [bool]$executionOk
     actionFinalVerdict = if ($null -eq $actionReceipt) { 'ACTION_RECEIPT_INVALID' } else { [string]$actionReceipt.finalVerdict }
-    blocker = if ($executionOk) { '' } elseif ($null -eq $actionReceipt) { 'FIXED_ACTION_RECEIPT_INVALID' } else { [string]$actionReceipt.blocker }
+    blocker = if (-not $executionOk) { if ($null -eq $actionReceipt) { 'FIXED_ACTION_RECEIPT_INVALID' } else { [string]$actionReceipt.blocker } } elseif ($verificationPerformed) { [string]$verification.blocker } else { 'POST_ACTION_VERIFICATION_NOT_PERFORMED' }
     startRequested = if ($null -eq $actionReceipt) { $false } else { [bool]$actionReceipt.startRequested }
+    verificationPerformed = [bool]$verificationPerformed
+    verificationVerdict = if ($verificationPerformed) { [string]$verification.verdict } else { '' }
+    targetComponentHealthy = if ($verificationPerformed) { [bool]$verification.targetComponentHealthy } else { $false }
     postActionProofRequired = $true
     recoveredHealthClaimed = $false
+    replayAllowed = $false
     arbitraryShellAllowed = $false
     gitMutationAllowed = $false
     sourceMutationAllowed = $false
     mergeAllowed = $false
     pcRestartAllowed = $false
 }
-$receiptPath = Join-Path $receiptRoot "$receiptId.json"
-if (-not (Write-CreateNewJson -Path $receiptPath -Value $terminal)) { throw 'Recovery terminal receipt collision.' }
+$null = Write-TerminalReceipt -Terminal $terminal
+$journal.state = 'TERMINAL'
+$journal.terminalizedAtUtc = [DateTime]::UtcNow.ToString('o')
+$journal.verificationPerformed = [bool]$verificationPerformed
+$journal.verificationVerdict = [string]$terminal.verificationVerdict
+$journal.terminalVerdict = $terminalVerdict
+$journal.receiptId = $receiptId
+Write-AtomicJson -Path $journalPath -Value $journal
+if (-not (Write-Consumed -RequestId $request.requestId -Action $request.action -ReceiptId $receiptId -TerminalVerdict $terminalVerdict)) { throw 'Recovery consumed-request receipt collision.' }
 
-if ($executionOk) {
-    $consumed = [ordered]@{
-        schemaVersion = 'stephanos.battle-bridge-recovery-lifeboat-consumed-request.v1'
-        requestId = $request.requestId
-        action = $request.action
-        receiptId = $receiptId
-        consumedAtUtc = [DateTime]::UtcNow.ToString('o')
-        bankId = $bankId
-    }
-    $consumedPath = Join-Path $consumedRoot "$($request.requestId).json"
-    if (-not (Write-CreateNewJson -Path $consumedPath -Value $consumed)) { throw 'Recovery consumed-request receipt collision.' }
-}
-
-$verdict = if ($executionOk) { 'RECOVERY_ACTION_DISPATCHED_PROOF_PENDING' } else { 'RECOVERY_ACTION_BLOCKED' }
-Publish-Status -Verdict $verdict -Blocker ([string]$terminal.blocker) -Request $request -Receipt $terminal | ConvertTo-Json -Depth 8
+Publish-Status -Verdict $terminalVerdict -Blocker ([string]$terminal.blocker) -Request $request -Receipt $terminal | ConvertTo-Json -Depth 10
 exit 0
