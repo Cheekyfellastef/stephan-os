@@ -49,13 +49,15 @@ After the fixed action returns, `ACTION_RETURNED` is written before post-action 
 
 The installed task uses `MultipleInstances IgnoreNew`, so a new bank invocation cannot overlap the previous invocation. At the beginning of every new run, M7 scans a fixed bounded set of locally-created claim files.
 
-A claim that has no consumed-request record and no terminal journal is treated as an interrupted previous owner. The new process does **not** repeat the potentially already-executed wake. Instead it:
+A valid claim that has no consumed-request record and no terminal journal is treated as an interrupted previous owner. The new process does **not** repeat the potentially already-executed wake. Instead it:
 
 1. performs only the fixed read-only Battle Bridge probe;
 2. emits a deterministic interruption receipt;
 3. terminalizes the journal with `RECOVERY_INTERRUPTED_CLAIM_TERMINALIZED_NO_REPLAY`;
 4. writes the consumed-request record; and
 5. requires a new owner request for any further mutation.
+
+A malformed or semantically invalid interrupted claim is never silently skipped. M7 publishes `RECOVERY_LOCAL_STATE_BLOCKED` with a specific malformed, identity-invalid or action-invalid blocker and aborts before fetching or executing a new recovery request. This keeps corrupted local claim state visible and fail-closed rather than turning it into an unexplained permanent `EXCLUSIVE_CLAIM_EXISTS` tombstone.
 
 This is intentionally at-most-once. Ambiguous execution is safer than silently performing a duplicate recovery mutation.
 
@@ -70,8 +72,9 @@ Representative terminal outcomes are:
 - `RECOVERY_ACTION_DISPATCHED_VERIFICATION_FAILED`
 - `RECOVERY_ACTION_BLOCKED`
 - `RECOVERY_INTERRUPTED_CLAIM_TERMINALIZED_NO_REPLAY`
+- `RECOVERY_LOCAL_STATE_BLOCKED`
 
-Silence, malformed probe output, stale task-success evidence and ambiguous interrupted execution remain non-green truth.
+Silence, malformed probe output, stale task-success evidence, corrupted interrupted-claim state and ambiguous interrupted execution remain non-green truth.
 
 ## Authority boundary
 
