@@ -1,13 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import process from 'node:process';
 import {
   createSupervisorHousekeepRunStep,
   ensureLiveUiConvergedBeforeSupervisor,
   runSupervisorHousekeepPreservingLiveDist,
+  runSupervisorHousekeepPreservingLiveRuntime,
 } from './run-battle-bridge-ignition.mjs';
 
-test('supervisor housekeeping defers generated dist mutation but preserves other safe housekeeping', () => {
+test('supervisor housekeeping preserves exact-head dist and runtime-owned durable memory', () => {
   const delegated = [];
   const runStepFn = (label, command, args) => {
     delegated.push({ label, command, args });
@@ -18,21 +20,23 @@ test('supervisor housekeeping defers generated dist mutation but preserves other
   guarded('git-restore-auto-generated', 'git', ['restore', '--', 'apps/stephanos/dist/index.html']);
   guarded('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', 'apps/stephanos/dist/']);
   guarded('git-restore-runtime-tracked', 'git', ['restore', '--', 'stephanos-server/data/memory/durable-memory.json']);
+  guarded('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', 'data/activity/']);
 
-  assert.deepEqual(delegated.map((entry) => entry.label), ['git-restore-runtime-tracked']);
+  assert.deepEqual(delegated.map((entry) => entry.label), ['git-clean-runtime-untracked']);
 });
 
-test('supervisor housekeeping injects the live-dist-preserving run step into the existing housekeeper', () => {
+test('supervisor housekeeping injects the live-runtime-preserving run step into the existing housekeeper', () => {
   const delegated = [];
   let receivedOptions = null;
   const housekeepFn = (options) => {
     receivedOptions = options;
     options.runStepFn('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', 'apps/stephanos/dist/']);
+    options.runStepFn('git-restore-runtime-tracked', 'git', ['restore', '--', 'stephanos-server/data/memory/durable-memory.json']);
     options.runStepFn('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', 'data/activity/']);
     return { ok: true };
   };
 
-  const result = runSupervisorHousekeepPreservingLiveDist(
+  const result = runSupervisorHousekeepPreservingLiveRuntime(
     { dryRun: false, compact: true },
     {
       housekeepFn,
@@ -47,6 +51,21 @@ test('supervisor housekeeping injects the live-dist-preserving run step into the
   assert.equal(receivedOptions.dryRun, false);
   assert.equal(receivedOptions.compact, true);
   assert.deepEqual(delegated, ['git-clean-runtime-untracked']);
+  assert.equal(runSupervisorHousekeepPreservingLiveDist, runSupervisorHousekeepPreservingLiveRuntime);
+});
+
+test('backend startup source tolerates only unstaged canonical durable-memory dirt and fixed Node command forms', async () => {
+  const starter = await readFile(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
+  assert.match(starter, /\$runtimeMemoryPath = 'stephanos-server\/data\/memory\/durable-memory\.json'/);
+  assert.match(starter, /\$status -eq ' M' -and \$path -eq \$runtimeMemoryPath/);
+  assert.match(starter, /Backend startup requires source-tracked files to be unmodified at exact head/);
+  assert.match(starter, /runtimeMemoryDirtTolerated = \$RuntimeMemoryDirty/);
+  assert.match(starter, /trackedWorktreeClean = -not \$RuntimeMemoryDirty/);
+  assert.match(starter, /sourceWorktreeClean = \$true/);
+  assert.match(starter, /-replace '\\s\+', ' '/);
+  assert.match(starter, /'node stephanos-server\/server\.js'/);
+  assert.match(starter, /'node\.exe stephanos-server\/server\.js'/);
+  assert.doesNotMatch(starter, /CommandLine -match|Invoke-Expression|Start-Process[^\n]*-ArgumentList[^\n]*\$CommandLine/i);
 });
 
 test('second press reuses an existing exact-head UI without spawning another refresh', async () => {
