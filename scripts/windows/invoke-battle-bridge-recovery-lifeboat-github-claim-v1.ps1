@@ -262,7 +262,7 @@ function Verify-PostAction([string]$Action, [object]$ActionReceipt) {
     }
 }
 
-function Write-Consumed([string]$RequestId, [string]$Action, [string]$ReceiptId, [string]$TerminalVerdict) {
+function Write-Consumed([string]$RequestId, [string]$Action, [string]$ReceiptId, [string]$TerminalVerdict, [string]$BankId = $bankId) {
     $consumedPath = Join-Path $consumedRoot "$RequestId.json"
     if (Test-Path -LiteralPath $consumedPath -PathType Leaf) { return $true }
     $consumed = [ordered]@{
@@ -271,7 +271,7 @@ function Write-Consumed([string]$RequestId, [string]$Action, [string]$ReceiptId,
         action = $Action
         receiptId = $ReceiptId
         consumedAtUtc = [DateTime]::UtcNow.ToString('o')
-        bankId = $bankId
+        bankId = $BankId
         terminalVerdict = $TerminalVerdict
     }
     return Write-CreateNewJson -Path $consumedPath -Value $consumed
@@ -311,22 +311,66 @@ function Terminalize-InterruptedClaims() {
         $journalPath = Join-Path $journalRoot "$requestId.json"
         $journal = $null
         if (Test-Path -LiteralPath $journalPath -PathType Leaf) {
-            try { $journal = Get-Content -LiteralPath $journalPath -Raw | ConvertFrom-Json } catch { }
-            if ($null -ne $journal -and [string]$journal.state -ceq 'TERMINAL') {
+            try {
+                $journal = Get-Content -LiteralPath $journalPath -Raw | ConvertFrom-Json
+            } catch {
+                Publish-Status -Verdict 'RECOVERY_LOCAL_STATE_BLOCKED' -Blocker 'INTERRUPTED_JOURNAL_MALFORMED' | ConvertTo-Json -Depth 8
+                throw 'Interrupted recovery journal is malformed.'
+            }
+            if ([string]$journal.schemaVersion -cne $journalSchema -or [string]$journal.requestId -cne $requestId -or [string]$journal.action -cne $action -or [string]$journal.bankId -cne [string]$claim.bankId) {
+                Publish-Status -Verdict 'RECOVERY_LOCAL_STATE_BLOCKED' -Blocker 'INTERRUPTED_JOURNAL_IDENTITY_INVALID' | ConvertTo-Json -Depth 8
+                throw 'Interrupted recovery journal identity is invalid.'
+            }
+            $journalState = [string]$journal.state
+            if ($journalState -notin @('CLAIMED','ACTION_RETURNED','TERMINAL')) {
+                Publish-Status -Verdict 'RECOVERY_LOCAL_STATE_BLOCKED' -Blocker 'INTERRUPTED_JOURNAL_STATE_INVALID' | ConvertTo-Json -Depth 8
+                throw 'Interrupted recovery journal state is invalid.'
+            }
+            if ($journalState -ceq 'TERMINAL') {
                 $existingReceiptId = [string]$journal.receiptId
-                if ($existingReceiptId) { $null = Write-Consumed -RequestId $requestId -Action $action -ReceiptId $existingReceiptId -TerminalVerdict ([string]$journal.terminalVerdict) }
+                $existingTerminalVerdict = [string]$journal.terminalVerdict
+                $validTerminalVerdicts = @(
+                    'RECOVERY_ACTION_BLOCKED',
+                    'RECOVERY_PROBE_VERIFIED',
+                    'RECOVERY_ACTION_TARGET_VERIFIED',
+                    'RECOVERY_ACTION_DISPATCHED_VERIFICATION_FAILED',
+                    'RECOVERY_INTERRUPTED_CLAIM_TERMINALIZED_NO_REPLAY'
+                )
+                if ($existingReceiptId -notmatch "^github-recovery-$([regex]::Escape($requestId))-(?:[a-f0-9]{32}|interrupted)$" -or $validTerminalVerdicts -cnotcontains $existingTerminalVerdict) {
+                    Publish-Status -Verdict 'RECOVERY_LOCAL_STATE_BLOCKED' -Blocker 'INTERRUPTED_JOURNAL_TERMINAL_INVALID' | ConvertTo-Json -Depth 8
+                    throw 'Interrupted recovery terminal journal is invalid.'
+                }
+                $existingReceiptPath = Join-Path $receiptRoot "$existingReceiptId.json"
+                if (-not (Test-Path -LiteralPath $existingReceiptPath -PathType Leaf)) {
+                    Publish-Status -Verdict 'RECOVERY_LOCAL_STATE_BLOCKED' -Blocker 'INTERRUPTED_TERMINAL_RECEIPT_MISSING' | ConvertTo-Json -Depth 8
+                    throw 'Interrupted recovery terminal receipt is missing.'
+                }
+                $terminalReceipt = $null
+                try {
+                    $terminalReceipt = Get-Content -LiteralPath $existingReceiptPath -Raw | ConvertFrom-Json
+                } catch {
+                    Publish-Status -Verdict 'RECOVERY_LOCAL_STATE_BLOCKED' -Blocker 'INTERRUPTED_TERMINAL_RECEIPT_INVALID' | ConvertTo-Json -Depth 8
+                    throw 'Interrupted recovery terminal receipt is invalid.'
+                }
+                $terminalReceiptKeys = @('schemaVersion','receiptId','requestId','action','bankId','executedAtUtc','executionOk','actionFinalVerdict','blocker','startRequested','verificationPerformed','verificationVerdict','targetComponentHealthy','postActionProofRequired','recoveredHealthClaimed','replayAllowed','arbitraryShellAllowed','gitMutationAllowed','sourceMutationAllowed','mergeAllowed','pcRestartAllowed')
+                if (-not (Test-ExactProperties $terminalReceipt $terminalReceiptKeys) -or [string]$terminalReceipt.schemaVersion -cne 'stephanos.battle-bridge-recovery-lifeboat-github-execution-receipt.v1' -or [string]$terminalReceipt.receiptId -cne $existingReceiptId -or [string]$terminalReceipt.requestId -cne $requestId -or [string]$terminalReceipt.action -cne $action -or [string]$terminalReceipt.bankId -cne [string]$claim.bankId -or -not [bool]$terminalReceipt.postActionProofRequired -or [bool]$terminalReceipt.recoveredHealthClaimed -or [bool]$terminalReceipt.replayAllowed -or [bool]$terminalReceipt.arbitraryShellAllowed -or [bool]$terminalReceipt.gitMutationAllowed -or [bool]$terminalReceipt.sourceMutationAllowed -or [bool]$terminalReceipt.mergeAllowed -or [bool]$terminalReceipt.pcRestartAllowed) {
+                    Publish-Status -Verdict 'RECOVERY_LOCAL_STATE_BLOCKED' -Blocker 'INTERRUPTED_TERMINAL_RECEIPT_INVALID' | ConvertTo-Json -Depth 8
+                    throw 'Interrupted recovery terminal receipt identity is invalid.'
+                }
+                if (-not (Write-Consumed -RequestId $requestId -Action $action -ReceiptId $existingReceiptId -TerminalVerdict $existingTerminalVerdict -BankId ([string]$claim.bankId))) { throw 'Interrupted terminal recovery request could not be consumed.' }
                 continue
             }
         }
         $probeResult = Invoke-ReadOnlyProbe
         $receiptId = "github-recovery-$requestId-interrupted"
         $terminalVerdict = 'RECOVERY_INTERRUPTED_CLAIM_TERMINALIZED_NO_REPLAY'
+        $claimBankId = [string]$claim.bankId
         $terminal = [ordered]@{
             schemaVersion = 'stephanos.battle-bridge-recovery-lifeboat-github-execution-receipt.v1'
             receiptId = $receiptId
             requestId = $requestId
             action = $action
-            bankId = $bankId
+            bankId = $claimBankId
             executedAtUtc = [DateTime]::UtcNow.ToString('o')
             executionOk = $false
             actionFinalVerdict = 'INTERRUPTED_EXECUTION_STATE_UNKNOWN'
@@ -349,7 +393,7 @@ function Terminalize-InterruptedClaims() {
             schemaVersion = $journalSchema
             requestId = $requestId
             action = $action
-            bankId = $bankId
+            bankId = $claimBankId
             state = 'TERMINAL'
             claimedAtUtc = [string]$claim.claimedAtUtc
             terminalizedAtUtc = [DateTime]::UtcNow.ToString('o')
@@ -359,7 +403,7 @@ function Terminalize-InterruptedClaims() {
             postCrashProbePerformed = [bool]$probeResult.ok
         }
         Write-AtomicJson -Path $journalPath -Value $terminalJournal
-        if (-not (Write-Consumed -RequestId $requestId -Action $action -ReceiptId $receiptId -TerminalVerdict $terminalVerdict)) { throw 'Interrupted recovery request could not be terminalized.' }
+        if (-not (Write-Consumed -RequestId $requestId -Action $action -ReceiptId $receiptId -TerminalVerdict $terminalVerdict -BankId $claimBankId)) { throw 'Interrupted recovery request could not be terminalized.' }
     }
 }
 
