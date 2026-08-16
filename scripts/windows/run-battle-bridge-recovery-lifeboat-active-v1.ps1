@@ -4,6 +4,8 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+$powershellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+if (-not (Test-Path -LiteralPath $powershellExe -PathType Leaf)) { throw 'Canonical Windows PowerShell host is missing.' }
 $lifeboatRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
 $statePath = Join-Path $lifeboatRoot 'state\active-bank.json'
 if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { throw 'Active lifeboat bank state is missing.' }
@@ -23,5 +25,5 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'Active 
 $manifest = (Get-Content -LiteralPath $manifestPath -Raw).Trim().ToLowerInvariant()
 if ($manifest -ne [string]$state.manifestSha256) { throw 'Active lifeboat bank manifest does not match active-bank metadata.' }
 
-& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $runnerPath
+& $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $runnerPath
 exit $LASTEXITCODE
