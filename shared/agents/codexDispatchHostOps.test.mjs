@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CODEX_DISPATCH_TEST_ARGS,
+  parseTapTestSummary,
   runBattleBridgeDiagnostics,
   syncCodexDispatchBridge,
 } from './codexDispatchHostOps.mjs';
@@ -45,7 +46,7 @@ test('sync bridge fast-forwards latest canonical main and runs tests through the
     'git rev-list --left-right --count HEAD...new-head': { stdout: '0\t1\n' },
     'git merge --ff-only new-head': { stdout: 'Updating old-head..new-head\nFast-forward\n' },
     'git diff --name-only old-head..new-head': { stdout: 'scripts/stephanos-codex-dispatch-worker.mjs\n' },
-    [nodeTestCommand()]: { stdout: 'tests 22\npass 22\nfail 0\n' },
+    [nodeTestCommand()]: { stdout: '# tests 22\n# pass 22\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n' },
   });
 
   const result = syncCodexDispatchBridge({
@@ -69,12 +70,51 @@ test('sync bridge fast-forwards latest canonical main and runs tests through the
   assert.equal(result.destructiveCleanupPerformed, false);
   assert.equal(result.tests.command, 'node.exe');
   assert.deepEqual(result.tests.args, CODEX_DISPATCH_TEST_ARGS);
+  assert.equal(result.tests.args.includes('--test-reporter=tap'), true);
+  assert.deepEqual(result.tests.tapSummary, {
+    summaryComplete: true,
+    tests: 22,
+    pass: 22,
+    fail: 0,
+    cancelled: 0,
+    skipped: 0,
+    todo: 0,
+    failingTests: [],
+  });
   assert.equal(spawnSyncFn.calls.includes('git rev-list --left-right --count HEAD...new-head'), true);
   assert.equal(spawnSyncFn.calls.includes('git merge --ff-only new-head'), true);
   assert.equal(spawnSyncFn.calls.includes('git merge --ff-only origin/main'), false);
   assert.equal(spawnSyncFn.calls.some((call) => /npm(?:\.cmd)?/i.test(call)), false);
   assert.equal(spawnSyncFn.calls.some((call) => /powershell/i.test(call)), false);
   assert.equal(spawnSyncFn.calls.some((call) => /reset|clean|stash|checkout/i.test(call)), false);
+});
+
+test('TAP summary is extracted before stdout is bounded', () => {
+  const output = `${'ok 1 - noisy passing test\n'.repeat(400)}not ok 401 - late Windows-only failure\n# tests 401\n# pass 400\n# fail 1\n# cancelled 0\n# skipped 0\n# todo 0\n`;
+  assert.ok(output.length > 6000);
+  assert.deepEqual(parseTapTestSummary(output), {
+    summaryComplete: true,
+    tests: 401,
+    pass: 400,
+    fail: 1,
+    cancelled: 0,
+    skipped: 0,
+    todo: 0,
+    failingTests: ['late Windows-only failure'],
+  });
+});
+
+test('incomplete TAP output preserves partial failures and marks missing totals unknown', () => {
+  assert.deepEqual(parseTapTestSummary('ok 1 - completed\nnot ok 2 - process ended before trailer\n'), {
+    summaryComplete: false,
+    tests: null,
+    pass: null,
+    fail: null,
+    cancelled: null,
+    skipped: null,
+    todo: null,
+    failingTests: ['process ended before trailer'],
+  });
 });
 
 test('sync bridge pins fast-forward safety and mutation to the exact head observed after fetch', () => {
