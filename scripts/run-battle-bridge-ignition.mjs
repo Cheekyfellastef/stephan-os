@@ -13,9 +13,10 @@ import { runIgnitionHousekeep } from './ignite-stephanos-local.mjs';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const backendStarterScript = path.join(repoRoot, 'scripts', 'windows', 'start-stephanos-backend.ps1');
 const ui4173RefreshScript = path.join(repoRoot, 'scripts', 'refresh-stephanos-ui-4173.mjs');
-const DIST_MUTATION_LABELS = new Set([
-  'git-restore-auto-generated',
-  'git-clean-dist-untracked',
+const SUPERVISOR_PRESERVED_MUTATION_LABELS = new Map([
+  ['git-restore-auto-generated', 'preserve the currently served generated dist until exact-head browser proof completes'],
+  ['git-clean-dist-untracked', 'preserve the currently served generated dist until exact-head browser proof completes'],
+  ['git-restore-runtime-tracked', 'preserve runtime-owned durable memory; runtime dirt is evidence, not source cleanup authority'],
 ]);
 
 export function runStep(label, command, args, { cwd = repoRoot, env = process.env } = {}) {
@@ -42,8 +43,9 @@ export function runStep(label, command, args, { cwd = repoRoot, env = process.en
 
 export function createSupervisorHousekeepRunStep({ runStepFn = runStep } = {}) {
   return (label, command, args) => {
-    if (DIST_MUTATION_LABELS.has(label)) {
-      console.log(`[IGNITION ENTRY] ${label} deferred: preserve the currently served generated dist until exact-head browser proof completes.`);
+    const preservationReason = SUPERVISOR_PRESERVED_MUTATION_LABELS.get(label);
+    if (preservationReason) {
+      console.log(`[IGNITION ENTRY] ${label} deferred: ${preservationReason}.`);
       return true;
     }
 
@@ -53,7 +55,7 @@ export function createSupervisorHousekeepRunStep({ runStepFn = runStep } = {}) {
   };
 }
 
-export function runSupervisorHousekeepPreservingLiveDist(
+export function runSupervisorHousekeepPreservingLiveRuntime(
   options = {},
   { housekeepFn = runIgnitionHousekeep, runStepFn = runStep } = {},
 ) {
@@ -62,6 +64,8 @@ export function runSupervisorHousekeepPreservingLiveDist(
     runStepFn: createSupervisorHousekeepRunStep({ runStepFn }),
   });
 }
+
+export const runSupervisorHousekeepPreservingLiveDist = runSupervisorHousekeepPreservingLiveRuntime;
 
 function timeoutFetch(url, options = {}) {
   const timeoutMs = Number(options.timeoutMs || 4_000);
@@ -167,6 +171,8 @@ function sharedWorkspaceFromArgs(argv = process.argv.slice(2)) {
 }
 
 export async function main({ platform = process.platform } = {}) {
+  process.chdir(repoRoot);
+
   if (platform === 'win32') {
     const backendReady = runStep('backend-8787-preflight', 'powershell.exe', [
       '-NoProfile',
@@ -190,7 +196,7 @@ export async function main({ platform = process.platform } = {}) {
 
   const result = await runBattleBridgeIgnitionSupervisor({
     sharedWorkspace: sharedWorkspaceFromArgs(),
-    housekeepFn: (options) => runSupervisorHousekeepPreservingLiveDist(options),
+    housekeepFn: (options) => runSupervisorHousekeepPreservingLiveRuntime(options),
   });
 
   return result.ok ? 0 : 2;
