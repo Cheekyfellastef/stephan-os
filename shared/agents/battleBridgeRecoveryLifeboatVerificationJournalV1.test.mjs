@@ -69,6 +69,18 @@ test('M7 detects an interrupted previous owner and refuses ambiguous replay', as
   assert.match(text, /if \(Test-Path -LiteralPath \$consumedPath -PathType Leaf\) \{ continue \}/);
 });
 
+test('M7 exposes malformed interrupted claims as a fail-closed local-state blocker', async () => {
+  const text = await source();
+  assert.match(text, /INTERRUPTED_CLAIM_MALFORMED/);
+  assert.match(text, /INTERRUPTED_CLAIM_IDENTITY_INVALID/);
+  assert.match(text, /INTERRUPTED_CLAIM_ACTION_INVALID/);
+  assert.match(text, /RECOVERY_LOCAL_STATE_BLOCKED/);
+  assert.match(text, /throw 'Interrupted recovery claim is malformed\.'/);
+  assert.match(text, /throw 'Interrupted recovery claim identity is invalid\.'/);
+  assert.match(text, /throw 'Interrupted recovery claim action is invalid\.'/);
+  assert.doesNotMatch(text, /ConvertFrom-Json \} catch \{ continue \}/);
+});
+
 test('M7 retains the closed-world no-shell no-git no-restart boundary', async () => {
   const text = await source();
   assert.doesNotMatch(text, /Invoke-Expression/i);
