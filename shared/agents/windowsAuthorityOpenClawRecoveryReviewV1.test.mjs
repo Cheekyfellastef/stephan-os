@@ -12,15 +12,11 @@ const blobSha = (content) => {
   const bytes = Buffer.from(content, 'utf8');
   return createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
 };
-const sourceRecord = (path, content) => ({
-  schemaVersion: 'stephanos.windows-authority-source.v1', repository, path, ref: head,
+const sourceRecord = (path, content, sourceRepository = repository) => ({
+  schemaVersion: 'stephanos.windows-authority-source.v1', repository: sourceRepository, path, ref: head,
   exists: true, size: Buffer.byteLength(content, 'utf8'), blobSha: blobSha(content), content,
 });
 const analysisFor = (paths) => ({ findings: paths.map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })) });
-const analyze = (entries) => analyzeWindowsAuthorityOpenClawRecoveryReview({
-  repository, sourceHead: head, analysis: analysisFor(entries.map(([path]) => path)),
-  sources: entries.map(([path, content]) => sourceRecord(path, content)),
-});
 const codes = (result) => result.findings.map((item) => item.code);
 const join = (...parts) => parts.join('');
 
@@ -94,6 +90,25 @@ function ingressTestFixture() {
     "assert.match(source, /OPENCLAW_HOST_PROOF_ALREADY_CONSUMED/)",
   ].join('\n');
 }
+function validEntries() {
+  return [
+    [WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1[0], pluginFixture()],
+    [WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1[1], pluginTestFixture()],
+    [WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1[2], ingressFixture()],
+    [WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1[3], ingressTestFixture()],
+  ];
+}
+function analyze(entries = validEntries(), { repo = repository, paths = WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1, extraSources = [] } = {}) {
+  return analyzeWindowsAuthorityOpenClawRecoveryReview({
+    repository: repo,
+    sourceHead: head,
+    analysis: analysisFor(paths),
+    sources: [...entries.map(([path, content]) => sourceRecord(path, content, repo)), ...extraSources],
+  });
+}
+function replaceEntry(entries, path, content) {
+  return entries.map(([candidatePath, candidateContent]) => [candidatePath, candidatePath === path ? content : candidateContent]);
+}
 
 test('reviewer owns exactly the four OpenClaw recovery authority files', () => {
   assert.deepEqual(WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1, [
@@ -104,34 +119,49 @@ test('reviewer owns exactly the four OpenClaw recovery authority files', () => {
   ]);
 });
 
-test('reviewer accepts the closed-world OpenClaw recovery contract', () => {
-  const entries = [
-    [WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1[0], pluginFixture()],
-    [WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1[1], pluginTestFixture()],
-    [WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1[2], ingressFixture()],
-    [WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1[3], ingressTestFixture()],
-  ];
-  const result = analyze(entries);
+test('reviewer accepts only the complete closed-world OpenClaw recovery contract', () => {
+  const result = analyze();
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true, JSON.stringify(result.findings));
   assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1);
 });
 
+test('reviewer rejects partial escalation, wrong repositories and oversized source evidence estates', () => {
+  for (let count = 1; count < WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1.length; count += 1) {
+    const partial = analyze(validEntries().slice(0, count), { paths: WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1.slice(0, count) });
+    assert.equal(partial.eligible, false, `partial estate ${count}`);
+  }
+  const wrongRepository = analyze(validEntries(), { repo: 'example/stephan-os' });
+  assert.equal(wrongRepository.eligible, false);
+  const extra = sourceRecord('scripts/windows/unrelated.ps1', 'Write-Output bounded');
+  const oversized = analyze(validEntries(), { extraSources: [extra] });
+  assert.equal(oversized.eligible, true);
+  assert.ok(codes(oversized).includes('windows-authority-source-estate-invalid'));
+  assert.equal(oversized.clean, false);
+});
+
 test('reviewer rejects unrelated high-risk paths and invalid exact-head evidence', () => {
   const unrelated = 'scripts/windows/arbitrary-admin.ps1';
-  const no = analyzeWindowsAuthorityOpenClawRecoveryReview({ repository, sourceHead: head, analysis: analysisFor([unrelated]), sources: [sourceRecord(unrelated, 'x')] });
+  const no = analyze(validEntries(), { paths: [unrelated] });
   assert.equal(no.eligible, false);
   const path = WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1[2];
-  const record = sourceRecord(path, ingressFixture());
-  record.blobSha = 'b'.repeat(40);
-  const bad = analyzeWindowsAuthorityOpenClawRecoveryReview({ repository, sourceHead: head, analysis: analysisFor([path]), sources: [record] });
+  const sources = validEntries().map(([entryPath, content]) => sourceRecord(entryPath, content));
+  sources.find((source) => source.path === path).blobSha = 'b'.repeat(40);
+  const bad = analyzeWindowsAuthorityOpenClawRecoveryReview({
+    repository,
+    sourceHead: head,
+    analysis: analysisFor(WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1),
+    sources,
+  });
   assert.ok(codes(bad).includes('windows-authority-source-evidence-invalid'));
+  assert.equal(bad.clean, false);
 });
 
 test('reviewer blocks widened shell, task, Git and restart authority', () => {
   const pluginPath = WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1[0];
   const unsafeShell = join('shell:', ' true');
-  assert.ok(codes(analyze([[pluginPath, `${pluginFixture()}\n${unsafeShell}`]])).includes('openclaw-dynamic-shell-forbidden'));
+  const pluginResult = analyze(replaceEntry(validEntries(), pluginPath, `${pluginFixture()}\n${unsafeShell}`));
+  assert.ok(codes(pluginResult).includes('openclaw-dynamic-shell-forbidden'));
   const ingressPath = WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1[2];
   for (const [extra, code] of [
     ['Register-ScheduledTask -TaskName x', 'openclaw-task-construction-forbidden'],
@@ -139,5 +169,8 @@ test('reviewer blocks widened shell, task, Git and restart authority', () => {
     [join('Invoke-', 'Expression $payload'), 'openclaw-dynamic-execution-forbidden'],
     [join('git ', 'reset --hard HEAD'), 'windows-authority-source-mutation-forbidden'],
     [join('Restart-', 'Computer'), 'windows-authority-expanded'],
-  ]) assert.ok(codes(analyze([[ingressPath, `${ingressFixture()}\n${extra}`]])).includes(code), extra);
+  ]) {
+    const result = analyze(replaceEntry(validEntries(), ingressPath, `${ingressFixture()}\n${extra}`));
+    assert.ok(codes(result).includes(code), extra);
+  }
 });
