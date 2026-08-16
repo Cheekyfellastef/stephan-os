@@ -22,12 +22,14 @@ function blobSha(content) {
 
 function escalationPaths(analysis) {
   const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
-  if (!findings.length || !findings.every((item) => (
+  if (findings.length !== WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1.length) return [];
+  if (!findings.every((item) => (
     text(item?.severity).toUpperCase() === 'P0'
     && text(item?.code) === 'unsupported-high-risk-surface'
-    && WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1.includes(text(item?.path))
   ))) return [];
-  return unique(findings.map((item) => text(item.path)));
+  const paths = unique(findings.map((item) => text(item?.path))).sort();
+  const expected = [...WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1].sort();
+  return JSON.stringify(paths) === JSON.stringify(expected) ? paths : [];
 }
 
 function exactSource(source, repository, head, path) {
@@ -167,14 +169,15 @@ export function analyzeWindowsAuthorityOpenClawRecoveryReview(input = {}) {
   const repository = text(input.repository);
   const sourceHead = text(input.sourceHead).toLowerCase();
   const paths = escalationPaths(input.analysis);
-  const eligible = repository.includes('/') && SHA.test(sourceHead) && paths.length > 0
-    && paths.every((path) => WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1.includes(path));
+  const eligible = repository === 'Cheekyfellastef/stephan-os'
+    && SHA.test(sourceHead)
+    && paths.length === WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1.length;
   if (!eligible) return Object.freeze({ schemaVersion: SCHEMA, eligible: false, clean: false, reviewedPaths: Object.freeze([]), findings: Object.freeze([]), proofRefs: Object.freeze([]), finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_NOT_APPLICABLE' });
 
   const sources = Array.isArray(input.sources) ? input.sources : [];
   const findings = [];
   const proofRefs = [];
-  for (const path of paths) {
+  for (const path of WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1) {
     const candidates = sources.filter((source) => text(source?.path) === path);
     if (candidates.length !== 1 || !exactSource(candidates[0], repository, sourceHead, path)) {
       findings.push(finding('windows-authority-source-evidence-invalid', path));
@@ -187,6 +190,9 @@ export function analyzeWindowsAuthorityOpenClawRecoveryReview(input = {}) {
     if (path === WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1[3]) reviewWindowsIngressTest(source, path, findings);
     proofRefs.push(`proofs/windows-authority-specialist/${path}@${sourceHead}#${candidates[0].blobSha}:${candidates[0].size}`);
   }
+  if (sources.length !== WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1.length) {
+    findings.push(finding('windows-authority-source-estate-invalid', WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1[0]));
+  }
   const clean = findings.length === 0;
-  return Object.freeze({ schemaVersion: SCHEMA, eligible: true, clean, reviewedPaths: Object.freeze(paths), findings: Object.freeze(findings), proofRefs: Object.freeze(proofRefs), finalVerdict: clean ? 'WINDOWS_AUTHORITY_SPECIALIST_CLEAN' : 'WINDOWS_AUTHORITY_SPECIALIST_FINDINGS' });
+  return Object.freeze({ schemaVersion: SCHEMA, eligible: true, clean, reviewedPaths: Object.freeze([...WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1]), findings: Object.freeze(findings), proofRefs: Object.freeze(proofRefs), finalVerdict: clean ? 'WINDOWS_AUTHORITY_SPECIALIST_CLEAN' : 'WINDOWS_AUTHORITY_SPECIALIST_FINDINGS' });
 }
