@@ -78,16 +78,17 @@ function Get-TaskHealth {
 
 function Test-CanonicalBackendCommandLine {
     param([string]$CommandLine)
-    $normalized = (([string]$CommandLine -replace '\s+', ' ').Trim())
-    $allowed = @(
-        "`"$canonicalNode`" stephanos-server/server.js",
-        "$canonicalNode stephanos-server/server.js",
-        'node.exe stephanos-server/server.js',
-        'node stephanos-server/server.js'
-    )
-    return @($allowed | Where-Object {
-        [string]::Equals($normalized, $_, [System.StringComparison]::OrdinalIgnoreCase)
-    }).Count -eq 1
+    $commandLine = (([string]$CommandLine -replace '\s+', ' ').Trim())
+    $expectedQuotedCommand = "`"$canonicalNode`" stephanos-server/server.js"
+    $expectedUnquotedCommand = "$canonicalNode stephanos-server/server.js"
+    if ([string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase) `
+        -or [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+    $expectedNpmNodeCommand = 'node stephanos-server/server.js'
+    $expectedNpmNodeExeCommand = 'node.exe stephanos-server/server.js'
+    return [string]::Equals($commandLine, $expectedNpmNodeCommand, [System.StringComparison]::OrdinalIgnoreCase) `
+        -or [string]::Equals($commandLine, $expectedNpmNodeExeCommand, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function Get-BackendListenerIdentity {
@@ -233,12 +234,16 @@ function Assert-CanonicalSourceWorktreeClean {
     if ($assessment.SourceDirt.Count -ne 0) { throw 'RECOVERY_CANONICAL_TRACKED_SOURCE_WORKTREE_DIRTY' }
     return $assessment
 }
+function Assert-CanonicalTrackedWorktreeClean {
+    param([string]$GitExecutable, [string]$RepositoryRoot)
+    return Assert-CanonicalSourceWorktreeClean -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot
+}
 $sourceHeadRaw = & $sourceControlExecutable -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1
 $branchRaw = & $sourceControlExecutable -C $repoRoot branch --show-current 2>$null | Select-Object -First 1
 $sourceHead = if ($sourceHeadRaw) { ([string]$sourceHeadRaw).Trim().ToLowerInvariant() } else { '' }
 $branch = if ($branchRaw) { ([string]$branchRaw).Trim() } else { '' }
 if ($sourceHead -notmatch '^[0-9a-f]{40}$' -or $branch -ne 'main') { throw 'RECOVERY_CANONICAL_SOURCE_IDENTITY_INVALID' }
-$beforeWorktree = Assert-CanonicalSourceWorktreeClean -GitExecutable $sourceControlExecutable -RepositoryRoot $repoRoot
+$beforeWorktree = Assert-CanonicalTrackedWorktreeClean -GitExecutable $sourceControlExecutable -RepositoryRoot $repoRoot
 
 $before = @{}
 foreach ($spec in $taskSpecs) { $before[$spec.Id] = Get-TaskHealth -Spec $spec }
@@ -271,7 +276,7 @@ $worker = Get-WorkerHealth
 $worker.healthy = [bool]($worker.healthy -and $after.watchdog.actionCanonical -and $after.watchdog.authorityCanonical)
 $openClawHealth = Get-OpenClawIdentityHealth
 $backendFreshness = Get-BackendFreshnessHealth -ExpectedSourceHead $sourceHead -BackendTask $after.backend
-$afterWorktree = Assert-CanonicalSourceWorktreeClean -GitExecutable $sourceControlExecutable -RepositoryRoot $repoRoot
+$afterWorktree = Assert-CanonicalTrackedWorktreeClean -GitExecutable $sourceControlExecutable -RepositoryRoot $repoRoot
 $mailboxTask = $after.mailbox
 $mailboxLastRunMs = if ($mailboxTask.lastRunTimeUtc) { ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($mailboxTask.lastRunTimeUtc)).TotalMilliseconds } else { [double]::PositiveInfinity }
 $mailboxHealthy = $mailboxTask.present `
