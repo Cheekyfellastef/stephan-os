@@ -20,6 +20,7 @@ const EXECUTABLE_ACTION_SET = new Set(BATTLE_BRIDGE_LIFEBOAT_EXECUTABLE_ACTIONS_
 const MAX_COMMENT_BYTES = 16 * 1024;
 const MAX_COMMENT_COUNT = 100;
 const SAFE_REQUEST_ID = /^mobile-recovery-[a-z0-9][a-z0-9-]{7,63}$/;
+const SAFE_COMMENT_ID = /^[1-9][0-9]{0,19}$/;
 
 function ownDataSnapshot(value, keys) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -64,10 +65,12 @@ function safeCommentSnapshot(value) {
 function parseFencedJson(body, marker) {
   if (typeof body !== 'string' || Buffer.byteLength(body, 'utf8') > MAX_COMMENT_BYTES) return null;
   const normalized = body.replace(/\r\n/g, '\n').trim();
-  const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = normalized.match(new RegExp(`^${escaped}\\n\\u0060\\u0060\\u0060json\\n([\\s\\S]+?)\\n\\u0060\\u0060\\u0060$`));
-  if (!match) return null;
-  try { return JSON.parse(match[1]); } catch { return null; }
+  const prefix = `${marker}\n\`\`\`json\n`;
+  const suffix = '\n```';
+  if (!normalized.startsWith(prefix) || !normalized.endsWith(suffix)) return null;
+  const jsonText = normalized.slice(prefix.length, normalized.length - suffix.length);
+  if (!jsonText.trim()) return null;
+  try { return JSON.parse(jsonText); } catch { return null; }
 }
 
 export function parseLifeboatRecoveryRequestComment(comment) {
@@ -86,18 +89,29 @@ export function parseLifeboatRecoveryAttestationComment(comment) {
     return Object.freeze({ ok: false, blocker: 'attestation-comment-identity-invalid', comment: snapshot, payload: null });
   }
   const normalized = snapshot.body.replace(/\r\n/g, '\n').trim();
-  const escaped = BATTLE_BRIDGE_LIFEBOAT_GITHUB_ATTESTATION_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = normalized.match(new RegExp(`^${escaped}\\nrequestId: ([a-z0-9-]+)\\nsourceCommentId: ([0-9]+)\\n\\u0060\\u0060\\u0060json\\n([\\s\\S]+?)\\n\\u0060\\u0060\\u0060$`));
-  if (!match || !SAFE_REQUEST_ID.test(match[1])) {
+  const lines = normalized.split('\n');
+  if (lines.length < 6
+      || lines[0] !== BATTLE_BRIDGE_LIFEBOAT_GITHUB_ATTESTATION_MARKER
+      || !lines[1].startsWith('requestId: ')
+      || !lines[2].startsWith('sourceCommentId: ')
+      || lines[3] !== '```json'
+      || lines.at(-1) !== '```') {
+    return Object.freeze({ ok: false, blocker: 'attestation-comment-format-invalid', comment: snapshot, payload: null });
+  }
+  const requestId = lines[1].slice('requestId: '.length);
+  const sourceCommentIdText = lines[2].slice('sourceCommentId: '.length);
+  if (!SAFE_REQUEST_ID.test(requestId) || !SAFE_COMMENT_ID.test(sourceCommentIdText)) {
     return Object.freeze({ ok: false, blocker: 'attestation-comment-format-invalid', comment: snapshot, payload: null });
   }
   let payload;
-  try { payload = JSON.parse(match[3]); } catch {
+  try { payload = JSON.parse(lines.slice(4, -1).join('\n')); } catch {
     return Object.freeze({ ok: false, blocker: 'attestation-comment-json-invalid', comment: snapshot, payload: null });
   }
   const envelope = ownDataSnapshot(payload, ['attestation', 'eventBinding']);
   const binding = envelope ? ownDataSnapshot(envelope.eventBinding, ['commentId', 'commentCreatedAtUtc', 'commentAuthor', 'authorAssociation']) : null;
-  if (!envelope || !binding || Number(match[2]) !== Number(binding.commentId) || match[1] !== envelope.attestation?.requestId) {
+  if (!envelope || !binding
+      || Number(sourceCommentIdText) !== Number(binding.commentId)
+      || requestId !== envelope.attestation?.requestId) {
     return Object.freeze({ ok: false, blocker: 'attestation-comment-binding-invalid', comment: snapshot, payload: null });
   }
   return Object.freeze({
@@ -112,13 +126,17 @@ export function selectAttestedLifeboatGitHubClaim(comments, { nowMs = Date.now()
   if (!Array.isArray(comments) || comments.length > MAX_COMMENT_COUNT) {
     return Object.freeze({ ok: false, blocker: 'github-comment-window-invalid', claim: null });
   }
-  const snapshots = comments.map(safeCommentSnapshot).filter(Boolean).sort((left, right) => right.id - left.id);
-  const requestCandidates = snapshots
-    .map((comment) => parseLifeboatRecoveryRequestComment(comment))
+
+  const entries = comments
+    .map((raw) => Object.freeze({ raw, snapshot: safeCommentSnapshot(raw) }))
+    .filter((entry) => entry.snapshot)
+    .sort((left, right) => right.snapshot.id - left.snapshot.id);
+  const requestCandidates = entries
+    .map((entry) => parseLifeboatRecoveryRequestComment(entry.raw))
     .filter((entry) => entry.ok)
     .sort((left, right) => right.comment.id - left.comment.id);
-  const attestations = snapshots
-    .map((comment) => parseLifeboatRecoveryAttestationComment(comment))
+  const attestations = entries
+    .map((entry) => parseLifeboatRecoveryAttestationComment(entry.raw))
     .filter((entry) => entry.ok);
 
   for (const requestEntry of requestCandidates) {
