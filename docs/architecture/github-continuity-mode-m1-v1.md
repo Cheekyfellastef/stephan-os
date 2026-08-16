@@ -4,7 +4,7 @@ Status: source-only contract, not live
 
 ## Goal
 
-Keep Stephanos construction moving when the Battle Bridge is degraded or unavailable.
+Keep Stephanos construction moving when the Battle Bridge is degraded, unavailable, or stale relative to canonical source truth.
 
 The Battle Bridge remains the required host for Windows/runtime/GPU/VR work, but its loss must not freeze unrelated source construction, hosted CI, independent review, PR preparation, or any other task that already has a proven non-Windows execution surface.
 
@@ -23,13 +23,14 @@ The existing router remains authoritative for whether a task can use:
 - `FOUNDRY_FORGE`
 - `WAIT_FOR_PROVEN_CAPACITY`
 
-Continuity Mode adds only host-failure truth:
+Continuity Mode adds only host-failure and host-staleness truth:
 
 ```text
-Battle Bridge READY
+Battle Bridge READY on exact canonical source head
   -> NORMAL
 
 Battle Bridge DEGRADED / UNAVAILABLE / UNKNOWN
+or READY on a non-canonical source head
   -> keep existing running dispatch ownership
   -> non-Windows work may continue only through an already-proven existing route
   -> Windows/runtime work becomes HOLD_RUNTIME_RECOVERY
@@ -55,7 +56,17 @@ It binds:
 - blockers;
 - proof references.
 
-Silence, malformed evidence, or stale health can never become `READY`.
+The planner also requires an explicit `expectedSourceHead`, supplied from canonical GitHub truth. A host receipt is valid only when its `sourceHead` equals that exact expected 40-character SHA. This prevents a healthy-looking but stale Battle Bridge from returning the system to `NORMAL` after `main` advances.
+
+Silence, malformed evidence, stale health, or source-head mismatch can never become `READY`.
+
+A source-head mismatch is surfaced explicitly as:
+
+```text
+BATTLE_BRIDGE_CONTINUITY_SOURCE_HEAD_MISMATCH
+```
+
+The host is then treated as `UNKNOWN` for routing purposes. Proven non-Windows source work may continue, but Windows/runtime work remains fenced for recovery.
 
 ## Task dispositions
 
@@ -79,7 +90,7 @@ A canonical running dispatch already owns the mission. Continuity Mode never ste
 
 ### HOLD_RUNTIME_RECOVERY
 
-The task is Windows-bound and the Battle Bridge is not `READY`. The task is durably held for #1814 recovery instead of being incorrectly rerouted to GitHub.
+The task is Windows-bound and the Battle Bridge is not `READY` on exact canonical source. The task is durably held for #1814 recovery instead of being incorrectly rerouted to GitHub.
 
 ### HOLD_NO_PROVEN_CAPACITY
 
@@ -100,7 +111,7 @@ protectedMergeDispatchAllowed=false
 
 A later GitHub Continuity execution slice may consume existing source-construction authority only through the same leases/receipts already used by the construction fabric.
 
-Protected merge remains a separate gate. M1 deliberately does not solve the current missing GitHub `workflow_dispatch` mutation by weakening merge governance.
+Protected merge remains a separate gate. M1 deliberately does not weaken merge governance merely because the Battle Bridge is unavailable.
 
 ## Relationship to #1814
 
@@ -108,7 +119,7 @@ Protected merge remains a separate gate. M1 deliberately does not solve the curr
 
 ```text
 #1637 Continuity Mode
-  keeps eligible project work moving while Battle Bridge is unavailable
+  keeps eligible project work moving while Battle Bridge is unavailable or stale
 
 #1814 Lifeboat
   restores the Battle Bridge without local keyboard/mouse intervention
@@ -117,12 +128,12 @@ Protected merge remains a separate gate. M1 deliberately does not solve the curr
 The intended steady-state incident sequence is:
 
 ```text
-Battle Bridge unhealthy
+Battle Bridge unhealthy or stale
   -> availability becomes DEGRADED / UNAVAILABLE / UNKNOWN
   -> GitHub Continuity Mode continues eligible work
   -> Windows-only work is held truthfully
   -> #1814 performs bounded remote recovery
-  -> Battle Bridge publishes fresh READY health
+  -> Battle Bridge publishes fresh READY health on exact canonical source
   -> NORMAL routing resumes
   -> no duplicate dispatch is created
 ```
@@ -137,8 +148,9 @@ The broader #1637 continuity amendment is not production-complete until a real c
 2. GitHub continuity becomes active from durable evidence;
 3. at least one real source goal advances through source construction, CI, review, and merge-ready state without Battle Bridge participation;
 4. Windows/runtime work remains explicitly held;
-5. #1814 remotely restores the Battle Bridge;
-6. the recovered host rejoins without duplicate jobs or stolen leases.
+5. a stale-head Battle Bridge cannot be treated as recovered merely because its services are running;
+6. #1814 remotely restores the Battle Bridge onto exact canonical source;
+7. the recovered host rejoins without duplicate jobs or stolen leases.
 
 ## Non-goals
 
