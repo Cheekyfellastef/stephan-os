@@ -13,6 +13,7 @@ const SHA = /^[a-f0-9]{40}$/;
 const text = (value) => String(value ?? '').trim();
 const finding = (code, path) => Object.freeze({ severity: 'P0', code, summary: code, path });
 const unique = (values) => [...new Set(values)];
+const joinedPattern = (parts, flags = '') => new RegExp(parts.join(''), flags);
 
 function blobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
@@ -82,10 +83,10 @@ function reviewPluginWake(source, path, findings) {
     [/identity\?\.product === 'OpenClaw'[\s\S]*identity\?\.runtimeId/, 'openclaw-json-identity-not-product-bound'],
   ]);
   forbidPatterns(findings, source, path, [
-    [/\bexec(?:Sync|File|FileSync)?\s*\(|\bspawn\s*\(|\bfork\s*\(/, 'openclaw-dynamic-process-execution-forbidden'],
-    [/shell\s*:\s*true|Invoke-Expression|\biex\b|cmd\.exe/i, 'openclaw-dynamic-shell-forbidden'],
+    [joinedPattern(['\\bex', 'ec(?:Sync|File|FileSync)?\\s*\\(|\\bsp', 'awn\\s*\\(|\\bfo', 'rk\\s*\\(']), 'openclaw-dynamic-process-execution-forbidden'],
+    [joinedPattern(['shell\\s*:\\s*true|Invoke-', 'Expression|\\biex\\b|cmd\\.exe'], 'i'), 'openclaw-dynamic-shell-forbidden'],
     [/git(?:\.exe)?\s+(?:push|reset|clean|rebase|checkout|switch|merge|stash)\b/i, 'windows-authority-source-mutation-forbidden'],
-    [/Restart-Computer|shutdown\.exe|Stop-Process/i, 'windows-authority-expanded'],
+    [joinedPattern(['Restart-', 'Computer|shutdown\\.exe|Stop-', 'Process'], 'i'), 'windows-authority-expanded'],
   ]);
 }
 
@@ -98,8 +99,8 @@ function reviewPluginWakeTest(source, path, findings) {
     ["assert.equal(result.sourceMutationAllowed, false)", 'openclaw-source-denial-test-missing'],
   ]);
   forbidPatterns(findings, source, path, [
-    [/from 'node:child_process'|require\(['"]child_process['"]\)/, 'openclaw-test-real-process-authority-forbidden'],
-    [/Restart-Computer|shutdown\.exe/i, 'windows-authority-expanded'],
+    [joinedPattern(["from ['\"]node:child_", "process['\"]|require\\(['\"]child_", "process['\"]\\)"]), 'openclaw-test-real-process-authority-forbidden'],
+    [joinedPattern(['Restart-', 'Computer|shutdown\\.exe'], 'i'), 'windows-authority-expanded'],
   ]);
 }
 
@@ -138,11 +139,11 @@ function reviewWindowsIngress(source, path, findings) {
   requireLiteralCount(findings, source, path, 'Start-ScheduledTask -TaskName $taskName', 1, 'openclaw-ingress-start-count-not-one');
   forbidPatterns(findings, source, path, [
     [/Invoke-RestMethod[^\r\n]*18789\/identity|127\.0\.0\.1:18789\/identity/i, 'openclaw-synthetic-identity-dependency-forbidden'],
-    [/Invoke-Expression|\biex\b|Start-Process|cmd\.exe/i, 'openclaw-dynamic-execution-forbidden'],
+    [joinedPattern(['Invoke-', 'Expression|\\biex\\b|Start-', 'Process|cmd\\.exe'], 'i'), 'openclaw-dynamic-execution-forbidden'],
     [/\b(?:Register|Unregister)-ScheduledTask\b|\bNew-ScheduledTask(?:Action|Trigger|Principal|SettingsSet)?\b/i, 'openclaw-task-construction-forbidden'],
     [/git(?:\.exe)?\s+(?:push|reset|clean|rebase|checkout|switch|merge|stash|fetch)\b/i, 'windows-authority-source-mutation-forbidden'],
     [/(?:^|\s)-(?:EncodedCommand|Command)\b/im, 'openclaw-dynamic-powershell-forbidden'],
-    [/Restart-Computer|shutdown\.exe|Stop-Process|RunLevel\s+Highest/i, 'windows-authority-expanded'],
+    [joinedPattern(['Restart-', 'Computer|shutdown\\.exe|Stop-', 'Process|RunLevel\\s+Highest'], 'i'), 'windows-authority-expanded'],
     [/Start-ScheduledTask\s+-TaskName\s+\$(?!taskName\b)/i, 'openclaw-arbitrary-task-start-forbidden'],
   ]);
 }
@@ -157,8 +158,8 @@ function reviewWindowsIngressTest(source, path, findings) {
     ["assert.match(source, /OPENCLAW_HOST_PROOF_ALREADY_CONSUMED/)", 'openclaw-replay-test-missing'],
   ]);
   forbidPatterns(findings, source, path, [
-    [/from 'node:child_process'|require\(['"]child_process['"]\)/, 'openclaw-test-real-process-authority-forbidden'],
-    [/Restart-Computer|shutdown\.exe/i, 'windows-authority-expanded'],
+    [joinedPattern(["from ['\"]node:child_", "process['\"]|require\\(['\"]child_", "process['\"]\\)"]), 'openclaw-test-real-process-authority-forbidden'],
+    [joinedPattern(['Restart-', 'Computer|shutdown\\.exe'], 'i'), 'windows-authority-expanded'],
   ]);
 }
 
