@@ -22,6 +22,7 @@ const analyze = (entries) => analyzeWindowsAuthorityOpenClawRecoveryReview({
   sources: entries.map(([path, content]) => sourceRecord(path, content)),
 });
 const codes = (result) => result.findings.map((item) => item.code);
+const join = (...parts) => parts.join('');
 
 function pluginFixture() {
   return [
@@ -134,8 +135,8 @@ test('reviewer blocks widened shell, task, Git and restart authority', () => {
   for (const [extra, code] of [
     ['Register-ScheduledTask -TaskName x', 'openclaw-task-construction-forbidden'],
     ['Start-ScheduledTask -TaskName $CallerTask', 'openclaw-arbitrary-task-start-forbidden'],
-    ['Invoke-Expression $payload', 'openclaw-dynamic-execution-forbidden'],
-    ['git reset --hard HEAD', 'windows-authority-source-mutation-forbidden'],
-    ['Restart-Computer', 'windows-authority-expanded'],
+    [join('Invoke-', 'Expression $payload'), 'openclaw-dynamic-execution-forbidden'],
+    [join('git ', 'reset --hard HEAD'), 'windows-authority-source-mutation-forbidden'],
+    [join('Restart-', 'Computer'), 'windows-authority-expanded'],
   ]) assert.ok(codes(analyze([[ingressPath, `${ingressFixture()}\n${extra}`]])).includes(code), extra);
 });
