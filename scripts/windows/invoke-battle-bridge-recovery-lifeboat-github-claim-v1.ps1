@@ -85,6 +85,20 @@ function Get-CanonicalUtc([object]$Value) {
     return $parsed
 }
 
+function Get-ProbeUtc([object]$Value) {
+    if ($Value -isnot [string] -or $Value -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$') { return $null }
+    $parsed = [DateTimeOffset]::MinValue
+    $ok = [DateTimeOffset]::TryParseExact(
+        $Value,
+        "yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'",
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal,
+        [ref]$parsed
+    )
+    if (-not $ok -or $parsed.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'") -cne $Value) { return $null }
+    return $parsed
+}
+
 function Test-ExactProperties([object]$Value, [string[]]$Expected) {
     if ($null -eq $Value) { return $false }
     $actual = @($Value.PSObject.Properties.Name | Sort-Object)
@@ -196,10 +210,17 @@ function Invoke-ReadOnlyProbe() {
     }
 }
 
-function Test-TaskCurrentlyHealthy([object]$TaskSnapshot) {
+function Test-TaskCurrentlyHealthy([object]$TaskSnapshot, [object]$BaselineSnapshot) {
     if ($null -eq $TaskSnapshot -or -not [bool]$TaskSnapshot.present -or -not [bool]$TaskSnapshot.actionIdentityValid) { return $false }
     if ([string]$TaskSnapshot.state -ceq 'Running') { return $true }
-    return $null -ne $TaskSnapshot.lastTaskResult -and [int64]$TaskSnapshot.lastTaskResult -eq 0
+    if ($null -eq $BaselineSnapshot -or -not [bool]$BaselineSnapshot.present -or -not [bool]$BaselineSnapshot.actionIdentityValid) { return $false }
+    if ($null -eq $TaskSnapshot.lastTaskResult -or [int64]$TaskSnapshot.lastTaskResult -ne 0) { return $false }
+    $postRun = Get-ProbeUtc $TaskSnapshot.lastRunTimeUtc
+    if ($null -eq $postRun) { return $false }
+    if ($null -eq $BaselineSnapshot.lastRunTimeUtc) { return $true }
+    $baselineRun = Get-ProbeUtc $BaselineSnapshot.lastRunTimeUtc
+    if ($null -eq $baselineRun) { return $false }
+    return $postRun -gt $baselineRun
 }
 
 function Verify-PostAction([string]$Action, [object]$ActionReceipt) {
@@ -229,7 +250,8 @@ function Verify-PostAction([string]$Action, [object]$ActionReceipt) {
         }
     }
     $target = if ($Action -eq 'WAKE_CANONICAL_MAILBOX') { $mailbox } else { $mesh }
-    $healthy = Test-TaskCurrentlyHealthy $target
+    $baseline = if ($Action -eq 'WAKE_CANONICAL_MAILBOX') { $ActionReceipt.mailbox.before } else { $ActionReceipt.recoveryMesh.before }
+    $healthy = Test-TaskCurrentlyHealthy $target $baseline
     return [pscustomobject]@{
         verified = [bool]$healthy
         verdict = if ($healthy) { 'RECOVERY_WAKE_TARGET_COMPONENT_VERIFIED' } else { 'RECOVERY_WAKE_TARGET_COMPONENT_NOT_VERIFIED' }
