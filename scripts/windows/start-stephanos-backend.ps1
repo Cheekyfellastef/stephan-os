@@ -25,16 +25,17 @@ function Test-BackendHealth {
 
 function Test-CanonicalBackendCommandLine {
     param([string]$CommandLine)
-    $normalized = (([string]$CommandLine -replace '\s+', ' ').Trim())
-    $allowed = @(
-        "`"$canonicalNode`" stephanos-server/server.js",
-        "$canonicalNode stephanos-server/server.js",
-        'node.exe stephanos-server/server.js',
-        'node stephanos-server/server.js'
-    )
-    return @($allowed | Where-Object {
-        [string]::Equals($normalized, $_, [System.StringComparison]::OrdinalIgnoreCase)
-    }).Count -eq 1
+    $commandLine = (([string]$CommandLine -replace '\s+', ' ').Trim())
+    $expectedQuotedCommand = "`"$canonicalNode`" stephanos-server/server.js"
+    $expectedUnquotedCommand = "$canonicalNode stephanos-server/server.js"
+    if ([string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase) `
+        -or [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+    $expectedNpmNodeCommand = 'node stephanos-server/server.js'
+    $expectedNpmNodeExeCommand = 'node.exe stephanos-server/server.js'
+    return [string]::Equals($commandLine, $expectedNpmNodeCommand, [System.StringComparison]::OrdinalIgnoreCase) `
+        -or [string]::Equals($commandLine, $expectedNpmNodeExeCommand, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function Get-TrackedWorktreeAssessment {
