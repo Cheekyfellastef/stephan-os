@@ -45,26 +45,31 @@ function requestComment(value, id = 7001) {
   };
 }
 
-function attestationFor(value, sourceComment, id = 7002) {
-  const attestation = {
-    schemaVersion: BATTLE_BRIDGE_MOBILE_RECOVERY_ATTESTATION_SCHEMA,
-    repository: BATTLE_BRIDGE_RECOVERY_REPOSITORY,
-    issueNumber: BATTLE_BRIDGE_RECOVERY_ISSUE,
-    requestId: value.requestId,
-    requestSha256: recoveryRequestSha256(value),
-    action: value.action,
-    workflowPath: BATTLE_BRIDGE_RECOVERY_WORKFLOW,
-    reviewerLogin: 'github-actions[bot]',
-    verdict: 'ATTESTED',
-    attestedAtUtc: '2026-08-16T16:39:15.000Z',
-    expiresAtUtc: value.expiresAtUtc,
+function attestationPayload(value, sourceComment) {
+  return {
+    attestation: {
+      schemaVersion: BATTLE_BRIDGE_MOBILE_RECOVERY_ATTESTATION_SCHEMA,
+      repository: BATTLE_BRIDGE_RECOVERY_REPOSITORY,
+      issueNumber: BATTLE_BRIDGE_RECOVERY_ISSUE,
+      requestId: value.requestId,
+      requestSha256: recoveryRequestSha256(value),
+      action: value.action,
+      workflowPath: BATTLE_BRIDGE_RECOVERY_WORKFLOW,
+      reviewerLogin: 'github-actions[bot]',
+      verdict: 'ATTESTED',
+      attestedAtUtc: '2026-08-16T16:39:15.000Z',
+      expiresAtUtc: value.expiresAtUtc,
+    },
+    eventBinding: {
+      commentId: sourceComment.id,
+      commentCreatedAtUtc: sourceComment.created_at,
+      commentAuthor: 'Cheekyfellastef',
+      authorAssociation: 'OWNER',
+    },
   };
-  const eventBinding = {
-    commentId: sourceComment.id,
-    commentCreatedAtUtc: sourceComment.created_at,
-    commentAuthor: 'Cheekyfellastef',
-    authorAssociation: 'OWNER',
-  };
+}
+
+function attestationFor(value, sourceComment, id = 7002, payload = attestationPayload(value, sourceComment)) {
   return {
     id,
     user: { login: 'github-actions[bot]' },
@@ -75,7 +80,7 @@ function attestationFor(value, sourceComment, id = 7002) {
       `requestId: ${value.requestId}`,
       `sourceCommentId: ${sourceComment.id}`,
       '```json',
-      JSON.stringify({ attestation, eventBinding }, null, 2),
+      JSON.stringify(payload, null, 2),
       '```',
     ].join('\n'),
   };
@@ -136,10 +141,9 @@ test('unqualified high-impact actions remain held even with a syntactically vali
 test('request and attestation bindings must match the immutable source comment', () => {
   const value = request('PROBE_BATTLE_BRIDGE');
   const source = requestComment(value);
-  const attestation = attestationFor(value, source);
-  const payload = JSON.parse(attestation.body.match(/```json\n([\s\S]+)\n```$/)[1]);
+  const payload = attestationPayload(value, source);
   payload.eventBinding.commentId = source.id + 1;
-  attestation.body = attestation.body.replace(/```json\n[\s\S]+\n```$/, `\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``);
+  const attestation = attestationFor(value, source, 7002, payload);
   assert.equal(selectAttestedLifeboatGitHubClaim([source, attestation], { nowMs: NOW }).ok, false);
 });
 
