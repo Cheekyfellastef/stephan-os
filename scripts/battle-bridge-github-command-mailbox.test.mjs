@@ -5,18 +5,134 @@ import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  buildRejectedMailboxTerminalReceipt,
+  checkpointAcceptedMailboxReceipt,
+  checkpointMailboxReceiptPublication,
+  checkpointTerminalMailboxReceipt,
   createSanitizedMailboxReceiptProjection,
   createWindowsSafeMailboxReceiptFilename,
+  flushMailboxReceiptPublicationOutbox,
   parseBoundedGitHubJson,
+  preflightMailboxControlExpectedHead,
   readMailboxReceipt,
   serializeBoundedReceiptJson,
+  terminalizeRejectedMailboxCommands,
   validateBattleBridgeRecoveryMeshInstallReceipt,
 } from './battle-bridge-github-command-mailbox.mjs';
+import { planForgeShadowM3RunnerAdmission } from '../shared/agents/forgeShadowM3RunnerAdmissionV1.mjs';
 
 const installerPath = new URL('./windows/install-battle-bridge-github-command-mailbox.ps1', import.meta.url);
 const hiddenLauncherPath = new URL('./windows/run-battle-bridge-github-command-mailbox-hidden.ps1', import.meta.url);
 const windowlessLauncherPath = new URL('./windows/run-stephanos-scheduled-task-windowless.vbs', import.meta.url);
 const mailboxSourcePath = new URL('./battle-bridge-github-command-mailbox.mjs', import.meta.url);
+
+const FORGE_HEAD = 'a'.repeat(40);
+const FORGE_TREE = 'b'.repeat(40);
+const FORGE_IMAGE = `sha256:${'c'.repeat(64)}`;
+const FORGE_BACKUP = 'd'.repeat(64);
+
+function forgeM2Receipt(overrides = {}) {
+  return {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'forge-m2-install-ready-001',
+    operation: 'INSTALL_FORGE_SHADOW_M2',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 1507,
+    branch: 'main',
+    expectedHead: FORGE_HEAD,
+    forgejoVersion: '15.0.6',
+    forgejoImageDigest: FORGE_IMAGE,
+    runtimeBoundary: 'podman-wsl-rootless',
+    m2Only: true,
+    state: 'DONE',
+    acceptedAt: '2026-08-09T17:00:00Z',
+    heartbeatAt: '2026-08-09T17:05:00Z',
+    completedAt: '2026-08-09T17:10:00Z',
+    blocker: '',
+    proofRefs: ['receipts/github-command-mailbox/forge-m2-install-ready-001.json'],
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'INSTALL_FORGE_SHADOW_M2',
+      requestId: 'forge-m2-install-ready-001',
+      result: {
+        ok: true,
+        blocker: '',
+        finalVerdict: 'FORGE_SHADOW_M2_READY',
+        repository: 'Cheekyfellastef/stephan-os',
+        sourceHead: FORGE_HEAD,
+        canonicalTree: FORGE_TREE,
+        installerBlob: 'e'.repeat(40),
+        forgejoVersion: '15.0.6',
+        podmanVersion: '6.0.2',
+        forgejoImageDigest: FORGE_IMAGE,
+        runtimeBoundary: 'podman-wsl-rootless',
+        machine: 'stephanos-forge-shadow',
+        podmanConnection: 'stephanos-forge-shadow',
+        container: 'stephanos-forge-shadow',
+        listener: '127.0.0.1:3340',
+        mirrorHead: FORGE_HEAD,
+        mirrorTree: FORGE_TREE,
+        backupDigest: FORGE_BACKUP,
+        backupVolume: `stephanos-forge-shadow-backup-${FORGE_BACKUP.slice(0, 16)}`,
+        restoreDrillPassed: true,
+        rootFilesystemReadOnly: true,
+        allCapabilitiesDropped: true,
+        noNewPrivileges: true,
+        githubCredentialUsed: false,
+        credentialPersisted: false,
+        credentialLogged: false,
+        runnerRegistration: false,
+        actionsExecution: false,
+        mergeAuthority: false,
+        readyForM3: true,
+      },
+    },
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+    credentialsMayBeReadOrExported: false,
+    ...overrides,
+  };
+}
+
+function forgeRunnerPool(runnerClass) {
+  const linux = runnerClass === 'linux-isolated';
+  return {
+    poolId: linux ? 'forge-linux-build-test-v1' : 'forge-windows-proof-v1',
+    runnerClass,
+    count: linux ? 3 : 1,
+    runtimeBoundary: linux ? 'forge-linux-rootless-ephemeral' : 'battle-bridge-windows-proof-sandbox',
+    runtimeArtifactDigest: `sha256:${(linux ? '1' : '2').repeat(64)}`,
+    workloadIds: linux ? ['linux-shared-agent-tests', 'linux-stephanos-ui-build'] : ['windows-source-controlled-proof'],
+    cpuLimit: linux ? 4 : 2,
+    memoryMiB: 4096,
+    diskMiB: 16384,
+    maxJobMinutes: linux ? 45 : 60,
+    maxConcurrentJobs: linux ? 3 : 1,
+    artifactRetentionDays: 14,
+    maxArtifactBytes: 512 * 1024 * 1024,
+    workspacePolicy: 'ephemeral-per-job',
+    artifactPolicy: 'immutable-content-addressed',
+    networkPolicy: linux ? 'forge-loopback-and-approved-readonly-egress' : 'battle-bridge-loopback-and-approved-readonly-egress',
+    registrationMode: 'disabled-pending-runtime-authorization',
+    ephemeralWorkspace: true,
+    limitedUser: true,
+    privileged: false,
+    hostNetwork: false,
+    hostProcessAccess: false,
+    canonicalCheckoutMounted: false,
+    containerSocketMounted: false,
+    githubCredentialAvailable: false,
+    persistentSecrets: false,
+    publicInbound: false,
+    tailscaleInbound: false,
+    sourceMutationAuthority: false,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    registrationRequested: false,
+    executed: false,
+  };
+}
 
 test('mailbox task uses the fixed windowless launcher instead of allocating a Node console', async () => {
   const [installer, hiddenLauncher, windowlessLauncher] = await Promise.all([
@@ -33,6 +149,18 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(installer, /github-command-mailbox/);
   assert.doesNotMatch(installer, /New-ScheduledTaskAction -Execute \$(?:node|nodeExe|npm)/);
 
+  const mailboxSource = await readFile(mailboxSourcePath, 'utf8');
+  assert.match(mailboxSource, /selectBattleBridgeGitHubCommandBatch\(comments/);
+  assert.match(mailboxSource, /executeBattleBridgeGitHubCommandBatch\(batch/);
+  assert.match(mailboxSource, /beforeExecute:\s*async \(selected\)/);
+  assert.match(mailboxSource, /onTerminal:\s*async \(selected, execution\)/);
+  assert.match(mailboxSource, /checkpointTerminalMailboxReceipt\(state, receipt\)/);
+  assert.doesNotMatch(mailboxSource, /for \(const selected of batch\.commands\) \{[\s\S]{0,500}state: 'ACCEPTED'/);
+  assert.match(mailboxSource, /maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH/);
+  assert.match(mailboxSource, /deferredCount: batch\.deferredCount/);
+  assert.match(mailboxSource, /updateStephanosFromChat\(\{[\s\S]{0,180}expectedHead: command\.expectedHead/);
+  assert.doesNotMatch(mailboxSource, /BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE\s*=\s*[^1]*2|issueNumber:\s*1508/);
+
   assert.match(
     windowlessLauncher,
     /Case "github-command-mailbox"\s+targetPath = fileSystem\.BuildPath\(repoRoot, "scripts\\windows\\run-battle-bridge-github-command-mailbox-hidden\.ps1"\)\s+command = Quote\(powershellExe\) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote\(targetPath\)/,
@@ -46,6 +174,144 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(hiddenLauncher, /Get-Command node\.exe/);
   assert.match(hiddenLauncher, /\*> \$null/);
   assert.doesNotMatch(hiddenLauncher, /\[string\]\s*\$|Invoke-Expression|Start-Process|cmd\.exe/i);
+});
+
+test('terminal checkpoint persists each request immediately and bounds replay history', () => {
+  const state = { consumedRequestIds: ['req-1507-old-1'] };
+  const snapshots = [];
+  const receipt = {
+    requestId: 'req-1507-done-2',
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    state: 'DONE',
+  };
+  checkpointTerminalMailboxReceipt(state, receipt, {
+    persist: (value) => snapshots.push(JSON.parse(JSON.stringify(value))),
+  });
+  assert.deepEqual(snapshots[0].consumedRequestIds, ['req-1507-old-1', 'req-1507-done-2']);
+  assert.equal(snapshots[0].lastReceipt.requestId, 'req-1507-done-2');
+  assert.equal(snapshots[0].lastReceipt.state, 'DONE');
+  assert.throws(
+    () => checkpointTerminalMailboxReceipt({}, { ...receipt, state: 'ACCEPTED' }),
+    /MAILBOX_TERMINAL_CHECKPOINT_INVALID/,
+  );
+});
+
+test('accepted checkpoint prevents crash replay until a terminal receipt replaces it', () => {
+  const state = { consumedRequestIds: [], acceptedRequestIds: [] };
+  const snapshots = [];
+  checkpointAcceptedMailboxReceipt(state, {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'req-1507-accepted-1',
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    state: 'ACCEPTED',
+  }, { persist: (value) => snapshots.push(structuredClone(value)) });
+  assert.deepEqual(state.acceptedRequestIds, ['req-1507-accepted-1']);
+  assert.equal(snapshots.length, 1);
+  checkpointTerminalMailboxReceipt(state, {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'req-1507-accepted-1',
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    state: 'BLOCKED',
+  }, { persist: (value) => snapshots.push(structuredClone(value)) });
+  assert.deepEqual(state.acceptedRequestIds, []);
+  assert.deepEqual(state.consumedRequestIds, ['req-1507-accepted-1']);
+});
+
+test('safe owner rejection is terminalized once without an accepted state', () => {
+  const state = { consumedRequestIds: [], acceptedRequestIds: [] };
+  const writes = [];
+  const publications = [];
+  const rejection = {
+    blocker: 'COMMAND_EXPIRY_TOO_FAR_AHEAD',
+    commentUrl: 'https://github.com/Cheekyfellastef/stephan-os/issues/1507#issuecomment-7',
+    command: {
+      schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+      requestId: 'req-1507-rejected-1',
+      operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+      repository: 'Cheekyfellastef/stephan-os',
+      issueNumber: 1507,
+      branch: 'main',
+      operatorApproval: 'operator-approved',
+      expectedHead: 'a'.repeat(40),
+      expiresAt: '2026-08-11T18:00:00.000Z',
+    },
+  };
+  const receipt = buildRejectedMailboxTerminalReceipt(rejection, '2026-08-11T11:30:00.000Z');
+  assert.equal(receipt.state, 'BLOCKED');
+  assert.equal(receipt.acceptedAt, '');
+  assert.equal(receipt.blocker, 'COMMAND_EXPIRY_TOO_FAR_AHEAD');
+  const options = {
+    now: () => new Date('2026-08-11T11:30:00.000Z'),
+    write: (value) => {
+      writes.push(value);
+      return { ref: `receipts/github-command-mailbox/${value.requestId}.json` };
+    },
+    publish: (value) => publications.push(value),
+    persist: () => {},
+  };
+  assert.equal(terminalizeRejectedMailboxCommands(state, [rejection], options).length, 1);
+  assert.equal(terminalizeRejectedMailboxCommands(state, [rejection], options).length, 0);
+  assert.equal(writes.length, 1);
+  assert.equal(publications.length, 1);
+  assert.deepEqual(state.consumedRequestIds, ['req-1507-rejected-1']);
+});
+
+test('failed receipt publication is retried from outbox without replaying the command', () => {
+  const state = { pendingReceiptPublications: [] };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'req-1507-publish-1',
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    state: 'BLOCKED',
+    blocker: 'COMMAND_EXPECTED_HEAD_SUPERSEDED',
+    completedAt: '2026-08-11T11:30:00.000Z',
+  };
+  checkpointMailboxReceiptPublication(state, receipt, { ok: false }, { persist: () => {} });
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  const published = [];
+  const flushed = flushMailboxReceiptPublicationOutbox(state, {
+    publish: (value) => {
+      published.push(value.requestId);
+      return { ok: true };
+    },
+    persist: () => {},
+  });
+  assert.deepEqual(published, ['req-1507-publish-1']);
+  assert.deepEqual(flushed, { attemptedCount: 1, publishedCount: 1, pendingCount: 0 });
+  assert.deepEqual(state.pendingReceiptPublications, []);
+});
+
+test('terminal publication discards an obsolete failed acceptance for the same request', () => {
+  const state = { pendingReceiptPublications: [] };
+  const accepted = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'req-1507-publish-terminal-1',
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    state: 'ACCEPTED',
+    acceptedAt: '2026-08-11T11:30:00.000Z',
+  };
+  checkpointMailboxReceiptPublication(state, accepted, { ok: false }, { persist: () => {} });
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  checkpointMailboxReceiptPublication(state, {
+    ...accepted,
+    state: 'DONE',
+    completedAt: '2026-08-11T11:31:00.000Z',
+  }, { ok: true }, { persist: () => {} });
+  assert.deepEqual(state.pendingReceiptPublications, []);
+});
+
+test('main-targeting control preflight blocks a stale head and ignores observations', () => {
+  const stale = preflightMailboxControlExpectedHead({
+    partition: 'CONTROL',
+    command: { operation: 'UPDATE_STEPHANOS_FROM_CHAT', expectedHead: 'a'.repeat(40) },
+  }, { readMainHead: () => 'b'.repeat(40) });
+  assert.equal(stale.ok, false);
+  assert.equal(stale.blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+  const observation = preflightMailboxControlExpectedHead({
+    partition: 'OBSERVATION',
+    command: { operation: 'READ_DEPLOYMENT_STATUS', expectedHead: 'a'.repeat(40) },
+  }, { readMainHead: () => { throw new Error('must not read'); } });
+  assert.equal(observation.ok, true);
 });
 
 test('GitHub recovery wake binds the authenticated mailbox receipt instead of self-asserting a route boolean', async () => {
@@ -356,6 +622,225 @@ test('exact-head proof projections retain the verified PR and local heads', () =
     },
   });
   assert.equal(missingAncestry.operationResult.expectedHeadMatch, false);
+});
+
+test('Forge M2 receipt serialization preserves the closed-world proof required by M3 admission', () => {
+  const receipt = forgeM2Receipt({
+    token: 'ghp_this-must-not-leak',
+    result: {
+      ...forgeM2Receipt().result,
+      result: {
+        ...forgeM2Receipt().result.result,
+        command: 'powershell.exe -File C:\\Users\\Stephan\\secret.ps1',
+        credential: 'must-not-leak',
+      },
+    },
+  });
+  const serialized = JSON.parse(serializeBoundedReceiptJson(receipt));
+
+  assert.equal(serialized.forgejoVersion, '15.0.6');
+  assert.equal(serialized.forgejoImageDigest, FORGE_IMAGE);
+  assert.equal(serialized.runtimeBoundary, 'podman-wsl-rootless');
+  assert.equal(serialized.m2Only, true);
+  assert.equal(serialized.credentialsMayBeReadOrExported, false);
+  assert.equal(serialized.result.result.canonicalTree, FORGE_TREE);
+  assert.equal(serialized.result.result.mirrorHead, FORGE_HEAD);
+  assert.equal(serialized.result.result.mirrorTree, FORGE_TREE);
+  assert.equal(serialized.result.result.backupDigest, FORGE_BACKUP);
+  assert.equal(serialized.result.result.restoreDrillPassed, true);
+  assert.equal(serialized.result.result.rootFilesystemReadOnly, true);
+  assert.equal(serialized.result.result.allCapabilitiesDropped, true);
+  assert.equal(serialized.result.result.noNewPrivileges, true);
+  assert.equal(serialized.result.result.githubCredentialUsed, false);
+  assert.equal(serialized.result.result.credentialPersisted, false);
+  assert.equal(serialized.result.result.credentialLogged, false);
+  assert.equal(serialized.result.result.readyForM3, true);
+  assert.doesNotMatch(JSON.stringify(serialized), /ghp_this|must-not-leak|secret\.ps1/i);
+  assert.equal(Object.hasOwn(serialized, 'token'), false);
+  assert.equal(Object.hasOwn(serialized.result.result, 'command'), false);
+  assert.equal(Object.hasOwn(serialized.result.result, 'credential'), false);
+
+  const admission = planForgeShadowM3RunnerAdmission({
+    repository: 'Cheekyfellastef/stephan-os',
+    canonicalMainHead: FORGE_HEAD,
+    canonicalMainTree: FORGE_TREE,
+    nowUtc: '2026-08-09T17:30:00Z',
+    m2Receipt: serialized,
+    runnerPools: [forgeRunnerPool('windows-proof-isolated'), forgeRunnerPool('linux-isolated')],
+  });
+  assert.equal(admission.valid, true, admission.blockers.join(','));
+  assert.equal(admission.m2Evidence.sourceHead, FORGE_HEAD);
+  assert.equal(admission.m2Evidence.sourceTree, FORGE_TREE);
+});
+
+test('Forge digest diagnostics survive bounded serialization without path or credential leakage', () => {
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'forge-m2-diagnostics-001',
+    operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
+    state: 'BLOCKED',
+    result: {
+      ok: false,
+      result: {
+        blocker: 'worker-head-mismatch',
+        forgeShadowM2DigestResolution: {
+          ok: true,
+          status: 'FORGE_SHADOW_M2_DIGEST_READY',
+          blocker: '',
+          imageTag: 'code.forgejo.org/forgejo/forgejo:15.0.6-rootless',
+          imageDigest: FORGE_IMAGE,
+          forgejoVersion: '15.0.6',
+          podmanVersion: '6.0.2',
+          podmanExecutableIdentity: 'fixed-user-podman',
+          runtimePlatform: 'linux/amd64',
+          tlsVerified: true,
+          registryCredentialUsed: false,
+          mutationPerformed: false,
+          pullPerformed: false,
+          containerMutationPerformed: false,
+          observedVersion: 'token=ghp_this-must-not-leak at C:\\Users\\Stephan\\podman.exe',
+        },
+      },
+    },
+  };
+
+  const serialized = JSON.parse(serializeBoundedReceiptJson(receipt));
+  const resolution = serialized.result.result.forgeShadowM2DigestResolution;
+  assert.equal(resolution.ok, true);
+  assert.equal(resolution.imageDigest, FORGE_IMAGE);
+  assert.equal(resolution.podmanVersion, '6.0.2');
+  assert.equal(resolution.tlsVerified, true);
+  assert.equal(resolution.registryCredentialUsed, false);
+  assert.equal(resolution.matchingDescriptorCount, null);
+  assert.equal(resolution.observedVersion, '');
+  assert.doesNotMatch(JSON.stringify(serialized), /ghp_this|C:\\Users/i);
+
+  receipt.result.result.forgeShadowM2DigestResolution.matchingDescriptorCount = 1;
+  const counted = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(counted.result.result.forgeShadowM2DigestResolution.matchingDescriptorCount, 1);
+});
+
+test('malformed Forge proof values fail closed during projection', () => {
+  const receipt = forgeM2Receipt({ expectedHead: '', forgejoImageDigest: 'latest' });
+  receipt.result.result.expectedHead = FORGE_HEAD;
+  receipt.result.result.backupVolume = '..\\unsafe';
+  receipt.result.result.readyForM3 = 'true';
+  const serialized = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(serialized.expectedHead, '');
+  assert.equal(serialized.forgejoImageDigest, '');
+  assert.equal(serialized.result.result.backupVolume, '');
+  assert.equal(serialized.result.result.readyForM3, null);
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.forgejoImageDigest, '');
+  assert.equal(projected.operationResult.readyForM3, null);
+});
+
+test('failed chat updates retain installed source truth and bounded post-sync test evidence', () => {
+  const head = '10ce35ad3d9542694f02e6727954b965d3de4f6b';
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'post-sync-evidence-001',
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    expectedHead: head,
+    state: 'BLOCKED',
+    result: {
+      ok: false,
+      verdict: 'COMMAND_EXECUTION_BLOCKED',
+      result: {
+        ok: false,
+        blocker: 'POST_SYNC_VERIFICATION_FAILED',
+        finalVerdict: 'POST_SYNC_VERIFICATION_FAILED',
+        sourceInstalled: true,
+        sourceHead: head,
+        branch: 'main',
+        expectedHeadMatch: true,
+        sync: {
+          tests: {
+            ok: false,
+            status: 1,
+            signal: null,
+            stdout: `${'ok 1 - earlier passing evidence\n'.repeat(220)}\n...[truncated]`,
+            stderr: 'C:\\Users\\Stephan\\secret-shaped-local-path',
+            tapSummary: {
+              summaryComplete: true,
+              tests: 145,
+              pass: 143,
+              fail: 2,
+              cancelled: 0,
+              skipped: 0,
+              todo: 0,
+              failingTests: [
+                'preserves canonical source truth',
+                'reports bounded verification evidence',
+              ],
+            },
+          },
+        },
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt).operationResult;
+  assert.equal(projected.sourceHead, head);
+  assert.equal(projected.expectedHeadMatch, true);
+  assert.equal(projected.sourceInstalled, true);
+  assert.deepEqual(projected.postSyncVerification, {
+    ok: false,
+    status: 1,
+    signal: '',
+    summaryComplete: true,
+    tests: 145,
+    pass: 143,
+    fail: 2,
+    cancelled: 0,
+    skipped: 0,
+    todo: 0,
+    failingTests: [
+      'preserves canonical source truth',
+      'reports bounded verification evidence',
+    ],
+    outputTruncated: true,
+  });
+
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const compact = JSON.parse(serialized).result.result;
+  assert.deepEqual(compact.postSyncVerification, projected.postSyncVerification);
+  assert.doesNotMatch(serialized, /C:\\Users|secret-shaped/i);
+});
+
+test('incomplete post-sync TAP evidence projects unknown totals without dropping partial failures', () => {
+  const receipt = {
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    result: {
+      result: {
+        sync: {
+          tests: {
+            ok: false,
+            status: null,
+            signal: 'SIGTERM',
+            stdout: 'not ok 2 - partial Windows failure',
+            tapSummary: {
+              summaryComplete: false,
+              tests: null,
+              pass: null,
+              fail: null,
+              cancelled: null,
+              skipped: null,
+              todo: null,
+              failingTests: ['partial Windows failure'],
+            },
+          },
+        },
+      },
+    },
+  };
+  const evidence = createSanitizedMailboxReceiptProjection(receipt).operationResult.postSyncVerification;
+  assert.equal(evidence.summaryComplete, false);
+  assert.equal(evidence.tests, null);
+  assert.equal(evidence.pass, null);
+  assert.equal(evidence.fail, null);
+  assert.equal(evidence.signal, 'SIGTERM');
+  assert.deepEqual(evidence.failingTests, ['partial Windows failure']);
 });
 
 test('derives a deterministic Windows-safe receipt filename for colon-bearing request IDs', () => {

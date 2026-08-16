@@ -23,9 +23,27 @@ test('projection exposes the universal bootstrap and core routes without machine
   assert.equal(projection.sourceHead, head);
   assert.equal(projection.bootstrap.requiredBeforeCapabilityDenial, true);
   assert.equal(projection.bootstrap.duplicateActiveExecutionAllowed, false);
+  assert.equal(projection.bootstrap.missingGhIsGlobalBlocker, false);
+  assert.equal(projection.bootstrap.rebuildVerifiedWorkAfterRouteFailure, false);
+  assert.ok(projection.bootstrap.sequence.includes('DISCOVER_NESTED_CHECKOUTS'));
+  assert.ok(projection.bootstrap.sequence.includes('PROBE_CONNECTED_GITHUB_APP_PUBLISHER'));
   assert.equal(projection.safety.arbitraryShellAllowed, false);
   assert.equal(projection.safety.destructiveGitAllowed, false);
   assert.doesNotMatch(JSON.stringify(projection), MACHINE_PATH_PATTERN);
+});
+
+test('source publication failover and receipt-proven Forge construction are discoverable', () => {
+  const router = findStephanosCapability('source-publication-continuity-router');
+  const git = findStephanosCapability('authenticated-git-source-publisher');
+  const app = findStephanosCapability('connected-github-app-source-publisher');
+  const forge = findStephanosCapability('foundry-forge-construction-sidecar');
+  assert.ok(router.operations.includes('DISCOVER_NESTED_CHECKOUTS'));
+  assert.ok(router.operations.includes('FAIL_OVER_PRESERVING_ARTIFACT'));
+  assert.equal(git.requiresOperatorApproval, true);
+  assert.ok(app.operations.includes('CREATE_BRANCH_REF'));
+  assert.equal(app.requiresOperatorApproval, true);
+  assert.equal(forge.ownerIssue, 1671);
+  assert.ok(forge.operations.includes('CONSTRUCT_NONCONFLICTING_SLICE'));
 });
 
 test('summary remains machine-readable and bounded for GitHub receipts', () => {
@@ -80,9 +98,11 @@ test('nested Windows, UNC and local absolute paths fail closed', () => {
     '\\\\battle-bridge\\private-share',
     '/home/stephan/private',
   ]) {
-    const capabilities = STEPHANOS_CAPABILITIES.map((capability, index) => index === 0
-      ? { ...capability, discoveryRoute }
-      : capability);
+    const capabilities = STEPHANOS_CAPABILITIES.map((capability) => (
+      capability.capabilityId === 'shared-agent-workspace'
+        ? { ...capability, discoveryRoute }
+        : capability
+    ));
     const validation = validateStephanosCapabilityRegistry(capabilities);
     assert.equal(validation.valid, false);
     assert.match(validation.errors.join(','), /absolute-path-forbidden:shared-agent-workspace/);
