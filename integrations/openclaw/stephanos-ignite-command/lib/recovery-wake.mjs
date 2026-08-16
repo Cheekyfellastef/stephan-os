@@ -80,14 +80,38 @@ export function buildFixedRecoveryWakeInvocation({ env = process.env, hostProofI
   });
 }
 
-async function readOpenClawGatewayIdentity(fetchFn) {
-  const response = await fetchFn('http://127.0.0.1:18789/identity', { signal: AbortSignal.timeout(5_000) });
-  if (!response?.ok) throw new Error('RECOVERY_WAKE_GATEWAY_IDENTITY_REQUIRED');
-  const identity = await response.json();
-  if (identity?.product !== 'OpenClaw' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/.test(String(identity?.runtimeId || ''))) {
-    throw new Error('RECOVERY_WAKE_GATEWAY_IDENTITY_REQUIRED');
+function authenticatedOpenClawHostRuntimeId(authenticatedContext, hostPid) {
+  if (authenticatedContext?.authenticatedByHost !== true || authenticatedContext?.commandName !== 'stephanos-ignite'
+    || authenticatedContext?.command !== 'wake') throw new Error('RECOVERY_WAKE_OPENCLAW_AUTH_REQUIRED');
+  if (!Number.isSafeInteger(hostPid) || hostPid < 1) throw new Error('RECOVERY_WAKE_GATEWAY_IDENTITY_REQUIRED');
+  return `openclaw-plugin-host:${hostPid}`;
+}
+
+async function readOpenClawGatewayIdentity(fetchFn, { authenticatedContext, hostPid = process.pid } = {}) {
+  try {
+    const response = await fetchFn('http://127.0.0.1:18789/identity', { signal: AbortSignal.timeout(5_000) });
+    if (response?.ok) {
+      const contentType = String(response?.headers?.get?.('content-type') || '').toLowerCase();
+      if (!contentType || contentType.includes('json')) {
+        try {
+          const identity = await response.json();
+          if (identity?.product === 'OpenClaw' && /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/.test(String(identity?.runtimeId || ''))) {
+            return Object.freeze({ runtimeId: String(identity.runtimeId), source: 'gateway-identity-endpoint' });
+          }
+        } catch {
+          // Older/current OpenClaw builds may serve the control page at /identity.
+          // The authenticated plugin host remains a live, bounded runtime identity source.
+        }
+      }
+    }
+  } catch {
+    // The identity endpoint is optional. The command is already executing inside
+    // the authenticated OpenClaw plugin host, so use that live process identity.
   }
-  return Object.freeze({ runtimeId: String(identity.runtimeId) });
+  return Object.freeze({
+    runtimeId: authenticatedOpenClawHostRuntimeId(authenticatedContext, hostPid),
+    source: 'authenticated-plugin-host',
+  });
 }
 
 export async function wakeBattleBridgeRecoveryMesh({
@@ -104,7 +128,7 @@ export async function wakeBattleBridgeRecoveryMesh({
   if (platform !== 'win32') return Object.freeze({ ok: false, blocker: 'RECOVERY_WAKE_WINDOWS_REQUIRED' });
   let invocation;
   try {
-    const identity = await readOpenClawGatewayIdentity(fetchFn);
+    const identity = await readOpenClawGatewayIdentity(fetchFn, { authenticatedContext, hostPid });
     const proof = buildOpenClawHostProof({ authenticatedContext, runtimeId: identity.runtimeId, now, nonce, hostPid });
     const written = writeHostProofFn({ env, proof });
     invocation = buildFixedRecoveryWakeInvocation({ env, hostProofId: written.proofId });
