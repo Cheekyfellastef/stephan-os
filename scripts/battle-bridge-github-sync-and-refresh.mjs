@@ -6,6 +6,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
+
 export const BATTLE_BRIDGE_SYNC_AND_REFRESH_SCHEMA = 'stephanos.battle-bridge-sync-and-refresh.v1';
 export const BATTLE_BRIDGE_SYNC_AND_REFRESH_RESULT_MARKER = 'BATTLE_BRIDGE_SYNC_AND_REFRESH_RESULT=';
 export const MAX_SYNC_REFRESH_CYCLES = 3;
@@ -122,12 +124,47 @@ function syncIsConverged(result = {}) {
   return result?.ok === true && result?.evaluation?.classification === 'SYNC_NO_CHANGE';
 }
 
+function reconcileConvergedControlPlane({ sourceHead, paths, controlPlaneReconciler, platform }) {
+  if (platform !== 'win32') {
+    return Object.freeze({
+      ok: true,
+      classification: 'CONTROL_PLANE_REPAIR_SKIPPED_NON_WINDOWS',
+      repairAttempted: false,
+      sourceHead,
+    });
+  }
+  const repair = controlPlaneReconciler({
+    repoRoot: paths.repoRoot,
+    expectedHead: sourceHead,
+    platform,
+  });
+  if (repair?.ok !== true) {
+    return Object.freeze({
+      ok: false,
+      classification: 'CONTROL_PLANE_REPAIR_BLOCKED',
+      repairAttempted: true,
+      sourceHead,
+      blocker: String(repair?.blocker || 'CONTROL_PLANE_REPAIR_BLOCKED'),
+      repair: repair || null,
+    });
+  }
+  return Object.freeze({
+    ok: true,
+    classification: 'CONTROL_PLANE_RECONCILED',
+    repairAttempted: true,
+    sourceHead,
+    repair,
+  });
+}
+
 export async function runBattleBridgeSyncAndRefresh({
   env = process.env,
   paths = resolveCanonicalSyncAndRefreshPaths({ env }),
   expectedPaths = resolveCanonicalSyncAndRefreshPaths({ env }),
   adapter = createFixedSyncAndRefreshAdapter(),
   pendingReader = readPendingPostSyncRefresh,
+  controlPlaneReconciler = reconcileBattleBridgeControlPlane,
+  platform = process.platform,
   maxCycles = MAX_SYNC_REFRESH_CYCLES,
 } = {}) {
   if (path.resolve(paths.repoRoot) !== path.resolve(expectedPaths.repoRoot)
@@ -159,13 +196,36 @@ export async function runBattleBridgeSyncAndRefresh({
       return Object.freeze({ ok: false, blocker: sync.blocker, refreshes: Object.freeze(refreshes), finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
     }
     if (syncIsConverged(sync.result)) {
+      const sourceHead = safeHead(sync.result?.facts?.localHead || sync.result?.facts?.remoteHead);
+      if (!sourceHead) {
+        return Object.freeze({ ok: false, blocker: 'SYNC_CONVERGED_HEAD_UNPROVEN', refreshes: Object.freeze(refreshes), finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
+      }
+      const controlPlaneRepair = reconcileConvergedControlPlane({
+        sourceHead,
+        paths,
+        controlPlaneReconciler,
+        platform,
+      });
+      if (!controlPlaneRepair.ok) {
+        return Object.freeze({
+          ok: false,
+          blocker: controlPlaneRepair.blocker,
+          sourceHead,
+          syncClassification: sync.result.evaluation.classification,
+          refreshes: Object.freeze(refreshes),
+          controlPlaneRepair,
+          finalVerdict: 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED',
+        });
+      }
       return Object.freeze({
         schemaVersion: BATTLE_BRIDGE_SYNC_AND_REFRESH_SCHEMA,
         ok: true,
-        sourceHead: safeHead(sync.result?.facts?.localHead || sync.result?.facts?.remoteHead),
+        sourceHead,
         syncClassification: sync.result.evaluation.classification,
         refreshes: Object.freeze(refreshes),
         freshCoordinatorProcessUsed: refreshes.length > 0,
+        controlPlaneRepair,
+        controlPlaneRepairObserved: true,
         arbitraryShellAllowed: false,
         destructiveGitAllowed: false,
         liveOpenClawUpdateAllowed: false,
