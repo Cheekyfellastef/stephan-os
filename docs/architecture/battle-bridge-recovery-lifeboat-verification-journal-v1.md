@@ -22,7 +22,7 @@ M7 adds no backend restart, UI rebuild, checkout repair, task registration, arbi
 
 After a successful fixed wake, the consumer waits a fixed short interval and invokes only the existing read-only `PROBE_BATTLE_BRIDGE` action.
 
-For a mailbox or Recovery Mesh wake, the target is considered *component verified* only when the fixed task still exists, its reviewed `wscript.exe` action identity remains exact, and the task is either currently running or has a successful last task result.
+For a mailbox or Recovery Mesh wake, the target is considered *component verified* only when the fixed task still exists and its reviewed `wscript.exe` action identity remains exact. A task that is currently `Running` is accepted as current component evidence. A non-running task is accepted only when `lastTaskResult == 0` **and** its canonical post-wake `lastRunTimeUtc` is demonstrably newer than the exact pre-wake snapshot emitted by the fixed action receipt. If the task had never run before the wake, a new valid post-wake timestamp is sufficient. Unchanged, older, missing or malformed timestamps remain non-green, so a stale historical success can never certify a new wake.
 
 This is deliberately narrower than whole-system recovery. A verified target component does not prove backend 8787, UI 4173, OpenClaw, source convergence or the complete Battle Bridge are healthy. Every receipt therefore retains `recoveredHealthClaimed=false` and remote status continues to require stronger later proof before whole-system green may be published.
 
@@ -71,7 +71,7 @@ Representative terminal outcomes are:
 - `RECOVERY_ACTION_BLOCKED`
 - `RECOVERY_INTERRUPTED_CLAIM_TERMINALIZED_NO_REPLAY`
 
-Silence, malformed probe output and ambiguous interrupted execution remain non-green truth.
+Silence, malformed probe output, stale task-success evidence and ambiguous interrupted execution remain non-green truth.
 
 ## Authority boundary
 
