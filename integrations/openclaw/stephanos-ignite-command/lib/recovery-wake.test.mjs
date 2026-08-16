@@ -20,10 +20,10 @@ test('wake invocation is fully fixed and cannot accept a command, task or route'
     hostProofId: 'aaaaaaaabbbbccccddddeeeeeeeeeeee',
   });
   assert.equal(invocation.executable, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
-  assert.ok(invocation.args.includes('OPENCLAW_WHATSAPP'));
   assert.ok(invocation.args.includes('-OpenClawHostProofId'));
   assert.ok(invocation.args.includes('aaaaaaaabbbbccccddddeeeeeeeeeeee'));
-  assert.match(invocation.args[5], /request-battle-bridge-recovery\.ps1$/);
+  assert.ok(!invocation.args.includes('OPENCLAW_WHATSAPP'));
+  assert.match(invocation.args[5], /request-battle-bridge-recovery-openclaw\.ps1$/);
   assert.equal(invocation.arbitraryShellAllowed, false);
   assert.equal(invocation.arbitraryArgumentsAllowed, false);
 });
@@ -53,8 +53,8 @@ test('authenticated adapter binds live gateway identity and returns only a sanit
       assert.equal(executable, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
       assert.equal(options.shell, false);
       assert.equal(options.windowsHide, true);
-      assert.ok(args.includes('OPENCLAW_WHATSAPP'));
       assert.ok(args.includes('-OpenClawHostProofId'));
+      assert.ok(!args.includes('OPENCLAW_WHATSAPP'));
       return { status: 0, stdout: JSON.stringify({ queued: true, requestId: 'recovery-openclaw-0001', route: 'OPENCLAW_WHATSAPP', coordinatorTask: 'Stephanos Battle Bridge Recovery Mesh' }) };
     },
   });
