@@ -8,19 +8,19 @@ import {
 export const OCTOPUS_WEALTH_BALANCE_CASHFLOW_SCHEMA_VERSION = 'stephanos.octopus-wealth-balance-cashflow.v1';
 
 export const OCTOPUS_WEALTH_M2_METRIC_ROLES = Object.freeze([
-  Object.freeze({ metricId: 'cash-liquid-assets', section: 'ASSET', units: Object.freeze(['GBP']) }),
-  Object.freeze({ metricId: 'isa-current-value', section: 'ASSET', units: Object.freeze(['GBP']) }),
-  Object.freeze({ metricId: 'pension-current-value', section: 'ASSET', units: Object.freeze(['GBP']) }),
-  Object.freeze({ metricId: 'home-current-value', section: 'ASSET', units: Object.freeze(['GBP']) }),
-  Object.freeze({ metricId: 'caravan-current-value', section: 'ASSET', units: Object.freeze(['GBP']) }),
-  Object.freeze({ metricId: 'mortgage-outstanding', section: 'LIABILITY', units: Object.freeze(['GBP']) }),
-  Object.freeze({ metricId: 'debt-balance', section: 'LIABILITY', units: Object.freeze(['GBP']) }),
-  Object.freeze({ metricId: 'employment-net-income', section: 'INFLOW', units: Object.freeze(['GBP_PER_YEAR', 'GBP_PER_MONTH']) }),
-  Object.freeze({ metricId: 'caravan-net-income', section: 'INFLOW', units: Object.freeze(['GBP_PER_YEAR', 'GBP_PER_MONTH']) }),
-  Object.freeze({ metricId: 'household-running-costs', section: 'OUTFLOW', units: Object.freeze(['GBP_PER_YEAR', 'GBP_PER_MONTH']) }),
-  Object.freeze({ metricId: 'mortgage-debt-service', section: 'OUTFLOW', units: Object.freeze(['GBP_PER_YEAR', 'GBP_PER_MONTH']) }),
-  Object.freeze({ metricId: 'consumer-debt-service', section: 'OUTFLOW', units: Object.freeze(['GBP_PER_YEAR', 'GBP_PER_MONTH']) }),
-  Object.freeze({ metricId: 'caravan-running-costs', section: 'OUTFLOW', units: Object.freeze(['GBP_PER_YEAR', 'GBP_PER_MONTH']) }),
+  Object.freeze({ tentacleId: 'CASH_AND_LIQUIDITY', metricId: 'cash-liquid-assets', section: 'ASSET', units: Object.freeze(['GBP']) }),
+  Object.freeze({ tentacleId: 'ISA_AND_INVESTMENTS', metricId: 'isa-current-value', section: 'ASSET', units: Object.freeze(['GBP']) }),
+  Object.freeze({ tentacleId: 'PENSIONS_AND_RETIREMENT_BRIDGE', metricId: 'pension-current-value', section: 'ASSET', units: Object.freeze(['GBP']) }),
+  Object.freeze({ tentacleId: 'HOME_MORTGAGE_AND_EQUITY', metricId: 'home-current-value', section: 'ASSET', units: Object.freeze(['GBP']) }),
+  Object.freeze({ tentacleId: 'CARAVAN_PORTFOLIO', metricId: 'caravan-current-value', section: 'ASSET', units: Object.freeze(['GBP']) }),
+  Object.freeze({ tentacleId: 'HOME_MORTGAGE_AND_EQUITY', metricId: 'mortgage-outstanding', section: 'LIABILITY', units: Object.freeze(['GBP']) }),
+  Object.freeze({ tentacleId: 'DEBT_AND_CREDIT', metricId: 'debt-balance', section: 'LIABILITY', units: Object.freeze(['GBP']) }),
+  Object.freeze({ tentacleId: 'EMPLOYMENT_SALARY_SACRIFICE_AND_TAX', metricId: 'employment-net-income', section: 'INFLOW', units: Object.freeze(['GBP_PER_YEAR', 'GBP_PER_MONTH']) }),
+  Object.freeze({ tentacleId: 'CARAVAN_PORTFOLIO', metricId: 'caravan-net-income', section: 'INFLOW', units: Object.freeze(['GBP_PER_YEAR', 'GBP_PER_MONTH']) }),
+  Object.freeze({ tentacleId: 'CASH_AND_LIQUIDITY', metricId: 'household-running-costs', section: 'OUTFLOW', units: Object.freeze(['GBP_PER_YEAR', 'GBP_PER_MONTH']) }),
+  Object.freeze({ tentacleId: 'HOME_MORTGAGE_AND_EQUITY', metricId: 'mortgage-debt-service', section: 'OUTFLOW', units: Object.freeze(['GBP_PER_YEAR', 'GBP_PER_MONTH']) }),
+  Object.freeze({ tentacleId: 'DEBT_AND_CREDIT', metricId: 'consumer-debt-service', section: 'OUTFLOW', units: Object.freeze(['GBP_PER_YEAR', 'GBP_PER_MONTH']) }),
+  Object.freeze({ tentacleId: 'CARAVAN_PORTFOLIO', metricId: 'caravan-running-costs', section: 'OUTFLOW', units: Object.freeze(['GBP_PER_YEAR', 'GBP_PER_MONTH']) }),
 ]);
 
 const INPUT_KEYS = Object.freeze(['householdModel']);
@@ -126,40 +126,33 @@ function annualize(value, unit) {
   return null;
 }
 
+function emptyComponent(role, status) {
+  return Object.freeze({
+    tentacleId: role.tentacleId,
+    metricId: role.metricId,
+    section: role.section,
+    status,
+    usable: false,
+    valueGbp: null,
+    annualValueGbp: null,
+    conversion: 'NONE',
+    sourceDatumId: '',
+    sourceRef: '',
+    epistemicStatus: 'UNKNOWN',
+    freshness: 'UNKNOWN',
+    ownershipBoundary: 'UNKNOWN',
+  });
+}
+
 function componentForRole(role, sourceRecords) {
-  const matches = sourceRecords.filter((record) => record.metricId === role.metricId);
-  if (matches.length === 0) {
-    return Object.freeze({
-      metricId: role.metricId,
-      section: role.section,
-      status: 'MISSING',
-      usable: false,
-      valueGbp: null,
-      annualValueGbp: null,
-      conversion: 'NONE',
-      sourceDatumId: '',
-      sourceRef: '',
-      epistemicStatus: 'UNKNOWN',
-      freshness: 'UNKNOWN',
-      ownershipBoundary: 'UNKNOWN',
-    });
+  const metricMatches = sourceRecords.filter((record) => record.metricId === role.metricId);
+  if (metricMatches.length === 0) return emptyComponent(role, 'MISSING');
+  if (metricMatches.some((record) => record.tentacleId !== role.tentacleId)) {
+    return emptyComponent(role, 'TENTACLE_MISMATCH');
   }
-  if (matches.length !== 1) {
-    return Object.freeze({
-      metricId: role.metricId,
-      section: role.section,
-      status: 'AMBIGUOUS_MULTIPLE_RECORDS',
-      usable: false,
-      valueGbp: null,
-      annualValueGbp: null,
-      conversion: 'NONE',
-      sourceDatumId: '',
-      sourceRef: '',
-      epistemicStatus: 'UNKNOWN',
-      freshness: 'UNKNOWN',
-      ownershipBoundary: 'UNKNOWN',
-    });
-  }
+
+  const matches = metricMatches.filter((record) => record.tentacleId === role.tentacleId);
+  if (matches.length !== 1) return emptyComponent(role, 'AMBIGUOUS_MULTIPLE_RECORDS');
 
   const record = matches[0];
   let status = 'USABLE';
@@ -190,6 +183,7 @@ function componentForRole(role, sourceRecords) {
   }
 
   return Object.freeze({
+    tentacleId: role.tentacleId,
     metricId: role.metricId,
     section: role.section,
     status,
@@ -275,7 +269,7 @@ export function buildOctopusWealthBalanceCashflowV1(input = {}) {
   let state;
   if (ambiguousMetricIds.length > 0 || unusableMetricIds.some((metricId) => {
     const component = components.find((entry) => entry.metricId === metricId);
-    return ['UNIT_MISMATCH', 'VALUE_NOT_NON_NEGATIVE', 'STALE_EVIDENCE'].includes(component.status);
+    return ['TENTACLE_MISMATCH', 'UNIT_MISMATCH', 'VALUE_NOT_NON_NEGATIVE', 'STALE_EVIDENCE'].includes(component.status);
   })) {
     state = 'M2_RECONCILIATION_REQUIRED';
   } else if (assets.complete && liabilities.complete && inflows.complete && outflows.complete) {
