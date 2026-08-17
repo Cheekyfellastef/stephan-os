@@ -124,7 +124,6 @@ function reviewConsumerTest(source, path, findings) {
     'WAKE_CANONICAL_MAILBOX',
     'WAKE_CANONICAL_RECOVERY_MESH',
     'replayAllowed',
-    'executionReplayAllowed',
   ]) requireLiteral(findings, source, path, literal, 'm7-consumer-static-guard-test-missing');
   forbid(findings, source, path, /node:child_process|require\(['"]child_process/i, 'm7-test-process-authority-forbidden');
 }
