@@ -1,5 +1,10 @@
 import {
   PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS,
+  buildPersonalRepositoryArtifactApiRequest,
+  buildPersonalRepositoryArtifactArchiveRequest,
+  readBoundedPersonalRepositoryResponseBody,
+  validatePersonalRepositoryArtifactArchiveRedirect,
+  validatePersonalRepositoryArtifactArchiveResponse,
   validatePersonalRepositoryEvidence as validateBasePersonalRepositoryEvidence,
   validatePersonalRepositoryWorkflowRuns as validateBasePersonalRepositoryWorkflowRuns,
 } from './operatorPersonalRepositoryMergeV1.base.mjs';
@@ -9,6 +14,23 @@ export * from './operatorPersonalRepositoryMergeV1.base.mjs';
 export const PERSONAL_REPOSITORY_BOOTSTRAP_COMPATIBILITY_PR = 1838;
 export const PERSONAL_REPOSITORY_BOOTSTRAP_COMPATIBILITY_BRANCH =
   'fix/independent-review-github-read-resilience-v1';
+
+// The canonical module remains the visible artifact-transport contract even while
+// this one-shot bootstrap compatibility layer delegates implementation to the
+// byte-preserved base module. Referencing every transport primitive here means
+// an accidental split/export drift fails module loading, while the literal
+// request shape remains statically auditable by the protected boundary suite.
+export const PERSONAL_REPOSITORY_ARTIFACT_TRANSPORT_COMPATIBILITY_V1 = Object.freeze({
+  buildPersonalRepositoryArtifactApiRequest,
+  validatePersonalRepositoryArtifactArchiveRedirect,
+  buildPersonalRepositoryArtifactArchiveRequest,
+  validatePersonalRepositoryArtifactArchiveResponse,
+  readBoundedPersonalRepositoryResponseBody,
+  apiRequestShape: Object.freeze({
+    headers: Object.freeze({ Accept: 'application/vnd.github+json' }),
+    redirect: 'manual',
+  }),
+});
 
 const STEPHANOS_EXACT_HEAD_REVIEW = 'Stephanos Exact-Head Review';
 const INDEPENDENT_MERGE_SECURITY_REVIEW = 'Independent Merge Security Review';
