@@ -14,6 +14,7 @@ test('installed consumer has no caller arguments and fixes the public GitHub rec
   assert.match(text, /https:\/\/api\.github\.com\/repos\/Cheekyfellastef\/stephan-os\/issues\/1814\/comments\?per_page=100&page=1/);
   assert.match(text, /application\/vnd\.github\+json/);
   assert.match(text, /GITHUB_RECOVERY_RESPONSE_NOT_JSON/);
+  assert.match(text, /GITHUB_RECOVERY_JSON_INVALID/);
   assert.doesNotMatch(text, /127\.0\.0\.1:18789\/identity/);
   assert.doesNotMatch(text, /Invoke-Expression/i);
   assert.doesNotMatch(text, /Start-Process/i);
