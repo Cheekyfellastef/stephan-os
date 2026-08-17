@@ -3,9 +3,14 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const wrapperUrl = new URL('./independent-merge-security-review-with-windows-specialist-v1.mjs', import.meta.url);
+const baseReviewerUrl = new URL('./independent-merge-security-review-v2.mjs', import.meta.url);
 
 async function source() {
   return readFile(wrapperUrl, 'utf8');
+}
+
+async function baseReviewerSource() {
+  return readFile(baseReviewerUrl, 'utf8');
 }
 
 test('wrapper is GitHub-Actions-only and preserves the trusted base reviewer', async () => {
@@ -89,4 +94,13 @@ test('non-eligible or non-clean specialist results remain fail closed', async ()
   assert.match(text, /finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_FINDINGS'/);
   assert.match(text, /process\.exitCode = 1/);
   assert.match(text, /finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_CLEAN'/);
+});
+
+test('base reviewer enumerates submitted reviews only after specialist escalation is proven necessary', async () => {
+  const text = await baseReviewerSource();
+  assert.match(text, /const \[files, diff\] = await Promise\.all\(\[/);
+  assert.doesNotMatch(text, /const \[files, diff, reviews\] = await Promise\.all\(\[/);
+  assert.match(text, /const specialistProbe = adjudicateQualifiedSpecialistReview\(\{[\s\S]*?reviews: \[\],[\s\S]*?\}\);/);
+  assert.match(text, /const specialist = specialistProbe\.required\s*\? adjudicateQualifiedSpecialistReview\(\{[\s\S]*?reviews: await githubPages\(`\/repos\/\$\{owner\}\/\$\{repo\}\/pulls\/\$\{prNumber\}\/reviews`\),[\s\S]*?\}\)\s*: specialistProbe;/);
+  assert.doesNotMatch(text, /reviews: await githubPages\([\s\S]*?allowNotFound/);
 });
