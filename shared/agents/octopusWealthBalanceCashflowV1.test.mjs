@@ -126,6 +126,7 @@ test('complete reconciled M1 evidence produces deterministic balance sheet and a
   assert.equal(result.cashFlow.annualOutflowsGbp, 49_000);
   assert.equal(result.cashFlow.annualNetCashFlowGbp, 4_000);
   assert.equal(component(result, 'cash-liquid-assets').sourceDatumId, 'cash-assets');
+  assert.equal(component(result, 'cash-liquid-assets').tentacleId, 'CASH_AND_LIQUIDITY');
 });
 
 test('monthly cash-flow evidence is annualized transparently by exactly twelve', () => {
@@ -206,6 +207,28 @@ test('multiple M1 records for one M2 metric fail closed against double counting'
   assert.equal(result.state, 'M2_RECONCILIATION_REQUIRED');
   assert.equal(component(result, 'cash-liquid-assets').status, 'AMBIGUOUS_MULTIPLE_RECORDS');
   assert.deepEqual(result.coverage.ambiguousMetricIds, ['cash-liquid-assets']);
+  assert.equal(result.balanceSheet.assetsTotalGbp, null);
+  assert.equal(result.balanceSheet.netWorthGbp, null);
+});
+
+test('a correctly named metric in the wrong M1 tentacle cannot satisfy an M2 role', () => {
+  const observedAtUtc = isoNow();
+  const data = completeData(observedAtUtc).map((datum) => datum.metricId === 'home-current-value'
+    ? knownDatum(observedAtUtc, {
+      datumId: 'misrouted-home-value',
+      tentacleId: 'ISA_AND_INVESTMENTS',
+      metricId: 'home-current-value',
+      value: 350_000,
+      unit: 'GBP',
+    })
+    : datum);
+  const result = buildOctopusWealthBalanceCashflowV1({ householdModel: model(observedAtUtc, data) });
+
+  assert.equal(result.valid, true);
+  assert.equal(result.state, 'M2_RECONCILIATION_REQUIRED');
+  assert.equal(component(result, 'home-current-value').status, 'TENTACLE_MISMATCH');
+  assert.equal(component(result, 'home-current-value').tentacleId, 'HOME_MORTGAGE_AND_EQUITY');
+  assert.deepEqual(result.coverage.unusableMetricIds, ['home-current-value']);
   assert.equal(result.balanceSheet.assetsTotalGbp, null);
   assert.equal(result.balanceSheet.netWorthGbp, null);
 });
