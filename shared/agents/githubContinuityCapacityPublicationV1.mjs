@@ -197,12 +197,27 @@ export function buildGitHubContinuityCapacityPublicationV1(rawInput = {}) {
   });
 }
 
-export async function publishGitHubContinuityCapacityPublicationV1(root, rawInput = {}) {
+export async function publishGitHubContinuityCapacityPublicationV1(root, rawInput = {}, options = {}) {
   const built = buildGitHubContinuityCapacityPublicationV1(rawInput);
   if (built.state !== GITHUB_CONTINUITY_CAPACITY_PUBLICATION_STATE.READY) return built;
-  const publication = await publishBuildLaneCapacityToSharedWorkspace(root, built.receipt, {
-    nowUtc: built.receipt.observedAtUtc,
-  });
+
+  const injectedNowUtc = options && typeof options === 'object' && !Array.isArray(options)
+    ? text(options.nowUtc)
+    : '';
+  const nowUtc = injectedNowUtc || new Date().toISOString();
+  if (isoMs(nowUtc) === null) return blocked('publication-time-invalid');
+
+  const invalidAtPublication = built.receipt.supportedTaskClasses.find((taskClass) => !validateBuildLaneCapacityReceipt(
+    built.receipt,
+    {
+      repository: built.receipt.repository,
+      taskClass,
+      nowUtc,
+    },
+  ).valid);
+  if (invalidAtPublication) return blocked('capacity-observation-not-current-at-publication');
+
+  const publication = await publishBuildLaneCapacityToSharedWorkspace(root, built.receipt, { nowUtc });
   return Object.freeze({
     ...built,
     publication,
