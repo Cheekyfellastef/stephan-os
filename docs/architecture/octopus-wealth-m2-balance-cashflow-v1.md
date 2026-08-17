@@ -12,7 +12,7 @@ The product flow is:
 
 ```text
 M1 reconciled household evidence
-  -> fixed M2 metric roles
+  -> fixed M2 metric+tentacle roles
   -> explicit usable / missing / ambiguous / unusable components
   -> known subtotals
   -> complete totals only when every required component is usable
@@ -29,20 +29,20 @@ The separation is intentional. M2 consumes M1; it does not weaken or duplicate M
 
 ## Fixed balance-sheet roles
 
-Current assets require these exact M1 metric IDs:
+Current assets require these exact M1 metric IDs in their exact intended tentacles:
 
-- `cash-liquid-assets`
-- `isa-current-value`
-- `pension-current-value`
-- `home-current-value`
-- `caravan-current-value`
+- `CASH_AND_LIQUIDITY` / `cash-liquid-assets`
+- `ISA_AND_INVESTMENTS` / `isa-current-value`
+- `PENSIONS_AND_RETIREMENT_BRIDGE` / `pension-current-value`
+- `HOME_MORTGAGE_AND_EQUITY` / `home-current-value`
+- `CARAVAN_PORTFOLIO` / `caravan-current-value`
 
 Current liabilities require:
 
-- `mortgage-outstanding`
-- `debt-balance`
+- `HOME_MORTGAGE_AND_EQUITY` / `mortgage-outstanding`
+- `DEBT_AND_CREDIT` / `debt-balance`
 
-Balance-sheet components must be non-negative `GBP` values backed by current `ACTUAL` or `ESTIMATED` M1 evidence. `PROJECTED`, `UNKNOWN`, stale, negative, wrong-unit or multiply-represented metrics do not enter complete totals.
+Balance-sheet components must be non-negative `GBP` values backed by current `ACTUAL` or `ESTIMATED` M1 evidence. `PROJECTED`, `UNKNOWN`, stale, negative, wrong-unit, wrong-tentacle or multiply-represented metrics do not enter complete totals.
 
 M2 reports a known subtotal even when a section is incomplete, but `assetsTotalGbp`, `liabilitiesTotalGbp` and `netWorthGbp` remain `null` until their complete evidence requirements are met.
 
@@ -50,15 +50,15 @@ M2 reports a known subtotal even when a section is incomplete, but `assetsTotalG
 
 Annual inflows require:
 
-- `employment-net-income`
-- `caravan-net-income`
+- `EMPLOYMENT_SALARY_SACRIFICE_AND_TAX` / `employment-net-income`
+- `CARAVAN_PORTFOLIO` / `caravan-net-income`
 
 Annual outflows require:
 
-- `household-running-costs`
-- `mortgage-debt-service`
-- `consumer-debt-service`
-- `caravan-running-costs`
+- `CASH_AND_LIQUIDITY` / `household-running-costs`
+- `HOME_MORTGAGE_AND_EQUITY` / `mortgage-debt-service`
+- `DEBT_AND_CREDIT` / `consumer-debt-service`
+- `CARAVAN_PORTFOLIO` / `caravan-running-costs`
 
 Cash-flow evidence may be `GBP_PER_YEAR` or `GBP_PER_MONTH`. Monthly evidence is converted only by the explicit deterministic rule:
 
@@ -72,17 +72,17 @@ The conversion is exposed on the component as `MONTHLY_X_12`. No inflation, tax,
 
 ## No semantic guessing
 
-M2 does not reinterpret broad or ambiguous M1 metrics.
+M2 binds every role to both an exact metric ID and its exact M1 tentacle. A correctly named metric placed in a different tentacle becomes `TENTACLE_MISMATCH`, moves the projection to `M2_RECONCILIATION_REQUIRED`, and is excluded from totals.
 
-For example, M1's discovery seed metric `home-mortgage-position` is **not** silently treated as either `home-current-value` or `mortgage-outstanding`. Likewise a percentage such as `debt-weighted-cost` is not converted into a debt balance, and `external-base-rate` is not used to manufacture future borrowing costs.
+M2 also does not reinterpret broad or ambiguous M1 metrics. For example, M1's discovery seed metric `home-mortgage-position` is **not** silently treated as either `home-current-value` or `mortgage-outstanding`. Likewise a percentage such as `debt-weighted-cost` is not converted into a debt balance, and `external-base-rate` is not used to manufacture future borrowing costs.
 
-The required component must exist under its exact M2 role or the projection stays partial.
+The required component must exist under its exact M2 metric+tentacle role or the projection remains partial or reconciliation-required.
 
 ## Double-count protection
 
 M1 can validly retain evidence under different ownership boundaries. M2 will not guess whether two records with the same M2 metric are additive or overlapping.
 
-If more than one M1 record exists for a required M2 metric, that component becomes `AMBIGUOUS_MULTIPLE_RECORDS`, the relevant complete total is withheld, and the projection moves to `M2_RECONCILIATION_REQUIRED`.
+If more than one M1 record exists for a required M2 metric in its intended tentacle, that component becomes `AMBIGUOUS_MULTIPLE_RECORDS`, the relevant complete total is withheld, and the projection moves to `M2_RECONCILIATION_REQUIRED`.
 
 This is stricter than summing individual, joint and household records and accidentally double-counting the same asset or liability.
 
@@ -106,8 +106,8 @@ SAFE_HOLD
   M1 is invalid, stale, structurally incomplete or has unresolved known ownership.
 
 M2_RECONCILIATION_REQUIRED
-  Relevant evidence is ambiguous, stale at the component boundary, has the wrong unit,
-  or uses a sign that M2 cannot safely interpret.
+  Relevant evidence is ambiguous, in the wrong tentacle, stale at the component boundary,
+  has the wrong unit, or uses a sign that M2 cannot safely interpret.
 
 M2_PARTIAL_EVIDENCE
   M1 is valid and current, but one or more required M2 metrics are missing, UNKNOWN or PROJECTED.
@@ -122,7 +122,7 @@ M2_BALANCE_CASHFLOW_READY
 
 Every M2 component retains only bounded lineage needed to explain the arithmetic:
 
-- exact metric role;
+- exact tentacle+metric role;
 - source M1 datum ID;
 - safe M1 source reference;
 - epistemic status;
@@ -173,6 +173,7 @@ The M2 tests cover:
 - UNKNOWN evidence preserving partial truth;
 - PROJECTED evidence excluded from current totals;
 - duplicate-role double-count protection;
+- exact metric+tentacle binding and wrong-tentacle rejection;
 - stale M1 projection rejection;
 - all-eight-tentacle admission;
 - negative-sign reconciliation;
