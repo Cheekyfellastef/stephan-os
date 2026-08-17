@@ -288,6 +288,10 @@ function normalizeForgeSidecar(value, nowMs) {
   const binding = { repository, head: canonicalMainHead, tree: canonicalMainTree, nowMs };
   const m2ReceiptValid = validM2Receipt(value.m2Receipt, binding);
   const m3RuntimeReceiptValid = validM3Receipt(value.m3RuntimeReceipt, binding);
+  const m2ReceiptId = m2ReceiptValid ? text(value.m2Receipt.receiptId) : null;
+  const m3RuntimeReceiptId = m3RuntimeReceiptValid ? text(value.m3RuntimeReceipt.receiptId) : null;
+  const receiptIdentitiesDistinct = Boolean(m2ReceiptId && m3RuntimeReceiptId
+    && m2ReceiptId !== m3RuntimeReceiptId);
   const receiptEvidenceRefs = m2ReceiptValid && m3RuntimeReceiptValid
     ? [...new Set([...value.m2Receipt.proofRefs, ...value.m3RuntimeReceipt.proofRefs])].sort()
     : [];
@@ -297,6 +301,7 @@ function normalizeForgeSidecar(value, nowMs) {
     && exactMirrorParity
     && m2ReceiptValid
     && m3RuntimeReceiptValid
+    && receiptIdentitiesDistinct
     && evidenceRefs.length >= 2
     && evidenceBound;
   return Object.freeze({
@@ -315,10 +320,16 @@ function normalizeForgeSidecar(value, nowMs) {
     m2ReceiptValid,
     m3RuntimeReceiptValid,
     evidenceBound,
-    m2ReceiptId: m2ReceiptValid ? text(value.m2Receipt.receiptId) : null,
-    m3RuntimeReceiptId: m3RuntimeReceiptValid ? text(value.m3RuntimeReceipt.receiptId) : null,
+    m2ReceiptId,
+    m3RuntimeReceiptId,
     evidenceRefs: Object.freeze(evidenceRefs),
   });
+}
+
+export function adjudicateForgeSidecarCapacity(value, options = {}) {
+  const nowMs = timestamp(options.nowUtc ?? options.now);
+  if (nowMs === null) return null;
+  return normalizeForgeSidecar(value, nowMs);
 }
 
 function normalizeLane(lane, repository, nowMs) {

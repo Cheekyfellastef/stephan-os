@@ -23,7 +23,7 @@ const protectedWorkflowPaths = [
 ];
 
 function workflowContent(path) {
-  return readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
+  return readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 }
 
 function workflowSource(path, overrides = {}) {
@@ -106,6 +106,36 @@ test('admits only the exact personal-repository fallback workflow source', () =>
   assert.equal(validation.valid, true, validation.blockers.join(','));
   assert.match(validation.proofRef, /^proofs\/personal-repository-workflow-source\//);
 
+  for (const altered of [
+    content.replace(
+      'Collect exact personal-repository evidence after protected admission',
+      'Prove exact personal-repository evidence before protected approval',
+    ),
+    content.replace('    needs: [personal-repository-evidence]\n', ''),
+    content.replace(
+      '    needs: [personal-repository-evidence, operator-personal-repository-approval]',
+      '    needs: [operator-personal-repository-approval]',
+    ),
+  ]) {
+    const stageValidation = validatePersonalRepositoryProtectedWorkflowSource({
+      ...exact,
+      protectedWorkflowSources: [workflowSource(path, { content: altered })],
+    });
+    assert.equal(stageValidation.valid, false);
+    assert.ok(stageValidation.blockers.includes('personal-repository-workflow-stage-sequence-not-exact'));
+  }
+
+  const legacyContent = content.replace(
+    'inputs.expected_head || github.run_id',
+    "format('PR #{0} at {1}', inputs.pr_number, inputs.expected_head)",
+  );
+  const legacyValidation = validatePersonalRepositoryProtectedWorkflowSource({
+    ...exact,
+    protectedWorkflowSources: [workflowSource(path, { content: legacyContent })],
+  });
+  assert.equal(legacyValidation.valid, false);
+  assert.ok(legacyValidation.blockers.includes('personal-repository-workflow-content-digest-not-exact'));
+
   const analysis = analyzeIndependentSecurityReviewV2({
     ...exact,
     changedFiles: [
@@ -145,11 +175,14 @@ test('admits only the exact personal-repository fallback workflow source', () =>
     content.replace('cancel-in-progress: false', 'cancel-in-progress: true'),
     content.replace("github.event_name == 'workflow_dispatch'", "github.event_name == 'merge_group'"),
     content.replace('persist-credentials: false', 'persist-credentials: true'),
-    content.replace('permission-administration: read', 'permission-administration: write'),
+    content.replace('permission-administration: write', 'permission-administration: read'),
+    content.replace('          permission-administration: write\n', ''),
     content.replace(
-      '          permission-administration: read',
-      '          permission-administration: read\n          permission-contents: write',
+      '          permission-administration: write',
+      '          permission-administration: write\n          permission-contents: read',
     ),
+    content.replace('          owner: ${{ github.repository_owner }}', '          owner: another-owner'),
+    content.replace('          repositories: stephan-os', '          repositories: stephan-os, another-repository'),
     content.replace(
       'STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}',
       'STEPHANOS_RULESET_PROOF_TOKEN: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}',
@@ -174,6 +207,14 @@ test('admits only the exact personal-repository fallback workflow source', () =>
     content.replace(
       '          GH_TOKEN: ${{ github.token }}',
       '          GH_TOKEN: ${{ github.token }}\n          NODE_OPTIONS: --import=./arbitrary.mjs',
+    ),
+    content.replace(
+      '      evidence_sha256: ${{ steps.evidence.outputs.evidence_sha256 }}',
+      '      evidence_sha256: ${{ steps.evidence.outputs.evidence_sha256 }}\n      configuration_token: ${{ steps.ruleset-proof-token.outputs.token }}',
+    ),
+    content.replace(
+      '        run: node scripts/operator-protected-personal-repository-merge.mjs evidence',
+      '        run: node scripts/operator-protected-personal-repository-merge.mjs evidence\n      - uses: actions/upload-artifact@v4\n        with:\n          name: leaked-token\n          path: ${{ steps.ruleset-proof-token.outputs.token }}',
     ),
     content.replace(
       'permissions: {}',

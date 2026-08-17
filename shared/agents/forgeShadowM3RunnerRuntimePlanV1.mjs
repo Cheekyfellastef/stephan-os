@@ -18,6 +18,9 @@ export const FORGE_SHADOW_M3_RUNTIME_PLAN_SCHEMA = 'stephanos.forge-shadow-m3-ru
 export const FORGE_SHADOW_M3_RUNTIME_READY = 'FORGE_SHADOW_M3_RUNNER_RUNTIME_PLAN_READY';
 export const FORGE_SHADOW_M3_RUNTIME_BLOCKED = 'FORGE_SHADOW_M3_RUNNER_RUNTIME_PLAN_BLOCKED';
 export const FORGE_SHADOW_M3_RUNTIME_RECEIPT_SCHEMA = 'stephanos.forge-shadow-m3-runner-runtime-receipt.v1';
+export const FORGE_SHADOW_M3_CANARY_FORGE_SERVICE = 'stephanos-forge-shadow-m3-canary';
+export const FORGE_SHADOW_M3_CANARY_FORGE_LISTENER = '127.0.0.1:3342';
+export const FORGE_SHADOW_M3_CANARY_WORKFLOW_PATH = '.forgejo/workflows/forge-shadow-m3-isolation-canary-v1.yml';
 
 const INPUT_KEYS = ['repository', 'canonicalMainHead', 'canonicalMainTree', 'nowUtc', 'admissionInput', 'artifactResolutions'];
 const ARTIFACT_KEYS = [
@@ -55,6 +58,8 @@ const CONTRACTS = Object.freeze({
 const STEPS = Object.freeze([
   'VERIFY_CURRENT_M2_AND_M3_ADMISSION_EVIDENCE',
   'VERIFY_OFFICIAL_IMMUTABLE_RUNNER_ARTIFACTS',
+  'COPY_PROVEN_M2_BACKUP_TO_DISPOSABLE_CANARY_VOLUME',
+  'START_ACTIONS_ENABLED_CANARY_FORGE_WITHOUT_MUTATING_M2',
   'CREATE_ISOLATED_EPHEMERAL_RUNTIME_BOUNDARIES',
   'INSTALL_FIXED_RUNNER_ARTIFACTS',
   'ISSUE_CONTAINED_ONE_TIME_LOCAL_REGISTRATION_CREDENTIALS',
@@ -63,6 +68,7 @@ const STEPS = Object.freeze([
   'PUBLISH_IMMUTABLE_CONTENT_ADDRESSED_PROOFS',
   'UNREGISTER_RUNNER_IDENTITIES',
   'DESTROY_EPHEMERAL_WORKSPACES_AND_RUNTIME_BOUNDARIES',
+  'DESTROY_DISPOSABLE_CANARY_FORGE_AND_PRIVATE_RELAY',
   'PROVE_ZERO_RESIDUAL_CREDENTIAL_OR_AUTHORITY_STATE',
 ]);
 
@@ -249,8 +255,8 @@ export function planForgeShadowM3RunnerRuntime(input = {}) {
     return Array.from({ length: pool.count }, (_, index) => Object.freeze({
       runnerId: `${contract.prefix}${String(index + 1).padStart(2, '0')}`,
       poolId: pool.poolId, runnerClass: pool.runnerClass,
-      runtimeBoundary: pool.runtimeBoundary, forgeService: 'stephanos-forge-shadow',
-      forgeListener: '127.0.0.1:3340', registrationMode: 'one-time-local-contained',
+      runtimeBoundary: pool.runtimeBoundary, forgeService: FORGE_SHADOW_M3_CANARY_FORGE_SERVICE,
+      forgeListener: FORGE_SHADOW_M3_CANARY_FORGE_LISTENER, registrationMode: 'one-time-local-contained',
       labels: contract.labels, workloadIds: pool.workloadIds,
       installed: false, registered: false, connected: false, executed: false,
       requiresSeparateRuntimeAuthorization: true,
@@ -258,12 +264,33 @@ export function planForgeShadowM3RunnerRuntime(input = {}) {
   }) : [];
   const artifactSetDigest = artifacts.length === 2 && !blockers.length ? sha256(artifacts) : '';
   const valid = blockers.length === 0;
+  const canaryForge = admission ? Object.freeze({
+    serviceId: FORGE_SHADOW_M3_CANARY_FORGE_SERVICE,
+    sourceServiceId: 'stephanos-forge-shadow',
+    sourceListener: '127.0.0.1:3340',
+    sourceActionsRemainDisabled: true,
+    sourceMutationAllowed: false,
+    dataSource: 'ephemeral-copy-of-proven-m2-backup',
+    backupDigest: admission.m2Evidence.backupDigest,
+    backupVolume: admission.m2Evidence.backupVolume,
+    forgejoImageDigest: admission.m2Evidence.forgejoImageDigest,
+    listener: FORGE_SHADOW_M3_CANARY_FORGE_LISTENER,
+    listenerPolicy: 'loopback-only-with-temporary-sandbox-address-relay',
+    actionsEnabled: true,
+    actionsScope: 'exact-isolation-canary-only',
+    workflowPath: FORGE_SHADOW_M3_CANARY_WORKFLOW_PATH,
+    mirrorHead: head,
+    mirrorTree: tree,
+    persistentDataAllowed: false,
+    destroyAfterExecution: true,
+  }) : null;
   return Object.freeze({
     schemaVersion: FORGE_SHADOW_M3_RUNTIME_PLAN_SCHEMA, valid, repository,
     canonicalMainHead: head, canonicalMainTree: tree,
     decision: valid ? FORGE_SHADOW_M3_RUNTIME_READY : FORGE_SHADOW_M3_RUNTIME_BLOCKED,
     blockers: Object.freeze(unique(blockers)),
     admissionEvidence: valid ? admission.m2Evidence : null,
+    canaryForge: valid ? canaryForge : null,
     runnerArtifacts: Object.freeze(artifacts), artifactSetDigest,
     runners: Object.freeze(runners),
     executionPlan: Object.freeze(STEPS.map((operation, index) => Object.freeze({
@@ -276,6 +303,9 @@ export function planForgeShadowM3RunnerRuntime(input = {}) {
       maximumTeardownSeconds: 300, quarantineOnTeardownFailure: true,
       zeroResidualRegistrationRequired: true, zeroResidualCredentialRequired: true,
       zeroResidualWorkspaceRequired: true,
+      destroyDisposableCanaryForge: true,
+      destroyTemporarySandboxRelay: true,
+      canonicalM2MustRemainSealedAndUnchanged: true,
     }),
     proofPolicy: Object.freeze({
       receiptSchema: FORGE_SHADOW_M3_RUNTIME_RECEIPT_SCHEMA,
@@ -283,6 +313,8 @@ export function planForgeShadowM3RunnerRuntime(input = {}) {
       fixedRunnerIdentityRequired: true, teardownProofRequired: true,
       zeroResidualAuthorityProofRequired: true, credentialMaterialForbidden: true,
       immutableContentAddressedArtifactsRequired: true,
+      disposableCanaryForgeProofRequired: true,
+      canonicalM2UnchangedProofRequired: true,
     }),
     authority: authority(),
     finalVerdict: valid ? FORGE_SHADOW_M3_RUNTIME_READY : FORGE_SHADOW_M3_RUNTIME_BLOCKED,

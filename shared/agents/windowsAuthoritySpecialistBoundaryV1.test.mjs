@@ -19,6 +19,7 @@ function diffFor(path) {
 test('protects the complete source-controlled Windows specialist boundary', () => {
   assert.deepEqual(WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1, [
     'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs',
+    'shared/agents/windowsAuthorityWorkerWatchdogReviewV1.mjs',
     'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
   ]);
 

@@ -9,21 +9,18 @@ import {
   WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1,
 } from './operatorMergeApprovalBoundaryV2.mjs';
 import {
-  REQUIRED_EXACT_HEAD_WORKFLOWS,
-} from './operatorMergeApprovalGate.mjs';
+  PROTECTED_MERGE_REQUIRED_WORKFLOWS,
+  validateProtectedMergeCheckRows,
+} from './protectedMergeCheckClassifierV1.mjs';
 
 export const PROTECTED_OPENCLAW_MERGE_OPERATION = 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE';
 export const PROTECTED_OPENCLAW_MERGE_MODE = 'qualified-operator-bootstrap';
+export const PROTECTED_OPERATOR_WORKFLOW_MERGE_MODE = 'clean-independent';
 export const PROTECTED_OPENCLAW_MERGE_FINDING = 'approval-boundary-v2-self-change-requires-qualified-review';
 export const PROTECTED_OPENCLAW_MERGE_MAX_BOOTSTRAP_FINDINGS = 20;
-export const PROTECTED_OPENCLAW_MERGE_REQUIRED_WORKFLOWS = Object.freeze([
-  ...REQUIRED_EXACT_HEAD_WORKFLOWS,
-]);
-
-const PROTECTED_OPENCLAW_NEUTRAL_SKIPPED_CHECKS = new Set([
-  'Exact-Head Review Dispatch\0coordinate',
-  'Exact-Head Review Dispatch\0retry',
-]);
+export const PROTECTED_OPENCLAW_MERGE_REQUIRED_WORKFLOWS = PROTECTED_MERGE_REQUIRED_WORKFLOWS;
+export const PROTECTED_OPERATOR_MERGE_WORKFLOW = 'operator-merge-approval-gate.yml';
+export const PROTECTED_OPERATOR_MERGE_WORKFLOW_MODE = 'user-owned-protected-squash';
 
 const PROTECTED_OPENCLAW_BOOTSTRAP_PATHS = new Set([
   ...APPROVAL_BOUNDARY_PATHS_V2,
@@ -60,8 +57,12 @@ function parseJson(output, blocker) {
   catch { throw new Error(blocker); }
 }
 
-function exactApprovalToken(prNumber, headSha) {
+function bootstrapApprovalToken(prNumber, headSha) {
   return 'APPROVE_OPENCLAW_SQUASH_MERGE:' + prNumber + ':' + headSha;
+}
+
+function workflowApprovalToken(prNumber, headSha) {
+  return 'APPROVE_PROTECTED_WORKFLOW_SQUASH_MERGE:' + prNumber + ':' + headSha;
 }
 
 export function protectedOpenClawMergeFields() {
@@ -93,10 +94,21 @@ export function validateProtectedOpenClawMergeCommand(command = {}, { now = new 
   if (!reviewRunId || !reviewRunAttempt || !reviewJobId || !reviewArtifactId) return fail('PROTECTED_MERGE_REVIEW_IDENTITY_INVALID');
   if (!API_DIGEST.test(reviewArtifactDigest)) return fail('PROTECTED_MERGE_ARTIFACT_DIGEST_INVALID');
   if (!SHA256.test(reviewPayloadSha256)) return fail('PROTECTED_MERGE_PAYLOAD_DIGEST_INVALID');
-  if (reviewMode !== PROTECTED_OPENCLAW_MERGE_MODE) return fail('PROTECTED_MERGE_REVIEW_MODE_INVALID');
-  if (reviewFindingCode !== PROTECTED_OPENCLAW_MERGE_FINDING) return fail('PROTECTED_MERGE_FINDING_INVALID');
+  if (![PROTECTED_OPENCLAW_MERGE_MODE, PROTECTED_OPERATOR_WORKFLOW_MERGE_MODE].includes(reviewMode)) {
+    return fail('PROTECTED_MERGE_REVIEW_MODE_INVALID');
+  }
+  if (reviewMode === PROTECTED_OPENCLAW_MERGE_MODE
+    && reviewFindingCode !== PROTECTED_OPENCLAW_MERGE_FINDING) {
+    return fail('PROTECTED_MERGE_FINDING_INVALID');
+  }
+  if (reviewMode === PROTECTED_OPERATOR_WORKFLOW_MERGE_MODE && reviewFindingCode !== '') {
+    return fail('PROTECTED_MERGE_FINDING_NOT_ALLOWED');
+  }
   if (mergeMethod !== 'squash') return fail('PROTECTED_MERGE_METHOD_INVALID');
-  if (mergeApprovalToken !== exactApprovalToken(prNumber, expectedHead)) return fail('PROTECTED_MERGE_APPROVAL_TOKEN_INVALID');
+  const expectedToken = reviewMode === PROTECTED_OPENCLAW_MERGE_MODE
+    ? bootstrapApprovalToken(prNumber, expectedHead)
+    : workflowApprovalToken(prNumber, expectedHead);
+  if (mergeApprovalToken !== expectedToken) return fail('PROTECTED_MERGE_APPROVAL_TOKEN_INVALID');
   if (!Number.isFinite(nowMs) || !Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs) return fail('PROTECTED_MERGE_EXPIRED');
 
   return Object.freeze({
@@ -190,34 +202,7 @@ function validateArtifactMetadata(artifact, command) {
   );
 }
 
-export function validateProtectedOpenClawMergeChecks(checks) {
-  if (!Array.isArray(checks) || checks.length < 1) return false;
-  const identities = new Set();
-  const successfulRequiredWorkflows = new Set();
-  const requiredWorkflows = new Set(PROTECTED_OPENCLAW_MERGE_REQUIRED_WORKFLOWS);
-
-  for (const check of checks) {
-    const name = String(check?.name || '').trim();
-    const workflow = String(check?.workflow || '').trim();
-    const state = String(check?.state || '').trim().toUpperCase();
-    if (!name || !workflow || !state) return false;
-
-    const identity = `${workflow}\0${name}`;
-    if (identities.has(identity)) return false;
-    identities.add(identity);
-
-    if (state === 'SUCCESS') {
-      if (requiredWorkflows.has(workflow)) successfulRequiredWorkflows.add(workflow);
-      continue;
-    }
-    if (state === 'SKIPPED' && PROTECTED_OPENCLAW_NEUTRAL_SKIPPED_CHECKS.has(identity)) continue;
-    return false;
-  }
-
-  return PROTECTED_OPENCLAW_MERGE_REQUIRED_WORKFLOWS.every((workflow) => (
-    successfulRequiredWorkflows.has(workflow)
-  ));
-}
+export const validateProtectedOpenClawMergeChecks = validateProtectedMergeCheckRows;
 
 export function validateProtectedOpenClawBootstrapFindings(findings, expectedCode = PROTECTED_OPENCLAW_MERGE_FINDING) {
   if (!Array.isArray(findings)
@@ -248,13 +233,18 @@ function validateArtifactPayload(artifact, pull, command) {
     workflowRunAttempt: command.reviewRunAttempt,
   });
   const findings = Array.isArray(artifact?.receipt?.findings) ? artifact.receipt.findings : [];
+  if (!validation.valid
+    || artifact?.reviewMode !== command.reviewMode
+    || artifact?.receipt?.riskTier !== 'high'
+    || artifact?.receipt?.assuranceMode !== 'specialist'
+    || artifact?.receipt?.blocker !== '') return false;
+
+  if (command.reviewMode === PROTECTED_OPERATOR_WORKFLOW_MERGE_MODE) {
+    return artifact?.receipt?.verdict === 'clean' && findings.length === 0;
+  }
+
   return Boolean(
-    validation.valid
-    && artifact?.reviewMode === command.reviewMode
-    && artifact?.receipt?.riskTier === 'high'
-    && artifact?.receipt?.assuranceMode === 'specialist'
-    && artifact?.receipt?.blocker === ''
-    && artifact?.receipt?.verdict === 'findings'
+    artifact?.receipt?.verdict === 'findings'
     && Array.isArray(artifact?.receipt?.reviewScope)
     && artifact.receipt.reviewScope.includes('operator-protected-bootstrap-required')
     && validateProtectedOpenClawBootstrapFindings(findings, command.reviewFindingCode)
@@ -309,14 +299,48 @@ export function buildProtectedOpenClawMergePlan(command = {}, options = {}) {
   });
 }
 
+export function buildProtectedOperatorWorkflowDispatchArgs(plan, pull, headTree) {
+  if (!plan?.ok || plan.normalized?.reviewMode !== PROTECTED_OPERATOR_WORKFLOW_MERGE_MODE
+    || !pull?.head?.ref || !SHA40.test(String(headTree || '').toLowerCase())) return null;
+  return Object.freeze([
+    'workflow', 'run', PROTECTED_OPERATOR_MERGE_WORKFLOW,
+    '--repo', 'Cheekyfellastef/stephan-os',
+    '--ref', 'main',
+    '-f', 'mode=' + PROTECTED_OPERATOR_MERGE_WORKFLOW_MODE,
+    '-f', 'pr_number=' + plan.normalized.prNumber,
+    '-f', 'expected_branch=' + pull.head.ref,
+    '-f', 'expected_head=' + plan.normalized.expectedHead,
+    '-f', 'expected_head_tree=' + String(headTree).toLowerCase(),
+    '-f', 'expected_base=' + plan.normalized.expectedBase,
+    '-f', 'independent_review_run_id=' + plan.normalized.reviewRunId,
+    '-f', 'independent_review_run_attempt=' + plan.normalized.reviewRunAttempt,
+    '-f', 'independent_review_artifact_id=' + plan.normalized.reviewArtifactId,
+    '-f', 'independent_review_artifact_digest=' + plan.normalized.reviewArtifactDigest,
+    '-f', 'independent_review_payload_sha256=' + plan.normalized.reviewPayloadSha256,
+  ]);
+}
+
+function latestMatchingWorkflowRun(payload, plan) {
+  const runs = Array.isArray(payload?.workflow_runs) ? payload.workflow_runs : [];
+  return runs.find((run) => (
+    run?.name === 'Protected Operator Merge Queue Boundary'
+    && run?.event === 'workflow_dispatch'
+    && run?.head_sha === plan.normalized.expectedBase
+    && String(run?.display_title || '').includes(plan.normalized.expectedHead)
+  )) || null;
+}
+
 export async function executeProtectedOpenClawMergeOnBattleBridge(command = {}, options = {}) {
   const plan = buildProtectedOpenClawMergePlan(command, options);
   if (!plan.ok) return plan;
   const platform = options.platform || process.platform;
   if (platform !== 'win32') return fail('PROTECTED_MERGE_WINDOWS_REQUIRED');
   const runCommand = options.runCommand || defaultRun;
-  for (const path of [plan.repositoryRoot, plan.privateKeyPath, plan.issuerScript, plan.bridgeScript]) {
-    if (!existsSync(path)) return fail('PROTECTED_MERGE_LOCAL_IDENTITY_MISSING', { path });
+  if (!existsSync(plan.repositoryRoot)) return fail('PROTECTED_MERGE_LOCAL_IDENTITY_MISSING', { path: plan.repositoryRoot });
+  if (plan.normalized.reviewMode === PROTECTED_OPENCLAW_MERGE_MODE) {
+    for (const path of [plan.privateKeyPath, plan.issuerScript, plan.bridgeScript]) {
+      if (!existsSync(path)) return fail('PROTECTED_MERGE_LOCAL_IDENTITY_MISSING', { path });
+    }
   }
 
   mkdirSync(plan.requestRoot, { recursive: true });
@@ -330,9 +354,7 @@ export async function executeProtectedOpenClawMergeOnBattleBridge(command = {}, 
       'pr', 'checks', String(plan.normalized.prNumber), '--repo', 'Cheekyfellastef/stephan-os',
       '--json', 'name,state,workflow',
     ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_CHECKS_FAILED').stdout, 'PROTECTED_MERGE_CHECKS_JSON_INVALID');
-    if (!validateProtectedOpenClawMergeChecks(checks)) {
-      return fail('PROTECTED_MERGE_CHECKS_NOT_ALL_SUCCESS');
-    }
+    if (!validateProtectedOpenClawMergeChecks(checks)) return fail('PROTECTED_MERGE_CHECKS_NOT_ALL_SUCCESS');
 
     const reviewRun = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
       'api', 'repos/Cheekyfellastef/stephan-os/actions/runs/' + plan.normalized.reviewRunId,
@@ -361,6 +383,45 @@ export async function executeProtectedOpenClawMergeOnBattleBridge(command = {}, 
       'api', 'repos/Cheekyfellastef/stephan-os/pulls/' + plan.normalized.prNumber,
     ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_FINAL_PR_PREFLIGHT_FAILED').stdout, 'PROTECTED_MERGE_FINAL_PR_JSON_INVALID');
     if (!validateLivePullRequest(pullAgain, plan.normalized)) return fail('PROTECTED_MERGE_FINAL_PR_IDENTITY_CHANGED');
+
+    if (plan.normalized.reviewMode === PROTECTED_OPERATOR_WORKFLOW_MERGE_MODE) {
+      const main = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
+        'api', 'repos/Cheekyfellastef/stephan-os/branches/main',
+      ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_MAIN_PREFLIGHT_FAILED').stdout, 'PROTECTED_MERGE_MAIN_JSON_INVALID');
+      if (main?.commit?.sha !== plan.normalized.expectedBase) return fail('PROTECTED_MERGE_MAIN_IDENTITY_CHANGED');
+      const headCommit = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
+        'api', 'repos/Cheekyfellastef/stephan-os/git/commits/' + plan.normalized.expectedHead,
+      ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_HEAD_TREE_FAILED').stdout, 'PROTECTED_MERGE_HEAD_TREE_JSON_INVALID');
+      const headTree = String(headCommit?.tree?.sha || '').toLowerCase();
+      const dispatchArgs = buildProtectedOperatorWorkflowDispatchArgs(plan, pullAgain, headTree);
+      if (!dispatchArgs) return fail('PROTECTED_MERGE_WORKFLOW_INPUTS_INVALID');
+      runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, dispatchArgs, {
+        cwd: plan.repositoryRoot,
+      }, 'PROTECTED_MERGE_WORKFLOW_DISPATCH_FAILED');
+      const runs = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
+        'api', 'repos/Cheekyfellastef/stephan-os/actions/workflows/' + PROTECTED_OPERATOR_MERGE_WORKFLOW + '/runs?event=workflow_dispatch&per_page=20',
+      ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_WORKFLOW_RUN_LOOKUP_FAILED').stdout, 'PROTECTED_MERGE_WORKFLOW_RUN_LOOKUP_JSON_INVALID');
+      const run = latestMatchingWorkflowRun(runs, plan);
+      return Object.freeze({
+        ok: true,
+        finalVerdict: 'PROTECTED_OPERATOR_MERGE_WORKFLOW_DISPATCHED',
+        prNumber: plan.normalized.prNumber,
+        expectedHead: plan.normalized.expectedHead,
+        expectedHeadTree: headTree,
+        expectedBase: plan.normalized.expectedBase,
+        reviewRunId: plan.normalized.reviewRunId,
+        reviewArtifactId: plan.normalized.reviewArtifactId,
+        workflow: PROTECTED_OPERATOR_MERGE_WORKFLOW,
+        workflowRunId: Number(run?.id || 0),
+        workflowRunStatus: String(run?.status || 'queued'),
+        workflowRunConclusion: String(run?.conclusion || ''),
+        directMergePerformed: false,
+        arbitraryShellAllowed: false,
+        adminBypassAllowed: false,
+        directMainWriteAllowed: false,
+        forcePushAllowed: false,
+      });
+    }
 
     writeFileSync(plan.claimsPath, JSON.stringify(plan.claims, null, 2) + '\n', 'utf8');
     const issuer = runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.node, [plan.issuerScript, plan.claimsPath], {
