@@ -35,7 +35,7 @@ function Test-TaskAction {
         $execute = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables([string]$action.Execute))
         if ($LauncherId -eq 'openclaw-gateway') {
             $expectedGateway = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE '.openclaw\gateway.cmd'))
-            if ([string]::Equals($execute, $expectedGateway, [System.StringComparison]::OrdinalIgnoreCase)
+            if ([string]::Equals($execute, $expectedGateway, [System.StringComparison]::OrdinalIgnoreCase) `
                 -and [string]::IsNullOrWhiteSpace([string]$action.Arguments)) { return $true }
         }
         if (-not [string]::Equals($execute, $wscriptPath, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
@@ -278,7 +278,7 @@ $openClawHealth = Get-OpenClawIdentityHealth
 $backendFreshness = Get-BackendFreshnessHealth -ExpectedSourceHead $sourceHead -BackendTask $after.backend
 $afterWorktree = Assert-CanonicalSourceWorktreeClean -GitExecutable $sourceControlExecutable -RepositoryRoot $repoRoot
 $mailboxTask = $after.mailbox
-$mailboxLastRunMs = if ($mailboxTask.lastRunTimeUtc) { ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($mailboxTask.lastRunTimeUtc)).TotalMilliseconds } else { [double]::PositiveInfinity }
+$mailboxLastRunMs = if ($mailboxTask.lastRunTimeUtc) { ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse([string]$mailboxTask.lastRunTimeUtc)).TotalMilliseconds } else { [double]::PositiveInfinity }
 $mailboxHealthy = $mailboxTask.present `
     -and $mailboxTask.actionCanonical `
     -and $mailboxTask.authorityCanonical `
