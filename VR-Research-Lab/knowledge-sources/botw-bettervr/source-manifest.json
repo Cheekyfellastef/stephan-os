@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "source_id": "github-crementif-botw-bettervr",
+  "title": "Breath of the Wild BetterVR",
+  "priority": "P0",
+  "status": "source-packet-admitted-awaiting-registry-reconciliation",
+  "repository": "Crementif/BotW-BetterVR",
+  "snapshot_release": "0.9.20",
+  "snapshot_commit": "0e1053d58cdfbd592522dc892b1770418a1af009",
+  "snapshot_date": "2026-07-28",
+  "licence": "MIT for BetterVR; linked game, emulator, graphic packs and other dependencies retain their own terms",
+  "evidence_role": "Direct public implementation evidence for emulator-layer flat-to-VR conversion using a Vulkan interception layer, OpenXR presentation, translated game-code patches, stereo frame scheduling, room-scale embodiment and physical interaction.",
+  "canonical_source": "https://github.com/Crementif/BotW-BetterVR",
+  "release_source": "https://github.com/Crementif/BotW-BetterVR/releases/tag/0.9.20",
+  "game_boundary": "Requires a legal Wii U copy of The Legend of Zelda: Breath of the Wild. BetterVR states that it ships no game files and modifies code rather than game data.",
+  "current_runtime_notes": {
+    "emulator": "Cemu 2.6 or newer; 2.6 is the tested version in the current README",
+    "graphics_api": "Vulkan",
+    "vr_api": "OpenXR",
+    "wii_u_update": "V208",
+    "fps_plus_required": true
+  },
+  "distinct_value": [
+    "emulator-layer VR conversion rather than direct native-game injection",
+    "fully stereo-rendered 6DoF without alternate-eye rendering",
+    "PowerPC game-code patches coordinated with emulator/Vulkan presentation",
+    "Vulkan to D3D12 interoperability for OpenXR submission",
+    "full hands and arms with physical weapons, gestures, melee and bow drawing",
+    "first-person and optional third-person VR presentation",
+    "room-scale and camera-comfort handling across movement, mounting and climbing",
+    "large mod compatibility because the VR layer avoids modifying game data",
+    "in-game settings and diagnostics plus fail-visible setup requirements"
+  ],
+  "known_boundaries": [
+    "Version 1.0 is being actively worked toward but is not released at the admitted snapshot.",
+    "The current public release is 0.9.20, not 1.0.",
+    "Performance is constrained by CPU-heavy Wii U emulation as well as VR rendering.",
+    "The README currently recommends alternatives to Meta/Oculus Link for Quest due to interpolation artefacts; this is upstream operational guidance, not local Quest 3 proof.",
+    "Do not infer that Cemu, Nintendo game code, game assets, community graphic packs or third-party dependencies are MIT because BetterVR itself is MIT.",
+    "Do not reproduce Nintendo game data or require an unauthorised game image for research.",
+    "Any local Battle Bridge or Quest 3 experiment remains separately approval- and proof-gated."
+  ],
+  "programme_links": [1591, 1593, 1594, 1595, 1596, 1597, 1605, 1606, 1643],
+  "refresh_owner": 1596,
+  "promotion_rule": "Promote only exact-release, evidence-linked methods from the MIT BetterVR source while keeping emulator, game, graphic-pack and dependency rights separate. Treat the emulator-layer conversion architecture as reusable research knowledge, not as proof that Starfield or other native PC games expose the same hooks."
+}
