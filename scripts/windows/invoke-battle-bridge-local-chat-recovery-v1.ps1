@@ -63,7 +63,7 @@ if ($Action -ne 'PROBE_BATTLE_BRIDGE') {
     Add-Type -AssemblyName System.Windows.Forms
     $label = if ($Action -eq 'WAKE_CANONICAL_MAILBOX') { 'wake the canonical GitHub command mailbox' } else { 'wake the canonical Recovery Mesh' }
     $answer = [System.Windows.Forms.MessageBox]::Show(
-        "Stephanos Recovery Lifeboat requests permission to $label.`r`n`r`nNo arbitrary shell, Git mutation, deployment or PC restart is permitted by this action.",
+        "Stephanos Recovery Lifeboat requests permission to ${label}.`r`n`r`nNo arbitrary shell, Git mutation, deployment or PC restart is permitted by this action.",
         'Stephanos bounded recovery approval',
         [System.Windows.Forms.MessageBoxButtons]::YesNo,
         [System.Windows.Forms.MessageBoxIcon]::Warning,
