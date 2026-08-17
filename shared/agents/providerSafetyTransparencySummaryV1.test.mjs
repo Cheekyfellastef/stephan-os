@@ -83,7 +83,7 @@ test('confirmed provider intervention evidence and inferred anomalies stay separ
     event(),
     event({
       eventId: 'event-2',
-      classification: 'INFERRED_LATENCY_ANOMY',
+      classification: 'INFERRED_LATENCY_ANOMALY',
       noticeFingerprint: hash('b'),
       noticeSummaryRedacted: null,
       latencyMs: 1_000,
