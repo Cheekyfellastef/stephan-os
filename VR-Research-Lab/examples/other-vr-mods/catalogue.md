@@ -1,12 +1,12 @@
 # Flat-to-VR Mod Catalogue
 
-Last verified: 2026-07-24
+Catalogue baseline: 2026-07-24. UEVR licence/access evidence re-verified: 2026-08-17.
 
-This is a research index, not a redistribution archive. Inclusion means the project contains potentially useful evidence for flat-to-VR engineering. It does not imply compatibility, safety, quality, or permission to reuse all code.
+This is a research index, not a redistribution archive. Inclusion means the project contains potentially useful evidence for flat-to-VR engineering. It does not imply compatibility, safety, quality, or permission to reuse all code. Public readability is not a reuse licence: restricted repositories remain metadata/link and non-expressive architectural-observation sources only.
 
 | Project | Target / scope | Engine or layer | VR model | Corpus class | Licence / reuse status | Research value |
 |---|---|---|---|---|---|---|
-| UEVR | Broad UE4/UE5 game support | Unreal Engine native stereo and process injection | 6DOF HMD, stereo, optional motion controls and room scale | Open source | MIT; verify upstream revision before analysis | Universal injection, native stereo modes, UI projection, object hooks |
+| UEVR | Broad UE4/UE5 game support | Unreal Engine native stereo and process injection | 6DOF HMD, stereo, optional motion controls and room scale | Publicly readable, restricted backend + MIT frontend | Backend head `74b76bc9428a906cbdc69de3ebc1905fd0e9cc57` has licence blob `9fe814da6591bf98ab8f1f90ece0f6dcc8ca9604` stating all rights reserved: metadata/link and non-expressive architecture observations only. `uevr-frontend` head `dd6d372813097668a67e107c543f513d3170dc7a` has MIT licence blob `566b2a33fcdae086c79da6fc2ec089b96707d8cc` and is the only UEVR code repository currently eligible for exact-pin ingestion. | Universal injection, native stereo modes, UI projection, object hooks |
 | REFramework | RE Engine games | DX11/DX12 mod framework and scripting layer | VR support plus scripting/plugins | Open source | MIT | Engine-specific framework design, render hooks, scripting bridge |
 | UnityVRMod | Broad Unity games | BepInEx, Mono/IL2CPP, DX11 | OpenXR/OpenVR, 6DOF injection | Open source | GPL-3.0 | Version-independent Unity runtime access, camera discovery, backend abstraction |
 | UUVR | Broad Unity games | Unity patcher and XR packages | OpenXR/OpenVR support | Open source | Verify upstream licence and active status | Universal Unity patching and XR bootstrap patterns |
@@ -21,7 +21,9 @@ This is a research index, not a redistribution archive. Inclusion means the proj
 
 ## Primary upstream references
 
-- UEVR: https://github.com/praydog/UEVR
+- UEVR backend: https://github.com/praydog/UEVR — public-to-read but restricted at the pinned evidence above; do not clone into the durable corpus.
+- UEVR frontend: https://github.com/praydog/uevr-frontend — MIT only at the exact pinned evidence above; revalidate before ingestion.
+- UESDK: https://github.com/praydog/UESDK — anonymously unavailable/restricted as observed on 2026-08-17; metadata/link-only unless a later evidence review proves access and licence.
 - REFramework: https://github.com/praydog/REFramework
 - UnityVRMod: https://github.com/NewUnityModder/UnityVRMod
 - UUVR: https://github.com/Raicuparta/uuvr
@@ -41,4 +43,4 @@ The next pass should cover publicly verifiable conversions and frameworks for:
 - Minecraft, Valheim, Deep Rock Galactic, Outer Wilds, and Subnautica VR ecosystems
 - Cyberpunk 2077, Red Dead Redemption 2, GTA V, Starfield, and other release-only conversions as documentation-only entries
 
-Each addition must follow the corpus policy and record its primary source, licence, revision, and confidence.
+Each addition must follow the corpus policy and record its primary source, access status, licence classification, exact observed revision, permitted action and confidence before any source ingestion is allowed.

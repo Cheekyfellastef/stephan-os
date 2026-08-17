@@ -2,18 +2,22 @@
 
 ## Role in the Flat-to-VR Research Lab
 
-UEVR is the primary reference architecture for broad, reusable flat-to-VR conversion across Unreal Engine 4 and Unreal Engine 5 titles. It should be studied as a systems platform rather than as a single game mod.
+UEVR is the primary architectural reference for broad, reusable flat-to-VR conversion across Unreal Engine 4 and Unreal Engine 5 titles. It should be studied as a systems platform rather than treated as one uniformly reusable open-source codebase.
 
-## Canonical public sources
+## Evidence-classified upstreams
 
-- `praydog/UEVR` — backend, rendering integration, OpenXR/OpenVR support, UObjectHook, camera, UI, input and plugin surfaces.
-- `praydog/UESDK` — Unreal object, reflection and engine integration layer used by UEVR.
-- `praydog/uevr-frontend` — injector and process-selection frontend. The repository is MIT licensed.
-- Official UEVR documentation and release notes.
+Evidence was re-verified on 2026-08-17. Public readability is not reuse permission, and every permitted action remains bound to the exact evidence below.
 
-Pin every imported repository to a commit SHA and preserve its upstream licence files. Do not flatten upstream repositories into Stephanos source or remove attribution.
+- `praydog/UEVR` — backend, rendering integration, OpenXR/OpenVR support, UObjectHook, camera, UI, input and plugin surfaces. Exact observed head `74b76bc9428a906cbdc69de3ebc1905fd0e9cc57`; `LICENSE` blob `9fe814da6591bf98ab8f1f90ece0f6dcc8ca9604` states all rights reserved. Classification: `PUBLIC_READABLE_RESTRICTED`. Permitted treatment: repository URL/head/licence metadata plus non-expressive architectural observations only. Do not clone, vendor, inventory implementation files, or copy source into the durable Stephanos corpus.
+- `praydog/UESDK` — Unreal object/reflection and engine-integration upstream referenced by UEVR. Anonymous GitHub repository resolution returned 404 on 2026-08-17. Classification: `UPSTREAM_UNAVAILABLE_OR_RESTRICTED`. Permitted treatment: metadata/link-only. Do not require a clone and do not infer a reuse licence from UEVR references.
+- `praydog/uevr-frontend` — injector and process-selection frontend. Exact observed head `dd6d372813097668a67e107c543f513d3170dc7a`; `LICENSE` blob `566b2a33fcdae086c79da6fc2ec089b96707d8cc` is MIT. Classification: `PUBLIC_MIT_PINNED`. This is the only UEVR code repository currently eligible for exact-pin ingestion, and only after the evidence is revalidated immediately before ingestion.
+- Official UEVR documentation and release notes — link/index/reference material only unless an item has separately proven redistribution terms.
+
+If any upstream head, licence blob, access status, repository identity or permitted-action classification differs from the pinned evidence, fail closed as `EVIDENCE_DRIFT` and do not ingest code. Never substitute a moved head or a similarly named repository silently.
 
 ## Architecture topics to extract
+
+The topics below describe research questions. For restricted or unavailable upstreams, derive only non-expressive observations from permitted public evidence; do not copy implementation source.
 
 ### Rendering
 
@@ -66,39 +70,45 @@ Pin every imported repository to a commit SHA and preserve its upstream licence 
 
 ## What should enter the corpus
 
-- Public source repositories with intact history, licence and attribution
-- Official documentation snapshots or indexed links
-- Release notes and API-change summaries
-- Public example plugins and Lua scripts
-- Public game profiles whose redistribution terms allow it
-- Derived architecture notes, diagrams, tests and reusable patterns
+For the UEVR family specifically:
+
+- the exact MIT-pinned `uevr-frontend` repository may enter the source corpus after pre-ingestion evidence validation;
+- UEVR backend and UESDK remain external evidence references, with only URL/head/access/licence metadata and non-expressive derived architectural observations retained;
+- official documentation may be indexed or linked subject to its own terms;
+- derived architecture notes, diagrams, tests and reusable patterns must not reproduce restricted implementation expression.
+
+More generally, a public source repository may enter only when its exact revision, access status and reuse licence have been positively proven and the permitted action explicitly allows ingestion.
 
 ## What should remain external or private
 
-- Game files and proprietary Unreal assets
-- Profiles or plugins without clear redistribution permission
+- restricted public repositories whose source is readable but not licensed for reuse
+- unavailable or access-restricted upstreams
+- game files and proprietary Unreal assets
+- profiles or plugins without clear redistribution permission
 - Discord-only material unless the author has made redistribution terms explicit
-- User-downloaded binaries where licence or provenance is uncertain
+- user-downloaded binaries where licence or provenance is uncertain
 
 ## Relationship to Starfield
 
 Starfield is not an Unreal game, so UEVR cannot be dropped into it directly. Its value is architectural:
 
-- how to discover engine objects at runtime
-- how to inject stereo rendering without source access
-- how to expose reusable camera, UI and controller layers
-- how to separate universal machinery from per-game profiles
-- how to build a plugin ecosystem instead of one monolithic conversion
+- how reusable conversion systems separate engine discovery, rendering, camera, UI and controller concerns
+- how stereo-rendering approaches can be compared without copying restricted implementation
+- how plugin/profile boundaries can inform a Creation Engine 2-specific architecture
+- how evidence and per-game adaptation should remain separate from universal machinery
 
-The Starfield project should borrow these patterns while implementing Creation Engine 2-specific hooks through SFSE and the game's D3D12 renderer.
+The Starfield project should use licence-compatible patterns and independently derived design knowledge while implementing Creation Engine 2-specific hooks through its own authorised stack.
 
 ## Initial extraction deliverables
 
-1. Repository and licence manifest pinned to exact commits.
-2. Rendering-mode comparison note.
-3. UObjectHook and reflection architecture map.
-4. OpenXR input and motion-control map.
-5. UI projection and cutscene-comfort map.
-6. Plugin API catalogue for C++, Lua and Blueprint.
-7. Reusable design patterns applicable outside Unreal Engine.
-8. A list of UEVR-specific assumptions that must not leak into the Starfield architecture.
+1. Evidence manifest recording each upstream's exact repository identity, observed SHA/access state, licence classification, licence blob where available, permitted action and observation date.
+2. Exact-pin manifest and source inventory for the MIT `uevr-frontend` only.
+3. Rendering-mode comparison note based on permitted public evidence.
+4. UObject/reflection architecture map expressed as non-expressive derived observations where the underlying source is restricted or unavailable.
+5. OpenXR input and motion-control conceptual map.
+6. UI projection and cutscene-comfort conceptual map.
+7. Plugin/API capability catalogue that distinguishes documented capabilities from source-derived evidence.
+8. Reusable design patterns applicable outside Unreal Engine, with provenance and licence boundaries.
+9. A list of UEVR-specific assumptions that must not leak into the Starfield architecture.
+
+No acceptance criterion may require cloning the restricted UEVR backend or unavailable/restricted UESDK upstream.
