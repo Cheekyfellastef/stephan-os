@@ -115,15 +115,19 @@ function snapshotDataOnly(value, state = { nodes: 0 }, depth = 0, seen = new Set
 
   try {
     if (Array.isArray(value)) {
-      if (Object.getPrototypeOf(value) !== Array.prototype || value.length > MAX_ARRAY_ITEMS) return null;
+      if (Object.getPrototypeOf(value) !== Array.prototype) return null;
       if (Object.getOwnPropertySymbols(value).length > 0) return null;
       const descriptors = Object.getOwnPropertyDescriptors(value);
+      const lengthDescriptor = descriptors.length;
+      const length = lengthDescriptor?.value;
+      if (!lengthDescriptor || lengthDescriptor.get || lengthDescriptor.set
+          || !Number.isSafeInteger(length) || length < 0 || length > MAX_ARRAY_ITEMS) return null;
       const descriptorKeys = Object.keys(descriptors);
-      const expectedKeys = new Set(['length', ...Array.from({ length: value.length }, (_, index) => String(index))]);
+      const expectedKeys = new Set(['length', ...Array.from({ length }, (_, index) => String(index))]);
       if (descriptorKeys.some((key) => !expectedKeys.has(key))) return null;
       seen.add(value);
       const result = [];
-      for (let index = 0; index < value.length; index += 1) {
+      for (let index = 0; index < length; index += 1) {
         const descriptor = descriptors[String(index)];
         if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value') || descriptor.get || descriptor.set) {
           seen.delete(value);
@@ -418,7 +422,7 @@ function resultForSentinel(input, sentinel) {
 
 export function planAutonomousFailureSentinelHandoffV1(rawInput = {}) {
   const input = snapshotInput(rawInput);
-  if (!input) return blockedResult(rawInput, '', 'handoff-envelope-not-data-only-or-closed-world');
+  if (!input) return blockedResult(null, '', 'handoff-envelope-not-data-only-or-closed-world');
 
   const repository = text(input.repository);
   const expectedSourceHead = text(input.expectedSourceHead).toLowerCase();
