@@ -2,89 +2,97 @@
 
 ## Purpose
 
-M1 decides what may continue while Battle Bridge is unhealthy. M2 converts eligible `CONTINUE` tasks into source-only execution grants. M3 binds one M2 grant to the **existing** Mission Orchestrator worker action, immutable worker-queue item schema, Shared Workspace handoff schema and mission completion event.
+M1 decides what may continue while Battle Bridge is unhealthy. M2 converts eligible `CONTINUE` tasks into source-only execution grants. M3 binds one admitted M2 grant to the **existing** Mission Orchestrator external-lane contracts and preflights portable completion evidence back into the existing mission lifecycle.
 
-M3 does not create or write a queue, create a worker, select a new route, issue a lease, publish Shared Workspace state, mutate source, merge, deploy or touch Battle Bridge runtime state.
+M3 never writes the worker queue, writes Shared Workspace state, creates a scheduler, starts a worker, selects a new route, issues a lease, mutates source, merges, deploys or touches runtime state.
 
-## Existing machinery reused
+## Canonical machinery reused
 
-M3 deliberately reuses the machinery admitted through merged #1746:
+M3 reuses only already-admitted contracts:
 
 ```text
 missionOrchestratorWorker.buildMissionWorkerAction()
 stephanos.mission-worker-queue-item.v1
 sharedAgentWorkspaceStore.createSharedWorkspaceHandoffRecord()
+sharedAgentWorkspaceStore.validateSharedWorkspaceRecord()
 stephanos.external-build-lane-handoff.v1
 missionOrchestrator.applyMissionOrchestratorEvent()
 AGENT_RESULT_RECEIVED
 ```
 
-The production `missionOrchestratorWorkerService` remains the only owner of durable queue publication and Shared Workspace external-lane handoff publication. M3 prepares and preflights candidate records only.
+The production `missionOrchestratorWorkerService` remains the sole durable queue and Shared Workspace publisher.
 
-## Grant binding
+## Durable mission-state boundary
 
-The public build input contains exactly:
+M3 accepts only a canonical Mission Orchestrator state already durably in:
 
 ```text
-repository
-expectedSourceHead
-nowUtc
-executionGrant
-missionState
+AGENT_IMPLEMENTATION
 ```
 
-The M2 grant must remain:
+`REPAIR_REQUIRED` is deliberately **not** projected locally. The canonical mission service must first persist its existing `REPAIR_STARTED` transition. Only the resulting durable `AGENT_IMPLEMENTATION` revision may be handed to M3.
+
+This prevents an external queue candidate from being bound to a revision that exists only inside a pure preview function.
+
+A mission with an already-running dispatch is also rejected. M3 cannot take over work owned by another adapter.
+
+## M2 grant binding
+
+The grant must remain:
 
 - `stephanos.github-continuity-execution-grant.v1`;
-- bound to the same repository and 40-character source head;
+- bound to the same repository and exact 40-character source head;
 - source-only and explicitly non-Windows;
-- bound to a safe mission/task identity;
+- bound to the same mission/task identity;
 - bound to its already-selected route and adapter;
-- bound to the existing capacity receipt for GitHub/Foundry routes;
-- free of takeover, merge, deploy, runtime, protected-merge, lease-seizure, duplicate-dispatch and arbitrary-command authority.
+- bound to a capacity receipt and at least one safe proof reference for external routes;
+- free of takeover, source, merge, deploy, runtime, protected-merge, lease-seizure, duplicate-dispatch and arbitrary-command authority.
 
-M3 does not reinterpret unavailable capacity as available.
+M3 does not reinterpret missing capacity evidence as availability.
 
-## Mission binding
+## Route boundary
 
-M3 accepts only a canonical Mission Orchestrator state for the same repository and mission ID. The state must be in `AGENT_IMPLEMENTATION` or the existing bounded repair transition and must not already have a running dispatch.
-
-For repair work, M3 uses `projectMissionWorkerActionState()` to project the existing canonical `REPAIR_STARTED` transition. It then calls `buildMissionWorkerAction()` with the M2 route/capacity binding.
-
-The returned action must still match the M2 adapter, route, receipt and proof references byte-for-byte before a handoff candidate can exist.
-
-## External routes
-
-Only the external routes already supported by the Mission Orchestrator worker publisher are externalized:
+Only routes already supported by the canonical external publisher are externalized:
 
 ```text
 CHATGPT_GITHUB -> chatgpt-github
 FOUNDRY_FORGE -> foundry-forge
 ```
 
-A valid `CODEX` M2 grant is classified `EXISTING_IN_PROCESS_ROUTE_PRESERVED`; M3 creates no external queue or workspace candidate for it. This avoids creating a second Codex dispatch path and allows the existing route to remain dormant when provider capacity is exhausted.
+A valid `CODEX` grant stays on its existing in-process path and produces no external candidate. This prevents M3 from becoming a second Codex dispatch mechanism and allows GitHub Continuity to remain useful while Codex capacity is empty.
+
+## Canonical correlation identity
+
+The production external publisher uses the Mission Worker action ID as the Shared Workspace handoff ID. M3 preserves that identity exactly:
+
+```text
+queueItem.actionId
+== canonical Mission Worker actionId
+== Shared Workspace handoffId
+== M3 handoffId
+```
+
+M3 does **not** invent a separate continuity handoff identity.
+
+The M2 `grantId`, `taskId` and exact `expectedSourceHead` are carried inside the existing handoff body as additional continuity bindings; they do not replace the canonical action correlation key.
+
+Before exposing a handoff candidate, M3 runs the existing Shared Workspace record validator and verifies the returned record retained the exact canonical action ID, correlation ID, route, receipt and zero-authority body fields. If Shared Workspace ID normalization would change the action ID, M3 fails closed rather than silently publishing under a different identity.
 
 ## Candidate records
 
-For an external grant M3 returns two inert candidates:
+For an admitted external grant, M3 prepares only:
 
-1. `stephanos.mission-worker-queue-item.v1`
-2. the existing Shared Workspace `HANDOFF` record containing `stephanos.external-build-lane-handoff.v1`
+1. one `stephanos.mission-worker-queue-item.v1` candidate;
+2. one existing-kind Shared Workspace `HANDOFF` candidate containing `stephanos.external-build-lane-handoff.v1`.
 
-Both are derived from the canonical Mission Worker action. They are not written by M3.
-
-The handoff body additionally carries the M2 `grantId`, `taskId` and `expectedSourceHead` so completion evidence can bind back to the exact continuity decision rather than only the mission label.
-
-A deterministic `continuity-handoff-*` identity is derived from the exact M2 grant and canonical Mission Worker `actionId`. Re-evaluating an unchanged mission revision and grant therefore yields the same identity and lets the existing immutable publisher perform its normal idempotency handling.
+The canonical production service remains responsible for immutable publication and its existing idempotency/rollback behavior. M3 has no queue path or workspace writer.
 
 ## Portable completion receipt
 
-M3 defines `stephanos.github-continuity-external-completion.v1` as a portable evidence envelope for an external lane result.
-
-A completion binds:
+M3 defines `stephanos.github-continuity-external-completion.v1` as a portable result envelope bound to:
 
 ```text
-handoffId
+handoffId/actionId
 grantId
 missionId
 taskId
@@ -92,47 +100,43 @@ repository
 expectedSourceHead
 adapter
 capacityRoute
-success
-resultId
+success/resultId
 changedFiles
-receipt
+deterministic receipt
 proofRefs
 completedAtUtc
 ```
 
-and explicitly retains all mutation/merge/deploy/runtime/duplicate-dispatch/arbitrary-command authority as false.
+The supplied M3 handoff is rechecked before completion use. Its top-level handoff/action identity, queue-item action identity, Shared Workspace handoff identity, mission correlation, adapter and serialized body bindings must still agree.
 
-Successful completion requires a deterministic Mission Orchestrator-compatible receipt and safe changed-file list. M3 converts it into an existing `AGENT_RESULT_RECEIVED` event candidate and calls `applyMissionOrchestratorEvent()` against the supplied running mission state as a pure preflight.
+Successful completion is converted into the existing `AGENT_RESULT_RECEIVED` event and preflighted through `applyMissionOrchestratorEvent()`. Canonical Mission Orchestrator allowed-file and event-order checks therefore remain authoritative.
 
-If the changed-file list exceeds the mission's approved source scope, the canonical Mission Orchestrator blocks it and M3 returns no event candidate.
+A reported external failure is also preflighted through the same event and must project the mission to `BLOCKED`; M3 never converts failure into success.
 
-A reported external failure is not laundered into success. It is preflighted through the same canonical event and must project the mission to `BLOCKED`.
+M3 does not append the event to the durable mission store.
 
-M3 itself does not append the event to the durable mission store.
+## Hostile-data boundary
 
-## Data-only boundary
+The complete public build and completion packets are recursively descriptor-snapshotted before routing, hashing, serialization or downstream calls.
 
-Before any routing, hashing, Mission Orchestrator call or serialization, the complete public packet is recursively descriptor-snapshotted.
+The adapter rejects:
 
-M3 rejects:
-
-- accessors without invoking their values;
+- accessors without invoking values;
 - functions and own `toJSON` hooks;
-- sparse/custom arrays;
+- sparse or custom arrays;
 - custom prototypes;
-- symbols;
-- cycles;
-- reserved prototype-shaping keys;
-- non-finite numbers;
+- symbols and cycles;
+- prototype-shaping keys;
+- non-finite values;
 - oversized strings/arrays/graphs;
 - revoked or uninspectable proxies;
 - unexpected top-level orchestration fields.
 
-Only the frozen owned snapshot is supplied to canonical downstream functions.
+Only the frozen owned snapshot is passed to canonical machinery.
 
 ## Authority invariant
 
-Every M3 result keeps:
+Every result retains:
 
 ```text
 queueWriteAllowed=false
@@ -148,7 +152,7 @@ duplicateDispatchAllowed=false
 arbitraryCommandAllowed=false
 ```
 
-M3 does not convert a source-only continuity grant into source-mutation authority. The external route's existing worker/lease/publication contract remains responsible for any separately admitted source change.
+A continuity execution grant is routing evidence, not merge/deploy/runtime authority.
 
 ## Focused proof
 
@@ -157,22 +161,10 @@ node --check shared/agents/githubContinuityExternalHandoffV1.mjs
 node --test shared/agents/githubContinuityExecutionGrantV1.test.mjs shared/agents/githubContinuityExternalHandoffV1.test.mjs
 ```
 
-The M3 suite covers:
-
-- canonical GitHub queue/workspace candidate mapping;
-- deterministic handoff identity;
-- Foundry route binding;
-- Codex non-externalization;
-- source-head/Windows/authority drift;
-- running-dispatch takeover rejection;
-- successful completion event preflight;
-- completion identity and allowed-file enforcement;
-- external failure propagation;
-- accessor, `toJSON` and revoked-proxy rejection;
-- zero queue/workspace/merge/deploy/runtime authority.
+Coverage includes canonical queue/workspace mapping, exact action/handoff correlation, repair-state durable-transition hold, GitHub/Foundry route binding, Codex non-externalization, missing proof/head/Windows/authority drift, running-dispatch rejection, successful completion preflight, fabricated handoff/scope/authority rejection, external failure propagation and hostile caller objects.
 
 ## Next bounded slice
 
-M4 may connect these candidates to the **existing** durable publisher only after M2/M3 source acceptance. It must preserve immutable queue idempotency, Shared Workspace publication rollback semantics, the current action-grant/source-revision checks, exact worker ownership and completion receipt correlation.
+M4 may connect these already-preflighted candidates to the **existing** durable publisher only after M2/M3 source acceptance. It must preserve current immutable queue idempotency, Shared Workspace rollback semantics, action-grant/source-revision checks, exact worker ownership and completion correlation.
 
-M4 must not create another worker queue or controller and must not bypass protected merge, runtime, Battle Bridge recovery or operator approval gates.
+M4 must not create another queue/controller or bypass protected merge, runtime, Battle Bridge recovery or operator approval gates.
