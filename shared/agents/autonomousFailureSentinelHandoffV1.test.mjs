@@ -7,7 +7,7 @@ import {
   GITHUB_CONTINUITY_STATE,
 } from './githubContinuityModeV1.mjs';
 import {
-  AUTONOMOUS_FAILURE_RECOVERY_CAPABILITY_SCHEMA,
+  AUTONOMOUS_RECOVERY_CAPABILITY_SCHEMA,
 } from './autonomousFailureSentinelV1.mjs';
 import {
   AUTONOMOUS_FAILURE_HANDOFF_STATE,
@@ -43,7 +43,7 @@ function continuityPlan(overrides = {}) {
 
 function recoveryCapability(overrides = {}) {
   return {
-    schemaVersion: AUTONOMOUS_FAILURE_RECOVERY_CAPABILITY_SCHEMA,
+    schemaVersion: AUTONOMOUS_RECOVERY_CAPABILITY_SCHEMA,
     repository: REPOSITORY,
     sourceHead: HEAD,
     observedAtUtc: OBSERVED,
@@ -286,13 +286,11 @@ test('own toJSON, custom prototypes, sparse arrays and revoked proxies fail clos
     AUTONOMOUS_FAILURE_HANDOFF_STATE.SAFE_HOLD,
   );
 
-  const { proxy, revoke } = Proxy.revocable(baseInput(), {});
-  revoke();
-  assert.doesNotThrow(() => planAutonomousFailureSentinelHandoffV1(proxy));
-  assert.equal(
-    planAutonomousFailureSentinelHandoffV1(proxy).state,
-    AUTONOMOUS_FAILURE_HANDOFF_STATE.SAFE_HOLD,
-  );
+  const revoked = Proxy.revocable(baseInput(), {});
+  revoked.revoke();
+  let revokedResult;
+  assert.doesNotThrow(() => { revokedResult = planAutonomousFailureSentinelHandoffV1(revoked.proxy); });
+  assert.equal(revokedResult.state, AUTONOMOUS_FAILURE_HANDOFF_STATE.SAFE_HOLD);
 });
 
 test('candidate is deeply non-authoritative and cannot replace the #1814 trust chain', () => {
