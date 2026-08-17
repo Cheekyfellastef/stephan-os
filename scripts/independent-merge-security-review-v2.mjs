@@ -27,7 +27,10 @@ import {
   githubReadRetryDelayMs,
 } from '../shared/agents/githubReadResilienceV1.mjs';
 import { resolve } from 'node:path';
-import { adjudicateQualifiedSpecialistReview } from '../shared/agents/qualifiedSpecialistReviewV1.mjs';
+import {
+  adjudicateQualifiedSpecialistReview,
+  qualifiedSpecialistEscalationPaths,
+} from '../shared/agents/qualifiedSpecialistReviewV1.mjs';
 import { TextDecoder } from 'node:util';
 
 const API_VERSION = '2022-11-28';
@@ -351,7 +354,7 @@ function writeInfrastructureBlockedArtifact(error) {
     failure: error,
   });
   const artifactPath = writeReviewArtifact(artifact);
-  console.log(`INDEPENDENT_SECURITY_REVIEW=REVIEW_INFRASTRUCTURE_BLOCKED`);
+  console.log('INDEPENDENT_SECURITY_REVIEW=REVIEW_INFRASTRUCTURE_BLOCKED');
   console.log(`INDEPENDENT_SECURITY_REVIEW_ARTIFACT_NAME=${artifact.artifactName}`);
   console.log(`INDEPENDENT_SECURITY_REVIEW_ARTIFACT_PATH=${artifactPath}`);
   console.log(`INDEPENDENT_SECURITY_REVIEW_ARTIFACT_PAYLOAD_SHA256=${artifact.payloadSha256}`);
@@ -399,10 +402,9 @@ async function main() {
   // Review the immutable head/base immediately. CI and unresolved-thread
   // evidence remain mandatory at the independent merge-consumption boundary;
   // serializing analysis behind them only delays feedback and wastes runners.
-  const [files, diff, reviews] = await Promise.all([
+  const [files, diff] = await Promise.all([
     githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/files`),
     githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`, { accept: 'application/vnd.github.v3.diff' }),
-    githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`),
   ]);
   const protectedWorkflowPaths = PROTECTED_WORKFLOW_SOURCE_PATHS.filter((path) => (
     changedFilePaths(files).includes(path)
@@ -419,6 +421,10 @@ async function main() {
     protectedWorkflowSources,
     requireReviewerFilesInDiff: false,
   });
+  const specialistPaths = qualifiedSpecialistEscalationPaths(deterministicAnalysis);
+  const reviews = specialistPaths.length > 0
+    ? await githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`)
+    : [];
   const specialist = adjudicateQualifiedSpecialistReview({
     analysis: deterministicAnalysis,
     reviews,
@@ -431,6 +437,7 @@ async function main() {
   const analysis = specialist.required && specialist.valid
     ? specialist.analysis
     : deterministicAnalysis;
+  console.log(`SPECIALIST_REVIEW_ESTATE=${specialistPaths.length > 0 ? 'LOADED' : 'NOT_REQUIRED'}`);
   console.log(`SPECIALIST_REVIEW_DECISION=${specialist.required ? (specialist.valid ? 'SEALED' : 'REQUIRED') : 'NOT_REQUIRED'}`);
   console.log(`SPECIALIST_REVIEW_ID=${specialist.reviewId || ''}`);
 
