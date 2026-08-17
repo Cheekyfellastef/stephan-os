@@ -83,7 +83,7 @@ test('confirmed provider intervention evidence and inferred anomalies stay separ
     event(),
     event({
       eventId: 'event-2',
-      classification: 'INFERRED_LATENCY_ANOMALY',
+      classification: 'INFERRED_LATENCY_ANOMY',
       noticeFingerprint: hash('b'),
       noticeSummaryRedacted: null,
       latencyMs: 1_000,
@@ -168,10 +168,12 @@ test('stale confirmed evidence cannot remain a current confirmed intervention su
   const result = build([
     event({
       observedAtUtc: '2026-07-01T12:00:00.000Z',
+      startedAtUtc: '2026-07-01T11:59:58.000Z',
+      completedAtUtc: '2026-07-01T11:59:59.000Z',
       freshnessBasisUtc: '2026-07-01T12:00:00.000Z',
     }),
   ]);
-  assert.equal(result.valid, true);
+  assert.equal(result.valid, true, result.validationErrors.join(', '));
   assert.equal(result.confirmedInterventionEvidenceCount, 0);
   assert.equal(result.staleEventCount, 1);
   assert.equal(result.state, 'SUMMARY_EVIDENCE_INCOMPLETE');
