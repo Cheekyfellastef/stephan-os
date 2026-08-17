@@ -29,13 +29,14 @@ test('only bounded read-only transient conditions are retryable', () => {
   const network = classifyGitHubReadFailure({ method: 'GET', networkError: true });
   assert.equal(network.retryable, true);
   assert.equal(network.code, 'GITHUB_READ_NETWORK');
-  const globalId = classifyGitHubReadFailure({
-    method: 'GET',
-    status: 404,
-    body: '{"message":"Could not resolve to a node with the global id of PR_kwDORkv-6s7_DXmv"}',
-  });
-  assert.equal(globalId.retryable, true);
-  assert.equal(globalId.code, 'GITHUB_READ_PR_GLOBAL_ID_404');
+  for (const body of [
+    '{"message":"Could not resolve to a node with the global id of PR_kwDORkv-6s7_DXmv"}',
+    '{"message":"Not Found","errors":[{"message":"Could not resolve to a node with the global id of \'PR_kwDORkv-6s8AAAABACAwqA\'."}]}',
+  ]) {
+    const globalId = classifyGitHubReadFailure({ method: 'GET', status: 404, body });
+    assert.equal(globalId.retryable, true);
+    assert.equal(globalId.code, 'GITHUB_READ_PR_GLOBAL_ID_404');
+  }
   assert.equal(classifyGitHubReadFailure({ method: 'POST', status: 503 }).retryable, false);
   assert.equal(classifyGitHubReadFailure({ method: 'GET', status: 404, body: 'Not Found' }).retryable, false);
   assert.equal(classifyGitHubReadFailure({ method: 'GET', status: 403 }).retryable, false);
