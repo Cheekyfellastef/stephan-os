@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -95,13 +95,30 @@ test('fresh M4 capacity evidence routes exhausted-Codex source work to the exist
 test('publishes the receipt through the existing Shared Workspace status writer rather than a second queue', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'github-continuity-capacity-'));
   const root = join(parent, 'workspace');
-  const result = await publishGitHubContinuityCapacityPublicationV1(root, observation());
+  const result = await publishGitHubContinuityCapacityPublicationV1(root, observation(), { nowUtc: NOW });
   assert.equal(result.publication.ok, true, result.publication.reason);
   const persisted = JSON.parse(await readFile(join(root, 'status', 'chatgpt-github-build-capacity-current.json'), 'utf8'));
   assert.equal(persisted.capacityReceipt.receiptId, observation().receiptId);
   assert.equal(persisted.capacityReceipt.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
   assert.equal(persisted.sourceMutationAllowed, false);
   assert.equal(persisted.mergeAuthority, false);
+});
+
+test('rejects evidence that expires before publication and admits no current Shared Workspace truth', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'github-continuity-capacity-expired-'));
+  const root = join(parent, 'workspace');
+  const result = await publishGitHubContinuityCapacityPublicationV1(root, observation({
+    observedAtUtc: '2026-08-17T16:00:00.000Z',
+    expiresAtUtc: '2026-08-17T16:03:00.000Z',
+  }), {
+    nowUtc: '2026-08-17T16:03:00.001Z',
+  });
+
+  assert.equal(result.state, GITHUB_CONTINUITY_CAPACITY_PUBLICATION_STATE.SAFE_HOLD);
+  assert.equal(result.blocker, 'capacity-observation-not-current-at-publication');
+  assert.equal(result.receipt, null);
+  assert.equal(Object.hasOwn(result, 'publication'), false);
+  await assert.rejects(access(root), { code: 'ENOENT' });
 });
 
 test('fails closed on stale/overlong evidence, Codex masquerading and missing proof references', () => {
