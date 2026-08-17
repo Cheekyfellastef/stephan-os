@@ -81,7 +81,7 @@ if ($action -ne 'PROBE_BATTLE_BRIDGE') {
         "Stephanos Recovery Lifeboat requests permission to $label.`r`n`r`nNo arbitrary shell, Git mutation, deployment or PC restart is permitted by this action.",
         'Stephanos bounded recovery approval',
         [System.Windows.Forms.MessageBoxButtons]::YesNo,
-        [System.Windows.Forms.MessageBoxIcon]::Shield,
+        [System.Windows.Forms.MessageBoxIcon]::Warning,
         [System.Windows.Forms.MessageBoxDefaultButton]::Button2
     )
     $confirmed = $answer -eq [System.Windows.Forms.DialogResult]::Yes
