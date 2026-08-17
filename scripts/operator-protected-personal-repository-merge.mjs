@@ -8,6 +8,7 @@ import {
 import {
   INDEPENDENT_REVIEW_WORKFLOW_NAME,
   INDEPENDENT_REVIEW_WORKFLOW_PATH,
+  OPERATOR_MERGE_ENVIRONMENT,
   OPERATOR_MERGE_REVIEWER,
   validateIndependentReviewWorkflowRun,
 } from '../shared/agents/operatorMergeApprovalGate.mjs';
@@ -38,6 +39,9 @@ import {
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
 } from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
+import {
+  validatePersonalRepositoryReviewAdmission,
+} from '../shared/agents/operatorPersonalRepositoryReviewAdmissionV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-personal-repository-protected-squash';
@@ -394,7 +398,7 @@ async function collectRulesetConfiguration(
   });
 }
 
-async function loadSelectedIndependentReview(context, identity) {
+async function loadSelectedIndependentReview(context, identity, environmentName) {
   const definitions = (await apiCollection(
     `/repos/${context.owner}/${context.repo}/actions/workflows`,
     'workflows',
@@ -471,15 +475,15 @@ async function loadSelectedIndependentReview(context, identity) {
     workflowRunId: selected.independentReviewWorkflowRunId,
     workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
   });
+  const admission = validatePersonalRepositoryReviewAdmission({ artifact, validation }, {
+    protectedEnvironmentAdmitted: environmentName === OPERATOR_MERGE_ENVIRONMENT,
+    environmentName,
+  });
   if (!validation.valid
     || artifact.payloadSha256 !== selected.independentReviewPayloadSha256
-    || artifact.reviewMode !== 'clean-independent'
-    || artifact.receipt?.verdict !== 'clean'
-    || artifact.receipt?.blocker !== ''
-    || !Array.isArray(artifact.receipt?.findings)
-    || artifact.receipt.findings.length !== 0) {
-    fail('Selected independent review payload is invalid, stale or not clean.', {
-      blockers: validation.blockers,
+    || !admission.valid) {
+    fail('Selected independent review payload is invalid, stale or not admitted by the protected review boundary.', {
+      blockers: [...validation.blockers, ...admission.blockers],
     });
   }
   return Object.freeze({
@@ -488,8 +492,9 @@ async function loadSelectedIndependentReview(context, identity) {
     artifactId: selected.independentReviewArtifactId,
     artifactDigest: selected.independentReviewArtifactDigest,
     payloadSha256: selected.independentReviewPayloadSha256,
-    reviewMode: artifact.reviewMode,
-    findings: Object.freeze([]),
+    reviewMode: admission.reviewMode,
+    findings: admission.findings,
+    operatorProtectedApprovalRequired: admission.operatorProtectedApprovalRequired,
   });
 }
 
@@ -554,7 +559,11 @@ async function collectEvidence(context, expected = {}) {
     environment,
     integrationId,
   );
-  const independentReview = await loadSelectedIndependentReview(context, evidence.identity);
+  const independentReview = await loadSelectedIndependentReview(
+    context,
+    evidence.identity,
+    text(environment?.name),
+  );
   const packet = Object.freeze({
     schemaVersion: 'stephanos.personal-repository-evidence.v1',
     ...evidence.identity,
