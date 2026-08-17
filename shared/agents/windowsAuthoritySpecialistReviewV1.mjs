@@ -6,6 +6,7 @@ const NO_FAFF_PATH = './windowsAuthorityNoFaffRescueReviewV2.mjs';
 const MAILBOX_RECOVERY_GUARDIAN_PATH = './windowsAuthorityMailboxRecoveryGuardianReviewV1.mjs';
 const RECOVERY_GUARDIAN_PATH = './windowsAuthorityRecoveryMeshGuardianReviewV1.mjs';
 const OPENCLAW_RECOVERY_PATH = './windowsAuthorityOpenClawRecoveryReviewV1.mjs';
+const MOBILE_RECOVERY_EXECUTOR_PATH = './windowsAuthorityMobileRecoveryExecutorReviewV1.mjs';
 const WORKER_WATCHDOG_PATH = './windowsAuthorityWorkerWatchdogReviewV1.mjs';
 const FORGE_M3_EXECUTOR_PATH = './windowsAuthorityForgeM3ExecutorReviewV1.mjs';
 const FORGE_PODMAN_PREREQUISITE_PATH = './windowsAuthorityForgePodmanPrerequisiteReviewV1.mjs';
@@ -14,6 +15,7 @@ const NO_FAFF_BLOB_SHA = 'f6c2a92f4e2ffebb57e197e72ed0279a896c9ffe';
 const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '9f47c49eaab30db93897e4c5fcfce910a58ed0b9';
 const RECOVERY_GUARDIAN_BLOB_SHA = '60228170b62d8313bebece5e9e8655cfc45497a5';
 const OPENCLAW_RECOVERY_BLOB_SHA = 'f5ed69f5815c49dcf79b2b43a91b088e0cb0da07';
+const MOBILE_RECOVERY_EXECUTOR_BLOB_SHA = '95616156cc80abf66c7f8c4475f3e5a7f1c2c326';
 const WORKER_WATCHDOG_BLOB_SHA = 'b69e048ea9857b713e2faa17a1bbecec62fed84d';
 const FORGE_M3_EXECUTOR_BLOB_SHA = '7177c695d5a12b009785676440ce83163897f8f2';
 const FORGE_PODMAN_PREREQUISITE_BLOB_SHA = '0a0c98287f20145e31bf8aa3978d0ba4196cbcce';
@@ -39,6 +41,12 @@ const EXPECTED_OPENCLAW_RECOVERY_PATHS = Object.freeze([
   'scripts/windows/request-battle-bridge-recovery-openclaw.ps1',
   'scripts/windows/request-battle-bridge-recovery-openclaw.test.mjs',
 ]);
+const EXPECTED_MOBILE_RECOVERY_EXECUTOR_PATHS = Object.freeze([
+  'docs/architecture/openclaw-battle-bridge-recovery-executor-v1.md',
+  'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1',
+  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.mjs',
+  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.test.mjs',
+]);
 const EXPECTED_FORGE_M3_EXECUTOR_PATHS = Object.freeze([
   'scripts/windows/invoke-forge-shadow-m3-fixed-proof-executors-v1.ps1',
   'scripts/windows/invoke-forge-shadow-m3-fixed-proof-executors-v1.test.mjs',
@@ -63,6 +71,7 @@ const noFaffUrl = provePinnedModule(NO_FAFF_PATH, NO_FAFF_BLOB_SHA);
 const mailboxRecoveryGuardianUrl = provePinnedModule(MAILBOX_RECOVERY_GUARDIAN_PATH, MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA);
 const recoveryGuardianUrl = provePinnedModule(RECOVERY_GUARDIAN_PATH, RECOVERY_GUARDIAN_BLOB_SHA);
 const openClawRecoveryUrl = provePinnedModule(OPENCLAW_RECOVERY_PATH, OPENCLAW_RECOVERY_BLOB_SHA);
+const mobileRecoveryExecutorUrl = provePinnedModule(MOBILE_RECOVERY_EXECUTOR_PATH, MOBILE_RECOVERY_EXECUTOR_BLOB_SHA);
 const workerWatchdogUrl = provePinnedModule(WORKER_WATCHDOG_PATH, WORKER_WATCHDOG_BLOB_SHA);
 const forgeM3ExecutorUrl = provePinnedModule(FORGE_M3_EXECUTOR_PATH, FORGE_M3_EXECUTOR_BLOB_SHA);
 const forgePodmanPrerequisiteUrl = provePinnedModule(FORGE_PODMAN_PREREQUISITE_PATH, FORGE_PODMAN_PREREQUISITE_BLOB_SHA);
@@ -71,6 +80,7 @@ const noFaff = await import(noFaffUrl.href);
 const mailboxRecoveryGuardian = await import(mailboxRecoveryGuardianUrl.href);
 const recoveryGuardian = await import(recoveryGuardianUrl.href);
 const openClawRecovery = await import(openClawRecoveryUrl.href);
+const mobileRecoveryExecutor = await import(mobileRecoveryExecutorUrl.href);
 const workerWatchdog = await import(workerWatchdogUrl.href);
 const forgeM3Executor = await import(forgeM3ExecutorUrl.href);
 const forgePodmanPrerequisite = await import(forgePodmanPrerequisiteUrl.href);
@@ -79,6 +89,7 @@ if (JSON.stringify(noFaff.WINDOWS_AUTHORITY_NO_FAFF_RESCUE_PATHS_V1) !== JSON.st
 if (JSON.stringify(mailboxRecoveryGuardian.WINDOWS_AUTHORITY_MAILBOX_RECOVERY_GUARDIAN_PATHS_V1) !== JSON.stringify(EXPECTED_MAILBOX_RECOVERY_GUARDIAN_PATHS)) throw new Error('WINDOWS_AUTHORITY_MAILBOX_RECOVERY_GUARDIAN_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(recoveryGuardian.WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1) !== JSON.stringify(EXPECTED_RECOVERY_GUARDIAN_PATHS)) throw new Error('WINDOWS_AUTHORITY_RECOVERY_GUARDIAN_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(openClawRecovery.WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATHS_V1) !== JSON.stringify(EXPECTED_OPENCLAW_RECOVERY_PATHS)) throw new Error('WINDOWS_AUTHORITY_OPENCLAW_RECOVERY_PATH_INVENTORY_MISMATCH');
+if (JSON.stringify(mobileRecoveryExecutor.WINDOWS_AUTHORITY_MOBILE_RECOVERY_EXECUTOR_PATHS_V1) !== JSON.stringify(EXPECTED_MOBILE_RECOVERY_EXECUTOR_PATHS)) throw new Error('WINDOWS_AUTHORITY_MOBILE_RECOVERY_EXECUTOR_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(forgeM3Executor.WINDOWS_AUTHORITY_FORGE_M3_EXECUTOR_PATHS_V1) !== JSON.stringify(EXPECTED_FORGE_M3_EXECUTOR_PATHS)) throw new Error('WINDOWS_AUTHORITY_FORGE_M3_EXECUTOR_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(forgePodmanPrerequisite.WINDOWS_AUTHORITY_FORGE_PODMAN_PREREQUISITE_PATHS_V1) !== JSON.stringify(EXPECTED_FORGE_PODMAN_PREREQUISITE_PATHS)) throw new Error('WINDOWS_AUTHORITY_FORGE_PODMAN_PREREQUISITE_PATH_INVENTORY_MISMATCH');
 export const WINDOWS_AUTHORITY_SPECIALIST_SCHEMA_VERSION = core.WINDOWS_AUTHORITY_SPECIALIST_SCHEMA_VERSION;
@@ -89,6 +100,8 @@ export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
   if (workerWatchdogResult.eligible) return workerWatchdogResult;
   const openClawRecoveryResult = openClawRecovery.analyzeWindowsAuthorityOpenClawRecoveryReview(input);
   if (openClawRecoveryResult.eligible) return openClawRecoveryResult;
+  const mobileRecoveryExecutorResult = mobileRecoveryExecutor.analyzeWindowsAuthorityMobileRecoveryExecutorReview(input);
+  if (mobileRecoveryExecutorResult.eligible) return mobileRecoveryExecutorResult;
   const forgeM3ExecutorResult = forgeM3Executor.analyzeWindowsAuthorityForgeM3ExecutorReview(input);
   if (forgeM3ExecutorResult.eligible) return forgeM3ExecutorResult;
   const forgePodmanPrerequisiteResult = forgePodmanPrerequisite.analyzeWindowsAuthorityForgePodmanPrerequisiteReview(input);
