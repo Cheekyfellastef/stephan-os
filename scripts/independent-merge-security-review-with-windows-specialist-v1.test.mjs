@@ -60,7 +60,7 @@ test('source retrieval is one bounded exact-head GitHub Contents GET', async () 
 
 test('lineage proof comes only from exact GitHub commit, comparison and current-main reads', async () => {
   const text = await source();
-  assert.match(text, /exactReconciliationLineage\(artifact\.repository, artifact\.sourceHead, artifact\.baseSha\)/);
+  assert.match(text, /exactReconciliationLineage\(\s*artifact\.repository,\s*artifact\.sourceHead,\s*artifact\.baseSha,?\s*\)/s);
   assert.match(text, /\/git\/commits\/\$\{encodeURIComponent\(sourceHead\)\}/);
   assert.match(text, /\/compare\/\$\{encodeURIComponent\(baseSha\)\}\.\.\.\$\{encodeURIComponent\(sourceHead\)\}/);
   assert.match(text, /\/git\/ref\/heads\/main/);
