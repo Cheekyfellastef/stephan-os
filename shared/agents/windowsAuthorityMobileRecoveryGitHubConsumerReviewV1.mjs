@@ -17,7 +17,7 @@ const EXPECTED_BLOBS = Object.freeze({
   'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '0203869947447f0ae7b60814c1056e81b4139334',
   'scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1': '1189bba73607a1d802f2594c16431febdc3a8719',
   'scripts/windows/run-battle-bridge-recovery-lifeboat-bank-v1.ps1': '3ee321a023ac85bc0c71750228bae4da40bbb58b',
-  'shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs': '26bd6b1c444dfb27f2b0ec18f199477bdbe0f145',
+  'shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs': 'aebec71e5e0333fbf7a4b44521c8e5822f8544d0',
 });
 
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
@@ -106,7 +106,7 @@ function reviewBank(source, path, findings) {
   for (const [literal, code] of [
     ['[switch]$SelfTestOnly', 'm6-bank-self-test-switch-missing'],
     ["$bankId -notin @('A', 'B')", 'm6-bank-id-boundary-missing'],
-    ['claim=$claimHash', 'm6-bank-claim-manifest-binding-missing'],
+    ['claim=$claimConsumerHash', 'm6-bank-claim-manifest-binding-missing'],
     ['if (-not $SelfTestOnly -and $ok)', 'm6-bank-self-test-network-boundary-missing'],
     ['invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1', 'm6-bank-fixed-consumer-missing'],
     ['repoCheckoutRequired = $false', 'm6-bank-checkout-independence-missing'],
