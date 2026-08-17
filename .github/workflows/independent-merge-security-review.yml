@@ -31,11 +31,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Prove bounded Windows authority specialist policy
+        run: >-
+          node --test
+          shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs
+          shared/agents/windowsAuthoritySpecialistBoundaryV1.test.mjs
+          scripts/independent-merge-security-review-with-windows-specialist-v1.test.mjs
+      # The specialist wrapper preserves scripts/independent-merge-security-review-v2.mjs as the trusted base reviewer.
       - name: Review the complete exact-head and exact-base diff without mutation authority
         env:
           GH_TOKEN: ${{ github.token }}
           STEPHANOS_INDEPENDENT_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/independent-review-result.json
-        run: node scripts/independent-merge-security-review-v2.mjs
+        run: node scripts/independent-merge-security-review-with-windows-specialist-v1.mjs
       - name: Upload the exact-run immutable independent review result
         id: independent-review-artifact
         if: ${{ always() }}

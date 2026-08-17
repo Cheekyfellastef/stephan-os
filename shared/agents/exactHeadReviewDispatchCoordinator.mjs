@@ -7,7 +7,7 @@ import {
 } from './operatorMergeApprovalGate.mjs';
 
 export const EXACT_HEAD_REVIEW_DISPATCH_SCHEMA = 'stephanos.exact-head-review-dispatch.v1';
-export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.0.8';
+export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.1.0';
 
 export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'OpenClaw GitHub Operator',
@@ -29,18 +29,34 @@ export const EXACT_HEAD_REVIEW_DECISION = Object.freeze({
   INVALID_INPUT: 'INVALID_INPUT',
   INELIGIBLE: 'INELIGIBLE',
   WAIT_WORKFLOWS: 'WAIT_WORKFLOWS',
+  WAIT_WORKFLOWS_REVIEW_READY: 'WAIT_WORKFLOWS_REVIEW_READY',
   BLOCKED_WORKFLOWS: 'BLOCKED_WORKFLOWS',
+  BLOCKED_REVIEW_THREADS: 'BLOCKED_REVIEW_THREADS',
   DISPATCH_REVIEW: 'DISPATCH_REVIEW',
   WAIT_REVIEW_RECEIPT: 'WAIT_REVIEW_RECEIPT',
   ESCALATE_MISSING_RECEIPT: 'ESCALATE_MISSING_RECEIPT',
+  STALLED_MISSING_RECEIPT: 'STALLED_MISSING_RECEIPT',
   RECORD_REVIEW_RECEIPT: 'RECORD_REVIEW_RECEIPT',
   REVIEW_RECEIPT_RECORDED: 'REVIEW_RECEIPT_RECORDED',
+});
+
+export const EXACT_HEAD_REVIEW_PROGRESS = Object.freeze({
+  VERIFIED_ONLY: 'VERIFIED_ONLY',
+  WAITING_FOR_WORKFLOWS: 'WAITING_FOR_WORKFLOWS',
+  REVIEW_PRECOMPUTED: 'REVIEW_PRECOMPUTED',
+  REVIEW_DISPATCHED: 'REVIEW_DISPATCHED',
+  WAITING_FOR_RECEIPT: 'WAITING_FOR_RECEIPT',
+  STALLED_MISSING_RECEIPT: 'STALLED_MISSING_RECEIPT',
+  RECEIPT_RECORDED: 'RECEIPT_RECORDED',
+  REVIEW_COMPLETE: 'REVIEW_COMPLETE',
+  BLOCKED: 'BLOCKED',
 });
 
 export const EXACT_HEAD_REVIEW_MARKERS = Object.freeze({
   AUTO: 'stephanos:exact-head-review:auto:v1',
   DISPATCH: 'stephanos:exact-head-review-dispatch:v1',
   RECEIPT: 'stephanos:exact-head-review-receipt:v1',
+  ARTIFACT_INDEX: 'stephanos:independent-review-artifact-index:v1',
   ESCALATION: 'stephanos:exact-head-review-escalation:v1',
 });
 
@@ -120,6 +136,44 @@ export function parseOptionalManualPrNumber(value) {
   return parsed;
 }
 
+export function candidateReviewPrNumbers({ event = {}, manualPrNumber = null } = {}) {
+  if (manualPrNumber !== null && manualPrNumber !== undefined) {
+    const parsed = Number(manualPrNumber);
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error('manual review PR number must be a safe positive integer');
+    return Object.freeze([parsed]);
+  }
+  const directNumbers = [
+    event?.pull_request?.number,
+    event?.issue?.pull_request ? event?.issue?.number : null,
+    ...(Array.isArray(event?.workflow_run?.pull_requests)
+      ? event.workflow_run.pull_requests.map((pr) => pr?.number)
+      : []),
+  ].map(Number).filter((number) => Number.isSafeInteger(number) && number > 0);
+  return Object.freeze([...new Set(directNumbers)]);
+}
+
+export function exactHeadReviewProgress(decision) {
+  switch (text(decision)) {
+    case EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS:
+      return EXACT_HEAD_REVIEW_PROGRESS.WAITING_FOR_WORKFLOWS;
+    case EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS_REVIEW_READY:
+      return EXACT_HEAD_REVIEW_PROGRESS.REVIEW_PRECOMPUTED;
+    case EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW:
+      return EXACT_HEAD_REVIEW_PROGRESS.REVIEW_DISPATCHED;
+    case EXACT_HEAD_REVIEW_DECISION.WAIT_REVIEW_RECEIPT:
+      return EXACT_HEAD_REVIEW_PROGRESS.WAITING_FOR_RECEIPT;
+    case EXACT_HEAD_REVIEW_DECISION.ESCALATE_MISSING_RECEIPT:
+    case EXACT_HEAD_REVIEW_DECISION.STALLED_MISSING_RECEIPT:
+      return EXACT_HEAD_REVIEW_PROGRESS.STALLED_MISSING_RECEIPT;
+    case EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT:
+      return EXACT_HEAD_REVIEW_PROGRESS.RECEIPT_RECORDED;
+    case EXACT_HEAD_REVIEW_DECISION.REVIEW_RECEIPT_RECORDED:
+      return EXACT_HEAD_REVIEW_PROGRESS.REVIEW_COMPLETE;
+    default:
+      return EXACT_HEAD_REVIEW_PROGRESS.BLOCKED;
+  }
+}
+
 function itemTimestamp(item) {
   return asTime(item?.createdAt ?? item?.created_at ?? item?.submittedAt ?? item?.submitted_at);
 }
@@ -170,6 +224,12 @@ function isKnownGitHubActionsReviewer(item) {
   return actorMatches(item, TRUSTED_GITHUB_ACTIONS_REVIEWER);
 }
 
+function isTrustedCoordinatorArtifactIndex(item, context = {}) {
+  return normalizedLogin((item?.user ?? item?.author ?? {})?.login)
+    === normalizedLogin(context.trustedCoordinatorLogin)
+    && commentBody(item).includes(`<!-- ${EXACT_HEAD_REVIEW_MARKERS.ARTIFACT_INDEX} -->`);
+}
+
 function fencedJsonObjects(body) {
   const objects = [];
   for (const match of text(body).matchAll(/```json\s*([\s\S]*?)```/gi)) {
@@ -183,15 +243,15 @@ function fencedJsonObjects(body) {
   return objects;
 }
 
-function providerNeutralReviewMatchesHead(item, context = {}) {
-  if (!isKnownGitHubActionsReviewer(item)) return false;
+function providerNeutralReviewReceipt(item, context = {}) {
+  if (!isKnownGitHubActionsReviewer(item) && !isTrustedCoordinatorArtifactIndex(item, context)) return null;
   const body = commentBody(item);
-  if (!body.includes(PROTECTED_REVIEW_MARKER)) return false;
+  if (!body.includes(PROTECTED_REVIEW_MARKER)) return null;
   const receipt = fencedJsonObjects(body).find((candidate) => (
     candidate?.kind === 'stephanos.provider-neutral.review'
   ));
   const session = parseIndependentReviewSessionId(receipt?.reviewerSessionId);
-  if (!receipt || receipt.verdict !== 'clean' || !session) return false;
+  if (!receipt || receipt.verdict !== 'clean' || !session) return null;
 
   const workflowRunId = Number(session.workflowRunId);
   const workflowRunAttempt = Number(session.workflowRunAttempt);
@@ -217,7 +277,7 @@ function providerNeutralReviewMatchesHead(item, context = {}) {
     workflowRunId,
     workflowRunAttempt,
   });
-  if (!receiptValidation.valid || receiptValidation.operatorBootstrapRequired === true) return false;
+  if (!receiptValidation.valid || receiptValidation.operatorBootstrapRequired === true) return null;
 
   const workflowValidation = validateIndependentReviewWorkflowRun(run || {}, jobs, {
     repository: text(context.repository),
@@ -231,7 +291,13 @@ function providerNeutralReviewMatchesHead(item, context = {}) {
     workflowRunAttempt,
   });
   return workflowValidation.valid
-    && jobs.some((job) => text(job?.name) === INDEPENDENT_REVIEW_JOB);
+    && jobs.some((job) => text(job?.name) === INDEPENDENT_REVIEW_JOB)
+    ? receipt
+    : null;
+}
+
+function providerNeutralReviewMatchesHead(item, context = {}) {
+  return Boolean(providerNeutralReviewReceipt(item, context));
 }
 
 function reviewMatchesHead(item, context = {}) {
@@ -243,13 +309,25 @@ function reviewMatchesHead(item, context = {}) {
   return providerNeutralReviewMatchesHead(item, context);
 }
 
+function latestPrecomputedProviderNeutralReceipt(comments, context) {
+  return newest((comments || []).filter((item) => (
+    providerNeutralReviewMatchesHead(item, context)
+    && itemTimestamp(item) !== null
+  )));
+}
+
 function latestExternalReceipt(comments, reviews, context, notBeforeMs) {
   return newest([
     ...(comments || []).filter((item) => reviewMatchesHead(item, context)),
     ...(reviews || []).filter((item) => reviewMatchesHead(item, context)),
   ].filter((item) => {
     const timestamp = itemTimestamp(item);
-    return timestamp !== null && timestamp > notBeforeMs;
+    if (timestamp === null) return false;
+    // A protected provider-neutral receipt is already bound to the exact PR,
+    // head, base, workflow run and successful review job. It may be computed
+    // while CI is still running and consumed once CI becomes green. A generic
+    // app review is not exact-base-bound, so it retains the post-workflow rule.
+    return providerNeutralReviewMatchesHead(item, context) || timestamp > notBeforeMs;
   }));
 }
 
@@ -420,15 +498,37 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
       && asTime(run.completedAt ?? run.completed_at ?? run.updatedAt ?? run.updated_at) === null;
   });
 
+  const comments = Array.isArray(input.comments) ? input.comments : [];
+  const reviews = Array.isArray(input.reviews) ? input.reviews : [];
+  const reviewContext = {
+    repository: text(input.repository),
+    prNumber: base.prNumber,
+    branch: text(pr.headRef ?? pr.head_ref),
+    headSha,
+    baseRef,
+    baseSha: text(pr.baseSha ?? pr.base_sha),
+    independentReviewWorkflowId: input.independentReviewWorkflowId,
+    independentReviewRuns: input.independentReviewRuns,
+    independentReviewJobsByRunId: input.independentReviewJobsByRunId,
+    trustedCoordinatorLogin,
+  };
+  const precomputedReceipt = latestPrecomputedProviderNeutralReceipt(comments, reviewContext);
+
   if (missingWorkflows.length || pendingWorkflows.length || unboundWorkflows.length) {
     return Object.freeze({
       ...base,
-      decision: EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS,
-      reason: 'required exact-head workflows are missing, still running or lack completion timestamps',
+      decision: precomputedReceipt
+        ? EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS_REVIEW_READY
+        : EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS,
+      reason: precomputedReceipt
+        ? 'exact-head and exact-base review is precomputed while required workflows finish'
+        : 'required exact-head workflows are missing, still running or lack completion timestamps',
       missingWorkflows: Object.freeze(missingWorkflows),
       pendingWorkflows: Object.freeze(pendingWorkflows),
       unboundWorkflows: Object.freeze(unboundWorkflows),
       failedWorkflows: Object.freeze(failedWorkflows),
+      reviewReady: Boolean(precomputedReceipt),
+      externalReceiptId: precomputedReceipt?.id ?? null,
     });
   }
 
@@ -443,30 +543,41 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
     });
   }
 
-  const comments = Array.isArray(input.comments) ? input.comments : [];
-  const reviews = Array.isArray(input.reviews) ? input.reviews : [];
   const workflowsCompletedAtMs = Math.max(...requiredWorkflows.map((name) => {
     const run = latestRuns.get(name);
     return asTime(run?.completedAt ?? run?.completed_at ?? run?.updatedAt ?? run?.updated_at);
   }));
-  const externalReceipt = latestExternalReceipt(comments, reviews, {
-    repository: text(input.repository),
-    prNumber: base.prNumber,
-    branch: text(pr.headRef ?? pr.head_ref),
-    headSha,
-    baseRef,
-    baseSha: text(pr.baseSha ?? pr.base_sha),
-    independentReviewWorkflowId: input.independentReviewWorkflowId,
-    independentReviewRuns: input.independentReviewRuns,
-    independentReviewJobsByRunId: input.independentReviewJobsByRunId,
-  }, workflowsCompletedAtMs);
+  const externalReceipt = latestExternalReceipt(
+    comments,
+    reviews,
+    reviewContext,
+    workflowsCompletedAtMs,
+  );
   const externalReceiptTime = itemTimestamp(externalReceipt);
+  const unresolvedThreadCount = input.unresolvedThreadCount;
+  if (externalReceipt && (!Number.isSafeInteger(unresolvedThreadCount) || unresolvedThreadCount < 0 || unresolvedThreadCount > 0)) {
+    return Object.freeze({
+      ...base,
+      decision: EXACT_HEAD_REVIEW_DECISION.BLOCKED_REVIEW_THREADS,
+      reason: !Number.isSafeInteger(unresolvedThreadCount) || unresolvedThreadCount < 0
+        ? 'unresolved review-thread evidence is unavailable at receipt consumption'
+        : `${unresolvedThreadCount} unresolved review thread(s) block receipt consumption`,
+      unresolvedThreadCount: Number.isSafeInteger(unresolvedThreadCount) && unresolvedThreadCount >= 0
+        ? unresolvedThreadCount
+        : null,
+      reviewReady: true,
+      externalReceiptId: externalReceipt?.id ?? null,
+    });
+  }
   const recordedReceipt = externalReceipt && externalReceiptTime !== null
-    ? markerComment(comments, EXACT_HEAD_REVIEW_MARKERS.RECEIPT, headSha, {
-      trustedCoordinatorLogin,
-      notBeforeMs: workflowsCompletedAtMs,
-      afterItem: externalReceipt,
-    })
+    ? (commentBody(externalReceipt).includes(markerFor(EXACT_HEAD_REVIEW_MARKERS.RECEIPT, headSha))
+      && isTrustedCoordinatorActor(externalReceipt, trustedCoordinatorLogin)
+      ? externalReceipt
+      : markerComment(comments, EXACT_HEAD_REVIEW_MARKERS.RECEIPT, headSha, {
+        trustedCoordinatorLogin,
+        notBeforeMs: workflowsCompletedAtMs,
+        afterItem: externalReceipt,
+      }))
     : null;
   if (externalReceipt && !recordedReceipt) {
     return Object.freeze({
@@ -476,6 +587,7 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
       actionRequired: true,
       externalReceiptId: externalReceipt.id ?? null,
       externalReceiptTimestamp: externalReceipt.createdAt ?? externalReceipt.created_at ?? externalReceipt.submittedAt ?? externalReceipt.submitted_at ?? null,
+      providerNeutralReceipt: providerNeutralReviewReceipt(externalReceipt, reviewContext),
     });
   }
   if (recordedReceipt) {
@@ -517,15 +629,24 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
     });
   }
 
+  if (escalation) {
+    return Object.freeze({
+      ...base,
+      decision: EXACT_HEAD_REVIEW_DECISION.STALLED_MISSING_RECEIPT,
+      reason: 'review dispatch remains without a matching receipt after its bounded escalation',
+      dispatchCommentId: dispatch.id ?? null,
+      dispatchAgeMs: ageMs,
+      escalated: true,
+    });
+  }
+
   return Object.freeze({
     ...base,
     decision: EXACT_HEAD_REVIEW_DECISION.WAIT_REVIEW_RECEIPT,
-    reason: escalation
-      ? 'missing review receipt has already been escalated once'
-      : 'review dispatch exists and remains inside the bounded receipt window',
+    reason: 'review dispatch exists and remains inside the bounded receipt window',
     dispatchCommentId: dispatch.id ?? null,
     dispatchAgeMs: ageMs,
-    escalated: Boolean(escalation),
+    escalated: false,
   });
 }
 
@@ -549,10 +670,10 @@ export function buildReviewDispatchComment({ prNumber, headSha, workflowNames = 
   ].join('\n');
 }
 
-export function buildReviewReceiptComment({ prNumber, headSha, externalReceiptId = null } = {}) {
+export function buildReviewReceiptComment({ prNumber, headSha, externalReceiptId = null, providerNeutralReceipt = null } = {}) {
   const head = text(headSha).toLowerCase();
   if (!Number.isSafeInteger(Number(prNumber)) || Number(prNumber) <= 0 || !FULL_SHA_PATTERN.test(head)) throw new Error('valid PR number and exact head SHA are required');
-  return [
+  const lines = [
     markerFor(EXACT_HEAD_REVIEW_MARKERS.RECEIPT, head),
     '## Exact-head review receipt recorded',
     '',
@@ -561,7 +682,20 @@ export function buildReviewReceiptComment({ prNumber, headSha, externalReceiptId
     `External review receipt: ${externalReceiptId ?? 'present'}`,
     '',
     'The review was observed after all required workflows succeeded. This receipt does not authorise merge and becomes stale if the PR head changes.',
-  ].join('\n');
+  ];
+  if (providerNeutralReceipt?.kind === 'stephanos.provider-neutral.review') {
+    lines.push(
+      '',
+      `<!-- ${EXACT_HEAD_REVIEW_MARKERS.ARTIFACT_INDEX} -->`,
+      PROTECTED_REVIEW_MARKER,
+      '```json',
+      JSON.stringify(providerNeutralReceipt, null, 2),
+      '```',
+      '',
+      'This is a durable discovery index for the separately validated immutable workflow artifact and grants no merge authority.',
+    );
+  }
+  return lines.join('\n');
 }
 
 export function buildMissingReceiptEscalationComment({ prNumber, headSha, timeoutMinutes = 10, dispatchCommentId = null } = {}) {

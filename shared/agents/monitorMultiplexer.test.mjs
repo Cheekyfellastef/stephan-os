@@ -63,6 +63,12 @@ test('contract multiplexes many monitors through one bounded notification surfac
   assert.equal(contract.arbitraryPowerShellAllowed, false);
 });
 
+test('default monitor width matches the five-lane build-fabric baseline', () => {
+  const contract = buildMonitorMultiplexerContract();
+  assert.equal(contract.concurrency, 5);
+  assert.equal(contract.maximumConcurrency, 16);
+});
+
 test('twelve independent monitors publish one deduplicated notification batch', async () => {
   const root = await workspace();
   const monitors = Array.from({ length: 12 }, (_, index) => monitor(index + 1));

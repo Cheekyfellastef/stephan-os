@@ -191,7 +191,7 @@ test('rejects invalid workflow or pull-request authority before considering runs
     input({ workflow: workflow({ state: 'disabled_manually' }) }),
     input({ workflow: workflow({ path: '.github/workflows/lookalike-review.yml' }) }),
     input({ pr: pullRequest({ state: 'closed' }) }),
-    input({ pr: pullRequest({ draft: true }) }),
+    input({ pr: pullRequest({ draft: null }) }),
     input({ pr: pullRequest({ sameRepository: false }) }),
     input({ pr: pullRequest({ baseRef: 'other' }) }),
     input({ pr: pullRequest({ headSha: 'short' }) }),
@@ -201,6 +201,15 @@ test('rejects invalid workflow or pull-request authority before considering runs
     assert.equal(plan.decision, INDEPENDENT_REVIEW_RETRY_DECISION.INVALID_INPUT);
     assert.equal(plan.mutationAllowed, false);
   }
+});
+
+test('retries a failed exact-head review while the PR is still draft', () => {
+  const result = planIndependentReviewRetry(input({
+    pr: pullRequest({ draft: true }),
+  }));
+  assert.equal(result.decision, INDEPENDENT_REVIEW_RETRY_DECISION.RERUN_FAILED_JOBS);
+  assert.equal(result.mutationAllowed, true);
+  assert.equal(result.operation, 'rerun-failed-jobs');
 });
 
 test('selects the first nonblank coordinator credential and does not let an empty secret mask the repository token', () => {
@@ -341,34 +350,47 @@ test('normalizes only trusted mechanical markers while preserving owner lane evi
   assert.equal(normalized[4], ownerLaneReceipt);
 });
 
-test('trusted workflow re-evaluates a bounded retry after dispatch, wait and one escalation', () => {
+test('trusted workflow serializes every bounded retry under the same PR authority lock', () => {
   assert.match(COORDINATOR_WORKFLOW, /permissions:\s*\n\s+actions: write\b/);
   const retryStepStart = COORDINATOR_WORKFLOW.indexOf(
-    '- name: Retry only the exact failed canonical independent review',
+    '- name: Retry one exact failed canonical independent review',
   );
   assert.ok(retryStepStart >= 0, 'bounded retry step must exist');
   const retryStep = COORDINATOR_WORKFLOW.slice(retryStepStart);
 
-  assert.match(retryStep, /if:\s*>-\s*\n\s+always\(\) &&/);
-  for (const decision of [
-    'DISPATCH_REVIEW',
-    'WAIT_REVIEW_RECEIPT',
-    'ESCALATE_MISSING_RECEIPT',
-  ]) {
-    assert.match(retryStep, new RegExp(`steps\\.coordinate\\.outputs\\.decision == '${decision}'`));
-  }
+  assert.match(COORDINATOR_WORKFLOW, /targets:\s*\$\{\{ steps\.plan\.outputs\.targets \}\}/);
+  assert.match(COORDINATOR_WORKFLOW, /target:\s*\$\{\{ fromJSON\(needs\.plan\.outputs\.targets\) \}\}/);
+  assert.match(
+    COORDINATOR_WORKFLOW,
+    /group: exact-head-review-dispatch-\$\{\{ github\.repository \}\}-pr-\$\{\{ matrix\.target\.prNumber \}\}/,
+  );
+  assert.match(COORDINATOR_WORKFLOW, /steps\.coordinate\.outputs\.retry_targets != '\[\]'/);
+  assert.match(COORDINATOR_WORKFLOW, /max-parallel:\s*4/);
+  assert.doesNotMatch(COORDINATOR_WORKFLOW, /steps\.coordinate\.outputs\.decision ==/);
   assert.match(
     retryStep,
-    /STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR:\s*\$\{\{ steps\.coordinate\.outputs\.pr_number \}\}/,
+    /STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR:\s*\$\{\{ matrix\.target\.prNumber \}\}/,
   );
   assert.match(
     retryStep,
-    /STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD:\s*\$\{\{ steps\.coordinate\.outputs\.exact_head \}\}/,
+    /STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD:\s*\$\{\{ fromJSON\(steps\.coordinate\.outputs\.retry_targets\)\[0\]\.exactHead \}\}/,
   );
   assert.match(retryStep, /run: node scripts\/retry-independent-review\.mjs/);
   assert.doesNotMatch(retryStep, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_(?:RUN|WORKFLOW)_ID/);
 });
-
+test('pull-request planning remains a successful read-only neutral gate', () => {
+  const planJob = COORDINATOR_WORKFLOW.match(/^  plan:\n[\s\S]*?^  coordinate:/m)?.[0] || '';
+  const neutralStep = planJob.match(
+    /^      - name: Publish pull-request neutral planning truth\n[\s\S]*?^      - name: Check out trusted default-branch planner/m,
+  )?.[0] || '';
+  assert.match(planJob, /^  plan:\n    runs-on: ubuntu-latest/m);
+  assert.match(neutralStep, /if: github\.event_name == 'pull_request'/);
+  assert.doesNotMatch(neutralStep, /GITHUB_TOKEN|STEPHANOS_|actions: write|issues: write|pull-requests: write/);
+  assert.match(
+    planJob,
+    /Discover canonical PR targets without mutation\n        id: plan\n        if: >-\n          github\.event_name != 'pull_request'/,
+  );
+});
 test('workflow and runner wire repository fallback, owner lane authority and sentinel marker continuity', () => {
   assert.ok(COORDINATOR_WORKFLOW.includes('GITHUB_TOKEN: ${{ github.token }}'));
   assert.ok(COORDINATOR_WORKFLOW.includes('STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}'));

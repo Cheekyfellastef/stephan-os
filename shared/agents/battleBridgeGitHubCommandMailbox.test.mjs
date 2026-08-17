@@ -4,9 +4,14 @@ import {
   BATTLE_BRIDGE_GITHUB_COMMAND_MARKER,
   BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
   BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA,
+  BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
+  BATTLE_BRIDGE_MAILBOX_PARTITION,
   buildBattleBridgeGitHubCommandReceipt,
   executeBattleBridgeGitHubCommand,
+  executeBattleBridgeGitHubCommandBatch,
   extractBattleBridgeGitHubCommand,
+  revalidateBattleBridgeGitHubCommandForExecution,
+  selectBattleBridgeGitHubCommandBatch,
   selectNextBattleBridgeGitHubCommand,
   validateBattleBridgeGitHubCommand,
 } from './battleBridgeGitHubCommandMailbox.mjs';
@@ -31,6 +36,16 @@ function command(overrides = {}) {
     operatorApproval: 'operator-approved',
     expectedHead: 'fb10c39a5c0178158bc3b43c5539e8f5d023bc2a',
     expiresAt: '2026-07-20T23:30:00.000Z',
+    ...overrides,
+  };
+}
+
+function scopedDelivery(overrides = {}) {
+  return {
+    prNumber: 1668,
+    mergeCommit: 'b83f7df46d9d52233f0b4f5dc2e034f50c0bae93',
+    deploymentRequestId: 'req-1507-0001',
+    featureId: 'music-tile-auto-url-artwork',
     ...overrides,
   };
 }
@@ -62,6 +77,7 @@ function comment(payload = command(), overrides = {}) {
   return {
     id: 100,
     html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/1507#issuecomment-100',
+    created_at: now.toISOString(),
     user: { login: 'Cheekyfellastef' },
     body: `\`\`\`${BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(payload)}\n\`\`\``,
     ...overrides,
@@ -77,6 +93,41 @@ test('extracts and accepts an owner-authored bounded command', () => {
   });
   assert.equal(validated.verdict, 'COMMAND_ACCEPTED');
   assert.equal(validated.command.operation, 'UPDATE_STEPHANOS_FROM_CHAT');
+});
+
+test('scoped delivery identity is exact, operation-bound and preserved in receipts', () => {
+  const validated = validateBattleBridgeGitHubCommand(command({
+    scopedDelivery: scopedDelivery(),
+  }), { authorLogin: 'Cheekyfellastef', now });
+  assert.equal(validated.ok, true);
+  assert.equal(validated.command.scopedDelivery.deploymentHead, command().expectedHead);
+  assert.equal(validated.command.scopedDelivery.relatedPr, '#1668');
+
+  const receipt = buildBattleBridgeGitHubCommandReceipt({
+    command: validated.command,
+    state: 'ACCEPTED',
+    acceptedAt: now.toISOString(),
+    heartbeatAt: now.toISOString(),
+  });
+  assert.equal(receipt.relatedPr, '#1668');
+  assert.equal(receipt.mergeCommit, scopedDelivery().mergeCommit);
+  assert.equal(receipt.deploymentHead, command().expectedHead);
+  assert.equal(receipt.deploymentRequestId, command().requestId);
+  assert.equal(receipt.featureId, 'music-tile-auto-url-artwork');
+
+  assert.equal(validateBattleBridgeGitHubCommand(command({
+    scopedDelivery: scopedDelivery({ deploymentRequestId: 'req-1507-other1' }),
+  }), { authorLogin: 'Cheekyfellastef', now }).blocker, 'SCOPED_DELIVERY_REQUEST_ID_MISMATCH');
+  assert.equal(validateBattleBridgeGitHubCommand(command({
+    scopedDelivery: scopedDelivery({ mergeCommit: 'short' }),
+  }), { authorLogin: 'Cheekyfellastef', now }).blocker, 'SCOPED_DELIVERY_MERGE_COMMIT_INVALID');
+  assert.equal(validateBattleBridgeGitHubCommand(command({
+    scopedDelivery: scopedDelivery({ command: 'dir' }),
+  }), { authorLogin: 'Cheekyfellastef', now }).blocker, 'SCOPED_DELIVERY_FIELD_NOT_ALLOWED');
+  assert.equal(validateBattleBridgeGitHubCommand(command({
+    operation: 'READ_DEPLOYMENT_STATUS',
+    scopedDelivery: scopedDelivery(),
+  }), { authorLogin: 'Cheekyfellastef', now }).blocker, 'SCOPED_DELIVERY_FIELD_NOT_ALLOWED');
 });
 
 test('control-plane and banked reset commands are allowlisted', () => {
@@ -153,6 +204,28 @@ test('accepts a merged-main proof only with a distinct immutable PR provenance h
   assert.equal(validateBattleBridgeGitHubCommand(command({ pullRequestHead }), {
     authorLogin: 'Cheekyfellastef', now,
   }).blocker, 'WINDOWS_BROWSER_PROOF_FIELD_NOT_ALLOWED');
+});
+
+test('scoped browser proof fails closed when observed merge identity differs', async () => {
+  const proof = validateBattleBridgeGitHubCommand(command({
+    operation: 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
+    prNumber: 1668,
+    proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
+    proofTarget: 'MERGED_MAIN',
+    pullRequestHead: 'a'.repeat(40),
+    scopedDelivery: scopedDelivery(),
+  }), { authorLogin: 'Cheekyfellastef', now }).command;
+  const result = await executeBattleBridgeGitHubCommand(proof, {
+    runExactHeadWindowsBrowserProof: async () => ({
+      ok: true,
+      expectedHead: proof.expectedHead,
+      githubMainHead: proof.expectedHead,
+      localHead: proof.expectedHead,
+      mergeCommitHead: 'd'.repeat(40),
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SCOPED_DELIVERY_MERGE_COMMIT_MISMATCH');
 });
 
 test('dispatches Windows browser proof only through its named handler', async () => {
@@ -286,6 +359,205 @@ test('selects only an unconsumed valid command', () => {
   assert.equal(selected.command.requestId, 'req-1507-new2');
 });
 
+test('binds the maximum command window to immutable comment creation time', () => {
+  const posted = comment(command({
+    requestId: 'req-1507-too-far',
+    expiresAt: '2026-07-21T05:30:01.000Z',
+  }), { id: 7 });
+  const initial = selectBattleBridgeGitHubCommandBatch([posted], { now });
+  const later = selectBattleBridgeGitHubCommandBatch([posted], {
+    now: new Date('2026-07-21T00:30:00.000Z'),
+  });
+  for (const selected of [initial, later]) {
+    assert.equal(selected.verdict, 'NO_COMMAND_READY');
+    assert.equal(selected.terminalRejections.length, 1);
+    assert.equal(selected.terminalRejections[0].blocker, 'COMMAND_EXPIRY_TOO_FAR_AHEAD');
+    assert.equal(selected.terminalRejections[0].command.requestId, 'req-1507-too-far');
+  }
+});
+
+test('never projects attacker-authored validation failures as terminal receipts', () => {
+  const selected = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-attacker' }), {
+      id: 8,
+      user: { login: 'someone-else' },
+    }),
+  ], { now });
+  assert.equal(selected.verdict, 'NO_COMMAND_READY');
+  assert.equal(selected.terminalRejections.length, 0);
+  assert.equal(selected.rejected[0].blocker, 'COMMAND_AUTHOR_NOT_ALLOWED');
+});
+
+test('projects allowlisted operation-specific owner validation blockers as terminal receipts', () => {
+  const selected = selectBattleBridgeGitHubCommandBatch([
+    comment(command({
+      requestId: 'req-1507-mesh-missing-head',
+      operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
+      expectedHead: '',
+    }), { id: 9 }),
+  ], { now });
+  assert.equal(selected.verdict, 'NO_COMMAND_READY');
+  assert.equal(selected.terminalRejections.length, 1);
+  assert.equal(selected.terminalRejections[0].blocker, 'RECOVERY_MESH_EXPECTED_HEAD_REQUIRED');
+  assert.equal(selected.terminalRejections[0].command.requestId, 'req-1507-mesh-missing-head');
+});
+
+test('selects a bounded partitioned batch and reports backpressure without duplicating request IDs', () => {
+  const comments = [
+    comment(command({ requestId: 'req-1507-control-1' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-observe-2', operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS' }), { id: 2 }),
+    comment(command({ requestId: 'req-1507-observe-3', operation: 'READ_DEPLOYMENT_STATUS' }), { id: 3 }),
+    comment(command({ requestId: 'req-1507-control-4', operation: 'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH' }), { id: 4 }),
+    comment(command({ requestId: 'req-1507-control-4', operation: 'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH' }), { id: 5 }),
+    comment(command({ requestId: 'req-1507-deferred-5', operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH' }), { id: 6 }),
+  ];
+  const batch = selectBattleBridgeGitHubCommandBatch(comments, { now });
+  assert.equal(batch.verdict, 'COMMAND_BATCH_READY');
+  assert.equal(batch.maximumBatchSize, BATTLE_BRIDGE_MAILBOX_MAX_BATCH);
+  assert.equal(batch.selectedCount, 4);
+  assert.equal(batch.readyCount, 5);
+  assert.equal(batch.deferredCount, 1);
+  assert.equal(batch.controlCount, 2);
+  assert.equal(batch.observationCount, 2);
+  assert.deepEqual(batch.commands.map((entry) => entry.partition), [
+    BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
+    BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION,
+    BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION,
+    BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
+  ]);
+  assert.equal(batch.controlSerialized, true);
+  assert.equal(batch.duplicateWorkerAllowed, false);
+});
+
+test('serializes control commands while running only adjacent observations concurrently', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-control-1' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-observe-2', operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS' }), { id: 2 }),
+    comment(command({ requestId: 'req-1507-observe-3', operation: 'READ_DEPLOYMENT_STATUS' }), { id: 3 }),
+    comment(command({ requestId: 'req-1507-control-4', operation: 'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH' }), { id: 4 }),
+  ], { now });
+  const events = [];
+  let observationStarts = 0;
+  let releaseObservations;
+  const observationsStarted = new Promise((resolve) => {
+    releaseObservations = { resolveStarted: resolve, release: null };
+  });
+  const observationGate = new Promise((resolve) => { releaseObservations.release = resolve; });
+  const executionPromise = executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    executeCommand: async (entry) => {
+      const id = entry.command.requestId;
+      events.push(`start:${id}`);
+      if (entry.partition === BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION) {
+        observationStarts += 1;
+        if (observationStarts === 2) releaseObservations.resolveStarted();
+        await observationGate;
+      }
+      events.push(`end:${id}`);
+      return { ok: true, requestId: id };
+    },
+  });
+  await observationsStarted;
+  assert.deepEqual(events, [
+    'start:req-1507-control-1',
+    'end:req-1507-control-1',
+    'start:req-1507-observe-2',
+    'start:req-1507-observe-3',
+  ]);
+  releaseObservations.release();
+  const executed = await executionPromise;
+  assert.equal(executed.ok, true);
+  assert.equal(executed.maxConcurrencyObserved, 2);
+  assert.equal(events.at(-1), 'end:req-1507-control-4');
+  assert.ok(events.indexOf('start:req-1507-control-4') > events.indexOf('end:req-1507-observe-3'));
+  assert.equal(executed.controlSerialized, true);
+  assert.equal(executed.duplicateWorkerAllowed, false);
+});
+
+test('revalidates command authority immediately before every execution slot', async () => {
+  const expiresAt = '2026-07-20T23:30:00.000Z';
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-control-1', expiresAt }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-control-2', expiresAt }), { id: 2 }),
+  ], { now });
+  const slotTimes = [
+    new Date('2026-07-20T23:29:59.000Z'),
+    new Date('2026-07-20T23:30:00.000Z'),
+  ];
+  const executedIds = [];
+  const terminal = [];
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => slotTimes.shift(),
+    executeCommand: async (entry) => {
+      executedIds.push(entry.command.requestId);
+      return { ok: true };
+    },
+    onTerminal: async (entry, execution) => {
+      terminal.push(`${entry.command.requestId}:${execution.blocker || 'DONE'}`);
+      return execution;
+    },
+  });
+  assert.deepEqual(executedIds, ['req-1507-control-1']);
+  assert.deepEqual(terminal, [
+    'req-1507-control-1:DONE',
+    'req-1507-control-2:COMMAND_EXPIRED_BEFORE_EXECUTION',
+  ]);
+  assert.equal(result.results[1].result.blocker, 'COMMAND_EXPIRED_BEFORE_EXECUTION');
+  assert.equal(revalidateBattleBridgeGitHubCommandForExecution(batch.commands[1].command, {
+    now: new Date(expiresAt),
+  }).ok, false);
+});
+
+test('publishes acceptance only at slot start and checkpoints terminal state before advancing', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-control-1' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-control-2' }), { id: 2 }),
+  ], { now });
+  const events = [];
+  await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    beforeExecute: async (entry) => events.push(`accepted:${entry.command.requestId}`),
+    executeCommand: async (entry) => {
+      events.push(`execute:${entry.command.requestId}`);
+      return { ok: true };
+    },
+    onTerminal: async (entry, execution) => {
+      events.push(`checkpoint:${entry.command.requestId}`);
+      return execution;
+    },
+  });
+  assert.deepEqual(events, [
+    'accepted:req-1507-control-1',
+    'execute:req-1507-control-1',
+    'checkpoint:req-1507-control-1',
+    'accepted:req-1507-control-2',
+    'execute:req-1507-control-2',
+    'checkpoint:req-1507-control-2',
+  ]);
+});
+
+test('preflight blocker terminalizes without acceptance or handler execution', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-stale-head' }), { id: 9 }),
+  ], { now });
+  const events = [];
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    preflightCommand: async () => ({ ok: false, blocker: 'COMMAND_EXPECTED_HEAD_SUPERSEDED' }),
+    beforeExecute: async () => events.push('accepted'),
+    executeCommand: async () => {
+      events.push('executed');
+      return { ok: true };
+    },
+    onTerminal: async (_entry, execution) => {
+      events.push(`terminal:${execution.blocker}`);
+      return execution;
+    },
+  });
+  assert.deepEqual(events, ['terminal:COMMAND_EXPECTED_HEAD_SUPERSEDED']);
+  assert.equal(result.results[0].result.blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+});
+
 test('dispatches read-only reset status only through its named handler', async () => {
   const calls = [];
   const validated = validateBattleBridgeGitHubCommand(statusCommand(), {
@@ -306,6 +578,91 @@ test('dispatches read-only reset status only through its named handler', async (
   assert.deepEqual(calls, [CODEX_BANKED_RESET_STATUS_OPERATION]);
   assert.equal(result.ok, true);
   assert.equal(result.result.pressCount, 0);
+});
+
+test('publishes every completed meter observation to the canonical Shared Workspace fabric', async () => {
+  const validated = validateBattleBridgeGitHubCommand(statusCommand(), {
+    authorLogin: 'Cheekyfellastef', now,
+  });
+  const publications = [];
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    readCodexBankedResetStatus: async () => ({
+      ok: true,
+      observedAtUtc: now.toISOString(),
+      meterSummary: 'Codex weekly remaining 3%',
+      usageSurfaceMatched: true,
+      activeCodexTask: false,
+      proofRefs: ['receipts/github-command-mailbox/meter-read.json'],
+      finalVerdict: 'CODEX_BANKED_RESET_STATUS_READY',
+      readOnly: true,
+      pressAttempted: false,
+      pressCount: 0,
+    }),
+    publishCodexCapacityStatus: async (root, input, options) => {
+      publications.push({ root, input, options });
+      return {
+        ok: true,
+        reason: 'CODEX_CAPACITY_WORKSPACE_PUBLISHED',
+        finalVerdict: 'CODEX_CAPACITY_WORKSPACE_PUBLISH_PASS',
+        slice: { truthState: 'CURRENT', observedAtUtc: now.toISOString(), remainingPercent: 3, capacityUsable: true },
+      };
+    },
+    sharedWorkspaceRoot: 'workspace-root-identity',
+    repoRoot: 'repo-root-identity',
+    capacityPublicationTimestampUtc: now.toISOString(),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(publications.length, 1);
+  assert.equal(publications[0].root, 'workspace-root-identity');
+  assert.equal(publications[0].input.statusResult.meterSummary, 'Codex weekly remaining 3%');
+  assert.equal(result.sharedWorkspacePublication.truthState, 'CURRENT');
+  assert.equal(result.sharedWorkspacePublication.remainingPercent, 3);
+});
+
+test('fails the status command when a successful meter read cannot reach Shared Workspace', async () => {
+  const validated = validateBattleBridgeGitHubCommand(statusCommand(), {
+    authorLogin: 'Cheekyfellastef', now,
+  });
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    readCodexBankedResetStatus: async () => ({
+      ok: true,
+      observedAtUtc: now.toISOString(),
+      meterSummary: 'Codex weekly remaining 3%',
+      usageSurfaceMatched: true,
+      finalVerdict: 'CODEX_BANKED_RESET_STATUS_READY',
+    }),
+    publishCodexCapacityStatus: async () => ({ ok: false, reason: 'WORKSPACE_PATH_MISSING' }),
+    sharedWorkspaceRoot: 'workspace-root-identity',
+    capacityPublicationTimestampUtc: now.toISOString(),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CODEX_CAPACITY_WORKSPACE_PUBLISH_FAILED');
+  assert.equal(result.sharedWorkspacePublication.reason, 'WORKSPACE_PATH_MISSING');
+});
+
+test('preserves UNKNOWN meter percentage as null in the sanitized publication receipt', async () => {
+  const validated = validateBattleBridgeGitHubCommand(statusCommand(), {
+    authorLogin: 'Cheekyfellastef', now,
+  });
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    readCodexBankedResetStatus: async () => ({
+      ok: false,
+      blocker: 'RESET_STATUS_NOT_PROVEN',
+      observedAtUtc: now.toISOString(),
+      finalVerdict: 'CODEX_BANKED_RESET_STATUS_BLOCKED',
+    }),
+    publishCodexCapacityStatus: async () => ({
+      ok: true,
+      reason: 'CODEX_CAPACITY_WORKSPACE_PUBLISHED',
+      finalVerdict: 'CODEX_CAPACITY_WORKSPACE_PUBLISH_PASS',
+      slice: { truthState: 'UNKNOWN', observedAtUtc: now.toISOString(), remainingPercent: null, capacityUsable: false },
+    }),
+    sharedWorkspaceRoot: 'workspace-root-identity',
+    capacityPublicationTimestampUtc: now.toISOString(),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.sharedWorkspacePublication.truthState, 'UNKNOWN');
+  assert.equal(result.sharedWorkspacePublication.remainingPercent, null);
 });
 
 test('dispatches reset only through the named bounded handler', async () => {

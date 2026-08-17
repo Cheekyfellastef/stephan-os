@@ -12,6 +12,7 @@ import {
   DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS,
   projectMissionWorkerHeartbeat,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
+import { resolveForgeShadowM2DigestOnBattleBridge } from './forgeShadowM2DigestResolverV1.mjs';
 
 export const DEFAULT_CODEX_DISPATCH_REPO_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 export const DEFAULT_BATTLE_BRIDGE_ENDPOINTS = Object.freeze([
@@ -22,9 +23,11 @@ export const DEFAULT_BATTLE_BRIDGE_ENDPOINTS = Object.freeze([
 export const BATTLE_BRIDGE_WORKER_TELEMETRY_SCHEMA = 'stephanos.battle-bridge.worker-telemetry.v1';
 export const CODEX_DISPATCH_TEST_ARGS = Object.freeze([
   '--test',
+  '--test-reporter=tap',
   'shared/agents/localCodexExecIntegration.test.mjs',
   'shared/agents/codexDispatchMcp.test.mjs',
   'shared/agents/codexDispatchHostOps.test.mjs',
+  'shared/agents/forgeShadowM2DigestResolverV1.test.mjs',
   'shared/agents/stephanosChatUpdate.test.mjs',
   'shared/agents/remoteCodexTaskVisibility.test.mjs',
   'scripts/remote-codex-task-visibility-observer.test.mjs',
@@ -374,7 +377,26 @@ function bounded(value = '', limit = 6000) {
   return text.length > limit ? `${text.slice(0, limit)}\n...[truncated]` : text;
 }
 
-function capture(spawnSyncFn, command, args, { cwd, timeout = 120000 } = {}) {
+export function parseTapTestSummary(value = '') {
+  const output = String(value || '');
+  const countKeys = ['tests', 'pass', 'fail', 'cancelled', 'skipped', 'todo'];
+  const counts = Object.fromEntries(countKeys.map((key) => [key, null]));
+  const observedCounts = new Set();
+  for (const match of output.matchAll(/^\s*#\s+(tests|pass|fail|cancelled|skipped|todo)\s+(\d+)\s*$/gm)) {
+    const count = Number.parseInt(match[2], 10);
+    if (Number.isSafeInteger(count) && count >= 0) {
+      counts[match[1]] = count;
+      observedCounts.add(match[1]);
+    }
+  }
+  const failingTests = [...output.matchAll(/^\s*not ok\s+\d+\s+-\s+(.+?)\s*$/gm)]
+    .map((match) => String(match[1]).trim().slice(0, 500))
+    .filter(Boolean)
+    .slice(0, 3);
+  return Object.freeze({ summaryComplete: countKeys.every((key) => observedCounts.has(key)), ...counts, failingTests });
+}
+
+function capture(spawnSyncFn, command, args, { cwd, timeout = 120000, captureTapSummary = false } = {}) {
   const result = spawnSyncFn(command, args, {
     cwd,
     encoding: 'utf8',
@@ -382,15 +404,17 @@ function capture(spawnSyncFn, command, args, { cwd, timeout = 120000 } = {}) {
     windowsHide: true,
     timeout,
   });
+  const stdout = String(result?.stdout || '');
   return Object.freeze({
     command,
     args: [...args],
     ok: !result?.error && result?.status === 0,
     status: result?.status ?? null,
     signal: result?.signal ?? null,
-    stdout: bounded(result?.stdout),
+    stdout: bounded(stdout),
     stderr: bounded(result?.stderr),
     error: result?.error?.message || '',
+    ...(captureTapSummary ? { tapSummary: parseTapTestSummary(stdout) } : {}),
   });
 }
 
@@ -521,7 +545,11 @@ export function syncCodexDispatchBridge({
     ? Object.freeze({ ok: true, stdout: '', command: 'git', args: [] })
     : git(spawnSyncFn, repoRoot, ['diff', '--name-only', `${beforeHead.stdout}..${afterHead.stdout}`]);
   const filesChanged = diffNames.ok ? changedFiles(diffNames.stdout) : [];
-  const tests = capture(spawnSyncFn, nodeCommand, CODEX_DISPATCH_TEST_ARGS, { cwd: repoRoot, timeout: 180000 });
+  const tests = capture(spawnSyncFn, nodeCommand, CODEX_DISPATCH_TEST_ARGS, {
+    cwd: repoRoot,
+    timeout: 180000,
+    captureTapSummary: true,
+  });
   const restartRequired = filesChanged.some((path) => [
     'scripts/stephanos-codex-dispatch-mcp.mjs',
     'shared/agents/codexDispatchHostOps.mjs',
@@ -629,6 +657,12 @@ export async function runBattleBridgeDiagnostics({
     workerInspection: inspection,
     readRecord,
   });
+  const forgeShadowM2DigestResolution = resolveForgeShadowM2DigestOnBattleBridge({
+    repoRoot,
+    platform,
+    env,
+    spawnSyncFn,
+  });
   const passed = gitPassed && healthPassed && workerTelemetry.ok;
   const blocker = !gitPassed
     ? 'GIT_DIAGNOSTICS_FAILED'
@@ -659,6 +693,7 @@ export async function runBattleBridgeDiagnostics({
     latestExecutionReceipt: workerTelemetry.latestExecutionReceipt,
     testsChecksReview: workerTelemetry.testsChecksReview,
     operatorActionRequired: workerTelemetry.operatorActionRequired,
+    forgeShadowM2DigestResolution,
     safety: {
       sourceMutationDetected: false,
       generatedRuntimeMutationDetected: false,
