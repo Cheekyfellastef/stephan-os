@@ -153,7 +153,7 @@ function reviewDoc(source, path, findings) {
     '%LOCALAPPDATA%\\Stephanos\\BattleBridgeRecoveryLifeboat',
     'Stephanos Battle Bridge Recovery Lifeboat',
     'A bank update never targets the current active bank.',
-    'candidate installed-bank heartbeat proof before promotion',
+    'require a fresh healthy heartbeat bound to that exact manifest',
     'retain the previous active bank as rollback',
     'does not install the lifeboat',
   ]) requireLiteral(findings, source, path, literal, 'lifeboat-doc-boundary-missing');
