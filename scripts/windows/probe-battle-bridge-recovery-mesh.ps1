@@ -278,7 +278,7 @@ $openClawHealth = Get-OpenClawIdentityHealth
 $backendFreshness = Get-BackendFreshnessHealth -ExpectedSourceHead $sourceHead -BackendTask $after.backend
 $afterWorktree = Assert-CanonicalSourceWorktreeClean -GitExecutable $sourceControlExecutable -RepositoryRoot $repoRoot
 $mailboxTask = $after.mailbox
-$mailboxLastRunMs = if ($mailboxTask.lastRunTimeUtc) { ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse([string]$mailboxTask.lastRunTimeUtc)).TotalMilliseconds } else { [double]::PositiveInfinity }
+$mailboxLastRunMs = if ($mailboxTask.lastRunTimeUtc) { ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($mailboxTask.lastRunTimeUtc)).TotalMilliseconds } else { [double]::PositiveInfinity }
 $mailboxHealthy = $mailboxTask.present `
     -and $mailboxTask.actionCanonical `
     -and $mailboxTask.authorityCanonical `
