@@ -12,8 +12,6 @@ $installRoot = Join-Path $lifeboatRoot 'local-chat'
 $installedHandler = Join-Path $installRoot 'invoke-battle-bridge-local-chat-recovery-v1.ps1'
 $statePath = Join-Path $lifeboatRoot 'state\active-bank.json'
 $powershellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-$protocolKey = 'HKCU:\Software\Classes\stephanos-recover'
-$commandKey = Join-Path $protocolKey 'shell\open\command'
 
 foreach ($required in @($sourceHandler, $powershellExe, $statePath)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required local recovery prerequisite is missing: $required" }
@@ -27,43 +25,62 @@ if ([string]$state.selfTestVerdict -ne 'PASS') { throw 'Installed lifeboat is no
 [System.IO.Directory]::CreateDirectory($installRoot) | Out-Null
 $sourceHash = (Get-FileHash -LiteralPath $sourceHandler -Algorithm SHA256).Hash.ToLowerInvariant()
 
-if ($PSCmdlet.ShouldProcess($installedHandler, 'Install bounded local ChatGPT recovery URI handler outside the repository checkout')) {
+if ($PSCmdlet.ShouldProcess($installedHandler, 'Install bounded local ChatGPT recovery handler outside the repository checkout')) {
     Copy-Item -LiteralPath $sourceHandler -Destination $installedHandler -Force
 }
 $installedHash = (Get-FileHash -LiteralPath $installedHandler -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($installedHash -ne $sourceHash) { throw 'Installed local recovery handler hash does not match reviewed source.' }
 
-$command = "`"$powershellExe`" -NoProfile -ExecutionPolicy Bypass -File `"$installedHandler`" -Uri `"%1`""
-if ($PSCmdlet.ShouldProcess('stephanos-recover:', 'Register fixed per-user local recovery protocol')) {
-    New-Item -Path $protocolKey -Force | Out-Null
-    Set-Item -Path $protocolKey -Value 'URL:Stephanos Recovery Lifeboat Protocol'
-    New-ItemProperty -Path $protocolKey -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
-    New-Item -Path $commandKey -Force | Out-Null
-    Set-Item -Path $commandKey -Value $command
-}
+$protocols = @(
+    [pscustomobject]@{ Scheme = 'stephanos-recover-probe'; Action = 'PROBE_BATTLE_BRIDGE'; Description = 'Stephanos Recovery Lifeboat Probe' },
+    [pscustomobject]@{ Scheme = 'stephanos-recover-mailbox'; Action = 'WAKE_CANONICAL_MAILBOX'; Description = 'Stephanos Recovery Lifeboat Mailbox Wake' },
+    [pscustomobject]@{ Scheme = 'stephanos-recover-mesh'; Action = 'WAKE_CANONICAL_RECOVERY_MESH'; Description = 'Stephanos Recovery Lifeboat Mesh Wake' }
+)
 
-$observedCommand = (Get-Item -LiteralPath $commandKey).GetValue('')
-if ([string]$observedCommand -cne $command) { throw 'Registered local recovery protocol command identity mismatch.' }
+$registered = @()
+foreach ($protocol in $protocols) {
+    $protocolKey = "HKCU:\Software\Classes\$($protocol.Scheme)"
+    $commandKey = Join-Path $protocolKey 'shell\open\command'
+    $command = "`"$powershellExe`" -NoProfile -ExecutionPolicy Bypass -File `"$installedHandler`" -Action $($protocol.Action)"
+
+    if ($command.Contains('%1')) { throw 'Fixed local recovery protocol must not receive caller-controlled URI text.' }
+    if ($PSCmdlet.ShouldProcess("$($protocol.Scheme):", "Register fixed per-user local recovery action $($protocol.Action)")) {
+        New-Item -Path $protocolKey -Force | Out-Null
+        Set-Item -Path $protocolKey -Value "URL:$($protocol.Description)"
+        New-ItemProperty -Path $protocolKey -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
+        New-Item -Path $commandKey -Force | Out-Null
+        Set-Item -Path $commandKey -Value $command
+    }
+
+    $observedCommand = (Get-Item -LiteralPath $commandKey).GetValue('')
+    if ([string]$observedCommand -cne $command) { throw "Registered local recovery protocol command identity mismatch for $($protocol.Scheme)." }
+    $registered += [pscustomobject]@{
+        scheme = $protocol.Scheme
+        action = $protocol.Action
+        commandIdentityVerified = $true
+        callerControlledUriPassedToHandler = $false
+    }
+}
 
 [pscustomobject]@{
     schemaVersion = 'stephanos.battle-bridge-local-chat-recovery-install.v1'
-    protocol = 'stephanos-recover'
     installedHandler = $installedHandler
     handlerSha256 = $installedHash
     lifeboatRoot = $lifeboatRoot
     activeBank = [string]$state.activeBank
     activeManifestSha256 = [string]$state.manifestSha256
-    protocolCommandIdentityVerified = $true
+    registeredProtocols = $registered
     acceptedUris = @(
-        'stephanos-recover://probe',
-        'stephanos-recover://wake-mailbox',
-        'stephanos-recover://wake-recovery-mesh'
+        'stephanos-recover-probe:',
+        'stephanos-recover-mailbox:',
+        'stephanos-recover-mesh:'
     )
     arbitraryShellAllowed = $false
     callerSelectedExecutableAllowed = $false
     callerSelectedPathAllowed = $false
     callerSelectedUrlAllowed = $false
     callerSelectedTaskAllowed = $false
+    callerControlledUriPassedToHandler = $false
     gitMutationAllowed = $false
     sourceMutationAllowed = $false
     mergeAllowed = $false
