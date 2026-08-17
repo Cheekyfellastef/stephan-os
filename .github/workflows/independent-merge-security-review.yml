@@ -41,6 +41,7 @@ jobs:
       - name: Review the complete exact-head and exact-base diff without mutation authority
         env:
           GH_TOKEN: ${{ github.token }}
+          NODE_OPTIONS: --import=./scripts/independent-review-complete-review-estate-fallback-v1.mjs
           STEPHANOS_INDEPENDENT_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/independent-review-result.json
         run: node scripts/independent-merge-security-review-with-windows-specialist-v1.mjs
       - name: Upload the exact-run immutable independent review result
