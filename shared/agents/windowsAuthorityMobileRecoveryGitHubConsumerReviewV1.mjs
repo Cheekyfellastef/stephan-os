@@ -107,7 +107,7 @@ function reviewBank(source, path, findings) {
     ['[switch]$SelfTestOnly', 'm6-bank-self-test-switch-missing'],
     ["$bankId -notin @('A', 'B')", 'm6-bank-id-boundary-missing'],
     ['claim=$claimHash', 'm6-bank-claim-manifest-binding-missing'],
-    ['if (-not $SelfTestOnly)', 'm6-bank-self-test-network-boundary-missing'],
+    ['if (-not $SelfTestOnly -and $ok)', 'm6-bank-self-test-network-boundary-missing'],
     ['invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1', 'm6-bank-fixed-consumer-missing'],
     ['repoCheckoutRequired = $false', 'm6-bank-checkout-independence-missing'],
     ['openClawGatewayRequired = $false', 'm6-bank-openclaw-independence-missing'],
