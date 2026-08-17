@@ -41,7 +41,7 @@ function asset(overrides = {}) {
     dependents: [],
     engineOrRuntimeCompatibility: ['engine-neutral'],
     performanceClass: 'standard',
-    validationState: 'VALIDATED',
+    validationState: 'validated',
     integrationState: 'DRAFT',
     liveState: 'NOT_LIVE',
     rollbackRefs: [],
@@ -71,6 +71,16 @@ test('a valid asset registry preserves exact version identities and canonical co
   assert.equal(built.validation.uniqueVersionCount, 1);
   assert.equal(spatialAssetVersionIdentity(first), 'asset-tree-01@v1');
   assert.equal(canonicalSpatialAssetContentAddress(first), `cas://sha256/${'a'.repeat(64)}`);
+});
+
+test('registry validation inherits the repaired M1 canonical asset boundary', () => {
+  const noncanonicalState = registry([asset({ validationState: 'VALIDATED' })]);
+  assert.equal(noncanonicalState.valid, false);
+  assert.match(noncanonicalState.validation.errors.join('\n'), /validationState-invalid-or-noncanonical/);
+
+  const traversal = registry([asset({ sourceLocation: 'assets/..\/outside.json' })]);
+  assert.equal(traversal.valid, false);
+  assert.match(traversal.validation.errors.join('\n'), /sourceLocation-invalid/);
 });
 
 test('content-address index deduplicates physical identity without collapsing logical asset identities', () => {

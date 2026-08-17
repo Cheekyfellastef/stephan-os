@@ -144,6 +144,35 @@ test('M1 contracts accept one bounded candidate asset lineage', () => {
   assert.equal(validateSpatialWorldFoundryBundle(bundle()).valid, true);
 });
 
+test('budget data keys accept bounded lowerCamelCase without widening entity identity', () => {
+  const canonical = validateSpatialBuildOrder(buildOrder({
+    performanceBudget: { maxTriangles: 5000, maxTextureMb: 8, lod0Count: 1 },
+    comfortBudget: { flashingForbidden: true, maxAngularMotionDegPerSec: 0 },
+  }));
+  assert.equal(canonical.valid, true, canonical.errors.join(', '));
+
+  for (const unsafeKey of [
+    'MaxTriangles',
+    'max-triangles',
+    'max_triangles',
+    'max.triangles',
+    'max triangles',
+    'a'.repeat(65),
+  ]) {
+    const verdict = validateSpatialBuildOrder(buildOrder({ performanceBudget: { [unsafeKey]: 1 } }));
+    assert.equal(verdict.valid, false, `${unsafeKey} must fail closed`);
+    assert.ok(verdict.errors.includes('performanceBudget-unsafe-key'), verdict.errors.join(', '));
+  }
+
+  const reservedKey = validateSpatialBuildOrder(buildOrder({ performanceBudget: { constructor: 1 } }));
+  assert.equal(reservedKey.valid, false);
+  assert.ok(reservedKey.errors.includes('buildOrder-must-be-data-only'));
+
+  const entityIdentity = validateSpatialBuildOrder(buildOrder({ planetId: 'Idea-Planet-001' }));
+  assert.equal(entityIdentity.valid, false);
+  assert.ok(entityIdentity.errors.includes('planetId-invalid-or-noncanonical'));
+});
+
 test('allowedOperations is an explicit safe allowlist rather than a bypass blacklist', () => {
   for (const unsafe of ['VOICE_EXECUTE', 'MERGE', 'DEPLOY', 'APPROVE', 'LEASE_SEIZE', 'RUNTIME_MUTATE', 'SHELL_EXECUTE', 'RUN_ARBITRARY_COMMAND']) {
     const verdict = validateSpatialBuildOrder(buildOrder({ allowedOperations: ['GENERATE_ASSET', unsafe] }));
