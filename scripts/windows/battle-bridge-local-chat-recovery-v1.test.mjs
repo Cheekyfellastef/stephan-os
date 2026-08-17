@@ -15,6 +15,8 @@ test('local ChatGPT recovery handler accepts only fixed reviewed lifeboat action
   assert.match(handler, /payload hash verification failed/);
   assert.match(handler, /MessageBoxButtons\]::YesNo/);
   assert.match(handler, /MessageBoxDefaultButton\]::Button2/);
+  assert.match(handler, /permission to \$\{label\}\./);
+  assert.doesNotMatch(handler, /permission to \$label\./);
   assert.match(handler, /operatorConfirmed/);
   assert.match(handler, /local-chat-recovery-last\.json/);
   assert.match(handler, /callerSelectedUrlAllowed = \$false/);
