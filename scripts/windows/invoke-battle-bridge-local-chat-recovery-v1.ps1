@@ -1,14 +1,14 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string]$Uri
+    [ValidateSet('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH')]
+    [string]$Action
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $schemaVersion = 'stephanos.battle-bridge-local-chat-recovery.v1'
-$scheme = 'stephanos-recover'
 $powershellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is required.' }
 if (-not (Test-Path -LiteralPath $powershellExe -PathType Leaf)) { throw 'Canonical Windows PowerShell host is missing.' }
@@ -33,21 +33,6 @@ function Write-AtomicJson([string]$Path, [object]$Value) {
     $Value | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $temp -Encoding UTF8
     Move-Item -LiteralPath $temp -Destination $Path -Force
 }
-
-$parsed = $null
-try { $parsed = [System.Uri]::new($Uri, [System.UriKind]::Absolute) } catch { throw 'Local recovery URI is malformed.' }
-if (-not $parsed.Scheme.Equals($scheme, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Local recovery URI scheme is not allowed.' }
-if ($parsed.Query -or $parsed.Fragment -or $parsed.UserInfo -or $parsed.Port -ne -1) { throw 'Local recovery URI may not carry query, fragment, user info or port data.' }
-if ($parsed.AbsolutePath -and $parsed.AbsolutePath -ne '/') { throw 'Local recovery URI may not carry a path.' }
-
-$requested = $parsed.Host.ToLowerInvariant()
-$actionMap = @{
-    'probe' = 'PROBE_BATTLE_BRIDGE'
-    'wake-mailbox' = 'WAKE_CANONICAL_MAILBOX'
-    'wake-recovery-mesh' = 'WAKE_CANONICAL_RECOVERY_MESH'
-}
-if (-not $actionMap.ContainsKey($requested)) { throw 'Requested local recovery action is outside the closed-world allowlist.' }
-$action = [string]$actionMap[$requested]
 
 if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { throw 'Installed lifeboat active-bank state is missing.' }
 $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
@@ -74,9 +59,9 @@ $observedManifest = Get-TextSha256 "runner=$runnerHash`naction=$actionHash`nvers
 if ($manifest -ne [string]$state.manifestSha256 -or $observedManifest -ne $manifest) { throw 'Installed lifeboat payload hash verification failed.' }
 
 $confirmed = $true
-if ($action -ne 'PROBE_BATTLE_BRIDGE') {
+if ($Action -ne 'PROBE_BATTLE_BRIDGE') {
     Add-Type -AssemblyName System.Windows.Forms
-    $label = if ($action -eq 'WAKE_CANONICAL_MAILBOX') { 'wake the canonical GitHub command mailbox' } else { 'wake the canonical Recovery Mesh' }
+    $label = if ($Action -eq 'WAKE_CANONICAL_MAILBOX') { 'wake the canonical GitHub command mailbox' } else { 'wake the canonical Recovery Mesh' }
     $answer = [System.Windows.Forms.MessageBox]::Show(
         "Stephanos Recovery Lifeboat requests permission to $label.`r`n`r`nNo arbitrary shell, Git mutation, deployment or PC restart is permitted by this action.",
         'Stephanos bounded recovery approval',
@@ -92,7 +77,7 @@ $startedAt = [DateTime]::UtcNow
 $resultText = ''
 $exitCode = 0
 if ($confirmed) {
-    $output = @(& $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $actionPath -Action $action 2>&1)
+    $output = @(& $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $actionPath -Action $Action 2>&1)
     $exitCode = $LASTEXITCODE
     $resultText = $output -join [Environment]::NewLine
 } else {
@@ -106,10 +91,9 @@ $ok = $confirmed -and $exitCode -eq 0 -and $null -ne $parsedResult -and [bool]$p
 $receipt = [ordered]@{
     schemaVersion = $schemaVersion
     requestId = $requestId
-    ingress = 'battle-bridge-local-chat-uri'
-    requestedAction = $requested
-    action = $action
-    operatorConfirmationRequired = [bool]($action -ne 'PROBE_BATTLE_BRIDGE')
+    ingress = 'battle-bridge-local-chat-fixed-protocol'
+    action = $Action
+    operatorConfirmationRequired = [bool]($Action -ne 'PROBE_BATTLE_BRIDGE')
     operatorConfirmed = [bool]$confirmed
     activeBank = $bankId
     manifestSha256 = $manifest
