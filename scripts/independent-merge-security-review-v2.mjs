@@ -253,6 +253,7 @@ async function main() {
     protectedWorkflowSources,
     requireReviewerFilesInDiff: false,
   });
+  const deterministicBootstrapRequired = isApprovalBoundaryBootstrapAnalysis(deterministicAnalysis);
   const specialistProbe = adjudicateQualifiedSpecialistReview({
     analysis: deterministicAnalysis,
     reviews: [],
@@ -262,7 +263,7 @@ async function main() {
     sourceHead,
     baseSha,
   });
-  const specialist = specialistProbe.required
+  const specialist = !deterministicBootstrapRequired && specialistProbe.required
     ? adjudicateQualifiedSpecialistReview({
       analysis: deterministicAnalysis,
       reviews: await githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`),
@@ -273,13 +274,13 @@ async function main() {
       baseSha,
     })
     : specialistProbe;
-  const analysis = specialist.required && specialist.valid
+  const analysis = !deterministicBootstrapRequired && specialist.required && specialist.valid
     ? specialist.analysis
     : deterministicAnalysis;
   console.log(`SPECIALIST_REVIEW_DECISION=${specialist.required ? (specialist.valid ? 'SEALED' : 'REQUIRED') : 'NOT_REQUIRED'}`);
   console.log(`SPECIALIST_REVIEW_ID=${specialist.reviewId || ''}`);
 
-  const bootstrapRequired = isApprovalBoundaryBootstrapAnalysis(analysis);
+  const bootstrapRequired = deterministicBootstrapRequired || isApprovalBoundaryBootstrapAnalysis(analysis);
   const finalPullRequest = await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`);
   const finalMainRef = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/main`);
   if (text(finalPullRequest?.head?.sha).toLowerCase() !== sourceHead || text(finalPullRequest?.state).toLowerCase() !== 'open') {
