@@ -84,7 +84,9 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now()) {
   const observedMs = Date.parse(observedAtUtc);
   const ageMs = Number.isFinite(observedMs) ? Math.max(0, nowMs - observedMs) : null;
   const stale = ageMs === null || ageMs > spec.staleAfterMs;
-  const raw = text(record.status || record.classification || record.finalVerdict || record.state || 'UNKNOWN', 120).toUpperCase();
+  // Prefer the most specific typed machine verdict. Generic status fields can
+  // lag or be overly broad and must never paint a typed failure green.
+  const raw = text(record.classification || record.finalVerdict || record.status || record.state || 'UNKNOWN', 120).toUpperCase();
   const blocker = text(record.blocker || record.exactNextAction || '', 180);
   return Object.freeze({
     id: spec.id,
