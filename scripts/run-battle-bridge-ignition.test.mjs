@@ -1,12 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import process from 'node:process';
 import {
   createSupervisorHousekeepRunStep,
   ensureLiveUiConvergedBeforeSupervisor,
   runSupervisorHousekeepPreservingLiveDist,
   runSupervisorHousekeepPreservingLiveRuntime,
+  writePreSupervisorFailureStatus,
 } from './run-battle-bridge-ignition.mjs';
 
 test('supervisor housekeeping preserves exact-head dist and runtime-owned durable memory', () => {
@@ -54,13 +57,16 @@ test('supervisor housekeeping injects the live-runtime-preserving run step into 
   assert.equal(runSupervisorHousekeepPreservingLiveDist, runSupervisorHousekeepPreservingLiveRuntime);
 });
 
-test('backend startup source tolerates only unstaged canonical durable-memory dirt and fixed Node command forms', async () => {
+test('backend startup source tolerates only unstaged canonical durable-memory and UI-dist runtime dirt with fixed Node command forms', async () => {
   const starter = await readFile(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
   assert.match(starter, /\$runtimeMemoryPath = 'stephanos-server\/data\/memory\/durable-memory\.json'/);
+  assert.match(starter, /\$runtimeDistPrefix = 'apps\/stephanos\/dist\/'/);
   assert.match(starter, /\$status -eq ' M' -and \$path -eq \$runtimeMemoryPath/);
+  assert.match(starter, /\$status -eq ' M' -and \$path\.StartsWith\(\$runtimeDistPrefix, \[System\.StringComparison\]::Ordinal\)/);
   assert.match(starter, /Backend startup requires source-tracked files to be unmodified at exact head/);
   assert.match(starter, /runtimeMemoryDirtTolerated = \$RuntimeMemoryDirty/);
-  assert.match(starter, /trackedWorktreeClean = -not \$RuntimeMemoryDirty/);
+  assert.match(starter, /runtimeDistDirtTolerated = \$RuntimeDistDirty/);
+  assert.match(starter, /trackedWorktreeClean = -not \(\$RuntimeMemoryDirty -or \$RuntimeDistDirty\)/);
   assert.match(starter, /sourceWorktreeClean = \$true/);
   assert.match(starter, /-replace '\\s\+', ' '/);
   assert.match(starter, /'node stephanos-server\/server\.js'/);
@@ -81,6 +87,27 @@ test('Recovery Mesh shares the exact runtime-memory and backend listener identit
   assert.match(probe, /'node stephanos-server\/server\.js'/);
   assert.match(probe, /'node\.exe stephanos-server\/server\.js'/);
   assert.doesNotMatch(probe, /CommandLine -match|Invoke-Expression/i);
+});
+
+test('pre-supervisor failures publish a fresh terminal red ignition record instead of leaving the launcher blue', async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), 'stephanos-pre-supervisor-'));
+  try {
+    const result = await writePreSupervisorFailureStatus({
+      sharedWorkspace: workspace,
+      phase: 'backend 8787',
+      blockerId: 'backend-preflight-test-blocker',
+      detail: 'backend preflight failed before supervisor start',
+      nextOperatorAction: 'repair the backend preflight, then retry Ignition',
+    });
+    const status = JSON.parse(await readFile(result.statusPath, 'utf8'));
+    assert.equal(status.trafficLight, 'red');
+    assert.equal(status.currentPhase, 'backend 8787');
+    assert.equal(status.blockerId, 'backend-preflight-test-blocker');
+    assert.equal(status.phases['backend 8787'].state, 'blocked');
+    assert.match(status.nextOperatorAction, /retry Ignition/);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
 });
 
 test('canonical ignition pins repository-sensitive housekeeping to the source-derived repo root', async () => {
