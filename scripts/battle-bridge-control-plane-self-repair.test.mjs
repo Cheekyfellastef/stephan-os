@@ -174,6 +174,45 @@ test('control-plane repair fails closed on invalid beacon installer receipt', ()
   assert.equal(result.failedTaskId, 'outboundHealthBeacon');
 });
 
+test('Recovery Mesh hidden launcher emits bounded terminal liveness and fails closed on nonzero runner results', async () => {
+  const source = await readFile(new URL('./windows/run-battle-bridge-recovery-mesh-hidden.ps1', import.meta.url), 'utf8');
+
+  assert.match(source, /battle-bridge-recovery-mesh-launch-current\.json/);
+  assert.match(source, /stephanos\.battle-bridge-recovery-mesh-launch\.v1/);
+  for (const classification of [
+    'RECOVERY_MESH_HIDDEN_WRAPPER_STARTED',
+    'RECOVERY_MESH_MUTEX_BUSY',
+    'RECOVERY_MESH_STALE_LOCK_RECLAIM_FAILED',
+    'RECOVERY_MESH_RUNNER_STARTING',
+    'RECOVERY_MESH_RUNNER_COMPLETED',
+    'RECOVERY_MESH_RUNNER_FAILED',
+    'RECOVERY_MESH_HIDDEN_WRAPPER_FAILED',
+  ]) assert.match(source, new RegExp(classification));
+
+  assert.match(source, /runnerResultParsed/);
+  assert.match(source, /runnerClassification/);
+  assert.match(source, /\$runnerOutput = @\(& \$nodeExecutable \$runnerPath 2>&1\)/);
+  assert.match(source, /\$runnerResultParsed = \$null -ne \$runnerResult/);
+  assert.match(source, /if \(\$runnerResultParsed -and \$runnerExitCode -eq 0\)/);
+  assert.match(source, /-Classification 'RECOVERY_MESH_RUNNER_FAILED'[\s\S]*?-RunnerResultParsed \$runnerResultParsed[\s\S]*?-RunnerClassification \$runnerClassification/);
+  assert.doesNotMatch(source, /\$nodeExecutable \$runnerPath \*> \$null/);
+
+  assert.match(source, /System\.Threading\.Mutex/);
+  assert.match(source, /STEPHANOS_RECOVERY_MESH_MUTEX_HELD = '1'/);
+  assert.match(source, /Get-RecoveryLockPathBaseline/);
+  assert.match(source, /Assert-RecoveryLockPathBaseline/);
+  assert.match(source, /OpenVerifiedForDelete/);
+  assert.match(source, /DeleteByHandle/);
+  assert.match(source, /RECOVERY_LOCK_MULTIPLE_LINKS_REJECTED/);
+
+  assert.match(source, /visiblePowerShellRequired = \$false/);
+  assert.match(source, /arbitraryShellAllowed = \$false/);
+  assert.match(source, /arbitraryPowerShellAllowed = \$false/);
+  assert.match(source, /sourceMutationAllowed = \$false/);
+  assert.match(source, /pcRestartAllowed = \$false/);
+  assert.doesNotMatch(source, /["']-Command["']|Invoke-Expression|Start-Process|Restart-Computer|git\s+(?:reset|clean|checkout|switch|push)/i);
+});
+
 test('control-plane repair source exposes no caller-selected task, executable, installer or shell surface', async () => {
   const source = await readFile(new URL('../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs', import.meta.url), 'utf8');
   assert.match(source, /shell: false/);
