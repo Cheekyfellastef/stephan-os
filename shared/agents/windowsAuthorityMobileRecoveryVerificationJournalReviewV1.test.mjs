@@ -22,7 +22,7 @@ const escalated = [{
 const contents = {
   'docs/architecture/battle-bridge-recovery-lifeboat-verification-journal-v1.md': `M7 closes two truth gaps left by M6.\nThe executable recovery vocabulary remains exactly:\nRECOVERY_INTERRUPTED_CLAIM_TERMINALIZED_NO_REPLAY\nRECOVERY_LOCAL_STATE_BLOCKED\nrecoveredHealthClaimed=false\nadds no caller-selected URL, path, executable, task, PID, Git ref or shell command`,
   'scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1': `param()\n$repository = 'Cheekyfellastef/stephan-os'\n$issueNumber = 1814\n$ownerLogin = 'Cheekyfellastef'\n$apiUrl = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1814/comments?per_page=100&page=1'\n$powershellExe = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'\n$allowedActions = @('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH')\n$journalSchema = 'stephanos.battle-bridge-recovery-lifeboat-execution-journal.v1'\n$journalRoot = Join-Path $stateRoot 'execution-journal'\n[System.IO.FileMode]::CreateNew\nfunction Invoke-ReadOnlyProbe() {}\n-File $actionPath -Action PROBE_BATTLE_BRIDGE\nfunction Verify-PostAction([string]$Action, [object]$ActionReceipt) {}\nfunction Get-ProbeUtc([object]$Value) {}\nfunction Test-TaskCurrentlyHealthy([object]$TaskSnapshot, [object]$BaselineSnapshot) {}\nreturn $postRun -gt $baselineRun\n$journal.state = 'TERMINAL'\nRECOVERY_PROBE_VERIFIED\nRECOVERY_ACTION_TARGET_VERIFIED\nRECOVERY_ACTION_DISPATCHED_VERIFICATION_FAILED\nRECOVERY_ACTION_BLOCKED\nRECOVERY_INTERRUPTED_CLAIM_TERMINALIZED_NO_REPLAY\nPREVIOUS_LIFEBOAT_PROCESS_INTERRUPTED_AFTER_EXCLUSIVE_CLAIM\nREAD_ONLY_POST_CRASH_PROBE_COMPLETE\nRECOVERY_LOCAL_STATE_BLOCKED\nINTERRUPTED_CLAIM_MALFORMED\nINTERRUPTED_CLAIM_IDENTITY_INVALID\nINTERRUPTED_CLAIM_ACTION_INVALID\nINTERRUPTED_JOURNAL_MALFORMED\nINTERRUPTED_JOURNAL_IDENTITY_INVALID\nINTERRUPTED_JOURNAL_STATE_INVALID\nINTERRUPTED_JOURNAL_TERMINAL_INVALID\nINTERRUPTED_TERMINAL_RECEIPT_MISSING\nINTERRUPTED_TERMINAL_RECEIPT_INVALID\nrecoveredHealthClaimed = $false\nbattleBridgeHealthyClaimed = $false\nreplayAllowed = $false\nexecutionReplayAllowed = $false`,
-  'shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs': `GITHUB_RECOVERY_JSON_INVALID\nPROBE_BATTLE_BRIDGE\nWAKE_CANONICAL_MAILBOX\nWAKE_CANONICAL_RECOVERY_MESH\nreplayAllowed\nexecutionReplayAllowed`,
+  'shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs': `GITHUB_RECOVERY_JSON_INVALID\nPROBE_BATTLE_BRIDGE\nWAKE_CANONICAL_MAILBOX\nWAKE_CANONICAL_RECOVERY_MESH\nreplayAllowed`,
   'shared/agents/battleBridgeRecoveryLifeboatVerificationJournalV1.test.mjs': `Invoke-ReadOnlyProbe\nVerify-PostAction\npostRun -gt\nRECOVERY_ACTION_TARGET_VERIFIED\nRECOVERY_ACTION_DISPATCHED_VERIFICATION_FAILED\nRECOVERY_INTERRUPTED_CLAIM_TERMINALIZED_NO_REPLAY\nPREVIOUS_LIFEBOAT_PROCESS_INTERRUPTED_AFTER_EXCLUSIVE_CLAIM\nREAD_ONLY_POST_CRASH_PROBE_COMPLETE\nRECOVERY_LOCAL_STATE_BLOCKED\nINTERRUPTED_CLAIM_MALFORMED\nINTERRUPTED_TERMINAL_RECEIPT_INVALID\nexecutionReplayAllowed`,
 };
 
@@ -74,4 +74,18 @@ test('rejects removed no-replay, freshness, local-state or whole-system-health b
     const weakened = input().sources.map((source) => source.path.includes('github-claim') ? { ...source, content: source.content.replace(literal, '') } : source);
     assert.equal(analyzeWindowsAuthorityMobileRecoveryVerificationJournalReview(input({ sources: weakened })).clean, false);
   }
+});
+
+test('execution replay guard is owned by the dedicated M7 journal test', () => {
+  const baseline = input();
+  const consumerTest = baseline.sources.find((source) => source.path === 'shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs');
+  const journalTest = baseline.sources.find((source) => source.path === 'shared/agents/battleBridgeRecoveryLifeboatVerificationJournalV1.test.mjs');
+  assert.doesNotMatch(consumerTest.content, /executionReplayAllowed/);
+  assert.match(journalTest.content, /executionReplayAllowed/);
+  const weakened = baseline.sources.map((source) => source.path === journalTest.path
+    ? { ...source, content: source.content.replace('executionReplayAllowed', '') }
+    : source);
+  const result = analyzeWindowsAuthorityMobileRecoveryVerificationJournalReview(input({ sources: weakened }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'm7-verification-static-guard-test-missing'));
 });
