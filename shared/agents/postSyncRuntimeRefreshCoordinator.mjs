@@ -36,6 +36,7 @@ const NATURAL_EXACT = new Set([
   'scripts/battle-bridge-post-sync-refresh.mjs',
   'scripts/battle-bridge-shared-workspace-publisher.mjs',
   'scripts/chatgpt-shared-workspace-github-relay.mjs',
+  'scripts/windows/probe-battle-bridge-recovery-mesh.ps1',
   'scripts/windows/run-battle-bridge-github-sync-hidden.ps1',
   'scripts/windows/install-battle-bridge-github-sync.ps1',
   'scripts/windows/status-battle-bridge-github-sync.ps1',
@@ -63,6 +64,8 @@ const NO_RUNTIME_EXACT = new Set([
   '.gitattributes',
   'LICENSE',
   'README.md',
+  'scripts/publish-battle-bridge-main-advance-signal.mjs',
+  'shared/agents/battleBridgeMainAdvanceSignalV1.mjs',
 ]);
 
 const LAUNCHER_CRITICAL_SOURCE_PATHS = new Set([
