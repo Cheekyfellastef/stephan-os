@@ -234,10 +234,9 @@ async function main() {
   // Review the immutable head/base immediately. CI and unresolved-thread
   // evidence remain mandatory at the independent merge-consumption boundary;
   // serializing analysis behind them only delays feedback and wastes runners.
-  const [files, diff, reviews] = await Promise.all([
+  const [files, diff] = await Promise.all([
     githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/files`),
     githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`, { accept: 'application/vnd.github.v3.diff' }),
-    githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`),
   ]);
   const protectedWorkflowPaths = PROTECTED_WORKFLOW_SOURCE_PATHS.filter((path) => (
     changedFilePaths(files).includes(path)
@@ -254,22 +253,34 @@ async function main() {
     protectedWorkflowSources,
     requireReviewerFilesInDiff: false,
   });
-  const specialist = adjudicateQualifiedSpecialistReview({
+  const deterministicBootstrapRequired = isApprovalBoundaryBootstrapAnalysis(deterministicAnalysis);
+  const specialistProbe = adjudicateQualifiedSpecialistReview({
     analysis: deterministicAnalysis,
-    reviews,
+    reviews: [],
     repository,
     prNumber,
     branch,
     sourceHead,
     baseSha,
   });
-  const analysis = specialist.required && specialist.valid
+  const specialist = !deterministicBootstrapRequired && specialistProbe.required
+    ? adjudicateQualifiedSpecialistReview({
+      analysis: deterministicAnalysis,
+      reviews: await githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`),
+      repository,
+      prNumber,
+      branch,
+      sourceHead,
+      baseSha,
+    })
+    : specialistProbe;
+  const analysis = !deterministicBootstrapRequired && specialist.required && specialist.valid
     ? specialist.analysis
     : deterministicAnalysis;
   console.log(`SPECIALIST_REVIEW_DECISION=${specialist.required ? (specialist.valid ? 'SEALED' : 'REQUIRED') : 'NOT_REQUIRED'}`);
   console.log(`SPECIALIST_REVIEW_ID=${specialist.reviewId || ''}`);
 
-  const bootstrapRequired = isApprovalBoundaryBootstrapAnalysis(analysis);
+  const bootstrapRequired = deterministicBootstrapRequired || isApprovalBoundaryBootstrapAnalysis(analysis);
   const finalPullRequest = await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`);
   const finalMainRef = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/main`);
   if (text(finalPullRequest?.head?.sha).toLowerCase() !== sourceHead || text(finalPullRequest?.state).toLowerCase() !== 'open') {
