@@ -74,6 +74,33 @@ test('backend startup source tolerates only unstaged canonical durable-memory an
   assert.doesNotMatch(starter, /CommandLine -match|Invoke-Expression|Start-Process[^\n]*-ArgumentList[^\n]*\$CommandLine/i);
 });
 
+test('backend starter replaces only a verified stale canonical 8787 listener after the source safety gate', async () => {
+  const starter = await readFile(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
+  const sourceGate = starter.indexOf('if ($trackedAssessment.SourceDirt.Count -ne 0)');
+  const listenerGate = starter.indexOf('$listenerConnections = @(Get-NetTCPConnection -LocalPort 8787');
+  const staleHeadGate = starter.indexOf('if ($healthObservation.SourceHead -eq $headSha)');
+  const verifiedKill = starter.indexOf('Stop-Process -Id $staleListener.ProcessId -Force -ErrorAction Stop');
+  const replacementStart = starter.indexOf('Start-Process -FilePath $canonicalNpm');
+
+  assert.ok(sourceGate >= 0);
+  assert.ok(listenerGate > sourceGate);
+  assert.ok(staleHeadGate > listenerGate);
+  assert.ok(verifiedKill > staleHeadGate);
+  assert.ok(replacementStart > verifiedKill);
+
+  assert.match(starter, /function Get-CanonicalBackendHealthObservation/);
+  assert.match(starter, /backendIdentity\.runtimeId -ne 'stephanos-battle-bridge-backend'/);
+  assert.match(starter, /sourceHead -notmatch '\^\[0-9a-f\]\{40\}\$'/);
+  assert.match(starter, /refusing duplicate backend start or process termination/);
+  assert.match(starter, /staleCanonicalListenerReplaced = \$StaleCanonicalListenerReplaced/);
+  assert.match(starter, /verifiedOwnedProcessTerminationOnly = \$true/);
+  assert.match(starter, /arbitraryProcessKillAllowed = \$false/);
+
+  const stopProcessCalls = [...starter.matchAll(/Stop-Process[^\r\n]*/g)].map((match) => match[0].trim());
+  assert.deepEqual(stopProcessCalls, ['Stop-Process -Id $staleListener.ProcessId -Force -ErrorAction Stop']);
+  assert.doesNotMatch(starter, /Stop-Process\s+-Name|taskkill|wmic\s+process|Invoke-Expression/i);
+});
+
 test('Recovery Mesh shares the exact runtime-memory and backend listener identity rules', async () => {
   const probe = await readFile(new URL('./windows/probe-battle-bridge-recovery-mesh.ps1', import.meta.url), 'utf8');
   assert.match(probe, /\$runtimeMemoryPath = 'stephanos-server\/data\/memory\/durable-memory\.json'/);
