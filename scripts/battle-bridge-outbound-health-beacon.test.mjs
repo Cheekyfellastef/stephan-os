@@ -8,6 +8,7 @@ import {
   buildBattleBridgeOutboundBeacon,
   buildBattleBridgeOutboundBeaconBody,
   projectBeaconStatus,
+  projectMailboxReceipts,
 } from './battle-bridge-outbound-health-beacon.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -51,6 +52,7 @@ test('beacon publishes only fixed repository/issue identity and safe authority f
   assert.equal(record.liveOpenClawUpdateAllowed, false);
   assert.equal(record.pcRestartAllowed, false);
   assert.equal(record.secretValuesPublished, false);
+  assert.deepEqual(record.mailboxReceipts, []);
   assert.equal(record.blockerCount, 0);
   assert.equal(record.freshness, 'FRESH');
   assert.deepEqual(record.surfaces.map((surface) => surface.id), [
@@ -87,6 +89,76 @@ test('fresh typed watchdog and Recovery Mesh failures degrade the beacon instead
   assert.equal(record.freshness, 'DEGRADED');
   assert.ok(record.blockers.includes('recoveryMeshLaunch:RECOVERY_MESH_RUNNER_FAILED'));
   assert.ok(record.blockers.includes('workerWatchdog:WORKER_WATCHDOG_RECOVERY_FAILED'));
+});
+
+test('mailbox receipt projection exposes bounded correlation truth and rejects unsafe detail', () => {
+  const receipts = projectMailboxReceipts({
+    activeReceipt: {
+      requestId: 'bb-recovery-wake-000c1cd1-20260818t1554z',
+      operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
+      state: 'RUNNING',
+      expectedHead: HEAD,
+      heartbeatAt: '2026-08-18T15:58:00.000Z',
+      blocker: '',
+      finalVerdict: 'RECOVERY_WAKE_RUNNING',
+    },
+    recentReceipts: [
+      {
+        requestId: 'bb-recovery-wake-000c1cd1-20260818t1554z',
+        operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
+        state: 'DONE',
+        expectedHead: HEAD,
+        completedAt: '2026-08-18T15:59:00.000Z',
+        blocker: '',
+        finalVerdict: 'RECOVERY_MESH_WAKE_DISPATCHED',
+      },
+      {
+        requestId: 'bb-diag-safe-20260818t1559z',
+        operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
+        state: 'BLOCKED',
+        expectedHead: HEAD,
+        completedAt: '2026-08-18T16:00:00.000Z',
+        blocker: 'C:\\Users\\secret\\leak.txt',
+        finalVerdict: 'COMMAND_EXECUTION_BLOCKED',
+      },
+      { requestId: '../unsafe', operation: 'ARBITRARY', state: 'DONE' },
+    ],
+  });
+
+  assert.equal(receipts.length, 2);
+  assert.equal(receipts[0].requestId, 'bb-recovery-wake-000c1cd1-20260818t1554z');
+  assert.equal(receipts[0].state, 'RUNNING');
+  assert.equal(receipts[0].expectedHead, HEAD);
+  assert.equal(receipts[1].requestId, 'bb-diag-safe-20260818t1559z');
+  assert.equal(receipts[1].blocker, '');
+  assert.equal(receipts[1].finalVerdict, 'COMMAND_EXECUTION_BLOCKED');
+});
+
+test('beacon carries recent sanitized mailbox receipts for remote recovery correlation', () => {
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-08-18T16:01:00.000Z'),
+    statusRecords: {
+      mailbox: status({
+        status: 'READY',
+        timestampUtc: '2026-08-18T16:00:59.000Z',
+        recentReceipts: [{
+          requestId: 'bb-recovery-wake-000c1cd1-20260818t1554z',
+          operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
+          state: 'DONE',
+          expectedHead: HEAD,
+          completedAt: '2026-08-18T16:00:30.000Z',
+          blocker: 'RECOVERY_MESH_TASK_START_FAILED',
+          finalVerdict: 'COMMAND_EXECUTION_BLOCKED',
+        }],
+      }),
+    },
+  });
+
+  assert.equal(record.mailboxReceipts.length, 1);
+  assert.equal(record.mailboxReceipts[0].requestId, 'bb-recovery-wake-000c1cd1-20260818t1554z');
+  assert.equal(record.mailboxReceipts[0].operation, 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH');
+  assert.equal(record.mailboxReceipts[0].blocker, 'RECOVERY_MESH_TASK_START_FAILED');
 });
 
 test('beacon body is one bounded marker plus json record', () => {
