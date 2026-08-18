@@ -64,7 +64,10 @@ function reviewInstaller(source, path, findings) {
   for (const [literal, code] of [
     ["$taskName = 'Stephanos Battle Bridge Recovery Lifeboat'", 'lifeboat-task-name-not-fixed'],
     ["$candidateVersion = '1.2.0'", 'lifeboat-windowless-version-not-fixed'],
-    ["$wscriptExe = 'C:\\Windows\\System32\\wscript.exe'", 'lifeboat-wscript-not-fixed'],
+    ['$wscriptExe =', 'lifeboat-wscript-assignment-missing'],
+    ['Windows', 'lifeboat-windows-identity-missing'],
+    ['System32', 'lifeboat-system32-identity-missing'],
+    ['wscript.exe', 'lifeboat-wscript-not-fixed'],
     ['run-battle-bridge-recovery-lifeboat-windowless-v2.vbs', 'lifeboat-windowless-launcher-not-fixed'],
     ['New-ScheduledTaskAction -Execute $wscriptExe', 'lifeboat-task-does-not-use-wscript'],
     ['//B //Nologo', 'lifeboat-wscript-bounded-flags-missing'],
