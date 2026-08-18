@@ -75,12 +75,13 @@ test('supervisor housekeeping injects the live-runtime-preserving run step into 
   assert.equal(runSupervisorHousekeepPreservingLiveDist, runSupervisorHousekeepPreservingLiveRuntime);
 });
 
-test('backend startup source tolerates only unstaged canonical durable-memory and UI-dist runtime dirt with fixed Node command forms', async () => {
+test('backend startup source tolerates exact runtime memory plus unstaged modified/deleted generated dist with fixed Node command forms', async () => {
   const starter = await readFile(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
   assert.match(starter, /\$runtimeMemoryPath = 'stephanos-server\/data\/memory\/durable-memory\.json'/);
   assert.match(starter, /\$runtimeDistPrefix = 'apps\/stephanos\/dist\/'/);
   assert.match(starter, /\$status -eq ' M' -and \$path -eq \$runtimeMemoryPath/);
-  assert.match(starter, /\$status -eq ' M' -and \$path\.StartsWith\(\$runtimeDistPrefix, \[System\.StringComparison\]::Ordinal\)/);
+  assert.match(starter, /function Test-RuntimeUiDistStatus[\s\S]*\$Status -eq ' M' -or \$Status -eq ' D'/);
+  assert.match(starter, /Test-RuntimeUiDistStatus -Status \$status[\s\S]*\$path\.StartsWith\(\$runtimeDistPrefix, \[System\.StringComparison\]::Ordinal\)/);
   assert.match(starter, /Backend startup requires source-tracked files to be unmodified at exact head/);
   assert.match(starter, /runtimeMemoryDirtTolerated = \$RuntimeMemoryDirty/);
   assert.match(starter, /runtimeDistDirtTolerated = \$RuntimeDistDirty/);
@@ -89,6 +90,9 @@ test('backend startup source tolerates only unstaged canonical durable-memory an
   assert.match(starter, /-replace '\\s\+', ' '/);
   assert.match(starter, /'node stephanos-server\/server\.js'/);
   assert.match(starter, /'node\.exe stephanos-server\/server\.js'/);
+  assert.match(starter, /function Convert-ProcessCreationDateToUtcText[\s\S]*CreationDate -is \[DateTime\][\s\S]*ManagementDateTimeConverter\]::ToDateTime/);
+  assert.match(starter, /Convert-ProcessCreationDateToUtcText -CreationDate \$process\.CreationDate/);
+  assert.doesNotMatch(starter, /ManagementDateTimeConverter\]::ToDateTime\(\[string\]\$process\.CreationDate\)/);
   assert.doesNotMatch(starter, /CommandLine -match|Invoke-Expression|Start-Process[^\n]*-ArgumentList[^\n]*\$CommandLine/i);
   assert.doesNotMatch(starter, /Stop-Process|taskkill|wmic\s+process/i);
 });
@@ -207,10 +211,12 @@ test('approved restart must produce exact-current backend health before Ignition
   assert.equal(result.restartAttempted, true);
 });
 
-test('Recovery Mesh shares the exact runtime-memory and backend listener identity rules', async () => {
+test('Recovery Mesh shares the exact runtime-memory, generated-dist and backend listener identity rules', async () => {
   const probe = await readFile(new URL('./windows/probe-battle-bridge-recovery-mesh.ps1', import.meta.url), 'utf8');
   assert.match(probe, /\$runtimeMemoryPath = 'stephanos-server\/data\/memory\/durable-memory\.json'/);
   assert.match(probe, /\$status -eq ' M' -and \$path -eq \$runtimeMemoryPath/);
+  assert.match(probe, /function Test-RuntimeUiDistStatus[\s\S]*\$Status -eq ' M' -or \$Status -eq ' D'/);
+  assert.match(probe, /Test-RuntimeUiDistStatus -Status \$status[\s\S]*\$path\.StartsWith\(\$runtimeUiDistPrefix/);
   assert.match(probe, /RECOVERY_CANONICAL_TRACKED_SOURCE_WORKTREE_DIRTY/);
   assert.match(probe, /runtimeMemoryDirtTolerated = \[bool\]\$afterWorktree\.RuntimeMemoryDirty/);
   assert.match(probe, /sourceWorktreeClean = \$true/);
@@ -219,6 +225,9 @@ test('Recovery Mesh shares the exact runtime-memory and backend listener identit
   assert.match(probe, /-replace '\\s\+', ' '/);
   assert.match(probe, /'node stephanos-server\/server\.js'/);
   assert.match(probe, /'node\.exe stephanos-server\/server\.js'/);
+  assert.match(probe, /function Convert-ProcessCreationDateToUtcText[\s\S]*CreationDate -is \[DateTime\][\s\S]*ManagementDateTimeConverter\]::ToDateTime/);
+  assert.match(probe, /Convert-ProcessCreationDateToUtcText -CreationDate \$process\.CreationDate/);
+  assert.doesNotMatch(probe, /ManagementDateTimeConverter\]::ToDateTime\(\[string\]\$process\.CreationDate\)/);
   assert.doesNotMatch(probe, /CommandLine -match|Invoke-Expression/i);
 });
 
