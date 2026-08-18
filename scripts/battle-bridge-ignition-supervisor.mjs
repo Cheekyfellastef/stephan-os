@@ -120,6 +120,7 @@ export function projectBattleBridgeSupervisorStatus({ status = createBattleBridg
   return status;
 }
 
+
 export async function runApprovedBackend8787Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), platform = process.platform } = {}) {
   const logRoot = path.resolve(sharedWorkspace, 'logs', 'battle-bridge-backend-8787-repair');
   await fs.mkdir(logRoot, { recursive: true });
@@ -139,6 +140,7 @@ export async function runApprovedBackend8787Start({ spawnFn = spawn, sharedWorks
     child.once('exit', (code, signal) => resolve({ started: code === 0, exitCode: code, exit: { code, signal }, logs, logPath, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY }));
   });
 }
+
 
 function openClawHealthReady(payload = {}) {
   const status = String(payload?.status || payload?.state || '').toLowerCase();
@@ -226,18 +228,14 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
   let proof = null;
   do {
     try { proof = await probeOpenClawGateway18789Health({ fetchFn }); } catch (error) { proof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
-    await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}
-`);
-    await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}
-`);
+    await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
+    await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
     if (proof.ready) return { started: true, ready: true, exitCode: exitState.code, exit: exitState, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
     if (exitState.error || exitState.signal !== null || (exitState.code !== null && exitState.code !== 0)) break;
     if (Date.now() < deadline && retryIntervalMs > 0) await new Promise((resolve) => setTimeout(resolve, retryIntervalMs));
   } while (Date.now() <= deadline);
-  await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}
-`);
-  await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}
-`);
+  await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
+  await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
   return { started: !exitState.error, ready: false, exitCode: exitState.code, exit: exitState, error: exitState.error, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
 }
 
@@ -312,8 +310,7 @@ async function writeStatus(status, sharedWorkspace) {
   const dir = path.resolve(sharedWorkspace, 'status');
   await fs.mkdir(dir, { recursive: true });
   const file = path.join(dir, 'battle-bridge-ignition-supervisor-current.json');
-  await fs.writeFile(file, `${JSON.stringify(status, null, 2)}
-`);
+  await fs.writeFile(file, `${JSON.stringify(status, null, 2)}\n`);
   return file;
 }
 
@@ -329,8 +326,7 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   const sourceTruth = sourceTruthFn();
   if (sourceTruth?.blocker) {
     status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'blocked', blocker: sourceTruth.blocker }); await persist();
-    stdout.write(`${JSON.stringify(status, null, 2)}
-`);
+    stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return { ok: false, status, writes };
   }
   status.sourceTruthVerdict = { state: 'ready', verdict: sourceTruth?.publicationState || sourceTruth?.sourceTruthVerdict || 'source-current' };
@@ -357,8 +353,7 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
       const blockerId = startResult?.unavailable ? 'backend-8787-start-unavailable' : (startResult?.exitCode === 0 || startResult?.started ? 'backend-8787-repair-no-health-proof' : 'backend-8787-repair-failed');
       const blocker = requiredServiceBlocker(blockerId, 'Backend 8787 is required before browser/runtime proof and UI repair, and must be proved by HTTP health.', startResult?.unavailable ? 'Source needs a safe backend start adapter before Battle Bridge ignition can continue.' : `Inspect backend repair logs at ${startResult?.logPath || startResult?.logs?.logPath || 'canonical shared workspace logs'}; then rerun npm run stephanos:ignite.`, { commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY, startResult, logPath: startResult?.logPath || startResult?.logs?.logPath || '' });
       status = projectBattleBridgeSupervisorStatus({ status, phase: 'backend 8787', phaseState: startResult?.unavailable ? 'blocked' : 'failed', blocker, logPath: startResult?.logPath || startResult?.logs?.logPath || '' }); await persist();
-      stdout.write(`${JSON.stringify(status, null, 2)}
-`);
+      stdout.write(`${JSON.stringify(status, null, 2)}\n`);
       return { ok: false, status, writes };
     }
   }
@@ -380,8 +375,7 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
       const logPath = startResult?.logPath || startResult?.logs?.logPath || 'canonical shared workspace logs/openclaw-gateway-18789-start';
       const blocker = requiredServiceBlocker(blockerId, 'OpenClaw gateway 18789 startup must be proved by http://127.0.0.1:18789/health returning ok/status live; readonly adapter stubs are not accepted.', `Inspect OpenClaw gateway startup logs at ${logPath}; then rerun npm run stephanos:ignite.`, { startupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE, startResult, logPath });
       status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: failedExit ? 'failed' : 'blocked', blocker, logPath }); await persist();
-      stdout.write(`${JSON.stringify(status, null, 2)}
-`);
+      stdout.write(`${JSON.stringify(status, null, 2)}\n`);
       return { ok: false, status, writes };
     }
   }
@@ -441,15 +435,13 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     const action = staleRuntime ? 'Rebuild/restart 4173 through guarded UI repair, then rerun npm run stephanos:ignite.' : 'Resolve blocked required elements, then rerun npm run stephanos:ignite.';
     status = projectBattleBridgeSupervisorStatus({ status, phase: staleRuntime ? 'browser/runtime proof' : missingPhase, phaseState: 'blocked', readinessReport: proofReport, blocker: requiredServiceBlocker(blockerId, detail, action, { servedRuntimeProof }) });
     await persist();
-    stdout.write(`${JSON.stringify(status, null, 2)}
-`);
+    stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return { ok: false, status, writes };
   }
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'browser/runtime proof', phaseState: 'ready', readinessReport: proofReport });
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'ready', phaseState: 'ready' });
   await persist();
-  stdout.write(`${JSON.stringify(status, null, 2)}
-`);
+  stdout.write(`${JSON.stringify(status, null, 2)}\n`);
   return { ok: true, status, writes };
 }
 
