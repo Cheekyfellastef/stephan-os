@@ -7,6 +7,12 @@ export const BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_SCHEMA = 'stephanos.battle-bridg
 export const BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT = 'BATTLE_BRIDGE_CONTROL_PLANE_RECONCILED';
 export const BATTLE_BRIDGE_CONTROL_PLANE_TASKS = Object.freeze([
   Object.freeze({
+    id: 'recoveryLifeboat',
+    taskName: 'Stephanos Battle Bridge Recovery Lifeboat',
+    installerRelativePath: 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
+    intervalMinutes: 2,
+  }),
+  Object.freeze({
     id: 'recoveryMesh',
     taskName: 'Stephanos Battle Bridge Recovery Mesh',
     installerRelativePath: 'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
@@ -91,6 +97,33 @@ function blocked(blocker, details = {}) {
     finalVerdict: 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_BLOCKED',
     ...details,
   });
+}
+
+function validateRecoveryLifeboatReceipt(payload) {
+  return Boolean(
+    payload
+    && payload.schemaVersion === 'stephanos.battle-bridge-recovery-lifeboat-install.v1'
+    && payload.taskName === 'Stephanos Battle Bridge Recovery Lifeboat'
+    && payload.startedNow === true
+    && payload.candidateHeartbeatRequiredBeforePromotion === true
+    && payload.payloadHashVerificationRequired === true
+    && payload.githubClaimConsumerIncluded === true
+    && payload.windowlessLauncher === true
+    && payload.scheduledTaskExecutable === 'C:\\Windows\\System32\\wscript.exe'
+    && payload.directPowerShellTaskLaunch === false
+    && payload.repoCheckoutRequiredAfterInstall === false
+    && payload.openClawGatewayRequiredAfterInstall === false
+    && Number(payload.intervalMinutes) === 2
+    && payload.atLogon === true
+    && payload.runLevel === 'Limited'
+    && payload.arbitraryPathAllowed === false
+    && payload.arbitraryTaskNameAllowed === false
+    && payload.arbitraryExecutableAllowed === false
+    && payload.arbitraryShellAllowed === false
+    && payload.gitMutationAllowed === false
+    && payload.sourceMutationAllowed === false
+    && payload.pcRestartAllowed === false
+  );
 }
 
 function validateRecoveryMeshReceipt(payload) {
@@ -208,9 +241,13 @@ export function reconcileBattleBridgeControlPlane({
       });
     }
     const payload = parseInstallerJson(command.stdout);
-    const receiptValid = task.id === 'recoveryMesh'
-      ? validateRecoveryMeshReceipt(payload)
-      : validateMailboxReceipt(payload);
+    const receiptValid = task.id === 'recoveryLifeboat'
+      ? validateRecoveryLifeboatReceipt(payload)
+      : task.id === 'recoveryMesh'
+        ? validateRecoveryMeshReceipt(payload)
+        : task.id === 'githubCommandMailbox'
+          ? validateMailboxReceipt(payload)
+          : false;
     if (!receiptValid) {
       return blocked('CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID', {
         branch: identity.branch,
