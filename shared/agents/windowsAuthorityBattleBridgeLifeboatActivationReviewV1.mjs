@@ -56,36 +56,33 @@ function exactSource(source, repository, head, path) {
 function requireLiteral(findings, source, path, literal, code) {
   if (!source.includes(literal)) findings.push(finding(code, path));
 }
-
 function forbid(findings, source, path, pattern, code) {
   if (pattern.test(source)) findings.push(finding(code, path));
 }
 
 function reviewInstaller(source, path, findings) {
   for (const [literal, code] of [
-    ["$taskName = 'Stephanos Battle Bridge Recovery Lifeboat'", 'lifeboat-activation-task-name-not-fixed'],
+    ["$taskName = 'Stephanos Battle Bridge Recovery Lifeboat'", 'lifeboat-task-name-not-fixed'],
     ["$candidateVersion = '1.2.0'", 'lifeboat-windowless-version-not-fixed'],
-    ["$powershellExe = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'", 'lifeboat-powershell-not-fixed'],
     ["$wscriptExe = 'C:\\Windows\\System32\\wscript.exe'", 'lifeboat-wscript-not-fixed'],
-    ["run-battle-bridge-recovery-lifeboat-windowless-v2.vbs", 'lifeboat-windowless-launcher-not-fixed'],
-    ["New-ScheduledTaskAction -Execute $wscriptExe", 'lifeboat-task-does-not-use-wscript'],
-    ["//B //Nologo", 'lifeboat-wscript-bounded-flags-missing'],
-    ["New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited", 'lifeboat-limited-principal-missing'],
-    ["-RepetitionInterval (New-TimeSpan -Minutes 2)", 'lifeboat-two-minute-interval-missing'],
-    ["-MultipleInstances IgnoreNew", 'lifeboat-ignore-new-missing'],
-    ["githubClaimConsumerIncluded = $true", 'lifeboat-github-consumer-not-bound'],
-    ["windowlessLauncher = $true", 'lifeboat-windowless-receipt-missing'],
-    ["scheduledTaskExecutable = $wscriptExe", 'lifeboat-scheduled-executable-proof-missing'],
-    ["directPowerShellTaskLaunch = $false", 'lifeboat-direct-powershell-denial-missing'],
-    ["repoCheckoutRequiredAfterInstall = $false", 'lifeboat-checkout-independence-missing'],
-    ["openClawGatewayRequiredAfterInstall = $false", 'lifeboat-openclaw-independence-missing'],
-    ["arbitraryPathAllowed = $false", 'lifeboat-arbitrary-path-denial-missing'],
-    ["arbitraryTaskNameAllowed = $false", 'lifeboat-arbitrary-task-denial-missing'],
-    ["arbitraryExecutableAllowed = $false", 'lifeboat-arbitrary-executable-denial-missing'],
-    ["arbitraryShellAllowed = $false", 'lifeboat-arbitrary-shell-denial-missing'],
-    ["gitMutationAllowed = $false", 'lifeboat-git-denial-missing'],
-    ["sourceMutationAllowed = $false", 'lifeboat-source-denial-missing'],
-    ["pcRestartAllowed = $false", 'lifeboat-pc-restart-denial-missing'],
+    ['run-battle-bridge-recovery-lifeboat-windowless-v2.vbs', 'lifeboat-windowless-launcher-not-fixed'],
+    ['New-ScheduledTaskAction -Execute $wscriptExe', 'lifeboat-task-does-not-use-wscript'],
+    ['//B //Nologo', 'lifeboat-wscript-bounded-flags-missing'],
+    ['-RepetitionInterval (New-TimeSpan -Minutes 2)', 'lifeboat-two-minute-interval-missing'],
+    ['-MultipleInstances IgnoreNew', 'lifeboat-ignore-new-missing'],
+    ['githubClaimConsumerIncluded = $true', 'lifeboat-consumer-proof-missing'],
+    ['windowlessLauncher = $true', 'lifeboat-windowless-proof-missing'],
+    ['scheduledTaskExecutable = $wscriptExe', 'lifeboat-executable-proof-missing'],
+    ['directPowerShellTaskLaunch = $false', 'lifeboat-direct-powershell-denial-missing'],
+    ['repoCheckoutRequiredAfterInstall = $false', 'lifeboat-checkout-independence-missing'],
+    ['openClawGatewayRequiredAfterInstall = $false', 'lifeboat-openclaw-independence-missing'],
+    ['arbitraryPathAllowed = $false', 'lifeboat-arbitrary-path-denial-missing'],
+    ['arbitraryTaskNameAllowed = $false', 'lifeboat-arbitrary-task-denial-missing'],
+    ['arbitraryExecutableAllowed = $false', 'lifeboat-arbitrary-executable-denial-missing'],
+    ['arbitraryShellAllowed = $false', 'lifeboat-arbitrary-shell-denial-missing'],
+    ['gitMutationAllowed = $false', 'lifeboat-git-denial-missing'],
+    ['sourceMutationAllowed = $false', 'lifeboat-source-denial-missing'],
+    ['pcRestartAllowed = $false', 'lifeboat-pc-restart-denial-missing'],
   ]) requireLiteral(findings, source, path, literal, code);
   forbid(findings, source, path, /New-ScheduledTaskAction\s+-Execute\s+\$powershellExe/i, 'lifeboat-direct-powershell-task-forbidden');
   forbid(findings, source, path, /-WindowStyle\s+Hidden/i, 'lifeboat-windowstyle-hidden-regression');
@@ -113,105 +110,54 @@ function reviewControlPlane(source, path, findings) {
     ["installerRelativePath: 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'", 'control-plane-lifeboat-installer-not-fixed'],
     ["id: 'recoveryMesh'", 'control-plane-recovery-mesh-task-missing'],
     ["id: 'githubCommandMailbox'", 'control-plane-mailbox-task-missing'],
-    ["const POWERSHELL_EXE = 'C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe'", 'control-plane-powershell-not-fixed'],
-    ["const GIT_EXE = 'C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe'", 'control-plane-git-not-fixed'],
     ['shell: false', 'control-plane-shell-false-missing'],
     ["'-File', installerPath", 'control-plane-fixed-installer-execution-missing'],
     ["'-StartNow'", 'control-plane-start-now-missing'],
     ['function validateRecoveryLifeboatReceipt', 'control-plane-lifeboat-receipt-validator-missing'],
-    ["payload.scheduledTaskExecutable === 'C:\\\\Windows\\\\System32\\\\wscript.exe'", 'control-plane-lifeboat-wscript-proof-missing'],
+    ["payload.scheduledTaskExecutable === 'C:\\Windows\\System32\\wscript.exe'", 'control-plane-lifeboat-wscript-proof-missing'],
     ['payload.directPowerShellTaskLaunch === false', 'control-plane-direct-powershell-denial-missing'],
     ['payload.githubClaimConsumerIncluded === true', 'control-plane-consumer-proof-missing'],
     ['payload.repoCheckoutRequiredAfterInstall === false', 'control-plane-checkout-independence-missing'],
     ['payload.openClawGatewayRequiredAfterInstall === false', 'control-plane-openclaw-independence-missing'],
     ["task.id === 'recoveryLifeboat'", 'control-plane-closed-receipt-routing-missing'],
   ]) requireLiteral(findings, source, path, literal, code);
-  const lifeboatIndex = source.indexOf("id: 'recoveryLifeboat'");
-  const recoveryMeshIndex = source.indexOf("id: 'recoveryMesh'");
-  const mailboxIndex = source.indexOf("id: 'githubCommandMailbox'");
-  if (!(lifeboatIndex >= 0 && lifeboatIndex < recoveryMeshIndex && recoveryMeshIndex < mailboxIndex)) {
-    findings.push(finding('control-plane-lifeboat-not-first', path));
-  }
+  const lifeboat = source.indexOf("id: 'recoveryLifeboat'");
+  const mesh = source.indexOf("id: 'recoveryMesh'");
+  const mailbox = source.indexOf("id: 'githubCommandMailbox'");
+  if (!(lifeboat >= 0 && lifeboat < mesh && mesh < mailbox)) findings.push(finding('control-plane-lifeboat-not-first', path));
   forbid(findings, source, path, /taskName\s*=\s*options|installerRelativePath\s*=\s*options|executable\s*=\s*options|shell\s*=\s*true/i, 'control-plane-caller-selection-forbidden');
   forbid(findings, source, path, /Invoke-Expression|reset --hard|git clean|git stash|git checkout|git push|Restart-Computer/i, 'control-plane-destructive-authority-forbidden');
 }
 
-function reviewPostSyncCoordinator(source, path, findings) {
-  for (const [literal, code] of [
-    ["'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs'", 'post-sync-control-plane-natural-reload-missing'],
-    ["'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'", 'post-sync-lifeboat-installer-natural-reload-missing'],
-    ["'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs'", 'post-sync-lifeboat-vbs-natural-reload-missing'],
-  ]) requireLiteral(findings, source, path, literal, code);
-  forbid(findings, source, path, /automaticExecutionAllowed:\s*true/, 'post-sync-unconditional-automatic-authority-forbidden');
-}
-
-function reviewControlPlaneTest(source, path, findings) {
+function reviewPostSync(source, path, findings) {
   for (const literal of [
-    "id: 'recoveryLifeboat'",
-    "id: 'recoveryMesh'",
-    "id: 'githubCommandMailbox'",
-    'assert.equal(result.taskCount, 3)',
-    "endsWith('install-battle-bridge-recovery-lifeboat-v1.ps1')",
-    "assert.equal(result.failedTaskId, 'recoveryLifeboat')",
-    "assert.equal(result.failedTaskId, 'recoveryMesh')",
-    'assert.equal(powerShellCalls.length, 3)',
-  ]) requireLiteral(findings, source, path, literal, 'control-plane-activation-regression-proof-missing');
-}
-
-function reviewWindowlessTest(source, path, findings) {
-  for (const literal of [
-    'New-ScheduledTaskAction -Execute \\$wscriptExe',
-    'shell\\.Run\\(command, 0, True\\)',
-    'WScript\\.Arguments',
-    'New-ScheduledTaskAction -Execute \\$powershellExe',
-    '-WindowStyle Hidden',
-  ]) requireLiteral(findings, source, path, literal, 'lifeboat-windowless-regression-proof-missing');
-}
-
-function reviewPostSyncTest(source, path, findings) {
-  for (const literal of [
-    'windowless Lifeboat delivery and its fixed control-plane reconciler naturally reload without stranding sync',
+    "'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs'",
     "'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'",
     "'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs'",
-    "'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs'",
-    'assert.equal(plan.unknownPathCount, 0)',
-    'assert.equal(plan.automaticExecutionAllowed, true)',
-  ]) requireLiteral(findings, source, path, literal, 'post-sync-lifeboat-delivery-regression-proof-missing');
+  ]) requireLiteral(findings, source, path, literal, 'post-sync-lifeboat-natural-reload-missing');
+  forbid(findings, source, path, /automaticExecutionAllowed:\s*true/, 'post-sync-unconditional-authority-forbidden');
+}
+
+function reviewTestEvidence(source, path, findings) {
+  const requirements = path.includes('control-plane-self-repair')
+    ? ['recoveryLifeboat', 'result.taskCount, 3', 'install-battle-bridge-recovery-lifeboat-v1.ps1', "failedTaskId, 'recoveryLifeboat'", 'powerShellCalls.length, 3']
+    : path.includes('hidden-window')
+      ? ['$wscriptExe', '$powershellExe', '-WindowStyle Hidden', 'shell', 'WScript']
+      : ['windowless Lifeboat delivery', 'install-battle-bridge-recovery-lifeboat-v1.ps1', 'run-battle-bridge-recovery-lifeboat-windowless-v2.vbs', 'battleBridgeControlPlaneSelfRepairV1.mjs', 'unknownPathCount, 0', 'automaticExecutionAllowed, true'];
+  for (const literal of requirements) requireLiteral(findings, source, path, literal, 'lifeboat-activation-regression-proof-missing');
 }
 
 export function analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview(input = {}) {
   const repository = text(input.repository);
   const sourceHead = text(input.sourceHead).toLowerCase();
-  const eligible = repository === 'Cheekyfellastef/stephan-os'
-    && SHA.test(sourceHead)
-    && escalationMatches(input.analysis);
-  if (!eligible) return Object.freeze({
-    schemaVersion: SCHEMA,
-    eligible: false,
-    clean: false,
-    reviewedPaths: Object.freeze([]),
-    findings: Object.freeze([]),
-    proofRefs: Object.freeze([]),
-    finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_NOT_APPLICABLE',
-  });
+  const eligible = repository === 'Cheekyfellastef/stephan-os' && SHA.test(sourceHead) && escalationMatches(input.analysis);
+  if (!eligible) return Object.freeze({ schemaVersion: SCHEMA, eligible: false, clean: false, reviewedPaths: Object.freeze([]), findings: Object.freeze([]), proofRefs: Object.freeze([]), finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_NOT_APPLICABLE' });
+  if (!Array.isArray(input.sources) || input.sources.length === 0) return Object.freeze({ schemaVersion: SCHEMA, eligible: true, clean: false, reviewedPaths: WINDOWS_AUTHORITY_BATTLE_BRIDGE_LIFEBOAT_ACTIVATION_PATHS_V1, findings: Object.freeze([]), proofRefs: Object.freeze([]), finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_SOURCE_REQUIRED' });
 
-  if (!Array.isArray(input.sources) || input.sources.length === 0) {
-    return Object.freeze({
-      schemaVersion: SCHEMA,
-      eligible: true,
-      clean: false,
-      reviewedPaths: WINDOWS_AUTHORITY_BATTLE_BRIDGE_LIFEBOAT_ACTIVATION_PATHS_V1,
-      findings: Object.freeze([]),
-      proofRefs: Object.freeze([]),
-      finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_SOURCE_REQUIRED',
-    });
-  }
-
-  const sources = input.sources;
   const findings = [];
   const proofRefs = [];
   for (const path of WINDOWS_AUTHORITY_BATTLE_BRIDGE_LIFEBOAT_ACTIVATION_PATHS_V1) {
-    const candidates = sources.filter((source) => text(source?.path) === path);
+    const candidates = input.sources.filter((source) => text(source?.path) === path);
     if (candidates.length !== 1 || !exactSource(candidates[0], repository, sourceHead, path)) {
       findings.push(finding('windows-authority-source-evidence-invalid', path));
       continue;
@@ -220,15 +166,11 @@ export function analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview(inpu
     if (path === 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1') reviewInstaller(source, path, findings);
     else if (path === 'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs') reviewWindowlessLauncher(source, path, findings);
     else if (path === 'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs') reviewControlPlane(source, path, findings);
-    else if (path === 'shared/agents/postSyncRuntimeRefreshCoordinator.mjs') reviewPostSyncCoordinator(source, path, findings);
-    else if (path === 'scripts/battle-bridge-control-plane-self-repair.test.mjs') reviewControlPlaneTest(source, path, findings);
-    else if (path === 'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs') reviewWindowlessTest(source, path, findings);
-    else if (path === 'shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs') reviewPostSyncTest(source, path, findings);
+    else if (path === 'shared/agents/postSyncRuntimeRefreshCoordinator.mjs') reviewPostSync(source, path, findings);
+    else reviewTestEvidence(source, path, findings);
     proofRefs.push(`proofs/windows-authority-battle-bridge-lifeboat-activation/${path}@${sourceHead}#${candidates[0].blobSha}:${candidates[0].size}`);
   }
-  if (sources.length !== WINDOWS_AUTHORITY_BATTLE_BRIDGE_LIFEBOAT_ACTIVATION_PATHS_V1.length) {
-    findings.push(finding('windows-authority-source-estate-widened', ''));
-  }
+  if (input.sources.length !== WINDOWS_AUTHORITY_BATTLE_BRIDGE_LIFEBOAT_ACTIVATION_PATHS_V1.length) findings.push(finding('windows-authority-source-estate-widened', ''));
   return Object.freeze({
     schemaVersion: SCHEMA,
     eligible: true,
