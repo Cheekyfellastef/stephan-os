@@ -121,6 +121,19 @@ export function projectBattleBridgeSupervisorStatus({ status = createBattleBridg
 }
 
 
+export function resolveBackendRepairExecution(platform = process.platform) {
+  if (platform === 'win32') {
+    return {
+      command: 'cmd.exe',
+      args: ['/d', '/s', '/c', 'npm.cmd', 'run', 'stephanos:battle-bridge:repair'],
+    };
+  }
+  return {
+    command: 'npm',
+    args: ['run', 'stephanos:battle-bridge:repair'],
+  };
+}
+
 export async function runApprovedBackend8787Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), platform = process.platform } = {}) {
   const logRoot = path.resolve(sharedWorkspace, 'logs', 'battle-bridge-backend-8787-repair');
   await fs.mkdir(logRoot, { recursive: true });
@@ -129,8 +142,8 @@ export async function runApprovedBackend8787Start({ spawnFn = spawn, sharedWorks
   await fs.mkdir(logPath, { recursive: true });
   const stdoutLogPath = path.join(logPath, 'stdout.log');
   const stderrLogPath = path.join(logPath, 'stderr.log');
-  const npmExecutable = platform === 'win32' ? 'npm.cmd' : 'npm';
-  const child = spawnFn(npmExecutable, ['run', 'stephanos:battle-bridge:repair'], { cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), detached: false, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+  const execution = resolveBackendRepairExecution(platform);
+  const child = spawnFn(execution.command, execution.args, { cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), detached: false, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
   if (child?.stdout?.pipe) child.stdout.pipe(createWriteStream(stdoutLogPath, { flags: 'a' }));
   if (child?.stderr?.pipe) child.stderr.pipe(createWriteStream(stderrLogPath, { flags: 'a' }));
   const logs = { logPath, stdoutLogPath, stderrLogPath };
