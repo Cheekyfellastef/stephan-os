@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
 
 if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is required.' }
 $taskName = 'Stephanos Battle Bridge Recovery Lifeboat'
-$candidateVersion = '1.1.0'
+$candidateVersion = '1.2.0'
 $sourceRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $lifeboatRoot = [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'Stephanos\BattleBridgeRecoveryLifeboat'))
 $banksRoot = Join-Path $lifeboatRoot 'banks'
@@ -17,13 +17,16 @@ $statusRoot = Join-Path $lifeboatRoot 'status'
 $stagingRoot = Join-Path $lifeboatRoot 'staging'
 $activeStatePath = Join-Path $stateRoot 'active-bank.json'
 $sourceLauncher = Join-Path $sourceRoot 'scripts\windows\run-battle-bridge-recovery-lifeboat-active-v1.ps1'
+$sourceWindowlessLauncher = Join-Path $sourceRoot 'scripts\windows\run-battle-bridge-recovery-lifeboat-windowless-v2.vbs'
 $sourceRunner = Join-Path $sourceRoot 'scripts\windows\run-battle-bridge-recovery-lifeboat-bank-v1.ps1'
 $sourceAction = Join-Path $sourceRoot 'scripts\windows\battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1'
 $sourceClaimConsumer = Join-Path $sourceRoot 'scripts\windows\invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1'
 $installedLauncher = Join-Path $lifeboatRoot 'run-battle-bridge-recovery-lifeboat-active-v1.ps1'
+$installedWindowlessLauncher = Join-Path $lifeboatRoot 'run-battle-bridge-recovery-lifeboat-windowless-v2.vbs'
 $powershellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+$wscriptExe = 'C:\Windows\System32\wscript.exe'
 
-foreach ($required in @($sourceLauncher, $sourceRunner, $sourceAction, $sourceClaimConsumer, $powershellExe)) {
+foreach ($required in @($sourceLauncher, $sourceWindowlessLauncher, $sourceRunner, $sourceAction, $sourceClaimConsumer, $powershellExe, $wscriptExe)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required fixed lifeboat component is missing: $required" }
 }
 
@@ -75,6 +78,15 @@ if (Test-Path -LiteralPath $installedLauncher -PathType Leaf) {
 } elseif ($PSCmdlet.ShouldProcess($installedLauncher, 'Install immutable lifeboat active-bank launcher')) {
     Copy-Item -LiteralPath $sourceLauncher -Destination $installedLauncher
 }
+
+if (Test-Path -LiteralPath $installedWindowlessLauncher -PathType Leaf) {
+    if ((Get-Sha256 $installedWindowlessLauncher) -ne (Get-Sha256 $sourceWindowlessLauncher)) {
+        throw 'Installed immutable windowless lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.'
+    }
+} elseif ($PSCmdlet.ShouldProcess($installedWindowlessLauncher, 'Install immutable windowless lifeboat launcher')) {
+    Copy-Item -LiteralPath $sourceWindowlessLauncher -Destination $installedWindowlessLauncher
+}
+$windowlessLauncherSha256 = Get-Sha256 $installedWindowlessLauncher
 
 $activeState = Read-ActiveState
 $activeBank = if ($null -eq $activeState) { '' } else { [string]$activeState.activeBank }
@@ -137,12 +149,14 @@ if ($PSCmdlet.ShouldProcess($targetRoot, "Stage and prove candidate lifeboat in 
         previousManifestSha256 = if ($null -eq $activeState) { '' } else { [string]$activeState.manifestSha256 }
         productionRedundancyReady = [bool]($activeBank -in @('A', 'B'))
         githubClaimConsumerIncluded = $true
+        windowlessLauncher = $true
+        windowlessLauncherSha256 = $windowlessLauncherSha256
     }
     Write-AtomicJson -Path $activeStatePath -Value $newState
 }
 
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-$action = New-ScheduledTaskAction -Execute $powershellExe -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$installedLauncher`""
+$action = New-ScheduledTaskAction -Execute $wscriptExe -Argument "//B //Nologo `"$installedWindowlessLauncher`""
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 2) -RepetitionDuration (New-TimeSpan -Days 3650)
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
@@ -169,6 +183,10 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register fixed independent Battle Bridge
     githubTokenRequired = $false
     productionRedundancyReady = [bool]($activeBank -in @('A', 'B'))
     immutableLauncher = $true
+    windowlessLauncher = $true
+    windowlessLauncherSha256 = $windowlessLauncherSha256
+    scheduledTaskExecutable = $wscriptExe
+    directPowerShellTaskLaunch = $false
     repoCheckoutRequiredAfterInstall = $false
     openClawGatewayRequiredAfterInstall = $false
     intervalMinutes = 2
