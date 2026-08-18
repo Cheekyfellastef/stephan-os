@@ -18,6 +18,12 @@ export const BATTLE_BRIDGE_CONTROL_PLANE_TASKS = Object.freeze([
     installerRelativePath: 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
     intervalMinutes: 5,
   }),
+  Object.freeze({
+    id: 'outboundHealthBeacon',
+    taskName: 'Stephanos Battle Bridge Outbound Health Beacon',
+    installerRelativePath: 'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1',
+    intervalMinutes: 1,
+  }),
 ]);
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -134,6 +140,38 @@ function validateMailboxReceipt(payload) {
   );
 }
 
+function validateOutboundHealthBeaconReceipt(payload) {
+  return Boolean(
+    payload
+    && payload.schemaVersion === 'stephanos.battle-bridge-outbound-health-beacon-install.v1'
+    && payload.taskName === 'Stephanos Battle Bridge Outbound Health Beacon'
+    && payload.installed === true
+    && payload.startedNow === true
+    && Number(payload.intervalMinutes) === 1
+    && payload.atLogon === true
+    && payload.hidden === true
+    && payload.runLevel === 'Limited'
+    && payload.multipleInstances === 'IgnoreNew'
+    && payload.repository === 'Cheekyfellastef/stephan-os'
+    && Number(payload.issueNumber) === 1889
+    && payload.arbitraryShellAllowed === false
+    && payload.sourceMutationAllowed === false
+    && payload.taskMutationBeyondSelfAllowed === false
+    && payload.processRestartAllowed === false
+    && payload.destructiveGitAllowed === false
+    && payload.liveOpenClawUpdateAllowed === false
+    && payload.pcRestartAllowed === false
+    && payload.visiblePowerShellRequired === false
+  );
+}
+
+function validateTaskReceipt(taskId, payload) {
+  if (taskId === 'recoveryMesh') return validateRecoveryMeshReceipt(payload);
+  if (taskId === 'githubCommandMailbox') return validateMailboxReceipt(payload);
+  if (taskId === 'outboundHealthBeacon') return validateOutboundHealthBeaconReceipt(payload);
+  return false;
+}
+
 function sourceIdentity({ repoRoot, expectedHead, spawnSyncFn }) {
   if (!SHA.test(text(expectedHead).toLowerCase())) return blocked('CONTROL_PLANE_EXPECTED_HEAD_INVALID');
   const branch = capture(spawnSyncFn, GIT_EXE, ['-C', repoRoot, 'branch', '--show-current'], { cwd: repoRoot });
@@ -208,9 +246,7 @@ export function reconcileBattleBridgeControlPlane({
       });
     }
     const payload = parseInstallerJson(command.stdout);
-    const receiptValid = task.id === 'recoveryMesh'
-      ? validateRecoveryMeshReceipt(payload)
-      : validateMailboxReceipt(payload);
+    const receiptValid = validateTaskReceipt(task.id, payload);
     if (!receiptValid) {
       return blocked('CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID', {
         branch: identity.branch,

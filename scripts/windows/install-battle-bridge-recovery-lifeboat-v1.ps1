@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
 
 if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is required.' }
 $taskName = 'Stephanos Battle Bridge Recovery Lifeboat'
-$candidateVersion = '1.0.0'
+$candidateVersion = '1.1.0'
 $sourceRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $lifeboatRoot = [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'Stephanos\BattleBridgeRecoveryLifeboat'))
 $banksRoot = Join-Path $lifeboatRoot 'banks'
@@ -19,10 +19,11 @@ $activeStatePath = Join-Path $stateRoot 'active-bank.json'
 $sourceLauncher = Join-Path $sourceRoot 'scripts\windows\run-battle-bridge-recovery-lifeboat-active-v1.ps1'
 $sourceRunner = Join-Path $sourceRoot 'scripts\windows\run-battle-bridge-recovery-lifeboat-bank-v1.ps1'
 $sourceAction = Join-Path $sourceRoot 'scripts\windows\battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1'
+$sourceClaimConsumer = Join-Path $sourceRoot 'scripts\windows\invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1'
 $installedLauncher = Join-Path $lifeboatRoot 'run-battle-bridge-recovery-lifeboat-active-v1.ps1'
 $powershellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 
-foreach ($required in @($sourceLauncher, $sourceRunner, $sourceAction, $powershellExe)) {
+foreach ($required in @($sourceLauncher, $sourceRunner, $sourceAction, $sourceClaimConsumer, $powershellExe)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required fixed lifeboat component is missing: $required" }
 }
 
@@ -84,14 +85,18 @@ if ($targetBank -eq $activeBank) { throw 'Lifeboat installer must never target t
 $stageId = "stage-$targetBank-$([Guid]::NewGuid().ToString('N'))"
 $stageRoot = Join-Path $stagingRoot $stageId
 $stageActions = Join-Path $stageRoot 'actions'
+$stageGithub = Join-Path $stageRoot 'github'
 [System.IO.Directory]::CreateDirectory($stageActions) | Out-Null
+[System.IO.Directory]::CreateDirectory($stageGithub) | Out-Null
 Copy-Item -LiteralPath $sourceRunner -Destination (Join-Path $stageRoot 'run-battle-bridge-recovery-lifeboat-bank-v1.ps1')
 Copy-Item -LiteralPath $sourceAction -Destination (Join-Path $stageActions 'battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1')
+Copy-Item -LiteralPath $sourceClaimConsumer -Destination (Join-Path $stageGithub 'invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1')
 Set-Content -LiteralPath (Join-Path $stageRoot 'version.txt') -Value $candidateVersion -Encoding ASCII
 
 $runnerHash = Get-Sha256 (Join-Path $stageRoot 'run-battle-bridge-recovery-lifeboat-bank-v1.ps1')
 $actionHash = Get-Sha256 (Join-Path $stageActions 'battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1')
-$manifestMaterial = "runner=$runnerHash`naction=$actionHash`nversion=$candidateVersion`n"
+$claimHash = Get-Sha256 (Join-Path $stageGithub 'invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1')
+$manifestMaterial = "runner=$runnerHash`naction=$actionHash`nclaim=$claimHash`nversion=$candidateVersion`n"
 $manifestBytes = [System.Text.Encoding]::UTF8.GetBytes($manifestMaterial)
 $sha = [System.Security.Cryptography.SHA256]::Create()
 try { $manifestSha256 = ([BitConverter]::ToString($sha.ComputeHash($manifestBytes))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }
@@ -113,7 +118,7 @@ if ($PSCmdlet.ShouldProcess($targetRoot, "Stage and prove candidate lifeboat in 
     Move-Item -LiteralPath $stageRoot -Destination $targetRoot
 
     $candidateRunner = Join-Path $targetRoot 'run-battle-bridge-recovery-lifeboat-bank-v1.ps1'
-    $candidateOutput = @(& $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $candidateRunner 2>&1)
+    $candidateOutput = @(& $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $candidateRunner -SelfTestOnly 2>&1)
     if ($LASTEXITCODE -ne 0) {
         Remove-Item -LiteralPath $targetRoot -Recurse -Force
         if ($null -ne $backupInactive) { Move-Item -LiteralPath $backupInactive -Destination $targetRoot }
@@ -131,6 +136,7 @@ if ($PSCmdlet.ShouldProcess($targetRoot, "Stage and prove candidate lifeboat in 
         promotedAtUtc = [DateTime]::UtcNow.ToString('o')
         previousManifestSha256 = if ($null -eq $activeState) { '' } else { [string]$activeState.manifestSha256 }
         productionRedundancyReady = [bool]($activeBank -in @('A', 'B'))
+        githubClaimConsumerIncluded = $true
     }
     Write-AtomicJson -Path $activeStatePath -Value $newState
 }
@@ -143,7 +149,7 @@ $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interact
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
 
 if ($PSCmdlet.ShouldProcess($taskName, 'Register fixed independent Battle Bridge recovery lifeboat task')) {
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Independent A/B Battle Bridge recovery lifeboat outside the stephan-os checkout. Fixed probe/recovery adapters only; no arbitrary shell, Git mutation, merge, deployment or PC restart.' -Force | Out-Null
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Independent A/B Battle Bridge recovery lifeboat outside the stephan-os checkout. Fixed GitHub-attested probe/wake adapters only; no arbitrary shell, Git mutation, merge, deployment or PC restart.' -Force | Out-Null
     if ($StartNow) { Start-ScheduledTask -TaskName $taskName }
 }
 
@@ -158,6 +164,9 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register fixed independent Battle Bridge
     candidateManifestSha256 = $manifestSha256
     candidateHeartbeatRequiredBeforePromotion = $true
     payloadHashVerificationRequired = $true
+    githubClaimConsumerIncluded = $true
+    githubEndpointFixed = $true
+    githubTokenRequired = $false
     productionRedundancyReady = [bool]($activeBank -in @('A', 'B'))
     immutableLauncher = $true
     repoCheckoutRequiredAfterInstall = $false

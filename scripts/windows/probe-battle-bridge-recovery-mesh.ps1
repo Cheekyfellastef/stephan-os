@@ -19,6 +19,7 @@ $wscriptPath = 'C:\Windows\System32\wscript.exe'
 $canonicalPowerShell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
 $runtimeMemoryPath = 'stephanos-server/data/memory/durable-memory.json'
+$runtimeUiDistPrefix = 'apps/stephanos/dist/'
 
 $taskSpecs = @(
     [pscustomobject]@{ Id = 'watchdog'; Name = 'Stephanos Mission Orchestrator Worker Watchdog'; LauncherId = 'worker-watchdog' },
@@ -35,7 +36,7 @@ function Test-TaskAction {
         $execute = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables([string]$action.Execute))
         if ($LauncherId -eq 'openclaw-gateway') {
             $expectedGateway = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE '.openclaw\gateway.cmd'))
-            if ([string]::Equals($execute, $expectedGateway, [System.StringComparison]::OrdinalIgnoreCase)
+            if ([string]::Equals($execute, $expectedGateway, [System.StringComparison]::OrdinalIgnoreCase) `
                 -and [string]::IsNullOrWhiteSpace([string]$action.Arguments)) { return $true }
         }
         if (-not [string]::Equals($execute, $wscriptPath, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
@@ -205,6 +206,7 @@ function Get-CanonicalTrackedWorktreeAssessment {
     $trackedStatus = @(& $GitExecutable -C $RepositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
     if ($LASTEXITCODE -ne 0) { throw 'RECOVERY_CANONICAL_TRACKED_WORKTREE_INSPECTION_FAILED' }
     $runtimeMemoryDirty = $false
+    $runtimeUiDistDirty = $false
     $sourceDirt = @()
     foreach ($raw in @($trackedStatus)) {
         $line = [string]$raw
@@ -224,9 +226,17 @@ function Get-CanonicalTrackedWorktreeAssessment {
             $runtimeMemoryDirty = $true
             continue
         }
+        if ($path.StartsWith($runtimeUiDistPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $runtimeUiDistDirty = $true
+            continue
+        }
         $sourceDirt += $line
     }
-    return [pscustomobject]@{ RuntimeMemoryDirty = [bool]$runtimeMemoryDirty; SourceDirt = @($sourceDirt) }
+    return [pscustomobject]@{
+        RuntimeMemoryDirty = [bool]$runtimeMemoryDirty
+        RuntimeUiDistDirty = [bool]$runtimeUiDistDirty
+        SourceDirt = @($sourceDirt)
+    }
 }
 function Assert-CanonicalSourceWorktreeClean {
     param([string]$GitExecutable, [string]$RepositoryRoot)
@@ -290,10 +300,12 @@ $mailboxHealthy = $mailboxTask.present `
     mode = $Mode
     sourceHead = $sourceHead
     branch = $branch
-    trackedWorktreeClean = -not [bool]$afterWorktree.RuntimeMemoryDirty
+    trackedWorktreeClean = -not [bool]($afterWorktree.RuntimeMemoryDirty -or $afterWorktree.RuntimeUiDistDirty)
     sourceWorktreeClean = $true
     runtimeMemoryDirtTolerated = [bool]$afterWorktree.RuntimeMemoryDirty
     runtimeMemoryDirtPresentBefore = [bool]$beforeWorktree.RuntimeMemoryDirty
+    runtimeUiDistDirtTolerated = [bool]$afterWorktree.RuntimeUiDistDirty
+    runtimeUiDistDirtPresentBefore = [bool]$beforeWorktree.RuntimeUiDistDirty
     backendRestartSkippedAsCurrent = [bool]$backendRestartSkippedAsCurrent
     worker = $worker
     mailbox = [pscustomobject]@{ healthy = [bool]$mailboxHealthy; state = $mailboxTask.state; lastTaskResult = $mailboxTask.lastTaskResult; lastRunAgeMs = if ([double]::IsInfinity($mailboxLastRunMs)) { -1 } else { [int64]$mailboxLastRunMs }; task = $mailboxTask }
