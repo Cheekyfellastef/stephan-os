@@ -28,6 +28,7 @@ const TARGET_ORDER = Object.freeze([
 
 const NATURAL_EXACT = new Set([
   'shared/agents/battleBridgeGitHubCommandMailbox.mjs',
+  'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs',
   'shared/agents/stephanosCapabilityRegistry.mjs',
   'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
   'scripts/battle-bridge-github-command-mailbox.mjs',
@@ -42,6 +43,8 @@ const NATURAL_EXACT = new Set([
   'scripts/windows/status-battle-bridge-github-sync.ps1',
   'scripts/windows/uninstall-battle-bridge-github-sync.ps1',
   'scripts/windows/restart-approved-stephanos-runtime.ps1',
+  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
+  'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
 ]);
 
 const NATURAL_PREFIXES = Object.freeze([
