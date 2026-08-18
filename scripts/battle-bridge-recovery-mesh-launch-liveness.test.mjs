@@ -20,6 +20,9 @@ test('Recovery Mesh hidden launcher always emits bounded terminal liveness witho
   assert.match(source, /runnerResultParsed/);
   assert.match(source, /runnerClassification/);
   assert.match(source, /\$runnerOutput = @\(& \$nodeExecutable \$runnerPath 2>&1\)/);
+  assert.match(source, /\$runnerResultParsed = \$null -ne \$runnerResult/);
+  assert.match(source, /if \(\$runnerResultParsed -and \$runnerExitCode -eq 0\)/);
+  assert.match(source, /-Classification 'RECOVERY_MESH_RUNNER_FAILED'[\s\S]*?-RunnerResultParsed \$runnerResultParsed[\s\S]*?-RunnerClassification \$runnerClassification/);
   assert.doesNotMatch(source, /\$nodeExecutable \$runnerPath \*> \$null/);
 
   assert.match(source, /System\.Threading\.Mutex/);
