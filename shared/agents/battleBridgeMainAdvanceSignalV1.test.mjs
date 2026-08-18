@@ -9,7 +9,7 @@ import {
 } from './battleBridgeMainAdvanceSignalV1.mjs';
 
 const HEAD = 'a'.repeat(40);
-const MERGED_AT = '2026-08-18T10:45:00.000Z';
+const MERGED_AT = '2026-08-18T10:45:00Z';
 
 function validSignal(overrides = {}) {
   return createBattleBridgeMainAdvanceSignal({
@@ -28,6 +28,7 @@ test('main advance signal is exact-head, signal-only and grants no mutation auth
   assert.equal(signal.branch, 'main');
   assert.equal(signal.event, 'PULL_REQUEST_MERGED');
   assert.equal(signal.mainHead, HEAD);
+  assert.equal(signal.mergedAtUtc, '2026-08-18T10:45:00.000Z');
   assert.equal(signal.syncIntervalMinutes, 1);
   assert.equal(signal.signalOnly, true);
   assert.equal(signal.syncAuthorityGranted, false);
@@ -45,7 +46,10 @@ test('main advance signal is exact-head, signal-only and grants no mutation auth
   assert.equal(validateBattleBridgeMainAdvanceSignal({ ...signal }).ok, true);
 });
 
-test('signal validation fails closed on wrong identity, head or authority-shaped extras', () => {
+test('signal validation accepts GitHub second-resolution UTC and fails closed on invalid identity or extras', () => {
+  assert.equal(validSignal({ mergedAtUtc: '2026-08-18T10:45:00Z' }).mergedAtUtc, '2026-08-18T10:45:00.000Z');
+  assert.equal(validSignal({ mergedAtUtc: '2026-08-18T10:45:00.123Z' }).mergedAtUtc, '2026-08-18T10:45:00.123Z');
+  assert.throws(() => validSignal({ mergedAtUtc: '2026-08-18 10:45:00Z' }), /MAIN_ADVANCE_MERGED_AT_INVALID/);
   assert.throws(() => validSignal({ repository: 'other/repo' }), /MAIN_ADVANCE_REPOSITORY_INVALID/);
   assert.throws(() => validSignal({ branch: 'feature' }), /MAIN_ADVANCE_BRANCH_INVALID/);
   assert.throws(() => validSignal({ mainHead: 'abc' }), /MAIN_ADVANCE_HEAD_INVALID/);
