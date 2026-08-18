@@ -61,7 +61,7 @@ localAppData = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%")
 systemRoot = shell.ExpandEnvironmentStrings("%SystemRoot%")
 launcher = localAppData & "\Stephanos\BattleBridgeRecoveryLifeboat\run-battle-bridge-recovery-lifeboat-active-v1.ps1"
 exitCode = shell.Run(command, 0, True)
-`;
+`.replaceAll('\\"', '"');
   if (path === 'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs') return String.raw`
 id: 'recoveryLifeboat'
 taskName: 'Stephanos Battle Bridge Recovery Lifeboat'
@@ -149,7 +149,7 @@ test('specialist seals only the exact pinned windowless Lifeboat-first activatio
     sources: sources(),
   });
   assert.equal(result.eligible, true);
-  assert.equal(result.clean, true);
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
   assert.deepEqual(result.findings, []);
   assert.equal(result.proofRefs.length, 7);
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_PASS');
@@ -171,7 +171,7 @@ test('specialist rejects broadened generic findings, widened source estate and w
     sources: [...sources(), { ...sources()[0], path: 'extra' }],
   });
   assert.equal(widened.clean, false);
-  assert.ok(widened.findings.some((item) => item.code === 'windows-authority-source-estate-widened'));
+  assert.ok(widened.findings.some((item) => item.code === 'windows-authority-source-estate-widened'), JSON.stringify(widened.findings));
 
   const wrongBlob = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
     repository: REPOSITORY,
@@ -182,5 +182,5 @@ test('specialist rejects broadened generic findings, widened source estate and w
     }),
   });
   assert.equal(wrongBlob.clean, false);
-  assert.ok(wrongBlob.findings.some((item) => item.code === 'windows-authority-source-evidence-invalid'));
+  assert.ok(wrongBlob.findings.some((item) => item.code === 'windows-authority-source-evidence-invalid'), JSON.stringify(wrongBlob.findings));
 });
