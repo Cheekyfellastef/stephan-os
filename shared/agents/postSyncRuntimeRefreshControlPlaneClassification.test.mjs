@@ -62,6 +62,7 @@ test('outbound health beacon control-plane estate coalesces as natural reload wi
 
 test('worker watchdog and Recovery Mesh liveness repair coalesces as natural reload only', () => {
   const plan = classifyPostSyncRefresh([
+    '.github/workflows/battle-bridge-resilience-proof.yml',
     'scripts/battle-bridge-control-plane-self-repair.test.mjs',
     'scripts/battle-bridge-outbound-health-beacon.mjs',
     'scripts/battle-bridge-outbound-health-beacon.test.mjs',
@@ -74,8 +75,8 @@ test('worker watchdog and Recovery Mesh liveness repair coalesces as natural rel
 
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
   assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
-  assert.equal(plan.changedPathCount, 8);
-  assert.equal(plan.noRuntimePathCount, 4);
+  assert.equal(plan.changedPathCount, 9);
+  assert.equal(plan.noRuntimePathCount, 5);
   assert.equal(plan.openClawPathCount, 0);
   assert.equal(plan.unknownPathCount, 0);
   assert.equal(plan.unsafePathCount, 0);
