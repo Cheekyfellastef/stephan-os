@@ -31,6 +31,24 @@ function recoveryReceipt() {
   };
 }
 
+function workerWatchdogReceipt() {
+  return {
+    taskName: 'Stephanos Mission Orchestrator Worker Watchdog',
+    installed: true,
+    intervalMinutes: 1,
+    atLogon: true,
+    hidden: true,
+    runLevel: 'Limited',
+    multipleInstances: 'IgnoreNew',
+    startedNow: true,
+    remoteCodexVisibilityReconciler: true,
+    arbitraryTaskNameAllowed: false,
+    arbitraryShellAllowed: false,
+    visiblePowerShellRequired: false,
+    headlessLauncher: true,
+  };
+}
+
 function mailboxReceipt() {
   return {
     taskName: 'Stephanos Battle Bridge GitHub Command Mailbox',
@@ -72,7 +90,14 @@ function beaconReceipt() {
   };
 }
 
-function scriptedSpawn({ head = HEAD, status = '', recovery = recoveryReceipt(), mailbox = mailboxReceipt(), beacon = beaconReceipt() } = {}) {
+function scriptedSpawn({
+  head = HEAD,
+  status = '',
+  recovery = recoveryReceipt(),
+  workerWatchdog = workerWatchdogReceipt(),
+  mailbox = mailboxReceipt(),
+  beacon = beaconReceipt(),
+} = {}) {
   const calls = [];
   const spawn = (command, args, options) => {
     calls.push({ command, args: [...args], options: { ...options } });
@@ -80,6 +105,7 @@ function scriptedSpawn({ head = HEAD, status = '', recovery = recoveryReceipt(),
     if (args.includes('rev-parse') && args.includes('HEAD')) return { status: 0, stdout: `${head}\n`, stderr: '' };
     if (args.includes('status') && args.includes('--porcelain=v1')) return { status: 0, stdout: status, stderr: '' };
     if (args.some((arg) => String(arg).endsWith('install-battle-bridge-recovery-mesh.ps1'))) return { status: 0, stdout: `${JSON.stringify(recovery)}\n`, stderr: '' };
+    if (args.some((arg) => String(arg).endsWith('install-battle-bridge-worker-watchdog.ps1'))) return { status: 0, stdout: `${JSON.stringify(workerWatchdog)}\n`, stderr: '' };
     if (args.some((arg) => String(arg).endsWith('install-battle-bridge-github-command-mailbox.ps1'))) return { status: 0, stdout: `${JSON.stringify(mailbox)}\n`, stderr: '' };
     if (args.some((arg) => String(arg).endsWith('install-battle-bridge-outbound-health-beacon.ps1'))) return { status: 0, stdout: `${JSON.stringify(beacon)}\n`, stderr: '' };
     throw new Error(`Unexpected command: ${command} ${args.join(' ')}`);
@@ -88,9 +114,10 @@ function scriptedSpawn({ head = HEAD, status = '', recovery = recoveryReceipt(),
   return spawn;
 }
 
-test('control-plane repair is fixed to recovery mesh, mailbox and outbound health beacon installers', () => {
+test('control-plane repair is fixed to recovery mesh, worker watchdog, mailbox and outbound beacon installers', () => {
   assert.deepEqual(BATTLE_BRIDGE_CONTROL_PLANE_TASKS.map(({ id, taskName, installerRelativePath }) => ({ id, taskName, installerRelativePath })), [
     { id: 'recoveryMesh', taskName: 'Stephanos Battle Bridge Recovery Mesh', installerRelativePath: 'scripts/windows/install-battle-bridge-recovery-mesh.ps1' },
+    { id: 'workerWatchdog', taskName: 'Stephanos Mission Orchestrator Worker Watchdog', installerRelativePath: 'scripts/windows/install-battle-bridge-worker-watchdog.ps1' },
     { id: 'githubCommandMailbox', taskName: 'Stephanos Battle Bridge GitHub Command Mailbox', installerRelativePath: 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1' },
     { id: 'outboundHealthBeacon', taskName: 'Stephanos Battle Bridge Outbound Health Beacon', installerRelativePath: 'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1' },
   ]);
@@ -103,7 +130,7 @@ test('control-plane repair proves exact main and safe source dirt before startin
   assert.equal(result.sourceHead, HEAD);
   assert.equal(result.sourceDirtSafe, true);
   assert.equal(result.runtimeOnlyDirtCount, 2);
-  assert.equal(result.taskCount, 3);
+  assert.equal(result.taskCount, 4);
   assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_CONTROL_PLANE_RECONCILED');
   assert.equal(result.arbitraryTaskNameAllowed, false);
   assert.equal(result.arbitraryExecutableAllowed, false);
@@ -112,8 +139,8 @@ test('control-plane repair proves exact main and safe source dirt before startin
   assert.equal(result.gitMutationAllowed, false);
   assert.equal(result.pcRestartAllowed, false);
   const powerShellCalls = spawnSyncFn.calls.filter((call) => call.command.includes('WindowsPowerShell'));
-  assert.equal(powerShellCalls.length, 3);
-  assert.deepEqual(powerShellCalls.map((call) => call.args.slice(-1)), [['-StartNow'], ['-StartNow'], ['-StartNow']]);
+  assert.equal(powerShellCalls.length, 4);
+  assert.deepEqual(powerShellCalls.map((call) => call.args.slice(-1)), [['-StartNow'], ['-StartNow'], ['-StartNow'], ['-StartNow']]);
   assert.equal(powerShellCalls.every((call) => call.options.shell === false), true);
 });
 
@@ -131,6 +158,14 @@ test('control-plane repair blocks stale or real source dirt before any task muta
   }
 });
 
+test('control-plane repair fails closed on invalid worker watchdog installer receipt', () => {
+  const spawnSyncFn = scriptedSpawn({ workerWatchdog: { ...workerWatchdogReceipt(), startedNow: false } });
+  const result = reconcileBattleBridgeControlPlane({ repoRoot: '/repo', expectedHead: HEAD, platform: 'win32', spawnSyncFn });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID');
+  assert.equal(result.failedTaskId, 'workerWatchdog');
+});
+
 test('control-plane repair fails closed on invalid beacon installer receipt', () => {
   const spawnSyncFn = scriptedSpawn({ beacon: { ...beaconReceipt(), issueNumber: 1507 } });
   const result = reconcileBattleBridgeControlPlane({ repoRoot: '/repo', expectedHead: HEAD, platform: 'win32', spawnSyncFn });
@@ -143,6 +178,7 @@ test('control-plane repair source exposes no caller-selected task, executable, i
   const source = await readFile(new URL('../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs', import.meta.url), 'utf8');
   assert.match(source, /shell: false/);
   assert.match(source, /install-battle-bridge-recovery-mesh\.ps1/);
+  assert.match(source, /install-battle-bridge-worker-watchdog\.ps1/);
   assert.match(source, /install-battle-bridge-github-command-mailbox\.ps1/);
   assert.match(source, /install-battle-bridge-outbound-health-beacon\.ps1/);
   assert.doesNotMatch(source, /taskName\s*=\s*options|installerRelativePath\s*=\s*options|executable\s*=\s*options|shell\s*=\s*true/);
