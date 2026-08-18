@@ -1,13 +1,155 @@
 name: Music Discovery Spotlight UI Wiring M2 Constructor
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - agent/music-discovery-spotlight-ui-wiring-v1
 
 permissions:
   contents: write
 
 jobs:
-  hold:
+  construct:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - run: echo 'Staging final Music M2 source inputs on the same reserved branch.'
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/music-discovery-spotlight-ui-wiring-v1
+
+      - name: Verify exact construction basis
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="7f9d76a3bd472d4e451a25a2553b530bb386c357"
+          test "$(git merge-base HEAD "$base")" = "$base"
+          test "$(git rev-parse HEAD:apps/music-tile/main.js)" = "e2c34ae964b9d7ca18a4679b8e1dcd90efd73188"
+          test "$(git rev-parse HEAD:apps/music-tile/engine/musicDiscoverySpotlightPresenter.js)" = "7181670ab34ee92ef95ecfc8347743dc0dbad7a7"
+          expected="$(printf '%s\n' \
+            '.github/workflows/music-discovery-spotlight-ui-wiring-constructor.yml' \
+            'docs/architecture/music-discovery-spotlight-ui-wiring-v1.md' \
+            'tests/music-discovery-spotlight-ui-wiring.test.mjs' | sort)"
+          actual="$(git diff --name-only "$base" HEAD | sort)"
+          test "$actual" = "$expected"
+
+      - name: Verify Music host anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('apps/music-tile/main.js').read_text(encoding='utf-8')
+          import_anchor = "import { applyTasteTeachingContribution, buildConversationAiPayload, buildMusicConversationPlan, removeTasteTeachingContribution, retainConversationTeachingHistory, summarizeTasteEvidence } from './engine/musicConversationPlanner.js';\n"
+          function_anchor = 'function renderMusicIntelligenceCentre() {'
+          listener_anchor = "  intelligenceUi.spotlight?.addEventListener('click', (event) => {\n    const addButton = event.target.closest('[data-action=\"spotlight-add\"]');\n"
+          assert source.count(import_anchor) == 1, f'import anchor count={source.count(import_anchor)}'
+          assert source.count(function_anchor) == 1, f'render anchor count={source.count(function_anchor)}'
+          assert source.count(listener_anchor) == 1, f'listener anchor count={source.count(listener_anchor)}'
+          start = source.index(function_anchor)
+          end = source.index('\n}\n\nfunction enhanceListeningDeckCards()', start)
+          render_block = source[start:end]
+          assert render_block.count('  intelligenceUi.spotlight.innerHTML = `\n') == 1
+          assert render_block.count('    </article>`;') == 1
+          PY
+
+      - name: Patch Music host only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/music-tile/main.js')
+          source = path.read_text(encoding='utf-8')
+
+          import_anchor = "import { applyTasteTeachingContribution, buildConversationAiPayload, buildMusicConversationPlan, removeTasteTeachingContribution, retainConversationTeachingHistory, summarizeTasteEvidence } from './engine/musicConversationPlanner.js';\n"
+          presenter_import = "import { buildMusicDiscoverySpotlightView } from './engine/musicDiscoverySpotlightPresenter.js';\n"
+          function_anchor = 'function renderMusicIntelligenceCentre() {'
+          listener_anchor = "  intelligenceUi.spotlight?.addEventListener('click', (event) => {\n    const addButton = event.target.closest('[data-action=\"spotlight-add\"]');\n"
+
+          helper = '''function buildMusicDiscoverySpotlightPresentation(artistName) {
+            return buildMusicDiscoverySpotlightView({
+              surface: 'DISCOVERY_SPOTLIGHT',
+              artistName: String(artistName || '').trim(),
+              maxCards: 4,
+              catalogueEvidence: [],
+              tasteEvidence: [],
+            });
+          }
+
+          function renderMusicDiscoverySpotlightConnections(view = {}) {
+            const status = String(view.status || 'EVIDENCE_UNAVAILABLE');
+            const cards = Array.isArray(view.cards) ? view.cards : [];
+            if (status !== 'READY' || !cards.length) {
+              return `<section class="music-card discovery-spotlight-connections" data-music-discovery-status="${escapeHtml(status)}">
+                <div class="music-card-header"><strong>Discovery connections</strong><span class="music-badge">evidence unavailable</span></div>
+                <div class="music-card-meta">${escapeHtml(view.message || 'No governed discovery connection is available yet.')}</div>
+              </section>`;
+            }
+            return `<section class="discovery-spotlight-connections" data-music-discovery-status="READY">
+              <div class="music-card-header"><div><strong>${escapeHtml(view.headline || 'Discovery connections')}</strong><div class="music-card-meta">${escapeHtml(view.message || '')}</div></div><span class="music-badge">${cards.length} connection${cards.length === 1 ? '' : 's'}</span></div>
+              ${cards.map((card) => `<article class="music-card discovery-spotlight-connection" data-evidence-class="${escapeHtml(card.evidenceClass || 'EVIDENCE_UNAVAILABLE')}">
+                <div class="music-card-header"><strong>${escapeHtml(card.title || card.artistName || 'Discovery connection')}</strong><span class="music-badge">${escapeHtml(card.evidenceLabel || 'Evidence unavailable')}</span></div>
+                <div class="music-card-meta">${escapeHtml(card.whyInteresting || 'Evidence unavailable.')}</div>
+                <div class="music-card-meta">${escapeHtml(card.evidenceReason || 'No stronger evidence is available yet.')}</div>
+                <div class="actions"><button type="button" data-action="spotlight-search-catalogue" data-query="${escapeHtml(card.action?.query || '')}"${card.action?.type === 'SEARCH_EXISTING_CATALOGUE' && card.action?.query ? '' : ' disabled'}>Search existing catalogue</button></div>
+              </article>`).join('')}
+            </section>`;
+          }
+
+          '''
+
+          source = source.replace(import_anchor, import_anchor + presenter_import, 1)
+          source = source.replace(function_anchor, helper + function_anchor, 1)
+
+          start = source.index(function_anchor)
+          end = source.index('\n}\n\nfunction enhanceListeningDeckCards()', start)
+          render_block = source[start:end]
+          spotlight_anchor = '  intelligenceUi.spotlight.innerHTML = `\n'
+          render_block = render_block.replace(
+              spotlight_anchor,
+              "  const discoverySpotlight = buildMusicDiscoverySpotlightPresentation(artist);\n  const discoveryConnectionsMarkup = renderMusicDiscoverySpotlightConnections(discoverySpotlight);\n\n" + spotlight_anchor,
+              1,
+          )
+          render_block = render_block.replace('    </article>`;', '    </article>\n    ${discoveryConnectionsMarkup}`;', 1)
+          source = source[:start] + render_block + source[end:]
+
+          listener_replacement = "  intelligenceUi.spotlight?.addEventListener('click', (event) => {\n    const searchButton = event.target.closest('[data-action=\"spotlight-search-catalogue\"]');\n    if (searchButton) {\n      const query = String(searchButton.dataset.query || '').trim();\n      if (!query) return;\n      if (intelligenceUi.nativeSearchInput) {\n        intelligenceUi.nativeSearchInput.value = query;\n        intelligenceUi.nativeSearchInput.focus();\n      }\n      void performNativeCatalogSearch(query, { operationGeneration: musicOperationGeneration });\n      return;\n    }\n    const addButton = event.target.closest('[data-action=\"spotlight-add\"]');\n"
+          source = source.replace(listener_anchor, listener_replacement, 1)
+          path.write_text(source, encoding='utf-8')
+          PY
+          node --check apps/music-tile/main.js
+
+      - name: Focused Music source proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test \
+            tests/music-discovery-connections.test.mjs \
+            tests/music-discovery-spotlight-presenter.test.mjs \
+            tests/music-discovery-spotlight-ui-wiring.test.mjs \
+            tests/music-tile-native-catalog-ui.test.mjs \
+            tests/music-tile-conversation-intelligence.test.mjs \
+            tests/music-intelligence-centre-vnext.test.mjs
+          git diff --check
+
+      - name: Publish exact three-file Music estate
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="7f9d76a3bd472d4e451a25a2553b530bb386c357"
+          rm .github/workflows/music-discovery-spotlight-ui-wiring-constructor.yml
+          git diff --check "$base"
+          expected="$(printf '%s\n' \
+            'apps/music-tile/main.js' \
+            'docs/architecture/music-discovery-spotlight-ui-wiring-v1.md' \
+            'tests/music-discovery-spotlight-ui-wiring.test.mjs' | sort)"
+          actual="$(git diff --name-only "$base" | sort)"
+          test "$actual" = "$expected"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Wire Music Discovery Spotlight into existing catalogue flow'
+          git push origin HEAD:agent/music-discovery-spotlight-ui-wiring-v1
