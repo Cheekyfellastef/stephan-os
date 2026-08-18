@@ -65,6 +65,9 @@ export function createBattleBridgeMainAdvanceSignal({
 
 export function validateBattleBridgeMainAdvanceSignal(value = {}) {
   try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return Object.freeze({ ok: false, signal: null, blocker: 'MAIN_ADVANCE_SIGNAL_SHAPE_INVALID' });
+    }
     const rebuilt = createBattleBridgeMainAdvanceSignal({
       repository: value.repository,
       branch: value.branch,
@@ -73,8 +76,16 @@ export function validateBattleBridgeMainAdvanceSignal(value = {}) {
       mergedAtUtc: value.mergedAtUtc,
       workflowRunId: value.workflowRunId,
     });
-    const required = JSON.stringify(rebuilt);
-    return Object.freeze({ ok: required === JSON.stringify(value), signal: rebuilt, blocker: required === JSON.stringify(value) ? '' : 'MAIN_ADVANCE_SIGNAL_SHAPE_INVALID' });
+    const actualKeys = Object.keys(value).sort();
+    const expectedKeys = Object.keys(rebuilt).sort();
+    const exactKeys = actualKeys.length === expectedKeys.length
+      && actualKeys.every((key, index) => key === expectedKeys[index]);
+    const exactValues = exactKeys && expectedKeys.every((key) => JSON.stringify(value[key]) === JSON.stringify(rebuilt[key]));
+    return Object.freeze({
+      ok: exactValues,
+      signal: exactValues ? rebuilt : null,
+      blocker: exactValues ? '' : 'MAIN_ADVANCE_SIGNAL_SHAPE_INVALID',
+    });
   } catch (error) {
     return Object.freeze({ ok: false, signal: null, blocker: error?.message || 'MAIN_ADVANCE_SIGNAL_INVALID' });
   }
