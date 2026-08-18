@@ -40,7 +40,7 @@ test('package lifecycle commands pin the canonical PowerShell host', async () =>
     '"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%USERPROFILE%\\Documents\\GitHub\\stephan-os\\scripts\\windows\\run-battle-bridge-recovery-mesh-hidden.ps1"',
   );
   assert.doesNotMatch(packageJson.scripts['stephanos:battle-bridge:recovery-mesh'], /-File scripts[\\/]/);
-  assert.doesNotMatch(packageJson.scripts['stephanos:battle-bridge:recovery-mesh'], /^node\b/i);
+  assert.doesNotMatch(packageJson.scripts['stephanos:battle-bridge-recovery-mesh'], /^node\b/i);
 });
 
 test('windowless launcher pins recovery mesh to one fixed source runner', async () => {
@@ -113,6 +113,7 @@ test('fixed probe can start only four named tasks and cannot restart the PC or m
   assert.match(probe, /identityVerified/);
   assert.match(probe, /C:\\Program Files\\Git\\cmd\\git\.exe/);
   assert.match(probe, /wscriptPath = 'C:\\Windows\\System32\\wscript\.exe'/);
+  assert.doesNotMatch(probe, /Get-Command git/);
   assert.match(probe, /\$canonicalPowerShell/);
   assert.doesNotMatch(probe, /& powershell\.exe/);
   assert.doesNotMatch(probe, /& git\.exe/);
@@ -210,18 +211,21 @@ test('uninstall removes only the coordinator and preserves every underlying serv
   assert.doesNotMatch(uninstall, /Remove-Item|git\s+|Stop-Process|Restart-Computer/i);
 });
 
-test('exact-head backend authority tolerates only canonical unstaged runtime-memory dirt', async () => {
+test('exact-head backend authority tolerates only canonical unstaged runtime-memory and UI-dist dirt', async () => {
   const [starter, probe] = await Promise.all([
     source('start-stephanos-backend.ps1'),
     source('probe-battle-bridge-recovery-mesh.ps1'),
   ]);
   assert.match(starter, /status '--porcelain=v1' '--untracked-files=no'/);
   assert.match(starter, /\$runtimeMemoryPath = 'stephanos-server\/data\/memory\/durable-memory\.json'/);
+  assert.match(starter, /\$runtimeDistPrefix = 'apps\/stephanos\/dist\/'/);
   assert.match(starter, /\$status -eq ' M' -and \$path -eq \$runtimeMemoryPath/);
+  assert.match(starter, /\$status -eq ' M' -and \$path\.StartsWith\(\$runtimeDistPrefix, \[System\.StringComparison\]::Ordinal\)/);
   assert.match(starter, /Backend startup requires source-tracked files to be unmodified at exact head/);
-  assert.match(starter, /trackedWorktreeClean = -not \$RuntimeMemoryDirty/);
+  assert.match(starter, /trackedWorktreeClean = -not \(\$RuntimeMemoryDirty -or \$RuntimeDistDirty\)/);
   assert.match(starter, /sourceWorktreeClean = \$true/);
   assert.match(starter, /runtimeMemoryDirtTolerated = \$RuntimeMemoryDirty/);
+  assert.match(starter, /runtimeDistDirtTolerated = \$RuntimeDistDirty/);
   assert.match(probe, /function Get-CanonicalTrackedWorktreeAssessment/);
   assert.match(probe, /function Assert-CanonicalSourceWorktreeClean/);
   assert.equal((probe.match(/Assert-CanonicalSourceWorktreeClean -GitExecutable/g) || []).length, 2);
