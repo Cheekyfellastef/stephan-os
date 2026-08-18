@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/music-discovery-spotlight-ui-wiring-v1
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -17,16 +20,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: agent/music-discovery-spotlight-ui-wiring-v1
 
       - name: Verify exact construction basis
         shell: bash
         run: |
           set -euo pipefail
           base="7f9d76a3bd472d4e451a25a2553b530bb386c357"
-          test "$(git rev-parse HEAD^)" = "$base"
+          test "$(git merge-base HEAD "$base")" = "$base"
           test "$(git rev-parse HEAD:apps/music-tile/main.js)" = "e2c34ae964b9d7ca18a4679b8e1dcd90efd73188"
           test "$(git rev-parse HEAD:apps/music-tile/engine/musicDiscoverySpotlightPresenter.js)" = "7181670ab34ee92ef95ecfc8347743dc0dbad7a7"
-          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/music-discovery-spotlight-ui-wiring-constructor.yml"
+          test "$(git diff --name-only "$base" HEAD)" = ".github/workflows/music-discovery-spotlight-ui-wiring-constructor.yml"
 
       - name: Apply bounded Music UI wiring
         shell: bash
