@@ -7,11 +7,13 @@ export const BATTLE_BRIDGE_EXPRESS_SYNC_INTERVAL_MINUTES = 1;
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const RUN_ID_PATTERN = /^[1-9][0-9]{0,19}$/;
+const UTC_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 
 function canonicalUtc(value) {
   const text = String(value || '').trim();
+  if (!UTC_TIMESTAMP_PATTERN.test(text)) return '';
   const parsed = Date.parse(text);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === text ? text : '';
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : '';
 }
 
 export function createBattleBridgeMainAdvanceSignal({
