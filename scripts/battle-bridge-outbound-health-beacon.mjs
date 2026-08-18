@@ -13,6 +13,8 @@ export const BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE = 1889;
 export const BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY = 'Cheekyfellastef/stephan-os';
 
 const SHA = /^[0-9a-f]{40}$/;
+const SAFE_RECEIPT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
+const SAFE_RECEIPT_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$/;
 const MAX_STATUS_BYTES = 64 * 1024;
 const MAX_GITHUB_BYTES = 512 * 1024;
 const STATUS_SPECS = Object.freeze([
@@ -36,6 +38,11 @@ function text(value, limit = 180) {
 function safeSha(value) {
   const normalized = text(value, 40).toLowerCase();
   return SHA.test(normalized) ? normalized : '';
+}
+
+function safeReceiptToken(value) {
+  const normalized = text(value, 180);
+  return normalized && SAFE_RECEIPT_TOKEN.test(normalized) ? normalized : '';
 }
 
 function timestamp(value) {
@@ -76,6 +83,39 @@ function surfaceIsBlocked(surface) {
     || state.includes('COOLDOWN');
 }
 
+function projectMailboxReceipt(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const requestId = text(value.requestId, 121);
+  if (!SAFE_RECEIPT_ID.test(requestId)) return null;
+  return Object.freeze({
+    requestId,
+    operation: safeReceiptToken(value.operation),
+    state: safeReceiptToken(value.state).toUpperCase(),
+    expectedHead: safeSha(value.expectedHead),
+    completedAtUtc: timestamp(value.completedAt || value.heartbeatAt || value.acceptedAt),
+    blocker: safeReceiptToken(value.blocker),
+    finalVerdict: safeReceiptToken(value.finalVerdict),
+  });
+}
+
+export function projectMailboxReceipts(record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return Object.freeze([]);
+  const candidates = [
+    ...(record.activeReceipt ? [record.activeReceipt] : []),
+    ...(Array.isArray(record.recentReceipts) ? record.recentReceipts : []),
+  ];
+  const receipts = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    const projected = projectMailboxReceipt(candidate);
+    if (!projected || seen.has(projected.requestId)) continue;
+    seen.add(projected.requestId);
+    receipts.push(projected);
+    if (receipts.length >= 4) break;
+  }
+  return Object.freeze(receipts);
+}
+
 export function projectBeaconStatus(record, spec, nowMs = Date.now()) {
   if (!record) {
     return Object.freeze({ id: spec.id, state: 'UNPROVEN', observedAtUtc: '', ageMs: null, head: '', blocker: 'STATUS_MISSING' });
@@ -108,6 +148,7 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     .filter(surfaceIsBlocked)
     .map((surface) => `${surface.id}:${surface.blocker || surface.state}`)
     .slice(0, 16);
+  const mailboxReceipts = projectMailboxReceipts(statusRecords.mailbox || null);
   return Object.freeze({
     schemaVersion: BATTLE_BRIDGE_OUTBOUND_BEACON_SCHEMA,
     repository: BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY,
@@ -116,6 +157,7 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     sourceHead: head,
     branch: 'main',
     surfaces: Object.freeze(surfaces),
+    mailboxReceipts,
     blockerCount: blockers.length,
     blockers: Object.freeze(blockers),
     freshness: blockers.length > 0 ? 'DEGRADED' : 'FRESH',
