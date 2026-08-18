@@ -44,13 +44,27 @@ jobs:
 
           import_anchor = "import { applyTasteTeachingContribution, buildConversationAiPayload, buildMusicConversationPlan, removeTasteTeachingContribution, retainConversationTeachingHistory, summarizeTasteEvidence } from './engine/musicConversationPlanner.js';\n"
           presenter_import = "import { buildMusicDiscoverySpotlightView } from './engine/musicDiscoverySpotlightPresenter.js';\n"
+          function_anchor = 'function renderMusicIntelligenceCentre() {'
+          listener_anchor = '''  intelligenceUi.spotlight?.addEventListener('click', (event) => {
+            const addButton = event.target.closest('[data-action="spotlight-add"]');
+          '''
+
+          print('import_anchor_count=', source.count(import_anchor))
+          print('presenter_import_count=', source.count(presenter_import))
+          print('function_anchor_count=', source.count(function_anchor))
+          print('listener_anchor_count=', source.count(listener_anchor))
+
           if presenter_import in source:
               raise SystemExit('presenter import already present; refusing duplicate wiring')
           if source.count(import_anchor) != 1:
               raise SystemExit('music conversation import anchor drifted')
+          if source.count(function_anchor) != 1:
+              raise SystemExit('Music Intelligence render anchor drifted')
+          if source.count(listener_anchor) != 1:
+              raise SystemExit('spotlight delegated listener prefix drifted')
+
           source = source.replace(import_anchor, import_anchor + presenter_import, 1)
 
-          function_anchor = 'function renderMusicIntelligenceCentre() {'
           helper = '''function buildMusicDiscoverySpotlightPresentation(artistName) {
             return buildMusicDiscoverySpotlightView({
               surface: 'DISCOVERY_SPOTLIGHT',
@@ -82,8 +96,6 @@ jobs:
           }
 
           '''
-          if source.count(function_anchor) != 1:
-              raise SystemExit('Music Intelligence render anchor drifted')
           source = source.replace(function_anchor, helper + function_anchor, 1)
 
           start = source.index(function_anchor)
@@ -91,32 +103,22 @@ jobs:
           end = source.index(end_marker, start)
           render_block = source[start:end]
           spotlight_anchor = '  intelligenceUi.spotlight.innerHTML = `\n'
+          closing = '    </article>`;'
+          print('spotlight_markup_anchor_count=', render_block.count(spotlight_anchor))
+          print('spotlight_closing_count=', render_block.count(closing))
           if render_block.count(spotlight_anchor) != 1:
               raise SystemExit('spotlight markup anchor drifted')
+          if render_block.count(closing) != 1:
+              raise SystemExit('spotlight closing anchor drifted')
           render_block = render_block.replace(
               spotlight_anchor,
               "  const discoverySpotlight = buildMusicDiscoverySpotlightPresentation(artist);\n  const discoveryConnectionsMarkup = renderMusicDiscoverySpotlightConnections(discoverySpotlight);\n\n" + spotlight_anchor,
               1,
           )
-          closing = '    </article>`;'
-          if render_block.count(closing) != 1:
-              raise SystemExit('spotlight closing anchor drifted')
           render_block = render_block.replace(closing, '    </article>\n    ${discoveryConnectionsMarkup}`;', 1)
           source = source[:start] + render_block + source[end:]
 
-          old_listener = '''  intelligenceUi.spotlight?.addEventListener('click', (event) => {
-            const addButton = event.target.closest('[data-action="spotlight-add"]');
-            if (!addButton) return;
-            const track = (state.candidates || []).find((candidate) => `${candidate.id}` === `${addButton.dataset.id}`);
-            if (!track) return;
-            if (!state.listeningDeck.some((candidate) => `${candidate.id}` === `${track.id}`)) {
-              state.listeningDeck.unshift(track);
-              ui.status.textContent = `${track.title || 'Track'} added to your Listening Room.`;
-              saveState();
-              renderAll();
-            }
-          });'''
-          new_listener = '''  intelligenceUi.spotlight?.addEventListener('click', (event) => {
+          listener_replacement = '''  intelligenceUi.spotlight?.addEventListener('click', (event) => {
             const searchButton = event.target.closest('[data-action="spotlight-search-catalogue"]');
             if (searchButton) {
               const query = String(searchButton.dataset.query || '').trim();
@@ -129,19 +131,8 @@ jobs:
               return;
             }
             const addButton = event.target.closest('[data-action="spotlight-add"]');
-            if (!addButton) return;
-            const track = (state.candidates || []).find((candidate) => `${candidate.id}` === `${addButton.dataset.id}`);
-            if (!track) return;
-            if (!state.listeningDeck.some((candidate) => `${candidate.id}` === `${track.id}`)) {
-              state.listeningDeck.unshift(track);
-              ui.status.textContent = `${track.title || 'Track'} added to your Listening Room.`;
-              saveState();
-              renderAll();
-            }
-          });'''
-          if source.count(old_listener) != 1:
-              raise SystemExit('spotlight delegated listener anchor drifted')
-          source = source.replace(old_listener, new_listener, 1)
+          '''
+          source = source.replace(listener_anchor, listener_replacement, 1)
           path.write_text(source, encoding='utf-8')
           PY
 
