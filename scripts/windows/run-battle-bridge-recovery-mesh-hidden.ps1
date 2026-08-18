@@ -191,20 +191,24 @@ try {
     $runnerText = ($runnerOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
     $runnerResult = $null
     try { $runnerResult = $runnerText | ConvertFrom-Json } catch { $runnerResult = $null }
-    if ($runnerResult) {
+    $runnerResultParsed = $null -ne $runnerResult
+    $runnerClassification = if ($runnerResultParsed) { [string]$runnerResult.classification } else { '' }
+    if ($runnerResultParsed -and $runnerExitCode -eq 0) {
         Write-RecoveryMeshLaunchStatus `
             -Classification 'RECOVERY_MESH_RUNNER_COMPLETED' `
             -RunnerStarted $true `
             -RunnerCompleted $true `
             -RunnerExitCode $runnerExitCode `
             -RunnerResultParsed $true `
-            -RunnerClassification ([string]$runnerResult.classification)
+            -RunnerClassification $runnerClassification
     } else {
         Write-RecoveryMeshLaunchStatus `
             -Classification 'RECOVERY_MESH_RUNNER_FAILED' `
             -RunnerStarted $true `
             -RunnerCompleted $true `
-            -RunnerExitCode $runnerExitCode
+            -RunnerExitCode $runnerExitCode `
+            -RunnerResultParsed $runnerResultParsed `
+            -RunnerClassification $runnerClassification
     }
     exit $runnerExitCode
 } finally {
