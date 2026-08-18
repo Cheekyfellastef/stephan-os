@@ -17,23 +17,24 @@ function captureBackendStart(workspace, platform) {
   }).then((result) => ({ calls, result }));
 }
 
-test('Battle Bridge backend repair uses npm.cmd on Windows without shell fallback', async () => {
+test('Battle Bridge backend repair uses fixed cmd.exe npm.cmd execution on Windows without Node shell mode', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-backend-win-npm-'));
   const { calls, result } = await captureBackendStart(workspace, 'win32');
 
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].command, 'npm.cmd');
-  assert.deepEqual(calls[0].args, ['run', 'stephanos:battle-bridge:repair']);
+  assert.equal(calls[0].command, 'cmd.exe');
+  assert.deepEqual(calls[0].args, ['/d', '/s', '/c', 'npm.cmd', 'run', 'stephanos:battle-bridge:repair']);
   assert.equal(calls[0].options.shell, false);
   assert.equal(result.started, true);
   assert.equal(result.exitCode, 0);
 });
 
-test('Battle Bridge backend repair keeps npm executable on non-Windows hosts', async () => {
+test('Battle Bridge backend repair keeps direct npm executable on non-Windows hosts', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-backend-posix-npm-'));
   const { calls } = await captureBackendStart(workspace, 'linux');
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].command, 'npm');
+  assert.deepEqual(calls[0].args, ['run', 'stephanos:battle-bridge:repair']);
   assert.equal(calls[0].options.shell, false);
 });
