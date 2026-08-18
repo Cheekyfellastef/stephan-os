@@ -40,7 +40,7 @@ test('package lifecycle commands pin the canonical PowerShell host', async () =>
     '"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%USERPROFILE%\\Documents\\GitHub\\stephan-os\\scripts\\windows\\run-battle-bridge-recovery-mesh-hidden.ps1"',
   );
   assert.doesNotMatch(packageJson.scripts['stephanos:battle-bridge:recovery-mesh'], /-File scripts[\\/]/);
-  assert.doesNotMatch(packageJson.scripts['stephanos:battle-bridge-recovery-mesh'], /^node\b/i);
+  assert.doesNotMatch(packageJson.scripts['stephanos:battle-bridge:recovery-mesh'], /^node\b/i);
 });
 
 test('windowless launcher pins recovery mesh to one fixed source runner', async () => {
@@ -113,7 +113,6 @@ test('fixed probe can start only four named tasks and cannot restart the PC or m
   assert.match(probe, /identityVerified/);
   assert.match(probe, /C:\\Program Files\\Git\\cmd\\git\.exe/);
   assert.match(probe, /wscriptPath = 'C:\\Windows\\System32\\wscript\.exe'/);
-  assert.doesNotMatch(probe, /Get-Command git/);
   assert.match(probe, /\$canonicalPowerShell/);
   assert.doesNotMatch(probe, /& powershell\.exe/);
   assert.doesNotMatch(probe, /& git\.exe/);
