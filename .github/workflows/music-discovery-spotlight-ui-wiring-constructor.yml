@@ -39,8 +39,8 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          main_path = Path('apps/music-tile/main.js')
-          source = main_path.read_text(encoding='utf-8')
+          path = Path('apps/music-tile/main.js')
+          source = path.read_text(encoding='utf-8')
 
           import_anchor = "import { applyTasteTeachingContribution, buildConversationAiPayload, buildMusicConversationPlan, removeTasteTeachingContribution, retainConversationTeachingHistory, summarizeTasteEvidence } from './engine/musicConversationPlanner.js';\n"
           presenter_import = "import { buildMusicDiscoverySpotlightView } from './engine/musicDiscoverySpotlightPresenter.js';\n"
@@ -51,7 +51,7 @@ jobs:
           source = source.replace(import_anchor, import_anchor + presenter_import, 1)
 
           function_anchor = 'function renderMusicIntelligenceCentre() {'
-          helper = r'''function buildMusicDiscoverySpotlightPresentation(artistName) {
+          helper = '''function buildMusicDiscoverySpotlightPresentation(artistName) {
             return buildMusicDiscoverySpotlightView({
               surface: 'DISCOVERY_SPOTLIGHT',
               artistName: String(artistName || '').trim(),
@@ -104,7 +104,7 @@ jobs:
           render_block = render_block.replace(closing, '    </article>\n    ${discoveryConnectionsMarkup}`;', 1)
           source = source[:start] + render_block + source[end:]
 
-          old_listener = r'''  intelligenceUi.spotlight?.addEventListener('click', (event) => {
+          old_listener = '''  intelligenceUi.spotlight?.addEventListener('click', (event) => {
             const addButton = event.target.closest('[data-action="spotlight-add"]');
             if (!addButton) return;
             const track = (state.candidates || []).find((candidate) => `${candidate.id}` === `${addButton.dataset.id}`);
@@ -116,7 +116,7 @@ jobs:
               renderAll();
             }
           });'''
-          new_listener = r'''  intelligenceUi.spotlight?.addEventListener('click', (event) => {
+          new_listener = '''  intelligenceUi.spotlight?.addEventListener('click', (event) => {
             const searchButton = event.target.closest('[data-action="spotlight-search-catalogue"]');
             if (searchButton) {
               const query = String(searchButton.dataset.query || '').trim();
@@ -142,10 +142,11 @@ jobs:
           if source.count(old_listener) != 1:
               raise SystemExit('spotlight delegated listener anchor drifted')
           source = source.replace(old_listener, new_listener, 1)
-          main_path.write_text(source, encoding='utf-8')
+          path.write_text(source, encoding='utf-8')
+          PY
 
-          test_path = Path('tests/music-discovery-spotlight-ui-wiring.test.mjs')
-          test_path.write_text(r'''import test from 'node:test';
+          cat > tests/music-discovery-spotlight-ui-wiring.test.mjs <<'EOF'
+          import test from 'node:test';
           import assert from 'node:assert/strict';
           import { readFile } from 'node:fs/promises';
 
@@ -169,7 +170,7 @@ jobs:
             const end = source.indexOf('const addButton = event.target.closest', start);
             assert.ok(start > 0 && end > start);
             const actionBlock = source.slice(start, end);
-            assert.match(actionBlock, /data-action=\\"spotlight-search-catalogue\\"/);
+            assert.match(actionBlock, /data-action="spotlight-search-catalogue"/);
             assert.match(actionBlock, /performNativeCatalogSearch\(query, \{ operationGeneration: musicOperationGeneration \}\)/);
             assert.doesNotMatch(actionBlock, /requestNativeCatalogSearch|fetch\(|askMusicAi|state\.listeningDeck|saveState\(/);
             assert.match(source, /findExistingCatalogTrack\(state\.listeningDeck, result\)/);
@@ -213,10 +214,10 @@ jobs:
             assert.equal((renderBlock.match(/buildMusicDiscoverySpotlightPresentation\(artist\)/g) || []).length, 1);
             assert.match(source, /findExistingCatalogTrack\(state\.listeningDeck, result\)/);
           });
-          ''').replace('          ', ''), encoding='utf-8')
+          EOF
 
-          doc_path = Path('docs/architecture/music-discovery-spotlight-ui-wiring-v1.md')
-          doc_path.write_text(r'''# Music Discovery Spotlight UI Wiring V1
+          cat > docs/architecture/music-discovery-spotlight-ui-wiring-v1.md <<'EOF'
+          # Music Discovery Spotlight UI Wiring V1
 
           ## Purpose
 
@@ -258,8 +259,7 @@ jobs:
           ## Acceptance boundary
 
           This is standard-risk browser-visible source work. Independent exact-head review and separate operator merge approval remain required. Source merge alone is not live acceptance. The existing #1507/#1622 Battle Bridge lane must subsequently prove exact merged-main sync/build/served head plus desktop/iPad and real Windows Edge search, card insertion, playback/rating continuity, conversation, Teach, Forget and Reset before #1624 may be called complete/live.
-          ''').replace('          ', ''), encoding='utf-8')
-          PY
+          EOF
 
       - name: Focused source proof
         shell: bash
