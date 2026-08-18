@@ -21,6 +21,9 @@ const STATUS_SPECS = Object.freeze([
   Object.freeze({ id: 'ignition', path: 'status/battle-bridge-ignition-supervisor-current.json', staleAfterMs: 300_000 }),
   Object.freeze({ id: 'battleBridge', path: 'status/battle-bridge-current.json', staleAfterMs: 300_000 }),
   Object.freeze({ id: 'recoveryMesh', path: 'status/battle-bridge-recovery-mesh-current.json', staleAfterMs: 180_000 }),
+  Object.freeze({ id: 'recoveryMeshLaunch', path: 'status/battle-bridge-recovery-mesh-launch-current.json', staleAfterMs: 180_000 }),
+  Object.freeze({ id: 'workerWatchdog', path: 'status/battle-bridge-worker-watchdog-current.json', staleAfterMs: 180_000 }),
+  Object.freeze({ id: 'workerWatchdogLaunch', path: 'status/battle-bridge-worker-watchdog-launch-current.json', staleAfterMs: 180_000 }),
   Object.freeze({ id: 'mailbox', path: 'status/battle-bridge-mailbox-receipt-index.json', staleAfterMs: 420_000 }),
   Object.freeze({ id: 'missionWorker', path: 'status/mission-orchestrator-worker-heartbeat.json', staleAfterMs: 180_000 }),
 ]);
@@ -63,6 +66,16 @@ function recordHead(record = {}) {
   );
 }
 
+function surfaceIsBlocked(surface) {
+  const state = String(surface?.state || '').toUpperCase();
+  return state === 'STALE'
+    || state === 'UNPROVEN'
+    || state.includes('BLOCK')
+    || state.includes('FAIL')
+    || state.includes('UNHEALTHY')
+    || state.includes('COOLDOWN');
+}
+
 export function projectBeaconStatus(record, spec, nowMs = Date.now()) {
   if (!record) {
     return Object.freeze({ id: spec.id, state: 'UNPROVEN', observedAtUtc: '', ageMs: null, head: '', blocker: 'STATUS_MISSING' });
@@ -90,9 +103,9 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
   const nowMs = now.getTime();
   const surfaces = STATUS_SPECS.map((spec) => projectBeaconStatus(statusRecords[spec.id] || null, spec, nowMs));
   const blockers = surfaces
-    .filter((surface) => surface.state === 'STALE' || surface.state === 'UNPROVEN' || surface.state.includes('BLOCK'))
+    .filter(surfaceIsBlocked)
     .map((surface) => `${surface.id}:${surface.blocker || surface.state}`)
-    .slice(0, 12);
+    .slice(0, 16);
   return Object.freeze({
     schemaVersion: BATTLE_BRIDGE_OUTBOUND_BEACON_SCHEMA,
     repository: BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY,
@@ -103,7 +116,7 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     surfaces: Object.freeze(surfaces),
     blockerCount: blockers.length,
     blockers: Object.freeze(blockers),
-    freshness: blockers.some((item) => item.includes(':STATUS_MISSING') || item.includes(':STALE')) ? 'DEGRADED' : 'FRESH',
+    freshness: blockers.length > 0 ? 'DEGRADED' : 'FRESH',
     readOnly: true,
     sourceMutationAllowed: false,
     taskMutationAllowed: false,
