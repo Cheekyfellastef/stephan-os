@@ -52,6 +52,7 @@ jobs:
           node --test shared/agents/exactHeadReviewCoordinatorAuthority.test.mjs
           node --test shared/agents/independentReviewRetryPlanner.test.mjs
           node --test shared/agents/exactHeadReviewDispatchWorkflow.test.mjs
+          node --test scripts/exact-head-review-complete-review-estate-fallback-v1.test.mjs
 
       - name: Parse review coordinator sources
         run: |
@@ -60,6 +61,7 @@ jobs:
           node --check shared/agents/independentReviewRetryPlanner.mjs
           node --check scripts/exact-head-review-dispatch.mjs
           node --check scripts/retry-independent-review.mjs
+          node --check scripts/exact-head-review-complete-review-estate-fallback-v1.mjs
 
       - name: Diff check
         if: always()
@@ -135,6 +137,7 @@ jobs:
           (github.event_name != 'issue_comment' || github.event.issue.pull_request != null)
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          NODE_OPTIONS: --import=./scripts/exact-head-review-complete-review-estate-fallback-v1.mjs
           STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY: 'true'
           STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ inputs.pr_number || '' }}
           STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
@@ -193,6 +196,7 @@ jobs:
         id: coordinate
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          NODE_OPTIONS: --import=./scripts/exact-head-review-complete-review-estate-fallback-v1.mjs
           STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ matrix.target.prNumber }}
           STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
           STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES: '10'

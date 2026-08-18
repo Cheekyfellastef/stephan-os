@@ -31,6 +31,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Prove bounded GitHub review-read resilience
+        run: >-
+          node --test
+          shared/agents/githubReadResilienceV1.test.mjs
+          shared/agents/pullRequestReviewEstateFallbackV1.test.mjs
+          scripts/independent-merge-security-review-v2.read-resilience.test.mjs
+          scripts/independent-merge-security-review-v2.lazy-specialist.test.mjs
+          scripts/independent-review-complete-review-estate-fallback-v1.test.mjs
+      - name: Parse review-read resilience sources
+        run: >-
+          node --check
+          shared/agents/githubReadResilienceV1.mjs
+          shared/agents/pullRequestReviewEstateFallbackV1.mjs
+          scripts/independent-merge-security-review-v2.mjs
+          scripts/independent-review-complete-review-estate-fallback-v1.mjs
       - name: Prove bounded Windows authority specialist policy
         run: >-
           node --test
@@ -41,6 +56,7 @@ jobs:
       - name: Review the complete exact-head and exact-base diff without mutation authority
         env:
           GH_TOKEN: ${{ github.token }}
+          NODE_OPTIONS: --import=./scripts/independent-review-complete-review-estate-fallback-v1.mjs
           STEPHANOS_INDEPENDENT_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/independent-review-result.json
         run: node scripts/independent-merge-security-review-with-windows-specialist-v1.mjs
       - name: Upload the exact-run immutable independent review result
