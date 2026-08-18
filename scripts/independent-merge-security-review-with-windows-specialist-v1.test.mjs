@@ -96,11 +96,13 @@ test('non-eligible or non-clean specialist results remain fail closed', async ()
   assert.match(text, /finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_CLEAN'/);
 });
 
-test('base reviewer enumerates submitted reviews only after specialist escalation is proven necessary', async () => {
+test('base reviewer skips submitted reviews only for deterministic approval-boundary bootstrap', async () => {
   const text = await baseReviewerSource();
   assert.match(text, /const \[files, diff\] = await Promise\.all\(\[/);
   assert.doesNotMatch(text, /const \[files, diff, reviews\] = await Promise\.all\(\[/);
-  assert.match(text, /const specialistProbe = adjudicateQualifiedSpecialistReview\(\{[\s\S]*?reviews: \[\],[\s\S]*?\}\);/);
-  assert.match(text, /const specialist = specialistProbe\.required\s*\? adjudicateQualifiedSpecialistReview\(\{[\s\S]*?reviews: await githubPages\(`\/repos\/\$\{owner\}\/\$\{repo\}\/pulls\/\$\{prNumber\}\/reviews`\),[\s\S]*?\}\)\s*: specialistProbe;/);
+  assert.match(text, /const deterministicBootstrapRequired = isApprovalBoundaryBootstrapAnalysis\(deterministicAnalysis\);[\s\S]*?const specialistProbe = adjudicateQualifiedSpecialistReview\(\{[\s\S]*?reviews: \[\],[\s\S]*?\}\);/);
+  assert.match(text, /const specialist = !deterministicBootstrapRequired && specialistProbe\.required\s*\? adjudicateQualifiedSpecialistReview\(\{[\s\S]*?reviews: await githubPages\(`\/repos\/\$\{owner\}\/\$\{repo\}\/pulls\/\$\{prNumber\}\/reviews`\),[\s\S]*?\}\)\s*: specialistProbe;/);
+  assert.match(text, /const analysis = !deterministicBootstrapRequired && specialist\.required && specialist\.valid\s*\? specialist\.analysis\s*:\s*deterministicAnalysis;/);
+  assert.match(text, /const bootstrapRequired = deterministicBootstrapRequired \|\| isApprovalBoundaryBootstrapAnalysis\(analysis\);/);
   assert.doesNotMatch(text, /reviews: await githubPages\([\s\S]*?allowNotFound/);
 });
