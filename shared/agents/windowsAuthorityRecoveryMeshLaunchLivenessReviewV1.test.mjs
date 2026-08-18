@@ -22,7 +22,8 @@ $ErrorActionPreference = 'Stop'
 $nodeExecutable = 'C:\Program Files\nodejs\node.exe'
 $repoRoot = Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'
 $runnerPath = Join-Path $repoRoot 'scripts\battle-bridge-recovery-mesh.mjs'
-$launchStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\battle-bridge-recovery-mesh-launch-current.json'
+$workspaceRoot = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'
+$launchStatusPath = Join-Path $workspaceRoot 'status\battle-bridge-recovery-mesh-launch-current.json'
 $mutex = New-Object System.Threading.Mutex($false, 'Local\StephanosBattleBridgeRecoveryMeshV1')
 $mutexHeld = $mutex.WaitOne(0)
 if (-not $mutexHeld) { Write-RecoveryMeshLaunchStatus -Classification 'RECOVERY_MESH_MUTEX_BUSY' }
