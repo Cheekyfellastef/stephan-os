@@ -1,0 +1,308 @@
+import { createHash } from 'node:crypto';
+
+import { DEFAULT_PROVIDER_KEY } from '../ai/providerDefaults.mjs';
+import { queryStephanosAI } from '../ai/stephanosClient.mjs';
+import {
+  createStephanosWorkspaceAnswerRecord,
+  decodeStephanosWorkspaceQuestionRecord,
+} from './stephanosSharedWorkspaceConversationAdapterV1.mjs';
+import { STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION } from './stephanosConversationalCapabilityLadderV1.mjs';
+
+export const STEPHANOS_SHARED_PARTICIPANT_LIVE_QA_SCHEMA_VERSION = 'stephanos.shared-participant-live-qa.v1';
+export const STEPHANOS_SHARED_PARTICIPANT_ID = 'stephanos';
+
+const MAX_ANSWER_TEXT = 24_000;
+const MAX_RESPONSE_NODES = 2_048;
+const MAX_ARRAY_LENGTH = 128;
+const MAX_OBJECT_KEYS = 96;
+const MAX_DEPTH = 10;
+const RESERVED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+const SECRET_SHAPED_TEXT = /(?:BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|xox[baprs]-|gh[pousr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{20,}|(?:password|credential|api[_-]?key|private[_-]?key)\s*[:=])/i;
+const INVALID = Symbol('invalid-live-qa-data');
+
+function text(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function hash(value) {
+  return createHash('sha256').update(String(value ?? '')).digest('hex');
+}
+
+function authorityBoundary() {
+  return Object.freeze({
+    sourceMutationAllowed: false,
+    commandExecutionAllowed: false,
+    approvalAllowed: false,
+    mergeAllowed: false,
+    deploymentAllowed: false,
+    schedulerCreationAllowed: false,
+    workerCreationAllowed: false,
+    mailboxCreationAllowed: false,
+    providerSelectionAuthorityAdded: false,
+  });
+}
+
+function dataOnly(value, state = null, depth = 0) {
+  const traversal = state || { seen: new Set(), nodes: 0 };
+  if (value === null || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : INVALID;
+  if (typeof value === 'string') return value.length <= MAX_ANSWER_TEXT ? value : INVALID;
+  if (!value || typeof value !== 'object' || depth > MAX_DEPTH) return INVALID;
+  traversal.nodes += 1;
+  if (traversal.nodes > MAX_RESPONSE_NODES || traversal.seen.has(value)) return INVALID;
+
+  try {
+    const isArray = Array.isArray(value);
+    const prototype = Object.getPrototypeOf(value);
+    if (isArray ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return INVALID;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Reflect.ownKeys(descriptors);
+    if (keys.some((key) => typeof key !== 'string')) return INVALID;
+    traversal.seen.add(value);
+    try {
+      if (isArray) {
+        const length = descriptors.length?.value;
+        if (!Number.isSafeInteger(length) || length < 0 || length > MAX_ARRAY_LENGTH) return INVALID;
+        const expected = new Set(['length', ...Array.from({ length }, (_, index) => String(index))]);
+        if (keys.some((key) => !expected.has(key))) return INVALID;
+        const output = [];
+        for (let index = 0; index < length; index += 1) {
+          const descriptor = descriptors[String(index)];
+          if (!descriptor || descriptor.get || descriptor.set || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) return INVALID;
+          const child = dataOnly(descriptor.value, traversal, depth + 1);
+          if (child === INVALID) return INVALID;
+          output.push(child);
+        }
+        return Object.freeze(output);
+      }
+
+      if (keys.length > MAX_OBJECT_KEYS) return INVALID;
+      const output = Object.create(null);
+      for (const key of keys.sort()) {
+        if (RESERVED_KEYS.has(key)) return INVALID;
+        const descriptor = descriptors[key];
+        if (!descriptor || descriptor.get || descriptor.set || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) return INVALID;
+        const child = dataOnly(descriptor.value, traversal, depth + 1);
+        if (child === INVALID) return INVALID;
+        Object.defineProperty(output, key, {
+          value: child,
+          enumerable: true,
+          configurable: false,
+          writable: false,
+        });
+      }
+      return Object.freeze(output);
+    } finally {
+      traversal.seen.delete(value);
+    }
+  } catch {
+    return INVALID;
+  }
+}
+
+function cleanStringArray(value, limit = 32) {
+  if (!Array.isArray(value)) return Object.freeze([]);
+  const output = [];
+  for (const item of value.slice(0, limit)) {
+    const normalized = text(item);
+    if (normalized && !SECRET_SHAPED_TEXT.test(normalized)) output.push(normalized);
+  }
+  return Object.freeze([...new Set(output)]);
+}
+
+function evidenceToken(kind, value) {
+  return `${kind}:sha256:${hash(value).slice(0, 40)}`;
+}
+
+function deriveGroundingEvidence(response = {}) {
+  const data = response?.data && typeof response.data === 'object' ? response.data : {};
+  const execution = data.execution_metadata && typeof data.execution_metadata === 'object'
+    ? data.execution_metadata
+    : {};
+  const refs = [];
+  const sources = [];
+  let observedRuntimeProof = false;
+
+  const liveGoalProjection = data.liveGoalProjection && typeof data.liveGoalProjection === 'object'
+    ? data.liveGoalProjection
+    : null;
+  if (liveGoalProjection?.schemaVersion === 'stephanos.live-goal-projection.v1') {
+    refs.push(evidenceToken('live-goal-projection', JSON.stringify({
+      generatedAt: liveGoalProjection.generatedAt || '',
+      sourceTruth: liveGoalProjection.sourceTruth || '',
+      proofTruth: liveGoalProjection.proofTruth || {},
+    })));
+    sources.push('live-goal-projection');
+    observedRuntimeProof = true;
+  }
+
+  if (execution.retrieval_used === true) {
+    const retrieved = cleanStringArray(execution.retrieved_sources, 8);
+    for (const source of retrieved) refs.push(evidenceToken('local-retrieval', source));
+    if (retrieved.length > 0) sources.push('local-retrieval');
+  }
+
+  const memoryHits = Array.isArray(response?.memory_hits) ? response.memory_hits.slice(0, 8) : [];
+  if (memoryHits.length > 0) {
+    for (const hit of memoryHits) {
+      const safeHit = dataOnly(hit);
+      if (safeHit !== INVALID) refs.push(evidenceToken('memory-hit', JSON.stringify(safeHit)));
+    }
+    if (refs.some((ref) => ref.startsWith('memory-hit:'))) sources.push('durable-memory');
+  }
+
+  if (execution.grounding_active_for_request === true) {
+    const requestId = text(response?.debug?.request_id) || text(data?.request_trace?.requestId) || 'grounded-request';
+    refs.push(evidenceToken('provider-grounding', requestId));
+    sources.push('provider-grounding');
+  }
+
+  const freshnessIntegrity = execution.freshness_integrity_preserved === true;
+  const answerTruthMode = text(execution.answer_truth_mode || execution.effective_answer_mode).toLowerCase();
+  const freshness = freshnessIntegrity || observedRuntimeProof
+    ? 'FRESH'
+    : (answerTruthMode.includes('stale') ? 'STALE' : 'UNKNOWN');
+
+  return Object.freeze({
+    evidenceRefs: Object.freeze([...new Set(refs)]),
+    sourcesConsulted: Object.freeze([...new Set(sources)]),
+    freshness,
+    observedRuntimeProof,
+  });
+}
+
+function answerIdFor(question, outputText, response = {}) {
+  const requestId = text(response?.debug?.request_id) || 'no-request-id';
+  return `live-qa-${hash(JSON.stringify({
+    roundId: question.roundId,
+    questionId: question.questionId,
+    requestId,
+    outputDigest: hash(outputText),
+  })).slice(0, 24)}`;
+}
+
+function makeAnswer({ question, response, outputText, answeredAtUtc, failureReason = '' }) {
+  const grounding = deriveGroundingEvidence(response);
+  const failed = Boolean(failureReason);
+  const grounded = !failed
+    && grounding.evidenceRefs.length > 0
+    && grounding.sourcesConsulted.length > 0
+    && ['FRESH', 'RECENT'].includes(grounding.freshness);
+
+  return Object.freeze({
+    schemaVersion: STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION,
+    answerId: answerIdFor(question, outputText, response),
+    questionId: question.questionId,
+    roundId: question.roundId,
+    responderParticipantId: STEPHANOS_SHARED_PARTICIPANT_ID,
+    answerText: outputText,
+    epistemicState: failed
+      ? 'UNKNOWN'
+      : (grounding.observedRuntimeProof ? 'OBSERVED_FROM_RUNTIME_OR_PROOF' : 'INFERRED_FROM_EVIDENCE'),
+    evidenceRefs: failed ? Object.freeze([]) : grounding.evidenceRefs,
+    freshness: failed ? 'UNKNOWN' : grounding.freshness,
+    sourcesConsulted: failed ? Object.freeze([]) : grounding.sourcesConsulted,
+    cannotAnswerReason: failed ? failureReason : null,
+    answerVerdict: failed
+      ? 'GAP_TOOL_OR_DATA_ACCESS'
+      : (grounded ? 'ANSWERED_GROUNDED' : 'ANSWERED_PARTIAL'),
+    gapRefs: failed ? Object.freeze(['#1308']) : Object.freeze([]),
+    answeredAtUtc,
+  });
+}
+
+function blocked(classification, errors = []) {
+  return Object.freeze({
+    ok: false,
+    schemaVersion: STEPHANOS_SHARED_PARTICIPANT_LIVE_QA_SCHEMA_VERSION,
+    classification,
+    errors: Object.freeze([...errors]),
+    question: null,
+    answer: null,
+    answerRecord: null,
+    ...authorityBoundary(),
+  });
+}
+
+export async function answerStephanosWorkspaceQuestionRecord(questionRecord, options = {}) {
+  const now = options.now instanceof Date ? options.now : new Date();
+  const nowMs = now.getTime();
+  const answeredAtUtc = now.toISOString();
+  const decoded = decodeStephanosWorkspaceQuestionRecord(questionRecord, {
+    workspaceValidationOptions: { nowMs },
+    questionValidationOptions: options.questionValidationOptions,
+  });
+  if (!decoded.valid) return blocked('QUESTION_RECORD_REJECTED', decoded.errors);
+
+  const question = decoded.question;
+  if (text(question.targetParticipantId).toLowerCase() !== STEPHANOS_SHARED_PARTICIPANT_ID) {
+    return blocked('QUESTION_TARGET_NOT_STEPHANOS', ['targetParticipantId-must-be-stephanos']);
+  }
+
+  const queryFn = typeof options.queryFn === 'function' ? options.queryFn : queryStephanosAI;
+  let rawResponse;
+  try {
+    rawResponse = await queryFn({
+      provider: DEFAULT_PROVIDER_KEY,
+      messages: [{ role: 'user', content: question.questionText }],
+      context: {
+        surface: 'shared-participant-qa',
+        roundId: question.roundId,
+        questionId: question.questionId,
+        questionClass: question.questionClass,
+        expectedEvidenceClass: question.expectedEvidenceClass,
+        contextRefs: [...question.contextRefs],
+        noveltyRefs: [...question.noveltyRefs],
+      },
+      routeMode: 'auto',
+      fallbackEnabled: true,
+      runtimeContext: options.runtimeContext && typeof options.runtimeContext === 'object' ? options.runtimeContext : {},
+      fetchImpl: options.fetchImpl,
+    });
+  } catch (error) {
+    rawResponse = {
+      success: false,
+      output_text: 'Stephanos could not complete this question through the existing AI route.',
+      error: text(error?.message) || 'Stephanos AI route failed.',
+      data: {},
+      debug: {},
+    };
+  }
+
+  const response = dataOnly(rawResponse);
+  if (response === INVALID || !response || typeof response !== 'object' || Array.isArray(response)) {
+    return blocked('AI_RESPONSE_REJECTED_AS_NON_DATA', ['ai-response-must-be-bounded-data-only']);
+  }
+
+  let outputText = text(response.output_text);
+  const responseSucceeded = response.success === true && outputText.length > 0;
+  if (outputText.length > MAX_ANSWER_TEXT || SECRET_SHAPED_TEXT.test(outputText)) {
+    return blocked('AI_RESPONSE_UNSAFE_FOR_SHARED_WORKSPACE', ['ai-output-secret-shaped-or-oversized']);
+  }
+  if (!outputText) outputText = 'Stephanos could not complete this question through the existing AI route.';
+
+  const failureReason = responseSucceeded
+    ? ''
+    : text(response.error) || 'Existing Stephanos AI route did not produce a successful answer.';
+  const answer = makeAnswer({ question, response, outputText, answeredAtUtc, failureReason });
+  const built = createStephanosWorkspaceAnswerRecord(answer, {
+    recipientParticipantId: question.askerParticipantId,
+    relatedIssue: text(questionRecord.relatedIssue) || '#1308',
+    relatedPr: text(questionRecord.relatedPr),
+    proofRefs: Array.isArray(questionRecord.proofRefs) ? [...questionRecord.proofRefs] : [],
+    workspaceValidationOptions: { nowMs },
+  });
+  if (!built.valid) return blocked('ANSWER_RECORD_BUILD_FAILED', built.errors);
+
+  return Object.freeze({
+    ok: true,
+    schemaVersion: STEPHANOS_SHARED_PARTICIPANT_LIVE_QA_SCHEMA_VERSION,
+    classification: responseSucceeded
+      ? (answer.answerVerdict === 'ANSWERED_GROUNDED' ? 'STEPHANOS_GROUNDED_ANSWER_READY' : 'STEPHANOS_PARTIAL_ANSWER_READY')
+      : 'STEPHANOS_GAP_ANSWER_READY',
+    question,
+    answer,
+    answerRecord: built.record,
+    ...authorityBoundary(),
+  });
+}
