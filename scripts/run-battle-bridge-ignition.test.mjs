@@ -6,11 +6,29 @@ import path from 'node:path';
 import process from 'node:process';
 import {
   createSupervisorHousekeepRunStep,
+  ensureBackend8787ConvergedBeforeSupervisor,
   ensureLiveUiConvergedBeforeSupervisor,
+  probeCanonicalBackendHealth,
   runSupervisorHousekeepPreservingLiveDist,
   runSupervisorHousekeepPreservingLiveRuntime,
   writePreSupervisorFailureStatus,
 } from './run-battle-bridge-ignition.mjs';
+
+function backendHealthResponse(sourceHead, {
+  status = 200,
+  schemaVersion = 'stephanos.backend-health.v1',
+  runtimeId = 'stephanos-battle-bridge-backend',
+} = {}) {
+  return {
+    status,
+    async json() {
+      return {
+        schemaVersion,
+        backendIdentity: { runtimeId, sourceHead },
+      };
+    },
+  };
+}
 
 test('supervisor housekeeping preserves exact-head dist and runtime-owned durable memory', () => {
   const delegated = [];
@@ -72,33 +90,121 @@ test('backend startup source tolerates only unstaged canonical durable-memory an
   assert.match(starter, /'node stephanos-server\/server\.js'/);
   assert.match(starter, /'node\.exe stephanos-server\/server\.js'/);
   assert.doesNotMatch(starter, /CommandLine -match|Invoke-Expression|Start-Process[^\n]*-ArgumentList[^\n]*\$CommandLine/i);
+  assert.doesNotMatch(starter, /Stop-Process|taskkill|wmic\s+process/i);
 });
 
-test('backend starter replaces only a verified stale canonical 8787 listener after the source safety gate', async () => {
-  const starter = await readFile(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
-  const sourceGate = starter.indexOf('if ($trackedAssessment.SourceDirt.Count -ne 0)');
-  const listenerGate = starter.indexOf('$listenerConnections = @(Get-NetTCPConnection -LocalPort 8787');
-  const staleHeadGate = starter.indexOf('if ($healthObservation.SourceHead -eq $headSha)');
-  const verifiedKill = starter.indexOf('Stop-Process -Id $staleListener.ProcessId -Force -ErrorAction Stop');
-  const replacementStart = starter.indexOf('Start-Process -FilePath $canonicalNpm');
+test('canonical backend health probe accepts only the fixed runtime identity with a valid source head', async () => {
+  const head = 'a'.repeat(40);
+  const clean = await probeCanonicalBackendHealth({ fetchFn: async () => backendHealthResponse(head) });
+  assert.equal(clean.canonical, true);
+  assert.equal(clean.sourceHead, head);
 
-  assert.ok(sourceGate >= 0);
-  assert.ok(listenerGate > sourceGate);
-  assert.ok(staleHeadGate > listenerGate);
-  assert.ok(verifiedKill > staleHeadGate);
-  assert.ok(replacementStart > verifiedKill);
+  const foreign = await probeCanonicalBackendHealth({
+    fetchFn: async () => backendHealthResponse(head, { runtimeId: 'other-backend' }),
+  });
+  assert.equal(foreign.canonical, false);
+  assert.equal(foreign.sourceHead, '');
 
-  assert.match(starter, /function Get-CanonicalBackendHealthObservation/);
-  assert.match(starter, /backendIdentity\.runtimeId -ne 'stephanos-battle-bridge-backend'/);
-  assert.match(starter, /sourceHead -notmatch '\^\[0-9a-f\]\{40\}\$'/);
-  assert.match(starter, /refusing duplicate backend start or process termination/);
-  assert.match(starter, /staleCanonicalListenerReplaced = \$StaleCanonicalListenerReplaced/);
-  assert.match(starter, /verifiedOwnedProcessTerminationOnly = \$true/);
-  assert.match(starter, /arbitraryProcessKillAllowed = \$false/);
+  const malformed = await probeCanonicalBackendHealth({ fetchFn: async () => backendHealthResponse('not-a-sha') });
+  assert.equal(malformed.canonical, false);
+});
 
-  const stopProcessCalls = [...starter.matchAll(/Stop-Process[^\r\n]*/g)].map((match) => match[0].trim());
-  assert.deepEqual(stopProcessCalls, ['Stop-Process -Id $staleListener.ProcessId -Force -ErrorAction Stop']);
-  assert.doesNotMatch(starter, /Stop-Process\s+-Name|taskkill|wmic\s+process|Invoke-Expression/i);
+test('backend preflight success never invokes approved restart or health fallback', async () => {
+  const calls = [];
+  let fetchCalls = 0;
+  const result = await ensureBackend8787ConvergedBeforeSupervisor({
+    platform: 'win32',
+    runStepFn: (label, command, args) => {
+      calls.push({ label, command, args });
+      return true;
+    },
+    currentHeadFn: () => 'b'.repeat(40),
+    fetchFn: async () => {
+      fetchCalls += 1;
+      return backendHealthResponse('a'.repeat(40));
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.action, 'backend-preflight-pass');
+  assert.equal(result.restartAttempted, false);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].label, 'backend-8787-preflight');
+  assert.equal(fetchCalls, 0);
+});
+
+test('failed preflight delegates a proven stale canonical backend only to the approved exact-head restart primitive', async () => {
+  const oldHead = 'a'.repeat(40);
+  const currentHead = 'b'.repeat(40);
+  const calls = [];
+  const health = [backendHealthResponse(oldHead), backendHealthResponse(currentHead)];
+  const result = await ensureBackend8787ConvergedBeforeSupervisor({
+    platform: 'win32',
+    currentHeadFn: () => currentHead,
+    fetchFn: async () => health.shift(),
+    runStepFn: (label, command, args) => {
+      calls.push({ label, command, args });
+      return label === 'backend-8787-approved-stale-restart';
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.action, 'backend-approved-stale-restart-pass');
+  assert.equal(result.replacedSourceHead, oldHead);
+  assert.equal(result.currentHead, currentHead);
+  assert.equal(result.restartAttempted, true);
+  assert.deepEqual(calls.map((entry) => entry.label), [
+    'backend-8787-preflight',
+    'backend-8787-approved-stale-restart',
+  ]);
+  assert.equal(calls[1].command, 'powershell.exe');
+  assert.ok(calls[1].args.some((arg) => String(arg).replace(/\\/g, '/').endsWith('/scripts/windows/restart-approved-stephanos-runtime.ps1')));
+  assert.deepEqual(calls[1].args.slice(-6), ['-Target', 'backend', '-ExpectedHead', currentHead, '-TimeoutSeconds', '90']);
+});
+
+test('same-head or noncanonical 8787 failures remain fail closed without restart authority', async () => {
+  const currentHead = 'b'.repeat(40);
+  for (const fixture of [
+    {
+      response: backendHealthResponse(currentHead),
+      blocker: 'BACKEND_8787_SAME_HEAD_PREFLIGHT_FAILED',
+    },
+    {
+      response: backendHealthResponse('a'.repeat(40), { runtimeId: 'foreign-runtime' }),
+      blocker: 'BACKEND_8787_STALE_LISTENER_NOT_QUALIFIED',
+    },
+  ]) {
+    const calls = [];
+    const result = await ensureBackend8787ConvergedBeforeSupervisor({
+      platform: 'win32',
+      currentHeadFn: () => currentHead,
+      fetchFn: async () => fixture.response,
+      runStepFn: (label, command, args) => {
+        calls.push({ label, command, args });
+        return false;
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, fixture.blocker);
+    assert.equal(result.restartAttempted, false);
+    assert.deepEqual(calls.map((entry) => entry.label), ['backend-8787-preflight']);
+  }
+});
+
+test('approved restart must produce exact-current backend health before Ignition proceeds', async () => {
+  const oldHead = 'a'.repeat(40);
+  const currentHead = 'b'.repeat(40);
+  const health = [backendHealthResponse(oldHead), backendHealthResponse(oldHead)];
+  const result = await ensureBackend8787ConvergedBeforeSupervisor({
+    platform: 'win32',
+    currentHeadFn: () => currentHead,
+    fetchFn: async () => health.shift(),
+    runStepFn: (label) => label === 'backend-8787-approved-stale-restart',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'BACKEND_8787_APPROVED_RESTART_EXACT_HEAD_PROOF_FAILED');
+  assert.equal(result.restartAttempted, true);
 });
 
 test('Recovery Mesh shares the exact runtime-memory and backend listener identity rules', async () => {
@@ -141,6 +247,9 @@ test('canonical ignition pins repository-sensitive housekeeping to the source-de
   const entry = await readFile(new URL('./run-battle-bridge-ignition.mjs', import.meta.url), 'utf8');
   assert.match(entry, /const repoRoot = path\.resolve\(path\.dirname\(fileURLToPath\(import\.meta\.url\)\), '\.\.'\)/);
   assert.match(entry, /export async function main[\s\S]*process\.chdir\(repoRoot\)/);
+  assert.match(entry, /restart-approved-stephanos-runtime\.ps1/);
+  assert.match(entry, /'-Target',[\s\S]*'backend',[\s\S]*'-ExpectedHead',[\s\S]*currentHead/);
+  assert.doesNotMatch(entry, /Stop-Process|taskkill|wmic\s+process|Invoke-Expression/i);
   assert.doesNotMatch(entry, /process\.chdir\([^)]*process\.argv|process\.chdir\([^)]*env/i);
 });
 
