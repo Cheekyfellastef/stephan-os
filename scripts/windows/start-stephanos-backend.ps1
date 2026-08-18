@@ -11,27 +11,17 @@ $canonicalNode = 'C:\Program Files\nodejs\node.exe'
 $runtimeMemoryPath = 'stephanos-server/data/memory/durable-memory.json'
 $runtimeDistPrefix = 'apps/stephanos/dist/'
 
-function Get-CanonicalBackendHealthObservation {
-    param([string]$Url)
+function Test-BackendHealth {
+    param([string]$Url, [string]$ExpectedSourceHead)
     try {
         $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5 -MaximumRedirection 0
         $body = $response.Content | ConvertFrom-Json
-        $sourceHead = ([string]$body.backendIdentity.sourceHead).ToLowerInvariant()
-        if ($response.StatusCode -ne 200 `
-            -or [string]$body.schemaVersion -ne 'stephanos.backend-health.v1' `
-            -or [string]$body.backendIdentity.runtimeId -ne 'stephanos-battle-bridge-backend' `
-            -or $sourceHead -notmatch '^[0-9a-f]{40}$') {
-            return $null
-        }
-        return [PSCustomObject]@{ SourceHead = $sourceHead }
+        return $response.StatusCode -eq 200 `
+            -and [string]$body.schemaVersion -eq 'stephanos.backend-health.v1' `
+            -and [string]$body.backendIdentity.runtimeId -eq 'stephanos-battle-bridge-backend' `
+            -and ([string]$body.backendIdentity.sourceHead).ToLowerInvariant() -eq $ExpectedSourceHead
     }
-    catch { return $null }
-}
-
-function Test-BackendHealth {
-    param([string]$Url, [string]$ExpectedSourceHead)
-    $observation = Get-CanonicalBackendHealthObservation -Url $Url
-    return $null -ne $observation -and $observation.SourceHead -eq $ExpectedSourceHead
+    catch { return $false }
 }
 
 function Test-CanonicalBackendCommandLine {
@@ -111,8 +101,7 @@ function Write-BackendRuntimeReceipt {
         [string]$ProcessStartTimeUtc,
         [string]$HealthUrl,
         [bool]$RuntimeMemoryDirty,
-        [bool]$RuntimeDistDirty,
-        [bool]$StaleCanonicalListenerReplaced
+        [bool]$RuntimeDistDirty
     )
     $statusDir = Join-Path $WorkspaceRoot 'status'
     [System.IO.Directory]::CreateDirectory($statusDir) | Out-Null
@@ -132,9 +121,6 @@ function Write-BackendRuntimeReceipt {
         sourceWorktreeClean = $true
         runtimeMemoryDirtTolerated = $RuntimeMemoryDirty
         runtimeDistDirtTolerated = $RuntimeDistDirty
-        staleCanonicalListenerReplaced = $StaleCanonicalListenerReplaced
-        verifiedOwnedProcessTerminationOnly = $true
-        arbitraryProcessKillAllowed = $false
         arbitraryShellAllowed = $false
         sourceMutationAllowed = $false
         pathValuesPublished = $false
@@ -150,8 +136,7 @@ function Publish-VerifiedBackendRuntimeReceipt {
         [string]$HeadSha,
         [string]$HealthUrl,
         [bool]$RuntimeMemoryDirty,
-        [bool]$RuntimeDistDirty,
-        [bool]$StaleCanonicalListenerReplaced
+        [bool]$RuntimeDistDirty
     )
     if (-not $Listener) { throw 'Backend listener identity is required before publishing its runtime receipt.' }
     Write-BackendRuntimeReceipt `
@@ -162,8 +147,7 @@ function Publish-VerifiedBackendRuntimeReceipt {
         -ProcessStartTimeUtc $Listener.ProcessStartTimeUtc `
         -HealthUrl $HealthUrl `
         -RuntimeMemoryDirty $RuntimeMemoryDirty `
-        -RuntimeDistDirty $RuntimeDistDirty `
-        -StaleCanonicalListenerReplaced $StaleCanonicalListenerReplaced
+        -RuntimeDistDirty $RuntimeDistDirty
     $confirmedListener = Get-VerifiedBackendListener
     if (-not $confirmedListener `
         -or $confirmedListener.ProcessId -ne $Listener.ProcessId `
@@ -203,7 +187,6 @@ if ($trackedAssessment.SourceDirt.Count -ne 0) {
 }
 $runtimeMemoryDirty = [bool]$trackedAssessment.RuntimeMemoryDirty
 $runtimeDistDirty = [bool]$trackedAssessment.RuntimeDistDirty
-$staleCanonicalListenerReplaced = $false
 
 $healthUrl = 'http://127.0.0.1:8787/api/health'
 $userHome = if ($env:USERPROFILE) { $env:USERPROFILE } elseif ($env:HOME) { $env:HOME } else { throw 'USERPROFILE or HOME is required.' }
@@ -260,40 +243,9 @@ $existingListener = if (Test-BackendHealth -Url $healthUrl -ExpectedSourceHead $
     Get-VerifiedBackendListener
 } else { $null }
 if ($existingListener) {
-    Publish-VerifiedBackendRuntimeReceipt -Listener $existingListener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl -RuntimeMemoryDirty $runtimeMemoryDirty -RuntimeDistDirty $runtimeDistDirty -StaleCanonicalListenerReplaced $false
+    Publish-VerifiedBackendRuntimeReceipt -Listener $existingListener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl -RuntimeMemoryDirty $runtimeMemoryDirty -RuntimeDistDirty $runtimeDistDirty
     Write-Log 'Backend already healthy; exact listener receipt refreshed without starting a new process.'
     exit 0
-}
-
-$listenerConnections = @(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue)
-if ($listenerConnections.Count -gt 0) {
-    $staleListener = Get-VerifiedBackendListener
-    $healthObservation = Get-CanonicalBackendHealthObservation -Url $healthUrl
-    if (-not $staleListener) {
-        Write-Log 'ERROR: Port 8787 is occupied by an unverified or ambiguous listener; refusing duplicate backend start or process termination.'
-        exit 1
-    }
-    if (-not $healthObservation) {
-        Write-Log 'ERROR: A verified canonical backend listener exists but canonical health identity is unavailable; refusing duplicate backend start or process termination.'
-        exit 1
-    }
-    if ($healthObservation.SourceHead -eq $headSha) {
-        Write-Log 'ERROR: An exact-head verified canonical backend listener exists but exact health/receipt preflight did not pass; refusing duplicate backend start or process termination.'
-        exit 1
-    }
-
-    Write-Log ("Replacing stale verified canonical backend listener PID {0}: source head {1} -> exact head {2}." -f $staleListener.ProcessId, $healthObservation.SourceHead, $headSha)
-    Stop-Process -Id $staleListener.ProcessId -Force -ErrorAction Stop
-    $staleCanonicalListenerReplaced = $true
-    $listenerStopDeadline = (Get-Date).AddSeconds(30)
-    do {
-        if (@(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue).Count -eq 0) { break }
-        Start-Sleep -Milliseconds 500
-    } while ((Get-Date) -lt $listenerStopDeadline)
-    if (@(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue).Count -ne 0) {
-        Write-Log 'ERROR: Verified stale canonical backend listener did not release port 8787 within 30 seconds.'
-        exit 1
-    }
 }
 
 $arguments = @('run', 'stephanos:backend')
@@ -325,7 +277,7 @@ while ((Get-Date) -lt $deadline) {
 }
 
 if ($listener) {
-    Publish-VerifiedBackendRuntimeReceipt -Listener $listener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl -RuntimeMemoryDirty $runtimeMemoryDirty -RuntimeDistDirty $runtimeDistDirty -StaleCanonicalListenerReplaced $staleCanonicalListenerReplaced
+    Publish-VerifiedBackendRuntimeReceipt -Listener $listener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl -RuntimeMemoryDirty $runtimeMemoryDirty -RuntimeDistDirty $runtimeDistDirty
     Write-Log "Backend health, stable listener identity and exact-head runtime receipt succeeded within $StartupTimeoutSeconds seconds."
     exit 0
 }
