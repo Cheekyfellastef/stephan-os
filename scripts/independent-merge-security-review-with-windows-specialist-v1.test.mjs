@@ -106,3 +106,20 @@ test('base reviewer skips submitted reviews only for deterministic approval-boun
   assert.match(text, /const bootstrapRequired = deterministicBootstrapRequired \|\| isApprovalBoundaryBootstrapAnalysis\(analysis\);/);
   assert.doesNotMatch(text, /reviews: await githubPages\([\s\S]*?allowNotFound/);
 });
+
+test('bootstrap deferral preserves exact identity revalidation and immutable artifact boundaries', async () => {
+  const text = await baseReviewerSource();
+  assert.match(text, /const initialPullRequest = await githubRequest\(`\/repos\/\$\{owner\}\/\$\{repo\}\/pulls\/\$\{prNumber\}`\);/);
+  assert.match(text, /const initialMainRef = await githubRequest\(`\/repos\/\$\{owner\}\/\$\{repo\}\/git\/ref\/heads\/main`\);/);
+  assert.match(text, /requireExactBase\(initialPullRequest, initialMainRef, baseSha, 'pre-review'\);/);
+  assert.match(text, /const finalPullRequest = await githubRequest\(`\/repos\/\$\{owner\}\/\$\{repo\}\/pulls\/\$\{prNumber\}`\);/);
+  assert.match(text, /const finalMainRef = await githubRequest\(`\/repos\/\$\{owner\}\/\$\{repo\}\/git\/ref\/heads\/main`\);/);
+  assert.match(text, /requireExactBase\(finalPullRequest, finalMainRef, baseSha, 'pre-artifact'\);/);
+  assert.match(text, /buildIndependentReviewFindingsArtifact\(/);
+  assert.match(text, /buildIndependentReviewArtifact\(/);
+  assert.match(text, /flag: 'wx'/);
+  assert.match(text, /mode: 0o600/);
+  assert.match(text, /method: 'POST',[\s\S]*body: \{ body \}/);
+  assert.doesNotMatch(text, /method\s*:\s*['"](?:PUT|PATCH|DELETE)['"]/i);
+  assert.doesNotMatch(text, /git\s+(?:push|reset|clean|rebase)|gh\s+pr\s+merge|pull-requests:\s*write|contents:\s*write/i);
+});
