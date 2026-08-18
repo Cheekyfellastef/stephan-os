@@ -9,6 +9,32 @@ import {
 
 const HEAD = 'a'.repeat(40);
 
+function lifeboatReceipt() {
+  return {
+    schemaVersion: 'stephanos.battle-bridge-recovery-lifeboat-install.v1',
+    taskName: 'Stephanos Battle Bridge Recovery Lifeboat',
+    startedNow: true,
+    candidateHeartbeatRequiredBeforePromotion: true,
+    payloadHashVerificationRequired: true,
+    githubClaimConsumerIncluded: true,
+    windowlessLauncher: true,
+    scheduledTaskExecutable: 'C:\\Windows\\System32\\wscript.exe',
+    directPowerShellTaskLaunch: false,
+    repoCheckoutRequiredAfterInstall: false,
+    openClawGatewayRequiredAfterInstall: false,
+    intervalMinutes: 2,
+    atLogon: true,
+    runLevel: 'Limited',
+    arbitraryPathAllowed: false,
+    arbitraryTaskNameAllowed: false,
+    arbitraryExecutableAllowed: false,
+    arbitraryShellAllowed: false,
+    gitMutationAllowed: false,
+    sourceMutationAllowed: false,
+    pcRestartAllowed: false,
+  };
+}
+
 function recoveryReceipt() {
   return {
     schemaVersion: 'stephanos.battle-bridge-recovery-mesh-install.v1',
@@ -48,13 +74,22 @@ function mailboxReceipt() {
   };
 }
 
-function scriptedSpawn({ head = HEAD, status = '', recovery = recoveryReceipt(), mailbox = mailboxReceipt() } = {}) {
+function scriptedSpawn({
+  head = HEAD,
+  status = '',
+  lifeboat = lifeboatReceipt(),
+  recovery = recoveryReceipt(),
+  mailbox = mailboxReceipt(),
+} = {}) {
   const calls = [];
   const spawn = (command, args, options) => {
     calls.push({ command, args: [...args], options: { ...options } });
     if (args.includes('branch') && args.includes('--show-current')) return { status: 0, stdout: 'main\n', stderr: '' };
     if (args.includes('rev-parse') && args.includes('HEAD')) return { status: 0, stdout: `${head}\n`, stderr: '' };
     if (args.includes('status') && args.includes('--porcelain=v1')) return { status: 0, stdout: status, stderr: '' };
+    if (args.some((arg) => String(arg).endsWith('install-battle-bridge-recovery-lifeboat-v1.ps1'))) {
+      return { status: 0, stdout: `${JSON.stringify(lifeboat, null, 2)}\n`, stderr: '' };
+    }
     if (args.some((arg) => String(arg).endsWith('install-battle-bridge-recovery-mesh.ps1'))) {
       return { status: 0, stdout: `${JSON.stringify(recovery, null, 2)}\n`, stderr: '' };
     }
@@ -67,8 +102,13 @@ function scriptedSpawn({ head = HEAD, status = '', recovery = recoveryReceipt(),
   return spawn;
 }
 
-test('control-plane repair is fixed to exactly the existing recovery mesh and mailbox installers', () => {
+test('control-plane repair is fixed to Lifeboat first, then Recovery Mesh and mailbox', () => {
   assert.deepEqual(BATTLE_BRIDGE_CONTROL_PLANE_TASKS.map(({ id, taskName, installerRelativePath }) => ({ id, taskName, installerRelativePath })), [
+    {
+      id: 'recoveryLifeboat',
+      taskName: 'Stephanos Battle Bridge Recovery Lifeboat',
+      installerRelativePath: 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
+    },
     {
       id: 'recoveryMesh',
       taskName: 'Stephanos Battle Bridge Recovery Mesh',
@@ -96,7 +136,7 @@ test('control-plane repair proves exact main and safe source dirt before startin
   assert.equal(result.sourceDirtSafe, true);
   assert.equal(result.runtimeOnlyDirtCount, 2);
   assert.equal(result.dirtSummary.blocksSync, false);
-  assert.equal(result.taskCount, 2);
+  assert.equal(result.taskCount, 3);
   assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_CONTROL_PLANE_RECONCILED');
   assert.equal(result.arbitraryTaskNameAllowed, false);
   assert.equal(result.arbitraryExecutableAllowed, false);
@@ -107,11 +147,24 @@ test('control-plane repair proves exact main and safe source dirt before startin
   assert.equal(result.publicExposureChanged, false);
 
   const powerShellCalls = spawnSyncFn.calls.filter((call) => call.command.includes('WindowsPowerShell'));
-  assert.equal(powerShellCalls.length, 2);
-  assert.deepEqual(powerShellCalls.map((call) => call.args.slice(-1)), [['-StartNow'], ['-StartNow']]);
+  assert.equal(powerShellCalls.length, 3);
+  assert.deepEqual(powerShellCalls.map((call) => call.args.slice(-1)), [['-StartNow'], ['-StartNow'], ['-StartNow']]);
   assert.equal(powerShellCalls.every((call) => call.options.shell === false), true);
-  assert.equal(powerShellCalls[0].args.some((arg) => String(arg).endsWith('install-battle-bridge-recovery-mesh.ps1')), true);
-  assert.equal(powerShellCalls[1].args.some((arg) => String(arg).endsWith('install-battle-bridge-github-command-mailbox.ps1')), true);
+  assert.equal(powerShellCalls[0].args.some((arg) => String(arg).endsWith('install-battle-bridge-recovery-lifeboat-v1.ps1')), true);
+  assert.equal(powerShellCalls[1].args.some((arg) => String(arg).endsWith('install-battle-bridge-recovery-mesh.ps1')), true);
+  assert.equal(powerShellCalls[2].args.some((arg) => String(arg).endsWith('install-battle-bridge-github-command-mailbox.ps1')), true);
+});
+
+test('Lifeboat is attempted before an in-band Recovery Mesh failure can stop reconciliation', () => {
+  const spawnSyncFn = scriptedSpawn({ recovery: { ...recoveryReceipt(), startedNow: false } });
+  const result = reconcileBattleBridgeControlPlane({ repoRoot: '/repo', expectedHead: HEAD, platform: 'win32', spawnSyncFn });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID');
+  assert.equal(result.failedTaskId, 'recoveryMesh');
+  const powerShellCalls = spawnSyncFn.calls.filter((call) => call.command.includes('WindowsPowerShell'));
+  assert.equal(powerShellCalls.length, 2);
+  assert.equal(powerShellCalls[0].args.some((arg) => String(arg).endsWith('install-battle-bridge-recovery-lifeboat-v1.ps1')), true);
+  assert.equal(powerShellCalls[1].args.some((arg) => String(arg).endsWith('install-battle-bridge-recovery-mesh.ps1')), true);
 });
 
 test('control-plane repair blocks stale or real source dirt before any task mutation', () => {
@@ -128,7 +181,16 @@ test('control-plane repair blocks stale or real source dirt before any task muta
   }
 });
 
-test('control-plane repair fails closed on an invalid installer receipt', () => {
+test('control-plane repair fails closed on an invalid Lifeboat installer receipt', () => {
+  const spawnSyncFn = scriptedSpawn({ lifeboat: { ...lifeboatReceipt(), windowlessLauncher: false } });
+  const result = reconcileBattleBridgeControlPlane({ repoRoot: '/repo', expectedHead: HEAD, platform: 'win32', spawnSyncFn });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID');
+  assert.equal(result.failedTaskId, 'recoveryLifeboat');
+  assert.equal(spawnSyncFn.calls.filter((call) => call.command.includes('WindowsPowerShell')).length, 1);
+});
+
+test('control-plane repair fails closed on an invalid in-band installer receipt', () => {
   const spawnSyncFn = scriptedSpawn({ recovery: { ...recoveryReceipt(), startedNow: false } });
   const result = reconcileBattleBridgeControlPlane({ repoRoot: '/repo', expectedHead: HEAD, platform: 'win32', spawnSyncFn });
   assert.equal(result.ok, false);
@@ -140,6 +202,7 @@ test('control-plane repair source exposes no caller-selected task, executable, i
   const source = await readFile(new URL('../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs', import.meta.url), 'utf8');
   assert.match(source, /shell: false/);
   assert.match(source, /classifyDirt/);
+  assert.match(source, /install-battle-bridge-recovery-lifeboat-v1\.ps1/);
   assert.match(source, /install-battle-bridge-recovery-mesh\.ps1/);
   assert.match(source, /install-battle-bridge-github-command-mailbox\.ps1/);
   assert.doesNotMatch(source, /taskName\s*=\s*options|installerRelativePath\s*=\s*options|executable\s*=\s*options|shell\s*=\s*true/);
