@@ -33,7 +33,7 @@ function questionRecord(overrides = {}) {
   };
   const built = createStephanosWorkspaceQuestionRecord(question, {
     relatedIssue: '#1308',
-    proofRefs: ['proof:initial-round-packet'],
+    proofRefs: ['proof/question-message'],
     workspaceValidationOptions: { nowMs: NOW.getTime() },
   });
   assert.equal(built.valid, true, built.errors?.join(','));
