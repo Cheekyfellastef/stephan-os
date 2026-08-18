@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 const LEGACY_PATH = './windowsAuthoritySpecialistReviewLegacyV1.mjs';
 const LIFEBOAT_ACTIVATION_PATH = './windowsAuthorityBattleBridgeLifeboatActivationReviewV1.mjs';
 const LEGACY_BLOB_SHA = 'fc0ba9cc4cf950bc2256040a6d959038fc7199f7';
-const LIFEBOAT_ACTIVATION_BLOB_SHA = '208dcb91dd188730385b6e3ed6364318bd4f3cd4';
+const LIFEBOAT_ACTIVATION_BLOB_SHA = '0e8bf2536e20e9100c674a8b0205d3d109555f25';
 
 function gitBlobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
