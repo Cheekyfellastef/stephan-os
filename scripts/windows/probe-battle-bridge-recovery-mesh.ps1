@@ -35,7 +35,7 @@ function Test-TaskAction {
         $execute = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables([string]$action.Execute))
         if ($LauncherId -eq 'openclaw-gateway') {
             $expectedGateway = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE '.openclaw\gateway.cmd'))
-            if ([string]::Equals($execute, $expectedGateway, [System.StringComparison]::OrdinalIgnoreCase)
+            if ([string]::Equals($execute, $expectedGateway, [System.StringComparison]::OrdinalIgnoreCase) `
                 -and [string]::IsNullOrWhiteSpace([string]$action.Arguments)) { return $true }
         }
         if (-not [string]::Equals($execute, $wscriptPath, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
