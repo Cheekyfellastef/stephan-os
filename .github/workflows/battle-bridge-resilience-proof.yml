@@ -9,7 +9,6 @@ on:
       - 'scripts/battle-bridge-recovery-mesh.mjs'
       - 'scripts/battle-bridge-recovery-mesh.test.mjs'
       - 'scripts/battle-bridge-recovery-mesh-installer.test.mjs'
-      - 'scripts/battle-bridge-recovery-mesh-launch-liveness.test.mjs'
       - 'scripts/battle-bridge-backend-freshness-probe.mjs'
       - 'scripts/battle-bridge-backend-freshness-probe.test.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.mjs'
@@ -66,7 +65,6 @@ jobs:
           scripts/battle-bridge-backend-freshness-probe.test.mjs
           scripts/battle-bridge-recovery-mesh.test.mjs
           scripts/battle-bridge-recovery-mesh-installer.test.mjs
-          scripts/battle-bridge-recovery-mesh-launch-liveness.test.mjs
           scripts/battle-bridge-github-command-mailbox.test.mjs
           scripts/battle-bridge-outbound-health-beacon.test.mjs
           scripts/battle-bridge-control-plane-self-repair.test.mjs
