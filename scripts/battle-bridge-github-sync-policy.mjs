@@ -59,6 +59,13 @@ export const DEFAULT_RUNTIME_ONLY_ALLOWLIST = Object.freeze([
   'memory/dreaming/rem/',
 ]);
 
+export const DEFAULT_RUNTIME_ONLY_EXACT_STATUS = Object.freeze([
+  Object.freeze({
+    path: 'stephanos-server/data/memory/durable-memory.json',
+    status: ' M',
+  }),
+]);
+
 export const POST_SYNC_REFRESH_REGISTRY = Object.freeze({
   'refresh-shared-workspace': Object.freeze({ id: 'refresh-shared-workspace', requiresSourceChange: false, rawCommand: null }),
   'refresh-ui-runtime': Object.freeze({ id: 'refresh-ui-runtime', requiresSourceChange: true, rawCommand: null }),
@@ -83,6 +90,7 @@ export function rejectArbitraryShellPlan(plan) {
 
 export function classifyDirt(statusLines = [], options = {}) {
   const runtimeOnlyAllowlist = options.runtimeOnlyAllowlist ?? DEFAULT_RUNTIME_ONLY_ALLOWLIST;
+  const runtimeOnlyExactStatus = options.runtimeOnlyExactStatus ?? DEFAULT_RUNTIME_ONLY_EXACT_STATUS;
   const generatedSourceAllowlist = options.generatedSourceAllowlist ?? [];
   const result = {
     trackedSource: [],
@@ -96,7 +104,8 @@ export function classifyDirt(statusLines = [], options = {}) {
     if (!raw || !raw.trim()) continue;
     const status = raw.slice(0, 2);
     const path = raw.slice(3).trim();
-    const isRuntime = runtimeOnlyAllowlist.some((prefix) => path.startsWith(prefix));
+    const isExactRuntime = runtimeOnlyExactStatus.some((entry) => entry?.path === path && entry?.status === status);
+    const isRuntime = isExactRuntime || runtimeOnlyAllowlist.some((prefix) => path.startsWith(prefix));
     const isGenerated = generatedSourceAllowlist.some((prefix) => path.startsWith(prefix));
     if (!path) result.unknown.push(raw);
     else if (isRuntime) result.runtimeOnly.push(path);
