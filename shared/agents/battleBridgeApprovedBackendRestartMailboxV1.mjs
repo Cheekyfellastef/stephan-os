@@ -65,9 +65,15 @@ export function normalizeApprovedBackendRestartCommand(command = {}, validatedEn
     ok: true,
     verdict: 'COMMAND_ACCEPTED',
     command: Object.freeze({
-      ...validatedEnvelope.command,
+      schemaVersion: validatedEnvelope.command.schemaVersion,
+      requestId: validatedEnvelope.command.requestId,
       operation: BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
+      repository: validatedEnvelope.command.repository,
+      issueNumber: validatedEnvelope.command.issueNumber,
+      branch: validatedEnvelope.command.branch,
+      operatorApproval: validatedEnvelope.command.operatorApproval,
       expectedHead: shape.expectedHead,
+      expiresAt: validatedEnvelope.command.expiresAt,
     }),
   });
 }
