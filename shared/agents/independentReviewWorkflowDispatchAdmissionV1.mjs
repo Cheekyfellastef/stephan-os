@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 
 export const INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_ADMISSION_SCHEMA = 'stephanos.independent-review-workflow-dispatch-admission.v1';
+export const INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_RUN_SCHEMA = 'stephanos.independent-review-workflow-dispatch-run.v1';
 export const INDEPENDENT_REVIEW_HANDOFF_IDENTITY_SCHEMA = 'stephanos.independent-review-handoff-identity.v1';
 export const CANONICAL_REPOSITORY = 'Cheekyfellastef/stephan-os';
 export const CANONICAL_REVIEW_WORKFLOW_NAME = 'Independent Merge Security Review';
 export const CANONICAL_REVIEW_WORKFLOW_PATH = '.github/workflows/independent-merge-security-review.yml';
+export const CANONICAL_REVIEW_JOB = 'independent-security-review';
 export const CANONICAL_BASE_BRANCH = 'main';
 
 const FULL_SHA = /^[0-9a-f]{40}$/i;
@@ -16,6 +18,14 @@ const INPUT_KEYS = Object.freeze([
   'currentMainSha',
   'pullRequest',
   'handoffIdentity',
+]);
+const RUN_INPUT_KEYS = Object.freeze([
+  'environment',
+  'workflowDefinition',
+  'currentMainSha',
+  'pullRequest',
+  'handoffIdentity',
+  'workflowDispatchInputs',
 ]);
 
 const WORKFLOW_KEYS = Object.freeze(['id', 'name', 'path', 'state']);
@@ -171,6 +181,75 @@ export function admitIndependentReviewWorkflowDispatchV1(input = {}) {
     }),
     authority: Object.freeze({
       reviewWorkflowDispatchAllowed: true,
+      reviewExecutionAllowed: true,
+      sourceMutationAllowed: false,
+      approvalAllowed: false,
+      mergeAllowed: false,
+      deploymentAllowed: false,
+      runtimeMutationAllowed: false,
+      providerQualificationAllowed: false,
+      leaseSeizureAllowed: false,
+      arbitraryCommandAllowed: false,
+    }),
+  });
+}
+
+export function validateIndependentReviewWorkflowDispatchRunV1(input = {}) {
+  if (!hasExactKeys(input, RUN_INPUT_KEYS)) {
+    throw new Error('workflow dispatch run validation must use the exact closed-world schema');
+  }
+  if (!isPlainRecord(input.environment)) {
+    throw new Error('workflow dispatch run environment is required');
+  }
+
+  const admission = admitIndependentReviewWorkflowDispatchV1({
+    repository: CANONICAL_REPOSITORY,
+    workflowDefinition: input.workflowDefinition,
+    currentMainSha: input.currentMainSha,
+    pullRequest: input.pullRequest,
+    handoffIdentity: input.handoffIdentity,
+  });
+  const environment = input.environment;
+  const currentMainSha = sha(input.currentMainSha);
+  const expectedWorkflowRef = `${CANONICAL_REPOSITORY}/${CANONICAL_REVIEW_WORKFLOW_PATH}@refs/heads/${CANONICAL_BASE_BRANCH}`;
+  const blockers = [];
+
+  if (text(environment.GITHUB_ACTIONS) !== 'true') blockers.push('not-github-actions');
+  if (text(environment.GITHUB_EVENT_NAME) !== 'workflow_dispatch') blockers.push('wrong-event');
+  if (text(environment.GITHUB_REPOSITORY) !== CANONICAL_REPOSITORY) blockers.push('wrong-repository');
+  if (text(environment.GITHUB_WORKFLOW) !== CANONICAL_REVIEW_WORKFLOW_NAME) blockers.push('wrong-workflow');
+  if (text(environment.GITHUB_JOB) !== CANONICAL_REVIEW_JOB) blockers.push('wrong-job');
+  if (text(environment.GITHUB_REF) !== `refs/heads/${CANONICAL_BASE_BRANCH}`) blockers.push('wrong-ref');
+  if (sha(environment.GITHUB_SHA) !== currentMainSha) blockers.push('wrong-workflow-source-sha');
+  if (text(environment.GITHUB_WORKFLOW_REF) !== expectedWorkflowRef) blockers.push('untrusted-workflow-ref');
+
+  const observedInputs = input.workflowDispatchInputs;
+  const expectedInputs = admission.workflowDispatchInputs;
+  if (!hasExactKeys(observedInputs, Object.keys(expectedInputs))) {
+    blockers.push('workflow-dispatch-input-schema-mismatch');
+  } else {
+    for (const [key, expected] of Object.entries(expectedInputs)) {
+      if (text(observedInputs[key]) !== expected) blockers.push(`workflow-dispatch-input-mismatch:${key}`);
+    }
+  }
+
+  if (blockers.length) {
+    throw new Error(`workflow dispatch run identity is not canonical: ${blockers.join(', ')}`);
+  }
+
+  return Object.freeze({
+    schemaVersion: INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_RUN_SCHEMA,
+    verdict: 'INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_RUN_TRUSTED',
+    repository: CANONICAL_REPOSITORY,
+    workflowName: CANONICAL_REVIEW_WORKFLOW_NAME,
+    workflowPath: CANONICAL_REVIEW_WORKFLOW_PATH,
+    job: CANONICAL_REVIEW_JOB,
+    prNumber: admission.binding.prNumber,
+    sourceHead: admission.binding.sourceHead,
+    baseSha: admission.binding.baseSha,
+    branch: admission.binding.branch,
+    handoffBindingSha256: admission.handoffBindingSha256,
+    authority: Object.freeze({
       reviewExecutionAllowed: true,
       sourceMutationAllowed: false,
       approvalAllowed: false,
