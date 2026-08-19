@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import {
   collectServedRuntimeExactHeadProof,
+  createBattleBridgeSupervisorStatus,
+  defaultBattleBridgeSharedWorkspace,
   getCurrentGitHead,
+  projectBattleBridgeSupervisorStatus,
   runBattleBridgeIgnitionSupervisor,
 } from './battle-bridge-ignition-supervisor.mjs';
 import { runIgnitionHousekeep } from './ignite-stephanos-local.mjs';
@@ -170,8 +174,35 @@ function sharedWorkspaceFromArgs(argv = process.argv.slice(2)) {
   return index >= 0 ? argv[index + 1] : undefined;
 }
 
+export async function writePreSupervisorFailureStatus({
+  sharedWorkspace = defaultBattleBridgeSharedWorkspace(),
+  phase = 'backend 8787',
+  blockerId = 'ignition-pre-supervisor-failure',
+  detail = 'Ignition failed before the Battle Bridge supervisor could start.',
+  nextOperatorAction = 'Inspect the bounded ignition child logs, resolve the exact blocker, then retry Ignition.',
+} = {}) {
+  let status = createBattleBridgeSupervisorStatus();
+  status = projectBattleBridgeSupervisorStatus({
+    status,
+    phase,
+    phaseState: 'blocked',
+    blocker: {
+      id: blockerId,
+      detail,
+      nextOperatorAction,
+    },
+  });
+
+  const statusDir = path.resolve(sharedWorkspace, 'status');
+  const statusPath = path.join(statusDir, 'battle-bridge-ignition-supervisor-current.json');
+  await fs.mkdir(statusDir, { recursive: true });
+  await fs.writeFile(statusPath, `${JSON.stringify(status, null, 2)}\n`);
+  return { statusPath, status };
+}
+
 export async function main({ platform = process.platform } = {}) {
   process.chdir(repoRoot);
+  const sharedWorkspace = sharedWorkspaceFromArgs();
 
   if (platform === 'win32') {
     const backendReady = runStep('backend-8787-preflight', 'powershell.exe', [
@@ -187,15 +218,33 @@ export async function main({ platform = process.platform } = {}) {
     ]);
 
     if (!backendReady) {
+      await writePreSupervisorFailureStatus({
+        sharedWorkspace,
+        phase: 'backend 8787',
+        blockerId: 'backend-8787-preflight-failed-before-supervisor',
+        detail: 'The bounded backend 8787 preflight failed before the Battle Bridge supervisor could publish its first heartbeat.',
+        nextOperatorAction: 'Inspect the bounded backend preflight logs, resolve the reported source/runtime or listener blocker, then retry Ignition.',
+      });
       console.error('[IGNITION ENTRY] Battle Bridge supervisor not started because the backend-only 8787 preflight failed.');
       return 1;
     }
   }
 
-  await ensureLiveUiConvergedBeforeSupervisor({ platform });
+  try {
+    await ensureLiveUiConvergedBeforeSupervisor({ platform });
+  } catch (error) {
+    await writePreSupervisorFailureStatus({
+      sharedWorkspace,
+      phase: 'Stephanos UI 4173',
+      blockerId: 'stephanos-ui-4173-preflight-failed-before-supervisor',
+      detail: error?.message || 'The bounded UI 4173 preflight failed before the Battle Bridge supervisor could publish its first heartbeat.',
+      nextOperatorAction: 'Inspect the bounded UI refresh/proof logs, resolve the exact-head served-runtime blocker, then retry Ignition.',
+    });
+    throw error;
+  }
 
   const result = await runBattleBridgeIgnitionSupervisor({
-    sharedWorkspace: sharedWorkspaceFromArgs(),
+    sharedWorkspace,
     housekeepFn: (options) => runSupervisorHousekeepPreservingLiveRuntime(options),
   });
 
