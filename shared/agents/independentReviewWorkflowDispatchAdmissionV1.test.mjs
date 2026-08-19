@@ -3,10 +3,12 @@ import test from 'node:test';
 
 import {
   CANONICAL_REPOSITORY,
+  CANONICAL_REVIEW_JOB,
   CANONICAL_REVIEW_WORKFLOW_NAME,
   CANONICAL_REVIEW_WORKFLOW_PATH,
   INDEPENDENT_REVIEW_HANDOFF_IDENTITY_SCHEMA,
   admitIndependentReviewWorkflowDispatchV1,
+  validateIndependentReviewWorkflowDispatchRunV1,
 } from './independentReviewWorkflowDispatchAdmissionV1.mjs';
 
 const sourceHead = '1111111111111111111111111111111111111111';
@@ -73,6 +75,33 @@ function valid(overrides = {}) {
     currentMainSha: baseSha,
     pullRequest: pullRequest(),
     handoffIdentity: handoffIdentity(),
+    ...overrides,
+  };
+}
+
+function runEnvironment(overrides = {}) {
+  return {
+    GITHUB_ACTIONS: 'true',
+    GITHUB_EVENT_NAME: 'workflow_dispatch',
+    GITHUB_REPOSITORY: CANONICAL_REPOSITORY,
+    GITHUB_WORKFLOW: CANONICAL_REVIEW_WORKFLOW_NAME,
+    GITHUB_JOB: CANONICAL_REVIEW_JOB,
+    GITHUB_REF: 'refs/heads/main',
+    GITHUB_SHA: baseSha,
+    GITHUB_WORKFLOW_REF: `${CANONICAL_REPOSITORY}/${CANONICAL_REVIEW_WORKFLOW_PATH}@refs/heads/main`,
+    ...overrides,
+  };
+}
+
+function validRun(overrides = {}) {
+  const admission = admitIndependentReviewWorkflowDispatchV1(valid());
+  return {
+    environment: runEnvironment(),
+    workflowDefinition: workflowDefinition(),
+    currentMainSha: baseSha,
+    pullRequest: pullRequest(),
+    handoffIdentity: handoffIdentity(),
+    workflowDispatchInputs: { ...admission.workflowDispatchInputs },
     ...overrides,
   };
 }
@@ -191,4 +220,69 @@ test('dispatch binding is deterministic and changes with exact identity', () => 
   otherPr.head = { ...otherPr.head, sha: other.sourceHead };
   const changed = admitIndependentReviewWorkflowDispatchV1(valid({ handoffIdentity: other, pullRequest: otherPr }));
   assert.notEqual(first.handoffBindingSha256, changed.handoffBindingSha256);
+});
+
+test('future workflow-dispatch review execution is trusted only on canonical main with exact admitted inputs', () => {
+  const result = validateIndependentReviewWorkflowDispatchRunV1(validRun());
+  assert.equal(result.verdict, 'INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_RUN_TRUSTED');
+  assert.equal(result.prNumber, prNumber);
+  assert.equal(result.sourceHead, sourceHead);
+  assert.equal(result.baseSha, baseSha);
+  assert.equal(result.branch, branch);
+  assert.equal(result.authority.reviewExecutionAllowed, true);
+  assert.equal(result.authority.sourceMutationAllowed, false);
+  assert.equal(result.authority.approvalAllowed, false);
+  assert.equal(result.authority.mergeAllowed, false);
+  assert.equal(result.authority.runtimeMutationAllowed, false);
+  assert.equal(result.authority.arbitraryCommandAllowed, false);
+});
+
+test('future workflow-dispatch review execution rejects untrusted GitHub Actions boundaries', () => {
+  for (const environment of [
+    runEnvironment({ GITHUB_ACTIONS: 'false' }),
+    runEnvironment({ GITHUB_EVENT_NAME: 'push' }),
+    runEnvironment({ GITHUB_REPOSITORY: 'other/repo' }),
+    runEnvironment({ GITHUB_WORKFLOW: 'Independent Merge Security Review Copy' }),
+    runEnvironment({ GITHUB_JOB: 'other-job' }),
+    runEnvironment({ GITHUB_REF: 'refs/heads/release' }),
+    runEnvironment({ GITHUB_SHA: '3333333333333333333333333333333333333333' }),
+    runEnvironment({ GITHUB_WORKFLOW_REF: `${CANONICAL_REPOSITORY}/${CANONICAL_REVIEW_WORKFLOW_PATH}@refs/heads/release` }),
+  ]) {
+    assert.throws(
+      () => validateIndependentReviewWorkflowDispatchRunV1(validRun({ environment })),
+      /run identity is not canonical/,
+    );
+  }
+});
+
+test('future workflow-dispatch review execution rejects forged, widened or stale dispatch inputs', () => {
+  const admitted = admitIndependentReviewWorkflowDispatchV1(valid());
+  for (const workflowDispatchInputs of [
+    { ...admitted.workflowDispatchInputs, source_head: '3333333333333333333333333333333333333333' },
+    { ...admitted.workflowDispatchInputs, base_sha: '3333333333333333333333333333333333333333' },
+    { ...admitted.workflowDispatchInputs, head_branch: 'agent/other' },
+    { ...admitted.workflowDispatchInputs, handoff_binding_sha256: 'f'.repeat(64) },
+    { ...admitted.workflowDispatchInputs, command: 'arbitrary' },
+  ]) {
+    assert.throws(
+      () => validateIndependentReviewWorkflowDispatchRunV1(validRun({ workflowDispatchInputs })),
+      /run identity is not canonical/,
+    );
+  }
+});
+
+test('future workflow-dispatch review execution reuses live admission checks instead of trusting event inputs', () => {
+  const changedPr = pullRequest();
+  changedPr.head = { ...changedPr.head, sha: '3333333333333333333333333333333333333333' };
+  assert.throws(
+    () => validateIndependentReviewWorkflowDispatchRunV1(validRun({ pullRequest: changedPr })),
+    /pull request no longer matches/,
+  );
+
+  const widened = handoffIdentity();
+  widened.authority = { ...widened.authority, mergeAllowed: true };
+  assert.throws(
+    () => validateIndependentReviewWorkflowDispatchRunV1(validRun({ handoffIdentity: widened })),
+    /handoff identity/,
+  );
 });
