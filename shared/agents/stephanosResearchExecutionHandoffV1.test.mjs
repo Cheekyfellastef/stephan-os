@@ -75,6 +75,17 @@ function completedReturn(mission, researchResults, overrides = {}) {
   };
 }
 
+function directHandoff(mission) {
+  return createStephanosResearchExecutionHandoffV1({
+    mission,
+    executionCapabilities: [capability({
+      capabilityRef: 'capability:web-primary-source-v1',
+      schedulerRoute: 'CHATGPT_GITHUB',
+      taskTypes: ['RESEARCH_DIRECT'],
+    })],
+  });
+}
+
 test('canonical-knowledge route requires no external execution and retains zero mutation authority', () => {
   const plan = planStephanosResearchRouteV1({
     question: 'Who owns native research?',
@@ -211,8 +222,10 @@ test('completed execution return re-enters canonical evidence reconciliation und
     directResearchAvailable: true,
   });
   const mission = missionFor(plan);
+  const handoff = directHandoff(mission);
   const reconciled = reconcileStephanosResearchExecutionReturnV1({
     mission,
+    handoff,
     executionReturn: completedReturn(mission, [{
       researcherId: 'direct-research',
       providerId: 'provider-a',
@@ -248,13 +261,21 @@ test('execution return fails closed on mission identity drift or authority widen
     role: 'PRIMARY_SOURCE_RESEARCHER',
     claims: [{ topic: 'fact', value: 'current', sourceClass: 'PRIMARY_OFFICIAL', freshness: 'FRESH', evidenceRefs: ['official:fact'] }],
   }];
+  const handoff = directHandoff(mission);
   assert.equal(reconcileStephanosResearchExecutionReturnV1({
     mission,
+    handoff,
     executionReturn: completedReturn(mission, results, { researchMissionId: 'different-mission' }),
   }), null);
   assert.equal(reconcileStephanosResearchExecutionReturnV1({
     mission,
+    handoff,
     executionReturn: completedReturn(mission, results, { runtimeMutated: true }),
+  }), null);
+  assert.equal(reconcileStephanosResearchExecutionReturnV1({
+    mission,
+    handoff,
+    executionReturn: completedReturn(mission, results, { schedulerRoute: 'OPENCLAW_LOCAL' }),
   }), null);
 });
 
