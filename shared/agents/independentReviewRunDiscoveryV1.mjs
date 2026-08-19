@@ -17,13 +17,13 @@ function sameSha(left, right) {
     && text(left).toLowerCase() === text(right).toLowerCase();
 }
 
-export function buildIndependentReviewRunQueryV1({ workflowId, expectedBase } = {}) {
+export function buildIndependentReviewRunQueryV1({ workflowId, expectedHead } = {}) {
   const id = positiveInteger(workflowId);
-  const base = text(expectedBase).toLowerCase();
-  if (!id || !FULL_SHA.test(base)) {
-    throw new Error('canonical workflow id and exact trusted base are required');
+  const head = text(expectedHead).toLowerCase();
+  if (!id || !FULL_SHA.test(head)) {
+    throw new Error('canonical workflow id and exact feature head are required');
   }
-  return `/actions/workflows/${id}/runs?event=pull_request_target&head_sha=${encodeURIComponent(base)}&per_page=100&page=1`;
+  return `/actions/workflows/${id}/runs?event=pull_request_target&head_sha=${encodeURIComponent(head)}&per_page=100&page=1`;
 }
 
 export function selectIndependentReviewRunCandidatesV1(input = {}) {
@@ -37,8 +37,9 @@ export function selectIndependentReviewRunCandidatesV1(input = {}) {
 
   return Object.freeze((Array.isArray(input.runs) ? input.runs : []).filter((run) => (
     text(run?.event) === 'pull_request_target'
-    // pull_request_target executes the trusted workflow from the base commit.
-    && sameSha(run?.head_sha, expectedBase)
+    // The trusted workflow executes from the base, but the Actions REST run
+    // identity reports the pull request feature commit as run.head_sha.
+    && sameSha(run?.head_sha, expectedHead)
     && Array.isArray(run?.pull_requests)
     && run.pull_requests.some((pr) => (
       positiveInteger(pr?.number) === prNumber
