@@ -10,6 +10,7 @@ export const STEPHANOS_QUESTION_NOVELTY_LEDGER_SCHEMA = 'stephanos.question-nove
 export const STEPHANOS_QUESTION_NOVELTY_AUTHORITY_SCHEMA = 'stephanos.question-novelty-authority.v1';
 
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
+const SAFE_REF = /^(?:#[1-9][0-9]{0,9}|[a-z0-9][a-z0-9._:/#-]{0,191})$/i;
 const SAFE_FINGERPRINT = /^[a-z0-9][a-z0-9._:-]{7,191}$/i;
 const SAFE_DIGEST = /^[0-9a-f]{64}$/;
 const RESERVED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
@@ -166,7 +167,7 @@ function safeRefs(value, errors, label, minimum = 0) {
     return [];
   }
   const entries = value.map(text);
-  if (entries.some((entry) => !safeId(entry))) errors.push(`${label}-contains-invalid-ref`);
+  if (entries.some((entry) => !SAFE_REF.test(entry))) errors.push(`${label}-contains-invalid-ref`);
   if (new Set(entries).size !== entries.length) errors.push(`${label}-contains-duplicate-ref`);
   if (entries.length < minimum) errors.push(`${label}-requires-${minimum}`);
   return entries;
@@ -415,7 +416,7 @@ function validateLedgerSnapshot(ledger, errors) {
       if (text(question.normalizedText) !== normalizedQuestionText(question.questionText)) errors.push(`${label}-normalizedText-mismatch`);
       if (!SAFE_FINGERPRINT.test(text(question.intentFingerprint))) errors.push(`${label}-intentFingerprint-invalid`);
       if (!safeId(question.expectedEvidenceClass)) errors.push(`${label}-expectedEvidenceClass-invalid`);
-      if (!Array.isArray(question.noveltyRefs) || question.noveltyRefs.some((ref) => !safeId(ref))) errors.push(`${label}-noveltyRefs-invalid`);
+      if (!Array.isArray(question.noveltyRefs) || question.noveltyRefs.some((ref) => !SAFE_REF.test(text(ref)))) errors.push(`${label}-noveltyRefs-invalid`);
       if (questionIds.has(question.questionId)) errors.push(`${label}-duplicate-questionId`);
       if (fingerprints.has(question.intentFingerprint)) errors.push(`${label}-duplicate-intentFingerprint`);
       questionIds.add(question.questionId);
