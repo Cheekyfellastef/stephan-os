@@ -127,6 +127,8 @@ async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, headRef, 
   // the base commit as run.head_sha. The feature head is carried inside the
   // run's pull_requests[] binding and must be checked separately.
   const query = buildIndependentReviewRunQueryV1({ workflowId, expectedBase });
+  const trustedQueryPrefix = `/actions/workflows/${workflowId}/runs?event=pull_request_target`;
+  if (!query.startsWith(trustedQueryPrefix)) throw new Error('review-run discovery escaped the trusted workflow/event route');
   const payload = await githubRequest(`/repos/${owner}/${repo}${query}`);
   const listed = payload?.workflow_runs;
   if (!Array.isArray(listed)) {
