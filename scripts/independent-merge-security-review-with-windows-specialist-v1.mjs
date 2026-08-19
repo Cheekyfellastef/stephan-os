@@ -183,15 +183,34 @@ async function main() {
 
   const artifact = validateFindingsArtifact(JSON.parse(fs.readFileSync(artifactPath, 'utf8')));
   const findings = Array.isArray(artifact?.analysis?.findings) ? artifact.analysis.findings : [];
-  const paths = unique(findings.map((item) => text(item?.path)).filter(Boolean));
-  const [sources, lineageEvidence] = await Promise.all([
-    Promise.all(paths.map((path) => exactHeadSource(
-      artifact.repository,
-      path,
-      artifact.sourceHead,
-    ))),
-    exactReconciliationLineage(artifact.repository, artifact.sourceHead, artifact.baseSha),
-  ]);
+  const findingPaths = unique(findings.map((item) => text(item?.path)).filter(Boolean));
+  const lineageEvidence = await exactReconciliationLineage(
+    artifact.repository,
+    artifact.sourceHead,
+    artifact.baseSha,
+  );
+  const specialistPlan = analyzeWindowsAuthoritySpecialistReview({
+    repository: artifact.repository,
+    prNumber: artifact.prNumber,
+    branch: artifact.branch,
+    sourceHead: artifact.sourceHead,
+    baseSha: artifact.baseSha,
+    lineageEvidence,
+    analysis: artifact.analysis,
+    sources: [],
+  });
+  const plannedPaths = specialistPlan.eligible
+    && Array.isArray(specialistPlan.reviewedPaths)
+    && specialistPlan.reviewedPaths.length > 0
+    ? specialistPlan.reviewedPaths.map((path) => text(path)).filter(Boolean)
+    : findingPaths;
+  const paths = unique(plannedPaths);
+  if (paths.length === 0) process.exit(child.status || 1);
+  const sources = await Promise.all(paths.map((path) => exactHeadSource(
+    artifact.repository,
+    path,
+    artifact.sourceHead,
+  )));
   const specialist = analyzeWindowsAuthoritySpecialistReview({
     repository: artifact.repository,
     prNumber: artifact.prNumber,
