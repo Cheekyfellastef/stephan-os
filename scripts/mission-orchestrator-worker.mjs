@@ -14,6 +14,12 @@ import {
   publishNextMissionWorkerAction,
   readMissionWorkerQueue,
 } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
+import {
+  OPENCLAW_OC1_ISSUE,
+  OPENCLAW_OC1_PROVIDER_VERSION,
+  OPENCLAW_OC1_TASK_CLASS,
+  executeClaimedOpenClawOc1RepositoryScout,
+} from '../integrations/openclaw/stephanos-builder-provider/lib/oc1-repository-scout.mjs';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -250,6 +256,15 @@ async function groundedOpenClawEvidence(action, finalOutput, options, timestamp)
 
 export async function executeOpenClawReadonlyAction(action, claim, options = {}) {
   if (action?.actionKind !== 'agent-handoff' || action.adapter !== 'openclaw-readonly') throw new Error('Unsupported OpenClaw read-only worker action.');
+  if (options.actionGrant?.issueNumber === OPENCLAW_OC1_ISSUE) {
+    return executeClaimedOpenClawOc1RepositoryScout(action, claim, {
+      ...options,
+      taskClass: OPENCLAW_OC1_TASK_CLASS,
+      goalId: `#${OPENCLAW_OC1_ISSUE}`,
+      providerVersion: OPENCLAW_OC1_PROVIDER_VERSION,
+      requestedSourceHead: text(options.actionGrant.sourceRevision).toLowerCase(),
+    });
+  }
   const promptPath = `${claim.processingPath}.openclaw-prompt.txt`;
   await writeFile(promptPath, openClawPrompt(action), { encoding: 'utf8', flag: 'wx' });
   const run = options.runCommand || defaultRun;
