@@ -240,7 +240,7 @@ export function evaluateProviderIndependenceAdmissionV1(input = {}) {
     && CONTRACT_ID.test(text(dependency.requiredTaskClass, 181))
     && CONTRACT_ID.test(text(dependency.nonProviderSpecificContract, 181))
     && qualifiedAlternatives !== null
-    && CONTRACT_ID.test(text(dependency.portableCheckpointContract, 181))
+    && typeof dependency.portableCheckpointContract === 'string'
     && CONTRACT_ID.test(text(dependency.receiptContract, 181))
     && FAILURE_BEHAVIOUR.has(dependency.failureBehaviour)
     && text(dependency.operatorImpact)
@@ -252,6 +252,10 @@ export function evaluateProviderIndependenceAdmissionV1(input = {}) {
 
   if (!identityValid || routes.some((route) => !validRoute(route))) {
     return result(base, PROVIDER_INDEPENDENCE_VERDICT.BLOCK_PROVIDER_DEPENDENCY_AMBIGUOUS, ['provider-dependency-or-parity-evidence-invalid']);
+  }
+
+  if (!CONTRACT_ID.test(text(dependency.portableCheckpointContract, 181))) {
+    return result(base, PROVIDER_INDEPENDENCE_VERDICT.BLOCK_PORTABLE_CHECKPOINT_MISSING, ['portable-checkpoint-contract-missing']);
   }
 
   const routeById = new Map(routes.map((route) => [route.routeId, route]));
@@ -282,10 +286,6 @@ export function evaluateProviderIndependenceAdmissionV1(input = {}) {
   const codexLike = CODEX_LIKE.has(dependency.provider);
   const critical = dependency.criticalPathImpact === 'CRITICAL_PATH';
   const optional = dependency.criticalPathImpact === 'OPTIONAL';
-
-  if (!dependency.portableCheckpointContract || !CONTRACT_ID.test(dependency.portableCheckpointContract)) {
-    return result(base, PROVIDER_INDEPENDENCE_VERDICT.BLOCK_PORTABLE_CHECKPOINT_MISSING, ['portable-checkpoint-contract-missing']);
-  }
 
   if (dependency.mode === PROVIDER_DEPENDENCY_MODE.TEMPORARY_BOUNDED_EXCEPTION_WITH_EXPIRY_AND_OWNER) {
     const exception = validateException(input.exception, nowMs);
