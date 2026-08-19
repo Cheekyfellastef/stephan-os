@@ -53,6 +53,7 @@ jobs:
           node --test shared/agents/independentReviewRetryPlanner.test.mjs
           node --test shared/agents/exactHeadReviewDispatchWorkflow.test.mjs
           node --test shared/agents/independentReviewHandoffIdentityV1.test.mjs
+          node --test shared/agents/independentReviewWorkflowDispatchAdmissionV1.test.mjs
 
       - name: Parse review coordinator sources
         run: |
@@ -60,6 +61,7 @@ jobs:
           node --check shared/agents/exactHeadReviewCoordinatorAuthority.mjs
           node --check shared/agents/independentReviewRetryPlanner.mjs
           node --check shared/agents/independentReviewHandoffIdentityV1.mjs
+          node --check shared/agents/independentReviewWorkflowDispatchAdmissionV1.mjs
           node --check scripts/exact-head-review-dispatch.mjs
           node --check scripts/retry-independent-review.mjs
 
