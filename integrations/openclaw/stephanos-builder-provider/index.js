@@ -13,7 +13,7 @@ export default definePluginEntry({
   register(api) {
     api.registerCommand({
       name: 'stephanos-builder',
-      description: 'Run a bounded Stephanos/OpenClaw provider task. Current production candidate: read-only OC1 scout.',
+      description: 'Run bounded Stephanos/OpenClaw diagnostics. Qualification is reserved for canonical Mission Worker claims.',
       acceptsArgs: true,
       requireAuth: true,
       handler: async (ctx) => {
@@ -35,21 +35,23 @@ export default definePluginEntry({
               `REASON=${result.blocker}`,
               `SOURCE_HEAD=${result.sourceHead || ''}`,
               `PROOF_REF=${result.proofRef || ''}`,
+              'QUALIFICATION_ELIGIBLE=false',
               'SOURCE_MUTATION=false',
             ].join('\n'),
           };
         }
         return {
           text: [
-            'OPENCLAW_OC1_REPOSITORY_SCOUT=COMPLETED',
+            'OPENCLAW_OC1_REPOSITORY_SCOUT=DIAGNOSTIC_COMPLETED',
             `EXECUTION_ID=${result.executionId}`,
-            `RECEIPT_ID=${result.receiptId}`,
             `SOURCE_HEAD=${result.sourceHead}`,
             `PROOF_REF=${result.proofRef}`,
+            `PROVIDER_VERSION=${result.providerVersion}`,
             `RELEVANT_FILE_COUNT=${result.relevantFileCount}`,
             `PACKAGE_SCRIPT_COUNT=${result.packageScriptCount}`,
+            'QUALIFICATION_ELIGIBLE=false',
             'SOURCE_MUTATION=false',
-            'PRODUCTION_ELIGIBLE=NOT_YET_REQUIRES_INDEPENDENT_STEPHANOS_ADJUDICATION',
+            'PRODUCTION_ELIGIBLE=false',
           ].join('\n'),
         };
       },
