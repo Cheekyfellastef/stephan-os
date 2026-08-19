@@ -1,13 +1,13 @@
-import { createHash } from 'node:crypto';
-
 import {
   STEPHANOS_CAPABILITY_QUESTION_SCHEMA_VERSION,
   STEPHANOS_CAPABILITY_ROUND_SCHEMA_VERSION,
+  canonicalStephanosQuestionIntentFingerprint,
   validateStephanosCapabilityRound,
 } from './stephanosConversationalCapabilityLadderV1.mjs';
 
 export const STEPHANOS_FLAGSHIP_SYSTEMS_EXPERT_TRANSFER_SCHEMA_VERSION = 'stephanos.flagship-systems-expert-transfer-round.v1';
 export const STEPHANOS_FLAGSHIP_SYSTEMS_EXPERT_TRANSFER_ROUND_ID = 'stephanos-flagship-systems-transfer-001';
+export const STEPHANOS_FLAGSHIP_SYSTEMS_EXPERT_TRANSFER_BLOCKER_ID = 'canonical-novelty-authority-unresolved';
 
 const CASES = Object.freeze([
   Object.freeze({ caseId: 'provider-outage', questionClass: 'AGENT_AND_TOOL_CAPABILITIES', expectedEvidenceClass: 'PROVIDER_RUNTIME_AND_ROUTE_EVIDENCE', questionText: 'A preferred cloud provider becomes unavailable during unattended product work. Explain which durable provider and route truth Stephanos should inspect, which qualified alternatives can continue the mission, what must fail closed, and what evidence distinguishes a routing event from a project-wide stall.' }),
@@ -22,10 +22,6 @@ const CASES = Object.freeze([
   Object.freeze({ caseId: 'action-approval-presentation', questionClass: 'NEXT_BEST_ACTION', expectedEvidenceClass: 'ACTION_APPROVAL_PRESENTATION_EVIDENCE', questionText: 'Recommend the next safe action for a consequential Stephanos change and clearly separate recommendation, options, approval requirement, authority boundary, evidence refs and what the operator would actually be approving. Include the visual presentation candidates that reduce cognitive load without hiding truth.' }),
 ]);
 
-function fingerprint(questionClass, questionText) {
-  return `intent-${createHash('sha256').update(`${questionClass}\n${questionText}`).digest('hex').slice(0, 24)}`;
-}
-
 function exactIso(value) {
   const candidate = typeof value === 'string' ? value.trim() : '';
   const parsed = Date.parse(candidate);
@@ -33,24 +29,41 @@ function exactIso(value) {
   return candidate;
 }
 
+function buildQuestion(seed, index, roundId, createdAtUtc) {
+  const candidate = {
+    schemaVersion: STEPHANOS_CAPABILITY_QUESTION_SCHEMA_VERSION,
+    roundId,
+    questionId: `${roundId}-q${String(index + 1).padStart(2, '0')}`,
+    askerParticipantId: 'chatgpt-bridge',
+    targetParticipantId: 'stephanos',
+    questionText: seed.questionText,
+    questionClass: seed.questionClass,
+    intentFingerprint: 'intent-placeholder',
+    noveltyRefs: [`transfer:${seed.caseId}`],
+    contextRefs: ['#1776', '#1308', '#1722', '#1556', '#1290', '#1657', '#1694', '#1281', '#1898', '#1899', '#1900', '#1901'],
+    expectedEvidenceClass: seed.expectedEvidenceClass,
+    createdAtUtc,
+  };
+  return Object.freeze({
+    ...candidate,
+    intentFingerprint: canonicalStephanosQuestionIntentFingerprint(candidate),
+  });
+}
+
+function authorityBoundary() {
+  return Object.freeze({
+    sourceMutationAllowed: false,
+    commandExecutionAllowed: false,
+    approvalAllowed: false,
+    providerSelectionAuthorityAdded: false,
+  });
+}
+
 export function createStephanosFlagshipSystemsExpertTransferRoundV1(input = {}) {
   try {
     const createdAtUtc = exactIso(input.createdAtUtc);
     const roundId = STEPHANOS_FLAGSHIP_SYSTEMS_EXPERT_TRANSFER_ROUND_ID;
-    const questions = CASES.map((seed, index) => Object.freeze({
-      schemaVersion: STEPHANOS_CAPABILITY_QUESTION_SCHEMA_VERSION,
-      roundId,
-      questionId: `${roundId}-q${String(index + 1).padStart(2, '0')}`,
-      askerParticipantId: 'chatgpt-bridge',
-      targetParticipantId: 'stephanos',
-      questionText: seed.questionText,
-      questionClass: seed.questionClass,
-      intentFingerprint: fingerprint(seed.questionClass, seed.questionText),
-      noveltyRefs: Object.freeze([`transfer:${seed.caseId}`]),
-      contextRefs: Object.freeze(['#1776', '#1308', '#1722', '#1556', '#1290', '#1657', '#1694', '#1281', '#1898', '#1899', '#1900', '#1901']),
-      expectedEvidenceClass: seed.expectedEvidenceClass,
-      createdAtUtc,
-    }));
+    const questions = CASES.map((seed, index) => buildQuestion(seed, index, roundId, createdAtUtc));
     const round = Object.freeze({
       schemaVersion: STEPHANOS_CAPABILITY_ROUND_SCHEMA_VERSION,
       roundId,
@@ -60,33 +73,45 @@ export function createStephanosFlagshipSystemsExpertTransferRoundV1(input = {}) 
       questions: Object.freeze(questions),
       createdAtUtc,
     });
-    const validation = validateStephanosCapabilityRound(round);
+    const canonicalRoundValidation = validateStephanosCapabilityRound(round);
+    const expectedSafeHold = canonicalRoundValidation.valid === false
+      && canonicalRoundValidation.errors.length === 1
+      && canonicalRoundValidation.errors[0] === STEPHANOS_FLAGSHIP_SYSTEMS_EXPERT_TRANSFER_BLOCKER_ID;
+
     return Object.freeze({
       schemaVersion: STEPHANOS_FLAGSHIP_SYSTEMS_EXPERT_TRANSFER_SCHEMA_VERSION,
-      valid: validation.valid,
-      round: validation.valid ? round : null,
+      valid: expectedSafeHold,
+      state: expectedSafeHold ? 'TRANSFER_FIXTURES_READY_CANONICAL_NOVELTY_AUTHORITY_REQUIRED' : 'SAFE_HOLD',
+      candidateRound: expectedSafeHold ? round : null,
       cases: Object.freeze(CASES.map((seed) => seed.caseId)),
-      errors: validation.errors,
+      canonicalRoundValidation,
+      roundAdmissionReady: false,
+      blockerId: STEPHANOS_FLAGSHIP_SYSTEMS_EXPERT_TRANSFER_BLOCKER_ID,
+      errors: expectedSafeHold ? Object.freeze([]) : canonicalRoundValidation.errors,
       originalRoundReplayRequired: true,
       transferRoundReplayRequired: true,
       uiAgentExperienceDebtOnCognitivelyCorrectButHardToUseTurns: true,
       questionGapMachineryOnCognitiveFailure: true,
       liveExecutionClaimAllowed: false,
-      authority: Object.freeze({ sourceMutationAllowed: false, commandExecutionAllowed: false, approvalAllowed: false, providerSelectionAuthorityAdded: false }),
+      authority: authorityBoundary(),
     });
   } catch {
     return Object.freeze({
       schemaVersion: STEPHANOS_FLAGSHIP_SYSTEMS_EXPERT_TRANSFER_SCHEMA_VERSION,
       valid: false,
-      round: null,
+      state: 'SAFE_HOLD',
+      candidateRound: null,
       cases: Object.freeze([]),
+      canonicalRoundValidation: Object.freeze({ valid: false, errors: Object.freeze(['transfer-round-build-failed-closed']), refusalReason: 'transfer-round-build-failed-closed' }),
+      roundAdmissionReady: false,
+      blockerId: STEPHANOS_FLAGSHIP_SYSTEMS_EXPERT_TRANSFER_BLOCKER_ID,
       errors: Object.freeze(['transfer-round-build-failed-closed']),
       originalRoundReplayRequired: true,
       transferRoundReplayRequired: true,
       uiAgentExperienceDebtOnCognitivelyCorrectButHardToUseTurns: true,
       questionGapMachineryOnCognitiveFailure: true,
       liveExecutionClaimAllowed: false,
-      authority: Object.freeze({ sourceMutationAllowed: false, commandExecutionAllowed: false, approvalAllowed: false, providerSelectionAuthorityAdded: false }),
+      authority: authorityBoundary(),
     });
   }
 }
