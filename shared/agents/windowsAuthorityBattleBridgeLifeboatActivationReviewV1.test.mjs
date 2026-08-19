@@ -9,13 +9,13 @@ import {
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = 'a'.repeat(40);
 const BLOBS = Object.freeze({
-  'scripts/battle-bridge-control-plane-self-repair.test.mjs': '08911f3e3ba07bd1714a5e9c6203596e97190428',
+  'scripts/battle-bridge-control-plane-self-repair.test.mjs': '29b38bd1c4ad03efe0e5036bcdbdaaf16cddd47b',
   'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': '7f54c6f911d0f7012121b615b8cb6d84adffb46a',
   'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '1da7c432fd051f7b9249d881638d21b131fa98a4',
   'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs': 'c724540a727aab7881dd3b06b52aa7cf9d86f7d8',
-  'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs': '4923796bd34b1e6dcac0ec6fe45c17bc001dc27f',
-  'shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs': 'c42b73f478c96a306890ba96e318bb7c23f1b9b5',
-  'shared/agents/postSyncRuntimeRefreshCoordinator.mjs': '40f6b6c5d6d5030fd2cfdd17bf3b15b09f56e35c',
+  'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs': 'd7e186369d1e4b31945549d1d644b7a795cadc24',
+  'shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs': '80cc96e26e48039840720b623c1e18ddb4dbcbcc',
+  'shared/agents/postSyncRuntimeRefreshCoordinator.mjs': 'ec15409bc441ad8de5be47dbc38d8f7f241342c0',
 });
 
 function analysis(overrides = {}) {
@@ -68,34 +68,44 @@ taskName: 'Stephanos Battle Bridge Recovery Lifeboat'
 installerRelativePath: 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'
 id: 'recoveryMesh'
 id: 'githubCommandMailbox'
+id: 'outboundHealthBeacon'
+installerRelativePath: 'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1'
 const POWERSHELL_EXE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const GIT_EXE = 'C:\\Program Files\\Git\\cmd\\git.exe';
 shell: false
 '-File', installerPath
 '-StartNow'
 function validateRecoveryLifeboatReceipt
+function validateOutboundHealthBeaconReceipt
 payload.scheduledTaskExecutable === 'C:\\Windows\\System32\\wscript.exe'
 payload.directPowerShellTaskLaunch === false
 payload.githubClaimConsumerIncluded === true
 payload.repoCheckoutRequiredAfterInstall === false
 payload.openClawGatewayRequiredAfterInstall === false
-task.id === 'recoveryLifeboat'
+taskId === 'recoveryLifeboat'
+taskId === 'outboundHealthBeacon'
 `;
   if (path === 'shared/agents/postSyncRuntimeRefreshCoordinator.mjs') return String.raw`
 'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs'
+'scripts/battle-bridge-outbound-health-beacon.mjs'
+'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1'
+'scripts/windows/run-battle-bridge-outbound-health-beacon-hidden.ps1'
 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'
 'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs'
+if (NATURAL_EXACT.has(path)) return false;
 automaticExecutionAllowed: unsafePaths.length === 0 && unknownPaths.length === 0
 `;
   if (path === 'scripts/battle-bridge-control-plane-self-repair.test.mjs') return String.raw`
 id: 'recoveryLifeboat'
 id: 'recoveryMesh'
 id: 'githubCommandMailbox'
-assert.equal(result.taskCount, 3)
+id: 'outboundHealthBeacon'
+assert.equal(result.taskCount, 4)
 endsWith('install-battle-bridge-recovery-lifeboat-v1.ps1')
+endsWith('install-battle-bridge-outbound-health-beacon.ps1')
 assert.equal(result.failedTaskId, 'recoveryLifeboat')
 assert.equal(result.failedTaskId, 'recoveryMesh')
-assert.equal(powerShellCalls.length, 3)
+assert.equal(powerShellCalls.length, 4)
 `;
   if (path === 'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs') return String.raw`
 New-ScheduledTaskAction -Execute \$wscriptExe
@@ -105,11 +115,13 @@ New-ScheduledTaskAction -Execute \$powershellExe
 -WindowStyle Hidden
 `;
   return String.raw`
+outbound health beacon control-plane estate coalesces as natural reload without OpenClaw approval
 windowless Lifeboat delivery and its fixed control-plane reconciler naturally reload without stranding sync
 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'
 'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs'
 'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs'
 assert.equal(plan.unknownPathCount, 0)
+assert.equal(plan.openClawPathCount, 0)
 assert.equal(plan.automaticExecutionAllowed, true)
 `;
 }
@@ -141,7 +153,7 @@ test('specialist plans exactly the seven-file Lifeboat activation estate for the
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_SOURCE_REQUIRED');
 });
 
-test('specialist seals only the exact pinned windowless Lifeboat-first activation contract', () => {
+test('specialist seals only the exact pinned windowless Lifeboat-first activation contract while preserving current beacon continuity', () => {
   const result = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
     repository: REPOSITORY,
     sourceHead: HEAD,

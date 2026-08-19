@@ -14,13 +14,13 @@ const ESCALATED_PATHS = Object.freeze([
 ]);
 
 const EXPECTED_BLOBS = Object.freeze({
-  'scripts/battle-bridge-control-plane-self-repair.test.mjs': '08911f3e3ba07bd1714a5e9c6203596e97190428',
+  'scripts/battle-bridge-control-plane-self-repair.test.mjs': '29b38bd1c4ad03efe0e5036bcdbdaaf16cddd47b',
   'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': '7f54c6f911d0f7012121b615b8cb6d84adffb46a',
   'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '1da7c432fd051f7b9249d881638d21b131fa98a4',
   'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs': 'c724540a727aab7881dd3b06b52aa7cf9d86f7d8',
-  'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs': '4923796bd34b1e6dcac0ec6fe45c17bc001dc27f',
-  'shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs': 'c42b73f478c96a306890ba96e318bb7c23f1b9b5',
-  'shared/agents/postSyncRuntimeRefreshCoordinator.mjs': '40f6b6c5d6d5030fd2cfdd17bf3b15b09f56e35c',
+  'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs': 'd7e186369d1e4b31945549d1d644b7a795cadc24',
+  'shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs': '80cc96e26e48039840720b623c1e18ddb4dbcbcc',
+  'shared/agents/postSyncRuntimeRefreshCoordinator.mjs': 'ec15409bc441ad8de5be47dbc38d8f7f241342c0',
 });
 
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
@@ -113,41 +113,50 @@ function reviewControlPlane(source, path, findings) {
     ["installerRelativePath: 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'", 'control-plane-lifeboat-installer-not-fixed'],
     ["id: 'recoveryMesh'", 'control-plane-recovery-mesh-task-missing'],
     ["id: 'githubCommandMailbox'", 'control-plane-mailbox-task-missing'],
+    ["id: 'outboundHealthBeacon'", 'control-plane-outbound-health-beacon-task-missing'],
+    ["installerRelativePath: 'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1'", 'control-plane-outbound-health-beacon-installer-not-fixed'],
     ['shell: false', 'control-plane-shell-false-missing'],
     ["'-File', installerPath", 'control-plane-fixed-installer-execution-missing'],
     ["'-StartNow'", 'control-plane-start-now-missing'],
     ['function validateRecoveryLifeboatReceipt', 'control-plane-lifeboat-receipt-validator-missing'],
+    ['function validateOutboundHealthBeaconReceipt', 'control-plane-outbound-health-beacon-receipt-validator-missing'],
     ['payload.scheduledTaskExecutable', 'control-plane-lifeboat-executable-proof-field-missing'],
     ['wscript.exe', 'control-plane-lifeboat-wscript-identity-missing'],
     ['payload.directPowerShellTaskLaunch === false', 'control-plane-direct-powershell-denial-missing'],
     ['payload.githubClaimConsumerIncluded === true', 'control-plane-consumer-proof-missing'],
     ['payload.repoCheckoutRequiredAfterInstall === false', 'control-plane-checkout-independence-missing'],
     ['payload.openClawGatewayRequiredAfterInstall === false', 'control-plane-openclaw-independence-missing'],
-    ["task.id === 'recoveryLifeboat'", 'control-plane-closed-receipt-routing-missing'],
+    ["taskId === 'recoveryLifeboat'", 'control-plane-lifeboat-closed-receipt-routing-missing'],
+    ["taskId === 'outboundHealthBeacon'", 'control-plane-outbound-health-beacon-closed-receipt-routing-missing'],
   ]) requireLiteral(findings, source, path, literal, code);
   const lifeboat = source.indexOf("id: 'recoveryLifeboat'");
   const mesh = source.indexOf("id: 'recoveryMesh'");
   const mailbox = source.indexOf("id: 'githubCommandMailbox'");
-  if (!(lifeboat >= 0 && lifeboat < mesh && mesh < mailbox)) findings.push(finding('control-plane-lifeboat-not-first', path));
+  const beacon = source.indexOf("id: 'outboundHealthBeacon'");
+  if (!(lifeboat >= 0 && lifeboat < mesh && mesh < mailbox && mailbox < beacon)) findings.push(finding('control-plane-canonical-task-order-not-preserved', path));
   forbid(findings, source, path, /taskName\s*=\s*options|installerRelativePath\s*=\s*options|executable\s*=\s*options|shell\s*=\s*true/i, 'control-plane-caller-selection-forbidden');
   forbid(findings, source, path, /Invoke-Expression|reset --hard|git clean|git stash|git checkout|git push|Restart-Computer/i, 'control-plane-destructive-authority-forbidden');
 }
 
 function reviewPostSync(source, path, findings) {
-  for (const literal of [
-    "'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs'",
-    "'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'",
-    "'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs'",
-  ]) requireLiteral(findings, source, path, literal, 'post-sync-lifeboat-natural-reload-missing');
+  for (const [literal, code] of [
+    ["'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs'", 'post-sync-lifeboat-natural-reload-missing'],
+    ["'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'", 'post-sync-lifeboat-natural-reload-missing'],
+    ["'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs'", 'post-sync-lifeboat-natural-reload-missing'],
+    ["'scripts/battle-bridge-outbound-health-beacon.mjs'", 'post-sync-outbound-health-beacon-natural-reload-missing'],
+    ["'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1'", 'post-sync-outbound-health-beacon-natural-reload-missing'],
+    ["'scripts/windows/run-battle-bridge-outbound-health-beacon-hidden.ps1'", 'post-sync-outbound-health-beacon-natural-reload-missing'],
+    ['if (NATURAL_EXACT.has(path)) return false;', 'post-sync-natural-reload-openclaw-guard-missing'],
+  ]) requireLiteral(findings, source, path, literal, code);
   forbid(findings, source, path, /automaticExecutionAllowed:\s*true/, 'post-sync-unconditional-authority-forbidden');
 }
 
 function reviewTestEvidence(source, path, findings) {
   const requirements = path.includes('control-plane-self-repair')
-    ? ['recoveryLifeboat', 'result.taskCount, 3', 'install-battle-bridge-recovery-lifeboat-v1.ps1', "failedTaskId, 'recoveryLifeboat'", 'powerShellCalls.length, 3']
+    ? ['recoveryLifeboat', 'outboundHealthBeacon', 'result.taskCount, 4', 'install-battle-bridge-recovery-lifeboat-v1.ps1', 'install-battle-bridge-outbound-health-beacon.ps1', "failedTaskId, 'recoveryLifeboat'", 'powerShellCalls.length, 4']
     : path.includes('hidden-window')
       ? ['$wscriptExe', '$powershellExe', '-WindowStyle Hidden', 'shell', 'WScript']
-      : ['windowless Lifeboat delivery', 'install-battle-bridge-recovery-lifeboat-v1.ps1', 'run-battle-bridge-recovery-lifeboat-windowless-v2.vbs', 'battleBridgeControlPlaneSelfRepairV1.mjs', 'unknownPathCount, 0', 'automaticExecutionAllowed, true'];
+      : ['outbound health beacon control-plane estate', 'windowless Lifeboat delivery', 'install-battle-bridge-recovery-lifeboat-v1.ps1', 'run-battle-bridge-recovery-lifeboat-windowless-v2.vbs', 'battleBridgeControlPlaneSelfRepairV1.mjs', 'unknownPathCount, 0', 'openClawPathCount, 0', 'automaticExecutionAllowed, true'];
   for (const literal of requirements) requireLiteral(findings, source, path, literal, 'lifeboat-activation-regression-proof-missing');
 }
 
