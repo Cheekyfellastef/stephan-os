@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  CANONICAL_COORDINATOR_JOB,
+  CANONICAL_COORDINATOR_WORKFLOW_NAME,
+  CANONICAL_COORDINATOR_WORKFLOW_PATH,
+  INDEPENDENT_REVIEW_HANDOFF_PROVENANCE_SCHEMA,
+} from './independentReviewHandoffProvenanceV1.mjs';
+import {
   CANONICAL_REPOSITORY,
   CANONICAL_REVIEW_JOB,
   CANONICAL_REVIEW_WORKFLOW_NAME,
@@ -17,6 +23,7 @@ const sourceHead = '1111111111111111111111111111111111111111';
 const baseSha = '2222222222222222222222222222222222222222';
 const branch = 'agent/example-independent-review-target-v1';
 const prNumber = 1910;
+const handoffCommentId = 5348663430;
 
 function workflowDefinition(overrides = {}) {
   return {
@@ -24,6 +31,24 @@ function workflowDefinition(overrides = {}) {
     name: CANONICAL_REVIEW_WORKFLOW_NAME,
     path: CANONICAL_REVIEW_WORKFLOW_PATH,
     state: 'active',
+    ...overrides,
+  };
+}
+
+function coordinatorProvenance(overrides = {}) {
+  return {
+    schemaVersion: INDEPENDENT_REVIEW_HANDOFF_PROVENANCE_SCHEMA,
+    coordinatorWorkflowId: 316253381,
+    coordinatorWorkflowName: CANONICAL_COORDINATOR_WORKFLOW_NAME,
+    coordinatorWorkflowPath: CANONICAL_COORDINATOR_WORKFLOW_PATH,
+    coordinatorWorkflowRunId: 32307961772,
+    coordinatorWorkflowRunAttempt: 1,
+    coordinatorEvent: 'schedule',
+    coordinatorRepository: CANONICAL_REPOSITORY,
+    coordinatorSourceSha: baseSha,
+    coordinatorWorkflowRef: `${CANONICAL_REPOSITORY}/${CANONICAL_COORDINATOR_WORKFLOW_PATH}@refs/heads/main`,
+    coordinatorJobIdentity: CANONICAL_COORDINATOR_JOB,
+    handoffCommentId,
     ...overrides,
   };
 }
@@ -38,6 +63,7 @@ function handoffIdentity(overrides = {}) {
     branch,
     baseBranch: 'main',
     marker: `<!-- stephanos:exact-head-review-dispatch:v1 head=${sourceHead} -->`,
+    coordinatorProvenance: coordinatorProvenance(),
     authority: {
       reviewExecutionAllowed: true,
       sourceMutationAllowed: false,
@@ -108,12 +134,17 @@ function validRun(overrides = {}) {
   };
 }
 
-test('admits only the exact canonical review workflow for the exact current handoff', () => {
+test('admits only the exact canonical review workflow for the exact current run-bound handoff', () => {
   const result = admitIndependentReviewWorkflowDispatchV1(valid());
   assert.equal(result.verdict, 'INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_ADMITTED');
   assert.equal(result.binding.prNumber, prNumber);
   assert.equal(result.binding.sourceHead, sourceHead);
   assert.equal(result.binding.baseSha, baseSha);
+  assert.equal(result.binding.coordinatorWorkflowId, 316253381);
+  assert.equal(result.binding.coordinatorWorkflowRunId, 32307961772);
+  assert.equal(result.binding.coordinatorWorkflowRunAttempt, 1);
+  assert.equal(result.binding.coordinatorSourceSha, baseSha);
+  assert.equal(result.binding.handoffCommentId, handoffCommentId);
   assert.match(result.handoffBindingSha256, /^[a-f0-9]{64}$/);
   assert.deepEqual(result.workflowDispatchInputs, {
     pr_number: String(prNumber),
@@ -121,6 +152,14 @@ test('admits only the exact canonical review workflow for the exact current hand
     base_sha: baseSha,
     head_branch: branch,
     handoff_binding_sha256: result.handoffBindingSha256,
+  });
+  assert.deepEqual(result.requiredRevalidation, {
+    currentMain: true,
+    pullRequestIdentity: true,
+    workflowIdentity: true,
+    coordinatorWorkflowRun: true,
+    handoffComment: true,
+    exactRunAbsence: true,
   });
   assert.equal(result.authority.reviewWorkflowDispatchAllowed, true);
   assert.equal(result.authority.reviewExecutionAllowed, true);
@@ -133,7 +172,7 @@ test('admits only the exact canonical review workflow for the exact current hand
 test('stale current main or pull request base fails closed', () => {
   assert.throws(
     () => admitIndependentReviewWorkflowDispatchV1(valid({ currentMainSha: '3333333333333333333333333333333333333333' })),
-    /current canonical main/,
+    /current main|coordinator handoff provenance source/,
   );
   const stalePr = pullRequest();
   stalePr.base = { ...stalePr.base, sha: '3333333333333333333333333333333333333333' };
@@ -198,7 +237,35 @@ test('handoff authority cannot be widened or forged', () => {
   );
 });
 
-test('unknown top-level or workflow fields fail closed', () => {
+test('coordinator provenance is binding material and cannot silently drift from exact main', () => {
+  const first = admitIndependentReviewWorkflowDispatchV1(valid());
+
+  const changedRun = handoffIdentity({
+    coordinatorProvenance: coordinatorProvenance({ coordinatorWorkflowRunId: 32307961773 }),
+  });
+  const changed = admitIndependentReviewWorkflowDispatchV1(valid({ handoffIdentity: changedRun }));
+  assert.notEqual(first.handoffBindingSha256, changed.handoffBindingSha256);
+
+  const staleCoordinator = handoffIdentity({
+    coordinatorProvenance: coordinatorProvenance({
+      coordinatorSourceSha: '3333333333333333333333333333333333333333',
+    }),
+  });
+  assert.throws(
+    () => admitIndependentReviewWorkflowDispatchV1(valid({ handoffIdentity: staleCoordinator })),
+    /current main/,
+  );
+
+  const wrongJob = handoffIdentity({
+    coordinatorProvenance: coordinatorProvenance({ coordinatorJobIdentity: 'verify' }),
+  });
+  assert.throws(
+    () => admitIndependentReviewWorkflowDispatchV1(valid({ handoffIdentity: wrongJob })),
+    /provenance/,
+  );
+});
+
+test('unknown top-level, workflow or handoff-provenance fields fail closed', () => {
   assert.throws(
     () => admitIndependentReviewWorkflowDispatchV1({ ...valid(), command: 'run anything' }),
     /closed-world schema/,
@@ -207,9 +274,16 @@ test('unknown top-level or workflow fields fail closed', () => {
     () => admitIndependentReviewWorkflowDispatchV1(valid({ workflowDefinition: { ...workflowDefinition(), url: 'https://example.test' } })),
     /workflow identity/,
   );
+  const widened = handoffIdentity({
+    coordinatorProvenance: { ...coordinatorProvenance(), command: 'arbitrary' },
+  });
+  assert.throws(
+    () => admitIndependentReviewWorkflowDispatchV1(valid({ handoffIdentity: widened })),
+    /closed-world schema/,
+  );
 });
 
-test('dispatch binding is deterministic and changes with exact identity', () => {
+test('dispatch binding is deterministic and changes with exact PR identity', () => {
   const first = admitIndependentReviewWorkflowDispatchV1(valid());
   const second = admitIndependentReviewWorkflowDispatchV1(valid());
   assert.equal(first.handoffBindingSha256, second.handoffBindingSha256);
@@ -231,6 +305,9 @@ test('protected V2 gate trusts future workflow-dispatch review execution only on
   assert.equal(result.sourceHead, sourceHead);
   assert.equal(result.baseSha, baseSha);
   assert.equal(result.branch, branch);
+  assert.equal(result.coordinatorWorkflowRunId, 32307961772);
+  assert.equal(result.coordinatorWorkflowRunAttempt, 1);
+  assert.equal(result.handoffCommentId, handoffCommentId);
   assert.equal(result.authority.reviewExecutionAllowed, true);
   assert.equal(result.authority.sourceMutationAllowed, false);
   assert.equal(result.authority.approvalAllowed, false);

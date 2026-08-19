@@ -1,5 +1,13 @@
 import { createHash } from 'node:crypto';
 
+import {
+  CANONICAL_COORDINATOR_JOB,
+  CANONICAL_COORDINATOR_WORKFLOW_NAME,
+  CANONICAL_COORDINATOR_WORKFLOW_PATH,
+  INDEPENDENT_REVIEW_HANDOFF_PROVENANCE_SCHEMA,
+  validateIndependentReviewHandoffProvenanceV1,
+} from './independentReviewHandoffProvenanceV1.mjs';
+
 export const INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_ADMISSION_SCHEMA = 'stephanos.independent-review-workflow-dispatch-admission.v1';
 export const INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_RUN_SCHEMA = 'stephanos.independent-review-workflow-dispatch-run.v1';
 export const INDEPENDENT_REVIEW_HANDOFF_IDENTITY_SCHEMA = 'stephanos.independent-review-handoff-identity.v1';
@@ -38,6 +46,7 @@ const HANDOFF_KEYS = Object.freeze([
   'branch',
   'baseBranch',
   'marker',
+  'coordinatorProvenance',
   'authority',
 ]);
 const HANDOFF_AUTHORITY_KEYS = Object.freeze([
@@ -132,6 +141,22 @@ export function admitIndependentReviewWorkflowDispatchV1(input = {}) {
     || !validateHandoffAuthority(handoff.authority)) {
     throw new Error('authenticated provider-neutral handoff identity is incomplete or unsafe');
   }
+
+  const coordinatorProvenance = validateIndependentReviewHandoffProvenanceV1(
+    handoff.coordinatorProvenance,
+    {
+      repository,
+      currentMainSha,
+      handoffCommentId: handoff.coordinatorProvenance?.handoffCommentId,
+    },
+  );
+  if (text(coordinatorProvenance.schemaVersion) !== INDEPENDENT_REVIEW_HANDOFF_PROVENANCE_SCHEMA
+    || text(coordinatorProvenance.coordinatorWorkflowName) !== CANONICAL_COORDINATOR_WORKFLOW_NAME
+    || text(coordinatorProvenance.coordinatorWorkflowPath) !== CANONICAL_COORDINATOR_WORKFLOW_PATH
+    || text(coordinatorProvenance.coordinatorJobIdentity) !== CANONICAL_COORDINATOR_JOB) {
+    throw new Error('authenticated provider-neutral handoff coordinator provenance is not canonical');
+  }
+
   if (sha(handoff.baseSha) !== currentMainSha) {
     throw new Error('handoff base is not exact current canonical main');
   }
@@ -158,6 +183,17 @@ export function admitIndependentReviewWorkflowDispatchV1(input = {}) {
     branch: text(handoff.branch),
     baseBranch: CANONICAL_BASE_BRANCH,
     handoffMarker: text(handoff.marker),
+    coordinatorWorkflowId: coordinatorProvenance.coordinatorWorkflowId,
+    coordinatorWorkflowName: coordinatorProvenance.coordinatorWorkflowName,
+    coordinatorWorkflowPath: coordinatorProvenance.coordinatorWorkflowPath,
+    coordinatorWorkflowRunId: coordinatorProvenance.coordinatorWorkflowRunId,
+    coordinatorWorkflowRunAttempt: coordinatorProvenance.coordinatorWorkflowRunAttempt,
+    coordinatorEvent: coordinatorProvenance.coordinatorEvent,
+    coordinatorRepository: coordinatorProvenance.coordinatorRepository,
+    coordinatorSourceSha: coordinatorProvenance.coordinatorSourceSha,
+    coordinatorWorkflowRef: coordinatorProvenance.coordinatorWorkflowRef,
+    coordinatorJobIdentity: coordinatorProvenance.coordinatorJobIdentity,
+    handoffCommentId: coordinatorProvenance.handoffCommentId,
   });
   const handoffBindingSha256 = bindingSha256(binding);
 
@@ -177,6 +213,8 @@ export function admitIndependentReviewWorkflowDispatchV1(input = {}) {
       currentMain: true,
       pullRequestIdentity: true,
       workflowIdentity: true,
+      coordinatorWorkflowRun: true,
+      handoffComment: true,
       exactRunAbsence: true,
     }),
     authority: Object.freeze({
@@ -249,6 +287,9 @@ export function validateIndependentReviewWorkflowDispatchRunV1(input = {}) {
     baseSha: admission.binding.baseSha,
     branch: admission.binding.branch,
     handoffBindingSha256: admission.handoffBindingSha256,
+    coordinatorWorkflowRunId: admission.binding.coordinatorWorkflowRunId,
+    coordinatorWorkflowRunAttempt: admission.binding.coordinatorWorkflowRunAttempt,
+    handoffCommentId: admission.binding.handoffCommentId,
     authority: Object.freeze({
       reviewExecutionAllowed: true,
       sourceMutationAllowed: false,

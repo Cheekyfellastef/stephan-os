@@ -1,3 +1,7 @@
+import {
+  parseIndependentReviewHandoffProvenanceV1,
+} from './independentReviewHandoffProvenanceV1.mjs';
+
 export const INDEPENDENT_REVIEW_HANDOFF_IDENTITY_SCHEMA = 'stephanos.independent-review-handoff-identity.v1';
 export const EXACT_HEAD_REVIEW_DISPATCH_MARKER = 'stephanos:exact-head-review-dispatch:v1';
 export const TRUSTED_GITHUB_ACTIONS_REVIEWER = Object.freeze({
@@ -53,6 +57,7 @@ export function validateIndependentReviewHandoffIdentityV1(input = {}) {
   const hasPullRequest = Boolean(event?.issue?.pull_request);
   const actorLogin = text(event?.comment?.user?.login).toLowerCase();
   const actorId = positiveInteger(event?.comment?.user?.id);
+  const commentId = positiveInteger(event?.comment?.id);
   const body = text(event?.comment?.body);
   const marker = exactHeadReviewDispatchMarker(sourceHead);
 
@@ -66,11 +71,23 @@ export function validateIndependentReviewHandoffIdentityV1(input = {}) {
     || actorId !== TRUSTED_GITHUB_ACTIONS_REVIEWER.id) {
     throw new Error('handoff actor is not the trusted GitHub Actions coordinator');
   }
+  if (!commentId) {
+    throw new Error('handoff comment id is missing');
+  }
   if (!body.startsWith(marker)) {
     throw new Error('handoff marker is missing or bound to a different exact head');
   }
   if (!body.includes('## Provider-neutral exact-head review handoff')) {
     throw new Error('handoff body is not the canonical coordinator review request');
+  }
+
+  const coordinatorProvenance = parseIndependentReviewHandoffProvenanceV1(body, {
+    repository,
+    currentMainSha: baseSha,
+    handoffCommentId: commentId,
+  });
+  if (!sameSha(coordinatorProvenance.coordinatorSourceSha, baseSha)) {
+    throw new Error('handoff coordinator source is not exact current main');
   }
 
   return Object.freeze({
@@ -82,6 +99,7 @@ export function validateIndependentReviewHandoffIdentityV1(input = {}) {
     branch,
     baseBranch: 'main',
     marker,
+    coordinatorProvenance,
     authority: Object.freeze({
       reviewExecutionAllowed: true,
       sourceMutationAllowed: false,
