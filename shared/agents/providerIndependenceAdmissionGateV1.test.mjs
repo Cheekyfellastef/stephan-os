@@ -196,6 +196,14 @@ test('provider swap preserves exact checkpoint and receipt contracts', () => {
   assert.deepEqual(result.selectedAlternativeRouteIds, ['openclaw-review-v1']);
 });
 
+test('missing portable checkpoint contract gets the dedicated fail-closed verdict', () => {
+  const result = evaluate({
+    dependency: dependency({ portableCheckpointContract: '' }),
+  });
+  assert.equal(result.finalVerdict, PROVIDER_INDEPENDENCE_VERDICT.BLOCK_PORTABLE_CHECKPOINT_MISSING);
+  assert.deepEqual(result.blockers, ['portable-checkpoint-contract-missing']);
+});
+
 test('changed capability card invalidating the checkpoint contract blocks until reproof', () => {
   const changed = route({ portableCheckpointContract: 'different-checkpoint-v2' });
   const result = evaluate({ parityRoutes: [changed] });
