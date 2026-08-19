@@ -37,6 +37,29 @@ test('merge-signal publisher contracts are no-runtime while sync installer natur
   assert.equal(plan.automaticExecutionAllowed, true);
 });
 
+test('outbound health beacon control-plane estate coalesces as natural reload without OpenClaw approval', () => {
+  const plan = classifyPostSyncRefresh([
+    '.github/workflows/battle-bridge-resilience-proof.yml',
+    'scripts/battle-bridge-control-plane-self-repair.test.mjs',
+    'scripts/battle-bridge-outbound-health-beacon.mjs',
+    'scripts/battle-bridge-outbound-health-beacon.test.mjs',
+    'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1',
+    'scripts/windows/run-battle-bridge-outbound-health-beacon-hidden.ps1',
+    'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
+    'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs',
+  ]);
+
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.changedPathCount, 8);
+  assert.equal(plan.noRuntimePathCount, 3);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.unsafePathCount, 0);
+  assert.equal(plan.openClawApprovalRequired, false);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
 test('windowless Lifeboat delivery and its fixed control-plane reconciler naturally reload without stranding sync', () => {
   const plan = classifyPostSyncRefresh([
     'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs',
@@ -48,6 +71,9 @@ test('windowless Lifeboat delivery and its fixed control-plane reconciler natura
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
   assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
   assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.openClawPathCount, 0);
   assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.unsafePathCount, 0);
+  assert.equal(plan.openClawApprovalRequired, false);
   assert.equal(plan.automaticExecutionAllowed, true);
 });

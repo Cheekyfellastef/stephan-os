@@ -28,23 +28,27 @@ const TARGET_ORDER = Object.freeze([
 
 const NATURAL_EXACT = new Set([
   'shared/agents/battleBridgeGitHubCommandMailbox.mjs',
-  'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs',
   'shared/agents/stephanosCapabilityRegistry.mjs',
   'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
+  'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs',
   'scripts/battle-bridge-github-command-mailbox.mjs',
   'scripts/battle-bridge-github-sync-executor.mjs',
   'scripts/battle-bridge-github-sync-and-refresh.mjs',
   'scripts/battle-bridge-post-sync-refresh.mjs',
   'scripts/battle-bridge-shared-workspace-publisher.mjs',
+  'scripts/battle-bridge-outbound-health-beacon.mjs',
   'scripts/chatgpt-shared-workspace-github-relay.mjs',
   'scripts/windows/probe-battle-bridge-recovery-mesh.ps1',
   'scripts/windows/run-battle-bridge-github-sync-hidden.ps1',
   'scripts/windows/install-battle-bridge-github-sync.ps1',
   'scripts/windows/status-battle-bridge-github-sync.ps1',
   'scripts/windows/uninstall-battle-bridge-github-sync.ps1',
-  'scripts/windows/restart-approved-stephanos-runtime.ps1',
+  'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1',
+  'scripts/windows/run-battle-bridge-outbound-health-beacon-hidden.ps1',
   'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
   'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
+  'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
+  'scripts/windows/restart-approved-stephanos-runtime.ps1',
 ]);
 
 const NATURAL_PREFIXES = Object.freeze([
@@ -121,6 +125,7 @@ function isTestOrDocumentation(path) {
 }
 
 function isOpenClawPath(path) {
+  if (NATURAL_EXACT.has(path)) return false;
   return path.startsWith('integrations/openclaw/')
     || path.startsWith('openclaw/')
     || /(?:^|\/)[^/]*openclaw[^/]*\.(?:mjs|js|ps1|vbs|json)$/i.test(path)
@@ -148,6 +153,7 @@ function isUiPath(path) {
 }
 
 function isBackendPath(path) {
+  if (NATURAL_EXACT.has(path)) return false;
   return path.startsWith('stephanos-server/')
     || path.startsWith('shared/ai/')
     || path.startsWith('shared/runtime/')
@@ -162,6 +168,7 @@ function isBackendPath(path) {
 }
 
 function isMissionWorkerPath(path) {
+  if (NATURAL_EXACT.has(path)) return false;
   return (path.startsWith('shared/agents/') && !NATURAL_EXACT.has(path))
     || path.startsWith('scripts/mission-orchestrator-worker')
     || path.startsWith('scripts/battle-bridge-worker-watchdog')
