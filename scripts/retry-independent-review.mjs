@@ -5,6 +5,10 @@ import {
   planIndependentReviewRetry,
 } from '../shared/agents/independentReviewRetryPlanner.mjs';
 import {
+  buildIndependentReviewRunQueryV1,
+  selectIndependentReviewRunCandidatesV1,
+} from '../shared/agents/independentReviewRunDiscoveryV1.mjs';
+import {
   INDEPENDENT_REVIEW_WORKFLOW_NAME,
   INDEPENDENT_REVIEW_WORKFLOW_PATH,
 } from '../shared/agents/operatorMergeApprovalGate.mjs';
@@ -118,10 +122,15 @@ async function loadCanonicalWorkflow(owner, repo) {
   };
 }
 
-async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, expectedHead) {
-  const encodedHead = encodeURIComponent(expectedHead);
-  const path = `/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?event=pull_request_target&head_sha=${encodedHead}&per_page=100&page=1`;
-  const payload = await githubRequest(path);
+async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, headRef, expectedHead, expectedBase) {
+  // The workflow executes trusted code from the base, while the Actions REST
+  // run identity reports the pull request feature commit as run.head_sha.
+  // Query that exact feature identity, then require the embedded PR binding to
+  // prove the exact branch, feature head and trusted base independently.
+  const query = buildIndependentReviewRunQueryV1({ workflowId, expectedHead });
+  const trustedQueryPrefix = `/actions/workflows/${workflowId}/runs?event=pull_request_target`;
+  if (!query.startsWith(trustedQueryPrefix)) throw new Error('review-run discovery escaped the trusted workflow/event route');
+  const payload = await githubRequest(`/repos/${owner}/${repo}${query}`);
   const listed = payload?.workflow_runs;
   if (!Array.isArray(listed)) {
     throw new Error('bounded exact-head review-run payload is not workflow_runs');
@@ -129,14 +138,13 @@ async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, expectedH
   if (positiveInteger(payload?.total_count) > listed.length) {
     throw new Error('bounded exact-head review-run query exceeded 100 records');
   }
-  const candidates = listed
-    .filter((run) => (
-      text(run?.head_sha).toLowerCase() === expectedHead
-      && Array.isArray(run?.pull_requests)
-      && run.pull_requests.some((pr) => positiveInteger(pr?.number) === prNumber)
-    ))
-    .sort((left, right) => positiveInteger(right?.id) - positiveInteger(left?.id))
-    .slice(0, MAX_RUN_DETAILS);
+  const candidates = selectIndependentReviewRunCandidatesV1({
+    runs: listed,
+    prNumber,
+    headRef,
+    expectedHead,
+    expectedBase,
+  }).slice(0, MAX_RUN_DETAILS);
   const details = [];
   for (const candidate of candidates) {
     details.push(mapRun(await githubRequest(`/repos/${owner}/${repo}/actions/runs/${positiveInteger(candidate.id)}`)));
@@ -179,7 +187,15 @@ async function main() {
     throw new Error('pull-request base is not exact current main');
   }
 
-  const runs = await loadRecentReviewRuns(owner, repo, workflow.id, prNumber, expectedHead);
+  const runs = await loadRecentReviewRuns(
+    owner,
+    repo,
+    workflow.id,
+    prNumber,
+    pr.headRef,
+    expectedHead,
+    pr.baseSha,
+  );
   const plan = planIndependentReviewRetry({ repository, workflow, pr, runs });
   console.log(`INDEPENDENT_REVIEW_RETRY_DECISION=${plan.decision}`);
   console.log(`INDEPENDENT_REVIEW_RETRY_PR=${plan.prNumber ?? ''}`);
