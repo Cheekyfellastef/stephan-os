@@ -85,6 +85,42 @@ test('authenticated OpenClaw plugin host is a bounded fallback when /identity se
   assert.equal(writtenProof.hostPid, 4321);
 });
 
+test('failed fixed adapter projects only an allowlisted blocker code and never raw stderr', async () => {
+  const specific = await wakeBattleBridgeRecoveryMesh({
+    platform: 'win32',
+    env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    authenticatedContext,
+    nonce: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    fetchFn: identityFetch,
+    writeHostProofFn: ({ proof }) => ({ proofId: proof.proofId }),
+    spawnSyncFn: () => ({
+      status: 1,
+      stderr: 'At C:\\Users\\Stephan Callear\\private\\adapter.ps1:99 RECOVERY_MESH_TASK_NOT_INSTALLED secret-shaped-text',
+    }),
+  });
+  assert.deepEqual(specific, {
+    ok: false,
+    blocker: 'RECOVERY_MESH_TASK_NOT_INSTALLED',
+    exitCode: 1,
+  });
+
+  const opaque = await wakeBattleBridgeRecoveryMesh({
+    platform: 'win32',
+    env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    authenticatedContext,
+    nonce: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+    fetchFn: identityFetch,
+    writeHostProofFn: ({ proof }) => ({ proofId: proof.proofId }),
+    spawnSyncFn: () => ({ status: 5, stderr: 'C:\\private\\credential-shaped-path access denied' }),
+  });
+  assert.deepEqual(opaque, {
+    ok: false,
+    blocker: 'RECOVERY_WAKE_FIXED_ADAPTER_FAILED',
+    exitCode: 5,
+  });
+  assert.doesNotMatch(JSON.stringify(opaque), /private|credential|Stephan/i);
+});
+
 test('non-Windows, unauthenticated, identity-less and failed adapter calls fail closed', async () => {
   assert.equal((await wakeBattleBridgeRecoveryMesh({ platform: 'linux' })).blocker, 'RECOVERY_WAKE_WINDOWS_REQUIRED');
   assert.equal((await wakeBattleBridgeRecoveryMesh({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\Stephan Callear' }, fetchFn: identityFetch })).blocker, 'RECOVERY_WAKE_OPENCLAW_AUTH_REQUIRED');
