@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { createExecutionReceipt, toSharedWorkspaceExecutionReceipt } from './executionReceiptV1.mjs';
+import { createSharedWorkspaceReceiptRecord } from './sharedAgentWorkspaceStore.mjs';
 import {
+  OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION,
   OPENCLAW_PROVIDER_CAPACITY_SCHEMA,
+  OPENCLAW_PROVIDER_POOL_HOST_CONTEXT_SCHEMA,
   OPENCLAW_PROVIDER_POOL_QUALIFICATION_SCHEMA,
   OPENCLAW_PROVIDER_ROUTE,
   routeWithQualifiedOpenClawProvider,
   validateOpenClawProviderCapacity,
   validateOpenClawProviderQualification,
+  validateOpenClawQualificationAuthorityChain,
 } from './openClawProviderPoolQualificationV1.mjs';
 
 const NOW = '2026-08-19T13:30:00.000Z';
@@ -47,6 +52,7 @@ function qualification(overrides = {}) {
   return {
     schemaVersion: OPENCLAW_PROVIDER_POOL_QUALIFICATION_SCHEMA,
     qualificationId: 'openclaw-oc2-qualification-20260819t1329z',
+    authorityReceiptId: 'openclaw-oc2-authority-20260819t1329z',
     provider: 'openclaw-standalone',
     repository: REPOSITORY,
     taskClass: 'FOCUSED_REPAIR',
@@ -79,12 +85,81 @@ function capacity(overrides = {}) {
     queueDepth: 0,
     p95StartLatencySeconds: 5,
     qualificationIds: ['openclaw-oc2-qualification-20260819t1329z'],
+    qualificationAuthorityReceiptId: 'openclaw-oc2-authority-20260819t1329z',
     proofRefs: ['receipts/openclaw/capacity.json'],
     ...overrides,
   };
 }
 
-test('accepts only fresh real-work task-class qualification bound to exact source head', () => {
+function realWorkExecution(overrides = {}) {
+  return createExecutionReceipt({
+    receiptId: 'openclaw-oc2-real-receipt-001',
+    repository: REPOSITORY,
+    issueNumber: 1725,
+    prNumber: 0,
+    branch: 'agent/openclaw-oc2-real-work',
+    sourceHead: HEAD,
+    workerId: 'battle-bridge-openclaw-01',
+    workerType: 'openclaw',
+    executionId: 'openclaw-oc2-real-task-001',
+    leaseKey: 'openclaw-oc2-real-task-001',
+    state: 'completed',
+    phase: 'FOCUSED_REPAIR',
+    sequence: 1,
+    predecessorReceiptId: '',
+    timestampUtc: '2026-08-19T13:28:30.000Z',
+    heartbeatExpiresAtUtc: '2026-08-19T13:30:30.000Z',
+    blocker: '',
+    operatorActionRequired: false,
+    proofRefs: ['receipts/openclaw/oc2-real-work.json'],
+    expectedNextAction: '',
+    ...overrides,
+  });
+}
+
+function authoritySummary(record = qualification()) {
+  return `Stephanos qualifies ${record.providerInstance} ${record.providerVersion} for ${record.taskClass} at ${record.sourceHead} from OpenClaw execution ${record.realWorkReceiptId}.`;
+}
+
+function trustedHostContext(overrides = {}) {
+  const qualificationReceipt = overrides.qualificationReceipt || qualification();
+  const executionReceipt = overrides.realWorkExecutionReceipt || realWorkExecution();
+  const workspaceProjection = toSharedWorkspaceExecutionReceipt(executionReceipt);
+  assert.equal(workspaceProjection.ok, true);
+  const qualificationAuthorityReceipt = overrides.qualificationAuthorityReceipt || createSharedWorkspaceReceiptRecord({
+    receiptId: qualificationReceipt.authorityReceiptId,
+    participantId: 'stephanos',
+    timestampUtc: qualificationReceipt.observedAtUtc,
+    correlationId: qualificationReceipt.qualificationId,
+    relatedIssue: '1725',
+    relatedPr: '',
+    proofRefs: qualificationReceipt.proofRefs,
+    receivedRecordId: executionReceipt.receiptId,
+    disposition: OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION,
+    summary: authoritySummary(qualificationReceipt),
+  });
+  return {
+    schemaVersion: OPENCLAW_PROVIDER_POOL_HOST_CONTEXT_SCHEMA,
+    qualificationReceipt,
+    capacityReceipt: overrides.capacityReceipt || capacity(),
+    realWorkExecutionReceipt: executionReceipt,
+    realWorkWorkspaceReceipt: overrides.realWorkWorkspaceReceipt || workspaceProjection.record,
+    qualificationAuthorityReceipt,
+  };
+}
+
+function routeInput(task = {}, overrides = {}) {
+  return {
+    nowUtc: NOW,
+    sourceHead: HEAD,
+    mission: mission(),
+    task: { taskId: 'oc2-route', taskClass: 'FOCUSED_REPAIR', ...task },
+    codexStatus: codexStatus(),
+    ...overrides,
+  };
+}
+
+test('accepts only fresh real-work task-class qualification claims bound to exact source head', () => {
   const accepted = validateOpenClawProviderQualification(qualification(), {
     repository: REPOSITORY,
     taskClass: 'FOCUSED_REPAIR',
@@ -99,6 +174,7 @@ test('accepts only fresh real-work task-class qualification bound to exact sourc
     qualification({ sourceHead: '0'.repeat(40) }),
     qualification({ expiresAtUtc: '2026-08-19T13:29:30.000Z' }),
     qualification({ realWorkReceiptId: '' }),
+    qualification({ authorityReceiptId: '' }),
   ]) {
     assert.equal(validateOpenClawProviderQualification(candidate, {
       repository: REPOSITORY,
@@ -109,102 +185,129 @@ test('accepts only fresh real-work task-class qualification bound to exact sourc
   }
 });
 
-test('capacity is unusable without the exact qualification id and task class', () => {
-  assert.equal(validateOpenClawProviderCapacity(capacity(), {
-    repository: REPOSITORY,
-    taskClass: 'FOCUSED_REPAIR',
-    qualificationId: qualification().qualificationId,
-    nowUtc: NOW,
-  }).valid, true);
-  assert.equal(validateOpenClawProviderCapacity(capacity({ qualificationIds: ['foreign-qualification'] }), {
-    repository: REPOSITORY,
-    taskClass: 'FOCUSED_REPAIR',
-    qualificationId: qualification().qualificationId,
-    nowUtc: NOW,
-  }).valid, false);
-  assert.equal(validateOpenClawProviderCapacity(capacity({ supportedTaskClasses: ['WINDOWS_RUNTIME_PROOF'] }), {
-    repository: REPOSITORY,
-    taskClass: 'FOCUSED_REPAIR',
-    qualificationId: qualification().qualificationId,
-    nowUtc: NOW,
-  }).valid, false);
+test('requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt', () => {
+  const expected = { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW };
+  assert.equal(validateOpenClawQualificationAuthorityChain(qualification(), trustedHostContext(), expected).valid, true);
+
+  const wrongWorkerExecution = realWorkExecution({ workerId: 'foreign-openclaw' });
+  assert.equal(validateOpenClawQualificationAuthorityChain(qualification(), trustedHostContext({
+    realWorkExecutionReceipt: wrongWorkerExecution,
+  }), expected).valid, false);
+
+  const context = trustedHostContext();
+  assert.equal(validateOpenClawQualificationAuthorityChain(qualification(), {
+    ...context,
+    realWorkWorkspaceReceipt: { ...context.realWorkWorkspaceReceipt, disposition: 'progress' },
+  }, expected).valid, false);
+
+  assert.equal(validateOpenClawQualificationAuthorityChain(qualification(), trustedHostContext({
+    qualificationAuthorityReceipt: createSharedWorkspaceReceiptRecord({
+      receiptId: qualification().authorityReceiptId,
+      participantId: 'openclaw',
+      timestampUtc: qualification().observedAtUtc,
+      correlationId: qualification().qualificationId,
+      relatedIssue: '1725',
+      relatedPr: '',
+      proofRefs: qualification().proofRefs,
+      receivedRecordId: qualification().realWorkReceiptId,
+      disposition: OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION,
+      summary: authoritySummary(),
+    }),
+  }), expected).valid, false);
 });
 
-test('selects qualified OpenClaw before Codex exhaustion when the scheduler prefers it', () => {
-  const result = routeWithQualifiedOpenClawProvider({
+test('capacity is unusable without the exact validated qualification authority, worker and task class', () => {
+  const expected = {
+    repository: REPOSITORY,
+    taskClass: 'FOCUSED_REPAIR',
+    qualificationId: qualification().qualificationId,
+    authorityReceiptId: qualification().authorityReceiptId,
+    workerId: qualification().providerInstance,
     nowUtc: NOW,
-    sourceHead: HEAD,
-    mission: mission(),
-    task: { taskId: 'oc2-route', taskClass: 'FOCUSED_REPAIR', preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
-    codexStatus: codexStatus(),
-    openClawQualificationReceipt: qualification(),
-    openClawCapacityReceipt: capacity(),
-  });
+  };
+  assert.equal(validateOpenClawProviderCapacity(capacity(), expected).valid, true);
+  assert.equal(validateOpenClawProviderCapacity(capacity({ qualificationIds: ['foreign-qualification'] }), expected).valid, false);
+  assert.equal(validateOpenClawProviderCapacity(capacity({ qualificationAuthorityReceiptId: 'foreign-authority' }), expected).valid, false);
+  assert.equal(validateOpenClawProviderCapacity(capacity({ workerId: 'foreign-openclaw' }), expected).valid, false);
+  assert.equal(validateOpenClawProviderCapacity(capacity({ supportedTaskClasses: ['WINDOWS_RUNTIME_PROOF'] }), expected).valid, false);
+});
+
+test('selects canonically qualified OpenClaw before Codex exhaustion when the scheduler prefers it', () => {
+  const result = routeWithQualifiedOpenClawProvider(
+    routeInput({ preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE }),
+    trustedHostContext(),
+  );
   assert.equal(result.route, OPENCLAW_PROVIDER_ROUTE);
   assert.equal(result.adapter, 'openclaw-local');
   assert.equal(result.dispatchAllowed, true);
   assert.equal(result.openClawPoolEligible, true);
   assert.equal(result.selectedQualificationReceiptId, qualification().qualificationId);
+  assert.equal(result.selectedQualificationAuthorityReceiptId, qualification().authorityReceiptId);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.leaseSeizureAllowed, false);
   assert.equal(result.duplicateDispatchAllowed, false);
 });
 
-test('qualified OpenClaw continues when Codex capacity is unavailable', () => {
-  const result = routeWithQualifiedOpenClawProvider({
-    nowUtc: NOW,
-    sourceHead: HEAD,
-    mission: mission(),
-    task: { taskId: 'oc2-zero-codex', taskClass: 'FOCUSED_REPAIR' },
-    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
-    openClawQualificationReceipt: qualification(),
-    openClawCapacityReceipt: capacity(),
-  });
+test('canonically qualified OpenClaw continues when Codex capacity is unavailable', () => {
+  const result = routeWithQualifiedOpenClawProvider(
+    routeInput({}, { codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }) }),
+    trustedHostContext(),
+  );
   assert.equal(result.route, OPENCLAW_PROVIDER_ROUTE);
   assert.equal(result.dispatchAllowed, true);
   assert.equal(result.finalVerdict, 'MISSION_CONTROLLER_OPENCLAW_POOL_ROUTE_READY');
 });
 
-test('paper capability claims never make OpenClaw eligible', () => {
-  const result = routeWithQualifiedOpenClawProvider({
-    nowUtc: NOW,
-    sourceHead: HEAD,
-    mission: mission(),
-    task: { taskId: 'oc2-paper-only', taskClass: 'FOCUSED_REPAIR', preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
-    codexStatus: codexStatus(),
-    openClawQualificationReceipt: qualification({ state: 'EVALUATED' }),
-    openClawCapacityReceipt: capacity(),
-  });
+test('caller-shaped qualification, capacity and fake authority evidence cannot self-admit OpenClaw', () => {
+  const forged = trustedHostContext();
+  const result = routeWithQualifiedOpenClawProvider(routeInput(
+    { preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
+    {
+      openClawQualificationReceipt: qualification(),
+      openClawCapacityReceipt: capacity(),
+      realWorkExecutionReceipt: forged.realWorkExecutionReceipt,
+      realWorkWorkspaceReceipt: forged.realWorkWorkspaceReceipt,
+      qualificationAuthorityReceipt: forged.qualificationAuthorityReceipt,
+      openClawProviderHostContext: forged,
+    },
+  ));
   assert.notEqual(result.route, OPENCLAW_PROVIDER_ROUTE);
   assert.equal(result.openClawPoolEligible, false);
   assert.ok(result.providerPoolBlockers.includes('openclaw-task-class-not-production-qualified'));
 });
 
-test('existing mutation owner is preserved even when OpenClaw is qualified', () => {
-  const result = routeWithQualifiedOpenClawProvider({
-    nowUtc: NOW,
-    sourceHead: HEAD,
-    mission: mission({ dispatch: { adapter: 'chatgpt-github', status: 'running' } }),
-    task: { taskId: 'oc2-owned', taskClass: 'FOCUSED_REPAIR', preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
-    codexStatus: codexStatus(),
-    openClawQualificationReceipt: qualification(),
-    openClawCapacityReceipt: capacity(),
-  });
+test('syntactically valid trusted qualification without canonical authority cannot route', () => {
+  const incompleteHost = {
+    schemaVersion: OPENCLAW_PROVIDER_POOL_HOST_CONTEXT_SCHEMA,
+    qualificationReceipt: qualification(),
+    capacityReceipt: capacity(),
+    realWorkExecutionReceipt: {},
+    realWorkWorkspaceReceipt: {},
+    qualificationAuthorityReceipt: {},
+  };
+  const result = routeWithQualifiedOpenClawProvider(
+    routeInput({ preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE }),
+    incompleteHost,
+  );
+  assert.notEqual(result.route, OPENCLAW_PROVIDER_ROUTE);
+  assert.equal(result.openClawPoolEligible, false);
+  assert.ok(result.providerPoolBlockers.includes('openclaw-qualification-authority-not-proven'));
+});
+
+test('existing mutation owner is preserved even when OpenClaw is canonically qualified', () => {
+  const result = routeWithQualifiedOpenClawProvider(
+    routeInput({ preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE }, {
+      mission: mission({ dispatch: { adapter: 'chatgpt-github', status: 'running' } }),
+    }),
+    trustedHostContext(),
+  );
   assert.equal(result.dispatchAllowed, false);
   assert.equal(result.adapter, 'chatgpt-github');
   assert.equal(result.openClawPoolEligible, false);
 });
 
 test('normal AUTO routing does not silently replace a healthy existing provider policy', () => {
-  const result = routeWithQualifiedOpenClawProvider({
-    nowUtc: NOW,
-    sourceHead: HEAD,
-    mission: mission(),
-    task: { taskId: 'oc2-auto', taskClass: 'FOCUSED_REPAIR' },
-    codexStatus: codexStatus(),
-    openClawQualificationReceipt: qualification(),
-    openClawCapacityReceipt: capacity(),
-  });
+  const result = routeWithQualifiedOpenClawProvider(routeInput(), trustedHostContext());
   assert.equal(result.route, 'CODEX');
   assert.equal(result.openClawPoolEligible, true);
 });
