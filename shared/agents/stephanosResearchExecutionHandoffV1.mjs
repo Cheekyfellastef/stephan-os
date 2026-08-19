@@ -258,18 +258,24 @@ export function reconcileStephanosResearchExecutionReturnV1(input = {}) {
   try {
     const request = plainObject(input);
     const mission = plainObject(request?.mission);
+    const handoff = plainObject(request?.handoff);
     const executionReturn = plainObject(request?.executionReturn);
-    if (!request || !mission || !executionReturn) return null;
+    if (!request || !mission || !handoff || !executionReturn) return null;
     if (mission.schemaVersion !== STEPHANOS_RESEARCH_MISSION_SCHEMA_VERSION) return null;
+    if (handoff.schemaVersion !== STEPHANOS_RESEARCH_EXECUTION_HANDOFF_SCHEMA_VERSION) return null;
+    if (handoff.valid !== true || handoff.state !== STEPHANOS_RESEARCH_EXECUTION_STATES.READY_FOR_EXISTING_SCHEDULER) return null;
     if (executionReturn.schemaVersion !== STEPHANOS_RESEARCH_EXECUTION_RETURN_SCHEMA_VERSION) return null;
     if (executionReturnViolatesAuthority(executionReturn)) return null;
 
     const missionId = id(mission.researchMissionId);
     const missionFingerprint = text(mission.missionFingerprint);
     if (!missionId || !missionFingerprint) return null;
+    if (id(handoff.researchMissionId) !== missionId || text(handoff.missionFingerprint) !== missionFingerprint) return null;
     if (id(executionReturn.researchMissionId) !== missionId) return null;
     if (text(executionReturn.missionFingerprint) !== missionFingerprint) return null;
     if (text(executionReturn.researchRoute).toUpperCase() !== text(mission.researchRoute).toUpperCase()) return null;
+    const executionRoute = text(executionReturn.schedulerRoute).toUpperCase();
+    if (!EXISTING_SCHEDULER_ROUTES.has(executionRoute) || executionRoute !== handoff.schedulerRoute) return null;
     if (text(executionReturn.state).toUpperCase() !== 'COMPLETED') return null;
 
     const results = list(executionReturn.researchResults).map((entry) => plainObject(entry)).filter(Boolean);
@@ -295,7 +301,7 @@ export function reconcileStephanosResearchExecutionReturnV1(input = {}) {
       accepted: true,
       researchMissionId: missionId,
       missionFingerprint,
-      executionRoute: text(executionReturn.schedulerRoute).toUpperCase(),
+      executionRoute,
       providerSubstitutionUsed: executionReturn.providerSubstitutionUsed === true,
       evidencePacket: packet,
       authority: authorityBoundary(),
