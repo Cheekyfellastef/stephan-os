@@ -123,19 +123,20 @@ async function loadCanonicalWorkflow(owner, repo) {
 }
 
 async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, headRef, expectedHead, expectedBase) {
-  // pull_request_target runs execute from the trusted base, so GitHub exposes
-  // the base commit as run.head_sha. The feature head is carried inside the
-  // run's pull_requests[] binding and must be checked separately.
-  const query = buildIndependentReviewRunQueryV1({ workflowId, expectedBase });
+  // The workflow executes trusted code from the base, while the Actions REST
+  // run identity reports the pull request feature commit as run.head_sha.
+  // Query that exact feature identity, then require the embedded PR binding to
+  // prove the exact branch, feature head and trusted base independently.
+  const query = buildIndependentReviewRunQueryV1({ workflowId, expectedHead });
   const trustedQueryPrefix = `/actions/workflows/${workflowId}/runs?event=pull_request_target`;
   if (!query.startsWith(trustedQueryPrefix)) throw new Error('review-run discovery escaped the trusted workflow/event route');
   const payload = await githubRequest(`/repos/${owner}/${repo}${query}`);
   const listed = payload?.workflow_runs;
   if (!Array.isArray(listed)) {
-    throw new Error('bounded exact-base review-run payload is not workflow_runs');
+    throw new Error('bounded exact-head review-run payload is not workflow_runs');
   }
   if (positiveInteger(payload?.total_count) > listed.length) {
-    throw new Error('bounded exact-base review-run query exceeded 100 records');
+    throw new Error('bounded exact-head review-run query exceeded 100 records');
   }
   const candidates = selectIndependentReviewRunCandidatesV1({
     runs: listed,
