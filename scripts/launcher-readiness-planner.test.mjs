@@ -36,6 +36,75 @@ test('runtime-only dirt is caveat, not source blocker', () => {
   assert.equal(plan.caveats[0].id, 'runtime-only-dirt');
 });
 
+test('status-aware readiness accepts only the exact unstaged durable-memory runtime write', () => {
+  const allowed = planLauncherReadiness({
+    observedFacts: { services: allReady },
+    sourceFacts: {
+      statusLines: [' M stephanos-server/data/memory/durable-memory.json'],
+      dirtyPaths: ['stephanos-server/data/memory/durable-memory.json'],
+    },
+  });
+  assert.equal(allowed.finalVerdict, 'ready');
+  assert.deepEqual(allowed.safetyBlockers, []);
+  assert.deepEqual(allowed.caveats[0].paths, ['stephanos-server/data/memory/durable-memory.json']);
+
+  for (const statusLine of [
+    'M  stephanos-server/data/memory/durable-memory.json',
+    ' D stephanos-server/data/memory/durable-memory.json',
+    '?? stephanos-server/data/memory/durable-memory.json',
+  ]) {
+    const blocked = planLauncherReadiness({
+      observedFacts: { services: allReady },
+      sourceFacts: {
+        statusLines: [statusLine],
+        dirtyPaths: ['stephanos-server/data/memory/durable-memory.json'],
+      },
+    });
+    assert.equal(blocked.finalVerdict, 'blocked-dirty-source', statusLine);
+    assert.equal(blocked.safetyBlockers[0].id, 'dirty-source');
+  }
+});
+
+test('path-only durable-memory evidence stays fail closed because status qualification is missing', () => {
+  const plan = planLauncherReadiness({
+    observedFacts: { services: allReady },
+    sourceFacts: { dirtyPaths: ['stephanos-server/data/memory/durable-memory.json'] },
+  });
+  assert.equal(plan.finalVerdict, 'blocked-dirty-source');
+  assert.deepEqual(plan.safetyBlockers[0].paths, ['stephanos-server/data/memory/durable-memory.json']);
+});
+
+test('generated dist deletion is runtime build churn rather than source dirt', () => {
+  const plan = planLauncherReadiness({
+    observedFacts: { services: allReady },
+    sourceFacts: {
+      statusLines: [' D apps/stephanos/dist/assets/index-oldhash.js'],
+      dirtyPaths: ['apps/stephanos/dist/assets/index-oldhash.js'],
+    },
+  });
+  assert.equal(plan.finalVerdict, 'ready');
+  assert.deepEqual(plan.safetyBlockers, []);
+  assert.deepEqual(plan.caveats[0].paths, ['apps/stephanos/dist/assets/index-oldhash.js']);
+});
+
+test('status-aware runtime dirt cannot hide an ordinary tracked source modification', () => {
+  const plan = planLauncherReadiness({
+    observedFacts: { services: allReady },
+    sourceFacts: {
+      statusLines: [
+        ' M stephanos-server/data/memory/durable-memory.json',
+        ' M scripts/source.mjs',
+      ],
+      dirtyPaths: [
+        'stephanos-server/data/memory/durable-memory.json',
+        'scripts/source.mjs',
+      ],
+    },
+  });
+  assert.equal(plan.finalVerdict, 'blocked-dirty-source');
+  assert.deepEqual(plan.safetyBlockers[0].paths, ['scripts/source.mjs']);
+});
+
 test('unsafe launcher command is rejected', () => {
   const plan = planLauncherReadiness({ observedFacts: { services: allReady }, requestedStartCommand: 'rm -rf /' });
   assert.equal(isAllowedLauncherStartCommand('rm -rf /'), false);
