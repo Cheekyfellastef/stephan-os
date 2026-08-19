@@ -5,15 +5,32 @@ import {
   resolveOpenClawBuilderCommand,
   runOpenClawOc1RepositoryScout,
 } from './lib/oc1-repository-scout.mjs';
+import {
+  OPENCLAW_OC1_GATEWAY_METHOD,
+  executeOpenClawOc1GatewayRequest,
+} from './lib/oc1-gateway-provider.mjs';
 
 export default definePluginEntry({
   id: 'stephanos-builder-provider',
   name: 'Stephanos Builder Provider',
   description: 'Bounded OpenClaw provider tasks for Stephanos qualification, beginning with read-only OC1 repository scouting.',
   register(api) {
+    api.registerGatewayMethod(
+      OPENCLAW_OC1_GATEWAY_METHOD,
+      async (params) => executeOpenClawOc1GatewayRequest(params, {
+        gatewayRuntimeContext: {
+          executingInsideOpenClawGateway: true,
+          pluginId: 'stephanos-builder-provider',
+          method: OPENCLAW_OC1_GATEWAY_METHOD,
+          providerInstance: `openclaw-gateway:${process.pid}`,
+        },
+      }),
+      { scope: 'operator.write' },
+    );
+
     api.registerCommand({
       name: 'stephanos-builder',
-      description: 'Run bounded Stephanos/OpenClaw diagnostics. Qualification is reserved for canonical Mission Worker claims.',
+      description: 'Run bounded Stephanos/OpenClaw diagnostics. Qualification is reserved for canonical Mission Worker claims executed by the OpenClaw Gateway plugin.',
       acceptsArgs: true,
       requireAuth: true,
       handler: async (ctx) => {
