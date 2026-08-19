@@ -8,8 +8,10 @@ import {
   CANONICAL_REVIEW_WORKFLOW_PATH,
   INDEPENDENT_REVIEW_HANDOFF_IDENTITY_SCHEMA,
   admitIndependentReviewWorkflowDispatchV1,
-  validateIndependentReviewWorkflowDispatchRunV1,
 } from './independentReviewWorkflowDispatchAdmissionV1.mjs';
+import {
+  validateIndependentReviewWorkflowDispatchRunV1,
+} from './operatorMergeApprovalGateV2.mjs';
 
 const sourceHead = '1111111111111111111111111111111111111111';
 const baseSha = '2222222222222222222222222222222222222222';
@@ -222,7 +224,7 @@ test('dispatch binding is deterministic and changes with exact identity', () => 
   assert.notEqual(first.handoffBindingSha256, changed.handoffBindingSha256);
 });
 
-test('future workflow-dispatch review execution is trusted only on canonical main with exact admitted inputs', () => {
+test('protected V2 gate trusts future workflow-dispatch review execution only on canonical main with exact admitted inputs', () => {
   const result = validateIndependentReviewWorkflowDispatchRunV1(validRun());
   assert.equal(result.verdict, 'INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_RUN_TRUSTED');
   assert.equal(result.prNumber, prNumber);
@@ -237,7 +239,7 @@ test('future workflow-dispatch review execution is trusted only on canonical mai
   assert.equal(result.authority.arbitraryCommandAllowed, false);
 });
 
-test('future workflow-dispatch review execution rejects untrusted GitHub Actions boundaries', () => {
+test('protected V2 gate rejects untrusted future workflow-dispatch GitHub Actions boundaries', () => {
   for (const environment of [
     runEnvironment({ GITHUB_ACTIONS: 'false' }),
     runEnvironment({ GITHUB_EVENT_NAME: 'push' }),
@@ -255,7 +257,7 @@ test('future workflow-dispatch review execution rejects untrusted GitHub Actions
   }
 });
 
-test('future workflow-dispatch review execution rejects forged, widened or stale dispatch inputs', () => {
+test('protected V2 gate rejects forged, widened or stale future workflow-dispatch inputs', () => {
   const admitted = admitIndependentReviewWorkflowDispatchV1(valid());
   for (const workflowDispatchInputs of [
     { ...admitted.workflowDispatchInputs, source_head: '3333333333333333333333333333333333333333' },
@@ -271,7 +273,7 @@ test('future workflow-dispatch review execution rejects forged, widened or stale
   }
 });
 
-test('future workflow-dispatch review execution reuses live admission checks instead of trusting event inputs', () => {
+test('protected V2 gate reuses live admission checks instead of trusting workflow-dispatch event inputs', () => {
   const changedPr = pullRequest();
   changedPr.head = { ...changedPr.head, sha: '3333333333333333333333333333333333333333' };
   assert.throws(
