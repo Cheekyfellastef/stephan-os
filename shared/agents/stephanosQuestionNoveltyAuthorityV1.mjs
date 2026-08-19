@@ -5,6 +5,7 @@ export const STEPHANOS_QUESTION_NOVELTY_AUTHORITY_SCHEMA = 'stephanos.question-n
 
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
 const SAFE_FINGERPRINT = /^[a-z0-9][a-z0-9._:-]{7,191}$/i;
+const SAFE_DIGEST = /^[0-9a-f]{64}$/;
 const RESERVED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const INVALID = Symbol('invalid-data-only-question-novelty-record');
 const LIMITS = Object.freeze({ array: 512, keys: 64, depth: 12, nodes: 8192, string: 24_000 });
@@ -27,6 +28,18 @@ const LEDGER_KEYS = Object.freeze([
   'questions',
   'questionCount',
   'fingerprintDigest',
+  'contentDigest',
+]);
+const LEDGER_QUESTION_KEYS = Object.freeze([
+  'roundId',
+  'roundNumber',
+  'questionId',
+  'questionClass',
+  'questionText',
+  'normalizedText',
+  'intentFingerprint',
+  'expectedEvidenceClass',
+  'noveltyRefs',
 ]);
 
 const THRESHOLDS = Object.freeze({
@@ -169,6 +182,34 @@ function normalizeQuestion(question, errors, label, requireNoveltyRefs) {
   });
 }
 
+function canonicalLedgerQuestion(question) {
+  return Object.freeze({
+    roundId: text(question.roundId),
+    roundNumber: question.roundNumber,
+    questionId: text(question.questionId),
+    questionClass: text(question.questionClass).toUpperCase(),
+    questionText: text(question.questionText),
+    normalizedText: normalizedQuestionText(question.questionText),
+    intentFingerprint: text(question.intentFingerprint),
+    expectedEvidenceClass: text(question.expectedEvidenceClass).toUpperCase(),
+    noveltyRefs: Object.freeze(Array.isArray(question.noveltyRefs) ? question.noveltyRefs.map(text) : []),
+  });
+}
+
+function sortedLedgerQuestions(questions) {
+  return [...questions]
+    .map(canonicalLedgerQuestion)
+    .sort((left, right) => left.roundNumber - right.roundNumber || compareCodePoints(left.questionId, right.questionId));
+}
+
+function ledgerDigests(priorRoundRefs, questions) {
+  const sortedQuestions = sortedLedgerQuestions(questions);
+  const fingerprintDigest = canonicalHash(sortedQuestions.map((question) => question.intentFingerprint).sort(compareCodePoints));
+  const contentDigest = canonicalHash({ priorRoundRefs: [...priorRoundRefs], questions: sortedQuestions });
+  const ledgerId = `novelty-ledger-${canonicalHash({ priorRoundRefs: [...priorRoundRefs], contentDigest }).slice(0, 24)}`;
+  return Object.freeze({ fingerprintDigest, contentDigest, ledgerId });
+}
+
 function safeHold(errors, details = {}) {
   return Object.freeze({
     schemaVersion: STEPHANOS_QUESTION_NOVELTY_AUTHORITY_SCHEMA,
@@ -238,18 +279,67 @@ export function buildStephanosQuestionNoveltyLedgerV1(input = {}) {
   const priorRoundRefs = normalizedRounds
     .sort((left, right) => left.roundNumber - right.roundNumber)
     .map((round) => round.roundId);
-  const fingerprintDigest = canonicalHash(allQuestions.map((question) => question.intentFingerprint).sort(compareCodePoints));
-  const ledgerId = `novelty-ledger-${canonicalHash({ priorRoundRefs, fingerprintDigest }).slice(0, 24)}`;
+  const digests = ledgerDigests(priorRoundRefs, allQuestions);
   const ledger = Object.freeze({
     schemaVersion: STEPHANOS_QUESTION_NOVELTY_LEDGER_SCHEMA,
-    ledgerId,
+    ledgerId: digests.ledgerId,
     priorRoundRefs: Object.freeze(priorRoundRefs),
     highestSettledRoundNumber: Math.max(...normalizedRounds.map((round) => round.roundNumber)),
-    questions: Object.freeze(allQuestions),
+    questions: Object.freeze(sortedLedgerQuestions(allQuestions)),
     questionCount: allQuestions.length,
-    fingerprintDigest,
+    fingerprintDigest: digests.fingerprintDigest,
+    contentDigest: digests.contentDigest,
   });
   return Object.freeze({ valid: true, ledger, errors: Object.freeze([]) });
+}
+
+function validateLedgerSnapshot(ledger, errors) {
+  if (!exactShape(ledger, LEDGER_KEYS, errors, 'ledger')) return;
+  if (ledger.schemaVersion !== STEPHANOS_QUESTION_NOVELTY_LEDGER_SCHEMA) errors.push('ledger-schema-version-mismatch');
+  if (!safeId(ledger.ledgerId)) errors.push('ledgerId-invalid');
+  if (!Array.isArray(ledger.priorRoundRefs) || ledger.priorRoundRefs.length === 0 || ledger.priorRoundRefs.some((ref) => !safeId(ref))) errors.push('ledger-priorRoundRefs-invalid');
+  if (Array.isArray(ledger.priorRoundRefs) && new Set(ledger.priorRoundRefs).size !== ledger.priorRoundRefs.length) errors.push('ledger-priorRoundRefs-duplicate');
+  if (!Number.isSafeInteger(ledger.highestSettledRoundNumber) || ledger.highestSettledRoundNumber < 1) errors.push('ledger-highestSettledRoundNumber-invalid');
+  if (Array.isArray(ledger.priorRoundRefs) && ledger.highestSettledRoundNumber !== ledger.priorRoundRefs.length) errors.push('ledger-round-sequence-not-contiguous');
+  if (!Array.isArray(ledger.questions) || ledger.questions.length !== ledger.questionCount || ledger.questions.length < 10) errors.push('ledger-questionCount-invalid');
+  if (!SAFE_DIGEST.test(text(ledger.fingerprintDigest))) errors.push('ledger-fingerprintDigest-invalid');
+  if (!SAFE_DIGEST.test(text(ledger.contentDigest))) errors.push('ledger-contentDigest-invalid');
+
+  const roundQuestionCounts = new Map();
+  const questionIds = new Set();
+  const fingerprints = new Set();
+  if (Array.isArray(ledger.questions)) {
+    for (let index = 0; index < ledger.questions.length; index += 1) {
+      const question = ledger.questions[index];
+      const label = `ledger-question-${index + 1}`;
+      if (!exactShape(question, LEDGER_QUESTION_KEYS, errors, label)) continue;
+      if (!safeId(question.roundId) || !ledger.priorRoundRefs.includes(question.roundId)) errors.push(`${label}-roundId-invalid`);
+      if (!Number.isSafeInteger(question.roundNumber) || question.roundNumber < 1 || question.roundNumber > ledger.highestSettledRoundNumber) errors.push(`${label}-roundNumber-invalid`);
+      if (ledger.priorRoundRefs[question.roundNumber - 1] !== question.roundId) errors.push(`${label}-round-sequence-mismatch`);
+      if (!safeId(question.questionId)) errors.push(`${label}-questionId-invalid`);
+      if (!safeId(question.questionClass)) errors.push(`${label}-questionClass-invalid`);
+      if (!text(question.questionText) || text(question.questionText).length > 4096) errors.push(`${label}-questionText-invalid`);
+      if (text(question.normalizedText) !== normalizedQuestionText(question.questionText)) errors.push(`${label}-normalizedText-mismatch`);
+      if (!SAFE_FINGERPRINT.test(text(question.intentFingerprint))) errors.push(`${label}-intentFingerprint-invalid`);
+      if (!safeId(question.expectedEvidenceClass)) errors.push(`${label}-expectedEvidenceClass-invalid`);
+      if (!Array.isArray(question.noveltyRefs) || question.noveltyRefs.some((ref) => !safeId(ref))) errors.push(`${label}-noveltyRefs-invalid`);
+      if (questionIds.has(question.questionId)) errors.push(`${label}-duplicate-questionId`);
+      if (fingerprints.has(question.intentFingerprint)) errors.push(`${label}-duplicate-intentFingerprint`);
+      questionIds.add(question.questionId);
+      fingerprints.add(question.intentFingerprint);
+      roundQuestionCounts.set(question.roundId, (roundQuestionCounts.get(question.roundId) || 0) + 1);
+    }
+  }
+  for (const roundRef of ledger.priorRoundRefs || []) {
+    if (roundQuestionCounts.get(roundRef) !== 10) errors.push(`ledger-round:${roundRef}:must-contain-exactly-10-questions`);
+  }
+
+  if (errors.length === 0) {
+    const digests = ledgerDigests(ledger.priorRoundRefs, ledger.questions);
+    if (ledger.fingerprintDigest !== digests.fingerprintDigest) errors.push('ledger-fingerprintDigest-mismatch');
+    if (ledger.contentDigest !== digests.contentDigest) errors.push('ledger-contentDigest-mismatch');
+    if (ledger.ledgerId !== digests.ledgerId) errors.push('ledgerId-content-mismatch');
+  }
 }
 
 export function evaluateStephanosQuestionNoveltyAuthorityV1(input = {}) {
@@ -258,16 +348,10 @@ export function evaluateStephanosQuestionNoveltyAuthorityV1(input = {}) {
   const ledger = safeInput.ledger;
   const candidateRound = safeInput.candidateRound;
   const errors = [];
-  if (!exactShape(ledger, LEDGER_KEYS, errors, 'ledger')) return safeHold(errors);
-  if (ledger.schemaVersion !== STEPHANOS_QUESTION_NOVELTY_LEDGER_SCHEMA) errors.push('ledger-schema-version-mismatch');
-  if (!safeId(ledger.ledgerId)) errors.push('ledgerId-invalid');
-  if (!Array.isArray(ledger.priorRoundRefs) || ledger.priorRoundRefs.some((ref) => !safeId(ref))) errors.push('ledger-priorRoundRefs-invalid');
-  if (!Number.isSafeInteger(ledger.highestSettledRoundNumber) || ledger.highestSettledRoundNumber < 1) errors.push('ledger-highestSettledRoundNumber-invalid');
-  if (!Array.isArray(ledger.questions) || ledger.questions.length !== ledger.questionCount || ledger.questions.length < 10) errors.push('ledger-questionCount-invalid');
-  if (!SAFE_FINGERPRINT.test(text(ledger.fingerprintDigest))) errors.push('ledger-fingerprintDigest-invalid');
+  validateLedgerSnapshot(ledger, errors);
   if (!exactShape(candidateRound, CANDIDATE_ROUND_KEYS, errors, 'candidateRound')) return safeHold(errors);
   if (!safeId(candidateRound.roundId)) errors.push('candidateRound-roundId-invalid');
-  if (!Number.isSafeInteger(candidateRound.roundNumber) || candidateRound.roundNumber !== ledger.highestSettledRoundNumber + 1) errors.push('candidateRound-must-follow-highest-settled-round');
+  if (!Number.isSafeInteger(candidateRound.roundNumber) || candidateRound.roundNumber !== ledger?.highestSettledRoundNumber + 1) errors.push('candidateRound-must-follow-highest-settled-round');
   if (!Array.isArray(candidateRound.questions) || candidateRound.questions.length !== 10) errors.push('candidateRound-questions-must-contain-exactly-10');
   if (errors.length > 0) return safeHold(errors, { ledgerId: text(ledger?.ledgerId), candidateRoundId: text(candidateRound?.roundId) });
 
@@ -361,6 +445,7 @@ export function evaluateStephanosQuestionNoveltyAuthorityV1(input = {}) {
     errors: Object.freeze([]),
     ledgerId: ledger.ledgerId,
     ledgerFingerprintDigest: ledger.fingerprintDigest,
+    ledgerContentDigest: ledger.contentDigest,
     candidateRoundId: candidateRound.roundId,
     candidateRoundNumber: candidateRound.roundNumber,
     priorRoundRefs: Object.freeze([...ledger.priorRoundRefs]),
