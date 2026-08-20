@@ -201,7 +201,7 @@ function Read-BackendExpectedHeadHandoff {
     try {
         Move-Item -LiteralPath $handoffPath -Destination $consumedPath -ErrorAction Stop
     }
-    catch { return $null }
+    catch { throw 'BACKEND_EXPECTED_HEAD_HANDOFF_CONSUME_FAILED' }
     try {
         $handoff = Get-Content -LiteralPath $consumedPath -Raw | ConvertFrom-Json
         if ([string]$handoff.schemaVersion -ne 'stephanos.backend-expected-head-handoff.v1') { throw 'BACKEND_EXPECTED_HEAD_HANDOFF_SCHEMA_INVALID' }
@@ -211,7 +211,7 @@ function Read-BackendExpectedHeadHandoff {
         $issuedAtUtc = [datetime]::Parse([string]$handoff.issuedAtUtc).ToUniversalTime()
         $expiresAtUtc = [datetime]::Parse([string]$handoff.expiresAtUtc).ToUniversalTime()
         $nowUtc = [datetime]::UtcNow
-        if ($expiresAtUtc -le $nowUtc) { return $null }
+        if ($expiresAtUtc -le $nowUtc) { throw 'BACKEND_EXPECTED_HEAD_HANDOFF_EXPIRED' }
         if ($issuedAtUtc -gt $nowUtc.AddSeconds(30) -or $expiresAtUtc -gt $issuedAtUtc.AddMinutes(2).AddSeconds(5)) {
             throw 'BACKEND_EXPECTED_HEAD_HANDOFF_TIME_INVALID'
         }

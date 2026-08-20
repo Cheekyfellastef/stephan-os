@@ -201,7 +201,6 @@ try {
 
     if ($Target -eq 'backend') {
         $backendExpectedHeadHandoffPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\control\backend-expected-head-handoff.json'
-        Publish-BackendExpectedHeadHandoff -Path $backendExpectedHeadHandoffPath -Head $ExpectedHead
         if ([string]$task.State -eq 'Running') {
             Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
             if (-not (Wait-Until -Seconds 30 -Condition {
@@ -216,6 +215,7 @@ try {
                 Stop-WithBlocker 'BACKEND_LISTENER_DID_NOT_STOP'
             }
         }
+        Publish-BackendExpectedHeadHandoff -Path $backendExpectedHeadHandoffPath -Head $ExpectedHead
         Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
         if (-not (Wait-Until -Seconds $TimeoutSeconds -Condition { $null -ne (Test-BackendHealth) })) {
             Stop-WithBlocker 'BACKEND_HEALTH_TIMEOUT'

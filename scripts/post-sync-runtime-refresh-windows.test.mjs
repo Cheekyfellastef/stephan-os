@@ -27,7 +27,7 @@ test('backend restart terminates only the verified 8787 Stephanos Node listener'
   assert.match(restartSource, /stephanos-backend-runtime\.json/);
   assert.match(restartSource, /BACKEND_EXACT_HEAD_RECEIPT_TIMEOUT/);
   assert.match(restartSource, /stephanos\.backend-expected-head-handoff\.v1/);
-  assert.match(restartSource, /Publish-BackendExpectedHeadHandoff[\s\S]*Start-ScheduledTask/);
+  assert.match(restartSource, /BACKEND_LISTENER_DID_NOT_STOP[\s\S]*Publish-BackendExpectedHeadHandoff[\s\S]*Start-ScheduledTask/);
   assert.match(restartSource, /backend-expected-head-handoff\.json/);
   assert.match(restartSource, /expiresAtUtc = \$issuedAtUtc\.AddMinutes\(2\)/);
   assert.match(restartSource, /catch \{[\s\S]*Remove-Item -LiteralPath \$backendExpectedHeadHandoffPath/);
@@ -57,6 +57,9 @@ test('backend starter proves canonical main and writes a bounded exact-head runt
   assert.match(backendStartSource, /observedHead -ne \$boundExpectedHead/);
   assert.match(backendStartSource, /function Read-BackendExpectedHeadHandoff/);
   assert.match(backendStartSource, /Move-Item -LiteralPath \$handoffPath -Destination \$consumedPath/);
+  assert.match(backendStartSource, /BACKEND_EXPECTED_HEAD_HANDOFF_CONSUME_FAILED/);
+  assert.match(backendStartSource, /BACKEND_EXPECTED_HEAD_HANDOFF_EXPIRED/);
+  assert.doesNotMatch(backendStartSource, /expiresAtUtc -le \$nowUtc\) \{ return \$null/);
   assert.match(backendStartSource, /BACKEND_EXPECTED_HEAD_HANDOFF_TIME_INVALID/);
   assert.match(backendStartSource, /if \(-not \$providedExpectedHead\) \{[\s\S]*Read-BackendExpectedHeadHandoff/);
   assert.match(backendStartSource, /stephanos-backend-runtime\.json/);
