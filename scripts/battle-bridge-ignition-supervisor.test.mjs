@@ -138,6 +138,7 @@ test('canonical source truth gate accepts only clean synchronized main tracking 
 
   const rejected = [
     [{ publicationState: 'source-truth-unproven', blockedForRemoteTruth: true }, 'source-truth-unproven'],
+    [canonicalSourceTruth({ branch: 'HEAD', detachedHead: true, publicationState: 'detached-head', hasUpstream: false, upstreamBranch: '', headPublished: false, blockedForRemoteTruth: true }), 'detached-source-truth'],
     [canonicalSourceTruth({ branch: 'feature/test' }), 'non-main-source-truth'],
     [canonicalSourceTruth({ upstreamBranch: 'origin/feature' }), 'noncanonical-upstream-source-truth'],
     [canonicalSourceTruth({ publicationState: 'local-uncommitted', workingTreeDirty: true }), 'dirty-source-truth'],

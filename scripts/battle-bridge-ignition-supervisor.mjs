@@ -89,10 +89,10 @@ export function evaluateCanonicalIgnitionSourceTruth(sourceTruth = {}) {
 
   let id = 'source-truth-unproven';
   if (publicationState === 'source-truth-unproven') id = 'source-truth-unproven';
+  else if (sourceTruth?.detachedHead === true) id = 'detached-source-truth';
   else if (branch && branch !== 'main') id = 'non-main-source-truth';
   else if (sourceTruth?.hasUpstream !== true || upstreamBranch !== 'origin/main') id = 'noncanonical-upstream-source-truth';
   else if (sourceTruth?.workingTreeDirty === true || publicationState === 'local-uncommitted') id = 'dirty-source-truth';
-  else if (sourceTruth?.detachedHead === true) id = 'detached-source-truth';
   else if (publicationState === 'diverged' || Number(sourceTruth?.aheadCount) > 0 || sourceTruth?.blockedForRemoteTruth === true) id = 'unpublished-source-truth';
   else if (publicationState === 'stale-behind' || Number(sourceTruth?.behindCount) > 0) id = 'stale-source-truth';
   else if (publicationState !== 'healthy-synced') id = 'unpublished-source-truth';
