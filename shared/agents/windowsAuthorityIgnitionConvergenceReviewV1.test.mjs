@@ -11,7 +11,8 @@ const prNumber = 1919;
 const branch = 'fix/ignition-canonical-convergence-gate-v1';
 const sourceHead = '0cbd8318f5da7d815e3f4e30d8ef9a5d1c9feb77';
 const priorSourceHead = '9941da6e500a7d95d11e8a3654630462cce71a91';
-const baseSha = '13f13144730b2a6d94754914dbdf2c254c39567d';
+const baseSha = '3dc12a7c84c54f406b10dee1293789e2338f7824';
+const priorBaseSha = '13f13144730b2a6d94754914dbdf2c254c39567d';
 
 const repairSource = String.raw`[CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -158,6 +159,7 @@ test('specialist is exact PR head/base bound and rejects another identity or fin
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ branch: 'other' })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sourceHead: priorSourceHead })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sourceHead: 'b'.repeat(40) })).eligible, false);
+  assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ baseSha: priorBaseSha })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ baseSha: 'c'.repeat(40) })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sourceHead: 'bad' })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ analysis: { findings: [] } })).eligible, false);
