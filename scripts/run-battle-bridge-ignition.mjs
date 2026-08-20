@@ -5,9 +5,11 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import {
+  collectCanonicalIgnitionSourceTruth,
   collectServedRuntimeExactHeadProof,
   createBattleBridgeSupervisorStatus,
   defaultBattleBridgeSharedWorkspace,
+  evaluateCanonicalIgnitionSourceTruth,
   getCurrentGitHead,
   projectBattleBridgeSupervisorStatus,
   runBattleBridgeIgnitionSupervisor,
@@ -339,12 +341,32 @@ export async function writePreSupervisorFailureStatus({
   return { statusPath, status };
 }
 
-export async function main({ platform = process.platform } = {}) {
+export async function main({
+  platform = process.platform,
+  sourceTruthFn = collectCanonicalIgnitionSourceTruth,
+  backendPreflightFn = ensureBackend8787ConvergedBeforeSupervisor,
+  uiPreflightFn = ensureLiveUiConvergedBeforeSupervisor,
+  supervisorFn = runBattleBridgeIgnitionSupervisor,
+} = {}) {
   process.chdir(repoRoot);
   const sharedWorkspace = sharedWorkspaceFromArgs();
 
+  const sourceTruth = sourceTruthFn();
+  const canonicalSourceTruth = evaluateCanonicalIgnitionSourceTruth(sourceTruth);
+  if (!canonicalSourceTruth.ok) {
+    await writePreSupervisorFailureStatus({
+      sharedWorkspace,
+      phase: 'source truth',
+      blockerId: canonicalSourceTruth.blocker.id,
+      detail: canonicalSourceTruth.blocker.detail,
+      nextOperatorAction: canonicalSourceTruth.blocker.nextOperatorAction,
+    });
+    console.error(`[IGNITION ENTRY] Battle Bridge preflight blocked before service mutation because canonical source truth is not ready (${canonicalSourceTruth.blocker.id}).`);
+    return 2;
+  }
+
   if (platform === 'win32') {
-    const backend = await ensureBackend8787ConvergedBeforeSupervisor({ platform });
+    const backend = await backendPreflightFn({ platform });
     if (!backend.ok) {
       await writePreSupervisorFailureStatus({
         sharedWorkspace,
@@ -359,7 +381,7 @@ export async function main({ platform = process.platform } = {}) {
   }
 
   try {
-    await ensureLiveUiConvergedBeforeSupervisor({ platform });
+    await uiPreflightFn({ platform });
   } catch (error) {
     await writePreSupervisorFailureStatus({
       sharedWorkspace,
@@ -371,7 +393,7 @@ export async function main({ platform = process.platform } = {}) {
     throw error;
   }
 
-  const result = await runBattleBridgeIgnitionSupervisor({
+  const result = await supervisorFn({
     sharedWorkspace,
     housekeepFn: (options) => runSupervisorHousekeepPreservingLiveRuntime(options),
   });

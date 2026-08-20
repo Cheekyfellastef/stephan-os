@@ -8,6 +8,7 @@ import {
   createSupervisorHousekeepRunStep,
   ensureBackend8787ConvergedBeforeSupervisor,
   ensureLiveUiConvergedBeforeSupervisor,
+  main,
   probeCanonicalBackendHealth,
   runSupervisorHousekeepPreservingLiveDist,
   runSupervisorHousekeepPreservingLiveRuntime,
@@ -249,6 +250,41 @@ test('pre-supervisor failures publish a fresh terminal red ignition record inste
     assert.match(status.nextOperatorAction, /retry Ignition/);
   } finally {
     await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('canonical source truth blocks the click path before backend, UI, or supervisor mutation', async () => {
+  const sharedWorkspace = await mkdtemp(path.join(tmpdir(), 'bb-ignition-source-gate-'));
+  const previousArgs = process.argv;
+  const calls = [];
+  process.argv = [previousArgs[0], previousArgs[1], '--shared-workspace', sharedWorkspace];
+  try {
+    const exitCode = await main({
+      platform: 'win32',
+      sourceTruthFn: () => ({
+        branch: 'main',
+        detachedHead: false,
+        hasUpstream: true,
+        upstreamBranch: 'origin/main',
+        workingTreeDirty: false,
+        aheadCount: 1,
+        behindCount: 1,
+        headPublished: false,
+        blockedForRemoteTruth: true,
+        publicationState: 'diverged',
+      }),
+      backendPreflightFn: async () => { calls.push('backend'); return { ok: true }; },
+      uiPreflightFn: async () => { calls.push('ui'); },
+      supervisorFn: async () => { calls.push('supervisor'); return { ok: true }; },
+    });
+    assert.equal(exitCode, 2);
+    assert.deepEqual(calls, []);
+    const status = JSON.parse(await readFile(path.join(sharedWorkspace, 'status', 'battle-bridge-ignition-supervisor-current.json'), 'utf8'));
+    assert.equal(status.phases['source truth'].state, 'blocked');
+    assert.equal(status.blockerId, 'unpublished-source-truth');
+  } finally {
+    process.argv = previousArgs;
+    await rm(sharedWorkspace, { recursive: true, force: true });
   }
 });
 

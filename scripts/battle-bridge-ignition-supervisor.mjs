@@ -10,7 +10,11 @@ import { refreshBattleBridgeSharedWorkspacePublisher } from './battle-bridge-sha
 import { collectLauncherReadinessLiveFacts, defaultWindowsSharedWorkspacePath } from './launcher-readiness-live-facts.mjs';
 import { planLauncherReadiness } from './launcher-readiness-planner.mjs';
 import { runUi4173Repair, UI_4173_REPAIR_AUTHORITY } from './battle-bridge-ui-4173-repair.mjs';
-import { evaluateGitPublicationTruthWithDeps, runIgnitionHousekeep } from './ignite-stephanos-local.mjs';
+import {
+  evaluateGitPublicationTruthWithDeps,
+  evaluateGitStatusForIgnition,
+  runIgnitionHousekeep,
+} from './ignite-stephanos-local.mjs';
 import { buildOpenClawGatewayStartupTarget, OPENCLAW_GATEWAY_STARTUP_SOURCE, resolveOpenClawGatewayStartupExecution } from '../shared/agents/openClawGatewayStartup.mjs';
 
 export const BATTLE_BRIDGE_IGNITION_SUPERVISOR_SCHEMA = 'stephanos.battle-bridge-ignition-supervisor.v1';
@@ -43,6 +47,65 @@ export const BATTLE_BRIDGE_IGNITION_AUTHORITY = Object.freeze({
   backendStartCommandIdentity: BACKEND_8787_START_COMMAND_IDENTITY,
   openClawGatewayStartupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE,
 });
+
+const defaultRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+export function collectCanonicalIgnitionSourceTruth({ cwd = defaultRepoRoot, execFile = execFileSync } = {}) {
+  try {
+    const statusOutput = String(execFile('git', ['status', '--porcelain=v1'], { cwd, encoding: 'utf8' }) || '');
+    const statusAssessment = evaluateGitStatusForIgnition(statusOutput);
+    const captureStep = (_label, command, args) => ({
+      stdout: execFile(command, args, { cwd, encoding: 'utf8' }),
+    });
+    return evaluateGitPublicationTruthWithDeps({ captureStep, statusAssessment });
+  } catch {
+    return Object.freeze({
+      publicationState: 'source-truth-unproven',
+      blockedForRemoteTruth: true,
+      operatorAction: 'Use the existing bounded Battle Bridge sync/recovery path to restore canonical main source truth, then retry Ignition.',
+    });
+  }
+}
+
+export function evaluateCanonicalIgnitionSourceTruth(sourceTruth = {}) {
+  if (sourceTruth?.blocker) return Object.freeze({ ok: false, blocker: sourceTruth.blocker, sourceTruth });
+
+  const publicationState = String(sourceTruth?.publicationState || 'source-truth-unproven');
+  const branch = String(sourceTruth?.branch || '');
+  const upstreamBranch = String(sourceTruth?.upstreamBranch || '');
+  const canonical = publicationState === 'healthy-synced'
+    && branch === 'main'
+    && sourceTruth?.detachedHead === false
+    && sourceTruth?.hasUpstream === true
+    && upstreamBranch === 'origin/main'
+    && sourceTruth?.workingTreeDirty === false
+    && Number(sourceTruth?.aheadCount) === 0
+    && Number(sourceTruth?.behindCount) === 0
+    && sourceTruth?.headPublished === true
+    && sourceTruth?.blockedForRemoteTruth === false;
+
+  if (canonical) return Object.freeze({ ok: true, publicationState, sourceTruth });
+
+  let id = 'source-truth-unproven';
+  if (branch && branch !== 'main') id = 'non-main-source-truth';
+  else if (sourceTruth?.hasUpstream !== true || upstreamBranch !== 'origin/main') id = 'noncanonical-upstream-source-truth';
+  else if (sourceTruth?.workingTreeDirty === true || publicationState === 'local-uncommitted') id = 'dirty-source-truth';
+  else if (sourceTruth?.detachedHead === true) id = 'detached-source-truth';
+  else if (publicationState === 'diverged' || Number(sourceTruth?.aheadCount) > 0 || sourceTruth?.blockedForRemoteTruth === true) id = 'unpublished-source-truth';
+  else if (publicationState === 'stale-behind' || Number(sourceTruth?.behindCount) > 0) id = 'stale-source-truth';
+  else if (publicationState !== 'healthy-synced') id = 'unpublished-source-truth';
+
+  return Object.freeze({
+    ok: false,
+    sourceTruth,
+    blocker: Object.freeze({
+      id,
+      detail: `Canonical Ignition source truth is not exact main tracking origin/main at a clean synchronized head (state=${publicationState}).`,
+      nextOperatorAction: sourceTruth?.operatorAction
+        || 'Use the existing bounded Battle Bridge sync/recovery path to preserve local state and converge canonical main, then retry Ignition.',
+    }),
+  });
+}
 
 function phaseRecord(id, overrides = {}) {
   return { id, state: 'pending', blockerId: '', nextOperatorAction: '', logPath: '', ...overrides };
@@ -327,7 +390,7 @@ async function writeStatus(status, sharedWorkspace) {
   return file;
 }
 
-export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defaultBattleBridgeSharedWorkspace(), housekeepFn = runIgnitionHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, openClawStartFn = runApprovedOpenClawGateway18789Start, sourceTruthFn = evaluateGitPublicationTruthWithDeps, runtimeProofFn = collectServedRuntimeExactHeadProof, currentHeadFn = getCurrentGitHead, stdout = process.stdout } = {}) {
+export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defaultBattleBridgeSharedWorkspace(), housekeepFn = runIgnitionHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, openClawStartFn = runApprovedOpenClawGateway18789Start, sourceTruthFn = collectCanonicalIgnitionSourceTruth, runtimeProofFn = collectServedRuntimeExactHeadProof, currentHeadFn = getCurrentGitHead, stdout = process.stdout } = {}) {
   let status = createBattleBridgeSupervisorStatus();
   const writes = [];
   const persist = async () => { const file = await writeStatus(status, sharedWorkspace); if (file) writes.push(file); };
@@ -337,12 +400,15 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
 
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'running' }); await persist();
   const sourceTruth = sourceTruthFn();
-  if (sourceTruth?.blocker) {
-    status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'blocked', blocker: sourceTruth.blocker }); await persist();
+  const canonicalSourceTruth = evaluateCanonicalIgnitionSourceTruth(sourceTruth);
+  if (!canonicalSourceTruth.ok) {
+    status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'blocked', blocker: canonicalSourceTruth.blocker }); await persist();
+    status.sourceTruthVerdict = { state: 'blocked', verdict: sourceTruth?.publicationState || canonicalSourceTruth.blocker.id, blocker: canonicalSourceTruth.blocker };
+    await persist();
     stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return { ok: false, status, writes };
   }
-  status.sourceTruthVerdict = { state: 'ready', verdict: sourceTruth?.publicationState || sourceTruth?.sourceTruthVerdict || 'source-current' };
+  status.sourceTruthVerdict = { state: 'ready', verdict: canonicalSourceTruth.publicationState };
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'ready' }); await persist();
 
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'shared workspace publisher', phaseState: 'running' }); await persist();

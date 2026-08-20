@@ -9,7 +9,9 @@ import {
   BATTLE_BRIDGE_IGNITION_AUTHORITY,
   BATTLE_BRIDGE_IGNITION_PHASES,
   BATTLE_BRIDGE_IGNITION_PHASE_STATES,
+  collectCanonicalIgnitionSourceTruth,
   createBattleBridgeSupervisorStatus,
+  evaluateCanonicalIgnitionSourceTruth,
   projectBattleBridgeSupervisorStatus,
   runApprovedBackend8787Start,
   runApprovedOpenClawGateway18789Start,
@@ -39,6 +41,22 @@ function factsFor({ backend = true, openclaw = true, ui = true, stale = [], cave
   };
 }
 
+function canonicalSourceTruth(overrides = {}) {
+  return {
+    branch: 'main',
+    detachedHead: false,
+    hasUpstream: true,
+    upstreamBranch: 'origin/main',
+    workingTreeDirty: false,
+    aheadCount: 0,
+    behindCount: 0,
+    headPublished: true,
+    blockedForRemoteTruth: false,
+    publicationState: 'healthy-synced',
+    ...overrides,
+  };
+}
+
 test('supervisor status model exposes required phases and states', () => {
   const status = createBattleBridgeSupervisorStatus();
   assert.deepEqual(Object.keys(status.phases), [...BATTLE_BRIDGE_IGNITION_PHASES]);
@@ -57,7 +75,7 @@ test('publisher is refreshed before UI repair and stale records are refreshed by
     sharedWorkspace: workspace,
     housekeepFn: () => calls.push('housekeeping'),
     publisherFn: async () => { calls.push('publisher'); },
-    sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => {
       collectCount += 1;
       calls.push(`collect-${collectCount}`);
@@ -80,7 +98,7 @@ test('partial-ui-missing triggers repair and ready is only reported after 4173 p
   const result = await runBattleBridgeIgnitionSupervisor({
     housekeepFn: () => {},
     publisherFn: async () => {},
-    sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => { collectCount += 1; return factsFor({ ui: collectCount > 1 }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['stephanos-ui'].ready ? 'ready' : 'partial-ui-missing' }),
     repairFn: async ({ stdout }) => { calls.push('repair'); stdout.write(JSON.stringify({ ready: true })); return 0; },
@@ -92,7 +110,7 @@ test('partial-ui-missing triggers repair and ready is only reported after 4173 p
 
 test('missing 4173 repair attempt records structured degraded result when proof does not become ready', async () => {
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => factsFor({ ui: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-ui-missing' }),
     repairFn: async ({ stdout }) => { stdout.write(JSON.stringify({ ready: false, action: 'start-ui-4173-spawned-but-not-ready' })); return 0; },
@@ -111,6 +129,68 @@ test('non-main stale branch reports blocker to splash/status model', async () =>
   assert.equal(result.ok, false);
   assert.equal(result.status.blockerId, 'non-main-source-truth');
   assert.equal(result.status.phases['source truth'].state, 'blocked');
+});
+
+test('canonical source truth gate accepts only clean synchronized main tracking origin/main', () => {
+  const ready = evaluateCanonicalIgnitionSourceTruth(canonicalSourceTruth());
+  assert.equal(ready.ok, true);
+  assert.equal(ready.publicationState, 'healthy-synced');
+
+  const rejected = [
+    [canonicalSourceTruth({ branch: 'feature/test' }), 'non-main-source-truth'],
+    [canonicalSourceTruth({ upstreamBranch: 'origin/feature' }), 'noncanonical-upstream-source-truth'],
+    [canonicalSourceTruth({ publicationState: 'local-uncommitted', workingTreeDirty: true }), 'dirty-source-truth'],
+    [canonicalSourceTruth({ publicationState: 'stale-behind', behindCount: 1, headPublished: true }), 'stale-source-truth'],
+    [canonicalSourceTruth({ publicationState: 'diverged', aheadCount: 1, behindCount: 1, headPublished: false, blockedForRemoteTruth: true }), 'unpublished-source-truth'],
+    [canonicalSourceTruth({ publicationState: 'unpublished-local-only', aheadCount: 1, headPublished: false, blockedForRemoteTruth: true }), 'unpublished-source-truth'],
+  ];
+  for (const [truth, blockerId] of rejected) {
+    const result = evaluateCanonicalIgnitionSourceTruth(truth);
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker.id, blockerId);
+  }
+});
+
+test('live source collector includes meaningful Git dirt instead of silently assuming a clean tree', () => {
+  const calls = [];
+  const result = collectCanonicalIgnitionSourceTruth({
+    cwd: '/canonical/repo',
+    execFile(command, args) {
+      calls.push([command, ...args]);
+      if (args[0] === 'status') return ' M scripts/run-battle-bridge-ignition.mjs\n';
+      if (args.includes('--abbrev-ref') && args.includes('HEAD')) return 'main\n';
+      if (args.includes('--symbolic-full-name')) return 'origin/main\n';
+      if (args[0] === 'rev-list') return '0\t0\n';
+      throw new Error(`unexpected fixed Git command: ${command} ${args.join(' ')}`);
+    },
+  });
+  assert.equal(result.publicationState, 'local-uncommitted');
+  assert.equal(result.workingTreeDirty, true);
+  assert.equal(result.blockedForRemoteTruth, true);
+  assert.deepEqual(calls[0], ['git', 'status', '--porcelain=v1']);
+});
+
+test('real evaluator-shaped diverged source blocks before publisher or service mutation', async () => {
+  const calls = [];
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => { calls.push('housekeeping'); },
+    sourceTruthFn: () => canonicalSourceTruth({
+      publicationState: 'diverged',
+      aheadCount: 1,
+      behindCount: 2,
+      headPublished: false,
+      blockedForRemoteTruth: true,
+    }),
+    publisherFn: async () => { calls.push('publisher'); },
+    backendStartFn: async () => { calls.push('backend'); },
+    openClawStartFn: async () => { calls.push('openclaw'); },
+    repairFn: async () => { calls.push('ui'); },
+    stdout: { write() {} },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'unpublished-source-truth');
+  assert.equal(result.status.sourceTruthVerdict.state, 'blocked');
+  assert.deepEqual(calls, ['housekeeping']);
 });
 
 test('tracked runtime activity dirt guidance and runtime-only dist caveat are separate', () => {
@@ -134,7 +214,7 @@ test('backend missing plus UI missing does not enter browser/runtime proof and s
   const calls = [];
   let collectCount = 0;
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => { collectCount += 1; return factsFor({ backend: collectCount > 1, ui: false }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices.backend.ready ? 'partial-ui-missing' : 'blocked-needs-supervisor-repair' }),
     backendStartFn: async ({ commandIdentity }) => { calls.push(commandIdentity.commandText); return { started: true, commandIdentity }; },
@@ -147,7 +227,7 @@ test('backend missing plus UI missing does not enter browser/runtime proof and s
 
 test('backend missing has deterministic backend blocker and no empty blockerId when approved start fails proof', async () => {
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => factsFor({ backend: false, ui: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
     backendStartFn: async () => ({ started: false }),
@@ -162,7 +242,7 @@ test('backend missing has deterministic backend blocker and no empty blockerId w
 
 test('backend start unavailable returns adapter blocker', async () => {
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => factsFor({ backend: false, ui: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
     backendStartFn: async () => ({ unavailable: true }),
@@ -532,7 +612,7 @@ test('supervisor calls approved OpenClaw startup adapter when 18789 is missing',
   const calls = [];
   let collectCount = 0;
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => { collectCount += 1; return factsFor({ openclaw: collectCount > 1 }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['openclaw-gateway'].ready ? 'ready' : 'partial-openclaw-missing' }),
     openClawStartFn: async ({ sharedWorkspace }) => { calls.push(sharedWorkspace); return { ready: true, started: true, target: { commandText: 'openclaw gateway run --port 18789 --bind loopback' }, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' }, healthProof: { ready: true, health: { json: { ok: true } } } }; },
@@ -546,7 +626,7 @@ test('supervisor calls approved OpenClaw startup adapter when 18789 is missing',
 test('OpenClaw command failure blocks with start-failed and does not run UI repair', async () => {
   const calls = [];
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => factsFor({ openclaw: false, ui: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-openclaw-missing' }),
     openClawStartFn: async () => ({ ready: false, started: false, exitCode: 2, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' } }),
@@ -560,7 +640,7 @@ test('OpenClaw command failure blocks with start-failed and does not run UI repa
 
 test('OpenClaw running without health proof blocks with no-health-proof and surfaces logPath', async () => {
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => factsFor({ openclaw: false, ui: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-openclaw-missing' }),
     openClawStartFn: async () => ({ ready: false, started: true, exitCode: null, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' }, healthProof: { ready: false, health: { json: { service: 'openclaw-readonly-adapter-stub', status: 'healthy' } } } }),
@@ -614,7 +694,7 @@ test('backend repair success without health proof blocks with no-health-proof an
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-supervisor-canonical-'));
   const logPath = path.join(workspace, 'logs', 'battle-bridge-backend-8787-repair', 'fixture');
   const result = await runBattleBridgeIgnitionSupervisor({
-    sharedWorkspace: workspace, housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    sharedWorkspace: workspace, housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => factsFor({ backend: false, ui: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
     backendStartFn: async () => ({ started: true, exitCode: 0, logPath, logs: { logPath, stdoutLogPath: path.join(logPath, 'stdout.log'), stderrLogPath: path.join(logPath, 'stderr.log') } }),
@@ -630,7 +710,7 @@ test('backend repair success without health proof blocks with no-health-proof an
 test('backend repair nonzero blocks with backend repair failed and does not run UI repair', async () => {
   const calls = [];
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => factsFor({ backend: false, ui: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
     backendStartFn: async () => ({ started: false, exitCode: 7, logPath: '/canonical/log' }),
@@ -647,7 +727,7 @@ test('backend and OpenClaw ready with UI missing refreshes publisher before UI r
   const calls = [];
   let collectCount = 0;
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => { calls.push('publisher'); }, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => { calls.push('publisher'); }, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => { collectCount += 1; return collectCount === 1 ? factsFor({ ui: false, stale: ['old UNKNOWN'] }) : factsFor({ ui: collectCount > 2 }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['stephanos-ui'].ready ? 'ready' : 'partial-ui-missing' }),
     repairFn: async ({ stdout }) => { calls.push('repair'); stdout.write(JSON.stringify({ ready: true })); return 0; },
@@ -669,7 +749,7 @@ test('served runtime exact-head proof accepts full or unambiguous short head in 
 
 test('supervisor blocks with served-runtime-stale when 4173 reports old gitCommit after guarded repair', async () => {
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => factsFor(),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
     currentHeadFn: () => '51600ceb1234567890abcdef1234567890abcdef',
@@ -687,7 +767,7 @@ test('stale served runtime triggers guarded repair and final ready only after ex
   let proofCount = 0;
   let repairCount = 0;
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => factsFor(),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
     currentHeadFn: () => '51600ceb1234567890abcdef1234567890abcdef',

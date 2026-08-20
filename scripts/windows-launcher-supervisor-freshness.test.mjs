@@ -11,6 +11,21 @@ import {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const launcherPath = resolve(root, 'windows/Launch-Stephanos-Local.ps1');
 
+function canonicalSourceTruth() {
+  return {
+    branch: 'main',
+    detachedHead: false,
+    hasUpstream: true,
+    upstreamBranch: 'origin/main',
+    workingTreeDirty: false,
+    aheadCount: 0,
+    behindCount: 0,
+    headPublished: true,
+    blockedForRemoteTruth: false,
+    publicationState: 'healthy-synced',
+  };
+}
+
 function readyReport() {
   return {
     observedServices: {
@@ -55,7 +70,7 @@ test('blocked served-runtime status preserves exact rejection proof', async () =
   const result = await runBattleBridgeIgnitionSupervisor({
     housekeepFn: () => {},
     publisherFn: async () => {},
-    sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => readyReport(),
     plannerFn: (facts) => facts,
     currentHeadFn: () => staleProof.currentHead,
