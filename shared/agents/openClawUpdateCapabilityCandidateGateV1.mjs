@@ -165,8 +165,11 @@ export function evaluateOpenClawUpdateCapabilityCandidateV1(input = {}) {
   if (ledger.updateAllowed !== true || text(ledger.verdict) !== 'CAPABILITY_LEDGER_READY_FOR_CANDIDATE_PROOF') {
     blockers.push('CAPABILITY_LEDGER_NOT_READY');
   }
-  if (staged.safety?.mutationAllowed === true || staged.safety?.sourceMutationAllowed === true
-    || staged.safety?.mergeAuthority === true || staged.safety?.deploymentAuthority === true) {
+
+  const safety = plainDataRecord(staged.safety);
+  if (!safety) blockers.push('STAGED_UPDATE_SAFETY_INVALID');
+  if (safety && (safety.mutationAllowed === true || safety.sourceMutationAllowed === true
+    || safety.mergeAuthority === true || safety.deploymentAuthority === true)) {
     blockers.push('STAGED_UPDATE_AUTHORITY_WIDENED');
   }
 
