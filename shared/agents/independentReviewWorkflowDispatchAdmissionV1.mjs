@@ -7,6 +7,9 @@ import {
   INDEPENDENT_REVIEW_HANDOFF_PROVENANCE_SCHEMA,
   validateIndependentReviewHandoffProvenanceV1,
 } from './independentReviewHandoffProvenanceV1.mjs';
+import {
+  validateIndependentReviewHandoffRunReceiptV1,
+} from './independentReviewHandoffRunReceiptV1.mjs';
 
 export const INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_ADMISSION_SCHEMA = 'stephanos.independent-review-workflow-dispatch-admission.v1';
 export const INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_RUN_SCHEMA = 'stephanos.independent-review-workflow-dispatch-run.v1';
@@ -26,6 +29,7 @@ const INPUT_KEYS = Object.freeze([
   'currentMainSha',
   'pullRequest',
   'handoffIdentity',
+  'handoffRunReceipt',
 ]);
 const RUN_INPUT_KEYS = Object.freeze([
   'environment',
@@ -33,6 +37,7 @@ const RUN_INPUT_KEYS = Object.freeze([
   'currentMainSha',
   'pullRequest',
   'handoffIdentity',
+  'handoffRunReceipt',
   'workflowDispatchInputs',
 ]);
 
@@ -172,6 +177,17 @@ export function admitIndependentReviewWorkflowDispatchV1(input = {}) {
     throw new Error('pull request no longer matches the exact authenticated handoff');
   }
 
+  const handoffRunReceipt = validateIndependentReviewHandoffRunReceiptV1(input.handoffRunReceipt, {
+    repository,
+    currentMainSha,
+    prNumber: handoff.prNumber,
+    sourceHead: handoff.sourceHead,
+    baseSha: currentMainSha,
+    handoffCommentId: coordinatorProvenance.handoffCommentId,
+    coordinatorWorkflowRunId: coordinatorProvenance.coordinatorWorkflowRunId,
+    coordinatorWorkflowRunAttempt: coordinatorProvenance.coordinatorWorkflowRunAttempt,
+  });
+
   const binding = Object.freeze({
     repository,
     workflowId: workflow.id,
@@ -194,6 +210,7 @@ export function admitIndependentReviewWorkflowDispatchV1(input = {}) {
     coordinatorWorkflowRef: coordinatorProvenance.coordinatorWorkflowRef,
     coordinatorJobIdentity: coordinatorProvenance.coordinatorJobIdentity,
     handoffCommentId: coordinatorProvenance.handoffCommentId,
+    handoffRunReceiptSha256: handoffRunReceipt.bindingSha256,
   });
   const handoffBindingSha256 = bindingSha256(binding);
 
@@ -208,6 +225,7 @@ export function admitIndependentReviewWorkflowDispatchV1(input = {}) {
       base_sha: binding.baseSha,
       head_branch: binding.branch,
       handoff_binding_sha256: handoffBindingSha256,
+      handoff_run_receipt_sha256: handoffRunReceipt.bindingSha256,
     }),
     requiredRevalidation: Object.freeze({
       currentMain: true,
@@ -215,6 +233,7 @@ export function admitIndependentReviewWorkflowDispatchV1(input = {}) {
       workflowIdentity: true,
       coordinatorWorkflowRun: true,
       handoffComment: true,
+      coordinatorHandoffRunReceipt: true,
       exactRunAbsence: true,
     }),
     authority: Object.freeze({
@@ -246,6 +265,7 @@ export function validateIndependentReviewWorkflowDispatchRunV1(input = {}) {
     currentMainSha: input.currentMainSha,
     pullRequest: input.pullRequest,
     handoffIdentity: input.handoffIdentity,
+    handoffRunReceipt: input.handoffRunReceipt,
   });
   const environment = input.environment;
   const currentMainSha = sha(input.currentMainSha);
@@ -287,6 +307,7 @@ export function validateIndependentReviewWorkflowDispatchRunV1(input = {}) {
     baseSha: admission.binding.baseSha,
     branch: admission.binding.branch,
     handoffBindingSha256: admission.handoffBindingSha256,
+    handoffRunReceiptSha256: admission.binding.handoffRunReceiptSha256,
     coordinatorWorkflowRunId: admission.binding.coordinatorWorkflowRunId,
     coordinatorWorkflowRunAttempt: admission.binding.coordinatorWorkflowRunAttempt,
     handoffCommentId: admission.binding.handoffCommentId,
