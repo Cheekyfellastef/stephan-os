@@ -7,6 +7,7 @@ import {
   decodeStephanosWorkspaceQuestionRecord,
 } from './stephanosSharedWorkspaceConversationAdapterV1.mjs';
 import { STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION } from './stephanosConversationalCapabilityLadderV1.mjs';
+import { buildStephanosRichConversationalResponseV1 } from './stephanosRichConversationalResponseV1.mjs';
 
 export const STEPHANOS_SHARED_PARTICIPANT_LIVE_QA_SCHEMA_VERSION = 'stephanos.shared-participant-live-qa.v1';
 export const STEPHANOS_SHARED_PARTICIPANT_ID = 'stephanos';
@@ -312,6 +313,7 @@ function blocked(classification, errors = []) {
     question: null,
     answer: null,
     answerRecord: null,
+    richResponse: null,
     ...authorityBoundary(),
   });
 }
@@ -391,6 +393,13 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
   });
   if (!built.valid) return blocked('ANSWER_RECORD_BUILD_FAILED', built.errors);
 
+  const richResponse = buildStephanosRichConversationalResponseV1({
+    question,
+    answer,
+    structured: options.richResponseStructured,
+  });
+  if (!richResponse.valid) return blocked('RICH_RESPONSE_BUILD_FAILED', richResponse.errors);
+
   return Object.freeze({
     ok: true,
     schemaVersion: STEPHANOS_SHARED_PARTICIPANT_LIVE_QA_SCHEMA_VERSION,
@@ -400,6 +409,7 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
     question,
     answer,
     answerRecord: built.record,
+    richResponse,
     ...authorityBoundary(),
   });
 }
