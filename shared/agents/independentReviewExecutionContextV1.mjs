@@ -14,6 +14,25 @@ const INPUT_KEYS = Object.freeze([
   'legacyEvent',
   'dispatchPreflight',
 ]);
+const PREFLIGHT_KEYS = Object.freeze([
+  'schemaVersion',
+  'verdict',
+  'repository',
+  'prNumber',
+  'sourceHead',
+  'baseSha',
+  'branch',
+  'workflowName',
+  'workflowPath',
+  'workflowJob',
+  'handoffBindingSha256',
+  'handoffRunReceiptSha256',
+  'coordinatorWorkflowRunId',
+  'coordinatorWorkflowRunAttempt',
+  'handoffCommentId',
+  'pullRequest',
+  'authority',
+]);
 const AUTHORITY_KEYS = Object.freeze([
   'reviewExecutionAllowed',
   'sourceMutationAllowed',
@@ -158,9 +177,15 @@ function workflowDispatchContext(input) {
   const sourceHead = sha(preflight.sourceHead);
   const baseSha = sha(preflight.baseSha);
   const branch = text(preflight.branch);
-  if (text(preflight.schemaVersion) !== INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_PREFLIGHT_SCHEMA
+  if (!exactKeys(preflight, PREFLIGHT_KEYS)
+    || text(preflight.schemaVersion) !== INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_PREFLIGHT_SCHEMA
     || text(preflight.verdict) !== 'INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_PREFLIGHT_PASS'
     || text(preflight.repository) !== CANONICAL_REPOSITORY
+    || text(preflight.workflowName) !== 'Independent Merge Security Review'
+    || text(preflight.workflowPath) !== '.github/workflows/independent-merge-security-review.yml'
+    || text(preflight.workflowJob) !== 'independent-security-review'
+    || text(preflight.pullRequest?.state).toLowerCase() !== 'open'
+    || preflight.pullRequest?.draft !== false
     || !prNumber || !sourceHead || !baseSha || !branch
     || !safeReviewAuthority(preflight.authority)
     || !/^[0-9a-f]{64}$/i.test(text(preflight.handoffBindingSha256))
