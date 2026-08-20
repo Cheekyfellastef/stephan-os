@@ -19,8 +19,8 @@ import { buildOpenClawGatewayStartupTarget, OPENCLAW_GATEWAY_STARTUP_SOURCE, res
 
 export const BATTLE_BRIDGE_IGNITION_SUPERVISOR_SCHEMA = 'stephanos.battle-bridge-ignition-supervisor.v1';
 export const BATTLE_BRIDGE_IGNITION_PHASES = Object.freeze([
-  'housekeeping',
   'source truth',
+  'housekeeping',
   'shared workspace publisher',
   'backend 8787',
   'OpenClaw gateway 18789',
@@ -396,10 +396,6 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   let status = createBattleBridgeSupervisorStatus();
   const writes = [];
   const persist = async () => { const file = await writeStatus(status, sharedWorkspace); if (file) writes.push(file); };
-  status = projectBattleBridgeSupervisorStatus({ status, phase: 'housekeeping', phaseState: 'running' }); await persist();
-  housekeepFn({ dryRun: false, compact: true });
-  status = projectBattleBridgeSupervisorStatus({ status, phase: 'housekeeping', phaseState: 'ready' }); await persist();
-
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'running' }); await persist();
   const sourceTruth = sourceTruthFn();
   const canonicalSourceTruth = evaluateCanonicalIgnitionSourceTruth(sourceTruth);
@@ -412,6 +408,10 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   }
   status.sourceTruthVerdict = { state: 'ready', verdict: canonicalSourceTruth.publicationState };
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'ready' }); await persist();
+
+  status = projectBattleBridgeSupervisorStatus({ status, phase: 'housekeeping', phaseState: 'running' }); await persist();
+  housekeepFn({ dryRun: false, compact: true, preserveRuntimeDirt: true });
+  status = projectBattleBridgeSupervisorStatus({ status, phase: 'housekeeping', phaseState: 'ready' }); await persist();
 
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'shared workspace publisher', phaseState: 'running' }); await persist();
   await publisherFn({ sharedWorkspace });

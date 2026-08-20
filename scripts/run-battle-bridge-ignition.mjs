@@ -71,6 +71,7 @@ export function runSupervisorHousekeepPreservingLiveRuntime(
 ) {
   return housekeepFn({
     ...options,
+    preserveRuntimeDirt: true,
     runStepFn: createSupervisorHousekeepRunStep({ runStepFn }),
   });
 }

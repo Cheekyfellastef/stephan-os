@@ -60,6 +60,7 @@ function canonicalSourceTruth(overrides = {}) {
 test('supervisor status model exposes required phases and states', () => {
   const status = createBattleBridgeSupervisorStatus();
   assert.deepEqual(Object.keys(status.phases), [...BATTLE_BRIDGE_IGNITION_PHASES]);
+  assert.deepEqual(BATTLE_BRIDGE_IGNITION_PHASES.slice(0, 2), ['source truth', 'housekeeping']);
   assert.deepEqual([...BATTLE_BRIDGE_IGNITION_PHASE_STATES], ['pending', 'running', 'ready', 'degraded', 'blocked', 'failed']);
   const updated = projectBattleBridgeSupervisorStatus({ status, phase: 'backend 8787', phaseState: 'ready', readinessReport: factsFor() });
   assert.equal(updated.currentPhase, 'backend 8787');
@@ -191,13 +192,16 @@ test('real evaluator-shaped diverged source blocks before publisher or service m
   const calls = [];
   const result = await runBattleBridgeIgnitionSupervisor({
     housekeepFn: () => { calls.push('housekeeping'); },
-    sourceTruthFn: () => canonicalSourceTruth({
-      publicationState: 'diverged',
-      aheadCount: 1,
-      behindCount: 2,
-      headPublished: false,
-      blockedForRemoteTruth: true,
-    }),
+    sourceTruthFn: () => {
+      calls.push('source-truth');
+      return canonicalSourceTruth({
+        publicationState: 'diverged',
+        aheadCount: 1,
+        behindCount: 2,
+        headPublished: false,
+        blockedForRemoteTruth: true,
+      });
+    },
     publisherFn: async () => { calls.push('publisher'); },
     backendStartFn: async () => { calls.push('backend'); },
     openClawStartFn: async () => { calls.push('openclaw'); },
@@ -207,7 +211,7 @@ test('real evaluator-shaped diverged source blocks before publisher or service m
   assert.equal(result.ok, false);
   assert.equal(result.status.blockerId, 'unpublished-source-truth');
   assert.equal(result.status.sourceTruthVerdict.state, 'blocked');
-  assert.deepEqual(calls, ['housekeeping']);
+  assert.deepEqual(calls, ['source-truth']);
 });
 
 test('tracked runtime activity dirt guidance and runtime-only dist caveat are separate', () => {

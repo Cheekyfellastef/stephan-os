@@ -72,6 +72,7 @@ test('supervisor housekeeping injects the live-runtime-preserving run step into 
   assert.deepEqual(result, { ok: true });
   assert.equal(receivedOptions.dryRun, false);
   assert.equal(receivedOptions.compact, true);
+  assert.equal(receivedOptions.preserveRuntimeDirt, true);
   assert.deepEqual(delegated, []);
   assert.equal(runSupervisorHousekeepPreservingLiveDist, runSupervisorHousekeepPreservingLiveRuntime);
 });

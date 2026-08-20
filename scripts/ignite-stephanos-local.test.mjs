@@ -968,6 +968,37 @@ test('housekeep auto-cleans allowlisted root runtime data and stays READY', () =
   ]);
 });
 
+test('supervisor preservation mode never moves root OpenClaw data or cleans tracked, untracked, or generated runtime paths', () => {
+  const steps = [];
+  const moveRequests = [];
+  assert.throws(() => runIgnitionHousekeep({
+    dryRun: false,
+    compact: true,
+    preserveRuntimeDirt: true,
+    captureStepFn: (label) => {
+      if (label === 'git-status') return {
+        stdout: [
+          '?? MEMORY.md',
+          ' M stephanos-server/data/memory/durable-memory.json',
+          '?? data/',
+          '?? apps/stephanos/dist/assets/generated.js',
+        ].join('\n'),
+        stderr: '',
+      };
+      if (label === 'git-untracked-data') return { stdout: 'data/activity/events.json\n', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: (label, command, args) => steps.push({ label, command, args }),
+    moveRootOpenClawWorkspaceDirtFn: ({ paths }) => {
+      moveRequests.push(...paths);
+      return { destinationRoot: 'should-not-run', migrationDirectory: null, moved: [], skipped: [] };
+    },
+  }), /housekeep blocked/);
+
+  assert.deepEqual(moveRequests, []);
+  assert.deepEqual(steps, []);
+});
+
 test('housekeep hard-blocks unknown data files and surfaces exact hardBlockPaths', () => {
   assert.throws(() => runIgnitionHousekeep({
     dryRun: false,
