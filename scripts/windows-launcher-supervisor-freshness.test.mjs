@@ -93,3 +93,10 @@ test('Windows launcher ignores supervisor records from a previous ignition run',
   assert.match(source, /\$generatedAtUtc\.UtcDateTime -lt \$freshnessBoundaryUtc/);
   assert.match(source, /battleBridgeSupervisorCurrentPath = \$battleBridgeSupervisorCurrentPath/);
 });
+
+test('standalone Windows UI repair passes a canonically proven exact head', async () => {
+  const source = await readFile(launcherPath, 'utf8');
+  assert.match(source, /battle-bridge-ignition-supervisor\.mjs --source-truth-json/);
+  assert.match(source, /\$sourceTruth\.ok -ne \$true/);
+  assert.match(source, /\$repairArgs \+= @\('--start', '--expected-head', \[string\]\$sourceTruth\.head\)/);
+});

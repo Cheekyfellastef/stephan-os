@@ -953,6 +953,31 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     return { ok: false, status, writes };
   }
   const expectedHead = canonicalSourceTruth.sourceTruth.head;
+  const reproveExpectedHead = (blockerId) => {
+    const latestSourceTruth = sourceTruthFn({ cwd, environment, platform, spawnSyncFn });
+    const latestCanonicalTruth = evaluateCanonicalIgnitionSourceTruth(latestSourceTruth);
+    if (!latestCanonicalTruth.ok) return { ok: false, blocker: latestCanonicalTruth.blocker };
+    const observedHead = String(latestCanonicalTruth.sourceTruth?.head || '').trim().toLowerCase();
+    if (observedHead !== expectedHead) {
+      return {
+        ok: false,
+        blocker: requiredServiceBlocker(
+          blockerId,
+          `Canonical source HEAD changed from ${expectedHead} to ${observedHead || 'unproven'} before runtime proof.`,
+          'Restore a clean synchronized canonical main checkout, then rerun npm run stephanos:ignite.',
+          { expectedHead, observedHead },
+        ),
+      };
+    }
+    return { ok: true, observedHead };
+  };
+  const blockForSourceReproof = async (proof, phase = 'source truth') => {
+    status = projectBattleBridgeSupervisorStatus({ status, phase, phaseState: 'blocked', blocker: proof.blocker });
+    status.sourceTruthVerdict = { state: 'blocked', verdict: proof.blocker?.id || 'source-truth-unproven', expectedHead, blocker: proof.blocker };
+    await persist();
+    stdout.write(`${JSON.stringify(status, null, 2)}\n`);
+    return { ok: false, status, writes };
+  };
   const fixedGitExecFile = createCanonicalSupervisorGitExecFile({ cwd, environment, platform, spawnSyncFn });
   const collectFacts = (options = {}) => collectFactsFn({ ...options, execFile: fixedGitExecFile });
   status.sourceTruthVerdict = { state: 'ready', verdict: canonicalSourceTruth.publicationState, expectedHead };
@@ -1035,6 +1060,8 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'browser/runtime proof', phaseState: 'running', readinessReport: proofReport }); await persist();
   let servedRuntimeProof = null;
   if (isReady(proofReport, 'stephanos-ui')) {
+    const runtimeSourceProof = reproveExpectedHead('ignition-exact-head-changed-before-runtime-proof');
+    if (!runtimeSourceProof.ok) return blockForSourceReproof(runtimeSourceProof, 'browser/runtime proof');
     servedRuntimeProof = await runtimeProofFn({ currentHead: expectedHead, expectedHead, sharedWorkspace });
     status.services.stephanosUi4173.servedRuntimeProof = servedRuntimeProof;
     if (!servedRuntimeProof.ready) {
@@ -1049,12 +1076,18 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
       proofReport.observedServices = repairedReport.observedServices;
       proofReport.finalVerdict = repairedReport.finalVerdict;
       proofReport.staleWorkspaceRecords = repairedReport.staleWorkspaceRecords || [];
-      servedRuntimeProof = isReady(repairedReport, 'stephanos-ui') ? await runtimeProofFn({ currentHead: expectedHead, expectedHead, sharedWorkspace }) : servedRuntimeProof;
+      if (isReady(repairedReport, 'stephanos-ui')) {
+        const repairedRuntimeSourceProof = reproveExpectedHead('ignition-exact-head-changed-before-runtime-proof');
+        if (!repairedRuntimeSourceProof.ok) return blockForSourceReproof(repairedRuntimeSourceProof, 'browser/runtime proof');
+        servedRuntimeProof = await runtimeProofFn({ currentHead: expectedHead, expectedHead, sharedWorkspace });
+      }
       status = projectBattleBridgeSupervisorStatus({ status, phase: 'Stephanos UI 4173', phaseState: servedRuntimeProof.ready ? 'ready' : (code === 0 ? 'blocked' : 'failed'), readinessReport: repairedReport, logPath: repairResult?.logs?.logPath || '' });
       status.services.stephanosUi4173.servedRuntimeProof = servedRuntimeProof;
       await persist();
     }
   }
+  const readySourceProof = reproveExpectedHead('ignition-exact-head-changed-before-ready');
+  if (!readySourceProof.ok) return blockForSourceReproof(readySourceProof, 'browser/runtime proof');
   const exactHeadReady = servedRuntimeProof?.ready === true;
   const proofReady = proofReport.finalVerdict === 'ready' && isReady(proofReport, 'backend') && isReady(proofReport, 'openclaw-gateway') && isReady(proofReport, 'stephanos-ui') && isReady(proofReport, 'shared-workspace') && exactHeadReady;
   if (!proofReady) {
@@ -1075,9 +1108,30 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   return { ok: true, status, writes };
 }
 
+export function runCanonicalIgnitionSourceTruthReport({
+  cwd = defaultRepoRoot,
+  environment = process.env,
+  platform = process.platform,
+  spawnSyncFn = spawnSync,
+  sourceTruthFn = collectCanonicalIgnitionSourceTruth,
+  stdout = process.stdout,
+} = {}) {
+  const sourceTruth = sourceTruthFn({ cwd, environment, platform, spawnSyncFn });
+  const canonical = evaluateCanonicalIgnitionSourceTruth(sourceTruth);
+  const report = canonical.ok
+    ? { ok: true, head: canonical.sourceTruth.head, publicationState: canonical.publicationState }
+    : { ok: false, head: '', publicationState: sourceTruth?.publicationState || 'source-truth-unproven', blocker: canonical.blocker };
+  stdout.write(`${JSON.stringify(report)}\n`);
+  return report.ok ? 0 : 2;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const sharedWorkspaceIndex = process.argv.indexOf('--shared-workspace');
   const sharedWorkspace = sharedWorkspaceIndex >= 0 ? process.argv[sharedWorkspaceIndex + 1] : undefined;
-  try { process.exitCode = (await runBattleBridgeIgnitionSupervisor({ sharedWorkspace })).ok ? 0 : 2; }
+  try {
+    process.exitCode = process.argv.includes('--source-truth-json')
+      ? runCanonicalIgnitionSourceTruthReport()
+      : ((await runBattleBridgeIgnitionSupervisor({ sharedWorkspace })).ok ? 0 : 2);
+  }
   catch (error) { console.error(error.message); process.exitCode = 1; }
 }

@@ -18,6 +18,7 @@ import {
   runApprovedBackend8787Start,
   runApprovedOpenClawGateway18789Start,
   runCanonicalSupervisorHousekeep,
+  runCanonicalIgnitionSourceTruthReport,
   defaultBattleBridgeSharedWorkspace,
   runBattleBridgeIgnitionSupervisor,
   evaluateServedRuntimeExactHeadProof,
@@ -266,6 +267,20 @@ test('canonical source truth gate accepts only clean synchronized main tracking 
     assert.equal(result.ok, false);
     assert.equal(result.blocker.id, blockerId);
   }
+});
+
+test('source-truth-only report exposes a canonical head without service mutation', () => {
+  const writes = [];
+  const code = runCanonicalIgnitionSourceTruthReport({
+    sourceTruthFn: () => canonicalSourceTruth(),
+    stdout: { write: (chunk) => writes.push(String(chunk)) },
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(writes.join('')), {
+    ok: true,
+    head: COLLECTOR_HEAD,
+    publicationState: 'healthy-synced',
+  });
 });
 
 test('fixed source collector ignores attacker PATH and fetches only the canonical URL after preflight', () => {
@@ -601,6 +616,57 @@ test('supervisor threads the fixed collector head through backend, UI, and runti
     { phase: 'ui', expectedHead },
     { phase: 'runtime', currentHead: expectedHead, expectedHead },
   ]);
+});
+
+test('supervisor re-proves canonical source head before runtime proof and never publishes ready after drift', async () => {
+  const expectedHead = 'd'.repeat(40);
+  let sourceTruthReads = 0;
+  let runtimeProofCalls = 0;
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => {
+      sourceTruthReads += 1;
+      const head = sourceTruthReads === 1 ? expectedHead : 'e'.repeat(40);
+      return canonicalSourceTruth({ head, originHead: head });
+    },
+    collectFactsFn: async () => factsFor(),
+    plannerFn: (facts) => facts,
+    runtimeProofFn: async () => { runtimeProofCalls += 1; return { ready: true }; },
+    stdout: { write() {} },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'ignition-exact-head-changed-before-runtime-proof');
+  assert.equal(runtimeProofCalls, 0);
+  assert.equal(sourceTruthReads, 2);
+});
+
+test('supervisor re-proves canonical source head again after runtime proof before ready publication', async () => {
+  const expectedHead = 'd'.repeat(40);
+  let sourceTruthReads = 0;
+  let runtimeProofCalls = 0;
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => {
+      sourceTruthReads += 1;
+      const head = sourceTruthReads < 3 ? expectedHead : 'e'.repeat(40);
+      return canonicalSourceTruth({ head, originHead: head });
+    },
+    collectFactsFn: async () => factsFor(),
+    plannerFn: (facts) => facts,
+    runtimeProofFn: async () => {
+      runtimeProofCalls += 1;
+      return { ready: true, currentHead: expectedHead };
+    },
+    stdout: { write() {} },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'ignition-exact-head-changed-before-ready');
+  assert.equal(runtimeProofCalls, 1);
+  assert.equal(sourceTruthReads, 3);
 });
 
 test('tracked runtime activity dirt guidance and runtime-only dist caveat are separate', () => {
