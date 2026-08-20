@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   CANONICAL_COORDINATOR_JOB,
+  CANONICAL_COORDINATOR_WORKFLOW_ID,
   CANONICAL_COORDINATOR_WORKFLOW_NAME,
   CANONICAL_COORDINATOR_WORKFLOW_PATH,
   appendIndependentReviewHandoffProvenanceV1,
@@ -19,7 +20,7 @@ function workflowRun(overrides = {}) {
   return {
     id: 32307961772,
     run_attempt: 1,
-    workflow_id: 316253381,
+    workflow_id: CANONICAL_COORDINATOR_WORKFLOW_ID,
     name: CANONICAL_COORDINATOR_WORKFLOW_NAME,
     path: CANONICAL_COORDINATOR_WORKFLOW_PATH,
     event: 'schedule',
@@ -43,7 +44,7 @@ function build(overrides = {}) {
 
 test('builds exact trusted coordinator-run provenance and round-trips through the handoff body', () => {
   const provenance = build();
-  assert.equal(provenance.coordinatorWorkflowId, 316253381);
+  assert.equal(provenance.coordinatorWorkflowId, CANONICAL_COORDINATOR_WORKFLOW_ID);
   assert.equal(provenance.coordinatorWorkflowRunId, 32307961772);
   assert.equal(provenance.coordinatorWorkflowRunAttempt, 1);
   assert.equal(provenance.coordinatorSourceSha, currentMainSha);
@@ -61,9 +62,10 @@ test('builds exact trusted coordinator-run provenance and round-trips through th
   assert.deepEqual(parsed, provenance);
 });
 
-test('wrong workflow, event, source, ref, job, repository or run identity fails closed', () => {
+test('wrong workflow id, workflow identity, event, source, ref, job, repository or run identity fails closed', () => {
   const badRuns = [
     workflowRun({ workflow_id: 0 }),
+    workflowRun({ workflow_id: CANONICAL_COORDINATOR_WORKFLOW_ID + 1 }),
     workflowRun({ run_attempt: 0 }),
     workflowRun({ name: 'Exact-Head Review Dispatch Copy' }),
     workflowRun({ path: '.github/workflows/lookalike.yml' }),
