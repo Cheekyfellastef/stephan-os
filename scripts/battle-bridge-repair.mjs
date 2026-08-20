@@ -1,11 +1,33 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createWriteStream, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  battleBridgeCanonicalRepositoryArgs,
+  resolveBattleBridgeGitExecution,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
-const repoRoot = process.cwd();
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const psScript = path.join(repoRoot, 'scripts', 'windows', 'repair-stephanos-battle-bridge.ps1');
 const logsDir = path.join(repoRoot, 'logs', 'battle-bridge');
 const healthUrl = 'http://127.0.0.1:8787/api/health';
+const SHA40 = /^[0-9a-f]{40}$/;
+
+function assertExpectedHeadImmediatelyBeforeMutation() {
+  const expectedHead = String(process.env.STEPHANOS_EXPECTED_HEAD || '').trim().toLowerCase();
+  if (!SHA40.test(expectedHead)) throw new Error('BATTLE_BRIDGE_BACKEND_EXPECTED_HEAD_REQUIRED');
+  const gitExecution = resolveBattleBridgeGitExecution({ platform: process.platform, environment: process.env });
+  const result = spawnSync(
+    gitExecution.executable,
+    [...gitExecution.fixedConfigArgs, ...battleBridgeCanonicalRepositoryArgs(repoRoot), 'rev-parse', 'HEAD'],
+    { cwd: repoRoot, env: gitExecution.environment, encoding: 'utf8', shell: false, windowsHide: true, timeout: 120_000 },
+  );
+  const observedHead = String(result?.stdout || '').trim().toLowerCase();
+  if (result?.error || result?.status !== 0 || observedHead !== expectedHead) {
+    throw new Error('BATTLE_BRIDGE_BACKEND_EXPECTED_HEAD_MISMATCH');
+  }
+  return expectedHead;
+}
 
 function findPowerShell() {
   for (const cmd of ['powershell', 'pwsh']) {
@@ -27,6 +49,7 @@ async function waitForHealth(timeoutMs = 20000) {
 
 const ps = findPowerShell();
 if (ps) {
+  assertExpectedHeadImmediatelyBeforeMutation();
   const result = spawnSync(ps, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psScript], { stdio: 'inherit' });
   process.exit(result.status ?? 1);
 }
@@ -48,6 +71,7 @@ const stderrPath = path.join(logsDir, `backend-start-${timestamp}.stderr.log`);
 const stdoutStream = createWriteStream(stdoutPath, { flags: 'a' });
 const stderrStream = createWriteStream(stderrPath, { flags: 'a' });
 
+assertExpectedHeadImmediatelyBeforeMutation();
 const child = spawn('node', ['stephanos-server/server.js'], {
   cwd: repoRoot,
   detached: true,

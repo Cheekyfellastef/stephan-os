@@ -414,10 +414,10 @@ export async function probeLiveUiExactHead({
   }
 }
 
-function canonicalUiRefreshInvocation() {
+function canonicalUiRefreshInvocation(expectedHead) {
   return {
     command: process.execPath,
-    args: [ui4173RefreshScript],
+    args: [ui4173RefreshScript, '--expected-head', expectedHead],
   };
 }
 
@@ -471,7 +471,7 @@ export async function ensureLiveUiConvergedBeforeSupervisor({
   }
 
   console.log('[IGNITION ENTRY] 4173 preflight: live UI is stale; running bounded build, verify, restart handoff, and exact-head proof.');
-  const invocation = canonicalUiRefreshInvocation(platform);
+  const invocation = canonicalUiRefreshInvocation(entryHeadProof.expectedHead);
   const refreshStarted = runStepFn('refresh-stale-ui-4173', invocation.command, invocation.args);
   if (!refreshStarted) {
     throw new Error('Bounded UI 4173 refresh failed before Battle Bridge supervisor proof.');

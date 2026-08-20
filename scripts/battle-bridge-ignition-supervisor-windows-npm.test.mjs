@@ -8,9 +8,12 @@ import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindows
 
 function captureBackendStart(workspace, platform) {
   const calls = [];
+  const expectedHead = 'a'.repeat(40);
   return runApprovedBackend8787Start({
     sharedWorkspace: workspace,
     platform,
+    expectedHead,
+    currentHeadFn: () => expectedHead,
     spawnFn: (command, args, options) => {
       calls.push({ command, args, options });
       return null;
@@ -26,6 +29,7 @@ test('Battle Bridge backend repair uses fixed cmd.exe npm.cmd execution on Windo
   assert.equal(calls[0].command, BATTLE_BRIDGE_WINDOWS_HOST.cmd);
   assert.deepEqual(calls[0].args, ['/d', '/s', '/c', `""${BATTLE_BRIDGE_WINDOWS_HOST.npm}" run stephanos:battle-bridge:repair"`]);
   assert.equal(calls[0].options.shell, false);
+  assert.equal(calls[0].options.env.STEPHANOS_EXPECTED_HEAD, 'a'.repeat(40));
   assert.equal(result.started, true);
   assert.equal(result.exitCode, 0);
 });
@@ -38,4 +42,12 @@ test('Battle Bridge backend repair keeps direct npm executable on non-Windows ho
   assert.equal(calls[0].command, 'npm');
   assert.deepEqual(calls[0].args, ['run', 'stephanos:battle-bridge:repair']);
   assert.equal(calls[0].options.shell, false);
+  assert.equal(calls[0].options.env.STEPHANOS_EXPECTED_HEAD, 'a'.repeat(40));
+});
+
+test('backend repair child source requires fixed exact-head proof immediately before mutation', async () => {
+  const source = fs.readFileSync(new URL('./battle-bridge-repair.mjs', import.meta.url), 'utf8');
+  assert.match(source, /STEPHANOS_EXPECTED_HEAD/);
+  assert.match(source, /assertExpectedHeadImmediatelyBeforeMutation\(\);\s*const result = spawnSync\(ps/);
+  assert.match(source, /assertExpectedHeadImmediatelyBeforeMutation\(\);\s*const child = spawn\('node'/);
 });

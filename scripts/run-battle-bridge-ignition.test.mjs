@@ -611,8 +611,9 @@ test('live stale UI uses the bounded refresh helper and must converge before sup
   assert.equal(refreshCalls.length, 1);
   assert.equal(refreshCalls[0].label, 'refresh-stale-ui-4173');
   assert.equal(refreshCalls[0].command, process.execPath);
-  assert.equal(refreshCalls[0].args.length, 1);
+  assert.equal(refreshCalls[0].args.length, 3);
   assert.match(refreshCalls[0].args[0].replace(/\\/g, '/'), /scripts\/refresh-stephanos-ui-4173\.mjs$/);
+  assert.deepEqual(refreshCalls[0].args.slice(1), ['--expected-head', currentHead]);
 });
 
 test('cold start remains delegated to the complete existing supervisor flow', async () => {

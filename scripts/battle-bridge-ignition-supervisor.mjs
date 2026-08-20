@@ -731,9 +731,15 @@ export async function runApprovedBackend8787Start({
   const stdoutLogPath = path.join(logPath, 'stdout.log');
   const stderrLogPath = path.join(logPath, 'stderr.log');
   const execution = resolveBackendRepairExecution(platform);
+  const childEnvironment = {
+    ...(platform === 'win32'
+      ? createBattleBridgeMinimalChildEnvironment(environment, { platform })
+      : environment),
+    STEPHANOS_EXPECTED_HEAD: expected,
+  };
   const child = spawnFn(execution.command, execution.args, {
     cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
-    ...(platform === 'win32' ? { env: createBattleBridgeMinimalChildEnvironment(environment, { platform }) } : {}),
+    env: childEnvironment,
     detached: false,
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: false,
