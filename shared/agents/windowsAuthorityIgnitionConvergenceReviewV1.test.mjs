@@ -9,8 +9,8 @@ import {
 const repository = 'Cheekyfellastef/stephan-os';
 const prNumber = 1919;
 const branch = 'fix/ignition-canonical-convergence-gate-v1';
-const sourceHead = '0cbd8318f5da7d815e3f4e30d8ef9a5d1c9feb77';
-const priorSourceHead = '9941da6e500a7d95d11e8a3654630462cce71a91';
+const sourceHead = '34b573d15fe065a35a6c94f9f58a2876811a63b7';
+const priorSourceHead = '0cbd8318f5da7d815e3f4e30d8ef9a5d1c9feb77';
 const baseSha = '3dc12a7c84c54f406b10dee1293789e2338f7824';
 const priorBaseSha = '13f13144730b2a6d94754914dbdf2c254c39567d';
 
