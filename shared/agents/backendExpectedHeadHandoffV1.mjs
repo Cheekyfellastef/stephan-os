@@ -1,6 +1,7 @@
 export const BACKEND_EXPECTED_HEAD_HANDOFF_SCHEMA = 'stephanos.backend-expected-head-handoff.v1';
 
 const SHA40 = /^[0-9a-f]{40}$/;
+const CANONICAL_BACKEND_TASK_MULTIPLE_INSTANCES = 'IgnoreNew';
 
 function normalizedHead(value) {
   return String(value || '').trim().toLowerCase();
@@ -15,6 +16,7 @@ export function evaluateBackendExpectedHeadHandoffPublication({
   taskWasRunning = false,
   taskStopped = false,
   taskStateImmediatelyBeforePublish = '',
+  taskMultipleInstancesImmediatelyBeforePublish = '',
   listenerWasPresent = false,
   listenerStopped = false,
 } = {}) {
@@ -22,11 +24,31 @@ export function evaluateBackendExpectedHeadHandoffPublication({
   if (!SHA40.test(head)) return blocked('expected-head-invalid', { publishAllowed: false, expectedHead: head });
   if (taskWasRunning && !taskStopped) return blocked('old-task-not-stopped', { publishAllowed: false, expectedHead: head });
   if (taskStateImmediatelyBeforePublish !== 'Disabled') return blocked('task-not-disabled-before-publish', { publishAllowed: false, expectedHead: head });
+  if (taskMultipleInstancesImmediatelyBeforePublish !== CANONICAL_BACKEND_TASK_MULTIPLE_INSTANCES) {
+    return blocked('task-overlap-policy-not-ignore-new-before-publish', { publishAllowed: false, expectedHead: head });
+  }
   if (listenerWasPresent && !listenerStopped) return blocked('old-listener-not-stopped', { publishAllowed: false, expectedHead: head });
   return Object.freeze({
     mutationAllowed: false,
     publishAllowed: true,
     reason: 'old-consumers-stopped',
+    expectedHead: head,
+  });
+}
+
+export function evaluateBackendExpectedHeadHandoffStart({
+  expectedHead = '',
+  taskMultipleInstancesImmediatelyBeforeStart = '',
+} = {}) {
+  const head = normalizedHead(expectedHead);
+  if (!SHA40.test(head)) return blocked('expected-head-invalid', { startAllowed: false, expectedHead: head });
+  if (taskMultipleInstancesImmediatelyBeforeStart !== CANONICAL_BACKEND_TASK_MULTIPLE_INSTANCES) {
+    return blocked('task-overlap-policy-not-ignore-new-before-start', { startAllowed: false, expectedHead: head });
+  }
+  return Object.freeze({
+    mutationAllowed: false,
+    startAllowed: true,
+    reason: 'task-overlap-policy-ignore-new',
     expectedHead: head,
   });
 }

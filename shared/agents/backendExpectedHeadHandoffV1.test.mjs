@@ -4,6 +4,7 @@ import {
   BACKEND_EXPECTED_HEAD_HANDOFF_SCHEMA,
   evaluateBackendExpectedHeadHandoffConsumption,
   evaluateBackendExpectedHeadHandoffPublication,
+  evaluateBackendExpectedHeadHandoffStart,
 } from './backendExpectedHeadHandoffV1.mjs';
 
 const HEAD_A = 'a'.repeat(40);
@@ -26,20 +27,62 @@ function validHandoff(overrides = {}) {
   };
 }
 
-test('publication is impossible until every previous consumer is proven stopped', () => {
+test('publication is impossible until previous consumers are stopped and overlap policy is canonical', () => {
+  const policies = ['', 'Parallel', 'Queue', 'StopExisting', 'IgnoreNew'];
   for (const taskWasRunning of [false, true]) {
     for (const taskStopped of [false, true]) {
       for (const listenerWasPresent of [false, true]) {
         for (const listenerStopped of [false, true]) {
           for (const taskStateImmediatelyBeforePublish of ['Ready', 'Running', 'Queued', 'Disabled']) {
-            const result = evaluateBackendExpectedHeadHandoffPublication({ expectedHead: HEAD_A, taskWasRunning, taskStopped, taskStateImmediatelyBeforePublish, listenerWasPresent, listenerStopped });
-            const requiredStopsHold = (!taskWasRunning || taskStopped) && taskStateImmediatelyBeforePublish === 'Disabled' && (!listenerWasPresent || listenerStopped);
-            assert.equal(result.publishAllowed, requiredStopsHold, JSON.stringify({ taskWasRunning, taskStopped, taskStateImmediatelyBeforePublish, listenerWasPresent, listenerStopped, result }));
+            for (const taskMultipleInstancesImmediatelyBeforePublish of policies) {
+              const result = evaluateBackendExpectedHeadHandoffPublication({
+                expectedHead: HEAD_A,
+                taskWasRunning,
+                taskStopped,
+                taskStateImmediatelyBeforePublish,
+                taskMultipleInstancesImmediatelyBeforePublish,
+                listenerWasPresent,
+                listenerStopped,
+              });
+              const requiredStopsHold = (!taskWasRunning || taskStopped)
+                && taskStateImmediatelyBeforePublish === 'Disabled'
+                && taskMultipleInstancesImmediatelyBeforePublish === 'IgnoreNew'
+                && (!listenerWasPresent || listenerStopped);
+              assert.equal(result.publishAllowed, requiredStopsHold, JSON.stringify({
+                taskWasRunning,
+                taskStopped,
+                taskStateImmediatelyBeforePublish,
+                taskMultipleInstancesImmediatelyBeforePublish,
+                listenerWasPresent,
+                listenerStopped,
+                result,
+              }));
+            }
           }
         }
       }
     }
   }
+});
+
+test('start admission rejects overlap-policy drift after handoff publication', () => {
+  for (const policy of ['', 'Parallel', 'Queue', 'StopExisting']) {
+    const result = evaluateBackendExpectedHeadHandoffStart({
+      expectedHead: HEAD_A,
+      taskMultipleInstancesImmediatelyBeforeStart: policy,
+    });
+    assert.equal(result.startAllowed, false, JSON.stringify({ policy, result }));
+    assert.equal(result.reason, 'task-overlap-policy-not-ignore-new-before-start');
+  }
+  assert.deepEqual(evaluateBackendExpectedHeadHandoffStart({
+    expectedHead: HEAD_A,
+    taskMultipleInstancesImmediatelyBeforeStart: 'IgnoreNew',
+  }), {
+    mutationAllowed: false,
+    startAllowed: true,
+    reason: 'task-overlap-policy-ignore-new',
+    expectedHead: HEAD_A,
+  });
 });
 
 test('an observed handoff never degrades into standalone derivation', () => {

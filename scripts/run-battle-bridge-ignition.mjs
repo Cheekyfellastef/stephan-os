@@ -250,7 +250,7 @@ export async function probeCanonicalBackendHealth({ fetchFn = timeoutFetch } = {
   }
 }
 
-function backendStarterInvocation() {
+export function backendStarterInvocation(expectedHead) {
   return Object.freeze({
     command: 'powershell.exe',
     args: Object.freeze([
@@ -259,6 +259,8 @@ function backendStarterInvocation() {
       'Bypass',
       '-File',
       backendStarterScript,
+      '-ExpectedHead',
+      expectedHead,
       '-StartupTimeoutSeconds',
       '90',
       '-PollIntervalSeconds',
@@ -316,7 +318,7 @@ export async function ensureBackend8787ConvergedBeforeSupervisor({
   }
 
   const currentHead = entryHeadProof.currentHead;
-  const starter = backendStarterInvocation();
+  const starter = backendStarterInvocation(currentHead);
   if (runStepFn('backend-8787-preflight', starter.command, [...starter.args])) {
     return Object.freeze({ ok: true, action: 'backend-preflight-pass', restartAttempted: false });
   }

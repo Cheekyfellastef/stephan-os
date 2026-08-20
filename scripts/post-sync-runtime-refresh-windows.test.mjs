@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { backendStarterInvocation } from './run-battle-bridge-ignition.mjs';
 
 const restartSource = await readFile(new URL('./windows/restart-approved-stephanos-runtime.ps1', import.meta.url), 'utf8');
 const backendStartSource = await readFile(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
+const ignitionEntrySource = await readFile(new URL('./run-battle-bridge-ignition.mjs', import.meta.url), 'utf8');
 
 test('restart helper accepts only backend and mission-worker', () => {
   assert.match(restartSource, /ValidateSet\('backend', 'mission-worker'\)/);
@@ -12,11 +14,24 @@ test('restart helper accepts only backend and mission-worker', () => {
   assert.doesNotMatch(restartSource, /\[string\]\$TaskName/);
 });
 
-test('restart helper validates canonical task action before mutation', () => {
+test('restart helper validates canonical task action and overlap policy before mutation', () => {
   assert.match(restartSource, /run-stephanos-scheduled-task-windowless\.vbs/);
   assert.match(restartSource, /APPROVED_TASK_EXECUTABLE_MISMATCH/);
   assert.match(restartSource, /APPROVED_TASK_ARGUMENTS_MISMATCH/);
+  assert.match(restartSource, /\$Target -eq 'backend' -and \[string\]\$task\.Settings\.MultipleInstances -ne 'IgnoreNew'/);
+  assert.match(restartSource, /APPROVED_BACKEND_TASK_MULTIPLE_INSTANCES_MISMATCH/);
   assert.ok(restartSource.includes("TaskPath '\\'"));
+});
+
+test('backend entry preflight carries the parent-proven exact head into its PowerShell child', () => {
+  const provenHead = 'a'.repeat(40);
+  const laterHead = 'b'.repeat(40);
+  const invocation = backendStarterInvocation(provenHead);
+  const expectedHeadIndex = invocation.args.indexOf('-ExpectedHead');
+  assert.notEqual(expectedHeadIndex, -1);
+  assert.equal(invocation.args[expectedHeadIndex + 1], provenHead);
+  assert.equal(invocation.args.includes(laterHead), false);
+  assert.match(ignitionEntrySource, /const currentHead = entryHeadProof\.currentHead;[\s\S]*const starter = backendStarterInvocation\(currentHead\)/);
 });
 
 test('backend restart terminates only the verified 8787 Stephanos Node listener', () => {
@@ -28,7 +43,7 @@ test('backend restart terminates only the verified 8787 Stephanos Node listener'
   assert.match(restartSource, /BACKEND_EXACT_HEAD_RECEIPT_TIMEOUT/);
   assert.match(restartSource, /stephanos\.backend-expected-head-handoff\.v1/);
   assert.match(restartSource, /BACKEND_LISTENER_DID_NOT_STOP[\s\S]*Publish-BackendExpectedHeadHandoff[\s\S]*Start-ScheduledTask/);
-  assert.match(restartSource, /Disable-ScheduledTask[\s\S]*\$task\.State -in @\('Running', 'Queued'\)[\s\S]*\$prePublishTask = Get-ScheduledTask[\s\S]*\$prePublishTask\.State -ne 'Disabled'[\s\S]*BACKEND_TASK_NOT_QUIESCENT_BEFORE_HANDOFF[\s\S]*Publish-BackendExpectedHeadHandoff[\s\S]*Enable-ScheduledTask[\s\S]*Start-ScheduledTask/);
+  assert.match(restartSource, /Disable-ScheduledTask[\s\S]*\$task\.State -in @\('Running', 'Queued'\)[\s\S]*\$prePublishTask = Get-ScheduledTask[\s\S]*\$prePublishTask\.State -ne 'Disabled'[\s\S]*\$prePublishTask\.Settings\.MultipleInstances -ne 'IgnoreNew'[\s\S]*BACKEND_TASK_MULTIPLE_INSTANCES_MISMATCH_BEFORE_HANDOFF[\s\S]*Publish-BackendExpectedHeadHandoff[\s\S]*Enable-ScheduledTask[\s\S]*\$preStartTask = Get-ScheduledTask[\s\S]*\$preStartTask\.Settings\.MultipleInstances -ne 'IgnoreNew'[\s\S]*BACKEND_TASK_MULTIPLE_INSTANCES_MISMATCH_BEFORE_START[\s\S]*Start-ScheduledTask/);
   assert.match(restartSource, /backend-expected-head-handoff\.json/);
   assert.match(restartSource, /expiresAtUtc = \$issuedAtUtc\.AddMinutes\(2\)/);
   assert.match(restartSource, /catch \{[\s\S]*Remove-Item -LiteralPath \$backendExpectedHeadHandoffPath/);

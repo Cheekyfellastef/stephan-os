@@ -195,6 +195,9 @@ try {
     $expectedArguments = "//B //NoLogo `"$launcherPath`" $($plan.Role)"
     if ($actualExecute -ne $wscriptExe) { Stop-WithBlocker 'APPROVED_TASK_EXECUTABLE_MISMATCH' }
     if ([string]$action.Arguments -ne $expectedArguments) { Stop-WithBlocker 'APPROVED_TASK_ARGUMENTS_MISMATCH' }
+    if ($Target -eq 'backend' -and [string]$task.Settings.MultipleInstances -ne 'IgnoreNew') {
+        Stop-WithBlocker 'APPROVED_BACKEND_TASK_MULTIPLE_INSTANCES_MISMATCH'
+    }
 
     $beforeState = [string]$task.State
     $startedAtUtc = [datetime]::UtcNow
@@ -222,9 +225,16 @@ try {
         if ([string]$prePublishTask.State -ne 'Disabled') {
             Stop-WithBlocker 'BACKEND_TASK_NOT_QUIESCENT_BEFORE_HANDOFF'
         }
+        if ([string]$prePublishTask.Settings.MultipleInstances -ne 'IgnoreNew') {
+            Stop-WithBlocker 'BACKEND_TASK_MULTIPLE_INSTANCES_MISMATCH_BEFORE_HANDOFF'
+        }
         Publish-BackendExpectedHeadHandoff -Path $backendExpectedHeadHandoffPath -Head $ExpectedHead
         Enable-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop | Out-Null
         $backendTaskDisabledByRepair = $false
+        $preStartTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop
+        if ([string]$preStartTask.Settings.MultipleInstances -ne 'IgnoreNew') {
+            Stop-WithBlocker 'BACKEND_TASK_MULTIPLE_INSTANCES_MISMATCH_BEFORE_START'
+        }
         Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
         if (-not (Wait-Until -Seconds $TimeoutSeconds -Condition { $null -ne (Test-BackendHealth) })) {
             Stop-WithBlocker 'BACKEND_HEALTH_TIMEOUT'
