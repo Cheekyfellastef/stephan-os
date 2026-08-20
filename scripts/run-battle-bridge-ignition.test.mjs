@@ -1,13 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import process from 'node:process';
 import {
   createSupervisorHousekeepRunStep,
+  ensureBackend8787ConvergedBeforeSupervisor,
   ensureLiveUiConvergedBeforeSupervisor,
+  probeCanonicalBackendHealth,
   runSupervisorHousekeepPreservingLiveDist,
+  runSupervisorHousekeepPreservingLiveRuntime,
+  writePreSupervisorFailureStatus,
 } from './run-battle-bridge-ignition.mjs';
 
-test('supervisor housekeeping defers generated dist mutation but preserves other safe housekeeping', () => {
+function backendHealthResponse(sourceHead, {
+  status = 200,
+  schemaVersion = 'stephanos.backend-health.v1',
+  runtimeId = 'stephanos-battle-bridge-backend',
+} = {}) {
+  return {
+    status,
+    async json() {
+      return {
+        schemaVersion,
+        backendIdentity: { runtimeId, sourceHead },
+      };
+    },
+  };
+}
+
+test('supervisor housekeeping preserves exact-head dist and runtime-owned durable memory', () => {
   const delegated = [];
   const runStepFn = (label, command, args) => {
     delegated.push({ label, command, args });
@@ -18,21 +41,23 @@ test('supervisor housekeeping defers generated dist mutation but preserves other
   guarded('git-restore-auto-generated', 'git', ['restore', '--', 'apps/stephanos/dist/index.html']);
   guarded('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', 'apps/stephanos/dist/']);
   guarded('git-restore-runtime-tracked', 'git', ['restore', '--', 'stephanos-server/data/memory/durable-memory.json']);
+  guarded('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', 'data/activity/']);
 
-  assert.deepEqual(delegated.map((entry) => entry.label), ['git-restore-runtime-tracked']);
+  assert.deepEqual(delegated.map((entry) => entry.label), ['git-clean-runtime-untracked']);
 });
 
-test('supervisor housekeeping injects the live-dist-preserving run step into the existing housekeeper', () => {
+test('supervisor housekeeping injects the live-runtime-preserving run step into the existing housekeeper', () => {
   const delegated = [];
   let receivedOptions = null;
   const housekeepFn = (options) => {
     receivedOptions = options;
     options.runStepFn('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', 'apps/stephanos/dist/']);
+    options.runStepFn('git-restore-runtime-tracked', 'git', ['restore', '--', 'stephanos-server/data/memory/durable-memory.json']);
     options.runStepFn('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', 'data/activity/']);
     return { ok: true };
   };
 
-  const result = runSupervisorHousekeepPreservingLiveDist(
+  const result = runSupervisorHousekeepPreservingLiveRuntime(
     { dryRun: false, compact: true },
     {
       housekeepFn,
@@ -47,6 +72,194 @@ test('supervisor housekeeping injects the live-dist-preserving run step into the
   assert.equal(receivedOptions.dryRun, false);
   assert.equal(receivedOptions.compact, true);
   assert.deepEqual(delegated, ['git-clean-runtime-untracked']);
+  assert.equal(runSupervisorHousekeepPreservingLiveDist, runSupervisorHousekeepPreservingLiveRuntime);
+});
+
+test('backend startup source tolerates exact runtime memory plus unstaged modified/deleted generated dist with fixed Node command forms', async () => {
+  const starter = await readFile(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
+  assert.match(starter, /\$runtimeMemoryPath = 'stephanos-server\/data\/memory\/durable-memory\.json'/);
+  assert.match(starter, /\$runtimeDistPrefix = 'apps\/stephanos\/dist\/'/);
+  assert.match(starter, /\$status -eq ' M' -and \$path -eq \$runtimeMemoryPath/);
+  assert.match(starter, /function Test-RuntimeUiDistStatus[\s\S]*\$Status -eq ' M' -or \$Status -eq ' D'/);
+  assert.match(starter, /Test-RuntimeUiDistStatus -Status \$status[\s\S]*\$path\.StartsWith\(\$runtimeDistPrefix, \[System\.StringComparison\]::Ordinal\)/);
+  assert.match(starter, /Backend startup requires source-tracked files to be unmodified at exact head/);
+  assert.match(starter, /runtimeMemoryDirtTolerated = \$RuntimeMemoryDirty/);
+  assert.match(starter, /runtimeDistDirtTolerated = \$RuntimeDistDirty/);
+  assert.match(starter, /trackedWorktreeClean = -not \(\$RuntimeMemoryDirty -or \$RuntimeDistDirty\)/);
+  assert.match(starter, /sourceWorktreeClean = \$true/);
+  assert.match(starter, /-replace '\\s\+', ' '/);
+  assert.match(starter, /'node stephanos-server\/server\.js'/);
+  assert.match(starter, /'node\.exe stephanos-server\/server\.js'/);
+  assert.match(starter, /function Convert-ProcessCreationDateToUtcText[\s\S]*CreationDate -is \[DateTime\][\s\S]*ManagementDateTimeConverter\]::ToDateTime/);
+  assert.match(starter, /Convert-ProcessCreationDateToUtcText -CreationDate \$process\.CreationDate/);
+  assert.doesNotMatch(starter, /ManagementDateTimeConverter\]::ToDateTime\(\[string\]\$process\.CreationDate\)/);
+  assert.doesNotMatch(starter, /CommandLine -match|Invoke-Expression|Start-Process[^\n]*-ArgumentList[^\n]*\$CommandLine/i);
+  assert.doesNotMatch(starter, /Stop-Process|taskkill|wmic\s+process/i);
+});
+
+test('canonical backend health probe accepts only the fixed runtime identity with a valid source head', async () => {
+  const head = 'a'.repeat(40);
+  const clean = await probeCanonicalBackendHealth({ fetchFn: async () => backendHealthResponse(head) });
+  assert.equal(clean.canonical, true);
+  assert.equal(clean.sourceHead, head);
+
+  const foreign = await probeCanonicalBackendHealth({
+    fetchFn: async () => backendHealthResponse(head, { runtimeId: 'other-backend' }),
+  });
+  assert.equal(foreign.canonical, false);
+  assert.equal(foreign.sourceHead, '');
+
+  const malformed = await probeCanonicalBackendHealth({ fetchFn: async () => backendHealthResponse('not-a-sha') });
+  assert.equal(malformed.canonical, false);
+});
+
+test('backend preflight success never invokes approved restart or health fallback', async () => {
+  const calls = [];
+  let fetchCalls = 0;
+  const result = await ensureBackend8787ConvergedBeforeSupervisor({
+    platform: 'win32',
+    runStepFn: (label, command, args) => {
+      calls.push({ label, command, args });
+      return true;
+    },
+    currentHeadFn: () => 'b'.repeat(40),
+    fetchFn: async () => {
+      fetchCalls += 1;
+      return backendHealthResponse('a'.repeat(40));
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.action, 'backend-preflight-pass');
+  assert.equal(result.restartAttempted, false);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].label, 'backend-8787-preflight');
+  assert.equal(fetchCalls, 0);
+});
+
+test('failed preflight delegates a proven stale canonical backend only to the approved exact-head restart primitive', async () => {
+  const oldHead = 'a'.repeat(40);
+  const currentHead = 'b'.repeat(40);
+  const calls = [];
+  const health = [backendHealthResponse(oldHead), backendHealthResponse(currentHead)];
+  const result = await ensureBackend8787ConvergedBeforeSupervisor({
+    platform: 'win32',
+    currentHeadFn: () => currentHead,
+    fetchFn: async () => health.shift(),
+    runStepFn: (label, command, args) => {
+      calls.push({ label, command, args });
+      return label === 'backend-8787-approved-stale-restart';
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.action, 'backend-approved-stale-restart-pass');
+  assert.equal(result.replacedSourceHead, oldHead);
+  assert.equal(result.currentHead, currentHead);
+  assert.equal(result.restartAttempted, true);
+  assert.deepEqual(calls.map((entry) => entry.label), [
+    'backend-8787-preflight',
+    'backend-8787-approved-stale-restart',
+  ]);
+  assert.equal(calls[1].command, 'powershell.exe');
+  assert.ok(calls[1].args.some((arg) => String(arg).replace(/\\/g, '/').endsWith('/scripts/windows/restart-approved-stephanos-runtime.ps1')));
+  assert.deepEqual(calls[1].args.slice(-6), ['-Target', 'backend', '-ExpectedHead', currentHead, '-TimeoutSeconds', '90']);
+});
+
+test('same-head or noncanonical 8787 failures remain fail closed without restart authority', async () => {
+  const currentHead = 'b'.repeat(40);
+  for (const fixture of [
+    {
+      response: backendHealthResponse(currentHead),
+      blocker: 'BACKEND_8787_SAME_HEAD_PREFLIGHT_FAILED',
+    },
+    {
+      response: backendHealthResponse('a'.repeat(40), { runtimeId: 'foreign-runtime' }),
+      blocker: 'BACKEND_8787_STALE_LISTENER_NOT_QUALIFIED',
+    },
+  ]) {
+    const calls = [];
+    const result = await ensureBackend8787ConvergedBeforeSupervisor({
+      platform: 'win32',
+      currentHeadFn: () => currentHead,
+      fetchFn: async () => fixture.response,
+      runStepFn: (label, command, args) => {
+        calls.push({ label, command, args });
+        return false;
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, fixture.blocker);
+    assert.equal(result.restartAttempted, false);
+    assert.deepEqual(calls.map((entry) => entry.label), ['backend-8787-preflight']);
+  }
+});
+
+test('approved restart must produce exact-current backend health before Ignition proceeds', async () => {
+  const oldHead = 'a'.repeat(40);
+  const currentHead = 'b'.repeat(40);
+  const health = [backendHealthResponse(oldHead), backendHealthResponse(oldHead)];
+  const result = await ensureBackend8787ConvergedBeforeSupervisor({
+    platform: 'win32',
+    currentHeadFn: () => currentHead,
+    fetchFn: async () => health.shift(),
+    runStepFn: (label) => label === 'backend-8787-approved-stale-restart',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'BACKEND_8787_APPROVED_RESTART_EXACT_HEAD_PROOF_FAILED');
+  assert.equal(result.restartAttempted, true);
+});
+
+test('Recovery Mesh shares the exact runtime-memory, generated-dist and backend listener identity rules', async () => {
+  const probe = await readFile(new URL('./windows/probe-battle-bridge-recovery-mesh.ps1', import.meta.url), 'utf8');
+  assert.match(probe, /\$runtimeMemoryPath = 'stephanos-server\/data\/memory\/durable-memory\.json'/);
+  assert.match(probe, /\$status -eq ' M' -and \$path -eq \$runtimeMemoryPath/);
+  assert.match(probe, /function Test-RuntimeUiDistStatus[\s\S]*\$Status -eq ' M' -or \$Status -eq ' D'/);
+  assert.match(probe, /Test-RuntimeUiDistStatus -Status \$status[\s\S]*\$path\.StartsWith\(\$runtimeUiDistPrefix/);
+  assert.match(probe, /RECOVERY_CANONICAL_TRACKED_SOURCE_WORKTREE_DIRTY/);
+  assert.match(probe, /runtimeMemoryDirtTolerated = \[bool\]\$afterWorktree\.RuntimeMemoryDirty/);
+  assert.match(probe, /sourceWorktreeClean = \$true/);
+  assert.match(probe, /\$receiptSourceClean/);
+  assert.match(probe, /\$receiptTrackedTruth/);
+  assert.match(probe, /-replace '\\s\+', ' '/);
+  assert.match(probe, /'node stephanos-server\/server\.js'/);
+  assert.match(probe, /'node\.exe stephanos-server\/server\.js'/);
+  assert.match(probe, /function Convert-ProcessCreationDateToUtcText[\s\S]*CreationDate -is \[DateTime\][\s\S]*ManagementDateTimeConverter\]::ToDateTime/);
+  assert.match(probe, /Convert-ProcessCreationDateToUtcText -CreationDate \$process\.CreationDate/);
+  assert.doesNotMatch(probe, /ManagementDateTimeConverter\]::ToDateTime\(\[string\]\$process\.CreationDate\)/);
+  assert.doesNotMatch(probe, /CommandLine -match|Invoke-Expression/i);
+});
+
+test('pre-supervisor failures publish a fresh terminal red ignition record instead of leaving the launcher blue', async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), 'stephanos-pre-supervisor-'));
+  try {
+    const result = await writePreSupervisorFailureStatus({
+      sharedWorkspace: workspace,
+      phase: 'backend 8787',
+      blockerId: 'backend-preflight-test-blocker',
+      detail: 'backend preflight failed before supervisor start',
+      nextOperatorAction: 'repair the backend preflight, then retry Ignition',
+    });
+    const status = JSON.parse(await readFile(result.statusPath, 'utf8'));
+    assert.equal(status.trafficLight, 'red');
+    assert.equal(status.currentPhase, 'backend 8787');
+    assert.equal(status.blockerId, 'backend-preflight-test-blocker');
+    assert.equal(status.phases['backend 8787'].state, 'blocked');
+    assert.match(status.nextOperatorAction, /retry Ignition/);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('canonical ignition pins repository-sensitive housekeeping to the source-derived repo root', async () => {
+  const entry = await readFile(new URL('./run-battle-bridge-ignition.mjs', import.meta.url), 'utf8');
+  assert.match(entry, /const repoRoot = path\.resolve\(path\.dirname\(fileURLToPath\(import\.meta\.url\)\), '\.\.'\)/);
+  assert.match(entry, /export async function main[\s\S]*process\.chdir\(repoRoot\)/);
+  assert.match(entry, /restart-approved-stephanos-runtime\.ps1/);
+  assert.match(entry, /'-Target',[\s\S]*'backend',[\s\S]*'-ExpectedHead',[\s\S]*currentHead/);
+  assert.doesNotMatch(entry, /Stop-Process|taskkill|wmic\s+process|Invoke-Expression/i);
+  assert.doesNotMatch(entry, /process\.chdir\([^)]*process\.argv|process\.chdir\([^)]*env/i);
 });
 
 test('second press reuses an existing exact-head UI without spawning another refresh', async () => {

@@ -289,6 +289,36 @@ export function resolveProgrammeAuthorityPaths({ root, repoRoot } = {}) {
   });
 }
 
+export async function readMissionControllerCapacityRoutingInput({
+  root,
+  repoRoot,
+  nowUtc,
+  readFileImpl = readFile,
+} = {}) {
+  const names = {
+    codexStatus: 'codex-capacity-current.json',
+    github: 'chatgpt-github-build-capacity-current.json',
+    forge: 'foundry-forge-build-capacity-current.json',
+    forgeSidecar: 'foundry-forge-sidecar-current.json',
+  };
+  const resolved = Object.fromEntries(Object.entries(names).map(([key, file]) => [
+    key,
+    authorityPath(root, repoRoot, 'status', file),
+  ]));
+  if (Object.values(resolved).some((entry) => !entry.ok)) return null;
+  const loaded = Object.fromEntries(await Promise.all(Object.entries(resolved).map(async ([key, entry]) => {
+    const result = await readJson(entry.path, readFileImpl);
+    return [key, result.present && !result.error ? result.value : null];
+  })));
+  return Object.freeze({
+    nowUtc,
+    codexStatus: loaded.codexStatus,
+    githubLaneReceipt: loaded.github?.capacityReceipt ?? loaded.github,
+    forgeLaneReceipt: loaded.forge?.capacityReceipt ?? loaded.forge,
+    forgeSidecar: loaded.forgeSidecar?.forgeSidecar ?? loaded.forgeSidecar,
+  });
+}
+
 export async function readSourceMutationLease({
   root,
   repoRoot,
