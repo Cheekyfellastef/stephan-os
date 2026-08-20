@@ -9,6 +9,8 @@ on:
     paths:
       - 'shared/agents/openClawUpdateBattleBridgeAdapterV1.mjs'
       - 'shared/agents/openClawUpdateBattleBridgeAdapterV1.test.mjs'
+      - 'shared/agents/openClawUpdateCapabilityLedgerV1.mjs'
+      - 'shared/agents/openClawUpdateCapabilityLedgerV1.test.mjs'
       - 'scripts/openclaw-update-battle-bridge-adapter.mjs'
       - 'scripts/openclaw-update-battle-bridge-adapter.test.mjs'
       - '.github/workflows/openclaw-update-battle-bridge-adapter-proof.yml'
@@ -33,13 +35,18 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Parse adapter sources
+      - name: Parse adapter and capability-ledger sources
         run: |
           node --check shared/agents/openClawUpdateBattleBridgeAdapterV1.mjs
+          node --check shared/agents/openClawUpdateCapabilityLedgerV1.mjs
           node --check scripts/openclaw-update-battle-bridge-adapter.mjs
 
-      - name: Run adapter authority and rollback regressions
-        run: node --test shared/agents/openClawUpdateBattleBridgeAdapterV1.test.mjs scripts/openclaw-update-battle-bridge-adapter.test.mjs
+      - name: Run adapter authority, rollback and capability-evolution regressions
+        run: >-
+          node --test
+          shared/agents/openClawUpdateBattleBridgeAdapterV1.test.mjs
+          shared/agents/openClawUpdateCapabilityLedgerV1.test.mjs
+          scripts/openclaw-update-battle-bridge-adapter.test.mjs
 
       - name: Check exact diff
         run: |
