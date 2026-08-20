@@ -12,6 +12,7 @@ import {
   collectCanonicalIgnitionSourceTruth,
   createBattleBridgeSupervisorStatus,
   evaluateCanonicalIgnitionSourceTruth,
+  getCurrentGitHead,
   projectBattleBridgeSupervisorStatus,
   resolveBackendRepairExecution,
   runApprovedBackend8787Start,
@@ -25,7 +26,10 @@ import { buildOpenClawGatewayStartupTarget, npmGlobalBinCandidatesForOpenClaw, r
 import {
   BATTLE_BRIDGE_CANONICAL_REMOTE_URL,
   BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+  BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE,
   battleBridgeCanonicalRepositoryArgs,
+  battleBridgeGitFixedConfigArgs,
+  resolveBattleBridgeGitExecutable,
 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
@@ -92,6 +96,7 @@ function runSourceCollectorFixture({
   divergence = '0\t0\n',
   failOperation = '',
   topologyAfter = null,
+  platform = 'win32',
   environment = { PATH: 'C:\\attacker', NODE_OPTIONS: '--require=C:\\attacker\\inject.cjs' },
 } = {}) {
   const calls = [];
@@ -146,6 +151,7 @@ function runSourceCollectorFixture({
   const result = collectCanonicalIgnitionSourceTruth({
     cwd: '/canonical/repo',
     environment,
+    platform,
     spawnSyncFn,
     inspectTopologyFn,
   });
@@ -270,6 +276,20 @@ test('fixed source collector ignores attacker PATH and fetches only the canonica
   assert.equal(fetchCall.options.env.NODE_OPTIONS, undefined);
   assert.equal(fetchCall.options.env.GIT_CONFIG_GLOBAL, 'NUL');
   assert.equal(fetchCall.options.shell, false);
+});
+
+test('fixed source collector selects an absolute platform-valid Git executable on Linux and macOS', () => {
+  for (const platform of ['linux', 'darwin']) {
+    const { result, calls } = runSourceCollectorFixture({
+      platform,
+      environment: { PATH: '/attacker', NODE_OPTIONS: '--require=/attacker/inject.cjs' },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(calls.every((call) => call.command === BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE), true);
+    assert.equal(calls.every((call) => path.isAbsolute(call.command)), true);
+    assert.equal(calls.every((call) => call.options.env.PATH !== '/attacker'), true);
+    assert.equal(calls.every((call) => call.options.env.NODE_OPTIONS === undefined), true);
+  }
 });
 
 test('source dirt blocks before the canonical fetch or any service mutation', () => {
@@ -416,6 +436,7 @@ test('standalone supervisor housekeeping ignores hostile PATH and uses only the 
     {
       cwd,
       environment: { PATH: 'C:\\attacker', NODE_OPTIONS: '--require=C:\\attacker\\inject.cjs' },
+      platform: 'win32',
       spawnSyncFn: (command, args, options) => {
         calls.push({ command, args, options });
         return { status: 0, stdout: '', stderr: '' };
@@ -442,6 +463,33 @@ test('standalone supervisor housekeeping ignores hostile PATH and uses only the 
   assert.equal(calls.every((call) => call.options.shell === false), true);
 });
 
+test('current-head reads use the same fixed Git boundary and never hostile PATH', () => {
+  const expectedHead = 'd'.repeat(40);
+  for (const platform of ['win32', 'linux', 'darwin']) {
+    const calls = [];
+    const head = getCurrentGitHead({
+      cwd: '/canonical/repo',
+      platform,
+      environment: { PATH: platform === 'win32' ? 'C:\\attacker' : '/attacker', NODE_OPTIONS: '--require=attacker.js' },
+      spawnSyncFn: (command, args, options) => {
+        calls.push({ command, args, options });
+        return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+      },
+    });
+    assert.equal(head, expectedHead);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].command, resolveBattleBridgeGitExecutable(platform));
+    assert.deepEqual(calls[0].args, [
+      ...battleBridgeGitFixedConfigArgs(platform),
+      ...battleBridgeCanonicalRepositoryArgs('/canonical/repo'),
+      'rev-parse', 'HEAD',
+    ]);
+    assert.notEqual(calls[0].options.env.PATH, platform === 'win32' ? 'C:\\attacker' : '/attacker');
+    assert.equal(calls[0].options.env.NODE_OPTIONS, undefined);
+    assert.equal(calls[0].options.shell, false);
+  }
+});
+
 test('real evaluator-shaped diverged source blocks before publisher or service mutation', async () => {
   const calls = [];
   const result = await runBattleBridgeIgnitionSupervisor({
@@ -466,6 +514,64 @@ test('real evaluator-shaped diverged source blocks before publisher or service m
   assert.equal(result.status.blockerId, 'unpublished-source-truth');
   assert.equal(result.status.sourceTruthVerdict.state, 'blocked');
   assert.deepEqual(calls, ['source-truth']);
+});
+
+test('supervisor threads the fixed collector head through backend, UI, and runtime proof without a later head adapter read', async () => {
+  const expectedHead = 'd'.repeat(40);
+  const calls = [];
+  const gitCalls = [];
+  let factsCount = 0;
+  let hostileHeadReads = 0;
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => canonicalSourceTruth({ head: expectedHead, originHead: expectedHead }),
+    cwd: '/canonical/repo',
+    platform: 'linux',
+    environment: { PATH: '/attacker', NODE_OPTIONS: '--require=/attacker/inject.cjs' },
+    spawnSyncFn: (command, args, options) => {
+      gitCalls.push({ command, args, options });
+      return { status: 0, stdout: '', stderr: '' };
+    },
+    collectFactsFn: async ({ execFile }) => {
+      execFile('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: '/canonical/repo', encoding: 'utf8' });
+      factsCount += 1;
+      if (factsCount === 1) return factsFor({ backend: false, ui: false });
+      if (factsCount === 2) return factsFor({ ui: false });
+      return factsFor();
+    },
+    plannerFn: (facts) => facts,
+    backendStartFn: async ({ expectedHead: receivedHead }) => {
+      calls.push({ phase: 'backend', expectedHead: receivedHead });
+      return { started: true, exitCode: 0 };
+    },
+    repairFn: async ({ expectedHead: receivedHead, stdout }) => {
+      calls.push({ phase: 'ui', expectedHead: receivedHead });
+      stdout.write(JSON.stringify({ ready: true }));
+      return 0;
+    },
+    runtimeProofFn: async ({ currentHead, expectedHead: receivedHead }) => {
+      calls.push({ phase: 'runtime', currentHead, expectedHead: receivedHead });
+      return { ready: currentHead === expectedHead && receivedHead === expectedHead, currentHead };
+    },
+    currentHeadFn: () => {
+      hostileHeadReads += 1;
+      return 'e'.repeat(40);
+    },
+    stdout: { write() {} },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(hostileHeadReads, 0);
+  assert.equal(result.status.sourceTruthVerdict.expectedHead, expectedHead);
+  assert.equal(gitCalls.length, 3);
+  assert.equal(gitCalls.every((call) => call.command === BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE), true);
+  assert.equal(gitCalls.every((call) => call.options.env.PATH === '/usr/bin:/bin'), true);
+  assert.equal(gitCalls.every((call) => call.options.env.NODE_OPTIONS === undefined), true);
+  assert.deepEqual(calls, [
+    { phase: 'backend', expectedHead },
+    { phase: 'ui', expectedHead },
+    { phase: 'runtime', currentHead: expectedHead, expectedHead },
+  ]);
 });
 
 test('tracked runtime activity dirt guidance and runtime-only dist caveat are separate', () => {
@@ -964,6 +1070,25 @@ test('approved backend repair command captures stdout stderr exit code and canon
   assert.equal(fs.readFileSync(result.logs.stderrLogPath, 'utf8'), 'backend stderr proof\n');
 });
 
+test('approved backend repair rejects collector-head drift before spawning', async () => {
+  const expectedHead = 'a'.repeat(40);
+  let spawnCalls = 0;
+  const result = await runApprovedBackend8787Start({
+    expectedHead,
+    currentHeadFn: () => 'b'.repeat(40),
+    spawnFn: () => {
+      spawnCalls += 1;
+      throw new Error('head-mismatched backend must not spawn');
+    },
+  });
+  assert.equal(result.started, false);
+  assert.equal(result.reason, 'canonical-source-head-mismatch');
+  assert.equal(result.expectedHead, expectedHead);
+  assert.equal(result.observedHead, 'b'.repeat(40));
+  assert.equal(result.sourceHeadProof.ok, false);
+  assert.equal(spawnCalls, 0);
+});
+
 test('Windows backend repair pins System32 cmd and Program Files npm entrypoints', () => {
   const execution = resolveBackendRepairExecution('win32');
   assert.equal(execution.command, BATTLE_BRIDGE_WINDOWS_HOST.cmd);
@@ -1030,11 +1155,11 @@ test('served runtime exact-head proof accepts full or unambiguous short head in 
 });
 
 test('supervisor blocks with served-runtime-stale when 4173 reports old gitCommit after guarded repair', async () => {
+  const expectedHead = '51600ceb1234567890abcdef1234567890abcdef';
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth({ head: expectedHead, originHead: expectedHead }),
     collectFactsFn: async () => factsFor(),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
-    currentHeadFn: () => '51600ceb1234567890abcdef1234567890abcdef',
     runtimeProofFn: async ({ currentHead }) => evaluateServedRuntimeExactHeadProof({ currentHead, health: { ok: true, gitCommit: '0f0aa30d', runtimeMarker: 'antifriction-live-v3::0f0aa30d::fixture' }, dist: { ok: true, statusCode: 200 } }),
     repairFn: async ({ stdout }) => { stdout.write(JSON.stringify({ ready: true })); return 0; },
     stdout: { write() {} },
@@ -1048,20 +1173,25 @@ test('supervisor blocks with served-runtime-stale when 4173 reports old gitCommi
 test('stale served runtime triggers guarded repair and final ready only after exact-head proof', async () => {
   let proofCount = 0;
   let repairCount = 0;
+  const expectedHead = '51600ceb1234567890abcdef1234567890abcdef';
+  const proofHeads = [];
+  const repairHeads = [];
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth({ head: expectedHead, originHead: expectedHead }),
     collectFactsFn: async () => factsFor(),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
-    currentHeadFn: () => '51600ceb1234567890abcdef1234567890abcdef',
-    runtimeProofFn: async ({ currentHead }) => {
+    runtimeProofFn: async ({ currentHead, expectedHead: receivedHead }) => {
       proofCount += 1;
+      proofHeads.push([currentHead, receivedHead]);
       const commit = proofCount > 1 ? '51600ceb' : '0f0aa30d';
       return evaluateServedRuntimeExactHeadProof({ currentHead, health: { ok: true, gitCommit: commit, runtimeMarker: `antifriction-live-v3::${commit}::fixture` }, dist: { ok: true, statusCode: 200 } });
     },
-    repairFn: async ({ stdout }) => { repairCount += 1; stdout.write(JSON.stringify({ ready: true })); return 0; },
+    repairFn: async ({ expectedHead: receivedHead, stdout }) => { repairCount += 1; repairHeads.push(receivedHead); stdout.write(JSON.stringify({ ready: true })); return 0; },
     stdout: { write() {} },
   });
   assert.equal(result.ok, true);
   assert.equal(repairCount, 1);
+  assert.deepEqual(repairHeads, [expectedHead]);
+  assert.deepEqual(proofHeads, [[expectedHead, expectedHead], [expectedHead, expectedHead]]);
   assert.equal(result.status.services.stephanosUi4173.servedRuntimeProof.ready, true);
 });
