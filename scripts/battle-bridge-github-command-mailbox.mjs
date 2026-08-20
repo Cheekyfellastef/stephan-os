@@ -35,6 +35,7 @@ import {
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { FORGE_SHADOW_BATTLE_BRIDGE_OPERATION } from '../shared/agents/forgeShadowBattleBridgeAdapterV1.mjs';
 import { publishCodexCapacityToSharedWorkspace } from '../shared/agents/codexCapacitySharedWorkspace.mjs';
+import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/recoveryAdapterBlockerClassifier.mjs';
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
@@ -199,26 +200,13 @@ function safeTelemetryBranch(value) {
     : '';
 }
 
-function recoveryMeshWakeAdapterBlockerCandidates(stderr = '') {
-  const candidates = [];
-  for (const rawLine of String(stderr || '').replace(/\r/g, '').split('\n')) {
-    const line = rawLine.trim();
-    if (!line) continue;
-    if (RECOVERY_MESH_SAFE_WAKE_ADAPTER_BLOCKERS.has(line)) {
-      candidates.push(line);
-      continue;
-    }
-    const fullyQualified = line.match(/^\+\s*FullyQualifiedErrorId\s*:\s*([A-Z][A-Z0-9_]+)\s*$/i);
-    if (fullyQualified && RECOVERY_MESH_SAFE_WAKE_ADAPTER_BLOCKERS.has(fullyQualified[1].toUpperCase())) {
-      candidates.push(fullyQualified[1].toUpperCase());
-    }
-  }
-  return [...new Set(candidates)];
-}
-
 export function classifyRecoveryMeshWakeAdapterFailure(invocation = {}) {
-  const matches = recoveryMeshWakeAdapterBlockerCandidates(invocation?.stderr);
-  return matches.length === 1 ? matches[0] : 'RECOVERY_MESH_WAKE_ADAPTER_FAILED';
+  return classifyAllowlistedRecoveryAdapterBlocker({
+    stdout: invocation?.stdout,
+    stderr: invocation?.stderr,
+    allowlist: RECOVERY_MESH_SAFE_WAKE_ADAPTER_BLOCKERS,
+    fallback: 'RECOVERY_MESH_WAKE_ADAPTER_FAILED',
+  });
 }
 
 function telemetryPosture(value = {}) {
