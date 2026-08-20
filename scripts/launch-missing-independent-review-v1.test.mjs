@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 import {
+  reconcileExistingLaunchReceiptV1,
   selectExactHandoffCommentV1,
   selectExactLaunchReceiptCommentV1,
 } from './launch-missing-independent-review-v1.mjs';
@@ -84,6 +85,15 @@ test('selects exactly one trusted exact-head handoff and at most one content-add
   );
 });
 
+test('an existing launch receipt with no observable dispatch run fails closed instead of silently succeeding', () => {
+  const result = reconcileExistingLaunchReceiptV1({ launchReceipt: launchReceipt(), runs: [] });
+  assert.equal(result.verdict, 'DISPATCH_RUN_NOT_YET_OBSERVED');
+  assert.equal(result.reconciliation, 'BLOCKED_DISPATCH_REQUEST_UNOBSERVED');
+  assert.deepEqual(result.blockers, [
+    'launch receipt exists but no matching workflow-dispatch run is observable; blind redispatch is forbidden',
+  ]);
+});
+
 test('launcher has one fixed workflow dispatch mutation and no shell/source/merge authority surface', () => {
   const source = fs.readFileSync(new URL('./launch-missing-independent-review-v1.mjs', import.meta.url), 'utf8');
   assert.match(source, /\/actions\/workflows\/\$\{context\.workflow\.id\}\/dispatches/);
@@ -92,5 +102,6 @@ test('launcher has one fixed workflow dispatch mutation and no shell/source/merg
   assert.match(source, /retryPlan\.decision !== INDEPENDENT_REVIEW_RETRY_DECISION\.NO_MATCHING_RUN/);
   assert.match(source, /Reconstruct the complete trusted context immediately before/);
   assert.match(source, /selectExactLaunchReceiptCommentV1/);
-  assert.match(source, /discoverIndependentReviewWorkflowDispatchRunV1/);
+  assert.match(source, /reconcileExistingLaunchReceiptV1/);
+  assert.match(source, /BLOCKED_DISPATCH_REQUEST_UNOBSERVED/);
 });
