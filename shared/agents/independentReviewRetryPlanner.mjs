@@ -2,9 +2,6 @@ import {
   INDEPENDENT_REVIEW_WORKFLOW_NAME,
   INDEPENDENT_REVIEW_WORKFLOW_PATH,
 } from './operatorMergeApprovalGate.mjs';
-import {
-  independentReviewWorkflowDispatchRunNameV1,
-} from './independentReviewRunDiscoveryV1.mjs';
 
 export const INDEPENDENT_REVIEW_RETRY_SCHEMA_VERSION = 'stephanos.independent-review-retry-plan.v1';
 export const INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT = 2;
@@ -53,30 +50,15 @@ function exactPullRequestBinding(run, pr) {
   ));
 }
 
-function exactPullRequestTargetRun(run, pr) {
-  return text(run?.event) === 'pull_request_target'
-    && exactPullRequestBinding(run, pr);
-}
-
-function exactWorkflowDispatchRun(run, pr) {
-  return text(run?.event) === 'workflow_dispatch'
-    && text(run?.head_branch) === 'main'
-    && sameSha(run?.head_sha, pr?.baseSha)
-    && text(run?.display_title) === independentReviewWorkflowDispatchRunNameV1({
-      prNumber: positiveInteger(pr?.number),
-      expectedHead: text(pr?.headSha).toLowerCase(),
-      expectedBase: text(pr?.baseSha).toLowerCase(),
-    });
-}
-
 function exactCanonicalRun(run, { repository, workflowId, pr }) {
   return positiveInteger(run?.id) > 0
     && positiveInteger(run?.workflow_id) === workflowId
     && text(run?.name) === INDEPENDENT_REVIEW_WORKFLOW_NAME
     && text(run?.path) === INDEPENDENT_REVIEW_WORKFLOW_PATH
+    && text(run?.event) === 'pull_request_target'
     && normalizedRepository(run?.repository?.full_name) === normalizedRepository(repository)
     && positiveInteger(run?.run_attempt) > 0
-    && (exactPullRequestTargetRun(run, pr) || exactWorkflowDispatchRun(run, pr));
+    && exactPullRequestBinding(run, pr);
 }
 
 function compareRuns(left, right) {
@@ -144,7 +126,7 @@ export function planIndependentReviewRetry(input = {}) {
     return Object.freeze({
       ...base,
       decision: INDEPENDENT_REVIEW_RETRY_DECISION.NO_MATCHING_RUN,
-      reason: 'no canonical independent-review run matches the exact PR head and base',
+      reason: 'no canonical pull_request_target review run matches the exact PR head and base',
     });
   }
 
@@ -157,7 +139,6 @@ export function planIndependentReviewRetry(input = {}) {
     runId,
     runAttempt,
     runNumber: positiveInteger(run.run_number) || null,
-    runEvent: text(run.event),
     runStatus: status,
     runConclusion: conclusion || null,
   };
