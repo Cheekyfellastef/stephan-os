@@ -4,6 +4,19 @@ import path from 'node:path';
 
 import { importBundledModule, srcRoot } from '../test/renderHarness.mjs';
 
+const ZERO_AUTHORITY_KEYS = [
+  'sourceMutationAllowed',
+  'commandExecutionAllowed',
+  'approvalAuthorityAdded',
+  'mergeAllowed',
+  'deploymentAllowed',
+  'runtimeMutationAllowed',
+  'providerSelectionAuthorityAdded',
+  'privateUiTruthAllowed',
+  'presenterMayExecuteActions',
+  'presenterMayHideEvidence',
+];
+
 function canvasView(overrides = {}) {
   return {
     schemaVersion: 'stephanos.ui-agent.conversation-canvas-presenter.v1',
@@ -145,11 +158,18 @@ test('recommended action and approval remain visibly inert in the served Canvas'
 
 test('iPad and iPhone Canvas projections retain touch/single-column surface truth without adding motion', async () => {
   const { renderConversationCanvasCard } = await renderer('conversation-canvas-touch');
+  const touchAccessibility = {
+    reducedMotion: true,
+    colorOnlyStatusAllowed: false,
+    evidenceKeyboardReachable: true,
+    touchTargetsLarge: true,
+    animationAllowed: false,
+  };
 
   const ipad = renderConversationCanvasCard(canvasView({
     surface: 'ipad',
     layoutProfile: { layout: 'TOUCH_STACK_WITH_DETAIL_DRAWER' },
-    accessibility: { reducedMotion: true, colorOnlyStatusAllowed: false, evidenceKeyboardReachable: true, touchTargetsLarge: true, animationAllowed: false },
+    accessibility: touchAccessibility,
   }));
   assert.match(ipad, /data-canvas-surface="ipad"/);
   assert.match(ipad, /data-canvas-layout="TOUCH_STACK_WITH_DETAIL_DRAWER"/);
@@ -159,17 +179,31 @@ test('iPad and iPhone Canvas projections retain touch/single-column surface trut
   const phone = renderConversationCanvasCard(canvasView({
     surface: 'iphone',
     layoutProfile: { layout: 'SINGLE_COLUMN_PROGRESSIVE' },
+    accessibility: touchAccessibility,
   }));
   assert.match(phone, /data-canvas-surface="iphone"/);
   assert.match(phone, /data-canvas-layout="SINGLE_COLUMN_PROGRESSIVE"/);
   assert.match(phone, /grid-template-columns:minmax\(0, 1fr\)/);
 });
 
-test('invalid, unsupported or authority-widened Canvas views fail closed instead of replacing the plain answer surface', async () => {
+test('every authority widening and mismatched accessibility/layout contract fails closed', async () => {
   const { renderConversationCanvasCard } = await renderer('conversation-canvas-fail-closed');
 
   assert.equal(renderConversationCanvasCard(canvasView({ valid: false })), '');
   assert.equal(renderConversationCanvasCard(canvasView({ surface: 'quest3-spatial' })), '');
-  assert.equal(renderConversationCanvasCard(canvasView({ authority: { ...canvasView().authority, presenterMayExecuteActions: true } })), '');
+  assert.equal(renderConversationCanvasCard(canvasView({ layoutProfile: { layout: 'SINGLE_COLUMN_PROGRESSIVE' } })), '');
+  assert.equal(renderConversationCanvasCard(canvasView({ stateBanner: { ...canvasView().stateBanner, colorOnlyStatusAllowed: true } })), '');
+  assert.equal(renderConversationCanvasCard(canvasView({ accessibility: { ...canvasView().accessibility, evidenceKeyboardReachable: false } })), '');
+
+  for (const key of ZERO_AUTHORITY_KEYS) {
+    assert.equal(
+      renderConversationCanvasCard(canvasView({ authority: { ...canvasView().authority, [key]: true } })),
+      '',
+      key,
+    );
+  }
+
+  assert.equal(renderConversationCanvasCard(canvasView({ experienceModes: [{ mode: 'SYSTEMS_EXPERT_MAP', executable: true }] })), '');
+  assert.equal(renderConversationCanvasCard(canvasView({ sections: [{ kind: 'RECOMMENDED_ACTION', items: [{ executable: true }] }] })), '');
   assert.equal(renderConversationCanvasCard({ schemaVersion: 'unknown', valid: true }), '');
 });
