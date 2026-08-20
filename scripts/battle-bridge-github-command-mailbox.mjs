@@ -24,6 +24,7 @@ import {
   buildBattleBridgeGitHubCommandReceipt,
   executeBattleBridgeGitHubCommand,
   executeBattleBridgeGitHubCommandBatch,
+  isTerminalizableOwnerCommandBlocker,
   selectBattleBridgeGitHubCommandBatch,
 } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import { dispatchExactHeadWindowsBrowserProof } from '../shared/agents/exactHeadWindowsBrowserProofDispatch.mjs';
@@ -782,7 +783,7 @@ export function checkpointAcceptedMailboxReceipt(state, receipt, {
 
 export function buildRejectedMailboxTerminalReceipt(rejection, completedAt) {
   if (!rejection?.command || !SAFE_REQUEST_ID_PATTERN.test(String(rejection.command.requestId || ''))
-    || !/^COMMAND_[A-Z0-9_:-]{3,150}$/.test(String(rejection.blocker || ''))
+    || !isTerminalizableOwnerCommandBlocker(rejection.blocker)
     || !Number.isFinite(Date.parse(String(completedAt || '')))) {
     throw new Error('MAILBOX_REJECTION_RECEIPT_INVALID');
   }
