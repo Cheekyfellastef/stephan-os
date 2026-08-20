@@ -28,7 +28,7 @@ test('backend restart terminates only the verified 8787 Stephanos Node listener'
   assert.match(restartSource, /BACKEND_EXACT_HEAD_RECEIPT_TIMEOUT/);
   assert.match(restartSource, /stephanos\.backend-expected-head-handoff\.v1/);
   assert.match(restartSource, /BACKEND_LISTENER_DID_NOT_STOP[\s\S]*Publish-BackendExpectedHeadHandoff[\s\S]*Start-ScheduledTask/);
-  assert.match(restartSource, /\$prePublishTask = Get-ScheduledTask[\s\S]*BACKEND_TASK_NOT_QUIESCENT_BEFORE_HANDOFF[\s\S]*Publish-BackendExpectedHeadHandoff/);
+  assert.match(restartSource, /Disable-ScheduledTask[\s\S]*\$task\.State -in @\('Running', 'Queued'\)[\s\S]*\$prePublishTask = Get-ScheduledTask[\s\S]*\$prePublishTask\.State -ne 'Disabled'[\s\S]*BACKEND_TASK_NOT_QUIESCENT_BEFORE_HANDOFF[\s\S]*Publish-BackendExpectedHeadHandoff[\s\S]*Enable-ScheduledTask[\s\S]*Start-ScheduledTask/);
   assert.match(restartSource, /backend-expected-head-handoff\.json/);
   assert.match(restartSource, /expiresAtUtc = \$issuedAtUtc\.AddMinutes\(2\)/);
   assert.match(restartSource, /catch \{[\s\S]*Remove-Item -LiteralPath \$backendExpectedHeadHandoffPath/);

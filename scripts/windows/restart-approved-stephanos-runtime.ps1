@@ -16,6 +16,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
 $backendExpectedHeadHandoffPath = $null
+$backendTaskDisabledByRepair = $false
 
 function Stop-WithBlocker {
     param([Parameter(Mandatory = $true)][string]$Code)
@@ -201,10 +202,12 @@ try {
 
     if ($Target -eq 'backend') {
         $backendExpectedHeadHandoffPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\control\backend-expected-head-handoff.json'
-        if ([string]$task.State -eq 'Running') {
+        Disable-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop | Out-Null
+        $backendTaskDisabledByRepair = $true
+        if ([string]$task.State -in @('Running', 'Queued')) {
             Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
             if (-not (Wait-Until -Seconds 30 -Condition {
-                [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -ne 'Running'
+                [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -eq 'Disabled'
             })) { Stop-WithBlocker 'BACKEND_TASK_DID_NOT_STOP' }
         }
         $listener = Get-VerifiedBackendListener
@@ -216,16 +219,12 @@ try {
             }
         }
         $prePublishTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop
-        if ([string]$prePublishTask.State -eq 'Running') {
-            Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
-            if (-not (Wait-Until -Seconds 30 -Condition {
-                [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -ne 'Running'
-            })) { Stop-WithBlocker 'BACKEND_TASK_NOT_QUIESCENT_BEFORE_HANDOFF' }
-        }
-        if ([string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop).State -eq 'Running') {
+        if ([string]$prePublishTask.State -ne 'Disabled') {
             Stop-WithBlocker 'BACKEND_TASK_NOT_QUIESCENT_BEFORE_HANDOFF'
         }
         Publish-BackendExpectedHeadHandoff -Path $backendExpectedHeadHandoffPath -Head $ExpectedHead
+        Enable-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop | Out-Null
+        $backendTaskDisabledByRepair = $false
         Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
         if (-not (Wait-Until -Seconds $TimeoutSeconds -Condition { $null -ne (Test-BackendHealth) })) {
             Stop-WithBlocker 'BACKEND_HEALTH_TIMEOUT'
@@ -289,6 +288,9 @@ try {
 catch {
     if ($backendExpectedHeadHandoffPath) {
         Remove-Item -LiteralPath $backendExpectedHeadHandoffPath -Force -ErrorAction SilentlyContinue
+    }
+    if ($backendTaskDisabledByRepair) {
+        Enable-ScheduledTask -TaskName 'Stephanos Battle Bridge Backend' -TaskPath '\' -ErrorAction SilentlyContinue | Out-Null
     }
     $blocker = [string]$_.Exception.Message
     if ($blocker -notmatch '^[A-Z0-9_:-]{3,120}$') { $blocker = 'APPROVED_RUNTIME_RESTART_FAILED' }

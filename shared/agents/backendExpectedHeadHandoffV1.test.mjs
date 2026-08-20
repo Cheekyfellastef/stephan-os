@@ -31,10 +31,10 @@ test('publication is impossible until every previous consumer is proven stopped'
     for (const taskStopped of [false, true]) {
       for (const listenerWasPresent of [false, true]) {
         for (const listenerStopped of [false, true]) {
-          for (const taskRunningImmediatelyBeforePublish of [false, true]) {
-            const result = evaluateBackendExpectedHeadHandoffPublication({ expectedHead: HEAD_A, taskWasRunning, taskStopped, taskRunningImmediatelyBeforePublish, listenerWasPresent, listenerStopped });
-            const requiredStopsHold = (!taskWasRunning || taskStopped) && !taskRunningImmediatelyBeforePublish && (!listenerWasPresent || listenerStopped);
-            assert.equal(result.publishAllowed, requiredStopsHold, JSON.stringify({ taskWasRunning, taskStopped, taskRunningImmediatelyBeforePublish, listenerWasPresent, listenerStopped, result }));
+          for (const taskStateImmediatelyBeforePublish of ['Ready', 'Running', 'Queued', 'Disabled']) {
+            const result = evaluateBackendExpectedHeadHandoffPublication({ expectedHead: HEAD_A, taskWasRunning, taskStopped, taskStateImmediatelyBeforePublish, listenerWasPresent, listenerStopped });
+            const requiredStopsHold = (!taskWasRunning || taskStopped) && taskStateImmediatelyBeforePublish === 'Disabled' && (!listenerWasPresent || listenerStopped);
+            assert.equal(result.publishAllowed, requiredStopsHold, JSON.stringify({ taskWasRunning, taskStopped, taskStateImmediatelyBeforePublish, listenerWasPresent, listenerStopped, result }));
           }
         }
       }

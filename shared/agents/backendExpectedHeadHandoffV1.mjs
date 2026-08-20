@@ -14,14 +14,14 @@ export function evaluateBackendExpectedHeadHandoffPublication({
   expectedHead = '',
   taskWasRunning = false,
   taskStopped = false,
-  taskRunningImmediatelyBeforePublish = false,
+  taskStateImmediatelyBeforePublish = '',
   listenerWasPresent = false,
   listenerStopped = false,
 } = {}) {
   const head = normalizedHead(expectedHead);
   if (!SHA40.test(head)) return blocked('expected-head-invalid', { publishAllowed: false, expectedHead: head });
   if (taskWasRunning && !taskStopped) return blocked('old-task-not-stopped', { publishAllowed: false, expectedHead: head });
-  if (taskRunningImmediatelyBeforePublish) return blocked('task-not-quiescent-before-publish', { publishAllowed: false, expectedHead: head });
+  if (taskStateImmediatelyBeforePublish !== 'Disabled') return blocked('task-not-disabled-before-publish', { publishAllowed: false, expectedHead: head });
   if (listenerWasPresent && !listenerStopped) return blocked('old-listener-not-stopped', { publishAllowed: false, expectedHead: head });
   return Object.freeze({
     mutationAllowed: false,
