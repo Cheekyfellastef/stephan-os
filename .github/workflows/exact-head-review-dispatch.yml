@@ -56,6 +56,7 @@ jobs:
           node --test shared/agents/independentReviewHandoffRunReceiptV1.test.mjs
           node --test shared/agents/independentReviewHandoffIdentityV1.test.mjs
           node --test shared/agents/independentReviewWorkflowDispatchAdmissionV1.test.mjs
+          node --test scripts/bind-independent-review-handoff-provenance-v1.test.mjs
 
       - name: Parse review coordinator sources
         run: |
@@ -211,24 +212,26 @@ jobs:
           STEPHANOS_TRIGGER_REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
         run: node scripts/exact-head-review-dispatch.mjs
 
-      - name: Bind exact coordinator-run provenance to a new review handoff
+      - name: Bind exact coordinator-run provenance to the exact review handoff
+        id: bind_handoff
         if: >-
-          steps.coordinate.outcome == 'success' &&
-          steps.coordinate.outputs.comment_id != ''
+          always() &&
+          steps.coordinate.outputs.retry_targets != '' &&
+          steps.coordinate.outputs.retry_targets != '[]'
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          STEPHANOS_REVIEW_HANDOFF_COMMENT_ID: ${{ steps.coordinate.outputs.comment_id }}
           STEPHANOS_REVIEW_HANDOFF_PR: ${{ matrix.target.prNumber }}
+          STEPHANOS_REVIEW_HANDOFF_HEAD: ${{ steps.coordinate.outputs.exact_head }}
           STEPHANOS_REVIEW_HANDOFF_RUN_RECEIPT_PATH: ${{ runner.temp }}/independent-review-handoff-run-receipt.json
         run: node scripts/bind-independent-review-handoff-provenance-v1.mjs
 
       - name: Upload immutable coordinator-to-handoff run receipt
         if: >-
-          steps.coordinate.outcome == 'success' &&
-          steps.coordinate.outputs.comment_id != ''
+          always() &&
+          steps.bind_handoff.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: stephanos-independent-review-handoff-${{ github.run_id }}-attempt-${{ github.run_attempt }}-comment-${{ steps.coordinate.outputs.comment_id }}
+          name: stephanos-independent-review-handoff-${{ github.run_id }}-attempt-${{ github.run_attempt }}-comment-${{ steps.bind_handoff.outputs.handoff_comment_id }}
           path: ${{ runner.temp }}/independent-review-handoff-run-receipt.json
           if-no-files-found: error
           retention-days: 30
