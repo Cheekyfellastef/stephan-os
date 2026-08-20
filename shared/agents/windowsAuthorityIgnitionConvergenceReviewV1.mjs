@@ -15,7 +15,7 @@ const REVIEWED_REPOSITORY = 'Cheekyfellastef/stephan-os';
 const REVIEWED_PR = 1919;
 const REVIEWED_BRANCH = 'fix/ignition-canonical-convergence-gate-v1';
 const REVIEWED_SOURCE_HEAD = '0cbd8318f5da7d815e3f4e30d8ef9a5d1c9feb77';
-const REVIEWED_BASE_SHA = '13f13144730b2a6d94754914dbdf2c254c39567d';
+const REVIEWED_BASE_SHA = '3dc12a7c84c54f406b10dee1293789e2338f7824';
 const SOURCE_RECORD_KEYS = Object.freeze([
   'blobSha', 'content', 'exists', 'path', 'ref', 'repository', 'schemaVersion', 'size',
 ]);
