@@ -259,6 +259,39 @@ test('async command timeout settles unproven after bounded kill wait when child 
   assert.equal(result.executionStateUnproven, true);
 });
 
+test('data after the exact output cap fails closed instead of hiding later source dirt', async () => {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.pid = 4242;
+  let killed = false;
+  child.kill = () => { killed = true; };
+  const runner = createBattleBridgeAsyncCommandRunner({
+    spawnFn: () => {
+      setImmediate(() => {
+        child.emit('spawn');
+        child.stdout.write(Buffer.alloc(1024 * 1024, 0x0a));
+        child.stdout.write(' M shared/agents/hidden-source.mjs\n');
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+    environment: { USERPROFILE: 'C:\\Users\\Stephan' },
+  });
+  const result = await runner(BATTLE_BRIDGE_WINDOWS_HOST.git, [
+    ...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+    ...battleBridgeCanonicalRepositoryArgs('C:\\repo'),
+    'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching',
+  ], { cwd: 'C:\\repo', timeout: 1000, killAckTimeoutMs: 5 });
+
+  assert.equal(killed, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.stdout, '');
+  assert.equal(result.error, 'BATTLE_BRIDGE_COMMAND_OUTPUT_TOO_LARGE');
+  assert.equal(result.processTreeClosureProven, false);
+  assert.equal(result.executionStateUnproven, true);
+});
+
 test('sync result propagates unproven execution state after an abnormal post-spawn termination', async () => {
   const base = scriptedSpawn();
   const spawnFn = (command, args, options) => {

@@ -56,6 +56,10 @@ function captureAsync(spawnFn, command, args, options = {}) {
     let approvalSettled = !options.ignitionApproval;
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
+    const requestedKillAckTimeoutMs = Number(options.killAckTimeoutMs);
+    const killAckTimeoutMs = Number.isFinite(requestedKillAckTimeoutMs) && requestedKillAckTimeoutMs > 0
+      ? Math.min(requestedKillAckTimeoutMs, 5_000)
+      : 250;
     const finish = (value) => {
       if (settled) return;
       settled = true;
@@ -75,6 +79,12 @@ function captureAsync(spawnFn, command, args, options = {}) {
         processTreeClosureProven: false,
         executionStateUnproven: true,
       });
+    };
+    const requestTermination = (error) => {
+      terminationError ||= error;
+      if (killAckTimer) return;
+      killAckTimer = setTimeout(finishUnprovenTermination, killAckTimeoutMs);
+      try { child.kill(); } catch { /* bounded failure */ }
     };
     const finishClosedChild = () => {
       if (!closeObservation || !approvalSettled) return;
@@ -118,13 +128,16 @@ function captureAsync(spawnFn, command, args, options = {}) {
       return;
     }
     const append = (current, chunk) => {
-      if (current.length >= MAX_OUTPUT_BYTES) return current;
       const incoming = Buffer.from(chunk);
+      if (incoming.length === 0) return current;
       const remaining = MAX_OUTPUT_BYTES - current.length;
+      if (remaining <= 0) {
+        requestTermination(new Error('BATTLE_BRIDGE_COMMAND_OUTPUT_TOO_LARGE'));
+        return current;
+      }
       const next = Buffer.concat([current, incoming.subarray(0, remaining)]);
       if (incoming.length > remaining) {
-        terminationError ||= new Error('BATTLE_BRIDGE_COMMAND_OUTPUT_TOO_LARGE');
-        try { child.kill(); } catch { /* bounded failure */ }
+        requestTermination(new Error('BATTLE_BRIDGE_COMMAND_OUTPUT_TOO_LARGE'));
       }
       return next;
     };
@@ -191,16 +204,7 @@ function captureAsync(spawnFn, command, args, options = {}) {
       finishClosedChild();
     });
     timer = setTimeout(() => {
-      terminationError ||= new Error('BATTLE_BRIDGE_COMMAND_TIMEOUT');
-      const requestedKillAckTimeoutMs = Number(options.killAckTimeoutMs);
-      const killAckTimeoutMs = Number.isFinite(requestedKillAckTimeoutMs) && requestedKillAckTimeoutMs > 0
-        ? Math.min(requestedKillAckTimeoutMs, 5_000)
-        : 250;
-      killAckTimer = setTimeout(
-        finishUnprovenTermination,
-        killAckTimeoutMs,
-      );
-      try { child.kill(); } catch { /* bounded failure */ }
+      requestTermination(new Error('BATTLE_BRIDGE_COMMAND_TIMEOUT'));
     }, Math.max(1, Number(options.timeout || 120_000)));
   });
 }
