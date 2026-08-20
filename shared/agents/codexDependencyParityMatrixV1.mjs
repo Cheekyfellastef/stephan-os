@@ -80,6 +80,9 @@ function normalizeCandidate(candidate = {}, index = 0) {
   if (!VALID_CODEX_USE_CLASSES.has(codexUseClass)) structuralProblems.push('codex-use-class-invalid');
   if (!text(candidate.component)) structuralProblems.push('component-missing');
   if (!text(candidate.owningGoal)) structuralProblems.push('owning-goal-missing');
+  if (typeof candidate.workCreditCoupled !== 'boolean') structuralProblems.push('work-credit-coupled-missing');
+  if (typeof candidate.active !== 'boolean') structuralProblems.push('active-state-missing');
+  if (typeof candidate.criticalPath !== 'boolean') structuralProblems.push('critical-path-state-missing');
 
   return Object.freeze({
     schema: CODEX_DEPENDENCY_TOUCHPOINT_SCHEMA,
@@ -104,7 +107,7 @@ function normalizeCandidate(candidate = {}, index = 0) {
   });
 }
 
-function routeIdentity(route) {
+function routeContractIdentity(route) {
   return JSON.stringify([
     route.routeId,
     route.provider,
@@ -118,7 +121,6 @@ function routeIdentity(route) {
     route.receiptParity,
     route.proofParity,
     route.operatorApprovalParity,
-    route.proofRefs,
   ]);
 }
 
@@ -132,9 +134,14 @@ function mergeRoutes(instances) {
         byRouteId.set(route.routeId, route);
         continue;
       }
-      if (routeIdentity(prior) !== routeIdentity(route)) {
+      if (routeContractIdentity(prior) !== routeContractIdentity(route)) {
         conflicts.push(`route-contract-conflict:${route.routeId}`);
+        continue;
       }
+      byRouteId.set(route.routeId, Object.freeze({
+        ...prior,
+        proofRefs: uniqueSorted([...prior.proofRefs, ...route.proofRefs]),
+      }));
     }
   }
   return {
@@ -206,7 +213,7 @@ function evaluateTouchpoint(record) {
 
   if (!record.criticalPath) {
     return {
-      coverageVerdict: COVERAGE_VERDICT.PARITY_PROVEN,
+      coverageVerdict: COVERAGE_VERDICT.LEGACY_NON_CRITICAL,
       blockers: Object.freeze([]),
       selectedRouteIds: Object.freeze([]),
     };
@@ -256,6 +263,8 @@ function mergeTouchpointGroup(instances) {
   }
   const routeMerge = mergeRoutes(ordered);
   conflicts.push(...routeMerge.conflicts);
+  const gapOwners = uniqueSorted(ordered.map((instance) => instance.missingGapOwner));
+  if (gapOwners.length > 1) conflicts.push('touchpoint-field-conflict:missingGapOwner');
   const structuralProblems = uniqueSorted(ordered.flatMap((instance) => instance.structuralProblems));
   const record = {
     schema: CODEX_DEPENDENCY_TOUCHPOINT_SCHEMA,
@@ -274,7 +283,7 @@ function mergeTouchpointGroup(instances) {
     hardExternalBoundary: ordered.some((instance) => instance.hardExternalBoundary),
     unrelatedWorkIsolation: ordered.every((instance) => !instance.hardExternalBoundary || instance.unrelatedWorkIsolation),
     proofRefs: uniqueSorted(ordered.flatMap((instance) => instance.proofRefs)),
-    missingGapOwner: uniqueSorted(ordered.map((instance) => instance.missingGapOwner))[0] || '',
+    missingGapOwner: gapOwners[0] || '',
     structuralProblems,
     conflicts: uniqueSorted(conflicts),
   };
@@ -319,6 +328,11 @@ export function buildCodexDependencyParityMatrixV1(input = {}) {
     .sort((a, b) => a.touchpointId.localeCompare(b.touchpointId)));
   const verdictCounts = Object.fromEntries(Object.values(COVERAGE_VERDICT).map((verdict) => [verdict, 0]));
   touchpoints.forEach((touchpoint) => { verdictCounts[touchpoint.coverageVerdict] += 1; });
+  const criticalGapCount = touchpoints.filter((touchpoint) => (
+    touchpoint.active
+    && touchpoint.criticalPath
+    && ![COVERAGE_VERDICT.PARITY_PROVEN, COVERAGE_VERDICT.HARD_EXTERNAL_BOUNDARY_ISOLATED].includes(touchpoint.coverageVerdict)
+  )).length;
   const unownedCriticalGapCount = touchpoints.filter((touchpoint) => (
     touchpoint.active
     && touchpoint.criticalPath
@@ -332,8 +346,9 @@ export function buildCodexDependencyParityMatrixV1(input = {}) {
     touchpointCount: touchpoints.length,
     touchpoints,
     verdictCounts: Object.freeze(verdictCounts),
+    criticalGapCount,
     unownedCriticalGapCount,
-    admissionReady: unownedCriticalGapCount === 0
+    admissionReady: criticalGapCount === 0
       && touchpoints.every((touchpoint) => touchpoint.coverageVerdict !== COVERAGE_VERDICT.AMBIGUOUS_FAIL_CLOSED),
     authority: Object.freeze({
       sourceMutation: false,
