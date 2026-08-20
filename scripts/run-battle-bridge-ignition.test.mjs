@@ -6,13 +6,18 @@ import path from 'node:path';
 import process from 'node:process';
 import {
   createSupervisorHousekeepRunStep,
+  captureFixedAuthorityGitStep,
   ensureBackend8787ConvergedBeforeSupervisor,
   ensureLiveUiConvergedBeforeSupervisor,
   probeCanonicalBackendHealth,
+  readOwnerIgnitionApprovalFromPipe,
   runSupervisorHousekeepPreservingLiveDist,
   runSupervisorHousekeepPreservingLiveRuntime,
   writePreSupervisorFailureStatus,
 } from './run-battle-bridge-ignition.mjs';
+import { BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS, battleBridgeCanonicalRepositoryArgs } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
+import { BATTLE_BRIDGE_IGNITION_PIPE_APPROVAL_SCHEMA } from '../shared/agents/battleBridgeExactHeadAsyncUpdateV1.mjs';
 
 function backendHealthResponse(sourceHead, {
   status = 200,
@@ -43,7 +48,7 @@ test('supervisor housekeeping preserves exact-head dist and runtime-owned durabl
   guarded('git-restore-runtime-tracked', 'git', ['restore', '--', 'stephanos-server/data/memory/durable-memory.json']);
   guarded('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', 'data/activity/']);
 
-  assert.deepEqual(delegated.map((entry) => entry.label), ['git-clean-runtime-untracked']);
+  assert.deepEqual(delegated.map((entry) => entry.label), []);
 });
 
 test('supervisor housekeeping injects the live-runtime-preserving run step into the existing housekeeper', () => {
@@ -54,7 +59,8 @@ test('supervisor housekeeping injects the live-runtime-preserving run step into 
     options.runStepFn('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', 'apps/stephanos/dist/']);
     options.runStepFn('git-restore-runtime-tracked', 'git', ['restore', '--', 'stephanos-server/data/memory/durable-memory.json']);
     options.runStepFn('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', 'data/activity/']);
-    return { ok: true };
+    const move = options.moveRootOpenClawWorkspaceDirtFn({ paths: ['openclaw-workspace/attacker.txt'] });
+    return { ok: true, move };
   };
 
   const result = runSupervisorHousekeepPreservingLiveRuntime(
@@ -68,11 +74,95 @@ test('supervisor housekeeping injects the live-runtime-preserving run step into 
     },
   );
 
-  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(result, {
+    ok: true,
+    move: {
+      destinationRoot: null,
+      migrationDirectory: null,
+      moved: [],
+      skipped: [{ path: 'openclaw-workspace/attacker.txt', reason: 'recovery-lane-move-authority-disabled' }],
+    },
+  });
   assert.equal(receivedOptions.dryRun, false);
   assert.equal(receivedOptions.compact, true);
-  assert.deepEqual(delegated, ['git-clean-runtime-untracked']);
+  assert.deepEqual(delegated, []);
   assert.equal(runSupervisorHousekeepPreservingLiveDist, runSupervisorHousekeepPreservingLiveRuntime);
+});
+
+test('owner ignition approval is accepted only from the bound one-use pipe payload', () => {
+  const expectedHead = 'a'.repeat(40);
+  const receiptId = 'c'.repeat(32);
+  const payload = Buffer.from(JSON.stringify({
+    schemaVersion: BATTLE_BRIDGE_IGNITION_PIPE_APPROVAL_SCHEMA,
+    action: 'RUN_EXACT_HEAD_IGNITION',
+    expectedHead,
+    parentPid: 120,
+    childPid: 121,
+    nonce: 'b'.repeat(32),
+    receiptId,
+  }));
+  const boundedReader = (bytes) => {
+    let offset = 0;
+    return (_fd, buffer, bufferOffset, length) => {
+      if (offset >= bytes.length) return 0;
+      const count = Math.min(length, bytes.length - offset);
+      bytes.copy(buffer, bufferOffset, offset, offset + count);
+      offset += count;
+      return count;
+    };
+  };
+  const valid = readOwnerIgnitionApprovalFromPipe({
+    parentPid: 120,
+    childPid: 121,
+    fstatFn: () => ({ isFIFO: () => true, isSocket: () => false }),
+    readSyncFn: boundedReader(payload),
+  });
+  assert.deepEqual(valid, {
+    approved: true,
+    action: 'RUN_EXACT_HEAD_IGNITION',
+    expectedHead,
+    receiptId,
+    parentPid: 120,
+    childPid: 121,
+  });
+  assert.equal(readOwnerIgnitionApprovalFromPipe({
+    parentPid: 999,
+    childPid: 121,
+    fstatFn: () => ({ isFIFO: () => true, isSocket: () => false }),
+    readSyncFn: boundedReader(payload),
+  }), null);
+  assert.equal(readOwnerIgnitionApprovalFromPipe({
+    fstatFn: () => ({ isFIFO: () => false, isSocket: () => false }),
+    readSyncFn: () => { throw new Error('non-pipe must never be read'); },
+  }), null);
+  assert.equal(readOwnerIgnitionApprovalFromPipe({
+    parentPid: 120,
+    childPid: 121,
+    fstatFn: () => ({ isFIFO: () => true, isSocket: () => false }),
+    readSyncFn: boundedReader(Buffer.alloc(4097, 0x61)),
+  }), null);
+});
+
+test('fixed authority Git capture prepends the canonical isolation config', () => {
+  const calls = [];
+  const result = captureFixedAuthorityGitStep('source-status', 'git', [
+    'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching',
+  ], {
+    cwd: 'C:\\repo',
+    env: { GIT_CONFIG_NOSYSTEM: '1' },
+    spawnSyncFn: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  });
+  assert.equal(result.stdout, '');
+  assert.equal(calls[0].command, BATTLE_BRIDGE_WINDOWS_HOST.git);
+  assert.deepEqual(calls[0].args, [
+    ...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+    ...battleBridgeCanonicalRepositoryArgs('C:\\repo'),
+    'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching',
+  ]);
+  assert.equal(calls[0].options.shell, false);
 });
 
 test('backend startup source tolerates exact runtime memory plus unstaged modified/deleted generated dist with fixed Node command forms', async () => {
@@ -161,7 +251,7 @@ test('failed preflight delegates a proven stale canonical backend only to the ap
     'backend-8787-preflight',
     'backend-8787-approved-stale-restart',
   ]);
-  assert.equal(calls[1].command, 'powershell.exe');
+  assert.equal(calls[1].command, BATTLE_BRIDGE_WINDOWS_HOST.powershell);
   assert.ok(calls[1].args.some((arg) => String(arg).replace(/\\/g, '/').endsWith('/scripts/windows/restart-approved-stephanos-runtime.ps1')));
   assert.deepEqual(calls[1].args.slice(-6), ['-Target', 'backend', '-ExpectedHead', currentHead, '-TimeoutSeconds', '90']);
 });

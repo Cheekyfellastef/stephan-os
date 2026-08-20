@@ -30,6 +30,7 @@ test('declares the canonical stephanos ignite OpenClaw plugin id', async () => {
   assert.equal(manifest.id, 'stephanos-ignite-command');
   assert.equal(manifest.activation.onStartup, true);
   assert.equal(manifest.configSchema.additionalProperties, false);
+  assert.match(manifest.description, /owner-gated in-memory exact-head main update route/i);
 });
 
 test('loads the JavaScript command entry directly', async () => {
@@ -42,12 +43,18 @@ test('loads the JavaScript command entry directly', async () => {
 
 test('registers one authenticated ignite command with no general tool or agent authority', async () => {
   const source = await readFile(new URL('index.js', root), 'utf8');
-  assert.match(source, /name:\s*'stephanos-ignite'/);
-  assert.match(source, /acceptsArgs:\s*true/);
-  assert.match(source, /requireAuth:\s*true/);
-  assert.match(source, /authenticatedContext:\s*\{ authenticatedByHost: true, commandName: 'stephanos-ignite', command: 'wake' \}/);
-  assert.equal(source.match(/api\.registerCommand\s*\(/g)?.length, 1);
+  const handler = await readFile(new URL('lib/command-handler.mjs', root), 'utf8');
+  const ownerLane = await readFile(new URL('lib/recovery-update.mjs', root), 'utf8');
+  assert.match(ownerLane, /name:\s*'stephanos-ignite'/);
+  assert.match(ownerLane, /acceptsArgs:\s*true/);
+  assert.match(ownerLane, /requireAuth:\s*true/);
+  assert.match(ownerLane, /OWNER_HANDLER_CAPABILITY/);
+  assert.doesNotMatch(ownerLane, /export\s+(?:async\s+)?function\s+runBattleBridgeExactHeadFromOpenClawOwnerHandler/);
+  assert.match(handler, /authenticatedContext:\s*\{ authenticatedByHost: true, commandName: 'stephanos-ignite', command: 'wake' \}/);
+  assert.match(handler, /const result = await queueUpdateFn/);
+  assert.equal(ownerLane.match(/api\.registerCommand\s*\(/g)?.length, 1);
   assertNoGeneralAuthority(source);
+  assertNoGeneralAuthority(handler);
 });
 
 test('authority guard rejects executable authority without rejecting inert install status truth', () => {

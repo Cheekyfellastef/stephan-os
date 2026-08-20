@@ -13,13 +13,14 @@ const HEAD = 'a'.repeat(40);
 
 test('exposes only the authorized command surface', () => {
   assert.equal(PLUGIN_ID, 'stephanos-ignite-command');
-  assert.deepEqual(AUTHORIZED_SUBCOMMANDS, ['help', 'openclaw-status', 'status', 'wake', 'update']);
+  assert.deepEqual(AUTHORIZED_SUBCOMMANDS, ['help', 'openclaw-status', 'status', 'wake', 'update', 'update-status']);
 });
 
 test('renders deterministic help, openclaw-status, status and fixed recovery outputs', () => {
   assert.equal(renderIgniteCommand('help'), renderIgniteCommand(''));
   assert.match(renderIgniteCommand('help'), /\/stephanos-ignite openclaw-status/);
   assert.match(renderIgniteCommand('help'), /\/stephanos-ignite update <exact-40-character-main-sha>/);
+  assert.match(renderIgniteCommand('help'), /\/stephanos-ignite update-status <32-character-receipt-id>/);
   assert.match(renderIgniteCommand('openclaw-status'), /OPENCLAW_STATUS=operator-verification-required/);
   assert.match(renderIgniteCommand('status'), /STEPHANOS_IGNITE_STATUS=source-plugin-restored/);
   assert.match(renderIgniteCommand('status'), /PLUGIN_CAPABILITY_MUTATES_REPO=OWNER_GATED_EXACT_HEAD_ONLY/);
@@ -27,6 +28,20 @@ test('renders deterministic help, openclaw-status, status and fixed recovery out
   assert.match(renderIgniteCommand('wake'), /AUTHENTICATED_FIXED_ADAPTER/);
   assert.match(renderIgniteCommand(`update ${HEAD}`), new RegExp(`EXPECTED_HEAD=${HEAD}`));
   assert.equal(renderIgniteCommand('status'), renderIgniteCommand(' STATUS '));
+});
+
+test('accepts update-status only with one exact receipt ID', () => {
+  const receiptId = '1'.repeat(32);
+  assert.deepEqual(resolveIgniteCommand(`update-status ${receiptId.toUpperCase()}`), {
+    ok: true,
+    command: 'update-status',
+    receiptId,
+  });
+  for (const command of ['update-status', 'update-status latest', `update-status ${receiptId} extra`, `update-status ${'1'.repeat(31)}`]) {
+    const resolved = resolveIgniteCommand(command);
+    assert.equal(resolved.ok, false);
+    assert.match(resolved.text, /exact 32-character receipt ID/i);
+  }
 });
 
 test('accepts update only with one exact 40-character SHA', () => {
@@ -60,10 +75,12 @@ test('rejects unsupported mutation and dispatch commands', () => {
 test('command surface exposes no arbitrary mutation, Codex, merge, push, install, or free-form task capabilities', async () => {
   const files = [
     await readFile(new URL('index.js', root), 'utf8'),
+    await readFile(new URL('lib/command-handler.mjs', root), 'utf8'),
     await readFile(new URL('lib/ignite-status.mjs', root), 'utf8'),
   ].join('\n');
+  const registration = await readFile(new URL('lib/recovery-update.mjs', root), 'utf8');
   assert.doesNotMatch(files, /registerTool\s*\(|continueAgent:\s*true/);
   assert.doesNotMatch(files, /git\s+(?:merge|push|commit)|openclaw\s+doctor|codex\s+/);
-  assert.match(files, /exposeSenderIsOwner:\s*true/);
+  assert.match(registration, /exposeSenderIsOwner:\s*true/);
   assert.match(files, /senderIsOwner:\s*ctx\?\.senderIsOwner === true/);
 });

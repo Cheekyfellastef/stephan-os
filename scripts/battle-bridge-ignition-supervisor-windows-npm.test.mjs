@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runApprovedBackend8787Start } from './battle-bridge-ignition-supervisor.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
 function captureBackendStart(workspace, platform) {
   const calls = [];
@@ -22,8 +23,8 @@ test('Battle Bridge backend repair uses fixed cmd.exe npm.cmd execution on Windo
   const { calls, result } = await captureBackendStart(workspace, 'win32');
 
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].command, 'cmd.exe');
-  assert.deepEqual(calls[0].args, ['/d', '/s', '/c', 'npm.cmd', 'run', 'stephanos:battle-bridge:repair']);
+  assert.equal(calls[0].command, BATTLE_BRIDGE_WINDOWS_HOST.cmd);
+  assert.deepEqual(calls[0].args, ['/d', '/s', '/c', `""${BATTLE_BRIDGE_WINDOWS_HOST.npm}" run stephanos:battle-bridge:repair"`]);
   assert.equal(calls[0].options.shell, false);
   assert.equal(result.started, true);
   assert.equal(result.exitCode, 0);

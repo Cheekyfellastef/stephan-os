@@ -284,3 +284,52 @@ test('backend+OpenClaw connected + UI missing + fresh status/proof/events record
     fs.rmSync(workspaceRoot, { recursive: true, force: true });
   }
 }));
+
+test('workspace current enumeration is count-bounded and fails closed', async () => withRepo(async (repoRoot) => {
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'launcher-count-bounded-'));
+  try {
+    const current = path.join(workspaceRoot, 'current');
+    fs.mkdirSync(current, { recursive: true });
+    for (let index = 0; index < 129; index += 1) {
+      fs.writeFileSync(path.join(current, `record-${String(index).padStart(3, '0')}.json`), '{"status":"READY"}');
+    }
+    const facts = await collectLauncherReadinessLiveFacts({
+      repoRoot,
+      sharedWorkspace: workspaceRoot,
+      serviceProbe: serviceProbeFor(['backend']),
+      execFile: cleanGit,
+    });
+    assert.equal(facts.observedFacts.services['shared-workspace'].ready, false);
+    assert.match(facts.observedFacts.staleWorkspaceRecords.join('\n'), /WORKSPACE_CURRENT_RECORD_COUNT_EXCEEDED/);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+}));
+
+test('workspace records reject oversized, malformed, and linked JSON without following them', async () => withRepo(async (repoRoot) => {
+  for (const fixture of ['oversized', 'malformed', 'linked']) {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), `launcher-${fixture}-record-`));
+    try {
+      const current = path.join(workspaceRoot, 'current');
+      fs.mkdirSync(current, { recursive: true });
+      const record = path.join(current, 'status.json');
+      if (fixture === 'oversized') fs.writeFileSync(record, 'x'.repeat(256 * 1024 + 1));
+      else if (fixture === 'malformed') fs.writeFileSync(record, '{"status":');
+      else {
+        const outside = path.join(workspaceRoot, 'outside.json');
+        fs.writeFileSync(outside, '{"status":"READY"}');
+        fs.symlinkSync(outside, record);
+      }
+      const facts = await collectLauncherReadinessLiveFacts({
+        repoRoot,
+        sharedWorkspace: workspaceRoot,
+        serviceProbe: serviceProbeFor(['backend']),
+        execFile: cleanGit,
+      });
+      assert.equal(facts.observedFacts.services['shared-workspace'].ready, false, fixture);
+      assert.match(facts.observedFacts.staleWorkspaceRecords.join('\n'), /WORKSPACE_RECORD_(?:TOO_LARGE|JSON_INVALID|NOT_REGULAR)/, fixture);
+    } finally {
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  }
+}));

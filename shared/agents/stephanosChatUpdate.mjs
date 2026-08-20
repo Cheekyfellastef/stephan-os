@@ -2,9 +2,11 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
   DEFAULT_CODEX_DISPATCH_REPO_ROOT,
-  runBattleBridgeDiagnostics,
   syncCodexDispatchBridge,
 } from './codexDispatchHostOps.mjs';
+import { classifyUpdateDirt, compareUpdateDirt } from './stephanosUpdateDirt.mjs';
+
+export { classifyUpdateDirt, compareUpdateDirt } from './stephanosUpdateDirt.mjs';
 
 export const STEPHANOS_CHAT_UPDATE_SCHEMA = 'stephanos.chat-update.v1';
 export const DEFAULT_RUNTIME_PROOF_ATTEMPTS = 5;
@@ -12,16 +14,12 @@ export const DEFAULT_RUNTIME_PROOF_DELAY_MS = 2000;
 
 const MAX_RUNTIME_PROOF_ATTEMPTS = 8;
 const MAX_RUNTIME_PROOF_DELAY_MS = 10000;
-const APPROVED_RUNTIME_PREFIXES = Object.freeze([
-  'apps/stephanos/dist/',
-  'data/',
-  'stephanos-server/data/memory/durable-memory.json',
-  'memory/.dreams/',
-  'memory/dreaming/deep/',
-  'memory/dreaming/light/',
-  'memory/dreaming/rem/',
+const EXACT_HEAD = /^[0-9a-f]{40}$/;
+const RUNTIME_PROOF_ENDPOINTS = Object.freeze([
+  'http://127.0.0.1:4173/__stephanos/health',
+  'http://127.0.0.1:8787/api/health',
+  'http://127.0.0.1:18789/health',
 ]);
-
 function bounded(value = '', limit = 8000) {
   const text = String(value || '').trim();
   return text.length > limit ? `${text.slice(0, limit)}\n...[truncated]` : text;
@@ -37,9 +35,10 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function capture(spawnSyncFn, command, args, { cwd, timeout = 900000 } = {}) {
+function capture(spawnSyncFn, command, args, { cwd, timeout = 900000, env } = {}) {
   const result = spawnSyncFn(command, args, {
     cwd,
+    ...(env ? { env } : {}),
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
@@ -57,55 +56,85 @@ function capture(spawnSyncFn, command, args, { cwd, timeout = 900000 } = {}) {
   });
 }
 
-function parsePorcelain(output = '') {
-  return String(output || '')
-    .split(/\r?\n/)
-    .map((line) => line.trimEnd())
-    .filter(Boolean)
-    .map((line) => ({
-      status: line.slice(0, 2),
-      path: line.slice(3).trim().split(' -> ').at(-1)?.replace(/^"|"$/g, '').replace(/\\/g, '/') || '',
-    }))
-    .filter((entry) => entry.path);
+async function readBoundedResponseText(response, maxBytes = 2500) {
+  if (response?.body?.getReader) {
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = Buffer.from(value || []);
+        total += chunk.length;
+        if (total > maxBytes) throw new Error('RUNTIME_PROOF_RESPONSE_TOO_LARGE');
+        chunks.push(chunk);
+      }
+    } finally {
+      if (total > maxBytes) await reader.cancel?.().catch?.(() => {});
+      reader.releaseLock?.();
+    }
+    return Buffer.concat(chunks, total).toString('utf8');
+  }
+  const text = String(await response.text());
+  if (Buffer.byteLength(text, 'utf8') > maxBytes) throw new Error('RUNTIME_PROOF_RESPONSE_TOO_LARGE');
+  return text;
 }
 
-function stableEntries(entries = []) {
-  return entries.map((entry) => `${entry.status} ${entry.path}`).sort((a, b) => a.localeCompare(b));
-}
-
-export function classifyUpdateDirt(output = '') {
-  const entries = parsePorcelain(output);
-  const runtimeEntries = entries.filter((entry) => APPROVED_RUNTIME_PREFIXES.some((prefix) => (
-    prefix.endsWith('/') ? entry.path.startsWith(prefix) : entry.path === prefix
-  )));
-  const sourceEntries = entries.filter((entry) => !runtimeEntries.includes(entry));
-  return Object.freeze({
-    entries,
-    runtimeEntries,
-    sourceEntries,
-    runtime: runtimeEntries.map((entry) => entry.path),
-    source: sourceEntries.map((entry) => entry.path),
+async function probeRuntimeEndpoint(url, { fetchFn = globalThis.fetch, timeoutMs = 10_000 } = {}) {
+  const controller = new AbortController();
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error('RUNTIME_PROOF_RESPONSE_TIMEOUT'));
+    }, timeoutMs);
   });
+  timer.unref?.();
+  try {
+    return await Promise.race([
+      (async () => {
+        const response = await fetchFn(url, { method: 'GET', signal: controller.signal });
+        return Object.freeze({
+          url,
+          ok: response?.ok === true,
+          status: Number.isSafeInteger(response?.status) ? response.status : null,
+          body: await readBoundedResponseText(response, 2500),
+          error: '',
+        });
+      })(),
+      timeout,
+    ]);
+  } catch (error) {
+    return Object.freeze({ url, ok: false, status: null, body: '', error: error?.message || String(error) });
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
 }
 
-export function compareUpdateDirt(before = {}, after = {}) {
-  const sourceBefore = stableEntries(before.sourceEntries || []);
-  const sourceAfter = stableEntries(after.sourceEntries || []);
-  const runtimeBefore = stableEntries(before.runtimeEntries || []);
-  const runtimeAfter = stableEntries(after.runtimeEntries || []);
+// Runtime proof is deliberately HTTP-only. Source identity is supplied by the
+// fixed command runner at the call site; this collector never invokes Git,
+// PowerShell, a worker probe, or any logical/ambient diagnostic command.
+export async function collectStephanosRuntimeEndpointDiagnostics({
+  sourceHead = '',
+  fetchFn = globalThis.fetch,
+  endpoints = RUNTIME_PROOF_ENDPOINTS,
+  timeoutMs = 10_000,
+} = {}) {
+  const fullHead = String(sourceHead || '').trim().toLowerCase();
+  const health = await Promise.all(endpoints.map((url) => probeRuntimeEndpoint(url, { fetchFn, timeoutMs })));
+  const ok = EXACT_HEAD.test(fullHead) && health.every((entry) => entry.ok);
   return Object.freeze({
-    sourceMutationDetected: JSON.stringify(sourceBefore) !== JSON.stringify(sourceAfter),
-    runtimeMutationDetected: JSON.stringify(runtimeBefore) !== JSON.stringify(runtimeAfter),
-    sourceDirtBefore: sourceBefore,
-    sourceDirtAfter: sourceAfter,
-    runtimeDirtBefore: runtimeBefore,
-    runtimeDirtAfter: runtimeAfter,
+    ok,
+    status: ok ? 'DONE' : 'FAILED',
+    verdict: ok ? 'PASS' : 'FAIL',
+    blocker: ok ? '' : (EXACT_HEAD.test(fullHead) ? 'BATTLE_BRIDGE_ENDPOINT_HEALTH_FAILED' : 'SOURCE_HEAD_UNPROVEN'),
+    fullHead,
+    health: Object.freeze(health),
+    commandDiagnosticsPerformed: false,
+    powershellDiagnosticsPerformed: false,
   });
-}
-
-function extractJsonString(text = '', key = '') {
-  const match = String(text || '').match(new RegExp(`"${key}"\\s*:\\s*"([^"]*)"`));
-  return match?.[1] || '';
 }
 
 function servedUiProof(diagnostics = {}) {
@@ -114,22 +143,24 @@ function servedUiProof(diagnostics = {}) {
     : null;
   const body = String(ui?.body || '');
   let payload = null;
-  try { payload = body ? JSON.parse(body) : null; } catch {
-    payload = {
-      gitCommit: extractJsonString(body, 'gitCommit'),
-      runtimeMarker: extractJsonString(body, 'runtimeMarker'),
-      intendedMode: extractJsonString(body, 'intendedMode'),
-    };
-  }
-  const sourceHead = String(diagnostics.fullHead || '');
-  const servedCommit = String(payload?.gitCommit || '');
+  try { payload = body ? JSON.parse(body) : null; } catch { payload = null; }
+  const sourceHead = String(diagnostics.fullHead || '').trim().toLowerCase();
+  const servedCommit = String(payload?.gitCommit || '').trim().toLowerCase();
+  const runtimeMarker = String(payload?.runtimeMarker || '');
+  const markerHeadBound = /^[0-9a-f]{40}$/.test(sourceHead)
+    && new RegExp(`(?:^|::)${sourceHead}(?:::|$)`, 'i').test(runtimeMarker);
+  const canonicalHealth = ui?.ok === true
+    && ui?.status === 200
+    && payload?.ok === true
+    && payload?.service === 'stephanos-dist-server'
+    && payload?.intendedMode === 'launcher-root';
   return Object.freeze({
-    healthOk: ui?.ok === true,
+    healthOk: canonicalHealth,
     httpStatus: ui?.status ?? null,
     sourceHead,
     servedCommit,
-    runtimeMarker: String(payload?.runtimeMarker || ''),
-    exactHead: Boolean(sourceHead && servedCommit && sourceHead.toLowerCase().startsWith(servedCommit.toLowerCase())),
+    runtimeMarker,
+    exactHead: Boolean(canonicalHealth && servedCommit === sourceHead && markerHeadBound),
     intendedMode: payload?.intendedMode || '',
     endpoint: String(ui?.url || 'http://127.0.0.1:4173/__stephanos/health'),
     error: ui?.error || '',
@@ -239,10 +270,18 @@ export async function updateStephanosFromChat({
   platform = process.platform,
   spawnSyncFn = spawnSync,
   syncFn = syncCodexDispatchBridge,
-  diagnosticsFn = runBattleBridgeDiagnostics,
+  diagnosticsFn = collectStephanosRuntimeEndpointDiagnostics,
+  fetchFn = globalThis.fetch,
   runtimeProofAttempts = DEFAULT_RUNTIME_PROOF_ATTEMPTS,
   runtimeProofDelayMs = DEFAULT_RUNTIME_PROOF_DELAY_MS,
   sleepFn = sleep,
+  gitCommand = 'git',
+  gitArgsPrefix = Object.freeze([]),
+  gitEnv,
+  nodeCommand = process.execPath,
+  nodeEnv,
+  commandRunnerFn = null,
+  ownerReceiptId = '',
 } = {}) {
   if (operatorApproval !== 'operator-approved') {
     return Object.freeze({
@@ -277,6 +316,7 @@ export async function updateStephanosFromChat({
       branch: sourceInstalled ? expectedBranch : '',
       expectedHeadMatch,
       runtimeRefreshAttempted: false,
+      executionStateUnproven: sync?.executionStateUnproven === true,
       operatorPowerShellRequired: false,
       nextOperatorAction: 'Inspect the exact bounded sync blocker. No local work was discarded and no runtime refresh was attempted.',
     });
@@ -301,30 +341,211 @@ export async function updateStephanosFromChat({
     });
   }
 
-  const preDiagnostics = await diagnosticsFn({ repoRoot, spawnSyncFn });
-  const statusBefore = capture(spawnSyncFn, 'git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: repoRoot, timeout: 120000 });
+  if (platform === 'win32' && typeof commandRunnerFn !== 'function') {
+    return Object.freeze({
+      ok: false,
+      schemaVersion: STEPHANOS_CHAT_UPDATE_SCHEMA,
+      status: 'BLOCKED',
+      verdict: 'FAIL',
+      finalVerdict: 'FIXED_RUNTIME_COMMAND_BOUNDARY_REQUIRED',
+      blocker: 'FIXED_RUNTIME_COMMAND_BOUNDARY_REQUIRED',
+      sync,
+      sourceInstalled,
+      sourceHead: sourceInstalled ? normalizedAfterHead : '',
+      branch: sourceInstalled ? expectedBranch : '',
+      expectedHeadMatch,
+      runtimeRefreshAttempted: false,
+      processControlPerformed: false,
+      nextOperatorAction: 'Use the authenticated owner-handler update route with its fixed in-memory command boundary.',
+    });
+  }
+
+  const runCommand = commandRunnerFn
+    ? (command, args, options) => commandRunnerFn(command, args, options)
+    : (command, args, options) => capture(spawnSyncFn, command, args, options);
+  const headBeforeIgnition = await runCommand(
+    gitCommand,
+    [...gitArgsPrefix, 'rev-parse', 'HEAD'],
+    { cwd: repoRoot, timeout: 120000, env: gitEnv },
+  );
+  const branchBeforeIgnition = await runCommand(
+    gitCommand,
+    [...gitArgsPrefix, 'branch', '--show-current'],
+    { cwd: repoRoot, timeout: 120000, env: gitEnv },
+  );
+  const statusBefore = await runCommand(
+    gitCommand,
+    [...gitArgsPrefix, 'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching'],
+    { cwd: repoRoot, timeout: 120000, env: gitEnv },
+  );
+  const trackedVisibilityBefore = await runCommand(
+    gitCommand,
+    [...gitArgsPrefix, 'ls-files', '-v', '--'],
+    { cwd: repoRoot, timeout: 120000, env: gitEnv },
+  );
   const dirtBefore = classifyUpdateDirt(statusBefore.stdout);
+  const preIgnitionHead = String(headBeforeIgnition.stdout || '').trim().toLowerCase();
+  const preIgnitionBranch = String(branchBeforeIgnition.stdout || '').trim();
+  const preDiagnosticsRaw = await diagnosticsFn({
+    repoRoot,
+    sourceHead: preIgnitionHead,
+    expectedSourceHead: normalizedAfterHead,
+    fetchFn,
+  });
+  const preDiagnostics = Object.freeze({ ...preDiagnosticsRaw, fullHead: preIgnitionHead });
+  let preIgnitionBlocker = '';
+  if (!headBeforeIgnition.ok) preIgnitionBlocker = 'PRE_IGNITION_SOURCE_HEAD_UNPROVEN';
+  else if (!branchBeforeIgnition.ok) preIgnitionBlocker = 'PRE_IGNITION_BRANCH_UNPROVEN';
+  else if (!statusBefore.ok) preIgnitionBlocker = 'PRE_IGNITION_SOURCE_STATUS_UNPROVEN';
+  else if (!trackedVisibilityBefore.ok) preIgnitionBlocker = 'PRE_IGNITION_TRACKED_VISIBILITY_UNPROVEN';
+  else if (String(trackedVisibilityBefore.stdout || '').split(/\r?\n/).some((line) => /^S\s|^[a-z]\s/.test(line))) preIgnitionBlocker = 'HIDDEN_TRACKED_PATHS_PRESENT';
+  else if (dirtBefore.sourceEntries.length > 0) preIgnitionBlocker = 'CHECKOUT_DIRTY_BEFORE_IGNITION';
+  else if (!/^[0-9a-f]{40}$/.test(preIgnitionHead)) preIgnitionBlocker = 'PRE_IGNITION_SOURCE_HEAD_UNPROVEN';
+  else if (preIgnitionHead !== normalizedAfterHead) preIgnitionBlocker = 'SOURCE_HEAD_CHANGED_BEFORE_REFRESH';
+  else if (preIgnitionBranch !== expectedBranch) preIgnitionBlocker = 'PRE_IGNITION_BRANCH_MISMATCH';
+  if (preIgnitionBlocker) {
+    return Object.freeze({
+      ok: false,
+      schemaVersion: STEPHANOS_CHAT_UPDATE_SCHEMA,
+      status: 'BLOCKED',
+      verdict: 'FAIL',
+      finalVerdict: preIgnitionBlocker,
+      blocker: preIgnitionBlocker,
+      repoRoot,
+      expectedBranch,
+      expectedHead: normalizedExpectedHead,
+      expectedHeadMatch,
+      sourceInstalled: true,
+      sourceInstallStatus: sync.updated ? 'SOURCE_UPDATED' : 'SOURCE_ALREADY_CURRENT',
+      sourceHead: normalizedAfterHead,
+      branch: expectedBranch,
+      sync,
+      preDiagnostics,
+      headBeforeIgnition,
+      branchBeforeIgnition,
+      statusBefore,
+      trackedVisibilityBefore,
+      dirtBefore,
+      runtimeRefreshAttempted: false,
+      runtimeProofPassed: false,
+      runtimeProofPending: false,
+      processControlPerformed: false,
+      destructiveSourceCleanupPerformed: false,
+      nextOperatorAction: 'Preserve and inspect the checkout/head evidence. No ignition, cleanup, restore, move, or runtime process control was attempted.',
+    });
+  }
   const ignitionScript = join(repoRoot, 'scripts', 'run-battle-bridge-ignition.mjs');
-  const ignition = capture(spawnSyncFn, process.execPath, [ignitionScript], { cwd: repoRoot, timeout: 900000 });
+  const ignition = await runCommand(nodeCommand, [ignitionScript], {
+    cwd: repoRoot,
+    timeout: 900000,
+    env: nodeEnv,
+    ignitionApproval: Object.freeze({ expectedHead: normalizedAfterHead, receiptId: String(ownerReceiptId || '').toLowerCase() }),
+  });
+  if (ignition?.executionStateUnproven === true || ignition?.processTreeClosureProven === false) {
+    return Object.freeze({
+      ok: false,
+      schemaVersion: STEPHANOS_CHAT_UPDATE_SCHEMA,
+      status: 'PENDING',
+      verdict: 'FAIL',
+      finalVerdict: 'IGNITION_EXECUTION_STATE_UNPROVEN',
+      blocker: 'IGNITION_EXECUTION_STATE_UNPROVEN',
+      repoRoot,
+      expectedBranch,
+      expectedHead: normalizedExpectedHead,
+      expectedHeadMatch,
+      sourceInstalled: true,
+      sourceInstallStatus: sync.updated ? 'SOURCE_UPDATED' : 'SOURCE_ALREADY_CURRENT',
+      sourceHead: normalizedAfterHead,
+      branch: expectedBranch,
+      sync,
+      preDiagnostics,
+      headBeforeIgnition,
+      branchBeforeIgnition,
+      statusBefore,
+      dirtBefore,
+      ignition,
+      runtimeRefreshAttempted: true,
+      runtimeProofPassed: false,
+      runtimeProofPending: false,
+      processControlPerformed: true,
+      processTreeClosureProven: false,
+      executionStateUnproven: true,
+      destructiveSourceCleanupPerformed: false,
+      nextOperatorAction: 'Preserve the active owner lane. Do not retry while the timed-out or failed child process tree remains unproven.',
+    });
+  }
   const attempts = boundedInteger(runtimeProofAttempts, DEFAULT_RUNTIME_PROOF_ATTEMPTS, 1, MAX_RUNTIME_PROOF_ATTEMPTS);
   const delayMs = boundedInteger(runtimeProofDelayMs, DEFAULT_RUNTIME_PROOF_DELAY_MS, 0, MAX_RUNTIME_PROOF_DELAY_MS);
   const runtimeProof = await collectRuntimeProof({
-    diagnosticsFn: () => diagnosticsFn({ repoRoot, spawnSyncFn }),
-    preSourceHead: String(preDiagnostics?.fullHead || ''),
+    diagnosticsFn: async () => {
+      const fixedHead = await runCommand(
+        gitCommand,
+        [...gitArgsPrefix, 'rev-parse', 'HEAD'],
+        { cwd: repoRoot, timeout: 120000, env: gitEnv },
+      );
+      const observedHead = String(fixedHead.stdout || '').trim().toLowerCase();
+      if (!fixedHead.ok || !EXACT_HEAD.test(observedHead)) {
+        return Object.freeze({
+          ok: false,
+          status: 'FAILED',
+          verdict: 'FAIL',
+          blocker: 'RUNTIME_PROOF_SOURCE_HEAD_UNPROVEN',
+          fullHead: '',
+          health: Object.freeze([]),
+        });
+      }
+      const diagnostics = await diagnosticsFn({
+        repoRoot,
+        sourceHead: observedHead,
+        expectedSourceHead: normalizedAfterHead,
+        fetchFn,
+      });
+      return Object.freeze({ ...diagnostics, fullHead: observedHead });
+    },
+    preSourceHead: preIgnitionHead,
     expectedSourceHead: String(sync.afterHead || ''),
     attempts,
     delayMs,
     sleepFn,
   });
   const postDiagnostics = runtimeProof.finalDiagnostics;
-  const statusAfter = capture(spawnSyncFn, 'git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: repoRoot, timeout: 120000 });
+  const headAfterIgnition = await runCommand(
+    gitCommand,
+    [...gitArgsPrefix, 'rev-parse', 'HEAD'],
+    { cwd: repoRoot, timeout: 120000, env: gitEnv },
+  );
+  const branchAfterIgnition = await runCommand(
+    gitCommand,
+    [...gitArgsPrefix, 'branch', '--show-current'],
+    { cwd: repoRoot, timeout: 120000, env: gitEnv },
+  );
+  const statusAfter = await runCommand(
+    gitCommand,
+    [...gitArgsPrefix, 'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching'],
+    { cwd: repoRoot, timeout: 120000, env: gitEnv },
+  );
+  const trackedVisibilityAfter = await runCommand(
+    gitCommand,
+    [...gitArgsPrefix, 'ls-files', '-v', '--'],
+    { cwd: repoRoot, timeout: 120000, env: gitEnv },
+  );
   const dirtAfter = classifyUpdateDirt(statusAfter.stdout);
   const dirtDelta = compareUpdateDirt(dirtBefore, dirtAfter);
   const finalProof = runtimeProof.finalAttempt;
-  const sourceHeadChangedDuringRefresh = finalProof?.sourceHeadChangedDuringRefresh === true;
-  const sourceHeadMismatch = finalProof?.sourceHeadMismatch === true;
+  const directPostHead = String(headAfterIgnition.stdout || '').trim().toLowerCase();
+  const sourceHeadChangedDuringRefresh = finalProof?.sourceHeadChangedDuringRefresh === true
+    || (headAfterIgnition.ok && directPostHead !== preIgnitionHead);
+  const sourceHeadMismatch = finalProof?.sourceHeadMismatch === true
+    || (headAfterIgnition.ok && directPostHead !== normalizedAfterHead);
   const runtimeProofPending = Boolean(
     ignition.ok
+    && headAfterIgnition.ok
+    && branchAfterIgnition.ok
+    && String(branchAfterIgnition.stdout || '').trim() === expectedBranch
+    && statusAfter.ok
+    && trackedVisibilityAfter.ok
+    && !String(trackedVisibilityAfter.stdout || '').split(/\r?\n/).some((line) => /^S\s|^[a-z]\s/.test(line))
+    && dirtAfter.source.length === 0
     && !dirtDelta.sourceMutationDetected
     && !sourceHeadChangedDuringRefresh
     && !sourceHeadMismatch
@@ -333,11 +554,25 @@ export async function updateStephanosFromChat({
   const passed = Boolean(
     ignition.ok
     && runtimeProof.passed
+    && headAfterIgnition.ok
+    && branchAfterIgnition.ok
+    && String(branchAfterIgnition.stdout || '').trim() === expectedBranch
+    && statusAfter.ok
+    && trackedVisibilityAfter.ok
+    && !String(trackedVisibilityAfter.stdout || '').split(/\r?\n/).some((line) => /^S\s|^[a-z]\s/.test(line))
+    && dirtAfter.source.length === 0
     && !dirtDelta.sourceMutationDetected
   );
 
   let blocker = '';
-  if (dirtDelta.sourceMutationDetected) blocker = 'SOURCE_DIRT_CHANGED_DURING_UPDATE';
+  if (!headAfterIgnition.ok) blocker = 'POST_IGNITION_SOURCE_HEAD_UNPROVEN';
+  else if (!branchAfterIgnition.ok) blocker = 'POST_IGNITION_BRANCH_UNPROVEN';
+  else if (String(branchAfterIgnition.stdout || '').trim() !== expectedBranch) blocker = 'POST_IGNITION_BRANCH_MISMATCH';
+  else if (!statusAfter.ok) blocker = 'POST_IGNITION_SOURCE_STATUS_UNPROVEN';
+  else if (!trackedVisibilityAfter.ok) blocker = 'POST_IGNITION_TRACKED_VISIBILITY_UNPROVEN';
+  else if (String(trackedVisibilityAfter.stdout || '').split(/\r?\n/).some((line) => /^S\s|^[a-z]\s/.test(line))) blocker = 'HIDDEN_TRACKED_PATHS_PRESENT';
+  else if (dirtAfter.source.length > 0) blocker = 'SOURCE_DIRT_PRESENT_AFTER_IGNITION';
+  else if (dirtDelta.sourceMutationDetected) blocker = 'SOURCE_DIRT_CHANGED_DURING_UPDATE';
   else if (!ignition.ok) blocker = 'IGNITION_REFRESH_FAILED';
   else if (sourceHeadChangedDuringRefresh) blocker = 'SOURCE_HEAD_CHANGED_DURING_REFRESH';
   else if (sourceHeadMismatch) blocker = 'POST_UPDATE_SOURCE_HEAD_MISMATCH';
@@ -365,8 +600,14 @@ export async function updateStephanosFromChat({
     branch: expectedBranch,
     sync,
     preDiagnostics,
+    headBeforeIgnition,
+    branchBeforeIgnition,
     ignition,
     postDiagnostics,
+    headAfterIgnition,
+    branchAfterIgnition,
+    trackedVisibilityBefore,
+    trackedVisibilityAfter,
     servedUiProof: finalProof?.servedUiProof || servedUiProof(postDiagnostics || {}),
     sourceHeadUnchangedDuringRefresh: finalProof?.sourceHeadUnchangedDuringRefresh === true,
     sourceMatchesSync: finalProof?.sourceMatchesSync === true,
@@ -389,6 +630,8 @@ export async function updateStephanosFromChat({
     visiblePowerShellRequested: false,
     codexChildUsed: false,
     processControlPerformed: true,
+    processTreeClosureProven: ignition?.processTreeClosureProven !== false,
+    executionStateUnproven: false,
     publicExposureChanged: false,
     destructiveSourceCleanupPerformed: false,
     desktopRestartRequired: Boolean(sync.restartRequired),

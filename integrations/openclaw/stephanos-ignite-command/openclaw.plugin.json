@@ -1,7 +1,7 @@
 {
   "id": "stephanos-ignite-command",
   "name": "Stephanos Ignite Command",
-  "description": "Adds /stephanos-ignite status and one authenticated fixed recovery wake route.",
+  "description": "Adds /stephanos-ignite status, one authenticated fixed recovery wake route, and an owner-gated in-memory exact-head main update route with no disk-triggered executor.",
   "activation": {
     "onStartup": true
   },

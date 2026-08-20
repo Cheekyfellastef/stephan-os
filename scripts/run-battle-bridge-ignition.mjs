@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { fstatSync, readSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -11,8 +12,20 @@ import {
   getCurrentGitHead,
   projectBattleBridgeSupervisorStatus,
   runBattleBridgeIgnitionSupervisor,
+  runApprovedOpenClawGateway18789Start,
 } from './battle-bridge-ignition-supervisor.mjs';
-import { runIgnitionHousekeep } from './ignite-stephanos-local.mjs';
+import { evaluateGitPublicationTruthWithDeps, runIgnitionHousekeep } from './ignite-stephanos-local.mjs';
+import {
+  BATTLE_BRIDGE_CANONICAL_REMOTE_URL,
+  BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+  battleBridgeCanonicalRepositoryArgs,
+  createBattleBridgeMinimalChildEnvironment,
+  inspectBattleBridgeGitTopology,
+  validateBattleBridgeLocalGitConfiguration,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
+import { BATTLE_BRIDGE_IGNITION_PIPE_APPROVAL_SCHEMA } from '../shared/agents/battleBridgeExactHeadAsyncUpdateV1.mjs';
+import { classifyUpdateDirt } from '../shared/agents/stephanosUpdateDirt.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const backendStarterScript = path.join(repoRoot, 'scripts', 'windows', 'start-stephanos-backend.ps1');
@@ -20,19 +33,38 @@ const approvedRuntimeRestartScript = path.join(repoRoot, 'scripts', 'windows', '
 const ui4173RefreshScript = path.join(repoRoot, 'scripts', 'refresh-stephanos-ui-4173.mjs');
 const backendHealthUrl = 'http://127.0.0.1:8787/api/health';
 const SHA40 = /^[0-9a-f]{40}$/;
+const HEX32 = /^[0-9a-f]{32}$/;
+const MAX_IGNITION_APPROVAL_BYTES = 4096;
 const SUPERVISOR_PRESERVED_MUTATION_LABELS = new Map([
   ['git-restore-auto-generated', 'preserve the currently served generated dist until exact-head browser proof completes'],
   ['git-clean-dist-untracked', 'preserve the currently served generated dist until exact-head browser proof completes'],
   ['git-restore-runtime-tracked', 'preserve runtime-owned durable memory; runtime dirt is evidence, not source cleanup authority'],
+  ['git-clean-runtime-untracked', 'preserve runtime-owned durable memory; this recovery lane has no delete authority'],
 ]);
 
+function deferRootWorkspaceMove({ paths = [] } = {}) {
+  return {
+    destinationRoot: null,
+    migrationDirectory: null,
+    moved: [],
+    skipped: paths.map((pathname) => ({ path: pathname, reason: 'recovery-lane-move-authority-disabled' })),
+  };
+}
+
 export function runStep(label, command, args, { cwd = repoRoot, env = process.env } = {}) {
-  console.log(`[IGNITION ENTRY] ${label}: ${command} ${args.join(' ')}`);
-  const result = spawnSync(command, args, {
+  const fixedGit = command === 'git' || command === BATTLE_BRIDGE_WINDOWS_HOST.git;
+  const executable = fixedGit
+    ? BATTLE_BRIDGE_WINDOWS_HOST.git
+    : (command === 'powershell.exe'
+      ? BATTLE_BRIDGE_WINDOWS_HOST.powershell
+      : (command === 'cmd.exe' ? BATTLE_BRIDGE_WINDOWS_HOST.cmd : command));
+  const fixedArgs = fixedGit ? [...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS, ...battleBridgeCanonicalRepositoryArgs(cwd), ...args] : args;
+  console.log(`[IGNITION ENTRY] ${label}: ${executable} ${fixedArgs.join(' ')}`);
+  const result = spawnSync(executable, fixedArgs, {
     cwd,
     stdio: 'inherit',
     shell: false,
-    env,
+    env: fixedGit ? createBattleBridgeMinimalChildEnvironment(env, { git: true }) : env,
   });
 
   if (result.error || result.status !== 0) {
@@ -46,6 +78,70 @@ export function runStep(label, command, args, { cwd = repoRoot, env = process.en
   }
 
   return true;
+}
+
+export function captureFixedAuthorityGitStep(label, command, args, {
+  cwd = repoRoot,
+  env = process.env,
+  spawnSyncFn = spawnSync,
+} = {}) {
+  if (command !== 'git' && command !== BATTLE_BRIDGE_WINDOWS_HOST.git) {
+    throw new Error(`FIXED_AUTHORITY_GIT_COMMAND_REQUIRED:${label}`);
+  }
+  const result = spawnSyncFn(
+    BATTLE_BRIDGE_WINDOWS_HOST.git,
+    [...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS, ...battleBridgeCanonicalRepositoryArgs(cwd), ...args],
+    { cwd, env: createBattleBridgeMinimalChildEnvironment(env, { git: true }), encoding: 'utf8', shell: false, windowsHide: true, timeout: 120_000 },
+  );
+  if (result?.error || result?.status !== 0) {
+    throw new Error(`${label} failed through fixed authority Git (${result?.error?.message || result?.status || 'unknown'}).`);
+  }
+  return Object.freeze({ stdout: String(result?.stdout || ''), stderr: String(result?.stderr || '') });
+}
+
+export function readOwnerIgnitionApprovalFromPipe({
+  fd = 3,
+  parentPid = process.ppid,
+  childPid = process.pid,
+  readSyncFn = readSync,
+  fstatFn = fstatSync,
+} = {}) {
+  let info;
+  try { info = fstatFn(fd); } catch { return null; }
+  if (!info?.isFIFO?.() && !info?.isSocket?.()) return null;
+  const bounded = Buffer.alloc(MAX_IGNITION_APPROVAL_BYTES + 1);
+  let length = 0;
+  try {
+    // The producer writes one sub-PIPE_BUF JSON frame. A single bounded read
+    // neither waits for EOF from a writer that keeps its handle open nor
+    // allocates beyond the fixed maximum-plus-one rejection byte.
+    length = readSyncFn(fd, bounded, 0, bounded.length, null);
+    if (!Number.isSafeInteger(length) || length < 0) return null;
+  } catch { return null; }
+  const bytes = bounded.subarray(0, length);
+  if (bytes.length < 2 || bytes.length > MAX_IGNITION_APPROVAL_BYTES) return null;
+  let approval;
+  try { approval = JSON.parse(bytes.toString('utf8')); } catch { return null; }
+  const exactKeys = [
+    'action', 'childPid', 'expectedHead', 'nonce', 'parentPid', 'receiptId', 'schemaVersion',
+  ];
+  if (!approval || typeof approval !== 'object' || Array.isArray(approval)
+      || JSON.stringify(Object.keys(approval).sort()) !== JSON.stringify(exactKeys)) return null;
+  if (approval.schemaVersion !== BATTLE_BRIDGE_IGNITION_PIPE_APPROVAL_SCHEMA
+      || approval.action !== 'RUN_EXACT_HEAD_IGNITION'
+      || !SHA40.test(String(approval.expectedHead || '').toLowerCase())
+      || !HEX32.test(String(approval.receiptId || '').toLowerCase())
+      || !HEX32.test(String(approval.nonce || '').toLowerCase())
+      || Number(approval.parentPid) !== Number(parentPid)
+      || Number(approval.childPid) !== Number(childPid)) return null;
+  return Object.freeze({
+    approved: true,
+    action: approval.action,
+    expectedHead: String(approval.expectedHead).toLowerCase(),
+    receiptId: String(approval.receiptId).toLowerCase(),
+    parentPid: Number(parentPid),
+    childPid: Number(childPid),
+  });
 }
 
 export function createSupervisorHousekeepRunStep({ runStepFn = runStep } = {}) {
@@ -68,11 +164,49 @@ export function runSupervisorHousekeepPreservingLiveRuntime(
 ) {
   return housekeepFn({
     ...options,
+    captureStepFn: (label, command, args) => captureFixedAuthorityGitStep(label, command, args),
     runStepFn: createSupervisorHousekeepRunStep({ runStepFn }),
+    moveRootOpenClawWorkspaceDirtFn: deferRootWorkspaceMove,
   });
 }
 
 export const runSupervisorHousekeepPreservingLiveDist = runSupervisorHousekeepPreservingLiveRuntime;
+
+function collectCanonicalPreServiceSourceTruth() {
+  const topology = inspectBattleBridgeGitTopology(repoRoot);
+  if (!topology.ok) return Object.freeze({ ok: false, blocker: topology.blocker });
+  const capture = (label, args) => captureFixedAuthorityGitStep(label, 'git', args, { cwd: repoRoot });
+  try {
+    const config = capture('source-config', ['config', '--local', '--null', '--list']);
+    const configProof = validateBattleBridgeLocalGitConfiguration(config.stdout);
+    if (!configProof.ok) return Object.freeze({ ok: false, blocker: configProof.blocker });
+    const statusBefore = capture('source-status-before-fetch', ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
+    const dirtBefore = classifyUpdateDirt(statusBefore.stdout);
+    if (dirtBefore.sourceEntries.length > 0) return Object.freeze({ ok: false, blocker: 'CANONICAL_CHECKOUT_DIRTY', dirt: dirtBefore });
+    const branch = capture('source-branch', ['branch', '--show-current']).stdout.trim();
+    const head = capture('source-head', ['rev-parse', 'HEAD']).stdout.trim().toLowerCase();
+    if (branch !== 'main' || !SHA40.test(head)) return Object.freeze({ ok: false, blocker: 'CANONICAL_MAIN_SOURCE_UNPROVEN', branch, head });
+    capture('source-fetch', ['fetch', '--prune', BATTLE_BRIDGE_CANONICAL_REMOTE_URL, 'main:refs/remotes/origin/main']);
+    const originHead = capture('source-origin-head', ['rev-parse', 'origin/main']).stdout.trim().toLowerCase();
+    const divergence = capture('source-divergence', ['rev-list', '--left-right', '--count', `HEAD...${originHead}`]).stdout.trim();
+    const [aheadText, behindText] = divergence.split(/\s+/);
+    const ahead = Number.parseInt(aheadText, 10);
+    const behind = Number.parseInt(behindText, 10);
+    const statusAfter = capture('source-status-after-fetch', ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
+    const dirtAfter = classifyUpdateDirt(statusAfter.stdout);
+    const finalTopology = inspectBattleBridgeGitTopology(repoRoot);
+    if (!finalTopology.ok || JSON.stringify(finalTopology.stableIdentities) !== JSON.stringify(topology.stableIdentities)) {
+      return Object.freeze({ ok: false, blocker: finalTopology.blocker || 'CANONICAL_GIT_TOPOLOGY_CHANGED' });
+    }
+    if (dirtAfter.sourceEntries.length > 0) return Object.freeze({ ok: false, blocker: 'CANONICAL_CHECKOUT_DIRTY', dirt: dirtAfter });
+    if (originHead !== head || ahead !== 0 || behind !== 0) {
+      return Object.freeze({ ok: false, blocker: 'CANONICAL_MAIN_NOT_CURRENT', branch, head, originHead, ahead, behind });
+    }
+    return Object.freeze({ ok: true, branch, head, originHead, runtimeDirt: dirtAfter.runtime });
+  } catch (error) {
+    return Object.freeze({ ok: false, blocker: 'CANONICAL_SOURCE_TRUTH_UNPROVEN', error: error?.message || String(error) });
+  }
+}
 
 function timeoutFetch(url, options = {}) {
   const timeoutMs = Number(options.timeoutMs || 4_000);
@@ -87,10 +221,50 @@ function timeoutFetch(url, options = {}) {
   });
 }
 
+async function readBoundedJsonResponse(response, maxBytes = 16 * 1024) {
+  if (response?.body?.getReader || typeof response?.text === 'function') {
+    let text = '';
+    if (response?.body?.getReader) {
+      const reader = response.body.getReader();
+      const chunks = [];
+      let total = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = Buffer.from(value || []);
+          total += chunk.length;
+          if (total > maxBytes) throw new Error('BACKEND_HEALTH_RESPONSE_TOO_LARGE');
+          chunks.push(chunk);
+        }
+      } finally {
+        if (total > maxBytes) await reader.cancel?.().catch?.(() => {});
+        reader.releaseLock?.();
+      }
+      text = Buffer.concat(chunks, total).toString('utf8');
+    } else {
+      text = String(await response.text());
+      if (Buffer.byteLength(text, 'utf8') > maxBytes) throw new Error('BACKEND_HEALTH_RESPONSE_TOO_LARGE');
+    }
+    return JSON.parse(text);
+  }
+  const payload = await response.json();
+  if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > maxBytes) throw new Error('BACKEND_HEALTH_RESPONSE_TOO_LARGE');
+  return payload;
+}
+
 export async function probeCanonicalBackendHealth({ fetchFn = timeoutFetch } = {}) {
+  let timer;
   try {
-    const response = await fetchFn(backendHealthUrl, { timeoutMs: 4_000 });
-    const payload = await response.json();
+    const operation = (async () => {
+      const response = await fetchFn(backendHealthUrl, { timeoutMs: 4_000 });
+      return { response, payload: await readBoundedJsonResponse(response) };
+    })();
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('BACKEND_HEALTH_RESPONSE_TIMEOUT')), 4_500);
+      timer.unref?.();
+    });
+    const { response, payload } = await Promise.race([operation, timeout]);
     const sourceHead = String(payload?.backendIdentity?.sourceHead || '').trim().toLowerCase();
     const canonical = Number(response?.status || 0) === 200
       && payload?.schemaVersion === 'stephanos.backend-health.v1'
@@ -109,12 +283,14 @@ export async function probeCanonicalBackendHealth({ fetchFn = timeoutFetch } = {
       sourceHead: '',
       error: error?.message || String(error),
     });
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 function backendStarterInvocation() {
   return Object.freeze({
-    command: 'powershell.exe',
+    command: BATTLE_BRIDGE_WINDOWS_HOST.powershell,
     args: Object.freeze([
       '-NoProfile',
       '-ExecutionPolicy',
@@ -131,7 +307,7 @@ function backendStarterInvocation() {
 
 function approvedBackendRestartInvocation(currentHead) {
   return Object.freeze({
-    command: 'powershell.exe',
+    command: BATTLE_BRIDGE_WINDOWS_HOST.powershell,
     args: Object.freeze([
       '-NoProfile',
       '-NonInteractive',
@@ -342,6 +518,32 @@ export async function writePreSupervisorFailureStatus({
 export async function main({ platform = process.platform } = {}) {
   process.chdir(repoRoot);
   const sharedWorkspace = sharedWorkspaceFromArgs();
+  const approval = readOwnerIgnitionApprovalFromPipe();
+  if (approval?.approved === true) {
+    const currentHead = getCurrentGitHead({ cwd: repoRoot, platform });
+    if (currentHead !== approval.expectedHead) {
+      await writePreSupervisorFailureStatus({
+        sharedWorkspace,
+        phase: 'source truth',
+        blockerId: 'owner-ignition-exact-head-mismatch',
+        detail: 'The one-use owner ignition approval did not match the fixed current source head.',
+        nextOperatorAction: 'Do not start runtime services; re-enter through the authenticated exact-head owner update route.',
+      });
+      return 1;
+    }
+  }
+
+  const sourceTruth = collectCanonicalPreServiceSourceTruth();
+  if (!sourceTruth.ok) {
+    await writePreSupervisorFailureStatus({
+      sharedWorkspace,
+      phase: 'source truth',
+      blockerId: sourceTruth.blocker,
+      detail: 'Canonical clean, current main source truth was not proven before any backend, UI, or OpenClaw service mutation.',
+      nextOperatorAction: 'Use the bounded owner exact-head update route or restore canonical main source truth, then retry Ignition.',
+    });
+    return 2;
+  }
 
   if (platform === 'win32') {
     const backend = await ensureBackend8787ConvergedBeforeSupervisor({ platform });
@@ -374,6 +576,20 @@ export async function main({ platform = process.platform } = {}) {
   const result = await runBattleBridgeIgnitionSupervisor({
     sharedWorkspace,
     housekeepFn: (options) => runSupervisorHousekeepPreservingLiveRuntime(options),
+    sourceTruthFn: () => evaluateGitPublicationTruthWithDeps({
+      captureStep: (label, command, args) => captureFixedAuthorityGitStep(label, command, args),
+    }),
+    currentHeadFn: (options = {}) => getCurrentGitHead({ ...options, platform }),
+    ...(approval?.approved === true ? {
+      openClawStartFn: (options) => runApprovedOpenClawGateway18789Start({
+        ...options,
+        env: process.env,
+        token: '',
+        approved: true,
+        ownerApproval: approval,
+        platform,
+      }),
+    } : {}),
   });
 
   return result.ok ? 0 : 2;

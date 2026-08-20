@@ -20,6 +20,11 @@ on:
       - 'scripts/windows/*battle-bridge-outbound-health-beacon.ps1'
       - 'scripts/windows/run-stephanos-scheduled-task-windowless.vbs'
       - 'scripts/windows/request-battle-bridge-recovery.ps1'
+      - 'scripts/windows/probe-openclaw-gateway-18789-owner.ps1'
+      - 'scripts/run-battle-bridge-ignition.mjs'
+      - 'scripts/run-battle-bridge-ignition.test.mjs'
+      - 'scripts/launcher-readiness-live-facts.mjs'
+      - 'scripts/launcher-readiness-live-facts.test.mjs'
       - 'scripts/windows/install-stephanos-backend-autostart.ps1'
       - 'shared/agents/backendFreshnessSupervisor.mjs'
       - 'shared/agents/backendFreshnessSupervisor.test.mjs'
@@ -30,6 +35,22 @@ on:
       - 'windows/Launch-Stephanos-Local.ps1'
       - 'shared/agents/battleBridgeRecoveryMeshV1.mjs'
       - 'shared/agents/battleBridgeRecoveryMeshV1.test.mjs'
+      - 'shared/agents/battleBridgeExactHeadSyncGuardV1.mjs'
+      - 'shared/agents/battleBridgeExactHeadSyncGuardV1.test.mjs'
+      - 'shared/agents/battleBridgeExactHeadAsyncUpdateV1.mjs'
+      - 'shared/agents/battleBridgeExactHeadAsyncUpdateV1.test.mjs'
+      - 'shared/agents/battleBridgeExecutionBoundaryV1.mjs'
+      - 'shared/agents/battleBridgeExecutionBoundaryV1.test.mjs'
+      - 'shared/agents/battleBridgeWindowsHosts.mjs'
+      - 'shared/agents/openClawGatewayStartup.mjs'
+      - 'shared/agents/safeReceiptDirectoryChainV1.mjs'
+      - 'shared/agents/safeReceiptDirectoryChainV1.test.mjs'
+      - 'shared/agents/stephanosUpdateDirt.mjs'
+      - 'shared/agents/stephanosUpdateDirt.test.mjs'
+      - 'shared/agents/codexDispatchHostOps.mjs'
+      - 'shared/agents/codexDispatchHostOps.test.mjs'
+      - 'shared/agents/stephanosChatUpdate.mjs'
+      - 'shared/agents/stephanosChatUpdate.test.mjs'
       - 'integrations/openclaw/stephanos-ignite-command/**'
       - '.github/workflows/battle-bridge-resilience-proof.yml'
 
@@ -69,7 +90,22 @@ jobs:
           scripts/battle-bridge-outbound-health-beacon.test.mjs
           scripts/battle-bridge-control-plane-self-repair.test.mjs
           integrations/openclaw/stephanos-ignite-command/lib/recovery-wake.test.mjs
+          integrations/openclaw/stephanos-ignite-command/lib/recovery-update.test.mjs
+          integrations/openclaw/stephanos-ignite-command/lib/recovery-update-executor.test.mjs
+          integrations/openclaw/stephanos-ignite-command/lib/recovery-update-receipt.test.mjs
+          integrations/openclaw/stephanos-ignite-command/lib/recovery-update-workflow-coverage.test.mjs
+          integrations/openclaw/stephanos-ignite-command/lib/command-handler.test.mjs
+          integrations/openclaw/stephanos-ignite-command/lib/ignite-status.test.mjs
           integrations/openclaw/stephanos-ignite-command/manifest.test.mjs
+          scripts/run-battle-bridge-ignition.test.mjs
+          scripts/launcher-readiness-live-facts.test.mjs
+          shared/agents/battleBridgeExactHeadSyncGuardV1.test.mjs
+          shared/agents/battleBridgeExactHeadAsyncUpdateV1.test.mjs
+          shared/agents/battleBridgeExecutionBoundaryV1.test.mjs
+          shared/agents/safeReceiptDirectoryChainV1.test.mjs
+          shared/agents/stephanosUpdateDirt.test.mjs
+          shared/agents/codexDispatchHostOps.test.mjs
+          shared/agents/stephanosChatUpdate.test.mjs
 
       - name: Parse outbound beacon
         run: node --check scripts/battle-bridge-outbound-health-beacon.mjs
@@ -79,3 +115,44 @@ jobs:
 
       - name: Diff check
         run: git diff --check origin/main...HEAD
+
+  update-owner-lane-windows-adversarial:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Parse fixed OpenClaw listener owner probe
+        shell: pwsh
+        run: >-
+          [void][scriptblock]::Create(
+            (Get-Content -LiteralPath scripts/windows/probe-openclaw-gateway-18789-owner.ps1 -Raw)
+          )
+
+      - name: Windows filesystem, claim, config, async-child, and listener adversarial proof
+        run: >-
+          node --test
+          integrations/openclaw/stephanos-ignite-command/lib/recovery-update-windows-adversarial.test.mjs
+          integrations/openclaw/stephanos-ignite-command/lib/recovery-update.test.mjs
+          integrations/openclaw/stephanos-ignite-command/lib/recovery-update-receipt.test.mjs
+          integrations/openclaw/stephanos-ignite-command/lib/recovery-update-executor.test.mjs
+          integrations/openclaw/stephanos-ignite-command/lib/command-handler.test.mjs
+          integrations/openclaw/stephanos-ignite-command/manifest.test.mjs
+          shared/agents/safeReceiptDirectoryChainV1.test.mjs
+          shared/agents/battleBridgeExecutionBoundaryV1.test.mjs
+          shared/agents/battleBridgeExactHeadAsyncUpdateV1.test.mjs
+          shared/agents/codexDispatchHostOps.test.mjs
+          shared/agents/stephanosChatUpdate.test.mjs
+          scripts/run-battle-bridge-ignition.test.mjs
+          scripts/battle-bridge-ignition-supervisor.test.mjs
+          scripts/battle-bridge-ignition-supervisor-windows-npm.test.mjs
+          scripts/launcher-readiness-live-facts.test.mjs

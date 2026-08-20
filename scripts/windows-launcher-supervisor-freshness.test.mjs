@@ -60,6 +60,7 @@ test('blocked served-runtime status preserves exact rejection proof', async () =
     plannerFn: (facts) => facts,
     currentHeadFn: () => staleProof.currentHead,
     runtimeProofFn: async () => staleProof,
+    openClawStartFn: async ({ probeOnly = false } = {}) => ({ ready: true, started: !probeOnly, reusedExistingRuntime: true }),
     repairFn: async ({ stdout }) => { stdout.write(JSON.stringify({ ready: true })); return 0; },
     stdout: { write() {} },
   });

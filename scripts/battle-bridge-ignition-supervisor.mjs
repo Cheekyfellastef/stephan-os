@@ -12,8 +12,14 @@ import { planLauncherReadiness } from './launcher-readiness-planner.mjs';
 import { runUi4173Repair, UI_4173_REPAIR_AUTHORITY } from './battle-bridge-ui-4173-repair.mjs';
 import { evaluateGitPublicationTruthWithDeps, runIgnitionHousekeep } from './ignite-stephanos-local.mjs';
 import { buildOpenClawGatewayStartupTarget, OPENCLAW_GATEWAY_STARTUP_SOURCE, resolveOpenClawGatewayStartupExecution } from '../shared/agents/openClawGatewayStartup.mjs';
+import {
+  BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+  createBattleBridgeMinimalChildEnvironment,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
 export const BATTLE_BRIDGE_IGNITION_SUPERVISOR_SCHEMA = 'stephanos.battle-bridge-ignition-supervisor.v1';
+export const OPENCLAW_18789_PROCESS_PROOF_SCHEMA = 'stephanos.openclaw-gateway-18789-process-proof.v1';
 export const BATTLE_BRIDGE_IGNITION_PHASES = Object.freeze([
   'housekeeping',
   'source truth',
@@ -83,7 +89,7 @@ export function defaultBattleBridgeSharedWorkspace({ env = process.env, platform
   return env.STEPHANOS_SHARED_WORKSPACE
     || env.STEPHANOS_OPENCLAW_WORKSPACE
     || defaultWindowsSharedWorkspacePath({ home: env.USERPROFILE || env.HOME || os.homedir(), platform })
-    || path.join(os.homedir(), 'Documents', 'Stephanos-openclaw-workspace');
+    || path.join(os.tmpdir(), `stephanos-openclaw-workspace-${process.pid}`);
 }
 
 function applyReadinessToStatus(status, report = {}) {
@@ -124,8 +130,8 @@ export function projectBattleBridgeSupervisorStatus({ status = createBattleBridg
 export function resolveBackendRepairExecution(platform = process.platform) {
   if (platform === 'win32') {
     return {
-      command: 'cmd.exe',
-      args: ['/d', '/s', '/c', 'npm.cmd', 'run', 'stephanos:battle-bridge:repair'],
+      command: BATTLE_BRIDGE_WINDOWS_HOST.cmd,
+      args: ['/d', '/s', '/c', `""${BATTLE_BRIDGE_WINDOWS_HOST.npm}" run stephanos:battle-bridge:repair"`],
     };
   }
   return {
@@ -143,7 +149,13 @@ export async function runApprovedBackend8787Start({ spawnFn = spawn, sharedWorks
   const stdoutLogPath = path.join(logPath, 'stdout.log');
   const stderrLogPath = path.join(logPath, 'stderr.log');
   const execution = resolveBackendRepairExecution(platform);
-  const child = spawnFn(execution.command, execution.args, { cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), detached: false, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+  const child = spawnFn(execution.command, execution.args, {
+    cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
+    ...(platform === 'win32' ? { env: createBattleBridgeMinimalChildEnvironment(process.env) } : {}),
+    detached: false,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    shell: false,
+  });
   if (child?.stdout?.pipe) child.stdout.pipe(createWriteStream(stdoutLogPath, { flags: 'a' }));
   if (child?.stderr?.pipe) child.stderr.pipe(createWriteStream(stderrLogPath, { flags: 'a' }));
   const logs = { logPath, stdoutLogPath, stderrLogPath };
@@ -160,19 +172,161 @@ function openClawHealthReady(payload = {}) {
   return payload?.ok === true || status === 'ok' || status === 'live';
 }
 
-async function probeOpenClawGateway18789Health({ fetchFn = globalThis.fetch } = {}) {
+function canonicalOpenClawIdentity(response = {}) {
+  const identity = response?.json;
+  const status = String(identity?.status || identity?.state || '').toLowerCase();
+  return Boolean(
+    response?.ok === true
+    && response?.statusCode === 200
+    && identity?.product === 'OpenClaw'
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/.test(String(identity?.runtimeId || ''))
+    && ['ok', 'live', 'ready'].includes(status)
+  );
+}
+
+export async function collectOpenClawGateway18789ProcessProof({
+  spawnFn = spawn,
+  env = process.env,
+  timeoutMs = 10_000,
+} = {}) {
+  const probeScript = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'windows', 'probe-openclaw-gateway-18789-owner.ps1');
+  const childEnvironment = createBattleBridgeMinimalChildEnvironment(env);
+  let child;
+  try {
+    child = spawnFn(BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', probeScript,
+    ], {
+      cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
+      env: childEnvironment,
+      shell: false,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    return Object.freeze({ ok: false, blocker: 'OPENCLAW_18789_PROCESS_PROBE_START_FAILED', error: error?.message || String(error) });
+  }
+  return await new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let failure = '';
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(Object.freeze(value));
+    };
+    const append = (current, chunk) => {
+      const next = current + String(chunk || '');
+      if (Buffer.byteLength(next, 'utf8') > 64 * 1024) {
+        failure ||= 'OPENCLAW_18789_PROCESS_PROBE_OUTPUT_TOO_LARGE';
+        try { child.kill(); } catch { /* bounded failure */ }
+        return current;
+      }
+      return next;
+    };
+    child.stdout?.on('data', (chunk) => { stdout = append(stdout, chunk); });
+    child.stderr?.on('data', (chunk) => { stderr = append(stderr, chunk); });
+    child.once?.('error', (error) => { failure ||= error?.message || String(error); });
+    child.once?.('close', (status) => {
+      if (failure || status !== 0) {
+        finish({ ok: false, blocker: 'OPENCLAW_18789_PROCESS_PROBE_FAILED', status, error: failure || stderr.trim().slice(0, 500) });
+        return;
+      }
+      let proof;
+      try { proof = JSON.parse(stdout); } catch {
+        finish({ ok: false, blocker: 'OPENCLAW_18789_PROCESS_PROBE_JSON_INVALID' });
+        return;
+      }
+      const canonical = proof?.schemaVersion === OPENCLAW_18789_PROCESS_PROOF_SCHEMA
+        && proof?.ok === true
+        && Number.isSafeInteger(Number(proof?.pid)) && Number(proof.pid) > 0
+        && Number.isSafeInteger(Number(proof?.parentPid)) && Number(proof.parentPid) > 0
+        && Number(proof?.listenerCount) === 1
+        && ['127.0.0.1', '::1', '0.0.0.0', '::'].includes(String(proof?.localAddress || ''))
+        && String(proof?.processName || '').toLowerCase() === 'node.exe'
+        && String(proof?.executablePath || '').replace(/\//g, '\\').toLowerCase() === BATTLE_BRIDGE_WINDOWS_HOST.node.toLowerCase()
+        && proof?.executableCanonical === true
+        && proof?.entrypointCanonical === true
+        && proof?.gatewayCommandCanonical === true
+        && proof?.commandLineCanonical === true
+        && proof?.lineageCanonical === true;
+      finish({
+        ok: canonical,
+        blocker: canonical ? '' : 'OPENCLAW_18789_PROCESS_IDENTITY_INVALID',
+        pid: canonical ? Number(proof.pid) : 0,
+        parentPid: canonical ? Number(proof.parentPid) : 0,
+        processName: canonical ? String(proof.processName) : '',
+        executablePath: canonical ? String(proof.executablePath) : '',
+        ancestorPids: canonical && Array.isArray(proof.ancestorPids)
+          ? Object.freeze(proof.ancestorPids.map(Number).filter((pid) => Number.isSafeInteger(pid) && pid > 0).slice(0, 8))
+          : Object.freeze([]),
+      });
+    });
+    const timer = setTimeout(() => {
+      failure ||= 'OPENCLAW_18789_PROCESS_PROBE_TIMEOUT';
+      try { child.kill(); } catch { /* bounded failure */ }
+    }, Math.max(1, Number(timeoutMs || 10_000)));
+    timer.unref?.();
+  });
+}
+
+async function probeOpenClawGateway18789Health({
+  fetchFn = globalThis.fetch,
+  platform = process.platform,
+  processProofFn = platform === 'win32' ? collectOpenClawGateway18789ProcessProof : null,
+  expectedStarterPid = 0,
+} = {}) {
   const healthUrl = 'http://127.0.0.1:18789/health';
   const identityUrl = 'http://127.0.0.1:18789/identity';
   const healthResponse = await fetchJson(healthUrl, { fetchFn });
   let identity = null;
+  let processProof = Object.freeze({ ok: platform !== 'win32', blocker: platform === 'win32' ? 'OPENCLAW_18789_PROCESS_PROOF_REQUIRED' : '' });
   if (healthResponse.ok && openClawHealthReady(healthResponse.json || {})) {
     try { identity = await fetchJson(identityUrl, { fetchFn }); } catch (error) { identity = { ok: false, error: error?.message || String(error) }; }
+    if (canonicalOpenClawIdentity(identity) && (platform === 'win32' || processProofFn)) {
+      try { processProof = await processProofFn({ expectedStarterPid }); } catch (error) {
+        processProof = { ok: false, blocker: 'OPENCLAW_18789_PROCESS_PROBE_FAILED', error: error?.message || String(error) };
+      }
+    }
   }
-  return { ready: Boolean(healthResponse.ok && openClawHealthReady(healthResponse.json || {})), healthUrl, identityUrl, health: healthResponse, identity };
+  const healthReady = Boolean(healthResponse.ok && healthResponse.statusCode === 200 && openClawHealthReady(healthResponse.json || {}));
+  const identityCanonical = canonicalOpenClawIdentity(identity);
+  const processCanonical = processProof?.ok === true;
+  const starterLineageBound = (platform !== 'win32' && !processProofFn)
+    || !expectedStarterPid
+    || Number(processProof?.pid) === Number(expectedStarterPid)
+    || processProof?.ancestorPids?.includes?.(Number(expectedStarterPid)) === true;
+  return {
+    ready: Boolean(healthReady && identityCanonical && processCanonical && starterLineageBound),
+    listenerObserved: healthResponse?.ok === true,
+    healthReady,
+    identityCanonical,
+    processCanonical,
+    starterLineageBound,
+    healthUrl,
+    identityUrl,
+    health: healthResponse,
+    identity,
+    processProof,
+  };
 }
 
-export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 60000, retryIntervalMs = 500, env = process.env, token = '', approved = false, platform = process.platform, existsSync } = {}) {
-  const target = buildOpenClawGatewayStartupTarget({ env, token, approved });
+export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 60000, retryIntervalMs = 500, env = process.env, token = '', approved = false, ownerApproval = null, platform = process.platform, existsSync, processProofFn = platform === 'win32' ? collectOpenClawGateway18789ProcessProof : null, probeOnly = false } = {}) {
+  const inMemoryOwnerApproval = ownerApproval?.approved === true
+    && ownerApproval?.action === 'RUN_EXACT_HEAD_IGNITION'
+    && /^[0-9a-f]{40}$/.test(String(ownerApproval?.expectedHead || ''))
+    && /^[0-9a-f]{32}$/.test(String(ownerApproval?.receiptId || ''))
+    && Number.isSafeInteger(Number(ownerApproval?.parentPid)) && Number(ownerApproval.parentPid) > 0
+    && Number.isSafeInteger(Number(ownerApproval?.childPid)) && Number(ownerApproval.childPid) > 0;
+  const effectiveEnvironment = inMemoryOwnerApproval
+    ? createBattleBridgeMinimalChildEnvironment(env)
+    : env;
+  const target = buildOpenClawGatewayStartupTarget({
+    env: effectiveEnvironment,
+    token: inMemoryOwnerApproval ? '' : token,
+    approved: inMemoryOwnerApproval || approved,
+  });
   const logRoot = path.resolve(sharedWorkspace, 'logs', 'openclaw-gateway-18789-start');
   await fs.mkdir(logRoot, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -183,18 +337,8 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
   const exitLogPath = path.join(logPath, 'exit.json');
   const healthProofLogPath = path.join(logPath, 'health-proof.json');
   const logs = { logPath, stdoutLogPath, stderrLogPath, exitLogPath, healthProofLogPath };
-  if (!target.available) {
-    const unavailableExit = { code: null, signal: null, error: target.reason, reusedExistingRuntime: false };
-    await fs.writeFile(stdoutLogPath, '');
-    await fs.writeFile(stderrLogPath, '');
-    await fs.writeFile(exitLogPath, `${JSON.stringify(unavailableExit, null, 2)}
-`);
-    await fs.writeFile(healthProofLogPath, `${JSON.stringify({ ready: false, skipped: true, reason: target.reason, healthUrl: 'http://127.0.0.1:18789/health' }, null, 2)}
-`);
-    return { started: false, exitCode: null, unavailable: true, reason: target.reason, target, logs, logPath, exit: unavailableExit, healthProof: { ready: false, skipped: true, reason: target.reason } };
-  }
   let existingProof = null;
-  try { existingProof = await probeOpenClawGateway18789Health({ fetchFn }); } catch (error) { existingProof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
+  try { existingProof = await probeOpenClawGateway18789Health({ fetchFn, platform, processProofFn }); } catch (error) { existingProof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
   await fs.writeFile(healthProofLogPath, `${JSON.stringify(existingProof, null, 2)}
 `);
   if (existingProof.ready) {
@@ -203,12 +347,33 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
 `);
     return { started: false, reusedExistingRuntime: true, duplicateStartAvoided: true, ready: true, exitCode: null, exit: exitState, logs, logPath, target, healthProof: existingProof, pid: null };
   }
+  if (existingProof.listenerObserved) {
+    const exitState = { code: null, signal: null, error: 'OPENCLAW_18789_EXISTING_LISTENER_IDENTITY_UNPROVEN', reusedExistingRuntime: false };
+    await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
+    return { started: false, ready: false, exitCode: null, error: exitState.error, exit: exitState, logs, logPath, target, healthProof: existingProof, pid: null };
+  }
+  if (probeOnly) {
+    const exitState = { code: null, signal: null, error: 'OPENCLAW_18789_READ_ONLY_PROOF_FAILED', reusedExistingRuntime: false };
+    await fs.writeFile(stdoutLogPath, '');
+    await fs.writeFile(stderrLogPath, '');
+    await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
+    return { started: false, ready: false, exitCode: null, error: exitState.error, exit: exitState, logs, logPath, target, healthProof: existingProof, pid: null };
+  }
+  if (!target.available) {
+    const unavailableExit = { code: null, signal: null, error: target.reason, reusedExistingRuntime: false };
+    await fs.writeFile(stdoutLogPath, '');
+    await fs.writeFile(stderrLogPath, '');
+    await fs.writeFile(exitLogPath, `${JSON.stringify(unavailableExit, null, 2)}\n`);
+    const unavailableProof = { ...existingProof, skipped: true, reason: target.reason };
+    await fs.writeFile(healthProofLogPath, `${JSON.stringify(unavailableProof, null, 2)}\n`);
+    return { started: false, ready: false, exitCode: null, unavailable: true, reason: target.reason, target, logs, logPath, exit: unavailableExit, healthProof: unavailableProof };
+  }
   let child = null;
   const childEnv = {
-    ...process.env,
-    ...env,
+    ...(inMemoryOwnerApproval ? effectiveEnvironment : process.env),
+    ...effectiveEnvironment,
     STEPHANOS_OPENCLAW_AUTOSTART: 'battle-bridge-supervisor-gateway-only',
-    ...(token || env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN || env.OPENCLAW_GATEWAY_TOKEN ? {
+    ...(!inMemoryOwnerApproval && (token || env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN || env.OPENCLAW_GATEWAY_TOKEN) ? {
       STEPHANOS_OPENCLAW_GATEWAY_TOKEN: token || env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN || env.OPENCLAW_GATEWAY_TOKEN,
       OPENCLAW_GATEWAY_TOKEN: token || env.OPENCLAW_GATEWAY_TOKEN || env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN,
     } : {}),
@@ -240,7 +405,7 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
   const deadline = Date.now() + Math.max(0, readyTimeoutMs);
   let proof = null;
   do {
-    try { proof = await probeOpenClawGateway18789Health({ fetchFn }); } catch (error) { proof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
+    try { proof = await probeOpenClawGateway18789Health({ fetchFn, platform, processProofFn, expectedStarterPid: Number(child?.pid || 0) || 0 }); } catch (error) { proof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
     await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
     await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
     if (proof.ready) return { started: true, ready: true, exitCode: exitState.code, exit: exitState, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
@@ -252,8 +417,24 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
   return { started: !exitState.error, ready: false, exitCode: exitState.code, exit: exitState, error: exitState.error, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
 }
 
-export function getCurrentGitHead({ cwd = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), execFile = execFileSync } = {}) {
-  return String(execFile('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' })).trim();
+export function getCurrentGitHead({ cwd = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), execFile = execFileSync, platform = process.platform, env = process.env } = {}) {
+  const command = platform === 'win32' ? BATTLE_BRIDGE_WINDOWS_HOST.git : 'git';
+  const childEnvironment = platform === 'win32'
+    ? createBattleBridgeMinimalChildEnvironment(env, { git: true })
+    : {
+      ...env,
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_NO_REPLACE_OBJECTS: '1',
+      GIT_OPTIONAL_LOCKS: '0',
+      GIT_TERMINAL_PROMPT: '0',
+    };
+  return String(execFile(command, [...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS, 'rev-parse', 'HEAD'], {
+    cwd,
+    env: childEnvironment,
+    encoding: 'utf8',
+    shell: false,
+  })).trim();
 }
 
 function commitMatchesHead(value, head) {
@@ -292,12 +473,56 @@ export function evaluateServedRuntimeExactHeadProof({ health = null, dist = null
   };
 }
 
-async function fetchJson(url, { fetchFn = globalThis.fetch } = {}) {
-  const response = await fetchFn(url);
-  const text = await response.text();
-  let json = null;
-  try { json = JSON.parse(text); } catch {}
-  return { ok: response.ok, statusCode: response.status, json, text: text.slice(0, 500) };
+async function readBoundedHttpText(response, maxBytes) {
+  if (response?.body?.getReader) {
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = Buffer.from(value || []);
+        total += chunk.length;
+        if (total > maxBytes) throw new Error('LOCALHOST_RESPONSE_TOO_LARGE');
+        chunks.push(chunk);
+      }
+    } finally {
+      if (total > maxBytes) await reader.cancel?.().catch?.(() => {});
+      reader.releaseLock?.();
+    }
+    return Buffer.concat(chunks, total).toString('utf8');
+  }
+  const text = String(await response.text());
+  if (Buffer.byteLength(text, 'utf8') > maxBytes) throw new Error('LOCALHOST_RESPONSE_TOO_LARGE');
+  return text;
+}
+
+async function fetchJson(url, { fetchFn = globalThis.fetch, timeoutMs = 4_000, maxBytes = 16 * 1024 } = {}) {
+  const controller = new AbortController();
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error('LOCALHOST_RESPONSE_TIMEOUT'));
+    }, Math.max(1, Number(timeoutMs || 4_000)));
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([
+      (async () => {
+        const response = await fetchFn(url, { method: 'GET', signal: controller.signal });
+        const text = await readBoundedHttpText(response, maxBytes);
+        let json = null;
+        try { json = JSON.parse(text); } catch {}
+        return { ok: response?.ok === true, statusCode: response?.status ?? null, json, text: text.slice(0, 500) };
+      })(),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
 }
 
 export async function collectServedRuntimeExactHeadProof({ currentHead = getCurrentGitHead(), fetchFn = globalThis.fetch } = {}) {
@@ -372,8 +597,11 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   }
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'backend 8787', phaseState: 'ready', readinessReport: report, logPath: status.services.backend8787.repair?.logPath || '' }); await persist();
 
-  status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: isReady(report, 'openclaw-gateway') ? 'ready' : 'running' }); await persist();
-  if (!isReady(report, 'openclaw-gateway')) {
+  // TCP readiness is only a hint. Always pass through the fixed identity and
+  // process proof adapter; it reuses a canonical listener without starting a
+  // duplicate and rejects a fake listener before later runtime proof.
+  status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: 'running' }); await persist();
+  {
     const startResult = await openClawStartFn({ sharedWorkspace });
     status.services.openClaw18789.start = { startupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE, commandText: startResult?.target?.commandText || '', execution: startResult?.execution || startResult?.exit?.execution || null, logPath: startResult?.logPath || startResult?.logs?.logPath || '', logs: startResult?.logs || null, exitCode: startResult?.exitCode ?? startResult?.exit?.code ?? null, healthProof: startResult?.healthProof || null };
     status.phases['OpenClaw gateway 18789'].logPath = startResult?.logPath || startResult?.logs?.logPath || '';
@@ -416,6 +644,18 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   const proofFacts = await collectFactsFn({ sharedWorkspace });
   const proofReport = plannerFn(proofFacts);
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'browser/runtime proof', phaseState: 'running', readinessReport: proofReport }); await persist();
+  const finalOpenClawProof = await openClawStartFn({ sharedWorkspace, probeOnly: true });
+  if (finalOpenClawProof?.ready !== true) {
+    const blocker = requiredServiceBlocker(
+      'openclaw-gateway-18789-final-identity-unproven',
+      'Final readiness requires a fresh canonical OpenClaw 18789 health, identity, executable, listener-owner, and lineage proof.',
+      `Inspect OpenClaw gateway proof logs at ${finalOpenClawProof?.logPath || 'canonical shared workspace logs'}; do not trust TCP/HTTP-only readiness.`,
+      { finalOpenClawProof },
+    );
+    status = projectBattleBridgeSupervisorStatus({ status, phase: 'browser/runtime proof', phaseState: 'blocked', blocker, logPath: finalOpenClawProof?.logPath || '' }); await persist();
+    stdout.write(`${JSON.stringify(status, null, 2)}\n`);
+    return { ok: false, status, writes };
+  }
   let servedRuntimeProof = null;
   if (isReady(proofReport, 'stephanos-ui')) {
     servedRuntimeProof = await runtimeProofFn({ currentHead: currentHeadFn(), sharedWorkspace });

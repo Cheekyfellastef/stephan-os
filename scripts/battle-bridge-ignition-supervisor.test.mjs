@@ -10,14 +10,19 @@ import {
   BATTLE_BRIDGE_IGNITION_PHASES,
   BATTLE_BRIDGE_IGNITION_PHASE_STATES,
   createBattleBridgeSupervisorStatus,
+  collectOpenClawGateway18789ProcessProof,
+  collectServedRuntimeExactHeadProof,
+  OPENCLAW_18789_PROCESS_PROOF_SCHEMA,
   projectBattleBridgeSupervisorStatus,
+  resolveBackendRepairExecution,
   runApprovedBackend8787Start,
   runApprovedOpenClawGateway18789Start,
   defaultBattleBridgeSharedWorkspace,
-  runBattleBridgeIgnitionSupervisor,
+  runBattleBridgeIgnitionSupervisor as runBattleBridgeIgnitionSupervisorImpl,
   evaluateServedRuntimeExactHeadProof,
 } from './battle-bridge-ignition-supervisor.mjs';
 import { buildOpenClawGatewayStartupTarget, npmGlobalBinCandidatesForOpenClaw, resolveOpenClawGatewayStartupExecution } from '../shared/agents/openClawGatewayStartup.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
 
 const readyRuntimeProof = async () => ({ ready: true, currentHead: '51600ceb00000000000000000000000000000000', healthOk: true, distOk: true, gitCommitMatches: true, runtimeMarkerMatches: true, gitCommit: '51600ceb', runtimeMarker: 'antifriction-live-v3::51600ceb::fixture' });
@@ -37,6 +42,34 @@ function factsFor({ backend = true, openclaw = true, ui = true, stale = [], cave
     safetyBlockers: blockers,
     finalVerdict: backend && openclaw && ui && stale.length === 0 && blockers.length === 0 ? 'ready' : 'partial-ui-missing',
   };
+}
+
+const canonicalOpenClawIdentity = Object.freeze({
+  product: 'OpenClaw',
+  runtimeId: 'openclaw-runtime-fixture',
+  status: 'ready',
+});
+
+const canonicalOpenClawProcessProof = async () => Object.freeze({
+  ok: true,
+  pid: 18789,
+  parentPid: 18788,
+  processName: 'node.exe',
+  ancestorPids: Object.freeze([18788]),
+});
+
+const readyOpenClawAdapter = async () => Object.freeze({
+  ready: true,
+  started: false,
+  reusedExistingRuntime: true,
+  healthProof: Object.freeze({ ready: true, identityCanonical: true, processCanonical: true }),
+});
+
+function runBattleBridgeIgnitionSupervisor(options = {}) {
+  return runBattleBridgeIgnitionSupervisorImpl({
+    openClawStartFn: readyOpenClawAdapter,
+    ...options,
+  });
 }
 
 test('supervisor status model exposes required phases and states', () => {
@@ -68,7 +101,7 @@ test('publisher is refreshed before UI repair and stale records are refreshed by
     runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.equal(result.ok, true);
-  assert.deepEqual(calls.slice(0, 5), ['housekeeping', 'publisher', 'collect-1', 'publisher', 'collect-2']);
+  assert.deepEqual(calls.slice(0, 5), ['housekeeping', 'publisher', 'collect-1', 'collect-2', 'repair']);
   assert.equal(calls.includes('repair'), true);
   assert.equal(calls.includes('publisher'), true);
   assert.equal(fs.existsSync(path.join(workspace, 'status', 'battle-bridge-ignition-supervisor-current.json')), true);
@@ -81,7 +114,7 @@ test('partial-ui-missing triggers repair and ready is only reported after 4173 p
     housekeepFn: () => {},
     publisherFn: async () => {},
     sourceTruthFn: () => ({ publicationState: 'source-current' }),
-    collectFactsFn: async () => { collectCount += 1; return factsFor({ ui: collectCount > 1 }); },
+    collectFactsFn: async () => { collectCount += 1; return factsFor({ ui: collectCount > 2 }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['stephanos-ui'].ready ? 'ready' : 'partial-ui-missing' }),
     repairFn: async ({ stdout }) => { calls.push('repair'); stdout.write(JSON.stringify({ ready: true })); return 0; },
     runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
@@ -222,7 +255,7 @@ test('approved OpenClaw gateway start uses config-safe start command shape, env 
         if (healthCalls === 1) throw new Error('not listening before start');
         return { ok: true, status: 200, text: async () => JSON.stringify({ status: 'live' }) };
       }
-      return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
+      return { ok: true, status: 200, text: async () => JSON.stringify(canonicalOpenClawIdentity) };
     },
   });
   await new Promise((resolve) => setTimeout(resolve, 25));
@@ -269,7 +302,7 @@ test('approved OpenClaw gateway start runs without token and writes non-skipped 
           ? Promise.reject(new Error('not ready yet'))
           : { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 'live' }) };
       }
-      return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
+      return { ok: true, status: 200, text: async () => JSON.stringify(canonicalOpenClawIdentity) };
     },
   });
 
@@ -329,6 +362,7 @@ test('Windows OpenClaw gateway execution uses cmd.exe wrapper for openclaw.cmd i
     env: { APPDATA: appData, Path: '' },
     approved: true,
     platform: 'win32',
+    processProofFn: canonicalOpenClawProcessProof,
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
     spawnFn: (command, args, options) => { spawnCalls.push({ command, args, options }); return child; },
@@ -338,12 +372,12 @@ test('Windows OpenClaw gateway execution uses cmd.exe wrapper for openclaw.cmd i
         if (healthCalls === 1) throw new Error('down before start');
         return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 'live' }) };
       }
-      return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
+      return { ok: true, status: 200, text: async () => JSON.stringify(canonicalOpenClawIdentity) };
     },
   });
   assert.equal(result.ready, true);
   assert.equal(spawnCalls.length, 1);
-  assert.equal(spawnCalls[0].command, 'cmd.exe');
+  assert.equal(spawnCalls[0].command, BATTLE_BRIDGE_WINDOWS_HOST.cmd);
   assert.notEqual(spawnCalls[0].command, 'openclaw');
   assert.deepEqual(spawnCalls[0].args, ['/d', '/s', '/c', `""${cmdShim}" gateway start --json"`]);
   assert.equal(spawnCalls[0].options.shell, false);
@@ -379,7 +413,8 @@ test('Windows OpenClaw gateway execution prefers APPDATA npm node entrypoint whe
     env: { APPDATA: appData, Path: nodeDir },
     approved: true,
     platform: 'win32',
-    existsSync: (candidate) => candidate === cmdShim || candidate === localMjs || candidate === openClawMjs || candidate === nodeExe,
+    processProofFn: canonicalOpenClawProcessProof,
+    existsSync: (candidate) => candidate === cmdShim || candidate === localMjs || candidate === openClawMjs || candidate === BATTLE_BRIDGE_WINDOWS_HOST.node,
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
     spawnFn: (command, args, options) => { spawnCalls.push({ command, args, options }); return child; },
@@ -389,12 +424,12 @@ test('Windows OpenClaw gateway execution prefers APPDATA npm node entrypoint whe
         if (healthCalls === 1) throw new Error('down before start');
         return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 'live' }) };
       }
-      return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
+      return { ok: true, status: 200, text: async () => JSON.stringify(canonicalOpenClawIdentity) };
     },
   });
   assert.equal(result.ready, true);
   assert.equal(spawnCalls.length, 1);
-  assert.equal(spawnCalls[0].command, nodeExe);
+  assert.equal(spawnCalls[0].command, BATTLE_BRIDGE_WINDOWS_HOST.node);
   assert.deepEqual(spawnCalls[0].args, [openClawMjs, 'gateway', 'start', '--json']);
   assert.equal(spawnCalls[0].options.shell, false);
   assert.equal(result.execution.strategy, 'node-entrypoint');
@@ -414,7 +449,7 @@ test('Windows OpenClaw resolver includes APPDATA npm fallback and only accepts f
     existsSync: (candidate) => candidate.endsWith(`npm${path.sep}openclaw.cmd`),
   });
   assert.equal(resolved.ok, true);
-  assert.equal(resolved.command, 'cmd.exe');
+  assert.equal(resolved.command, BATTLE_BRIDGE_WINDOWS_HOST.cmd);
   assert.deepEqual(resolved.commandArgs.slice(0, 3), ['/d', '/s', '/c']);
   assert.match(resolved.commandArgs[3], /^"".*openclaw\.cmd" gateway start --json"$/);
   assert.equal(resolved.strategy, 'cmd-shim');
@@ -516,7 +551,7 @@ test('approved OpenClaw gateway start reuses healthy 18789 and avoids duplicate 
     spawnFn: (...args) => { spawnCalls.push(args); throw new Error('duplicate start must not run'); },
     fetchFn: async (url) => {
       if (url.endsWith('/health')) return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 'live' }) };
-      return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
+      return { ok: true, status: 200, text: async () => JSON.stringify(canonicalOpenClawIdentity) };
     },
   });
 
@@ -528,6 +563,120 @@ test('approved OpenClaw gateway start reuses healthy 18789 and avoids duplicate 
   assert.match(result.logPath, /logs[\\/]openclaw-gateway-18789-start/);
 });
 
+test('healthy-looking fake 18789 listener is not reused without canonical process identity', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-fake-listener-'));
+  const spawnCalls = [];
+  const result = await runApprovedOpenClawGateway18789Start({
+    sharedWorkspace: workspace,
+    approved: true,
+    platform: 'win32',
+    processProofFn: async () => ({ ok: false, blocker: 'OPENCLAW_18789_PROCESS_IDENTITY_INVALID' }),
+    spawnFn: (...args) => { spawnCalls.push(args); throw new Error('must not collide with an unproven listener'); },
+    fetchFn: async (url) => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(url.endsWith('/health')
+        ? { ok: true, status: 'live' }
+        : canonicalOpenClawIdentity),
+    }),
+  });
+  assert.equal(result.ready, false);
+  assert.equal(result.started, false);
+  assert.equal(result.error, 'OPENCLAW_18789_EXISTING_LISTENER_IDENTITY_UNPROVEN');
+  assert.equal(result.healthProof.identityCanonical, true);
+  assert.equal(result.healthProof.processCanonical, false);
+  assert.equal(spawnCalls.length, 0);
+});
+
+test('owner-approved cold start carries no ambient approval flag or gateway token', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-owner-cold-start-'));
+  const child = new EventEmitter();
+  child.pid = 18789;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  const calls = [];
+  let healthCalls = 0;
+  const result = await runApprovedOpenClawGateway18789Start({
+    sharedWorkspace: workspace,
+    ownerApproval: Object.freeze({
+      approved: true,
+      action: 'RUN_EXACT_HEAD_IGNITION',
+      expectedHead: 'a'.repeat(40),
+      receiptId: 'b'.repeat(32),
+      parentPid: 100,
+      childPid: 101,
+    }),
+    env: {
+      APPDATA: 'C:\\Fixture\\AppData\\Roaming',
+      STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY: '1',
+      STEPHANOS_OPENCLAW_GATEWAY_TOKEN: 'ambient-secret',
+      OPENCLAW_GATEWAY_TOKEN: 'ambient-secret-two',
+      NODE_OPTIONS: '--require attacker.js',
+    },
+    readyTimeoutMs: 1,
+    retryIntervalMs: 0,
+    spawnFn: (command, args, options) => { calls.push({ command, args, options }); return child; },
+    fetchFn: async (url) => {
+      if (url.endsWith('/health')) {
+        healthCalls += 1;
+        if (healthCalls === 1) throw new Error('cold');
+        return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 'live' }) };
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify(canonicalOpenClawIdentity) };
+    },
+  });
+  assert.equal(result.ready, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.env.STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY, undefined);
+  assert.equal(calls[0].options.env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN, undefined);
+  assert.equal(calls[0].options.env.OPENCLAW_GATEWAY_TOKEN, undefined);
+  assert.equal(calls[0].options.env.NODE_OPTIONS, undefined);
+});
+
+test('Windows 18789 process proof uses only fixed PowerShell script and sanitized environment', async () => {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = () => {};
+  const calls = [];
+  const pending = collectOpenClawGateway18789ProcessProof({
+    env: { USERPROFILE: 'C:\\Users\\Fixture', NODE_OPTIONS: '--require attacker.js', COMSPEC: 'C:\\evil.cmd' },
+    spawnFn: (command, args, options) => {
+      calls.push({ command, args, options });
+      setImmediate(() => {
+        child.stdout.end(JSON.stringify({
+          schemaVersion: OPENCLAW_18789_PROCESS_PROOF_SCHEMA,
+          ok: true,
+          pid: 18789,
+          parentPid: 18788,
+          processName: 'node.exe',
+          executablePath: BATTLE_BRIDGE_WINDOWS_HOST.node,
+          executableCanonical: true,
+          entrypointCanonical: true,
+          gatewayCommandCanonical: true,
+          commandLineCanonical: true,
+          lineageCanonical: true,
+          ancestorPids: [18788],
+          listenerCount: 1,
+          localAddress: '127.0.0.1',
+        }));
+        child.stderr.end();
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+  });
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].command, /powershell\.exe$/i);
+  assert.deepEqual(calls[0].args.slice(0, 5), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File']);
+  assert.match(calls[0].args[5], /probe-openclaw-gateway-18789-owner\.ps1$/);
+  assert.equal(calls[0].options.shell, false);
+  assert.equal(calls[0].options.env.NODE_OPTIONS, undefined);
+  assert.equal(calls[0].options.env.COMSPEC, undefined);
+});
+
 test('supervisor calls approved OpenClaw startup adapter when 18789 is missing', async () => {
   const calls = [];
   let collectCount = 0;
@@ -535,11 +684,11 @@ test('supervisor calls approved OpenClaw startup adapter when 18789 is missing',
     housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
     collectFactsFn: async () => { collectCount += 1; return factsFor({ openclaw: collectCount > 1 }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['openclaw-gateway'].ready ? 'ready' : 'partial-openclaw-missing' }),
-    openClawStartFn: async ({ sharedWorkspace }) => { calls.push(sharedWorkspace); return { ready: true, started: true, target: { commandText: 'openclaw gateway run --port 18789 --bind loopback' }, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' }, healthProof: { ready: true, health: { json: { ok: true } } } }; },
+    openClawStartFn: async ({ sharedWorkspace, probeOnly = false }) => { calls.push({ sharedWorkspace, probeOnly }); return { ready: true, started: !probeOnly, target: { commandText: 'openclaw gateway run --port 18789 --bind loopback' }, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' }, healthProof: { ready: true, health: { json: { ok: true } } } }; },
     runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.equal(result.ok, true);
-  assert.equal(calls.length, 1);
+  assert.deepEqual(calls.map((call) => call.probeOnly), [false, true]);
   assert.equal(result.status.services.openClaw18789.start.logPath, '/canonical/openclaw-log');
 });
 
@@ -609,6 +758,13 @@ test('approved backend repair command captures stdout stderr exit code and canon
   assert.equal(fs.readFileSync(result.logs.stderrLogPath, 'utf8'), 'backend stderr proof\n');
 });
 
+test('Windows backend repair pins System32 cmd and Program Files npm entrypoints', () => {
+  const execution = resolveBackendRepairExecution('win32');
+  assert.equal(execution.command, BATTLE_BRIDGE_WINDOWS_HOST.cmd);
+  assert.deepEqual(execution.args.slice(0, 3), ['/d', '/s', '/c']);
+  assert.equal(execution.args[3], `""${BATTLE_BRIDGE_WINDOWS_HOST.npm}" run stephanos:battle-bridge:repair"`);
+});
+
 
 test('backend repair success without health proof blocks with no-health-proof and surfaces canonical logPath', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-supervisor-canonical-'));
@@ -665,6 +821,16 @@ test('served runtime exact-head proof accepts full or unambiguous short head in 
     dist: { ok: true, statusCode: 200 },
   });
   assert.equal(proof.ready, true);
+});
+
+test('served runtime proof rejects oversized localhost bodies before JSON parsing', async () => {
+  await assert.rejects(
+    collectServedRuntimeExactHeadProof({
+      currentHead: '5'.repeat(40),
+      fetchFn: async () => ({ ok: true, status: 200, text: async () => 'x'.repeat(16 * 1024 + 1) }),
+    }),
+    /LOCALHOST_RESPONSE_TOO_LARGE/,
+  );
 });
 
 test('supervisor blocks with served-runtime-stale when 4173 reports old gitCommit after guarded repair', async () => {
