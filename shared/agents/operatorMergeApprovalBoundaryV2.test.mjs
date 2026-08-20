@@ -645,10 +645,13 @@ test('specialist approval fails closed on stale head, wrong app, missing path co
   assert.equal(result.valid, false);
 });
 
-test('trusted reviewer fetches exact PR reviews and seals only through the specialist adjudicator', () => {
+test('trusted reviewer fetches authenticated review evidence and seals only through the specialist adjudicator', () => {
   const source = readFileSync(new URL('../../scripts/independent-merge-security-review-v2.mjs', import.meta.url), 'utf8');
   assert.match(source, /pulls\/\$\{prNumber\}\/reviews/);
+  assert.match(source, /issues\/\$\{prNumber\}\/comments/);
+  assert.match(source, /resolveQualifiedSpecialistCommentHeads/);
   assert.match(source, /adjudicateQualifiedSpecialistReview/);
   assert.match(source, /SPECIALIST_REVIEW_DECISION/);
+  assert.match(source, /SPECIALIST_REVIEW_ARTIFACT_SHA256/);
   assert.doesNotMatch(source, /gh\s+pr\s+(?:merge|ready)/);
 });
