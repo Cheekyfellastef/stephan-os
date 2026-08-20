@@ -848,6 +848,30 @@ test('ignition status evaluator allows canonical ignored runtime logs', () => {
   assert.equal(classifyIgnitionDirtPath('logs/battle-bridge/backend.stdout.log'), 'RUNTIME_CHECKPOINT_CLEAN');
 });
 
+test('ignition status evaluator aligns exact dream-memory runtime prefixes without allowing secret-shaped children', () => {
+  const allowed = [
+    'memory/.dreams/session.json',
+    'memory/dreaming/deep/session.json',
+    'memory/dreaming/light/session.json',
+    'memory/dreaming/rem/session.json',
+  ];
+  const blocked = [
+    'memory/.dreams/token.json',
+    'memory/dreaming/deep/private-key.json',
+    'memory/dreaming/light/credential.json',
+    'memory/dreaming/rem/password.txt',
+  ];
+  const evaluation = evaluateGitStatusForIgnition([
+    ...allowed.map((path) => `!! ${path}`),
+    ...blocked.map((path) => `!! ${path}`),
+  ].join('\n'));
+
+  assert.deepEqual(evaluation.transientRootDataEntries.map((entry) => entry.paths[0]), allowed);
+  assert.deepEqual(evaluation.meaningfulEntries.map((entry) => entry.paths[0]), blocked);
+  for (const path of allowed) assert.equal(classifyIgnitionDirtPath(path), 'RUNTIME_CHECKPOINT_CLEAN');
+  for (const path of blocked) assert.equal(classifyIgnitionDirtPath(path), 'HARD_BLOCK');
+});
+
 test('collectApprovedTrackedGeneratedRestorePaths returns tracked dist paths only', () => {
   const evaluation = evaluateGitStatusForIgnition([
     ' M apps/stephanos/dist/index.html',

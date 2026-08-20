@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import {
+  captureFixedAuthorityGitStep,
   createSupervisorHousekeepRunStep,
   ensureBackend8787ConvergedBeforeSupervisor,
   ensureLiveUiConvergedBeforeSupervisor,
@@ -14,6 +15,8 @@ import {
   runSupervisorHousekeepPreservingLiveRuntime,
   writePreSupervisorFailureStatus,
 } from './run-battle-bridge-ignition.mjs';
+import { BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS, battleBridgeCanonicalRepositoryArgs } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
 function backendHealthResponse(sourceHead, {
   status = 200,
@@ -49,9 +52,11 @@ test('supervisor housekeeping preserves exact-head dist and all runtime-owned da
 
 test('supervisor housekeeping injects the live-runtime-preserving run step into the existing housekeeper', () => {
   const delegated = [];
+  const captures = [];
   let receivedOptions = null;
   const housekeepFn = (options) => {
     receivedOptions = options;
+    options.captureStepFn('source-status', 'git', ['status', '--porcelain=v1']);
     options.runStepFn('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', 'apps/stephanos/dist/']);
     options.runStepFn('git-restore-runtime-tracked', 'git', ['restore', '--', 'stephanos-server/data/memory/durable-memory.json']);
     options.runStepFn('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', 'data/activity/']);
@@ -66,6 +71,10 @@ test('supervisor housekeeping injects the live-runtime-preserving run step into 
         delegated.push(label);
         return true;
       },
+      captureStepFn: (label, command, args) => {
+        captures.push({ label, command, args });
+        return { stdout: '', stderr: '' };
+      },
     },
   );
 
@@ -74,7 +83,34 @@ test('supervisor housekeeping injects the live-runtime-preserving run step into 
   assert.equal(receivedOptions.compact, true);
   assert.equal(receivedOptions.preserveRuntimeDirt, true);
   assert.deepEqual(delegated, []);
+  assert.deepEqual(captures, [{
+    label: 'source-status',
+    command: 'git',
+    args: ['status', '--porcelain=v1'],
+  }]);
   assert.equal(runSupervisorHousekeepPreservingLiveDist, runSupervisorHousekeepPreservingLiveRuntime);
+});
+
+test('fixed authority Git capture prepends the canonical isolation config', () => {
+  const calls = [];
+  const result = captureFixedAuthorityGitStep('source-status', 'git', [
+    'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching',
+  ], {
+    cwd: 'C:\\repo',
+    env: { GIT_CONFIG_NOSYSTEM: '1' },
+    spawnSyncFn: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  });
+  assert.equal(result.stdout, '');
+  assert.equal(calls[0].command, BATTLE_BRIDGE_WINDOWS_HOST.git);
+  assert.deepEqual(calls[0].args, [
+    ...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+    ...battleBridgeCanonicalRepositoryArgs('C:\\repo'),
+    'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching',
+  ]);
+  assert.equal(calls[0].options.shell, false);
 });
 
 test('backend startup source tolerates exact runtime memory plus unstaged modified/deleted generated dist with fixed Node command forms', async () => {
@@ -273,6 +309,8 @@ test('canonical source truth blocks the click path before backend, UI, or superv
         headPublished: false,
         blockedForRemoteTruth: true,
         publicationState: 'diverged',
+        head: 'a'.repeat(40),
+        originHead: 'b'.repeat(40),
       }),
       backendPreflightFn: async () => { calls.push('backend'); return { ok: true }; },
       uiPreflightFn: async () => { calls.push('ui'); },
@@ -282,11 +320,42 @@ test('canonical source truth blocks the click path before backend, UI, or superv
     assert.deepEqual(calls, []);
     const status = JSON.parse(await readFile(path.join(sharedWorkspace, 'status', 'battle-bridge-ignition-supervisor-current.json'), 'utf8'));
     assert.equal(status.phases['source truth'].state, 'blocked');
-    assert.equal(status.blockerId, 'unpublished-source-truth');
+    assert.equal(status.blockerId, 'source-head-truth-unproven');
   } finally {
     process.argv = previousArgs;
     await rm(sharedWorkspace, { recursive: true, force: true });
   }
+});
+
+test('wrapper and standalone supervisor share the same canonical source collector', async () => {
+  const sourceTruthFn = () => ({
+    branch: 'main',
+    detachedHead: false,
+    hasUpstream: true,
+    upstreamBranch: 'origin/main',
+    workingTreeDirty: false,
+    aheadCount: 0,
+    behindCount: 0,
+    headPublished: true,
+    blockedForRemoteTruth: false,
+    publicationState: 'healthy-synced',
+    head: 'a'.repeat(40),
+    originHead: 'a'.repeat(40),
+  });
+  let supervisorOptions = null;
+  const exitCode = await main({
+    platform: 'linux',
+    sourceTruthFn,
+    uiPreflightFn: async () => {},
+    supervisorFn: async (options) => {
+      supervisorOptions = options;
+      return { ok: true };
+    },
+  });
+
+  assert.equal(exitCode, 0);
+  assert.equal(supervisorOptions.sourceTruthFn, sourceTruthFn);
+  assert.equal(typeof supervisorOptions.housekeepFn, 'function');
 });
 
 test('canonical ignition pins repository-sensitive housekeeping to the source-derived repo root', async () => {

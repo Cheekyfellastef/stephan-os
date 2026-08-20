@@ -13,13 +13,21 @@ import {
   createBattleBridgeSupervisorStatus,
   evaluateCanonicalIgnitionSourceTruth,
   projectBattleBridgeSupervisorStatus,
+  resolveBackendRepairExecution,
   runApprovedBackend8787Start,
   runApprovedOpenClawGateway18789Start,
+  runCanonicalSupervisorHousekeep,
   defaultBattleBridgeSharedWorkspace,
   runBattleBridgeIgnitionSupervisor,
   evaluateServedRuntimeExactHeadProof,
 } from './battle-bridge-ignition-supervisor.mjs';
 import { buildOpenClawGatewayStartupTarget, npmGlobalBinCandidatesForOpenClaw, resolveOpenClawGatewayStartupExecution } from '../shared/agents/openClawGatewayStartup.mjs';
+import {
+  BATTLE_BRIDGE_CANONICAL_REMOTE_URL,
+  BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+  battleBridgeCanonicalRepositoryArgs,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
 
 const readyRuntimeProof = async () => ({ ready: true, currentHead: '51600ceb00000000000000000000000000000000', healthOk: true, distOk: true, gitCommitMatches: true, runtimeMarkerMatches: true, gitCommit: '51600ceb', runtimeMarker: 'antifriction-live-v3::51600ceb::fixture' });
@@ -53,14 +61,102 @@ function canonicalSourceTruth(overrides = {}) {
     headPublished: true,
     blockedForRemoteTruth: false,
     publicationState: 'healthy-synced',
+    head: 'a'.repeat(40),
+    originHead: 'a'.repeat(40),
     ...overrides,
   };
+}
+
+const COLLECTOR_HEAD = 'a'.repeat(40);
+const COLLECTOR_CONFIG = `remote.origin.url\n${BATTLE_BRIDGE_CANONICAL_REMOTE_URL}\0`;
+
+function runSourceCollectorFixture({
+  statusBefore = '',
+  statusAfter = statusBefore,
+  statusFinal = statusAfter,
+  configurationBefore = COLLECTOR_CONFIG,
+  configurationAfter = configurationBefore,
+  trackedVisibilityBefore = 'H tracked-source.mjs\n',
+  trackedVisibilityAfter = trackedVisibilityBefore,
+  trackedVisibilityFinal = trackedVisibilityAfter,
+  branchBefore = 'main',
+  branchAfter = branchBefore,
+  upstreamBefore = 'origin/main',
+  upstreamAfter = upstreamBefore,
+  headBefore = COLLECTOR_HEAD,
+  headAfter = headBefore,
+  originHead = headBefore,
+  originHeadAfter = originHead,
+  headFinal = headAfter,
+  originHeadFinal = originHeadAfter,
+  divergence = '0\t0\n',
+  failOperation = '',
+  topologyAfter = null,
+  environment = { PATH: 'C:\\attacker', NODE_OPTIONS: '--require=C:\\attacker\\inject.cjs' },
+} = {}) {
+  const calls = [];
+  const counts = Object.create(null);
+  let topologyCalls = 0;
+  const topologyOptions = [];
+  const stableTopology = Object.freeze({ config: 'stable-config', HEAD: 'stable-head' });
+  const inspectTopologyFn = (_cwd, options = {}) => {
+    topologyCalls += 1;
+    topologyOptions.push(options);
+    return topologyCalls === 1
+      ? { ok: true, stableIdentities: stableTopology }
+      : (topologyAfter || { ok: true, stableIdentities: stableTopology });
+  };
+  const spawnSyncFn = (command, args, options) => {
+    const workTreeIndex = args.findIndex((arg) => String(arg).startsWith('--work-tree='));
+    const operationArgs = args.slice(workTreeIndex + 1);
+    const operation = String(operationArgs[0] || '');
+    counts[operation] = Number(counts[operation] || 0) + 1;
+    calls.push({ command, args, operationArgs, options });
+    if (operation === failOperation) return { status: 1, stdout: '', stderr: 'fixture failure' };
+    if (operation === 'config') return { status: 0, stdout: counts.config === 1 ? configurationBefore : configurationAfter, stderr: '' };
+    if (operation === 'ls-files') {
+      return { status: 0, stdout: [trackedVisibilityBefore, trackedVisibilityAfter, trackedVisibilityFinal][counts['ls-files'] - 1], stderr: '' };
+    }
+    if (operation === 'status') {
+      return { status: 0, stdout: [statusBefore, statusAfter, statusFinal][counts.status - 1], stderr: '' };
+    }
+    if (operation === 'branch') return { status: 0, stdout: `${counts.branch === 1 ? branchBefore : branchAfter}\n`, stderr: '' };
+    if (operation === 'fetch') return { status: 0, stdout: '', stderr: '' };
+    if (operation === 'rev-list') return { status: 0, stdout: divergence, stderr: '' };
+    if (operation === 'rev-parse' && operationArgs.includes('@{upstream}')) {
+      counts.upstream = Number(counts.upstream || 0) + 1;
+      const value = counts.upstream === 1 ? upstreamBefore : upstreamAfter;
+      return value === null
+        ? { status: 1, stdout: '', stderr: 'no upstream configured' }
+        : { status: 0, stdout: `${value}\n`, stderr: '' };
+    }
+    if (operation === 'rev-parse' && operationArgs[1] === 'HEAD' && operationArgs[2] === 'origin/main') {
+      return { status: 0, stdout: `${headFinal}\n${originHeadFinal}\n`, stderr: '' };
+    }
+    if (operation === 'rev-parse' && operationArgs[1] === 'HEAD') {
+      counts.headRead = Number(counts.headRead || 0) + 1;
+      return { status: 0, stdout: `${counts.headRead === 1 ? headBefore : headAfter}\n`, stderr: '' };
+    }
+    if (operation === 'rev-parse' && operationArgs[1] === 'origin/main') {
+      counts.originRead = Number(counts.originRead || 0) + 1;
+      return { status: 0, stdout: `${counts.originRead === 1 ? originHead : originHeadAfter}\n`, stderr: '' };
+    }
+    throw new Error(`unexpected fixed Git operation: ${operationArgs.join(' ')}`);
+  };
+  const result = collectCanonicalIgnitionSourceTruth({
+    cwd: '/canonical/repo',
+    environment,
+    spawnSyncFn,
+    inspectTopologyFn,
+  });
+  return { result, calls, topologyCalls, topologyOptions };
 }
 
 test('supervisor status model exposes required phases and states', () => {
   const status = createBattleBridgeSupervisorStatus();
   assert.deepEqual(Object.keys(status.phases), [...BATTLE_BRIDGE_IGNITION_PHASES]);
   assert.deepEqual(BATTLE_BRIDGE_IGNITION_PHASES.slice(0, 2), ['source truth', 'housekeeping']);
+  assert.equal(status.currentPhase, 'source truth');
   assert.deepEqual([...BATTLE_BRIDGE_IGNITION_PHASE_STATES], ['pending', 'running', 'ready', 'degraded', 'blocked', 'failed']);
   const updated = projectBattleBridgeSupervisorStatus({ status, phase: 'backend 8787', phaseState: 'ready', readinessReport: factsFor() });
   assert.equal(updated.currentPhase, 'backend 8787');
@@ -143,6 +239,8 @@ test('canonical source truth gate accepts only clean synchronized main tracking 
     [canonicalSourceTruth({ branch: 'feature/test' }), 'non-main-source-truth'],
     [canonicalSourceTruth({ upstreamBranch: 'origin/feature' }), 'noncanonical-upstream-source-truth'],
     [canonicalSourceTruth({ publicationState: 'local-uncommitted', workingTreeDirty: true }), 'dirty-source-truth'],
+    [canonicalSourceTruth({ head: '', originHead: '' }), 'source-head-truth-unproven'],
+    [canonicalSourceTruth({ originHead: 'b'.repeat(40) }), 'source-head-truth-unproven'],
     [canonicalSourceTruth({ publicationState: 'stale-behind', behindCount: 1, headPublished: true }), 'stale-source-truth'],
     [canonicalSourceTruth({ publicationState: 'diverged', aheadCount: 1, behindCount: 1, headPublished: false, blockedForRemoteTruth: true }), 'unpublished-source-truth'],
     [canonicalSourceTruth({ publicationState: 'unpublished-local-only', aheadCount: 1, headPublished: false, blockedForRemoteTruth: true }), 'unpublished-source-truth'],
@@ -154,102 +252,194 @@ test('canonical source truth gate accepts only clean synchronized main tracking 
   }
 });
 
-test('live source collector includes meaningful Git dirt instead of silently assuming a clean tree', () => {
-  const calls = [];
-  const result = collectCanonicalIgnitionSourceTruth({
-    cwd: '/canonical/repo',
-    execFile(command, args) {
-      calls.push([command, ...args]);
-      if (args[0] === 'fetch') return '';
-      if (args[0] === 'status') return ' M scripts/run-battle-bridge-ignition.mjs\n';
-      if (args.includes('--abbrev-ref') && args.includes('HEAD')) return 'main\n';
-      if (args.includes('--symbolic-full-name')) return 'origin/main\n';
-      if (args[0] === 'rev-list') return '0\t0\n';
-      throw new Error(`unexpected fixed Git command: ${command} ${args.join(' ')}`);
-    },
-  });
-  assert.equal(result.publicationState, 'local-uncommitted');
-  assert.equal(result.workingTreeDirty, true);
-  assert.equal(result.blockedForRemoteTruth, true);
-  assert.deepEqual(calls[0], ['git', 'fetch', '--prune', 'origin', 'main:refs/remotes/origin/main']);
-  assert.deepEqual(calls[1], ['git', 'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
-});
-
-test('live source collector expands nested untracked data so every canonical hard blocker stops Ignition', () => {
-  const calls = [];
-  const result = collectCanonicalIgnitionSourceTruth({
-    cwd: '/canonical/repo',
-    execFile(command, args) {
-      calls.push([command, ...args]);
-      if (args[0] === 'fetch') return '';
-      if (args[0] === 'status') return '?? data/random.txt\n?? data/unknown.bin\n';
-      if (args.includes('--abbrev-ref') && args.includes('HEAD')) return 'main\n';
-      if (args.includes('--symbolic-full-name')) return 'origin/main\n';
-      if (args[0] === 'rev-list') return '0\t0\n';
-      throw new Error(`unexpected fixed Git command: ${command} ${args.join(' ')}`);
-    },
-  });
-
-  assert.equal(result.publicationState, 'local-uncommitted');
-  assert.equal(result.workingTreeDirty, true);
-  assert.equal(result.blockedForRemoteTruth, true);
-  assert.deepEqual(calls[1], ['git', 'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
-  const verdict = evaluateCanonicalIgnitionSourceTruth(result);
-  assert.equal(verdict.ok, false);
-  assert.equal(verdict.blocker.id, 'dirty-source-truth');
-});
-
-test('live source collector includes ignored data hard blockers before Ignition mutation', () => {
-  const calls = [];
-  const result = collectCanonicalIgnitionSourceTruth({
-    cwd: '/canonical/repo',
-    execFile(command, args) {
-      calls.push([command, ...args]);
-      if (args[0] === 'fetch') return '';
-      if (args[0] === 'status') return '!! data/random.txt\n!! data/unknown.bin\n';
-      if (args.includes('--abbrev-ref') && args.includes('HEAD')) return 'main\n';
-      if (args.includes('--symbolic-full-name')) return 'origin/main\n';
-      if (args[0] === 'rev-list') return '0\t0\n';
-      throw new Error(`unexpected fixed Git command: ${command} ${args.join(' ')}`);
-    },
-  });
-
-  assert.equal(result.publicationState, 'local-uncommitted');
-  assert.equal(result.workingTreeDirty, true);
-  assert.equal(result.blockedForRemoteTruth, true);
-  assert.deepEqual(calls[1], ['git', 'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
-  assert.equal(evaluateCanonicalIgnitionSourceTruth(result).blocker.id, 'dirty-source-truth');
-});
-
-test('live source collector tolerates the canonical ignored runtime logs directory', () => {
-  const result = collectCanonicalIgnitionSourceTruth({
-    cwd: '/canonical/repo',
-    execFile(command, args) {
-      if (args[0] === 'fetch') return '';
-      if (args[0] === 'status') return '!! logs/\n';
-      if (args.includes('--abbrev-ref') && args.includes('HEAD')) return 'main\n';
-      if (args.includes('--symbolic-full-name')) return 'origin/main\n';
-      if (args[0] === 'rev-list') return '0\t0\n';
-      throw new Error(`unexpected fixed Git command: ${command} ${args.join(' ')}`);
-    },
-  });
-
+test('fixed source collector ignores attacker PATH and fetches only the canonical URL after preflight', () => {
+  const { result, calls, topologyCalls, topologyOptions } = runSourceCollectorFixture();
+  assert.equal(result.ok, true);
   assert.equal(result.publicationState, 'healthy-synced');
-  assert.equal(result.workingTreeDirty, false);
-  assert.equal(evaluateCanonicalIgnitionSourceTruth(result).ok, true);
+  assert.equal(result.head, COLLECTOR_HEAD);
+  assert.equal(result.originHead, COLLECTOR_HEAD);
+  assert.equal(topologyCalls, 3);
+  assert.equal(topologyOptions.every((options) => options.stabilizeIndex === true), true);
+  assert.equal(calls.every((call) => call.command === BATTLE_BRIDGE_WINDOWS_HOST.git), true);
+  assert.deepEqual(calls.slice(0, 3).map((call) => call.operationArgs[0]), ['config', 'ls-files', 'status']);
+  const fetchCall = calls.find((call) => call.operationArgs[0] === 'fetch');
+  assert.deepEqual(fetchCall.operationArgs, [
+    'fetch', '--prune', BATTLE_BRIDGE_CANONICAL_REMOTE_URL, 'main:refs/remotes/origin/main',
+  ]);
+  assert.notEqual(fetchCall.options.env.PATH, 'C:\\attacker');
+  assert.equal(fetchCall.options.env.NODE_OPTIONS, undefined);
+  assert.equal(fetchCall.options.env.GIT_CONFIG_GLOBAL, 'NUL');
+  assert.equal(fetchCall.options.shell, false);
+});
+
+test('source dirt blocks before the canonical fetch or any service mutation', () => {
+  const { result, calls } = runSourceCollectorFixture({
+    statusBefore: ' M scripts/run-battle-bridge-ignition.mjs\n',
+  });
+  assert.equal(result.publicationState, 'local-uncommitted');
+  assert.equal(result.workingTreeDirty, true);
+  assert.equal(result.blockedForRemoteTruth, true);
+  assert.equal(result.blocker.id, 'dirty-source-truth');
+  assert.equal(result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
+  assert.deepEqual(calls.map((call) => call.operationArgs[0]), ['config', 'ls-files', 'status']);
+});
+
+test('hidden tracked paths and tracked-visibility drift fail closed around the fetch', () => {
+  for (const trackedVisibilityBefore of ['S hidden-source.mjs\n', 'h assumed-source.mjs\n']) {
+    const hiddenBefore = runSourceCollectorFixture({ trackedVisibilityBefore });
+    assert.equal(hiddenBefore.result.ok, false);
+    assert.equal(hiddenBefore.result.blocker.id, 'hidden-tracked-source-truth');
+    assert.equal(hiddenBefore.result.blocker.code, 'HIDDEN_TRACKED_PATHS_PRESENT');
+    assert.deepEqual(hiddenBefore.calls.map((call) => call.operationArgs[0]), ['config', 'ls-files']);
+  }
+
+  const changedAfter = runSourceCollectorFixture({
+    trackedVisibilityBefore: 'H tracked-source.mjs\n',
+    trackedVisibilityAfter: 'H different-source.mjs\n',
+  });
+  assert.equal(changedAfter.result.ok, false);
+  assert.equal(changedAfter.result.blocker.id, 'hidden-tracked-source-truth');
+  assert.equal(changedAfter.result.blocker.code, 'CANONICAL_TRACKED_VISIBILITY_CHANGED');
+
+  const hiddenAfter = runSourceCollectorFixture({
+    trackedVisibilityBefore: 'H tracked-source.mjs\n',
+    trackedVisibilityAfter: 'S tracked-source.mjs\n',
+  });
+  assert.equal(hiddenAfter.result.ok, false);
+  assert.equal(hiddenAfter.result.blocker.code, 'HIDDEN_TRACKED_PATHS_PRESENT');
+});
+
+test('attacker-configured origin is rejected before fetch even when PATH and ambient Git variables are hostile', () => {
+  const { result, calls } = runSourceCollectorFixture({
+    configurationBefore: 'remote.origin.url\nhttps://attacker.invalid/repository.git\0',
+    environment: {
+      PATH: 'C:\\attacker',
+      GIT_CONFIG_GLOBAL: 'C:\\attacker\\gitconfig',
+      GIT_SSH_COMMAND: 'C:\\attacker\\ssh.exe',
+      NODE_OPTIONS: '--require=C:\\attacker\\inject.cjs',
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker.code, 'CANONICAL_GIT_CONFIGURATION_INVALID');
+  assert.deepEqual(calls.map((call) => call.operationArgs[0]), ['config']);
+  assert.equal(calls[0].command, BATTLE_BRIDGE_WINDOWS_HOST.git);
+  assert.equal(calls[0].options.env.GIT_SSH_COMMAND, undefined);
+});
+
+test('missing or noncanonical upstream blocks before the canonical fetch', () => {
+  for (const upstreamBefore of [null, 'origin/feature']) {
+    const { result, calls } = runSourceCollectorFixture({ upstreamBefore });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker.id, 'noncanonical-upstream-source-truth');
+    assert.equal(result.blocker.code, 'CANONICAL_UPSTREAM_UNPROVEN');
+    assert.equal(result.hasUpstream, upstreamBefore !== null);
+    assert.equal(result.upstreamBranch, upstreamBefore || '');
+    assert.equal(calls.some((call) => call.operationArgs[0] === 'fetch'), false);
+  }
+});
+
+test('collector aligns dream-memory runtime dirt while secret-shaped children remain pre-fetch blockers', () => {
+  const runtime = runSourceCollectorFixture({
+    statusBefore: '!! memory/.dreams/session.json\n!! memory/dreaming/deep/session.json\n!! memory/dreaming/light/session.json\n!! memory/dreaming/rem/session.json\n',
+  });
+  assert.equal(runtime.result.ok, true);
+  assert.equal(runtime.result.workingTreeDirty, false);
+  assert.equal(runtime.result.runtimeOnlyDirt.length, 4);
+
+  const secret = runSourceCollectorFixture({
+    statusBefore: '!! memory/.dreams/token.json\n!! memory/dreaming/rem/private-key.json\n',
+  });
+  assert.equal(secret.result.ok, false);
+  assert.equal(secret.result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
+  assert.deepEqual(secret.calls.map((call) => call.operationArgs[0]), ['config', 'ls-files', 'status']);
+});
+
+test('collector final recheck rejects source dirt or topology drift after canonical fetch', () => {
+  const dirtyAfter = runSourceCollectorFixture({
+    statusBefore: '!! logs/\n',
+    statusAfter: '!! logs/\n M scripts/after-fetch.mjs\n',
+  });
+  assert.equal(dirtyAfter.result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
+  assert.equal(dirtyAfter.calls.some((call) => call.operationArgs[0] === 'fetch'), true);
+
+  const topologyDrift = runSourceCollectorFixture({
+    topologyAfter: { ok: true, stableIdentities: { config: 'changed', HEAD: 'stable-head' } },
+  });
+  assert.equal(topologyDrift.result.blocker.code, 'CANONICAL_GIT_TOPOLOGY_CHANGED');
+});
+
+test('collector repeats status and hidden-index proof after every other post-fetch Git check', () => {
+  const lateDirt = runSourceCollectorFixture({
+    statusBefore: '',
+    statusAfter: '',
+    statusFinal: ' M scripts/late-source-change.mjs\n',
+  });
+  assert.equal(lateDirt.result.ok, false);
+  assert.equal(lateDirt.result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
+  assert.deepEqual(lateDirt.calls.slice(-2).map((call) => call.operationArgs[0]), ['status', 'ls-files']);
+
+  const lateHidden = runSourceCollectorFixture({
+    trackedVisibilityBefore: 'H tracked-source.mjs\n',
+    trackedVisibilityAfter: 'H tracked-source.mjs\n',
+    trackedVisibilityFinal: 'S tracked-source.mjs\n',
+  });
+  assert.equal(lateHidden.result.ok, false);
+  assert.equal(lateHidden.result.blocker.code, 'HIDDEN_TRACKED_PATHS_PRESENT');
+  assert.deepEqual(lateHidden.calls.slice(-2).map((call) => call.operationArgs[0]), ['status', 'ls-files']);
+});
+
+test('collector binds local and fetched refs again at the final source boundary', () => {
+  const lateRefDrift = runSourceCollectorFixture({
+    headFinal: 'c'.repeat(40),
+    originHeadFinal: 'c'.repeat(40),
+  });
+  assert.equal(lateRefDrift.result.ok, false);
+  assert.equal(lateRefDrift.result.blocker.code, 'CANONICAL_SOURCE_TRUTH_CHANGED');
+  assert.deepEqual(lateRefDrift.calls.at(-1).operationArgs, ['rev-parse', 'HEAD', 'origin/main']);
 });
 
 test('live source collector fails closed when current origin/main cannot be fetched', () => {
-  const result = collectCanonicalIgnitionSourceTruth({
-    cwd: '/canonical/repo',
-    execFile(command, args) {
-      assert.deepEqual([command, ...args], ['git', 'fetch', '--prune', 'origin', 'main:refs/remotes/origin/main']);
-      throw new Error('offline');
-    },
-  });
+  const { result, calls } = runSourceCollectorFixture({ failOperation: 'fetch' });
   const verdict = evaluateCanonicalIgnitionSourceTruth(result);
   assert.equal(verdict.ok, false);
   assert.equal(verdict.blocker.id, 'source-truth-unproven');
+  assert.equal(verdict.blocker.code, 'FIXED_AUTHORITY_GIT_FAILED');
+  assert.deepEqual(calls.slice(0, 7).map((call) => call.operationArgs[0]), ['config', 'ls-files', 'status', 'branch', 'rev-parse', 'rev-parse', 'fetch']);
+});
+
+test('standalone supervisor housekeeping ignores hostile PATH and uses only the fixed Git boundary', () => {
+  const calls = [];
+  let receivedOptions = null;
+  const cwd = '/canonical/repo';
+  const result = runCanonicalSupervisorHousekeep(
+    { dryRun: false, compact: true, preserveRuntimeDirt: true },
+    {
+      cwd,
+      environment: { PATH: 'C:\\attacker', NODE_OPTIONS: '--require=C:\\attacker\\inject.cjs' },
+      spawnSyncFn: (command, args, options) => {
+        calls.push({ command, args, options });
+        return { status: 0, stdout: '', stderr: '' };
+      },
+      housekeepFn: (options) => {
+        receivedOptions = options;
+        options.captureStepFn('git-status', 'git', ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
+        options.runStepFn('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', 'data/activity/']);
+        return { ok: true };
+      },
+    },
+  );
+  assert.deepEqual(result, { ok: true });
+  assert.equal(receivedOptions.preserveRuntimeDirt, true);
+  assert.equal(calls.length, 2);
+  assert.equal(calls.every((call) => call.command === BATTLE_BRIDGE_WINDOWS_HOST.git), true);
+  assert.deepEqual(calls[0].args.slice(0, BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.length), [...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS]);
+  assert.deepEqual(
+    calls[0].args.slice(BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.length, BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.length + 2),
+    [...battleBridgeCanonicalRepositoryArgs(cwd)],
+  );
+  assert.equal(calls.every((call) => call.options.env.PATH !== 'C:\\attacker'), true);
+  assert.equal(calls.every((call) => call.options.env.NODE_OPTIONS === undefined), true);
+  assert.equal(calls.every((call) => call.options.shell === false), true);
 });
 
 test('real evaluator-shaped diverged source blocks before publisher or service mutation', async () => {
@@ -772,6 +962,13 @@ test('approved backend repair command captures stdout stderr exit code and canon
   assert.match(result.logPath, /battle-bridge-backend-8787-repair/);
   assert.equal(fs.readFileSync(result.logs.stdoutLogPath, 'utf8'), 'backend stdout proof\n');
   assert.equal(fs.readFileSync(result.logs.stderrLogPath, 'utf8'), 'backend stderr proof\n');
+});
+
+test('Windows backend repair pins System32 cmd and Program Files npm entrypoints', () => {
+  const execution = resolveBackendRepairExecution('win32');
+  assert.equal(execution.command, BATTLE_BRIDGE_WINDOWS_HOST.cmd);
+  assert.deepEqual(execution.args.slice(0, 3), ['/d', '/s', '/c']);
+  assert.equal(execution.args[3], `""${BATTLE_BRIDGE_WINDOWS_HOST.npm}" run stephanos:battle-bridge:repair"`);
 });
 
 

@@ -921,6 +921,10 @@ const ROOT_RUNTIME_ALLOWLIST_PREFIXES = [
   'data/roadmap/',
   'data/simulations/',
   'logs/',
+  'memory/.dreams/',
+  'memory/dreaming/deep/',
+  'memory/dreaming/light/',
+  'memory/dreaming/rem/',
 ];
 const DEPENDENCY_DIR_PREFIXES = ['node_modules/', 'stephanos-server/node_modules/', 'stephanos-ui/node_modules/'];
 const SECRETS_PATTERN = /(^|\/)(\.env($|\.)|.*(secret|token|credential|passwd|password|private[-_]?key).*)/i;

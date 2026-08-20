@@ -23,6 +23,8 @@ function canonicalSourceTruth() {
     headPublished: true,
     blockedForRemoteTruth: false,
     publicationState: 'healthy-synced',
+    head: '51600ceb1234567890abcdef1234567890abcdef',
+    originHead: '51600ceb1234567890abcdef1234567890abcdef',
   };
 }
 
