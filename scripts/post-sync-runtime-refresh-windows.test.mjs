@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { backendStarterInvocation } from './run-battle-bridge-ignition.mjs';
+import { createExactHeadSourceLoader } from '../stephanos-server/backend-exact-head-loader.mjs';
 
 const restartSource = await readFile(new URL('./windows/restart-approved-stephanos-runtime.ps1', import.meta.url), 'utf8');
 const backendStartSource = await readFile(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
@@ -17,8 +18,8 @@ const backendServerSource = await readFile(backendServerPath, 'utf8');
 
 function backendHeadProofForObservedHeads(observedHeads, expectedHead) {
   const proofFunctionsStart = backendServerSource.indexOf('function minimalBackendChildGitEnvironment()');
-  const firstProofCall = backendServerSource.indexOf('\nenforceBattleBridgeBackendChildExpectedHead();');
-  const proofFunctionsSource = backendServerSource.slice(proofFunctionsStart, firstProofCall);
+  const proofFunctionsEnd = backendServerSource.indexOf('function registerBattleBridgeBackendExactHeadModuleLoader()');
+  const proofFunctionsSource = backendServerSource.slice(proofFunctionsStart, proofFunctionsEnd);
   const remainingHeads = [...observedHeads];
   const spawnSyncImpl = () => ({
     status: 0,
@@ -50,6 +51,16 @@ async function simulateBackendImportBoundary(observedHeads, expectedHead) {
   } catch (error) {
     return { listenerStarted, error };
   }
+}
+
+function runGit(gitExecutable, root, args) {
+  const result = spawnSync(gitExecutable, ['-C', root, ...args], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 5_000,
+  });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  return String(result.stdout || '').trim();
 }
 
 test('restart helper accepts only backend and mission-worker', () => {
@@ -123,6 +134,69 @@ test('backend Node child re-proves exact head after module loading immediately b
     'the second proof must be the only operation before listener/health publication',
   );
   assert.ok(proofOffsets[1] < listenerOffset, 'failed re-proof must prevent server.listen');
+});
+
+test('backend registers an immutable exact-head module loader before application imports', () => {
+  const firstProofOffset = backendServerSource.indexOf('\nenforceBattleBridgeBackendChildExpectedHead();');
+  const loaderRegistrationOffset = backendServerSource.indexOf('\nregisterBattleBridgeBackendExactHeadModuleLoader();');
+  const firstBackendImportOffset = backendServerSource.indexOf("await import('dotenv/config')");
+
+  assert.ok(firstProofOffset >= 0);
+  assert.ok(firstProofOffset < loaderRegistrationOffset);
+  assert.ok(loaderRegistrationOffset < firstBackendImportOffset);
+  assert.match(
+    backendServerSource,
+    /'show',[\s\S]*`\$\{expectedHead\}:\$\{loaderGitPath\}`/,
+    'the loader implementation itself must come from the approved Git object',
+  );
+});
+
+test('immutable module loading admits A during an A to B to A checkout transition', async () => {
+  const gitExecutable = process.platform === 'win32'
+    ? 'C:\\Program Files\\Git\\cmd\\git.exe'
+    : '/usr/bin/git';
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'stephanos-exact-head-loader-'));
+  const modulePath = join(fixtureRoot, 'module.js');
+  try {
+    runGit(gitExecutable, fixtureRoot, ['init', '--quiet']);
+    runGit(gitExecutable, fixtureRoot, ['config', 'user.name', 'Stephanos Test']);
+    runGit(gitExecutable, fixtureRoot, ['config', 'user.email', 'stephanos-test@example.invalid']);
+
+    writeFileSync(modulePath, "export const sourceIdentity = 'A';\n", 'utf8');
+    runGit(gitExecutable, fixtureRoot, ['add', '--', 'module.js']);
+    runGit(gitExecutable, fixtureRoot, ['commit', '--quiet', '-m', 'source A']);
+    const approvedHead = runGit(gitExecutable, fixtureRoot, ['rev-parse', 'HEAD']).toLowerCase();
+
+    writeFileSync(modulePath, "export const sourceIdentity = 'B';\n", 'utf8');
+    runGit(gitExecutable, fixtureRoot, ['add', '--', 'module.js']);
+    runGit(gitExecutable, fixtureRoot, ['commit', '--quiet', '-m', 'source B']);
+    const driftedHead = runGit(gitExecutable, fixtureRoot, ['rev-parse', 'HEAD']).toLowerCase();
+    assert.notEqual(driftedHead, approvedHead);
+
+    const loadExactHeadSource = createExactHeadSourceLoader({
+      canonicalGitDirectory: join(fixtureRoot, '.git'),
+      canonicalRepoRoot: fixtureRoot,
+      expectedHead: approvedHead,
+      gitEnvironment: process.env,
+      gitExecutable,
+    });
+    const moduleUrl = pathToFileURL(modulePath).href;
+    const duringDrift = await loadExactHeadSource(moduleUrl, { format: 'commonjs' }, () => {
+      throw new Error('repository module must not fall through to the mutable checkout');
+    });
+    assert.equal(duringDrift.format, 'module', 'mutable checkout package metadata must not change source format');
+    assert.match(duringDrift.source, /sourceIdentity = 'A'/);
+    assert.doesNotMatch(duringDrift.source, /sourceIdentity = 'B'/);
+
+    runGit(gitExecutable, fixtureRoot, ['checkout', '--quiet', '--detach', approvedHead]);
+    const afterReturn = await loadExactHeadSource(moduleUrl, { format: 'module' }, () => {
+      throw new Error('repository module must not fall through to the mutable checkout');
+    });
+    assert.match(afterReturn.source, /sourceIdentity = 'A'/);
+    assert.equal(runGit(gitExecutable, fixtureRoot, ['rev-parse', 'HEAD']).toLowerCase(), approvedHead);
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 });
 
 test('checkout drift A to B during backend module loading prevents listener publication', async () => {
