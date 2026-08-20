@@ -14,7 +14,7 @@ const MAX_SOURCE_BYTES = 256 * 1024;
 const REVIEWED_REPOSITORY = 'Cheekyfellastef/stephan-os';
 const REVIEWED_PR = 1919;
 const REVIEWED_BRANCH = 'fix/ignition-canonical-convergence-gate-v1';
-const REVIEWED_SOURCE_HEAD = '9941da6e500a7d95d11e8a3654630462cce71a91';
+const REVIEWED_SOURCE_HEAD = '0cbd8318f5da7d815e3f4e30d8ef9a5d1c9feb77';
 const REVIEWED_BASE_SHA = '13f13144730b2a6d94754914dbdf2c254c39567d';
 const SOURCE_RECORD_KEYS = Object.freeze([
   'blobSha', 'content', 'exists', 'path', 'ref', 'repository', 'schemaVersion', 'size',
@@ -110,6 +110,12 @@ function reviewRepair(source, path, findings) {
     ["$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'", 'ignition-repair-git-not-fixed', 'Battle Bridge repair must use fixed canonical Git.'],
     ['function Assert-ExpectedHeadImmediatelyBeforeMutation', 'ignition-repair-pre-mutation-head-gate-missing', 'Every consequential repair stage must retain the exact-head mutation gate.'],
     ['function Test-BackendExactHeadHealth', 'ignition-repair-backend-head-health-missing', 'Backend health must bind HTTP health to the expected source head.'],
+    ['$payload.schemaVersion', 'ignition-repair-backend-schema-identity-missing', 'Backend health must verify the canonical health schema.'],
+    ["'stephanos.backend-health.v1'", 'ignition-repair-backend-schema-value-missing', 'Backend health must require the canonical health schema value.'],
+    ['$payload.backendIdentity.runtimeId', 'ignition-repair-backend-runtime-identity-missing', 'Backend health must verify the canonical runtime identity.'],
+    ["'stephanos-battle-bridge-backend'", 'ignition-repair-backend-runtime-value-missing', 'Backend health must require the canonical backend runtime identifier.'],
+    ['BACKEND_HEALTH_SCHEMA_MISSING_OR_MISMATCH', 'ignition-repair-backend-schema-mismatch-not-blocked', 'Wrong or missing backend schema must fail closed.'],
+    ['BACKEND_HEALTH_RUNTIME_ID_MISSING_OR_MISMATCH', 'ignition-repair-backend-runtime-mismatch-not-blocked', 'Wrong or missing backend runtime identity must fail closed.'],
     ['$payload.backendIdentity.sourceHead', 'ignition-repair-backend-identity-missing', 'Backend health must read the canonical backend source-head identity.'],
     ['BACKEND_HEALTH_SOURCE_HEAD_MISSING_OR_INVALID', 'ignition-repair-backend-missing-head-not-blocked', 'Missing backend source identity must fail closed.'],
     ['BACKEND_HEALTH_SOURCE_HEAD_MISMATCH', 'ignition-repair-backend-head-mismatch-not-blocked', 'Wrong-head backend health must fail closed.'],

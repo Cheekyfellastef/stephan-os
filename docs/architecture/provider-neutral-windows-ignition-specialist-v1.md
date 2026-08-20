@@ -20,11 +20,13 @@ This first child specialist is intentionally head-bound to the current reviewed 
 repository=Cheekyfellastef/stephan-os
 pr=1919
 branch=fix/ignition-canonical-convergence-gate-v1
-sourceHead=9941da6e500a7d95d11e8a3654630462cce71a91
+sourceHead=0cbd8318f5da7d815e3f4e30d8ef9a5d1c9feb77
 baseSha=13f13144730b2a6d94754914dbdf2c254c39567d
 ```
 
-If #1919 head or base moves, this specialist becomes ineligible. A new exact target requires a bounded source update and fresh proof. Head movement never inherits specialist evidence silently.
+The previous exact target `9941da6e500a7d95d11e8a3654630462cce71a91` became ineligible as soon as #1919 advanced. The specialist is deliberately retargeted only by an explicit source change plus fresh proof; head movement never inherits specialist evidence silently.
+
+If #1919 head or base moves again, this specialist becomes ineligible. A new exact target requires another bounded source update and fresh proof.
 
 ## Design
 
@@ -42,6 +44,7 @@ The specialist then verifies the task-class invariants that make the three Windo
 - exact-head gates before consequential mutation;
 - fixed canonical Git/Node/npm boundaries where applicable;
 - exact local and hosted backend health identity;
+- canonical backend health schema `stephanos.backend-health.v1` and runtime ID `stephanos-battle-bridge-backend` are mandatory before an already-healthy backend can bypass convergence;
 - fixed backend and Mission Worker Scheduled Task identities;
 - `MultipleInstances=IgnoreNew` checks around backend restart handoff;
 - atomic, short-lived backend expected-head handoff;

@@ -9,7 +9,8 @@ import {
 const repository = 'Cheekyfellastef/stephan-os';
 const prNumber = 1919;
 const branch = 'fix/ignition-canonical-convergence-gate-v1';
-const sourceHead = '9941da6e500a7d95d11e8a3654630462cce71a91';
+const sourceHead = '0cbd8318f5da7d815e3f4e30d8ef9a5d1c9feb77';
+const priorSourceHead = '9941da6e500a7d95d11e8a3654630462cce71a91';
 const baseSha = '13f13144730b2a6d94754914dbdf2c254c39567d';
 
 const repairSource = String.raw`[CmdletBinding(SupportsShouldProcess = $true)]
@@ -20,6 +21,12 @@ $ErrorActionPreference = 'Stop'
 $canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
 function Assert-ExpectedHeadImmediatelyBeforeMutation {}
 function Test-BackendExactHeadHealth {}
+$payload.schemaVersion
+'stephanos.backend-health.v1'
+$payload.backendIdentity.runtimeId
+'stephanos-battle-bridge-backend'
+BACKEND_HEALTH_SCHEMA_MISSING_OR_MISMATCH
+BACKEND_HEALTH_RUNTIME_ID_MISSING_OR_MISMATCH
 $payload.backendIdentity.sourceHead
 BACKEND_HEALTH_SOURCE_HEAD_MISSING_OR_INVALID
 BACKEND_HEALTH_SOURCE_HEAD_MISMATCH
@@ -149,6 +156,7 @@ test('specialist is exact PR head/base bound and rejects another identity or fin
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ repository: 'other/repo' })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ prNumber: 1918 })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ branch: 'other' })).eligible, false);
+  assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sourceHead: priorSourceHead })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sourceHead: 'b'.repeat(40) })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ baseSha: 'c'.repeat(40) })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sourceHead: 'bad' })).eligible, false);
@@ -218,6 +226,18 @@ test('already-healthy backend exact-head identity gates are mandatory', () => {
   const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources }));
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'ignition-repair-backend-head-mismatch-not-blocked'));
+});
+
+test('canonical backend schema and runtime identity gates are mandatory', () => {
+  const weakened = repairSource
+    .replace('BACKEND_HEALTH_SCHEMA_MISSING_OR_MISMATCH', 'REMOVED_SCHEMA_GATE')
+    .replace('BACKEND_HEALTH_RUNTIME_ID_MISSING_OR_MISMATCH', 'REMOVED_RUNTIME_GATE');
+  const sources = input().sources;
+  sources[0] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[0], weakened);
+  const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'ignition-repair-backend-schema-mismatch-not-blocked'));
+  assert.ok(result.findings.some((item) => item.code === 'ignition-repair-backend-runtime-mismatch-not-blocked'));
 });
 
 test('scheduled backend restart must preserve bounded handoff and IgnoreNew gates', () => {
