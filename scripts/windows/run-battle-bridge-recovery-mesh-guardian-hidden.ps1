@@ -187,11 +187,14 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents
 $mailboxInstallerPath = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-github-command-mailbox.ps1'
 $recoveryInstallerPath = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-recovery-mesh.ps1'
 $launcherPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'))
+$mailboxRunnerPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\battle-bridge-github-command-mailbox-outbox-guard-v1.mjs'))
+$mailboxChildRunnerPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\battle-bridge-github-command-mailbox-with-receipt-index.mjs'))
 $authoritySourcePaths = @(
     'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
     'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
     'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
     'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1',
+    'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
     'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs',
     'scripts/battle-bridge-github-command-mailbox.mjs',
     'scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1',
@@ -270,6 +273,9 @@ if (-not $mailboxHealthy) {
         -or $mailboxInstallerReceiptRaw.installed -ne $true `
         -or $mailboxInstallerReceiptRaw.startedNow -ne $true `
         -or $mailboxInstallerReceiptRaw.receiptIndexEnabled -ne $true `
+        -or $mailboxInstallerReceiptRaw.outboxGuardEnabled -ne $true `
+        -or [string]$mailboxInstallerReceiptRaw.runnerPath -ne $mailboxRunnerPath `
+        -or [string]$mailboxInstallerReceiptRaw.childRunnerPath -ne $mailboxChildRunnerPath `
         -or [int]$mailboxInstallerReceiptRaw.intervalMinutes -ne 5 `
         -or [string]$mailboxInstallerReceiptRaw.runLevel -ne 'Limited' `
         -or $mailboxInstallerReceiptRaw.arbitraryShellAllowed -ne $false `
@@ -283,6 +289,9 @@ if (-not $mailboxHealthy) {
         installed = [bool]$mailboxInstallerReceiptRaw.installed
         startedNow = [bool]$mailboxInstallerReceiptRaw.startedNow
         receiptIndexEnabled = [bool]$mailboxInstallerReceiptRaw.receiptIndexEnabled
+        outboxGuardEnabled = [bool]$mailboxInstallerReceiptRaw.outboxGuardEnabled
+        runnerPath = [string]$mailboxInstallerReceiptRaw.runnerPath
+        childRunnerPath = [string]$mailboxInstallerReceiptRaw.childRunnerPath
         intervalMinutes = [int]$mailboxInstallerReceiptRaw.intervalMinutes
         runLevel = [string]$mailboxInstallerReceiptRaw.runLevel
         arbitraryShellAllowed = [bool]$mailboxInstallerReceiptRaw.arbitraryShellAllowed
