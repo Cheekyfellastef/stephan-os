@@ -36,8 +36,11 @@ import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindows
 import { FORGE_SHADOW_BATTLE_BRIDGE_OPERATION } from '../shared/agents/forgeShadowBattleBridgeAdapterV1.mjs';
 import { publishCodexCapacityToSharedWorkspace } from '../shared/agents/codexCapacitySharedWorkspace.mjs';
 import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/recoveryAdapterBlockerClassifier.mjs';
+import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
+
+export const BATTLE_BRIDGE_MAILBOX_MAX_RECEIPT_PUBLICATION_ATTEMPTS_PER_CYCLE = 1;
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const expectedRepoRoot = resolve(process.env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os');
@@ -826,7 +829,9 @@ export function checkpointMailboxReceiptPublication(state, receipt, publication,
       receipt: JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES)),
     }));
   }
-  state.pendingReceiptPublications = pending.slice(-100);
+  // The segmented outer guard is the durable capacity boundary. Truncating here
+  // would silently discard authority-bearing terminal receipts during an outage.
+  state.pendingReceiptPublications = pending;
   persist(state);
   return publication;
 }
@@ -840,15 +845,17 @@ export function flushMailboxReceiptPublicationOutbox(state, {
   }
   const pending = Array.isArray(state.pendingReceiptPublications) ? state.pendingReceiptPublications : [];
   const retained = [];
+  let attemptedCount = 0;
   let publishedCount = 0;
   for (const entry of pending) {
     const publication = publish(entry.receipt);
+    if (publication?.publicationDeferred !== true) attemptedCount += 1;
     if (publication?.ok === true) publishedCount += 1;
     else retained.push(entry);
   }
-  state.pendingReceiptPublications = retained.slice(-100);
+  state.pendingReceiptPublications = retained;
   persist(state);
-  return Object.freeze({ attemptedCount: pending.length, publishedCount, pendingCount: retained.length });
+  return Object.freeze({ attemptedCount, publishedCount, pendingCount: retained.length });
 }
 
 export function terminalizeRejectedMailboxCommands(state, rejections = [], {
@@ -979,6 +986,48 @@ function postReceipt(receipt) {
     '```',
   ].join('\n');
   return run(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, ['issue', 'comment', String(BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE), '--repo', BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY, '--body', body], { timeout: 120000 });
+}
+
+export function createBoundedMailboxReceiptPublisher({
+  publish = postReceipt,
+  maxAttempts = BATTLE_BRIDGE_MAILBOX_MAX_RECEIPT_PUBLICATION_ATTEMPTS_PER_CYCLE,
+} = {}) {
+  if (typeof publish !== 'function'
+    || !Number.isSafeInteger(maxAttempts)
+    || maxAttempts < 0
+    || maxAttempts > BATTLE_BRIDGE_MAILBOX_MAX_RECEIPT_PUBLICATION_ATTEMPTS_PER_CYCLE) {
+    throw new Error('MAILBOX_RECEIPT_PUBLICATION_BUDGET_INVALID');
+  }
+  let attemptedCount = 0;
+  let deferredCount = 0;
+  return Object.freeze({
+    publish(receipt) {
+      if (attemptedCount >= maxAttempts) {
+        deferredCount += 1;
+        return Object.freeze({
+          ok: false,
+          blocker: 'MAILBOX_RECEIPT_PUBLICATION_DEFERRED',
+          publicationAttempted: false,
+          publicationDeferred: true,
+        });
+      }
+      attemptedCount += 1;
+      const publication = publish(receipt);
+      return Object.freeze({
+        ...(publication && typeof publication === 'object' ? publication : {}),
+        ok: publication?.ok === true,
+        publicationAttempted: true,
+        publicationDeferred: false,
+      });
+    },
+    snapshot() {
+      return Object.freeze({
+        maxAttempts,
+        attemptedCount,
+        deferredCount,
+      });
+    },
+  });
 }
 
 async function installUnattendedSync() {
@@ -1339,13 +1388,16 @@ async function executeSelectedMailboxCommand(selected, receiptRef) {
   });
 }
 
-export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date() } = {}) {
+async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() } = {}) {
   if (process.platform !== 'win32') return { ok: false, blocker: 'WINDOWS_REQUIRED' };
   if (repoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) {
     return { ok: false, blocker: 'CANONICAL_CHECKOUT_REQUIRED', repoRoot, expectedRepoRoot };
   }
   const state = loadState();
-  const publicationOutbox = flushMailboxReceiptPublicationOutbox(state);
+  const publicationBudget = createBoundedMailboxReceiptPublisher();
+  const publicationOutbox = flushMailboxReceiptPublicationOutbox(state, {
+    publish: publicationBudget.publish,
+  });
   const comments = loadBoundedMailboxComments();
   const batch = selectBattleBridgeGitHubCommandBatch(comments, {
     consumedRequestIds: new Set([
@@ -1355,11 +1407,15 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     now: now(),
     maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
   });
-  const rejectedTerminal = terminalizeRejectedMailboxCommands(state, batch.terminalRejections, { now });
+  const rejectedTerminal = terminalizeRejectedMailboxCommands(state, batch.terminalRejections, {
+    now,
+    publish: publicationBudget.publish,
+  });
   if (batch.verdict === 'NO_COMMAND_READY') return Object.freeze({
     ...batch,
     terminalizedRejectionCount: rejectedTerminal.length,
     receiptPublicationOutbox: publicationOutbox,
+    receiptPublicationBudget: publicationBudget.snapshot(),
   });
   if (!batch.ok) return batch;
 
@@ -1379,7 +1435,7 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
       const receiptLocation = writeReceipt(receipt);
       checkpointAcceptedMailboxReceipt(state, receipt);
       const publishable = { ...receipt, receiptRef: receiptLocation.ref };
-      checkpointMailboxReceiptPublication(state, publishable, postReceipt(publishable));
+      checkpointMailboxReceiptPublication(state, publishable, publicationBudget.publish(publishable));
       accepted.set(selected.command.requestId, Object.freeze({ acceptedAt, receiptLocation }));
     },
     executeCommand: async (selected) => {
@@ -1402,7 +1458,7 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
       const receiptLocation = writeReceipt(receipt);
       checkpointTerminalMailboxReceipt(state, receipt);
       const publishable = { ...receipt, receiptRef: receiptLocation.ref };
-      checkpointMailboxReceiptPublication(state, publishable, postReceipt(publishable));
+      checkpointMailboxReceiptPublication(state, publishable, publicationBudget.publish(publishable));
       return Object.freeze({ receipt, execution, receiptLocation });
     },
   });
@@ -1444,8 +1500,33 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     duplicateWorkerAllowed: false,
     terminalizedRejectionCount: rejectedTerminal.length,
     receiptPublicationOutbox: publicationOutbox,
+    receiptPublicationBudget: publicationBudget.snapshot(),
     terminal: Object.freeze(terminal),
   });
+}
+
+export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date() } = {}) {
+  if (process.platform !== 'win32') return { ok: false, blocker: 'WINDOWS_REQUIRED' };
+  const leaseBefore = verifyMailboxOutboxGuardLease();
+  if (!leaseBefore.ok) return Object.freeze({
+    ok: false,
+    blocker: leaseBefore.blocker,
+    finalVerdict: 'MAILBOX_COMMAND_POLL_BLOCKED',
+    duplicateWorkerAllowed: false,
+    arbitraryShellAllowed: false,
+    sourceMutationAccess: false,
+  });
+  const result = await runBattleBridgeGitHubCommandMailboxCore({ now });
+  const leaseAfter = verifyMailboxOutboxGuardLease();
+  if (!leaseAfter.ok) return Object.freeze({
+    ok: false,
+    blocker: leaseAfter.blocker,
+    finalVerdict: 'MAILBOX_COMMAND_POLL_BLOCKED',
+    duplicateWorkerAllowed: false,
+    arbitraryShellAllowed: false,
+    sourceMutationAccess: false,
+  });
+  return result;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
