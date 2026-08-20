@@ -39,6 +39,23 @@ function backendHealthResponse(sourceHead, {
   };
 }
 
+function canonicalSourceTruth(head) {
+  return {
+    branch: 'main',
+    detachedHead: false,
+    hasUpstream: true,
+    upstreamBranch: 'origin/main',
+    workingTreeDirty: false,
+    aheadCount: 0,
+    behindCount: 0,
+    headPublished: true,
+    blockedForRemoteTruth: false,
+    publicationState: 'healthy-synced',
+    head,
+    originHead: head,
+  };
+}
+
 test('supervisor housekeeping preserves exact-head dist and all runtime-owned data', () => {
   const delegated = [];
   const runStepFn = (label, command, args) => {
@@ -222,6 +239,7 @@ test('backend preflight success never invokes approved restart or health fallbac
   let fetchCalls = 0;
   const result = await ensureBackend8787ConvergedBeforeSupervisor({
     platform: 'win32',
+    expectedHead: 'b'.repeat(40),
     runStepFn: (label, command, args) => {
       calls.push({ label, command, args });
       return true;
@@ -248,6 +266,7 @@ test('failed preflight delegates a proven stale canonical backend only to the ap
   const health = [backendHealthResponse(oldHead), backendHealthResponse(currentHead)];
   const result = await ensureBackend8787ConvergedBeforeSupervisor({
     platform: 'win32',
+    expectedHead: currentHead,
     currentHeadFn: () => currentHead,
     fetchFn: async () => health.shift(),
     runStepFn: (label, command, args) => {
@@ -285,6 +304,7 @@ test('same-head or noncanonical 8787 failures remain fail closed without restart
     const calls = [];
     const result = await ensureBackend8787ConvergedBeforeSupervisor({
       platform: 'win32',
+      expectedHead: currentHead,
       currentHeadFn: () => currentHead,
       fetchFn: async () => fixture.response,
       runStepFn: (label, command, args) => {
@@ -305,6 +325,7 @@ test('approved restart must produce exact-current backend health before Ignition
   const health = [backendHealthResponse(oldHead), backendHealthResponse(oldHead)];
   const result = await ensureBackend8787ConvergedBeforeSupervisor({
     platform: 'win32',
+    expectedHead: currentHead,
     currentHeadFn: () => currentHead,
     fetchFn: async () => health.shift(),
     runStepFn: (label) => label === 'backend-8787-approved-stale-restart',
@@ -393,6 +414,118 @@ test('canonical source truth blocks the click path before backend, UI, or superv
   }
 });
 
+test('source head drift before backend blocks every service mutator', async () => {
+  const sharedWorkspace = await mkdtemp(path.join(tmpdir(), 'bb-ignition-head-drift-backend-'));
+  const previousArgs = process.argv;
+  const provenHead = 'a'.repeat(40);
+  const driftedHead = 'b'.repeat(40);
+  const sourceProofs = [canonicalSourceTruth(provenHead), canonicalSourceTruth(driftedHead)];
+  const calls = [];
+  process.argv = [previousArgs[0], previousArgs[1], '--shared-workspace', sharedWorkspace];
+  try {
+    const exitCode = await main({
+      platform: 'win32',
+      sourceTruthFn: () => sourceProofs.shift(),
+      backendPreflightFn: async () => { calls.push('backend'); return { ok: true }; },
+      uiPreflightFn: async () => { calls.push('ui'); },
+      supervisorFn: async () => { calls.push('supervisor'); return { ok: true }; },
+    });
+
+    assert.equal(exitCode, 2);
+    assert.deepEqual(calls, []);
+    const status = JSON.parse(await readFile(path.join(sharedWorkspace, 'status', 'battle-bridge-ignition-supervisor-current.json'), 'utf8'));
+    assert.equal(status.blockerId, 'ignition-exact-head-changed-before-service-mutation');
+  } finally {
+    process.argv = previousArgs;
+    await rm(sharedWorkspace, { recursive: true, force: true });
+  }
+});
+
+test('source head drift between backend and UI blocks every later mutator', async () => {
+  const sharedWorkspace = await mkdtemp(path.join(tmpdir(), 'bb-ignition-head-drift-ui-'));
+  const previousArgs = process.argv;
+  const provenHead = 'a'.repeat(40);
+  const driftedHead = 'b'.repeat(40);
+  const sourceProofs = [
+    canonicalSourceTruth(provenHead),
+    canonicalSourceTruth(provenHead),
+    canonicalSourceTruth(driftedHead),
+  ];
+  const calls = [];
+  process.argv = [previousArgs[0], previousArgs[1], '--shared-workspace', sharedWorkspace];
+  try {
+    const exitCode = await main({
+      platform: 'win32',
+      sourceTruthFn: () => sourceProofs.shift(),
+      backendPreflightFn: async ({ expectedHead }) => {
+        calls.push('backend');
+        assert.equal(expectedHead, provenHead);
+        return { ok: true };
+      },
+      uiPreflightFn: async () => { calls.push('ui'); },
+      supervisorFn: async () => { calls.push('supervisor'); return { ok: true }; },
+    });
+
+    assert.equal(exitCode, 2);
+    assert.deepEqual(calls, ['backend']);
+    const status = JSON.parse(await readFile(path.join(sharedWorkspace, 'status', 'battle-bridge-ignition-supervisor-current.json'), 'utf8'));
+    assert.equal(status.blockerId, 'ignition-exact-head-changed-before-service-mutation');
+  } finally {
+    process.argv = previousArgs;
+    await rm(sharedWorkspace, { recursive: true, force: true });
+  }
+});
+
+test('default backend and UI entry preflights reject a changed fixed head before mutation', async () => {
+  const provenHead = 'a'.repeat(40);
+  const driftedHead = 'b'.repeat(40);
+  const backendMutations = [];
+  const backend = await ensureBackend8787ConvergedBeforeSupervisor({
+    platform: 'win32',
+    expectedHead: provenHead,
+    currentHeadFn: () => driftedHead,
+    runStepFn: (...args) => {
+      backendMutations.push(args);
+      return true;
+    },
+  });
+  assert.equal(backend.ok, false);
+  assert.equal(backend.blocker, 'BACKEND_8787_EXACT_HEAD_CHANGED');
+  assert.deepEqual(backendMutations, []);
+
+  const lateHeads = [provenHead, driftedHead];
+  const lateBackendMutations = [];
+  const lateBackend = await ensureBackend8787ConvergedBeforeSupervisor({
+    platform: 'win32',
+    expectedHead: provenHead,
+    currentHeadFn: () => lateHeads.shift(),
+    fetchFn: async () => backendHealthResponse('c'.repeat(40)),
+    runStepFn: (label) => {
+      lateBackendMutations.push(label);
+      return false;
+    },
+  });
+  assert.equal(lateBackend.ok, false);
+  assert.equal(lateBackend.blocker, 'BACKEND_8787_EXACT_HEAD_CHANGED');
+  assert.deepEqual(lateBackendMutations, ['backend-8787-preflight']);
+
+  const uiMutations = [];
+  await assert.rejects(
+    ensureLiveUiConvergedBeforeSupervisor({
+      platform: 'linux',
+      expectedHead: provenHead,
+      currentHeadFn: () => driftedHead,
+      probeFn: async () => ({ reachable: true, ready: false, currentHead: provenHead }),
+      runStepFn: (...args) => {
+        uiMutations.push(args);
+        return true;
+      },
+    }),
+    /STEPHANOS_UI_4173_EXACT_HEAD_CHANGED/,
+  );
+  assert.deepEqual(uiMutations, []);
+});
+
 test('wrapper and standalone supervisor share the same canonical source collector', async () => {
   const sourceTruthFn = () => ({
     branch: 'main',
@@ -420,7 +553,8 @@ test('wrapper and standalone supervisor share the same canonical source collecto
   });
 
   assert.equal(exitCode, 0);
-  assert.equal(supervisorOptions.sourceTruthFn, sourceTruthFn);
+  assert.notEqual(supervisorOptions.sourceTruthFn, sourceTruthFn);
+  assert.deepEqual(supervisorOptions.sourceTruthFn(), sourceTruthFn());
   assert.equal(supervisorOptions.platform, 'linux');
   assert.equal(typeof supervisorOptions.housekeepFn, 'function');
 });
@@ -437,8 +571,11 @@ test('canonical ignition pins repository-sensitive housekeeping to the source-de
 
 test('second press reuses an existing exact-head UI without spawning another refresh', async () => {
   const refreshCalls = [];
+  const currentHead = 'a'.repeat(40);
   const proof = { reachable: true, ready: true, currentHead: 'abc1234', proof: { ready: true } };
   const result = await ensureLiveUiConvergedBeforeSupervisor({
+    expectedHead: currentHead,
+    currentHeadFn: () => currentHead,
     probeFn: async () => proof,
     runStepFn: (...args) => {
       refreshCalls.push(args);
@@ -453,11 +590,14 @@ test('second press reuses an existing exact-head UI without spawning another ref
 
 test('live stale UI uses the bounded refresh helper and must converge before supervisor starts', async () => {
   const refreshCalls = [];
+  const currentHead = 'a'.repeat(40);
   const before = { reachable: true, ready: false, currentHead: 'abc1234', proof: { ready: false } };
   const after = { reachable: true, ready: true, currentHead: 'abc1234', proof: { ready: true } };
 
   const result = await ensureLiveUiConvergedBeforeSupervisor({
     platform: 'win32',
+    expectedHead: currentHead,
+    currentHeadFn: () => currentHead,
     probeFn: async () => before,
     waitFn: async () => after,
     runStepFn: (label, command, args) => {
@@ -477,8 +617,11 @@ test('live stale UI uses the bounded refresh helper and must converge before sup
 
 test('cold start remains delegated to the complete existing supervisor flow', async () => {
   const refreshCalls = [];
+  const currentHead = 'a'.repeat(40);
   const before = { reachable: false, ready: false, currentHead: 'abc1234', error: 'connection refused' };
   const result = await ensureLiveUiConvergedBeforeSupervisor({
+    expectedHead: currentHead,
+    currentHeadFn: () => currentHead,
     probeFn: async () => before,
     runStepFn: (...args) => {
       refreshCalls.push(args);
@@ -491,9 +634,12 @@ test('cold start remains delegated to the complete existing supervisor flow', as
 });
 
 test('stale refresh without exact-head convergence fails closed', async () => {
+  const currentHead = 'a'.repeat(40);
   await assert.rejects(
     ensureLiveUiConvergedBeforeSupervisor({
       platform: 'win32',
+      expectedHead: currentHead,
+      currentHeadFn: () => currentHead,
       probeFn: async () => ({ reachable: true, ready: false, currentHead: 'abc1234' }),
       waitFn: async () => ({ reachable: true, ready: false, currentHead: 'abc1234', error: 'still stale' }),
       runStepFn: () => true,

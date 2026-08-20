@@ -34,6 +34,79 @@ const SUPERVISOR_PRESERVED_MUTATION_LABELS = new Map([
   ['git-clean-runtime-untracked', 'preserve untracked runtime-owned data; runtime dirt is evidence, not cleanup authority'],
 ]);
 
+function proveExpectedCurrentGitHead({
+  expectedHead,
+  currentHeadFn = getCurrentGitHead,
+  platform = process.platform,
+  blockerPrefix = 'IGNITION',
+} = {}) {
+  const expected = String(expectedHead || '').trim().toLowerCase();
+  if (!SHA40.test(expected)) {
+    return Object.freeze({
+      ok: false,
+      blocker: `${blockerPrefix}_EXPECTED_HEAD_UNPROVEN`,
+      expectedHead: expected,
+      currentHead: '',
+    });
+  }
+
+  let currentHead = '';
+  try {
+    currentHead = String(currentHeadFn({ cwd: repoRoot, platform }) || '').trim().toLowerCase();
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      blocker: `${blockerPrefix}_CURRENT_HEAD_UNPROVEN`,
+      expectedHead: expected,
+      currentHead: '',
+      error: error?.message || String(error),
+    });
+  }
+  if (!SHA40.test(currentHead)) {
+    return Object.freeze({
+      ok: false,
+      blocker: `${blockerPrefix}_CURRENT_HEAD_UNPROVEN`,
+      expectedHead: expected,
+      currentHead,
+    });
+  }
+  if (currentHead !== expected) {
+    return Object.freeze({
+      ok: false,
+      blocker: `${blockerPrefix}_EXACT_HEAD_CHANGED`,
+      expectedHead: expected,
+      currentHead,
+    });
+  }
+  return Object.freeze({ ok: true, expectedHead: expected, currentHead });
+}
+
+export function bindCanonicalSourceTruthToProvenHead({ sourceTruthFn, expectedHead } = {}) {
+  if (typeof sourceTruthFn !== 'function') throw new TypeError('sourceTruthFn must be a function');
+  const expected = String(expectedHead || '').trim().toLowerCase();
+  if (!SHA40.test(expected)) throw new Error('IGNITION_EXPECTED_HEAD_UNPROVEN');
+
+  return (options = {}) => {
+    const sourceTruth = sourceTruthFn(options);
+    if (!evaluateCanonicalIgnitionSourceTruth(sourceTruth).ok) return sourceTruth;
+    const head = String(sourceTruth?.head || '').trim().toLowerCase();
+    const originHead = String(sourceTruth?.originHead || '').trim().toLowerCase();
+    if (head === expected && originHead === expected) return sourceTruth;
+    return Object.freeze({
+      ...sourceTruth,
+      headPublished: false,
+      blockedForRemoteTruth: true,
+      publicationState: 'source-truth-unproven',
+      blocker: Object.freeze({
+        id: 'ignition-exact-head-changed-before-service-mutation',
+        code: 'IGNITION_EXACT_HEAD_CHANGED',
+        detail: 'Canonical source truth changed after the entry proof and before service mutation.',
+        nextOperatorAction: 'Do not mutate runtime services; restore one canonical exact head, then retry Ignition.',
+      }),
+    });
+  };
+}
+
 export function runStep(label, command, args, {
   cwd = repoRoot,
   env = process.env,
@@ -215,6 +288,7 @@ function approvedBackendRestartInvocation(currentHead) {
 
 export async function ensureBackend8787ConvergedBeforeSupervisor({
   platform = process.platform,
+  expectedHead = '',
   runStepFn = runStep,
   currentHeadFn = getCurrentGitHead,
   fetchFn = timeoutFetch,
@@ -223,19 +297,27 @@ export async function ensureBackend8787ConvergedBeforeSupervisor({
     return Object.freeze({ ok: true, action: 'backend-preflight-skipped-non-windows', restartAttempted: false });
   }
 
-  const starter = backendStarterInvocation();
-  if (runStepFn('backend-8787-preflight', starter.command, [...starter.args])) {
-    return Object.freeze({ ok: true, action: 'backend-preflight-pass', restartAttempted: false });
-  }
-
-  const currentHead = String(currentHeadFn({ cwd: repoRoot }) || '').trim().toLowerCase();
-  if (!SHA40.test(currentHead)) {
+  const entryHeadProof = proveExpectedCurrentGitHead({
+    expectedHead,
+    currentHeadFn,
+    platform,
+    blockerPrefix: 'BACKEND_8787',
+  });
+  if (!entryHeadProof.ok) {
     return Object.freeze({
       ok: false,
       action: 'backend-preflight-blocked',
-      blocker: 'BACKEND_8787_CURRENT_HEAD_UNPROVEN',
+      blocker: entryHeadProof.blocker,
+      expectedHead: entryHeadProof.expectedHead,
+      currentHead: entryHeadProof.currentHead,
       restartAttempted: false,
     });
+  }
+
+  const currentHead = entryHeadProof.currentHead;
+  const starter = backendStarterInvocation();
+  if (runStepFn('backend-8787-preflight', starter.command, [...starter.args])) {
+    return Object.freeze({ ok: true, action: 'backend-preflight-pass', restartAttempted: false });
   }
 
   const before = await probeCanonicalBackendHealth({ fetchFn });
@@ -253,6 +335,23 @@ export async function ensureBackend8787ConvergedBeforeSupervisor({
   }
 
   console.log(`[IGNITION ENTRY] 8787 preflight: canonical stale backend ${before.sourceHead} occupies the port; delegating replacement to the approved exact-head restart primitive for ${currentHead}.`);
+  const restartHeadProof = proveExpectedCurrentGitHead({
+    expectedHead,
+    currentHeadFn,
+    platform,
+    blockerPrefix: 'BACKEND_8787',
+  });
+  if (!restartHeadProof.ok) {
+    return Object.freeze({
+      ok: false,
+      action: 'backend-preflight-blocked',
+      blocker: restartHeadProof.blocker,
+      expectedHead: restartHeadProof.expectedHead,
+      currentHead: restartHeadProof.currentHead,
+      observedSourceHead: before.sourceHead,
+      restartAttempted: false,
+    });
+  }
   const restart = approvedBackendRestartInvocation(currentHead);
   const restarted = runStepFn('backend-8787-approved-stale-restart', restart.command, [...restart.args]);
   if (!restarted) {
@@ -289,10 +388,11 @@ export async function ensureBackend8787ConvergedBeforeSupervisor({
 
 export async function probeLiveUiExactHead({
   currentHeadFn = getCurrentGitHead,
+  platform = process.platform,
   proofFn = collectServedRuntimeExactHeadProof,
   fetchFn = timeoutFetch,
 } = {}) {
-  const currentHead = currentHeadFn({ cwd: repoRoot });
+  const currentHead = currentHeadFn({ cwd: repoRoot, platform });
   try {
     const proof = await proofFn({ currentHead, fetchFn });
     return {
@@ -340,11 +440,24 @@ export async function waitForLiveUiExactHead({
 
 export async function ensureLiveUiConvergedBeforeSupervisor({
   platform = process.platform,
+  expectedHead = '',
+  currentHeadFn = getCurrentGitHead,
   probeFn = probeLiveUiExactHead,
   waitFn = waitForLiveUiExactHead,
   runStepFn = runStep,
 } = {}) {
-  const before = await probeFn();
+  const before = await probeFn({ currentHeadFn, platform });
+  const entryHeadProof = proveExpectedCurrentGitHead({
+    expectedHead,
+    currentHeadFn,
+    platform,
+    blockerPrefix: 'STEPHANOS_UI_4173',
+  });
+  if (!entryHeadProof.ok) {
+    const error = new Error(`${entryHeadProof.blocker}: expected ${entryHeadProof.expectedHead || 'unproven'}, observed ${entryHeadProof.currentHead || 'unproven'}.`);
+    error.code = entryHeadProof.blocker;
+    throw error;
+  }
 
   if (!before.reachable) {
     console.log(`[IGNITION ENTRY] 4173 preflight: no live UI proof available (${before.error || 'listener unavailable'}); the full supervisor remains responsible for cold-start repair.`);
@@ -406,6 +519,7 @@ export async function writePreSupervisorFailureStatus({
 export async function main({
   platform = process.platform,
   sourceTruthFn = collectCanonicalIgnitionSourceTruth,
+  currentHeadFn = getCurrentGitHead,
   backendPreflightFn = ensureBackend8787ConvergedBeforeSupervisor,
   uiPreflightFn = ensureLiveUiConvergedBeforeSupervisor,
   supervisorFn = runBattleBridgeIgnitionSupervisor,
@@ -413,7 +527,7 @@ export async function main({
   process.chdir(repoRoot);
   const sharedWorkspace = sharedWorkspaceFromArgs();
 
-  const sourceTruth = sourceTruthFn();
+  const sourceTruth = sourceTruthFn({ cwd: repoRoot, platform });
   const canonicalSourceTruth = evaluateCanonicalIgnitionSourceTruth(sourceTruth);
   if (!canonicalSourceTruth.ok) {
     await writePreSupervisorFailureStatus({
@@ -427,8 +541,27 @@ export async function main({
     return 2;
   }
 
+  const expectedHead = String(canonicalSourceTruth.sourceTruth.head || '').trim().toLowerCase();
+  const boundSourceTruthFn = bindCanonicalSourceTruthToProvenHead({ sourceTruthFn, expectedHead });
+  const proveSourceTruthBeforeMutation = async () => {
+    const nextSourceTruth = boundSourceTruthFn({ cwd: repoRoot, platform });
+    const nextCanonicalSourceTruth = evaluateCanonicalIgnitionSourceTruth(nextSourceTruth);
+    if (nextCanonicalSourceTruth.ok) return true;
+    const sourceBlocker = nextCanonicalSourceTruth.blocker || {};
+    await writePreSupervisorFailureStatus({
+      sharedWorkspace,
+      phase: 'source truth',
+      blockerId: sourceBlocker.id || 'source-truth-unproven',
+      detail: sourceBlocker.detail || 'Canonical source truth changed before service mutation.',
+      nextOperatorAction: sourceBlocker.nextOperatorAction || 'Restore one canonical exact head, then retry Ignition.',
+    });
+    console.error(`[IGNITION ENTRY] Battle Bridge preflight blocked because canonical source truth changed before service mutation (${sourceBlocker.id || 'source-truth-unproven'}).`);
+    return false;
+  };
+
   if (platform === 'win32') {
-    const backend = await backendPreflightFn({ platform });
+    if (!await proveSourceTruthBeforeMutation()) return 2;
+    const backend = await backendPreflightFn({ platform, expectedHead, currentHeadFn });
     if (!backend.ok) {
       await writePreSupervisorFailureStatus({
         sharedWorkspace,
@@ -442,8 +575,9 @@ export async function main({
     }
   }
 
+  if (!await proveSourceTruthBeforeMutation()) return 2;
   try {
-    await uiPreflightFn({ platform });
+    await uiPreflightFn({ platform, expectedHead, currentHeadFn });
   } catch (error) {
     await writePreSupervisorFailureStatus({
       sharedWorkspace,
@@ -461,7 +595,7 @@ export async function main({
     housekeepFn: (options) => runSupervisorHousekeepPreservingLiveRuntime(options, { platform }),
     // Re-run the same fixed collector inside the standalone supervisor before
     // its own housekeeping boundary; do not fall back to a weaker adapter.
-    sourceTruthFn,
+    sourceTruthFn: boundSourceTruthFn,
   });
 
   return result.ok ? 0 : 2;
