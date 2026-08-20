@@ -169,7 +169,7 @@ test('live source collector includes meaningful Git dirt instead of silently ass
   assert.equal(result.publicationState, 'local-uncommitted');
   assert.equal(result.workingTreeDirty, true);
   assert.equal(result.blockedForRemoteTruth, true);
-  assert.deepEqual(calls[0], ['git', 'fetch', '--prune', 'origin', 'main']);
+  assert.deepEqual(calls[0], ['git', 'fetch', '--prune', 'origin', 'main:refs/remotes/origin/main']);
   assert.deepEqual(calls[1], ['git', 'status', '--porcelain=v1']);
 });
 
@@ -177,7 +177,7 @@ test('live source collector fails closed when current origin/main cannot be fetc
   const result = collectCanonicalIgnitionSourceTruth({
     cwd: '/canonical/repo',
     execFile(command, args) {
-      assert.deepEqual([command, ...args], ['git', 'fetch', '--prune', 'origin', 'main']);
+      assert.deepEqual([command, ...args], ['git', 'fetch', '--prune', 'origin', 'main:refs/remotes/origin/main']);
       throw new Error('offline');
     },
   });
