@@ -94,9 +94,10 @@ test('backend repair child source requires fixed exact-head proof immediately be
   assert.doesNotMatch(repairPowerShell, /\$localResult = Test-Url/);
   assert.match(backendPowerShell, /Backend startup expected-head binding mismatch/);
   assert.match(backendPowerShell, /Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend process start'/);
-  assert.match(backendPowerShell, /Publish-ExactHeadBackendBootstrap/);
+  assert.match(backendPowerShell, /Get-ExactHeadBackendBootstrapBase64/);
   assert.match(backendPowerShell, /Start-Process -FilePath \$canonicalNode/);
-  assert.match(backendPowerShell, /backend-bootstrap-\$headSha\.mjs/);
+  assert.match(backendPowerShell, /STEPHANOS_BACKEND_BOOTSTRAP_BASE64/);
+  assert.match(backendPowerShell, /--input-type=module', '--eval'/);
   assert.doesNotMatch(backendPowerShell, /Start-Process -FilePath \$canonicalNpm/);
 });
 

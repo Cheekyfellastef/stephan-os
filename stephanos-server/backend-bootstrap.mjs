@@ -4,11 +4,19 @@ import { register } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const bootstrapSourceFile = fileURLToPath(import.meta.url);
+const bootstrapDataUrlPrefix = 'data:text/javascript;base64,';
+const bootstrapIsProcessBound = import.meta.url.startsWith(bootstrapDataUrlPrefix);
+const bootstrapSourceFile = bootstrapIsProcessBound ? '' : fileURLToPath(import.meta.url);
+const processBoundBootstrapSource = bootstrapIsProcessBound
+  ? Buffer.from(import.meta.url.slice(bootstrapDataUrlPrefix.length), 'base64').toString('utf8')
+  : '';
 const canonicalRepoRoot = resolve(
   String(process.env.STEPHANOS_BACKEND_REPO_ROOT || '').trim()
-    || resolve(dirname(bootstrapSourceFile), '..'),
+    || (bootstrapSourceFile ? resolve(dirname(bootstrapSourceFile), '..') : ''),
 );
+if (bootstrapIsProcessBound && !String(process.env.STEPHANOS_BACKEND_REPO_ROOT || '').trim()) {
+  throw new Error('BACKEND_CHILD_REPO_ROOT_REQUIRED');
+}
 const canonicalGitDirectory = resolve(canonicalRepoRoot, '.git');
 const expectedHead = String(process.env.STEPHANOS_BACKEND_SOURCE_HEAD || '').trim().toLowerCase();
 const gitExecutable = process.platform === 'win32'
@@ -106,7 +114,9 @@ function proveExpectedHead() {
 if (expectedHead) {
   proveExpectedHead();
   const expectedBootstrapSource = readExactHeadBlob('stephanos-server/backend-bootstrap.mjs', 512 * 1024);
-  const observedBootstrapSource = readFileSync(bootstrapSourceFile, 'utf8');
+  const observedBootstrapSource = bootstrapIsProcessBound
+    ? processBoundBootstrapSource
+    : readFileSync(bootstrapSourceFile, 'utf8');
   const normalizeText = (value) => String(value).replace(/\r\n/g, '\n');
   if (normalizeText(observedBootstrapSource) !== normalizeText(expectedBootstrapSource)) {
     throw new Error('BACKEND_CHILD_EXACT_HEAD_BOOTSTRAP_SOURCE_MISMATCH');

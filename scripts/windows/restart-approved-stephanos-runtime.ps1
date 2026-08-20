@@ -79,14 +79,11 @@ function Get-VerifiedBackendListener {
     if (-not $process) { Stop-WithBlocker 'BACKEND_LISTENER_PROCESS_MISSING' }
     $executable = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
     if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { Stop-WithBlocker 'BACKEND_LISTENER_NOT_CANONICAL_NODE' }
-    if (-not $env:USERPROFILE) { Stop-WithBlocker 'BACKEND_LISTENER_USERPROFILE_MISSING' }
-    $bootstrapRuntimePath = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE "Documents\Stephanos-openclaw-workspace\control\backend-runtime\backend-bootstrap-$ExpectedHead.mjs"))
+    $canonicalBootstrapEval = "import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)"
     $commandLine = (([string]$process.CommandLine -replace '\s+', ' ').Trim())
     $expectedCommands = @(
-        "`"$canonicalNode`" `"$bootstrapRuntimePath`"",
-        "`"$canonicalNode`" $bootstrapRuntimePath",
-        "$canonicalNode `"$bootstrapRuntimePath`"",
-        "$canonicalNode $bootstrapRuntimePath"
+        "`"$canonicalNode`" --input-type=module --eval `"$canonicalBootstrapEval`"",
+        "$canonicalNode --input-type=module --eval `"$canonicalBootstrapEval`""
     )
     if (-not @($expectedCommands | Where-Object { [string]::Equals($commandLine, $_, [System.StringComparison]::OrdinalIgnoreCase) }).Count) {
         Stop-WithBlocker 'BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED'

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -220,7 +220,7 @@ test('immutable module loading admits A during an A to B to A checkout transitio
   }
 });
 
-test('materialized production bootstrap rejects package, bootstrap, server, and replace-ref drift from A to B', () => {
+test('process-bound production bootstrap rejects package, runtime bootstrap, server, and replace-ref drift from A to B', () => {
   const gitExecutable = process.platform === 'win32'
     ? 'C:\\Program Files\\Git\\cmd\\git.exe'
     : '/usr/bin/git';
@@ -231,6 +231,7 @@ test('materialized production bootstrap rejects package, bootstrap, server, and 
   const fixturePackage = join(fixtureRoot, 'package.json');
   const alternateEntry = join(fixtureRoot, 'alternate-b.mjs');
   const runtimeBootstrap = join(fixtureRoot, 'runtime', 'backend-bootstrap-exact-a.mjs');
+  const hostileBootstrapSentinel = join(fixtureRoot, 'runtime', 'bootstrap-b-executed.txt');
   try {
     mkdirSync(fixtureServerRoot, { recursive: true });
     runGit(gitExecutable, fixtureRoot, ['init', '--quiet']);
@@ -245,7 +246,13 @@ test('materialized production bootstrap rejects package, bootstrap, server, and 
     const approvedHead = runGit(gitExecutable, fixtureRoot, ['rev-parse', 'HEAD']).toLowerCase();
 
     const packageB = '{"scripts":{"stephanos:backend":"node alternate-b.mjs"}}\n';
-    const bootstrapB = "console.log('BOOTSTRAP_B_EXECUTED');\n" + backendBootstrapSource;
+    const bootstrapB = [
+      "import { writeFileSync as hostileWriteFileSync } from 'node:fs';",
+      "hostileWriteFileSync(process.env.STEPHANOS_TEST_BOOTSTRAP_SENTINEL, 'BOOTSTRAP_B_EXECUTED');",
+      "hostileWriteFileSync(process.env.STEPHANOS_TEST_RUNTIME_BOOTSTRAP, Buffer.from(process.env.STEPHANOS_TEST_APPROVED_BOOTSTRAP_BASE64, 'base64'));",
+      "console.log('BOOTSTRAP_B_EXECUTED');",
+      backendBootstrapSource,
+    ].join('\n');
     const serverB = "console.log('PRODUCTION_ENTRY_B');\n";
     const alternateB = "console.log('ALTERNATE_PACKAGE_ENTRY_B');\n";
     writeFileSync(fixturePackage, packageB, 'utf8');
@@ -272,15 +279,21 @@ test('materialized production bootstrap rejects package, bootstrap, server, and 
     });
     assert.equal(exactBootstrap.status, 0, exactBootstrap.stderr || exactBootstrap.error?.message);
     mkdirSync(join(fixtureRoot, 'runtime'), { recursive: true });
-    writeFileSync(runtimeBootstrap, exactBootstrap.stdout, 'utf8');
+    writeFileSync(runtimeBootstrap, bootstrapB, 'utf8');
+    const bootstrapBase64 = Buffer.from(exactBootstrap.stdout, 'utf8').toString('base64');
+    const bootstrapEval = "import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)";
 
-    const child = spawnSync(process.execPath, [runtimeBootstrap], {
+    const child = spawnSync(process.execPath, ['--input-type=module', '--eval', bootstrapEval], {
       cwd: fixtureRoot,
       env: {
         ...process.env,
         GIT_NO_REPLACE_OBJECTS: '0',
+        STEPHANOS_BACKEND_BOOTSTRAP_BASE64: bootstrapBase64,
         STEPHANOS_BACKEND_REPO_ROOT: fixtureRoot,
         STEPHANOS_BACKEND_SOURCE_HEAD: approvedHead,
+        STEPHANOS_TEST_APPROVED_BOOTSTRAP_BASE64: bootstrapBase64,
+        STEPHANOS_TEST_BOOTSTRAP_SENTINEL: hostileBootstrapSentinel,
+        STEPHANOS_TEST_RUNTIME_BOOTSTRAP: runtimeBootstrap,
       },
       encoding: 'utf8',
       windowsHide: true,
@@ -288,6 +301,8 @@ test('materialized production bootstrap rejects package, bootstrap, server, and 
     });
     assert.equal(child.status, 0, child.stderr || child.error?.message);
     assert.match(String(child.stdout || ''), /PRODUCTION_ENTRY_A/);
+    assert.match(readFileSync(runtimeBootstrap, 'utf8'), /BOOTSTRAP_B_EXECUTED/);
+    assert.equal(existsSync(hostileBootstrapSentinel), false);
     assert.doesNotMatch(String(child.stdout || ''), /PRODUCTION_ENTRY_B/);
     assert.doesNotMatch(String(child.stdout || ''), /BOOTSTRAP_B_EXECUTED|ALTERNATE_PACKAGE_ENTRY_B/);
   } finally {
@@ -381,7 +396,8 @@ test('backend Node child ignores hostile inherited Git repository-selection vari
 
 test('backend restart terminates only the verified 8787 Stephanos Node listener', () => {
   assert.match(restartSource, /Get-NetTCPConnection -LocalPort 8787 -State Listen/);
-  assert.match(restartSource, /backend-runtime\\backend-bootstrap-\$ExpectedHead\.mjs/);
+  assert.match(restartSource, /--input-type=module --eval/);
+  assert.match(restartSource, /STEPHANOS_BACKEND_BOOTSTRAP_BASE64/);
   assert.match(restartSource, /BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED/);
   assert.match(restartSource, /Stop-Process -Id \$listener\.ProcessId -Force/);
   assert.match(restartSource, /stephanos-backend-runtime\.json/);
@@ -428,10 +444,13 @@ test('backend starter proves canonical main and writes a bounded exact-head runt
   assert.match(backendStartSource, /headSha = \$HeadSha/);
   assert.match(backendStartSource, /taskName = 'Stephanos Battle Bridge Backend'/);
   assert.match(backendStartSource, /pathValuesPublished = \$false/);
-  assert.match(backendStartSource, /function Publish-ExactHeadBackendBootstrap/);
+  assert.match(backendStartSource, /function Get-ExactHeadBackendBootstrapBase64/);
   assert.match(backendStartSource, /'show', "\$\{HeadSha\}:\$bootstrapGitPath"/);
-  assert.match(backendStartSource, /hash-object "--path=\$bootstrapGitPath" \$temporaryPath/);
-  assert.match(backendStartSource, /backend-bootstrap-\$headSha\.mjs/);
+  assert.match(backendStartSource, /ReadAllBytes\(\$temporaryPath\)/);
+  assert.match(backendStartSource, /ComputeHash\(\$blobBytes\)/);
+  assert.match(backendStartSource, /STEPHANOS_BACKEND_BOOTSTRAP_BASE64 = Get-ExactHeadBackendBootstrapBase64/);
+  assert.match(backendStartSource, /--input-type=module', '--eval'/);
+  assert.doesNotMatch(backendStartSource, /backend-bootstrap-\$headSha\.mjs/);
   assert.match(backendStartSource, /Start-Process -FilePath \$canonicalNode/);
   assert.doesNotMatch(backendStartSource, /Start-Process -FilePath \$canonicalNpm/);
   assert.match(backendStartSource, /Get-NetTCPConnection -LocalPort 8787 -State Listen/);

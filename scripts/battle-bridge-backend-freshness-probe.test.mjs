@@ -80,8 +80,9 @@ test('Windows backend recovery authority pins every executable, normalized liste
   assert.match(starter, /StringComparison\]::OrdinalIgnoreCase/);
   assert.match(starter, /function Test-CanonicalBackendCommandLine/);
   assert.match(starter, /-replace '\\s\+', ' '/);
-  assert.match(starter, /backend-bootstrap-\$headSha\.mjs/);
-  assert.match(starter, /Publish-ExactHeadBackendBootstrap/);
+  assert.match(starter, /STEPHANOS_BACKEND_BOOTSTRAP_BASE64/);
+  assert.match(starter, /Get-ExactHeadBackendBootstrapBase64/);
+  assert.match(starter, /--input-type=module', '--eval'/);
   assert.match(starter, /ProcessStartTimeUtc/);
   assert.match(starter, /Publish-VerifiedBackendRuntimeReceipt/);
   assert.match(starter, /\$existingListener[\s\S]*if \(\$existingListener\)[\s\S]*Publish-VerifiedBackendRuntimeReceipt[\s\S]*exit 0/);

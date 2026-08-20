@@ -80,18 +80,12 @@ function Get-TaskHealth {
 function Test-CanonicalBackendCommandLine {
     param([string]$CommandLine, [string]$ExpectedSourceHead)
     $commandLine = (([string]$CommandLine -replace '\s+', ' ').Trim())
-    $bootstrapRuntimePath = [System.IO.Path]::GetFullPath((Join-Path $workspaceRoot "control\backend-runtime\backend-bootstrap-$ExpectedSourceHead.mjs"))
-    $expectedQuotedCommand = "`"$canonicalNode`" `"$bootstrapRuntimePath`""
-    $expectedUnquotedCommand = "`"$canonicalNode`" $bootstrapRuntimePath"
-    if ([string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase) `
-        -or [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $true
-    }
-    $additionalExpectedCommands = @(
-        "$canonicalNode `"$bootstrapRuntimePath`"",
-        "$canonicalNode $bootstrapRuntimePath"
+    $canonicalBootstrapEval = "import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)"
+    $expectedCommands = @(
+        "`"$canonicalNode`" --input-type=module --eval `"$canonicalBootstrapEval`"",
+        "$canonicalNode --input-type=module --eval `"$canonicalBootstrapEval`""
     )
-    foreach ($expectedCommand in $additionalExpectedCommands) {
+    foreach ($expectedCommand in $expectedCommands) {
         if ([string]::Equals($commandLine, $expectedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
             return $true
         }

@@ -9,6 +9,7 @@ $ErrorActionPreference = 'Stop'
 $canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
 $canonicalNpm = 'C:\Program Files\nodejs\npm.cmd'
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
+$canonicalBootstrapEval = "import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)"
 $env:GIT_NO_REPLACE_OBJECTS = '1'
 $runtimeMemoryPath = 'stephanos-server/data/memory/durable-memory.json'
 $runtimeDistPrefix = 'apps/stephanos/dist/'
@@ -29,17 +30,11 @@ function Test-BackendHealth {
 function Test-CanonicalBackendCommandLine {
     param([string]$CommandLine)
     $commandLine = (([string]$CommandLine -replace '\s+', ' ').Trim())
-    $expectedQuotedCommand = "`"$canonicalNode`" `"$canonicalBootstrapRuntimePath`""
-    $expectedUnquotedCommand = "`"$canonicalNode`" $canonicalBootstrapRuntimePath"
-    if ([string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase) `
-        -or [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $true
-    }
-    $additionalExpectedCommands = @(
-        "$canonicalNode `"$canonicalBootstrapRuntimePath`"",
-        "$canonicalNode $canonicalBootstrapRuntimePath"
+    $expectedCommands = @(
+        "`"$canonicalNode`" --input-type=module --eval `"$canonicalBootstrapEval`"",
+        "$canonicalNode --input-type=module --eval `"$canonicalBootstrapEval`""
     )
-    foreach ($expectedCommand in $additionalExpectedCommands) {
+    foreach ($expectedCommand in $expectedCommands) {
         if ([string]::Equals($commandLine, $expectedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
             return $true
         }
@@ -278,8 +273,6 @@ $runtimeDistDirty = [bool]$trackedAssessment.RuntimeDistDirty
 $healthUrl = 'http://127.0.0.1:8787/api/health'
 $userHome = if ($env:USERPROFILE) { $env:USERPROFILE } elseif ($env:HOME) { $env:HOME } else { throw 'USERPROFILE or HOME is required.' }
 $workspaceRoot = Join-Path $userHome 'Documents\Stephanos-openclaw-workspace'
-$bootstrapRuntimeDirectory = Join-Path $workspaceRoot 'control\backend-runtime'
-$canonicalBootstrapRuntimePath = Join-Path $bootstrapRuntimeDirectory "backend-bootstrap-$headSha.mjs"
 $logsDir = Join-Path $repoRoot 'logs\battle-bridge'
 if (-not (Test-Path -LiteralPath $logsDir)) {
     New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
@@ -312,13 +305,12 @@ function Write-LatestBackendErrorTail {
     Get-Content -Path $latestStderr.FullName -Tail $TailLineCount | ForEach-Object { Write-Log $_ }
 }
 
-function Publish-ExactHeadBackendBootstrap {
+function Get-ExactHeadBackendBootstrapBase64 {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
-        [Parameter(Mandatory = $true)][string]$HeadSha,
-        [Parameter(Mandatory = $true)][string]$RuntimePath
+        [Parameter(Mandatory = $true)][string]$HeadSha
     )
-    if ($RepositoryRoot.Contains('"') -or $RuntimePath.Contains('"')) {
+    if ($RepositoryRoot.Contains('"')) {
         throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_PATH_INVALID'
     }
     $bootstrapGitPath = 'stephanos-server/backend-bootstrap.mjs'
@@ -327,8 +319,7 @@ function Publish-ExactHeadBackendBootstrap {
     $expectedBlob = ([string]($expectedBlobOutput | Select-Object -First 1)).Trim().ToLowerInvariant()
     if ($expectedBlob -notmatch '^[0-9a-f]{40}$') { throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_BLOB_PROOF_INVALID' }
 
-    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $RuntimePath)) | Out-Null
-    $temporaryPath = "${RuntimePath}.$PID.tmp"
+    $temporaryPath = Join-Path ([System.IO.Path]::GetTempPath()) "stephanos-backend-bootstrap-$PID-$([guid]::NewGuid().ToString('N')).tmp"
     $temporaryErrorPath = "${temporaryPath}.stderr"
     try {
         Remove-Item -LiteralPath $temporaryPath, $temporaryErrorPath -Force -ErrorAction SilentlyContinue
@@ -344,11 +335,23 @@ function Publish-ExactHeadBackendBootstrap {
         if ($materialization.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $temporaryPath -PathType Leaf)) {
             throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_MATERIALIZATION_FAILED'
         }
-        $observedBlobOutput = @(& $canonicalGit hash-object "--path=$bootstrapGitPath" $temporaryPath 2>$null)
-        if ($LASTEXITCODE -ne 0) { throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_HASH_FAILED' }
-        $observedBlob = ([string]($observedBlobOutput | Select-Object -First 1)).Trim().ToLowerInvariant()
+        $bootstrapBytes = [System.IO.File]::ReadAllBytes($temporaryPath)
+        if ($bootstrapBytes.Length -le 0 -or $bootstrapBytes.Length -gt 524288) {
+            throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_SIZE_INVALID'
+        }
+        $headerBytes = [System.Text.Encoding]::UTF8.GetBytes("blob $($bootstrapBytes.Length)`0")
+        $blobBytes = New-Object byte[] ($headerBytes.Length + $bootstrapBytes.Length)
+        [System.Buffer]::BlockCopy($headerBytes, 0, $blobBytes, 0, $headerBytes.Length)
+        [System.Buffer]::BlockCopy($bootstrapBytes, 0, $blobBytes, $headerBytes.Length, $bootstrapBytes.Length)
+        $sha1 = [System.Security.Cryptography.SHA1]::Create()
+        try {
+            $observedBlob = -join ($sha1.ComputeHash($blobBytes) | ForEach-Object { $_.ToString('x2') })
+        }
+        finally {
+            $sha1.Dispose()
+        }
         if ($observedBlob -ne $expectedBlob) { throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_HASH_MISMATCH' }
-        Move-Item -LiteralPath $temporaryPath -Destination $RuntimePath -Force
+        return [Convert]::ToBase64String($bootstrapBytes)
     }
     finally {
         Remove-Item -LiteralPath $temporaryPath, $temporaryErrorPath -Force -ErrorAction SilentlyContinue
@@ -382,21 +385,26 @@ if ($existingListener) {
     exit 0
 }
 
-$arguments = @("`"$canonicalBootstrapRuntimePath`"")
+$arguments = @('--input-type=module', '--eval', "`"$canonicalBootstrapEval`"")
 $env:STEPHANOS_BACKEND_SOURCE_HEAD = $headSha
 $env:STEPHANOS_BACKEND_REPO_ROOT = $repoRoot
-Write-Log ("Starting backend with fixed Node and materialized exact-head bootstrap: {0} {1}" -f $canonicalNode, ($arguments -join ' '))
+Write-Log ("Starting backend with fixed Node and process-bound exact-head bootstrap: {0} {1}" -f $canonicalNode, ($arguments -join ' '))
 if ($PSCmdlet.ShouldProcess("$canonicalNode $($arguments -join ' ')", 'Start Stephanos backend')) {
-    Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'exact-head bootstrap materialization' | Out-Null
-    Publish-ExactHeadBackendBootstrap -RepositoryRoot $repoRoot -HeadSha $headSha -RuntimePath $canonicalBootstrapRuntimePath
+    Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'exact-head bootstrap capture' | Out-Null
+    $env:STEPHANOS_BACKEND_BOOTSTRAP_BASE64 = Get-ExactHeadBackendBootstrapBase64 -RepositoryRoot $repoRoot -HeadSha $headSha
     Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend process start' | Out-Null
-    $process = Start-Process -FilePath $canonicalNode `
-        -ArgumentList $arguments `
-        -WorkingDirectory $repoRoot `
-        -RedirectStandardOutput $stdoutLogPath `
-        -RedirectStandardError $stderrLogPath `
-        -WindowStyle Hidden `
-        -PassThru
+    try {
+        $process = Start-Process -FilePath $canonicalNode `
+            -ArgumentList $arguments `
+            -WorkingDirectory $repoRoot `
+            -RedirectStandardOutput $stdoutLogPath `
+            -RedirectStandardError $stderrLogPath `
+            -WindowStyle Hidden `
+            -PassThru
+    }
+    finally {
+        Remove-Item Env:STEPHANOS_BACKEND_BOOTSTRAP_BASE64 -ErrorAction SilentlyContinue
+    }
     Write-Log ("Start-Process launched with PID {0}." -f $process.Id)
 }
 else {
