@@ -260,6 +260,38 @@ test('safe owner rejection is terminalized once without an accepted state', () =
   assert.deepEqual(state.consumedRequestIds, ['req-1507-rejected-1']);
 });
 
+test('expired protected merge rejection is terminalized from the selector allowlist', () => {
+  const rejection = {
+    blocker: 'PROTECTED_MERGE_EXPIRED',
+    commentUrl: 'https://github.com/Cheekyfellastef/stephan-os/issues/1507#issuecomment-8',
+    command: {
+      schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+      requestId: 'req-protected-merge-expired-1',
+      operation: 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE',
+      repository: 'Cheekyfellastef/stephan-os',
+      issueNumber: 1507,
+      branch: 'main',
+      operatorApproval: 'operator-approved',
+      expectedHead: 'a'.repeat(40),
+      expiresAt: '2026-08-11T11:00:00.000Z',
+    },
+  };
+  const receipt = buildRejectedMailboxTerminalReceipt(rejection, '2026-08-11T11:30:00.000Z');
+  assert.equal(receipt.state, 'BLOCKED');
+  assert.equal(receipt.acceptedAt, '');
+  assert.equal(receipt.blocker, 'PROTECTED_MERGE_EXPIRED');
+});
+
+test('look-alike protected merge rejection outside the selector allowlist is rejected', () => {
+  assert.throws(() => buildRejectedMailboxTerminalReceipt({
+    blocker: 'PROTECTED_MERGE_FORGED_TERMINAL_CODE',
+    command: {
+      requestId: 'req-protected-merge-forged-1',
+      operation: 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE',
+    },
+  }, '2026-08-11T11:30:00.000Z'), /MAILBOX_REJECTION_RECEIPT_INVALID/);
+});
+
 test('one shared publication budget pre-defers sustained rejection debt without loss or identity drift', () => {
   assert.equal(BATTLE_BRIDGE_MAILBOX_MAX_RECEIPT_PUBLICATION_ATTEMPTS_PER_CYCLE, 1);
   const oldReceipt = {
