@@ -12,10 +12,13 @@ import {
 
 export const CODEX_DEPENDENCY_CURRENT_TRUTH_REPORT_SCHEMA = 'stephanos.codex-dependency-current-truth-report.v1';
 export const CANONICAL_STEPHANOS_REPOSITORY = 'Cheekyfellastef/stephan-os';
+export const PROVIDER_ROUTE_EVIDENCE_CLASS = 'CANONICAL_PROVIDER_ROUTE_PROOF';
+export const HARD_BOUNDARY_EVIDENCE_CLASS = 'CANONICAL_HARD_BOUNDARY_PROOF';
 
 export const CURRENT_TRUTH_REPORT_STATE = Object.freeze({
   CURRENT_PROVIDER_INDEPENDENT: 'CURRENT_PROVIDER_INDEPENDENT',
   CURRENT_PARITY_GAPS: 'CURRENT_PARITY_GAPS',
+  BLOCKED_OBSERVATION_INCOMPLETE: 'BLOCKED_OBSERVATION_INCOMPLETE',
   BLOCKED_SEMANTIC_CLASSIFICATION: 'BLOCKED_SEMANTIC_CLASSIFICATION',
   BLOCKED_EVIDENCE_CONFLICT: 'BLOCKED_EVIDENCE_CONFLICT',
 });
@@ -60,13 +63,23 @@ function dataOnly(value, path = 'value', depth = 0) {
   }
   if (Array.isArray(value)) {
     if (Object.getPrototypeOf(value) !== Array.prototype) throw new Error(`${path} must be a plain array`);
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.prototype.hasOwnProperty.call(value, index)) throw new Error(`${path} must not be sparse`);
+    }
+    for (const key of Reflect.ownKeys(value)) {
+      if (key === 'length') continue;
+      if (typeof key !== 'string' || !/^\d+$/.test(key) || Number(key) >= value.length) {
+        throw new Error(`${path} contains a non-index array property`);
+      }
+    }
     return value.map((entry, index) => dataOnly(entry, `${path}[${index}]`, depth + 1));
   }
   if (typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) {
     throw new Error(`${path} must contain data-only plain objects`);
   }
   const result = {};
-  for (const key of Object.keys(value)) {
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== 'string') throw new Error(`${path} contains a symbol key`);
     if (['__proto__', 'prototype', 'constructor'].includes(key)) throw new Error(`${path} contains a forbidden key`);
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor || descriptor.get || descriptor.set) throw new Error(`${path}.${key} must be a data property`);
@@ -129,6 +142,8 @@ function normalizeProviderEvidence(records = [], { sourceHead, observedAtUtc }) 
     const qualificationState = text(record.qualificationState);
     const localProblems = [];
 
+    if (text(record.evidenceClass) !== PROVIDER_ROUTE_EVIDENCE_CLASS) localProblems.push('evidence-class-invalid');
+    if (record.verified !== true) localProblems.push('verified-proof-required');
     if (!routeId) localProblems.push('route-id-missing');
     if (!provider) localProblems.push('provider-missing');
     if (!capabilityClass) localProblems.push('capability-class-missing');
@@ -191,6 +206,55 @@ function normalizeProviderEvidence(records = [], { sourceHead, observedAtUtc }) 
   return { evidence, problems: uniqueSorted(problems) };
 }
 
+function normalizeBoundaryEvidence(records = [], { sourceHead, observedAtUtc }) {
+  const evidence = new Map();
+  const problems = [];
+  for (let index = 0; index < records.length; index += 1) {
+    const record = dataOnly(records[index], `boundaryEvidence[${index}]`);
+    const touchpointId = text(record.touchpointId);
+    const evidenceSourceHead = text(record.sourceHead).toLowerCase();
+    const evidenceObservedAtUtc = validTimestamp(record.observedAtUtc);
+    const freshUntilUtc = validTimestamp(record.freshUntilUtc);
+    const proofRefs = uniqueSorted(record.proofRefs);
+    const localProblems = [];
+    if (text(record.evidenceClass) !== HARD_BOUNDARY_EVIDENCE_CLASS) localProblems.push('evidence-class-invalid');
+    if (record.verified !== true) localProblems.push('verified-proof-required');
+    if (!touchpointId) localProblems.push('touchpoint-id-missing');
+    if (!isFullSha(evidenceSourceHead)) localProblems.push('source-head-invalid');
+    if (evidenceSourceHead && evidenceSourceHead !== sourceHead) localProblems.push('source-head-not-current');
+    if (!evidenceObservedAtUtc) localProblems.push('evidence-observed-at-invalid');
+    if (!freshUntilUtc) localProblems.push('fresh-until-invalid');
+    if (evidenceObservedAtUtc && Date.parse(evidenceObservedAtUtc) > Date.parse(observedAtUtc)) localProblems.push('evidence-from-future');
+    if (freshUntilUtc && Date.parse(freshUntilUtc) < Date.parse(observedAtUtc)) localProblems.push('hard-boundary-proof-stale');
+    if (record.hardExternalBoundary !== true) localProblems.push('hard-external-boundary-proof-required');
+    if (record.unrelatedWorkIsolation !== true) localProblems.push('unrelated-work-isolation-proof-required');
+    if (!proofRefs.length) localProblems.push('proof-refs-missing');
+    if (localProblems.length) {
+      problems.push(...localProblems.map((problem) => `boundary-evidence-invalid:${touchpointId || index}:${problem}`));
+      continue;
+    }
+    const prior = evidence.get(touchpointId);
+    if (prior) {
+      evidence.set(touchpointId, Object.freeze({
+        ...prior,
+        proofRefs: uniqueSorted([...prior.proofRefs, ...proofRefs]),
+        observedAtUtc: Date.parse(evidenceObservedAtUtc) > Date.parse(prior.observedAtUtc) ? evidenceObservedAtUtc : prior.observedAtUtc,
+      }));
+      continue;
+    }
+    evidence.set(touchpointId, Object.freeze({
+      touchpointId,
+      sourceHead: evidenceSourceHead,
+      observedAtUtc: evidenceObservedAtUtc,
+      freshUntilUtc,
+      hardExternalBoundary: true,
+      unrelatedWorkIsolation: true,
+      proofRefs,
+    }));
+  }
+  return { evidence, problems: uniqueSorted(problems) };
+}
+
 function downgradeRouteWithoutEvidence(route = {}) {
   const sourceReady = route.sourceReady === true;
   return Object.freeze({
@@ -210,7 +274,7 @@ function downgradeRouteWithoutEvidence(route = {}) {
   });
 }
 
-function correlateCandidate(rawCandidate, providerEvidence, gapOwners, problems) {
+function correlateCandidate(rawCandidate, providerEvidence, gapOwners, boundaryEvidence, problems) {
   const candidate = dataOnly(rawCandidate, 'candidate');
   const touchpointId = text(candidate.touchpointId);
   const currentGapOwner = text(candidate.missingGapOwner);
@@ -246,9 +310,19 @@ function correlateCandidate(rawCandidate, providerEvidence, gapOwners, problems)
     });
   });
 
+  const hardBoundaryEvidence = boundaryEvidence.get(touchpointId);
+  const hardExternalBoundary = candidate.hardExternalBoundary === true && Boolean(hardBoundaryEvidence);
+  const unrelatedWorkIsolation = hardExternalBoundary && hardBoundaryEvidence.unrelatedWorkIsolation === true;
+
   return Object.freeze({
     ...candidate,
     nonCodexRoutes: Object.freeze(routes),
+    hardExternalBoundary,
+    unrelatedWorkIsolation,
+    proofRefs: uniqueSorted([
+      ...(Array.isArray(candidate.proofRefs) ? candidate.proofRefs : []),
+      ...(hardBoundaryEvidence?.proofRefs || []),
+    ]),
     missingGapOwner: currentGapOwner || observedGapOwner,
   });
 }
@@ -271,38 +345,55 @@ export function buildCodexDependencyCurrentTruthReportV1(input = {}) {
   const repository = text(envelope.repository);
   const sourceBranch = text(envelope.sourceBranch);
   const sourceHead = text(envelope.sourceHead).toLowerCase();
+  const coverageRefs = uniqueSorted(envelope.coverageRefs);
 
   if (!observedAtUtc) throw new Error('observedAtUtc must be a valid timestamp');
   if (repository !== CANONICAL_STEPHANOS_REPOSITORY) throw new Error('canonical Stephanos repository is required');
   if (sourceBranch !== 'main') throw new Error('current-truth report must be bound to main');
   if (!isFullSha(sourceHead)) throw new Error('exact 40-character current main sourceHead is required');
 
-  const discovery = discoverCodexDependencyRepositoryCandidatesV1({
-    observedAtUtc,
-    entries: Array.isArray(envelope.repositoryEntries) ? envelope.repositoryEntries : [],
-  });
+  const repositoryEntries = Array.isArray(envelope.repositoryEntries) ? envelope.repositoryEntries : [];
+  const goalCandidateRecords = Array.isArray(envelope.goalCandidates) ? envelope.goalCandidates : [];
+  const observationProblems = [];
+  if (envelope.observationComplete !== true) observationProblems.push('observation-not-complete');
+  if (!coverageRefs.length) observationProblems.push('coverage-refs-missing');
+  if (repositoryEntries.length + goalCandidateRecords.length === 0) observationProblems.push('observed-estate-empty');
+
+  const discovery = discoverCodexDependencyRepositoryCandidatesV1({ observedAtUtc, entries: repositoryEntries });
   if (discovery.schema !== CODEX_DEPENDENCY_DISCOVERY_SCHEMA) throw new Error('canonical discovery result required');
 
-  const goalCandidates = normalizeGoalCandidates(Array.isArray(envelope.goalCandidates) ? envelope.goalCandidates : []);
+  const goalCandidates = normalizeGoalCandidates(goalCandidateRecords);
   const gapOwnerResult = normalizeGapOwners(Array.isArray(envelope.gapOwners) ? envelope.gapOwners : []);
   const providerEvidenceResult = normalizeProviderEvidence(
     Array.isArray(envelope.providerEvidence) ? envelope.providerEvidence : [],
     { sourceHead, observedAtUtc },
   );
-  const correlationProblems = [...gapOwnerResult.problems, ...providerEvidenceResult.problems];
+  const boundaryEvidenceResult = normalizeBoundaryEvidence(
+    Array.isArray(envelope.boundaryEvidence) ? envelope.boundaryEvidence : [],
+    { sourceHead, observedAtUtc },
+  );
+  const correlationProblems = [
+    ...gapOwnerResult.problems,
+    ...providerEvidenceResult.problems,
+    ...boundaryEvidenceResult.problems,
+  ];
   const candidates = [...discovery.candidates, ...goalCandidates]
     .map((candidate) => correlateCandidate(
       candidate,
       providerEvidenceResult.evidence,
       gapOwnerResult.owners,
+      boundaryEvidenceResult.evidence,
       correlationProblems,
     ));
 
   const matrix = buildCodexDependencyParityMatrixV1({ observedAtUtc, candidates });
   const uniqueProblems = uniqueSorted(correlationProblems);
+  const uniqueObservationProblems = uniqueSorted(observationProblems);
   let reportState;
   if (uniqueProblems.length) {
     reportState = CURRENT_TRUTH_REPORT_STATE.BLOCKED_EVIDENCE_CONFLICT;
+  } else if (uniqueObservationProblems.length) {
+    reportState = CURRENT_TRUTH_REPORT_STATE.BLOCKED_OBSERVATION_INCOMPLETE;
   } else if (!discovery.semanticClassificationComplete) {
     reportState = CURRENT_TRUTH_REPORT_STATE.BLOCKED_SEMANTIC_CLASSIFICATION;
   } else if (!matrix.admissionReady) {
@@ -317,11 +408,16 @@ export function buildCodexDependencyCurrentTruthReportV1(input = {}) {
     sourceBranch,
     sourceHead,
     observedAtUtc,
+    observationComplete: envelope.observationComplete === true,
+    coverageRefs,
+    observationProblems: uniqueObservationProblems,
+    observedRecordCount: repositoryEntries.length + goalCandidates.length,
     reportState,
     admissionReady: reportState === CURRENT_TRUTH_REPORT_STATE.CURRENT_PROVIDER_INDEPENDENT,
     repositoryDiscovery: discovery,
     goalCandidateCount: goalCandidates.length,
     providerEvidenceCount: providerEvidenceResult.evidence.size,
+    boundaryEvidenceCount: boundaryEvidenceResult.evidence.size,
     gapOwnerCount: gapOwnerResult.owners.size,
     correlationProblems: uniqueProblems,
     parityMatrix: matrix,
@@ -337,11 +433,14 @@ export function currentTruthReportHasProvenParity(report = {}) {
   return report.schema === CODEX_DEPENDENCY_CURRENT_TRUTH_REPORT_SCHEMA
     && report.reportState === CURRENT_TRUTH_REPORT_STATE.CURRENT_PROVIDER_INDEPENDENT
     && report.admissionReady === true
+    && report.observationComplete === true
+    && Array.isArray(report.coverageRefs)
+    && report.coverageRefs.length > 0
     && report.parityMatrix?.admissionReady === true
     && report.parityMatrix?.touchpoints?.every((touchpoint) => (
       !touchpoint.active
       || !touchpoint.criticalPath
       || [COVERAGE_VERDICT.PARITY_PROVEN, COVERAGE_VERDICT.HARD_EXTERNAL_BOUNDARY_ISOLATED]
         .includes(touchpoint.coverageVerdict)
-    ));
+    )) === true;
 }

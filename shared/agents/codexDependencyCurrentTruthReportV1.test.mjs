@@ -8,6 +8,8 @@ import {
 } from './codexDependencyParityMatrixV1.mjs';
 import {
   CURRENT_TRUTH_REPORT_STATE,
+  HARD_BOUNDARY_EVIDENCE_CLASS,
+  PROVIDER_ROUTE_EVIDENCE_CLASS,
   buildCodexDependencyCurrentTruthReportV1,
   currentTruthReportHasProvenParity,
 } from './codexDependencyCurrentTruthReportV1.mjs';
@@ -54,6 +56,8 @@ function semantic(overrides = {}) {
 
 function providerEvidence(overrides = {}) {
   return {
+    evidenceClass: PROVIDER_ROUTE_EVIDENCE_CLASS,
+    verified: true,
     routeId: 'github-independent-review',
     provider: 'GITHUB_ACTIONS',
     capabilityClass: 'EXACT_HEAD_REVIEW',
@@ -73,18 +77,36 @@ function providerEvidence(overrides = {}) {
   };
 }
 
+function boundaryEvidence(touchpointId, overrides = {}) {
+  return {
+    evidenceClass: HARD_BOUNDARY_EVIDENCE_CLASS,
+    verified: true,
+    touchpointId,
+    sourceHead,
+    observedAtUtc: '2026-08-20T06:45:00.000Z',
+    freshUntilUtc: '2026-08-20T08:00:00.000Z',
+    hardExternalBoundary: true,
+    unrelatedWorkIsolation: true,
+    proofRefs: ['boundary:official-api-only'],
+    ...overrides,
+  };
+}
+
 function report(overrides = {}) {
   return buildCodexDependencyCurrentTruthReportV1({
     repository: 'Cheekyfellastef/stephan-os',
     sourceBranch: 'main',
     sourceHead,
     observedAtUtc,
+    observationComplete: true,
+    coverageRefs: [`tree:${sourceHead}`, 'goals:open-current'],
     repositoryEntries: [{
       path: '.github/workflows/independent-merge-security-review.yml',
       content: 'Codex optional; provider-neutral review is canonical.',
       semantic: semantic(),
     }],
     providerEvidence: [providerEvidence()],
+    boundaryEvidence: [],
     gapOwners: [],
     goalCandidates: [],
     ...overrides,
@@ -111,6 +133,24 @@ test('raw provider prose blocks report admission until semantic classification e
   assert.equal(result.parityMatrix.touchpointCount, 0);
 });
 
+test('empty or unattested observation estate can never claim provider independence', () => {
+  const result = report({
+    observationComplete: false,
+    coverageRefs: [],
+    repositoryEntries: [],
+    goalCandidates: [],
+    providerEvidence: [],
+  });
+  assert.equal(result.reportState, CURRENT_TRUTH_REPORT_STATE.BLOCKED_OBSERVATION_INCOMPLETE);
+  assert.equal(result.admissionReady, false);
+  assert.deepEqual(result.observationProblems, [
+    'coverage-refs-missing',
+    'observation-not-complete',
+    'observed-estate-empty',
+  ]);
+  assert.equal(currentTruthReportHasProvenParity(result), false);
+});
+
 test('source claims cannot self-promote a route to live production parity without provider evidence', () => {
   const result = report({ providerEvidence: [] });
   assert.equal(result.reportState, CURRENT_TRUTH_REPORT_STATE.CURRENT_PARITY_GAPS);
@@ -118,6 +158,15 @@ test('source claims cannot self-promote a route to live production parity withou
   assert.equal(result.parityMatrix.touchpoints[0].coverageVerdict, COVERAGE_VERDICT.PARITY_SOURCE_READY_NEEDS_LIVE_PROOF);
   assert.ok(result.parityMatrix.touchpoints[0].blockers.includes('live-proof-missing:github-independent-review'));
   assert.equal(currentTruthReportHasProvenParity(result), false);
+});
+
+test('provider proof must carry the canonical evidence class and verified proof posture', () => {
+  const result = report({
+    providerEvidence: [providerEvidence({ evidenceClass: 'CALLER_ASSERTION', verified: false })],
+  });
+  assert.equal(result.reportState, CURRENT_TRUTH_REPORT_STATE.BLOCKED_EVIDENCE_CONFLICT);
+  assert.ok(result.correlationProblems.some((problem) => problem.includes('evidence-class-invalid')));
+  assert.ok(result.correlationProblems.some((problem) => problem.includes('verified-proof-required')));
 });
 
 test('provider proof that has expired by observation time stays stale and cannot prove parity', () => {
@@ -209,6 +258,56 @@ test('contradictory gap ownership blocks the report instead of opening duplicate
   assert.ok(result.correlationProblems.includes('gap-owner-conflict:openclaw-oc1'));
 });
 
+test('source-only hard external boundary claims are downgraded until current proof exists', () => {
+  const touchpointId = 'external-api-only';
+  const result = report({
+    repositoryEntries: [{
+      path: 'shared/agents/external.mjs',
+      content: 'Codex',
+      semantic: semantic({
+        touchpointId,
+        component: 'external-api',
+        capabilityClass: 'EXTERNAL_VENDOR_AGENT',
+        codexUseClass: CODEX_USE_CLASS.CRITICAL_PATH,
+        owningGoal: '#1899',
+        nonCodexRoutes: [],
+        hardExternalBoundary: true,
+        unrelatedWorkIsolation: true,
+      }),
+    }],
+    providerEvidence: [],
+  });
+  assert.equal(result.reportState, CURRENT_TRUTH_REPORT_STATE.CURRENT_PARITY_GAPS);
+  assert.equal(result.parityMatrix.touchpoints[0].hardExternalBoundary, false);
+  assert.equal(result.parityMatrix.touchpoints[0].coverageVerdict, COVERAGE_VERDICT.MISSING_NON_CODEX_ROUTE);
+});
+
+test('fresh verified hard-boundary evidence may isolate a genuine external boundary without granting authority', () => {
+  const touchpointId = 'external-api-only';
+  const result = report({
+    repositoryEntries: [{
+      path: 'shared/agents/external.mjs',
+      content: 'Codex',
+      semantic: semantic({
+        touchpointId,
+        component: 'external-api',
+        capabilityClass: 'EXTERNAL_VENDOR_AGENT',
+        codexUseClass: CODEX_USE_CLASS.CRITICAL_PATH,
+        owningGoal: '#1899',
+        nonCodexRoutes: [],
+        hardExternalBoundary: true,
+        unrelatedWorkIsolation: true,
+      }),
+    }],
+    providerEvidence: [],
+    boundaryEvidence: [boundaryEvidence(touchpointId)],
+  });
+  assert.equal(result.reportState, CURRENT_TRUTH_REPORT_STATE.CURRENT_PROVIDER_INDEPENDENT);
+  assert.equal(result.boundaryEvidenceCount, 1);
+  assert.equal(result.parityMatrix.touchpoints[0].coverageVerdict, COVERAGE_VERDICT.HARD_EXTERNAL_BOUNDARY_ISOLATED);
+  assert.equal(result.admissionReady, true);
+});
+
 test('goal candidates join repository candidates in the same canonical parity matrix', () => {
   const result = report({
     goalCandidates: [{
@@ -244,6 +343,16 @@ test('future-dated provider evidence fails closed', () => {
   });
   assert.equal(result.reportState, CURRENT_TRUTH_REPORT_STATE.BLOCKED_EVIDENCE_CONFLICT);
   assert.ok(result.correlationProblems.some((problem) => problem.includes('evidence-from-future')));
+});
+
+test('hostile sparse or symbol-shaped inputs are rejected before truth evaluation', () => {
+  const sparse = [];
+  sparse.length = 1;
+  assert.throws(() => report({ providerEvidence: sparse }), /must not be sparse/);
+
+  const hostile = { ...providerEvidence() };
+  hostile[Symbol('secret')] = 'hidden';
+  assert.throws(() => report({ providerEvidence: [hostile] }), /symbol key/);
 });
 
 test('current-truth report and nested matrix never grant mutation, execution or approval authority', () => {
