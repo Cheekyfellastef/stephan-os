@@ -80,14 +80,14 @@ function Get-TaskHealth {
 function Test-CanonicalBackendCommandLine {
     param([string]$CommandLine)
     $commandLine = (([string]$CommandLine -replace '\s+', ' ').Trim())
-    $expectedQuotedCommand = "`"$canonicalNode`" stephanos-server/server.js"
-    $expectedUnquotedCommand = "$canonicalNode stephanos-server/server.js"
+    $expectedQuotedCommand = "`"$canonicalNode`" stephanos-server/backend-bootstrap.mjs"
+    $expectedUnquotedCommand = "$canonicalNode stephanos-server/backend-bootstrap.mjs"
     if ([string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase) `
         -or [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
         return $true
     }
-    $expectedNpmNodeCommand = 'node stephanos-server/server.js'
-    $expectedNpmNodeExeCommand = 'node.exe stephanos-server/server.js'
+    $expectedNpmNodeCommand = 'node stephanos-server/backend-bootstrap.mjs'
+    $expectedNpmNodeExeCommand = 'node.exe stephanos-server/backend-bootstrap.mjs'
     return [string]::Equals($commandLine, $expectedNpmNodeCommand, [System.StringComparison]::OrdinalIgnoreCase) `
         -or [string]::Equals($commandLine, $expectedNpmNodeExeCommand, [System.StringComparison]::OrdinalIgnoreCase)
 }

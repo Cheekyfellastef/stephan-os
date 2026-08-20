@@ -91,7 +91,8 @@ if ($existingListener) {
   Publish-VerifiedBackendRuntimeReceipt -Listener $existingListener
   exit 0
 }
-Start-Process -FilePath $canonicalNpm -ArgumentList $arguments
+$arguments = @('stephanos-server/backend-bootstrap.mjs')
+Start-Process -FilePath $canonicalNode -ArgumentList $arguments
 Write-BackendRuntimeReceipt -ProcessStartTimeUtc $processStartTimeUtc
 `;
 

@@ -79,7 +79,7 @@ function Get-VerifiedBackendListener {
     $name = ([string]$process.Name).ToLowerInvariant()
     $commandLine = ([string]$process.CommandLine).Replace('\', '/').ToLowerInvariant()
     if ($name -notin @('node.exe', 'node')) { Stop-WithBlocker 'BACKEND_LISTENER_NOT_NODE' }
-    if (-not $commandLine.Contains('stephanos-server/server.js')) { Stop-WithBlocker 'BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED' }
+    if (-not $commandLine.Contains('stephanos-server/backend-bootstrap.mjs')) { Stop-WithBlocker 'BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED' }
     return [PSCustomObject]@{ ProcessId = $processId }
 }
 

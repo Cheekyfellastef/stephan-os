@@ -6,6 +6,7 @@ import {
   battleBridgeCanonicalRepositoryArgs,
   resolveBattleBridgeGitExecution,
 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import {
   collectCanonicalIgnitionSourceTruth,
   evaluateCanonicalIgnitionSourceTruth,
@@ -47,18 +48,32 @@ function assertExpectedHeadImmediatelyBeforeMutation() {
 }
 
 function findPowerShell() {
-  for (const cmd of ['powershell', 'pwsh']) {
+  const candidates = process.platform === 'win32'
+    ? [BATTLE_BRIDGE_WINDOWS_HOST.powershell]
+    : ['pwsh', 'powershell'];
+  for (const cmd of candidates) {
     const res = spawnSync(cmd, ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()'], { encoding: 'utf8' });
     if (res.status === 0) return cmd;
   }
   return null;
 }
 
-async function waitForHealth(timeoutMs = 20000) {
+async function waitForHealth(expectedHead, timeoutMs = 20000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const res = spawnSync('curl', ['-sS', '-o', '/tmp/stephanos-health.json', '-w', '%{http_code}', healthUrl], { encoding: 'utf8' });
-    if ((res.stdout || '').trim() === '200') return true;
+    try {
+      const response = await fetch(healthUrl, {
+        headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+      });
+      const payload = response.ok ? await response.json() : null;
+      if (
+        payload?.schemaVersion === 'stephanos.backend-health.v1'
+        && payload?.backendIdentity?.runtimeId === 'stephanos-battle-bridge-backend'
+        && String(payload?.backendIdentity?.sourceHead || '').trim().toLowerCase() === expectedHead
+      ) return true;
+    } catch {
+      // Keep polling until the bounded timeout.
+    }
     await new Promise((r) => setTimeout(r, 1000));
   }
   return false;
@@ -70,13 +85,17 @@ if (ps) {
   const result = spawnSync(ps, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psScript, '-ExpectedHead', expectedHead], { stdio: 'inherit' });
   process.exit(result.status ?? 1);
 }
+if (process.platform === 'win32') {
+  throw new Error('BATTLE_BRIDGE_REPAIR_CANONICAL_POWERSHELL_UNAVAILABLE');
+}
 
 console.log('PowerShell is unavailable; running portable backend-only repair.');
 console.log(`Backend health endpoint: ${healthUrl}`);
 console.log('Frontend/dist server not started by this backend repair fallback (port 4173).');
 mkdirSync(logsDir, { recursive: true });
 
-const healthOk = await waitForHealth(2000);
+const portableExpectedHead = assertExpectedHeadImmediatelyBeforeMutation();
+const healthOk = await waitForHealth(portableExpectedHead, 2000);
 if (healthOk) {
   console.log(`Backend already healthy at ${healthUrl}`);
   process.exit(0);
@@ -89,8 +108,13 @@ const stdoutStream = createWriteStream(stdoutPath, { flags: 'a' });
 const stderrStream = createWriteStream(stderrPath, { flags: 'a' });
 
 assertExpectedHeadImmediatelyBeforeMutation();
-const child = spawn('node', ['stephanos-server/server.js'], {
+const child = spawn(process.execPath, ['stephanos-server/backend-bootstrap.mjs'], {
   cwd: repoRoot,
+  env: {
+    ...process.env,
+    STEPHANOS_BACKEND_REPO_ROOT: repoRoot,
+    STEPHANOS_BACKEND_SOURCE_HEAD: portableExpectedHead,
+  },
   detached: true,
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -102,7 +126,7 @@ console.log(`Portable backend start launched (pid=${child.pid ?? 'unknown'}).`);
 console.log(`stdout log: ${path.relative(repoRoot, stdoutPath)}`);
 console.log(`stderr log: ${path.relative(repoRoot, stderrPath)}`);
 
-const recovered = await waitForHealth();
+const recovered = await waitForHealth(portableExpectedHead);
 if (!recovered) {
   console.error(`Failed to recover backend health at ${healthUrl}`);
   console.error(`Inspect stderr tail at ${path.relative(repoRoot, stderrPath)}`);

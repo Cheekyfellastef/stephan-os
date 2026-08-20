@@ -72,6 +72,7 @@ test('minimal child environment removes Node/Git/shell injection variables', () 
   assert.equal(result.GIT_NO_REPLACE_OBJECTS, '1');
   assert.equal(result.GIT_GRAFT_FILE, 'NUL');
   assert.equal(result.PATH.includes('attacker'), false);
+  assert.equal(result.PATH.includes('C:\\Windows\\System32\\WindowsPowerShell\\v1.0'), true);
 });
 
 test('Git topology rejects graft, common-dir, and object-alternate redirects', () => {

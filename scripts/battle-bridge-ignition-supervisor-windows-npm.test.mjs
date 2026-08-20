@@ -66,8 +66,15 @@ test('backend repair child source requires fixed exact-head proof immediately be
   assert.match(source, /collectCanonicalIgnitionSourceTruth/);
   assert.match(source, /evaluateCanonicalIgnitionSourceTruth/);
   assert.match(source, /if \(!expectedHead\) \{[\s\S]*canonicalSourceTruth[\s\S]*BATTLE_BRIDGE_BACKEND_CANONICAL_HEAD_UNPROVEN/);
+  assert.match(source, /process\.platform === 'win32'[\s\S]*BATTLE_BRIDGE_WINDOWS_HOST\.powershell/);
+  assert.match(source, /BATTLE_BRIDGE_REPAIR_CANONICAL_POWERSHELL_UNAVAILABLE/);
   assert.match(source, /const expectedHead = assertExpectedHeadImmediatelyBeforeMutation\(\);\s*const result = spawnSync\(ps,[\s\S]*'-ExpectedHead', expectedHead/);
-  assert.match(source, /assertExpectedHeadImmediatelyBeforeMutation\(\);\s*const child = spawn\('node'/);
+  assert.match(source, /assertExpectedHeadImmediatelyBeforeMutation\(\);\s*const child = spawn\(process\.execPath, \['stephanos-server\/backend-bootstrap\.mjs'\]/);
+  assert.match(source, /STEPHANOS_BACKEND_REPO_ROOT: repoRoot/);
+  assert.match(source, /STEPHANOS_BACKEND_SOURCE_HEAD: portableExpectedHead/);
+  assert.match(source, /schemaVersion === 'stephanos\.backend-health\.v1'/);
+  assert.match(source, /runtimeId === 'stephanos-battle-bridge-backend'/);
+  assert.match(source, /sourceHead \|\| ''/);
   const repairPowerShell = fs.readFileSync(new URL('./windows/repair-stephanos-battle-bridge.ps1', import.meta.url), 'utf8');
   const backendPowerShell = fs.readFileSync(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
   assert.match(repairPowerShell, /Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend starter child'/);
@@ -87,6 +94,9 @@ test('backend repair child source requires fixed exact-head proof immediately be
   assert.doesNotMatch(repairPowerShell, /\$localResult = Test-Url/);
   assert.match(backendPowerShell, /Backend startup expected-head binding mismatch/);
   assert.match(backendPowerShell, /Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend process start'/);
+  assert.match(backendPowerShell, /Start-Process -FilePath \$canonicalNode/);
+  assert.match(backendPowerShell, /stephanos-server\/backend-bootstrap\.mjs/);
+  assert.doesNotMatch(backendPowerShell, /Start-Process -FilePath \$canonicalNpm/);
 });
 
 test('already-healthy backend requires exact runtime head before bypassing convergence', () => {

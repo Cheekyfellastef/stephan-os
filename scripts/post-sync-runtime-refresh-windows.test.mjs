@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -13,12 +13,15 @@ const restartSource = await readFile(new URL('./windows/restart-approved-stephan
 const backendStartSource = await readFile(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
 const ignitionEntrySource = await readFile(new URL('./run-battle-bridge-ignition.mjs', import.meta.url), 'utf8');
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+const backendBootstrapPath = fileURLToPath(new URL('../stephanos-server/backend-bootstrap.mjs', import.meta.url));
+const backendBootstrapSource = await readFile(backendBootstrapPath, 'utf8');
+const backendLoaderSource = await readFile(new URL('../stephanos-server/backend-exact-head-loader.mjs', import.meta.url), 'utf8');
 const backendServerPath = fileURLToPath(new URL('../stephanos-server/server.js', import.meta.url));
 const backendServerSource = await readFile(backendServerPath, 'utf8');
 
 function backendHeadProofForObservedHeads(observedHeads, expectedHead) {
   const proofFunctionsStart = backendServerSource.indexOf('function minimalBackendChildGitEnvironment()');
-  const proofFunctionsEnd = backendServerSource.indexOf('function registerBattleBridgeBackendExactHeadModuleLoader()');
+  const proofFunctionsEnd = backendServerSource.indexOf('const backendExpectedHead =');
   const proofFunctionsSource = backendServerSource.slice(proofFunctionsStart, proofFunctionsEnd);
   const remainingHeads = [...observedHeads];
   const spawnSyncImpl = () => ({
@@ -103,7 +106,7 @@ test('backend Node child rejects checkout drift before loading or listening', ()
   const actualHead = String(headProof.stdout || '').trim().toLowerCase();
   assert.match(actualHead, /^[0-9a-f]{40}$/);
   const driftedExpectedHead = actualHead === 'a'.repeat(40) ? 'b'.repeat(40) : 'a'.repeat(40);
-  const child = spawnSync(process.execPath, [backendServerPath], {
+  const child = spawnSync(process.execPath, [backendBootstrapPath], {
     cwd: repoRoot,
     env: {
       ...process.env,
@@ -136,19 +139,35 @@ test('backend Node child re-proves exact head after module loading immediately b
   assert.ok(proofOffsets[1] < listenerOffset, 'failed re-proof must prevent server.listen');
 });
 
-test('backend registers an immutable exact-head module loader before application imports', () => {
-  const firstProofOffset = backendServerSource.indexOf('\nenforceBattleBridgeBackendChildExpectedHead();');
-  const loaderRegistrationOffset = backendServerSource.indexOf('\nregisterBattleBridgeBackendExactHeadModuleLoader();');
+test('backend immutable bootstrap registers the exact-head loader before importing the server entry', () => {
+  const firstProofOffset = backendBootstrapSource.indexOf('\n  proveExpectedHead();');
+  const loaderRegistrationOffset = backendBootstrapSource.indexOf('\n  register(');
+  const serverEntryImportOffset = backendBootstrapSource.lastIndexOf('\nawait import(');
   const firstBackendImportOffset = backendServerSource.indexOf("await import('dotenv/config')");
 
   assert.ok(firstProofOffset >= 0);
   assert.ok(firstProofOffset < loaderRegistrationOffset);
-  assert.ok(loaderRegistrationOffset < firstBackendImportOffset);
+  assert.ok(loaderRegistrationOffset < serverEntryImportOffset);
+  assert.ok(backendServerSource.indexOf('BACKEND_CHILD_IMMUTABLE_BOOTSTRAP_REQUIRED') < firstBackendImportOffset);
   assert.match(
-    backendServerSource,
-    /'show',[\s\S]*`\$\{expectedHead\}:\$\{loaderGitPath\}`/,
-    'the loader implementation itself must come from the approved Git object',
+    backendBootstrapSource,
+    /readExactHeadBlob\('stephanos-server\/backend-exact-head-loader\.mjs'/,
+    'the loader implementation must come from the approved Git object',
   );
+  assert.match(backendBootstrapSource, /readExactHeadBlob\('stephanos-server\/backend-bootstrap\.mjs'/);
+});
+
+test('bound backend server entry cannot be launched without the immutable bootstrap', () => {
+  const child = spawnSync(process.execPath, [backendServerPath], {
+    cwd: repoRoot,
+    env: { ...process.env, STEPHANOS_BACKEND_SOURCE_HEAD: 'a'.repeat(40) },
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 10_000,
+  });
+  assert.notEqual(child.status, 0);
+  assert.match(String(child.stderr || ''), /BACKEND_CHILD_IMMUTABLE_BOOTSTRAP_REQUIRED/);
+  assert.doesNotMatch(`${child.stdout || ''}\n${child.stderr || ''}`, /\[BACKEND LIVE\] Stephanos server listening/);
 });
 
 test('immutable module loading admits A during an A to B to A checkout transition', async () => {
@@ -194,6 +213,46 @@ test('immutable module loading admits A during an A to B to A checkout transitio
     });
     assert.match(afterReturn.source, /sourceIdentity = 'A'/);
     assert.equal(runGit(gitExecutable, fixtureRoot, ['rev-parse', 'HEAD']).toLowerCase(), approvedHead);
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('production bootstrap executes exact-head server A while the mutable checkout contains server B', () => {
+  const gitExecutable = process.platform === 'win32'
+    ? 'C:\\Program Files\\Git\\cmd\\git.exe'
+    : '/usr/bin/git';
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'stephanos-production-bootstrap-'));
+  const fixtureServerRoot = join(fixtureRoot, 'stephanos-server');
+  const fixtureBootstrap = join(fixtureServerRoot, 'backend-bootstrap.mjs');
+  const fixtureServer = join(fixtureServerRoot, 'server.js');
+  try {
+    mkdirSync(fixtureServerRoot, { recursive: true });
+    runGit(gitExecutable, fixtureRoot, ['init', '--quiet']);
+    runGit(gitExecutable, fixtureRoot, ['config', 'user.name', 'Stephanos Test']);
+    runGit(gitExecutable, fixtureRoot, ['config', 'user.email', 'stephanos-test@example.invalid']);
+    writeFileSync(fixtureBootstrap, backendBootstrapSource, 'utf8');
+    writeFileSync(join(fixtureServerRoot, 'backend-exact-head-loader.mjs'), backendLoaderSource, 'utf8');
+    writeFileSync(fixtureServer, "console.log('PRODUCTION_ENTRY_A');\n", 'utf8');
+    runGit(gitExecutable, fixtureRoot, ['add', '--', 'stephanos-server']);
+    runGit(gitExecutable, fixtureRoot, ['commit', '--quiet', '-m', 'production entry A']);
+    const approvedHead = runGit(gitExecutable, fixtureRoot, ['rev-parse', 'HEAD']).toLowerCase();
+
+    writeFileSync(fixtureServer, "console.log('PRODUCTION_ENTRY_B');\n", 'utf8');
+    const child = spawnSync(process.execPath, [fixtureBootstrap], {
+      cwd: fixtureRoot,
+      env: {
+        ...process.env,
+        STEPHANOS_BACKEND_REPO_ROOT: fixtureRoot,
+        STEPHANOS_BACKEND_SOURCE_HEAD: approvedHead,
+      },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 10_000,
+    });
+    assert.equal(child.status, 0, child.stderr || child.error?.message);
+    assert.match(String(child.stdout || ''), /PRODUCTION_ENTRY_A/);
+    assert.doesNotMatch(String(child.stdout || ''), /PRODUCTION_ENTRY_B/);
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
@@ -260,7 +319,7 @@ test('backend Node child ignores hostile inherited Git repository-selection vari
     assert.match(canonicalHead, /^[0-9a-f]{40}$/);
     assert.notEqual(hostileHead, canonicalHead);
 
-    const child = spawnSync(process.execPath, [backendServerPath], {
+    const child = spawnSync(process.execPath, [backendBootstrapPath], {
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -285,7 +344,7 @@ test('backend Node child ignores hostile inherited Git repository-selection vari
 
 test('backend restart terminates only the verified 8787 Stephanos Node listener', () => {
   assert.match(restartSource, /Get-NetTCPConnection -LocalPort 8787 -State Listen/);
-  assert.match(restartSource, /stephanos-server\/server\.js/);
+  assert.match(restartSource, /stephanos-server\/backend-bootstrap\.mjs/);
   assert.match(restartSource, /BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED/);
   assert.match(restartSource, /Stop-Process -Id \$listener\.ProcessId -Force/);
   assert.match(restartSource, /stephanos-backend-runtime\.json/);

@@ -1,5 +1,4 @@
 import { spawnSync } from 'node:child_process';
-import { register } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -57,53 +56,12 @@ function enforceBattleBridgeBackendChildExpectedHead() {
   }
 }
 
-function registerBattleBridgeBackendExactHeadModuleLoader() {
-  const expectedHead = String(process.env.STEPHANOS_BACKEND_SOURCE_HEAD || '').trim().toLowerCase();
-  if (!expectedHead) return;
-  if (!/^[0-9a-f]{40}$/.test(expectedHead)) {
-    throw new Error('BACKEND_CHILD_EXPECTED_HEAD_INVALID');
-  }
-
-  const gitExecutable = process.platform === 'win32'
-    ? 'C:\\Program Files\\Git\\cmd\\git.exe'
-    : '/usr/bin/git';
-  const loaderGitPath = 'stephanos-server/backend-exact-head-loader.mjs';
-  const loaderSourceProof = spawnSync(gitExecutable, [
-    `--git-dir=${canonicalGitDirectory}`,
-    `--work-tree=${canonicalRepoRoot}`,
-    'show',
-    `${expectedHead}:${loaderGitPath}`,
-  ], {
-    cwd: canonicalRepoRoot,
-    env: minimalBackendChildGitEnvironment(),
-    encoding: 'utf8',
-    windowsHide: true,
-    timeout: 5_000,
-    maxBuffer: 256 * 1024,
-  });
-  if (loaderSourceProof.error || loaderSourceProof.status !== 0) {
-    throw new Error('BACKEND_CHILD_EXACT_HEAD_MODULE_LOADER_PROOF_FAILED');
-  }
-  const loaderSource = String(loaderSourceProof.stdout || '');
-  if (!loaderSource.trim()) {
-    throw new Error('BACKEND_CHILD_EXACT_HEAD_MODULE_LOADER_PROOF_INVALID');
-  }
-
-  const loaderUrl = `data:text/javascript;base64,${Buffer.from(loaderSource, 'utf8').toString('base64')}`;
-  register(loaderUrl, {
-    parentURL: import.meta.url,
-    data: {
-      canonicalGitDirectory,
-      canonicalRepoRoot,
-      expectedHead,
-      gitEnvironment: minimalBackendChildGitEnvironment(),
-      gitExecutable,
-    },
-  });
+const backendExpectedHead = String(process.env.STEPHANOS_BACKEND_SOURCE_HEAD || '').trim().toLowerCase();
+if (backendExpectedHead
+  && globalThis[Symbol.for('stephanos.backend.exact-head-bootstrap')] !== backendExpectedHead) {
+  throw new Error('BACKEND_CHILD_IMMUTABLE_BOOTSTRAP_REQUIRED');
 }
-
 enforceBattleBridgeBackendChildExpectedHead();
-registerBattleBridgeBackendExactHeadModuleLoader();
 
 await import('dotenv/config');
 const { default: express } = await import('express');

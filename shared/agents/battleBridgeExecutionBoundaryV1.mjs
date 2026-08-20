@@ -96,7 +96,7 @@ export function createBattleBridgeMinimalChildEnvironment(environment = process.
     if (value) sanitized[key] = value;
   }
   sanitized.PATH = platform === 'win32'
-    ? 'C:\\Windows\\System32;C:\\Windows;C:\\Program Files\\nodejs;C:\\Program Files\\Git\\cmd'
+    ? 'C:\\Windows\\System32;C:\\Windows;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Program Files\\nodejs;C:\\Program Files\\Git\\cmd'
     : '/usr/bin:/bin';
   if (platform === 'win32') sanitized.PATHEXT = '.COM;.EXE;.BAT;.CMD';
   if (git) {

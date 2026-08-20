@@ -28,14 +28,14 @@ function Test-BackendHealth {
 function Test-CanonicalBackendCommandLine {
     param([string]$CommandLine)
     $commandLine = (([string]$CommandLine -replace '\s+', ' ').Trim())
-    $expectedQuotedCommand = "`"$canonicalNode`" stephanos-server/server.js"
-    $expectedUnquotedCommand = "$canonicalNode stephanos-server/server.js"
+    $expectedQuotedCommand = "`"$canonicalNode`" stephanos-server/backend-bootstrap.mjs"
+    $expectedUnquotedCommand = "$canonicalNode stephanos-server/backend-bootstrap.mjs"
     if ([string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase) `
         -or [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
         return $true
     }
-    $expectedNpmNodeCommand = 'node stephanos-server/server.js'
-    $expectedNpmNodeExeCommand = 'node.exe stephanos-server/server.js'
+    $expectedNpmNodeCommand = 'node stephanos-server/backend-bootstrap.mjs'
+    $expectedNpmNodeExeCommand = 'node.exe stephanos-server/backend-bootstrap.mjs'
     return [string]::Equals($commandLine, $expectedNpmNodeCommand, [System.StringComparison]::OrdinalIgnoreCase) `
         -or [string]::Equals($commandLine, $expectedNpmNodeExeCommand, [System.StringComparison]::OrdinalIgnoreCase)
 }
@@ -330,12 +330,13 @@ if ($existingListener) {
     exit 0
 }
 
-$arguments = @('run', 'stephanos:backend')
+$arguments = @('stephanos-server/backend-bootstrap.mjs')
 $env:STEPHANOS_BACKEND_SOURCE_HEAD = $headSha
-Write-Log ("Starting backend with command: {0} {1}" -f $canonicalNpm, ($arguments -join ' '))
-if ($PSCmdlet.ShouldProcess("$canonicalNpm $($arguments -join ' ')", 'Start Stephanos backend')) {
+$env:STEPHANOS_BACKEND_REPO_ROOT = $repoRoot
+Write-Log ("Starting backend with fixed Node and self-verifying exact-head bootstrap: {0} {1}" -f $canonicalNode, ($arguments -join ' '))
+if ($PSCmdlet.ShouldProcess("$canonicalNode $($arguments -join ' ')", 'Start Stephanos backend')) {
     Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend process start' | Out-Null
-    $process = Start-Process -FilePath $canonicalNpm `
+    $process = Start-Process -FilePath $canonicalNode `
         -ArgumentList $arguments `
         -WorkingDirectory $repoRoot `
         -RedirectStandardOutput $stdoutLogPath `
