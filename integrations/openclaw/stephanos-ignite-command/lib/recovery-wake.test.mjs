@@ -129,7 +129,7 @@ test('failed fixed adapter accepts a complete PowerShell FullyQualifiedErrorId',
     nonce: 'cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa',
     fetchFn: identityFetch,
     writeHostProofFn: ({ proof }) => ({ proofId: proof.proofId }),
-    spawnSyncFn: () => ({ status: 1, stderr: 'FullyQualifiedErrorId : OPENCLAW_HOST_PROOF_REQUIRED' }),
+    spawnSyncFn: () => ({ status: 1, stderr: '+ FullyQualifiedErrorId : OPENCLAW_HOST_PROOF_REQUIRED' }),
   });
   assert.deepEqual(result, { ok: false, blocker: 'OPENCLAW_HOST_PROOF_REQUIRED', exitCode: 1 });
 });

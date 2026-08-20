@@ -33,7 +33,7 @@ function fixedRecoveryAdapterBlocker(result = {}) {
       emitted.add(line);
       continue;
     }
-    const qualified = /^FullyQualifiedErrorId\s*:\s*([A-Z0-9_]+)$/.exec(line);
+    const qualified = /^\+?\s*FullyQualifiedErrorId\s*:\s*([A-Z0-9_]+)$/.exec(line);
     if (qualified && allowlisted.has(qualified[1])) emitted.add(qualified[1]);
   }
   return emitted.size === 1 ? [...emitted][0] : '';
