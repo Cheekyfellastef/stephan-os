@@ -14,12 +14,24 @@ const MAX_SOURCE_BYTES = 256 * 1024;
 const REVIEWED_REPOSITORY = 'Cheekyfellastef/stephan-os';
 const REVIEWED_PR = 1919;
 const REVIEWED_BRANCH = 'fix/ignition-canonical-convergence-gate-v1';
+const REVIEWED_SOURCE_HEAD = '9941da6e500a7d95d11e8a3654630462cce71a91';
+const REVIEWED_BASE_SHA = '13f13144730b2a6d94754914dbdf2c254c39567d';
 const SOURCE_RECORD_KEYS = Object.freeze([
   'blobSha', 'content', 'exists', 'path', 'ref', 'repository', 'schemaVersion', 'size',
 ]);
 
-function text(value) { return String(value ?? '').trim(); }
+function text(value) { return typeof value === 'string' ? value.trim() : ''; }
 function finding(code, summary, path) { return Object.freeze({ severity: 'P0', code, summary, path }); }
+function dataValue(record, key) {
+  if (!record || typeof record !== 'object' || Array.isArray(record) || Object.getPrototypeOf(record) !== Object.prototype) {
+    return Object.freeze({ ok: false, value: undefined });
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+  if (!descriptor || !Object.hasOwn(descriptor, 'value') || descriptor.enumerable !== true) {
+    return Object.freeze({ ok: false, value: undefined });
+  }
+  return Object.freeze({ ok: true, value: descriptor.value });
+}
 function gitBlobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
   return createHash('sha1').update(`blob ${bytes.length}\0`, 'utf8').update(bytes).digest('hex');
@@ -57,14 +69,23 @@ function exactArray(value, expectedLength) {
   const expected = Array.from({ length: expectedLength }, (_, index) => String(index)).concat('length');
   return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
 }
-function escalationPaths(analysis = {}) {
-  const findings = analysis && typeof analysis === 'object' && !Array.isArray(analysis) && Array.isArray(analysis.findings)
-    ? analysis.findings : [];
-  if (!exactArray(findings, WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1.length)) return [];
-  const paths = findings.map((item) => text(item?.path));
-  if (findings.some((item) => text(item?.severity).toUpperCase() !== 'P0'
-    || text(item?.code) !== 'unsupported-high-risk-surface')
-    || new Set(paths).size !== paths.length) return [];
+function exactFinding(item) {
+  const severity = dataValue(item, 'severity');
+  const code = dataValue(item, 'code');
+  const path = dataValue(item, 'path');
+  if (!severity.ok || !code.ok || !path.ok) return null;
+  if (typeof severity.value !== 'string' || typeof code.value !== 'string' || typeof path.value !== 'string') return null;
+  return Object.freeze({ severity: severity.value.trim(), code: code.value.trim(), path: path.value.trim() });
+}
+function escalationPaths(analysis) {
+  const findingsProperty = dataValue(analysis, 'findings');
+  if (!findingsProperty.ok || !exactArray(findingsProperty.value, WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1.length)) return [];
+  const normalized = findingsProperty.value.map(exactFinding);
+  if (normalized.some((item) => !item
+    || item.severity.toUpperCase() !== 'P0'
+    || item.code !== 'unsupported-high-risk-surface')) return [];
+  const paths = normalized.map((item) => item.path);
+  if (new Set(paths).size !== paths.length) return [];
   const sorted = [...paths].sort();
   const expected = [...WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1].sort();
   return sorted.every((path, index) => path === expected[index]) ? expected : [];
@@ -175,33 +196,36 @@ function reviewBackendStart(source, path, findings) {
 }
 
 export function analyzeWindowsAuthorityIgnitionConvergenceReview(input = {}) {
-  let repository = '';
-  let sourceHead = '';
-  let prNumber = 0;
-  let branch = '';
-  try {
-    repository = text(input.repository);
-    sourceHead = text(input.sourceHead).toLowerCase();
-    prNumber = Number(input.prNumber);
-    branch = text(input.branch);
-  } catch {
+  const repositoryProperty = dataValue(input, 'repository');
+  const prProperty = dataValue(input, 'prNumber');
+  const branchProperty = dataValue(input, 'branch');
+  const headProperty = dataValue(input, 'sourceHead');
+  const baseProperty = dataValue(input, 'baseSha');
+  const analysisProperty = dataValue(input, 'analysis');
+  const sourcesProperty = dataValue(input, 'sources');
+  if (!repositoryProperty.ok || !prProperty.ok || !branchProperty.ok || !headProperty.ok
+    || !baseProperty.ok || !analysisProperty.ok || !sourcesProperty.ok) {
     return Object.freeze({ eligible: false, clean: false, findings: Object.freeze([]), reviewedPaths: Object.freeze([]), proofRefs: Object.freeze([]), finalVerdict: 'WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_SPECIALIST_NOT_ELIGIBLE' });
   }
-  const paths = escalationPaths(input.analysis);
-  if (repository !== REVIEWED_REPOSITORY || prNumber !== REVIEWED_PR || branch !== REVIEWED_BRANCH
-    || !SHA.test(sourceHead) || paths.length !== WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1.length) {
+  const repository = text(repositoryProperty.value);
+  const prNumber = prProperty.value;
+  const branch = text(branchProperty.value);
+  const sourceHead = text(headProperty.value).toLowerCase();
+  const baseSha = text(baseProperty.value).toLowerCase();
+  const paths = escalationPaths(analysisProperty.value);
+  if (repository !== REVIEWED_REPOSITORY || !Number.isSafeInteger(prNumber) || prNumber !== REVIEWED_PR
+    || branch !== REVIEWED_BRANCH || sourceHead !== REVIEWED_SOURCE_HEAD || baseSha !== REVIEWED_BASE_SHA
+    || paths.length !== WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1.length) {
     return Object.freeze({ eligible: false, clean: false, findings: Object.freeze([]), reviewedPaths: Object.freeze([]), proofRefs: Object.freeze([]), finalVerdict: 'WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_SPECIALIST_NOT_ELIGIBLE' });
   }
-  const sources = Array.isArray(input.sources) ? input.sources : [];
+  const sources = sourcesProperty.value;
   const findings = [];
   const proofRefs = [];
   if (!exactArray(sources, WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1.length)) {
     findings.push(finding('windows-authority-source-estate-invalid', 'Exactly three closed-world immutable source records are required.', WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[0]));
   } else {
     for (const path of WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1) {
-      const candidates = sources.filter((source) => {
-        try { return source?.path === path; } catch { return false; }
-      });
+      const candidates = sources.filter((source) => exactPlainRecord(source, SOURCE_RECORD_KEYS) && source.path === path);
       if (candidates.length !== 1 || !exactSource(candidates[0], repository, sourceHead, path)) {
         findings.push(finding('windows-authority-source-evidence-invalid', 'One immutable exact-head source record is required for every reviewed path.', path));
         continue;
@@ -218,6 +242,8 @@ export function analyzeWindowsAuthorityIgnitionConvergenceReview(input = {}) {
     schemaVersion: WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_SCHEMA_VERSION,
     eligible: true,
     clean,
+    reviewedSourceHead: REVIEWED_SOURCE_HEAD,
+    reviewedBaseSha: REVIEWED_BASE_SHA,
     findings: Object.freeze(findings),
     reviewedPaths: Object.freeze([...WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1]),
     proofRefs: Object.freeze(proofRefs),
