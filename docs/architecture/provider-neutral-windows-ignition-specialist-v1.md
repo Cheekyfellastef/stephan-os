@@ -21,10 +21,10 @@ repository=Cheekyfellastef/stephan-os
 pr=1919
 branch=fix/ignition-canonical-convergence-gate-v1
 sourceHead=0cbd8318f5da7d815e3f4e30d8ef9a5d1c9feb77
-baseSha=13f13144730b2a6d94754914dbdf2c254c39567d
+baseSha=3dc12a7c84c54f406b10dee1293789e2338f7824
 ```
 
-The previous exact target `9941da6e500a7d95d11e8a3654630462cce71a91` became ineligible as soon as #1919 advanced. The specialist is deliberately retargeted only by an explicit source change plus fresh proof; head movement never inherits specialist evidence silently.
+The previous source target `9941da6e500a7d95d11e8a3654630462cce71a91` and previous base `13f13144730b2a6d94754914dbdf2c254c39567d` are historical and explicitly ineligible. The specialist is deliberately retargeted only by an explicit source change plus fresh proof; head or base movement never inherits specialist evidence silently.
 
 If #1919 head or base moves again, this specialist becomes ineligible. A new exact target requires another bounded source update and fresh proof.
 
