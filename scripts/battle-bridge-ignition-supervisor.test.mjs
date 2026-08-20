@@ -137,6 +137,7 @@ test('canonical source truth gate accepts only clean synchronized main tracking 
   assert.equal(ready.publicationState, 'healthy-synced');
 
   const rejected = [
+    [{ publicationState: 'source-truth-unproven', blockedForRemoteTruth: true }, 'source-truth-unproven'],
     [canonicalSourceTruth({ branch: 'feature/test' }), 'non-main-source-truth'],
     [canonicalSourceTruth({ upstreamBranch: 'origin/feature' }), 'noncanonical-upstream-source-truth'],
     [canonicalSourceTruth({ publicationState: 'local-uncommitted', workingTreeDirty: true }), 'dirty-source-truth'],
@@ -157,6 +158,7 @@ test('live source collector includes meaningful Git dirt instead of silently ass
     cwd: '/canonical/repo',
     execFile(command, args) {
       calls.push([command, ...args]);
+      if (args[0] === 'fetch') return '';
       if (args[0] === 'status') return ' M scripts/run-battle-bridge-ignition.mjs\n';
       if (args.includes('--abbrev-ref') && args.includes('HEAD')) return 'main\n';
       if (args.includes('--symbolic-full-name')) return 'origin/main\n';
@@ -167,7 +169,21 @@ test('live source collector includes meaningful Git dirt instead of silently ass
   assert.equal(result.publicationState, 'local-uncommitted');
   assert.equal(result.workingTreeDirty, true);
   assert.equal(result.blockedForRemoteTruth, true);
-  assert.deepEqual(calls[0], ['git', 'status', '--porcelain=v1']);
+  assert.deepEqual(calls[0], ['git', 'fetch', '--prune', 'origin', 'main']);
+  assert.deepEqual(calls[1], ['git', 'status', '--porcelain=v1']);
+});
+
+test('live source collector fails closed when current origin/main cannot be fetched', () => {
+  const result = collectCanonicalIgnitionSourceTruth({
+    cwd: '/canonical/repo',
+    execFile(command, args) {
+      assert.deepEqual([command, ...args], ['git', 'fetch', '--prune', 'origin', 'main']);
+      throw new Error('offline');
+    },
+  });
+  const verdict = evaluateCanonicalIgnitionSourceTruth(result);
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.blocker.id, 'source-truth-unproven');
 });
 
 test('real evaluator-shaped diverged source blocks before publisher or service mutation', async () => {

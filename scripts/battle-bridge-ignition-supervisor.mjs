@@ -52,6 +52,7 @@ const defaultRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 
 export function collectCanonicalIgnitionSourceTruth({ cwd = defaultRepoRoot, execFile = execFileSync } = {}) {
   try {
+    execFile('git', ['fetch', '--prune', 'origin', 'main'], { cwd, encoding: 'utf8' });
     const statusOutput = String(execFile('git', ['status', '--porcelain=v1'], { cwd, encoding: 'utf8' }) || '');
     const statusAssessment = evaluateGitStatusForIgnition(statusOutput);
     const captureStep = (_label, command, args) => ({
@@ -87,7 +88,8 @@ export function evaluateCanonicalIgnitionSourceTruth(sourceTruth = {}) {
   if (canonical) return Object.freeze({ ok: true, publicationState, sourceTruth });
 
   let id = 'source-truth-unproven';
-  if (branch && branch !== 'main') id = 'non-main-source-truth';
+  if (publicationState === 'source-truth-unproven') id = 'source-truth-unproven';
+  else if (branch && branch !== 'main') id = 'non-main-source-truth';
   else if (sourceTruth?.hasUpstream !== true || upstreamBranch !== 'origin/main') id = 'noncanonical-upstream-source-truth';
   else if (sourceTruth?.workingTreeDirty === true || publicationState === 'local-uncommitted') id = 'dirty-source-truth';
   else if (sourceTruth?.detachedHead === true) id = 'detached-source-truth';
