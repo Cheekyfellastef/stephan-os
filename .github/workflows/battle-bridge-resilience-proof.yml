@@ -38,6 +38,8 @@ on:
       - 'shared/agents/battleBridgeExecutionBoundaryV1.mjs'
       - 'shared/agents/battleBridgeExecutionBoundaryV1.test.mjs'
       - 'shared/agents/battleBridgeWindowsHosts.mjs'
+      - 'shared/agents/backendExpectedHeadHandoffV1.mjs'
+      - 'shared/agents/backendExpectedHeadHandoffV1.test.mjs'
       - 'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs'
       - 'scripts/windows-launcher-supervisor-freshness.test.mjs'
       - 'scripts/windows-launcher-defaults.test.mjs'
@@ -82,6 +84,7 @@ jobs:
           shared/agents/battleBridgeRecoveryMeshV1.test.mjs
           shared/agents/backendFreshnessSupervisor.test.mjs
           shared/agents/battleBridgeExecutionBoundaryV1.test.mjs
+          shared/agents/backendExpectedHeadHandoffV1.test.mjs
           scripts/battle-bridge-backend-freshness-probe.test.mjs
           scripts/battle-bridge-recovery-mesh.test.mjs
           scripts/battle-bridge-recovery-mesh-installer.test.mjs
