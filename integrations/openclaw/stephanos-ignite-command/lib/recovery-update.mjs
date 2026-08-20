@@ -44,7 +44,7 @@ function replaceReceipt(receiptPath, receipt) {
   renameSync(temporaryPath, receiptPath);
 }
 
-function observeSpawn(child, timeoutMs = 5000) {
+function observeSpawn(child) {
   return new Promise((resolve) => {
     if (!child || typeof child.once !== 'function') {
       resolve(false);
@@ -54,11 +54,8 @@ function observeSpawn(child, timeoutMs = 5000) {
     const finish = (value) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
       resolve(value);
     };
-    const timer = setTimeout(() => finish(false), timeoutMs);
-    timer.unref?.();
     child.once('spawn', () => finish(true));
     child.once('error', () => finish(false));
   });
@@ -72,7 +69,6 @@ export async function queueBattleBridgeExactHeadFromOpenClaw({
   spawnFn = spawn,
   nonce = randomUUID(),
   now = new Date(),
-  launchTimeoutMs = 5000,
 } = {}) {
   const normalizedExpectedHead = normalizeOpenClawExactHead(expectedHead);
   if (!normalizedExpectedHead) return Object.freeze({ ok: false, blocker: 'EXPECTED_HEAD_INVALID', expectedHead: '' });
@@ -99,20 +95,23 @@ export async function queueBattleBridgeExactHeadFromOpenClaw({
     queuedAtUtc: now.toISOString(),
     pluginReloadProof: 'PENDING',
   };
+
+  let receiptCreated = false;
   try {
     writeNewReceipt(receiptPath, queued);
+    receiptCreated = true;
     const executorPath = fileURLToPath(new URL('./recovery-update-executor.mjs', import.meta.url));
     const child = spawnFn(BATTLE_BRIDGE_WINDOWS_HOST.node, [executorPath, receiptId, normalizedExpectedHead], {
       cwd: canonicalRepoRoot(env), env, detached: true, shell: false, windowsHide: true, stdio: 'ignore',
     });
-    const launched = await observeSpawn(child, launchTimeoutMs);
+    const launched = await observeSpawn(child);
     if (!launched) {
       replaceReceipt(receiptPath, {
         ...queued,
         status: 'LAUNCH_FAILED',
         finalVerdict: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
         blocker: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
-        launchFailedAtUtc: new Date(now.getTime()).toISOString(),
+        launchFailedAtUtc: now.toISOString(),
       });
       return Object.freeze({
         ok: false,
@@ -128,25 +127,27 @@ export async function queueBattleBridgeExactHeadFromOpenClaw({
     }
     child.unref?.();
   } catch {
-    try {
-      replaceReceipt(receiptPath, {
-        ...queued,
-        status: 'LAUNCH_FAILED',
-        finalVerdict: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
-        blocker: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
-        launchFailedAtUtc: new Date(now.getTime()).toISOString(),
-      });
-    } catch {}
+    if (receiptCreated) {
+      try {
+        replaceReceipt(receiptPath, {
+          ...queued,
+          status: 'LAUNCH_FAILED',
+          finalVerdict: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
+          blocker: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
+          launchFailedAtUtc: now.toISOString(),
+        });
+      } catch {}
+    }
     return Object.freeze({
       ok: false,
-      status: 'LAUNCH_FAILED',
-      finalVerdict: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
-      blocker: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
+      status: receiptCreated ? 'LAUNCH_FAILED' : 'BLOCKED',
+      finalVerdict: receiptCreated ? 'UPDATE_EXECUTOR_LAUNCH_FAILED' : 'UPDATE_QUEUE_FAILED',
+      blocker: receiptCreated ? 'UPDATE_EXECUTOR_LAUNCH_FAILED' : 'UPDATE_QUEUE_FAILED',
       expectedHead: normalizedExpectedHead,
-      receiptId,
+      ...(receiptCreated ? { receiptId } : {}),
       route: OPENCLAW_BATTLE_BRIDGE_UPDATE_ROUTE,
       runtimeProofPassed: false,
-      pluginReloadProofPending: true,
+      pluginReloadProofPending: receiptCreated,
     });
   }
   return Object.freeze({
