@@ -81,6 +81,31 @@ function Test-BackendExactHeadHealth {
             }
         }
 
+        $observedSchemaVersion = if ($null -ne $payload.schemaVersion) { [string]$payload.schemaVersion } else { '' }
+        if (-not [string]::Equals($observedSchemaVersion, 'stephanos.backend-health.v1', [System.StringComparison]::Ordinal)) {
+            return [PSCustomObject]@{
+                Url = $Url
+                Healthy = $false
+                StatusCode = $response.StatusCode
+                SourceHead = $null
+                Error = 'BACKEND_HEALTH_SCHEMA_MISSING_OR_MISMATCH'
+            }
+        }
+
+        $observedRuntimeId = ''
+        if ($null -ne $payload.backendIdentity -and $null -ne $payload.backendIdentity.runtimeId) {
+            $observedRuntimeId = [string]$payload.backendIdentity.runtimeId
+        }
+        if (-not [string]::Equals($observedRuntimeId, 'stephanos-battle-bridge-backend', [System.StringComparison]::Ordinal)) {
+            return [PSCustomObject]@{
+                Url = $Url
+                Healthy = $false
+                StatusCode = $response.StatusCode
+                SourceHead = $null
+                Error = 'BACKEND_HEALTH_RUNTIME_ID_MISSING_OR_MISMATCH'
+            }
+        }
+
         $observedSourceHead = ''
         if ($null -ne $payload.backendIdentity -and $null -ne $payload.backendIdentity.sourceHead) {
             $observedSourceHead = ([string]$payload.backendIdentity.sourceHead).Trim().ToLowerInvariant()

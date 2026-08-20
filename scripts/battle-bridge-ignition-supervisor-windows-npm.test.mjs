@@ -21,7 +21,7 @@ function captureBackendStart(workspace, platform) {
   }).then((result) => ({ calls, result }));
 }
 
-function exactHeadBackendHealth({ statusCode = 200, body, expectedHead }) {
+function canonicalExactHeadBackendHealth({ statusCode = 200, body, expectedHead }) {
   if (statusCode !== 200) return false;
   let payload;
   try {
@@ -29,6 +29,8 @@ function exactHeadBackendHealth({ statusCode = 200, body, expectedHead }) {
   } catch {
     return false;
   }
+  if (payload?.schemaVersion !== 'stephanos.backend-health.v1') return false;
+  if (payload?.backendIdentity?.runtimeId !== 'stephanos-battle-bridge-backend') return false;
   const observed = String(payload?.backendIdentity?.sourceHead || '').trim().toLowerCase();
   const expected = String(expectedHead || '').trim().toLowerCase();
   return /^[0-9a-f]{40}$/.test(observed) && observed === expected;
@@ -73,6 +75,10 @@ test('backend repair child source requires fixed exact-head proof immediately be
   assert.match(repairPowerShell, /Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'OpenClaw readonly adapter ensure'/);
   assert.match(repairPowerShell, /function Test-BackendExactHeadHealth/);
   assert.match(repairPowerShell, /ConvertFrom-Json -ErrorAction Stop/);
+  assert.match(repairPowerShell, /stephanos\.backend-health\.v1/);
+  assert.match(repairPowerShell, /BACKEND_HEALTH_SCHEMA_MISSING_OR_MISMATCH/);
+  assert.match(repairPowerShell, /stephanos-battle-bridge-backend/);
+  assert.match(repairPowerShell, /BACKEND_HEALTH_RUNTIME_ID_MISSING_OR_MISMATCH/);
   assert.match(repairPowerShell, /\$payload\.backendIdentity\.sourceHead/);
   assert.match(repairPowerShell, /BACKEND_HEALTH_SOURCE_HEAD_MISSING_OR_INVALID/);
   assert.match(repairPowerShell, /BACKEND_HEALTH_SOURCE_HEAD_MISMATCH/);
@@ -86,24 +92,58 @@ test('backend repair child source requires fixed exact-head proof immediately be
 test('already-healthy backend requires exact runtime head before bypassing convergence', () => {
   const expectedHead = 'a'.repeat(40);
   const staleHead = 'b'.repeat(40);
+  const canonicalIdentity = {
+    runtimeId: 'stephanos-battle-bridge-backend',
+    sourceHead: expectedHead,
+  };
 
-  assert.equal(exactHeadBackendHealth({
+  assert.equal(canonicalExactHeadBackendHealth({
     expectedHead,
-    body: { backendIdentity: { sourceHead: staleHead } },
+    body: {
+      schemaVersion: 'stephanos.backend-health.v1',
+      backendIdentity: { ...canonicalIdentity, sourceHead: staleHead },
+    },
   }), false, 'HTTP 200 from stale head B must not satisfy expected head A');
 
-  assert.equal(exactHeadBackendHealth({
+  assert.equal(canonicalExactHeadBackendHealth({
+    expectedHead,
+    body: {
+      schemaVersion: 'stephanos.backend-health.v0',
+      backendIdentity: canonicalIdentity,
+    },
+  }), false, 'correct head with the wrong health schema must fail closed');
+
+  assert.equal(canonicalExactHeadBackendHealth({
+    expectedHead,
+    body: {
+      schemaVersion: 'stephanos.backend-health.v1',
+      backendIdentity: { ...canonicalIdentity, runtimeId: 'foreign-backend' },
+    },
+  }), false, 'correct head with the wrong runtime ID must fail closed');
+
+  assert.equal(canonicalExactHeadBackendHealth({
     expectedHead,
     body: { backendIdentity: { sourceHead: expectedHead } },
-  }), true, 'HTTP 200 from exact head A may bypass backend convergence');
+  }), false, 'missing schema and runtime identity must fail closed');
 
-  assert.equal(exactHeadBackendHealth({
+  assert.equal(canonicalExactHeadBackendHealth({
     expectedHead,
-    body: { backendIdentity: {} },
+    body: {
+      schemaVersion: 'stephanos.backend-health.v1',
+      backendIdentity: { runtimeId: 'stephanos-battle-bridge-backend' },
+    },
   }), false, 'missing source head must fail closed');
 
-  assert.equal(exactHeadBackendHealth({
+  assert.equal(canonicalExactHeadBackendHealth({
     expectedHead,
     body: '{malformed-json',
   }), false, 'malformed health identity must fail closed');
+
+  assert.equal(canonicalExactHeadBackendHealth({
+    expectedHead,
+    body: {
+      schemaVersion: 'stephanos.backend-health.v1',
+      backendIdentity: canonicalIdentity,
+    },
+  }), true, 'only canonical schema, runtime ID, and exact head may bypass backend convergence');
 });

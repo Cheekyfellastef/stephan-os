@@ -242,6 +242,7 @@ server.on('error', async (error) => {
   process.exit(1);
 });
 
+enforceBattleBridgeBackendChildExpectedHead();
 server.listen(PORT, () => {
   void startBackendPublisherLoop();
   logger.info(`Stephanos server listening on http://localhost:${PORT}`);

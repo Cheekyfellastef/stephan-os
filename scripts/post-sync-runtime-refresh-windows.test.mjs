@@ -13,6 +13,44 @@ const backendStartSource = await readFile(new URL('./windows/start-stephanos-bac
 const ignitionEntrySource = await readFile(new URL('./run-battle-bridge-ignition.mjs', import.meta.url), 'utf8');
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const backendServerPath = fileURLToPath(new URL('../stephanos-server/server.js', import.meta.url));
+const backendServerSource = await readFile(backendServerPath, 'utf8');
+
+function backendHeadProofForObservedHeads(observedHeads, expectedHead) {
+  const proofFunctionsStart = backendServerSource.indexOf('function minimalBackendChildGitEnvironment()');
+  const firstProofCall = backendServerSource.indexOf('\nenforceBattleBridgeBackendChildExpectedHead();');
+  const proofFunctionsSource = backendServerSource.slice(proofFunctionsStart, firstProofCall);
+  const remainingHeads = [...observedHeads];
+  const spawnSyncImpl = () => ({
+    status: 0,
+    stdout: `${remainingHeads.shift() || ''}\n`,
+    stderr: '',
+  });
+  const processForTest = {
+    env: { STEPHANOS_BACKEND_SOURCE_HEAD: expectedHead },
+    platform: 'linux',
+  };
+  return Function(
+    'spawnSync',
+    'canonicalGitDirectory',
+    'canonicalRepoRoot',
+    'process',
+    `'use strict'; ${proofFunctionsSource}; return enforceBattleBridgeBackendChildExpectedHead;`,
+  )(spawnSyncImpl, '/repo/.git', '/repo', processForTest);
+}
+
+async function simulateBackendImportBoundary(observedHeads, expectedHead) {
+  const proveExpectedHead = backendHeadProofForObservedHeads(observedHeads, expectedHead);
+  let listenerStarted = false;
+  try {
+    proveExpectedHead();
+    await Promise.resolve(); // backend module loading boundary
+    proveExpectedHead();
+    listenerStarted = true;
+    return { listenerStarted, error: null };
+  } catch (error) {
+    return { listenerStarted, error };
+  }
+}
 
 test('restart helper accepts only backend and mission-worker', () => {
   assert.match(restartSource, /ValidateSet\('backend', 'mission-worker'\)/);
@@ -67,6 +105,41 @@ test('backend Node child rejects checkout drift before loading or listening', ()
   assert.notEqual(child.status, 0, 'drifted backend child must fail closed');
   assert.match(String(child.stderr || ''), /BACKEND_CHILD_EXPECTED_HEAD_MISMATCH/);
   assert.doesNotMatch(`${child.stdout || ''}\n${child.stderr || ''}`, /\[BACKEND LIVE\] Stephanos server listening/);
+});
+
+test('backend Node child re-proves exact head after module loading immediately before listening', () => {
+  const proofCall = 'enforceBattleBridgeBackendChildExpectedHead();';
+  const proofOffsets = [...backendServerSource.matchAll(/enforceBattleBridgeBackendChildExpectedHead\(\);/g)]
+    .map((match) => match.index);
+  const lastBackendImportOffset = backendServerSource.lastIndexOf('await import(');
+  const listenerOffset = backendServerSource.indexOf('server.listen(');
+
+  assert.equal(proofOffsets.length, 2, 'backend entry must prove the fixed expected head exactly twice');
+  assert.ok(proofOffsets[0] < lastBackendImportOffset, 'the first proof must happen before backend module loading');
+  assert.ok(lastBackendImportOffset < proofOffsets[1], 'checkout drift during module loading must reach a second proof');
+  assert.equal(
+    backendServerSource.slice(proofOffsets[1], listenerOffset).trim(),
+    proofCall,
+    'the second proof must be the only operation before listener/health publication',
+  );
+  assert.ok(proofOffsets[1] < listenerOffset, 'failed re-proof must prevent server.listen');
+});
+
+test('checkout drift A to B during backend module loading prevents listener publication', async () => {
+  const approvedHead = 'a'.repeat(40);
+  const driftedHead = 'b'.repeat(40);
+  const result = await simulateBackendImportBoundary([approvedHead, driftedHead], approvedHead);
+
+  assert.equal(result.listenerStarted, false);
+  assert.match(result.error?.message || '', /BACKEND_CHILD_EXPECTED_HEAD_MISMATCH/);
+});
+
+test('unchanged exact head A across backend module loading proceeds to listener publication', async () => {
+  const approvedHead = 'a'.repeat(40);
+  const result = await simulateBackendImportBoundary([approvedHead, approvedHead], approvedHead);
+
+  assert.equal(result.error, null);
+  assert.equal(result.listenerStarted, true);
 });
 
 test('backend Node child ignores hostile inherited Git repository-selection variables', () => {
