@@ -21,6 +21,19 @@ function captureBackendStart(workspace, platform) {
   }).then((result) => ({ calls, result }));
 }
 
+function exactHeadBackendHealth({ statusCode = 200, body, expectedHead }) {
+  if (statusCode !== 200) return false;
+  let payload;
+  try {
+    payload = typeof body === 'string' ? JSON.parse(body) : body;
+  } catch {
+    return false;
+  }
+  const observed = String(payload?.backendIdentity?.sourceHead || '').trim().toLowerCase();
+  const expected = String(expectedHead || '').trim().toLowerCase();
+  return /^[0-9a-f]{40}$/.test(observed) && observed === expected;
+}
+
 test('Battle Bridge backend repair uses fixed cmd.exe npm.cmd execution on Windows without Node shell mode', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-backend-win-npm-'));
   const { calls, result } = await captureBackendStart(workspace, 'win32');
@@ -58,6 +71,39 @@ test('backend repair child source requires fixed exact-head proof immediately be
   assert.match(repairPowerShell, /Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend starter child'/);
   assert.match(repairPowerShell, /'-ExpectedHead', \$ExpectedHead/);
   assert.match(repairPowerShell, /Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'OpenClaw readonly adapter ensure'/);
+  assert.match(repairPowerShell, /function Test-BackendExactHeadHealth/);
+  assert.match(repairPowerShell, /ConvertFrom-Json -ErrorAction Stop/);
+  assert.match(repairPowerShell, /\$payload\.backendIdentity\.sourceHead/);
+  assert.match(repairPowerShell, /BACKEND_HEALTH_SOURCE_HEAD_MISSING_OR_INVALID/);
+  assert.match(repairPowerShell, /BACKEND_HEALTH_SOURCE_HEAD_MISMATCH/);
+  assert.match(repairPowerShell, /Test-BackendExactHeadHealth -Url \$localHealthUrl -ExpectedSourceHead \$ExpectedHead/);
+  assert.match(repairPowerShell, /Test-BackendExactHeadHealth -Url \$hostedHealthUrl -ExpectedSourceHead \$ExpectedHead/);
+  assert.doesNotMatch(repairPowerShell, /\$localResult = Test-Url/);
   assert.match(backendPowerShell, /Backend startup expected-head binding mismatch/);
   assert.match(backendPowerShell, /Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend process start'/);
+});
+
+test('already-healthy backend requires exact runtime head before bypassing convergence', () => {
+  const expectedHead = 'a'.repeat(40);
+  const staleHead = 'b'.repeat(40);
+
+  assert.equal(exactHeadBackendHealth({
+    expectedHead,
+    body: { backendIdentity: { sourceHead: staleHead } },
+  }), false, 'HTTP 200 from stale head B must not satisfy expected head A');
+
+  assert.equal(exactHeadBackendHealth({
+    expectedHead,
+    body: { backendIdentity: { sourceHead: expectedHead } },
+  }), true, 'HTTP 200 from exact head A may bypass backend convergence');
+
+  assert.equal(exactHeadBackendHealth({
+    expectedHead,
+    body: { backendIdentity: {} },
+  }), false, 'missing source head must fail closed');
+
+  assert.equal(exactHeadBackendHealth({
+    expectedHead,
+    body: '{malformed-json',
+  }), false, 'malformed health identity must fail closed');
 });
