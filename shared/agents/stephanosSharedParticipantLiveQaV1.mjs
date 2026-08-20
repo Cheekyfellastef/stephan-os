@@ -16,6 +16,8 @@ const MAX_RESPONSE_NODES = 2_048;
 const MAX_ARRAY_LENGTH = 128;
 const MAX_OBJECT_KEYS = 96;
 const MAX_DEPTH = 10;
+const MAX_LIVE_GOAL_PROJECTION_AGE_MS = 2 * 60 * 1000;
+const MAX_LIVE_GOAL_PROJECTION_FUTURE_SKEW_MS = 30 * 1000;
 const RESERVED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const SECRET_SHAPED_TEXT = /(?:BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|xox[baprs]-|gh[pousr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{20,}|(?:password|credential|api[_-]?key|private[_-]?key)\s*[:=])/i;
 const INVALID = Symbol('invalid-live-qa-data');
@@ -141,26 +143,83 @@ function requiresDurableSystemTruth(question = {}) {
     || DURABLE_SYSTEM_TRUTH_QUESTION_CLASSES.has(text(question.questionClass));
 }
 
-function deriveGroundingEvidence(response = {}) {
+function timestampPosture(value, nowMs) {
+  const timestampMs = Date.parse(text(value));
+  if (!Number.isFinite(timestampMs)) return 'INVALID';
+  const ageMs = nowMs - timestampMs;
+  if (ageMs < -MAX_LIVE_GOAL_PROJECTION_FUTURE_SKEW_MS) return 'FUTURE';
+  if (ageMs > MAX_LIVE_GOAL_PROJECTION_AGE_MS) return 'STALE';
+  return 'FRESH';
+}
+
+function classifyLiveGoalProjection(projection, nowMs) {
+  if (!projection || typeof projection !== 'object' || projection.schemaVersion !== 'stephanos.live-goal-projection.v1') {
+    return Object.freeze({ posture: 'ABSENT_OR_INVALID', observedRuntimeProof: false });
+  }
+
+  const generatedAtPosture = timestampPosture(projection.generatedAt, nowMs);
+  const heartbeat = projection.heartbeat && typeof projection.heartbeat === 'object' ? projection.heartbeat : {};
+  const heartbeatPosture = timestampPosture(heartbeat.generatedAt, nowMs);
+  const backend = projection.backendStatus && typeof projection.backendStatus === 'object' ? projection.backendStatus : {};
+  const backendStatus = text(backend.status).toLowerCase();
+  const missionStatus = text(projection.missionOperationsStatus?.status).toLowerCase();
+  const canonicalSource = text(projection.projectionSource) === 'live-goal-projection-service'
+    && text(heartbeat.projectionSource) === 'live-goal-projection-service';
+  const liveSourceTruth = text(projection.sourceTruth).toLowerCase() === 'live';
+  const backendLive = backend.ok === true || backendStatus === 'live' || backendStatus === 'ok';
+  const heartbeatLive = heartbeat.backendLive === true;
+  const missionLive = missionStatus === 'ready' || missionStatus === 'empty';
+  const timestampsFresh = generatedAtPosture === 'FRESH' && heartbeatPosture === 'FRESH';
+
+  if (!timestampsFresh) {
+    return Object.freeze({ posture: 'STALE_OR_INVALID_TIMESTAMP', observedRuntimeProof: false });
+  }
+  if (!canonicalSource) {
+    return Object.freeze({ posture: 'NON_CANONICAL_SOURCE', observedRuntimeProof: false });
+  }
+  if (!liveSourceTruth) {
+    const posture = text(projection.sourceTruth).toLowerCase() === 'mixed'
+      ? 'MIXED'
+      : (text(projection.sourceTruth).toLowerCase() === 'static-fallback' ? 'STATIC_FALLBACK' : 'NON_LIVE_SOURCE_TRUTH');
+    return Object.freeze({ posture, observedRuntimeProof: false });
+  }
+  if (!backendLive || !heartbeatLive) {
+    return Object.freeze({ posture: 'BACKEND_OR_HEARTBEAT_NOT_LIVE', observedRuntimeProof: false });
+  }
+  if (!missionLive) {
+    return Object.freeze({ posture: 'MISSION_OPERATIONS_NOT_LIVE', observedRuntimeProof: false });
+  }
+  return Object.freeze({ posture: 'LIVE_CURRENT', observedRuntimeProof: true });
+}
+
+function deriveGroundingEvidence(response = {}, options = {}) {
   const data = response?.data && typeof response.data === 'object' ? response.data : {};
   const execution = data.execution_metadata && typeof data.execution_metadata === 'object'
     ? data.execution_metadata
     : {};
   const refs = [];
   const sources = [];
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
   let observedRuntimeProof = false;
+  let liveGoalProjectionPosture = 'ABSENT';
 
   const liveGoalProjection = data.liveGoalProjection && typeof data.liveGoalProjection === 'object'
     ? data.liveGoalProjection
     : null;
   if (liveGoalProjection?.schemaVersion === 'stephanos.live-goal-projection.v1') {
+    const classifiedProjection = classifyLiveGoalProjection(liveGoalProjection, nowMs);
+    liveGoalProjectionPosture = classifiedProjection.posture;
     refs.push(evidenceToken('live-goal-projection', JSON.stringify({
       generatedAt: liveGoalProjection.generatedAt || '',
+      projectionSource: liveGoalProjection.projectionSource || '',
       sourceTruth: liveGoalProjection.sourceTruth || '',
+      backendStatus: liveGoalProjection.backendStatus || {},
+      heartbeat: liveGoalProjection.heartbeat || {},
+      missionOperationsStatus: liveGoalProjection.missionOperationsStatus || {},
       proofTruth: liveGoalProjection.proofTruth || {},
     })));
     sources.push('live-goal-projection');
-    observedRuntimeProof = true;
+    observedRuntimeProof = classifiedProjection.observedRuntimeProof;
   }
 
   if (execution.retrieval_used === true) {
@@ -195,6 +254,7 @@ function deriveGroundingEvidence(response = {}) {
     sourcesConsulted: Object.freeze([...new Set(sources)]),
     freshness,
     observedRuntimeProof,
+    liveGoalProjectionPosture,
   });
 }
 
@@ -208,14 +268,17 @@ function answerIdFor(question, outputText, response = {}) {
   })).slice(0, 24)}`;
 }
 
-function makeAnswer({ question, response, outputText, answeredAtUtc, failureReason = '' }) {
-  const grounding = deriveGroundingEvidence(response);
+function makeAnswer({ question, response, outputText, answeredAtUtc, nowMs, failureReason = '' }) {
+  const grounding = deriveGroundingEvidence(response, { nowMs });
   const failed = Boolean(failureReason);
   const durableSystemTruthRequired = requiresDurableSystemTruth(question);
+  const effectiveFreshness = durableSystemTruthRequired && !grounding.observedRuntimeProof
+    ? (grounding.liveGoalProjectionPosture === 'STALE_OR_INVALID_TIMESTAMP' ? 'STALE' : 'UNKNOWN')
+    : grounding.freshness;
   const grounded = !failed
     && grounding.evidenceRefs.length > 0
     && grounding.sourcesConsulted.length > 0
-    && ['FRESH', 'RECENT'].includes(grounding.freshness)
+    && ['FRESH', 'RECENT'].includes(effectiveFreshness)
     && (!durableSystemTruthRequired || grounding.observedRuntimeProof);
 
   return Object.freeze({
@@ -229,7 +292,7 @@ function makeAnswer({ question, response, outputText, answeredAtUtc, failureReas
       ? 'UNKNOWN'
       : (grounding.observedRuntimeProof ? 'OBSERVED_FROM_RUNTIME_OR_PROOF' : 'INFERRED_FROM_EVIDENCE'),
     evidenceRefs: failed ? Object.freeze([]) : grounding.evidenceRefs,
-    freshness: failed ? 'UNKNOWN' : grounding.freshness,
+    freshness: failed ? 'UNKNOWN' : effectiveFreshness,
     sourcesConsulted: failed ? Object.freeze([]) : grounding.sourcesConsulted,
     cannotAnswerReason: failed ? failureReason : null,
     answerVerdict: failed
@@ -318,7 +381,7 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
   const failureReason = responseSucceeded
     ? ''
     : text(response.error) || 'Existing Stephanos AI route did not produce a successful answer.';
-  const answer = makeAnswer({ question, response, outputText, answeredAtUtc, failureReason });
+  const answer = makeAnswer({ question, response, outputText, answeredAtUtc, nowMs, failureReason });
   const built = createStephanosWorkspaceAnswerRecord(answer, {
     recipientParticipantId: question.askerParticipantId,
     relatedIssue: text(questionRecord.relatedIssue) || '#1308',
