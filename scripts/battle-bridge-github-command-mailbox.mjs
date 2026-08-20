@@ -35,6 +35,7 @@ import {
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { FORGE_SHADOW_BATTLE_BRIDGE_OPERATION } from '../shared/agents/forgeShadowBattleBridgeAdapterV1.mjs';
 import { publishCodexCapacityToSharedWorkspace } from '../shared/agents/codexCapacitySharedWorkspace.mjs';
+import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -1399,7 +1400,7 @@ async function executeSelectedMailboxCommand(selected, receiptRef) {
   });
 }
 
-export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date() } = {}) {
+async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() } = {}) {
   if (process.platform !== 'win32') return { ok: false, blocker: 'WINDOWS_REQUIRED' };
   if (repoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) {
     return { ok: false, blocker: 'CANONICAL_CHECKOUT_REQUIRED', repoRoot, expectedRepoRoot };
@@ -1514,6 +1515,30 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     receiptPublicationBudget: publicationBudget.snapshot(),
     terminal: Object.freeze(terminal),
   });
+}
+
+export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date() } = {}) {
+  if (process.platform !== 'win32') return { ok: false, blocker: 'WINDOWS_REQUIRED' };
+  const leaseBefore = verifyMailboxOutboxGuardLease();
+  if (!leaseBefore.ok) return Object.freeze({
+    ok: false,
+    blocker: leaseBefore.blocker,
+    finalVerdict: 'MAILBOX_COMMAND_POLL_BLOCKED',
+    duplicateWorkerAllowed: false,
+    arbitraryShellAllowed: false,
+    sourceMutationAccess: false,
+  });
+  const result = await runBattleBridgeGitHubCommandMailboxCore({ now });
+  const leaseAfter = verifyMailboxOutboxGuardLease();
+  if (!leaseAfter.ok) return Object.freeze({
+    ok: false,
+    blocker: leaseAfter.blocker,
+    finalVerdict: 'MAILBOX_COMMAND_POLL_BLOCKED',
+    duplicateWorkerAllowed: false,
+    arbitraryShellAllowed: false,
+    sourceMutationAccess: false,
+  });
+  return result;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

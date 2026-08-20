@@ -5,8 +5,11 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -15,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import {
+  atomicWriteJson,
   MAILBOX_OUTBOX_DEFERRED_MANIFEST_SCHEMA,
   MAILBOX_OUTBOX_DEFERRED_SCHEMA,
   MAILBOX_OUTBOX_DEFERRED_SEGMENT_SCHEMA,
@@ -25,7 +29,9 @@ import {
   MAILBOX_OUTBOX_SEGMENT_MAX_BYTES,
   normalizePendingReceiptPublications,
   pendingReceiptPublicationDigest,
+  readJsonObject,
   runMailboxOutboxGuard,
+  verifyMailboxOutboxGuardLease,
 } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 
 function pending(id, state = 'BLOCKED', extra = {}) {
@@ -111,6 +117,9 @@ function runGuard(f, options = {}) {
     platform: 'win32',
     repoRoot: f.root,
     pathOverrides: f.paths,
+    processIdentityFn: (pid) => pid === process.pid
+      ? { state: 'known', bootId: 'test-boot-current', processStartId: 'test-process-current' }
+      : { state: 'dead' },
     ...options,
   });
 }
@@ -269,6 +278,47 @@ test('bounded transaction journal completes after a simulated crash without debt
   }
 });
 
+test('post-child crash after future segments resumes from intent without a sequence wedge', () => {
+  const f = fixture();
+  try {
+    const retry = pending('mailbox-post-crash-a');
+    const queued = pending('mailbox-post-crash-b');
+    const created = pending('mailbox-post-crash-new');
+    writeJson(f.statePath, { pendingReceiptPublications: [retry, queued] });
+    let childRan = false;
+    const crashed = runGuard(f, {
+      spawnSyncFn: () => {
+        const state = readJson(f.statePath);
+        state.pendingReceiptPublications.push(created);
+        writeJson(f.statePath, state);
+        childRan = true;
+        return { status: 1 };
+      },
+      faultFn: (stage) => {
+        if (childRan && stage === 'after-ledger-segments') throw new Error('SIMULATED_POST_CHILD_POWER_LOSS');
+      },
+    });
+    assert.equal(crashed.ok, false);
+    assert.match(crashed.error, /SIMULATED_POST_CHILD_POWER_LOSS/);
+    assert.equal(existsSync(`${f.deferredPath}.transaction-v3.json`), true);
+
+    const recovered = runGuard(f, {
+      spawnSyncFn: () => ({ status: 1, stdout: '', stderr: 'still offline' }),
+    });
+    assert.equal(recovered.blocker, 'MAILBOX_CHILD_RUN_BLOCKED');
+    assert.doesNotMatch(String(recovered.error || ''), /MAILBOX_OUTBOX_LEDGER_FUTURE_SEGMENT_CONFLICT/);
+    assert.equal(existsSync(`${f.deferredPath}.transaction-v3.json`), false);
+    assert.deepEqual(activeLedgerIds(f.deferredPath), [
+      'mailbox-post-crash-a',
+      'mailbox-post-crash-new',
+      'mailbox-post-crash-b',
+    ]);
+    assert.equal(new Set(activeLedgerEntries(f.deferredPath).map((entry) => entry.publicationId)).size, 3);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test('legacy v1 debt migrates once into v3 without collapsing a conflicting identity', () => {
   const f = fixture();
   try {
@@ -387,6 +437,36 @@ test('canonical debt conflicting with an indexed publication identity blocks acr
     assert.equal(childCalled, false);
     assert.deepEqual(readJson(f.statePath), canonical);
     assert.equal(readFileSync(f.deferredPath, 'utf8'), originalManifest);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('same-digest queued indexes must resolve to reachable ledger debt before canonical state is cleared', () => {
+  const f = fixture();
+  try {
+    const entry = pending('mailbox-unreachable-index');
+    const entryDigest = pendingReceiptPublicationDigest(entry);
+    writeLedgerFixture(f, []);
+    writeJson(ledgerIndexPath(f.deferredPath, entry.publicationId), {
+      schemaVersion: MAILBOX_OUTBOX_LEDGER_INDEX_SCHEMA,
+      publicationId: entry.publicationId,
+      entryDigest,
+      status: 'QUEUED',
+      source: 'ledger-v3',
+      sequence: 999,
+    });
+    writeJson(f.statePath, { pendingReceiptPublications: [entry] });
+    let childCalled = false;
+    const result = runGuard(f, {
+      spawnSyncFn: () => { childCalled = true; return { status: 0 }; },
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /MAILBOX_OUTBOX_LEDGER_INDEX_UNREACHABLE/);
+    assert.equal(childCalled, false);
+    assert.deepEqual(readJson(f.statePath).pendingReceiptPublications, [entry]);
+    assert.equal(readJson(f.deferredPath).headSequence, 0);
+    assert.equal(readJson(f.deferredPath).nextSequence, 0);
   } finally {
     f.cleanup();
   }
@@ -514,6 +594,51 @@ test('oversized state and segment files are rejected from lstat size before payl
   }
 });
 
+test('bounded JSON reads bind the capped file descriptor before allocating or reading payload bytes', () => {
+  const f = fixture();
+  try {
+    writeJson(f.statePath, { safe: true });
+    const originalPath = `${f.statePath}.original`;
+    let payloadRead = false;
+    assert.throws(() => readJsonObject(f.statePath, {
+      maxBytes: 64,
+      openFile(path, flags) {
+        renameSync(path, originalPath);
+        writeFileSync(path, `${JSON.stringify({ padding: 'x'.repeat(4096) })}\n`, 'utf8');
+        return openSync(path, flags);
+      },
+      readFile(...args) {
+        payloadRead = true;
+        return readSync(...args);
+      },
+    }), /MAILBOX_OUTBOX_FILE_IDENTITY_CHANGED/);
+    assert.equal(payloadRead, false);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('atomic JSON writes reject a replaced parent before publishing into the redirected directory', () => {
+  const f = fixture();
+  try {
+    const parentPath = join(f.root, 'stable-parent');
+    const movedParentPath = join(f.root, 'stable-parent-original');
+    const targetPath = join(parentPath, 'record.json');
+    mkdirSync(parentPath);
+    assert.throws(() => atomicWriteJson(targetPath, { safe: true }, {
+      beforeTemporaryOpenFn() {
+        renameSync(parentPath, movedParentPath);
+        mkdirSync(parentPath);
+      },
+    }), /MAILBOX_OUTBOX_DIRECTORY_IDENTITY_CHANGED/);
+    assert.equal(existsSync(targetPath), false);
+    assert.deepEqual(readdirSync(parentPath), []);
+    assert.deepEqual(readdirSync(movedParentPath), []);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test('single-writer lock blocks overlap and recovers one dead stale owner without a permanent wedge', () => {
   const f = fixture();
   try {
@@ -540,16 +665,94 @@ test('single-writer lock blocks overlap and recovers one dead stale owner withou
       schemaVersion: 'stephanos.battle-bridge-mailbox-outbox-lock.v1',
       token: 'cccccccccccccccccccccccccccccccc',
       pid: 999_999,
+      ownerBootId: 'test-boot-old',
+      ownerProcessStartId: 'test-process-old',
       acquiredAtUtc: '2026-08-19T18:00:00.000Z',
     });
     const recovered = runGuard(f, {
       now: () => new Date('2026-08-19T19:00:00.000Z'),
       lockTokenFn: () => 'dddddddddddddddddddddddddddddddd',
-      processIsAliveFn: () => false,
+      processIdentityFn: (pid) => pid === process.pid
+        ? { state: 'known', bootId: 'test-boot-current', processStartId: 'test-process-current' }
+        : { state: 'dead' },
       staleAfterMs: 60_000,
       spawnSyncFn: () => ({ status: 1 }),
     });
     assert.equal(recovered.staleLockRecovered, true);
+    assert.equal(existsSync(`${f.deferredPath}.lock-v1.json`), false);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('guard delegates one parent-bound lease and the lease expires when the guard releases its lock', () => {
+  const f = fixture();
+  try {
+    writeJson(f.statePath, { pendingReceiptPublications: [] });
+    let delegatedEnv = null;
+    let liveLease = null;
+    const result = runGuard(f, {
+      env: { ...process.env, STEPHANOS_SHARED_WORKSPACE_ROOT: dirname(dirname(f.statePath)) },
+      spawnSyncFn: (_command, _args, options) => {
+        delegatedEnv = options.env;
+        liveLease = verifyMailboxOutboxGuardLease({ env: delegatedEnv, parentPid: process.pid });
+        return { status: 1 };
+      },
+    });
+    assert.equal(result.blocker, 'MAILBOX_CHILD_RUN_BLOCKED');
+    assert.equal(liveLease.ok, true);
+    assert.equal(liveLease.guardPid, process.pid);
+    const expiredLease = verifyMailboxOutboxGuardLease({ env: delegatedEnv, parentPid: process.pid });
+    assert.equal(expiredLease.ok, false);
+    assert.equal(expiredLease.blocker, 'MAILBOX_OUTBOX_GUARD_LEASE_UNPROVEN');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('stale lock recovery distinguishes PID reuse and does not trust a future claimed timestamp', () => {
+  const f = fixture();
+  const currentIdentity = { state: 'known', bootId: 'test-boot-current', processStartId: 'test-process-current' };
+  try {
+    writeJson(f.statePath, { pendingReceiptPublications: [] });
+    writeJson(`${f.deferredPath}.lock-v1.json`, {
+      schemaVersion: 'stephanos.battle-bridge-mailbox-outbox-lock.v1',
+      token: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      pid: 4242,
+      ownerBootId: 'test-boot-current',
+      ownerProcessStartId: 'test-process-original',
+      acquiredAtUtc: '2026-08-19T18:00:00.000Z',
+    });
+    const reusedPid = runGuard(f, {
+      now: () => new Date('2026-08-19T19:00:00.000Z'),
+      lockTokenFn: () => 'ffffffffffffffffffffffffffffffff',
+      staleAfterMs: 60_000,
+      processIdentityFn: (pid) => {
+        if (pid === process.pid) return currentIdentity;
+        if (pid === 4242) return { state: 'known', bootId: 'test-boot-current', processStartId: 'test-process-reused' };
+        return { state: 'dead' };
+      },
+      spawnSyncFn: () => ({ status: 1 }),
+    });
+    assert.equal(reusedPid.staleLockRecovered, true);
+
+    const observedNow = new Date(Date.now() + (2 * 60 * 60 * 1000));
+    writeJson(`${f.deferredPath}.lock-v1.json`, {
+      schemaVersion: 'stephanos.battle-bridge-mailbox-outbox-lock.v1',
+      token: '11111111111111111111111111111111',
+      pid: 5252,
+      ownerBootId: 'test-boot-old',
+      ownerProcessStartId: 'test-process-old',
+      acquiredAtUtc: new Date(observedNow.getTime() + (24 * 60 * 60 * 1000)).toISOString(),
+    });
+    const futureTimestamp = runGuard(f, {
+      now: () => observedNow,
+      lockTokenFn: () => '22222222222222222222222222222222',
+      staleAfterMs: 60_000,
+      processIdentityFn: (pid) => pid === process.pid ? currentIdentity : { state: 'dead' },
+      spawnSyncFn: () => ({ status: 1 }),
+    });
+    assert.equal(futureTimestamp.staleLockRecovered, true);
     assert.equal(existsSync(`${f.deferredPath}.lock-v1.json`), false);
   } finally {
     f.cleanup();

@@ -2,11 +2,12 @@
 import {
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
   openSync,
-  readFileSync,
+  readSync,
   renameSync,
   unlinkSync,
   writeFileSync,
@@ -25,6 +26,13 @@ export const MAILBOX_OUTBOX_LEDGER_SCHEMA = 'stephanos.battle-bridge-mailbox-out
 export const MAILBOX_OUTBOX_LEDGER_SEGMENT_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-ledger-segment.v3';
 export const MAILBOX_OUTBOX_LEDGER_INDEX_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-ledger-index.v3';
 export const MAILBOX_OUTBOX_LEDGER_TRANSACTION_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-ledger-transaction.v3';
+export const MAILBOX_OUTBOX_GUARD_LEASE_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-guard-lease.v1';
+export const MAILBOX_OUTBOX_GUARD_LEASE_ENV = Object.freeze({
+  schema: 'STEPHANOS_MAILBOX_OUTBOX_GUARD_LEASE_SCHEMA',
+  lockPath: 'STEPHANOS_MAILBOX_OUTBOX_GUARD_LOCK_PATH',
+  token: 'STEPHANOS_MAILBOX_OUTBOX_GUARD_LOCK_TOKEN',
+  guardPid: 'STEPHANOS_MAILBOX_OUTBOX_GUARD_PID',
+});
 export const MAILBOX_OUTBOX_MAX_ATTEMPTS_PER_CYCLE = 1;
 export const MAILBOX_OUTBOX_MAX_ENTRIES = 500;
 export const MAILBOX_OUTBOX_SEGMENT_MAX_BYTES = 2 * 1024 * 1024;
@@ -33,7 +41,11 @@ export const MAILBOX_OUTBOX_MANIFEST_MAX_BYTES = 64 * 1024;
 const MAILBOX_STATE_MAX_BYTES = 32 * 1024 * 1024;
 const MAILBOX_LEGACY_V1_MIGRATION_MAX_BYTES = 2 * 1024 * 1024;
 const MAILBOX_LEDGER_INDEX_MAX_BYTES = 8 * 1024;
-const MAILBOX_LEDGER_TRANSACTION_MAX_BYTES = 1024 * 1024;
+// One bounded intent can contain the current ingress batch (itself bounded by the
+// 32 MiB canonical state file) plus its small index/manifest metadata. Keeping
+// the segment payloads in the intent is what makes a crash before segment
+// publication resumable instead of leaving unauthorised future segments behind.
+const MAILBOX_LEDGER_TRANSACTION_MAX_BYTES = 40 * 1024 * 1024;
 const MAILBOX_LOCK_MAX_BYTES = 8 * 1024;
 const MAILBOX_LOCK_STALE_AFTER_MS = 20 * 60 * 1000;
 const MAILBOX_LEGACY_V1_MAX_MIGRATION_ENTRIES = 500;
@@ -44,6 +56,7 @@ const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const PUBLICATION_ID_LIMIT = 360;
 const HEX_32 = /^[a-f0-9]{32}$/;
 const HEX_64 = /^[a-f0-9]{64}$/;
+const PROCESS_IDENTITY_COMPONENT = /^[A-Za-z0-9._:-]{6,160}$/;
 const LEGACY_SLOT = /^(a|b)$/;
 
 function fail(blocker, details = {}) {
@@ -196,26 +209,57 @@ function sameFileIdentity(before, after) {
     && before.ctimeMs === after.ctimeMs;
 }
 
-function readJsonObject(path, {
+function sameDirectoryIdentity(before, after) {
+  return before.dev === after.dev
+    && before.ino === after.ino
+    && before.isDirectory()
+    && after.isDirectory();
+}
+
+export function readJsonObject(path, {
   allowMissing = false,
   missingValue = null,
   maxBytes = MAILBOX_STATE_MAX_BYTES,
   metrics = null,
   kind = 'json',
+  openFile = openSync,
+  fstatFile = fstatSync,
+  readFile = readSync,
 } = {}) {
-  const before = assertRegularUnlinkedFile(path, { allowMissing });
-  if (!before) return missingValue;
-  // Size is checked before readFileSync, then the same file identity is rechecked.
-  if (before.size > maxBytes) throw new Error('MAILBOX_OUTBOX_JSON_TOO_LARGE');
-  bumpRead(metrics, kind);
-  const payload = readFileSync(path);
-  const after = assertRegularUnlinkedFile(path);
-  if (!sameFileIdentity(before, after) || payload.byteLength !== before.size) {
-    throw new Error('MAILBOX_OUTBOX_FILE_IDENTITY_CHANGED');
+  const pathBefore = assertRegularUnlinkedFile(path, { allowMissing });
+  if (!pathBefore) return missingValue;
+  let descriptor = null;
+  try {
+    descriptor = openFile(path, 'r');
+    const before = fstatFile(descriptor);
+    if (!before.isFile() || !sameFileIdentity(pathBefore, before)) {
+      throw new Error('MAILBOX_OUTBOX_FILE_IDENTITY_CHANGED');
+    }
+    if (before.size > maxBytes) throw new Error('MAILBOX_OUTBOX_JSON_TOO_LARGE');
+    bumpRead(metrics, kind);
+    const payload = Buffer.alloc(before.size);
+    let offset = 0;
+    while (offset < payload.byteLength) {
+      const bytesRead = readFile(descriptor, payload, offset, payload.byteLength - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const overflow = Buffer.alloc(1);
+    const overflowBytes = readFile(descriptor, overflow, 0, 1, offset);
+    const after = fstatFile(descriptor);
+    const pathAfter = assertRegularUnlinkedFile(path);
+    if (offset !== payload.byteLength
+      || overflowBytes !== 0
+      || !sameFileIdentity(before, after)
+      || !sameFileIdentity(before, pathAfter)) {
+      throw new Error('MAILBOX_OUTBOX_FILE_IDENTITY_CHANGED');
+    }
+    const value = JSON.parse(payload.toString('utf8'));
+    if (!isPlainObject(value)) throw new Error('MAILBOX_OUTBOX_JSON_OBJECT_REQUIRED');
+    return value;
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
   }
-  const value = JSON.parse(payload.toString('utf8'));
-  if (!isPlainObject(value)) throw new Error('MAILBOX_OUTBOX_JSON_OBJECT_REQUIRED');
-  return value;
 }
 
 function syncDirectoryBestEffort(path) {
@@ -230,14 +274,18 @@ function syncDirectoryBestEffort(path) {
   }
 }
 
-function atomicWriteJson(path, value, {
+export function atomicWriteJson(path, value, {
   maxBytes = null,
   metrics = null,
   kind = 'json',
   space = 2,
+  beforeTemporaryOpenFn = () => {},
+  beforeRenameFn = () => {},
 } = {}) {
-  mkdirSync(dirname(path), { recursive: true });
-  if (existsSync(path)) assertRegularUnlinkedFile(path);
+  const parentPath = dirname(path);
+  mkdirSync(parentPath, { recursive: true });
+  const parentIdentity = assertUnlinkedDirectory(parentPath);
+  const targetIdentity = assertRegularUnlinkedFile(path, { allowMissing: true });
   const payload = `${JSON.stringify(value, null, space)}\n`;
   if (Number.isSafeInteger(maxBytes) && Buffer.byteLength(payload, 'utf8') > maxBytes) {
     throw new Error('MAILBOX_OUTBOX_JSON_TOO_LARGE');
@@ -245,13 +293,29 @@ function atomicWriteJson(path, value, {
   const temporary = `${path}.tmp-${process.pid}-${Date.now()}-${randomUUID().replaceAll('-', '')}`;
   let descriptor = null;
   try {
+    beforeTemporaryOpenFn();
     descriptor = openSync(temporary, 'wx');
+    if (!sameDirectoryIdentity(parentIdentity, assertUnlinkedDirectory(parentPath))) {
+      throw new Error('MAILBOX_OUTBOX_DIRECTORY_IDENTITY_CHANGED');
+    }
     writeFileSync(descriptor, payload, { encoding: 'utf8' });
     fsyncSync(descriptor);
     closeSync(descriptor);
     descriptor = null;
+    beforeRenameFn();
+    if (!sameDirectoryIdentity(parentIdentity, assertUnlinkedDirectory(parentPath))) {
+      throw new Error('MAILBOX_OUTBOX_DIRECTORY_IDENTITY_CHANGED');
+    }
+    const currentTargetIdentity = assertRegularUnlinkedFile(path, { allowMissing: true });
+    if (Boolean(targetIdentity) !== Boolean(currentTargetIdentity)
+      || (targetIdentity && !sameFileIdentity(targetIdentity, currentTargetIdentity))) {
+      throw new Error('MAILBOX_OUTBOX_FILE_IDENTITY_CHANGED');
+    }
     renameSync(temporary, path);
-    syncDirectoryBestEffort(dirname(path));
+    if (!sameDirectoryIdentity(parentIdentity, assertUnlinkedDirectory(parentPath))) {
+      throw new Error('MAILBOX_OUTBOX_DIRECTORY_IDENTITY_CHANGED');
+    }
+    syncDirectoryBestEffort(parentPath);
     bumpWrite(metrics, kind);
   } catch (error) {
     if (descriptor !== null) {
@@ -287,6 +351,15 @@ function transactionPath(path) {
 
 function lockPath(path) {
   return `${path}.lock-v1.json`;
+}
+
+function mailboxStateRootFromEnv(env = process.env) {
+  const workspaceRoot = resolve(env.STEPHANOS_SHARED_WORKSPACE_ROOT || join(env.USERPROFILE || homedir(), 'Documents', 'Stephanos', 'shared-agent-workspace'));
+  return join(workspaceRoot, 'github-command-mailbox');
+}
+
+export function resolveMailboxOutboxGuardLockPath({ env = process.env } = {}) {
+  return lockPath(join(mailboxStateRootFromEnv(env), 'receipt-publication-deferred-v1.json'));
 }
 
 function sequenceText(sequence) {
@@ -633,8 +706,11 @@ function validateTransaction(record) {
     || !HEX_64.test(String(record.baseManifestDigest || ''))
     || !HEX_64.test(String(record.targetManifestDigest || ''))
     || !isPlainObject(record.baseManifest)
+    || !Array.isArray(record.segmentWrites)
+    || record.segmentWrites.length > MAILBOX_OUTBOX_MAX_ENTRIES + 1
     || !Array.isArray(record.segmentRefs)
     || record.segmentRefs.length > MAILBOX_OUTBOX_MAX_ENTRIES + 1
+    || record.segmentWrites.length !== record.segmentRefs.length
     || !Array.isArray(record.indexWrites)
     || record.indexWrites.length > MAILBOX_OUTBOX_MAX_ENTRIES + 1
     || !Array.isArray(record.cleanupSequences)
@@ -648,11 +724,24 @@ function validateTransaction(record) {
     throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
   }
   const segmentSequenceKeys = new Set();
+  const segmentWritesBySequence = new Map();
+  for (const segment of record.segmentWrites) {
+    if (!isPlainObject(segment) || !validSequence(segment.sequence)
+      || segmentWritesBySequence.has(segment.sequence)) {
+      throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+    }
+    validateSegment(segment, record.targetManifest, segment.sequence);
+    segmentWritesBySequence.set(segment.sequence, segment);
+  }
   for (const ref of record.segmentRefs) {
     if (!isPlainObject(ref)
       || !validSequence(ref.sequence)
       || !HEX_64.test(String(ref.entryDigest || ''))
       || segmentSequenceKeys.has(ref.sequence)) {
+      throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+    }
+    const segment = segmentWritesBySequence.get(ref.sequence);
+    if (!segment || segment.entryDigest !== ref.entryDigest) {
       throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
     }
     segmentSequenceKeys.add(ref.sequence);
@@ -705,6 +794,7 @@ function recoverTransaction(path, manifest, metrics) {
   if (currentDigest !== transaction.baseManifestDigest && currentDigest !== transaction.targetManifestDigest) {
     throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_BASE_MISMATCH');
   }
+  for (const segment of transaction.segmentWrites) writeSegment(path, segment, metrics);
   for (const ref of transaction.segmentRefs) {
     const segment = readSegment(path, transaction.targetManifest, ref.sequence, metrics);
     const targetIndex = transaction.indexWrites
@@ -740,8 +830,6 @@ function commitLedgerMutation(path, baseManifest, {
     && indexWrites.length === 0
     && cleanupSequences.length === 0
     && stableJson(baseManifest) === stableJson(targetManifest)) return baseManifest;
-  for (const segment of segmentWrites) writeSegment(path, segment, metrics);
-  faultFn('after-ledger-segments');
   const transaction = {
     schemaVersion: MAILBOX_OUTBOX_LEDGER_TRANSACTION_SCHEMA,
     transactionId: randomUUID().replaceAll('-', ''),
@@ -749,6 +837,7 @@ function commitLedgerMutation(path, baseManifest, {
     targetManifestDigest: recordDigest(targetManifest),
     baseManifest,
     targetManifest,
+    segmentWrites,
     segmentRefs: segmentWrites.map((segment) => ({ sequence: segment.sequence, entryDigest: segment.entryDigest })),
     indexWrites,
     cleanupSequences,
@@ -759,6 +848,8 @@ function commitLedgerMutation(path, baseManifest, {
     metrics,
   });
   faultFn('after-ledger-transaction');
+  for (const segment of segmentWrites) writeSegment(path, segment, metrics);
+  faultFn('after-ledger-segments');
   for (const mutation of indexWrites) applyIndexWrite(path, mutation, metrics);
   faultFn('after-ledger-indexes');
   atomicWriteJson(path, targetManifest, {
@@ -870,6 +961,34 @@ function updateManifestTimestamp(manifest, timestampUtc, overrides = {}) {
   return { ...manifest, ...overrides, timestampUtc };
 }
 
+function assertQueuedIndexReachable(path, manifest, entry, index, metrics) {
+  if (index.status === 'COMPLETED') return;
+  if (index.source === 'ledger-v3') {
+    if (index.sequence < manifest.headSequence || index.sequence >= manifest.nextSequence) {
+      throw new Error('MAILBOX_OUTBOX_LEDGER_INDEX_UNREACHABLE');
+    }
+    const segment = readSegment(path, manifest, index.sequence, metrics);
+    if (segment.entry.publicationId !== entry.publicationId
+      || segment.entryDigest !== index.entryDigest) {
+      throw new Error('MAILBOX_OUTBOX_LEDGER_INDEX_UNREACHABLE');
+    }
+    return;
+  }
+  const legacy = validateLegacyDescriptor(manifest.legacy ?? null);
+  if (!legacy
+    || index.source !== 'legacy-v2'
+    || index.legacySegmentIndex !== legacy.segmentIndex
+    || index.legacyEntryOffset !== legacy.entryOffset) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_INDEX_UNREACHABLE');
+  }
+  const head = readLegacyHead(path, manifest, metrics);
+  if (!head
+    || head.entry.publicationId !== entry.publicationId
+    || head.entryDigest !== index.entryDigest) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_INDEX_UNREACHABLE');
+  }
+}
+
 function planAppendEntries(path, manifest, entries, metrics, virtualIndexes = new Map()) {
   const segmentWrites = [];
   const indexWrites = [];
@@ -877,11 +996,13 @@ function planAppendEntries(path, manifest, entries, metrics, virtualIndexes = ne
   for (const entry of normalizePendingReceiptPublications(entries)) {
     const entryDigest = pendingReceiptPublicationDigest(entry);
     const publicationId = entry.publicationId;
-    const existing = virtualIndexes.has(publicationId)
+    const virtual = virtualIndexes.has(publicationId);
+    const existing = virtual
       ? virtualIndexes.get(publicationId)
       : readIndex(path, entry, metrics);
     if (existing) {
       if (existing.entryDigest !== entryDigest) throw new Error('MAILBOX_OUTBOX_PUBLICATION_ID_CONFLICT');
+      if (!virtual) assertQueuedIndexReachable(path, manifest, entry, existing, metrics);
       continue;
     }
     if (!validSequence(nextSequence + 1)) throw new Error('MAILBOX_OUTBOX_LEDGER_SEQUENCE_EXHAUSTED');
@@ -1045,21 +1166,69 @@ function pendingCount(manifest) {
   return (manifest.nextSequence - manifest.headSequence) + Number(manifest.legacy?.remainingEntryCount || 0);
 }
 
-function defaultProcessIsAlive(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === 'EPERM';
+function defaultProcessIdentity(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return Object.freeze({ state: 'unknown' });
+  if (process.platform !== 'win32') {
+    if (pid !== process.pid) {
+      try {
+        process.kill(pid, 0);
+        return Object.freeze({ state: 'unknown' });
+      } catch (error) {
+        return Object.freeze({ state: error?.code === 'ESRCH' ? 'dead' : 'unknown' });
+      }
+    }
+    return Object.freeze({
+      state: 'known',
+      bootId: `nonwindows-boot-${process.pid}`,
+      processStartId: `nonwindows-start-${Math.floor(Date.now() - (process.uptime() * 1000))}`,
+    });
   }
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    `$p=Get-Process -Id ${pid} -ErrorAction SilentlyContinue`,
+    'if ($null -eq $p) { exit 3 }',
+    '$os=Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop',
+    "[Console]::Out.Write($os.LastBootUpTime.ToUniversalTime().Ticks.ToString()+'|'+$p.StartTime.ToUniversalTime().Ticks.ToString())",
+  ].join('; ');
+  const result = spawnSync('powershell.exe', [
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+    script,
+  ], {
+    encoding: 'utf8',
+    windowsHide: true,
+    shell: false,
+    timeout: 10_000,
+  });
+  if (result?.status === 3) return Object.freeze({ state: 'dead' });
+  if (result?.error || result?.status !== 0) return Object.freeze({ state: 'unknown' });
+  const match = String(result.stdout || '').trim().match(/^([0-9]+)\|([0-9]+)$/);
+  if (!match) return Object.freeze({ state: 'unknown' });
+  return Object.freeze({
+    state: 'known',
+    bootId: `windows-boot-${match[1]}`,
+    processStartId: `windows-process-${match[2]}`,
+  });
 }
 
-function lockRecord(token, now) {
+function validKnownProcessIdentity(identity) {
+  return identity?.state === 'known'
+    && PROCESS_IDENTITY_COMPONENT.test(String(identity.bootId || ''))
+    && PROCESS_IDENTITY_COMPONENT.test(String(identity.processStartId || ''));
+}
+
+function lockRecord(token, now, processIdentity) {
+  if (!validKnownProcessIdentity(processIdentity)) throw new Error('MAILBOX_OUTBOX_LOCK_PROCESS_IDENTITY_UNPROVEN');
   return {
     schemaVersion: 'stephanos.battle-bridge-mailbox-outbox-lock.v1',
     token,
     pid: process.pid,
+    ownerBootId: processIdentity.bootId,
+    ownerProcessStartId: processIdentity.processStartId,
     acquiredAtUtc: now.toISOString(),
   };
 }
@@ -1079,26 +1248,35 @@ function writeExclusiveLock(path, record) {
 
 function acquireGuardLock(path, now, {
   tokenFn,
-  processIsAliveFn,
+  processIdentityFn,
   staleAfterMs,
   allowRecovery = true,
 } = {}) {
   const target = lockPath(path);
   const token = String(tokenFn() || '').toLowerCase();
   if (!HEX_32.test(token)) throw new Error('MAILBOX_OUTBOX_LOCK_TOKEN_INVALID');
+  const selfIdentity = processIdentityFn(process.pid);
+  if (!validKnownProcessIdentity(selfIdentity)) throw new Error('MAILBOX_OUTBOX_LOCK_PROCESS_IDENTITY_UNPROVEN');
   try {
-    writeExclusiveLock(target, lockRecord(token, now));
-    return Object.freeze({ path: target, token, recoveredStaleLock: !allowRecovery });
+    writeExclusiveLock(target, lockRecord(token, now, selfIdentity));
+    return Object.freeze({ path: target, token, processIdentity: selfIdentity, recoveredStaleLock: !allowRecovery });
   } catch (error) {
     if (error?.code !== 'EEXIST') throw error;
     const info = assertRegularUnlinkedFile(target);
     let existing = null;
     try { existing = readJsonObject(target, { maxBytes: MAILBOX_LOCK_MAX_BYTES }); } catch {}
     const parsedAt = Date.parse(String(existing?.acquiredAtUtc || ''));
-    const acquiredAtMs = Number.isFinite(parsedAt) ? parsedAt : info.mtimeMs;
+    const acquiredAtMs = Number.isFinite(parsedAt) && parsedAt <= now.getTime() + 60_000
+      ? parsedAt
+      : info.mtimeMs;
     const ageMs = now.getTime() - acquiredAtMs;
-    const ownerAlive = processIsAliveFn(Number.parseInt(existing?.pid, 10));
-    if (allowRecovery && Number.isFinite(ageMs) && ageMs > staleAfterMs && !ownerAlive) {
+    const liveIdentity = processIdentityFn(Number.parseInt(existing?.pid, 10));
+    const exactOwnerAlive = validKnownProcessIdentity(liveIdentity)
+      && liveIdentity.bootId === existing?.ownerBootId
+      && liveIdentity.processStartId === existing?.ownerProcessStartId;
+    const exactOwnerAbsent = liveIdentity?.state === 'dead'
+      || (validKnownProcessIdentity(liveIdentity) && !exactOwnerAlive);
+    if (allowRecovery && Number.isFinite(ageMs) && ageMs > staleAfterMs && exactOwnerAbsent) {
       const currentInfo = assertRegularUnlinkedFile(target);
       if (!sameFileIdentity(info, currentInfo)) throw new Error('MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
       const stalePath = `${target}.stale-${token}`;
@@ -1106,7 +1284,7 @@ function acquireGuardLock(path, now, {
       removeRegularFile(stalePath);
       return acquireGuardLock(path, now, {
         tokenFn,
-        processIsAliveFn,
+        processIdentityFn,
         staleAfterMs,
         allowRecovery: false,
       });
@@ -1117,9 +1295,76 @@ function acquireGuardLock(path, now, {
 
 function verifyGuardLock(lock) {
   const current = readJsonObject(lock.path, { maxBytes: MAILBOX_LOCK_MAX_BYTES });
-  if (current.token !== lock.token || Number(current.pid) !== process.pid) {
+  if (current.token !== lock.token
+    || Number(current.pid) !== process.pid
+    || current.ownerBootId !== lock.processIdentity?.bootId
+    || current.ownerProcessStartId !== lock.processIdentity?.processStartId) {
     throw new Error('MAILBOX_OUTBOX_GUARD_LOCK_LOST');
   }
+}
+
+function guardLeaseFailure(blocker) {
+  return Object.freeze({
+    ok: false,
+    blocker,
+    finalVerdict: 'MAILBOX_OUTBOX_GUARD_LEASE_BLOCKED',
+    sourceMutationAllowed: false,
+    commandExecutionAllowed: false,
+  });
+}
+
+export function verifyMailboxOutboxGuardLease({
+  env = process.env,
+  parentPid = process.ppid,
+} = {}) {
+  try {
+    const schema = String(env[MAILBOX_OUTBOX_GUARD_LEASE_ENV.schema] || '');
+    const claimedLockPath = String(env[MAILBOX_OUTBOX_GUARD_LEASE_ENV.lockPath] || '');
+    const token = String(env[MAILBOX_OUTBOX_GUARD_LEASE_ENV.token] || '').toLowerCase();
+    const guardPid = Number.parseInt(env[MAILBOX_OUTBOX_GUARD_LEASE_ENV.guardPid], 10);
+    if (schema !== MAILBOX_OUTBOX_GUARD_LEASE_SCHEMA
+      || !claimedLockPath
+      || !HEX_32.test(token)
+      || !Number.isSafeInteger(guardPid)
+      || guardPid <= 0
+      || guardPid !== Number(parentPid)) {
+      return guardLeaseFailure('MAILBOX_OUTBOX_GUARD_LEASE_REQUIRED');
+    }
+    const expectedLockPath = resolveMailboxOutboxGuardLockPath({ env });
+    if (resolve(claimedLockPath).toLowerCase() !== resolve(expectedLockPath).toLowerCase()) {
+      return guardLeaseFailure('MAILBOX_OUTBOX_GUARD_LEASE_PATH_MISMATCH');
+    }
+    const current = readJsonObject(expectedLockPath, { maxBytes: MAILBOX_LOCK_MAX_BYTES });
+    if (current.schemaVersion !== 'stephanos.battle-bridge-mailbox-outbox-lock.v1'
+      || String(current.token || '').toLowerCase() !== token
+      || Number(current.pid) !== guardPid
+      || !PROCESS_IDENTITY_COMPONENT.test(String(current.ownerBootId || ''))
+      || !PROCESS_IDENTITY_COMPONENT.test(String(current.ownerProcessStartId || ''))) {
+      return guardLeaseFailure('MAILBOX_OUTBOX_GUARD_LEASE_MISMATCH');
+    }
+    return Object.freeze({
+      ok: true,
+      blocker: '',
+      finalVerdict: 'MAILBOX_OUTBOX_GUARD_LEASE_READY',
+      lockPath: expectedLockPath,
+      guardPid,
+      sourceMutationAllowed: false,
+      commandExecutionAllowed: true,
+    });
+  } catch {
+    return guardLeaseFailure('MAILBOX_OUTBOX_GUARD_LEASE_UNPROVEN');
+  }
+}
+
+export function createMailboxOutboxGuardChildEnvironment(env, lock) {
+  verifyGuardLock(lock);
+  return Object.freeze({
+    ...env,
+    [MAILBOX_OUTBOX_GUARD_LEASE_ENV.schema]: MAILBOX_OUTBOX_GUARD_LEASE_SCHEMA,
+    [MAILBOX_OUTBOX_GUARD_LEASE_ENV.lockPath]: lock.path,
+    [MAILBOX_OUTBOX_GUARD_LEASE_ENV.token]: lock.token,
+    [MAILBOX_OUTBOX_GUARD_LEASE_ENV.guardPid]: String(process.pid),
+  });
 }
 
 function releaseGuardLock(lock) {
@@ -1133,8 +1378,7 @@ function releaseGuardLock(lock) {
 function resolveProductionPaths({ env = process.env, repoRoot = defaultRepoRoot } = {}) {
   const actualRepoRoot = resolve(repoRoot);
   const expectedRepoRoot = resolve(env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os');
-  const workspaceRoot = resolve(env.STEPHANOS_SHARED_WORKSPACE_ROOT || join(env.USERPROFILE || homedir(), 'Documents', 'Stephanos', 'shared-agent-workspace'));
-  const mailboxStateRoot = join(workspaceRoot, 'github-command-mailbox');
+  const mailboxStateRoot = mailboxStateRootFromEnv(env);
   return Object.freeze({
     actualRepoRoot,
     expectedRepoRoot,
@@ -1150,7 +1394,7 @@ export function runMailboxOutboxGuard({
   repoRoot = defaultRepoRoot,
   now = () => new Date(),
   lockTokenFn = () => randomUUID().replaceAll('-', ''),
-  processIsAliveFn = defaultProcessIsAlive,
+  processIdentityFn = defaultProcessIdentity,
   staleAfterMs = MAILBOX_LOCK_STALE_AFTER_MS,
   spawnSyncFn = spawnSync,
   faultFn = () => {},
@@ -1179,7 +1423,7 @@ export function runMailboxOutboxGuard({
     const timestamp = now();
     lock = acquireGuardLock(deferredPath, timestamp, {
       tokenFn: lockTokenFn,
-      processIsAliveFn,
+      processIdentityFn,
       staleAfterMs,
     });
     const state = readJsonObject(statePath, {
@@ -1204,6 +1448,7 @@ export function runMailboxOutboxGuard({
 
     const child = spawnSyncFn(process.execPath, [childRunnerPath], {
       cwd: actualRepoRoot,
+      env: createMailboxOutboxGuardChildEnvironment(env, lock),
       encoding: 'utf8',
       shell: false,
       windowsHide: true,
