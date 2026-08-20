@@ -226,8 +226,10 @@ test('sidecar still refreshes the index after a mailbox exception and returns a 
   assert.equal(result.finalVerdict, 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED');
 }));
 
-test('Scheduled Task installer points only to the fixed sidecar and retains bounded authority', async () => {
+test('Scheduled Task installer reports the fixed guard and its child sidecar while retaining bounded authority', async () => {
   const installer = await readFile(new URL('./windows/install-battle-bridge-github-command-mailbox.ps1', import.meta.url), 'utf8');
+  assert.match(installer, /runnerPath = \(Resolve-Path[\s\S]{0,180}battle-bridge-github-command-mailbox-outbox-guard-v1\.mjs/);
+  assert.match(installer, /childRunnerPath = \(Resolve-Path[\s\S]{0,180}battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
   assert.match(installer, /battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
   assert.match(installer, /receiptIndexEnabled = \$true/);
   assert.match(installer, /-MultipleInstances IgnoreNew/);

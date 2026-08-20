@@ -146,6 +146,8 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(installer, /New-ScheduledTaskAction -Execute \$wscriptExe/);
   assert.match(installer, /run-stephanos-scheduled-task-windowless\.vbs/);
   assert.match(installer, /battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
+  assert.match(installer, /runnerPath = \(Resolve-Path[\s\S]{0,180}battle-bridge-github-command-mailbox-outbox-guard-v1\.mjs/);
+  assert.match(installer, /childRunnerPath = \(Resolve-Path[\s\S]{0,180}battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
   assert.match(installer, /receiptIndexEnabled = \$true/);
   assert.match(installer, /\/\/B \/\/NoLogo/);
   assert.match(installer, /github-command-mailbox/);
@@ -171,7 +173,7 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.doesNotMatch(windowlessLauncher, /WScript\.Arguments\(1\)|cmd\.exe|Invoke-Expression/i);
 
   assert.match(hiddenLauncher, /Documents\\GitHub\\stephan-os/);
-  assert.match(hiddenLauncher, /battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
+  assert.match(hiddenLauncher, /battle-bridge-github-command-mailbox-outbox-guard-v1\.mjs/);
   assert.doesNotMatch(hiddenLauncher, /scripts\\battle-bridge-github-command-mailbox\.mjs/);
   assert.match(hiddenLauncher, /Get-Command node\.exe/);
   assert.match(hiddenLauncher, /\*> \$null/);

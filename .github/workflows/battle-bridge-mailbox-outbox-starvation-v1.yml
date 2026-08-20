@@ -7,7 +7,17 @@ on:
       - 'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.test.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.test.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs'
+      - 'scripts/battle-bridge-recovery-mesh-guardian.test.mjs'
+      - 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1'
       - 'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1'
+      - 'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1'
+      - 'shared/agents/postSyncRuntimeRefreshCoordinator.mjs'
+      - 'shared/agents/postSyncRuntimeRefreshCoordinator.test.mjs'
+      - 'shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.mjs'
+      - 'shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.test.mjs'
+      - 'shared/agents/windowsAuthoritySpecialistReviewV1.mjs'
+      - 'shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs'
       - '.github/workflows/battle-bridge-mailbox-outbox-starvation-v1.yml'
 
 permissions:
@@ -37,6 +47,11 @@ jobs:
           node --test
           scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.test.mjs
           scripts/battle-bridge-github-command-mailbox.test.mjs
+          scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs
+          scripts/battle-bridge-recovery-mesh-guardian.test.mjs
+          shared/agents/postSyncRuntimeRefreshCoordinator.test.mjs
+          shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.test.mjs
+          shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs
 
       - name: Diff check
         if: always()

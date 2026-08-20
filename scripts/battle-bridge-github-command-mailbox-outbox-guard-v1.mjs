@@ -7,36 +7,44 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  readdirSync,
   renameSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const MAILBOX_OUTBOX_GUARD_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-guard.v1';
 export const MAILBOX_OUTBOX_DEFERRED_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-deferred.v1';
 export const MAILBOX_OUTBOX_DEFERRED_MANIFEST_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-deferred-manifest.v2';
 export const MAILBOX_OUTBOX_DEFERRED_SEGMENT_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-deferred-segment.v2';
+export const MAILBOX_OUTBOX_LEDGER_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-ledger.v3';
+export const MAILBOX_OUTBOX_LEDGER_SEGMENT_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-ledger-segment.v3';
+export const MAILBOX_OUTBOX_LEDGER_INDEX_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-ledger-index.v3';
+export const MAILBOX_OUTBOX_LEDGER_TRANSACTION_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-ledger-transaction.v3';
 export const MAILBOX_OUTBOX_MAX_ATTEMPTS_PER_CYCLE = 1;
 export const MAILBOX_OUTBOX_MAX_ENTRIES = 500;
 export const MAILBOX_OUTBOX_SEGMENT_MAX_BYTES = 2 * 1024 * 1024;
 export const MAILBOX_OUTBOX_MANIFEST_MAX_BYTES = 64 * 1024;
 
 const MAILBOX_STATE_MAX_BYTES = 32 * 1024 * 1024;
-const MAILBOX_LEGACY_DEFERRED_MAX_BYTES = 512 * 1024 * 1024;
-const MAILBOX_OUTBOX_MAX_SEGMENTS = 1_000_000;
+const MAILBOX_LEGACY_V1_MIGRATION_MAX_BYTES = 2 * 1024 * 1024;
+const MAILBOX_LEDGER_INDEX_MAX_BYTES = 8 * 1024;
+const MAILBOX_LEDGER_TRANSACTION_MAX_BYTES = 1024 * 1024;
+const MAILBOX_LOCK_MAX_BYTES = 8 * 1024;
+const MAILBOX_LOCK_STALE_AFTER_MS = 20 * 60 * 1000;
+const MAILBOX_LEGACY_V1_MAX_MIGRATION_ENTRIES = 500;
+const MAILBOX_MAX_SEQUENCE = 9_007_199_254_740_000;
 
 const defaultRepoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const PUBLICATION_ID_LIMIT = 360;
-const DEFERRED_SLOT = /^(a|b)$/;
-const DEFERRED_GENERATION = /^[a-f0-9]{32}$/;
-const DEFERRED_SEGMENT_FILE = /^segment-([0-9]{8,16})\.json$/;
+const HEX_32 = /^[a-f0-9]{32}$/;
+const HEX_64 = /^[a-f0-9]{64}$/;
+const LEGACY_SLOT = /^(a|b)$/;
 
 function fail(blocker, details = {}) {
   return Object.freeze({
@@ -52,6 +60,24 @@ function fail(blocker, details = {}) {
 
 function isPlainObject(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (!isPlainObject(value)) return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableValue(value[key])]));
+}
+
+function stableJson(value) {
+  return JSON.stringify(stableValue(value));
+}
+
+function sha256(value) {
+  return createHash('sha256').update(String(value), 'utf8').digest('hex');
+}
+
+function recordDigest(value) {
+  return sha256(stableJson(value));
 }
 
 function safePublicationId(value) {
@@ -72,14 +98,23 @@ function validatePendingEntry(value) {
   );
 }
 
+export function pendingReceiptPublicationDigest(entry) {
+  if (!validatePendingEntry(entry)) throw new Error('MAILBOX_OUTBOX_PENDING_ENTRY_INVALID');
+  return recordDigest(entry);
+}
+
 export function normalizePendingReceiptPublications(entries = [], { maxEntries = MAILBOX_OUTBOX_MAX_ENTRIES } = {}) {
   if (!Array.isArray(entries)) throw new Error('MAILBOX_OUTBOX_PENDING_ARRAY_REQUIRED');
   const byId = new Map();
   for (const entry of entries) {
     if (!validatePendingEntry(entry)) throw new Error('MAILBOX_OUTBOX_PENDING_ENTRY_INVALID');
-    byId.set(String(entry.publicationId), structuredClone(entry));
+    const publicationId = String(entry.publicationId);
+    const digest = pendingReceiptPublicationDigest(entry);
+    const existing = byId.get(publicationId);
+    if (existing && existing.digest !== digest) throw new Error('MAILBOX_OUTBOX_PUBLICATION_ID_CONFLICT');
+    if (!existing) byId.set(publicationId, { digest, entry: structuredClone(entry) });
   }
-  const normalized = [...byId.values()];
+  const normalized = [...byId.values()].map(({ entry }) => entry);
   if (Number.isSafeInteger(maxEntries) && normalized.length > maxEntries) throw new Error('MAILBOX_OUTBOX_PENDING_LIMIT_EXCEEDED');
   return normalized;
 }
@@ -88,26 +123,33 @@ function normalizeAccumulatedDebt(entries = []) {
   return normalizePendingReceiptPublications(entries, { maxEntries: null });
 }
 
-export function planMailboxOutboxCycle({ statePending = [], deferredPending = [] } = {}) {
-  const combined = normalizeAccumulatedDebt([
-    ...normalizeAccumulatedDebt(deferredPending),
-    ...normalizePendingReceiptPublications(statePending),
-  ]);
-  return Object.freeze({
-    attemptedThisCycle: Object.freeze(combined.slice(0, MAILBOX_OUTBOX_MAX_ATTEMPTS_PER_CYCLE)),
-    deferred: Object.freeze(combined.slice(MAILBOX_OUTBOX_MAX_ATTEMPTS_PER_CYCLE)),
-    totalPending: combined.length,
-    maxAttemptsPerCycle: MAILBOX_OUTBOX_MAX_ATTEMPTS_PER_CYCLE,
-  });
+function createIoMetrics() {
+  return {
+    jsonReads: 0,
+    jsonWrites: 0,
+    segmentReads: 0,
+    segmentWrites: 0,
+    indexReads: 0,
+    indexWrites: 0,
+  };
 }
 
-export function mergeMailboxOutboxAfterCycle({ deferredPending = [], statePending = [] } = {}) {
-  // Deferred debt is placed first. A failed publication attempted in this cycle is
-  // therefore rotated behind older deferred debt instead of monopolising every run.
-  return Object.freeze(normalizeAccumulatedDebt([
-    ...normalizeAccumulatedDebt(deferredPending),
-    ...normalizePendingReceiptPublications(statePending),
-  ]));
+function snapshotIo(metrics) {
+  return Object.freeze({ ...metrics });
+}
+
+function bumpRead(metrics, kind) {
+  if (!metrics) return;
+  metrics.jsonReads += 1;
+  if (kind === 'segment') metrics.segmentReads += 1;
+  if (kind === 'index') metrics.indexReads += 1;
+}
+
+function bumpWrite(metrics, kind) {
+  if (!metrics) return;
+  metrics.jsonWrites += 1;
+  if (kind === 'segment') metrics.segmentWrites += 1;
+  if (kind === 'index') metrics.indexWrites += 1;
 }
 
 function assertRegularUnlinkedFile(path, { allowMissing = false } = {}) {
@@ -130,15 +172,48 @@ function assertUnlinkedDirectory(path, { allowMissing = false } = {}) {
   return info;
 }
 
-function readJsonObject(path, { allowMissing = false, missingValue = null, maxBytes = MAILBOX_STATE_MAX_BYTES } = {}) {
-  if (!existsSync(path)) {
-    if (allowMissing) return missingValue;
-    throw new Error('MAILBOX_OUTBOX_JSON_MISSING');
+function fixedDirectoryChain(root, components = [], { create = false } = {}) {
+  const paths = [root];
+  for (const component of components) paths.push(join(paths.at(-1), component));
+  for (const path of paths) {
+    const existing = assertUnlinkedDirectory(path, { allowMissing: true });
+    if (existing) continue;
+    if (!create) return false;
+    const parent = dirname(path);
+    assertUnlinkedDirectory(parent);
+    mkdirSync(path);
+    assertUnlinkedDirectory(path);
+    syncDirectoryBestEffort(parent);
   }
-  assertRegularUnlinkedFile(path);
-  const text = readFileSync(path, 'utf8');
-  if (Buffer.byteLength(text, 'utf8') > maxBytes) throw new Error('MAILBOX_OUTBOX_JSON_TOO_LARGE');
-  const value = JSON.parse(text);
+  return true;
+}
+
+function sameFileIdentity(before, after) {
+  return before.dev === after.dev
+    && before.ino === after.ino
+    && before.size === after.size
+    && before.mtimeMs === after.mtimeMs
+    && before.ctimeMs === after.ctimeMs;
+}
+
+function readJsonObject(path, {
+  allowMissing = false,
+  missingValue = null,
+  maxBytes = MAILBOX_STATE_MAX_BYTES,
+  metrics = null,
+  kind = 'json',
+} = {}) {
+  const before = assertRegularUnlinkedFile(path, { allowMissing });
+  if (!before) return missingValue;
+  // Size is checked before readFileSync, then the same file identity is rechecked.
+  if (before.size > maxBytes) throw new Error('MAILBOX_OUTBOX_JSON_TOO_LARGE');
+  bumpRead(metrics, kind);
+  const payload = readFileSync(path);
+  const after = assertRegularUnlinkedFile(path);
+  if (!sameFileIdentity(before, after) || payload.byteLength !== before.size) {
+    throw new Error('MAILBOX_OUTBOX_FILE_IDENTITY_CHANGED');
+  }
+  const value = JSON.parse(payload.toString('utf8'));
   if (!isPlainObject(value)) throw new Error('MAILBOX_OUTBOX_JSON_OBJECT_REQUIRED');
   return value;
 }
@@ -155,14 +230,19 @@ function syncDirectoryBestEffort(path) {
   }
 }
 
-function atomicWriteJson(path, value, { maxBytes = null, space = 2 } = {}) {
+function atomicWriteJson(path, value, {
+  maxBytes = null,
+  metrics = null,
+  kind = 'json',
+  space = 2,
+} = {}) {
   mkdirSync(dirname(path), { recursive: true });
   if (existsSync(path)) assertRegularUnlinkedFile(path);
   const payload = `${JSON.stringify(value, null, space)}\n`;
   if (Number.isSafeInteger(maxBytes) && Buffer.byteLength(payload, 'utf8') > maxBytes) {
     throw new Error('MAILBOX_OUTBOX_JSON_TOO_LARGE');
   }
-  const temporary = `${path}.tmp-${process.pid}-${Date.now()}`;
+  const temporary = `${path}.tmp-${process.pid}-${Date.now()}-${randomUUID().replaceAll('-', '')}`;
   let descriptor = null;
   try {
     descriptor = openSync(temporary, 'wx');
@@ -172,6 +252,7 @@ function atomicWriteJson(path, value, { maxBytes = null, space = 2 } = {}) {
     descriptor = null;
     renameSync(temporary, path);
     syncDirectoryBestEffort(dirname(path));
+    bumpWrite(metrics, kind);
   } catch (error) {
     if (descriptor !== null) {
       try { closeSync(descriptor); } catch {}
@@ -179,6 +260,13 @@ function atomicWriteJson(path, value, { maxBytes = null, space = 2 } = {}) {
     try { unlinkSync(temporary); } catch {}
     throw error;
   }
+}
+
+function removeRegularFile(path) {
+  if (!existsSync(path)) return;
+  assertRegularUnlinkedFile(path);
+  unlinkSync(path);
+  syncDirectoryBestEffort(dirname(path));
 }
 
 function canonicalPendingFromState(state) {
@@ -189,29 +277,107 @@ function canonicalPendingFromState(state) {
   return normalizePendingReceiptPublications(state.pendingReceiptPublications || []);
 }
 
-function deferredSegmentRoot(path) {
-  return `${path}.segments`;
+function ledgerRoot(path) {
+  return `${path}.ledger-v3`;
 }
 
-function deferredSlotRoot(path, slot) {
-  if (!DEFERRED_SLOT.test(String(slot || ''))) throw new Error('MAILBOX_OUTBOX_DEFERRED_SLOT_INVALID');
-  return join(deferredSegmentRoot(path), slot);
+function transactionPath(path) {
+  return `${path}.transaction-v3.json`;
 }
 
-function deferredSegmentPath(path, slot, index) {
-  if (!Number.isSafeInteger(index) || index < 0 || index >= MAILBOX_OUTBOX_MAX_SEGMENTS) {
-    throw new Error('MAILBOX_OUTBOX_DEFERRED_SEGMENT_INDEX_INVALID');
+function lockPath(path) {
+  return `${path}.lock-v1.json`;
+}
+
+function sequenceText(sequence) {
+  if (!Number.isSafeInteger(sequence) || sequence < 0 || sequence > MAILBOX_MAX_SEQUENCE) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_SEQUENCE_INVALID');
   }
-  return join(deferredSlotRoot(path, slot), `segment-${String(index).padStart(8, '0')}.json`);
+  return String(sequence).padStart(16, '0');
 }
 
-function validateManifest(record) {
+function segmentPath(path, sequence) {
+  const text = sequenceText(sequence);
+  const bucket = sequenceBucket(sequence);
+  return join(ledgerRoot(path), 'segments', bucket, `segment-${text}.json`);
+}
+
+function sequenceBucket(sequence) {
+  sequenceText(sequence);
+  return String(Math.floor(sequence / 1000)).padStart(13, '0');
+}
+
+function publicationIndexPath(path, publicationId) {
+  const digest = sha256(String(publicationId));
+  return join(ledgerRoot(path), 'index', digest.slice(0, 2), `${digest}.json`);
+}
+
+function ledgerSegmentDirectoryReady(path, sequence, { create = false } = {}) {
+  return fixedDirectoryChain(ledgerRoot(path), ['segments', sequenceBucket(sequence)], { create });
+}
+
+function ledgerIndexDirectoryReady(path, publicationId, { create = false } = {}) {
+  const digest = sha256(String(publicationId));
+  return fixedDirectoryChain(ledgerRoot(path), ['index', digest.slice(0, 2)], { create });
+}
+
+function legacySegmentDirectoryReady(path, legacy) {
+  return fixedDirectoryChain(`${path}.segments`, [legacy.activeSlot]);
+}
+
+function legacyV2SegmentPath(path, legacy, segmentIndex) {
+  if (!LEGACY_SLOT.test(String(legacy?.activeSlot || ''))
+    || !Number.isSafeInteger(segmentIndex)
+    || segmentIndex < 0
+    || segmentIndex >= legacy.segmentCount) {
+    throw new Error('MAILBOX_OUTBOX_LEGACY_CURSOR_INVALID');
+  }
+  return join(`${path}.segments`, legacy.activeSlot, `segment-${String(segmentIndex).padStart(8, '0')}.json`);
+}
+
+function validSequence(value) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= MAILBOX_MAX_SEQUENCE;
+}
+
+function validateLegacyDescriptor(value) {
+  if (value === null) return null;
+  if (!isPlainObject(value)
+    || value.kind !== 'segmented-v2'
+    || !LEGACY_SLOT.test(String(value.activeSlot || ''))
+    || !HEX_32.test(String(value.generation || ''))
+    || !Number.isSafeInteger(value.segmentCount)
+    || value.segmentCount < 0
+    || !Number.isSafeInteger(value.segmentIndex)
+    || value.segmentIndex < 0
+    || value.segmentIndex > value.segmentCount
+    || !Number.isSafeInteger(value.entryOffset)
+    || value.entryOffset < 0
+    || !Number.isSafeInteger(value.remainingEntryCount)
+    || value.remainingEntryCount < 0
+    || (value.remainingEntryCount === 0) !== (value.segmentIndex === value.segmentCount)) {
+    throw new Error('MAILBOX_OUTBOX_LEGACY_DESCRIPTOR_INVALID');
+  }
+  return value;
+}
+
+function validateLedgerManifest(record) {
+  if (record.schemaVersion !== MAILBOX_OUTBOX_LEDGER_SCHEMA
+    || !HEX_32.test(String(record.storeId || ''))
+    || !validSequence(record.headSequence)
+    || !validSequence(record.nextSequence)
+    || record.headSequence > record.nextSequence) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_MANIFEST_INVALID');
+  }
+  validateLegacyDescriptor(record.legacy ?? null);
+  return record;
+}
+
+function validateV2Manifest(record) {
   if (record.schemaVersion !== MAILBOX_OUTBOX_DEFERRED_MANIFEST_SCHEMA
-    || !DEFERRED_SLOT.test(String(record.activeSlot || ''))
-    || !DEFERRED_GENERATION.test(String(record.generation || ''))
+    || !LEGACY_SLOT.test(String(record.activeSlot || ''))
+    || !HEX_32.test(String(record.generation || ''))
     || !Number.isSafeInteger(record.segmentCount)
     || record.segmentCount < 0
-    || record.segmentCount > MAILBOX_OUTBOX_MAX_SEGMENTS
     || !Number.isSafeInteger(record.entryCount)
     || record.entryCount < 0
     || (record.segmentCount === 0) !== (record.entryCount === 0)
@@ -222,174 +388,746 @@ function validateManifest(record) {
   return record;
 }
 
-function readDeferredManifest(path, record) {
-  validateManifest(record);
-  const segmentRoot = deferredSegmentRoot(path);
-  const slotRoot = deferredSlotRoot(path, record.activeSlot);
-  if (record.segmentCount > 0) {
-    assertUnlinkedDirectory(segmentRoot);
-    assertUnlinkedDirectory(slotRoot);
+function createLedgerManifest({ storeId, timestampUtc, legacy = null, headSequence = 0, nextSequence = 0 }) {
+  return {
+    schemaVersion: MAILBOX_OUTBOX_LEDGER_SCHEMA,
+    timestampUtc,
+    storeId,
+    headSequence,
+    nextSequence,
+    legacy,
+  };
+}
+
+function validateIndexRecord(record, expectedPublicationId = null) {
+  const publicationId = safePublicationId(record?.publicationId);
+  const queuedLedger = record?.status === 'QUEUED'
+    && record?.source === 'ledger-v3'
+    && validSequence(record?.sequence)
+    && record?.legacySegmentIndex === undefined
+    && record?.legacyEntryOffset === undefined;
+  const queuedLegacy = record?.status === 'QUEUED'
+    && record?.source === 'legacy-v2'
+    && record?.sequence === null
+    && Number.isSafeInteger(record?.legacySegmentIndex)
+    && record.legacySegmentIndex >= 0
+    && Number.isSafeInteger(record?.legacyEntryOffset)
+    && record.legacyEntryOffset >= 0;
+  const completed = record?.status === 'COMPLETED'
+    && record?.source === 'ledger-v3'
+    && record?.sequence === null
+    && record?.legacySegmentIndex === undefined
+    && record?.legacyEntryOffset === undefined;
+  if (!isPlainObject(record)
+    || record.schemaVersion !== MAILBOX_OUTBOX_LEDGER_INDEX_SCHEMA
+    || !publicationId
+    || publicationId !== record.publicationId
+    || (expectedPublicationId !== null && publicationId !== expectedPublicationId)
+    || !HEX_64.test(String(record.entryDigest || ''))
+    || (!queuedLedger && !queuedLegacy && !completed)) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_INDEX_INVALID');
   }
-  const entries = [];
-  let storedEntryCount = 0;
-  for (let index = 0; index < record.segmentCount; index += 1) {
-    const segment = readJsonObject(deferredSegmentPath(path, record.activeSlot, index), {
-      maxBytes: MAILBOX_OUTBOX_SEGMENT_MAX_BYTES,
-    });
-    if (segment.schemaVersion !== MAILBOX_OUTBOX_DEFERRED_SEGMENT_SCHEMA
-      || segment.generation !== record.generation
-      || segment.segmentIndex !== index
-      || !Array.isArray(segment.entries)
-      || segment.entries.length > MAILBOX_OUTBOX_MAX_ENTRIES) {
-      throw new Error('MAILBOX_OUTBOX_DEFERRED_SEGMENT_INVALID');
+  return record;
+}
+
+function readIndex(path, entry, metrics) {
+  if (!ledgerIndexDirectoryReady(path, entry.publicationId)) return null;
+  const indexPath = publicationIndexPath(path, entry.publicationId);
+  const record = readJsonObject(indexPath, {
+    allowMissing: true,
+    missingValue: null,
+    maxBytes: MAILBOX_LEDGER_INDEX_MAX_BYTES,
+    metrics,
+    kind: 'index',
+  });
+  if (!record) return null;
+  return validateIndexRecord(record, entry.publicationId);
+}
+
+function queuedLedgerIndex(entry, entryDigest, sequence) {
+  return {
+    schemaVersion: MAILBOX_OUTBOX_LEDGER_INDEX_SCHEMA,
+    publicationId: entry.publicationId,
+    entryDigest,
+    status: 'QUEUED',
+    source: 'ledger-v3',
+    sequence,
+  };
+}
+
+function queuedLegacyIndex(entry, entryDigest, legacy) {
+  return {
+    schemaVersion: MAILBOX_OUTBOX_LEDGER_INDEX_SCHEMA,
+    publicationId: entry.publicationId,
+    entryDigest,
+    status: 'QUEUED',
+    source: 'legacy-v2',
+    sequence: null,
+    legacySegmentIndex: legacy.segmentIndex,
+    legacyEntryOffset: legacy.entryOffset,
+  };
+}
+
+function completedIndex(entry, entryDigest) {
+  return {
+    schemaVersion: MAILBOX_OUTBOX_LEDGER_INDEX_SCHEMA,
+    publicationId: entry.publicationId,
+    entryDigest,
+    status: 'COMPLETED',
+    source: 'ledger-v3',
+    sequence: null,
+  };
+}
+
+function segmentRecord(manifest, sequence, entry, entryDigest) {
+  return {
+    schemaVersion: MAILBOX_OUTBOX_LEDGER_SEGMENT_SCHEMA,
+    storeId: manifest.storeId,
+    sequence,
+    entryDigest,
+    entry,
+  };
+}
+
+function validateSegment(record, manifest, sequence) {
+  if (record.schemaVersion !== MAILBOX_OUTBOX_LEDGER_SEGMENT_SCHEMA
+    || record.storeId !== manifest.storeId
+    || record.sequence !== sequence
+    || !HEX_64.test(String(record.entryDigest || ''))
+    || !validatePendingEntry(record.entry)
+    || pendingReceiptPublicationDigest(record.entry) !== record.entryDigest) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_SEGMENT_INVALID');
+  }
+  return record;
+}
+
+function writeSegment(path, record, metrics) {
+  ledgerSegmentDirectoryReady(path, record.sequence, { create: true });
+  const targetPath = segmentPath(path, record.sequence);
+  const existing = readJsonObject(targetPath, {
+    allowMissing: true,
+    missingValue: null,
+    maxBytes: MAILBOX_OUTBOX_SEGMENT_MAX_BYTES,
+    metrics,
+    kind: 'segment',
+  });
+  if (existing) {
+    if (stableJson(existing) === stableJson(record)) return;
+    throw new Error('MAILBOX_OUTBOX_LEDGER_FUTURE_SEGMENT_CONFLICT');
+  }
+  atomicWriteJson(targetPath, record, {
+    maxBytes: MAILBOX_OUTBOX_SEGMENT_MAX_BYTES,
+    metrics,
+    kind: 'segment',
+    space: 0,
+  });
+}
+
+function readSegment(path, manifest, sequence, metrics) {
+  if (!ledgerSegmentDirectoryReady(path, sequence)) throw new Error('MAILBOX_OUTBOX_LEDGER_SEGMENT_DIRECTORY_MISSING');
+  return validateSegment(readJsonObject(segmentPath(path, sequence), {
+    maxBytes: MAILBOX_OUTBOX_SEGMENT_MAX_BYTES,
+    metrics,
+    kind: 'segment',
+  }), manifest, sequence);
+}
+
+function removeLedgerSegment(path, sequence) {
+  if (!ledgerSegmentDirectoryReady(path, sequence)) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_SEGMENT_DIRECTORY_MISSING');
+  }
+  removeRegularFile(segmentPath(path, sequence));
+}
+
+function assertIndexCompatible(existing, target, expected) {
+  if (existing && stableJson(existing) === stableJson(target)) return 'already-target';
+  if (expected === null && existing === null) return 'apply';
+  if (expected && existing && stableJson(existing) === stableJson(expected)) return 'apply';
+  throw new Error('MAILBOX_OUTBOX_LEDGER_INDEX_CONFLICT');
+}
+
+function applyIndexWrite(path, mutation, metrics) {
+  if (!isPlainObject(mutation) || !isPlainObject(mutation.target)
+    || (mutation.expected !== null && !isPlainObject(mutation.expected))) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_INDEX_INVALID');
+  }
+  const target = validateIndexRecord(mutation.target);
+  const expected = mutation.expected === null
+    ? null
+    : validateIndexRecord(mutation.expected, target.publicationId);
+  if (expected && expected.entryDigest !== target.entryDigest) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_INDEX_INVALID');
+  }
+  ledgerIndexDirectoryReady(path, target.publicationId, { create: true });
+  const indexPath = publicationIndexPath(path, target.publicationId);
+  const existing = readJsonObject(indexPath, {
+    allowMissing: true,
+    missingValue: null,
+    maxBytes: MAILBOX_LEDGER_INDEX_MAX_BYTES,
+    metrics,
+    kind: 'index',
+  });
+  const validatedExisting = existing === null ? null : validateIndexRecord(existing, target.publicationId);
+  if (assertIndexCompatible(validatedExisting, target, expected) === 'already-target') return;
+  atomicWriteJson(indexPath, target, {
+    maxBytes: MAILBOX_LEDGER_INDEX_MAX_BYTES,
+    metrics,
+    kind: 'index',
+  });
+}
+
+function legacyCursorTransition(baseValue, targetValue) {
+  if (stableJson(baseValue) === stableJson(targetValue)) return 'SAME';
+  const base = validateLegacyDescriptor(baseValue);
+  const target = validateLegacyDescriptor(targetValue);
+  if (!base) throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+  if (base.remainingEntryCount === 1 && target === null) return 'ADVANCED';
+  if (!target
+    || target.kind !== base.kind
+    || target.activeSlot !== base.activeSlot
+    || target.generation !== base.generation
+    || target.segmentCount !== base.segmentCount
+    || target.remainingEntryCount !== base.remainingEntryCount - 1) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+  }
+  const sameSegmentAdvance = target.segmentIndex === base.segmentIndex
+    && target.entryOffset === base.entryOffset + 1;
+  const nextSegmentAdvance = target.segmentIndex === base.segmentIndex + 1
+    && target.entryOffset === 0;
+  if (!sameSegmentAdvance && !nextSegmentAdvance) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+  }
+  return 'ADVANCED';
+}
+
+function validateLedgerTransition(baseManifest, targetManifest, transaction) {
+  const base = validateLedgerManifest(baseManifest);
+  const target = validateLedgerManifest(targetManifest);
+  const headDelta = target.headSequence - base.headSequence;
+  const nextDelta = target.nextSequence - base.nextSequence;
+  const legacyTransition = legacyCursorTransition(base.legacy ?? null, target.legacy ?? null);
+  if (target.storeId !== base.storeId
+    || ![0, 1].includes(headDelta)
+    || nextDelta < 0
+    || nextDelta > MAILBOX_OUTBOX_MAX_ENTRIES + 1
+    || (headDelta === 1 && base.legacy !== null)
+    || (headDelta === 1 && legacyTransition !== 'SAME')
+    || (headDelta === 0 && legacyTransition === 'ADVANCED' && base.legacy === null)) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+  }
+  const expectedCleanup = headDelta === 1 ? [base.headSequence] : [];
+  if (stableJson(transaction.cleanupSequences) !== stableJson(expectedCleanup)) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+  }
+  const referencedSequences = [...transaction.segmentRefs].map((ref) => ref.sequence).sort((left, right) => left - right);
+  const expectedSequences = Array.from({ length: nextDelta }, (_, offset) => base.nextSequence + offset);
+  if (stableJson(referencedSequences) !== stableJson(expectedSequences)) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+  }
+  return transaction;
+}
+
+function validateTransaction(record) {
+  if (record.schemaVersion !== MAILBOX_OUTBOX_LEDGER_TRANSACTION_SCHEMA
+    || !HEX_32.test(String(record.transactionId || ''))
+    || !HEX_64.test(String(record.baseManifestDigest || ''))
+    || !HEX_64.test(String(record.targetManifestDigest || ''))
+    || !isPlainObject(record.baseManifest)
+    || !Array.isArray(record.segmentRefs)
+    || record.segmentRefs.length > MAILBOX_OUTBOX_MAX_ENTRIES + 1
+    || !Array.isArray(record.indexWrites)
+    || record.indexWrites.length > MAILBOX_OUTBOX_MAX_ENTRIES + 1
+    || !Array.isArray(record.cleanupSequences)
+    || record.cleanupSequences.length > 1) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+  }
+  validateLedgerManifest(record.baseManifest);
+  validateLedgerManifest(record.targetManifest);
+  if (recordDigest(record.baseManifest) !== record.baseManifestDigest
+    || recordDigest(record.targetManifest) !== record.targetManifestDigest) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+  }
+  const segmentSequenceKeys = new Set();
+  for (const ref of record.segmentRefs) {
+    if (!isPlainObject(ref)
+      || !validSequence(ref.sequence)
+      || !HEX_64.test(String(ref.entryDigest || ''))
+      || segmentSequenceKeys.has(ref.sequence)) {
+      throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
     }
-    storedEntryCount += segment.entries.length;
-    entries.push(...normalizePendingReceiptPublications(segment.entries));
+    segmentSequenceKeys.add(ref.sequence);
   }
-  if (storedEntryCount !== record.entryCount) throw new Error('MAILBOX_OUTBOX_DEFERRED_ENTRY_COUNT_INVALID');
-  return Object.freeze({
-    entries: Object.freeze(normalizeAccumulatedDebt(entries)),
-    activeSlot: record.activeSlot,
-    storageFormat: 'segmented-v2',
-    segmentCount: record.segmentCount,
-  });
+  const indexPublicationIds = new Set();
+  const queuedSegmentIndexes = new Map();
+  for (const mutation of record.indexWrites) {
+    if (!isPlainObject(mutation) || !isPlainObject(mutation.target) || (mutation.expected !== null && !isPlainObject(mutation.expected))) {
+      throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+    }
+    const target = validateIndexRecord(mutation.target);
+    const expected = mutation.expected === null
+      ? null
+      : validateIndexRecord(mutation.expected, target.publicationId);
+    if ((expected && expected.entryDigest !== target.entryDigest)
+      || indexPublicationIds.has(target.publicationId)) {
+      throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+    }
+    indexPublicationIds.add(target.publicationId);
+    if (target.status === 'QUEUED' && target.source === 'ledger-v3') {
+      if (queuedSegmentIndexes.has(target.sequence)) throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+      queuedSegmentIndexes.set(target.sequence, target);
+    }
+  }
+  if (record.cleanupSequences.some((sequence) => !validSequence(sequence))) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+  }
+  for (const ref of record.segmentRefs) {
+    const target = queuedSegmentIndexes.get(ref.sequence);
+    if (!target || target.entryDigest !== ref.entryDigest) {
+      throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+    }
+  }
+  if (queuedSegmentIndexes.size !== record.segmentRefs.length) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_INVALID');
+  }
+  return validateLedgerTransition(record.baseManifest, record.targetManifest, record);
 }
 
-function readLegacyDeferred(record) {
-  if (record.schemaVersion !== MAILBOX_OUTBOX_DEFERRED_SCHEMA) {
-    throw new Error('MAILBOX_OUTBOX_DEFERRED_RECORD_INVALID');
+function recoverTransaction(path, manifest, metrics) {
+  const pending = readJsonObject(transactionPath(path), {
+    allowMissing: true,
+    missingValue: null,
+    maxBytes: MAILBOX_LEDGER_TRANSACTION_MAX_BYTES,
+    metrics,
+  });
+  if (!pending) return manifest;
+  const transaction = validateTransaction(pending);
+  const currentDigest = recordDigest(manifest);
+  if (currentDigest !== transaction.baseManifestDigest && currentDigest !== transaction.targetManifestDigest) {
+    throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_BASE_MISMATCH');
   }
-  if (Array.isArray(record.entries)) {
-    return Object.freeze({
-      entries: Object.freeze(normalizeAccumulatedDebt(record.entries)),
-      activeSlot: null,
-      storageFormat: 'legacy-v1',
-      segmentCount: 0,
+  for (const ref of transaction.segmentRefs) {
+    const segment = readSegment(path, transaction.targetManifest, ref.sequence, metrics);
+    const targetIndex = transaction.indexWrites
+      .map((mutation) => mutation.target)
+      .find((target) => target.status === 'QUEUED'
+        && target.source === 'ledger-v3'
+        && target.sequence === ref.sequence);
+    if (segment.entryDigest !== ref.entryDigest
+      || targetIndex?.publicationId !== segment.entry.publicationId
+      || targetIndex?.entryDigest !== segment.entryDigest) {
+      throw new Error('MAILBOX_OUTBOX_LEDGER_TRANSACTION_SEGMENT_MISMATCH');
+    }
+  }
+  for (const mutation of transaction.indexWrites) applyIndexWrite(path, mutation, metrics);
+  if (currentDigest === transaction.baseManifestDigest) {
+    atomicWriteJson(path, transaction.targetManifest, {
+      maxBytes: MAILBOX_OUTBOX_MANIFEST_MAX_BYTES,
+      metrics,
     });
   }
-  if (!Array.isArray(record.segments)) throw new Error('MAILBOX_OUTBOX_DEFERRED_RECORD_INVALID');
-  const entries = [];
-  for (const segment of record.segments) {
-    if (!Array.isArray(segment)) throw new Error('MAILBOX_OUTBOX_DEFERRED_SEGMENT_INVALID');
-    entries.push(...normalizePendingReceiptPublications(segment));
-  }
-  return Object.freeze({
-    entries: Object.freeze(normalizeAccumulatedDebt(entries)),
-    activeSlot: null,
-    storageFormat: 'legacy-v1',
-    segmentCount: record.segments.length,
+  for (const sequence of transaction.cleanupSequences) removeLedgerSegment(path, sequence);
+  removeRegularFile(transactionPath(path));
+  return transaction.targetManifest;
+}
+
+function commitLedgerMutation(path, baseManifest, {
+  targetManifest,
+  segmentWrites = [],
+  indexWrites = [],
+  cleanupSequences = [],
+}, { metrics, faultFn = () => {} } = {}) {
+  if (segmentWrites.length === 0
+    && indexWrites.length === 0
+    && cleanupSequences.length === 0
+    && stableJson(baseManifest) === stableJson(targetManifest)) return baseManifest;
+  for (const segment of segmentWrites) writeSegment(path, segment, metrics);
+  faultFn('after-ledger-segments');
+  const transaction = {
+    schemaVersion: MAILBOX_OUTBOX_LEDGER_TRANSACTION_SCHEMA,
+    transactionId: randomUUID().replaceAll('-', ''),
+    baseManifestDigest: recordDigest(baseManifest),
+    targetManifestDigest: recordDigest(targetManifest),
+    baseManifest,
+    targetManifest,
+    segmentRefs: segmentWrites.map((segment) => ({ sequence: segment.sequence, entryDigest: segment.entryDigest })),
+    indexWrites,
+    cleanupSequences,
+  };
+  validateTransaction(transaction);
+  atomicWriteJson(transactionPath(path), transaction, {
+    maxBytes: MAILBOX_LEDGER_TRANSACTION_MAX_BYTES,
+    metrics,
   });
+  faultFn('after-ledger-transaction');
+  for (const mutation of indexWrites) applyIndexWrite(path, mutation, metrics);
+  faultFn('after-ledger-indexes');
+  atomicWriteJson(path, targetManifest, {
+    maxBytes: MAILBOX_OUTBOX_MANIFEST_MAX_BYTES,
+    metrics,
+  });
+  faultFn('after-ledger-manifest');
+  for (const sequence of cleanupSequences) removeLedgerSegment(path, sequence);
+  removeRegularFile(transactionPath(path));
+  return targetManifest;
 }
 
-function readMailboxOutboxDeferredStore(path) {
-  if (!existsSync(path)) {
-    return Object.freeze({ entries: Object.freeze([]), activeSlot: null, storageFormat: 'missing', segmentCount: 0 });
+function parseLegacyV1(record) {
+  if (record.schemaVersion !== MAILBOX_OUTBOX_DEFERRED_SCHEMA) throw new Error('MAILBOX_OUTBOX_DEFERRED_RECORD_INVALID');
+  let entries;
+  if (Array.isArray(record.entries)) {
+    if (record.entries.length > MAILBOX_LEGACY_V1_MAX_MIGRATION_ENTRIES) {
+      throw new Error('MAILBOX_OUTBOX_LEGACY_V1_MIGRATION_WORK_LIMIT_EXCEEDED');
+    }
+    entries = normalizeAccumulatedDebt(record.entries);
   }
-  const info = assertRegularUnlinkedFile(path);
-  if (info.size > MAILBOX_LEGACY_DEFERRED_MAX_BYTES) throw new Error('MAILBOX_OUTBOX_JSON_TOO_LARGE');
-  const record = readJsonObject(path, { maxBytes: MAILBOX_LEGACY_DEFERRED_MAX_BYTES });
-  if (record.schemaVersion === MAILBOX_OUTBOX_DEFERRED_MANIFEST_SCHEMA) {
-    if (info.size > MAILBOX_OUTBOX_MANIFEST_MAX_BYTES) throw new Error('MAILBOX_OUTBOX_DEFERRED_MANIFEST_TOO_LARGE');
-    return readDeferredManifest(path, record);
+  else {
+    if (!Array.isArray(record.segments)
+      || record.segments.length > MAILBOX_LEGACY_V1_MAX_MIGRATION_ENTRIES) {
+      throw new Error(record.segments?.length > MAILBOX_LEGACY_V1_MAX_MIGRATION_ENTRIES
+        ? 'MAILBOX_OUTBOX_LEGACY_V1_MIGRATION_WORK_LIMIT_EXCEEDED'
+        : 'MAILBOX_OUTBOX_DEFERRED_RECORD_INVALID');
+    }
+    const accumulated = [];
+    let rawEntryCount = 0;
+    for (const segment of record.segments) {
+      if (!Array.isArray(segment)) throw new Error('MAILBOX_OUTBOX_DEFERRED_SEGMENT_INVALID');
+      rawEntryCount += segment.length;
+      if (rawEntryCount > MAILBOX_LEGACY_V1_MAX_MIGRATION_ENTRIES) {
+        throw new Error('MAILBOX_OUTBOX_LEGACY_V1_MIGRATION_WORK_LIMIT_EXCEEDED');
+      }
+      accumulated.push(...normalizePendingReceiptPublications(segment));
+    }
+    entries = normalizeAccumulatedDebt(accumulated);
   }
-  return readLegacyDeferred(record);
+  return entries;
 }
 
-function segmentEnvelopeBytes(generation, segmentIndex) {
-  return Buffer.byteLength(`${JSON.stringify({
-    schemaVersion: MAILBOX_OUTBOX_DEFERRED_SEGMENT_SCHEMA,
-    generation,
-    segmentIndex,
-    entries: [],
-  })}\n`, 'utf8');
-}
-
-function buildDeferredSegments(entries, generation) {
-  const segments = [];
-  let current = [];
-  let currentBytes = segmentEnvelopeBytes(generation, 0);
+function migrateLegacyV1(path, record, timestampUtc, metrics) {
+  const entries = parseLegacyV1(record);
+  const storeId = sha256(`legacy-v1:${stableJson(record)}`).slice(0, 32);
+  const base = createLedgerManifest({ storeId, timestampUtc });
+  const segmentWrites = [];
+  const indexWrites = [];
+  let nextSequence = 0;
   for (const entry of entries) {
-    const entryBytes = Buffer.byteLength(JSON.stringify(entry), 'utf8');
-    const candidateBytes = currentBytes + entryBytes + (current.length > 0 ? 1 : 0);
-    if (current.length < MAILBOX_OUTBOX_MAX_ENTRIES
-      && candidateBytes <= MAILBOX_OUTBOX_SEGMENT_MAX_BYTES) {
-      current.push(entry);
-      currentBytes = candidateBytes;
+    const entryDigest = pendingReceiptPublicationDigest(entry);
+    segmentWrites.push(segmentRecord(base, nextSequence, entry, entryDigest));
+    indexWrites.push({ expected: null, target: queuedLedgerIndex(entry, entryDigest, nextSequence) });
+    nextSequence += 1;
+  }
+  const target = { ...base, nextSequence };
+  for (const segment of segmentWrites) writeSegment(path, segment, metrics);
+  for (const mutation of indexWrites) applyIndexWrite(path, mutation, metrics);
+  atomicWriteJson(path, target, { maxBytes: MAILBOX_OUTBOX_MANIFEST_MAX_BYTES, metrics });
+  return target;
+}
+
+function loadOrInitializeLedger(path, timestampUtc, metrics) {
+  assertUnlinkedDirectory(ledgerRoot(path), { allowMissing: true });
+  assertUnlinkedDirectory(`${path}.segments`, { allowMissing: true });
+  const record = readJsonObject(path, {
+    allowMissing: true,
+    missingValue: null,
+    maxBytes: MAILBOX_LEGACY_V1_MIGRATION_MAX_BYTES,
+    metrics,
+  });
+  if (!record) {
+    const manifest = createLedgerManifest({ storeId: randomUUID().replaceAll('-', ''), timestampUtc });
+    atomicWriteJson(path, manifest, { maxBytes: MAILBOX_OUTBOX_MANIFEST_MAX_BYTES, metrics });
+    return manifest;
+  }
+  if (record.schemaVersion === MAILBOX_OUTBOX_LEDGER_SCHEMA) {
+    if (assertRegularUnlinkedFile(path).size > MAILBOX_OUTBOX_MANIFEST_MAX_BYTES) {
+      throw new Error('MAILBOX_OUTBOX_LEDGER_MANIFEST_TOO_LARGE');
+    }
+    return recoverTransaction(path, validateLedgerManifest(record), metrics);
+  }
+  if (record.schemaVersion === MAILBOX_OUTBOX_DEFERRED_MANIFEST_SCHEMA) {
+    if (assertRegularUnlinkedFile(path).size > MAILBOX_OUTBOX_MANIFEST_MAX_BYTES) {
+      throw new Error('MAILBOX_OUTBOX_DEFERRED_MANIFEST_TOO_LARGE');
+    }
+    const legacy = validateV2Manifest(record);
+    const manifest = createLedgerManifest({
+      storeId: sha256(`legacy-v2:${legacy.generation}`).slice(0, 32),
+      timestampUtc,
+      legacy: legacy.entryCount === 0 ? null : {
+        kind: 'segmented-v2',
+        activeSlot: legacy.activeSlot,
+        generation: legacy.generation,
+        segmentCount: legacy.segmentCount,
+        segmentIndex: 0,
+        entryOffset: 0,
+        remainingEntryCount: legacy.entryCount,
+      },
+    });
+    atomicWriteJson(path, manifest, { maxBytes: MAILBOX_OUTBOX_MANIFEST_MAX_BYTES, metrics });
+    return manifest;
+  }
+  return migrateLegacyV1(path, record, timestampUtc, metrics);
+}
+
+function updateManifestTimestamp(manifest, timestampUtc, overrides = {}) {
+  return { ...manifest, ...overrides, timestampUtc };
+}
+
+function planAppendEntries(path, manifest, entries, metrics, virtualIndexes = new Map()) {
+  const segmentWrites = [];
+  const indexWrites = [];
+  let nextSequence = manifest.nextSequence;
+  for (const entry of normalizePendingReceiptPublications(entries)) {
+    const entryDigest = pendingReceiptPublicationDigest(entry);
+    const publicationId = entry.publicationId;
+    const existing = virtualIndexes.has(publicationId)
+      ? virtualIndexes.get(publicationId)
+      : readIndex(path, entry, metrics);
+    if (existing) {
+      if (existing.entryDigest !== entryDigest) throw new Error('MAILBOX_OUTBOX_PUBLICATION_ID_CONFLICT');
       continue;
     }
-    if (current.length === 0) throw new Error('MAILBOX_OUTBOX_DEFERRED_ENTRY_TOO_LARGE');
-    segments.push(current);
-    current = [entry];
-    currentBytes = segmentEnvelopeBytes(generation, segments.length) + entryBytes;
-    if (currentBytes > MAILBOX_OUTBOX_SEGMENT_MAX_BYTES) {
-      throw new Error('MAILBOX_OUTBOX_DEFERRED_ENTRY_TOO_LARGE');
+    if (!validSequence(nextSequence + 1)) throw new Error('MAILBOX_OUTBOX_LEDGER_SEQUENCE_EXHAUSTED');
+    const targetIndex = queuedLedgerIndex(entry, entryDigest, nextSequence);
+    segmentWrites.push(segmentRecord(manifest, nextSequence, entry, entryDigest));
+    indexWrites.push({ expected: null, target: targetIndex });
+    virtualIndexes.set(publicationId, targetIndex);
+    nextSequence += 1;
+  }
+  return { segmentWrites, indexWrites, nextSequence, virtualIndexes };
+}
+
+function appendCanonicalDebt(path, manifest, entries, timestampUtc, metrics, faultFn) {
+  const planned = planAppendEntries(path, manifest, entries, metrics);
+  if (planned.segmentWrites.length === 0) return manifest;
+  return commitLedgerMutation(path, manifest, {
+    targetManifest: updateManifestTimestamp(manifest, timestampUtc, { nextSequence: planned.nextSequence }),
+    segmentWrites: planned.segmentWrites,
+    indexWrites: planned.indexWrites,
+  }, { metrics, faultFn });
+}
+
+function readLegacyHead(path, manifest, metrics) {
+  const legacy = validateLegacyDescriptor(manifest.legacy);
+  if (!legacy) return null;
+  if (!legacySegmentDirectoryReady(path, legacy)) {
+    throw new Error('MAILBOX_OUTBOX_DEFERRED_SEGMENT_DIRECTORY_MISSING');
+  }
+  const record = readJsonObject(legacyV2SegmentPath(path, legacy, legacy.segmentIndex), {
+    maxBytes: MAILBOX_OUTBOX_SEGMENT_MAX_BYTES,
+    metrics,
+    kind: 'segment',
+  });
+  if (record.schemaVersion !== MAILBOX_OUTBOX_DEFERRED_SEGMENT_SCHEMA
+    || record.generation !== legacy.generation
+    || record.segmentIndex !== legacy.segmentIndex
+    || !Array.isArray(record.entries)
+    || record.entries.length === 0
+    || record.entries.length > MAILBOX_OUTBOX_MAX_ENTRIES
+    || legacy.entryOffset >= record.entries.length) {
+    throw new Error('MAILBOX_OUTBOX_DEFERRED_SEGMENT_INVALID');
+  }
+  const entries = normalizePendingReceiptPublications(record.entries);
+  if (entries.length !== record.entries.length) throw new Error('MAILBOX_OUTBOX_LEGACY_DUPLICATE_INVALID');
+  const entry = entries[legacy.entryOffset];
+  return {
+    origin: 'legacy-v2',
+    entry,
+    entryDigest: pendingReceiptPublicationDigest(entry),
+    legacySegmentEntryCount: entries.length,
+  };
+}
+
+function advanceLegacy(manifest, head, timestampUtc) {
+  const legacy = { ...manifest.legacy };
+  legacy.remainingEntryCount -= 1;
+  legacy.entryOffset += 1;
+  if (legacy.entryOffset >= head.legacySegmentEntryCount) {
+    legacy.segmentIndex += 1;
+    legacy.entryOffset = 0;
+  }
+  const nextLegacy = legacy.remainingEntryCount === 0 ? null : legacy;
+  if (nextLegacy && nextLegacy.segmentIndex >= nextLegacy.segmentCount) {
+    throw new Error('MAILBOX_OUTBOX_LEGACY_CURSOR_INVALID');
+  }
+  return updateManifestTimestamp(manifest, timestampUtc, { legacy: nextLegacy });
+}
+
+function peekLedgerHead(path, manifest, timestampUtc, metrics, faultFn) {
+  if (manifest.legacy) {
+    const head = readLegacyHead(path, manifest, metrics);
+    const existing = readIndex(path, head.entry, metrics);
+    if (existing && existing.entryDigest !== head.entryDigest) throw new Error('MAILBOX_OUTBOX_PUBLICATION_ID_CONFLICT');
+    if (existing && (existing.status === 'COMPLETED' || existing.source === 'ledger-v3')) {
+      const advanced = commitLedgerMutation(path, manifest, {
+        targetManifest: advanceLegacy(manifest, head, timestampUtc),
+      }, { metrics, faultFn });
+      return { manifest: advanced, head: null, duplicateCollapsed: true };
+    }
+    const expectedLegacy = queuedLegacyIndex(head.entry, head.entryDigest, manifest.legacy);
+    if (existing && stableJson(existing) !== stableJson(expectedLegacy)) {
+      throw new Error('MAILBOX_OUTBOX_LEDGER_INDEX_CONFLICT');
+    }
+    if (!existing) applyIndexWrite(path, { expected: null, target: expectedLegacy }, metrics);
+    return { manifest, head, duplicateCollapsed: false };
+  }
+  if (manifest.headSequence === manifest.nextSequence) return { manifest, head: null, duplicateCollapsed: false };
+  const segment = readSegment(path, manifest, manifest.headSequence, metrics);
+  const index = readIndex(path, segment.entry, metrics);
+  const expected = queuedLedgerIndex(segment.entry, segment.entryDigest, manifest.headSequence);
+  if (!index || stableJson(index) !== stableJson(expected)) throw new Error('MAILBOX_OUTBOX_LEDGER_INDEX_CONFLICT');
+  return {
+    manifest,
+    head: {
+      origin: 'ledger-v3',
+      sequence: manifest.headSequence,
+      entry: segment.entry,
+      entryDigest: segment.entryDigest,
+    },
+    duplicateCollapsed: false,
+  };
+}
+
+function applyPostChildOutcome(path, manifest, head, statePending, timestampUtc, metrics, faultFn) {
+  const normalized = normalizePendingReceiptPublications(statePending);
+  const attemptedAfter = head
+    ? normalized.find((entry) => entry.publicationId === head.entry.publicationId) || null
+    : null;
+  if (attemptedAfter && pendingReceiptPublicationDigest(attemptedAfter) !== head.entryDigest) {
+    throw new Error('MAILBOX_OUTBOX_PUBLICATION_ID_CONFLICT');
+  }
+  const appendEntries = head
+    ? normalized.filter((entry) => entry.publicationId !== head.entry.publicationId)
+    : normalized;
+  let targetManifest = manifest;
+  const segmentWrites = [];
+  const indexWrites = [];
+  const cleanupSequences = [];
+  const virtualIndexes = new Map();
+
+  if (head) {
+    const existing = readIndex(path, head.entry, metrics);
+    if (!existing || existing.entryDigest !== head.entryDigest || existing.status !== 'QUEUED') {
+      throw new Error('MAILBOX_OUTBOX_LEDGER_INDEX_CONFLICT');
+    }
+    if (head.origin === 'legacy-v2') targetManifest = advanceLegacy(targetManifest, head, timestampUtc);
+    else {
+      targetManifest = updateManifestTimestamp(targetManifest, timestampUtc, {
+        headSequence: targetManifest.headSequence + 1,
+      });
+      cleanupSequences.push(head.sequence);
+    }
+    if (attemptedAfter) {
+      const sequence = targetManifest.nextSequence;
+      if (!validSequence(sequence + 1)) throw new Error('MAILBOX_OUTBOX_LEDGER_SEQUENCE_EXHAUSTED');
+      const targetIndex = queuedLedgerIndex(head.entry, head.entryDigest, sequence);
+      segmentWrites.push(segmentRecord(targetManifest, sequence, head.entry, head.entryDigest));
+      indexWrites.push({ expected: existing, target: targetIndex });
+      virtualIndexes.set(head.entry.publicationId, targetIndex);
+      targetManifest = updateManifestTimestamp(targetManifest, timestampUtc, { nextSequence: sequence + 1 });
+    } else {
+      const targetIndex = completedIndex(head.entry, head.entryDigest);
+      indexWrites.push({ expected: existing, target: targetIndex });
+      virtualIndexes.set(head.entry.publicationId, targetIndex);
     }
   }
-  if (current.length > 0) segments.push(current);
-  if (segments.length > MAILBOX_OUTBOX_MAX_SEGMENTS) throw new Error('MAILBOX_OUTBOX_DEFERRED_SEGMENT_LIMIT_EXCEEDED');
-  return segments;
+
+  const appended = planAppendEntries(path, targetManifest, appendEntries, metrics, virtualIndexes);
+  segmentWrites.push(...appended.segmentWrites);
+  indexWrites.push(...appended.indexWrites);
+  targetManifest = updateManifestTimestamp(targetManifest, timestampUtc, { nextSequence: appended.nextSequence });
+  return commitLedgerMutation(path, manifest, {
+    targetManifest,
+    segmentWrites,
+    indexWrites,
+    cleanupSequences,
+  }, { metrics, faultFn });
 }
 
-function prepareDeferredSlot(path, slot) {
-  const root = deferredSegmentRoot(path);
+function pendingCount(manifest) {
+  return (manifest.nextSequence - manifest.headSequence) + Number(manifest.legacy?.remainingEntryCount || 0);
+}
+
+function defaultProcessIsAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
+function lockRecord(token, now) {
+  return {
+    schemaVersion: 'stephanos.battle-bridge-mailbox-outbox-lock.v1',
+    token,
+    pid: process.pid,
+    acquiredAtUtc: now.toISOString(),
+  };
+}
+
+function writeExclusiveLock(path, record) {
   mkdirSync(dirname(path), { recursive: true });
-  if (existsSync(root)) assertUnlinkedDirectory(root);
-  else {
-    mkdirSync(root);
-    syncDirectoryBestEffort(dirname(root));
+  let descriptor = null;
+  try {
+    descriptor = openSync(path, 'wx');
+    writeFileSync(descriptor, `${JSON.stringify(record)}\n`, 'utf8');
+    fsyncSync(descriptor);
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
   }
-  const slotRoot = deferredSlotRoot(path, slot);
-  if (existsSync(slotRoot)) assertUnlinkedDirectory(slotRoot);
-  else {
-    mkdirSync(slotRoot);
-    syncDirectoryBestEffort(root);
-  }
-  return slotRoot;
+  syncDirectoryBestEffort(dirname(path));
 }
 
-function removeInactiveSlotRemainder(slotRoot, retainedSegmentCount) {
-  for (const name of readdirSync(slotRoot)) {
-    const match = DEFERRED_SEGMENT_FILE.exec(name);
-    if (!match) continue;
-    const index = Number(match[1]);
-    if (!Number.isSafeInteger(index) || index < retainedSegmentCount) continue;
-    const stalePath = join(slotRoot, name);
-    assertRegularUnlinkedFile(stalePath);
-    unlinkSync(stalePath);
-  }
-}
-
-function writeDeferred(path, entries, timestampUtc, {
-  activeSlot = null,
-  generationIdFn = () => randomUUID().replaceAll('-', ''),
+function acquireGuardLock(path, now, {
+  tokenFn,
+  processIsAliveFn,
+  staleAfterMs,
+  allowRecovery = true,
 } = {}) {
-  if (activeSlot !== null && !DEFERRED_SLOT.test(String(activeSlot))) {
-    throw new Error('MAILBOX_OUTBOX_DEFERRED_SLOT_INVALID');
+  const target = lockPath(path);
+  const token = String(tokenFn() || '').toLowerCase();
+  if (!HEX_32.test(token)) throw new Error('MAILBOX_OUTBOX_LOCK_TOKEN_INVALID');
+  try {
+    writeExclusiveLock(target, lockRecord(token, now));
+    return Object.freeze({ path: target, token, recoveredStaleLock: !allowRecovery });
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error;
+    const info = assertRegularUnlinkedFile(target);
+    let existing = null;
+    try { existing = readJsonObject(target, { maxBytes: MAILBOX_LOCK_MAX_BYTES }); } catch {}
+    const parsedAt = Date.parse(String(existing?.acquiredAtUtc || ''));
+    const acquiredAtMs = Number.isFinite(parsedAt) ? parsedAt : info.mtimeMs;
+    const ageMs = now.getTime() - acquiredAtMs;
+    const ownerAlive = processIsAliveFn(Number.parseInt(existing?.pid, 10));
+    if (allowRecovery && Number.isFinite(ageMs) && ageMs > staleAfterMs && !ownerAlive) {
+      const currentInfo = assertRegularUnlinkedFile(target);
+      if (!sameFileIdentity(info, currentInfo)) throw new Error('MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
+      const stalePath = `${target}.stale-${token}`;
+      renameSync(target, stalePath);
+      removeRegularFile(stalePath);
+      return acquireGuardLock(path, now, {
+        tokenFn,
+        processIsAliveFn,
+        staleAfterMs,
+        allowRecovery: false,
+      });
+    }
+    throw new Error('MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
   }
-  const normalized = normalizeAccumulatedDebt(entries);
-  const generation = String(generationIdFn() || '').toLowerCase();
-  if (!DEFERRED_GENERATION.test(generation)) throw new Error('MAILBOX_OUTBOX_DEFERRED_GENERATION_INVALID');
-  const targetSlot = activeSlot === 'a' ? 'b' : 'a';
-  const segments = buildDeferredSegments(normalized, generation);
-  const slotRoot = prepareDeferredSlot(path, targetSlot);
-  for (let index = 0; index < segments.length; index += 1) {
-    atomicWriteJson(deferredSegmentPath(path, targetSlot, index), {
-      schemaVersion: MAILBOX_OUTBOX_DEFERRED_SEGMENT_SCHEMA,
-      generation,
-      segmentIndex: index,
-      entries: segments[index],
-    }, { maxBytes: MAILBOX_OUTBOX_SEGMENT_MAX_BYTES, space: 0 });
+}
+
+function verifyGuardLock(lock) {
+  const current = readJsonObject(lock.path, { maxBytes: MAILBOX_LOCK_MAX_BYTES });
+  if (current.token !== lock.token || Number(current.pid) !== process.pid) {
+    throw new Error('MAILBOX_OUTBOX_GUARD_LOCK_LOST');
   }
-  removeInactiveSlotRemainder(slotRoot, segments.length);
-  atomicWriteJson(path, {
-    schemaVersion: MAILBOX_OUTBOX_DEFERRED_MANIFEST_SCHEMA,
-    timestampUtc,
-    activeSlot: targetSlot,
-    generation,
-    segmentCount: segments.length,
-    entryCount: normalized.length,
-  }, { maxBytes: MAILBOX_OUTBOX_MANIFEST_MAX_BYTES });
-  return Object.freeze({ activeSlot: targetSlot, segmentCount: segments.length, entryCount: normalized.length });
+}
+
+function releaseGuardLock(lock) {
+  if (!lock || !existsSync(lock.path)) return;
+  try {
+    const current = readJsonObject(lock.path, { maxBytes: MAILBOX_LOCK_MAX_BYTES });
+    if (current.token === lock.token) removeRegularFile(lock.path);
+  } catch {}
 }
 
 function resolveProductionPaths({ env = process.env, repoRoot = defaultRepoRoot } = {}) {
@@ -411,8 +1149,11 @@ export function runMailboxOutboxGuard({
   env = process.env,
   repoRoot = defaultRepoRoot,
   now = () => new Date(),
-  generationIdFn = () => randomUUID().replaceAll('-', ''),
+  lockTokenFn = () => randomUUID().replaceAll('-', ''),
+  processIsAliveFn = defaultProcessIsAlive,
+  staleAfterMs = MAILBOX_LOCK_STALE_AFTER_MS,
   spawnSyncFn = spawnSync,
+  faultFn = () => {},
   pathOverrides = null,
 } = {}) {
   if (platform !== 'win32') return fail('WINDOWS_REQUIRED');
@@ -424,31 +1165,42 @@ export function runMailboxOutboxGuard({
   const statePath = resolve(resolved.statePath);
   const deferredPath = resolve(resolved.deferredPath);
   const childRunnerPath = resolve(resolved.childRunnerPath);
+  if (dirname(statePath).toLowerCase() !== dirname(deferredPath).toLowerCase()
+    || basename(statePath).toLowerCase() !== 'state.json'
+    || basename(deferredPath).toLowerCase() !== 'receipt-publication-deferred-v1.json') {
+    return fail('MAILBOX_OUTBOX_STORE_PATH_INVALID');
+  }
+  const metrics = createIoMetrics();
+  let lock = null;
   try {
     assertRegularUnlinkedFile(childRunnerPath);
+    mkdirSync(dirname(statePath), { recursive: true });
+    assertUnlinkedDirectory(dirname(statePath));
+    const timestamp = now();
+    lock = acquireGuardLock(deferredPath, timestamp, {
+      tokenFn: lockTokenFn,
+      processIsAliveFn,
+      staleAfterMs,
+    });
     const state = readJsonObject(statePath, {
       allowMissing: true,
       missingValue: { consumedRequestIds: [], acceptedRequestIds: [], pendingReceiptPublications: [] },
       maxBytes: MAILBOX_STATE_MAX_BYTES,
+      metrics,
     });
     const statePendingBefore = canonicalPendingFromState(state);
-    const deferredBefore = readMailboxOutboxDeferredStore(deferredPath);
-    const cycle = planMailboxOutboxCycle({
-      statePending: statePendingBefore,
-      deferredPending: deferredBefore.entries,
-    });
-
-    // Crash safety: persist everything not attempted this cycle before shrinking the
-    // canonical state outbox. The inactive slot is complete before the bounded
-    // manifest switches, so a crash retains either the old or the new generation.
-    writeDeferred(deferredPath, cycle.deferred, now().toISOString(), {
-      activeSlot: deferredBefore.activeSlot,
-      generationIdFn,
-    });
+    let manifest = loadOrInitializeLedger(deferredPath, timestamp.toISOString(), metrics);
+    manifest = appendCanonicalDebt(deferredPath, manifest, statePendingBefore, now().toISOString(), metrics, faultFn);
+    const peeked = peekLedgerHead(deferredPath, manifest, now().toISOString(), metrics, faultFn);
+    manifest = peeked.manifest;
+    const head = peeked.head;
+    const pendingBeforeChild = pendingCount(manifest);
     atomicWriteJson(statePath, {
       ...state,
-      pendingReceiptPublications: cycle.attemptedThisCycle,
-    }, { maxBytes: MAILBOX_STATE_MAX_BYTES });
+      pendingReceiptPublications: head ? [head.entry] : [],
+    }, { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
+    verifyGuardLock(lock);
+    const preIngressIo = snapshotIo(metrics);
 
     const child = spawnSyncFn(process.execPath, [childRunnerPath], {
       cwd: actualRepoRoot,
@@ -459,35 +1211,36 @@ export function runMailboxOutboxGuard({
       maxBuffer: 2 * 1024 * 1024,
     });
 
-    const stateAfter = readJsonObject(statePath, { maxBytes: MAILBOX_STATE_MAX_BYTES });
-    // Authority-bearing canonical debt is never coerced to an empty array. A child
-    // that writes a malformed shape is left untouched for operator recovery.
+    verifyGuardLock(lock);
+    const stateAfter = readJsonObject(statePath, { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
     const statePendingAfter = canonicalPendingFromState(stateAfter);
-    const deferredAfter = readMailboxOutboxDeferredStore(deferredPath);
-    const mergedPending = mergeMailboxOutboxAfterCycle({
-      deferredPending: deferredAfter.entries,
-      statePending: statePendingAfter,
-    });
-    // Persist the complete union before clearing canonical state. A crash between
-    // these writes can only duplicate debt, which is deduplicated next cycle.
-    const persistedAfter = writeDeferred(deferredPath, mergedPending, now().toISOString(), {
-      activeSlot: deferredAfter.activeSlot,
-      generationIdFn,
-    });
+    manifest = applyPostChildOutcome(
+      deferredPath,
+      manifest,
+      head,
+      statePendingAfter,
+      now().toISOString(),
+      metrics,
+      faultFn,
+    );
     atomicWriteJson(statePath, {
       ...stateAfter,
       pendingReceiptPublications: [],
-    }, { maxBytes: MAILBOX_STATE_MAX_BYTES });
+    }, { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
 
     const childOk = !child?.error && child?.status === 0;
     return Object.freeze({
       ok: childOk,
       blocker: childOk ? '' : 'MAILBOX_CHILD_RUN_BLOCKED',
       finalVerdict: childOk ? 'MAILBOX_OUTBOX_GUARD_READY' : 'MAILBOX_OUTBOX_GUARD_BLOCKED',
-      attemptedPublicationCount: cycle.attemptedThisCycle.length,
-      deferredPublicationCountBeforeChild: cycle.deferred.length,
-      pendingPublicationCountAfterChild: mergedPending.length,
-      deferredSegmentCountAfterChild: persistedAfter.segmentCount,
+      attemptedPublicationCount: head ? 1 : 0,
+      deferredPublicationCountBeforeChild: Math.max(0, pendingBeforeChild - (head ? 1 : 0)),
+      pendingPublicationCountAfterChild: pendingCount(manifest),
+      deferredLedgerVersion: 3,
+      duplicateLegacyPublicationCollapsed: peeked.duplicateCollapsed,
+      staleLockRecovered: lock.recoveredStaleLock === true,
+      preIngressIo,
+      ledgerIo: snapshotIo(metrics),
       childExitStatus: child?.status ?? null,
       childSignal: child?.signal ?? null,
       childError: child?.error?.message || '',
@@ -499,7 +1252,12 @@ export function runMailboxOutboxGuard({
       sourceMutationAllowed: false,
     });
   } catch (error) {
-    return fail('MAILBOX_OUTBOX_GUARD_FAILED', { error: String(error?.message || error).slice(0, 240) });
+    return fail('MAILBOX_OUTBOX_GUARD_FAILED', {
+      error: String(error?.message || error).slice(0, 240),
+      ledgerIo: snapshotIo(metrics),
+    });
+  } finally {
+    releaseGuardLock(lock);
   }
 }
 
