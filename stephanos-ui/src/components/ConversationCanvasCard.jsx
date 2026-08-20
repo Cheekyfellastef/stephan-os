@@ -1,6 +1,23 @@
 const CANVAS_SCHEMA = 'stephanos.ui-agent.conversation-canvas-presenter.v1';
 const CANVAS_STATES = new Set(['LOADING', 'PARTIAL', 'READY', 'ERROR', 'OFFLINE']);
 const CANVAS_SURFACES = new Set(['desktop-browser', 'ipad', 'iphone']);
+const SURFACE_LAYOUTS = Object.freeze({
+  'desktop-browser': 'TWO_COLUMN_WITH_DETAIL_RAIL',
+  ipad: 'TOUCH_STACK_WITH_DETAIL_DRAWER',
+  iphone: 'SINGLE_COLUMN_PROGRESSIVE',
+});
+const ZERO_AUTHORITY_KEYS = Object.freeze([
+  'sourceMutationAllowed',
+  'commandExecutionAllowed',
+  'approvalAuthorityAdded',
+  'mergeAllowed',
+  'deploymentAllowed',
+  'runtimeMutationAllowed',
+  'providerSelectionAuthorityAdded',
+  'privateUiTruthAllowed',
+  'presenterMayExecuteActions',
+  'presenterMayHideEvidence',
+]);
 
 function safeArray(value, limit = 64) {
   return Array.isArray(value) ? value.slice(0, limit) : [];
@@ -10,18 +27,63 @@ function safeText(value, fallback = '') {
   return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }
 
+function authorityIsZero(authority) {
+  return Boolean(
+    authority
+      && typeof authority === 'object'
+      && !Array.isArray(authority)
+      && ZERO_AUTHORITY_KEYS.every((key) => authority[key] === false),
+  );
+}
+
+function modesAreInert(modes) {
+  if (!Array.isArray(modes)) return false;
+  return modes.every((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || entry.executable !== false) return false;
+    return entry.mode !== 'IMPROVE_STEPHANOS' || entry.constructionExecutionOwnedHere === false;
+  });
+}
+
+function actionSectionsAreInert(sections) {
+  if (!Array.isArray(sections)) return false;
+  for (const section of sections) {
+    if (!section || typeof section !== 'object' || Array.isArray(section)) return false;
+    if (section.kind !== 'RECOMMENDED_ACTION') continue;
+    if (!Array.isArray(section.items)) return false;
+    for (const item of section.items) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+      if (Object.hasOwn(item, 'interactiveApprovalAllowed')) {
+        if (item.interactiveApprovalAllowed !== false) return false;
+      } else if (item.executable !== false) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 export function isConversationCanvasViewV1(view) {
+  const surface = safeText(view?.surface);
+  const state = safeText(view?.state).toUpperCase();
+  const touchSurface = surface === 'ipad' || surface === 'iphone';
+  const reducedMotion = view?.accessibility?.reducedMotion === true;
   return Boolean(
     view
       && typeof view === 'object'
       && !Array.isArray(view)
       && view.schemaVersion === CANVAS_SCHEMA
       && view.valid === true
-      && CANVAS_STATES.has(safeText(view.state).toUpperCase())
-      && CANVAS_SURFACES.has(safeText(view.surface))
-      && view.authority?.presenterMayExecuteActions === false
-      && view.authority?.approvalAuthorityAdded === false
-      && view.authority?.runtimeMutationAllowed === false,
+      && CANVAS_STATES.has(state)
+      && CANVAS_SURFACES.has(surface)
+      && safeText(view.layoutProfile?.layout) === SURFACE_LAYOUTS[surface]
+      && authorityIsZero(view.authority)
+      && view.stateBanner?.colorOnlyStatusAllowed === false
+      && view.accessibility?.colorOnlyStatusAllowed === false
+      && view.accessibility?.evidenceKeyboardReachable === true
+      && (!touchSurface || view.accessibility?.touchTargetsLarge === true)
+      && (!reducedMotion || view.accessibility?.animationAllowed === false)
+      && modesAreInert(view.experienceModes)
+      && actionSectionsAreInert(view.sections),
   );
 }
 
