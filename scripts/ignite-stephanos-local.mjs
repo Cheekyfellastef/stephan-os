@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, copyFileSync, cpSync, existsSync, rmSync, writeFileSync, renameSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { mkdirSync, copyFileSync, cpSync, existsSync, lstatSync, opendirSync, rmSync, writeFileSync, renameSync } from 'node:fs';
+import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
 import { projectIgnitionCockpit } from './ignition-cockpit-model.mjs';
@@ -1055,6 +1055,80 @@ export function mergeIgnoredRuntimeChildrenIntoStatus(statusOutput, ignoredChild
   return lines.length > 0 ? `${lines.join('\n')}\n` : '';
 }
 
+function ignoredRuntimeAggregateScanError(detail) {
+  const error = new Error(`ignored-runtime-aggregate-scan:${detail}`);
+  error.code = 'IGNITION_RUNTIME_AGGREGATE_SCAN_FAILED';
+  return error;
+}
+
+export function scanIgnoredRuntimeAggregatePathsForBlockers({
+  repoRoot = process.cwd(),
+  aggregatePaths = [],
+  lstatSyncFn = lstatSync,
+  opendirSyncFn = opendirSync,
+  maxDepth = 64,
+} = {}) {
+  const canonicalRoot = resolve(repoRoot);
+  const blockers = [];
+
+  const walk = (absoluteDirectory, relativeDirectory, depth) => {
+    if (depth > maxDepth) throw ignoredRuntimeAggregateScanError('maximum-depth-exceeded');
+    let directory;
+    try {
+      directory = opendirSyncFn(absoluteDirectory);
+      for (let entry = directory.readSync(); entry; entry = directory.readSync()) {
+        if (entry.name.includes('\0') || entry.name.includes('\n') || entry.name.includes('\r')) {
+          throw ignoredRuntimeAggregateScanError('unsafe-entry-name');
+        }
+        const childPath = `${relativeDirectory}/${entry.name}`.replace(/\\/g, '/');
+        if (SECRETS_PATTERN.test(childPath)) {
+          blockers.push(childPath);
+          return;
+        }
+        if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
+          throw ignoredRuntimeAggregateScanError('unsupported-entry-identity');
+        }
+        if (entry.isDirectory()) walk(resolve(absoluteDirectory, entry.name), childPath, depth + 1);
+        if (blockers.length > 0) return;
+      }
+    } catch (error) {
+      if (error?.code === 'IGNITION_RUNTIME_AGGREGATE_SCAN_FAILED') throw error;
+      throw ignoredRuntimeAggregateScanError(error?.code || 'filesystem-read-failed');
+    } finally {
+      directory?.closeSync();
+    }
+  };
+
+  for (const rawAggregatePath of aggregatePaths) {
+    const aggregatePath = normalizeGitPath(rawAggregatePath).replace(/\\/g, '/').replace(/\/+$/, '');
+    const segments = aggregatePath.split('/');
+    if (!aggregatePath || isAbsolute(aggregatePath) || segments.includes('..') || segments.includes('.')) {
+      throw ignoredRuntimeAggregateScanError('unsafe-aggregate-path');
+    }
+    if (classifyIgnitionDirtPath(`${aggregatePath}/`) !== 'RUNTIME_CHECKPOINT_CLEAN') {
+      throw ignoredRuntimeAggregateScanError('non-runtime-aggregate');
+    }
+    const absoluteAggregate = resolve(canonicalRoot, aggregatePath);
+    const relativeToRoot = relative(canonicalRoot, absoluteAggregate);
+    if (!relativeToRoot || relativeToRoot.startsWith('..') || isAbsolute(relativeToRoot)) {
+      throw ignoredRuntimeAggregateScanError('aggregate-outside-repository');
+    }
+    let identity;
+    try {
+      identity = lstatSyncFn(absoluteAggregate);
+    } catch (error) {
+      throw ignoredRuntimeAggregateScanError(error?.code || 'aggregate-identity-unproven');
+    }
+    if (identity.isSymbolicLink() || !identity.isDirectory()) {
+      throw ignoredRuntimeAggregateScanError('aggregate-identity-invalid');
+    }
+    walk(absoluteAggregate, aggregatePath, 0);
+    if (blockers.length > 0) break;
+  }
+
+  return blockers.length > 0 ? `${blockers.join('\n')}\n` : '';
+}
+
 export function evaluateGitStatusForIgnition(statusOutput) {
   const lines = String(statusOutput || '')
     .split('\n')
@@ -1828,13 +1902,13 @@ export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureSt
   return { healthy: true, state: 'connected-healthy', recoveryApplied: true, readiness };
 }
 
-export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, preserveRuntimeDirt = false, captureStepFn = runStepCapture, runStepFn = runStep, moveRootOpenClawWorkspaceDirtFn = moveRootOpenClawWorkspaceDirt } = {}) {
+export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, preserveRuntimeDirt = false, captureStepFn = runStepCapture, runStepFn = runStep, moveRootOpenClawWorkspaceDirtFn = moveRootOpenClawWorkspaceDirt, scanIgnoredRuntimeAggregatePathsFn = scanIgnoredRuntimeAggregatePathsForBlockers, repoRoot = process.cwd() } = {}) {
   const capture = captureStepFn('git-status', 'git', ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
   const ignoredRuntimeAggregates = collectIgnoredRuntimeAggregatePaths(capture.stdout);
-  const ignoredRuntimeChildren = ignoredRuntimeAggregates.length > 0
-    ? captureStepFn('git-ignored-runtime-children', 'git', ['ls-files', '--others', '--ignored', '--exclude-standard', '--', ...ignoredRuntimeAggregates])
-    : { stdout: '', stderr: '' };
-  const assessment = evaluateGitStatusForIgnition(mergeIgnoredRuntimeChildrenIntoStatus(capture.stdout, ignoredRuntimeChildren.stdout));
+  const ignoredRuntimeBlockers = ignoredRuntimeAggregates.length > 0
+    ? scanIgnoredRuntimeAggregatePathsFn({ repoRoot, aggregatePaths: ignoredRuntimeAggregates })
+    : '';
+  const assessment = evaluateGitStatusForIgnition(mergeIgnoredRuntimeChildrenIntoStatus(capture.stdout, ignoredRuntimeBlockers));
   const runtimeDataListing = captureStepFn('git-untracked-data', 'git', ['ls-files', '--others', '--exclude-standard', '--', 'data']);
   const runtimeDataPaths = normalizeCaptureStdout(runtimeDataListing).split('\n').map((line) => normalizeGitPath(line)).filter((line) => line.startsWith('data/'));
   const plan = assessment.entries.map((entry) => ({

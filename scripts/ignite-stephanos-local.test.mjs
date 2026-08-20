@@ -29,6 +29,7 @@ import {
   runApprovedLocalMergeRecoveryWithDeps,
   resolveStepExecution,
   runIgnitionHousekeep,
+  scanIgnoredRuntimeAggregatePathsForBlockers,
   shouldAutoPublishDist,
   shouldAutoPull,
 } from './ignite-stephanos-local.mjs';
@@ -1097,10 +1098,10 @@ test('housekeep tolerates canonical ignored runtime logs without weakening the d
       compact: true,
       captureStepFn: (label) => {
         if (label === 'git-status') return { stdout: '!! logs/\n', stderr: '' };
-        if (label === 'git-ignored-runtime-children') return { stdout: 'logs/battle-bridge/backend.stdout.log\n', stderr: '' };
         if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
         throw new Error(`unexpected capture label: ${label}`);
       },
+      scanIgnoredRuntimeAggregatePathsFn: () => '',
       runStepFn: () => {},
     });
   } finally {
@@ -1119,18 +1120,40 @@ test('housekeep hard-blocks secret-shaped children hidden by an ignored logs agg
     captureStepFn: (label, command, args) => {
       calls.push([label, command, ...args]);
       if (label === 'git-status') return { stdout: '!! logs/\n', stderr: '' };
-      if (label === 'git-ignored-runtime-children') return { stdout: 'logs/battle-bridge/backend.stdout.log\nlogs/credential.json\n', stderr: '' };
       if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
       throw new Error(`unexpected capture label: ${label}`);
     },
+    scanIgnoredRuntimeAggregatePathsFn: () => 'logs/credential.json\n',
     runStepFn: () => {},
   }), /housekeep blocked/);
 
-  assert.deepEqual(calls[1], [
-    'git-ignored-runtime-children',
-    'git',
-    'ls-files', '--others', '--ignored', '--exclude-standard', '--', 'logs/',
-  ]);
+  assert.deepEqual(calls.map((call) => call[0]), ['git-status', 'git-untracked-data']);
+});
+
+test('ignored runtime aggregate scan stays output-bounded across a large benign log estate', () => {
+  const benignCount = 50_000;
+  let reads = 0;
+  const blockerOutput = scanIgnoredRuntimeAggregatePathsForBlockers({
+    repoRoot: '/canonical/repo',
+    aggregatePaths: ['logs/'],
+    lstatSyncFn: () => ({ isDirectory: () => true, isSymbolicLink: () => false }),
+    opendirSyncFn: () => ({
+      readSync: () => {
+        reads += 1;
+        if (reads <= benignCount) {
+          return { name: `runtime-${reads}.log`, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false };
+        }
+        if (reads === benignCount + 1) {
+          return { name: 'credential.json', isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false };
+        }
+        return null;
+      },
+      closeSync: () => {},
+    }),
+  });
+
+  assert.equal(reads, benignCount + 1);
+  assert.equal(blockerOutput, 'logs/credential.json\n');
 });
 
 test('housekeep dry-run classifies known OpenClaw workspace dirt without weakening hard-block', () => {

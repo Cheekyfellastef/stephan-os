@@ -15,6 +15,7 @@ import {
   evaluateGitStatusForIgnition,
   mergeIgnoredRuntimeChildrenIntoStatus,
   runIgnitionHousekeep,
+  scanIgnoredRuntimeAggregatePathsForBlockers,
 } from './ignite-stephanos-local.mjs';
 import { buildOpenClawGatewayStartupTarget, OPENCLAW_GATEWAY_STARTUP_SOURCE, resolveOpenClawGatewayStartupExecution } from '../shared/agents/openClawGatewayStartup.mjs';
 import {
@@ -126,6 +127,7 @@ export function collectCanonicalIgnitionSourceTruth({
   inspectTopologyFn = inspectBattleBridgeGitTopology,
   validateConfigurationFn = validateBattleBridgeLocalGitConfiguration,
   evaluateStatusFn = evaluateGitStatusForIgnition,
+  scanIgnoredRuntimeAggregatePathsFn = scanIgnoredRuntimeAggregatePathsForBlockers,
 } = {}) {
   const topologyBefore = inspectTopologyFn(cwd, { stabilizeIndex: true });
   if (!topologyBefore?.ok) {
@@ -164,10 +166,11 @@ export function collectCanonicalIgnitionSourceTruth({
     const statusOutput = capture(label, [...SOURCE_STATUS_ARGS]);
     const ignoredRuntimeAggregates = collectIgnoredRuntimeAggregatePaths(statusOutput);
     if (ignoredRuntimeAggregates.length === 0) return statusOutput;
-    const ignoredChildrenOutput = capture(`${label}-ignored-runtime-children`, [
-      'ls-files', '--others', '--ignored', '--exclude-standard', '--', ...ignoredRuntimeAggregates,
-    ]);
-    return mergeIgnoredRuntimeChildrenIntoStatus(statusOutput, ignoredChildrenOutput);
+    const ignoredRuntimeBlockers = scanIgnoredRuntimeAggregatePathsFn({
+      repoRoot: cwd,
+      aggregatePaths: ignoredRuntimeAggregates,
+    });
+    return mergeIgnoredRuntimeChildrenIntoStatus(statusOutput, ignoredRuntimeBlockers);
   };
 
   try {
@@ -558,6 +561,7 @@ export function runCanonicalSupervisorHousekeep(
   );
   return housekeepFn({
     ...options,
+    repoRoot: cwd,
     captureStepFn,
     runStepFn: (label, command, args) => {
       captureStepFn(label, command, args);

@@ -103,6 +103,7 @@ function runSourceCollectorFixture({
   environment = { PATH: 'C:\\attacker', NODE_OPTIONS: '--require=C:\\attacker\\inject.cjs' },
 } = {}) {
   const calls = [];
+  const ignoredRuntimeScanCalls = [];
   const counts = Object.create(null);
   let topologyCalls = 0;
   const topologyOptions = [];
@@ -122,10 +123,6 @@ function runSourceCollectorFixture({
     calls.push({ command, args, operationArgs, options });
     if (operation === failOperation) return { status: 1, stdout: '', stderr: 'fixture failure' };
     if (operation === 'config') return { status: 0, stdout: counts.config === 1 ? configurationBefore : configurationAfter, stderr: '' };
-    if (operation === 'ls-files' && operationArgs.includes('--ignored')) {
-      counts.ignoredRuntimeChildren = Number(counts.ignoredRuntimeChildren || 0) + 1;
-      return { status: 0, stdout: [ignoredRuntimeChildrenBefore, ignoredRuntimeChildrenAfter, ignoredRuntimeChildrenFinal][counts.ignoredRuntimeChildren - 1], stderr: '' };
-    }
     if (operation === 'ls-files') {
       counts.trackedVisibility = Number(counts.trackedVisibility || 0) + 1;
       return { status: 0, stdout: [trackedVisibilityBefore, trackedVisibilityAfter, trackedVisibilityFinal][counts.trackedVisibility - 1], stderr: '' };
@@ -162,8 +159,13 @@ function runSourceCollectorFixture({
     platform,
     spawnSyncFn,
     inspectTopologyFn,
+    scanIgnoredRuntimeAggregatePathsFn: ({ repoRoot, aggregatePaths }) => {
+      ignoredRuntimeScanCalls.push({ repoRoot, aggregatePaths });
+      const index = ignoredRuntimeScanCalls.length - 1;
+      return [ignoredRuntimeChildrenBefore, ignoredRuntimeChildrenAfter, ignoredRuntimeChildrenFinal][index] || '';
+    },
   });
-  return { result, calls, topologyCalls, topologyOptions };
+  return { result, calls, ignoredRuntimeScanCalls, topologyCalls, topologyOptions };
 }
 
 test('supervisor status model exposes required phases and states', () => {
@@ -388,7 +390,8 @@ test('collector enumerates ignored log children before accepting the logs runtim
     ignoredRuntimeChildrenBefore: 'logs/battle-bridge/backend.stdout.log\n',
   });
   assert.equal(benign.result.ok, true);
-  assert.equal(benign.calls.filter((call) => call.operationArgs.includes('--ignored')).length, 3);
+  assert.equal(benign.ignoredRuntimeScanCalls.length, 3);
+  assert.deepEqual(benign.ignoredRuntimeScanCalls[0], { repoRoot: '/canonical/repo', aggregatePaths: ['logs/'] });
 
   const secret = runSourceCollectorFixture({
     statusBefore: '!! logs/\n',
@@ -396,11 +399,7 @@ test('collector enumerates ignored log children before accepting the logs runtim
   });
   assert.equal(secret.result.ok, false);
   assert.equal(secret.result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
-  assert.equal(secret.calls.some((call) => (
-    call.operationArgs[0] === 'ls-files'
-      && call.operationArgs.includes('--ignored')
-      && call.operationArgs.at(-1) === 'logs/'
-  )), true);
+  assert.equal(secret.ignoredRuntimeScanCalls.length, 1);
   assert.equal(secret.calls.some((call) => call.operationArgs[0] === 'fetch'), false);
 });
 

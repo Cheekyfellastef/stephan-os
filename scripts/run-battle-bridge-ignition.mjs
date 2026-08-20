@@ -203,6 +203,7 @@ export function runSupervisorHousekeepPreservingLiveRuntime(
   ));
   return housekeepFn({
     ...options,
+    repoRoot: cwd,
     preserveRuntimeDirt: true,
     captureStepFn: fixedCaptureStep,
     runStepFn: createSupervisorHousekeepRunStep({ runStepFn: fixedRunStep }),
