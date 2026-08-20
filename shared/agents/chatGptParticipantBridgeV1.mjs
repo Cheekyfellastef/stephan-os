@@ -6,6 +6,7 @@ import {
   aggregateLatestSharedWorkspaceStatus,
   validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
+import { validateDeliveryStatusSubject } from './sharedWorkspaceScopedDeliveryStatusV1.mjs';
 
 export const CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION = 'chatgpt-participant-bridge.v1';
 export const CHATGPT_BRIDGE_PARTICIPANT_ID = 'chatgpt-bridge';
@@ -17,6 +18,7 @@ export const CHATGPT_BRIDGE_READ_OPERATIONS = Object.freeze([
   'READ_CURRENT_STATUS',
   'READ_LATEST_PROOF',
   'READ_OPERATOR_ATTENTION',
+  'READ_DELIVERY_STATUS',
 ]);
 
 export const CHATGPT_BRIDGE_WRITE_OPERATIONS = Object.freeze([
@@ -33,6 +35,7 @@ export const CHATGPT_BRIDGE_RECORD_KINDS = Object.freeze({
   CURRENT_STATUS: 'current-status-projection',
   LATEST_PROOF: 'latest-proof-projection',
   OPERATOR_ATTENTION: 'operator-attention-projection',
+  DELIVERY_STATUS: 'delivery-status-projection',
   GOAL_INTENT_PROPOSAL: 'goal-intent-proposal',
   NEXT_ACTION_PACKET: 'next-action-packet',
   BLOCKER_CLASSIFICATION: 'blocker-classification',
@@ -44,6 +47,7 @@ export const CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP = Object.freeze({
   READ_CURRENT_STATUS: CHATGPT_BRIDGE_RECORD_KINDS.CURRENT_STATUS,
   READ_LATEST_PROOF: CHATGPT_BRIDGE_RECORD_KINDS.LATEST_PROOF,
   READ_OPERATOR_ATTENTION: CHATGPT_BRIDGE_RECORD_KINDS.OPERATOR_ATTENTION,
+  READ_DELIVERY_STATUS: CHATGPT_BRIDGE_RECORD_KINDS.DELIVERY_STATUS,
   WRITE_GOAL_INTENT_PROPOSAL: CHATGPT_BRIDGE_RECORD_KINDS.GOAL_INTENT_PROPOSAL,
   WRITE_NEXT_ACTION_PACKET: CHATGPT_BRIDGE_RECORD_KINDS.NEXT_ACTION_PACKET,
   WRITE_BLOCKER_CLASSIFICATION: CHATGPT_BRIDGE_RECORD_KINDS.BLOCKER_CLASSIFICATION,
@@ -288,6 +292,7 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
     const serializedPayload = serializePayload(request.boundedPayload);
     if (!serializedPayload.ok || serializedPayload.bytes > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (serializedPayloadHasSecretShapedData(serializedPayload)) responseStatus = 'BLOCKED_SECRET_SHAPED_DATA';
+    else if (operation === 'READ_DELIVERY_STATUS' && !validateDeliveryStatusSubject(request.boundedPayload?.statusSubject).ok) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (request.recordKind === 'approval-result') responseStatus = 'BLOCKED_APPROVAL_REQUIRED';
     else if (text(request.approvalRef)) {
       const approvalCheck = verifyOperatorApprovalSeparation(request, options.operatorApproval);

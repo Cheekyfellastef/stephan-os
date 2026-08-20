@@ -91,6 +91,33 @@ test('chat update stops safely when fast-forward sync is blocked', async () => {
   assert.equal(diagnosticsCalled, false);
 });
 
+test('chat update preserves exact installed source truth when post-sync verification blocks runtime refresh', async () => {
+  const head = '10ce35ad3d9542694f02e6727954b965d3de4f6b';
+  let diagnosticsCalled = false;
+  const result = await updateStephanosFromChat({
+    expectedHead: head,
+    operatorApproval: 'operator-approved',
+    syncFn: () => ({
+      ok: false,
+      status: 'FAILED',
+      blocker: 'POST_SYNC_VERIFICATION_FAILED',
+      branch: 'main',
+      afterHead: head,
+      tests: { ok: false, status: 1 },
+    }),
+    diagnosticsFn: () => { diagnosticsCalled = true; },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'POST_SYNC_VERIFICATION_FAILED');
+  assert.equal(result.sourceInstalled, true);
+  assert.equal(result.sourceHead, head);
+  assert.equal(result.branch, 'main');
+  assert.equal(result.expectedHeadMatch, true);
+  assert.equal(result.runtimeRefreshAttempted, false);
+  assert.equal(diagnosticsCalled, false);
+});
+
 test('chat update fast-forwards, runs the canonical ignition entry, and proves exact-head runtime without manual PowerShell', async () => {
   const head = '443e3bcb6f6da050961b881160f7d5a4ca463fee';
   const diagnostics = [health(head), health(head)];

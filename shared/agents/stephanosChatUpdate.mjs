@@ -257,6 +257,12 @@ export async function updateStephanosFromChat({
   }
 
   const sync = await syncFn({ repoRoot, expectedBranch, expectedHead, operatorApproval, platform, spawnSyncFn });
+  const normalizedExpectedHead = String(expectedHead || '').trim().toLowerCase();
+  const normalizedAfterHead = String(sync?.afterHead || '').trim().toLowerCase();
+  const expectedHeadSupplied = /^[0-9a-f]{40}$/i.test(normalizedExpectedHead);
+  const sourceInstalled = /^[0-9a-f]{40}$/i.test(normalizedAfterHead)
+    && String(sync?.branch || '') === expectedBranch;
+  const expectedHeadMatch = expectedHeadSupplied && normalizedAfterHead === normalizedExpectedHead;
   if (!sync?.ok) {
     return Object.freeze({
       ok: false,
@@ -266,17 +272,16 @@ export async function updateStephanosFromChat({
       finalVerdict: sync?.blocker || 'SOURCE_SYNC_FAILED',
       blocker: sync?.blocker || 'SOURCE_SYNC_FAILED',
       sync,
-      sourceInstalled: false,
+      sourceInstalled,
+      sourceHead: sourceInstalled ? normalizedAfterHead : '',
+      branch: sourceInstalled ? expectedBranch : '',
+      expectedHeadMatch,
       runtimeRefreshAttempted: false,
       operatorPowerShellRequired: false,
       nextOperatorAction: 'Inspect the exact bounded sync blocker. No local work was discarded and no runtime refresh was attempted.',
     });
   }
 
-  const normalizedExpectedHead = String(expectedHead || '').trim().toLowerCase();
-  const normalizedAfterHead = String(sync.afterHead || '').trim().toLowerCase();
-  const expectedHeadSupplied = /^[0-9a-f]{40}$/i.test(normalizedExpectedHead);
-  const expectedHeadMatch = expectedHeadSupplied && normalizedAfterHead === normalizedExpectedHead;
   if (expectedHeadSupplied && !expectedHeadMatch) {
     return Object.freeze({
       ok: false,

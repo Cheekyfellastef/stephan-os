@@ -44,7 +44,7 @@ export function adjudicateBackendFreshnessProof({ baseUrl = 'http://127.0.0.1:87
       route,
       url: proof.url || routeUrl(baseUrl, route),
       status: Number.isInteger(proof.status) ? proof.status : null,
-      ok: proof.ok === true || isOk(proof.status),
+      ok: Object.prototype.hasOwnProperty.call(proof, 'ok') ? proof.ok === true : isOk(proof.status),
       missing: proof.missing === true || isMissing(proof.status),
       error: proof.error || '',
     };

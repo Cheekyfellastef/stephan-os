@@ -72,10 +72,50 @@ test('sidecar refreshes the authoritative Shared Workspace index before and afte
   assert.equal(result.indexHeartbeatIntervalMs, 15_000);
   assert.equal(result.indexHeartbeatRefreshCount, 0);
   assert.equal(result.recentReceiptCount, 1);
+  assert.equal(result.mailboxSelectedCount, 0);
+  assert.equal(result.mailboxDeferredCount, 0);
+  assert.equal(result.duplicateMailboxAllowed, false);
   assert.equal(result.arbitraryFilesystemAccess, false);
   assert.equal(result.arbitraryShellAllowed, false);
   assert.equal(result.destructiveGitAllowed, false);
   assert.equal(result.sourceMutationAccess, false);
+}));
+
+test('sidecar projects bounded batch throughput and backpressure telemetry', async () => fixture(async ({ repoRoot, workspaceRoot }) => {
+  const result = await runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
+    platform: 'win32',
+    sourceRepoRoot: repoRoot,
+    canonicalRepoRoot: repoRoot,
+    env: { STEPHANOS_SHARED_AGENT_WORKSPACE: workspaceRoot },
+    refreshIndex: async () => ({
+      ok: true,
+      finalVerdict: 'MAILBOX_RECEIPT_INDEX_READY',
+      projection: { activeReceipt: null, recentReceipts: [] },
+    }),
+    runMailbox: async () => ({
+      ok: true,
+      finalVerdict: 'MAILBOX_BATCH_DRAINED_WITH_BLOCKERS',
+      selectedCount: 4,
+      readyCount: 7,
+      deferredCount: 3,
+      controlCount: 2,
+      observationCount: 2,
+      blockedCount: 1,
+      maxConcurrencyObserved: 2,
+      controlSerialized: true,
+    }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.mailboxVerdict, 'MAILBOX_BATCH_DRAINED_WITH_BLOCKERS');
+  assert.equal(result.mailboxSelectedCount, 4);
+  assert.equal(result.mailboxReadyCount, 7);
+  assert.equal(result.mailboxDeferredCount, 3);
+  assert.equal(result.mailboxControlCount, 2);
+  assert.equal(result.mailboxObservationCount, 2);
+  assert.equal(result.mailboxBlockedCount, 1);
+  assert.equal(result.mailboxMaxConcurrencyObserved, 2);
+  assert.equal(result.mailboxControlSerialized, true);
+  assert.equal(result.duplicateMailboxAllowed, false);
 }));
 
 test('sidecar refreshes an ACCEPTED receipt during a long mailbox poll on a bounded heartbeat', async () => fixture(async ({ repoRoot, workspaceRoot }) => {

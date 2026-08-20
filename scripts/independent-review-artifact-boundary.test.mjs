@@ -28,6 +28,18 @@ test('independent review publishes one exact-run immutable result artifact', asy
   assert.match(script, /protectedWorkflowSources/);
   assert.doesNotMatch(script, /node:child_process|\bspawnSync\b|\bexecSync\b|\beval\s*\(/);
   assert.match(script, /const artifactPath = writeReviewArtifact\(artifact\);[\s\S]*const comment = await postDisplayComment/);
+  assert.doesNotMatch(script, /waitForExactHeadWorkflows|POLL_(?:INTERVAL|TIMEOUT)_MS/);
+  assert.doesNotMatch(script, /actions\/runs\?head_sha=.*event=pull_request/);
+  assert.doesNotMatch(script, /unresolvedThreadCount|reviewThreads\(first:/);
+  assert.match(script, /CI success and zero unresolved threads remain mandatory when the receipt is consumed/);
+  const displayComment = script.slice(
+    script.indexOf('async function postDisplayComment'),
+    script.indexOf('function writeReviewArtifact'),
+  );
+  assert.match(displayComment, /return await postComment/);
+  assert.match(displayComment, /INDEPENDENT_SECURITY_REVIEW_DISPLAY_COMMENT_UNAVAILABLE/);
+  assert.match(displayComment, /catch[\s\S]*return null/);
+  assert.match(displayComment, /immutable artifact is the merge authority/);
 });
 
 test('operator review authority comes from the exact artifact, never a bot review comment', async () => {
@@ -46,5 +58,17 @@ test('operator review authority comes from the exact artifact, never a bot revie
   assert.match(script, /validateIndependentReviewArtifact/);
   assert.match(script, /actions\/runs\/\$\{[^}]+\}\/artifacts/);
   assert.match(script, /actions\/artifacts\/\$\{[^}]+\}\/zip/);
+  assert.match(script, /executePersonalRepositoryArtifactArchiveTransport/);
+  assert.match(script, /requestApiRedirect: \(request\) => fetch\(request\.url/);
+  assert.match(script, /requestArchive: \(request\) => fetch\(request\.url/);
+  assert.doesNotMatch(script, /application\/octet-stream/);
+  assert.match(script, /extractPersonalRepositoryArtifactZip\(archiveBytes, INDEPENDENT_REVIEW_ARTIFACT_FILE\)/);
+  assert.doesNotMatch(script, /node:child_process|\bspawn(?:Sync)?\b|\bexec(?:File|Sync)?\b|\bunzip\b|shell\s*:/i);
+  assert.doesNotMatch(script, /mkdtempSync|writeFileSync|rmSync|node:os|node:path/);
+  const archiveRequest = script.slice(
+    script.indexOf('    requestArchive:'),
+    script.indexOf('\n    }),', script.indexOf('    requestArchive:')),
+  );
+  assert.doesNotMatch(archiveRequest, /Authorization|GH_TOKEN|GITHUB_TOKEN|STEPHANOS_RULESET_PROOF_TOKEN/);
   assert.doesNotMatch(script, /function independentReviewCandidate\(/);
 });
