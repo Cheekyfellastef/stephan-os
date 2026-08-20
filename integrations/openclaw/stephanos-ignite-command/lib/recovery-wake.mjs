@@ -4,6 +4,7 @@ import { closeSync, lstatSync, mkdirSync, openSync, realpathSync, writeFileSync 
 import path from 'node:path';
 
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';
+import { classifyAllowlistedRecoveryAdapterBlocker } from '../../../../shared/agents/recoveryAdapterBlockerClassifier.mjs';
 
 export const OPENCLAW_RECOVERY_ROUTE = 'OPENCLAW_WHATSAPP';
 
@@ -24,19 +25,12 @@ const FIXED_RECOVERY_ADAPTER_BLOCKERS = Object.freeze([
 ]);
 
 function fixedRecoveryAdapterBlocker(result = {}) {
-  const allowlisted = new Set(FIXED_RECOVERY_ADAPTER_BLOCKERS);
-  const emitted = new Set();
-  const lines = `${String(result?.stderr || '')}\n${String(result?.stdout || '')}`.split(/\r?\n/);
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (allowlisted.has(line)) {
-      emitted.add(line);
-      continue;
-    }
-    const qualified = /^\+?\s*FullyQualifiedErrorId\s*:\s*([A-Z0-9_]+)$/.exec(line);
-    if (qualified && allowlisted.has(qualified[1])) emitted.add(qualified[1]);
-  }
-  return emitted.size === 1 ? [...emitted][0] : '';
+  return classifyAllowlistedRecoveryAdapterBlocker({
+    stdout: result?.stdout,
+    stderr: result?.stderr,
+    allowlist: FIXED_RECOVERY_ADAPTER_BLOCKERS,
+    fallback: '',
+  });
 }
 
 function buildOpenClawHostProof({ authenticatedContext, runtimeId, now = new Date(), nonce = randomUUID(), hostPid = process.pid } = {}) {
