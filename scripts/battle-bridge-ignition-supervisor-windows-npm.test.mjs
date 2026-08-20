@@ -48,6 +48,9 @@ test('Battle Bridge backend repair keeps direct npm executable on non-Windows ho
 test('backend repair child source requires fixed exact-head proof immediately before mutation', async () => {
   const source = fs.readFileSync(new URL('./battle-bridge-repair.mjs', import.meta.url), 'utf8');
   assert.match(source, /STEPHANOS_EXPECTED_HEAD/);
+  assert.match(source, /collectCanonicalIgnitionSourceTruth/);
+  assert.match(source, /evaluateCanonicalIgnitionSourceTruth/);
+  assert.match(source, /if \(!expectedHead\) \{[\s\S]*canonicalSourceTruth[\s\S]*BATTLE_BRIDGE_BACKEND_CANONICAL_HEAD_UNPROVEN/);
   assert.match(source, /assertExpectedHeadImmediatelyBeforeMutation\(\);\s*const result = spawnSync\(ps/);
   assert.match(source, /assertExpectedHeadImmediatelyBeforeMutation\(\);\s*const child = spawn\('node'/);
 });

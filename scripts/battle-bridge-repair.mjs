@@ -6,6 +6,10 @@ import {
   battleBridgeCanonicalRepositoryArgs,
   resolveBattleBridgeGitExecution,
 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import {
+  collectCanonicalIgnitionSourceTruth,
+  evaluateCanonicalIgnitionSourceTruth,
+} from './battle-bridge-ignition-supervisor.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const psScript = path.join(repoRoot, 'scripts', 'windows', 'repair-stephanos-battle-bridge.ps1');
@@ -14,8 +18,21 @@ const healthUrl = 'http://127.0.0.1:8787/api/health';
 const SHA40 = /^[0-9a-f]{40}$/;
 
 function assertExpectedHeadImmediatelyBeforeMutation() {
-  const expectedHead = String(process.env.STEPHANOS_EXPECTED_HEAD || '').trim().toLowerCase();
-  if (!SHA40.test(expectedHead)) throw new Error('BATTLE_BRIDGE_BACKEND_EXPECTED_HEAD_REQUIRED');
+  let expectedHead = String(process.env.STEPHANOS_EXPECTED_HEAD || '').trim().toLowerCase();
+  if (expectedHead && !SHA40.test(expectedHead)) throw new Error('BATTLE_BRIDGE_BACKEND_EXPECTED_HEAD_INVALID');
+  if (!expectedHead) {
+    const sourceTruth = collectCanonicalIgnitionSourceTruth({
+      cwd: repoRoot,
+      environment: process.env,
+      platform: process.platform,
+      spawnSyncFn: spawnSync,
+    });
+    const canonicalSourceTruth = evaluateCanonicalIgnitionSourceTruth(sourceTruth);
+    expectedHead = String(canonicalSourceTruth.sourceTruth?.head || '').trim().toLowerCase();
+    if (!canonicalSourceTruth.ok || !SHA40.test(expectedHead)) {
+      throw new Error(`BATTLE_BRIDGE_BACKEND_CANONICAL_HEAD_UNPROVEN:${canonicalSourceTruth.blocker?.id || 'source-truth-unproven'}`);
+    }
+  }
   const gitExecution = resolveBattleBridgeGitExecution({ platform: process.platform, environment: process.env });
   const result = spawnSync(
     gitExecution.executable,
