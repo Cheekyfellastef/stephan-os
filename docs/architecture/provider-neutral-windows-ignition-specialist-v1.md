@@ -20,11 +20,13 @@ This first child specialist is intentionally head-bound to the current reviewed 
 repository=Cheekyfellastef/stephan-os
 pr=1919
 branch=fix/ignition-canonical-convergence-gate-v1
-sourceHead=0cbd8318f5da7d815e3f4e30d8ef9a5d1c9feb77
+sourceHead=34b573d15fe065a35a6c94f9f58a2876811a63b7
 baseSha=3dc12a7c84c54f406b10dee1293789e2338f7824
 ```
 
-The previous source target `9941da6e500a7d95d11e8a3654630462cce71a91` and previous base `13f13144730b2a6d94754914dbdf2c254c39567d` are historical and explicitly ineligible. The specialist is deliberately retargeted only by an explicit source change plus fresh proof; head or base movement never inherits specialist evidence silently.
+The immediately previous source target `0cbd8318f5da7d815e3f4e30d8ef9a5d1c9feb77`, older source target `9941da6e500a7d95d11e8a3654630462cce71a91`, and previous base `13f13144730b2a6d94754914dbdf2c254c39567d` are historical and ineligible. The specialist is deliberately retargeted only by an explicit source change plus fresh proof; head or base movement never inherits specialist evidence silently.
+
+The current #1919 move from `0cbd8318...` to `34b573d...` is one commit that hardens backend exact-head loading in `stephanos-server/server.js` and a new fixed loader plus regression tests. The specialist's exact three Windows authority path inventory is unchanged, but its whole-PR exact-head binding is deliberately refreshed so no old-head specialist evidence can float across that source change.
 
 If #1919 head or base moves again, this specialist becomes ineligible. A new exact target requires another bounded source update and fresh proof.
 
