@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
+import { CODEX_DISPATCH_TEST_ARGS } from './codexDispatchHostOps.mjs';
 import {
   createBattleBridgeExactHeadSpawnGuard,
   syncBattleBridgeExactHeadV1,
@@ -38,7 +40,7 @@ test('exact-head guard blocks a fast-forward to any SHA other than the approved 
   assert.equal(guard.state.mergeAllowed, false);
 });
 
-test('exact-head guard allows only ff-only merge of the exact approved SHA', () => {
+test('exact-head guard allows only ff-only merge of the exact approved SHA through canonical Git', () => {
   const calls = [];
   const guard = createBattleBridgeExactHeadSpawnGuard({
     expectedHead: HEAD.toUpperCase(),
@@ -47,7 +49,7 @@ test('exact-head guard allows only ff-only merge of the exact approved SHA', () 
   const result = guard.spawnSyncFn('git', ['merge', '--ff-only', HEAD], {});
   assert.equal(result.status, 0);
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0], ['git', ['merge', '--ff-only', HEAD]]);
+  assert.deepEqual(calls[0], [BATTLE_BRIDGE_WINDOWS_HOST.git, ['merge', '--ff-only', HEAD]]);
   assert.equal(guard.state.mergeAllowed, true);
   assert.equal(guard.expectedHead, HEAD);
 });
@@ -69,7 +71,7 @@ test('exact-head guard rejects every unlisted command and destructive Git shape'
   assert.equal(guard.state.unlistedOperationObserved, true);
 });
 
-test('exact-head guard allows only canonical read/fetch shapes', () => {
+test('exact-head guard allows only canonical read/fetch shapes and executes them through canonical Git', () => {
   const calls = [];
   const guard = createBattleBridgeExactHeadSpawnGuard({ expectedHead: HEAD, spawnSyncFn: (...args) => { calls.push(args); return successSpawn(); } });
   for (const args of [
@@ -78,6 +80,34 @@ test('exact-head guard allows only canonical read/fetch shapes', () => {
     ['rev-list', '--left-right', '--count', `HEAD...${HEAD}`], ['diff', '--name-only', `${OTHER}..${HEAD}`],
   ]) assert.equal(guard.spawnSyncFn('git', args, {}).status, 0);
   assert.equal(calls.length, 7);
+  assert.ok(calls.every(([command]) => command === BATTLE_BRIDGE_WINDOWS_HOST.git));
+});
+
+test('exact-head guard rejects attacker-controlled Git and Node executable paths', () => {
+  const calls = [];
+  const guard = createBattleBridgeExactHeadSpawnGuard({
+    expectedHead: HEAD,
+    spawnSyncFn: (...args) => { calls.push(args); return successSpawn(); },
+  });
+  const fakeGit = guard.spawnSyncFn('C:\\attacker\\git.exe', ['merge', '--ff-only', HEAD], {});
+  assert.equal(fakeGit.status, 86);
+  assert.equal(fakeGit.stderr, 'EXACT_HEAD_SYNC_OPERATION_NOT_ALLOWED');
+  const fakeNode = guard.spawnSyncFn('C:\\attacker\\node.exe', CODEX_DISPATCH_TEST_ARGS, {});
+  assert.equal(fakeNode.status, 86);
+  assert.equal(fakeNode.stderr, 'EXACT_HEAD_SYNC_OPERATION_NOT_ALLOWED');
+  assert.equal(calls.length, 0);
+});
+
+test('exact-head guard permits the fixed proof suite only through canonical Node', () => {
+  const calls = [];
+  const guard = createBattleBridgeExactHeadSpawnGuard({
+    expectedHead: HEAD,
+    spawnSyncFn: (...args) => { calls.push(args); return successSpawn(); },
+  });
+  const result = guard.spawnSyncFn(BATTLE_BRIDGE_WINDOWS_HOST.node, CODEX_DISPATCH_TEST_ARGS, {});
+  assert.equal(result.status, 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], BATTLE_BRIDGE_WINDOWS_HOST.node);
 });
 
 test('sync wrapper fails closed before merge when fetched origin/main differs from approved exact head', () => {
@@ -110,16 +140,21 @@ test('sync wrapper fails closed before merge when fetched origin/main differs fr
   assert.equal(realMergeCalls, 0);
 });
 
-test('sync wrapper preserves an exact successful fast-forward result', () => {
+test('sync wrapper preserves an exact successful fast-forward result and pins canonical Node', () => {
   let merges = 0;
+  let observedNode = '';
   const result = syncBattleBridgeExactHeadV1({
     expectedHead: HEAD,
     operatorApproval: 'operator-approved',
     spawnSyncFn: (command, args) => {
-      if (args?.[0] === 'merge') merges += 1;
+      if (args?.[0] === 'merge') {
+        merges += 1;
+        assert.equal(command, BATTLE_BRIDGE_WINDOWS_HOST.git);
+      }
       return successSpawn();
     },
-    syncFn: ({ spawnSyncFn }) => {
+    syncFn: ({ spawnSyncFn, nodeCommand }) => {
+      observedNode = nodeCommand;
       const merge = spawnSyncFn('git', ['merge', '--ff-only', HEAD], {});
       return {
         ok: merge.status === 0,
@@ -137,4 +172,21 @@ test('sync wrapper preserves an exact successful fast-forward result', () => {
   assert.equal(result.expectedHeadMatch, true);
   assert.equal(result.mergeAllowed, true);
   assert.equal(merges, 1);
+  assert.equal(observedNode, BATTLE_BRIDGE_WINDOWS_HOST.node);
+});
+
+test('sync wrapper ignores a caller nodeCommand injection surface', () => {
+  let observedNode = '';
+  const result = syncBattleBridgeExactHeadV1({
+    expectedHead: HEAD,
+    operatorApproval: 'operator-approved',
+    nodeCommand: 'C:\\attacker\\node.exe',
+    spawnSyncFn: successSpawn,
+    syncFn: ({ nodeCommand }) => {
+      observedNode = nodeCommand;
+      return { ok: true, status: 'DONE', verdict: 'PASS', remoteHead: HEAD, afterHead: HEAD };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(observedNode, BATTLE_BRIDGE_WINDOWS_HOST.node);
 });
