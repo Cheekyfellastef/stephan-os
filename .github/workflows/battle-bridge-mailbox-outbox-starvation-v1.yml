@@ -5,6 +5,8 @@ on:
     paths:
       - 'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs'
       - 'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.test.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox.test.mjs'
       - 'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1'
       - '.github/workflows/battle-bridge-mailbox-outbox-starvation-v1.yml'
 
