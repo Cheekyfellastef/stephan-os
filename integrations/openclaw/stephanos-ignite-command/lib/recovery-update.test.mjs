@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 import {
   normalizeOpenClawExactHead,
+  queueBattleBridgeExactHeadFromOpenClaw,
   recoverBattleBridgeExactHeadFromOpenClaw,
   sanitizeOpenClawBattleBridgeUpdateResult,
 } from './recovery-update.mjs';
@@ -75,8 +79,10 @@ test('fixed recovery update binds canonical main, exact head and operator approv
   assert.equal(syncCaptured.expectedHead, HEAD);
   assert.equal(result.ok, true);
   assert.equal(result.expectedHeadMatch, true);
-  assert.equal(result.runtimeProofPassed, true);
-  assert.equal(result.servedUiExactHead, true);
+  assert.equal(result.runtimeProofPassed, false);
+  assert.equal(result.servedUiExactHead, false);
+  assert.equal(result.pluginReloadProofPending, true);
+  assert.equal(result.finalVerdict, 'PLUGIN_RELOAD_PROOF_PENDING');
   assert.equal(result.arbitraryShellAllowed, false);
   assert.equal(result.callerSelectedPathAllowed, false);
   assert.equal(result.pcRestartAllowed, false);
@@ -109,6 +115,7 @@ test('WhatsApp projection strips raw sync, diagnostics, status paths and stderr'
     'finalVerdict',
     'ok',
     'pcRestartAllowed',
+    'pluginReloadProofPending',
     'route',
     'runtimeProofPassed',
     'runtimeProofPending',
@@ -118,4 +125,33 @@ test('WhatsApp projection strips raw sync, diagnostics, status paths and stderr'
     'status',
   ].sort());
   assert.doesNotMatch(JSON.stringify(result), /private|Stephan|secret|statusBefore|stderr/i);
+});
+
+test('owner update queues a fixed detached executor and returns a durable receipt without awaiting recovery', () => {
+  const profile = mkdtempSync(path.join(tmpdir(), 'ignite-update-'));
+  const calls = [];
+  const result = queueBattleBridgeExactHeadFromOpenClaw({
+    expectedHead: HEAD,
+    authenticatedContext: OWNER,
+    platform: 'win32',
+    env: { USERPROFILE: profile },
+    nonce: '1'.repeat(32),
+    now: new Date('2026-08-20T00:00:00.000Z'),
+    spawnFn: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { unref() { calls.push({ unref: true }); } };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'QUEUED');
+  assert.equal(result.runtimeProofPassed, false);
+  assert.equal(result.pluginReloadProofPending, true);
+  assert.equal(calls[0].command, process.execPath);
+  assert.deepEqual(calls[0].args.slice(1), ['1'.repeat(32), HEAD]);
+  assert.equal(calls[0].options.detached, true);
+  assert.equal(calls[0].options.shell, false);
+  assert.deepEqual(calls[1], { unref: true });
+  const receipt = JSON.parse(readFileSync(path.join(profile, 'Documents', 'Stephanos-openclaw-workspace', 'receipts', 'exact-head-update', `${'1'.repeat(32)}.json`), 'utf8'));
+  assert.equal(receipt.status, 'QUEUED');
+  assert.equal(receipt.pluginReloadProof, 'PENDING');
 });

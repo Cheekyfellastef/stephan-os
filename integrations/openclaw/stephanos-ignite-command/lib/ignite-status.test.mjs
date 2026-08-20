@@ -22,6 +22,8 @@ test('renders deterministic help, openclaw-status, status and fixed recovery out
   assert.match(renderIgniteCommand('help'), /\/stephanos-ignite update <exact-40-character-main-sha>/);
   assert.match(renderIgniteCommand('openclaw-status'), /OPENCLAW_STATUS=operator-verification-required/);
   assert.match(renderIgniteCommand('status'), /STEPHANOS_IGNITE_STATUS=source-plugin-restored/);
+  assert.match(renderIgniteCommand('status'), /PLUGIN_CAPABILITY_MUTATES_REPO=OWNER_GATED_EXACT_HEAD_ONLY/);
+  assert.doesNotMatch(renderIgniteCommand('status'), /MUTATES_REPO=false|RUNS_SHELL=false/);
   assert.match(renderIgniteCommand('wake'), /AUTHENTICATED_FIXED_ADAPTER/);
   assert.match(renderIgniteCommand(`update ${HEAD}`), new RegExp(`EXPECTED_HEAD=${HEAD}`));
   assert.equal(renderIgniteCommand('status'), renderIgniteCommand(' STATUS '));

@@ -52,14 +52,32 @@ test('exact-head guard allows only ff-only merge of the exact approved SHA', () 
   assert.equal(guard.expectedHead, HEAD);
 });
 
-test('exact-head guard independently denies destructive and branch-changing Git writes', () => {
+test('exact-head guard rejects every unlisted command and destructive Git shape', () => {
   const guard = createBattleBridgeExactHeadSpawnGuard({ expectedHead: HEAD, spawnSyncFn: successSpawn });
-  for (const operation of ['reset', 'clean', 'stash', 'rebase', 'checkout', 'switch', 'push', 'commit', 'cherry-pick']) {
-    const result = guard.spawnSyncFn('git', [operation, 'anything'], {});
-    assert.equal(result.status, 86, operation);
-    assert.equal(result.stderr, 'EXACT_HEAD_SYNC_FORBIDDEN_GIT_WRITE', operation);
+  for (const [command, args] of [
+    ['git', ['rm', 'tracked.txt']],
+    ['git', ['branch', '-D', 'main']],
+    ['git', ['update-ref', '-d', 'refs/heads/main']],
+    ['cmd.exe', ['/c', 'echo unsafe']],
+    ['powershell.exe', ['-Command', 'Write-Host unsafe']],
+    ['node', ['unlisted-script.mjs']],
+  ]) {
+    const result = guard.spawnSyncFn(command, args, {});
+    assert.equal(result.status, 86, `${command} ${args.join(' ')}`);
+    assert.equal(result.stderr, 'EXACT_HEAD_SYNC_OPERATION_NOT_ALLOWED');
   }
-  assert.equal(guard.state.forbiddenGitWriteObserved, true);
+  assert.equal(guard.state.unlistedOperationObserved, true);
+});
+
+test('exact-head guard allows only canonical read/fetch shapes', () => {
+  const calls = [];
+  const guard = createBattleBridgeExactHeadSpawnGuard({ expectedHead: HEAD, spawnSyncFn: (...args) => { calls.push(args); return successSpawn(); } });
+  for (const args of [
+    ['branch', '--show-current'], ['rev-parse', 'HEAD'], ['rev-parse', 'origin/main'],
+    ['status', '--porcelain=v1', '--untracked-files=all'], ['fetch', 'origin', 'main'],
+    ['rev-list', '--left-right', '--count', `HEAD...${HEAD}`], ['diff', '--name-only', `${OTHER}..${HEAD}`],
+  ]) assert.equal(guard.spawnSyncFn('git', args, {}).status, 0);
+  assert.equal(calls.length, 7);
 });
 
 test('sync wrapper fails closed before merge when fetched origin/main differs from approved exact head', () => {

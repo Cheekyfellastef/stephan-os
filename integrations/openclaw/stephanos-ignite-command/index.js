@@ -1,6 +1,6 @@
 import { definePluginEntry } from 'openclaw/plugin-sdk/plugin-entry';
 import { renderIgniteCommand, resolveIgniteCommand } from './lib/ignite-status.mjs';
-import { recoverBattleBridgeExactHeadFromOpenClaw } from './lib/recovery-update.mjs';
+import { queueBattleBridgeExactHeadFromOpenClaw } from './lib/recovery-update.mjs';
 import { wakeBattleBridgeRecoveryMesh } from './lib/recovery-wake.mjs';
 
 function bool(value) {
@@ -16,6 +16,7 @@ function renderExactHeadUpdateResult(result) {
     `SOURCE_INSTALLED=${bool(result.sourceInstalled)}`,
     `RUNTIME_PROOF_PASSED=${bool(result.runtimeProofPassed)}`,
     `RUNTIME_PROOF_PENDING=${bool(result.runtimeProofPending)}`,
+    `PLUGIN_RELOAD_PROOF_PENDING=${bool(result.pluginReloadProofPending)}`,
     `SERVED_UI_EXACT_HEAD=${bool(result.servedUiExactHead)}`,
     `VERDICT=${result.finalVerdict || 'UPDATE_FAILED'}`,
   ];
@@ -48,7 +49,7 @@ export default definePluginEntry({
           return { text: `BATTLE_BRIDGE_RECOVERY_WAKE=QUEUED\nREQUEST_ID=${result.requestId}\nROUTE=${result.route}\nONE_CANONICAL_COORDINATOR=true` };
         }
         if (resolved.command === 'update') {
-          const result = await recoverBattleBridgeExactHeadFromOpenClaw({
+          const result = queueBattleBridgeExactHeadFromOpenClaw({
             expectedHead: resolved.expectedHead,
             authenticatedContext: {
               authenticatedByHost: true,
@@ -57,6 +58,7 @@ export default definePluginEntry({
               senderIsOwner: ctx?.senderIsOwner === true,
             },
           });
+          if (result.receiptId) return { text: `${renderExactHeadUpdateResult(result)}\nRECEIPT_ID=${result.receiptId}` };
           return { text: renderExactHeadUpdateResult(result) };
         }
         return { text: renderIgniteCommand(ctx?.args || 'help') };

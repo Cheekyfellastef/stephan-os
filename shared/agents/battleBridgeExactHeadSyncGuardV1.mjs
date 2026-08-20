@@ -1,22 +1,10 @@
 import { spawnSync } from 'node:child_process';
 
-import { syncCodexDispatchBridge } from './codexDispatchHostOps.mjs';
+import { CODEX_DISPATCH_TEST_ARGS, syncCodexDispatchBridge } from './codexDispatchHostOps.mjs';
 
 export const BATTLE_BRIDGE_EXACT_HEAD_SYNC_GUARD_SCHEMA = 'stephanos.battle-bridge-exact-head-sync-guard.v1';
 
 const EXACT_HEAD = /^[0-9a-f]{40}$/;
-const FORBIDDEN_GIT_WRITES = new Set([
-  'reset',
-  'clean',
-  'stash',
-  'rebase',
-  'checkout',
-  'switch',
-  'push',
-  'commit',
-  'cherry-pick',
-]);
-
 function text(value) {
   return String(value ?? '').trim();
 }
@@ -42,6 +30,7 @@ function blockedSpawnResult(blocker) {
 export function createBattleBridgeExactHeadSpawnGuard({
   expectedHead,
   spawnSyncFn = spawnSync,
+  nodeCommand = process.execPath,
 } = {}) {
   const normalizedExpectedHead = text(expectedHead).toLowerCase();
   if (!EXACT_HEAD.test(normalizedExpectedHead)) {
@@ -58,22 +47,29 @@ export function createBattleBridgeExactHeadSpawnGuard({
     mergeAttempted: false,
     mergeAllowed: false,
     mergeTarget: '',
-    forbiddenGitWriteObserved: false,
+    unlistedOperationObserved: false,
     blockedOperation: '',
   };
 
   const guarded = (command, args = [], options = {}) => {
     const argv = Array.isArray(args) ? args.map((value) => String(value)) : [];
-    if (!isGitCommand(command) || argv.length === 0) return spawnSyncFn(command, args, options);
+    const operation = argv[0]?.toLowerCase() || '';
+    const allowedGitRead = isGitCommand(command) && (
+      (argv.length === 2 && argv[0] === 'branch' && argv[1] === '--show-current')
+      || (argv.length === 2 && argv[0] === 'rev-parse' && ['HEAD', 'origin/main'].includes(argv[1]))
+      || (argv.length === 3 && argv[0] === 'status' && argv[1] === '--porcelain=v1' && argv[2] === '--untracked-files=all')
+      || (argv.length === 3 && argv[0] === 'fetch' && argv[1] === 'origin' && argv[2] === 'main')
+      || (argv.length === 4 && argv[0] === 'rev-list' && argv[1] === '--left-right' && argv[2] === '--count'
+        && argv[3] === `HEAD...${normalizedExpectedHead}`)
+      || (argv.length === 3 && argv[0] === 'diff' && argv[1] === '--name-only'
+        && new RegExp(`^[0-9a-f]{40}\\.\\.${normalizedExpectedHead}$`, 'i').test(argv[2]))
+    );
+    const allowedProof = command === nodeCommand
+      && argv.length === CODEX_DISPATCH_TEST_ARGS.length
+      && argv.every((value, index) => value === CODEX_DISPATCH_TEST_ARGS[index]);
 
-    const operation = argv[0].toLowerCase();
-    if (FORBIDDEN_GIT_WRITES.has(operation)) {
-      state.forbiddenGitWriteObserved = true;
-      state.blockedOperation = operation;
-      return blockedSpawnResult('EXACT_HEAD_SYNC_FORBIDDEN_GIT_WRITE');
-    }
-
-    if (operation === 'merge') {
+    let allowedMerge = false;
+    if (operation === 'merge' && isGitCommand(command)) {
       state.mergeAttempted = true;
       const exactShape = argv.length === 3 && argv[1] === '--ff-only';
       const target = text(argv[2]).toLowerCase();
@@ -83,6 +79,13 @@ export function createBattleBridgeExactHeadSpawnGuard({
         return blockedSpawnResult('EXACT_HEAD_SYNC_TARGET_MISMATCH');
       }
       state.mergeAllowed = true;
+      allowedMerge = true;
+    }
+
+    if (!allowedGitRead && !allowedMerge && !allowedProof) {
+      state.unlistedOperationObserved = true;
+      state.blockedOperation = isGitCommand(command) ? operation : commandLeaf(command);
+      return blockedSpawnResult('EXACT_HEAD_SYNC_OPERATION_NOT_ALLOWED');
     }
 
     return spawnSyncFn(command, args, options);
@@ -106,7 +109,7 @@ export function syncBattleBridgeExactHeadV1({
   syncFn = syncCodexDispatchBridge,
   nodeCommand,
 } = {}) {
-  const guard = createBattleBridgeExactHeadSpawnGuard({ expectedHead, spawnSyncFn });
+  const guard = createBattleBridgeExactHeadSpawnGuard({ expectedHead, spawnSyncFn, nodeCommand });
   if (!guard.ok) {
     return Object.freeze({
       ok: false,
@@ -133,14 +136,14 @@ export function syncBattleBridgeExactHeadV1({
   const exactAfter = afterHead === guard.expectedHead;
   const targetMismatchBlocked = guard.state.mergeAttempted && !guard.state.mergeAllowed;
 
-  if (guard.state.forbiddenGitWriteObserved) {
+  if (guard.state.unlistedOperationObserved) {
     return Object.freeze({
       ...result,
       ok: false,
       schemaVersion: BATTLE_BRIDGE_EXACT_HEAD_SYNC_GUARD_SCHEMA,
       status: 'BLOCKED',
       verdict: 'FAIL',
-      blocker: 'FORBIDDEN_GIT_WRITE_ATTEMPTED',
+      blocker: 'UNLISTED_SYNC_OPERATION_ATTEMPTED',
       expectedHead: guard.expectedHead,
       expectedHeadMatch: false,
       mutationAttempted: false,
