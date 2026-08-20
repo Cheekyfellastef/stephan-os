@@ -1076,7 +1076,14 @@ function peekLedgerHead(path, manifest, timestampUtc, metrics, faultFn) {
     const head = readLegacyHead(path, manifest, metrics);
     const existing = readIndex(path, head.entry, metrics);
     if (existing && existing.entryDigest !== head.entryDigest) throw new Error('MAILBOX_OUTBOX_PUBLICATION_ID_CONFLICT');
-    if (existing && (existing.status === 'COMPLETED' || existing.source === 'ledger-v3')) {
+    if (existing && existing.status === 'COMPLETED') {
+      const advanced = commitLedgerMutation(path, manifest, {
+        targetManifest: advanceLegacy(manifest, head, timestampUtc),
+      }, { metrics, faultFn });
+      return { manifest: advanced, head: null, duplicateCollapsed: true };
+    }
+    if (existing && existing.source === 'ledger-v3') {
+      assertQueuedIndexReachable(path, manifest, head.entry, existing, metrics);
       const advanced = commitLedgerMutation(path, manifest, {
         targetManifest: advanceLegacy(manifest, head, timestampUtc),
       }, { metrics, faultFn });
@@ -1266,9 +1273,13 @@ function acquireGuardLock(path, now, {
     let existing = null;
     try { existing = readJsonObject(target, { maxBytes: MAILBOX_LOCK_MAX_BYTES }); } catch {}
     const parsedAt = Date.parse(String(existing?.acquiredAtUtc || ''));
-    const acquiredAtMs = Number.isFinite(parsedAt) && parsedAt <= now.getTime() + 60_000
+    const latestTrustedTimeMs = now.getTime() + 60_000;
+    const fallbackMtimeMs = Number.isFinite(info.mtimeMs) && info.mtimeMs <= latestTrustedTimeMs
+      ? info.mtimeMs
+      : now.getTime() - staleAfterMs - 1;
+    const acquiredAtMs = Number.isFinite(parsedAt) && parsedAt <= latestTrustedTimeMs
       ? parsedAt
-      : info.mtimeMs;
+      : fallbackMtimeMs;
     const ageMs = now.getTime() - acquiredAtMs;
     const liveIdentity = processIdentityFn(Number.parseInt(existing?.pid, 10));
     const exactOwnerAlive = validKnownProcessIdentity(liveIdentity)

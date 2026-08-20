@@ -12,6 +12,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -472,6 +473,50 @@ test('same-digest queued indexes must resolve to reachable ledger debt before ca
   }
 });
 
+test('legacy collapse rejects an unreachable same-digest queued ledger index', () => {
+  const f = fixture();
+  try {
+    const generation = 'abcdef0123456789abcdef0123456789';
+    const entry = pending('mailbox-legacy-unreachable-index');
+    const entryDigest = pendingReceiptPublicationDigest(entry);
+    writeJson(f.deferredPath, {
+      schemaVersion: MAILBOX_OUTBOX_DEFERRED_MANIFEST_SCHEMA,
+      timestampUtc: '2026-08-19T19:00:00.000Z',
+      activeSlot: 'a',
+      generation,
+      segmentCount: 1,
+      entryCount: 1,
+    });
+    writeJson(join(`${f.deferredPath}.segments`, 'a', 'segment-00000000.json'), {
+      schemaVersion: MAILBOX_OUTBOX_DEFERRED_SEGMENT_SCHEMA,
+      generation,
+      segmentIndex: 0,
+      entries: [entry],
+    });
+    writeJson(ledgerIndexPath(f.deferredPath, entry.publicationId), {
+      schemaVersion: MAILBOX_OUTBOX_LEDGER_INDEX_SCHEMA,
+      publicationId: entry.publicationId,
+      entryDigest,
+      status: 'QUEUED',
+      source: 'ledger-v3',
+      sequence: 999,
+    });
+    writeJson(f.statePath, { pendingReceiptPublications: [] });
+    let childCalled = false;
+    const result = runGuard(f, {
+      spawnSyncFn: () => { childCalled = true; return { status: 0 }; },
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /MAILBOX_OUTBOX_LEDGER_INDEX_UNREACHABLE/);
+    assert.equal(childCalled, false);
+    const manifest = readJson(f.deferredPath);
+    assert.equal(manifest.legacy.remainingEntryCount, 1);
+    assert.equal(manifest.legacy.entryOffset, 0);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test('v2 migration advances one bounded legacy segment entry while new debt waits in v3', () => {
   const f = fixture();
   try {
@@ -745,6 +790,8 @@ test('stale lock recovery distinguishes PID reuse and does not trust a future cl
       ownerProcessStartId: 'test-process-old',
       acquiredAtUtc: new Date(observedNow.getTime() + (24 * 60 * 60 * 1000)).toISOString(),
     });
+    const futureFilesystemTime = new Date(observedNow.getTime() + (48 * 60 * 60 * 1000));
+    utimesSync(`${f.deferredPath}.lock-v1.json`, futureFilesystemTime, futureFilesystemTime);
     const futureTimestamp = runGuard(f, {
       now: () => observedNow,
       lockTokenFn: () => '22222222222222222222222222222222',
