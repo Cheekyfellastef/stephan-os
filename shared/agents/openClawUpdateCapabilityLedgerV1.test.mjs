@@ -151,3 +151,86 @@ test('ledger itself is closed-world and requires at least one protected capabili
   assert.equal(unprotectedOnly.updateAllowed, false);
   assert.ok(unprotectedOnly.blockers.includes('NO_PROTECTED_CAPABILITIES'));
 });
+
+test('accessor-bearing capability records are rejected without invoking getters', () => {
+  let getterCalled = false;
+  const capability = baseCapability();
+  Object.defineProperty(capability, 'purpose', {
+    enumerable: true,
+    configurable: true,
+    get() {
+      getterCalled = true;
+      return 'unsafe';
+    },
+  });
+  const result = ledger([capability]);
+  assert.equal(getterCalled, false);
+  assert.equal(result.updateAllowed, false);
+  assert.ok(result.blockers.includes('CAPABILITY_SCHEMA_INVALID'));
+});
+
+test('sparse and accessor-bearing evidence arrays fail closed', () => {
+  const sparse = [];
+  sparse.length = 1;
+  const sparseResult = ledger([baseCapability({ evidenceRefs: sparse })]);
+  assert.equal(sparseResult.updateAllowed, false);
+  assert.ok(sparseResult.blockers.includes('EVIDENCEREFS_INVALID:openclaw.gateway-provider'));
+
+  let getterCalled = false;
+  const accessors = [];
+  Object.defineProperty(accessors, '0', {
+    enumerable: true,
+    configurable: true,
+    get() {
+      getterCalled = true;
+      return 'proof:should-not-run';
+    },
+  });
+  accessors.length = 1;
+  const accessorResult = ledger([baseCapability({ evidenceRefs: accessors })]);
+  assert.equal(getterCalled, false);
+  assert.equal(accessorResult.updateAllowed, false);
+  assert.ok(accessorResult.blockers.includes('EVIDENCEREFS_INVALID:openclaw.gateway-provider'));
+});
+
+test('custom-prototype and revoked-proxy inputs fail closed without throwing', () => {
+  const customPrototype = Object.create({ inherited: true });
+  Object.assign(customPrototype, baseCapability());
+  const customResult = ledger([customPrototype]);
+  assert.equal(customResult.updateAllowed, false);
+  assert.ok(customResult.blockers.includes('CAPABILITY_SCHEMA_INVALID'));
+
+  const { proxy, revoke } = Proxy.revocable(baseCapability(), {});
+  revoke();
+  const revokedResult = ledger([proxy]);
+  assert.equal(revokedResult.updateAllowed, false);
+  assert.ok(revokedResult.blockers.includes('CAPABILITY_SCHEMA_INVALID'));
+});
+
+test('top-level accessor and hostile capability array fail closed without executing hidden behavior', () => {
+  let getterCalled = false;
+  const topLevel = {
+    currentVersion: '1.2.3',
+    targetVersion: '1.3.0',
+  };
+  Object.defineProperty(topLevel, 'capabilities', {
+    enumerable: true,
+    get() {
+      getterCalled = true;
+      return [baseCapability()];
+    },
+  });
+  const accessorResult = buildOpenClawUpdateCapabilityLedgerV1(topLevel);
+  assert.equal(getterCalled, false);
+  assert.deepEqual(accessorResult.blockers, ['LEDGER_SCHEMA_INVALID']);
+
+  const hostileArray = [baseCapability()];
+  hostileArray.extraAuthority = true;
+  const arrayResult = buildOpenClawUpdateCapabilityLedgerV1({
+    currentVersion: '1.2.3',
+    targetVersion: '1.3.0',
+    capabilities: hostileArray,
+  });
+  assert.equal(arrayResult.updateAllowed, false);
+  assert.ok(arrayResult.blockers.includes('CAPABILITIES_INVALID'));
+});
