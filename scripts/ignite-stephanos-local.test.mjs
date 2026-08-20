@@ -332,7 +332,7 @@ test('preflight housekeeping works without shell cp on Windows-style environment
   const steps = [];
   runGitPullPreflightWithDeps({
     captureStep: (label) => {
-      if (label === 'git-status') return { stdout: '?? data/session-cache.json\n', stderr: '' };
+      if (label === 'git-status') return { stdout: '?? data/activity/session-cache.json\n', stderr: '' };
       if (label === 'git-branch') return { stdout: 'main\n', stderr: '' };
       if (label === 'git-upstream') return { stdout: 'origin/main\n', stderr: '' };
       if (label === 'git-ahead-behind') return { stdout: '0\t0\n', stderr: '' };
@@ -802,7 +802,7 @@ test('ignition status evaluator reproduces Battle Bridge generated dist and root
 test('ignition status evaluator classifies backend runtime data dirt separately', () => {
   const evaluation = evaluateGitStatusForIgnition([
     ' M stephanos-server/data/memory/durable-memory.json',
-    '?? data/session-cache.json',
+    '?? data/activity/session-cache.json',
   ].join('\n'));
 
   assert.equal(evaluation.runtimeStateEntries.length, 1);
@@ -812,6 +812,17 @@ test('ignition status evaluator classifies backend runtime data dirt separately'
   assert.deepEqual(collectRuntimeStatePaths(evaluation), [
     'stephanos-server/data/memory/durable-memory.json',
   ]);
+});
+
+test('ignition status evaluator hard-blocks unallowlisted nested data files', () => {
+  const evaluation = evaluateGitStatusForIgnition([
+    '?? data/random.txt',
+    '?? data/unknown.bin',
+  ].join('\n'));
+
+  assert.equal(evaluation.transientRootDataEntries.length, 0);
+  assert.equal(evaluation.forbiddenOrUnknownEntries.length, 2);
+  assert.equal(evaluation.meaningfulEntries.length, 2);
 });
 
 test('collectApprovedTrackedGeneratedRestorePaths returns tracked dist paths only', () => {
@@ -1518,7 +1529,7 @@ test('auto-publish reuses existing verify result when current', () => {
 test('auto-publish blocks runtime/root/source dirt categories', () => {
   const status = evaluateGitStatusForIgnition([
     ' M stephanos-server/data/memory/durable-memory.json',
-    '?? data/session.json',
+    '?? data/activity/session.json',
     ' M scripts/ignite-stephanos-local.mjs',
   ].join('\n'));
 

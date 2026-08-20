@@ -175,14 +175,14 @@ test('live source collector includes meaningful Git dirt instead of silently ass
   assert.deepEqual(calls[1], ['git', 'status', '--porcelain=v1', '--untracked-files=all']);
 });
 
-test('live source collector expands nested untracked data so hard blockers stop Ignition', () => {
+test('live source collector expands nested untracked data so every canonical hard blocker stops Ignition', () => {
   const calls = [];
   const result = collectCanonicalIgnitionSourceTruth({
     cwd: '/canonical/repo',
     execFile(command, args) {
       calls.push([command, ...args]);
       if (args[0] === 'fetch') return '';
-      if (args[0] === 'status') return '?? data/secrets.json\n';
+      if (args[0] === 'status') return '?? data/random.txt\n?? data/unknown.bin\n';
       if (args.includes('--abbrev-ref') && args.includes('HEAD')) return 'main\n';
       if (args.includes('--symbolic-full-name')) return 'origin/main\n';
       if (args[0] === 'rev-list') return '0\t0\n';
