@@ -310,6 +310,48 @@ test('process-bound production bootstrap rejects package, runtime bootstrap, ser
   }
 });
 
+test('Windows backend process creation excludes hostile inherited Node injection variables', { skip: process.platform !== 'win32' }, () => {
+  const functionStart = backendStartSource.indexOf('function Start-BackendNodeWithMinimalEnvironment');
+  const functionEnd = backendStartSource.indexOf('\nWrite-Log "Stephanos Battle Bridge backend start requested', functionStart);
+  assert.notEqual(functionStart, -1);
+  assert.notEqual(functionEnd, -1);
+  const launcherFunction = backendStartSource.slice(functionStart, functionEnd);
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'stephanos-minimal-node-env-'));
+  const sentinelPath = join(fixtureRoot, 'hostile-node-options-executed.txt');
+  const hostilePreloadPath = join(fixtureRoot, 'hostile-preload.cjs');
+  const stdoutPath = join(fixtureRoot, 'stdout.log');
+  const stderrPath = join(fixtureRoot, 'stderr.log');
+  const harnessPath = join(fixtureRoot, 'minimal-environment-harness.ps1');
+  try {
+    writeFileSync(hostilePreloadPath, `require('node:fs').writeFileSync(${JSON.stringify(sentinelPath)}, 'HOSTILE_NODE_OPTIONS_EXECUTED');\n`, 'utf8');
+    const quoted = (value) => `'${String(value).replaceAll("'", "''")}'`;
+    const harness = [
+      `$canonicalNode = ${quoted(process.execPath)}`,
+      launcherFunction,
+      `$process = Start-BackendNodeWithMinimalEnvironment -Arguments @('--eval', 'console.log(13579)') -WorkingDirectory ${quoted(fixtureRoot)} -StandardOutputPath ${quoted(stdoutPath)} -StandardErrorPath ${quoted(stderrPath)} -SourceHead ${'a'.repeat(40)} -RepositoryRoot ${quoted(fixtureRoot)} -BootstrapBase64 'YQ=='`,
+      '$process.WaitForExit()',
+      'exit $process.ExitCode',
+    ].join('\r\n');
+    writeFileSync(harnessPath, harness, 'utf8');
+    const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+    const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', harnessPath], {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${hostilePreloadPath}`,
+        NODE_PATH: fixtureRoot,
+      },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, `${result.stderr || ''}\n${readFileSync(stderrPath, 'utf8')}`);
+    assert.equal(existsSync(sentinelPath), false);
+    assert.match(readFileSync(stdoutPath, 'utf8'), /13579/);
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 test('checkout drift A to B during backend module loading prevents listener publication', async () => {
   const approvedHead = 'a'.repeat(40);
   const driftedHead = 'b'.repeat(40);
@@ -448,7 +490,10 @@ test('backend starter proves canonical main and writes a bounded exact-head runt
   assert.match(backendStartSource, /'show', "\$\{HeadSha\}:\$bootstrapGitPath"/);
   assert.match(backendStartSource, /ReadAllBytes\(\$temporaryPath\)/);
   assert.match(backendStartSource, /ComputeHash\(\$blobBytes\)/);
-  assert.match(backendStartSource, /STEPHANOS_BACKEND_BOOTSTRAP_BASE64 = Get-ExactHeadBackendBootstrapBase64/);
+  assert.match(backendStartSource, /\$bootstrapBase64 = Get-ExactHeadBackendBootstrapBase64/);
+  assert.match(backendStartSource, /function Start-BackendNodeWithMinimalEnvironment/);
+  assert.match(backendStartSource, /SetEnvironmentVariable\(\[string\]\$entry\.Name, \$null, 'Process'\)/);
+  assert.match(backendStartSource, /\$minimalEnvironment\['STEPHANOS_BACKEND_BOOTSTRAP_BASE64'\] = \$BootstrapBase64/);
   assert.match(backendStartSource, /--input-type=module', '--eval'/);
   assert.doesNotMatch(backendStartSource, /backend-bootstrap-\$headSha\.mjs/);
   assert.match(backendStartSource, /Start-Process -FilePath \$canonicalNode/);

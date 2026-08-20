@@ -358,6 +358,64 @@ function Get-ExactHeadBackendBootstrapBase64 {
     }
 }
 
+function Start-BackendNodeWithMinimalEnvironment {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string]$StandardOutputPath,
+        [Parameter(Mandatory = $true)][string]$StandardErrorPath,
+        [Parameter(Mandatory = $true)][string]$SourceHead,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$BootstrapBase64
+    )
+    $originalEnvironment = @{}
+    foreach ($entry in @(Get-ChildItem Env:)) {
+        $originalEnvironment[[string]$entry.Name] = [string]$entry.Value
+    }
+
+    $minimalEnvironment = @{}
+    $allowedWindowsEnvironmentNames = @(
+        'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP',
+        'SystemDrive', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+        'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA',
+        'ProgramFiles', 'ProgramFiles(x86)', 'CommonProgramFiles', 'CommonProgramFiles(x86)'
+    )
+    foreach ($name in $allowedWindowsEnvironmentNames) {
+        $value = [Environment]::GetEnvironmentVariable($name, 'Process')
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            $minimalEnvironment[$name] = $value
+        }
+    }
+    $minimalEnvironment['GIT_NO_REPLACE_OBJECTS'] = '1'
+    $minimalEnvironment['STEPHANOS_BACKEND_SOURCE_HEAD'] = $SourceHead
+    $minimalEnvironment['STEPHANOS_BACKEND_REPO_ROOT'] = $RepositoryRoot
+    $minimalEnvironment['STEPHANOS_BACKEND_BOOTSTRAP_BASE64'] = $BootstrapBase64
+
+    try {
+        foreach ($entry in @(Get-ChildItem Env:)) {
+            [Environment]::SetEnvironmentVariable([string]$entry.Name, $null, 'Process')
+        }
+        foreach ($name in $minimalEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable([string]$name, [string]$minimalEnvironment[$name], 'Process')
+        }
+        return Start-Process -FilePath $canonicalNode `
+            -ArgumentList $Arguments `
+            -WorkingDirectory $WorkingDirectory `
+            -RedirectStandardOutput $StandardOutputPath `
+            -RedirectStandardError $StandardErrorPath `
+            -WindowStyle Hidden `
+            -PassThru
+    }
+    finally {
+        foreach ($entry in @(Get-ChildItem Env:)) {
+            [Environment]::SetEnvironmentVariable([string]$entry.Name, $null, 'Process')
+        }
+        foreach ($name in $originalEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable([string]$name, [string]$originalEnvironment[$name], 'Process')
+        }
+    }
+}
+
 Write-Log "Stephanos Battle Bridge backend start requested from canonical main ${headSha}."
 Write-Log "Backend health endpoint: $healthUrl"
 Write-Log ("Runtime memory dirt tolerated: {0}" -f $runtimeMemoryDirty)
@@ -386,25 +444,19 @@ if ($existingListener) {
 }
 
 $arguments = @('--input-type=module', '--eval', "`"$canonicalBootstrapEval`"")
-$env:STEPHANOS_BACKEND_SOURCE_HEAD = $headSha
-$env:STEPHANOS_BACKEND_REPO_ROOT = $repoRoot
 Write-Log ("Starting backend with fixed Node and process-bound exact-head bootstrap: {0} {1}" -f $canonicalNode, ($arguments -join ' '))
 if ($PSCmdlet.ShouldProcess("$canonicalNode $($arguments -join ' ')", 'Start Stephanos backend')) {
     Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'exact-head bootstrap capture' | Out-Null
-    $env:STEPHANOS_BACKEND_BOOTSTRAP_BASE64 = Get-ExactHeadBackendBootstrapBase64 -RepositoryRoot $repoRoot -HeadSha $headSha
+    $bootstrapBase64 = Get-ExactHeadBackendBootstrapBase64 -RepositoryRoot $repoRoot -HeadSha $headSha
     Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend process start' | Out-Null
-    try {
-        $process = Start-Process -FilePath $canonicalNode `
-            -ArgumentList $arguments `
-            -WorkingDirectory $repoRoot `
-            -RedirectStandardOutput $stdoutLogPath `
-            -RedirectStandardError $stderrLogPath `
-            -WindowStyle Hidden `
-            -PassThru
-    }
-    finally {
-        Remove-Item Env:STEPHANOS_BACKEND_BOOTSTRAP_BASE64 -ErrorAction SilentlyContinue
-    }
+    $process = Start-BackendNodeWithMinimalEnvironment `
+        -Arguments $arguments `
+        -WorkingDirectory $repoRoot `
+        -StandardOutputPath $stdoutLogPath `
+        -StandardErrorPath $stderrLogPath `
+        -SourceHead $headSha `
+        -RepositoryRoot $repoRoot `
+        -BootstrapBase64 $bootstrapBase64
     Write-Log ("Start-Process launched with PID {0}." -f $process.Id)
 }
 else {
