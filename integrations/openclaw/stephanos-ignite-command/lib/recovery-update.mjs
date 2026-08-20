@@ -1,10 +1,11 @@
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { closeSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, renameSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { syncBattleBridgeExactHeadV1 } from '../../../../shared/agents/battleBridgeExactHeadSyncGuardV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';
 import { updateStephanosFromChat } from '../../../../shared/agents/stephanosChatUpdate.mjs';
 
 export const OPENCLAW_BATTLE_BRIDGE_UPDATE_ROUTE = 'OPENCLAW_WHATSAPP_EXACT_HEAD';
@@ -37,7 +38,33 @@ function writeNewReceipt(receiptPath, receipt) {
   try { writeFileSync(descriptor, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8'); } finally { closeSync(descriptor); }
 }
 
-export function queueBattleBridgeExactHeadFromOpenClaw({
+function replaceReceipt(receiptPath, receipt) {
+  const temporaryPath = `${receiptPath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  renameSync(temporaryPath, receiptPath);
+}
+
+function observeSpawn(child, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    if (!child || typeof child.once !== 'function') {
+      resolve(false);
+      return;
+    }
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    timer.unref?.();
+    child.once('spawn', () => finish(true));
+    child.once('error', () => finish(false));
+  });
+}
+
+export async function queueBattleBridgeExactHeadFromOpenClaw({
   expectedHead,
   authenticatedContext = null,
   env = process.env,
@@ -45,6 +72,7 @@ export function queueBattleBridgeExactHeadFromOpenClaw({
   spawnFn = spawn,
   nonce = randomUUID(),
   now = new Date(),
+  launchTimeoutMs = 5000,
 } = {}) {
   const normalizedExpectedHead = normalizeOpenClawExactHead(expectedHead);
   if (!normalizedExpectedHead) return Object.freeze({ ok: false, blocker: 'EXPECTED_HEAD_INVALID', expectedHead: '' });
@@ -63,22 +91,63 @@ export function queueBattleBridgeExactHeadFromOpenClaw({
   mkdirSync(receiptRoot, { recursive: true });
   const receiptPath = path.resolve(receiptRoot, `${receiptId}.json`);
   if (path.dirname(receiptPath) !== receiptRoot) return Object.freeze({ ok: false, blocker: 'UPDATE_RECEIPT_PATH_INVALID', expectedHead: normalizedExpectedHead });
+  const queued = {
+    schemaVersion: OPENCLAW_BATTLE_BRIDGE_UPDATE_RECEIPT_SCHEMA,
+    receiptId,
+    status: 'QUEUED',
+    expectedHead: normalizedExpectedHead,
+    queuedAtUtc: now.toISOString(),
+    pluginReloadProof: 'PENDING',
+  };
   try {
-    writeNewReceipt(receiptPath, {
-      schemaVersion: OPENCLAW_BATTLE_BRIDGE_UPDATE_RECEIPT_SCHEMA,
-      receiptId,
-      status: 'QUEUED',
-      expectedHead: normalizedExpectedHead,
-      queuedAtUtc: now.toISOString(),
-      pluginReloadProof: 'PENDING',
-    });
+    writeNewReceipt(receiptPath, queued);
     const executorPath = fileURLToPath(new URL('./recovery-update-executor.mjs', import.meta.url));
-    const child = spawnFn(process.execPath, [executorPath, receiptId, normalizedExpectedHead], {
+    const child = spawnFn(BATTLE_BRIDGE_WINDOWS_HOST.node, [executorPath, receiptId, normalizedExpectedHead], {
       cwd: canonicalRepoRoot(env), env, detached: true, shell: false, windowsHide: true, stdio: 'ignore',
     });
+    const launched = await observeSpawn(child, launchTimeoutMs);
+    if (!launched) {
+      replaceReceipt(receiptPath, {
+        ...queued,
+        status: 'LAUNCH_FAILED',
+        finalVerdict: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
+        blocker: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
+        launchFailedAtUtc: new Date(now.getTime()).toISOString(),
+      });
+      return Object.freeze({
+        ok: false,
+        status: 'LAUNCH_FAILED',
+        finalVerdict: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
+        blocker: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
+        expectedHead: normalizedExpectedHead,
+        receiptId,
+        route: OPENCLAW_BATTLE_BRIDGE_UPDATE_ROUTE,
+        runtimeProofPassed: false,
+        pluginReloadProofPending: true,
+      });
+    }
     child.unref?.();
   } catch {
-    return Object.freeze({ ok: false, blocker: 'UPDATE_QUEUE_FAILED', expectedHead: normalizedExpectedHead });
+    try {
+      replaceReceipt(receiptPath, {
+        ...queued,
+        status: 'LAUNCH_FAILED',
+        finalVerdict: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
+        blocker: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
+        launchFailedAtUtc: new Date(now.getTime()).toISOString(),
+      });
+    } catch {}
+    return Object.freeze({
+      ok: false,
+      status: 'LAUNCH_FAILED',
+      finalVerdict: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
+      blocker: 'UPDATE_EXECUTOR_LAUNCH_FAILED',
+      expectedHead: normalizedExpectedHead,
+      receiptId,
+      route: OPENCLAW_BATTLE_BRIDGE_UPDATE_ROUTE,
+      runtimeProofPassed: false,
+      pluginReloadProofPending: true,
+    });
   }
   return Object.freeze({
     ok: true,
