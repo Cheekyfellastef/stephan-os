@@ -1796,7 +1796,7 @@ export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureSt
 }
 
 export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, preserveRuntimeDirt = false, captureStepFn = runStepCapture, runStepFn = runStep, moveRootOpenClawWorkspaceDirtFn = moveRootOpenClawWorkspaceDirt } = {}) {
-  const capture = captureStepFn('git-status', 'git', ['status', '--porcelain']);
+  const capture = captureStepFn('git-status', 'git', ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
   const assessment = evaluateGitStatusForIgnition(capture.stdout);
   const runtimeDataListing = captureStepFn('git-untracked-data', 'git', ['ls-files', '--others', '--exclude-standard', '--', 'data']);
   const runtimeDataPaths = normalizeCaptureStdout(runtimeDataListing).split('\n').map((line) => normalizeGitPath(line)).filter((line) => line.startsWith('data/'));

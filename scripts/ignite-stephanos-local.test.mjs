@@ -825,6 +825,19 @@ test('ignition status evaluator hard-blocks unallowlisted nested data files', ()
   assert.equal(evaluation.meaningfulEntries.length, 2);
 });
 
+test('ignition status evaluator hard-blocks ignored data outside the explicit runtime allowlist', () => {
+  const evaluation = evaluateGitStatusForIgnition([
+    '!! data/activity/session.json',
+    '!! data/random.txt',
+    '!! data/unknown.bin',
+  ].join('\n'));
+
+  assert.equal(evaluation.transientRootDataEntries.length, 1);
+  assert.equal(evaluation.forbiddenOrUnknownEntries.length, 0);
+  assert.equal(evaluation.meaningfulEntries.length, 2);
+  assert.equal(isGitWorkingTreeClean('!! data/random.txt\n!! data/unknown.bin\n'), false);
+});
+
 test('collectApprovedTrackedGeneratedRestorePaths returns tracked dist paths only', () => {
   const evaluation = evaluateGitStatusForIgnition([
     ' M apps/stephanos/dist/index.html',
@@ -1021,6 +1034,23 @@ test('housekeep hard-blocks unknown data files and surfaces exact hardBlockPaths
     },
     runStepFn: () => {},
   }), /housekeep blocked/);
+});
+
+test('housekeep includes ignored data entries in the canonical hard-block gate', () => {
+  const calls = [];
+  assert.throws(() => runIgnitionHousekeep({
+    dryRun: false,
+    compact: true,
+    captureStepFn: (label, command, args) => {
+      calls.push([label, command, ...args]);
+      if (label === 'git-status') return { stdout: '!! data/random.txt\n!! data/unknown.bin\n', stderr: '' };
+      if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: () => {},
+  }), /housekeep blocked/);
+
+  assert.deepEqual(calls[0], ['git-status', 'git', 'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
 });
 test('housekeep dry-run classifies known OpenClaw workspace dirt without weakening hard-block', () => {
   const logs = [];

@@ -53,7 +53,7 @@ const defaultRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 export function collectCanonicalIgnitionSourceTruth({ cwd = defaultRepoRoot, execFile = execFileSync } = {}) {
   try {
     execFile('git', ['fetch', '--prune', 'origin', 'main:refs/remotes/origin/main'], { cwd, encoding: 'utf8' });
-    const statusOutput = String(execFile('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd, encoding: 'utf8' }) || '');
+    const statusOutput = String(execFile('git', ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching'], { cwd, encoding: 'utf8' }) || '');
     const statusAssessment = evaluateGitStatusForIgnition(statusOutput);
     const captureStep = (_label, command, args) => ({
       stdout: execFile(command, args, { cwd, encoding: 'utf8' }),
