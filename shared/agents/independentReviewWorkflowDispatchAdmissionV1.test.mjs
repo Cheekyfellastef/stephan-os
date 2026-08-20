@@ -8,6 +8,9 @@ import {
   INDEPENDENT_REVIEW_HANDOFF_PROVENANCE_SCHEMA,
 } from './independentReviewHandoffProvenanceV1.mjs';
 import {
+  buildIndependentReviewHandoffRunReceiptV1,
+} from './independentReviewHandoffRunReceiptV1.mjs';
+import {
   CANONICAL_REPOSITORY,
   CANONICAL_REVIEW_JOB,
   CANONICAL_REVIEW_WORKFLOW_NAME,
@@ -96,6 +99,15 @@ function pullRequest(overrides = {}) {
   };
 }
 
+function buildRunReceipt(provenanceValue = coordinatorProvenance(), pullRequestValue = pullRequest()) {
+  return buildIndependentReviewHandoffRunReceiptV1({
+    repository: CANONICAL_REPOSITORY,
+    currentMainSha: baseSha,
+    pullRequest: pullRequestValue,
+    provenance: provenanceValue,
+  });
+}
+
 function valid(overrides = {}) {
   return {
     repository: CANONICAL_REPOSITORY,
@@ -103,6 +115,7 @@ function valid(overrides = {}) {
     currentMainSha: baseSha,
     pullRequest: pullRequest(),
     handoffIdentity: handoffIdentity(),
+    handoffRunReceipt: buildRunReceipt(),
     ...overrides,
   };
 }
@@ -122,13 +135,15 @@ function runEnvironment(overrides = {}) {
 }
 
 function validRun(overrides = {}) {
-  const admission = admitIndependentReviewWorkflowDispatchV1(valid());
+  const base = valid();
+  const admission = admitIndependentReviewWorkflowDispatchV1(base);
   return {
     environment: runEnvironment(),
     workflowDefinition: workflowDefinition(),
     currentMainSha: baseSha,
-    pullRequest: pullRequest(),
-    handoffIdentity: handoffIdentity(),
+    pullRequest: base.pullRequest,
+    handoffIdentity: base.handoffIdentity,
+    handoffRunReceipt: base.handoffRunReceipt,
     workflowDispatchInputs: { ...admission.workflowDispatchInputs },
     ...overrides,
   };
@@ -145,6 +160,7 @@ test('admits only the exact canonical review workflow for the exact current run-
   assert.equal(result.binding.coordinatorWorkflowRunAttempt, 1);
   assert.equal(result.binding.coordinatorSourceSha, baseSha);
   assert.equal(result.binding.handoffCommentId, handoffCommentId);
+  assert.match(result.binding.handoffRunReceiptSha256, /^[a-f0-9]{64}$/);
   assert.match(result.handoffBindingSha256, /^[a-f0-9]{64}$/);
   assert.deepEqual(result.workflowDispatchInputs, {
     pr_number: String(prNumber),
@@ -152,6 +168,7 @@ test('admits only the exact canonical review workflow for the exact current run-
     base_sha: baseSha,
     head_branch: branch,
     handoff_binding_sha256: result.handoffBindingSha256,
+    handoff_run_receipt_sha256: result.binding.handoffRunReceiptSha256,
   });
   assert.deepEqual(result.requiredRevalidation, {
     currentMain: true,
@@ -159,6 +176,7 @@ test('admits only the exact canonical review workflow for the exact current run-
     workflowIdentity: true,
     coordinatorWorkflowRun: true,
     handoffComment: true,
+    coordinatorHandoffRunReceipt: true,
     exactRunAbsence: true,
   });
   assert.equal(result.authority.reviewWorkflowDispatchAllowed, true);
@@ -237,14 +255,24 @@ test('handoff authority cannot be widened or forged', () => {
   );
 });
 
-test('coordinator provenance is binding material and cannot silently drift from exact main', () => {
+test('coordinator provenance and immutable run receipt are binding material and cannot silently drift', () => {
   const first = admitIndependentReviewWorkflowDispatchV1(valid());
 
-  const changedRun = handoffIdentity({
-    coordinatorProvenance: coordinatorProvenance({ coordinatorWorkflowRunId: 32307961773 }),
-  });
-  const changed = admitIndependentReviewWorkflowDispatchV1(valid({ handoffIdentity: changedRun }));
+  const changedProvenance = coordinatorProvenance({ coordinatorWorkflowRunId: 32307961773 });
+  const changedHandoff = handoffIdentity({ coordinatorProvenance: changedProvenance });
+  const changedReceipt = buildRunReceipt(changedProvenance);
+  const changed = admitIndependentReviewWorkflowDispatchV1(valid({
+    handoffIdentity: changedHandoff,
+    handoffRunReceipt: changedReceipt,
+  }));
   assert.notEqual(first.handoffBindingSha256, changed.handoffBindingSha256);
+  assert.notEqual(first.binding.handoffRunReceiptSha256, changed.binding.handoffRunReceiptSha256);
+
+  const mismatchedReceipt = buildRunReceipt(coordinatorProvenance({ coordinatorWorkflowRunId: 32307961774 }));
+  assert.throws(
+    () => admitIndependentReviewWorkflowDispatchV1(valid({ handoffRunReceipt: mismatchedReceipt })),
+    /coordinator run mismatch/,
+  );
 
   const staleCoordinator = handoffIdentity({
     coordinatorProvenance: coordinatorProvenance({
@@ -262,6 +290,25 @@ test('coordinator provenance is binding material and cannot silently drift from 
   assert.throws(
     () => admitIndependentReviewWorkflowDispatchV1(valid({ handoffIdentity: wrongJob })),
     /provenance/,
+  );
+});
+
+test('tampered or authority-widened immutable handoff receipt fails closed', () => {
+  const receipt = buildRunReceipt();
+  assert.throws(
+    () => admitIndependentReviewWorkflowDispatchV1(valid({
+      handoffRunReceipt: { ...receipt, bindingSha256: 'f'.repeat(64) },
+    })),
+    /binding hash mismatch/,
+  );
+  assert.throws(
+    () => admitIndependentReviewWorkflowDispatchV1(valid({
+      handoffRunReceipt: {
+        ...receipt,
+        authority: { ...receipt.authority, reviewWorkflowDispatchAllowed: true },
+      },
+    })),
+    /schema or authority/,
   );
 });
 
@@ -294,7 +341,12 @@ test('dispatch binding is deterministic and changes with exact PR identity', () 
   });
   const otherPr = pullRequest();
   otherPr.head = { ...otherPr.head, sha: other.sourceHead };
-  const changed = admitIndependentReviewWorkflowDispatchV1(valid({ handoffIdentity: other, pullRequest: otherPr }));
+  const otherReceipt = buildRunReceipt(coordinatorProvenance(), otherPr);
+  const changed = admitIndependentReviewWorkflowDispatchV1(valid({
+    handoffIdentity: other,
+    pullRequest: otherPr,
+    handoffRunReceipt: otherReceipt,
+  }));
   assert.notEqual(first.handoffBindingSha256, changed.handoffBindingSha256);
 });
 
@@ -305,6 +357,7 @@ test('protected V2 gate trusts future workflow-dispatch review execution only on
   assert.equal(result.sourceHead, sourceHead);
   assert.equal(result.baseSha, baseSha);
   assert.equal(result.branch, branch);
+  assert.match(result.handoffRunReceiptSha256, /^[a-f0-9]{64}$/);
   assert.equal(result.coordinatorWorkflowRunId, 32307961772);
   assert.equal(result.coordinatorWorkflowRunAttempt, 1);
   assert.equal(result.handoffCommentId, handoffCommentId);
@@ -341,6 +394,7 @@ test('protected V2 gate rejects forged, widened or stale future workflow-dispatc
     { ...admitted.workflowDispatchInputs, base_sha: '3333333333333333333333333333333333333333' },
     { ...admitted.workflowDispatchInputs, head_branch: 'agent/other' },
     { ...admitted.workflowDispatchInputs, handoff_binding_sha256: 'f'.repeat(64) },
+    { ...admitted.workflowDispatchInputs, handoff_run_receipt_sha256: 'e'.repeat(64) },
     { ...admitted.workflowDispatchInputs, command: 'arbitrary' },
   ]) {
     assert.throws(
