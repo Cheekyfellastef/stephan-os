@@ -1156,6 +1156,24 @@ test('ignored runtime aggregate scan stays output-bounded across a large benign 
   assert.equal(blockerOutput, 'logs/credential.json\n');
 });
 
+test('ignored runtime aggregate scan fails closed at its deterministic work budget', () => {
+  let reads = 0;
+  assert.throws(() => scanIgnoredRuntimeAggregatePathsForBlockers({
+    repoRoot: '/canonical/repo',
+    aggregatePaths: ['logs/'],
+    maxEntries: 3,
+    lstatSyncFn: () => ({ isDirectory: () => true, isSymbolicLink: () => false }),
+    opendirSyncFn: () => ({
+      readSync: () => {
+        reads += 1;
+        return { name: `runtime-${reads}.log`, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false };
+      },
+      closeSync: () => {},
+    }),
+  }), (error) => error?.code === 'IGNITION_RUNTIME_AGGREGATE_SCAN_FAILED' && /maximum-entry-budget-exceeded/.test(error.message));
+  assert.equal(reads, 4);
+});
+
 test('housekeep dry-run classifies known OpenClaw workspace dirt without weakening hard-block', () => {
   const logs = [];
   const originalLog = console.log;

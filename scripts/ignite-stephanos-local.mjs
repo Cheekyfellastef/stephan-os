@@ -1067,9 +1067,11 @@ export function scanIgnoredRuntimeAggregatePathsForBlockers({
   lstatSyncFn = lstatSync,
   opendirSyncFn = opendirSync,
   maxDepth = 64,
+  maxEntries = 100_000,
 } = {}) {
   const canonicalRoot = resolve(repoRoot);
   const blockers = [];
+  let entriesInspected = 0;
 
   const walk = (absoluteDirectory, relativeDirectory, depth) => {
     if (depth > maxDepth) throw ignoredRuntimeAggregateScanError('maximum-depth-exceeded');
@@ -1077,6 +1079,8 @@ export function scanIgnoredRuntimeAggregatePathsForBlockers({
     try {
       directory = opendirSyncFn(absoluteDirectory);
       for (let entry = directory.readSync(); entry; entry = directory.readSync()) {
+        entriesInspected += 1;
+        if (entriesInspected > maxEntries) throw ignoredRuntimeAggregateScanError('maximum-entry-budget-exceeded');
         if (entry.name.includes('\0') || entry.name.includes('\n') || entry.name.includes('\r')) {
           throw ignoredRuntimeAggregateScanError('unsafe-entry-name');
         }
