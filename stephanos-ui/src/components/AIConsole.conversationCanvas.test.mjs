@@ -38,7 +38,13 @@ function canvasView(overrides = {}) {
     },
     sections: [],
     experienceModes: [{ mode: 'SYSTEMS_EXPERT_MAP', executable: false }],
-    accessibility: { reducedMotion: true, colorOnlyStatusAllowed: false, evidenceKeyboardReachable: true },
+    accessibility: {
+      reducedMotion: true,
+      colorOnlyStatusAllowed: false,
+      evidenceKeyboardReachable: true,
+      touchTargetsLarge: false,
+      animationAllowed: false,
+    },
     authority: {
       sourceMutationAllowed: false,
       commandExecutionAllowed: false,
@@ -92,7 +98,7 @@ test('AIConsole serves a valid bounded conversation_canvas_view through the exis
 
 test('AIConsole fails closed to the existing plain answer when Canvas identity or authority is invalid', async () => {
   const invalidAuthority = canvasView({
-    authority: { ...canvasView().authority, presenterMayExecuteActions: true },
+    authority: { ...canvasView().authority, providerSelectionAuthorityAdded: true },
   });
   const rendered = await render([
     assistantEntry({ conversation_canvas_view: invalidAuthority }),
@@ -104,7 +110,19 @@ test('AIConsole fails closed to the existing plain answer when Canvas identity o
 
 test('AIConsole accepts the bounded camelCase Canvas alias without changing the current command-history contract', async () => {
   const rendered = await render([
-    assistantEntry({ conversationCanvasView: canvasView({ surface: 'iphone', layoutProfile: { layout: 'SINGLE_COLUMN_PROGRESSIVE' } }) }),
+    assistantEntry({
+      conversationCanvasView: canvasView({
+        surface: 'iphone',
+        layoutProfile: { layout: 'SINGLE_COLUMN_PROGRESSIVE' },
+        accessibility: {
+          reducedMotion: true,
+          colorOnlyStatusAllowed: false,
+          evidenceKeyboardReachable: true,
+          touchTargetsLarge: true,
+          animationAllowed: false,
+        },
+      }),
+    }),
   ], 'ai-console-conversation-canvas-alias');
 
   assert.match(rendered, /data-canvas-surface="iphone"/);
