@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { backendStarterInvocation } from './run-battle-bridge-ignition.mjs';
 
@@ -64,6 +67,73 @@ test('backend Node child rejects checkout drift before loading or listening', ()
   assert.notEqual(child.status, 0, 'drifted backend child must fail closed');
   assert.match(String(child.stderr || ''), /BACKEND_CHILD_EXPECTED_HEAD_MISMATCH/);
   assert.doesNotMatch(`${child.stdout || ''}\n${child.stderr || ''}`, /\[BACKEND LIVE\] Stephanos server listening/);
+});
+
+test('backend Node child ignores hostile inherited Git repository-selection variables', () => {
+  const gitExecutable = process.platform === 'win32'
+    ? 'C:\\Program Files\\Git\\cmd\\git.exe'
+    : '/usr/bin/git';
+  const hostileRoot = mkdtempSync(join(tmpdir(), 'stephanos-backend-hostile-git-'));
+  try {
+    const init = spawnSync(gitExecutable, ['init', '--quiet', hostileRoot], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 5_000,
+    });
+    assert.equal(init.status, 0, init.stderr || init.error?.message);
+
+    const commit = spawnSync(gitExecutable, [
+      '-C', hostileRoot,
+      '-c', 'user.name=Stephanos Test',
+      '-c', 'user.email=stephanos-test@example.invalid',
+      'commit', '--allow-empty', '--quiet', '-m', 'hostile Git redirect',
+    ], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 5_000,
+    });
+    assert.equal(commit.status, 0, commit.stderr || commit.error?.message);
+
+    const hostileHeadProof = spawnSync(gitExecutable, ['-C', hostileRoot, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 5_000,
+    });
+    assert.equal(hostileHeadProof.status, 0, hostileHeadProof.stderr || hostileHeadProof.error?.message);
+    const hostileHead = String(hostileHeadProof.stdout || '').trim().toLowerCase();
+    assert.match(hostileHead, /^[0-9a-f]{40}$/);
+
+    const canonicalHeadProof = spawnSync(gitExecutable, ['-C', repoRoot, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 5_000,
+    });
+    assert.equal(canonicalHeadProof.status, 0, canonicalHeadProof.stderr || canonicalHeadProof.error?.message);
+    const canonicalHead = String(canonicalHeadProof.stdout || '').trim().toLowerCase();
+    assert.match(canonicalHead, /^[0-9a-f]{40}$/);
+    assert.notEqual(hostileHead, canonicalHead);
+
+    const child = spawnSync(process.execPath, [backendServerPath], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        STEPHANOS_BACKEND_SOURCE_HEAD: hostileHead,
+        GIT_DIR: join(hostileRoot, '.git'),
+        GIT_WORK_TREE: hostileRoot,
+        GIT_COMMON_DIR: join(hostileRoot, '.git'),
+        GIT_OBJECT_DIRECTORY: join(hostileRoot, '.git', 'objects'),
+        GIT_INDEX_FILE: join(hostileRoot, '.git', 'index'),
+      },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 10_000,
+    });
+    assert.notEqual(child.status, 0, 'hostile Git environment must not redirect the backend proof');
+    assert.match(String(child.stderr || ''), /BACKEND_CHILD_EXPECTED_HEAD_MISMATCH/);
+    assert.doesNotMatch(`${child.stdout || ''}\n${child.stderr || ''}`, /\[BACKEND LIVE\] Stephanos server listening/);
+  } finally {
+    rmSync(hostileRoot, { recursive: true, force: true });
+  }
 });
 
 test('backend restart terminates only the verified 8787 Stephanos Node listener', () => {

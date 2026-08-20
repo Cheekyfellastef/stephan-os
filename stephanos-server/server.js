@@ -1,4 +1,25 @@
 import { spawnSync } from 'node:child_process';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const backendSourceFile = fileURLToPath(import.meta.url);
+const canonicalRepoRoot = resolve(dirname(backendSourceFile), '..');
+const canonicalGitDirectory = resolve(canonicalRepoRoot, '.git');
+
+function minimalBackendChildGitEnvironment() {
+  const allowedNames = new Set([
+    'systemroot',
+    'windir',
+    'comspec',
+    'pathext',
+    'temp',
+    'tmp',
+    'tmpdir',
+  ]);
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => allowedNames.has(name.toLowerCase())),
+  );
+}
 
 function enforceBattleBridgeBackendChildExpectedHead() {
   const expectedHead = String(process.env.STEPHANOS_BACKEND_SOURCE_HEAD || '').trim().toLowerCase();
@@ -10,7 +31,14 @@ function enforceBattleBridgeBackendChildExpectedHead() {
   const gitExecutable = process.platform === 'win32'
     ? 'C:\\Program Files\\Git\\cmd\\git.exe'
     : '/usr/bin/git';
-  const proof = spawnSync(gitExecutable, ['-C', process.cwd(), 'rev-parse', 'HEAD'], {
+  const proof = spawnSync(gitExecutable, [
+    `--git-dir=${canonicalGitDirectory}`,
+    `--work-tree=${canonicalRepoRoot}`,
+    'rev-parse',
+    'HEAD',
+  ], {
+    cwd: canonicalRepoRoot,
+    env: minimalBackendChildGitEnvironment(),
     encoding: 'utf8',
     windowsHide: true,
     timeout: 5_000,
