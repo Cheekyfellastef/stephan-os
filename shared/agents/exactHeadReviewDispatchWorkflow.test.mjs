@@ -101,6 +101,7 @@ test('binds and artifacts the exact handoff for dispatch, wait, escalation and s
   assert.match(bind, /STEPHANOS_REVIEW_HANDOFF_RUN_RECEIPT_PATH:\s*\$\{\{ runner\.temp \}\}\/independent-review-handoff-run-receipt\.json/);
   assert.match(bind, /node scripts\/bind-independent-review-handoff-provenance-v1\.mjs/);
 
+  assert.match(upload, /id: upload_handoff/);
   assert.match(upload, /always\(\)/);
   assert.match(upload, /steps\.bind_handoff\.outcome == 'success'/);
   assert.match(upload, /uses: actions\/upload-artifact@v4/);
@@ -129,6 +130,7 @@ test('launches a missing review only after exact retry classification and immuta
 
   assert.match(launch, /always\(\)/);
   assert.match(launch, /steps\.bind_handoff\.outcome == 'success'/);
+  assert.match(launch, /steps\.upload_handoff\.outcome == 'success'/);
   assert.match(launch, /steps\.retry\.outcome == 'success'/);
   assert.match(launch, /steps\.retry\.outputs\.decision == 'NO_MATCHING_RUN'/);
   assert.match(launch, /STEPHANOS_REVIEW_HANDOFF_RUN_RECEIPT_PATH:\s*\$\{\{ runner\.temp \}\}\/independent-review-handoff-run-receipt\.json/);
