@@ -53,12 +53,22 @@ jobs:
       issues: write
       pull-requests: read
     steps:
-      - name: Check out trusted exact-base reviewer
+      - name: Check out trusted pull-request exact base reviewer
+        if: github.event_name == 'pull_request_target'
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
           fetch-depth: 1
+
+      - name: Check out trusted workflow-dispatch exact main reviewer
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24
