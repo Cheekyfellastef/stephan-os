@@ -9,7 +9,8 @@ import {
 const repository = 'Cheekyfellastef/stephan-os';
 const prNumber = 1919;
 const branch = 'fix/ignition-canonical-convergence-gate-v1';
-const sourceHead = 'a'.repeat(40);
+const sourceHead = '9941da6e500a7d95d11e8a3654630462cce71a91';
+const baseSha = '13f13144730b2a6d94754914dbdf2c254c39567d';
 
 const repairSource = String.raw`[CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -119,6 +120,7 @@ function input(overrides = {}) {
     prNumber,
     branch,
     sourceHead,
+    baseSha,
     analysis: analysis(),
     sources: [
       sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[0], repairSource),
@@ -133,6 +135,8 @@ test('exact ignition convergence escalation with closed-world source proof is cl
   const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input());
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true);
+  assert.equal(result.reviewedSourceHead, sourceHead);
+  assert.equal(result.reviewedBaseSha, baseSha);
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_SPECIALIST_CLEAN');
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.runtimeAuthority, false);
@@ -141,10 +145,12 @@ test('exact ignition convergence escalation with closed-world source proof is cl
   assert.equal(result.proofRefs.length, 3);
 });
 
-test('specialist is not eligible for another repository, PR, branch, head shape or finding estate', () => {
+test('specialist is exact PR head/base bound and rejects another identity or finding estate', () => {
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ repository: 'other/repo' })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ prNumber: 1918 })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ branch: 'other' })).eligible, false);
+  assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sourceHead: 'b'.repeat(40) })).eligible, false);
+  assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ baseSha: 'c'.repeat(40) })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sourceHead: 'bad' })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ analysis: { findings: [] } })).eligible, false);
 });
@@ -164,12 +170,45 @@ test('missing, duplicate or wrong source evidence fails closed', () => {
 
 test('accessor-shaped source evidence cannot smuggle trusted content', () => {
   const sources = input().sources;
+  let getterCalled = false;
   const hostile = { ...sources[0] };
-  Object.defineProperty(hostile, 'content', { enumerable: true, get() { return repairSource; } });
+  Object.defineProperty(hostile, 'content', { enumerable: true, get() { getterCalled = true; return repairSource; } });
   sources[0] = hostile;
   const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources }));
   assert.equal(result.clean, false);
+  assert.equal(getterCalled, false);
   assert.ok(result.findings.some((item) => item.code === 'windows-authority-source-evidence-invalid'));
+});
+
+test('accessor-shaped top-level and analysis fields fail closed without invoking getters', () => {
+  let headGetterCalled = false;
+  const hostileInput = input();
+  delete hostileInput.sourceHead;
+  Object.defineProperty(hostileInput, 'sourceHead', { enumerable: true, get() { headGetterCalled = true; return sourceHead; } });
+  const topResult = analyzeWindowsAuthorityIgnitionConvergenceReview(hostileInput);
+  assert.equal(topResult.eligible, false);
+  assert.equal(headGetterCalled, false);
+
+  let findingsGetterCalled = false;
+  const hostileAnalysis = { schemaVersion: 'stephanos.independent-security-analysis.v1' };
+  Object.defineProperty(hostileAnalysis, 'findings', { enumerable: true, get() { findingsGetterCalled = true; return analysis().findings; } });
+  const analysisResult = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ analysis: hostileAnalysis }));
+  assert.equal(analysisResult.eligible, false);
+  assert.equal(findingsGetterCalled, false);
+});
+
+test('accessor-shaped finding fields fail closed without invoking getters', () => {
+  let pathGetterCalled = false;
+  const hostileFinding = {
+    severity: 'P0',
+    code: 'unsupported-high-risk-surface',
+  };
+  Object.defineProperty(hostileFinding, 'path', { enumerable: true, get() { pathGetterCalled = true; return WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[0]; } });
+  const hostileAnalysis = analysis();
+  hostileAnalysis.findings[0] = hostileFinding;
+  const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ analysis: hostileAnalysis }));
+  assert.equal(result.eligible, false);
+  assert.equal(pathGetterCalled, false);
 });
 
 test('already-healthy backend exact-head identity gates are mandatory', () => {
