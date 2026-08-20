@@ -19,7 +19,7 @@ test('entry keeps legacy pull_request_target on the existing specialist reviewer
 test('workflow_dispatch must pass the proven execution-context boundary before synthetic legacy execution', async () => {
   const text = await source();
   const contextIndex = text.indexOf('buildIndependentReviewExecutionContextV1({');
-  const syntheticIndex = text.indexOf('writeSyntheticLegacyEvent(context)');
+  const syntheticIndex = text.indexOf('const eventPath = writeSyntheticLegacyEvent(context);');
   const launchIndex = text.indexOf('const child = launch(prepared.env);');
   assert.ok(contextIndex >= 0);
   assert.ok(syntheticIndex > contextIndex);
