@@ -1,7 +1,6 @@
 import { validateSpatialAssetRecord, validateSpatialBuildOrder } from './spatialWorldFoundryContractsV1.mjs';
 
 export const SPATIAL_SEMANTIC_WORLD_CHAMBER_SCHEMA = 'stephanos.spatial-world-foundry.semantic-world-chamber.v1';
-export const SPATIAL_SEMANTIC_WORLD_EVIDENCE_SCHEMA = 'stephanos.spatial-world-foundry.semantic-world-evidence.v1';
 export const SPATIAL_SEMANTIC_WORLD_STATUS = Object.freeze({
   PASS: 'SEMANTIC_WORLD_PASS',
   REQUIRED: 'SEMANTIC_WORLD_EVIDENCE_REQUIRED',
@@ -110,11 +109,9 @@ export function evaluateSpatialSemanticWorldChamber(buildOrder = {}, assetRecord
   for (const id of requiredWorldStates) if (!has('WORLD_STATE_LABEL',id)) missing.push(`world-state:${id}`);
   if (missing.length) return output(SPATIAL_SEMANTIC_WORLD_STATUS.REQUIRED,missing);
 
-  const refs = [...new Set(observations.map((entry) => entry.evidenceRef))];
   const evidence = freeze({ validatorId:evaluatorId, validatorVersion:evaluatorVersion, class:'SEMANTIC_WORLD', verdict:'PASS',
     spatialBuildOrderId:buildOrder.spatialBuildOrderId, assetId:assetRecord.assetId, assetVersion:assetRecord.version,
     sourceHead, evidenceRef:`semantic-world:${evaluatorId}:${assetRecord.assetId}:${sourceHead.slice(0,12)}`,
-    observedAtUtc:observations.map((entry) => entry.observedAtUtc).sort().at(-1),
-    proofRefs:refs, schemaVersion:SPATIAL_SEMANTIC_WORLD_EVIDENCE_SCHEMA });
+    observedAtUtc:observations.map((entry) => entry.observedAtUtc).sort().at(-1) });
   return output(SPATIAL_SEMANTIC_WORLD_STATUS.PASS,[],evidence);
 }
