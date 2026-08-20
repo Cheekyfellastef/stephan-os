@@ -31,7 +31,7 @@ function backendHealthResponse(sourceHead, {
   };
 }
 
-test('supervisor housekeeping preserves exact-head dist and runtime-owned durable memory', () => {
+test('supervisor housekeeping preserves exact-head dist and all runtime-owned data', () => {
   const delegated = [];
   const runStepFn = (label, command, args) => {
     delegated.push({ label, command, args });
@@ -44,7 +44,7 @@ test('supervisor housekeeping preserves exact-head dist and runtime-owned durabl
   guarded('git-restore-runtime-tracked', 'git', ['restore', '--', 'stephanos-server/data/memory/durable-memory.json']);
   guarded('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', 'data/activity/']);
 
-  assert.deepEqual(delegated.map((entry) => entry.label), ['git-clean-runtime-untracked']);
+  assert.deepEqual(delegated, []);
 });
 
 test('supervisor housekeeping injects the live-runtime-preserving run step into the existing housekeeper', () => {
@@ -72,7 +72,7 @@ test('supervisor housekeeping injects the live-runtime-preserving run step into 
   assert.deepEqual(result, { ok: true });
   assert.equal(receivedOptions.dryRun, false);
   assert.equal(receivedOptions.compact, true);
-  assert.deepEqual(delegated, ['git-clean-runtime-untracked']);
+  assert.deepEqual(delegated, []);
   assert.equal(runSupervisorHousekeepPreservingLiveDist, runSupervisorHousekeepPreservingLiveRuntime);
 });
 

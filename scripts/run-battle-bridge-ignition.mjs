@@ -26,6 +26,7 @@ const SUPERVISOR_PRESERVED_MUTATION_LABELS = new Map([
   ['git-restore-auto-generated', 'preserve the currently served generated dist until exact-head browser proof completes'],
   ['git-clean-dist-untracked', 'preserve the currently served generated dist until exact-head browser proof completes'],
   ['git-restore-runtime-tracked', 'preserve runtime-owned durable memory; runtime dirt is evidence, not source cleanup authority'],
+  ['git-clean-runtime-untracked', 'preserve untracked runtime-owned data; runtime dirt is evidence, not cleanup authority'],
 ]);
 
 export function runStep(label, command, args, { cwd = repoRoot, env = process.env } = {}) {
