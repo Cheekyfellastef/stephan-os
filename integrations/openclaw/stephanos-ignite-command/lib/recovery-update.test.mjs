@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../../shared/agents/battleBridgeWindowsHosts.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';
 import { executeQueuedOpenClawUpdate } from './recovery-update-executor.mjs';
 import {
   normalizeOpenClawExactHead,
@@ -170,6 +170,34 @@ test('owner update queues canonical detached executor only after observing succe
   assert.equal(receipt.pluginReloadProof, 'PENDING');
 });
 
+test('receipt-id collision fails closed without overwriting an existing queued receipt', async () => {
+  const profile = mkdtempSync(path.join(tmpdir(), 'ignite-update-collision-'));
+  const receiptId = '4'.repeat(32);
+  const first = await queueBattleBridgeExactHeadFromOpenClaw({
+    expectedHead: HEAD,
+    authenticatedContext: OWNER,
+    platform: 'win32',
+    env: { USERPROFILE: profile },
+    nonce: receiptId,
+    now: new Date('2026-08-20T00:00:00.000Z'),
+    spawnFn: successfulDetachedSpawn(),
+  });
+  assert.equal(first.ok, true);
+  const before = readFileSync(receiptPath(profile, receiptId), 'utf8');
+  const second = await queueBattleBridgeExactHeadFromOpenClaw({
+    expectedHead: HEAD,
+    authenticatedContext: OWNER,
+    platform: 'win32',
+    env: { USERPROFILE: profile },
+    nonce: receiptId,
+    now: new Date('2026-08-20T00:01:00.000Z'),
+    spawnFn: () => assert.fail('collision must fail before spawning'),
+  });
+  assert.equal(second.ok, false);
+  assert.equal(second.blocker, 'UPDATE_QUEUE_FAILED');
+  assert.equal(readFileSync(receiptPath(profile, receiptId), 'utf8'), before);
+});
+
 test('owner update fails durably when detached executor emits launch error', async () => {
   const profile = mkdtempSync(path.join(tmpdir(), 'ignite-update-error-'));
   const child = new EventEmitter();
@@ -181,7 +209,6 @@ test('owner update fails durably when detached executor emits launch error', asy
     env: { USERPROFILE: profile },
     nonce: '2'.repeat(32),
     now: new Date('2026-08-20T00:01:00.000Z'),
-    launchTimeoutMs: 100,
     spawnFn: (command) => {
       assert.equal(command, BATTLE_BRIDGE_WINDOWS_HOST.node);
       queueMicrotask(() => child.emit('error', Object.assign(new Error('missing cwd'), { code: 'ENOENT' })));
