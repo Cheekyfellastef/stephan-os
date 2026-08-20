@@ -14,12 +14,14 @@ export function evaluateBackendExpectedHeadHandoffPublication({
   expectedHead = '',
   taskWasRunning = false,
   taskStopped = false,
+  taskRunningImmediatelyBeforePublish = false,
   listenerWasPresent = false,
   listenerStopped = false,
 } = {}) {
   const head = normalizedHead(expectedHead);
   if (!SHA40.test(head)) return blocked('expected-head-invalid', { publishAllowed: false, expectedHead: head });
   if (taskWasRunning && !taskStopped) return blocked('old-task-not-stopped', { publishAllowed: false, expectedHead: head });
+  if (taskRunningImmediatelyBeforePublish) return blocked('task-not-quiescent-before-publish', { publishAllowed: false, expectedHead: head });
   if (listenerWasPresent && !listenerStopped) return blocked('old-listener-not-stopped', { publishAllowed: false, expectedHead: head });
   return Object.freeze({
     mutationAllowed: false,
@@ -54,7 +56,7 @@ export function evaluateBackendExpectedHeadHandoffConsumption({
   const expectedHead = normalizedHead(handoffHead);
   if (!SHA40.test(expectedHead)) return blocked('handoff-head-invalid', { bindingSource: 'handoff' });
   if (!Number.isFinite(issuedAtMs) || !Number.isFinite(expiresAtMs) || !Number.isFinite(nowMs)) return blocked('handoff-time-invalid', { bindingSource: 'handoff' });
-  if (issuedAtMs > nowMs + 30_000 || expiresAtMs > issuedAtMs + 125_000) return blocked('handoff-time-invalid', { bindingSource: 'handoff' });
+  if (expiresAtMs <= issuedAtMs || issuedAtMs > nowMs + 30_000 || expiresAtMs > issuedAtMs + 125_000) return blocked('handoff-time-invalid', { bindingSource: 'handoff' });
   if (expiresAtMs <= nowMs) return blocked('handoff-expired', { bindingSource: 'handoff' });
   if (observedHead !== expectedHead) return blocked('handoff-head-mismatch', { bindingSource: 'handoff', expectedHead, observedHead });
   return Object.freeze({ mutationAllowed: true, reason: 'handoff-exact-head', bindingSource: 'handoff', expectedHead, observedHead });

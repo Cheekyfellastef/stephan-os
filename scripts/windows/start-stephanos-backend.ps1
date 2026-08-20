@@ -212,7 +212,7 @@ function Read-BackendExpectedHeadHandoff {
         $expiresAtUtc = [datetime]::Parse([string]$handoff.expiresAtUtc).ToUniversalTime()
         $nowUtc = [datetime]::UtcNow
         if ($expiresAtUtc -le $nowUtc) { throw 'BACKEND_EXPECTED_HEAD_HANDOFF_EXPIRED' }
-        if ($issuedAtUtc -gt $nowUtc.AddSeconds(30) -or $expiresAtUtc -gt $issuedAtUtc.AddMinutes(2).AddSeconds(5)) {
+        if ($expiresAtUtc -le $issuedAtUtc -or $issuedAtUtc -gt $nowUtc.AddSeconds(30) -or $expiresAtUtc -gt $issuedAtUtc.AddMinutes(2).AddSeconds(5)) {
             throw 'BACKEND_EXPECTED_HEAD_HANDOFF_TIME_INVALID'
         }
         return $handoffHead

@@ -215,6 +215,16 @@ try {
                 Stop-WithBlocker 'BACKEND_LISTENER_DID_NOT_STOP'
             }
         }
+        $prePublishTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop
+        if ([string]$prePublishTask.State -eq 'Running') {
+            Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
+            if (-not (Wait-Until -Seconds 30 -Condition {
+                [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -ne 'Running'
+            })) { Stop-WithBlocker 'BACKEND_TASK_NOT_QUIESCENT_BEFORE_HANDOFF' }
+        }
+        if ([string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop).State -eq 'Running') {
+            Stop-WithBlocker 'BACKEND_TASK_NOT_QUIESCENT_BEFORE_HANDOFF'
+        }
         Publish-BackendExpectedHeadHandoff -Path $backendExpectedHeadHandoffPath -Head $ExpectedHead
         Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
         if (-not (Wait-Until -Seconds $TimeoutSeconds -Condition { $null -ne (Test-BackendHealth) })) {

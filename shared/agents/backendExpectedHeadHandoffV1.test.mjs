@@ -31,9 +31,11 @@ test('publication is impossible until every previous consumer is proven stopped'
     for (const taskStopped of [false, true]) {
       for (const listenerWasPresent of [false, true]) {
         for (const listenerStopped of [false, true]) {
-          const result = evaluateBackendExpectedHeadHandoffPublication({ expectedHead: HEAD_A, taskWasRunning, taskStopped, listenerWasPresent, listenerStopped });
-          const requiredStopsHold = (!taskWasRunning || taskStopped) && (!listenerWasPresent || listenerStopped);
-          assert.equal(result.publishAllowed, requiredStopsHold, JSON.stringify({ taskWasRunning, taskStopped, listenerWasPresent, listenerStopped, result }));
+          for (const taskRunningImmediatelyBeforePublish of [false, true]) {
+            const result = evaluateBackendExpectedHeadHandoffPublication({ expectedHead: HEAD_A, taskWasRunning, taskStopped, taskRunningImmediatelyBeforePublish, listenerWasPresent, listenerStopped });
+            const requiredStopsHold = (!taskWasRunning || taskStopped) && !taskRunningImmediatelyBeforePublish && (!listenerWasPresent || listenerStopped);
+            assert.equal(result.publishAllowed, requiredStopsHold, JSON.stringify({ taskWasRunning, taskStopped, taskRunningImmediatelyBeforePublish, listenerWasPresent, listenerStopped, result }));
+          }
         }
       }
     }
@@ -49,6 +51,7 @@ test('an observed handoff never degrades into standalone derivation', () => {
     { expiresAtMs: NOW },
     { issuedAtMs: NOW + 31_000 },
     { expiresAtMs: NOW + 126_000 },
+    { issuedAtMs: NOW + 20_000, expiresAtMs: NOW + 10_000 },
     { currentHead: HEAD_B },
   ];
   for (const hostile of adversarialCases) {
