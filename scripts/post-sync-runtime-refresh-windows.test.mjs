@@ -1,11 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { backendStarterInvocation } from './run-battle-bridge-ignition.mjs';
 
 const restartSource = await readFile(new URL('./windows/restart-approved-stephanos-runtime.ps1', import.meta.url), 'utf8');
 const backendStartSource = await readFile(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
 const ignitionEntrySource = await readFile(new URL('./run-battle-bridge-ignition.mjs', import.meta.url), 'utf8');
+const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+const backendServerPath = fileURLToPath(new URL('../stephanos-server/server.js', import.meta.url));
 
 test('restart helper accepts only backend and mission-worker', () => {
   assert.match(restartSource, /ValidateSet\('backend', 'mission-worker'\)/);
@@ -32,6 +36,34 @@ test('backend entry preflight carries the parent-proven exact head into its Powe
   assert.equal(invocation.args[expectedHeadIndex + 1], provenHead);
   assert.equal(invocation.args.includes(laterHead), false);
   assert.match(ignitionEntrySource, /const currentHead = entryHeadProof\.currentHead;[\s\S]*const starter = backendStarterInvocation\(currentHead\)/);
+});
+
+test('backend Node child rejects checkout drift before loading or listening', () => {
+  const gitExecutable = process.platform === 'win32'
+    ? 'C:\\Program Files\\Git\\cmd\\git.exe'
+    : '/usr/bin/git';
+  const headProof = spawnSync(gitExecutable, ['-C', repoRoot, 'rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 5_000,
+  });
+  assert.equal(headProof.status, 0, headProof.stderr || headProof.error?.message);
+  const actualHead = String(headProof.stdout || '').trim().toLowerCase();
+  assert.match(actualHead, /^[0-9a-f]{40}$/);
+  const driftedExpectedHead = actualHead === 'a'.repeat(40) ? 'b'.repeat(40) : 'a'.repeat(40);
+  const child = spawnSync(process.execPath, [backendServerPath], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      STEPHANOS_BACKEND_SOURCE_HEAD: driftedExpectedHead,
+    },
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 10_000,
+  });
+  assert.notEqual(child.status, 0, 'drifted backend child must fail closed');
+  assert.match(String(child.stderr || ''), /BACKEND_CHILD_EXPECTED_HEAD_MISMATCH/);
+  assert.doesNotMatch(`${child.stdout || ''}\n${child.stderr || ''}`, /\[BACKEND LIVE\] Stephanos server listening/);
 });
 
 test('backend restart terminates only the verified 8787 Stephanos Node listener', () => {
