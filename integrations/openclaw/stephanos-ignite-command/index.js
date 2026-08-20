@@ -49,7 +49,7 @@ export default definePluginEntry({
           return { text: `BATTLE_BRIDGE_RECOVERY_WAKE=QUEUED\nREQUEST_ID=${result.requestId}\nROUTE=${result.route}\nONE_CANONICAL_COORDINATOR=true` };
         }
         if (resolved.command === 'update') {
-          const result = queueBattleBridgeExactHeadFromOpenClaw({
+          const result = await queueBattleBridgeExactHeadFromOpenClaw({
             expectedHead: resolved.expectedHead,
             authenticatedContext: {
               authenticatedByHost: true,
