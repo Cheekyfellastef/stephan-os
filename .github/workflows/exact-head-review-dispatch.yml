@@ -234,6 +234,7 @@ jobs:
         run: node scripts/bind-independent-review-handoff-provenance-v1.mjs
 
       - name: Upload immutable coordinator-to-handoff run receipt
+        id: upload_handoff
         if: >-
           always() &&
           steps.bind_handoff.outcome == 'success'
@@ -262,6 +263,7 @@ jobs:
         if: >-
           always() &&
           steps.bind_handoff.outcome == 'success' &&
+          steps.upload_handoff.outcome == 'success' &&
           steps.retry.outcome == 'success' &&
           steps.retry.outputs.decision == 'NO_MATCHING_RUN'
         env:
