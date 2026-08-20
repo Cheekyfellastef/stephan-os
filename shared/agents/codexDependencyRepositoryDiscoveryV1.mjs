@@ -76,8 +76,8 @@ function sourceClass(path) {
   if (path.startsWith('.github/workflows/') || path.startsWith('.forgejo/workflows/')) return 'WORKFLOW';
   if (path.startsWith('scripts/windows/')) return 'WINDOWS_SCRIPT';
   if (path.startsWith('scripts/')) return 'SCRIPT';
-  if (path.startsWith('shared/agents/')) return 'AGENT_SOURCE';
   if (/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path)) return 'TEST_FIXTURE';
+  if (path.startsWith('shared/agents/')) return 'AGENT_SOURCE';
   if (path.startsWith('docs/')) return 'DURABLE_DOCUMENT';
   return 'OTHER_REPOSITORY_SOURCE';
 }
@@ -99,9 +99,9 @@ function declaredSignals(entry) {
     .filter((signal) => VALID_SIGNALS.has(signal));
 }
 
-function stableFindingId(path, signals, state) {
+function stableFindingId(path, signals, state, semanticIdentity = '') {
   return createHash('sha256')
-    .update(JSON.stringify([path, [...signals].sort(), state]))
+    .update(JSON.stringify([path, [...signals].sort(), state, semanticIdentity]))
     .digest('hex');
 }
 
@@ -115,6 +115,24 @@ function semanticProblems(semantic = {}) {
     }
   }
   return uniqueSorted(problems);
+}
+
+function semanticFindingIdentity(semantic = {}) {
+  return JSON.stringify([
+    text(semantic.touchpointId),
+    text(semantic.component),
+    text(semantic.capabilityClass),
+    text(semantic.codexUseClass),
+    text(semantic.provider),
+    semantic.workCreditCoupled,
+    semantic.active,
+    semantic.criticalPath,
+    text(semantic.owningGoal),
+    text(semantic.currentPrimaryRoute),
+    semantic.hardExternalBoundary === true,
+    semantic.unrelatedWorkIsolation === true,
+    text(semantic.missingGapOwner),
+  ]);
 }
 
 function candidateFromSemantic(entry, path, signals) {
@@ -145,8 +163,10 @@ function normalizeEntry(entry = {}, index = 0) {
   const path = normalizePath(entry.path);
   if (!path) throw new Error(`entry[${index}] path is required`);
   const signals = uniqueSorted([...detectedSignals(entry.content), ...declaredSignals(entry)]);
-  const klass = sourceClass(path);
+  const semanticOperational = entry?.semantic?.operationalDependency === true;
+  if (!signals.length && !semanticOperational) return null;
 
+  const klass = sourceClass(path);
   if (isExcluded(path)) {
     const state = DISCOVERY_STATE.EXCLUDED_GENERATED_OR_RUNTIME;
     return Object.freeze({
@@ -159,8 +179,6 @@ function normalizeEntry(entry = {}, index = 0) {
       candidate: null,
     });
   }
-
-  if (!signals.length && entry?.semantic?.operationalDependency !== true) return null;
 
   if (entry.referenceOnly === true || entry?.semantic?.operationalDependency === false) {
     const state = DISCOVERY_STATE.REFERENCE_ONLY;
@@ -175,16 +193,17 @@ function normalizeEntry(entry = {}, index = 0) {
     });
   }
 
-  if (entry?.semantic?.operationalDependency === true) {
+  if (semanticOperational) {
     const state = DISCOVERY_STATE.STRUCTURED_TOUCHPOINT;
+    const candidate = candidateFromSemantic(entry, path, signals);
     return Object.freeze({
-      findingId: stableFindingId(path, signals, state),
+      findingId: stableFindingId(path, signals, state, semanticFindingIdentity(entry.semantic)),
       path,
       sourceClass: klass,
       providerSignals: signals,
       state,
-      reason: semanticProblems(entry.semantic).length ? 'semantic-contract-incomplete-fail-closed' : 'explicit-operational-dependency',
-      candidate: candidateFromSemantic(entry, path, signals),
+      reason: candidate.discoveryProblems.length ? 'semantic-contract-incomplete-fail-closed' : 'explicit-operational-dependency',
+      candidate,
     });
   }
 

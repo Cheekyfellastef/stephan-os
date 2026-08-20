@@ -74,7 +74,7 @@ test('explicit reference-only documentation is retained without becoming parity 
   assert.equal(result.referenceOnly[0].state, DISCOVERY_STATE.REFERENCE_ONLY);
 });
 
-test('generated and runtime paths are excluded even when they contain provider text', () => {
+test('generated and runtime paths are excluded when they contain provider references', () => {
   const result = discover([
     { path: 'apps/stephanos/dist/index.js', content: 'Codex' },
     { path: 'runtime-activity/status.json', content: 'Work agentic' },
@@ -84,6 +84,16 @@ test('generated and runtime paths are excluded even when they contain provider t
   assert.equal(result.candidateCount, 0);
   assert.equal(result.unclassifiedReferenceCount, 0);
   assert.ok(result.excluded.every((finding) => finding.state === DISCOVERY_STATE.EXCLUDED_GENERATED_OR_RUNTIME));
+});
+
+test('generated and runtime paths without provider evidence do not pollute the inventory', () => {
+  const result = discover([
+    { path: 'apps/stephanos/dist/index.js', content: 'ordinary generated UI bundle' },
+    { path: 'runtime-activity/status.json', content: '{"healthy":true}' },
+  ]);
+  assert.equal(result.entryCount, 2);
+  assert.equal(result.findingCount, 0);
+  assert.equal(result.excludedCount, 0);
 });
 
 test('explicit operational semantics produce one matrix-ready candidate', () => {
@@ -154,6 +164,11 @@ test('entries with no provider signal and no operational semantic assertion do n
   assert.equal(result.findingCount, 0);
 });
 
+test('test fixtures are classified separately from agent source', () => {
+  const result = discover([{ path: 'shared/agents/router.test.mjs', content: 'Codex fixture' }]);
+  assert.equal(result.findings[0].sourceClass, 'TEST_FIXTURE');
+});
+
 test('discovery ordering and finding identity are deterministic', () => {
   const entries = [
     { path: 'scripts/z.mjs', content: 'Codex' },
@@ -185,6 +200,40 @@ test('snapshot diff reports structured additions without claiming semantic refre
   assert.equal(diff.addedStructuredTouchpointIds.length, 1);
   assert.equal(diff.addedUnclassifiedReferenceIds.length, 0);
   assert.equal(diff.requiresSemanticRefresh, false);
+});
+
+test('structured semantic identity changes are visible in snapshot refresh', () => {
+  const path = '.github/workflows/review.yml';
+  const previous = discover([{
+    path,
+    declaredProviderSignals: [PROVIDER_SIGNAL.CODEX],
+    semantic: semantic({ criticalPath: false, codexUseClass: CODEX_USE_CLASS.OPTIONAL_SPECIALIST }),
+  }], '2026-08-20T05:00:00Z');
+  const current = discover([{
+    path,
+    declaredProviderSignals: [PROVIDER_SIGNAL.CODEX],
+    semantic: semantic({ criticalPath: true, codexUseClass: CODEX_USE_CLASS.CRITICAL_PATH }),
+  }], '2026-08-20T06:00:00Z');
+  const diff = diffCodexDependencyRepositoryDiscoveryV1(previous, current);
+  assert.equal(diff.addedStructuredTouchpointIds.length, 1);
+  assert.equal(diff.removedFindingIds.length, 1);
+});
+
+test('proof-only changes do not churn discovery identity for the same semantic dependency', () => {
+  const path = '.github/workflows/review.yml';
+  const previous = discover([{
+    path,
+    declaredProviderSignals: [PROVIDER_SIGNAL.CODEX],
+    semantic: semantic({ proofRefs: ['run:1'] }),
+  }], '2026-08-20T05:00:00Z');
+  const current = discover([{
+    path,
+    declaredProviderSignals: [PROVIDER_SIGNAL.CODEX],
+    semantic: semantic({ proofRefs: ['run:2'] }),
+  }], '2026-08-20T06:00:00Z');
+  const diff = diffCodexDependencyRepositoryDiscoveryV1(previous, current);
+  assert.equal(diff.addedFindingIds.length, 0);
+  assert.equal(diff.removedFindingIds.length, 0);
 });
 
 test('discovery and diff never grant mutation or execution authority', () => {
