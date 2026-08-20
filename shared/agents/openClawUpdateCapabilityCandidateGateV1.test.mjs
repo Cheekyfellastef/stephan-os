@@ -222,3 +222,24 @@ test('accessor, sparse, custom-prototype and revoked replay inputs fail without 
   });
   assert.equal(revoked.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
 });
+
+test('nested staged safety accessors are rejected without invoking hidden authority getters', () => {
+  let getterCalled = false;
+  const value = staged();
+  Object.defineProperty(value.safety, 'mutationAllowed', {
+    enumerable: true,
+    configurable: true,
+    get() {
+      getterCalled = true;
+      return true;
+    },
+  });
+  const result = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: value,
+    capabilityLedger: ledger(),
+    qualificationReplay: [],
+  });
+  assert.equal(getterCalled, false);
+  assert.equal(result.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.ok(result.blockers.includes('STAGED_UPDATE_SAFETY_INVALID'));
+});
