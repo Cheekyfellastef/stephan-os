@@ -73,3 +73,36 @@ test('every real planning dependency is gated away from pull-request verificatio
   assert.match(plan, /permissions:\n      actions: read\n      contents: read\n      issues: read\n      pull-requests: read/);
   assert.match(workflow, /coordinate:\n    needs: plan\n    if: >-\n      needs\.plan\.outputs\.targets != ''/);
 });
+
+test('binds and artifacts the exact handoff for dispatch, wait, escalation and stalled states', () => {
+  const workflow = readWorkflow();
+  const coordinate = workflow.match(/^  coordinate:\n[\s\S]*$/m)?.[0] || '';
+  const bind = workflowStep(
+    coordinate,
+    'Bind exact coordinator-run provenance to the exact review handoff',
+    'Upload immutable coordinator-to-handoff run receipt',
+  );
+  const upload = workflowStep(
+    coordinate,
+    'Upload immutable coordinator-to-handoff run receipt',
+    'Retry one exact failed canonical independent review',
+  );
+
+  assert.match(bind, /id: bind_handoff/);
+  assert.match(bind, /always\(\)/);
+  assert.match(bind, /steps\.coordinate\.outputs\.retry_targets != ''/);
+  assert.match(bind, /steps\.coordinate\.outputs\.retry_targets != '\[\]'/);
+  assert.match(bind, /STEPHANOS_REVIEW_HANDOFF_PR:\s*\$\{\{ matrix\.target\.prNumber \}\}/);
+  assert.match(bind, /STEPHANOS_REVIEW_HANDOFF_HEAD:\s*\$\{\{ steps\.coordinate\.outputs\.exact_head \}\}/);
+  assert.doesNotMatch(bind, /STEPHANOS_REVIEW_HANDOFF_COMMENT_ID/);
+  assert.match(bind, /STEPHANOS_REVIEW_HANDOFF_RUN_RECEIPT_PATH:\s*\$\{\{ runner\.temp \}\}\/independent-review-handoff-run-receipt\.json/);
+  assert.match(bind, /node scripts\/bind-independent-review-handoff-provenance-v1\.mjs/);
+
+  assert.match(upload, /always\(\)/);
+  assert.match(upload, /steps\.bind_handoff\.outcome == 'success'/);
+  assert.match(upload, /uses: actions\/upload-artifact@v4/);
+  assert.match(upload, /name: stephanos-independent-review-handoff-\$\{\{ github\.run_id \}\}-attempt-\$\{\{ github\.run_attempt \}\}-comment-\$\{\{ steps\.bind_handoff\.outputs\.handoff_comment_id \}\}/);
+  assert.match(upload, /path: \$\{\{ runner\.temp \}\}\/independent-review-handoff-run-receipt\.json/);
+  assert.match(upload, /if-no-files-found: error/);
+  assert.match(upload, /overwrite: false/);
+});
