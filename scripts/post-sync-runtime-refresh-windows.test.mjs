@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { backendStarterInvocation } from './run-battle-bridge-ignition.mjs';
 import { createExactHeadSourceLoader } from '../stephanos-server/backend-exact-head-loader.mjs';
+import { fixedBackendExecutable } from '../stephanos-server/services/fixedBackendExecutable.js';
 
 const restartSource = await readFile(new URL('./windows/restart-approved-stephanos-runtime.ps1', import.meta.url), 'utf8');
 const backendStartSource = await readFile(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
@@ -18,6 +19,11 @@ const backendBootstrapSource = await readFile(backendBootstrapPath, 'utf8');
 const backendLoaderSource = await readFile(new URL('../stephanos-server/backend-exact-head-loader.mjs', import.meta.url), 'utf8');
 const backendServerPath = fileURLToPath(new URL('../stephanos-server/server.js', import.meta.url));
 const backendServerSource = await readFile(backendServerPath, 'utf8');
+const workspaceUpdateSource = await readFile(new URL('../stephanos-server/services/workspaceUpdateStatusService.js', import.meta.url), 'utf8');
+const githubAuthSource = await readFile(new URL('../stephanos-server/services/githubAuthResolver.js', import.meta.url), 'utf8');
+const gitRitualSource = await readFile(new URL('../stephanos-server/services/gitRitualStateService.js', import.meta.url), 'utf8');
+const programmeAuthoritySource = await readFile(new URL('../stephanos-server/services/programmeAuthorityService.js', import.meta.url), 'utf8');
+const localShellSource = await readFile(new URL('../stephanos-server/services/localShellService.js', import.meta.url), 'utf8');
 
 function backendHeadProofForObservedHeads(observedHeads, expectedHead) {
   const proofFunctionsStart = backendServerSource.indexOf('function minimalBackendChildGitEnvironment()');
@@ -310,7 +316,7 @@ test('process-bound production bootstrap rejects package, runtime bootstrap, ser
   }
 });
 
-test('Windows backend process creation excludes hostile inherited Node injection variables', { skip: process.platform !== 'win32' }, () => {
+test('Windows backend process creation excludes hostile inherited executable and Node injection state', { skip: process.platform !== 'win32' }, () => {
   const functionStart = backendStartSource.indexOf('function Start-BackendNodeWithMinimalEnvironment');
   const functionEnd = backendStartSource.indexOf('\nWrite-Log "Stephanos Battle Bridge backend start requested', functionStart);
   assert.notEqual(functionStart, -1);
@@ -318,18 +324,17 @@ test('Windows backend process creation excludes hostile inherited Node injection
   const launcherFunction = backendStartSource.slice(functionStart, functionEnd);
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'stephanos-minimal-node-env-'));
   const sentinelPath = join(fixtureRoot, 'hostile-node-options-executed.txt');
-  const hostileGitSentinelPath = join(fixtureRoot, 'hostile-git-executed.txt');
   const fixedGitProofPath = join(fixtureRoot, 'fixed-git-proof.txt');
   const hostilePreloadPath = join(fixtureRoot, 'hostile-preload.cjs');
-  const hostileGitPath = join(fixtureRoot, 'git.cmd');
+  const hostileGitPath = join(fixtureRoot, 'git.exe');
   const stdoutPath = join(fixtureRoot, 'stdout.log');
   const stderrPath = join(fixtureRoot, 'stderr.log');
   const harnessPath = join(fixtureRoot, 'minimal-environment-harness.ps1');
   try {
     writeFileSync(hostilePreloadPath, `require('node:fs').writeFileSync(${JSON.stringify(sentinelPath)}, 'HOSTILE_NODE_OPTIONS_EXECUTED');\n`, 'utf8');
-    writeFileSync(hostileGitPath, `@echo off\r\necho HOSTILE_GIT_EXECUTED>"${hostileGitSentinelPath}"\r\necho hostile git\r\n`, 'utf8');
+    copyFileSync(process.execPath, hostileGitPath);
     const quoted = (value) => `'${String(value).replaceAll("'", "''")}'`;
-    const childCode = `const{execFileSync}=require('node:child_process');require('node:fs').writeFileSync(${JSON.stringify(fixedGitProofPath)},execFileSync('git',['--version'],{encoding:'utf8'}));`;
+    const childCode = `const{execFileSync}=require('node:child_process');require('node:fs').writeFileSync(${JSON.stringify(fixedGitProofPath)},execFileSync(${JSON.stringify(fixedBackendExecutable('git', 'win32'))},['--version'],{encoding:'utf8'}));`;
     const childEval = `eval(Buffer.from('${Buffer.from(childCode, 'utf8').toString('base64')}','base64').toString())`;
     const harness = [
       `$canonicalNode = ${quoted(process.execPath)}`,
@@ -354,10 +359,23 @@ test('Windows backend process creation excludes hostile inherited Node injection
     });
     assert.equal(result.status, 0, `${result.stderr || ''}\n${readFileSync(stderrPath, 'utf8')}`);
     assert.equal(existsSync(sentinelPath), false);
-    assert.equal(existsSync(hostileGitSentinelPath), false);
     assert.match(readFileSync(fixedGitProofPath, 'utf8'), /git version/i);
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('backend services pin Windows child executables instead of searching the repository current directory', () => {
+  assert.equal(fixedBackendExecutable('git', 'win32'), 'C:\\Program Files\\Git\\cmd\\git.exe');
+  assert.equal(fixedBackendExecutable('githubCli', 'win32'), 'C:\\Program Files\\GitHub CLI\\gh.exe');
+  assert.equal(fixedBackendExecutable('powershell', 'win32'), 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+  assert.match(workspaceUpdateSource, /execFileAsync\(fixedBackendExecutable\('git'\)/);
+  assert.match(githubAuthSource, /execImpl\(fixedBackendExecutable\('githubCli'\)/);
+  assert.match(gitRitualSource, /spawnSyncImpl\(fixedBackendExecutable\('git'\)/);
+  assert.match(programmeAuthoritySource, /execFileImpl\(fixedBackendExecutable\('git'\)/);
+  assert.match(localShellSource, /fixedBackendExecutable\('powershell'/);
+  for (const source of [workspaceUpdateSource, githubAuthSource, gitRitualSource, programmeAuthoritySource, localShellSource]) {
+    assert.doesNotMatch(source, /(?:execFileAsync|execImpl|spawnSyncImpl|execFileImpl)\(['"](?:git|gh|powershell\.exe)['"]/);
   }
 });
 
