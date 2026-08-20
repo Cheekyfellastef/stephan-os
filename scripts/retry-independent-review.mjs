@@ -6,6 +6,7 @@ import {
 } from '../shared/agents/independentReviewRetryPlanner.mjs';
 import {
   buildIndependentReviewRunQueryV1,
+  buildIndependentReviewWorkflowDispatchRunQueryV1,
   selectIndependentReviewRunCandidatesV1,
 } from '../shared/agents/independentReviewRunDiscoveryV1.mjs';
 import {
@@ -96,6 +97,9 @@ function mapRun(run) {
     path: text(run?.path),
     event: text(run?.event),
     repository: { full_name: text(run?.repository?.full_name) },
+    head_branch: text(run?.head_branch),
+    head_sha: text(run?.head_sha).toLowerCase(),
+    display_title: text(run?.display_title),
     status: text(run?.status),
     conclusion: text(run?.conclusion),
     created_at: run?.created_at ?? null,
@@ -122,22 +126,37 @@ async function loadCanonicalWorkflow(owner, repo) {
   };
 }
 
-async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, headRef, expectedHead, expectedBase) {
-  // The workflow executes trusted code from the base, while the Actions REST
-  // run identity reports the pull request feature commit as run.head_sha.
-  // Query that exact feature identity, then require the embedded PR binding to
-  // prove the exact branch, feature head and trusted base independently.
-  const query = buildIndependentReviewRunQueryV1({ workflowId, expectedHead });
-  const trustedQueryPrefix = `/actions/workflows/${workflowId}/runs?event=pull_request_target`;
-  if (!query.startsWith(trustedQueryPrefix)) throw new Error('review-run discovery escaped the trusted workflow/event route');
-  const payload = await githubRequest(`/repos/${owner}/${repo}${query}`);
+function exactListedRuns(payload, label) {
   const listed = payload?.workflow_runs;
   if (!Array.isArray(listed)) {
-    throw new Error('bounded exact-head review-run payload is not workflow_runs');
+    throw new Error(`bounded exact-head ${label} review-run payload is not workflow_runs`);
   }
   if (positiveInteger(payload?.total_count) > listed.length) {
-    throw new Error('bounded exact-head review-run query exceeded 100 records');
+    throw new Error(`bounded exact-head ${label} review-run query exceeded 100 records`);
   }
+  return listed;
+}
+
+async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, headRef, expectedHead, expectedBase) {
+  // Legacy pull_request_target runs are keyed by the feature head reported by
+  // Actions REST. Stage-2 workflow_dispatch runs execute trusted main and are
+  // keyed by the exact base; their run-name carries the exact PR/head/base.
+  const targetQuery = buildIndependentReviewRunQueryV1({ workflowId, expectedHead });
+  const dispatchQuery = buildIndependentReviewWorkflowDispatchRunQueryV1({ workflowId, expectedBase });
+  const trustedTargetPrefix = `/actions/workflows/${workflowId}/runs?event=pull_request_target`;
+  const trustedDispatchPrefix = `/actions/workflows/${workflowId}/runs?event=workflow_dispatch`;
+  if (!targetQuery.startsWith(trustedTargetPrefix) || !dispatchQuery.startsWith(trustedDispatchPrefix)) {
+    throw new Error('review-run discovery escaped the trusted workflow/event routes');
+  }
+
+  const [targetPayload, dispatchPayload] = await Promise.all([
+    githubRequest(`/repos/${owner}/${repo}${targetQuery}`),
+    githubRequest(`/repos/${owner}/${repo}${dispatchQuery}`),
+  ]);
+  const listed = [
+    ...exactListedRuns(targetPayload, 'pull_request_target'),
+    ...exactListedRuns(dispatchPayload, 'workflow_dispatch'),
+  ];
   const candidates = selectIndependentReviewRunCandidatesV1({
     runs: listed,
     prNumber,
@@ -203,6 +222,7 @@ async function main() {
   console.log(`INDEPENDENT_REVIEW_RETRY_BASE=${plan.exactBase}`);
   console.log(`INDEPENDENT_REVIEW_RETRY_RUN_ID=${plan.runId ?? ''}`);
   console.log(`INDEPENDENT_REVIEW_RETRY_ATTEMPT=${plan.runAttempt ?? ''}`);
+  console.log(`INDEPENDENT_REVIEW_RETRY_EVENT=${plan.runEvent ?? ''}`);
   console.log(`INDEPENDENT_REVIEW_RETRY_REASON=${plan.reason}`);
 
   if (plan.decision === INDEPENDENT_REVIEW_RETRY_DECISION.RERUN_FAILED_JOBS) {
