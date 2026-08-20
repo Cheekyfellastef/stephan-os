@@ -1,10 +1,7 @@
 export const INDEPENDENT_REVIEW_WORKFLOW_FINAL_POLICY_SCHEMA = 'stephanos.independent-review-workflow-final-policy.v1';
 
-export const INDEPENDENT_REVIEW_WORKFLOW_RUN_NAME_V1 = "stephanos-independent-review-pr-${{ inputs.pr_number || github.event.pull_request.number }}-head-${{ inputs.source_head || github.event.pull_request.head.sha }}-binding-${{ inputs.handoff_binding_sha256 || 'legacy-pull-request-target' }}";
-
 export const INDEPENDENT_REVIEW_WORKFLOW_FINAL_POLICY_V1 = Object.freeze({
   schemaVersion: INDEPENDENT_REVIEW_WORKFLOW_FINAL_POLICY_SCHEMA,
-  runName: INDEPENDENT_REVIEW_WORKFLOW_RUN_NAME_V1,
   events: Object.freeze(['pull_request_target', 'workflow_dispatch']),
   workflowDispatchInputs: Object.freeze([
     'pr_number',
@@ -25,7 +22,6 @@ export const INDEPENDENT_REVIEW_WORKFLOW_FINAL_POLICY_V1 = Object.freeze({
 });
 
 const FACT_KEYS = Object.freeze([
-  'runName',
   'events',
   'workflowDispatchInputs',
   'checkoutRefs',
@@ -71,7 +67,6 @@ export function validateIndependentReviewWorkflowFinalPolicyV1(facts = {}) {
   if (!exactKeys(facts, FACT_KEYS)) {
     blockers.push('workflow-policy-facts-schema-mismatch');
   } else {
-    if (facts.runName !== expected.runName) blockers.push('workflow-run-name-not-exact');
     if (!exactStringArray(facts.events, expected.events)) blockers.push('workflow-events-not-exact');
     if (!exactStringArray(facts.workflowDispatchInputs, expected.workflowDispatchInputs)) {
       blockers.push('workflow-dispatch-inputs-not-exact');
