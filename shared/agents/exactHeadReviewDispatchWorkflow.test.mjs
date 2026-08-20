@@ -73,3 +73,26 @@ test('every real planning dependency is gated away from pull-request verificatio
   assert.match(plan, /permissions:\n      actions: read\n      contents: read\n      issues: read\n      pull-requests: read/);
   assert.match(workflow, /coordinate:\n    needs: plan\n    if: >-\n      needs\.plan\.outputs\.targets != ''/);
 });
+
+test('publishes an immutable exact-run artifact only after the handoff provenance binder succeeds', () => {
+  const workflow = readWorkflow();
+  const coordinate = workflow.match(/^  coordinate:\n[\s\S]*$/m)?.[0] || '';
+  const bind = workflowStep(
+    coordinate,
+    'Bind exact coordinator-run provenance to a new review handoff',
+    'Upload immutable coordinator-to-handoff run receipt',
+  );
+  const upload = workflowStep(
+    coordinate,
+    'Upload immutable coordinator-to-handoff run receipt',
+    'Retry one exact failed canonical independent review',
+  );
+
+  assert.match(bind, /STEPHANOS_REVIEW_HANDOFF_RUN_RECEIPT_PATH:\s*\$\{\{ runner\.temp \}\}\/independent-review-handoff-run-receipt\.json/);
+  assert.match(bind, /node scripts\/bind-independent-review-handoff-provenance-v1\.mjs/);
+  assert.match(upload, /uses: actions\/upload-artifact@v4/);
+  assert.match(upload, /name: stephanos-independent-review-handoff-\$\{\{ github\.run_id \}\}-attempt-\$\{\{ github\.run_attempt \}\}-comment-\$\{\{ steps\.coordinate\.outputs\.comment_id \}\}/);
+  assert.match(upload, /path: \$\{\{ runner\.temp \}\}\/independent-review-handoff-run-receipt\.json/);
+  assert.match(upload, /if-no-files-found: error/);
+  assert.match(upload, /overwrite: false/);
+});
