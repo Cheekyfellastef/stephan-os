@@ -64,6 +64,16 @@ const defaultRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 const SHA40 = /^[0-9a-f]{40}$/;
 const SOURCE_STATUS_ARGS = Object.freeze(['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
 
+export function evaluateBattleBridgeMutationHeadBinding({ expectedHead = '', observedHead = '' } = {}) {
+  const expected = String(expectedHead || '').trim().toLowerCase();
+  const observed = String(observedHead || '').trim().toLowerCase();
+  return Object.freeze({
+    ok: SHA40.test(expected) && SHA40.test(observed) && observed === expected,
+    expectedHead: expected,
+    observedHead: observed,
+  });
+}
+
 function structuredSourceTruthBlocker({
   id = 'source-truth-unproven',
   code = 'CANONICAL_SOURCE_TRUTH_UNPROVEN',
@@ -706,11 +716,7 @@ export async function runApprovedBackend8787Start({
         commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY,
       });
     }
-    sourceHeadProof = Object.freeze({
-      ok: SHA40.test(expected) && SHA40.test(observedHead) && observedHead === expected,
-      expectedHead: expected,
-      observedHead,
-    });
+    sourceHeadProof = evaluateBattleBridgeMutationHeadBinding({ expectedHead: expected, observedHead });
     if (!sourceHeadProof.ok) {
       return Object.freeze({
         started: false,
@@ -771,7 +777,7 @@ async function probeOpenClawGateway18789Health({ fetchFn = globalThis.fetch } = 
   return { ready: Boolean(healthResponse.ok && openClawHealthReady(healthResponse.json || {})), healthUrl, identityUrl, health: healthResponse, identity };
 }
 
-export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 60000, retryIntervalMs = 500, env = process.env, token = '', approved = false, platform = process.platform, existsSync } = {}) {
+export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 60000, retryIntervalMs = 500, env = process.env, token = '', approved = false, platform = process.platform, existsSync, expectedHead = '', currentHeadFn = getCurrentGitHead, cwd = defaultRepoRoot, spawnSyncFn = spawnSync } = {}) {
   const target = buildOpenClawGatewayStartupTarget({ env, token, approved });
   const logRoot = path.resolve(sharedWorkspace, 'logs', 'openclaw-gateway-18789-start');
   await fs.mkdir(logRoot, { recursive: true });
@@ -826,6 +832,23 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
     strategy: '',
   };
   const exitState = { code: null, signal: null, error: execution.ok ? null : execution.reason, execution: safeExecution, commandText: target.commandText };
+  let sourceHeadProof = null;
+  if (expectedHead && execution.ok) {
+    let observedHead = '';
+    try {
+      observedHead = String(currentHeadFn({ cwd, environment: env, platform, spawnSyncFn }) || '').trim().toLowerCase();
+    } catch (error) {
+      exitState.error = error?.message || String(error);
+    }
+    sourceHeadProof = evaluateBattleBridgeMutationHeadBinding({ expectedHead, observedHead });
+    if (!sourceHeadProof.ok) {
+      exitState.error ||= 'canonical-source-head-mismatch';
+      await fs.writeFile(stdoutLogPath, '');
+      await fs.writeFile(stderrLogPath, '');
+      await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
+      return { started: false, ready: false, exitCode: null, error: exitState.error, reason: 'canonical-source-head-mismatch', sourceHeadProof, logs, logPath, target, execution: safeExecution, healthProof: existingProof, pid: null };
+    }
+  }
   try {
     if (execution.ok) child = spawnFn(execution.command, execution.commandArgs, { cwd: path.resolve(sharedWorkspace), detached: true, stdio: ['ignore', 'pipe', 'pipe'], shell: false, env: childEnv });
   } catch (error) {
@@ -843,13 +866,13 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
     try { proof = await probeOpenClawGateway18789Health({ fetchFn }); } catch (error) { proof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
     await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
     await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
-    if (proof.ready) return { started: true, ready: true, exitCode: exitState.code, exit: exitState, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
+    if (proof.ready) return { started: true, ready: true, exitCode: exitState.code, exit: exitState, sourceHeadProof, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
     if (exitState.error || exitState.signal !== null || (exitState.code !== null && exitState.code !== 0)) break;
     if (Date.now() < deadline && retryIntervalMs > 0) await new Promise((resolve) => setTimeout(resolve, retryIntervalMs));
   } while (Date.now() <= deadline);
   await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
   await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
-  return { started: !exitState.error, ready: false, exitCode: exitState.code, exit: exitState, error: exitState.error, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
+  return { started: !exitState.error, ready: false, exitCode: exitState.code, exit: exitState, error: exitState.error, sourceHeadProof, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
 }
 
 export function getCurrentGitHead({
@@ -984,6 +1007,13 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return { ok: false, status, writes };
   };
+  const runExactHeadBoundMutation = async ({ phase, blockerId, mutate }) => {
+    const sourceProof = reproveExpectedHead(blockerId);
+    if (!sourceProof.ok) {
+      return { ok: false, blockedResult: await blockForSourceReproof(sourceProof, phase) };
+    }
+    return { ok: true, value: await mutate({ expectedHead, sourceProof }) };
+  };
   const fixedGitExecFile = createCanonicalSupervisorGitExecFile({ cwd, environment, platform, spawnSyncFn });
   const collectFacts = (options = {}) => collectFactsFn({ ...options, execFile: fixedGitExecFile });
   status.sourceTruthVerdict = { state: 'ready', verdict: canonicalSourceTruth.publicationState, expectedHead };
@@ -1003,7 +1033,13 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
 
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'backend 8787', phaseState: isReady(report, 'backend') ? 'ready' : 'running' }); await persist();
   if (!isReady(report, 'backend')) {
-    const startResult = await backendStartFn({ sharedWorkspace, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY, expectedHead, cwd, environment, platform, spawnSyncFn });
+    const mutation = await runExactHeadBoundMutation({
+      phase: 'backend 8787',
+      blockerId: 'ignition-exact-head-changed-before-backend-start',
+      mutate: () => backendStartFn({ sharedWorkspace, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY, expectedHead, cwd, environment, platform, spawnSyncFn }),
+    });
+    if (!mutation.ok) return mutation.blockedResult;
+    const startResult = mutation.value;
     status.services.backend8787.repair = { commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY, logPath: startResult?.logPath || startResult?.logs?.logPath || '', logs: startResult?.logs || null, exitCode: startResult?.exitCode ?? startResult?.exit?.code ?? null };
     status.phases['backend 8787'].logPath = startResult?.logPath || startResult?.logs?.logPath || '';
     await persist();
@@ -1022,7 +1058,13 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
 
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: isReady(report, 'openclaw-gateway') ? 'ready' : 'running' }); await persist();
   if (!isReady(report, 'openclaw-gateway')) {
-    const startResult = await openClawStartFn({ sharedWorkspace });
+    const mutation = await runExactHeadBoundMutation({
+      phase: 'OpenClaw gateway 18789',
+      blockerId: 'ignition-exact-head-changed-before-openclaw-start',
+      mutate: () => openClawStartFn({ sharedWorkspace, expectedHead, cwd, env: environment, platform, spawnSyncFn }),
+    });
+    if (!mutation.ok) return mutation.blockedResult;
+    const startResult = mutation.value;
     status.services.openClaw18789.start = { startupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE, commandText: startResult?.target?.commandText || '', execution: startResult?.execution || startResult?.exit?.execution || null, logPath: startResult?.logPath || startResult?.logs?.logPath || '', logs: startResult?.logs || null, exitCode: startResult?.exitCode ?? startResult?.exit?.code ?? null, healthProof: startResult?.healthProof || null };
     status.phases['OpenClaw gateway 18789'].logPath = startResult?.logPath || startResult?.logs?.logPath || '';
     await persist();
@@ -1054,7 +1096,13 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   if (report.finalVerdict === 'partial-ui-missing' || !isReady(report, 'stephanos-ui')) {
     status = projectBattleBridgeSupervisorStatus({ status, phase: 'Stephanos UI 4173', phaseState: 'running' }); await persist();
     const repairOutput = { chunks: '' };
-    const code = await repairFn({ sharedWorkspace, dryRun: false, expectedHead, collectFactsFn: collectFacts, stdout: { write: (chunk) => { repairOutput.chunks += chunk; } } });
+    const mutation = await runExactHeadBoundMutation({
+      phase: 'Stephanos UI 4173',
+      blockerId: 'ignition-exact-head-changed-before-ui-repair',
+      mutate: () => repairFn({ sharedWorkspace, dryRun: false, expectedHead, collectFactsFn: collectFacts, stdout: { write: (chunk) => { repairOutput.chunks += chunk; } } }),
+    });
+    if (!mutation.ok) return mutation.blockedResult;
+    const code = mutation.value;
     let repairResult = null;
     try { repairResult = JSON.parse(repairOutput.chunks); } catch {}
     const uiBlocker = repairResult?.ready ? null : requiredServiceBlocker('stephanos-ui-4173-missing', 'Stephanos UI 4173 did not pass readiness proof after guarded repair.', repairResult?.nextOperatorAction || `Inspect UI repair logs, then rerun proof. Approved command: ${UI_4173_REPAIR_AUTHORITY ? 'npm run stephanos:ignite:launcher-root' : 'source adapter required'}`);
@@ -1073,7 +1121,13 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     if (!servedRuntimeProof.ready) {
       status = projectBattleBridgeSupervisorStatus({ status, phase: 'Stephanos UI 4173', phaseState: 'running' }); await persist();
       const repairOutput = { chunks: '' };
-      const code = await repairFn({ sharedWorkspace, dryRun: false, expectedHead, collectFactsFn: collectFacts, stdout: { write: (chunk) => { repairOutput.chunks += chunk; } } });
+      const mutation = await runExactHeadBoundMutation({
+        phase: 'Stephanos UI 4173',
+        blockerId: 'ignition-exact-head-changed-before-ui-repair',
+        mutate: () => repairFn({ sharedWorkspace, dryRun: false, expectedHead, collectFactsFn: collectFacts, stdout: { write: (chunk) => { repairOutput.chunks += chunk; } } }),
+      });
+      if (!mutation.ok) return mutation.blockedResult;
+      const code = mutation.value;
       let repairResult = null;
       try { repairResult = JSON.parse(repairOutput.chunks); } catch {}
       await publisherFn({ sharedWorkspace });

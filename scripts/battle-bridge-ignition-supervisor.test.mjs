@@ -20,6 +20,7 @@ import {
   runCanonicalSupervisorHousekeep,
   runCanonicalIgnitionSourceTruthReport,
   defaultBattleBridgeSharedWorkspace,
+  evaluateBattleBridgeMutationHeadBinding,
   runBattleBridgeIgnitionSupervisor,
   evaluateServedRuntimeExactHeadProof,
 } from './battle-bridge-ignition-supervisor.mjs';
@@ -179,6 +180,17 @@ test('supervisor status model exposes required phases and states', () => {
   assert.equal(updated.currentPhase, 'backend 8787');
   assert.equal(updated.services.backend8787.ready, true);
   assert.equal(updated.trafficLight, 'blue');
+});
+
+test('service mutation head binding accepts only the same exact 40-character head', () => {
+  const head = 'a'.repeat(40);
+  assert.deepEqual(evaluateBattleBridgeMutationHeadBinding({ expectedHead: head, observedHead: head }), {
+    ok: true,
+    expectedHead: head,
+    observedHead: head,
+  });
+  assert.equal(evaluateBattleBridgeMutationHeadBinding({ expectedHead: head, observedHead: 'b'.repeat(40) }).ok, false);
+  assert.equal(evaluateBattleBridgeMutationHeadBinding({ expectedHead: 'abc1234', observedHead: 'abc1234' }).ok, false);
 });
 
 test('publisher is refreshed before UI repair and stale records are refreshed by supervisor', async () => {
@@ -1084,6 +1096,32 @@ test('approved OpenClaw gateway start reuses healthy 18789 and avoids duplicate 
   assert.match(result.logPath, /logs[\\/]openclaw-gateway-18789-start/);
 });
 
+test('approved OpenClaw gateway start blocks exact-head drift immediately before spawn', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-head-drift-'));
+  const expectedHead = 'a'.repeat(40);
+  const spawnCalls = [];
+  const result = await runApprovedOpenClawGateway18789Start({
+    sharedWorkspace: workspace,
+    token: 'test-token',
+    approved: true,
+    expectedHead,
+    currentHeadFn: () => 'b'.repeat(40),
+    readyTimeoutMs: 1,
+    retryIntervalMs: 0,
+    spawnFn: (...args) => { spawnCalls.push(args); throw new Error('must not spawn after source drift'); },
+    fetchFn: async () => { throw new Error('gateway down before start'); },
+  });
+
+  assert.equal(spawnCalls.length, 0);
+  assert.equal(result.ready, false);
+  assert.equal(result.reason, 'canonical-source-head-mismatch');
+  assert.deepEqual(result.sourceHeadProof, {
+    ok: false,
+    expectedHead,
+    observedHead: 'b'.repeat(40),
+  });
+});
+
 test('supervisor calls approved OpenClaw startup adapter when 18789 is missing', async () => {
   const calls = [];
   let collectCount = 0;
@@ -1097,6 +1135,30 @@ test('supervisor calls approved OpenClaw startup adapter when 18789 is missing',
   assert.equal(result.ok, true);
   assert.equal(calls.length, 1);
   assert.equal(result.status.services.openClaw18789.start.logPath, '/canonical/openclaw-log');
+});
+
+test('supervisor blocks source drift before invoking the OpenClaw startup mutator', async () => {
+  const expectedHead = 'a'.repeat(40);
+  let sourceTruthReads = 0;
+  let openClawStarts = 0;
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => {
+      sourceTruthReads += 1;
+      const head = sourceTruthReads === 1 ? expectedHead : 'b'.repeat(40);
+      return canonicalSourceTruth({ head, originHead: head });
+    },
+    collectFactsFn: async () => factsFor({ openclaw: false }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-openclaw-missing' }),
+    openClawStartFn: async () => { openClawStarts += 1; return { ready: true }; },
+    stdout: { write() {} },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'ignition-exact-head-changed-before-openclaw-start');
+  assert.equal(openClawStarts, 0);
+  assert.equal(sourceTruthReads, 2);
 });
 
 test('OpenClaw command failure blocks with start-failed and does not run UI repair', async () => {
