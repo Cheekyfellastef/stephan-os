@@ -63,7 +63,35 @@ const protectedWorkflowPaths = [
   '.github/workflows/independent-merge-security-review.yml',
 ];
 
+const independentReviewWorkflowV1Fixture = [
+  'name: Independent Merge Security Review',
+  '',
+  'on:',
+  '  pull_request_target:',
+  '    branches: [main]',
+  '    types: [opened, synchronize, reopened, ready_for_review]',
+  '',
+  'permissions: {}',
+  '',
+  'jobs:',
+  '  independent-security-review:',
+  '    runs-on: ubuntu-latest',
+  '    permissions:',
+  '      actions: read',
+  '      contents: read',
+  '      issues: write',
+  '      pull-requests: read',
+  '    steps:',
+  '      - uses: actions/checkout@v4',
+  '        with:',
+  '          ref: ${{ github.event.pull_request.base.sha }}',
+  '          persist-credentials: false',
+  '          fetch-depth: 1',
+  '',
+].join('\n');
+
 function protectedWorkflowContent(path) {
+  if (path === INDEPENDENT_REVIEW_WORKFLOW_PATH) return independentReviewWorkflowV1Fixture;
   return readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 }
 
