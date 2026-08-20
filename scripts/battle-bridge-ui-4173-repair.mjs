@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
@@ -8,6 +8,10 @@ import { dirname, resolve, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectLauncherReadinessLiveFacts } from './launcher-readiness-live-facts.mjs';
 import { isAllowedLauncherStartCommand, planLauncherReadiness } from './launcher-readiness-planner.mjs';
+import {
+  battleBridgeCanonicalRepositoryArgs,
+  resolveBattleBridgeGitExecution,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 export const UI_4173_REPAIR_SCHEMA = 'stephanos.battle-bridge-ui-4173-repair-plan.v1';
 const CANONICAL_NPM_SCRIPT_ARGS = Object.freeze(['run', 'stephanos:ignite:launcher-root']);
@@ -17,6 +21,7 @@ const UI_ROOT = resolve(REPO_ROOT, 'stephanos-ui');
 const REQUIRED_UI_BUILD_DEPENDENCIES = Object.freeze(['vite', '@vitejs/plugin-react']);
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
 const NO_LOCKFILE_INSTALL_ACTION = 'npm install --prefix .\\stephanos-ui --no-audit --no-fund --package-lock=false';
+const SHA40 = /^[0-9a-f]{40}$/;
 
 export function resolveUi4173RepairInvocation(platform = process.platform) {
   if (platform === 'win32') {
@@ -223,7 +228,38 @@ function spawnUi4173Repair({ spawnFn, platform, logs }) {
   });
 }
 
-export async function runUi4173Repair({ sharedWorkspace = null, dryRun = true, spawnFn = spawn, stdout = process.stdout, platform = process.platform, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, preflightDepsFn = preflightUiBuildDependencies, probeFetch = fetch, readyTimeoutMs = DEFAULT_READY_TIMEOUT_MS } = {}) {
+export function getUi4173RepairCurrentGitHead({
+  cwd = REPO_ROOT,
+  platform = process.platform,
+  environment = process.env,
+  spawnSyncFn = spawnSync,
+} = {}) {
+  const gitExecution = resolveBattleBridgeGitExecution({ platform, environment });
+  const result = spawnSyncFn(
+    gitExecution.executable,
+    [
+      ...gitExecution.fixedConfigArgs,
+      ...battleBridgeCanonicalRepositoryArgs(cwd),
+      'rev-parse', 'HEAD',
+    ],
+    {
+      cwd,
+      env: gitExecution.environment,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout: 120_000,
+    },
+  );
+  if (result?.error || result?.status !== 0) {
+    throw new Error(`UI_4173_FIXED_CURRENT_HEAD_FAILED:${result?.error?.message || result?.status || 'unknown'}`);
+  }
+  const head = String(result?.stdout || '').trim().toLowerCase();
+  if (!SHA40.test(head)) throw new Error('UI_4173_FIXED_CURRENT_HEAD_INVALID');
+  return head;
+}
+
+export async function runUi4173Repair({ sharedWorkspace = null, dryRun = true, expectedHead = '', currentHeadFn = getUi4173RepairCurrentGitHead, spawnFn = spawn, stdout = process.stdout, platform = process.platform, environment = process.env, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, preflightDepsFn = preflightUiBuildDependencies, probeFetch = fetch, readyTimeoutMs = DEFAULT_READY_TIMEOUT_MS } = {}) {
   const facts = await collectFactsFn({ sharedWorkspace });
   const readinessReport = plannerFn(facts);
   const result = evaluateUi4173Repair({ readinessReport, dryRun });
@@ -242,6 +278,33 @@ export async function runUi4173Repair({ sharedWorkspace = null, dryRun = true, s
       return 2;
     }
     const logs = createRepairLogs(sharedWorkspace);
+    const expected = String(expectedHead || '').trim().toLowerCase();
+    let observedHead = '';
+    let headProofError = '';
+    try {
+      observedHead = String(currentHeadFn({ cwd: REPO_ROOT, platform, environment }) || '').trim().toLowerCase();
+    } catch (error) {
+      headProofError = error?.message || String(error);
+    }
+    if (!SHA40.test(expected) || !SHA40.test(observedHead) || observedHead !== expected) {
+      result.action = 'blocked';
+      result.allowedToStart = false;
+      result.started = false;
+      result.expectedHead = expected;
+      result.observedHead = observedHead;
+      result.blockers.push({
+        id: !SHA40.test(expected) ? 'ui-repair-expected-head-unproven' : (!SHA40.test(observedHead) ? 'ui-repair-current-head-unproven' : 'ui-repair-exact-head-changed'),
+        detail: 'The fixed current source head must match the supervisor-proven head immediately before UI launch.',
+        expectedHead: expected,
+        observedHead,
+        ...(headProofError ? { error: headProofError } : {}),
+      });
+      result.logs = logMetadata(logs);
+      stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 2;
+    }
+    result.expectedHead = expected;
+    result.observedHead = observedHead;
     const spawnResult = await spawnUi4173Repair({ spawnFn, platform, logs });
     if (!spawnResult.ok) {
       result.action = 'start-ui-4173-failed';
@@ -284,11 +347,12 @@ export async function runUi4173Repair({ sharedWorkspace = null, dryRun = true, s
 }
 
 function parseArgs(argv) {
-  const args = { dryRun: true, sharedWorkspace: null };
+  const args = { dryRun: true, sharedWorkspace: null, expectedHead: '' };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--dry-run' || argv[i] === '--report-only') args.dryRun = true;
     else if (argv[i] === '--start' || argv[i] === '--repair') args.dryRun = false;
     else if (argv[i] === '--shared-workspace') { args.sharedWorkspace = argv[i + 1]; i += 1; }
+    else if (argv[i] === '--expected-head') { args.expectedHead = argv[i + 1]; i += 1; }
     else if (argv[i] === '--json') {}
     else throw new Error(`Unknown argument: ${argv[i]}`);
   }
