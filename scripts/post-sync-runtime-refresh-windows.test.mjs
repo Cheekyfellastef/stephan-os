@@ -42,9 +42,14 @@ test('worker restart requires task-owned process stop and a fresh exact-head hea
 });
 
 test('backend starter proves canonical main and writes a bounded exact-head runtime receipt', () => {
+  assert.match(backendStartSource, /\[string\]\$ExpectedHead = ''/);
   assert.match(backendStartSource, /branch --show-current/);
   assert.match(backendStartSource, /rev-parse HEAD/);
   assert.match(backendStartSource, /branch -ne 'main'/);
+  assert.match(backendStartSource, /upstream -ne 'origin\/main'/);
+  assert.match(backendStartSource, /originHead -ne \$headSha/);
+  assert.match(backendStartSource, /\$boundExpectedHead = if \(\$providedExpectedHead\) \{ \$providedExpectedHead \} else \{ \$headSha \}/);
+  assert.match(backendStartSource, /observedHead -ne \$boundExpectedHead/);
   assert.match(backendStartSource, /stephanos-backend-runtime\.json/);
   assert.match(backendStartSource, /headSha = \$HeadSha/);
   assert.match(backendStartSource, /taskName = 'Stephanos Battle Bridge Backend'/);

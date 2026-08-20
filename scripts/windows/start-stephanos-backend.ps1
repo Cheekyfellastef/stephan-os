@@ -2,7 +2,7 @@
 param(
     [int]$StartupTimeoutSeconds = 90,
     [int]$PollIntervalSeconds = 3,
-    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedHead
+    [string]$ExpectedHead = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -187,8 +187,8 @@ function Assert-ExpectedHeadImmediatelyBeforeMutation {
     if ($headExitCode -ne 0) { throw "Canonical Git head proof failed before ${Mutation}." }
     $observedHead = [string]($headOutput | Select-Object -First 1)
     $observedHead = $observedHead.Trim().ToLowerInvariant()
-    if ($observedHead -ne $ExpectedHead.ToLowerInvariant()) {
-        throw "BACKEND_START_EXPECTED_HEAD_MISMATCH before ${Mutation}: expected=$ExpectedHead observed=$observedHead"
+    if ($observedHead -ne $boundExpectedHead) {
+        throw "BACKEND_START_EXPECTED_HEAD_MISMATCH before ${Mutation}: expected=$boundExpectedHead observed=$observedHead"
     }
     return $observedHead
 }
@@ -211,7 +211,22 @@ $branch = if ($branchRaw) { ([string]$branchRaw).Trim() } else { '' }
 $headSha = if ($headRaw) { ([string]$headRaw).Trim().ToLowerInvariant() } else { '' }
 if ($branch -ne 'main') { throw 'Backend startup requires canonical branch main.' }
 if ($headSha -notmatch '^[0-9a-f]{40}$') { throw 'Backend startup could not prove a canonical 40-character Git head.' }
-if ($headSha -ne $ExpectedHead.ToLowerInvariant()) { throw "Backend startup expected-head binding mismatch: expected=$ExpectedHead observed=$headSha" }
+$providedExpectedHead = ([string]$ExpectedHead).Trim().ToLowerInvariant()
+if ($providedExpectedHead -and $providedExpectedHead -notmatch '^[0-9a-f]{40}$') { throw 'Backend startup received an invalid expected-head binding.' }
+$upstreamOutput = @(& $canonicalGit -C $repoRoot rev-parse '--abbrev-ref' '--symbolic-full-name' '@{u}' 2>$null)
+$upstreamExitCode = $LASTEXITCODE
+if ($upstreamExitCode -ne 0) { throw 'Backend startup could not prove the canonical upstream.' }
+$upstream = [string]($upstreamOutput | Select-Object -First 1)
+$upstream = $upstream.Trim()
+if ($upstream -ne 'origin/main') { throw "Backend startup requires canonical upstream origin/main; observed=$upstream" }
+$originHeadOutput = @(& $canonicalGit -C $repoRoot rev-parse origin/main 2>$null)
+$originHeadExitCode = $LASTEXITCODE
+if ($originHeadExitCode -ne 0) { throw 'Backend startup could not prove origin/main.' }
+$originHead = [string]($originHeadOutput | Select-Object -First 1)
+$originHead = $originHead.Trim().ToLowerInvariant()
+if ($originHead -ne $headSha) { throw "Backend startup requires synchronized main: head=$headSha origin/main=$originHead" }
+$boundExpectedHead = if ($providedExpectedHead) { $providedExpectedHead } else { $headSha }
+if ($headSha -ne $boundExpectedHead) { throw "Backend startup expected-head binding mismatch: expected=$boundExpectedHead observed=$headSha" }
 $trackedStatus = @(& $canonicalGit -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
 if ($LASTEXITCODE -ne 0) { throw 'Backend startup could not inspect tracked worktree state.' }
 $trackedAssessment = Get-TrackedWorktreeAssessment -StatusLines $trackedStatus
