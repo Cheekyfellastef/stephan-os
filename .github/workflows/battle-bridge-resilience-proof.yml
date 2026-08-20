@@ -138,21 +138,16 @@ jobs:
             (Get-Content -LiteralPath scripts/windows/probe-openclaw-gateway-18789-owner.ps1 -Raw)
           )
 
-      - name: Windows filesystem, claim, config, async-child, and listener adversarial proof
+      - name: Windows reparse, claim, Git, ignition-pipe, and listener adversarial proof
         run: >-
           node --test
           integrations/openclaw/stephanos-ignite-command/lib/recovery-update-windows-adversarial.test.mjs
-          integrations/openclaw/stephanos-ignite-command/lib/recovery-update.test.mjs
           integrations/openclaw/stephanos-ignite-command/lib/recovery-update-receipt.test.mjs
           integrations/openclaw/stephanos-ignite-command/lib/recovery-update-executor.test.mjs
           integrations/openclaw/stephanos-ignite-command/lib/command-handler.test.mjs
           integrations/openclaw/stephanos-ignite-command/manifest.test.mjs
           shared/agents/safeReceiptDirectoryChainV1.test.mjs
           shared/agents/battleBridgeExecutionBoundaryV1.test.mjs
-          shared/agents/battleBridgeExactHeadAsyncUpdateV1.test.mjs
           shared/agents/codexDispatchHostOps.test.mjs
-          shared/agents/stephanosChatUpdate.test.mjs
           scripts/run-battle-bridge-ignition.test.mjs
-          scripts/battle-bridge-ignition-supervisor.test.mjs
           scripts/battle-bridge-ignition-supervisor-windows-npm.test.mjs
-          scripts/launcher-readiness-live-facts.test.mjs

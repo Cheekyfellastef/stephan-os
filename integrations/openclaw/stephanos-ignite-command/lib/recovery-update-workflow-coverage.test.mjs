@@ -32,18 +32,27 @@ test('hosted resilience proof keeps the complete exact-head update authority sui
     'shared/agents/openClawGatewayStartup.mjs',
     'runs-on: windows-latest',
     'Parse fixed OpenClaw listener owner probe',
-    'Windows filesystem, claim, config, async-child, and listener adversarial proof',
+    'Windows reparse, claim, Git, ignition-pipe, and listener adversarial proof',
   ]) assert.match(source, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   const windowsJob = source.slice(source.indexOf('update-owner-lane-windows-adversarial:'));
   for (const requiredWindowsTest of [
     'recovery-update-windows-adversarial.test.mjs',
-    'recovery-update.test.mjs',
     'recovery-update-receipt.test.mjs',
+    'recovery-update-executor.test.mjs',
+    'command-handler.test.mjs',
+    'manifest.test.mjs',
+    'safeReceiptDirectoryChainV1.test.mjs',
     'battleBridgeExecutionBoundaryV1.test.mjs',
+    'codexDispatchHostOps.test.mjs',
+    'run-battle-bridge-ignition.test.mjs',
+    'battle-bridge-ignition-supervisor-windows-npm.test.mjs',
+  ]) assert.match(windowsJob, new RegExp(requiredWindowsTest.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  for (const mockOnlySuite of [
+    'recovery-update.test.mjs',
     'battleBridgeExactHeadAsyncUpdateV1.test.mjs',
     'stephanosChatUpdate.test.mjs',
-    'run-battle-bridge-ignition.test.mjs',
     'battle-bridge-ignition-supervisor.test.mjs',
-  ]) assert.match(windowsJob, new RegExp(requiredWindowsTest.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    'launcher-readiness-live-facts.test.mjs',
+  ]) assert.doesNotMatch(windowsJob, new RegExp(mockOnlySuite.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.doesNotMatch(source, /verify-openclaw-exact-head-update-host|recovery-update-host-verifier/);
 });
