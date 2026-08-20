@@ -20,6 +20,28 @@ const RESERVED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const SECRET_SHAPED_TEXT = /(?:BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|xox[baprs]-|gh[pousr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{20,}|(?:password|credential|api[_-]?key|private[_-]?key)\s*[:=])/i;
 const INVALID = Symbol('invalid-live-qa-data');
 
+const DURABLE_SYSTEM_TRUTH_EVIDENCE_CLASSES = new Set([
+  'CURRENT_PROGRAMME_STATE',
+  'PROVIDER_RUNTIME_AND_ROUTE_EVIDENCE',
+  'ZERO_CODEX_CONTINUITY_EVIDENCE',
+  'OPENCLAW_TASK_CLASS_QUALIFICATION_EVIDENCE',
+  'FORGE_FOUNDRY_CAPACITY_EVIDENCE',
+  'PROVIDER_NEUTRAL_REVIEW_EVIDENCE',
+  'BATTLE_BRIDGE_RECOVERY_EVIDENCE',
+  'IGNITION_SELF_HEALING_EVIDENCE',
+  'CONVERSATION_CONTINUITY_EVIDENCE',
+  'EPISTEMIC_AND_EVIDENCE_DISCLOSURE_EVIDENCE',
+  'ACTION_APPROVAL_PRESENTATION_EVIDENCE',
+]);
+
+const DURABLE_SYSTEM_TRUTH_QUESTION_CLASSES = new Set([
+  'CURRENT_PROGRAMME_TRUTH',
+  'ARCHITECTURE_AND_RELATIONSHIPS',
+  'AGENT_AND_TOOL_CAPABILITIES',
+  'BLOCKERS_AND_PROOF',
+  'WHAT_CHANGED_RECENTLY',
+]);
+
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -114,6 +136,11 @@ function evidenceToken(kind, value) {
   return `${kind}:sha256:${hash(value).slice(0, 40)}`;
 }
 
+function requiresDurableSystemTruth(question = {}) {
+  return DURABLE_SYSTEM_TRUTH_EVIDENCE_CLASSES.has(text(question.expectedEvidenceClass))
+    || DURABLE_SYSTEM_TRUTH_QUESTION_CLASSES.has(text(question.questionClass));
+}
+
 function deriveGroundingEvidence(response = {}) {
   const data = response?.data && typeof response.data === 'object' ? response.data : {};
   const execution = data.execution_metadata && typeof data.execution_metadata === 'object'
@@ -184,10 +211,12 @@ function answerIdFor(question, outputText, response = {}) {
 function makeAnswer({ question, response, outputText, answeredAtUtc, failureReason = '' }) {
   const grounding = deriveGroundingEvidence(response);
   const failed = Boolean(failureReason);
+  const durableSystemTruthRequired = requiresDurableSystemTruth(question);
   const grounded = !failed
     && grounding.evidenceRefs.length > 0
     && grounding.sourcesConsulted.length > 0
-    && ['FRESH', 'RECENT'].includes(grounding.freshness);
+    && ['FRESH', 'RECENT'].includes(grounding.freshness)
+    && (!durableSystemTruthRequired || grounding.observedRuntimeProof);
 
   return Object.freeze({
     schemaVersion: STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION,
@@ -239,6 +268,7 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
     return blocked('QUESTION_TARGET_NOT_STEPHANOS', ['targetParticipantId-must-be-stephanos']);
   }
 
+  const durableSystemTruthRequired = requiresDurableSystemTruth(question);
   const queryFn = typeof options.queryFn === 'function' ? options.queryFn : queryStephanosAI;
   let rawResponse;
   try {
@@ -253,6 +283,10 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
         expectedEvidenceClass: question.expectedEvidenceClass,
         contextRefs: [...question.contextRefs],
         noveltyRefs: [...question.noveltyRefs],
+        durableSystemTruthRequired,
+        durableSystemTruthRequirement: durableSystemTruthRequired
+          ? 'LIVE_DURABLE_SYSTEM_TRUTH'
+          : 'STANDARD_EVIDENCE',
       },
       routeMode: 'auto',
       fallbackEnabled: true,
