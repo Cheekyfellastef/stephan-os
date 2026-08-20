@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 
+import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
 import { CODEX_DISPATCH_TEST_ARGS, syncCodexDispatchBridge } from './codexDispatchHostOps.mjs';
 
 export const BATTLE_BRIDGE_EXACT_HEAD_SYNC_GUARD_SCHEMA = 'stephanos.battle-bridge-exact-head-sync-guard.v1';
@@ -9,12 +10,21 @@ function text(value) {
   return String(value ?? '').trim();
 }
 
-function commandLeaf(command) {
-  return text(command).replace(/\\/g, '/').split('/').at(-1)?.toLowerCase() || '';
+function normalizeExecutable(command) {
+  return text(command).replace(/\//g, '\\').toLowerCase();
 }
 
-function isGitCommand(command) {
-  return ['git', 'git.exe'].includes(commandLeaf(command));
+function commandLeaf(command) {
+  return normalizeExecutable(command).split('\\').at(-1) || '';
+}
+
+function isTrustedGitToken(command) {
+  const normalized = normalizeExecutable(command);
+  return normalized === 'git' || normalized === normalizeExecutable(BATTLE_BRIDGE_WINDOWS_HOST.git);
+}
+
+function isCanonicalNodeCommand(command) {
+  return normalizeExecutable(command) === normalizeExecutable(BATTLE_BRIDGE_WINDOWS_HOST.node);
 }
 
 function blockedSpawnResult(blocker) {
@@ -30,7 +40,6 @@ function blockedSpawnResult(blocker) {
 export function createBattleBridgeExactHeadSpawnGuard({
   expectedHead,
   spawnSyncFn = spawnSync,
-  nodeCommand = process.execPath,
 } = {}) {
   const normalizedExpectedHead = text(expectedHead).toLowerCase();
   if (!EXACT_HEAD.test(normalizedExpectedHead)) {
@@ -54,7 +63,8 @@ export function createBattleBridgeExactHeadSpawnGuard({
   const guarded = (command, args = [], options = {}) => {
     const argv = Array.isArray(args) ? args.map((value) => String(value)) : [];
     const operation = argv[0]?.toLowerCase() || '';
-    const allowedGitRead = isGitCommand(command) && (
+    const trustedGitToken = isTrustedGitToken(command);
+    const allowedGitRead = trustedGitToken && (
       (argv.length === 2 && argv[0] === 'branch' && argv[1] === '--show-current')
       || (argv.length === 2 && argv[0] === 'rev-parse' && ['HEAD', 'origin/main'].includes(argv[1]))
       || (argv.length === 3 && argv[0] === 'status' && argv[1] === '--porcelain=v1' && argv[2] === '--untracked-files=all')
@@ -64,12 +74,12 @@ export function createBattleBridgeExactHeadSpawnGuard({
       || (argv.length === 3 && argv[0] === 'diff' && argv[1] === '--name-only'
         && new RegExp(`^[0-9a-f]{40}\\.\\.${normalizedExpectedHead}$`, 'i').test(argv[2]))
     );
-    const allowedProof = command === nodeCommand
+    const allowedProof = isCanonicalNodeCommand(command)
       && argv.length === CODEX_DISPATCH_TEST_ARGS.length
       && argv.every((value, index) => value === CODEX_DISPATCH_TEST_ARGS[index]);
 
     let allowedMerge = false;
-    if (operation === 'merge' && isGitCommand(command)) {
+    if (operation === 'merge' && trustedGitToken) {
       state.mergeAttempted = true;
       const exactShape = argv.length === 3 && argv[1] === '--ff-only';
       const target = text(argv[2]).toLowerCase();
@@ -84,11 +94,14 @@ export function createBattleBridgeExactHeadSpawnGuard({
 
     if (!allowedGitRead && !allowedMerge && !allowedProof) {
       state.unlistedOperationObserved = true;
-      state.blockedOperation = isGitCommand(command) ? operation : commandLeaf(command);
+      state.blockedOperation = trustedGitToken ? operation : commandLeaf(command);
       return blockedSpawnResult('EXACT_HEAD_SYNC_OPERATION_NOT_ALLOWED');
     }
 
-    return spawnSyncFn(command, args, options);
+    const canonicalCommand = trustedGitToken
+      ? BATTLE_BRIDGE_WINDOWS_HOST.git
+      : BATTLE_BRIDGE_WINDOWS_HOST.node;
+    return spawnSyncFn(canonicalCommand, args, options);
   };
 
   return Object.freeze({
@@ -107,9 +120,8 @@ export function syncBattleBridgeExactHeadV1({
   operatorApproval = '',
   spawnSyncFn = spawnSync,
   syncFn = syncCodexDispatchBridge,
-  nodeCommand,
 } = {}) {
-  const guard = createBattleBridgeExactHeadSpawnGuard({ expectedHead, spawnSyncFn, nodeCommand });
+  const guard = createBattleBridgeExactHeadSpawnGuard({ expectedHead, spawnSyncFn });
   if (!guard.ok) {
     return Object.freeze({
       ok: false,
@@ -128,7 +140,7 @@ export function syncBattleBridgeExactHeadV1({
     expectedBranch,
     operatorApproval,
     spawnSyncFn: guard.spawnSyncFn,
-    ...(nodeCommand ? { nodeCommand } : {}),
+    nodeCommand: BATTLE_BRIDGE_WINDOWS_HOST.node,
   });
   const remoteHead = text(result?.remoteHead).toLowerCase();
   const afterHead = text(result?.afterHead).toLowerCase();
