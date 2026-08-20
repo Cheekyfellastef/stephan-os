@@ -318,17 +318,23 @@ test('Windows backend process creation excludes hostile inherited Node injection
   const launcherFunction = backendStartSource.slice(functionStart, functionEnd);
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'stephanos-minimal-node-env-'));
   const sentinelPath = join(fixtureRoot, 'hostile-node-options-executed.txt');
+  const hostileGitSentinelPath = join(fixtureRoot, 'hostile-git-executed.txt');
+  const fixedGitProofPath = join(fixtureRoot, 'fixed-git-proof.txt');
   const hostilePreloadPath = join(fixtureRoot, 'hostile-preload.cjs');
+  const hostileGitPath = join(fixtureRoot, 'git.cmd');
   const stdoutPath = join(fixtureRoot, 'stdout.log');
   const stderrPath = join(fixtureRoot, 'stderr.log');
   const harnessPath = join(fixtureRoot, 'minimal-environment-harness.ps1');
   try {
     writeFileSync(hostilePreloadPath, `require('node:fs').writeFileSync(${JSON.stringify(sentinelPath)}, 'HOSTILE_NODE_OPTIONS_EXECUTED');\n`, 'utf8');
+    writeFileSync(hostileGitPath, `@echo off\r\necho HOSTILE_GIT_EXECUTED>"${hostileGitSentinelPath}"\r\necho hostile git\r\n`, 'utf8');
     const quoted = (value) => `'${String(value).replaceAll("'", "''")}'`;
+    const childCode = `const{execFileSync}=require('node:child_process');require('node:fs').writeFileSync(${JSON.stringify(fixedGitProofPath)},execFileSync('git',['--version'],{encoding:'utf8'}));`;
+    const childEval = `eval(Buffer.from('${Buffer.from(childCode, 'utf8').toString('base64')}','base64').toString())`;
     const harness = [
       `$canonicalNode = ${quoted(process.execPath)}`,
       launcherFunction,
-      `$process = Start-BackendNodeWithMinimalEnvironment -Arguments @('--eval', 'console.log(13579)') -WorkingDirectory ${quoted(fixtureRoot)} -StandardOutputPath ${quoted(stdoutPath)} -StandardErrorPath ${quoted(stderrPath)} -SourceHead ${'a'.repeat(40)} -RepositoryRoot ${quoted(fixtureRoot)} -BootstrapBase64 'YQ=='`,
+      `$process = Start-BackendNodeWithMinimalEnvironment -Arguments @('--eval', ${quoted(childEval)}) -WorkingDirectory ${quoted(fixtureRoot)} -StandardOutputPath ${quoted(stdoutPath)} -StandardErrorPath ${quoted(stderrPath)} -SourceHead ${'a'.repeat(40)} -RepositoryRoot ${quoted(fixtureRoot)} -BootstrapBase64 'YQ=='`,
       '$process.WaitForExit()',
       'exit $process.ExitCode',
     ].join('\r\n');
@@ -337,6 +343,8 @@ test('Windows backend process creation excludes hostile inherited Node injection
     const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', harnessPath], {
       env: {
         ...process.env,
+        PATH: fixtureRoot,
+        ComSpec: join(fixtureRoot, 'hostile-cmd.exe'),
         NODE_OPTIONS: `--require=${hostilePreloadPath}`,
         NODE_PATH: fixtureRoot,
       },
@@ -346,7 +354,8 @@ test('Windows backend process creation excludes hostile inherited Node injection
     });
     assert.equal(result.status, 0, `${result.stderr || ''}\n${readFileSync(stderrPath, 'utf8')}`);
     assert.equal(existsSync(sentinelPath), false);
-    assert.match(readFileSync(stdoutPath, 'utf8'), /13579/);
+    assert.equal(existsSync(hostileGitSentinelPath), false);
+    assert.match(readFileSync(fixedGitProofPath, 'utf8'), /git version/i);
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
@@ -494,6 +503,8 @@ test('backend starter proves canonical main and writes a bounded exact-head runt
   assert.match(backendStartSource, /function Start-BackendNodeWithMinimalEnvironment/);
   assert.match(backendStartSource, /SetEnvironmentVariable\(\[string\]\$entry\.Name, \$null, 'Process'\)/);
   assert.match(backendStartSource, /\$minimalEnvironment\['STEPHANOS_BACKEND_BOOTSTRAP_BASE64'\] = \$BootstrapBase64/);
+  assert.match(backendStartSource, /\$minimalEnvironment\['PATH'\] = 'C:\\Windows\\System32;C:\\Windows;C:\\Windows\\System32\\WindowsPowerShell\\v1\.0;C:\\Program Files\\nodejs;C:\\Program Files\\Git\\cmd;C:\\Program Files\\GitHub CLI'/);
+  assert.match(backendStartSource, /\$minimalEnvironment\['PATHEXT'\] = '\.COM;\.EXE;\.BAT;\.CMD'/);
   assert.match(backendStartSource, /--input-type=module', '--eval'/);
   assert.doesNotMatch(backendStartSource, /backend-bootstrap-\$headSha\.mjs/);
   assert.match(backendStartSource, /Start-Process -FilePath \$canonicalNode/);

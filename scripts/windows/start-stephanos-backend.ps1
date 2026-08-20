@@ -375,7 +375,7 @@ function Start-BackendNodeWithMinimalEnvironment {
 
     $minimalEnvironment = @{}
     $allowedWindowsEnvironmentNames = @(
-        'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP',
+        'SystemRoot', 'WINDIR', 'TEMP', 'TMP',
         'SystemDrive', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
         'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA',
         'ProgramFiles', 'ProgramFiles(x86)', 'CommonProgramFiles', 'CommonProgramFiles(x86)'
@@ -386,6 +386,8 @@ function Start-BackendNodeWithMinimalEnvironment {
             $minimalEnvironment[$name] = $value
         }
     }
+    $minimalEnvironment['PATH'] = 'C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\nodejs;C:\Program Files\Git\cmd;C:\Program Files\GitHub CLI'
+    $minimalEnvironment['PATHEXT'] = '.COM;.EXE;.BAT;.CMD'
     $minimalEnvironment['GIT_NO_REPLACE_OBJECTS'] = '1'
     $minimalEnvironment['STEPHANOS_BACKEND_SOURCE_HEAD'] = $SourceHead
     $minimalEnvironment['STEPHANOS_BACKEND_REPO_ROOT'] = $RepositoryRoot
