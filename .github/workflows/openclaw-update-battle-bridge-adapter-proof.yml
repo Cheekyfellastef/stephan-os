@@ -15,6 +15,8 @@ on:
       - 'shared/agents/openClawUpdateCapabilityCandidateGateV1.test.mjs'
       - 'shared/agents/openClawUpdateCapabilityOutcomeV1.mjs'
       - 'shared/agents/openClawUpdateCapabilityOutcomeV1.test.mjs'
+      - 'shared/agents/openClawUpdateFinalAcceptanceV1.mjs'
+      - 'shared/agents/openClawUpdateFinalAcceptanceV1.test.mjs'
       - 'scripts/openclaw-update-battle-bridge-adapter.mjs'
       - 'scripts/openclaw-update-battle-bridge-adapter.test.mjs'
       - '.github/workflows/openclaw-update-battle-bridge-adapter-proof.yml'
@@ -45,6 +47,7 @@ jobs:
           node --check shared/agents/openClawUpdateCapabilityLedgerV1.mjs
           node --check shared/agents/openClawUpdateCapabilityCandidateGateV1.mjs
           node --check shared/agents/openClawUpdateCapabilityOutcomeV1.mjs
+          node --check shared/agents/openClawUpdateFinalAcceptanceV1.mjs
           node --check scripts/openclaw-update-battle-bridge-adapter.mjs
 
       - name: Run adapter authority, rollback and capability-evolution regressions
@@ -54,6 +57,7 @@ jobs:
           shared/agents/openClawUpdateCapabilityLedgerV1.test.mjs
           shared/agents/openClawUpdateCapabilityCandidateGateV1.test.mjs
           shared/agents/openClawUpdateCapabilityOutcomeV1.test.mjs
+          shared/agents/openClawUpdateFinalAcceptanceV1.test.mjs
           scripts/openclaw-update-battle-bridge-adapter.test.mjs
 
       - name: Check exact diff
