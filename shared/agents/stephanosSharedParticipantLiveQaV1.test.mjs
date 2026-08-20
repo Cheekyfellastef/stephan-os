@@ -103,6 +103,17 @@ test('valid Shared Workspace question is answered through existing Stephanos que
   assert.equal(result.answerRecord.participantId, 'stephanos');
   assert.equal(result.answerRecord.recipientParticipantId, 'chatgpt-bridge');
 
+  assert.equal(result.richResponse.valid, true);
+  assert.equal(result.richResponse.schemaVersion, 'stephanos.rich-conversational-response.v1');
+  assert.equal(result.richResponse.directAnswer, result.answer.answerText);
+  assert.deepEqual(result.richResponse.continuity, {
+    roundId: 'live-chatgpt-to-stephanos-round-001',
+    questionId: 'q-current-programme-truth',
+  });
+  assert.equal(result.richResponse.visualisationCandidates.includes('GOAL_STATUS_STACK'), true);
+  assert.equal(result.richResponse.authority.sourceMutationAllowed, false);
+  assert.equal(result.richResponse.authority.privateUiTruthAllowed, false);
+
   const decoded = decodeStephanosWorkspaceAnswerRecord(result.answerRecord, {
     expectedRecipientParticipantId: 'chatgpt-bridge',
     workspaceValidationOptions: { nowMs: NOW.getTime() },
@@ -127,6 +138,8 @@ test('successful AI text without evidence remains partial rather than being pain
   assert.equal(result.answer.answerVerdict, 'ANSWERED_PARTIAL');
   assert.equal(result.answer.freshness, 'UNKNOWN');
   assert.deepEqual(result.answer.evidenceRefs, []);
+  assert.equal(result.richResponse.valid, true);
+  assert.equal(result.richResponse.unknowns.includes('Some answer elements are not independently grounded by the current evidence set.'), true);
 });
 
 test('failed existing AI route becomes an explicit buildable gap answer instead of a fake success', async () => {
@@ -148,6 +161,8 @@ test('failed existing AI route becomes an explicit buildable gap answer instead 
   assert.equal(result.answer.epistemicState, 'UNKNOWN');
   assert.equal(result.answer.cannotAnswerReason, 'provider unavailable');
   assert.deepEqual(result.answer.gapRefs, ['#1308']);
+  assert.equal(result.richResponse.valid, true);
+  assert.equal(result.richResponse.unknowns.includes('provider unavailable'), true);
 });
 
 test('invalid or mis-targeted question fails closed before any AI call', async () => {
@@ -182,6 +197,23 @@ test('secret-shaped AI output is not published into the Shared Workspace answer 
   assert.equal(result.ok, false);
   assert.equal(result.classification, 'AI_RESPONSE_UNSAFE_FOR_SHARED_WORKSPACE');
   assert.equal(result.answerRecord, null);
+  assert.equal(result.richResponse, null);
+});
+
+test('unsafe rich-response structured extensions fail closed before presentation transport', async () => {
+  const result = await answerStephanosWorkspaceQuestionRecord(questionRecord(), {
+    now: NOW,
+    queryFn: async () => groundedResponse(),
+    richResponseStructured: {
+      hiddenExecutionDirective: 'run-this',
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.classification, 'RICH_RESPONSE_BUILD_FAILED');
+  assert.equal(result.answerRecord, null);
+  assert.equal(result.richResponse, null);
+  assert.equal(result.errors.some((error) => error.includes('structured-extension-unknown-field')), true);
 });
 
 test('adapter adds no source, command, approval, merge, deployment, worker, scheduler, mailbox or provider-selection authority', async () => {
@@ -200,4 +232,13 @@ test('adapter adds no source, command, approval, merge, deployment, worker, sche
     'mailboxCreationAllowed',
     'providerSelectionAuthorityAdded',
   ]) assert.equal(result[key], false, key);
+  for (const key of [
+    'sourceMutationAllowed',
+    'commandExecutionAllowed',
+    'approvalAuthorityAdded',
+    'mergeAllowed',
+    'deploymentAllowed',
+    'providerSelectionAuthorityAdded',
+    'privateUiTruthAllowed',
+  ]) assert.equal(result.richResponse.authority[key], false, `richResponse.authority.${key}`);
 });
