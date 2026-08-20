@@ -53,21 +53,39 @@ function providerGroundingOnlyResponse() {
   };
 }
 
-function durableSystemTruthResponse() {
+function canonicalLiveGoalProjection(overrides = {}) {
+  const generatedAt = overrides.generatedAt || NOW.toISOString();
+  const sourceTruth = overrides.sourceTruth || 'live';
+  return {
+    schemaVersion: 'stephanos.live-goal-projection.v1',
+    generatedAt,
+    projectionSource: overrides.projectionSource || 'live-goal-projection-service',
+    sourceTruth,
+    backendStatus: overrides.backendStatus || { status: 'live', ok: true, healthRoute: '/api/health' },
+    heartbeat: overrides.heartbeat || {
+      generatedAt,
+      backendLive: true,
+      projectionSource: 'live-goal-projection-service',
+    },
+    missionOperationsStatus: overrides.missionOperationsStatus || {
+      status: 'ready',
+      source: 'mission-operations-service',
+      route: '/api/mission-operations',
+    },
+    proofTruth: {
+      github: 'adapter-provided',
+      local: 'unknown',
+      browser: 'unknown',
+    },
+  };
+}
+
+function durableSystemTruthResponse(projection = canonicalLiveGoalProjection()) {
   return {
     success: true,
     output_text: 'Current programme truth is backed by the live goal projection attached to this answer.',
     data: {
-      liveGoalProjection: {
-        schemaVersion: 'stephanos.live-goal-projection.v1',
-        generatedAt: NOW.toISOString(),
-        sourceTruth: 'CURRENT',
-        proofTruth: {
-          github: 'CURRENT',
-          local: 'UNKNOWN',
-          browser: 'UNKNOWN',
-        },
-      },
+      liveGoalProjection: projection,
       execution_metadata: {
         freshness_integrity_preserved: true,
         retrieval_used: false,
@@ -94,7 +112,7 @@ test('systems-expert question declares live durable truth requirement to the exi
   assert.equal(observedContext.durableSystemTruthRequirement, 'LIVE_DURABLE_SYSTEM_TRUTH');
 });
 
-test('generic provider grounding cannot paint a systems-expert answer as grounded without live durable system truth', async () => {
+test('generic provider grounding cannot paint a systems-expert answer as grounded or fresh without live durable system truth', async () => {
   const result = await answerStephanosWorkspaceQuestionRecord(systemsQuestionRecord(), {
     now: NOW,
     queryFn: async () => providerGroundingOnlyResponse(),
@@ -104,12 +122,12 @@ test('generic provider grounding cannot paint a systems-expert answer as grounde
   assert.equal(result.classification, 'STEPHANOS_PARTIAL_ANSWER_READY');
   assert.equal(result.answer.answerVerdict, 'ANSWERED_PARTIAL');
   assert.equal(result.answer.epistemicState, 'INFERRED_FROM_EVIDENCE');
-  assert.equal(result.answer.freshness, 'FRESH');
+  assert.equal(result.answer.freshness, 'UNKNOWN');
   assert.equal(result.answer.sourcesConsulted.includes('provider-grounding'), true);
   assert.equal(result.answer.sourcesConsulted.includes('live-goal-projection'), false);
 });
 
-test('live goal projection can satisfy the systems-expert durable-truth gate without widening authority', async () => {
+test('canonical live goal projection can satisfy the systems-expert durable-truth gate without widening authority', async () => {
   const result = await answerStephanosWorkspaceQuestionRecord(systemsQuestionRecord(), {
     now: NOW,
     queryFn: async () => durableSystemTruthResponse(),
@@ -119,6 +137,7 @@ test('live goal projection can satisfy the systems-expert durable-truth gate wit
   assert.equal(result.classification, 'STEPHANOS_GROUNDED_ANSWER_READY');
   assert.equal(result.answer.answerVerdict, 'ANSWERED_GROUNDED');
   assert.equal(result.answer.epistemicState, 'OBSERVED_FROM_RUNTIME_OR_PROOF');
+  assert.equal(result.answer.freshness, 'FRESH');
   assert.equal(result.answer.sourcesConsulted.includes('live-goal-projection'), true);
   assert.equal(result.sourceMutationAllowed, false);
   assert.equal(result.commandExecutionAllowed, false);
@@ -126,4 +145,57 @@ test('live goal projection can satisfy the systems-expert durable-truth gate wit
   assert.equal(result.mergeAllowed, false);
   assert.equal(result.deploymentAllowed, false);
   assert.equal(result.providerSelectionAuthorityAdded, false);
+});
+
+test('stale canonical projection remains visible evidence but cannot satisfy or freshen systems truth', async () => {
+  const staleGeneratedAt = new Date(NOW.getTime() - (10 * 60 * 1000)).toISOString();
+  const projection = canonicalLiveGoalProjection({
+    generatedAt: staleGeneratedAt,
+    heartbeat: {
+      generatedAt: staleGeneratedAt,
+      backendLive: true,
+      projectionSource: 'live-goal-projection-service',
+    },
+  });
+  const result = await answerStephanosWorkspaceQuestionRecord(systemsQuestionRecord(), {
+    now: NOW,
+    queryFn: async () => durableSystemTruthResponse(projection),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'STEPHANOS_PARTIAL_ANSWER_READY');
+  assert.equal(result.answer.answerVerdict, 'ANSWERED_PARTIAL');
+  assert.equal(result.answer.epistemicState, 'INFERRED_FROM_EVIDENCE');
+  assert.equal(result.answer.freshness, 'STALE');
+  assert.equal(result.answer.sourcesConsulted.includes('live-goal-projection'), true);
+});
+
+test('mixed projection remains visible evidence but cannot satisfy or freshen systems truth', async () => {
+  const projection = canonicalLiveGoalProjection({ sourceTruth: 'mixed' });
+  const result = await answerStephanosWorkspaceQuestionRecord(systemsQuestionRecord(), {
+    now: NOW,
+    queryFn: async () => durableSystemTruthResponse(projection),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'STEPHANOS_PARTIAL_ANSWER_READY');
+  assert.equal(result.answer.answerVerdict, 'ANSWERED_PARTIAL');
+  assert.equal(result.answer.epistemicState, 'INFERRED_FROM_EVIDENCE');
+  assert.equal(result.answer.freshness, 'UNKNOWN');
+  assert.equal(result.answer.sourcesConsulted.includes('live-goal-projection'), true);
+});
+
+test('static-fallback projection remains visible evidence but cannot satisfy or freshen systems truth', async () => {
+  const projection = canonicalLiveGoalProjection({ sourceTruth: 'static-fallback' });
+  const result = await answerStephanosWorkspaceQuestionRecord(systemsQuestionRecord(), {
+    now: NOW,
+    queryFn: async () => durableSystemTruthResponse(projection),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'STEPHANOS_PARTIAL_ANSWER_READY');
+  assert.equal(result.answer.answerVerdict, 'ANSWERED_PARTIAL');
+  assert.equal(result.answer.epistemicState, 'INFERRED_FROM_EVIDENCE');
+  assert.equal(result.answer.freshness, 'UNKNOWN');
+  assert.equal(result.answer.sourcesConsulted.includes('live-goal-projection'), true);
 });
