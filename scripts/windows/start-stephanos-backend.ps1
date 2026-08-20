@@ -330,13 +330,13 @@ if ($existingListener) {
     exit 0
 }
 
-$arguments = @('stephanos-server/backend-bootstrap.mjs')
+$arguments = @('run', 'stephanos:backend')
 $env:STEPHANOS_BACKEND_SOURCE_HEAD = $headSha
 $env:STEPHANOS_BACKEND_REPO_ROOT = $repoRoot
-Write-Log ("Starting backend with fixed Node and self-verifying exact-head bootstrap: {0} {1}" -f $canonicalNode, ($arguments -join ' '))
-if ($PSCmdlet.ShouldProcess("$canonicalNode $($arguments -join ' ')", 'Start Stephanos backend')) {
+Write-Log ("Starting backend with fixed npm and self-verifying exact-head bootstrap: {0} {1}" -f $canonicalNpm, ($arguments -join ' '))
+if ($PSCmdlet.ShouldProcess("$canonicalNpm $($arguments -join ' ')", 'Start Stephanos backend')) {
     Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend process start' | Out-Null
-    $process = Start-Process -FilePath $canonicalNode `
+    $process = Start-Process -FilePath $canonicalNpm `
         -ArgumentList $arguments `
         -WorkingDirectory $repoRoot `
         -RedirectStandardOutput $stdoutLogPath `

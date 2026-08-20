@@ -88,7 +88,7 @@ test('Windows backend recovery authority pins every executable, normalized liste
   assert.match(starter, /confirmedListener\.ProcessId -ne \$Listener\.ProcessId/);
   assert.match(starter, /confirmedListener\.ProcessStartTimeUtc -ne \$Listener\.ProcessStartTimeUtc/);
   assert.match(starter, /& \$canonicalNpm run --silent openclaw:stub:ensure/);
-  assert.match(starter, /Start-Process -FilePath \$canonicalNode/);
+  assert.match(starter, /Start-Process -FilePath \$canonicalNpm/);
   assert.doesNotMatch(starter, /Get-Command (?:git|npm)/i);
   assert.doesNotMatch(starter, /(^|\r?\n)\s*npm(?:\.cmd)?\s+run/im);
   assert.doesNotMatch(starter, /CommandLine -match|Invoke-Expression|\.Contains\(['"]stephanos-server\/server\.js['"]\)/i);
