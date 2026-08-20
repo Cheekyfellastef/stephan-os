@@ -90,7 +90,6 @@ async function probeRuntimeEndpoint(url, { fetchFn = globalThis.fetch, timeoutMs
       reject(new Error('RUNTIME_PROOF_RESPONSE_TIMEOUT'));
     }, timeoutMs);
   });
-  timer.unref?.();
   try {
     return await Promise.race([
       (async () => {
