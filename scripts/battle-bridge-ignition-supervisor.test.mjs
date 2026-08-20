@@ -221,6 +221,24 @@ test('live source collector includes ignored data hard blockers before Ignition 
   assert.equal(evaluateCanonicalIgnitionSourceTruth(result).blocker.id, 'dirty-source-truth');
 });
 
+test('live source collector tolerates the canonical ignored runtime logs directory', () => {
+  const result = collectCanonicalIgnitionSourceTruth({
+    cwd: '/canonical/repo',
+    execFile(command, args) {
+      if (args[0] === 'fetch') return '';
+      if (args[0] === 'status') return '!! logs/\n';
+      if (args.includes('--abbrev-ref') && args.includes('HEAD')) return 'main\n';
+      if (args.includes('--symbolic-full-name')) return 'origin/main\n';
+      if (args[0] === 'rev-list') return '0\t0\n';
+      throw new Error(`unexpected fixed Git command: ${command} ${args.join(' ')}`);
+    },
+  });
+
+  assert.equal(result.publicationState, 'healthy-synced');
+  assert.equal(result.workingTreeDirty, false);
+  assert.equal(evaluateCanonicalIgnitionSourceTruth(result).ok, true);
+});
+
 test('live source collector fails closed when current origin/main cannot be fetched', () => {
   const result = collectCanonicalIgnitionSourceTruth({
     cwd: '/canonical/repo',

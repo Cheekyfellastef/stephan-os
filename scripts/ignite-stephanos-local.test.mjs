@@ -838,6 +838,16 @@ test('ignition status evaluator hard-blocks ignored data outside the explicit ru
   assert.equal(isGitWorkingTreeClean('!! data/random.txt\n!! data/unknown.bin\n'), false);
 });
 
+test('ignition status evaluator allows canonical ignored runtime logs', () => {
+  const status = '!! logs/\n!! logs/battle-bridge/backend.stdout.log\n';
+  const evaluation = evaluateGitStatusForIgnition(status);
+
+  assert.equal(evaluation.transientRootDataEntries.length, 2);
+  assert.equal(evaluation.meaningfulEntries.length, 0);
+  assert.equal(isGitWorkingTreeClean(status), true);
+  assert.equal(classifyIgnitionDirtPath('logs/battle-bridge/backend.stdout.log'), 'RUNTIME_CHECKPOINT_CLEAN');
+});
+
 test('collectApprovedTrackedGeneratedRestorePaths returns tracked dist paths only', () => {
   const evaluation = evaluateGitStatusForIgnition([
     ' M apps/stephanos/dist/index.html',
@@ -1051,6 +1061,29 @@ test('housekeep includes ignored data entries in the canonical hard-block gate',
   }), /housekeep blocked/);
 
   assert.deepEqual(calls[0], ['git-status', 'git', 'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
+});
+
+test('housekeep tolerates canonical ignored runtime logs without weakening the data gate', () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (message) => logs.push(String(message));
+  try {
+    runIgnitionHousekeep({
+      dryRun: false,
+      compact: true,
+      captureStepFn: (label) => {
+        if (label === 'git-status') return { stdout: '!! logs/\n', stderr: '' };
+        if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      runStepFn: () => {},
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  const status = JSON.parse(logs.find((line) => line.startsWith('[HOUSEKEEP] status=')).replace('[HOUSEKEEP] status=', ''));
+  assert.equal(status.ignitionStatus, 'READY');
+  assert.equal(status.ignitionHardBlockCount, 0);
 });
 test('housekeep dry-run classifies known OpenClaw workspace dirt without weakening hard-block', () => {
   const logs = [];
