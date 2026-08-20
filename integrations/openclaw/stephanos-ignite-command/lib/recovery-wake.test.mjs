@@ -95,7 +95,7 @@ test('failed fixed adapter projects only an allowlisted blocker code and never r
     writeHostProofFn: ({ proof }) => ({ proofId: proof.proofId }),
     spawnSyncFn: () => ({
       status: 1,
-      stderr: 'At C:\\Users\\Stephan Callear\\private\\adapter.ps1:99 RECOVERY_MESH_TASK_NOT_INSTALLED secret-shaped-text',
+      stderr: 'RECOVERY_MESH_TASK_NOT_INSTALLED',
     }),
   });
   assert.deepEqual(specific, {
@@ -119,6 +119,40 @@ test('failed fixed adapter projects only an allowlisted blocker code and never r
     exitCode: 5,
   });
   assert.doesNotMatch(JSON.stringify(opaque), /private|credential|Stephan/i);
+});
+
+test('failed fixed adapter accepts a complete PowerShell FullyQualifiedErrorId', async () => {
+  const result = await wakeBattleBridgeRecoveryMesh({
+    platform: 'win32',
+    env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    authenticatedContext,
+    nonce: 'cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa',
+    fetchFn: identityFetch,
+    writeHostProofFn: ({ proof }) => ({ proofId: proof.proofId }),
+    spawnSyncFn: () => ({ status: 1, stderr: 'FullyQualifiedErrorId : OPENCLAW_HOST_PROOF_REQUIRED' }),
+  });
+  assert.deepEqual(result, { ok: false, blocker: 'OPENCLAW_HOST_PROOF_REQUIRED', exitCode: 1 });
+});
+
+test('quoted source, prose, ambiguous codes, and malformed qualified identifiers fail to the generic blocker', async () => {
+  const outputs = [
+    "At adapter.ps1:27 throw 'OPENCLAW_HOST_PROOF_REQUIRED'",
+    'adapter failed because OPENCLAW_HOST_PROOF_REQUIRED was mentioned in prose',
+    'OPENCLAW_HOST_PROOF_REQUIRED\nRECOVERY_MESH_TASK_NOT_INSTALLED',
+    'FullyQualifiedErrorId : OPENCLAW_HOST_PROOF_REQUIRED,RemoteException',
+  ];
+  for (const [index, stderr] of outputs.entries()) {
+    const result = await wakeBattleBridgeRecoveryMesh({
+      platform: 'win32',
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+      authenticatedContext,
+      nonce: `${String(index + 1).repeat(8)}-bbbb-cccc-dddd-eeeeeeeeeeee`,
+      fetchFn: identityFetch,
+      writeHostProofFn: ({ proof }) => ({ proofId: proof.proofId }),
+      spawnSyncFn: () => ({ status: 1, stderr }),
+    });
+    assert.deepEqual(result, { ok: false, blocker: 'RECOVERY_WAKE_FIXED_ADAPTER_FAILED', exitCode: 1 });
+  }
 });
 
 test('non-Windows, unauthenticated, identity-less and failed adapter calls fail closed', async () => {

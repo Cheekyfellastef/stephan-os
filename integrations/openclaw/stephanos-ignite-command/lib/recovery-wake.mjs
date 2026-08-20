@@ -24,8 +24,19 @@ const FIXED_RECOVERY_ADAPTER_BLOCKERS = Object.freeze([
 ]);
 
 function fixedRecoveryAdapterBlocker(result = {}) {
-  const tokens = new Set(`${String(result?.stderr || '')}\n${String(result?.stdout || '')}`.split(/[^A-Z0-9_]+/).filter(Boolean));
-  return FIXED_RECOVERY_ADAPTER_BLOCKERS.find((code) => tokens.has(code)) || '';
+  const allowlisted = new Set(FIXED_RECOVERY_ADAPTER_BLOCKERS);
+  const emitted = new Set();
+  const lines = `${String(result?.stderr || '')}\n${String(result?.stdout || '')}`.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (allowlisted.has(line)) {
+      emitted.add(line);
+      continue;
+    }
+    const qualified = /^FullyQualifiedErrorId\s*:\s*([A-Z0-9_]+)$/.exec(line);
+    if (qualified && allowlisted.has(qualified[1])) emitted.add(qualified[1]);
+  }
+  return emitted.size === 1 ? [...emitted][0] : '';
 }
 
 function buildOpenClawHostProof({ authenticatedContext, runtimeId, now = new Date(), nonce = randomUUID(), hostPid = process.pid } = {}) {
