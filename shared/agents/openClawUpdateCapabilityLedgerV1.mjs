@@ -55,22 +55,53 @@ const CAPABILITY_KEYS = Object.freeze([
 ]);
 
 function text(value) {
-  return String(value ?? '').trim();
+  return typeof value === 'string' ? value.trim() : '';
 }
 
-function isPlainRecord(value) {
-  return Boolean(value)
-    && typeof value === 'object'
-    && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype;
+function safeDataRecord(value, expectedKeys) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+      return null;
+    }
+    const ownKeys = Reflect.ownKeys(value);
+    if (ownKeys.some((key) => typeof key !== 'string')) return null;
+    const actual = ownKeys.map(String).sort();
+    const wanted = [...expectedKeys].sort();
+    if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const snapshot = {};
+    for (const key of wanted) {
+      const descriptor = descriptors[key];
+      if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) return null;
+      snapshot[key] = descriptor.value;
+    }
+    return snapshot;
+  } catch {
+    return null;
+  }
 }
 
-function exactKeys(value, expected) {
-  if (!isPlainRecord(value)) return false;
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return actual.length === wanted.length
-    && actual.every((key, index) => key === wanted[index]);
+function safeDenseArray(value, maxItems) {
+  try {
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const lengthDescriptor = descriptors.length;
+    const length = lengthDescriptor?.value;
+    if (!Number.isSafeInteger(length) || length < 0 || length > maxItems) return null;
+    const ownKeys = Reflect.ownKeys(value);
+    if (ownKeys.some((key) => typeof key !== 'string')) return null;
+    const allowed = new Set(['length', ...Array.from({ length }, (_, index) => String(index))]);
+    if (ownKeys.some((key) => !allowed.has(key))) return null;
+    const output = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) return null;
+      output.push(descriptor.value);
+    }
+    return output;
+  } catch {
+    return null;
+  }
 }
 
 function safeText(value) {
@@ -91,13 +122,14 @@ function safeVersion(value) {
 }
 
 function normalizeRefArray(value, field, capabilityId, blockers, { allowEmpty = true, taskClasses = false } = {}) {
-  if (!Array.isArray(value) || value.length > OPENCLAW_UPDATE_CAPABILITY_LEDGER_MAX_REFS) {
+  const snapshot = safeDenseArray(value, OPENCLAW_UPDATE_CAPABILITY_LEDGER_MAX_REFS);
+  if (!snapshot) {
     blockers.push(`${field.toUpperCase()}_INVALID:${capabilityId || 'unknown'}`);
     return [];
   }
-  if (!allowEmpty && value.length === 0) blockers.push(`${field.toUpperCase()}_EMPTY:${capabilityId || 'unknown'}`);
+  if (!allowEmpty && snapshot.length === 0) blockers.push(`${field.toUpperCase()}_EMPTY:${capabilityId || 'unknown'}`);
   const normalized = [];
-  for (const raw of value) {
+  for (const raw of snapshot) {
     const entry = taskClasses ? text(raw) : safeId(raw);
     const valid = taskClasses ? TASK_CLASSES.has(entry) : Boolean(entry);
     if (!valid) {
@@ -119,8 +151,9 @@ function requiresCandidateProof(disposition) {
   ].includes(disposition);
 }
 
-function normalizeCapability(raw, blockers) {
-  if (!exactKeys(raw, CAPABILITY_KEYS)) {
+function normalizeCapability(rawInput, blockers) {
+  const raw = safeDataRecord(rawInput, CAPABILITY_KEYS);
+  if (!raw) {
     blockers.push('CAPABILITY_SCHEMA_INVALID');
     return null;
   }
@@ -217,46 +250,44 @@ function normalizeCapability(raw, blockers) {
   });
 }
 
-export function buildOpenClawUpdateCapabilityLedgerV1(input = {}) {
-  const blockers = [];
-  if (!exactKeys(input, LEDGER_KEYS)) {
-    return Object.freeze({
-      schemaVersion: OPENCLAW_UPDATE_CAPABILITY_LEDGER_SCHEMA,
-      version: OPENCLAW_UPDATE_CAPABILITY_LEDGER_VERSION,
-      verdict: 'BLOCK_UPDATE',
-      blockers: Object.freeze(['LEDGER_SCHEMA_INVALID']),
-      capabilities: Object.freeze([]),
-      protectedCapabilityCount: 0,
-      dispositionCounts: Object.freeze({}),
-      requiredQualificationReplay: Object.freeze([]),
-      updateAllowed: false,
-    });
-  }
+function blockedLedger(blocker) {
+  return Object.freeze({
+    schemaVersion: OPENCLAW_UPDATE_CAPABILITY_LEDGER_SCHEMA,
+    version: OPENCLAW_UPDATE_CAPABILITY_LEDGER_VERSION,
+    verdict: 'BLOCK_UPDATE',
+    blockers: Object.freeze([blocker]),
+    capabilities: Object.freeze([]),
+    protectedCapabilityCount: 0,
+    dispositionCounts: Object.freeze({}),
+    requiredQualificationReplay: Object.freeze([]),
+    updateAllowed: false,
+  });
+}
 
-  const currentVersion = safeVersion(input.currentVersion);
-  const targetVersion = safeVersion(input.targetVersion);
+export function buildOpenClawUpdateCapabilityLedgerV1(input = {}) {
+  const snapshot = safeDataRecord(input, LEDGER_KEYS);
+  if (!snapshot) return blockedLedger('LEDGER_SCHEMA_INVALID');
+
+  const blockers = [];
+  const currentVersion = safeVersion(snapshot.currentVersion);
+  const targetVersion = safeVersion(snapshot.targetVersion);
   if (!currentVersion) blockers.push('CURRENT_VERSION_INVALID');
   if (!targetVersion) blockers.push('TARGET_VERSION_INVALID');
-  if (!Array.isArray(input.capabilities)) blockers.push('CAPABILITIES_NOT_ARRAY');
-  if (Array.isArray(input.capabilities) && input.capabilities.length === 0) blockers.push('CAPABILITIES_EMPTY');
-  if (Array.isArray(input.capabilities)
-    && input.capabilities.length > OPENCLAW_UPDATE_CAPABILITY_LEDGER_MAX_CAPABILITIES) {
-    blockers.push('CAPABILITY_LIMIT_EXCEEDED');
-  }
+
+  const capabilityInputs = safeDenseArray(snapshot.capabilities, OPENCLAW_UPDATE_CAPABILITY_LEDGER_MAX_CAPABILITIES);
+  if (!capabilityInputs) blockers.push('CAPABILITIES_INVALID');
+  if (capabilityInputs && capabilityInputs.length === 0) blockers.push('CAPABILITIES_EMPTY');
 
   const normalized = [];
   const seenIds = new Set();
-  if (Array.isArray(input.capabilities)
-    && input.capabilities.length <= OPENCLAW_UPDATE_CAPABILITY_LEDGER_MAX_CAPABILITIES) {
-    for (const raw of input.capabilities) {
-      const capability = normalizeCapability(raw, blockers);
-      if (!capability) continue;
-      if (capability.capabilityId) {
-        if (seenIds.has(capability.capabilityId)) blockers.push(`DUPLICATE_CAPABILITY_ID:${capability.capabilityId}`);
-        seenIds.add(capability.capabilityId);
-      }
-      normalized.push(capability);
+  for (const raw of capabilityInputs || []) {
+    const capability = normalizeCapability(raw, blockers);
+    if (!capability) continue;
+    if (capability.capabilityId) {
+      if (seenIds.has(capability.capabilityId)) blockers.push(`DUPLICATE_CAPABILITY_ID:${capability.capabilityId}`);
+      seenIds.add(capability.capabilityId);
     }
+    normalized.push(capability);
   }
 
   const capabilities = normalized
