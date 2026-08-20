@@ -367,9 +367,12 @@ export async function runUi4173Repair({ sharedWorkspace = null, dryRun = true, e
       } catch (error) {
         servedRuntimeProof = { ready: false, expectedHead: expected, blocker: error?.code || 'UI_REPAIR_SERVED_RUNTIME_PROOF_FAILED' };
       }
+      let postProofObservedHead = '';
+      try { postProofObservedHead = String(currentHeadFn({ cwd: REPO_ROOT, platform, environment }) || '').trim().toLowerCase(); } catch {}
       result.postStartObservedHead = postStartObservedHead;
+      result.postProofObservedHead = postProofObservedHead;
       result.servedRuntimeProof = servedRuntimeProof;
-      if (postStartObservedHead === expected && servedRuntimeProof?.ready === true) {
+      if (postStartObservedHead === expected && postProofObservedHead === expected && servedRuntimeProof?.ready === true) {
         result.action = 'start-ui-4173-ready';
         result.ready = true;
         result.processAlive = true;
@@ -377,10 +380,11 @@ export async function runUi4173Repair({ sharedWorkspace = null, dryRun = true, e
         result.action = 'start-ui-4173-exact-head-unproven';
         result.ready = false;
         result.blockers.push({
-          id: postStartObservedHead !== expected ? 'ui-repair-post-start-head-changed' : 'ui-repair-served-runtime-head-mismatch',
+          id: postStartObservedHead !== expected || postProofObservedHead !== expected ? 'ui-repair-post-start-head-changed' : 'ui-repair-served-runtime-head-mismatch',
           detail: 'The started UI and canonical checkout must both remain bound to the supervisor-proven exact head.',
           expectedHead: expected,
           observedHead: postStartObservedHead,
+          postProofObservedHead,
           servedRuntimeProof,
         });
       }

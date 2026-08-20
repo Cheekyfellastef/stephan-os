@@ -179,6 +179,34 @@ test('UI repair post-start proof rejects a served runtime that drifted from the 
   assert.match(output.blockers.map((blocker) => blocker.id).join(','), /ui-repair-served-runtime-head-mismatch/);
 });
 
+test('UI repair rechecks the fixed source head after served-runtime proof before ready', async () => {
+  let headReads = 0;
+  const { stdout, json } = stdoutCapture();
+  const code = await runUi4173Repair({
+    ...exactHeadProof({
+      currentHeadFn: () => {
+        headReads += 1;
+        return headReads < 3 ? EXACT_HEAD : 'b'.repeat(40);
+      },
+    }),
+    dryRun: false,
+    collectFactsFn: fakeCollector,
+    plannerFn: readyPlanner,
+    preflightDepsFn: depsOk,
+    stdout,
+    spawnFn: () => fakeChild(4173),
+    probeFetch: okFetch,
+    readyTimeoutMs: 1,
+  });
+  const output = json();
+  assert.equal(code, 1);
+  assert.equal(headReads, 3);
+  assert.equal(output.ready, false);
+  assert.equal(output.postStartObservedHead, EXACT_HEAD);
+  assert.equal(output.postProofObservedHead, 'b'.repeat(40));
+  assert.match(output.blockers.map((blocker) => blocker.id).join(','), /ui-repair-post-start-head-changed/);
+});
+
 test('served UI repair exact-head proof requires health commit marker and dist parity', async () => {
   const proof = await collectUi4173ServedExactHeadProof({ expectedHead: EXACT_HEAD, fetchFn: okFetch });
   assert.equal(proof.ready, true);
