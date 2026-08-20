@@ -15,3 +15,8 @@ export {
 export {
   analyzeIndependentSecurityReviewV2 as analyzeIndependentSecurityReview,
 } from './operatorMergeApprovalBoundaryV2.mjs';
+
+export {
+  INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_RUN_SCHEMA,
+  validateIndependentReviewWorkflowDispatchRunV1,
+} from './independentReviewWorkflowDispatchAdmissionV1.mjs';
