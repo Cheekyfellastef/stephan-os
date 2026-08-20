@@ -53,6 +53,7 @@ jobs:
           node --test shared/agents/independentReviewRetryPlanner.test.mjs
           node --test shared/agents/exactHeadReviewDispatchWorkflow.test.mjs
           node --test shared/agents/independentReviewHandoffProvenanceV1.test.mjs
+          node --test shared/agents/independentReviewHandoffRunReceiptV1.test.mjs
           node --test shared/agents/independentReviewHandoffIdentityV1.test.mjs
           node --test shared/agents/independentReviewWorkflowDispatchAdmissionV1.test.mjs
 
@@ -62,6 +63,7 @@ jobs:
           node --check shared/agents/exactHeadReviewCoordinatorAuthority.mjs
           node --check shared/agents/independentReviewRetryPlanner.mjs
           node --check shared/agents/independentReviewHandoffProvenanceV1.mjs
+          node --check shared/agents/independentReviewHandoffRunReceiptV1.mjs
           node --check shared/agents/independentReviewHandoffIdentityV1.mjs
           node --check shared/agents/independentReviewWorkflowDispatchAdmissionV1.mjs
           node --check scripts/bind-independent-review-handoff-provenance-v1.mjs
@@ -217,7 +219,21 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           STEPHANOS_REVIEW_HANDOFF_COMMENT_ID: ${{ steps.coordinate.outputs.comment_id }}
           STEPHANOS_REVIEW_HANDOFF_PR: ${{ matrix.target.prNumber }}
+          STEPHANOS_REVIEW_HANDOFF_RUN_RECEIPT_PATH: ${{ runner.temp }}/independent-review-handoff-run-receipt.json
         run: node scripts/bind-independent-review-handoff-provenance-v1.mjs
+
+      - name: Upload immutable coordinator-to-handoff run receipt
+        if: >-
+          steps.coordinate.outcome == 'success' &&
+          steps.coordinate.outputs.comment_id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: stephanos-independent-review-handoff-${{ github.run_id }}-attempt-${{ github.run_attempt }}-comment-${{ steps.coordinate.outputs.comment_id }}
+          path: ${{ runner.temp }}/independent-review-handoff-run-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: false
+          include-hidden-files: false
 
       - name: Retry one exact failed canonical independent review
         if: >-
