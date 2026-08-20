@@ -80,15 +80,15 @@ test('Windows backend recovery authority pins every executable, normalized liste
   assert.match(starter, /StringComparison\]::OrdinalIgnoreCase/);
   assert.match(starter, /function Test-CanonicalBackendCommandLine/);
   assert.match(starter, /-replace '\\s\+', ' '/);
-  assert.match(starter, /'node stephanos-server\/backend-bootstrap\.mjs'/);
-  assert.match(starter, /'node\.exe stephanos-server\/backend-bootstrap\.mjs'/);
+  assert.match(starter, /backend-bootstrap-\$headSha\.mjs/);
+  assert.match(starter, /Publish-ExactHeadBackendBootstrap/);
   assert.match(starter, /ProcessStartTimeUtc/);
   assert.match(starter, /Publish-VerifiedBackendRuntimeReceipt/);
   assert.match(starter, /\$existingListener[\s\S]*if \(\$existingListener\)[\s\S]*Publish-VerifiedBackendRuntimeReceipt[\s\S]*exit 0/);
   assert.match(starter, /confirmedListener\.ProcessId -ne \$Listener\.ProcessId/);
   assert.match(starter, /confirmedListener\.ProcessStartTimeUtc -ne \$Listener\.ProcessStartTimeUtc/);
   assert.match(starter, /& \$canonicalNpm run --silent openclaw:stub:ensure/);
-  assert.match(starter, /Start-Process -FilePath \$canonicalNpm/);
+  assert.match(starter, /Start-Process -FilePath \$canonicalNode/);
   assert.doesNotMatch(starter, /Get-Command (?:git|npm)/i);
   assert.doesNotMatch(starter, /(^|\r?\n)\s*npm(?:\.cmd)?\s+run/im);
   assert.doesNotMatch(starter, /CommandLine -match|Invoke-Expression|\.Contains\(['"]stephanos-server\/server\.js['"]\)/i);

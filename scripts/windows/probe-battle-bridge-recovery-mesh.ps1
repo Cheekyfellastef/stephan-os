@@ -78,18 +78,25 @@ function Get-TaskHealth {
 }
 
 function Test-CanonicalBackendCommandLine {
-    param([string]$CommandLine)
+    param([string]$CommandLine, [string]$ExpectedSourceHead)
     $commandLine = (([string]$CommandLine -replace '\s+', ' ').Trim())
-    $expectedQuotedCommand = "`"$canonicalNode`" stephanos-server/backend-bootstrap.mjs"
-    $expectedUnquotedCommand = "$canonicalNode stephanos-server/backend-bootstrap.mjs"
+    $bootstrapRuntimePath = [System.IO.Path]::GetFullPath((Join-Path $workspaceRoot "control\backend-runtime\backend-bootstrap-$ExpectedSourceHead.mjs"))
+    $expectedQuotedCommand = "`"$canonicalNode`" `"$bootstrapRuntimePath`""
+    $expectedUnquotedCommand = "`"$canonicalNode`" $bootstrapRuntimePath"
     if ([string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase) `
         -or [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
         return $true
     }
-    $expectedNpmNodeCommand = 'node stephanos-server/backend-bootstrap.mjs'
-    $expectedNpmNodeExeCommand = 'node.exe stephanos-server/backend-bootstrap.mjs'
-    return [string]::Equals($commandLine, $expectedNpmNodeCommand, [System.StringComparison]::OrdinalIgnoreCase) `
-        -or [string]::Equals($commandLine, $expectedNpmNodeExeCommand, [System.StringComparison]::OrdinalIgnoreCase)
+    $additionalExpectedCommands = @(
+        "$canonicalNode `"$bootstrapRuntimePath`"",
+        "$canonicalNode $bootstrapRuntimePath"
+    )
+    foreach ($expectedCommand in $additionalExpectedCommands) {
+        if ([string]::Equals($commandLine, $expectedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
 }
 
 function Test-RuntimeUiDistStatus {
@@ -111,6 +118,7 @@ function Convert-ProcessCreationDateToUtcText {
 }
 
 function Get-BackendListenerIdentity {
+    param([string]$ExpectedSourceHead)
     try {
         $listeners = @(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction Stop)
         $processIds = @($listeners | Select-Object -ExpandProperty OwningProcess -Unique)
@@ -120,7 +128,7 @@ function Get-BackendListenerIdentity {
         if (-not $process) { throw 'BACKEND_LISTENER_PROCESS_MISSING' }
         $executable = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
         if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'BACKEND_LISTENER_EXECUTABLE_FOREIGN' }
-        if (-not (Test-CanonicalBackendCommandLine -CommandLine ([string]$process.CommandLine))) { throw 'BACKEND_LISTENER_COMMAND_FOREIGN' }
+        if (-not (Test-CanonicalBackendCommandLine -CommandLine ([string]$process.CommandLine) -ExpectedSourceHead $ExpectedSourceHead)) { throw 'BACKEND_LISTENER_COMMAND_FOREIGN' }
         $creationUtc = Convert-ProcessCreationDateToUtcText -CreationDate $process.CreationDate
         return [pscustomobject]@{ healthy = $true; pid = $processId; creationTimeUtc = $creationUtc; blocker = '' }
     } catch {
@@ -136,7 +144,7 @@ function Get-BackendFreshnessHealth {
         if (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) { throw 'RECOVERY_CANONICAL_NODE_EXECUTABLE_MISSING' }
         if (-not (Test-Path -LiteralPath $backendFreshnessProbePath -PathType Leaf)) { throw 'RECOVERY_BACKEND_FRESHNESS_PROBE_MISSING' }
         if (-not $BackendTask.present -or -not $BackendTask.actionCanonical -or -not $BackendTask.authorityCanonical) { throw 'BACKEND_TASK_AUTHORITY_INVALID' }
-        $listenerBefore = Get-BackendListenerIdentity
+        $listenerBefore = Get-BackendListenerIdentity -ExpectedSourceHead $ExpectedSourceHead
         if (-not $listenerBefore.healthy) { throw $listenerBefore.blocker }
         $raw = & $canonicalNode $backendFreshnessProbePath --expected-source-head $ExpectedSourceHead
         if ($LASTEXITCODE -ne 0) { throw 'RECOVERY_BACKEND_FRESHNESS_PROBE_FAILED' }
@@ -151,7 +159,7 @@ function Get-BackendFreshnessHealth {
             -and @($routeProofs | Where-Object { $_.route -eq '/api/mission-operations' -and $_.ok -eq $true }).Count -eq 1
         if (-not (Test-Path -LiteralPath $backendRuntimeReceiptPath -PathType Leaf)) { throw 'BACKEND_RUNTIME_RECEIPT_MISSING' }
         $receipt = Get-Content -LiteralPath $backendRuntimeReceiptPath -Raw | ConvertFrom-Json
-        $listenerAfter = Get-BackendListenerIdentity
+        $listenerAfter = Get-BackendListenerIdentity -ExpectedSourceHead $ExpectedSourceHead
         if (-not $listenerAfter.healthy) { throw $listenerAfter.blocker }
         if ($listenerBefore.pid -ne $listenerAfter.pid -or $listenerBefore.creationTimeUtc -ne $listenerAfter.creationTimeUtc) { throw 'BACKEND_LISTENER_IDENTITY_CHANGED' }
         $receiptPropertyNames = @($receipt.PSObject.Properties.Name)

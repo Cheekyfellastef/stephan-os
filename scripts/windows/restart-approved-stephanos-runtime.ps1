@@ -17,6 +17,7 @@ $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
 $backendExpectedHeadHandoffPath = $null
 $backendTaskDisabledByRepair = $false
+$canonicalNode = 'C:\Program Files\nodejs\node.exe'
 
 function Stop-WithBlocker {
     param([Parameter(Mandatory = $true)][string]$Code)
@@ -76,10 +77,20 @@ function Get-VerifiedBackendListener {
     $processId = [int]$processIds[0]
     $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
     if (-not $process) { Stop-WithBlocker 'BACKEND_LISTENER_PROCESS_MISSING' }
-    $name = ([string]$process.Name).ToLowerInvariant()
-    $commandLine = ([string]$process.CommandLine).Replace('\', '/').ToLowerInvariant()
-    if ($name -notin @('node.exe', 'node')) { Stop-WithBlocker 'BACKEND_LISTENER_NOT_NODE' }
-    if (-not $commandLine.Contains('stephanos-server/backend-bootstrap.mjs')) { Stop-WithBlocker 'BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED' }
+    $executable = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
+    if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { Stop-WithBlocker 'BACKEND_LISTENER_NOT_CANONICAL_NODE' }
+    if (-not $env:USERPROFILE) { Stop-WithBlocker 'BACKEND_LISTENER_USERPROFILE_MISSING' }
+    $bootstrapRuntimePath = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE "Documents\Stephanos-openclaw-workspace\control\backend-runtime\backend-bootstrap-$ExpectedHead.mjs"))
+    $commandLine = (([string]$process.CommandLine -replace '\s+', ' ').Trim())
+    $expectedCommands = @(
+        "`"$canonicalNode`" `"$bootstrapRuntimePath`"",
+        "`"$canonicalNode`" $bootstrapRuntimePath",
+        "$canonicalNode `"$bootstrapRuntimePath`"",
+        "$canonicalNode $bootstrapRuntimePath"
+    )
+    if (-not @($expectedCommands | Where-Object { [string]::Equals($commandLine, $_, [System.StringComparison]::OrdinalIgnoreCase) }).Count) {
+        Stop-WithBlocker 'BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED'
+    }
     return [PSCustomObject]@{ ProcessId = $processId }
 }
 

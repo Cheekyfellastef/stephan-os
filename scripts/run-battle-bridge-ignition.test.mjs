@@ -209,8 +209,8 @@ test('backend startup source tolerates exact runtime memory plus unstaged modifi
   assert.match(starter, /trackedWorktreeClean = -not \(\$RuntimeMemoryDirty -or \$RuntimeDistDirty\)/);
   assert.match(starter, /sourceWorktreeClean = \$true/);
   assert.match(starter, /-replace '\\s\+', ' '/);
-  assert.match(starter, /'node stephanos-server\/backend-bootstrap\.mjs'/);
-  assert.match(starter, /'node\.exe stephanos-server\/backend-bootstrap\.mjs'/);
+  assert.match(starter, /backend-bootstrap-\$headSha\.mjs/);
+  assert.match(starter, /Publish-ExactHeadBackendBootstrap/);
   assert.match(starter, /function Convert-ProcessCreationDateToUtcText[\s\S]*CreationDate -is \[DateTime\][\s\S]*ManagementDateTimeConverter\]::ToDateTime/);
   assert.match(starter, /Convert-ProcessCreationDateToUtcText -CreationDate \$process\.CreationDate/);
   assert.doesNotMatch(starter, /ManagementDateTimeConverter\]::ToDateTime\(\[string\]\$process\.CreationDate\)/);
@@ -348,8 +348,8 @@ test('Recovery Mesh shares the exact runtime-memory, generated-dist and backend 
   assert.match(probe, /\$receiptSourceClean/);
   assert.match(probe, /\$receiptTrackedTruth/);
   assert.match(probe, /-replace '\\s\+', ' '/);
-  assert.match(probe, /'node stephanos-server\/backend-bootstrap\.mjs'/);
-  assert.match(probe, /'node\.exe stephanos-server\/backend-bootstrap\.mjs'/);
+  assert.match(probe, /backend-bootstrap-\$ExpectedSourceHead\.mjs/);
+  assert.match(probe, /Test-CanonicalBackendCommandLine -CommandLine \(\[string\]\$process\.CommandLine\) -ExpectedSourceHead \$ExpectedSourceHead/);
   assert.match(probe, /function Convert-ProcessCreationDateToUtcText[\s\S]*CreationDate -is \[DateTime\][\s\S]*ManagementDateTimeConverter\]::ToDateTime/);
   assert.match(probe, /Convert-ProcessCreationDateToUtcText -CreationDate \$process\.CreationDate/);
   assert.doesNotMatch(probe, /ManagementDateTimeConverter\]::ToDateTime\(\[string\]\$process\.CreationDate\)/);

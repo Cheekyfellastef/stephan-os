@@ -9,8 +9,9 @@ test('battle bridge backend script points to backend server entry', () => {
   assert.equal(packageJson.scripts['stephanos:backend'], 'node stephanos-server/backend-bootstrap.mjs');
 });
 
-test('windows backend starter invokes the fixed npm script that enters the immutable bootstrap', () => {
-  assert.match(startBackendPs1, /Start-Process -FilePath \$canonicalNpm/);
-  assert.match(startBackendPs1, /@\('run', 'stephanos:backend'\)/);
+test('windows backend starter materializes the exact-head bootstrap and invokes fixed Node', () => {
+  assert.match(startBackendPs1, /Publish-ExactHeadBackendBootstrap/);
+  assert.match(startBackendPs1, /Start-Process -FilePath \$canonicalNode/);
+  assert.doesNotMatch(startBackendPs1, /Start-Process -FilePath \$canonicalNpm/);
   assert.doesNotMatch(startBackendPs1, /stephanos:serve/);
 });

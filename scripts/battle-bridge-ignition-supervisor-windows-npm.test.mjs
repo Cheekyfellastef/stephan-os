@@ -94,8 +94,10 @@ test('backend repair child source requires fixed exact-head proof immediately be
   assert.doesNotMatch(repairPowerShell, /\$localResult = Test-Url/);
   assert.match(backendPowerShell, /Backend startup expected-head binding mismatch/);
   assert.match(backendPowerShell, /Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend process start'/);
-  assert.match(backendPowerShell, /Start-Process -FilePath \$canonicalNpm/);
-  assert.match(backendPowerShell, /@\('run', 'stephanos:backend'\)/);
+  assert.match(backendPowerShell, /Publish-ExactHeadBackendBootstrap/);
+  assert.match(backendPowerShell, /Start-Process -FilePath \$canonicalNode/);
+  assert.match(backendPowerShell, /backend-bootstrap-\$headSha\.mjs/);
+  assert.doesNotMatch(backendPowerShell, /Start-Process -FilePath \$canonicalNpm/);
 });
 
 test('already-healthy backend requires exact runtime head before bypassing convergence', () => {

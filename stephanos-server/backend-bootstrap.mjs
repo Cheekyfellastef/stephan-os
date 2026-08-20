@@ -19,9 +19,45 @@ function minimalBackendChildGitEnvironment() {
   const allowedNames = new Set([
     'systemroot', 'windir', 'comspec', 'pathext', 'temp', 'tmp', 'tmpdir',
   ]);
-  return Object.fromEntries(
+  const environment = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => allowedNames.has(name.toLowerCase())),
   );
+  const nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null';
+  const fixedConfig = [
+    ['core.hooksPath', nullDevice],
+    ['core.fsmonitor', 'false'],
+    ['core.trustctime', 'true'],
+    ['core.checkStat', 'default'],
+    ['core.ignoreStat', 'false'],
+    ['core.untrackedCache', 'false'],
+    ['core.attributesFile', nullDevice],
+    ['core.excludesFile', nullDevice],
+    ['credential.helper', ''],
+    ['protocol.allow', 'never'],
+    ['protocol.https.allow', 'always'],
+    ['submodule.recurse', 'false'],
+    ['fetch.recurseSubmodules', 'false'],
+    ['fetch.writeCommitGraph', 'false'],
+    ['gc.auto', '0'],
+    ['maintenance.auto', 'false'],
+  ];
+  environment.GIT_CONFIG_COUNT = String(fixedConfig.length);
+  fixedConfig.forEach(([key, value], index) => {
+    environment[`GIT_CONFIG_KEY_${index}`] = key;
+    environment[`GIT_CONFIG_VALUE_${index}`] = value;
+  });
+  Object.assign(environment, {
+    GIT_CONFIG_GLOBAL: nullDevice,
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_GRAFT_FILE: nullDevice,
+    GIT_NO_LAZY_FETCH: '1',
+    GIT_NO_REPLACE_OBJECTS: '1',
+    GIT_OPTIONAL_LOCKS: '0',
+    GIT_PROTOCOL_FROM_USER: '0',
+    GIT_TERMINAL_PROMPT: '0',
+    GCM_INTERACTIVE: 'Never',
+  });
+  return environment;
 }
 
 function readExactHeadBlob(gitPath, maxBuffer) {

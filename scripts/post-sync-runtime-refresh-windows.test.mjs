@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -155,6 +155,8 @@ test('backend immutable bootstrap registers the exact-head loader before importi
     'the loader implementation must come from the approved Git object',
   );
   assert.match(backendBootstrapSource, /readExactHeadBlob\('stephanos-server\/backend-bootstrap\.mjs'/);
+  assert.match(backendBootstrapSource, /GIT_NO_REPLACE_OBJECTS: '1'/);
+  assert.match(backendLoaderSource, /GIT_NO_REPLACE_OBJECTS: '1'/);
 });
 
 test('bound backend server entry cannot be launched without the immutable bootstrap', () => {
@@ -218,7 +220,7 @@ test('immutable module loading admits A during an A to B to A checkout transitio
   }
 });
 
-test('production bootstrap executes exact-head server A while the mutable checkout contains server B', () => {
+test('materialized production bootstrap rejects package, bootstrap, server, and replace-ref drift from A to B', () => {
   const gitExecutable = process.platform === 'win32'
     ? 'C:\\Program Files\\Git\\cmd\\git.exe'
     : '/usr/bin/git';
@@ -226,23 +228,57 @@ test('production bootstrap executes exact-head server A while the mutable checko
   const fixtureServerRoot = join(fixtureRoot, 'stephanos-server');
   const fixtureBootstrap = join(fixtureServerRoot, 'backend-bootstrap.mjs');
   const fixtureServer = join(fixtureServerRoot, 'server.js');
+  const fixturePackage = join(fixtureRoot, 'package.json');
+  const alternateEntry = join(fixtureRoot, 'alternate-b.mjs');
+  const runtimeBootstrap = join(fixtureRoot, 'runtime', 'backend-bootstrap-exact-a.mjs');
   try {
     mkdirSync(fixtureServerRoot, { recursive: true });
     runGit(gitExecutable, fixtureRoot, ['init', '--quiet']);
     runGit(gitExecutable, fixtureRoot, ['config', 'user.name', 'Stephanos Test']);
     runGit(gitExecutable, fixtureRoot, ['config', 'user.email', 'stephanos-test@example.invalid']);
+    writeFileSync(fixturePackage, '{"scripts":{"stephanos:backend":"node stephanos-server/backend-bootstrap.mjs"}}\n', 'utf8');
     writeFileSync(fixtureBootstrap, backendBootstrapSource, 'utf8');
     writeFileSync(join(fixtureServerRoot, 'backend-exact-head-loader.mjs'), backendLoaderSource, 'utf8');
     writeFileSync(fixtureServer, "console.log('PRODUCTION_ENTRY_A');\n", 'utf8');
-    runGit(gitExecutable, fixtureRoot, ['add', '--', 'stephanos-server']);
+    runGit(gitExecutable, fixtureRoot, ['add', '--', 'package.json', 'stephanos-server']);
     runGit(gitExecutable, fixtureRoot, ['commit', '--quiet', '-m', 'production entry A']);
     const approvedHead = runGit(gitExecutable, fixtureRoot, ['rev-parse', 'HEAD']).toLowerCase();
 
-    writeFileSync(fixtureServer, "console.log('PRODUCTION_ENTRY_B');\n", 'utf8');
-    const child = spawnSync(process.execPath, [fixtureBootstrap], {
+    const packageB = '{"scripts":{"stephanos:backend":"node alternate-b.mjs"}}\n';
+    const bootstrapB = "console.log('BOOTSTRAP_B_EXECUTED');\n" + backendBootstrapSource;
+    const serverB = "console.log('PRODUCTION_ENTRY_B');\n";
+    const alternateB = "console.log('ALTERNATE_PACKAGE_ENTRY_B');\n";
+    writeFileSync(fixturePackage, packageB, 'utf8');
+    writeFileSync(fixtureBootstrap, bootstrapB, 'utf8');
+    writeFileSync(fixtureServer, serverB, 'utf8');
+    writeFileSync(alternateEntry, alternateB, 'utf8');
+    runGit(gitExecutable, fixtureRoot, ['add', '--', 'package.json', 'alternate-b.mjs', 'stephanos-server']);
+    runGit(gitExecutable, fixtureRoot, ['commit', '--quiet', '-m', 'production entry B']);
+    const replacementHead = runGit(gitExecutable, fixtureRoot, ['rev-parse', 'HEAD']).toLowerCase();
+    assert.notEqual(replacementHead, approvedHead);
+
+    runGit(gitExecutable, fixtureRoot, ['checkout', '--quiet', '--detach', approvedHead]);
+    writeFileSync(fixturePackage, packageB, 'utf8');
+    writeFileSync(fixtureBootstrap, bootstrapB, 'utf8');
+    writeFileSync(fixtureServer, serverB, 'utf8');
+    writeFileSync(alternateEntry, alternateB, 'utf8');
+    runGit(gitExecutable, fixtureRoot, ['replace', approvedHead, replacementHead]);
+    assert.match(readFileSync(fixturePackage, 'utf8'), /alternate-b\.mjs/);
+    assert.match(readFileSync(fixtureBootstrap, 'utf8'), /BOOTSTRAP_B_EXECUTED/);
+
+    const exactBootstrap = spawnSync(gitExecutable, ['-C', fixtureRoot, 'show', `${approvedHead}:stephanos-server/backend-bootstrap.mjs`], {
+      env: { ...process.env, GIT_NO_REPLACE_OBJECTS: '1' },
+      encoding: 'utf8', windowsHide: true, timeout: 5_000,
+    });
+    assert.equal(exactBootstrap.status, 0, exactBootstrap.stderr || exactBootstrap.error?.message);
+    mkdirSync(join(fixtureRoot, 'runtime'), { recursive: true });
+    writeFileSync(runtimeBootstrap, exactBootstrap.stdout, 'utf8');
+
+    const child = spawnSync(process.execPath, [runtimeBootstrap], {
       cwd: fixtureRoot,
       env: {
         ...process.env,
+        GIT_NO_REPLACE_OBJECTS: '0',
         STEPHANOS_BACKEND_REPO_ROOT: fixtureRoot,
         STEPHANOS_BACKEND_SOURCE_HEAD: approvedHead,
       },
@@ -253,6 +289,7 @@ test('production bootstrap executes exact-head server A while the mutable checko
     assert.equal(child.status, 0, child.stderr || child.error?.message);
     assert.match(String(child.stdout || ''), /PRODUCTION_ENTRY_A/);
     assert.doesNotMatch(String(child.stdout || ''), /PRODUCTION_ENTRY_B/);
+    assert.doesNotMatch(String(child.stdout || ''), /BOOTSTRAP_B_EXECUTED|ALTERNATE_PACKAGE_ENTRY_B/);
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
@@ -344,7 +381,7 @@ test('backend Node child ignores hostile inherited Git repository-selection vari
 
 test('backend restart terminates only the verified 8787 Stephanos Node listener', () => {
   assert.match(restartSource, /Get-NetTCPConnection -LocalPort 8787 -State Listen/);
-  assert.match(restartSource, /stephanos-server\/backend-bootstrap\.mjs/);
+  assert.match(restartSource, /backend-runtime\\backend-bootstrap-\$ExpectedHead\.mjs/);
   assert.match(restartSource, /BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED/);
   assert.match(restartSource, /Stop-Process -Id \$listener\.ProcessId -Force/);
   assert.match(restartSource, /stephanos-backend-runtime\.json/);
@@ -391,6 +428,12 @@ test('backend starter proves canonical main and writes a bounded exact-head runt
   assert.match(backendStartSource, /headSha = \$HeadSha/);
   assert.match(backendStartSource, /taskName = 'Stephanos Battle Bridge Backend'/);
   assert.match(backendStartSource, /pathValuesPublished = \$false/);
+  assert.match(backendStartSource, /function Publish-ExactHeadBackendBootstrap/);
+  assert.match(backendStartSource, /'show', "\$\{HeadSha\}:\$bootstrapGitPath"/);
+  assert.match(backendStartSource, /hash-object "--path=\$bootstrapGitPath" \$temporaryPath/);
+  assert.match(backendStartSource, /backend-bootstrap-\$headSha\.mjs/);
+  assert.match(backendStartSource, /Start-Process -FilePath \$canonicalNode/);
+  assert.doesNotMatch(backendStartSource, /Start-Process -FilePath \$canonicalNpm/);
   assert.match(backendStartSource, /Get-NetTCPConnection -LocalPort 8787 -State Listen/);
   assert.doesNotMatch(backendStartSource, /repositoryRoot\s*=/);
 });
