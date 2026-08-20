@@ -18,7 +18,8 @@ if ([System.IO.Path]::GetFullPath($repoRoot) -ne [System.IO.Path]::GetFullPath($
     throw "Installer must run from the canonical checkout: $expectedRepoRoot"
 }
 
-$runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-github-command-mailbox-with-receipt-index.mjs')).Path
+$runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-github-command-mailbox-outbox-guard-v1.mjs')).Path
+$childRunnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-github-command-mailbox-with-receipt-index.mjs')).Path
 $wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
 if (-not (Test-Path -LiteralPath $wscriptExe -PathType Leaf)) { throw "Windowless task host is missing: $wscriptExe" }
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -61,6 +62,8 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub comman
     executable = $wscriptExe
     launcherPath = $launcherPath
     runnerPath = $runnerPath
+    childRunnerPath = $childRunnerPath
+    outboxGuardEnabled = $true
     receiptIndexEnabled = $true
     intervalMinutes = 5
     atLogon = $true
