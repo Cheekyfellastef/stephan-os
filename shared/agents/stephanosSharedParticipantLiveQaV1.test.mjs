@@ -49,8 +49,20 @@ function groundedResponse() {
       liveGoalProjection: {
         schemaVersion: 'stephanos.live-goal-projection.v1',
         generatedAt: NOW.toISOString(),
-        sourceTruth: 'CURRENT',
-        proofTruth: { github: 'CURRENT', local: 'UNKNOWN', browser: 'UNKNOWN' },
+        projectionSource: 'live-goal-projection-service',
+        sourceTruth: 'live',
+        backendStatus: { status: 'live', ok: true, healthRoute: '/api/health' },
+        heartbeat: {
+          generatedAt: NOW.toISOString(),
+          backendLive: true,
+          projectionSource: 'live-goal-projection-service',
+        },
+        missionOperationsStatus: {
+          status: 'ready',
+          source: 'mission-operations-service',
+          route: '/api/mission-operations',
+        },
+        proofTruth: { github: 'adapter-provided', local: 'unknown', browser: 'unknown' },
       },
       execution_metadata: {
         freshness_integrity_preserved: true,
