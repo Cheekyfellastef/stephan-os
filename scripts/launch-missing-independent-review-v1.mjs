@@ -217,6 +217,20 @@ export function selectExactLaunchReceiptCommentV1(comments, launchKeySha256) {
   return matches[0] || null;
 }
 
+export function reconcileExistingLaunchReceiptV1({ launchReceipt, runs } = {}) {
+  const discovery = discoverIndependentReviewWorkflowDispatchRunV1({ launchReceipt, runs });
+  if (discovery.verdict === 'DISPATCH_RUN_NOT_YET_OBSERVED') {
+    return Object.freeze({
+      ...discovery,
+      reconciliation: 'BLOCKED_DISPATCH_REQUEST_UNOBSERVED',
+      blockers: Object.freeze([
+        'launch receipt exists but no matching workflow-dispatch run is observable; blind redispatch is forbidden',
+      ]),
+    });
+  }
+  return Object.freeze({ ...discovery, reconciliation: discovery.verdict });
+}
+
 function handoffEvent(repository, prNumber, comment) {
   return {
     repository: { full_name: repository },
@@ -295,10 +309,14 @@ async function main() {
   if (existingLaunchComment) {
     const persistedReceipt = parseIndependentReviewWorkflowDispatchLaunchReceiptCommentV1(existingLaunchComment.body);
     const dispatchRuns = await loadWorkflowDispatchRuns(owner, repo, context.workflow.id, token);
-    const discovery = discoverIndependentReviewWorkflowDispatchRunV1({ launchReceipt: persistedReceipt, runs: dispatchRuns });
-    console.log(`INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_DISCOVERY=${discovery.verdict}`);
-    appendOutput('decision', discovery.verdict);
+    const reconciliation = reconcileExistingLaunchReceiptV1({ launchReceipt: persistedReceipt, runs: dispatchRuns });
+    console.log(`INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_DISCOVERY=${reconciliation.verdict}`);
+    console.log(`INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_RECONCILIATION=${reconciliation.reconciliation}`);
+    appendOutput('decision', reconciliation.reconciliation);
     appendOutput('launch_key', persistedReceipt.launchKeySha256);
+    if (reconciliation.reconciliation === 'BLOCKED_DISPATCH_REQUEST_UNOBSERVED') {
+      throw new Error('workflow-dispatch launch receipt exists but no matching dispatch run is observable; request requires bounded recovery');
+    }
     return;
   }
 
