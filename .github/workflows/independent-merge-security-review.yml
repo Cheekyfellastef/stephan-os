@@ -1,12 +1,43 @@
 name: Independent Merge Security Review
 
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch'
+      && format('Independent Merge Security Review PR #{0} head {1} base {2}', inputs.pr_number, inputs.source_head, inputs.base_sha)
+      || github.event.pull_request.title }}
+
 on:
   pull_request_target:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Exact same-repository pull request number
+        required: true
+        type: string
+      source_head:
+        description: Exact 40-character pull request head
+        required: true
+        type: string
+      base_sha:
+        description: Exact current protected main SHA
+        required: true
+        type: string
+      head_branch:
+        description: Exact pull request head branch
+        required: true
+        type: string
+      handoff_binding_sha256:
+        description: Exact Stage-1 authenticated handoff binding SHA-256
+        required: true
+        type: string
+      handoff_run_receipt_sha256:
+        description: Exact immutable coordinator handoff receipt SHA-256
+        required: true
+        type: string
 
 concurrency:
-  group: independent-merge-security-review-${{ github.event.pull_request.number }}
+  group: independent-merge-security-review-${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions: {}
@@ -25,24 +56,52 @@ jobs:
       - name: Check out trusted exact-base reviewer
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.pull_request.base.sha }}
           persist-credentials: false
           fetch-depth: 1
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      - name: Preflight exact Stage-1 workflow-dispatch identity
+        id: dispatch_preflight
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STEPHANOS_REVIEW_DISPATCH_PR: ${{ inputs.pr_number }}
+          STEPHANOS_REVIEW_DISPATCH_HEAD: ${{ inputs.source_head }}
+          STEPHANOS_REVIEW_DISPATCH_BASE: ${{ inputs.base_sha }}
+          STEPHANOS_REVIEW_DISPATCH_BRANCH: ${{ inputs.head_branch }}
+          STEPHANOS_REVIEW_DISPATCH_BINDING: ${{ inputs.handoff_binding_sha256 }}
+          STEPHANOS_REVIEW_DISPATCH_RECEIPT_BINDING: ${{ inputs.handoff_run_receipt_sha256 }}
+          STEPHANOS_INDEPENDENT_REVIEW_HANDOFF_IDENTITY_PATH: ${{ runner.temp }}/independent-review-handoff-identity.json
+        run: node scripts/prepare-independent-review-workflow-dispatch-v1.mjs
+
+      - name: Download exact immutable coordinator handoff receipt
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.dispatch_preflight.outputs.handoff_artifact_name }}
+          path: ${{ runner.temp }}/dispatch-handoff
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.dispatch_preflight.outputs.coordinator_run_id }}
+
       - name: Prove bounded Windows authority specialist policy
         run: >-
           node --test
           shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs
           shared/agents/windowsAuthoritySpecialistBoundaryV1.test.mjs
           scripts/independent-merge-security-review-with-windows-specialist-v1.test.mjs
+
       # The specialist wrapper preserves scripts/independent-merge-security-review-v2.mjs as the trusted base reviewer.
       - name: Review the complete exact-head and exact-base diff without mutation authority
         env:
           GH_TOKEN: ${{ github.token }}
           STEPHANOS_INDEPENDENT_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/independent-review-result.json
+          STEPHANOS_INDEPENDENT_REVIEW_HANDOFF_IDENTITY_PATH: ${{ runner.temp }}/independent-review-handoff-identity.json
+          STEPHANOS_INDEPENDENT_REVIEW_HANDOFF_RUN_RECEIPT_PATH: ${{ runner.temp }}/dispatch-handoff/independent-review-handoff-run-receipt.json
         run: node scripts/independent-merge-security-review-with-windows-specialist-v1.mjs
+
       - name: Upload the exact-run immutable independent review result
         id: independent-review-artifact
         if: ${{ always() }}
