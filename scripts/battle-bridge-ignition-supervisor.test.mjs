@@ -172,7 +172,31 @@ test('live source collector includes meaningful Git dirt instead of silently ass
   assert.equal(result.workingTreeDirty, true);
   assert.equal(result.blockedForRemoteTruth, true);
   assert.deepEqual(calls[0], ['git', 'fetch', '--prune', 'origin', 'main:refs/remotes/origin/main']);
-  assert.deepEqual(calls[1], ['git', 'status', '--porcelain=v1']);
+  assert.deepEqual(calls[1], ['git', 'status', '--porcelain=v1', '--untracked-files=all']);
+});
+
+test('live source collector expands nested untracked data so hard blockers stop Ignition', () => {
+  const calls = [];
+  const result = collectCanonicalIgnitionSourceTruth({
+    cwd: '/canonical/repo',
+    execFile(command, args) {
+      calls.push([command, ...args]);
+      if (args[0] === 'fetch') return '';
+      if (args[0] === 'status') return '?? data/secrets.json\n';
+      if (args.includes('--abbrev-ref') && args.includes('HEAD')) return 'main\n';
+      if (args.includes('--symbolic-full-name')) return 'origin/main\n';
+      if (args[0] === 'rev-list') return '0\t0\n';
+      throw new Error(`unexpected fixed Git command: ${command} ${args.join(' ')}`);
+    },
+  });
+
+  assert.equal(result.publicationState, 'local-uncommitted');
+  assert.equal(result.workingTreeDirty, true);
+  assert.equal(result.blockedForRemoteTruth, true);
+  assert.deepEqual(calls[1], ['git', 'status', '--porcelain=v1', '--untracked-files=all']);
+  const verdict = evaluateCanonicalIgnitionSourceTruth(result);
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.blocker.id, 'dirty-source-truth');
 });
 
 test('live source collector fails closed when current origin/main cannot be fetched', () => {
