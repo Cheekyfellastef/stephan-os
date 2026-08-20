@@ -221,11 +221,12 @@ function formatInvocation(invocation) {
   return formatted;
 }
 
-function spawnUi4173Repair({ spawnFn, platform, logs }) {
+function spawnUi4173Repair({ spawnFn, platform, logs, expectedHead, environment }) {
   const invocation = resolveUi4173RepairInvocation(platform);
+  const childEnvironment = { ...environment, STEPHANOS_EXPECTED_HEAD: expectedHead };
   let child;
   try {
-    child = spawnFn(invocation.command, invocation.commandArgs, { cwd: invocation.cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'], shell: invocation.shell });
+    child = spawnFn(invocation.command, invocation.commandArgs, { cwd: invocation.cwd, env: childEnvironment, detached: true, stdio: ['ignore', 'pipe', 'pipe'], shell: invocation.shell });
     if (child?.stdout?.pipe) child.stdout.pipe(createWriteStream(logs.stdoutLogPath, { flags: 'a' }));
     if (child?.stderr?.pipe) child.stderr.pipe(createWriteStream(logs.stderrLogPath, { flags: 'a' }));
   } catch (error) {
@@ -335,7 +336,7 @@ export async function runUi4173Repair({ sharedWorkspace = null, dryRun = true, e
     }
     result.expectedHead = expected;
     result.observedHead = observedHead;
-    const spawnResult = await spawnUi4173Repair({ spawnFn, platform, logs });
+    const spawnResult = await spawnUi4173Repair({ spawnFn, platform, logs, expectedHead: expected, environment });
     if (!spawnResult.ok) {
       result.action = 'start-ui-4173-failed';
       result.started = false;

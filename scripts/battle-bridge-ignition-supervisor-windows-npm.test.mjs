@@ -51,6 +51,13 @@ test('backend repair child source requires fixed exact-head proof immediately be
   assert.match(source, /collectCanonicalIgnitionSourceTruth/);
   assert.match(source, /evaluateCanonicalIgnitionSourceTruth/);
   assert.match(source, /if \(!expectedHead\) \{[\s\S]*canonicalSourceTruth[\s\S]*BATTLE_BRIDGE_BACKEND_CANONICAL_HEAD_UNPROVEN/);
-  assert.match(source, /assertExpectedHeadImmediatelyBeforeMutation\(\);\s*const result = spawnSync\(ps/);
+  assert.match(source, /const expectedHead = assertExpectedHeadImmediatelyBeforeMutation\(\);\s*const result = spawnSync\(ps,[\s\S]*'-ExpectedHead', expectedHead/);
   assert.match(source, /assertExpectedHeadImmediatelyBeforeMutation\(\);\s*const child = spawn\('node'/);
+  const repairPowerShell = fs.readFileSync(new URL('./windows/repair-stephanos-battle-bridge.ps1', import.meta.url), 'utf8');
+  const backendPowerShell = fs.readFileSync(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
+  assert.match(repairPowerShell, /Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend starter child'/);
+  assert.match(repairPowerShell, /'-ExpectedHead', \$ExpectedHead/);
+  assert.match(repairPowerShell, /Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'OpenClaw readonly adapter ensure'/);
+  assert.match(backendPowerShell, /Backend startup expected-head binding mismatch/);
+  assert.match(backendPowerShell, /Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend process start'/);
 });

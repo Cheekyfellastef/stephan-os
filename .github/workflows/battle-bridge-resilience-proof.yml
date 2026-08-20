@@ -30,6 +30,9 @@ on:
       - 'scripts/windows/run-stephanos-scheduled-task-windowless.vbs'
       - 'scripts/windows/request-battle-bridge-recovery.ps1'
       - 'scripts/windows/install-stephanos-backend-autostart.ps1'
+      - 'scripts/windows/repair-stephanos-battle-bridge.ps1'
+      - 'scripts/windows/start-stephanos-backend.ps1'
+      - 'scripts/post-sync-runtime-refresh-windows.test.mjs'
       - 'shared/agents/backendFreshnessSupervisor.mjs'
       - 'shared/agents/backendFreshnessSupervisor.test.mjs'
       - 'shared/agents/battleBridgeExecutionBoundaryV1.mjs'
@@ -85,6 +88,7 @@ jobs:
           scripts/battle-bridge-github-command-mailbox.test.mjs
           scripts/battle-bridge-outbound-health-beacon.test.mjs
           scripts/battle-bridge-control-plane-self-repair.test.mjs
+          scripts/post-sync-runtime-refresh-windows.test.mjs
           integrations/openclaw/stephanos-ignite-command/lib/recovery-wake.test.mjs
           integrations/openclaw/stephanos-ignite-command/manifest.test.mjs
 

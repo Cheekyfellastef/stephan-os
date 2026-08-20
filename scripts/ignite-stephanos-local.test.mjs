@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import {
+  assertBoundIgnitionHeadImmediatelyBeforeMutation,
   autoPublishDistWithDeps,
   buildOpenClawReadinessEndpoints,
   buildTrackedRuntimeActivityDirtBlocker,
@@ -34,6 +35,7 @@ import {
   shouldAutoPull,
 } from './ignite-stephanos-local.mjs';
 import { buildOpenClawStartupRecoveryPacket, classifyOpenClawReadiness } from '../shared/agents/openClawStartupRecovery.mjs';
+import { BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { isStephanosDebugEnabled } from './stephanos-build-utils.mjs';
 
 test('isMainModule matches direct script execution path', () => {
@@ -48,6 +50,32 @@ test('isMainModule does not match different module path', () => {
   const argv = ['node', scriptPath];
   const metaUrl = pathToFileURL(resolve('scripts/verify-stephanos-dist.mjs')).href;
   assert.equal(isMainModule(argv, metaUrl), false);
+});
+
+test('bound ignition child uses fixed Git and rejects head drift before mutation', () => {
+  const expectedHead = 'a'.repeat(40);
+  const calls = [];
+  const proof = assertBoundIgnitionHeadImmediatelyBeforeMutation({
+    expectedHead,
+    cwd: '/canonical/repo',
+    platform: 'linux',
+    environment: { PATH: '/attacker', NODE_OPTIONS: '--require=/attacker/inject.cjs' },
+    spawnSyncFn(command, args, options) {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+    },
+  });
+  assert.deepEqual(proof, { expectedHead, observedHead: expectedHead });
+  assert.equal(calls[0].command, BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE);
+  assert.deepEqual(calls[0].args.slice(-2), ['rev-parse', 'HEAD']);
+  assert.equal(calls[0].options.env.PATH, '/usr/bin:/bin');
+  assert.equal(calls[0].options.env.NODE_OPTIONS, undefined);
+  assert.throws(() => assertBoundIgnitionHeadImmediatelyBeforeMutation({
+    expectedHead,
+    cwd: '/canonical/repo',
+    platform: 'linux',
+    spawnSyncFn: () => ({ status: 0, stdout: `${'b'.repeat(40)}\n`, stderr: '' }),
+  }), /IGNITION_BOUND_EXPECTED_HEAD_MISMATCH/);
 });
 
 test('resolveStepExecution wraps Windows npm commands via cmd.exe', () => {

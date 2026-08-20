@@ -238,6 +238,7 @@ test('Windows start uses controlled cmd.exe wrapper with fixed args for the cano
   assert.deepEqual(calls[0].args, ['/d', '/s', '/c', 'npm.cmd', 'run', 'stephanos:ignite:launcher-root']);
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.cwd, process.cwd());
+  assert.equal(calls[0].options.env.STEPHANOS_EXPECTED_HEAD, EXACT_HEAD);
   const output = json();
   assert.equal(output.invocation.kind, 'CONTROLLED_WINDOWS_NPM_WRAPPER');
   assert.equal(output.invocation.command, 'cmd.exe');
@@ -273,6 +274,7 @@ test('non-Windows start remains controlled direct npm for the canonical npm scri
   assert.equal(calls[0].command, 'npm');
   assert.deepEqual(calls[0].args, ['run', 'stephanos:ignite:launcher-root']);
   assert.equal(calls[0].options.cwd, process.cwd());
+  assert.equal(calls[0].options.env.STEPHANOS_EXPECTED_HEAD, EXACT_HEAD);
   const output = json();
   assert.equal(output.invocation.kind, 'CONTROLLED_DIRECT_NPM');
   assert.equal(output.invocation.command, 'npm');

@@ -66,8 +66,8 @@ async function waitForHealth(timeoutMs = 20000) {
 
 const ps = findPowerShell();
 if (ps) {
-  assertExpectedHeadImmediatelyBeforeMutation();
-  const result = spawnSync(ps, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psScript], { stdio: 'inherit' });
+  const expectedHead = assertExpectedHeadImmediatelyBeforeMutation();
+  const result = spawnSync(ps, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psScript, '-ExpectedHead', expectedHead], { stdio: 'inherit' });
   process.exit(result.status ?? 1);
 }
 

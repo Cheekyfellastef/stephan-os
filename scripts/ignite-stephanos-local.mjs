@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, copyFileSync, cpSync, existsSync, lstatSync, opendirSync, rmSync, writeFileSync, renameSync } from 'node:fs';
-import { basename, isAbsolute, relative, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
 import { projectIgnitionCockpit } from './ignition-cockpit-model.mjs';
 import { projectGitBranchIntelligence } from './git-branch-intelligence.mjs';
@@ -30,10 +30,37 @@ import {
   hasForbiddenOpenClawGatewayStartupToken,
   splitOpenClawGatewayStartupCommand,
 } from '../shared/agents/openClawGatewayStartup.mjs';
+import {
+  battleBridgeCanonicalRepositoryArgs,
+  resolveBattleBridgeGitExecution,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 const args = new Set(process.argv.slice(2));
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const OPENCLAW_STARTUP_RESTART_FLAG = '--approve-openclaw-service-restart';
+const IGNITION_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const SHA40 = /^[0-9a-f]{40}$/;
+
+export function assertBoundIgnitionHeadImmediatelyBeforeMutation({
+  expectedHead = process.env.STEPHANOS_EXPECTED_HEAD || '',
+  cwd = IGNITION_REPO_ROOT,
+  platform = process.platform,
+  environment = process.env,
+  spawnSyncFn = spawnSync,
+} = {}) {
+  const expected = String(expectedHead || '').trim().toLowerCase();
+  if (!expected) return null;
+  if (!SHA40.test(expected)) throw new Error('IGNITION_BOUND_EXPECTED_HEAD_INVALID');
+  const gitExecution = resolveBattleBridgeGitExecution({ platform, environment });
+  const proof = spawnSyncFn(
+    gitExecution.executable,
+    [...gitExecution.fixedConfigArgs, ...battleBridgeCanonicalRepositoryArgs(cwd), 'rev-parse', 'HEAD'],
+    { cwd, env: gitExecution.environment, encoding: 'utf8', shell: false, windowsHide: true, timeout: 120_000 },
+  );
+  const observed = String(proof?.stdout || '').trim().toLowerCase();
+  if (proof?.error || proof?.status !== 0 || observed !== expected) throw new Error('IGNITION_BOUND_EXPECTED_HEAD_MISMATCH');
+  return Object.freeze({ expectedHead: expected, observedHead: observed });
+}
 
 const OPENCLAW_AUTOSTART_SURFACES = Object.freeze([
   { id: 'gateway', envKey: 'STEPHANOS_OPENCLAW_GATEWAY_COMMAND', required: true },
@@ -2131,6 +2158,7 @@ export function autoPublishDistWithDeps({ statusAssessment, captureStep = runSte
 }
 
 export async function run() {
+  assertBoundIgnitionHeadImmediatelyBeforeMutation();
   const preflightState = readLocalBuildState();
   const autoPullEnabled = shouldAutoPull();
   const ignitionMode = resolveIgnitionMode();
@@ -2211,6 +2239,7 @@ export async function run() {
       console.log('[IGNITION] launcher guardrail passed');
     },
     runBuild: async () => {
+      assertBoundIgnitionHeadImmediatelyBeforeMutation();
       console.log('[IGNITION] build starting');
       try {
         runStep('build', npmCommand, ['run', 'stephanos:build']);
@@ -2299,6 +2328,7 @@ export async function run() {
         console.error(`[IGNITION] repair-packet=${JSON.stringify(distFreshness)}`);
         throw new Error(`blocked for safety: ${distFreshness.reason}. ${distFreshness.nextSafeAction}`);
       }
+      assertBoundIgnitionHeadImmediatelyBeforeMutation();
       const restartReport = await ensureLocalStaticServerRestartWithDeps({
         expectedMetadata: refreshedState.distMetadata || refreshedState.expectedMetadata,
         verifyServedAfterStart: true,

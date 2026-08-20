@@ -2,7 +2,8 @@
 param(
     [int]$BackendStartupTimeoutSeconds = 90,
     [int]$HostedPollTimeoutSeconds = 45,
-    [int]$PollIntervalSeconds = 3
+    [int]$PollIntervalSeconds = 3,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedHead
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,6 +13,7 @@ $expectedServeHost = 'https://desktop-9flonkj.taild6f215.ts.net'
 $expectedServeTarget = 'http://127.0.0.1:8787'
 $localHealthUrl = 'http://127.0.0.1:8787/api/health'
 $hostedHealthUrl = "$expectedServeHost/api/health"
+$canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
@@ -29,6 +31,22 @@ function Write-Log {
     param([string]$Message)
     $entry = "[{0}] {1}" -f (Get-Date -Format 's'), $Message
     $entry | Tee-Object -FilePath $logPath -Append
+}
+
+function Assert-ExpectedHeadImmediatelyBeforeMutation {
+    param([Parameter(Mandatory = $true)][string]$Mutation)
+    if (-not (Test-Path -LiteralPath $canonicalGit -PathType Leaf)) {
+        throw "Canonical Git is unavailable before ${Mutation}: $canonicalGit"
+    }
+    $headOutput = @(& $canonicalGit -C $repoRoot rev-parse HEAD 2>$null)
+    $headExitCode = $LASTEXITCODE
+    if ($headExitCode -ne 0) { throw "Canonical Git head proof failed before ${Mutation}." }
+    $observedHead = [string]($headOutput | Select-Object -First 1)
+    $observedHead = $observedHead.Trim().ToLowerInvariant()
+    if ($observedHead -ne $ExpectedHead.ToLowerInvariant()) {
+        throw "BATTLE_BRIDGE_REPAIR_EXPECTED_HEAD_MISMATCH before ${Mutation}: expected=$ExpectedHead observed=$observedHead"
+    }
+    Write-Log "Exact-head mutation gate passed before ${Mutation}: $observedHead"
 }
 
 function Test-Url {
@@ -150,10 +168,11 @@ else {
         $powershellExe = 'powershell.exe'
     }
 
-    $startArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startScriptPath, '-StartupTimeoutSeconds', $BackendStartupTimeoutSeconds, '-PollIntervalSeconds', $PollIntervalSeconds)
+    $startArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $startScriptPath, '-StartupTimeoutSeconds', $BackendStartupTimeoutSeconds, '-PollIntervalSeconds', $PollIntervalSeconds, '-ExpectedHead', $ExpectedHead)
     Write-Log ("Invoking backend starter: {0} {1}" -f $powershellExe, ($startArgs -join ' '))
 
     if ($PSCmdlet.ShouldProcess($startScriptPath, 'Start Stephanos backend')) {
+        Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend starter child'
         & $powershellExe @startArgs
         if ($LASTEXITCODE -ne 0) {
             Write-Log "ERROR: Backend starter exited with code $LASTEXITCODE"
@@ -206,6 +225,7 @@ if ($serveMappingPresent) {
 else {
     Write-Log 'Expected Serve mapping missing. Restoring / -> http://127.0.0.1:8787 (tailnet-only, no Funnel).'
     if ($PSCmdlet.ShouldProcess('tailscale serve', 'Restore expected Battle Bridge mapping')) {
+        Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'Tailscale Serve repair'
         & $tailscaleExe serve --bg $expectedServeTarget | Out-Null
         if ($LASTEXITCODE -ne 0) {
             Write-Log "ERROR: tailscale serve --bg $expectedServeTarget failed with exit code $LASTEXITCODE"
@@ -248,6 +268,7 @@ Write-Log "Hosted bridge healthy (HTTP $($hostedResult.StatusCode))."
 Write-Log 'Ensuring readonly OpenClaw adapter stub at 127.0.0.1:8790.'
 $openClawEnsureOutput = ''
 try {
+    Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'OpenClaw readonly adapter ensure'
     $openClawEnsureOutput = npm run --silent openclaw:stub:ensure 2>&1 | Out-String
     Write-Log ("openclaw:stub:ensure -> {0}" -f $openClawEnsureOutput.Trim())
 }

@@ -1,7 +1,8 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [int]$StartupTimeoutSeconds = 90,
-    [int]$PollIntervalSeconds = 3
+    [int]$PollIntervalSeconds = 3,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedHead
 )
 
 $ErrorActionPreference = 'Stop'
@@ -179,6 +180,19 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
 Set-Location -Path $repoRoot
 
+function Assert-ExpectedHeadImmediatelyBeforeMutation {
+    param([Parameter(Mandatory = $true)][string]$Mutation)
+    $headOutput = @(& $canonicalGit -C $repoRoot rev-parse HEAD 2>$null)
+    $headExitCode = $LASTEXITCODE
+    if ($headExitCode -ne 0) { throw "Canonical Git head proof failed before ${Mutation}." }
+    $observedHead = [string]($headOutput | Select-Object -First 1)
+    $observedHead = $observedHead.Trim().ToLowerInvariant()
+    if ($observedHead -ne $ExpectedHead.ToLowerInvariant()) {
+        throw "BACKEND_START_EXPECTED_HEAD_MISMATCH before ${Mutation}: expected=$ExpectedHead observed=$observedHead"
+    }
+    return $observedHead
+}
+
 foreach ($requiredExecutable in @($canonicalGit, $canonicalNpm, $canonicalNode)) {
     if (-not (Test-Path -LiteralPath $requiredExecutable -PathType Leaf)) {
         throw "Required canonical executable is missing: $requiredExecutable"
@@ -197,6 +211,7 @@ $branch = if ($branchRaw) { ([string]$branchRaw).Trim() } else { '' }
 $headSha = if ($headRaw) { ([string]$headRaw).Trim().ToLowerInvariant() } else { '' }
 if ($branch -ne 'main') { throw 'Backend startup requires canonical branch main.' }
 if ($headSha -notmatch '^[0-9a-f]{40}$') { throw 'Backend startup could not prove a canonical 40-character Git head.' }
+if ($headSha -ne $ExpectedHead.ToLowerInvariant()) { throw "Backend startup expected-head binding mismatch: expected=$ExpectedHead observed=$headSha" }
 $trackedStatus = @(& $canonicalGit -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
 if ($LASTEXITCODE -ne 0) { throw 'Backend startup could not inspect tracked worktree state.' }
 $trackedAssessment = Get-TrackedWorktreeAssessment -StatusLines $trackedStatus
@@ -249,6 +264,7 @@ Write-Log 'Frontend/dist server not started by this backend script (port 4173).'
 Write-Log 'Ensuring OpenClaw readonly adapter stub lifecycle (execution remains disabled).'
 
 try {
+    Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'OpenClaw readonly adapter ensure' | Out-Null
     $openClawEnsureOutput = & $canonicalNpm run --silent openclaw:stub:ensure 2>&1 | Out-String
     Write-Log ("openclaw:stub:ensure -> {0}" -f $openClawEnsureOutput.Trim())
 }
@@ -261,6 +277,7 @@ $existingListener = if (Test-BackendHealth -Url $healthUrl -ExpectedSourceHead $
     Get-VerifiedBackendListener
 } else { $null }
 if ($existingListener) {
+    Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend runtime receipt publication' | Out-Null
     Publish-VerifiedBackendRuntimeReceipt -Listener $existingListener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl -RuntimeMemoryDirty $runtimeMemoryDirty -RuntimeDistDirty $runtimeDistDirty
     Write-Log 'Backend already healthy; exact listener receipt refreshed without starting a new process.'
     exit 0
@@ -270,6 +287,7 @@ $arguments = @('run', 'stephanos:backend')
 $env:STEPHANOS_BACKEND_SOURCE_HEAD = $headSha
 Write-Log ("Starting backend with command: {0} {1}" -f $canonicalNpm, ($arguments -join ' '))
 if ($PSCmdlet.ShouldProcess("$canonicalNpm $($arguments -join ' ')", 'Start Stephanos backend')) {
+    Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend process start' | Out-Null
     $process = Start-Process -FilePath $canonicalNpm `
         -ArgumentList $arguments `
         -WorkingDirectory $repoRoot `
