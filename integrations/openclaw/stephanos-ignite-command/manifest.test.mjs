@@ -56,7 +56,7 @@ test('authority guard rejects executable authority without rejecting inert insta
     'api.registerTool({ name: "shell" });',
     'const route = { continueAgent: true };',
     'run("openclaw doctor");',
-    'invokeCodex();',
+    'run("codex");',
     'import { spawn } from "node:child_process"; spawn("cmd.exe");',
     'execFile("git.exe", ["merge", "--ff-only", head]);',
     'run("git push origin main");',
