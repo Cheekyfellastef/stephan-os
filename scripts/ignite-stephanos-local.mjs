@@ -1027,6 +1027,34 @@ function parsePorcelainStatusLine(line) {
   return { status, paths, rawLine: line };
 }
 
+export function collectIgnoredRuntimeAggregatePaths(statusOutput) {
+  return String(statusOutput || '')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => line.startsWith('!! '))
+    .map(parsePorcelainStatusLine)
+    .flatMap((entry) => entry.paths)
+    .filter((path) => path.endsWith('/') && classifyIgnitionDirtPath(path) === 'RUNTIME_CHECKPOINT_CLEAN');
+}
+
+export function mergeIgnoredRuntimeChildrenIntoStatus(statusOutput, ignoredChildrenOutput) {
+  const lines = String(statusOutput || '')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+  const seen = new Set(lines);
+  for (const rawPath of String(ignoredChildrenOutput || '').split('\n')) {
+    const path = normalizeGitPath(rawPath);
+    if (!path) continue;
+    const line = `!! ${path}`;
+    if (!seen.has(line)) {
+      seen.add(line);
+      lines.push(line);
+    }
+  }
+  return lines.length > 0 ? `${lines.join('\n')}\n` : '';
+}
+
 export function evaluateGitStatusForIgnition(statusOutput) {
   const lines = String(statusOutput || '')
     .split('\n')
@@ -1802,7 +1830,11 @@ export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureSt
 
 export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, preserveRuntimeDirt = false, captureStepFn = runStepCapture, runStepFn = runStep, moveRootOpenClawWorkspaceDirtFn = moveRootOpenClawWorkspaceDirt } = {}) {
   const capture = captureStepFn('git-status', 'git', ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
-  const assessment = evaluateGitStatusForIgnition(capture.stdout);
+  const ignoredRuntimeAggregates = collectIgnoredRuntimeAggregatePaths(capture.stdout);
+  const ignoredRuntimeChildren = ignoredRuntimeAggregates.length > 0
+    ? captureStepFn('git-ignored-runtime-children', 'git', ['ls-files', '--others', '--ignored', '--exclude-standard', '--', ...ignoredRuntimeAggregates])
+    : { stdout: '', stderr: '' };
+  const assessment = evaluateGitStatusForIgnition(mergeIgnoredRuntimeChildrenIntoStatus(capture.stdout, ignoredRuntimeChildren.stdout));
   const runtimeDataListing = captureStepFn('git-untracked-data', 'git', ['ls-files', '--others', '--exclude-standard', '--', 'data']);
   const runtimeDataPaths = normalizeCaptureStdout(runtimeDataListing).split('\n').map((line) => normalizeGitPath(line)).filter((line) => line.startsWith('data/'));
   const plan = assessment.entries.map((entry) => ({

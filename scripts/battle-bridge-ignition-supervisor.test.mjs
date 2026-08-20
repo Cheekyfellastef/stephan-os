@@ -78,6 +78,9 @@ function runSourceCollectorFixture({
   statusBefore = '',
   statusAfter = statusBefore,
   statusFinal = statusAfter,
+  ignoredRuntimeChildrenBefore = '',
+  ignoredRuntimeChildrenAfter = ignoredRuntimeChildrenBefore,
+  ignoredRuntimeChildrenFinal = ignoredRuntimeChildrenAfter,
   configurationBefore = COLLECTOR_CONFIG,
   configurationAfter = configurationBefore,
   trackedVisibilityBefore = 'H tracked-source.mjs\n',
@@ -119,8 +122,13 @@ function runSourceCollectorFixture({
     calls.push({ command, args, operationArgs, options });
     if (operation === failOperation) return { status: 1, stdout: '', stderr: 'fixture failure' };
     if (operation === 'config') return { status: 0, stdout: counts.config === 1 ? configurationBefore : configurationAfter, stderr: '' };
+    if (operation === 'ls-files' && operationArgs.includes('--ignored')) {
+      counts.ignoredRuntimeChildren = Number(counts.ignoredRuntimeChildren || 0) + 1;
+      return { status: 0, stdout: [ignoredRuntimeChildrenBefore, ignoredRuntimeChildrenAfter, ignoredRuntimeChildrenFinal][counts.ignoredRuntimeChildren - 1], stderr: '' };
+    }
     if (operation === 'ls-files') {
-      return { status: 0, stdout: [trackedVisibilityBefore, trackedVisibilityAfter, trackedVisibilityFinal][counts['ls-files'] - 1], stderr: '' };
+      counts.trackedVisibility = Number(counts.trackedVisibility || 0) + 1;
+      return { status: 0, stdout: [trackedVisibilityBefore, trackedVisibilityAfter, trackedVisibilityFinal][counts.trackedVisibility - 1], stderr: '' };
     }
     if (operation === 'status') {
       return { status: 0, stdout: [statusBefore, statusAfter, statusFinal][counts.status - 1], stderr: '' };
@@ -372,6 +380,28 @@ test('collector aligns dream-memory runtime dirt while secret-shaped children re
   assert.equal(secret.result.ok, false);
   assert.equal(secret.result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
   assert.deepEqual(secret.calls.map((call) => call.operationArgs[0]), ['config', 'ls-files', 'status']);
+});
+
+test('collector enumerates ignored log children before accepting the logs runtime aggregate', () => {
+  const benign = runSourceCollectorFixture({
+    statusBefore: '!! logs/\n',
+    ignoredRuntimeChildrenBefore: 'logs/battle-bridge/backend.stdout.log\n',
+  });
+  assert.equal(benign.result.ok, true);
+  assert.equal(benign.calls.filter((call) => call.operationArgs.includes('--ignored')).length, 3);
+
+  const secret = runSourceCollectorFixture({
+    statusBefore: '!! logs/\n',
+    ignoredRuntimeChildrenBefore: 'logs/battle-bridge/backend.stdout.log\nlogs/credential.json\n',
+  });
+  assert.equal(secret.result.ok, false);
+  assert.equal(secret.result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
+  assert.equal(secret.calls.some((call) => (
+    call.operationArgs[0] === 'ls-files'
+      && call.operationArgs.includes('--ignored')
+      && call.operationArgs.at(-1) === 'logs/'
+  )), true);
+  assert.equal(secret.calls.some((call) => call.operationArgs[0] === 'fetch'), false);
 });
 
 test('collector final recheck rejects source dirt or topology drift after canonical fetch', () => {

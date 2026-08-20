@@ -1097,6 +1097,7 @@ test('housekeep tolerates canonical ignored runtime logs without weakening the d
       compact: true,
       captureStepFn: (label) => {
         if (label === 'git-status') return { stdout: '!! logs/\n', stderr: '' };
+        if (label === 'git-ignored-runtime-children') return { stdout: 'logs/battle-bridge/backend.stdout.log\n', stderr: '' };
         if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
         throw new Error(`unexpected capture label: ${label}`);
       },
@@ -1109,6 +1110,29 @@ test('housekeep tolerates canonical ignored runtime logs without weakening the d
   assert.equal(status.ignitionStatus, 'READY');
   assert.equal(status.ignitionHardBlockCount, 0);
 });
+
+test('housekeep hard-blocks secret-shaped children hidden by an ignored logs aggregate', () => {
+  const calls = [];
+  assert.throws(() => runIgnitionHousekeep({
+    dryRun: false,
+    compact: true,
+    captureStepFn: (label, command, args) => {
+      calls.push([label, command, ...args]);
+      if (label === 'git-status') return { stdout: '!! logs/\n', stderr: '' };
+      if (label === 'git-ignored-runtime-children') return { stdout: 'logs/battle-bridge/backend.stdout.log\nlogs/credential.json\n', stderr: '' };
+      if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: () => {},
+  }), /housekeep blocked/);
+
+  assert.deepEqual(calls[1], [
+    'git-ignored-runtime-children',
+    'git',
+    'ls-files', '--others', '--ignored', '--exclude-standard', '--', 'logs/',
+  ]);
+});
+
 test('housekeep dry-run classifies known OpenClaw workspace dirt without weakening hard-block', () => {
   const logs = [];
   const originalLog = console.log;

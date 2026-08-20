@@ -11,7 +11,9 @@ import { collectLauncherReadinessLiveFacts, defaultWindowsSharedWorkspacePath } 
 import { planLauncherReadiness } from './launcher-readiness-planner.mjs';
 import { runUi4173Repair, UI_4173_REPAIR_AUTHORITY } from './battle-bridge-ui-4173-repair.mjs';
 import {
+  collectIgnoredRuntimeAggregatePaths,
   evaluateGitStatusForIgnition,
+  mergeIgnoredRuntimeChildrenIntoStatus,
   runIgnitionHousekeep,
 } from './ignite-stephanos-local.mjs';
 import { buildOpenClawGatewayStartupTarget, OPENCLAW_GATEWAY_STARTUP_SOURCE, resolveOpenClawGatewayStartupExecution } from '../shared/agents/openClawGatewayStartup.mjs';
@@ -158,6 +160,15 @@ export function collectCanonicalIgnitionSourceTruth({
     }
     return String(result?.stdout || '');
   };
+  const captureSourceStatus = (label) => {
+    const statusOutput = capture(label, [...SOURCE_STATUS_ARGS]);
+    const ignoredRuntimeAggregates = collectIgnoredRuntimeAggregatePaths(statusOutput);
+    if (ignoredRuntimeAggregates.length === 0) return statusOutput;
+    const ignoredChildrenOutput = capture(`${label}-ignored-runtime-children`, [
+      'ls-files', '--others', '--ignored', '--exclude-standard', '--', ...ignoredRuntimeAggregates,
+    ]);
+    return mergeIgnoredRuntimeChildrenIntoStatus(statusOutput, ignoredChildrenOutput);
+  };
 
   try {
     const configurationBefore = capture('source-config-before-fetch', ['config', '--local', '--null', '--list']);
@@ -181,7 +192,7 @@ export function collectCanonicalIgnitionSourceTruth({
       });
     }
 
-    const statusBeforeOutput = capture('source-status-before-fetch', [...SOURCE_STATUS_ARGS]);
+    const statusBeforeOutput = captureSourceStatus('source-status-before-fetch');
     const statusBefore = evaluateStatusFn(statusBeforeOutput);
     if (!statusBefore || !Array.isArray(statusBefore.meaningfulEntries)) {
       return structuredSourceTruthBlocker({
@@ -252,7 +263,7 @@ export function collectCanonicalIgnitionSourceTruth({
       });
     }
 
-    const statusAfterOutput = capture('source-status-after-fetch', [...SOURCE_STATUS_ARGS]);
+    const statusAfterOutput = captureSourceStatus('source-status-after-fetch');
     const statusAfter = evaluateStatusFn(statusAfterOutput);
     const configurationAfter = capture('source-config-after-fetch', ['config', '--local', '--null', '--list']);
     const configurationAfterProof = validateConfigurationFn(configurationAfter);
@@ -353,7 +364,7 @@ export function collectCanonicalIgnitionSourceTruth({
       });
     }
 
-    const statusFinalOutput = capture('source-status-final', [...SOURCE_STATUS_ARGS]);
+    const statusFinalOutput = captureSourceStatus('source-status-final');
     const statusFinal = evaluateStatusFn(statusFinalOutput);
     const trackedVisibilityFinalOutput = capture('source-tracked-visibility-final', ['ls-files', '--stage', '-v', '--']);
     const trackedVisibilityFinal = evaluateTrackedVisibility(trackedVisibilityFinalOutput);
