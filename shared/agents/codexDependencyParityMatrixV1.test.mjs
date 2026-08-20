@@ -119,7 +119,7 @@ test('legacy or inactive touchpoint remains separate from live parity gaps', () 
 
 test('optional non-critical Codex specialist does not become a false critical gap', () => {
   const matrix = build([candidate({ codexUseClass: CODEX_USE_CLASS.OPTIONAL_SPECIALIST, criticalPath: false, nonCodexRoutes: [] })]);
-  assert.equal(matrix.touchpoints[0].coverageVerdict, COVERAGE_VERDICT.PARITY_PROVEN);
+  assert.equal(matrix.touchpoints[0].coverageVerdict, COVERAGE_VERDICT.LEGACY_NON_CRITICAL);
 });
 
 test('Work agentic dependency shares the constrained-provider classification model', () => {
@@ -180,6 +180,39 @@ test('invalid structural identity fails closed instead of guessing', () => {
   const matrix = build([candidate({ owningGoal: '' })]);
   assert.equal(matrix.touchpoints[0].coverageVerdict, COVERAGE_VERDICT.AMBIGUOUS_FAIL_CLOSED);
   assert.ok(matrix.touchpoints[0].blockers.includes('owning-goal-missing'));
+});
+
+test('route proof refs from multiple source observations are unioned rather than treated as contract conflict', () => {
+  const matrix = build([
+    candidate({ pathOrGoalRef: 'scripts/a.mjs', nonCodexRoutes: [route({ proofRefs: ['run:1'] })] }),
+    candidate({ pathOrGoalRef: 'scripts/b.mjs', nonCodexRoutes: [route({ proofRefs: ['run:2'] })] }),
+  ]);
+  assert.equal(matrix.touchpoints[0].coverageVerdict, COVERAGE_VERDICT.PARITY_PROVEN);
+  assert.deepEqual(matrix.touchpoints[0].nonCodexRoutes[0].proofRefs, ['run:1', 'run:2']);
+});
+
+test('conflicting missing-gap owners fail closed instead of picking one', () => {
+  const matrix = build([
+    candidate({ nonCodexRoutes: [], missingGapOwner: '#1574' }),
+    candidate({ pathOrGoalRef: '#1637', nonCodexRoutes: [], missingGapOwner: '#1637' }),
+  ]);
+  assert.equal(matrix.touchpoints[0].coverageVerdict, COVERAGE_VERDICT.AMBIGUOUS_FAIL_CLOSED);
+  assert.ok(matrix.touchpoints[0].blockers.includes('touchpoint-field-conflict:missingGapOwner'));
+});
+
+test('critical gaps keep matrix admissionReady false even when an owner exists', () => {
+  const matrix = build([candidate({ nonCodexRoutes: [], missingGapOwner: '#1574' })]);
+  assert.equal(matrix.criticalGapCount, 1);
+  assert.equal(matrix.unownedCriticalGapCount, 0);
+  assert.equal(matrix.admissionReady, false);
+});
+
+test('candidate authority-relevant booleans must be explicit', () => {
+  const incomplete = candidate();
+  delete incomplete.criticalPath;
+  const matrix = build([incomplete]);
+  assert.equal(matrix.touchpoints[0].coverageVerdict, COVERAGE_VERDICT.AMBIGUOUS_FAIL_CLOSED);
+  assert.ok(matrix.touchpoints[0].blockers.includes('critical-path-state-missing'));
 });
 
 test('invalid observedAtUtc is rejected', () => {
