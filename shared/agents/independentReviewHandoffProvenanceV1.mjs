@@ -1,5 +1,6 @@
 export const INDEPENDENT_REVIEW_HANDOFF_PROVENANCE_SCHEMA = 'stephanos.independent-review-handoff-provenance.v1';
 export const INDEPENDENT_REVIEW_HANDOFF_PROVENANCE_MARKER = 'stephanos:exact-head-review-handoff-provenance:v1';
+export const CANONICAL_COORDINATOR_WORKFLOW_ID = 316253381;
 export const CANONICAL_COORDINATOR_WORKFLOW_NAME = 'Exact-Head Review Dispatch';
 export const CANONICAL_COORDINATOR_WORKFLOW_PATH = '.github/workflows/exact-head-review-dispatch.yml';
 export const CANONICAL_COORDINATOR_JOB = 'coordinate';
@@ -88,7 +89,7 @@ export function validateIndependentReviewHandoffProvenanceV1(
   const expectedWorkflowRef = `${normalizedRepository}/${CANONICAL_COORDINATOR_WORKFLOW_PATH}@refs/heads/main`;
 
   if (text(value.schemaVersion) !== INDEPENDENT_REVIEW_HANDOFF_PROVENANCE_SCHEMA
-    || !positiveInteger(value.coordinatorWorkflowId)
+    || positiveInteger(value.coordinatorWorkflowId) !== CANONICAL_COORDINATOR_WORKFLOW_ID
     || text(value.coordinatorWorkflowName) !== CANONICAL_COORDINATOR_WORKFLOW_NAME
     || text(value.coordinatorWorkflowPath) !== CANONICAL_COORDINATOR_WORKFLOW_PATH
     || !positiveInteger(value.coordinatorWorkflowRunId)
@@ -113,7 +114,7 @@ export function validateIndependentReviewHandoffProvenanceV1(
 
   return freezeProvenance({
     schemaVersion: INDEPENDENT_REVIEW_HANDOFF_PROVENANCE_SCHEMA,
-    coordinatorWorkflowId: positiveInteger(value.coordinatorWorkflowId),
+    coordinatorWorkflowId: CANONICAL_COORDINATOR_WORKFLOW_ID,
     coordinatorWorkflowName: CANONICAL_COORDINATOR_WORKFLOW_NAME,
     coordinatorWorkflowPath: CANONICAL_COORDINATOR_WORKFLOW_PATH,
     coordinatorWorkflowRunId: positiveInteger(value.coordinatorWorkflowRunId),
