@@ -40,6 +40,15 @@ const SUPERVISOR_PRESERVED_MUTATION_LABELS = new Map([
   ['git-clean-runtime-untracked', 'preserve runtime-owned durable memory; this recovery lane has no delete authority'],
 ]);
 
+function invalidOwnerIgnitionApproval(reason) {
+  return Object.freeze({
+    approved: false,
+    pipePresent: true,
+    blocker: 'OWNER_IGNITION_APPROVAL_INVALID',
+    reason,
+  });
+}
+
 function deferRootWorkspaceMove({ paths = [] } = {}) {
   return {
     destinationRoot: null,
@@ -133,8 +142,14 @@ export function readOwnerIgnitionApprovalFromPipe({
   fstatFn = fstatSync,
 } = {}) {
   let info;
-  try { info = fstatFn(fd); } catch { return null; }
-  if (!info?.isFIFO?.() && !info?.isSocket?.()) return null;
+  try { info = fstatFn(fd); } catch (error) {
+    return error?.code === 'EBADF'
+      ? null
+      : invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_PIPE_UNREADABLE');
+  }
+  if (!info?.isFIFO?.() && !info?.isSocket?.()) {
+    return invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_PIPE_TYPE_INVALID');
+  }
   const bounded = Buffer.alloc(MAX_IGNITION_APPROVAL_BYTES + 1);
   let length = 0;
   try {
@@ -142,24 +157,34 @@ export function readOwnerIgnitionApprovalFromPipe({
     // neither waits for EOF from a writer that keeps its handle open nor
     // allocates beyond the fixed maximum-plus-one rejection byte.
     length = readSyncFn(fd, bounded, 0, bounded.length, null);
-    if (!Number.isSafeInteger(length) || length < 0) return null;
-  } catch { return null; }
+    if (!Number.isSafeInteger(length) || length < 0) {
+      return invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_READ_INVALID');
+    }
+  } catch { return invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_READ_FAILED'); }
   const bytes = bounded.subarray(0, length);
-  if (bytes.length < 2 || bytes.length > MAX_IGNITION_APPROVAL_BYTES) return null;
+  if (bytes.length < 2 || bytes.length > MAX_IGNITION_APPROVAL_BYTES) {
+    return invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_FRAME_INVALID');
+  }
   let approval;
-  try { approval = JSON.parse(bytes.toString('utf8')); } catch { return null; }
+  try { approval = JSON.parse(bytes.toString('utf8')); } catch {
+    return invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_JSON_INVALID');
+  }
   const exactKeys = [
     'action', 'childPid', 'expectedHead', 'nonce', 'parentPid', 'receiptId', 'schemaVersion',
   ];
   if (!approval || typeof approval !== 'object' || Array.isArray(approval)
-      || JSON.stringify(Object.keys(approval).sort()) !== JSON.stringify(exactKeys)) return null;
+      || JSON.stringify(Object.keys(approval).sort()) !== JSON.stringify(exactKeys)) {
+    return invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_SHAPE_INVALID');
+  }
   if (approval.schemaVersion !== BATTLE_BRIDGE_IGNITION_PIPE_APPROVAL_SCHEMA
       || approval.action !== 'RUN_EXACT_HEAD_IGNITION'
       || !SHA40.test(String(approval.expectedHead || '').toLowerCase())
       || !HEX32.test(String(approval.receiptId || '').toLowerCase())
       || !HEX32.test(String(approval.nonce || '').toLowerCase())
       || Number(approval.parentPid) !== Number(parentPid)
-      || Number(approval.childPid) !== Number(childPid)) return null;
+      || Number(approval.childPid) !== Number(childPid)) {
+    return invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_BINDING_INVALID');
+  }
   return Object.freeze({
     approved: true,
     action: approval.action,
@@ -517,6 +542,16 @@ export async function main({
   process.chdir(repoRoot);
   const sharedWorkspace = sharedWorkspaceFromArgs();
   const approval = approvalFn();
+  if (approval != null && approval?.approved !== true) {
+    await writePreSupervisorFailureStatus({
+      sharedWorkspace,
+      phase: 'source truth',
+      blockerId: approval?.blocker || 'owner-ignition-approval-invalid',
+      detail: `Ignition descriptor 3 was present but did not contain a valid one-use owner approval (${approval?.reason || 'invalid approval'}).`,
+      nextOperatorAction: 'Do not start runtime services; retry through the authenticated exact-head owner update route or remove the invalid descriptor for an ordinary direct Ignition invocation.',
+    });
+    return 1;
+  }
   if (approval?.approved === true) {
     let currentHead = '';
     try {
@@ -544,9 +579,10 @@ export async function main({
   }
 
   const ownerBoundSourceTruthFn = bindCanonicalSourceTruthToOwnerApproval({ sourceTruthFn, approval });
-  const sourceTruth = ownerBoundSourceTruthFn({ cwd: repoRoot });
-  const canonicalSourceTruth = evaluateCanonicalIgnitionSourceTruth(sourceTruth);
-  if (!canonicalSourceTruth.ok) {
+  const proveSourceTruthBeforeMutation = async () => {
+    const sourceTruth = ownerBoundSourceTruthFn({ cwd: repoRoot });
+    const canonicalSourceTruth = evaluateCanonicalIgnitionSourceTruth(sourceTruth);
+    if (canonicalSourceTruth.ok) return true;
     const sourceBlocker = canonicalSourceTruth.blocker || {};
     await writePreSupervisorFailureStatus({
       sharedWorkspace,
@@ -555,10 +591,12 @@ export async function main({
       detail: sourceBlocker.detail || 'Canonical clean, current main source truth was not proven before any backend, UI, or OpenClaw service mutation.',
       nextOperatorAction: sourceBlocker.nextOperatorAction || 'Use the bounded owner exact-head update route or restore canonical main source truth, then retry Ignition.',
     });
-    return 2;
-  }
+    return false;
+  };
+  if (!await proveSourceTruthBeforeMutation()) return 2;
 
   if (platform === 'win32') {
+    if (approval?.approved === true && !await proveSourceTruthBeforeMutation()) return 2;
     const backend = await backendPreflightFn({ platform });
     if (!backend.ok) {
       await writePreSupervisorFailureStatus({
@@ -573,6 +611,7 @@ export async function main({
     }
   }
 
+  if (approval?.approved === true && !await proveSourceTruthBeforeMutation()) return 2;
   try {
     await uiPreflightFn({ platform });
   } catch (error) {

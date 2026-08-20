@@ -127,22 +127,41 @@ test('owner ignition approval is accepted only from the bound one-use pipe paylo
     parentPid: 120,
     childPid: 121,
   });
-  assert.equal(readOwnerIgnitionApprovalFromPipe({
+  const wrongParent = readOwnerIgnitionApprovalFromPipe({
     parentPid: 999,
     childPid: 121,
     fstatFn: () => ({ isFIFO: () => true, isSocket: () => false }),
     readSyncFn: boundedReader(payload),
-  }), null);
-  assert.equal(readOwnerIgnitionApprovalFromPipe({
+  });
+  assert.equal(wrongParent.approved, false);
+  assert.equal(wrongParent.pipePresent, true);
+  assert.equal(wrongParent.reason, 'OWNER_IGNITION_APPROVAL_BINDING_INVALID');
+  const wrongType = readOwnerIgnitionApprovalFromPipe({
     fstatFn: () => ({ isFIFO: () => false, isSocket: () => false }),
     readSyncFn: () => { throw new Error('non-pipe must never be read'); },
-  }), null);
-  assert.equal(readOwnerIgnitionApprovalFromPipe({
+  });
+  assert.equal(wrongType.reason, 'OWNER_IGNITION_APPROVAL_PIPE_TYPE_INVALID');
+  const oversized = readOwnerIgnitionApprovalFromPipe({
     parentPid: 120,
     childPid: 121,
     fstatFn: () => ({ isFIFO: () => true, isSocket: () => false }),
     readSyncFn: boundedReader(Buffer.alloc(4097, 0x61)),
-  }), null);
+  });
+  assert.equal(oversized.reason, 'OWNER_IGNITION_APPROVAL_FRAME_INVALID');
+  const absentError = Object.assign(new Error('descriptor absent'), { code: 'EBADF' });
+  assert.equal(readOwnerIgnitionApprovalFromPipe({ fstatFn: () => { throw absentError; } }), null);
+  assert.equal(readOwnerIgnitionApprovalFromPipe({
+    fstatFn: () => ({ isFIFO: () => true, isSocket: () => false }),
+    readSyncFn: () => 0,
+  }).reason, 'OWNER_IGNITION_APPROVAL_FRAME_INVALID');
+  assert.equal(readOwnerIgnitionApprovalFromPipe({
+    fstatFn: () => ({ isFIFO: () => true, isSocket: () => false }),
+    readSyncFn: boundedReader(Buffer.from('{"schemaVersion":')),
+  }).reason, 'OWNER_IGNITION_APPROVAL_JSON_INVALID');
+  assert.equal(readOwnerIgnitionApprovalFromPipe({
+    fstatFn: () => ({ isFIFO: () => true, isSocket: () => false }),
+    readSyncFn: () => { throw new Error('read failed'); },
+  }).reason, 'OWNER_IGNITION_APPROVAL_READ_FAILED');
 });
 
 test('fixed authority Git capture prepends the canonical isolation config', () => {
@@ -414,11 +433,12 @@ test('wrapper and standalone supervisor share the same canonical source collecto
   assert.equal(typeof supervisorOptions.housekeepFn, 'function');
 });
 
-test('one-use owner approval rejects a head change at the supervisor source re-proof', async () => {
+test('one-use owner approval re-proves source immediately before backend mutation', async () => {
   const expectedHead = 'a'.repeat(40);
   const changedHead = 'b'.repeat(40);
+  const sharedWorkspace = await mkdtemp(path.join(tmpdir(), 'bb-owner-preflight-source-'));
+  const previousArgs = process.argv;
   let sourceCalls = 0;
-  let secondTruth = null;
   const canonicalTruth = (head) => ({
     ok: true,
     branch: 'main',
@@ -449,24 +469,116 @@ test('one-use owner approval rejects a head change at the supervisor source re-p
 
   sourceCalls = 0;
   const calls = [];
-  const exitCode = await main({
-    platform: 'win32',
-    approvalFn: () => approval,
-    currentHeadFn: () => expectedHead,
-    sourceTruthFn,
-    backendPreflightFn: async () => { calls.push('backend'); return { ok: true }; },
-    uiPreflightFn: async () => { calls.push('ui'); },
-    supervisorFn: async (options) => {
-      calls.push('supervisor');
-      secondTruth = options.sourceTruthFn();
-      return { ok: false };
-    },
-  });
-  assert.equal(exitCode, 2);
-  assert.equal(sourceCalls, 2);
-  assert.deepEqual(calls, ['backend', 'ui', 'supervisor']);
-  assert.equal(secondTruth.blocker.id, 'owner-ignition-exact-head-mismatch');
-  assert.equal(secondTruth.blocker.code, 'OWNER_IGNITION_EXACT_HEAD_MISMATCH');
+  process.argv = [previousArgs[0], previousArgs[1], '--shared-workspace', sharedWorkspace];
+  try {
+    const exitCode = await main({
+      platform: 'win32',
+      approvalFn: () => approval,
+      currentHeadFn: () => expectedHead,
+      sourceTruthFn,
+      backendPreflightFn: async () => { calls.push('backend'); return { ok: true }; },
+      uiPreflightFn: async () => { calls.push('ui'); },
+      supervisorFn: async () => { calls.push('supervisor'); return { ok: true }; },
+    });
+    assert.equal(exitCode, 2);
+    assert.equal(sourceCalls, 2);
+    assert.deepEqual(calls, []);
+    const status = JSON.parse(await readFile(path.join(sharedWorkspace, 'status', 'battle-bridge-ignition-supervisor-current.json'), 'utf8'));
+    assert.equal(status.blockerId, 'owner-ignition-exact-head-mismatch');
+  } finally {
+    process.argv = previousArgs;
+    await rm(sharedWorkspace, { recursive: true, force: true });
+  }
+});
+
+test('one-use owner approval re-proves source again before UI mutation', async () => {
+  const expectedHead = 'a'.repeat(40);
+  const changedHead = 'b'.repeat(40);
+  const sharedWorkspace = await mkdtemp(path.join(tmpdir(), 'bb-owner-ui-source-'));
+  const previousArgs = process.argv;
+  const approval = {
+    approved: true,
+    action: 'RUN_EXACT_HEAD_IGNITION',
+    expectedHead,
+    receiptId: 'c'.repeat(32),
+    parentPid: 120,
+    childPid: 121,
+  };
+  const heads = [expectedHead, expectedHead, changedHead];
+  const calls = [];
+  process.argv = [previousArgs[0], previousArgs[1], '--shared-workspace', sharedWorkspace];
+  try {
+    const exitCode = await main({
+      platform: 'win32',
+      approvalFn: () => approval,
+      currentHeadFn: () => expectedHead,
+      sourceTruthFn: () => ({
+        ok: true,
+        branch: 'main',
+        detachedHead: false,
+        hasUpstream: true,
+        upstreamBranch: 'origin/main',
+        workingTreeDirty: false,
+        aheadCount: 0,
+        behindCount: 0,
+        headPublished: true,
+        blockedForRemoteTruth: false,
+        publicationState: 'healthy-synced',
+        head: heads.shift(),
+        originHead: heads.length === 0 ? changedHead : expectedHead,
+      }),
+      backendPreflightFn: async () => { calls.push('backend'); return { ok: true }; },
+      uiPreflightFn: async () => { calls.push('ui'); },
+      supervisorFn: async () => { calls.push('supervisor'); return { ok: true }; },
+    });
+    assert.equal(exitCode, 2);
+    assert.deepEqual(calls, ['backend']);
+  } finally {
+    process.argv = previousArgs;
+    await rm(sharedWorkspace, { recursive: true, force: true });
+  }
+});
+
+test('present invalid approval pipe blocks while a truly absent descriptor preserves direct Ignition', async () => {
+  const sharedWorkspace = await mkdtemp(path.join(tmpdir(), 'bb-invalid-owner-pipe-'));
+  const previousArgs = process.argv;
+  const calls = [];
+  const canonicalTruth = {
+    branch: 'main', detachedHead: false, hasUpstream: true, upstreamBranch: 'origin/main',
+    workingTreeDirty: false, aheadCount: 0, behindCount: 0, headPublished: true,
+    blockedForRemoteTruth: false, publicationState: 'healthy-synced',
+    head: 'a'.repeat(40), originHead: 'a'.repeat(40),
+  };
+  process.argv = [previousArgs[0], previousArgs[1], '--shared-workspace', sharedWorkspace];
+  try {
+    const invalidExit = await main({
+      platform: 'linux',
+      approvalFn: () => ({
+        approved: false,
+        pipePresent: true,
+        blocker: 'OWNER_IGNITION_APPROVAL_INVALID',
+        reason: 'OWNER_IGNITION_APPROVAL_JSON_INVALID',
+      }),
+      sourceTruthFn: () => { calls.push('source'); return canonicalTruth; },
+      uiPreflightFn: async () => { calls.push('ui'); },
+      supervisorFn: async () => { calls.push('supervisor'); return { ok: true }; },
+    });
+    assert.equal(invalidExit, 1);
+    assert.deepEqual(calls, []);
+
+    const directExit = await main({
+      platform: 'linux',
+      approvalFn: () => null,
+      sourceTruthFn: () => { calls.push('source'); return canonicalTruth; },
+      uiPreflightFn: async () => { calls.push('ui'); },
+      supervisorFn: async () => { calls.push('supervisor'); return { ok: true }; },
+    });
+    assert.equal(directExit, 0);
+    assert.deepEqual(calls, ['source', 'ui', 'supervisor']);
+  } finally {
+    process.argv = previousArgs;
+    await rm(sharedWorkspace, { recursive: true, force: true });
+  }
 });
 
 test('owner current-head read failure publishes red source truth and invokes no mutator', async () => {

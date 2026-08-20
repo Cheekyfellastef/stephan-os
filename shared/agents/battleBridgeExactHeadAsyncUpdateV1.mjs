@@ -49,6 +49,7 @@ function captureAsync(spawnFn, command, args, options = {}) {
     let child;
     let settled = false;
     let timer;
+    let killAckTimer;
     let spawned = false;
     let terminationError = null;
     let closeObservation = null;
@@ -59,7 +60,21 @@ function captureAsync(spawnFn, command, args, options = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearTimeout(killAckTimer);
       resolve(Object.freeze(value));
+    };
+    const finishUnprovenTermination = () => {
+      const { status = null, signal = null } = closeObservation || {};
+      finish({
+        status,
+        signal,
+        stdout: stdout.toString('utf8'),
+        stderr: terminationError?.message || stderr.toString('utf8'),
+        error: terminationError,
+        spawnObserved: spawned,
+        processTreeClosureProven: false,
+        executionStateUnproven: true,
+      });
     };
     const finishClosedChild = () => {
       if (!closeObservation || !approvalSettled) return;
@@ -177,6 +192,14 @@ function captureAsync(spawnFn, command, args, options = {}) {
     });
     timer = setTimeout(() => {
       terminationError ||= new Error('BATTLE_BRIDGE_COMMAND_TIMEOUT');
+      const requestedKillAckTimeoutMs = Number(options.killAckTimeoutMs);
+      const killAckTimeoutMs = Number.isFinite(requestedKillAckTimeoutMs) && requestedKillAckTimeoutMs > 0
+        ? Math.min(requestedKillAckTimeoutMs, 5_000)
+        : 250;
+      killAckTimer = setTimeout(
+        finishUnprovenTermination,
+        killAckTimeoutMs,
+      );
       try { child.kill(); } catch { /* bounded failure */ }
     }, Math.max(1, Number(options.timeout || 120_000)));
     timer.unref?.();

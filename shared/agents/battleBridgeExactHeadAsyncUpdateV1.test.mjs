@@ -200,7 +200,7 @@ test('async exact-head lane rejects a clean HEAD switch during verification', as
   assert.equal(result.mutationAttempted, true);
 });
 
-test('async command timeout never reports terminal state before child close acknowledgement', async () => {
+test('async command timeout waits for child close within the bounded kill-ack window', async () => {
   const child = new EventEmitter();
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
@@ -225,6 +225,34 @@ test('async command timeout never reports terminal state before child close ackn
   assert.equal(settled, false);
   child.emit('close', null, 'SIGTERM');
   const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'BATTLE_BRIDGE_COMMAND_TIMEOUT');
+  assert.equal(result.processTreeClosureProven, false);
+  assert.equal(result.executionStateUnproven, true);
+});
+
+test('async command timeout settles unproven after bounded kill wait when child never closes', async () => {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.pid = 4141;
+  let killed = false;
+  child.kill = () => { killed = true; };
+  const runner = createBattleBridgeAsyncCommandRunner({
+    spawnFn: () => {
+      queueMicrotask(() => child.emit('spawn'));
+      return child;
+    },
+    environment: { USERPROFILE: 'C:\\Users\\Stephan' },
+  });
+  const result = await runner(BATTLE_BRIDGE_WINDOWS_HOST.git, [
+    ...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+    ...battleBridgeCanonicalRepositoryArgs('C:\\repo'),
+    'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching',
+  ], { cwd: 'C:\\repo', timeout: 1, killAckTimeoutMs: 5 });
+
+  assert.equal(killed, true);
+  assert.equal(result.spawnObserved, true);
   assert.equal(result.ok, false);
   assert.equal(result.error, 'BATTLE_BRIDGE_COMMAND_TIMEOUT');
   assert.equal(result.processTreeClosureProven, false);
