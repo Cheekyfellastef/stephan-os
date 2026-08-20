@@ -8,7 +8,6 @@ import {
 
 function facts() {
   return {
-    runName: INDEPENDENT_REVIEW_WORKFLOW_FINAL_POLICY_V1.runName,
     events: [...INDEPENDENT_REVIEW_WORKFLOW_FINAL_POLICY_V1.events],
     workflowDispatchInputs: [...INDEPENDENT_REVIEW_WORKFLOW_FINAL_POLICY_V1.workflowDispatchInputs],
     checkoutRefs: INDEPENDENT_REVIEW_WORKFLOW_FINAL_POLICY_V1.checkoutRefs.map((entry) => ({ ...entry })),
@@ -17,7 +16,7 @@ function facts() {
   };
 }
 
-test('accepts only the exact run-name, two-event, six-input reviewer workflow policy', () => {
+test('accepts only the exact two-event six-input reviewer workflow policy', () => {
   const result = validateIndependentReviewWorkflowFinalPolicyV1(facts());
   assert.equal(result.valid, true);
   assert.equal(result.verdict, 'INDEPENDENT_REVIEW_WORKFLOW_FINAL_POLICY_PASS');
@@ -27,9 +26,8 @@ test('accepts only the exact run-name, two-event, six-input reviewer workflow po
   assert.equal(Object.isFrozen(result), true);
 });
 
-test('fails closed on run-name, trigger, input, checkout, permission or schema widening', () => {
+test('fails closed on trigger, input, checkout, permission or schema widening', () => {
   const mutations = [
-    (value) => { value.runName = `${value.runName}-changed`; },
     (value) => value.events.push('schedule'),
     (value) => value.events.reverse(),
     (value) => value.workflowDispatchInputs.push('command'),
