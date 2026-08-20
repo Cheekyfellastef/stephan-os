@@ -15,7 +15,12 @@ import {
   runSupervisorHousekeepPreservingLiveRuntime,
   writePreSupervisorFailureStatus,
 } from './run-battle-bridge-ignition.mjs';
-import { BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS, battleBridgeCanonicalRepositoryArgs } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import {
+  BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+  BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE,
+  battleBridgeCanonicalRepositoryArgs,
+  battleBridgeGitFixedConfigArgs,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
 function backendHealthResponse(sourceHead, {
@@ -98,6 +103,7 @@ test('fixed authority Git capture prepends the canonical isolation config', () =
   ], {
     cwd: 'C:\\repo',
     env: { GIT_CONFIG_NOSYSTEM: '1' },
+    platform: 'win32',
     spawnSyncFn: (command, args, options) => {
       calls.push({ command, args, options });
       return { status: 0, stdout: '', stderr: '' };
@@ -111,6 +117,66 @@ test('fixed authority Git capture prepends the canonical isolation config', () =
     'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching',
   ]);
   assert.equal(calls[0].options.shell, false);
+});
+
+test('wrapper housekeeping routes capture and delegated Git through the fixed POSIX bundle', () => {
+  for (const platform of ['linux', 'darwin']) {
+    const calls = [];
+    const cwd = '/canonical/repo';
+    const result = runSupervisorHousekeepPreservingLiveRuntime(
+      { dryRun: false, compact: true },
+      {
+        cwd,
+        platform,
+        env: { PATH: '/attacker', NODE_OPTIONS: '--require=/attacker/inject.cjs' },
+        spawnSyncFn: (command, args, options) => {
+          calls.push({ command, args, options });
+          return { status: 0, stdout: '', stderr: '' };
+        },
+        housekeepFn: (options) => {
+          options.captureStepFn('source-status', 'git', ['status', '--porcelain=v1']);
+          options.runStepFn('git-current-head', 'git', ['rev-parse', 'HEAD']);
+          return { ok: true };
+        },
+      },
+    );
+    assert.deepEqual(result, { ok: true });
+    assert.equal(calls.length, 2);
+    assert.equal(calls.every((call) => call.command === BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE), true);
+    assert.equal(calls.every((call) => call.options.env.PATH === '/usr/bin:/bin'), true);
+    assert.equal(calls.every((call) => call.options.env.NODE_OPTIONS === undefined), true);
+    assert.equal(calls.every((call) => call.options.env.GIT_CONFIG_GLOBAL === '/dev/null'), true);
+    assert.equal(calls.every((call) => call.options.shell === false), true);
+    assert.deepEqual(calls[0].args, [
+      ...battleBridgeGitFixedConfigArgs(platform),
+      ...battleBridgeCanonicalRepositoryArgs(cwd),
+      'status', '--porcelain=v1',
+    ]);
+    assert.deepEqual(calls[1].args, [
+      ...battleBridgeGitFixedConfigArgs(platform),
+      ...battleBridgeCanonicalRepositoryArgs(cwd),
+      'rev-parse', 'HEAD',
+    ]);
+  }
+});
+
+test('wrapper housekeeping rejects unsupported fixed-Git platforms before spawn', () => {
+  let spawnCalls = 0;
+  assert.throws(
+    () => runSupervisorHousekeepPreservingLiveRuntime(
+      { dryRun: false },
+      {
+        platform: 'freebsd',
+        spawnSyncFn: () => {
+          spawnCalls += 1;
+          return { status: 0, stdout: '', stderr: '' };
+        },
+        housekeepFn: (options) => options.captureStepFn('source-status', 'git', ['status', '--porcelain=v1']),
+      },
+    ),
+    /BATTLE_BRIDGE_GIT_PLATFORM_UNSUPPORTED:freebsd/,
+  );
+  assert.equal(spawnCalls, 0);
 });
 
 test('backend startup source tolerates exact runtime memory plus unstaged modified/deleted generated dist with fixed Node command forms', async () => {
@@ -355,6 +421,7 @@ test('wrapper and standalone supervisor share the same canonical source collecto
 
   assert.equal(exitCode, 0);
   assert.equal(supervisorOptions.sourceTruthFn, sourceTruthFn);
+  assert.equal(supervisorOptions.platform, 'linux');
   assert.equal(typeof supervisorOptions.housekeepFn, 'function');
 });
 

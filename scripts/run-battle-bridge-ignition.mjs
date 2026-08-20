@@ -16,9 +16,8 @@ import {
 } from './battle-bridge-ignition-supervisor.mjs';
 import { runIgnitionHousekeep } from './ignite-stephanos-local.mjs';
 import {
-  BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
   battleBridgeCanonicalRepositoryArgs,
-  createBattleBridgeMinimalChildEnvironment,
+  resolveBattleBridgeGitExecution,
 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
@@ -35,20 +34,26 @@ const SUPERVISOR_PRESERVED_MUTATION_LABELS = new Map([
   ['git-clean-runtime-untracked', 'preserve untracked runtime-owned data; runtime dirt is evidence, not cleanup authority'],
 ]);
 
-export function runStep(label, command, args, { cwd = repoRoot, env = process.env } = {}) {
+export function runStep(label, command, args, {
+  cwd = repoRoot,
+  env = process.env,
+  platform = process.platform,
+  spawnSyncFn = spawnSync,
+} = {}) {
   const fixedGit = command === 'git' || command === BATTLE_BRIDGE_WINDOWS_HOST.git;
+  const gitExecution = fixedGit ? resolveBattleBridgeGitExecution({ platform, environment: env }) : null;
   const executable = fixedGit
-    ? BATTLE_BRIDGE_WINDOWS_HOST.git
+    ? gitExecution.executable
     : (command === 'powershell.exe'
       ? BATTLE_BRIDGE_WINDOWS_HOST.powershell
       : (command === 'cmd.exe' ? BATTLE_BRIDGE_WINDOWS_HOST.cmd : command));
-  const fixedArgs = fixedGit ? [...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS, ...battleBridgeCanonicalRepositoryArgs(cwd), ...args] : args;
+  const fixedArgs = fixedGit ? [...gitExecution.fixedConfigArgs, ...battleBridgeCanonicalRepositoryArgs(cwd), ...args] : args;
   console.log(`[IGNITION ENTRY] ${label}: ${executable} ${fixedArgs.join(' ')}`);
-  const result = spawnSync(executable, fixedArgs, {
+  const result = spawnSyncFn(executable, fixedArgs, {
     cwd,
     stdio: 'inherit',
     shell: false,
-    env: fixedGit ? createBattleBridgeMinimalChildEnvironment(env, { git: true }) : env,
+    env: fixedGit ? gitExecution.environment : env,
   });
 
   if (result.error || result.status !== 0) {
@@ -67,15 +72,17 @@ export function runStep(label, command, args, { cwd = repoRoot, env = process.en
 export function captureFixedAuthorityGitStep(label, command, args, {
   cwd = repoRoot,
   env = process.env,
+  platform = process.platform,
   spawnSyncFn = spawnSync,
 } = {}) {
-  if (command !== 'git' && command !== BATTLE_BRIDGE_WINDOWS_HOST.git) {
+  const gitExecution = resolveBattleBridgeGitExecution({ platform, environment: env });
+  if (command !== 'git' && command !== BATTLE_BRIDGE_WINDOWS_HOST.git && command !== gitExecution.executable) {
     throw new Error(`FIXED_AUTHORITY_GIT_COMMAND_REQUIRED:${label}`);
   }
   const result = spawnSyncFn(
-    BATTLE_BRIDGE_WINDOWS_HOST.git,
-    [...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS, ...battleBridgeCanonicalRepositoryArgs(cwd), ...args],
-    { cwd, env: createBattleBridgeMinimalChildEnvironment(env, { git: true }), encoding: 'utf8', shell: false, windowsHide: true, timeout: 120_000 },
+    gitExecution.executable,
+    [...gitExecution.fixedConfigArgs, ...battleBridgeCanonicalRepositoryArgs(cwd), ...args],
+    { cwd, env: gitExecution.environment, encoding: 'utf8', shell: false, windowsHide: true, timeout: 120_000 },
   );
   if (result?.error || result?.status !== 0) {
     throw new Error(`${label} failed through fixed authority Git (${result?.error?.message || result?.status || 'unknown'}).`);
@@ -101,15 +108,31 @@ export function runSupervisorHousekeepPreservingLiveRuntime(
   options = {},
   {
     housekeepFn = runIgnitionHousekeep,
-    runStepFn = runStep,
-    captureStepFn = captureFixedAuthorityGitStep,
+    runStepFn = null,
+    captureStepFn = null,
+    cwd = repoRoot,
+    env = process.env,
+    platform = process.platform,
+    spawnSyncFn = spawnSync,
   } = {},
 ) {
+  const fixedRunStep = runStepFn || ((label, command, args) => runStep(
+    label,
+    command,
+    args,
+    { cwd, env, platform, spawnSyncFn },
+  ));
+  const fixedCaptureStep = captureStepFn || ((label, command, args) => captureFixedAuthorityGitStep(
+    label,
+    command,
+    args,
+    { cwd, env, platform, spawnSyncFn },
+  ));
   return housekeepFn({
     ...options,
     preserveRuntimeDirt: true,
-    captureStepFn: (label, command, args) => captureStepFn(label, command, args),
-    runStepFn: createSupervisorHousekeepRunStep({ runStepFn }),
+    captureStepFn: fixedCaptureStep,
+    runStepFn: createSupervisorHousekeepRunStep({ runStepFn: fixedRunStep }),
   });
 }
 
@@ -434,7 +457,8 @@ export async function main({
 
   const result = await supervisorFn({
     sharedWorkspace,
-    housekeepFn: (options) => runSupervisorHousekeepPreservingLiveRuntime(options),
+    platform,
+    housekeepFn: (options) => runSupervisorHousekeepPreservingLiveRuntime(options, { platform }),
     // Re-run the same fixed collector inside the standalone supervisor before
     // its own housekeeping boundary; do not fall back to a weaker adapter.
     sourceTruthFn,
