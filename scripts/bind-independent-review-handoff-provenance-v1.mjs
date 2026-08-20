@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import path from 'node:path';
 
 import {
   appendIndependentReviewHandoffProvenanceV1,
   buildIndependentReviewHandoffProvenanceV1,
+  parseIndependentReviewHandoffProvenanceV1,
 } from '../shared/agents/independentReviewHandoffProvenanceV1.mjs';
+import {
+  buildIndependentReviewHandoffRunReceiptV1,
+} from '../shared/agents/independentReviewHandoffRunReceiptV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-independent-review-handoff-provenance-v1';
@@ -37,8 +43,8 @@ function sameSha(left, right) {
     && text(left).toLowerCase() === text(right).toLowerCase();
 }
 
-async function githubRequest(path, { method = 'GET', body = null, token } = {}) {
-  const response = await fetch(`https://api.github.com${path}`, {
+async function githubRequest(pathname, { method = 'GET', body = null, token } = {}) {
+  const response = await fetch(`https://api.github.com${pathname}`, {
     method,
     headers: {
       Accept: 'application/vnd.github+json',
@@ -56,7 +62,7 @@ async function githubRequest(path, { method = 'GET', body = null, token } = {}) 
   }
   if (!response.ok) {
     const message = typeof payload === 'object' && payload ? payload.message : raw;
-    throw new Error(`GitHub ${method} ${path} failed (${response.status}): ${text(message)}`);
+    throw new Error(`GitHub ${method} ${pathname} failed (${response.status}): ${text(message)}`);
   }
   return payload;
 }
@@ -72,6 +78,19 @@ function exactDispatchHead(body) {
   return match?.[1]?.toLowerCase() || '';
 }
 
+function exactRunnerTempReceiptPath(runnerTemp, requestedPath) {
+  const root = path.resolve(text(runnerTemp));
+  const target = path.resolve(text(requestedPath));
+  if (!text(runnerTemp) || !text(requestedPath)) {
+    throw new Error('RUNNER_TEMP and immutable handoff receipt path are required');
+  }
+  const relative = path.relative(root, target);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('immutable handoff receipt path must be a file inside RUNNER_TEMP');
+  }
+  return target;
+}
+
 async function main() {
   const token = text(process.env.GITHUB_TOKEN);
   const repository = text(process.env.GITHUB_REPOSITORY);
@@ -81,6 +100,10 @@ async function main() {
   const workflowRef = text(process.env.GITHUB_WORKFLOW_REF);
   const commentId = positiveInteger(process.env.STEPHANOS_REVIEW_HANDOFF_COMMENT_ID);
   const prNumber = positiveInteger(process.env.STEPHANOS_REVIEW_HANDOFF_PR);
+  const receiptPath = exactRunnerTempReceiptPath(
+    process.env.RUNNER_TEMP,
+    process.env.STEPHANOS_REVIEW_HANDOFF_RUN_RECEIPT_PATH,
+  );
 
   if (!token || !repository || !runId || !runAttempt || !jobIdentity || !workflowRef || !commentId || !prNumber) {
     throw new Error('exact coordinator run, comment and PR environment is required');
@@ -142,11 +165,34 @@ async function main() {
     body: { body: updatedBody },
   });
 
+  const persistedComment = await githubRequest(`/repos/${owner}/${repo}/issues/comments/${commentId}`, { token });
+  const persistedProvenance = parseIndependentReviewHandoffProvenanceV1(persistedComment?.body, {
+    repository,
+    currentMainSha,
+    handoffCommentId: commentId,
+  });
+  if (JSON.stringify(persistedProvenance) !== JSON.stringify(provenance)) {
+    throw new Error('persisted handoff provenance does not match the exact coordinator-run binding');
+  }
+
+  const immutableReceipt = buildIndependentReviewHandoffRunReceiptV1({
+    repository,
+    currentMainSha,
+    pullRequest,
+    provenance: persistedProvenance,
+  });
+  writeFileSync(receiptPath, `${JSON.stringify(immutableReceipt, null, 2)}\n`, {
+    encoding: 'utf8',
+    flag: 'wx',
+  });
+
   console.log('INDEPENDENT_REVIEW_HANDOFF_PROVENANCE_BOUND=true');
   console.log(`INDEPENDENT_REVIEW_HANDOFF_COMMENT_ID=${commentId}`);
   console.log(`INDEPENDENT_REVIEW_COORDINATOR_WORKFLOW_RUN_ID=${runId}`);
   console.log(`INDEPENDENT_REVIEW_COORDINATOR_WORKFLOW_RUN_ATTEMPT=${runAttempt}`);
   console.log(`INDEPENDENT_REVIEW_COORDINATOR_SOURCE_SHA=${currentMainSha}`);
+  console.log(`INDEPENDENT_REVIEW_HANDOFF_RUN_RECEIPT_PATH=${receiptPath}`);
+  console.log(`INDEPENDENT_REVIEW_HANDOFF_RUN_RECEIPT_SHA256=${immutableReceipt.bindingSha256}`);
 }
 
 main().catch((error) => {
