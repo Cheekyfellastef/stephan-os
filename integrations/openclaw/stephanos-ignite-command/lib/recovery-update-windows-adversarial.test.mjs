@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import {
-  existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import {
   OPENCLAW_BATTLE_BRIDGE_UPDATE_RECEIPT_SCHEMA,
@@ -21,7 +22,11 @@ import {
   inspectBattleBridgeGitTopology,
 } from '../../../../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';
-import { runApprovedOpenClawGateway18789Start } from '../../../../scripts/battle-bridge-ignition-supervisor.mjs';
+import {
+  OPENCLAW_18789_PROCESS_PROOF_SCHEMA,
+  runApprovedOpenClawGateway18789Start,
+  validateOpenClawGateway18789ProcessProofRecord,
+} from '../../../../scripts/battle-bridge-ignition-supervisor.mjs';
 
 const HEAD = 'a'.repeat(40);
 const OWNER = Object.freeze({ authenticatedByHost: true, commandName: 'stephanos-ignite', command: 'update', senderIsOwner: true });
@@ -171,10 +176,64 @@ test('Windows topology baseline survives Git index lockfile replacement but bind
   assert.equal(Object.hasOwn(before.stableIdentities, 'index'), false);
 });
 
-test('Windows canonical 18789 proof rejects an actual fake Node health and identity listener', { skip: process.platform !== 'win32' }, async (t) => {
+test('Windows listener proof consumer rejects an injected wrong-owner SID record', { skip: process.platform !== 'win32' }, () => {
+  const appData = process.env.APPDATA;
+  const userProfile = process.env.USERPROFILE;
+  assert.equal(Boolean(appData && userProfile), true);
+  const operatorSid = 'S-1-5-21-1000-2000-3000-1001';
+  const record = {
+    schemaVersion: OPENCLAW_18789_PROCESS_PROOF_SCHEMA,
+    ok: true,
+    pid: 18789,
+    parentPid: 18788,
+    processName: 'node.exe',
+    executablePath: BATTLE_BRIDGE_WINDOWS_HOST.node,
+    executableCanonical: true,
+    executableTokenCanonical: true,
+    executableToken: BATTLE_BRIDGE_WINDOWS_HOST.node,
+    entrypointCanonical: true,
+    entrypointToken: path.win32.join(appData, 'npm', 'node_modules', 'openclaw', 'openclaw.mjs'),
+    gatewayCommandCanonical: true,
+    gatewayToken: 'gateway',
+    gatewayActionToken: 'run',
+    gatewayPortToken: '',
+    commandTokenCount: 4,
+    commandLineCanonical: true,
+    currentOwnerSid: operatorSid,
+    processOwnerSid: 'S-1-5-21-1000-2000-3000-2002',
+    ownerSidMatches: true,
+    expectedStarterPid: 0,
+    starterPidBound: true,
+    supportedStarterLineage: true,
+    starterLineageKind: 'canonical-gateway-cmd',
+    starterCommandCanonical: true,
+    supportedStarterPid: 18788,
+    supportedStarterExecutablePath: BATTLE_BRIDGE_WINDOWS_HOST.cmd,
+    supportedStarterGatewayPath: path.win32.join(userProfile, '.openclaw', 'gateway.cmd'),
+    supportedStarterCommandShape: 'cmd-c',
+    lineageCanonical: true,
+    ancestorPids: [18788],
+    listenerCount: 1,
+    localAddress: '127.0.0.1',
+  };
+  assert.equal(validateOpenClawGateway18789ProcessProofRecord(record, { env: process.env }).ok, false);
+});
+
+test('Windows canonical 18789 proof rejects fake Node with canonical path and gateway argv only in unused eval arguments', { skip: process.platform !== 'win32' }, async (t) => {
+  const fakeRoot = mkdtempSync(path.join(tmpdir(), 'update-fake-openclaw-argv-'));
+  const isolatedProfile = path.join(fakeRoot, 'profile');
+  const proofEnvironment = { ...process.env, USERPROFILE: isolatedProfile };
+  const canonicalGatewayDirectory = path.win32.join(isolatedProfile, '.openclaw');
+  const canonicalGatewayPath = path.win32.join(canonicalGatewayDirectory, 'gateway.cmd');
+  const fakeModulePath = path.join(fakeRoot, 'fake-listener.mjs');
   const fakeSource = `
     import { createServer } from 'node:http';
     const server = createServer((request, response) => {
+      if (request.url === '/__shutdown') {
+        response.end('{}');
+        server.close(() => process.exit(0));
+        return;
+      }
       response.setHeader('content-type', 'application/json');
       response.end(JSON.stringify(request.url === '/identity'
         ? { product: 'OpenClaw', runtimeId: 'openclaw-runtime-fake', status: 'ready' }
@@ -182,18 +241,28 @@ test('Windows canonical 18789 proof rejects an actual fake Node health and ident
     });
     server.once('error', (error) => { process.stderr.write(error.code || error.message); process.exit(23); });
     server.listen(18789, '127.0.0.1', () => process.stdout.write('READY\\n'));
-    process.on('SIGTERM', () => server.close(() => process.exit(0)));
   `;
-  const fake = spawn(process.execPath, ['--input-type=module', '--eval', fakeSource, 'openclaw', 'gateway'], {
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  let fake = null;
+  let fakeReady = false;
+  let closed = Promise.resolve();
   let stdout = '';
   let stderr = '';
-  fake.stdout.on('data', (chunk) => { stdout += chunk; });
-  fake.stderr.on('data', (chunk) => { stderr += chunk; });
-  const closed = new Promise((resolve) => fake.once('close', resolve));
   try {
+    writeFileSync(fakeModulePath, fakeSource);
+    const argvSpoofEntrypoint = path.win32.join(process.env.APPDATA, 'npm', 'node_modules', 'openclaw', 'openclaw.mjs');
+    mkdirSync(canonicalGatewayDirectory, { recursive: true });
+    writeFileSync(canonicalGatewayPath, [
+      '@echo off',
+      `"${BATTLE_BRIDGE_WINDOWS_HOST.node}" --input-type=module --eval "import(process.argv[1])" "${pathToFileURL(fakeModulePath).href}" "${argvSpoofEntrypoint}" gateway run`,
+      '',
+    ].join('\r\n'), { flag: 'wx' });
+    fake = spawn(BATTLE_BRIDGE_WINDOWS_HOST.cmd, ['/d', '/s', '/c', `""${canonicalGatewayPath}""`], {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    fake.stdout.on('data', (chunk) => { stdout += chunk; });
+    fake.stderr.on('data', (chunk) => { stderr += chunk; });
+    closed = new Promise((resolve) => fake.once('close', resolve));
     for (let attempt = 0; attempt < 100 && !stdout.includes('READY') && !stderr; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
@@ -201,12 +270,13 @@ test('Windows canonical 18789 proof rejects an actual fake Node health and ident
       t.skip(`port 18789 unavailable for isolated fake-listener proof (${stderr || 'no readiness'})`);
       return;
     }
+    fakeReady = true;
     const workspace = mkdtempSync(path.join(tmpdir(), 'update-fake-openclaw-'));
     const result = await runApprovedOpenClawGateway18789Start({
       sharedWorkspace: workspace,
       platform: 'win32',
       approved: true,
-      env: process.env,
+      env: proofEnvironment,
       readyTimeoutMs: 1000,
       retryIntervalMs: 0,
       spawnFn: () => { throw new Error('fake listener must block before startup'); },
@@ -216,8 +286,16 @@ test('Windows canonical 18789 proof rejects an actual fake Node health and ident
     assert.equal(result.error, 'OPENCLAW_18789_EXISTING_LISTENER_IDENTITY_UNPROVEN');
     assert.equal(result.healthProof.identityCanonical, true);
     assert.equal(result.healthProof.processCanonical, false);
+    assert.equal(result.healthProof.processProof.proofFacets.listenerAddressCanonical, true);
+    assert.equal(result.healthProof.processProof.proofFacets.ownerIdentityCanonical, true);
+    assert.equal(result.healthProof.processProof.proofFacets.starterLineageCanonical, true);
+    assert.equal(result.healthProof.processProof.proofFacets.positionalCommandCanonical, false);
   } finally {
-    fake.kill();
-    await closed;
+    if (fakeReady) await fetch('http://127.0.0.1:18789/__shutdown').catch(() => null);
+    if (fake) {
+      await Promise.race([closed, new Promise((resolve) => setTimeout(resolve, 2000))]);
+      if (fake.exitCode === null) fake.kill();
+    }
+    rmSync(fakeRoot, { recursive: true, force: true });
   }
 });

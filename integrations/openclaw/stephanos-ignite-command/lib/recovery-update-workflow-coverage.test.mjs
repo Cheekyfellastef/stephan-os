@@ -25,6 +25,8 @@ test('hosted resilience proof keeps the complete exact-head update authority sui
     'shared/agents/stephanosChatUpdate.test.mjs',
     'scripts/run-battle-bridge-ignition.mjs',
     'scripts/run-battle-bridge-ignition.test.mjs',
+    'scripts/ignite-stephanos-local.mjs',
+    'scripts/ignite-stephanos-local.test.mjs',
     'scripts/launcher-readiness-live-facts.mjs',
     'scripts/launcher-readiness-live-facts.test.mjs',
     'scripts/windows/probe-openclaw-gateway-18789-owner.ps1',
@@ -34,6 +36,11 @@ test('hosted resilience proof keeps the complete exact-head update authority sui
     'Parse fixed OpenClaw listener owner probe',
     'Windows reparse, claim, Git, ignition-pipe, and listener adversarial proof',
   ]) assert.match(source, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  const ubuntuTestCommand = source.slice(
+    source.indexOf('node --test'),
+    source.indexOf('- name: Parse outbound beacon'),
+  );
+  assert.match(ubuntuTestCommand, /scripts\/ignite-stephanos-local\.test\.mjs/);
   const windowsJob = source.slice(source.indexOf('update-owner-lane-windows-adversarial:'));
   for (const requiredWindowsTest of [
     'recovery-update-windows-adversarial.test.mjs',

@@ -19,6 +19,10 @@ export function battleBridgeCanonicalRepositoryArgs(repoRoot) {
 export const BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS = Object.freeze([
   '-c', 'core.hooksPath=NUL',
   '-c', 'core.fsmonitor=false',
+  '-c', 'core.trustctime=true',
+  '-c', 'core.checkStat=default',
+  '-c', 'core.ignoreStat=false',
+  '-c', 'core.untrackedCache=false',
   '-c', 'core.attributesFile=NUL',
   '-c', 'core.excludesFile=NUL',
   '-c', 'credential.helper=',
@@ -112,6 +116,10 @@ export function validateBattleBridgeLocalGitConfiguration(output = '') {
     || entry.key === 'index.sparse'
     || entry.key === 'core.hookspath'
     || entry.key === 'core.fsmonitor'
+    || entry.key === 'core.trustctime'
+    || entry.key === 'core.checkstat'
+    || entry.key === 'core.ignorestat'
+    || entry.key === 'core.untrackedcache'
     || entry.key === 'core.sshcommand'
     || entry.key === 'core.alternaterefscommand'
     || entry.key === 'core.askpass'
@@ -157,7 +165,7 @@ const FORBIDDEN_GIT_TOPOLOGY_PATHS = Object.freeze([
   [path.join('objects', 'info', 'alternates'), 'GIT_OBJECT_ALTERNATES_PRESENT'],
 ]);
 
-export function inspectBattleBridgeGitTopology(repoRoot, { lstatFn = lstatSync } = {}) {
+export function inspectBattleBridgeGitTopology(repoRoot, { lstatFn = lstatSync, stabilizeIndex = false } = {}) {
   const gitDirectory = path.resolve(String(repoRoot || ''), '.git');
   const stableIdentities = Object.create(null);
   const samePath = (left, right) => process.platform === 'win32'
@@ -230,7 +238,7 @@ export function inspectBattleBridgeGitTopology(repoRoot, { lstatFn = lstatSync }
     // Git legitimately commits these through lockfile + rename. They must be
     // ordinary canonical files at every boundary, but their inode is not a
     // cross-mutation invariant.
-    ['index', 'file', false],
+    ['index', 'file', stabilizeIndex],
     ['packed-refs', 'file', false],
     ['config.worktree', 'file', false],
     ['shallow', 'file', false],

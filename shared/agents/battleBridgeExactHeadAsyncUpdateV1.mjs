@@ -120,7 +120,9 @@ function captureAsync(spawnFn, command, args, options = {}) {
         const childPid = Number(child.pid || 0);
         if (!approvalStream?.end || !Number.isSafeInteger(childPid) || childPid < 1) {
           terminationError ||= new Error('BATTLE_BRIDGE_IGNITION_APPROVAL_PIPE_UNAVAILABLE');
+          approvalSettled = true;
           try { child.kill(); } catch { /* bounded failure */ }
+          finishClosedChild();
           return;
         }
         try {
@@ -148,7 +150,9 @@ function captureAsync(spawnFn, command, args, options = {}) {
           });
         } catch (error) {
           terminationError ||= error;
+          approvalSettled = true;
           try { child.kill(); } catch { /* bounded failure */ }
+          finishClosedChild();
         }
       }
     });

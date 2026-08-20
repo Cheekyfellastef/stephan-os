@@ -36,6 +36,10 @@ test('minimal child environment removes Node/Git/shell injection variables', () 
   const fixedValues = Array.from({ length: Number(result.GIT_CONFIG_COUNT) }, (_, index) => result[`GIT_CONFIG_VALUE_${index}`]);
   assert.equal(fixedKeys.includes('core.hooksPath'), true);
   assert.equal(fixedValues[fixedKeys.indexOf('core.hooksPath')], 'NUL');
+  assert.equal(fixedValues[fixedKeys.indexOf('core.trustctime')], 'true');
+  assert.equal(fixedValues[fixedKeys.indexOf('core.checkStat')], 'default');
+  assert.equal(fixedValues[fixedKeys.indexOf('core.ignoreStat')], 'false');
+  assert.equal(fixedValues[fixedKeys.indexOf('core.untrackedCache')], 'false');
   assert.equal(fixedValues.includes('attacker.exe'), false);
   assert.equal(result.GIT_NO_REPLACE_OBJECTS, '1');
   assert.equal(result.GIT_GRAFT_FILE, 'NUL');
@@ -71,12 +75,33 @@ test('Git topology rejects linked critical metadata descendants', () => {
   assert.equal(inspectBattleBridgeGitTopology(root).blocker, 'CANONICAL_GIT_REPARSE_POINT_PRESENT');
 });
 
+test('Git topology can bind the canonical index identity for read-only source proofs', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'battle-bridge-git-index-'));
+  mkdirSync(path.join(root, '.git', 'objects'), { recursive: true });
+  mkdirSync(path.join(root, '.git', 'refs'), { recursive: true });
+  writeFileSync(path.join(root, '.git', 'config'), '[core]\n\trepositoryformatversion = 0\n');
+  writeFileSync(path.join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+  writeFileSync(path.join(root, '.git', 'index'), 'index-v1');
+  const ordinary = inspectBattleBridgeGitTopology(root);
+  const first = inspectBattleBridgeGitTopology(root, { stabilizeIndex: true });
+  assert.equal(ordinary.ok, true);
+  assert.equal(ordinary.stableIdentities.index, undefined);
+  assert.equal(typeof first.stableIdentities.index, 'string');
+  writeFileSync(path.join(root, '.git', 'index'), 'index-v2');
+  const second = inspectBattleBridgeGitTopology(root, { stabilizeIndex: true });
+  assert.notEqual(second.stableIdentities.index, first.stableIdentities.index);
+});
+
 test('local Git configuration admits only the fixed origin and blocks executable helpers', () => {
   const baseline = `core.repositoryformatversion\n0\0remote.origin.url\n${BATTLE_BRIDGE_CANONICAL_REMOTE_URL}\0remote.origin.fetch\n+refs/heads/main:refs/remotes/origin/main\0`;
   assert.equal(validateBattleBridgeLocalGitConfiguration(baseline).ok, true);
   for (const injected of [
     'core.hooksPath\nC:\\attacker\0',
     'core.fsmonitor\nC:\\attacker.exe\0',
+    'core.trustctime\nfalse\0',
+    'core.checkStat\nminimal\0',
+    'core.ignoreStat\ntrue\0',
+    'core.untrackedCache\ntrue\0',
     'filter.evil.clean\nC:\\attacker.exe\0',
     'credential.helper\n!C:\\attacker.exe\0',
     'protocol.ext.allow\nalways\0',

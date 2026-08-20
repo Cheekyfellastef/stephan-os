@@ -913,7 +913,6 @@ export async function ensureLocalStaticServerRestartWithDeps({
 
 const APPROVED_GENERATED_DIST_PREFIX = 'apps/stephanos/dist/';
 const RUNTIME_MEMORY_PATH = 'stephanos-server/data/memory/durable-memory.json';
-const ROOT_TRANSIENT_DATA_PREFIX = 'data/';
 const ROOT_TRANSIENT_TMP_PATH = 'tmp/';
 const ROOT_RUNTIME_ALLOWLIST_PREFIXES = [
   'data/activity/',
@@ -921,6 +920,11 @@ const ROOT_RUNTIME_ALLOWLIST_PREFIXES = [
   'data/proposals/',
   'data/roadmap/',
   'data/simulations/',
+  'logs/',
+  'memory/.dreams/',
+  'memory/dreaming/deep/',
+  'memory/dreaming/light/',
+  'memory/dreaming/rem/',
 ];
 const DEPENDENCY_DIR_PREFIXES = ['node_modules/', 'stephanos-server/node_modules/', 'stephanos-ui/node_modules/'];
 const SECRETS_PATTERN = /(^|\/)(\.env($|\.)|.*(secret|token|credential|passwd|password|private[-_]?key).*)/i;
@@ -961,10 +965,6 @@ function isDependencyDirtPath(path) {
   return DEPENDENCY_DIR_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
-function isTransientRootDataPath(path) {
-  return path === 'data' || path.startsWith(ROOT_TRANSIENT_DATA_PREFIX);
-}
-
 function isTransientRootTmpDirectoryStatusPath(path) {
   return path === 'tmp' || path === ROOT_TRANSIENT_TMP_PATH;
 }
@@ -992,7 +992,7 @@ function classifyStatusEntry(entry) {
   if (entry.paths.some((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)))) return 'meaningful-source-dirt';
   if (entry.paths.every((path) => path === RUNTIME_MEMORY_PATH)) return 'runtime-state';
   if (entry.status.includes('?') && entry.paths.every((path) => isTransientRootTmpDirectoryStatusPath(path))) return 'runtime-state';
-  if (entry.paths.every((path) => isTransientRootDataPath(path))) return 'transient-root-data';
+  if (entry.paths.every((path) => isAllowlistedRootRuntimePath(path))) return 'transient-root-data';
   if (entry.paths.every((path) => isDependencyDirtPath(path))) return 'dependency-dirt';
   if (entry.paths.every((path) => isApprovedGeneratedDistPath(path))) return 'approved-generated-dist';
   if (entry.status.includes('?') && entry.paths.some((path) => path.includes('.'))) {
@@ -1800,8 +1800,8 @@ export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureSt
   return { healthy: true, state: 'connected-healthy', recoveryApplied: true, readiness };
 }
 
-export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, captureStepFn = runStepCapture, runStepFn = runStep, moveRootOpenClawWorkspaceDirtFn = moveRootOpenClawWorkspaceDirt } = {}) {
-  const capture = captureStepFn('git-status', 'git', ['status', '--porcelain']);
+export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, preserveRuntimeDirt = false, captureStepFn = runStepCapture, runStepFn = runStep, moveRootOpenClawWorkspaceDirtFn = moveRootOpenClawWorkspaceDirt } = {}) {
+  const capture = captureStepFn('git-status', 'git', ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
   const assessment = evaluateGitStatusForIgnition(capture.stdout);
   const runtimeDataListing = captureStepFn('git-untracked-data', 'git', ['ls-files', '--others', '--exclude-standard', '--', 'data']);
   const runtimeDataPaths = normalizeCaptureStdout(runtimeDataListing).split('\n').map((line) => normalizeGitPath(line)).filter((line) => line.startsWith('data/'));
@@ -1827,7 +1827,7 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     .filter((path) => path !== 'data/' || runtimeDataPaths.some((candidate) => !isAllowlistedRootRuntimePath(candidate)));
   const movableRootOpenClawDirt = collectMovableRootOpenClawWorkspaceDirt(assessment);
   let openClawMoveResult = { destinationRoot: resolveOpenClawWorkspaceRepairPath(), migrationDirectory: null, moved: [], skipped: [] };
-  if (!dryRun && movableRootOpenClawDirt.length > 0) {
+  if (!dryRun && !preserveRuntimeDirt && movableRootOpenClawDirt.length > 0) {
     openClawMoveResult = moveRootOpenClawWorkspaceDirtFn({ paths: movableRootOpenClawDirt });
     const movedRootPaths = new Set(openClawMoveResult.moved.map((entry) => normalizeRootCandidatePath(entry.path)));
     hardBlockTargets = hardBlockTargets.filter((path) => !movedRootPaths.has(normalizeRootCandidatePath(path)));
@@ -1844,18 +1844,20 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
 
   let runtimeCleaned = 0;
   if (!dryRun) {
-    if (trackedAuto.length > 0) {
+    if (!preserveRuntimeDirt && trackedAuto.length > 0) {
       runStepFn('git-restore-auto-generated', 'git', ['restore', '--worktree', '--staged', '--', ...trackedAuto]);
     }
-    if (trackedRuntime.length > 0) {
+    if (!preserveRuntimeDirt && trackedRuntime.length > 0) {
       runStepFn('git-restore-runtime-tracked', 'git', ['restore', '--worktree', '--staged', '--', ...trackedRuntime]);
       runtimeCleaned += trackedRuntime.length;
     }
-    if (untrackedRuntime.length > 0) {
+    if (!preserveRuntimeDirt && untrackedRuntime.length > 0) {
       runStepFn('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', ...untrackedRuntime]);
       runtimeCleaned += untrackedRuntime.length;
     }
-    runStepFn('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', APPROVED_GENERATED_DIST_PREFIX]);
+    if (!preserveRuntimeDirt) {
+      runStepFn('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', APPROVED_GENERATED_DIST_PREFIX]);
+    }
   }
 
   const uniqueRuntimeTargets = [...new Set(runtimeTargets)];
@@ -1869,13 +1871,14 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     ignitionStatus: blocked ? 'BLOCKED' : 'READY',
     ignitionPhase: dryRun ? 'housekeep-dry-run' : 'housekeep',
     ignitionCleanlinessVerdict: blocked ? 'blocked' : 'ready',
-    ignitionAutoCleaned: dryRun ? 0 : autoCleanTargets.length,
+    ignitionAutoCleaned: dryRun || preserveRuntimeDirt ? 0 : autoCleanTargets.length,
     ignitionRuntimeCleaned: dryRun ? 0 : runtimeCleaned,
     ignitionOpenClawWorkspaceMoved: dryRun ? 0 : openClawMoveResult.moved.length,
     ignitionOpenClawWorkspaceMoveDestination: openClawMoveResult.destinationRoot,
     ignitionOpenClawWorkspaceMovedPaths: dryRun ? [] : openClawMoveResult.moved.map((entry) => entry.path),
-    ignitionRuntimeCleanedPaths: dryRun ? [] : uniqueRuntimeTargets.slice(0, 10),
-    ignitionAutoCleanedPaths: dryRun ? [] : [...new Set(autoCleanTargets)].slice(0, 10),
+    ignitionRuntimeCleanedPaths: dryRun || preserveRuntimeDirt ? [] : uniqueRuntimeTargets.slice(0, 10),
+    ignitionAutoCleanedPaths: dryRun || preserveRuntimeDirt ? [] : [...new Set(autoCleanTargets)].slice(0, 10),
+    ignitionRuntimePreservationEnabled: preserveRuntimeDirt,
     ignitionSourceDirtCount: sourceTargets.length,
     ignitionDependencyWarningCount: dependencyTargets.length,
     ignitionHardBlockCount: uniqueHardBlockTargets.length,

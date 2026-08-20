@@ -332,7 +332,7 @@ test('preflight housekeeping works without shell cp on Windows-style environment
   const steps = [];
   runGitPullPreflightWithDeps({
     captureStep: (label) => {
-      if (label === 'git-status') return { stdout: '?? data/session-cache.json\n', stderr: '' };
+      if (label === 'git-status') return { stdout: '?? data/activity/session-cache.json\n', stderr: '' };
       if (label === 'git-branch') return { stdout: 'main\n', stderr: '' };
       if (label === 'git-upstream') return { stdout: 'origin/main\n', stderr: '' };
       if (label === 'git-ahead-behind') return { stdout: '0\t0\n', stderr: '' };
@@ -802,7 +802,7 @@ test('ignition status evaluator reproduces Battle Bridge generated dist and root
 test('ignition status evaluator classifies backend runtime data dirt separately', () => {
   const evaluation = evaluateGitStatusForIgnition([
     ' M stephanos-server/data/memory/durable-memory.json',
-    '?? data/session-cache.json',
+    '?? data/activity/session-cache.json',
   ].join('\n'));
 
   assert.equal(evaluation.runtimeStateEntries.length, 1);
@@ -812,6 +812,61 @@ test('ignition status evaluator classifies backend runtime data dirt separately'
   assert.deepEqual(collectRuntimeStatePaths(evaluation), [
     'stephanos-server/data/memory/durable-memory.json',
   ]);
+});
+
+test('ignition status evaluator hard-blocks unallowlisted nested data files', () => {
+  const evaluation = evaluateGitStatusForIgnition([
+    '?? data/random.txt',
+    '?? data/unknown.bin',
+  ].join('\n'));
+  assert.equal(evaluation.transientRootDataEntries.length, 0);
+  assert.equal(evaluation.forbiddenOrUnknownEntries.length, 2);
+  assert.equal(evaluation.meaningfulEntries.length, 2);
+});
+
+test('ignition status evaluator hard-blocks ignored data outside the explicit runtime allowlist', () => {
+  const evaluation = evaluateGitStatusForIgnition([
+    '!! data/activity/session.json',
+    '!! data/random.txt',
+    '!! data/unknown.bin',
+  ].join('\n'));
+  assert.equal(evaluation.transientRootDataEntries.length, 1);
+  assert.equal(evaluation.forbiddenOrUnknownEntries.length, 0);
+  assert.equal(evaluation.meaningfulEntries.length, 2);
+  assert.equal(isGitWorkingTreeClean('!! data/random.txt\n!! data/unknown.bin\n'), false);
+});
+
+test('ignition status evaluator allows canonical ignored runtime logs', () => {
+  const status = '!! logs/\n!! logs/battle-bridge/backend.stdout.log\n';
+  const evaluation = evaluateGitStatusForIgnition(status);
+  assert.equal(evaluation.transientRootDataEntries.length, 2);
+  assert.equal(evaluation.meaningfulEntries.length, 0);
+  assert.equal(isGitWorkingTreeClean(status), true);
+  assert.equal(classifyIgnitionDirtPath('logs/battle-bridge/backend.stdout.log'), 'RUNTIME_CHECKPOINT_CLEAN');
+});
+
+test('ignition status evaluator aligns exact dream-memory runtime prefixes without allowing secret-shaped children', () => {
+  const allowed = [
+    'memory/.dreams/session.json',
+    'memory/dreaming/deep/session.json',
+    'memory/dreaming/light/session.json',
+    'memory/dreaming/rem/session.json',
+  ];
+  const blocked = [
+    'memory/.dreams/token.json',
+    'memory/dreaming/deep/private-key.json',
+    'memory/dreaming/light/credential.json',
+    'memory/dreaming/rem/password.txt',
+  ];
+  const evaluation = evaluateGitStatusForIgnition([
+    ...allowed.map((path) => `!! ${path}`),
+    ...blocked.map((path) => `!! ${path}`),
+  ].join('\n'));
+
+  assert.deepEqual(evaluation.transientRootDataEntries.map((entry) => entry.paths[0]), allowed);
+  assert.deepEqual(evaluation.meaningfulEntries.map((entry) => entry.paths[0]), blocked);
+  for (const path of allowed) assert.equal(classifyIgnitionDirtPath(path), 'RUNTIME_CHECKPOINT_CLEAN');
+  for (const path of blocked) assert.equal(classifyIgnitionDirtPath(path), 'HARD_BLOCK');
 });
 
 test('collectApprovedTrackedGeneratedRestorePaths returns tracked dist paths only', () => {
@@ -968,6 +1023,36 @@ test('housekeep auto-cleans allowlisted root runtime data and stays READY', () =
   ]);
 });
 
+test('supervisor preservation mode never moves or cleans tracked, untracked, or generated runtime paths', () => {
+  const steps = [];
+  const moveRequests = [];
+  assert.throws(() => runIgnitionHousekeep({
+    dryRun: false,
+    compact: true,
+    preserveRuntimeDirt: true,
+    captureStepFn: (label) => {
+      if (label === 'git-status') return {
+        stdout: [
+          '?? MEMORY.md',
+          ' M stephanos-server/data/memory/durable-memory.json',
+          '?? data/',
+          '?? apps/stephanos/dist/assets/generated.js',
+        ].join('\n'),
+        stderr: '',
+      };
+      if (label === 'git-untracked-data') return { stdout: 'data/activity/events.json\n', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: (label, command, args) => steps.push({ label, command, args }),
+    moveRootOpenClawWorkspaceDirtFn: ({ paths }) => {
+      moveRequests.push(...paths);
+      return { destinationRoot: 'should-not-run', migrationDirectory: null, moved: [], skipped: [] };
+    },
+  }), /housekeep blocked/);
+  assert.deepEqual(moveRequests, []);
+  assert.deepEqual(steps, []);
+});
+
 test('housekeep hard-blocks unknown data files and surfaces exact hardBlockPaths', () => {
   assert.throws(() => runIgnitionHousekeep({
     dryRun: false,
@@ -980,6 +1065,46 @@ test('housekeep hard-blocks unknown data files and surfaces exact hardBlockPaths
     runStepFn: () => {},
   }), /housekeep blocked/);
 });
+
+test('housekeep includes ignored data entries in the canonical hard-block gate', () => {
+  const calls = [];
+  assert.throws(() => runIgnitionHousekeep({
+    dryRun: false,
+    compact: true,
+    captureStepFn: (label, command, args) => {
+      calls.push([label, command, ...args]);
+      if (label === 'git-status') return { stdout: '!! data/random.txt\n!! data/unknown.bin\n', stderr: '' };
+      if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    runStepFn: () => {},
+  }), /housekeep blocked/);
+  assert.deepEqual(calls[0], ['git-status', 'git', 'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
+});
+
+test('housekeep tolerates canonical ignored runtime logs without weakening the data gate', () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (message) => logs.push(String(message));
+  try {
+    runIgnitionHousekeep({
+      dryRun: false,
+      compact: true,
+      captureStepFn: (label) => {
+        if (label === 'git-status') return { stdout: '!! logs/\n', stderr: '' };
+        if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      runStepFn: () => {},
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  const status = JSON.parse(logs.find((line) => line.startsWith('[HOUSEKEEP] status=')).replace('[HOUSEKEEP] status=', ''));
+  assert.equal(status.ignitionStatus, 'READY');
+  assert.equal(status.ignitionHardBlockCount, 0);
+});
+
 test('housekeep dry-run classifies known OpenClaw workspace dirt without weakening hard-block', () => {
   const logs = [];
   const originalLog = console.log;
@@ -1487,7 +1612,7 @@ test('auto-publish reuses existing verify result when current', () => {
 test('auto-publish blocks runtime/root/source dirt categories', () => {
   const status = evaluateGitStatusForIgnition([
     ' M stephanos-server/data/memory/durable-memory.json',
-    '?? data/session.json',
+    '?? data/activity/session.json',
     ' M scripts/ignite-stephanos-local.mjs',
   ].join('\n'));
 

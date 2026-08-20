@@ -267,6 +267,77 @@ test('sync result propagates unproven execution state after an abnormal post-spa
   assert.equal(result.fetchResult.executionStateUnproven, true);
 });
 
+test('missing ignition approval fd stays pending without close and settles unproven after close', async () => {
+  const child = new EventEmitter();
+  child.pid = 7070;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.stdio = [null, child.stdout, child.stderr];
+  let killed = false;
+  child.kill = () => { killed = true; };
+  const runner = createBattleBridgeAsyncCommandRunner({
+    environment: { USERPROFILE: 'C:\\Users\\Stephan' },
+    spawnFn: () => {
+      setImmediate(() => child.emit('spawn'));
+      return child;
+    },
+  });
+  const cwd = 'C:\\repo';
+  const ignitionScript = path.resolve(cwd, 'scripts', 'run-battle-bridge-ignition.mjs');
+  let settled = false;
+  const pending = runner(BATTLE_BRIDGE_WINDOWS_HOST.node, [ignitionScript], {
+    cwd,
+    timeout: 5,
+    ignitionApproval: Object.freeze({ expectedHead: HEAD, receiptId: RECEIPT_ID }),
+  }).then((value) => { settled = true; return value; });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(killed, true);
+  assert.equal(settled, false);
+
+  child.emit('close', null, 'SIGTERM');
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'BATTLE_BRIDGE_IGNITION_APPROVAL_PIPE_UNAVAILABLE');
+  assert.equal(result.processTreeClosureProven, false);
+  assert.equal(result.executionStateUnproven, true);
+});
+
+test('synchronous ignition approval write failure settles unproven after child close', async () => {
+  const child = new EventEmitter();
+  child.pid = 8080;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  const approvalPipe = new EventEmitter();
+  approvalPipe.end = () => { throw new Error('IGNITION_APPROVAL_WRITE_FAILED'); };
+  child.stdio = [null, child.stdout, child.stderr, approvalPipe];
+  let killed = false;
+  child.kill = () => { killed = true; };
+  const runner = createBattleBridgeAsyncCommandRunner({
+    environment: { USERPROFILE: 'C:\\Users\\Stephan' },
+    spawnFn: () => {
+      setImmediate(() => {
+        child.emit('spawn');
+        child.emit('close', null, 'SIGTERM');
+      });
+      return child;
+    },
+  });
+  const cwd = 'C:\\repo';
+  const ignitionScript = path.resolve(cwd, 'scripts', 'run-battle-bridge-ignition.mjs');
+  const result = await runner(BATTLE_BRIDGE_WINDOWS_HOST.node, [ignitionScript], {
+    cwd,
+    timeout: 1000,
+    ignitionApproval: Object.freeze({ expectedHead: HEAD, receiptId: RECEIPT_ID }),
+  });
+
+  assert.equal(killed, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'IGNITION_APPROVAL_WRITE_FAILED');
+  assert.equal(result.processTreeClosureProven, false);
+  assert.equal(result.executionStateUnproven, true);
+});
+
 test('fixed ignition child receives one-use approval only over fd 3 and nested Git is isolated', async () => {
   const child = new EventEmitter();
   child.pid = 5050;

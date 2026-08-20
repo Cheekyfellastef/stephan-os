@@ -5,10 +5,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import {
+  bindCanonicalSourceTruthToOwnerApproval,
   createSupervisorHousekeepRunStep,
   captureFixedAuthorityGitStep,
   ensureBackend8787ConvergedBeforeSupervisor,
   ensureLiveUiConvergedBeforeSupervisor,
+  main,
   probeCanonicalBackendHealth,
   readOwnerIgnitionApprovalFromPipe,
   runSupervisorHousekeepPreservingLiveDist,
@@ -339,6 +341,165 @@ test('pre-supervisor failures publish a fresh terminal red ignition record inste
     assert.match(status.nextOperatorAction, /retry Ignition/);
   } finally {
     await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test('canonical source truth blocks the click path before backend, UI, or supervisor mutation', async () => {
+  const sharedWorkspace = await mkdtemp(path.join(tmpdir(), 'bb-ignition-source-gate-'));
+  const previousArgs = process.argv;
+  const calls = [];
+  process.argv = [previousArgs[0], previousArgs[1], '--shared-workspace', sharedWorkspace];
+  try {
+    const exitCode = await main({
+      platform: 'win32',
+      approvalFn: () => null,
+      sourceTruthFn: () => ({
+        branch: 'main',
+        detachedHead: false,
+        hasUpstream: true,
+        upstreamBranch: 'origin/main',
+        workingTreeDirty: false,
+        aheadCount: 1,
+        behindCount: 1,
+        headPublished: false,
+        blockedForRemoteTruth: true,
+        publicationState: 'diverged',
+        head: 'a'.repeat(40),
+        originHead: 'b'.repeat(40),
+      }),
+      backendPreflightFn: async () => { calls.push('backend'); return { ok: true }; },
+      uiPreflightFn: async () => { calls.push('ui'); },
+      supervisorFn: async () => { calls.push('supervisor'); return { ok: true }; },
+    });
+    assert.equal(exitCode, 2);
+    assert.deepEqual(calls, []);
+    const status = JSON.parse(await readFile(path.join(sharedWorkspace, 'status', 'battle-bridge-ignition-supervisor-current.json'), 'utf8'));
+    assert.equal(status.phases['source truth'].state, 'blocked');
+    assert.equal(status.blockerId, 'source-head-truth-unproven');
+  } finally {
+    process.argv = previousArgs;
+    await rm(sharedWorkspace, { recursive: true, force: true });
+  }
+});
+
+test('wrapper and standalone supervisor share the same canonical source collector', async () => {
+  const sourceTruthFn = () => ({
+    branch: 'main',
+    detachedHead: false,
+    hasUpstream: true,
+    upstreamBranch: 'origin/main',
+    workingTreeDirty: false,
+    aheadCount: 0,
+    behindCount: 0,
+    headPublished: true,
+    blockedForRemoteTruth: false,
+    publicationState: 'healthy-synced',
+    head: 'a'.repeat(40),
+    originHead: 'a'.repeat(40),
+  });
+  let supervisorOptions = null;
+  const exitCode = await main({
+    platform: 'linux',
+    approvalFn: () => null,
+    sourceTruthFn,
+    uiPreflightFn: async () => {},
+    supervisorFn: async (options) => {
+      supervisorOptions = options;
+      return { ok: true };
+    },
+  });
+
+  assert.equal(exitCode, 0);
+  assert.equal(supervisorOptions.sourceTruthFn, sourceTruthFn);
+  assert.equal(typeof supervisorOptions.housekeepFn, 'function');
+});
+
+test('one-use owner approval rejects a head change at the supervisor source re-proof', async () => {
+  const expectedHead = 'a'.repeat(40);
+  const changedHead = 'b'.repeat(40);
+  let sourceCalls = 0;
+  let secondTruth = null;
+  const canonicalTruth = (head) => ({
+    ok: true,
+    branch: 'main',
+    detachedHead: false,
+    hasUpstream: true,
+    upstreamBranch: 'origin/main',
+    workingTreeDirty: false,
+    aheadCount: 0,
+    behindCount: 0,
+    headPublished: true,
+    blockedForRemoteTruth: false,
+    publicationState: 'healthy-synced',
+    head,
+    originHead: head,
+  });
+  const approval = {
+    approved: true,
+    action: 'RUN_EXACT_HEAD_IGNITION',
+    expectedHead,
+    receiptId: 'c'.repeat(32),
+    parentPid: 120,
+    childPid: 121,
+  };
+  const sourceTruthFn = () => canonicalTruth(sourceCalls++ === 0 ? expectedHead : changedHead);
+  const bound = bindCanonicalSourceTruthToOwnerApproval({ sourceTruthFn, approval });
+  assert.equal(bound().head, expectedHead);
+  assert.equal(bound().blocker.id, 'owner-ignition-exact-head-mismatch');
+
+  sourceCalls = 0;
+  const calls = [];
+  const exitCode = await main({
+    platform: 'win32',
+    approvalFn: () => approval,
+    currentHeadFn: () => expectedHead,
+    sourceTruthFn,
+    backendPreflightFn: async () => { calls.push('backend'); return { ok: true }; },
+    uiPreflightFn: async () => { calls.push('ui'); },
+    supervisorFn: async (options) => {
+      calls.push('supervisor');
+      secondTruth = options.sourceTruthFn();
+      return { ok: false };
+    },
+  });
+  assert.equal(exitCode, 2);
+  assert.equal(sourceCalls, 2);
+  assert.deepEqual(calls, ['backend', 'ui', 'supervisor']);
+  assert.equal(secondTruth.blocker.id, 'owner-ignition-exact-head-mismatch');
+  assert.equal(secondTruth.blocker.code, 'OWNER_IGNITION_EXACT_HEAD_MISMATCH');
+});
+
+test('owner current-head read failure publishes red source truth and invokes no mutator', async () => {
+  const sharedWorkspace = await mkdtemp(path.join(tmpdir(), 'bb-owner-head-read-'));
+  const previousArgs = process.argv;
+  const calls = [];
+  process.argv = [previousArgs[0], previousArgs[1], '--shared-workspace', sharedWorkspace];
+  try {
+    const exitCode = await main({
+      platform: 'win32',
+      approvalFn: () => ({
+        approved: true,
+        action: 'RUN_EXACT_HEAD_IGNITION',
+        expectedHead: 'a'.repeat(40),
+        receiptId: 'c'.repeat(32),
+        parentPid: 120,
+        childPid: 121,
+      }),
+      currentHeadFn: () => { throw new Error('fixed Git unavailable'); },
+      sourceTruthFn: () => { calls.push('source'); return {}; },
+      backendPreflightFn: async () => { calls.push('backend'); return { ok: true }; },
+      uiPreflightFn: async () => { calls.push('ui'); },
+      supervisorFn: async () => { calls.push('supervisor'); return { ok: true }; },
+    });
+    assert.equal(exitCode, 1);
+    assert.deepEqual(calls, []);
+    const status = JSON.parse(await readFile(path.join(sharedWorkspace, 'status', 'battle-bridge-ignition-supervisor-current.json'), 'utf8'));
+    assert.equal(status.trafficLight, 'red');
+    assert.equal(status.blockerId, 'owner-ignition-current-head-unproven');
+    assert.equal(status.phases['source truth'].state, 'blocked');
+  } finally {
+    process.argv = previousArgs;
+    await rm(sharedWorkspace, { recursive: true, force: true });
   }
 });
 

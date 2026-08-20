@@ -6,6 +6,8 @@ on:
       - 'scripts/battle-bridge-ignition-supervisor.mjs'
       - 'scripts/battle-bridge-ignition-supervisor.test.mjs'
       - 'scripts/battle-bridge-ignition-supervisor-windows-npm.test.mjs'
+      - 'scripts/ignite-stephanos-local.mjs'
+      - 'scripts/ignite-stephanos-local.test.mjs'
       - 'scripts/battle-bridge-recovery-mesh.mjs'
       - 'scripts/battle-bridge-recovery-mesh.test.mjs'
       - 'scripts/battle-bridge-recovery-mesh-installer.test.mjs'
@@ -78,6 +80,7 @@ jobs:
           node --test
           scripts/battle-bridge-ignition-supervisor.test.mjs
           scripts/battle-bridge-ignition-supervisor-windows-npm.test.mjs
+          scripts/ignite-stephanos-local.test.mjs
           scripts/windows-launcher-supervisor-freshness.test.mjs
           scripts/windows-launcher-defaults.test.mjs
           tests/windows-launcher-ignition.test.mjs

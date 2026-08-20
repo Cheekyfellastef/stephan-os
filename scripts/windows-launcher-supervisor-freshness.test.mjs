@@ -55,7 +55,12 @@ test('blocked served-runtime status preserves exact rejection proof', async () =
   const result = await runBattleBridgeIgnitionSupervisor({
     housekeepFn: () => {},
     publisherFn: async () => {},
-    sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    sourceTruthFn: () => ({
+      branch: 'main', detachedHead: false, hasUpstream: true, upstreamBranch: 'origin/main',
+      workingTreeDirty: false, aheadCount: 0, behindCount: 0, headPublished: true,
+      blockedForRemoteTruth: false, publicationState: 'healthy-synced',
+      head: staleProof.currentHead, originHead: staleProof.currentHead,
+    }),
     collectFactsFn: async () => readyReport(),
     plannerFn: (facts) => facts,
     currentHeadFn: () => staleProof.currentHead,

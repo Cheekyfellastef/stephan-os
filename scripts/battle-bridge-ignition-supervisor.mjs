@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn, execFileSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import path from 'node:path';
@@ -10,19 +10,26 @@ import { refreshBattleBridgeSharedWorkspacePublisher } from './battle-bridge-sha
 import { collectLauncherReadinessLiveFacts, defaultWindowsSharedWorkspacePath } from './launcher-readiness-live-facts.mjs';
 import { planLauncherReadiness } from './launcher-readiness-planner.mjs';
 import { runUi4173Repair, UI_4173_REPAIR_AUTHORITY } from './battle-bridge-ui-4173-repair.mjs';
-import { evaluateGitPublicationTruthWithDeps, runIgnitionHousekeep } from './ignite-stephanos-local.mjs';
+import {
+  evaluateGitStatusForIgnition,
+  runIgnitionHousekeep,
+} from './ignite-stephanos-local.mjs';
 import { buildOpenClawGatewayStartupTarget, OPENCLAW_GATEWAY_STARTUP_SOURCE, resolveOpenClawGatewayStartupExecution } from '../shared/agents/openClawGatewayStartup.mjs';
 import {
+  BATTLE_BRIDGE_CANONICAL_REMOTE_URL,
   BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+  battleBridgeCanonicalRepositoryArgs,
   createBattleBridgeMinimalChildEnvironment,
+  inspectBattleBridgeGitTopology,
+  validateBattleBridgeLocalGitConfiguration,
 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
 export const BATTLE_BRIDGE_IGNITION_SUPERVISOR_SCHEMA = 'stephanos.battle-bridge-ignition-supervisor.v1';
 export const OPENCLAW_18789_PROCESS_PROOF_SCHEMA = 'stephanos.openclaw-gateway-18789-process-proof.v1';
 export const BATTLE_BRIDGE_IGNITION_PHASES = Object.freeze([
-  'housekeeping',
   'source truth',
+  'housekeeping',
   'shared workspace publisher',
   'backend 8787',
   'OpenClaw gateway 18789',
@@ -50,6 +57,499 @@ export const BATTLE_BRIDGE_IGNITION_AUTHORITY = Object.freeze({
   openClawGatewayStartupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE,
 });
 
+const defaultRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+const SHA40 = /^[0-9a-f]{40}$/;
+const SOURCE_STATUS_ARGS = Object.freeze(['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
+
+function structuredSourceTruthBlocker({
+  id = 'source-truth-unproven',
+  code = 'CANONICAL_SOURCE_TRUTH_UNPROVEN',
+  detail = 'Canonical source truth could not be proven through the fixed Git boundary.',
+  publicationState = 'source-truth-unproven',
+  branch = '',
+  upstreamBranch = '',
+  head = '',
+  originHead = '',
+  aheadCount = 0,
+  behindCount = 0,
+  workingTreeDirty = false,
+  statusAssessment = null,
+  extra = {},
+} = {}) {
+  return Object.freeze({
+    ok: false,
+    branch,
+    detachedHead: branch === '',
+    hasUpstream: Boolean(upstreamBranch),
+    upstreamBranch,
+    workingTreeDirty,
+    aheadCount,
+    behindCount,
+    headPublished: false,
+    blockedForRemoteTruth: true,
+    publicationState,
+    head,
+    originHead,
+    statusAssessment,
+    blocker: Object.freeze({
+      id,
+      code,
+      detail,
+      nextOperatorAction: 'Use the bounded Battle Bridge source-recovery route to restore a clean canonical main checkout, then retry Ignition.',
+    }),
+    ...extra,
+  });
+}
+
+function sameStableGitTopology(left = {}, right = {}) {
+  return JSON.stringify(left || {}) === JSON.stringify(right || {});
+}
+
+function evaluateTrackedVisibility(output = '') {
+  const hidden = String(output || '').split(/\r?\n/).filter((line) => (
+    /^S\s/.test(line) || /^[a-z]\s/.test(line)
+  ));
+  return Object.freeze({
+    ok: hidden.length === 0,
+    blocker: hidden.length === 0 ? '' : 'HIDDEN_TRACKED_PATHS_PRESENT',
+    hiddenCount: hidden.length,
+  });
+}
+
+export function collectCanonicalIgnitionSourceTruth({
+  cwd = defaultRepoRoot,
+  environment = process.env,
+  spawnSyncFn = spawnSync,
+  inspectTopologyFn = inspectBattleBridgeGitTopology,
+  validateConfigurationFn = validateBattleBridgeLocalGitConfiguration,
+  evaluateStatusFn = evaluateGitStatusForIgnition,
+} = {}) {
+  const topologyBefore = inspectTopologyFn(cwd, { stabilizeIndex: true });
+  if (!topologyBefore?.ok) {
+    return structuredSourceTruthBlocker({
+      code: topologyBefore?.blocker || 'CANONICAL_GIT_TOPOLOGY_UNPROVEN',
+      detail: 'Canonical repository topology could not be proven before source inspection.',
+      extra: { topology: topologyBefore || null },
+    });
+  }
+
+  const childEnvironment = createBattleBridgeMinimalChildEnvironment(environment, { git: true });
+  const capture = (label, args, { allowFailure = false } = {}) => {
+    const fixedArgs = [
+      ...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+      ...battleBridgeCanonicalRepositoryArgs(cwd),
+      ...args,
+    ];
+    const result = spawnSyncFn(BATTLE_BRIDGE_WINDOWS_HOST.git, fixedArgs, {
+      cwd,
+      env: childEnvironment,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout: 120_000,
+    });
+    if (result?.error || result?.status !== 0) {
+      if (allowFailure) return null;
+      const error = new Error(`${label}:${result?.error?.message || result?.status || 'UNKNOWN_FIXED_GIT_FAILURE'}`);
+      error.code = 'FIXED_AUTHORITY_GIT_FAILED';
+      throw error;
+    }
+    return String(result?.stdout || '');
+  };
+
+  try {
+    const configurationBefore = capture('source-config-before-fetch', ['config', '--local', '--null', '--list']);
+    const configurationProof = validateConfigurationFn(configurationBefore);
+    if (!configurationProof?.ok) {
+      return structuredSourceTruthBlocker({
+        code: configurationProof?.blocker || 'CANONICAL_GIT_CONFIGURATION_INVALID',
+        detail: 'Local Git configuration or origin identity is outside the canonical closed-world policy.',
+        extra: { configurationProof: configurationProof || null },
+      });
+    }
+
+    const trackedVisibilityBeforeOutput = capture('source-tracked-visibility-before-fetch', ['ls-files', '--stage', '-v', '--']);
+    const trackedVisibilityBefore = evaluateTrackedVisibility(trackedVisibilityBeforeOutput);
+    if (!trackedVisibilityBefore.ok) {
+      return structuredSourceTruthBlocker({
+        id: 'hidden-tracked-source-truth',
+        code: trackedVisibilityBefore.blocker,
+        detail: 'Skip-worktree or assume-unchanged flags hide tracked paths before canonical source proof.',
+        extra: { trackedVisibilityProof: trackedVisibilityBefore },
+      });
+    }
+
+    const statusBeforeOutput = capture('source-status-before-fetch', [...SOURCE_STATUS_ARGS]);
+    const statusBefore = evaluateStatusFn(statusBeforeOutput);
+    if (!statusBefore || !Array.isArray(statusBefore.meaningfulEntries)) {
+      return structuredSourceTruthBlocker({
+        code: 'CANONICAL_SOURCE_STATUS_INVALID',
+        detail: 'Canonical source status could not be classified before fetch.',
+      });
+    }
+    if (statusBefore.meaningfulEntries.length > 0) {
+      return structuredSourceTruthBlocker({
+        id: 'dirty-source-truth',
+        code: 'CANONICAL_CHECKOUT_DIRTY',
+        detail: 'Source-owned checkout dirt blocks the canonical fetch before any Git mutation.',
+        publicationState: 'local-uncommitted',
+        workingTreeDirty: true,
+        statusAssessment: statusBefore,
+      });
+    }
+
+    const branchBefore = capture('source-branch-before-fetch', ['branch', '--show-current']).trim();
+    const upstreamBefore = String(capture(
+      'source-upstream-before-fetch',
+      ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'],
+      { allowFailure: true },
+    ) || '').trim();
+    const headBefore = capture('source-head-before-fetch', ['rev-parse', 'HEAD']).trim().toLowerCase();
+    if (branchBefore !== 'main' || !SHA40.test(headBefore)) {
+      return structuredSourceTruthBlocker({
+        id: branchBefore ? 'non-main-source-truth' : 'detached-source-truth',
+        code: 'CANONICAL_MAIN_SOURCE_UNPROVEN',
+        detail: 'The checkout is not canonical main at a full lowercase Git head.',
+        branch: branchBefore,
+        upstreamBranch: upstreamBefore,
+        head: headBefore,
+      });
+    }
+    if (upstreamBefore !== 'origin/main') {
+      return structuredSourceTruthBlocker({
+        id: 'noncanonical-upstream-source-truth',
+        code: 'CANONICAL_UPSTREAM_UNPROVEN',
+        detail: 'Canonical main does not track exactly origin/main.',
+        branch: branchBefore,
+        upstreamBranch: upstreamBefore,
+        head: headBefore,
+      });
+    }
+
+    capture('source-fetch', [
+      'fetch',
+      '--prune',
+      BATTLE_BRIDGE_CANONICAL_REMOTE_URL,
+      'main:refs/remotes/origin/main',
+    ]);
+    const originHead = capture('source-origin-head', ['rev-parse', 'origin/main']).trim().toLowerCase();
+    const divergence = capture('source-divergence', ['rev-list', '--left-right', '--count', `HEAD...${originHead}`]).trim();
+    const divergenceParts = divergence.split(/\s+/);
+    const aheadCount = Number.parseInt(divergenceParts[0], 10);
+    const behindCount = Number.parseInt(divergenceParts[1], 10);
+    if (!SHA40.test(originHead)
+        || divergenceParts.length !== 2
+        || !Number.isSafeInteger(aheadCount) || aheadCount < 0
+        || !Number.isSafeInteger(behindCount) || behindCount < 0) {
+      return structuredSourceTruthBlocker({
+        code: 'CANONICAL_REMOTE_TRUTH_INVALID',
+        detail: 'The fixed canonical fetch did not yield a valid origin/main and divergence proof.',
+        branch: branchBefore,
+        head: headBefore,
+        originHead,
+      });
+    }
+
+    const statusAfterOutput = capture('source-status-after-fetch', [...SOURCE_STATUS_ARGS]);
+    const statusAfter = evaluateStatusFn(statusAfterOutput);
+    const configurationAfter = capture('source-config-after-fetch', ['config', '--local', '--null', '--list']);
+    const configurationAfterProof = validateConfigurationFn(configurationAfter);
+    const branchAfter = capture('source-branch-after-fetch', ['branch', '--show-current']).trim();
+    const upstreamAfter = String(capture(
+      'source-upstream-after-fetch',
+      ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'],
+      { allowFailure: true },
+    ) || '').trim();
+    const headAfter = capture('source-head-after-fetch', ['rev-parse', 'HEAD']).trim().toLowerCase();
+    const originHeadAfter = capture('source-origin-head-after-fetch', ['rev-parse', 'origin/main']).trim().toLowerCase();
+    const trackedVisibilityAfterOutput = capture('source-tracked-visibility-after-fetch', ['ls-files', '--stage', '-v', '--']);
+    const trackedVisibilityAfter = evaluateTrackedVisibility(trackedVisibilityAfterOutput);
+    const topologyAfter = inspectTopologyFn(cwd, { stabilizeIndex: true });
+
+    if (!topologyAfter?.ok || !sameStableGitTopology(topologyAfter.stableIdentities, topologyBefore.stableIdentities)) {
+      return structuredSourceTruthBlocker({
+        code: topologyAfter?.blocker || 'CANONICAL_GIT_TOPOLOGY_CHANGED',
+        detail: 'Canonical Git metadata topology changed during source proof.',
+        branch: branchAfter,
+        upstreamBranch: upstreamAfter,
+        head: headAfter,
+        originHead: originHeadAfter,
+      });
+    }
+    if (!configurationAfterProof?.ok || configurationAfter !== configurationBefore) {
+      return structuredSourceTruthBlocker({
+        code: configurationAfterProof?.blocker || 'CANONICAL_GIT_CONFIGURATION_CHANGED',
+        detail: 'Canonical Git configuration changed during source proof.',
+        branch: branchAfter,
+        upstreamBranch: upstreamAfter,
+        head: headAfter,
+        originHead: originHeadAfter,
+        extra: { configurationProof: configurationAfterProof || null },
+      });
+    }
+    if (!trackedVisibilityAfter.ok || trackedVisibilityAfterOutput !== trackedVisibilityBeforeOutput) {
+      return structuredSourceTruthBlocker({
+        id: 'hidden-tracked-source-truth',
+        code: trackedVisibilityAfter.blocker || 'CANONICAL_TRACKED_VISIBILITY_CHANGED',
+        detail: trackedVisibilityAfter.ok
+          ? 'The canonical tracked-file visibility set changed during source proof.'
+          : 'Skip-worktree or assume-unchanged flags appeared during canonical source proof.',
+        branch: branchAfter,
+        upstreamBranch: upstreamAfter,
+        head: headAfter,
+        originHead: originHeadAfter,
+        extra: { trackedVisibilityProof: trackedVisibilityAfter },
+      });
+    }
+    if (!statusAfter || !Array.isArray(statusAfter.meaningfulEntries) || statusAfter.meaningfulEntries.length > 0) {
+      return structuredSourceTruthBlocker({
+        id: 'dirty-source-truth',
+        code: 'CANONICAL_CHECKOUT_DIRTY',
+        detail: 'Source-owned checkout dirt appeared during the canonical fetch proof.',
+        publicationState: 'local-uncommitted',
+        branch: branchAfter,
+        upstreamBranch: upstreamAfter,
+        head: headAfter,
+        originHead: originHeadAfter,
+        workingTreeDirty: true,
+        statusAssessment: statusAfter || null,
+      });
+    }
+    if (branchAfter !== branchBefore
+        || upstreamAfter !== upstreamBefore
+        || upstreamAfter !== 'origin/main'
+        || headAfter !== headBefore
+        || originHeadAfter !== originHead) {
+      return structuredSourceTruthBlocker({
+        code: 'CANONICAL_SOURCE_TRUTH_CHANGED',
+        detail: 'Branch or head truth changed during the canonical source proof.',
+        branch: branchAfter,
+        upstreamBranch: upstreamAfter,
+        head: headAfter,
+        originHead: originHeadAfter,
+        aheadCount,
+        behindCount,
+      });
+    }
+
+    if (originHead !== headBefore || aheadCount !== 0 || behindCount !== 0) {
+      const publicationState = aheadCount > 0 && behindCount > 0
+        ? 'diverged'
+        : (aheadCount > 0 ? 'unpublished-local-only' : 'stale-behind');
+      return structuredSourceTruthBlocker({
+        id: behindCount > 0 && aheadCount === 0 ? 'stale-source-truth' : 'unpublished-source-truth',
+        code: 'CANONICAL_MAIN_NOT_CURRENT',
+        detail: 'Canonical main is not exactly synchronized with the freshly fetched origin/main.',
+        publicationState,
+        branch: branchAfter,
+        upstreamBranch: upstreamAfter,
+        head: headAfter,
+        originHead: originHeadAfter,
+        aheadCount,
+        behindCount,
+        statusAssessment: statusAfter,
+      });
+    }
+
+    const statusFinalOutput = capture('source-status-final', [...SOURCE_STATUS_ARGS]);
+    const statusFinal = evaluateStatusFn(statusFinalOutput);
+    const trackedVisibilityFinalOutput = capture('source-tracked-visibility-final', ['ls-files', '--stage', '-v', '--']);
+    const trackedVisibilityFinal = evaluateTrackedVisibility(trackedVisibilityFinalOutput);
+    const topologyFinal = inspectTopologyFn(cwd, { stabilizeIndex: true });
+    if (!topologyFinal?.ok || !sameStableGitTopology(topologyFinal.stableIdentities, topologyBefore.stableIdentities)) {
+      return structuredSourceTruthBlocker({
+        code: topologyFinal?.blocker || 'CANONICAL_GIT_TOPOLOGY_CHANGED',
+        detail: 'Canonical Git metadata topology changed at the final source boundary.',
+        branch: branchAfter,
+        upstreamBranch: upstreamAfter,
+        head: headAfter,
+        originHead: originHeadAfter,
+      });
+    }
+    if (!statusFinal || !Array.isArray(statusFinal.meaningfulEntries) || statusFinal.meaningfulEntries.length > 0) {
+      return structuredSourceTruthBlocker({
+        id: 'dirty-source-truth',
+        code: 'CANONICAL_CHECKOUT_DIRTY',
+        detail: 'Source-owned checkout dirt appeared during the final canonical source boundary.',
+        publicationState: 'local-uncommitted',
+        branch: branchAfter,
+        upstreamBranch: upstreamAfter,
+        head: headAfter,
+        originHead: originHeadAfter,
+        workingTreeDirty: true,
+        statusAssessment: statusFinal || null,
+      });
+    }
+    if (!trackedVisibilityFinal.ok
+        || trackedVisibilityFinalOutput !== trackedVisibilityBeforeOutput
+        || trackedVisibilityFinalOutput !== trackedVisibilityAfterOutput) {
+      return structuredSourceTruthBlocker({
+        id: 'hidden-tracked-source-truth',
+        code: trackedVisibilityFinal.blocker || 'CANONICAL_TRACKED_VISIBILITY_CHANGED',
+        detail: trackedVisibilityFinal.ok
+          ? 'The canonical tracked-file visibility set changed at the final source boundary.'
+          : 'Skip-worktree or assume-unchanged flags appeared at the final canonical source boundary.',
+        branch: branchAfter,
+        upstreamBranch: upstreamAfter,
+        head: headAfter,
+        originHead: originHeadAfter,
+        extra: { trackedVisibilityProof: trackedVisibilityFinal },
+      });
+    }
+
+    const finalHeadLines = capture(
+      'source-heads-final',
+      ['rev-parse', 'HEAD', 'origin/main'],
+    ).trim().toLowerCase().split(/\r?\n/).map((value) => value.trim());
+    const [headFinal = '', originHeadFinal = ''] = finalHeadLines;
+    if (finalHeadLines.length !== 2
+        || !SHA40.test(headFinal)
+        || !SHA40.test(originHeadFinal)
+        || headFinal !== headBefore
+        || originHeadFinal !== originHead
+        || headFinal !== originHeadFinal) {
+      return structuredSourceTruthBlocker({
+        code: 'CANONICAL_SOURCE_TRUTH_CHANGED',
+        detail: 'Local main or fetched origin/main changed at the final canonical source boundary.',
+        branch: branchAfter,
+        upstreamBranch: upstreamAfter,
+        head: headFinal,
+        originHead: originHeadFinal,
+        aheadCount,
+        behindCount,
+      });
+    }
+
+    return Object.freeze({
+      ok: true,
+      branch: 'main',
+      detachedHead: false,
+      hasUpstream: true,
+      upstreamBranch: 'origin/main',
+      workingTreeDirty: false,
+      aheadCount: 0,
+      behindCount: 0,
+      headPublished: true,
+      blockedForRemoteTruth: false,
+      publicationState: 'healthy-synced',
+      head: headFinal,
+      originHead: originHeadFinal,
+      statusAssessment: statusFinal,
+      runtimeOnlyDirt: Object.freeze([
+        ...(statusFinal.runtimeStateEntries || []),
+        ...(statusFinal.transientRootDataEntries || []),
+        ...(statusFinal.approvedEntries || []),
+      ]),
+    });
+  } catch (error) {
+    return structuredSourceTruthBlocker({
+      code: error?.code || 'CANONICAL_SOURCE_TRUTH_UNPROVEN',
+      detail: `Canonical source truth could not be proven through fixed Git (${error?.message || 'unknown failure'}).`,
+      extra: { error: error?.message || String(error) },
+    });
+  }
+}
+
+export function evaluateCanonicalIgnitionSourceTruth(sourceTruth = {}) {
+  if (sourceTruth?.blocker) return Object.freeze({ ok: false, blocker: sourceTruth.blocker, sourceTruth });
+
+  const publicationState = String(sourceTruth?.publicationState || 'source-truth-unproven');
+  const branch = String(sourceTruth?.branch || '');
+  const upstreamBranch = String(sourceTruth?.upstreamBranch || '');
+  const head = String(sourceTruth?.head || '').trim().toLowerCase();
+  const originHead = String(sourceTruth?.originHead || '').trim().toLowerCase();
+  const canonical = publicationState === 'healthy-synced'
+    && branch === 'main'
+    && sourceTruth?.detachedHead === false
+    && sourceTruth?.hasUpstream === true
+    && upstreamBranch === 'origin/main'
+    && sourceTruth?.workingTreeDirty === false
+    && Number(sourceTruth?.aheadCount) === 0
+    && Number(sourceTruth?.behindCount) === 0
+    && sourceTruth?.headPublished === true
+    && sourceTruth?.blockedForRemoteTruth === false
+    && SHA40.test(head)
+    && originHead === head;
+
+  if (canonical) return Object.freeze({ ok: true, publicationState, sourceTruth });
+
+  let id = 'source-truth-unproven';
+  if (publicationState === 'source-truth-unproven') id = 'source-truth-unproven';
+  else if (sourceTruth?.detachedHead === true) id = 'detached-source-truth';
+  else if (branch && branch !== 'main') id = 'non-main-source-truth';
+  else if (sourceTruth?.hasUpstream !== true || upstreamBranch !== 'origin/main') id = 'noncanonical-upstream-source-truth';
+  else if (sourceTruth?.workingTreeDirty === true || publicationState === 'local-uncommitted') id = 'dirty-source-truth';
+  else if (!SHA40.test(head) || originHead !== head) id = 'source-head-truth-unproven';
+  else if (publicationState === 'diverged' || Number(sourceTruth?.aheadCount) > 0 || sourceTruth?.blockedForRemoteTruth === true) id = 'unpublished-source-truth';
+  else if (publicationState === 'stale-behind' || Number(sourceTruth?.behindCount) > 0) id = 'stale-source-truth';
+  else if (publicationState !== 'healthy-synced') id = 'unpublished-source-truth';
+
+  return Object.freeze({
+    ok: false,
+    sourceTruth,
+    blocker: Object.freeze({
+      id,
+      detail: `Canonical Ignition source truth is not exact main tracking origin/main at one clean synchronized full head (state=${publicationState}).`,
+      nextOperatorAction: sourceTruth?.operatorAction
+        || 'Use the existing bounded Battle Bridge sync/recovery path to preserve local state and converge canonical main, then retry Ignition.',
+    }),
+  });
+}
+
+export function captureCanonicalSupervisorHousekeepGitStep(label, command, args, {
+  cwd = defaultRepoRoot,
+  environment = process.env,
+  spawnSyncFn = spawnSync,
+} = {}) {
+  if (command !== 'git' && command !== BATTLE_BRIDGE_WINDOWS_HOST.git) {
+    throw new Error('BATTLE_BRIDGE_HOUSEKEEP_COMMAND_NOT_ALLOWED');
+  }
+  const result = spawnSyncFn(BATTLE_BRIDGE_WINDOWS_HOST.git, [
+    ...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+    ...battleBridgeCanonicalRepositoryArgs(cwd),
+    ...args,
+  ], {
+    cwd,
+    env: createBattleBridgeMinimalChildEnvironment(environment, { git: true }),
+    encoding: 'utf8',
+    shell: false,
+    windowsHide: true,
+    timeout: 120_000,
+  });
+  if (result?.error || result?.status !== 0) {
+    const error = new Error(`${label}:FIXED_AUTHORITY_GIT_FAILED`);
+    error.code = 'FIXED_AUTHORITY_GIT_FAILED';
+    throw error;
+  }
+  return Object.freeze({ stdout: String(result?.stdout || ''), stderr: String(result?.stderr || '') });
+}
+
+export function runCanonicalSupervisorHousekeep(
+  options = {},
+  {
+    housekeepFn = runIgnitionHousekeep,
+    cwd = defaultRepoRoot,
+    environment = process.env,
+    spawnSyncFn = spawnSync,
+  } = {},
+) {
+  const captureStepFn = (label, command, args) => captureCanonicalSupervisorHousekeepGitStep(
+    label,
+    command,
+    args,
+    { cwd, environment, spawnSyncFn },
+  );
+  return housekeepFn({
+    ...options,
+    captureStepFn,
+    runStepFn: (label, command, args) => {
+      captureStepFn(label, command, args);
+      return true;
+    },
+  });
+}
+
 function phaseRecord(id, overrides = {}) {
   return { id, state: 'pending', blockerId: '', nextOperatorAction: '', logPath: '', ...overrides };
 }
@@ -58,7 +558,7 @@ export function createBattleBridgeSupervisorStatus(overrides = {}) {
   return {
     schema: BATTLE_BRIDGE_IGNITION_SUPERVISOR_SCHEMA,
     generatedAt: new Date().toISOString(),
-    currentPhase: 'housekeeping',
+    currentPhase: 'source truth',
     trafficLight: 'blue',
     blockerId: '',
     nextOperatorAction: 'Watch the Battle Bridge ignition supervisor surface.',
@@ -184,17 +684,122 @@ function canonicalOpenClawIdentity(response = {}) {
   );
 }
 
+function canonicalWindowsPath(value = '') {
+  const normalized = path.win32.normalize(String(value || '').trim()).replace(/[\\/]+$/, '');
+  return path.win32.isAbsolute(normalized) ? normalized.toLowerCase() : '';
+}
+
+export function validateOpenClawGateway18789ProcessProofRecord(proof = {}, {
+  env = process.env,
+  expectedStarterPid = 0,
+} = {}) {
+  const appData = canonicalWindowsPath(env?.APPDATA || '');
+  const userProfile = canonicalWindowsPath(env?.USERPROFILE || '');
+  const expectedEntrypoints = appData ? new Set([
+    canonicalWindowsPath(path.win32.join(appData, 'npm', 'node_modules', 'openclaw', 'dist', 'index.js')),
+    canonicalWindowsPath(path.win32.join(appData, 'npm', 'node_modules', 'openclaw', 'openclaw.mjs')),
+  ]) : new Set();
+  const expectedGatewayStarter = userProfile
+    ? canonicalWindowsPath(path.win32.join(userProfile, '.openclaw', 'gateway.cmd'))
+    : '';
+  const pid = Number(proof?.pid || 0);
+  const parentPid = Number(proof?.parentPid || 0);
+  const starterPid = Number(proof?.supportedStarterPid || 0);
+  const expectedPid = Number.isSafeInteger(Number(expectedStarterPid)) && Number(expectedStarterPid) > 0
+    ? Number(expectedStarterPid)
+    : 0;
+  const ancestorPids = Object.freeze(Array.isArray(proof?.ancestorPids)
+    ? proof.ancestorPids.map(Number).filter((candidate) => Number.isSafeInteger(candidate) && candidate > 0).slice(0, 8)
+    : []);
+  const currentOwnerSid = String(proof?.currentOwnerSid || '');
+  const processOwnerSid = String(proof?.processOwnerSid || '');
+  const sidCanonical = /^S-1-(?:[0-9]+-)+[0-9]+$/i.test(currentOwnerSid)
+    && currentOwnerSid.toLowerCase() === processOwnerSid.toLowerCase();
+  const executablePath = canonicalWindowsPath(proof?.executablePath);
+  const executableToken = canonicalWindowsPath(proof?.executableToken);
+  const entrypointToken = canonicalWindowsPath(proof?.entrypointToken);
+  const supportedStarterPath = canonicalWindowsPath(proof?.supportedStarterExecutablePath);
+  const gatewayRunShape = Number(proof?.commandTokenCount) === 4
+    && String(proof?.gatewayToken || '') === 'gateway'
+    && String(proof?.gatewayActionToken || '') === 'run'
+    && String(proof?.gatewayPortToken || '') === '';
+  const gatewayPortShape = Number(proof?.commandTokenCount) === 5
+    && String(proof?.gatewayToken || '') === 'gateway'
+    && String(proof?.gatewayActionToken || '') === '--port'
+    && String(proof?.gatewayPortToken || '') === '18789';
+  const positionalCommandCanonical = executableToken === canonicalWindowsPath(BATTLE_BRIDGE_WINDOWS_HOST.node)
+    && expectedEntrypoints.has(entrypointToken)
+    && (gatewayRunShape || gatewayPortShape);
+  const expectedStarterLineage = expectedPid > 0
+    && proof?.starterLineageKind === 'expected-starter-pid'
+    && starterPid === expectedPid
+    && (pid === expectedPid || ancestorPids.includes(expectedPid));
+  const canonicalGatewayStarterLineage = proof?.starterLineageKind === 'canonical-gateway-cmd'
+    && starterPid > 0
+      && ancestorPids.includes(starterPid)
+      && supportedStarterPath === canonicalWindowsPath(BATTLE_BRIDGE_WINDOWS_HOST.cmd)
+      && canonicalWindowsPath(proof?.supportedStarterGatewayPath) === expectedGatewayStarter
+      && ['cmd-c', 'cmd-d-s-c'].includes(String(proof?.supportedStarterCommandShape || ''));
+  const starterRecordCanonical = expectedStarterLineage || canonicalGatewayStarterLineage;
+  const expectedStarterBindingCanonical = Number(proof?.expectedStarterPid || 0) === expectedPid
+    && proof?.starterPidBound === true
+    && proof?.starterCommandCanonical === true;
+  const listenerAddressCanonical = String(proof?.localAddress || '') === '127.0.0.1';
+  const ownerIdentityCanonical = proof?.ownerSidMatches === true && sidCanonical;
+  const commandIdentityCanonical = String(proof?.processName || '').toLowerCase() === 'node.exe'
+    && executablePath === canonicalWindowsPath(BATTLE_BRIDGE_WINDOWS_HOST.node)
+    && proof?.executableCanonical === true
+    && proof?.executableTokenCanonical === true
+    && proof?.entrypointCanonical === true
+    && proof?.gatewayCommandCanonical === true
+    && proof?.commandLineCanonical === true
+    && positionalCommandCanonical;
+  const starterLineageCanonical = proof?.supportedStarterLineage === true
+    && proof?.lineageCanonical === true
+    && starterRecordCanonical
+    && expectedStarterBindingCanonical;
+  const ok = proof?.schemaVersion === OPENCLAW_18789_PROCESS_PROOF_SCHEMA
+    && proof?.ok === true
+    && Number.isSafeInteger(pid) && pid > 0
+    && Number.isSafeInteger(parentPid) && parentPid > 0
+    && Number(proof?.listenerCount) === 1
+    && listenerAddressCanonical
+    && commandIdentityCanonical
+    && ownerIdentityCanonical
+    && starterLineageCanonical;
+  return Object.freeze({
+    ok,
+    ownerSid: ok ? currentOwnerSid : '',
+    ancestorPids,
+    starterLineageKind: ok ? String(proof?.starterLineageKind || '') : '',
+    canonicalGatewayStarterLineage: ok && canonicalGatewayStarterLineage,
+    proofFacets: Object.freeze({
+      listenerAddressCanonical,
+      ownerIdentityCanonical,
+      positionalCommandCanonical,
+      commandIdentityCanonical,
+      starterLineageCanonical,
+    }),
+  });
+}
+
 export async function collectOpenClawGateway18789ProcessProof({
   spawnFn = spawn,
   env = process.env,
   timeoutMs = 10_000,
+  killAckTimeoutMs = 250,
+  expectedStarterPid = 0,
 } = {}) {
   const probeScript = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'windows', 'probe-openclaw-gateway-18789-owner.ps1');
   const childEnvironment = createBattleBridgeMinimalChildEnvironment(env);
+  const boundedExpectedStarterPid = Number.isSafeInteger(Number(expectedStarterPid)) && Number(expectedStarterPid) > 0
+    ? Number(expectedStarterPid)
+    : 0;
   let child;
   try {
     child = spawnFn(BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
       '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', probeScript,
+      '-ExpectedStarterPid', String(boundedExpectedStarterPid),
     ], {
       cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
       env: childEnvironment,
@@ -210,64 +815,83 @@ export async function collectOpenClawGateway18789ProcessProof({
     let stderr = '';
     let failure = '';
     let settled = false;
+    let terminationRequested = false;
+    let timeoutTimer;
+    let terminationTimer;
     const finish = (value) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimeout(timeoutTimer);
+      clearTimeout(terminationTimer);
       resolve(Object.freeze(value));
+    };
+    const requestTermination = (reason) => {
+      failure ||= reason;
+      if (terminationRequested) return;
+      terminationRequested = true;
+      terminationTimer = setTimeout(() => {
+        finish({
+          ok: false,
+          blocker: 'OPENCLAW_18789_PROCESS_PROBE_TERMINATION_UNPROVEN',
+          error: failure,
+          processProofStateUnproven: true,
+        });
+      }, Math.max(1, Number(killAckTimeoutMs || 250)));
+      try { child.kill(); } catch { /* bounded failure */ }
     };
     const append = (current, chunk) => {
       const next = current + String(chunk || '');
       if (Buffer.byteLength(next, 'utf8') > 64 * 1024) {
-        failure ||= 'OPENCLAW_18789_PROCESS_PROBE_OUTPUT_TOO_LARGE';
-        try { child.kill(); } catch { /* bounded failure */ }
+        requestTermination('OPENCLAW_18789_PROCESS_PROBE_OUTPUT_TOO_LARGE');
         return current;
       }
       return next;
     };
     child.stdout?.on('data', (chunk) => { stdout = append(stdout, chunk); });
     child.stderr?.on('data', (chunk) => { stderr = append(stderr, chunk); });
-    child.once?.('error', (error) => { failure ||= error?.message || String(error); });
+    child.once?.('error', (error) => { requestTermination(error?.message || String(error)); });
     child.once?.('close', (status) => {
-      if (failure || status !== 0) {
+      if (failure) {
         finish({ ok: false, blocker: 'OPENCLAW_18789_PROCESS_PROBE_FAILED', status, error: failure || stderr.trim().slice(0, 500) });
         return;
       }
       let proof;
       try { proof = JSON.parse(stdout); } catch {
-        finish({ ok: false, blocker: 'OPENCLAW_18789_PROCESS_PROBE_JSON_INVALID' });
+        finish({
+          ok: false,
+          blocker: status === 0 ? 'OPENCLAW_18789_PROCESS_PROBE_JSON_INVALID' : 'OPENCLAW_18789_PROCESS_PROBE_FAILED',
+          status,
+          error: stderr.trim().slice(0, 500),
+        });
         return;
       }
-      const canonical = proof?.schemaVersion === OPENCLAW_18789_PROCESS_PROOF_SCHEMA
-        && proof?.ok === true
-        && Number.isSafeInteger(Number(proof?.pid)) && Number(proof.pid) > 0
-        && Number.isSafeInteger(Number(proof?.parentPid)) && Number(proof.parentPid) > 0
-        && Number(proof?.listenerCount) === 1
-        && ['127.0.0.1', '::1', '0.0.0.0', '::'].includes(String(proof?.localAddress || ''))
-        && String(proof?.processName || '').toLowerCase() === 'node.exe'
-        && String(proof?.executablePath || '').replace(/\//g, '\\').toLowerCase() === BATTLE_BRIDGE_WINDOWS_HOST.node.toLowerCase()
-        && proof?.executableCanonical === true
-        && proof?.entrypointCanonical === true
-        && proof?.gatewayCommandCanonical === true
-        && proof?.commandLineCanonical === true
-        && proof?.lineageCanonical === true;
+      const validation = validateOpenClawGateway18789ProcessProofRecord(proof, {
+        env: childEnvironment,
+        expectedStarterPid: boundedExpectedStarterPid,
+      });
+      const canonical = status === 0 && validation.ok;
       finish({
         ok: canonical,
-        blocker: canonical ? '' : 'OPENCLAW_18789_PROCESS_IDENTITY_INVALID',
+        blocker: canonical
+          ? ''
+          : (status === 0 ? 'OPENCLAW_18789_PROCESS_IDENTITY_INVALID' : 'OPENCLAW_18789_PROCESS_PROBE_FAILED'),
+        status,
         pid: canonical ? Number(proof.pid) : 0,
         parentPid: canonical ? Number(proof.parentPid) : 0,
         processName: canonical ? String(proof.processName) : '',
         executablePath: canonical ? String(proof.executablePath) : '',
-        ancestorPids: canonical && Array.isArray(proof.ancestorPids)
-          ? Object.freeze(proof.ancestorPids.map(Number).filter((pid) => Number.isSafeInteger(pid) && pid > 0).slice(0, 8))
-          : Object.freeze([]),
+        ownerSid: canonical ? validation.ownerSid : '',
+        ancestorPids: canonical ? validation.ancestorPids : Object.freeze([]),
+        localAddress: canonical ? String(proof.localAddress) : '',
+        starterLineageKind: canonical ? validation.starterLineageKind : '',
+        canonicalGatewayStarterLineage: canonical ? validation.canonicalGatewayStarterLineage : false,
+        listenerObserved: Number(proof?.listenerCount) === 1 && String(proof?.localAddress || '') === '127.0.0.1',
+        proofFacets: validation.proofFacets,
       });
     });
-    const timer = setTimeout(() => {
-      failure ||= 'OPENCLAW_18789_PROCESS_PROBE_TIMEOUT';
-      try { child.kill(); } catch { /* bounded failure */ }
+    timeoutTimer = setTimeout(() => {
+      requestTermination('OPENCLAW_18789_PROCESS_PROBE_TIMEOUT');
     }, Math.max(1, Number(timeoutMs || 10_000)));
-    timer.unref?.();
   });
 }
 
@@ -279,36 +903,63 @@ async function probeOpenClawGateway18789Health({
 } = {}) {
   const healthUrl = 'http://127.0.0.1:18789/health';
   const identityUrl = 'http://127.0.0.1:18789/identity';
+  const processProofRequired = platform === 'win32' || Boolean(processProofFn);
+  const missingProcessProof = Object.freeze({
+    ok: !processProofRequired,
+    blocker: processProofRequired ? 'OPENCLAW_18789_PROCESS_PROOF_REQUIRED' : '',
+  });
+  let processProofBefore = missingProcessProof;
+  if (processProofRequired) {
+    try { processProofBefore = await processProofFn({ expectedStarterPid }); } catch (error) {
+      processProofBefore = { ok: false, blocker: 'OPENCLAW_18789_PROCESS_PROBE_FAILED', error: error?.message || String(error) };
+    }
+  }
   const healthResponse = await fetchJson(healthUrl, { fetchFn });
   let identity = null;
-  let processProof = Object.freeze({ ok: platform !== 'win32', blocker: platform === 'win32' ? 'OPENCLAW_18789_PROCESS_PROOF_REQUIRED' : '' });
+  let processProofAfter = missingProcessProof;
   if (healthResponse.ok && openClawHealthReady(healthResponse.json || {})) {
     try { identity = await fetchJson(identityUrl, { fetchFn }); } catch (error) { identity = { ok: false, error: error?.message || String(error) }; }
-    if (canonicalOpenClawIdentity(identity) && (platform === 'win32' || processProofFn)) {
-      try { processProof = await processProofFn({ expectedStarterPid }); } catch (error) {
-        processProof = { ok: false, blocker: 'OPENCLAW_18789_PROCESS_PROBE_FAILED', error: error?.message || String(error) };
+    if (canonicalOpenClawIdentity(identity) && processProofRequired) {
+      try { processProofAfter = await processProofFn({ expectedStarterPid }); } catch (error) {
+        processProofAfter = { ok: false, blocker: 'OPENCLAW_18789_PROCESS_PROBE_FAILED', error: error?.message || String(error) };
       }
     }
   }
   const healthReady = Boolean(healthResponse.ok && healthResponse.statusCode === 200 && openClawHealthReady(healthResponse.json || {}));
   const identityCanonical = canonicalOpenClawIdentity(identity);
-  const processCanonical = processProof?.ok === true;
+  const processSnapshotStable = !processProofRequired || (
+    processProofBefore?.ok === true
+    && processProofAfter?.ok === true
+    && Number(processProofBefore.pid) === Number(processProofAfter.pid)
+    && Number(processProofBefore.parentPid) === Number(processProofAfter.parentPid)
+    && String(processProofBefore.localAddress || '') === '127.0.0.1'
+    && String(processProofAfter.localAddress || '') === '127.0.0.1'
+    && String(processProofBefore.ownerSid || '').toLowerCase() === String(processProofAfter.ownerSid || '').toLowerCase()
+    && String(processProofBefore.executablePath || '').toLowerCase() === String(processProofAfter.executablePath || '').toLowerCase()
+    && String(processProofBefore.starterLineageKind || '') === String(processProofAfter.starterLineageKind || '')
+  );
+  const processCanonical = processSnapshotStable;
+  const canonicalScheduledTaskLineage = processProofAfter?.canonicalGatewayStarterLineage === true
+    && processProofAfter?.starterLineageKind === 'canonical-gateway-cmd';
   const starterLineageBound = (platform !== 'win32' && !processProofFn)
     || !expectedStarterPid
-    || Number(processProof?.pid) === Number(expectedStarterPid)
-    || processProof?.ancestorPids?.includes?.(Number(expectedStarterPid)) === true;
+    || Number(processProofAfter?.pid) === Number(expectedStarterPid)
+    || processProofAfter?.ancestorPids?.includes?.(Number(expectedStarterPid)) === true
+    || canonicalScheduledTaskLineage;
   return {
     ready: Boolean(healthReady && identityCanonical && processCanonical && starterLineageBound),
     listenerObserved: healthResponse?.ok === true,
     healthReady,
     identityCanonical,
     processCanonical,
+    processSnapshotStable,
     starterLineageBound,
     healthUrl,
     identityUrl,
     health: healthResponse,
     identity,
-    processProof,
+    processProof: processProofAfter,
+    processProofBefore,
   };
 }
 
@@ -440,15 +1091,15 @@ export function getCurrentGitHead({ cwd = path.resolve(path.dirname(fileURLToPat
 function commitMatchesHead(value, head) {
   const served = String(value || '').trim();
   const current = String(head || '').trim();
-  if (!served || !current) return false;
-  if (served === current) return true;
-  return served.length >= 7 && current.startsWith(served);
+  return /^[0-9a-f]{40}$/.test(served)
+    && /^[0-9a-f]{40}$/.test(current)
+    && served === current;
 }
 
 function runtimeMarkerMatchesHead(marker, head) {
-  const text = String(marker || '');
-  const tokens = text.match(/[0-9a-f]{7,40}/gi) || [];
-  return tokens.some((token) => commitMatchesHead(token, head));
+  const current = String(head || '').trim();
+  if (!/^[0-9a-f]{40}$/.test(current)) return false;
+  return String(marker || '').split('::').some((token) => commitMatchesHead(token, current));
 }
 
 export function evaluateServedRuntimeExactHeadProof({ health = null, dist = null, currentHead = '' } = {}) {
@@ -552,23 +1203,26 @@ async function writeStatus(status, sharedWorkspace) {
   return file;
 }
 
-export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defaultBattleBridgeSharedWorkspace(), housekeepFn = runIgnitionHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, openClawStartFn = runApprovedOpenClawGateway18789Start, sourceTruthFn = evaluateGitPublicationTruthWithDeps, runtimeProofFn = collectServedRuntimeExactHeadProof, currentHeadFn = getCurrentGitHead, stdout = process.stdout } = {}) {
+export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defaultBattleBridgeSharedWorkspace(), housekeepFn = runCanonicalSupervisorHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, openClawStartFn = runApprovedOpenClawGateway18789Start, sourceTruthFn = collectCanonicalIgnitionSourceTruth, runtimeProofFn = collectServedRuntimeExactHeadProof, currentHeadFn = getCurrentGitHead, stdout = process.stdout } = {}) {
   let status = createBattleBridgeSupervisorStatus();
   const writes = [];
   const persist = async () => { const file = await writeStatus(status, sharedWorkspace); if (file) writes.push(file); };
-  status = projectBattleBridgeSupervisorStatus({ status, phase: 'housekeeping', phaseState: 'running' }); await persist();
-  housekeepFn({ dryRun: false, compact: true });
-  status = projectBattleBridgeSupervisorStatus({ status, phase: 'housekeeping', phaseState: 'ready' }); await persist();
-
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'running' }); await persist();
   const sourceTruth = sourceTruthFn();
-  if (sourceTruth?.blocker) {
-    status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'blocked', blocker: sourceTruth.blocker }); await persist();
+  const canonicalSourceTruth = evaluateCanonicalIgnitionSourceTruth(sourceTruth);
+  if (!canonicalSourceTruth.ok) {
+    status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'blocked', blocker: canonicalSourceTruth.blocker }); await persist();
+    status.sourceTruthVerdict = { state: 'blocked', verdict: sourceTruth?.publicationState || canonicalSourceTruth.blocker.id, blocker: canonicalSourceTruth.blocker };
+    await persist();
     stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return { ok: false, status, writes };
   }
-  status.sourceTruthVerdict = { state: 'ready', verdict: sourceTruth?.publicationState || sourceTruth?.sourceTruthVerdict || 'source-current' };
+  status.sourceTruthVerdict = { state: 'ready', verdict: canonicalSourceTruth.publicationState };
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'ready' }); await persist();
+
+  status = projectBattleBridgeSupervisorStatus({ status, phase: 'housekeeping', phaseState: 'running' }); await persist();
+  housekeepFn({ dryRun: false, compact: true, preserveRuntimeDirt: true });
+  status = projectBattleBridgeSupervisorStatus({ status, phase: 'housekeeping', phaseState: 'ready' }); await persist();
 
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'shared workspace publisher', phaseState: 'running' }); await persist();
   await publisherFn({ sharedWorkspace });
