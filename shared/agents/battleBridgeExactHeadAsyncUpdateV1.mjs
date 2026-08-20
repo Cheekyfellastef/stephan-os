@@ -202,7 +202,6 @@ function captureAsync(spawnFn, command, args, options = {}) {
       );
       try { child.kill(); } catch { /* bounded failure */ }
     }, Math.max(1, Number(options.timeout || 120_000)));
-    timer.unref?.();
   });
 }
 
