@@ -193,6 +193,35 @@ function Assert-ExpectedHeadImmediatelyBeforeMutation {
     return $observedHead
 }
 
+function Read-BackendExpectedHeadHandoff {
+    if (-not $env:USERPROFILE) { return $null }
+    $handoffPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\control\backend-expected-head-handoff.json'
+    if (-not (Test-Path -LiteralPath $handoffPath -PathType Leaf)) { return $null }
+    $consumedPath = "${handoffPath}.consumed-$PID"
+    try {
+        Move-Item -LiteralPath $handoffPath -Destination $consumedPath -ErrorAction Stop
+    }
+    catch { return $null }
+    try {
+        $handoff = Get-Content -LiteralPath $consumedPath -Raw | ConvertFrom-Json
+        if ([string]$handoff.schemaVersion -ne 'stephanos.backend-expected-head-handoff.v1') { throw 'BACKEND_EXPECTED_HEAD_HANDOFF_SCHEMA_INVALID' }
+        if ([string]$handoff.target -ne 'backend') { throw 'BACKEND_EXPECTED_HEAD_HANDOFF_TARGET_INVALID' }
+        $handoffHead = ([string]$handoff.expectedHead).Trim().ToLowerInvariant()
+        if ($handoffHead -notmatch '^[0-9a-f]{40}$') { throw 'BACKEND_EXPECTED_HEAD_HANDOFF_HEAD_INVALID' }
+        $issuedAtUtc = [datetime]::Parse([string]$handoff.issuedAtUtc).ToUniversalTime()
+        $expiresAtUtc = [datetime]::Parse([string]$handoff.expiresAtUtc).ToUniversalTime()
+        $nowUtc = [datetime]::UtcNow
+        if ($expiresAtUtc -le $nowUtc) { return $null }
+        if ($issuedAtUtc -gt $nowUtc.AddSeconds(30) -or $expiresAtUtc -gt $issuedAtUtc.AddMinutes(2).AddSeconds(5)) {
+            throw 'BACKEND_EXPECTED_HEAD_HANDOFF_TIME_INVALID'
+        }
+        return $handoffHead
+    }
+    finally {
+        Remove-Item -LiteralPath $consumedPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 foreach ($requiredExecutable in @($canonicalGit, $canonicalNpm, $canonicalNode)) {
     if (-not (Test-Path -LiteralPath $requiredExecutable -PathType Leaf)) {
         throw "Required canonical executable is missing: $requiredExecutable"
@@ -213,6 +242,9 @@ if ($branch -ne 'main') { throw 'Backend startup requires canonical branch main.
 if ($headSha -notmatch '^[0-9a-f]{40}$') { throw 'Backend startup could not prove a canonical 40-character Git head.' }
 $providedExpectedHead = ([string]$ExpectedHead).Trim().ToLowerInvariant()
 if ($providedExpectedHead -and $providedExpectedHead -notmatch '^[0-9a-f]{40}$') { throw 'Backend startup received an invalid expected-head binding.' }
+if (-not $providedExpectedHead) {
+    $providedExpectedHead = [string](Read-BackendExpectedHeadHandoff)
+}
 $upstreamOutput = @(& $canonicalGit -C $repoRoot rev-parse '--abbrev-ref' '--symbolic-full-name' '@{u}' 2>$null)
 $upstreamExitCode = $LASTEXITCODE
 if ($upstreamExitCode -ne 0) { throw 'Backend startup could not prove the canonical upstream.' }

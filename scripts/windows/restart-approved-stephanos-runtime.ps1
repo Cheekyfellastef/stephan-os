@@ -15,6 +15,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
+$backendExpectedHeadHandoffPath = $null
 
 function Stop-WithBlocker {
     param([Parameter(Mandatory = $true)][string]$Code)
@@ -104,6 +105,26 @@ function Read-FreshBackendReceipt {
     catch { return $null }
 }
 
+function Publish-BackendExpectedHeadHandoff {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Head
+    )
+    $directory = Split-Path -Parent $Path
+    [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+    $temporaryPath = "${Path}.$PID.tmp"
+    $issuedAtUtc = [datetime]::UtcNow
+    [PSCustomObject]@{
+        schemaVersion = 'stephanos.backend-expected-head-handoff.v1'
+        target = 'backend'
+        expectedHead = $Head
+        issuedAtUtc = $issuedAtUtc.ToString('o')
+        expiresAtUtc = $issuedAtUtc.AddMinutes(2).ToString('o')
+        issuerPid = $PID
+    } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $temporaryPath -Encoding utf8
+    Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+}
+
 function Get-VerifiedWorkerProcessFromHeartbeat {
     param([string]$HeartbeatPath)
     if (-not (Test-Path -LiteralPath $HeartbeatPath -PathType Leaf)) { return $null }
@@ -179,6 +200,8 @@ try {
     $terminatedVerifiedOwnedProcess = $false
 
     if ($Target -eq 'backend') {
+        $backendExpectedHeadHandoffPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\control\backend-expected-head-handoff.json'
+        Publish-BackendExpectedHeadHandoff -Path $backendExpectedHeadHandoffPath -Head $ExpectedHead
         if ([string]$task.State -eq 'Running') {
             Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
             if (-not (Wait-Until -Seconds 30 -Condition {
@@ -201,6 +224,7 @@ try {
         if (-not (Wait-Until -Seconds $TimeoutSeconds -Condition {
             $null -ne (Read-FreshBackendReceipt -ReceiptPath $backendReceiptPath -StartedAfterUtc $startedAtUtc -ExpectedSourceHead $ExpectedHead)
         })) { Stop-WithBlocker 'BACKEND_EXACT_HEAD_RECEIPT_TIMEOUT' }
+        Remove-Item -LiteralPath $backendExpectedHeadHandoffPath -Force -ErrorAction SilentlyContinue
         $proofKind = 'backend-health-and-runtime-receipt'
         $proofFresh = $true
     }
@@ -253,6 +277,9 @@ try {
     exit 0
 }
 catch {
+    if ($backendExpectedHeadHandoffPath) {
+        Remove-Item -LiteralPath $backendExpectedHeadHandoffPath -Force -ErrorAction SilentlyContinue
+    }
     $blocker = [string]$_.Exception.Message
     if ($blocker -notmatch '^[A-Z0-9_:-]{3,120}$') { $blocker = 'APPROVED_RUNTIME_RESTART_FAILED' }
     [PSCustomObject]@{
