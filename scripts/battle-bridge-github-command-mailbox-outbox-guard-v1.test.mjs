@@ -35,6 +35,12 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
+function deferredRequestIds(path) {
+  const record = readJson(path);
+  const entries = Array.isArray(record.entries) ? record.entries : record.segments.flat();
+  return entries.map((entry) => entry.receipt.requestId);
+}
+
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'stephanos-mailbox-outbox-'));
   const stateRoot = join(root, 'workspace', 'github-command-mailbox');
@@ -143,7 +149,8 @@ test('guard exposes only one old publication to canonical mailbox, then restores
     assert.deepEqual(childObserved, ['mailbox-outbox-a']);
     assert.equal(result.attemptedPublicationCount, 1);
     assert.equal(result.deferredPublicationCountBeforeChild, 2);
-    assert.deepEqual(readJson(f.statePath).pendingReceiptPublications.map((entry) => entry.receipt.requestId), [
+    assert.deepEqual(readJson(f.statePath).pendingReceiptPublications, []);
+    assert.deepEqual(deferredRequestIds(f.deferredPath), [
       'mailbox-outbox-b',
       'mailbox-outbox-c',
       'mailbox-outbox-a',
@@ -177,7 +184,8 @@ test('guard restores deferred receipt debt even when canonical mailbox child blo
     });
     assert.equal(result.ok, false);
     assert.equal(result.blocker, 'MAILBOX_CHILD_RUN_BLOCKED');
-    assert.deepEqual(readJson(f.statePath).pendingReceiptPublications.map((entry) => entry.receipt.requestId), [
+    assert.deepEqual(readJson(f.statePath).pendingReceiptPublications, []);
+    assert.deepEqual(deferredRequestIds(f.deferredPath), [
       'mailbox-outbox-fail-b',
       'mailbox-outbox-fail-a',
     ]);
@@ -216,4 +224,44 @@ test('malformed crash-recovery deferred record blocks before child execution and
 
 test('deferred record schema is explicit and not caller-shaped', () => {
   assert.equal(MAILBOX_OUTBOX_DEFERRED_SCHEMA, 'stephanos.battle-bridge-mailbox-outbox-deferred.v1');
+});
+
+test('sustained publication outage never wedges command ingress and preserves segmented debt', () => {
+  const f = fixture();
+  try {
+    const initial = Array.from({ length: 500 }, (_, index) => pending(`mailbox-outage-${String(index).padStart(4, '0')}`));
+    writeFileSync(f.statePath, JSON.stringify({ pendingReceiptPublications: initial }, null, 2));
+    let childCalls = 0;
+    for (let cycle = 0; cycle < 125; cycle += 1) {
+      const result = runMailboxOutboxGuard({
+        platform: 'win32',
+        repoRoot: f.root,
+        pathOverrides: {
+          actualRepoRoot: f.root,
+          expectedRepoRoot: f.root,
+          statePath: f.statePath,
+          deferredPath: f.deferredPath,
+          childRunnerPath: f.childRunnerPath,
+        },
+        spawnSyncFn: () => {
+          childCalls += 1;
+          const state = readJson(f.statePath);
+          state.pendingReceiptPublications.push(pending(`mailbox-new-${String(cycle).padStart(4, '0')}`));
+          writeFileSync(f.statePath, JSON.stringify(state, null, 2));
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      });
+      assert.equal(result.ok, true);
+    }
+
+    assert.equal(childCalls, 125);
+    assert.deepEqual(readJson(f.statePath).pendingReceiptPublications, []);
+    const deferred = readJson(f.deferredPath);
+    assert.ok(deferred.segments.every((segment) => segment.length <= 500));
+    const ids = deferred.segments.flat().map((entry) => entry.receipt.requestId);
+    assert.equal(ids.length, 625);
+    assert.equal(new Set(ids).size, 625);
+  } finally {
+    f.cleanup();
+  }
 });

@@ -18,6 +18,9 @@ export const MAILBOX_OUTBOX_DEFERRED_SCHEMA = 'stephanos.battle-bridge-mailbox-o
 export const MAILBOX_OUTBOX_MAX_ATTEMPTS_PER_CYCLE = 1;
 export const MAILBOX_OUTBOX_MAX_ENTRIES = 500;
 
+const MAILBOX_STATE_MAX_BYTES = 32 * 1024 * 1024;
+const MAILBOX_DEFERRED_MAX_BYTES = 512 * 1024 * 1024;
+
 const defaultRepoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const PUBLICATION_ID_LIMIT = 360;
@@ -56,7 +59,7 @@ function validatePendingEntry(value) {
   );
 }
 
-export function normalizePendingReceiptPublications(entries = []) {
+export function normalizePendingReceiptPublications(entries = [], { maxEntries = MAILBOX_OUTBOX_MAX_ENTRIES } = {}) {
   if (!Array.isArray(entries)) throw new Error('MAILBOX_OUTBOX_PENDING_ARRAY_REQUIRED');
   const byId = new Map();
   for (const entry of entries) {
@@ -64,13 +67,17 @@ export function normalizePendingReceiptPublications(entries = []) {
     byId.set(String(entry.publicationId), structuredClone(entry));
   }
   const normalized = [...byId.values()];
-  if (normalized.length > MAILBOX_OUTBOX_MAX_ENTRIES) throw new Error('MAILBOX_OUTBOX_PENDING_LIMIT_EXCEEDED');
+  if (Number.isSafeInteger(maxEntries) && normalized.length > maxEntries) throw new Error('MAILBOX_OUTBOX_PENDING_LIMIT_EXCEEDED');
   return normalized;
 }
 
+function normalizeAccumulatedDebt(entries = []) {
+  return normalizePendingReceiptPublications(entries, { maxEntries: null });
+}
+
 export function planMailboxOutboxCycle({ statePending = [], deferredPending = [] } = {}) {
-  const combined = normalizePendingReceiptPublications([
-    ...normalizePendingReceiptPublications(deferredPending),
+  const combined = normalizeAccumulatedDebt([
+    ...normalizeAccumulatedDebt(deferredPending),
     ...normalizePendingReceiptPublications(statePending),
   ]);
   return Object.freeze({
@@ -84,8 +91,8 @@ export function planMailboxOutboxCycle({ statePending = [], deferredPending = []
 export function mergeMailboxOutboxAfterCycle({ deferredPending = [], statePending = [] } = {}) {
   // Deferred debt is placed first. A failed publication attempted in this cycle is
   // therefore rotated behind older deferred debt instead of monopolising every run.
-  return Object.freeze(normalizePendingReceiptPublications([
-    ...normalizePendingReceiptPublications(deferredPending),
+  return Object.freeze(normalizeAccumulatedDebt([
+    ...normalizeAccumulatedDebt(deferredPending),
     ...normalizePendingReceiptPublications(statePending),
   ]));
 }
@@ -99,14 +106,14 @@ function assertRegularUnlinkedFile(path, { allowMissing = false } = {}) {
   if (!info.isFile() || info.isSymbolicLink()) throw new Error('MAILBOX_OUTBOX_FILE_IDENTITY_INVALID');
 }
 
-function readJsonObject(path, { allowMissing = false, missingValue = null } = {}) {
+function readJsonObject(path, { allowMissing = false, missingValue = null, maxBytes = MAILBOX_STATE_MAX_BYTES } = {}) {
   if (!existsSync(path)) {
     if (allowMissing) return missingValue;
     throw new Error('MAILBOX_OUTBOX_JSON_MISSING');
   }
   assertRegularUnlinkedFile(path);
   const text = readFileSync(path, 'utf8');
-  if (Buffer.byteLength(text, 'utf8') > 2 * 1024 * 1024) throw new Error('MAILBOX_OUTBOX_JSON_TOO_LARGE');
+  if (Buffer.byteLength(text, 'utf8') > maxBytes) throw new Error('MAILBOX_OUTBOX_JSON_TOO_LARGE');
   const value = JSON.parse(text);
   if (!isPlainObject(value)) throw new Error('MAILBOX_OUTBOX_JSON_OBJECT_REQUIRED');
   return value;
@@ -129,18 +136,31 @@ function readDeferred(path) {
   const record = readJsonObject(path, {
     allowMissing: true,
     missingValue: { schemaVersion: MAILBOX_OUTBOX_DEFERRED_SCHEMA, entries: [] },
+    maxBytes: MAILBOX_DEFERRED_MAX_BYTES,
   });
-  if (record.schemaVersion !== MAILBOX_OUTBOX_DEFERRED_SCHEMA || !Array.isArray(record.entries)) {
+  if (record.schemaVersion !== MAILBOX_OUTBOX_DEFERRED_SCHEMA) {
     throw new Error('MAILBOX_OUTBOX_DEFERRED_RECORD_INVALID');
   }
-  return normalizePendingReceiptPublications(record.entries);
+  if (Array.isArray(record.entries)) return normalizePendingReceiptPublications(record.entries);
+  if (!Array.isArray(record.segments)) throw new Error('MAILBOX_OUTBOX_DEFERRED_RECORD_INVALID');
+  const entries = [];
+  for (const segment of record.segments) {
+    if (!Array.isArray(segment)) throw new Error('MAILBOX_OUTBOX_DEFERRED_SEGMENT_INVALID');
+    entries.push(...normalizePendingReceiptPublications(segment));
+  }
+  return normalizeAccumulatedDebt(entries);
 }
 
 function writeDeferred(path, entries, timestampUtc) {
+  const normalized = normalizeAccumulatedDebt(entries);
+  const segments = [];
+  for (let index = 0; index < normalized.length; index += MAILBOX_OUTBOX_MAX_ENTRIES) {
+    segments.push(normalized.slice(index, index + MAILBOX_OUTBOX_MAX_ENTRIES));
+  }
   atomicWriteJson(path, {
     schemaVersion: MAILBOX_OUTBOX_DEFERRED_SCHEMA,
     timestampUtc,
-    entries: normalizePendingReceiptPublications(entries),
+    segments,
   });
 }
 
@@ -186,6 +206,7 @@ export function runMailboxOutboxGuard({
     const state = readJsonObject(statePath, {
       allowMissing: true,
       missingValue: { consumedRequestIds: [], acceptedRequestIds: [], pendingReceiptPublications: [] },
+      maxBytes: MAILBOX_STATE_MAX_BYTES,
     });
     const deferredBefore = readDeferred(deferredPath);
     const cycle = planMailboxOutboxCycle({
@@ -210,17 +231,20 @@ export function runMailboxOutboxGuard({
       maxBuffer: 2 * 1024 * 1024,
     });
 
-    const stateAfter = readJsonObject(statePath);
+    const stateAfter = readJsonObject(statePath, { maxBytes: MAILBOX_STATE_MAX_BYTES });
     const deferredAfter = readDeferred(deferredPath);
     const mergedPending = mergeMailboxOutboxAfterCycle({
       deferredPending: deferredAfter,
       statePending: Array.isArray(stateAfter.pendingReceiptPublications) ? stateAfter.pendingReceiptPublications : [],
     });
+    // Persist the complete union before clearing canonical state. A crash between
+    // these writes can only duplicate debt, which is deduplicated next cycle.
+    writeDeferred(deferredPath, mergedPending, now().toISOString());
     atomicWriteJson(statePath, {
       ...stateAfter,
-      pendingReceiptPublications: mergedPending,
+      pendingReceiptPublications: [],
     });
-    removeDeferred(deferredPath);
+    if (mergedPending.length === 0) removeDeferred(deferredPath);
 
     const childOk = !child?.error && child?.status === 0;
     return Object.freeze({
