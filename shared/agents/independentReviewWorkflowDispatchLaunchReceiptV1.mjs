@@ -11,6 +11,7 @@ import {
 } from './independentReviewWorkflowDispatchAdmissionV1.mjs';
 
 export const INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_LAUNCH_RECEIPT_SCHEMA = 'stephanos.independent-review-workflow-dispatch-launch-receipt.v1';
+export const INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_LAUNCH_MARKER = 'stephanos:independent-review-workflow-dispatch-launch:v1';
 
 const SHA40 = /^[0-9a-f]{40}$/;
 const SHA64 = /^[0-9a-f]{64}$/;
@@ -176,4 +177,39 @@ export function validateIndependentReviewWorkflowDispatchLaunchReceiptV1(receipt
   }
   iso(receipt.requestedAtUtc);
   return Object.freeze({ ...receipt, ...binding });
+}
+
+export function renderIndependentReviewWorkflowDispatchLaunchReceiptCommentV1(receipt) {
+  const validated = validateIndependentReviewWorkflowDispatchLaunchReceiptV1(receipt);
+  return [
+    `<!-- ${INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_LAUNCH_MARKER} key=${validated.launchKeySha256} -->`,
+    '## Provider-neutral independent-review missing-run launch receipt',
+    '',
+    '```json',
+    JSON.stringify(validated, null, 2),
+    '```',
+    '',
+    'This content-addressed receipt records one bounded review-workflow dispatch request only. It grants no source, approval, merge, deployment, runtime, provider-qualification, lease or arbitrary-command authority.',
+  ].join('\n');
+}
+
+export function parseIndependentReviewWorkflowDispatchLaunchReceiptCommentV1(body) {
+  const value = text(body);
+  const marker = value.match(new RegExp(`^<!--\\s*${INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_LAUNCH_MARKER}\\s+key=([0-9a-f]{64})\\s*-->`));
+  if (!marker || !value.includes('## Provider-neutral independent-review missing-run launch receipt')) {
+    throw new Error('workflow-dispatch launch receipt comment marker is missing');
+  }
+  const fenced = value.match(/```json\s*\n([\s\S]*?)\n```/);
+  if (!fenced) throw new Error('workflow-dispatch launch receipt JSON is missing');
+  let parsed;
+  try {
+    parsed = JSON.parse(fenced[1]);
+  } catch {
+    throw new Error('workflow-dispatch launch receipt JSON is invalid');
+  }
+  const receipt = validateIndependentReviewWorkflowDispatchLaunchReceiptV1(parsed);
+  if (receipt.launchKeySha256 !== marker[1]) {
+    throw new Error('workflow-dispatch launch receipt comment key does not match receipt');
+  }
+  return receipt;
 }
