@@ -12,18 +12,30 @@ PR #1919 currently escalates exactly three Windows authority paths that the exis
 
 The existing `qualifiedSpecialistReviewV1` fallback can cover unsupported Windows paths, but its accepted reviewer identity is provider-specific. That makes high-risk ignition convergence review a Codex-coupled critical-path task class when the deterministic stack cannot cover it.
 
+## Exact reviewed target
+
+This first child specialist is intentionally head-bound to the current reviewed #1919 source, rather than being a floating approval rule:
+
+```text
+repository=Cheekyfellastef/stephan-os
+pr=1919
+branch=fix/ignition-canonical-convergence-gate-v1
+sourceHead=9941da6e500a7d95d11e8a3654630462cce71a91
+baseSha=13f13144730b2a6d94754914dbdf2c254c39567d
+```
+
+If #1919 head or base moves, this specialist becomes ineligible. A new exact target requires a bounded source update and fresh proof. Head movement never inherits specialist evidence silently.
+
 ## Design
 
 `windowsAuthorityIgnitionConvergenceReviewV1.mjs` is an inert child-specialist contract. It is not wired into `windowsAuthoritySpecialistReviewV1` by this PR.
 
 Eligibility is closed-world:
 
-- repository exactly `Cheekyfellastef/stephan-os`;
-- PR exactly `#1919`;
-- branch exactly `fix/ignition-canonical-convergence-gate-v1`;
-- exact 40-character source head;
+- exact reviewed repository, PR, branch, source head and base above;
 - exactly three P0 `unsupported-high-risk-surface` escalations, one for each fixed path above;
-- exactly three immutable `stephanos.windows-authority-source.v1` source records bound to repository, path and exact head with content-derived Git blob identity.
+- exactly three immutable `stephanos.windows-authority-source.v1` source records bound to repository, path and exact head with content-derived Git blob identity;
+- ordinary input, analysis, finding and source evidence must arrive through plain data properties; accessor-shaped authority/evidence fails closed without being invoked.
 
 The specialist then verifies the task-class invariants that make the three Windows scripts safe to review deterministically:
 
