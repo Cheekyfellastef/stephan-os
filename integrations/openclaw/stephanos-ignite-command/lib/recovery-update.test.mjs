@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { EventEmitter } from 'node:events';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../../shared/agents/battleBridgeWindowsHosts.mjs';
+import { executeQueuedOpenClawUpdate } from './recovery-update-executor.mjs';
 import {
   normalizeOpenClawExactHead,
   queueBattleBridgeExactHeadFromOpenClaw,
@@ -18,6 +21,20 @@ const OWNER = Object.freeze({
   command: 'update',
   senderIsOwner: true,
 });
+
+function receiptPath(profile, receiptId) {
+  return path.join(profile, 'Documents', 'Stephanos-openclaw-workspace', 'receipts', 'exact-head-update', `${receiptId}.json`);
+}
+
+function successfulDetachedSpawn(calls = []) {
+  return (command, args, options) => {
+    const child = new EventEmitter();
+    child.unref = () => calls.push({ unref: true });
+    calls.push({ command, args, options });
+    queueMicrotask(() => child.emit('spawn'));
+    return child;
+  };
+}
 
 test('exact-head parser accepts only one canonical SHA value', () => {
   assert.equal(normalizeOpenClawExactHead(HEAD.toUpperCase()), HEAD);
@@ -127,31 +144,117 @@ test('WhatsApp projection strips raw sync, diagnostics, status paths and stderr'
   assert.doesNotMatch(JSON.stringify(result), /private|Stephan|secret|statusBefore|stderr/i);
 });
 
-test('owner update queues a fixed detached executor and returns a durable receipt without awaiting recovery', () => {
+test('owner update queues canonical detached executor only after observing successful spawn', async () => {
   const profile = mkdtempSync(path.join(tmpdir(), 'ignite-update-'));
   const calls = [];
-  const result = queueBattleBridgeExactHeadFromOpenClaw({
+  const result = await queueBattleBridgeExactHeadFromOpenClaw({
     expectedHead: HEAD,
     authenticatedContext: OWNER,
     platform: 'win32',
     env: { USERPROFILE: profile },
     nonce: '1'.repeat(32),
     now: new Date('2026-08-20T00:00:00.000Z'),
-    spawnFn: (command, args, options) => {
-      calls.push({ command, args, options });
-      return { unref() { calls.push({ unref: true }); } };
-    },
+    spawnFn: successfulDetachedSpawn(calls),
   });
   assert.equal(result.ok, true);
   assert.equal(result.status, 'QUEUED');
   assert.equal(result.runtimeProofPassed, false);
   assert.equal(result.pluginReloadProofPending, true);
-  assert.equal(calls[0].command, process.execPath);
+  assert.equal(calls[0].command, BATTLE_BRIDGE_WINDOWS_HOST.node);
   assert.deepEqual(calls[0].args.slice(1), ['1'.repeat(32), HEAD]);
   assert.equal(calls[0].options.detached, true);
   assert.equal(calls[0].options.shell, false);
   assert.deepEqual(calls[1], { unref: true });
-  const receipt = JSON.parse(readFileSync(path.join(profile, 'Documents', 'Stephanos-openclaw-workspace', 'receipts', 'exact-head-update', `${'1'.repeat(32)}.json`), 'utf8'));
+  const receipt = JSON.parse(readFileSync(receiptPath(profile, '1'.repeat(32)), 'utf8'));
   assert.equal(receipt.status, 'QUEUED');
   assert.equal(receipt.pluginReloadProof, 'PENDING');
+});
+
+test('owner update fails durably when detached executor emits launch error', async () => {
+  const profile = mkdtempSync(path.join(tmpdir(), 'ignite-update-error-'));
+  const child = new EventEmitter();
+  child.unref = () => assert.fail('failed launch must not detach');
+  const resultPromise = queueBattleBridgeExactHeadFromOpenClaw({
+    expectedHead: HEAD,
+    authenticatedContext: OWNER,
+    platform: 'win32',
+    env: { USERPROFILE: profile },
+    nonce: '2'.repeat(32),
+    now: new Date('2026-08-20T00:01:00.000Z'),
+    launchTimeoutMs: 100,
+    spawnFn: (command) => {
+      assert.equal(command, BATTLE_BRIDGE_WINDOWS_HOST.node);
+      queueMicrotask(() => child.emit('error', Object.assign(new Error('missing cwd'), { code: 'ENOENT' })));
+      return child;
+    },
+  });
+  const result = await resultPromise;
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'LAUNCH_FAILED');
+  assert.equal(result.blocker, 'UPDATE_EXECUTOR_LAUNCH_FAILED');
+  const receipt = JSON.parse(readFileSync(receiptPath(profile, '2'.repeat(32)), 'utf8'));
+  assert.equal(receipt.status, 'LAUNCH_FAILED');
+  assert.equal(receipt.blocker, 'UPDATE_EXECUTOR_LAUNCH_FAILED');
+  assert.notEqual(receipt.status, 'QUEUED');
+});
+
+test('queued executor atomically claims receipt so a second executor cannot mutate concurrently', async () => {
+  const profile = mkdtempSync(path.join(tmpdir(), 'ignite-update-claim-'));
+  const receiptId = '3'.repeat(32);
+  const queued = await queueBattleBridgeExactHeadFromOpenClaw({
+    expectedHead: HEAD,
+    authenticatedContext: OWNER,
+    platform: 'win32',
+    env: { USERPROFILE: profile },
+    nonce: receiptId,
+    now: new Date('2026-08-20T00:02:00.000Z'),
+    spawnFn: successfulDetachedSpawn(),
+  });
+  assert.equal(queued.ok, true);
+
+  let releaseRecovery;
+  let recoveryCalls = 0;
+  let enteredRecovery;
+  const recoveryEntered = new Promise((resolve) => { enteredRecovery = resolve; });
+  const first = executeQueuedOpenClawUpdate({
+    receiptId,
+    expectedHead: HEAD,
+    env: { USERPROFILE: profile },
+    now: () => new Date('2026-08-20T00:03:00.000Z'),
+    recoverFn: async () => {
+      recoveryCalls += 1;
+      enteredRecovery();
+      await new Promise((resolve) => { releaseRecovery = resolve; });
+      return {
+        ok: true,
+        status: 'DONE',
+        finalVerdict: 'SOURCE_CURRENT',
+        blocker: '',
+        sourceHead: HEAD,
+        sourceInstalled: false,
+      };
+    },
+  });
+  await recoveryEntered;
+
+  const claimedReceipt = JSON.parse(readFileSync(receiptPath(profile, receiptId), 'utf8'));
+  assert.equal(claimedReceipt.status, 'CLAIMED');
+  const second = await executeQueuedOpenClawUpdate({
+    receiptId,
+    expectedHead: HEAD,
+    env: { USERPROFILE: profile },
+    recoverFn: async () => {
+      recoveryCalls += 1;
+      return { ok: true };
+    },
+  });
+  assert.equal(second.ok, false);
+  assert.equal(second.blocker, 'QUEUED_UPDATE_ALREADY_CLAIMED');
+  assert.equal(recoveryCalls, 1);
+
+  releaseRecovery();
+  const completed = await first;
+  assert.equal(completed.status, 'DONE');
+  assert.equal(completed.sourceHead, HEAD);
+  assert.equal(recoveryCalls, 1);
 });
