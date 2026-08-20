@@ -14,7 +14,7 @@ const MAX_SOURCE_BYTES = 256 * 1024;
 const REVIEWED_REPOSITORY = 'Cheekyfellastef/stephan-os';
 const REVIEWED_PR = 1919;
 const REVIEWED_BRANCH = 'fix/ignition-canonical-convergence-gate-v1';
-const REVIEWED_SOURCE_HEAD = '34b573d15fe065a35a6c94f9f58a2876811a63b7';
+const REVIEWED_SOURCE_HEAD = '51438eeb85df96f7363b7d5d8700711f54374371';
 const REVIEWED_BASE_SHA = '3dc12a7c84c54f406b10dee1293789e2338f7824';
 const SOURCE_RECORD_KEYS = Object.freeze([
   'blobSha', 'content', 'exists', 'path', 'ref', 'repository', 'schemaVersion', 'size',
@@ -142,6 +142,11 @@ function reviewRestart(source, path, findings) {
     ["'Stephanos Mission Orchestrator Worker'", 'ignition-restart-worker-task-not-fixed', 'Mission Worker Scheduled Task identity must remain fixed.'],
     ['NON_CANONICAL_REPOSITORY_PATH', 'ignition-restart-canonical-root-gate-missing', 'Runtime restart must fail closed outside the canonical repository root.'],
     ['EXPECTED_HEAD_MISMATCH', 'ignition-restart-source-head-gate-missing', 'Runtime restart must fail closed on source-head drift.'],
+    ["$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'", 'ignition-restart-backend-node-not-fixed', 'Backend listener verification must require fixed canonical Node.'],
+    ["$canonicalBootstrapEval = \"import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)\"", 'ignition-restart-backend-bootstrap-command-not-fixed', 'Backend listener verification must require the fixed immutable-bootstrap command.'],
+    ['$process.ExecutablePath', 'ignition-restart-backend-executable-identity-missing', 'Backend listener verification must inspect the executable identity.'],
+    ['BACKEND_LISTENER_NOT_CANONICAL_NODE', 'ignition-restart-backend-node-mismatch-not-blocked', 'A non-canonical backend Node executable must fail closed.'],
+    ['BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED', 'ignition-restart-backend-command-mismatch-not-blocked', 'A backend listener outside the fixed immutable-bootstrap command must fail closed.'],
     ["if ($Target -eq 'backend' -and [string]$task.Settings.MultipleInstances -ne 'IgnoreNew')", 'ignition-restart-backend-overlap-gate-missing', 'Backend task must prove IgnoreNew before repair.'],
     ['Publish-BackendExpectedHeadHandoff', 'ignition-restart-handoff-missing', 'Approved backend restart must preserve the expected head through the scheduled-task boundary.'],
     ["schemaVersion = 'stephanos.backend-expected-head-handoff.v1'", 'ignition-restart-handoff-schema-missing', 'Expected-head handoff must use the fixed schema.'],
@@ -172,6 +177,8 @@ function reviewBackendStart(source, path, findings) {
     ["$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'", 'ignition-backend-git-not-fixed', 'Backend start must use fixed canonical Git.'],
     ["$canonicalNpm = 'C:\\Program Files\\nodejs\\npm.cmd'", 'ignition-backend-npm-not-fixed', 'Backend start must use fixed canonical npm.'],
     ["$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'", 'ignition-backend-node-not-fixed', 'Backend start must use fixed canonical Node.'],
+    ["$canonicalBootstrapEval = \"import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)\"", 'ignition-backend-bootstrap-command-not-fixed', 'Backend start must use the fixed process-bound immutable bootstrap command.'],
+    ["$env:GIT_NO_REPLACE_OBJECTS = '1'", 'ignition-backend-git-replacement-bypass-not-disabled', 'Backend exact-head materialization must disable Git replacement objects.'],
     ['function Assert-ExpectedHeadImmediatelyBeforeMutation', 'ignition-backend-pre-mutation-head-gate-missing', 'Backend start must re-prove the expected head before mutation.'],
     ['function Read-BackendExpectedHeadHandoff', 'ignition-backend-handoff-consumer-missing', 'Scheduled backend start must consume the bounded expected-head handoff.'],
     ["schemaVersion -ne 'stephanos.backend-expected-head-handoff.v1'", 'ignition-backend-handoff-schema-gate-missing', 'Backend handoff must be schema checked.'],
@@ -185,10 +192,18 @@ function reviewBackendStart(source, path, findings) {
     ['if ($trackedAssessment.SourceDirt.Count -ne 0)', 'ignition-backend-source-dirt-gate-missing', 'Source dirt must remain fail closed.'],
     ['Test-BackendHealth -Url $healthUrl -ExpectedSourceHead $headSha', 'ignition-backend-health-head-binding-missing', 'Backend health must prove the exact source head.'],
     ["Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'OpenClaw readonly adapter ensure'", 'ignition-backend-openclaw-gate-missing', 'Readonly OpenClaw ensure must be exact-head gated.'],
-    ["$env:STEPHANOS_BACKEND_SOURCE_HEAD = $headSha", 'ignition-backend-child-head-binding-missing', 'The Node backend child must inherit the exact approved source head.'],
-    ["$arguments = @('run', 'stephanos:backend')", 'ignition-backend-command-not-fixed', 'Backend npm command must remain fixed.'],
+    ['function Get-ExactHeadBackendBootstrapBase64', 'ignition-backend-bootstrap-materializer-missing', 'Backend start must materialize its bootstrap from the exact approved Git object.'],
+    ["$bootstrapGitPath = 'stephanos-server/backend-bootstrap.mjs'", 'ignition-backend-bootstrap-path-not-fixed', 'Backend bootstrap path must remain fixed.'],
+    ['BACKEND_EXACT_HEAD_BOOTSTRAP_HASH_MISMATCH', 'ignition-backend-bootstrap-hash-gate-missing', 'Materialized bootstrap bytes must be verified against the exact Git blob.'],
+    ['function Start-BackendNodeWithMinimalEnvironment', 'ignition-backend-minimal-environment-launcher-missing', 'Backend child launch must use the fixed minimal-environment boundary.'],
+    ["$minimalEnvironment['STEPHANOS_BACKEND_SOURCE_HEAD'] = $SourceHead", 'ignition-backend-child-head-binding-missing', 'The Node backend child must inherit the exact approved source head.'],
+    ["$minimalEnvironment['STEPHANOS_BACKEND_REPO_ROOT'] = $RepositoryRoot", 'ignition-backend-child-root-binding-missing', 'The backend child must inherit the canonical repository root explicitly.'],
+    ["$minimalEnvironment['STEPHANOS_BACKEND_BOOTSTRAP_BASE64'] = $BootstrapBase64", 'ignition-backend-child-bootstrap-binding-missing', 'The backend child must receive only the verified exact-head bootstrap bytes.'],
+    ["$arguments = @('--input-type=module', '--eval'", 'ignition-backend-command-not-fixed', 'Backend Node command must remain the fixed module eval bootstrap.'],
+    ["Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'exact-head bootstrap capture'", 'ignition-backend-bootstrap-capture-gate-missing', 'Exact-head bootstrap capture must be re-gated immediately before materialization.'],
+    ['$bootstrapBase64 = Get-ExactHeadBackendBootstrapBase64 -RepositoryRoot $repoRoot -HeadSha $headSha', 'ignition-backend-bootstrap-capture-not-bound', 'Bootstrap capture must bind the canonical root to the exact approved head.'],
     ["Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend process start'", 'ignition-backend-process-start-gate-missing', 'Backend process creation must be re-gated immediately before mutation.'],
-    ['Start-Process -FilePath $canonicalNpm', 'ignition-backend-process-executable-not-fixed', 'Backend process start must use fixed canonical npm.'],
+    ['Start-BackendNodeWithMinimalEnvironment', 'ignition-backend-process-executable-not-fixed', 'Backend process start must use the fixed canonical Node/minimal-environment launcher.'],
     ['Publish-VerifiedBackendRuntimeReceipt', 'ignition-backend-runtime-receipt-proof-missing', 'Backend success must publish only after listener and exact-head health proof.'],
     ['arbitraryShellAllowed = $false', 'ignition-backend-arbitrary-shell-authority-not-zero', 'Backend receipt must deny arbitrary shell authority.'],
     ['sourceMutationAllowed = $false', 'ignition-backend-source-authority-not-zero', 'Backend receipt must deny source mutation authority.'],

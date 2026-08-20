@@ -9,8 +9,8 @@ import {
 const repository = 'Cheekyfellastef/stephan-os';
 const prNumber = 1919;
 const branch = 'fix/ignition-canonical-convergence-gate-v1';
-const sourceHead = '34b573d15fe065a35a6c94f9f58a2876811a63b7';
-const priorSourceHead = '0cbd8318f5da7d815e3f4e30d8ef9a5d1c9feb77';
+const sourceHead = '51438eeb85df96f7363b7d5d8700711f54374371';
+const priorSourceHead = '34b573d15fe065a35a6c94f9f58a2876811a63b7';
 const baseSha = '3dc12a7c84c54f406b10dee1293789e2338f7824';
 const priorBaseSha = '13f13144730b2a6d94754914dbdf2c254c39567d';
 
@@ -46,10 +46,15 @@ param(
   [int]$TimeoutSeconds = 90
 )
 $ErrorActionPreference = 'Stop'
+$canonicalNode = 'C:\Program Files\nodejs\node.exe'
+$canonicalBootstrapEval = "import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)"
 'Stephanos Battle Bridge Backend'
 'Stephanos Mission Orchestrator Worker'
 NON_CANONICAL_REPOSITORY_PATH
 EXPECTED_HEAD_MISMATCH
+$process.ExecutablePath
+BACKEND_LISTENER_NOT_CANONICAL_NODE
+BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED
 if ($Target -eq 'backend' -and [string]$task.Settings.MultipleInstances -ne 'IgnoreNew') {}
 function Publish-BackendExpectedHeadHandoff {}
 schemaVersion = 'stephanos.backend-expected-head-handoff.v1'
@@ -74,6 +79,8 @@ $ErrorActionPreference = 'Stop'
 $canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
 $canonicalNpm = 'C:\Program Files\nodejs\npm.cmd'
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
+$canonicalBootstrapEval = "import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)"
+$env:GIT_NO_REPLACE_OBJECTS = '1'
 function Assert-ExpectedHeadImmediatelyBeforeMutation {}
 function Read-BackendExpectedHeadHandoff {}
 if ([string]$handoff.schemaVersion -ne 'stephanos.backend-expected-head-handoff.v1') {}
@@ -87,10 +94,18 @@ Get-TrackedWorktreeAssessment -StatusLines $trackedStatus
 if ($trackedAssessment.SourceDirt.Count -ne 0) {}
 Test-BackendHealth -Url $healthUrl -ExpectedSourceHead $headSha
 Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'OpenClaw readonly adapter ensure'
-$env:STEPHANOS_BACKEND_SOURCE_HEAD = $headSha
-$arguments = @('run', 'stephanos:backend')
+function Get-ExactHeadBackendBootstrapBase64 {}
+$bootstrapGitPath = 'stephanos-server/backend-bootstrap.mjs'
+BACKEND_EXACT_HEAD_BOOTSTRAP_HASH_MISMATCH
+function Start-BackendNodeWithMinimalEnvironment {}
+$minimalEnvironment['STEPHANOS_BACKEND_SOURCE_HEAD'] = $SourceHead
+$minimalEnvironment['STEPHANOS_BACKEND_REPO_ROOT'] = $RepositoryRoot
+$minimalEnvironment['STEPHANOS_BACKEND_BOOTSTRAP_BASE64'] = $BootstrapBase64
+$arguments = @('--input-type=module', '--eval', $canonicalBootstrapEval)
+Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'exact-head bootstrap capture'
+$bootstrapBase64 = Get-ExactHeadBackendBootstrapBase64 -RepositoryRoot $repoRoot -HeadSha $headSha
 Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend process start'
-Start-Process -FilePath $canonicalNpm
+Start-BackendNodeWithMinimalEnvironment
 Publish-VerifiedBackendRuntimeReceipt
 arbitraryShellAllowed = $false
 sourceMutationAllowed = $false
@@ -254,16 +269,40 @@ test('scheduled backend restart must preserve bounded handoff and IgnoreNew gate
   assert.ok(result.findings.some((item) => item.code === 'ignition-restart-handoff-expiry-not-bounded'));
 });
 
+test('restart listener identity must remain bound to canonical Node and immutable bootstrap command', () => {
+  const weakened = restartSource
+    .replace('BACKEND_LISTENER_NOT_CANONICAL_NODE', 'REMOVED_CANONICAL_NODE_GATE')
+    .replace('BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED', 'REMOVED_BOOTSTRAP_COMMAND_GATE');
+  const sources = input().sources;
+  sources[1] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[1], weakened);
+  const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'ignition-restart-backend-node-mismatch-not-blocked'));
+  assert.ok(result.findings.some((item) => item.code === 'ignition-restart-backend-command-mismatch-not-blocked'));
+});
+
 test('backend child must remain canonical, synchronized and expected-head bound', () => {
   const weakened = backendSource
     .replace("if ($upstream -ne 'origin/main') {}", "if ($upstream -ne 'somewhere') {}")
-    .replace('$env:STEPHANOS_BACKEND_SOURCE_HEAD = $headSha', '$env:OTHER = $headSha');
+    .replace("$minimalEnvironment['STEPHANOS_BACKEND_SOURCE_HEAD'] = $SourceHead", "$minimalEnvironment['OTHER'] = $SourceHead");
   const sources = input().sources;
   sources[2] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[2], weakened);
   const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources }));
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'ignition-backend-upstream-gate-missing'));
   assert.ok(result.findings.some((item) => item.code === 'ignition-backend-child-head-binding-missing'));
+});
+
+test('immutable exact-head bootstrap materialization is mandatory for backend start', () => {
+  const weakened = backendSource
+    .replace('BACKEND_EXACT_HEAD_BOOTSTRAP_HASH_MISMATCH', 'REMOVED_BOOTSTRAP_HASH_GATE')
+    .replace("Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'exact-head bootstrap capture'", 'REMOVED_BOOTSTRAP_CAPTURE_GATE');
+  const sources = input().sources;
+  sources[2] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[2], weakened);
+  const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'ignition-backend-bootstrap-hash-gate-missing'));
+  assert.ok(result.findings.some((item) => item.code === 'ignition-backend-bootstrap-capture-gate-missing'));
 });
 
 test('dynamic PowerShell and destructive Git remain rejected', () => {

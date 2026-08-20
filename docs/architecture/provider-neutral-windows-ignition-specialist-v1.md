@@ -14,19 +14,19 @@ The existing `qualifiedSpecialistReviewV1` fallback can cover unsupported Window
 
 ## Exact reviewed target
 
-This first child specialist is intentionally head-bound to the current reviewed #1919 source, rather than being a floating approval rule:
+This child specialist is intentionally head-bound to the current reviewed #1919 source, rather than being a floating approval rule:
 
 ```text
 repository=Cheekyfellastef/stephan-os
 pr=1919
 branch=fix/ignition-canonical-convergence-gate-v1
-sourceHead=34b573d15fe065a35a6c94f9f58a2876811a63b7
+sourceHead=51438eeb85df96f7363b7d5d8700711f54374371
 baseSha=3dc12a7c84c54f406b10dee1293789e2338f7824
 ```
 
-The immediately previous source target `0cbd8318f5da7d815e3f4e30d8ef9a5d1c9feb77`, older source target `9941da6e500a7d95d11e8a3654630462cce71a91`, and previous base `13f13144730b2a6d94754914dbdf2c254c39567d` are historical and ineligible. The specialist is deliberately retargeted only by an explicit source change plus fresh proof; head or base movement never inherits specialist evidence silently.
+The immediately previous source target `34b573d15fe065a35a6c94f9f58a2876811a63b7`, earlier targets `0cbd8318f5da7d815e3f4e30d8ef9a5d1c9feb77` and `9941da6e500a7d95d11e8a3654630462cce71a91`, and previous base `13f13144730b2a6d94754914dbdf2c254c39567d` are historical and ineligible. The specialist is deliberately retargeted only by an explicit source change plus fresh proof; head or base movement never inherits specialist evidence silently.
 
-The current #1919 move from `0cbd8318...` to `34b573d...` is one commit that hardens backend exact-head loading in `stephanos-server/server.js` and a new fixed loader plus regression tests. The specialist's exact three Windows authority path inventory is unchanged, but its whole-PR exact-head binding is deliberately refreshed so no old-head specialist evidence can float across that source change.
+The current #1919 move from `34b573d...` to `51438ee...` preserves the same exact three Windows authority path inventory but materially hardens two of those paths. Backend listener identity is now bound to fixed canonical Node plus the immutable bootstrap command, and backend startup now materializes `stephanos-server/backend-bootstrap.mjs` from the exact approved Git object, verifies its Git blob identity, and launches canonical Node through a minimal process environment with the exact head/root/bootstrap bindings. The specialist therefore adds explicit invariants and regressions for those new authority boundaries rather than merely changing the target SHA.
 
 If #1919 head or base moves again, this specialist becomes ineligible. A new exact target requires another bounded source update and fresh proof.
 
@@ -49,11 +49,13 @@ The specialist then verifies the task-class invariants that make the three Windo
 - canonical backend health schema `stephanos.backend-health.v1` and runtime ID `stephanos-battle-bridge-backend` are mandatory before an already-healthy backend can bypass convergence;
 - fixed backend and Mission Worker Scheduled Task identities;
 - `MultipleInstances=IgnoreNew` checks around backend restart handoff;
+- backend listener identity requires canonical Node and the fixed process-bound immutable-bootstrap command;
 - atomic, short-lived backend expected-head handoff;
 - verified-owned-process-only termination;
 - canonical `main` / `origin/main` synchronization;
 - tracked source dirt remains fail-closed;
-- fixed backend npm command and exact source-head environment binding;
+- exact-head backend bootstrap materialization uses the fixed `stephanos-server/backend-bootstrap.mjs` path, disables Git replacement objects, verifies the content-derived Git blob identity, and fails closed on mismatch;
+- backend child launch uses fixed canonical Node through the minimal-environment launcher with exact source-head, repository-root and verified bootstrap-byte bindings;
 - fresh exact-head runtime receipt/heartbeat proof;
 - no caller-selected command/path/task/executable/URL authority;
 - no dynamic PowerShell execution or destructive/publishing Git authority.
