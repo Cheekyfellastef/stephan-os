@@ -137,6 +137,49 @@ test('a later operator invocation closes the original request response window', 
   assert.deepEqual(result.blockers, ['qualified-specialist-review-missing']);
 });
 
+test('a same-second higher-ID operator invocation closes the request response window', () => {
+  const original = request();
+  const retry = request({
+    id: 1002,
+    created_at: original.created_at,
+    updated_at: original.updated_at,
+    body: '@codex cancel and replace this review',
+  });
+  const late = response({
+    id: 1003,
+    created_at: original.created_at,
+    updated_at: original.updated_at,
+  });
+  const result = adjudicate([original, retry, late]);
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.blockers, ['qualified-specialist-review-missing']);
+});
+
+test('a same-second provider response is ordered by its higher immutable comment ID', () => {
+  const original = request();
+  const sameSecond = response({
+    id: 1002,
+    created_at: original.created_at,
+    updated_at: original.updated_at,
+  });
+  const result = adjudicate([sameSecond, original]);
+  assert.equal(result.valid, true, result.blockers.join(', '));
+
+  const forgedArtifact = structuredClone(result.artifact);
+  forgedArtifact.response.id = original.id - 1;
+  forgedArtifact.payloadSha256 = result.artifact.payloadSha256;
+  const validation = validateQualifiedSpecialistReviewArtifact(forgedArtifact, {
+    repository,
+    prNumber,
+    branch,
+    sourceHead,
+    baseSha,
+    paths,
+  });
+  assert.equal(validation.valid, false);
+  assert.equal(validation.blockers.includes('specialist-artifact-causality-invalid'), true);
+});
+
 test('tampering with normalized request or response evidence breaks the artifact digest and validation', () => {
   const artifact = adjudicate([request(), response()]).artifact;
   const tampered = structuredClone(artifact);

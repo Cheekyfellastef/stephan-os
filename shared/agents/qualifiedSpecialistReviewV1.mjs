@@ -129,6 +129,25 @@ function commentUpdatedAtMs(comment = {}) {
   return explicitTimeMs(comment?.updated_at ?? comment?.updatedAtUtc);
 }
 
+function compareCommentOrder(left = {}, right = {}) {
+  const leftTime = commentCreatedAtMs(left);
+  const rightTime = commentCreatedAtMs(right);
+  if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) return Number.NaN;
+  if (leftTime !== rightTime) return leftTime - rightTime;
+  const leftId = positiveInteger(left?.id);
+  const rightId = positiveInteger(right?.id);
+  if (!leftId || !rightId) return Number.NaN;
+  return leftId - rightId;
+}
+
+function commentComesAfter(left = {}, right = {}) {
+  return compareCommentOrder(left, right) > 0;
+}
+
+function commentComesBefore(left = {}, right = {}) {
+  return compareCommentOrder(left, right) < 0;
+}
+
 function commentBody(comment = {}) {
   return text(comment?.body);
 }
@@ -355,6 +374,7 @@ export function validateQualifiedSpecialistReviewArtifact(artifact = {}, options
   if (!Number.isFinite(requestCreatedAtMs)
     || !Number.isFinite(requestUpdatedAtMs)
     || !Number.isFinite(responseCreatedAtMs)
+    || !commentComesAfter(artifact?.response, artifact?.request)
     || requestUpdatedAtMs > responseCreatedAtMs
     || responseCreatedAtMs - requestCreatedAtMs > MAX_SPECIALIST_RESPONSE_DELAY_MS) {
     blockers.push('specialist-artifact-causality-invalid');
@@ -420,16 +440,13 @@ function providerNeutralArtifactCandidates(comments = [], options = {}) {
   const requests = ordered.filter((comment) => qualifiedRequestMatches(comment, options));
   const candidates = [];
   for (const request of requests) {
-    const requestTime = commentCreatedAtMs(request);
     const nextInvocation = ordered.find((comment) => (
-      positiveInteger(comment.id) !== positiveInteger(request.id)
-      && commentCreatedAtMs(comment) > requestTime
+      commentComesAfter(comment, request)
       && isQualifiedOperatorInvocation(comment)
     ));
-    const boundaryTime = nextInvocation ? commentCreatedAtMs(nextInvocation) : Number.POSITIVE_INFINITY;
     const providerResults = ordered.filter((comment) => (
-      commentCreatedAtMs(comment) > requestTime
-      && commentCreatedAtMs(comment) < boundaryTime
+      commentComesAfter(comment, request)
+      && (!nextInvocation || commentComesBefore(comment, nextInvocation))
       && isTrustedProviderResponse(comment)
       && /^Codex Review:/i.test(commentBody(comment))
     ));
