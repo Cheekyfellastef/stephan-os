@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import {
   buildIndependentReviewWorkflowDispatchLaunchReceiptV1,
+  parseIndependentReviewWorkflowDispatchLaunchReceiptCommentV1,
+  renderIndependentReviewWorkflowDispatchLaunchReceiptCommentV1,
   validateIndependentReviewWorkflowDispatchLaunchReceiptV1,
 } from './independentReviewWorkflowDispatchLaunchReceiptV1.mjs';
 
@@ -71,6 +73,21 @@ test('builds a content-addressed launch receipt from an exact admitted missing-r
     `stephanos-independent-review-pr-1910-head-${HEAD}-binding-${HANDOFF}`,
   );
   assert.deepEqual(validateIndependentReviewWorkflowDispatchLaunchReceiptV1(receipt), receipt);
+});
+
+test('round-trips the exact launch receipt through one content-addressed PR comment', () => {
+  const receipt = buildIndependentReviewWorkflowDispatchLaunchReceiptV1({
+    launchPlan: launchPlan(),
+    requestedAtUtc: '2026-08-20T10:00:00.000Z',
+  });
+  const comment = renderIndependentReviewWorkflowDispatchLaunchReceiptCommentV1(receipt);
+  assert.match(comment, /stephanos:independent-review-workflow-dispatch-launch:v1/);
+  assert.deepEqual(parseIndependentReviewWorkflowDispatchLaunchReceiptCommentV1(comment), receipt);
+
+  assert.throws(
+    () => parseIndependentReviewWorkflowDispatchLaunchReceiptCommentV1(comment.replace(receipt.launchKeySha256, 'c'.repeat(64))),
+    /comment key does not match receipt/,
+  );
 });
 
 test('rejects paper launch claims, widened authority and altered content-addressed identity', () => {
