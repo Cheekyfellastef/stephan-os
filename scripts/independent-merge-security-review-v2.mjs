@@ -9,6 +9,7 @@ import {
   PROTECTED_REVIEW_MARKER,
   analyzeIndependentSecurityReview,
   isApprovalBoundaryBootstrapAnalysis,
+  validateIndependentReviewWorkflowDispatchRunV1,
 } from '../shared/agents/operatorMergeApprovalGateV2.mjs';
 import {
   validateMainRefBaseBinding,
@@ -26,6 +27,15 @@ import { TextDecoder } from 'node:util';
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-independent-merge-security-review-v2';
 const MAX_PAGES = 20;
+const FULL_SHA = /^[a-f0-9]{40}$/;
+const DISPATCH_INPUT_KEYS = Object.freeze([
+  'pr_number',
+  'source_head',
+  'base_sha',
+  'head_branch',
+  'handoff_binding_sha256',
+  'handoff_run_receipt_sha256',
+]);
 
 function text(value) {
   return String(value ?? '').trim();
@@ -37,7 +47,7 @@ function integer(value) {
 }
 
 function readJson(path) {
-  if (!path || !fs.existsSync(path)) throw new Error('GitHub event payload is required.');
+  if (!path || !fs.existsSync(path)) throw new Error('GitHub event or dispatch evidence payload is required.');
   return JSON.parse(fs.readFileSync(path, 'utf8'));
 }
 
@@ -162,10 +172,6 @@ async function postComment(owner, repo, prNumber, body) {
 }
 
 async function postDisplayComment(owner, repo, prNumber, body) {
-  // The immutable artifact is the merge authority. This comment is only a
-  // discovery index and some GitHub App-triggered workflows cannot publish it
-  // even with the bounded workflow permission. Preserve the exact artifact;
-  // the protected merge consumer reads and validates it directly.
   try {
     return await postComment(owner, repo, prNumber, body);
   } catch (error) {
@@ -197,28 +203,114 @@ function requireExactBase(pullRequest, mainRef, baseSha, phase) {
   }
 }
 
+async function loadCanonicalWorkflowDefinition(owner, repo) {
+  const workflows = await githubPages(`/repos/${owner}/${repo}/actions/workflows`, 'workflows');
+  const path = '.github/workflows/independent-merge-security-review.yml';
+  const name = 'Independent Merge Security Review';
+  const pathMatches = workflows.filter((workflow) => text(workflow?.path) === path);
+  const nameCollisions = workflows.filter((workflow) => text(workflow?.name) === name && text(workflow?.path) !== path);
+  if (pathMatches.length !== 1 || nameCollisions.length !== 0) {
+    throw new Error('canonical independent-review workflow identity is missing or ambiguous');
+  }
+  const workflow = pathMatches[0];
+  return {
+    id: integer(workflow?.id),
+    name: text(workflow?.name),
+    path: text(workflow?.path),
+    state: text(workflow?.state),
+  };
+}
+
+function exactDispatchInputs(event = {}) {
+  const inputs = event?.inputs;
+  if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) {
+    throw new Error('workflow_dispatch inputs are required');
+  }
+  const actual = Object.keys(inputs).sort();
+  const expected = [...DISPATCH_INPUT_KEYS].sort();
+  if (actual.length !== expected.length || !actual.every((key, index) => key === expected[index])) {
+    throw new Error('workflow_dispatch input schema is not exact');
+  }
+  return Object.fromEntries(DISPATCH_INPUT_KEYS.map((key) => [key, text(inputs[key])]));
+}
+
+function dispatchEnvironment() {
+  return {
+    GITHUB_ACTIONS: text(process.env.GITHUB_ACTIONS),
+    GITHUB_EVENT_NAME: text(process.env.GITHUB_EVENT_NAME),
+    GITHUB_REPOSITORY: text(process.env.GITHUB_REPOSITORY),
+    GITHUB_WORKFLOW: text(process.env.GITHUB_WORKFLOW),
+    GITHUB_JOB: text(process.env.GITHUB_JOB),
+    GITHUB_REF: text(process.env.GITHUB_REF),
+    GITHUB_SHA: text(process.env.GITHUB_SHA),
+    GITHUB_WORKFLOW_REF: text(process.env.GITHUB_WORKFLOW_REF),
+  };
+}
+
+async function resolveReviewIdentity({ eventName, event, repository, owner, repo }) {
+  if (eventName === 'pull_request_target') {
+    const prNumber = integer(event?.pull_request?.number);
+    const sourceHead = text(event?.pull_request?.head?.sha).toLowerCase();
+    const baseSha = text(event?.pull_request?.base?.sha).toLowerCase();
+    const branch = text(event?.pull_request?.head?.ref);
+    const baseBranch = text(event?.pull_request?.base?.ref);
+    if (!prNumber || !FULL_SHA.test(sourceHead) || !FULL_SHA.test(baseSha) || !branch || baseBranch !== 'main') {
+      throw new Error('Independent review pull_request_target identity is incomplete or unsafe.');
+    }
+    if (text(event?.pull_request?.head?.repo?.full_name).toLowerCase() !== repository.toLowerCase()) {
+      throw new Error('Cross-repository pull requests require a separate specialist route.');
+    }
+    return { prNumber, sourceHead, baseSha, branch, baseBranch };
+  }
+
+  if (eventName !== 'workflow_dispatch') {
+    throw new Error(`Independent review event ${eventName || 'unknown'} is not allowlisted.`);
+  }
+
+  const workflowDispatchInputs = exactDispatchInputs(event);
+  const handoffIdentity = readJson(text(process.env.STEPHANOS_INDEPENDENT_REVIEW_HANDOFF_IDENTITY_PATH));
+  const handoffRunReceipt = readJson(text(process.env.STEPHANOS_INDEPENDENT_REVIEW_HANDOFF_RUN_RECEIPT_PATH));
+  const prNumber = integer(workflowDispatchInputs.pr_number);
+  const [pullRequest, mainRef, workflowDefinition] = await Promise.all([
+    githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`),
+    githubRequest(`/repos/${owner}/${repo}/git/ref/heads/main`),
+    loadCanonicalWorkflowDefinition(owner, repo),
+  ]);
+  const currentMainSha = text(mainRef?.object?.sha).toLowerCase();
+  const validated = validateIndependentReviewWorkflowDispatchRunV1({
+    environment: dispatchEnvironment(),
+    workflowDefinition,
+    currentMainSha,
+    pullRequest,
+    handoffIdentity,
+    handoffRunReceipt,
+    workflowDispatchInputs,
+  });
+  return {
+    prNumber: validated.prNumber,
+    sourceHead: text(validated.sourceHead).toLowerCase(),
+    baseSha: text(validated.baseSha).toLowerCase(),
+    branch: text(validated.branch),
+    baseBranch: 'main',
+  };
+}
+
 async function main() {
   if (process.env.GITHUB_ACTIONS !== 'true') throw new Error('Independent review may run only inside GitHub Actions.');
-  if (process.env.GITHUB_EVENT_NAME !== 'pull_request_target') throw new Error('Independent review requires pull_request_target.');
   if (process.env.GITHUB_JOB !== INDEPENDENT_REVIEW_JOB) throw new Error('Independent review job identity mismatch.');
 
+  const eventName = text(process.env.GITHUB_EVENT_NAME);
   const event = readJson(text(process.env.GITHUB_EVENT_PATH));
   const repository = text(process.env.GITHUB_REPOSITORY || event?.repository?.full_name);
   const [owner, repo] = repository.split('/');
-  const prNumber = integer(event?.pull_request?.number);
-  const sourceHead = text(event?.pull_request?.head?.sha).toLowerCase();
-  const baseSha = text(event?.pull_request?.base?.sha).toLowerCase();
-  const branch = text(event?.pull_request?.head?.ref);
-  const baseBranch = text(event?.pull_request?.base?.ref);
   const runId = integer(process.env.GITHUB_RUN_ID);
   const runAttempt = integer(process.env.GITHUB_RUN_ATTEMPT);
+  if (!owner || !repo || !runId || !runAttempt) throw new Error('Independent review repository/run identity is incomplete.');
 
-  if (!owner || !repo || !prNumber || !/^[a-f0-9]{40}$/.test(sourceHead)
-    || !/^[a-f0-9]{40}$/.test(baseSha) || !branch || baseBranch !== 'main' || !runId || !runAttempt) {
-    throw new Error('Independent review event identity is incomplete or unsafe.');
-  }
-  if (text(event?.pull_request?.head?.repo?.full_name).toLowerCase() !== repository.toLowerCase()) {
-    throw new Error('Cross-repository pull requests require a separate specialist route.');
+  const identity = await resolveReviewIdentity({ eventName, event, repository, owner, repo });
+  const { prNumber, sourceHead, baseSha, branch, baseBranch } = identity;
+  if (!prNumber || !FULL_SHA.test(sourceHead) || !FULL_SHA.test(baseSha) || !branch || baseBranch !== 'main') {
+    throw new Error('Independent review resolved identity is incomplete or unsafe.');
   }
 
   const initialPullRequest = await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`);
@@ -226,14 +318,12 @@ async function main() {
   if (text(initialPullRequest?.state).toLowerCase() !== 'open'
     || text(initialPullRequest?.head?.sha).toLowerCase() !== sourceHead
     || text(initialPullRequest?.head?.ref) !== branch
-    || text(initialPullRequest?.base?.ref) !== 'main') {
+    || text(initialPullRequest?.base?.ref) !== 'main'
+    || text(initialPullRequest?.head?.repo?.full_name).toLowerCase() !== repository.toLowerCase()) {
     throw new Error('Pull-request identity changed before review.');
   }
   requireExactBase(initialPullRequest, initialMainRef, baseSha, 'pre-review');
 
-  // Review the immutable head/base immediately. CI and unresolved-thread
-  // evidence remain mandatory at the independent merge-consumption boundary;
-  // serializing analysis behind them only delays feedback and wastes runners.
   const [files, diff] = await Promise.all([
     githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/files`),
     githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`, { accept: 'application/vnd.github.v3.diff' }),
