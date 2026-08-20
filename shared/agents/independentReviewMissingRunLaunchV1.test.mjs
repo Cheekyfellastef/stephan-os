@@ -10,13 +10,16 @@ const HEAD = '1'.repeat(40);
 const BASE = '2'.repeat(40);
 const BINDING = 'a'.repeat(64);
 const RECEIPT = 'b'.repeat(64);
+const REPOSITORY = 'Cheekyfellastef/stephan-os';
+const BRANCH = 'agent/openclaw-oc1';
 
 function fixture() {
   return {
     retryPlan: {
       decision: 'NO_MATCHING_RUN',
-      repository: 'Cheekyfellastef/stephan-os',
+      repository: REPOSITORY,
       prNumber: 1910,
+      branch: BRANCH,
       exactHead: HEAD,
       exactBase: BASE,
       workflowId: 123,
@@ -26,7 +29,9 @@ function fixture() {
       verdict: 'INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_ADMITTED',
       handoffBindingSha256: BINDING,
       binding: {
+        repository: REPOSITORY,
         prNumber: 1910,
+        branch: BRANCH,
         sourceHead: HEAD,
         baseSha: BASE,
         workflowId: 123,
@@ -36,7 +41,7 @@ function fixture() {
         pr_number: '1910',
         source_head: HEAD,
         base_sha: BASE,
-        head_branch: 'agent/openclaw-oc1',
+        head_branch: BRANCH,
         handoff_binding_sha256: BINDING,
         handoff_run_receipt_sha256: RECEIPT,
       },
@@ -82,12 +87,20 @@ test('blocks stale or mismatched immutable admission', () => {
   assert.equal(result.mutationAllowed, false);
 });
 
-test('blocks authority widening', () => {
-  const input = fixture();
-  input.dispatchAdmission.authority.sourceMutationAllowed = true;
-  const result = planIndependentReviewMissingRunLaunchV1(input);
-  assert.equal(result.decision, INDEPENDENT_REVIEW_MISSING_RUN_LAUNCH_DECISION.BLOCKED);
-  assert.equal(result.mutationAllowed, false);
+test('blocks authority widening including unknown authority fields', () => {
+  const widened = fixture();
+  widened.dispatchAdmission.authority.sourceMutationAllowed = true;
+  assert.equal(
+    planIndependentReviewMissingRunLaunchV1(widened).decision,
+    INDEPENDENT_REVIEW_MISSING_RUN_LAUNCH_DECISION.BLOCKED,
+  );
+
+  const smuggled = fixture();
+  smuggled.dispatchAdmission.authority.arbitraryShellAllowed = true;
+  assert.equal(
+    planIndependentReviewMissingRunLaunchV1(smuggled).decision,
+    INDEPENDENT_REVIEW_MISSING_RUN_LAUNCH_DECISION.BLOCKED,
+  );
 });
 
 test('blocks missing immutable receipt identity', () => {
@@ -95,4 +108,46 @@ test('blocks missing immutable receipt identity', () => {
   input.dispatchAdmission.binding.handoffRunReceiptSha256 = '';
   const result = planIndependentReviewMissingRunLaunchV1(input);
   assert.equal(result.decision, INDEPENDENT_REVIEW_MISSING_RUN_LAUNCH_DECISION.BLOCKED);
+});
+
+test('blocks caller-shaped workflow-dispatch input smuggling', () => {
+  for (const mutate of [
+    (input) => { input.dispatchAdmission.workflowDispatchInputs.pr_number = '9999'; },
+    (input) => { input.dispatchAdmission.workflowDispatchInputs.source_head = '4'.repeat(40); },
+    (input) => { input.dispatchAdmission.workflowDispatchInputs.base_sha = '5'.repeat(40); },
+    (input) => { input.dispatchAdmission.workflowDispatchInputs.head_branch = 'agent/other'; },
+    (input) => { input.dispatchAdmission.workflowDispatchInputs.handoff_binding_sha256 = 'c'.repeat(64); },
+    (input) => { input.dispatchAdmission.workflowDispatchInputs.handoff_run_receipt_sha256 = 'd'.repeat(64); },
+    (input) => { input.dispatchAdmission.workflowDispatchInputs.command = 'run-anything'; },
+  ]) {
+    const input = fixture();
+    mutate(input);
+    const result = planIndependentReviewMissingRunLaunchV1(input);
+    assert.equal(result.decision, INDEPENDENT_REVIEW_MISSING_RUN_LAUNCH_DECISION.BLOCKED);
+    assert.equal(result.mutationAllowed, false);
+  }
+});
+
+test('blocks repository and branch drift between retry truth and immutable admission', () => {
+  const wrongRepository = fixture();
+  wrongRepository.dispatchAdmission.binding.repository = 'other/repo';
+  assert.equal(
+    planIndependentReviewMissingRunLaunchV1(wrongRepository).decision,
+    INDEPENDENT_REVIEW_MISSING_RUN_LAUNCH_DECISION.BLOCKED,
+  );
+
+  const wrongBranch = fixture();
+  wrongBranch.dispatchAdmission.binding.branch = 'agent/other';
+  assert.equal(
+    planIndependentReviewMissingRunLaunchV1(wrongBranch).decision,
+    INDEPENDENT_REVIEW_MISSING_RUN_LAUNCH_DECISION.BLOCKED,
+  );
+});
+
+test('returns a frozen copy of the exact admitted dispatch inputs', () => {
+  const input = fixture();
+  const result = planIndependentReviewMissingRunLaunchV1(input);
+  assert.equal(Object.isFrozen(result.workflowDispatchInputs), true);
+  input.dispatchAdmission.workflowDispatchInputs.pr_number = '9999';
+  assert.equal(result.workflowDispatchInputs.pr_number, '1910');
 });
