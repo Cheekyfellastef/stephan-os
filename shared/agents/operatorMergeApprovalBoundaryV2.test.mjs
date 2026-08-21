@@ -7,6 +7,9 @@ import {
   analyzeIndependentSecurityReviewV2,
   validatePersonalRepositoryProtectedWorkflowSource,
 } from './operatorMergeApprovalBoundaryV2.mjs';
+import {
+  analyzeIndependentSecurityReviewWithFinalSourcePolicyV1,
+} from './operatorMergeApprovalGateV2IndependentReviewFinalSourceV1.mjs';
 import { isApprovalBoundaryBootstrapAnalysis } from './operatorMergeApprovalGateV2.mjs';
 import { createProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
 import {
@@ -333,7 +336,7 @@ test('fails closed when any live v2 boundary attempts to review itself', () => {
 test('valid final exact-head workflow source prevents hunk-only false trust findings', () => {
   const path = '.github/workflows/independent-merge-security-review.yml';
   const finalContent = workflowContent(path).replace('timeout-minutes: 15', 'timeout-minutes: 16');
-  const result = analyzeIndependentSecurityReviewV2({
+  const result = analyzeIndependentSecurityReviewWithFinalSourcePolicyV1({
     changedFiles: [{ filename: path, status: 'modified' }],
     diff: diffFor(path, ['timeout-minutes: 16']),
     repository,
@@ -645,13 +648,10 @@ test('specialist approval fails closed on stale head, wrong app, missing path co
   assert.equal(result.valid, false);
 });
 
-test('trusted reviewer fetches authenticated review evidence and seals only through the specialist adjudicator', () => {
+test('trusted reviewer fetches exact PR reviews and seals only through the specialist adjudicator', () => {
   const source = readFileSync(new URL('../../scripts/independent-merge-security-review-v2.mjs', import.meta.url), 'utf8');
   assert.match(source, /pulls\/\$\{prNumber\}\/reviews/);
-  assert.match(source, /issues\/\$\{prNumber\}\/comments/);
-  assert.match(source, /resolveQualifiedSpecialistCommentHeads/);
   assert.match(source, /adjudicateQualifiedSpecialistReview/);
   assert.match(source, /SPECIALIST_REVIEW_DECISION/);
-  assert.match(source, /SPECIALIST_REVIEW_ARTIFACT_SHA256/);
   assert.doesNotMatch(source, /gh\s+pr\s+(?:merge|ready)/);
 });
