@@ -22,6 +22,7 @@ import {
   validatePersonalRepositoryApprovalReceipt,
   validatePersonalRepositoryArtifactArchiveRedirect,
   validatePersonalRepositoryArtifactArchiveResponse,
+  validatePersonalRepositoryCheckRuns,
   validatePersonalRepositoryConfiguration,
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
@@ -875,6 +876,44 @@ function workflowRuns() {
   }));
 }
 
+function escalationWorkflowRun(overrides = {}) {
+  return {
+    id: 9199,
+    run_number: 199,
+    run_attempt: 1,
+    workflow_id: 7199,
+    check_suite_id: 8199,
+    name: 'Stephanos Exact-Head Review',
+    path: `${repository}/.github/workflows/stephanos-exact-head-review.yml@refs/heads/main`,
+    event: 'pull_request_target',
+    repository: { full_name: repository },
+    head_sha: sourceHead,
+    status: 'completed',
+    conclusion: 'failure',
+    pull_requests: [{
+      number: prNumber,
+      head: { sha: sourceHead, ref: branch },
+      base: { sha: baseSha, ref: 'main' },
+    }],
+    ...overrides,
+  };
+}
+
+function checkRun(run, overrides = {}) {
+  const id = overrides.id || (run.check_suite_id + 1000);
+  return {
+    id,
+    name: 'exact-head-review',
+    head_sha: sourceHead,
+    status: 'completed',
+    conclusion: 'failure',
+    details_url: `https://github.com/${repository}/actions/runs/${run.id}/job/${id}`,
+    app: { id: 15368, slug: 'github-actions' },
+    check_suite: { id: run.check_suite_id },
+    ...overrides,
+  };
+}
+
 function evidenceInput(overrides = {}) {
   return {
     repository,
@@ -1274,6 +1313,104 @@ test('personal repository evidence binds operator, PR, branch, head, tree and cu
     sourceHead: 'f'.repeat(40),
   });
   assert.ok(drifted.blockers.includes('personal-repository-expected-head-mismatch'));
+});
+
+test('only a proved clean independent review admits GitHub UNSTABLE review escalation', () => {
+  const unstable = evidenceInput({ mergeStateStatus: 'UNSTABLE' });
+  const unproved = validatePersonalRepositoryEvidence(unstable, expectedEvidence);
+  assert.equal(unproved.valid, false);
+  assert.ok(unproved.blockers.includes('personal-repository-pr-not-clean'));
+
+  const proved = validatePersonalRepositoryEvidence(unstable, expectedEvidence, {
+    cleanIndependentReviewProved: true,
+    reviewEscalationChecksProved: true,
+  });
+  assert.equal(proved.valid, true);
+  assert.equal(proved.identity.mergeStateStatus, 'UNSTABLE');
+  assert.equal(proved.identity.reviewAdjudication, 'clean-independent-review');
+
+  for (const mergeStateStatus of ['BLOCKED', 'DIRTY', 'BEHIND', 'UNKNOWN', 'HAS_HOOKS']) {
+    const hostile = validatePersonalRepositoryEvidence(
+      evidenceInput({ mergeStateStatus }),
+      expectedEvidence,
+      { cleanIndependentReviewProved: true, reviewEscalationChecksProved: true },
+    );
+    assert.equal(hostile.valid, false, mergeStateStatus);
+    assert.ok(hostile.blockers.includes('personal-repository-pr-not-clean'), mergeStateStatus);
+  }
+});
+
+test('UNSTABLE admission binds the one failing check to the exact reviewed escalation workflow', () => {
+  const escalationRun = escalationWorkflowRun();
+  const greenRun = workflowRuns()[0];
+  const greenCheck = checkRun(greenRun, {
+    id: 9301,
+    name: 'verify-mission-operations',
+    conclusion: 'success',
+  });
+  const escalationCheck = checkRun(escalationRun);
+  const expected = { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' };
+  const runs = [...workflowRuns(), escalationRun];
+  const admitted = validatePersonalRepositoryCheckRuns(
+    [greenCheck, escalationCheck],
+    runs,
+    [],
+    expected,
+    { cleanIndependentReviewProved: true },
+  );
+  assert.equal(admitted.valid, true);
+  assert.equal(admitted.admittedReviewEscalations, 1);
+  assert.equal(admitted.evidence.find((item) => item.name === 'exact-head-review').disposition, 'clean-independent-review');
+
+  const unreviewed = validatePersonalRepositoryCheckRuns(
+    [greenCheck, escalationCheck],
+    runs,
+    [],
+    expected,
+  );
+  assert.equal(unreviewed.valid, false);
+
+  for (const hostileCheck of [
+    checkRun(escalationRun, { name: 'unrelated-security-check' }),
+    checkRun(escalationRun, { status: 'in_progress', conclusion: '' }),
+    checkRun(escalationRun, { app: { id: 999, slug: 'github-actions' } }),
+    checkRun(escalationRun, { head_sha: 'f'.repeat(40) }),
+    checkRun(escalationRun, { details_url: 'https://example.test/not-the-bound-job' }),
+  ]) {
+    const rejected = validatePersonalRepositoryCheckRuns(
+      [greenCheck, hostileCheck],
+      runs,
+      [],
+      expected,
+      { cleanIndependentReviewProved: true },
+    );
+    assert.equal(rejected.valid, false);
+  }
+
+  const unrelatedFailure = checkRun(greenRun, {
+    id: 9302,
+    name: 'unrelated-security-check',
+    conclusion: 'failure',
+  });
+  const extraFailure = validatePersonalRepositoryCheckRuns(
+    [greenCheck, escalationCheck, unrelatedFailure],
+    runs,
+    [],
+    expected,
+    { cleanIndependentReviewProved: true },
+  );
+  assert.equal(extraFailure.valid, false);
+  assert.ok(extraFailure.blockers.includes('personal-repository-check-run-not-exact-green'));
+
+  const legacyFailure = validatePersonalRepositoryCheckRuns(
+    [greenCheck, escalationCheck],
+    runs,
+    [{ sha: sourceHead, state: 'failure' }],
+    expected,
+    { cleanIndependentReviewProved: true },
+  );
+  assert.equal(legacyFailure.valid, false);
+  assert.ok(legacyFailure.blockers.includes('personal-repository-commit-status-not-exact-green'));
 });
 
 test('configuration requires the exact protected environment and an active no-bypass main ruleset', () => {
