@@ -27,6 +27,7 @@ export const PERSONAL_REPOSITORY_REQUIRED_CHECK = 'protected-merge-source-proof'
 export const PERSONAL_REPOSITORY_MODE = 'user-owned-protected-squash';
 export const PERSONAL_REPOSITORY_AUTHORITY = 'github-actions-protected-environment-exact-head-squash-only';
 export const PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS = 3;
+export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS = 2;
 export const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES = 256 * 1024;
 export const PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES = 256 * 1024;
 
@@ -1150,6 +1151,63 @@ export function validatePersonalRepositoryCheckRuns(
     finalVerdict: blockers.length
       ? 'PERSONAL_REPOSITORY_CHECK_RUNS_BLOCKED'
       : 'PERSONAL_REPOSITORY_CHECK_RUNS_READY',
+  });
+}
+
+export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
+  readSnapshot,
+  expected = {},
+  options = {},
+} = {}) {
+  if (typeof readSnapshot !== 'function') {
+    return Object.freeze({
+      valid: false,
+      evidence: Object.freeze([]),
+      admittedReviewEscalations: 0,
+      blockers: Object.freeze(['personal-repository-check-snapshot-reader-invalid']),
+      snapshotAttempt: 0,
+      snapshotAttempts: Object.freeze([]),
+      selectedSnapshot: null,
+      finalVerdict: 'PERSONAL_REPOSITORY_CHECK_RUNS_BLOCKED',
+    });
+  }
+
+  const snapshotAttempts = [];
+  let validation = null;
+  for (let attempt = 1; attempt <= PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS; attempt += 1) {
+    const snapshot = await readSnapshot(attempt);
+    validation = validatePersonalRepositoryCheckRuns(
+      snapshot?.checkRuns,
+      snapshot?.workflowRuns,
+      snapshot?.commitStatuses,
+      expected,
+      options,
+    );
+    snapshotAttempts.push(Object.freeze({
+      attempt,
+      valid: validation.valid,
+      blockers: validation.blockers,
+    }));
+    if (validation.valid) {
+      const selectedSnapshot = Object.freeze({
+        checkRuns: Object.freeze([...snapshot.checkRuns]),
+        workflowRuns: Object.freeze([...snapshot.workflowRuns]),
+        commitStatuses: Object.freeze([...snapshot.commitStatuses]),
+      });
+      return Object.freeze({
+        ...validation,
+        snapshotAttempt: attempt,
+        snapshotAttempts: Object.freeze(snapshotAttempts),
+        selectedSnapshot,
+      });
+    }
+  }
+
+  return Object.freeze({
+    ...validation,
+    snapshotAttempt: 0,
+    snapshotAttempts: Object.freeze(snapshotAttempts),
+    selectedSnapshot: null,
   });
 }
 
