@@ -65,9 +65,14 @@ function exactSource(source, repository, sourceHead, path) {
 }
 function exactArray(value, expectedLength) {
   if (!Array.isArray(value) || value.length !== expectedLength) return false;
-  const keys = Reflect.ownKeys(value).map(String);
+  const ownKeys = Reflect.ownKeys(value);
+  const keys = ownKeys.map(String);
   const expected = Array.from({ length: expectedLength }, (_, index) => String(index)).concat('length');
-  return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
+  if (keys.length !== expected.length || !keys.every((key, index) => key === expected[index])) return false;
+  return Array.from({ length: expectedLength }, (_, index) => String(index)).every((key) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && Object.hasOwn(descriptor, 'value') && descriptor.enumerable === true;
+  });
 }
 function exactFinding(item) {
   const severity = dataValue(item, 'severity');

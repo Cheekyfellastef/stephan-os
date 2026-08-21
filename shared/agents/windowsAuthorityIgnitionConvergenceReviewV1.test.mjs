@@ -236,6 +236,36 @@ test('accessor-shaped finding fields fail closed without invoking getters', () =
   assert.equal(pathGetterCalled, false);
 });
 
+test('accessor-backed finding array entries fail closed without invoking getters', () => {
+  let findingGetterCalled = false;
+  const hostileAnalysis = analysis();
+  const firstFinding = hostileAnalysis.findings[0];
+  Object.defineProperty(hostileAnalysis.findings, '0', {
+    configurable: true,
+    enumerable: true,
+    get() { findingGetterCalled = true; return firstFinding; },
+  });
+  const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ analysis: hostileAnalysis }));
+  assert.equal(result.eligible, false);
+  assert.equal(findingGetterCalled, false);
+});
+
+test('accessor-backed source array entries fail closed without invoking getters', () => {
+  let sourceGetterCalled = false;
+  const hostileSources = input().sources;
+  const firstSource = hostileSources[0];
+  Object.defineProperty(hostileSources, '0', {
+    configurable: true,
+    enumerable: true,
+    get() { sourceGetterCalled = true; return firstSource; },
+  });
+  const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources: hostileSources }));
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.equal(sourceGetterCalled, false);
+  assert.ok(result.findings.some((item) => item.code === 'windows-authority-source-estate-invalid'));
+});
+
 test('already-healthy backend exact-head identity gates are mandatory', () => {
   const weakened = repairSource.replace('BACKEND_HEALTH_SOURCE_HEAD_MISMATCH', 'REMOVED_HEAD_MISMATCH_GATE');
   const sources = input().sources;
