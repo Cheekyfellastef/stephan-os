@@ -5,6 +5,7 @@ import {
   BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE,
   BATTLE_BRIDGE_OUTBOUND_BEACON_MARKER,
   BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY,
+  MAILBOX_INGRESS_LOOKBACK_MS,
   buildBattleBridgeOutboundBeacon,
   buildBattleBridgeOutboundBeaconBody,
   projectBeaconStatus,
@@ -49,10 +50,15 @@ function commandComment({
   };
 }
 
-function receiptComment({ requestId = 'beacon-ingress-diagnostic-0001', user = OWNER } = {}) {
+function receiptComment({
+  requestId = 'beacon-ingress-diagnostic-0001',
+  expectedHead = HEAD,
+  createdAt = '2026-08-21T00:05:00.000Z',
+  user = OWNER,
+} = {}) {
   return {
     id: 2,
-    created_at: '2026-08-21T00:05:00.000Z',
+    created_at: createdAt,
     user: { login: user },
     body: `<!-- stephanos-battle-bridge-command-receipt -->\n\`\`\`json\n${JSON.stringify({
       schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
@@ -61,10 +67,10 @@ function receiptComment({ requestId = 'beacon-ingress-diagnostic-0001', user = O
       repository: 'Cheekyfellastef/stephan-os',
       issueNumber: 1507,
       branch: 'main',
-      expectedHead: HEAD,
+      expectedHead,
       state: 'ACCEPTED',
-      acceptedAt: '2026-08-21T00:05:00.000Z',
-      heartbeatAt: '2026-08-21T00:05:00.000Z',
+      acceptedAt: createdAt,
+      heartbeatAt: createdAt,
       completedAt: '',
       blocker: '',
       proofRefs: [],
@@ -140,12 +146,67 @@ test('matching trusted ACCEPTED receipt preserves normal mailbox readiness', () 
   assert.deepEqual(ingress, { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
 });
 
-test('wrong-head foreign expired and still-within-grace commands do not create false ingress blockers', () => {
+test('expired unaccepted exact-head command remains blocked across the live bounded lookback', () => {
+  assert.ok(MAILBOX_INGRESS_LOOKBACK_MS >= 4 * 60 * 60 * 1000);
+  const ingress = projectMailboxIngressLiveness([
+    commandComment({
+      requestId: 'flywheel-dirt-diag-13f13144-20260820T2358Z',
+      createdAt: '2026-08-20T23:58:50.000Z',
+      expiresAt: '2026-08-21T01:30:00.000Z',
+    }),
+  ], {
+    sourceHead: HEAD,
+    now: new Date('2026-08-21T02:03:50.405Z'),
+  });
+  assert.deepEqual(ingress, {
+    state: 'BLOCKED_COMMAND_INGRESS_UNOBSERVED',
+    blocker: 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED',
+    pendingRequestCount: 1,
+  });
+});
+
+test('a newer mature exact-head command with a correlated receipt supersedes an older missed command', () => {
+  const newerRequest = 'beacon-ingress-recovery-0002';
+  const ingress = projectMailboxIngressLiveness([
+    commandComment({
+      requestId: 'beacon-ingress-missed-0001',
+      createdAt: '2026-08-20T23:58:50.000Z',
+      expiresAt: '2026-08-21T01:30:00.000Z',
+    }),
+    commandComment({
+      requestId: newerRequest,
+      createdAt: '2026-08-21T01:40:00.000Z',
+      expiresAt: '2026-08-21T03:30:00.000Z',
+    }),
+    receiptComment({ requestId: newerRequest, createdAt: '2026-08-21T01:55:00.000Z' }),
+  ], {
+    sourceHead: HEAD,
+    now: new Date('2026-08-21T02:03:50.405Z'),
+  });
+  assert.deepEqual(ingress, { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
+});
+
+test('a receipt for the same request id on the wrong head cannot mask exact-head ingress failure', () => {
+  const requestId = 'beacon-ingress-head-bind-0001';
+  const ingress = projectMailboxIngressLiveness([
+    commandComment({ requestId }),
+    receiptComment({ requestId, expectedHead: 'b'.repeat(40) }),
+  ], {
+    sourceHead: HEAD,
+    now: new Date('2026-08-21T00:20:00.000Z'),
+  });
+  assert.deepEqual(ingress, {
+    state: 'BLOCKED_COMMAND_INGRESS_UNOBSERVED',
+    blocker: 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED',
+    pendingRequestCount: 1,
+  });
+});
+
+test('wrong-head foreign and still-within-grace commands do not create false ingress blockers', () => {
   const comments = [
     commandComment({ requestId: 'wrong-head-command-0001', expectedHead: 'b'.repeat(40) }),
     commandComment({ requestId: 'foreign-command-0000001', user: 'attacker' }),
     commandComment({ requestId: 'foreign-repository-0001', repository: 'other/repo' }),
-    commandComment({ requestId: 'expired-command-0000001', expiresAt: '2026-08-21T00:10:00.000Z' }),
     commandComment({ requestId: 'fresh-command-000000001', createdAt: '2026-08-21T00:15:00.000Z' }),
   ];
   const ingress = projectMailboxIngressLiveness(comments, {
