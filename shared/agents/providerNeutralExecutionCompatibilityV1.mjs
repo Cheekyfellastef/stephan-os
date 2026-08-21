@@ -45,7 +45,8 @@ const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,180}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:#-]{0,160}$/;
 const SAFE_OPERATION = /^[a-z][a-z0-9._:-]{0,80}$/;
 const SAFE_PROOF_REF = /^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,80}|(?:proof|proofs|receipts|evidence\/receipts)\/[A-Za-z0-9._/-]{1,220})$/;
-const FORBIDDEN_TEXT = /(?:token|secret|password|credential|private[ _-]?key|\.env|session)/i;
+const FORBIDDEN_SENSITIVE_TEXT = /(?:token|secret|password|private[ _-]?key|\.env|session)/i;
+const SAFE_LEGACY_COMMAND = /^(?:node|npm|git)\b(?!.*\b(?:reset\s+--hard|clean\s+-[a-z]*f|merge|push|branch\s+-[dD]|checkout|switch)\b)/i;
 const RESULT_VERDICTS = new Set(['complete', 'blocked', 'failed', 'cancelled', 'partial']);
 
 function text(value, fallback = '') {
@@ -67,36 +68,42 @@ function isPlainObject(value) {
 
 function isSafeId(value) {
   const normalized = text(value);
-  return SAFE_ID.test(normalized) && !FORBIDDEN_TEXT.test(normalized);
+  return SAFE_ID.test(normalized) && !FORBIDDEN_SENSITIVE_TEXT.test(normalized);
 }
 
 function isSafeBranch(value) {
   const normalized = text(value).replace(/\\/g, '/');
   return SAFE_BRANCH.test(normalized)
     && !normalized.includes('..')
-    && !FORBIDDEN_TEXT.test(normalized);
+    && !FORBIDDEN_SENSITIVE_TEXT.test(normalized);
 }
 
 function isSafePath(value) {
   const normalized = text(value).replace(/\\/g, '/');
   if (!normalized || normalized.startsWith('/') || normalized.startsWith('//') || /^[a-z]:\//i.test(normalized)) return false;
   if (normalized.split('/').some((part) => part === '..' || part === '.git')) return false;
-  return !FORBIDDEN_TEXT.test(normalized);
+  return !FORBIDDEN_SENSITIVE_TEXT.test(normalized);
 }
 
-function isSafeBoundedString(value, max = 1000) {
+function isBoundedText(value, max = 1000) {
   const normalized = text(value);
   return normalized.length > 0
     && normalized.length <= max
-    && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(normalized)
-    && !FORBIDDEN_TEXT.test(normalized);
+    && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(normalized);
+}
+
+function isSafeCommandOrTestId(value) {
+  const normalized = text(value);
+  if (!isBoundedText(normalized, 500) || FORBIDDEN_SENSITIVE_TEXT.test(normalized)) return false;
+  if (!/\s/.test(normalized)) return SAFE_ID.test(normalized);
+  return SAFE_LEGACY_COMMAND.test(normalized);
 }
 
 function isSafeProofRef(value) {
   const normalized = text(value).replace(/\\/g, '/');
   if (!normalized || normalized.startsWith('/') || normalized.startsWith('//') || /^[a-z]:\//i.test(normalized)) return false;
   if (normalized.split('/').some((part) => part === '..')) return false;
-  return SAFE_PROOF_REF.test(normalized) && !FORBIDDEN_TEXT.test(normalized);
+  return SAFE_PROOF_REF.test(normalized) && !FORBIDDEN_SENSITIVE_TEXT.test(normalized);
 }
 
 function exactSha(value) {
@@ -128,18 +135,16 @@ function approvalBlocksDispatch(task) {
     && task.operatorApprovalState.dispatchApprovalPresent !== true;
 }
 
-function scopeKey(task) {
+function sourceScopeKey(task) {
   return JSON.stringify([
     task.repository,
     task.branch,
     task.expectedStartingHeadIfMutable || task.exactHeadIfReadOnly,
-    ...task.resourceLeaseIds,
+    [...task.allowedPaths].sort(),
   ]);
 }
 
 export function createProviderNeutralTaskEnvelope(input = {}) {
-  const readOnlyHead = exactSha(input.exactHeadIfReadOnly);
-  const mutableHead = exactSha(input.expectedStartingHeadIfMutable);
   const hardDenials = new Set([
     ...PROVIDER_NEUTRAL_HARD_DENIALS_V1,
     ...uniqueStrings(input.forbiddenOperations).map((item) => item.toLowerCase()),
@@ -156,8 +161,8 @@ export function createProviderNeutralTaskEnvelope(input = {}) {
     repository: text(input.repository),
     branch: text(input.branch).replace(/\\/g, '/'),
     exactBase: exactSha(input.exactBase),
-    exactHeadIfReadOnly: readOnlyHead,
-    expectedStartingHeadIfMutable: mutableHead,
+    exactHeadIfReadOnly: exactSha(input.exactHeadIfReadOnly),
+    expectedStartingHeadIfMutable: exactSha(input.expectedStartingHeadIfMutable),
     allowedPaths: Object.freeze(uniqueStrings(input.allowedPaths).map((item) => item.replace(/\\/g, '/'))),
     allowedOperations: Object.freeze(uniqueStrings(input.allowedOperations).map((item) => item.toLowerCase())),
     allowedCommandsOrTestIds: Object.freeze(uniqueStrings(input.allowedCommandsOrTestIds)),
@@ -165,7 +170,7 @@ export function createProviderNeutralTaskEnvelope(input = {}) {
     timeoutAndRetryBudget: normalizedRetryBudget(input.timeoutAndRetryBudget),
     resourceLeaseIds: Object.freeze(uniqueStrings(input.resourceLeaseIds)),
     requiredTests: Object.freeze(uniqueStrings(input.requiredTests)),
-    requiredArtifacts: Object.freeze(uniqueStrings(input.requiredArtifacts)),
+    requiredArtifacts: Object.freeze(uniqueStrings(input.requiredArtifacts).map((item) => item.replace(/\\/g, '/'))),
     requiredEvidence: Object.freeze(uniqueStrings(input.requiredEvidence).map((item) => item.replace(/\\/g, '/'))),
     completionContract: text(input.completionContract),
     operatorApprovalState: normalizedApprovalState(input.operatorApprovalState),
@@ -185,7 +190,7 @@ export function validateProviderNeutralTaskEnvelope(task) {
   for (const [field, value] of [['missionId', task.missionId], ['goalId', task.goalId], ['taskId', task.taskId], ['taskClass', task.taskClass], ['correlationId', task.correlationId]]) {
     if (!isSafeId(value)) errors.push(`${field}-invalid`);
   }
-  if (!SAFE_REPOSITORY.test(text(task.repository)) || FORBIDDEN_TEXT.test(text(task.repository))) errors.push('repository-invalid');
+  if (!SAFE_REPOSITORY.test(text(task.repository)) || FORBIDDEN_SENSITIVE_TEXT.test(text(task.repository))) errors.push('repository-invalid');
   if (!isSafeBranch(task.branch)) errors.push('branch-invalid');
   if (!exactSha(task.exactBase)) errors.push('exact-base-invalid');
   const readOnlyHead = exactSha(task.exactHeadIfReadOnly);
@@ -195,7 +200,7 @@ export function validateProviderNeutralTaskEnvelope(task) {
   if (!Array.isArray(task.allowedOperations) || task.allowedOperations.some((item) => !SAFE_OPERATION.test(text(item)))) errors.push('allowed-operations-invalid');
   if (task.allowedOperations.some((item) => PROVIDER_NEUTRAL_HARD_DENIALS_V1.includes(text(item).toLowerCase()))) errors.push('authority-widening-operation');
   if (!Array.isArray(task.forbiddenOperations) || PROVIDER_NEUTRAL_HARD_DENIALS_V1.some((item) => !task.forbiddenOperations.includes(item))) errors.push('hard-denials-missing');
-  if (!Array.isArray(task.allowedCommandsOrTestIds) || task.allowedCommandsOrTestIds.some((item) => !isSafeBoundedString(item, 500))) errors.push('allowed-command-or-test-id-invalid');
+  if (!Array.isArray(task.allowedCommandsOrTestIds) || task.allowedCommandsOrTestIds.some((item) => !isSafeCommandOrTestId(item))) errors.push('allowed-command-or-test-id-invalid');
   if (!isPlainObject(task.timeoutAndRetryBudget)
     || !Number.isSafeInteger(task.timeoutAndRetryBudget.timeoutMs)
     || task.timeoutAndRetryBudget.timeoutMs < 1_000
@@ -203,12 +208,13 @@ export function validateProviderNeutralTaskEnvelope(task) {
     || !Number.isSafeInteger(task.timeoutAndRetryBudget.maxAttempts)
     || task.timeoutAndRetryBudget.maxAttempts < 1
     || task.timeoutAndRetryBudget.maxAttempts > 10) errors.push('timeout-retry-budget-invalid');
-  if (!Array.isArray(task.resourceLeaseIds) || task.resourceLeaseIds.some((item) => !isSafeId(item))) errors.push('resource-lease-ids-invalid');
-  if (!Array.isArray(task.requiredTests) || task.requiredTests.some((item) => !isSafeBoundedString(item, 500))) errors.push('required-tests-invalid');
+  if (!Array.isArray(task.resourceLeaseIds) || task.resourceLeaseIds.length === 0 || task.resourceLeaseIds.some((item) => !isSafeId(item))) errors.push('resource-lease-ids-invalid');
+  if (!Array.isArray(task.requiredTests) || task.requiredTests.some((item) => !isSafeCommandOrTestId(item))) errors.push('required-tests-invalid');
   if (!Array.isArray(task.requiredArtifacts) || task.requiredArtifacts.some((item) => !isSafePath(item))) errors.push('required-artifacts-invalid');
   if (!Array.isArray(task.requiredEvidence) || task.requiredEvidence.some((item) => !isSafeProofRef(item))) errors.push('required-evidence-invalid');
-  if (!isSafeBoundedString(task.completionContract, 1000)) errors.push('completion-contract-invalid');
+  if (!isBoundedText(task.completionContract, 1000)) errors.push('completion-contract-invalid');
   if (!isPlainObject(task.operatorApprovalState)) errors.push('operator-approval-state-invalid');
+  if (task.operatorApprovalState?.requiresExactHeadApproval !== true) errors.push('exact-head-approval-required');
   if (task.operatorApprovalState?.mergeApprovalPresent === true) errors.push('merge-approval-must-not-be-carried-by-task-envelope');
   if (task.portableCheckpointRef && !isSafeProofRef(task.portableCheckpointRef)) errors.push('portable-checkpoint-ref-invalid');
   if (!Number.isFinite(Date.parse(task.createdAtUtc))) errors.push('created-at-invalid');
@@ -241,7 +247,7 @@ export function adaptLegacyCodexQueueRecordV1(record, context = {}) {
   }
   const envelope = createProviderNeutralTaskEnvelope({
     missionId: context.missionId,
-    goalId: context.goalId || `#${record.issueNumber}`,
+    goalId: context.goalId || `goal-${record.issueNumber}`,
     taskId: record.jobId,
     taskClass: context.taskClass,
     correlationId: context.correlationId || `issue-${record.issueNumber}`,
@@ -346,20 +352,22 @@ export function validateProviderNeutralResultEnvelope(result, task) {
     }
     const expectedInput = task.exactHeadIfReadOnly || task.expectedStartingHeadIfMutable;
     if (result.exactInputIdentity !== expectedInput) errors.push('exact-input-identity-mismatch');
+    if (task.exactHeadIfReadOnly && result.exactOutputIdentity !== expectedInput) errors.push('read-only-output-identity-mismatch');
+    if (task.exactHeadIfReadOnly && result.changedPaths.length > 0) errors.push('read-only-task-changed-paths');
     if (result.authorityUsed.some((item) => !task.allowedOperations.includes(item))) errors.push('authority-used-outside-task');
     if (result.commandsOrTestIdsExecuted.some((item) => !task.allowedCommandsOrTestIds.includes(item))) errors.push('command-or-test-outside-task');
     if (result.changedPaths.some((item) => !task.allowedPaths.includes(item))) errors.push('changed-path-outside-task');
   }
   if (!result.exactOutputIdentity || !exactSha(result.exactOutputIdentity)) errors.push('exact-output-identity-invalid');
   if (!Array.isArray(result.authorityUsed) || result.authorityUsed.some((item) => !SAFE_OPERATION.test(text(item)) || PROVIDER_NEUTRAL_HARD_DENIALS_V1.includes(item))) errors.push('authority-used-invalid');
-  if (!Array.isArray(result.commandsOrTestIdsExecuted) || result.commandsOrTestIdsExecuted.some((item) => !isSafeBoundedString(item, 500))) errors.push('commands-or-tests-invalid');
+  if (!Array.isArray(result.commandsOrTestIdsExecuted) || result.commandsOrTestIdsExecuted.some((item) => !isSafeCommandOrTestId(item))) errors.push('commands-or-tests-invalid');
   if (!Array.isArray(result.changedPaths) || result.changedPaths.some((item) => !isSafePath(item))) errors.push('changed-paths-invalid');
   if (!Array.isArray(result.artifacts) || result.artifacts.some((item) => !isSafePath(item))) errors.push('artifacts-invalid');
   if (!Array.isArray(result.proofRefs) || result.proofRefs.some((item) => !isSafeProofRef(item))) errors.push('proof-refs-invalid');
   if (result.portableCheckpointRef && !isSafeProofRef(result.portableCheckpointRef)) errors.push('portable-checkpoint-ref-invalid');
   if (!Number.isFinite(Date.parse(result.startedAtUtc)) || !Number.isFinite(Date.parse(result.completedAtUtc)) || Date.parse(result.completedAtUtc) < Date.parse(result.startedAtUtc)) errors.push('result-time-invalid');
   if (!RESULT_VERDICTS.has(result.verdict)) errors.push('verdict-invalid');
-  if (!Array.isArray(result.blockers) || result.blockers.some((item) => !isSafeBoundedString(item, 240))) errors.push('blockers-invalid');
+  if (!Array.isArray(result.blockers) || result.blockers.some((item) => !isBoundedText(item, 240))) errors.push('blockers-invalid');
   if (!['none', 'retryable', 'exhausted', 'handoff-ready'].includes(result.retryState)) errors.push('retry-state-invalid');
   if (!['held', 'released', 'not-applicable'].includes(result.leaseDisposition)) errors.push('lease-disposition-invalid');
   return Object.freeze({
@@ -404,9 +412,10 @@ export function planContinuousCapacityRefillV1(input = {}) {
   }
   const candidates = Array.isArray(input.schedulerDecision?.selectedTasks) ? input.schedulerDecision.selectedTasks : [];
   const activeLeaseIds = new Set(uniqueStrings(input.activeLeaseIds));
+  const selectedLeaseIds = new Set();
+  const selectedScopes = new Set();
   const selected = [];
   const held = [];
-  const selectedScopes = new Set();
   for (const task of candidates) {
     const validation = validateProviderNeutralTaskEnvelope(task);
     if (!validation.valid) {
@@ -421,12 +430,17 @@ export function planContinuousCapacityRefillV1(input = {}) {
       held.push(Object.freeze({ taskId: task.taskId, reason: 'RESOURCE_LEASE_ACTIVE' }));
       continue;
     }
-    const scope = scopeKey(task);
+    if (task.resourceLeaseIds.some((leaseId) => selectedLeaseIds.has(leaseId))) {
+      held.push(Object.freeze({ taskId: task.taskId, reason: 'RESOURCE_LEASE_DUPLICATE' }));
+      continue;
+    }
+    const scope = sourceScopeKey(task);
     if (selectedScopes.has(scope)) {
       held.push(Object.freeze({ taskId: task.taskId, reason: 'RESOURCE_SCOPE_DUPLICATE' }));
       continue;
     }
     selectedScopes.add(scope);
+    for (const leaseId of task.resourceLeaseIds) selectedLeaseIds.add(leaseId);
     selected.push(Object.freeze({
       missionId: task.missionId,
       goalId: task.goalId,
