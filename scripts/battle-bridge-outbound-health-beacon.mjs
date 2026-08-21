@@ -124,6 +124,7 @@ export function projectMailboxIngressLiveness(comments = [], {
     }
   }
   const matureCommands = [];
+  let validExactHeadCommandCount = 0;
   for (const comment of comments) {
     const command = extractTrustedMailboxCommandComment(comment, ownerLogin);
     if (!command || command.expectedHead !== head) continue;
@@ -132,6 +133,7 @@ export function projectMailboxIngressLiveness(comments = [], {
     const createdAtMs = Date.parse(createdAtUtc);
     const expiresAtMs = Date.parse(expiresAtUtc);
     if (!Number.isFinite(createdAtMs) || !Number.isFinite(expiresAtMs) || expiresAtMs <= createdAtMs) continue;
+    validExactHeadCommandCount += 1;
     const ageMs = Math.max(0, nowMs - createdAtMs);
     if (ageMs > graceMs) {
       matureCommands.push({
@@ -148,12 +150,21 @@ export function projectMailboxIngressLiveness(comments = [], {
     if (matureCommands[index].hasReceipt) lastReceiptIndex = index;
   }
   const pending = matureCommands.slice(lastReceiptIndex + 1).filter((command) => !command.hasReceipt);
-  if (pending.length === 0) return Object.freeze({ state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
-  return Object.freeze({
-    state: 'BLOCKED_COMMAND_INGRESS_UNOBSERVED',
-    blocker: 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED',
-    pendingRequestCount: pending.length,
-  });
+  if (pending.length > 0) {
+    return Object.freeze({
+      state: 'BLOCKED_COMMAND_INGRESS_UNOBSERVED',
+      blocker: 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED',
+      pendingRequestCount: pending.length,
+    });
+  }
+  if (validExactHeadCommandCount === 0) {
+    return Object.freeze({
+      state: 'UNPROVEN',
+      blocker: 'MAILBOX_INGRESS_NO_RECENT_EXACT_HEAD_PROOF',
+      pendingRequestCount: 0,
+    });
+  }
+  return Object.freeze({ state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
 }
 
 function combineMailboxStatus(localStatus, ingressObservation) {
