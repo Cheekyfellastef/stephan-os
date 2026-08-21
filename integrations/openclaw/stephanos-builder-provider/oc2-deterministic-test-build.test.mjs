@@ -53,6 +53,7 @@ function fixture(overrides = {}) {
     boundedActionCount: 1,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
+    ...overrides,
   };
   return { action, item, claim, grant, ...overrides };
 }
@@ -154,7 +155,7 @@ test('OC2 fails closed if a fixed test changes repository source state', async (
       if (key === 'rev-parse HEAD') return { status: 0, stdout: `${HEAD}\n`, stderr: '' };
       if (key === 'status --porcelain=v1 --untracked-files=all') {
         statusReads += 1;
-        return { status: 0, stdout: statusReads <= 2 ? '' : ' M shared/agents/unsafe.mjs\n', stderr: '' };
+        return { status: 0, stdout: statusReads === 1 ? '' : ' M shared/agents/unsafe.mjs\n', stderr: '' };
       }
     }
     return { status: 0, stdout: 'ok\n', stderr: '' };
