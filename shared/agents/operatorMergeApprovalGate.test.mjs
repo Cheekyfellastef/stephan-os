@@ -838,6 +838,37 @@ test('requires the independent workflow path, job, run attempt, PR and head bind
   assert.ok(duplicateCurrentJobs.blockers.includes('independent-review-job-count-not-one'));
 });
 
+test('personal-repository caller can require the exact deterministic independent-review run name', () => {
+  const expectedWorkflowRunName = `stephanos-independent-review-pr-${prNumber}-head-${sourceHead}-binding-legacy-pull-request-target`;
+  const run = independentWorkflowRun({
+    name: expectedWorkflowRunName,
+    display_title: expectedWorkflowRunName,
+  });
+  const options = {
+    repository,
+    prNumber,
+    expectedHead: sourceHead,
+    expectedBranch: branch,
+    expectedBaseBranch: 'main',
+    expectedBaseSha: baseSha,
+    expectedWorkflowId: reviewWorkflowId,
+    workflowRunId: reviewRunId,
+    workflowRunAttempt: reviewRunAttempt,
+    expectedWorkflowRunName,
+  };
+  assert.equal(validateIndependentReviewWorkflowRun(run, independentWorkflowJobs(), options).valid, true);
+  assert.ok(validateIndependentReviewWorkflowRun(
+    { ...run, name: INDEPENDENT_REVIEW_WORKFLOW_NAME },
+    independentWorkflowJobs(),
+    options,
+  ).blockers.includes('independent-review-workflow-name-mismatch'));
+  assert.ok(validateIndependentReviewWorkflowRun(
+    { ...run, display_title: 'lookalike' },
+    independentWorkflowJobs(),
+    options,
+  ).blockers.includes('independent-review-workflow-display-title-mismatch'));
+});
+
 test('validates only a receipt bound to the independent review run', () => {
   const ready = validateTrustedProtectedReviewReceipt(protectedReview(), {
     repository,
