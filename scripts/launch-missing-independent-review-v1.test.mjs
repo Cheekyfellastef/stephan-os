@@ -94,7 +94,7 @@ test('an existing launch receipt with no observable dispatch run fails closed in
   ]);
 });
 
-test('launcher has one fixed workflow dispatch mutation and no shell/source/merge authority surface', () => {
+test('launcher has one fixed workflow dispatch mutation, accepts draft review, and has no shell/source/merge authority surface', () => {
   const source = fs.readFileSync(new URL('./launch-missing-independent-review-v1.mjs', import.meta.url), 'utf8');
   assert.match(source, /\/actions\/workflows\/\$\{context\.workflow\.id\}\/dispatches/);
   assert.equal((source.match(/method:\s*'POST'/g) || []).length, 2, 'only launch-receipt comment plus workflow dispatch may POST');
@@ -104,4 +104,6 @@ test('launcher has one fixed workflow dispatch mutation and no shell/source/merg
   assert.match(source, /selectExactLaunchReceiptCommentV1/);
   assert.match(source, /reconcileExistingLaunchReceiptV1/);
   assert.match(source, /BLOCKED_DISPATCH_REQUEST_UNOBSERVED/);
+  assert.match(source, /pr\.state\.toLowerCase\(\) !== 'open' \|\| !pr\.sameRepository/);
+  assert.doesNotMatch(source, /pr\.state\.toLowerCase\(\) !== 'open' \|\| pr\.draft/);
 });
