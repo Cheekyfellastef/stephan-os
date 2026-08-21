@@ -19,7 +19,7 @@ export const BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE = 1889;
 export const BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY = 'Cheekyfellastef/stephan-os';
 export const BATTLE_BRIDGE_OUTBOUND_BEACON_OWNER = 'Cheekyfellastef';
 export const MAILBOX_INGRESS_GRACE_MS = 10 * 60 * 1000;
-export const MAILBOX_INGRESS_LOOKBACK_MS = 2 * 60 * 60 * 1000;
+export const MAILBOX_INGRESS_LOOKBACK_MS = 4 * 60 * 60 * 1000;
 
 const SHA = /^[0-9a-f]{40}$/;
 const MAX_STATUS_BYTES = 64 * 1024;
@@ -115,25 +115,39 @@ export function projectMailboxIngressLiveness(comments = [], {
     return Object.freeze({ state: 'UNPROVEN', blocker: 'MAILBOX_INGRESS_OBSERVATION_INVALID', pendingRequestCount: 0 });
   }
   const nowMs = now.getTime();
-  const receiptRequestIds = new Set();
+  const receiptKeys = new Set();
   for (const comment of comments) {
     const receipt = extractTrustedMailboxReceiptComment(comment, ownerLogin);
-    if (receipt && ['ACCEPTED', 'DONE', 'BLOCKED'].includes(String(receipt.state || '').toUpperCase())) {
-      receiptRequestIds.add(String(receipt.requestId));
+    const receiptHead = safeSha(receipt?.expectedHead);
+    if (receiptHead === head && ['ACCEPTED', 'DONE', 'BLOCKED'].includes(String(receipt?.state || '').toUpperCase())) {
+      receiptKeys.add(`${String(receipt.requestId)}:${receiptHead}`);
     }
   }
-  const pending = [];
+  const matureCommands = [];
   for (const comment of comments) {
     const command = extractTrustedMailboxCommandComment(comment, ownerLogin);
-    if (!command || command.expectedHead !== head || receiptRequestIds.has(command.requestId)) continue;
+    if (!command || command.expectedHead !== head) continue;
     const createdAtUtc = timestamp(comment?.created_at || comment?.createdAt);
     const expiresAtUtc = commandExpiryUtc(comment);
     const createdAtMs = Date.parse(createdAtUtc);
     const expiresAtMs = Date.parse(expiresAtUtc);
-    if (!Number.isFinite(createdAtMs) || !Number.isFinite(expiresAtMs) || expiresAtMs <= createdAtMs || nowMs > expiresAtMs) continue;
+    if (!Number.isFinite(createdAtMs) || !Number.isFinite(expiresAtMs) || expiresAtMs <= createdAtMs) continue;
     const ageMs = Math.max(0, nowMs - createdAtMs);
-    if (ageMs > graceMs) pending.push({ requestId: command.requestId, ageMs });
+    if (ageMs > graceMs) {
+      matureCommands.push({
+        requestId: command.requestId,
+        createdAtMs,
+        commentId: Number(comment?.id || 0),
+        hasReceipt: receiptKeys.has(`${command.requestId}:${head}`),
+      });
+    }
   }
+  matureCommands.sort((left, right) => left.createdAtMs - right.createdAtMs || left.commentId - right.commentId);
+  let lastReceiptIndex = -1;
+  for (let index = 0; index < matureCommands.length; index += 1) {
+    if (matureCommands[index].hasReceipt) lastReceiptIndex = index;
+  }
+  const pending = matureCommands.slice(lastReceiptIndex + 1).filter((command) => !command.hasReceipt);
   if (pending.length === 0) return Object.freeze({ state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
   return Object.freeze({
     state: 'BLOCKED_COMMAND_INGRESS_UNOBSERVED',
