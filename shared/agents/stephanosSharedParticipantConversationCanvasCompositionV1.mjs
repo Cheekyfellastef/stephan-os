@@ -4,6 +4,9 @@ import {
 import {
   buildStephanosConversationCanvasHandoffV1,
 } from './stephanosConversationCanvasHandoffV1.mjs';
+import {
+  buildStephanosConversationCanvasWorkspaceHandoffRecordV1,
+} from './stephanosConversationCanvasWorkspaceHandoffRecordV1.mjs';
 
 export const STEPHANOS_SHARED_PARTICIPANT_CONVERSATION_CANVAS_COMPOSITION_SCHEMA_VERSION =
   'stephanos.shared-participant-conversation-canvas-composition.v1';
@@ -41,8 +44,10 @@ function blocked(classification, errors = [], answered = null) {
     answerRecord: answered?.answerRecord || null,
     richResponse: answered?.richResponse || null,
     canvasHandoff: null,
+    workspaceHandoffRecord: null,
     privatePresentation: Object.freeze({
       sharedWorkspacePrivateHandoffRequired: true,
+      workspaceRecordReady: false,
       persistencePerformed: false,
       publicRelayProjectionAllowed: false,
       rawAnswerMayEnterPublicRelay: false,
@@ -79,18 +84,38 @@ export async function answerStephanosWorkspaceQuestionForConversationCanvasV1(qu
     return blocked('CONVERSATION_CANVAS_HANDOFF_BUILD_FAILED', canvasHandoff.errors, answered);
   }
 
+  const workspaceHandoffRecord = buildStephanosConversationCanvasWorkspaceHandoffRecordV1({
+    canvasHandoff,
+    correlationId: answered.question.roundId,
+    proofRefs: Array.isArray(questionRecord?.proofRefs) ? [...questionRecord.proofRefs] : [],
+    timestampUtc: answered.answer.answeredAtUtc,
+    relatedIssue: text(questionRecord?.relatedIssue) || '#1308',
+    relatedPr: text(questionRecord?.relatedPr),
+  }, {
+    nowMs: Number.isFinite(options.nowMs) ? options.nowMs : Date.parse(answered.answer.answeredAtUtc),
+  });
+  if (!workspaceHandoffRecord.valid) {
+    return blocked(
+      'CONVERSATION_CANVAS_WORKSPACE_HANDOFF_RECORD_BUILD_FAILED',
+      workspaceHandoffRecord.errors,
+      answered,
+    );
+  }
+
   return Object.freeze({
     ok: true,
     schemaVersion: STEPHANOS_SHARED_PARTICIPANT_CONVERSATION_CANVAS_COMPOSITION_SCHEMA_VERSION,
-    classification: 'STEPHANOS_CONVERSATION_CANVAS_HANDOFF_READY',
+    classification: 'STEPHANOS_CONVERSATION_CANVAS_WORKSPACE_HANDOFF_READY',
     errors: Object.freeze([]),
     question: answered.question,
     answer: answered.answer,
     answerRecord: answered.answerRecord,
     richResponse: answered.richResponse,
     canvasHandoff,
+    workspaceHandoffRecord,
     privatePresentation: Object.freeze({
       sharedWorkspacePrivateHandoffRequired: true,
+      workspaceRecordReady: true,
       persistencePerformed: false,
       publicRelayProjectionAllowed: false,
       rawAnswerMayEnterPublicRelay: false,
@@ -99,6 +124,8 @@ export async function answerStephanosWorkspaceQuestionForConversationCanvasV1(qu
       targetPayloadField: canvasHandoff.targetPayloadField,
       surface: canvasHandoff.surface,
       handoffId: canvasHandoff.handoffId,
+      workspaceHandoffId: workspaceHandoffRecord.record.handoffId,
+      workspaceSegments: workspaceHandoffRecord.workspaceSegments,
     }),
     ...authorityBoundary(),
   });
