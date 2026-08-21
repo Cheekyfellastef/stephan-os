@@ -140,7 +140,6 @@ async function main() {
   const currentMainSha = text(mainRef?.object?.sha).toLowerCase();
   if (currentMainSha !== baseSha
     || text(pullRequest?.state).toLowerCase() !== 'open'
-    || pullRequest?.draft === true
     || text(pullRequest?.head?.sha).toLowerCase() !== sourceHead
     || text(pullRequest?.head?.ref) !== branch
     || text(pullRequest?.base?.sha).toLowerCase() !== baseSha
