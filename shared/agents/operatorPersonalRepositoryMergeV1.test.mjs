@@ -1445,6 +1445,9 @@ test('one bounded fresh snapshot can recover an inconsistent GitHub check/run re
   assert.equal(recovered.snapshotAttempt, 2);
   assert.deepEqual(reads, [1, 2]);
   assert.equal(recovered.admittedReviewEscalations, 1);
+  assert.deepEqual(recovered.selectedSnapshot.workflowRuns, exactSnapshot.workflowRuns);
+  assert.notStrictEqual(recovered.selectedSnapshot.workflowRuns, exactSnapshot.workflowRuns);
+  assert.equal(Object.isFrozen(recovered.selectedSnapshot.workflowRuns), true);
   assert.ok(recovered.snapshotAttempts[0].blockers.includes('personal-repository-check-run-identity-invalid'));
 });
 
@@ -1484,6 +1487,7 @@ test('bounded fresh snapshot stays fail-closed for stable, stale and unrelated f
     });
     assert.equal(blocked.valid, false);
     assert.equal(blocked.snapshotAttempt, 0);
+    assert.equal(blocked.selectedSnapshot, null);
     assert.equal(reads, 2);
   }
 });

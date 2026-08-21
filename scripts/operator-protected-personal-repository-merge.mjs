@@ -548,6 +548,7 @@ async function collectEvidence(context, expected = {}) {
       snapshotAttempts: checks.snapshotAttempts,
     });
   }
+  const acceptedWorkflowRuns = checks.selectedSnapshot.workflowRuns;
   const evidence = validatePersonalRepositoryEvidence({
     repository: context.repository,
     repositoryOwnerType: repository?.owner?.type,
@@ -576,7 +577,7 @@ async function collectEvidence(context, expected = {}) {
   }
   const workflows = validatePersonalRepositoryWorkflowRuns(
     execution.definitions,
-    workflowRuns.items,
+    acceptedWorkflowRuns,
     evidence.identity,
   );
   if (!workflows.valid) {

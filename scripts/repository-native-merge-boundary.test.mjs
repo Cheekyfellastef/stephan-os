@@ -110,6 +110,8 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /CHECK_SNAPSHOT_REREAD_DELAY_MS = 1_000/);
   assert.match(source, /if \(attempt === 1\) return initialCheckSnapshot/);
   assert.match(source, /snapshotAttempts: checks\.snapshotAttempts/);
+  assert.match(source, /acceptedWorkflowRuns = checks\.selectedSnapshot\.workflowRuns/);
+  assert.match(source, /validatePersonalRepositoryWorkflowRuns\([\s\S]*?acceptedWorkflowRuns/);
   assert.match(source, /validatePersonalRepositoryConfiguration/);
   assert.match(source, /validatePersonalRepositoryWorkflowRuns/);
   assert.match(source, /authorization === 'omit' && \(method !== 'GET' \|\| body !== null\)/);

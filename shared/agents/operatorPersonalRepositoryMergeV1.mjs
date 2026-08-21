@@ -1167,6 +1167,7 @@ export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
       blockers: Object.freeze(['personal-repository-check-snapshot-reader-invalid']),
       snapshotAttempt: 0,
       snapshotAttempts: Object.freeze([]),
+      selectedSnapshot: null,
       finalVerdict: 'PERSONAL_REPOSITORY_CHECK_RUNS_BLOCKED',
     });
   }
@@ -1188,10 +1189,16 @@ export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
       blockers: validation.blockers,
     }));
     if (validation.valid) {
+      const selectedSnapshot = Object.freeze({
+        checkRuns: Object.freeze([...snapshot.checkRuns]),
+        workflowRuns: Object.freeze([...snapshot.workflowRuns]),
+        commitStatuses: Object.freeze([...snapshot.commitStatuses]),
+      });
       return Object.freeze({
         ...validation,
         snapshotAttempt: attempt,
         snapshotAttempts: Object.freeze(snapshotAttempts),
+        selectedSnapshot,
       });
     }
   }
@@ -1200,6 +1207,7 @@ export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
     ...validation,
     snapshotAttempt: 0,
     snapshotAttempts: Object.freeze(snapshotAttempts),
+    selectedSnapshot: null,
   });
 }
 
