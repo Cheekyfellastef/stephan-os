@@ -65,7 +65,7 @@ function snapshotReviewPullRequest(pullRequest, run) {
   if (!isPlainRecord(pullRequest)
     || Number(pullRequest.number) !== expectedNumber
     || text(pullRequest.state).toLowerCase() !== 'open'
-    || pullRequest.draft === true
+    || typeof pullRequest.draft !== 'boolean'
     || text(pullRequest?.head?.sha).toLowerCase() !== run.sourceHead
     || text(pullRequest?.head?.ref) !== run.branch
     || text(pullRequest?.base?.sha).toLowerCase() !== run.baseSha
@@ -77,7 +77,7 @@ function snapshotReviewPullRequest(pullRequest, run) {
   return Object.freeze({
     number: expectedNumber,
     state: 'open',
-    draft: false,
+    draft: pullRequest.draft === true,
     head: Object.freeze({
       sha: run.sourceHead,
       ref: run.branch,
