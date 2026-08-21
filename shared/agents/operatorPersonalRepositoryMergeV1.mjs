@@ -1096,6 +1096,77 @@ export function validatePersonalRepositoryWorkflowRunHydration(
   });
 }
 
+export function validatePersonalRepositoryCheckRunHydration(
+  summaries = [],
+  details = [],
+  expected = {},
+) {
+  const blockers = [];
+  const sourceHead = text(expected.sourceHead).toLowerCase();
+  if (!Array.isArray(summaries) || summaries.length === 0) {
+    blockers.push('personal-repository-check-run-summaries-invalid');
+  }
+  if (!Array.isArray(details) || details.length === 0) {
+    blockers.push('personal-repository-check-run-details-invalid');
+  }
+  if (!SHA_PATTERN.test(sourceHead)) {
+    blockers.push('personal-repository-check-run-hydration-head-invalid');
+  }
+
+  const summaryIds = new Set();
+  const detailById = new Map();
+  for (const detail of Array.isArray(details) ? details : []) {
+    const detailId = strictPositiveInteger(detail?.id);
+    if (!detailId || detailById.has(detailId)) {
+      blockers.push('personal-repository-check-run-detail-identity-invalid');
+      continue;
+    }
+    detailById.set(detailId, detail);
+  }
+
+  const hydratedChecks = [];
+  for (const summary of Array.isArray(summaries) ? summaries : []) {
+    const summaryId = strictPositiveInteger(summary?.id);
+    const summaryName = text(summary?.name);
+    const summaryStatus = text(summary?.status).toLowerCase();
+    const summaryConclusion = text(summary?.conclusion).toLowerCase();
+    if (!summaryId || !summaryName || !summaryStatus
+      || text(summary?.head_sha).toLowerCase() !== sourceHead
+      || summaryIds.has(summaryId)) {
+      blockers.push('personal-repository-check-run-summary-identity-invalid');
+      continue;
+    }
+    summaryIds.add(summaryId);
+    const detail = detailById.get(summaryId);
+    const summaryAppId = strictPositiveInteger(summary?.app?.id);
+    const summaryAppSlug = text(summary?.app?.slug);
+    if (!detail
+      || text(detail?.head_sha).toLowerCase() !== sourceHead
+      || text(detail?.name) !== summaryName
+      || text(detail?.status).toLowerCase() !== summaryStatus
+      || text(detail?.conclusion).toLowerCase() !== summaryConclusion
+      || (summaryAppId && strictPositiveInteger(detail?.app?.id) !== summaryAppId)
+      || (summaryAppSlug && text(detail?.app?.slug) !== summaryAppSlug)) {
+      blockers.push('personal-repository-check-run-detail-mismatch');
+      continue;
+    }
+    hydratedChecks.push(detail);
+  }
+  if (summaryIds.size !== detailById.size) {
+    blockers.push('personal-repository-check-run-hydration-cardinality-mismatch');
+  }
+
+  const valid = blockers.length === 0 && hydratedChecks.length === summaryIds.size;
+  return Object.freeze({
+    valid,
+    checks: valid ? Object.freeze([...hydratedChecks]) : Object.freeze([]),
+    blockers: Object.freeze(unique(blockers)),
+    finalVerdict: valid
+      ? 'PERSONAL_REPOSITORY_CHECK_RUN_HYDRATION_READY'
+      : 'PERSONAL_REPOSITORY_CHECK_RUN_HYDRATION_BLOCKED',
+  });
+}
+
 export function validatePersonalRepositoryCheckRuns(
   checkRuns = [],
   workflowRuns = [],
@@ -1105,6 +1176,7 @@ export function validatePersonalRepositoryCheckRuns(
 ) {
   const blockers = [];
   const evidence = [];
+  const identityFailures = [];
   const repository = text(expected.repository);
   const prNumber = strictPositiveInteger(expected.prNumber);
   const branch = text(expected.branch);
@@ -1154,13 +1226,23 @@ export function validatePersonalRepositoryCheckRuns(
     const path = canonicalWorkflowPath(run, repository);
     const detailsUrl = `https://github.com/${repository}/actions/runs/${run?.id}/job/${checkId}`;
 
-    if (!checkId || !checkSuiteId || !name
-      || text(check?.head_sha).toLowerCase() !== sourceHead
-      || text(check?.app?.slug) !== 'github-actions'
-      || strictPositiveInteger(check?.app?.id) !== 15368
-      || text(check?.details_url) !== detailsUrl
-      || !exactRun) {
+    const identityMismatches = [
+      ['check-id', Boolean(checkId)],
+      ['check-suite-id', Boolean(checkSuiteId)],
+      ['check-name', Boolean(name)],
+      ['check-head', text(check?.head_sha).toLowerCase() === sourceHead],
+      ['check-app-slug', text(check?.app?.slug) === 'github-actions'],
+      ['check-app-id', strictPositiveInteger(check?.app?.id) === 15368],
+      ['check-details-url', text(check?.details_url) === detailsUrl],
+      ['workflow-run', exactRun],
+    ].filter(([, matches]) => !matches).map(([field]) => field);
+    if (identityMismatches.length !== 0) {
       blockers.push('personal-repository-check-run-identity-invalid');
+      identityFailures.push(Object.freeze({
+        checkId,
+        name,
+        mismatches: Object.freeze(identityMismatches),
+      }));
       continue;
     }
 
@@ -1212,6 +1294,7 @@ export function validatePersonalRepositoryCheckRuns(
     valid: blockers.length === 0,
     evidence: Object.freeze(evidence),
     admittedReviewEscalations,
+    identityFailures: Object.freeze(identityFailures),
     blockers: Object.freeze(unique(blockers)),
     finalVerdict: blockers.length
       ? 'PERSONAL_REPOSITORY_CHECK_RUNS_BLOCKED'

@@ -32,6 +32,7 @@ import {
   extractPersonalRepositoryArtifactZip,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
+  validatePersonalRepositoryCheckRunHydration,
   validatePersonalRepositoryCheckRunsWithBoundedReread,
   validatePersonalRepositoryConfiguration,
   validatePersonalRepositoryDispatchExecution,
@@ -348,6 +349,23 @@ async function hydrateExactHeadWorkflowRuns(context, sourceHead, summaries) {
   return validation.runs;
 }
 
+async function hydrateExactHeadCheckRuns(context, sourceHead, summaries) {
+  const details = await Promise.all((Array.isArray(summaries) ? summaries : []).map((check) => (
+    apiJson(`/repos/${context.owner}/${context.repo}/check-runs/${check?.id}`)
+  )));
+  const validation = validatePersonalRepositoryCheckRunHydration(
+    summaries,
+    details,
+    { sourceHead },
+  );
+  if (!validation.valid) {
+    fail('Exact-head check-run summaries could not be bound to full check identities.', {
+      blockers: validation.blockers,
+    });
+  }
+  return validation.checks;
+}
+
 function configurationSnapshot(repository, environment, activeRules, rulesets) {
   return sha256(JSON.stringify(buildPersonalRepositoryConfigurationEvidence({
     repository,
@@ -541,9 +559,14 @@ async function collectEvidence(context, expected = {}) {
     identity.sourceHead,
     workflowRuns.items,
   );
+  const initialCheckRuns = await hydrateExactHeadCheckRuns(
+    context,
+    identity.sourceHead,
+    checkRuns.items,
+  );
   const independentReview = await loadSelectedIndependentReview(context, identity);
   const initialCheckSnapshot = Object.freeze({
-    checkRuns: checkRuns.items,
+    checkRuns: initialCheckRuns,
     workflowRuns: initialWorkflowRuns,
     commitStatuses: commitStatuses.items,
   });
@@ -551,7 +574,7 @@ async function collectEvidence(context, expected = {}) {
     readSnapshot: async (attempt) => {
       if (attempt === 1) return initialCheckSnapshot;
       await new Promise((resolve) => setTimeout(resolve, CHECK_SNAPSHOT_REREAD_DELAY_MS));
-      const [freshWorkflowRunSummaries, freshCheckRuns, freshCommitStatuses] = await Promise.all([
+      const [freshWorkflowRunSummaries, freshCheckRunSummaries, freshCommitStatuses] = await Promise.all([
         apiCollection(`/repos/${context.owner}/${context.repo}/actions/runs?head_sha=${identity.sourceHead}`, 'workflow_runs'),
         apiCollection(`/repos/${context.owner}/${context.repo}/commits/${identity.sourceHead}/check-runs?filter=latest`, 'check_runs'),
         apiCollection(`/repos/${context.owner}/${context.repo}/commits/${identity.sourceHead}/statuses`, null),
@@ -561,8 +584,13 @@ async function collectEvidence(context, expected = {}) {
         identity.sourceHead,
         freshWorkflowRunSummaries.items,
       );
+      const freshCheckRuns = await hydrateExactHeadCheckRuns(
+        context,
+        identity.sourceHead,
+        freshCheckRunSummaries.items,
+      );
       return Object.freeze({
-        checkRuns: freshCheckRuns.items,
+        checkRuns: freshCheckRuns,
         workflowRuns: freshWorkflowRuns,
         commitStatuses: freshCommitStatuses.items,
       });
@@ -574,6 +602,7 @@ async function collectEvidence(context, expected = {}) {
     fail('One or more exact-head checks are pending, failed, stale or outside the reviewed escalation.', {
       blockers: checks.blockers,
       snapshotAttempts: checks.snapshotAttempts,
+      identityFailures: checks.identityFailures,
     });
   }
   const acceptedWorkflowRuns = checks.selectedSnapshot.workflowRuns;

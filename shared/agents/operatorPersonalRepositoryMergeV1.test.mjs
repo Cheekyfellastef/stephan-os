@@ -24,6 +24,7 @@ import {
   validatePersonalRepositoryArtifactArchiveRedirect,
   validatePersonalRepositoryArtifactArchiveResponse,
   validatePersonalRepositoryCheckRuns,
+  validatePersonalRepositoryCheckRunHydration,
   validatePersonalRepositoryCheckRunsWithBoundedReread,
   validatePersonalRepositoryConfiguration,
   validatePersonalRepositoryDispatchExecution,
@@ -1347,6 +1348,59 @@ test('workflow run hydration rejects omissions, substitutions, duplicates and st
   }
 });
 
+test('check run hydration replaces permission-trimmed summaries only with exact individual identities', () => {
+  const run = escalationWorkflowRun();
+  const details = [checkRun(run)];
+  const summaries = details.map((check) => ({
+    id: check.id,
+    name: check.name,
+    head_sha: check.head_sha,
+    status: check.status,
+    conclusion: check.conclusion,
+    app: check.app,
+  }));
+  const hydrated = validatePersonalRepositoryCheckRunHydration(
+    summaries,
+    details,
+    { sourceHead },
+  );
+  assert.equal(hydrated.valid, true);
+  assert.deepEqual(hydrated.checks, details);
+  assert.equal(hydrated.checks[0].check_suite.id, run.check_suite_id);
+});
+
+test('check run hydration rejects omissions, substitutions, duplicates and stale identities', () => {
+  const run = escalationWorkflowRun();
+  const details = [checkRun(run)];
+  const summaries = details.map((check) => ({
+    id: check.id,
+    name: check.name,
+    head_sha: check.head_sha,
+    status: check.status,
+    conclusion: check.conclusion,
+    app: check.app,
+  }));
+  const hostilePairs = [
+    [summaries, []],
+    [summaries, [{ ...details[0], name: 'lookalike' }]],
+    [summaries, [{ ...details[0], status: 'in_progress' }]],
+    [summaries, [{ ...details[0], head_sha: 'f'.repeat(40) }]],
+    [summaries, [{ ...details[0], app: { ...details[0].app, id: 999 } }]],
+    [[...summaries, summaries[0]], details],
+    [summaries, [...details, details[0]]],
+  ];
+  for (const [candidateSummaries, candidateDetails] of hostilePairs) {
+    const blocked = validatePersonalRepositoryCheckRunHydration(
+      candidateSummaries,
+      candidateDetails,
+      { sourceHead },
+    );
+    assert.equal(blocked.valid, false);
+    assert.deepEqual(blocked.checks, []);
+    assert.ok(blocked.blockers.length > 0);
+  }
+});
+
 test('personal repository evidence binds operator, PR, branch, head, tree and current base', () => {
   assert.equal(validatePersonalRepositoryEvidence(evidenceInput(), expectedEvidence).valid, true);
   for (const [overrides, blocker] of [
@@ -1436,6 +1490,15 @@ test('UNSTABLE admission binds the one failing check to the exact reviewed escal
     );
     assert.equal(rejected.valid, false);
   }
+
+  const identityRejected = validatePersonalRepositoryCheckRuns(
+    [greenCheck, checkRun(escalationRun, { details_url: 'https://example.test/not-the-bound-job' })],
+    runs,
+    [],
+    expected,
+    { cleanIndependentReviewProved: true },
+  );
+  assert.deepEqual(identityRejected.identityFailures[0].mismatches, ['check-details-url']);
 
   const unrelatedFailure = checkRun(greenRun, {
     id: 9302,
