@@ -248,7 +248,7 @@ async function exactContext({ owner, repo, repository, prNumber, expectedHead, t
   ]);
   const pr = mapPullRequest(rawPr);
   const mainSha = text(mainRef?.object?.sha).toLowerCase();
-  if (pr.state.toLowerCase() !== 'open' || pr.draft || !pr.sameRepository
+  if (pr.state.toLowerCase() !== 'open' || !pr.sameRepository
     || pr.baseRef !== 'main' || pr.baseSha !== mainSha || pr.headSha !== expectedHead) {
     throw new Error('pull request no longer matches exact open current-main review identity');
   }

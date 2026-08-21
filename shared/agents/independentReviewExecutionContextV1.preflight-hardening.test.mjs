@@ -27,11 +27,11 @@ function authority() {
   };
 }
 
-function pullRequest() {
+function pullRequest({ draft = false, state = 'open' } = {}) {
   return {
     number: 42,
-    state: 'open',
-    draft: false,
+    state,
+    draft,
     head: { ref: branch, sha: sourceHead, repo: { full_name: repository } },
     base: { ref: 'main', sha: baseSha, repo: { full_name: repository } },
   };
@@ -90,18 +90,32 @@ test('unknown preflight fields fail closed', () => {
   );
 });
 
-test('draft or closed pull-request snapshots cannot be smuggled into dispatch execution', () => {
-  const draft = preflight();
-  draft.pullRequest.draft = true;
+test('draft pull-request snapshots remain reviewable but never gain mutation authority', () => {
+  const draft = preflight({ pullRequest: pullRequest({ draft: true }) });
+  const result = buildIndependentReviewExecutionContextV1(dispatchInput(draft));
+  assert.equal(result.source, 'workflow_dispatch');
+  assert.equal(result.prNumber, 42);
+  assert.equal(result.authority.reviewExecutionAllowed, true);
+  assert.equal(result.authority.sourceMutationAllowed, false);
+  assert.equal(result.authority.approvalAllowed, false);
+  assert.equal(result.authority.mergeAllowed, false);
+  assert.equal(result.authority.deploymentAllowed, false);
+  assert.equal(result.authority.runtimeMutationAllowed, false);
+  assert.equal(result.authority.providerQualificationAllowed, false);
+  assert.equal(result.authority.leaseSeizureAllowed, false);
+  assert.equal(result.authority.arbitraryCommandAllowed, false);
+});
+
+test('closed or malformed draft-state pull-request snapshots cannot be smuggled into dispatch execution', () => {
+  const closed = preflight({ pullRequest: pullRequest({ state: 'closed' }) });
   assert.throws(
-    () => buildIndependentReviewExecutionContextV1(dispatchInput(draft)),
+    () => buildIndependentReviewExecutionContextV1(dispatchInput(closed)),
     /complete trusted review identity/,
   );
 
-  const closed = preflight();
-  closed.pullRequest.state = 'closed';
+  const malformedDraft = preflight({ pullRequest: { ...pullRequest(), draft: 'yes' } });
   assert.throws(
-    () => buildIndependentReviewExecutionContextV1(dispatchInput(closed)),
+    () => buildIndependentReviewExecutionContextV1(dispatchInput(malformedDraft)),
     /complete trusted review identity/,
   );
 });
