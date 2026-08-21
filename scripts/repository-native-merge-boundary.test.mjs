@@ -94,9 +94,11 @@ test('protected boundary keeps the native queue and adds only the exact user-own
   assert.doesNotMatch(protectedSource, /STEPHANOS_RULESET_PROOF_TOKEN[^\n]*(?:GITHUB_OUTPUT|GITHUB_ENV|upload-artifact)/i);
 
   assert.match(independentSource, /pull_request_target:/);
+  assert.match(independentSource, /^  workflow_dispatch:\s*$/m);
   assert.match(independentSource, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
-  assert.match(independentSource, /persist-credentials: false/);
-  assert.match(independentSource, /independent-merge-security-review-v2\.mjs/);
+  assert.match(independentSource, /ref: \$\{\{ github\.sha \}\}/);
+  assert.equal([...independentSource.matchAll(/persist-credentials: false/g)].length, 2);
+  assert.match(independentSource, /independent-merge-security-review-entry-v1\.mjs/);
 });
 
 test('personal-repository executor is workflow-dispatch-only and performs one exact-head squash without branch deletion', async () => {
