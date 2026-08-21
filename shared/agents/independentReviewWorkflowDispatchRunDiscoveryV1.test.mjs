@@ -13,7 +13,7 @@ const BASE = '2'.repeat(40);
 const BINDING = 'a'.repeat(64);
 const RECEIPT = 'b'.repeat(64);
 
-function receipt() {
+function receipt(requestedAtUtc = '2026-08-20T10:00:00.000Z') {
   return buildIndependentReviewWorkflowDispatchLaunchReceiptV1({
     launchPlan: {
       schemaVersion: 'stephanos.independent-review-missing-run-launch.v1',
@@ -56,7 +56,7 @@ function receipt() {
         arbitraryCommandAllowed: false,
       },
     },
-    requestedAtUtc: '2026-08-20T10:00:00.000Z',
+    requestedAtUtc,
   });
 }
 
@@ -96,15 +96,30 @@ test('discovers one exact running or terminal workflow-dispatch review run from 
   assert.equal(terminal.conclusion, 'success');
 });
 
-test('does not let unrelated or pre-receipt dispatch runs suppress a legitimate launch', () => {
-  const launchReceipt = receipt();
+test('accepts GitHub whole-second created_at for a millisecond launch receipt in the same second', () => {
+  const launchReceipt = receipt('2026-08-20T10:00:00.750Z');
+  const result = discoverIndependentReviewWorkflowDispatchRunV1({
+    launchReceipt,
+    runs: [run(launchReceipt, {
+      created_at: '2026-08-20T10:00:00.000Z',
+      status: 'completed',
+      conclusion: 'success',
+    })],
+  });
+  assert.equal(result.verdict, 'DISPATCH_RUN_TERMINAL');
+  assert.equal(result.runId, 500);
+  assert.equal(result.conclusion, 'success');
+});
+
+test('does not let unrelated or previous-second dispatch runs suppress a legitimate launch', () => {
+  const launchReceipt = receipt('2026-08-20T10:00:00.750Z');
   const result = discoverIndependentReviewWorkflowDispatchRunV1({
     launchReceipt,
     runs: [
       run(launchReceipt, { id: 1, display_title: 'other' }),
       run(launchReceipt, { id: 2, event: 'pull_request_target' }),
       run(launchReceipt, { id: 3, head_sha: '3'.repeat(40) }),
-      run(launchReceipt, { id: 4, created_at: '2026-08-20T09:59:59.000Z' }),
+      run(launchReceipt, { id: 4, created_at: '2026-08-20T09:59:59.999Z' }),
     ],
   });
   assert.equal(result.verdict, 'DISPATCH_RUN_NOT_YET_OBSERVED');

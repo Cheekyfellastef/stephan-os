@@ -103,8 +103,8 @@ function environment(overrides = {}) {
   };
 }
 
-function validInput() {
-  const pr = pullRequest();
+function validInput({ draft = false } = {}) {
+  const pr = pullRequest({ draft });
   const receipt = buildIndependentReviewHandoffRunReceiptV1({
     repository: CANONICAL_REPOSITORY,
     currentMainSha: baseSha,
@@ -144,6 +144,22 @@ test('normalizes one trusted workflow-dispatch run into a bounded immutable revi
   assert.equal(Object.isFrozen(result.pullRequest), true);
 });
 
+test('preserves draft truth while keeping provider-neutral review zero-authority', () => {
+  const result = buildIndependentReviewWorkflowDispatchPreflightV1(validInput({ draft: true }));
+  assert.equal(result.verdict, 'INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_PREFLIGHT_PASS');
+  assert.equal(result.pullRequest.state, 'open');
+  assert.equal(result.pullRequest.draft, true);
+  assert.equal(result.authority.reviewExecutionAllowed, true);
+  assert.equal(result.authority.sourceMutationAllowed, false);
+  assert.equal(result.authority.approvalAllowed, false);
+  assert.equal(result.authority.mergeAllowed, false);
+  assert.equal(result.authority.deploymentAllowed, false);
+  assert.equal(result.authority.runtimeMutationAllowed, false);
+  assert.equal(result.authority.providerQualificationAllowed, false);
+  assert.equal(result.authority.leaseSeizureAllowed, false);
+  assert.equal(result.authority.arbitraryCommandAllowed, false);
+});
+
 test('fails closed if the workflow run, dispatch inputs or live pull request identity drift', () => {
   const wrongEvent = validInput();
   wrongEvent.environment = environment({ GITHUB_EVENT_NAME: 'schedule' });
@@ -153,7 +169,11 @@ test('fails closed if the workflow run, dispatch inputs or live pull request ide
   wrongInput.workflowDispatchInputs = { ...wrongInput.workflowDispatchInputs, source_head: '3'.repeat(40) };
   assert.throws(() => buildIndependentReviewWorkflowDispatchPreflightV1(wrongInput), /workflow dispatch run identity/);
 
-  const draft = validInput();
-  draft.pullRequest = pullRequest({ draft: true });
-  assert.throws(() => buildIndependentReviewWorkflowDispatchPreflightV1(draft), /pull request/);
+  const closed = validInput();
+  closed.pullRequest = pullRequest({ state: 'closed' });
+  assert.throws(() => buildIndependentReviewWorkflowDispatchPreflightV1(closed), /pull request/);
+
+  const malformedDraft = validInput();
+  malformedDraft.pullRequest = pullRequest({ draft: 'yes' });
+  assert.throws(() => buildIndependentReviewWorkflowDispatchPreflightV1(malformedDraft), /pull request/);
 });
