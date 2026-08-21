@@ -66,7 +66,7 @@ test('desktop READY presenter produces a deterministic summary-first Conversatio
   assert.equal(result.sectionNavigation.length, 7);
 });
 
-test('progressive disclosure keeps evidence collapsed by default and expands only requested sections', () => {
+test('progressive disclosure keeps sections visually collapsed while retaining bounded details for disclosure', () => {
   const collapsed = buildUiAgentConversationCanvasPresenterV1({
     canvasContract: canvasContract(),
     richResponse: richResponse(),
@@ -76,9 +76,11 @@ test('progressive disclosure keeps evidence collapsed by default and expands onl
   const actionCollapsed = collapsed.sections.find((section) => section.id === 'action');
   assert.equal(evidenceCollapsed.expanded, false);
   assert.equal(evidenceCollapsed.itemCount, 2);
-  assert.deepEqual(evidenceCollapsed.items, []);
+  assert.equal(evidenceCollapsed.items.length, 2);
   assert.equal(actionCollapsed.expanded, false);
+  assert.equal(actionCollapsed.items.length, 2);
   assert.equal(collapsed.progressiveDisclosure.evidenceCollapsedByDefault, true);
+  assert.equal(collapsed.accessibility.evidenceKeyboardReachable, true);
 
   const expanded = buildUiAgentConversationCanvasPresenterV1({
     canvasContract: canvasContract(),
@@ -89,9 +91,9 @@ test('progressive disclosure keeps evidence collapsed by default and expands onl
   const evidenceExpanded = expanded.sections.find((section) => section.id === 'evidence');
   const actionExpanded = expanded.sections.find((section) => section.id === 'action');
   assert.equal(evidenceExpanded.expanded, true);
-  assert.equal(evidenceExpanded.items.length, 2);
+  assert.deepEqual(evidenceExpanded.items, evidenceCollapsed.items);
   assert.equal(actionExpanded.expanded, true);
-  assert.equal(actionExpanded.items.length, 2);
+  assert.deepEqual(actionExpanded.items, actionCollapsed.items);
   assert.equal(expanded.progressiveDisclosure.evidenceCollapsedByDefault, false);
 });
 
