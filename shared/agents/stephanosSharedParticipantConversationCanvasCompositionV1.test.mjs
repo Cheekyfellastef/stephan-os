@@ -10,6 +10,7 @@ import {
 import {
   STEPHANOS_SHARED_PARTICIPANT_CONVERSATION_CANVAS_COMPOSITION_SCHEMA_VERSION,
   answerStephanosWorkspaceQuestionForConversationCanvasV1,
+  buildStephanosConversationCanvasFromPersistedQaV1,
 } from './stephanosSharedParticipantConversationCanvasCompositionV1.mjs';
 
 const NOW = new Date('2026-08-21T00:10:00.000Z');
@@ -123,6 +124,67 @@ test('real live-QA result composes directly into the existing private Conversati
   assert.equal(result.privatePresentation.persistencePerformed, false);
   assert.equal(result.privatePresentation.servedPresentationClaimed, false);
   assert.equal(result.privatePresentation.workspaceHandoffId, result.workspaceHandoffRecord.record.handoffId);
+});
+
+test('persisted canonical Q&A can rebuild the identical private Canvas handoff without calling Stephanos cognition again', async () => {
+  const record = questionRecord();
+  let queryCalls = 0;
+  const first = await answerStephanosWorkspaceQuestionForConversationCanvasV1(record, {
+    now: NOW,
+    surface: 'ipad',
+    prefersReducedMotion: true,
+    expandedSections: ['evidence'],
+    queryFn: async () => {
+      queryCalls += 1;
+      return groundedResponse();
+    },
+  });
+  assert.equal(first.ok, true);
+  assert.equal(queryCalls, 1);
+
+  const replay = buildStephanosConversationCanvasFromPersistedQaV1(record, first.answerRecord, {
+    nowMs: NOW.getTime(),
+    surface: 'ipad',
+    prefersReducedMotion: true,
+    expandedSections: ['evidence'],
+  });
+
+  assert.equal(queryCalls, 1);
+  assert.equal(replay.ok, true);
+  assert.equal(replay.classification, 'STEPHANOS_CONVERSATION_CANVAS_WORKSPACE_HANDOFF_READY');
+  assert.equal(replay.answer.answerId, first.answer.answerId);
+  assert.equal(replay.richResponse.responseId, first.richResponse.responseId);
+  assert.equal(replay.canvasHandoff.handoffId, first.canvasHandoff.handoffId);
+  assert.equal(replay.workspaceHandoffRecord.record.handoffId, first.workspaceHandoffRecord.record.handoffId);
+  assert.deepEqual(replay.workspaceHandoffRecord.workspaceSegments, first.workspaceHandoffRecord.workspaceSegments);
+  assert.equal(replay.privatePresentation.persistencePerformed, false);
+  assert.equal(replay.privatePresentation.rawAnswerMayEnterPublicRelay, false);
+});
+
+test('persisted Q&A replay rejects cross-PR lineage before producing a private Canvas handoff', async () => {
+  const record = questionRecord();
+  const first = await answerStephanosWorkspaceQuestionForConversationCanvasV1(record, {
+    now: NOW,
+    surface: 'desktop-browser',
+    queryFn: async () => groundedResponse(),
+  });
+  assert.equal(first.ok, true);
+
+  const mismatchedAnswerRecord = {
+    ...first.answerRecord,
+    relatedPr: '#1906',
+  };
+  const replay = buildStephanosConversationCanvasFromPersistedQaV1(record, mismatchedAnswerRecord, {
+    nowMs: NOW.getTime(),
+    surface: 'desktop-browser',
+  });
+
+  assert.equal(replay.ok, false);
+  assert.equal(replay.classification, 'PERSISTED_CONVERSATION_LINEAGE_REJECTED');
+  assert.deepEqual(replay.errors, ['persisted-question-answer-lineage-mismatch']);
+  assert.equal(replay.canvasHandoff, null);
+  assert.equal(replay.workspaceHandoffRecord, null);
+  assert.equal(replay.privatePresentation.publicRelayProjectionAllowed, false);
 });
 
 test('partial live-QA truth cannot be promoted to READY during Canvas composition', async () => {
