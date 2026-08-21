@@ -97,6 +97,30 @@ test('unknown root cause routes to #1902 research instead of guessing a change',
   assert.equal(result.proposalReady, false);
 });
 
+test('research-led evidence can produce a bounded proposal but never grants implementation authority', () => {
+  const result = planStephanosGovernedImprovementProposalV1(packet({
+    gap: {
+      gapId: 'gap-research-led-conversation-evidence',
+      gapSource: 'STEPHANOS_RESEARCH_DISCOVERY',
+      evidenceRefs: ['evidence/research-expedition-1902'],
+    },
+    diagnosis: {
+      rootCauseState: 'KNOWN',
+      rootCauseSummary: 'Bounded research found that evidence hierarchy is the smallest useful change.',
+      researchRoute: 'SPECIALIST_RESEARCH',
+      researchRefs: ['research/1902/evidence-hierarchy'],
+    },
+  }));
+  assert.equal(result.status, 'IMPROVEMENT_PROPOSAL_READY_EXISTING_OWNER');
+  assert.equal(result.gapSource, 'STEPHANOS_RESEARCH_DISCOVERY');
+  assert.equal(result.currentOwnerGoal, '#1722');
+  assert.equal(result.authorityRequired, 'SOURCE_IMPLEMENTATION_AUTHORIZATION_REQUIRED');
+  assert.equal(result.proposalReady, true);
+  assert.equal(result.implementationAllowed, false);
+  assert.equal(result.dispatchAllowed, false);
+  assert.equal(result.mergeAllowed, false);
+});
+
 test('overlapping active writer blocks duplicate implementation ownership', () => {
   const result = planStephanosGovernedImprovementProposalV1(packet({
     architecture: {
