@@ -12,6 +12,7 @@ const MOBILE_RECOVERY_VERIFICATION_JOURNAL_PATH = './windowsAuthorityMobileRecov
 const MOBILE_RECOVERY_GITHUB_CONSUMER_PATH = './windowsAuthorityMobileRecoveryGitHubConsumerReviewV1.mjs';
 const MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATH = './windowsAuthorityMobileRecoveryLifeboatInstallerReviewV1.mjs';
 const WORKER_WATCHDOG_PATH = './windowsAuthorityWorkerWatchdogReviewV1.mjs';
+const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1.mjs';
 const FORGE_M3_EXECUTOR_PATH = './windowsAuthorityForgeM3ExecutorReviewV1.mjs';
 const FORGE_PODMAN_PREREQUISITE_PATH = './windowsAuthorityForgePodmanPrerequisiteReviewV1.mjs';
 const CORE_BLOB_SHA = '4424046455d8fd7724f1ae8b7c53b7c6529668df';
@@ -25,6 +26,7 @@ const MOBILE_RECOVERY_VERIFICATION_JOURNAL_BLOB_SHA = 'b4b3a6dd6c0226331d4faf682
 const MOBILE_RECOVERY_GITHUB_CONSUMER_BLOB_SHA = '7b0a62a712c2340293ffe09aee0154ae9e9766de';
 const MOBILE_RECOVERY_LIFEBOAT_INSTALLER_BLOB_SHA = '6ca86bcd68e034950b3d01fdabb12e3eb07055e1';
 const WORKER_WATCHDOG_BLOB_SHA = 'b69e048ea9857b713e2faa17a1bbecec62fed84d';
+const IGNITION_CONVERGENCE_BLOB_SHA = '8d583a4c2247be80f91db34d46e3eb870aea9576';
 const FORGE_M3_EXECUTOR_BLOB_SHA = '7177c695d5a12b009785676440ce83163897f8f2';
 const FORGE_PODMAN_PREREQUISITE_BLOB_SHA = '0a0c98287f20145e31bf8aa3978d0ba4196cbcce';
 const EXPECTED_NO_FAFF_PATHS = Object.freeze(['scripts/windows/repair-battle-bridge-control-plane-now.ps1','scripts/windows/Repair-Battle-Bridge-Control-Plane-Now.cmd','scripts/windows/repair-battle-bridge-control-plane-now.test.mjs','scripts/windows/status-stephanos-codex-dispatch-plugin.ps1']);
@@ -36,6 +38,7 @@ const EXPECTED_MOBILE_RECOVERY_EXECUTOR_PATHS = Object.freeze(['docs/architectur
 const EXPECTED_MOBILE_RECOVERY_VERIFICATION_JOURNAL_PATHS = Object.freeze(['docs/architecture/battle-bridge-recovery-lifeboat-verification-journal-v1.md','scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1','shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs','shared/agents/battleBridgeRecoveryLifeboatVerificationJournalV1.test.mjs']);
 const EXPECTED_MOBILE_RECOVERY_GITHUB_CONSUMER_PATHS = Object.freeze(['docs/architecture/battle-bridge-recovery-lifeboat-github-consumer-v1.md','scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1','scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1','scripts/windows/run-battle-bridge-recovery-lifeboat-bank-v1.ps1','shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs']);
 const EXPECTED_MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATHS = Object.freeze(['docs/architecture/battle-bridge-recovery-lifeboat-ab-installer-v1.md','scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1','scripts/windows/run-battle-bridge-recovery-lifeboat-active-v1.ps1','scripts/windows/run-battle-bridge-recovery-lifeboat-bank-v1.ps1','shared/agents/battleBridgeRecoveryLifeboatInstallV1.mjs','shared/agents/battleBridgeRecoveryLifeboatInstallV1.test.mjs']);
+const EXPECTED_IGNITION_CONVERGENCE_PATHS = Object.freeze(['scripts/windows/repair-stephanos-battle-bridge.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1','scripts/windows/start-stephanos-backend.ps1']);
 const EXPECTED_FORGE_M3_EXECUTOR_PATHS = Object.freeze(['scripts/windows/invoke-forge-shadow-m3-fixed-proof-executors-v1.ps1','scripts/windows/invoke-forge-shadow-m3-fixed-proof-executors-v1.test.mjs']);
 const EXPECTED_FORGE_PODMAN_PREREQUISITE_PATHS = Object.freeze(['scripts/windows/install-forge-shadow-podman-prerequisite-v1.ps1']);
 
@@ -52,6 +55,7 @@ const mobileRecoveryVerificationJournalUrl = provePinnedModule(MOBILE_RECOVERY_V
 const mobileRecoveryGitHubConsumerUrl = provePinnedModule(MOBILE_RECOVERY_GITHUB_CONSUMER_PATH, MOBILE_RECOVERY_GITHUB_CONSUMER_BLOB_SHA);
 const mobileRecoveryLifeboatInstallerUrl = provePinnedModule(MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATH, MOBILE_RECOVERY_LIFEBOAT_INSTALLER_BLOB_SHA);
 const workerWatchdogUrl = provePinnedModule(WORKER_WATCHDOG_PATH, WORKER_WATCHDOG_BLOB_SHA);
+const ignitionConvergenceUrl = provePinnedModule(IGNITION_CONVERGENCE_PATH, IGNITION_CONVERGENCE_BLOB_SHA);
 const forgeM3ExecutorUrl = provePinnedModule(FORGE_M3_EXECUTOR_PATH, FORGE_M3_EXECUTOR_BLOB_SHA);
 const forgePodmanPrerequisiteUrl = provePinnedModule(FORGE_PODMAN_PREREQUISITE_PATH, FORGE_PODMAN_PREREQUISITE_BLOB_SHA);
 const core = await import(coreUrl.href);
@@ -65,6 +69,7 @@ const mobileRecoveryVerificationJournal = await import(mobileRecoveryVerificatio
 const mobileRecoveryGitHubConsumer = await import(mobileRecoveryGitHubConsumerUrl.href);
 const mobileRecoveryLifeboatInstaller = await import(mobileRecoveryLifeboatInstallerUrl.href);
 const workerWatchdog = await import(workerWatchdogUrl.href);
+const ignitionConvergence = await import(ignitionConvergenceUrl.href);
 const forgeM3Executor = await import(forgeM3ExecutorUrl.href);
 const forgePodmanPrerequisite = await import(forgePodmanPrerequisiteUrl.href);
 if (JSON.stringify(workerWatchdog.WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1) !== JSON.stringify(['scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1','scripts/windows/start-mission-orchestrator-worker.ps1'])) throw new Error('WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATH_INVENTORY_MISMATCH');
@@ -77,6 +82,7 @@ if (JSON.stringify(mobileRecoveryExecutor.WINDOWS_AUTHORITY_MOBILE_RECOVERY_EXEC
 if (JSON.stringify(mobileRecoveryVerificationJournal.WINDOWS_AUTHORITY_MOBILE_RECOVERY_VERIFICATION_JOURNAL_PATHS_V1) !== JSON.stringify(EXPECTED_MOBILE_RECOVERY_VERIFICATION_JOURNAL_PATHS)) throw new Error('WINDOWS_AUTHORITY_MOBILE_RECOVERY_VERIFICATION_JOURNAL_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(mobileRecoveryGitHubConsumer.WINDOWS_AUTHORITY_MOBILE_RECOVERY_GITHUB_CONSUMER_PATHS_V1) !== JSON.stringify(EXPECTED_MOBILE_RECOVERY_GITHUB_CONSUMER_PATHS)) throw new Error('WINDOWS_AUTHORITY_MOBILE_RECOVERY_GITHUB_CONSUMER_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(mobileRecoveryLifeboatInstaller.WINDOWS_AUTHORITY_MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATHS_V1) !== JSON.stringify(EXPECTED_MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATHS)) throw new Error('WINDOWS_AUTHORITY_MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATH_INVENTORY_MISMATCH');
+if (JSON.stringify(ignitionConvergence.WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1) !== JSON.stringify(EXPECTED_IGNITION_CONVERGENCE_PATHS)) throw new Error('WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(forgeM3Executor.WINDOWS_AUTHORITY_FORGE_M3_EXECUTOR_PATHS_V1) !== JSON.stringify(EXPECTED_FORGE_M3_EXECUTOR_PATHS)) throw new Error('WINDOWS_AUTHORITY_FORGE_M3_EXECUTOR_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(forgePodmanPrerequisite.WINDOWS_AUTHORITY_FORGE_PODMAN_PREREQUISITE_PATHS_V1) !== JSON.stringify(EXPECTED_FORGE_PODMAN_PREREQUISITE_PATHS)) throw new Error('WINDOWS_AUTHORITY_FORGE_PODMAN_PREREQUISITE_PATH_INVENTORY_MISMATCH');
 export const WINDOWS_AUTHORITY_SPECIALIST_SCHEMA_VERSION = core.WINDOWS_AUTHORITY_SPECIALIST_SCHEMA_VERSION;
@@ -84,6 +90,7 @@ export const WINDOWS_AUTHORITY_SOURCE_SCHEMA_VERSION = core.WINDOWS_AUTHORITY_SO
 export const WINDOWS_AUTHORITY_SOURCE_MAX_BYTES = core.WINDOWS_AUTHORITY_SOURCE_MAX_BYTES;
 export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
   const workerWatchdogResult = workerWatchdog.analyzeWindowsAuthorityWorkerWatchdogReview(input); if (workerWatchdogResult.eligible) return workerWatchdogResult;
+  const ignitionConvergenceResult = ignitionConvergence.analyzeWindowsAuthorityIgnitionConvergenceReview(input); if (ignitionConvergenceResult.eligible) return ignitionConvergenceResult;
   const openClawRecoveryResult = openClawRecovery.analyzeWindowsAuthorityOpenClawRecoveryReview(input); if (openClawRecoveryResult.eligible) return openClawRecoveryResult;
   const localChatRecoveryResult = localChatRecovery.analyzeWindowsAuthorityLocalChatRecoveryReview(input); if (localChatRecoveryResult.eligible) return localChatRecoveryResult;
   const mobileRecoveryExecutorResult = mobileRecoveryExecutor.analyzeWindowsAuthorityMobileRecoveryExecutorReview(input); if (mobileRecoveryExecutorResult.eligible) return mobileRecoveryExecutorResult;
