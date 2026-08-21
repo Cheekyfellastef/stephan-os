@@ -1031,6 +1031,71 @@ export function validatePersonalRepositoryWorkflowRuns(definitions = [], runs = 
   });
 }
 
+export function validatePersonalRepositoryWorkflowRunHydration(
+  summaries = [],
+  details = [],
+  expected = {},
+) {
+  const blockers = [];
+  const sourceHead = text(expected.sourceHead).toLowerCase();
+  if (!Array.isArray(summaries) || summaries.length === 0) {
+    blockers.push('personal-repository-workflow-run-summaries-invalid');
+  }
+  if (!Array.isArray(details) || details.length === 0) {
+    blockers.push('personal-repository-workflow-run-details-invalid');
+  }
+  if (!SHA_PATTERN.test(sourceHead)) {
+    blockers.push('personal-repository-workflow-run-hydration-head-invalid');
+  }
+
+  const summaryIds = new Set();
+  const detailById = new Map();
+  for (const detail of Array.isArray(details) ? details : []) {
+    const detailId = strictPositiveInteger(detail?.id);
+    if (!detailId || detailById.has(detailId)) {
+      blockers.push('personal-repository-workflow-run-detail-identity-invalid');
+      continue;
+    }
+    detailById.set(detailId, detail);
+  }
+
+  const hydratedRuns = [];
+  for (const summary of Array.isArray(summaries) ? summaries : []) {
+    const summaryId = strictPositiveInteger(summary?.id);
+    const workflowId = strictPositiveInteger(summary?.workflow_id);
+    const checkSuiteId = strictPositiveInteger(summary?.check_suite_id);
+    if (!summaryId || !workflowId || !checkSuiteId
+      || text(summary?.head_sha).toLowerCase() !== sourceHead
+      || summaryIds.has(summaryId)) {
+      blockers.push('personal-repository-workflow-run-summary-identity-invalid');
+      continue;
+    }
+    summaryIds.add(summaryId);
+    const detail = detailById.get(summaryId);
+    if (!detail
+      || strictPositiveInteger(detail?.workflow_id) !== workflowId
+      || strictPositiveInteger(detail?.check_suite_id) !== checkSuiteId
+      || text(detail?.head_sha).toLowerCase() !== sourceHead) {
+      blockers.push('personal-repository-workflow-run-detail-mismatch');
+      continue;
+    }
+    hydratedRuns.push(detail);
+  }
+  if (summaryIds.size !== detailById.size) {
+    blockers.push('personal-repository-workflow-run-hydration-cardinality-mismatch');
+  }
+
+  const valid = blockers.length === 0 && hydratedRuns.length === summaryIds.size;
+  return Object.freeze({
+    valid,
+    runs: valid ? Object.freeze([...hydratedRuns]) : Object.freeze([]),
+    blockers: Object.freeze(unique(blockers)),
+    finalVerdict: valid
+      ? 'PERSONAL_REPOSITORY_WORKFLOW_RUN_HYDRATION_READY'
+      : 'PERSONAL_REPOSITORY_WORKFLOW_RUN_HYDRATION_BLOCKED',
+  });
+}
+
 export function validatePersonalRepositoryCheckRuns(
   checkRuns = [],
   workflowRuns = [],
