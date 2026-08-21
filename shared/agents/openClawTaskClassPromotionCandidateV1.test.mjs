@@ -161,7 +161,10 @@ test('fails closed on unsupported, failed, mutated, self-qualified, mismatched o
 test('rejects accessor-bearing or extra-field provider evidence before reading it as authority', () => {
   const base = evidence();
   const accessor = {};
-  for (const [key, value] of Object.entries(base)) Object.defineProperty(accessor, key, { value, enumerable: true });
+  for (const [key, value] of Object.entries(base)) {
+    if (key === 'finalVerdict') continue;
+    Object.defineProperty(accessor, key, { value, enumerable: true });
+  }
   Object.defineProperty(accessor, 'finalVerdict', {
     enumerable: true,
     get() { throw new Error('must not execute'); },
