@@ -185,7 +185,7 @@ function workflowDispatchContext(input) {
     || text(preflight.workflowPath) !== '.github/workflows/independent-merge-security-review.yml'
     || text(preflight.workflowJob) !== 'independent-security-review'
     || text(preflight.pullRequest?.state).toLowerCase() !== 'open'
-    || preflight.pullRequest?.draft !== false
+    || typeof preflight.pullRequest?.draft !== 'boolean'
     || !prNumber || !sourceHead || !baseSha || !branch
     || !safeReviewAuthority(preflight.authority)
     || !/^[0-9a-f]{64}$/i.test(text(preflight.handoffBindingSha256))
