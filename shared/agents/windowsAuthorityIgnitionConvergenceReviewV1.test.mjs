@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import {
-  analyzeWindowsAuthorityIgnitionConvergenceReview,
+  analyzeWindowsAuthorityIgnitionConvergenceReview as analyzeProductionReview,
+  analyzeWindowsAuthorityIgnitionConvergenceReviewWithFixtureBlobsForTest,
+  WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_BLOBS_V1,
   WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1,
 } from './windowsAuthorityIgnitionConvergenceReviewV1.mjs';
 
@@ -215,6 +217,63 @@ function input(overrides = {}) {
     ...overrides,
   };
 }
+
+const baseFixtureBlobs = Object.freeze(Object.fromEntries([
+  probeSource, repairSource, restartSource, backendSource,
+].map((content, index) => [WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[index], blobSha(content)])));
+
+function fixtureBlobsFor(value) {
+  const sourcesDescriptor = Object.getOwnPropertyDescriptor(value, 'sources');
+  const sources = sourcesDescriptor && Object.hasOwn(sourcesDescriptor, 'value') ? sourcesDescriptor.value : null;
+  if (!Array.isArray(sources) || sources.length !== WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1.length) return baseFixtureBlobs;
+  const records = [];
+  for (let index = 0; index < sources.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(sources, String(index));
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || descriptor.enumerable !== true) return baseFixtureBlobs;
+    records.push(descriptor.value);
+  }
+  const entries = [];
+  for (const path of WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1) {
+    const matches = records.filter((source) => {
+      const descriptor = source && typeof source === 'object' && Object.getPrototypeOf(source) === Object.prototype
+        ? Object.getOwnPropertyDescriptor(source, 'path')
+        : null;
+      return descriptor && Object.hasOwn(descriptor, 'value') && descriptor.value === path;
+    });
+    if (matches.length !== 1) return baseFixtureBlobs;
+    const blobDescriptor = Object.getOwnPropertyDescriptor(matches[0], 'blobSha');
+    if (!blobDescriptor || !Object.hasOwn(blobDescriptor, 'value') || !/^[a-f0-9]{40}$/.test(blobDescriptor.value)) return baseFixtureBlobs;
+    entries.push([path, blobDescriptor.value]);
+  }
+  return Object.freeze(Object.fromEntries(entries));
+}
+
+function analyzeWindowsAuthorityIgnitionConvergenceReview(value) {
+  return analyzeWindowsAuthorityIgnitionConvergenceReviewWithFixtureBlobsForTest(value, fixtureBlobsFor(value));
+}
+
+test('production reviewer pins the four independently reviewed Git blobs while allowing lineage head and base to move', () => {
+  assert.deepEqual(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_BLOBS_V1, {
+    'scripts/windows/probe-battle-bridge-recovery-mesh.ps1': '5d12fbe57fb55693836155e8c55f1885dae09a4c',
+    'scripts/windows/repair-stephanos-battle-bridge.ps1': '92b33ddfb83077668196724935b5e9d881755dab',
+    'scripts/windows/restart-approved-stephanos-runtime.ps1': 'c97613abbde8bf4771d4ba32c233e2e01d2128fb',
+    'scripts/windows/start-stephanos-backend.ps1': 'd95fcc7cb0288ac6dff3d25b6677b77f2f95ce34',
+  });
+  const result = analyzeProductionReview(input());
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.equal(result.findings.length, 4);
+  assert.ok(result.findings.every((item) => item.code === 'windows-authority-source-evidence-invalid'));
+});
+
+test('appended filesystem authority cannot inherit a clean review through a future reconciliation head', () => {
+  const sources = input().sources;
+  sources[0] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[0], `${probeSource}\nRemove-Item -Recurse -Force $callerPath\n`);
+  const result = analyzeProductionReview(input({ sources }));
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'windows-authority-source-evidence-invalid'));
+});
 
 test('exact ignition convergence escalation with closed-world source proof is clean and grants no authority', () => {
   const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input());

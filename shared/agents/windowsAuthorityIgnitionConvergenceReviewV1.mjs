@@ -7,6 +7,13 @@ export const WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1 = Object.freeze([
   'scripts/windows/start-stephanos-backend.ps1',
 ]);
 
+export const WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_BLOBS_V1 = Object.freeze({
+  'scripts/windows/probe-battle-bridge-recovery-mesh.ps1': '5d12fbe57fb55693836155e8c55f1885dae09a4c',
+  'scripts/windows/repair-stephanos-battle-bridge.ps1': '92b33ddfb83077668196724935b5e9d881755dab',
+  'scripts/windows/restart-approved-stephanos-runtime.ps1': 'c97613abbde8bf4771d4ba32c233e2e01d2128fb',
+  'scripts/windows/start-stephanos-backend.ps1': 'd95fcc7cb0288ac6dff3d25b6677b77f2f95ce34',
+});
+
 export const WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_SCHEMA_VERSION = 'stephanos.windows-authority-ignition-convergence-review.v1';
 
 const SOURCE_SCHEMA = 'stephanos.windows-authority-source.v1';
@@ -54,7 +61,7 @@ function exactPlainRecord(value, keys) {
     return descriptor && Object.hasOwn(descriptor, 'value') && descriptor.enumerable === true;
   });
 }
-function exactSource(source, repository, sourceHead, path) {
+function exactSource(source, repository, sourceHead, path, expectedBlobSha) {
   if (!exactPlainRecord(source, SOURCE_RECORD_KEYS)) return false;
   const content = typeof source.content === 'string' ? source.content : '';
   const size = Buffer.byteLength(content, 'utf8');
@@ -68,7 +75,8 @@ function exactSource(source, repository, sourceHead, path) {
     && size > 0
     && size <= MAX_SOURCE_BYTES
     && SHA.test(text(source.blobSha))
-    && source.blobSha === gitBlobSha(content);
+    && source.blobSha === gitBlobSha(content)
+    && source.blobSha === expectedBlobSha;
 }
 function exactArray(value, expectedLength) {
   if (!Array.isArray(value) || value.length !== expectedLength) return false;
@@ -300,7 +308,7 @@ function reviewBackendStart(source, path, findings) {
   forbidPattern(findings, source, /\bgit(?:\.exe)?\s+(?:reset|clean|checkout|switch|rebase|push|merge)\b/i, 'ignition-backend-destructive-git-forbidden', 'Backend start must not gain destructive or publishing Git authority.', path);
 }
 
-export function analyzeWindowsAuthorityIgnitionConvergenceReview(input = {}) {
+function analyzeWithReviewedBlobs(input, reviewedBlobs) {
   const repositoryProperty = dataValue(input, 'repository');
   const prProperty = dataValue(input, 'prNumber');
   const branchProperty = dataValue(input, 'branch');
@@ -332,8 +340,8 @@ export function analyzeWindowsAuthorityIgnitionConvergenceReview(input = {}) {
   } else {
     for (const path of WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1) {
       const candidates = sources.filter((source) => exactPlainRecord(source, SOURCE_RECORD_KEYS) && source.path === path);
-      if (candidates.length !== 1 || !exactSource(candidates[0], repository, sourceHead, path)) {
-        findings.push(finding('windows-authority-source-evidence-invalid', 'One immutable exact-head source record is required for every reviewed path.', path));
+      if (candidates.length !== 1 || !exactSource(candidates[0], repository, sourceHead, path, reviewedBlobs[path])) {
+        findings.push(finding('windows-authority-source-evidence-invalid', 'One immutable exact-head source record matching the independently reviewed Git blob is required for every reviewed path.', path));
         continue;
       }
       const content = candidates[0].content;
@@ -361,4 +369,17 @@ export function analyzeWindowsAuthorityIgnitionConvergenceReview(input = {}) {
       ? 'WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_SPECIALIST_CLEAN'
       : 'WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_SPECIALIST_FINDINGS',
   });
+}
+
+export function analyzeWindowsAuthorityIgnitionConvergenceReview(input = {}) {
+  return analyzeWithReviewedBlobs(input, WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_BLOBS_V1);
+}
+
+export function analyzeWindowsAuthorityIgnitionConvergenceReviewWithFixtureBlobsForTest(input = {}, reviewedBlobs = {}) {
+  const keys = [...WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1].sort();
+  if (!exactPlainRecord(reviewedBlobs, keys)
+    || keys.some((path) => !SHA.test(text(reviewedBlobs[path])))) {
+    throw new TypeError('WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_TEST_BLOB_MANIFEST_INVALID');
+  }
+  return analyzeWithReviewedBlobs(input, reviewedBlobs);
 }

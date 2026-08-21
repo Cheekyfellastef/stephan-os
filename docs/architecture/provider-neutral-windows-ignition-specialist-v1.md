@@ -25,7 +25,7 @@ sourceHead=<artifact exact head>
 baseSha=<artifact exact base and live protected main>
 ```
 
-The specialist accepts only a two-parent reconciliation commit whose second parent equals the exact artifact base, while two independent live-main reads, the GitHub comparison base and merge base all equal that same base. A stale artifact, changed main, reordered parent, divergent comparison, substituted source commit or accessor-backed value is ineligible. Head or base movement therefore never inherits specialist evidence silently.
+The specialist accepts only a two-parent reconciliation commit whose second parent equals the exact artifact base, while two independent live-main reads, the GitHub comparison base and merge base all equal that same base. Each of the four source records must also match its independently reviewed Git blob identity. A stale artifact, changed main, reordered parent, divergent comparison, substituted source commit, changed script byte or accessor-backed value is ineligible. Head or base movement therefore never inherits specialist evidence silently, while unchanged reviewed scripts may survive a preservation-only reconciliation.
 
 The current #1919 source materially hardens the Windows probe, repair, restart and backend-start paths. Backend listener identity is bound to fixed canonical Node plus the immutable bootstrap command, and backend startup materializes `stephanos-server/backend-bootstrap.mjs` from the exact approved Git object, verifies its Git blob identity, and launches canonical Node through a minimal process environment with the exact head/root/bootstrap bindings. The specialist therefore validates the complete four-path authority estate rather than relying on a target SHA embedded in reviewer source.
 
@@ -40,7 +40,7 @@ Eligibility is closed-world:
 - exact reviewed repository, PR and branch above;
 - exact artifact head/base plus fresh two-parent reconciliation lineage bound to the same live base;
 - exactly four P0 `unsupported-high-risk-surface` escalations, one for each fixed path above;
-- exactly four immutable `stephanos.windows-authority-source.v1` source records bound to repository, path and exact head with content-derived Git blob identity;
+- exactly four immutable `stephanos.windows-authority-source.v1` source records bound to repository, path and exact head with content-derived Git blob identity that also equals the independently reviewed blob pin;
 - ordinary input, analysis, finding and source evidence must arrive through plain data properties; accessor-shaped authority/evidence fails closed without being invoked.
 
 The specialist then verifies the task-class invariants that make the four Windows scripts safe to review deterministically:
