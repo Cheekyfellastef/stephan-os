@@ -16,6 +16,8 @@ export const OPENCLAW_PROMOTION_CANDIDATE_DISPOSITION = 'OPENCLAW_TASK_CLASS_PRO
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const ISSUE_NUMBER = 1725;
 const MAX_QUALIFICATION_LIFETIME_MS = 15 * 60 * 1000;
+const MAX_EVIDENCE_NODES = 256;
+const MAX_EVIDENCE_DEPTH = 6;
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const SAFE_WORKER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
 const SAFE_PROVIDER_VERSION = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{2,239}$/;
@@ -61,18 +63,61 @@ function exactKeys(value, expected) {
   return sorted.every((key, index) => key === wanted[index]);
 }
 
-function plainDataRecord(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) return null;
-  const snapshot = {};
-  for (const key of Reflect.ownKeys(value)) {
-    if (typeof key !== 'string') return null;
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !Object.hasOwn(descriptor, 'value') || descriptor.enumerable !== true) return null;
-    snapshot[key] = descriptor.value;
+function inertEvidenceSnapshot(value, state, depth = 0) {
+  state.nodes += 1;
+  if (state.nodes > MAX_EVIDENCE_NODES || depth > MAX_EVIDENCE_DEPTH) {
+    throw new TypeError('provider-evidence-bounds-exceeded');
   }
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new TypeError('provider-evidence-number-invalid');
+    return value;
+  }
+  if (!value || typeof value !== 'object') throw new TypeError('provider-evidence-type-invalid');
+  if (state.visiting.has(value)) throw new TypeError('provider-evidence-cycle');
+
+  const isArray = Array.isArray(value);
+  const prototype = Object.getPrototypeOf(value);
+  if (isArray ? prototype !== Array.prototype : (prototype !== Object.prototype && prototype !== null)) {
+    throw new TypeError('provider-evidence-prototype-invalid');
+  }
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key !== 'string')) throw new TypeError('provider-evidence-symbol-key');
+
+  if (isArray) {
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
+    const length = lengthDescriptor?.value;
+    if (!Number.isSafeInteger(length) || length < 0 || length > 128) {
+      throw new TypeError('provider-evidence-array-length-invalid');
+    }
+    const expectedKeys = new Set(['length', ...Array.from({ length }, (_, index) => String(index))]);
+    if (keys.length !== expectedKeys.size || keys.some((key) => !expectedKeys.has(key))) {
+      throw new TypeError('provider-evidence-array-shape-invalid');
+    }
+  }
+
+  const snapshot = isArray ? [] : {};
+  state.visiting.add(value);
+  for (const key of keys) {
+    if (isArray && key === 'length') continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || descriptor.enumerable !== true) {
+      throw new TypeError('provider-evidence-accessor-or-hidden-field');
+    }
+    const child = inertEvidenceSnapshot(descriptor.value, state, depth + 1);
+    if (isArray) snapshot[Number(key)] = child;
+    else snapshot[key] = child;
+  }
+  state.visiting.delete(value);
   return Object.freeze(snapshot);
+}
+
+function providerEvidenceSnapshot(value) {
+  try {
+    return inertEvidenceSnapshot(value, { nodes: 0, visiting: new WeakSet() });
+  } catch {
+    return null;
+  }
 }
 
 function uniqueProofRefs(value) {
@@ -106,7 +151,7 @@ function blocked(reason) {
 
 export function adjudicateOpenClawTaskClassPromotionCandidateV1(input = {}) {
   const execution = input.executionReceipt;
-  const evidence = plainDataRecord(input.providerEvidence);
+  const evidence = providerEvidenceSnapshot(input.providerEvidence);
   const observedAtUtc = text(input.observedAtUtc);
   const observedAtMs = Date.parse(observedAtUtc);
 
