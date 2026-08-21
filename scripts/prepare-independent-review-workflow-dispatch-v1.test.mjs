@@ -30,13 +30,14 @@ test('preparation is GitHub-Actions-only and pinned to the canonical reviewer jo
   assert.match(text, /GITHUB_JOB\) !== 'independent-security-review'/);
 });
 
-test('preparation re-reads canonical PR main workflow and handoff truth', async () => {
+test('preparation re-reads canonical PR main workflow and handoff truth without requiring ready state', async () => {
   const text = await source();
   assert.match(text, /\/pulls\/\$\{prNumber\}/);
   assert.match(text, /\/git\/ref\/heads\/main/);
   assert.match(text, /canonicalWorkflow\(owner, repo, token\)/);
   assert.match(text, /\/issues\/\$\{prNumber\}\/comments/);
-  assert.match(text, /pullRequest\?\.draft === true/);
+  assert.match(text, /typeof pullRequest\?\.draft !== 'boolean'/);
+  assert.doesNotMatch(text, /pullRequest\?\.draft === true/);
   assert.match(text, /head\?\.repo\?\.full_name/);
   assert.match(text, /base\?\.repo\?\.full_name/);
 });
