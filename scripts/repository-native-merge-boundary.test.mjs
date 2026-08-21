@@ -107,6 +107,9 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /triggering_actor\?\.login \|\| run\?\.actor\?\.login/);
   assert.match(source, /validatePersonalRepositoryEvidence/);
   assert.match(source, /validatePersonalRepositoryCheckRunsWithBoundedReread/);
+  assert.match(source, /validatePersonalRepositoryWorkflowRunHydration/);
+  assert.match(source, /hydrateExactHeadWorkflowRuns/);
+  assert.match(source, /actions\/runs\/\$\{run\?\.id\}/);
   assert.match(source, /CHECK_SNAPSHOT_REREAD_DELAY_MS = 1_000/);
   assert.match(source, /if \(attempt === 1\) return initialCheckSnapshot/);
   assert.match(source, /snapshotAttempts: checks\.snapshotAttempts/);

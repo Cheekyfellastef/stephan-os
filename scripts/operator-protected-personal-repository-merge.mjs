@@ -41,6 +41,7 @@ import {
   validatePersonalRepositoryRulesetProofResponse,
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
+  validatePersonalRepositoryWorkflowRunHydration,
 } from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
 
 const API_VERSION = '2022-11-28';
@@ -330,6 +331,23 @@ async function pullRequestReviewState(owner, repo, prNumber) {
   };
 }
 
+async function hydrateExactHeadWorkflowRuns(context, sourceHead, summaries) {
+  const details = await Promise.all((Array.isArray(summaries) ? summaries : []).map((run) => (
+    apiJson(`/repos/${context.owner}/${context.repo}/actions/runs/${run?.id}`)
+  )));
+  const validation = validatePersonalRepositoryWorkflowRunHydration(
+    summaries,
+    details,
+    { sourceHead },
+  );
+  if (!validation.valid) {
+    fail('Exact-head workflow run summaries could not be bound to full run identities.', {
+      blockers: validation.blockers,
+    });
+  }
+  return validation.runs;
+}
+
 function configurationSnapshot(repository, environment, activeRules, rulesets) {
   return sha256(JSON.stringify(buildPersonalRepositoryConfigurationEvidence({
     repository,
@@ -518,24 +536,34 @@ async function collectEvidence(context, expected = {}) {
     apiCollection(`/repos/${context.owner}/${context.repo}/commits/${identity.sourceHead}/check-runs?filter=latest`, 'check_runs'),
     apiCollection(`/repos/${context.owner}/${context.repo}/commits/${identity.sourceHead}/statuses`, null),
   ]);
+  const initialWorkflowRuns = await hydrateExactHeadWorkflowRuns(
+    context,
+    identity.sourceHead,
+    workflowRuns.items,
+  );
   const independentReview = await loadSelectedIndependentReview(context, identity);
   const initialCheckSnapshot = Object.freeze({
     checkRuns: checkRuns.items,
-    workflowRuns: workflowRuns.items,
+    workflowRuns: initialWorkflowRuns,
     commitStatuses: commitStatuses.items,
   });
   const checks = await validatePersonalRepositoryCheckRunsWithBoundedReread({
     readSnapshot: async (attempt) => {
       if (attempt === 1) return initialCheckSnapshot;
       await new Promise((resolve) => setTimeout(resolve, CHECK_SNAPSHOT_REREAD_DELAY_MS));
-      const [freshWorkflowRuns, freshCheckRuns, freshCommitStatuses] = await Promise.all([
+      const [freshWorkflowRunSummaries, freshCheckRuns, freshCommitStatuses] = await Promise.all([
         apiCollection(`/repos/${context.owner}/${context.repo}/actions/runs?head_sha=${identity.sourceHead}`, 'workflow_runs'),
         apiCollection(`/repos/${context.owner}/${context.repo}/commits/${identity.sourceHead}/check-runs?filter=latest`, 'check_runs'),
         apiCollection(`/repos/${context.owner}/${context.repo}/commits/${identity.sourceHead}/statuses`, null),
       ]);
+      const freshWorkflowRuns = await hydrateExactHeadWorkflowRuns(
+        context,
+        identity.sourceHead,
+        freshWorkflowRunSummaries.items,
+      );
       return Object.freeze({
         checkRuns: freshCheckRuns.items,
-        workflowRuns: freshWorkflowRuns.items,
+        workflowRuns: freshWorkflowRuns,
         commitStatuses: freshCommitStatuses.items,
       });
     },
