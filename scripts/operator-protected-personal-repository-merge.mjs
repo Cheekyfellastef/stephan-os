@@ -32,7 +32,7 @@ import {
   extractPersonalRepositoryArtifactZip,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
-  validatePersonalRepositoryCheckRuns,
+  validatePersonalRepositoryCheckRunsWithBoundedReread,
   validatePersonalRepositoryConfiguration,
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
@@ -41,12 +41,14 @@ import {
   validatePersonalRepositoryRulesetProofResponse,
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
+  validatePersonalRepositoryWorkflowRunHydration,
 } from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-personal-repository-protected-squash';
 const MAX_API_PAGES = 20;
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
+const CHECK_SNAPSHOT_REREAD_DELAY_MS = 1_000;
 const COMPLETION_MARKER = '<!-- stephanos-personal-repository-protected-squash-completion -->';
 const mode = String(process.argv[2] || '').trim().toLowerCase();
 
@@ -329,6 +331,23 @@ async function pullRequestReviewState(owner, repo, prNumber) {
   };
 }
 
+async function hydrateExactHeadWorkflowRuns(context, sourceHead, summaries) {
+  const details = await Promise.all((Array.isArray(summaries) ? summaries : []).map((run) => (
+    apiJson(`/repos/${context.owner}/${context.repo}/actions/runs/${run?.id}`)
+  )));
+  const validation = validatePersonalRepositoryWorkflowRunHydration(
+    summaries,
+    details,
+    { sourceHead },
+  );
+  if (!validation.valid) {
+    fail('Exact-head workflow run summaries could not be bound to full run identities.', {
+      blockers: validation.blockers,
+    });
+  }
+  return validation.runs;
+}
+
 function configurationSnapshot(repository, environment, activeRules, rulesets) {
   return sha256(JSON.stringify(buildPersonalRepositoryConfigurationEvidence({
     repository,
@@ -517,19 +536,47 @@ async function collectEvidence(context, expected = {}) {
     apiCollection(`/repos/${context.owner}/${context.repo}/commits/${identity.sourceHead}/check-runs?filter=latest`, 'check_runs'),
     apiCollection(`/repos/${context.owner}/${context.repo}/commits/${identity.sourceHead}/statuses`, null),
   ]);
-  const independentReview = await loadSelectedIndependentReview(context, identity);
-  const checks = validatePersonalRepositoryCheckRuns(
-    checkRuns.items,
+  const initialWorkflowRuns = await hydrateExactHeadWorkflowRuns(
+    context,
+    identity.sourceHead,
     workflowRuns.items,
-    commitStatuses.items,
-    { ...identity, mergeStateStatus: review.mergeStateStatus },
-    { cleanIndependentReviewProved: independentReview.reviewMode === 'clean-independent' },
   );
+  const independentReview = await loadSelectedIndependentReview(context, identity);
+  const initialCheckSnapshot = Object.freeze({
+    checkRuns: checkRuns.items,
+    workflowRuns: initialWorkflowRuns,
+    commitStatuses: commitStatuses.items,
+  });
+  const checks = await validatePersonalRepositoryCheckRunsWithBoundedReread({
+    readSnapshot: async (attempt) => {
+      if (attempt === 1) return initialCheckSnapshot;
+      await new Promise((resolve) => setTimeout(resolve, CHECK_SNAPSHOT_REREAD_DELAY_MS));
+      const [freshWorkflowRunSummaries, freshCheckRuns, freshCommitStatuses] = await Promise.all([
+        apiCollection(`/repos/${context.owner}/${context.repo}/actions/runs?head_sha=${identity.sourceHead}`, 'workflow_runs'),
+        apiCollection(`/repos/${context.owner}/${context.repo}/commits/${identity.sourceHead}/check-runs?filter=latest`, 'check_runs'),
+        apiCollection(`/repos/${context.owner}/${context.repo}/commits/${identity.sourceHead}/statuses`, null),
+      ]);
+      const freshWorkflowRuns = await hydrateExactHeadWorkflowRuns(
+        context,
+        identity.sourceHead,
+        freshWorkflowRunSummaries.items,
+      );
+      return Object.freeze({
+        checkRuns: freshCheckRuns.items,
+        workflowRuns: freshWorkflowRuns,
+        commitStatuses: freshCommitStatuses.items,
+      });
+    },
+    expected: { ...identity, mergeStateStatus: review.mergeStateStatus },
+    options: { cleanIndependentReviewProved: independentReview.reviewMode === 'clean-independent' },
+  });
   if (!checks.valid) {
     fail('One or more exact-head checks are pending, failed, stale or outside the reviewed escalation.', {
       blockers: checks.blockers,
+      snapshotAttempts: checks.snapshotAttempts,
     });
   }
+  const acceptedWorkflowRuns = checks.selectedSnapshot.workflowRuns;
   const evidence = validatePersonalRepositoryEvidence({
     repository: context.repository,
     repositoryOwnerType: repository?.owner?.type,
@@ -558,7 +605,7 @@ async function collectEvidence(context, expected = {}) {
   }
   const workflows = validatePersonalRepositoryWorkflowRuns(
     execution.definitions,
-    workflowRuns.items,
+    acceptedWorkflowRuns,
     evidence.identity,
   );
   if (!workflows.valid) {
