@@ -200,7 +200,7 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     surfaces: Object.freeze(surfaces),
     blockerCount: blockers.length,
     blockers: Object.freeze(blockers),
-    freshness: blockers.some((item) => item.includes(':STATUS_MISSING') || item.includes(':STALE')) ? 'DEGRADED' : 'FRESH',
+    freshness: blockers.length > 0 ? 'DEGRADED' : 'FRESH',
     readOnly: true,
     sourceMutationAllowed: false,
     taskMutationAllowed: false,
