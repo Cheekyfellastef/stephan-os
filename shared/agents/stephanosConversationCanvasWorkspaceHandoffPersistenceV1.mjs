@@ -16,6 +16,17 @@ export const STEPHANOS_CONVERSATION_CANVAS_WORKSPACE_HANDOFF_PERSISTENCE_SCHEMA_
 
 const STEPHANOS_PARTICIPANT_ID = 'stephanos';
 const SAFE_SEGMENT = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
+const REQUIRED_INPUT_ZERO_AUTHORITY_FIELDS = Object.freeze([
+  'sourceMutationAllowed',
+  'commandExecutionAllowed',
+  'approvalAllowed',
+  'mergeAllowed',
+  'deploymentAllowed',
+  'runtimeMutationAllowed',
+  'providerSelectionAuthorityAdded',
+  'presenterActionExecutionAllowed',
+  'publicRelayProjectionAllowed',
+]);
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -60,10 +71,7 @@ function authorityBoundary() {
 function exactZeroAuthority(authority) {
   const record = plainObject(authority);
   if (!record) return false;
-  for (const [key, value] of Object.entries(authorityBoundary())) {
-    if (record[key] !== value) return false;
-  }
-  return true;
+  return REQUIRED_INPUT_ZERO_AUTHORITY_FIELDS.every((field) => record[field] === false);
 }
 
 function blocked(classification, errors = []) {
