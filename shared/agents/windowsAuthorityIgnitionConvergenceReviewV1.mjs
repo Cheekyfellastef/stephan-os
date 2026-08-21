@@ -1,10 +1,18 @@
 import { createHash } from 'node:crypto';
 
 export const WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1 = Object.freeze([
+  'scripts/windows/probe-battle-bridge-recovery-mesh.ps1',
   'scripts/windows/repair-stephanos-battle-bridge.ps1',
   'scripts/windows/restart-approved-stephanos-runtime.ps1',
   'scripts/windows/start-stephanos-backend.ps1',
 ]);
+
+export const WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_BLOBS_V1 = Object.freeze({
+  'scripts/windows/probe-battle-bridge-recovery-mesh.ps1': '5d12fbe57fb55693836155e8c55f1885dae09a4c',
+  'scripts/windows/repair-stephanos-battle-bridge.ps1': '92b33ddfb83077668196724935b5e9d881755dab',
+  'scripts/windows/restart-approved-stephanos-runtime.ps1': 'c97613abbde8bf4771d4ba32c233e2e01d2128fb',
+  'scripts/windows/start-stephanos-backend.ps1': 'd95fcc7cb0288ac6dff3d25b6677b77f2f95ce34',
+});
 
 export const WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_SCHEMA_VERSION = 'stephanos.windows-authority-ignition-convergence-review.v1';
 
@@ -14,8 +22,14 @@ const MAX_SOURCE_BYTES = 256 * 1024;
 const REVIEWED_REPOSITORY = 'Cheekyfellastef/stephan-os';
 const REVIEWED_PR = 1919;
 const REVIEWED_BRANCH = 'fix/ignition-canonical-convergence-gate-v1';
-const REVIEWED_SOURCE_HEAD = '51438eeb85df96f7363b7d5d8700711f54374371';
-const REVIEWED_BASE_SHA = '3dc12a7c84c54f406b10dee1293789e2338f7824';
+const LINEAGE_SCHEMA = 'stephanos.windows-authority-reconciliation-lineage.v1';
+const LINEAGE_KEYS = Object.freeze([
+  'baseSha', 'comparison', 'liveMainAfterSha', 'liveMainBeforeSha', 'parents',
+  'repository', 'schemaVersion', 'sourceCommitSha', 'sourceHead',
+]);
+const COMPARISON_KEYS = Object.freeze([
+  'aheadBy', 'baseCommitSha', 'behindBy', 'mergeBaseCommitSha', 'status',
+]);
 const SOURCE_RECORD_KEYS = Object.freeze([
   'blobSha', 'content', 'exists', 'path', 'ref', 'repository', 'schemaVersion', 'size',
 ]);
@@ -47,7 +61,7 @@ function exactPlainRecord(value, keys) {
     return descriptor && Object.hasOwn(descriptor, 'value') && descriptor.enumerable === true;
   });
 }
-function exactSource(source, repository, sourceHead, path) {
+function exactSource(source, repository, sourceHead, path, expectedBlobSha) {
   if (!exactPlainRecord(source, SOURCE_RECORD_KEYS)) return false;
   const content = typeof source.content === 'string' ? source.content : '';
   const size = Buffer.byteLength(content, 'utf8');
@@ -61,7 +75,8 @@ function exactSource(source, repository, sourceHead, path) {
     && size > 0
     && size <= MAX_SOURCE_BYTES
     && SHA.test(text(source.blobSha))
-    && source.blobSha === gitBlobSha(content);
+    && source.blobSha === gitBlobSha(content)
+    && source.blobSha === expectedBlobSha;
 }
 function exactArray(value, expectedLength) {
   if (!Array.isArray(value) || value.length !== expectedLength) return false;
@@ -73,6 +88,37 @@ function exactArray(value, expectedLength) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     return descriptor && Object.hasOwn(descriptor, 'value') && descriptor.enumerable === true;
   });
+}
+function exactReviewedLineage(lineage, repository, sourceHead, baseSha) {
+  try {
+    if (!SHA.test(sourceHead) || !SHA.test(baseSha) || sourceHead === baseSha
+      || !exactPlainRecord(lineage, LINEAGE_KEYS)
+      || lineage.schemaVersion !== LINEAGE_SCHEMA
+      || lineage.repository !== repository
+      || lineage.sourceHead !== sourceHead
+      || lineage.sourceCommitSha !== sourceHead
+      || lineage.baseSha !== baseSha
+      || lineage.liveMainBeforeSha !== baseSha
+      || lineage.liveMainAfterSha !== baseSha
+      || !exactArray(lineage.parents, 2)
+      || typeof lineage.parents[0] !== 'string'
+      || typeof lineage.parents[1] !== 'string'
+      || !SHA.test(lineage.parents[0])
+      || !SHA.test(lineage.parents[1])
+      || lineage.parents[0] === sourceHead
+      || lineage.parents[0] === baseSha
+      || lineage.parents[1] !== baseSha
+      || !exactPlainRecord(lineage.comparison, COMPARISON_KEYS)) return false;
+    const comparison = lineage.comparison;
+    return comparison.status === 'ahead'
+      && Number.isSafeInteger(comparison.aheadBy)
+      && comparison.aheadBy >= 1
+      && comparison.behindBy === 0
+      && comparison.baseCommitSha === baseSha
+      && comparison.mergeBaseCommitSha === baseSha;
+  } catch {
+    return false;
+  }
 }
 function exactFinding(item) {
   const severity = dataValue(item, 'severity');
@@ -107,6 +153,47 @@ function forbidPattern(findings, source, pattern, code, summary, path) {
 function parameterPrefix(source) {
   const marker = source.indexOf('$ErrorActionPreference');
   return marker >= 0 ? source.slice(0, marker) : source.slice(0, Math.min(source.length, 4096));
+}
+
+function reviewProbe(source, path, findings) {
+  for (const [literal, code, summary] of [
+    ["[ValidateSet('Inspect', 'Recover')]", 'ignition-probe-mode-not-closed', 'Recovery probe mode must remain a closed Inspect/Recover choice.'],
+    ["$wscriptPath = 'C:\\Windows\\System32\\wscript.exe'", 'ignition-probe-wscript-not-fixed', 'Recovery probe must pin canonical WScript.'],
+    ["$canonicalPowerShell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'", 'ignition-probe-powershell-not-fixed', 'Recovery probe must pin canonical Windows PowerShell.'],
+    ["$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'", 'ignition-probe-node-not-fixed', 'Recovery probe must pin canonical Node.'],
+    ["$sourceControlExecutable = 'C:\\Program Files\\Git\\cmd\\git.exe'", 'ignition-probe-git-not-fixed', 'Recovery probe must pin canonical Git.'],
+    ["$canonicalBootstrapEval = \"import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)\"", 'ignition-probe-bootstrap-command-not-fixed', 'Backend listener proof must require the immutable-bootstrap command.'],
+    ["'Stephanos Battle Bridge Backend'", 'ignition-probe-backend-task-not-fixed', 'Backend Scheduled Task identity must remain fixed.'],
+    ["'Stephanos Mission Orchestrator Worker Watchdog'", 'ignition-probe-watchdog-task-not-fixed', 'Worker watchdog Scheduled Task identity must remain fixed.'],
+    ["'Stephanos Battle Bridge GitHub Command Mailbox'", 'ignition-probe-mailbox-task-not-fixed', 'Mailbox Scheduled Task identity must remain fixed.'],
+    ["'OpenClaw Gateway'", 'ignition-probe-openclaw-task-not-fixed', 'OpenClaw Scheduled Task identity must remain fixed.'],
+    ["[string]$Task.Settings.MultipleInstances -eq 'IgnoreNew'", 'ignition-probe-overlap-proof-missing', 'Every accepted task must prove IgnoreNew.'],
+    ['BACKEND_LISTENER_EXECUTABLE_FOREIGN', 'ignition-probe-backend-node-mismatch-not-blocked', 'A non-canonical backend Node executable must fail closed.'],
+    ['BACKEND_LISTENER_COMMAND_FOREIGN', 'ignition-probe-backend-command-mismatch-not-blocked', 'A backend listener outside the immutable-bootstrap command must fail closed.'],
+    ['$raw = & $canonicalNode $backendFreshnessProbePath --expected-source-head $ExpectedSourceHead', 'ignition-probe-backend-head-proof-not-bound', 'Backend freshness proof must receive the exact source head.'],
+    ["[string]$receipt.schemaVersion -eq 'stephanos.backend-runtime.v1'", 'ignition-probe-runtime-receipt-schema-missing', 'Backend receipt proof must require the canonical runtime schema.'],
+    ['([string]$receipt.headSha).ToLowerInvariant() -eq $ExpectedSourceHead', 'ignition-probe-runtime-receipt-head-missing', 'Backend receipt proof must bind the exact source head.'],
+    ['[int]$receipt.pid -eq $listenerAfter.pid', 'ignition-probe-runtime-receipt-pid-missing', 'Backend receipt proof must bind the verified listener PID.'],
+    ['[string]$receipt.processStartTimeUtc -eq $listenerAfter.creationTimeUtc', 'ignition-probe-runtime-receipt-start-time-missing', 'Backend receipt proof must bind process creation identity.'],
+    ["[string]$proof.finalVerdict -eq 'BACKEND_CURRENT'", 'ignition-probe-backend-current-verdict-missing', 'Backend freshness must end in the canonical current verdict.'],
+    ["if ($sourceHead -notmatch '^[0-9a-f]{40}$' -or $branch -ne 'main')", 'ignition-probe-main-head-gate-missing', 'Recovery probe must bind canonical main to one exact source head.'],
+    ['Assert-CanonicalTrackedWorktreeClean -GitExecutable $sourceControlExecutable -RepositoryRoot $repoRoot', 'ignition-probe-source-clean-gate-missing', 'Recovery probe must fail closed on tracked source dirt.'],
+    ['Start-ScheduledTask -TaskName $spec.Name', 'ignition-probe-task-start-not-allowlisted', 'Recovery may start only a task from the fixed task estate.'],
+    ['maximumTaskStarts = 4', 'ignition-probe-start-budget-not-fixed', 'Recovery task starts must remain bounded to the four fixed services.'],
+    ['arbitraryTaskNameAllowed = $false', 'ignition-probe-arbitrary-task-authority-not-zero', 'Recovery probe must deny arbitrary task authority.'],
+    ['arbitraryPowerShellAllowed = $false', 'ignition-probe-arbitrary-powershell-authority-not-zero', 'Recovery probe must deny arbitrary PowerShell authority.'],
+    ['sourceMutationAllowed = $false', 'ignition-probe-source-authority-not-zero', 'Recovery probe must deny source mutation authority.'],
+    ['pcRestartAllowed = $false', 'ignition-probe-pc-restart-authority-not-zero', 'Recovery probe must deny PC restart authority.'],
+  ]) requireLiteral(findings, source, literal, code, summary, path);
+  requirePattern(findings, source, /if\s*\(-not\s+\$observed\.authorityCanonical\)\s*\{\s*continue\s*\}/, 'ignition-probe-task-authority-gate-missing', 'Recovery must refuse non-canonical task authority before start.', path);
+  requirePattern(findings, source, /\[string\]::Equals\(\$executable,\s*\$canonicalNode[\s\S]*Test-CanonicalBackendCommandLine/, 'ignition-probe-listener-identity-incomplete', 'Backend listener proof must bind canonical Node and the fixed command.', path);
+  const params = parameterPrefix(source);
+  if (/\$(?:Path|Executable|Command|TaskName|Url|Uri|Script|Arguments?)\b/i.test(params)) {
+    findings.push(finding('ignition-probe-caller-command-authority-forbidden', 'Probe parameters may not accept caller-selected paths, executables, tasks, commands or URLs.', path));
+  }
+  forbidPattern(findings, source, /\b(?:Invoke-Expression|Invoke-Command|Start-Job|ScriptBlock::Create)\b/i, 'ignition-probe-dynamic-execution-forbidden', 'Dynamic PowerShell execution is forbidden.', path);
+  forbidPattern(findings, source, /\bgit(?:\.exe)?\s+(?:reset|clean|checkout|switch|rebase|push|merge)\b/i, 'ignition-probe-destructive-git-forbidden', 'Recovery probe must not gain destructive or publishing Git authority.', path);
+  forbidPattern(findings, source, /\b(?:Stop-Process|taskkill|Restart-Computer|shutdown\.exe)\b/i, 'ignition-probe-process-or-host-mutation-forbidden', 'Recovery probe must not gain process termination or host restart authority.', path);
 }
 
 function reviewRepair(source, path, findings) {
@@ -221,16 +308,17 @@ function reviewBackendStart(source, path, findings) {
   forbidPattern(findings, source, /\bgit(?:\.exe)?\s+(?:reset|clean|checkout|switch|rebase|push|merge)\b/i, 'ignition-backend-destructive-git-forbidden', 'Backend start must not gain destructive or publishing Git authority.', path);
 }
 
-export function analyzeWindowsAuthorityIgnitionConvergenceReview(input = {}) {
+function analyzeWithReviewedBlobs(input, reviewedBlobs) {
   const repositoryProperty = dataValue(input, 'repository');
   const prProperty = dataValue(input, 'prNumber');
   const branchProperty = dataValue(input, 'branch');
   const headProperty = dataValue(input, 'sourceHead');
   const baseProperty = dataValue(input, 'baseSha');
+  const lineageProperty = dataValue(input, 'lineageEvidence');
   const analysisProperty = dataValue(input, 'analysis');
   const sourcesProperty = dataValue(input, 'sources');
   if (!repositoryProperty.ok || !prProperty.ok || !branchProperty.ok || !headProperty.ok
-    || !baseProperty.ok || !analysisProperty.ok || !sourcesProperty.ok) {
+    || !baseProperty.ok || !lineageProperty.ok || !analysisProperty.ok || !sourcesProperty.ok) {
     return Object.freeze({ eligible: false, clean: false, findings: Object.freeze([]), reviewedPaths: Object.freeze([]), proofRefs: Object.freeze([]), finalVerdict: 'WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_SPECIALIST_NOT_ELIGIBLE' });
   }
   const repository = text(repositoryProperty.value);
@@ -240,7 +328,7 @@ export function analyzeWindowsAuthorityIgnitionConvergenceReview(input = {}) {
   const baseSha = text(baseProperty.value).toLowerCase();
   const paths = escalationPaths(analysisProperty.value);
   if (repository !== REVIEWED_REPOSITORY || !Number.isSafeInteger(prNumber) || prNumber !== REVIEWED_PR
-    || branch !== REVIEWED_BRANCH || sourceHead !== REVIEWED_SOURCE_HEAD || baseSha !== REVIEWED_BASE_SHA
+    || branch !== REVIEWED_BRANCH || !exactReviewedLineage(lineageProperty.value, repository, sourceHead, baseSha)
     || paths.length !== WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1.length) {
     return Object.freeze({ eligible: false, clean: false, findings: Object.freeze([]), reviewedPaths: Object.freeze([]), proofRefs: Object.freeze([]), finalVerdict: 'WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_SPECIALIST_NOT_ELIGIBLE' });
   }
@@ -248,16 +336,17 @@ export function analyzeWindowsAuthorityIgnitionConvergenceReview(input = {}) {
   const findings = [];
   const proofRefs = [];
   if (!exactArray(sources, WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1.length)) {
-    findings.push(finding('windows-authority-source-estate-invalid', 'Exactly three closed-world immutable source records are required.', WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[0]));
+    findings.push(finding('windows-authority-source-estate-invalid', 'Exactly four closed-world immutable source records are required.', WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[0]));
   } else {
     for (const path of WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1) {
       const candidates = sources.filter((source) => exactPlainRecord(source, SOURCE_RECORD_KEYS) && source.path === path);
-      if (candidates.length !== 1 || !exactSource(candidates[0], repository, sourceHead, path)) {
-        findings.push(finding('windows-authority-source-evidence-invalid', 'One immutable exact-head source record is required for every reviewed path.', path));
+      if (candidates.length !== 1 || !exactSource(candidates[0], repository, sourceHead, path, reviewedBlobs[path])) {
+        findings.push(finding('windows-authority-source-evidence-invalid', 'One immutable exact-head source record matching the independently reviewed Git blob is required for every reviewed path.', path));
         continue;
       }
       const content = candidates[0].content;
-      if (path.endsWith('/repair-stephanos-battle-bridge.ps1')) reviewRepair(content, path, findings);
+      if (path.endsWith('/probe-battle-bridge-recovery-mesh.ps1')) reviewProbe(content, path, findings);
+      else if (path.endsWith('/repair-stephanos-battle-bridge.ps1')) reviewRepair(content, path, findings);
       else if (path.endsWith('/restart-approved-stephanos-runtime.ps1')) reviewRestart(content, path, findings);
       else reviewBackendStart(content, path, findings);
       proofRefs.push(`proofs/windows-authority-ignition-convergence/${path}@${sourceHead}#${candidates[0].blobSha}:${candidates[0].size}`);
@@ -268,8 +357,8 @@ export function analyzeWindowsAuthorityIgnitionConvergenceReview(input = {}) {
     schemaVersion: WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_SCHEMA_VERSION,
     eligible: true,
     clean,
-    reviewedSourceHead: REVIEWED_SOURCE_HEAD,
-    reviewedBaseSha: REVIEWED_BASE_SHA,
+    reviewedSourceHead: sourceHead,
+    reviewedBaseSha: baseSha,
     findings: Object.freeze(findings),
     reviewedPaths: Object.freeze([...WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1]),
     proofRefs: Object.freeze(proofRefs),
@@ -280,4 +369,17 @@ export function analyzeWindowsAuthorityIgnitionConvergenceReview(input = {}) {
       ? 'WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_SPECIALIST_CLEAN'
       : 'WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_SPECIALIST_FINDINGS',
   });
+}
+
+export function analyzeWindowsAuthorityIgnitionConvergenceReview(input = {}) {
+  return analyzeWithReviewedBlobs(input, WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_BLOBS_V1);
+}
+
+export function analyzeWindowsAuthorityIgnitionConvergenceReviewWithFixtureBlobsForTest(input = {}, reviewedBlobs = {}) {
+  const keys = [...WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1].sort();
+  if (!exactPlainRecord(reviewedBlobs, keys)
+    || keys.some((path) => !SHA.test(text(reviewedBlobs[path])))) {
+    throw new TypeError('WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_TEST_BLOB_MANIFEST_INVALID');
+  }
+  return analyzeWithReviewedBlobs(input, reviewedBlobs);
 }
