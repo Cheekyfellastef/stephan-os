@@ -40,6 +40,15 @@ test('resolver revalidates PR main handoff and exact coordinator run before nami
   assert.match(text, /head_sha\)\.toLowerCase\(\) !== baseSha/);
 });
 
+test('resolver preserves draft-safe review while keeping exact open PR identity checks', async () => {
+  const text = await source();
+  assert.doesNotMatch(text, /pullRequest\?\.draft === true/);
+  assert.match(text, /text\(pullRequest\?\.state\)\.toLowerCase\(\) !== 'open'/);
+  assert.match(text, /text\(pullRequest\?\.head\?\.sha\)\.toLowerCase\(\) !== sourceHead/);
+  assert.match(text, /text\(pullRequest\?\.base\?\.sha\)\.toLowerCase\(\) !== baseSha/);
+  assert.match(text, /text\(pullRequest\?\.base\?\.ref\) !== 'main'/);
+});
+
 test('resolver emits only bounded coordinator and artifact identity outputs', async () => {
   const text = await source();
   for (const output of [
