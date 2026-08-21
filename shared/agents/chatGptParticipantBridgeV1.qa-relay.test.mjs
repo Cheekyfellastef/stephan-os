@@ -217,7 +217,9 @@ test('response publication retry reuses persisted question and answer without in
   assert.equal(answerCounter.count, 1);
   assert.equal(responseAttempts, 2);
   assert.equal(workspace.writes.filter((entry) => entry.segments[0] === 'inbox').length, 1);
-  assert.equal(workspace.writes.filter((entry) => entry.segments[0] === 'outbox').length, 1);
+  const outboxWrites = workspace.writes.filter((entry) => entry.segments[0] === 'outbox');
+  assert.equal(outboxWrites.filter((entry) => entry.record?.recordSubtype === 'conversation-answer').length, 1);
+  assert.equal(outboxWrites.filter((entry) => entry.record?.kind === 'stephanos.shared_workspace.record.handoff').length, 1);
   assert.equal(workspace.events.length, 1);
 });
 
