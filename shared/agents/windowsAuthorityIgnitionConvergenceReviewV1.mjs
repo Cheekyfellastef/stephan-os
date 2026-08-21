@@ -8,9 +8,9 @@ export const WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1 = Object.freeze([
 ]);
 
 export const WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_BLOBS_V1 = Object.freeze({
-  'scripts/windows/probe-battle-bridge-recovery-mesh.ps1': '5d12fbe57fb55693836155e8c55f1885dae09a4c',
-  'scripts/windows/repair-stephanos-battle-bridge.ps1': '92b33ddfb83077668196724935b5e9d881755dab',
-  'scripts/windows/restart-approved-stephanos-runtime.ps1': 'c97613abbde8bf4771d4ba32c233e2e01d2128fb',
+  'scripts/windows/probe-battle-bridge-recovery-mesh.ps1': '132460b4e131786a65da03aaaf9215bcff8de1d6',
+  'scripts/windows/repair-stephanos-battle-bridge.ps1': 'c53aea4971932f9758992d8ce7cbb75e75ae6c06',
+  'scripts/windows/restart-approved-stephanos-runtime.ps1': '04ac9ee1d87d5ace47f4904ad89b167b418edbd3',
   'scripts/windows/start-stephanos-backend.ps1': 'a13ce1f3f5c1b23cfcfc38343698c5e5de42bac1',
 });
 
