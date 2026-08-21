@@ -173,7 +173,7 @@ async function main() {
   const currentMainSha = text(mainRef?.object?.sha).toLowerCase();
   if (currentMainSha !== baseSha) throw new Error('workflow_dispatch base is not exact current main');
   if (text(pullRequest?.state).toLowerCase() !== 'open'
-    || pullRequest?.draft === true
+    || typeof pullRequest?.draft !== 'boolean'
     || text(pullRequest?.head?.sha).toLowerCase() !== sourceHead
     || text(pullRequest?.head?.ref) !== branch
     || text(pullRequest?.base?.sha).toLowerCase() !== baseSha
