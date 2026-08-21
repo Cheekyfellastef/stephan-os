@@ -4,6 +4,7 @@ import { deflateRawSync } from 'node:zlib';
 import {
   PERSONAL_REPOSITORY_AUTHORITY,
   PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES,
+  PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS,
   PERSONAL_REPOSITORY_MODE,
   PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
@@ -23,6 +24,7 @@ import {
   validatePersonalRepositoryArtifactArchiveRedirect,
   validatePersonalRepositoryArtifactArchiveResponse,
   validatePersonalRepositoryCheckRuns,
+  validatePersonalRepositoryCheckRunsWithBoundedReread,
   validatePersonalRepositoryConfiguration,
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
@@ -1411,6 +1413,79 @@ test('UNSTABLE admission binds the one failing check to the exact reviewed escal
   );
   assert.equal(legacyFailure.valid, false);
   assert.ok(legacyFailure.blockers.includes('personal-repository-commit-status-not-exact-green'));
+});
+
+test('one bounded fresh snapshot can recover an inconsistent GitHub check/run read without widening admission', async () => {
+  assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS, 2);
+  const escalationRun = escalationWorkflowRun();
+  const greenRun = workflowRuns()[0];
+  const expected = { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' };
+  const exactSnapshot = {
+    checkRuns: [
+      checkRun(greenRun, { id: 9301, name: 'verify-mission-operations', conclusion: 'success' }),
+      checkRun(escalationRun),
+    ],
+    workflowRuns: [...workflowRuns(), escalationRun],
+    commitStatuses: [],
+  };
+  const inconsistentSnapshot = {
+    ...exactSnapshot,
+    workflowRuns: workflowRuns(),
+  };
+  const reads = [];
+  const recovered = await validatePersonalRepositoryCheckRunsWithBoundedReread({
+    readSnapshot: async (attempt) => {
+      reads.push(attempt);
+      return attempt === 1 ? inconsistentSnapshot : exactSnapshot;
+    },
+    expected,
+    options: { cleanIndependentReviewProved: true },
+  });
+  assert.equal(recovered.valid, true);
+  assert.equal(recovered.snapshotAttempt, 2);
+  assert.deepEqual(reads, [1, 2]);
+  assert.equal(recovered.admittedReviewEscalations, 1);
+  assert.ok(recovered.snapshotAttempts[0].blockers.includes('personal-repository-check-run-identity-invalid'));
+});
+
+test('bounded fresh snapshot stays fail-closed for stable, stale and unrelated failures', async () => {
+  const escalationRun = escalationWorkflowRun();
+  const greenRun = workflowRuns()[0];
+  const expected = { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' };
+  const hostileSnapshots = [
+    {
+      checkRuns: [checkRun(escalationRun, { head_sha: 'f'.repeat(40) })],
+      workflowRuns: [...workflowRuns(), escalationRun],
+      commitStatuses: [],
+    },
+    {
+      checkRuns: [
+        checkRun(escalationRun),
+        checkRun(greenRun, { id: 9302, name: 'unrelated-security-check', conclusion: 'failure' }),
+      ],
+      workflowRuns: [...workflowRuns(), escalationRun],
+      commitStatuses: [],
+    },
+    {
+      checkRuns: [checkRun(escalationRun)],
+      workflowRuns: [...workflowRuns(), escalationRun],
+      commitStatuses: [{ sha: sourceHead, state: 'failure' }],
+    },
+  ];
+  for (const hostileSnapshot of hostileSnapshots) {
+    let reads = 0;
+    const blocked = await validatePersonalRepositoryCheckRunsWithBoundedReread({
+      readSnapshot: async () => {
+        reads += 1;
+        return hostileSnapshot;
+      },
+      expected,
+      options: { cleanIndependentReviewProved: true },
+    });
+    assert.equal(blocked.valid, false);
+    assert.equal(blocked.snapshotAttempt, 0);
+    assert.equal(reads, 2);
+  }
 });
 
 test('configuration requires the exact protected environment and an active no-bypass main ruleset', () => {
