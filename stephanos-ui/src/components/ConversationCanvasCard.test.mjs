@@ -145,6 +145,19 @@ test('served Conversation Canvas renders summary-first answer, continuity, evide
   assert.match(rendered, /Systems Expert Map/);
 });
 
+test('collapsed served details retain evidence for keyboard disclosure without opening by default', async () => {
+  const { renderConversationCanvasCard } = await renderer('conversation-canvas-collapsed-evidence');
+  const evidence = canvasView().sections[0];
+  const rendered = renderConversationCanvasCard(canvasView({
+    sections: [{ ...evidence, expanded: false, ariaLabel: 'Evidence and confidence. 2 items. Collapsed.' }],
+  }));
+
+  assert.match(rendered, /data-canvas-section="evidence"/);
+  assert.doesNotMatch(rendered, /<details open=/);
+  assert.match(rendered, /The current owner is evidence-bound/);
+  assert.match(rendered, /proof\/current-owner/);
+});
+
 test('recommended action and approval remain visibly inert in the served Canvas', async () => {
   const { renderConversationCanvasCard } = await renderer('conversation-canvas-inert');
   const rendered = renderConversationCanvasCard(canvasView());
