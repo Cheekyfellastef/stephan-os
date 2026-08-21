@@ -4,6 +4,7 @@ import { deflateRawSync } from 'node:zlib';
 import {
   PERSONAL_REPOSITORY_AUTHORITY,
   PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES,
+  PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS,
   PERSONAL_REPOSITORY_MODE,
   PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
@@ -23,6 +24,7 @@ import {
   validatePersonalRepositoryArtifactArchiveRedirect,
   validatePersonalRepositoryArtifactArchiveResponse,
   validatePersonalRepositoryCheckRuns,
+  validatePersonalRepositoryCheckRunsWithBoundedReread,
   validatePersonalRepositoryConfiguration,
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
@@ -31,6 +33,7 @@ import {
   validatePersonalRepositoryRulesetProofResponse,
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
+  validatePersonalRepositoryWorkflowRunHydration,
 } from './operatorPersonalRepositoryMergeV1.mjs';
 
 function response(status) {
@@ -1297,6 +1300,53 @@ test('all seven universally applicable exact-head workflow identities must be ac
   ));
 });
 
+test('workflow run hydration replaces permission-trimmed summaries only with exact individual identities', () => {
+  const details = [...workflowRuns(), escalationWorkflowRun()];
+  const summaries = details.map((run) => ({
+    id: run.id,
+    workflow_id: run.workflow_id,
+    check_suite_id: run.check_suite_id,
+    head_sha: run.head_sha,
+    pull_requests: [],
+  }));
+  const hydrated = validatePersonalRepositoryWorkflowRunHydration(
+    summaries,
+    details,
+    { sourceHead },
+  );
+  assert.equal(hydrated.valid, true);
+  assert.deepEqual(hydrated.runs, details);
+  assert.equal(hydrated.runs[0].pull_requests.length, 1);
+});
+
+test('workflow run hydration rejects omissions, substitutions, duplicates and stale heads', () => {
+  const details = workflowRuns();
+  const summaries = details.map((run) => ({
+    id: run.id,
+    workflow_id: run.workflow_id,
+    check_suite_id: run.check_suite_id,
+    head_sha: run.head_sha,
+  }));
+  const hostilePairs = [
+    [summaries, details.slice(1)],
+    [summaries, details.map((run, index) => index === 0 ? { ...run, workflow_id: run.workflow_id + 1 } : run)],
+    [summaries, details.map((run, index) => index === 0 ? { ...run, check_suite_id: run.check_suite_id + 1 } : run)],
+    [summaries, details.map((run, index) => index === 0 ? { ...run, head_sha: 'f'.repeat(40) } : run)],
+    [[...summaries, summaries[0]], details],
+    [summaries, [...details, details[0]]],
+  ];
+  for (const [candidateSummaries, candidateDetails] of hostilePairs) {
+    const blocked = validatePersonalRepositoryWorkflowRunHydration(
+      candidateSummaries,
+      candidateDetails,
+      { sourceHead },
+    );
+    assert.equal(blocked.valid, false);
+    assert.deepEqual(blocked.runs, []);
+    assert.ok(blocked.blockers.length > 0);
+  }
+});
+
 test('personal repository evidence binds operator, PR, branch, head, tree and current base', () => {
   assert.equal(validatePersonalRepositoryEvidence(evidenceInput(), expectedEvidence).valid, true);
   for (const [overrides, blocker] of [
@@ -1411,6 +1461,83 @@ test('UNSTABLE admission binds the one failing check to the exact reviewed escal
   );
   assert.equal(legacyFailure.valid, false);
   assert.ok(legacyFailure.blockers.includes('personal-repository-commit-status-not-exact-green'));
+});
+
+test('one bounded fresh snapshot can recover an inconsistent GitHub check/run read without widening admission', async () => {
+  assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS, 2);
+  const escalationRun = escalationWorkflowRun();
+  const greenRun = workflowRuns()[0];
+  const expected = { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' };
+  const exactSnapshot = {
+    checkRuns: [
+      checkRun(greenRun, { id: 9301, name: 'verify-mission-operations', conclusion: 'success' }),
+      checkRun(escalationRun),
+    ],
+    workflowRuns: [...workflowRuns(), escalationRun],
+    commitStatuses: [],
+  };
+  const inconsistentSnapshot = {
+    ...exactSnapshot,
+    workflowRuns: workflowRuns(),
+  };
+  const reads = [];
+  const recovered = await validatePersonalRepositoryCheckRunsWithBoundedReread({
+    readSnapshot: async (attempt) => {
+      reads.push(attempt);
+      return attempt === 1 ? inconsistentSnapshot : exactSnapshot;
+    },
+    expected,
+    options: { cleanIndependentReviewProved: true },
+  });
+  assert.equal(recovered.valid, true);
+  assert.equal(recovered.snapshotAttempt, 2);
+  assert.deepEqual(reads, [1, 2]);
+  assert.equal(recovered.admittedReviewEscalations, 1);
+  assert.deepEqual(recovered.selectedSnapshot.workflowRuns, exactSnapshot.workflowRuns);
+  assert.notStrictEqual(recovered.selectedSnapshot.workflowRuns, exactSnapshot.workflowRuns);
+  assert.equal(Object.isFrozen(recovered.selectedSnapshot.workflowRuns), true);
+  assert.ok(recovered.snapshotAttempts[0].blockers.includes('personal-repository-check-run-identity-invalid'));
+});
+
+test('bounded fresh snapshot stays fail-closed for stable, stale and unrelated failures', async () => {
+  const escalationRun = escalationWorkflowRun();
+  const greenRun = workflowRuns()[0];
+  const expected = { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' };
+  const hostileSnapshots = [
+    {
+      checkRuns: [checkRun(escalationRun, { head_sha: 'f'.repeat(40) })],
+      workflowRuns: [...workflowRuns(), escalationRun],
+      commitStatuses: [],
+    },
+    {
+      checkRuns: [
+        checkRun(escalationRun),
+        checkRun(greenRun, { id: 9302, name: 'unrelated-security-check', conclusion: 'failure' }),
+      ],
+      workflowRuns: [...workflowRuns(), escalationRun],
+      commitStatuses: [],
+    },
+    {
+      checkRuns: [checkRun(escalationRun)],
+      workflowRuns: [...workflowRuns(), escalationRun],
+      commitStatuses: [{ sha: sourceHead, state: 'failure' }],
+    },
+  ];
+  for (const hostileSnapshot of hostileSnapshots) {
+    let reads = 0;
+    const blocked = await validatePersonalRepositoryCheckRunsWithBoundedReread({
+      readSnapshot: async () => {
+        reads += 1;
+        return hostileSnapshot;
+      },
+      expected,
+      options: { cleanIndependentReviewProved: true },
+    });
+    assert.equal(blocked.valid, false);
+    assert.equal(blocked.snapshotAttempt, 0);
+    assert.equal(blocked.selectedSnapshot, null);
+    assert.equal(reads, 2);
+  }
 });
 
 test('configuration requires the exact protected environment and an active no-bypass main ruleset', () => {
