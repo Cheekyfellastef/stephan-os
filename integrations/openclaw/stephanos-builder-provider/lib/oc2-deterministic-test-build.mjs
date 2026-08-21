@@ -86,6 +86,8 @@ function runFixed(spawnSyncFn, executable, args, repoRoot, env, timeout = 120_00
   return Object.freeze({
     status: Number.isInteger(result?.status) ? result.status : -1,
     error: result?.error ? String(result.error.message || result.error) : '',
+    stdout,
+    stderr,
     outputSha256: sha256(`${stdout}\n${stderr}`),
   });
 }
@@ -93,16 +95,7 @@ function runFixed(spawnSyncFn, executable, args, repoRoot, env, timeout = 120_00
 function runGit(spawnSyncFn, repoRoot, args, env) {
   const result = runFixed(spawnSyncFn, BATTLE_BRIDGE_WINDOWS_HOST.git, args, repoRoot, env, 15_000);
   if (result.error || result.status !== 0) throw new Error('OPENCLAW_OC2_FIXED_GIT_FAILED');
-  const raw = spawnSyncFn(BATTLE_BRIDGE_WINDOWS_HOST.git, args, {
-    cwd: repoRoot,
-    env,
-    encoding: 'utf8',
-    shell: false,
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 15_000,
-  });
-  return bounded(raw.stdout || '').trimEnd();
+  return result.stdout.trimEnd();
 }
 
 function blocker(reason, details = {}) {
