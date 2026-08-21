@@ -172,3 +172,26 @@ test('rejects accessor-bearing or extra-field provider evidence before reading i
   assert.equal(promote(execution(), accessor).ok, false);
   assert.equal(promote(execution(), { ...base, surpriseAuthority: true }).ok, false);
 });
+
+test('rejects hostile nested arrays, sparse arrays and revoked evidence without executing accessors', () => {
+  let accessorExecuted = false;
+  const proofRefs = [];
+  Object.defineProperty(proofRefs, '0', {
+    enumerable: true,
+    get() {
+      accessorExecuted = true;
+      throw new Error('must not execute nested accessor');
+    },
+  });
+  assert.equal(promote(execution(), evidence(execution(), { proofRefs })).ok, false);
+  assert.equal(accessorExecuted, false);
+
+  const sparseProofRefs = new Array(2);
+  sparseProofRefs[1] = 'proofs/openclaw-oc1/oc1-real-execution-001.json';
+  assert.equal(promote(execution(), evidence(execution(), { proofRefs: sparseProofRefs })).ok, false);
+
+  const { proxy, revoke } = Proxy.revocable(evidence(), {});
+  revoke();
+  assert.doesNotThrow(() => promote(execution(), proxy));
+  assert.equal(promote(execution(), proxy).ok, false);
+});
