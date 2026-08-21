@@ -99,7 +99,7 @@ test('real live-QA result composes directly into the existing private Conversati
 
   assert.equal(result.workspaceHandoffRecord.valid, true);
   assert.equal(result.workspaceHandoffRecord.state, 'PRIVATE_CANVAS_WORKSPACE_HANDOFF_RECORD_READY');
-  assert.equal(result.workspaceHandoffRecord.record.kind, 'handoff');
+  assert.equal(result.workspaceHandoffRecord.record.kind, 'stephanos.shared_workspace.record.handoff');
   assert.equal(result.workspaceHandoffRecord.record.participantId, 'stephanos');
   assert.equal(result.workspaceHandoffRecord.record.fromParticipantId, 'stephanos');
   assert.equal(result.workspaceHandoffRecord.record.toParticipantId, 'user-interface-agent');
