@@ -136,6 +136,7 @@ test('fresh receipt-index READY cannot hide an exact-head command that never rea
   assert.equal(mailbox.state, 'BLOCKED_COMMAND_INGRESS_UNOBSERVED');
   assert.equal(mailbox.blocker, 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED');
   assert.ok(record.blockers.includes('mailbox:PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED'));
+  assert.equal(record.freshness, 'DEGRADED');
 });
 
 test('matching trusted ACCEPTED receipt preserves normal mailbox readiness', () => {
