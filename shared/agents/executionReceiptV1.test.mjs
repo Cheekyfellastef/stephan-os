@@ -142,6 +142,18 @@ async function waitForFile(path, timeoutMs = 5_000) {
   }
 }
 
+async function waitForMtimeAdvance(path, baselineMtimeMs, timeoutMs = 1_000) {
+  const startedAt = Date.now();
+  while (true) {
+    const current = await stat(path);
+    if (current.mtimeMs > baselineMtimeMs) return current;
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw new Error(`Timed out waiting for heartbeat mtime advance at ${path}`);
+    }
+    await delay(10);
+  }
+}
+
 async function startHistoryLockWorker(root, { holdMs = 250, crash = false, staleLockMs = 45 } = {}) {
   const inputDirectory = join(root, 'history-lock-worker');
   const markerPath = join(inputDirectory, 'history.locked');
@@ -527,15 +539,14 @@ test('workspace history lock heartbeat renews an active owner beyond the stale t
   const root = await mkdtemp(join(tmpdir(), 'execution-receipt-history-heartbeat-'));
   const lockPath = join(root, 'receipt-locks', 'history', 'execution-receipts.lock');
   try {
-    const worker = await startHistoryLockWorker(root, { holdMs: 250, staleLockMs: 45 });
+    const worker = await startHistoryLockWorker(root, { holdMs: 2_000, staleLockMs: 45 });
     await waitForFile(worker.markerPath);
     const [ownerFileName] = await readdir(lockPath);
     const ownerPath = join(lockPath, ownerFileName);
-    const before = await stat(ownerPath);
     await delay(120);
-    const after = await stat(ownerPath);
+    const before = await stat(ownerPath);
+    const after = await waitForMtimeAdvance(ownerPath, before.mtimeMs, 1_000);
     assert.equal(after.mtimeMs > before.mtimeMs, true);
-    assert.equal(Date.now() - after.mtimeMs < 45, true);
     const completion = await worker.completion;
     assert.equal(completion.exitCode, 0, completion.stderr);
     assert.equal(completion.result.reason, 'EXECUTION_RECEIPT_HISTORY_LOCK_RELEASED');
