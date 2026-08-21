@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import { createExecutionReceipt } from './executionReceiptV1.mjs';
+import {
+  createSharedWorkspaceMessageRecord,
+} from './sharedAgentWorkspaceStore.mjs';
 import {
   OPENCLAW_PROVIDER_CAPACITY_SCHEMA,
   OPENCLAW_PROVIDER_POOL_HOST_CONTEXT_SCHEMA,
@@ -16,7 +20,14 @@ import {
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = '3dc12a7c84c54f406b10dee1293789e2338f7824';
 const NOW = '2026-08-21T02:00:00.000Z';
-const WORKER_ID = 'openclaw-8f11b5c0d3ac762a12345678';
+const PROVIDER_INSTANCE = 'openclaw-gateway:4321';
+const PROVIDER_VERSION = '1.0.0';
+
+function sha256(value) {
+  return createHash('sha256').update(String(value), 'utf8').digest('hex');
+}
+
+const WORKER_ID = `openclaw-${sha256(PROVIDER_INSTANCE).slice(0, 24)}`;
 
 function execution(overrides = {}) {
   return createExecutionReceipt({
@@ -44,28 +55,128 @@ function execution(overrides = {}) {
   });
 }
 
-function evidence(exec = execution(), overrides = {}) {
-  return {
-    taskClass: exec.phase,
-    taskId: exec.executionId,
-    sourceHead: exec.sourceHead,
-    workerId: exec.workerId,
-    providerVersion: '1.0.0',
-    finalVerdict: exec.phase === 'OC2_DETERMINISTIC_TEST_BUILD'
-      ? 'OPENCLAW_OC2_PROVIDER_TASK_COMPLETED'
-      : 'OPENCLAW_OC1_PROVIDER_TASK_COMPLETED',
-    proofRefs: [...exec.proofRefs],
-    changedFiles: [],
+function withOutputIdentity(core) {
+  return Object.freeze({ ...core, exactOutputIdentity: sha256(JSON.stringify(core)) });
+}
+
+function oc1Result(exec, overrides = {}) {
+  const core = {
+    schemaVersion: 'stephanos.openclaw-oc1-provider-result.v1',
+    missionId: 'mission-oc1-real-001',
+    goalId: '#1725',
+    taskId: 'task-oc1-real-001',
+    taskClass: 'OC1_REPOSITORY_SCOUT',
+    repository: REPOSITORY,
+    requestedSourceHead: exec.sourceHead,
+    observedSourceHead: exec.sourceHead,
+    exactInputIdentity: sha256('oc1-real-input'),
+    provider: 'openclaw-standalone',
+    providerInstance: PROVIDER_INSTANCE,
+    providerIdentitySource: 'gateway-status',
+    providerVersion: PROVIDER_VERSION,
+    authorityUsed: {
+      grantId: 'grant-oc1-real-001',
+      adapter: 'openclaw-readonly',
+      canonicalMissionWorkerClaim: true,
+      boundedActionCount: 1,
+      mergeAuthority: false,
+      deploymentAuthority: false,
+      sourceMutationAuthority: false,
+      selfQualificationAuthority: false,
+    },
+    commandsOrTestIds: [
+      'git-rev-parse-toplevel',
+      'git-remote-get-url-origin',
+      'git-rev-parse-branch',
+      'git-rev-parse-head',
+      'git-status-porcelain-v1',
+      'read-package-json-script-names',
+      'check-fixed-relevant-file-estate',
+    ],
+    artifacts: [exec.proofRefs[0], `receipts/${exec.receiptId}.json`],
+    dirt: { blocksSync: false, source: [], runtimeOnly: [] },
+    packageScripts: [],
+    relevantFiles: [],
+    startedAtUtc: exec.timestampUtc,
+    completedAtUtc: exec.timestampUtc,
+    blockers: [],
+    finalVerdict: 'OPENCLAW_OC1_PROVIDER_TASK_COMPLETED',
     sourceMutationPerformed: false,
+    arbitraryShellAllowed: false,
+    arbitraryCommandAllowed: false,
+    networkMutationAllowed: false,
+    mergeAllowed: false,
+    deploymentAllowed: false,
     selfQualificationAllowed: false,
     ...overrides,
   };
+  return withOutputIdentity(core);
 }
 
-function promote(exec = execution(), providerEvidence = evidence(exec), observedAtUtc = NOW) {
+function oc2Result(exec, overrides = {}) {
+  const core = {
+    schemaVersion: 'stephanos.openclaw-oc2-provider-result.v1',
+    missionId: 'mission-oc2-real-001',
+    goalId: '#1725',
+    taskId: 'task-oc2-real-001',
+    taskClass: 'OC2_DETERMINISTIC_TEST_BUILD',
+    repository: REPOSITORY,
+    requestedSourceHead: exec.sourceHead,
+    observedSourceHead: exec.sourceHead,
+    exactInputIdentity: sha256('oc2-real-input'),
+    provider: 'openclaw-standalone',
+    providerInstance: PROVIDER_INSTANCE,
+    providerVersion: PROVIDER_VERSION,
+    operation: 'oc2-provider-regression-v1',
+    testResults: [
+      { testId: 'OC2_PROVIDER_SOURCE_PARSE_V1', status: 0, outputSha256: sha256('oc2-parse') },
+      { testId: 'OC2_PROVIDER_REGRESSION_V1', status: 0, outputSha256: sha256('oc2-tests') },
+    ],
+    changedFiles: [],
+    sourceMutationPerformed: false,
+    arbitraryShellAllowed: false,
+    arbitraryCommandAllowed: false,
+    mergeAllowed: false,
+    deploymentAllowed: false,
+    selfQualificationAllowed: false,
+    finalVerdict: 'OPENCLAW_OC2_PROVIDER_TASK_COMPLETED',
+    completedAtUtc: exec.timestampUtc,
+    ...overrides,
+  };
+  return withOutputIdentity(core);
+}
+
+function providerProof(exec = execution(), overrides = {}) {
+  const result = exec.phase === 'OC2_DETERMINISTIC_TEST_BUILD'
+    ? oc2Result(exec, overrides.result || {})
+    : oc1Result(exec, overrides.result || {});
+  return createSharedWorkspaceMessageRecord({
+    messageId: exec.executionId,
+    participantId: 'openclaw',
+    timestampUtc: exec.timestampUtc,
+    correlationId: result.taskId,
+    relatedIssue: '1725',
+    relatedPr: '',
+    proofRefs: [...exec.proofRefs],
+    channel: 'openclaw-provider-qualification',
+    summary: 'Canonical OpenClaw provider qualification proof.',
+    body: JSON.stringify(result),
+    ...(overrides.record || {}),
+  });
+}
+
+function mutateProof(proof, mutateResult) {
+  const parsed = JSON.parse(proof.body);
+  const { exactOutputIdentity: _old, ...core } = parsed;
+  const nextCore = mutateResult({ ...core });
+  const next = withOutputIdentity(nextCore);
+  return Object.freeze({ ...proof, body: JSON.stringify(next) });
+}
+
+function promote(exec = execution(), proof = providerProof(exec), observedAtUtc = NOW) {
   return adjudicateOpenClawTaskClassPromotionCandidateV1({
     executionReceipt: exec,
-    providerEvidence,
+    providerProofRecord: proof,
     observedAtUtc,
   });
 }
@@ -91,7 +202,7 @@ function capacity(candidate, overrides = {}) {
   };
 }
 
-test('turns one completed OC1 real-work receipt into a gate-compatible Stephanos promotion candidate without routing authority', () => {
+test('turns canonical OC1 execution plus provider proof into a gate-compatible Stephanos promotion candidate without routing authority', () => {
   const exec = execution();
   const candidate = promote(exec);
   assert.equal(candidate.ok, true);
@@ -112,12 +223,11 @@ test('turns one completed OC1 real-work receipt into a gate-compatible Stephanos
     realWorkWorkspaceReceipt: candidate.realWorkWorkspaceReceipt,
     qualificationAuthorityReceipt: candidate.qualificationAuthorityReceipt,
   };
-  const authority = validateOpenClawQualificationAuthorityChain(
+  assert.equal(validateOpenClawQualificationAuthorityChain(
     candidate.qualificationReceipt,
     hostContext,
     { repository: REPOSITORY, taskClass: 'OC1_REPOSITORY_SCOUT', sourceHead: HEAD, nowUtc: NOW },
-  );
-  assert.equal(authority.valid, true);
+  ).valid, true);
   assert.equal(validateOpenClawProviderCapacity(capacity(candidate), {
     repository: REPOSITORY,
     taskClass: 'OC1_REPOSITORY_SCOUT',
@@ -128,7 +238,7 @@ test('turns one completed OC1 real-work receipt into a gate-compatible Stephanos
   }).valid, true);
 });
 
-test('supports OC2 only after a completed fixed task-class execution receipt', () => {
+test('supports OC2 only after a completed fixed test/build execution and matching canonical provider proof', () => {
   const exec = execution({
     receiptId: 'oc2-receipt-real-001',
     executionId: 'oc2-real-execution-001',
@@ -136,62 +246,79 @@ test('supports OC2 only after a completed fixed task-class execution receipt', (
     phase: 'OC2_DETERMINISTIC_TEST_BUILD',
     proofRefs: ['proofs/openclaw-oc2/oc2-real-execution-001.json'],
   });
-  const candidate = promote(exec, evidence(exec));
+  const candidate = promote(exec, providerProof(exec));
   assert.equal(candidate.ok, true);
   assert.equal(candidate.qualificationReceipt.taskClass, 'OC2_DETERMINISTIC_TEST_BUILD');
 });
 
-test('fails closed on unsupported, failed, mutated, self-qualified, mismatched or stale evidence', () => {
+test('fails closed on failed execution, unsupported class, mutation, self-qualification, worker/head drift, test failure or stale proof', () => {
   const base = execution();
+  const baseProof = providerProof(base);
+  const failedExecution = execution({ state: 'failed', blocker: 'test-failed' });
   const cases = [
-    [execution({ state: 'failed', blocker: 'test-failed' }), evidence(execution({ state: 'failed', blocker: 'test-failed' }))],
-    [base, evidence(base, { taskClass: 'OC3_BOUNDED_REPAIR', finalVerdict: 'OPENCLAW_OC3_PROVIDER_TASK_COMPLETED' })],
-    [base, evidence(base, { finalVerdict: 'OPENCLAW_OC1_PROVIDER_TASK_BLOCKED' })],
-    [base, evidence(base, { changedFiles: ['shared/agents/example.mjs'], sourceMutationPerformed: true })],
-    [base, evidence(base, { selfQualificationAllowed: true })],
-    [base, evidence(base, { workerId: 'foreign-openclaw' })],
-    [base, evidence(base, { sourceHead: '0'.repeat(40) })],
+    [failedExecution, providerProof(failedExecution)],
+    [base, mutateProof(baseProof, (result) => ({ ...result, taskClass: 'OC3_BOUNDED_REPAIR' }))],
+    [base, mutateProof(baseProof, (result) => ({ ...result, sourceMutationPerformed: true }))],
+    [base, mutateProof(baseProof, (result) => ({ ...result, selfQualificationAllowed: true }))],
+    [base, mutateProof(baseProof, (result) => ({ ...result, providerInstance: 'openclaw-gateway:9999' }))],
+    [base, mutateProof(baseProof, (result) => ({ ...result, requestedSourceHead: '0'.repeat(40), observedSourceHead: '0'.repeat(40) }))],
   ];
-  for (const [exec, providerEvidence] of cases) {
-    assert.equal(promote(exec, providerEvidence).ok, false);
-  }
-  assert.equal(promote(base, evidence(base), '2026-08-21T02:20:00.000Z').ok, false);
+  for (const [exec, proof] of cases) assert.equal(promote(exec, proof).ok, false);
+
+  const oc2 = execution({
+    receiptId: 'oc2-receipt-real-001',
+    executionId: 'oc2-real-execution-001',
+    leaseKey: 'oc2-real-execution-001',
+    phase: 'OC2_DETERMINISTIC_TEST_BUILD',
+    proofRefs: ['proofs/openclaw-oc2/oc2-real-execution-001.json'],
+  });
+  const failedTestProof = mutateProof(providerProof(oc2), (result) => ({
+    ...result,
+    testResults: result.testResults.map((entry, index) => index === 1 ? { ...entry, status: 1 } : entry),
+  }));
+  assert.equal(promote(oc2, failedTestProof).ok, false);
+  assert.equal(promote(base, baseProof, '2026-08-21T02:20:00.000Z').ok, false);
 });
 
-test('rejects accessor-bearing or extra-field provider evidence before reading it as authority', () => {
-  const base = evidence();
+test('rejects result digest drift, extra authority fields and proof-record lineage drift', () => {
+  const exec = execution();
+  const proof = providerProof(exec);
+  const parsed = JSON.parse(proof.body);
+  parsed.finalVerdict = 'OPENCLAW_OC1_PROVIDER_TASK_BLOCKED';
+  assert.equal(promote(exec, { ...proof, body: JSON.stringify(parsed) }).ok, false);
+
+  const extra = mutateProof(proof, (result) => ({ ...result, surpriseAuthority: true }));
+  assert.equal(promote(exec, extra).ok, false);
+  assert.equal(promote(exec, { ...proof, participantId: 'foreign-agent' }).ok, false);
+  assert.equal(promote(exec, { ...proof, messageId: 'foreign-execution' }).ok, false);
+  assert.equal(promote(exec, { ...proof, proofRefs: ['proofs/openclaw-oc1/foreign.json'] }).ok, false);
+});
+
+test('rejects accessor-bearing, sparse and revoked proof records without executing accessors', () => {
+  const exec = execution();
+  const proof = providerProof(exec);
+  let accessorExecuted = false;
   const accessor = {};
-  for (const [key, value] of Object.entries(base)) {
-    if (key === 'finalVerdict') continue;
+  for (const [key, value] of Object.entries(proof)) {
+    if (key === 'body') continue;
     Object.defineProperty(accessor, key, { value, enumerable: true });
   }
-  Object.defineProperty(accessor, 'finalVerdict', {
-    enumerable: true,
-    get() { throw new Error('must not execute'); },
-  });
-  assert.equal(promote(execution(), accessor).ok, false);
-  assert.equal(promote(execution(), { ...base, surpriseAuthority: true }).ok, false);
-});
-
-test('rejects hostile nested arrays, sparse arrays and revoked evidence without executing accessors', () => {
-  let accessorExecuted = false;
-  const proofRefs = [];
-  Object.defineProperty(proofRefs, '0', {
+  Object.defineProperty(accessor, 'body', {
     enumerable: true,
     get() {
       accessorExecuted = true;
-      throw new Error('must not execute nested accessor');
+      throw new Error('must not execute proof accessor');
     },
   });
-  assert.equal(promote(execution(), evidence(execution(), { proofRefs })).ok, false);
+  assert.equal(promote(exec, accessor).ok, false);
   assert.equal(accessorExecuted, false);
 
-  const sparseProofRefs = new Array(2);
-  sparseProofRefs[1] = 'proofs/openclaw-oc1/oc1-real-execution-001.json';
-  assert.equal(promote(execution(), evidence(execution(), { proofRefs: sparseProofRefs })).ok, false);
+  const sparseRefs = new Array(2);
+  sparseRefs[1] = proof.proofRefs[0];
+  assert.equal(promote(exec, { ...proof, proofRefs: sparseRefs }).ok, false);
 
-  const { proxy, revoke } = Proxy.revocable(evidence(), {});
+  const { proxy, revoke } = Proxy.revocable(proof, {});
   revoke();
-  assert.doesNotThrow(() => promote(execution(), proxy));
-  assert.equal(promote(execution(), proxy).ok, false);
+  assert.doesNotThrow(() => promote(exec, proxy));
+  assert.equal(promote(exec, proxy).ok, false);
 });
