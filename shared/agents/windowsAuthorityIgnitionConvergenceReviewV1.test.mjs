@@ -9,10 +9,50 @@ import {
 const repository = 'Cheekyfellastef/stephan-os';
 const prNumber = 1919;
 const branch = 'fix/ignition-canonical-convergence-gate-v1';
-const sourceHead = '51438eeb85df96f7363b7d5d8700711f54374371';
-const priorSourceHead = '34b573d15fe065a35a6c94f9f58a2876811a63b7';
-const baseSha = '3dc12a7c84c54f406b10dee1293789e2338f7824';
-const priorBaseSha = '13f13144730b2a6d94754914dbdf2c254c39567d';
+const sourceHead = 'a'.repeat(40);
+const previousHead = 'c'.repeat(40);
+const baseSha = 'b'.repeat(40);
+
+const probeSource = String.raw`[CmdletBinding()]
+param(
+  [ValidateSet('Inspect', 'Recover')]
+  [string]$Mode = 'Inspect'
+)
+$ErrorActionPreference = 'Stop'
+$wscriptPath = 'C:\Windows\System32\wscript.exe'
+$canonicalPowerShell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+$canonicalNode = 'C:\Program Files\nodejs\node.exe'
+$canonicalBootstrapEval = "import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)"
+$taskSpecs = @(
+  [pscustomobject]@{ Name = 'Stephanos Mission Orchestrator Worker Watchdog' }
+  [pscustomobject]@{ Name = 'Stephanos Battle Bridge GitHub Command Mailbox' }
+  [pscustomobject]@{ Name = 'Stephanos Battle Bridge Backend' }
+  [pscustomobject]@{ Name = 'OpenClaw Gateway' }
+)
+[string]$Task.Settings.MultipleInstances -eq 'IgnoreNew'
+function Test-CanonicalBackendCommandLine {}
+[string]::Equals($executable, $canonicalNode)
+Test-CanonicalBackendCommandLine
+BACKEND_LISTENER_EXECUTABLE_FOREIGN
+BACKEND_LISTENER_COMMAND_FOREIGN
+$raw = & $canonicalNode $backendFreshnessProbePath --expected-source-head $ExpectedSourceHead
+[string]$receipt.schemaVersion -eq 'stephanos.backend-runtime.v1'
+([string]$receipt.headSha).ToLowerInvariant() -eq $ExpectedSourceHead
+[int]$receipt.pid -eq $listenerAfter.pid
+[string]$receipt.processStartTimeUtc -eq $listenerAfter.creationTimeUtc
+[string]$proof.finalVerdict -eq 'BACKEND_CURRENT'
+$sourceControlExecutable = 'C:\Program Files\Git\cmd\git.exe'
+if ($sourceHead -notmatch '^[0-9a-f]{40}$' -or $branch -ne 'main') {}
+function Assert-CanonicalTrackedWorktreeClean {}
+Assert-CanonicalTrackedWorktreeClean -GitExecutable $sourceControlExecutable -RepositoryRoot $repoRoot
+if (-not $observed.authorityCanonical) { continue }
+Start-ScheduledTask -TaskName $spec.Name
+maximumTaskStarts = 4
+arbitraryTaskNameAllowed = $false
+arbitraryPowerShellAllowed = $false
+sourceMutationAllowed = $false
+pcRestartAllowed = $false
+`;
 
 const repairSource = String.raw`[CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -127,6 +167,26 @@ function sourceRecord(path, content) {
     content,
   };
 }
+function lineage(overrides = {}) {
+  return {
+    schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1',
+    repository,
+    sourceHead,
+    sourceCommitSha: sourceHead,
+    baseSha,
+    liveMainBeforeSha: baseSha,
+    liveMainAfterSha: baseSha,
+    parents: [previousHead, baseSha],
+    comparison: {
+      status: 'ahead',
+      aheadBy: 19,
+      behindBy: 0,
+      baseCommitSha: baseSha,
+      mergeBaseCommitSha: baseSha,
+    },
+    ...overrides,
+  };
+}
 function analysis() {
   return {
     schemaVersion: 'stephanos.independent-security-analysis.v1',
@@ -144,11 +204,13 @@ function input(overrides = {}) {
     branch,
     sourceHead,
     baseSha,
+    lineageEvidence: lineage(),
     analysis: analysis(),
     sources: [
-      sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[0], repairSource),
-      sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[1], restartSource),
-      sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[2], backendSource),
+      sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[0], probeSource),
+      sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[1], repairSource),
+      sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[2], restartSource),
+      sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[3], backendSource),
     ],
     ...overrides,
   };
@@ -165,29 +227,56 @@ test('exact ignition convergence escalation with closed-world source proof is cl
   assert.equal(result.runtimeAuthority, false);
   assert.equal(result.providerQualificationAuthority, false);
   assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1);
-  assert.equal(result.proofRefs.length, 3);
+  assert.equal(result.proofRefs.length, 4);
 });
 
 test('specialist is exact PR head/base bound and rejects another identity or finding estate', () => {
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ repository: 'other/repo' })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ prNumber: 1918 })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ branch: 'other' })).eligible, false);
-  assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sourceHead: priorSourceHead })).eligible, false);
+  assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sourceHead: 'd'.repeat(40) })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sourceHead: 'b'.repeat(40) })).eligible, false);
-  assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ baseSha: priorBaseSha })).eligible, false);
+  assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ baseSha: 'e'.repeat(40) })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ baseSha: 'c'.repeat(40) })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sourceHead: 'bad' })).eligible, false);
   assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ analysis: { findings: [] } })).eligible, false);
 });
 
+test('stale, reordered, diverged or accessor-shaped reconciliation evidence fails closed', () => {
+  const variants = [
+    lineage({ liveMainBeforeSha: 'd'.repeat(40) }),
+    lineage({ liveMainAfterSha: 'd'.repeat(40) }),
+    lineage({ sourceCommitSha: 'd'.repeat(40) }),
+    lineage({ parents: [baseSha, previousHead] }),
+    lineage({ parents: [previousHead] }),
+    lineage({ comparison: { ...lineage().comparison, status: 'diverged' } }),
+    lineage({ comparison: { ...lineage().comparison, behindBy: 1 } }),
+    lineage({ comparison: { ...lineage().comparison, baseCommitSha: 'd'.repeat(40) } }),
+    lineage({ comparison: { ...lineage().comparison, mergeBaseCommitSha: 'd'.repeat(40) } }),
+  ];
+  for (const lineageEvidence of variants) {
+    assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ lineageEvidence })).eligible, false);
+  }
+
+  let getterCalled = false;
+  const hostile = lineage();
+  delete hostile.sourceHead;
+  Object.defineProperty(hostile, 'sourceHead', {
+    enumerable: true,
+    get() { getterCalled = true; return sourceHead; },
+  });
+  assert.equal(analyzeWindowsAuthorityIgnitionConvergenceReview(input({ lineageEvidence: hostile })).eligible, false);
+  assert.equal(getterCalled, false);
+});
+
 test('missing, duplicate or wrong source evidence fails closed', () => {
-  const missing = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources: input().sources.slice(0, 2) }));
+  const missing = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources: input().sources.slice(0, 3) }));
   assert.equal(missing.eligible, true);
   assert.equal(missing.clean, false);
   assert.ok(missing.findings.some((item) => item.code === 'windows-authority-source-estate-invalid'));
 
   const duplicate = input().sources;
-  duplicate[2] = duplicate[1];
+  duplicate[3] = duplicate[2];
   const dupResult = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources: duplicate }));
   assert.equal(dupResult.clean, false);
   assert.ok(dupResult.findings.some((item) => item.code === 'windows-authority-source-evidence-invalid'));
@@ -266,10 +355,22 @@ test('accessor-backed source array entries fail closed without invoking getters'
   assert.ok(result.findings.some((item) => item.code === 'windows-authority-source-estate-invalid'));
 });
 
+test('recovery probe must preserve fixed listener, task, source and mutation boundaries', () => {
+  const weakened = probeSource
+    .replace('BACKEND_LISTENER_COMMAND_FOREIGN', 'REMOVED_COMMAND_GATE')
+    .replace('sourceMutationAllowed = $false', 'sourceMutationAllowed = $true');
+  const sources = input().sources;
+  sources[0] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[0], weakened);
+  const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'ignition-probe-backend-command-mismatch-not-blocked'));
+  assert.ok(result.findings.some((item) => item.code === 'ignition-probe-source-authority-not-zero'));
+});
+
 test('already-healthy backend exact-head identity gates are mandatory', () => {
   const weakened = repairSource.replace('BACKEND_HEALTH_SOURCE_HEAD_MISMATCH', 'REMOVED_HEAD_MISMATCH_GATE');
   const sources = input().sources;
-  sources[0] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[0], weakened);
+  sources[1] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[1], weakened);
   const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources }));
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'ignition-repair-backend-head-mismatch-not-blocked'));
@@ -280,7 +381,7 @@ test('canonical backend schema and runtime identity gates are mandatory', () => 
     .replace('BACKEND_HEALTH_SCHEMA_MISSING_OR_MISMATCH', 'REMOVED_SCHEMA_GATE')
     .replace('BACKEND_HEALTH_RUNTIME_ID_MISSING_OR_MISMATCH', 'REMOVED_RUNTIME_GATE');
   const sources = input().sources;
-  sources[0] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[0], weakened);
+  sources[1] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[1], weakened);
   const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources }));
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'ignition-repair-backend-schema-mismatch-not-blocked'));
@@ -292,7 +393,7 @@ test('scheduled backend restart must preserve bounded handoff and IgnoreNew gate
     .replace('BACKEND_TASK_MULTIPLE_INSTANCES_MISMATCH_BEFORE_START', 'REMOVED_PRE_START_GATE')
     .replace("expiresAtUtc = $issuedAtUtc.AddMinutes(2).ToString('o')", "expiresAtUtc = $issuedAtUtc.AddHours(2).ToString('o')");
   const sources = input().sources;
-  sources[1] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[1], weakened);
+  sources[2] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[2], weakened);
   const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources }));
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'ignition-restart-pre-start-overlap-proof-missing'));
@@ -304,7 +405,7 @@ test('restart listener identity must remain bound to canonical Node and immutabl
     .replace('BACKEND_LISTENER_NOT_CANONICAL_NODE', 'REMOVED_CANONICAL_NODE_GATE')
     .replace('BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED', 'REMOVED_BOOTSTRAP_COMMAND_GATE');
   const sources = input().sources;
-  sources[1] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[1], weakened);
+  sources[2] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[2], weakened);
   const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources }));
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'ignition-restart-backend-node-mismatch-not-blocked'));
@@ -316,7 +417,7 @@ test('backend child must remain canonical, synchronized and expected-head bound'
     .replace("if ($upstream -ne 'origin/main') {}", "if ($upstream -ne 'somewhere') {}")
     .replace("$minimalEnvironment['STEPHANOS_BACKEND_SOURCE_HEAD'] = $SourceHead", "$minimalEnvironment['OTHER'] = $SourceHead");
   const sources = input().sources;
-  sources[2] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[2], weakened);
+  sources[3] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[3], weakened);
   const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources }));
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'ignition-backend-upstream-gate-missing'));
@@ -328,7 +429,7 @@ test('immutable exact-head bootstrap materialization is mandatory for backend st
     .replace('BACKEND_EXACT_HEAD_BOOTSTRAP_HASH_MISMATCH', 'REMOVED_BOOTSTRAP_HASH_GATE')
     .replace("Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'exact-head bootstrap capture'", 'REMOVED_BOOTSTRAP_CAPTURE_GATE');
   const sources = input().sources;
-  sources[2] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[2], weakened);
+  sources[3] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[3], weakened);
   const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources }));
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'ignition-backend-bootstrap-hash-gate-missing'));
@@ -338,7 +439,7 @@ test('immutable exact-head bootstrap materialization is mandatory for backend st
 test('dynamic PowerShell and destructive Git remain rejected', () => {
   const poisoned = `${repairSource}\nInvoke-Expression $x\ngit reset --hard HEAD\n`;
   const sources = input().sources;
-  sources[0] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[0], poisoned);
+  sources[1] = sourceRecord(WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1[1], poisoned);
   const result = analyzeWindowsAuthorityIgnitionConvergenceReview(input({ sources }));
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'ignition-repair-dynamic-execution-forbidden'));
