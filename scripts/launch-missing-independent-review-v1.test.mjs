@@ -65,6 +65,25 @@ function launchReceipt() {
   });
 }
 
+function dispatchRun(receipt, overrides = {}) {
+  return {
+    id: 500,
+    workflow_id: 123,
+    name: 'Independent Merge Security Review',
+    path: '.github/workflows/independent-merge-security-review.yml',
+    event: 'workflow_dispatch',
+    repository: { full_name: 'Cheekyfellastef/stephan-os' },
+    head_branch: 'main',
+    head_sha: BASE,
+    display_title: receipt.runName,
+    created_at: '2026-08-20T10:00:01.000Z',
+    run_attempt: 1,
+    status: 'completed',
+    conclusion: 'failure',
+    ...overrides,
+  };
+}
+
 test('selects exactly one trusted exact-head handoff and at most one content-addressed launch receipt', () => {
   const handoff = {
     id: 10,
@@ -89,19 +108,70 @@ test('an existing launch receipt with no observable dispatch run fails closed in
   const result = reconcileExistingLaunchReceiptV1({ launchReceipt: launchReceipt(), runs: [] });
   assert.equal(result.verdict, 'DISPATCH_RUN_NOT_YET_OBSERVED');
   assert.equal(result.reconciliation, 'BLOCKED_DISPATCH_REQUEST_UNOBSERVED');
+  assert.equal(result.mutationAllowed, false);
   assert.deepEqual(result.blockers, [
     'launch receipt exists but no matching workflow-dispatch run is observable; blind redispatch is forbidden',
   ]);
 });
 
-test('launcher has one fixed workflow dispatch mutation and no shell/source/merge authority surface', () => {
+test('one exact failed workflow-dispatch review may use the existing failed-job-only retry budget', () => {
+  const receipt = launchReceipt();
+  const result = reconcileExistingLaunchReceiptV1({
+    launchReceipt: receipt,
+    runs: [dispatchRun(receipt)],
+  });
+  assert.equal(result.verdict, 'DISPATCH_RUN_TERMINAL');
+  assert.equal(result.reconciliation, 'RERUN_FAILED_JOBS');
+  assert.equal(result.runId, 500);
+  assert.equal(result.runAttempt, 1);
+  assert.equal(result.mutationAllowed, true);
+  assert.equal(result.operation, 'rerun-failed-jobs');
+});
+
+test('workflow-dispatch retry remains bounded and non-failure conclusions fail closed', () => {
+  const receipt = launchReceipt();
+  const exhausted = reconcileExistingLaunchReceiptV1({
+    launchReceipt: receipt,
+    runs: [dispatchRun(receipt, { run_attempt: 2 })],
+  });
+  assert.equal(exhausted.reconciliation, 'RETRY_BUDGET_EXHAUSTED');
+  assert.equal(exhausted.mutationAllowed, false);
+
+  const cancelled = reconcileExistingLaunchReceiptV1({
+    launchReceipt: receipt,
+    runs: [dispatchRun(receipt, { conclusion: 'cancelled' })],
+  });
+  assert.equal(cancelled.reconciliation, 'BLOCKED_CONCLUSION');
+  assert.equal(cancelled.mutationAllowed, false);
+
+  const running = reconcileExistingLaunchReceiptV1({
+    launchReceipt: receipt,
+    runs: [dispatchRun(receipt, { status: 'in_progress', conclusion: null })],
+  });
+  assert.equal(running.reconciliation, 'WAIT_RUNNING');
+  assert.equal(running.mutationAllowed, false);
+
+  const successful = reconcileExistingLaunchReceiptV1({
+    launchReceipt: receipt,
+    runs: [dispatchRun(receipt, { conclusion: 'success' })],
+  });
+  assert.equal(successful.reconciliation, 'ALREADY_SUCCESSFUL');
+  assert.equal(successful.mutationAllowed, false);
+});
+
+test('launcher has one fixed workflow dispatch, one exact failed-job retry, accepts draft review, and has no shell/source/merge authority surface', () => {
   const source = fs.readFileSync(new URL('./launch-missing-independent-review-v1.mjs', import.meta.url), 'utf8');
   assert.match(source, /\/actions\/workflows\/\$\{context\.workflow\.id\}\/dispatches/);
-  assert.equal((source.match(/method:\s*'POST'/g) || []).length, 2, 'only launch-receipt comment plus workflow dispatch may POST');
+  assert.match(source, /\/actions\/runs\/\$\{reconciliation\.runId\}\/rerun-failed-jobs/);
+  assert.equal((source.match(/method:\s*'POST'/g) || []).length, 3, 'only launch-receipt comment, workflow dispatch, and exact failed-job retry may POST');
   assert.doesNotMatch(source, /execFile|spawn|child_process|shell:\s*true|git\s+(?:push|reset|clean|rebase)|gh\s+pr\s+merge|\/merges|\/contents\//i);
   assert.match(source, /retryPlan\.decision !== INDEPENDENT_REVIEW_RETRY_DECISION\.NO_MATCHING_RUN/);
+  assert.match(source, /INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT/);
+  assert.match(source, /reconciliation\.reconciliation === 'RERUN_FAILED_JOBS'/);
   assert.match(source, /Reconstruct the complete trusted context immediately before/);
   assert.match(source, /selectExactLaunchReceiptCommentV1/);
   assert.match(source, /reconcileExistingLaunchReceiptV1/);
   assert.match(source, /BLOCKED_DISPATCH_REQUEST_UNOBSERVED/);
+  assert.match(source, /pr\.state\.toLowerCase\(\) !== 'open' \|\| !pr\.sameRepository/);
+  assert.doesNotMatch(source, /pr\.state\.toLowerCase\(\) !== 'open' \|\| pr\.draft/);
 });
