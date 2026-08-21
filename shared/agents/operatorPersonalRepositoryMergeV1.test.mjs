@@ -33,6 +33,7 @@ import {
   validatePersonalRepositoryRulesetProofResponse,
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
+  validatePersonalRepositoryWorkflowRunHydration,
 } from './operatorPersonalRepositoryMergeV1.mjs';
 
 function response(status) {
@@ -1297,6 +1298,53 @@ test('all seven universally applicable exact-head workflow identities must be ac
   assert.ok(blocked.blockers.includes(
     `personal-repository-workflow-run-not-exact-green:${PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS[3].name}`,
   ));
+});
+
+test('workflow run hydration replaces permission-trimmed summaries only with exact individual identities', () => {
+  const details = [...workflowRuns(), escalationWorkflowRun()];
+  const summaries = details.map((run) => ({
+    id: run.id,
+    workflow_id: run.workflow_id,
+    check_suite_id: run.check_suite_id,
+    head_sha: run.head_sha,
+    pull_requests: [],
+  }));
+  const hydrated = validatePersonalRepositoryWorkflowRunHydration(
+    summaries,
+    details,
+    { sourceHead },
+  );
+  assert.equal(hydrated.valid, true);
+  assert.deepEqual(hydrated.runs, details);
+  assert.equal(hydrated.runs[0].pull_requests.length, 1);
+});
+
+test('workflow run hydration rejects omissions, substitutions, duplicates and stale heads', () => {
+  const details = workflowRuns();
+  const summaries = details.map((run) => ({
+    id: run.id,
+    workflow_id: run.workflow_id,
+    check_suite_id: run.check_suite_id,
+    head_sha: run.head_sha,
+  }));
+  const hostilePairs = [
+    [summaries, details.slice(1)],
+    [summaries, details.map((run, index) => index === 0 ? { ...run, workflow_id: run.workflow_id + 1 } : run)],
+    [summaries, details.map((run, index) => index === 0 ? { ...run, check_suite_id: run.check_suite_id + 1 } : run)],
+    [summaries, details.map((run, index) => index === 0 ? { ...run, head_sha: 'f'.repeat(40) } : run)],
+    [[...summaries, summaries[0]], details],
+    [summaries, [...details, details[0]]],
+  ];
+  for (const [candidateSummaries, candidateDetails] of hostilePairs) {
+    const blocked = validatePersonalRepositoryWorkflowRunHydration(
+      candidateSummaries,
+      candidateDetails,
+      { sourceHead },
+    );
+    assert.equal(blocked.valid, false);
+    assert.deepEqual(blocked.runs, []);
+    assert.ok(blocked.blockers.length > 0);
+  }
 });
 
 test('personal repository evidence binds operator, PR, branch, head, tree and current base', () => {
