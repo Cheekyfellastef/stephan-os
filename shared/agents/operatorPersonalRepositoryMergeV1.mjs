@@ -27,6 +27,7 @@ export const PERSONAL_REPOSITORY_REQUIRED_CHECK = 'protected-merge-source-proof'
 export const PERSONAL_REPOSITORY_MODE = 'user-owned-protected-squash';
 export const PERSONAL_REPOSITORY_AUTHORITY = 'github-actions-protected-environment-exact-head-squash-only';
 export const PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS = 3;
+export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS = 2;
 export const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES = 256 * 1024;
 export const PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES = 256 * 1024;
 
@@ -1030,6 +1031,71 @@ export function validatePersonalRepositoryWorkflowRuns(definitions = [], runs = 
   });
 }
 
+export function validatePersonalRepositoryWorkflowRunHydration(
+  summaries = [],
+  details = [],
+  expected = {},
+) {
+  const blockers = [];
+  const sourceHead = text(expected.sourceHead).toLowerCase();
+  if (!Array.isArray(summaries) || summaries.length === 0) {
+    blockers.push('personal-repository-workflow-run-summaries-invalid');
+  }
+  if (!Array.isArray(details) || details.length === 0) {
+    blockers.push('personal-repository-workflow-run-details-invalid');
+  }
+  if (!SHA_PATTERN.test(sourceHead)) {
+    blockers.push('personal-repository-workflow-run-hydration-head-invalid');
+  }
+
+  const summaryIds = new Set();
+  const detailById = new Map();
+  for (const detail of Array.isArray(details) ? details : []) {
+    const detailId = strictPositiveInteger(detail?.id);
+    if (!detailId || detailById.has(detailId)) {
+      blockers.push('personal-repository-workflow-run-detail-identity-invalid');
+      continue;
+    }
+    detailById.set(detailId, detail);
+  }
+
+  const hydratedRuns = [];
+  for (const summary of Array.isArray(summaries) ? summaries : []) {
+    const summaryId = strictPositiveInteger(summary?.id);
+    const workflowId = strictPositiveInteger(summary?.workflow_id);
+    const checkSuiteId = strictPositiveInteger(summary?.check_suite_id);
+    if (!summaryId || !workflowId || !checkSuiteId
+      || text(summary?.head_sha).toLowerCase() !== sourceHead
+      || summaryIds.has(summaryId)) {
+      blockers.push('personal-repository-workflow-run-summary-identity-invalid');
+      continue;
+    }
+    summaryIds.add(summaryId);
+    const detail = detailById.get(summaryId);
+    if (!detail
+      || strictPositiveInteger(detail?.workflow_id) !== workflowId
+      || strictPositiveInteger(detail?.check_suite_id) !== checkSuiteId
+      || text(detail?.head_sha).toLowerCase() !== sourceHead) {
+      blockers.push('personal-repository-workflow-run-detail-mismatch');
+      continue;
+    }
+    hydratedRuns.push(detail);
+  }
+  if (summaryIds.size !== detailById.size) {
+    blockers.push('personal-repository-workflow-run-hydration-cardinality-mismatch');
+  }
+
+  const valid = blockers.length === 0 && hydratedRuns.length === summaryIds.size;
+  return Object.freeze({
+    valid,
+    runs: valid ? Object.freeze([...hydratedRuns]) : Object.freeze([]),
+    blockers: Object.freeze(unique(blockers)),
+    finalVerdict: valid
+      ? 'PERSONAL_REPOSITORY_WORKFLOW_RUN_HYDRATION_READY'
+      : 'PERSONAL_REPOSITORY_WORKFLOW_RUN_HYDRATION_BLOCKED',
+  });
+}
+
 export function validatePersonalRepositoryCheckRuns(
   checkRuns = [],
   workflowRuns = [],
@@ -1150,6 +1216,63 @@ export function validatePersonalRepositoryCheckRuns(
     finalVerdict: blockers.length
       ? 'PERSONAL_REPOSITORY_CHECK_RUNS_BLOCKED'
       : 'PERSONAL_REPOSITORY_CHECK_RUNS_READY',
+  });
+}
+
+export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
+  readSnapshot,
+  expected = {},
+  options = {},
+} = {}) {
+  if (typeof readSnapshot !== 'function') {
+    return Object.freeze({
+      valid: false,
+      evidence: Object.freeze([]),
+      admittedReviewEscalations: 0,
+      blockers: Object.freeze(['personal-repository-check-snapshot-reader-invalid']),
+      snapshotAttempt: 0,
+      snapshotAttempts: Object.freeze([]),
+      selectedSnapshot: null,
+      finalVerdict: 'PERSONAL_REPOSITORY_CHECK_RUNS_BLOCKED',
+    });
+  }
+
+  const snapshotAttempts = [];
+  let validation = null;
+  for (let attempt = 1; attempt <= PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS; attempt += 1) {
+    const snapshot = await readSnapshot(attempt);
+    validation = validatePersonalRepositoryCheckRuns(
+      snapshot?.checkRuns,
+      snapshot?.workflowRuns,
+      snapshot?.commitStatuses,
+      expected,
+      options,
+    );
+    snapshotAttempts.push(Object.freeze({
+      attempt,
+      valid: validation.valid,
+      blockers: validation.blockers,
+    }));
+    if (validation.valid) {
+      const selectedSnapshot = Object.freeze({
+        checkRuns: Object.freeze([...snapshot.checkRuns]),
+        workflowRuns: Object.freeze([...snapshot.workflowRuns]),
+        commitStatuses: Object.freeze([...snapshot.commitStatuses]),
+      });
+      return Object.freeze({
+        ...validation,
+        snapshotAttempt: attempt,
+        snapshotAttempts: Object.freeze(snapshotAttempts),
+        selectedSnapshot,
+      });
+    }
+  }
+
+  return Object.freeze({
+    ...validation,
+    snapshotAttempt: 0,
+    snapshotAttempts: Object.freeze(snapshotAttempts),
+    selectedSnapshot: null,
   });
 }
 
