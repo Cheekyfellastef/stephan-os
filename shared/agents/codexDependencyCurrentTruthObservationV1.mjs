@@ -11,6 +11,7 @@ import {
 export const CODEX_DEPENDENCY_CURRENT_TRUTH_OBSERVATION_SCHEMA = 'stephanos.codex-dependency-current-truth-observation.v1';
 export const CODEX_DEPENDENCY_CURRENT_TRUTH_OBSERVATION_RECORD_SCHEMA = 'stephanos.codex-dependency-current-truth-observation-record.v1';
 export const PROVIDER_INDEPENDENCE_OBSERVER_EVIDENCE_CLASS = 'CANONICAL_PROVIDER_INDEPENDENCE_OBSERVER_PROOF';
+export const PROVIDER_INDEPENDENCE_OBSERVATION_MAX_AGE_MS = 15 * 60 * 1000;
 
 export const OBSERVATION_COVERAGE_CLASS = Object.freeze({
   REPOSITORY_SOURCE: 'REPOSITORY_SOURCE',
@@ -104,6 +105,24 @@ function collectionLengths(envelope) {
   ]);
 }
 
+function boundedFreshUntil(observedAtUtc, rawFreshUntilUtc) {
+  if (!observedAtUtc) return { freshUntilUtc: '', problems: [] };
+  const observedAtMs = Date.parse(observedAtUtc);
+  const maximumFreshUntilMs = observedAtMs + PROVIDER_INDEPENDENCE_OBSERVATION_MAX_AGE_MS;
+  const raw = text(rawFreshUntilUtc);
+  const declaredFreshUntilUtc = validTimestamp(raw);
+  const problems = [];
+
+  if (raw && !declaredFreshUntilUtc) problems.push('fresh-until-invalid');
+  if (declaredFreshUntilUtc && Date.parse(declaredFreshUntilUtc) < observedAtMs) problems.push('freshness-window-invalid');
+  if (declaredFreshUntilUtc && Date.parse(declaredFreshUntilUtc) > maximumFreshUntilMs) problems.push('freshness-window-too-wide');
+
+  return {
+    freshUntilUtc: declaredFreshUntilUtc || new Date(maximumFreshUntilMs).toISOString(),
+    problems,
+  };
+}
+
 function normalizeObserver(rawObserver, { sourceHead, observedAtUtc }) {
   const observer = dataOnly(rawObserver || {}, 'observer');
   const problems = [];
@@ -112,7 +131,7 @@ function normalizeObserver(rawObserver, { sourceHead, observedAtUtc }) {
   const executionId = text(observer.executionId);
   const observerSourceHead = text(observer.sourceHead).toLowerCase();
   const evidenceObservedAtUtc = validTimestamp(observer.observedAtUtc);
-  const freshUntilUtc = validTimestamp(observer.freshUntilUtc);
+  const freshness = boundedFreshUntil(evidenceObservedAtUtc, observer.freshUntilUtc);
   const proofRefs = uniqueSorted(observer.proofRefs);
 
   if (evidenceClass !== PROVIDER_INDEPENDENCE_OBSERVER_EVIDENCE_CLASS) problems.push('observer-evidence-class-invalid');
@@ -123,11 +142,8 @@ function normalizeObserver(rawObserver, { sourceHead, observedAtUtc }) {
   if (observerSourceHead && observerSourceHead !== sourceHead) problems.push('observer-source-head-not-current');
   if (!evidenceObservedAtUtc) problems.push('observer-observed-at-invalid');
   if (evidenceObservedAtUtc && Date.parse(evidenceObservedAtUtc) > Date.parse(observedAtUtc)) problems.push('observer-proof-from-future');
-  if (!freshUntilUtc) problems.push('observer-fresh-until-invalid');
-  if (evidenceObservedAtUtc && freshUntilUtc && Date.parse(freshUntilUtc) < Date.parse(evidenceObservedAtUtc)) {
-    problems.push('observer-freshness-window-invalid');
-  }
-  if (freshUntilUtc && Date.parse(freshUntilUtc) < Date.parse(observedAtUtc)) problems.push('observer-proof-stale');
+  problems.push(...freshness.problems.map((problem) => `observer-${problem}`));
+  if (freshness.freshUntilUtc && Date.parse(freshness.freshUntilUtc) < Date.parse(observedAtUtc)) problems.push('observer-proof-stale');
   if (!proofRefs.length) problems.push('observer-proof-refs-missing');
 
   return {
@@ -138,7 +154,7 @@ function normalizeObserver(rawObserver, { sourceHead, observedAtUtc }) {
       executionId,
       sourceHead: observerSourceHead,
       observedAtUtc: evidenceObservedAtUtc,
-      freshUntilUtc,
+      freshUntilUtc: freshness.freshUntilUtc,
       proofRefs,
     }),
     problems,
@@ -156,7 +172,7 @@ function normalizeCoverage(rawCoverage, { envelope, sourceHead, observedAtUtc })
     const coverageClass = text(record.coverageClass);
     const coverageSourceHead = text(record.sourceHead).toLowerCase();
     const coverageObservedAtUtc = validTimestamp(record.observedAtUtc);
-    const freshUntilUtc = validTimestamp(record.freshUntilUtc);
+    const freshness = boundedFreshUntil(coverageObservedAtUtc, record.freshUntilUtc);
     const examinedCount = nonNegativeInteger(record.examinedCount);
     const emittedCount = nonNegativeInteger(record.emittedCount);
     const proofRefs = uniqueSorted(record.proofRefs);
@@ -169,11 +185,8 @@ function normalizeCoverage(rawCoverage, { envelope, sourceHead, observedAtUtc })
     if (coverageSourceHead && coverageSourceHead !== sourceHead) localProblems.push('coverage-source-head-not-current');
     if (!coverageObservedAtUtc) localProblems.push('coverage-observed-at-invalid');
     if (coverageObservedAtUtc && Date.parse(coverageObservedAtUtc) > Date.parse(observedAtUtc)) localProblems.push('coverage-from-future');
-    if (!freshUntilUtc) localProblems.push('coverage-fresh-until-invalid');
-    if (coverageObservedAtUtc && freshUntilUtc && Date.parse(freshUntilUtc) < Date.parse(coverageObservedAtUtc)) {
-      localProblems.push('coverage-freshness-window-invalid');
-    }
-    if (freshUntilUtc && Date.parse(freshUntilUtc) < Date.parse(observedAtUtc)) localProblems.push('coverage-proof-stale');
+    localProblems.push(...freshness.problems.map((problem) => `coverage-${problem}`));
+    if (freshness.freshUntilUtc && Date.parse(freshness.freshUntilUtc) < Date.parse(observedAtUtc)) localProblems.push('coverage-proof-stale');
     if (examinedCount === null) localProblems.push('examined-count-invalid');
     if (emittedCount === null) localProblems.push('emitted-count-invalid');
     if (examinedCount !== null && emittedCount !== null && examinedCount < emittedCount) localProblems.push('examined-count-below-emitted-count');
@@ -192,7 +205,7 @@ function normalizeCoverage(rawCoverage, { envelope, sourceHead, observedAtUtc })
       complete: record.complete === true,
       sourceHead: coverageSourceHead,
       observedAtUtc: coverageObservedAtUtc,
-      freshUntilUtc,
+      freshUntilUtc: freshness.freshUntilUtc,
       examinedCount: examinedCount ?? -1,
       emittedCount: emittedCount ?? -1,
       scopeRef: text(record.scopeRef),
