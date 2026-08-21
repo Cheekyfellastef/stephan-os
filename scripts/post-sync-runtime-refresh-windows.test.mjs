@@ -463,6 +463,65 @@ test('backend Node child ignores hostile inherited Git repository-selection vari
   }
 });
 
+test('backend PowerShell starter binds every Git proof to the canonical repository despite hostile inherited selectors', { skip: process.platform !== 'win32' }, () => {
+  const gitExecutable = 'C:\\Program Files\\Git\\cmd\\git.exe';
+  const powershellExecutable = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'stephanos-backend-powershell-git-'));
+  const canonicalRoot = join(fixtureRoot, 'canonical');
+  const hostileRoot = join(fixtureRoot, 'hostile');
+  const proofScript = join(fixtureRoot, 'prove-canonical-git.ps1');
+  try {
+    for (const root of [canonicalRoot, hostileRoot]) {
+      runGit(gitExecutable, fixtureRoot, ['init', '--quiet', root]);
+      runGit(gitExecutable, root, ['config', 'user.name', 'Stephanos Test']);
+      runGit(gitExecutable, root, ['config', 'user.email', 'stephanos-test@example.invalid']);
+      runGit(gitExecutable, root, ['commit', '--allow-empty', '--quiet', '-m', root === canonicalRoot ? 'canonical' : 'hostile']);
+    }
+    const canonicalHead = runGit(gitExecutable, canonicalRoot, ['rev-parse', 'HEAD']).toLowerCase();
+    const hostileHead = runGit(gitExecutable, hostileRoot, ['rev-parse', 'HEAD']).toLowerCase();
+    assert.notEqual(canonicalHead, hostileHead);
+
+    const boundaryStart = backendStartSource.indexOf('$canonicalGitDirectory =');
+    const boundaryEnd = backendStartSource.indexOf('function Assert-ExpectedHeadImmediatelyBeforeMutation', boundaryStart);
+    assert.notEqual(boundaryStart, -1);
+    assert.ok(boundaryEnd > boundaryStart);
+    const boundarySource = backendStartSource.slice(boundaryStart, boundaryEnd);
+    const psLiteral = (value) => String(value).replaceAll("'", "''");
+    writeFileSync(proofScript, [
+      "$ErrorActionPreference = 'Stop'",
+      `$canonicalGit = '${psLiteral(gitExecutable)}'`,
+      `$repoRoot = '${psLiteral(canonicalRoot)}'`,
+      boundarySource,
+      '$headOutput = @(& $canonicalGit @canonicalGitArguments rev-parse HEAD 2>$null)',
+      'if ($LASTEXITCODE -ne 0) { throw "CANONICAL_GIT_PROOF_FAILED" }',
+      '$headOutput | Select-Object -First 1',
+    ].join('\r\n'), 'utf8');
+
+    const proof = spawnSync(powershellExecutable, [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', proofScript,
+    ], {
+      env: {
+        ...process.env,
+        GIT_DIR: join(hostileRoot, '.git'),
+        GIT_WORK_TREE: hostileRoot,
+        GIT_COMMON_DIR: join(hostileRoot, '.git'),
+        GIT_OBJECT_DIRECTORY: join(hostileRoot, '.git', 'objects'),
+        GIT_INDEX_FILE: join(hostileRoot, '.git', 'index'),
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'core.repositoryformatversion',
+        GIT_CONFIG_VALUE_0: '0',
+      },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 10_000,
+    });
+    assert.equal(proof.status, 0, proof.stderr || proof.error?.message);
+    assert.equal(String(proof.stdout || '').trim().toLowerCase(), canonicalHead);
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 test('backend restart terminates only the verified 8787 Stephanos Node listener', () => {
   assert.match(restartSource, /Get-NetTCPConnection -LocalPort 8787 -State Listen/);
   assert.match(restartSource, /--input-type=module --eval/);
@@ -514,7 +573,7 @@ test('backend starter proves canonical main and writes a bounded exact-head runt
   assert.match(backendStartSource, /taskName = 'Stephanos Battle Bridge Backend'/);
   assert.match(backendStartSource, /pathValuesPublished = \$false/);
   assert.match(backendStartSource, /function Get-ExactHeadBackendBootstrapBase64/);
-  assert.match(backendStartSource, /'show', "\$\{HeadSha\}:\$bootstrapGitPath"/);
+  assert.match(backendStartSource, /"--git-dir=`"\$canonicalGitDirectory`"", "--work-tree=`"\$repoRoot`"", 'show', "\$\{HeadSha\}:\$bootstrapGitPath"/);
   assert.match(backendStartSource, /ReadAllBytes\(\$temporaryPath\)/);
   assert.match(backendStartSource, /ComputeHash\(\$blobBytes\)/);
   assert.match(backendStartSource, /\$bootstrapBase64 = Get-ExactHeadBackendBootstrapBase64/);
@@ -527,6 +586,12 @@ test('backend starter proves canonical main and writes a bounded exact-head runt
   assert.doesNotMatch(backendStartSource, /backend-bootstrap-\$headSha\.mjs/);
   assert.match(backendStartSource, /Start-Process -FilePath \$canonicalNode/);
   assert.doesNotMatch(backendStartSource, /Start-Process -FilePath \$canonicalNpm/);
+  assert.match(backendStartSource, /\$canonicalGitArguments = @\("--git-dir=\$canonicalGitDirectory", "--work-tree=\$repoRoot"\)/);
+  assert.match(backendStartSource, /if \(\[string\]\$entry\.Name -like 'GIT_\*'\)[\s\S]*Remove-Item -LiteralPath \("Env:\{0\}" -f \[string\]\$entry\.Name\)/);
+  assert.match(backendStartSource, /\$env:GIT_CONFIG_NOSYSTEM = '1'/);
+  assert.match(backendStartSource, /\$env:GIT_CONFIG_GLOBAL = 'NUL'/);
+  assert.match(backendStartSource, /\$env:GIT_NO_REPLACE_OBJECTS = '1'/);
+  assert.doesNotMatch(backendStartSource, /& \$canonicalGit -C /);
   assert.match(backendStartSource, /Get-NetTCPConnection -LocalPort 8787 -State Listen/);
   assert.doesNotMatch(backendStartSource, /repositoryRoot\s*=/);
 });
@@ -534,11 +599,11 @@ test('backend starter proves canonical main and writes a bounded exact-head runt
 test('backend starter captures native Git exit codes before selecting bounded output', () => {
   assert.match(
     backendStartSource,
-    /\$branchOutput = @\(& \$canonicalGit -C \$repoRoot branch --show-current 2>\$null\)\r?\n\$branchExitCode = \$LASTEXITCODE\r?\nif \(\$branchExitCode -ne 0\)/,
+    /\$branchOutput = @\(& \$canonicalGit @canonicalGitArguments branch --show-current 2>\$null\)\r?\n\$branchExitCode = \$LASTEXITCODE\r?\nif \(\$branchExitCode -ne 0\)/,
   );
   assert.match(
     backendStartSource,
-    /\$headOutput = @\(& \$canonicalGit -C \$repoRoot rev-parse HEAD 2>\$null\)\r?\n\$headExitCode = \$LASTEXITCODE\r?\nif \(\$headExitCode -ne 0\)/,
+    /\$headOutput = @\(& \$canonicalGit @canonicalGitArguments rev-parse HEAD 2>\$null\)\r?\n\$headExitCode = \$LASTEXITCODE\r?\nif \(\$headExitCode -ne 0\)/,
   );
   assert.match(backendStartSource, /\$branchRaw = \$branchOutput \| Select-Object -First 1/);
   assert.match(backendStartSource, /\$headRaw = \$headOutput \| Select-Object -First 1/);

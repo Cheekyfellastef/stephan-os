@@ -10,7 +10,6 @@ $canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
 $canonicalNpm = 'C:\Program Files\nodejs\npm.cmd'
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
 $canonicalBootstrapEval = "import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)"
-$env:GIT_NO_REPLACE_OBJECTS = '1'
 $runtimeMemoryPath = 'stephanos-server/data/memory/durable-memory.json'
 $runtimeDistPrefix = 'apps/stephanos/dist/'
 
@@ -181,10 +180,26 @@ function Publish-VerifiedBackendRuntimeReceipt {
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
 Set-Location -Path $repoRoot
+$canonicalGitDirectory = Join-Path $repoRoot '.git'
+if (-not (Test-Path -LiteralPath $canonicalGitDirectory -PathType Container)) {
+    throw 'Backend startup requires the canonical repository Git directory.'
+}
+$canonicalGitArguments = @("--git-dir=$canonicalGitDirectory", "--work-tree=$repoRoot")
+foreach ($entry in @(Get-ChildItem Env:)) {
+    if ([string]$entry.Name -like 'GIT_*') {
+        Remove-Item -LiteralPath ("Env:{0}" -f [string]$entry.Name) -Force -ErrorAction SilentlyContinue
+    }
+}
+$env:GIT_CONFIG_NOSYSTEM = '1'
+$env:GIT_CONFIG_GLOBAL = 'NUL'
+$env:GIT_ATTR_NOSYSTEM = '1'
+$env:GIT_NO_REPLACE_OBJECTS = '1'
+$env:GIT_TERMINAL_PROMPT = '0'
+$env:GCM_INTERACTIVE = 'Never'
 
 function Assert-ExpectedHeadImmediatelyBeforeMutation {
     param([Parameter(Mandatory = $true)][string]$Mutation)
-    $headOutput = @(& $canonicalGit -C $repoRoot rev-parse HEAD 2>$null)
+    $headOutput = @(& $canonicalGit @canonicalGitArguments rev-parse HEAD 2>$null)
     $headExitCode = $LASTEXITCODE
     if ($headExitCode -ne 0) { throw "Canonical Git head proof failed before ${Mutation}." }
     $observedHead = [string]($headOutput | Select-Object -First 1)
@@ -230,11 +245,11 @@ foreach ($requiredExecutable in @($canonicalGit, $canonicalNpm, $canonicalNode))
     }
 }
 
-$branchOutput = @(& $canonicalGit -C $repoRoot branch --show-current 2>$null)
+$branchOutput = @(& $canonicalGit @canonicalGitArguments branch --show-current 2>$null)
 $branchExitCode = $LASTEXITCODE
 if ($branchExitCode -ne 0) { throw 'Backend startup could not inspect the canonical Git branch.' }
 $branchRaw = $branchOutput | Select-Object -First 1
-$headOutput = @(& $canonicalGit -C $repoRoot rev-parse HEAD 2>$null)
+$headOutput = @(& $canonicalGit @canonicalGitArguments rev-parse HEAD 2>$null)
 $headExitCode = $LASTEXITCODE
 if ($headExitCode -ne 0) { throw 'Backend startup could not inspect the canonical Git head.' }
 $headRaw = $headOutput | Select-Object -First 1
@@ -247,13 +262,13 @@ if ($providedExpectedHead -and $providedExpectedHead -notmatch '^[0-9a-f]{40}$')
 if (-not $providedExpectedHead) {
     $providedExpectedHead = [string](Read-BackendExpectedHeadHandoff)
 }
-$upstreamOutput = @(& $canonicalGit -C $repoRoot rev-parse '--abbrev-ref' '--symbolic-full-name' '@{u}' 2>$null)
+$upstreamOutput = @(& $canonicalGit @canonicalGitArguments rev-parse '--abbrev-ref' '--symbolic-full-name' '@{u}' 2>$null)
 $upstreamExitCode = $LASTEXITCODE
 if ($upstreamExitCode -ne 0) { throw 'Backend startup could not prove the canonical upstream.' }
 $upstream = [string]($upstreamOutput | Select-Object -First 1)
 $upstream = $upstream.Trim()
 if ($upstream -ne 'origin/main') { throw "Backend startup requires canonical upstream origin/main; observed=$upstream" }
-$originHeadOutput = @(& $canonicalGit -C $repoRoot rev-parse origin/main 2>$null)
+$originHeadOutput = @(& $canonicalGit @canonicalGitArguments rev-parse origin/main 2>$null)
 $originHeadExitCode = $LASTEXITCODE
 if ($originHeadExitCode -ne 0) { throw 'Backend startup could not prove origin/main.' }
 $originHead = [string]($originHeadOutput | Select-Object -First 1)
@@ -261,7 +276,7 @@ $originHead = $originHead.Trim().ToLowerInvariant()
 if ($originHead -ne $headSha) { throw "Backend startup requires synchronized main: head=$headSha origin/main=$originHead" }
 $boundExpectedHead = if ($providedExpectedHead) { $providedExpectedHead } else { $headSha }
 if ($headSha -ne $boundExpectedHead) { throw "Backend startup expected-head binding mismatch: expected=$boundExpectedHead observed=$headSha" }
-$trackedStatus = @(& $canonicalGit -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
+$trackedStatus = @(& $canonicalGit @canonicalGitArguments status '--porcelain=v1' '--untracked-files=no' 2>$null)
 if ($LASTEXITCODE -ne 0) { throw 'Backend startup could not inspect tracked worktree state.' }
 $trackedAssessment = Get-TrackedWorktreeAssessment -StatusLines $trackedStatus
 if ($trackedAssessment.SourceDirt.Count -ne 0) {
@@ -313,8 +328,11 @@ function Get-ExactHeadBackendBootstrapBase64 {
     if ($RepositoryRoot.Contains('"')) {
         throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_PATH_INVALID'
     }
+    if (-not [string]::Equals([System.IO.Path]::GetFullPath($RepositoryRoot), $repoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_REPOSITORY_MISMATCH'
+    }
     $bootstrapGitPath = 'stephanos-server/backend-bootstrap.mjs'
-    $expectedBlobOutput = @(& $canonicalGit -C $RepositoryRoot rev-parse "${HeadSha}:$bootstrapGitPath" 2>$null)
+    $expectedBlobOutput = @(& $canonicalGit @canonicalGitArguments rev-parse "${HeadSha}:$bootstrapGitPath" 2>$null)
     if ($LASTEXITCODE -ne 0) { throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_BLOB_PROOF_FAILED' }
     $expectedBlob = ([string]($expectedBlobOutput | Select-Object -First 1)).Trim().ToLowerInvariant()
     if ($expectedBlob -notmatch '^[0-9a-f]{40}$') { throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_BLOB_PROOF_INVALID' }
@@ -323,7 +341,7 @@ function Get-ExactHeadBackendBootstrapBase64 {
     $temporaryErrorPath = "${temporaryPath}.stderr"
     try {
         Remove-Item -LiteralPath $temporaryPath, $temporaryErrorPath -Force -ErrorAction SilentlyContinue
-        $gitArguments = @('-C', "`"$RepositoryRoot`"", 'show', "${HeadSha}:$bootstrapGitPath")
+        $gitArguments = @("--git-dir=`"$canonicalGitDirectory`"", "--work-tree=`"$repoRoot`"", 'show', "${HeadSha}:$bootstrapGitPath")
         $materialization = Start-Process -FilePath $canonicalGit `
             -ArgumentList $gitArguments `
             -WorkingDirectory $RepositoryRoot `
