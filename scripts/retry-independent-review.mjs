@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import fs from 'node:fs';
+
 import {
   INDEPENDENT_REVIEW_RETRY_DECISION,
   planIndependentReviewRetry,
@@ -25,6 +27,12 @@ function text(value) {
 function positiveInteger(value) {
   const number = Number(value);
   return Number.isSafeInteger(number) && number > 0 ? number : 0;
+}
+
+function appendOutput(name, value) {
+  const outputPath = text(process.env.GITHUB_OUTPUT);
+  if (!outputPath) return;
+  fs.appendFileSync(outputPath, `${name}=${String(value ?? '').replace(/\r?\n/g, ' ')}\n`);
 }
 
 function repositoryParts(repository) {
@@ -123,10 +131,6 @@ async function loadCanonicalWorkflow(owner, repo) {
 }
 
 async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, headRef, expectedHead, expectedBase) {
-  // The workflow executes trusted code from the base, while the Actions REST
-  // run identity reports the pull request feature commit as run.head_sha.
-  // Query that exact feature identity, then require the embedded PR binding to
-  // prove the exact branch, feature head and trusted base independently.
   const query = buildIndependentReviewRunQueryV1({ workflowId, expectedHead });
   const trustedQueryPrefix = `/actions/workflows/${workflowId}/runs?event=pull_request_target`;
   if (!query.startsWith(trustedQueryPrefix)) throw new Error('review-run discovery escaped the trusted workflow/event route');
@@ -204,19 +208,26 @@ async function main() {
   console.log(`INDEPENDENT_REVIEW_RETRY_RUN_ID=${plan.runId ?? ''}`);
   console.log(`INDEPENDENT_REVIEW_RETRY_ATTEMPT=${plan.runAttempt ?? ''}`);
   console.log(`INDEPENDENT_REVIEW_RETRY_REASON=${plan.reason}`);
+  appendOutput('decision', plan.decision);
+  appendOutput('exact_head', plan.exactHead);
+  appendOutput('exact_base', plan.exactBase);
+  appendOutput('workflow_id', plan.workflowId ?? '');
 
   if (plan.decision === INDEPENDENT_REVIEW_RETRY_DECISION.RERUN_FAILED_JOBS) {
     await githubRequest(`/repos/${owner}/${repo}/actions/runs/${plan.runId}/rerun-failed-jobs`, {
       method: 'POST',
     });
     console.log('INDEPENDENT_REVIEW_RETRY_REQUESTED=true');
+    appendOutput('mutation', 'rerun-failed-jobs');
     return;
   }
   if ([
     INDEPENDENT_REVIEW_RETRY_DECISION.WAIT_RUNNING,
     INDEPENDENT_REVIEW_RETRY_DECISION.ALREADY_SUCCESSFUL,
+    INDEPENDENT_REVIEW_RETRY_DECISION.NO_MATCHING_RUN,
   ].includes(plan.decision)) {
     console.log('INDEPENDENT_REVIEW_RETRY_REQUESTED=false');
+    appendOutput('mutation', 'none');
     return;
   }
   process.exitCode = 2;
