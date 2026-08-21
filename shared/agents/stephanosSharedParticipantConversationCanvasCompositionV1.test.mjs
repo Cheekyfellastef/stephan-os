@@ -30,6 +30,7 @@ function questionRecord() {
     createdAtUtc: NOW.toISOString(),
   }, {
     relatedIssue: '#1308',
+    relatedPr: '#1896',
     proofRefs: ['proof/provider-outage-question'],
     workspaceValidationOptions: { nowMs: NOW.getTime() },
   });
@@ -67,7 +68,7 @@ function groundedResponse() {
   };
 }
 
-test('real live-QA result composes directly into the existing private Conversation Canvas handoff for iPad', async () => {
+test('real live-QA result composes directly into the existing private Conversation Canvas workspace handoff for iPad', async () => {
   let queryCalls = 0;
   const result = await answerStephanosWorkspaceQuestionForConversationCanvasV1(questionRecord(), {
     now: NOW,
@@ -83,7 +84,7 @@ test('real live-QA result composes directly into the existing private Conversati
   assert.equal(queryCalls, 1);
   assert.equal(result.ok, true);
   assert.equal(result.schemaVersion, STEPHANOS_SHARED_PARTICIPANT_CONVERSATION_CANVAS_COMPOSITION_SCHEMA_VERSION);
-  assert.equal(result.classification, 'STEPHANOS_CONVERSATION_CANVAS_HANDOFF_READY');
+  assert.equal(result.classification, 'STEPHANOS_CONVERSATION_CANVAS_WORKSPACE_HANDOFF_READY');
   assert.equal(result.richResponse.valid, true);
   assert.equal(result.canvasHandoff.valid, true);
   assert.equal(result.canvasHandoff.schemaVersion, 'stephanos.conversation-canvas-handoff.v1');
@@ -95,8 +96,33 @@ test('real live-QA result composes directly into the existing private Conversati
   assert.deepEqual(result.canvasHandoff.presenterInput.expandedSections, ['evidence', 'contributors']);
   assert.equal(result.canvasHandoff.privacy.rawAnswerMayEnterPublicRelay, false);
   assert.equal(result.canvasHandoff.privacy.publicRelayProjectionAllowed, false);
+
+  assert.equal(result.workspaceHandoffRecord.valid, true);
+  assert.equal(result.workspaceHandoffRecord.state, 'PRIVATE_CANVAS_WORKSPACE_HANDOFF_RECORD_READY');
+  assert.equal(result.workspaceHandoffRecord.record.kind, 'handoff');
+  assert.equal(result.workspaceHandoffRecord.record.participantId, 'stephanos');
+  assert.equal(result.workspaceHandoffRecord.record.fromParticipantId, 'stephanos');
+  assert.equal(result.workspaceHandoffRecord.record.toParticipantId, 'user-interface-agent');
+  assert.equal(result.workspaceHandoffRecord.record.correlationId, 'live-chatgpt-to-stephanos-round-001');
+  assert.equal(result.workspaceHandoffRecord.record.relatedIssue, '#1308');
+  assert.equal(result.workspaceHandoffRecord.record.relatedPr, '#1896');
+  assert.deepEqual(result.workspaceHandoffRecord.workspaceSegments, [
+    'outbox',
+    `${result.workspaceHandoffRecord.record.handoffId}.json`,
+  ]);
+  const privateBody = JSON.parse(result.workspaceHandoffRecord.record.body);
+  assert.equal(privateBody.targetPayloadField, 'conversation_canvas_view');
+  assert.equal(privateBody.surface, 'ipad');
+  assert.equal(privateBody.continuity.roundId, 'live-chatgpt-to-stephanos-round-001');
+  assert.equal(privateBody.continuity.questionId, 'q-provider-outage-route');
+  assert.equal(privateBody.privacy.rawAnswerMayEnterPublicRelay, false);
+  assert.equal(privateBody.privacy.publicRelayProjectionAllowed, false);
+  assert.equal(privateBody.authority.publicRelayProjectionAllowed, false);
+
+  assert.equal(result.privatePresentation.workspaceRecordReady, true);
   assert.equal(result.privatePresentation.persistencePerformed, false);
   assert.equal(result.privatePresentation.servedPresentationClaimed, false);
+  assert.equal(result.privatePresentation.workspaceHandoffId, result.workspaceHandoffRecord.record.handoffId);
 });
 
 test('partial live-QA truth cannot be promoted to READY during Canvas composition', async () => {
@@ -118,7 +144,9 @@ test('partial live-QA truth cannot be promoted to READY during Canvas compositio
   assert.equal(result.answer.answerVerdict, 'ANSWERED_PARTIAL');
   assert.equal(result.richResponse.valid, true);
   assert.equal(result.canvasHandoff, null);
+  assert.equal(result.workspaceHandoffRecord, null);
   assert.equal(result.errors.includes('partial-response-cannot-be-promoted-to-ready'), true);
+  assert.equal(result.privatePresentation.workspaceRecordReady, false);
   assert.equal(result.privatePresentation.persistencePerformed, false);
   assert.equal(result.privatePresentation.publicRelayProjectionAllowed, false);
 });
@@ -137,10 +165,11 @@ test('unsupported served surface is rejected before Stephanos cognition is calle
   assert.equal(result.ok, false);
   assert.equal(result.classification, 'CONVERSATION_CANVAS_SURFACE_REJECTED');
   assert.deepEqual(result.errors, ['unsupported-surface']);
+  assert.equal(result.workspaceHandoffRecord, null);
   assert.equal(queryCalls, 0);
 });
 
-test('composition adds no execution, approval, merge, deployment, provider-selection, worker, scheduler or mailbox authority', async () => {
+test('composition adds no execution, approval, merge, deployment, provider-selection, worker, scheduler, mailbox or persistence authority', async () => {
   const result = await answerStephanosWorkspaceQuestionForConversationCanvasV1(questionRecord(), {
     now: NOW,
     surface: 'iphone',
@@ -163,4 +192,7 @@ test('composition adds no execution, approval, merge, deployment, provider-selec
   ]) assert.equal(result[key], false, key);
   assert.equal(result.canvasHandoff.authority.publicRelayProjectionAllowed, false);
   assert.equal(result.canvasHandoff.authority.presenterActionExecutionAllowed, false);
+  assert.equal(result.workspaceHandoffRecord.authority.publicRelayProjectionAllowed, false);
+  assert.equal(result.workspaceHandoffRecord.authority.presenterActionExecutionAllowed, false);
+  assert.equal(result.privatePresentation.persistencePerformed, false);
 });
