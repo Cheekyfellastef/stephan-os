@@ -36,6 +36,9 @@ import {
   decodeStephanosWorkspaceQuestionRecord,
 } from '../shared/agents/stephanosSharedWorkspaceConversationAdapterV1.mjs';
 import { answerStephanosWorkspaceQuestionRecord } from '../shared/agents/stephanosSharedParticipantLiveQaV1.mjs';
+import {
+  persistStephanosConversationCanvasFromPersistedQaV1,
+} from '../shared/agents/stephanosSharedParticipantRelayCanvasPersistenceV1.mjs';
 
 export const CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA = 'stephanos.chatgpt-shared-workspace-github-relay.v1';
 export const CHATGPT_SHARED_WORKSPACE_REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -401,6 +404,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   deliveryProjectionBuilder = buildScopedDeliveryStatusProjection,
   recordBuilder = buildChatGptBridgeRecord,
   answerQuestionFn = answerStephanosWorkspaceQuestionRecord,
+  persistConversationCanvasFn = persistStephanosConversationCanvasFromPersistedQaV1,
   writeAtomicJsonFn = writeAtomicJson,
 } = {}) {
   const observed = adapter.readRequest();
@@ -472,6 +476,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   let answerRecord = null;
   let primaryWrite = { ok: true, reason: 'NO_PRIMARY_WRITE_REQUIRED', bytes: 0 };
   let answerWrite = { ok: true, reason: 'NO_ANSWER_WRITE_REQUIRED', bytes: 0 };
+  let canvasPersistence = { ok: true, classification: 'NO_CANVAS_PERSISTENCE_REQUIRED', persisted: false, resumed: false };
 
   if (verification.accepted && CHATGPT_BRIDGE_READ_OPERATIONS.includes(request.operation)) {
     if (request.operation === 'READ_CURRENT_STATUS') {
@@ -608,6 +613,20 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
             deliveryStatus = answerWrite.ok ? 'WORKSPACE_QA_PASS' : 'WORKSPACE_QA_ANSWER_WRITE_FAILED';
           }
         }
+
+        if (deliveryStatus === 'WORKSPACE_QA_PASS' && answerRecord) {
+          canvasPersistence = await persistConversationCanvasFn({
+            questionRecord,
+            answerRecord,
+            workspaceRoot: paths.workspaceRoot,
+            repoRoot: paths.repoRoot,
+            nowMs,
+            readWorkspaceRecordFn,
+            writeAtomicJsonFn,
+            readFileFn,
+          });
+          if (!canvasPersistence?.ok) deliveryStatus = 'WORKSPACE_QA_CANVAS_PERSISTENCE_FAILED';
+        }
       } else if (!deliveryStatus.startsWith('WORKSPACE_QA_')) {
         deliveryStatus = 'WORKSPACE_QA_QUESTION_WRITE_FAILED';
       }
@@ -639,7 +658,8 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   const acceptedDelivery = verification.accepted === true
     && ['WORKSPACE_READ_PASS', 'WORKSPACE_WRITE_PASS', 'WORKSPACE_QA_PASS'].includes(deliveryStatus)
     && primaryWrite.ok === true
-    && answerWrite.ok === true;
+    && answerWrite.ok === true
+    && canvasPersistence.ok === true;
   const deterministicDeliveryRejection = verification.accepted === true && TERMINAL_QA_REJECTIONS.has(deliveryStatus);
   const terminalOutcome = acceptedDelivery || verification.accepted !== true || deterministicDeliveryRejection;
   const relatedIssue = text(request.relatedGoal, `#${CHATGPT_SHARED_WORKSPACE_ISSUE}`);
@@ -711,6 +731,15 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
       summary: workspaceRecord.summary,
     } : null),
     correlatedAnswerRecord: compactConversationRecord(answerRecord),
+    conversationCanvasHandoff: canvasPersistence?.ok && request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION
+      ? {
+          classification: text(canvasPersistence.classification),
+          persisted: canvasPersistence.persisted === true,
+          resumed: canvasPersistence.resumed === true,
+          handoffId: text(canvasPersistence.handoffId),
+          publicProjection: canvasPersistence.publicProjection || null,
+        }
+      : null,
     audit: {
       auditReceiptId: verification.auditReceiptId,
       receiptId,
@@ -768,6 +797,13 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
     completionReceiptId,
     primaryWrite: compactWriteResult(primaryWrite),
     answerWrite: compactWriteResult(answerWrite),
+    canvasPersistence: Object.freeze({
+      ok: canvasPersistence?.ok === true,
+      classification: text(canvasPersistence?.classification),
+      persisted: canvasPersistence?.persisted === true,
+      resumed: canvasPersistence?.resumed === true,
+      handoffId: text(canvasPersistence?.handoffId),
+    }),
     auditReceiptWrite: compactWriteResult(auditReceiptWrite),
     eventWrite: compactWriteResult(eventWrite),
     responseWrite: compactWriteResult(responseWrite),
