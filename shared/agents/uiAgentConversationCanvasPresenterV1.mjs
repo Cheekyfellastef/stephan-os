@@ -188,7 +188,7 @@ function makeSection({ id, title, kind, summary, items = [], expanded = false, p
     summary: text(summary, 1600),
     itemCount: safeItems.length,
     expanded: Boolean(expanded),
-    items: expanded ? safeItems : Object.freeze([]),
+    items: safeItems,
     priority,
     ariaLabel: `${title}. ${safeItems.length} item${safeItems.length === 1 ? '' : 's'}. ${expanded ? 'Expanded' : 'Collapsed'}.`,
   });
