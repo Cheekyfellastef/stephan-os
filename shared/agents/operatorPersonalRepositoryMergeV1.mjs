@@ -63,6 +63,18 @@ export const PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS = Object.freeze([
   Object.freeze({ name: 'Codex Dispatch Queue Proof', path: '.github/workflows/codex-dispatch-queue-proof.yml', event: 'pull_request' }),
 ]);
 
+const PERSONAL_REPOSITORY_REVIEW_ESCALATION = Object.freeze({
+  workflow: 'Stephanos Exact-Head Review',
+  path: '.github/workflows/stephanos-exact-head-review.yml',
+  event: 'pull_request_target',
+  check: 'exact-head-review',
+  conclusion: 'failure',
+});
+
+const PERSONAL_REPOSITORY_NEUTRAL_SKIPPED_CHECKS = new Set([
+  'Exact-Head Review Dispatch\0coordinate',
+]);
+
 function text(value) {
   return String(value ?? '').trim();
 }
@@ -1018,7 +1030,130 @@ export function validatePersonalRepositoryWorkflowRuns(definitions = [], runs = 
   });
 }
 
-export function validatePersonalRepositoryEvidence(input = {}, expected = {}) {
+export function validatePersonalRepositoryCheckRuns(
+  checkRuns = [],
+  workflowRuns = [],
+  commitStatuses = [],
+  expected = {},
+  options = {},
+) {
+  const blockers = [];
+  const evidence = [];
+  const repository = text(expected.repository);
+  const prNumber = strictPositiveInteger(expected.prNumber);
+  const branch = text(expected.branch);
+  const sourceHead = text(expected.sourceHead).toLowerCase();
+  const baseSha = text(expected.baseSha).toLowerCase();
+  const mergeStateStatus = text(expected.mergeStateStatus).toUpperCase();
+  const cleanIndependentReviewProved = options.cleanIndependentReviewProved === true;
+  let admittedReviewEscalations = 0;
+
+  if (!Array.isArray(checkRuns) || checkRuns.length === 0) {
+    blockers.push('personal-repository-check-runs-invalid');
+  }
+  if (!Array.isArray(workflowRuns)) blockers.push('personal-repository-check-workflow-runs-invalid');
+  if (!Array.isArray(commitStatuses)) blockers.push('personal-repository-commit-statuses-invalid');
+
+  for (const status of Array.isArray(commitStatuses) ? commitStatuses : []) {
+    if (text(status?.sha).toLowerCase() !== sourceHead
+      || text(status?.state).toLowerCase() !== 'success') {
+      blockers.push('personal-repository-commit-status-not-exact-green');
+    }
+  }
+
+  for (const check of Array.isArray(checkRuns) ? checkRuns : []) {
+    const checkId = strictPositiveInteger(check?.id);
+    const checkSuiteId = strictPositiveInteger(check?.check_suite?.id);
+    const name = text(check?.name);
+    const status = text(check?.status).toLowerCase();
+    const conclusion = text(check?.conclusion).toLowerCase();
+    const matchingRuns = (Array.isArray(workflowRuns) ? workflowRuns : []).filter((run) => (
+      strictPositiveInteger(run?.check_suite_id) === checkSuiteId
+      && text(run?.head_sha).toLowerCase() === sourceHead
+    ));
+    const run = matchingRuns[0];
+    const bindings = Array.isArray(run?.pull_requests) ? run.pull_requests : [];
+    const binding = bindings.length === 1 ? bindings[0] : null;
+    const exactRun = matchingRuns.length === 1
+      && strictPositiveInteger(run?.id)
+      && strictPositiveInteger(run?.run_attempt)
+      && workflowRepository(run) === repository
+      && bindings.length === 1
+      && strictPositiveInteger(binding?.number) === prNumber
+      && text(binding?.head?.sha).toLowerCase() === sourceHead
+      && text(binding?.head?.ref) === branch
+      && text(binding?.base?.sha).toLowerCase() === baseSha
+      && text(binding?.base?.ref) === 'main';
+    const workflow = text(run?.name);
+    const path = canonicalWorkflowPath(run, repository);
+    const detailsUrl = `https://github.com/${repository}/actions/runs/${run?.id}/job/${checkId}`;
+
+    if (!checkId || !checkSuiteId || !name
+      || text(check?.head_sha).toLowerCase() !== sourceHead
+      || text(check?.app?.slug) !== 'github-actions'
+      || strictPositiveInteger(check?.app?.id) !== 15368
+      || text(check?.details_url) !== detailsUrl
+      || !exactRun) {
+      blockers.push('personal-repository-check-run-identity-invalid');
+      continue;
+    }
+
+    let disposition = 'green';
+    if (status !== 'completed') {
+      blockers.push('personal-repository-check-run-not-terminal');
+      disposition = 'blocked';
+    } else if (conclusion === 'success') {
+      // Exact successful check.
+    } else if (conclusion === 'skipped'
+      && PERSONAL_REPOSITORY_NEUTRAL_SKIPPED_CHECKS.has(`${workflow}\0${name}`)) {
+      disposition = 'neutral-skip';
+    } else if (cleanIndependentReviewProved
+      && mergeStateStatus === 'UNSTABLE'
+      && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
+      && path === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
+      && text(run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
+      && name === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check
+      && conclusion === PERSONAL_REPOSITORY_REVIEW_ESCALATION.conclusion) {
+      admittedReviewEscalations += 1;
+      disposition = 'clean-independent-review';
+    } else {
+      blockers.push('personal-repository-check-run-not-exact-green');
+      disposition = 'blocked';
+    }
+
+    evidence.push(Object.freeze({
+      checkId,
+      checkSuiteId,
+      name,
+      workflow,
+      path,
+      workflowRunId: run.id,
+      workflowRunAttempt: run.run_attempt,
+      status,
+      conclusion,
+      disposition,
+    }));
+  }
+
+  if (mergeStateStatus === 'UNSTABLE' && admittedReviewEscalations !== 1) {
+    blockers.push('personal-repository-review-escalation-check-not-exact');
+  }
+  if (mergeStateStatus === 'CLEAN' && admittedReviewEscalations !== 0) {
+    blockers.push('personal-repository-clean-state-has-review-escalation');
+  }
+
+  return Object.freeze({
+    valid: blockers.length === 0,
+    evidence: Object.freeze(evidence),
+    admittedReviewEscalations,
+    blockers: Object.freeze(unique(blockers)),
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_CHECK_RUNS_BLOCKED'
+      : 'PERSONAL_REPOSITORY_CHECK_RUNS_READY',
+  });
+}
+
+export function validatePersonalRepositoryEvidence(input = {}, expected = {}, options = {}) {
   const blockers = [];
   const repository = text(input.repository);
   const pullRequest = input.pullRequest && typeof input.pullRequest === 'object' ? input.pullRequest : {};
@@ -1034,6 +1169,8 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}) {
   const reviewDecision = text(input.reviewDecision).toUpperCase();
   const mergeable = text(input.mergeable).toUpperCase();
   const mergeStateStatus = text(input.mergeStateStatus).toUpperCase();
+  const cleanIndependentReviewProved = options.cleanIndependentReviewProved === true;
+  const reviewEscalationChecksProved = options.reviewEscalationChecksProved === true;
   const comparison = input.comparison && typeof input.comparison === 'object' ? input.comparison : {};
 
   if (!REPOSITORY_PATTERN.test(repository)) blockers.push('personal-repository-repository-invalid');
@@ -1059,7 +1196,12 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}) {
   if (reviewDecision === 'CHANGES_REQUESTED') blockers.push('personal-repository-changes-requested');
   else if (!['', 'APPROVED'].includes(reviewDecision)) blockers.push('personal-repository-review-decision-unsupported');
   if (mergeable !== 'MERGEABLE') blockers.push('personal-repository-pr-not-mergeable');
-  if (mergeStateStatus !== 'CLEAN') blockers.push('personal-repository-pr-not-clean');
+  if (mergeStateStatus !== 'CLEAN'
+    && !(mergeStateStatus === 'UNSTABLE'
+      && cleanIndependentReviewProved
+      && reviewEscalationChecksProved)) {
+    blockers.push('personal-repository-pr-not-clean');
+  }
   if (!Number.isSafeInteger(input.unresolvedThreadCount) || input.unresolvedThreadCount !== 0) {
     blockers.push('personal-repository-conversations-not-resolved');
   }
@@ -1096,6 +1238,10 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}) {
       baseSha,
       workflowRunId,
       workflowRunAttempt,
+      mergeStateStatus,
+      reviewAdjudication: mergeStateStatus === 'UNSTABLE'
+        ? 'clean-independent-review'
+        : 'native-clean',
     }),
     blockers: Object.freeze(unique(blockers)),
     finalVerdict: blockers.length
