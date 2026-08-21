@@ -1018,7 +1018,7 @@ export function validatePersonalRepositoryWorkflowRuns(definitions = [], runs = 
   });
 }
 
-export function validatePersonalRepositoryEvidence(input = {}, expected = {}) {
+export function validatePersonalRepositoryEvidence(input = {}, expected = {}, options = {}) {
   const blockers = [];
   const repository = text(input.repository);
   const pullRequest = input.pullRequest && typeof input.pullRequest === 'object' ? input.pullRequest : {};
@@ -1034,6 +1034,7 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}) {
   const reviewDecision = text(input.reviewDecision).toUpperCase();
   const mergeable = text(input.mergeable).toUpperCase();
   const mergeStateStatus = text(input.mergeStateStatus).toUpperCase();
+  const cleanIndependentReviewProved = options.cleanIndependentReviewProved === true;
   const comparison = input.comparison && typeof input.comparison === 'object' ? input.comparison : {};
 
   if (!REPOSITORY_PATTERN.test(repository)) blockers.push('personal-repository-repository-invalid');
@@ -1059,7 +1060,10 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}) {
   if (reviewDecision === 'CHANGES_REQUESTED') blockers.push('personal-repository-changes-requested');
   else if (!['', 'APPROVED'].includes(reviewDecision)) blockers.push('personal-repository-review-decision-unsupported');
   if (mergeable !== 'MERGEABLE') blockers.push('personal-repository-pr-not-mergeable');
-  if (mergeStateStatus !== 'CLEAN') blockers.push('personal-repository-pr-not-clean');
+  if (mergeStateStatus !== 'CLEAN'
+    && !(mergeStateStatus === 'UNSTABLE' && cleanIndependentReviewProved)) {
+    blockers.push('personal-repository-pr-not-clean');
+  }
   if (!Number.isSafeInteger(input.unresolvedThreadCount) || input.unresolvedThreadCount !== 0) {
     blockers.push('personal-repository-conversations-not-resolved');
   }
@@ -1096,6 +1100,10 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}) {
       baseSha,
       workflowRunId,
       workflowRunAttempt,
+      mergeStateStatus,
+      reviewAdjudication: mergeStateStatus === 'UNSTABLE'
+        ? 'clean-independent-review'
+        : 'native-clean',
     }),
     blockers: Object.freeze(unique(blockers)),
     finalVerdict: blockers.length

@@ -1276,6 +1276,30 @@ test('personal repository evidence binds operator, PR, branch, head, tree and cu
   assert.ok(drifted.blockers.includes('personal-repository-expected-head-mismatch'));
 });
 
+test('only a proved clean independent review admits GitHub UNSTABLE review escalation', () => {
+  const unstable = evidenceInput({ mergeStateStatus: 'UNSTABLE' });
+  const unproved = validatePersonalRepositoryEvidence(unstable, expectedEvidence);
+  assert.equal(unproved.valid, false);
+  assert.ok(unproved.blockers.includes('personal-repository-pr-not-clean'));
+
+  const proved = validatePersonalRepositoryEvidence(unstable, expectedEvidence, {
+    cleanIndependentReviewProved: true,
+  });
+  assert.equal(proved.valid, true);
+  assert.equal(proved.identity.mergeStateStatus, 'UNSTABLE');
+  assert.equal(proved.identity.reviewAdjudication, 'clean-independent-review');
+
+  for (const mergeStateStatus of ['BLOCKED', 'DIRTY', 'BEHIND', 'UNKNOWN', 'HAS_HOOKS']) {
+    const hostile = validatePersonalRepositoryEvidence(
+      evidenceInput({ mergeStateStatus }),
+      expectedEvidence,
+      { cleanIndependentReviewProved: true },
+    );
+    assert.equal(hostile.valid, false, mergeStateStatus);
+    assert.ok(hostile.blockers.includes('personal-repository-pr-not-clean'), mergeStateStatus);
+  }
+});
+
 test('configuration requires the exact protected environment and an active no-bypass main ruleset', () => {
   const ready = validatePersonalRepositoryConfiguration(configuration(), {
     requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,

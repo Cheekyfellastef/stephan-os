@@ -506,6 +506,7 @@ async function collectEvidence(context, expected = {}) {
     apiJson(`/repos/${context.owner}/${context.repo}/environments/operator-merge-approval`),
     apiCollection(`/repos/${context.owner}/${context.repo}/actions/runs?head_sha=${identity.sourceHead}`, 'workflow_runs'),
   ]);
+  const independentReview = await loadSelectedIndependentReview(context, identity);
   const evidence = validatePersonalRepositoryEvidence({
     repository: context.repository,
     repositoryOwnerType: repository?.owner?.type,
@@ -523,6 +524,8 @@ async function collectEvidence(context, expected = {}) {
     workflowRunId: context.runId,
     workflowRunAttempt: context.runAttempt,
     ...expected,
+  }, {
+    cleanIndependentReviewProved: independentReview.reviewMode === 'clean-independent',
   });
   if (!evidence.valid) {
     fail('Personal-repository PR, exact head/tree/base or review state is stale.', {
@@ -554,7 +557,6 @@ async function collectEvidence(context, expected = {}) {
     environment,
     integrationId,
   );
-  const independentReview = await loadSelectedIndependentReview(context, evidence.identity);
   const packet = Object.freeze({
     schemaVersion: 'stephanos.personal-repository-evidence.v1',
     ...evidence.identity,
