@@ -12,12 +12,11 @@ export const INDEPENDENT_REVIEW_WORKFLOW_FINAL_POLICY_V1 = Object.freeze({
     'handoff_run_receipt_sha256',
   ]),
   checkoutRefs: Object.freeze([
-    Object.freeze({ expression: 'github.event.pull_request.base.sha', count: 2 }),
-    Object.freeze({ expression: 'github.sha', count: 2 }),
+    Object.freeze({ expression: 'github.event.pull_request.base.sha', count: 1 }),
+    Object.freeze({ expression: 'github.sha', count: 1 }),
   ]),
-  checkoutCount: 4,
+  checkoutCount: 2,
   permissionSignatures: Object.freeze([
-    'actions:read,contents:read,issues:write,pull-requests:read',
     'actions:read,contents:read,issues:write,pull-requests:read',
   ]),
 });

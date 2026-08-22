@@ -11,52 +11,56 @@ function workflowText() {
   return fs.readFileSync(WORKFLOW, 'utf8');
 }
 
-function jobBody(source, jobName, nextJobName = null) {
-  const start = source.indexOf(`  ${jobName}:\n`);
-  assert.ok(start >= 0, `missing ${jobName} job`);
-  const end = nextJobName ? source.indexOf(`  ${nextJobName}:\n`, start + 1) : source.length;
-  assert.ok(end > start, `missing ${nextJobName || 'workflow end'} boundary`);
+function stepBody(source, name, nextName) {
+  const start = source.indexOf(`      - name: ${name}\n`);
+  assert.ok(start >= 0, `missing ${name} step`);
+  const end = nextName ? source.indexOf(`      - name: ${nextName}\n`, start + 1) : source.length;
+  assert.ok(end > start, `missing ${nextName || 'workflow end'} boundary`);
   return source.slice(start, end);
 }
 
-test('review execution timeout cannot consume terminal receipt publication budget', () => {
+test('review job reserves bounded execution time for immutable artifact and terminal receipt publication', () => {
   const source = workflowText();
-  const reviewJob = jobBody(source, 'independent-security-review', 'terminal-review-receipt');
-  const terminalJob = jobBody(source, 'terminal-review-receipt');
+  assert.match(source, /independent-security-review:\n[\s\S]*?timeout-minutes: 60/);
 
-  assert.match(reviewJob, /timeout-minutes: 25/);
-  assert.match(reviewJob, /- name: Review the complete exact-head and exact-base diff without mutation authority\n\s+timeout-minutes: 15/);
-  assert.doesNotMatch(reviewJob, /publish-independent-review-terminal-findings-v1\.mjs/);
+  const boundedBeforeTerminal = [
+    ['Check out trusted exact-base reviewer', 'Check out trusted current-main reviewer', 4],
+    ['Check out trusted current-main reviewer', 'Resolve exact immutable coordinator handoff artifact', 4],
+    ['Resolve exact immutable coordinator handoff artifact', 'Download exact immutable coordinator handoff receipt', 4],
+    ['Download exact immutable coordinator handoff receipt', 'Build exact workflow-dispatch review preflight', 4],
+    ['Build exact workflow-dispatch review preflight', 'Prove bounded Windows authority specialist policy', 4],
+    ['Prove bounded Windows authority specialist policy', 'Review the complete exact-head and exact-base diff without mutation authority', 5],
+    ['Review the complete exact-head and exact-base diff without mutation authority', 'Upload the exact-run immutable independent review result', 15],
+    ['Upload the exact-run immutable independent review result', 'Surface terminal exact-head findings or pre-artifact failure', 4],
+  ];
+  for (const [name, nextName, minutes] of boundedBeforeTerminal) {
+    assert.match(stepBody(source, name, nextName), new RegExp(`timeout-minutes: ${minutes}`));
+  }
+  assert.match(source, /- uses: actions\/setup-node@v4\n\s+timeout-minutes: 4/);
+  assert.match(stepBody(source, 'Surface terminal exact-head findings or pre-artifact failure'), /timeout-minutes: 4/);
 
-  assert.match(terminalJob, /if: \$\{\{ always\(\) \}\}/);
-  assert.match(terminalJob, /needs: independent-security-review/);
-  assert.match(terminalJob, /timeout-minutes: 5/);
-  assert.match(terminalJob, /publish-independent-review-terminal-findings-v1\.mjs/);
+  const workflowDispatchMaximumMinutes = 4 + 4 + 4 + 4 + 4 + 5 + 15 + 4 + 4;
+  assert.equal(workflowDispatchMaximumMinutes, 48);
+  assert.ok(60 - workflowDispatchMaximumMinutes >= 10);
 });
 
-test('terminal receipt job uses trusted event-specific checkout and exact same-run artifact identity', () => {
+test('trusted review workflow retains the current one-job checkout and least-authority policy shape', () => {
   const source = workflowText();
-  const terminalJob = jobBody(source, 'terminal-review-receipt');
-
-  assert.match(terminalJob, /if: github\.event_name == 'pull_request_target'[\s\S]*?ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
-  assert.match(terminalJob, /if: github\.event_name == 'workflow_dispatch'[\s\S]*?ref: \$\{\{ github\.sha \}\}/);
-  assert.equal([...terminalJob.matchAll(/persist-credentials: false/g)].length, 2);
-  assert.match(terminalJob, /continue-on-error: true/);
-  assert.match(terminalJob, /name: stephanos-independent-review-\$\{\{ github\.run_id \}\}-attempt-\$\{\{ github\.run_attempt \}\}/);
-  assert.match(terminalJob, /run-id: \$\{\{ github\.run_id \}\}/);
+  assert.doesNotMatch(source, /^  terminal-review-receipt:\s*$/m);
+  assert.equal([...source.matchAll(/uses: actions\/checkout@v4/g)].length, 2);
+  assert.equal([...source.matchAll(/persist-credentials: false/g)].length, 2);
+  assert.equal([...source.matchAll(/^    permissions:\s*$/gm)].length, 1);
 });
 
-test('terminal publisher retains exact head/base bindings and pre-artifact fallback', () => {
+test('terminal publisher remains after immutable result upload and both remain always-run bounded steps', () => {
   const source = workflowText();
-  const terminalJob = jobBody(source, 'terminal-review-receipt');
-
-  const download = terminalJob.indexOf('      - name: Download exact-run immutable independent review result when present');
-  const publish = terminalJob.indexOf('      - name: Surface terminal exact-head findings or pre-artifact failure');
-  assert.ok(download >= 0);
-  assert.ok(publish > download);
-  assert.match(terminalJob.slice(publish), /if: \$\{\{ always\(\) \}\}/);
-  assert.match(terminalJob.slice(publish), /STEPHANOS_TERMINAL_REVIEW_PR:/);
-  assert.match(terminalJob.slice(publish), /STEPHANOS_TERMINAL_REVIEW_BRANCH:/);
-  assert.match(terminalJob.slice(publish), /STEPHANOS_TERMINAL_REVIEW_HEAD:/);
-  assert.match(terminalJob.slice(publish), /STEPHANOS_TERMINAL_REVIEW_BASE:/);
+  const upload = stepBody(source, 'Upload the exact-run immutable independent review result', 'Surface terminal exact-head findings or pre-artifact failure');
+  const publish = stepBody(source, 'Surface terminal exact-head findings or pre-artifact failure');
+  assert.match(upload, /if: \$\{\{ always\(\) \}\}/);
+  assert.match(upload, /timeout-minutes: 4/);
+  assert.match(publish, /if: \$\{\{ always\(\) \}\}/);
+  assert.match(publish, /timeout-minutes: 4/);
+  assert.match(publish, /STEPHANOS_TERMINAL_REVIEW_HEAD:/);
+  assert.match(publish, /STEPHANOS_TERMINAL_REVIEW_BASE:/);
+  assert.match(publish, /publish-independent-review-terminal-findings-v1\.mjs/);
 });

@@ -25,10 +25,6 @@ const PROTECTED_WORKFLOW_SOURCE_KEYS = Object.freeze([
   'blobSha',
   'content',
 ]);
-const LEGACY_FINAL_SOURCE_FINDING_CODES = Object.freeze(new Set([
-  'independent-review-workflow-not-trusted',
-  'independent-reviewer-has-source-authority',
-]));
 
 function text(value) {
   return String(value ?? '').trim();
@@ -286,21 +282,12 @@ export function migrateIndependentReviewWorkflowFinalPolicyAnalysisV1(analysis =
   if (!validation.valid) return analysis;
   const findings = Array.isArray(analysis.findings) ? [...analysis.findings] : [];
   const legacyFindings = findings.filter((item) => (
-    LEGACY_FINAL_SOURCE_FINDING_CODES.has(text(item?.code))
+    text(item?.code) === 'independent-review-workflow-not-trusted'
     && text(item?.path) === INDEPENDENT_REVIEW_WORKFLOW_PATH
   ));
-  const trustFindings = legacyFindings.filter((item) => (
-    text(item?.code) === 'independent-review-workflow-not-trusted'
-  ));
-  const sourceAuthorityFindings = legacyFindings.filter((item) => (
-    text(item?.code) === 'independent-reviewer-has-source-authority'
-  ));
-  if (trustFindings.length !== 1 || sourceAuthorityFindings.length > 1) {
-    return analysis;
-  }
+  if (legacyFindings.length !== 1) return analysis;
 
-  const legacySet = new Set(legacyFindings);
-  const preserved = findings.filter((item) => !legacySet.has(item));
+  const preserved = findings.filter((item) => item !== legacyFindings[0]);
   return recalculateAnalysis(
     analysis,
     preserved,

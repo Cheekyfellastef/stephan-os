@@ -63,28 +63,6 @@ jobs:
           ref: \${{ github.sha }}
           persist-credentials: false
           fetch-depth: 1
-
-  terminal-review-receipt:
-    permissions:
-      actions: read
-      contents: read
-      issues: write
-      pull-requests: read
-    steps:
-      - name: Check out trusted pull-request exact base terminal publisher
-        if: github.event_name == 'pull_request_target'
-        uses: actions/checkout@v4
-        with:
-          ref: \${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
-          fetch-depth: 1
-      - name: Check out trusted workflow-dispatch exact main terminal publisher
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@v4
-        with:
-          ref: \${{ github.sha }}
-          persist-credentials: false
-          fetch-depth: 1
 `;
 }
 
@@ -134,12 +112,6 @@ const TRUST_FINDING = Object.freeze({
   summary: 'legacy policy mismatch',
   path: INDEPENDENT_REVIEW_WORKFLOW_PATH,
 });
-const SOURCE_AUTHORITY_FINDING = Object.freeze({
-  severity: 'P0',
-  code: 'independent-reviewer-has-source-authority',
-  summary: 'legacy single-job authority policy sees the terminal publisher',
-  path: INDEPENDENT_REVIEW_WORKFLOW_PATH,
-});
 const BOOTSTRAP_FINDING = Object.freeze({
   severity: 'P0',
   code: 'approval-boundary-v2-self-change-requires-qualified-review',
@@ -147,15 +119,15 @@ const BOOTSTRAP_FINDING = Object.freeze({
   path: INDEPENDENT_REVIEW_WORKFLOW_PATH,
 });
 
-test('validates the exact Stage-2 two-event two-job workflow final-source policy', () => {
+test('validates the exact Stage-2 two-event workflow final-source policy', () => {
   const result = validateIndependentReviewWorkflowFinalSourcePolicyV1(input());
   assert.equal(result.valid, true, result.blockers.join(','));
   assert.match(result.proofRef, /^proofs\/independent-review-workflow-final-policy-v1\//);
 });
 
-test('migrates the exact legacy topology findings and preserves bootstrap review', () => {
+test('migrates only the legacy trust-policy finding and preserves bootstrap review', () => {
   const result = migrateIndependentReviewWorkflowFinalPolicyAnalysisV1(
-    analysis([TRUST_FINDING, SOURCE_AUTHORITY_FINDING, BOOTSTRAP_FINDING]),
+    analysis([TRUST_FINDING, BOOTSTRAP_FINDING]),
     input(),
   );
   assert.deepEqual(result.findings, [BOOTSTRAP_FINDING]);
@@ -177,10 +149,10 @@ test('fails closed on trigger, input, checkout, permission and source-binding dr
     const result = validateIndependentReviewWorkflowFinalSourcePolicyV1(input(mutated));
     assert.equal(result.valid, false);
     const migrated = migrateIndependentReviewWorkflowFinalPolicyAnalysisV1(
-      analysis([TRUST_FINDING, SOURCE_AUTHORITY_FINDING, BOOTSTRAP_FINDING]),
+      analysis([TRUST_FINDING, BOOTSTRAP_FINDING]),
       input(mutated),
     );
-    assert.deepEqual(migrated.findings, [TRUST_FINDING, SOURCE_AUTHORITY_FINDING, BOOTSTRAP_FINDING]);
+    assert.deepEqual(migrated.findings, [TRUST_FINDING, BOOTSTRAP_FINDING]);
   }
 
   const wrongBinding = input(workflowContent(), {
@@ -197,20 +169,14 @@ test('never suppresses unrelated authority findings or ambiguous legacy trust fi
     path: 'scripts/independent-merge-security-review-v2.mjs',
   });
   const preserved = migrateIndependentReviewWorkflowFinalPolicyAnalysisV1(
-    analysis([TRUST_FINDING, SOURCE_AUTHORITY_FINDING, BOOTSTRAP_FINDING, authority]),
+    analysis([TRUST_FINDING, BOOTSTRAP_FINDING, authority]),
     input(),
   );
   assert.deepEqual(preserved.findings, [BOOTSTRAP_FINDING, authority]);
 
-  const ambiguousTrust = migrateIndependentReviewWorkflowFinalPolicyAnalysisV1(
+  const ambiguous = migrateIndependentReviewWorkflowFinalPolicyAnalysisV1(
     analysis([TRUST_FINDING, { ...TRUST_FINDING }]),
     input(),
   );
-  assert.equal(ambiguousTrust.findings.length, 2);
-
-  const ambiguousAuthority = migrateIndependentReviewWorkflowFinalPolicyAnalysisV1(
-    analysis([TRUST_FINDING, SOURCE_AUTHORITY_FINDING, { ...SOURCE_AUTHORITY_FINDING }]),
-    input(),
-  );
-  assert.equal(ambiguousAuthority.findings.length, 3);
+  assert.equal(ambiguous.findings.length, 2);
 });

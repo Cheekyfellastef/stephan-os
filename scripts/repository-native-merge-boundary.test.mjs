@@ -97,7 +97,7 @@ test('protected boundary keeps the native queue and adds only the exact user-own
   assert.match(independentSource, /^  workflow_dispatch:\s*$/m);
   assert.match(independentSource, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
   assert.match(independentSource, /ref: \$\{\{ github\.sha \}\}/);
-  assert.equal([...independentSource.matchAll(/persist-credentials: false/g)].length, 4);
+  assert.equal([...independentSource.matchAll(/persist-credentials: false/g)].length, 2);
   assert.match(independentSource, /independent-merge-security-review-entry-v1\.mjs/);
 });
 
