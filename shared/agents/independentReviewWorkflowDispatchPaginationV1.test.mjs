@@ -6,7 +6,7 @@ import {
 } from '../../scripts/launch-missing-independent-review-v1.mjs';
 
 const WORKFLOW_ID = 318073448;
-const BASE = '64d9556e630d38e3dc2c31057677d29b22c6ad0';
+const BASE = 'bd764f538a3d40fbd5c4c40fe6ff37798c9febd2';
 const REQUESTED_AT = '2026-08-22T10:00:00.500Z';
 const RUN_NAME = 'stephanos-independent-review-pr-1946-head-2fac6f7-binding-test';
 const RECEIPT = Object.freeze({ requestedAtUtc: REQUESTED_AT, runName: RUN_NAME });
