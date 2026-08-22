@@ -80,7 +80,16 @@ if ($RepairMissingUi4173.IsPresent) {
   try {
     $repairArgs = @('scripts/battle-bridge-ui-4173-repair.mjs', '--json')
     if ($SharedWorkspace -and $SharedWorkspace.Trim()) { $repairArgs += @('--shared-workspace', $SharedWorkspace) }
-    if ($RepairDryRun.IsPresent) { $repairArgs += '--dry-run' } else { $repairArgs += '--start' }
+    if ($RepairDryRun.IsPresent) {
+      $repairArgs += '--dry-run'
+    }
+    else {
+      $sourceTruthJson = (& node scripts/battle-bridge-ignition-supervisor.mjs --source-truth-json | Out-String).Trim()
+      if ($LASTEXITCODE -ne 0 -or -not $sourceTruthJson) { throw 'Canonical Battle Bridge source truth could not be proven for UI repair.' }
+      $sourceTruth = $sourceTruthJson | ConvertFrom-Json
+      if ($sourceTruth.ok -ne $true -or [string]$sourceTruth.head -notmatch '^[0-9a-f]{40}$') { throw 'Canonical Battle Bridge source head is invalid for UI repair.' }
+      $repairArgs += @('--start', '--expected-head', [string]$sourceTruth.head)
+    }
     & node @repairArgs
     exit $LASTEXITCODE
   }
