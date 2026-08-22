@@ -11,6 +11,7 @@ import {
   admitIndependentReviewWorkflowDispatchV1,
 } from '../shared/agents/independentReviewWorkflowDispatchAdmissionV1.mjs';
 import {
+  INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT,
   INDEPENDENT_REVIEW_RETRY_DECISION,
   planIndependentReviewRetry,
 } from '../shared/agents/independentReviewRetryPlanner.mjs';
@@ -183,15 +184,12 @@ async function loadPullRequestTargetRuns(owner, repo, workflowId, pr, token) {
   return rows;
 }
 
-async function loadWorkflowDispatchRuns(owner, repo, workflowId, token) {
-  const payload = await githubRequest(
-    `/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?event=workflow_dispatch&branch=main&per_page=100&page=1`,
-    { token },
+export async function loadWorkflowDispatchRuns(owner, repo, workflowId, token) {
+  const runs = await githubPages(
+    `/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?event=workflow_dispatch&branch=main`,
+    { token, itemKey: 'workflow_runs' },
   );
-  if (!Array.isArray(payload?.workflow_runs) || positiveInteger(payload?.total_count) > payload.workflow_runs.length) {
-    throw new Error('bounded workflow_dispatch review-run query is incomplete');
-  }
-  return payload.workflow_runs.map(mapRun);
+  return runs.map(mapRun);
 }
 
 export function selectExactHandoffCommentV1(comments, sourceHead) {
@@ -223,12 +221,47 @@ export function reconcileExistingLaunchReceiptV1({ launchReceipt, runs } = {}) {
     return Object.freeze({
       ...discovery,
       reconciliation: 'BLOCKED_DISPATCH_REQUEST_UNOBSERVED',
+      mutationAllowed: false,
+      operation: 'none',
       blockers: Object.freeze([
         'launch receipt exists but no matching workflow-dispatch run is observable; blind redispatch is forbidden',
       ]),
     });
   }
-  return Object.freeze({ ...discovery, reconciliation: discovery.verdict });
+  if (discovery.verdict === 'DISPATCH_RUN_RUNNING') {
+    return Object.freeze({ ...discovery, reconciliation: 'WAIT_RUNNING', mutationAllowed: false, operation: 'none' });
+  }
+  if (discovery.verdict !== 'DISPATCH_RUN_TERMINAL') {
+    return Object.freeze({ ...discovery, reconciliation: discovery.verdict, mutationAllowed: false, operation: 'none' });
+  }
+  if (discovery.conclusion === 'success') {
+    return Object.freeze({ ...discovery, reconciliation: 'ALREADY_SUCCESSFUL', mutationAllowed: false, operation: 'none' });
+  }
+  if (discovery.conclusion !== 'failure') {
+    return Object.freeze({
+      ...discovery,
+      reconciliation: 'BLOCKED_CONCLUSION',
+      mutationAllowed: false,
+      operation: 'none',
+      blockers: Object.freeze([`workflow-dispatch review conclusion ${discovery.conclusion || 'unknown'} is not retryable`]),
+    });
+  }
+  if (!positiveInteger(discovery.runAttempt) || discovery.runAttempt >= INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT) {
+    return Object.freeze({
+      ...discovery,
+      reconciliation: 'RETRY_BUDGET_EXHAUSTED',
+      mutationAllowed: false,
+      operation: 'none',
+      blockers: Object.freeze([`workflow-dispatch review attempt ${discovery.runAttempt || 'unknown'} reached the bounded retry limit`]),
+    });
+  }
+  return Object.freeze({
+    ...discovery,
+    reconciliation: 'RERUN_FAILED_JOBS',
+    mutationAllowed: true,
+    operation: 'rerun-failed-jobs',
+    blockers: Object.freeze([]),
+  });
 }
 
 function handoffEvent(repository, prNumber, comment) {
@@ -314,10 +347,22 @@ async function main() {
     console.log(`INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_RECONCILIATION=${reconciliation.reconciliation}`);
     appendOutput('decision', reconciliation.reconciliation);
     appendOutput('launch_key', persistedReceipt.launchKeySha256);
+    if (reconciliation.reconciliation === 'RERUN_FAILED_JOBS' && reconciliation.mutationAllowed === true) {
+      await githubRequest(`/repos/${owner}/${repo}/actions/runs/${reconciliation.runId}/rerun-failed-jobs`, {
+        method: 'POST',
+        token,
+      });
+      console.log('INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_RETRY_REQUESTED=true');
+      appendOutput('mutation', 'rerun-failed-jobs');
+      appendOutput('run_id', reconciliation.runId);
+      appendOutput('run_attempt', reconciliation.runAttempt);
+      return;
+    }
+    if (['WAIT_RUNNING', 'ALREADY_SUCCESSFUL'].includes(reconciliation.reconciliation)) return;
     if (reconciliation.reconciliation === 'BLOCKED_DISPATCH_REQUEST_UNOBSERVED') {
       throw new Error('workflow-dispatch launch receipt exists but no matching dispatch run is observable; request requires bounded recovery');
     }
-    return;
+    throw new Error(`workflow-dispatch reconciliation blocked: ${reconciliation.reconciliation}`);
   }
 
   // Reconstruct the complete trusted context immediately before publishing the
