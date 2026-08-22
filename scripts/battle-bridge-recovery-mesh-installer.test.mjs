@@ -136,8 +136,9 @@ test('canonical task definition beside an unrelated listener cannot establish ba
   assert.match(probe, /BACKEND_LISTENER_EXECUTABLE_FOREIGN/);
   assert.match(probe, /function Test-CanonicalBackendCommandLine/);
   assert.match(probe, /-replace '\\s\+', ' '/);
-  assert.match(probe, /'node stephanos-server\/server\.js'/);
-  assert.match(probe, /'node\.exe stephanos-server\/server\.js'/);
+  assert.match(probe, /STEPHANOS_BACKEND_BOOTSTRAP_BASE64/);
+  assert.match(probe, /--input-type=module --eval/);
+  assert.match(probe, /Test-CanonicalBackendCommandLine -CommandLine \(\[string\]\$process\.CommandLine\) -ExpectedSourceHead \$ExpectedSourceHead/);
   assert.match(probe, /BACKEND_LISTENER_COMMAND_FOREIGN/);
   assert.match(probe, /receipt\.pid -eq \$listenerAfter\.pid/);
   assert.doesNotMatch(probe, /CommandLine -match|Invoke-Expression/i);
