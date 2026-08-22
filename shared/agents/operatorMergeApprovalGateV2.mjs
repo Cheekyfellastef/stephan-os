@@ -13,5 +13,10 @@ export {
 } from './operatorMergeApprovalGate.mjs';
 
 export {
-  analyzeIndependentSecurityReviewV2 as analyzeIndependentSecurityReview,
-} from './operatorMergeApprovalBoundaryV2.mjs';
+  analyzeIndependentSecurityReviewWithRunNamePolicyV1 as analyzeIndependentSecurityReview,
+} from './operatorMergeApprovalGateV2IndependentReviewRunNamePolicyV1.mjs';
+
+export {
+  INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_RUN_SCHEMA,
+  validateIndependentReviewWorkflowDispatchRunV1,
+} from './independentReviewWorkflowDispatchAdmissionV1.mjs';
