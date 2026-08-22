@@ -44,12 +44,14 @@ test('review job reserves bounded execution time for immutable artifact and term
   assert.ok(60 - workflowDispatchMaximumMinutes >= 10);
 });
 
-test('trusted review workflow retains the current one-job checkout and least-authority policy shape', () => {
+test('trusted review workflow retains the current one-job checkout and bounded terminal publication permission shape', () => {
   const source = workflowText();
   assert.doesNotMatch(source, /^  terminal-review-receipt:\s*$/m);
   assert.equal([...source.matchAll(/uses: actions\/checkout@v4/g)].length, 2);
   assert.equal([...source.matchAll(/persist-credentials: false/g)].length, 2);
   assert.equal([...source.matchAll(/^    permissions:\s*$/gm)].length, 1);
+  assert.match(source, /permissions:\n\s+actions: read\n\s+contents: read\n\s+issues: write\n\s+pull-requests: write/);
+  assert.doesNotMatch(source, /pull-requests: read/);
 });
 
 test('terminal publisher remains after immutable result upload and both remain always-run bounded steps', () => {
