@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
+import { fixedBackendExecutable } from './fixedBackendExecutable.js';
 
 import {
   PROGRAMME_CONTROLLER_HEARTBEAT_STATUS_ID,
@@ -162,8 +163,8 @@ async function readCanonicalRepositoryHead({ repositoryRoot, execFileImpl = exec
   try {
     const commandOptions = { encoding: 'utf8', windowsHide: true, timeout: 5_000, maxBuffer: 64 * 1024 };
     const [headResult, branchResult] = await Promise.all([
-      execFileImpl('git', ['-C', expectedRepositoryRoot, 'rev-parse', 'HEAD'], commandOptions),
-      execFileImpl('git', ['-C', expectedRepositoryRoot, 'rev-parse', '--abbrev-ref', 'HEAD'], commandOptions),
+      execFileImpl(fixedBackendExecutable('git'), ['-C', expectedRepositoryRoot, 'rev-parse', 'HEAD'], commandOptions),
+      execFileImpl(fixedBackendExecutable('git'), ['-C', expectedRepositoryRoot, 'rev-parse', '--abbrev-ref', 'HEAD'], commandOptions),
     ]);
     const headSha = text(headResult?.stdout ?? headResult).toLowerCase();
     const branch = text(branchResult?.stdout ?? branchResult);
