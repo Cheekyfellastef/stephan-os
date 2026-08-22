@@ -92,6 +92,24 @@ function Test-CanonicalBackendCommandLine {
         -or [string]::Equals($commandLine, $expectedNpmNodeExeCommand, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Test-RuntimeUiDistStatus {
+    param([string]$Status)
+    return $Status -eq ' M' -or $Status -eq ' D'
+}
+
+function Convert-ProcessCreationDateToUtcText {
+    param([object]$CreationDate)
+    if ($CreationDate -is [DateTime]) {
+        return ([DateTime]$CreationDate).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    }
+    if ($CreationDate -is [DateTimeOffset]) {
+        return ([DateTimeOffset]$CreationDate).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    }
+    $creationText = [string]$CreationDate
+    if ([string]::IsNullOrWhiteSpace($creationText)) { throw 'BACKEND_LISTENER_CREATION_TIME_MISSING' }
+    return [System.Management.ManagementDateTimeConverter]::ToDateTime($creationText).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+}
+
 function Get-BackendListenerIdentity {
     try {
         $listeners = @(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction Stop)
@@ -103,7 +121,7 @@ function Get-BackendListenerIdentity {
         $executable = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
         if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'BACKEND_LISTENER_EXECUTABLE_FOREIGN' }
         if (-not (Test-CanonicalBackendCommandLine -CommandLine ([string]$process.CommandLine))) { throw 'BACKEND_LISTENER_COMMAND_FOREIGN' }
-        $creationUtc = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$process.CreationDate).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        $creationUtc = Convert-ProcessCreationDateToUtcText -CreationDate $process.CreationDate
         return [pscustomobject]@{ healthy = $true; pid = $processId; creationTimeUtc = $creationUtc; blocker = '' }
     } catch {
         $reason = [string]$_.Exception.Message
@@ -226,7 +244,7 @@ function Get-CanonicalTrackedWorktreeAssessment {
             $runtimeMemoryDirty = $true
             continue
         }
-        if ($path.StartsWith($runtimeUiDistPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        if ((Test-RuntimeUiDistStatus -Status $status) -and $path.StartsWith($runtimeUiDistPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
             $runtimeUiDistDirty = $true
             continue
         }
