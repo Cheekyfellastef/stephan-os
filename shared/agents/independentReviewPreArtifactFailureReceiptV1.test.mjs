@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { PROTECTED_REVIEW_MARKER } from './operatorMergeApprovalGate.mjs';
 import {
   planIndependentReviewPreArtifactFailureReceiptV1,
   renderIndependentReviewPreArtifactFailureReceiptV1,
@@ -15,7 +16,7 @@ const VALID = Object.freeze({
   workflowRunAttempt:1,
 });
 
-test('pre-artifact failure receipt exposes exact run identity without review acceptance authority', () => {
+test('pre-artifact failure receipt exposes exact coordinator-discoverable run identity without review acceptance authority', () => {
   const plan = planIndependentReviewPreArtifactFailureReceiptV1(VALID);
   assert.equal(plan.decision, 'PUBLISH_PRE_ARTIFACT_FAILURE_RECEIPT');
   assert.equal(plan.publishAllowed, true);
@@ -28,6 +29,7 @@ test('pre-artifact failure receipt exposes exact run identity without review acc
   assert.equal(plan.receipt.authority.runtimeMutationAllowed, false);
 
   const rendered = renderIndependentReviewPreArtifactFailureReceiptV1(plan);
+  assert.ok(rendered.includes(PROTECTED_REVIEW_MARKER));
   assert.match(rendered, /github-actions-independent-review-run-32570000000-attempt-1/);
   assert.match(rendered, /PRE_ARTIFACT_REVIEW_RESULT_MISSING/);
   assert.match(rendered, /not a clean review/);
