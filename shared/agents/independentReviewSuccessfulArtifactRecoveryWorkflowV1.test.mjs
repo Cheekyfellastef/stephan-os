@@ -6,8 +6,13 @@ const workflowUrl = new URL('../../.github/workflows/exact-head-review-dispatch.
 const readWorkflow = () => fs.readFileSync(workflowUrl, 'utf8').replaceAll('\r\n', '\n');
 
 function step(source, name, nextName = null) {
-  const suffix = nextName ? `^      - name: ${nextName}` : '$';
-  return source.match(new RegExp(`^      - name: ${name}\\n[\\s\\S]*?${suffix}`, 'm'))?.[0] || '';
+  const marker = `      - name: ${name}\n`;
+  const start = source.indexOf(marker);
+  if (start < 0) return '';
+  if (!nextName) return source.slice(start);
+  const nextMarker = `      - name: ${nextName}\n`;
+  const end = source.indexOf(nextMarker, start + marker.length);
+  return end < 0 ? '' : source.slice(start, end);
 }
 
 test('recovers one already-successful workflow-dispatch artifact through the existing receipt consumer', () => {
