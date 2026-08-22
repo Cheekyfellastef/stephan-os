@@ -145,6 +145,10 @@ function requestIdentity(request) {
   return `${request.repository}#${request.prNumber}@${request.sourceHead}`.toLowerCase();
 }
 
+function requestBinding(request) {
+  return `${request.branch}\u0000${request.baseSha}\u0000${request.riskTier}`.toLowerCase();
+}
+
 function reviewerCanTake(request, reviewer) {
   if (reviewer.invalid || reviewer.availableSlots <= 0) return false;
   if (!reviewer.qualifiedRiskTiers.includes(request.riskTier)) return false;
@@ -161,14 +165,18 @@ function priorityRank(priorityClass) {
 }
 
 export function deriveElasticIndependentReviewWidth(input = {}) {
-  const minimum = integer(input.minimumSlots) ?? MINIMUM_REVIEW_SLOTS;
-  const maximum = integer(input.maximumSlots) ?? MAXIMUM_REVIEW_SLOTS;
+  const hasMinimumSlots = Object.hasOwn(input, 'minimumSlots');
+  const hasMaximumSlots = Object.hasOwn(input, 'maximumSlots');
+  const minimum = hasMinimumSlots ? integer(input.minimumSlots) : MINIMUM_REVIEW_SLOTS;
+  const maximum = hasMaximumSlots ? integer(input.maximumSlots) : MAXIMUM_REVIEW_SLOTS;
   const active = integer(input.activeReviewCount);
   const ready = integer(input.readyReviewCount);
   const available = integer(input.availableReviewerSlots);
   const criticalReady = integer(input.criticalRecoveryReadyCount ?? 0);
 
-  const invalid = minimum < MINIMUM_REVIEW_SLOTS
+  const invalid = minimum === null
+    || maximum === null
+    || minimum < MINIMUM_REVIEW_SLOTS
     || maximum < minimum
     || maximum > MAXIMUM_REVIEW_SLOTS
     || active === null
@@ -281,6 +289,19 @@ export function planElasticIndependentReviewAssignments(requests = [], reviewers
     runtimeMutationAuthority:false,
   });
 
+  const bindingsByExactHead = new Map();
+  for (const request of normalizedRequests) {
+    if (request.invalid) continue;
+    const identity = requestIdentity(request);
+    if (!bindingsByExactHead.has(identity)) bindingsByExactHead.set(identity, new Set());
+    bindingsByExactHead.get(identity).add(requestBinding(request));
+  }
+  const conflictingExactHeadIdentities = new Set(
+    [...bindingsByExactHead]
+      .filter(([, bindings]) => bindings.size > 1)
+      .map(([identity]) => identity),
+  );
+
   const reviewerSlots = new Map();
   for (const reviewer of normalizedReviewers) {
     if (!reviewer.invalid) reviewerSlots.set(reviewer.reviewerId, reviewer.availableSlots);
@@ -294,15 +315,26 @@ export function planElasticIndependentReviewAssignments(requests = [], reviewers
 
   const assignments = [];
   const held = [];
+  const selectedReviewIdentities = new Set();
   for (const { request } of orderedRequests) {
     if (request.invalid) {
       held.push({ requestId:request.requestId, reasonCode:'INVALID_REVIEW_REQUEST' });
       continue;
     }
-    if (activeReviewIdentities.has(requestIdentity(request))) {
+    const exactHeadIdentity = requestIdentity(request);
+    if (conflictingExactHeadIdentities.has(exactHeadIdentity)) {
+      held.push({ requestId:request.requestId, reasonCode:'CONFLICTING_EXACT_HEAD_REVIEW_REQUEST' });
+      continue;
+    }
+    if (activeReviewIdentities.has(exactHeadIdentity)) {
       held.push({ requestId:request.requestId, reasonCode:'EXACT_HEAD_REVIEW_ALREADY_ACTIVE' });
       continue;
     }
+    if (selectedReviewIdentities.has(exactHeadIdentity)) {
+      held.push({ requestId:request.requestId, reasonCode:'DUPLICATE_EXACT_HEAD_REVIEW_REQUEST' });
+      continue;
+    }
+    selectedReviewIdentities.add(exactHeadIdentity);
     if (assignments.length >= maxAssignments) {
       held.push({ requestId:request.requestId, reasonCode:'PARALLEL_REVIEW_CAPACITY_FULL' });
       continue;
@@ -334,7 +366,7 @@ export function planElasticIndependentReviewAssignments(requests = [], reviewers
     reviewerSlots.set(reviewer.reviewerId, (reviewerSlots.get(reviewer.reviewerId) ?? 0) - 1);
     assignments.push(freeze({
       requestId:request.requestId,
-      reviewIdentity:requestIdentity(request),
+      reviewIdentity:exactHeadIdentity,
       priorityClass:request.priorityClass,
       riskTier:request.riskTier,
       reviewerId:reviewer.reviewerId,
@@ -348,12 +380,17 @@ export function planElasticIndependentReviewAssignments(requests = [], reviewers
     }));
   }
 
+  const reasonCodes = [...new Set(held.map(({ reasonCode }) => reasonCode))];
   return freeze({
     schemaVersion:ELASTIC_INDEPENDENT_REVIEW_CAPACITY_SCHEMA,
-    status:assignments.length ? 'ASSIGNMENT_PLAN_READY' : 'NO_ASSIGNMENT_READY',
+    status:assignments.length
+      ? 'ASSIGNMENT_PLAN_READY'
+      : reasonCodes.includes('CONFLICTING_EXACT_HEAD_REVIEW_REQUEST')
+        ? 'SAFE_HOLD_CONFLICTING_EXACT_HEAD_REQUEST'
+        : 'NO_ASSIGNMENT_READY',
     assignments,
     held,
-    reasonCodes:[...new Set(held.map(({ reasonCode }) => reasonCode))],
+    reasonCodes,
     criticalRecoveryAssignments:assignments.filter(({ priorityClass }) => priorityClass === CRITICAL_RECOVERY_PRIORITY).length,
     dispatchAuthority:false,
     mergeAuthority:false,
