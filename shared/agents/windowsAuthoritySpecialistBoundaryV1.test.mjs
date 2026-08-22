@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
@@ -19,6 +20,7 @@ function diffFor(path) {
 test('protects the complete source-controlled Windows specialist boundary', () => {
   assert.deepEqual(WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1, [
     'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs',
+    'shared/agents/windowsAuthorityIgnitionConvergenceReviewV1.mjs',
     'shared/agents/windowsAuthorityWorkerWatchdogReviewV1.mjs',
     'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
   ]);
@@ -33,4 +35,14 @@ test('protects the complete source-controlled Windows specialist boundary', () =
       && item.path === path
     )));
   }
+});
+
+test('trusted specialist composition pins and invokes the exact four-path ignition child before fallback', async () => {
+  const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
+  assert.match(source, /IGNITION_CONVERGENCE_PATH = '\.\/windowsAuthorityIgnitionConvergenceReviewV1\.mjs'/);
+  assert.match(source, /IGNITION_CONVERGENCE_BLOB_SHA = '[a-f0-9]{40}'/);
+  assert.match(source, /provePinnedModule\(IGNITION_CONVERGENCE_PATH, IGNITION_CONVERGENCE_BLOB_SHA\)/);
+  assert.match(source, /WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1/);
+  assert.match(source, /\['scripts\/windows\/probe-battle-bridge-recovery-mesh\.ps1','scripts\/windows\/repair-stephanos-battle-bridge\.ps1','scripts\/windows\/restart-approved-stephanos-runtime\.ps1','scripts\/windows\/start-stephanos-backend\.ps1'\]/);
+  assert.match(source, /ignitionConvergence\.analyzeWindowsAuthorityIgnitionConvergenceReview\(input\); if \(ignitionConvergenceResult\.eligible\) return ignitionConvergenceResult;/);
 });

@@ -39,6 +39,24 @@ function Test-CanonicalBackendCommandLine {
         -or [string]::Equals($commandLine, $expectedNpmNodeExeCommand, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Test-RuntimeUiDistStatus {
+    param([string]$Status)
+    return $Status -eq ' M' -or $Status -eq ' D'
+}
+
+function Convert-ProcessCreationDateToUtcText {
+    param([object]$CreationDate)
+    if ($CreationDate -is [DateTime]) {
+        return ([DateTime]$CreationDate).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    }
+    if ($CreationDate -is [DateTimeOffset]) {
+        return ([DateTimeOffset]$CreationDate).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    }
+    $creationText = [string]$CreationDate
+    if ([string]::IsNullOrWhiteSpace($creationText)) { throw 'BACKEND_LISTENER_CREATION_TIME_MISSING' }
+    return [System.Management.ManagementDateTimeConverter]::ToDateTime($creationText).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+}
+
 function Get-TrackedWorktreeAssessment {
     param([string[]]$StatusLines)
     $runtimeMemoryDirty = $false
@@ -62,7 +80,7 @@ function Get-TrackedWorktreeAssessment {
             $runtimeMemoryDirty = $true
             continue
         }
-        if ($status -eq ' M' -and $path.StartsWith($runtimeDistPrefix, [System.StringComparison]::Ordinal)) {
+        if ((Test-RuntimeUiDistStatus -Status $status) -and $path.StartsWith($runtimeDistPrefix, [System.StringComparison]::Ordinal)) {
             $runtimeDistDirty = $true
             continue
         }
@@ -86,7 +104,7 @@ function Get-VerifiedBackendListener {
         $executable = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
         if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
         if (-not (Test-CanonicalBackendCommandLine -CommandLine ([string]$process.CommandLine))) { return $null }
-        $processStartTimeUtc = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$process.CreationDate).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        $processStartTimeUtc = Convert-ProcessCreationDateToUtcText -CreationDate $process.CreationDate
         return [PSCustomObject]@{ ProcessId = $processId; ProcessStartTimeUtc = $processStartTimeUtc }
     }
     catch { return $null }
