@@ -27,6 +27,7 @@ export const PERSONAL_REPOSITORY_REQUIRED_CHECK = 'protected-merge-source-proof'
 export const PERSONAL_REPOSITORY_MODE = 'user-owned-protected-squash';
 export const PERSONAL_REPOSITORY_AUTHORITY = 'github-actions-protected-environment-exact-head-squash-only';
 export const PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS = 3;
+export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS = 2;
 export const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES = 256 * 1024;
 export const PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES = 256 * 1024;
 
@@ -61,6 +62,18 @@ export const PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS = Object.freeze([
   Object.freeze({ name: 'Build Stephanos UI', path: '.github/workflows/build-stephanos-ui.yml', event: 'pull_request' }),
   Object.freeze({ name: 'Battle Bridge Publisher Proof', path: '.github/workflows/battle-bridge-publisher-proof.yml', event: 'pull_request' }),
   Object.freeze({ name: 'Codex Dispatch Queue Proof', path: '.github/workflows/codex-dispatch-queue-proof.yml', event: 'pull_request' }),
+]);
+
+const PERSONAL_REPOSITORY_REVIEW_ESCALATION = Object.freeze({
+  workflow: 'Stephanos Exact-Head Review',
+  path: '.github/workflows/stephanos-exact-head-review.yml',
+  event: 'pull_request_target',
+  check: 'exact-head-review',
+  conclusion: 'failure',
+});
+
+const PERSONAL_REPOSITORY_NEUTRAL_SKIPPED_CHECKS = new Set([
+  'Exact-Head Review Dispatch\0coordinate',
 ]);
 
 function text(value) {
@@ -1018,7 +1031,252 @@ export function validatePersonalRepositoryWorkflowRuns(definitions = [], runs = 
   });
 }
 
-export function validatePersonalRepositoryEvidence(input = {}, expected = {}) {
+export function validatePersonalRepositoryWorkflowRunHydration(
+  summaries = [],
+  details = [],
+  expected = {},
+) {
+  const blockers = [];
+  const sourceHead = text(expected.sourceHead).toLowerCase();
+  if (!Array.isArray(summaries) || summaries.length === 0) {
+    blockers.push('personal-repository-workflow-run-summaries-invalid');
+  }
+  if (!Array.isArray(details) || details.length === 0) {
+    blockers.push('personal-repository-workflow-run-details-invalid');
+  }
+  if (!SHA_PATTERN.test(sourceHead)) {
+    blockers.push('personal-repository-workflow-run-hydration-head-invalid');
+  }
+
+  const summaryIds = new Set();
+  const detailById = new Map();
+  for (const detail of Array.isArray(details) ? details : []) {
+    const detailId = strictPositiveInteger(detail?.id);
+    if (!detailId || detailById.has(detailId)) {
+      blockers.push('personal-repository-workflow-run-detail-identity-invalid');
+      continue;
+    }
+    detailById.set(detailId, detail);
+  }
+
+  const hydratedRuns = [];
+  for (const summary of Array.isArray(summaries) ? summaries : []) {
+    const summaryId = strictPositiveInteger(summary?.id);
+    const workflowId = strictPositiveInteger(summary?.workflow_id);
+    const checkSuiteId = strictPositiveInteger(summary?.check_suite_id);
+    if (!summaryId || !workflowId || !checkSuiteId
+      || text(summary?.head_sha).toLowerCase() !== sourceHead
+      || summaryIds.has(summaryId)) {
+      blockers.push('personal-repository-workflow-run-summary-identity-invalid');
+      continue;
+    }
+    summaryIds.add(summaryId);
+    const detail = detailById.get(summaryId);
+    if (!detail
+      || strictPositiveInteger(detail?.workflow_id) !== workflowId
+      || strictPositiveInteger(detail?.check_suite_id) !== checkSuiteId
+      || text(detail?.head_sha).toLowerCase() !== sourceHead) {
+      blockers.push('personal-repository-workflow-run-detail-mismatch');
+      continue;
+    }
+    hydratedRuns.push(detail);
+  }
+  if (summaryIds.size !== detailById.size) {
+    blockers.push('personal-repository-workflow-run-hydration-cardinality-mismatch');
+  }
+
+  const valid = blockers.length === 0 && hydratedRuns.length === summaryIds.size;
+  return Object.freeze({
+    valid,
+    runs: valid ? Object.freeze([...hydratedRuns]) : Object.freeze([]),
+    blockers: Object.freeze(unique(blockers)),
+    finalVerdict: valid
+      ? 'PERSONAL_REPOSITORY_WORKFLOW_RUN_HYDRATION_READY'
+      : 'PERSONAL_REPOSITORY_WORKFLOW_RUN_HYDRATION_BLOCKED',
+  });
+}
+
+export function validatePersonalRepositoryCheckRuns(
+  checkRuns = [],
+  workflowRuns = [],
+  commitStatuses = [],
+  expected = {},
+  options = {},
+) {
+  const blockers = [];
+  const evidence = [];
+  const repository = text(expected.repository);
+  const prNumber = strictPositiveInteger(expected.prNumber);
+  const branch = text(expected.branch);
+  const sourceHead = text(expected.sourceHead).toLowerCase();
+  const baseSha = text(expected.baseSha).toLowerCase();
+  const mergeStateStatus = text(expected.mergeStateStatus).toUpperCase();
+  const cleanIndependentReviewProved = options.cleanIndependentReviewProved === true;
+  let admittedReviewEscalations = 0;
+
+  if (!Array.isArray(checkRuns) || checkRuns.length === 0) {
+    blockers.push('personal-repository-check-runs-invalid');
+  }
+  if (!Array.isArray(workflowRuns)) blockers.push('personal-repository-check-workflow-runs-invalid');
+  if (!Array.isArray(commitStatuses)) blockers.push('personal-repository-commit-statuses-invalid');
+
+  for (const status of Array.isArray(commitStatuses) ? commitStatuses : []) {
+    if (text(status?.sha).toLowerCase() !== sourceHead
+      || text(status?.state).toLowerCase() !== 'success') {
+      blockers.push('personal-repository-commit-status-not-exact-green');
+    }
+  }
+
+  for (const check of Array.isArray(checkRuns) ? checkRuns : []) {
+    const checkId = strictPositiveInteger(check?.id);
+    const checkSuiteId = strictPositiveInteger(check?.check_suite?.id);
+    const name = text(check?.name);
+    const status = text(check?.status).toLowerCase();
+    const conclusion = text(check?.conclusion).toLowerCase();
+    const matchingRuns = (Array.isArray(workflowRuns) ? workflowRuns : []).filter((run) => (
+      strictPositiveInteger(run?.check_suite_id) === checkSuiteId
+      && text(run?.head_sha).toLowerCase() === sourceHead
+    ));
+    const run = matchingRuns[0];
+    const bindings = Array.isArray(run?.pull_requests) ? run.pull_requests : [];
+    const binding = bindings.length === 1 ? bindings[0] : null;
+    const exactRun = matchingRuns.length === 1
+      && strictPositiveInteger(run?.id)
+      && strictPositiveInteger(run?.run_attempt)
+      && workflowRepository(run) === repository
+      && bindings.length === 1
+      && strictPositiveInteger(binding?.number) === prNumber
+      && text(binding?.head?.sha).toLowerCase() === sourceHead
+      && text(binding?.head?.ref) === branch
+      && text(binding?.base?.sha).toLowerCase() === baseSha
+      && text(binding?.base?.ref) === 'main';
+    const workflow = text(run?.name);
+    const path = canonicalWorkflowPath(run, repository);
+    const detailsUrl = `https://github.com/${repository}/actions/runs/${run?.id}/job/${checkId}`;
+
+    if (!checkId || !checkSuiteId || !name
+      || text(check?.head_sha).toLowerCase() !== sourceHead
+      || text(check?.app?.slug) !== 'github-actions'
+      || strictPositiveInteger(check?.app?.id) !== 15368
+      || text(check?.details_url) !== detailsUrl
+      || !exactRun) {
+      blockers.push('personal-repository-check-run-identity-invalid');
+      continue;
+    }
+
+    let disposition = 'green';
+    if (status !== 'completed') {
+      blockers.push('personal-repository-check-run-not-terminal');
+      disposition = 'blocked';
+    } else if (conclusion === 'success') {
+      // Exact successful check.
+    } else if (conclusion === 'skipped'
+      && PERSONAL_REPOSITORY_NEUTRAL_SKIPPED_CHECKS.has(`${workflow}\0${name}`)) {
+      disposition = 'neutral-skip';
+    } else if (cleanIndependentReviewProved
+      && mergeStateStatus === 'UNSTABLE'
+      && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
+      && path === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
+      && text(run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
+      && name === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check
+      && conclusion === PERSONAL_REPOSITORY_REVIEW_ESCALATION.conclusion) {
+      admittedReviewEscalations += 1;
+      disposition = 'clean-independent-review';
+    } else {
+      blockers.push('personal-repository-check-run-not-exact-green');
+      disposition = 'blocked';
+    }
+
+    evidence.push(Object.freeze({
+      checkId,
+      checkSuiteId,
+      name,
+      workflow,
+      path,
+      workflowRunId: run.id,
+      workflowRunAttempt: run.run_attempt,
+      status,
+      conclusion,
+      disposition,
+    }));
+  }
+
+  if (mergeStateStatus === 'UNSTABLE' && admittedReviewEscalations !== 1) {
+    blockers.push('personal-repository-review-escalation-check-not-exact');
+  }
+  if (mergeStateStatus === 'CLEAN' && admittedReviewEscalations !== 0) {
+    blockers.push('personal-repository-clean-state-has-review-escalation');
+  }
+
+  return Object.freeze({
+    valid: blockers.length === 0,
+    evidence: Object.freeze(evidence),
+    admittedReviewEscalations,
+    blockers: Object.freeze(unique(blockers)),
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_CHECK_RUNS_BLOCKED'
+      : 'PERSONAL_REPOSITORY_CHECK_RUNS_READY',
+  });
+}
+
+export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
+  readSnapshot,
+  expected = {},
+  options = {},
+} = {}) {
+  if (typeof readSnapshot !== 'function') {
+    return Object.freeze({
+      valid: false,
+      evidence: Object.freeze([]),
+      admittedReviewEscalations: 0,
+      blockers: Object.freeze(['personal-repository-check-snapshot-reader-invalid']),
+      snapshotAttempt: 0,
+      snapshotAttempts: Object.freeze([]),
+      selectedSnapshot: null,
+      finalVerdict: 'PERSONAL_REPOSITORY_CHECK_RUNS_BLOCKED',
+    });
+  }
+
+  const snapshotAttempts = [];
+  let validation = null;
+  for (let attempt = 1; attempt <= PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS; attempt += 1) {
+    const snapshot = await readSnapshot(attempt);
+    validation = validatePersonalRepositoryCheckRuns(
+      snapshot?.checkRuns,
+      snapshot?.workflowRuns,
+      snapshot?.commitStatuses,
+      expected,
+      options,
+    );
+    snapshotAttempts.push(Object.freeze({
+      attempt,
+      valid: validation.valid,
+      blockers: validation.blockers,
+    }));
+    if (validation.valid) {
+      const selectedSnapshot = Object.freeze({
+        checkRuns: Object.freeze([...snapshot.checkRuns]),
+        workflowRuns: Object.freeze([...snapshot.workflowRuns]),
+        commitStatuses: Object.freeze([...snapshot.commitStatuses]),
+      });
+      return Object.freeze({
+        ...validation,
+        snapshotAttempt: attempt,
+        snapshotAttempts: Object.freeze(snapshotAttempts),
+        selectedSnapshot,
+      });
+    }
+  }
+
+  return Object.freeze({
+    ...validation,
+    snapshotAttempt: 0,
+    snapshotAttempts: Object.freeze(snapshotAttempts),
+    selectedSnapshot: null,
+  });
+}
+
+export function validatePersonalRepositoryEvidence(input = {}, expected = {}, options = {}) {
   const blockers = [];
   const repository = text(input.repository);
   const pullRequest = input.pullRequest && typeof input.pullRequest === 'object' ? input.pullRequest : {};
@@ -1034,6 +1292,8 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}) {
   const reviewDecision = text(input.reviewDecision).toUpperCase();
   const mergeable = text(input.mergeable).toUpperCase();
   const mergeStateStatus = text(input.mergeStateStatus).toUpperCase();
+  const cleanIndependentReviewProved = options.cleanIndependentReviewProved === true;
+  const reviewEscalationChecksProved = options.reviewEscalationChecksProved === true;
   const comparison = input.comparison && typeof input.comparison === 'object' ? input.comparison : {};
 
   if (!REPOSITORY_PATTERN.test(repository)) blockers.push('personal-repository-repository-invalid');
@@ -1059,7 +1319,12 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}) {
   if (reviewDecision === 'CHANGES_REQUESTED') blockers.push('personal-repository-changes-requested');
   else if (!['', 'APPROVED'].includes(reviewDecision)) blockers.push('personal-repository-review-decision-unsupported');
   if (mergeable !== 'MERGEABLE') blockers.push('personal-repository-pr-not-mergeable');
-  if (mergeStateStatus !== 'CLEAN') blockers.push('personal-repository-pr-not-clean');
+  if (mergeStateStatus !== 'CLEAN'
+    && !(mergeStateStatus === 'UNSTABLE'
+      && cleanIndependentReviewProved
+      && reviewEscalationChecksProved)) {
+    blockers.push('personal-repository-pr-not-clean');
+  }
   if (!Number.isSafeInteger(input.unresolvedThreadCount) || input.unresolvedThreadCount !== 0) {
     blockers.push('personal-repository-conversations-not-resolved');
   }
@@ -1096,6 +1361,10 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}) {
       baseSha,
       workflowRunId,
       workflowRunAttempt,
+      mergeStateStatus,
+      reviewAdjudication: mergeStateStatus === 'UNSTABLE'
+        ? 'clean-independent-review'
+        : 'native-clean',
     }),
     blockers: Object.freeze(unique(blockers)),
     finalVerdict: blockers.length
