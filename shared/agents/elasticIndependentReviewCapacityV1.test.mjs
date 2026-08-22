@@ -11,6 +11,7 @@ const HEAD_A = 'a'.repeat(40);
 const HEAD_B = 'b'.repeat(40);
 const HEAD_C = 'c'.repeat(40);
 const BASE = 'd'.repeat(40);
+const OTHER_BASE = 'e'.repeat(40);
 
 function request(overrides = {}) {
   return {
@@ -81,6 +82,25 @@ test('capacity evidence fails closed below policy baseline or above maximum', ()
     availableReviewerSlots:20,
     maximumSlots:MAXIMUM_REVIEW_SLOTS + 1,
   }).status, 'SAFE_HOLD_INVALID_CAPACITY');
+});
+
+test('explicit malformed capacity bounds fail closed instead of silently defaulting', () => {
+  for (const invalidBounds of [
+    { minimumSlots:-1 },
+    { maximumSlots:-1 },
+    { minimumSlots:null },
+    { maximumSlots:null },
+  ]) {
+    const result = deriveElasticIndependentReviewWidth({
+      activeReviewCount:0,
+      readyReviewCount:1,
+      criticalRecoveryReadyCount:0,
+      availableReviewerSlots:3,
+      ...invalidBounds,
+    });
+    assert.equal(result.status, 'SAFE_HOLD_INVALID_CAPACITY');
+    assert.equal(result.scaleAction, 'SAFE_HOLD');
+  }
 });
 
 test('critical recovery review is assigned before ordinary programme work', () => {
@@ -168,7 +188,7 @@ test('bounded reviewer slots widen across disjoint exact-head requests and hold 
   assert.equal(result.held[0].reasonCode, 'PARALLEL_REVIEW_CAPACITY_FULL');
 });
 
-test('duplicate request identities fail closed instead of double-spending review capacity', () => {
+test('duplicate request IDs fail closed instead of double-spending review capacity', () => {
   const result = planElasticIndependentReviewAssignments([
     request({ requestId:'duplicate', prNumber:101 }),
     request({ requestId:'duplicate', prNumber:102, sourceHead:HEAD_B, branch:'agent/example-v2' }),
@@ -177,4 +197,58 @@ test('duplicate request identities fail closed instead of double-spending review
   assert.equal(result.status, 'SAFE_HOLD_DUPLICATE_REQUEST');
   assert.equal(result.assignments.length, 0);
   assert.deepEqual(result.held.map(({ reasonCode }) => reasonCode), ['DUPLICATE_REQUEST_ID','DUPLICATE_REQUEST_ID']);
+});
+
+test('same exact head with different request IDs is selected once and later duplicates are held', () => {
+  const result = planElasticIndependentReviewAssignments([
+    request({
+      requestId:'ordinary-copy',
+      priorityClass:'STANDARD',
+      queuedAtUtc:'2026-08-22T09:59:00.000Z',
+    }),
+    request({
+      requestId:'critical-copy',
+      priorityClass:'CRITICAL_RECOVERY',
+      queuedAtUtc:'2026-08-22T10:01:00.000Z',
+    }),
+  ], [reviewer({ availableSlots:2 })], { maxAssignments:2, activeReviewIdentities:[] });
+
+  assert.deepEqual(result.assignments.map(({ requestId }) => requestId), ['critical-copy']);
+  assert.deepEqual(result.held, [{
+    requestId:'ordinary-copy',
+    reasonCode:'DUPLICATE_EXACT_HEAD_REVIEW_REQUEST',
+  }]);
+  assert.equal(result.assignments[0].reviewIdentity, `cheekyfellastef/stephan-os#100@${HEAD_A}`);
+});
+
+test('conflicting bindings for one exact head fail closed for branch, base or risk drift', () => {
+  const conflicts = [
+    { branch:'agent/conflicting-branch' },
+    { baseSha:OTHER_BASE },
+    { riskTier:'high' },
+  ];
+
+  for (const conflict of conflicts) {
+    const result = planElasticIndependentReviewAssignments([
+      request({ requestId:'canonical-copy' }),
+      request({ requestId:'conflicting-copy', ...conflict }),
+    ], [
+      reviewer({ availableSlots:2, qualifiedRiskTiers:['low','standard','high'] }),
+      reviewer({
+        reviewerId:'specialist',
+        provider:'external-review',
+        sessionId:'specialist-session',
+        reviewerClass:'external-qualified',
+        availableSlots:2,
+        qualifiedRiskTiers:['standard','high'],
+      }),
+    ], { maxAssignments:2, activeReviewIdentities:[] });
+
+    assert.equal(result.status, 'SAFE_HOLD_CONFLICTING_EXACT_HEAD_REQUEST');
+    assert.equal(result.assignments.length, 0);
+    assert.deepEqual(result.held.map(({ reasonCode }) => reasonCode), [
+      'CONFLICTING_EXACT_HEAD_REVIEW_REQUEST',
+      'CONFLICTING_EXACT_HEAD_REVIEW_REQUEST',
+    ]);
+  }
 });
