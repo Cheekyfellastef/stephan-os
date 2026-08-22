@@ -47,7 +47,7 @@ jobs:
       actions: read
       contents: read
       issues: write
-      pull-requests: read
+      pull-requests: write
     steps:
       - name: Check out trusted exact-base reviewer
         if: github.event_name == 'pull_request_target'
