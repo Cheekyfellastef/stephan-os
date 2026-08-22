@@ -1,3 +1,5 @@
+import { PROTECTED_REVIEW_MARKER } from './operatorMergeApprovalGate.mjs';
+
 export const INDEPENDENT_REVIEW_PRE_ARTIFACT_FAILURE_SCHEMA = 'stephanos.independent-review-pre-artifact-failure.v1';
 export const INDEPENDENT_REVIEW_PRE_ARTIFACT_FAILURE_MARKER = 'stephanos:independent-review-pre-artifact-failure:v1';
 
@@ -89,7 +91,7 @@ export function renderIndependentReviewPreArtifactFailureReceiptV1(plan = {}) {
   if (plan?.publishAllowed !== true || !plan.marker || !plan.receipt) {
     throw new Error('pre-artifact review failure receipt plan is not publishable');
   }
-  return `${plan.marker}\n## Provider-neutral independent review pre-artifact failure receipt\n\n`+
+  return `${plan.marker}\n${PROTECTED_REVIEW_MARKER}\n## Provider-neutral independent review pre-artifact failure receipt\n\n`+
     `Run identity: \`${plan.receipt.runIdentityHint}\`\n\n`+
     '```json\n'+JSON.stringify(plan.receipt, null, 2)+'\n```\n\n'+
     'This is a fail-closed execution receipt only. It is not a clean review, approval, merge authorization, deployment authority, runtime authority or permission to dispatch a second review. The canonical coordinator may inspect this exact run and use only its existing bounded retry policy.';
