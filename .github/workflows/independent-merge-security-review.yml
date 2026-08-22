@@ -120,8 +120,46 @@ jobs:
           overwrite: false
           include-hidden-files: false
 
-      - name: Surface terminal exact-head findings after bounded retry exhaustion
-        if: ${{ always() }}
+  terminal-review-receipt:
+    name: terminal-review-receipt
+    needs: independent-security-review
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Check out trusted exact-base terminal publisher
+        if: github.event_name == 'pull_request_target'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Check out trusted current-main terminal publisher
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Recover exact-run immutable independent review result
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: stephanos-independent-review-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}
+
+      - name: Surface terminal exact-head findings or pre-artifact failure
         env:
           GITHUB_TOKEN: ${{ github.token }}
           STEPHANOS_INDEPENDENT_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/independent-review-result.json
