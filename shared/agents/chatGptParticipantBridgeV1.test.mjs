@@ -13,6 +13,8 @@ import {
   CHATGPT_BRIDGE_RECORD_KINDS,
   CHATGPT_BRIDGE_REDACTED_TEXT,
   CHATGPT_BRIDGE_RESPONSE_STATUSES,
+  CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
+  CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND,
   CHATGPT_BRIDGE_TRANSPORT_STATUS,
   CHATGPT_BRIDGE_WRITE_OPERATIONS,
   CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION,
@@ -57,6 +59,7 @@ test('V1 exposes exact read/write allowlists and no generic file or execute capa
     'WRITE_BLOCKER_CLASSIFICATION',
     'WRITE_OPERATOR_ATTENTION_REQUEST',
     'WRITE_APPROVAL_REQUEST',
+    CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
   ]);
   assert.deepEqual(CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS, ['READ_FILE', 'WRITE_FILE', 'EXECUTE']);
   for (const forbidden of CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS) {
@@ -67,8 +70,48 @@ test('V1 exposes exact read/write allowlists and no generic file or execute capa
 
 test('operation-to-record-kind authorization mapping is fixed and fail closed', () => {
   assert.equal(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP.WRITE_NEXT_ACTION_PACKET, CHATGPT_BRIDGE_RECORD_KINDS.NEXT_ACTION_PACKET);
+  assert.equal(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP[CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION], CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND);
   assert.equal(verify(validRequest({ recordKind: CHATGPT_BRIDGE_RECORD_KINDS.GOAL_INTENT_PROPOSAL })).responseStatus, 'BLOCKED_RECORD_KIND_NOT_ALLOWLISTED');
   assert.equal(verify(validRequest({ operation: 'READ_FILE', recordKind: 'file' })).responseStatus, 'BLOCKED_OPERATION_NOT_ALLOWLISTED');
+});
+
+test('Stephanos Q&A operation accepts only one exact conversation-question payload and cannot fall through the generic writer', () => {
+  const questionRecord = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.record.message',
+    messageId: 'qa-q-test',
+    participantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
+    recipientParticipantId: 'stephanos',
+    timestampUtc: '2026-07-13T00:00:00.000Z',
+    correlationId: 'stephanos-round-001',
+    relatedIssue: '#1308',
+    relatedPr: '#1896',
+    proofRefs: ['receipts/question-test'],
+    channel: 'shared-participant-qa',
+    recordSubtype: CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND,
+    subjectId: 'stephanos-round-001-q01',
+    summary: 'Question for Stephanos',
+    body: '{}',
+    sourceMutationAllowed: false,
+    commandExecutionAllowed: false,
+    approvalAllowed: false,
+    mergeAllowed: false,
+    deploymentAllowed: false,
+  };
+  const qaRequest = validRequest({
+    requestId: 'request-qa-1',
+    operation: CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
+    recordKind: CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND,
+    relatedGoal: '#1308',
+    relatedPr: '#1896',
+    correlationId: 'stephanos-round-001',
+    boundedPayload: { questionRecord },
+  });
+
+  assert.equal(verify(qaRequest).responseStatus, 'BRIDGE_VERIFIED_PASS');
+  assert.equal(buildChatGptBridgeRecord(qaRequest).reason, 'BLOCKED_SPECIALIZED_OPERATION_REQUIRED');
+  assert.equal(verify({ ...qaRequest, boundedPayload: { questionRecord, extra: true } }).responseStatus, 'BLOCKED_PAYLOAD_UNSAFE');
+  assert.equal(verify({ ...qaRequest, boundedPayload: { questionRecord: { ...questionRecord, recipientParticipantId: 'openclaw' } } }).responseStatus, 'BLOCKED_PAYLOAD_UNSAFE');
 });
 
 test('schema/authentication/correlation/expiry/replay guards produce required statuses and audit receipts', () => {

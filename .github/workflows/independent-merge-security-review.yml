@@ -130,6 +130,7 @@ jobs:
           include-hidden-files: false
 
       - name: Surface terminal exact-head findings or pre-artifact failure
+        id: terminal_findings
         if: ${{ always() }}
         timeout-minutes: 4
         env:
@@ -140,3 +141,15 @@ jobs:
           STEPHANOS_TERMINAL_REVIEW_HEAD: ${{ inputs.source_head || github.event.pull_request.head.sha }}
           STEPHANOS_TERMINAL_REVIEW_BASE: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
         run: node scripts/publish-independent-review-terminal-findings-v1.mjs
+
+      - name: Upload exact-run pre-artifact failure receipt
+        if: ${{ always() && steps.terminal_findings.outputs.decision == 'PUBLISH_PRE_ARTIFACT_FAILURE_RECEIPT' }}
+        timeout-minutes: 4
+        uses: actions/upload-artifact@v4
+        with:
+          name: stephanos-independent-review-pre-artifact-failure-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/independent-review-pre-artifact-failure.json
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: false
+          include-hidden-files: false
