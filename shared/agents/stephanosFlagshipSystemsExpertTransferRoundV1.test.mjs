@@ -23,7 +23,7 @@ const EXPECTED_CASES = [
 
 const REQUIRED_CONTEXT_REFS = [
   '#1776', '#1308', '#1722', '#1556', '#1290', '#1657', '#1694', '#1281',
-  '#1596', '#1597', '#1898', '#1899', '#1900', '#1901', '#1902', '#1903', '#1934',
+  '#1596', '#1597', '#1898', '#1899', '#1900', '#1901', '#1902', '#1903', '#1934', '#1945',
 ];
 
 test('flagship peer-intelligence transfer fixtures cover exactly ten systems, research and improvement cases and remain held by canonical novelty authority', () => {
@@ -73,6 +73,7 @@ test('the ten cases explicitly exercise current systems truth, provider outage, 
     'foundry',
     'battle bridge',
     'ignition',
+    'draft-safe independent-review',
     'research council',
     'primary-source',
     'conflicting evidence',
