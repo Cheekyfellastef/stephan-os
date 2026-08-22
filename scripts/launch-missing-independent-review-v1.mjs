@@ -160,13 +160,6 @@ function sameOrLaterGithubTimestamp(runCreatedAt, requestedAtUtc) {
       >= Math.floor(requestedAt / GITHUB_TIMESTAMP_PRECISION_MS);
 }
 
-function assertOptionalSummaryField(summaryValue, detailValue, label, runId, normalize = text) {
-  const summary = normalize(summaryValue);
-  if (summary && summary !== normalize(detailValue)) {
-    throw new Error(`workflow-dispatch run summary/detail ${label} mismatch for run ${runId}`);
-  }
-}
-
 function assertWorkflowDispatchSummaryDetailBinding(summary, detail, workflowId) {
   const summaryId = positiveInteger(summary?.id);
   const detailId = positiveInteger(detail?.id);
@@ -180,14 +173,6 @@ function assertWorkflowDispatchSummaryDetailBinding(summary, detail, workflowId)
   if (positiveInteger(detail?.workflow_id) !== workflowId) {
     throw new Error(`workflow-dispatch run detail workflow mismatch for run ${summaryId}`);
   }
-  assertOptionalSummaryField(summary?.name, detail?.name, 'name', summaryId);
-  assertOptionalSummaryField(summary?.path, detail?.path, 'path', summaryId);
-  assertOptionalSummaryField(summary?.event, detail?.event, 'event', summaryId);
-  assertOptionalSummaryField(summary?.repository?.full_name, detail?.repository?.full_name, 'repository', summaryId, (value) => text(value).toLowerCase());
-  assertOptionalSummaryField(summary?.head_branch, detail?.head_branch, 'head-branch', summaryId);
-  assertOptionalSummaryField(summary?.head_sha, detail?.head_sha, 'head-sha', summaryId, (value) => text(value).toLowerCase());
-  assertOptionalSummaryField(summary?.display_title, detail?.display_title, 'display-title', summaryId);
-  assertOptionalSummaryField(summary?.created_at, detail?.created_at, 'created-at', summaryId);
   const summaryAttempt = positiveInteger(summary?.run_attempt);
   if (summaryAttempt && summaryAttempt !== positiveInteger(detail?.run_attempt)) {
     throw new Error(`workflow-dispatch run summary/detail attempt mismatch for run ${summaryId}`);
@@ -213,9 +198,12 @@ function plausibleWorkflowDispatchSummary(summary, workflowId, launchReceipt) {
     throw new Error(`workflow-dispatch list returned foreign branch ${branch}`);
   }
   const displayTitle = text(summary?.display_title);
-  if (displayTitle && displayTitle !== expectedRunName) return false;
   const createdAt = text(summary?.created_at);
-  if (createdAt && !sameOrLaterGithubTimestamp(createdAt, requestedAtUtc)) return false;
+  if (createdAt) {
+    if (!sameOrLaterGithubTimestamp(createdAt, requestedAtUtc)) return false;
+  } else if (displayTitle !== expectedRunName) {
+    return false;
+  }
   if (!positiveInteger(summary?.id)) {
     if (displayTitle === expectedRunName || createdAt) {
       throw new Error('plausible workflow-dispatch summary is missing a positive run id');
