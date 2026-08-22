@@ -201,7 +201,7 @@ async function main() {
   const handoffRunReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
 
   const preflight = buildIndependentReviewWorkflowDispatchPreflightV1({
-    environment: process.env,
+    environment: { ...process.env },
     workflowDefinition: workflow,
     currentMainSha,
     pullRequest,
