@@ -9,9 +9,9 @@ import {
 const HEAD = 'd4d400146432f0a696a62bd8f5064c40feac5b91';
 const escalated = [...WINDOWS_AUTHORITY_LOCAL_CHAT_RECOVERY_PATHS_V1];
 const blobs = {
-  'scripts/windows/battle-bridge-local-chat-recovery-v1.test.mjs': '945fd2f2fdafaa95e45a26d046af243f8dd42a56',
+  'scripts/windows/battle-bridge-local-chat-recovery-v1.test.mjs': '25a34ce17214abc022614b2400b93c95bd13fc2d',
   'scripts/windows/install-battle-bridge-local-chat-recovery-v1.ps1': '4f58a6654913b2415de6df340efe59df98a87602',
-  'scripts/windows/invoke-battle-bridge-local-chat-recovery-v1.ps1': '2544f775afa860ef8d1d71c11eced34867cf7fcb',
+  'scripts/windows/invoke-battle-bridge-local-chat-recovery-v1.ps1': 'e5f0e8f1781730f3128298134499f96069bbcfdb',
 };
 const content = {
   'scripts/windows/battle-bridge-local-chat-recovery-v1.test.mjs': String.raw`
