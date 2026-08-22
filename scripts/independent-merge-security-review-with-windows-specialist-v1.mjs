@@ -16,9 +16,6 @@ import {
   WINDOWS_AUTHORITY_SOURCE_SCHEMA_VERSION,
   analyzeWindowsAuthoritySpecialistReview,
 } from '../shared/agents/windowsAuthoritySpecialistReviewV1.mjs';
-import {
-  buildIndependentReviewWorkflowDispatchBridgeV1,
-} from '../shared/agents/independentReviewWorkflowDispatchBridgeV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-independent-review-windows-specialist-v1';
@@ -172,42 +169,6 @@ function validateFindingsArtifact(artifact) {
   return artifact;
 }
 
-function reviewerChildEnvironment() {
-  const eventName = text(process.env.GITHUB_EVENT_NAME);
-  if (eventName === 'pull_request_target') return process.env;
-  if (eventName !== 'workflow_dispatch') {
-    throw new Error(`Specialist wrapper does not admit GitHub event ${eventName || 'missing'}.`);
-  }
-  const runnerTemp = text(process.env.RUNNER_TEMP);
-  const requestedPreflightPath = text(process.env.STEPHANOS_INDEPENDENT_REVIEW_DISPATCH_PREFLIGHT_PATH);
-  if (!runnerTemp || !requestedPreflightPath) {
-    throw new Error('Trusted workflow-dispatch preflight path is required.');
-  }
-  const expectedPreflightPath = resolve(runnerTemp, 'independent-review-workflow-dispatch-preflight.json');
-  if (resolve(requestedPreflightPath) !== expectedPreflightPath || !fs.existsSync(expectedPreflightPath)) {
-    throw new Error('Trusted workflow-dispatch preflight path is missing or not exact.');
-  }
-  const preflight = JSON.parse(fs.readFileSync(expectedPreflightPath, 'utf8'));
-  const bridge = buildIndependentReviewWorkflowDispatchBridgeV1(preflight, {
-    repository: text(process.env.GITHUB_REPOSITORY),
-  });
-  const syntheticEventPath = resolve(runnerTemp, 'independent-review-workflow-dispatch-reviewer-event.json');
-  fs.writeFileSync(syntheticEventPath, `${JSON.stringify(bridge.syntheticEvent, null, 2)}\n`, {
-    encoding: 'utf8',
-    flag: 'wx',
-    mode: 0o600,
-  });
-  console.log(`INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_BRIDGE=${bridge.schemaVersion}`);
-  console.log(`INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_BRIDGE_HEAD=${bridge.sourceHead}`);
-  console.log(`INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_BRIDGE_BASE=${bridge.baseSha}`);
-  return Object.freeze({
-    ...process.env,
-    GITHUB_EVENT_NAME: bridge.syntheticEventName,
-    GITHUB_EVENT_PATH: syntheticEventPath,
-    STEPHANOS_INDEPENDENT_REVIEW_ORIGINAL_EVENT_NAME: 'workflow_dispatch',
-  });
-}
-
 async function main() {
   if (process.env.GITHUB_ACTIONS !== 'true') throw new Error('Specialist wrapper may run only inside GitHub Actions.');
   const artifactPath = exactArtifactPath();
@@ -215,7 +176,7 @@ async function main() {
     stdio: 'inherit',
     shell: false,
     windowsHide: true,
-    env: reviewerChildEnvironment(),
+    env: process.env,
   });
   if (child.status === 0) return;
   if (!fs.existsSync(artifactPath)) process.exit(child.status || 1);
