@@ -56,7 +56,11 @@ jobs:
           node --test shared/agents/independentReviewHandoffRunReceiptV1.test.mjs
           node --test shared/agents/independentReviewHandoffIdentityV1.test.mjs
           node --test shared/agents/independentReviewWorkflowDispatchAdmissionV1.test.mjs
+          node --test shared/agents/independentReviewMissingRunLaunchV1.test.mjs
+          node --test shared/agents/independentReviewWorkflowDispatchLaunchReceiptV1.test.mjs
+          node --test shared/agents/independentReviewWorkflowDispatchRunDiscoveryV1.test.mjs
           node --test scripts/bind-independent-review-handoff-provenance-v1.test.mjs
+          node --test scripts/launch-missing-independent-review-v1.test.mjs
 
       - name: Parse review coordinator sources
         run: |
@@ -67,9 +71,13 @@ jobs:
           node --check shared/agents/independentReviewHandoffRunReceiptV1.mjs
           node --check shared/agents/independentReviewHandoffIdentityV1.mjs
           node --check shared/agents/independentReviewWorkflowDispatchAdmissionV1.mjs
+          node --check shared/agents/independentReviewMissingRunLaunchV1.mjs
+          node --check shared/agents/independentReviewWorkflowDispatchLaunchReceiptV1.mjs
+          node --check shared/agents/independentReviewWorkflowDispatchRunDiscoveryV1.mjs
           node --check scripts/bind-independent-review-handoff-provenance-v1.mjs
           node --check scripts/exact-head-review-dispatch.mjs
           node --check scripts/retry-independent-review.mjs
+          node --check scripts/launch-missing-independent-review-v1.mjs
 
       - name: Diff check
         if: always()
@@ -226,6 +234,7 @@ jobs:
         run: node scripts/bind-independent-review-handoff-provenance-v1.mjs
 
       - name: Upload immutable coordinator-to-handoff run receipt
+        id: upload_handoff
         if: >-
           always() &&
           steps.bind_handoff.outcome == 'success'
@@ -239,6 +248,7 @@ jobs:
           include-hidden-files: false
 
       - name: Retry one exact failed canonical independent review
+        id: retry
         if: >-
           always() &&
           steps.coordinate.outputs.retry_targets != '' &&
@@ -248,3 +258,17 @@ jobs:
           STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR: ${{ matrix.target.prNumber }}
           STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD: ${{ fromJSON(steps.coordinate.outputs.retry_targets)[0].exactHead }}
         run: node scripts/retry-independent-review.mjs
+
+      - name: Launch one exact missing canonical independent review
+        if: >-
+          always() &&
+          steps.bind_handoff.outcome == 'success' &&
+          steps.upload_handoff.outcome == 'success' &&
+          steps.retry.outcome == 'success' &&
+          steps.retry.outputs.decision == 'NO_MATCHING_RUN'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR: ${{ matrix.target.prNumber }}
+          STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD: ${{ fromJSON(steps.coordinate.outputs.retry_targets)[0].exactHead }}
+          STEPHANOS_REVIEW_HANDOFF_RUN_RECEIPT_PATH: ${{ runner.temp }}/independent-review-handoff-run-receipt.json
+        run: node scripts/launch-missing-independent-review-v1.mjs
