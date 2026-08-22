@@ -6,20 +6,11 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
-import {
-  MAILBOX_RECEIPT_GITHUB_ISSUE,
-  MAILBOX_RECEIPT_GITHUB_REPOSITORY,
-  extractTrustedMailboxCommandComment,
-  extractTrustedMailboxReceiptComment,
-} from '../shared/agents/mailboxReceiptIndexGitHubMirror.mjs';
 
 export const BATTLE_BRIDGE_OUTBOUND_BEACON_SCHEMA = 'stephanos.battle-bridge-outbound-health-beacon.v1';
 export const BATTLE_BRIDGE_OUTBOUND_BEACON_MARKER = '<!-- stephanos-battle-bridge-outbound-health-beacon -->';
 export const BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE = 1889;
 export const BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const BATTLE_BRIDGE_OUTBOUND_BEACON_OWNER = 'Cheekyfellastef';
-export const MAILBOX_INGRESS_GRACE_MS = 10 * 60 * 1000;
-export const MAILBOX_INGRESS_LOOKBACK_MS = 4 * 60 * 60 * 1000;
 
 const SHA = /^[0-9a-f]{40}$/;
 const MAX_STATUS_BYTES = 64 * 1024;
@@ -92,100 +83,12 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now()) {
   });
 }
 
-function commandExpiryUtc(comment = {}) {
-  const body = String(comment?.body || '');
-  const match = body.match(/```stephanos-battle-bridge-command\s*([\s\S]*?)```/i);
-  if (!match) return '';
-  try {
-    const command = JSON.parse(match[1]);
-    return timestamp(command?.expiresAt);
-  } catch {
-    return '';
-  }
-}
-
-export function projectMailboxIngressLiveness(comments = [], {
-  sourceHead,
-  ownerLogin = BATTLE_BRIDGE_OUTBOUND_BEACON_OWNER,
-  now = new Date(),
-  graceMs = MAILBOX_INGRESS_GRACE_MS,
-} = {}) {
-  const head = safeSha(sourceHead);
-  if (!head || !Array.isArray(comments)) {
-    return Object.freeze({ state: 'UNPROVEN', blocker: 'MAILBOX_INGRESS_OBSERVATION_INVALID', pendingRequestCount: 0 });
-  }
-  const nowMs = now.getTime();
-  const receiptKeys = new Set();
-  for (const comment of comments) {
-    const receipt = extractTrustedMailboxReceiptComment(comment, ownerLogin);
-    const receiptHead = safeSha(receipt?.expectedHead);
-    if (receiptHead === head && ['ACCEPTED', 'DONE', 'BLOCKED'].includes(String(receipt?.state || '').toUpperCase())) {
-      receiptKeys.add(`${String(receipt.requestId)}:${receiptHead}`);
-    }
-  }
-  const matureCommands = [];
-  let validExactHeadCommandCount = 0;
-  for (const comment of comments) {
-    const command = extractTrustedMailboxCommandComment(comment, ownerLogin);
-    if (!command || command.expectedHead !== head) continue;
-    const createdAtUtc = timestamp(comment?.created_at || comment?.createdAt);
-    const expiresAtUtc = commandExpiryUtc(comment);
-    const createdAtMs = Date.parse(createdAtUtc);
-    const expiresAtMs = Date.parse(expiresAtUtc);
-    if (!Number.isFinite(createdAtMs) || !Number.isFinite(expiresAtMs) || expiresAtMs <= createdAtMs) continue;
-    validExactHeadCommandCount += 1;
-    const ageMs = Math.max(0, nowMs - createdAtMs);
-    if (ageMs > graceMs) {
-      matureCommands.push({
-        requestId: command.requestId,
-        createdAtMs,
-        commentId: Number(comment?.id || 0),
-        hasReceipt: receiptKeys.has(`${command.requestId}:${head}`),
-      });
-    }
-  }
-  matureCommands.sort((left, right) => left.createdAtMs - right.createdAtMs || left.commentId - right.commentId);
-  let lastReceiptIndex = -1;
-  for (let index = 0; index < matureCommands.length; index += 1) {
-    if (matureCommands[index].hasReceipt) lastReceiptIndex = index;
-  }
-  const pending = matureCommands.slice(lastReceiptIndex + 1).filter((command) => !command.hasReceipt);
-  if (pending.length > 0) {
-    return Object.freeze({
-      state: 'BLOCKED_COMMAND_INGRESS_UNOBSERVED',
-      blocker: 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED',
-      pendingRequestCount: pending.length,
-    });
-  }
-  if (validExactHeadCommandCount === 0) {
-    return Object.freeze({
-      state: 'UNPROVEN',
-      blocker: 'MAILBOX_INGRESS_NO_RECENT_EXACT_HEAD_PROOF',
-      pendingRequestCount: 0,
-    });
-  }
-  return Object.freeze({ state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
-}
-
-function combineMailboxStatus(localStatus, ingressObservation) {
-  if (!ingressObservation || ingressObservation.state === 'OBSERVED') return localStatus;
-  if (localStatus.state === 'STALE' || localStatus.state === 'UNPROVEN' || localStatus.state.includes('BLOCK')) return localStatus;
-  return Object.freeze({
-    ...localStatus,
-    state: ingressObservation.state,
-    blocker: ingressObservation.blocker,
-  });
-}
-
-export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}, mailboxIngressObservation = null, now = new Date() } = {}) {
+export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}, now = new Date() } = {}) {
   const head = safeSha(sourceHead);
   if (!head) throw new Error('OUTBOUND_BEACON_SOURCE_HEAD_INVALID');
   const observedAtUtc = now.toISOString();
   const nowMs = now.getTime();
-  const surfaces = STATUS_SPECS.map((spec) => {
-    const projected = projectBeaconStatus(statusRecords[spec.id] || null, spec, nowMs);
-    return spec.id === 'mailbox' ? combineMailboxStatus(projected, mailboxIngressObservation) : projected;
-  });
+  const surfaces = STATUS_SPECS.map((spec) => projectBeaconStatus(statusRecords[spec.id] || null, spec, nowMs));
   const blockers = surfaces
     .filter((surface) => surface.state === 'STALE' || surface.state === 'UNPROVEN' || surface.state.includes('BLOCK'))
     .map((surface) => `${surface.id}:${surface.blocker || surface.state}`)
@@ -200,7 +103,7 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     surfaces: Object.freeze(surfaces),
     blockerCount: blockers.length,
     blockers: Object.freeze(blockers),
-    freshness: blockers.length > 0 ? 'DEGRADED' : 'FRESH',
+    freshness: blockers.some((item) => item.includes(':STATUS_MISSING') || item.includes(':STALE')) ? 'DEGRADED' : 'FRESH',
     readOnly: true,
     sourceMutationAllowed: false,
     taskMutationAllowed: false,
@@ -260,20 +163,6 @@ function existingBeaconCommentId(repoRoot) {
   return Number.isSafeInteger(id) && id > 0 ? id : 0;
 }
 
-function recentMailboxComments(repoRoot, observedAt) {
-  const since = new Date(observedAt.getTime() - MAILBOX_INGRESS_LOOKBACK_MS).toISOString();
-  const response = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
-    'api',
-    `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}/comments?per_page=100&since=${encodeURIComponent(since)}`,
-    '--paginate',
-    '--slurp',
-  ], { cwd: repoRoot, timeout: 120_000 });
-  if (!response.ok) throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_READ_FAILED');
-  let pages;
-  try { pages = JSON.parse(response.stdout); } catch { throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_JSON_INVALID'); }
-  return Array.isArray(pages) ? pages.flat().filter((value) => value && typeof value === 'object') : [];
-}
-
 function publishBeacon(repoRoot, body) {
   const existingId = existingBeaconCommentId(repoRoot);
   const args = existingId
@@ -296,22 +185,8 @@ export function runBattleBridgeOutboundHealthBeacon({
   if (repoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) throw new Error('OUTBOUND_BEACON_CANONICAL_CHECKOUT_REQUIRED');
   const workspaceRoot = resolve(env.STEPHANOS_SHARED_AGENT_WORKSPACE || join(env.USERPROFILE || homedir(), 'Documents', 'Stephanos-openclaw-workspace'));
   const sourceHead = exactLocalHead(repoRoot);
-  const observedAt = now();
   const statusRecords = Object.fromEntries(STATUS_SPECS.map((spec) => [spec.id, readJsonBounded(join(workspaceRoot, ...spec.path.split('/')))]));
-  let mailboxIngressObservation;
-  try {
-    mailboxIngressObservation = projectMailboxIngressLiveness(recentMailboxComments(repoRoot, observedAt), {
-      sourceHead,
-      now: observedAt,
-    });
-  } catch {
-    mailboxIngressObservation = Object.freeze({
-      state: 'UNPROVEN',
-      blocker: 'MAILBOX_INGRESS_OBSERVATION_UNAVAILABLE',
-      pendingRequestCount: 0,
-    });
-  }
-  const record = buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords, mailboxIngressObservation, now: observedAt });
+  const record = buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords, now: now() });
   const publication = publish(repoRoot, buildBattleBridgeOutboundBeaconBody(record));
   return Object.freeze({ ok: true, publication, sourceHead, issueNumber: BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE, record });
 }

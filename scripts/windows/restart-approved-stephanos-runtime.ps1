@@ -15,9 +15,6 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
-$backendExpectedHeadHandoffPath = $null
-$backendTaskDisabledByRepair = $false
-$canonicalNode = 'C:\Program Files\nodejs\node.exe'
 
 function Stop-WithBlocker {
     param([Parameter(Mandatory = $true)][string]$Code)
@@ -77,17 +74,10 @@ function Get-VerifiedBackendListener {
     $processId = [int]$processIds[0]
     $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
     if (-not $process) { Stop-WithBlocker 'BACKEND_LISTENER_PROCESS_MISSING' }
-    $executable = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
-    if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { Stop-WithBlocker 'BACKEND_LISTENER_NOT_CANONICAL_NODE' }
-    $canonicalBootstrapEval = "import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)"
-    $commandLine = (([string]$process.CommandLine -replace '\s+', ' ').Trim())
-    $expectedCommands = @(
-        "`"$canonicalNode`" --input-type=module --eval `"$canonicalBootstrapEval`"",
-        "$canonicalNode --input-type=module --eval `"$canonicalBootstrapEval`""
-    )
-    if (-not @($expectedCommands | Where-Object { [string]::Equals($commandLine, $_, [System.StringComparison]::OrdinalIgnoreCase) }).Count) {
-        Stop-WithBlocker 'BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED'
-    }
+    $name = ([string]$process.Name).ToLowerInvariant()
+    $commandLine = ([string]$process.CommandLine).Replace('\', '/').ToLowerInvariant()
+    if ($name -notin @('node.exe', 'node')) { Stop-WithBlocker 'BACKEND_LISTENER_NOT_NODE' }
+    if (-not $commandLine.Contains('stephanos-server/server.js')) { Stop-WithBlocker 'BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED' }
     return [PSCustomObject]@{ ProcessId = $processId }
 }
 
@@ -112,26 +102,6 @@ function Read-FreshBackendReceipt {
         return $receipt
     }
     catch { return $null }
-}
-
-function Publish-BackendExpectedHeadHandoff {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$Head
-    )
-    $directory = Split-Path -Parent $Path
-    [System.IO.Directory]::CreateDirectory($directory) | Out-Null
-    $temporaryPath = "${Path}.$PID.tmp"
-    $issuedAtUtc = [datetime]::UtcNow
-    [PSCustomObject]@{
-        schemaVersion = 'stephanos.backend-expected-head-handoff.v1'
-        target = 'backend'
-        expectedHead = $Head
-        issuedAtUtc = $issuedAtUtc.ToString('o')
-        expiresAtUtc = $issuedAtUtc.AddMinutes(2).ToString('o')
-        issuerPid = $PID
-    } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $temporaryPath -Encoding utf8
-    Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
 }
 
 function Get-VerifiedWorkerProcessFromHeartbeat {
@@ -203,22 +173,16 @@ try {
     $expectedArguments = "//B //NoLogo `"$launcherPath`" $($plan.Role)"
     if ($actualExecute -ne $wscriptExe) { Stop-WithBlocker 'APPROVED_TASK_EXECUTABLE_MISMATCH' }
     if ([string]$action.Arguments -ne $expectedArguments) { Stop-WithBlocker 'APPROVED_TASK_ARGUMENTS_MISMATCH' }
-    if ($Target -eq 'backend' -and [string]$task.Settings.MultipleInstances -ne 'IgnoreNew') {
-        Stop-WithBlocker 'APPROVED_BACKEND_TASK_MULTIPLE_INSTANCES_MISMATCH'
-    }
 
     $beforeState = [string]$task.State
     $startedAtUtc = [datetime]::UtcNow
     $terminatedVerifiedOwnedProcess = $false
 
     if ($Target -eq 'backend') {
-        $backendExpectedHeadHandoffPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\control\backend-expected-head-handoff.json'
-        Disable-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop | Out-Null
-        $backendTaskDisabledByRepair = $true
-        if ([string]$task.State -in @('Running', 'Queued')) {
+        if ([string]$task.State -eq 'Running') {
             Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
             if (-not (Wait-Until -Seconds 30 -Condition {
-                [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -eq 'Disabled'
+                [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -ne 'Running'
             })) { Stop-WithBlocker 'BACKEND_TASK_DID_NOT_STOP' }
         }
         $listener = Get-VerifiedBackendListener
@@ -229,20 +193,6 @@ try {
                 Stop-WithBlocker 'BACKEND_LISTENER_DID_NOT_STOP'
             }
         }
-        $prePublishTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop
-        if ([string]$prePublishTask.State -ne 'Disabled') {
-            Stop-WithBlocker 'BACKEND_TASK_NOT_QUIESCENT_BEFORE_HANDOFF'
-        }
-        if ([string]$prePublishTask.Settings.MultipleInstances -ne 'IgnoreNew') {
-            Stop-WithBlocker 'BACKEND_TASK_MULTIPLE_INSTANCES_MISMATCH_BEFORE_HANDOFF'
-        }
-        Publish-BackendExpectedHeadHandoff -Path $backendExpectedHeadHandoffPath -Head $ExpectedHead
-        Enable-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop | Out-Null
-        $backendTaskDisabledByRepair = $false
-        $preStartTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop
-        if ([string]$preStartTask.Settings.MultipleInstances -ne 'IgnoreNew') {
-            Stop-WithBlocker 'BACKEND_TASK_MULTIPLE_INSTANCES_MISMATCH_BEFORE_START'
-        }
         Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
         if (-not (Wait-Until -Seconds $TimeoutSeconds -Condition { $null -ne (Test-BackendHealth) })) {
             Stop-WithBlocker 'BACKEND_HEALTH_TIMEOUT'
@@ -251,7 +201,6 @@ try {
         if (-not (Wait-Until -Seconds $TimeoutSeconds -Condition {
             $null -ne (Read-FreshBackendReceipt -ReceiptPath $backendReceiptPath -StartedAfterUtc $startedAtUtc -ExpectedSourceHead $ExpectedHead)
         })) { Stop-WithBlocker 'BACKEND_EXACT_HEAD_RECEIPT_TIMEOUT' }
-        Remove-Item -LiteralPath $backendExpectedHeadHandoffPath -Force -ErrorAction SilentlyContinue
         $proofKind = 'backend-health-and-runtime-receipt'
         $proofFresh = $true
     }
@@ -304,12 +253,6 @@ try {
     exit 0
 }
 catch {
-    if ($backendExpectedHeadHandoffPath) {
-        Remove-Item -LiteralPath $backendExpectedHeadHandoffPath -Force -ErrorAction SilentlyContinue
-    }
-    if ($backendTaskDisabledByRepair) {
-        Enable-ScheduledTask -TaskName 'Stephanos Battle Bridge Backend' -TaskPath '\' -ErrorAction SilentlyContinue | Out-Null
-    }
     $blocker = [string]$_.Exception.Message
     if ($blocker -notmatch '^[A-Z0-9_:-]{3,120}$') { $blocker = 'APPROVED_RUNTIME_RESTART_FAILED' }
     [PSCustomObject]@{

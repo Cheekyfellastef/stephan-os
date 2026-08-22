@@ -115,7 +115,7 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
       return { ok: true, paths: parsed.paths };
     },
     async refreshUi({ afterHead }) {
-      const result = await refreshUiFn({ expectedHead: afterHead });
+      const result = await refreshUiFn();
       const sourceHead = text(result?.currentHead).toLowerCase();
       const exactHeadProofOk = sourceHead === text(afterHead).toLowerCase() && result?.exactHeadProof?.ready === true;
       return {
