@@ -184,15 +184,12 @@ async function loadPullRequestTargetRuns(owner, repo, workflowId, pr, token) {
   return rows;
 }
 
-async function loadWorkflowDispatchRuns(owner, repo, workflowId, token) {
-  const payload = await githubRequest(
-    `/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?event=workflow_dispatch&branch=main&per_page=100&page=1`,
-    { token },
+export async function loadWorkflowDispatchRuns(owner, repo, workflowId, token) {
+  const runs = await githubPages(
+    `/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?event=workflow_dispatch&branch=main`,
+    { token, itemKey: 'workflow_runs' },
   );
-  if (!Array.isArray(payload?.workflow_runs) || positiveInteger(payload?.total_count) > payload.workflow_runs.length) {
-    throw new Error('bounded workflow_dispatch review-run query is incomplete');
-  }
-  return payload.workflow_runs.map(mapRun);
+  return runs.map(mapRun);
 }
 
 export function selectExactHandoffCommentV1(comments, sourceHead) {
