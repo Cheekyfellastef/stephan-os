@@ -289,7 +289,13 @@ export function migrateIndependentReviewWorkflowFinalPolicyAnalysisV1(analysis =
     LEGACY_FINAL_SOURCE_FINDING_CODES.has(text(item?.code))
     && text(item?.path) === INDEPENDENT_REVIEW_WORKFLOW_PATH
   ));
-  if (!legacyFindings.some((item) => text(item?.code) === 'independent-review-workflow-not-trusted')) {
+  const trustFindings = legacyFindings.filter((item) => (
+    text(item?.code) === 'independent-review-workflow-not-trusted'
+  ));
+  const sourceAuthorityFindings = legacyFindings.filter((item) => (
+    text(item?.code) === 'independent-reviewer-has-source-authority'
+  ));
+  if (trustFindings.length !== 1 || sourceAuthorityFindings.length > 1) {
     return analysis;
   }
 

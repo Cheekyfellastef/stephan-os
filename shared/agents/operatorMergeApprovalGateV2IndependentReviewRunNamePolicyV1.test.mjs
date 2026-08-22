@@ -66,6 +66,28 @@ jobs:
           ref: \${{ github.sha }}
           persist-credentials: false
           fetch-depth: 1
+
+  terminal-review-receipt:
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Check out trusted pull-request exact base terminal publisher
+        if: github.event_name == 'pull_request_target'
+        uses: actions/checkout@v4
+        with:
+          ref: \${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Check out trusted workflow-dispatch exact main terminal publisher
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          ref: \${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
 `;
 }
 
@@ -96,7 +118,7 @@ function input(content = workflowContent()) {
   };
 }
 
-test('accepts exactly one deterministic run-name only after the existing final-source policy passes', () => {
+test('accepts exactly one deterministic run-name only after the two-job final-source policy passes', () => {
   const result = validateIndependentReviewWorkflowRunNameFinalSourceV1(input());
   assert.equal(result.applicable, true);
   assert.equal(result.valid, true, result.blockers.join(','));
