@@ -30,6 +30,12 @@ test('preparation is GitHub-Actions-only and pinned to the canonical reviewer jo
   assert.match(text, /GITHUB_JOB\) !== 'independent-security-review'/);
 });
 
+test('preparation passes a plain snapshot of the GitHub Actions environment into strict preflight validation', async () => {
+  const text = await source();
+  assert.match(text, /environment:\s*\{ \.\.\.process\.env \},/);
+  assert.doesNotMatch(text, /environment:\s*process\.env,/);
+});
+
 test('preparation re-reads canonical PR main workflow and handoff truth without requiring ready state', async () => {
   const text = await source();
   assert.match(text, /\/pulls\/\$\{prNumber\}/);
