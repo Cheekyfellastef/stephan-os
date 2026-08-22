@@ -121,6 +121,48 @@ jobs:
           overwrite: false
           include-hidden-files: false
 
+  terminal-review-receipt:
+    name: terminal-review-receipt
+    if: ${{ always() }}
+    needs: independent-security-review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Check out trusted exact-base terminal publisher
+        if: github.event_name == 'pull_request_target'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Check out trusted current-main terminal publisher
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Download exact-run immutable independent review result when present
+        id: terminal-review-artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: stephanos-independent-review-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}
+          github-token: ${{ github.token }}
+          run-id: ${{ github.run_id }}
+
       - name: Surface terminal exact-head findings or pre-artifact failure
         if: ${{ always() }}
         env:
