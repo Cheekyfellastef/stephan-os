@@ -42,6 +42,8 @@ const USER_AGENT = 'stephanos-independent-review-missing-run-launch-v1';
 const TRUSTED_GITHUB_ACTIONS_REVIEWER = Object.freeze({ login: 'github-actions[bot]', id: 41898282 });
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const MAX_PAGES = 20;
+const MAX_DISPATCH_RUN_HYDRATIONS = 20;
+const GITHUB_TIMESTAMP_PRECISION_MS = 1000;
 
 function text(value) {
   return String(value ?? '').trim();
@@ -149,6 +151,68 @@ function mapRun(run) {
   };
 }
 
+function sameOrLaterGithubTimestamp(runCreatedAt, requestedAtUtc) {
+  const createdAt = Date.parse(text(runCreatedAt));
+  const requestedAt = Date.parse(text(requestedAtUtc));
+  return Number.isFinite(createdAt)
+    && Number.isFinite(requestedAt)
+    && Math.floor(createdAt / GITHUB_TIMESTAMP_PRECISION_MS)
+      >= Math.floor(requestedAt / GITHUB_TIMESTAMP_PRECISION_MS);
+}
+
+function assertWorkflowDispatchSummaryDetailBinding(summary, detail, workflowId) {
+  const summaryId = positiveInteger(summary?.id);
+  const detailId = positiveInteger(detail?.id);
+  if (!summaryId || detailId !== summaryId) {
+    throw new Error(`workflow-dispatch run summary/detail id mismatch for run ${summaryId || 'unknown'}`);
+  }
+  const summaryWorkflowId = positiveInteger(summary?.workflow_id);
+  if (summaryWorkflowId && summaryWorkflowId !== workflowId) {
+    throw new Error(`workflow-dispatch run summary workflow mismatch for run ${summaryId}`);
+  }
+  if (positiveInteger(detail?.workflow_id) !== workflowId) {
+    throw new Error(`workflow-dispatch run detail workflow mismatch for run ${summaryId}`);
+  }
+  const summaryAttempt = positiveInteger(summary?.run_attempt);
+  if (summaryAttempt && summaryAttempt !== positiveInteger(detail?.run_attempt)) {
+    throw new Error(`workflow-dispatch run summary/detail attempt mismatch for run ${summaryId}`);
+  }
+}
+
+function plausibleWorkflowDispatchSummary(summary, workflowId, launchReceipt) {
+  const requestedAtUtc = text(launchReceipt?.requestedAtUtc);
+  const expectedRunName = text(launchReceipt?.runName);
+  if (!Number.isFinite(Date.parse(requestedAtUtc)) || !expectedRunName) {
+    throw new Error('workflow-dispatch launch receipt timestamp and run name are required for bounded hydration');
+  }
+  const summaryWorkflowId = positiveInteger(summary?.workflow_id);
+  if (summaryWorkflowId && summaryWorkflowId !== workflowId) {
+    throw new Error(`workflow-dispatch list returned a foreign workflow id ${summaryWorkflowId}`);
+  }
+  const event = text(summary?.event);
+  if (event && event !== 'workflow_dispatch') {
+    throw new Error(`workflow-dispatch list returned foreign event ${event}`);
+  }
+  const branch = text(summary?.head_branch);
+  if (branch && branch !== 'main') {
+    throw new Error(`workflow-dispatch list returned foreign branch ${branch}`);
+  }
+  const displayTitle = text(summary?.display_title);
+  const createdAt = text(summary?.created_at);
+  if (createdAt) {
+    if (!sameOrLaterGithubTimestamp(createdAt, requestedAtUtc)) return false;
+  } else if (displayTitle !== expectedRunName) {
+    return false;
+  }
+  if (!positiveInteger(summary?.id)) {
+    if (displayTitle === expectedRunName || createdAt) {
+      throw new Error('plausible workflow-dispatch summary is missing a positive run id');
+    }
+    return false;
+  }
+  return true;
+}
+
 async function loadCanonicalWorkflow(owner, repo, token) {
   const workflows = await githubPages(`/repos/${owner}/${repo}/actions/workflows`, { token, itemKey: 'workflows' });
   const pathMatches = workflows.filter((workflow) => text(workflow?.path) === INDEPENDENT_REVIEW_WORKFLOW_PATH);
@@ -184,15 +248,26 @@ async function loadPullRequestTargetRuns(owner, repo, workflowId, pr, token) {
   return rows;
 }
 
-async function loadWorkflowDispatchRuns(owner, repo, workflowId, token) {
-  const payload = await githubRequest(
-    `/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?event=workflow_dispatch&branch=main&per_page=100&page=1`,
-    { token },
+export async function loadWorkflowDispatchRuns(owner, repo, workflowId, token, launchReceipt) {
+  const summaries = await githubPages(
+    `/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?event=workflow_dispatch&branch=main`,
+    { token, itemKey: 'workflow_runs' },
   );
-  if (!Array.isArray(payload?.workflow_runs) || positiveInteger(payload?.total_count) > payload.workflow_runs.length) {
-    throw new Error('bounded workflow_dispatch review-run query is incomplete');
+  const candidates = summaries.filter((summary) => plausibleWorkflowDispatchSummary(summary, workflowId, launchReceipt));
+  if (candidates.length > MAX_DISPATCH_RUN_HYDRATIONS) {
+    throw new Error(`workflow-dispatch run hydration exceeded ${MAX_DISPATCH_RUN_HYDRATIONS} plausible records`);
   }
-  return payload.workflow_runs.map(mapRun);
+  const seen = new Set();
+  const rows = [];
+  for (const summary of candidates) {
+    const runId = positiveInteger(summary?.id);
+    if (seen.has(runId)) throw new Error(`duplicate workflow-dispatch run summary id ${runId}`);
+    seen.add(runId);
+    const detail = await githubRequest(`/repos/${owner}/${repo}/actions/runs/${runId}`, { token });
+    assertWorkflowDispatchSummaryDetailBinding(summary, detail, workflowId);
+    rows.push(mapRun(detail));
+  }
+  return rows;
 }
 
 export function selectExactHandoffCommentV1(comments, sourceHead) {
@@ -344,7 +419,7 @@ async function main() {
   const existingLaunchComment = selectExactLaunchReceiptCommentV1(context.comments, launchReceipt.launchKeySha256);
   if (existingLaunchComment) {
     const persistedReceipt = parseIndependentReviewWorkflowDispatchLaunchReceiptCommentV1(existingLaunchComment.body);
-    const dispatchRuns = await loadWorkflowDispatchRuns(owner, repo, context.workflow.id, token);
+    const dispatchRuns = await loadWorkflowDispatchRuns(owner, repo, context.workflow.id, token, persistedReceipt);
     const reconciliation = reconcileExistingLaunchReceiptV1({ launchReceipt: persistedReceipt, runs: dispatchRuns });
     console.log(`INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_DISCOVERY=${reconciliation.verdict}`);
     console.log(`INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_RECONCILIATION=${reconciliation.reconciliation}`);
