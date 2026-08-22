@@ -42,7 +42,7 @@ jobs:
   independent-security-review:
     name: independent-security-review
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       actions: read
       contents: read
@@ -102,6 +102,7 @@ jobs:
           scripts/independent-merge-security-review-with-windows-specialist-v1.test.mjs
 
       - name: Review the complete exact-head and exact-base diff without mutation authority
+        timeout-minutes: 15
         env:
           GH_TOKEN: ${{ github.token }}
           STEPHANOS_INDEPENDENT_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/independent-review-result.json
@@ -120,7 +121,7 @@ jobs:
           overwrite: false
           include-hidden-files: false
 
-      - name: Surface terminal exact-head findings after bounded retry exhaustion
+      - name: Surface terminal exact-head findings or pre-artifact failure
         if: ${{ always() }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
