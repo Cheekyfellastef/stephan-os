@@ -13,6 +13,8 @@ export const CHATGPT_BRIDGE_PARTICIPANT_ID = 'chatgpt-bridge';
 export const CHATGPT_BRIDGE_TRANSPORT_STATUS = 'BLOCKED_TRANSPORT_NOT_CONFIGURED';
 export const CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES = 4096;
 export const CHATGPT_BRIDGE_REDACTED_TEXT = '[REDACTED]';
+export const CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION = 'DELIVER_STEPHANOS_CONVERSATION_QUESTION';
+export const CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND = 'conversation-question';
 
 export const CHATGPT_BRIDGE_READ_OPERATIONS = Object.freeze([
   'READ_CURRENT_STATUS',
@@ -27,6 +29,7 @@ export const CHATGPT_BRIDGE_WRITE_OPERATIONS = Object.freeze([
   'WRITE_BLOCKER_CLASSIFICATION',
   'WRITE_OPERATOR_ATTENTION_REQUEST',
   'WRITE_APPROVAL_REQUEST',
+  CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
 ]);
 
 export const CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS = Object.freeze(['READ_FILE', 'WRITE_FILE', 'EXECUTE']);
@@ -41,6 +44,7 @@ export const CHATGPT_BRIDGE_RECORD_KINDS = Object.freeze({
   BLOCKER_CLASSIFICATION: 'blocker-classification',
   OPERATOR_ATTENTION_REQUEST: 'operator-attention-request',
   APPROVAL_REQUEST: 'approval-request',
+  STEPHANOS_CONVERSATION_QUESTION: CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND,
 });
 
 export const CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP = Object.freeze({
@@ -53,6 +57,7 @@ export const CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP = Object.freeze({
   WRITE_BLOCKER_CLASSIFICATION: CHATGPT_BRIDGE_RECORD_KINDS.BLOCKER_CLASSIFICATION,
   WRITE_OPERATOR_ATTENTION_REQUEST: CHATGPT_BRIDGE_RECORD_KINDS.OPERATOR_ATTENTION_REQUEST,
   WRITE_APPROVAL_REQUEST: CHATGPT_BRIDGE_RECORD_KINDS.APPROVAL_REQUEST,
+  [CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION]: CHATGPT_BRIDGE_RECORD_KINDS.STEPHANOS_CONVERSATION_QUESTION,
 });
 
 export const CHATGPT_BRIDGE_RESPONSE_STATUSES = Object.freeze([
@@ -117,6 +122,33 @@ function serializedPayloadHasSecretShapedData(serializedPayload) {
     return hasSecretShapedData(JSON.parse(serializedPayload.json));
   } catch {
     return true;
+  }
+}
+
+function isPlainDataObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  } catch {
+    return false;
+  }
+}
+
+function isExactStephanosQuestionDeliveryPayload(value) {
+  if (!isPlainDataObject(value)) return false;
+  try {
+    const keys = Object.keys(value).sort();
+    if (keys.length !== 1 || keys[0] !== 'questionRecord') return false;
+    const record = value.questionRecord;
+    if (!isPlainDataObject(record)) return false;
+    return record.kind === SHARED_WORKSPACE_RECORD_KINDS.MESSAGE
+      && text(record.participantId) === CHATGPT_BRIDGE_PARTICIPANT_ID
+      && text(record.recipientParticipantId).toLowerCase() === 'stephanos'
+      && text(record.channel) === 'shared-participant-qa'
+      && text(record.recordSubtype) === CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND;
+  } catch {
+    return false;
   }
 }
 
@@ -188,6 +220,9 @@ export function createInertChatGptBridgeTransportAdapter() {
 
 export function buildChatGptBridgeRecord(request = {}, options = {}) {
   if (request.recordKind === 'approval-result') return { ok: false, reason: 'BLOCKED_APPROVAL_REQUIRED' };
+  if (request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION) {
+    return { ok: false, reason: 'BLOCKED_SPECIALIZED_OPERATION_REQUIRED' };
+  }
   if (!Object.values(CHATGPT_BRIDGE_RECORD_KINDS).includes(request.recordKind) || !CHATGPT_BRIDGE_WRITE_OPERATIONS.includes(request.operation)) {
     return { ok: false, reason: 'BLOCKED_RECORD_KIND_NOT_ALLOWLISTED' };
   }
@@ -292,6 +327,7 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
     const serializedPayload = serializePayload(request.boundedPayload);
     if (!serializedPayload.ok || serializedPayload.bytes > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (serializedPayloadHasSecretShapedData(serializedPayload)) responseStatus = 'BLOCKED_SECRET_SHAPED_DATA';
+    else if (operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION && !isExactStephanosQuestionDeliveryPayload(request.boundedPayload)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (operation === 'READ_DELIVERY_STATUS' && !validateDeliveryStatusSubject(request.boundedPayload?.statusSubject).ok) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (request.recordKind === 'approval-result') responseStatus = 'BLOCKED_APPROVAL_REQUIRED';
     else if (text(request.approvalRef)) {
