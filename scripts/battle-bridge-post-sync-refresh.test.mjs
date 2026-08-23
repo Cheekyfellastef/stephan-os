@@ -24,6 +24,7 @@ test('runtime adapters are fixed to UI backend worker natural reload and bounded
   assert.match(source, /reconcileBattleBridgeControlPlane/);
   assert.doesNotMatch(source, /reconcile-battle-bridge-control-plane\.ps1/);
   assert.doesNotMatch(source, /WAKE_BATTLE_BRIDGE_RECOVERY_MESH/);
+  assert.match(source, /refreshUiFn\(\{ expectedHead: afterHead \}\)/);
 });
 
 test('control-plane repair runs only after normal exact-head refresh execution passes', () => {

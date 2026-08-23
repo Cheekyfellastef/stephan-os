@@ -31,7 +31,10 @@ const NATURAL_EXACT = new Set([
   'shared/agents/stephanosCapabilityRegistry.mjs',
   'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
   'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs',
+  'shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.mjs',
+  'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
   'scripts/battle-bridge-github-command-mailbox.mjs',
+  'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
   'scripts/battle-bridge-github-sync-executor.mjs',
   'scripts/battle-bridge-github-sync-and-refresh.mjs',
   'scripts/battle-bridge-post-sync-refresh.mjs',
@@ -40,6 +43,9 @@ const NATURAL_EXACT = new Set([
   'scripts/chatgpt-shared-workspace-github-relay.mjs',
   'scripts/windows/probe-battle-bridge-recovery-mesh.ps1',
   'scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1',
+  'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
+  'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1',
+  'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1',
   'scripts/windows/run-battle-bridge-github-sync-hidden.ps1',
   'scripts/windows/install-battle-bridge-github-sync.ps1',
   'scripts/windows/status-battle-bridge-github-sync.ps1',
@@ -303,112 +309,41 @@ export async function executePostSyncRefreshPlan({
   const results = [];
   const handlers = {
     [POST_SYNC_REFRESH_TARGETS.UI_4173]: adapters.refreshUi,
-    [POST_SYNC_REFRESH_TARGETS.BACKEND_8787]: adapters.restartBackend,
-    [POST_SYNC_REFRESH_TARGETS.MISSION_WORKER]: adapters.restartMissionWorker,
-    [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]: adapters.confirmNaturalReload,
-  };
+    [POST_SYNC_REFRESH_TARGEËPÒÑS‘ÎÎ×NˆY\\œËœ™\İ\˜XÚÙ[™ˆÔÔÕÔÖS×Ô‘Q”‘TÒÕT‘ÑUË“RTÔÒSÓ—ÕÓÔ’ÑT—NˆY\\œËœ™\İ\Z\ÜÚ[Û•ÛÜšÙ\‹ˆÔÔÕÔÖS×Ô‘Q”‘TÒÕT‘ÑUË“UTSÔ‘SĞQNˆY\\œË˜ÛÛ™š\›S˜]\˜[™[ØYˆNÂ‚ˆ›Üˆ
+ÛÛœİ\™Ù]YÙˆ[‹\™Ù]YÊHÂˆYˆ
+™\İ[XX›Kš\Ê\™Ù]Y
+JHÂˆ™\İ[Ëœ\Ú
+™\İ[XX›K™Ù]
+\™Ù]Y
+JNÂˆÛÛ[YNÂˆBˆÛÛœİ[™\ˆH[™\œÖİ\™Ù]YNÂˆYˆ
+\[Ùˆ[™\ˆOOH	Ù[˜İ[Û‰ÊHÂˆ™]\›ˆØš™Xİ™œ™Y^™JÂˆÚÎˆ˜[ÙKˆÛ\ÜÚYšXØ][ÛˆÔÕÔÖS×Ô‘Q”‘TÒĞÓTÔÒQ’PĞUSÓ”Ë“ĞÒÑQÔ‘Q”‘TÒÑRSQˆ›ØÚÙ\ˆ‘Q”‘TÒÒS‘T—ÓRTÔÒS‘Î‰İ\™Ù]YXˆ[‹ˆ^XİXY›ÛÙ“ÚÎˆ˜[ÙKˆ™\İ[ÎˆØš™Xİ™œ™Y^™J™\İ[ÊKˆJNÂˆBˆHÂˆÛÛœİ™\İ[H]ØZ][™\ŠÈ™Y›Ü™RXYY\’XY\™Ù]Y[ˆJNÂˆÛÛœİÛÛ\]YHØš™Xİ™œ™Y^™JÈ\™Ù]Y‹‹œ™\İ[JNÂˆ™\İ[Ëœ\Ú
+ÛÛ\]Y
+NÂˆYˆ
+\™\İ[\ÜÊ™\İ[Y\’XY
+JHÂˆ™]\›ˆØš™Xİ™œ™Y^™JÂˆÚÎˆ˜[ÙKˆÛ\ÜÚYšXØ][ÛˆÔÕÔÖS×Ô‘Q”‘TÒĞÓTÔÒQ’PĞUSÓ”Ë“ĞÒÑQÔ‘Q”‘TÒÑRSQˆ›ØÚÙ\ˆ™\İ[Ë˜›ØÚÙ\ˆ‘Q”‘TÒÔ“ÓÑ—ÑRSQ‰İ\™Ù]YXˆ[‹ˆ^XİXY›ÛÙ“ÚÎˆ˜[ÙKˆ™\İ[ÎˆØš™Xİ™œ™Y^™J™\İ[ÊKˆJNÂˆBˆYˆ
+\[ÙˆÛ•\™Ù]ÛÛ\]HOOH	Ù[˜İ[Û‰ÊHÂˆ]ØZ]Û•\™Ù]ÛÛ\]JØš™Xİ™œ™Y^™JË‹‹œ™\İ[×JJNÂˆBˆHØ]Ú
+\œ›ÜŠHÂˆ™]\›ˆØš™Xİ™œ™Y^™JÂˆÚÎˆ˜[ÙKˆÛ\ÜÚYšXØ][ÛˆÔÕÔÖS×Ô‘Q”‘TÒĞÓTÔÒQ’PĞUSÓ”Ë“ĞÒÑQÔ‘Q”‘TÒÑRSQˆ›ØÚÙ\ˆ‘Q”‘TÒÑVPÕUSÓ—ÑRSQ‰İ\™Ù]YXˆ\œ›Üˆ\œ›ÜË›Y\ÜØYÙHİš[™Ê\œ›ÜŠKˆ[‹ˆ^XİXY›ÛÙ“ÚÎˆ˜[ÙKˆ™\İ[ÎˆØš™Xİ™œ™Y^™J™\İ[ÊKˆJNÂˆBˆB‚ˆYˆ
+[‹›Ü[Û]Ğ\›İ˜[™\]Z\™Y
+HÂˆ™]\›ˆØš™Xİ™œ™Y^™JÂˆÚÎˆ˜[ÙKˆÛ\ÜÚYšXØ][ÛˆÔÕÔÖS×Ô‘Q”‘TÒĞÓTÔÒQ’PĞUSÓ”ËT“ÕSÔ‘TURT‘QÓÔSÓUËˆ›ØÚÙ\ˆ	ÓÔSÓU×Ô‘Q”‘TÒĞT“ÕSÔ‘TURT‘Q	Ëˆ[‹ˆ^XİXY›ÛÙ“ÚÎˆ˜[ÙKˆØY™T™Yœ™\Ú\ĞÛÛ\]YˆYKˆ™\İ[ÎˆØš™Xİ™œ™Y^™J™\İ[ÊKˆJNÂˆB‚ˆ™]\›ˆØš™Xİ™œ™Y^™JÂˆÚÎˆYKˆÛ\ÜÚYšXØ][Ûˆ[‹\™Ù]YË›[™İˆÈÔÕÔÖS×Ô‘Q”‘TÒĞÓTÔÒQ’PĞUSÓ”Ë”‘Q”‘TÒĞÓÓTUBˆˆÔÕÔÖS×Ô‘Q”‘TÒĞÓTÔÒQ’PĞUSÓ”Ë““×Ô•S•SQWÔ‘Q”‘TÒÔ‘TURT‘Qˆ›ØÚÙ\ˆ	ÉËˆ[‹ˆ^XİXY›ÛÙ“ÚÎˆYKˆÛİ\˜ÙRXYˆİš[™ÊY\’XY
+KÓİÙ\Ø\ÙJ
+Kˆ™\İ[ÎˆØš™Xİ™œ™Y^™J™\İ[ÊKˆš[˜[™\™Xİˆ	ÔÔÕÔÖS×Ô•S•SQWÔ‘Q”‘TÒÔTÔÉËˆJNÂŸB‚™^Ü[˜İ[ÛˆZ[ÜİŞ[˜Ô™Yœ™\Ú›Ú™Xİ[ÛŠ™\İ[HßKÈ™Y›Ü™RXYH	ÉËY\’XYH	ÉÈHHßJHÂˆÛÛœİ[ˆH™\İ[œ[ˆßNÂˆ™]\›ˆØš™Xİ™œ™Y^™JÂˆØÚ[XU™\œÚ[ÛˆÔÕÔÖS×Ô‘Q”‘TÒÔĞÒSPKˆ™Y›Ü™RXYˆ˜[YXY
+™Y›Ü™RXY
+HÈİš[™Ê™Y›Ü™RXY
+KÓİÙ\Ø\ÙJ
+Hˆ	ÉËˆY\’XYˆ˜[YXY
+Y\’XY
+HÈİš[™ÊY\’XY
+KÓİÙ\Ø\ÙJ
+Hˆ	ÉËˆÛ\ÜÚYšXØ][Ûˆ™\İ[˜Û\ÜÚYšXØ][Ûˆ[‹˜Û\ÜÚYšXØ][ÛˆÔÕÔÖS×Ô‘Q”‘TÒĞÓTÔÒQ’PĞUSÓ”Ë“ĞÒÑQÔ‘Q”‘TÒÑRSQˆ›ØÚÙ\ˆİš[™Ê™\İ[˜›ØÚÙ\ˆ	ÉÊKˆ\™Ù]YÎˆ\œ˜^Kš\Ğ\œ˜^J[‹\™Ù]YÊHÈË‹‹œ[‹\™Ù]Y×Hˆ×KˆÚ[™ÙY]Ûİ[ˆ[X™\Š[‹˜Ú[™ÙY]Ûİ[
+Kˆ›Ô[[YT]Ûİ[ˆ[X™\Š[‹››Ô[[YT]Ûİ[
+KˆÜ[Û]Ô]Ûİ[ˆ[X™\Š[‹›Ü[Û]Ô]Ûİ[
+Kˆ[šÛ›İÛ”]Ûİ[ˆ[X™\Š[‹[šÛ›İÛ”]Ûİ[
+Kˆ[œØY™T]Ûİ[ˆ[X™\Š[‹[œØY™T]Ûİ[
+Kˆ^XİXY›ÛÙ“ÚÎˆ™\İ[™^XİXY›ÛÙ“ÚÈOOHYKˆØY™T™Yœ™\Ú\ĞÛÛ\]Yˆ™\İ[œØY™T™Yœ™\Ú\ĞÛÛ\]YOOHYKˆ™\İ[\™Ù]Îˆ\œ˜^Kš\Ğ\œ˜^J™\İ[œ™\İ[ÊHÈ™\İ[œ™\İ[Ë›X\
 
-  for (const targetId of plan.targetIds) {
-    if (resumable.has(targetId)) {
-      results.push(resumable.get(targetId));
-      continue;
-    }
-    const handler = handlers[targetId];
-    if (typeof handler !== 'function') {
-      return Object.freeze({
-        ok: false,
-        classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
-        blocker: `REFRESH_HANDLER_MISSING:${targetId}`,
-        plan,
-        exactHeadProofOk: false,
-        results: Object.freeze(results),
-      });
-    }
-    try {
-      const result = await handler({ beforeHead, afterHead, targetId, plan });
-      const completed = Object.freeze({ targetId, ...result });
-      results.push(completed);
-      if (!resultPass(result, afterHead)) {
-        return Object.freeze({
-          ok: false,
-          classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
-          blocker: result?.blocker || `REFRESH_PROOF_FAILED:${targetId}`,
-          plan,
-          exactHeadProofOk: false,
-          results: Object.freeze(results),
-        });
-      }
-      if (typeof onTargetComplete === 'function') {
-        await onTargetComplete(Object.freeze([...results]));
-      }
-    } catch (error) {
-      return Object.freeze({
-        ok: false,
-        classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
-        blocker: `REFRESH_EXECUTION_FAILED:${targetId}`,
-        error: error?.message || String(error),
-        plan,
-        exactHeadProofOk: false,
-        results: Object.freeze(results),
-      });
-    }
-  }
-
-  if (plan.openClawApprovalRequired) {
-    return Object.freeze({
-      ok: false,
-      classification: POST_SYNC_REFRESH_CLASSIFICATIONS.APPROVAL_REQUIRED_OPENCLAW,
-      blocker: 'OPENCLAW_REFRESH_APPROVAL_REQUIRED',
-      plan,
-      exactHeadProofOk: false,
-      safeRefreshesCompleted: true,
-      results: Object.freeze(results),
-    });
-  }
-
-  return Object.freeze({
-    ok: true,
-    classification: plan.targetIds.length
-      ? POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_COMPLETE
-      : POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED,
-    blocker: '',
-    plan,
-    exactHeadProofOk: true,
-    sourceHead: String(afterHead).toLowerCase(),
-    results: Object.freeze(results),
-    finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS',
-  });
-}
-
-export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', afterHead = '' } = {}) {
-  const plan = result.plan || {};
-  return Object.freeze({
-    schemaVersion: POST_SYNC_REFRESH_SCHEMA,
-    beforeHead: validHead(beforeHead) ? String(beforeHead).toLowerCase() : '',
-    afterHead: validHead(afterHead) ? String(afterHead).toLowerCase() : '',
-    classification: result.classification || plan.classification || POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
-    blocker: String(result.blocker || ''),
-    targetIds: Array.isArray(plan.targetIds) ? [...plan.targetIds] : [],
-    changedPathCount: Number(plan.changedPathCount || 0),
-    noRuntimePathCount: Number(plan.noRuntimePathCount || 0),
-    openClawPathCount: Number(plan.openClawPathCount || 0),
-    unknownPathCount: Number(plan.unknownPathCount || 0),
-    unsafePathCount: Number(plan.unsafePathCount || 0),
-    exactHeadProofOk: result.exactHeadProofOk === true,
-    safeRefreshesCompleted: result.safeRefreshesCompleted === true,
-    resultTargets: Array.isArray(result.results) ? result.results.map((entry) => ({
-      targetId: entry.targetId,
-      ok: entry.ok === true,
-      exactHeadProofOk: entry.exactHeadProofOk === true,
-      sourceHead: validHead(entry.sourceHead) ? String(entry.sourceHead).toLowerCase() : '',
-      blocker: String(entry.blocker || ''),
-    })) : [],
-    arbitraryShellAllowed: false,
-    arbitraryPowerShellAllowed: false,
-    destructiveGitAllowed: false,
-    unrelatedTaskMutationAllowed: false,
-    liveOpenClawUpdateAllowed: false,
-    pathValuesPublished: false,
-    finalVerdict: result.ok === true ? 'POST_SYNC_RUNTIME_REFRESH_PASS' : 'POST_SYNC_RUNTIME_REFRESH_BLOCKED',
-  });
-}
+[JHOˆ
+Âˆ\™Ù]Yˆ[K\™Ù]YˆÚÎˆ[K›ÚÈOOHYKˆ^XİXY›ÛÙ“ÚÎˆ[K™^XİXY›ÛÙ“ÚÈOOHYKˆÛİ\˜ÙRXYˆ˜[YXY
+[KœÛİ\˜ÙRXY
+HÈİš[™Ê[KœÛİ\˜ÙRXY
+KÓİÙ\Ø\ÙJ
+Hˆ	ÉËˆ›ØÚÙ\ˆİš[™Ê[K˜›ØÚÙ\ˆ	ÉÊKˆJJHˆ×Kˆ\˜š]˜\TÚ[[İÙYˆ˜[ÙKˆ\˜š]˜\TİÙ\”Ú[[İÙYˆ˜[ÙKˆ\İXİ]™QÚ][İÙYˆ˜[ÙKˆ[œ™[]Y\ÚÓ]]][Û[İÙYˆ˜[ÙKˆ]™SÜ[Û]Õ\]P[İÙYˆ˜[ÙKˆ]˜[Y\ÔX›\ÚYˆ˜[ÙKˆš[˜[™\™Xİˆ™\İ[›ÚÈOOHYHÈ	ÔÔÕÔÖS×Ô•S•SQWÔ‘Q”‘TÒÔTÔÉÈˆ	ÔÔÕÔÖS×Ô•S•SQWÔ‘Q”‘TÒĞ“ĞÒÑQ	ËˆJNÂŸB

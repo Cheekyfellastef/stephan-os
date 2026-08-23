@@ -5,13 +5,16 @@ import {
   BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE,
   BATTLE_BRIDGE_OUTBOUND_BEACON_MARKER,
   BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY,
+  MAILBOX_INGRESS_LOOKBACK_MS,
   buildBattleBridgeOutboundBeacon,
   buildBattleBridgeOutboundBeaconBody,
   projectBeaconStatus,
+  projectMailboxIngressLiveness,
   projectMailboxReceipts,
 } from './battle-bridge-outbound-health-beacon.mjs';
 
 const HEAD = 'a'.repeat(40);
+const OWNER = 'Cheekyfellastef';
 
 function status(overrides = {}) {
   return {
@@ -19,6 +22,61 @@ function status(overrides = {}) {
     status: 'HEALTHY',
     sourceHead: HEAD,
     ...overrides,
+  };
+}
+
+function commandComment({
+  requestId = 'beacon-ingress-diagnostic-0001',
+  expectedHead = HEAD,
+  createdAt = '2026-08-21T00:00:00.000Z',
+  expiresAt = '2026-08-21T02:00:00.000Z',
+  user = OWNER,
+  repository = 'Cheekyfellastef/stephan-os',
+} = {}) {
+  return {
+    id: 1,
+    created_at: createdAt,
+    user: { login: user },
+    body: `\`\`\`stephanos-battle-bridge-command\n${JSON.stringify({
+      schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+      requestId,
+      operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
+      repository,
+      issueNumber: 1507,
+      branch: 'main',
+      operatorApproval: 'operator-approved',
+      expectedHead,
+      expiresAt,
+    })}\n\`\`\``,
+  };
+}
+
+function receiptComment({
+  requestId = 'beacon-ingress-diagnostic-0001',
+  expectedHead = HEAD,
+  createdAt = '2026-08-21T00:05:00.000Z',
+  user = OWNER,
+} = {}) {
+  return {
+    id: 2,
+    created_at: createdAt,
+    user: { login: user },
+    body: `<!-- stephanos-battle-bridge-command-receipt -->\n\`\`\`json\n${JSON.stringify({
+      schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+      requestId,
+      operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
+      repository: 'Cheekyfellastef/stephan-os',
+      issueNumber: 1507,
+      branch: 'main',
+      expectedHead,
+      state: 'ACCEPTED',
+      acceptedAt: createdAt,
+      heartbeatAt: createdAt,
+      completedAt: '',
+      blocker: '',
+      proofRefs: [],
+      result: null,
+    })}\n\`\`\``,
   };
 }
 
@@ -161,14 +219,95 @@ test('beacon carries recent sanitized mailbox receipts for remote recovery corre
   assert.equal(record.mailboxReceipts[0].blocker, 'RECOVERY_MESH_TASK_START_FAILED');
 });
 
-test('beacon body is one bounded marker plus json record', () => {
-  const record = buildBattleBridgeOutboundBeacon({ sourceHead: HEAD, now: new Date('2026-08-18T14:31:00Z') });
-  const body = buildBattleBridgeOutboundBeaconBody(record);
-  assert.match(body, new RegExp(BATTLE_BRIDGE_OUTBOUND_BEACON_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  assert.match(body, /stephanos\.battle-bridge-outbound-health-beacon\.v1/);
-  assert.doesNotMatch(body, /password|private key|authorization|bearer/i);
+test('fresh receipt-index READY cannot hide an exact-head command that never reaches ACCEPTED', () => {
+  const ingress = projectMailboxIngressLiveness([commandComment()], {
+    sourceHead: HEAD,
+    now: new Date('2026-08-21T00:20:00.000Z'),
+  });
+  assert.deepEqual(ingress, {
+    state: 'BLOCKED_COMMAND_INGRESS_UNOBSERVED',
+    blocker: 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED',
+    pendingRequestCount: 1,
+  });
+
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-08-21T00:20:00.000Z'),
+    statusRecords: { mailbox: status({ timestampUtc: '2026-08-21T00:19:00.000Z', status: 'READY' }) },
+    mailboxIngressObservation: ingress,
+  });
+  const mailbox = record.surfaces.find((surface) => surface.id === 'mailbox');
+  assert.equal(mailbox.state, 'BLOCKED_COMMAND_INGRESS_UNOBSERVED');
+  assert.equal(mailbox.blocker, 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED');
+  assert.ok(record.blockers.includes('mailbox:PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED'));
+  assert.equal(record.freshness, 'DEGRADED');
 });
 
-test('invalid source head fails closed', () => {
-  assert.throws(() => buildBattleBridgeOutboundBeacon({ sourceHead: 'not-a-head' }), /OUTBOUND_BEACON_SOURCE_HEAD_INVALID/);
+test('matching trusted ACCEPTED receipt preserves normal mailbox readiness', () => {
+  const ingress = projectMailboxIngressLiveness([commandComment(), receiptComment()], {
+    sourceHead: HEAD,
+    now: new Date('2026-08-21T00:20:00.000Z'),
+  });
+  assert.deepEqual(ingress, { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
 });
+
+test('expired unaccepted exact-head command remains blocked across the live bounded lookback', () => {
+  assert.ok(MAILBOX_INGRESS_LOOKBACK_MS >= 4 * 60 * 60 * 1000);
+  const ingress = projectMailboxIngressLiveness([
+    commandComment({
+      requestId: 'flywheel-dirt-diag-13f13144-20260820T2358Z',
+      createdAt: '2026-08-20T23:58:50.000Z',
+      expiresAt: '2026-08-21T01:30:00.000Z',
+    }),
+  ], {
+    sourceHead: HEAD,
+    now: new Date('2026-08-21T02:03:50.405Z'),
+  });
+  assert.deepEqual(ingress, {
+    state: 'BLOCKED_COMMAND_INGRESS_UNOBSERVED',
+    blocker: 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED',
+    pendingRequestCount: 1,
+  });
+});
+
+test('a newer mature exact-head command with a correlated receipt supersedes an older missed command', () => {
+  const newerRequest = 'beacon-ingress-recovery-0002';
+  const ingress = projectMailboxIngressLiveness([
+    commandComment({
+      requestId: 'beacon-ingress-missed-0001',
+      createdAt: '2026-08-20T23:58:50.000Z',
+      expiresAt: '2026-08-21T01:30:00.000Z',
+    }),
+    commandComment({
+      requestId: newerRequest,
+      createdAt: '2026-08-21T01:40:00.000Z',
+      expiresAt: '2026-08-21T03:30:00.000Z',
+    }),
+    receiptComment({ requestId: newerRequest, createdAt: '2026-08-21T01:55:00.000Z' }),
+  ], {
+    sourceHead: HEAD,
+    now: new Date('2026-08-21T02:03:50.405Z'),
+  });
+  assert.deepEqual(ingress, { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
+});
+
+test('a receipt for the same request id on the wrong head cannot mask exact-head ingress failure', () => {
+  const requestId = 'beacon-ingress-head-bind-0001';
+  const ingress = projectMailboxIngressLiveness([
+    commandComment({ requestId }),
+    receiptComment({ requestId, expectedHead: 'b'.repeat(40) }),
+  ], {
+    sourceHead: HEAD,
+    now: new Date('2026-08-21T00:20:00.000Z'),
+  });
+  assert.deepEqual(ingress, {
+    state: 'BLOCKED_COMMAND_INGRESS_UNOBSERVED',
+    blocker: 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED',
+    pendingRequestCount: 1,
+  });
+});
+
+test('wrong-head foreign and still-within-grace commands do not create false ingress blockers', () => {
+  const comments = [
+    commandComment({ requestId: 'wrong-head-command-0001', expectedHead: 'b'.repeat(40) }),
+    comm
