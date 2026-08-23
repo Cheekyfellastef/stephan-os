@@ -36,6 +36,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY = 'Cheekyfellastef/stephan-
 export const BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE = 1507;
 export const BATTLE_BRIDGE_GITHUB_COMMAND_AUTHOR = 'Cheekyfellastef';
 export const BATTLE_BRIDGE_GITHUB_COMMAND_MARKER = 'stephanos-battle-bridge-command';
+export const MISSION_ORCHESTRATOR_CANCEL_OPERATION = 'CANCEL_MISSION_ORCHESTRATOR_MISSION';
 
 export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'UPDATE_STEPHANOS_FROM_CHAT',
@@ -46,6 +47,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'READ_SHARED_WORKSPACE_STATUS',
   'READ_CRITICAL_BACKLOG_STATUS',
   'READ_MAILBOX_RECEIPT',
+  MISSION_ORCHESTRATOR_CANCEL_OPERATION,
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
   'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
   'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
@@ -87,7 +89,25 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const RESET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,120}$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const PR_NUMBER_PATTERN = /^[1-9][0-9]{0,9}$/;
+const MISSION_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{2,127}$/;
+const MISSION_COMMAND_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{7,127}$/;
 const MAX_FUTURE_WINDOW_MS = 6 * 60 * 60 * 1000;
+const MISSION_CANCEL_REASON_MAX_LENGTH = 512;
+const MISSION_CANCEL_ALLOWED_FIELDS = new Set([
+  'schemaVersion',
+  'requestId',
+  'operation',
+  'repository',
+  'issueNumber',
+  'branch',
+  'operatorApproval',
+  'expectedHead',
+  'missionId',
+  'commandId',
+  'reason',
+  'expiresAt',
+]);
+const MISSION_CANCEL_ONLY_FIELDS = Object.freeze(['missionId', 'commandId', 'reason']);
 const RESET_COMMAND_FIELDS = Object.freeze([
   'resetId',
   'resetExpiresAtUtc',
@@ -135,6 +155,11 @@ const TERMINALIZABLE_OWNER_COMMAND_BLOCKERS = new Set([
   'FORGE_SHADOW_COMMAND_UNSAFE_FIELD_PRESENT',
   'FORGE_SHADOW_COMMAND_VERSION_MISMATCH',
   'FORGE_SHADOW_FIELD_NOT_ALLOWED',
+  'MISSION_CANCEL_COMMAND_ID_INVALID',
+  'MISSION_CANCEL_EXPECTED_HEAD_REQUIRED',
+  'MISSION_CANCEL_FIELD_NOT_ALLOWED',
+  'MISSION_CANCEL_MISSION_ID_INVALID',
+  'MISSION_CANCEL_REASON_INVALID',
   'MUSIC_SPOTIFY_EXPECTED_HEAD_REQUIRED',
   'MUSIC_SPOTIFY_FIELD_NOT_ALLOWED',
   'MUSIC_SPOTIFY_REQUEST_ID_INVALID',
@@ -203,6 +228,26 @@ function hasValue(value) {
 
 function plainObject(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function validateMissionCancellation(command = {}) {
+  const unexpectedField = Object.keys(command).find((field) => !MISSION_CANCEL_ALLOWED_FIELDS.has(field));
+  if (unexpectedField) return fail('MISSION_CANCEL_FIELD_NOT_ALLOWED', { field: unexpectedField });
+  if (!SHA_PATTERN.test(String(command.expectedHead || ''))) {
+    return fail('MISSION_CANCEL_EXPECTED_HEAD_REQUIRED');
+  }
+  const missionId = String(command.missionId || '').trim().toLowerCase();
+  if (!MISSION_ID_PATTERN.test(missionId)) return fail('MISSION_CANCEL_MISSION_ID_INVALID');
+  const commandId = String(command.commandId || '').trim().toLowerCase();
+  if (!MISSION_COMMAND_ID_PATTERN.test(commandId)) return fail('MISSION_CANCEL_COMMAND_ID_INVALID');
+  const reason = String(command.reason || '').trim();
+  if (!reason || reason.length > MISSION_CANCEL_REASON_MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(reason)) {
+    return fail('MISSION_CANCEL_REASON_INVALID');
+  }
+  return Object.freeze({
+    ok: true,
+    cancellation: Object.freeze({ missionId, commandId, reason }),
+  });
 }
 
 function validateScopedDelivery(command = {}) {
@@ -331,6 +376,17 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
   if (command.expectedHead && !SHA_PATTERN.test(String(command.expectedHead))) {
     return fail('COMMAND_EXPECTED_HEAD_INVALID');
   }
+
+  let missionCancellation = null;
+  if (command.operation === MISSION_ORCHESTRATOR_CANCEL_OPERATION) {
+    const validation = validateMissionCancellation(command);
+    if (!validation.ok) return validation;
+    missionCancellation = validation.cancellation;
+  } else {
+    const unexpectedMissionCancelField = MISSION_CANCEL_ONLY_FIELDS.find((field) => hasValue(command[field]));
+    if (unexpectedMissionCancelField) return fail('MISSION_CANCEL_FIELD_NOT_ALLOWED', { field: unexpectedMissionCancelField });
+  }
+
   if (['INSTALL_BATTLE_BRIDGE_RECOVERY_MESH', 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'].includes(command.operation)
     && !SHA_PATTERN.test(String(command.expectedHead || ''))) {
     return fail('RECOVERY_MESH_EXPECTED_HEAD_REQUIRED');
@@ -464,6 +520,7 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
       pullRequestHead: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
         ? String(command.pullRequestHead || '').toLowerCase()
         : '',
+      ...(missionCancellation || {}),
       ...(scopedDeliveryValidation.scopedDelivery
         ? { scopedDelivery: scopedDeliveryValidation.scopedDelivery }
         : {}),
@@ -759,6 +816,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
   readSharedWorkspaceStatus,
   readCriticalBacklogStatus,
   readMailboxReceipt,
+  cancelMissionOrchestratorMission,
   runWorkerWatchdogAcceptance,
   installRecoveryMesh,
   wakeRecoveryMesh,
@@ -785,6 +843,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
     READ_SHARED_WORKSPACE_STATUS: readSharedWorkspaceStatus,
     READ_CRITICAL_BACKLOG_STATUS: readCriticalBacklogStatus,
     READ_MAILBOX_RECEIPT: readMailboxReceipt,
+    [MISSION_ORCHESTRATOR_CANCEL_OPERATION]: cancelMissionOrchestratorMission,
     RUN_WORKER_WATCHDOG_ACCEPTANCE: runWorkerWatchdogAcceptance,
     INSTALL_BATTLE_BRIDGE_RECOVERY_MESH: installRecoveryMesh,
     WAKE_BATTLE_BRIDGE_RECOVERY_MESH: wakeRecoveryMesh,
@@ -883,6 +942,8 @@ export function buildBattleBridgeGitHubCommandReceipt({
     issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
     expectedHead: String(command?.expectedHead || ''),
+    missionId: command?.operation === MISSION_ORCHESTRATOR_CANCEL_OPERATION ? String(command?.missionId || '') : '',
+    commandId: command?.operation === MISSION_ORCHESTRATOR_CANCEL_OPERATION ? String(command?.commandId || '') : '',
     expectedTree: FORGE_SHADOW_M3_MAILBOX_OPERATIONS.includes(command?.operation)
       ? String(command?.expectedTree || '')
       : '',
