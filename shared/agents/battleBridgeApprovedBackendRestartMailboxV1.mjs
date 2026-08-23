@@ -5,6 +5,7 @@ import { win32 } from 'node:path';
 
 export const BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION = 'RESTART_APPROVED_STEPHANOS_BACKEND';
 export const BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_SCHEMA = 'stephanos.battle-bridge-approved-backend-restart-mailbox.v1';
+export const BATTLE_BRIDGE_LEGACY_BACKEND_MIGRATION_SCHEMA = 'stephanos.legacy-backend-listener-migration.v1';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const SAFE_BLOCKER_PATTERN = /^[A-Z0-9_:-]{3,120}$/;
@@ -78,6 +79,69 @@ export function normalizeApprovedBackendRestartCommand(command = {}, validatedEn
   });
 }
 
+function validateRestartPayload(payload, expectedHead) {
+  const sourceHead = String(payload?.sourceHead || '').trim().toLowerCase();
+  const payloadExpectedHead = String(payload?.expectedHead || '').trim().toLowerCase();
+  const proofValid = payload?.schemaVersion === 'stephanos.approved-runtime-restart.v1'
+    && payload?.target === 'backend'
+    && payload?.taskName === 'Stephanos Battle Bridge Backend'
+    && payloadExpectedHead === expectedHead
+    && sourceHead === expectedHead
+    && payload?.exactHeadProofOk === true
+    && payload?.canonicalActionVerified === true
+    && payload?.proofFresh === true
+    && payload?.unrelatedTasksChanged === false
+    && payload?.arbitraryTaskTargetAllowed === false
+    && payload?.arbitraryProcessKillAllowed === false
+    && payload?.verifiedOwnedProcessTerminationOnly === true
+    && payload?.liveOpenClawUpdatePerformed === false
+    && payload?.finalVerdict === 'APPROVED_RUNTIME_RESTART_PASS';
+  return proofValid ? Object.freeze({ ok: true, sourceHead }) : fail('APPROVED_BACKEND_RESTART_PROOF_INVALID');
+}
+
+function validateLegacyMigrationPayload(payload, expectedHead) {
+  const replacedSourceHead = String(payload?.replacedSourceHead || '').trim().toLowerCase();
+  const proofValid = payload?.schemaVersion === BATTLE_BRIDGE_LEGACY_BACKEND_MIGRATION_SCHEMA
+    && payload?.ok === true
+    && payload?.finalVerdict === 'LEGACY_BACKEND_LISTENER_MIGRATED'
+    && String(payload?.expectedHead || '').trim().toLowerCase() === expectedHead
+    && SHA_PATTERN.test(replacedSourceHead)
+    && replacedSourceHead !== expectedHead
+    && payload?.canonicalNodeVerified === true
+    && payload?.legacyCommandVerified === true
+    && payload?.healthIdentityVerified === true
+    && payload?.staleSourceAncestor === true
+    && payload?.stableProcessIdentity === true
+    && payload?.terminatedVerifiedOwnedProcess === true
+    && payload?.arbitraryPidAllowed === false
+    && payload?.arbitraryExecutableAllowed === false
+    && payload?.arbitraryCommandAllowed === false
+    && payload?.arbitraryTaskAllowed === false
+    && payload?.arbitraryShellAllowed === false
+    && payload?.sourceMutationAllowed === false
+    && payload?.pcRestartAllowed === false
+    && payload?.liveOpenClawUpdatePerformed === false;
+  return proofValid
+    ? Object.freeze({ ok: true, replacedSourceHead })
+    : fail('LEGACY_BACKEND_MIGRATION_PROOF_INVALID');
+}
+
+function runPowerShell(spawnSyncFn, powershellExe, scriptPath, scriptArgs, repoRoot) {
+  return spawnSyncFn(powershellExe, [
+    '-NoProfile',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', scriptPath,
+    ...scriptArgs,
+  ], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    shell: false,
+    windowsHide: true,
+    timeout: 240_000,
+    maxBuffer: 1024 * 1024,
+  });
+}
+
 export async function executeApprovedBackendRestartOnBattleBridge(command = {}, {
   platform = process.platform,
   env = process.env,
@@ -95,54 +159,62 @@ export async function executeApprovedBackendRestartOnBattleBridge(command = {}, 
 
   const repoRoot = win32.resolve(userProfile, 'Documents', 'GitHub', 'stephan-os');
   const restartScript = win32.resolve(repoRoot, 'scripts', 'windows', 'restart-approved-stephanos-runtime.ps1');
+  const legacyMigrationScript = win32.resolve(repoRoot, 'scripts', 'windows', 'migrate-legacy-stephanos-backend-listener-v1.ps1');
   const powershellExe = win32.resolve(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   if (!existsSyncFn(restartScript)) return fail('APPROVED_BACKEND_RESTART_SCRIPT_MISSING');
+  if (!existsSyncFn(legacyMigrationScript)) return fail('LEGACY_BACKEND_MIGRATION_SCRIPT_MISSING');
   if (!existsSyncFn(powershellExe)) return fail('APPROVED_BACKEND_RESTART_POWERSHELL_MISSING');
 
-  const args = [
-    '-NoProfile',
-    '-ExecutionPolicy', 'Bypass',
-    '-File', restartScript,
+  const restartArgs = [
     '-Target', 'backend',
     '-ExpectedHead', shape.expectedHead,
     '-TimeoutSeconds', '90',
   ];
-  const invocation = spawnSyncFn(powershellExe, args, {
-    cwd: repoRoot,
-    encoding: 'utf8',
-    shell: false,
-    windowsHide: true,
-    timeout: 240_000,
-    maxBuffer: 1024 * 1024,
-  });
-  const payload = parseLastJsonObject(invocation?.stdout);
-  if (!payload) {
-    return fail(invocation?.error ? 'APPROVED_BACKEND_RESTART_EXECUTOR_FAILED' : 'APPROVED_BACKEND_RESTART_RESPONSE_INVALID');
-  }
+  let invocation = runPowerShell(spawnSyncFn, powershellExe, restartScript, restartArgs, repoRoot);
+  let payload = parseLastJsonObject(invocation?.stdout);
+  let legacyMigrationPerformed = false;
+  let legacyReplacedSourceHead = '';
+
   if (invocation?.error || invocation?.status !== 0 || payload?.ok !== true) {
-    return fail(safeBlocker(payload?.blocker), {
-      finalVerdict: 'APPROVED_BACKEND_RESTART_BLOCKED',
-      expectedHead: shape.expectedHead,
-    });
+    const initialBlocker = safeBlocker(payload?.blocker);
+    if (initialBlocker !== 'BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED') {
+      return fail(initialBlocker, {
+        finalVerdict: 'APPROVED_BACKEND_RESTART_BLOCKED',
+        expectedHead: shape.expectedHead,
+      });
+    }
+
+    const migrationInvocation = runPowerShell(
+      spawnSyncFn,
+      powershellExe,
+      legacyMigrationScript,
+      ['-ExpectedHead', shape.expectedHead],
+      repoRoot,
+    );
+    const migrationPayload = parseLastJsonObject(migrationInvocation?.stdout);
+    if (migrationInvocation?.error || migrationInvocation?.status !== 0 || migrationPayload?.ok !== true) {
+      return fail(safeBlocker(migrationPayload?.blocker, 'LEGACY_BACKEND_MIGRATION_FAILED'), {
+        finalVerdict: 'APPROVED_BACKEND_RESTART_BLOCKED',
+        expectedHead: shape.expectedHead,
+      });
+    }
+    const migrationProof = validateLegacyMigrationPayload(migrationPayload, shape.expectedHead);
+    if (!migrationProof.ok) return migrationProof;
+    legacyMigrationPerformed = true;
+    legacyReplacedSourceHead = migrationProof.replacedSourceHead;
+
+    invocation = runPowerShell(spawnSyncFn, powershellExe, restartScript, restartArgs, repoRoot);
+    payload = parseLastJsonObject(invocation?.stdout);
+    if (invocation?.error || invocation?.status !== 0 || payload?.ok !== true) {
+      return fail(safeBlocker(payload?.blocker, 'APPROVED_BACKEND_RESTART_AFTER_LEGACY_MIGRATION_FAILED'), {
+        finalVerdict: 'APPROVED_BACKEND_RESTART_BLOCKED',
+        expectedHead: shape.expectedHead,
+      });
+    }
   }
 
-  const sourceHead = String(payload?.sourceHead || '').trim().toLowerCase();
-  const expectedHead = String(payload?.expectedHead || '').trim().toLowerCase();
-  const proofValid = payload?.schemaVersion === 'stephanos.approved-runtime-restart.v1'
-    && payload?.target === 'backend'
-    && payload?.taskName === 'Stephanos Battle Bridge Backend'
-    && expectedHead === shape.expectedHead
-    && sourceHead === shape.expectedHead
-    && payload?.exactHeadProofOk === true
-    && payload?.canonicalActionVerified === true
-    && payload?.proofFresh === true
-    && payload?.unrelatedTasksChanged === false
-    && payload?.arbitraryTaskTargetAllowed === false
-    && payload?.arbitraryProcessKillAllowed === false
-    && payload?.verifiedOwnedProcessTerminationOnly === true
-    && payload?.liveOpenClawUpdatePerformed === false
-    && payload?.finalVerdict === 'APPROVED_RUNTIME_RESTART_PASS';
-  if (!proofValid) return fail('APPROVED_BACKEND_RESTART_PROOF_INVALID');
+  const proof = validateRestartPayload(payload, shape.expectedHead);
+  if (!proof.ok) return proof;
 
   return Object.freeze({
     ok: true,
@@ -151,12 +223,14 @@ export async function executeApprovedBackendRestartOnBattleBridge(command = {}, 
     target: 'backend',
     taskName: 'Stephanos Battle Bridge Backend',
     expectedHead: shape.expectedHead,
-    sourceHead,
+    sourceHead: proof.sourceHead,
     exactHeadProofOk: true,
     canonicalActionVerified: true,
     proofKind: String(payload.proofKind || ''),
     proofFresh: true,
-    terminatedVerifiedOwnedProcess: payload?.terminatedVerifiedOwnedProcess === true,
+    legacyMigrationPerformed,
+    legacyReplacedSourceHead,
+    terminatedVerifiedOwnedProcess: payload?.terminatedVerifiedOwnedProcess === true || legacyMigrationPerformed,
     unrelatedTasksChanged: false,
     arbitraryTaskTargetAllowed: false,
     arbitraryProcessKillAllowed: false,
