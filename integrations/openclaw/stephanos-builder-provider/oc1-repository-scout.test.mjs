@@ -175,7 +175,7 @@ test('OC1 diagnostic requires the authenticated OpenClaw plugin host and Windows
   assert.equal(result.blocker, 'OPENCLAW_OC1_AUTHENTICATED_HOST_REQUIRED');
 });
 
-test('free-standing manual OC1 scout can never mint scheduler-qualified execution evidence', async () => {
+test('free-standing manual OC1 scout can never mint scheduler-qualified execution evidence; QUALIFICATION_ELIGIBLE=false', async () => {
   const current = harness();
   const result = await runOpenClawOc1RepositoryScout(current.input);
 
