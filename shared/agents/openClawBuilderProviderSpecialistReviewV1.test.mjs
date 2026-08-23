@@ -4,19 +4,22 @@ import test from 'node:test';
 
 import {
   OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1,
+  OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1,
   analyzeOpenClawBuilderProviderSpecialistReviewV1,
 } from './openClawBuilderProviderSpecialistReviewV1.mjs';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
-const HEAD = '46abde391adf7dd138d0f70f63c284133baaa3d4';
-const BASE = 'a564e318541d75854ed7bf675baf9b4dc52fedaf';
+const OC1_HEAD = '46abde391adf7dd138d0f70f63c284133baaa3d4';
+const OC1_BASE = 'a564e318541d75854ed7bf675baf9b4dc52fedaf';
+const POOL_HEAD = '341c4e4e1b4a2d02438149940f70275848c6ac74';
+const POOL_BASE = '74bf1e3ae769f0fc3c0ed9e4eeee61b408788b16';
 
 function blobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
   return createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
 }
 
-function contentFor(path) {
+function oc1ContentFor(path) {
   if (path.endsWith('/index.js')) return `
 api.registerGatewayMethod(
 executeOpenClawOc1GatewayRequest
@@ -109,104 +112,174 @@ sourceMutation
       compat: { pluginApi: '>=2026.3.24-beta.2', minGatewayVersion: '>=2026.6.11' },
     },
   });
-  throw new Error(`unexpected path ${path}`);
+  throw new Error(`unexpected OC1 path ${path}`);
 }
 
-function sources(overrides = {}) {
-  return OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1.map((path) => {
+function providerPoolContentFor(path) {
+  if (path.endsWith('/openClawProviderPoolQualificationV1.mjs')) return `
+${'import'} { routeMissionControllerCapacity } from './missionControllerCapacityRouterV1.mjs';
+validateExecutionReceipt
+toSharedWorkspaceExecutionReceipt
+validateSharedWorkspaceRecord
+const OPENCLAW_QUALIFICATION_ISSUE = 1725;
+export function validateOpenClawQualificationAuthorityChain
+issueNumber: OPENCLAW_QUALIFICATION_ISSUE
+execution.workerType !== 'openclaw'
+execution.state !== 'completed'
+execution.operatorActionRequired !== false
+canonicalJson(host.realWorkWorkspaceReceipt) !== canonicalJson(canonicalWorkspace.record)
+authority.participantId !== 'stephanos'
+authority.relatedIssue !== String(OPENCLAW_QUALIFICATION_ISSUE)
+authority.receivedRecordId !== execution.receiptId
+authority.disposition !== OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION
+candidate.qualificationAuthorityReceiptId === expected.authorityReceiptId
+const host = snapshot(trustedHostContext);
+const openClawPoolEligible = qualification.valid && authority.valid && capacity.valid;
+mergeAuthority: false
+leaseSeizureAllowed: false
+duplicateDispatchAllowed: false
+`;
+  if (path.endsWith('/openClawProviderPoolQualificationV1.test.mjs')) return `
+requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt
+capacity is unusable without the exact validated qualification authority, worker and task class
+caller-shaped qualification, capacity and fake authority evidence cannot self-admit OpenClaw
+syntactically valid trusted qualification without canonical authority cannot route
+existing mutation owner is preserved even when OpenClaw is canonically qualified
+normal AUTO routing does not silently replace a healthy existing provider policy
+assert.equal(result.mergeAuthority, false)
+assert.equal(result.leaseSeizureAllowed, false)
+assert.equal(result.duplicateDispatchAllowed, false)
+`;
+  if (path.endsWith('/openClawTaskClassPromotionCandidateV1.mjs')) return `
+const ISSUE_NUMBER = 1725;
+OC1_REPOSITORY_SCOUT: Object.freeze({
+OC2_DETERMINISTIC_TEST_BUILD: Object.freeze({
+validateExecutionReceipt(execution
+execution?.workerType !== 'openclaw'
+execution?.operatorActionRequired !== false
+proof.record.timestampUtc !== execution.timestampUtc
+proof.record.messageId !== execution.executionId
+text(result.observedSourceHead).toLowerCase() !== text(execution.sourceHead).toLowerCase()
+canonicalResultDigest(result) !== text(result.exactOutputIdentity).toLowerCase()
+result.selfQualificationAllowed !== false
+createSharedWorkspaceReceiptRecord({
+participantId: 'stephanos'
+providerPoolAdmissionAllowed: false
+providerQualificationAuthority: false
+sourceMutationAllowed: false
+mergeAllowed: false
+deploymentAllowed: false
+runtimeMutationAllowed: false
+`;
+  if (path.endsWith('/openClawTaskClassPromotionCandidateV1.test.mjs')) return `
+turns canonical OC1 execution plus provider proof into a gate-compatible Stephanos promotion candidate without routing authority
+supports OC2 only after a completed fixed test/build execution and matching canonical provider proof
+fails closed on failed execution, unsupported class, mutation, self-qualification, worker/head drift, test failure or stale proof
+rejects result digest drift, extra authority fields and proof-record lineage drift
+rejects accessor-bearing, sparse and revoked proof records without executing accessors
+assert.equal(candidate.providerPoolAdmissionAllowed, false)
+assert.equal(candidate.providerQualificationAuthority, false)
+`;
+  throw new Error(`unexpected provider-pool path ${path}`);
+}
+
+function sources(paths, head, contentFor, overrides = {}) {
+  return paths.map((path) => {
     const content = overrides[path] ?? contentFor(path);
     return {
-      schemaVersion: 'stephanos.windows-authority-source.v1',
-      repository: REPOSITORY,
-      path,
-      ref: HEAD,
-      exists: true,
-      size: Buffer.byteLength(content, 'utf8'),
-      blobSha: blobSha(content),
-      content,
+      schemaVersion: 'stephanos.windows-authority-source.v1', repository: REPOSITORY, path, ref: head, exists: true,
+      size: Buffer.byteLength(content, 'utf8'), blobSha: blobSha(content), content,
     };
   });
 }
 
-function analysis() {
-  return {
-    findings: OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1.map((path) => ({
-      severity: 'P0',
-      code: 'unsupported-high-risk-surface',
-      path,
-    })),
-  };
+function analysis(paths) {
+  return { findings: paths.map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })) };
 }
 
-function lineage(overrides = {}) {
+function lineage(head, base, overrides = {}) {
   return {
-    schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1',
-    repository: REPOSITORY,
-    sourceHead: HEAD,
-    sourceCommitSha: HEAD,
-    baseSha: BASE,
-    liveMainBeforeSha: BASE,
-    liveMainAfterSha: BASE,
-    parents: ['1111111111111111111111111111111111111111', BASE],
-    comparison: {
-      status: 'ahead',
-      aheadBy: 43,
-      behindBy: 0,
-      baseCommitSha: BASE,
-      mergeBaseCommitSha: BASE,
-    },
+    schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1', repository: REPOSITORY,
+    sourceHead: head, sourceCommitSha: head, baseSha: base, liveMainBeforeSha: base, liveMainAfterSha: base,
+    parents: ['1111111111111111111111111111111111111111', base],
+    comparison: { status: 'ahead', aheadBy: 43, behindBy: 0, baseCommitSha: base, mergeBaseCommitSha: base },
     ...overrides,
   };
 }
 
-function input(overrides = {}) {
+function oc1Input(overrides = {}) {
   return {
-    repository: REPOSITORY,
-    prNumber: 1910,
-    branch: 'agent/openclaw-oc1-repository-scout-provider-v1',
-    sourceHead: HEAD,
-    baseSha: BASE,
-    lineageEvidence: lineage(),
-    analysis: analysis(),
-    sources: sources(),
+    repository: REPOSITORY, prNumber: 1910, branch: 'agent/openclaw-oc1-repository-scout-provider-v1',
+    sourceHead: OC1_HEAD, baseSha: OC1_BASE, lineageEvidence: lineage(OC1_HEAD, OC1_BASE),
+    analysis: analysis(OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1),
+    sources: sources(OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1, OC1_HEAD, oc1ContentFor),
     ...overrides,
   };
 }
 
-test('exact OC1 high-risk estate is eligible and clean only with closed-world source proof', () => {
-  const result = analyzeOpenClawBuilderProviderSpecialistReviewV1(input());
-  assert.equal(result.eligible, true);
-  assert.equal(result.clean, true);
-  assert.equal(result.findings.length, 0);
+function poolInput(overrides = {}) {
+  return {
+    repository: REPOSITORY, prNumber: 1905, branch: 'agent/openclaw-provider-pool-qualification-v1',
+    sourceHead: POOL_HEAD, baseSha: POOL_BASE, lineageEvidence: lineage(POOL_HEAD, POOL_BASE),
+    analysis: analysis(OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1),
+    sources: sources(OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1, POOL_HEAD, providerPoolContentFor),
+    ...overrides,
+  };
+}
+
+test('exact OC1 high-risk estate remains eligible and clean only with closed-world source proof', () => {
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewV1(oc1Input());
+  assert.equal(result.eligible, true); assert.equal(result.clean, true); assert.equal(result.findings.length, 0);
   assert.deepEqual(result.reviewedPaths, OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1);
   assert.equal(result.proofRefs.length, OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1.length);
   assert.equal(result.finalVerdict, 'OPENCLAW_BUILDER_PROVIDER_SPECIALIST_CLEAN');
 });
 
-test('wrong PR, incomplete escalation and main drift are not accepted', () => {
-  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(input({ prNumber: 1911 })).eligible, false);
-  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(input({ analysis: { findings: analysis().findings.slice(1) } })).eligible, false);
-  const drift = analyzeOpenClawBuilderProviderSpecialistReviewV1(input({
-    lineageEvidence: lineage({ liveMainAfterSha: '2222222222222222222222222222222222222222' }),
-  }));
-  assert.equal(drift.eligible, true);
-  assert.equal(drift.clean, false);
-  assert.equal(drift.findings[0].code, 'openclaw-oc1-reconciliation-lineage-invalid');
+test('OC1 wrong PR, incomplete escalation and main drift remain fail closed', () => {
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(oc1Input({ prNumber: 1911 })).eligible, false);
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(oc1Input({ analysis: { findings: analysis(OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1).findings.slice(1) } })).eligible, false);
+  const drift = analyzeOpenClawBuilderProviderSpecialistReviewV1(oc1Input({ lineageEvidence: lineage(OC1_HEAD, OC1_BASE, { liveMainAfterSha: '2222222222222222222222222222222222222222' }) }));
+  assert.equal(drift.eligible, true); assert.equal(drift.clean, false); assert.equal(drift.findings[0].code, 'openclaw-oc1-reconciliation-lineage-invalid');
 });
 
-test('shell widening, missing mission binding and extra source evidence fail closed', () => {
+test('OC1 shell widening, missing mission binding and extra source evidence remain findings', () => {
   const gatewayPath = OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1[1];
   const scoutPath = OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1[2];
-  const alteredSources = sources({
-    [gatewayPath]: contentFor(gatewayPath).replace("text(item?.missionId).toLowerCase() !== missionId", 'mission-binding-removed'),
-    [scoutPath]: contentFor(scoutPath).replace('shell: false', 'shell: true'),
+  const alteredSources = sources(OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1, OC1_HEAD, oc1ContentFor, {
+    [gatewayPath]: oc1ContentFor(gatewayPath).replace("text(item?.missionId).toLowerCase() !== missionId", 'mission-binding-removed'),
+    [scoutPath]: oc1ContentFor(scoutPath).replace('shell: false', 'shell: true'),
   });
   alteredSources.push({ ...alteredSources[0] });
-  const result = analyzeOpenClawBuilderProviderSpecialistReviewV1(input({ sources: alteredSources }));
-  assert.equal(result.eligible, true);
-  assert.equal(result.clean, false);
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewV1(oc1Input({ sources: alteredSources }));
+  assert.equal(result.eligible, true); assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc1-mission-binding-missing'));
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc1-shell-denial-missing'));
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc1-dynamic-code-forbidden'));
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc1-source-evidence-estate-mismatch'));
+});
+
+test('exact #1905 provider-pool high-risk estate is eligible and clean only with closed-world authority proof', () => {
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewV1(poolInput());
+  assert.equal(result.eligible, true); assert.equal(result.clean, true);
+  assert.deepEqual(result.reviewedPaths, OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1);
+  assert.equal(result.proofRefs.length, OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1.length);
+  assert.equal(result.finalVerdict, 'OPENCLAW_BUILDER_PROVIDER_SPECIALIST_CLEAN');
+});
+
+test('#1905 specialist rejects wrong PR and incomplete four-path escalation instead of widening review authority', () => {
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(poolInput({ prNumber: 1906 })).eligible, false);
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(poolInput({ analysis: { findings: analysis(OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1).findings.slice(0, 3) } })).eligible, false);
+});
+
+test('#1905 specialist fails closed when trusted-host authority binding or denial coverage is removed', () => {
+  const poolPath = OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1[0];
+  const promotionTestPath = OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1[3];
+  const alteredSources = sources(OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1, POOL_HEAD, providerPoolContentFor, {
+    [poolPath]: providerPoolContentFor(poolPath).replace("authority.participantId !== 'stephanos'", 'authority-participant-binding-removed'),
+    [promotionTestPath]: providerPoolContentFor(promotionTestPath).replace('assert.equal(candidate.providerQualificationAuthority, false)', 'qualification-authority-denial-test-removed'),
+  });
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewV1(poolInput({ sources: alteredSources }));
+  assert.equal(result.eligible, true); assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-stephanos-authority-gate-missing'));
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-promotion-qualification-authority-denial-test-missing'));
 });
