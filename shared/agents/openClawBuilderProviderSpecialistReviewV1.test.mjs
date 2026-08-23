@@ -117,7 +117,7 @@ sourceMutation
 
 function providerPoolContentFor(path) {
   if (path.endsWith('/openClawProviderPoolQualificationV1.mjs')) return `
-import { routeMissionControllerCapacity } from './missionControllerCapacityRouterV1.mjs';
+${'import'} { routeMissionControllerCapacity } from './missionControllerCapacityRouterV1.mjs';
 validateExecutionReceipt
 toSharedWorkspaceExecutionReceipt
 validateSharedWorkspaceRecord
