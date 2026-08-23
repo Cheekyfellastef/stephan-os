@@ -1,25 +1,53 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import { runBattleBridgeGitHubCommandMailboxWithReceiptIndex } from './battle-bridge-github-command-mailbox-with-receipt-index.mjs';
+import {
+  MAILBOX_OUTBOX_GUARD_LEASE_ENV,
+  MAILBOX_OUTBOX_GUARD_LEASE_SCHEMA,
+  resolveMailboxOutboxGuardLockPath,
+} from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 
 async function fixture(fn) {
   const root = await mkdtemp(join(tmpdir(), 'mailbox-index-sidecar-'));
   const repoRoot = join(root, 'canonical-repo');
   const workspaceRoot = join(root, 'shared-workspace');
-  try { return await fn({ repoRoot, workspaceRoot }); }
+  const mailboxWorkspaceRoot = join(root, 'mailbox-workspace');
+  const token = 'abcdefabcdefabcdefabcdefabcdefab';
+  const baseEnv = {
+    STEPHANOS_SHARED_AGENT_WORKSPACE: workspaceRoot,
+    STEPHANOS_SHARED_WORKSPACE_ROOT: mailboxWorkspaceRoot,
+  };
+  const lockPath = resolveMailboxOutboxGuardLockPath({ env: baseEnv });
+  await mkdir(dirname(lockPath), { recursive: true });
+  await writeFile(lockPath, `${JSON.stringify({
+    schemaVersion: 'stephanos.battle-bridge-mailbox-outbox-lock.v1',
+    token,
+    pid: process.ppid,
+    ownerBootId: 'test-parent-boot',
+    ownerProcessStartId: 'test-parent-process',
+    acquiredAtUtc: '2026-07-17T20:00:00.000Z',
+  })}\n`, 'utf8');
+  const env = {
+    ...baseEnv,
+    [MAILBOX_OUTBOX_GUARD_LEASE_ENV.schema]: MAILBOX_OUTBOX_GUARD_LEASE_SCHEMA,
+    [MAILBOX_OUTBOX_GUARD_LEASE_ENV.lockPath]: lockPath,
+    [MAILBOX_OUTBOX_GUARD_LEASE_ENV.token]: token,
+    [MAILBOX_OUTBOX_GUARD_LEASE_ENV.guardPid]: String(process.ppid),
+  };
+  try { return await fn({ repoRoot, workspaceRoot, env }); }
   finally { await rm(root, { recursive: true, force: true }); }
 }
 
-test('sidecar fails closed outside Windows and outside the canonical checkout', async () => fixture(async ({ repoRoot, workspaceRoot }) => {
+test('sidecar fails closed outside Windows and outside the canonical checkout', async () => fixture(async ({ repoRoot, env }) => {
   const nonWindows = await runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
     platform: 'linux',
     sourceRepoRoot: repoRoot,
     canonicalRepoRoot: repoRoot,
-    env: { STEPHANOS_SHARED_AGENT_WORKSPACE: workspaceRoot },
+    env,
   });
   assert.equal(nonWindows.ok, false);
   assert.equal(nonWindows.blocker, 'WINDOWS_REQUIRED');
@@ -28,13 +56,30 @@ test('sidecar fails closed outside Windows and outside the canonical checkout', 
     platform: 'win32',
     sourceRepoRoot: `${repoRoot}-other`,
     canonicalRepoRoot: repoRoot,
-    env: { STEPHANOS_SHARED_AGENT_WORKSPACE: workspaceRoot },
+    env,
   });
   assert.equal(nonCanonical.ok, false);
   assert.equal(nonCanonical.blocker, 'CANONICAL_CHECKOUT_REQUIRED');
 }));
 
-test('sidecar refreshes the authoritative Shared Workspace index before and after one mailbox poll', async () => fixture(async ({ repoRoot, workspaceRoot }) => {
+test('standalone sidecar invocation without the parent-bound guard lease cannot mutate state', async () => fixture(async ({ repoRoot, env }) => {
+  let indexCalled = false;
+  let mailboxCalled = false;
+  const result = await runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
+    platform: 'win32',
+    sourceRepoRoot: repoRoot,
+    canonicalRepoRoot: repoRoot,
+    env: { ...env, [MAILBOX_OUTBOX_GUARD_LEASE_ENV.schema]: '' },
+    refreshIndex: async () => { indexCalled = true; return { ok: true }; },
+    runMailbox: async () => { mailboxCalled = true; return { ok: true }; },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'MAILBOX_OUTBOX_GUARD_LEASE_REQUIRED');
+  assert.equal(indexCalled, false);
+  assert.equal(mailboxCalled, false);
+}));
+
+test('sidecar refreshes the authoritative Shared Workspace index before and after one mailbox poll', async () => fixture(async ({ repoRoot, workspaceRoot, env }) => {
   const calls = [];
   const times = [
     new Date('2026-07-17T20:10:00.000Z'),
@@ -44,7 +89,7 @@ test('sidecar refreshes the authoritative Shared Workspace index before and afte
     platform: 'win32',
     sourceRepoRoot: repoRoot,
     canonicalRepoRoot: repoRoot,
-    env: { STEPHANOS_SHARED_AGENT_WORKSPACE: workspaceRoot },
+    env,
     now: () => times.shift() || new Date('2026-07-17T20:10:02.000Z'),
     refreshIndex: async (input) => {
       calls.push(`index:${input.timestampUtc}:${input.root}`);
@@ -81,12 +126,12 @@ test('sidecar refreshes the authoritative Shared Workspace index before and afte
   assert.equal(result.sourceMutationAccess, false);
 }));
 
-test('sidecar projects bounded batch throughput and backpressure telemetry', async () => fixture(async ({ repoRoot, workspaceRoot }) => {
+test('sidecar projects bounded batch throughput and backpressure telemetry', async () => fixture(async ({ repoRoot, env }) => {
   const result = await runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
     platform: 'win32',
     sourceRepoRoot: repoRoot,
     canonicalRepoRoot: repoRoot,
-    env: { STEPHANOS_SHARED_AGENT_WORKSPACE: workspaceRoot },
+    env,
     refreshIndex: async () => ({
       ok: true,
       finalVerdict: 'MAILBOX_RECEIPT_INDEX_READY',
@@ -118,7 +163,7 @@ test('sidecar projects bounded batch throughput and backpressure telemetry', asy
   assert.equal(result.duplicateMailboxAllowed, false);
 }));
 
-test('sidecar refreshes an ACCEPTED receipt during a long mailbox poll on a bounded heartbeat', async () => fixture(async ({ repoRoot, workspaceRoot }) => {
+test('sidecar refreshes an ACCEPTED receipt during a long mailbox poll on a bounded heartbeat', async () => fixture(async ({ repoRoot, env }) => {
   const calls = [];
   const times = [
     new Date('2026-07-17T20:20:00.000Z'),
@@ -132,7 +177,7 @@ test('sidecar refreshes an ACCEPTED receipt during a long mailbox poll on a boun
     platform: 'win32',
     sourceRepoRoot: repoRoot,
     canonicalRepoRoot: repoRoot,
-    env: { STEPHANOS_SHARED_AGENT_WORKSPACE: workspaceRoot },
+    env,
     now: () => times.shift() || new Date('2026-07-17T20:20:17.000Z'),
     heartbeatIntervalMs: 15_000,
     setIntervalFn: (callback, intervalMs) => {
@@ -177,14 +222,14 @@ test('sidecar refreshes an ACCEPTED receipt during a long mailbox poll on a boun
   assert.equal(result.indexHeartbeatRefreshCount, 1);
 }));
 
-test('an index refresh exception cannot prevent the mailbox from polling', async () => fixture(async ({ repoRoot, workspaceRoot }) => {
+test('an index refresh exception cannot prevent the mailbox from polling', async () => fixture(async ({ repoRoot, env }) => {
   let refreshCount = 0;
   let mailboxCalls = 0;
   const result = await runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
     platform: 'win32',
     sourceRepoRoot: repoRoot,
     canonicalRepoRoot: repoRoot,
-    env: { STEPHANOS_SHARED_AGENT_WORKSPACE: workspaceRoot },
+    env,
     refreshIndex: async () => {
       refreshCount += 1;
       if (refreshCount === 1) throw new Error('disk unavailable');
@@ -205,13 +250,13 @@ test('an index refresh exception cannot prevent the mailbox from polling', async
   assert.equal(result.finalVerdict, 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED');
 }));
 
-test('sidecar still refreshes the index after a mailbox exception and returns a bounded blocker', async () => fixture(async ({ repoRoot, workspaceRoot }) => {
+test('sidecar still refreshes the index after a mailbox exception and returns a bounded blocker', async () => fixture(async ({ repoRoot, env }) => {
   let refreshCount = 0;
   const result = await runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
     platform: 'win32',
     sourceRepoRoot: repoRoot,
     canonicalRepoRoot: repoRoot,
-    env: { STEPHANOS_SHARED_AGENT_WORKSPACE: workspaceRoot },
+    env,
     refreshIndex: async () => {
       refreshCount += 1;
       return { ok: true, finalVerdict: 'MAILBOX_RECEIPT_INDEX_READY', projection: { recentReceipts: [] } };
@@ -226,8 +271,10 @@ test('sidecar still refreshes the index after a mailbox exception and returns a 
   assert.equal(result.finalVerdict, 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED');
 }));
 
-test('Scheduled Task installer points only to the fixed sidecar and retains bounded authority', async () => {
+test('Scheduled Task installer reports the fixed guard and its child sidecar while retaining bounded authority', async () => {
   const installer = await readFile(new URL('./windows/install-battle-bridge-github-command-mailbox.ps1', import.meta.url), 'utf8');
+  assert.match(installer, /runnerPath = \(Resolve-Path[\s\S]{0,180}battle-bridge-github-command-mailbox-outbox-guard-v1\.mjs/);
+  assert.match(installer, /childRunnerPath = \(Resolve-Path[\s\S]{0,180}battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
   assert.match(installer, /battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
   assert.match(installer, /receiptIndexEnabled = \$true/);
   assert.match(installer, /-MultipleInstances IgnoreNew/);
