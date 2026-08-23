@@ -49,6 +49,7 @@ jobs:
       - name: Run coordinator regressions
         run: |
           npm run stephanos:exact-head-review:test
+          node --test shared/agents/codexReviewCapacityFailoverV1.test.mjs
           node --test shared/agents/exactHeadReviewCoordinatorAuthority.test.mjs
           node --test shared/agents/independentReviewRetryPlanner.test.mjs
           node --test shared/agents/exactHeadReviewDispatchWorkflow.test.mjs
@@ -66,6 +67,7 @@ jobs:
 
       - name: Parse review coordinator sources
         run: |
+          node --check shared/agents/codexReviewCapacityFailoverV1.mjs
           node --check shared/agents/exactHeadReviewDispatchCoordinator.mjs
           node --check shared/agents/exactHeadReviewCoordinatorAuthority.mjs
           node --check shared/agents/independentReviewRetryPlanner.mjs
@@ -136,6 +138,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Classify trusted Codex review-capacity outage
+        id: provider_failover
+        if: >-
+          github.event_name == 'issue_comment' &&
+          github.event.issue.pull_request != null
+        run: node shared/agents/codexReviewCapacityFailoverV1.mjs
 
       - name: Download the exact triggering independent-review artifact
         if: >-
