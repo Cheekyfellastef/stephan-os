@@ -13,10 +13,22 @@ export const BATTLE_BRIDGE_CONTROL_PLANE_TASKS = Object.freeze([
     intervalMinutes: 1,
   }),
   Object.freeze({
+    id: 'workerWatchdog',
+    taskName: 'Stephanos Mission Orchestrator Worker Watchdog',
+    installerRelativePath: 'scripts/windows/install-battle-bridge-worker-watchdog.ps1',
+    intervalMinutes: 1,
+  }),
+  Object.freeze({
     id: 'githubCommandMailbox',
     taskName: 'Stephanos Battle Bridge GitHub Command Mailbox',
     installerRelativePath: 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
     intervalMinutes: 5,
+  }),
+  Object.freeze({
+    id: 'outboundHealthBeacon',
+    taskName: 'Stephanos Battle Bridge Outbound Health Beacon',
+    installerRelativePath: 'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1',
+    intervalMinutes: 1,
   }),
 ]);
 
@@ -116,6 +128,25 @@ function validateRecoveryMeshReceipt(payload) {
   );
 }
 
+function validateWorkerWatchdogReceipt(payload) {
+  return Boolean(
+    payload
+    && payload.taskName === 'Stephanos Mission Orchestrator Worker Watchdog'
+    && payload.installed === true
+    && payload.startedNow === true
+    && Number(payload.intervalMinutes) === 1
+    && payload.atLogon === true
+    && payload.hidden === true
+    && payload.runLevel === 'Limited'
+    && payload.multipleInstances === 'IgnoreNew'
+    && payload.remoteCodexVisibilityReconciler === true
+    && payload.arbitraryTaskNameAllowed === false
+    && payload.arbitraryShellAllowed === false
+    && payload.visiblePowerShellRequired === false
+    && payload.headlessLauncher === true
+  );
+}
+
 function validateMailboxReceipt(payload) {
   return Boolean(
     payload
@@ -132,6 +163,39 @@ function validateMailboxReceipt(payload) {
     && payload.liveOpenClawUpdateAllowed === false
     && payload.headlessLauncher === true
   );
+}
+
+function validateOutboundHealthBeaconReceipt(payload) {
+  return Boolean(
+    payload
+    && payload.schemaVersion === 'stephanos.battle-bridge-outbound-health-beacon-install.v1'
+    && payload.taskName === 'Stephanos Battle Bridge Outbound Health Beacon'
+    && payload.installed === true
+    && payload.startedNow === true
+    && Number(payload.intervalMinutes) === 1
+    && payload.atLogon === true
+    && payload.hidden === true
+    && payload.runLevel === 'Limited'
+    && payload.multipleInstances === 'IgnoreNew'
+    && payload.repository === 'Cheekyfellastef/stephan-os'
+    && Number(payload.issueNumber) === 1889
+    && payload.arbitraryShellAllowed === false
+    && payload.sourceMutationAllowed === false
+    && payload.taskMutationBeyondSelfAllowed === false
+    && payload.processRestartAllowed === false
+    && payload.destructiveGitAllowed === false
+    && payload.liveOpenClawUpdateAllowed === false
+    && payload.pcRestartAllowed === false
+    && payload.visiblePowerShellRequired === false
+  );
+}
+
+function validateTaskReceipt(taskId, payload) {
+  if (taskId === 'recoveryMesh') return validateRecoveryMeshReceipt(payload);
+  if (taskId === 'workerWatchdog') return validateWorkerWatchdogReceipt(payload);
+  if (taskId === 'githubCommandMailbox') return validateMailboxReceipt(payload);
+  if (taskId === 'outboundHealthBeacon') return validateOutboundHealthBeaconReceipt(payload);
+  return false;
 }
 
 function sourceIdentity({ repoRoot, expectedHead, spawnSyncFn }) {
@@ -208,9 +272,7 @@ export function reconcileBattleBridgeControlPlane({
       });
     }
     const payload = parseInstallerJson(command.stdout);
-    const receiptValid = task.id === 'recoveryMesh'
-      ? validateRecoveryMeshReceipt(payload)
-      : validateMailboxReceipt(payload);
+    const receiptValid = validateTaskReceipt(task.id, payload);
     if (!receiptValid) {
       return blocked('CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID', {
         branch: identity.branch,
