@@ -99,14 +99,16 @@ jobs:
           STEPHANOS_INDEPENDENT_REVIEW_DISPATCH_PREFLIGHT_PATH: ${{ runner.temp }}/independent-review-workflow-dispatch-preflight.json
         run: node scripts/prepare-independent-review-workflow-dispatch-v1.mjs
 
-      - name: Prove bounded Windows authority specialist policy
+      - name: Prove bounded specialist policy
         timeout-minutes: 5
         run: >-
           node --test
           shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs
           shared/agents/windowsAuthoritySpecialistBoundaryV1.test.mjs
           shared/agents/qualifiedSpecialistReviewArtifactV1.test.mjs
+          shared/agents/openClawBuilderProviderSpecialistReviewV1.test.mjs
           scripts/independent-merge-security-review-with-windows-specialist-v1.test.mjs
+          scripts/independent-merge-security-review-with-openclaw-specialist-v1.test.mjs
 
       - name: Review the complete exact-head and exact-base diff without mutation authority
         timeout-minutes: 15
