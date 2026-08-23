@@ -47,6 +47,11 @@ const CANONICAL_REMOTE_PATTERNS = Object.freeze([
   /^git@github\.com:Cheekyfellastef\/stephan-os(?:\.git)?$/i,
   /^ssh:\/\/git@github\.com\/Cheekyfellastef\/stephan-os(?:\.git)?\/?$/i,
 ]);
+const REMOTE_DIRT_SAMPLE_LIMIT = 2;
+const REMOTE_DIRT_SAMPLE_PATH_MAX = 72;
+const REMOTE_DIRT_SUMMARY_MAX = 180;
+const SAFE_REMOTE_DIRT_PATH = /^(?:[A-Za-z0-9._@+-]+\/)*[A-Za-z0-9._@+-]+$/;
+const TOKEN_SHAPED_PATH = /(?:ghp|github_pat|sk(?:-proj)?|xox[baprs])[-_][A-Za-z0-9_-]{8,}/i;
 
 export const DEFAULT_RUNTIME_ONLY_ALLOWLIST = Object.freeze([
   'logs/',
@@ -118,6 +123,41 @@ export function classifyDirt(statusLines = [], options = {}) {
   return result;
 }
 
+function safeRemoteDirtPath(value) {
+  const candidate = String(value ?? '').trim().replace(/\\/g, '/');
+  if (!candidate || candidate.length > REMOTE_DIRT_SAMPLE_PATH_MAX) return '';
+  if (candidate.startsWith('/') || candidate.includes(':') || candidate.includes('..') || candidate.includes('//')) return '';
+  if (!SAFE_REMOTE_DIRT_PATH.test(candidate) || TOKEN_SHAPED_PATH.test(candidate)) return '';
+  return candidate;
+}
+
+export function buildRemoteDirtBlockerSummary(dirt = {}) {
+  const trackedSource = Array.isArray(dirt.trackedSource) ? dirt.trackedSource : [];
+  const untrackedSource = Array.isArray(dirt.untrackedSource) ? dirt.untrackedSource : [];
+  const unknownCount = Array.isArray(dirt.unknown) ? dirt.unknown.length : 0;
+  const runtimeOnlyCount = Array.isArray(dirt.runtimeOnly) ? dirt.runtimeOnly.length : 0;
+  const generatedSourceCount = Array.isArray(dirt.generatedSource) ? dirt.generatedSource.length : 0;
+  const samples = [];
+  let hiddenBlockingCount = 0;
+  for (const [kind, values] of [['tracked', trackedSource], ['untracked', untrackedSource]]) {
+    for (const value of values) {
+      const safePath = safeRemoteDirtPath(value);
+      if (!safePath || samples.length >= REMOTE_DIRT_SAMPLE_LIMIT) hiddenBlockingCount += 1;
+      else samples.push(`${kind}:${safePath}`);
+    }
+  }
+  const base = 'Resolve or preserve source dirt outside unattended sync.';
+  const details = [];
+  if (samples.length) details.push(`blockingSamples=[${samples.join('|')}]`);
+  if (hiddenBlockingCount) details.push(`hiddenBlockingCount=${hiddenBlockingCount}`);
+  if (unknownCount) details.push(`unknownCount=${unknownCount}`);
+  if (runtimeOnlyCount) details.push(`runtimeOnlyCount=${runtimeOnlyCount}`);
+  if (generatedSourceCount) details.push(`generatedSourceCount=${generatedSourceCount}`);
+  const detailed = details.length ? `${base} ${details.join('; ')}` : base;
+  if (detailed.length <= REMOTE_DIRT_SUMMARY_MAX) return detailed;
+  return `${base} trackedCount=${trackedSource.length}; untrackedCount=${untrackedSource.length}; unknownCount=${unknownCount}; runtimeOnlyCount=${runtimeOnlyCount}; diagnosticSamplesRedacted=true`;
+}
+
 function remoteMatches(remoteUrl) {
   const candidate = String(remoteUrl ?? '').trim();
   return CANONICAL_REMOTE_PATTERNS.some((pattern) => pattern.test(candidate));
@@ -139,7 +179,7 @@ export function evaluateSyncPolicy(facts) {
   });
   if (facts.currentBranch !== CANONICAL_SYNC_CONTRACT.branch) return blocked(SYNC_CLASSIFICATIONS.BLOCKED_NON_MAIN_BRANCH, 'Return canonical checkout to main before sync.');
   if (!remoteMatches(facts.originUrl)) return blocked(SYNC_CLASSIFICATIONS.BLOCKED_REMOTE_MISMATCH, 'Fix origin to the canonical GitHub repository before sync.');
-  if (dirt.blocksSync) return blocked(SYNC_CLASSIFICATIONS.BLOCKED_DIRTY_SOURCE, 'Resolve or preserve source dirt outside unattended sync.');
+  if (dirt.blocksSync) return blocked(SYNC_CLASSIFICATIONS.BLOCKED_DIRTY_SOURCE, buildRemoteDirtBlockerSummary(dirt));
   if (facts.fetchOk === false) return blocked(SYNC_CLASSIFICATIONS.BLOCKED_FETCH_FAILED, 'Investigate fetch failure without mutating local source.');
   if (!isObservedCommitSha(facts.localHead) || !isObservedCommitSha(facts.remoteHead)) {
     return blocked(SYNC_CLASSIFICATIONS.BLOCKED_HEAD_PROOF_MISSING, 'Collect concrete local and origin/main commit SHAs before classifying sync state.');
@@ -173,6 +213,8 @@ function boundedRecord(kind, evaluation, heads = {}, proofRefs = []) {
       unknownCount: Array.isArray(dirt.unknown) ? dirt.unknown.length : 0,
       blocksSync: dirt.blocksSync === true,
       pathValuesPublished: false,
+      sanitizedBlockingSamplesPublished: evaluation.classification === SYNC_CLASSIFICATIONS.BLOCKED_DIRTY_SOURCE
+        && String(evaluation.exactNextAction || '').includes('blockingSamples=['),
     }),
     operatorNeeded: evaluation.operatorNeeded,
     exactNextAction: evaluation.exactNextAction,
