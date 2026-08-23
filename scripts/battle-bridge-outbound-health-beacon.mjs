@@ -22,8 +22,6 @@ export const MAILBOX_INGRESS_GRACE_MS = 10 * 60 * 1000;
 export const MAILBOX_INGRESS_LOOKBACK_MS = 4 * 60 * 60 * 1000;
 
 const SHA = /^[0-9a-f]{40}$/;
-const SAFE_RECEIPT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
-const SAFE_RECEIPT_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$/;
 const MAX_STATUS_BYTES = 64 * 1024;
 const MAX_GITHUB_BYTES = 512 * 1024;
 const STATUS_SPECS = Object.freeze([
@@ -32,9 +30,6 @@ const STATUS_SPECS = Object.freeze([
   Object.freeze({ id: 'ignition', path: 'status/battle-bridge-ignition-supervisor-current.json', staleAfterMs: 300_000 }),
   Object.freeze({ id: 'battleBridge', path: 'status/battle-bridge-current.json', staleAfterMs: 300_000 }),
   Object.freeze({ id: 'recoveryMesh', path: 'status/battle-bridge-recovery-mesh-current.json', staleAfterMs: 180_000 }),
-  Object.freeze({ id: 'recoveryMeshLaunch', path: 'status/battle-bridge-recovery-mesh-launch-current.json', staleAfterMs: 180_000 }),
-  Object.freeze({ id: 'workerWatchdog', path: 'status/battle-bridge-worker-watchdog-current.json', staleAfterMs: 180_000 }),
-  Object.freeze({ id: 'workerWatchdogLaunch', path: 'status/battle-bridge-worker-watchdog-launch-current.json', staleAfterMs: 180_000 }),
   Object.freeze({ id: 'mailbox', path: 'status/battle-bridge-mailbox-receipt-index.json', staleAfterMs: 420_000 }),
   Object.freeze({ id: 'missionWorker', path: 'status/mission-orchestrator-worker-heartbeat.json', staleAfterMs: 180_000 }),
 ]);
@@ -47,11 +42,6 @@ function text(value, limit = 180) {
 function safeSha(value) {
   const normalized = text(value, 40).toLowerCase();
   return SHA.test(normalized) ? normalized : '';
-}
-
-function safeReceiptToken(value) {
-  const normalized = text(value, 180);
-  return normalized && SAFE_RECEIPT_TOKEN.test(normalized) ? normalized : '';
 }
 
 function timestamp(value) {
@@ -82,49 +72,6 @@ function recordHead(record = {}) {
   );
 }
 
-function surfaceIsBlocked(surface) {
-  const state = String(surface?.state || '').toUpperCase();
-  return state === 'STALE'
-    || state === 'UNPROVEN'
-    || state.includes('BLOCK')
-    || state.includes('FAIL')
-    || state.includes('UNHEALTHY')
-    || state.includes('COOLDOWN');
-}
-
-function projectMailboxReceipt(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const requestId = text(value.requestId, 121);
-  if (!SAFE_RECEIPT_ID.test(requestId)) return null;
-  return Object.freeze({
-    requestId,
-    operation: safeReceiptToken(value.operation),
-    state: safeReceiptToken(value.state).toUpperCase(),
-    expectedHead: safeSha(value.expectedHead),
-    completedAtUtc: timestamp(value.completedAt || value.heartbeatAt || value.acceptedAt),
-    blocker: safeReceiptToken(value.blocker),
-    finalVerdict: safeReceiptToken(value.finalVerdict),
-  });
-}
-
-export function projectMailboxReceipts(record) {
-  if (!record || typeof record !== 'object' || Array.isArray(record)) return Object.freeze([]);
-  const candidates = [
-    ...(record.activeReceipt ? [record.activeReceipt] : []),
-    ...(Array.isArray(record.recentReceipts) ? record.recentReceipts : []),
-  ];
-  const receipts = [];
-  const seen = new Set();
-  for (const candidate of candidates) {
-    const projected = projectMailboxReceipt(candidate);
-    if (!projected || seen.has(projected.requestId)) continue;
-    seen.add(projected.requestId);
-    receipts.push(projected);
-    if (receipts.length >= 4) break;
-  }
-  return Object.freeze(receipts);
-}
-
 export function projectBeaconStatus(record, spec, nowMs = Date.now()) {
   if (!record) {
     return Object.freeze({ id: spec.id, state: 'UNPROVEN', observedAtUtc: '', ageMs: null, head: '', blocker: 'STATUS_MISSING' });
@@ -133,9 +80,7 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now()) {
   const observedMs = Date.parse(observedAtUtc);
   const ageMs = Number.isFinite(observedMs) ? Math.max(0, nowMs - observedMs) : null;
   const stale = ageMs === null || ageMs > spec.staleAfterMs;
-  // Prefer the most specific typed machine verdict. Generic status fields can
-  // lag or be overly broad and must never paint a typed failure green.
-  const raw = text(record.classification || record.finalVerdict || record.status || record.state || 'UNKNOWN', 120).toUpperCase();
+  const raw = text(record.status || record.classification || record.finalVerdict || record.state || 'UNKNOWN', 120).toUpperCase();
   const blocker = text(record.blocker || record.exactNextAction || '', 180);
   return Object.freeze({
     id: spec.id,
@@ -242,10 +187,9 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     return spec.id === 'mailbox' ? combineMailboxStatus(projected, mailboxIngressObservation) : projected;
   });
   const blockers = surfaces
-    .filter(surfaceIsBlocked)
+    .filter((surface) => surface.state === 'STALE' || surface.state === 'UNPROVEN' || surface.state.includes('BLOCK'))
     .map((surface) => `${surface.id}:${surface.blocker || surface.state}`)
-    .slice(0, 16);
-  const mailboxReceipts = projectMailboxReceipts(statusRecords.mailbox || null);
+    .slice(0, 12);
   return Object.freeze({
     schemaVersion: BATTLE_BRIDGE_OUTBOUND_BEACON_SCHEMA,
     repository: BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY,
@@ -254,7 +198,6 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     sourceHead: head,
     branch: 'main',
     surfaces: Object.freeze(surfaces),
-    mailboxReceipts,
     blockerCount: blockers.length,
     blockers: Object.freeze(blockers),
     freshness: blockers.length > 0 ? 'DEGRADED' : 'FRESH',

@@ -42,7 +42,6 @@ const NATURAL_EXACT = new Set([
   'scripts/battle-bridge-outbound-health-beacon.mjs',
   'scripts/chatgpt-shared-workspace-github-relay.mjs',
   'scripts/windows/probe-battle-bridge-recovery-mesh.ps1',
-  'scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1',
   'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
   'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1',
   'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1',
@@ -309,41 +308,112 @@ export async function executePostSyncRefreshPlan({
   const results = [];
   const handlers = {
     [POST_SYNC_REFRESH_TARGETS.UI_4173]: adapters.refreshUi,
-    [POST_SYNC_REFRESH_TARGEËPÒÑS‘ÎÎ×NˆY\\œËœ™\Ý\˜XÚÙ[™ˆÔÔÕÔÖS×Ô‘Q”‘TÒÕT‘ÑUË“RTÔÒSÓ—ÕÓÔ’ÑT—NˆY\\œËœ™\Ý\Z\ÜÚ[Û•ÛÜšÙ\‹ˆÔÔÕÔÖS×Ô‘Q”‘TÒÕT‘ÑUË“UTSÔ‘SÐQNˆY\\œË˜ÛÛ™š\›S˜]\˜[™[ØYˆNÂ‚ˆ›Üˆ
-ÛÛœÝ\™Ù]YÙˆ[‹\™Ù]YÊHÂˆYˆ
-™\Ý[XX›Kš\Ê\™Ù]Y
-JHÂˆ™\Ý[Ëœ\Ú
-™\Ý[XX›K™Ù]
-\™Ù]Y
-JNÂˆÛÛ[YNÂˆBˆÛÛœÝ[™\ˆH[™\œÖÝ\™Ù]YNÂˆYˆ
-\[Ùˆ[™\ˆOOH	Ù[˜Ý[Û‰ÊHÂˆ™]\›ˆØš™XÝ™œ™Y^™JÂˆÚÎˆ˜[ÙKˆÛ\ÜÚYšXØ][ÛŽˆÔÕÔÖS×Ô‘Q”‘TÒÐÓTÔÒQ’PÐUSÓ”Ë“ÐÒÑQÔ‘Q”‘TÒÑRSQˆ›ØÚÙ\Žˆ‘Q”‘TÒÒS‘T—ÓRTÔÒS‘Î‰Ý\™Ù]YXˆ[‹ˆ^XÝXY›ÛÙ“ÚÎˆ˜[ÙKˆ™\Ý[ÎˆØš™XÝ™œ™Y^™J™\Ý[ÊKˆJNÂˆBˆžHÂˆÛÛœÝ™\Ý[H]ØZ][™\ŠÈ™Y›Ü™RXYY\’XY\™Ù]Y[ˆJNÂˆÛÛœÝÛÛ\]YHØš™XÝ™œ™Y^™JÈ\™Ù]Y‹‹œ™\Ý[JNÂˆ™\Ý[Ëœ\Ú
-ÛÛ\]Y
-NÂˆYˆ
-\™\Ý[\ÜÊ™\Ý[Y\’XY
-JHÂˆ™]\›ˆØš™XÝ™œ™Y^™JÂˆÚÎˆ˜[ÙKˆÛ\ÜÚYšXØ][ÛŽˆÔÕÔÖS×Ô‘Q”‘TÒÐÓTÔÒQ’PÐUSÓ”Ë“ÐÒÑQÔ‘Q”‘TÒÑRSQˆ›ØÚÙ\Žˆ™\Ý[Ë˜›ØÚÙ\ˆ‘Q”‘TÒÔ“ÓÑ—ÑRSQ‰Ý\™Ù]YXˆ[‹ˆ^XÝXY›ÛÙ“ÚÎˆ˜[ÙKˆ™\Ý[ÎˆØš™XÝ™œ™Y^™J™\Ý[ÊKˆJNÂˆBˆYˆ
-\[ÙˆÛ•\™Ù]ÛÛ\]HOOH	Ù[˜Ý[Û‰ÊHÂˆ]ØZ]Û•\™Ù]ÛÛ\]JØš™XÝ™œ™Y^™JË‹‹œ™\Ý[×JJNÂˆBˆHØ]Ú
-\œ›ÜŠHÂˆ™]\›ˆØš™XÝ™œ™Y^™JÂˆÚÎˆ˜[ÙKˆÛ\ÜÚYšXØ][ÛŽˆÔÕÔÖS×Ô‘Q”‘TÒÐÓTÔÒQ’PÐUSÓ”Ë“ÐÒÑQÔ‘Q”‘TÒÑRSQˆ›ØÚÙ\Žˆ‘Q”‘TÒÑVPÕUSÓ—ÑRSQ‰Ý\™Ù]YXˆ\œ›ÜŽˆ\œ›ÜË›Y\ÜØYÙHÝš[™Ê\œ›ÜŠKˆ[‹ˆ^XÝXY›ÛÙ“ÚÎˆ˜[ÙKˆ™\Ý[ÎˆØš™XÝ™œ™Y^™J™\Ý[ÊKˆJNÂˆBˆB‚ˆYˆ
-[‹›Ü[Û]Ð\›Ý˜[™\]Z\™Y
-HÂˆ™]\›ˆØš™XÝ™œ™Y^™JÂˆÚÎˆ˜[ÙKˆÛ\ÜÚYšXØ][ÛŽˆÔÕÔÖS×Ô‘Q”‘TÒÐÓTÔÒQ’PÐUSÓ”ËT“ÕSÔ‘TURT‘QÓÔSÓUËˆ›ØÚÙ\Žˆ	ÓÔSÓU×Ô‘Q”‘TÒÐT“ÕSÔ‘TURT‘Q	Ëˆ[‹ˆ^XÝXY›ÛÙ“ÚÎˆ˜[ÙKˆØY™T™Yœ™\Ú\ÐÛÛ\]YˆYKˆ™\Ý[ÎˆØš™XÝ™œ™Y^™J™\Ý[ÊKˆJNÂˆB‚ˆ™]\›ˆØš™XÝ™œ™Y^™JÂˆÚÎˆYKˆÛ\ÜÚYšXØ][ÛŽˆ[‹\™Ù]YË›[™ÝˆÈÔÕÔÖS×Ô‘Q”‘TÒÐÓTÔÒQ’PÐUSÓ”Ë”‘Q”‘TÒÐÓÓTUBˆˆÔÕÔÖS×Ô‘Q”‘TÒÐÓTÔÒQ’PÐUSÓ”Ë““×Ô•S•SQWÔ‘Q”‘TÒÔ‘TURT‘Qˆ›ØÚÙ\Žˆ	ÉËˆ[‹ˆ^XÝXY›ÛÙ“ÚÎˆYKˆÛÝ\˜ÙRXYˆÝš[™ÊY\’XY
-KÓÝÙ\Ø\ÙJ
-Kˆ™\Ý[ÎˆØš™XÝ™œ™Y^™J™\Ý[ÊKˆš[˜[™\™XÝˆ	ÔÔÕÔÖS×Ô•S•SQWÔ‘Q”‘TÒÔTÔÉËˆJNÂŸB‚™^Ü[˜Ý[ÛˆZ[ÜÝÞ[˜Ô™Yœ™\Ú›Ú™XÝ[ÛŠ™\Ý[HßKÈ™Y›Ü™RXYH	ÉËY\’XYH	ÉÈHHßJHÂˆÛÛœÝ[ˆH™\Ý[œ[ˆßNÂˆ™]\›ˆØš™XÝ™œ™Y^™JÂˆØÚ[XU™\œÚ[ÛŽˆÔÕÔÖS×Ô‘Q”‘TÒÔÐÒSPKˆ™Y›Ü™RXYˆ˜[YXY
-™Y›Ü™RXY
-HÈÝš[™Ê™Y›Ü™RXY
-KÓÝÙ\Ø\ÙJ
-Hˆ	ÉËˆY\’XYˆ˜[YXY
-Y\’XY
-HÈÝš[™ÊY\’XY
-KÓÝÙ\Ø\ÙJ
-Hˆ	ÉËˆÛ\ÜÚYšXØ][ÛŽˆ™\Ý[˜Û\ÜÚYšXØ][Ûˆ[‹˜Û\ÜÚYšXØ][ÛˆÔÕÔÖS×Ô‘Q”‘TÒÐÓTÔÒQ’PÐUSÓ”Ë“ÐÒÑQÔ‘Q”‘TÒÑRSQˆ›ØÚÙ\ŽˆÝš[™Ê™\Ý[˜›ØÚÙ\ˆ	ÉÊKˆ\™Ù]YÎˆ\œ˜^Kš\Ð\œ˜^J[‹\™Ù]YÊHÈË‹‹œ[‹\™Ù]Y×Hˆ×KˆÚ[™ÙY]ÛÝ[ˆ[X™\Š[‹˜Ú[™ÙY]ÛÝ[
-Kˆ›Ô[[YT]ÛÝ[ˆ[X™\Š[‹››Ô[[YT]ÛÝ[
-KˆÜ[Û]Ô]ÛÝ[ˆ[X™\Š[‹›Ü[Û]Ô]ÛÝ[
-Kˆ[šÛ›ÝÛ”]ÛÝ[ˆ[X™\Š[‹[šÛ›ÝÛ”]ÛÝ[
-Kˆ[œØY™T]ÛÝ[ˆ[X™\Š[‹[œØY™T]ÛÝ[
-Kˆ^XÝXY›ÛÙ“ÚÎˆ™\Ý[™^XÝXY›ÛÙ“ÚÈOOHYKˆØY™T™Yœ™\Ú\ÐÛÛ\]Yˆ™\Ý[œØY™T™Yœ™\Ú\ÐÛÛ\]YOOHYKˆ™\Ý[\™Ù]Îˆ\œ˜^Kš\Ð\œ˜^J™\Ý[œ™\Ý[ÊHÈ™\Ý[œ™\Ý[Ë›X\
+    [POST_SYNC_REFRESH_TARGETS.BACKEND_8787]: adapters.restartBackend,
+    [POST_SYNC_REFRESH_TARGETS.MISSION_WORKER]: adapters.restartMissionWorker,
+    [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]: adapters.confirmNaturalReload,
+  };
 
-[žJHOˆ
-Âˆ\™Ù]Yˆ[žK\™Ù]YˆÚÎˆ[žK›ÚÈOOHYKˆ^XÝXY›ÛÙ“ÚÎˆ[žK™^XÝXY›ÛÙ“ÚÈOOHYKˆÛÝ\˜ÙRXYˆ˜[YXY
-[žKœÛÝ\˜ÙRXY
-HÈÝš[™Ê[žKœÛÝ\˜ÙRXY
-KÓÝÙ\Ø\ÙJ
-Hˆ	ÉËˆ›ØÚÙ\ŽˆÝš[™Ê[žK˜›ØÚÙ\ˆ	ÉÊKˆJJHˆ×Kˆ\˜š]˜\žTÚ[[ÝÙYˆ˜[ÙKˆ\˜š]˜\žTÝÙ\”Ú[[ÝÙYˆ˜[ÙKˆ\ÝXÝ]™QÚ][ÝÙYˆ˜[ÙKˆ[œ™[]Y\ÚÓ]]][Û[ÝÙYˆ˜[ÙKˆ]™SÜ[Û]Õ\]P[ÝÙYˆ˜[ÙKˆ]˜[Y\ÔX›\ÚYˆ˜[ÙKˆš[˜[™\™XÝˆ™\Ý[›ÚÈOOHYHÈ	ÔÔÕÔÖS×Ô•S•SQWÔ‘Q”‘TÒÔTÔÉÈˆ	ÔÔÕÔÖS×Ô•S•SQWÔ‘Q”‘TÒÐ“ÐÒÑQ	ËˆJNÂŸB
+  for (const targetId of plan.targetIds) {
+    if (resumable.has(targetId)) {
+      results.push(resumable.get(targetId));
+      continue;
+    }
+    const handler = handlers[targetId];
+    if (typeof handler !== 'function') {
+      return Object.freeze({
+        ok: false,
+        classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
+        blocker: `REFRESH_HANDLER_MISSING:${targetId}`,
+        plan,
+        exactHeadProofOk: false,
+        results: Object.freeze(results),
+      });
+    }
+    try {
+      const result = await handler({ beforeHead, afterHead, targetId, plan });
+      const completed = Object.freeze({ targetId, ...result });
+      results.push(completed);
+      if (!resultPass(result, afterHead)) {
+        return Object.freeze({
+          ok: false,
+          classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
+          blocker: result?.blocker || `REFRESH_PROOF_FAILED:${targetId}`,
+          plan,
+          exactHeadProofOk: false,
+          results: Object.freeze(results),
+        });
+      }
+      if (typeof onTargetComplete === 'function') {
+        await onTargetComplete(Object.freeze([...results]));
+      }
+    } catch (error) {
+      return Object.freeze({
+        ok: false,
+        classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
+        blocker: `REFRESH_EXECUTION_FAILED:${targetId}`,
+        error: error?.message || String(error),
+        plan,
+        exactHeadProofOk: false,
+        results: Object.freeze(results),
+      });
+    }
+  }
+
+  if (plan.openClawApprovalRequired) {
+    return Object.freeze({
+      ok: false,
+      classification: POST_SYNC_REFRESH_CLASSIFICATIONS.APPROVAL_REQUIRED_OPENCLAW,
+      blocker: 'OPENCLAW_REFRESH_APPROVAL_REQUIRED',
+      plan,
+      exactHeadProofOk: false,
+      safeRefreshesCompleted: true,
+      results: Object.freeze(results),
+    });
+  }
+
+  return Object.freeze({
+    ok: true,
+    classification: plan.targetIds.length
+      ? POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_COMPLETE
+      : POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED,
+    blocker: '',
+    plan,
+    exactHeadProofOk: true,
+    sourceHead: String(afterHead).toLowerCase(),
+    results: Object.freeze(results),
+    finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS',
+  });
+}
+
+export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', afterHead = '' } = {}) {
+  const plan = result.plan || {};
+  return Object.freeze({
+    schemaVersion: POST_SYNC_REFRESH_SCHEMA,
+    beforeHead: validHead(beforeHead) ? String(beforeHead).toLowerCase() : '',
+    afterHead: validHead(afterHead) ? String(afterHead).toLowerCase() : '',
+    classification: result.classification || plan.classification || POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
+    blocker: String(result.blocker || ''),
+    targetIds: Array.isArray(plan.targetIds) ? [...plan.targetIds] : [],
+    changedPathCount: Number(plan.changedPathCount || 0),
+    noRuntimePathCount: Number(plan.noRuntimePathCount || 0),
+    openClawPathCount: Number(plan.openClawPathCount || 0),
+    unknownPathCount: Number(plan.unknownPathCount || 0),
+    unsafePathCount: Number(plan.unsafePathCount || 0),
+    exactHeadProofOk: result.exactHeadProofOk === true,
+    safeRefreshesCompleted: result.safeRefreshesCompleted === true,
+    resultTargets: Array.isArray(result.results) ? result.results.map((entry) => ({
+      targetId: entry.targetId,
+      ok: entry.ok === true,
+      exactHeadProofOk: entry.exactHeadProofOk === true,
+      sourceHead: validHead(entry.sourceHead) ? String(entry.sourceHead).toLowerCase() : '',
+      blocker: String(entry.blocker || ''),
+    })) : [],
+    arbitraryShellAllowed: false,
+    arbitraryPowerShellAllowed: false,
+    destructiveGitAllowed: false,
+    unrelatedTaskMutationAllowed: false,
+    liveOpenClawUpdateAllowed: false,
+    pathValuesPublished: false,
+    finalVerdict: result.ok === true ? 'POST_SYNC_RUNTIME_REFRESH_PASS' : 'POST_SYNC_RUNTIME_REFRESH_BLOCKED',
+  });
+}

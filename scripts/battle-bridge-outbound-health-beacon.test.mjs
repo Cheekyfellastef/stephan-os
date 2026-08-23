@@ -10,7 +10,6 @@ import {
   buildBattleBridgeOutboundBeaconBody,
   projectBeaconStatus,
   projectMailboxIngressLiveness,
-  projectMailboxReceipts,
 } from './battle-bridge-outbound-health-beacon.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -89,12 +88,9 @@ test('beacon publishes only fixed repository/issue identity and safe authority f
       postSyncRefresh: status({ finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS' }),
       ignition: status({ status: 'READY' }),
       battleBridge: status(),
-      recoveryMesh: status({ classification: 'RECOVERY_MESH_ALL_SERVICES_HEALTHY' }),
-      recoveryMeshLaunch: status({ classification: 'RECOVERY_MESH_RUNNER_COMPLETED' }),
-      workerWatchdog: status({ classification: 'WORKER_WATCHDOG_HEALTHY' }),
-      workerWatchdogLaunch: status({ classification: 'WATCHDOG_RUNNER_COMPLETED' }),
-      mailbox: status({ status: 'READY' }),
-      missionWorker: status({ status: 'HEALTHY' }),
+      recoveryMesh: status(),
+      mailbox: status(),
+      missionWorker: status(),
     },
   });
   assert.equal(record.repository, BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY);
@@ -110,21 +106,6 @@ test('beacon publishes only fixed repository/issue identity and safe authority f
   assert.equal(record.liveOpenClawUpdateAllowed, false);
   assert.equal(record.pcRestartAllowed, false);
   assert.equal(record.secretValuesPublished, false);
-  assert.deepEqual(record.mailboxReceipts, []);
-  assert.equal(record.blockerCount, 0);
-  assert.equal(record.freshness, 'FRESH');
-  assert.deepEqual(record.surfaces.map((surface) => surface.id), [
-    'githubSync',
-    'postSyncRefresh',
-    'ignition',
-    'battleBridge',
-    'recoveryMesh',
-    'recoveryMeshLaunch',
-    'workerWatchdog',
-    'workerWatchdogLaunch',
-    'mailbox',
-    'missionWorker',
-  ]);
 });
 
 test('missing and stale status cannot be painted green', () => {
@@ -132,91 +113,6 @@ test('missing and stale status cannot be painted green', () => {
   assert.equal(missing.state, 'UNPROVEN');
   const stale = projectBeaconStatus(status({ timestampUtc: '2026-08-18T14:20:00Z' }), { id: 'x', staleAfterMs: 60_000 }, Date.parse('2026-08-18T14:31:00Z'));
   assert.equal(stale.state, 'STALE');
-});
-
-test('fresh typed watchdog and Recovery Mesh failures degrade the beacon instead of disappearing', () => {
-  const record = buildBattleBridgeOutboundBeacon({
-    sourceHead: HEAD,
-    now: new Date('2026-08-18T14:31:00.000Z'),
-    statusRecords: {
-      recoveryMeshLaunch: status({ classification: 'RECOVERY_MESH_RUNNER_FAILED', blocker: 'RECOVERY_MESH_RUNNER_FAILED' }),
-      workerWatchdog: status({ classification: 'WORKER_WATCHDOG_RECOVERY_FAILED', blocker: 'WORKER_WATCHDOG_RECOVERY_FAILED' }),
-      workerWatchdogLaunch: status({ classification: 'WATCHDOG_RUNNER_COMPLETED' }),
-    },
-  });
-  assert.equal(record.freshness, 'DEGRADED');
-  assert.ok(record.blockers.includes('recoveryMeshLaunch:RECOVERY_MESH_RUNNER_FAILED'));
-  assert.ok(record.blockers.includes('workerWatchdog:WORKER_WATCHDOG_RECOVERY_FAILED'));
-});
-
-test('mailbox receipt projection exposes bounded correlation truth and rejects unsafe detail', () => {
-  const receipts = projectMailboxReceipts({
-    activeReceipt: {
-      requestId: 'bb-recovery-wake-000c1cd1-20260818t1554z',
-      operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
-      state: 'RUNNING',
-      expectedHead: HEAD,
-      heartbeatAt: '2026-08-18T15:58:00.000Z',
-      blocker: '',
-      finalVerdict: 'RECOVERY_WAKE_RUNNING',
-    },
-    recentReceipts: [
-      {
-        requestId: 'bb-recovery-wake-000c1cd1-20260818t1554z',
-        operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
-        state: 'DONE',
-        expectedHead: HEAD,
-        completedAt: '2026-08-18T15:59:00.000Z',
-        blocker: '',
-        finalVerdict: 'RECOVERY_MESH_WAKE_DISPATCHED',
-      },
-      {
-        requestId: 'bb-diag-safe-20260818t1559z',
-        operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
-        state: 'BLOCKED',
-        expectedHead: HEAD,
-        completedAt: '2026-08-18T16:00:00.000Z',
-        blocker: 'C:\\Users\\secret\\leak.txt',
-        finalVerdict: 'COMMAND_EXECUTION_BLOCKED',
-      },
-      { requestId: '../unsafe', operation: 'ARBITRARY', state: 'DONE' },
-    ],
-  });
-
-  assert.equal(receipts.length, 2);
-  assert.equal(receipts[0].requestId, 'bb-recovery-wake-000c1cd1-20260818t1554z');
-  assert.equal(receipts[0].state, 'RUNNING');
-  assert.equal(receipts[0].expectedHead, HEAD);
-  assert.equal(receipts[1].requestId, 'bb-diag-safe-20260818t1559z');
-  assert.equal(receipts[1].blocker, '');
-  assert.equal(receipts[1].finalVerdict, 'COMMAND_EXECUTION_BLOCKED');
-});
-
-test('beacon carries recent sanitized mailbox receipts for remote recovery correlation', () => {
-  const record = buildBattleBridgeOutboundBeacon({
-    sourceHead: HEAD,
-    now: new Date('2026-08-18T16:01:00.000Z'),
-    statusRecords: {
-      mailbox: status({
-        status: 'READY',
-        timestampUtc: '2026-08-18T16:00:59.000Z',
-        recentReceipts: [{
-          requestId: 'bb-recovery-wake-000c1cd1-20260818t1554z',
-          operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
-          state: 'DONE',
-          expectedHead: HEAD,
-          completedAt: '2026-08-18T16:00:30.000Z',
-          blocker: 'RECOVERY_MESH_TASK_START_FAILED',
-          finalVerdict: 'COMMAND_EXECUTION_BLOCKED',
-        }],
-      }),
-    },
-  });
-
-  assert.equal(record.mailboxReceipts.length, 1);
-  assert.equal(record.mailboxReceipts[0].requestId, 'bb-recovery-wake-000c1cd1-20260818t1554z');
-  assert.equal(record.mailboxReceipts[0].operation, 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH');
-  assert.equal(record.mailboxReceipts[0].blocker, 'RECOVERY_MESH_TASK_START_FAILED');
 });
 
 test('fresh receipt-index READY cannot hide an exact-head command that never reaches ACCEPTED', () => {
@@ -310,4 +206,45 @@ test('a receipt for the same request id on the wrong head cannot mask exact-head
 test('wrong-head foreign and still-within-grace commands do not create false ingress blockers', () => {
   const comments = [
     commandComment({ requestId: 'wrong-head-command-0001', expectedHead: 'b'.repeat(40) }),
-    comm
+    commandComment({ requestId: 'foreign-command-0000001', user: 'attacker' }),
+    commandComment({ requestId: 'foreign-repository-0001', repository: 'other/repo' }),
+    commandComment({ requestId: 'fresh-command-000000001', createdAt: '2026-08-21T00:15:00.000Z' }),
+  ];
+  const ingress = projectMailboxIngressLiveness(comments, {
+    sourceHead: HEAD,
+    now: new Date('2026-08-21T00:20:00.000Z'),
+  });
+  assert.deepEqual(ingress, { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
+});
+
+test('unavailable ingress observation downgrades a locally READY mailbox but never overrides an already-stale mailbox', () => {
+  const unavailable = { state: 'UNPROVEN', blocker: 'MAILBOX_INGRESS_OBSERVATION_UNAVAILABLE', pendingRequestCount: 0 };
+  const ready = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-08-21T00:20:00.000Z'),
+    statusRecords: { mailbox: status({ timestampUtc: '2026-08-21T00:19:00.000Z', status: 'READY' }) },
+    mailboxIngressObservation: unavailable,
+  }).surfaces.find((surface) => surface.id === 'mailbox');
+  assert.equal(ready.state, 'UNPROVEN');
+  assert.equal(ready.blocker, 'MAILBOX_INGRESS_OBSERVATION_UNAVAILABLE');
+
+  const stale = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-08-21T00:20:00.000Z'),
+    statusRecords: { mailbox: status({ timestampUtc: '2026-08-20T20:00:00.000Z', status: 'READY' }) },
+    mailboxIngressObservation: unavailable,
+  }).surfaces.find((surface) => surface.id === 'mailbox');
+  assert.equal(stale.state, 'STALE');
+});
+
+test('beacon body is one bounded marker plus json record', () => {
+  const record = buildBattleBridgeOutboundBeacon({ sourceHead: HEAD, now: new Date('2026-08-18T14:31:00Z') });
+  const body = buildBattleBridgeOutboundBeaconBody(record);
+  assert.match(body, new RegExp(BATTLE_BRIDGE_OUTBOUND_BEACON_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(body, /stephanos\.battle-bridge-outbound-health-beacon\.v1/);
+  assert.doesNotMatch(body, /password|private key|authorization|bearer/i);
+});
+
+test('invalid source head fails closed', () => {
+  assert.throws(() => buildBattleBridgeOutboundBeacon({ sourceHead: 'not-a-head' }), /OUTBOUND_BEACON_SOURCE_HEAD_INVALID/);
+});
