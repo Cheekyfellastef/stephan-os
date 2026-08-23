@@ -189,6 +189,10 @@ const TERMINALIZABLE_OWNER_COMMAND_BLOCKERS = new Set([
   'WINDOWS_BROWSER_PROOF_TARGET_NOT_ALLOWED',
 ]);
 
+export function isTerminalizableOwnerCommandBlocker(value) {
+  return TERMINALIZABLE_OWNER_COMMAND_BLOCKERS.has(String(value || ''));
+}
+
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
 }
