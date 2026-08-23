@@ -437,7 +437,7 @@ test('fixed ignition child receives one-use approval only over fd 3 and nested G
   assert.equal(result.ok, true);
   assert.deepEqual(spawnOptions.stdio, ['ignore', 'pipe', 'pipe', 'pipe']);
   assert.equal(spawnOptions.env.NODE_OPTIONS, undefined);
-  assert.equal(spawnOptions.env.GIT_CONFIG_GLOBAL, 'NUL');
+  assert.equal(spawnOptions.env.GIT_CONFIG_GLOBAL, process.platform === 'win32' ? 'NUL' : '/dev/null');
   assert.equal(Number(spawnOptions.env.GIT_CONFIG_COUNT) > 0, true);
   const approval = JSON.parse(approvalText);
   assert.equal(approval.schemaVersion, BATTLE_BRIDGE_IGNITION_PIPE_APPROVAL_SCHEMA);
