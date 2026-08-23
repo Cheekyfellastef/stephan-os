@@ -8,7 +8,7 @@ import {
   buildIndependentReviewExecutionContextV1,
 } from '../shared/agents/independentReviewExecutionContextV1.mjs';
 
-const REVIEW_WRAPPER = 'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs';
+const REVIEW_WRAPPER = 'scripts/independent-merge-security-review-with-openclaw-specialist-v1.mjs';
 const PREFLIGHT_FILE = 'independent-review-workflow-dispatch-preflight.json';
 const SYNTHETIC_EVENT_FILE = 'independent-review-workflow-dispatch-event.json';
 
