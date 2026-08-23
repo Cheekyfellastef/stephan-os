@@ -118,7 +118,7 @@ test('exact non-allowlisted legacy listener routes through one fixed migration t
   assert.equal(result.verifiedOwnedProcessTerminationOnly, true);
   assert.equal(result.arbitraryProcessKillAllowed, false);
   assert.equal(setup.calls.length, 3);
-  assert.match(setup.calls[0].args.join(' '), /restart-approved-stephanos-runtime\.ps1 .* -Target backend .* -ExpectedHead a{40}/);
+  assert.match(setup.calls[0].args.join(' '), /restart-approved-stephanos-runtime\.ps1\s+-Target backend\s+-ExpectedHead a{40}\s+-TimeoutSeconds 90/);
   assert.deepEqual(setup.calls[1].args, [
     '-NoProfile', '-ExecutionPolicy', 'Bypass',
     '-File', 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os\\scripts\\windows\\migrate-legacy-stephanos-backend-listener-v1.ps1',
