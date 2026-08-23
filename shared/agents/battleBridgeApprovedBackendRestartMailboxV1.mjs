@@ -162,7 +162,6 @@ export async function executeApprovedBackendRestartOnBattleBridge(command = {}, 
   const legacyMigrationScript = win32.resolve(repoRoot, 'scripts', 'windows', 'migrate-legacy-stephanos-backend-listener-v1.ps1');
   const powershellExe = win32.resolve(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   if (!existsSyncFn(restartScript)) return fail('APPROVED_BACKEND_RESTART_SCRIPT_MISSING');
-  if (!existsSyncFn(legacyMigrationScript)) return fail('LEGACY_BACKEND_MIGRATION_SCRIPT_MISSING');
   if (!existsSyncFn(powershellExe)) return fail('APPROVED_BACKEND_RESTART_POWERSHELL_MISSING');
 
   const restartArgs = [
@@ -184,6 +183,12 @@ export async function executeApprovedBackendRestartOnBattleBridge(command = {}, 
       });
     }
 
+    if (!existsSyncFn(legacyMigrationScript)) {
+      return fail('LEGACY_BACKEND_MIGRATION_SCRIPT_MISSING', {
+        finalVerdict: 'APPROVED_BACKEND_RESTART_BLOCKED',
+        expectedHead: shape.expectedHead,
+      });
+    }
     const migrationInvocation = runPowerShell(
       spawnSyncFn,
       powershellExe,
