@@ -8,10 +8,38 @@ import test from 'node:test';
 
 import {
   BATTLE_BRIDGE_CANONICAL_REMOTE_URL,
+  BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE,
+  battleBridgeGitFixedConfigArgs,
   createBattleBridgeMinimalChildEnvironment,
   inspectBattleBridgeGitTopology,
+  resolveBattleBridgeGitExecution,
+  resolveBattleBridgeGitExecutable,
   validateBattleBridgeLocalGitConfiguration,
 } from './battleBridgeExecutionBoundaryV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
+
+test('fixed Git executable is absolute and platform-canonical', () => {
+  assert.equal(resolveBattleBridgeGitExecutable('win32'), BATTLE_BRIDGE_WINDOWS_HOST.git);
+  assert.equal(resolveBattleBridgeGitExecutable('linux'), BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE);
+  assert.equal(resolveBattleBridgeGitExecutable('darwin'), BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE);
+  assert.equal(path.isAbsolute(resolveBattleBridgeGitExecutable('linux')), true);
+  assert.throws(
+    () => resolveBattleBridgeGitExecutable('freebsd'),
+    /BATTLE_BRIDGE_GIT_PLATFORM_UNSUPPORTED:freebsd/,
+  );
+  const posix = resolveBattleBridgeGitExecution({
+    platform: 'linux',
+    environment: { PATH: '/attacker', NODE_OPTIONS: '--require=/attacker/inject.cjs' },
+  });
+  assert.equal(posix.executable, BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE);
+  assert.equal(posix.fixedConfigArgs.includes('core.hooksPath=/dev/null'), true);
+  assert.equal(posix.fixedConfigArgs.includes('core.attributesFile=/dev/null'), true);
+  assert.equal(posix.environment.PATH, '/usr/bin:/bin');
+  assert.equal(posix.environment.GIT_CONFIG_GLOBAL, '/dev/null');
+  assert.equal(posix.environment.GIT_GRAFT_FILE, '/dev/null');
+  assert.equal(posix.environment.NODE_OPTIONS, undefined);
+  assert.deepEqual(battleBridgeGitFixedConfigArgs('win32').slice(0, 2), ['-c', 'core.hooksPath=NUL']);
+});
 
 test('minimal child environment removes Node/Git/shell injection variables', () => {
   const result = createBattleBridgeMinimalChildEnvironment({
@@ -24,7 +52,7 @@ test('minimal child environment removes Node/Git/shell injection variables', () 
     GIT_REPLACE_REF_BASE: 'refs/evil/',
     COMSPEC: 'C:\\attacker\\cmd.exe',
     PATH: 'C:\\attacker',
-  }, { git: true });
+  }, { git: true, platform: 'win32' });
   assert.equal(result.USERPROFILE, 'C:\\Users\\Stephan');
   assert.equal(result.NODE_OPTIONS, undefined);
   assert.equal(result.NODE_PATH, undefined);
@@ -44,6 +72,7 @@ test('minimal child environment removes Node/Git/shell injection variables', () 
   assert.equal(result.GIT_NO_REPLACE_OBJECTS, '1');
   assert.equal(result.GIT_GRAFT_FILE, 'NUL');
   assert.equal(result.PATH.includes('attacker'), false);
+  assert.equal(result.PATH.includes('C:\\Windows\\System32\\WindowsPowerShell\\v1.0'), true);
 });
 
 test('Git topology rejects graft, common-dir, and object-alternate redirects', () => {

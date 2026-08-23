@@ -1,8 +1,16 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
 
 export const BATTLE_BRIDGE_CANONICAL_REMOTE_URL = 'https://github.com/Cheekyfellastef/stephan-os.git';
+export const BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE = '/usr/bin/git';
+
+export function resolveBattleBridgeGitExecutable(platform = process.platform) {
+  if (platform === 'win32') return BATTLE_BRIDGE_WINDOWS_HOST.git;
+  if (platform === 'linux' || platform === 'darwin') return BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE;
+  throw new Error(`BATTLE_BRIDGE_GIT_PLATFORM_UNSUPPORTED:${platform}`);
+}
 
 export function battleBridgeCanonicalRepositoryArgs(repoRoot) {
   const root = path.resolve(String(repoRoot || ''));
@@ -35,16 +43,26 @@ export const BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS = Object.freeze([
   '-c', 'maintenance.auto=false',
 ]);
 
-const BATTLE_BRIDGE_GIT_FIXED_ENVIRONMENT_CONFIG = Object.freeze(
-  BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.reduce((entries, value, index, values) => {
-    if (value !== '-c') return entries;
-    const assignment = String(values[index + 1] || '');
-    const separator = assignment.indexOf('=');
-    if (separator < 1) throw new Error('BATTLE_BRIDGE_FIXED_GIT_CONFIG_INVALID');
-    entries.push(Object.freeze([assignment.slice(0, separator), assignment.slice(separator + 1)]));
-    return entries;
-  }, []),
-);
+export function battleBridgeGitFixedConfigArgs(platform = process.platform) {
+  resolveBattleBridgeGitExecutable(platform);
+  const nullDevice = platform === 'win32' ? 'NUL' : '/dev/null';
+  return Object.freeze(BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.map((value) => (
+    value.endsWith('=NUL') ? `${value.slice(0, -3)}${nullDevice}` : value
+  )));
+}
+
+function fixedEnvironmentConfig(fixedConfigArgs) {
+  return Object.freeze(
+    fixedConfigArgs.reduce((entries, value, index, values) => {
+      if (value !== '-c') return entries;
+      const assignment = String(values[index + 1] || '');
+      const separator = assignment.indexOf('=');
+      if (separator < 1) throw new Error('BATTLE_BRIDGE_FIXED_GIT_CONFIG_INVALID');
+      entries.push(Object.freeze([assignment.slice(0, separator), assignment.slice(separator + 1)]));
+      return entries;
+    }, []),
+  );
+}
 
 const SAFE_WINDOWS_ENVIRONMENT_KEYS = Object.freeze([
   'APPDATA',
@@ -61,6 +79,7 @@ const SAFE_WINDOWS_ENVIRONMENT_KEYS = Object.freeze([
   'USERPROFILE',
   'WINDIR',
 ]);
+const SAFE_POSIX_ENVIRONMENT_KEYS = Object.freeze(['LANG', 'LC_ALL', 'TEMP', 'TMP', 'TMPDIR', 'USER']);
 
 function readCaseInsensitive(environment, expectedKey) {
   const key = Object.keys(environment || {}).find((candidate) => candidate.toUpperCase() === expectedKey);
@@ -68,23 +87,29 @@ function readCaseInsensitive(environment, expectedKey) {
   return value && !/[\0\r\n]/.test(value) ? value : '';
 }
 
-export function createBattleBridgeMinimalChildEnvironment(environment = process.env, { git = false } = {}) {
+export function createBattleBridgeMinimalChildEnvironment(environment = process.env, { git = false, platform = process.platform } = {}) {
+  resolveBattleBridgeGitExecutable(platform);
   const sanitized = Object.create(null);
-  for (const key of SAFE_WINDOWS_ENVIRONMENT_KEYS) {
+  const safeKeys = platform === 'win32' ? SAFE_WINDOWS_ENVIRONMENT_KEYS : SAFE_POSIX_ENVIRONMENT_KEYS;
+  for (const key of safeKeys) {
     const value = readCaseInsensitive(environment, key);
     if (value) sanitized[key] = value;
   }
-  sanitized.PATH = 'C:\\Windows\\System32;C:\\Windows;C:\\Program Files\\nodejs;C:\\Program Files\\Git\\cmd';
-  sanitized.PATHEXT = '.COM;.EXE;.BAT;.CMD';
+  sanitized.PATH = platform === 'win32'
+    ? 'C:\\Windows\\System32;C:\\Windows;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Program Files\\nodejs;C:\\Program Files\\Git\\cmd'
+    : '/usr/bin:/bin';
+  if (platform === 'win32') sanitized.PATHEXT = '.COM;.EXE;.BAT;.CMD';
   if (git) {
-    sanitized.GIT_CONFIG_COUNT = String(BATTLE_BRIDGE_GIT_FIXED_ENVIRONMENT_CONFIG.length);
-    BATTLE_BRIDGE_GIT_FIXED_ENVIRONMENT_CONFIG.forEach(([key, value], index) => {
+    const fixedConfig = fixedEnvironmentConfig(battleBridgeGitFixedConfigArgs(platform));
+    const nullDevice = platform === 'win32' ? 'NUL' : '/dev/null';
+    sanitized.GIT_CONFIG_COUNT = String(fixedConfig.length);
+    fixedConfig.forEach(([key, value], index) => {
       sanitized[`GIT_CONFIG_KEY_${index}`] = key;
       sanitized[`GIT_CONFIG_VALUE_${index}`] = value;
     });
-    sanitized.GIT_CONFIG_GLOBAL = 'NUL';
+    sanitized.GIT_CONFIG_GLOBAL = nullDevice;
     sanitized.GIT_CONFIG_NOSYSTEM = '1';
-    sanitized.GIT_GRAFT_FILE = 'NUL';
+    sanitized.GIT_GRAFT_FILE = nullDevice;
     sanitized.GIT_NO_LAZY_FETCH = '1';
     sanitized.GIT_NO_REPLACE_OBJECTS = '1';
     sanitized.GIT_OPTIONAL_LOCKS = '0';
@@ -93,6 +118,17 @@ export function createBattleBridgeMinimalChildEnvironment(environment = process.
     sanitized.GCM_INTERACTIVE = 'Never';
   }
   return Object.freeze(sanitized);
+}
+
+export function resolveBattleBridgeGitExecution({
+  platform = process.platform,
+  environment = process.env,
+} = {}) {
+  return Object.freeze({
+    executable: resolveBattleBridgeGitExecutable(platform),
+    fixedConfigArgs: battleBridgeGitFixedConfigArgs(platform),
+    environment: createBattleBridgeMinimalChildEnvironment(environment, { git: true, platform }),
+  });
 }
 
 function parseNullConfig(output = '') {

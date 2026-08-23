@@ -11,31 +11,32 @@ import {
   BATTLE_BRIDGE_IGNITION_PHASE_STATES,
   collectCanonicalIgnitionSourceTruth,
   createBattleBridgeSupervisorStatus,
-  collectOpenClawGateway18789ProcessProof,
-  collectServedRuntimeExactHeadProof,
   evaluateCanonicalIgnitionSourceTruth,
-  OPENCLAW_18789_PROCESS_PROOF_SCHEMA,
+  getCurrentGitHead,
   projectBattleBridgeSupervisorStatus,
   resolveBackendRepairExecution,
   runApprovedBackend8787Start,
   runApprovedOpenClawGateway18789Start,
   runCanonicalSupervisorHousekeep,
+  runCanonicalIgnitionSourceTruthReport,
   defaultBattleBridgeSharedWorkspace,
-  runBattleBridgeIgnitionSupervisor as runBattleBridgeIgnitionSupervisorImpl,
+  evaluateBattleBridgeMutationHeadBinding,
+  runBattleBridgeIgnitionSupervisor,
   evaluateServedRuntimeExactHeadProof,
-  validateOpenClawGateway18789ProcessProofRecord,
 } from './battle-bridge-ignition-supervisor.mjs';
 import { buildOpenClawGatewayStartupTarget, npmGlobalBinCandidatesForOpenClaw, resolveOpenClawGatewayStartupExecution } from '../shared/agents/openClawGatewayStartup.mjs';
 import {
   BATTLE_BRIDGE_CANONICAL_REMOTE_URL,
   BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+  BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE,
   battleBridgeCanonicalRepositoryArgs,
+  battleBridgeGitFixedConfigArgs,
+  resolveBattleBridgeGitExecutable,
 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
 
-const READY_HEAD = '51600ceb00000000000000000000000000000000';
-const readyRuntimeProof = async () => ({ ready: true, currentHead: READY_HEAD, healthOk: true, distOk: true, gitCommitMatches: true, runtimeMarkerMatches: true, gitCommit: READY_HEAD, runtimeMarker: `antifriction-live-v3::${READY_HEAD}::fixture` });
+const readyRuntimeProof = async () => ({ ready: true, currentHead: '51600ceb00000000000000000000000000000000', healthOk: true, distOk: true, gitCommitMatches: true, runtimeMarkerMatches: true, gitCommit: '51600ceb', runtimeMarker: 'antifriction-live-v3::51600ceb::fixture' });
 
 const readyServices = {
   backend: { ready: true },
@@ -43,6 +44,16 @@ const readyServices = {
   'stephanos-ui': { ready: true },
   'shared-workspace': { ready: true },
 };
+
+function factsFor({ backend = true, openclaw = true, ui = true, stale = [], caveats = [], blockers = [] } = {}) {
+  return {
+    observedServices: { ...readyServices, backend: { ready: backend }, 'openclaw-gateway': { ready: openclaw }, 'stephanos-ui': { ready: ui }, 'shared-workspace': { ready: stale.length === 0 } },
+    staleWorkspaceRecords: stale,
+    caveats,
+    safetyBlockers: blockers,
+    finalVerdict: backend && openclaw && ui && stale.length === 0 && blockers.length === 0 ? 'ready' : 'partial-ui-missing',
+  };
+}
 
 function canonicalSourceTruth(overrides = {}) {
   return {
@@ -69,6 +80,9 @@ function runSourceCollectorFixture({
   statusBefore = '',
   statusAfter = statusBefore,
   statusFinal = statusAfter,
+  ignoredRuntimeChildrenBefore = '',
+  ignoredRuntimeChildrenAfter = ignoredRuntimeChildrenBefore,
+  ignoredRuntimeChildrenFinal = ignoredRuntimeChildrenAfter,
   configurationBefore = COLLECTOR_CONFIG,
   configurationAfter = configurationBefore,
   trackedVisibilityBefore = 'H tracked-source.mjs\n',
@@ -87,9 +101,11 @@ function runSourceCollectorFixture({
   divergence = '0\t0\n',
   failOperation = '',
   topologyAfter = null,
+  platform = 'win32',
   environment = { PATH: 'C:\\attacker', NODE_OPTIONS: '--require=C:\\attacker\\inject.cjs' },
 } = {}) {
   const calls = [];
+  const ignoredRuntimeScanCalls = [];
   const counts = Object.create(null);
   let topologyCalls = 0;
   const topologyOptions = [];
@@ -110,7 +126,8 @@ function runSourceCollectorFixture({
     if (operation === failOperation) return { status: 1, stdout: '', stderr: 'fixture failure' };
     if (operation === 'config') return { status: 0, stdout: counts.config === 1 ? configurationBefore : configurationAfter, stderr: '' };
     if (operation === 'ls-files') {
-      return { status: 0, stdout: [trackedVisibilityBefore, trackedVisibilityAfter, trackedVisibilityFinal][counts['ls-files'] - 1], stderr: '' };
+      counts.trackedVisibility = Number(counts.trackedVisibility || 0) + 1;
+      return { status: 0, stdout: [trackedVisibilityBefore, trackedVisibilityAfter, trackedVisibilityFinal][counts.trackedVisibility - 1], stderr: '' };
     }
     if (operation === 'status') {
       return { status: 0, stdout: [statusBefore, statusAfter, statusFinal][counts.status - 1], stderr: '' };
@@ -141,113 +158,39 @@ function runSourceCollectorFixture({
   const result = collectCanonicalIgnitionSourceTruth({
     cwd: '/canonical/repo',
     environment,
+    platform,
     spawnSyncFn,
     inspectTopologyFn,
+    scanIgnoredRuntimeAggregatePathsFn: ({ repoRoot, aggregatePaths }) => {
+      ignoredRuntimeScanCalls.push({ repoRoot, aggregatePaths });
+      const index = ignoredRuntimeScanCalls.length - 1;
+      return [ignoredRuntimeChildrenBefore, ignoredRuntimeChildrenAfter, ignoredRuntimeChildrenFinal][index] || '';
+    },
   });
-  return { result, calls, topologyCalls, topologyOptions };
-}
-
-function factsFor({ backend = true, openclaw = true, ui = true, stale = [], caveats = [], blockers = [] } = {}) {
-  return {
-    observedServices: { ...readyServices, backend: { ready: backend }, 'openclaw-gateway': { ready: openclaw }, 'stephanos-ui': { ready: ui }, 'shared-workspace': { ready: stale.length === 0 } },
-    staleWorkspaceRecords: stale,
-    caveats,
-    safetyBlockers: blockers,
-    finalVerdict: backend && openclaw && ui && stale.length === 0 && blockers.length === 0 ? 'ready' : 'partial-ui-missing',
-  };
-}
-
-const canonicalOpenClawIdentity = Object.freeze({
-  product: 'OpenClaw',
-  runtimeId: 'openclaw-runtime-fixture',
-  status: 'ready',
-});
-
-const PROCESS_PROOF_APPDATA = 'C:\\Users\\Fixture\\AppData\\Roaming';
-const PROCESS_PROOF_ENTRYPOINT = path.win32.join(PROCESS_PROOF_APPDATA, 'npm', 'node_modules', 'openclaw', 'openclaw.mjs');
-const PROCESS_PROOF_OWNER_SID = 'S-1-5-21-1000-2000-3000-1001';
-
-function canonicalProcessProofRecord(overrides = {}) {
-  return {
-    schemaVersion: OPENCLAW_18789_PROCESS_PROOF_SCHEMA,
-    ok: true,
-    pid: 18789,
-    parentPid: 18788,
-    processName: 'node.exe',
-    executablePath: BATTLE_BRIDGE_WINDOWS_HOST.node,
-    executableCanonical: true,
-    executableTokenCanonical: true,
-    executableToken: BATTLE_BRIDGE_WINDOWS_HOST.node,
-    entrypointCanonical: true,
-    entrypointToken: PROCESS_PROOF_ENTRYPOINT,
-    gatewayCommandCanonical: true,
-    gatewayToken: 'gateway',
-    gatewayActionToken: 'run',
-    gatewayPortToken: '',
-    commandTokenCount: 4,
-    commandLineCanonical: true,
-    currentOwnerSid: PROCESS_PROOF_OWNER_SID,
-    processOwnerSid: PROCESS_PROOF_OWNER_SID,
-    ownerSidMatches: true,
-    expectedStarterPid: 0,
-    starterPidBound: true,
-    supportedStarterLineage: true,
-    starterLineageKind: 'canonical-gateway-cmd',
-    starterCommandCanonical: true,
-    supportedStarterPid: 18788,
-    supportedStarterExecutablePath: BATTLE_BRIDGE_WINDOWS_HOST.cmd,
-    supportedStarterGatewayPath: path.win32.join('C:\\Users\\Fixture', '.openclaw', 'gateway.cmd'),
-    supportedStarterCommandShape: 'cmd-d-s-c',
-    lineageCanonical: true,
-    ancestorPids: [18788],
-    listenerCount: 1,
-    localAddress: '127.0.0.1',
-    ...overrides,
-  };
-}
-
-function canonicalOpenClawProcessProofResult(overrides = {}) {
-  return Object.freeze({
-    ok: true,
-    pid: 18789,
-    parentPid: 18788,
-    processName: 'node.exe',
-    executablePath: BATTLE_BRIDGE_WINDOWS_HOST.node,
-    ownerSid: PROCESS_PROOF_OWNER_SID,
-    localAddress: '127.0.0.1',
-    starterLineageKind: 'canonical-gateway-cmd',
-    canonicalGatewayStarterLineage: true,
-    listenerObserved: true,
-    ancestorPids: Object.freeze([18788]),
-    ...overrides,
-  });
-}
-
-const canonicalOpenClawProcessProof = async () => canonicalOpenClawProcessProofResult();
-
-const readyOpenClawAdapter = async () => Object.freeze({
-  ready: true,
-  started: false,
-  reusedExistingRuntime: true,
-  healthProof: Object.freeze({ ready: true, identityCanonical: true, processCanonical: true }),
-});
-
-function runBattleBridgeIgnitionSupervisor(options = {}) {
-  return runBattleBridgeIgnitionSupervisorImpl({
-    openClawStartFn: readyOpenClawAdapter,
-    ...options,
-  });
+  return { result, calls, ignoredRuntimeScanCalls, topologyCalls, topologyOptions };
 }
 
 test('supervisor status model exposes required phases and states', () => {
   const status = createBattleBridgeSupervisorStatus();
   assert.deepEqual(Object.keys(status.phases), [...BATTLE_BRIDGE_IGNITION_PHASES]);
   assert.deepEqual(BATTLE_BRIDGE_IGNITION_PHASES.slice(0, 2), ['source truth', 'housekeeping']);
+  assert.equal(status.currentPhase, 'source truth');
   assert.deepEqual([...BATTLE_BRIDGE_IGNITION_PHASE_STATES], ['pending', 'running', 'ready', 'degraded', 'blocked', 'failed']);
   const updated = projectBattleBridgeSupervisorStatus({ status, phase: 'backend 8787', phaseState: 'ready', readinessReport: factsFor() });
   assert.equal(updated.currentPhase, 'backend 8787');
   assert.equal(updated.services.backend8787.ready, true);
   assert.equal(updated.trafficLight, 'blue');
+});
+
+test('service mutation head binding accepts only the same exact 40-character head', () => {
+  const head = 'a'.repeat(40);
+  assert.deepEqual(evaluateBattleBridgeMutationHeadBinding({ expectedHead: head, observedHead: head }), {
+    ok: true,
+    expectedHead: head,
+    observedHead: head,
+  });
+  assert.equal(evaluateBattleBridgeMutationHeadBinding({ expectedHead: head, observedHead: 'b'.repeat(40) }).ok, false);
+  assert.equal(evaluateBattleBridgeMutationHeadBinding({ expectedHead: 'abc1234', observedHead: 'abc1234' }).ok, false);
 });
 
 test('publisher is refreshed before UI repair and stale records are refreshed by supervisor', async () => {
@@ -269,7 +212,7 @@ test('publisher is refreshed before UI repair and stale records are refreshed by
     runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.equal(result.ok, true);
-  assert.deepEqual(calls.slice(0, 5), ['housekeeping', 'publisher', 'collect-1', 'collect-2', 'repair']);
+  assert.deepEqual(calls.slice(0, 5), ['housekeeping', 'publisher', 'collect-1', 'publisher', 'collect-2']);
   assert.equal(calls.includes('repair'), true);
   assert.equal(calls.includes('publisher'), true);
   assert.equal(fs.existsSync(path.join(workspace, 'status', 'battle-bridge-ignition-supervisor-current.json')), true);
@@ -282,7 +225,7 @@ test('partial-ui-missing triggers repair and ready is only reported after 4173 p
     housekeepFn: () => {},
     publisherFn: async () => {},
     sourceTruthFn: () => canonicalSourceTruth(),
-    collectFactsFn: async () => { collectCount += 1; return factsFor({ ui: collectCount > 2 }); },
+    collectFactsFn: async () => { collectCount += 1; return factsFor({ ui: collectCount > 1 }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['stephanos-ui'].ready ? 'ready' : 'partial-ui-missing' }),
     repairFn: async ({ stdout }) => { calls.push('repair'); stdout.write(JSON.stringify({ ready: true })); return 0; },
     runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
@@ -314,22 +257,42 @@ test('non-main stale branch reports blocker to splash/status model', async () =>
   assert.equal(result.status.phases['source truth'].state, 'blocked');
 });
 
-test('canonical source truth accepts only clean synchronized main tracking origin/main', () => {
-  assert.equal(evaluateCanonicalIgnitionSourceTruth(canonicalSourceTruth()).ok, true);
-  for (const [truth, blockerId] of [
+test('canonical source truth gate accepts only clean synchronized main tracking origin/main', () => {
+  const ready = evaluateCanonicalIgnitionSourceTruth(canonicalSourceTruth());
+  assert.equal(ready.ok, true);
+  assert.equal(ready.publicationState, 'healthy-synced');
+
+  const rejected = [
     [{ publicationState: 'source-truth-unproven', blockedForRemoteTruth: true }, 'source-truth-unproven'],
+    [canonicalSourceTruth({ branch: 'HEAD', detachedHead: true, publicationState: 'detached-head', hasUpstream: false, upstreamBranch: '', headPublished: false, blockedForRemoteTruth: true }), 'detached-source-truth'],
     [canonicalSourceTruth({ branch: 'feature/test' }), 'non-main-source-truth'],
     [canonicalSourceTruth({ upstreamBranch: 'origin/feature' }), 'noncanonical-upstream-source-truth'],
     [canonicalSourceTruth({ publicationState: 'local-uncommitted', workingTreeDirty: true }), 'dirty-source-truth'],
     [canonicalSourceTruth({ head: '', originHead: '' }), 'source-head-truth-unproven'],
     [canonicalSourceTruth({ originHead: 'b'.repeat(40) }), 'source-head-truth-unproven'],
-    [canonicalSourceTruth({ publicationState: 'stale-behind', behindCount: 1 }), 'stale-source-truth'],
+    [canonicalSourceTruth({ publicationState: 'stale-behind', behindCount: 1, headPublished: true }), 'stale-source-truth'],
     [canonicalSourceTruth({ publicationState: 'diverged', aheadCount: 1, behindCount: 1, headPublished: false, blockedForRemoteTruth: true }), 'unpublished-source-truth'],
-  ]) {
+    [canonicalSourceTruth({ publicationState: 'unpublished-local-only', aheadCount: 1, headPublished: false, blockedForRemoteTruth: true }), 'unpublished-source-truth'],
+  ];
+  for (const [truth, blockerId] of rejected) {
     const result = evaluateCanonicalIgnitionSourceTruth(truth);
     assert.equal(result.ok, false);
     assert.equal(result.blocker.id, blockerId);
   }
+});
+
+test('source-truth-only report exposes a canonical head without service mutation', () => {
+  const writes = [];
+  const code = runCanonicalIgnitionSourceTruthReport({
+    sourceTruthFn: () => canonicalSourceTruth(),
+    stdout: { write: (chunk) => writes.push(String(chunk)) },
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(writes.join('')), {
+    ok: true,
+    head: COLLECTOR_HEAD,
+    publicationState: 'healthy-synced',
+  });
 });
 
 test('fixed source collector ignores attacker PATH and fetches only the canonical URL after preflight', () => {
@@ -350,6 +313,20 @@ test('fixed source collector ignores attacker PATH and fetches only the canonica
   assert.equal(fetchCall.options.env.NODE_OPTIONS, undefined);
   assert.equal(fetchCall.options.env.GIT_CONFIG_GLOBAL, 'NUL');
   assert.equal(fetchCall.options.shell, false);
+});
+
+test('fixed source collector selects an absolute platform-valid Git executable on Linux and macOS', () => {
+  for (const platform of ['linux', 'darwin']) {
+    const { result, calls } = runSourceCollectorFixture({
+      platform,
+      environment: { PATH: '/attacker', NODE_OPTIONS: '--require=/attacker/inject.cjs' },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(calls.every((call) => call.command === BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE), true);
+    assert.equal(calls.every((call) => path.isAbsolute(call.command)), true);
+    assert.equal(calls.every((call) => call.options.env.PATH !== '/attacker'), true);
+    assert.equal(calls.every((call) => call.options.env.NODE_OPTIONS === undefined), true);
+  }
 });
 
 test('source dirt blocks before the canonical fetch or any service mutation', () => {
@@ -434,6 +411,25 @@ test('collector aligns dream-memory runtime dirt while secret-shaped children re
   assert.deepEqual(secret.calls.map((call) => call.operationArgs[0]), ['config', 'ls-files', 'status']);
 });
 
+test('collector enumerates ignored log children before accepting the logs runtime aggregate', () => {
+  const benign = runSourceCollectorFixture({
+    statusBefore: '!! logs/\n',
+    ignoredRuntimeChildrenBefore: 'logs/battle-bridge/backend.stdout.log\n',
+  });
+  assert.equal(benign.result.ok, true);
+  assert.equal(benign.ignoredRuntimeScanCalls.length, 3);
+  assert.deepEqual(benign.ignoredRuntimeScanCalls[0], { repoRoot: '/canonical/repo', aggregatePaths: ['logs/'] });
+
+  const secret = runSourceCollectorFixture({
+    statusBefore: '!! logs/\n',
+    ignoredRuntimeChildrenBefore: 'logs/battle-bridge/backend.stdout.log\nlogs/credential.json\n',
+  });
+  assert.equal(secret.result.ok, false);
+  assert.equal(secret.result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
+  assert.equal(secret.ignoredRuntimeScanCalls.length, 1);
+  assert.equal(secret.calls.some((call) => call.operationArgs[0] === 'fetch'), false);
+});
+
 test('collector final recheck rejects source dirt or topology drift after canonical fetch', () => {
   const dirtyAfter = runSourceCollectorFixture({
     statusBefore: '!! logs/\n',
@@ -496,6 +492,7 @@ test('standalone supervisor housekeeping ignores hostile PATH and uses only the 
     {
       cwd,
       environment: { PATH: 'C:\\attacker', NODE_OPTIONS: '--require=C:\\attacker\\inject.cjs' },
+      platform: 'win32',
       spawnSyncFn: (command, args, options) => {
         calls.push({ command, args, options });
         return { status: 0, stdout: '', stderr: '' };
@@ -522,16 +519,48 @@ test('standalone supervisor housekeeping ignores hostile PATH and uses only the 
   assert.equal(calls.every((call) => call.options.shell === false), true);
 });
 
-test('source proof blocks every housekeeping and service mutator before it is called', async () => {
+test('current-head reads use the same fixed Git boundary and never hostile PATH', () => {
+  const expectedHead = 'd'.repeat(40);
+  for (const platform of ['win32', 'linux', 'darwin']) {
+    const calls = [];
+    const head = getCurrentGitHead({
+      cwd: '/canonical/repo',
+      platform,
+      environment: { PATH: platform === 'win32' ? 'C:\\attacker' : '/attacker', NODE_OPTIONS: '--require=attacker.js' },
+      spawnSyncFn: (command, args, options) => {
+        calls.push({ command, args, options });
+        return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+      },
+    });
+    assert.equal(head, expectedHead);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].command, resolveBattleBridgeGitExecutable(platform));
+    assert.deepEqual(calls[0].args, [
+      ...battleBridgeGitFixedConfigArgs(platform),
+      ...battleBridgeCanonicalRepositoryArgs('/canonical/repo'),
+      'rev-parse', 'HEAD',
+    ]);
+    assert.notEqual(calls[0].options.env.PATH, platform === 'win32' ? 'C:\\attacker' : '/attacker');
+    assert.equal(calls[0].options.env.NODE_OPTIONS, undefined);
+    assert.equal(calls[0].options.shell, false);
+  }
+});
+
+test('real evaluator-shaped diverged source blocks before publisher or service mutation', async () => {
   const calls = [];
   const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => { calls.push('housekeeping'); },
     sourceTruthFn: () => {
       calls.push('source-truth');
-      return canonicalSourceTruth({ publicationState: 'diverged', aheadCount: 1, behindCount: 1, headPublished: false, blockedForRemoteTruth: true });
+      return canonicalSourceTruth({
+        publicationState: 'diverged',
+        aheadCount: 1,
+        behindCount: 2,
+        headPublished: false,
+        blockedForRemoteTruth: true,
+      });
     },
-    housekeepFn: () => { calls.push('housekeeping'); },
     publisherFn: async () => { calls.push('publisher'); },
-    collectFactsFn: async () => { calls.push('facts'); return factsFor(); },
     backendStartFn: async () => { calls.push('backend'); },
     openClawStartFn: async () => { calls.push('openclaw'); },
     repairFn: async () => { calls.push('ui'); },
@@ -539,7 +568,117 @@ test('source proof blocks every housekeeping and service mutator before it is ca
   });
   assert.equal(result.ok, false);
   assert.equal(result.status.blockerId, 'unpublished-source-truth');
+  assert.equal(result.status.sourceTruthVerdict.state, 'blocked');
   assert.deepEqual(calls, ['source-truth']);
+});
+
+test('supervisor threads the fixed collector head through backend, UI, and runtime proof without a later head adapter read', async () => {
+  const expectedHead = 'd'.repeat(40);
+  const calls = [];
+  const gitCalls = [];
+  let factsCount = 0;
+  let hostileHeadReads = 0;
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => canonicalSourceTruth({ head: expectedHead, originHead: expectedHead }),
+    cwd: '/canonical/repo',
+    platform: 'linux',
+    environment: { PATH: '/attacker', NODE_OPTIONS: '--require=/attacker/inject.cjs' },
+    spawnSyncFn: (command, args, options) => {
+      gitCalls.push({ command, args, options });
+      return { status: 0, stdout: '', stderr: '' };
+    },
+    collectFactsFn: async ({ execFile }) => {
+      execFile('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: '/canonical/repo', encoding: 'utf8' });
+      factsCount += 1;
+      if (factsCount === 1) return factsFor({ backend: false, ui: false });
+      if (factsCount === 2) return factsFor({ ui: false });
+      return factsFor();
+    },
+    plannerFn: (facts) => facts,
+    backendStartFn: async ({ expectedHead: receivedHead }) => {
+      calls.push({ phase: 'backend', expectedHead: receivedHead });
+      return { started: true, exitCode: 0 };
+    },
+    repairFn: async ({ expectedHead: receivedHead, stdout }) => {
+      calls.push({ phase: 'ui', expectedHead: receivedHead });
+      stdout.write(JSON.stringify({ ready: true }));
+      return 0;
+    },
+    runtimeProofFn: async ({ currentHead, expectedHead: receivedHead }) => {
+      calls.push({ phase: 'runtime', currentHead, expectedHead: receivedHead });
+      return { ready: currentHead === expectedHead && receivedHead === expectedHead, currentHead };
+    },
+    currentHeadFn: () => {
+      hostileHeadReads += 1;
+      return 'e'.repeat(40);
+    },
+    stdout: { write() {} },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(hostileHeadReads, 0);
+  assert.equal(result.status.sourceTruthVerdict.expectedHead, expectedHead);
+  assert.equal(gitCalls.length, 3);
+  assert.equal(gitCalls.every((call) => call.command === BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE), true);
+  assert.equal(gitCalls.every((call) => call.options.env.PATH === '/usr/bin:/bin'), true);
+  assert.equal(gitCalls.every((call) => call.options.env.NODE_OPTIONS === undefined), true);
+  assert.deepEqual(calls, [
+    { phase: 'backend', expectedHead },
+    { phase: 'ui', expectedHead },
+    { phase: 'runtime', currentHead: expectedHead, expectedHead },
+  ]);
+});
+
+test('supervisor re-proves canonical source head before runtime proof and never publishes ready after drift', async () => {
+  const expectedHead = 'd'.repeat(40);
+  let sourceTruthReads = 0;
+  let runtimeProofCalls = 0;
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => {
+      sourceTruthReads += 1;
+      const head = sourceTruthReads === 1 ? expectedHead : 'e'.repeat(40);
+      return canonicalSourceTruth({ head, originHead: head });
+    },
+    collectFactsFn: async () => factsFor(),
+    plannerFn: (facts) => facts,
+    runtimeProofFn: async () => { runtimeProofCalls += 1; return { ready: true }; },
+    stdout: { write() {} },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'ignition-exact-head-changed-before-runtime-proof');
+  assert.equal(runtimeProofCalls, 0);
+  assert.equal(sourceTruthReads, 2);
+});
+
+test('supervisor re-proves canonical source head again after runtime proof before ready publication', async () => {
+  const expectedHead = 'd'.repeat(40);
+  let sourceTruthReads = 0;
+  let runtimeProofCalls = 0;
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => {
+      sourceTruthReads += 1;
+      const head = sourceTruthReads < 3 ? expectedHead : 'e'.repeat(40);
+      return canonicalSourceTruth({ head, originHead: head });
+    },
+    collectFactsFn: async () => factsFor(),
+    plannerFn: (facts) => facts,
+    runtimeProofFn: async () => {
+      runtimeProofCalls += 1;
+      return { ready: true, currentHead: expectedHead };
+    },
+    stdout: { write() {} },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'ignition-exact-head-changed-before-ready');
+  assert.equal(runtimeProofCalls, 1);
+  assert.equal(sourceTruthReads, 3);
 });
 
 test('tracked runtime activity dirt guidance and runtime-only dist caveat are separate', () => {
@@ -651,7 +790,7 @@ test('approved OpenClaw gateway start uses config-safe start command shape, env 
         if (healthCalls === 1) throw new Error('not listening before start');
         return { ok: true, status: 200, text: async () => JSON.stringify({ status: 'live' }) };
       }
-      return { ok: true, status: 200, text: async () => JSON.stringify(canonicalOpenClawIdentity) };
+      return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
     },
   });
   await new Promise((resolve) => setTimeout(resolve, 25));
@@ -698,7 +837,7 @@ test('approved OpenClaw gateway start runs without token and writes non-skipped 
           ? Promise.reject(new Error('not ready yet'))
           : { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 'live' }) };
       }
-      return { ok: true, status: 200, text: async () => JSON.stringify(canonicalOpenClawIdentity) };
+      return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
     },
   });
 
@@ -758,7 +897,6 @@ test('Windows OpenClaw gateway execution uses cmd.exe wrapper for openclaw.cmd i
     env: { APPDATA: appData, Path: '' },
     approved: true,
     platform: 'win32',
-    processProofFn: canonicalOpenClawProcessProof,
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
     spawnFn: (command, args, options) => { spawnCalls.push({ command, args, options }); return child; },
@@ -768,12 +906,12 @@ test('Windows OpenClaw gateway execution uses cmd.exe wrapper for openclaw.cmd i
         if (healthCalls === 1) throw new Error('down before start');
         return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 'live' }) };
       }
-      return { ok: true, status: 200, text: async () => JSON.stringify(canonicalOpenClawIdentity) };
+      return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
     },
   });
   assert.equal(result.ready, true);
   assert.equal(spawnCalls.length, 1);
-  assert.equal(spawnCalls[0].command, BATTLE_BRIDGE_WINDOWS_HOST.cmd);
+  assert.equal(spawnCalls[0].command, 'cmd.exe');
   assert.notEqual(spawnCalls[0].command, 'openclaw');
   assert.deepEqual(spawnCalls[0].args, ['/d', '/s', '/c', `""${cmdShim}" gateway start --json"`]);
   assert.equal(spawnCalls[0].options.shell, false);
@@ -809,8 +947,7 @@ test('Windows OpenClaw gateway execution prefers APPDATA npm node entrypoint whe
     env: { APPDATA: appData, Path: nodeDir },
     approved: true,
     platform: 'win32',
-    processProofFn: canonicalOpenClawProcessProof,
-    existsSync: (candidate) => candidate === cmdShim || candidate === localMjs || candidate === openClawMjs || candidate === BATTLE_BRIDGE_WINDOWS_HOST.node,
+    existsSync: (candidate) => candidate === cmdShim || candidate === localMjs || candidate === openClawMjs || candidate === nodeExe,
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
     spawnFn: (command, args, options) => { spawnCalls.push({ command, args, options }); return child; },
@@ -820,86 +957,17 @@ test('Windows OpenClaw gateway execution prefers APPDATA npm node entrypoint whe
         if (healthCalls === 1) throw new Error('down before start');
         return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 'live' }) };
       }
-      return { ok: true, status: 200, text: async () => JSON.stringify(canonicalOpenClawIdentity) };
+      return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
     },
   });
   assert.equal(result.ready, true);
   assert.equal(spawnCalls.length, 1);
-  assert.equal(spawnCalls[0].command, BATTLE_BRIDGE_WINDOWS_HOST.node);
+  assert.equal(spawnCalls[0].command, nodeExe);
   assert.deepEqual(spawnCalls[0].args, [openClawMjs, 'gateway', 'start', '--json']);
   assert.equal(spawnCalls[0].options.shell, false);
   assert.equal(result.execution.strategy, 'node-entrypoint');
   assert.equal(result.execution.resolvedOpenClawPath, openClawMjs);
   assert.equal(result.target.commandText, 'openclaw gateway start --json');
-});
-
-test('Windows startup accepts one stable canonical gateway.cmd listener when launcher and listener PIDs differ', async () => {
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-win-scheduled-task-'));
-  const appData = path.join(workspace, 'AppData', 'Roaming');
-  const cmdShim = path.join(appData, 'npm', 'openclaw.cmd');
-  fs.mkdirSync(path.dirname(cmdShim), { recursive: true });
-  fs.writeFileSync(cmdShim, '@echo off\n');
-  const child = new EventEmitter();
-  child.pid = 4242;
-  child.stdout = new PassThrough();
-  child.stderr = new PassThrough();
-  let healthCalls = 0;
-  const expectedStarterPids = [];
-  const result = await runApprovedOpenClawGateway18789Start({
-    sharedWorkspace: workspace,
-    env: { APPDATA: appData, USERPROFILE: workspace, Path: '' },
-    approved: true,
-    platform: 'win32',
-    existsSync: (candidate) => candidate === cmdShim,
-    readyTimeoutMs: 1,
-    retryIntervalMs: 0,
-    spawnFn: () => child,
-    processProofFn: async ({ expectedStarterPid = 0 } = {}) => {
-      expectedStarterPids.push(expectedStarterPid);
-      return canonicalOpenClawProcessProofResult();
-    },
-    fetchFn: async (url) => {
-      if (url.endsWith('/health')) {
-        healthCalls += 1;
-        if (healthCalls === 1) throw new Error('down before start');
-        return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 'live' }) };
-      }
-      return { ok: true, status: 200, text: async () => JSON.stringify(canonicalOpenClawIdentity) };
-    },
-  });
-  assert.equal(result.ready, true);
-  assert.equal(result.pid, 4242);
-  assert.equal(result.healthProof.processProof.pid, 18789);
-  assert.equal(result.healthProof.starterLineageBound, true);
-  assert.equal(result.healthProof.processSnapshotStable, true);
-  assert.deepEqual(expectedStarterPids.slice(-2), [4242, 4242]);
-});
-
-test('Windows health identity is rejected when the proven 127 listener changes across the HTTP exchange', async () => {
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-win-snapshot-switch-'));
-  let proofCalls = 0;
-  const result = await runApprovedOpenClawGateway18789Start({
-    sharedWorkspace: workspace,
-    env: { APPDATA: PROCESS_PROOF_APPDATA, USERPROFILE: 'C:\\Users\\Fixture' },
-    approved: true,
-    platform: 'win32',
-    probeOnly: true,
-    processProofFn: async () => {
-      proofCalls += 1;
-      return canonicalOpenClawProcessProofResult({ pid: proofCalls === 1 ? 18789 : 28789 });
-    },
-    fetchFn: async (url) => ({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify(url.endsWith('/identity') ? canonicalOpenClawIdentity : { ok: true, status: 'live' }),
-    }),
-  });
-  assert.equal(proofCalls, 2);
-  assert.equal(result.ready, false);
-  assert.equal(result.healthProof.healthReady, true);
-  assert.equal(result.healthProof.identityCanonical, true);
-  assert.equal(result.healthProof.processSnapshotStable, false);
-  assert.equal(result.error, 'OPENCLAW_18789_EXISTING_LISTENER_IDENTITY_UNPROVEN');
 });
 
 test('Windows OpenClaw resolver includes APPDATA npm fallback and only accepts fixed allowlisted command', () => {
@@ -914,7 +982,7 @@ test('Windows OpenClaw resolver includes APPDATA npm fallback and only accepts f
     existsSync: (candidate) => candidate.endsWith(`npm${path.sep}openclaw.cmd`),
   });
   assert.equal(resolved.ok, true);
-  assert.equal(resolved.command, BATTLE_BRIDGE_WINDOWS_HOST.cmd);
+  assert.equal(resolved.command, 'cmd.exe');
   assert.deepEqual(resolved.commandArgs.slice(0, 3), ['/d', '/s', '/c']);
   assert.match(resolved.commandArgs[3], /^"".*openclaw\.cmd" gateway start --json"$/);
   assert.equal(resolved.strategy, 'cmd-shim');
@@ -1016,7 +1084,7 @@ test('approved OpenClaw gateway start reuses healthy 18789 and avoids duplicate 
     spawnFn: (...args) => { spawnCalls.push(args); throw new Error('duplicate start must not run'); },
     fetchFn: async (url) => {
       if (url.endsWith('/health')) return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 'live' }) };
-      return { ok: true, status: 200, text: async () => JSON.stringify(canonicalOpenClawIdentity) };
+      return { ok: true, status: 200, text: async () => JSON.stringify({ service: 'openclaw-gateway' }) };
     },
   });
 
@@ -1028,174 +1096,30 @@ test('approved OpenClaw gateway start reuses healthy 18789 and avoids duplicate 
   assert.match(result.logPath, /logs[\\/]openclaw-gateway-18789-start/);
 });
 
-test('healthy-looking fake 18789 listener is not reused without canonical process identity', async () => {
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-fake-listener-'));
+test('approved OpenClaw gateway start blocks exact-head drift immediately before spawn', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-head-drift-'));
+  const expectedHead = 'a'.repeat(40);
   const spawnCalls = [];
   const result = await runApprovedOpenClawGateway18789Start({
     sharedWorkspace: workspace,
+    token: 'test-token',
     approved: true,
-    platform: 'win32',
-    processProofFn: async () => ({ ok: false, blocker: 'OPENCLAW_18789_PROCESS_IDENTITY_INVALID' }),
-    spawnFn: (...args) => { spawnCalls.push(args); throw new Error('must not collide with an unproven listener'); },
-    fetchFn: async (url) => ({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify(url.endsWith('/health')
-        ? { ok: true, status: 'live' }
-        : canonicalOpenClawIdentity),
-    }),
-  });
-  assert.equal(result.ready, false);
-  assert.equal(result.started, false);
-  assert.equal(result.error, 'OPENCLAW_18789_EXISTING_LISTENER_IDENTITY_UNPROVEN');
-  assert.equal(result.healthProof.identityCanonical, true);
-  assert.equal(result.healthProof.processCanonical, false);
-  assert.equal(spawnCalls.length, 0);
-});
-
-test('owner-approved cold start carries no ambient approval flag or gateway token', async () => {
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-owner-cold-start-'));
-  const child = new EventEmitter();
-  child.pid = 18789;
-  child.stdout = new PassThrough();
-  child.stderr = new PassThrough();
-  const calls = [];
-  let healthCalls = 0;
-  const result = await runApprovedOpenClawGateway18789Start({
-    sharedWorkspace: workspace,
-    ownerApproval: Object.freeze({
-      approved: true,
-      action: 'RUN_EXACT_HEAD_IGNITION',
-      expectedHead: 'a'.repeat(40),
-      receiptId: 'b'.repeat(32),
-      parentPid: 100,
-      childPid: 101,
-    }),
-    env: {
-      APPDATA: 'C:\\Fixture\\AppData\\Roaming',
-      STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY: '1',
-      STEPHANOS_OPENCLAW_GATEWAY_TOKEN: 'ambient-secret',
-      OPENCLAW_GATEWAY_TOKEN: 'ambient-secret-two',
-      NODE_OPTIONS: '--require attacker.js',
-    },
+    expectedHead,
+    currentHeadFn: () => 'b'.repeat(40),
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
-    spawnFn: (command, args, options) => { calls.push({ command, args, options }); return child; },
-    fetchFn: async (url) => {
-      if (url.endsWith('/health')) {
-        healthCalls += 1;
-        if (healthCalls === 1) throw new Error('cold');
-        return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 'live' }) };
-      }
-      return { ok: true, status: 200, text: async () => JSON.stringify(canonicalOpenClawIdentity) };
-    },
+    spawnFn: (...args) => { spawnCalls.push(args); throw new Error('must not spawn after source drift'); },
+    fetchFn: async () => { throw new Error('gateway down before start'); },
   });
-  assert.equal(result.ready, true);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].options.env.STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY, undefined);
-  assert.equal(calls[0].options.env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN, undefined);
-  assert.equal(calls[0].options.env.OPENCLAW_GATEWAY_TOKEN, undefined);
-  assert.equal(calls[0].options.env.NODE_OPTIONS, undefined);
-});
 
-test('Windows 18789 process proof uses only fixed PowerShell script and sanitized environment', async () => {
-  const child = new EventEmitter();
-  child.stdout = new PassThrough();
-  child.stderr = new PassThrough();
-  child.kill = () => {};
-  const calls = [];
-  const pending = collectOpenClawGateway18789ProcessProof({
-    env: { USERPROFILE: 'C:\\Users\\Fixture', APPDATA: PROCESS_PROOF_APPDATA, NODE_OPTIONS: '--require attacker.js', COMSPEC: 'C:\\evil.cmd' },
-    spawnFn: (command, args, options) => {
-      calls.push({ command, args, options });
-      setImmediate(() => {
-        child.stdout.end(JSON.stringify(canonicalProcessProofRecord()));
-        child.stderr.end();
-        child.emit('close', 0, null);
-      });
-      return child;
-    },
+  assert.equal(spawnCalls.length, 0);
+  assert.equal(result.ready, false);
+  assert.equal(result.reason, 'canonical-source-head-mismatch');
+  assert.deepEqual(result.sourceHeadProof, {
+    ok: false,
+    expectedHead,
+    observedHead: 'b'.repeat(40),
   });
-  const result = await pending;
-  assert.equal(result.ok, true);
-  assert.equal(calls.length, 1);
-  assert.match(calls[0].command, /powershell\.exe$/i);
-  assert.deepEqual(calls[0].args.slice(0, 5), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File']);
-  assert.match(calls[0].args[5], /probe-openclaw-gateway-18789-owner\.ps1$/);
-  assert.deepEqual(calls[0].args.slice(6), ['-ExpectedStarterPid', '0']);
-  assert.equal(calls[0].options.shell, false);
-  assert.equal(calls[0].options.env.NODE_OPTIONS, undefined);
-  assert.equal(calls[0].options.env.COMSPEC, undefined);
-});
-
-test('Windows 18789 process proof record requires owner SID, positional argv, and exact starter identity', () => {
-  const environment = { APPDATA: PROCESS_PROOF_APPDATA, USERPROFILE: 'C:\\Users\\Fixture' };
-  assert.equal(validateOpenClawGateway18789ProcessProofRecord(canonicalProcessProofRecord(), { env: environment }).ok, true);
-  assert.equal(validateOpenClawGateway18789ProcessProofRecord(canonicalProcessProofRecord({
-    supportedStarterCommandShape: 'cmd-c',
-  }), { env: environment }).ok, true);
-  assert.equal(validateOpenClawGateway18789ProcessProofRecord(canonicalProcessProofRecord({
-    expectedStarterPid: 4242,
-  }), { env: environment, expectedStarterPid: 4242 }).ok, true);
-  assert.equal(validateOpenClawGateway18789ProcessProofRecord(canonicalProcessProofRecord({
-    gatewayActionToken: '--port', gatewayPortToken: '18789', commandTokenCount: 5,
-  }), { env: environment }).ok, true);
-
-  const wrongOwner = canonicalProcessProofRecord({
-    processOwnerSid: 'S-1-5-21-1000-2000-3000-2002',
-    ownerSidMatches: true,
-  });
-  assert.equal(validateOpenClawGateway18789ProcessProofRecord(wrongOwner, { env: environment }).ok, false);
-
-  const argvSpoof = canonicalProcessProofRecord({
-    entrypointToken: '--eval',
-    gatewayActionToken: 'run',
-    gatewayPortToken: PROCESS_PROOF_ENTRYPOINT,
-    commandTokenCount: 5,
-  });
-  assert.equal(validateOpenClawGateway18789ProcessProofRecord(argvSpoof, { env: environment }).ok, false);
-
-  const arbitraryCmdParent = canonicalProcessProofRecord({
-    supportedStarterGatewayPath: 'C:\\attacker\\gateway.cmd',
-  });
-  assert.equal(validateOpenClawGateway18789ProcessProofRecord(arbitraryCmdParent, { env: environment }).ok, false);
-
-  const differentLoopbackFamily = canonicalProcessProofRecord({ localAddress: '::1' });
-  assert.equal(validateOpenClawGateway18789ProcessProofRecord(differentLoopbackFamily, { env: environment }).ok, false);
-});
-
-test('fixed Windows 18789 probe derives owner SID and parses exact command and starter tokens', () => {
-  const source = fs.readFileSync(path.join(process.cwd(), 'scripts', 'windows', 'probe-openclaw-gateway-18789-owner.ps1'), 'utf8');
-  assert.match(source, /CommandLineToArgvW/);
-  assert.match(source, /Invoke-CimMethod\s+-InputObject\s+\$Process\s+-MethodName\s+GetOwnerSid/);
-  assert.match(source, /\$commandTokens\.Count\s+-eq\s+4[\s\S]*'gateway'[\s\S]*'run'/);
-  assert.match(source, /\$commandTokens\.Count\s+-eq\s+5[\s\S]*'--port'[\s\S]*'18789'/);
-  assert.match(source, /\.openclaw\\gateway\.cmd/);
-  assert.match(source, /\$ancestorTokens\.Count\s+-eq\s+3[\s\S]*'\/c'/);
-  assert.match(source, /\$ancestorTokens\.Count\s+-eq\s+5[\s\S]*'\/d'[\s\S]*'\/s'[\s\S]*'\/c'/);
-  assert.match(source, /\$_.LocalAddress\s+-eq\s+'127\.0\.0\.1'/);
-  assert.doesNotMatch(source, /LocalAddress\s+-in\s+@\([^)]*(?:::1|0\.0\.0\.0)/);
-  assert.match(source, /function Test-FullyQualifiedWindowsPath/);
-  assert.doesNotMatch(source, /IsPathFullyQualified/);
-  assert.doesNotMatch(source, /\$lineageCanonical\s*=\s*\$parentPid\s+-gt\s+0\s+-and\s+\$ancestorPids\.Count/);
-});
-
-test('Windows 18789 process proof timeout settles fail-closed when killed child never closes', async () => {
-  const child = new EventEmitter();
-  child.stdout = new PassThrough();
-  child.stderr = new PassThrough();
-  let killed = false;
-  child.kill = () => { killed = true; };
-  const result = await collectOpenClawGateway18789ProcessProof({
-    env: { APPDATA: PROCESS_PROOF_APPDATA, USERPROFILE: 'C:\\Users\\Fixture' },
-    spawnFn: () => child,
-    timeoutMs: 5,
-    killAckTimeoutMs: 5,
-  });
-  assert.equal(killed, true);
-  assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'OPENCLAW_18789_PROCESS_PROBE_TERMINATION_UNPROVEN');
-  assert.equal(result.processProofStateUnproven, true);
 });
 
 test('supervisor calls approved OpenClaw startup adapter when 18789 is missing', async () => {
@@ -1205,12 +1129,36 @@ test('supervisor calls approved OpenClaw startup adapter when 18789 is missing',
     housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => { collectCount += 1; return factsFor({ openclaw: collectCount > 1 }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['openclaw-gateway'].ready ? 'ready' : 'partial-openclaw-missing' }),
-    openClawStartFn: async ({ sharedWorkspace, probeOnly = false }) => { calls.push({ sharedWorkspace, probeOnly }); return { ready: true, started: !probeOnly, target: { commandText: 'openclaw gateway run --port 18789 --bind loopback' }, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' }, healthProof: { ready: true, health: { json: { ok: true } } } }; },
+    openClawStartFn: async ({ sharedWorkspace }) => { calls.push(sharedWorkspace); return { ready: true, started: true, target: { commandText: 'openclaw gateway run --port 18789 --bind loopback' }, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' }, healthProof: { ready: true, health: { json: { ok: true } } } }; },
     runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.equal(result.ok, true);
-  assert.deepEqual(calls.map((call) => call.probeOnly), [false, true]);
+  assert.equal(calls.length, 1);
   assert.equal(result.status.services.openClaw18789.start.logPath, '/canonical/openclaw-log');
+});
+
+test('supervisor blocks source drift before invoking the OpenClaw startup mutator', async () => {
+  const expectedHead = 'a'.repeat(40);
+  let sourceTruthReads = 0;
+  let openClawStarts = 0;
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => {
+      sourceTruthReads += 1;
+      const head = sourceTruthReads === 1 ? expectedHead : 'b'.repeat(40);
+      return canonicalSourceTruth({ head, originHead: head });
+    },
+    collectFactsFn: async () => factsFor({ openclaw: false }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-openclaw-missing' }),
+    openClawStartFn: async () => { openClawStarts += 1; return { ready: true }; },
+    stdout: { write() {} },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'ignition-exact-head-changed-before-openclaw-start');
+  assert.equal(openClawStarts, 0);
+  assert.equal(sourceTruthReads, 2);
 });
 
 test('OpenClaw command failure blocks with start-failed and does not run UI repair', async () => {
@@ -1279,6 +1227,25 @@ test('approved backend repair command captures stdout stderr exit code and canon
   assert.equal(fs.readFileSync(result.logs.stderrLogPath, 'utf8'), 'backend stderr proof\n');
 });
 
+test('approved backend repair rejects collector-head drift before spawning', async () => {
+  const expectedHead = 'a'.repeat(40);
+  let spawnCalls = 0;
+  const result = await runApprovedBackend8787Start({
+    expectedHead,
+    currentHeadFn: () => 'b'.repeat(40),
+    spawnFn: () => {
+      spawnCalls += 1;
+      throw new Error('head-mismatched backend must not spawn');
+    },
+  });
+  assert.equal(result.started, false);
+  assert.equal(result.reason, 'canonical-source-head-mismatch');
+  assert.equal(result.expectedHead, expectedHead);
+  assert.equal(result.observedHead, 'b'.repeat(40));
+  assert.equal(result.sourceHeadProof.ok, false);
+  assert.equal(spawnCalls, 0);
+});
+
 test('Windows backend repair pins System32 cmd and Program Files npm entrypoints', () => {
   const execution = resolveBackendRepairExecution('win32');
   assert.equal(execution.command, BATTLE_BRIDGE_WINDOWS_HOST.cmd);
@@ -1334,55 +1301,23 @@ test('backend and OpenClaw ready with UI missing refreshes publisher before UI r
   assert.equal(result.ok, true);
 });
 
-test('served runtime exact-head proof accepts only the full lowercase current HEAD in gitCommit and runtimeMarker', () => {
+test('served runtime exact-head proof accepts full or unambiguous short head in gitCommit and runtimeMarker', () => {
   const currentHead = '51600ceb1234567890abcdef1234567890abcdef';
   const proof = evaluateServedRuntimeExactHeadProof({
     currentHead,
-    health: { ok: true, gitCommit: currentHead, runtimeMarker: `antifriction-live-v3::${currentHead}::fixture`, buildTimestamp: '2026-07-10T00:00:00.000Z' },
+    health: { ok: true, gitCommit: '51600ceb', runtimeMarker: 'antifriction-live-v3::51600ceb::fixture', buildTimestamp: '2026-07-10T00:00:00.000Z' },
     dist: { ok: true, statusCode: 200 },
   });
   assert.equal(proof.ready, true);
 });
 
-test('served runtime exact-head proof rejects every 7 through 39 character prefix and uppercase SHA', () => {
-  const currentHead = '51600ceb1234567890abcdef1234567890abcdef';
-  for (let length = 7; length <= 39; length += 1) {
-    const prefix = currentHead.slice(0, length);
-    const proof = evaluateServedRuntimeExactHeadProof({
-      currentHead,
-      health: { ok: true, gitCommit: prefix, runtimeMarker: `antifriction-live-v3::${prefix}::fixture` },
-      dist: { ok: true, statusCode: 200 },
-    });
-    assert.equal(proof.ready, false, `prefix length ${length}`);
-    assert.equal(proof.gitCommitMatches, false, `gitCommit prefix length ${length}`);
-    assert.equal(proof.runtimeMarkerMatches, false, `runtimeMarker prefix length ${length}`);
-  }
-  const uppercase = currentHead.toUpperCase();
-  const uppercaseProof = evaluateServedRuntimeExactHeadProof({
-    currentHead,
-    health: { ok: true, gitCommit: uppercase, runtimeMarker: `antifriction-live-v3::${uppercase}::fixture` },
-    dist: { ok: true, statusCode: 200 },
-  });
-  assert.equal(uppercaseProof.ready, false);
-});
-
-test('served runtime proof rejects oversized localhost bodies before JSON parsing', async () => {
-  await assert.rejects(
-    collectServedRuntimeExactHeadProof({
-      currentHead: '5'.repeat(40),
-      fetchFn: async () => ({ ok: true, status: 200, text: async () => 'x'.repeat(16 * 1024 + 1) }),
-    }),
-    /LOCALHOST_RESPONSE_TOO_LARGE/,
-  );
-});
-
 test('supervisor blocks with served-runtime-stale when 4173 reports old gitCommit after guarded repair', async () => {
+  const expectedHead = '51600ceb1234567890abcdef1234567890abcdef';
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth({ head: expectedHead, originHead: expectedHead }),
     collectFactsFn: async () => factsFor(),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
-    currentHeadFn: () => '51600ceb1234567890abcdef1234567890abcdef',
-    runtimeProofFn: async ({ currentHead }) => evaluateServedRuntimeExactHeadProof({ currentHead, health: { ok: true, gitCommit: '0f0aa30d00000000000000000000000000000000', runtimeMarker: 'antifriction-live-v3::0f0aa30d00000000000000000000000000000000::fixture' }, dist: { ok: true, statusCode: 200 } }),
+    runtimeProofFn: async ({ currentHead }) => evaluateServedRuntimeExactHeadProof({ currentHead, health: { ok: true, gitCommit: '0f0aa30d', runtimeMarker: 'antifriction-live-v3::0f0aa30d::fixture' }, dist: { ok: true, statusCode: 200 } }),
     repairFn: async ({ stdout }) => { stdout.write(JSON.stringify({ ready: true })); return 0; },
     stdout: { write() {} },
   });
@@ -1395,20 +1330,25 @@ test('supervisor blocks with served-runtime-stale when 4173 reports old gitCommi
 test('stale served runtime triggers guarded repair and final ready only after exact-head proof', async () => {
   let proofCount = 0;
   let repairCount = 0;
+  const expectedHead = '51600ceb1234567890abcdef1234567890abcdef';
+  const proofHeads = [];
+  const repairHeads = [];
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth({ head: expectedHead, originHead: expectedHead }),
     collectFactsFn: async () => factsFor(),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
-    currentHeadFn: () => '51600ceb1234567890abcdef1234567890abcdef',
-    runtimeProofFn: async ({ currentHead }) => {
+    runtimeProofFn: async ({ currentHead, expectedHead: receivedHead }) => {
       proofCount += 1;
-      const commit = proofCount > 1 ? currentHead : '0f0aa30d00000000000000000000000000000000';
+      proofHeads.push([currentHead, receivedHead]);
+      const commit = proofCount > 1 ? '51600ceb' : '0f0aa30d';
       return evaluateServedRuntimeExactHeadProof({ currentHead, health: { ok: true, gitCommit: commit, runtimeMarker: `antifriction-live-v3::${commit}::fixture` }, dist: { ok: true, statusCode: 200 } });
     },
-    repairFn: async ({ stdout }) => { repairCount += 1; stdout.write(JSON.stringify({ ready: true })); return 0; },
+    repairFn: async ({ expectedHead: receivedHead, stdout }) => { repairCount += 1; repairHeads.push(receivedHead); stdout.write(JSON.stringify({ ready: true })); return 0; },
     stdout: { write() {} },
   });
   assert.equal(result.ok, true);
   assert.equal(repairCount, 1);
+  assert.deepEqual(repairHeads, [expectedHead]);
+  assert.deepEqual(proofHeads, [[expectedHead, expectedHead], [expectedHead, expectedHead]]);
   assert.equal(result.status.services.stephanosUi4173.servedRuntimeProof.ready, true);
 });

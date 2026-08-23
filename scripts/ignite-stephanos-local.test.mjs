@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import {
+  assertBoundIgnitionHeadImmediatelyBeforeMutation,
   autoPublishDistWithDeps,
   buildOpenClawReadinessEndpoints,
   buildTrackedRuntimeActivityDirtBlocker,
@@ -29,10 +30,12 @@ import {
   runApprovedLocalMergeRecoveryWithDeps,
   resolveStepExecution,
   runIgnitionHousekeep,
+  scanIgnoredRuntimeAggregatePathsForBlockers,
   shouldAutoPublishDist,
   shouldAutoPull,
 } from './ignite-stephanos-local.mjs';
 import { buildOpenClawStartupRecoveryPacket, classifyOpenClawReadiness } from '../shared/agents/openClawStartupRecovery.mjs';
+import { BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { isStephanosDebugEnabled } from './stephanos-build-utils.mjs';
 
 test('isMainModule matches direct script execution path', () => {
@@ -47,6 +50,32 @@ test('isMainModule does not match different module path', () => {
   const argv = ['node', scriptPath];
   const metaUrl = pathToFileURL(resolve('scripts/verify-stephanos-dist.mjs')).href;
   assert.equal(isMainModule(argv, metaUrl), false);
+});
+
+test('bound ignition child uses fixed Git and rejects head drift before mutation', () => {
+  const expectedHead = 'a'.repeat(40);
+  const calls = [];
+  const proof = assertBoundIgnitionHeadImmediatelyBeforeMutation({
+    expectedHead,
+    cwd: '/canonical/repo',
+    platform: 'linux',
+    environment: { PATH: '/attacker', NODE_OPTIONS: '--require=/attacker/inject.cjs' },
+    spawnSyncFn(command, args, options) {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+    },
+  });
+  assert.deepEqual(proof, { expectedHead, observedHead: expectedHead });
+  assert.equal(calls[0].command, BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE);
+  assert.deepEqual(calls[0].args.slice(-2), ['rev-parse', 'HEAD']);
+  assert.equal(calls[0].options.env.PATH, '/usr/bin:/bin');
+  assert.equal(calls[0].options.env.NODE_OPTIONS, undefined);
+  assert.throws(() => assertBoundIgnitionHeadImmediatelyBeforeMutation({
+    expectedHead,
+    cwd: '/canonical/repo',
+    platform: 'linux',
+    spawnSyncFn: () => ({ status: 0, stdout: `${'b'.repeat(40)}\n`, stderr: '' }),
+  }), /IGNITION_BOUND_EXPECTED_HEAD_MISMATCH/);
 });
 
 test('resolveStepExecution wraps Windows npm commands via cmd.exe', () => {
@@ -819,6 +848,7 @@ test('ignition status evaluator hard-blocks unallowlisted nested data files', ()
     '?? data/random.txt',
     '?? data/unknown.bin',
   ].join('\n'));
+
   assert.equal(evaluation.transientRootDataEntries.length, 0);
   assert.equal(evaluation.forbiddenOrUnknownEntries.length, 2);
   assert.equal(evaluation.meaningfulEntries.length, 2);
@@ -830,6 +860,7 @@ test('ignition status evaluator hard-blocks ignored data outside the explicit ru
     '!! data/random.txt',
     '!! data/unknown.bin',
   ].join('\n'));
+
   assert.equal(evaluation.transientRootDataEntries.length, 1);
   assert.equal(evaluation.forbiddenOrUnknownEntries.length, 0);
   assert.equal(evaluation.meaningfulEntries.length, 2);
@@ -839,6 +870,7 @@ test('ignition status evaluator hard-blocks ignored data outside the explicit ru
 test('ignition status evaluator allows canonical ignored runtime logs', () => {
   const status = '!! logs/\n!! logs/battle-bridge/backend.stdout.log\n';
   const evaluation = evaluateGitStatusForIgnition(status);
+
   assert.equal(evaluation.transientRootDataEntries.length, 2);
   assert.equal(evaluation.meaningfulEntries.length, 0);
   assert.equal(isGitWorkingTreeClean(status), true);
@@ -1023,7 +1055,7 @@ test('housekeep auto-cleans allowlisted root runtime data and stays READY', () =
   ]);
 });
 
-test('supervisor preservation mode never moves or cleans tracked, untracked, or generated runtime paths', () => {
+test('supervisor preservation mode never moves root OpenClaw data or cleans tracked, untracked, or generated runtime paths', () => {
   const steps = [];
   const moveRequests = [];
   assert.throws(() => runIgnitionHousekeep({
@@ -1049,6 +1081,7 @@ test('supervisor preservation mode never moves or cleans tracked, untracked, or 
       return { destinationRoot: 'should-not-run', migrationDirectory: null, moved: [], skipped: [] };
     },
   }), /housekeep blocked/);
+
   assert.deepEqual(moveRequests, []);
   assert.deepEqual(steps, []);
 });
@@ -1079,6 +1112,7 @@ test('housekeep includes ignored data entries in the canonical hard-block gate',
     },
     runStepFn: () => {},
   }), /housekeep blocked/);
+
   assert.deepEqual(calls[0], ['git-status', 'git', 'status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
 });
 
@@ -1095,6 +1129,7 @@ test('housekeep tolerates canonical ignored runtime logs without weakening the d
         if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
         throw new Error(`unexpected capture label: ${label}`);
       },
+      scanIgnoredRuntimeAggregatePathsFn: () => '',
       runStepFn: () => {},
     });
   } finally {
@@ -1103,6 +1138,68 @@ test('housekeep tolerates canonical ignored runtime logs without weakening the d
   const status = JSON.parse(logs.find((line) => line.startsWith('[HOUSEKEEP] status=')).replace('[HOUSEKEEP] status=', ''));
   assert.equal(status.ignitionStatus, 'READY');
   assert.equal(status.ignitionHardBlockCount, 0);
+});
+
+test('housekeep hard-blocks secret-shaped children hidden by an ignored logs aggregate', () => {
+  const calls = [];
+  assert.throws(() => runIgnitionHousekeep({
+    dryRun: false,
+    compact: true,
+    captureStepFn: (label, command, args) => {
+      calls.push([label, command, ...args]);
+      if (label === 'git-status') return { stdout: '!! logs/\n', stderr: '' };
+      if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+      throw new Error(`unexpected capture label: ${label}`);
+    },
+    scanIgnoredRuntimeAggregatePathsFn: () => 'logs/credential.json\n',
+    runStepFn: () => {},
+  }), /housekeep blocked/);
+
+  assert.deepEqual(calls.map((call) => call[0]), ['git-status', 'git-untracked-data']);
+});
+
+test('ignored runtime aggregate scan stays output-bounded across a large benign log estate', () => {
+  const benignCount = 50_000;
+  let reads = 0;
+  const blockerOutput = scanIgnoredRuntimeAggregatePathsForBlockers({
+    repoRoot: '/canonical/repo',
+    aggregatePaths: ['logs/'],
+    lstatSyncFn: () => ({ isDirectory: () => true, isSymbolicLink: () => false }),
+    opendirSyncFn: () => ({
+      readSync: () => {
+        reads += 1;
+        if (reads <= benignCount) {
+          return { name: `runtime-${reads}.log`, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false };
+        }
+        if (reads === benignCount + 1) {
+          return { name: 'credential.json', isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false };
+        }
+        return null;
+      },
+      closeSync: () => {},
+    }),
+  });
+
+  assert.equal(reads, benignCount + 1);
+  assert.equal(blockerOutput, 'logs/credential.json\n');
+});
+
+test('ignored runtime aggregate scan fails closed at its deterministic work budget', () => {
+  let reads = 0;
+  assert.throws(() => scanIgnoredRuntimeAggregatePathsForBlockers({
+    repoRoot: '/canonical/repo',
+    aggregatePaths: ['logs/'],
+    maxEntries: 3,
+    lstatSyncFn: () => ({ isDirectory: () => true, isSymbolicLink: () => false }),
+    opendirSyncFn: () => ({
+      readSync: () => {
+        reads += 1;
+        return { name: `runtime-${reads}.log`, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false };
+      },
+      closeSync: () => {},
+    }),
+  }), (error) => error?.code === 'IGNITION_RUNTIME_AGGREGATE_SCAN_FAILED' && /maximum-entry-budget-exceeded/.test(error.message));
+  assert.equal(reads, 4);
 });
 
 test('housekeep dry-run classifies known OpenClaw workspace dirt without weakening hard-block', () => {

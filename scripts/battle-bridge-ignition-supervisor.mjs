@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import path from 'node:path';
@@ -11,22 +11,24 @@ import { collectLauncherReadinessLiveFacts, defaultWindowsSharedWorkspacePath } 
 import { planLauncherReadiness } from './launcher-readiness-planner.mjs';
 import { runUi4173Repair, UI_4173_REPAIR_AUTHORITY } from './battle-bridge-ui-4173-repair.mjs';
 import {
+  collectIgnoredRuntimeAggregatePaths,
   evaluateGitStatusForIgnition,
+  mergeIgnoredRuntimeChildrenIntoStatus,
   runIgnitionHousekeep,
+  scanIgnoredRuntimeAggregatePathsForBlockers,
 } from './ignite-stephanos-local.mjs';
 import { buildOpenClawGatewayStartupTarget, OPENCLAW_GATEWAY_STARTUP_SOURCE, resolveOpenClawGatewayStartupExecution } from '../shared/agents/openClawGatewayStartup.mjs';
 import {
   BATTLE_BRIDGE_CANONICAL_REMOTE_URL,
-  BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
   battleBridgeCanonicalRepositoryArgs,
   createBattleBridgeMinimalChildEnvironment,
   inspectBattleBridgeGitTopology,
+  resolveBattleBridgeGitExecution,
   validateBattleBridgeLocalGitConfiguration,
 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
 export const BATTLE_BRIDGE_IGNITION_SUPERVISOR_SCHEMA = 'stephanos.battle-bridge-ignition-supervisor.v1';
-export const OPENCLAW_18789_PROCESS_PROOF_SCHEMA = 'stephanos.openclaw-gateway-18789-process-proof.v1';
 export const BATTLE_BRIDGE_IGNITION_PHASES = Object.freeze([
   'source truth',
   'housekeeping',
@@ -61,6 +63,16 @@ const defaultRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 
 const SHA40 = /^[0-9a-f]{40}$/;
 const SOURCE_STATUS_ARGS = Object.freeze(['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
+
+export function evaluateBattleBridgeMutationHeadBinding({ expectedHead = '', observedHead = '' } = {}) {
+  const expected = String(expectedHead || '').trim().toLowerCase();
+  const observed = String(observedHead || '').trim().toLowerCase();
+  return Object.freeze({
+    ok: SHA40.test(expected) && SHA40.test(observed) && observed === expected,
+    expectedHead: expected,
+    observedHead: observed,
+  });
+}
 
 function structuredSourceTruthBlocker({
   id = 'source-truth-unproven',
@@ -120,10 +132,12 @@ function evaluateTrackedVisibility(output = '') {
 export function collectCanonicalIgnitionSourceTruth({
   cwd = defaultRepoRoot,
   environment = process.env,
+  platform = process.platform,
   spawnSyncFn = spawnSync,
   inspectTopologyFn = inspectBattleBridgeGitTopology,
   validateConfigurationFn = validateBattleBridgeLocalGitConfiguration,
   evaluateStatusFn = evaluateGitStatusForIgnition,
+  scanIgnoredRuntimeAggregatePathsFn = scanIgnoredRuntimeAggregatePathsForBlockers,
 } = {}) {
   const topologyBefore = inspectTopologyFn(cwd, { stabilizeIndex: true });
   if (!topologyBefore?.ok) {
@@ -134,16 +148,17 @@ export function collectCanonicalIgnitionSourceTruth({
     });
   }
 
-  const childEnvironment = createBattleBridgeMinimalChildEnvironment(environment, { git: true });
+  let gitExecution = null;
   const capture = (label, args, { allowFailure = false } = {}) => {
+    gitExecution ||= resolveBattleBridgeGitExecution({ platform, environment });
     const fixedArgs = [
-      ...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+      ...gitExecution.fixedConfigArgs,
       ...battleBridgeCanonicalRepositoryArgs(cwd),
       ...args,
     ];
-    const result = spawnSyncFn(BATTLE_BRIDGE_WINDOWS_HOST.git, fixedArgs, {
+    const result = spawnSyncFn(gitExecution.executable, fixedArgs, {
       cwd,
-      env: childEnvironment,
+      env: gitExecution.environment,
       encoding: 'utf8',
       shell: false,
       windowsHide: true,
@@ -156,6 +171,16 @@ export function collectCanonicalIgnitionSourceTruth({
       throw error;
     }
     return String(result?.stdout || '');
+  };
+  const captureSourceStatus = (label) => {
+    const statusOutput = capture(label, [...SOURCE_STATUS_ARGS]);
+    const ignoredRuntimeAggregates = collectIgnoredRuntimeAggregatePaths(statusOutput);
+    if (ignoredRuntimeAggregates.length === 0) return statusOutput;
+    const ignoredRuntimeBlockers = scanIgnoredRuntimeAggregatePathsFn({
+      repoRoot: cwd,
+      aggregatePaths: ignoredRuntimeAggregates,
+    });
+    return mergeIgnoredRuntimeChildrenIntoStatus(statusOutput, ignoredRuntimeBlockers);
   };
 
   try {
@@ -180,7 +205,7 @@ export function collectCanonicalIgnitionSourceTruth({
       });
     }
 
-    const statusBeforeOutput = capture('source-status-before-fetch', [...SOURCE_STATUS_ARGS]);
+    const statusBeforeOutput = captureSourceStatus('source-status-before-fetch');
     const statusBefore = evaluateStatusFn(statusBeforeOutput);
     if (!statusBefore || !Array.isArray(statusBefore.meaningfulEntries)) {
       return structuredSourceTruthBlocker({
@@ -251,7 +276,7 @@ export function collectCanonicalIgnitionSourceTruth({
       });
     }
 
-    const statusAfterOutput = capture('source-status-after-fetch', [...SOURCE_STATUS_ARGS]);
+    const statusAfterOutput = captureSourceStatus('source-status-after-fetch');
     const statusAfter = evaluateStatusFn(statusAfterOutput);
     const configurationAfter = capture('source-config-after-fetch', ['config', '--local', '--null', '--list']);
     const configurationAfterProof = validateConfigurationFn(configurationAfter);
@@ -352,7 +377,7 @@ export function collectCanonicalIgnitionSourceTruth({
       });
     }
 
-    const statusFinalOutput = capture('source-status-final', [...SOURCE_STATUS_ARGS]);
+    const statusFinalOutput = captureSourceStatus('source-status-final');
     const statusFinal = evaluateStatusFn(statusFinalOutput);
     const trackedVisibilityFinalOutput = capture('source-tracked-visibility-final', ['ls-files', '--stage', '-v', '--']);
     const trackedVisibilityFinal = evaluateTrackedVisibility(trackedVisibilityFinalOutput);
@@ -500,18 +525,21 @@ export function evaluateCanonicalIgnitionSourceTruth(sourceTruth = {}) {
 export function captureCanonicalSupervisorHousekeepGitStep(label, command, args, {
   cwd = defaultRepoRoot,
   environment = process.env,
+  platform = process.platform,
   spawnSyncFn = spawnSync,
 } = {}) {
-  if (command !== 'git' && command !== BATTLE_BRIDGE_WINDOWS_HOST.git) {
+  const gitExecution = resolveBattleBridgeGitExecution({ platform, environment });
+  const gitExecutable = gitExecution.executable;
+  if (command !== 'git' && command !== gitExecutable && command !== BATTLE_BRIDGE_WINDOWS_HOST.git) {
     throw new Error('BATTLE_BRIDGE_HOUSEKEEP_COMMAND_NOT_ALLOWED');
   }
-  const result = spawnSyncFn(BATTLE_BRIDGE_WINDOWS_HOST.git, [
-    ...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+  const result = spawnSyncFn(gitExecutable, [
+    ...gitExecution.fixedConfigArgs,
     ...battleBridgeCanonicalRepositoryArgs(cwd),
     ...args,
   ], {
     cwd,
-    env: createBattleBridgeMinimalChildEnvironment(environment, { git: true }),
+    env: gitExecution.environment,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
@@ -531,6 +559,7 @@ export function runCanonicalSupervisorHousekeep(
     housekeepFn = runIgnitionHousekeep,
     cwd = defaultRepoRoot,
     environment = process.env,
+    platform = process.platform,
     spawnSyncFn = spawnSync,
   } = {},
 ) {
@@ -538,16 +567,36 @@ export function runCanonicalSupervisorHousekeep(
     label,
     command,
     args,
-    { cwd, environment, spawnSyncFn },
+    { cwd, environment, platform, spawnSyncFn },
   );
   return housekeepFn({
     ...options,
+    repoRoot: cwd,
     captureStepFn,
     runStepFn: (label, command, args) => {
       captureStepFn(label, command, args);
       return true;
     },
   });
+}
+
+export function createCanonicalSupervisorGitExecFile({
+  cwd = defaultRepoRoot,
+  environment = process.env,
+  platform = process.platform,
+  spawnSyncFn = spawnSync,
+} = {}) {
+  return (command, args, options = {}) => captureCanonicalSupervisorHousekeepGitStep(
+    'readiness-source-status',
+    command,
+    args,
+    {
+      cwd: path.resolve(options?.cwd || cwd),
+      environment,
+      platform,
+      spawnSyncFn,
+    },
+  ).stdout;
 }
 
 function phaseRecord(id, overrides = {}) {
@@ -589,7 +638,7 @@ export function defaultBattleBridgeSharedWorkspace({ env = process.env, platform
   return env.STEPHANOS_SHARED_WORKSPACE
     || env.STEPHANOS_OPENCLAW_WORKSPACE
     || defaultWindowsSharedWorkspacePath({ home: env.USERPROFILE || env.HOME || os.homedir(), platform })
-    || path.join(os.tmpdir(), `stephanos-openclaw-workspace-${process.pid}`);
+    || path.join(os.homedir(), 'Documents', 'Stephanos-openclaw-workspace');
 }
 
 function applyReadinessToStatus(status, report = {}) {
@@ -640,7 +689,46 @@ export function resolveBackendRepairExecution(platform = process.platform) {
   };
 }
 
-export async function runApprovedBackend8787Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), platform = process.platform } = {}) {
+export async function runApprovedBackend8787Start({
+  spawnFn = spawn,
+  sharedWorkspace = defaultBattleBridgeSharedWorkspace(),
+  platform = process.platform,
+  expectedHead = '',
+  currentHeadFn = getCurrentGitHead,
+  cwd = defaultRepoRoot,
+  environment = process.env,
+  spawnSyncFn = spawnSync,
+} = {}) {
+  const expected = String(expectedHead || '').trim().toLowerCase();
+  let sourceHeadProof = null;
+  if (expected) {
+    let observedHead = '';
+    try {
+      observedHead = String(currentHeadFn({ cwd, environment, platform, spawnSyncFn }) || '').trim().toLowerCase();
+    } catch (error) {
+      return Object.freeze({
+        started: false,
+        exitCode: null,
+        reason: 'canonical-source-head-unproven',
+        expectedHead: expected,
+        observedHead: '',
+        error: error?.message || String(error),
+        commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY,
+      });
+    }
+    sourceHeadProof = evaluateBattleBridgeMutationHeadBinding({ expectedHead: expected, observedHead });
+    if (!sourceHeadProof.ok) {
+      return Object.freeze({
+        started: false,
+        exitCode: null,
+        reason: 'canonical-source-head-mismatch',
+        expectedHead: expected,
+        observedHead,
+        sourceHeadProof,
+        commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY,
+      });
+    }
+  }
   const logRoot = path.resolve(sharedWorkspace, 'logs', 'battle-bridge-backend-8787-repair');
   await fs.mkdir(logRoot, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -649,9 +737,15 @@ export async function runApprovedBackend8787Start({ spawnFn = spawn, sharedWorks
   const stdoutLogPath = path.join(logPath, 'stdout.log');
   const stderrLogPath = path.join(logPath, 'stderr.log');
   const execution = resolveBackendRepairExecution(platform);
+  const childEnvironment = {
+    ...(platform === 'win32'
+      ? createBattleBridgeMinimalChildEnvironment(environment, { platform })
+      : environment),
+    STEPHANOS_EXPECTED_HEAD: expected,
+  };
   const child = spawnFn(execution.command, execution.args, {
     cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
-    ...(platform === 'win32' ? { env: createBattleBridgeMinimalChildEnvironment(process.env) } : {}),
+    env: childEnvironment,
     detached: false,
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: false,
@@ -659,10 +753,10 @@ export async function runApprovedBackend8787Start({ spawnFn = spawn, sharedWorks
   if (child?.stdout?.pipe) child.stdout.pipe(createWriteStream(stdoutLogPath, { flags: 'a' }));
   if (child?.stderr?.pipe) child.stderr.pipe(createWriteStream(stderrLogPath, { flags: 'a' }));
   const logs = { logPath, stdoutLogPath, stderrLogPath };
-  if (!child || typeof child.on !== 'function') return { started: true, exitCode: 0, logs, logPath, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY };
+  if (!child || typeof child.on !== 'function') return { started: true, exitCode: 0, logs, logPath, sourceHeadProof, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY };
   return await new Promise((resolve) => {
-    child.once('error', (error) => resolve({ started: false, exitCode: null, error: error?.message || String(error), logs, logPath, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY }));
-    child.once('exit', (code, signal) => resolve({ started: code === 0, exitCode: code, exit: { code, signal }, logs, logPath, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY }));
+    child.once('error', (error) => resolve({ started: false, exitCode: null, error: error?.message || String(error), logs, logPath, sourceHeadProof, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY }));
+    child.once('exit', (code, signal) => resolve({ started: code === 0, exitCode: code, exit: { code, signal }, logs, logPath, sourceHeadProof, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY }));
   });
 }
 
@@ -672,312 +766,19 @@ function openClawHealthReady(payload = {}) {
   return payload?.ok === true || status === 'ok' || status === 'live';
 }
 
-function canonicalOpenClawIdentity(response = {}) {
-  const identity = response?.json;
-  const status = String(identity?.status || identity?.state || '').toLowerCase();
-  return Boolean(
-    response?.ok === true
-    && response?.statusCode === 200
-    && identity?.product === 'OpenClaw'
-    && /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/.test(String(identity?.runtimeId || ''))
-    && ['ok', 'live', 'ready'].includes(status)
-  );
-}
-
-function canonicalWindowsPath(value = '') {
-  const normalized = path.win32.normalize(String(value || '').trim()).replace(/[\\/]+$/, '');
-  return path.win32.isAbsolute(normalized) ? normalized.toLowerCase() : '';
-}
-
-export function validateOpenClawGateway18789ProcessProofRecord(proof = {}, {
-  env = process.env,
-  expectedStarterPid = 0,
-} = {}) {
-  const appData = canonicalWindowsPath(env?.APPDATA || '');
-  const userProfile = canonicalWindowsPath(env?.USERPROFILE || '');
-  const expectedEntrypoints = appData ? new Set([
-    canonicalWindowsPath(path.win32.join(appData, 'npm', 'node_modules', 'openclaw', 'dist', 'index.js')),
-    canonicalWindowsPath(path.win32.join(appData, 'npm', 'node_modules', 'openclaw', 'openclaw.mjs')),
-  ]) : new Set();
-  const expectedGatewayStarter = userProfile
-    ? canonicalWindowsPath(path.win32.join(userProfile, '.openclaw', 'gateway.cmd'))
-    : '';
-  const pid = Number(proof?.pid || 0);
-  const parentPid = Number(proof?.parentPid || 0);
-  const starterPid = Number(proof?.supportedStarterPid || 0);
-  const expectedPid = Number.isSafeInteger(Number(expectedStarterPid)) && Number(expectedStarterPid) > 0
-    ? Number(expectedStarterPid)
-    : 0;
-  const ancestorPids = Object.freeze(Array.isArray(proof?.ancestorPids)
-    ? proof.ancestorPids.map(Number).filter((candidate) => Number.isSafeInteger(candidate) && candidate > 0).slice(0, 8)
-    : []);
-  const currentOwnerSid = String(proof?.currentOwnerSid || '');
-  const processOwnerSid = String(proof?.processOwnerSid || '');
-  const sidCanonical = /^S-1-(?:[0-9]+-)+[0-9]+$/i.test(currentOwnerSid)
-    && currentOwnerSid.toLowerCase() === processOwnerSid.toLowerCase();
-  const executablePath = canonicalWindowsPath(proof?.executablePath);
-  const executableToken = canonicalWindowsPath(proof?.executableToken);
-  const entrypointToken = canonicalWindowsPath(proof?.entrypointToken);
-  const supportedStarterPath = canonicalWindowsPath(proof?.supportedStarterExecutablePath);
-  const gatewayRunShape = Number(proof?.commandTokenCount) === 4
-    && String(proof?.gatewayToken || '') === 'gateway'
-    && String(proof?.gatewayActionToken || '') === 'run'
-    && String(proof?.gatewayPortToken || '') === '';
-  const gatewayPortShape = Number(proof?.commandTokenCount) === 5
-    && String(proof?.gatewayToken || '') === 'gateway'
-    && String(proof?.gatewayActionToken || '') === '--port'
-    && String(proof?.gatewayPortToken || '') === '18789';
-  const positionalCommandCanonical = executableToken === canonicalWindowsPath(BATTLE_BRIDGE_WINDOWS_HOST.node)
-    && expectedEntrypoints.has(entrypointToken)
-    && (gatewayRunShape || gatewayPortShape);
-  const expectedStarterLineage = expectedPid > 0
-    && proof?.starterLineageKind === 'expected-starter-pid'
-    && starterPid === expectedPid
-    && (pid === expectedPid || ancestorPids.includes(expectedPid));
-  const canonicalGatewayStarterLineage = proof?.starterLineageKind === 'canonical-gateway-cmd'
-    && starterPid > 0
-      && ancestorPids.includes(starterPid)
-      && supportedStarterPath === canonicalWindowsPath(BATTLE_BRIDGE_WINDOWS_HOST.cmd)
-      && canonicalWindowsPath(proof?.supportedStarterGatewayPath) === expectedGatewayStarter
-      && ['cmd-c', 'cmd-d-s-c'].includes(String(proof?.supportedStarterCommandShape || ''));
-  const starterRecordCanonical = expectedStarterLineage || canonicalGatewayStarterLineage;
-  const expectedStarterBindingCanonical = Number(proof?.expectedStarterPid || 0) === expectedPid
-    && proof?.starterPidBound === true
-    && proof?.starterCommandCanonical === true;
-  const listenerAddressCanonical = String(proof?.localAddress || '') === '127.0.0.1';
-  const ownerIdentityCanonical = proof?.ownerSidMatches === true && sidCanonical;
-  const commandIdentityCanonical = String(proof?.processName || '').toLowerCase() === 'node.exe'
-    && executablePath === canonicalWindowsPath(BATTLE_BRIDGE_WINDOWS_HOST.node)
-    && proof?.executableCanonical === true
-    && proof?.executableTokenCanonical === true
-    && proof?.entrypointCanonical === true
-    && proof?.gatewayCommandCanonical === true
-    && proof?.commandLineCanonical === true
-    && positionalCommandCanonical;
-  const starterLineageCanonical = proof?.supportedStarterLineage === true
-    && proof?.lineageCanonical === true
-    && starterRecordCanonical
-    && expectedStarterBindingCanonical;
-  const ok = proof?.schemaVersion === OPENCLAW_18789_PROCESS_PROOF_SCHEMA
-    && proof?.ok === true
-    && Number.isSafeInteger(pid) && pid > 0
-    && Number.isSafeInteger(parentPid) && parentPid > 0
-    && Number(proof?.listenerCount) === 1
-    && listenerAddressCanonical
-    && commandIdentityCanonical
-    && ownerIdentityCanonical
-    && starterLineageCanonical;
-  return Object.freeze({
-    ok,
-    ownerSid: ok ? currentOwnerSid : '',
-    ancestorPids,
-    starterLineageKind: ok ? String(proof?.starterLineageKind || '') : '',
-    canonicalGatewayStarterLineage: ok && canonicalGatewayStarterLineage,
-    proofFacets: Object.freeze({
-      listenerAddressCanonical,
-      ownerIdentityCanonical,
-      positionalCommandCanonical,
-      commandIdentityCanonical,
-      starterLineageCanonical,
-    }),
-  });
-}
-
-export async function collectOpenClawGateway18789ProcessProof({
-  spawnFn = spawn,
-  env = process.env,
-  timeoutMs = 10_000,
-  killAckTimeoutMs = 250,
-  expectedStarterPid = 0,
-} = {}) {
-  const probeScript = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'windows', 'probe-openclaw-gateway-18789-owner.ps1');
-  const childEnvironment = createBattleBridgeMinimalChildEnvironment(env);
-  const boundedExpectedStarterPid = Number.isSafeInteger(Number(expectedStarterPid)) && Number(expectedStarterPid) > 0
-    ? Number(expectedStarterPid)
-    : 0;
-  let child;
-  try {
-    child = spawnFn(BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
-      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', probeScript,
-      '-ExpectedStarterPid', String(boundedExpectedStarterPid),
-    ], {
-      cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
-      env: childEnvironment,
-      shell: false,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch (error) {
-    return Object.freeze({ ok: false, blocker: 'OPENCLAW_18789_PROCESS_PROBE_START_FAILED', error: error?.message || String(error) });
-  }
-  return await new Promise((resolve) => {
-    let stdout = '';
-    let stderr = '';
-    let failure = '';
-    let settled = false;
-    let terminationRequested = false;
-    let timeoutTimer;
-    let terminationTimer;
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeoutTimer);
-      clearTimeout(terminationTimer);
-      resolve(Object.freeze(value));
-    };
-    const requestTermination = (reason) => {
-      failure ||= reason;
-      if (terminationRequested) return;
-      terminationRequested = true;
-      terminationTimer = setTimeout(() => {
-        finish({
-          ok: false,
-          blocker: 'OPENCLAW_18789_PROCESS_PROBE_TERMINATION_UNPROVEN',
-          error: failure,
-          processProofStateUnproven: true,
-        });
-      }, Math.max(1, Number(killAckTimeoutMs || 250)));
-      try { child.kill(); } catch { /* bounded failure */ }
-    };
-    const append = (current, chunk) => {
-      const next = current + String(chunk || '');
-      if (Buffer.byteLength(next, 'utf8') > 64 * 1024) {
-        requestTermination('OPENCLAW_18789_PROCESS_PROBE_OUTPUT_TOO_LARGE');
-        return current;
-      }
-      return next;
-    };
-    child.stdout?.on('data', (chunk) => { stdout = append(stdout, chunk); });
-    child.stderr?.on('data', (chunk) => { stderr = append(stderr, chunk); });
-    child.once?.('error', (error) => { requestTermination(error?.message || String(error)); });
-    child.once?.('close', (status) => {
-      if (failure) {
-        finish({ ok: false, blocker: 'OPENCLAW_18789_PROCESS_PROBE_FAILED', status, error: failure || stderr.trim().slice(0, 500) });
-        return;
-      }
-      let proof;
-      try { proof = JSON.parse(stdout); } catch {
-        finish({
-          ok: false,
-          blocker: status === 0 ? 'OPENCLAW_18789_PROCESS_PROBE_JSON_INVALID' : 'OPENCLAW_18789_PROCESS_PROBE_FAILED',
-          status,
-          error: stderr.trim().slice(0, 500),
-        });
-        return;
-      }
-      const validation = validateOpenClawGateway18789ProcessProofRecord(proof, {
-        env: childEnvironment,
-        expectedStarterPid: boundedExpectedStarterPid,
-      });
-      const canonical = status === 0 && validation.ok;
-      finish({
-        ok: canonical,
-        blocker: canonical
-          ? ''
-          : (status === 0 ? 'OPENCLAW_18789_PROCESS_IDENTITY_INVALID' : 'OPENCLAW_18789_PROCESS_PROBE_FAILED'),
-        status,
-        pid: canonical ? Number(proof.pid) : 0,
-        parentPid: canonical ? Number(proof.parentPid) : 0,
-        processName: canonical ? String(proof.processName) : '',
-        executablePath: canonical ? String(proof.executablePath) : '',
-        ownerSid: canonical ? validation.ownerSid : '',
-        ancestorPids: canonical ? validation.ancestorPids : Object.freeze([]),
-        localAddress: canonical ? String(proof.localAddress) : '',
-        starterLineageKind: canonical ? validation.starterLineageKind : '',
-        canonicalGatewayStarterLineage: canonical ? validation.canonicalGatewayStarterLineage : false,
-        listenerObserved: Number(proof?.listenerCount) === 1 && String(proof?.localAddress || '') === '127.0.0.1',
-        proofFacets: validation.proofFacets,
-      });
-    });
-    timeoutTimer = setTimeout(() => {
-      requestTermination('OPENCLAW_18789_PROCESS_PROBE_TIMEOUT');
-    }, Math.max(1, Number(timeoutMs || 10_000)));
-  });
-}
-
-async function probeOpenClawGateway18789Health({
-  fetchFn = globalThis.fetch,
-  platform = process.platform,
-  processProofFn = platform === 'win32' ? collectOpenClawGateway18789ProcessProof : null,
-  expectedStarterPid = 0,
-} = {}) {
+async function probeOpenClawGateway18789Health({ fetchFn = globalThis.fetch } = {}) {
   const healthUrl = 'http://127.0.0.1:18789/health';
   const identityUrl = 'http://127.0.0.1:18789/identity';
-  const processProofRequired = platform === 'win32' || Boolean(processProofFn);
-  const missingProcessProof = Object.freeze({
-    ok: !processProofRequired,
-    blocker: processProofRequired ? 'OPENCLAW_18789_PROCESS_PROOF_REQUIRED' : '',
-  });
-  let processProofBefore = missingProcessProof;
-  if (processProofRequired) {
-    try { processProofBefore = await processProofFn({ expectedStarterPid }); } catch (error) {
-      processProofBefore = { ok: false, blocker: 'OPENCLAW_18789_PROCESS_PROBE_FAILED', error: error?.message || String(error) };
-    }
-  }
   const healthResponse = await fetchJson(healthUrl, { fetchFn });
   let identity = null;
-  let processProofAfter = missingProcessProof;
   if (healthResponse.ok && openClawHealthReady(healthResponse.json || {})) {
     try { identity = await fetchJson(identityUrl, { fetchFn }); } catch (error) { identity = { ok: false, error: error?.message || String(error) }; }
-    if (canonicalOpenClawIdentity(identity) && processProofRequired) {
-      try { processProofAfter = await processProofFn({ expectedStarterPid }); } catch (error) {
-        processProofAfter = { ok: false, blocker: 'OPENCLAW_18789_PROCESS_PROBE_FAILED', error: error?.message || String(error) };
-      }
-    }
   }
-  const healthReady = Boolean(healthResponse.ok && healthResponse.statusCode === 200 && openClawHealthReady(healthResponse.json || {}));
-  const identityCanonical = canonicalOpenClawIdentity(identity);
-  const processSnapshotStable = !processProofRequired || (
-    processProofBefore?.ok === true
-    && processProofAfter?.ok === true
-    && Number(processProofBefore.pid) === Number(processProofAfter.pid)
-    && Number(processProofBefore.parentPid) === Number(processProofAfter.parentPid)
-    && String(processProofBefore.localAddress || '') === '127.0.0.1'
-    && String(processProofAfter.localAddress || '') === '127.0.0.1'
-    && String(processProofBefore.ownerSid || '').toLowerCase() === String(processProofAfter.ownerSid || '').toLowerCase()
-    && String(processProofBefore.executablePath || '').toLowerCase() === String(processProofAfter.executablePath || '').toLowerCase()
-    && String(processProofBefore.starterLineageKind || '') === String(processProofAfter.starterLineageKind || '')
-  );
-  const processCanonical = processSnapshotStable;
-  const canonicalScheduledTaskLineage = processProofAfter?.canonicalGatewayStarterLineage === true
-    && processProofAfter?.starterLineageKind === 'canonical-gateway-cmd';
-  const starterLineageBound = (platform !== 'win32' && !processProofFn)
-    || !expectedStarterPid
-    || Number(processProofAfter?.pid) === Number(expectedStarterPid)
-    || processProofAfter?.ancestorPids?.includes?.(Number(expectedStarterPid)) === true
-    || canonicalScheduledTaskLineage;
-  return {
-    ready: Boolean(healthReady && identityCanonical && processCanonical && starterLineageBound),
-    listenerObserved: healthResponse?.ok === true,
-    healthReady,
-    identityCanonical,
-    processCanonical,
-    processSnapshotStable,
-    starterLineageBound,
-    healthUrl,
-    identityUrl,
-    health: healthResponse,
-    identity,
-    processProof: processProofAfter,
-    processProofBefore,
-  };
+  return { ready: Boolean(healthResponse.ok && openClawHealthReady(healthResponse.json || {})), healthUrl, identityUrl, health: healthResponse, identity };
 }
 
-export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 60000, retryIntervalMs = 500, env = process.env, token = '', approved = false, ownerApproval = null, platform = process.platform, existsSync, processProofFn = platform === 'win32' ? collectOpenClawGateway18789ProcessProof : null, probeOnly = false } = {}) {
-  const inMemoryOwnerApproval = ownerApproval?.approved === true
-    && ownerApproval?.action === 'RUN_EXACT_HEAD_IGNITION'
-    && /^[0-9a-f]{40}$/.test(String(ownerApproval?.expectedHead || ''))
-    && /^[0-9a-f]{32}$/.test(String(ownerApproval?.receiptId || ''))
-    && Number.isSafeInteger(Number(ownerApproval?.parentPid)) && Number(ownerApproval.parentPid) > 0
-    && Number.isSafeInteger(Number(ownerApproval?.childPid)) && Number(ownerApproval.childPid) > 0;
-  const effectiveEnvironment = inMemoryOwnerApproval
-    ? createBattleBridgeMinimalChildEnvironment(env)
-    : env;
-  const target = buildOpenClawGatewayStartupTarget({
-    env: effectiveEnvironment,
-    token: inMemoryOwnerApproval ? '' : token,
-    approved: inMemoryOwnerApproval || approved,
-  });
+export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 60000, retryIntervalMs = 500, env = process.env, token = '', approved = false, platform = process.platform, existsSync, expectedHead = '', currentHeadFn = getCurrentGitHead, cwd = defaultRepoRoot, spawnSyncFn = spawnSync } = {}) {
+  const target = buildOpenClawGatewayStartupTarget({ env, token, approved });
   const logRoot = path.resolve(sharedWorkspace, 'logs', 'openclaw-gateway-18789-start');
   await fs.mkdir(logRoot, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -988,8 +789,18 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
   const exitLogPath = path.join(logPath, 'exit.json');
   const healthProofLogPath = path.join(logPath, 'health-proof.json');
   const logs = { logPath, stdoutLogPath, stderrLogPath, exitLogPath, healthProofLogPath };
+  if (!target.available) {
+    const unavailableExit = { code: null, signal: null, error: target.reason, reusedExistingRuntime: false };
+    await fs.writeFile(stdoutLogPath, '');
+    await fs.writeFile(stderrLogPath, '');
+    await fs.writeFile(exitLogPath, `${JSON.stringify(unavailableExit, null, 2)}
+`);
+    await fs.writeFile(healthProofLogPath, `${JSON.stringify({ ready: false, skipped: true, reason: target.reason, healthUrl: 'http://127.0.0.1:18789/health' }, null, 2)}
+`);
+    return { started: false, exitCode: null, unavailable: true, reason: target.reason, target, logs, logPath, exit: unavailableExit, healthProof: { ready: false, skipped: true, reason: target.reason } };
+  }
   let existingProof = null;
-  try { existingProof = await probeOpenClawGateway18789Health({ fetchFn, platform, processProofFn }); } catch (error) { existingProof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
+  try { existingProof = await probeOpenClawGateway18789Health({ fetchFn }); } catch (error) { existingProof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
   await fs.writeFile(healthProofLogPath, `${JSON.stringify(existingProof, null, 2)}
 `);
   if (existingProof.ready) {
@@ -998,33 +809,12 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
 `);
     return { started: false, reusedExistingRuntime: true, duplicateStartAvoided: true, ready: true, exitCode: null, exit: exitState, logs, logPath, target, healthProof: existingProof, pid: null };
   }
-  if (existingProof.listenerObserved) {
-    const exitState = { code: null, signal: null, error: 'OPENCLAW_18789_EXISTING_LISTENER_IDENTITY_UNPROVEN', reusedExistingRuntime: false };
-    await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
-    return { started: false, ready: false, exitCode: null, error: exitState.error, exit: exitState, logs, logPath, target, healthProof: existingProof, pid: null };
-  }
-  if (probeOnly) {
-    const exitState = { code: null, signal: null, error: 'OPENCLAW_18789_READ_ONLY_PROOF_FAILED', reusedExistingRuntime: false };
-    await fs.writeFile(stdoutLogPath, '');
-    await fs.writeFile(stderrLogPath, '');
-    await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
-    return { started: false, ready: false, exitCode: null, error: exitState.error, exit: exitState, logs, logPath, target, healthProof: existingProof, pid: null };
-  }
-  if (!target.available) {
-    const unavailableExit = { code: null, signal: null, error: target.reason, reusedExistingRuntime: false };
-    await fs.writeFile(stdoutLogPath, '');
-    await fs.writeFile(stderrLogPath, '');
-    await fs.writeFile(exitLogPath, `${JSON.stringify(unavailableExit, null, 2)}\n`);
-    const unavailableProof = { ...existingProof, skipped: true, reason: target.reason };
-    await fs.writeFile(healthProofLogPath, `${JSON.stringify(unavailableProof, null, 2)}\n`);
-    return { started: false, ready: false, exitCode: null, unavailable: true, reason: target.reason, target, logs, logPath, exit: unavailableExit, healthProof: unavailableProof };
-  }
   let child = null;
   const childEnv = {
-    ...(inMemoryOwnerApproval ? effectiveEnvironment : process.env),
-    ...effectiveEnvironment,
+    ...process.env,
+    ...env,
     STEPHANOS_OPENCLAW_AUTOSTART: 'battle-bridge-supervisor-gateway-only',
-    ...(!inMemoryOwnerApproval && (token || env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN || env.OPENCLAW_GATEWAY_TOKEN) ? {
+    ...(token || env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN || env.OPENCLAW_GATEWAY_TOKEN ? {
       STEPHANOS_OPENCLAW_GATEWAY_TOKEN: token || env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN || env.OPENCLAW_GATEWAY_TOKEN,
       OPENCLAW_GATEWAY_TOKEN: token || env.OPENCLAW_GATEWAY_TOKEN || env.STEPHANOS_OPENCLAW_GATEWAY_TOKEN,
     } : {}),
@@ -1042,6 +832,23 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
     strategy: '',
   };
   const exitState = { code: null, signal: null, error: execution.ok ? null : execution.reason, execution: safeExecution, commandText: target.commandText };
+  let sourceHeadProof = null;
+  if (expectedHead && execution.ok) {
+    let observedHead = '';
+    try {
+      observedHead = String(currentHeadFn({ cwd, environment: env, platform, spawnSyncFn }) || '').trim().toLowerCase();
+    } catch (error) {
+      exitState.error = error?.message || String(error);
+    }
+    sourceHeadProof = evaluateBattleBridgeMutationHeadBinding({ expectedHead, observedHead });
+    if (!sourceHeadProof.ok) {
+      exitState.error ||= 'canonical-source-head-mismatch';
+      await fs.writeFile(stdoutLogPath, '');
+      await fs.writeFile(stderrLogPath, '');
+      await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
+      return { started: false, ready: false, exitCode: null, error: exitState.error, reason: 'canonical-source-head-mismatch', sourceHeadProof, logs, logPath, target, execution: safeExecution, healthProof: existingProof, pid: null };
+    }
+  }
   try {
     if (execution.ok) child = spawnFn(execution.command, execution.commandArgs, { cwd: path.resolve(sharedWorkspace), detached: true, stdio: ['ignore', 'pipe', 'pipe'], shell: false, env: childEnv });
   } catch (error) {
@@ -1056,50 +863,51 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
   const deadline = Date.now() + Math.max(0, readyTimeoutMs);
   let proof = null;
   do {
-    try { proof = await probeOpenClawGateway18789Health({ fetchFn, platform, processProofFn, expectedStarterPid: Number(child?.pid || 0) || 0 }); } catch (error) { proof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
+    try { proof = await probeOpenClawGateway18789Health({ fetchFn }); } catch (error) { proof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
     await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
     await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
-    if (proof.ready) return { started: true, ready: true, exitCode: exitState.code, exit: exitState, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
+    if (proof.ready) return { started: true, ready: true, exitCode: exitState.code, exit: exitState, sourceHeadProof, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
     if (exitState.error || exitState.signal !== null || (exitState.code !== null && exitState.code !== 0)) break;
     if (Date.now() < deadline && retryIntervalMs > 0) await new Promise((resolve) => setTimeout(resolve, retryIntervalMs));
   } while (Date.now() <= deadline);
   await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
   await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
-  return { started: !exitState.error, ready: false, exitCode: exitState.code, exit: exitState, error: exitState.error, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
+  return { started: !exitState.error, ready: false, exitCode: exitState.code, exit: exitState, error: exitState.error, sourceHeadProof, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
 }
 
-export function getCurrentGitHead({ cwd = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), execFile = execFileSync, platform = process.platform, env = process.env } = {}) {
-  const command = platform === 'win32' ? BATTLE_BRIDGE_WINDOWS_HOST.git : 'git';
-  const childEnvironment = platform === 'win32'
-    ? createBattleBridgeMinimalChildEnvironment(env, { git: true })
-    : {
-      ...env,
-      GIT_CONFIG_GLOBAL: '/dev/null',
-      GIT_CONFIG_NOSYSTEM: '1',
-      GIT_NO_REPLACE_OBJECTS: '1',
-      GIT_OPTIONAL_LOCKS: '0',
-      GIT_TERMINAL_PROMPT: '0',
-    };
-  return String(execFile(command, [...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS, 'rev-parse', 'HEAD'], {
-    cwd,
-    env: childEnvironment,
-    encoding: 'utf8',
-    shell: false,
-  })).trim();
+export function getCurrentGitHead({
+  cwd = defaultRepoRoot,
+  environment = process.env,
+  platform = process.platform,
+  spawnSyncFn = spawnSync,
+} = {}) {
+  const result = captureCanonicalSupervisorHousekeepGitStep(
+    'current-source-head',
+    'git',
+    ['rev-parse', 'HEAD'],
+    { cwd, environment, platform, spawnSyncFn },
+  );
+  const head = String(result.stdout || '').trim().toLowerCase();
+  if (!SHA40.test(head)) {
+    const error = new Error('current-source-head:FIXED_AUTHORITY_GIT_HEAD_INVALID');
+    error.code = 'FIXED_AUTHORITY_GIT_HEAD_INVALID';
+    throw error;
+  }
+  return head;
 }
 
 function commitMatchesHead(value, head) {
   const served = String(value || '').trim();
   const current = String(head || '').trim();
-  return /^[0-9a-f]{40}$/.test(served)
-    && /^[0-9a-f]{40}$/.test(current)
-    && served === current;
+  if (!served || !current) return false;
+  if (served === current) return true;
+  return served.length >= 7 && current.startsWith(served);
 }
 
 function runtimeMarkerMatchesHead(marker, head) {
-  const current = String(head || '').trim();
-  if (!/^[0-9a-f]{40}$/.test(current)) return false;
-  return String(marker || '').split('::').some((token) => commitMatchesHead(token, current));
+  const text = String(marker || '');
+  const tokens = text.match(/[0-9a-f]{7,40}/gi) || [];
+  return tokens.some((token) => commitMatchesHead(token, head));
 }
 
 export function evaluateServedRuntimeExactHeadProof({ health = null, dist = null, currentHead = '' } = {}) {
@@ -1124,56 +932,12 @@ export function evaluateServedRuntimeExactHeadProof({ health = null, dist = null
   };
 }
 
-async function readBoundedHttpText(response, maxBytes) {
-  if (response?.body?.getReader) {
-    const reader = response.body.getReader();
-    const chunks = [];
-    let total = 0;
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = Buffer.from(value || []);
-        total += chunk.length;
-        if (total > maxBytes) throw new Error('LOCALHOST_RESPONSE_TOO_LARGE');
-        chunks.push(chunk);
-      }
-    } finally {
-      if (total > maxBytes) await reader.cancel?.().catch?.(() => {});
-      reader.releaseLock?.();
-    }
-    return Buffer.concat(chunks, total).toString('utf8');
-  }
-  const text = String(await response.text());
-  if (Buffer.byteLength(text, 'utf8') > maxBytes) throw new Error('LOCALHOST_RESPONSE_TOO_LARGE');
-  return text;
-}
-
-async function fetchJson(url, { fetchFn = globalThis.fetch, timeoutMs = 4_000, maxBytes = 16 * 1024 } = {}) {
-  const controller = new AbortController();
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      reject(new Error('LOCALHOST_RESPONSE_TIMEOUT'));
-    }, Math.max(1, Number(timeoutMs || 4_000)));
-    timer.unref?.();
-  });
-  try {
-    return await Promise.race([
-      (async () => {
-        const response = await fetchFn(url, { method: 'GET', signal: controller.signal });
-        const text = await readBoundedHttpText(response, maxBytes);
-        let json = null;
-        try { json = JSON.parse(text); } catch {}
-        return { ok: response?.ok === true, statusCode: response?.status ?? null, json, text: text.slice(0, 500) };
-      })(),
-      timeout,
-    ]);
-  } finally {
-    clearTimeout(timer);
-    controller.abort();
-  }
+async function fetchJson(url, { fetchFn = globalThis.fetch } = {}) {
+  const response = await fetchFn(url);
+  const text = await response.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch {}
+  return { ok: response.ok, statusCode: response.status, json, text: text.slice(0, 500) };
 }
 
 export async function collectServedRuntimeExactHeadProof({ currentHead = getCurrentGitHead(), fetchFn = globalThis.fetch } = {}) {
@@ -1203,7 +967,7 @@ async function writeStatus(status, sharedWorkspace) {
   return file;
 }
 
-export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defaultBattleBridgeSharedWorkspace(), housekeepFn = runCanonicalSupervisorHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, openClawStartFn = runApprovedOpenClawGateway18789Start, sourceTruthFn = collectCanonicalIgnitionSourceTruth, runtimeProofFn = collectServedRuntimeExactHeadProof, currentHeadFn = getCurrentGitHead, stdout = process.stdout } = {}) {
+export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defaultBattleBridgeSharedWorkspace(), housekeepFn = runCanonicalSupervisorHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, openClawStartFn = runApprovedOpenClawGateway18789Start, sourceTruthFn = collectCanonicalIgnitionSourceTruth, runtimeProofFn = collectServedRuntimeExactHeadProof, cwd = defaultRepoRoot, environment = process.env, platform = process.platform, spawnSyncFn = spawnSync, stdout = process.stdout } = {}) {
   let status = createBattleBridgeSupervisorStatus();
   const writes = [];
   const persist = async () => { const file = await writeStatus(status, sharedWorkspace); if (file) writes.push(file); };
@@ -1217,7 +981,42 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return { ok: false, status, writes };
   }
-  status.sourceTruthVerdict = { state: 'ready', verdict: canonicalSourceTruth.publicationState };
+  const expectedHead = canonicalSourceTruth.sourceTruth.head;
+  const reproveExpectedHead = (blockerId) => {
+    const latestSourceTruth = sourceTruthFn({ cwd, environment, platform, spawnSyncFn });
+    const latestCanonicalTruth = evaluateCanonicalIgnitionSourceTruth(latestSourceTruth);
+    if (!latestCanonicalTruth.ok) return { ok: false, blocker: latestCanonicalTruth.blocker };
+    const observedHead = String(latestCanonicalTruth.sourceTruth?.head || '').trim().toLowerCase();
+    if (observedHead !== expectedHead) {
+      return {
+        ok: false,
+        blocker: requiredServiceBlocker(
+          blockerId,
+          `Canonical source HEAD changed from ${expectedHead} to ${observedHead || 'unproven'} before runtime proof.`,
+          'Restore a clean synchronized canonical main checkout, then rerun npm run stephanos:ignite.',
+          { expectedHead, observedHead },
+        ),
+      };
+    }
+    return { ok: true, observedHead };
+  };
+  const blockForSourceReproof = async (proof, phase = 'source truth') => {
+    status = projectBattleBridgeSupervisorStatus({ status, phase, phaseState: 'blocked', blocker: proof.blocker });
+    status.sourceTruthVerdict = { state: 'blocked', verdict: proof.blocker?.id || 'source-truth-unproven', expectedHead, blocker: proof.blocker };
+    await persist();
+    stdout.write(`${JSON.stringify(status, null, 2)}\n`);
+    return { ok: false, status, writes };
+  };
+  const runExactHeadBoundMutation = async ({ phase, blockerId, mutate }) => {
+    const sourceProof = reproveExpectedHead(blockerId);
+    if (!sourceProof.ok) {
+      return { ok: false, blockedResult: await blockForSourceReproof(sourceProof, phase) };
+    }
+    return { ok: true, value: await mutate({ expectedHead, sourceProof }) };
+  };
+  const fixedGitExecFile = createCanonicalSupervisorGitExecFile({ cwd, environment, platform, spawnSyncFn });
+  const collectFacts = (options = {}) => collectFactsFn({ ...options, execFile: fixedGitExecFile });
+  status.sourceTruthVerdict = { state: 'ready', verdict: canonicalSourceTruth.publicationState, expectedHead };
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'source truth', phaseState: 'ready' }); await persist();
 
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'housekeeping', phaseState: 'running' }); await persist();
@@ -1228,17 +1027,23 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   await publisherFn({ sharedWorkspace });
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'shared workspace publisher', phaseState: 'ready' }); await persist();
 
-  let facts = await collectFactsFn({ sharedWorkspace });
+  let facts = await collectFacts({ sharedWorkspace });
   let report = plannerFn(facts);
   status = projectBattleBridgeSupervisorStatus({ status, readinessReport: report }); await persist();
 
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'backend 8787', phaseState: isReady(report, 'backend') ? 'ready' : 'running' }); await persist();
   if (!isReady(report, 'backend')) {
-    const startResult = await backendStartFn({ sharedWorkspace, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY });
+    const mutation = await runExactHeadBoundMutation({
+      phase: 'backend 8787',
+      blockerId: 'ignition-exact-head-changed-before-backend-start',
+      mutate: () => backendStartFn({ sharedWorkspace, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY, expectedHead, cwd, environment, platform, spawnSyncFn }),
+    });
+    if (!mutation.ok) return mutation.blockedResult;
+    const startResult = mutation.value;
     status.services.backend8787.repair = { commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY, logPath: startResult?.logPath || startResult?.logs?.logPath || '', logs: startResult?.logs || null, exitCode: startResult?.exitCode ?? startResult?.exit?.code ?? null };
     status.phases['backend 8787'].logPath = startResult?.logPath || startResult?.logs?.logPath || '';
     await persist();
-    facts = await collectFactsFn({ sharedWorkspace });
+    facts = await collectFacts({ sharedWorkspace });
     report = plannerFn(facts);
     status = projectBattleBridgeSupervisorStatus({ status, readinessReport: report });
     if (!isReady(report, 'backend')) {
@@ -1251,16 +1056,19 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   }
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'backend 8787', phaseState: 'ready', readinessReport: report, logPath: status.services.backend8787.repair?.logPath || '' }); await persist();
 
-  // TCP readiness is only a hint. Always pass through the fixed identity and
-  // process proof adapter; it reuses a canonical listener without starting a
-  // duplicate and rejects a fake listener before later runtime proof.
-  status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: 'running' }); await persist();
-  {
-    const startResult = await openClawStartFn({ sharedWorkspace });
+  status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: isReady(report, 'openclaw-gateway') ? 'ready' : 'running' }); await persist();
+  if (!isReady(report, 'openclaw-gateway')) {
+    const mutation = await runExactHeadBoundMutation({
+      phase: 'OpenClaw gateway 18789',
+      blockerId: 'ignition-exact-head-changed-before-openclaw-start',
+      mutate: () => openClawStartFn({ sharedWorkspace, expectedHead, cwd, env: environment, platform, spawnSyncFn }),
+    });
+    if (!mutation.ok) return mutation.blockedResult;
+    const startResult = mutation.value;
     status.services.openClaw18789.start = { startupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE, commandText: startResult?.target?.commandText || '', execution: startResult?.execution || startResult?.exit?.execution || null, logPath: startResult?.logPath || startResult?.logs?.logPath || '', logs: startResult?.logs || null, exitCode: startResult?.exitCode ?? startResult?.exit?.code ?? null, healthProof: startResult?.healthProof || null };
     status.phases['OpenClaw gateway 18789'].logPath = startResult?.logPath || startResult?.logs?.logPath || '';
     await persist();
-    facts = await collectFactsFn({ sharedWorkspace });
+    facts = await collectFacts({ sharedWorkspace });
     report = plannerFn(facts);
     status = projectBattleBridgeSupervisorStatus({ status, readinessReport: report });
     if (!isReady(report, 'openclaw-gateway') || startResult?.ready !== true) {
@@ -1279,7 +1087,7 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   if (!isReady(report, 'shared-workspace') || (report.staleWorkspaceRecords || []).length) {
     status = projectBattleBridgeSupervisorStatus({ status, phase: 'shared workspace publisher', phaseState: 'running' }); await persist();
     await publisherFn({ sharedWorkspace });
-    facts = await collectFactsFn({ sharedWorkspace });
+    facts = await collectFacts({ sharedWorkspace });
     report = plannerFn(facts);
     status = projectBattleBridgeSupervisorStatus({ status, phase: 'shared workspace publisher', phaseState: isReady(report, 'shared-workspace') && !(report.staleWorkspaceRecords || []).length ? 'ready' : 'blocked', readinessReport: report }); await persist();
   }
@@ -1288,50 +1096,58 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   if (report.finalVerdict === 'partial-ui-missing' || !isReady(report, 'stephanos-ui')) {
     status = projectBattleBridgeSupervisorStatus({ status, phase: 'Stephanos UI 4173', phaseState: 'running' }); await persist();
     const repairOutput = { chunks: '' };
-    const code = await repairFn({ sharedWorkspace, dryRun: false, stdout: { write: (chunk) => { repairOutput.chunks += chunk; } } });
+    const mutation = await runExactHeadBoundMutation({
+      phase: 'Stephanos UI 4173',
+      blockerId: 'ignition-exact-head-changed-before-ui-repair',
+      mutate: () => repairFn({ sharedWorkspace, dryRun: false, expectedHead, collectFactsFn: collectFacts, stdout: { write: (chunk) => { repairOutput.chunks += chunk; } } }),
+    });
+    if (!mutation.ok) return mutation.blockedResult;
+    const code = mutation.value;
     let repairResult = null;
     try { repairResult = JSON.parse(repairOutput.chunks); } catch {}
     const uiBlocker = repairResult?.ready ? null : requiredServiceBlocker('stephanos-ui-4173-missing', 'Stephanos UI 4173 did not pass readiness proof after guarded repair.', repairResult?.nextOperatorAction || `Inspect UI repair logs, then rerun proof. Approved command: ${UI_4173_REPAIR_AUTHORITY ? 'npm run stephanos:ignite:launcher-root' : 'source adapter required'}`);
     status = projectBattleBridgeSupervisorStatus({ status, phase: 'Stephanos UI 4173', phaseState: repairResult?.ready ? 'ready' : (code === 0 ? 'blocked' : 'failed'), blocker: uiBlocker, logPath: repairResult?.logs?.logPath || '' }); await persist();
     await publisherFn({ sharedWorkspace });
   }
-  const proofFacts = await collectFactsFn({ sharedWorkspace });
+  const proofFacts = await collectFacts({ sharedWorkspace });
   const proofReport = plannerFn(proofFacts);
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'browser/runtime proof', phaseState: 'running', readinessReport: proofReport }); await persist();
-  const finalOpenClawProof = await openClawStartFn({ sharedWorkspace, probeOnly: true });
-  if (finalOpenClawProof?.ready !== true) {
-    const blocker = requiredServiceBlocker(
-      'openclaw-gateway-18789-final-identity-unproven',
-      'Final readiness requires a fresh canonical OpenClaw 18789 health, identity, executable, listener-owner, and lineage proof.',
-      `Inspect OpenClaw gateway proof logs at ${finalOpenClawProof?.logPath || 'canonical shared workspace logs'}; do not trust TCP/HTTP-only readiness.`,
-      { finalOpenClawProof },
-    );
-    status = projectBattleBridgeSupervisorStatus({ status, phase: 'browser/runtime proof', phaseState: 'blocked', blocker, logPath: finalOpenClawProof?.logPath || '' }); await persist();
-    stdout.write(`${JSON.stringify(status, null, 2)}\n`);
-    return { ok: false, status, writes };
-  }
   let servedRuntimeProof = null;
   if (isReady(proofReport, 'stephanos-ui')) {
-    servedRuntimeProof = await runtimeProofFn({ currentHead: currentHeadFn(), sharedWorkspace });
+    const runtimeSourceProof = reproveExpectedHead('ignition-exact-head-changed-before-runtime-proof');
+    if (!runtimeSourceProof.ok) return blockForSourceReproof(runtimeSourceProof, 'browser/runtime proof');
+    servedRuntimeProof = await runtimeProofFn({ currentHead: expectedHead, expectedHead, sharedWorkspace });
     status.services.stephanosUi4173.servedRuntimeProof = servedRuntimeProof;
     if (!servedRuntimeProof.ready) {
       status = projectBattleBridgeSupervisorStatus({ status, phase: 'Stephanos UI 4173', phaseState: 'running' }); await persist();
       const repairOutput = { chunks: '' };
-      const code = await repairFn({ sharedWorkspace, dryRun: false, stdout: { write: (chunk) => { repairOutput.chunks += chunk; } } });
+      const mutation = await runExactHeadBoundMutation({
+        phase: 'Stephanos UI 4173',
+        blockerId: 'ignition-exact-head-changed-before-ui-repair',
+        mutate: () => repairFn({ sharedWorkspace, dryRun: false, expectedHead, collectFactsFn: collectFacts, stdout: { write: (chunk) => { repairOutput.chunks += chunk; } } }),
+      });
+      if (!mutation.ok) return mutation.blockedResult;
+      const code = mutation.value;
       let repairResult = null;
       try { repairResult = JSON.parse(repairOutput.chunks); } catch {}
       await publisherFn({ sharedWorkspace });
-      const repairedFacts = await collectFactsFn({ sharedWorkspace });
+      const repairedFacts = await collectFacts({ sharedWorkspace });
       const repairedReport = plannerFn(repairedFacts);
       proofReport.observedServices = repairedReport.observedServices;
       proofReport.finalVerdict = repairedReport.finalVerdict;
       proofReport.staleWorkspaceRecords = repairedReport.staleWorkspaceRecords || [];
-      servedRuntimeProof = isReady(repairedReport, 'stephanos-ui') ? await runtimeProofFn({ currentHead: currentHeadFn(), sharedWorkspace }) : servedRuntimeProof;
+      if (isReady(repairedReport, 'stephanos-ui')) {
+        const repairedRuntimeSourceProof = reproveExpectedHead('ignition-exact-head-changed-before-runtime-proof');
+        if (!repairedRuntimeSourceProof.ok) return blockForSourceReproof(repairedRuntimeSourceProof, 'browser/runtime proof');
+        servedRuntimeProof = await runtimeProofFn({ currentHead: expectedHead, expectedHead, sharedWorkspace });
+      }
       status = projectBattleBridgeSupervisorStatus({ status, phase: 'Stephanos UI 4173', phaseState: servedRuntimeProof.ready ? 'ready' : (code === 0 ? 'blocked' : 'failed'), readinessReport: repairedReport, logPath: repairResult?.logs?.logPath || '' });
       status.services.stephanosUi4173.servedRuntimeProof = servedRuntimeProof;
       await persist();
     }
   }
+  const readySourceProof = reproveExpectedHead('ignition-exact-head-changed-before-ready');
+  if (!readySourceProof.ok) return blockForSourceReproof(readySourceProof, 'browser/runtime proof');
   const exactHeadReady = servedRuntimeProof?.ready === true;
   const proofReady = proofReport.finalVerdict === 'ready' && isReady(proofReport, 'backend') && isReady(proofReport, 'openclaw-gateway') && isReady(proofReport, 'stephanos-ui') && isReady(proofReport, 'shared-workspace') && exactHeadReady;
   if (!proofReady) {
@@ -1352,9 +1168,30 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   return { ok: true, status, writes };
 }
 
+export function runCanonicalIgnitionSourceTruthReport({
+  cwd = defaultRepoRoot,
+  environment = process.env,
+  platform = process.platform,
+  spawnSyncFn = spawnSync,
+  sourceTruthFn = collectCanonicalIgnitionSourceTruth,
+  stdout = process.stdout,
+} = {}) {
+  const sourceTruth = sourceTruthFn({ cwd, environment, platform, spawnSyncFn });
+  const canonical = evaluateCanonicalIgnitionSourceTruth(sourceTruth);
+  const report = canonical.ok
+    ? { ok: true, head: canonical.sourceTruth.head, publicationState: canonical.publicationState }
+    : { ok: false, head: '', publicationState: sourceTruth?.publicationState || 'source-truth-unproven', blocker: canonical.blocker };
+  stdout.write(`${JSON.stringify(report)}\n`);
+  return report.ok ? 0 : 2;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const sharedWorkspaceIndex = process.argv.indexOf('--shared-workspace');
   const sharedWorkspace = sharedWorkspaceIndex >= 0 ? process.argv[sharedWorkspaceIndex + 1] : undefined;
-  try { process.exitCode = (await runBattleBridgeIgnitionSupervisor({ sharedWorkspace })).ok ? 0 : 2; }
+  try {
+    process.exitCode = process.argv.includes('--source-truth-json')
+      ? runCanonicalIgnitionSourceTruthReport()
+      : ((await runBattleBridgeIgnitionSupervisor({ sharedWorkspace })).ok ? 0 : 2);
+  }
   catch (error) { console.error(error.message); process.exitCode = 1; }
 }

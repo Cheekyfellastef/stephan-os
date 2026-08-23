@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, copyFileSync, cpSync, existsSync, rmSync, writeFileSync, renameSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { mkdirSync, copyFileSync, cpSync, existsSync, lstatSync, opendirSync, rmSync, writeFileSync, renameSync } from 'node:fs';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
 import { projectIgnitionCockpit } from './ignition-cockpit-model.mjs';
 import { projectGitBranchIntelligence } from './git-branch-intelligence.mjs';
@@ -30,10 +30,37 @@ import {
   hasForbiddenOpenClawGatewayStartupToken,
   splitOpenClawGatewayStartupCommand,
 } from '../shared/agents/openClawGatewayStartup.mjs';
+import {
+  battleBridgeCanonicalRepositoryArgs,
+  resolveBattleBridgeGitExecution,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 const args = new Set(process.argv.slice(2));
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const OPENCLAW_STARTUP_RESTART_FLAG = '--approve-openclaw-service-restart';
+const IGNITION_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const SHA40 = /^[0-9a-f]{40}$/;
+
+export function assertBoundIgnitionHeadImmediatelyBeforeMutation({
+  expectedHead = process.env.STEPHANOS_EXPECTED_HEAD || '',
+  cwd = IGNITION_REPO_ROOT,
+  platform = process.platform,
+  environment = process.env,
+  spawnSyncFn = spawnSync,
+} = {}) {
+  const expected = String(expectedHead || '').trim().toLowerCase();
+  if (!expected) return null;
+  if (!SHA40.test(expected)) throw new Error('IGNITION_BOUND_EXPECTED_HEAD_INVALID');
+  const gitExecution = resolveBattleBridgeGitExecution({ platform, environment });
+  const proof = spawnSyncFn(
+    gitExecution.executable,
+    [...gitExecution.fixedConfigArgs, ...battleBridgeCanonicalRepositoryArgs(cwd), 'rev-parse', 'HEAD'],
+    { cwd, env: gitExecution.environment, encoding: 'utf8', shell: false, windowsHide: true, timeout: 120_000 },
+  );
+  const observed = String(proof?.stdout || '').trim().toLowerCase();
+  if (proof?.error || proof?.status !== 0 || observed !== expected) throw new Error('IGNITION_BOUND_EXPECTED_HEAD_MISMATCH');
+  return Object.freeze({ expectedHead: expected, observedHead: observed });
+}
 
 const OPENCLAW_AUTOSTART_SURFACES = Object.freeze([
   { id: 'gateway', envKey: 'STEPHANOS_OPENCLAW_GATEWAY_COMMAND', required: true },
@@ -1027,6 +1054,112 @@ function parsePorcelainStatusLine(line) {
   return { status, paths, rawLine: line };
 }
 
+export function collectIgnoredRuntimeAggregatePaths(statusOutput) {
+  return String(statusOutput || '')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => line.startsWith('!! '))
+    .map(parsePorcelainStatusLine)
+    .flatMap((entry) => entry.paths)
+    .filter((path) => path.endsWith('/') && classifyIgnitionDirtPath(path) === 'RUNTIME_CHECKPOINT_CLEAN');
+}
+
+export function mergeIgnoredRuntimeChildrenIntoStatus(statusOutput, ignoredChildrenOutput) {
+  const lines = String(statusOutput || '')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+  const seen = new Set(lines);
+  for (const rawPath of String(ignoredChildrenOutput || '').split('\n')) {
+    const path = normalizeGitPath(rawPath);
+    if (!path) continue;
+    const line = `!! ${path}`;
+    if (!seen.has(line)) {
+      seen.add(line);
+      lines.push(line);
+    }
+  }
+  return lines.length > 0 ? `${lines.join('\n')}\n` : '';
+}
+
+function ignoredRuntimeAggregateScanError(detail) {
+  const error = new Error(`ignored-runtime-aggregate-scan:${detail}`);
+  error.code = 'IGNITION_RUNTIME_AGGREGATE_SCAN_FAILED';
+  return error;
+}
+
+export function scanIgnoredRuntimeAggregatePathsForBlockers({
+  repoRoot = process.cwd(),
+  aggregatePaths = [],
+  lstatSyncFn = lstatSync,
+  opendirSyncFn = opendirSync,
+  maxDepth = 64,
+  maxEntries = 100_000,
+} = {}) {
+  const canonicalRoot = resolve(repoRoot);
+  const blockers = [];
+  let entriesInspected = 0;
+
+  const walk = (absoluteDirectory, relativeDirectory, depth) => {
+    if (depth > maxDepth) throw ignoredRuntimeAggregateScanError('maximum-depth-exceeded');
+    let directory;
+    try {
+      directory = opendirSyncFn(absoluteDirectory);
+      for (let entry = directory.readSync(); entry; entry = directory.readSync()) {
+        entriesInspected += 1;
+        if (entriesInspected > maxEntries) throw ignoredRuntimeAggregateScanError('maximum-entry-budget-exceeded');
+        if (entry.name.includes('\0') || entry.name.includes('\n') || entry.name.includes('\r')) {
+          throw ignoredRuntimeAggregateScanError('unsafe-entry-name');
+        }
+        const childPath = `${relativeDirectory}/${entry.name}`.replace(/\\/g, '/');
+        if (SECRETS_PATTERN.test(childPath)) {
+          blockers.push(childPath);
+          return;
+        }
+        if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
+          throw ignoredRuntimeAggregateScanError('unsupported-entry-identity');
+        }
+        if (entry.isDirectory()) walk(resolve(absoluteDirectory, entry.name), childPath, depth + 1);
+        if (blockers.length > 0) return;
+      }
+    } catch (error) {
+      if (error?.code === 'IGNITION_RUNTIME_AGGREGATE_SCAN_FAILED') throw error;
+      throw ignoredRuntimeAggregateScanError(error?.code || 'filesystem-read-failed');
+    } finally {
+      directory?.closeSync();
+    }
+  };
+
+  for (const rawAggregatePath of aggregatePaths) {
+    const aggregatePath = normalizeGitPath(rawAggregatePath).replace(/\\/g, '/').replace(/\/+$/, '');
+    const segments = aggregatePath.split('/');
+    if (!aggregatePath || isAbsolute(aggregatePath) || segments.includes('..') || segments.includes('.')) {
+      throw ignoredRuntimeAggregateScanError('unsafe-aggregate-path');
+    }
+    if (classifyIgnitionDirtPath(`${aggregatePath}/`) !== 'RUNTIME_CHECKPOINT_CLEAN') {
+      throw ignoredRuntimeAggregateScanError('non-runtime-aggregate');
+    }
+    const absoluteAggregate = resolve(canonicalRoot, aggregatePath);
+    const relativeToRoot = relative(canonicalRoot, absoluteAggregate);
+    if (!relativeToRoot || relativeToRoot.startsWith('..') || isAbsolute(relativeToRoot)) {
+      throw ignoredRuntimeAggregateScanError('aggregate-outside-repository');
+    }
+    let identity;
+    try {
+      identity = lstatSyncFn(absoluteAggregate);
+    } catch (error) {
+      throw ignoredRuntimeAggregateScanError(error?.code || 'aggregate-identity-unproven');
+    }
+    if (identity.isSymbolicLink() || !identity.isDirectory()) {
+      throw ignoredRuntimeAggregateScanError('aggregate-identity-invalid');
+    }
+    walk(absoluteAggregate, aggregatePath, 0);
+    if (blockers.length > 0) break;
+  }
+
+  return blockers.length > 0 ? `${blockers.join('\n')}\n` : '';
+}
+
 export function evaluateGitStatusForIgnition(statusOutput) {
   const lines = String(statusOutput || '')
     .split('\n')
@@ -1800,9 +1933,13 @@ export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureSt
   return { healthy: true, state: 'connected-healthy', recoveryApplied: true, readiness };
 }
 
-export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, preserveRuntimeDirt = false, captureStepFn = runStepCapture, runStepFn = runStep, moveRootOpenClawWorkspaceDirtFn = moveRootOpenClawWorkspaceDirt } = {}) {
+export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, preserveRuntimeDirt = false, captureStepFn = runStepCapture, runStepFn = runStep, moveRootOpenClawWorkspaceDirtFn = moveRootOpenClawWorkspaceDirt, scanIgnoredRuntimeAggregatePathsFn = scanIgnoredRuntimeAggregatePathsForBlockers, repoRoot = process.cwd() } = {}) {
   const capture = captureStepFn('git-status', 'git', ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
-  const assessment = evaluateGitStatusForIgnition(capture.stdout);
+  const ignoredRuntimeAggregates = collectIgnoredRuntimeAggregatePaths(capture.stdout);
+  const ignoredRuntimeBlockers = ignoredRuntimeAggregates.length > 0
+    ? scanIgnoredRuntimeAggregatePathsFn({ repoRoot, aggregatePaths: ignoredRuntimeAggregates })
+    : '';
+  const assessment = evaluateGitStatusForIgnition(mergeIgnoredRuntimeChildrenIntoStatus(capture.stdout, ignoredRuntimeBlockers));
   const runtimeDataListing = captureStepFn('git-untracked-data', 'git', ['ls-files', '--others', '--exclude-standard', '--', 'data']);
   const runtimeDataPaths = normalizeCaptureStdout(runtimeDataListing).split('\n').map((line) => normalizeGitPath(line)).filter((line) => line.startsWith('data/'));
   const plan = assessment.entries.map((entry) => ({
@@ -2021,6 +2158,7 @@ export function autoPublishDistWithDeps({ statusAssessment, captureStep = runSte
 }
 
 export async function run() {
+  assertBoundIgnitionHeadImmediatelyBeforeMutation();
   const preflightState = readLocalBuildState();
   const autoPullEnabled = shouldAutoPull();
   const ignitionMode = resolveIgnitionMode();
@@ -2101,6 +2239,7 @@ export async function run() {
       console.log('[IGNITION] launcher guardrail passed');
     },
     runBuild: async () => {
+      assertBoundIgnitionHeadImmediatelyBeforeMutation();
       console.log('[IGNITION] build starting');
       try {
         runStep('build', npmCommand, ['run', 'stephanos:build']);
@@ -2189,6 +2328,7 @@ export async function run() {
         console.error(`[IGNITION] repair-packet=${JSON.stringify(distFreshness)}`);
         throw new Error(`blocked for safety: ${distFreshness.reason}. ${distFreshness.nextSafeAction}`);
       }
+      assertBoundIgnitionHeadImmediatelyBeforeMutation();
       const restartReport = await ensureLocalStaticServerRestartWithDeps({
         expectedMetadata: refreshedState.distMetadata || refreshedState.expectedMetadata,
         verifyServedAfterStart: true,

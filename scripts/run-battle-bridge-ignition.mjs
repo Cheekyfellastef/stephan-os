@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { fstatSync, readSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -14,16 +13,13 @@ import {
   getCurrentGitHead,
   projectBattleBridgeSupervisorStatus,
   runBattleBridgeIgnitionSupervisor,
-  runApprovedOpenClawGateway18789Start,
 } from './battle-bridge-ignition-supervisor.mjs';
 import { runIgnitionHousekeep } from './ignite-stephanos-local.mjs';
 import {
-  BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
   battleBridgeCanonicalRepositoryArgs,
-  createBattleBridgeMinimalChildEnvironment,
+  resolveBattleBridgeGitExecution,
 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
-import { BATTLE_BRIDGE_IGNITION_PIPE_APPROVAL_SCHEMA } from '../shared/agents/battleBridgeExactHeadAsyncUpdateV1.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const backendStarterScript = path.join(repoRoot, 'scripts', 'windows', 'start-stephanos-backend.ps1');
@@ -31,75 +27,106 @@ const approvedRuntimeRestartScript = path.join(repoRoot, 'scripts', 'windows', '
 const ui4173RefreshScript = path.join(repoRoot, 'scripts', 'refresh-stephanos-ui-4173.mjs');
 const backendHealthUrl = 'http://127.0.0.1:8787/api/health';
 const SHA40 = /^[0-9a-f]{40}$/;
-const HEX32 = /^[0-9a-f]{32}$/;
-const MAX_IGNITION_APPROVAL_BYTES = 4096;
 const SUPERVISOR_PRESERVED_MUTATION_LABELS = new Map([
   ['git-restore-auto-generated', 'preserve the currently served generated dist until exact-head browser proof completes'],
   ['git-clean-dist-untracked', 'preserve the currently served generated dist until exact-head browser proof completes'],
   ['git-restore-runtime-tracked', 'preserve runtime-owned durable memory; runtime dirt is evidence, not source cleanup authority'],
-  ['git-clean-runtime-untracked', 'preserve runtime-owned durable memory; this recovery lane has no delete authority'],
+  ['git-clean-runtime-untracked', 'preserve untracked runtime-owned data; runtime dirt is evidence, not cleanup authority'],
 ]);
 
-function invalidOwnerIgnitionApproval(reason) {
-  return Object.freeze({
-    approved: false,
-    pipePresent: true,
-    blocker: 'OWNER_IGNITION_APPROVAL_INVALID',
-    reason,
-  });
+function proveExpectedCurrentGitHead({
+  expectedHead,
+  currentHeadFn = getCurrentGitHead,
+  platform = process.platform,
+  blockerPrefix = 'IGNITION',
+} = {}) {
+  const expected = String(expectedHead || '').trim().toLowerCase();
+  if (!SHA40.test(expected)) {
+    return Object.freeze({
+      ok: false,
+      blocker: `${blockerPrefix}_EXPECTED_HEAD_UNPROVEN`,
+      expectedHead: expected,
+      currentHead: '',
+    });
+  }
+
+  let currentHead = '';
+  try {
+    currentHead = String(currentHeadFn({ cwd: repoRoot, platform }) || '').trim().toLowerCase();
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      blocker: `${blockerPrefix}_CURRENT_HEAD_UNPROVEN`,
+      expectedHead: expected,
+      currentHead: '',
+      error: error?.message || String(error),
+    });
+  }
+  if (!SHA40.test(currentHead)) {
+    return Object.freeze({
+      ok: false,
+      blocker: `${blockerPrefix}_CURRENT_HEAD_UNPROVEN`,
+      expectedHead: expected,
+      currentHead,
+    });
+  }
+  if (currentHead !== expected) {
+    return Object.freeze({
+      ok: false,
+      blocker: `${blockerPrefix}_EXACT_HEAD_CHANGED`,
+      expectedHead: expected,
+      currentHead,
+    });
+  }
+  return Object.freeze({ ok: true, expectedHead: expected, currentHead });
 }
 
-function deferRootWorkspaceMove({ paths = [] } = {}) {
-  return {
-    destinationRoot: null,
-    migrationDirectory: null,
-    moved: [],
-    skipped: paths.map((pathname) => ({ path: pathname, reason: 'recovery-lane-move-authority-disabled' })),
-  };
-}
-
-export function bindCanonicalSourceTruthToOwnerApproval({ sourceTruthFn, approval } = {}) {
+export function bindCanonicalSourceTruthToProvenHead({ sourceTruthFn, expectedHead } = {}) {
   if (typeof sourceTruthFn !== 'function') throw new TypeError('sourceTruthFn must be a function');
-  if (approval?.approved !== true) return sourceTruthFn;
-  const expectedHead = String(approval.expectedHead || '').trim().toLowerCase();
-  if (!SHA40.test(expectedHead)) throw new Error('OWNER_IGNITION_EXPECTED_HEAD_INVALID');
+  const expected = String(expectedHead || '').trim().toLowerCase();
+  if (!SHA40.test(expected)) throw new Error('IGNITION_EXPECTED_HEAD_UNPROVEN');
 
   return (options = {}) => {
     const sourceTruth = sourceTruthFn(options);
     if (!evaluateCanonicalIgnitionSourceTruth(sourceTruth).ok) return sourceTruth;
     const head = String(sourceTruth?.head || '').trim().toLowerCase();
     const originHead = String(sourceTruth?.originHead || '').trim().toLowerCase();
-    if (head === expectedHead && originHead === expectedHead) return sourceTruth;
+    if (head === expected && originHead === expected) return sourceTruth;
     return Object.freeze({
       ...sourceTruth,
-      ok: false,
       headPublished: false,
       blockedForRemoteTruth: true,
       publicationState: 'source-truth-unproven',
       blocker: Object.freeze({
-        id: 'owner-ignition-exact-head-mismatch',
-        code: 'OWNER_IGNITION_EXACT_HEAD_MISMATCH',
-        detail: 'Canonical source truth no longer matches the commit approved for this one-use ignition.',
-        nextOperatorAction: 'Do not start runtime services; re-enter through the authenticated exact-head owner update route.',
+        id: 'ignition-exact-head-changed-before-service-mutation',
+        code: 'IGNITION_EXACT_HEAD_CHANGED',
+        detail: 'Canonical source truth changed after the entry proof and before service mutation.',
+        nextOperatorAction: 'Do not mutate runtime services; restore one canonical exact head, then retry Ignition.',
       }),
     });
   };
 }
 
-export function runStep(label, command, args, { cwd = repoRoot, env = process.env } = {}) {
+export function runStep(label, command, args, {
+  cwd = repoRoot,
+  env = process.env,
+  platform = process.platform,
+  spawnSyncFn = spawnSync,
+} = {}) {
   const fixedGit = command === 'git' || command === BATTLE_BRIDGE_WINDOWS_HOST.git;
+  const gitExecution = fixedGit ? resolveBattleBridgeGitExecution({ platform, environment: env }) : null;
   const executable = fixedGit
-    ? BATTLE_BRIDGE_WINDOWS_HOST.git
+    ? gitExecution.executable
     : (command === 'powershell.exe'
       ? BATTLE_BRIDGE_WINDOWS_HOST.powershell
       : (command === 'cmd.exe' ? BATTLE_BRIDGE_WINDOWS_HOST.cmd : command));
-  const fixedArgs = fixedGit ? [...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS, ...battleBridgeCanonicalRepositoryArgs(cwd), ...args] : args;
+  const fixedArgs = fixedGit ? [...gitExecution.fixedConfigArgs, ...battleBridgeCanonicalRepositoryArgs(cwd), ...args] : args;
   console.log(`[IGNITION ENTRY] ${label}: ${executable} ${fixedArgs.join(' ')}`);
-  const result = spawnSync(executable, fixedArgs, {
+  const result = spawnSyncFn(executable, fixedArgs, {
     cwd,
     stdio: 'inherit',
     shell: false,
-    env: fixedGit ? createBattleBridgeMinimalChildEnvironment(env, { git: true }) : env,
+    env: fixedGit ? gitExecution.environment : env,
   });
 
   if (result.error || result.status !== 0) {
@@ -118,81 +145,22 @@ export function runStep(label, command, args, { cwd = repoRoot, env = process.en
 export function captureFixedAuthorityGitStep(label, command, args, {
   cwd = repoRoot,
   env = process.env,
+  platform = process.platform,
   spawnSyncFn = spawnSync,
 } = {}) {
-  if (command !== 'git' && command !== BATTLE_BRIDGE_WINDOWS_HOST.git) {
+  const gitExecution = resolveBattleBridgeGitExecution({ platform, environment: env });
+  if (command !== 'git' && command !== BATTLE_BRIDGE_WINDOWS_HOST.git && command !== gitExecution.executable) {
     throw new Error(`FIXED_AUTHORITY_GIT_COMMAND_REQUIRED:${label}`);
   }
   const result = spawnSyncFn(
-    BATTLE_BRIDGE_WINDOWS_HOST.git,
-    [...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS, ...battleBridgeCanonicalRepositoryArgs(cwd), ...args],
-    { cwd, env: createBattleBridgeMinimalChildEnvironment(env, { git: true }), encoding: 'utf8', shell: false, windowsHide: true, timeout: 120_000 },
+    gitExecution.executable,
+    [...gitExecution.fixedConfigArgs, ...battleBridgeCanonicalRepositoryArgs(cwd), ...args],
+    { cwd, env: gitExecution.environment, encoding: 'utf8', shell: false, windowsHide: true, timeout: 120_000 },
   );
   if (result?.error || result?.status !== 0) {
     throw new Error(`${label} failed through fixed authority Git (${result?.error?.message || result?.status || 'unknown'}).`);
   }
   return Object.freeze({ stdout: String(result?.stdout || ''), stderr: String(result?.stderr || '') });
-}
-
-export function readOwnerIgnitionApprovalFromPipe({
-  fd = 3,
-  parentPid = process.ppid,
-  childPid = process.pid,
-  readSyncFn = readSync,
-  fstatFn = fstatSync,
-} = {}) {
-  let info;
-  try { info = fstatFn(fd); } catch (error) {
-    return error?.code === 'EBADF'
-      ? null
-      : invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_PIPE_UNREADABLE');
-  }
-  if (!info?.isFIFO?.() && !info?.isSocket?.()) {
-    return invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_PIPE_TYPE_INVALID');
-  }
-  const bounded = Buffer.alloc(MAX_IGNITION_APPROVAL_BYTES + 1);
-  let length = 0;
-  try {
-    // The producer writes one sub-PIPE_BUF JSON frame. A single bounded read
-    // neither waits for EOF from a writer that keeps its handle open nor
-    // allocates beyond the fixed maximum-plus-one rejection byte.
-    length = readSyncFn(fd, bounded, 0, bounded.length, null);
-    if (!Number.isSafeInteger(length) || length < 0) {
-      return invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_READ_INVALID');
-    }
-  } catch { return invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_READ_FAILED'); }
-  const bytes = bounded.subarray(0, length);
-  if (bytes.length < 2 || bytes.length > MAX_IGNITION_APPROVAL_BYTES) {
-    return invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_FRAME_INVALID');
-  }
-  let approval;
-  try { approval = JSON.parse(bytes.toString('utf8')); } catch {
-    return invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_JSON_INVALID');
-  }
-  const exactKeys = [
-    'action', 'childPid', 'expectedHead', 'nonce', 'parentPid', 'receiptId', 'schemaVersion',
-  ];
-  if (!approval || typeof approval !== 'object' || Array.isArray(approval)
-      || JSON.stringify(Object.keys(approval).sort()) !== JSON.stringify(exactKeys)) {
-    return invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_SHAPE_INVALID');
-  }
-  if (approval.schemaVersion !== BATTLE_BRIDGE_IGNITION_PIPE_APPROVAL_SCHEMA
-      || approval.action !== 'RUN_EXACT_HEAD_IGNITION'
-      || !SHA40.test(String(approval.expectedHead || '').toLowerCase())
-      || !HEX32.test(String(approval.receiptId || '').toLowerCase())
-      || !HEX32.test(String(approval.nonce || '').toLowerCase())
-      || Number(approval.parentPid) !== Number(parentPid)
-      || Number(approval.childPid) !== Number(childPid)) {
-    return invalidOwnerIgnitionApproval('OWNER_IGNITION_APPROVAL_BINDING_INVALID');
-  }
-  return Object.freeze({
-    approved: true,
-    action: approval.action,
-    expectedHead: String(approval.expectedHead).toLowerCase(),
-    receiptId: String(approval.receiptId).toLowerCase(),
-    parentPid: Number(parentPid),
-    childPid: Number(childPid),
-  });
 }
 
 export function createSupervisorHousekeepRunStep({ runStepFn = runStep } = {}) {
@@ -211,13 +179,34 @@ export function createSupervisorHousekeepRunStep({ runStepFn = runStep } = {}) {
 
 export function runSupervisorHousekeepPreservingLiveRuntime(
   options = {},
-  { housekeepFn = runIgnitionHousekeep, runStepFn = runStep } = {},
+  {
+    housekeepFn = runIgnitionHousekeep,
+    runStepFn = null,
+    captureStepFn = null,
+    cwd = repoRoot,
+    env = process.env,
+    platform = process.platform,
+    spawnSyncFn = spawnSync,
+  } = {},
 ) {
+  const fixedRunStep = runStepFn || ((label, command, args) => runStep(
+    label,
+    command,
+    args,
+    { cwd, env, platform, spawnSyncFn },
+  ));
+  const fixedCaptureStep = captureStepFn || ((label, command, args) => captureFixedAuthorityGitStep(
+    label,
+    command,
+    args,
+    { cwd, env, platform, spawnSyncFn },
+  ));
   return housekeepFn({
     ...options,
-    captureStepFn: (label, command, args) => captureFixedAuthorityGitStep(label, command, args),
-    runStepFn: createSupervisorHousekeepRunStep({ runStepFn }),
-    moveRootOpenClawWorkspaceDirtFn: deferRootWorkspaceMove,
+    repoRoot: cwd,
+    preserveRuntimeDirt: true,
+    captureStepFn: fixedCaptureStep,
+    runStepFn: createSupervisorHousekeepRunStep({ runStepFn: fixedRunStep }),
   });
 }
 
@@ -236,50 +225,10 @@ function timeoutFetch(url, options = {}) {
   });
 }
 
-async function readBoundedJsonResponse(response, maxBytes = 16 * 1024) {
-  if (response?.body?.getReader || typeof response?.text === 'function') {
-    let text = '';
-    if (response?.body?.getReader) {
-      const reader = response.body.getReader();
-      const chunks = [];
-      let total = 0;
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = Buffer.from(value || []);
-          total += chunk.length;
-          if (total > maxBytes) throw new Error('BACKEND_HEALTH_RESPONSE_TOO_LARGE');
-          chunks.push(chunk);
-        }
-      } finally {
-        if (total > maxBytes) await reader.cancel?.().catch?.(() => {});
-        reader.releaseLock?.();
-      }
-      text = Buffer.concat(chunks, total).toString('utf8');
-    } else {
-      text = String(await response.text());
-      if (Buffer.byteLength(text, 'utf8') > maxBytes) throw new Error('BACKEND_HEALTH_RESPONSE_TOO_LARGE');
-    }
-    return JSON.parse(text);
-  }
-  const payload = await response.json();
-  if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > maxBytes) throw new Error('BACKEND_HEALTH_RESPONSE_TOO_LARGE');
-  return payload;
-}
-
 export async function probeCanonicalBackendHealth({ fetchFn = timeoutFetch } = {}) {
-  let timer;
   try {
-    const operation = (async () => {
-      const response = await fetchFn(backendHealthUrl, { timeoutMs: 4_000 });
-      return { response, payload: await readBoundedJsonResponse(response) };
-    })();
-    const timeout = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error('BACKEND_HEALTH_RESPONSE_TIMEOUT')), 4_500);
-      timer.unref?.();
-    });
-    const { response, payload } = await Promise.race([operation, timeout]);
+    const response = await fetchFn(backendHealthUrl, { timeoutMs: 4_000 });
+    const payload = await response.json();
     const sourceHead = String(payload?.backendIdentity?.sourceHead || '').trim().toLowerCase();
     const canonical = Number(response?.status || 0) === 200
       && payload?.schemaVersion === 'stephanos.backend-health.v1'
@@ -298,20 +247,20 @@ export async function probeCanonicalBackendHealth({ fetchFn = timeoutFetch } = {
       sourceHead: '',
       error: error?.message || String(error),
     });
-  } finally {
-    clearTimeout(timer);
   }
 }
 
-function backendStarterInvocation() {
+export function backendStarterInvocation(expectedHead) {
   return Object.freeze({
-    command: BATTLE_BRIDGE_WINDOWS_HOST.powershell,
+    command: 'powershell.exe',
     args: Object.freeze([
       '-NoProfile',
       '-ExecutionPolicy',
       'Bypass',
       '-File',
       backendStarterScript,
+      '-ExpectedHead',
+      expectedHead,
       '-StartupTimeoutSeconds',
       '90',
       '-PollIntervalSeconds',
@@ -322,7 +271,7 @@ function backendStarterInvocation() {
 
 function approvedBackendRestartInvocation(currentHead) {
   return Object.freeze({
-    command: BATTLE_BRIDGE_WINDOWS_HOST.powershell,
+    command: 'powershell.exe',
     args: Object.freeze([
       '-NoProfile',
       '-NonInteractive',
@@ -342,6 +291,7 @@ function approvedBackendRestartInvocation(currentHead) {
 
 export async function ensureBackend8787ConvergedBeforeSupervisor({
   platform = process.platform,
+  expectedHead = '',
   runStepFn = runStep,
   currentHeadFn = getCurrentGitHead,
   fetchFn = timeoutFetch,
@@ -350,19 +300,27 @@ export async function ensureBackend8787ConvergedBeforeSupervisor({
     return Object.freeze({ ok: true, action: 'backend-preflight-skipped-non-windows', restartAttempted: false });
   }
 
-  const starter = backendStarterInvocation();
-  if (runStepFn('backend-8787-preflight', starter.command, [...starter.args])) {
-    return Object.freeze({ ok: true, action: 'backend-preflight-pass', restartAttempted: false });
-  }
-
-  const currentHead = String(currentHeadFn({ cwd: repoRoot }) || '').trim().toLowerCase();
-  if (!SHA40.test(currentHead)) {
+  const entryHeadProof = proveExpectedCurrentGitHead({
+    expectedHead,
+    currentHeadFn,
+    platform,
+    blockerPrefix: 'BACKEND_8787',
+  });
+  if (!entryHeadProof.ok) {
     return Object.freeze({
       ok: false,
       action: 'backend-preflight-blocked',
-      blocker: 'BACKEND_8787_CURRENT_HEAD_UNPROVEN',
+      blocker: entryHeadProof.blocker,
+      expectedHead: entryHeadProof.expectedHead,
+      currentHead: entryHeadProof.currentHead,
       restartAttempted: false,
     });
+  }
+
+  const currentHead = entryHeadProof.currentHead;
+  const starter = backendStarterInvocation(currentHead);
+  if (runStepFn('backend-8787-preflight', starter.command, [...starter.args])) {
+    return Object.freeze({ ok: true, action: 'backend-preflight-pass', restartAttempted: false });
   }
 
   const before = await probeCanonicalBackendHealth({ fetchFn });
@@ -380,6 +338,23 @@ export async function ensureBackend8787ConvergedBeforeSupervisor({
   }
 
   console.log(`[IGNITION ENTRY] 8787 preflight: canonical stale backend ${before.sourceHead} occupies the port; delegating replacement to the approved exact-head restart primitive for ${currentHead}.`);
+  const restartHeadProof = proveExpectedCurrentGitHead({
+    expectedHead,
+    currentHeadFn,
+    platform,
+    blockerPrefix: 'BACKEND_8787',
+  });
+  if (!restartHeadProof.ok) {
+    return Object.freeze({
+      ok: false,
+      action: 'backend-preflight-blocked',
+      blocker: restartHeadProof.blocker,
+      expectedHead: restartHeadProof.expectedHead,
+      currentHead: restartHeadProof.currentHead,
+      observedSourceHead: before.sourceHead,
+      restartAttempted: false,
+    });
+  }
   const restart = approvedBackendRestartInvocation(currentHead);
   const restarted = runStepFn('backend-8787-approved-stale-restart', restart.command, [...restart.args]);
   if (!restarted) {
@@ -416,10 +391,11 @@ export async function ensureBackend8787ConvergedBeforeSupervisor({
 
 export async function probeLiveUiExactHead({
   currentHeadFn = getCurrentGitHead,
+  platform = process.platform,
   proofFn = collectServedRuntimeExactHeadProof,
   fetchFn = timeoutFetch,
 } = {}) {
-  const currentHead = currentHeadFn({ cwd: repoRoot });
+  const currentHead = currentHeadFn({ cwd: repoRoot, platform });
   try {
     const proof = await proofFn({ currentHead, fetchFn });
     return {
@@ -440,10 +416,10 @@ export async function probeLiveUiExactHead({
   }
 }
 
-function canonicalUiRefreshInvocation() {
+function canonicalUiRefreshInvocation(expectedHead) {
   return {
     command: process.execPath,
-    args: [ui4173RefreshScript],
+    args: [ui4173RefreshScript, '--expected-head', expectedHead],
   };
 }
 
@@ -467,11 +443,24 @@ export async function waitForLiveUiExactHead({
 
 export async function ensureLiveUiConvergedBeforeSupervisor({
   platform = process.platform,
+  expectedHead = '',
+  currentHeadFn = getCurrentGitHead,
   probeFn = probeLiveUiExactHead,
   waitFn = waitForLiveUiExactHead,
   runStepFn = runStep,
 } = {}) {
-  const before = await probeFn();
+  const before = await probeFn({ currentHeadFn, platform });
+  const entryHeadProof = proveExpectedCurrentGitHead({
+    expectedHead,
+    currentHeadFn,
+    platform,
+    blockerPrefix: 'STEPHANOS_UI_4173',
+  });
+  if (!entryHeadProof.ok) {
+    const error = new Error(`${entryHeadProof.blocker}: expected ${entryHeadProof.expectedHead || 'unproven'}, observed ${entryHeadProof.currentHead || 'unproven'}.`);
+    error.code = entryHeadProof.blocker;
+    throw error;
+  }
 
   if (!before.reachable) {
     console.log(`[IGNITION ENTRY] 4173 preflight: no live UI proof available (${before.error || 'listener unavailable'}); the full supervisor remains responsible for cold-start repair.`);
@@ -484,7 +473,7 @@ export async function ensureLiveUiConvergedBeforeSupervisor({
   }
 
   console.log('[IGNITION ENTRY] 4173 preflight: live UI is stale; running bounded build, verify, restart handoff, and exact-head proof.');
-  const invocation = canonicalUiRefreshInvocation(platform);
+  const invocation = canonicalUiRefreshInvocation(entryHeadProof.expectedHead);
   const refreshStarted = runStepFn('refresh-stale-ui-4173', invocation.command, invocation.args);
   if (!refreshStarted) {
     throw new Error('Bounded UI 4173 refresh failed before Battle Bridge supervisor proof.');
@@ -533,71 +522,49 @@ export async function writePreSupervisorFailureStatus({
 export async function main({
   platform = process.platform,
   sourceTruthFn = collectCanonicalIgnitionSourceTruth,
+  currentHeadFn = getCurrentGitHead,
   backendPreflightFn = ensureBackend8787ConvergedBeforeSupervisor,
   uiPreflightFn = ensureLiveUiConvergedBeforeSupervisor,
   supervisorFn = runBattleBridgeIgnitionSupervisor,
-  approvalFn = readOwnerIgnitionApprovalFromPipe,
-  currentHeadFn = getCurrentGitHead,
 } = {}) {
   process.chdir(repoRoot);
   const sharedWorkspace = sharedWorkspaceFromArgs();
-  const approval = approvalFn();
-  if (approval != null && approval?.approved !== true) {
+
+  const sourceTruth = sourceTruthFn({ cwd: repoRoot, platform });
+  const canonicalSourceTruth = evaluateCanonicalIgnitionSourceTruth(sourceTruth);
+  if (!canonicalSourceTruth.ok) {
     await writePreSupervisorFailureStatus({
       sharedWorkspace,
       phase: 'source truth',
-      blockerId: approval?.blocker || 'owner-ignition-approval-invalid',
-      detail: `Ignition descriptor 3 was present but did not contain a valid one-use owner approval (${approval?.reason || 'invalid approval'}).`,
-      nextOperatorAction: 'Do not start runtime services; retry through the authenticated exact-head owner update route or remove the invalid descriptor for an ordinary direct Ignition invocation.',
+      blockerId: canonicalSourceTruth.blocker.id,
+      detail: canonicalSourceTruth.blocker.detail,
+      nextOperatorAction: canonicalSourceTruth.blocker.nextOperatorAction,
     });
-    return 1;
-  }
-  if (approval?.approved === true) {
-    let currentHead = '';
-    try {
-      currentHead = String(currentHeadFn({ cwd: repoRoot, platform }) || '').trim().toLowerCase();
-    } catch {
-      await writePreSupervisorFailureStatus({
-        sharedWorkspace,
-        phase: 'source truth',
-        blockerId: 'owner-ignition-current-head-unproven',
-        detail: 'The fixed current source head could not be read for the one-use owner ignition approval.',
-        nextOperatorAction: 'Do not start runtime services; restore canonical Git source truth and re-enter through the authenticated exact-head owner update route.',
-      });
-      return 1;
-    }
-    if (currentHead !== approval.expectedHead) {
-      await writePreSupervisorFailureStatus({
-        sharedWorkspace,
-        phase: 'source truth',
-        blockerId: 'owner-ignition-exact-head-mismatch',
-        detail: 'The one-use owner ignition approval did not match the fixed current source head.',
-        nextOperatorAction: 'Do not start runtime services; re-enter through the authenticated exact-head owner update route.',
-      });
-      return 1;
-    }
+    console.error(`[IGNITION ENTRY] Battle Bridge preflight blocked before service mutation because canonical source truth is not ready (${canonicalSourceTruth.blocker.id}).`);
+    return 2;
   }
 
-  const ownerBoundSourceTruthFn = bindCanonicalSourceTruthToOwnerApproval({ sourceTruthFn, approval });
+  const expectedHead = String(canonicalSourceTruth.sourceTruth.head || '').trim().toLowerCase();
+  const boundSourceTruthFn = bindCanonicalSourceTruthToProvenHead({ sourceTruthFn, expectedHead });
   const proveSourceTruthBeforeMutation = async () => {
-    const sourceTruth = ownerBoundSourceTruthFn({ cwd: repoRoot });
-    const canonicalSourceTruth = evaluateCanonicalIgnitionSourceTruth(sourceTruth);
-    if (canonicalSourceTruth.ok) return true;
-    const sourceBlocker = canonicalSourceTruth.blocker || {};
+    const nextSourceTruth = boundSourceTruthFn({ cwd: repoRoot, platform });
+    const nextCanonicalSourceTruth = evaluateCanonicalIgnitionSourceTruth(nextSourceTruth);
+    if (nextCanonicalSourceTruth.ok) return true;
+    const sourceBlocker = nextCanonicalSourceTruth.blocker || {};
     await writePreSupervisorFailureStatus({
       sharedWorkspace,
       phase: 'source truth',
       blockerId: sourceBlocker.id || 'source-truth-unproven',
-      detail: sourceBlocker.detail || 'Canonical clean, current main source truth was not proven before any backend, UI, or OpenClaw service mutation.',
-      nextOperatorAction: sourceBlocker.nextOperatorAction || 'Use the bounded owner exact-head update route or restore canonical main source truth, then retry Ignition.',
+      detail: sourceBlocker.detail || 'Canonical source truth changed before service mutation.',
+      nextOperatorAction: sourceBlocker.nextOperatorAction || 'Restore one canonical exact head, then retry Ignition.',
     });
+    console.error(`[IGNITION ENTRY] Battle Bridge preflight blocked because canonical source truth changed before service mutation (${sourceBlocker.id || 'source-truth-unproven'}).`);
     return false;
   };
-  if (!await proveSourceTruthBeforeMutation()) return 2;
 
   if (platform === 'win32') {
-    if (approval?.approved === true && !await proveSourceTruthBeforeMutation()) return 2;
-    const backend = await backendPreflightFn({ platform });
+    if (!await proveSourceTruthBeforeMutation()) return 2;
+    const backend = await backendPreflightFn({ platform, expectedHead, currentHeadFn });
     if (!backend.ok) {
       await writePreSupervisorFailureStatus({
         sharedWorkspace,
@@ -611,9 +578,9 @@ export async function main({
     }
   }
 
-  if (approval?.approved === true && !await proveSourceTruthBeforeMutation()) return 2;
+  if (!await proveSourceTruthBeforeMutation()) return 2;
   try {
-    await uiPreflightFn({ platform });
+    await uiPreflightFn({ platform, expectedHead, currentHeadFn });
   } catch (error) {
     await writePreSupervisorFailureStatus({
       sharedWorkspace,
@@ -627,19 +594,11 @@ export async function main({
 
   const result = await supervisorFn({
     sharedWorkspace,
-    housekeepFn: (options) => runSupervisorHousekeepPreservingLiveRuntime(options),
-    sourceTruthFn: ownerBoundSourceTruthFn,
-    currentHeadFn: (options = {}) => currentHeadFn({ ...options, platform }),
-    ...(approval?.approved === true ? {
-      openClawStartFn: (options) => runApprovedOpenClawGateway18789Start({
-        ...options,
-        env: process.env,
-        token: '',
-        approved: true,
-        ownerApproval: approval,
-        platform,
-      }),
-    } : {}),
+    platform,
+    housekeepFn: (options) => runSupervisorHousekeepPreservingLiveRuntime(options, { platform }),
+    // Re-run the same fixed collector inside the standalone supervisor before
+    // its own housekeeping boundary; do not fall back to a weaker adapter.
+    sourceTruthFn: boundSourceTruthFn,
   });
 
   return result.ok ? 0 : 2;

@@ -1,6 +1,8 @@
 await import('./windowsAuthoritySpecialistReviewCoreV1.test.mjs');
 await import('./windowsAuthorityNoFaffRescueReviewV1.test.mjs');
 await import('./windowsAuthorityRecoveryMeshGuardianReviewV1.test.mjs');
+await import('./windowsAuthorityRecoveryMeshLaunchLivenessReviewV1.test.mjs');
+await import('./windowsAuthorityLegacyBackendMigrationReviewV1.test.mjs');
 await import('./windowsAuthorityOpenClawRecoveryReviewV1.test.mjs');
 await import('./windowsAuthorityLocalChatRecoveryReviewV1.test.mjs');
 await import('./windowsAuthorityMobileRecoveryExecutorReviewV1.test.mjs');
