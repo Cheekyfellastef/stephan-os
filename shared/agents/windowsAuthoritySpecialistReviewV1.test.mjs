@@ -9,6 +9,7 @@ await import('./windowsAuthorityMobileRecoveryExecutorReviewV1.test.mjs');
 await import('./windowsAuthorityMobileRecoveryVerificationJournalReviewV1.test.mjs');
 await import('./windowsAuthorityMobileRecoveryGitHubConsumerReviewV1.test.mjs');
 await import('./windowsAuthorityMobileRecoveryLifeboatInstallerReviewV1.test.mjs');
+await import('./windowsAuthorityBattleBridgeLifeboatActivationReviewV1.test.mjs');
 await import('./windowsAuthorityWorkerWatchdogReviewV1.test.mjs');
 await import('./windowsAuthorityForgeM3ExecutorReviewV1.test.mjs');
 await import('./windowsAuthorityForgePodmanPrerequisiteReviewV1.test.mjs');
