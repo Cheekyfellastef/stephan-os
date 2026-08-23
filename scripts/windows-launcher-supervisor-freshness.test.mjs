@@ -11,6 +11,23 @@ import {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const launcherPath = resolve(root, 'windows/Launch-Stephanos-Local.ps1');
 
+function canonicalSourceTruth() {
+  return {
+    branch: 'main',
+    detachedHead: false,
+    hasUpstream: true,
+    upstreamBranch: 'origin/main',
+    workingTreeDirty: false,
+    aheadCount: 0,
+    behindCount: 0,
+    headPublished: true,
+    blockedForRemoteTruth: false,
+    publicationState: 'healthy-synced',
+    head: '51600ceb1234567890abcdef1234567890abcdef',
+    originHead: '51600ceb1234567890abcdef1234567890abcdef',
+  };
+}
+
 function readyReport() {
   return {
     observedServices: {
@@ -55,7 +72,7 @@ test('blocked served-runtime status preserves exact rejection proof', async () =
   const result = await runBattleBridgeIgnitionSupervisor({
     housekeepFn: () => {},
     publisherFn: async () => {},
-    sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => readyReport(),
     plannerFn: (facts) => facts,
     currentHeadFn: () => staleProof.currentHead,
@@ -75,4 +92,11 @@ test('Windows launcher ignores supervisor records from a previous ignition run',
   assert.match(source, /\[DateTimeOffset\]::TryParse\(\[string\]\$record\.generatedAt, \[ref\]\$generatedAtUtc\)/);
   assert.match(source, /\$generatedAtUtc\.UtcDateTime -lt \$freshnessBoundaryUtc/);
   assert.match(source, /battleBridgeSupervisorCurrentPath = \$battleBridgeSupervisorCurrentPath/);
+});
+
+test('standalone Windows UI repair passes a canonically proven exact head', async () => {
+  const source = await readFile(launcherPath, 'utf8');
+  assert.match(source, /battle-bridge-ignition-supervisor\.mjs --source-truth-json/);
+  assert.match(source, /\$sourceTruth\.ok -ne \$true/);
+  assert.match(source, /\$repairArgs \+= @\('--start', '--expected-head', \[string\]\$sourceTruth\.head\)/);
 });
