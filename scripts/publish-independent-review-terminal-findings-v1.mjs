@@ -7,6 +7,9 @@ import {
   planIndependentReviewTerminalFindingsPublicationV1,
   renderIndependentReviewTerminalFindingsCommentV1,
 } from '../shared/agents/independentReviewTerminalFindingsPublicationV1.mjs';
+import {
+  planIndependentReviewPreArtifactFailureReceiptV1,
+} from '../shared/agents/independentReviewPreArtifactFailureReceiptV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-independent-review-terminal-findings-v1';
@@ -15,6 +18,7 @@ const TRUSTED_GITHUB_ACTIONS_REVIEWER = Object.freeze({
   id: 41898282,
 });
 const MAX_COMMENT_PAGES = 20;
+const PRE_ARTIFACT_FAILURE_FILE = 'independent-review-pre-artifact-failure.json';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -45,6 +49,12 @@ function exactArtifactPath() {
   const actual = path.resolve(requested);
   if (expected !== actual) throw new Error('terminal findings publisher accepts only the exact runner-temp review artifact');
   return actual;
+}
+
+function exactPreArtifactFailurePath() {
+  const runnerTemp = text(process.env.RUNNER_TEMP);
+  if (!runnerTemp) throw new Error('runner temp is required for pre-artifact failure publication');
+  return path.resolve(runnerTemp, PRE_ARTIFACT_FAILURE_FILE);
 }
 
 async function githubRequest(pathname, { method = 'GET', body = null } = {}) {
@@ -84,6 +94,33 @@ async function issueComments(owner, repo, prNumber) {
   throw new Error('issue comments exceed bounded terminal-findings scan');
 }
 
+function trustedMarkerMatches(comments, marker) {
+  return comments.filter((comment) => (
+    text(comment?.user?.login).toLowerCase() === TRUSTED_GITHUB_ACTIONS_REVIEWER.login
+    && Number(comment?.user?.id) === TRUSTED_GITHUB_ACTIONS_REVIEWER.id
+    && text(comment?.body).startsWith(marker)
+  ));
+}
+
+async function publishExactComment(owner, repo, prNumber, marker, body, duplicateError) {
+  const comments = await issueComments(owner, repo, prNumber);
+  const matches = trustedMarkerMatches(comments, marker);
+  if (matches.length > 1) throw new Error(duplicateError);
+  if (matches.length === 1) return { created:false, id:positiveInteger(matches[0].id) };
+
+  const created = await githubRequest(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, {
+    method:'POST',
+    body:{ body },
+  });
+  if (!positiveInteger(created?.id)
+      || text(created?.user?.login).toLowerCase() !== TRUSTED_GITHUB_ACTIONS_REVIEWER.login
+      || Number(created?.user?.id) !== TRUSTED_GITHUB_ACTIONS_REVIEWER.id
+      || !text(created?.body).startsWith(marker)) {
+    throw new Error('terminal review publication did not return the exact trusted comment identity');
+  }
+  return { created:true, id:positiveInteger(created.id) };
+}
+
 async function main() {
   if (process.env.GITHUB_ACTIONS !== 'true') {
     throw new Error('terminal findings publication may run only inside GitHub Actions');
@@ -101,12 +138,36 @@ async function main() {
   const workflowRunId = positiveInteger(process.env.GITHUB_RUN_ID);
   const workflowRunAttempt = positiveInteger(process.env.GITHUB_RUN_ATTEMPT);
   const artifactPath = exactArtifactPath();
+  const { owner, repo } = repositoryParts(repository);
 
   if (!fs.existsSync(artifactPath)) {
-    console.log('INDEPENDENT_REVIEW_TERMINAL_FINDINGS=NO_ARTIFACT');
-    appendOutput('decision', 'NO_ARTIFACT');
+    const failurePlan = planIndependentReviewPreArtifactFailureReceiptV1({
+      repository,
+      prNumber,
+      branch,
+      sourceHead,
+      baseSha,
+      workflowRunId,
+      workflowRunAttempt,
+    });
+    console.log(`INDEPENDENT_REVIEW_TERMINAL_FINDINGS=${failurePlan.decision}`);
+    appendOutput('decision', failurePlan.decision);
+    if (failurePlan.publishAllowed !== true) {
+      throw new Error(`pre-artifact review failure identity is invalid: ${failurePlan.errors.join(',')}`);
+    }
+    const failurePath = exactPreArtifactFailurePath();
+    fs.writeFileSync(failurePath, `${JSON.stringify(failurePlan.receipt, null, 2)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+    console.log(`INDEPENDENT_REVIEW_PRE_ARTIFACT_FAILURE_FILE=${failurePath}`);
+    console.log(`INDEPENDENT_REVIEW_PRE_ARTIFACT_FAILURE_RUN=${failurePlan.receipt.runIdentityHint}`);
+    appendOutput('mutation', 'write-pre-artifact-failure-artifact');
+    appendOutput('pre_artifact_receipt_path', failurePath);
     return;
   }
+
   const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
   const plan = planIndependentReviewTerminalFindingsPublicationV1({
     artifact,
@@ -122,35 +183,18 @@ async function main() {
   appendOutput('decision', plan.decision);
   if (plan.publishAllowed !== true) return;
 
-  const { owner, repo } = repositoryParts(repository);
-  const comments = await issueComments(owner, repo, prNumber);
-  const matches = comments.filter((comment) => (
-    text(comment?.user?.login).toLowerCase() === TRUSTED_GITHUB_ACTIONS_REVIEWER.login
-    && Number(comment?.user?.id) === TRUSTED_GITHUB_ACTIONS_REVIEWER.id
-    && text(comment?.body).startsWith(plan.marker)
-  ));
-  if (matches.length > 1) throw new Error('terminal findings marker is duplicated');
-  if (matches.length === 1) {
-    console.log('INDEPENDENT_REVIEW_TERMINAL_FINDINGS_ALREADY_PUBLISHED=true');
-    appendOutput('mutation', 'none');
-    appendOutput('comment_id', matches[0].id);
-    return;
-  }
-
-  const commentBody = renderIndependentReviewTerminalFindingsCommentV1(plan);
-  const created = await githubRequest(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, {
-    method: 'POST',
-    body: { body: commentBody },
-  });
-  if (!positiveInteger(created?.id)
-      || text(created?.user?.login).toLowerCase() !== TRUSTED_GITHUB_ACTIONS_REVIEWER.login
-      || Number(created?.user?.id) !== TRUSTED_GITHUB_ACTIONS_REVIEWER.id
-      || !text(created?.body).startsWith(plan.marker)) {
-    throw new Error('terminal findings publication did not return the exact trusted comment identity');
-  }
-  console.log(`INDEPENDENT_REVIEW_TERMINAL_FINDINGS_COMMENT=${created.id}`);
-  appendOutput('mutation', 'publish-terminal-findings');
-  appendOutput('comment_id', created.id);
+  const published = await publishExactComment(
+    owner,
+    repo,
+    prNumber,
+    plan.marker,
+    renderIndependentReviewTerminalFindingsCommentV1(plan),
+    'terminal findings marker is duplicated',
+  );
+  if (!published.created) console.log('INDEPENDENT_REVIEW_TERMINAL_FINDINGS_ALREADY_PUBLISHED=true');
+  console.log(`INDEPENDENT_REVIEW_TERMINAL_FINDINGS_COMMENT=${published.id}`);
+  appendOutput('mutation', published.created ? 'publish-terminal-findings' : 'none');
+  appendOutput('comment_id', published.id);
 }
 
 main().catch((error) => {
