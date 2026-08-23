@@ -147,6 +147,10 @@ export function buildRemoteDirtBlockerSummary(dirt = {}) {
     }
   }
   const base = 'Resolve or preserve source dirt outside unattended sync.';
+  const compact = `${base} tracked=${trackedSource.length}; untracked=${untrackedSource.length}; hidden=${hiddenBlockingCount}; unknown=${unknownCount}; runtime=${runtimeOnlyCount}; generated=${generatedSourceCount}; samplesRedacted=true`;
+  if (samples.length === 0 && hiddenBlockingCount > 0) {
+    return compact.length <= REMOTE_DIRT_SUMMARY_MAX ? compact : `${base} diagnosticSamplesRedacted=true`;
+  }
   const details = [];
   if (samples.length) details.push(`blockingSamples=[${samples.join('|')}]`);
   if (hiddenBlockingCount) details.push(`hiddenBlockingCount=${hiddenBlockingCount}`);
@@ -155,7 +159,6 @@ export function buildRemoteDirtBlockerSummary(dirt = {}) {
   if (generatedSourceCount) details.push(`generatedSourceCount=${generatedSourceCount}`);
   const detailed = details.length ? `${base} ${details.join('; ')}` : base;
   if (detailed.length <= REMOTE_DIRT_SUMMARY_MAX) return detailed;
-  const compact = `${base} tracked=${trackedSource.length}; untracked=${untrackedSource.length}; hidden=${hiddenBlockingCount}; unknown=${unknownCount}; runtime=${runtimeOnlyCount}; generated=${generatedSourceCount}; samplesRedacted=true`;
   return compact.length <= REMOTE_DIRT_SUMMARY_MAX ? compact : `${base} diagnosticSamplesRedacted=true`;
 }
 
