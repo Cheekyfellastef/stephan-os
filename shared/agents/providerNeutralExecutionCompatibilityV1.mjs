@@ -45,9 +45,22 @@ const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,180}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:#-]{0,160}$/;
 const SAFE_OPERATION = /^[a-z][a-z0-9._:-]{0,80}$/;
 const SAFE_PROOF_REF = /^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,80}|(?:proof|proofs|receipts|evidence\/receipts)\/[A-Za-z0-9._/-]{1,220})$/;
+const SAFE_COMMAND_PATH_TOKEN = /^[A-Za-z0-9_.@/-]+$/;
 const FORBIDDEN_SENSITIVE_TEXT = /(?:token|secret|password|private[ _-]?key|\.env|session)/i;
-const SAFE_LEGACY_COMMAND = /^(?:node|npm|git)\b(?!.*\b(?:reset\s+--hard|clean\s+-[a-z]*f|merge|push|branch\s+-[dD]|checkout|switch)\b)/i;
 const RESULT_VERDICTS = new Set(['complete', 'blocked', 'failed', 'cancelled', 'partial']);
+const TASK_ENVELOPE_KEYS = new Set([
+  'schemaVersion', 'kind', 'adapterContractVersion', 'missionId', 'goalId', 'taskId', 'taskClass',
+  'correlationId', 'repository', 'branch', 'exactBase', 'exactHeadIfReadOnly', 'expectedStartingHeadIfMutable',
+  'allowedPaths', 'allowedOperations', 'allowedCommandsOrTestIds', 'forbiddenOperations', 'timeoutAndRetryBudget',
+  'resourceLeaseIds', 'requiredTests', 'requiredArtifacts', 'requiredEvidence', 'completionContract',
+  'operatorApprovalState', 'portableCheckpointRef', 'createdAtUtc', 'expiresAtUtc', 'sourceAdapter',
+]);
+const RESULT_ENVELOPE_KEYS = new Set([
+  'schemaVersion', 'kind', 'adapterContractVersion', 'provider', 'providerInstance', 'providerVersion', 'taskClass',
+  'missionId', 'goalId', 'taskId', 'correlationId', 'exactInputIdentity', 'exactOutputIdentity', 'authorityUsed',
+  'commandsOrTestIdsExecuted', 'changedPaths', 'artifacts', 'proofRefs', 'portableCheckpointRef', 'startedAtUtc',
+  'completedAtUtc', 'verdict', 'blockers', 'retryState', 'leaseDisposition',
+]);
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -64,6 +77,11 @@ function isPlainObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
+}
+
+function hasExactKeys(value, expectedKeys) {
+  const keys = Object.keys(value);
+  return keys.length === expectedKeys.size && keys.every((key) => expectedKeys.has(key));
 }
 
 function isSafeId(value) {
@@ -92,11 +110,40 @@ function isBoundedText(value, max = 1000) {
     && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(normalized);
 }
 
+function isSafeNodePathToken(value) {
+  const normalized = text(value);
+  return SAFE_COMMAND_PATH_TOKEN.test(normalized)
+    && !normalized.startsWith('/')
+    && !normalized.startsWith('-')
+    && !normalized.includes('..')
+    && /\.(?:mjs|cjs|js)$/.test(normalized)
+    && !FORBIDDEN_SENSITIVE_TEXT.test(normalized);
+}
+
+function isSafeLegacyCommand(value) {
+  const normalized = text(value);
+  if (!isBoundedText(normalized, 500) || FORBIDDEN_SENSITIVE_TEXT.test(normalized)) return false;
+  if (/[\r\n;&|<>`$()\\]/.test(normalized)) return false;
+  const tokens = normalized.split(/\s+/);
+  const executable = tokens.shift()?.toLowerCase();
+  if (executable === 'git') {
+    return tokens.length === 2 && tokens[0] === 'diff' && tokens[1] === '--check';
+  }
+  if (executable === 'npm') {
+    return tokens.length === 1 && tokens[0] === 'test';
+  }
+  if (executable === 'node') {
+    if (tokens[0] === '--check') return tokens.length === 2 && isSafeNodePathToken(tokens[1]);
+    if (tokens[0] === '--test') return tokens.length >= 2 && tokens.slice(1).every((item) => isSafeNodePathToken(item));
+  }
+  return false;
+}
+
 function isSafeCommandOrTestId(value) {
   const normalized = text(value);
   if (!isBoundedText(normalized, 500) || FORBIDDEN_SENSITIVE_TEXT.test(normalized)) return false;
   if (!/\s/.test(normalized)) return SAFE_ID.test(normalized);
-  return SAFE_LEGACY_COMMAND.test(normalized);
+  return isSafeLegacyCommand(normalized);
 }
 
 function isSafeProofRef(value) {
@@ -184,6 +231,7 @@ export function createProviderNeutralTaskEnvelope(input = {}) {
 export function validateProviderNeutralTaskEnvelope(task) {
   const errors = [];
   if (!isPlainObject(task)) return Object.freeze({ valid: false, errors: Object.freeze(['task-not-object']), finalVerdict: 'PROVIDER_NEUTRAL_TASK_ENVELOPE_BLOCKED' });
+  if (!hasExactKeys(task, TASK_ENVELOPE_KEYS)) errors.push('task-envelope-fields-invalid');
   if (task.schemaVersion !== PROVIDER_NEUTRAL_TASK_ENVELOPE_SCHEMA_VERSION) errors.push('schema-version-invalid');
   if (task.kind !== PROVIDER_NEUTRAL_TASK_ENVELOPE_KIND) errors.push('kind-invalid');
   if (task.adapterContractVersion !== PROVIDER_NEUTRAL_EXECUTION_ADAPTER_CONTRACT_VERSION) errors.push('adapter-contract-version-invalid');
@@ -339,6 +387,7 @@ export function validateProviderNeutralResultEnvelope(result, task) {
   const taskValidation = validateProviderNeutralTaskEnvelope(task);
   if (!taskValidation.valid) errors.push('task-envelope-invalid');
   if (!isPlainObject(result)) return Object.freeze({ valid: false, errors: Object.freeze(['result-not-object']), finalVerdict: 'PROVIDER_NEUTRAL_RESULT_ENVELOPE_BLOCKED' });
+  if (!hasExactKeys(result, RESULT_ENVELOPE_KEYS)) errors.push('result-envelope-fields-invalid');
   if (result.schemaVersion !== PROVIDER_NEUTRAL_RESULT_ENVELOPE_SCHEMA_VERSION) errors.push('schema-version-invalid');
   if (result.kind !== PROVIDER_NEUTRAL_RESULT_ENVELOPE_KIND) errors.push('kind-invalid');
   if (result.adapterContractVersion !== PROVIDER_NEUTRAL_EXECUTION_ADAPTER_CONTRACT_VERSION) errors.push('adapter-contract-version-invalid');
