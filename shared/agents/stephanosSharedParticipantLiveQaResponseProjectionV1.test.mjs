@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import {
   projectStephanosAiResponseForWorkspaceV1,
-} from './stephanosSharedParticipantLiveQaV1.mjs';
+} from './stephanosSharedParticipantLiveQaResponseProjectionV1.mjs';
 
 test('AI response projection ignores bulky unrelated provider envelope material', () => {
   const providerRaw = Object.fromEntries(

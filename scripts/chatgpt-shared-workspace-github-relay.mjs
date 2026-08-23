@@ -4,7 +4,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { writeAtomicJson } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
-import { answerStephanosWorkspaceQuestionRecord } from '../shared/agents/stephanosSharedParticipantLiveQaV1.mjs';
+import { answerStephanosWorkspaceQuestionRecord } from '../shared/agents/stephanosSharedParticipantLiveQaResponseProjectionV1.mjs';
 import { buildSharedWorkspaceQaAnswerDiagnosticV1 } from '../shared/agents/sharedWorkspaceQaAnswerDiagnosticV1.mjs';
 import {
   CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA,
