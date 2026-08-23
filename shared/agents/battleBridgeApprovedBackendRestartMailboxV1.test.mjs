@@ -199,6 +199,40 @@ test('Windows adapter invokes only the fixed approved backend restart primitive 
   assert.equal(calls[0].options.windowsHide, true);
 });
 
+test('normal approved restart does not require the legacy migration helper', async () => {
+  const existenceChecks = [];
+  const result = await executeApprovedBackendRestartOnBattleBridge(command(), {
+    platform: 'win32',
+    env: { USERPROFILE: 'C:\\Users\\Stephan', SystemRoot: 'C:\\Windows' },
+    home: 'C:\\Users\\Stephan',
+    existsSyncFn: (path) => {
+      existenceChecks.push(String(path));
+      return !String(path).endsWith('migrate-legacy-stephanos-backend-listener-v1.ps1');
+    },
+    spawnSyncFn: () => ({ status: 0, stdout: `${JSON.stringify(runtimePass())}\n`, stderr: '', error: null }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(existenceChecks.some((path) => path.endsWith('migrate-legacy-stephanos-backend-listener-v1.ps1')), false);
+});
+
+test('legacy migration helper is required only after the exact non-allowlisted listener blocker', async () => {
+  const blocked = {
+    schemaVersion: 'stephanos.approved-runtime-restart.v1',
+    ok: false,
+    blocker: 'BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED',
+    finalVerdict: 'APPROVED_RUNTIME_RESTART_BLOCKED',
+  };
+  const result = await executeApprovedBackendRestartOnBattleBridge(command(), {
+    platform: 'win32',
+    env: { USERPROFILE: 'C:\\Users\\Stephan', SystemRoot: 'C:\\Windows' },
+    home: 'C:\\Users\\Stephan',
+    existsSyncFn: (path) => !String(path).endsWith('migrate-legacy-stephanos-backend-listener-v1.ps1'),
+    spawnSyncFn: () => ({ status: 1, stdout: `${JSON.stringify(blocked)}\n`, stderr: '', error: null }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'LEGACY_BACKEND_MIGRATION_SCRIPT_MISSING');
+});
+
 test('Windows adapter fails closed off Windows and on malformed or widened runtime proof', async () => {
   assert.equal((await executeApprovedBackendRestartOnBattleBridge(command(), { platform: 'linux' })).blocker, 'APPROVED_BACKEND_RESTART_WINDOWS_REQUIRED');
 
