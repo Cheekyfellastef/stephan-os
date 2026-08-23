@@ -5,6 +5,15 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildMissionOperationsProjection } from '../shared/runtime/missionOperationsProjection.mjs';
 import { readMissionOperations } from '../stephanos-server/services/missionOperationsService.js';
+import {
+  cancelBoundedMission,
+  createBoundedMission,
+} from '../stephanos-server/services/missionOrchestratorControlService.js';
+import {
+  MISSION_ORCHESTRATOR_CANCEL_OPERATION,
+  executeBattleBridgeGitHubCommand,
+  validateBattleBridgeGitHubCommand,
+} from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 
 const now = new Date('2026-06-24T18:10:00.000Z');
 
@@ -12,7 +21,15 @@ async function fixtureDirectory() {
   return mkdtemp(join(tmpdir(), 'stephanos-mission-operations-'));
 }
 
-test('projection exposes complete mission, agent, Git, PR, approval, receipt, timestamp, and next-action truth', () => {
+async function controlRoots() {
+  const parent = await mkdtemp(join(tmpdir(), 'stephanos-mission-control-'));
+  return {
+    root: join(parent, 'orchestrator'),
+    snapshotRoot: join(parent, 'proof', 'mission-operations'),
+  };
+}
+
+test('projection exposes complete mission, agent, Git, PR, approval, receipt, repair, deployment, timestamp, and next-action truth', () => {
   const projection = buildMissionOperationsProjection({
     missionId: 'mission-dashboard',
     title: 'Mission dashboard',
@@ -38,6 +55,13 @@ test('projection exposes complete mission, agent, Git, PR, approval, receipt, ti
       mergeable: true,
       checks: [{ name: 'Build', status: 'in_progress', required: true }],
     },
+    repair: { currentRound: 2, maximumRounds: 3, history: [{ round: 1 }, { round: 2 }] },
+    deployment: {
+      sync: { status: 'success', completedAt: '2026-06-24T18:05:00.000Z', commitSha: 'a'.repeat(40) },
+      build: { status: 'success' },
+      verify: { status: 'pending' },
+      restart: { status: 'pending' },
+    },
     approvals: [{ approvalId: 'merge', status: 'approved' }],
     receipts: [{ receiptId: 'receipt-1', sha256: 'b'.repeat(64), status: 'RESERVED' }],
   }, { now });
@@ -57,6 +81,11 @@ test('projection exposes complete mission, agent, Git, PR, approval, receipt, ti
   assert.equal(projection.pullRequest.state, 'open');
   assert.equal(projection.pullRequest.mergeable, true);
   assert.equal(projection.pullRequest.requiredCheckCount, 1);
+  assert.equal(projection.repair.currentRound, 2);
+  assert.equal(projection.repair.maximumRounds, 3);
+  assert.equal(projection.deployment.sync.status, 'success');
+  assert.equal(projection.deployment.sync.commitSha, 'a'.repeat(40));
+  assert.equal(projection.deployment.verify.status, 'pending');
   assert.equal(projection.receipts[0].sha256, 'b'.repeat(64));
   assert.equal(projection.mission.nextAction, 'Wait for checks.');
 });
@@ -103,6 +132,103 @@ test('stale active mission is visibly warned instead of presented as healthy', (
   }, { now, staleAfterMinutes: 10 });
   assert.equal(projection.stale, true);
   assert.match(projection.warnings.join(' '), /stale/);
+});
+
+test('bounded mission cancellation emits MISSION_CANCELLED, terminalizes, and is retry-safe', async () => {
+  const options = await controlRoots();
+  const missionId = 'mission-cancel-control';
+  await createBoundedMission({
+    missionId,
+    operatorIntent: 'Inspect one bounded mission-control state without source mutation.',
+    intendedOutcome: 'The bounded mission can be cancelled safely by the operator.',
+    missionKind: 'live-runtime-investigation',
+    repository: 'Cheekyfellastef/stephan-os',
+    repositoryRoot: 'C:\\repo',
+    worktreePath: 'C:\\worktrees\\mission-cancel-control',
+    requiredEvidence: ['bounded inspection receipt'],
+  }, options);
+
+  const command = {
+    missionId,
+    commandId: 'operator-cancel-mission-control-test',
+    reason: 'Bounded test cancellation.',
+  };
+  const cancelled = await cancelBoundedMission(command, options);
+  assert.equal(cancelled.state.currentPhase, 'CANCELLED');
+  assert.equal(cancelled.state.cancelled, true);
+
+  const eventText = await readFile(join(options.root, `${missionId}.events.ndjson`), 'utf8');
+  const events = eventText.trim().split(/\r?\n/).map((line) => JSON.parse(line));
+  assert.equal(events.at(-1).eventType, 'MISSION_CANCELLED');
+  assert.equal(events.at(-1).summary, 'Bounded test cancellation.');
+
+  const duplicate = await cancelBoundedMission(command, options);
+  assert.equal(duplicate.duplicate, true);
+  await assert.rejects(
+    () => cancelBoundedMission({ ...command, commandId: 'operator-cancel-second-control-test' }, options),
+    /terminal mission/i,
+  );
+});
+
+test('Battle Bridge cancellation command is closed-world and dispatches only the registered cancellation handler', async () => {
+  const authoredAt = new Date('2026-08-23T05:00:00.000Z');
+  const command = {
+    schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+    requestId: 'mission-cancel-mailbox-test-001',
+    operation: MISSION_ORCHESTRATOR_CANCEL_OPERATION,
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 1507,
+    branch: 'main',
+    operatorApproval: 'operator-approved',
+    expectedHead: 'c'.repeat(40),
+    missionId: 'mission-cancel-control',
+    commandId: 'operator-cancel-mailbox-control-test',
+    reason: 'Terminalize one exact stale bounded mission.',
+    expiresAt: '2026-08-23T05:30:00.000Z',
+  };
+  const validated = validateBattleBridgeGitHubCommand(command, {
+    authorLogin: 'Cheekyfellastef',
+    authoredAt,
+    now: new Date('2026-08-23T05:01:00.000Z'),
+  });
+  assert.equal(validated.ok, true);
+  assert.equal(validated.command.missionId, command.missionId);
+  assert.equal(validated.command.commandId, command.commandId);
+  assert.equal(validated.command.reason, command.reason);
+
+  for (const [field, value] of [
+    ['eventType', 'MISSION_CANCELLED'],
+    ['executable', 'cmd.exe'],
+    ['path', 'C:\\temp'],
+    ['leaseId', 'lease-forged'],
+    ['approvalToken', 'forged'],
+  ]) {
+    const blocked = validateBattleBridgeGitHubCommand({ ...command, [field]: value }, {
+      authorLogin: 'Cheekyfellastef',
+      authoredAt,
+      now: new Date('2026-08-23T05:01:00.000Z'),
+    });
+    assert.equal(blocked.ok, false, field);
+    assert.equal(blocked.blocker, 'MISSION_CANCEL_FIELD_NOT_ALLOWED', field);
+  }
+
+  let observed = null;
+  const execution = await executeBattleBridgeGitHubCommand(validated.command, {
+    cancelMissionOrchestratorMission: async (candidate) => {
+      observed = candidate;
+      return {
+        ok: true,
+        finalVerdict: 'MISSION_ORCHESTRATOR_MISSION_CANCELLED',
+        missionId: candidate.missionId,
+        currentPhase: 'CANCELLED',
+        duplicate: false,
+      };
+    },
+  });
+  assert.equal(execution.ok, true);
+  assert.equal(execution.verdict, 'COMMAND_EXECUTION_COMPLETE');
+  assert.equal(observed.missionId, command.missionId);
+  assert.equal(observed.commandId, command.commandId);
 });
 
 test('service returns explicit configuration state when no external receipt directory exists', async () => {
@@ -202,8 +328,9 @@ test('service reports malformed evidence and does not fabricate missions', async
   assert.deepEqual(feed.missions, []);
 });
 
-test('Mission Operations panel visibly renders every required operational truth family', async () => {
+test('Mission Operations panel visibly renders every required operational truth family and private controls', async () => {
   const source = await readFile(new URL('../stephanos-ui/src/components/MissionOperationsPanel.jsx', import.meta.url), 'utf8');
+  const controlSource = await readFile(new URL('../stephanos-ui/src/components/MissionOperationsControls.jsx', import.meta.url), 'utf8');
   assert.match(source, /<CollapsiblePanel/);
   assert.match(source, /panelId="missionConsoleMissionOperationsPanel"/);
   assert.match(source, /REFRESH_INTERVAL_MS = 5000/);
@@ -226,6 +353,8 @@ test('Mission Operations panel visibly renders every required operational truth 
     'PR state',
     'Mergeable',
     'Required checks',
+    'Repair round',
+    'Deployment',
     'Approvals',
     'Evidence receipts',
     'Started',
@@ -241,6 +370,11 @@ test('Mission Operations panel visibly renders every required operational truth 
   assert.match(source, /receipt\.status/);
   assert.match(source, /check\.status/);
   assert.match(source, /approval\.status/);
+  assert.doesNotMatch(source, /approval\.requiredToken/);
+  assert.match(controlSource, /type="password"/);
+  assert.match(controlSource, /Approve exact PR head/);
+  assert.match(controlSource, /Cancel mission/);
+  assert.doesNotMatch(controlSource, /MissionIntakeForm|createMissionOperation/);
   assert.match(source, /UPDATE_AVAILABLE|PULL_REQUIRED|REBUILD_REQUIRED|AUTO_UPDATE_NOT_ENABLED/);
   assert.doesNotMatch(source, /MissionOperationsDashboard/);
 });
@@ -256,9 +390,10 @@ test('Mission Operations is integrated inside the canonical Mission Command Deck
   assert.doesNotMatch(consoleSource, /MissionOperationsDashboard/);
 });
 
-test('server mounts the read-only mission operations route', async () => {
+test('server mounts bounded approve/cancel controls without exposing direct mission creation or generic event ingestion', async () => {
   const source = await readFile(new URL('../stephanos-server/server.js', import.meta.url), 'utf8');
   const route = await readFile(new URL('../stephanos-server/routes/mission-operations.js', import.meta.url), 'utf8');
+  const mailbox = await readFile(new URL('../scripts/battle-bridge-github-command-mailbox.mjs', import.meta.url), 'utf8');
   const mountStart = source.indexOf("app.use('/api/mission-operations'");
   const mountEnd = source.indexOf("app.use('/api/build-concierge'", mountStart);
   assert.notEqual(mountStart, -1);
@@ -267,5 +402,12 @@ test('server mounts the read-only mission operations route', async () => {
   assert.match(mount, /backendIdentity/);
   assert.match(mount, /missionOperationsRouter/);
   assert.match(route, /router\.get\('\/', async/);
-  assert.doesNotMatch(route, /router\.(post|put|patch|delete)/);
+  assert.match(route, /router\.post\('\/missions\/:missionId\/approve'/);
+  assert.match(route, /router\.post\('\/missions\/:missionId\/cancel'/);
+  assert.match(route, /cancelBoundedMission\(\{/);
+  assert.doesNotMatch(route, /router\.post\('\/missions'/);
+  assert.doesNotMatch(route, /events|appendMissionEvent/);
+  assert.match(mailbox, /cancelBoundedMission/);
+  assert.match(mailbox, /cancelMissionOrchestratorMission/);
+  assert.doesNotMatch(mailbox, /appendMissionEvent/);
 });
