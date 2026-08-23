@@ -1,57 +1,22 @@
-import { createHash } from 'node:crypto';
-
-import { DEFAULT_PROVIDER_KEY } from '../ai/providerDefaults.mjs';
 import { queryStephanosAI } from '../ai/stephanosClient.mjs';
 import {
-  createStephanosWorkspaceAnswerRecord,
-  decodeStephanosWorkspaceQuestionRecord,
-} from './stephanosSharedWorkspaceConversationAdapterV1.mjs';
-import { STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION } from './stephanosConversationalCapabilityLadderV1.mjs';
-import { buildStephanosRichConversationalResponseV1 } from './stephanosRichConversationalResponseV1.mjs';
+  STEPHANOS_SHARED_PARTICIPANT_ID,
+  STEPHANOS_SHARED_PARTICIPANT_LIVE_QA_SCHEMA_VERSION,
+  answerStephanosWorkspaceQuestionRecord as answerCoreQuestionRecord,
+} from './stephanosSharedParticipantLiveQaCoreV1.mjs';
 
-export const STEPHANOS_SHARED_PARTICIPANT_LIVE_QA_SCHEMA_VERSION = 'stephanos.shared-participant-live-qa.v1';
-export const STEPHANOS_SHARED_PARTICIPANT_ID = 'stephanos';
+export {
+  STEPHANOS_SHARED_PARTICIPANT_ID,
+  STEPHANOS_SHARED_PARTICIPANT_LIVE_QA_SCHEMA_VERSION,
+};
 
 const MAX_ANSWER_TEXT = 24_000;
 const MAX_RESPONSE_NODES = 2_048;
 const MAX_ARRAY_LENGTH = 128;
 const MAX_OBJECT_KEYS = 96;
 const MAX_DEPTH = 10;
-const MAX_LIVE_GOAL_PROJECTION_AGE_MS = 2 * 60 * 1000;
-const MAX_LIVE_GOAL_PROJECTION_FUTURE_SKEW_MS = 30 * 1000;
 const RESERVED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
-const SECRET_SHAPED_TEXT = /(?:BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|xox[baprs]-|gh[pousr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{20,}|(?:password|credential|api[_-]?key|private[_-]?key)\s*[:=])/i;
-const INVALID = Symbol('invalid-live-qa-data');
-
-const DURABLE_SYSTEM_TRUTH_EVIDENCE_CLASSES = new Set([
-  'CURRENT_PROGRAMME_STATE',
-  'PROVIDER_RUNTIME_AND_ROUTE_EVIDENCE',
-  'ZERO_CODEX_CONTINUITY_EVIDENCE',
-  'OPENCLAW_TASK_CLASS_QUALIFICATION_EVIDENCE',
-  'FORGE_FOUNDRY_CAPACITY_EVIDENCE',
-  'PROVIDER_NEUTRAL_REVIEW_EVIDENCE',
-  'BATTLE_BRIDGE_RECOVERY_EVIDENCE',
-  'IGNITION_SELF_HEALING_EVIDENCE',
-  'CONVERSATION_CONTINUITY_EVIDENCE',
-  'EPISTEMIC_AND_EVIDENCE_DISCLOSURE_EVIDENCE',
-  'ACTION_APPROVAL_PRESENTATION_EVIDENCE',
-]);
-
-const DURABLE_SYSTEM_TRUTH_QUESTION_CLASSES = new Set([
-  'CURRENT_PROGRAMME_TRUTH',
-  'ARCHITECTURE_AND_RELATIONSHIPS',
-  'AGENT_AND_TOOL_CAPABILITIES',
-  'BLOCKERS_AND_PROOF',
-  'WHAT_CHANGED_RECENTLY',
-]);
-
-function text(value) {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function hash(value) {
-  return createHash('sha256').update(String(value ?? '')).digest('hex');
-}
+const INVALID = Symbol('invalid-live-qa-projection');
 
 function authorityBoundary() {
   return Object.freeze({
@@ -67,6 +32,20 @@ function authorityBoundary() {
   });
 }
 
+function blocked(classification, errors = []) {
+  return Object.freeze({
+    ok: false,
+    schemaVersion: STEPHANOS_SHARED_PARTICIPANT_LIVE_QA_SCHEMA_VERSION,
+    classification,
+    errors: Object.freeze([...errors]),
+    question: null,
+    answer: null,
+    answerRecord: null,
+    richResponse: null,
+    ...authorityBoundary(),
+  });
+}
+
 function dataOnly(value, state = null, depth = 0) {
   const traversal = state || { seen: new Set(), nodes: 0 };
   if (value === null || typeof value === 'boolean') return value;
@@ -75,7 +54,6 @@ function dataOnly(value, state = null, depth = 0) {
   if (!value || typeof value !== 'object' || depth > MAX_DEPTH) return INVALID;
   traversal.nodes += 1;
   if (traversal.nodes > MAX_RESPONSE_NODES || traversal.seen.has(value)) return INVALID;
-
   try {
     const isArray = Array.isArray(value);
     const prototype = Object.getPrototypeOf(value);
@@ -100,7 +78,6 @@ function dataOnly(value, state = null, depth = 0) {
         }
         return Object.freeze(output);
       }
-
       if (keys.length > MAX_OBJECT_KEYS) return INVALID;
       const output = Object.create(null);
       for (const key of keys.sort()) {
@@ -125,291 +102,204 @@ function dataOnly(value, state = null, depth = 0) {
   }
 }
 
-function cleanStringArray(value, limit = 32) {
-  if (!Array.isArray(value)) return Object.freeze([]);
-  const output = [];
-  for (const item of value.slice(0, limit)) {
-    const normalized = text(item);
-    if (normalized && !SECRET_SHAPED_TEXT.test(normalized)) output.push(normalized);
+function isPlainDataObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  } catch {
+    return false;
   }
-  return Object.freeze([...new Set(output)]);
 }
 
-function evidenceToken(kind, value) {
-  return `${kind}:sha256:${hash(value).slice(0, 40)}`;
-}
-
-function requiresDurableSystemTruth(question = {}) {
-  return DURABLE_SYSTEM_TRUTH_EVIDENCE_CLASSES.has(text(question.expectedEvidenceClass))
-    || DURABLE_SYSTEM_TRUTH_QUESTION_CLASSES.has(text(question.questionClass));
-}
-
-function timestampPosture(value, nowMs) {
-  const timestampMs = Date.parse(text(value));
-  if (!Number.isFinite(timestampMs)) return 'INVALID';
-  const ageMs = nowMs - timestampMs;
-  if (ageMs < -MAX_LIVE_GOAL_PROJECTION_FUTURE_SKEW_MS) return 'FUTURE';
-  if (ageMs > MAX_LIVE_GOAL_PROJECTION_AGE_MS) return 'STALE';
-  return 'FRESH';
-}
-
-function classifyLiveGoalProjection(projection, nowMs) {
-  if (!projection || typeof projection !== 'object' || projection.schemaVersion !== 'stephanos.live-goal-projection.v1') {
-    return Object.freeze({ posture: 'ABSENT_OR_INVALID', observedRuntimeProof: false });
+function readOwnDataField(value, key, path) {
+  if (!isPlainDataObject(value)) {
+    return Object.freeze({ valid: false, present: false, value: null, error: `${path}-must-be-plain-data-object` });
   }
-
-  const generatedAtPosture = timestampPosture(projection.generatedAt, nowMs);
-  const heartbeat = projection.heartbeat && typeof projection.heartbeat === 'object' ? projection.heartbeat : {};
-  const heartbeatPosture = timestampPosture(heartbeat.generatedAt, nowMs);
-  const backend = projection.backendStatus && typeof projection.backendStatus === 'object' ? projection.backendStatus : {};
-  const backendStatus = text(backend.status).toLowerCase();
-  const missionStatus = text(projection.missionOperationsStatus?.status).toLowerCase();
-  const canonicalSource = text(projection.projectionSource) === 'live-goal-projection-service'
-    && text(heartbeat.projectionSource) === 'live-goal-projection-service';
-  const liveSourceTruth = text(projection.sourceTruth).toLowerCase() === 'live';
-  const backendLive = backend.ok === true || backendStatus === 'live' || backendStatus === 'ok';
-  const heartbeatLive = heartbeat.backendLive === true;
-  const missionLive = missionStatus === 'ready' || missionStatus === 'empty';
-  const timestampsFresh = generatedAtPosture === 'FRESH' && heartbeatPosture === 'FRESH';
-
-  if (!timestampsFresh) {
-    return Object.freeze({ posture: 'STALE_OR_INVALID_TIMESTAMP', observedRuntimeProof: false });
-  }
-  if (!canonicalSource) {
-    return Object.freeze({ posture: 'NON_CANONICAL_SOURCE', observedRuntimeProof: false });
-  }
-  if (!liveSourceTruth) {
-    const posture = text(projection.sourceTruth).toLowerCase() === 'mixed'
-      ? 'MIXED'
-      : (text(projection.sourceTruth).toLowerCase() === 'static-fallback' ? 'STATIC_FALLBACK' : 'NON_LIVE_SOURCE_TRUTH');
-    return Object.freeze({ posture, observedRuntimeProof: false });
-  }
-  if (!backendLive || !heartbeatLive) {
-    return Object.freeze({ posture: 'BACKEND_OR_HEARTBEAT_NOT_LIVE', observedRuntimeProof: false });
-  }
-  if (!missionLive) {
-    return Object.freeze({ posture: 'MISSION_OPERATIONS_NOT_LIVE', observedRuntimeProof: false });
-  }
-  return Object.freeze({ posture: 'LIVE_CURRENT', observedRuntimeProof: true });
-}
-
-function deriveGroundingEvidence(response = {}, options = {}) {
-  const data = response?.data && typeof response.data === 'object' ? response.data : {};
-  const execution = data.execution_metadata && typeof data.execution_metadata === 'object'
-    ? data.execution_metadata
-    : {};
-  const refs = [];
-  const sources = [];
-  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
-  let observedRuntimeProof = false;
-  let liveGoalProjectionPosture = 'ABSENT';
-
-  const liveGoalProjection = data.liveGoalProjection && typeof data.liveGoalProjection === 'object'
-    ? data.liveGoalProjection
-    : null;
-  if (liveGoalProjection?.schemaVersion === 'stephanos.live-goal-projection.v1') {
-    const classifiedProjection = classifyLiveGoalProjection(liveGoalProjection, nowMs);
-    liveGoalProjectionPosture = classifiedProjection.posture;
-    refs.push(evidenceToken('live-goal-projection', JSON.stringify({
-      generatedAt: liveGoalProjection.generatedAt || '',
-      projectionSource: liveGoalProjection.projectionSource || '',
-      sourceTruth: liveGoalProjection.sourceTruth || '',
-      backendStatus: liveGoalProjection.backendStatus || {},
-      heartbeat: liveGoalProjection.heartbeat || {},
-      missionOperationsStatus: liveGoalProjection.missionOperationsStatus || {},
-      proofTruth: liveGoalProjection.proofTruth || {},
-    })));
-    sources.push('live-goal-projection');
-    observedRuntimeProof = classifiedProjection.observedRuntimeProof;
-  }
-
-  if (execution.retrieval_used === true) {
-    const retrieved = cleanStringArray(execution.retrieved_sources, 8);
-    for (const source of retrieved) refs.push(evidenceToken('local-retrieval', source));
-    if (retrieved.length > 0) sources.push('local-retrieval');
-  }
-
-  const memoryHits = Array.isArray(response?.memory_hits) ? response.memory_hits.slice(0, 8) : [];
-  if (memoryHits.length > 0) {
-    for (const hit of memoryHits) {
-      const safeHit = dataOnly(hit);
-      if (safeHit !== INVALID) refs.push(evidenceToken('memory-hit', JSON.stringify(safeHit)));
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) return Object.freeze({ valid: true, present: false, value: null, error: '' });
+    if (descriptor.get || descriptor.set || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) {
+      return Object.freeze({ valid: false, present: true, value: null, error: `${path}.${key}-must-be-own-enumerable-data` });
     }
-    if (refs.some((ref) => ref.startsWith('memory-hit:'))) sources.push('durable-memory');
+    return Object.freeze({ valid: true, present: true, value: descriptor.value, error: '' });
+  } catch {
+    return Object.freeze({ valid: false, present: false, value: null, error: `${path}.${key}-descriptor-read-failed` });
+  }
+}
+
+function readDataFields(value, keys, path) {
+  if (!isPlainDataObject(value)) return Object.freeze({ valid: false, fields: null, error: `${path}-must-be-plain-data-object` });
+  const fields = Object.create(null);
+  for (const key of keys) {
+    const field = readOwnDataField(value, key, path);
+    if (!field.valid) return Object.freeze({ valid: false, fields: null, error: field.error });
+    if (field.present) fields[key] = field.value;
+  }
+  return Object.freeze({ valid: true, fields, error: '' });
+}
+
+function readArrayPrefix(value, limit, path) {
+  if (!Array.isArray(value)) return Object.freeze({ valid: false, value: null, error: `${path}-must-be-array` });
+  try {
+    if (Object.getPrototypeOf(value) !== Array.prototype) {
+      return Object.freeze({ valid: false, value: null, error: `${path}-must-be-plain-array` });
+    }
+    const length = Object.getOwnPropertyDescriptor(value, 'length')?.value;
+    if (!Number.isSafeInteger(length) || length < 0) {
+      return Object.freeze({ valid: false, value: null, error: `${path}-length-invalid` });
+    }
+    const output = [];
+    for (let index = 0; index < Math.min(length, limit); index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || descriptor.get || descriptor.set || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) {
+        return Object.freeze({ valid: false, value: null, error: `${path}.${index}-must-be-own-enumerable-data` });
+      }
+      output.push(descriptor.value);
+    }
+    return Object.freeze({ valid: true, value: output, error: '' });
+  } catch {
+    return Object.freeze({ valid: false, value: null, error: `${path}-descriptor-read-failed` });
+  }
+}
+
+function projectObject(value, keys, path) {
+  const selected = readDataFields(value, keys, path);
+  if (!selected.valid) return selected;
+  const projected = dataOnly(selected.fields);
+  if (projected === INVALID || !projected || typeof projected !== 'object' || Array.isArray(projected)) {
+    return Object.freeze({ valid: false, fields: null, error: `${path}-must-be-bounded-data-only` });
+  }
+  return Object.freeze({ valid: true, fields: projected, error: '' });
+}
+
+export function projectStephanosAiResponseForWorkspaceV1(rawResponse) {
+  const top = readDataFields(rawResponse, ['success', 'output_text', 'error', 'data', 'debug', 'memory_hits'], 'ai-response');
+  if (!top.valid) return Object.freeze({ valid: false, response: null, errors: Object.freeze([top.error]) });
+  const response = Object.create(null);
+
+  if (Object.hasOwn(top.fields, 'success')) {
+    if (typeof top.fields.success !== 'boolean') {
+      return Object.freeze({ valid: false, response: null, errors: Object.freeze(['ai-response.success-must-be-boolean']) });
+    }
+    response.success = top.fields.success;
+  }
+  if (Object.hasOwn(top.fields, 'output_text')) {
+    if (typeof top.fields.output_text !== 'string') {
+      return Object.freeze({ valid: false, response: null, errors: Object.freeze(['ai-response.output_text-must-be-string']) });
+    }
+    response.output_text = top.fields.output_text;
+  }
+  if (Object.hasOwn(top.fields, 'error') && top.fields.error !== null) {
+    const safeError = dataOnly(top.fields.error);
+    if (safeError === INVALID || typeof safeError !== 'string') {
+      return Object.freeze({ valid: false, response: null, errors: Object.freeze(['ai-response.error-must-be-bounded-string']) });
+    }
+    response.error = safeError;
   }
 
-  if (execution.grounding_active_for_request === true) {
-    const requestId = text(response?.debug?.request_id) || text(data?.request_trace?.requestId) || 'grounded-request';
-    refs.push(evidenceToken('provider-grounding', requestId));
-    sources.push('provider-grounding');
+  if (Object.hasOwn(top.fields, 'data') && top.fields.data !== null) {
+    const data = readDataFields(top.fields.data, ['execution_metadata', 'liveGoalProjection', 'request_trace'], 'ai-response.data');
+    if (!data.valid) return Object.freeze({ valid: false, response: null, errors: Object.freeze([data.error]) });
+    const projectedData = Object.create(null);
+    if (Object.hasOwn(data.fields, 'execution_metadata')) {
+      const execution = readDataFields(data.fields.execution_metadata, [
+        'retrieval_used',
+        'retrieved_sources',
+        'grounding_active_for_request',
+        'freshness_integrity_preserved',
+        'answer_truth_mode',
+        'effective_answer_mode',
+      ], 'ai-response.data.execution_metadata');
+      if (!execution.valid) return Object.freeze({ valid: false, response: null, errors: Object.freeze([execution.error]) });
+      const projectedExecution = { ...execution.fields };
+      if (Object.hasOwn(execution.fields, 'retrieved_sources')) {
+        const prefix = readArrayPrefix(execution.fields.retrieved_sources, 8, 'ai-response.data.execution_metadata.retrieved_sources');
+        if (!prefix.valid) return Object.freeze({ valid: false, response: null, errors: Object.freeze([prefix.error]) });
+        projectedExecution.retrieved_sources = prefix.value;
+      }
+      const safeExecution = dataOnly(projectedExecution);
+      if (safeExecution === INVALID) {
+        return Object.freeze({ valid: false, response: null, errors: Object.freeze(['ai-response.data.execution_metadata-must-be-bounded-data-only']) });
+      }
+      projectedData.execution_metadata = safeExecution;
+    }
+    if (Object.hasOwn(data.fields, 'liveGoalProjection')) {
+      const projection = readDataFields(data.fields.liveGoalProjection, [
+        'schemaVersion',
+        'generatedAt',
+        'projectionSource',
+        'sourceTruth',
+        'backendStatus',
+        'heartbeat',
+        'missionOperationsStatus',
+        'proofTruth',
+      ], 'ai-response.data.liveGoalProjection');
+      if (!projection.valid) return Object.freeze({ valid: false, response: null, errors: Object.freeze([projection.error]) });
+      const projectedProjection = { ...projection.fields };
+      for (const [key, keys] of [
+        ['backendStatus', ['ok', 'status']],
+        ['heartbeat', ['generatedAt', 'projectionSource', 'backendLive']],
+        ['missionOperationsStatus', ['status']],
+        ['proofTruth', ['github', 'local', 'browser']],
+      ]) {
+        if (!Object.hasOwn(projection.fields, key)) continue;
+        const nested = projectObject(projection.fields[key], keys, `ai-response.data.liveGoalProjection.${key}`);
+        if (!nested.valid) return Object.freeze({ valid: false, response: null, errors: Object.freeze([nested.error]) });
+        projectedProjection[key] = nested.fields;
+      }
+      const safeProjection = dataOnly(projectedProjection);
+      if (safeProjection === INVALID) {
+        return Object.freeze({ valid: false, response: null, errors: Object.freeze(['ai-response.data.liveGoalProjection-must-be-bounded-data-only']) });
+      }
+      projectedData.liveGoalProjection = safeProjection;
+    }
+    if (Object.hasOwn(data.fields, 'request_trace')) {
+      const trace = projectObject(data.fields.request_trace, ['requestId'], 'ai-response.data.request_trace');
+      if (!trace.valid) return Object.freeze({ valid: false, response: null, errors: Object.freeze([trace.error]) });
+      projectedData.request_trace = trace.fields;
+    }
+    response.data = Object.freeze(projectedData);
   }
 
-  const freshnessIntegrity = execution.freshness_integrity_preserved === true;
-  const answerTruthMode = text(execution.answer_truth_mode || execution.effective_answer_mode).toLowerCase();
-  const freshness = freshnessIntegrity || observedRuntimeProof
-    ? 'FRESH'
-    : (answerTruthMode.includes('stale') ? 'STALE' : 'UNKNOWN');
+  if (Object.hasOwn(top.fields, 'debug') && top.fields.debug !== null) {
+    const debug = projectObject(top.fields.debug, ['request_id'], 'ai-response.debug');
+    if (!debug.valid) return Object.freeze({ valid: false, response: null, errors: Object.freeze([debug.error]) });
+    response.debug = debug.fields;
+  }
+  if (Object.hasOwn(top.fields, 'memory_hits') && top.fields.memory_hits !== null) {
+    const prefix = readArrayPrefix(top.fields.memory_hits, 8, 'ai-response.memory_hits');
+    if (!prefix.valid) return Object.freeze({ valid: false, response: null, errors: Object.freeze([prefix.error]) });
+    const safeMemoryHits = dataOnly(prefix.value);
+    if (safeMemoryHits === INVALID) {
+      return Object.freeze({ valid: false, response: null, errors: Object.freeze(['ai-response.memory_hits-must-be-bounded-data-only']) });
+    }
+    response.memory_hits = safeMemoryHits;
+  }
 
-  return Object.freeze({
-    evidenceRefs: Object.freeze([...new Set(refs)]),
-    sourcesConsulted: Object.freeze([...new Set(sources)]),
-    freshness,
-    observedRuntimeProof,
-    liveGoalProjectionPosture,
-  });
-}
-
-function answerIdFor(question, outputText, response = {}) {
-  const requestId = text(response?.debug?.request_id) || 'no-request-id';
-  return `live-qa-${hash(JSON.stringify({
-    roundId: question.roundId,
-    questionId: question.questionId,
-    requestId,
-    outputDigest: hash(outputText),
-  })).slice(0, 24)}`;
-}
-
-function makeAnswer({ question, response, outputText, answeredAtUtc, nowMs, failureReason = '' }) {
-  const grounding = deriveGroundingEvidence(response, { nowMs });
-  const failed = Boolean(failureReason);
-  const durableSystemTruthRequired = requiresDurableSystemTruth(question);
-  const effectiveFreshness = durableSystemTruthRequired && !grounding.observedRuntimeProof
-    ? (grounding.liveGoalProjectionPosture === 'STALE_OR_INVALID_TIMESTAMP' ? 'STALE' : 'UNKNOWN')
-    : grounding.freshness;
-  const grounded = !failed
-    && grounding.evidenceRefs.length > 0
-    && grounding.sourcesConsulted.length > 0
-    && ['FRESH', 'RECENT'].includes(effectiveFreshness)
-    && (!durableSystemTruthRequired || grounding.observedRuntimeProof);
-
-  return Object.freeze({
-    schemaVersion: STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION,
-    answerId: answerIdFor(question, outputText, response),
-    questionId: question.questionId,
-    roundId: question.roundId,
-    responderParticipantId: STEPHANOS_SHARED_PARTICIPANT_ID,
-    answerText: outputText,
-    epistemicState: failed
-      ? 'UNKNOWN'
-      : (grounding.observedRuntimeProof ? 'OBSERVED_FROM_RUNTIME_OR_PROOF' : 'INFERRED_FROM_EVIDENCE'),
-    evidenceRefs: failed ? Object.freeze([]) : grounding.evidenceRefs,
-    freshness: failed ? 'UNKNOWN' : effectiveFreshness,
-    sourcesConsulted: failed ? Object.freeze([]) : grounding.sourcesConsulted,
-    cannotAnswerReason: failed ? failureReason : null,
-    answerVerdict: failed
-      ? 'GAP_TOOL_OR_DATA_ACCESS'
-      : (grounded ? 'ANSWERED_GROUNDED' : 'ANSWERED_PARTIAL'),
-    gapRefs: failed ? Object.freeze(['#1308']) : Object.freeze([]),
-    answeredAtUtc,
-  });
-}
-
-function blocked(classification, errors = []) {
-  return Object.freeze({
-    ok: false,
-    schemaVersion: STEPHANOS_SHARED_PARTICIPANT_LIVE_QA_SCHEMA_VERSION,
-    classification,
-    errors: Object.freeze([...errors]),
-    question: null,
-    answer: null,
-    answerRecord: null,
-    richResponse: null,
-    ...authorityBoundary(),
-  });
+  return Object.freeze({ valid: true, response: Object.freeze(response), errors: Object.freeze([]) });
 }
 
 export async function answerStephanosWorkspaceQuestionRecord(questionRecord, options = {}) {
-  const now = options.now instanceof Date ? options.now : new Date();
-  const nowMs = now.getTime();
-  const answeredAtUtc = now.toISOString();
-  const decoded = decodeStephanosWorkspaceQuestionRecord(questionRecord, {
-    workspaceValidationOptions: { nowMs },
-    questionValidationOptions: options.questionValidationOptions,
-  });
-  if (!decoded.valid) return blocked('QUESTION_RECORD_REJECTED', decoded.errors);
-
-  const question = decoded.question;
-  if (text(question.targetParticipantId).toLowerCase() !== STEPHANOS_SHARED_PARTICIPANT_ID) {
-    return blocked('QUESTION_TARGET_NOT_STEPHANOS', ['targetParticipantId-must-be-stephanos']);
-  }
-
-  const durableSystemTruthRequired = requiresDurableSystemTruth(question);
   const queryFn = typeof options.queryFn === 'function' ? options.queryFn : queryStephanosAI;
-  let rawResponse;
-  try {
-    rawResponse = await queryFn({
-      provider: DEFAULT_PROVIDER_KEY,
-      messages: [{ role: 'user', content: question.questionText }],
-      context: {
-        surface: 'shared-participant-qa',
-        roundId: question.roundId,
-        questionId: question.questionId,
-        questionClass: question.questionClass,
-        expectedEvidenceClass: question.expectedEvidenceClass,
-        contextRefs: [...question.contextRefs],
-        noveltyRefs: [...question.noveltyRefs],
-        durableSystemTruthRequired,
-        durableSystemTruthRequirement: durableSystemTruthRequired
-          ? 'LIVE_DURABLE_SYSTEM_TRUTH'
-          : 'STANDARD_EVIDENCE',
-      },
-      routeMode: 'auto',
-      fallbackEnabled: true,
-      runtimeContext: options.runtimeContext && typeof options.runtimeContext === 'object' ? options.runtimeContext : {},
-      fetchImpl: options.fetchImpl,
-    });
-  } catch (error) {
-    rawResponse = {
-      success: false,
-      output_text: 'Stephanos could not complete this question through the existing AI route.',
-      error: text(error?.message) || 'Stephanos AI route failed.',
-      data: {},
-      debug: {},
-    };
-  }
-
-  const response = dataOnly(rawResponse);
-  if (response === INVALID || !response || typeof response !== 'object' || Array.isArray(response)) {
-    return blocked('AI_RESPONSE_REJECTED_AS_NON_DATA', ['ai-response-must-be-bounded-data-only']);
-  }
-
-  let outputText = text(response.output_text);
-  const responseSucceeded = response.success === true && outputText.length > 0;
-  if (outputText.length > MAX_ANSWER_TEXT || SECRET_SHAPED_TEXT.test(outputText)) {
-    return blocked('AI_RESPONSE_UNSAFE_FOR_SHARED_WORKSPACE', ['ai-output-secret-shaped-or-oversized']);
-  }
-  if (!outputText) outputText = 'Stephanos could not complete this question through the existing AI route.';
-
-  const failureReason = responseSucceeded
-    ? ''
-    : text(response.error) || 'Existing Stephanos AI route did not produce a successful answer.';
-  const answer = makeAnswer({ question, response, outputText, answeredAtUtc, nowMs, failureReason });
-  const built = createStephanosWorkspaceAnswerRecord(answer, {
-    recipientParticipantId: question.askerParticipantId,
-    relatedIssue: text(questionRecord.relatedIssue) || '#1308',
-    relatedPr: text(questionRecord.relatedPr),
-    proofRefs: Array.isArray(questionRecord.proofRefs) ? [...questionRecord.proofRefs] : [],
-    workspaceValidationOptions: { nowMs },
+  let projectionFailure = null;
+  const result = await answerCoreQuestionRecord(questionRecord, {
+    ...options,
+    queryFn: async (request) => {
+      const rawResponse = await queryFn(request);
+      const projected = projectStephanosAiResponseForWorkspaceV1(rawResponse);
+      if (projected.valid) return projected.response;
+      projectionFailure = projected.errors;
+      return {
+        success: false,
+        output_text: 'Stephanos could not safely consume the AI response envelope.',
+        error: 'AI response projection rejected.',
+        data: {},
+        debug: {},
+        memory_hits: [],
+      };
+    },
   });
-  if (!built.valid) return blocked('ANSWER_RECORD_BUILD_FAILED', built.errors);
-
-  const richResponse = buildStephanosRichConversationalResponseV1({
-    question,
-    answer,
-    structured: options.richResponseStructured,
-  });
-  if (!richResponse.valid) return blocked('RICH_RESPONSE_BUILD_FAILED', richResponse.errors);
-
-  return Object.freeze({
-    ok: true,
-    schemaVersion: STEPHANOS_SHARED_PARTICIPANT_LIVE_QA_SCHEMA_VERSION,
-    classification: responseSucceeded
-      ? (answer.answerVerdict === 'ANSWERED_GROUNDED' ? 'STEPHANOS_GROUNDED_ANSWER_READY' : 'STEPHANOS_PARTIAL_ANSWER_READY')
-      : 'STEPHANOS_GAP_ANSWER_READY',
-    question,
-    answer,
-    answerRecord: built.record,
-    richResponse,
-    ...authorityBoundary(),
-  });
+  if (projectionFailure) return blocked('AI_RESPONSE_REJECTED_AS_NON_DATA', projectionFailure);
+  return result;
 }
