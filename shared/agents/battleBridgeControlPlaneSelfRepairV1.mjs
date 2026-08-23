@@ -13,6 +13,12 @@ export const BATTLE_BRIDGE_CONTROL_PLANE_TASKS = Object.freeze([
     intervalMinutes: 1,
   }),
   Object.freeze({
+    id: 'workerWatchdog',
+    taskName: 'Stephanos Mission Orchestrator Worker Watchdog',
+    installerRelativePath: 'scripts/windows/install-battle-bridge-worker-watchdog.ps1',
+    intervalMinutes: 1,
+  }),
+  Object.freeze({
     id: 'githubCommandMailbox',
     taskName: 'Stephanos Battle Bridge GitHub Command Mailbox',
     installerRelativePath: 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
@@ -122,6 +128,25 @@ function validateRecoveryMeshReceipt(payload) {
   );
 }
 
+function validateWorkerWatchdogReceipt(payload) {
+  return Boolean(
+    payload
+    && payload.taskName === 'Stephanos Mission Orchestrator Worker Watchdog'
+    && payload.installed === true
+    && payload.startedNow === true
+    && Number(payload.intervalMinutes) === 1
+    && payload.atLogon === true
+    && payload.hidden === true
+    && payload.runLevel === 'Limited'
+    && payload.multipleInstances === 'IgnoreNew'
+    && payload.remoteCodexVisibilityReconciler === true
+    && payload.arbitraryTaskNameAllowed === false
+    && payload.arbitraryShellAllowed === false
+    && payload.visiblePowerShellRequired === false
+    && payload.headlessLauncher === true
+  );
+}
+
 function validateMailboxReceipt(payload) {
   return Boolean(
     payload
@@ -167,6 +192,7 @@ function validateOutboundHealthBeaconReceipt(payload) {
 
 function validateTaskReceipt(taskId, payload) {
   if (taskId === 'recoveryMesh') return validateRecoveryMeshReceipt(payload);
+  if (taskId === 'workerWatchdog') return validateWorkerWatchdogReceipt(payload);
   if (taskId === 'githubCommandMailbox') return validateMailboxReceipt(payload);
   if (taskId === 'outboundHealthBeacon') return validateOutboundHealthBeaconReceipt(payload);
   return false;
