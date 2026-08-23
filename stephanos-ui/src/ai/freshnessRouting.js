@@ -12,6 +12,7 @@ const FRESHNESS_HIGH_PATTERNS = [
 const OFFICE_HOLDER_PATTERNS = [
   /\b(who is|who's)\s+(the\s+)?(uk|u\.?k\.?|united kingdom|us|u\.?s\.?|united states)\s+(prime minister|president)\b/i,
   /\b(who is|who's)\s+(the\s+)?(prime minister|president)\b/i,
+  /\b(has|have|had|did|was|were|is|are)\b.{0,80}\b(resign(?:ed|ing|ation)?|step(?:ped)? down|removed from office|ousted|dismissed|appointed|elected|died)\b/i,
 ];
 
 const LOCAL_PRIVATE_PATTERNS = [

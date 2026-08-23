@@ -81,6 +81,14 @@ Discoveries from this lab are intended to become production-ready assets for the
 - Validation checklists and experiment evidence
 - Risk/compatibility notes for integration planning
 
+### Spatial Bridge Doctrine
+
+The future Quest spatial surface is governed by the [Stephanos Spatial Bridge Doctrine](docs/research-notes/stephanos-spatial-bridge-doctrine.md).
+
+That doctrine records the captain operating model, original far-future starship-bridge direction, single-brain architecture, read-only-first transition, contextual intent contract, bounded approval rules, evidence requirements, safety fallbacks, and Stephanos readiness gates.
+
+Retrieve the doctrine before planning or reviewing any Quest, WebXR, cockpit, voice, or spatial command-surface implementation. The spatial surface must remain a thin client over canonical Stephanos state and must never become a separate VR Stephanos or a direct route to Battle Bridge execution.
+
 ## Repository Structure
 
 ```text

@@ -1,0 +1,115 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  buildCompletionPacket,
+  buildPullRequestBody,
+  mergeApprovalToken,
+  publishApprovalToken,
+  validatePublishLaneRequest,
+  validatePublishSourceScope,
+} from './repositoryNativePublishMergeLane.mjs';
+
+test('source scope blocks runtime tmp memory node_modules dist env and secrets by default', () => {
+  const verdict = validatePublishSourceScope({
+    files: [
+      'runtime/state.json',
+      'tmp/a.txt',
+      'memory/records.json',
+      'node_modules/pkg/index.js',
+      'apps/stephanos/dist/index.html',
+      '.env.local',
+      'docs/api-token.md',
+      'secrets/prod.pem',
+    ],
+  });
+  assert.equal(verdict.finalVerdict, 'SOURCE_SCOPE_BLOCKED');
+  assert.equal(verdict.blockers.length, 8);
+});
+
+test('source scope can explicitly allow dist while still blocking secrets and env files', () => {
+  const verdict = validatePublishSourceScope({
+    allowDist: true,
+    files: ['apps/example/dist/proof.txt', '.env', 'docs/credentials.md'],
+  });
+  assert.equal(verdict.finalVerdict, 'SOURCE_SCOPE_BLOCKED');
+  assert.ok(!verdict.blockers.some((blocker) => blocker.includes('dist/proof')));
+  assert.ok(verdict.blockers.some((blocker) => blocker.includes('Environment files')));
+  assert.ok(verdict.blockers.some((blocker) => blocker.includes('Secrets')));
+});
+
+test('publish request is gated but has no ready or merge authority', () => {
+  const branch = 'publish/shared-workspace-v3';
+  const verdict = validatePublishLaneRequest({
+    branch,
+    baseBranch: 'main',
+    approvalToken: publishApprovalToken(branch),
+    goal: 'Ship Shared Workspace V3',
+    proofCommand: ['npm', 'test'],
+    changedFiles: ['shared/workspace/model.mjs', 'shared/workspace/model.test.mjs'],
+  });
+  assert.equal(verdict.finalVerdict, 'PUBLISH_LANE_READY');
+  assert.deepEqual(verdict.files, ['shared/workspace/model.mjs', 'shared/workspace/model.test.mjs']);
+  assert.equal(verdict.mergeAuthority, false);
+  assert.equal(verdict.mergeApprovalMechanism, 'github-protected-environment-only');
+});
+
+test('publish request rejects missing approval token and main branch', () => {
+  const verdict = validatePublishLaneRequest({
+    branch: 'main',
+    baseBranch: 'main',
+    approvalToken: 'APPROVE',
+    goal: 'Unsafe',
+    proofCommand: 'npm test',
+    changedFiles: ['shared/example.mjs'],
+  });
+  assert.equal(verdict.finalVerdict, 'PUBLISH_LANE_BLOCKED');
+  assert.ok(verdict.blockers.some((blocker) => blocker.includes('non-main')));
+  assert.ok(verdict.blockers.some((blocker) => blocker.includes('approval')));
+});
+
+test('PR body includes goal proof files exact head and explicit protected merge boundary', () => {
+  const headSha = 'a'.repeat(40);
+  const body = buildPullRequestBody({
+    goal: 'Publish lane V3',
+    proofCommand: 'node --test shared/agents/repositoryNativePublishMergeLane.test.mjs',
+    proofResult: 'PASS exitCode=0',
+    filesChanged: ['shared/agents/repositoryNativePublishMergeLane.mjs'],
+    headSha,
+  });
+  assert.match(body, /## Goal\nPublish lane V3/);
+  assert.match(body, /## Proof/);
+  assert.match(body, new RegExp(headSha));
+  assert.match(body, /has no ready or merge authority/);
+  assert.match(body, /protected-environment approval/);
+});
+
+test('deterministic merge approval tokens are disabled fail closed', () => {
+  assert.throws(
+    () => mergeApprovalToken(1313, 'b'.repeat(40)),
+    /Deterministic merge approval tokens are disabled/,
+  );
+});
+
+test('completion packet contains stable required fields', () => {
+  const packet = buildCompletionPacket({
+    branch: 'publish/lane-v3',
+    prNumber: '1313',
+    headSha: 'c'.repeat(40),
+    mergeCommit: '',
+    proofCommand: ['npm', 'test'],
+    proofResult: 'PASS exitCode=0',
+    finalStatus: 'AWAITING_PROTECTED_OPERATOR_APPROVAL',
+  });
+  assert.deepEqual(Object.keys(packet), [
+    'schemaVersion',
+    'branch',
+    'prNumber',
+    'headSha',
+    'mergeCommit',
+    'proofCommand',
+    'proofResult',
+    'finalStatus',
+  ]);
+  assert.equal(packet.prNumber, 1313);
+  assert.equal(packet.finalStatus, 'AWAITING_PROTECTED_OPERATOR_APPROVAL');
+});

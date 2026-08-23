@@ -10,7 +10,21 @@ import {
   processNextOpenClawReadonlyItem,
   processNextSignedOpenClawItem,
 } from '../stephanos-server/services/missionOrchestratorWorkerConsumer.js';
-import { publishNextMissionWorkerAction } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
+import {
+  publishNextMissionWorkerAction,
+  readMissionWorkerQueue,
+} from '../stephanos-server/services/missionOrchestratorWorkerService.js';
+import {
+  OPENCLAW_OC1_ISSUE,
+  OPENCLAW_OC1_PROVIDER,
+  OPENCLAW_OC1_PROVIDER_VERSION,
+  OPENCLAW_OC1_TASK_CLASS,
+} from '../integrations/openclaw/stephanos-builder-provider/lib/oc1-repository-scout.mjs';
+import {
+  OPENCLAW_OC1_GATEWAY_METHOD,
+  OPENCLAW_OC1_GATEWAY_REQUEST_SCHEMA,
+  OPENCLAW_OC1_GATEWAY_RESULT_SCHEMA,
+} from '../integrations/openclaw/stephanos-builder-provider/lib/oc1-gateway-provider.mjs';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -70,11 +84,8 @@ function defaultRun(executable, args, options = {}) {
 
 function requireJson(result, label) {
   if (result.error || result.status !== 0) throw new Error(`${label} failed: ${result.error?.message || result.stderr || `exit ${result.status}`}`);
-  try {
-    return JSON.parse(result.stdout);
-  } catch {
-    throw new Error(`${label} returned invalid JSON.`);
-  }
+  try { return JSON.parse(result.stdout); }
+  catch { throw new Error(`${label} returned invalid JSON.`); }
 }
 
 function normalizeChecks(checks = []) {
@@ -94,18 +105,7 @@ function codexOutputSchema() {
     properties: {
       success: { type: 'boolean' },
       summary: { type: 'string' },
-      evidence: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            requirement: { type: 'string' },
-            command: { type: 'string' },
-          },
-          required: ['requirement', 'command'],
-          additionalProperties: false,
-        },
-      },
+      evidence: { type: 'array', items: { type: 'object', properties: { requirement: { type: 'string' }, command: { type: 'string' } }, required: ['requirement', 'command'], additionalProperties: false } },
     },
     required: ['success', 'summary', 'evidence'],
     additionalProperties: false,
@@ -137,11 +137,9 @@ function successfulCodexCommands(events) {
   return events.filter((event) => {
     const item = event?.item || {};
     const exitCode = Number.isInteger(item.exit_code) ? item.exit_code : item.exitCode;
-    return event?.type === 'item.completed'
-      && item.type === 'command_execution'
+    return event?.type === 'item.completed' && item.type === 'command_execution'
       && ['completed', 'success'].includes(text(item.status).toLowerCase())
-      && exitCode === 0
-      && text(item.command);
+      && exitCode === 0 && text(item.command);
   });
 }
 
@@ -158,12 +156,8 @@ function groundedCodexEvidence(action, finalOutput, events, timestamp) {
     if (!commandEvent) continue;
     receipts.push({
       receiptId: `codex-evidence-${createHash('sha256').update(`${requirement}\n${command}`).digest('hex').slice(0, 20)}`,
-      requirement,
-      source: 'codex-cli',
-      evidenceType: 'command-output',
-      verified: true,
-      commandOutputHash: createHash('sha256').update(JSON.stringify(commandEvent)).digest('hex'),
-      createdAt: timestamp,
+      requirement, source: 'codex-cli', evidenceType: 'command-output', verified: true,
+      commandOutputHash: createHash('sha256').update(JSON.stringify(commandEvent)).digest('hex'), createdAt: timestamp,
     });
   }
   return receipts;
@@ -172,9 +166,7 @@ function groundedCodexEvidence(action, finalOutput, events, timestamp) {
 function inspectChangedFiles(worktreePath, run) {
   const tracked = run('git.exe', ['-C', worktreePath, 'diff', '--name-only', 'HEAD', '--'], { cwd: worktreePath });
   const untracked = run('git.exe', ['-C', worktreePath, 'ls-files', '--others', '--exclude-standard'], { cwd: worktreePath });
-  if (tracked.error || tracked.status !== 0 || untracked.error || untracked.status !== 0) {
-    throw new Error('Codex changed-file inspection failed.');
-  }
+  if (tracked.error || tracked.status !== 0 || untracked.error || untracked.status !== 0) throw new Error('Codex changed-file inspection failed.');
   return [...new Set(`${tracked.stdout || ''}\n${untracked.stdout || ''}`.split(/\r?\n/).map(normalizePath).filter(Boolean))].sort();
 }
 
@@ -189,19 +181,14 @@ export async function executeCodexAction(action, claim, options = {}) {
   const timestamp = completedAt(options);
   try {
     const result = run(options.codexExecutable || process.env.STEPHANOS_CODEX_EXECUTABLE || 'codex.exe', [
-      'exec', '--ephemeral', '--cd', worktreePath,
-      '--sandbox', 'workspace-write', '--json',
-      '--output-schema', schemaPath,
-      '--output-last-message', outputPath,
-      '-c', 'approval_policy="never"',
-      codexPrompt(action),
+      'exec', '--ephemeral', '--cd', worktreePath, '--sandbox', 'workspace-write', '--json',
+      '--output-schema', schemaPath, '--output-last-message', outputPath,
+      '-c', 'approval_policy="never"', codexPrompt(action),
     ], { cwd: worktreePath, env: options.env || process.env });
     const stdout = result.stdout || '';
     const stderr = result.stderr || '';
     const commandOutputHash = outputHash(stdout, stderr);
-    if (result.error || result.status !== 0) {
-      return { success: false, error: result.error?.message || stderr || stdout || `Codex exited with code ${result.status}.`, completedAt: timestamp, changedFiles: [], evidenceReceipts: [] };
-    }
+    if (result.error || result.status !== 0) return { success: false, error: result.error?.message || stderr || stdout || `Codex exited with code ${result.status}.`, completedAt: timestamp, changedFiles: [], evidenceReceipts: [] };
     let finalOutput;
     try { finalOutput = JSON.parse(await readFile(outputPath, 'utf8')); }
     catch { return { success: false, error: 'Codex did not produce a valid schema-constrained result.', completedAt: timestamp, changedFiles: [], evidenceReceipts: [] }; }
@@ -213,18 +200,8 @@ export async function executeCodexAction(action, claim, options = {}) {
     return {
       success,
       error: success ? '' : unsafeChanges.length ? `Codex changed files outside approved scope: ${unsafeChanges.join(', ')}` : changedFiles.length ? text(finalOutput.summary, 'Codex reported an unsuccessful result.') : 'Codex completed without a source change.',
-      resultId: threadId,
-      changedFiles,
-      completedAt: timestamp,
-      receipt: success ? {
-        receiptId: `codex-result-${action.actionId}`.slice(0, 128),
-        requirement: 'codex result',
-        source: 'codex-cli',
-        evidenceType: 'codex-exec',
-        verified: true,
-        commandOutputHash,
-        createdAt: timestamp,
-      } : undefined,
+      resultId: threadId, changedFiles, completedAt: timestamp,
+      receipt: success ? { receiptId: `codex-result-${action.actionId}`.slice(0, 128), requirement: 'codex result', source: 'codex-cli', evidenceType: 'codex-exec', verified: true, commandOutputHash, createdAt: timestamp } : undefined,
       evidenceReceipts: success ? groundedCodexEvidence(action, finalOutput, events, timestamp) : [],
     };
   } finally {
@@ -256,6 +233,44 @@ function openClawPayloadText(response) {
   return payloads.map((payload) => text(payload?.text)).filter(Boolean).join('\n').trim();
 }
 
+function openClawOc1GatewayPayload(stdout) {
+  let parsed;
+  try { parsed = JSON.parse(String(stdout || '')); }
+  catch { return null; }
+  if (parsed?.schemaVersion === OPENCLAW_OC1_GATEWAY_RESULT_SCHEMA) return parsed;
+  if (parsed?.result?.schemaVersion === OPENCLAW_OC1_GATEWAY_RESULT_SCHEMA) return parsed.result;
+  return null;
+}
+
+function validateOpenClawOc1GatewayPayload(payload, grant) {
+  const taskId = text(grant?.actionId).toLowerCase();
+  const missionId = text(grant?.missionId).toLowerCase();
+  const sourceHead = text(grant?.sourceRevision).toLowerCase();
+  const providerInstance = text(payload?.providerInstance);
+  const result = payload?.result;
+  return payload?.schemaVersion === OPENCLAW_OC1_GATEWAY_RESULT_SCHEMA
+    && payload?.success === true
+    && payload?.qualificationEligible === true
+    && text(payload?.missionId).toLowerCase() === missionId
+    && text(payload?.goalId) === `#${OPENCLAW_OC1_ISSUE}`
+    && text(payload?.taskId).toLowerCase() === taskId
+    && text(payload?.taskClass) === OPENCLAW_OC1_TASK_CLASS
+    && text(payload?.repository) === text(grant?.repository)
+    && text(payload?.requestedSourceHead).toLowerCase() === sourceHead
+    && text(payload?.provider) === OPENCLAW_OC1_PROVIDER
+    && /^openclaw-gateway:[1-9][0-9]*$/.test(providerInstance)
+    && text(payload?.providerVersion) === OPENCLAW_OC1_PROVIDER_VERSION
+    && payload?.executionSurface === 'openclaw-gateway-plugin'
+    && result?.success === true
+    && text(result?.resultId).toLowerCase() === taskId
+    && Array.isArray(result?.changedFiles)
+    && result.changedFiles.length === 0
+    && result?.receipt?.verified === true
+    && Array.isArray(result?.evidenceReceipts)
+    && result.evidenceReceipts.length > 0
+    && result.evidenceReceipts.every((receipt) => receipt?.verified === true);
+}
+
 async function groundedOpenClawEvidence(action, finalOutput, options, timestamp) {
   const env = options.env || process.env;
   const missionRunnerRoot = text(options.missionRunnerRoot || env.STEPHANOS_MISSION_RUNNER_ROOT || (env.USERPROFILE ? resolve(env.USERPROFILE, 'Documents', 'OpenClaw-Standalone', 'mission-runner') : ''));
@@ -274,23 +289,53 @@ async function groundedOpenClawEvidence(action, finalOutput, options, timestamp)
       const sha256 = createHash('sha256').update(await readFile(receiptPath)).digest('hex');
       receipts.push({
         receiptId: `openclaw-evidence-${createHash('sha256').update(`${requirement}\n${relativePath}\n${sha256}`).digest('hex').slice(0, 20)}`,
-        requirement,
-        source: 'openclaw-readonly-cli',
-        evidenceType: action.browserProofRequired === true ? 'browser-proof' : 'readonly-inspection',
-        verified: true,
-        sha256,
-        receiptPath: `proof/${relativePath}`,
-        createdAt: timestamp,
+        requirement, source: 'openclaw-readonly-cli', evidenceType: action.browserProofRequired === true ? 'browser-proof' : 'readonly-inspection',
+        verified: true, sha256, receiptPath: `proof/${relativePath}`, createdAt: timestamp,
       });
-    } catch {
-      // An absent or unreadable receipt is not evidence.
-    }
+    } catch { /* An absent or unreadable receipt is not evidence. */ }
   }
   return receipts;
 }
 
 export async function executeOpenClawReadonlyAction(action, claim, options = {}) {
   if (action?.actionKind !== 'agent-handoff' || action.adapter !== 'openclaw-readonly') throw new Error('Unsupported OpenClaw read-only worker action.');
+  if (options.actionGrant?.issueNumber === OPENCLAW_OC1_ISSUE) {
+    const grant = options.actionGrant;
+    const request = {
+      schemaVersion: OPENCLAW_OC1_GATEWAY_REQUEST_SCHEMA,
+      actionGrant: grant,
+    };
+    const run = options.runCommand || defaultRun;
+    const timestamp = completedAt(options);
+    const command = run(options.openClawExecutable || process.env.STEPHANOS_OPENCLAW_EXECUTABLE || 'openclaw.cmd', [
+      'gateway', 'call', OPENCLAW_OC1_GATEWAY_METHOD,
+      '--params', JSON.stringify(request),
+      '--timeout', '120000',
+      '--json',
+    ], { cwd: text(action.repositoryRoot) || undefined, env: options.env || process.env });
+    const stdout = command.stdout || '';
+    const stderr = command.stderr || '';
+    if (command.error || command.status !== 0) {
+      return {
+        success: false,
+        error: command.error?.message || stderr || stdout || `OpenClaw OC1 Gateway call exited with code ${command.status}.`,
+        completedAt: timestamp,
+        changedFiles: [],
+        evidenceReceipts: [],
+      };
+    }
+    const payload = openClawOc1GatewayPayload(stdout);
+    if (!validateOpenClawOc1GatewayPayload(payload, grant)) {
+      return {
+        success: false,
+        error: 'OPENCLAW_OC1_GATEWAY_RESULT_LINEAGE_INVALID',
+        completedAt: timestamp,
+        changedFiles: [],
+        evidenceReceipts: [],
+      };
+    }
+    return payload.result;
+  }
   const promptPath = `${claim.processingPath}.openclaw-prompt.txt`;
   await writeFile(promptPath, openClawPrompt(action), { encoding: 'utf8', flag: 'wx' });
   const run = options.runCommand || defaultRun;
@@ -298,16 +343,12 @@ export async function executeOpenClawReadonlyAction(action, claim, options = {})
   try {
     const result = run(options.openClawExecutable || process.env.STEPHANOS_OPENCLAW_EXECUTABLE || 'openclaw.cmd', [
       'agent', '--agent', options.openClawAgent || process.env.STEPHANOS_OPENCLAW_READONLY_AGENT || 'stephanos-scout',
-      '--session-key', `orchestrator-${action.missionId}`,
-      '--message-file', promptPath,
-      '--timeout', String(options.openClawTimeoutSeconds || 600),
-      '--json',
+      '--session-key', `orchestrator-${action.missionId}`, '--message-file', promptPath,
+      '--timeout', String(options.openClawTimeoutSeconds || 600), '--json',
     ], { cwd: text(action.repositoryRoot) || undefined, env: options.env || process.env });
     const stdout = result.stdout || '';
     const stderr = result.stderr || '';
-    if (result.error || result.status !== 0) {
-      return { success: false, error: result.error?.message || stderr || stdout || `OpenClaw exited with code ${result.status}.`, completedAt: timestamp, changedFiles: [], evidenceReceipts: [] };
-    }
+    if (result.error || result.status !== 0) return { success: false, error: result.error?.message || stderr || stdout || `OpenClaw exited with code ${result.status}.`, completedAt: timestamp, changedFiles: [], evidenceReceipts: [] };
     let response;
     try { response = JSON.parse(stdout); }
     catch { return { success: false, error: 'OpenClaw did not return valid JSON.', completedAt: timestamp, changedFiles: [], evidenceReceipts: [] }; }
@@ -319,23 +360,11 @@ export async function executeOpenClawReadonlyAction(action, claim, options = {})
     return {
       success,
       error: success ? '' : text(finalOutput.summary, 'OpenClaw could not ground the requested read-only investigation.'),
-      resultId: text(response?.meta?.runId || response?.result?.meta?.runId, action.actionId),
-      changedFiles: [],
-      completedAt: timestamp,
-      receipt: success ? {
-        receiptId: `openclaw-result-${action.actionId}`.slice(0, 128),
-        requirement: 'openclaw result',
-        source: 'openclaw-readonly-cli',
-        evidenceType: 'openclaw-agent-turn',
-        verified: true,
-        commandOutputHash: outputHash(stdout, stderr),
-        createdAt: timestamp,
-      } : undefined,
+      resultId: text(response?.meta?.runId || response?.result?.meta?.runId, action.actionId), changedFiles: [], completedAt: timestamp,
+      receipt: success ? { receiptId: `openclaw-result-${action.actionId}`.slice(0, 128), requirement: 'openclaw result', source: 'openclaw-readonly-cli', evidenceType: 'openclaw-agent-turn', verified: true, commandOutputHash: outputHash(stdout, stderr), createdAt: timestamp } : undefined,
       evidenceReceipts: success ? evidenceReceipts : [],
     };
-  } finally {
-    await rm(promptPath, { force: true });
-  }
+  } finally { await rm(promptPath, { force: true }); }
 }
 
 export async function executeSignedOperation(payload, claim, options = {}) {
@@ -347,26 +376,12 @@ export async function executeSignedOperation(payload, claim, options = {}) {
   await writeFile(requestPath, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
   const run = options.runCommand || defaultRun;
   try {
-    const result = run(options.powerShellExecutable || 'powershell.exe', [
-      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', bridgePath,
-      '-RequestPath', requestPath,
-      '-StephanosRepositoryRoot', repositoryRoot,
-    ], { cwd: repositoryRoot, env: options.env || process.env });
+    const result = run(options.powerShellExecutable || 'powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', bridgePath, '-RequestPath', requestPath, '-StephanosRepositoryRoot', repositoryRoot], { cwd: repositoryRoot, env: options.env || process.env });
     const stdout = result.stdout || '';
     const stderr = result.stderr || '';
     const fields = parseBridgeOutput(stdout);
-    return {
-      success: !result.error && result.status === 0 && fields.FINAL_VERDICT === 'OPENCLAW_GITHUB_OPERATION_PASS',
-      error: result.error?.message || (result.status === 0 ? '' : stderr || stdout),
-      exitCode: result.status,
-      commandOutputHash: outputHash(stdout, stderr),
-      completedAt: completedAt(options),
-      resultPath: fields.RESULT_PATH || '',
-      snapshotPath: fields.SNAPSHOT_PATH || '',
-    };
-  } finally {
-    await rm(requestPath, { force: true });
-  }
+    return { success: !result.error && result.status === 0 && fields.FINAL_VERDICT === 'OPENCLAW_GITHUB_OPERATION_PASS', error: result.error?.message || (result.status === 0 ? '' : stderr || stdout), exitCode: result.status, commandOutputHash: outputHash(stdout, stderr), completedAt: completedAt(options), resultPath: fields.RESULT_PATH || '', snapshotPath: fields.SNAPSHOT_PATH || '' };
+  } finally { await rm(requestPath, { force: true }); }
 }
 
 export async function inspectSignedOperation(payload, _execution, _claim, options = {}) {
@@ -392,13 +407,7 @@ export async function inspectSignedOperation(payload, _execution, _claim, option
   }
   if (operation === 'check-pr') {
     const view = requireJson(run('gh.exe', ['pr', 'view', String(claims.prNumber), '--repo', claims.repository, '--json', 'number,headRefOid,mergeable,state,statusCheckRollup'], { cwd: repositoryRoot }), 'Pull request check inspection');
-    return {
-      prNumber: view.number,
-      headSha: text(view.headRefOid).toLowerCase(),
-      prState: text(view.state).toLowerCase(),
-      mergeable: view.mergeable === 'MERGEABLE' && view.state === 'OPEN',
-      checks: normalizeChecks(view.statusCheckRollup),
-    };
+    return { prNumber: view.number, headSha: text(view.headRefOid).toLowerCase(), prState: text(view.state).toLowerCase(), mergeable: view.mergeable === 'MERGEABLE' && view.state === 'OPEN', checks: normalizeChecks(view.statusCheckRollup) };
   }
   if (operation === 'merge-pr') {
     const view = requireJson(run('gh.exe', ['pr', 'view', String(claims.prNumber), '--repo', claims.repository, '--json', 'state,mergeCommit'], { cwd: repositoryRoot }), 'Merged pull request inspection');
@@ -408,60 +417,136 @@ export async function inspectSignedOperation(payload, _execution, _claim, option
 }
 
 export async function inspectGitHubAction(action, _claim, options = {}) {
-  if (action?.actionKind !== 'github-inspection' || action.operation !== 'check-pr') {
-    throw new Error('Unsupported read-only GitHub inspection action.');
-  }
+  if (action?.actionKind !== 'github-inspection' || action.operation !== 'check-pr') throw new Error('Unsupported read-only GitHub inspection action.');
   const repository = text(action.repository);
   const repositoryRoot = text(action.repositoryRoot);
   const prNumber = Number.parseInt(action.prNumber, 10);
-  if (!repository || !Number.isInteger(prNumber) || prNumber < 1) {
-    throw new Error('Read-only GitHub inspection requires a repository and pull request number.');
-  }
+  if (!repository || !Number.isInteger(prNumber) || prNumber < 1) throw new Error('Read-only GitHub inspection requires a repository and pull request number.');
   const run = options.runCommand || defaultRun;
-  const result = run('gh.exe', [
-    'pr', 'view', String(prNumber), '--repo', repository,
-    '--json', 'number,headRefOid,mergeable,state,statusCheckRollup',
-  ], { cwd: repositoryRoot || undefined, env: options.env || process.env });
+  const result = run('gh.exe', ['pr', 'view', String(prNumber), '--repo', repository, '--json', 'number,headRefOid,mergeable,state,statusCheckRollup'], { cwd: repositoryRoot || undefined, env: options.env || process.env });
   const view = requireJson(result, 'Read-only pull request check inspection');
-  return {
-    execution: {
-      success: true,
-      commandOutputHash: outputHash(result.stdout || '', result.stderr || ''),
-      completedAt: completedAt(options),
-    },
-    inspection: {
-      prNumber: view.number,
-      headSha: text(view.headRefOid).toLowerCase(),
-      prState: text(view.state).toLowerCase(),
-      mergeable: view.mergeable === 'MERGEABLE' && view.state === 'OPEN',
-      checks: normalizeChecks(view.statusCheckRollup),
-    },
-  };
+  return { execution: { success: true, commandOutputHash: outputHash(result.stdout || '', result.stderr || ''), completedAt: completedAt(options) }, inspection: { prNumber: view.number, headSha: text(view.headRefOid).toLowerCase(), prState: text(view.state).toLowerCase(), mergeable: view.mergeable === 'MERGEABLE' && view.state === 'OPEN', checks: normalizeChecks(view.statusCheckRollup) } };
+}
+
+function payloadActionKind(payload, adapter) {
+  const declared = text(payload?.actionKind);
+  if (declared) return declared;
+  if (
+    adapter === 'openclaw-signed'
+    && payload?.schemaVersion === 'stephanos.mission-worker-request.v1'
+  ) {
+    return 'signed-openclaw-operation';
+  }
+  return '';
+}
+
+function queuePayloadMatchesGrant(entry, actionGrant) {
+  const payload = entry?.item?.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const adapter = text(actionGrant.adapter).toLowerCase();
+  const expectedOperation = text(actionGrant.operation).toLowerCase();
+  const declaredPayloadAdapter = text(payload.adapter).toLowerCase();
+  return (
+    text(payload.missionId).toLowerCase() === text(actionGrant.missionId).toLowerCase()
+    && text(payload.actionId).toLowerCase() === text(actionGrant.actionId).toLowerCase()
+    && (!declaredPayloadAdapter || declaredPayloadAdapter === adapter)
+    && payloadActionKind(payload, adapter) === text(actionGrant.actionKind)
+    && text(payload.operation).toLowerCase() === expectedOperation
+  );
+}
+
+export function selectGrantedMissionWorkerQueueItem(queue = [], actionGrant = {}) {
+  const missionId = text(actionGrant.missionId).toLowerCase();
+  const actionId = text(actionGrant.actionId).toLowerCase();
+  const adapter = text(actionGrant.adapter).toLowerCase();
+  if (
+    actionGrant.schemaVersion !== 'stephanos.mission-worker-action-grant.v1'
+    || actionGrant.boundedActionCount !== 1
+    || !missionId
+    || !actionId
+    || !adapter
+  ) {
+    return { ok: false, reason: 'exact-action-grant-invalid', entry: null };
+  }
+  const envelopeMatches = queue.filter((entry) => (
+    text(entry?.adapter).toLowerCase() === adapter
+    && entry?.item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+    && text(entry?.item?.adapter).toLowerCase() === adapter
+    && text(entry?.item?.missionId).toLowerCase() === missionId
+    && text(entry?.item?.actionId).toLowerCase() === actionId
+  ));
+  const matches = envelopeMatches.filter((entry) => (
+    queuePayloadMatchesGrant(entry, actionGrant)
+  ));
+  if (matches.length !== 1) {
+    return {
+      ok: false,
+      reason: matches.length
+        ? 'exact-action-queue-item-ambiguous'
+        : envelopeMatches.length
+          ? 'exact-action-queue-payload-mismatch'
+          : 'exact-action-queue-item-not-pending',
+      entry: null,
+    };
+  }
+  return { ok: true, reason: 'exact-action-queue-item-selected', entry: matches[0] };
 }
 
 export async function runMissionWorkerTick(options = {}) {
-  const publish = await publishNextMissionWorkerAction({
+  const actionGrant = options.actionGrant;
+  const grantCheck = selectGrantedMissionWorkerQueueItem([], actionGrant);
+  if (grantCheck.reason === 'exact-action-grant-invalid') {
+    return {
+      publish: { published: false, reason: 'exact-action-grant-required' },
+      processed: { processed: false, reason: 'exact-action-grant-required' },
+    };
+  }
+  const workerOptions = {
     ...options,
-    privateKeyPath: options.privateKeyPath || process.env.STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH,
-  });
-  const consumed = await processNextSignedOpenClawItem({
-    ...options,
-    executeSignedOperation: (payload, claim) => executeSignedOperation(payload, claim, options),
-    inspectSignedOperation: (payload, execution, claim) => inspectSignedOperation(payload, execution, claim, options),
-  });
-  const inspected = await processNextGitHubInspectionItem({
-    ...options,
-    inspectGitHub: (action, claim) => inspectGitHubAction(action, claim, options),
-  });
-  const codex = await processNextCodexItem({
-    ...options,
-    executeCodexAction: (action, claim) => executeCodexAction(action, claim, options),
-  });
-  const openclaw = await processNextOpenClawReadonlyItem({
-    ...options,
-    executeOpenClawReadonlyAction: (action, claim) => executeOpenClawReadonlyAction(action, claim, options),
-  });
-  return { publish, consumed, inspected, codex, openclaw };
+    actionGrant,
+    privateKeyPath: options.privateKeyPath
+      || options.env?.STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH
+      || process.env.STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH,
+  };
+  const publish = await publishNextMissionWorkerAction(workerOptions);
+  if (publish.reason === 'action-grant-mismatch' || publish.reason?.startsWith('action-grant-mission-')) {
+    return { publish, processed: { processed: false, reason: publish.reason } };
+  }
+  const selection = selectGrantedMissionWorkerQueueItem(
+    await readMissionWorkerQueue(workerOptions),
+    actionGrant,
+  );
+  if (!selection.ok) {
+    return { publish, processed: { processed: false, reason: selection.reason } };
+  }
+  let processed;
+  if (selection.entry.adapter === 'openclaw-signed') {
+    processed = await processNextSignedOpenClawItem({
+      ...workerOptions,
+      executeSignedOperation: (payload, claim) => executeSignedOperation(payload, claim, options),
+      inspectSignedOperation: (payload, execution, claim) => inspectSignedOperation(payload, execution, claim, options),
+    });
+  } else if (selection.entry.adapter === 'openclaw-github-readonly') {
+    processed = await processNextGitHubInspectionItem({
+      ...workerOptions,
+      inspectGitHub: (action, claim) => inspectGitHubAction(action, claim, options),
+    });
+  } else if (selection.entry.adapter === 'codex') {
+    processed = await processNextCodexItem({
+      ...workerOptions,
+      executeCodexAction: (action, claim) => executeCodexAction(action, claim, options),
+    });
+  } else if (selection.entry.adapter === 'openclaw-readonly') {
+    processed = await processNextOpenClawReadonlyItem({
+      ...workerOptions,
+      executeOpenClawReadonlyAction: (action, claim) => executeOpenClawReadonlyAction(action, claim, options),
+    });
+  } else if (['chatgpt-github', 'foundry-forge'].includes(selection.entry.adapter)) {
+    processed = { processed: false, reason: 'proven-external-lane-handoff-pending', adapter: selection.entry.adapter, queuePath: selection.entry.path };
+  } else {
+    processed = { processed: false, reason: 'granted-action-adapter-not-supported-by-worker' };
+  }
+  return { publish, actionGrant, processed };
 }
 
 async function main() {

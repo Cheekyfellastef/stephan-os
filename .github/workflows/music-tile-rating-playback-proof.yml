@@ -1,0 +1,50 @@
+name: Music Tile Rating Playback Proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/music-tile/**'
+      - 'tests/music-intelligence-centre-vnext.test.mjs'
+      - 'tests/music-tile-rating-playback-browser.test.mjs'
+      - '.github/workflows/music-tile-rating-playback-proof.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/music-tile/**'
+      - 'tests/music-intelligence-centre-vnext.test.mjs'
+      - 'tests/music-tile-rating-playback-browser.test.mjs'
+      - '.github/workflows/music-tile-rating-playback-proof.yml'
+
+permissions: {}
+
+concurrency:
+  group: music-tile-rating-playback-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-edge-player-identity:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install root browser-test dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Prove rating UI and both mounted players
+        shell: pwsh
+        env:
+          STEPHANOS_BROWSER_CHANNEL: msedge
+        run: |
+          node --test tests/music-intelligence-centre-vnext.test.mjs
+          node --test tests/music-tile-rating-playback-browser.test.mjs

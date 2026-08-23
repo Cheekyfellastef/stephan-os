@@ -8,7 +8,7 @@ import { createServer } from 'vite';
 
 const componentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const uiRoot = path.resolve(componentDirectory, '../..');
-const privateToken = `APPROVE_OPENCLAW_SQUASH_MERGE:1262:${'1'.repeat(40)}`;
+const inertApprovalToken = 'TEST_ONLY_APPROVAL_TOKEN_NOT_VALID_FOR_EXECUTION';
 
 function missionFixture() {
   return {
@@ -34,7 +34,7 @@ function missionFixture() {
     git: {
       branch: 'feature/mission-operations-dashboard-v1',
       baseBranch: 'main',
-      headSha: '1'.repeat(40),
+      headSha: '1111111111111111111111111111111111111111',
       worktreePath: 'configured-isolated-worktree',
       changedFiles: [
         'stephanos-ui/src/components/MissionOperationsPanel.jsx',
@@ -62,7 +62,7 @@ function missionFixture() {
     deployment: {
       sync: { status: 'success' },
       build: { status: 'success' },
-      verify: { status: 'success' },
+      verify: { status: 'pending' },
       restart: { status: 'pending' },
     },
     approvals: [
@@ -70,8 +70,7 @@ function missionFixture() {
         approvalId: 'merge-test',
         kind: 'squash-merge',
         status: 'pending',
-        approvalRequired: true,
-        requiredToken: privateToken,
+        requiredToken: inertApprovalToken,
       },
     ],
     receipts: [
@@ -81,7 +80,7 @@ function missionFixture() {
         status: 'PASS',
         source: 'openclaw-standalone',
         sha256: 'a'.repeat(64),
-        path: 'receipt://acceptance.json',
+        path: 'proof/mission-operations/acceptance.json',
         createdAt: '2026-06-24T20:05:00.000Z',
       },
     ],
@@ -90,7 +89,7 @@ function missionFixture() {
   };
 }
 
-test('MissionSummary renders operational truth and a private approval input without exposing the token', async () => {
+test('MissionSummary renders bounded operator controls without rendering the private approval token', async () => {
   const vite = await createServer({
     root: uiRoot,
     appType: 'custom',
@@ -120,27 +119,80 @@ test('MissionSummary renders operational truth and a private approval input with
       'Build Stephanos UI',
       'Signed Windows acceptance',
       '3/3',
+      'Repair round',
       '1/3',
-      'sync:success',
-      'build:success',
-      'verify:success',
-      'restart:pending',
+      'Deployment',
+      'sync:success / build:success / verify:pending / restart:pending',
+      'signed-windows-acceptance',
+      'proof/mission-operations/acceptance.json',
+      'Approve the exact head-bound squash merge token.',
+      'Approval required:',
+      'submit the private exact head-bound token below.',
       'Private head-bound approval token',
       'Approve exact PR head',
-      'signed-windows-acceptance',
-      'receipt://acceptance.json',
-      'Approve the exact head-bound squash merge token.',
+      'Cancel mission',
       'Exact operator approval is still required.',
       'A previous approval token was bound to a stale head SHA.',
     ]) {
       assert.equal(markup.includes(visibleValue), true, `missing rendered value: ${visibleValue}`);
     }
 
-    assert.match(markup, /type="password"/);
     assert.match(markup, /href="https:\/\/github\.com\/Cheekyfellastef\/stephan-os\/pull\/1262"/);
     assert.match(markup, /data-mission-state="AWAITING_APPROVAL"/);
-    assert.equal(markup.includes(privateToken), false);
+    assert.match(markup, /type="password"/);
+    assert.equal(markup.includes(inertApprovalToken), false, 'private approval token must not be rendered');
     assert.doesNotMatch(markup, /javascript:/i);
+  } finally {
+    await vite.close();
+  }
+});
+
+
+test('Build Concierge panel renders selected candidate proof and approval truth', async () => {
+  const vite = await createServer({ root: uiRoot, appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } });
+  try {
+    const { BuildConciergeSurface } = await vite.ssrLoadModule('/src/components/MissionOperationsPanel.jsx');
+    const markup = renderToStaticMarkup(React.createElement(BuildConciergeSurface, { concierge: {
+      selectedCandidate: { prNumber: 1391, title: 'Battle Bridge Build Concierge V2 Operator Surfaces', headSha: 'c'.repeat(40), proofCommands: ['npm test'], requiredApprovalToken: 'APPROVE_BATTLE_BRIDGE_EXACT_HEAD_MERGE:1391:' + 'c'.repeat(40) },
+      proofReadiness: 'ready',
+      dirtyTreeStatus: 'clean',
+      exactHeadApproval: { status: 'required', token: 'APPROVE_BATTLE_BRIDGE_EXACT_HEAD_MERGE:1391:' + 'c'.repeat(40) },
+      approvalDecision: { approvalToken: 'APPROVE_BATTLE_BRIDGE_EXACT_HEAD_MERGE:1391:' + 'c'.repeat(40), approvalStatus: 'awaiting_operator_token', rejectionStatus: 'not_rejected', uiMergeClaim: false, nextOperatorAction: 'Review proof and provide exact token.' },
+        proofPacketSummary: { status: 'not_started', commandCount: 1, browserProof: 'blocked_unavailable', browserProofPacket: { browserProofStatus: 'blocked_unavailable', screenshotUnavailableReason: 'Browser proof runner/runtime unavailable; browser proof was not captured.', checklistStatus: 'unknown', proofUnavailableBlocker: 'Browser proof runner/runtime unavailable; browser proof was not captured.', caveats: ['Runtime not launched.'], consoleErrors: ['console unavailable'] } },
+      mergeHoldState: 'HELD_PENDING_PROOF_PACKET_AND_EXACT_HEAD_APPROVAL',
+      postMergeSync: { status: 'implemented_guarded', mergeReceiptObserved: true, pullMain: { status: 'required' }, restartRefresh: { status: 'blocked', pcRestartAllowed: false }, backendFreshnessProof: { status: 'blocked' }, refreshState: { missionOperations: 'blocked', goalDashboard: 'blocked' }, nextOperatorAction: 'Pull main with receipt before claiming sync.' },
+      nextOperatorAction: 'Run proof-packet for PR #1391.',
+      executionEngine: { schemaVersion: 'stephanos.build-concierge.execution-engine.v9', status: 'blocked_or_manual', watchedGoalCount: 1, classifiedGoalCount: 1, enrichedCandidateCount: 1, dispatchReadyCount: 0, manualDispatchRequiredCount: 1, activeExecutionLane: 'ui-surface-proof-lane', enrichedCandidates: [{ candidateId: 'bc-goal-ui', classification: 'ui_surface_goal', suggestedLane: 'ui-surface-proof-lane', dispatchReadiness: 'MANUAL_DISPATCH_REQUIRED', requiredProofFamilies: ['browser-proof'], declaredAllowlistedProofCommands: ['npm run stephanos:browser-proof'] }], dispatchPackets: [{ candidateId: 'bc-goal-ui', packet: 'Build Concierge V9 mission packet' }], nextOperatorAction: 'Copy packet.', finalVerdict: 'BUILD_CONCIERGE_V9_BLOCKED_OR_MANUAL_DISPATCH_REQUIRED' },
+      roadmap: { activePhase: { version: 'V4', title: 'Browser Proof Capture' }, phases: [{ version: 'V2', title: 'Operator Surfaces', status: 'implemented' }, { version: 'V3', title: 'Local Proof Runner', status: 'implemented_guarded' }, { version: 'V4', title: 'Browser Proof Capture', status: 'implemented_guarded' }, { version: 'V5', title: 'Auto Pick Next Safe Work', status: 'implemented_guarded' }, { version: 'V6', title: 'Operator Approval Surface', status: 'implemented_guarded' }, { version: 'V7', title: 'Post-Merge Sync and Reproof', status: 'implemented_guarded' }, { version: 'V8', title: 'Multi-Goal Queue', status: 'implemented_guarded' }], successMarkers: ['GOAL_COMPLETE_BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP', 'NO_CLICK_MONKEY_LOOP', 'INTENT_ENGINE_APPROVAL_ONLY'] },
+    } }));
+    for (const visibleValue of ['Build Concierge', '#1391', 'Battle Bridge Build Concierge V2 Operator Surfaces', 'ready', 'clean', 'npm test', 'HELD_PENDING_PROOF_PACKET_AND_EXACT_HEAD_APPROVAL', 'V3', 'Local Proof Runner', 'GOAL_COMPLETE_BATTLE_BRIDGE_BUILD_CONCIERGE_ROADMAP', 'V4', 'Browser Proof Capture', 'V5', 'Auto Pick Next Safe Work', 'V6', 'Operator Approval Surface', 'V6 approval surface', 'awaiting_operator_token', 'not_rejected', 'no UI merge claim', 'V7', 'Post-Merge Sync and Reproof', 'V8', 'Multi-Goal Queue', 'implemented_guarded', 'blocked_unavailable', 'Browser proof runner/runtime unavailable; browser proof was not captured.', 'V7 post-merge sync', 'merge receipt observed', 'V7 pull main', 'required', 'V7 restart/refresh', 'PC restart prohibited', 'V7 backend freshness proof', 'V7 surface refresh', 'Mission Operations blocked', 'Goal Dashboard blocked', 'V8 queue', 'V8 one-active-lane guardrail', 'V8 anti-stall fallback truth', 'implemented_guarded', 'V9 Live Goal Execution Engine', 'ui_surface_goal', 'MANUAL_DISPATCH_REQUIRED', 'Copyable Codex mission packets']) {
+      assert.equal(markup.includes(visibleValue), true, `missing rendered value: ${visibleValue}`);
+    }
+  } finally {
+    await vite.close();
+  }
+});
+
+test('Mission Operations shows live Mission Control projection summary', async () => {
+  const vite = await createServer({ root: uiRoot, appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } });
+  try {
+    const { LiveGoalProjectionSummary } = await vite.ssrLoadModule('/src/components/MissionOperationsPanel.jsx');
+    const markup = renderToStaticMarkup(React.createElement(LiveGoalProjectionSummary, { projection: {
+      schemaVersion: 'stephanos.live-goal-projection.v1',
+      sourceTruth: 'mixed',
+      queuedGoalCount: 1,
+      blockedGoalCount: 1,
+      completedGoalCount: 0,
+      activeProofLane: [{ candidateId: 'bc-goal-ops' }],
+      currentAgentStates: { operator: { state: 'approval_authority' }, stephanos: { state: 'backend_reachable' }, codex: { state: 'not_dispatched' }, openclaw: { state: 'unknown' }, github: { state: 'unknown' }, battleBridge: { state: 'satisfied' } },
+      executionEngine: { schemaVersion: 'stephanos.build-concierge.execution-engine.v9', status: 'blocked_or_manual', watchedGoalCount: 1, classifiedGoalCount: 1, enrichedCandidateCount: 1, dispatchReadyCount: 0, manualDispatchRequiredCount: 1, activeExecutionLane: 'backend-api-proof-lane', enrichedCandidates: [{ candidateId: 'bc-goal-api', classification: 'backend_api_goal', suggestedLane: 'backend-api-proof-lane', dispatchReadiness: 'MANUAL_DISPATCH_REQUIRED', requiredProofFamilies: ['api-route-proof'], declaredAllowlistedProofCommands: ['npm run stephanos:verify'] }], dispatchPackets: [], nextOperatorAction: 'Copy a MANUAL_DISPATCH_REQUIRED Codex mission packet.', finalVerdict: 'BUILD_CONCIERGE_V9_BLOCKED_OR_MANUAL_DISPATCH_REQUIRED' },
+      heartbeat: { generatedAtAgeSeconds: 7, backendLive: true, projectionSource: 'live-goal-projection-service', watchedGoals: 1, classifiedGoals: 1, manualDispatchRequired: 1, staleUnknownWarnings: ['GitHub truth is unknown'] },
+      importedGoals: { verificationState: 'imported_unverified' },
+      nextOperatorAction: 'Inspect Mission Control.',
+    } }));
+    for (const value of ['Mission Control Live Projection', 'MIXED', 'Operator state', 'approval_authority', 'Stephanos state', 'backend_reachable', 'Codex state', 'not_dispatched', 'OpenClaw state', 'GitHub state', 'Battle Bridge state', 'Active proof lane', 'bc-goal-ops', 'Queued goals', 'Blocked goals', 'Completed goals', 'Inspect Mission Control.', 'GeneratedAt age', '7s', 'Backend live', 'true', 'Projection source', 'live-goal-projection-service', 'Watched goals', 'Classified goals', 'Manual dispatch required', 'Imported goals', 'imported_unverified', 'Stale/unknown warnings', 'GitHub truth is unknown', 'V9 execution engine', 'backend_api_goal', 'api-route-proof']) {
+      assert.equal(markup.includes(value), true, `missing live Mission Operations value: ${value}`);
+    }
   } finally {
     await vite.close();
   }

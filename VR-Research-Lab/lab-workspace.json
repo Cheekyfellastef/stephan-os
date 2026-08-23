@@ -1,133 +1,306 @@
 {
-  "mission": "Build a practical Stephanos VR analysis workspace that turns flat-to-VR research into reusable conversion patterns with Starfield as a primary target.",
+  "schemaVersion": "stephanos.vr-research-lab.workspace.v2",
+  "updatedAt": "2026-08-03T14:15:00Z",
+  "mission": "Grow a compounding flat-to-VR capability factory: turn verified external knowledge, Battle Bridge proof and Stephan's headset judgement into reusable methods that accelerate Starfield VR and every later conversion.",
   "overview": [
-    "This lab captures engine, camera, rendering, input, HUD, and performance findings for seated-first VR conversion work.",
-    "Cockpit Mode is the pragmatic default: head-tracked seated play with low-friction control mapping and comfort-first frame pacing.",
-    "Use this surface as the operational front door while the repo folders hold durable notes, experiments, and tools."
+    "The Lab now coordinates an 18-source VR knowledge stack rather than a small collection of game notes. Every source retains provenance, licence, freshness, confidence and reuse boundaries.",
+    "Starfield VR is the flagship proving ground. The current path combines Starfield and Creation Kit authoring evidence, Mutar/OpenXR implementation evidence, Skyrim VR parity references and exact Quest 3 Battle Bridge proof.",
+    "Meta Air Link over Wi-Fi is Stephan's primary PCVR transport. Virtual Desktop is a separately proven alternative; wired Meta Link is unavailable and must never be requested as a fallback.",
+    "A resistant game is no longer classified as impossible. The route ladder continues through engine adapters, title-specific adapters, external reconstructed stereo, spatial-screen presentation and lawful independent recreation.",
+    "Compounding agency is the governing measure: each experiment should leave reusable interfaces, tests, methods, evidence and licence freedom behind."
   ],
+  "spatialBridge": {
+    "status": "doctrine-recorded-implementation-deferred",
+    "decisionDate": "2026-07-13",
+    "doctrinePath": "VR-Research-Lab/docs/research-notes/stephanos-spatial-bridge-doctrine.md",
+    "retrievalTags": [
+      "vr",
+      "spatial-surface",
+      "captain-model",
+      "quest-3",
+      "meta-air-link",
+      "intent-engine",
+      "battle-bridge",
+      "approval-gates",
+      "verification",
+      "starship-bridge",
+      "compounding-agency"
+    ],
+    "captainModel": {
+      "humanResponsibilities": [
+        "state intent",
+        "exercise judgement",
+        "grant bounded authority",
+        "perform physical headset acceptance",
+        "accept or reject completion evidence"
+      ],
+      "stephanosResponsibilities": [
+        "interpret intent",
+        "discover goals, dependencies and missing capabilities",
+        "coordinate research, build, execution and verification",
+        "maintain continuity and canonical state",
+        "detect licence bottlenecks and preserve sovereign replacement routes",
+        "return evidence and escalate only genuine judgement or permission gates"
+      ],
+      "governingPrinciple": "The captain commands the ship; every completed mission should make the ship more capable."
+    },
+    "surfaceRole": "A thin spatial command client over the same canonical Stephanos brain, never a separate VR Stephanos.",
+    "visualDirection": "An original Stephanos far-future starship bridge: calm, panoramic, seated-first, luminous, mission-led and capable of transforming into game-specific workspaces.",
+    "initialInteractionModel": {
+      "posture": "seated-cockpit",
+      "attention": "Quest 3 head tracking and gaze context",
+      "navigation": "Xbox controller",
+      "intent": "voice",
+      "primaryTransport": "Meta Air Link over Wi-Fi",
+      "alternativeTransport": "Virtual Desktop when separately proven",
+      "unavailableTransport": "Wired Meta Link",
+      "motionControls": "deferred-until-useful"
+    },
+    "singleBrainRule": true,
+    "directQuestExecutionForbidden": true,
+    "initialAuthority": "read-only",
+    "transitionStages": [
+      "mirror",
+      "navigate-and-ask",
+      "proposal-mode",
+      "bounded-reversible-actions",
+      "captain-approvals",
+      "intent-level-command"
+    ],
+    "readinessGates": [
+      "canonical continuity across chats, devices, restarts and agents",
+      "reliable intent and contextual-reference interpretation",
+      "capability discovery with available, missing, blocked and unproven states",
+      "Shared Agent Workspace truth for goals, dependencies, actions, blockers and evidence",
+      "deny-by-default bounded authority",
+      "authenticated and independently stoppable Battle Bridge control",
+      "verification harness returning observed evidence",
+      "rollback and known-good-state protection",
+      "idempotent execution across duplicate events and reconnects",
+      "surface parity outside VR"
+    ],
+    "primaryReadinessTest": "The headset can disconnect completely without losing mission state, approvals, execution state or evidence.",
+    "implementationGate": "Do not promote any VR path to accepted merely because public source or a DLL exists. Exact installed identity, licence-compatible provenance and physical Quest 3 evidence are required."
+  },
   "targets": [
     {
-      "name": "Starfield",
+      "name": "Starfield VR",
       "priority": "P0",
-      "mode": "Cockpit Mode (controller-based VR) first, then assisted VR",
-      "focus": "Camera injection, stereo rendering, UI/HUD anchoring, VorpX behavior, performance constraints."
+      "mode": "Seated Quest 3 cockpit first; grow toward Skyrim VR-quality embodiment and a living starship world",
+      "focus": "Mutar OpenXR baseline, exact Battle Bridge identity, Creation Kit attachment points, dialogue presentation, cutscene theatre, HUD, ships, performance and continuous capability transplantation."
     },
     {
-      "name": "Red Dead Redemption 2",
+      "name": "Resistant Flat Games",
+      "priority": "P0",
+      "mode": "Best lawful rung: injector, adapter, reconstructed stereo, spatial theatre or independent recreation",
+      "focus": "Classify engine and protection boundaries, select the least invasive route, preserve comfort and add every successful method to the reusable factory."
+    },
+    {
+      "name": "Stephanos Spatial Volume",
       "priority": "P1",
-      "mode": "Seated VR conversion",
-      "focus": "Rendering pipeline constraints and reusable module extraction."
+      "mode": "Quest 3 seated command bridge over the canonical Stephanos brain",
+      "focus": "Goals as spatial objects, AI agents as inhabitants, voice intent, controller navigation and evidence-rich mission execution without separate state."
     }
   ],
   "knowledgeBuckets": [
-    "Target Games",
-    "VR Mode Type (Cockpit, Assisted, Motion Control Viability)",
-    "Graphics / Rendering",
-    "Camera / View",
-    "Input / Interaction",
-    "UI / HUD",
-    "Performance / Frame Pacing",
-    "Tooling / Analysis",
-    "Reusable Conversion Techniques",
-    "Open Questions",
-    "Priority Opportunities"
+    "18-source canonical registry: provenance, revision, licence, freshness and promotion state",
+    "Flat-to-VR route planner and failure-layer ownership",
+    "Starfield / Creation Kit authoring evidence",
+    "Mutar / NoMoreFlat Starfield implementation evidence",
+    "Skyrim VR parity: SKSE, VRIK, HIGGS and PLANCK",
+    "Halo MCC VR multi-title runtime and room-fixed 3D cutscene theatre",
+    "OpenXR specification, loader, API layers and Meta runtime routing",
+    "Quest 3 Meta Air Link wireless transport and comfort proof",
+    "Virtual Desktop SBS, VDXR and operational comparison evidence",
+    "Monocular temporal depth, proxy mapping and coherent stereo reconstruction",
+    "Dialogue and cinematic Presentation Controller",
+    "HUD, subtitles, menus and world-space UI",
+    "Bodies, hands, weapons, holsters, grabbing and NPC physical response",
+    "Vehicles, ships, cockpits and living-starship interaction",
+    "Performance, foveation, frame pacing, latency and long-session stability",
+    "Licence Bottleneck Radar and sovereign replacement readiness",
+    "Creator evidence, one-click catalogues and local game-library discovery",
+    "Compounding agency: methods, tests, adapters and evidence returned to the factory"
   ],
   "techniques": [
     {
-      "name": "Camera Injection",
+      "name": "Capability Route Planner",
       "status": "active",
-      "path": "VR-Research-Lab/docs/vr-techniques/camera-injection-techniques.md",
-      "goal": "Stabilize head-tracked seated camera behavior without breaking core gameplay loops."
+      "path": "VR-Research-Lab/knowledge-sources/source-stack-unlocks.md",
+      "goal": "Select native, framework, title-adapter, reconstructed-stereo, spatial-screen or independent-recreation routes from evidence rather than guesswork."
     },
     {
-      "name": "Stereo Rendering",
+      "name": "Starfield Mutar OpenXR Baseline",
+      "status": "proof-pending",
+      "path": "VR-Research-Lab/knowledge-sources/mutar-nomoreflat/knowledge-extraction.md",
+      "goal": "Bind the exact installed Starfield and provider files to pinned provenance, Meta OpenXR and Quest 3 Air Link proof."
+    },
+    {
+      "name": "Skyrim VR Parity Decomposition",
       "status": "active",
+      "path": "VR-Research-Lab/knowledge-sources/skyrim-vr-ecosystem/knowledge-extraction.md",
+      "goal": "Translate VRIK body/holsters, HIGGS interaction and PLANCK character response into named Starfield attachment points and acceptance tests."
+    },
+    {
+      "name": "Room-fixed 3D Cutscene Theatre",
+      "status": "reference-proven",
+      "path": "VR-Research-Lab/examples/other-vr-mods/halo-mcc-vr/knowledge-extraction.md",
+      "goal": "Preserve authored cinematic framing on a room-fixed stereo screen while retaining full 6DoF head tracking, then evolve it into a Starfield-aware Presentation Controller."
+    },
+    {
+      "name": "Adaptive Dialogue Presentation",
+      "status": "design-active",
+      "path": "VR-Research-Lab/examples/starfield-vr/README.md",
+      "goal": "Use Starfield's Dialogue Camera preference as an intent signal: immersive dialogue when safe, focused conversation when requested and theatre only for forced cinematic camera ownership."
+    },
+    {
+      "name": "Monocular Flat-to-VR Reconstruction",
+      "status": "goal-open",
       "path": "VR-Research-Lab/docs/vr-techniques/stereo-rendering-methods.md",
-      "goal": "Assess depth reconstruction and stereo strategies for non-native VR pipelines."
+      "goal": "Observe authorised flat gameplay, estimate temporally stable depth and camera motion, accumulate a confidence-aware proxy scene and synthesize coherent stereo for resistant games."
     },
     {
-      "name": "Tooling Integration",
-      "status": "active",
-      "path": "VR-Research-Lab/docs/research-notes/tooling-integration-workflow.md",
-      "goal": "Standardize capture workflows with RenderDoc/PIX/Ghidra-class tooling."
+      "name": "Quest 3 Air Link Acceptance",
+      "status": "proof-pending",
+      "path": "VR-Research-Lab/knowledge-sources/meta-quest-link-air-link/knowledge-extraction.md",
+      "goal": "Treat Meta Air Link over Wi-Fi as the primary route and attribute failures across application, OpenXR, encode, network, decode, compositor and headset layers."
     },
     {
-      "name": "UI/HUD Anchoring",
-      "status": "active",
-      "path": "VR-Research-Lab/docs/vr-techniques/README.md",
-      "goal": "Maintain cockpit readability while preventing HUD depth conflicts in seated VR."
+      "name": "Virtual Desktop Presentation Adapter",
+      "status": "optional-reference",
+      "path": "VR-Research-Lab/knowledge-sources/virtual-desktop/knowledge-extraction.md",
+      "goal": "Use Virtual Desktop as an optional operational benchmark and SBS/VDXR transport without coupling sovereign reconstruction or Starfield logic to proprietary internals."
     },
     {
-      "name": "VorpX Behavior Profiling",
+      "name": "Licence Bottleneck Radar",
       "status": "active",
-      "path": "VR-Research-Lab/docs/research-notes/tooling-integration-workflow.md",
-      "goal": "Document VorpX-specific behavior, edge cases, and reliable startup constraints."
+      "path": "VR-Research-Lab/knowledge-sources.json",
+      "goal": "Classify reuse rights, dependency centrality and withdrawal risk early, then reuse, isolate, replace or stop before licence constraints become structural."
     },
     {
-      "name": "Performance Constraint Envelope",
+      "name": "Continuous Source Discovery",
       "status": "active",
-      "path": "VR-Research-Lab/docs/vr-techniques/README.md",
-      "goal": "Keep cockpit mode frame pacing inside comfort-safe limits under real workloads."
+      "path": "VR-Research-Lab/knowledge-sources.json",
+      "goal": "Detect material releases, licence changes, compatibility evidence and permissive alternatives, then promote only verified findings into the Capability Graph."
     }
   ],
   "experiments": [
     {
-      "id": "exp-starfield-cockpit-camera",
-      "title": "Starfield cockpit camera stability baseline",
-      "hypothesis": "Cockpit camera injection can remain comfortable when rotational latency is bounded and hand/controller mapping stays native-feeling.",
+      "id": "exp-starfield-air-link-exact-proof",
+      "title": "Starfield VR exact Air Link launch path",
+      "hypothesis": "A pinned Starfield build and approved provider can launch through Meta OpenXR and active Quest 3 Air Link with exact identities, fail-closed readiness and a durable receipt.",
       "status": "testing",
-      "notes": "Track nausea triggers, camera drift, and conflict points with ship HUD overlays.",
+      "notes": "Issue #1595 owns the read-only Battle Bridge packet. Do not claim the desktop shortcut is usable until readiness and one operator-authorised headset launch pass.",
       "relatedTechniques": [
-        "Camera Injection",
-        "UI/HUD Anchoring",
-        "Performance Constraint Envelope"
+        "Starfield Mutar OpenXR Baseline",
+        "Quest 3 Air Link Acceptance"
       ]
     },
     {
-      "id": "exp-starfield-stereo-vorpx",
-      "title": "Starfield stereo + VorpX compatibility triage",
-      "hypothesis": "Stereo rendering can be made usable in cockpit mode by constraining VorpX profile behavior and bypassing conflicting post-process paths.",
+      "id": "exp-starfield-living-starship",
+      "title": "Living Starship vertical slice",
+      "hypothesis": "A bounded ship slice combining cockpit presence, spatial UI, embodied interaction, crew behaviour and stable Air Link delivery will reveal the highest-value path toward the blow-my-mind Starfield.",
       "status": "idea",
-      "notes": "Capture VorpX profile diffs and rendering artifact categories for reproducible tuning.",
+      "notes": "Use the Starfield VR Reference Lab recipe once PR #1642 is repaired, visually accepted and merged.",
       "relatedTechniques": [
-        "Stereo Rendering",
-        "VorpX Behavior Profiling"
+        "Skyrim VR Parity Decomposition",
+        "Adaptive Dialogue Presentation",
+        "Quest 3 Air Link Acceptance"
       ]
     },
     {
-      "id": "exp-starfield-performance-envelope",
-      "title": "Starfield frame pacing guardrails",
-      "hypothesis": "Comfort-first cockpit mode is achievable when CPU/GPU budgets are codified into a reusable constraint envelope.",
+      "id": "exp-starfield-dialogue-controller",
+      "title": "Starfield VR adaptive dialogue and cinematic controller",
+      "hypothesis": "Starfield's Dialogue Camera setting plus camera-control telemetry can select immersive dialogue, focused conversation or room-fixed theatre without forcing the headset camera.",
       "status": "idea",
-      "notes": "Define hard and soft performance boundaries with reproducible measurements.",
+      "notes": "Test both Dialogue Camera states, normal conversations, scripted scenes, pre-rendered video, subtitles and return-to-gameplay transitions.",
       "relatedTechniques": [
-        "Performance Constraint Envelope",
-        "Tooling Integration"
+        "Adaptive Dialogue Presentation",
+        "Room-fixed 3D Cutscene Theatre"
+      ]
+    },
+    {
+      "id": "exp-resistant-game-offline-stereo",
+      "title": "Offline monocular reconstruction to coherent SBS",
+      "hypothesis": "A permitted prerecorded sequence can produce temporally stable depth and a dual-eye proxy render with measurable comfort advantages over one-original-eye/one-synthetic-eye presentation.",
+      "status": "idea",
+      "notes": "Issue #1643 begins offline. Record disocclusion holes, edge mismatch, temporal shimmer, processing latency and all model/component licences.",
+      "relatedTechniques": [
+        "Monocular Flat-to-VR Reconstruction",
+        "Virtual Desktop Presentation Adapter"
+      ]
+    },
+    {
+      "id": "exp-air-link-vd-transport-comparison",
+      "title": "Air Link versus Virtual Desktop transport comparison",
+      "hypothesis": "A transport-neutral output contract can preserve identical game/reconstruction logic while Air Link and Virtual Desktop are measured independently for latency, image quality and stability.",
+      "status": "idea",
+      "notes": "Air Link is primary. Virtual Desktop must never be silently substituted and wired Meta Link is unavailable.",
+      "relatedTechniques": [
+        "Quest 3 Air Link Acceptance",
+        "Virtual Desktop Presentation Adapter"
+      ]
+    },
+    {
+      "id": "exp-source-registry-live-projection",
+      "title": "Canonical source registry projected into the Lab tile",
+      "hypothesis": "Rendering the registry and unlock state directly will prevent the visible Lab from drifting behind canonical knowledge.",
+      "status": "testing",
+      "notes": "This workspace refresh closes the immediate drift. A follow-on should make the tile consume knowledge-sources.json dynamically rather than relying on manual duplication.",
+      "relatedTechniques": [
+        "Continuous Source Discovery",
+        "Licence Bottleneck Radar"
       ]
     }
   ],
   "nextActions": [
-    "Capture initial Starfield research brief in VR-Research-Lab/examples/starfield-vr/README.md.",
-    "Add first experiment note under docs/experiment-logs/ with timestamped findings.",
-    "Run engine-scanner prototype against target code snapshots and commit reports.",
-    "Promote stable findings into module folders (camera-injection, stereo-rendering, input-hooks)."
+    "Land this refreshed workspace model so the visible VR Research Lab reflects the current source stack, route ladder, transport truth and active experiments.",
+    "Repair and complete PR #1642 so the separate Starfield VR Reference Lab can become the detailed 11-system decision surface without duplicating the general VR Lab.",
+    "Complete #1595 exact Battle Bridge identity, Meta OpenXR, Air Link and provider proof before installing or trusting the Starfield VR shortcut.",
+    "Build the first #1643 offline reconstruction slice from permitted prerecorded gameplay and compare dual-synthetic stereo with the original-eye/synthetic-eye experiment.",
+    "Promote Halo MCC VR's MIT-licensed room-fixed theatre pattern into a Starfield Presentation Controller design with dialogue-toggle awareness.",
+    "Make the VR Research Lab load the canonical source registry and unlock map dynamically, exposing source count, licence class, freshness and promotion state without manual snapshot drift."
   ],
   "folderMap": [
     {
-      "label": "Primary Lab README",
-      "path": "VR-Research-Lab/README.md"
+      "label": "Canonical Source Registry",
+      "path": "VR-Research-Lab/knowledge-sources.json"
+    },
+    {
+      "label": "Source Stack Unlock Map",
+      "path": "VR-Research-Lab/knowledge-sources/source-stack-unlocks.md"
+    },
+    {
+      "label": "Starfield VR Track",
+      "path": "VR-Research-Lab/examples/starfield-vr/README.md"
+    },
+    {
+      "label": "Starfield Desktop Launcher Contract",
+      "path": "VR-Research-Lab/examples/starfield-vr/desktop-launcher.md"
+    },
+    {
+      "label": "Halo MCC VR Extraction",
+      "path": "VR-Research-Lab/examples/other-vr-mods/halo-mcc-vr/knowledge-extraction.md"
+    },
+    {
+      "label": "Meta Air Link Source",
+      "path": "VR-Research-Lab/knowledge-sources/meta-quest-link-air-link/knowledge-extraction.md"
+    },
+    {
+      "label": "Virtual Desktop Source",
+      "path": "VR-Research-Lab/knowledge-sources/virtual-desktop/knowledge-extraction.md"
+    },
+    {
+      "label": "Mutar / NoMoreFlat Source",
+      "path": "VR-Research-Lab/knowledge-sources/mutar-nomoreflat/knowledge-extraction.md"
+    },
+    {
+      "label": "Skyrim VR Parity Source",
+      "path": "VR-Research-Lab/knowledge-sources/skyrim-vr-ecosystem/knowledge-extraction.md"
     },
     {
       "label": "Technique Docs",
       "path": "VR-Research-Lab/docs/vr-techniques/"
-    },
-    {
-      "label": "Engine Architecture Notes",
-      "path": "VR-Research-Lab/docs/engine-architecture/"
-    },
-    {
-      "label": "Research Notes",
-      "path": "VR-Research-Lab/docs/research-notes/"
     },
     {
       "label": "Experiment Logs",
@@ -138,14 +311,23 @@
       "path": "VR-Research-Lab/modules/"
     },
     {
-      "label": "Engine Scanner Tool",
-      "path": "VR-Research-Lab/tools/engine-scanner/README.md"
+      "label": "Spatial Bridge Doctrine",
+      "path": "VR-Research-Lab/docs/research-notes/stephanos-spatial-bridge-doctrine.md"
+    },
+    {
+      "label": "Battle Bridge Intake Contract",
+      "path": "VR-Research-Lab/docs/research-notes/battle-bridge-downloads-vr-source-intake.md"
     }
   ],
   "integrationSeams": [
-    "Memory seam: findings can be serialized as memory candidates for future retrieval indexing.",
-    "Experiment seam: docs/experiment-logs and experiments/* are canonical drop points for run artifacts.",
-    "Pattern seam: modules/* folders are the reusable output contract for flat-to-VR techniques.",
-    "Game-lab seam: examples/starfield-vr and examples/rdr2-vr can evolve into game-specific research tracks."
+    "Capability Graph seam: every promoted method retains provider, revision, evidence plane, confidence, licence and Starfield attachment point.",
+    "Source-registry seam: future UI should derive source cards and counts directly from knowledge-sources.json so visual truth cannot lag canonical truth.",
+    "Licence seam: proprietary and analysis-only sources inform requirements but remain isolated behind Stephanos-owned interfaces and replacement plans.",
+    "Presentation seam: immersive world, focused dialogue, room-fixed theatre and safe curved-screen modes share one VR Presentation Controller.",
+    "Transport seam: Starfield and reconstructed stereo emit through a transport-neutral boundary; Air Link is primary and Virtual Desktop is optional.",
+    "Reconstruction seam: resistant games can feed temporal depth, proxy-map and stereo-synthesis experiments without touching protected renderer internals.",
+    "Battle Bridge seam: exact installed identity, hashes, runtime state, Air Link session, logs and physical headset judgement remain the promotion authority.",
+    "Compounding-agency seam: every accepted experiment must return reusable code, tests, methods, evidence or licence freedom to later projects.",
+    "Spatial seam: the future Quest surface consumes canonical Stephanos projections and never owns separate goals, memory, approvals, execution queues or evidence."
   ]
 }

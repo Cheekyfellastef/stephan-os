@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "shared-agent-workspace-record.v1",
+  "kind": "stephanos.shared_workspace.agent_capability",
+  "agentId": "openclaw",
+  "timestampUtc": "2026-07-07T00:00:00Z",
+  "mode": "design_only",
+  "boundedWritePath": "/courier-open",
+  "trustedBuilder": false,
+  "mergeAuthority": false,
+  "arbitraryShellAllowed": false,
+  "proofRefs": []
+}

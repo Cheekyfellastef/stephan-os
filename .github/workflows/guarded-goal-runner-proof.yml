@@ -1,0 +1,50 @@
+name: Guarded Goal Runner Proof
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'shared/agents/guardedGoalRunnerV1.mjs'
+      - 'shared/agents/guardedGoalRunnerV1.test.mjs'
+      - 'scripts/guarded-goal-runner-current.mjs'
+      - 'scripts/guarded-goal-runner-current.test.mjs'
+      - 'scripts/guarded-goal-runner-pr-proof-current.test.mjs'
+      - '.github/workflows/guarded-goal-runner-proof.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Parse guarded runner sources
+        run: |
+          node --check shared/agents/guardedGoalRunnerV1.mjs
+          node --check scripts/guarded-goal-runner-current.mjs
+
+      - name: Run focused guarded runner proof
+        run: >-
+          node --test
+          shared/agents/guardedGoalRunnerV1.test.mjs
+          scripts/guarded-goal-runner-current.test.mjs
+          scripts/guarded-goal-runner-pr-proof-current.test.mjs
+
+      - name: Run strict PR clean guard
+        run: npm run stephanos:guard:pr-clean
+
+      - name: Check pull request diff
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"

@@ -1,0 +1,23 @@
+{
+  "source_id": "github-khronos-openxr-sdk-source",
+  "repository": "KhronosGroup/OpenXR-SDK-Source",
+  "canonical_url": "https://github.com/KhronosGroup/OpenXR-SDK-Source",
+  "default_branch": "main",
+  "snapshot_commit": "211e2f4f0b79932300a845f3a8ed75026dbfa4a3",
+  "snapshot_release": "OpenXR SDK 1.1.61",
+  "captured_on": "2026-07-29",
+  "licence": {
+    "classification": "Apache-2.0 with per-file notices",
+    "ingestion_policy": "Reuse is permitted subject to Apache-2.0 and any file-specific notices or NOTICE obligations."
+  },
+  "source_role": "Authoritative OpenXR implementation, loader, API-layer and sample source",
+  "refresh_owner_issue": 1596,
+  "extraction_owner_issue": 1593,
+  "safe_acquisition": {
+    "metadata": true,
+    "public_repository_inspection": true,
+    "isolated_ephemeral_clone_for_analysis": true,
+    "selected_source_copy_with_notices": true,
+    "binary_execution": false
+  }
+}

@@ -1,0 +1,35 @@
+name: OpenClaw Agent Command Audit
+
+on:
+  pull_request:
+    paths:
+      - 'shared/agents/openClawAgentCommandAudit*'
+      - 'scripts/assess-openclaw-agent-command-inventory.mjs'
+      - 'scripts/windows/inspect-openclaw-agent-commands.ps1'
+      - '.github/workflows/openclaw-agent-command-audit.yml'
+
+jobs:
+  audit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test shared/agents/openClawAgentCommandAudit.test.mjs
+
+  powershell-parse:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          $path = Resolve-Path 'scripts/windows/inspect-openclaw-agent-commands.ps1'
+          [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+          if (@($errors).Count -ne 0) {
+            $errors | Format-List | Out-String | Write-Error
+            exit 1
+          }
+          Write-Output 'FINAL_VERDICT=OPENCLAW_AGENT_COMMAND_AUDIT_POWERSHELL_PARSE_PASS'

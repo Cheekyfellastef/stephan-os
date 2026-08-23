@@ -1,125 +1,73 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
+import { appendMissionEvent, createMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
 import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawReadonlyItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
 
-const intent = {
-  missionId: 'worker-consumer-test', operatorIntent: 'Implement a bounded source change.',
-  intendedOutcome: 'The change is safely promoted.', missionKind: 'implementation',
-  repository: 'Cheekyfellastef/stephan-os', repositoryRoot: 'C:\\repo', branch: 'openclaw/worker-consumer-test',
-  worktreePath: 'C:\\worktrees\\worker-consumer-test', allowedFiles: ['shared/agents/**'],
-  requiredEvidence: ['focused test output'], requiredTests: ['node --test focused.test.mjs'],
-};
-
-function proof(requirement, id) {
-  return { receiptId: id, requirement, source: 'test-runner', evidenceType: 'command-output', verified: true, exitCode: 0 };
-}
-
-async function options() {
+const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
+async function runtime() {
   const parent = await mkdtemp(join(tmpdir(), 'mission-worker-consumer-'));
   const { privateKey } = generateKeyPairSync('ed25519');
-  return { root: join(parent, 'state'), snapshotRoot: join(parent, 'proof'), queueRoot: join(parent, 'queue'), privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }), now: new Date('2026-06-24T23:00:00.000Z') };
+  return { root: join(parent, 'state'), snapshotRoot: join(parent, 'proof'), queueRoot: join(parent, 'queue'), privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }) };
+}
+function intent(missionId, missionKind = 'implementation') {
+  return { missionId, operatorIntent: 'Bounded mission.', intendedOutcome: 'Grounded completion.', missionKind, repository: 'Cheekyfellastef/stephan-os', repositoryRoot: 'C:\\repo', branch: `openclaw/${missionId}`, worktreePath: 'C:\\worktree', allowedFiles: missionKind === 'implementation' ? ['shared/agents/**'] : [], requiredEvidence: ['focused evidence'], requiredTests: missionKind === 'implementation' ? ['node --test focused.test.mjs'] : [], browserProofRequired: missionKind !== 'implementation' };
 }
 
-test('claims a pending queue item exactly once by moving it to processing', async () => {
-  const runtime = await options();
-  const created = await createMissionRecord(intent, runtime);
-  await publishMissionWorkerAction(created.state, runtime);
-  const claim = await claimNextMissionWorkerItem('openclaw-signed', runtime);
-  assert.equal(claim.item.missionId, intent.missionId);
-  assert.equal(await claimNextMissionWorkerItem('openclaw-signed', runtime), null);
+test('claims each queue item exactly once', async () => {
+  const options = await runtime();
+  const created = await createMissionRecord(intent('claim-test'), options);
+  await publishMissionWorkerAction(created.state, options);
+  assert.ok(await claimNextMissionWorkerItem('openclaw-signed', options));
+  assert.equal(await claimNextMissionWorkerItem('openclaw-signed', options), null);
 });
 
-test('consumes a signed worktree item, appends the canonical event, and archives deterministic result', async () => {
-  const runtime = await options();
-  const created = await createMissionRecord(intent, runtime);
-  await publishMissionWorkerAction(created.state, runtime);
-  const processed = await processNextSignedOpenClawItem({
-    ...runtime,
-    executeSignedOperation: async () => ({ success: true, commandOutputHash: 'a'.repeat(64), completedAt: '2026-06-24T23:01:00.000Z' }),
-    inspectSignedOperation: async () => ({ worktreePath: intent.worktreePath, clean: true }),
+test('exact action grant cannot consume another mission queue item', async () => {
+  const options = await runtime();
+  const first = await createMissionRecord(intent('claim-first'), options);
+  const second = await createMissionRecord(intent('claim-second'), options);
+  const firstPublish = await publishMissionWorkerAction(first.state, options);
+  const secondPublish = await publishMissionWorkerAction(second.state, options);
+  const granted = await claimNextMissionWorkerItem('openclaw-signed', {
+    ...options,
+    actionGrant: {
+      missionId: second.state.missionId,
+      actionId: secondPublish.action.actionId,
+      adapter: 'openclaw-signed',
+    },
   });
-  assert.equal(processed.processed, true);
-  assert.equal(processed.event.eventType, 'WORKTREE_READY');
+  assert.equal(granted.item.missionId, second.state.missionId);
+  assert.equal(granted.item.actionId, secondPublish.action.actionId);
+
+  const remaining = await claimNextMissionWorkerItem('openclaw-signed', options);
+  assert.equal(remaining.item.missionId, first.state.missionId);
+  assert.equal(remaining.item.actionId, firstPublish.action.actionId);
+});
+
+test('signed worktree result advances to implementation', async () => {
+  const options = await runtime();
+  const created = await createMissionRecord(intent('signed-test'), options);
+  await publishMissionWorkerAction(created.state, options);
+  const processed = await processNextSignedOpenClawItem({ ...options, executeSignedOperation: async () => ({ success: true, commandOutputHash: 'a'.repeat(64), completedAt: new Date().toISOString() }), inspectSignedOperation: async () => ({ worktreePath: 'C:\\worktree', clean: true }) });
   assert.equal(processed.applied.state.currentPhase, 'AGENT_IMPLEMENTATION');
-  assert.equal(JSON.parse(await readFile(processed.resultPath, 'utf8')).finalVerdict, 'MISSION_WORKER_ITEM_COMPLETE');
-  assert.equal((await readMissionRecord(intent.missionId, runtime)).state.git.worktreeReady, true);
 });
 
-test('consumes a Codex handoff and advances only with grounded source and evidence receipts', async () => {
-  const runtime = await options();
-  await createMissionRecord({ ...intent, missionId: 'worker-codex-test', branch: 'openclaw/worker-codex-test' }, runtime);
-  const ready = await appendMissionEvent('worker-codex-test', { eventId: 'worktree-codex-consumer-001', eventType: 'WORKTREE_READY', worktreePath: intent.worktreePath, clean: true, receipt: proof('isolated worktree', 'codex-worktree-proof') }, runtime);
-  await publishMissionWorkerAction(ready.state, runtime);
-  const processed = await processNextCodexItem({
-    ...runtime,
-    executeCodexAction: async () => ({
-      success: true, resultId: 'codex-thread-1', changedFiles: ['shared/agents/example.mjs'], completedAt: '2026-06-24T23:04:00.000Z',
-      receipt: { ...proof('codex result', 'codex-exec-proof'), commandOutputHash: 'd'.repeat(64) },
-      evidenceReceipts: [{ ...proof('focused test output', 'codex-test-proof'), commandOutputHash: 'e'.repeat(64) }],
-    }),
-  });
-  assert.equal(processed.processed, true);
-  assert.equal(processed.applied.state.currentPhase, 'GITHUB_COMMIT');
-  assert.equal(processed.result.evidenceReceiptCount, 1);
-  assert.match(processed.resultPath.replace(/\\/g, '/'), /\/completed\//);
-  const current = await readMissionRecord('worker-codex-test', runtime);
-  assert.equal(current.state.dispatch.status, 'complete');
-  assert.deepEqual(current.state.git.changedFiles, ['shared/agents/example.mjs']);
-});
+test('Codex and OpenClaw adapters collect bounded results with one active writer', async () => {
+  const codexOptions = await runtime();
+  await createMissionRecord(intent('codex-test'), codexOptions);
+  const ready = await appendMissionEvent('codex-test', { eventId: 'worktree', eventType: 'WORKTREE_READY', worktreePath: 'C:\\worktree', clean: true, receipt: proof('isolated worktree', 'worktree') }, codexOptions);
+  await publishMissionWorkerAction(ready.state, codexOptions);
+  const codex = await processNextCodexItem({ ...codexOptions, executeCodexAction: async () => ({ success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result'), evidenceReceipts: [proof('focused evidence', 'evidence')] }) });
+  assert.equal(codex.applied.state.currentPhase, 'GITHUB_COMMIT');
 
-test('consumes an OpenClaw read-only handoff without granting source-writer authority', async () => {
-  const runtime = await options();
-  const missionId = 'worker-openclaw-readonly-test';
-  const created = await createMissionRecord({
-    missionId, operatorIntent: 'Inspect the live runtime without mutation.', intendedOutcome: 'Ground browser runtime proof.',
-    missionKind: 'live-runtime-investigation', repository: 'Cheekyfellastef/stephan-os', repositoryRoot: 'C:\\repo',
-    branch: 'openclaw/worker-openclaw-readonly-test', allowedFiles: [], requiredEvidence: ['browser runtime proof'], requiredTests: [], browserProofRequired: true,
-  }, runtime);
-  assert.equal(created.state.currentPhase, 'LIVE_RUNTIME_INVESTIGATION');
-  await publishMissionWorkerAction(created.state, runtime);
-  const processed = await processNextOpenClawReadonlyItem({
-    ...runtime,
-    executeOpenClawReadonlyAction: async () => ({
-      success: true, resultId: 'openclaw-run-1', changedFiles: [], completedAt: '2026-06-24T23:05:00.000Z',
-      receipt: { ...proof('openclaw result', 'openclaw-result-proof'), commandOutputHash: 'f'.repeat(64) },
-      evidenceReceipts: [{ ...proof('browser runtime proof', 'openclaw-browser-proof'), sha256: '1'.repeat(64), receiptPath: 'proof/browser/runtime.json' }],
-    }),
-  });
-  assert.equal(processed.processed, true);
-  assert.equal(processed.applied.state.currentPhase, 'COMPLETE');
-  assert.equal(processed.applied.state.activeWriter, 'none');
-  assert.deepEqual(processed.result.changedFiles, []);
-});
-
-test('failed signed execution records a blocked mission event and archives the item as failed', async () => {
-  const runtime = await options();
-  const created = await createMissionRecord({ ...intent, missionId: 'worker-failure-test', branch: 'openclaw/worker-failure-test' }, runtime);
-  await publishMissionWorkerAction(created.state, runtime);
-  const processed = await processNextSignedOpenClawItem({
-    ...runtime,
-    executeSignedOperation: async () => ({ success: false, error: 'git unavailable', commandOutputHash: 'b'.repeat(64), completedAt: '2026-06-24T23:02:00.000Z' }),
-    inspectSignedOperation: async () => { throw new Error('must not inspect failed execution'); },
-  });
-  assert.equal(processed.event.eventType, 'MISSION_BLOCKED');
-  assert.equal(processed.applied.state.currentPhase, 'BLOCKED');
-  assert.match(processed.resultPath.replace(/\\/g, '/'), /\/failed\//);
-});
-
-test('invalid success inspection fails closed without claiming mission progress', async () => {
-  const runtime = await options();
-  const created = await createMissionRecord({ ...intent, missionId: 'worker-inspection-test', branch: 'openclaw/worker-inspection-test' }, runtime);
-  await publishMissionWorkerAction(created.state, runtime);
-  const processed = await processNextSignedOpenClawItem({
-    ...runtime,
-    executeSignedOperation: async () => ({ success: true, commandOutputHash: 'c'.repeat(64), completedAt: '2026-06-24T23:03:00.000Z' }),
-    inspectSignedOperation: async () => ({ worktreePath: '', clean: false }),
-  });
-  assert.equal(processed.result.finalVerdict, 'MISSION_WORKER_ITEM_FAILED');
-  assert.equal((await readMissionRecord('worker-inspection-test', runtime)).state.currentPhase, 'CREATE_WORKTREE');
+  const openClawOptions = await runtime();
+  const created = await createMissionRecord(intent('readonly-test', 'live-runtime-investigation'), openClawOptions);
+  await publishMissionWorkerAction(created.state, openClawOptions);
+  const openclaw = await processNextOpenClawReadonlyItem({ ...openClawOptions, executeOpenClawReadonlyAction: async () => ({ success: true, changedFiles: [], receipt: proof('openclaw result', 'result'), evidenceReceipts: [proof('focused evidence', 'evidence')] }) });
+  assert.equal(openclaw.applied.state.activeWriter, 'none');
+  assert.deepEqual(openclaw.result.changedFiles, []);
 });

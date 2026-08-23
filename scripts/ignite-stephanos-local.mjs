@@ -1,8 +1,10 @@
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, copyFileSync, cpSync, existsSync, rmSync, writeFileSync, renameSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync, copyFileSync, cpSync, existsSync, lstatSync, opendirSync, rmSync, writeFileSync, renameSync } from 'node:fs';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
+import { projectIgnitionCockpit } from './ignition-cockpit-model.mjs';
+import { projectGitBranchIntelligence } from './git-branch-intelligence.mjs';
 import { runIgnitionPlan } from './ignite-stephanos-local-lib.mjs';
 import {
   OPENCLAW_WORKSPACE_DIRT_PATHS,
@@ -13,16 +15,140 @@ import {
 } from '../shared/agents/openClawWorkspaceHygiene.mjs';
 import {
   DEFAULT_OPENCLAW_ENDPOINTS,
+  DEFAULT_OPENCLAW_IDENTITY_ENDPOINT,
   DEFAULT_OPENCLAW_SERVICE_NAME,
   buildOpenClawStartupRecoveryPacket,
   classifyOpenClawReadiness,
   createOpenClawStandaloneDiscoveryPacket,
   findVerifiedOpenClawStandaloneGatewayCandidate,
 } from '../shared/agents/openClawStartupRecovery.mjs';
+import {
+  OPENCLAW_GATEWAY_APPROVED_ENDPOINT,
+  OPENCLAW_GATEWAY_STARTUP_SOURCE,
+  OPENCLAW_GATEWAY_STARTUP_GUARDRAILS,
+  buildOpenClawGatewayStartupTarget,
+  hasForbiddenOpenClawGatewayStartupToken,
+  splitOpenClawGatewayStartupCommand,
+} from '../shared/agents/openClawGatewayStartup.mjs';
+import {
+  battleBridgeCanonicalRepositoryArgs,
+  resolveBattleBridgeGitExecution,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 const args = new Set(process.argv.slice(2));
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const OPENCLAW_STARTUP_RESTART_FLAG = '--approve-openclaw-service-restart';
+const IGNITION_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const SHA40 = /^[0-9a-f]{40}$/;
+
+export function assertBoundIgnitionHeadImmediatelyBeforeMutation({
+  expectedHead = process.env.STEPHANOS_EXPECTED_HEAD || '',
+  cwd = IGNITION_REPO_ROOT,
+  platform = process.platform,
+  environment = process.env,
+  spawnSyncFn = spawnSync,
+} = {}) {
+  const expected = String(expectedHead || '').trim().toLowerCase();
+  if (!expected) return null;
+  if (!SHA40.test(expected)) throw new Error('IGNITION_BOUND_EXPECTED_HEAD_INVALID');
+  const gitExecution = resolveBattleBridgeGitExecution({ platform, environment });
+  const proof = spawnSyncFn(
+    gitExecution.executable,
+    [...gitExecution.fixedConfigArgs, ...battleBridgeCanonicalRepositoryArgs(cwd), 'rev-parse', 'HEAD'],
+    { cwd, env: gitExecution.environment, encoding: 'utf8', shell: false, windowsHide: true, timeout: 120_000 },
+  );
+  const observed = String(proof?.stdout || '').trim().toLowerCase();
+  if (proof?.error || proof?.status !== 0 || observed !== expected) throw new Error('IGNITION_BOUND_EXPECTED_HEAD_MISMATCH');
+  return Object.freeze({ expectedHead: expected, observedHead: observed });
+}
+
+const OPENCLAW_AUTOSTART_SURFACES = Object.freeze([
+  { id: 'gateway', envKey: 'STEPHANOS_OPENCLAW_GATEWAY_COMMAND', required: true },
+  { id: 'chat', envKey: 'STEPHANOS_OPENCLAW_CHAT_COMMAND', required: false },
+  { id: 'dashboard', envKey: 'STEPHANOS_OPENCLAW_DASHBOARD_COMMAND', required: false },
+]);
+
+
+export function resolveApprovedOpenClawAutostartTargets({ env = process.env } = {}) {
+  return OPENCLAW_AUTOSTART_SURFACES.map((surface) => {
+    const commandText = String(env[surface.envKey] || '').trim();
+    if (surface.id === 'gateway') {
+      const target = buildOpenClawGatewayStartupTarget({ commandText: commandText || undefined, source: commandText ? `env:${surface.envKey}` : OPENCLAW_GATEWAY_STARTUP_SOURCE, env });
+      const reason = target.reason === 'startup-command-violates-guardrails' ? 'approved-launch-command-violates-guardrails' : target.reason;
+      return { ...surface, ...target, reason, blocked: target.blocked, required: surface.required };
+    }
+    if (!commandText) return { ...surface, available: false, blocked: surface.required, reason: 'approved-launch-command-missing' };
+    const argv = splitOpenClawGatewayStartupCommand(commandText);
+    if (argv.length === 0) return { ...surface, available: false, blocked: surface.required, reason: 'approved-launch-command-empty' };
+    if (hasForbiddenOpenClawGatewayStartupToken(commandText)) return { ...surface, available: false, blocked: true, reason: 'approved-launch-command-violates-guardrails', commandText };
+    return { ...surface, available: true, blocked: false, command: argv[0], commandArgs: argv.slice(1), commandText, source: `env:${surface.envKey}` };
+  });
+}
+
+function startApprovedOpenClawSurface({ target, spawnFn = spawn, log = (message) => console.log(message) } = {}) {
+  if (!target?.available) return { surface: target?.id || 'unknown', started: false, reason: target?.reason || 'not-available' };
+  const child = spawnFn(target.command, target.commandArgs || [], {
+    cwd: process.cwd(),
+    detached: true,
+    stdio: 'ignore',
+    shell: false,
+    env: { ...process.env, STEPHANOS_OPENCLAW_AUTOSTART: 'runtime-surfaces-only' },
+  });
+  if (typeof child?.unref === 'function') child.unref();
+  const pid = Number(child?.pid || 0) || null;
+  log(`[IGNITION] openclaw-autostart-surface=${JSON.stringify({ surface: target.id, started: true, pid, guardrails: OPENCLAW_GATEWAY_STARTUP_GUARDRAILS })}`);
+  return { surface: target.id, started: true, pid };
+}
+
+export async function evaluateOpenClawRuntimeAutostartWithDeps({
+  captureStep = runStepCapture,
+  fetchFn = globalThis.fetch,
+  spawnFn = spawn,
+  platform = process.platform,
+  env = process.env,
+  log = (message) => console.log(message),
+  waitMs = 1200,
+  readinessTimeoutMs = 10000,
+  retryIntervalMs = 500,
+} = {}) {
+  const discovery = discoverOpenClawStandaloneIdentityWithDeps({ captureStep, platform, env });
+  const { endpoints, gatewayCandidate, selectedGatewayEndpoint, selectedGatewayEndpointSource } = buildOpenClawReadinessEndpoints({ discovery, env });
+  const expectedIdentity = resolveExpectedOpenClawIdentity({ env, endpoint: endpoints[0] || DEFAULT_OPENCLAW_IDENTITY_ENDPOINT, endpointSource: selectedGatewayEndpointSource });
+  const base = probeOpenClawProcessWithDeps({ captureStep, platform });
+  const beforeEndpoint = await probeOpenClawEndpoint({ endpoints, fetchFn, expectedIdentity, timeoutMs: 0, retryIntervalMs });
+  const beforeReadiness = { ...base, endpoint: beforeEndpoint, standaloneGatewayCandidate: gatewayCandidate };
+  const beforeClassification = classifyOpenClawReadiness(beforeReadiness);
+  const endpointAlreadyVerified = beforeEndpoint.reachable === true && beforeEndpoint.identityVerified === true && /^(healthy|ready|live|connected)$/i.test(String(beforeEndpoint.connectionStatus || ''));
+  if (beforeClassification.healthy || endpointAlreadyVerified) {
+    const status = { state: 'openclaw-reused-existing-runtime', ignitionPhase: 'openclaw-gateway-startup', healthy: true, autostartAttempted: false, duplicateStartAvoided: true, startupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE, selectedReadinessEndpoint: beforeEndpoint.url || null, selectedGatewayEndpoint, selectedGatewayEndpointSource };
+    log(`[IGNITION] openclaw-autostart-status=${JSON.stringify(status)}`);
+    return status;
+  }
+
+  const targets = resolveApprovedOpenClawAutostartTargets({ env });
+  const blockingTarget = targets.find((target) => target.blocked && target.required);
+  if (blockingTarget) {
+    const status = { state: 'openclaw-autostart-blocked', healthy: false, autostartAttempted: false, reason: blockingTarget.reason, surface: blockingTarget.id, guardrails: OPENCLAW_GATEWAY_STARTUP_GUARDRAILS };
+    log(`[IGNITION] openclaw-autostart-status=${JSON.stringify(status)}`);
+    throw new Error(`blocked for safety: OpenClaw ${blockingTarget.id} autostart cannot proceed (${blockingTarget.reason}). Configure ${blockingTarget.envKey} with an approved local runtime-surface launch command; no OpenClaw task execution or mutation is allowed.`);
+  }
+
+  const started = targets.filter((target) => target.available).map((target) => startApprovedOpenClawSurface({ target, spawnFn, log }));
+  if (waitMs > 0) await new Promise((resolvePromise) => setTimeout(resolvePromise, waitMs));
+  const afterEndpoint = await probeOpenClawEndpoint({ endpoints, fetchFn, expectedIdentity, timeoutMs: readinessTimeoutMs, retryIntervalMs });
+  const afterReadiness = { ...probeOpenClawProcessWithDeps({ captureStep, platform }), endpoint: afterEndpoint, standaloneGatewayCandidate: gatewayCandidate };
+  const afterClassification = classifyOpenClawReadiness(afterReadiness);
+  const identityVerified = afterClassification.healthy === true || afterClassification.endpointIdentityVerified === true || afterEndpoint.identityVerified === true;
+  const diagnostics = { selectedGatewayEndpoint, selectedGatewayEndpointSource, startupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE, startupCommand: (targets.find((target) => target.id === 'gateway') || {}).commandText || '', processStartResult: started.find((entry) => entry.surface === 'gateway') || null, probeAttempts: afterEndpoint.probeAttempts || null, expectedEndpoint: afterEndpoint.expectedEndpoint || expectedIdentity.endpoint, expectedEndpointSource: expectedIdentity.endpointSource || selectedGatewayEndpointSource, actualEndpoint: afterEndpoint.actualEndpoint || afterEndpoint.url || null, identityPayload: afterEndpoint.identityPayload || null, mismatchReason: afterEndpoint.identityMismatchReason || (identityVerified ? '' : 'identity-unverified') };
+  const status = { state: identityVerified ? 'openclaw-autostart-identity-verified' : 'openclaw-autostart-identity-unverified', ignitionPhase: 'openclaw-gateway-startup', healthy: identityVerified, autostartAttempted: true, startupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE, started, selectedReadinessEndpoint: afterEndpoint.url || null, identityDiagnostics: diagnostics, guardrails: OPENCLAW_GATEWAY_STARTUP_GUARDRAILS };
+  log(`[IGNITION] openclaw-autostart-status=${JSON.stringify(status)}`);
+  if (!identityVerified) {
+    throw new Error(`blocked for safety: OpenClaw local runtime surface started or was probed, but endpoint identity could not be verified. Diagnostics: ${JSON.stringify(diagnostics)}. Operator action: confirm the gateway endpoint is the approved local OpenClaw runtime before retrying.`);
+  }
+  return status;
+}
+
+
 
 function formatStep(label, command, commandArgs) {
   return `[IGNITION PREFLIGHT] ${label}: ${command} ${commandArgs.join(' ')}`;
@@ -155,6 +281,10 @@ function parseGitCountPair(value = '') {
 
 function normalizeCaptureStdout(result) {
   return String(result?.stdout || '').trim();
+}
+
+function shortSha(value = '') {
+  return String(value || '').trim().slice(0, 12);
 }
 
 export function classifyPublicationTruth({
@@ -299,6 +429,47 @@ export function evaluateGitPublicationTruthWithDeps({
   };
 }
 
+function dirtyPaths(entries = []) {
+  return entries.flatMap((entry) => entry.paths || []).filter(Boolean).sort();
+}
+
+export function projectIgnitionSourceUpdateProof({
+  localHeadBefore = '',
+  originMainHead = '',
+  localHeadAfter = '',
+  statusAssessment = evaluateGitStatusForIgnition(''),
+  error = '',
+} = {}) {
+  const sourceDirtyFiles = dirtyPaths(statusAssessment.meaningfulEntries);
+  const generatedDistDirtyFiles = dirtyPaths((statusAssessment.entries || []).filter((entry) => entry.category === 'approved-generated-dist'));
+  const hasKnownAfter = Boolean(localHeadAfter && localHeadAfter !== 'unknown');
+  const hasKnownOrigin = Boolean(originMainHead && originMainHead !== 'unknown');
+  let verdict = 'ERROR';
+  if (error) verdict = 'ERROR';
+  else if (sourceDirtyFiles.length > 0) verdict = 'BLOCKED_DIRTY_TREE';
+  else if (localHeadBefore && localHeadAfter && localHeadBefore !== localHeadAfter) verdict = 'UPDATED';
+  else if (hasKnownAfter && hasKnownOrigin && localHeadAfter === originMainHead) verdict = 'ALREADY_CURRENT';
+  else if (localHeadBefore && localHeadAfter && localHeadBefore === localHeadAfter) verdict = 'ALREADY_CURRENT';
+  return {
+    schema: 'stephanos.ignition-source-update-proof.v1',
+    localHeadBefore,
+    originMainHead,
+    localHeadAfter,
+    verdict,
+    runningLatestMain: Boolean(hasKnownAfter && hasKnownOrigin && localHeadAfter === originMainHead),
+    sourceClean: sourceDirtyFiles.length === 0,
+    buildOutputDirty: generatedDistDirtyFiles.length > 0,
+    dirtyFiles: {
+      source: sourceDirtyFiles,
+      generatedDist: generatedDistDirtyFiles,
+    },
+    exactBlocker: sourceDirtyFiles.length > 0 ? `Source dirty tree blocks pull: ${sourceDirtyFiles.join(', ')}` : (error || ''),
+    nextAction: sourceDirtyFiles.length > 0
+      ? 'Commit/stash/discard source dirt before ignition pull; generated dist dirt alone is build output, not source staleness.'
+      : (generatedDistDirtyFiles.length > 0 ? 'Continue source proof; regenerate or clean dist after source update proof completes.' : 'Continue ignition proof.'),
+  };
+}
+
 function formatPublicationParityLine(publicationTruth) {
   const upstreamLabel = publicationTruth.hasUpstream ? publicationTruth.upstreamBranch : 'none';
   const branchLabel = publicationTruth.detachedHead ? 'detached-HEAD' : publicationTruth.branch;
@@ -331,13 +502,23 @@ export function createIgnitionRepairPacket({
   localOnlyPaths = [],
   localOnlyDistOnly = false,
   nextSafeAction = 'Stop ignition and ask the operator to approve the next source-control action.',
+  blocker = null,
+  currentBranch = 'unknown',
+  runningLatestMain = false,
+  branchMatchesMain = false,
+  sourceTruthVerdict = reason,
 } = {}) {
   return {
     ignitionStatus: 'BLOCKED',
     statusPanel: 'source-update-safety',
     reason,
+    currentBranch,
     currentCommit,
     originMainCommit,
+    runningLatestMain,
+    branchMatchesMain,
+    sourceTruthVerdict,
+    blocker,
     servedCommit,
     expectedSourceCommit,
     sourceFingerprint,
@@ -368,6 +549,7 @@ export function classifySourceUpdateTruth({
   detachedHead = false,
   hasUpstream = true,
   upstreamBranch = 'origin/main',
+  currentBranch = 'main',
 } = {}) {
   if (detachedHead) {
     return createIgnitionRepairPacket({
@@ -384,6 +566,26 @@ export function classifySourceUpdateTruth({
       currentCommit,
       originMainCommit,
       nextSafeAction: 'Current branch has no upstream tracking branch. Configure an upstream tracking branch before ignition updates source or rebuilds dist.',
+    });
+  }
+
+  const branchMatchesMain = currentBranch === 'main';
+  const runningLatestMain = Boolean(currentCommit && originMainCommit && currentCommit !== 'unknown' && originMainCommit !== 'unknown' && currentCommit === originMainCommit);
+  if (!branchMatchesMain && !runningLatestMain) {
+    return createIgnitionRepairPacket({
+      reason: 'non-main-source-truth',
+      currentCommit,
+      originMainCommit,
+      nextSafeAction: 'cd <repo>; git fetch origin main; git switch main; git merge --ff-only origin/main',
+      blocker: {
+        id: 'non-main-source-truth',
+        detail: 'Ignition is running from a non-main branch that does not match origin/main.',
+        nextOperatorAction: 'cd <repo>; git fetch origin main; git switch main; git merge --ff-only origin/main',
+      },
+      currentBranch,
+      runningLatestMain,
+      branchMatchesMain,
+      sourceTruthVerdict: 'non-main-source-truth',
     });
   }
 
@@ -405,21 +607,30 @@ export function classifySourceUpdateTruth({
       ignitionStatus: 'READY',
       statusPanel: 'source-update-safety',
       reason: 'safe-fast-forward-required',
+      currentBranch,
       currentCommit,
       originMainCommit,
+      runningLatestMain,
+      branchMatchesMain,
+      sourceTruthVerdict: 'safe-fast-forward-required',
       nextSafeAction: 'Run git pull --ff-only, then rebuild and verify before serving.',
     };
   }
 
+  const sourceTruthVerdict = aheadCount > 0 ? 'local-ahead-origin' : (runningLatestMain ? 'source-current' : 'source-mismatch');
   return {
     ignitionStatus: 'READY',
     statusPanel: 'source-update-safety',
-    reason: aheadCount > 0 ? 'local-ahead-origin' : 'source-current',
+    reason: sourceTruthVerdict,
+    currentBranch,
     currentCommit,
     originMainCommit,
+    runningLatestMain,
+    branchMatchesMain,
+    sourceTruthVerdict,
     nextSafeAction: aheadCount > 0
       ? 'Local commits are ahead of origin/main; do not silently treat them as remote truth.'
-      : 'Source commit matches tracked remote truth; build and verify may continue.',
+      : (runningLatestMain ? 'Source commit matches tracked remote truth; build and verify may continue.' : 'Source commit does not match origin/main; prove source truth before build.'),
   };
 }
 
@@ -672,7 +883,7 @@ export async function ensureLocalStaticServerRestartWithDeps({
 
   report.serverStarted = true;
   report.restartRequired = true;
-  if (verifyServedAfterStart) {
+  if (verifyServedAfterStart && report.previousServerStatus === 'running') {
     let servedHealth = null;
     try {
       const servedResponse = await fetchFn(healthUrl, { headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } });
@@ -729,13 +940,18 @@ export async function ensureLocalStaticServerRestartWithDeps({
 
 const APPROVED_GENERATED_DIST_PREFIX = 'apps/stephanos/dist/';
 const RUNTIME_MEMORY_PATH = 'stephanos-server/data/memory/durable-memory.json';
-const ROOT_TRANSIENT_DATA_PREFIX = 'data/';
+const ROOT_TRANSIENT_TMP_PATH = 'tmp/';
 const ROOT_RUNTIME_ALLOWLIST_PREFIXES = [
   'data/activity/',
   'data/knowledge-graph/',
   'data/proposals/',
   'data/roadmap/',
   'data/simulations/',
+  'logs/',
+  'memory/.dreams/',
+  'memory/dreaming/deep/',
+  'memory/dreaming/light/',
+  'memory/dreaming/rem/',
 ];
 const DEPENDENCY_DIR_PREFIXES = ['node_modules/', 'stephanos-server/node_modules/', 'stephanos-ui/node_modules/'];
 const SECRETS_PATTERN = /(^|\/)(\.env($|\.)|.*(secret|token|credential|passwd|password|private[-_]?key).*)/i;
@@ -776,8 +992,21 @@ function isDependencyDirtPath(path) {
   return DEPENDENCY_DIR_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
-function isTransientRootDataPath(path) {
-  return path === 'data' || path.startsWith(ROOT_TRANSIENT_DATA_PREFIX);
+function isTransientRootTmpDirectoryStatusPath(path) {
+  return path === 'tmp' || path === ROOT_TRANSIENT_TMP_PATH;
+}
+
+export const TRACKED_RUNTIME_ACTIVITY_EVENTS_PATH = 'stephanos-server/data/activity/events.json';
+
+export function buildTrackedRuntimeActivityDirtBlocker({ path = TRACKED_RUNTIME_ACTIVITY_EVENTS_PATH, userProfile = '%USERPROFILE%', timestamp = '<timestamp>' } = {}) {
+  const backupPath = `${userProfile}\\Documents\\Stephanos-openclaw-workspace\\backups\\main-repo-runtime-events\\${timestamp}\\events.json`;
+  return {
+    id: 'tracked-runtime-activity-dirt',
+    path,
+    detail: 'Runtime activity data is dirty inside source repo.',
+    backupPath,
+    nextOperatorAction: `Preserve then restore runtime activity data: mkdir "${userProfile}\\Documents\\Stephanos-openclaw-workspace\\backups\\main-repo-runtime-events\\${timestamp}" && copy "${path.replace(/\//g, '\\')}" "${backupPath}" && git restore --worktree --staged -- "${path}"`,
+  };
 }
 
 function isAllowlistedRootRuntimePath(path) {
@@ -789,7 +1018,8 @@ function classifyStatusEntry(entry) {
   if (entry.paths.every((path) => isSanctionedOpenClawWorkspacePath(path))) return 'openclaw-runtime-workspace';
   if (entry.paths.some((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)))) return 'meaningful-source-dirt';
   if (entry.paths.every((path) => path === RUNTIME_MEMORY_PATH)) return 'runtime-state';
-  if (entry.paths.every((path) => isTransientRootDataPath(path))) return 'transient-root-data';
+  if (entry.status.includes('?') && entry.paths.every((path) => isTransientRootTmpDirectoryStatusPath(path))) return 'runtime-state';
+  if (entry.paths.every((path) => isAllowlistedRootRuntimePath(path))) return 'transient-root-data';
   if (entry.paths.every((path) => isDependencyDirtPath(path))) return 'dependency-dirt';
   if (entry.paths.every((path) => isApprovedGeneratedDistPath(path))) return 'approved-generated-dist';
   if (entry.status.includes('?') && entry.paths.some((path) => path.includes('.'))) {
@@ -805,6 +1035,7 @@ function classifyStatusEntry(entry) {
 export function classifyIgnitionDirtPath(path) {
   const normalized = normalizeGitPath(path);
   if (SECRETS_PATTERN.test(normalized)) return 'HARD_BLOCK';
+  if (isTransientRootTmpDirectoryStatusPath(normalized)) return 'RUNTIME_CHECKPOINT_CLEAN';
   if (normalized === RUNTIME_MEMORY_PATH || isAllowlistedRootRuntimePath(normalized)) return 'RUNTIME_CHECKPOINT_CLEAN';
   if (isSanctionedOpenClawWorkspacePath(normalized)) return 'OPENCLAW_RUNTIME_WORKSPACE_ALLOWED';
   if (isDependencyDirtPath(normalized)) return 'DEPENDENCY_WARNING';
@@ -821,6 +1052,112 @@ function parsePorcelainStatusLine(line) {
   const rawPaths = pathSegment.includes(' -> ') ? pathSegment.split(' -> ') : [pathSegment];
   const paths = rawPaths.map(normalizeGitPath).filter(Boolean);
   return { status, paths, rawLine: line };
+}
+
+export function collectIgnoredRuntimeAggregatePaths(statusOutput) {
+  return String(statusOutput || '')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => line.startsWith('!! '))
+    .map(parsePorcelainStatusLine)
+    .flatMap((entry) => entry.paths)
+    .filter((path) => path.endsWith('/') && classifyIgnitionDirtPath(path) === 'RUNTIME_CHECKPOINT_CLEAN');
+}
+
+export function mergeIgnoredRuntimeChildrenIntoStatus(statusOutput, ignoredChildrenOutput) {
+  const lines = String(statusOutput || '')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+  const seen = new Set(lines);
+  for (const rawPath of String(ignoredChildrenOutput || '').split('\n')) {
+    const path = normalizeGitPath(rawPath);
+    if (!path) continue;
+    const line = `!! ${path}`;
+    if (!seen.has(line)) {
+      seen.add(line);
+      lines.push(line);
+    }
+  }
+  return lines.length > 0 ? `${lines.join('\n')}\n` : '';
+}
+
+function ignoredRuntimeAggregateScanError(detail) {
+  const error = new Error(`ignored-runtime-aggregate-scan:${detail}`);
+  error.code = 'IGNITION_RUNTIME_AGGREGATE_SCAN_FAILED';
+  return error;
+}
+
+export function scanIgnoredRuntimeAggregatePathsForBlockers({
+  repoRoot = process.cwd(),
+  aggregatePaths = [],
+  lstatSyncFn = lstatSync,
+  opendirSyncFn = opendirSync,
+  maxDepth = 64,
+  maxEntries = 100_000,
+} = {}) {
+  const canonicalRoot = resolve(repoRoot);
+  const blockers = [];
+  let entriesInspected = 0;
+
+  const walk = (absoluteDirectory, relativeDirectory, depth) => {
+    if (depth > maxDepth) throw ignoredRuntimeAggregateScanError('maximum-depth-exceeded');
+    let directory;
+    try {
+      directory = opendirSyncFn(absoluteDirectory);
+      for (let entry = directory.readSync(); entry; entry = directory.readSync()) {
+        entriesInspected += 1;
+        if (entriesInspected > maxEntries) throw ignoredRuntimeAggregateScanError('maximum-entry-budget-exceeded');
+        if (entry.name.includes('\0') || entry.name.includes('\n') || entry.name.includes('\r')) {
+          throw ignoredRuntimeAggregateScanError('unsafe-entry-name');
+        }
+        const childPath = `${relativeDirectory}/${entry.name}`.replace(/\\/g, '/');
+        if (SECRETS_PATTERN.test(childPath)) {
+          blockers.push(childPath);
+          return;
+        }
+        if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
+          throw ignoredRuntimeAggregateScanError('unsupported-entry-identity');
+        }
+        if (entry.isDirectory()) walk(resolve(absoluteDirectory, entry.name), childPath, depth + 1);
+        if (blockers.length > 0) return;
+      }
+    } catch (error) {
+      if (error?.code === 'IGNITION_RUNTIME_AGGREGATE_SCAN_FAILED') throw error;
+      throw ignoredRuntimeAggregateScanError(error?.code || 'filesystem-read-failed');
+    } finally {
+      directory?.closeSync();
+    }
+  };
+
+  for (const rawAggregatePath of aggregatePaths) {
+    const aggregatePath = normalizeGitPath(rawAggregatePath).replace(/\\/g, '/').replace(/\/+$/, '');
+    const segments = aggregatePath.split('/');
+    if (!aggregatePath || isAbsolute(aggregatePath) || segments.includes('..') || segments.includes('.')) {
+      throw ignoredRuntimeAggregateScanError('unsafe-aggregate-path');
+    }
+    if (classifyIgnitionDirtPath(`${aggregatePath}/`) !== 'RUNTIME_CHECKPOINT_CLEAN') {
+      throw ignoredRuntimeAggregateScanError('non-runtime-aggregate');
+    }
+    const absoluteAggregate = resolve(canonicalRoot, aggregatePath);
+    const relativeToRoot = relative(canonicalRoot, absoluteAggregate);
+    if (!relativeToRoot || relativeToRoot.startsWith('..') || isAbsolute(relativeToRoot)) {
+      throw ignoredRuntimeAggregateScanError('aggregate-outside-repository');
+    }
+    let identity;
+    try {
+      identity = lstatSyncFn(absoluteAggregate);
+    } catch (error) {
+      throw ignoredRuntimeAggregateScanError(error?.code || 'aggregate-identity-unproven');
+    }
+    if (identity.isSymbolicLink() || !identity.isDirectory()) {
+      throw ignoredRuntimeAggregateScanError('aggregate-identity-invalid');
+    }
+    walk(absoluteAggregate, aggregatePath, 0);
+    if (blockers.length > 0) break;
+  }
+
+  return blockers.length > 0 ? `${blockers.join('\n')}\n` : '';
 }
 
 export function evaluateGitStatusForIgnition(statusOutput) {
@@ -863,7 +1200,7 @@ function collectMovableRootOpenClawWorkspaceDirt(assessment) {
 
 function formatMigrationStamp(date = new Date()) {
   const pad = (value) => String(value).padStart(2, '0');
-  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+  return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}-${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}`;
 }
 
 function uniqueMigrationDirectory(destinationRoot, pathExists, now = () => new Date()) {
@@ -992,6 +1329,9 @@ export function collectRuntimeStatePaths(statusAssessment) {
   const runtimePaths = new Set();
   for (const entry of statusAssessment.runtimeStateEntries || []) {
     for (const path of entry.paths) {
+      if (isTransientRootTmpDirectoryStatusPath(path)) {
+        continue;
+      }
       runtimePaths.add(path);
     }
   }
@@ -1168,6 +1508,10 @@ export function runGitPullPreflightWithDeps({
     }
     const publicationTruth = evaluateGitPublicationTruthWithDeps({ captureStep, statusAssessment });
     reportPublicationParity(publicationTruth, { label: 'publication parity (dirty working tree)', forceWarning: true });
+    console.error(`[IGNITION] source-update-proof=${JSON.stringify(projectIgnitionSourceUpdateProof({
+      statusAssessment,
+      error: 'BLOCKED_DIRTY_TREE',
+    }))}`);
     console.error('[IGNITION] git pull blocked');
     throw new Error('blocked for safety: local working tree is dirty. Commit/stash/discard local changes before ignition can pull latest remote changes.');
   }
@@ -1196,18 +1540,23 @@ export function runGitPullPreflightWithDeps({
 
   const prePullPublicationTruth = evaluateGitPublicationTruthWithDeps({ captureStep, statusAssessment });
   reportPublicationParity(prePullPublicationTruth, { label: 'publication parity (pre-pull)' });
+  console.log(`[IGNITION] git-branch-intelligence=${JSON.stringify(projectGitBranchIntelligence({
+    currentBranch: prePullPublicationTruth.branch,
+    upstreamBranch: prePullPublicationTruth.upstreamBranch,
+    hasUpstream: prePullPublicationTruth.hasUpstream,
+  }))}`);
   let currentCommit = 'unknown';
   try {
-    currentCommit = normalizeCaptureStdout(captureStep('git-current-commit', 'git', ['rev-parse', '--short', 'HEAD']));
+    currentCommit = normalizeCaptureStdout(captureStep('git-current-commit', 'git', ['rev-parse', 'HEAD']));
   } catch {
     currentCommit = 'unknown';
   }
   let originMainCommit = 'unknown';
   try {
-    originMainCommit = normalizeCaptureStdout(captureStep('git-origin-main-commit', 'git', ['rev-parse', '--short', 'origin/main']));
+    originMainCommit = normalizeCaptureStdout(captureStep('git-origin-main-commit', 'git', ['rev-parse', 'origin/main']));
   } catch {
     try {
-      originMainCommit = normalizeCaptureStdout(captureStep('git-upstream-commit', 'git', ['rev-parse', '--short', '@{u}']));
+      originMainCommit = normalizeCaptureStdout(captureStep('git-upstream-commit', 'git', ['rev-parse', '@{u}']));
     } catch {
       originMainCommit = 'unknown';
     }
@@ -1226,6 +1575,7 @@ export function runGitPullPreflightWithDeps({
     detachedHead: prePullPublicationTruth.detachedHead,
     hasUpstream: prePullPublicationTruth.hasUpstream,
     upstreamBranch: prePullPublicationTruth.upstreamBranch,
+    currentBranch: prePullPublicationTruth.branch,
   });
   console.log(`[IGNITION] source-update-status=${JSON.stringify(sourceUpdateTruth)}`);
   if (sourceUpdateTruth.ignitionStatus === 'BLOCKED') {
@@ -1284,8 +1634,33 @@ export function runGitPullPreflightWithDeps({
 
   console.log('[IGNITION] git pull passed');
   const postPullPublicationTruth = evaluateGitPublicationTruthWithDeps({ captureStep, statusAssessment });
-  reportPublicationParity(postPullPublicationTruth, { label: 'publication parity (post-pull)' });
-  return postPullPublicationTruth;
+  let afterCommit = currentCommit;
+  try {
+    afterCommit = normalizeCaptureStdout(captureStep('git-current-commit-post-pull', 'git', ['rev-parse', 'HEAD']));
+  } catch {
+    afterCommit = currentCommit;
+  }
+  const sourceUpdateProof = projectIgnitionSourceUpdateProof({
+    localHeadBefore: currentCommit,
+    originMainHead: originMainCommit,
+    localHeadAfter: afterCommit,
+    statusAssessment,
+  });
+  console.log(`[IGNITION] source-update-proof=${JSON.stringify({
+    ...sourceUpdateProof,
+    localHeadBeforeShort: shortSha(sourceUpdateProof.localHeadBefore),
+    originMainHeadShort: shortSha(sourceUpdateProof.originMainHead),
+    localHeadAfterShort: shortSha(sourceUpdateProof.localHeadAfter),
+  })}`);
+  const enrichedPublicationTruth = {
+    ...postPullPublicationTruth,
+    beforeCommit: shortSha(currentCommit),
+    afterCommit: shortSha(afterCommit),
+    pulledFromCommit: shortSha(originMainCommit),
+    sourceUpdateProof,
+  };
+  reportPublicationParity(enrichedPublicationTruth, { label: 'publication parity (post-pull)' });
+  return enrichedPublicationTruth;
 }
 
 function runGitPullPreflight() {
@@ -1296,28 +1671,109 @@ function parseJsonLine(value = '') {
   try { return JSON.parse(String(value || '').trim()); } catch { return null; }
 }
 
-export async function probeOpenClawEndpoint({ endpoints = DEFAULT_OPENCLAW_ENDPOINTS, fetchFn = globalThis.fetch } = {}) {
+
+function normalizeOpenClawEndpointUrl(value = '') {
+  try {
+    const url = new URL(String(value || '').trim());
+    url.hostname = url.hostname === 'localhost' ? '127.0.0.1' : url.hostname;
+    url.hash = '';
+    url.search = '';
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return String(value || '').trim().replace(/\/$/, '');
+  }
+}
+
+function resolveExpectedOpenClawIdentity({ env = process.env, endpoint = DEFAULT_OPENCLAW_IDENTITY_ENDPOINT, endpointSource = 'default-fallback' } = {}) {
+  const explicitIdentityEndpoint = String(env.STEPHANOS_OPENCLAW_IDENTITY_ENDPOINT || '').trim();
+  return {
+    product: String(env.STEPHANOS_OPENCLAW_EXPECTED_PRODUCT || 'OpenClaw').trim(),
+    runtimeId: String(env.STEPHANOS_OPENCLAW_EXPECTED_RUNTIME_ID || 'openclaw-local-runtime').trim(),
+    endpoint: normalizeOpenClawEndpointUrl(explicitIdentityEndpoint || endpoint),
+    endpointSource: explicitIdentityEndpoint ? 'env:STEPHANOS_OPENCLAW_IDENTITY_ENDPOINT' : endpointSource,
+  };
+}
+
+function extractOpenClawIdentityPayload(json = {}, body = '') {
+  const identity = json?.identity && typeof json.identity === 'object' ? json.identity : json;
+  return {
+    product: String(identity?.product || identity?.service || identity?.name || identity?.app || '').trim(),
+    runtimeId: String(identity?.runtimeId || identity?.runtimeID || identity?.id || identity?.runtime || '').trim(),
+    version: String(identity?.version || identity?.runtimeVersion || '').trim(),
+    endpoint: normalizeOpenClawEndpointUrl(identity?.endpoint || identity?.expectedEndpoint || identity?.url || ''),
+    raw: json && Object.keys(json).length > 0 ? json : body.slice(0, 500),
+  };
+}
+
+function verifyOpenClawIdentityPayload({ payload, expected, actualEndpoint }) {
+  const normalizedActualEndpoint = normalizeOpenClawEndpointUrl(actualEndpoint);
+  const actualProduct = String(payload?.product || '').trim();
+  const actualRuntimeId = String(payload?.runtimeId || '').trim();
+  const actualVersion = String(payload?.version || '').trim();
+  const actualDeclaredEndpoint = normalizeOpenClawEndpointUrl(payload?.endpoint || normalizedActualEndpoint);
+  const expectedEndpoint = normalizeOpenClawEndpointUrl(expected?.endpoint || actualEndpoint);
+  const productOk = actualProduct.toLowerCase() === String(expected?.product || '').trim().toLowerCase() || /^openclaw(?:\b|\s)/i.test(actualProduct);
+  const runtimeOk = actualRuntimeId === expected?.runtimeId;
+  const versionOk = actualVersion.length > 0;
+  const endpointOk = actualDeclaredEndpoint === expectedEndpoint && normalizedActualEndpoint === expectedEndpoint;
+  const mismatchReasons = [];
+  if (!productOk) mismatchReasons.push('product-mismatch');
+  if (!runtimeOk) mismatchReasons.push('runtime-id-mismatch');
+  if (!versionOk) mismatchReasons.push('version-missing');
+  if (!endpointOk) mismatchReasons.push('endpoint-mismatch');
+  return {
+    verified: mismatchReasons.length === 0,
+    mismatchReason: mismatchReasons.join(',') || '',
+    expected: { ...expected, endpoint: expectedEndpoint },
+    actual: { product: actualProduct, runtimeId: actualRuntimeId, version: actualVersion, endpoint: actualDeclaredEndpoint || normalizedActualEndpoint },
+  };
+}
+
+async function probeOpenClawEndpointOnce({ endpoints = DEFAULT_OPENCLAW_ENDPOINTS, fetchFn = globalThis.fetch, expectedIdentity = resolveExpectedOpenClawIdentity() } = {}) {
+  let lastReachable = null;
   for (const url of endpoints) {
     try {
       const response = await fetchFn(url, { headers: { Accept: 'application/json,text/plain', 'Cache-Control': 'no-cache' } });
       const body = await response.text();
       const json = parseJsonLine(body);
-      const identity = json?.service || json?.name || json?.app || body.slice(0, 200);
+      const identityPayload = extractOpenClawIdentityPayload(json || {}, body);
+      const verification = verifyOpenClawIdentityPayload({ payload: identityPayload, expected: expectedIdentity, actualEndpoint: url });
+      const identity = identityPayload.product || json?.service || json?.name || json?.app || body.slice(0, 200);
       const connectionStatus = json?.connectionStatus || json?.status || json?.health || (response.ok ? 'unknown' : 'unhealthy');
-      return {
+      const standaloneGatewayHealthVerified = response?.ok === true && json?.ok === true && json?.status === 'live' && /\/health$/i.test(String(url));
+      const result = {
         url,
         reachable: Boolean(response?.ok),
         httpStatus: response?.status ?? null,
         identity,
+        identityPayload,
+        expectedEndpoint: verification.expected.endpoint,
+        actualEndpoint: normalizeOpenClawEndpointUrl(url),
         body: body.slice(0, 500),
-        identityVerified: /openclaw/i.test(String(identity || body || '')),
-        connectionStatus: /^(healthy|connected|ready)$/i.test(String(connectionStatus).trim()) ? 'healthy' : String(connectionStatus || 'unknown'),
+        identityVerified: response?.ok === true && (verification.verified || standaloneGatewayHealthVerified),
+        identityMismatchReason: standaloneGatewayHealthVerified ? '' : verification.mismatchReason,
+        identityVerification: verification,
+        connectionStatus: /^(healthy|connected|ready|live)$/i.test(String(connectionStatus).trim()) ? 'healthy' : String(connectionStatus || 'unknown'),
       };
+      if (result.identityVerified) return result;
+      if (result.reachable && !lastReachable) lastReachable = result;
     } catch (error) {
       // Try the next known local endpoint before reporting unreachable.
     }
   }
-  return { reachable: false, status: 'unreachable-or-unknown', identityVerified: false, connectionStatus: 'unknown' };
+  return lastReachable || { reachable: false, status: 'unreachable-or-unknown', identityVerified: false, connectionStatus: 'unknown', expectedEndpoint: expectedIdentity.endpoint, actualEndpoint: null, identityPayload: null, identityMismatchReason: 'endpoint-unreachable' };
+}
+
+export async function probeOpenClawEndpoint({ endpoints = DEFAULT_OPENCLAW_ENDPOINTS, fetchFn = globalThis.fetch, expectedIdentity = resolveExpectedOpenClawIdentity(), timeoutMs = 0, retryIntervalMs = 500 } = {}) {
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs || 0));
+  let last = null;
+  do {
+    last = await probeOpenClawEndpointOnce({ endpoints, fetchFn, expectedIdentity });
+    if (last.identityVerified === true) return last;
+    if (Date.now() >= deadline) return last;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, Math.max(0, Number(retryIntervalMs || 0))));
+  } while (Date.now() <= deadline);
+  return last;
 }
 
 function parseJsonArrayLine(value = '') {
@@ -1377,25 +1833,72 @@ export function probeOpenClawProcessWithDeps({ captureStep = runStepCapture, pla
   return { process, service, portOwner: { present: serviceIdentityOwnsProcess, verified: serviceIdentityOwnsProcess } };
 }
 
-export function buildOpenClawReadinessEndpoints({ discovery = {}, defaultEndpoints = DEFAULT_OPENCLAW_ENDPOINTS } = {}) {
-  const gatewayCandidate = findVerifiedOpenClawStandaloneGatewayCandidate(discovery);
-  if (!gatewayCandidate?.candidatePort) {
-    return { endpoints: defaultEndpoints, gatewayCandidate };
+function normalizeOpenClawGatewayBaseEndpoint(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const url = new URL(raw);
+    url.hostname = url.hostname === 'localhost' ? '127.0.0.1' : url.hostname;
+    url.hash = '';
+    url.search = '';
+    url.pathname = url.pathname.replace(/\/(?:identity|health|status)\/?$/i, '') || '/';
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return raw.replace(/\/(?:identity|health|status)\/?$/i, '').replace(/\/$/, '');
   }
-  const gatewayEndpoints = [
-    `http://127.0.0.1:${gatewayCandidate.candidatePort}/health`,
-    `http://127.0.0.1:${gatewayCandidate.candidatePort}/status`,
-  ];
-  return { endpoints: [...gatewayEndpoints, ...defaultEndpoints], gatewayCandidate };
 }
 
-export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureStep = runStepCapture, runStepFn = runStep, fetchFn = globalThis.fetch, argvArgs = args, platform = process.platform, log = (message) => console.log(message) } = {}) {
+function buildOpenClawGatewayEndpointSet(baseEndpoint) {
+  const base = normalizeOpenClawGatewayBaseEndpoint(baseEndpoint);
+  if (!base) return [];
+  return [`${base}/identity`, `${base}/health`, `${base}/status`];
+}
+
+function resolveConfiguredOpenClawGatewayEndpoint({ env = process.env } = {}) {
+  const explicit = String(env.STEPHANOS_OPENCLAW_GATEWAY_ENDPOINT || '').trim();
+  if (explicit) return { endpoint: normalizeOpenClawGatewayBaseEndpoint(explicit), source: 'env:STEPHANOS_OPENCLAW_GATEWAY_ENDPOINT' };
+  const commandText = String(env.STEPHANOS_OPENCLAW_GATEWAY_COMMAND || '').trim();
+  const portMatch = commandText.match(/(?:^|\s)--port(?:=|\s+)(\d{2,5})(?:\s|$)/i);
+  if (portMatch) return { endpoint: `http://127.0.0.1:${portMatch[1]}`, source: 'env:STEPHANOS_OPENCLAW_GATEWAY_COMMAND:--port' };
+  return { endpoint: OPENCLAW_GATEWAY_APPROVED_ENDPOINT, source: OPENCLAW_GATEWAY_STARTUP_SOURCE };
+}
+
+export function buildOpenClawReadinessEndpoints({ discovery = {}, defaultEndpoints = DEFAULT_OPENCLAW_ENDPOINTS, env = process.env } = {}) {
+  const gatewayCandidate = findVerifiedOpenClawStandaloneGatewayCandidate(discovery);
+  const configuredGateway = resolveConfiguredOpenClawGatewayEndpoint({ env });
+  const endpointGroups = [];
+  let selectedGatewayEndpoint = '';
+  let selectedGatewayEndpointSource = '';
+  if (configuredGateway.endpoint) {
+    endpointGroups.push(...buildOpenClawGatewayEndpointSet(configuredGateway.endpoint));
+    selectedGatewayEndpoint = configuredGateway.endpoint;
+    selectedGatewayEndpointSource = configuredGateway.source;
+  }
+  if (gatewayCandidate?.candidatePort) {
+    const discoveredEndpoint = `http://127.0.0.1:${gatewayCandidate.candidatePort}`;
+    endpointGroups.push(...buildOpenClawGatewayEndpointSet(discoveredEndpoint));
+    if (!selectedGatewayEndpoint) {
+      selectedGatewayEndpoint = discoveredEndpoint;
+      selectedGatewayEndpointSource = 'discovery:standalone-gateway-port';
+    }
+  }
+  endpointGroups.push(...defaultEndpoints);
+  const endpoints = [...new Set(endpointGroups.map((endpoint) => normalizeOpenClawEndpointUrl(endpoint)).filter(Boolean))];
+  if (!selectedGatewayEndpoint) {
+    selectedGatewayEndpoint = normalizeOpenClawGatewayBaseEndpoint(defaultEndpoints[0] || DEFAULT_OPENCLAW_IDENTITY_ENDPOINT);
+    selectedGatewayEndpointSource = 'default-fallback';
+  }
+  return { endpoints, gatewayCandidate, selectedGatewayEndpoint, selectedGatewayEndpointSource };
+}
+
+export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureStep = runStepCapture, runStepFn = runStep, fetchFn = globalThis.fetch, argvArgs = args, platform = process.platform, env = process.env, log = (message) => console.log(message) } = {}) {
   const discovery = discoverOpenClawStandaloneIdentityWithDeps({ captureStep, platform });
   log(`[IGNITION] openclaw-standalone-discovery=${JSON.stringify(discovery)}`);
-  const { endpoints, gatewayCandidate } = buildOpenClawReadinessEndpoints({ discovery });
+  const { endpoints, gatewayCandidate, selectedGatewayEndpoint, selectedGatewayEndpointSource } = buildOpenClawReadinessEndpoints({ discovery, env });
+  const expectedIdentity = resolveExpectedOpenClawIdentity({ env, endpoint: endpoints[0] || DEFAULT_OPENCLAW_IDENTITY_ENDPOINT, endpointSource: selectedGatewayEndpointSource });
   const base = probeOpenClawProcessWithDeps({ captureStep, platform });
-  const endpoint = await probeOpenClawEndpoint({ endpoints, fetchFn });
-  let readiness = { ...base, endpoint, standaloneGatewayCandidate: gatewayCandidate, candidatePort: gatewayCandidate?.candidatePort || null, selectedReadinessEndpoint: endpoint.url || null, adapterOnly: gatewayCandidate?.verified === true ? 'no' : undefined, restartCommandAllowed: false, safeRestartTarget: 'none' };
+  const endpoint = await probeOpenClawEndpoint({ endpoints, fetchFn, expectedIdentity });
+  let readiness = { ...base, endpoint, standaloneGatewayCandidate: gatewayCandidate, candidatePort: gatewayCandidate?.candidatePort || null, selectedReadinessEndpoint: endpoint.url || null, selectedGatewayEndpoint, selectedGatewayEndpointSource, adapterOnly: gatewayCandidate?.verified === true ? 'no' : undefined, restartCommandAllowed: false, safeRestartTarget: 'none' };
   let packet = buildOpenClawStartupRecoveryPacket(readiness);
   const classification = classifyOpenClawReadiness(readiness);
   const readinessIdentity = classification.state === 'openclaw-standalone-gateway-live' || classification.state === 'openclaw-standalone-gateway'
@@ -1430,9 +1933,13 @@ export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureSt
   return { healthy: true, state: 'connected-healthy', recoveryApplied: true, readiness };
 }
 
-export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, captureStepFn = runStepCapture, runStepFn = runStep, moveRootOpenClawWorkspaceDirtFn = moveRootOpenClawWorkspaceDirt } = {}) {
-  const capture = captureStepFn('git-status', 'git', ['status', '--porcelain']);
-  const assessment = evaluateGitStatusForIgnition(capture.stdout);
+export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, preserveRuntimeDirt = false, captureStepFn = runStepCapture, runStepFn = runStep, moveRootOpenClawWorkspaceDirtFn = moveRootOpenClawWorkspaceDirt, scanIgnoredRuntimeAggregatePathsFn = scanIgnoredRuntimeAggregatePathsForBlockers, repoRoot = process.cwd() } = {}) {
+  const capture = captureStepFn('git-status', 'git', ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
+  const ignoredRuntimeAggregates = collectIgnoredRuntimeAggregatePaths(capture.stdout);
+  const ignoredRuntimeBlockers = ignoredRuntimeAggregates.length > 0
+    ? scanIgnoredRuntimeAggregatePathsFn({ repoRoot, aggregatePaths: ignoredRuntimeAggregates })
+    : '';
+  const assessment = evaluateGitStatusForIgnition(mergeIgnoredRuntimeChildrenIntoStatus(capture.stdout, ignoredRuntimeBlockers));
   const runtimeDataListing = captureStepFn('git-untracked-data', 'git', ['ls-files', '--others', '--exclude-standard', '--', 'data']);
   const runtimeDataPaths = normalizeCaptureStdout(runtimeDataListing).split('\n').map((line) => normalizeGitPath(line)).filter((line) => line.startsWith('data/'));
   const plan = assessment.entries.map((entry) => ({
@@ -1457,7 +1964,7 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     .filter((path) => path !== 'data/' || runtimeDataPaths.some((candidate) => !isAllowlistedRootRuntimePath(candidate)));
   const movableRootOpenClawDirt = collectMovableRootOpenClawWorkspaceDirt(assessment);
   let openClawMoveResult = { destinationRoot: resolveOpenClawWorkspaceRepairPath(), migrationDirectory: null, moved: [], skipped: [] };
-  if (!dryRun && movableRootOpenClawDirt.length > 0) {
+  if (!dryRun && !preserveRuntimeDirt && movableRootOpenClawDirt.length > 0) {
     openClawMoveResult = moveRootOpenClawWorkspaceDirtFn({ paths: movableRootOpenClawDirt });
     const movedRootPaths = new Set(openClawMoveResult.moved.map((entry) => normalizeRootCandidatePath(entry.path)));
     hardBlockTargets = hardBlockTargets.filter((path) => !movedRootPaths.has(normalizeRootCandidatePath(path)));
@@ -1474,39 +1981,46 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
 
   let runtimeCleaned = 0;
   if (!dryRun) {
-    if (trackedAuto.length > 0) {
+    if (!preserveRuntimeDirt && trackedAuto.length > 0) {
       runStepFn('git-restore-auto-generated', 'git', ['restore', '--worktree', '--staged', '--', ...trackedAuto]);
     }
-    if (trackedRuntime.length > 0) {
+    if (!preserveRuntimeDirt && trackedRuntime.length > 0) {
       runStepFn('git-restore-runtime-tracked', 'git', ['restore', '--worktree', '--staged', '--', ...trackedRuntime]);
       runtimeCleaned += trackedRuntime.length;
     }
-    if (untrackedRuntime.length > 0) {
+    if (!preserveRuntimeDirt && untrackedRuntime.length > 0) {
       runStepFn('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', ...untrackedRuntime]);
       runtimeCleaned += untrackedRuntime.length;
     }
-    runStepFn('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', APPROVED_GENERATED_DIST_PREFIX]);
+    if (!preserveRuntimeDirt) {
+      runStepFn('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', APPROVED_GENERATED_DIST_PREFIX]);
+    }
   }
 
   const uniqueRuntimeTargets = [...new Set(runtimeTargets)];
   const uniqueHardBlockTargets = [...new Set(hardBlockTargets)];
+  const trackedRuntimeActivityBlocker = entryPaths.includes(TRACKED_RUNTIME_ACTIVITY_EVENTS_PATH)
+    ? buildTrackedRuntimeActivityDirtBlocker({ timestamp: '<timestamp>' })
+    : null;
   const blocked = sourceTargets.length > 0 || uniqueHardBlockTargets.length > 0;
   const openClawWorkspaceHygiene = buildOpenClawWorkspaceHygieneProjection({ hardBlockPaths: uniqueHardBlockTargets, sourcePaths: sourceTargets, blocksIgnition: blocked });
   const status = {
     ignitionStatus: blocked ? 'BLOCKED' : 'READY',
     ignitionPhase: dryRun ? 'housekeep-dry-run' : 'housekeep',
     ignitionCleanlinessVerdict: blocked ? 'blocked' : 'ready',
-    ignitionAutoCleaned: dryRun ? 0 : autoCleanTargets.length,
+    ignitionAutoCleaned: dryRun || preserveRuntimeDirt ? 0 : autoCleanTargets.length,
     ignitionRuntimeCleaned: dryRun ? 0 : runtimeCleaned,
     ignitionOpenClawWorkspaceMoved: dryRun ? 0 : openClawMoveResult.moved.length,
     ignitionOpenClawWorkspaceMoveDestination: openClawMoveResult.destinationRoot,
     ignitionOpenClawWorkspaceMovedPaths: dryRun ? [] : openClawMoveResult.moved.map((entry) => entry.path),
-    ignitionRuntimeCleanedPaths: dryRun ? [] : uniqueRuntimeTargets.slice(0, 10),
-    ignitionAutoCleanedPaths: dryRun ? [] : [...new Set(autoCleanTargets)].slice(0, 10),
+    ignitionRuntimeCleanedPaths: dryRun || preserveRuntimeDirt ? [] : uniqueRuntimeTargets.slice(0, 10),
+    ignitionAutoCleanedPaths: dryRun || preserveRuntimeDirt ? [] : [...new Set(autoCleanTargets)].slice(0, 10),
+    ignitionRuntimePreservationEnabled: preserveRuntimeDirt,
     ignitionSourceDirtCount: sourceTargets.length,
     ignitionDependencyWarningCount: dependencyTargets.length,
     ignitionHardBlockCount: uniqueHardBlockTargets.length,
     ignitionHardBlockPaths: uniqueHardBlockTargets.slice(0, 10),
+    ignitionStructuredBlockers: trackedRuntimeActivityBlocker ? [trackedRuntimeActivityBlocker] : [],
     openClawWorkspaceHygieneStatus: openClawWorkspaceHygiene.workspaceHygieneStatus,
     openClawWorkspaceDirtDetected: openClawWorkspaceHygiene.workspaceDirtDetected,
     openClawWorkspaceDirtPaths: openClawWorkspaceHygiene.workspaceDirtPaths,
@@ -1523,7 +2037,7 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     openClawWorkspaceMutationAuthority: openClawWorkspaceHygiene.workspaceMutationAuthority,
     openClawWorkspaceNextOperatorAction: openClawWorkspaceHygiene.workspaceNextOperatorAction,
     ignitionBlockedReason: uniqueHardBlockTargets.length > 0 ? 'Hard-block dirt detected' : (sourceTargets.length > 0 ? 'Source dirt detected' : ''),
-    ignitionNextOperatorAction: blocked ? 'Resolve source dirt/hard-block files before ignition.' : 'Housekeeping complete.',
+    ignitionNextOperatorAction: trackedRuntimeActivityBlocker ? trackedRuntimeActivityBlocker.nextOperatorAction : (blocked ? 'Resolve source dirt/hard-block files before ignition.' : 'Housekeeping complete.'),
     ignitionReadyToEnterCommandDeck: !blocked,
   };
   console.log(`[HOUSEKEEP] status=${JSON.stringify(status)}`);
@@ -1644,6 +2158,7 @@ export function autoPublishDistWithDeps({ statusAssessment, captureStep = runSte
 }
 
 export async function run() {
+  assertBoundIgnitionHeadImmediatelyBeforeMutation();
   const preflightState = readLocalBuildState();
   const autoPullEnabled = shouldAutoPull();
   const ignitionMode = resolveIgnitionMode();
@@ -1709,7 +2224,7 @@ export async function run() {
       }
 
       if (ignitionMode === 'NORMAL_IGNITION' && process.platform === 'win32') {
-        await evaluateOpenClawStartupConnectRecoveryWithDeps();
+        await evaluateOpenClawRuntimeAutostartWithDeps();
       } else if (ignitionMode === 'NORMAL_IGNITION') {
         console.log('[IGNITION] OpenClaw startup connect recovery skipped (non-Windows desktop service probe unavailable).');
       }
@@ -1724,6 +2239,7 @@ export async function run() {
       console.log('[IGNITION] launcher guardrail passed');
     },
     runBuild: async () => {
+      assertBoundIgnitionHeadImmediatelyBeforeMutation();
       console.log('[IGNITION] build starting');
       try {
         runStep('build', npmCommand, ['run', 'stephanos:build']);
@@ -1786,16 +2302,14 @@ export async function run() {
       const servedCommit = refreshedState.distMetadata?.gitCommit || 'missing';
       const sourceFingerprint = refreshedState.distMetadata?.sourceFingerprint || refreshedState.expectedMetadata?.sourceFingerprint || 'missing';
       const buildTimestamp = refreshedState.distMetadata?.buildTimestamp || 'missing';
-      const currentCommit = normalizeCaptureStdout(runStepCapture('git-current-commit-pre-serve', 'git', ['rev-parse', '--short', 'HEAD']));
+      const currentCommit = normalizeCaptureStdout(runStepCapture('git-current-commit-pre-serve', 'git', ['rev-parse', 'HEAD']));
       let originMainCommit = currentCommit;
       try {
-        originMainCommit = normalizeCaptureStdout(runStepCapture('git-origin-main-commit-pre-serve', 'git', ['rev-parse', '--short', 'origin/main']));
+        originMainCommit = normalizeCaptureStdout(runStepCapture('git-origin-main-commit-pre-serve', 'git', ['rev-parse', 'origin/main']));
       } catch {
         originMainCommit = currentCommit;
       }
-      const expectedSourceCommit = publicationTruth?.aheadCount > 0 && publicationTruth?.behindCount === 0
-        ? currentCommit
-        : originMainCommit;
+      const expectedSourceCommit = currentCommit;
       const distFreshness = evaluateDistFreshnessAgainstOrigin({
         distMetadata: refreshedState.distMetadata,
         currentCommit,
@@ -1814,8 +2328,32 @@ export async function run() {
         console.error(`[IGNITION] repair-packet=${JSON.stringify(distFreshness)}`);
         throw new Error(`blocked for safety: ${distFreshness.reason}. ${distFreshness.nextSafeAction}`);
       }
+      assertBoundIgnitionHeadImmediatelyBeforeMutation();
       const restartReport = await ensureLocalStaticServerRestartWithDeps({
         expectedMetadata: refreshedState.distMetadata || refreshedState.expectedMetadata,
+        verifyServedAfterStart: true,
+      });
+      const cockpit = projectIgnitionCockpit({
+        buildPassed: buildAction.startsWith('passed'),
+        verifyPassed: verifyResult === 'passed',
+        serverStarted: restartReport.serverStarted === true,
+        sourceProof: { beforeCommit: publicationTruth?.beforeCommit || null, afterCommit: publicationTruth?.afterCommit || expectedSourceCommit, originMainCommit, headPublished: publicationTruth?.headPublished ?? null, publicationState: publicationTruth?.publicationState || null, behindCount: publicationTruth?.behindCount ?? null },
+        sourceUpdateProof: publicationTruth?.sourceUpdateProof || null,
+        servedProof: {
+          healthProbePass: restartReport.serverStarted === true,
+          runtimeMarkerMatches: restartReport.servedRuntimeMatchesExpectedDistMetadata === true,
+          moduleMimeChecksPass: restartReport.moduleMimeChecksPass === true,
+          servedCommit: restartReport.servedCommit,
+          expectedSourceCommit,
+          servedBuildTimestamp: restartReport.servedBuildTimestamp,
+          servedSourceFingerprint: restartReport.servedSourceFingerprint,
+        },
+        stages: [
+          { id: 'source-update', label: 'Source update', status: 'complete', detail: `state=${publicationTruth?.publicationState || 'unknown'} behind=${publicationTruth?.behindCount ?? 'unknown'} before=${publicationTruth?.beforeCommit || 'unknown'} after=${publicationTruth?.afterCommit || expectedSourceCommit}` },
+          { id: 'build-output', label: 'Build Output', status: buildAction.startsWith('passed') ? 'passed' : 'pending', detail: buildAction },
+          { id: 'verify', label: 'Verify', status: verifyResult === 'passed' ? 'passed' : 'pending', detail: verifyResult },
+          { id: 'runtime', label: 'Runtime', status: restartReport.servedRuntimeMatchesExpectedDistMetadata ? 'passed' : 'pending', detail: `restart=${restartReport.serverStarted}; markerAndMime=${restartReport.servedRuntimeMatchesExpectedDistMetadata}; mime=${restartReport.moduleMimeChecksPass}` },
+        ],
       });
       const finalStatus = {
         ignitionMode,
@@ -1827,8 +2365,12 @@ export async function run() {
         buildTimestamp,
         sourceFingerprint,
         staticServerRestart: restartReport,
-        StartupDecision: 'START',
+        StartupDecision: cockpit.readyToEnterStephanos ? 'START_READY' : 'START_PROOF_PENDING',
+        ignitionCockpit: cockpit,
       };
+      if (!cockpit.readyToEnterStephanos) {
+        console.log(`[IGNITION] cockpit-status=${JSON.stringify(cockpit)}`);
+      }
       console.log(`[IGNITION] status-report=${JSON.stringify(finalStatus)}`);
       printPreflightSummary({
         ...refreshedState,

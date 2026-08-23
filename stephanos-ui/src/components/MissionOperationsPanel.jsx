@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
-import { MissionActionControls, MissionIntakeForm } from './MissionOperationsControls';
+import { MissionActionControls } from './MissionOperationsControls';
 import { fetchMissionOperations } from '../state/missionOperationsClient';
+import { buildConciergeRoadmap } from '../../../shared/agents/battleBridgeBuildConciergeV2.mjs';
 import './MissionOperationsPanel.css';
 
 const REFRESH_INTERVAL_MS = 5000;
+const UPDATE_STATUS_TRUTH_STATES = ['UPDATE_AVAILABLE', 'PULL_REQUIRED', 'REBUILD_REQUIRED', 'AUTO_UPDATE_NOT_ENABLED'];
 
 function displayTime(value) {
   const parsed = Date.parse(String(value || ''));
@@ -35,6 +37,165 @@ function EvidenceList({ title, items, emptyText, renderItem }) {
   );
 }
 
+function ExecutionEngineV9Surface({ engine = {} }) {
+  if (!engine || !engine.schemaVersion) return null;
+  const candidates = Array.isArray(engine.enrichedCandidates) ? engine.enrichedCandidates : [];
+  const packets = Array.isArray(engine.dispatchPackets) ? engine.dispatchPackets : [];
+  return (
+    <div className="mission-operations-evidence-group" aria-label="Build Concierge V9 execution engine status">
+      <strong>V9 Live Goal Execution Engine:</strong> {engine.status || 'unknown'} · watched {engine.watchedGoalCount ?? 0} · classified {engine.classifiedGoalCount ?? 0} · enriched {engine.enrichedCandidateCount ?? 0} · dispatch ready {engine.dispatchReadyCount ?? 0} · manual dispatch {engine.manualDispatchRequiredCount ?? 0}
+      <div><strong>V9 active execution lane:</strong> {engine.activeExecutionLane || 'none'}</div>
+      <ul className="mission-operations-evidence-list">
+        {candidates.map((candidate) => (
+          <li key={candidate.candidateId}>
+            <strong>{candidate.candidateId}</strong> · {candidate.classification || 'unknown'} · {candidate.suggestedLane || 'unknown'} · {candidate.dispatchReadiness || 'blocked_or_unknown'}
+            <div>Proof families: {(candidate.requiredProofFamilies || []).join(', ') || 'unknown'}</div>
+            <div>Allowlisted commands: {(candidate.declaredAllowlistedProofCommands || []).join(' · ') || 'none'}</div>
+            {candidate.blockerReasons?.length ? <div>Blockers: {candidate.blockerReasons.join(' | ')}</div> : null}
+          </li>
+        ))}
+      </ul>
+      {packets.length ? <div><strong>Copyable Codex mission packets:</strong>{packets.map((packet) => <pre key={packet.candidateId}>{packet.packet}</pre>)}</div> : null}
+      <div><strong>V9 next operator action:</strong> {engine.nextOperatorAction || 'unknown'}</div>
+      <div><strong>V9 final verdict:</strong> {engine.finalVerdict || 'unknown'}</div>
+    </div>
+  );
+}
+
+export function LiveGoalProjectionSummary({ projection = {} }) {
+  if (!projection || !projection.schemaVersion) return null;
+  const agents = projection.currentAgentStates || {};
+  const activeLane = Array.isArray(projection.activeProofLane) ? projection.activeProofLane : [];
+  const engine = projection.executionEngine || projection.buildConciergeStatus?.executionEngine || {};
+  const githubTelemetry = projection.githubTelemetry || {};
+  const notificationCounts = githubTelemetry.notificationCounts || {};
+  const workflowCounts = githubTelemetry.workflowCounts || {};
+  const sourceBadge = projection.sourceTruth === 'live' ? 'LIVE' : projection.sourceTruth === 'mixed' ? 'MIXED' : projection.sourceTruth === 'static-fallback' ? 'STATIC_FALLBACK' : 'UNKNOWN';
+  return (
+    <section className="mission-operations-build-concierge" aria-label="Mission Control live projection" data-testid="mission-control-live-projection">
+      <h4>Mission Control Live Projection <span>{sourceBadge}</span></h4>
+      <dl className="mission-operations-grid">
+        <div><dt>Operator state</dt><dd>{agents.operator?.state || 'unknown'}</dd></div>
+        <div><dt>Stephanos state</dt><dd>{agents.stephanos?.state || 'unknown'}</dd></div>
+        <div><dt>Codex state</dt><dd>{agents.codex?.state || 'unknown'}</dd></div>
+        <div><dt>OpenClaw state</dt><dd>{agents.openclaw?.state || 'unknown'}</dd></div>
+        <div><dt>GitHub state</dt><dd>{agents.github?.state || 'unknown'}</dd></div>
+        <div><dt>Battle Bridge state</dt><dd>{agents.battleBridge?.state || 'unknown'}</dd></div>
+        <div><dt>Active proof lane</dt><dd>{activeLane.map((candidate) => candidate.candidateId || candidate.title || 'unknown').join(', ') || 'none'}</dd></div>
+        <div><dt>Queued goals</dt><dd>{projection.queuedGoalCount ?? 'unknown'}</dd></div>
+        <div><dt>Blocked goals</dt><dd>{projection.blockedGoalCount ?? 'unknown'}</dd></div>
+        <div><dt>Completed goals</dt><dd>{projection.completedGoalCount ?? 'unknown'}</dd></div>
+        <div><dt>GeneratedAt age</dt><dd>{projection.heartbeat?.generatedAtAgeSeconds ?? projection.generatedAtAgeSeconds ?? 'unknown'}s</dd></div>
+        <div><dt>Backend live</dt><dd>{projection.heartbeat?.backendLive === true ? 'true' : 'unknown'}</dd></div>
+        <div><dt>Projection source</dt><dd>{projection.heartbeat?.projectionSource || projection.projectionSource || 'unknown'}</dd></div>
+        <div><dt>Watched goals</dt><dd>{projection.heartbeat?.watchedGoals ?? engine.watchedGoalCount ?? 'unknown'}</dd></div>
+        <div><dt>Classified goals</dt><dd>{projection.heartbeat?.classifiedGoals ?? engine.classifiedGoalCount ?? 'unknown'}</dd></div>
+        <div><dt>Manual dispatch required</dt><dd>{projection.heartbeat?.manualDispatchRequired ?? engine.manualDispatchRequiredCount ?? 'unknown'}</dd></div>
+        <div><dt>Imported goals</dt><dd>{projection.importedGoals?.verificationState || 'unknown'}</dd></div>
+        <div><dt>Stale/unknown warnings</dt><dd>{(projection.heartbeat?.staleUnknownWarnings || projection.staleWarnings || []).join(' | ') || 'none'}</dd></div>
+        <div><dt>GitHub adapter</dt><dd>{githubTelemetry.status || 'adapter_unavailable'}</dd></div>
+        <div><dt>GitHub notifications</dt><dd>{Object.entries(notificationCounts).map(([key, value]) => `${key}:${value}`).join(' | ') || 'none'}</dd></div>
+        <div><dt>Open PRs</dt><dd>{githubTelemetry.pullRequestCount ?? (githubTelemetry.pullRequests || []).length ?? 'unknown'}</dd></div>
+        <div><dt>Workflows</dt><dd>{Object.entries(workflowCounts).map(([key, value]) => `${key}:${value}`).join(' | ') || 'none'}</dd></div>
+        <div><dt>V9 execution engine</dt><dd>{engine.status || 'unknown'} · classified {engine.classifiedGoalCount ?? 0} · manual dispatch {engine.manualDispatchRequiredCount ?? 0}</dd></div>
+      </dl>
+      <ExecutionEngineV9Surface engine={engine} />
+      <p className="mission-operations-next-action"><strong>Next operator action:</strong> {projection.nextOperatorAction || 'unknown'}</p>
+    </section>
+  );
+}
+
+export function BuildConciergeSurface({ concierge = {} }) {
+  const candidate = concierge.selectedCandidate || {};
+  const proofPacketSummary = concierge.proofPacketSummary || {};
+  const exactHeadApproval = concierge.exactHeadApproval || {};
+  const approvalDecision = concierge.approvalDecision || {};
+  const proofCommands = Array.isArray(candidate.proofCommands) ? candidate.proofCommands : [];
+  const blockers = Array.isArray(concierge.blockers) ? concierge.blockers : [];
+  const roadmap = concierge.roadmap || buildConciergeRoadmap();
+  const browserProofPacket = concierge.browserProofPacket || proofPacketSummary.browserProofPacket || {};
+  const consoleErrors = Array.isArray(browserProofPacket.consoleErrors) ? browserProofPacket.consoleErrors : [];
+  const caveats = Array.isArray(browserProofPacket.caveats) ? browserProofPacket.caveats : [];
+  const roadmapPhases = Array.isArray(roadmap.phases) ? roadmap.phases : [];
+  const postMergeSync = concierge.postMergeSync || {};
+  const pullMain = postMergeSync.pullMain || {};
+  const restartRefresh = postMergeSync.restartRefresh || {};
+  const backendFreshnessProof = postMergeSync.backendFreshnessProof || {};
+  const refreshState = postMergeSync.refreshState || {};
+  const queue = concierge.queue || {};
+  const antiStall = concierge.antiStallMergeLane || {};
+  const liveAdapter = concierge.liveAdapter || {};
+  const executionEngine = concierge.executionEngine || concierge.liveGoalProjection?.executionEngine || concierge.liveGoalProjection?.buildConciergeStatus?.executionEngine || {};
+  const queuedCandidates = Array.isArray(queue.queuedCandidates) ? queue.queuedCandidates : [];
+  const activeProofLane = Array.isArray(queue.activeProofLane) ? queue.activeProofLane : [];
+  return (
+    <>
+      <LiveGoalProjectionSummary projection={concierge.liveGoalProjection || {}} />
+      <section className="mission-operations-build-concierge" aria-label="Build Concierge panel" data-testid="build-concierge-panel">
+      <h4>Build Concierge</h4>
+      <dl className="mission-operations-grid">
+        <div><dt>Selected PR/goal candidate</dt><dd>{candidate.prNumber ? `#${candidate.prNumber} ${candidate.title || ''}` : 'unknown'}</dd></div>
+        <div><dt>Candidate head</dt><dd>{candidate.headSha || 'unknown'}</dd></div>
+        <div><dt>Proof readiness</dt><dd>{concierge.proofReadiness || (concierge.canStartProof ? 'ready' : 'blocked_or_unknown')}</dd></div>
+        <div><dt>Dirty-tree status</dt><dd>{concierge.dirtyTreeStatus || 'unknown'}</dd></div>
+        <div><dt>Exact-head approval</dt><dd>{exactHeadApproval.status || 'unknown'}</dd></div>
+        <div><dt>Approval token</dt><dd><code>{approvalDecision.approvalToken || exactHeadApproval.token || candidate.requiredApprovalToken || 'unknown'}</code></dd></div>
+        <div><dt>V6 approval surface</dt><dd>{approvalDecision.approvalStatus || 'awaiting_operator_token'} / {approvalDecision.rejectionStatus || 'not_rejected'}</dd></div>
+        <div><dt>V6 UI merge claim</dt><dd>{approvalDecision.uiMergeClaim === true ? 'invalid_merge_claim' : 'no UI merge claim'}</dd></div>
+        <div><dt>Proof packet</dt><dd>{proofPacketSummary.status || 'not_started'} · commands {proofPacketSummary.passedCommandCount ?? 0}/{proofPacketSummary.commandCount ?? proofCommands.length}</dd></div>
+        <div><dt>V4 browser proof</dt><dd>{browserProofPacket.browserProofStatus || proofPacketSummary.browserProof || concierge.browserProof || 'unknown'}</dd></div>
+        <div><dt>V4 screenshot</dt><dd>{browserProofPacket.screenshotPath || browserProofPacket.screenshotUnavailableReason || 'unknown'}</dd></div>
+        <div><dt>V4 checklist</dt><dd>{browserProofPacket.checklistStatus || 'unknown'}</dd></div>
+        <div><dt>Merge hold state</dt><dd>{concierge.mergeHoldState || 'HELD_UNKNOWN'}</dd></div>
+        <div><dt>V7 post-merge sync</dt><dd>{postMergeSync.status || roadmapPhases.find((phase) => phase.version === 'V7')?.status || 'unknown'} · merge receipt {postMergeSync.mergeReceiptObserved === true ? 'observed' : 'required'}</dd></div>
+        <div><dt>V7 pull main</dt><dd>{pullMain.status || 'unknown'}</dd></div>
+        <div><dt>V7 restart/refresh</dt><dd>{restartRefresh.status || 'unknown'} · PC restart {restartRefresh.pcRestartAllowed === true ? 'allowed' : 'prohibited'}</dd></div>
+        <div><dt>V7 backend freshness proof</dt><dd>{backendFreshnessProof.status || 'unknown'}</dd></div>
+        <div><dt>V7 surface refresh</dt><dd>Mission Operations {refreshState.missionOperations || 'unknown'} · Goal Dashboard {refreshState.goalDashboard || 'unknown'}</dd></div>
+        <div><dt>V8 queue</dt><dd>{queue.status || roadmapPhases.find((phase) => phase.version === 'V8')?.status || 'unknown'} · queued {queuedCandidates.length} · active {activeProofLane.length}</dd></div>
+        <div><dt>V8 one-active-lane guardrail</dt><dd>{queue.oneActiveLaneGuardrail || 'unknown'}</dd></div>
+        <div><dt>V8 next safe candidate</dt><dd>{queue.nextSafeCandidate?.candidateId || 'unknown'}</dd></div>
+        <div><dt>V8 anti-stall fallback truth</dt><dd>{antiStall.cliMergeFallbackAllowed === true ? 'manual CLI fallback allowed' : 'manual CLI fallback blocked_or_unknown'}</dd></div>
+        <div><dt>V8 connector merge</dt><dd>{antiStall.connectorMergeAttempted === true ? 'attempted' : 'not_attempted'} · {antiStall.connectorMergeBlockedReason || 'unknown'}</dd></div>
+        <div><dt>Live goal-create adapter</dt><dd>{liveAdapter.status || (liveAdapter.available === true ? 'available' : 'blocked_unavailable')} · {liveAdapter.route || '/api/build-concierge/goals'}</dd></div>
+        <div><dt>V9 execution engine</dt><dd>{executionEngine.status || 'unknown'} · watched {executionEngine.watchedGoalCount ?? 0} · classified {executionEngine.classifiedGoalCount ?? 0}</dd></div>
+      </dl>
+      <ExecutionEngineV9Surface engine={executionEngine} />
+      {liveAdapter.available === false || liveAdapter.status === 'blocked_unavailable' ? <p className="mission-operations-next-action"><strong>Build Concierge live adapter blocker:</strong> {liveAdapter.blockerText || 'Build Concierge live adapter unavailable: backend route /api/build-concierge/goals has not returned availability proof; create goals manually and keep queue truth unknown until a durable receipt exists.'}</p> : null}
+      <p className="mission-operations-next-action"><strong>Next operator action:</strong> {postMergeSync.nextOperatorAction || approvalDecision.nextOperatorAction || concierge.nextOperatorAction || 'Refresh Build Concierge truth before acting.'}</p>
+      {proofCommands.length ? (
+        <div><strong>Declared proof commands:</strong><ul className="mission-operations-evidence-list">{proofCommands.map((command) => <li key={command}><code>{command}</code></li>)}</ul></div>
+      ) : <p className="muted">Declared proof commands are unknown.</p>}
+      {(browserProofPacket.proofUnavailableBlocker || consoleErrors.length || caveats.length) ? (
+        <div className="mission-operations-evidence-group" aria-label="Build Concierge V4 browser proof truth">
+          <strong>V4 browser-proof blocker:</strong> {browserProofPacket.proofUnavailableBlocker || 'none'}
+          {consoleErrors.length ? <div><strong>Console errors:</strong> {consoleErrors.join(' | ')}</div> : null}
+          {caveats.length ? <div><strong>Caveats:</strong> {caveats.join(' | ')}</div> : null}
+        </div>
+      ) : null}
+      {queuedCandidates.length ? (
+        <div className="mission-operations-evidence-group" aria-label="Build Concierge V8 queue truth">
+          <strong>V8 queue state:</strong> one active proof lane unless explicitly isolated.
+          <ul className="mission-operations-evidence-list">{queuedCandidates.map((item) => <li key={item.candidateId}><strong>{item.candidateId}</strong> rank {item.queueRank} · {item.safeToProof ? 'safe_to_proof' : 'blocked_or_rejected'} · {item.rejectionReasons?.join(' | ') || item.blockers?.join(' | ') || 'no rejection reason'}</li>)}</ul>
+          {antiStall.exactCliMergeCommand ? <div><strong>Operator manual CLI fallback command:</strong> <code>{antiStall.exactCliMergeCommand}</code></div> : null}
+        </div>
+      ) : null}
+      {roadmapPhases.length ? (
+        <div className="mission-operations-evidence-group" aria-label="Build Concierge roadmap">
+          <strong>Roadmap:</strong> {roadmap.activePhase?.version || 'unknown'} · {roadmap.activePhase?.title || 'unknown'}
+          <ul className="mission-operations-evidence-list">
+            {roadmapPhases.map((phase) => <li key={phase.version}><strong>{phase.version}</strong> {phase.title} - {phase.status}</li>)}
+          </ul>
+          {Array.isArray(roadmap.successMarkers) && roadmap.successMarkers.length ? <code>{roadmap.successMarkers.join(' · ')}</code> : null}
+        </div>
+      ) : null}
+      {approvalDecision.rejectionReceipt ? <div className="mission-operations-alert mission-operations-alert--blocked"><strong>V6 rejection receipt:</strong> {approvalDecision.rejectionReceipt.status} · {approvalDecision.rejectionReceipt.reason}</div> : null}
+      {blockers.length ? <div className="mission-operations-alert mission-operations-alert--blocked"><strong>Concierge blockers:</strong> {blockers.join(' | ')}</div> : null}
+      </section>
+    </>
+  );
+}
+
 export function MissionSummary({ mission, onChanged }) {
   const supportingAgents = mission.agent.supportingAgents || [];
   const changedFiles = mission.git.changedFiles || [];
@@ -47,6 +208,8 @@ export function MissionSummary({ mission, onChanged }) {
   const deploymentSummary = ['sync', 'build', 'verify', 'restart']
     .map((step) => `${step}:${deployment[step]?.status || 'pending'}`)
     .join(' / ');
+  const goalDashboardStatusProjection = mission.goalDashboardStatusProjection || {};
+  const goalDashboardGoals = goalDashboardStatusProjection.goals || [];
 
   return (
     <article className="mission-operations-item" data-testid="mission-operations-item" data-mission-state={mission.mission.state}>
@@ -84,6 +247,7 @@ export function MissionSummary({ mission, onChanged }) {
         <div><dt>Updated</dt><dd>{displayTime(mission.mission.updatedAt)}</dd></div>
         <div><dt>Elapsed</dt><dd>{displayElapsed(mission.mission.elapsedSeconds)}</dd></div>
         <div><dt>Receipts</dt><dd>{receipts.length}</dd></div>
+        <div><dt>Goal status</dt><dd>{goalDashboardStatusProjection.refreshTruth || 'MANUAL_REFRESH_REQUIRED'}</dd></div>
       </dl>
 
       {mission.pullRequest.url ? (
@@ -128,6 +292,18 @@ export function MissionSummary({ mission, onChanged }) {
             <>
               <strong>{approval.kind}</strong> - {approval.status}
               {approval.decidedAt ? ` / decided ${displayTime(approval.decidedAt)}` : ''}
+            </>
+          )}
+        />
+        <EvidenceList
+          title="Goal Dashboard status"
+          items={goalDashboardGoals}
+          emptyText="Static Goal Dashboard seed is unavailable; manual refresh is required."
+          renderItem={(goal) => (
+            <>
+              <strong>{goal.issue}</strong> - {goal.status} / {goal.currentOwner} to {goal.nextOwner}
+              <br /><span>{goal.milestone}</span>
+              <br /><span>{goal.nextAction}</span>
             </>
           )}
         />
@@ -224,20 +400,33 @@ export default function MissionOperationsPanel({ isOpen, onToggle, missionId = '
     <CollapsiblePanel
       panelId="missionConsoleMissionOperationsPanel"
       title="Mission Operations"
-      description="Live mission, agent, Git, PR, approval, blocker, and evidence receipt truth."
+      description="Live mission, agent, Git, PR, update, approval, blocker, and evidence receipt truth."
       isOpen={isOpen}
       onToggle={onToggle}
       actions={actions}
       className="mission-operations-panel"
       testIdBase="mission-operations-panel"
     >
-      <MissionIntakeForm onChanged={refresh} />
-
       <div className="mission-operations-status" data-testid="mission-operations-status" data-feed-status={feed.status}>
         <span><strong>Feed:</strong> {feed.status}</span>
         <span><strong>Source:</strong> {feed.source || 'none'}</span>
         <span><strong>Last refresh:</strong> {displayTime(feed.generatedAt)}</span>
       </div>
+
+      <LiveGoalProjectionSummary projection={feed.liveGoalProjection || {}} />
+      <BuildConciergeSurface concierge={feed.buildConcierge || {}} />
+
+      {feed.updateStatus ? (
+        <div className="mission-operations-update-status" data-testid="mission-operations-update-status" data-update-status={feed.updateStatus.status}>
+          <strong>Workspace update:</strong> {feed.updateStatus.status}
+          <span>Local SHA: {feed.updateStatus.localSha || 'unknown'}</span>
+          <span>Main SHA: {feed.updateStatus.mainSha || 'unknown'}</span>
+          <span>Manual refresh required: {feed.updateStatus.manualRefreshRequired ? 'yes' : 'no'}</span>
+          <span>Auto-pull attempted: {feed.updateStatus.autoPullAttempted ? 'yes' : 'no'}</span>
+          <span>UI refresh after build: {feed.updateStatus.uiRefreshAfterBuild || 'manual-browser-refresh-required'}</span>
+          <span>Next operator action: {feed.updateStatus.nextOperatorAction || 'Refresh update status before acting.'}</span>
+        </div>
+      ) : null}
 
       {transportError ? (
         <div className="mission-operations-alert mission-operations-alert--blocked" role="alert">

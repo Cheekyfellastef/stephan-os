@@ -16,6 +16,30 @@ test('import guard passes when imports are at top and bindings are unique', () =
   assert.equal(violations.length, 0);
 });
 
+test('import guard accepts a legal line-one shebang before imports', () => {
+  const source = [
+    '#!/usr/bin/env node',
+    "import { a } from 'x';",
+    "import b from 'y';",
+    'const value = a + b;',
+  ].join('\n');
+
+  const violations = analyzeImportStructureInSource(source, 'executable.mjs');
+  assert.equal(violations.length, 0);
+});
+
+test('a shebang anywhere other than line one does not reopen the import region', () => {
+  const source = [
+    'const value = 1;',
+    '#!/usr/bin/env node',
+    "import { a } from 'x';",
+    'void value;',
+  ].join('\n');
+
+  const violations = analyzeImportStructureInSource(source, 'late-shebang.mjs');
+  assert.ok(violations.some((violation) => violation.reason === 'import not at top'));
+});
+
 test('import guard fails when an identifier is imported twice', () => {
   const source = [
     "import { a } from 'x';",

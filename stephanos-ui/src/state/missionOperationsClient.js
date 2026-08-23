@@ -12,26 +12,31 @@ async function requestMissionOperations(path, options = {}) {
     body: options.body ? JSON.stringify(options.body) : undefined,
     signal: options.signal,
   });
+
   let payload = null;
-  try { payload = await response.json(); } catch { payload = null; }
-  if (!response.ok) {
-    throw new Error(payload?.errors?.[0] || payload?.error || `Mission Operations request failed (${response.status}).`);
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
   }
-  if (!payload || typeof payload !== 'object') throw new Error('Mission Operations returned an invalid payload.');
+
+  if (!response.ok) {
+    throw new Error(
+      payload?.errors?.[0]
+      || payload?.error
+      || `Mission Operations request failed (${response.status}).`,
+    );
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Mission Operations returned an invalid payload.');
+  }
   return payload;
 }
 
 export function fetchMissionOperations({ missionId = '', signal, runtimeConfig } = {}) {
   const query = missionId ? `?missionId=${encodeURIComponent(missionId)}` : '';
   return requestMissionOperations(`/api/mission-operations${query}`, { signal, runtimeConfig });
-}
-
-export function createMissionOperation(input, options = {}) {
-  return requestMissionOperations('/api/mission-operations/missions', {
-    ...options,
-    method: 'POST',
-    body: input,
-  });
 }
 
 export function approveMissionOperation(missionId, approvalToken, options = {}) {

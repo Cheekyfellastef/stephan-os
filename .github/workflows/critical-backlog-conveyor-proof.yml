@@ -1,0 +1,59 @@
+name: Critical Backlog Conveyor Proof
+
+on:
+  pull_request:
+    paths:
+      - 'shared/agents/criticalBacklogConveyor.mjs'
+      - 'shared/agents/criticalBacklogConveyor.test.mjs'
+      - 'stephanos-server/services/criticalBacklogConveyorService.js'
+      - 'stephanos-server/services/criticalBacklogConveyorService.test.js'
+      - 'scripts/battle-bridge-worker-watchdog-runner.mjs'
+      - 'scripts/battle-bridge-worker-watchdog-runner.test.mjs'
+      - '.github/workflows/critical-backlog-conveyor-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: critical-backlog-conveyor-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Critical backlog policy and service proof
+        run: >-
+          node --test
+          shared/agents/criticalBacklogConveyor.test.mjs
+          stephanos-server/services/criticalBacklogConveyorService.test.js
+          scripts/battle-bridge-worker-watchdog-runner.test.mjs
+
+      - name: Mission orchestrator compatibility proof
+        run: >-
+          node --test
+          shared/agents/missionOrchestrator.test.mjs
+          shared/agents/missionOrchestratorWorker.test.mjs
+          stephanos-server/services/missionOrchestratorWorkerService.test.js
+
+      - name: Syntax proof
+        run: >-
+          node --check shared/agents/criticalBacklogConveyor.mjs
+          && node --check stephanos-server/services/criticalBacklogConveyorService.js
+          && node --check scripts/battle-bridge-worker-watchdog-runner.mjs
+
+      - name: Diff check
+        if: always()
+        run: git diff --check origin/main...HEAD

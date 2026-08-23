@@ -4,17 +4,6 @@ on:
   pull_request:
     branches:
       - main
-    paths:
-      - '.github/workflows/openclaw-github-operator.yml'
-      - 'package.json'
-      - 'scripts/openclaw-github-operator.mjs'
-      - 'scripts/stephanos-issue-openclaw-github-authorization.mjs'
-      - 'shared/agents/openClawGitHubAuthorization.mjs'
-      - 'shared/agents/openClawGitHubAuthorization.test.mjs'
-      - 'shared/agents/openClawGitHubExecutorPreflight.mjs'
-      - 'shared/agents/openClawGitHubExecutorPreflight.test.mjs'
-      - 'shared/agents/openClawGitHubOperator.mjs'
-      - 'shared/agents/openClawGitHubOperator.test.mjs'
 
 permissions:
   contents: read
@@ -26,6 +15,9 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

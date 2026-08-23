@@ -1,0 +1,140 @@
+name: Mailbox Receipt Index
+
+on:
+  pull_request:
+    paths:
+      - 'shared/agents/mailboxReceiptIndex.mjs'
+      - 'shared/agents/mailboxReceiptIndex.test.mjs'
+      - 'shared/agents/mailboxReceiptIndexAccess.mjs'
+      - 'shared/agents/mailboxReceiptIndexAccess.test.mjs'
+      - 'shared/agents/mailboxReceiptIndexGitHubMirror.mjs'
+      - 'shared/agents/mailboxReceiptIndexGitHubMirror.test.mjs'
+      - 'shared/agents/mailboxReceiptTruthIssue.test.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs'
+      - 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1'
+      - '.github/workflows/mailbox-receipt-index.yml'
+  issue_comment:
+    types: [created, edited]
+  push:
+    branches: [main]
+    paths:
+      - 'shared/agents/mailboxReceiptIndex.mjs'
+      - 'shared/agents/mailboxReceiptIndexGitHubMirror.mjs'
+      - '.github/workflows/mailbox-receipt-index.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mailbox-receipt-index-${{ github.event.pull_request.number || 'mirror' }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Shared Workspace receipt index proof
+        run: >-
+          node --test
+          shared/agents/mailboxReceiptIndex.test.mjs
+          shared/agents/mailboxReceiptIndexAccess.test.mjs
+          shared/agents/mailboxReceiptIndexGitHubMirror.test.mjs
+          shared/agents/mailboxReceiptTruthIssue.test.mjs
+          scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
+
+      - name: Import structure proof
+        run: node scripts/guard-import-structure.mjs
+
+      - name: Diff check
+        if: always()
+        run: git diff --check origin/main...HEAD
+
+  mirror:
+    if: >-
+      github.event_name != 'pull_request' &&
+      (
+        github.event_name != 'issue_comment' ||
+        (
+          github.event.issue.number == 1507 &&
+          github.event.comment.user.login == github.repository_owner &&
+          contains(github.event.comment.body, '<!-- stephanos-battle-bridge-command-receipt -->')
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted main source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Update compact receipt truth surfaces
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const path = await import('node:path');
+            const { pathToFileURL } = await import('node:url');
+            const moduleUrl = `${pathToFileURL(path.resolve('shared/agents/mailboxReceiptIndexGitHubMirror.mjs')).href}?run=${Date.now()}`;
+            const receiptIndexMirror = await import(moduleUrl);
+            const mailboxIssueNumber = receiptIndexMirror.MAILBOX_RECEIPT_GITHUB_ISSUE;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: mailboxIssueNumber,
+              per_page: 100,
+            });
+            const record = receiptIndexMirror.createTrustedMailboxReceiptIndexFromGitHubComments(comments, {
+              ownerLogin: context.repo.owner,
+              timestampUtc: new Date().toISOString(),
+            });
+            const commentBody = receiptIndexMirror.buildTrustedMailboxReceiptIndexGitHubBody(record);
+            const existing = receiptIndexMirror.findTrustedMailboxReceiptIndexComment(comments);
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: commentBody,
+              });
+              core.info(`Updated receipt index comment ${existing.id}.`);
+            } else {
+              const created = await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: mailboxIssueNumber,
+                body: commentBody,
+              });
+              core.info(`Created receipt index comment ${created.data.id}.`);
+            }
+
+            const truthIssueNumber = receiptIndexMirror.MAILBOX_RECEIPT_GITHUB_TRUTH_ISSUE;
+            const truthBody = receiptIndexMirror.buildTrustedMailboxReceiptTruthIssueBody(record);
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: truthIssueNumber,
+              title: receiptIndexMirror.MAILBOX_RECEIPT_GITHUB_TRUTH_TITLE,
+              body: truthBody,
+              state: 'open',
+            });
+            core.info(`Updated receipt truth issue ${truthIssueNumber}.`);
