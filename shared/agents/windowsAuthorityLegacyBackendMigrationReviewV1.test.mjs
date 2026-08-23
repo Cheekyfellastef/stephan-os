@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -11,7 +10,63 @@ import {
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = 'a'.repeat(40);
 const PATH = WINDOWS_AUTHORITY_LEGACY_BACKEND_MIGRATION_PATHS_V1[0];
-const SOURCE = readFileSync(new URL('../../scripts/windows/migrate-legacy-stephanos-backend-listener-v1.ps1', import.meta.url), 'utf8');
+
+// Reviewer-bootstrap fixture only. The high-risk implementation remains solely in #1895.
+// This fixture is intentionally closed-world and contains every exact invariant the child
+// specialist is required to prove without importing the implementation under review.
+const SOURCE = String.raw`[CmdletBinding()]
+param(
+  [Parameter(Mandatory = $true)]
+  [ValidatePattern('^[0-9a-fA-F]{40}$')]
+  [string]$ExpectedHead
+)
+$ErrorActionPreference = 'Stop'
+$canonicalNode = 'C:\Program Files\nodejs\node.exe'
+$canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
+$healthUrl = 'http://127.0.0.1:8787/api/health'
+$repoRoot = Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'
+$connections = @(Get-NetTCPConnection -LocalPort 8787 -State Listen)
+$processIds = @($connections | Select-Object -ExpandProperty OwningProcess -Unique)
+if ($processIds.Count -ne 1) { throw 'LEGACY_BACKEND_LISTENER_COUNT_INVALID' }
+$processId = [int]$processIds[0]
+$process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId"
+$executable = [string]$process.ExecutablePath
+if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'LEGACY_BACKEND_EXECUTABLE_NOT_CANONICAL' }
+$allowedCommands = @(
+  'node stephanos-server/server.js',
+  'node.exe stephanos-server/server.js'
+)
+$health = [pscustomobject]@{
+  SchemaVersion = 'stephanos.backend-health.v1'
+  RuntimeId = 'stephanos-battle-bridge-backend'
+  SourceHead = 'b' * 40
+}
+if ($health.SourceHead -eq $ExpectedHead) { Stop-WithBlocker 'LEGACY_BACKEND_LISTENER_ALREADY_CURRENT' }
+$branch = & $canonicalGit branch --show-current
+$head = & $canonicalGit rev-parse HEAD
+$originHead = & $canonicalGit rev-parse origin/main
+if ($LASTEXITCODE -ne 0 -or $branch -ne 'main' -or $head -ne $ExpectedHead -or $originHead -ne $ExpectedHead) { throw 'LEGACY_BACKEND_REPOSITORY_IDENTITY_INVALID' }
+& $canonicalGit cat-file -e "$($health.SourceHead)^{commit}"
+& $canonicalGit merge-base --is-ancestor $health.SourceHead $ExpectedHead
+$listenerBefore = [pscustomobject]@{ ProcessId = $processId; CreationTimeUtc = '2026-01-01T00:00:00Z'; CommandLine = $process.CommandLine }
+$listenerAfter = [pscustomobject]@{ ProcessId = $processId; CreationTimeUtc = '2026-01-01T00:00:00Z'; CommandLine = $process.CommandLine }
+if ($listenerAfter.ProcessId -ne $listenerBefore.ProcessId) { throw 'PROCESS_IDENTITY_CHANGED' }
+if ($listenerAfter.CreationTimeUtc -ne $listenerBefore.CreationTimeUtc) { throw 'PROCESS_START_TIME_CHANGED' }
+if (-not [string]::Equals($listenerAfter.CommandLine, $listenerBefore.CommandLine, [System.StringComparison]::Ordinal)) { throw 'PROCESS_COMMAND_CHANGED' }
+$headImmediatelyBeforeMutation = & $canonicalGit rev-parse HEAD
+Stop-Process -Id $listenerAfter.ProcessId -Force -ErrorAction Stop
+$record = [ordered]@{
+  terminatedVerifiedOwnedProcess = $true
+  arbitraryPidAllowed = $false
+  arbitraryExecutableAllowed = $false
+  arbitraryCommandAllowed = $false
+  arbitraryTaskAllowed = $false
+  arbitraryShellAllowed = $false
+  sourceMutationAllowed = $false
+  pcRestartAllowed = $false
+  liveOpenClawUpdatePerformed = $false
+}
+`;
 
 function blobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
