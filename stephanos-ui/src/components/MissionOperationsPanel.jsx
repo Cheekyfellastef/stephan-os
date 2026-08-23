@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import CollapsiblePanel from './CollapsiblePanel';
+import { MissionActionControls } from './MissionOperationsControls';
 import { fetchMissionOperations } from '../state/missionOperationsClient';
 import { buildConciergeRoadmap } from '../../../shared/agents/battleBridgeBuildConciergeV2.mjs';
 import './MissionOperationsPanel.css';
@@ -195,13 +196,18 @@ export function BuildConciergeSurface({ concierge = {} }) {
   );
 }
 
-export function MissionSummary({ mission }) {
-  const checkSummary = `${mission.pullRequest.passingCheckCount}/${mission.pullRequest.requiredCheckCount}`;
+export function MissionSummary({ mission, onChanged }) {
   const supportingAgents = mission.agent.supportingAgents || [];
   const changedFiles = mission.git.changedFiles || [];
   const checks = mission.pullRequest.checks || [];
   const approvals = mission.approvals || [];
   const receipts = mission.receipts || [];
+  const pendingApproval = approvals.some((approval) => approval.status === 'pending');
+  const repair = mission.repair || { currentRound: 0, maximumRounds: 3 };
+  const deployment = mission.deployment || {};
+  const deploymentSummary = ['sync', 'build', 'verify', 'restart']
+    .map((step) => `${step}:${deployment[step]?.status || 'pending'}`)
+    .join(' / ');
   const goalDashboardStatusProjection = mission.goalDashboardStatusProjection || {};
   const goalDashboardGoals = goalDashboardStatusProjection.goals || [];
 
@@ -234,7 +240,9 @@ export function MissionSummary({ mission }) {
         <div><dt>Pull request</dt><dd>{mission.pullRequest.number ? `#${mission.pullRequest.number}` : 'not opened'}</dd></div>
         <div><dt>PR state</dt><dd>{mission.pullRequest.state || 'not reported'}</dd></div>
         <div><dt>Mergeable</dt><dd>{mission.pullRequest.mergeable ? 'yes' : 'not proven'}</dd></div>
-        <div><dt>Checks</dt><dd>{checkSummary}</dd></div>
+        <div><dt>Checks</dt><dd>{mission.pullRequest.passingCheckCount}/{mission.pullRequest.requiredCheckCount}</dd></div>
+        <div><dt>Repair round</dt><dd>{repair.currentRound}/{repair.maximumRounds}</dd></div>
+        <div><dt>Deployment</dt><dd>{deploymentSummary}</dd></div>
         <div><dt>Started</dt><dd>{displayTime(mission.mission.startedAt)}</dd></div>
         <div><dt>Updated</dt><dd>{displayTime(mission.mission.updatedAt)}</dd></div>
         <div><dt>Elapsed</dt><dd>{displayElapsed(mission.mission.elapsedSeconds)}</dd></div>
@@ -283,7 +291,6 @@ export function MissionSummary({ mission }) {
           renderItem={(approval) => (
             <>
               <strong>{approval.kind}</strong> - {approval.status}
-              {approval.requiredToken ? <><br /><code>{approval.requiredToken}</code></> : null}
               {approval.decidedAt ? ` / decided ${displayTime(approval.decidedAt)}` : ''}
             </>
           )}
@@ -315,13 +322,13 @@ export function MissionSummary({ mission }) {
         />
       </div>
 
-      {approvals.some((approval) => approval.status === 'pending') ? (
+      {pendingApproval ? (
         <div className="mission-operations-alert mission-operations-alert--approval">
-          <strong>Approval required:</strong>{' '}
-          {approvals.filter((approval) => approval.status === 'pending')
-            .map((approval) => approval.requiredToken || approval.approvalId).join(', ')}
+          <strong>Approval required:</strong> submit the private exact head-bound token below.
         </div>
       ) : null}
+
+      <MissionActionControls mission={mission} onChanged={onChanged} />
 
       {mission.blockers.length ? (
         <div className="mission-operations-alert mission-operations-alert--blocked">
@@ -331,7 +338,8 @@ export function MissionSummary({ mission }) {
 
       {mission.warnings.length ? (
         <div className="mission-operations-alert mission-operations-alert--warning">
-          <strong>Evidence warnings:</strong> {mission.warnings.join(' | ')}</div>
+          <strong>Evidence warnings:</strong> {mission.warnings.join(' | ')}
+        </div>
       ) : null}
     </article>
   );
@@ -434,7 +442,9 @@ export default function MissionOperationsPanel({ isOpen, onToggle, missionId = '
 
       {feed.missions?.length ? (
         <div className="mission-operations-list">
-          {feed.missions.map((mission) => <MissionSummary key={mission.mission.missionId} mission={mission} />)}
+          {feed.missions.map((mission) => (
+            <MissionSummary key={mission.mission.missionId} mission={mission} onChanged={refresh} />
+          ))}
         </div>
       ) : (
         <div className="empty-state" data-testid="mission-operations-empty">
