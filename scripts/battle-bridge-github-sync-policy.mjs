@@ -155,7 +155,8 @@ export function buildRemoteDirtBlockerSummary(dirt = {}) {
   if (generatedSourceCount) details.push(`generatedSourceCount=${generatedSourceCount}`);
   const detailed = details.length ? `${base} ${details.join('; ')}` : base;
   if (detailed.length <= REMOTE_DIRT_SUMMARY_MAX) return detailed;
-  return `${base} trackedCount=${trackedSource.length}; untrackedCount=${untrackedSource.length}; unknownCount=${unknownCount}; runtimeOnlyCount=${runtimeOnlyCount}; diagnosticSamplesRedacted=true`;
+  const compact = `${base} tracked=${trackedSource.length}; untracked=${untrackedSource.length}; hidden=${hiddenBlockingCount}; unknown=${unknownCount}; runtime=${runtimeOnlyCount}; generated=${generatedSourceCount}; samplesRedacted=true`;
+  return compact.length <= REMOTE_DIRT_SUMMARY_MAX ? compact : `${base} diagnosticSamplesRedacted=true`;
 }
 
 function remoteMatches(remoteUrl) {

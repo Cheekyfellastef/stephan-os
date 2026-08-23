@@ -95,7 +95,7 @@ test('dirty source blocks and runtime-only dirt cannot hide source dirt', () => 
   assert.equal(evaluateSyncPolicy({ ...baseFacts, statusLines: [' M scripts/ignite-stephanos-local.mjs'] }).classification, SYNC_CLASSIFICATIONS.BLOCKED_DIRTY_SOURCE);
 });
 
-test('dirty-source blocker exposes only bounded sanitized repo-relative samples', () => {
+test('dirty-source blocker exposes samples when bounded and compact counts when redacted', () => {
   const dirt = classifyDirt([
     ' M scripts/ignite-stephanos-local.mjs',
     '?? docs/recovery-note.md',
@@ -105,9 +105,11 @@ test('dirty-source blocker exposes only bounded sanitized repo-relative samples'
     '?? logs/runtime.txt',
   ]);
   const summary = buildRemoteDirtBlockerSummary(dirt);
-  assert.match(summary, /blockingSamples=\[tracked:scripts\/ignite-stephanos-local\.mjs\|untracked:docs\/recovery-note\.md\]/);
-  assert.match(summary, /hiddenBlockingCount=3/);
-  assert.match(summary, /runtimeOnlyCount=1/);
+  assert.match(summary, /tracked=1/);
+  assert.match(summary, /untracked=4/);
+  assert.match(summary, /hidden=3/);
+  assert.match(summary, /runtime=1/);
+  assert.match(summary, /samplesRedacted=true/);
   assert.ok(summary.length <= 180);
   assert.doesNotMatch(summary, /ghp_|\.\.\/|path with spaces/);
 
@@ -128,7 +130,10 @@ test('oversized or unsafe dirt diagnostics fall back to counts without raw path 
     '?? github_pat_abcdefghijklmnop.txt',
   ]);
   const summary = buildRemoteDirtBlockerSummary(dirt);
-  assert.match(summary, /hiddenBlockingCount=3|diagnosticSamplesRedacted=true/);
+  assert.match(summary, /tracked=1/);
+  assert.match(summary, /untracked=2/);
+  assert.match(summary, /hidden=3/);
+  assert.match(summary, /samplesRedacted=true/);
   assert.doesNotMatch(summary, /C:\/|Users\/example|github_pat_|aaaaaaaaaaaaaaaaaaaaaaaa/);
   assert.ok(summary.length <= 180);
 });
