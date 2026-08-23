@@ -49,17 +49,25 @@ jobs:
       - name: Run coordinator regressions
         run: |
           npm run stephanos:exact-head-review:test
+          node --test shared/agents/codexReviewCapacityFailoverV1.test.mjs
           node --test shared/agents/exactHeadReviewCoordinatorAuthority.test.mjs
           node --test shared/agents/independentReviewRetryPlanner.test.mjs
           node --test shared/agents/exactHeadReviewDispatchWorkflow.test.mjs
+          node --test shared/agents/independentReviewSuccessfulArtifactRecoveryWorkflowV1.test.mjs
           node --test shared/agents/independentReviewHandoffProvenanceV1.test.mjs
           node --test shared/agents/independentReviewHandoffRunReceiptV1.test.mjs
           node --test shared/agents/independentReviewHandoffIdentityV1.test.mjs
           node --test shared/agents/independentReviewWorkflowDispatchAdmissionV1.test.mjs
+          node --test shared/agents/independentReviewMissingRunLaunchV1.test.mjs
+          node --test shared/agents/independentReviewWorkflowDispatchLaunchReceiptV1.test.mjs
+          node --test shared/agents/independentReviewWorkflowDispatchRunDiscoveryV1.test.mjs
           node --test scripts/bind-independent-review-handoff-provenance-v1.test.mjs
+          node --test scripts/launch-missing-independent-review-v1.test.mjs
+          node --test scripts/recover-successful-independent-review-v1.test.mjs
 
       - name: Parse review coordinator sources
         run: |
+          node --check shared/agents/codexReviewCapacityFailoverV1.mjs
           node --check shared/agents/exactHeadReviewDispatchCoordinator.mjs
           node --check shared/agents/exactHeadReviewCoordinatorAuthority.mjs
           node --check shared/agents/independentReviewRetryPlanner.mjs
@@ -67,9 +75,14 @@ jobs:
           node --check shared/agents/independentReviewHandoffRunReceiptV1.mjs
           node --check shared/agents/independentReviewHandoffIdentityV1.mjs
           node --check shared/agents/independentReviewWorkflowDispatchAdmissionV1.mjs
+          node --check shared/agents/independentReviewMissingRunLaunchV1.mjs
+          node --check shared/agents/independentReviewWorkflowDispatchLaunchReceiptV1.mjs
+          node --check shared/agents/independentReviewWorkflowDispatchRunDiscoveryV1.mjs
           node --check scripts/bind-independent-review-handoff-provenance-v1.mjs
           node --check scripts/exact-head-review-dispatch.mjs
           node --check scripts/retry-independent-review.mjs
+          node --check scripts/launch-missing-independent-review-v1.mjs
+          node --check scripts/recover-successful-independent-review-v1.mjs
 
       - name: Diff check
         if: always()
@@ -125,6 +138,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Classify trusted Codex review-capacity outage
+        id: provider_failover
+        if: >-
+          github.event_name == 'issue_comment' &&
+          github.event.issue.pull_request != null
+        run: node shared/agents/codexReviewCapacityFailoverV1.mjs
 
       - name: Download the exact triggering independent-review artifact
         if: >-
@@ -226,6 +246,7 @@ jobs:
         run: node scripts/bind-independent-review-handoff-provenance-v1.mjs
 
       - name: Upload immutable coordinator-to-handoff run receipt
+        id: upload_handoff
         if: >-
           always() &&
           steps.bind_handoff.outcome == 'success'
@@ -239,6 +260,7 @@ jobs:
           include-hidden-files: false
 
       - name: Retry one exact failed canonical independent review
+        id: retry
         if: >-
           always() &&
           steps.coordinate.outputs.retry_targets != '' &&
@@ -248,3 +270,61 @@ jobs:
           STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR: ${{ matrix.target.prNumber }}
           STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD: ${{ fromJSON(steps.coordinate.outputs.retry_targets)[0].exactHead }}
         run: node scripts/retry-independent-review.mjs
+
+      - name: Launch one exact missing canonical independent review
+        id: launch_missing
+        if: >-
+          always() &&
+          steps.bind_handoff.outcome == 'success' &&
+          steps.upload_handoff.outcome == 'success' &&
+          steps.retry.outcome == 'success' &&
+          steps.retry.outputs.decision == 'NO_MATCHING_RUN'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR: ${{ matrix.target.prNumber }}
+          STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD: ${{ fromJSON(steps.coordinate.outputs.retry_targets)[0].exactHead }}
+          STEPHANOS_REVIEW_HANDOFF_RUN_RECEIPT_PATH: ${{ runner.temp }}/independent-review-handoff-run-receipt.json
+        run: node scripts/launch-missing-independent-review-v1.mjs
+
+      - name: Discover successful review result for receipt recovery
+        id: recover_successful
+        if: >-
+          always() &&
+          steps.bind_handoff.outcome == 'success' &&
+          steps.upload_handoff.outcome == 'success' &&
+          steps.retry.outcome == 'success' &&
+          steps.retry.outputs.decision == 'NO_MATCHING_RUN' &&
+          steps.launch_missing.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_PR: ${{ matrix.target.prNumber }}
+          STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_HEAD: ${{ fromJSON(steps.coordinate.outputs.retry_targets)[0].exactHead }}
+        run: node scripts/recover-successful-independent-review-v1.mjs
+
+      - name: Download recovered successful independent review result
+        id: download_recovered_review
+        if: >-
+          always() &&
+          steps.recover_successful.outcome == 'success' &&
+          steps.recover_successful.outputs.recovery_required == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.recover_successful.outputs.artifact_name }}
+          path: ${{ runner.temp }}/recovered-independent-review
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.recover_successful.outputs.run_id }}
+
+      - name: Consume recovered successful independent review result
+        if: >-
+          always() &&
+          steps.download_recovered_review.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ matrix.target.prNumber }}
+          STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
+          STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES: '10'
+          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: 'true'
+          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/recovered-independent-review/independent-review-result.json
+          STEPHANOS_TRIGGER_REVIEW_RUN_ID: ${{ steps.recover_successful.outputs.run_id }}
+          STEPHANOS_TRIGGER_REVIEW_RUN_ATTEMPT: ${{ steps.recover_successful.outputs.run_attempt }}
+        run: node scripts/exact-head-review-dispatch.mjs
