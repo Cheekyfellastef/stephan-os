@@ -107,7 +107,7 @@ test('dirty-source blocker exposes samples when bounded and compact counts when 
   const summary = buildRemoteDirtBlockerSummary(dirt);
   assert.match(summary, /tracked=1/);
   assert.match(summary, /untracked=4/);
-  assert.match(summary, /hidden=3/);
+  assert.match(summary, /hidden=5/);
   assert.match(summary, /runtime=1/);
   assert.match(summary, /samplesRedacted=true/);
   assert.ok(summary.length <= 180);
@@ -120,6 +120,42 @@ test('dirty-source blocker exposes samples when bounded and compact counts when 
   assert.equal(evaluation.classification, SYNC_CLASSIFICATIONS.BLOCKED_DIRTY_SOURCE);
   assert.match(evaluation.exactNextAction, /tracked:scripts\/ignite-stephanos-local\.mjs/);
   assert.match(evaluation.exactNextAction, /untracked:docs\/recovery-note\.md/);
+});
+
+test('credential-shaped and high-entropy filename components are never published', () => {
+  const sensitivePaths = [
+    'debug/AKIAIOSFODNN7EXAMPLE.txt',
+    'secrets/npm_abcdefghijklmnopqrstuvwxyz.txt',
+    'debug/eyJabcDEF12.abcDEF123456.sigABC123456.txt',
+    'scratch/Abcdefghijklmnopqrstuv1234567890.txt',
+  ];
+  const dirt = classifyDirt(sensitivePaths.map((path) => `?? ${path}`));
+  const summary = buildRemoteDirtBlockerSummary(dirt);
+  assert.match(summary, /untracked=4/);
+  assert.match(summary, /hidden=4/);
+  assert.match(summary, /samplesRedacted=true/);
+  assert.ok(summary.length <= 180);
+  for (const path of sensitivePaths) {
+    assert.doesNotMatch(summary, new RegExp(path.split('/').at(-1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+  assert.doesNotMatch(summary, /AKIA|npm_|eyJabcDEF12|Abcdefghijklmnopqrstuv/);
+});
+
+test('length fallback counts otherwise safe samples that it redacts', () => {
+  const trackedPath = `scripts/${'a'.repeat(60)}.mjs`;
+  const untrackedPath = `docs/${'b'.repeat(63)}.md`;
+  const dirt = classifyDirt([
+    ` M ${trackedPath}`,
+    `?? ${untrackedPath}`,
+  ]);
+  const summary = buildRemoteDirtBlockerSummary(dirt);
+  assert.match(summary, /tracked=1/);
+  assert.match(summary, /untracked=1/);
+  assert.match(summary, /hidden=2/);
+  assert.match(summary, /samplesRedacted=true/);
+  assert.doesNotMatch(summary, /blockingSamples=/);
+  assert.doesNotMatch(summary, /aaaaaaaaaaaaaaaa|bbbbbbbbbbbbbbbb/);
+  assert.ok(summary.length <= 180);
 });
 
 test('oversized or unsafe dirt diagnostics fall back to counts without raw path leakage', () => {
