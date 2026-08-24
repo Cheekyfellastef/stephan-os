@@ -22,6 +22,17 @@ const DIRECTORY_BY_KIND = Object.freeze({
   events: 'eventRecords',
 });
 
+export const SPECIALIZED_NON_DASHBOARD_STATUS_FILES = Object.freeze([
+  'battle-bridge-ignition-supervisor-current.json',
+  'battle-bridge-recovery-mesh-launch-current.json',
+  'battle-bridge-worker-watchdog-launch-current.json',
+  'guarded-goal-runner-current.json',
+  'mission-orchestrator-worker-heartbeat.json',
+  'stephanos-backend-runtime.json',
+]);
+
+const SPECIALIZED_NON_DASHBOARD_STATUS_FILE_SET = new Set(SPECIALIZED_NON_DASHBOARD_STATUS_FILES);
+
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
   const out = String(value).trim();
@@ -92,7 +103,10 @@ async function readRecordDirectory(root, directory, options) {
   }
   const records = [];
   const errors = [];
-  for (const name of names.filter((item) => item.endsWith('.json'))) {
+  for (const name of names.filter((item) => (
+    item.endsWith('.json')
+    && !(directory === 'status' && SPECIALIZED_NON_DASHBOARD_STATUS_FILE_SET.has(item))
+  ))) {
     try {
       const record = JSON.parse(await readFile(join(resolved.path, name), 'utf8'));
       const validation = validateSharedWorkspaceRecord(record, options);
