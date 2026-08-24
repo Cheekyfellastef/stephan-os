@@ -21,6 +21,9 @@ import {
   validateIndependentReviewWorkflowDispatchExecutionV1,
 } from '../shared/agents/independentReviewWorkflowDispatchExecutionV1.mjs';
 import {
+  independentReviewWorkflowDispatchRunNameV1,
+} from '../shared/agents/independentReviewWorkflowDispatchLaunchReceiptV1.mjs';
+import {
   PERSONAL_REPOSITORY_APPROVAL_JOB,
   PERSONAL_REPOSITORY_EVIDENCE_JOB,
   PERSONAL_REPOSITORY_MERGE_JOB,
@@ -48,7 +51,6 @@ const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-personal-repository-protected-squash';
 const MAX_API_PAGES = 20;
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
-const CHECK_SNAPSHOT_REREAD_DELAY_MS = 1_000;
 const COMPLETION_MARKER = '<!-- stephanos-personal-repository-protected-squash-completion -->';
 const mode = String(process.argv[2] || '').trim().toLowerCase();
 
@@ -275,7 +277,7 @@ async function currentWorkflowExecution(context) {
   const triggeringActor = text(run?.triggering_actor?.login || run?.actor?.login).toLowerCase();
   const runIdentityMismatches = [...new Set([
     ...execution.currentMismatches,
-    ...(text(run?.name) === text(definition.name) ? [] : ['workflow-name']),
+    ...(text(run?.name) === expectedDisplayTitle ? [] : ['run-name']),
     ...(text(run?.display_title) === expectedDisplayTitle ? [] : ['display-title']),
     ...(triggeringActor === OPERATOR_MERGE_REVIEWER.toLowerCase() ? [] : ['triggering-actor']),
   ])];
@@ -460,6 +462,11 @@ async function loadSelectedIndependentReview(context, identity) {
       expectedWorkflowId: definition.id,
       workflowRunId: selected.independentReviewWorkflowRunId,
       workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+      expectedWorkflowRunName: independentReviewWorkflowDispatchRunNameV1({
+        prNumber: identity.prNumber,
+        sourceHead: identity.sourceHead,
+        handoffBindingSha256: 'legacy-pull-request-target',
+      }),
     });
   if (!workflowValidation.valid) {
     fail('Selected independent review run is failed, stale or ambiguously bound.', {
@@ -557,7 +564,6 @@ async function collectEvidence(context, expected = {}) {
   const checks = await validatePersonalRepositoryCheckRunsWithBoundedReread({
     readSnapshot: async (attempt) => {
       if (attempt === 1) return initialCheckSnapshot;
-      await new Promise((resolve) => setTimeout(resolve, CHECK_SNAPSHOT_REREAD_DELAY_MS));
       const [freshWorkflowRunSummaries, freshCheckRuns, freshCommitStatuses] = await Promise.all([
         apiCollection(`/repos/${context.owner}/${context.repo}/actions/runs?head_sha=${identity.sourceHead}`, 'workflow_runs'),
         apiCollection(`/repos/${context.owner}/${context.repo}/commits/${identity.sourceHead}/check-runs?filter=latest`, 'check_runs'),
