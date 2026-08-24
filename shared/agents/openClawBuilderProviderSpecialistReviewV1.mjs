@@ -10,29 +10,42 @@ export const OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1 = Object.freeze([
   'integrations/openclaw/stephanos-builder-provider/package.json',
 ]);
 
+export const OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1 = Object.freeze([
+  'shared/agents/openClawProviderPoolQualificationV1.mjs',
+  'shared/agents/openClawProviderPoolQualificationV1.test.mjs',
+  'shared/agents/openClawTaskClassPromotionCandidateV1.mjs',
+  'shared/agents/openClawTaskClassPromotionCandidateV1.test.mjs',
+]);
+
 const SCHEMA = 'stephanos.openclaw-builder-provider-specialist-review.v1';
 const SOURCE_SCHEMA = 'stephanos.windows-authority-source.v1';
 const CANONICAL_REPOSITORY = 'Cheekyfellastef/stephan-os';
 const OC1_PR = 1910;
+const PROVIDER_POOL_PR = 1905;
 const SHA = /^[a-f0-9]{40}$/;
 const text = (value) => String(value ?? '').trim();
 const unique = (values) => [...new Set(values)];
 const finding = (code, path) => Object.freeze({ severity: 'P0', code, summary: code, path });
+
+const PROFILES = Object.freeze({
+  [OC1_PR]: Object.freeze({ id: 'oc1', paths: OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1 }),
+  [PROVIDER_POOL_PR]: Object.freeze({ id: 'provider-pool', paths: OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1 }),
+});
 
 function blobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
   return createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
 }
 
-function escalationPaths(analysis) {
+function escalationPaths(analysis, expectedPaths) {
   const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
-  if (findings.length !== OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1.length) return [];
+  if (findings.length !== expectedPaths.length) return [];
   if (!findings.every((item) => (
     text(item?.severity).toUpperCase() === 'P0'
     && text(item?.code) === 'unsupported-high-risk-surface'
   ))) return [];
   const paths = unique(findings.map((item) => text(item?.path))).sort();
-  const expected = [...OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1].sort();
+  const expected = [...expectedPaths].sort();
   return JSON.stringify(paths) === JSON.stringify(expected) ? paths : [];
 }
 
@@ -188,9 +201,7 @@ function reviewScoutTests(source, path, findings) {
     ["OPENCLAW_OC1_QUALIFICATION", 'openclaw-oc1-qualification-test-estate-missing'],
     ["sourceMutation", 'openclaw-oc1-source-mutation-test-estate-missing'],
   ]);
-  forbidPatterns(findings, source, path, [
-    [/shell\s*:\s*true/i, 'openclaw-oc1-test-shell-widening-forbidden'],
-  ]);
+  forbidPatterns(findings, source, path, [[/shell\s*:\s*true/i, 'openclaw-oc1-test-shell-widening-forbidden']]);
 }
 
 function reviewPluginManifest(source, path, findings) {
@@ -198,9 +209,7 @@ function reviewPluginManifest(source, path, findings) {
     const manifest = JSON.parse(source);
     if (manifest?.id !== 'stephanos-builder-provider') findings.push(finding('openclaw-oc1-plugin-id-mismatch', path));
     if (manifest?.activation?.onStartup !== true) findings.push(finding('openclaw-oc1-plugin-startup-activation-missing', path));
-    if (manifest?.configSchema?.type !== 'object' || manifest?.configSchema?.additionalProperties !== false) {
-      findings.push(finding('openclaw-oc1-plugin-config-not-closed', path));
-    }
+    if (manifest?.configSchema?.type !== 'object' || manifest?.configSchema?.additionalProperties !== false) findings.push(finding('openclaw-oc1-plugin-config-not-closed', path));
     if (JSON.stringify(manifest?.configSchema?.properties) !== '{}') findings.push(finding('openclaw-oc1-plugin-config-accepts-caller-input', path));
   } catch {
     findings.push(finding('openclaw-oc1-plugin-manifest-invalid-json', path));
@@ -213,12 +222,111 @@ function reviewPackageManifest(source, path, findings) {
     if (manifest?.name !== '@stephanos/openclaw-builder-provider') findings.push(finding('openclaw-oc1-package-name-mismatch', path));
     if (manifest?.version !== '1.0.0' || manifest?.private !== true || manifest?.type !== 'module') findings.push(finding('openclaw-oc1-package-identity-mismatch', path));
     if (JSON.stringify(manifest?.openclaw?.extensions) !== JSON.stringify(['./index.js'])) findings.push(finding('openclaw-oc1-package-entrypoint-not-fixed', path));
-    if (manifest?.openclaw?.compat?.pluginApi !== '>=2026.3.24-beta.2' || manifest?.openclaw?.compat?.minGatewayVersion !== '>=2026.6.11') {
-      findings.push(finding('openclaw-oc1-package-compatibility-boundary-mismatch', path));
-    }
+    if (manifest?.openclaw?.compat?.pluginApi !== '>=2026.3.24-beta.2' || manifest?.openclaw?.compat?.minGatewayVersion !== '>=2026.6.11') findings.push(finding('openclaw-oc1-package-compatibility-boundary-mismatch', path));
   } catch {
     findings.push(finding('openclaw-oc1-package-manifest-invalid-json', path));
   }
+}
+
+function reviewProviderPool(source, path, findings) {
+  requireLiterals(findings, source, path, [
+    ["import { routeMissionControllerCapacity } from './missionControllerCapacityRouterV1.mjs';", 'openclaw-provider-pool-canonical-router-missing'],
+    ["validateExecutionReceipt", 'openclaw-provider-pool-execution-validator-missing'],
+    ["toSharedWorkspaceExecutionReceipt", 'openclaw-provider-pool-workspace-projection-missing'],
+    ["validateSharedWorkspaceRecord", 'openclaw-provider-pool-workspace-validator-missing'],
+    ["const OPENCLAW_QUALIFICATION_ISSUE = 1725;", 'openclaw-provider-pool-goal-not-fixed'],
+    ["export function validateOpenClawQualificationAuthorityChain", 'openclaw-provider-pool-authority-chain-gate-missing'],
+    ["issueNumber: OPENCLAW_QUALIFICATION_ISSUE", 'openclaw-provider-pool-execution-goal-binding-missing'],
+    ["execution.workerType !== 'openclaw'", 'openclaw-provider-pool-worker-type-binding-missing'],
+    ["execution.state !== 'completed'", 'openclaw-provider-pool-completed-execution-gate-missing'],
+    ["execution.operatorActionRequired !== false", 'openclaw-provider-pool-operator-action-gate-missing'],
+    ["canonicalJson(host.realWorkWorkspaceReceipt) !== canonicalJson(canonicalWorkspace.record)", 'openclaw-provider-pool-canonical-workspace-gate-missing'],
+    ["authority.participantId !== 'stephanos'", 'openclaw-provider-pool-stephanos-authority-gate-missing'],
+    ["authority.relatedIssue !== String(OPENCLAW_QUALIFICATION_ISSUE)", 'openclaw-provider-pool-authority-goal-binding-missing'],
+    ["authority.receivedRecordId !== execution.receiptId", 'openclaw-provider-pool-authority-execution-binding-missing'],
+    ["authority.disposition !== OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION", 'openclaw-provider-pool-production-disposition-gate-missing'],
+    ["candidate.qualificationAuthorityReceiptId === expected.authorityReceiptId", 'openclaw-provider-pool-capacity-authority-binding-missing'],
+    ["const host = snapshot(trustedHostContext);", 'openclaw-provider-pool-trusted-host-only-gate-missing'],
+    ["const openClawPoolEligible = qualification.valid && authority.valid && capacity.valid;", 'openclaw-provider-pool-complete-chain-gate-missing'],
+    ["mergeAuthority: false", 'openclaw-provider-pool-merge-denial-missing'],
+    ["leaseSeizureAllowed: false", 'openclaw-provider-pool-lease-denial-missing'],
+    ["duplicateDispatchAllowed: false", 'openclaw-provider-pool-duplicate-dispatch-denial-missing'],
+  ]);
+  forbidPatterns(findings, source, path, [
+    [/from ['"]node:(?:child_process|fs|fs\/promises)['"]|require\(['"](?:child_process|fs)['"]\)/, 'openclaw-provider-pool-local-execution-authority-forbidden'],
+    [/\b(?:exec|execSync|execFile|spawn|spawnSync|fork)\s*\(|shell\s*:\s*true|\beval\s*\(|new\s+Function\s*\(/i, 'openclaw-provider-pool-dynamic-execution-forbidden'],
+  ]);
+}
+
+function reviewProviderPoolTests(source, path, findings) {
+  requireLiterals(findings, source, path, [
+    ["requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt", 'openclaw-provider-pool-authority-chain-positive-test-missing'],
+    ["capacity is unusable without the exact validated qualification authority, worker and task class", 'openclaw-provider-pool-capacity-binding-test-missing'],
+    ["caller-shaped qualification, capacity and fake authority evidence cannot self-admit OpenClaw", 'openclaw-provider-pool-caller-forgery-test-missing'],
+    ["syntactically valid trusted qualification without canonical authority cannot route", 'openclaw-provider-pool-syntax-only-forgery-test-missing'],
+    ["existing mutation owner is preserved even when OpenClaw is canonically qualified", 'openclaw-provider-pool-owner-preservation-test-missing'],
+    ["normal AUTO routing does not silently replace a healthy existing provider policy", 'openclaw-provider-pool-no-silent-route-replacement-test-missing'],
+    ["assert.equal(result.mergeAuthority, false)", 'openclaw-provider-pool-merge-denial-test-missing'],
+    ["assert.equal(result.leaseSeizureAllowed, false)", 'openclaw-provider-pool-lease-denial-test-missing'],
+    ["assert.equal(result.duplicateDispatchAllowed, false)", 'openclaw-provider-pool-duplicate-dispatch-test-missing'],
+  ]);
+}
+
+function reviewPromotionCandidate(source, path, findings) {
+  requireLiterals(findings, source, path, [
+    ["const ISSUE_NUMBER = 1725;", 'openclaw-promotion-goal-not-fixed'],
+    ["OC1_REPOSITORY_SCOUT: Object.freeze({", 'openclaw-promotion-oc1-policy-missing'],
+    ["OC2_DETERMINISTIC_TEST_BUILD: Object.freeze({", 'openclaw-promotion-oc2-policy-missing'],
+    ["validateExecutionReceipt(execution", 'openclaw-promotion-execution-validator-missing'],
+    ["execution?.workerType !== 'openclaw'", 'openclaw-promotion-worker-type-gate-missing'],
+    ["execution?.operatorActionRequired !== false", 'openclaw-promotion-operator-action-gate-missing'],
+    ["proof.record.timestampUtc !== execution.timestampUtc", 'openclaw-promotion-proof-time-lineage-missing'],
+    ["proof.record.messageId !== execution.executionId", 'openclaw-promotion-proof-execution-lineage-missing'],
+    ["text(result.observedSourceHead).toLowerCase() !== text(execution.sourceHead).toLowerCase()", 'openclaw-promotion-source-head-binding-missing'],
+    ["canonicalResultDigest(result) !== text(result.exactOutputIdentity).toLowerCase()", 'openclaw-promotion-result-digest-gate-missing'],
+    ["result.selfQualificationAllowed !== false", 'openclaw-promotion-self-qualification-denial-missing'],
+    ["createSharedWorkspaceReceiptRecord({", 'openclaw-promotion-stephanos-receipt-missing'],
+    ["participantId: 'stephanos'", 'openclaw-promotion-stephanos-authority-missing'],
+    ["providerPoolAdmissionAllowed: false", 'openclaw-promotion-pool-admission-denial-missing'],
+    ["providerQualificationAuthority: false", 'openclaw-promotion-qualification-authority-denial-missing'],
+    ["sourceMutationAllowed: false", 'openclaw-promotion-source-denial-missing'],
+    ["mergeAllowed: false", 'openclaw-promotion-merge-denial-missing'],
+    ["deploymentAllowed: false", 'openclaw-promotion-deployment-denial-missing'],
+    ["runtimeMutationAllowed: false", 'openclaw-promotion-runtime-denial-missing'],
+  ]);
+  forbidPatterns(findings, source, path, [
+    [/from ['"]node:(?:child_process|fs|fs\/promises|http|https|net)['"]|require\(['"](?:child_process|fs|http|https|net)['"]\)/, 'openclaw-promotion-execution-or-network-authority-forbidden'],
+    [/\b(?:exec|execSync|execFile|spawn|spawnSync|fork|fetch)\s*\(|shell\s*:\s*true|\beval\s*\(|new\s+Function\s*\(/i, 'openclaw-promotion-dynamic-execution-forbidden'],
+  ]);
+}
+
+function reviewPromotionCandidateTests(source, path, findings) {
+  requireLiterals(findings, source, path, [
+    ["turns canonical OC1 execution plus provider proof into a gate-compatible Stephanos promotion candidate without routing authority", 'openclaw-promotion-oc1-positive-test-missing'],
+    ["supports OC2 only after a completed fixed test/build execution and matching canonical provider proof", 'openclaw-promotion-oc2-positive-test-missing'],
+    ["fails closed on failed execution, unsupported class, mutation, self-qualification, worker/head drift, test failure or stale proof", 'openclaw-promotion-hostile-lineage-test-missing'],
+    ["rejects result digest drift, extra authority fields and proof-record lineage drift", 'openclaw-promotion-digest-authority-test-missing'],
+    ["rejects accessor-bearing, sparse and revoked proof records without executing accessors", 'openclaw-promotion-hostile-object-test-missing'],
+    ["assert.equal(candidate.providerPoolAdmissionAllowed, false)", 'openclaw-promotion-pool-admission-denial-test-missing'],
+    ["assert.equal(candidate.providerQualificationAuthority, false)", 'openclaw-promotion-qualification-authority-denial-test-missing'],
+  ]);
+}
+
+function reviewPath(profile, source, path, findings) {
+  if (profile.id === 'oc1') {
+    if (path.endsWith('/index.js')) reviewIndex(source, path, findings);
+    else if (path.endsWith('/lib/oc1-gateway-provider.mjs')) reviewGateway(source, path, findings);
+    else if (path.endsWith('/lib/oc1-repository-scout.mjs')) reviewScout(source, path, findings);
+    else if (path.endsWith('/oc1-gateway-provider.test.mjs')) reviewGatewayTests(source, path, findings);
+    else if (path.endsWith('/oc1-repository-scout.test.mjs')) reviewScoutTests(source, path, findings);
+    else if (path.endsWith('/openclaw.plugin.json')) reviewPluginManifest(source, path, findings);
+    else if (path.endsWith('/package.json')) reviewPackageManifest(source, path, findings);
+    return;
+  }
+  if (path.endsWith('/openClawProviderPoolQualificationV1.mjs')) reviewProviderPool(source, path, findings);
+  else if (path.endsWith('/openClawProviderPoolQualificationV1.test.mjs')) reviewProviderPoolTests(source, path, findings);
+  else if (path.endsWith('/openClawTaskClassPromotionCandidateV1.mjs')) reviewPromotionCandidate(source, path, findings);
+  else if (path.endsWith('/openClawTaskClassPromotionCandidateV1.test.mjs')) reviewPromotionCandidateTests(source, path, findings);
 }
 
 export function analyzeOpenClawBuilderProviderSpecialistReviewV1(input = {}) {
@@ -226,12 +334,13 @@ export function analyzeOpenClawBuilderProviderSpecialistReviewV1(input = {}) {
   const prNumber = Number(input.prNumber);
   const sourceHead = text(input.sourceHead).toLowerCase();
   const baseSha = text(input.baseSha).toLowerCase();
-  const paths = escalationPaths(input.analysis);
+  const profile = PROFILES[prNumber] || null;
+  const paths = profile ? escalationPaths(input.analysis, profile.paths) : [];
   const eligible = repository === CANONICAL_REPOSITORY
-    && prNumber === OC1_PR
+    && profile !== null
     && SHA.test(sourceHead)
     && SHA.test(baseSha)
-    && paths.length === OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1.length;
+    && paths.length === profile.paths.length;
   if (!eligible) return Object.freeze({
     schemaVersion: SCHEMA,
     eligible: false,
@@ -242,12 +351,13 @@ export function analyzeOpenClawBuilderProviderSpecialistReviewV1(input = {}) {
     finalVerdict: 'OPENCLAW_BUILDER_PROVIDER_SPECIALIST_NOT_APPLICABLE',
   });
 
+  const codePrefix = profile.id === 'oc1' ? 'openclaw-oc1' : 'openclaw-provider-pool';
   if (!exactLineage(input.lineageEvidence, repository, sourceHead, baseSha)) return Object.freeze({
     schemaVersion: SCHEMA,
     eligible: true,
     clean: false,
     reviewedPaths: Object.freeze(paths),
-    findings: Object.freeze([finding('openclaw-oc1-reconciliation-lineage-invalid', paths[0])]),
+    findings: Object.freeze([finding(`${codePrefix}-reconciliation-lineage-invalid`, paths[0])]),
     proofRefs: Object.freeze([]),
     finalVerdict: 'OPENCLAW_BUILDER_PROVIDER_SPECIALIST_FINDINGS',
   });
@@ -255,30 +365,21 @@ export function analyzeOpenClawBuilderProviderSpecialistReviewV1(input = {}) {
   const sources = Array.isArray(input.sources) ? input.sources : [];
   const findings = [];
   const proofRefs = [];
-  for (const path of OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1) {
+  for (const path of profile.paths) {
     const candidates = sources.filter((source) => text(source?.path) === path);
     if (candidates.length !== 1 || !exactSource(candidates[0], repository, sourceHead, path)) {
-      findings.push(finding('openclaw-oc1-source-evidence-invalid', path));
+      findings.push(finding(`${codePrefix}-source-evidence-invalid`, path));
       continue;
     }
-    const source = candidates[0].content;
-    if (path.endsWith('/index.js')) reviewIndex(source, path, findings);
-    else if (path.endsWith('/lib/oc1-gateway-provider.mjs')) reviewGateway(source, path, findings);
-    else if (path.endsWith('/lib/oc1-repository-scout.mjs')) reviewScout(source, path, findings);
-    else if (path.endsWith('/oc1-gateway-provider.test.mjs')) reviewGatewayTests(source, path, findings);
-    else if (path.endsWith('/oc1-repository-scout.test.mjs')) reviewScoutTests(source, path, findings);
-    else if (path.endsWith('/openclaw.plugin.json')) reviewPluginManifest(source, path, findings);
-    else if (path.endsWith('/package.json')) reviewPackageManifest(source, path, findings);
+    reviewPath(profile, candidates[0].content, path, findings);
     proofRefs.push(`proofs/openclaw-builder-provider-specialist/${path}@${sourceHead}#${candidates[0].blobSha}:${candidates[0].size}`);
   }
-  if (sources.length !== OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1.length) {
-    findings.push(finding('openclaw-oc1-source-evidence-estate-mismatch', OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1[0]));
-  }
+  if (sources.length !== profile.paths.length) findings.push(finding(`${codePrefix}-source-evidence-estate-mismatch`, profile.paths[0]));
   return Object.freeze({
     schemaVersion: SCHEMA,
     eligible: true,
     clean: findings.length === 0,
-    reviewedPaths: Object.freeze([...OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1]),
+    reviewedPaths: Object.freeze([...profile.paths]),
     findings: Object.freeze(findings),
     proofRefs: Object.freeze(proofRefs),
     finalVerdict: findings.length === 0
