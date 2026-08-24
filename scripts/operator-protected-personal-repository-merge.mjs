@@ -21,6 +21,9 @@ import {
   validateIndependentReviewWorkflowDispatchExecutionV1,
 } from '../shared/agents/independentReviewWorkflowDispatchExecutionV1.mjs';
 import {
+  independentReviewWorkflowDispatchRunNameV1,
+} from '../shared/agents/independentReviewWorkflowDispatchLaunchReceiptV1.mjs';
+import {
   PERSONAL_REPOSITORY_APPROVAL_JOB,
   PERSONAL_REPOSITORY_EVIDENCE_JOB,
   PERSONAL_REPOSITORY_MERGE_JOB,
@@ -460,6 +463,11 @@ async function loadSelectedIndependentReview(context, identity) {
       expectedWorkflowId: definition.id,
       workflowRunId: selected.independentReviewWorkflowRunId,
       workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+      expectedWorkflowRunName: independentReviewWorkflowDispatchRunNameV1({
+        prNumber: identity.prNumber,
+        sourceHead: identity.sourceHead,
+        handoffBindingSha256: 'legacy-pull-request-target',
+      }),
     });
   if (!workflowValidation.valid) {
     fail('Selected independent review run is failed, stale or ambiguously bound.', {
