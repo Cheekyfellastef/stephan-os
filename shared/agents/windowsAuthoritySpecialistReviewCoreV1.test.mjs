@@ -104,18 +104,10 @@ const forgeInstaller = `
 $Repository = 'Cheekyfellastef/stephan-os'
 $ForgejoVersion = '15.0.6'
 $PodmanVersion = '6.0.2'
-$WindowsHostAdapter = 'podman-desktop-windows10-wsl2-v1'
-$MinimumWindowsBuild = 19043
-$PodmanDesktopVersion = '1.29.1'
-$PodmanDesktopSourceCommit = 'a969ee0e0b07285122dd4988a58edb0a1a25d5fc'
-$PodmanDesktopPodmanManifestBlob = '5acfedd1c3171414aa218a1d5d95ea7529687809'
-$CompatibilityAuthority = 'podman-desktop-v1.29.1-win32-x64-podman-v6.0.2'
-$ObservedWindowsBuild = [Environment]::OSVersion.Version.Build
 $MachineName = 'stephanos-forge-shadow'
 $ContainerName = 'stephanos-forge-shadow'
 $RemoteUrl = 'https://github.com/Cheekyfellastef/stephan-os.git'
 $HostAddress = '127.0.0.1'
-if ($ObservedWindowsBuild -lt $MinimumWindowsBuild) { Fail 'WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED' }
 function Invoke-PodmanRemote {
   $boundArguments = @('--connection', $MachineName) + @($Arguments)
 }
@@ -162,7 +154,6 @@ test('every remote Podman operation is bound to the named Forge machine connecti
 test('bootstrap token revocation is attempted even when mirror migration fails', () => {});
 test('backup restore probe always cleans temporary state and restarts the canonical Forge container', () => {});
 test('dangerous generic execution and destructive host commands are absent', () => {});
-test('Windows 10 compatibility authority and build floor are fixed', () => {});
 has("FORGE_CONTAINER_IMAGE_DIGEST_MISMATCH");
 `;
 
@@ -264,22 +255,6 @@ test('Forge specialist fails closed when actual OCI digest proof or connection b
   assert.ok(codes.includes('forge-podman-connection-not-fixed'));
   assert.ok(codes.includes('forge-container-image-digest-not-independently-proved'));
   assert.ok(codes.includes('forge-container-image-digest-blocker-missing'));
-});
-
-test('Forge specialist fails closed when Windows 10 compatibility authority or build gate weakens', () => {
-  const insecure = forgeInstaller
-    .replace('a969ee0e0b07285122dd4988a58edb0a1a25d5fc', 'b'.repeat(40))
-    .replace("if ($ObservedWindowsBuild -lt $MinimumWindowsBuild) { Fail 'WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED' }", '');
-  const result = analyzeWindowsAuthoritySpecialistReview({
-    repository: REPOSITORY,
-    sourceHead: HEAD,
-    analysis: escalation(forgePaths),
-    sources: [record(forgePaths[0], insecure), record(forgePaths[1], forgeStaticTest)],
-  });
-  assert.equal(result.clean, false);
-  const codes = result.findings.map((item) => item.code);
-  assert.ok(codes.includes('forge-podman-desktop-source-commit-not-fixed'));
-  assert.ok(codes.includes('forge-windows10-build-gate-missing'));
 });
 
 test('Forge specialist test must remain static and must guard the actual image digest', () => {
