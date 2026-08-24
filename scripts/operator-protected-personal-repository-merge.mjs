@@ -27,6 +27,7 @@ import {
   PERSONAL_REPOSITORY_APPROVAL_JOB,
   PERSONAL_REPOSITORY_EVIDENCE_JOB,
   PERSONAL_REPOSITORY_MERGE_JOB,
+  PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
@@ -262,7 +263,7 @@ async function currentWorkflowExecution(context) {
     `/repos/${context.owner}/${context.repo}/actions/workflows/${definition.id}/runs?event=workflow_dispatch`,
     'workflow_runs',
   )).items;
-  const execution = validatePersonalRepositoryDispatchExecution({
+  let execution = validatePersonalRepositoryDispatchExecution({
     definitions,
     run,
     priorRuns: dispatchRuns,
@@ -273,6 +274,30 @@ async function currentWorkflowExecution(context) {
     workflowRunId: context.runId,
     workflowRunAttempt: context.runAttempt,
   });
+  if (execution.replayRunIds.length !== 0) {
+    if (execution.replayRunIds.length > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX) {
+      fail('Prior protected merge attempts exceed the bounded job-proof estate.', {
+        blockers: ['personal-repository-prior-run-jobs-limit-exceeded'],
+        priorRunIds: execution.replayRunIds,
+      });
+    }
+    const priorRunJobSets = await Promise.all(execution.replayRunIds.map(async (runId) => ({
+      runId,
+      jobs: (await apiCollection(`/repos/${context.owner}/${context.repo}/actions/runs/${runId}/jobs`, 'jobs')).items,
+    })));
+    execution = validatePersonalRepositoryDispatchExecution({
+      definitions,
+      run,
+      priorRuns: dispatchRuns,
+      priorRunJobSets,
+    }, {
+      repository: context.repository,
+      sourceHead: context.dispatch.identity.sourceHead,
+      baseSha: context.dispatch.identity.baseSha,
+      workflowRunId: context.runId,
+      workflowRunAttempt: context.runAttempt,
+    });
+  }
   const expectedDisplayTitle = `Protected operator merge ${context.dispatch.identity.sourceHead}`;
   const triggeringActor = text(run?.triggering_actor?.login || run?.actor?.login).toLowerCase();
   const runIdentityMismatches = [...new Set([
@@ -304,7 +329,13 @@ async function currentWorkflowExecution(context) {
       blockers: execution.blockers,
     });
   }
-  return { definitions, definition, run };
+  return {
+    definitions,
+    definition,
+    run,
+    retryablePriorRunIds: execution.retryablePriorRunIds,
+    retryablePriorFailures: execution.retryablePriorFailures,
+  };
 }
 
 async function pullRequestReviewState(owner, repo, prNumber) {
@@ -649,6 +680,7 @@ async function collectEvidence(context, expected = {}) {
     requiredCheckIntegrationId: integrationId,
     activeRulesetIds: configuration.activeRulesetIds,
     configurationSnapshotSha256: configuration.configurationSnapshotSha256,
+    retryablePriorFailures: execution.retryablePriorFailures,
     workflows: workflows.evidence,
     checks: checks.evidence,
     independentReview,
@@ -759,6 +791,7 @@ async function main() {
       evidenceSha256: collected.evidenceSha256,
       ...identity,
       independentReview: collected.independentReview,
+      retryablePriorFailures: collected.packet.retryablePriorFailures,
       requiredWorkflowRuns: collected.workflows.evidence,
       activeRulesetIds: collected.configuration.activeRulesetIds,
     }, null, 2)}\n`);

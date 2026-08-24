@@ -6,7 +6,11 @@ import {
   PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES,
   PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS,
   PERSONAL_REPOSITORY_CHECK_SNAPSHOT_POLL_INTERVAL_MS,
+  PERSONAL_REPOSITORY_APPROVAL_JOB,
+  PERSONAL_REPOSITORY_EVIDENCE_JOB,
+  PERSONAL_REPOSITORY_MERGE_JOB,
   PERSONAL_REPOSITORY_MODE,
+  PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX,
   PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
   PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS,
@@ -32,6 +36,7 @@ import {
   validatePersonalRepositoryEvidence,
   validatePersonalRepositoryRulesetProofRequest,
   validatePersonalRepositoryRulesetProofResponse,
+  validatePersonalRepositoryReadOnlyPriorFailure,
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
   validatePersonalRepositoryWorkflowRunHydration,
@@ -824,6 +829,19 @@ function dispatchExecutionInput(overrides = {}) {
   };
 }
 
+function priorFailureJobs(overrides = {}) {
+  const jobs = [
+    { id: 101, name: PERSONAL_REPOSITORY_EVIDENCE_JOB, status: 'completed', conclusion: 'failure' },
+    { id: 102, name: PERSONAL_REPOSITORY_APPROVAL_JOB, status: 'completed', conclusion: 'skipped' },
+    { id: 103, name: PERSONAL_REPOSITORY_MERGE_JOB, status: 'completed', conclusion: 'skipped' },
+  ];
+  for (const [name, mutation] of Object.entries(overrides)) {
+    const index = jobs.findIndex((job) => job.name === name);
+    if (index >= 0) jobs[index] = { ...jobs[index], ...mutation };
+  }
+  return jobs;
+}
+
 const expectedDispatchExecution = Object.freeze({
   repository,
   sourceHead,
@@ -1136,7 +1154,7 @@ test('current protected dispatch binds every exact dynamic run identity field', 
   assert.ok(widened.currentMismatches.length > 0);
 });
 
-test('same-base prior protected dispatch is a replay regardless of failed conclusion', () => {
+test('same-base prior protected dispatch remains a replay without exact read-only job proof', () => {
   const priorRunId = runId + 10;
   const blocked = validatePersonalRepositoryDispatchExecution(
     dispatchExecutionInput({
@@ -1154,6 +1172,115 @@ test('same-base prior protected dispatch is a replay regardless of failed conclu
   assert.equal(blocked.valid, false);
   assert.deepEqual(blocked.replayRunIds, [priorRunId]);
   assert.ok(blocked.blockers.includes('personal-repository-prior-attempt-exists'));
+});
+
+test('same-base failed dispatch is retryable only when evidence failed and both later authority jobs were skipped', () => {
+  for (const priorRunAttempt of [1, 2]) {
+    const priorRunId = runId + 10;
+    const priorRun = dispatchRun({
+      id: priorRunId,
+      run_attempt: priorRunAttempt,
+      status: 'completed',
+      conclusion: 'failure',
+    });
+    const retryProof = validatePersonalRepositoryReadOnlyPriorFailure(priorRun, priorFailureJobs());
+    assert.equal(retryProof.valid, true);
+    assert.equal(retryProof.finalVerdict, 'PERSONAL_REPOSITORY_PRIOR_FAILURE_READ_ONLY');
+
+    const ready = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({
+        priorRuns: [dispatchRun(), priorRun],
+        priorRunJobSets: [{ runId: priorRunId, jobs: priorFailureJobs() }],
+      }),
+      expectedDispatchExecution,
+    );
+    assert.equal(ready.valid, true);
+    assert.deepEqual(ready.replayRunIds, []);
+    assert.deepEqual(ready.retryablePriorRunIds, [priorRunId]);
+    assert.deepEqual(ready.retryablePriorFailures, [{
+      runId: priorRunId,
+      runAttempt: priorRunAttempt,
+      status: 'completed',
+      conclusion: 'failure',
+      jobs: priorFailureJobs(),
+    }]);
+  }
+});
+
+test('prior dispatch retry proof fails closed if the approval or merge job was not skipped', () => {
+  const priorRunId = runId + 10;
+  const priorRun = dispatchRun({ id: priorRunId, status: 'completed', conclusion: 'failure' });
+  const hostileJobSets = [
+    priorFailureJobs({ [PERSONAL_REPOSITORY_EVIDENCE_JOB]: { conclusion: 'success' } }),
+    priorFailureJobs({ [PERSONAL_REPOSITORY_APPROVAL_JOB]: { conclusion: 'success' } }),
+    priorFailureJobs({ [PERSONAL_REPOSITORY_MERGE_JOB]: { conclusion: 'failure' } }),
+    priorFailureJobs({ [PERSONAL_REPOSITORY_MERGE_JOB]: { status: 'in_progress', conclusion: null } }),
+    priorFailureJobs().filter((job) => job.name !== PERSONAL_REPOSITORY_MERGE_JOB),
+    [...priorFailureJobs(), { id: 104, name: PERSONAL_REPOSITORY_MERGE_JOB, status: 'completed', conclusion: 'skipped' }],
+    priorFailureJobs({ [PERSONAL_REPOSITORY_MERGE_JOB]: { id: 0 } }),
+    priorFailureJobs({ [PERSONAL_REPOSITORY_MERGE_JOB]: { id: 102 } }),
+  ];
+  for (const jobs of hostileJobSets) {
+    const blocked = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({
+        priorRuns: [dispatchRun(), priorRun],
+        priorRunJobSets: [{ runId: priorRunId, jobs }],
+      }),
+      expectedDispatchExecution,
+    );
+    assert.equal(blocked.valid, false, JSON.stringify(jobs));
+    assert.deepEqual(blocked.replayRunIds, [priorRunId], JSON.stringify(jobs));
+    assert.deepEqual(blocked.retryablePriorRunIds, [], JSON.stringify(jobs));
+  }
+
+  for (const runMutation of [
+    { status: 'in_progress', conclusion: null },
+    { status: 'completed', conclusion: 'cancelled' },
+    { status: 'completed', conclusion: 'success' },
+  ]) {
+    const mutatedRun = dispatchRun({ id: priorRunId, ...runMutation });
+    const blocked = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({
+        priorRuns: [dispatchRun(), mutatedRun],
+        priorRunJobSets: [{ runId: priorRunId, jobs: priorFailureJobs() }],
+      }),
+      expectedDispatchExecution,
+    );
+    assert.equal(blocked.valid, false, JSON.stringify(runMutation));
+    assert.deepEqual(blocked.replayRunIds, [priorRunId], JSON.stringify(runMutation));
+  }
+
+  const bounded = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({
+      priorRunJobSets: Array.from({ length: PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX + 1 }, (_, index) => ({
+        runId: runId + 100 + index,
+        jobs: priorFailureJobs(),
+      })),
+    }),
+    expectedDispatchExecution,
+  );
+  assert.equal(bounded.valid, false);
+  assert.ok(bounded.blockers.includes('personal-repository-prior-run-jobs-limit-exceeded'));
+
+  const duplicateProof = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({
+      priorRuns: [dispatchRun(), priorRun],
+      priorRunJobSets: [
+        { runId: priorRunId, jobs: priorFailureJobs() },
+        { runId: priorRunId, jobs: priorFailureJobs() },
+      ],
+    }),
+    expectedDispatchExecution,
+  );
+  assert.equal(duplicateProof.valid, false);
+  assert.deepEqual(duplicateProof.replayRunIds, [priorRunId]);
+
+  const invalidContainer = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({ priorRunJobSets: {} }),
+    expectedDispatchExecution,
+  );
+  assert.equal(invalidContainer.valid, false);
+  assert.ok(invalidContainer.blockers.includes('personal-repository-prior-run-jobs-invalid'));
 });
 
 test('retried current workflow run is a replay even when GitHub retains or omits the run ID', () => {

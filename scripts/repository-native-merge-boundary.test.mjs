@@ -143,6 +143,10 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.doesNotMatch(source, /GH_TOKEN[^\n]*rules|GITHUB_TOKEN[^\n]*rules/);
   assert.match(source, /loadSelectedIndependentReview/);
   assert.match(source, /personal-repository-prior-attempt-exists/);
+  assert.match(source, /execution\.replayRunIds\.length > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX/);
+  assert.match(source, /actions\/runs\/\$\{runId\}\/jobs/);
+  assert.match(source, /retryablePriorFailures: execution\.retryablePriorFailures/);
+  assert.match(source, /retryablePriorFailures: collected\.packet\.retryablePriorFailures/);
   assert.match(source, /expectedDisplayTitle = `Protected operator merge \$\{context\.dispatch\.identity\.sourceHead\}`/);
   assert.doesNotMatch(source, /expectedDisplayTitle = `Protected operator merge PR #/);
   assert.match(source, /mismatches: runIdentityMismatches/);

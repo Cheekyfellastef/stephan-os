@@ -31,6 +31,61 @@ export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS = 60_000;
 export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_POLL_INTERVAL_MS = 5_000;
 export const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES = 256 * 1024;
 export const PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES = 256 * 1024;
+export const PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX = 8;
+
+export function validatePersonalRepositoryReadOnlyPriorFailure(run = {}, jobs = []) {
+  const blockers = [];
+  if (!strictPositiveInteger(run?.id)) blockers.push('prior-run-id-invalid');
+  if (!strictPositiveInteger(run?.run_attempt)) blockers.push('prior-run-attempt-invalid');
+  if (text(run?.status).toLowerCase() !== 'completed') blockers.push('prior-run-not-completed');
+  if (text(run?.conclusion).toLowerCase() !== 'failure') blockers.push('prior-run-not-failed');
+  if (!Array.isArray(jobs)) blockers.push('prior-run-jobs-invalid');
+  const jobList = Array.isArray(jobs) ? jobs : [];
+  const exactJob = (name) => {
+    const matches = jobList.filter((job) => text(job?.name) === name);
+    if (matches.length !== 1) blockers.push(`prior-run-job-not-exact:${name}`);
+    return matches.length === 1 ? matches[0] : {};
+  };
+  const evidence = exactJob(PERSONAL_REPOSITORY_EVIDENCE_JOB);
+  const approval = exactJob(PERSONAL_REPOSITORY_APPROVAL_JOB);
+  const merge = exactJob(PERSONAL_REPOSITORY_MERGE_JOB);
+  const selectedJobs = [evidence, approval, merge];
+  const jobIds = selectedJobs.map((job) => strictPositiveInteger(job?.id));
+  if (jobIds.some((id) => !id) || new Set(jobIds).size !== selectedJobs.length) {
+    blockers.push('prior-run-job-id-invalid');
+  }
+  if (text(evidence?.status).toLowerCase() !== 'completed'
+    || text(evidence?.conclusion).toLowerCase() !== 'failure') {
+    blockers.push('prior-run-evidence-job-not-failed');
+  }
+  if (text(approval?.status).toLowerCase() !== 'completed'
+    || text(approval?.conclusion).toLowerCase() !== 'skipped') {
+    blockers.push('prior-run-approval-job-not-skipped');
+  }
+  if (text(merge?.status).toLowerCase() !== 'completed'
+    || text(merge?.conclusion).toLowerCase() !== 'skipped') {
+    blockers.push('prior-run-merge-job-not-skipped');
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    receipt: blockers.length === 0 ? Object.freeze({
+      runId: strictPositiveInteger(run?.id),
+      runAttempt: strictPositiveInteger(run?.run_attempt),
+      status: 'completed',
+      conclusion: 'failure',
+      jobs: Object.freeze(selectedJobs.map((job) => Object.freeze({
+        id: strictPositiveInteger(job?.id),
+        name: text(job?.name),
+        status: text(job?.status).toLowerCase(),
+        conclusion: text(job?.conclusion).toLowerCase(),
+      }))),
+    }) : null,
+    blockers: Object.freeze(unique(blockers)),
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_PRIOR_FAILURE_NOT_RETRYABLE'
+      : 'PERSONAL_REPOSITORY_PRIOR_FAILURE_READ_ONLY',
+  });
+}
 
 const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_TRANSIENT_BLOCKERS = new Set([
   // GitHub exposes check runs and workflow runs through separate eventually-consistent collections.
@@ -843,6 +898,8 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     : {};
   const priorRunsValid = Array.isArray(input?.priorRuns);
   const priorRuns = priorRunsValid ? input.priorRuns : [];
+  const priorRunJobSetsValid = input?.priorRunJobSets === undefined || Array.isArray(input.priorRunJobSets);
+  const priorRunJobSets = Array.isArray(input?.priorRunJobSets) ? input.priorRunJobSets : [];
   const repository = text(expected.repository);
   const sourceHead = text(expected.sourceHead).toLowerCase();
   const baseSha = text(expected.baseSha).toLowerCase();
@@ -867,6 +924,8 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
 
   const malformedPriorRunIds = [];
   const replayRunIds = [];
+  const retryablePriorRunIds = [];
+  const retryablePriorFailures = [];
   const differentBasePriorRunIds = [];
   // GitHub keeps the workflow run ID when a run is retried and increments
   // run_attempt. The current exact run identity therefore proves that an
@@ -901,13 +960,26 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
       malformedPriorRunIds.push(candidateId || 0);
       continue;
     }
-    if (candidateBase === baseSha) replayRunIds.push(candidateId);
-    else differentBasePriorRunIds.push(candidateId);
+    if (candidateBase === baseSha) {
+      const matchingJobSets = priorRunJobSets.filter((item) => strictPositiveInteger(item?.runId) === candidateId);
+      const retryValidation = matchingJobSets.length === 1
+        ? validatePersonalRepositoryReadOnlyPriorFailure(candidate, matchingJobSets[0]?.jobs)
+        : { valid: false };
+      if (retryValidation.valid) {
+        retryablePriorRunIds.push(candidateId);
+        retryablePriorFailures.push(retryValidation.receipt);
+      }
+      else replayRunIds.push(candidateId);
+    } else differentBasePriorRunIds.push(candidateId);
   }
 
   const blockers = [
     ...definitionValidation.blockers,
     ...(!priorRunsValid ? ['personal-repository-prior-runs-invalid'] : []),
+    ...(!priorRunJobSetsValid ? ['personal-repository-prior-run-jobs-invalid'] : []),
+    ...(priorRunJobSets.length > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX
+      ? ['personal-repository-prior-run-jobs-limit-exceeded']
+      : []),
     ...(currentMismatches.length ? ['personal-repository-workflow-run-identity-mismatch'] : []),
     ...(malformedPriorRunIds.length ? ['personal-repository-prior-attempt-invalid'] : []),
     ...(replayRunIds.length ? ['personal-repository-prior-attempt-exists'] : []),
@@ -918,6 +990,8 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     currentMismatches: Object.freeze(currentMismatches),
     malformedPriorRunIds: Object.freeze(malformedPriorRunIds.sort((left, right) => left - right)),
     replayRunIds: Object.freeze(replayRunIds.sort((left, right) => left - right)),
+    retryablePriorRunIds: Object.freeze(retryablePriorRunIds.sort((left, right) => left - right)),
+    retryablePriorFailures: Object.freeze(retryablePriorFailures.sort((left, right) => left.runId - right.runId)),
     differentBasePriorRunIds: Object.freeze(differentBasePriorRunIds.sort((left, right) => left - right)),
     blockers: Object.freeze(unique(blockers)),
     finalVerdict: blockers.length
