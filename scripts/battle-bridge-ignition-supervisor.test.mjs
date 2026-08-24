@@ -911,7 +911,7 @@ test('Windows OpenClaw gateway execution uses cmd.exe wrapper for openclaw.cmd i
   });
   assert.equal(result.ready, true);
   assert.equal(spawnCalls.length, 1);
-  assert.equal(spawnCalls[0].command, 'cmd.exe');
+  assert.equal(spawnCalls[0].command, BATTLE_BRIDGE_WINDOWS_HOST.cmd);
   assert.notEqual(spawnCalls[0].command, 'openclaw');
   assert.deepEqual(spawnCalls[0].args, ['/d', '/s', '/c', `""${cmdShim}" gateway start --json"`]);
   assert.equal(spawnCalls[0].options.shell, false);
@@ -962,7 +962,7 @@ test('Windows OpenClaw gateway execution prefers APPDATA npm node entrypoint whe
   });
   assert.equal(result.ready, true);
   assert.equal(spawnCalls.length, 1);
-  assert.equal(spawnCalls[0].command, nodeExe);
+  assert.equal(spawnCalls[0].command, BATTLE_BRIDGE_WINDOWS_HOST.node);
   assert.deepEqual(spawnCalls[0].args, [openClawMjs, 'gateway', 'start', '--json']);
   assert.equal(spawnCalls[0].options.shell, false);
   assert.equal(result.execution.strategy, 'node-entrypoint');
@@ -982,7 +982,7 @@ test('Windows OpenClaw resolver includes APPDATA npm fallback and only accepts f
     existsSync: (candidate) => candidate.endsWith(`npm${path.sep}openclaw.cmd`),
   });
   assert.equal(resolved.ok, true);
-  assert.equal(resolved.command, 'cmd.exe');
+  assert.equal(resolved.command, BATTLE_BRIDGE_WINDOWS_HOST.cmd);
   assert.deepEqual(resolved.commandArgs.slice(0, 3), ['/d', '/s', '/c']);
   assert.match(resolved.commandArgs[3], /^"".*openclaw\.cmd" gateway start --json"$/);
   assert.equal(resolved.strategy, 'cmd-shim');
