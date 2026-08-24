@@ -29,6 +29,8 @@ export const OPENCLAW_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1 = Object.freeze([
   'scripts/independent-merge-security-review-with-openclaw-specialist-v1.mjs',
   'shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs',
   'shared/agents/openClawBuilderProviderSpecialistReviewV1.test.mjs',
+  'shared/agents/openClawOc2SpecialistReviewV1.mjs',
+  'shared/agents/openClawOc2SpecialistReviewV1.test.mjs',
 ]);
 
 function text(value) {

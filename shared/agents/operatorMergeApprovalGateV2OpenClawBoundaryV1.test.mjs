@@ -26,6 +26,8 @@ test('protects the exact OpenClaw reviewer-specialist composition boundary', () 
     'scripts/independent-merge-security-review-with-openclaw-specialist-v1.mjs',
     'shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs',
     'shared/agents/openClawBuilderProviderSpecialistReviewV1.test.mjs',
+    'shared/agents/openClawOc2SpecialistReviewV1.mjs',
+    'shared/agents/openClawOc2SpecialistReviewV1.test.mjs',
   ]);
 
   for (const path of OPENCLAW_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1) {
@@ -64,17 +66,17 @@ test('unrelated OpenClaw high-risk source remains unsupported and blocks bootstr
   const unrelated = 'integrations/openclaw/arbitrary-provider/index.mjs';
   const result = analyzeIndependentSecurityReview({
     changedFiles: [
-      'shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs',
+      'shared/agents/openClawOc2SpecialistReviewV1.mjs',
       unrelated,
     ],
     diff: [
-      diffFor('shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs'),
+      diffFor('shared/agents/openClawOc2SpecialistReviewV1.mjs'),
       diffFor(unrelated),
     ].join('\n'),
   });
   assert.ok(result.findings.some((item) => (
     item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE
-    && item.path === 'shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs'
+    && item.path === 'shared/agents/openClawOc2SpecialistReviewV1.mjs'
   )));
   assert.ok(result.findings.some((item) => (
     item.code === 'unsupported-high-risk-surface'
