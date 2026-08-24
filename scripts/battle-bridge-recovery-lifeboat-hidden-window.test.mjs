@@ -9,10 +9,10 @@ test('Battle Bridge Recovery Lifeboat scheduled task has no direct PowerShell co
   const installer = await readFile(installerUrl, 'utf8');
   const launcher = await readFile(launcherUrl, 'utf8');
 
-  assert.match(installer, /\$wscriptExe = 'C:\\Windows\\System32\\wscript\.exe'/);
+  assert.match(installer, /\$wscriptExe = 'C:\\\\Windows\\\\System32\\\\wscript\.exe'/);
   assert.match(
     installer,
-    /New-ScheduledTaskAction -Execute \$wscriptExe -Argument "\/\/B \/\/Nologo `"\$installedWindowlessLauncher`""/,
+    /New-ScheduledTaskAction -Execute \$wscriptExe -Argument "\/\/B \/\/Nologo `\\"\$installedWindowlessLauncher`\\""/,
   );
   assert.match(installer, /directPowerShellTaskLaunch = \$false/);
   assert.doesNotMatch(installer, /New-ScheduledTaskAction -Execute \$powershellExe/);
