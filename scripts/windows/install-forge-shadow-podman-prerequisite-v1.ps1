@@ -83,6 +83,7 @@ $wslStatus = Invoke-Fixed $WslExe @('--status') -AllowFailure
 if ($wslStatus.ExitCode -ne 0) { Emit-Blocked 'WSL2_NOT_AVAILABLE' }
 
 if (-not $OperatorApproved -and -not $WhatIfPreference) { Emit-Blocked 'EXACT_RUNTIME_OPERATOR_APPROVAL_REQUIRED' }
+if ($OperatorApproved) { $ConfirmPreference = 'None' }
 
 $existingVersion = Get-PodmanVersion $PodmanUserExe
 if ($existingVersion) {

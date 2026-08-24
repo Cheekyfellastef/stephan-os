@@ -72,6 +72,7 @@ test('executor emits only post-teardown closed-world observations and no reusabl
   const source = await readFile(scriptUrl, 'utf8');
   assert.match(source, /stephanos\.forge-shadow-m3-fixed-proof-execution-receipt\.v1/);
   assert.match(source, /FORGE_SHADOW_M3_FIXED_PROOF_EXECUTORS_READY/);
+  assert.match(source, /if \(\$OperatorApproved\) \{ \$ConfirmPreference = 'None' \}/);
   assert.match(source, /credentialLogged = \$false/);
   assert.match(source, /credentialPersisted = \$false/);
   assert.match(source, /canonicalCheckoutMounted = \$false/);

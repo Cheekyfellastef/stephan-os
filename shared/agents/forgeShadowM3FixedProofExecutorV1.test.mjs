@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import {
@@ -21,7 +22,7 @@ const BACKUP = 'd'.repeat(64);
 const LINUX_DIGEST = `sha256:${'e'.repeat(64)}`;
 const WINDOWS_DIGEST = `sha256:${'f'.repeat(64)}`;
 const ARTIFACT_SET = '1'.repeat(64);
-const REPOSITORY_ROOT = new URL('../..', import.meta.url).pathname.replace(/\/$/, '');
+const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const COMPLETE = '2026-08-10T13:05:00.000Z';
 
 function runtimePlan() {
@@ -208,7 +209,9 @@ test('fixed executor accepts hardened invocation, runs estate once and returns o
   assert.equal(linux.terminationAcknowledgement.schemaVersion, FORGE_SHADOW_M3_TERMINATION_ACK_SCHEMA);
   assert.equal(acknowledgements.length, 2);
   assert.equal(calls.filter((args) => args.includes('-File')).length, 1);
-  assert.ok(calls.find((args) => args.includes('-File')).includes('-OperatorApproved'));
+  const powershellCall = calls.find((args) => args.includes('-File'));
+  assert.ok(powershellCall.includes('-OperatorApproved'));
+  assert.equal(powershellCall.includes('-Confirm:$false'), false);
 });
 
 test('receipt validator requires unchanged M2, complete teardown and zero residual authority', () => {

@@ -142,6 +142,7 @@ test('prerequisite executor proves exact source, installs only fixed Podman, the
   const powershell = calls.find((call) => call.args.includes('-File'));
   assert.ok(powershell);
   assert.ok(powershell.args.includes('-OperatorApproved'));
+  assert.equal(powershell.args.includes('-Confirm:$false'), false);
   assert.equal(powershell.args.includes('-ForgejoImageDigest'), false);
   const manifest = calls.find((call) => call.executable === podman && call.args[0] === 'manifest');
   assert.ok(manifest);
@@ -159,6 +160,7 @@ test('fixed prerequisite PowerShell contains only the official pinned Podman 6.0
   assert.match(source, /Get-AuthenticodeSignature/);
   assert.match(source, /Get-FileHash/);
   assert.match(source, /PODMAN_USER_VERSION_NOT_PROVEN/);
+  assert.match(source, /if \(\$OperatorApproved\) \{ \$ConfirmPreference = 'None' \}/);
   assert.doesNotMatch(parameterBlock, /\$(?:Url|Uri|Path|Executable|Command|Args|Token|Credential)\b/i);
   assert.doesNotMatch(source, /@\('machine',\s*'(?:init|start)'|@\('pull'/i);
 });

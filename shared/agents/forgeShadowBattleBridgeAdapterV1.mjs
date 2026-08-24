@@ -314,7 +314,6 @@ export async function executeForgeShadowM2OnBattleBridge(command = {}, options =
       '-File', installerPath,
       '-ExpectedHead', normalized.expectedHead,
       '-OperatorApproved',
-      '-Confirm:$false',
     ], { cwd: repositoryRoot, timeout: 15 * 60 * 1000, maxBuffer: 128 * 1024 });
 
     if (Buffer.byteLength(invocation.stdout, 'utf8') > 128 * 1024) {
@@ -392,7 +391,6 @@ export async function executeForgeShadowM2OnBattleBridge(command = {}, options =
     '-ExpectedHead', normalized.expectedHead,
     '-ForgejoImageDigest', normalized.forgejoImageDigest,
     '-OperatorApproved',
-    '-Confirm:$false',
   ], { cwd: repositoryRoot, timeout: 30 * 60 * 1000, maxBuffer: 128 * 1024 });
 
   if (!invocation.ok) {

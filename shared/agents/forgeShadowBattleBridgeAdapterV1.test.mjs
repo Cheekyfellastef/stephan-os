@@ -198,6 +198,7 @@ test('executor rebinds exact main head, tree and installer blob before and after
   assert.ok(powershellCall.args.includes('-ForgejoImageDigest'));
   assert.ok(powershellCall.args.includes(DIGEST));
   assert.ok(powershellCall.args.includes('-OperatorApproved'));
+  assert.equal(powershellCall.args.includes('-Confirm:$false'), false);
 });
 
 test('pre-install source head movement blocks before PowerShell is called', async () => {

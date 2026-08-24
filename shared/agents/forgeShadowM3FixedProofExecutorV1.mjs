@@ -354,7 +354,7 @@ export function createForgeShadowM3FixedProofExecutor({
         '-LinuxArtifactDigest', contract.linuxArtifact.artifactDigest,
         '-WindowsArtifactDigest', contract.windowsArtifact.artifactDigest,
         '-LinuxRunnerCount', String(contract.linuxCount),
-        '-OperatorApproved', '-Confirm:$false',
+        '-OperatorApproved',
       ], { cwd: root, timeout: 2 * 60 * 60 * 1000, maxBuffer: MAX_STDOUT_BYTES });
       if (!invocation.ok) throw fail('FORGE_M3_FIXED_EXECUTOR_HOST_SCRIPT_FAILED');
       if (Buffer.byteLength(invocation.stdout, 'utf8') > MAX_STDOUT_BYTES) throw fail('FORGE_M3_FIXED_EXECUTOR_RECEIPT_TOO_LARGE');

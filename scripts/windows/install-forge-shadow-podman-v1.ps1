@@ -597,6 +597,7 @@ $podmanVersionText = ((Invoke-Fixed $PodmanExe @('--version')).Output -join ' ')
 if ($podmanVersionText -notmatch 'podman version 6\.0\.2(?:\s|$)') { Fail 'PODMAN_VERSION_MISMATCH' @{ observedVersion = $podmanVersionText } }
 
 if (-not $OperatorApproved -and -not $WhatIfPreference) { Fail 'EXACT_RUNTIME_OPERATOR_APPROVAL_REQUIRED' }
+if ($OperatorApproved) { $ConfirmPreference = 'None' }
 if ($WhatIfPreference) {
     [ordered]@{
         schemaVersion = 'stephanos.forge-shadow-podman-install-receipt.v1'

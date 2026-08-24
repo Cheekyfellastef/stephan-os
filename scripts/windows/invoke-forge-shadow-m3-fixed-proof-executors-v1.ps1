@@ -428,6 +428,7 @@ function Remove-FixedRuntime {
 
 try {
     if (-not $OperatorApproved -and -not $WhatIfPreference) { Stop-Bounded 'EXACT_RUNTIME_OPERATOR_APPROVAL_REQUIRED' }
+    if ($OperatorApproved) { $ConfirmPreference = 'None' }
     if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) { Stop-Bounded 'CANONICAL_REPOSITORY_ROOT_MISSING' }
     foreach ($required in @($GitExe, $LinuxRunnerPath, $WindowsRunnerPath, $SandboxExe)) {
         if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { Stop-Bounded 'FORGE_M3_FIXED_PREREQUISITE_MISSING' }

@@ -16,6 +16,7 @@ test('installer accepts only exact head, exact image digest and approval identit
   has("[ValidatePattern('^[0-9a-fA-F]{40}$')]");
   has("[ValidatePattern('^sha256:[0-9a-fA-F]{64}$')]");
   has('[switch]$OperatorApproved');
+  has("if ($OperatorApproved) { $ConfirmPreference = 'None' }");
   has("$Repository = 'Cheekyfellastef/stephan-os'");
   has("$RemoteUrl = 'https://github.com/Cheekyfellastef/stephan-os.git'");
   lacks('[string]$Command');
