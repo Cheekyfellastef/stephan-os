@@ -13,12 +13,10 @@ const MOBILE_RECOVERY_EXECUTOR_PATH = './windowsAuthorityMobileRecoveryExecutorR
 const MOBILE_RECOVERY_VERIFICATION_JOURNAL_PATH = './windowsAuthorityMobileRecoveryVerificationJournalReviewV1.mjs';
 const MOBILE_RECOVERY_GITHUB_CONSUMER_PATH = './windowsAuthorityMobileRecoveryGitHubConsumerReviewV1.mjs';
 const MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATH = './windowsAuthorityMobileRecoveryLifeboatInstallerReviewV1.mjs';
-const LIFEBOAT_ACTIVATION_PATH = './windowsAuthorityBattleBridgeLifeboatActivationReviewV1.mjs';
 const WORKER_WATCHDOG_PATH = './windowsAuthorityWorkerWatchdogReviewV1.mjs';
 const FORGE_M3_EXECUTOR_PATH = './windowsAuthorityForgeM3ExecutorReviewV1.mjs';
 const FORGE_PODMAN_PREREQUISITE_PATH = './windowsAuthorityForgePodmanPrerequisiteReviewV1.mjs';
 const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1.mjs';
-
 const CORE_BLOB_SHA = '4424046455d8fd7724f1ae8b7c53b7c6529668df';
 const NO_FAFF_BLOB_SHA = 'f6c2a92f4e2ffebb57e197e72ed0279a896c9ffe';
 const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '0750137480031f19a364915095c69b7ab6061799';
@@ -31,12 +29,10 @@ const MOBILE_RECOVERY_EXECUTOR_BLOB_SHA = '95616156cc80abf66c7f8c4475f3e5a7f1c2c
 const MOBILE_RECOVERY_VERIFICATION_JOURNAL_BLOB_SHA = 'b4b3a6dd6c0226331d4faf682754b14fa1642e67';
 const MOBILE_RECOVERY_GITHUB_CONSUMER_BLOB_SHA = '7b0a62a712c2340293ffe09aee0154ae9e9766de';
 const MOBILE_RECOVERY_LIFEBOAT_INSTALLER_BLOB_SHA = '6ca86bcd68e034950b3d01fdabb12e3eb07055e1';
-const LIFEBOAT_ACTIVATION_BLOB_SHA = 'ff4fbcf3e768589742ec8e9ae85168a83c43f7b3';
 const WORKER_WATCHDOG_BLOB_SHA = 'b69e048ea9857b713e2faa17a1bbecec62fed84d';
 const FORGE_M3_EXECUTOR_BLOB_SHA = '7177c695d5a12b009785676440ce83163897f8f2';
 const FORGE_PODMAN_PREREQUISITE_BLOB_SHA = '0a0c98287f20145e31bf8aa3978d0ba4196cbcce';
 const IGNITION_CONVERGENCE_BLOB_SHA = '8115a382c5c7b9a0bfe5611d4931fcbd969d1162';
-
 const EXPECTED_NO_FAFF_PATHS = Object.freeze(['scripts/windows/repair-battle-bridge-control-plane-now.ps1','scripts/windows/Repair-Battle-Bridge-Control-Plane-Now.cmd','scripts/windows/repair-battle-bridge-control-plane-now.test.mjs','scripts/windows/status-stephanos-codex-dispatch-plugin.ps1']);
 const EXPECTED_MAILBOX_RECOVERY_GUARDIAN_PATHS = Object.freeze(['scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1']);
 const EXPECTED_RECOVERY_GUARDIAN_PATHS = Object.freeze(['scripts/windows/install-battle-bridge-recovery-mesh.ps1','scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1','scripts/windows/run-stephanos-scheduled-task-windowless.vbs','scripts/windows/uninstall-battle-bridge-recovery-mesh.ps1','scripts/windows/request-battle-bridge-recovery.ps1']);
@@ -48,7 +44,6 @@ const EXPECTED_MOBILE_RECOVERY_EXECUTOR_PATHS = Object.freeze(['docs/architectur
 const EXPECTED_MOBILE_RECOVERY_VERIFICATION_JOURNAL_PATHS = Object.freeze(['docs/architecture/battle-bridge-recovery-lifeboat-verification-journal-v1.md','scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1','shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs','shared/agents/battleBridgeRecoveryLifeboatVerificationJournalV1.test.mjs']);
 const EXPECTED_MOBILE_RECOVERY_GITHUB_CONSUMER_PATHS = Object.freeze(['docs/architecture/battle-bridge-recovery-lifeboat-github-consumer-v1.md','scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1','scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1','scripts/windows/run-battle-bridge-recovery-lifeboat-bank-v1.ps1','shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs']);
 const EXPECTED_MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATHS = Object.freeze(['docs/architecture/battle-bridge-recovery-lifeboat-ab-installer-v1.md','scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1','scripts/windows/run-battle-bridge-recovery-lifeboat-active-v1.ps1','scripts/windows/run-battle-bridge-recovery-lifeboat-bank-v1.ps1','shared/agents/battleBridgeRecoveryLifeboatInstallV1.mjs','shared/agents/battleBridgeRecoveryLifeboatInstallV1.test.mjs']);
-const EXPECTED_LIFEBOAT_ACTIVATION_PATHS = Object.freeze(['scripts/battle-bridge-control-plane-self-repair.test.mjs','scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs','scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1','scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs','shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs','shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs','shared/agents/postSyncRuntimeRefreshCoordinator.mjs']);
 const EXPECTED_FORGE_M3_EXECUTOR_PATHS = Object.freeze(['scripts/windows/invoke-forge-shadow-m3-fixed-proof-executors-v1.ps1','scripts/windows/invoke-forge-shadow-m3-fixed-proof-executors-v1.test.mjs']);
 const EXPECTED_FORGE_PODMAN_PREREQUISITE_PATHS = Object.freeze(['scripts/windows/install-forge-shadow-podman-prerequisite-v1.ps1']);
 const EXPECTED_IGNITION_CONVERGENCE_PATHS = Object.freeze(['scripts/windows/probe-battle-bridge-recovery-mesh.ps1','scripts/windows/repair-stephanos-battle-bridge.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1','scripts/windows/start-stephanos-backend.ps1']);
@@ -67,7 +62,6 @@ const mobileRecoveryExecutorUrl = provePinnedModule(MOBILE_RECOVERY_EXECUTOR_PAT
 const mobileRecoveryVerificationJournalUrl = provePinnedModule(MOBILE_RECOVERY_VERIFICATION_JOURNAL_PATH, MOBILE_RECOVERY_VERIFICATION_JOURNAL_BLOB_SHA);
 const mobileRecoveryGitHubConsumerUrl = provePinnedModule(MOBILE_RECOVERY_GITHUB_CONSUMER_PATH, MOBILE_RECOVERY_GITHUB_CONSUMER_BLOB_SHA);
 const mobileRecoveryLifeboatInstallerUrl = provePinnedModule(MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATH, MOBILE_RECOVERY_LIFEBOAT_INSTALLER_BLOB_SHA);
-const lifeboatActivationUrl = provePinnedModule(LIFEBOAT_ACTIVATION_PATH, LIFEBOAT_ACTIVATION_BLOB_SHA);
 const workerWatchdogUrl = provePinnedModule(WORKER_WATCHDOG_PATH, WORKER_WATCHDOG_BLOB_SHA);
 const forgeM3ExecutorUrl = provePinnedModule(FORGE_M3_EXECUTOR_PATH, FORGE_M3_EXECUTOR_BLOB_SHA);
 const forgePodmanPrerequisiteUrl = provePinnedModule(FORGE_PODMAN_PREREQUISITE_PATH, FORGE_PODMAN_PREREQUISITE_BLOB_SHA);
@@ -84,7 +78,6 @@ const mobileRecoveryExecutor = await import(mobileRecoveryExecutorUrl.href);
 const mobileRecoveryVerificationJournal = await import(mobileRecoveryVerificationJournalUrl.href);
 const mobileRecoveryGitHubConsumer = await import(mobileRecoveryGitHubConsumerUrl.href);
 const mobileRecoveryLifeboatInstaller = await import(mobileRecoveryLifeboatInstallerUrl.href);
-const lifeboatActivation = await import(lifeboatActivationUrl.href);
 const workerWatchdog = await import(workerWatchdogUrl.href);
 const forgeM3Executor = await import(forgeM3ExecutorUrl.href);
 const forgePodmanPrerequisite = await import(forgePodmanPrerequisiteUrl.href);
@@ -101,7 +94,6 @@ if (JSON.stringify(mobileRecoveryExecutor.WINDOWS_AUTHORITY_MOBILE_RECOVERY_EXEC
 if (JSON.stringify(mobileRecoveryVerificationJournal.WINDOWS_AUTHORITY_MOBILE_RECOVERY_VERIFICATION_JOURNAL_PATHS_V1) !== JSON.stringify(EXPECTED_MOBILE_RECOVERY_VERIFICATION_JOURNAL_PATHS)) throw new Error('WINDOWS_AUTHORITY_MOBILE_RECOVERY_VERIFICATION_JOURNAL_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(mobileRecoveryGitHubConsumer.WINDOWS_AUTHORITY_MOBILE_RECOVERY_GITHUB_CONSUMER_PATHS_V1) !== JSON.stringify(EXPECTED_MOBILE_RECOVERY_GITHUB_CONSUMER_PATHS)) throw new Error('WINDOWS_AUTHORITY_MOBILE_RECOVERY_GITHUB_CONSUMER_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(mobileRecoveryLifeboatInstaller.WINDOWS_AUTHORITY_MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATHS_V1) !== JSON.stringify(EXPECTED_MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATHS)) throw new Error('WINDOWS_AUTHORITY_MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATH_INVENTORY_MISMATCH');
-if (JSON.stringify(lifeboatActivation.WINDOWS_AUTHORITY_BATTLE_BRIDGE_LIFEBOAT_ACTIVATION_PATHS_V1) !== JSON.stringify(EXPECTED_LIFEBOAT_ACTIVATION_PATHS)) throw new Error('WINDOWS_AUTHORITY_BATTLE_BRIDGE_LIFEBOAT_ACTIVATION_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(forgeM3Executor.WINDOWS_AUTHORITY_FORGE_M3_EXECUTOR_PATHS_V1) !== JSON.stringify(EXPECTED_FORGE_M3_EXECUTOR_PATHS)) throw new Error('WINDOWS_AUTHORITY_FORGE_M3_EXECUTOR_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(forgePodmanPrerequisite.WINDOWS_AUTHORITY_FORGE_PODMAN_PREREQUISITE_PATHS_V1) !== JSON.stringify(EXPECTED_FORGE_PODMAN_PREREQUISITE_PATHS)) throw new Error('WINDOWS_AUTHORITY_FORGE_PODMAN_PREREQUISITE_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(ignitionConvergence.WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATHS_V1) !== JSON.stringify(EXPECTED_IGNITION_CONVERGENCE_PATHS)) throw new Error('WINDOWS_AUTHORITY_IGNITION_CONVERGENCE_PATH_INVENTORY_MISMATCH');
@@ -109,7 +101,6 @@ export const WINDOWS_AUTHORITY_SPECIALIST_SCHEMA_VERSION = core.WINDOWS_AUTHORIT
 export const WINDOWS_AUTHORITY_SOURCE_SCHEMA_VERSION = core.WINDOWS_AUTHORITY_SOURCE_SCHEMA_VERSION;
 export const WINDOWS_AUTHORITY_SOURCE_MAX_BYTES = core.WINDOWS_AUTHORITY_SOURCE_MAX_BYTES;
 export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
-  const lifeboatActivationResult = lifeboatActivation.analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview(input); if (lifeboatActivationResult.eligible) return lifeboatActivationResult;
   const legacyBackendMigrationResult = legacyBackendMigration.analyzeWindowsAuthorityLegacyBackendMigrationReviewV1(input); if (legacyBackendMigrationResult.eligible) return legacyBackendMigrationResult;
   const ignitionConvergenceResult = ignitionConvergence.analyzeWindowsAuthorityIgnitionConvergenceReview(input); if (ignitionConvergenceResult.eligible) return ignitionConvergenceResult;
   const workerWatchdogResult = workerWatchdog.analyzeWindowsAuthorityWorkerWatchdogReview(input); if (workerWatchdogResult.eligible) return workerWatchdogResult;
