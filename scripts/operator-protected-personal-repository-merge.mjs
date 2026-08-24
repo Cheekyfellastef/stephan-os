@@ -275,7 +275,7 @@ async function currentWorkflowExecution(context) {
   const triggeringActor = text(run?.triggering_actor?.login || run?.actor?.login).toLowerCase();
   const runIdentityMismatches = [...new Set([
     ...execution.currentMismatches,
-    ...(text(run?.name) === text(definition.name) ? [] : ['workflow-name']),
+    ...(text(run?.name) === expectedDisplayTitle ? [] : ['run-name']),
     ...(text(run?.display_title) === expectedDisplayTitle ? [] : ['display-title']),
     ...(triggeringActor === OPERATOR_MERGE_REVIEWER.toLowerCase() ? [] : ['triggering-actor']),
   ])];
