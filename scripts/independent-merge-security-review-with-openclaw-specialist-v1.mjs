@@ -16,6 +16,7 @@ import {
   WINDOWS_AUTHORITY_SOURCE_SCHEMA_VERSION,
 } from '../shared/agents/windowsAuthoritySpecialistReviewV1.mjs';
 import { analyzeOpenClawBuilderProviderSpecialistReviewV1 } from '../shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs';
+import { analyzeOpenClawOc2SpecialistReviewV1 } from '../shared/agents/openClawOc2SpecialistReviewV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-independent-review-openclaw-specialist-v1';
@@ -156,7 +157,7 @@ async function main() {
 
   const artifact = validateFindingsArtifact(JSON.parse(fs.readFileSync(artifactPath, 'utf8')));
   const lineageEvidence = await exactReconciliationLineage(artifact.repository, artifact.sourceHead, artifact.baseSha);
-  const probe = analyzeOpenClawBuilderProviderSpecialistReviewV1({
+  const reviewInput = {
     repository: artifact.repository,
     prNumber: artifact.prNumber,
     branch: artifact.branch,
@@ -165,21 +166,19 @@ async function main() {
     lineageEvidence,
     analysis: artifact.analysis,
     sources: [],
-  });
+  };
+  let specialistAnalyzer = analyzeOpenClawBuilderProviderSpecialistReviewV1;
+  let probe = specialistAnalyzer(reviewInput);
+  if (!probe.eligible) {
+    specialistAnalyzer = analyzeOpenClawOc2SpecialistReviewV1;
+    probe = specialistAnalyzer(reviewInput);
+  }
   if (!probe.eligible) process.exit(child.status || 1);
 
   const sources = await Promise.all(probe.reviewedPaths.map((path) => exactHeadSource(artifact.repository, path, artifact.sourceHead)));
-  const specialist = analyzeOpenClawBuilderProviderSpecialistReviewV1({
-    repository: artifact.repository,
-    prNumber: artifact.prNumber,
-    branch: artifact.branch,
-    sourceHead: artifact.sourceHead,
-    baseSha: artifact.baseSha,
-    lineageEvidence,
-    analysis: artifact.analysis,
-    sources,
-  });
+  const specialist = specialistAnalyzer({ ...reviewInput, sources });
   if (!specialist.eligible) process.exit(child.status || 1);
+  const isOc2 = specialist.schemaVersion === 'stephanos.openclaw-oc2-specialist-review.v1';
 
   const createdAtUtc = new Date().toISOString();
   if (!specialist.clean) {
@@ -202,6 +201,7 @@ async function main() {
       createdAtUtc,
       analysis,
     }));
+    if (isOc2) console.error(`OPENCLAW_OC2_SPECIALIST_REVIEW_BLOCKED=${specialist.findings.map((item) => item.code).join(',')}`);
     console.error(`OPENCLAW_BUILDER_PROVIDER_SPECIALIST_REVIEW_BLOCKED=${specialist.findings.map((item) => item.code).join(',')}`);
     process.exitCode = 1;
     return;
@@ -227,6 +227,10 @@ async function main() {
     analysis: cleanAnalysis,
   });
   writeReplacementArtifact(artifactPath, replacement);
+  if (isOc2) {
+    console.log('OPENCLAW_OC2_SPECIALIST_REVIEW=clean');
+    console.log(`OPENCLAW_OC2_SPECIALIST_REVIEW_PATHS=${specialist.reviewedPaths.join(',')}`);
+  }
   console.log('OPENCLAW_BUILDER_PROVIDER_SPECIALIST_REVIEW=clean');
   console.log(`OPENCLAW_BUILDER_PROVIDER_SPECIALIST_REVIEW_PATHS=${specialist.reviewedPaths.join(',')}`);
   console.log(`INDEPENDENT_SECURITY_REVIEW_ARTIFACT_PAYLOAD_SHA256=${replacement.payloadSha256}`);
