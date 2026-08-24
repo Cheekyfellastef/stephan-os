@@ -23,6 +23,7 @@ $PodmanDesktopVersion = '1.29.1'
 $PodmanDesktopSourceCommit = 'a969ee0e0b07285122dd4988a58edb0a1a25d5fc'
 $PodmanDesktopPodmanManifestBlob = '5acfedd1c3171414aa218a1d5d95ea7529687809'
 $CompatibilityAuthority = 'podman-desktop-v1.29.1-win32-x64-podman-v6.0.2'
+$WindowsCurrentVersionKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
 $ImageRepository = 'code.forgejo.org/forgejo/forgejo'
 $MachineName = 'stephanos-forge-shadow'
 $ContainerName = 'stephanos-forge-shadow'
@@ -45,6 +46,8 @@ $PodmanSystemExe = 'C:\Program Files\RedHat\Podman\podman.exe'
 $ExpectedHead = $ExpectedHead.ToLowerInvariant()
 $ForgejoImageDigest = $ForgejoImageDigest.ToLowerInvariant()
 $ObservedWindowsBuild = [Environment]::OSVersion.Version.Build
+$ObservedWindowsProductName = ''
+$ObservedWindowsInstallationType = ''
 $ImageRef = "$ImageRepository@$ForgejoImageDigest"
 $ApiRoot = "http://$HostAddress`:$HostPort/api/v1"
 $RestoreApiRoot = "http://$HostAddress`:$RestorePort/api/v1"
@@ -61,6 +64,8 @@ function Fail([string]$Blocker, [hashtable]$Details = @{}) {
         windowsHostAdapter = $WindowsHostAdapter
         minimumWindowsBuild = $MinimumWindowsBuild
         observedWindowsBuild = $ObservedWindowsBuild
+        observedWindowsProductName = $ObservedWindowsProductName
+        observedWindowsInstallationType = $ObservedWindowsInstallationType
         compatibilityAuthority = $CompatibilityAuthority
         podmanDesktopVersion = $PodmanDesktopVersion
         podmanDesktopSourceCommit = $PodmanDesktopSourceCommit
@@ -591,6 +596,17 @@ function Create-And-ProveBackup([string]$Podman, [string]$Git) {
     return [pscustomobject]@{ Digest = $backupResult.Digest; Volume = $backupResult.Volume; Version = $mainVersion }
 }
 
+try {
+    $windowsIdentity = Get-ItemProperty -LiteralPath $WindowsCurrentVersionKey -ErrorAction Stop
+    $ObservedWindowsProductName = ([string]$windowsIdentity.ProductName).Trim()
+    $ObservedWindowsInstallationType = ([string]$windowsIdentity.InstallationType).Trim()
+} catch {
+    Fail 'WINDOWS_PRODUCT_IDENTITY_UNAVAILABLE'
+}
+if ($ObservedWindowsInstallationType -ne 'Client' -or $ObservedWindowsProductName -notmatch '^Windows 10(?:\s|$)') {
+    Fail 'WINDOWS_10_CLIENT_REQUIRED'
+}
+
 if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) { Fail 'CANONICAL_REPOSITORY_ROOT_MISSING' }
 if (-not (Test-Path -LiteralPath $GitExe -PathType Leaf)) { Fail 'FIXED_GIT_EXECUTABLE_MISSING' }
 if (-not (Test-Path -LiteralPath $WslExe -PathType Leaf)) { Fail 'WSL_EXECUTABLE_MISSING' }
@@ -624,6 +640,8 @@ if ($WhatIfPreference) {
         windowsHostAdapter = $WindowsHostAdapter
         minimumWindowsBuild = $MinimumWindowsBuild
         observedWindowsBuild = $ObservedWindowsBuild
+        observedWindowsProductName = $ObservedWindowsProductName
+        observedWindowsInstallationType = $ObservedWindowsInstallationType
         compatibilityAuthority = $CompatibilityAuthority
         podmanDesktopVersion = $PodmanDesktopVersion
         podmanDesktopSourceCommit = $PodmanDesktopSourceCommit
@@ -786,6 +804,8 @@ try {
         windowsHostAdapter = $WindowsHostAdapter
         minimumWindowsBuild = $MinimumWindowsBuild
         observedWindowsBuild = $ObservedWindowsBuild
+        observedWindowsProductName = $ObservedWindowsProductName
+        observedWindowsInstallationType = $ObservedWindowsInstallationType
         compatibilityAuthority = $CompatibilityAuthority
         podmanDesktopVersion = $PodmanDesktopVersion
         podmanDesktopSourceCommit = $PodmanDesktopSourceCommit

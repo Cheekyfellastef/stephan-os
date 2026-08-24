@@ -64,6 +64,8 @@ function prerequisiteReceipt() {
     windowsHostAdapter: WINDOWS_HOST_ADAPTER,
     minimumWindowsBuild: 19043,
     observedWindowsBuild: 19045,
+    observedWindowsProductName: 'Windows 10 Pro',
+    observedWindowsInstallationType: 'Client',
     compatibilityAuthority: 'podman-desktop-v1.29.1-win32-x64-podman-v6.0.2',
     podmanDesktopVersion: '1.29.1',
     podmanDesktopSourceCommit: PODMAN_DESKTOP_SOURCE_COMMIT,
@@ -148,6 +150,8 @@ test('prerequisite executor proves exact source, installs only fixed Podman, the
   assert.equal(result.windowsHostAdapter, WINDOWS_HOST_ADAPTER);
   assert.equal(result.minimumWindowsBuild, 19043);
   assert.equal(result.observedWindowsBuild, 19045);
+  assert.equal(result.observedWindowsProductName, 'Windows 10 Pro');
+  assert.equal(result.observedWindowsInstallationType, 'Client');
   assert.equal(result.installPerformed, true);
   assert.equal(result.machineMutation, false);
   assert.equal(result.containerMutation, false);
@@ -178,6 +182,10 @@ test('fixed prerequisite admits the Podman Desktop Windows 10 compatibility cont
   assert.match(source, new RegExp(PODMAN_DESKTOP_SOURCE_COMMIT));
   assert.match(source, new RegExp(PODMAN_DESKTOP_PODMAN_MANIFEST_BLOB));
   assert.match(source, /WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED/);
+  assert.match(source, /WINDOWS_10_CLIENT_REQUIRED/);
+  assert.match(source, /WINDOWS_PRODUCT_IDENTITY_UNAVAILABLE/);
+  assert.match(source, /\$ObservedWindowsInstallationType -ne 'Client'/);
+  assert.match(source, /\$ObservedWindowsProductName -notmatch '\^Windows 10/);
   assert.doesNotMatch(source, /WINDOWS_11_OR_NEWER_REQUIRED/);
   assert.doesNotMatch(source, /podman-desktop-1\.29\.1-setup-x64\.exe/);
   assert.doesNotMatch(parameterBlock, /\$(?:Url|Uri|Path|Executable|Command|Args|Token|Credential)\b/i);

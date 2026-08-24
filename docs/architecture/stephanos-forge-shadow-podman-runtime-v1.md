@@ -5,7 +5,7 @@ This document advances issue #1671 from the M2 deployment-admission contract int
 ## Fixed runtime identity
 
 - repository: `Cheekyfellastef/stephan-os`
-- Windows host posture: Windows 10 build 19043 or newer with WSL2 available, admitted only through `podman-desktop-windows10-wsl2-v1`
+- Windows host posture: Windows 10 client build 19043 or newer with WSL2 available, admitted only through `podman-desktop-windows10-wsl2-v1`
 - container engine: Podman `6.0.2`
 - machine: `stephanos-forge-shadow`
 - machine provider: WSL
@@ -43,7 +43,7 @@ Credential material is not proof. Receipts expose only the fact that containment
 
 The runtime planner and fixed Windows adapter progress only through these states:
 
-1. prove the allowlisted Windows host adapter, Windows build 19043+, WSL2, `main` and the exact source head;
+1. prove the allowlisted Windows host adapter, Windows 10 client product identity, build 19043+, WSL2, `main` and the exact source head;
 2. prove Podman 6.0.2 from one of two source-controlled installation paths, or stop at a separately authorised host prerequisite;
 3. initialise the fixed rootless WSL Podman machine if absent;
 4. start that exact machine if stopped;
@@ -129,7 +129,7 @@ A backup is not called restorable merely because it can be hashed or copied. The
 
 ## Strict runtime facts
 
-The pure runtime planner treats observed runtime facts as typed evidence. Every declared boolean fact must be a JavaScript boolean, `windowsBuild` must be a non-negative safe integer, and `windowsHostAdapter`, `podmanVersion` plus `mirrorSourceHead` must be strings. Stringified values such as `"false"`, numeric truthiness, nulls or arrays fail closed and cannot be promoted into runtime authority.
+The pure runtime planner treats observed runtime facts as typed evidence. Every declared boolean fact must be a JavaScript boolean, `windowsBuild` must be a non-negative safe integer, and `windowsHostAdapter`, `windowsProductName`, `windowsInstallationType`, `podmanVersion` plus `mirrorSourceHead` must be strings. The Windows adapter additionally requires `InstallationType=Client` and a Windows 10 product name, so a numerically compatible Windows Server build cannot impersonate the client adapter. Stringified values such as `"false"`, numeric truthiness, nulls or arrays fail closed and cannot be promoted into runtime authority.
 
 ## Fixed Windows adapter
 
@@ -150,7 +150,7 @@ M2 is not complete from service health alone. `FORGE_SHADOW_M2_READY` requires a
 - canonical repository identity;
 - exact canonical `main` head;
 - exact Forgejo OCI digest;
-- allowlisted Windows host adapter, Windows build 19043+ and WSL2 proof;
+- allowlisted Windows host adapter, Windows 10 client product identity, build 19043+ and WSL2 proof;
 - Podman 6.0.2 proof;
 - rootless machine proof;
 - loopback-only published service;

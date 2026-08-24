@@ -48,6 +48,8 @@ function blockedReceipt(blocker, extras = {}) {
     windowsHostAdapter: WINDOWS_HOST_ADAPTER,
     minimumWindowsBuild: 19043,
     observedWindowsBuild: 19045,
+    observedWindowsProductName: 'Windows 10 Pro',
+    observedWindowsInstallationType: 'Client',
     compatibilityAuthority: 'podman-desktop-v1.29.1-win32-x64-podman-v6.0.2',
     podmanDesktopVersion: '1.29.1',
     podmanDesktopSourceCommit: 'a969ee0e0b07285122dd4988a58edb0a1a25d5fc',
@@ -113,6 +115,24 @@ test('known structured prerequisite blocker is surfaced without raw detail leaka
     exitCode: 2,
   });
   assert.doesNotMatch(JSON.stringify(result), /Sensitive|secret-value|host-only stderr/i);
+});
+
+test('Windows Server product identity blocker is structured and bounded', async () => {
+  const result = await executeWithInstallerResult({
+    status: 2,
+    stdout: JSON.stringify(blockedReceipt('WINDOWS_10_CLIENT_REQUIRED', {
+      observedWindowsProductName: 'Windows Server 2022 Standard',
+      observedWindowsInstallationType: 'Server',
+    })),
+    stderr: '',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'WINDOWS_10_CLIENT_REQUIRED');
+  assert.deepEqual(result.details, {
+    stage: 'FORGE_SHADOW_PODMAN_PREREQUISITE',
+    exitCode: 2,
+  });
 });
 
 test('unknown structured prerequisite blocker stays behind the generic fail-closed boundary', async () => {

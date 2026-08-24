@@ -31,6 +31,8 @@ const PREREQUISITE_BLOCKERS = new Set([
   'FIXED_GIT_EXECUTABLE_MISSING',
   'WSL_EXECUTABLE_MISSING',
   'MSIEXEC_EXECUTABLE_MISSING',
+  'WINDOWS_PRODUCT_IDENTITY_UNAVAILABLE',
+  'WINDOWS_10_CLIENT_REQUIRED',
   'WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED',
   'CANONICAL_REPOSITORY_NOT_MAIN',
   'CANONICAL_REPOSITORY_HEAD_MISMATCH',
@@ -181,6 +183,8 @@ function validBlockedPrerequisiteReceipt(receipt, command) {
     && receipt.minimumWindowsBuild === MINIMUM_WINDOWS_BUILD
     && Number.isSafeInteger(receipt.observedWindowsBuild)
     && receipt.observedWindowsBuild > 0
+    && typeof receipt.observedWindowsProductName === 'string'
+    && typeof receipt.observedWindowsInstallationType === 'string'
     && receipt.compatibilityAuthority === PODMAN_DESKTOP_COMPATIBILITY_AUTHORITY
     && receipt.podmanDesktopVersion === PODMAN_DESKTOP_VERSION
     && receipt.podmanDesktopSourceCommit === PODMAN_DESKTOP_SOURCE_COMMIT
@@ -218,6 +222,8 @@ function validPrerequisiteReceipt(receipt, command, expectedTree) {
     && receipt.minimumWindowsBuild === MINIMUM_WINDOWS_BUILD
     && Number.isSafeInteger(receipt.observedWindowsBuild)
     && receipt.observedWindowsBuild >= MINIMUM_WINDOWS_BUILD
+    && /^Windows 10(?:\s|$)/.test(receipt.observedWindowsProductName)
+    && receipt.observedWindowsInstallationType === 'Client'
     && receipt.compatibilityAuthority === PODMAN_DESKTOP_COMPATIBILITY_AUTHORITY
     && receipt.podmanDesktopVersion === PODMAN_DESKTOP_VERSION
     && receipt.podmanDesktopSourceCommit === PODMAN_DESKTOP_SOURCE_COMMIT
@@ -265,6 +271,8 @@ function validInstallerReceipt(receipt, command, expectedTree) {
     && receipt.minimumWindowsBuild === MINIMUM_WINDOWS_BUILD
     && Number.isSafeInteger(receipt.observedWindowsBuild)
     && receipt.observedWindowsBuild >= MINIMUM_WINDOWS_BUILD
+    && /^Windows 10(?:\s|$)/.test(receipt.observedWindowsProductName)
+    && receipt.observedWindowsInstallationType === 'Client'
     && receipt.compatibilityAuthority === PODMAN_DESKTOP_COMPATIBILITY_AUTHORITY
     && receipt.podmanDesktopVersion === PODMAN_DESKTOP_VERSION
     && receipt.podmanDesktopSourceCommit === PODMAN_DESKTOP_SOURCE_COMMIT
@@ -395,6 +403,8 @@ export async function executeForgeShadowM2OnBattleBridge(command = {}, options =
       windowsHostAdapter: WINDOWS_HOST_ADAPTER,
       minimumWindowsBuild: MINIMUM_WINDOWS_BUILD,
       observedWindowsBuild: receipt.observedWindowsBuild,
+      observedWindowsProductName: receipt.observedWindowsProductName,
+      observedWindowsInstallationType: receipt.observedWindowsInstallationType,
       compatibilityAuthority: PODMAN_DESKTOP_COMPATIBILITY_AUTHORITY,
       podmanDesktopVersion: PODMAN_DESKTOP_VERSION,
       podmanDesktopSourceCommit: PODMAN_DESKTOP_SOURCE_COMMIT,
@@ -462,6 +472,8 @@ export async function executeForgeShadowM2OnBattleBridge(command = {}, options =
     windowsHostAdapter: WINDOWS_HOST_ADAPTER,
     minimumWindowsBuild: MINIMUM_WINDOWS_BUILD,
     observedWindowsBuild: receipt.observedWindowsBuild,
+    observedWindowsProductName: receipt.observedWindowsProductName,
+    observedWindowsInstallationType: receipt.observedWindowsInstallationType,
     compatibilityAuthority: PODMAN_DESKTOP_COMPATIBILITY_AUTHORITY,
     podmanDesktopVersion: PODMAN_DESKTOP_VERSION,
     podmanDesktopSourceCommit: PODMAN_DESKTOP_SOURCE_COMMIT,

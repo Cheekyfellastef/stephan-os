@@ -18,6 +18,7 @@ $PodmanDesktopVersion = '1.29.1'
 $PodmanDesktopSourceCommit = 'a969ee0e0b07285122dd4988a58edb0a1a25d5fc'
 $PodmanDesktopPodmanManifestBlob = '5acfedd1c3171414aa218a1d5d95ea7529687809'
 $CompatibilityAuthority = 'podman-desktop-v1.29.1-win32-x64-podman-v6.0.2'
+$WindowsCurrentVersionKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
 $InstallerUrl = 'https://github.com/podman-container-tools/podman/releases/download/v6.0.2/podman-installer-windows-amd64.msi'
 $InstallerSha256 = 'c094059880f033656092f5fb4306457e42aa068ee32137162299817c5f79396f'
 $RepoRoot = Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'
@@ -27,6 +28,8 @@ $MsiexecExe = Join-Path $env:SystemRoot 'System32\msiexec.exe'
 $PodmanUserExe = Join-Path $env:LOCALAPPDATA 'Programs\Podman\podman.exe'
 $ExpectedHead = $ExpectedHead.ToLowerInvariant()
 $ObservedWindowsBuild = [Environment]::OSVersion.Version.Build
+$ObservedWindowsProductName = ''
+$ObservedWindowsInstallationType = ''
 
 function Emit-Blocked([string]$Blocker, [hashtable]$Details = @{}) {
     $result = [ordered]@{
@@ -40,6 +43,8 @@ function Emit-Blocked([string]$Blocker, [hashtable]$Details = @{}) {
         windowsHostAdapter = $WindowsHostAdapter
         minimumWindowsBuild = $MinimumWindowsBuild
         observedWindowsBuild = $ObservedWindowsBuild
+        observedWindowsProductName = $ObservedWindowsProductName
+        observedWindowsInstallationType = $ObservedWindowsInstallationType
         compatibilityAuthority = $CompatibilityAuthority
         podmanDesktopVersion = $PodmanDesktopVersion
         podmanDesktopSourceCommit = $PodmanDesktopSourceCommit
@@ -80,6 +85,17 @@ function Get-PodmanVersion([string]$Path) {
     return (($probe.Output -join ' ').Trim())
 }
 
+try {
+    $windowsIdentity = Get-ItemProperty -LiteralPath $WindowsCurrentVersionKey -ErrorAction Stop
+    $ObservedWindowsProductName = ([string]$windowsIdentity.ProductName).Trim()
+    $ObservedWindowsInstallationType = ([string]$windowsIdentity.InstallationType).Trim()
+} catch {
+    Emit-Blocked 'WINDOWS_PRODUCT_IDENTITY_UNAVAILABLE'
+}
+if ($ObservedWindowsInstallationType -ne 'Client' -or $ObservedWindowsProductName -notmatch '^Windows 10(?:\s|$)') {
+    Emit-Blocked 'WINDOWS_10_CLIENT_REQUIRED'
+}
+
 if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) { Emit-Blocked 'CANONICAL_REPOSITORY_ROOT_MISSING' }
 if (-not (Test-Path -LiteralPath $GitExe -PathType Leaf)) { Emit-Blocked 'FIXED_GIT_EXECUTABLE_MISSING' }
 if (-not (Test-Path -LiteralPath $WslExe -PathType Leaf)) { Emit-Blocked 'WSL_EXECUTABLE_MISSING' }
@@ -117,6 +133,8 @@ if ($existingVersion) {
         windowsHostAdapter = $WindowsHostAdapter
         minimumWindowsBuild = $MinimumWindowsBuild
         observedWindowsBuild = $ObservedWindowsBuild
+        observedWindowsProductName = $ObservedWindowsProductName
+        observedWindowsInstallationType = $ObservedWindowsInstallationType
         compatibilityAuthority = $CompatibilityAuthority
         podmanDesktopVersion = $PodmanDesktopVersion
         podmanDesktopSourceCommit = $PodmanDesktopSourceCommit
@@ -155,6 +173,8 @@ if ($WhatIfPreference) {
         windowsHostAdapter = $WindowsHostAdapter
         minimumWindowsBuild = $MinimumWindowsBuild
         observedWindowsBuild = $ObservedWindowsBuild
+        observedWindowsProductName = $ObservedWindowsProductName
+        observedWindowsInstallationType = $ObservedWindowsInstallationType
         compatibilityAuthority = $CompatibilityAuthority
         podmanDesktopVersion = $PodmanDesktopVersion
         podmanDesktopSourceCommit = $PodmanDesktopSourceCommit
@@ -236,6 +256,8 @@ try {
         windowsHostAdapter = $WindowsHostAdapter
         minimumWindowsBuild = $MinimumWindowsBuild
         observedWindowsBuild = $ObservedWindowsBuild
+        observedWindowsProductName = $ObservedWindowsProductName
+        observedWindowsInstallationType = $ObservedWindowsInstallationType
         compatibilityAuthority = $CompatibilityAuthority
         podmanDesktopVersion = $PodmanDesktopVersion
         podmanDesktopSourceCommit = $PodmanDesktopSourceCommit

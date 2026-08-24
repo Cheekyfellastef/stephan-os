@@ -19,6 +19,8 @@ function facts(overrides = {}) {
   return {
     windowsBuild: 19045,
     windowsHostAdapter: FORGE_SHADOW_WINDOWS_HOST_ADAPTER,
+    windowsProductName: 'Windows 10 Pro',
+    windowsInstallationType: 'Client',
     wsl2Available: true,
     podmanPresent: true,
     podmanVersion: '6.0.2',
@@ -98,6 +100,8 @@ test('runtime fact observations require exact boolean and string types', () => {
     { windowsBuild: '19045' },
     { windowsBuild: 19045.5 },
     { windowsHostAdapter: false },
+    { windowsProductName: false },
+    { windowsInstallationType: null },
   ]) {
     const result = planForgeShadowPodmanRuntime(input(patch));
     assert.equal(result.valid, false);
@@ -110,6 +114,8 @@ test('the allowlisted Windows 10 adapter, build floor, WSL2 and rootless machine
   for (const patch of [
     { windowsBuild: 19042 },
     { windowsHostAdapter: 'local-one-off-adapter' },
+    { windowsProductName: 'Windows Server 2022 Standard' },
+    { windowsInstallationType: 'Server' },
     { wsl2Available: false },
     { machineRootful: true },
   ]) {

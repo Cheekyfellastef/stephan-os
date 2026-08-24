@@ -43,6 +43,11 @@ test('Windows 10 compatibility authority and build floor are fixed', () => {
   has("$PodmanDesktopSourceCommit = 'a969ee0e0b07285122dd4988a58edb0a1a25d5fc'");
   has("$PodmanDesktopPodmanManifestBlob = '5acfedd1c3171414aa218a1d5d95ea7529687809'");
   has("Fail 'WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED'");
+  has("$WindowsCurrentVersionKey = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion'");
+  has("Fail 'WINDOWS_PRODUCT_IDENTITY_UNAVAILABLE'");
+  has("Fail 'WINDOWS_10_CLIENT_REQUIRED'");
+  has("$ObservedWindowsInstallationType -ne 'Client'");
+  has("$ObservedWindowsProductName -notmatch '^Windows 10(?:\\s|$)'");
   lacks('WINDOWS_11_OR_NEWER_REQUIRED');
 });
 

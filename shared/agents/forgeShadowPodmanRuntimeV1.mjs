@@ -38,6 +38,8 @@ const TOP_LEVEL_KEYS = Object.freeze([
 const FACT_KEYS = Object.freeze([
   'windowsBuild',
   'windowsHostAdapter',
+  'windowsProductName',
+  'windowsInstallationType',
   'wsl2Available',
   'podmanPresent',
   'podmanVersion',
@@ -60,10 +62,18 @@ const FACT_KEYS = Object.freeze([
 const BOOLEAN_FACT_KEYS = Object.freeze(FACT_KEYS.filter((key) => ![
   'windowsBuild',
   'windowsHostAdapter',
+  'windowsProductName',
+  'windowsInstallationType',
   'podmanVersion',
   'mirrorSourceHead',
 ].includes(key)));
-const STRING_FACT_KEYS = Object.freeze(['windowsHostAdapter', 'podmanVersion', 'mirrorSourceHead']);
+const STRING_FACT_KEYS = Object.freeze([
+  'windowsHostAdapter',
+  'windowsProductName',
+  'windowsInstallationType',
+  'podmanVersion',
+  'mirrorSourceHead',
+]);
 const INTEGER_FACT_KEYS = Object.freeze(['windowsBuild']);
 
 function text(value) {
@@ -157,6 +167,9 @@ export function planForgeShadowPodmanRuntime(input = {}) {
   if (!blockers.some((blocker) => blocker.startsWith('runtime-fact-type-invalid:'))) {
     if (facts.windowsHostAdapter !== FORGE_SHADOW_WINDOWS_HOST_ADAPTER) {
       blockers.push('windows-host-adapter-not-allowlisted');
+    }
+    if (facts.windowsInstallationType !== 'Client' || !/^Windows 10(?:\s|$)/.test(facts.windowsProductName)) {
+      blockers.push('windows-10-client-not-proved');
     }
     if (facts.windowsBuild < FORGE_SHADOW_MINIMUM_WINDOWS_BUILD) {
       blockers.push('windows-10-build-19043-or-newer-not-proved');

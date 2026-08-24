@@ -64,7 +64,7 @@ That authority is fixed to:
 - Podman Desktop version `1.29.1`;
 - source commit `a969ee0e0b07285122dd4988a58edb0a1a25d5fc`;
 - bundled-Podman manifest blob `5acfedd1c3171414aa218a1d5d95ea7529687809`;
-- host floor Windows build `19043`;
+- host floor Windows 10 client build `19043`;
 - the existing `podman-wsl-rootless` runtime boundary.
 
 The upstream evidence is independently auditable through Podman Desktop's
@@ -79,11 +79,14 @@ machine identity, Forgejo digest and all no-authority receipts remain canonical.
 
 The fixed adapter verifies canonical `main`, exact head, exact tree and the committed/working prerequisite-installer blob before mutation and repeats source identity proof afterwards.
 
-The installer requires Windows 10 build `19043` or newer, the fixed Git
+The installer requires Windows 10 client `InstallationType`, a Windows 10
+product identity, build `19043` or newer, the fixed Git
 executable and an already available WSL2 environment. It does not enable Windows
 features, request elevation, reboot the host, create a Podman machine or alter
 system-scope Podman state. A host below the build floor returns
-`WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED`; a compatible host without working
+`WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED`; a server or other non-client SKU
+returns `WINDOWS_10_CLIENT_REQUIRED`; unreadable product identity returns
+`WINDOWS_PRODUCT_IDENTITY_UNAVAILABLE`; a compatible host without working
 WSL2 returns `WSL2_NOT_AVAILABLE`.
 
 If exact Podman 6.0.2 is already present at the fixed user path, the operation returns success without reinstalling it.
