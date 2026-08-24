@@ -36,6 +36,7 @@ const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_TRANSIENT_BLOCKERS = new Set([
   // GitHub exposes check runs and workflow runs through separate eventually-consistent collections.
   'personal-repository-check-runs-invalid',
   'personal-repository-check-workflow-run-missing',
+  'personal-repository-check-run-identity-invalid',
   'personal-repository-review-escalation-check-not-exact',
 ]);
 
