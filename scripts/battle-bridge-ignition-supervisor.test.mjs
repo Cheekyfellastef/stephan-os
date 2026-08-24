@@ -411,6 +411,33 @@ test('collector aligns dream-memory runtime dirt while secret-shaped children re
   assert.deepEqual(secret.calls.map((call) => call.operationArgs[0]), ['config', 'ls-files', 'status']);
 });
 
+test('collector accepts the exact Battle Bridge ignored local-runtime estate without weakening child checks', () => {
+  const status = [
+    '!! .stephanos/local-state-checkpoints/',
+    '!! package-lock.json',
+    '!! stephanos-server/data/durable-memory.json',
+    '!! stephanos-server/data/local-rag/',
+    '!! stephanos-server/data/provider-secrets.json',
+    '!! stephanos-server/data/tile-state.json',
+    '!! stephanos-server/package-lock.json',
+  ].join('\n') + '\n';
+  const accepted = runSourceCollectorFixture({ statusBefore: status });
+  assert.equal(accepted.result.ok, true);
+  assert.equal(accepted.result.workingTreeDirty, false);
+  assert.deepEqual(accepted.ignoredRuntimeScanCalls[0], {
+    repoRoot: '/canonical/repo',
+    aggregatePaths: ['.stephanos/local-state-checkpoints/', 'stephanos-server/data/local-rag/'],
+  });
+
+  const blockedChild = runSourceCollectorFixture({
+    statusBefore: status,
+    ignoredRuntimeChildrenBefore: '.stephanos/local-state-checkpoints/private-key.json\n',
+  });
+  assert.equal(blockedChild.result.ok, false);
+  assert.equal(blockedChild.result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
+  assert.equal(blockedChild.calls.some((call) => call.operationArgs[0] === 'fetch'), false);
+});
+
 test('collector enumerates ignored log children before accepting the logs runtime aggregate', () => {
   const benign = runSourceCollectorFixture({
     statusBefore: '!! logs/\n',
