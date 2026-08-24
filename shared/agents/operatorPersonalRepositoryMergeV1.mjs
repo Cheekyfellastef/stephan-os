@@ -33,6 +33,52 @@ export const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES = 256 * 1024;
 export const PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES = 256 * 1024;
 export const PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX = 8;
 
+export function validatePersonalRepositoryPriorJobEnvelope(run = {}, job = {}) {
+  const blockers = [];
+  const repository = workflowRepository(run);
+  const runId = strictPositiveInteger(run?.id);
+  const runAttempt = strictPositiveInteger(job?.run_attempt);
+  const jobId = strictPositiveInteger(job?.id);
+  const expectedJobUrl = `https://api.github.com/repos/${repository}/actions/jobs/${jobId}`;
+  const expectedRunUrl = `https://api.github.com/repos/${repository}/actions/runs/${runId}`;
+  const expectedCheckRunUrl = `https://api.github.com/repos/${repository}/check-runs/${jobId}`;
+  const expectedHtmlUrl = `https://github.com/${repository}/actions/runs/${runId}/job/${jobId}`;
+  if (!REPOSITORY_PATTERN.test(repository)) blockers.push('prior-job-repository-invalid');
+  if (!runId) blockers.push('prior-job-run-id-invalid');
+  if (!jobId) blockers.push('prior-job-id-invalid');
+  if (!runAttempt || runAttempt > strictPositiveInteger(run?.run_attempt)) blockers.push('prior-job-attempt-invalid');
+  if (strictPositiveInteger(job?.run_id) !== runId) blockers.push('prior-job-parent-run-mismatch');
+  if (text(job?.workflow_name) !== text(run?.name)) blockers.push('prior-job-workflow-name-mismatch');
+  if (text(job?.head_branch) !== text(run?.head_branch)) blockers.push('prior-job-head-branch-mismatch');
+  if (text(job?.head_sha).toLowerCase() !== text(run?.head_sha).toLowerCase()) blockers.push('prior-job-head-sha-mismatch');
+  if (text(job?.url) !== expectedJobUrl) blockers.push('prior-job-api-url-mismatch');
+  if (text(job?.run_url) !== expectedRunUrl) blockers.push('prior-job-run-url-mismatch');
+  if (text(job?.check_run_url) !== expectedCheckRunUrl) blockers.push('prior-job-check-run-url-mismatch');
+  if (text(job?.html_url) !== expectedHtmlUrl) blockers.push('prior-job-html-url-mismatch');
+  return Object.freeze({
+    valid: blockers.length === 0,
+    receipt: blockers.length === 0 ? Object.freeze({
+      id: jobId,
+      runId,
+      runAttempt,
+      workflowName: text(job?.workflow_name),
+      headBranch: text(job?.head_branch),
+      headSha: text(job?.head_sha).toLowerCase(),
+      name: text(job?.name),
+      status: text(job?.status).toLowerCase(),
+      conclusion: text(job?.conclusion).toLowerCase(),
+      url: text(job?.url),
+      runUrl: text(job?.run_url),
+      checkRunUrl: text(job?.check_run_url),
+      htmlUrl: text(job?.html_url),
+    }) : null,
+    blockers: Object.freeze(unique(blockers)),
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_PRIOR_JOB_ENVELOPE_BLOCKED'
+      : 'PERSONAL_REPOSITORY_PRIOR_JOB_ENVELOPE_READY',
+  });
+}
+
 export function validatePersonalRepositoryReadOnlyPriorFailure(run = {}, jobs = []) {
   const blockers = [];
   const runId = strictPositiveInteger(run?.id);
@@ -88,6 +134,13 @@ export function validatePersonalRepositoryReadOnlyPriorFailure(run = {}, jobs = 
   if (jobIds.some((id) => !id) || new Set(jobIds).size !== selectedJobs.length) {
     blockers.push('prior-run-job-id-invalid');
   }
+  const jobEnvelopeReceipts = [];
+  for (const job of selectedJobs) {
+    const envelope = validatePersonalRepositoryPriorJobEnvelope(run, job);
+    if (!envelope.valid) {
+      blockers.push(...envelope.blockers.map((blocker) => `prior-run-job-envelope:${blocker}`));
+    } else jobEnvelopeReceipts.push(envelope.receipt);
+  }
   return Object.freeze({
     valid: blockers.length === 0,
     receipt: blockers.length === 0 ? Object.freeze({
@@ -95,13 +148,7 @@ export function validatePersonalRepositoryReadOnlyPriorFailure(run = {}, jobs = 
       runAttempt,
       status: 'completed',
       conclusion: 'failure',
-      jobs: Object.freeze(selectedJobs.map((job) => Object.freeze({
-        id: strictPositiveInteger(job?.id),
-        runAttempt: strictPositiveInteger(job?.run_attempt),
-        name: text(job?.name),
-        status: text(job?.status).toLowerCase(),
-        conclusion: text(job?.conclusion).toLowerCase(),
-      }))),
+      jobs: Object.freeze(jobEnvelopeReceipts),
     }) : null,
     blockers: Object.freeze(unique(blockers)),
     finalVerdict: blockers.length

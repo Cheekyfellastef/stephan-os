@@ -34,6 +34,7 @@ import {
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
   validatePersonalRepositoryEvidence,
+  validatePersonalRepositoryPriorJobEnvelope,
   validatePersonalRepositoryRulesetProofRequest,
   validatePersonalRepositoryRulesetProofResponse,
   validatePersonalRepositoryReadOnlyPriorFailure,
@@ -829,14 +830,28 @@ function dispatchExecutionInput(overrides = {}) {
   };
 }
 
-function priorFailureJobs(overrides = {}, attempts = 1) {
+function priorFailureJobs(overrides = {}, attempts = 1, parentRunId = runId + 10) {
   const jobs = Array.from({ length: attempts }, (_, index) => {
     const attempt = index + 1;
     return [
-      { id: (attempt * 100) + 1, run_attempt: attempt, name: PERSONAL_REPOSITORY_EVIDENCE_JOB, status: 'completed', conclusion: 'failure' },
-      { id: (attempt * 100) + 2, run_attempt: attempt, name: PERSONAL_REPOSITORY_APPROVAL_JOB, status: 'completed', conclusion: 'skipped' },
-      { id: (attempt * 100) + 3, run_attempt: attempt, name: PERSONAL_REPOSITORY_MERGE_JOB, status: 'completed', conclusion: 'skipped' },
-    ];
+      [(attempt * 100) + 1, PERSONAL_REPOSITORY_EVIDENCE_JOB, 'failure'],
+      [(attempt * 100) + 2, PERSONAL_REPOSITORY_APPROVAL_JOB, 'skipped'],
+      [(attempt * 100) + 3, PERSONAL_REPOSITORY_MERGE_JOB, 'skipped'],
+    ].map(([id, name, conclusion]) => ({
+      id,
+      run_id: parentRunId,
+      run_attempt: attempt,
+      workflow_name: dispatchTitle,
+      head_branch: 'main',
+      head_sha: baseSha,
+      url: `https://api.github.com/repos/${repository}/actions/jobs/${id}`,
+      run_url: `https://api.github.com/repos/${repository}/actions/runs/${parentRunId}`,
+      check_run_url: `https://api.github.com/repos/${repository}/check-runs/${id}`,
+      html_url: `https://github.com/${repository}/actions/runs/${parentRunId}/job/${id}`,
+      name,
+      status: 'completed',
+      conclusion,
+    }));
   }).flat();
   for (const [name, mutation] of Object.entries(overrides)) {
     for (const [index, job] of jobs.entries()) {
@@ -846,13 +861,21 @@ function priorFailureJobs(overrides = {}, attempts = 1) {
   return jobs;
 }
 
-function normalizedPriorFailureJobs(attempts = 1) {
-  return priorFailureJobs({}, attempts).map((job) => ({
+function normalizedPriorFailureJobs(attempts = 1, parentRunId = runId + 10) {
+  return priorFailureJobs({}, attempts, parentRunId).map((job) => ({
     id: job.id,
+    runId: job.run_id,
     runAttempt: job.run_attempt,
+    workflowName: job.workflow_name,
+    headBranch: job.head_branch,
+    headSha: job.head_sha,
     name: job.name,
     status: job.status,
     conclusion: job.conclusion,
+    url: job.url,
+    runUrl: job.run_url,
+    checkRunUrl: job.check_run_url,
+    htmlUrl: job.html_url,
   }));
 }
 
@@ -1168,6 +1191,34 @@ test('current protected dispatch binds every exact dynamic run identity field', 
   assert.ok(widened.currentMismatches.length > 0);
 });
 
+test('prior authority jobs bind one complete canonical parent-run envelope', () => {
+  const parentRunId = runId + 10;
+  const parent = dispatchRun({ id: parentRunId, status: 'completed', conclusion: 'failure' });
+  const job = priorFailureJobs({}, 1, parentRunId)[0];
+  const ready = validatePersonalRepositoryPriorJobEnvelope(parent, job);
+  assert.equal(ready.valid, true);
+  assert.deepEqual(ready.receipt, normalizedPriorFailureJobs(1, parentRunId)[0]);
+
+  const mutations = [
+    ['job-id', { id: 0 }],
+    ['parent-run', { run_id: parentRunId + 1 }],
+    ['attempt', { run_attempt: 2 }],
+    ['workflow', { workflow_name: `${dispatchTitle}-lookalike` }],
+    ['branch', { head_branch: 'lookalike-main' }],
+    ['head', { head_sha: 'f'.repeat(40) }],
+    ['job-url', { url: `${job.url}-lookalike` }],
+    ['run-url', { run_url: `${job.run_url}-lookalike` }],
+    ['check-url', { check_run_url: `${job.check_run_url}-lookalike` }],
+    ['html-url', { html_url: `${job.html_url}-lookalike` }],
+  ];
+  for (const [name, mutation] of mutations) {
+    const blocked = validatePersonalRepositoryPriorJobEnvelope(parent, { ...job, ...mutation });
+    assert.equal(blocked.valid, false, name);
+    assert.ok(blocked.blockers.length > 0, name);
+    assert.equal(blocked.receipt, null, name);
+  }
+});
+
 test('same-base prior protected dispatch remains a replay without exact read-only job proof', () => {
   const priorRunId = runId + 10;
   const blocked = validatePersonalRepositoryDispatchExecution(
@@ -1355,7 +1406,7 @@ test('prior dispatch retry proof fails closed if the approval or merge job was n
       priorRuns: [dispatchRun(), priorRun, priorRun2],
       priorRunJobSets: [
         { runId: priorRunId, jobs: priorFailureJobs() },
-        { runId: priorRunId + 1, jobs: priorFailureJobs() },
+        { runId: priorRunId + 1, jobs: priorFailureJobs({}, 1, priorRunId + 1) },
       ],
     }),
     expectedDispatchExecution,
