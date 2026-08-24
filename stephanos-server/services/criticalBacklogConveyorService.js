@@ -8,11 +8,16 @@ import {
   DEFAULT_CRITICAL_BACKLOG,
   buildCriticalBacklogMissionInput,
   buildCriticalBacklogProjection,
+  validateCriticalBacklog,
 } from '../../shared/agents/criticalBacklogConveyor.mjs';
 import {
+  SHARED_WORKSPACE_RECORD_KINDS,
+  SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
   createSharedWorkspaceEventRecord,
+  createSharedWorkspaceGoalRecord,
   createSharedWorkspaceStatusRecord,
   resolveSharedWorkspacePath,
+  validateSharedWorkspaceRecord,
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import {
@@ -21,6 +26,9 @@ import {
 } from './missionOrchestratorStore.js';
 
 export const CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA = 'stephanos.critical-backlog-conveyor-service.v1';
+export const CRITICAL_BACKLOG_CURRENT_GOAL_FILE = 'critical-backlog-current.json';
+
+const CRITICAL_BACKLOG_GOAL_AUTHORITY = 'source-controlled-critical-backlog';
 
 const BLOCKED_DECISIONS = new Set([
   CRITICAL_BACKLOG_DECISION.BLOCKED_BY_INVALID_BACKLOG,
@@ -89,11 +97,151 @@ async function readPreviousProjection(paths) {
   }
 }
 
+async function readPreviousCriticalGoal(paths) {
+  const resolved = resolveSharedWorkspacePath({
+    root: paths.workspaceRoot,
+    repoRoot: paths.repoRoot,
+    segments: ['goals', CRITICAL_BACKLOG_CURRENT_GOAL_FILE],
+  });
+  if (!resolved.ok) return null;
+  try {
+    const record = JSON.parse(await readFile(resolved.path, 'utf8'));
+    const validation = validateSharedWorkspaceRecord(record);
+    return validation.valid
+      && record?.schemaVersion === SHARED_WORKSPACE_RECORD_SCHEMA_VERSION
+      && record?.kind === SHARED_WORKSPACE_RECORD_KINDS.GOAL
+      && record?.sourceAuthority === CRITICAL_BACKLOG_GOAL_AUTHORITY
+      && record?.participantId === 'critical-backlog-conveyor'
+      ? record
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function selectedCriticalGoalRecord(projection, timestampUtc) {
+  const selectedItem = projection?.selectedItem;
+  const selectedDecision = projection?.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION
+    || projection?.decision === CRITICAL_BACKLOG_DECISION.WAIT_ACTIVE_MISSION;
+  if (!selectedItem || !selectedDecision) return Object.freeze({ ok: true, record: null });
+  const validation = validateCriticalBacklog([selectedItem]);
+  const issueNumber = Number(selectedItem.issueNumbers?.[0]);
+  if (!validation.valid || !Number.isSafeInteger(issueNumber) || issueNumber <= 0) {
+    return Object.freeze({
+      ok: false,
+      reason: 'SELECTED_CRITICAL_BACKLOG_GOAL_INVALID',
+      blockers: validation.errors,
+      record: null,
+    });
+  }
+  const mission = selectedItem.mission;
+  const activePhase = text(projection?.activeMission?.currentPhase).toUpperCase();
+  const held = activePhase === 'BLOCKED' || activePhase === 'AWAITING_OPERATOR_APPROVAL';
+  return Object.freeze({
+    ok: true,
+    record: Object.freeze({
+      ...createSharedWorkspaceGoalRecord({
+        goalId: `goal-${issueNumber}`,
+        participantId: 'critical-backlog-conveyor',
+        timestampUtc,
+        title: mission.title,
+        status: held ? 'WAITING_FOR_EXTERNAL_CONDITION' : 'READY',
+      }),
+      sourceAuthority: CRITICAL_BACKLOG_GOAL_AUTHORITY,
+      sourceItemId: selectedItem.itemId,
+      missionId: mission.missionId,
+      headlineApprovalRef: selectedItem.headlineApprovalRef,
+      issueNumber,
+      relatedIssue: `#${issueNumber}`,
+      repository: mission.repository,
+      branch: mission.branch,
+      state: 'READY',
+      prerequisites: [],
+      priority: selectedItem.priority,
+      criticalPathWeight: selectedItem.priority,
+      reversibility: 'HIGH',
+      route: held ? 'WAITING_FOR_EXTERNAL_CONDITION' : 'CHATGPT_GITHUB',
+      approvalRequired: false,
+      operatorPriority: false,
+      evidenceAt: timestampUtc,
+      resultProofRefs: [],
+      repairCycleCount: 0,
+      chatMemoryAuthoritative: false,
+      oneActiveMissionEnforced: true,
+      duplicateCodexDispatchAllowed: false,
+      mergeAuthority: false,
+      exactHeadApprovalRequired: true,
+      holdDecision: held ? projection.decision : '',
+      holdReason: held ? text(projection.exactNextAction) : '',
+    }),
+  });
+}
+
+function heldCriticalGoalRecord(previousGoal, projection, timestampUtc) {
+  if (!previousGoal) return null;
+  const complete = projection?.decision === CRITICAL_BACKLOG_DECISION.BACKLOG_COMPLETE;
+  return Object.freeze({
+    ...previousGoal,
+    timestampUtc,
+    status: complete ? 'CLOSED' : 'WAITING_FOR_EXTERNAL_CONDITION',
+    state: complete ? 'CLOSED' : 'READY',
+    route: 'WAITING_FOR_EXTERNAL_CONDITION',
+    evidenceAt: timestampUtc,
+    holdDecision: text(projection?.decision, 'UNKNOWN'),
+    holdReason: text(projection?.exactNextAction, 'Critical backlog work is not currently admissible.'),
+    approvalRequired: false,
+    operatorPriority: false,
+    chatMemoryAuthoritative: false,
+    mergeAuthority: false,
+  });
+}
+
+function runnableCriticalGoal(record) {
+  return record?.state === 'READY' && record?.route === 'CHATGPT_GITHUB';
+}
+
 export async function publishCriticalBacklogProjection(projection, {
   paths,
   now = new Date(),
+  writeJson = writeAtomicJson,
 } = {}) {
   const timestampUtc = now instanceof Date ? now.toISOString() : new Date().toISOString();
+  const selectedGoal = selectedCriticalGoalRecord(projection, timestampUtc);
+  if (!selectedGoal.ok) {
+    return Object.freeze({
+      ok: false,
+      reason: selectedGoal.reason,
+      blockers: selectedGoal.blockers,
+      goalWrite: null,
+      statusWrite: null,
+      eventWrite: null,
+    });
+  }
+  const previousGoal = await readPreviousCriticalGoal(paths);
+  const goalRecord = selectedGoal.record || heldCriticalGoalRecord(previousGoal, projection, timestampUtc);
+  const identityChanges = previousGoal && goalRecord && previousGoal.goalId !== goalRecord.goalId;
+  const authorityMustBeNeutralized = runnableCriticalGoal(previousGoal)
+    && (!runnableCriticalGoal(goalRecord) || identityChanges);
+  let goalPreflightWrite = null;
+  if (authorityMustBeNeutralized) {
+    const neutralizedGoal = heldCriticalGoalRecord(previousGoal, projection, timestampUtc);
+    goalPreflightWrite = await writeJson(
+      paths.workspaceRoot,
+      ['goals', CRITICAL_BACKLOG_CURRENT_GOAL_FILE],
+      neutralizedGoal,
+      { repoRoot: paths.repoRoot },
+    );
+    if (!goalPreflightWrite.ok) {
+      return Object.freeze({
+        ok: false,
+        reason: goalPreflightWrite.reason,
+        goalPreflightWrite,
+        goalWrite: null,
+        statusWrite: null,
+        eventWrite: null,
+      });
+    }
+  }
   const selectedItemId = text(projection.selectedItem?.itemId);
   const activeMissionId = text(projection.activeMission?.missionId);
   const activePhase = text(projection.activeMission?.currentPhase);
@@ -141,27 +289,63 @@ export async function publishCriticalBacklogProjection(projection, {
       activeMissionId,
       activePhase,
     });
-    eventWrite = await writeAtomicJson(
+    eventWrite = await writeJson(
       paths.workspaceRoot,
       ['events', 'critical-backlog-conveyor', `${transitionEventId}.json`],
       eventRecord,
       { repoRoot: paths.repoRoot },
     );
-    if (!eventWrite.ok) return Object.freeze({ ok: false, reason: eventWrite.reason, statusWrite: null, eventWrite });
+    if (!eventWrite.ok) return Object.freeze({
+      ok: false,
+      reason: eventWrite.reason,
+      goalPreflightWrite,
+      goalWrite: null,
+      statusWrite: null,
+      eventWrite,
+    });
   }
 
-  const statusWrite = await writeAtomicJson(
+  const statusWrite = await writeJson(
     paths.workspaceRoot,
     ['status', 'critical-backlog-conveyor-current.json'],
     statusRecord,
     { repoRoot: paths.repoRoot },
   );
-  if (!statusWrite.ok) return Object.freeze({ ok: false, reason: statusWrite.reason, statusWrite, eventWrite });
+  if (!statusWrite.ok) return Object.freeze({
+    ok: false,
+    reason: statusWrite.reason,
+    goalPreflightWrite,
+    goalWrite: null,
+    statusWrite,
+    eventWrite,
+  });
+
+  let goalWrite = authorityMustBeNeutralized && !runnableCriticalGoal(goalRecord) ? goalPreflightWrite : null;
+  if (goalRecord && !goalWrite) {
+    goalWrite = await writeJson(
+      paths.workspaceRoot,
+      ['goals', CRITICAL_BACKLOG_CURRENT_GOAL_FILE],
+      goalRecord,
+      { repoRoot: paths.repoRoot },
+    );
+    if (!goalWrite.ok) {
+      return Object.freeze({
+        ok: false,
+        reason: goalWrite.reason,
+        goalPreflightWrite,
+        goalWrite,
+        statusWrite,
+        eventWrite,
+      });
+    }
+  }
 
   return Object.freeze({
     ok: true,
-    reason: changed ? 'CONVEYOR_STATUS_AND_EVENT_PUBLISHED' : 'CONVEYOR_STATUS_REFRESHED',
+    reason: changed ? 'CONVEYOR_GOAL_STATUS_AND_EVENT_PUBLISHED' : 'CONVEYOR_GOAL_AND_STATUS_REFRESHED',
     changed,
+    goalPreflightWrite,
+    goalWrite,
     statusWrite,
     eventWrite,
   });
