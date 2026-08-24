@@ -23,7 +23,10 @@ const APPROVED_RUNTIME_PREFIXES = Object.freeze([
 ]);
 
 function bounded(value = '', limit = 8000) {
-  const text = String(value || '').trim();
+  // Git porcelain status uses the first two columns as authority-bearing state.
+  // Preserve leading whitespace so a first-line worktree-only status (for example
+  // ` D path`) cannot be shifted into the index column or lose the first path byte.
+  const text = String(value || '').trimEnd();
   return text.length > limit ? `${text.slice(0, limit)}\n...[truncated]` : text;
 }
 
