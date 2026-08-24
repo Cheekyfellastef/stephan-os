@@ -275,6 +275,12 @@ async function currentWorkflowExecution(context) {
     workflowRunAttempt: context.runAttempt,
   });
   if (execution.replayRunIds.length !== 0) {
+    if (execution.blockers.includes('personal-repository-prior-run-attempt-limit-exceeded')) {
+      fail('Prior protected merge attempts exceed the bounded all-attempt proof estate.', {
+        blockers: ['personal-repository-prior-run-attempt-limit-exceeded'],
+        observedAttempts: execution.sameBasePriorAttemptCount,
+      });
+    }
     if (execution.replayRunIds.length > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX) {
       fail('Prior protected merge attempts exceed the bounded job-proof estate.', {
         blockers: ['personal-repository-prior-run-jobs-limit-exceeded'],

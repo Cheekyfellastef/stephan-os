@@ -38,7 +38,7 @@ A same-head/base workflow dispatch remains a replay by default. A later workflow
 - in every attempt, the exact `operator-personal-repository-approval` job completed as `skipped`;
 - in every attempt, the exact `operator-personal-repository-squash-merge` job completed as `skipped`;
 - the three jobs have unique positive GitHub job identities; and
-- the complete prior-attempt job-proof estate stays within the fixed bound.
+- the summed attempt count across the complete prior-run job-proof estate stays within the fixed bound before hydration.
 
 The normalized run, attempt and job identities are included in the revalidated evidence packet and therefore in its SHA-256. Missing earlier-attempt jobs, an active, successful, cancelled, malformed, duplicate, unbounded, approval-started or merge-started prior attempt remains blocked. Failed run deletion is not an accepted recovery path.
 

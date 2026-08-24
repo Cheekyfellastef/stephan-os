@@ -144,6 +144,7 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /loadSelectedIndependentReview/);
   assert.match(source, /personal-repository-prior-attempt-exists/);
   assert.match(source, /execution\.replayRunIds\.length > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX/);
+  assert.match(source, /execution\.blockers\.includes\('personal-repository-prior-run-attempt-limit-exceeded'\)/);
   assert.match(source, /actions\/runs\/\$\{runId\}\/jobs/);
   assert.match(source, /jobs\?filter=all/);
   assert.match(source, /retryablePriorFailures: execution\.retryablePriorFailures/);

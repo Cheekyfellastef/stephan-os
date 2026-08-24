@@ -39,6 +39,12 @@ export function validatePersonalRepositoryReadOnlyPriorFailure(run = {}, jobs = 
   const runAttempt = strictPositiveInteger(run?.run_attempt);
   if (!runId) blockers.push('prior-run-id-invalid');
   if (!runAttempt) blockers.push('prior-run-attempt-invalid');
+  if (runAttempt > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX) {
+    blockers.push('prior-run-attempt-limit-exceeded');
+  }
+  const boundedRunAttempt = runAttempt > 0 && runAttempt <= PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX
+    ? runAttempt
+    : 0;
   if (text(run?.status).toLowerCase() !== 'completed') blockers.push('prior-run-not-completed');
   if (text(run?.conclusion).toLowerCase() !== 'failure') blockers.push('prior-run-not-failed');
   if (!Array.isArray(jobs)) blockers.push('prior-run-jobs-invalid');
@@ -49,7 +55,7 @@ export function validatePersonalRepositoryReadOnlyPriorFailure(run = {}, jobs = 
     PERSONAL_REPOSITORY_MERGE_JOB,
   ]);
   const authorityJobs = jobList.filter((job) => authorityJobNames.has(text(job?.name)));
-  if (runAttempt && authorityJobs.length !== runAttempt * authorityJobNames.size) {
+  if (boundedRunAttempt && authorityJobs.length !== boundedRunAttempt * authorityJobNames.size) {
     blockers.push('prior-run-authority-job-estate-not-exact');
   }
   const exactJob = (name, attempt) => {
@@ -60,7 +66,7 @@ export function validatePersonalRepositoryReadOnlyPriorFailure(run = {}, jobs = 
     return matches.length === 1 ? matches[0] : {};
   };
   const selectedJobs = [];
-  for (let attempt = 1; attempt <= runAttempt; attempt += 1) {
+  for (let attempt = 1; attempt <= boundedRunAttempt; attempt += 1) {
     const evidence = exactJob(PERSONAL_REPOSITORY_EVIDENCE_JOB, attempt);
     const approval = exactJob(PERSONAL_REPOSITORY_APPROVAL_JOB, attempt);
     const merge = exactJob(PERSONAL_REPOSITORY_MERGE_JOB, attempt);
@@ -944,6 +950,7 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
   const retryablePriorRunIds = [];
   const retryablePriorFailures = [];
   const differentBasePriorRunIds = [];
+  let sameBasePriorAttemptCount = 0;
   // GitHub keeps the workflow run ID when a run is retried and increments
   // run_attempt. The current exact run identity therefore proves that an
   // earlier attempt already existed even though the runs listing exposes only
@@ -978,6 +985,13 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
       continue;
     }
     if (candidateBase === baseSha) {
+      sameBasePriorAttemptCount = Math.min(
+        PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX + 1,
+        sameBasePriorAttemptCount + Math.min(
+          strictPositiveInteger(candidate?.run_attempt),
+          PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX + 1,
+        ),
+      );
       const matchingJobSets = priorRunJobSets.filter((item) => strictPositiveInteger(item?.runId) === candidateId);
       const retryValidation = matchingJobSets.length === 1
         ? validatePersonalRepositoryReadOnlyPriorFailure(candidate, matchingJobSets[0]?.jobs)
@@ -990,6 +1004,16 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     } else differentBasePriorRunIds.push(candidateId);
   }
 
+  const retryableJobIds = retryablePriorFailures.flatMap((receipt) => receipt.jobs.map((job) => job.id));
+  const retryableProofDuplicate = new Set(retryablePriorRunIds).size !== retryablePriorRunIds.length
+    || new Set(retryableJobIds).size !== retryableJobIds.length;
+  const priorAttemptLimitExceeded = sameBasePriorAttemptCount > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX;
+  if (priorAttemptLimitExceeded || retryableProofDuplicate) {
+    replayRunIds.push(...retryablePriorRunIds);
+    retryablePriorRunIds.length = 0;
+    retryablePriorFailures.length = 0;
+  }
+
   const blockers = [
     ...definitionValidation.blockers,
     ...(!priorRunsValid ? ['personal-repository-prior-runs-invalid'] : []),
@@ -997,6 +1021,8 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     ...(priorRunJobSets.length > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX
       ? ['personal-repository-prior-run-jobs-limit-exceeded']
       : []),
+    ...(priorAttemptLimitExceeded ? ['personal-repository-prior-run-attempt-limit-exceeded'] : []),
+    ...(retryableProofDuplicate ? ['personal-repository-prior-run-proof-duplicate'] : []),
     ...(currentMismatches.length ? ['personal-repository-workflow-run-identity-mismatch'] : []),
     ...(malformedPriorRunIds.length ? ['personal-repository-prior-attempt-invalid'] : []),
     ...(replayRunIds.length ? ['personal-repository-prior-attempt-exists'] : []),
@@ -1006,9 +1032,10 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     definition,
     currentMismatches: Object.freeze(currentMismatches),
     malformedPriorRunIds: Object.freeze(malformedPriorRunIds.sort((left, right) => left - right)),
-    replayRunIds: Object.freeze(replayRunIds.sort((left, right) => left - right)),
+    replayRunIds: Object.freeze(unique(replayRunIds).sort((left, right) => left - right)),
     retryablePriorRunIds: Object.freeze(retryablePriorRunIds.sort((left, right) => left - right)),
     retryablePriorFailures: Object.freeze(retryablePriorFailures.sort((left, right) => left.runId - right.runId)),
+    sameBasePriorAttemptCount,
     differentBasePriorRunIds: Object.freeze(differentBasePriorRunIds.sort((left, right) => left - right)),
     blockers: Object.freeze(unique(blockers)),
     finalVerdict: blockers.length

@@ -1324,6 +1324,45 @@ test('prior dispatch retry proof fails closed if the approval or merge job was n
   );
   assert.equal(invalidContainer.valid, false);
   assert.ok(invalidContainer.blockers.includes('personal-repository-prior-run-jobs-invalid'));
+
+  const excessiveAttemptRun = dispatchRun({
+    id: priorRunId,
+    run_attempt: PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX + 1,
+    status: 'completed',
+    conclusion: 'failure',
+  });
+  assert.equal(validatePersonalRepositoryReadOnlyPriorFailure(
+    excessiveAttemptRun,
+    priorFailureJobs({}, PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX + 1),
+  ).valid, false);
+  const excessiveAttempt = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({
+      priorRuns: [dispatchRun(), excessiveAttemptRun],
+      priorRunJobSets: [{
+        runId: priorRunId,
+        jobs: priorFailureJobs({}, PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX + 1),
+      }],
+    }),
+    expectedDispatchExecution,
+  );
+  assert.equal(excessiveAttempt.valid, false);
+  assert.equal(excessiveAttempt.sameBasePriorAttemptCount, PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX + 1);
+  assert.ok(excessiveAttempt.blockers.includes('personal-repository-prior-run-attempt-limit-exceeded'));
+
+  const priorRun2 = dispatchRun({ id: priorRunId + 1, status: 'completed', conclusion: 'failure' });
+  const duplicateJobEstate = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({
+      priorRuns: [dispatchRun(), priorRun, priorRun2],
+      priorRunJobSets: [
+        { runId: priorRunId, jobs: priorFailureJobs() },
+        { runId: priorRunId + 1, jobs: priorFailureJobs() },
+      ],
+    }),
+    expectedDispatchExecution,
+  );
+  assert.equal(duplicateJobEstate.valid, false);
+  assert.ok(duplicateJobEstate.blockers.includes('personal-repository-prior-run-proof-duplicate'));
+  assert.deepEqual(duplicateJobEstate.retryablePriorFailures, []);
 });
 
 test('retried current workflow run is a replay even when GitHub retains or omits the run ID', () => {
