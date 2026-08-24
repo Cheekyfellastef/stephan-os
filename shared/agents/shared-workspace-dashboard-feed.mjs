@@ -2,6 +2,12 @@ import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { buildLandingGoalDashboardProjection } from './landingGoalDashboardProjection.mjs';
 import { resolveSharedWorkspacePath, validateSharedWorkspaceRecord, DEFAULT_STALE_AFTER_MS } from './sharedAgentWorkspaceStore.mjs';
+import {
+  SPECIALIZED_NON_DASHBOARD_STATUS_FILES,
+  isSharedWorkspaceSpecializedStatusFile,
+} from './sharedWorkspaceSpecializedStatusRegistryV1.mjs';
+
+export { SPECIALIZED_NON_DASHBOARD_STATUS_FILES };
 
 export const SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION = 'stephanos.shared-workspace-dashboard-feed.v1';
 export const DASHBOARD_FEED_STATES = Object.freeze({
@@ -21,17 +27,6 @@ const DIRECTORY_BY_KIND = Object.freeze({
   capabilities: 'capabilityRecords',
   events: 'eventRecords',
 });
-
-export const SPECIALIZED_NON_DASHBOARD_STATUS_FILES = Object.freeze([
-  'battle-bridge-ignition-supervisor-current.json',
-  'battle-bridge-recovery-mesh-launch-current.json',
-  'battle-bridge-worker-watchdog-launch-current.json',
-  'guarded-goal-runner-current.json',
-  'mission-orchestrator-worker-heartbeat.json',
-  'stephanos-backend-runtime.json',
-]);
-
-const SPECIALIZED_NON_DASHBOARD_STATUS_FILE_SET = new Set(SPECIALIZED_NON_DASHBOARD_STATUS_FILES);
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -105,7 +100,7 @@ async function readRecordDirectory(root, directory, options) {
   const errors = [];
   for (const name of names.filter((item) => (
     item.endsWith('.json')
-    && !(directory === 'status' && SPECIALIZED_NON_DASHBOARD_STATUS_FILE_SET.has(item))
+    && !isSharedWorkspaceSpecializedStatusFile({ directory, fileName: item })
   ))) {
     try {
       const record = JSON.parse(await readFile(join(resolved.path, name), 'utf8'));

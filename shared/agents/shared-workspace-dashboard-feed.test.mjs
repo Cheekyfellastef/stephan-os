@@ -6,11 +6,11 @@ import { tmpdir } from 'node:os';
 import {
   DASHBOARD_FEED_STATES,
   MIN_DASHBOARD_FEED_POLL_INTERVAL_MS,
-  SPECIALIZED_NON_DASHBOARD_STATUS_FILES,
   createLoadingSharedWorkspaceDashboardFeed,
   createSharedWorkspaceDashboardPollingContract,
   readSharedWorkspaceDashboardFeed,
 } from './shared-workspace-dashboard-feed.mjs';
+import { SPECIALIZED_NON_DASHBOARD_STATUS_FILES } from './sharedWorkspaceSpecializedStatusRegistryV1.mjs';
 import {
   createAgentCapabilityRecord,
   createSharedWorkspaceProofRecord,
@@ -108,6 +108,9 @@ test('known specialized status projections stay outside dashboard authority with
   assert.deepEqual(accepted.errors, []);
   assert.equal(accepted.records.statusRecords.length, 1);
   assert.equal(accepted.records.statusRecords[0].statusId, 'status-1290');
+  assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('guarded-goal-runner-pr-current.json'), true);
+  assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('battle-bridge-recovery-mesh-state.json'), true);
+  assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('battle-bridge-break-glass-nonce.json'), true);
 
   await writeFile(
     join(root, 'status', 'attacker-selected-specialized-record.json'),
