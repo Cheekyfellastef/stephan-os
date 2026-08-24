@@ -272,7 +272,7 @@ test('sync bridge preserves the fixed runtime-data estate before entering existi
   const newHead = 'b'.repeat(40);
   const spawnSyncFn = scriptedSpawn({
     'git branch --show-current': { stdout: 'main\n' },
-    'git rev-parse HEAD': [{ stdout: `${oldHead}\n` }, { stdout: `${newHead}\n` }],
+    'git rev-parse HEAD': [{ stdout: `${oldHead}\n` }, { stdout: `${oldHead}\n` }, { stdout: `${newHead}\n` }],
     'git rev-parse --show-toplevel': { stdout: `${repoRoot}\n` },
     'git remote get-url origin': { stdout: 'https://github.com/Cheekyfellastef/stephan-os.git\n' },
     'git status --porcelain=v1 --untracked-files=all': [
@@ -284,7 +284,7 @@ test('sync bridge preserves the fixed runtime-data estate before entering existi
     'git rev-parse origin/main': { stdout: `${newHead}\n` },
     [`git rev-list --left-right --count HEAD...${newHead}`]: { stdout: '0\t1\n' },
     [`git merge --ff-only ${newHead}`]: { stdout: 'Fast-forward\n' },
-    [`git diff --name-only ${oldHead}..${newHead}`]: { stdout: 'shared/agents/codexDispatchHostOps.mjs\n' },
+    [`git diff --name-only ${oldHead}..${newHead}`]: { stdout: 'shared/agents/battleBridgeDirtyDataPreservationV1.mjs\n' },
     [nodeTestCommand()]: { stdout: '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n' },
   });
   try {
@@ -305,7 +305,61 @@ test('sync bridge preserves the fixed runtime-data estate before entering existi
     assert.equal(result.preservation.receipt.itemCount, 6);
     assert.equal(result.statusBeforeSync, ' M apps/stephanos/dist/index.html');
     assert.equal(result.afterHead, newHead);
+    assert.equal(result.restartRequired, true);
     assert.equal(result.destructiveCleanupPerformed, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('sync bridge blocks preservation if HEAD changes after the initial dirt snapshot', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'stephanos-sync-head-drift-'));
+  const repoRoot = path.join(root, 'repo');
+  const workspaceRoot = path.join(root, 'workspace');
+  await mkdir(repoRoot);
+  await mkdir(workspaceRoot);
+  for (const relativePath of BATTLE_BRIDGE_RUNTIME_DATA_PATHS) {
+    const target = path.join(repoRoot, relativePath);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, `${JSON.stringify({ relativePath })}\n`);
+  }
+  const dirty = BATTLE_BRIDGE_RUNTIME_DATA_PATHS.map((relativePath) => `?? ${relativePath}`).join('\n');
+  const oldHead = 'a'.repeat(40);
+  const changedHead = 'c'.repeat(40);
+  const targetHead = 'b'.repeat(40);
+  const spawnSyncFn = scriptedSpawn({
+    'git branch --show-current': { stdout: 'main\n' },
+    'git rev-parse HEAD': [{ stdout: `${oldHead}\n` }, { stdout: `${changedHead}\n` }],
+    'git rev-parse --show-toplevel': { stdout: `${repoRoot}\n` },
+    'git remote get-url origin': { stdout: 'https://github.com/Cheekyfellastef/stephan-os.git\n' },
+    'git status --porcelain=v1 --untracked-files=all': { stdout: `${dirty}\n` },
+    'git fetch origin main': { stdout: '' },
+    'git rev-parse origin/main': { stdout: `${targetHead}\n` },
+    [`git rev-list --left-right --count HEAD...${targetHead}`]: { stdout: '0\t1\n' },
+  });
+  try {
+    const result = syncCodexDispatchBridge({
+      repoRoot,
+      workspaceRoot,
+      expectedPreservationPaths: { repoRoot, workspaceRoot },
+      operatorApproval: 'operator-approved',
+      expectedBranch: 'main',
+      preservationProfile: 'battle-bridge-runtime-data-v1',
+      preservationApproval: 'operator-approved',
+      spawnSyncFn,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'BLOCKED');
+    assert.equal(result.blocker, 'PRESERVATION_SOURCE_HEAD_CHANGED');
+    assert.equal(result.beforeHead, oldHead);
+    assert.equal(result.preservationHead, changedHead);
+    assert.equal(result.fileMovePerformed, false);
+    assert.equal(result.destructiveCleanupPerformed, false);
+    for (const relativePath of BATTLE_BRIDGE_RUNTIME_DATA_PATHS) {
+      assert.equal(existsSync(path.join(repoRoot, relativePath)), true);
+    }
+    assert.equal(existsSync(path.join(workspaceRoot, 'preserved-source-dirt')), false);
+    assert.equal(spawnSyncFn.calls.some((call) => call.includes('merge --ff-only')), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
