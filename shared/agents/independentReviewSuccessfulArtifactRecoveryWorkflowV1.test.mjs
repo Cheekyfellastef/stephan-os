@@ -52,3 +52,12 @@ test('successful artifact recovery adds no second review dispatch, reviewer, or 
   assert.doesNotMatch(workflow, /recover-successful-independent-review[\s\S]*?\/dispatches/);
   assert.doesNotMatch(workflow, /recover-successful-independent-review[\s\S]*?rerun-failed-jobs/);
 });
+
+test('workflow-run artifact consumption binds the canonical workflow path instead of a dynamic run name', () => {
+  const workflow = readWorkflow();
+  const canonicalPathCheck = "github.event.workflow_run.path == '.github/workflows/independent-merge-security-review.yml'";
+  const staticRunNameCheck = "github.event.workflow_run.name == 'Independent Merge Security Review'";
+
+  assert.equal(workflow.split(canonicalPathCheck).length - 1, 4);
+  assert.equal(workflow.split(staticRunNameCheck).length - 1, 0);
+});
