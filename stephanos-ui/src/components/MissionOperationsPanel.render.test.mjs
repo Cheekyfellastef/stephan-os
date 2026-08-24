@@ -54,6 +54,17 @@ function missionFixture() {
         { id: 'check-windows', name: 'Signed Windows acceptance', status: 'success', completedAt: '2026-06-24T20:05:00.000Z' },
       ],
     },
+    repair: {
+      currentRound: 1,
+      maximumRounds: 3,
+      history: [{ round: 1 }],
+    },
+    deployment: {
+      sync: { status: 'success' },
+      build: { status: 'success' },
+      verify: { status: 'pending' },
+      restart: { status: 'pending' },
+    },
     approvals: [
       {
         approvalId: 'merge-test',
@@ -78,7 +89,7 @@ function missionFixture() {
   };
 }
 
-test('MissionSummary renders concrete mission, agent, Git, PR, check, approval, blocker, and receipt truth', async () => {
+test('MissionSummary renders bounded operator controls without rendering the private approval token', async () => {
   const vite = await createServer({
     root: uiRoot,
     appType: 'custom',
@@ -108,10 +119,18 @@ test('MissionSummary renders concrete mission, agent, Git, PR, check, approval, 
       'Build Stephanos UI',
       'Signed Windows acceptance',
       '3/3',
-      inertApprovalToken,
+      'Repair round',
+      '1/3',
+      'Deployment',
+      'sync:success / build:success / verify:pending / restart:pending',
       'signed-windows-acceptance',
       'proof/mission-operations/acceptance.json',
       'Approve the exact head-bound squash merge token.',
+      'Approval required:',
+      'submit the private exact head-bound token below.',
+      'Private head-bound approval token',
+      'Approve exact PR head',
+      'Cancel mission',
       'Exact operator approval is still required.',
       'A previous approval token was bound to a stale head SHA.',
     ]) {
@@ -120,6 +139,8 @@ test('MissionSummary renders concrete mission, agent, Git, PR, check, approval, 
 
     assert.match(markup, /href="https:\/\/github\.com\/Cheekyfellastef\/stephan-os\/pull\/1262"/);
     assert.match(markup, /data-mission-state="AWAITING_APPROVAL"/);
+    assert.match(markup, /type="password"/);
+    assert.equal(markup.includes(inertApprovalToken), false, 'private approval token must not be rendered');
     assert.doesNotMatch(markup, /javascript:/i);
   } finally {
     await vite.close();

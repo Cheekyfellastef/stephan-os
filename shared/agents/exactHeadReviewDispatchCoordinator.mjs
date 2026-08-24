@@ -7,7 +7,7 @@ import {
 } from './operatorMergeApprovalGate.mjs';
 
 export const EXACT_HEAD_REVIEW_DISPATCH_SCHEMA = 'stephanos.exact-head-review-dispatch.v1';
-export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.1.0';
+export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.1.1';
 
 export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'OpenClaw GitHub Operator',
@@ -200,7 +200,7 @@ function markerComment(comments, kind, headSha, { trustedCoordinatorLogin, notBe
     if (afterItem && !itemCausallyFollows(comment, afterItem)) return false;
     if (notBeforeMs === null) return true;
     const timestamp = itemTimestamp(comment);
-    return timestamp !== null && timestamp > notBeforeMs;
+    return timestamp !== null && timestamp >= notBeforeMs;
   }));
 }
 
