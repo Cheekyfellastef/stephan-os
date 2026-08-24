@@ -1463,8 +1463,8 @@ test('UNSTABLE admission binds the one failing check to the exact reviewed escal
   assert.ok(legacyFailure.blockers.includes('personal-repository-commit-status-not-exact-green'));
 });
 
-test('one bounded fresh snapshot can recover an inconsistent GitHub check/run read without widening admission', async () => {
-  assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS, 2);
+test('bounded fresh snapshots recover two inconsistent GitHub check/run reads without widening admission', async () => {
+  assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS, 4);
   const escalationRun = escalationWorkflowRun();
   const greenRun = workflowRuns()[0];
   const expected = { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' };
@@ -1484,14 +1484,14 @@ test('one bounded fresh snapshot can recover an inconsistent GitHub check/run re
   const recovered = await validatePersonalRepositoryCheckRunsWithBoundedReread({
     readSnapshot: async (attempt) => {
       reads.push(attempt);
-      return attempt === 1 ? inconsistentSnapshot : exactSnapshot;
+      return attempt <= 2 ? inconsistentSnapshot : exactSnapshot;
     },
     expected,
     options: { cleanIndependentReviewProved: true },
   });
   assert.equal(recovered.valid, true);
-  assert.equal(recovered.snapshotAttempt, 2);
-  assert.deepEqual(reads, [1, 2]);
+  assert.equal(recovered.snapshotAttempt, 3);
+  assert.deepEqual(reads, [1, 2, 3]);
   assert.equal(recovered.admittedReviewEscalations, 1);
   assert.deepEqual(recovered.selectedSnapshot.workflowRuns, exactSnapshot.workflowRuns);
   assert.notStrictEqual(recovered.selectedSnapshot.workflowRuns, exactSnapshot.workflowRuns);
@@ -1536,7 +1536,7 @@ test('bounded fresh snapshot stays fail-closed for stable, stale and unrelated f
     assert.equal(blocked.valid, false);
     assert.equal(blocked.snapshotAttempt, 0);
     assert.equal(blocked.selectedSnapshot, null);
-    assert.equal(reads, 2);
+    assert.equal(reads, 4);
   }
 });
 
