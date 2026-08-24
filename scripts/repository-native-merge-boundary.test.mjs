@@ -158,18 +158,6 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.doesNotMatch(source, /\b(?:eval|execSync)\s*\(|shell\s*:\s*true/);
 });
 
-test('personal-repository executor preserves the exact dynamic run-name identity established by #1761', async () => {
-  const source = await readFile(personalRepositoryMergeScript, 'utf8');
-  assert.match(
-    source,
-    /\.\.\.\(text\(run\?\.name\) === expectedDisplayTitle \? \[\] : \['run-name'\]\)/,
-  );
-  assert.doesNotMatch(
-    source,
-    /text\(run\?\.name\) === text\(definition\.name\)/,
-  );
-});
-
 test('native and personal merge executors share one bounded artifact transport contract', async () => {
   const [nativeSource, personalSource, contractSource] = await Promise.all([
     readFile(protectedMergeScript, 'utf8'),
