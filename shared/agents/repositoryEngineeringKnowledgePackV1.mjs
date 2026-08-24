@@ -6,6 +6,7 @@ export const REPOSITORY_ENGINEERING_KNOWLEDGE_PACK_MAX_BYTES_V1 = 64 * 1024;
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const SAFE_REPOSITORY = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const SAFE_REF = /^[a-z0-9][a-z0-9._:/#-]{0,159}$/i;
+const CANONICAL_ISSUE_REF = /^#[1-9][0-9]{0,9}$/;
 const SAFE_TEXT = /^[^\u0000-\u001f\u007f]{1,500}$/u;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const ALLOWED_FRESHNESS = new Set(['CURRENT']);
@@ -64,7 +65,7 @@ function exactSha(value) {
 
 function safeRef(value) {
   const normalized = text(value);
-  return SAFE_REF.test(normalized) ? normalized : null;
+  return CANONICAL_ISSUE_REF.test(normalized) || SAFE_REF.test(normalized) ? normalized : null;
 }
 
 function safeText(value) {
