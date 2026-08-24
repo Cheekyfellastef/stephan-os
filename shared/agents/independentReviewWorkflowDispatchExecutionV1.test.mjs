@@ -67,6 +67,17 @@ test('accepts exact trusted-main workflow_dispatch review with no mutable PR ass
   assert.equal(validation.authority.mergeAllowed, false);
 });
 
+test('accepts live GitHub shape where run name equals the exact content-addressed display title', () => {
+  const dynamicName = `stephanos-independent-review-pr-${prNumber}-head-${sourceHead}-binding-${binding}`;
+  const validation = validateIndependentReviewWorkflowDispatchExecutionV1(
+    run({ name: dynamicName, display_title: dynamicName }),
+    jobs(),
+    options(),
+  );
+  assert.equal(validation.valid, true);
+  assert.equal(validation.handoffBindingSha256, binding);
+});
+
 test('can additionally bind the exact content-addressed handoff', () => {
   assert.equal(validateIndependentReviewWorkflowDispatchExecutionV1(
     run(),
@@ -90,6 +101,7 @@ test('rejects stale base, spoofed name, mutable PR association and non-green exe
     run({ pull_requests: [{ number: prNumber }] }),
     run({ conclusion: 'failure' }),
     run({ name: 'Lookalike Independent Review' }),
+    run({ name: 'Lookalike Independent Review', display_title: 'Lookalike Independent Review' }),
     run({ path: '.github/workflows/lookalike.yml' }),
   ];
   for (const candidate of cases) {
