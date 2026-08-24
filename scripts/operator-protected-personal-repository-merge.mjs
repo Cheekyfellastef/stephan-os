@@ -18,6 +18,9 @@ import {
   validateIndependentReviewArtifactSet,
 } from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
 import {
+  validateIndependentReviewWorkflowDispatchExecutionV1,
+} from '../shared/agents/independentReviewWorkflowDispatchExecutionV1.mjs';
+import {
   independentReviewWorkflowDispatchRunNameV1,
 } from '../shared/agents/independentReviewWorkflowDispatchLaunchReceiptV1.mjs';
 import {
@@ -48,7 +51,6 @@ const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-personal-repository-protected-squash';
 const MAX_API_PAGES = 20;
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
-const CHECK_SNAPSHOT_REREAD_DELAY_MS = 1_000;
 const COMPLETION_MARKER = '<!-- stephanos-personal-repository-protected-squash-completion -->';
 const mode = String(process.argv[2] || '').trim().toLowerCase();
 
@@ -438,22 +440,34 @@ async function loadSelectedIndependentReview(context, identity) {
     `/repos/${context.owner}/${context.repo}/actions/runs/${selected.independentReviewWorkflowRunId}/attempts/${selected.independentReviewWorkflowRunAttempt}/jobs?filter=all`,
     'jobs',
   )).items;
-  const workflowValidation = validateIndependentReviewWorkflowRun(run, jobs, {
-    repository: context.repository,
-    prNumber: identity.prNumber,
-    expectedHead: identity.sourceHead,
-    expectedBranch: identity.branch,
-    expectedBaseBranch: 'main',
-    expectedBaseSha: identity.baseSha,
-    expectedWorkflowId: definition.id,
-    workflowRunId: selected.independentReviewWorkflowRunId,
-    workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
-    expectedWorkflowRunName: independentReviewWorkflowDispatchRunNameV1({
+  const reviewEvent = text(run?.event);
+  const workflowValidation = reviewEvent === 'workflow_dispatch'
+    ? validateIndependentReviewWorkflowDispatchExecutionV1(run, jobs, {
+      repository: context.repository,
       prNumber: identity.prNumber,
-      sourceHead: identity.sourceHead,
-      handoffBindingSha256: 'legacy-pull-request-target',
-    }),
-  });
+      expectedHead: identity.sourceHead,
+      expectedBranch: identity.branch,
+      expectedBaseSha: identity.baseSha,
+      expectedWorkflowId: definition.id,
+      workflowRunId: selected.independentReviewWorkflowRunId,
+      workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+    })
+    : validateIndependentReviewWorkflowRun(run, jobs, {
+      repository: context.repository,
+      prNumber: identity.prNumber,
+      expectedHead: identity.sourceHead,
+      expectedBranch: identity.branch,
+      expectedBaseBranch: 'main',
+      expectedBaseSha: identity.baseSha,
+      expectedWorkflowId: definition.id,
+      workflowRunId: selected.independentReviewWorkflowRunId,
+      workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+      expectedWorkflowRunName: independentReviewWorkflowDispatchRunNameV1({
+        prNumber: identity.prNumber,
+        sourceHead: identity.sourceHead,
+        handoffBindingSha256: 'legacy-pull-request-target',
+      }),
+    });
   if (!workflowValidation.valid) {
     fail('Selected independent review run is failed, stale or ambiguously bound.', {
       blockers: workflowValidation.blockers,
@@ -550,7 +564,6 @@ async function collectEvidence(context, expected = {}) {
   const checks = await validatePersonalRepositoryCheckRunsWithBoundedReread({
     readSnapshot: async (attempt) => {
       if (attempt === 1) return initialCheckSnapshot;
-      await new Promise((resolve) => setTimeout(resolve, CHECK_SNAPSHOT_REREAD_DELAY_MS));
       const [freshWorkflowRunSummaries, freshCheckRuns, freshCommitStatuses] = await Promise.all([
         apiCollection(`/repos/${context.owner}/${context.repo}/actions/runs?head_sha=${identity.sourceHead}`, 'workflow_runs'),
         apiCollection(`/repos/${context.owner}/${context.repo}/commits/${identity.sourceHead}/check-runs?filter=latest`, 'check_runs'),
