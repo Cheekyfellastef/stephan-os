@@ -4,7 +4,8 @@ import { deflateRawSync } from 'node:zlib';
 import {
   PERSONAL_REPOSITORY_AUTHORITY,
   PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES,
-  PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS,
+  PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS,
+  PERSONAL_REPOSITORY_CHECK_SNAPSHOT_POLL_INTERVAL_MS,
   PERSONAL_REPOSITORY_MODE,
   PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
@@ -1463,8 +1464,9 @@ test('UNSTABLE admission binds the one failing check to the exact reviewed escal
   assert.ok(legacyFailure.blockers.includes('personal-repository-commit-status-not-exact-green'));
 });
 
-test('one bounded fresh snapshot can recover an inconsistent GitHub check/run read without widening admission', async () => {
-  assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS, 2);
+test('deadline convergence admits every exact snapshot arrival within the bounded window', async () => {
+  assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS, 15_000);
+  assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_POLL_INTERVAL_MS, 5_000);
   const escalationRun = escalationWorkflowRun();
   const greenRun = workflowRuns()[0];
   const expected = { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' };
@@ -1480,26 +1482,67 @@ test('one bounded fresh snapshot can recover an inconsistent GitHub check/run re
     ...exactSnapshot,
     workflowRuns: workflowRuns(),
   };
-  const reads = [];
-  const recovered = await validatePersonalRepositoryCheckRunsWithBoundedReread({
-    readSnapshot: async (attempt) => {
-      reads.push(attempt);
-      return attempt === 1 ? inconsistentSnapshot : exactSnapshot;
-    },
-    expected,
-    options: { cleanIndependentReviewProved: true },
-  });
-  assert.equal(recovered.valid, true);
-  assert.equal(recovered.snapshotAttempt, 2);
-  assert.deepEqual(reads, [1, 2]);
-  assert.equal(recovered.admittedReviewEscalations, 1);
-  assert.deepEqual(recovered.selectedSnapshot.workflowRuns, exactSnapshot.workflowRuns);
-  assert.notStrictEqual(recovered.selectedSnapshot.workflowRuns, exactSnapshot.workflowRuns);
-  assert.equal(Object.isFrozen(recovered.selectedSnapshot.workflowRuns), true);
-  assert.ok(recovered.snapshotAttempts[0].blockers.includes('personal-repository-check-run-identity-invalid'));
+  for (const exactSnapshotAttempt of [1, 2, 3, 4]) {
+    let clockMs = 0;
+    const reads = [];
+    const waits = [];
+    const recovered = await validatePersonalRepositoryCheckRunsWithBoundedReread({
+      readSnapshot: async (attempt) => {
+        reads.push(attempt);
+        return attempt < exactSnapshotAttempt ? inconsistentSnapshot : exactSnapshot;
+      },
+      waitBeforeReread: async (delayMs) => {
+        waits.push(delayMs);
+        clockMs += delayMs;
+      },
+      monotonicNow: () => clockMs,
+      expected,
+      options: { cleanIndependentReviewProved: true },
+    });
+    assert.equal(recovered.valid, true);
+    assert.equal(recovered.snapshotAttempt, exactSnapshotAttempt);
+    assert.deepEqual(reads, Array.from({ length: exactSnapshotAttempt }, (_, index) => index + 1));
+    assert.equal(waits.length, exactSnapshotAttempt - 1);
+    assert.ok(clockMs <= PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS);
+    assert.equal(recovered.admittedReviewEscalations, 1);
+    assert.deepEqual(recovered.selectedSnapshot.workflowRuns, exactSnapshot.workflowRuns);
+    assert.notStrictEqual(recovered.selectedSnapshot.workflowRuns, exactSnapshot.workflowRuns);
+    assert.equal(Object.isFrozen(recovered.selectedSnapshot.workflowRuns), true);
+    assert.equal(recovered.convergenceDeadlineReached, false);
+  }
 });
 
-test('bounded fresh snapshot stays fail-closed for stable, stale and unrelated failures', async () => {
+test('deadline convergence expires closed for persistent GitHub identity inconsistency', async () => {
+  const escalationRun = escalationWorkflowRun();
+  const exactSnapshot = {
+    checkRuns: [checkRun(escalationRun)],
+    workflowRuns: workflowRuns(),
+    commitStatuses: [],
+  };
+  let clockMs = 0;
+  let reads = 0;
+  const blocked = await validatePersonalRepositoryCheckRunsWithBoundedReread({
+    readSnapshot: async () => {
+      reads += 1;
+      return exactSnapshot;
+    },
+    waitBeforeReread: async (delayMs) => {
+      clockMs += delayMs;
+    },
+    monotonicNow: () => clockMs,
+    expected: { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' },
+    options: { cleanIndependentReviewProved: true },
+  });
+  assert.equal(blocked.valid, false);
+  assert.equal(blocked.snapshotAttempt, 0);
+  assert.equal(blocked.selectedSnapshot, null);
+  assert.equal(blocked.convergenceDeadlineReached, true);
+  assert.equal(clockMs, PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS);
+  assert.equal(reads, 4);
+  assert.equal(blocked.snapshotAttempts.every((snapshot) => snapshot.retryable), true);
+});
+
+test('deadline convergence does not reread terminal stale and unrelated failures', async () => {
   const escalationRun = escalationWorkflowRun();
   const greenRun = workflowRuns()[0];
   const expected = { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' };
@@ -1525,18 +1568,25 @@ test('bounded fresh snapshot stays fail-closed for stable, stale and unrelated f
   ];
   for (const hostileSnapshot of hostileSnapshots) {
     let reads = 0;
+    let waits = 0;
     const blocked = await validatePersonalRepositoryCheckRunsWithBoundedReread({
       readSnapshot: async () => {
         reads += 1;
         return hostileSnapshot;
       },
+      waitBeforeReread: async () => {
+        waits += 1;
+      },
+      monotonicNow: () => 0,
       expected,
       options: { cleanIndependentReviewProved: true },
     });
     assert.equal(blocked.valid, false);
     assert.equal(blocked.snapshotAttempt, 0);
     assert.equal(blocked.selectedSnapshot, null);
-    assert.equal(reads, 2);
+    assert.equal(reads, 1);
+    assert.equal(waits, 0);
+    assert.equal(blocked.snapshotAttempts[0].retryable, false);
   }
 });
 
