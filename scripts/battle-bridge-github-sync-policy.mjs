@@ -51,7 +51,9 @@ const REMOTE_DIRT_SAMPLE_LIMIT = 2;
 const REMOTE_DIRT_SAMPLE_PATH_MAX = 72;
 const REMOTE_DIRT_SUMMARY_MAX = 180;
 const SAFE_REMOTE_DIRT_PATH = /^(?:[A-Za-z0-9._@+-]+\/)*[A-Za-z0-9._@+-]+$/;
-const TOKEN_SHAPED_PATH = /(?:ghp|github_pat|sk(?:-proj)?|xox[baprs])[-_][A-Za-z0-9_-]{8,}/i;
+const TOKEN_SHAPED_PATH = /(?:ghp|github_pat|sk(?:-proj)?|xox[baprs]|npm)[-_][A-Za-z0-9_-]{8,}/i;
+const AWS_ACCESS_KEY_SHAPED_PATH = /(?:AKIA|ASIA)[A-Z0-9]{16}/i;
+const JWT_SHAPED_PATH = /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/;
 
 export const DEFAULT_RUNTIME_ONLY_ALLOWLIST = Object.freeze([
   'logs/',
@@ -123,11 +125,28 @@ export function classifyDirt(statusLines = [], options = {}) {
   return result;
 }
 
+function hasHighEntropyTokenShapedComponent(candidate) {
+  return String(candidate || '').split('/').some((component) => {
+    const stem = component.replace(/\.[A-Za-z0-9]{1,12}$/i, '');
+    if (stem.length < 24) return false;
+    if (/^[A-Fa-f0-9]{32,}$/.test(stem)) return true;
+    return /^[A-Za-z0-9_-]{24,}$/.test(stem)
+      && /[A-Za-z]/.test(stem)
+      && /[0-9]/.test(stem);
+  });
+}
+
 function safeRemoteDirtPath(value) {
   const candidate = String(value ?? '').trim().replace(/\\/g, '/');
   if (!candidate || candidate.length > REMOTE_DIRT_SAMPLE_PATH_MAX) return '';
   if (candidate.startsWith('/') || candidate.includes(':') || candidate.includes('..') || candidate.includes('//')) return '';
-  if (!SAFE_REMOTE_DIRT_PATH.test(candidate) || TOKEN_SHAPED_PATH.test(candidate)) return '';
+  if (!SAFE_REMOTE_DIRT_PATH.test(candidate)) return '';
+  if (
+    TOKEN_SHAPED_PATH.test(candidate)
+    || AWS_ACCESS_KEY_SHAPED_PATH.test(candidate)
+    || JWT_SHAPED_PATH.test(candidate)
+    || hasHighEntropyTokenShapedComponent(candidate)
+  ) return '';
   return candidate;
 }
 
@@ -147,7 +166,8 @@ export function buildRemoteDirtBlockerSummary(dirt = {}) {
     }
   }
   const base = 'Resolve or preserve source dirt outside unattended sync.';
-  const compact = `${base} tracked=${trackedSource.length}; untracked=${untrackedSource.length}; hidden=${hiddenBlockingCount}; unknown=${unknownCount}; runtime=${runtimeOnlyCount}; generated=${generatedSourceCount}; samplesRedacted=true`;
+  const compactHiddenBlockingCount = hiddenBlockingCount + samples.length;
+  const compact = `${base} tracked=${trackedSource.length}; untracked=${untrackedSource.length}; hidden=${compactHiddenBlockingCount}; unknown=${unknownCount}; runtime=${runtimeOnlyCount}; generated=${generatedSourceCount}; samplesRedacted=true`;
   if (samples.length === 0 && hiddenBlockingCount > 0) {
     return compact.length <= REMOTE_DIRT_SUMMARY_MAX ? compact : `${base} diagnosticSamplesRedacted=true`;
   }
