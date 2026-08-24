@@ -48,9 +48,20 @@ test('accepts a proven incident repair with attributable regression evidence', (
   assert.equal(record.schemaVersion, ENGINEERING_INCIDENT_METHOD_RECORD_SCHEMA_V1);
   assert.equal(record.recordClass, 'SUCCESSFUL_REPAIR');
   assert.equal(record.status, 'CURRENT');
+  assert.ok(record.componentAndOwnerRefs.includes('#1574'));
   assert.equal(record.authority.sourceMutationAllowed, false);
   assert.equal(record.authority.automationExecutionAllowed, false);
   assert.equal(Object.isFrozen(record), true);
+});
+
+test('canonical issue owner refs are bounded while malformed issue refs remain rejected', () => {
+  for (const value of ['#0', '#01', '#12345678901', '#abc', '#1574/extra']) {
+    const validation = validateEngineeringIncidentMethodRecordInputV1(recordInput({
+      componentAndOwnerRefs: [value, 'component:independent-review'],
+    }));
+    assert.equal(validation.valid, false, value);
+    assert.ok(validation.blockers.includes('component-and-owner-refs-item-invalid'), value);
+  }
 });
 
 test('rejects symptom-only root-cause and repair claims', () => {
@@ -89,6 +100,7 @@ test('a failed repair remains visible but is never selected as a preferred metho
     maxBytes: 24 * 1024,
   });
   assert.equal(pack.schemaVersion, ENGINEERING_CODING_MEMORY_PACK_SCHEMA_V1);
+  assert.ok(pack.componentRefs.includes('#1574'));
   assert.deepEqual(pack.preferredMethodRecordIds, [successful.recordId]);
   assert.ok(pack.incidentAndCounterexampleRecordIds.includes(failed.recordId));
   assert.ok(pack.records.some((record) => record.recordId === failed.recordId));
