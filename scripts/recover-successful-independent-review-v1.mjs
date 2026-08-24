@@ -22,6 +22,7 @@ const USER_AGENT = 'stephanos-independent-review-successful-artifact-recovery-v1
 const TRUSTED_GITHUB_ACTIONS_REVIEWER = Object.freeze({ login: 'github-actions[bot]', id: 41898282 });
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const MAX_PAGES = 20;
+const LAUNCH_RECEIPT_HEADING = '## Provider-neutral independent-review missing-run launch receipt';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -80,9 +81,11 @@ async function githubPages(pathname, { token, itemKey = null } = {}) {
 }
 
 function exactTrustedLaunchComment(comment) {
+  const body = text(comment?.body);
   return text(comment?.user?.login).toLowerCase() === TRUSTED_GITHUB_ACTIONS_REVIEWER.login
     && positiveInteger(comment?.user?.id) === TRUSTED_GITHUB_ACTIONS_REVIEWER.id
-    && text(comment?.body).startsWith(`<!-- ${INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_LAUNCH_MARKER} key=`);
+    && body.startsWith(`<!-- ${INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_LAUNCH_MARKER} key=`)
+    && body.includes(LAUNCH_RECEIPT_HEADING);
 }
 
 export function selectSuccessfulReviewRecoveryLaunchReceiptV1(comments, {

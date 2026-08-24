@@ -21,7 +21,7 @@ jobs:
         (github.event_name == 'pull_request_target' && !github.event.pull_request.draft) ||
         (github.event_name == 'issue_comment' &&
          github.event.issue.pull_request &&
-         startsWith(github.event.comment.body, '/stephanos-review ') &&
+         startsWith(github.event.comment.body, '<!-- stephanos:provider-neutral-assurance:v1 head=') &&
          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
       }}
     runs-on: ubuntu-latest
@@ -48,8 +48,13 @@ jobs:
             head_sha="${EVENT_HEAD_SHA}"
           else
             pr_number="${ISSUE_PR_NUMBER}"
-            expected_head="${COMMENT_BODY#/stephanos-review }"
-            expected_head="${expected_head%%[[:space:]]*}"
+            marker_prefix='<!-- stephanos:provider-neutral-assurance:v1 head='
+            marker_suffix=' -->'
+            first_line="${COMMENT_BODY%%$'\n'*}"
+            first_line="${first_line%$'\r'}"
+            [[ "${first_line}" == "${marker_prefix}"*"${marker_suffix}" ]]
+            expected_head="${first_line#${marker_prefix}}"
+            expected_head="${expected_head%${marker_suffix}}"
             [[ "${expected_head}" =~ ^[0-9a-fA-F]{40}$ ]]
 
             pr_json="$(gh api "/repos/${REPOSITORY}/pulls/${pr_number}")"

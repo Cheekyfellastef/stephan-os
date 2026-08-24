@@ -18,6 +18,9 @@ import {
   validateIndependentReviewArtifactSet,
 } from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
 import {
+  validateIndependentReviewWorkflowDispatchExecutionV1,
+} from '../shared/agents/independentReviewWorkflowDispatchExecutionV1.mjs';
+import {
   independentReviewWorkflowDispatchRunNameV1,
 } from '../shared/agents/independentReviewWorkflowDispatchLaunchReceiptV1.mjs';
 import {
@@ -438,22 +441,34 @@ async function loadSelectedIndependentReview(context, identity) {
     `/repos/${context.owner}/${context.repo}/actions/runs/${selected.independentReviewWorkflowRunId}/attempts/${selected.independentReviewWorkflowRunAttempt}/jobs?filter=all`,
     'jobs',
   )).items;
-  const workflowValidation = validateIndependentReviewWorkflowRun(run, jobs, {
-    repository: context.repository,
-    prNumber: identity.prNumber,
-    expectedHead: identity.sourceHead,
-    expectedBranch: identity.branch,
-    expectedBaseBranch: 'main',
-    expectedBaseSha: identity.baseSha,
-    expectedWorkflowId: definition.id,
-    workflowRunId: selected.independentReviewWorkflowRunId,
-    workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
-    expectedWorkflowRunName: independentReviewWorkflowDispatchRunNameV1({
+  const reviewEvent = text(run?.event);
+  const workflowValidation = reviewEvent === 'workflow_dispatch'
+    ? validateIndependentReviewWorkflowDispatchExecutionV1(run, jobs, {
+      repository: context.repository,
       prNumber: identity.prNumber,
-      sourceHead: identity.sourceHead,
-      handoffBindingSha256: 'legacy-pull-request-target',
-    }),
-  });
+      expectedHead: identity.sourceHead,
+      expectedBranch: identity.branch,
+      expectedBaseSha: identity.baseSha,
+      expectedWorkflowId: definition.id,
+      workflowRunId: selected.independentReviewWorkflowRunId,
+      workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+    })
+    : validateIndependentReviewWorkflowRun(run, jobs, {
+      repository: context.repository,
+      prNumber: identity.prNumber,
+      expectedHead: identity.sourceHead,
+      expectedBranch: identity.branch,
+      expectedBaseBranch: 'main',
+      expectedBaseSha: identity.baseSha,
+      expectedWorkflowId: definition.id,
+      workflowRunId: selected.independentReviewWorkflowRunId,
+      workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+      expectedWorkflowRunName: independentReviewWorkflowDispatchRunNameV1({
+        prNumber: identity.prNumber,
+        sourceHead: identity.sourceHead,
+        handoffBindingSha256: 'legacy-pull-request-target',
+      }),
+    });
   if (!workflowValidation.valid) {
     fail('Selected independent review run is failed, stale or ambiguously bound.', {
       blockers: workflowValidation.blockers,
