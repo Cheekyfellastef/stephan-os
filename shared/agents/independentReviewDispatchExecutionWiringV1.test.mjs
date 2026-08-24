@@ -28,9 +28,10 @@ test('personal protected merge retains legacy pull_request_target review validat
   assert.match(text, /expectedBaseSha: identity\.baseSha/);
 });
 
-test('personal protected merge binds GitHub workflow name and dynamic display title to their correct fields', async () => {
+test('personal protected merge binds the exact dynamic run name and display title separately from the static definition', async () => {
   const text = await source(personalMerge);
-  assert.match(text, /text\(run\?\.name\) === text\(definition\.name\)/);
+  assert.match(text, /validatePersonalRepositoryDispatchWorkflowDefinition\(definitions\)/);
+  assert.match(text, /text\(run\?\.name\) === expectedDisplayTitle/);
   assert.match(text, /text\(run\?\.display_title\) === expectedDisplayTitle/);
-  assert.doesNotMatch(text, /text\(run\?\.name\) === expectedDisplayTitle/);
+  assert.doesNotMatch(text, /text\(run\?\.name\) === text\(definition\.name\)/);
 });
