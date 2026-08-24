@@ -265,6 +265,77 @@ test('goal identity transition neutralizes the old authority before a new goal w
   assert.equal(scheduler.selectedGoal, null);
 });
 
+test('a cancelled critical mission neutralizes its previously runnable goal', async () => {
+  const paths = await roots();
+  await publishCriticalBacklogProjection({
+    decision: 'WAIT_ACTIVE_MISSION',
+    finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
+    selectedItem: DEFAULT_CRITICAL_BACKLOG[0],
+    activeMission: { missionId: DEFAULT_CRITICAL_BACKLOG[0].mission.missionId, currentPhase: 'AGENT_IMPLEMENTATION' },
+    completedItemIds: [],
+    remainingItemIds: DEFAULT_CRITICAL_BACKLOG.map(({ itemId }) => itemId),
+    exactNextAction: 'Continue the active mission.',
+  }, { paths, now });
+  const blockedAt = new Date(now.getTime() + 60_000);
+  const blocked = await publishCriticalBacklogProjection({
+    decision: 'BLOCKED_BY_TERMINAL_MISSION',
+    finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_BLOCKED',
+    selectedItem: DEFAULT_CRITICAL_BACKLOG[0],
+    activeMission: { missionId: DEFAULT_CRITICAL_BACKLOG[0].mission.missionId, currentPhase: 'CANCELLED' },
+    completedItemIds: [],
+    remainingItemIds: DEFAULT_CRITICAL_BACKLOG.map(({ itemId }) => itemId),
+    exactNextAction: 'Re-authorize or replace the cancelled mission.',
+  }, { paths, now: blockedAt });
+  assert.equal(blocked.ok, true);
+  const goal = JSON.parse(await readFile(join(paths.workspaceRoot, 'goals', CRITICAL_BACKLOG_CURRENT_GOAL_FILE), 'utf8'));
+  assert.equal(goal.goalId, 'goal-1291');
+  assert.equal(goal.route, 'WAITING_FOR_EXTERNAL_CONDITION');
+  assert.equal(goal.holdDecision, 'BLOCKED_BY_TERMINAL_MISSION');
+  const schedulerGoals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: blockedAt.toISOString(),
+    goalRecords: [goal],
+  });
+  const scheduler = buildMissionScheduler({ now: blockedAt.toISOString(), goals: schedulerGoals.goals });
+  assert.equal(scheduler.selectedGoal, null);
+});
+
+test('completed critical backlog closes and neutralizes its final current goal', async () => {
+  const paths = await roots();
+  const finalItem = DEFAULT_CRITICAL_BACKLOG.at(-1);
+  await publishCriticalBacklogProjection({
+    decision: 'WAIT_ACTIVE_MISSION',
+    finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
+    selectedItem: finalItem,
+    activeMission: { missionId: finalItem.mission.missionId, currentPhase: 'LOCAL_DEPLOYMENT' },
+    completedItemIds: DEFAULT_CRITICAL_BACKLOG.slice(0, -1).map(({ itemId }) => itemId),
+    remainingItemIds: [finalItem.itemId],
+    exactNextAction: 'Continue the final active mission.',
+  }, { paths, now });
+  const completeAt = new Date(now.getTime() + 60_000);
+  const complete = await publishCriticalBacklogProjection({
+    decision: 'BACKLOG_COMPLETE',
+    finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE',
+    selectedItem: null,
+    activeMission: null,
+    completedItemIds: DEFAULT_CRITICAL_BACKLOG.map(({ itemId }) => itemId),
+    remainingItemIds: [],
+    exactNextAction: 'No critical backlog mission remains.',
+  }, { paths, now: completeAt });
+  assert.equal(complete.ok, true);
+  const goal = JSON.parse(await readFile(join(paths.workspaceRoot, 'goals', CRITICAL_BACKLOG_CURRENT_GOAL_FILE), 'utf8'));
+  assert.equal(goal.goalId, 'goal-1284');
+  assert.equal(goal.status, 'CLOSED');
+  assert.equal(goal.state, 'CLOSED');
+  assert.equal(goal.route, 'WAITING_FOR_EXTERNAL_CONDITION');
+  assert.equal(goal.holdDecision, 'BACKLOG_COMPLETE');
+  const schedulerGoals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: completeAt.toISOString(),
+    goalRecords: [goal],
+  });
+  const scheduler = buildMissionScheduler({ now: completeAt.toISOString(), goals: schedulerGoals.goals });
+  assert.equal(scheduler.selectedGoal, null);
+});
+
 test('invalid selected goal evidence fails closed before publishing authority records', async () => {
   const paths = await roots();
   const result = await publishCriticalBacklogProjection({
