@@ -45,6 +45,7 @@ const SYMPTOM_REQUIRED = new Set([
 ]);
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,119}$/i;
 const SAFE_REF = /^[a-z0-9][a-z0-9._:/#@+-]{0,239}$/i;
+const CANONICAL_ISSUE_OWNER_REF = /^#[1-9][0-9]{0,9}$/;
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const MAX_PACK_BYTES = 64 * 1024;
@@ -68,6 +69,11 @@ function safeId(value) {
 function safeRef(value) {
   const normalized = text(value);
   return SAFE_REF.test(normalized) ? normalized : null;
+}
+
+function safeComponentOrOwnerRef(value) {
+  const normalized = text(value);
+  return CANONICAL_ISSUE_OWNER_REF.test(normalized) || SAFE_REF.test(normalized) ? normalized : null;
 }
 
 function exactSha(value) {
@@ -160,7 +166,7 @@ export function validateEngineeringIncidentMethodRecordInputV1(input = {}) {
     blockers,
     min: 1,
     max: 32,
-    normalize: safeRef,
+    normalize: safeComponentOrOwnerRef,
   });
 
   const observedAtUtc = timestamp(input.observedAtUtc);
@@ -310,7 +316,7 @@ export function buildEngineeringCodingMemoryPackV1(input = {}) {
     blockers,
     min: 1,
     max: 24,
-    normalize: safeRef,
+    normalize: safeComponentOrOwnerRef,
   });
   const createdAtUtc = timestamp(input.createdAtUtc);
   if (!createdAtUtc) blockers.push('created-at-invalid');
