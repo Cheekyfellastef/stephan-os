@@ -61,7 +61,6 @@ export function validateIndependentReviewWorkflowDispatchExecutionV1(run = {}, j
   if (positiveInteger(run?.id) !== workflowRunId) blockers.push('dispatch-review-run-id-mismatch');
   if (positiveInteger(run?.run_attempt) !== workflowRunAttempt) blockers.push('dispatch-review-run-attempt-mismatch');
   if (positiveInteger(run?.workflow_id) !== expectedWorkflowId) blockers.push('dispatch-review-workflow-id-mismatch');
-  if (text(run?.name) !== WORKFLOW_NAME) blockers.push('dispatch-review-workflow-name-mismatch');
   if (canonicalPath(run, repository) !== WORKFLOW_PATH) blockers.push('dispatch-review-workflow-path-mismatch');
   if (text(run?.event) !== 'workflow_dispatch') blockers.push('dispatch-review-event-mismatch');
   if (workflowRepository(run) !== repository) blockers.push('dispatch-review-repository-mismatch');
@@ -80,6 +79,9 @@ export function validateIndependentReviewWorkflowDispatchExecutionV1(run = {}, j
     : null;
   const observedHandoffBindingSha256 = text(titleMatch?.[1]).toLowerCase();
   if (!titleMatch) blockers.push('dispatch-review-run-name-binding-mismatch');
+  const runName = text(run?.name);
+  const exactAllowedRunName = runName === WORKFLOW_NAME || (Boolean(titleMatch) && runName === displayTitle);
+  if (!exactAllowedRunName) blockers.push('dispatch-review-workflow-name-mismatch');
   if (expectedHandoffBindingSha256
     && observedHandoffBindingSha256 !== expectedHandoffBindingSha256) {
     blockers.push('dispatch-review-handoff-binding-mismatch');
