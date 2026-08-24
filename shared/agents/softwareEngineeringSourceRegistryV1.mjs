@@ -91,6 +91,7 @@ const SOURCE_PRIORITY = Object.freeze({
 });
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,119}$/i;
 const SAFE_REF = /^[a-z0-9][a-z0-9._:/#@+-]{0,239}$/i;
+const CANONICAL_ISSUE_OWNER_REF = /^#[1-9][0-9]{0,9}$/;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 
 function text(value) {
@@ -135,6 +136,11 @@ function safeId(value) {
 function safeRef(value) {
   const normalized = text(value);
   return SAFE_REF.test(normalized) ? normalized : null;
+}
+
+function safeOwnerRef(value) {
+  const normalized = text(value);
+  return CANONICAL_ISSUE_OWNER_REF.test(normalized) || SAFE_REF.test(normalized) ? normalized : null;
 }
 
 function safeLocation(value) {
@@ -250,8 +256,8 @@ export function validateSoftwareEngineeringSourceRecordInputV1(input = {}) {
   const availability = text(input.availability).toUpperCase();
   if (!AVAILABILITY_STATES.has(availability)) blockers.push('availability-invalid');
 
-  const refreshOwner = safeRef(input.refreshOwner);
-  const extractionOwner = safeRef(input.extractionOwner);
+  const refreshOwner = safeOwnerRef(input.refreshOwner);
+  const extractionOwner = safeOwnerRef(input.extractionOwner);
   if (!refreshOwner) blockers.push('refresh-owner-invalid');
   if (!extractionOwner) blockers.push('extraction-owner-invalid');
 

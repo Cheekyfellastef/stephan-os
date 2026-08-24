@@ -42,9 +42,23 @@ test('admits a current official technical source with zero authority', () => {
   assert.equal(record.schemaVersion, SOFTWARE_ENGINEERING_SOURCE_RECORD_SCHEMA_V1);
   assert.equal(record.primarySource, true);
   assert.equal(record.status, 'ADMITTED');
+  assert.equal(record.refreshOwner, '#1902');
+  assert.equal(record.extractionOwner, '#1958');
   assert.equal(record.authority.sourceMutationAllowed, false);
   assert.equal(record.authority.researchDispatchAllowed, false);
   assert.equal(Object.isFrozen(record), true);
+});
+
+test('canonical issue owners are bounded and malformed issue refs remain rejected', () => {
+  for (const value of ['#0', '#01', '#12345678901', '#abc', '#1902/extra']) {
+    const refreshValidation = validateSoftwareEngineeringSourceRecordInputV1(sourceInput({ refreshOwner: value }));
+    assert.equal(refreshValidation.valid, false, value);
+    assert.ok(refreshValidation.blockers.includes('refresh-owner-invalid'), value);
+
+    const extractionValidation = validateSoftwareEngineeringSourceRecordInputV1(sourceInput({ extractionOwner: value }));
+    assert.equal(extractionValidation.valid, false, value);
+    assert.ok(extractionValidation.blockers.includes('extraction-owner-invalid'), value);
+  }
 });
 
 test('admits a pinned licence-compatible upstream repository for bounded direct reuse', () => {
