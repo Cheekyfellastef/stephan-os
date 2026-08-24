@@ -14,6 +14,7 @@ import {
   classifyPublicationTruth,
   classifySourceUpdateTruth,
   collectApprovedTrackedGeneratedRestorePaths,
+  collectIgnoredRuntimeAggregatePaths,
   collectRuntimeStatePaths,
   evaluateDistFreshnessAgainstOrigin,
   discoverOpenClawStandaloneIdentityWithDeps,
@@ -875,6 +876,51 @@ test('ignition status evaluator allows canonical ignored runtime logs', () => {
   assert.equal(evaluation.meaningfulEntries.length, 0);
   assert.equal(isGitWorkingTreeClean(status), true);
   assert.equal(classifyIgnitionDirtPath('logs/battle-bridge/backend.stdout.log'), 'RUNTIME_CHECKPOINT_CLEAN');
+});
+
+test('ignition status evaluator admits only the exact canonical ignored local-runtime estate', () => {
+  const approved = [
+    '.stephanos/local-state-checkpoints/',
+    'package-lock.json',
+    'stephanos-server/data/durable-memory.json',
+    'stephanos-server/data/local-rag/',
+    'stephanos-server/data/provider-secrets.json',
+    'stephanos-server/data/tile-state.json',
+    'stephanos-server/package-lock.json',
+  ];
+  const evaluation = evaluateGitStatusForIgnition(approved.map((path) => `!! ${path}`).join('\n'));
+
+  assert.deepEqual(evaluation.ignoredLocalRuntimeEntries.map((entry) => entry.paths[0]), approved);
+  assert.equal(evaluation.meaningfulEntries.length, 0);
+  assert.equal(isGitWorkingTreeClean(approved.map((path) => `!! ${path}`).join('\n')), true);
+
+  const lookalikes = evaluateGitStatusForIgnition([
+    ' M package-lock.json',
+    '?? stephanos-server/data/provider-secrets.json',
+    '!! stephanos-server/data/provider-secrets-copy.json',
+    '!! .stephanos/local-state-checkpoints/token.json',
+  ].join('\n'));
+  assert.equal(lookalikes.meaningfulEntries.length, 4);
+  assert.equal(lookalikes.forbiddenOrUnknownEntries.length, 3);
+});
+
+test('ignored local-runtime aggregates retain bounded secret-child inspection', () => {
+  const aggregates = collectIgnoredRuntimeAggregatePaths([
+    '!! .stephanos/local-state-checkpoints/',
+    '!! stephanos-server/data/local-rag/',
+    '!! data/random/',
+  ].join('\n'));
+  assert.deepEqual(aggregates, [
+    '.stephanos/local-state-checkpoints/',
+    'stephanos-server/data/local-rag/',
+  ]);
+
+  const evaluation = evaluateGitStatusForIgnition([
+    '!! .stephanos/local-state-checkpoints/',
+    '!! .stephanos/local-state-checkpoints/private-key.json',
+  ].join('\n'));
+  assert.equal(evaluation.ignoredLocalRuntimeEntries.length, 1);
+  assert.equal(evaluation.meaningfulEntries.length, 1);
 });
 
 test('ignition status evaluator aligns exact dream-memory runtime prefixes without allowing secret-shaped children', () => {
