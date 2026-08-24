@@ -565,6 +565,34 @@ export function syncCodexDispatchBridge({
   }
 
   if (preservationProfile) {
+    const preservationHead = git(spawnSyncFn, repoRoot, ['rev-parse', 'HEAD']);
+    if (!preservationHead.ok) {
+      return Object.freeze({
+        ok: false,
+        status: 'FAILED',
+        verdict: 'FAIL',
+        blocker: 'PRESERVATION_SOURCE_HEAD_READ_FAILED',
+        beforeHead: beforeHead.stdout,
+        preservationHead,
+        statusBefore: statusBefore.stdout,
+        fileMovePerformed: false,
+        destructiveCleanupPerformed: false,
+      });
+    }
+    if (preservationHead.stdout !== beforeHead.stdout) {
+      return Object.freeze({
+        ok: false,
+        status: 'BLOCKED',
+        verdict: 'FAIL',
+        blocker: 'PRESERVATION_SOURCE_HEAD_CHANGED',
+        beforeHead: beforeHead.stdout,
+        preservationHead: preservationHead.stdout,
+        statusBefore: statusBefore.stdout,
+        fileMovePerformed: false,
+        destructiveCleanupPerformed: false,
+        nextOperatorAction: 'Retry only after the canonical checkout is stable; no runtime-data files were moved.',
+      });
+    }
     preservation = preserveBattleBridgeDirtyData({
       repoRoot,
       workspaceRoot,
@@ -573,7 +601,7 @@ export function syncCodexDispatchBridge({
       profile: preservationProfile,
       operatorApproval: preservationApproval,
       statusLines: String(statusBefore.stdout).split(/\r?\n/).filter(Boolean),
-      sourceHead: beforeHead.stdout,
+      sourceHead: preservationHead.stdout,
       now: nowFn(),
     });
     if (!preservation.ok) return Object.freeze({ ...preservation, beforeHead: beforeHead.stdout, statusBefore: statusBefore.stdout });
@@ -628,6 +656,7 @@ export function syncCodexDispatchBridge({
   });
   const restartRequired = filesChanged.some((path) => [
     'scripts/stephanos-codex-dispatch-mcp.mjs',
+    'shared/agents/battleBridgeDirtyDataPreservationV1.mjs',
     'shared/agents/codexDispatchHostOps.mjs',
     'shared/agents/stephanosChatUpdate.mjs',
   ].includes(path));
