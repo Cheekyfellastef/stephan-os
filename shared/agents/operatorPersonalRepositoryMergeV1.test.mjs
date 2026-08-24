@@ -1465,7 +1465,7 @@ test('UNSTABLE admission binds the one failing check to the exact reviewed escal
 });
 
 test('deadline convergence admits every exact snapshot arrival within the bounded window', async () => {
-  assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS, 15_000);
+  assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS, 60_000);
   assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_POLL_INTERVAL_MS, 5_000);
   const escalationRun = escalationWorkflowRun();
   const greenRun = workflowRuns()[0];
@@ -1482,7 +1482,7 @@ test('deadline convergence admits every exact snapshot arrival within the bounde
     ...exactSnapshot,
     workflowRuns: workflowRuns(),
   };
-  for (const exactSnapshotAttempt of [1, 2, 3, 4]) {
+  for (const exactSnapshotAttempt of [1, 2, 3, 4, 7, 13]) {
     let clockMs = 0;
     const reads = [];
     const waits = [];
@@ -1580,7 +1580,7 @@ test('deadline convergence expires closed for persistent GitHub identity inconsi
   assert.equal(blocked.selectedSnapshot, null);
   assert.equal(blocked.convergenceDeadlineReached, true);
   assert.equal(clockMs, PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS);
-  assert.equal(reads, 4);
+  assert.equal(reads, 13);
   assert.equal(blocked.snapshotAttempts.every((snapshot) => snapshot.retryable), true);
 });
 
@@ -1614,7 +1614,7 @@ test('deadline convergence expires closed for a persistent hostile check identit
   assert.equal(blocked.selectedSnapshot, null);
   assert.equal(blocked.convergenceDeadlineReached, true);
   assert.equal(clockMs, PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS);
-  assert.equal(reads, 4);
+  assert.equal(reads, 13);
   assert.deepEqual(blocked.blockers, ['personal-repository-check-run-identity-invalid']);
   assert.equal(blocked.snapshotAttempts.every((snapshot) => snapshot.retryable), true);
 });
