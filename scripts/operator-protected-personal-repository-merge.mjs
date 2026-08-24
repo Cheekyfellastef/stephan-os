@@ -283,7 +283,7 @@ async function currentWorkflowExecution(context) {
     }
     const priorRunJobSets = await Promise.all(execution.replayRunIds.map(async (runId) => ({
       runId,
-      jobs: (await apiCollection(`/repos/${context.owner}/${context.repo}/actions/runs/${runId}/jobs`, 'jobs')).items,
+      jobs: (await apiCollection(`/repos/${context.owner}/${context.repo}/actions/runs/${runId}/jobs?filter=all`, 'jobs')).items,
     })));
     execution = validatePersonalRepositoryDispatchExecution({
       definitions,

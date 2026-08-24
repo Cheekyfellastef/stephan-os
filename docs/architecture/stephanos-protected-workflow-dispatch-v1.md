@@ -33,13 +33,14 @@ The mailbox does not call `gh pr merge`, write `main`, approve the protected env
 A same-head/base workflow dispatch remains a replay by default. A later workflow may proceed only when live GitHub job evidence proves all of the following for each prior matching run:
 
 - the run is completed with conclusion `failure`;
-- the exact `personal-repository-evidence` job completed with `failure`;
-- the exact `operator-personal-repository-approval` job completed as `skipped`;
-- the exact `operator-personal-repository-squash-merge` job completed as `skipped`;
+- GitHub's all-attempt job view contains one complete authority-job triplet for every run attempt;
+- in every attempt, the exact `personal-repository-evidence` job completed with `failure`;
+- in every attempt, the exact `operator-personal-repository-approval` job completed as `skipped`;
+- in every attempt, the exact `operator-personal-repository-squash-merge` job completed as `skipped`;
 - the three jobs have unique positive GitHub job identities; and
 - the complete prior-attempt job-proof estate stays within the fixed bound.
 
-The normalized run and job identities are included in the revalidated evidence packet and therefore in its SHA-256. An active, successful, cancelled, malformed, duplicate, unbounded, retried-in-place, approval-started or merge-started prior run remains blocked. Failed run deletion is not an accepted recovery path.
+The normalized run, attempt and job identities are included in the revalidated evidence packet and therefore in its SHA-256. Missing earlier-attempt jobs, an active, successful, cancelled, malformed, duplicate, unbounded, approval-started or merge-started prior attempt remains blocked. Failed run deletion is not an accepted recovery path.
 
 ## Approval separation
 

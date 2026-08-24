@@ -35,46 +35,63 @@ export const PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX = 8;
 
 export function validatePersonalRepositoryReadOnlyPriorFailure(run = {}, jobs = []) {
   const blockers = [];
-  if (!strictPositiveInteger(run?.id)) blockers.push('prior-run-id-invalid');
-  if (!strictPositiveInteger(run?.run_attempt)) blockers.push('prior-run-attempt-invalid');
+  const runId = strictPositiveInteger(run?.id);
+  const runAttempt = strictPositiveInteger(run?.run_attempt);
+  if (!runId) blockers.push('prior-run-id-invalid');
+  if (!runAttempt) blockers.push('prior-run-attempt-invalid');
   if (text(run?.status).toLowerCase() !== 'completed') blockers.push('prior-run-not-completed');
   if (text(run?.conclusion).toLowerCase() !== 'failure') blockers.push('prior-run-not-failed');
   if (!Array.isArray(jobs)) blockers.push('prior-run-jobs-invalid');
   const jobList = Array.isArray(jobs) ? jobs : [];
-  const exactJob = (name) => {
-    const matches = jobList.filter((job) => text(job?.name) === name);
-    if (matches.length !== 1) blockers.push(`prior-run-job-not-exact:${name}`);
+  const authorityJobNames = new Set([
+    PERSONAL_REPOSITORY_EVIDENCE_JOB,
+    PERSONAL_REPOSITORY_APPROVAL_JOB,
+    PERSONAL_REPOSITORY_MERGE_JOB,
+  ]);
+  const authorityJobs = jobList.filter((job) => authorityJobNames.has(text(job?.name)));
+  if (runAttempt && authorityJobs.length !== runAttempt * authorityJobNames.size) {
+    blockers.push('prior-run-authority-job-estate-not-exact');
+  }
+  const exactJob = (name, attempt) => {
+    const matches = authorityJobs.filter((job) => (
+      text(job?.name) === name && strictPositiveInteger(job?.run_attempt) === attempt
+    ));
+    if (matches.length !== 1) blockers.push(`prior-run-job-not-exact:${attempt}:${name}`);
     return matches.length === 1 ? matches[0] : {};
   };
-  const evidence = exactJob(PERSONAL_REPOSITORY_EVIDENCE_JOB);
-  const approval = exactJob(PERSONAL_REPOSITORY_APPROVAL_JOB);
-  const merge = exactJob(PERSONAL_REPOSITORY_MERGE_JOB);
-  const selectedJobs = [evidence, approval, merge];
+  const selectedJobs = [];
+  for (let attempt = 1; attempt <= runAttempt; attempt += 1) {
+    const evidence = exactJob(PERSONAL_REPOSITORY_EVIDENCE_JOB, attempt);
+    const approval = exactJob(PERSONAL_REPOSITORY_APPROVAL_JOB, attempt);
+    const merge = exactJob(PERSONAL_REPOSITORY_MERGE_JOB, attempt);
+    selectedJobs.push(evidence, approval, merge);
+    if (text(evidence?.status).toLowerCase() !== 'completed'
+      || text(evidence?.conclusion).toLowerCase() !== 'failure') {
+      blockers.push(`prior-run-evidence-job-not-failed:${attempt}`);
+    }
+    if (text(approval?.status).toLowerCase() !== 'completed'
+      || text(approval?.conclusion).toLowerCase() !== 'skipped') {
+      blockers.push(`prior-run-approval-job-not-skipped:${attempt}`);
+    }
+    if (text(merge?.status).toLowerCase() !== 'completed'
+      || text(merge?.conclusion).toLowerCase() !== 'skipped') {
+      blockers.push(`prior-run-merge-job-not-skipped:${attempt}`);
+    }
+  }
   const jobIds = selectedJobs.map((job) => strictPositiveInteger(job?.id));
   if (jobIds.some((id) => !id) || new Set(jobIds).size !== selectedJobs.length) {
     blockers.push('prior-run-job-id-invalid');
   }
-  if (text(evidence?.status).toLowerCase() !== 'completed'
-    || text(evidence?.conclusion).toLowerCase() !== 'failure') {
-    blockers.push('prior-run-evidence-job-not-failed');
-  }
-  if (text(approval?.status).toLowerCase() !== 'completed'
-    || text(approval?.conclusion).toLowerCase() !== 'skipped') {
-    blockers.push('prior-run-approval-job-not-skipped');
-  }
-  if (text(merge?.status).toLowerCase() !== 'completed'
-    || text(merge?.conclusion).toLowerCase() !== 'skipped') {
-    blockers.push('prior-run-merge-job-not-skipped');
-  }
   return Object.freeze({
     valid: blockers.length === 0,
     receipt: blockers.length === 0 ? Object.freeze({
-      runId: strictPositiveInteger(run?.id),
-      runAttempt: strictPositiveInteger(run?.run_attempt),
+      runId,
+      runAttempt,
       status: 'completed',
       conclusion: 'failure',
       jobs: Object.freeze(selectedJobs.map((job) => Object.freeze({
         id: strictPositiveInteger(job?.id),
+        runAttempt: strictPositiveInteger(job?.run_attempt),
         name: text(job?.name),
         status: text(job?.status).toLowerCase(),
         conclusion: text(job?.conclusion).toLowerCase(),

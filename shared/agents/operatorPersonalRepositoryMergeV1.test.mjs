@@ -829,17 +829,31 @@ function dispatchExecutionInput(overrides = {}) {
   };
 }
 
-function priorFailureJobs(overrides = {}) {
-  const jobs = [
-    { id: 101, name: PERSONAL_REPOSITORY_EVIDENCE_JOB, status: 'completed', conclusion: 'failure' },
-    { id: 102, name: PERSONAL_REPOSITORY_APPROVAL_JOB, status: 'completed', conclusion: 'skipped' },
-    { id: 103, name: PERSONAL_REPOSITORY_MERGE_JOB, status: 'completed', conclusion: 'skipped' },
-  ];
+function priorFailureJobs(overrides = {}, attempts = 1) {
+  const jobs = Array.from({ length: attempts }, (_, index) => {
+    const attempt = index + 1;
+    return [
+      { id: (attempt * 100) + 1, run_attempt: attempt, name: PERSONAL_REPOSITORY_EVIDENCE_JOB, status: 'completed', conclusion: 'failure' },
+      { id: (attempt * 100) + 2, run_attempt: attempt, name: PERSONAL_REPOSITORY_APPROVAL_JOB, status: 'completed', conclusion: 'skipped' },
+      { id: (attempt * 100) + 3, run_attempt: attempt, name: PERSONAL_REPOSITORY_MERGE_JOB, status: 'completed', conclusion: 'skipped' },
+    ];
+  }).flat();
   for (const [name, mutation] of Object.entries(overrides)) {
-    const index = jobs.findIndex((job) => job.name === name);
-    if (index >= 0) jobs[index] = { ...jobs[index], ...mutation };
+    for (const [index, job] of jobs.entries()) {
+      if (job.name === name) jobs[index] = { ...job, ...mutation };
+    }
   }
   return jobs;
+}
+
+function normalizedPriorFailureJobs(attempts = 1) {
+  return priorFailureJobs({}, attempts).map((job) => ({
+    id: job.id,
+    runAttempt: job.run_attempt,
+    name: job.name,
+    status: job.status,
+    conclusion: job.conclusion,
+  }));
 }
 
 const expectedDispatchExecution = Object.freeze({
@@ -1183,14 +1197,15 @@ test('same-base failed dispatch is retryable only when evidence failed and both 
       status: 'completed',
       conclusion: 'failure',
     });
-    const retryProof = validatePersonalRepositoryReadOnlyPriorFailure(priorRun, priorFailureJobs());
+    const jobs = priorFailureJobs({}, priorRunAttempt);
+    const retryProof = validatePersonalRepositoryReadOnlyPriorFailure(priorRun, jobs);
     assert.equal(retryProof.valid, true);
     assert.equal(retryProof.finalVerdict, 'PERSONAL_REPOSITORY_PRIOR_FAILURE_READ_ONLY');
 
     const ready = validatePersonalRepositoryDispatchExecution(
       dispatchExecutionInput({
         priorRuns: [dispatchRun(), priorRun],
-        priorRunJobSets: [{ runId: priorRunId, jobs: priorFailureJobs() }],
+        priorRunJobSets: [{ runId: priorRunId, jobs }],
       }),
       expectedDispatchExecution,
     );
@@ -1202,8 +1217,36 @@ test('same-base failed dispatch is retryable only when evidence failed and both 
       runAttempt: priorRunAttempt,
       status: 'completed',
       conclusion: 'failure',
-      jobs: priorFailureJobs(),
+      jobs: normalizedPriorFailureJobs(priorRunAttempt),
     }]);
+  }
+});
+
+test('multi-attempt prior dispatch requires read-only proof for every attempt, not only the latest jobs', () => {
+  const priorRunId = runId + 10;
+  const priorRun = dispatchRun({
+    id: priorRunId,
+    run_attempt: 2,
+    status: 'completed',
+    conclusion: 'failure',
+  });
+  const latestOnly = priorFailureJobs({}, 2).filter((job) => job.run_attempt === 2);
+  const earlierMergeStarted = priorFailureJobs({}, 2).map((job) => (
+    job.run_attempt === 1 && job.name === PERSONAL_REPOSITORY_MERGE_JOB
+      ? { ...job, conclusion: 'failure' }
+      : job
+  ));
+  for (const jobs of [latestOnly, earlierMergeStarted]) {
+    const blocked = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({
+        priorRuns: [dispatchRun(), priorRun],
+        priorRunJobSets: [{ runId: priorRunId, jobs }],
+      }),
+      expectedDispatchExecution,
+    );
+    assert.equal(blocked.valid, false, JSON.stringify(jobs));
+    assert.deepEqual(blocked.replayRunIds, [priorRunId], JSON.stringify(jobs));
+    assert.deepEqual(blocked.retryablePriorFailures, [], JSON.stringify(jobs));
   }
 });
 
