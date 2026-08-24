@@ -1132,6 +1132,82 @@ test('supervisor preservation mode never moves root OpenClaw data or cleans trac
   assert.deepEqual(steps, []);
 });
 
+test('supervisor preservation mode carries canonical ignored local-runtime truth through housekeeping', () => {
+  const steps = [];
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (message) => logs.push(String(message));
+  try {
+    runIgnitionHousekeep({
+      dryRun: false,
+      compact: true,
+      preserveRuntimeDirt: true,
+      captureStepFn: (label) => {
+        if (label === 'git-status') return {
+          stdout: [
+            '!! .stephanos/build-concierge/',
+            '!! .stephanos/local-state-checkpoints/',
+            '!! package-lock.json',
+            '!! stephanos-server/data/durable-memory.json',
+            '!! stephanos-server/data/local-rag/',
+            '!! stephanos-server/data/provider-secrets.json',
+            '!! stephanos-server/data/tile-state.json',
+            '!! stephanos-server/package-lock.json',
+            '!! stephanos-ui/package-lock.json',
+          ].join('\n'),
+          stderr: '',
+        };
+        if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      scanIgnoredRuntimeAggregatePathsFn: () => '',
+      runStepFn: (label, command, args) => steps.push({ label, command, args }),
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(steps, []);
+  const status = JSON.parse(logs.find((line) => line.startsWith('[HOUSEKEEP] status=')).replace('[HOUSEKEEP] status=', ''));
+  assert.equal(status.ignitionStatus, 'READY');
+  assert.equal(status.ignitionSourceDirtCount, 0);
+  assert.equal(status.ignitionHardBlockCount, 0);
+  assert.equal(status.ignitionRuntimePreservationEnabled, true);
+});
+
+test('housekeeping still blocks tracked and untracked lookalikes of ignored local-runtime paths', () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (message) => logs.push(String(message));
+  try {
+    assert.throws(() => runIgnitionHousekeep({
+      dryRun: false,
+      compact: true,
+      preserveRuntimeDirt: true,
+      captureStepFn: (label) => {
+        if (label === 'git-status') return {
+          stdout: [
+            ' M package-lock.json',
+            '?? stephanos-server/data/provider-secrets.json',
+          ].join('\n'),
+          stderr: '',
+        };
+        if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      runStepFn: () => {},
+    }), /housekeep blocked/);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const status = JSON.parse(logs.find((line) => line.startsWith('[HOUSEKEEP] status=')).replace('[HOUSEKEEP] status=', ''));
+  assert.equal(status.ignitionStatus, 'BLOCKED');
+  assert.equal(status.ignitionSourceDirtCount, 1);
+  assert.equal(status.ignitionHardBlockCount, 1);
+  assert.deepEqual(status.ignitionHardBlockPaths, ['stephanos-server/data/provider-secrets.json']);
+});
+
 test('housekeep hard-blocks unknown data files and surfaces exact hardBlockPaths', () => {
   assert.throws(() => runIgnitionHousekeep({
     dryRun: false,

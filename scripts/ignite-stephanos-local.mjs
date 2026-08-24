@@ -1966,7 +1966,7 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
   const plan = assessment.entries.map((entry) => ({
     status: entry.status,
     paths: entry.paths,
-    category: classifyIgnitionDirtPath(entry.paths[0]),
+    category: entry.category,
   }));
   console.log(`[HOUSEKEEP] mode=${dryRun ? 'dry-run' : 'clean'}`);
   if (debug || !compact) {
@@ -1978,10 +1978,14 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
   const entryPaths = assessment.entries.flatMap((entry) => entry.paths);
   const autoCleanTargets = entryPaths.filter((path) => isApprovedGeneratedDistPath(path));
   const runtimeTargets = [...entryPaths.filter((path) => path === RUNTIME_MEMORY_PATH || isAllowlistedRootRuntimePath(path)), ...runtimeDataPaths.filter((path) => isAllowlistedRootRuntimePath(path))];
-  const sourceTargets = entryPaths.filter((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)));
+  const sourceTargets = assessment.entries
+    .filter((entry) => entry.category === 'meaningful-source-dirt')
+    .flatMap((entry) => entry.paths);
   const dependencyTargets = entryPaths.filter((path) => isDependencyDirtPath(path));
-  let hardBlockTargets = [...entryPaths, ...runtimeDataPaths]
-    .filter((path) => classifyIgnitionDirtPath(path) === 'HARD_BLOCK')
+  let hardBlockTargets = [
+    ...assessment.forbiddenOrUnknownEntries.flatMap((entry) => entry.paths),
+    ...runtimeDataPaths.filter((path) => classifyIgnitionDirtPath(path) === 'HARD_BLOCK'),
+  ]
     .filter((path) => path !== 'data/' || runtimeDataPaths.some((candidate) => !isAllowlistedRootRuntimePath(candidate)));
   const movableRootOpenClawDirt = collectMovableRootOpenClawWorkspaceDirt(assessment);
   let openClawMoveResult = { destinationRoot: resolveOpenClawWorkspaceRepairPath(), migrationDirectory: null, moved: [], skipped: [] };
