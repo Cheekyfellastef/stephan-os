@@ -9,6 +9,8 @@ const MAX_BYTES = 256 * 1024;
 const EXACT_HEAD = /^[a-f0-9]{40}$/;
 const GIT_BLOB = /^[a-f0-9]{40}$/;
 const INSTALLER_SHA256 = 'c094059880f033656092f5fb4306457e42aa068ee32137162299817c5f79396f';
+const PODMAN_DESKTOP_SOURCE_COMMIT = 'a969ee0e0b07285122dd4988a58edb0a1a25d5fc';
+const PODMAN_DESKTOP_PODMAN_MANIFEST_BLOB = '5acfedd1c3171414aa218a1d5d95ea7529687809';
 
 function text(value) { return String(value ?? '').trim(); }
 function finding(code, summary, path) { return Object.freeze({ severity: 'P0', code, summary, path }); }
@@ -44,6 +46,12 @@ function reviewPrerequisite(source, path, findings) {
     ["[switch]$OperatorApproved", 'forge-podman-prerequisite-operator-approval-missing', 'Podman prerequisite must require explicit operator approval.'],
     ["$Repository = 'Cheekyfellastef/stephan-os'", 'forge-podman-prerequisite-repository-not-fixed', 'Repository identity must remain fixed.'],
     ["$PodmanVersion = '6.0.2'", 'forge-podman-prerequisite-version-not-fixed', 'Podman version must remain exactly 6.0.2.'],
+    ["$WindowsHostAdapter = 'podman-desktop-windows10-wsl2-v1'", 'forge-podman-windows10-adapter-not-fixed', 'The Windows 10 compatibility adapter identity must remain fixed.'],
+    ['$MinimumWindowsBuild = 19043', 'forge-podman-windows10-floor-not-fixed', 'The Podman Desktop Windows 10 build floor must remain fixed.'],
+    ["$PodmanDesktopVersion = '1.29.1'", 'forge-podman-desktop-version-not-fixed', 'The compatibility authority release must remain fixed.'],
+    [PODMAN_DESKTOP_SOURCE_COMMIT, 'forge-podman-desktop-source-commit-not-fixed', 'The compatibility authority source commit must remain immutable.'],
+    [PODMAN_DESKTOP_PODMAN_MANIFEST_BLOB, 'forge-podman-desktop-manifest-blob-not-fixed', 'The exact bundled-Podman manifest blob must remain immutable.'],
+    ["$CompatibilityAuthority = 'podman-desktop-v1.29.1-win32-x64-podman-v6.0.2'", 'forge-podman-desktop-authority-not-fixed', 'The Windows 10 compatibility authority must remain explicit.'],
     ['podman-installer-windows-amd64.msi', 'forge-podman-prerequisite-asset-not-fixed', 'Windows amd64 MSI asset must remain fixed.'],
     [INSTALLER_SHA256, 'forge-podman-prerequisite-digest-not-fixed', 'MSI SHA-256 must remain source-pinned.'],
     ["$PodmanUserExe = Join-Path $env:LOCALAPPDATA 'Programs\\Podman\\podman.exe'", 'forge-podman-prerequisite-user-path-not-fixed', 'Podman executable path must remain user-scoped and fixed.'],
@@ -64,6 +72,7 @@ function reviewPrerequisite(source, path, findings) {
     ['arbitraryPowerShellAllowed = $false', 'forge-podman-prerequisite-powershell-authority-not-zero', 'Arbitrary PowerShell authority must be denied.'],
   ]) requireLiteral(findings, source, literal, code, summary, path);
   requirePattern(findings, source, /Start-Process\s+-FilePath\s+\$MsiexecExe\s+-ArgumentList\s+@\([\s\S]*'\/i',\s*\$msiPath[\s\S]*'\/qn'[\s\S]*'\/norestart'[\s\S]*'ALLUSERS=2'[\s\S]*'MSIINSTALLPERUSER=1'/, 'forge-podman-prerequisite-msi-invocation-not-fixed', 'Only the fixed quiet per-user MSI invocation is allowed.', path);
+  requirePattern(findings, source, /if \(\$ObservedWindowsBuild -lt \$MinimumWindowsBuild\)\s*\{\s*Emit-Blocked 'WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED'\s*\}/, 'forge-podman-windows10-build-gate-missing', 'Windows hosts below the supported Podman Desktop build floor must fail closed.', path);
   requirePattern(findings, source, /finally\s*\{[\s\S]*Remove-Item -LiteralPath \$msiPath[\s\S]*Remove-Item -LiteralPath \$tempRoot/, 'forge-podman-prerequisite-temp-cleanup-missing', 'Downloaded material must be cleaned in finally.', path);
   for (const [pattern, code, summary] of [
     [/Invoke-Expression|ScriptBlock::Create|cmd\.exe|Start-Job/i, 'forge-podman-prerequisite-dynamic-execution-forbidden', 'Dynamic execution is forbidden.'],

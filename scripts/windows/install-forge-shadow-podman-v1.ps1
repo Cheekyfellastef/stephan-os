@@ -17,6 +17,12 @@ $ErrorActionPreference = 'Stop'
 $Repository = 'Cheekyfellastef/stephan-os'
 $ForgejoVersion = '15.0.6'
 $PodmanVersion = '6.0.2'
+$WindowsHostAdapter = 'podman-desktop-windows10-wsl2-v1'
+$MinimumWindowsBuild = 19043
+$PodmanDesktopVersion = '1.29.1'
+$PodmanDesktopSourceCommit = 'a969ee0e0b07285122dd4988a58edb0a1a25d5fc'
+$PodmanDesktopPodmanManifestBlob = '5acfedd1c3171414aa218a1d5d95ea7529687809'
+$CompatibilityAuthority = 'podman-desktop-v1.29.1-win32-x64-podman-v6.0.2'
 $ImageRepository = 'code.forgejo.org/forgejo/forgejo'
 $MachineName = 'stephanos-forge-shadow'
 $ContainerName = 'stephanos-forge-shadow'
@@ -38,6 +44,7 @@ $PodmanUserExe = Join-Path $env:LOCALAPPDATA 'Programs\Podman\podman.exe'
 $PodmanSystemExe = 'C:\Program Files\RedHat\Podman\podman.exe'
 $ExpectedHead = $ExpectedHead.ToLowerInvariant()
 $ForgejoImageDigest = $ForgejoImageDigest.ToLowerInvariant()
+$ObservedWindowsBuild = [Environment]::OSVersion.Version.Build
 $ImageRef = "$ImageRepository@$ForgejoImageDigest"
 $ApiRoot = "http://$HostAddress`:$HostPort/api/v1"
 $RestoreApiRoot = "http://$HostAddress`:$RestorePort/api/v1"
@@ -51,6 +58,13 @@ function Fail([string]$Blocker, [hashtable]$Details = @{}) {
         repository = $Repository
         expectedHead = $ExpectedHead
         imageDigest = $ForgejoImageDigest
+        windowsHostAdapter = $WindowsHostAdapter
+        minimumWindowsBuild = $MinimumWindowsBuild
+        observedWindowsBuild = $ObservedWindowsBuild
+        compatibilityAuthority = $CompatibilityAuthority
+        podmanDesktopVersion = $PodmanDesktopVersion
+        podmanDesktopSourceCommit = $PodmanDesktopSourceCommit
+        podmanDesktopPodmanManifestBlob = $PodmanDesktopPodmanManifestBlob
         arbitraryShellAllowed = $false
         arbitraryPowerShellAllowed = $false
         githubCredentialUsed = $false
@@ -580,7 +594,7 @@ function Create-And-ProveBackup([string]$Podman, [string]$Git) {
 if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) { Fail 'CANONICAL_REPOSITORY_ROOT_MISSING' }
 if (-not (Test-Path -LiteralPath $GitExe -PathType Leaf)) { Fail 'FIXED_GIT_EXECUTABLE_MISSING' }
 if (-not (Test-Path -LiteralPath $WslExe -PathType Leaf)) { Fail 'WSL_EXECUTABLE_MISSING' }
-if ([Environment]::OSVersion.Version.Build -lt 22000) { Fail 'WINDOWS_11_OR_NEWER_REQUIRED' }
+if ($ObservedWindowsBuild -lt $MinimumWindowsBuild) { Fail 'WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED' }
 
 $branch = ((Invoke-Fixed $GitExe @('-C', $RepoRoot, 'branch', '--show-current')).Output -join '').Trim()
 if ($branch -ne 'main') { Fail 'CANONICAL_REPOSITORY_NOT_MAIN' @{ branch = $branch } }
@@ -607,6 +621,13 @@ if ($WhatIfPreference) {
         imageDigest = $ForgejoImageDigest
         forgejoVersion = $ForgejoVersion
         podmanVersion = $PodmanVersion
+        windowsHostAdapter = $WindowsHostAdapter
+        minimumWindowsBuild = $MinimumWindowsBuild
+        observedWindowsBuild = $ObservedWindowsBuild
+        compatibilityAuthority = $CompatibilityAuthority
+        podmanDesktopVersion = $PodmanDesktopVersion
+        podmanDesktopSourceCommit = $PodmanDesktopSourceCommit
+        podmanDesktopPodmanManifestBlob = $PodmanDesktopPodmanManifestBlob
         listener = "$HostAddress`:$HostPort"
         mutationPerformed = $false
         githubCredentialUsed = $false
@@ -762,6 +783,13 @@ try {
         imageDigest = $ForgejoImageDigest
         forgejoVersion = $backup.Version
         podmanVersion = $PodmanVersion
+        windowsHostAdapter = $WindowsHostAdapter
+        minimumWindowsBuild = $MinimumWindowsBuild
+        observedWindowsBuild = $ObservedWindowsBuild
+        compatibilityAuthority = $CompatibilityAuthority
+        podmanDesktopVersion = $PodmanDesktopVersion
+        podmanDesktopSourceCommit = $PodmanDesktopSourceCommit
+        podmanDesktopPodmanManifestBlob = $PodmanDesktopPodmanManifestBlob
         machine = $MachineName
         podmanConnection = $MachineName
         container = $ContainerName

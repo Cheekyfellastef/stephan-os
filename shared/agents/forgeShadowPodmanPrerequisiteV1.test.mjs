@@ -18,6 +18,9 @@ const TREE = 'c'.repeat(40);
 const BLOB = 'e'.repeat(40);
 const IMAGE_DIGEST = `sha256:${'d'.repeat(64)}`;
 const INSTALLER_SHA256 = 'c094059880f033656092f5fb4306457e42aa068ee32137162299817c5f79396f';
+const WINDOWS_HOST_ADAPTER = 'podman-desktop-windows10-wsl2-v1';
+const PODMAN_DESKTOP_SOURCE_COMMIT = 'a969ee0e0b07285122dd4988a58edb0a1a25d5fc';
+const PODMAN_DESKTOP_PODMAN_MANIFEST_BLOB = '5acfedd1c3171414aa218a1d5d95ea7529687809';
 const PREREQUISITE_PATH = 'scripts/windows/install-forge-shadow-podman-prerequisite-v1.ps1';
 
 function command(overrides = {}) {
@@ -58,6 +61,13 @@ function prerequisiteReceipt() {
     expectedHead: HEAD,
     canonicalTree: TREE,
     podmanVersion: '6.0.2',
+    windowsHostAdapter: WINDOWS_HOST_ADAPTER,
+    minimumWindowsBuild: 19043,
+    observedWindowsBuild: 19045,
+    compatibilityAuthority: 'podman-desktop-v1.29.1-win32-x64-podman-v6.0.2',
+    podmanDesktopVersion: '1.29.1',
+    podmanDesktopSourceCommit: PODMAN_DESKTOP_SOURCE_COMMIT,
+    podmanDesktopPodmanManifestBlob: PODMAN_DESKTOP_PODMAN_MANIFEST_BLOB,
     podmanExecutableIdentity: 'fixed-user-podman',
     installerSha256: INSTALLER_SHA256,
     installerSignatureValid: true,
@@ -135,6 +145,9 @@ test('prerequisite executor proves exact source, installs only fixed Podman, the
   assert.equal(result.readyForM2, true);
   assert.equal(result.forgejoImageDigest, IMAGE_DIGEST);
   assert.equal(result.podmanVersion, '6.0.2');
+  assert.equal(result.windowsHostAdapter, WINDOWS_HOST_ADAPTER);
+  assert.equal(result.minimumWindowsBuild, 19043);
+  assert.equal(result.observedWindowsBuild, 19045);
   assert.equal(result.installPerformed, true);
   assert.equal(result.machineMutation, false);
   assert.equal(result.containerMutation, false);
@@ -148,7 +161,7 @@ test('prerequisite executor proves exact source, installs only fixed Podman, the
   assert.deepEqual(manifest.args.slice(0, 3), ['manifest', 'inspect', '--tls-verify=true']);
 });
 
-test('fixed prerequisite PowerShell contains only the official pinned Podman 6.0.2 user-scope installer path', () => {
+test('fixed prerequisite admits the Podman Desktop Windows 10 compatibility contract without adding a second installer', () => {
   const source = readFileSync(new URL('../../scripts/windows/install-forge-shadow-podman-prerequisite-v1.ps1', import.meta.url), 'utf8');
   const parameterBlock = source.slice(0, source.indexOf('Set-StrictMode'));
   assert.match(source, /podman-installer-windows-amd64\.msi/);
@@ -159,6 +172,14 @@ test('fixed prerequisite PowerShell contains only the official pinned Podman 6.0
   assert.match(source, /Get-AuthenticodeSignature/);
   assert.match(source, /Get-FileHash/);
   assert.match(source, /PODMAN_USER_VERSION_NOT_PROVEN/);
+  assert.match(source, /\$WindowsHostAdapter = 'podman-desktop-windows10-wsl2-v1'/);
+  assert.match(source, /\$MinimumWindowsBuild = 19043/);
+  assert.match(source, /\$PodmanDesktopVersion = '1\.29\.1'/);
+  assert.match(source, new RegExp(PODMAN_DESKTOP_SOURCE_COMMIT));
+  assert.match(source, new RegExp(PODMAN_DESKTOP_PODMAN_MANIFEST_BLOB));
+  assert.match(source, /WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED/);
+  assert.doesNotMatch(source, /WINDOWS_11_OR_NEWER_REQUIRED/);
+  assert.doesNotMatch(source, /podman-desktop-1\.29\.1-setup-x64\.exe/);
   assert.doesNotMatch(parameterBlock, /\$(?:Url|Uri|Path|Executable|Command|Args|Token|Credential)\b/i);
   assert.doesNotMatch(source, /@\('machine',\s*'(?:init|start)'|@\('pull'/i);
 });

@@ -50,9 +50,35 @@ The source fixes exactly:
 - installation scope: current user only;
 - resulting executable: `%LOCALAPPDATA%\Programs\Podman\podman.exe`.
 
+### Windows 10 compatibility adapter
+
+The Battle Bridge is Windows 10 Pro 22H2, so the prerequisite now carries one
+replaceable host adapter, `podman-desktop-windows10-wsl2-v1`. It does not create
+a second Forge runtime or install Podman Desktop. It records the upstream
+compatibility authority that Podman Desktop supports Windows 10 build `19043+`
+and, at Podman Desktop `1.29.1`, selects the same Windows x64 Podman `6.0.2`
+installer already pinned above.
+
+That authority is fixed to:
+
+- Podman Desktop version `1.29.1`;
+- source commit `a969ee0e0b07285122dd4988a58edb0a1a25d5fc`;
+- bundled-Podman manifest blob `5acfedd1c3171414aa218a1d5d95ea7529687809`;
+- host floor Windows build `19043`;
+- the existing `podman-wsl-rootless` runtime boundary.
+
+The adapter only changes host admission. Podman version, MSI URL, MSI digest,
+Authenticode verification, fixed executable path, user scope, WSL provider,
+machine identity, Forgejo digest and all no-authority receipts remain canonical.
+
 The fixed adapter verifies canonical `main`, exact head, exact tree and the committed/working prerequisite-installer blob before mutation and repeats source identity proof afterwards.
 
-The installer requires Windows 11+, the fixed Git executable and an already available WSL2 environment. It does not enable Windows features, request elevation, reboot the host, create a Podman machine or alter system-scope Podman state.
+The installer requires Windows 10 build `19043` or newer, the fixed Git
+executable and an already available WSL2 environment. It does not enable Windows
+features, request elevation, reboot the host, create a Podman machine or alter
+system-scope Podman state. A host below the build floor returns
+`WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED`; a compatible host without working
+WSL2 returns `WSL2_NOT_AVAILABLE`.
 
 If exact Podman 6.0.2 is already present at the fixed user path, the operation returns success without reinstalling it.
 
@@ -102,3 +128,12 @@ After this source slice receives ordinary provider-neutral review and protected 
 8. execute exactly one bounded M3 proof;
 9. require `FORGE_SHADOW_M3_EXECUTION_PROVEN` and teardown truth;
 10. only after the later capacity publication and one genuine machinery task completes without Remote Codex may Forge be described as a usable production build lane.
+
+## Shared invariant
+
+Host compatibility is an adapter fact, never permission to weaken the canonical
+Forge runtime. A platform adapter may widen admission only when it binds an
+immutable upstream compatibility authority to the already-pinned executable and
+then republishes the same bounded receipts. Missing OS features, elevation or a
+restart remain explicit operator prerequisites rather than hidden installer
+side effects.

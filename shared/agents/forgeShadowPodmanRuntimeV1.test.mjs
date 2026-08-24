@@ -7,6 +7,8 @@ import {
   FORGE_SHADOW_PODMAN_PORT,
   FORGE_SHADOW_PODMAN_RUNTIME_REPOSITORY,
   FORGE_SHADOW_PODMAN_RUNTIME_VERSION,
+  FORGE_SHADOW_MINIMUM_WINDOWS_BUILD,
+  FORGE_SHADOW_WINDOWS_HOST_ADAPTER,
   planForgeShadowPodmanRuntime,
 } from './forgeShadowPodmanRuntimeV1.mjs';
 
@@ -15,7 +17,8 @@ const DIGEST = `sha256:${'b'.repeat(64)}`;
 
 function facts(overrides = {}) {
   return {
-    windows11OrNewer: true,
+    windowsBuild: 19045,
+    windowsHostAdapter: FORGE_SHADOW_WINDOWS_HOST_ADAPTER,
     wsl2Available: true,
     podmanPresent: true,
     podmanVersion: '6.0.2',
@@ -59,6 +62,9 @@ test('fixed runtime identity selects current Forgejo LTS and loopback-only port'
   assert.equal(result.identity.host, '127.0.0.1');
   assert.equal(result.identity.connectionName, 'stephanos-forge-shadow');
   assert.equal(result.identity.remoteUrl, 'https://github.com/Cheekyfellastef/stephan-os.git');
+  assert.equal(result.identity.windowsHostAdapter, 'podman-desktop-windows10-wsl2-v1');
+  assert.equal(result.identity.minimumWindowsBuild, 19043);
+  assert.equal(FORGE_SHADOW_MINIMUM_WINDOWS_BUILD, 19043);
   assert.equal(result.authority.githubCredentialUse, false);
   assert.equal(result.authority.credentialPersistence, false);
   assert.equal(result.authority.credentialLogging, false);
@@ -89,6 +95,9 @@ test('runtime fact observations require exact boolean and string types', () => {
     { parityReady: null },
     { podmanVersion: 6.002 },
     { mirrorSourceHead: false },
+    { windowsBuild: '19045' },
+    { windowsBuild: 19045.5 },
+    { windowsHostAdapter: false },
   ]) {
     const result = planForgeShadowPodmanRuntime(input(patch));
     assert.equal(result.valid, false);
@@ -97,9 +106,10 @@ test('runtime fact observations require exact boolean and string types', () => {
   }
 });
 
-test('Windows 11, WSL2 and rootless machine proof are mandatory', () => {
+test('the allowlisted Windows 10 adapter, build floor, WSL2 and rootless machine proof are mandatory', () => {
   for (const patch of [
-    { windows11OrNewer: false },
+    { windowsBuild: 19042 },
+    { windowsHostAdapter: 'local-one-off-adapter' },
     { wsl2Available: false },
     { machineRootful: true },
   ]) {

@@ -36,6 +36,16 @@ test('Windows and executable identities are fixed rather than PATH selected', ()
   lacks('scoop');
 });
 
+test('Windows 10 compatibility authority and build floor are fixed', () => {
+  has("$WindowsHostAdapter = 'podman-desktop-windows10-wsl2-v1'");
+  has('$MinimumWindowsBuild = 19043');
+  has("$PodmanDesktopVersion = '1.29.1'");
+  has("$PodmanDesktopSourceCommit = 'a969ee0e0b07285122dd4988a58edb0a1a25d5fc'");
+  has("$PodmanDesktopPodmanManifestBlob = '5acfedd1c3171414aa218a1d5d95ea7529687809'");
+  has("Fail 'WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED'");
+  lacks('WINDOWS_11_OR_NEWER_REQUIRED');
+});
+
 test('machine creation and inspection are WSL rootless bounded identities', () => {
   has("'machine', 'init', '--provider', 'wsl', '--rootful=false', '--cpus', '4', '--memory', '4096', '--disk-size', '40'");
   has("'machine', 'inspect', '--format', '{{json .}}', $MachineName");

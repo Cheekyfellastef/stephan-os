@@ -19,7 +19,7 @@ const FORGE_M3_EXECUTOR_PATH = './windowsAuthorityForgeM3ExecutorReviewV1.mjs';
 const FORGE_PODMAN_PREREQUISITE_PATH = './windowsAuthorityForgePodmanPrerequisiteReviewV1.mjs';
 const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1.mjs';
 
-const CORE_BLOB_SHA = '4424046455d8fd7724f1ae8b7c53b7c6529668df';
+const CORE_BLOB_SHA = 'e7a0d64118b957bd49d4d97dd3ea32f8ab8fbf94';
 const NO_FAFF_BLOB_SHA = 'f6c2a92f4e2ffebb57e197e72ed0279a896c9ffe';
 const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '0750137480031f19a364915095c69b7ab6061799';
 const RECOVERY_GUARDIAN_BLOB_SHA = '60228170b62d8313bebece5e9e8655cfc45497a5';
@@ -34,7 +34,7 @@ const MOBILE_RECOVERY_LIFEBOAT_INSTALLER_BLOB_SHA = '6ca86bcd68e034950b3d01fdabb
 const LIFEBOAT_ACTIVATION_BLOB_SHA = 'ff4fbcf3e768589742ec8e9ae85168a83c43f7b3';
 const WORKER_WATCHDOG_BLOB_SHA = 'b69e048ea9857b713e2faa17a1bbecec62fed84d';
 const FORGE_M3_EXECUTOR_BLOB_SHA = '7177c695d5a12b009785676440ce83163897f8f2';
-const FORGE_PODMAN_PREREQUISITE_BLOB_SHA = '0a0c98287f20145e31bf8aa3978d0ba4196cbcce';
+const FORGE_PODMAN_PREREQUISITE_BLOB_SHA = '0f12e4cb8e7ed24b1020e51f0ffad5ead3b66def';
 const IGNITION_CONVERGENCE_BLOB_SHA = '8115a382c5c7b9a0bfe5611d4931fcbd969d1162';
 
 const EXPECTED_NO_FAFF_PATHS = Object.freeze(['scripts/windows/repair-battle-bridge-control-plane-now.ps1','scripts/windows/Repair-Battle-Bridge-Control-Plane-Now.cmd','scripts/windows/repair-battle-bridge-control-plane-now.test.mjs','scripts/windows/status-stephanos-codex-dispatch-plugin.ps1']);

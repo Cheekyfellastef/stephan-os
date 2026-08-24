@@ -139,6 +139,12 @@ function reviewForgeInstaller(source, path, findings) {
     ["$Repository = 'Cheekyfellastef/stephan-os'", 'forge-repository-identity-not-fixed', 'Forge repository identity must remain fixed.'],
     ["$ForgejoVersion = '15.0.6'", 'forge-version-not-fixed', 'Forgejo version must remain fixed to the reviewed LTS line.'],
     ["$PodmanVersion = '6.0.2'", 'forge-podman-version-not-fixed', 'Podman version must remain fixed.'],
+    ["$WindowsHostAdapter = 'podman-desktop-windows10-wsl2-v1'", 'forge-windows10-adapter-not-fixed', 'The Windows 10 compatibility adapter identity must remain fixed.'],
+    ['$MinimumWindowsBuild = 19043', 'forge-windows10-floor-not-fixed', 'The Windows 10 compatibility build floor must remain fixed.'],
+    ["$PodmanDesktopVersion = '1.29.1'", 'forge-podman-desktop-version-not-fixed', 'The compatibility authority release must remain fixed.'],
+    ["$PodmanDesktopSourceCommit = 'a969ee0e0b07285122dd4988a58edb0a1a25d5fc'", 'forge-podman-desktop-source-commit-not-fixed', 'The compatibility authority source commit must remain immutable.'],
+    ["$PodmanDesktopPodmanManifestBlob = '5acfedd1c3171414aa218a1d5d95ea7529687809'", 'forge-podman-desktop-manifest-blob-not-fixed', 'The exact bundled-Podman manifest blob must remain immutable.'],
+    ["$CompatibilityAuthority = 'podman-desktop-v1.29.1-win32-x64-podman-v6.0.2'", 'forge-podman-desktop-authority-not-fixed', 'The Windows 10 compatibility authority must remain explicit.'],
     ["$MachineName = 'stephanos-forge-shadow'", 'forge-machine-identity-not-fixed', 'Forge Podman machine identity must remain fixed.'],
     ["$ContainerName = 'stephanos-forge-shadow'", 'forge-container-identity-not-fixed', 'Forge container identity must remain fixed.'],
     ["$RemoteUrl = 'https://github.com/Cheekyfellastef/stephan-os.git'", 'forge-remote-not-fixed', 'Forge mirror source must remain the exact public canonical repository.'],
@@ -173,6 +179,7 @@ function reviewForgeInstaller(source, path, findings) {
   requirePattern(findings, source, /finally\s*\{[\s\S]*Invoke-RestMethod -Method Delete -Uri "\$ApiRoot\/users\/\$Owner\/tokens\/\$BootstrapTokenName"/, 'forge-token-revocation-not-finally-bound', 'Forge temporary-token cleanup must be in a finally path.', path);
   requirePattern(findings, source, /function Create-And-ProveBackup[\s\S]*finally\s*\{[\s\S]*\$RestoreContainerName[\s\S]*\$RestoreVolume[\s\S]*\('start', \$ContainerName\) -AllowFailure/, 'forge-backup-restore-finally-cleanup-missing', 'Forge restore artifacts and canonical restart must be handled in finally cleanup.', path);
   requirePattern(findings, source, /\$inspect\.ImageDigest[\s\S]*\$ForgejoImageDigest|image inspect[\s\S]*\.Digest/, 'forge-container-image-digest-not-independently-proved', 'Forge container identity must independently prove the actual OCI image digest, not only a caller-controlled label.', path);
+  requirePattern(findings, source, /if \(\$ObservedWindowsBuild -lt \$MinimumWindowsBuild\) \{ Fail 'WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED' \}/, 'forge-windows10-build-gate-missing', 'Windows hosts below the supported compatibility floor must fail closed.', path);
 
   for (const [pattern, code, summary] of [
     [/Get-Command\s+podman/i, 'forge-podman-path-resolution-forbidden', 'Forge installer must not resolve Podman from PATH.'],
@@ -190,6 +197,7 @@ function reviewForgeInstallerStaticTest(source, path, findings) {
     ["test('bootstrap token revocation is attempted even when mirror migration fails'", 'forge-static-test-token-proof-missing', 'Forge static regression must guard temporary-token cleanup.'],
     ["test('backup restore probe always cleans temporary state and restarts the canonical Forge container'", 'forge-static-test-backup-cleanup-proof-missing', 'Forge static regression must guard restore cleanup and canonical restart.'],
     ["test('dangerous generic execution and destructive host commands are absent'", 'forge-static-test-dangerous-command-guard-missing', 'Forge static regression must guard dangerous generic execution and host commands.'],
+    ["test('Windows 10 compatibility authority and build floor are fixed'", 'forge-static-test-windows10-proof-missing', 'Forge static regression must guard the Windows 10 compatibility authority and build floor.'],
     ["FORGE_CONTAINER_IMAGE_DIGEST_MISMATCH", 'forge-static-test-image-digest-proof-missing', 'Forge static regression must guard actual image-digest proof.'],
   ]) requireLiteral(findings, source, literal, code, summary, path);
 

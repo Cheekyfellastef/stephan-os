@@ -12,6 +12,12 @@ $ErrorActionPreference = 'Stop'
 
 $Repository = 'Cheekyfellastef/stephan-os'
 $PodmanVersion = '6.0.2'
+$WindowsHostAdapter = 'podman-desktop-windows10-wsl2-v1'
+$MinimumWindowsBuild = 19043
+$PodmanDesktopVersion = '1.29.1'
+$PodmanDesktopSourceCommit = 'a969ee0e0b07285122dd4988a58edb0a1a25d5fc'
+$PodmanDesktopPodmanManifestBlob = '5acfedd1c3171414aa218a1d5d95ea7529687809'
+$CompatibilityAuthority = 'podman-desktop-v1.29.1-win32-x64-podman-v6.0.2'
 $InstallerUrl = 'https://github.com/podman-container-tools/podman/releases/download/v6.0.2/podman-installer-windows-amd64.msi'
 $InstallerSha256 = 'c094059880f033656092f5fb4306457e42aa068ee32137162299817c5f79396f'
 $RepoRoot = Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'
@@ -20,6 +26,7 @@ $WslExe = Join-Path $env:SystemRoot 'System32\wsl.exe'
 $MsiexecExe = Join-Path $env:SystemRoot 'System32\msiexec.exe'
 $PodmanUserExe = Join-Path $env:LOCALAPPDATA 'Programs\Podman\podman.exe'
 $ExpectedHead = $ExpectedHead.ToLowerInvariant()
+$ObservedWindowsBuild = [Environment]::OSVersion.Version.Build
 
 function Emit-Blocked([string]$Blocker, [hashtable]$Details = @{}) {
     $result = [ordered]@{
@@ -30,6 +37,13 @@ function Emit-Blocked([string]$Blocker, [hashtable]$Details = @{}) {
         repository = $Repository
         expectedHead = $ExpectedHead
         podmanVersion = $PodmanVersion
+        windowsHostAdapter = $WindowsHostAdapter
+        minimumWindowsBuild = $MinimumWindowsBuild
+        observedWindowsBuild = $ObservedWindowsBuild
+        compatibilityAuthority = $CompatibilityAuthority
+        podmanDesktopVersion = $PodmanDesktopVersion
+        podmanDesktopSourceCommit = $PodmanDesktopSourceCommit
+        podmanDesktopPodmanManifestBlob = $PodmanDesktopPodmanManifestBlob
         installerSha256 = $InstallerSha256
         userScope = $true
         adminRequired = $false
@@ -70,7 +84,9 @@ if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) { Emit-Blocked 
 if (-not (Test-Path -LiteralPath $GitExe -PathType Leaf)) { Emit-Blocked 'FIXED_GIT_EXECUTABLE_MISSING' }
 if (-not (Test-Path -LiteralPath $WslExe -PathType Leaf)) { Emit-Blocked 'WSL_EXECUTABLE_MISSING' }
 if (-not (Test-Path -LiteralPath $MsiexecExe -PathType Leaf)) { Emit-Blocked 'MSIEXEC_EXECUTABLE_MISSING' }
-if ([Environment]::OSVersion.Version.Build -lt 22000) { Emit-Blocked 'WINDOWS_11_OR_NEWER_REQUIRED' }
+if ($ObservedWindowsBuild -lt $MinimumWindowsBuild) {
+    Emit-Blocked 'WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED'
+}
 
 $branch = ((Invoke-Fixed $GitExe @('-C', $RepoRoot, 'branch', '--show-current')).Output -join '').Trim()
 if ($branch -ne 'main') { Emit-Blocked 'CANONICAL_REPOSITORY_NOT_MAIN' @{ branch = $branch } }
@@ -98,6 +114,13 @@ if ($existingVersion) {
         expectedHead = $ExpectedHead
         canonicalTree = $localTree
         podmanVersion = $PodmanVersion
+        windowsHostAdapter = $WindowsHostAdapter
+        minimumWindowsBuild = $MinimumWindowsBuild
+        observedWindowsBuild = $ObservedWindowsBuild
+        compatibilityAuthority = $CompatibilityAuthority
+        podmanDesktopVersion = $PodmanDesktopVersion
+        podmanDesktopSourceCommit = $PodmanDesktopSourceCommit
+        podmanDesktopPodmanManifestBlob = $PodmanDesktopPodmanManifestBlob
         podmanExecutableIdentity = 'fixed-user-podman'
         installerSha256 = $InstallerSha256
         installerSignatureValid = $null
@@ -129,6 +152,13 @@ if ($WhatIfPreference) {
         expectedHead = $ExpectedHead
         canonicalTree = $localTree
         podmanVersion = $PodmanVersion
+        windowsHostAdapter = $WindowsHostAdapter
+        minimumWindowsBuild = $MinimumWindowsBuild
+        observedWindowsBuild = $ObservedWindowsBuild
+        compatibilityAuthority = $CompatibilityAuthority
+        podmanDesktopVersion = $PodmanDesktopVersion
+        podmanDesktopSourceCommit = $PodmanDesktopSourceCommit
+        podmanDesktopPodmanManifestBlob = $PodmanDesktopPodmanManifestBlob
         installerSha256 = $InstallerSha256
         installPerformed = $false
         userScope = $true
@@ -203,6 +233,13 @@ try {
         expectedHead = $ExpectedHead
         canonicalTree = $localTree
         podmanVersion = $PodmanVersion
+        windowsHostAdapter = $WindowsHostAdapter
+        minimumWindowsBuild = $MinimumWindowsBuild
+        observedWindowsBuild = $ObservedWindowsBuild
+        compatibilityAuthority = $CompatibilityAuthority
+        podmanDesktopVersion = $PodmanDesktopVersion
+        podmanDesktopSourceCommit = $PodmanDesktopSourceCommit
+        podmanDesktopPodmanManifestBlob = $PodmanDesktopPodmanManifestBlob
         podmanExecutableIdentity = 'fixed-user-podman'
         installerSha256 = $InstallerSha256
         installerSignatureValid = $signatureValid
