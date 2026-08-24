@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   CODEX_DISPATCH_TEST_ARGS,
   parseTapTestSummary,
+  readBoundedJson,
   runBattleBridgeDiagnostics,
   syncCodexDispatchBridge,
 } from './codexDispatchHostOps.mjs';
@@ -37,11 +41,12 @@ test('sync bridge fast-forwards latest canonical main and runs tests through the
   const spawnSyncFn = scriptedSpawn({
     'git branch --show-current': { stdout: 'main\n' },
     'git rev-parse HEAD': [{ stdout: 'old-head\n' }, { stdout: 'new-head\n' }],
-    'git status --porcelain=v1 --untracked-files=all': [
-      { stdout: ' M stephanos-server/data/memory/durable-memory.json\n' },
-      { stdout: ' M stephanos-server/data/memory/durable-memory.json\n' },
+    'git status --porcelain=v1 --untracked-files=all --ignored=matching': [
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '' },
     ],
-    'git fetch origin main': { stdout: '' },
+    'git fetch --prune origin main:refs/remotes/origin/main': { stdout: '' },
     'git rev-parse origin/main': { stdout: 'new-head\n' },
     'git rev-list --left-right --count HEAD...new-head': { stdout: '0\t1\n' },
     'git merge --ff-only new-head': { stdout: 'Updating old-head..new-head\nFast-forward\n' },
@@ -57,7 +62,7 @@ test('sync bridge fast-forwards latest canonical main and runs tests through the
     spawnSyncFn,
   });
 
-  assert.equal(result.ok, true);
+  assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.verdict, 'PASS');
   assert.equal(result.beforeHead, 'old-head');
   assert.equal(result.remoteHead, 'new-head');
@@ -65,7 +70,7 @@ test('sync bridge fast-forwards latest canonical main and runs tests through the
   assert.equal(result.approvedTargetHead, 'new-head');
   assert.equal(result.approvalScope, 'latest-canonical-origin-main-observed-after-fetch');
   assert.equal(result.updated, true);
-  assert.equal(result.preExistingDirt, true);
+  assert.equal(result.preExistingDirt, false);
   assert.equal(result.restartRequired, false);
   assert.equal(result.destructiveCleanupPerformed, false);
   assert.equal(result.tests.command, 'node.exe');
@@ -121,8 +126,8 @@ test('sync bridge pins fast-forward safety and mutation to the exact head observ
   const spawnSyncFn = scriptedSpawn({
     'git branch --show-current': { stdout: 'main\n' },
     'git rev-parse HEAD': [{ stdout: 'old-head\n' }, { stdout: 'approved-head\n' }],
-    'git status --porcelain=v1 --untracked-files=all': [{ stdout: '' }, { stdout: '' }],
-    'git fetch origin main': { stdout: '' },
+    'git status --porcelain=v1 --untracked-files=all --ignored=matching': [{ stdout: '' }, { stdout: '' }, { stdout: '' }],
+    'git fetch --prune origin main:refs/remotes/origin/main': { stdout: '' },
     'git rev-parse origin/main': { stdout: 'approved-head\n' },
     'git rev-list --left-right --count HEAD...approved-head': { stdout: '0\t1\n' },
     'git merge --ff-only approved-head': { stdout: 'Fast-forward\n' },
@@ -148,8 +153,8 @@ test('sync bridge fails if the post-merge HEAD is not the exact origin/main obse
   const spawnSyncFn = scriptedSpawn({
     'git branch --show-current': { stdout: 'main\n' },
     'git rev-parse HEAD': [{ stdout: 'old-head\n' }, { stdout: 'unexpected-head\n' }],
-    'git status --porcelain=v1 --untracked-files=all': [{ stdout: '' }, { stdout: '' }],
-    'git fetch origin main': { stdout: '' },
+    'git status --porcelain=v1 --untracked-files=all --ignored=matching': [{ stdout: '' }, { stdout: '' }, { stdout: '' }],
+    'git fetch --prune origin main:refs/remotes/origin/main': { stdout: '' },
     'git rev-parse origin/main': { stdout: 'approved-head\n' },
     'git rev-list --left-right --count HEAD...approved-head': { stdout: '0\t1\n' },
     'git merge --ff-only approved-head': { stdout: 'Fast-forward\n' },
@@ -176,11 +181,12 @@ test('sync bridge accepts an already-current main checkout and names verificatio
   const baseScript = {
     'git branch --show-current': { stdout: 'main\n' },
     'git rev-parse HEAD': [{ stdout: 'current-head\n' }, { stdout: 'current-head\n' }],
-    'git status --porcelain=v1 --untracked-files=all': [
-      { stdout: ' M apps/stephanos/dist/index.html\n' },
-      { stdout: ' M apps/stephanos/dist/index.html\n' },
+    'git status --porcelain=v1 --untracked-files=all --ignored=matching': [
+      { stdout: '' },
+      { stdout: '' },
+      { stdout: '' },
     ],
-    'git fetch origin main': { stdout: '' },
+    'git fetch --prune origin main:refs/remotes/origin/main': { stdout: '' },
     'git rev-parse origin/main': { stdout: 'current-head\n' },
     'git rev-list --left-right --count HEAD...current-head': { stdout: '0\t0\n' },
     [nodeTestCommand()]: { status: 1, stderr: 'focused verification failed\n' },
@@ -189,19 +195,37 @@ test('sync bridge accepts an already-current main checkout and names verificatio
     repoRoot: 'C:\\repo', operatorApproval: 'operator-approved', expectedBranch: 'main', nodeCommand: 'node.exe',
     spawnSyncFn: scriptedSpawn(baseScript),
   });
-  assert.equal(result.updated, false);
+  assert.equal(result.updated, false, JSON.stringify(result));
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'POST_SYNC_VERIFICATION_FAILED');
-  assert.equal(result.statusBefore, 'M apps/stephanos/dist/index.html');
-  assert.equal(result.statusAfter, 'M apps/stephanos/dist/index.html');
+  assert.equal(result.statusBefore, '');
+  assert.equal(result.statusAfter, '');
+});
+
+test('sync bridge blocks unknown source dirt before fetch in the no-discard update lane', () => {
+  const spawnSyncFn = scriptedSpawn({
+    'git branch --show-current': { stdout: 'main\n' },
+    'git rev-parse HEAD': { stdout: 'current-head\n' },
+    'git status --porcelain=v1 --untracked-files=all --ignored=matching': { stdout: '!! data/unknown.bin\n' },
+  });
+  const result = syncCodexDispatchBridge({
+    repoRoot: 'C:\\repo',
+    operatorApproval: 'operator-approved',
+    expectedBranch: 'main',
+    nodeCommand: 'node.exe',
+    spawnSyncFn,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CANONICAL_CHECKOUT_DIRTY');
+  assert.equal(spawnSyncFn.calls.some((call) => call.includes(' fetch ')), false);
 });
 
 test('sync bridge blocks local commits or divergence instead of forcing main', () => {
   const spawnSyncFn = scriptedSpawn({
     'git branch --show-current': { stdout: 'main\n' },
     'git rev-parse HEAD': { stdout: 'local-head\n' },
-    'git status --porcelain=v1 --untracked-files=all': { stdout: '' },
-    'git fetch origin main': { stdout: '' },
+    'git status --porcelain=v1 --untracked-files=all --ignored=matching': { stdout: '' },
+    'git fetch --prune origin main:refs/remotes/origin/main': { stdout: '' },
     'git rev-parse origin/main': { stdout: 'remote-head\n' },
     'git rev-list --left-right --count HEAD...remote-head': { stdout: '1\t2\n' },
   });
@@ -376,4 +400,45 @@ test('direct diagnostics report live worker telemetry only when canonical eviden
   assert.equal(result.workerTelemetry.lease.active, true);
   assert.equal(result.workerTelemetry.latestExecutionReceipt.executionId, 'exec-1631');
   assert.equal(result.workerTelemetry.operatorActionRequired, false);
+});
+
+test('bounded telemetry JSON reads one stable regular handle and rejects links or swaps', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-telemetry-stable-read-'));
+  try {
+    const record = path.join(root, 'record.json');
+    fs.writeFileSync(record, '{"status":"READY"}');
+    assert.deepEqual(readBoundedJson(record), {
+      state: 'present',
+      value: { status: 'READY' },
+      blocker: '',
+    });
+
+    const linked = path.join(root, 'linked.json');
+    fs.symlinkSync(record, linked);
+    assert.equal(readBoundedJson(linked).blocker, 'TELEMETRY_RECORD_NOT_REGULAR');
+
+    let reads = 0;
+    const swapped = readBoundedJson(record, {
+      lstat(pathname) {
+        const stat = fs.lstatSync(pathname);
+        reads += 1;
+        if (reads === 1) return stat;
+        return { ...stat, mtimeMs: stat.mtimeMs + 1000 };
+      },
+    });
+    assert.equal(swapped.blocker, 'TELEMETRY_RECORD_IDENTITY_CHANGED');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('bounded telemetry JSON rejects oversized input before parsing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-telemetry-size-'));
+  try {
+    const record = path.join(root, 'oversized.json');
+    fs.writeFileSync(record, 'x'.repeat(256 * 1024 + 1));
+    assert.equal(readBoundedJson(record).blocker, 'TELEMETRY_RECORD_TOO_LARGE');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

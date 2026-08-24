@@ -1,5 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { lstatSync, readFileSync } from 'node:fs';
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readSync,
+} from 'node:fs';
 import os from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +20,7 @@ import {
   projectMissionWorkerHeartbeat,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 import { resolveForgeShadowM2DigestOnBattleBridge } from './forgeShadowM2DigestResolverV1.mjs';
+import { classifyUpdateDirt } from './stephanosUpdateDirt.mjs';
 
 export const DEFAULT_CODEX_DISPATCH_REPO_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 export const DEFAULT_BATTLE_BRIDGE_ENDPOINTS = Object.freeze([
@@ -75,28 +83,58 @@ function safeProofRefs(value) {
     : [];
 }
 
-function readBoundedJson(filePath, {
-  readFile = readFileSync,
+export function readBoundedJson(filePath, {
   lstat = lstatSync,
+  open = openSync,
+  fstat = fstatSync,
+  read = readSync,
+  close = closeSync,
   maxBytes = MAX_TELEMETRY_JSON_BYTES,
 } = {}) {
+  let handle;
   try {
-    const info = lstat(filePath);
-    if (info.isSymbolicLink() || !info.isFile()) {
+    const before = lstat(filePath);
+    if (before.isSymbolicLink() || !before.isFile()) {
       return Object.freeze({ state: 'unverifiable', value: null, blocker: 'TELEMETRY_RECORD_NOT_REGULAR' });
     }
-    if (info.size > maxBytes) {
+    if (before.size > maxBytes) {
       return Object.freeze({ state: 'unverifiable', value: null, blocker: 'TELEMETRY_RECORD_TOO_LARGE' });
     }
-    const payload = readFile(filePath, 'utf8');
-    if (Buffer.byteLength(payload, 'utf8') > maxBytes) {
+    handle = open(filePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0));
+    const openedBefore = fstat(handle);
+    const sameIdentity = (left, right) => Boolean(left && right
+      && left.dev === right.dev
+      && left.ino === right.ino
+      && left.size === right.size
+      && left.mtimeMs === right.mtimeMs);
+    if (!sameIdentity(before, openedBefore)) {
+      return Object.freeze({ state: 'unverifiable', value: null, blocker: 'TELEMETRY_RECORD_IDENTITY_CHANGED' });
+    }
+    const buffer = Buffer.alloc(Math.min(maxBytes + 1, openedBefore.size + 1));
+    let offset = 0;
+    while (offset < buffer.length) {
+      const count = read(handle, buffer, offset, buffer.length - offset, offset);
+      if (count === 0) break;
+      offset += count;
+    }
+    if (offset > maxBytes) {
       return Object.freeze({ state: 'unverifiable', value: null, blocker: 'TELEMETRY_RECORD_TOO_LARGE' });
     }
+    const openedAfter = fstat(handle);
+    const after = lstat(filePath);
+    if (!sameIdentity(openedBefore, openedAfter) || !sameIdentity(openedAfter, after)) {
+      return Object.freeze({ state: 'unverifiable', value: null, blocker: 'TELEMETRY_RECORD_IDENTITY_CHANGED' });
+    }
+    const payload = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, offset));
     return Object.freeze({ state: 'present', value: JSON.parse(payload), blocker: '' });
   } catch (error) {
     return error?.code === 'ENOENT'
       ? Object.freeze({ state: 'absent', value: null, blocker: '' })
       : Object.freeze({ state: 'unverifiable', value: null, blocker: 'TELEMETRY_RECORD_READ_FAILED' });
+  } finally {
+    if (handle !== undefined) {
+      try { close(handle); } catch { /* read result already fails closed */ }
+    }
   }
 }
 
@@ -477,12 +515,28 @@ export function syncCodexDispatchBridge({
   }
 
   const beforeHead = git(spawnSyncFn, repoRoot, ['rev-parse', 'HEAD']);
-  const statusBefore = git(spawnSyncFn, repoRoot, ['status', '--porcelain=v1', '--untracked-files=all']);
+  const statusBefore = git(spawnSyncFn, repoRoot, ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
   if (!beforeHead.ok || !statusBefore.ok) {
     return Object.freeze({ ok: false, status: 'FAILED', verdict: 'FAIL', blocker: 'LOCAL_STATE_READ_FAILED', beforeHead, statusBefore });
   }
+  const dirtBefore = classifyUpdateDirt(statusBefore.stdout);
+  if (dirtBefore.sourceEntries.length > 0) {
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      verdict: 'FAIL',
+      blocker: 'CANONICAL_CHECKOUT_DIRTY',
+      beforeHead: beforeHead.stdout,
+      statusBefore: statusBefore.stdout,
+      sourceDirt: dirtBefore.source,
+      runtimeDirt: dirtBefore.runtime,
+      nextOperatorAction: 'Preserve and review non-runtime source changes. No fetch, merge, ignition, cleanup, stash, reset, or discard operation was attempted.',
+    });
+  }
 
-  const fetchResult = git(spawnSyncFn, repoRoot, ['fetch', 'origin', expectedBranch], 120000);
+  const fetchResult = git(spawnSyncFn, repoRoot, [
+    'fetch', '--prune', 'origin', `${expectedBranch}:refs/remotes/origin/${expectedBranch}`,
+  ], 120000);
   if (!fetchResult.ok) {
     return Object.freeze({
       ok: false,
@@ -519,6 +573,27 @@ export function syncCodexDispatchBridge({
     });
   }
 
+  const statusBeforeFastForward = git(spawnSyncFn, repoRoot, ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
+  if (!statusBeforeFastForward.ok) {
+    return Object.freeze({ ok: false, status: 'FAILED', verdict: 'FAIL', blocker: 'LOCAL_STATE_READ_FAILED', statusBeforeFastForward });
+  }
+  const dirtBeforeFastForward = classifyUpdateDirt(statusBeforeFastForward.stdout);
+  if (dirtBeforeFastForward.sourceEntries.length > 0) {
+    return Object.freeze({
+      ok: false,
+      status: 'BLOCKED',
+      verdict: 'FAIL',
+      blocker: 'CANONICAL_CHECKOUT_DIRTY',
+      beforeHead: beforeHead.stdout,
+      remoteHead: remoteHead.stdout,
+      statusBefore: statusBefore.stdout,
+      statusBeforeFastForward: statusBeforeFastForward.stdout,
+      sourceDirt: dirtBeforeFastForward.source,
+      runtimeDirt: dirtBeforeFastForward.runtime,
+      nextOperatorAction: 'Preserve and review source changes observed after fetch. No merge, ignition, cleanup, stash, reset, or discard operation was attempted.',
+    });
+  }
+
   let fastForward = null;
   if (counts.behind > 0) {
     fastForward = git(spawnSyncFn, repoRoot, ['merge', '--ff-only', approvedTargetHead], 120000);
@@ -540,7 +615,7 @@ export function syncCodexDispatchBridge({
   }
 
   const afterHead = git(spawnSyncFn, repoRoot, ['rev-parse', 'HEAD']);
-  const statusAfter = git(spawnSyncFn, repoRoot, ['status', '--porcelain=v1', '--untracked-files=all']);
+  const statusAfter = git(spawnSyncFn, repoRoot, ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
   const diffNames = beforeHead.stdout === afterHead.stdout
     ? Object.freeze({ ok: true, stdout: '', command: 'git', args: [] })
     : git(spawnSyncFn, repoRoot, ['diff', '--name-only', `${beforeHead.stdout}..${afterHead.stdout}`]);
@@ -599,18 +674,55 @@ export function syncCodexDispatchBridge({
   });
 }
 
+async function readBoundedEndpointBody(response, maxBytes = 2500) {
+  if (response?.body?.getReader) {
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = Buffer.from(value || []);
+        total += chunk.length;
+        if (total > maxBytes) throw new Error('DIAGNOSTIC_ENDPOINT_RESPONSE_TOO_LARGE');
+        chunks.push(chunk);
+      }
+    } finally {
+      if (total > maxBytes) await reader.cancel?.().catch?.(() => {});
+      reader.releaseLock?.();
+    }
+    return Buffer.concat(chunks, total).toString('utf8');
+  }
+  const text = String(await response.text());
+  if (Buffer.byteLength(text, 'utf8') > maxBytes) throw new Error('DIAGNOSTIC_ENDPOINT_RESPONSE_TOO_LARGE');
+  return text;
+}
+
 async function probeEndpoint(url, { fetchFn = globalThis.fetch, timeoutMs = 10000 } = {}) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error('DIAGNOSTIC_ENDPOINT_TIMEOUT'));
+    }, timeoutMs);
+  });
   timer.unref?.();
   try {
-    const response = await fetchFn(url, { method: 'GET', signal: controller.signal });
-    const body = bounded(await response.text(), 2500);
-    return Object.freeze({ url, ok: response.ok, status: response.status, body, error: '' });
+    return await Promise.race([
+      (async () => {
+        const response = await fetchFn(url, { method: 'GET', signal: controller.signal });
+        const body = await readBoundedEndpointBody(response, 2500);
+        return Object.freeze({ url, ok: response.ok, status: response.status, body, error: '' });
+      })(),
+      timeout,
+    ]);
   } catch (error) {
     return Object.freeze({ url, ok: false, status: null, body: '', error: error?.message || String(error) });
   } finally {
     clearTimeout(timer);
+    controller.abort();
   }
 }
 

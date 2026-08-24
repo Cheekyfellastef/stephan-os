@@ -1,10 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, lstatSync, mkdirSync, openSync, realpathSync, writeFileSync } from 'node:fs';
+import { closeSync, openSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';
 import { classifyAllowlistedRecoveryAdapterBlocker } from '../../../../shared/agents/recoveryAdapterBlockerClassifier.mjs';
+import { ensureSafeReceiptDirectoryChainSync } from '../../../../shared/agents/safeReceiptDirectoryChainV1.mjs';
 
 export const OPENCLAW_RECOVERY_ROUTE = 'OPENCLAW_WHATSAPP';
 
@@ -57,31 +58,16 @@ function buildOpenClawHostProof({ authenticatedContext, runtimeId, now = new Dat
 function writeOpenClawHostProof({ env = process.env, proof } = {}) {
   if (!env.USERPROFILE) throw new Error('RECOVERY_WAKE_USERPROFILE_REQUIRED');
   const root = path.resolve(env.USERPROFILE, 'Documents', 'Stephanos-openclaw-workspace', 'receipts', 'openclaw-authenticated-command');
-  const existingAncestorIdentities = new Map();
-  let cursor = path.parse(root).root;
-  for (const part of root.slice(cursor.length).split(path.sep).filter(Boolean)) {
-    cursor = path.join(cursor, part);
-    try {
-      const info = lstatSync(cursor);
-      if (info.isSymbolicLink() || path.resolve(realpathSync(cursor)).toLowerCase() !== path.resolve(cursor).toLowerCase()) {
-        throw new Error('RECOVERY_WAKE_HOST_PROOF_LINKED_ANCESTOR');
-      }
-      existingAncestorIdentities.set(cursor, `${info.dev}:${info.ino}:${info.mode}`);
-    } catch (error) {
-      if (error?.code !== 'ENOENT') throw error;
-    }
-  }
-  mkdirSync(root, { recursive: true });
-  for (const [pathname, identity] of existingAncestorIdentities) {
-    const info = lstatSync(pathname);
-    if (info.isSymbolicLink() || `${info.dev}:${info.ino}:${info.mode}` !== identity
-      || path.resolve(realpathSync(pathname)).toLowerCase() !== path.resolve(pathname).toLowerCase()) {
-      throw new Error('RECOVERY_WAKE_HOST_PROOF_ANCESTOR_CHANGED');
-    }
-  }
+  const safeRoot = ensureSafeReceiptDirectoryChainSync(root, {
+    create: true,
+    linkedBlocker: 'RECOVERY_WAKE_HOST_PROOF_LINKED_ANCESTOR',
+    changedBlocker: 'RECOVERY_WAKE_HOST_PROOF_ANCESTOR_CHANGED',
+    missingBlocker: 'RECOVERY_WAKE_HOST_PROOF_DIRECTORY_MISSING',
+  });
   const proofPath = path.resolve(root, `${proof.proofId}.json`);
   const relative = path.relative(root, proofPath);
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('RECOVERY_WAKE_HOST_PROOF_PATH_INVALID');
+  safeRoot.recheck();
   const descriptor = openSync(proofPath, 'wx', 0o600);
   try { writeFileSync(descriptor, `${JSON.stringify(proof, null, 2)}\n`, 'utf8'); } finally { closeSync(descriptor); }
   return Object.freeze({ proofId: proof.proofId, proofPath });

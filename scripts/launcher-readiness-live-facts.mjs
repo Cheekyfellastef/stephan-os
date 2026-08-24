@@ -7,6 +7,11 @@ import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createLauncherReadinessReport } from './launcher-readiness-report.mjs';
+import {
+  BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+  createBattleBridgeMinimalChildEnvironment,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
 export const LAUNCHER_READINESS_LIVE_FACTS_SCHEMA = 'stephanos.launcher-readiness-live-facts.v1';
 
@@ -29,6 +34,8 @@ export const LIVE_COLLECTOR_AUTHORITY = Object.freeze({
 const REPO_LOCAL_WORKSPACE_DIR = path.join('runtime-activity', 'shared-workspace');
 const DEFAULT_WORKSPACE_CURRENT_DIR = path.join(REPO_LOCAL_WORKSPACE_DIR, 'current');
 const DEFAULT_MAX_RECORD_AGE_MS = 5 * 60 * 1000;
+const MAX_WORKSPACE_CURRENT_RECORDS = 128;
+const MAX_WORKSPACE_RECORD_BYTES = 256 * 1024;
 
 function normalizeRepoRelativePath(value) {
   return value.replace(/\\/g, '/').replace(/^\/+/, '');
@@ -51,9 +58,28 @@ function parseGitPorcelain(output) {
     .filter(Boolean);
 }
 
-function collectGitSourceFacts(repoRoot, execFile = execFileSync) {
+function collectGitSourceFacts(repoRoot, execFile = execFileSync, {
+  platform = process.platform,
+  env = process.env,
+} = {}) {
   try {
-    const output = execFile('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: repoRoot, encoding: 'utf8' });
+    const command = platform === 'win32' ? BATTLE_BRIDGE_WINDOWS_HOST.git : 'git';
+    const childEnvironment = platform === 'win32'
+      ? createBattleBridgeMinimalChildEnvironment(env, { git: true })
+      : {
+        ...env,
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_NO_REPLACE_OBJECTS: '1',
+        GIT_OPTIONAL_LOCKS: '0',
+        GIT_TERMINAL_PROMPT: '0',
+      };
+    const output = execFile(command, [...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS, 'status', '--porcelain=v1', '--untracked-files=all'], {
+      cwd: repoRoot,
+      env: childEnvironment,
+      encoding: 'utf8',
+      shell: false,
+    });
     return {
       // Preserve exact two-character porcelain status so downstream policy can
       // distinguish runtime-owned unstaged state from staged/deleted source.
@@ -90,13 +116,69 @@ async function collectServiceFacts({ serviceProbe = probeTcpService } = {}) {
   return Object.fromEntries(entries);
 }
 
-function readWorkspaceRecord(filePath) {
-  const stat = fs.statSync(filePath);
-  let parsed = null;
-  if (filePath.endsWith('.json')) {
-    try { parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch {}
+function sameFileIdentity(left, right) {
+  return Boolean(left && right
+    && left.dev === right.dev
+    && left.ino === right.ino
+    && left.size === right.size
+    && left.mtimeMs === right.mtimeMs);
+}
+
+function readWorkspaceRecord(filePath, { maxBytes = MAX_WORKSPACE_RECORD_BYTES } = {}) {
+  let handle;
+  try {
+    const before = fs.lstatSync(filePath);
+    if (before.isSymbolicLink() || !before.isFile()) throw Object.assign(new Error('WORKSPACE_RECORD_NOT_REGULAR'), { code: 'WORKSPACE_RECORD_NOT_REGULAR' });
+    if (before.size > maxBytes) throw Object.assign(new Error('WORKSPACE_RECORD_TOO_LARGE'), { code: 'WORKSPACE_RECORD_TOO_LARGE' });
+    handle = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const openedBefore = fs.fstatSync(handle);
+    if (!sameFileIdentity(before, openedBefore)) throw Object.assign(new Error('WORKSPACE_RECORD_IDENTITY_CHANGED'), { code: 'WORKSPACE_RECORD_IDENTITY_CHANGED' });
+    const buffer = Buffer.alloc(Math.min(maxBytes + 1, openedBefore.size + 1));
+    let offset = 0;
+    while (offset < buffer.length) {
+      const count = fs.readSync(handle, buffer, offset, buffer.length - offset, offset);
+      if (count === 0) break;
+      offset += count;
+    }
+    if (offset > maxBytes) throw Object.assign(new Error('WORKSPACE_RECORD_TOO_LARGE'), { code: 'WORKSPACE_RECORD_TOO_LARGE' });
+    const openedAfter = fs.fstatSync(handle);
+    const after = fs.lstatSync(filePath);
+    if (!sameFileIdentity(openedBefore, openedAfter) || !sameFileIdentity(openedAfter, after)) {
+      throw Object.assign(new Error('WORKSPACE_RECORD_IDENTITY_CHANGED'), { code: 'WORKSPACE_RECORD_IDENTITY_CHANGED' });
+    }
+    let parsed = null;
+    if (filePath.endsWith('.json')) {
+      try { parsed = JSON.parse(buffer.subarray(0, offset).toString('utf8')); } catch {
+        throw Object.assign(new Error('WORKSPACE_RECORD_JSON_INVALID'), { code: 'WORKSPACE_RECORD_JSON_INVALID' });
+      }
+    }
+    return { path: filePath, mtimeMs: openedAfter.mtimeMs, length: offset, parsed, invalid: false, blocker: '' };
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    return { path: filePath, mtimeMs: 0, length: 0, parsed: null, invalid: true, blocker: error?.code || 'WORKSPACE_RECORD_READ_FAILED' };
+  } finally {
+    if (handle !== undefined) fs.closeSync(handle);
   }
-  return { path: filePath, mtimeMs: stat.mtimeMs, length: stat.size, parsed };
+}
+
+function readBoundedCurrentDirectory(currentDir) {
+  const info = fs.lstatSync(currentDir);
+  if (info.isSymbolicLink() || !info.isDirectory()) throw Object.assign(new Error('WORKSPACE_CURRENT_DIRECTORY_NOT_REGULAR'), { code: 'WORKSPACE_CURRENT_DIRECTORY_NOT_REGULAR' });
+  const directory = fs.opendirSync(currentDir);
+  const entries = [];
+  try {
+    while (entries.length <= MAX_WORKSPACE_CURRENT_RECORDS) {
+      const entry = directory.readSync();
+      if (!entry) break;
+      if (entry.isFile() || entry.isSymbolicLink()) entries.push(entry);
+    }
+  } finally {
+    directory.closeSync();
+  }
+  if (entries.length > MAX_WORKSPACE_CURRENT_RECORDS) {
+    throw Object.assign(new Error('WORKSPACE_CURRENT_RECORD_COUNT_EXCEEDED'), { code: 'WORKSPACE_CURRENT_RECORD_COUNT_EXCEEDED' });
+  }
+  return entries;
 }
 
 function isWindowsPlatform(platform = process.platform) {
@@ -157,8 +239,10 @@ function currentRecordEvidence(repoRoot, absolutePath, record, now, maxRecordAge
     length: record.length,
     ageSeconds,
     status,
-    stale: ageMs > maxRecordAgeMs,
+    stale: record.invalid === true || ageMs > maxRecordAgeMs,
     unknownStatus: status === 'UNKNOWN',
+    invalid: record.invalid === true,
+    blocker: record.blocker || '',
   };
 }
 
@@ -174,32 +258,34 @@ function collectWorkspaceFacts(repoRoot, { now = Date.now(), maxRecordAgeMs = DE
   const missingPaths = [];
   const staleRecords = [];
 
-  if (fs.existsSync(currentDir)) {
-    const currentEntries = fs.readdirSync(currentDir, { withFileTypes: true }).filter((entry) => entry.isFile());
+  try {
+    const currentEntries = readBoundedCurrentDirectory(currentDir);
     if (!currentEntries.length) missingPaths.push(`${workspaceEvidencePath(repoRoot, currentDir)} empty`);
     for (const entry of currentEntries) {
       const absolutePath = path.join(currentDir, entry.name);
       checkedAbsolutePaths.push(absolutePath);
       checkedPaths.push(workspaceEvidencePath(repoRoot, absolutePath));
       const record = readWorkspaceRecord(absolutePath);
-      foundRecords.push(currentRecordEvidence(repoRoot, absolutePath, record, now, maxRecordAgeMs));
+      if (record) foundRecords.push(currentRecordEvidence(repoRoot, absolutePath, record, now, maxRecordAgeMs));
     }
-  } else {
-    missingPaths.push(`${workspaceEvidencePath(repoRoot, currentDir)} missing`);
+  } catch (error) {
+    if (error?.code === 'ENOENT') missingPaths.push(`${workspaceEvidencePath(repoRoot, currentDir)} missing`);
+    else staleRecords.push(`${workspaceEvidencePath(repoRoot, currentDir)} invalid blocker=${error?.code || 'WORKSPACE_CURRENT_DIRECTORY_READ_FAILED'}`);
   }
 
   for (const absolutePath of battleBridgePaths) {
-    if (!fs.existsSync(absolutePath)) {
+    const record = readWorkspaceRecord(absolutePath);
+    if (!record) {
       missingPaths.push(`${workspaceEvidencePath(repoRoot, absolutePath)} missing`);
       continue;
     }
-    const record = readWorkspaceRecord(absolutePath);
     foundRecords.push(currentRecordEvidence(repoRoot, absolutePath, record, now, maxRecordAgeMs));
   }
 
   for (const record of foundRecords) {
     if (record.stale) staleRecords.push(`${record.path} stale ageSeconds=${record.ageSeconds}`);
     if (record.unknownStatus) staleRecords.push(`${record.path} UNKNOWN ageSeconds=${record.ageSeconds}`);
+    if (record.invalid) staleRecords.push(`${record.path} invalid blocker=${record.blocker}`);
   }
 
   if (!foundRecords.length) staleRecords.push(...missingPaths);
@@ -223,7 +309,7 @@ export async function collectLauncherReadinessLiveFacts(options = {}) {
   const repoRoot = path.resolve(options.repoRoot || process.cwd());
   const services = await collectServiceFacts(options);
   const workspace = collectWorkspaceFacts(repoRoot, options);
-  const sourceFacts = collectGitSourceFacts(repoRoot, options.execFile);
+  const sourceFacts = collectGitSourceFacts(repoRoot, options.execFile, options);
   services['shared-workspace'] = { ready: workspace.ready, evidence: workspace.evidence };
   return {
     schema: LAUNCHER_READINESS_LIVE_FACTS_SCHEMA,

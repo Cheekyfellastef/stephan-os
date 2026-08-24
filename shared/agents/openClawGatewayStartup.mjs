@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { OPENCLAW_WORKSPACE_EXTERNAL_DIRECTORY } from './openClawWorkspaceHygiene.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
 
 export const OPENCLAW_GATEWAY_STARTUP_SOURCE = 'shared:openclaw-control-panel-start-gateway';
 export const OPENCLAW_GATEWAY_APPROVED_PORT = 18789;
@@ -97,12 +98,12 @@ export function resolveOpenClawGatewayWindowsExecutable({ commandText = getOpenC
   const { shim, searchedDirs } = findOpenClawWindowsShim({ env, existsSync });
   const appDataNpm = env.APPDATA ? path.win32.join(env.APPDATA, 'npm') : '';
   const openClawMjs = appDataNpm ? path.win32.join(appDataNpm, 'node_modules', 'openclaw', 'openclaw.mjs') : '';
-  const nodeExe = findWindowsProgram({ names: ['node.exe'], env, existsSync });
+  const nodeExe = existsSync(BATTLE_BRIDGE_WINDOWS_HOST.node) ? BATTLE_BRIDGE_WINDOWS_HOST.node : '';
   if (openClawMjs && nodeExe && existsSync(openClawMjs)) {
     return { ok: true, source: 'windows-appdata-npm-node-entrypoint', strategy: 'node-entrypoint', command: nodeExe, commandArgs: [openClawMjs, 'gateway', 'start', '--json'], commandText: getOpenClawGatewayStartupCommand(), executesArbitraryShell: false, resolvedOpenClawPath: openClawMjs, resolvedExecutable: nodeExe, searchedDirs };
   }
   if (/\.cmd$/i.test(shim)) {
-    return { ok: true, source: 'windows-cmd-shim', strategy: 'cmd-shim', command: 'cmd.exe', commandArgs: ['/d', '/s', '/c', `""${shim}" gateway start --json"`], commandText: getOpenClawGatewayStartupCommand(), executesArbitraryShell: false, resolvedOpenClawPath: shim, resolvedExecutable: 'cmd.exe', searchedDirs };
+    return { ok: true, source: 'windows-cmd-shim', strategy: 'cmd-shim', command: BATTLE_BRIDGE_WINDOWS_HOST.cmd, commandArgs: ['/d', '/s', '/c', `""${shim}" gateway start --json"`], commandText: getOpenClawGatewayStartupCommand(), executesArbitraryShell: false, resolvedOpenClawPath: shim, resolvedExecutable: BATTLE_BRIDGE_WINDOWS_HOST.cmd, searchedDirs };
   }
   if (shim && !/\.(?:bat|cmd|ps1)$/i.test(shim) && path.win32.extname(shim)) {
     return { ok: true, source: 'windows-native-executable', strategy: 'native-executable', command: shim, commandArgs: ['gateway', 'start', '--json'], commandText: getOpenClawGatewayStartupCommand(), executesArbitraryShell: false, resolvedOpenClawPath: shim, resolvedExecutable: shim, searchedDirs };

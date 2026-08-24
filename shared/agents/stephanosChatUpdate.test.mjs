@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { basename } from 'node:path';
 import {
   classifyUpdateDirt,
+  collectStephanosRuntimeEndpointDiagnostics,
   compareUpdateDirt,
   evaluateRuntimeProofAttempt,
   updateStephanosFromChat,
 } from './stephanosChatUpdate.mjs';
 import { runStephanChatUpdateCli } from '../../scripts/stephanos-chat-update.mjs';
 
-function health(fullHead, servedCommit = fullHead.slice(0, 8), {
+function health(fullHead, servedCommit = fullHead, {
   backendOk = true,
   openClawOk = true,
 } = {}) {
@@ -23,7 +24,13 @@ function health(fullHead, servedCommit = fullHead.slice(0, 8), {
         url: 'http://127.0.0.1:4173/__stephanos/health',
         ok: true,
         status: 200,
-        body: JSON.stringify({ ok: true, gitCommit: servedCommit, runtimeMarker: `live::${servedCommit}`, intendedMode: 'launcher-root' }),
+        body: JSON.stringify({
+          ok: true,
+          service: 'stephanos-dist-server',
+          gitCommit: servedCommit,
+          runtimeMarker: `antifriction-live-v3::${servedCommit}::fixture`,
+          intendedMode: 'launcher-root',
+        }),
         error: '',
       },
       {
@@ -44,15 +51,42 @@ function health(fullHead, servedCommit = fullHead.slice(0, 8), {
   };
 }
 
-function scriptedSpawn({ before = '', after = before, ignitionStatus = 0 } = {}) {
+function scriptedSpawn({
+  before = '',
+  after = before,
+  ignitionStatus = 0,
+  head = '',
+  branch = 'main',
+  statusReadError = -1,
+  headSequence = null,
+  trackedVisibility = 'H scripts/source.mjs\n',
+} = {}) {
   let statusReads = 0;
+  let headReads = 0;
   const calls = [];
   const spawn = (command, args) => {
     calls.push({ command, args: [...args] });
     if (command === 'git' && args[0] === 'status') {
       const stdout = statusReads === 0 ? before : after;
+      if (statusReads === statusReadError) {
+        statusReads += 1;
+        return { status: 1, stdout: '', stderr: 'status failed', signal: null };
+      }
       statusReads += 1;
       return { status: 0, stdout, stderr: '', signal: null };
+    }
+    if (command === 'git' && args[0] === 'rev-parse' && args[1] === 'HEAD') {
+      const observedHead = Array.isArray(headSequence)
+        ? (headSequence[Math.min(headReads, headSequence.length - 1)] || '')
+        : head;
+      headReads += 1;
+      return { status: 0, stdout: `${observedHead}\n`, stderr: '', signal: null };
+    }
+    if (command === 'git' && args[0] === 'branch' && args[1] === '--show-current') {
+      return { status: 0, stdout: `${branch}\n`, stderr: '', signal: null };
+    }
+    if (command === 'git' && args[0] === 'ls-files' && args[1] === '-v') {
+      return { status: 0, stdout: trackedVisibility, stderr: '', signal: null };
     }
     if (command === process.execPath && basename(args[0]) === 'run-battle-bridge-ignition.mjs') {
       return { status: ignitionStatus, stdout: 'bounded ignition proof', stderr: '', signal: null };
@@ -61,6 +95,22 @@ function scriptedSpawn({ before = '', after = before, ignitionStatus = 0 } = {})
   };
   spawn.calls = calls;
   return spawn;
+}
+
+function commandRunnerFor(spawnSyncFn) {
+  return async (command, args, options) => {
+    const result = spawnSyncFn(command, args, options);
+    return Object.freeze({
+      command,
+      args: [...args],
+      ok: !result?.error && result?.status === 0,
+      status: result?.status ?? null,
+      signal: result?.signal ?? null,
+      stdout: String(result?.stdout || '').trim(),
+      stderr: String(result?.stderr || '').trim(),
+      error: result?.error?.message || '',
+    });
+  };
 }
 
 const noSleep = async () => {};
@@ -122,8 +172,9 @@ test('chat update fast-forwards, runs the canonical ignition entry, and proves e
   const head = '443e3bcb6f6da050961b881160f7d5a4ca463fee';
   const diagnostics = [health(head), health(head)];
   const spawnSyncFn = scriptedSpawn({
-    before: ' M apps/stephanos/dist/index.html\n M stephanos-server/data/memory/durable-memory.json\n',
+    before: '',
     after: ' M apps/stephanos/dist/index.html\n M stephanos-server/data/memory/durable-memory.json\n',
+    head,
   });
   const result = await updateStephanosFromChat({
     repoRoot: 'C:\\repo',
@@ -131,6 +182,7 @@ test('chat update fast-forwards, runs the canonical ignition entry, and proves e
     operatorApproval: 'operator-approved',
     platform: 'win32',
     spawnSyncFn,
+    commandRunnerFn: commandRunnerFor(spawnSyncFn),
     syncFn: () => ({ ok: true, status: 'DONE', verdict: 'PASS', afterHead: head, updated: true, restartRequired: false }),
     diagnosticsFn: async () => diagnostics.shift(),
     runtimeProofAttempts: 1,
@@ -158,7 +210,7 @@ test('chat update retries transient runtime health failure and passes when exact
   const head = 'dddddddddddddddddddddddddddddddddddddddd';
   const diagnostics = [
     health(head),
-    health(head, head.slice(0, 8), { backendOk: false }),
+    health(head, head, { backendOk: false }),
     health(head),
   ];
   const sleeps = [];
@@ -166,7 +218,7 @@ test('chat update retries transient runtime health failure and passes when exact
     repoRoot: 'C:\\repo',
     expectedHead: head,
     operatorApproval: 'operator-approved',
-    spawnSyncFn: scriptedSpawn(),
+    spawnSyncFn: scriptedSpawn({ head }),
     syncFn: () => ({ ok: true, afterHead: head, updated: true, restartRequired: false }),
     diagnosticsFn: async () => diagnostics.shift(),
     runtimeProofAttempts: 3,
@@ -193,7 +245,7 @@ test('chat update reports source-installed runtime-proof-pending after bounded r
     repoRoot: 'C:\\repo',
     expectedHead: head,
     operatorApproval: 'operator-approved',
-    spawnSyncFn: scriptedSpawn(),
+    spawnSyncFn: scriptedSpawn({ head }),
     syncFn: () => ({ ok: true, afterHead: head, updated: true, restartRequired: false }),
     diagnosticsFn: async () => diagnostics.shift(),
     runtimeProofAttempts: 2,
@@ -224,7 +276,7 @@ test('chat update hard-fails when diagnostics prove source head changed during r
     repoRoot: 'C:\\repo',
     expectedHead: head,
     operatorApproval: 'operator-approved',
-    spawnSyncFn: scriptedSpawn(),
+    spawnSyncFn: scriptedSpawn({ head, headSequence: [head, changedHead, changedHead] }),
     syncFn: () => ({ ok: true, afterHead: head, updated: true, restartRequired: false }),
     diagnosticsFn: async () => diagnostics.shift(),
     runtimeProofAttempts: 1,
@@ -260,7 +312,7 @@ test('chat update blocks newly changed source dirt while allowing runtime dirt c
     repoRoot: 'C:\\repo',
     expectedHead: head,
     operatorApproval: 'operator-approved',
-    spawnSyncFn: scriptedSpawn({ before: '', after: ' M scripts/unsafe.mjs\n M apps/stephanos/dist/index.html\n' }),
+    spawnSyncFn: scriptedSpawn({ before: '', after: ' M scripts/unsafe.mjs\n M apps/stephanos/dist/index.html\n', head }),
     syncFn: () => ({ ok: true, afterHead: head, updated: true, restartRequired: false }),
     diagnosticsFn: async () => diagnostics.shift(),
     runtimeProofAttempts: 1,
@@ -268,19 +320,162 @@ test('chat update blocks newly changed source dirt while allowing runtime dirt c
   });
   assert.equal(result.ok, false);
   assert.equal(result.status, 'BLOCKED');
-  assert.equal(result.blocker, 'SOURCE_DIRT_CHANGED_DURING_UPDATE');
+  assert.equal(result.blocker, 'SOURCE_DIRT_PRESENT_AFTER_IGNITION');
   assert.equal(result.dirtDelta.sourceMutationDetected, true);
+});
+
+test('chat update never ignites when fixed pre-ignition checkout evidence is dirty, unreadable, or on another head', async () => {
+  const head = 'abababababababababababababababababababab';
+  for (const [spawnSyncFn, blocker] of [
+    [scriptedSpawn({ before: '!! data/activity/private-key.txt\n', head }), 'CHECKOUT_DIRTY_BEFORE_IGNITION'],
+    [scriptedSpawn({ head, statusReadError: 0 }), 'PRE_IGNITION_SOURCE_STATUS_UNPROVEN'],
+    [scriptedSpawn({ head: 'cd'.repeat(20) }), 'SOURCE_HEAD_CHANGED_BEFORE_REFRESH'],
+  ]) {
+    const result = await updateStephanosFromChat({
+      repoRoot: 'C:\\repo',
+      expectedHead: head,
+      operatorApproval: 'operator-approved',
+      spawnSyncFn,
+      syncFn: () => ({ ok: true, afterHead: head, updated: false, restartRequired: false }),
+      diagnosticsFn: async () => health(head),
+      runtimeProofAttempts: 1,
+      sleepFn: noSleep,
+    });
+    assert.equal(result.ok, false, blocker);
+    assert.equal(result.blocker, blocker);
+    assert.equal(result.runtimeRefreshAttempted, false);
+    assert.equal(spawnSyncFn.calls.some((call) => basename(call.args[0] || '') === 'run-battle-bridge-ignition.mjs'), false);
+  }
+});
+
+test('chat update blocks skip-worktree and assume-unchanged tracked paths before ignition', async () => {
+  const head = 'ac'.repeat(20);
+  for (const trackedVisibility of ['S hidden-source.mjs\n', 'h assumed-source.mjs\n']) {
+    const spawnSyncFn = scriptedSpawn({ head, trackedVisibility });
+    const result = await updateStephanosFromChat({
+      repoRoot: 'C:\\repo',
+      expectedHead: head,
+      operatorApproval: 'operator-approved',
+      spawnSyncFn,
+      syncFn: () => ({ ok: true, afterHead: head, branch: 'main', updated: false }),
+      diagnosticsFn: async () => health(head),
+      runtimeProofAttempts: 1,
+      sleepFn: noSleep,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'HIDDEN_TRACKED_PATHS_PRESENT');
+    assert.equal(spawnSyncFn.calls.some((call) => basename(call.args[0] || '') === 'run-battle-bridge-ignition.mjs'), false);
+  }
+});
+
+test('post-spawn ignition failure remains nonterminal when process-tree closure is unproven', async () => {
+  const head = 'bd'.repeat(20);
+  const spawnSyncFn = scriptedSpawn({ head });
+  const baseRunner = commandRunnerFor(spawnSyncFn);
+  let diagnosticsCalls = 0;
+  const result = await updateStephanosFromChat({
+    repoRoot: 'C:\\repo',
+    expectedHead: head,
+    operatorApproval: 'operator-approved',
+    platform: 'win32',
+    spawnSyncFn,
+    commandRunnerFn: async (command, args, options) => {
+      if (command === process.execPath && basename(args[0] || '') === 'run-battle-bridge-ignition.mjs') {
+        return Object.freeze({
+          ok: false,
+          status: null,
+          signal: 'SIGTERM',
+          stdout: '',
+          stderr: 'BATTLE_BRIDGE_COMMAND_TIMEOUT',
+          error: 'BATTLE_BRIDGE_COMMAND_TIMEOUT',
+          processTreeClosureProven: false,
+          executionStateUnproven: true,
+        });
+      }
+      return baseRunner(command, args, options);
+    },
+    syncFn: () => ({ ok: true, afterHead: head, branch: 'main', updated: false }),
+    diagnosticsFn: async () => { diagnosticsCalls += 1; return health(head); },
+    runtimeProofAttempts: 1,
+    sleepFn: noSleep,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'PENDING');
+  assert.equal(result.blocker, 'IGNITION_EXECUTION_STATE_UNPROVEN');
+  assert.equal(result.executionStateUnproven, true);
+  assert.equal(result.processTreeClosureProven, false);
+  assert.equal(diagnosticsCalls, 1, 'only the pre-ignition endpoint snapshot is allowed');
+});
+
+test('chat update fails closed when post-ignition status cannot be read', async () => {
+  const head = 'edededededededededededededededededededed';
+  const spawnSyncFn = scriptedSpawn({ head, statusReadError: 1 });
+  const result = await updateStephanosFromChat({
+    repoRoot: 'C:\\repo',
+    expectedHead: head,
+    operatorApproval: 'operator-approved',
+    spawnSyncFn,
+    syncFn: () => ({ ok: true, afterHead: head, updated: false, restartRequired: false }),
+    diagnosticsFn: async () => health(head),
+    runtimeProofAttempts: 1,
+    sleepFn: noSleep,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'POST_IGNITION_SOURCE_STATUS_UNPROVEN');
+});
+
+test('runtime proof rejects short or unbound served commit metadata', () => {
+  const head = '3434343434343434343434343434343434343434';
+  const shortCommit = evaluateRuntimeProofAttempt(health(head, head.slice(0, 8)), {
+    preSourceHead: head,
+    expectedSourceHead: head,
+  });
+  assert.equal(shortCommit.servedUiProof.exactHead, false);
+  assert.equal(shortCommit.failedPredicates.includes('SERVED_UI_EXACT_HEAD'), true);
+  const wrongMarker = health(head);
+  wrongMarker.health[0].body = JSON.stringify({
+    ok: true,
+    service: 'stephanos-dist-server',
+    gitCommit: head,
+    runtimeMarker: `antifriction-live-v3::${'5'.repeat(40)}::fixture`,
+    intendedMode: 'launcher-root',
+  });
+  assert.equal(evaluateRuntimeProofAttempt(wrongMarker, {
+    preSourceHead: head,
+    expectedSourceHead: head,
+  }).servedUiProof.exactHead, false);
 });
 
 test('runtime proof evaluation names exact predicates and endpoint evidence', () => {
   const head = '3333333333333333333333333333333333333333';
-  const result = evaluateRuntimeProofAttempt(health(head, head.slice(0, 8), { openClawOk: false }), {
+  const result = evaluateRuntimeProofAttempt(health(head, head, { openClawOk: false }), {
     preSourceHead: head,
     expectedSourceHead: head,
   });
   assert.equal(result.passed, false);
   assert.deepEqual(result.failedPredicates, ['POST_DIAGNOSTICS_OK']);
   assert.equal(result.endpointEvidence.find((entry) => entry.url.includes('18789')).error, 'gateway restarting');
+});
+
+test('runtime endpoint diagnostics bound response bodies and wall-clock timeout', async () => {
+  const head = '7'.repeat(40);
+  const oversized = await collectStephanosRuntimeEndpointDiagnostics({
+    sourceHead: head,
+    endpoints: ['http://127.0.0.1:4173/oversized'],
+    timeoutMs: 50,
+    fetchFn: async () => ({ ok: true, status: 200, text: async () => 'x'.repeat(2501) }),
+  });
+  assert.equal(oversized.ok, false);
+  assert.equal(oversized.health[0].error, 'RUNTIME_PROOF_RESPONSE_TOO_LARGE');
+
+  const timedOut = await collectStephanosRuntimeEndpointDiagnostics({
+    sourceHead: head,
+    endpoints: ['http://127.0.0.1:4173/hung'],
+    timeoutMs: 5,
+    fetchFn: async () => new Promise(() => {}),
+  });
+  assert.equal(timedOut.ok, false);
+  assert.equal(timedOut.health[0].error, 'RUNTIME_PROOF_RESPONSE_TIMEOUT');
 });
 
 test('runtime and source dirt classification remains deterministic', () => {
