@@ -31,6 +31,7 @@ import {
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
+  buildPersonalRepositoryCheckExpectation,
   executeBoundedPersonalRepositoryRead,
   executePersonalRepositoryArtifactArchiveTransport,
   extractPersonalRepositoryArtifactZip,
@@ -598,6 +599,16 @@ async function collectEvidence(context, expected = {}) {
     workflowRuns: initialWorkflowRuns,
     commitStatuses: commitStatuses.items,
   });
+  const checkExpectation = buildPersonalRepositoryCheckExpectation({
+    repository: context.repository,
+    identity,
+    mergeStateStatus: review.mergeStateStatus,
+  });
+  if (!checkExpectation.valid) {
+    fail('Exact check expectation is incomplete or unsafe.', {
+      blockers: checkExpectation.blockers,
+    });
+  }
   const checks = await validatePersonalRepositoryCheckRunsWithBoundedReread({
     readSnapshot: async (attempt) => {
       if (attempt === 1) return initialCheckSnapshot;
@@ -617,7 +628,7 @@ async function collectEvidence(context, expected = {}) {
         commitStatuses: freshCommitStatuses.items,
       });
     },
-    expected: { ...identity, mergeStateStatus: review.mergeStateStatus },
+    expected: checkExpectation.expected,
     options: { cleanIndependentReviewProved: independentReview.reviewMode === 'clean-independent' },
   });
   if (!checks.valid) {
