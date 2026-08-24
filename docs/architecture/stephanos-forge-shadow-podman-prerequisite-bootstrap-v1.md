@@ -67,6 +67,12 @@ That authority is fixed to:
 - host floor Windows build `19043`;
 - the existing `podman-wsl-rootless` runtime boundary.
 
+The upstream evidence is independently auditable through Podman Desktop's
+[Windows installation support floor](https://podman-desktop.io/docs/installation/windows-install),
+[1.29 release record](https://podman-desktop.io/blog/podman-desktop-release-1.29),
+and the exact
+[`podman.json` manifest at the pinned commit](https://github.com/podman-desktop/podman-desktop/blob/a969ee0e0b07285122dd4988a58edb0a1a25d5fc/extensions/podman/packages/extension/src/podman.json).
+
 The adapter only changes host admission. Podman version, MSI URL, MSI digest,
 Authenticode verification, fixed executable path, user scope, WSL provider,
 machine identity, Forgejo digest and all no-authority receipts remain canonical.
