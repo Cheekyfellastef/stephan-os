@@ -96,6 +96,31 @@ test('discovers one exact running or terminal workflow-dispatch review run from 
   assert.equal(terminal.conclusion, 'success');
 });
 
+test('accepts GitHub API shape where workflow run name equals the content-addressed run-name', () => {
+  const launchReceipt = receipt();
+  const result = discoverIndependentReviewWorkflowDispatchRunV1({
+    launchReceipt,
+    runs: [run(launchReceipt, {
+      name: launchReceipt.runName,
+      display_title: launchReceipt.runName,
+      status: 'completed',
+      conclusion: 'success',
+    })],
+  });
+  assert.equal(result.verdict, 'DISPATCH_RUN_TERMINAL');
+  assert.equal(result.runId, 500);
+  assert.equal(result.conclusion, 'success');
+});
+
+test('still rejects a foreign run name even when all other dispatch identity fields match', () => {
+  const launchReceipt = receipt();
+  const result = discoverIndependentReviewWorkflowDispatchRunV1({
+    launchReceipt,
+    runs: [run(launchReceipt, { name: 'Foreign Review Workflow' })],
+  });
+  assert.equal(result.verdict, 'DISPATCH_RUN_NOT_YET_OBSERVED');
+});
+
 test('accepts GitHub whole-second created_at for a millisecond launch receipt in the same second', () => {
   const launchReceipt = receipt('2026-08-20T10:00:00.750Z');
   const result = discoverIndependentReviewWorkflowDispatchRunV1({
