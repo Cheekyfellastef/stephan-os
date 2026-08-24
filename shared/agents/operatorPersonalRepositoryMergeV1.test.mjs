@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { deflateRawSync } from 'node:zlib';
 import {
@@ -20,6 +21,7 @@ import {
   buildPersonalRepositoryArtifactArchiveRequest,
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
+  buildPersonalRepositoryCheckExpectation,
   executeBoundedPersonalRepositoryRead,
   executePersonalRepositoryArtifactArchiveTransport,
   extractPersonalRepositoryArtifactZip,
@@ -42,6 +44,11 @@ import {
   validatePersonalRepositoryWorkflowRuns,
   validatePersonalRepositoryWorkflowRunHydration,
 } from './operatorPersonalRepositoryMergeV1.mjs';
+
+const PERSONAL_REPOSITORY_MERGE_ENTRY = new URL(
+  '../../scripts/operator-protected-personal-repository-merge.mjs',
+  import.meta.url,
+);
 
 function response(status) {
   return { status, body: { cancel: async () => {} } };
@@ -164,6 +171,43 @@ function assertZipBlocked(archive, expectedReason = null) {
     },
   );
 }
+
+test('check expectation binds trusted repository identity before exact check validation', () => {
+  const input = {
+    repository: 'Cheekyfellastef/stephan-os',
+    identity: {
+      prNumber: 1993,
+      branch: 'codex/fix-ignition-porcelain-leading-status-v1',
+      sourceHead: 'a'.repeat(40),
+      baseSha: 'b'.repeat(40),
+    },
+    mergeStateStatus: 'clean',
+  };
+  const result = buildPersonalRepositoryCheckExpectation(input);
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.expected, {
+    repository: input.repository,
+    prNumber: input.identity.prNumber,
+    branch: input.identity.branch,
+    sourceHead: input.identity.sourceHead,
+    baseSha: input.identity.baseSha,
+    mergeStateStatus: 'CLEAN',
+  });
+  assert.ok(buildPersonalRepositoryCheckExpectation({
+    ...input,
+    repository: '',
+  }).blockers.includes('personal-repository-check-expectation-repository-invalid'));
+});
+
+test('protected merge entry constructs one repository-bound check expectation', () => {
+  const source = readFileSync(PERSONAL_REPOSITORY_MERGE_ENTRY, 'utf8');
+  assert.match(
+    source,
+    /const checkExpectation = buildPersonalRepositoryCheckExpectation\(\{[\s\S]*repository: context\.repository,[\s\S]*identity,[\s\S]*mergeStateStatus: review\.mergeStateStatus,[\s\S]*\}\);/,
+  );
+  assert.match(source, /expected: checkExpectation\.expected,/);
+  assert.doesNotMatch(source, /expected:\s*\{\s*\.\.\.identity,\s*mergeStateStatus:/);
+});
 
 test('in-process artifact ZIP reader accepts exact stored and deflated single-entry archives', () => {
   for (const [method, dataDescriptor] of [[0, false], [8, false], [0, true], [8, true]]) {
