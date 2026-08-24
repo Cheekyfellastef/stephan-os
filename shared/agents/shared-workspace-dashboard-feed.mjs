@@ -2,6 +2,12 @@ import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { buildLandingGoalDashboardProjection } from './landingGoalDashboardProjection.mjs';
 import { resolveSharedWorkspacePath, validateSharedWorkspaceRecord, DEFAULT_STALE_AFTER_MS } from './sharedAgentWorkspaceStore.mjs';
+import {
+  SPECIALIZED_NON_DASHBOARD_STATUS_FILES,
+  isSharedWorkspaceSpecializedStatusFile,
+} from './sharedWorkspaceSpecializedStatusRegistryV1.mjs';
+
+export { SPECIALIZED_NON_DASHBOARD_STATUS_FILES };
 
 export const SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION = 'stephanos.shared-workspace-dashboard-feed.v1';
 export const DASHBOARD_FEED_STATES = Object.freeze({
@@ -92,7 +98,10 @@ async function readRecordDirectory(root, directory, options) {
   }
   const records = [];
   const errors = [];
-  for (const name of names.filter((item) => item.endsWith('.json'))) {
+  for (const name of names.filter((item) => (
+    item.endsWith('.json')
+    && !isSharedWorkspaceSpecializedStatusFile({ directory, fileName: item })
+  ))) {
     try {
       const record = JSON.parse(await readFile(join(resolved.path, name), 'utf8'));
       const validation = validateSharedWorkspaceRecord(record, options);
