@@ -27,9 +27,17 @@ export const PERSONAL_REPOSITORY_REQUIRED_CHECK = 'protected-merge-source-proof'
 export const PERSONAL_REPOSITORY_MODE = 'user-owned-protected-squash';
 export const PERSONAL_REPOSITORY_AUTHORITY = 'github-actions-protected-environment-exact-head-squash-only';
 export const PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS = 3;
-export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS = 2;
+export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS = 15_000;
+export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_POLL_INTERVAL_MS = 5_000;
 export const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES = 256 * 1024;
 export const PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES = 256 * 1024;
+
+const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_TRANSIENT_BLOCKERS = new Set([
+  // GitHub exposes check runs and workflow runs through separate eventually-consistent collections.
+  'personal-repository-check-runs-invalid',
+  'personal-repository-check-workflow-run-missing',
+  'personal-repository-review-escalation-check-not-exact',
+]);
 
 const ZIP_LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
 const ZIP_CENTRAL_DIRECTORY_HEADER_SIGNATURE = 0x02014b50;
@@ -1140,6 +1148,9 @@ export function validatePersonalRepositoryCheckRuns(
     const run = matchingRuns[0];
     const bindings = Array.isArray(run?.pull_requests) ? run.pull_requests : [];
     const binding = bindings.length === 1 ? bindings[0] : null;
+    const workflow = text(run?.name);
+    const path = canonicalWorkflowPath(run, repository);
+    const detailsUrl = `https://github.com/${repository}/actions/runs/${run?.id}/job/${checkId}`;
     const exactRun = matchingRuns.length === 1
       && strictPositiveInteger(run?.id)
       && strictPositiveInteger(run?.run_attempt)
@@ -1149,17 +1160,21 @@ export function validatePersonalRepositoryCheckRuns(
       && text(binding?.head?.sha).toLowerCase() === sourceHead
       && text(binding?.head?.ref) === branch
       && text(binding?.base?.sha).toLowerCase() === baseSha
-      && text(binding?.base?.ref) === 'main';
-    const workflow = text(run?.name);
-    const path = canonicalWorkflowPath(run, repository);
-    const detailsUrl = `https://github.com/${repository}/actions/runs/${run?.id}/job/${checkId}`;
+      && text(binding?.base?.ref) === 'main'
+      && text(check?.details_url) === detailsUrl;
 
     if (!checkId || !checkSuiteId || !name
       || text(check?.head_sha).toLowerCase() !== sourceHead
       || text(check?.app?.slug) !== 'github-actions'
-      || strictPositiveInteger(check?.app?.id) !== 15368
-      || text(check?.details_url) !== detailsUrl
-      || !exactRun) {
+      || strictPositiveInteger(check?.app?.id) !== 15368) {
+      blockers.push('personal-repository-check-run-identity-invalid');
+      continue;
+    }
+    if (matchingRuns.length === 0) {
+      blockers.push('personal-repository-check-workflow-run-missing');
+      continue;
+    }
+    if (!exactRun) {
       blockers.push('personal-repository-check-run-identity-invalid');
       continue;
     }
@@ -1221,10 +1236,14 @@ export function validatePersonalRepositoryCheckRuns(
 
 export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
   readSnapshot,
+  waitBeforeReread = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+  monotonicNow = () => performance.now(),
   expected = {},
   options = {},
 } = {}) {
-  if (typeof readSnapshot !== 'function') {
+  if (typeof readSnapshot !== 'function'
+    || typeof waitBeforeReread !== 'function'
+    || typeof monotonicNow !== 'function') {
     return Object.freeze({
       valid: false,
       evidence: Object.freeze([]),
@@ -1233,13 +1252,31 @@ export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
       snapshotAttempt: 0,
       snapshotAttempts: Object.freeze([]),
       selectedSnapshot: null,
+      convergenceDeadlineReached: false,
       finalVerdict: 'PERSONAL_REPOSITORY_CHECK_RUNS_BLOCKED',
     });
   }
 
   const snapshotAttempts = [];
+  const startedAtMs = monotonicNow();
+  const deadlineMs = startedAtMs + PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS;
+  if (!Number.isFinite(startedAtMs)) {
+    return Object.freeze({
+      valid: false,
+      evidence: Object.freeze([]),
+      admittedReviewEscalations: 0,
+      blockers: Object.freeze(['personal-repository-check-snapshot-clock-invalid']),
+      snapshotAttempt: 0,
+      snapshotAttempts: Object.freeze([]),
+      selectedSnapshot: null,
+      convergenceDeadlineReached: false,
+      finalVerdict: 'PERSONAL_REPOSITORY_CHECK_RUNS_BLOCKED',
+    });
+  }
   let validation = null;
-  for (let attempt = 1; attempt <= PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS; attempt += 1) {
+  let attempt = 0;
+  while (true) {
+    attempt += 1;
     const snapshot = await readSnapshot(attempt);
     validation = validatePersonalRepositoryCheckRuns(
       snapshot?.checkRuns,
@@ -1248,9 +1285,14 @@ export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
       expected,
       options,
     );
+    const retryable = validation.blockers.length > 0
+      && validation.blockers.every((blocker) => (
+        PERSONAL_REPOSITORY_CHECK_SNAPSHOT_TRANSIENT_BLOCKERS.has(blocker)
+      ));
     snapshotAttempts.push(Object.freeze({
       attempt,
       valid: validation.valid,
+      retryable,
       blockers: validation.blockers,
     }));
     if (validation.valid) {
@@ -1264,16 +1306,42 @@ export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
         snapshotAttempt: attempt,
         snapshotAttempts: Object.freeze(snapshotAttempts),
         selectedSnapshot,
+        convergenceDeadlineReached: false,
+      });
+    }
+
+    const beforeWaitMs = monotonicNow();
+    const remainingMs = deadlineMs - beforeWaitMs;
+    if (!retryable || !Number.isFinite(beforeWaitMs) || remainingMs <= 0) {
+      return Object.freeze({
+        ...validation,
+        snapshotAttempt: 0,
+        snapshotAttempts: Object.freeze(snapshotAttempts),
+        selectedSnapshot: null,
+        convergenceDeadlineReached: retryable && Number.isFinite(beforeWaitMs) && remainingMs <= 0,
+      });
+    }
+    await waitBeforeReread(Math.min(
+      PERSONAL_REPOSITORY_CHECK_SNAPSHOT_POLL_INTERVAL_MS,
+      remainingMs,
+    ));
+    const afterWaitMs = monotonicNow();
+    if (!Number.isFinite(afterWaitMs) || afterWaitMs <= beforeWaitMs) {
+      return Object.freeze({
+        ...validation,
+        valid: false,
+        blockers: Object.freeze(unique([
+          ...validation.blockers,
+          'personal-repository-check-snapshot-clock-invalid',
+        ])),
+        snapshotAttempt: 0,
+        snapshotAttempts: Object.freeze(snapshotAttempts),
+        selectedSnapshot: null,
+        convergenceDeadlineReached: false,
+        finalVerdict: 'PERSONAL_REPOSITORY_CHECK_RUNS_BLOCKED',
       });
     }
   }
-
-  return Object.freeze({
-    ...validation,
-    snapshotAttempt: 0,
-    snapshotAttempts: Object.freeze(snapshotAttempts),
-    selectedSnapshot: null,
-  });
 }
 
 export function validatePersonalRepositoryEvidence(input = {}, expected = {}, options = {}) {
