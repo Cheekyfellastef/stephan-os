@@ -10,6 +10,7 @@ import {
   createSharedWorkspaceDashboardPollingContract,
   readSharedWorkspaceDashboardFeed,
 } from './shared-workspace-dashboard-feed.mjs';
+import { SPECIALIZED_NON_DASHBOARD_STATUS_FILES } from './sharedWorkspaceSpecializedStatusRegistryV1.mjs';
 import {
   createAgentCapabilityRecord,
   createSharedWorkspaceProofRecord,
@@ -85,4 +86,39 @@ test('invalid record produces error with exact next action', async () => {
   assert.equal(feed.state, DASHBOARD_FEED_STATES.ERROR);
   assert.equal(feed.errors.length, 1);
   assert.match(feed.exactNextAction, /fix the unreadable or invalid/i);
+});
+
+test('known specialized status projections stay outside dashboard authority without weakening invalid-record failure', async () => {
+  const root = await tempWorkspace();
+  const now = '2026-07-07T00:00:00.000Z';
+  await writeJson(root, 'status', 'status-1290.json', createSharedWorkspaceStatusRecord({
+    statusId: 'status-1290',
+    timestampUtc: now,
+    status: 'CURRENT',
+  }));
+
+  await Promise.all(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.map((name) => writeFile(
+    join(root, 'status', name),
+    '\uFEFF{"schemaVersion":"specialized-subsystem-record.v1","logPath":"must-not-enter-dashboard-authority"}\n',
+    'utf8',
+  )));
+
+  const accepted = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
+  assert.equal(accepted.state, DASHBOARD_FEED_STATES.READY);
+  assert.deepEqual(accepted.errors, []);
+  assert.equal(accepted.records.statusRecords.length, 1);
+  assert.equal(accepted.records.statusRecords[0].statusId, 'status-1290');
+  assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('guarded-goal-runner-pr-current.json'), true);
+  assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('battle-bridge-recovery-mesh-state.json'), true);
+  assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('battle-bridge-break-glass-nonce.json'), true);
+
+  await writeFile(
+    join(root, 'status', 'attacker-selected-specialized-record.json'),
+    '\uFEFF{"schemaVersion":"specialized-subsystem-record.v1"}\n',
+    'utf8',
+  );
+  const rejected = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
+  assert.equal(rejected.state, DASHBOARD_FEED_STATES.ERROR);
+  assert.equal(rejected.errors.length, 1);
+  assert.match(rejected.errors[0], /attacker-selected-specialized-record\.json:PARSE_FAILED/);
 });
