@@ -39,6 +39,10 @@ import {
   projectMissionWorkerHeartbeat,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 import { buildMissionScheduler } from '../runtime/missionScheduler.mjs';
+import {
+  DEFAULT_CRITICAL_BACKLOG,
+  buildCriticalBacklogProjection,
+} from './criticalBacklogConveyor.mjs';
 
 const NOW = '2026-07-30T10:00:00.000Z';
 const HEAD = 'a'.repeat(40);
@@ -947,6 +951,91 @@ test('scheduler goals are constructed from durable records and the canonical lan
   assert.ok(nullAuthorityScheduler.blockers.some(({ invalidFlywheelEvidenceContainers }) => (
     invalidFlywheelEvidenceContainers?.length === 3
   )));
+});
+
+test('source-controlled critical backlog is admitted without a duplicate workspace goal record', () => {
+  const selectedItem = DEFAULT_CRITICAL_BACKLOG[0];
+  const activeMission = {
+    missionId: selectedItem.mission.missionId,
+    repository: selectedItem.mission.repository,
+    git: { branch: selectedItem.mission.branch },
+    currentPhase: 'CREATE_WORKTREE',
+  };
+  const criticalBacklog = buildCriticalBacklogProjection({ missionRecords: [activeMission] });
+  const goals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [],
+    criticalBacklog,
+  });
+
+  assert.equal(goals.valid, true, goals.blockers.join(','));
+  assert.equal(goals.goals.length, 1);
+  assert.deepEqual(goals.goals[0], {
+    issue: 1291,
+    title: selectedItem.mission.title,
+    state: 'QUEUED',
+    prerequisites: [],
+    priority: 999990,
+    criticalPathWeight: 1000000,
+    reversibility: 'HIGH',
+    route: 'OPENCLAW_LOCAL',
+    activePr: null,
+    repository: selectedItem.mission.repository,
+    branch: selectedItem.mission.branch,
+    headSha: null,
+    proofState: 'UNKNOWN',
+    approvalRequired: false,
+    operatorPriority: true,
+    operatorApprovalReceipt: null,
+    evidenceAt: NOW,
+    resultProofRefs: [],
+    reusableCapabilityId: null,
+    sharedLessonId: null,
+    repairCycleCount: 0,
+    structuralReviewProofRefs: [],
+    modelTestProofRefs: [],
+    duplicateOf: null,
+    supersededBy: null,
+  });
+
+  const scheduler = buildMissionScheduler({ now: NOW, goals: goals.goals });
+  assert.equal(scheduler.failClosed, false);
+  assert.equal(scheduler.selectedGoal, '#1291');
+  assert.equal(scheduler.selectedRoute, 'OPENCLAW_LOCAL');
+  assert.equal(scheduler.decisionReceipt.status, 'LANE_SELECTED');
+
+  const nextMissionGoals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [],
+    criticalBacklog: buildCriticalBacklogProjection(),
+  });
+  assert.equal(nextMissionGoals.valid, true, nextMissionGoals.blockers.join(','));
+  assert.equal(nextMissionGoals.goals[0].issue, 1291);
+  assert.equal(
+    buildMissionScheduler({ now: NOW, goals: nextMissionGoals.goals }).decisionReceipt.status,
+    'LANE_SELECTED',
+  );
+});
+
+test('critical backlog scheduler admission fails closed on mission identity drift', () => {
+  const selectedItem = DEFAULT_CRITICAL_BACKLOG[0];
+  const criticalBacklog = buildCriticalBacklogProjection({
+    missionRecords: [{
+      missionId: selectedItem.mission.missionId,
+      repository: selectedItem.mission.repository,
+      git: { branch: 'openclaw/wrong-branch' },
+      currentPhase: 'CREATE_WORKTREE',
+    }],
+  });
+  const goals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [],
+    criticalBacklog,
+  });
+
+  assert.equal(goals.valid, false);
+  assert.equal(goals.goals.length, 0);
+  assert.ok(goals.blockers.includes('critical-backlog-scheduler-admission-invalid'));
 });
 
 test('authoritative projection holds without a real mutation lease even when a receipt has a leaseKey', () => {
