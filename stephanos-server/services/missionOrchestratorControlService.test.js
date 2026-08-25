@@ -40,8 +40,8 @@ async function event(options, missionId, eventId, eventType, fields = {}) {
 
 async function advanceToApproval(options, missionId) {
   await event(options, missionId, 'worktree-control-001', 'WORKTREE_READY', { worktreePath: intent.worktreePath, clean: true, receipt: proof('isolated worktree', 'worktree-receipt') });
-  await event(options, missionId, 'dispatch-control-001', 'AGENT_DISPATCHED', { agentId: 'codex' });
-  await event(options, missionId, 'result-control-001', 'AGENT_RESULT_RECEIVED', { success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'codex-receipt') });
+  await event(options, missionId, 'dispatch-control-001', 'AGENT_DISPATCHED', { agentId: 'codex', actionId: 'codex-control-action', workerId: 'codex' });
+  await event(options, missionId, 'result-control-001', 'AGENT_RESULT_RECEIVED', { actionId: 'codex-control-action', workerId: 'codex', success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'codex-receipt') });
   await event(options, missionId, 'evidence-control-001', 'EVIDENCE_RECORDED', { receipts: [proof('focused test output', 'focused-test-receipt')] });
   await event(options, missionId, 'commit-control-001', 'GIT_OPERATION_COMPLETED', { operation: 'commit', commitSha: '1'.repeat(40), clean: true, receipt: proof('signed commit', 'commit-receipt') });
   await event(options, missionId, 'push-control-001', 'GIT_OPERATION_COMPLETED', { operation: 'push', success: true, receipt: proof('signed push', 'push-receipt') });

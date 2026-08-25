@@ -319,16 +319,27 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     if (state.dispatch.status === 'running') return block(state, 'A mission agent is already running.', timestamp);
     const dispatchedActionId = text(event.actionId).toLowerCase();
     const dispatchedWorkerId = text(event.workerId);
-    if (adapter === 'openclaw-local' && (!dispatchedActionId || !dispatchedWorkerId)) {
+    if (!dispatchedActionId || !dispatchedWorkerId) {
       return block(state, 'Agent dispatch requires exact action and worker identity.', timestamp);
     }
     state.dispatch = { ...state.dispatch, adapter, status: 'running', actionId: dispatchedActionId, workerId: dispatchedWorkerId, startedAt: timestamp, completedAt: '', resultId: '' };
+  } else if (eventType === 'AGENT_DISPATCH_BINDING_RECONCILED') {
+    const actionId = text(event.actionId).toLowerCase();
+    const workerId = text(event.workerId);
+    const adapter = text(event.adapter).toLowerCase();
+    if (state.dispatch.status !== 'running') return block(state, 'Dispatch binding reconciliation requires one running agent.', timestamp);
+    if (state.dispatch.actionId || state.dispatch.workerId) return block(state, 'Dispatch binding is already present and cannot be replaced.', timestamp);
+    if (!actionId || !workerId || adapter !== state.dispatch.adapter) {
+      return block(state, 'Dispatch binding reconciliation identity is incomplete or mismatched.', timestamp);
+    }
+    state.dispatch.actionId = actionId;
+    state.dispatch.workerId = workerId;
   } else if (eventType === 'AGENT_RESULT_RECEIVED') {
     if (state.dispatch.status !== 'running') return block(state, 'Agent result arrived without an active dispatch.', timestamp);
-    if (state.dispatch.adapter === 'openclaw-local' && (
+    if (
       text(event.actionId).toLowerCase() !== state.dispatch.actionId
       || text(event.workerId) !== state.dispatch.workerId
-    )) {
+    ) {
       return block(state, 'Agent result does not match the active action and worker.', timestamp);
     }
     if (event.success !== true) {
@@ -378,7 +389,7 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     if (state.repair.currentRound >= MAX_REPAIR_ROUNDS) return block(state, 'Maximum repair rounds reached.', timestamp);
     state.repair.currentRound += 1;
     state.repair.history.push({ round: state.repair.currentRound, startedAt: timestamp, failedChecks: state.pullRequest.checks.filter((check) => !['success', 'neutral', 'skipped'].includes(check.status)).map((check) => check.name) });
-    state.dispatch = { ...state.dispatch, status: 'pending', startedAt: '', completedAt: '', resultId: '' };
+    state.dispatch = { ...state.dispatch, status: 'pending', actionId: '', workerId: '', startedAt: '', completedAt: '', resultId: '' };
     state.git.commitSha = '';
     state.git.pushed = false;
     state.pullRequest.checks = [];

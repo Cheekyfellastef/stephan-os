@@ -2,6 +2,7 @@ import { readFile, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
   buildMissionWorkerAction,
+  createMissionWorkerActionId,
   issueMissionWorkerAuthorization,
   projectMissionWorkerActionState,
 } from '../../shared/agents/missionOrchestratorWorker.mjs';
@@ -246,7 +247,8 @@ function validateExactActionGrant(state, action, grant, options = {}) {
   if (text(grant?.operation) !== text(action?.operation)) {
     errors.push('action-grant-operation-mismatch');
   }
-  const capacityScoped = Object.hasOwn(grant || {}, 'capacityRoute') || ['openclaw-local', 'chatgpt-github', 'foundry-forge'].includes(action?.adapter);
+  const agentHandoff = action?.actionKind === 'agent-handoff';
+  const capacityScoped = agentHandoff && ['codex', 'openclaw-local', 'chatgpt-github', 'foundry-forge'].includes(action?.adapter);
   if (capacityScoped) {
     if (text(grant?.capacityRoute) !== text(action?.capacityRoute)) {
       errors.push('action-grant-capacity-route-mismatch');
@@ -254,12 +256,12 @@ function validateExactActionGrant(state, action, grant, options = {}) {
     if (text(grant?.capacityReceiptId) !== text(action?.capacityReceiptId)) {
       errors.push('action-grant-capacity-receipt-mismatch');
     }
-    if (!text(action?.workerId) || text(grant?.workerId) !== text(action?.workerId)) {
-      errors.push('action-grant-worker-mismatch');
-    }
     if (JSON.stringify(grant?.capacityProofRefs || []) !== JSON.stringify(action?.capacityProofRefs || [])) {
       errors.push('action-grant-capacity-proof-mismatch');
     }
+  }
+  if (agentHandoff && (!text(action?.workerId) || text(grant?.workerId) !== text(action?.workerId))) {
+    errors.push('action-grant-worker-mismatch');
   }
   if (grant?.mergeAuthority !== false || grant?.leaseSeizureAllowed !== false) {
     errors.push('action-grant-authority-expanded');
@@ -557,6 +559,66 @@ export async function readMissionWorkerQueue(options = {}) {
   return result.sort((left, right) => String(left.item?.createdAt || '').localeCompare(String(right.item?.createdAt || '')));
 }
 
+async function readLegacyDispatchQueueBinding(state, actionId, options = {}) {
+  const adapter = text(state?.dispatch?.adapter).toLowerCase();
+  const missionId = text(state?.missionId).toLowerCase();
+  const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
+  if (!root) throw new Error('Mission worker queue directory is not configured.');
+  const paths = queuePaths(root, adapter);
+  const candidates = [];
+  for (const stage of ['pending', 'processing']) {
+    const path = resolve(paths[stage], `${actionId}.json`);
+    try {
+      const item = JSON.parse(await readFile(path, 'utf8'));
+      const payload = item?.payload;
+      const workerId = text(payload?.workerId || payload?.owner);
+      if (
+        item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+        && text(item.adapter).toLowerCase() === adapter
+        && text(item.missionId).toLowerCase() === missionId
+        && text(item.actionId).toLowerCase() === actionId
+        && text(payload?.missionId).toLowerCase() === missionId
+        && text(payload?.actionId).toLowerCase() === actionId
+        && text(payload?.adapter).toLowerCase() === adapter
+        && payload?.actionKind === 'agent-handoff'
+        && workerId
+      ) candidates.push({ actionId, workerId });
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw new Error('Legacy dispatch queue binding could not be verified.');
+    }
+  }
+  if (candidates.length !== 1) throw new Error('Legacy dispatch requires one exact durable queue binding.');
+  return candidates[0];
+}
+
+async function reconcileLegacyRunningDispatch(state, result, options = {}) {
+  const storedActionId = text(state?.dispatch?.actionId).toLowerCase();
+  const storedWorkerId = text(state?.dispatch?.workerId);
+  if (storedActionId && storedWorkerId) return state;
+  if (storedActionId || storedWorkerId) throw new Error('Active dispatch binding is incomplete.');
+  if (!Number.isSafeInteger(state?.revision) || state.revision < 1) {
+    throw new Error('Legacy dispatch revision cannot be reconciled.');
+  }
+  const adapter = text(state.dispatch?.adapter).toLowerCase();
+  const expectedActionId = createMissionWorkerActionId({ ...state, revision:state.revision - 1 }, adapter).toLowerCase();
+  const resultActionId = text(result?.actionId).toLowerCase();
+  if (resultActionId !== expectedActionId) throw new Error('Agent result action does not match the legacy dispatch.');
+  const binding = await readLegacyDispatchQueueBinding(state, expectedActionId, options);
+  if (text(result?.workerId) !== binding.workerId) throw new Error('Agent result worker does not match the legacy dispatch.');
+  const reconciled = await appendMissionEvent(state.missionId, {
+    eventId: `reconcile-${expectedActionId}`.slice(0, 128),
+    eventType: 'AGENT_DISPATCH_BINDING_RECONCILED',
+    expectedRevision: state.revision,
+    expectedCurrentPhase: state.currentPhase,
+    adapter,
+    actionId: binding.actionId,
+    workerId: binding.workerId,
+    summary: 'Pre-upgrade running dispatch bound to its one exact durable queue action before result acceptance.',
+  }, options);
+  if (reconciled.preconditionFailed === true) throw new Error('Legacy dispatch changed during binding reconciliation.');
+  return reconciled.state;
+}
+
 export async function collectAgentWorkerResult(result, options = {}) {
   const missionId = text(result?.missionId).toLowerCase();
   const actionId = text(result?.actionId).toLowerCase();
@@ -565,8 +627,9 @@ export async function collectAgentWorkerResult(result, options = {}) {
   const current = await readMissionRecord(missionId, options);
   if (current.state.dispatch?.status !== 'running') throw new Error('Mission has no active agent dispatch.');
   if (adapter !== current.state.dispatch.adapter) throw new Error('Agent result adapter does not match the active dispatch.');
-  if (actionId !== text(current.state.dispatch.actionId).toLowerCase()) throw new Error('Agent result action does not match the active dispatch.');
-  if (text(result?.workerId) !== text(current.state.dispatch.workerId)) throw new Error('Agent result worker does not match the active dispatch.');
+  const dispatchState = await reconcileLegacyRunningDispatch(current.state, result, options);
+  if (actionId !== text(dispatchState.dispatch.actionId).toLowerCase()) throw new Error('Agent result action does not match the active dispatch.');
+  if (text(result?.workerId) !== text(dispatchState.dispatch.workerId)) throw new Error('Agent result worker does not match the active dispatch.');
   let collected = await appendMissionEvent(missionId, { eventId: `result-${actionId}`.slice(0, 128), eventType: 'AGENT_RESULT_RECEIVED', actionId, workerId: text(result.workerId), success: result.success === true, resultId: text(result.resultId, actionId), changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
   const evidenceReceipts = Array.isArray(result.evidenceReceipts) ? result.evidenceReceipts : [];
   if (result.success === true && evidenceReceipts.length) {

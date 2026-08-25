@@ -865,6 +865,66 @@ export function projectProgrammeControllerHeartbeat(record = {}, options = {}) {
   });
 }
 
+function projectCriticalMissionSchedulingAuthority(conveyor) {
+  const active = conveyor?.decision === 'WAIT_ACTIVE_MISSION'
+    && conveyor?.finalVerdict === 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE';
+  const creating = conveyor?.decision === 'CREATE_NEXT_MISSION'
+    && conveyor?.finalVerdict === 'CRITICAL_BACKLOG_MISSION_READY';
+  if (!active && !creating) return null;
+  const selectedItem = conveyor.selectedItem;
+  const selectedMission = selectedItem?.mission;
+  const executableMission = active ? conveyor.activeMission : selectedMission;
+  const issueNumbers = list(selectedItem?.issueNumbers).map((value) => number(value)).filter(Boolean);
+  const issueNumber = issueNumbers[0] ?? null;
+  const missionId = text(executableMission?.missionId).toLowerCase();
+  const selectedMissionId = text(selectedMission?.missionId).toLowerCase();
+  const repository = text(executableMission?.repository);
+  const branch = text(executableMission?.git?.branch || executableMission?.branch || selectedMission?.branch);
+  const selectedRepository = text(selectedMission?.repository);
+  const selectedBranch = text(selectedMission?.branch);
+  const currentPhase = text(executableMission?.currentPhase).toUpperCase();
+  const providerRouteIntent = text(
+    executableMission?.providerRouteIntent || selectedMission?.providerRouteIntent,
+    'AUTO',
+  ).toUpperCase();
+  const rawScopes = list(executableMission?.allowedFiles || selectedMission?.allowedFiles);
+  const resourceIds = rawScopes.map((value) => {
+    const scope = text(value).replace(/\\/g, '/').replace(/\/\*\*$/, '').toLowerCase();
+    return scope ? `repo:${repository.toLowerCase()}:path:${scope}` : '';
+  });
+  const valid = Boolean(
+    issueNumber
+    && SAFE_ID.test(missionId)
+    && missionId === selectedMissionId
+    && SAFE_REPOSITORY.test(repository)
+    && repository.toLowerCase() === selectedRepository.toLowerCase()
+    && SAFE_BRANCH.test(branch)
+    && !branch.includes('..')
+    && branch === selectedBranch
+    && PROVIDER_ROUTE_INTENTS.has(providerRouteIntent)
+    && resourceIds.length > 0
+    && resourceIds.every(Boolean)
+    && unique(resourceIds).length === resourceIds.length
+    && (!active || (
+      currentPhase
+      && !['BLOCKED', 'AWAITING_OPERATOR_APPROVAL', 'COMPLETE', 'CANCELLED'].includes(currentPhase)
+    ))
+  );
+  return {
+    active,
+    valid,
+    selectedItem,
+    selectedMission,
+    executableMission,
+    issueNumber,
+    repository,
+    branch,
+    providerRouteIntent,
+    route:text(selectedMission?.route, 'CHATGPT_GITHUB').toUpperCase(),
+    resourceIds,
+  };
+}
+
 export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
   const blockers = [];
   const lane = input.lane ?? null;
@@ -966,66 +1026,47 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
     });
   }
   const conveyor = input.criticalBacklog;
-  if (
-    conveyor?.decision === 'WAIT_ACTIVE_MISSION'
-    && conveyor?.finalVerdict === 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE'
-  ) {
-    const selectedItem = conveyor.selectedItem;
-    const activeMission = conveyor.activeMission;
-    const selectedMission = selectedItem?.mission;
-    const issueNumbers = list(selectedItem?.issueNumbers).map((value) => number(value)).filter(Boolean);
-    const issueNumber = issueNumbers[0] ?? null;
-    const missionId = text(activeMission?.missionId).toLowerCase();
-    const selectedMissionId = text(selectedMission?.missionId).toLowerCase();
-    const repository = text(activeMission?.repository);
-    const branch = text(activeMission?.git?.branch || selectedMission?.branch);
-    const selectedRepository = text(selectedMission?.repository);
-    const selectedBranch = text(selectedMission?.branch);
-    const activePhase = text(activeMission?.currentPhase).toUpperCase();
-    const providerRouteIntent = text(
-      activeMission?.providerRouteIntent || selectedMission?.providerRouteIntent,
-      'AUTO',
-    ).toUpperCase();
-    const resourceIds = unique(list(activeMission?.allowedFiles || selectedMission?.allowedFiles).map((value) => {
-      const scope = text(value).replace(/\\/g, '/').replace(/\/\*\*$/, '').toLowerCase();
-      return scope ? `repo:${repository.toLowerCase()}:path:${scope}` : '';
-    }).filter(Boolean));
-    const valid = Boolean(
-      issueNumber
-      && SAFE_ID.test(missionId)
-      && missionId === selectedMissionId
-      && SAFE_REPOSITORY.test(repository)
-      && repository.toLowerCase() === selectedRepository.toLowerCase()
-      && branch
-      && branch === selectedBranch
-      && activePhase
-      && PROVIDER_ROUTE_INTENTS.has(providerRouteIntent)
-      && !['BLOCKED', 'AWAITING_OPERATOR_APPROVAL', 'COMPLETE', 'CANCELLED'].includes(activePhase)
-      && resourceIds.length > 0
-    );
+  const criticalMission = projectCriticalMissionSchedulingAuthority(conveyor);
+  if (criticalMission) {
+    const {
+      active,
+      valid,
+      selectedItem,
+      selectedMission,
+      executableMission,
+      issueNumber,
+      repository,
+      branch,
+      providerRouteIntent,
+      route,
+      resourceIds,
+    } = criticalMission;
     if (!valid) {
-      blockers.push('critical-backlog-active-mission-not-scheduler-admissible');
+      blockers.push(active
+        ? 'critical-backlog-active-mission-not-scheduler-admissible'
+        : 'critical-backlog-next-mission-not-scheduler-admissible');
     } else {
       const existingGoal = goals.find((goal) => goal.issue === issueNumber);
-      const activeRoute = text(selectedMission.route, 'CHATGPT_GITHUB').toUpperCase();
       if (existingGoal && (
         text(existingGoal.repository).toLowerCase() !== repository.toLowerCase()
         || text(existingGoal.branch) !== branch
-        || text(existingGoal.route).toUpperCase() !== activeRoute
+        || text(existingGoal.route).toUpperCase() !== route
         || text(existingGoal.providerRouteIntent).toUpperCase() !== providerRouteIntent
         || !sameExactStringSet(existingGoal.resourceIds, resourceIds)
       )) {
-        blockers.push('critical-backlog-active-mission-goal-authority-conflict');
+        blockers.push(active
+          ? 'critical-backlog-active-mission-goal-authority-conflict'
+          : 'critical-backlog-next-mission-goal-authority-conflict');
       } else if (!existingGoal) {
         goals.push({
           issue: issueNumber,
-          title: text(activeMission.title, selectedMission.title || `Goal #${issueNumber}`),
+          title: text(executableMission.title, selectedMission.title || `Goal #${issueNumber}`),
           state: 'QUEUED',
           prerequisites: [],
           priority: Number.isFinite(selectedItem.priority) ? selectedItem.priority : 0,
           criticalPathWeight: Number.isFinite(selectedItem.priority) ? Math.max(1, 10_000 - selectedItem.priority) : 1,
           reversibility: 'HIGH',
-          route: text(selectedMission.route, 'CHATGPT_GITHUB'),
+          route,
           providerRouteIntent,
           activePr: null,
           repository,

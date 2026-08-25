@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
@@ -250,6 +250,10 @@ test('publisher rejects retargeting and publishes only the exact granted mission
     actionKind: action.actionKind,
     adapter: 'openclaw-signed',
     operation: action.operation,
+    capacityRoute: '',
+    capacityReceiptId: null,
+    capacityProofRefs: [],
+    workerId: 'openclaw-standalone',
     repository: second.state.repository,
     branch: second.state.git.branch,
     mergeAuthority: false,
@@ -304,8 +308,15 @@ test('repair transition is projected, granted, applied, and queued as one exact 
     clean: true,
     receipt: proof('isolated worktree', 'repair-worktree'),
   });
-  await append('repair-dispatch', 'AGENT_DISPATCHED', { agentId: 'codex' });
+  const initialRepairAction = buildMissionWorkerAction(current.state, options);
+  await append('repair-dispatch', 'AGENT_DISPATCHED', {
+    agentId: 'codex',
+    actionId: initialRepairAction.actionId,
+    workerId: initialRepairAction.workerId,
+  });
   await append('repair-result', 'AGENT_RESULT_RECEIVED', {
+    actionId: initialRepairAction.actionId,
+    workerId: initialRepairAction.workerId,
     success: true,
     resultId: 'repair-result',
     changedFiles: ['shared/agents/example.mjs'],
@@ -356,6 +367,10 @@ test('repair transition is projected, granted, applied, and queued as one exact 
     actionKind: action.actionKind,
     adapter: 'codex',
     operation: '',
+    capacityRoute: action.capacityRoute,
+    capacityReceiptId: action.capacityReceiptId,
+    capacityProofRefs: action.capacityProofRefs,
+    workerId: action.workerId,
     laneId: missionId,
     repository: actionState.repository,
     issueNumber: 1497,
@@ -428,4 +443,75 @@ test('repair transition is projected, granted, applied, and queued as one exact 
   const queued = await readMissionWorkerQueue(options);
   assert.equal(queued.length, 1);
   assert.equal(queued[0].item.payload.actionId, grant.actionId);
+});
+
+test('pre-upgrade running dispatch is durably reconciled from one exact queue action', async () => {
+  const options = await runtime();
+  const missionId = 'legacy-running-dispatch-test';
+  await createMissionRecord({
+    ...intent,
+    missionId,
+    branch: 'openclaw/legacy-running-dispatch-test',
+  }, options);
+  const ready = await appendMissionEvent(missionId, {
+    eventId: 'legacy-worktree-ready',
+    eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'legacy-worktree-proof'),
+  }, options);
+  const action = buildMissionWorkerAction(ready.state, options);
+  const { workerId: _removedWorkerId, ...legacyAction } = action;
+  const pendingRoot = join(options.queueRoot, 'codex', 'pending');
+  await mkdir(pendingRoot, { recursive: true });
+  await writeFile(join(pendingRoot, `${action.actionId}.json`), `${JSON.stringify({
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter: 'codex',
+    actionId: action.actionId,
+    missionId,
+    createdAt: new Date().toISOString(),
+    payload: legacyAction,
+  }, null, 2)}\n`, 'utf8');
+  const running = await appendMissionEvent(missionId, {
+    eventId: 'legacy-agent-dispatched',
+    eventType: 'AGENT_DISPATCHED',
+    agentId: 'codex',
+    adapter: 'codex',
+    actionId: action.actionId,
+    workerId: action.workerId,
+    summary: 'Dispatch persisted before the legacy-shape fixture is applied.',
+  }, options);
+  const runningRecord = await readMissionRecord(missionId, options);
+  const legacyState = {
+    ...running.state,
+    dispatch: { ...running.state.dispatch, actionId: '', workerId: '' },
+  };
+  await writeFile(runningRecord.statePath, `${JSON.stringify(legacyState, null, 2)}\n`, 'utf8');
+  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.actionId, '');
+  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.workerId, '');
+
+  await assert.rejects(() => collectAgentWorkerResult({
+    missionId,
+    actionId: action.actionId,
+    adapter: 'codex',
+    workerId: 'foreign-worker',
+    success: true,
+    receipt: proof('codex result', 'legacy-foreign-result'),
+  }, options), /worker does not match the legacy dispatch/);
+  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.actionId, '');
+
+  const collected = await collectAgentWorkerResult({
+    missionId,
+    actionId: action.actionId,
+    adapter: 'codex',
+    workerId: legacyAction.owner,
+    success: true,
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: proof('codex result', 'legacy-result'),
+    evidenceReceipts: [proof('focused test output', 'legacy-evidence')],
+  }, options);
+  assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
+  assert.equal(collected.state.dispatch.actionId, action.actionId);
+  assert.equal(collected.state.dispatch.workerId, 'codex');
+  assert.ok(collected.state.timeline.some(({ eventType }) => eventType === 'AGENT_DISPATCH_BINDING_RECONCILED'));
 });

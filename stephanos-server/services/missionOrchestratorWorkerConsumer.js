@@ -90,13 +90,14 @@ async function processAgentClaim(adapter, options, execute) {
   if (!claim) return { processed: false, reason: 'queue-empty' };
   claim.options = options;
   const action = claim.item.payload;
+  const workerId = String(action?.workerId || action?.owner || '').trim();
   try {
     const execution = await execute(action, claim);
     const applied = await collectAgentWorkerResult({
       missionId: action.missionId,
       actionId: action.actionId,
       adapter,
-      workerId: action.workerId,
+      workerId,
       success: execution.success === true,
       resultId: execution.resultId || action.actionId,
       changedFiles: execution.changedFiles || [],
@@ -124,7 +125,7 @@ async function processAgentClaim(adapter, options, execute) {
     return { processed: true, claim, applied, result, resultPath };
   } catch (error) {
     try {
-      await collectAgentWorkerResult({ missionId: action.missionId, actionId: action.actionId, adapter, workerId: action.workerId, success: false, error: error?.message || `${adapter} execution failed.` }, options);
+      await collectAgentWorkerResult({ missionId: action.missionId, actionId: action.actionId, adapter, workerId, success: false, error: error?.message || `${adapter} execution failed.` }, options);
     } catch {
       // Preserve the original adapter failure in the queue result.
     }

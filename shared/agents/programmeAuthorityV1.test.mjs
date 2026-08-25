@@ -1065,6 +1065,68 @@ test('active mission and same-issue durable goal must agree on all scheduling au
   assert.ok(invalidProviderIntent.blockers.includes('goal-record-0-provider-route-intent-invalid'));
 });
 
+test('newly selected critical mission and same-issue durable goal share one scheduling authority', () => {
+  const mission = {
+    missionId: 'critical-1291-worker-watchdog-repair',
+    title: 'Repair and prove Mission Orchestrator Worker self-heal',
+    repository: REPOSITORY,
+    branch: 'openclaw/critical-1291-worker-watchdog-repair',
+    route: 'CHATGPT_GITHUB',
+    providerRouteIntent: 'AUTO',
+    allowedFiles: ['scripts/battle-bridge-worker-watchdog.mjs', 'shared/agents/**'],
+  };
+  const selectedItem = {
+    itemId: 'worker-watchdog-self-heal',
+    priority: 10,
+    issueNumbers: [1291],
+    mission,
+  };
+  const resources = [
+    'repo:cheekyfellastef/stephan-os:path:scripts/battle-bridge-worker-watchdog.mjs',
+    'repo:cheekyfellastef/stephan-os:path:shared/agents',
+  ];
+  const exactGoal = goalRecord({
+    goalId: 'goal-1291',
+    issueNumber: 1291,
+    repository: REPOSITORY,
+    branch: mission.branch,
+    route: mission.route,
+    providerRouteIntent: mission.providerRouteIntent,
+    resourceIds: resources,
+  });
+  const build = (goalRecords) => buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords,
+    criticalBacklog: {
+      decision: 'CREATE_NEXT_MISSION',
+      finalVerdict: 'CRITICAL_BACKLOG_MISSION_READY',
+      selectedItem,
+      activeMission: null,
+    },
+  });
+
+  const synthesized = build([]);
+  assert.equal(synthesized.valid, true, synthesized.blockers.join(','));
+  assert.equal(synthesized.goals.length, 1);
+  assert.deepEqual(synthesized.goals[0].resourceIds, resources);
+
+  const exact = build([exactGoal]);
+  assert.equal(exact.valid, true, exact.blockers.join(','));
+  assert.equal(exact.goals.length, 1);
+
+  for (const conflictingGoal of [
+    { ...exactGoal, repository: 'other/repository' },
+    { ...exactGoal, branch: 'openclaw/foreign-branch' },
+    { ...exactGoal, route: 'FOUNDRY_FORGE' },
+    { ...exactGoal, providerRouteIntent: 'CHATGPT_GITHUB' },
+    { ...exactGoal, resourceIds: ['repo:cheekyfellastef/stephan-os:path:unrelated'] },
+  ]) {
+    const conflict = build([conflictingGoal]);
+    assert.equal(conflict.valid, false);
+    assert.ok(conflict.blockers.includes('critical-backlog-next-mission-goal-authority-conflict'));
+  }
+});
+
 test('authoritative projection holds without a real mutation lease even when a receipt has a leaseKey', () => {
   const controllerHeartbeat = projectProgrammeControllerHeartbeat(createProgrammeControllerHeartbeat({
     controllerId: 'durable-flywheel-controller',

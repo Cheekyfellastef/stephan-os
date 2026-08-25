@@ -274,11 +274,13 @@ export function adjudicateGitHubContinuityExternalCompletionV1(rawInput={}) {
   if (c.success===true) {
     if (!SAFE_ID.test(text(c.resultId))||text(c.error)||!validMissionReceipt(c.receipt)) return blockedCompletion('completion-success-payload-invalid');
   } else if (!text(c.error)||files.length>0||c.resultId!=='') return blockedCompletion('completion-failure-payload-invalid');
+  const workerId=text(h.queueItemCandidate.payload?.workerId);
   if (!s||s.schemaVersion!==MISSION_ORCHESTRATOR_SCHEMA_VERSION||s.missionId!==c.missionId||s.repository!==c.repository
-      ||text(s.dispatch?.status).toLowerCase()!=='running'||text(s.dispatch?.adapter)!==c.adapter) return blockedCompletion('completion-mission-state-mismatch');
+      ||text(s.dispatch?.status).toLowerCase()!=='running'||text(s.dispatch?.adapter)!==c.adapter
+      ||text(s.dispatch?.actionId)!==h.actionId||text(s.dispatch?.workerId)!==workerId||!workerId) return blockedCompletion('completion-mission-state-mismatch');
   const event=Object.freeze({schemaVersion:MISSION_ORCHESTRATOR_EVENT_SCHEMA_VERSION,missionId:c.missionId,eventType:'AGENT_RESULT_RECEIVED',timestamp:c.completedAtUtc,
     summary:c.success?`GitHub Continuity external lane completed ${c.taskId}.`:`GitHub Continuity external lane failed ${c.taskId}.`,
-    success:c.success,resultId:c.resultId,changedFiles:files,receipt:c.receipt,error:c.error});
+    actionId:h.actionId,workerId,success:c.success,resultId:c.resultId,changedFiles:files,receipt:c.receipt,error:c.error});
   const projected=applyMissionOrchestratorEvent(s,event,{now:new Date(c.completedAtUtc)});
   if (c.success===true) {
     if (projected?.dispatch?.status!=='complete'||projected?.dispatch?.resultId!==c.resultId||text(projected?.currentPhase).toUpperCase()==='BLOCKED') return blockedCompletion('completion-event-preflight-failed');

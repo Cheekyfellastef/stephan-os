@@ -69,11 +69,15 @@ function build(overrides = {}) {
   });
 }
 
-function runningMission(adapter = 'chatgpt-github') {
+function runningMission(handoffOrAdapter = 'chatgpt-github') {
   const ready = readyMission();
+  const handoff = typeof handoffOrAdapter === 'object' ? handoffOrAdapter : null;
+  const adapter = handoff?.queueItemCandidate?.adapter || handoffOrAdapter;
   const running = applyMissionOrchestratorEvent(ready, {
     schemaVersion: MISSION_ORCHESTRATOR_EVENT_SCHEMA_VERSION, missionId: ready.missionId,
     eventType: 'AGENT_DISPATCHED', timestamp: NOW, adapter, agentId: adapter,
+    actionId: handoff?.actionId || 'running-action-001',
+    workerId: handoff?.queueItemCandidate?.payload?.workerId || adapter,
   }, { now: new Date(NOW) });
   assert.equal(running.dispatch.status, 'running');
   return running;
@@ -165,7 +169,7 @@ test('an already-running mission dispatch cannot be taken over', () => {
 test('successful portable completion preflights canonical AGENT_RESULT_RECEIVED', () => {
   const handoff = build();
   const result = adjudicateGitHubContinuityExternalCompletionV1({
-    handoff, completionReceipt: completion(handoff), missionState: runningMission(),
+    handoff, completionReceipt: completion(handoff), missionState: runningMission(handoff),
   });
   assert.equal(result.valid, true, result.blockers.join(', '));
   assert.equal(result.eventCandidate.eventType, 'AGENT_RESULT_RECEIVED');
@@ -178,17 +182,17 @@ test('completion rejects fabricated handoff correlation, scope drift and authori
   const handoff = build();
   const fabricated = { ...handoff, handoffId: 'fabricated-handoff-id' };
   assert.equal(adjudicateGitHubContinuityExternalCompletionV1({
-    handoff: fabricated, completionReceipt: completion(handoff), missionState: runningMission(),
+    handoff: fabricated, completionReceipt: completion(handoff), missionState: runningMission(handoff),
   }).valid, false);
 
   const scope = adjudicateGitHubContinuityExternalCompletionV1({
-    handoff, completionReceipt: completion(handoff, { changedFiles: ['shared/agents/unrelated.mjs'] }), missionState: runningMission(),
+    handoff, completionReceipt: completion(handoff, { changedFiles: ['shared/agents/unrelated.mjs'] }), missionState: runningMission(handoff),
   });
   assert.equal(scope.valid, false);
   assert.ok(scope.blockers.includes('completion-event-preflight-failed'));
 
   const authority = adjudicateGitHubContinuityExternalCompletionV1({
-    handoff, completionReceipt: completion(handoff, { mergeAuthorityAdded: true }), missionState: runningMission(),
+    handoff, completionReceipt: completion(handoff, { mergeAuthorityAdded: true }), missionState: runningMission(handoff),
   });
   assert.equal(authority.valid, false);
   assert.ok(authority.blockers.includes('completion-authority-invalid'));
@@ -199,7 +203,7 @@ test('external failure remains a blocked canonical mission result', () => {
   const result = adjudicateGitHubContinuityExternalCompletionV1({
     handoff,
     completionReceipt: completion(handoff, { success: false, resultId: '', changedFiles: [], receipt: null, error: 'external lane failed' }),
-    missionState: runningMission(),
+    missionState: runningMission(handoff),
   });
   assert.equal(result.valid, true, result.blockers.join(', '));
   assert.equal(result.finalVerdict, 'GITHUB_CONTINUITY_EXTERNAL_FAILURE_EVENT_READY');
