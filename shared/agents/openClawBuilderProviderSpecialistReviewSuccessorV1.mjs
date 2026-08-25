@@ -111,11 +111,22 @@ const DANGEROUS_AUTHORITY_TOKENS = new Set([
   'createRequire',
   'dlopen',
   'eval',
+  'exec',
+  'execFile',
+  'execFileSync',
+  'execSync',
+  'fork',
   'getBuiltinModule',
+  'global',
+  'globalThis',
   'module',
   'process',
   'require',
+  'spawn',
+  'spawnSync',
 ]);
+const MAX_FOLDED_AUTHORITY_STRING_LENGTH = 128;
+const MAX_FOLDED_AUTHORITY_EXPRESSION_DEPTH = 32;
 
 function readJavaScriptString(source, start) {
   const quote = source[start];
@@ -287,17 +298,56 @@ function tokenizeJavaScriptAuthority(source) {
   return { valid: contexts.length === 1, tokens: Object.freeze(tokens) };
 }
 
+function foldConstantStringExpression(tokens, start, depth = 0) {
+  if (depth > MAX_FOLDED_AUTHORITY_EXPRESSION_DEPTH) return null;
+  const first = tokens[start];
+  let value = '';
+  let cursor = start;
+  if (first?.type === 'string') {
+    value = first.value;
+    cursor += 1;
+  } else if (first?.type === 'punctuator' && first.value === '(') {
+    const nested = foldConstantStringExpression(tokens, start + 1, depth + 1);
+    if (!nested || tokens[nested.end]?.type !== 'punctuator' || tokens[nested.end].value !== ')') return null;
+    value = nested.value;
+    cursor = nested.end + 1;
+  } else {
+    return null;
+  }
+  if (value.length > MAX_FOLDED_AUTHORITY_STRING_LENGTH) return null;
+
+  while (tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === '+') {
+    const right = foldConstantStringExpression(tokens, cursor + 1, depth + 1);
+    if (!right) break;
+    value += right.value;
+    if (value.length > MAX_FOLDED_AUTHORITY_STRING_LENGTH) return null;
+    cursor = right.end;
+  }
+  return Object.freeze({ value, end: cursor });
+}
+
+function constantAuthorityStrings(tokens) {
+  const values = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (tokens[index]?.type !== 'string' && tokens[index]?.value !== '(') continue;
+    const folded = foldConstantStringExpression(tokens, index);
+    if (folded) values.push(folded.value);
+  }
+  return Object.freeze(values);
+}
+
 function reviewLocalModuleAuthority(source, path, findings) {
   const lexical = tokenizeJavaScriptAuthority(source);
   if (!lexical.valid) {
     findings.push(finding('openclaw-provider-pool-javascript-lexical-invalid', path));
     return;
   }
-  const forbiddenModule = lexical.tokens.some((token) => token.type === 'string' && FORBIDDEN_LOCAL_MODULES.has(token.value));
+  const authorityStrings = constantAuthorityStrings(lexical.tokens);
+  const forbiddenModule = authorityStrings.some((value) => FORBIDDEN_LOCAL_MODULES.has(value));
   const dangerousToken = lexical.tokens.some((token) => (
-    (token.type === 'identifier' || token.type === 'string')
+    token.type === 'identifier'
     && DANGEROUS_AUTHORITY_TOKENS.has(token.value)
-  ));
+  )) || authorityStrings.some((value) => DANGEROUS_AUTHORITY_TOKENS.has(value));
   const staticModules = [];
   let invalidImport = false;
   let dynamicLoader = false;
