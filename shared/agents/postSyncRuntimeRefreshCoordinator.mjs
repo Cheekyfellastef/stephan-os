@@ -42,6 +42,7 @@ const NATURAL_EXACT = new Set([
   'scripts/battle-bridge-outbound-health-beacon.mjs',
   'scripts/chatgpt-shared-workspace-github-relay.mjs',
   'scripts/windows/probe-battle-bridge-recovery-mesh.ps1',
+  'scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1',
   'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
   'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1',
   'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1',
@@ -77,6 +78,9 @@ const NO_RUNTIME_EXACT = new Set([
   'README.md',
   'scripts/publish-battle-bridge-main-advance-signal.mjs',
   'shared/agents/battleBridgeMainAdvanceSignalV1.mjs',
+  'scripts/operator-protected-personal-repository-merge.mjs',
+  'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+  'scripts/ignite-stephanos-local.mjs',
 ]);
 
 const LAUNCHER_CRITICAL_SOURCE_PATHS = new Set([
