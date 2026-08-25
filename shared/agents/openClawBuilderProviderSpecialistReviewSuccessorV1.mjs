@@ -498,7 +498,9 @@ function callArgumentRange(tokens, openIndex, requestedIndex) {
       else if (token.value === '}') depth.curly -= 1;
       const atArgumentBoundary = depth.round === 0 && depth.square === 0 && depth.curly === 0;
       if (atArgumentBoundary && (token.value === ',' || token.value === ')')) {
-        if (argumentIndex === requestedIndex) return Object.freeze({ start, end: index });
+        if (argumentIndex === requestedIndex) {
+          return index === start ? null : Object.freeze({ start, end: index });
+        }
         if (token.value === ')') return null;
         argumentIndex += 1;
         start = index + 1;
@@ -593,23 +595,153 @@ function reflectiveMethodReferenceEnd(tokens, start, depth = 0) {
   return couldSelectReflectiveMethod ? methodClose : -1;
 }
 
-function boundReflectiveMethodReferenceEnd(tokens, start) {
-  const referenceEnd = reflectiveMethodReferenceEnd(tokens, start);
-  if (referenceEnd < 0) return -1;
-  const bounds = transparentCalleeBounds(tokens, start, referenceEnd);
+function callArgumentRanges(tokens, openIndex) {
+  const ranges = [];
+  for (let index = 0; index < 32; index += 1) {
+    const range = callArgumentRange(tokens, openIndex, index);
+    if (!range) break;
+    ranges.push(range);
+  }
+  return Object.freeze(ranges);
+}
+
+function reflectiveBindDescriptor(tokens, calleeStart, calleeEnd, propertyIndex) {
+  const bounds = transparentCalleeBounds(tokens, calleeStart, calleeEnd);
   const access = tokens[bounds.end + 1];
   const method = tokens[bounds.end + 2];
   if (access?.type !== 'punctuator'
     || !new Set(['.', '?.']).has(access.value)
     || method?.type !== 'identifier'
-    || method.value !== 'bind') return referenceEnd;
+    || method.value !== 'bind') return null;
   const bindOpen = callOpenAfterCallee(tokens, bounds.start, bounds.end + 2);
-  if (bindOpen < 0) return -1;
-  return matchingPunctuator(tokens, bindOpen, '(', ')');
+  const bindClose = matchingPunctuator(tokens, bindOpen, '(', ')');
+  if (bindOpen < 0 || bindClose < 0) return null;
+  const arguments_ = callArgumentRanges(tokens, bindOpen);
+  const uncertain = arguments_.some(({ start, end }) => tokens.slice(start, end).some((token) => (
+    token?.type === 'punctuator' && token.value === '...'
+  )));
+  if (uncertain) {
+    return Object.freeze({
+      end: bindClose,
+      propertyIndex: null,
+      boundPropertyRange: Object.freeze({ start: bindOpen + 1, end: bindClose }),
+    });
+  }
+  const boundOriginalArgumentCount = Math.max(0, arguments_.length - 1);
+  if (boundOriginalArgumentCount > propertyIndex) {
+    return Object.freeze({
+      end: bindClose,
+      propertyIndex: null,
+      boundPropertyRange: arguments_[propertyIndex + 1],
+    });
+  }
+  return Object.freeze({
+    end: bindClose,
+    propertyIndex: propertyIndex - boundOriginalArgumentCount,
+    boundPropertyRange: null,
+  });
+}
+
+function assignmentExpressionEnd(tokens, start) {
+  const depth = { round: 0, square: 0, curly: 0 };
+  for (let index = start; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token?.type !== 'punctuator') continue;
+    const atBoundary = depth.round === 0 && depth.square === 0 && depth.curly === 0;
+    if (atBoundary && new Set([')', ',', ';']).has(token.value)) return index;
+    if (token.value === '(') depth.round += 1;
+    else if (token.value === ')') depth.round -= 1;
+    else if (token.value === '[') depth.square += 1;
+    else if (token.value === ']') depth.square -= 1;
+    else if (token.value === '{') depth.curly += 1;
+    else if (token.value === '}') depth.curly -= 1;
+    if (depth.round < 0 || depth.square < 0 || depth.curly < 0) return -1;
+  }
+  return -1;
+}
+
+function topLevelComma(tokens, start, end) {
+  const depth = { round: 0, square: 0, curly: 0 };
+  let last = -1;
+  for (let index = start; index < end; index += 1) {
+    const token = tokens[index];
+    if (token?.type !== 'punctuator') continue;
+    if (token.value === '(') depth.round += 1;
+    else if (token.value === ')') depth.round -= 1;
+    else if (token.value === '[') depth.square += 1;
+    else if (token.value === ']') depth.square -= 1;
+    else if (token.value === '{') depth.curly += 1;
+    else if (token.value === '}') depth.curly -= 1;
+    else if (token.value === ',' && depth.round === 0 && depth.square === 0 && depth.curly === 0) last = index;
+  }
+  return last;
+}
+
+function reflectiveExpressionDescriptors(tokens, start, end, aliases, depth = 0) {
+  if (depth > MAX_FOLDED_AUTHORITY_EXPRESSION_DEPTH || start >= end) return Object.freeze([]);
+  while (tokens[start]?.type === 'punctuator'
+    && tokens[start].value === '('
+    && matchingPunctuator(tokens, start, '(', ')') === end - 1) {
+    start += 1;
+    end -= 1;
+  }
+  const comma = topLevelComma(tokens, start, end);
+  if (comma >= start) return reflectiveExpressionDescriptors(tokens, comma + 1, end, aliases, depth + 1);
+
+  const referenceEnd = reflectiveMethodReferenceEnd(tokens, start);
+  if (referenceEnd >= 0) {
+    const bound = reflectiveBindDescriptor(tokens, start, referenceEnd, 1);
+    const descriptor = bound ?? Object.freeze({ end: referenceEnd, propertyIndex: 1, boundPropertyRange: null });
+    if (descriptor.end === end - 1) return Object.freeze([descriptor]);
+  }
+  if (end === start + 1 && tokens[start]?.type === 'identifier') {
+    return aliases.get(tokens[start].value) ?? Object.freeze([]);
+  }
+  const possible = [];
+  for (let cursor = start; cursor < end; cursor += 1) {
+    const nestedReferenceEnd = reflectiveMethodReferenceEnd(tokens, cursor);
+    if (nestedReferenceEnd >= 0 && nestedReferenceEnd < end) {
+      const bound = reflectiveBindDescriptor(tokens, cursor, nestedReferenceEnd, 1);
+      const descriptor = bound ?? Object.freeze({
+        end: nestedReferenceEnd,
+        propertyIndex: 1,
+        boundPropertyRange: null,
+      });
+      const invocationOpen = callOpenAfterCallee(tokens, cursor, descriptor.end);
+      const bounds = transparentCalleeBounds(tokens, cursor, nestedReferenceEnd);
+      const borrowMethod = tokens[bounds.end + 2];
+      const borrowedInvocation = tokens[bounds.end + 1]?.type === 'punctuator'
+        && new Set(['.', '?.']).has(tokens[bounds.end + 1].value)
+        && borrowMethod?.type === 'identifier'
+        && new Set(['apply', 'call']).has(borrowMethod.value)
+        && callOpenAfterCallee(tokens, bounds.start, bounds.end + 2) >= 0;
+      if (invocationOpen < 0 && !borrowedInvocation) possible.push(descriptor);
+      cursor = Math.max(cursor, descriptor.end);
+      continue;
+    }
+    const nestedAlias = tokens[cursor];
+    if (nestedAlias?.type === 'identifier' && aliases.has(nestedAlias.value)) {
+      possible.push(...aliases.get(nestedAlias.value));
+    }
+  }
+  if (possible.length > 0) return Object.freeze(possible);
+  return Object.freeze([]);
 }
 
 function reflectiveMethodAliases(tokens) {
-  const aliases = new Set();
+  const aliases = new Map();
+  const boundPropertyRanges = [];
+  const addAlias = (name, descriptor) => {
+    const current = aliases.get(name) ?? [];
+    const duplicate = current.some((item) => (
+      item.propertyIndex === descriptor.propertyIndex
+      && JSON.stringify(item.boundPropertyRange) === JSON.stringify(descriptor.boundPropertyRange)
+    ));
+    if (duplicate) return false;
+    aliases.set(name, Object.freeze([...current, descriptor]));
+    if (descriptor.boundPropertyRange) boundPropertyRanges.push(descriptor.boundPropertyRange);
+    return true;
+  };
   let changed = true;
   while (changed) {
     changed = false;
@@ -618,15 +750,11 @@ function reflectiveMethodAliases(tokens) {
       if (alias?.type !== 'identifier'
         || tokens[index + 1]?.type !== 'punctuator'
         || tokens[index + 1].value !== '=') continue;
-      const rhs = tokens[index + 2];
-      let rhsEnd = boundReflectiveMethodReferenceEnd(tokens, index + 2);
-      if (rhsEnd < 0 && rhs?.type === 'identifier' && aliases.has(rhs.value)) rhsEnd = index + 2;
+      const rhsStart = index + 2;
+      const rhsEnd = assignmentExpressionEnd(tokens, rhsStart);
       if (rhsEnd < 0) continue;
-      const terminator = tokens[rhsEnd + 1];
-      if (terminator?.type !== 'punctuator' || !new Set([';', ',', ')']).has(terminator.value)) continue;
-      if (!aliases.has(alias.value)) {
-        aliases.add(alias.value);
-        changed = true;
+      for (const descriptor of reflectiveExpressionDescriptors(tokens, rhsStart, rhsEnd, aliases)) {
+        if (addAlias(alias.value, descriptor)) changed = true;
       }
     }
     for (let index = 0; index < tokens.length - 6; index += 1) {
@@ -647,10 +775,11 @@ function reflectiveMethodAliases(tokens) {
           couldSelect = REFLECTIVE_PROPERTY_KEY_METHODS.has(tokens[cursor].value);
           if (couldSelect
             && !(tokens[cursor + 1]?.type === 'punctuator' && tokens[cursor + 1].value === ':')) {
-            if (!aliases.has(tokens[cursor].value)) {
-              aliases.add(tokens[cursor].value);
-              changed = true;
-            }
+            if (addAlias(tokens[cursor].value, Object.freeze({
+              end: cursor,
+              propertyIndex: 1,
+              boundPropertyRange: null,
+            }))) changed = true;
             cursor += 1;
             continue;
           }
@@ -665,10 +794,12 @@ function reflectiveMethodAliases(tokens) {
         if (couldSelect
           && tokens[cursor + 1]?.type === 'punctuator'
           && tokens[cursor + 1].value === ':'
-          && tokens[cursor + 2]?.type === 'identifier'
-          && !aliases.has(tokens[cursor + 2].value)) {
-          aliases.add(tokens[cursor + 2].value);
-          changed = true;
+          && tokens[cursor + 2]?.type === 'identifier') {
+          if (addAlias(tokens[cursor + 2].value, Object.freeze({
+            end: cursor + 2,
+            propertyIndex: 1,
+            boundPropertyRange: null,
+          }))) changed = true;
         }
         while (cursor < close
           && !(tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === ',')) cursor += 1;
@@ -676,12 +807,12 @@ function reflectiveMethodAliases(tokens) {
       }
     }
   }
-  return aliases;
+  return Object.freeze({ aliases, boundPropertyRanges: Object.freeze(boundPropertyRanges) });
 }
 
-function reflectiveCallPropertyRange(tokens, calleeStart, calleeEnd) {
+function reflectiveCallPropertyRange(tokens, calleeStart, calleeEnd, propertyIndex = 1) {
   const directOpen = callOpenAfterCallee(tokens, calleeStart, calleeEnd);
-  if (directOpen >= 0) return callArgumentRange(tokens, directOpen, 1);
+  if (directOpen >= 0) return callArgumentRange(tokens, directOpen, propertyIndex);
   const bounds = transparentCalleeBounds(tokens, calleeStart, calleeEnd);
   const access = tokens[bounds.end + 1];
   const method = tokens[bounds.end + 2];
@@ -691,13 +822,18 @@ function reflectiveCallPropertyRange(tokens, calleeStart, calleeEnd) {
     || !new Set(['apply', 'bind', 'call']).has(method.value)) return null;
   const borrowedOpen = callOpenAfterCallee(tokens, bounds.start, bounds.end + 2);
   if (borrowedOpen < 0) return null;
-  if (method.value === 'call') return callArgumentRange(tokens, borrowedOpen, 2);
+  if (method.value === 'call') return callArgumentRange(tokens, borrowedOpen, propertyIndex + 1);
   if (method.value === 'apply') {
     const argumentArray = callArgumentRange(tokens, borrowedOpen, 1);
-    return arrayElementRange(tokens, argumentArray, 1) ?? argumentArray;
+    return arrayElementRange(tokens, argumentArray, propertyIndex) ?? argumentArray;
   }
-  const close = matchingPunctuator(tokens, borrowedOpen, '(', ')');
-  return close < 0 ? null : Object.freeze({ start: borrowedOpen + 1, end: close });
+  const bound = reflectiveBindDescriptor(tokens, calleeStart, calleeEnd, propertyIndex);
+  if (!bound) return null;
+  if (bound.boundPropertyRange) return bound.boundPropertyRange;
+  const invocationOpen = callOpenAfterCallee(tokens, calleeStart, bound.end);
+  return invocationOpen < 0 || bound.propertyIndex === null
+    ? null
+    : callArgumentRange(tokens, invocationOpen, bound.propertyIndex);
 }
 
 function reflectivePropertyKeyRanges(tokens) {
@@ -709,12 +845,16 @@ function reflectivePropertyKeyRanges(tokens) {
     if (range) ranges.push(range);
     index = referenceEnd;
   }
-  const aliases = reflectiveMethodAliases(tokens);
+  const aliasAnalysis = reflectiveMethodAliases(tokens);
+  ranges.push(...aliasAnalysis.boundPropertyRanges);
   for (let index = 0; index < tokens.length; index += 1) {
     const alias = tokens[index];
-    if (alias?.type !== 'identifier' || !aliases.has(alias.value)) continue;
-    const range = reflectiveCallPropertyRange(tokens, index, index);
-    if (range) ranges.push(range);
+    if (alias?.type !== 'identifier' || !aliasAnalysis.aliases.has(alias.value)) continue;
+    for (const descriptor of aliasAnalysis.aliases.get(alias.value)) {
+      if (descriptor.propertyIndex === null) continue;
+      const range = reflectiveCallPropertyRange(tokens, index, index, descriptor.propertyIndex);
+      if (range) ranges.push(range);
+    }
   }
   return Object.freeze(ranges);
 }
@@ -919,15 +1059,8 @@ function blockedAuthorityReturn(tokens) {
 }
 
 function topLevelReturnStatements(tokens) {
-  const curlyDepthAt = [];
-  let curlyDepth = 0;
-  for (let index = 0; index < tokens.length; index += 1) {
-    curlyDepthAt[index] = curlyDepth;
-    if (tokens[index]?.type !== 'punctuator') continue;
-    if (tokens[index].value === '{') curlyDepth += 1;
-    else if (tokens[index].value === '}') curlyDepth -= 1;
-  }
-  return Object.freeze(returnStatements(tokens).filter(({ index }) => curlyDepthAt[index] === 0));
+  const statementStarts = directStatementStarts(tokens);
+  return Object.freeze(returnStatements(tokens).filter(({ index }) => statementStarts.has(index)));
 }
 
 function statementEnd(tokens, start) {

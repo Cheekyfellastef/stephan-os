@@ -320,6 +320,11 @@ test('computed authority remains visible across member, binding, and reflective 
     "export function widened(injected, empty) { const run = (Reflect['get']).call?.(null, injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const run = Reflect.get.apply(null, [injected, 'sp' + empty + 'awn']); run('cmd.exe'); }",
     "export function widened(injected, empty) { const getter = Reflect.get; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const getter = (0, Reflect.get); const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const getter = (null, (false, Reflect.get)); const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const getter = true && Reflect.get; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const getter = empty ? Reflect.get : () => null; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const getter = [Reflect.get][0]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const getter = Reflect.get; const borrowed = getter; const run = borrowed.call(null, injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const getter = Reflect.get.bind(Reflect); const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const run = Reflect.get.bind(Reflect, injected)('sp' + empty + 'awn'); run('cmd.exe'); }",
@@ -380,6 +385,11 @@ test('successor profile rejects global network capabilities without rejecting in
     "const helper = { render() {} }; const detached = Reflect.get.call(null, helper, 'render'); detached();",
     "const helper = { render() {} }; const detached = Reflect.get.apply(null, [helper, 'render']); detached();",
     "const helper = { render() {} }; const getter = Reflect.get; const detached = getter(helper, 'render'); detached();",
+    "const helper = { render() {} }; const getter = (0, Reflect.get); const detached = getter(helper, 'render'); detached();",
+    "const helper = { render() {} }; const getter = Reflect.get.bind(Reflect); const detached = getter(helper, 'render'); detached();",
+    "const helper = { render() {} }; const detached = Reflect.get.bind(Reflect)(helper, 'render'); detached();",
+    "const helper = { render() {} }; const getter = Reflect.get.bind(Reflect, helper); const detached = getter('render'); detached();",
+    "const helper = { render() {} }; const detached = Reflect.get.bind(Reflect, helper)('render'); detached();",
     `const helper = {}; helper[\`render-${'${mode}'}\`]();`,
     `const helper = {}; const detached = helper[\`render-${'${mode}'}\`];`,
     `const proofRef = \`proofs/openclaw/${'${receiptId}'}\`;`,
@@ -485,6 +495,8 @@ test('route success is structurally dominated by the negative provider-selection
     `  while (false) ${requiredGuard}`,
     `  for (; false;) ${requiredGuard}`,
     `  label: ${requiredGuard}`,
+    requiredGuard.replace('return Object.freeze', 'if (false) return Object.freeze'),
+    requiredGuard.replace('return Object.freeze', 'while (false) return Object.freeze'),
     requiredGuard.replace('if (!selectOpenClaw)', 'if (false && !selectOpenClaw)'),
   ]) {
     const content = hostileSources[0].content.replace(requiredGuard, replacement);
@@ -652,6 +664,8 @@ test('every split point of authority names remains visible across computed acces
           `export function widened(injected, maybe) { const run = Reflect['g' + maybe + 'et']?.(injected, \`${left}${substitution}${right}\`); run('cmd.exe'); }`,
           `export function widened(injected, maybe) { const run = Reflect.get.call(null, injected, \`${left}${substitution}${right}\`); run('cmd.exe'); }`,
           `export function widened(injected, maybe) { const getter = Reflect.get; const run = getter(injected, \`${left}${substitution}${right}\`); run('cmd.exe'); }`,
+          `export function widened(injected, maybe) { const getter = (0, Reflect.get); const run = getter(injected, \`${left}${substitution}${right}\`); run('cmd.exe'); }`,
+          `export function widened(injected, maybe) { const getter = Reflect.get.bind(Reflect, injected); const run = getter(\`${left}${substitution}${right}\`); run('cmd.exe'); }`,
         ]) {
           const result = analyzeProviderPoolInjection(hostileSource);
           assert.equal(result.clean, false, `${authorityName}:${split}:${substitution}:${hostileSource}`);
