@@ -27,7 +27,7 @@ export const PERSONAL_REPOSITORY_REQUIRED_CHECK = 'protected-merge-source-proof'
 export const PERSONAL_REPOSITORY_MODE = 'user-owned-protected-squash';
 export const PERSONAL_REPOSITORY_AUTHORITY = 'github-actions-protected-environment-exact-head-squash-only';
 export const PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS = 3;
-export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS = 60_000;
+export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS = 120_000;
 export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_POLL_INTERVAL_MS = 5_000;
 export const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES = 256 * 1024;
 export const PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES = 256 * 1024;
@@ -1267,6 +1267,46 @@ export function validatePersonalRepositoryWorkflowRunHydration(
     finalVerdict: valid
       ? 'PERSONAL_REPOSITORY_WORKFLOW_RUN_HYDRATION_READY'
       : 'PERSONAL_REPOSITORY_WORKFLOW_RUN_HYDRATION_BLOCKED',
+  });
+}
+
+export function buildPersonalRepositoryCheckExpectation({
+  repository = '',
+  identity = {},
+  mergeStateStatus = '',
+} = {}) {
+  const expected = Object.freeze({
+    repository: text(repository),
+    prNumber: strictPositiveInteger(identity?.prNumber),
+    branch: text(identity?.branch),
+    sourceHead: text(identity?.sourceHead).toLowerCase(),
+    baseSha: text(identity?.baseSha).toLowerCase(),
+    mergeStateStatus: text(mergeStateStatus).toUpperCase(),
+  });
+  const blockers = [];
+  if (!REPOSITORY_PATTERN.test(expected.repository)) {
+    blockers.push('personal-repository-check-expectation-repository-invalid');
+  }
+  if (!expected.prNumber) blockers.push('personal-repository-check-expectation-pr-invalid');
+  if (!BRANCH_PATTERN.test(expected.branch) || expected.branch.includes('..')) {
+    blockers.push('personal-repository-check-expectation-branch-invalid');
+  }
+  if (!SHA_PATTERN.test(expected.sourceHead)) {
+    blockers.push('personal-repository-check-expectation-head-invalid');
+  }
+  if (!SHA_PATTERN.test(expected.baseSha)) {
+    blockers.push('personal-repository-check-expectation-base-invalid');
+  }
+  if (!['CLEAN', 'UNSTABLE'].includes(expected.mergeStateStatus)) {
+    blockers.push('personal-repository-check-expectation-merge-state-invalid');
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    expected: blockers.length === 0 ? expected : null,
+    blockers: Object.freeze(blockers),
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_CHECK_EXPECTATION_BLOCKED'
+      : 'PERSONAL_REPOSITORY_CHECK_EXPECTATION_READY',
   });
 }
 
