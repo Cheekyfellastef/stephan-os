@@ -237,6 +237,9 @@ test('capacity is unusable without the exact validated qualification authority, 
   assert.equal(validateOpenClawProviderCapacity(capacity({ qualificationAuthorityReceiptId: 'foreign-authority' }), expected).valid, false);
   assert.equal(validateOpenClawProviderCapacity(capacity({ workerId: 'foreign-openclaw' }), expected).valid, false);
   assert.equal(validateOpenClawProviderCapacity(capacity({ supportedTaskClasses: ['WINDOWS_RUNTIME_PROOF'] }), expected).valid, false);
+  assert.equal(validateOpenClawProviderCapacity(capacity({
+    supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS', 'MERGE_PULL_REQUEST'],
+  }), expected).valid, false);
 });
 
 test('publishes only the complete trusted OpenClaw qualification chain to the canonical status path', async () => {
@@ -268,6 +271,17 @@ test('publishes only the complete trusted OpenClaw qualification chain to the ca
     );
     assert.equal(rejected.ok, false);
     assert.equal(rejected.reason, 'OPENCLAW_CAPACITY_INVALID');
+
+    const rejectedPrivilegedOperation = await publishOpenClawProviderPoolToSharedWorkspace(
+      root,
+      trustedHostContext({ capacityReceipt: capacity({
+        supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS', 'ARBITRARY_SHELL'],
+      }) }),
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW },
+      { repoRoot: process.cwd(), nowMs: Date.parse(NOW) },
+    );
+    assert.equal(rejectedPrivilegedOperation.ok, false);
+    assert.equal(rejectedPrivilegedOperation.reason, 'OPENCLAW_CAPACITY_INVALID');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

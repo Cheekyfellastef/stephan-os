@@ -29,6 +29,10 @@ const MAX_QUALIFICATION_LAG_MS = 10 * 60 * 1000;
 const MAX_SNAPSHOT_DEPTH = 12;
 const MAX_SNAPSHOT_NODES = 4096;
 const OPENCLAW_QUALIFICATION_ISSUE = 1725;
+const OPENCLAW_CAPACITY_OPERATIONS = Object.freeze([
+  'SOURCE_CONSTRUCTION',
+  'FOCUSED_TESTS',
+]);
 
 const QUALIFICATION_KEYS = Object.freeze([
   'schemaVersion',
@@ -335,8 +339,7 @@ export function validateOpenClawProviderCapacity(receipt, expected = {}) {
     && WORKSPACE_SAFE_ID.test(text(candidate.workerId))
     && candidate.workerId === expected.workerId
     && candidate.state === 'READY'
-    && operations?.includes('SOURCE_CONSTRUCTION')
-    && operations?.includes('FOCUSED_TESTS')
+    && sameStrings(operations, OPENCLAW_CAPACITY_OPERATIONS)
     && taskClasses?.includes(expected.taskClass)
     && qualificationIds?.includes(expected.qualificationId)
     && candidate.qualificationAuthorityReceiptId === expected.authorityReceiptId
