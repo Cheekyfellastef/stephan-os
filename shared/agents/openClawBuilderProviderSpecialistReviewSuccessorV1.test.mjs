@@ -4,8 +4,8 @@ import test from 'node:test';
 
 import {
   OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1,
-  analyzeOpenClawBuilderProviderSpecialistReviewV1,
-} from './openClawBuilderProviderSpecialistReviewV1.mjs';
+  analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1,
+} from './openClawBuilderProviderSpecialistReviewSuccessorV1.mjs';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const SUCCESSOR_PR = 1999;
@@ -116,8 +116,8 @@ function successorInput(overrides = {}) {
   };
 }
 
-test('successor PR may use the existing provider-pool specialist only for the exact two-file core escalation', () => {
-  const result = analyzeOpenClawBuilderProviderSpecialistReviewV1(successorInput());
+test('standalone successor specialist covers only the exact two-file provider-pool core escalation', () => {
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput());
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true);
   assert.deepEqual(result.reviewedPaths, OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1);
@@ -126,9 +126,11 @@ test('successor PR may use the existing provider-pool specialist only for the ex
 });
 
 test('successor profile rejects invalid PR identity, unsafe branch identity, incomplete scope and widened four-file scope', () => {
-  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(successorInput({ prNumber: 0 })).eligible, false);
-  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(successorInput({ branch: '../escape' })).eligible, false);
-  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(successorInput({
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ prNumber: 0 })).eligible, false);
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ prNumber: 1905 })).eligible, false);
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ prNumber: 1910 })).eligible, false);
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ branch: '../escape' })).eligible, false);
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({
     analysis: analysis(OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1.slice(0, 1)),
   })).eligible, false);
 
@@ -137,14 +139,14 @@ test('successor profile rejects invalid PR identity, unsafe branch identity, inc
     'shared/agents/openClawTaskClassPromotionCandidateV1.mjs',
     'shared/agents/openClawTaskClassPromotionCandidateV1.test.mjs',
   ];
-  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(successorInput({
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({
     analysis: analysis(widened),
   })).eligible, false);
 });
 
 test('successor profile remains exact-lineage and exact-source bound', () => {
   const movedMain = '2222222222222222222222222222222222222222';
-  const drift = analyzeOpenClawBuilderProviderSpecialistReviewV1(successorInput({
+  const drift = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({
     lineageEvidence: lineage(SUCCESSOR_HEAD, SUCCESSOR_BASE, { liveMainAfterSha: movedMain }),
   }));
   assert.equal(drift.eligible, true);
@@ -153,7 +155,7 @@ test('successor profile remains exact-lineage and exact-source bound', () => {
 
   const tampered = sources();
   tampered[0] = { ...tampered[0], blobSha: '3333333333333333333333333333333333333333' };
-  const badSource = analyzeOpenClawBuilderProviderSpecialistReviewV1(successorInput({ sources: tampered }));
+  const badSource = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: tampered }));
   assert.equal(badSource.eligible, true);
   assert.equal(badSource.clean, false);
   assert.ok(badSource.findings.some((item) => item.code === 'openclaw-provider-pool-source-evidence-invalid'));
