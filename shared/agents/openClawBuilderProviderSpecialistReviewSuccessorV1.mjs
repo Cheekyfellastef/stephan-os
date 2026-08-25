@@ -128,6 +128,36 @@ const DANGEROUS_AUTHORITY_TOKENS = new Set([
 const MAX_FOLDED_AUTHORITY_STRING_LENGTH = 128;
 const MAX_FOLDED_AUTHORITY_EXPRESSION_DEPTH = 32;
 
+function readJavaScriptEscapeSequence(source, start) {
+  let index = start + 1;
+  if (index >= source.length) return { valid: false, end: source.length, value: '' };
+  const escaped = source[index];
+  if (escaped === '\r' || escaped === '\n') {
+    if (escaped === '\r' && source[index + 1] === '\n') index += 1;
+    return { valid: true, end: index + 1, value: '' };
+  }
+  const simple = Object.freeze({ b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', 0: '\0', "'": "'", '"': '"', '\\': '\\', '`': '`', '$': '$' });
+  if (Object.hasOwn(simple, escaped)) return { valid: true, end: index + 1, value: simple[escaped] };
+  if (escaped === 'x') {
+    const hex = source.slice(index + 1, index + 3);
+    if (!/^[a-f0-9]{2}$/i.test(hex)) return { valid: false, end: source.length, value: '' };
+    return { valid: true, end: index + 3, value: String.fromCodePoint(Number.parseInt(hex, 16)) };
+  }
+  if (escaped === 'u') {
+    if (source[index + 1] === '{') {
+      const close = source.indexOf('}', index + 2);
+      const hex = close < 0 ? '' : source.slice(index + 2, close);
+      const point = /^[a-f0-9]{1,6}$/i.test(hex) ? Number.parseInt(hex, 16) : -1;
+      if (point < 0 || point > 0x10ffff) return { valid: false, end: source.length, value: '' };
+      return { valid: true, end: close + 1, value: String.fromCodePoint(point) };
+    }
+    const hex = source.slice(index + 1, index + 5);
+    if (!/^[a-f0-9]{4}$/i.test(hex)) return { valid: false, end: source.length, value: '' };
+    return { valid: true, end: index + 5, value: String.fromCodePoint(Number.parseInt(hex, 16)) };
+  }
+  return { valid: false, end: source.length, value: '' };
+}
+
 function readJavaScriptString(source, start) {
   const quote = source[start];
   let value = '';
@@ -141,44 +171,10 @@ function readJavaScriptString(source, start) {
       index += 1;
       continue;
     }
-    index += 1;
-    if (index >= source.length) return { valid: false, end: source.length, value: '' };
-    const escaped = source[index];
-    if (escaped === '\r' || escaped === '\n') {
-      if (escaped === '\r' && source[index + 1] === '\n') index += 1;
-      index += 1;
-      continue;
-    }
-    const simple = Object.freeze({ b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', 0: '\0', "'": "'", '"': '"', '\\': '\\' });
-    if (Object.hasOwn(simple, escaped)) {
-      value += simple[escaped];
-      index += 1;
-      continue;
-    }
-    if (escaped === 'x') {
-      const hex = source.slice(index + 1, index + 3);
-      if (!/^[a-f0-9]{2}$/i.test(hex)) return { valid: false, end: source.length, value: '' };
-      value += String.fromCodePoint(Number.parseInt(hex, 16));
-      index += 3;
-      continue;
-    }
-    if (escaped === 'u') {
-      if (source[index + 1] === '{') {
-        const close = source.indexOf('}', index + 2);
-        const hex = close < 0 ? '' : source.slice(index + 2, close);
-        const point = /^[a-f0-9]{1,6}$/i.test(hex) ? Number.parseInt(hex, 16) : -1;
-        if (point < 0 || point > 0x10ffff) return { valid: false, end: source.length, value: '' };
-        value += String.fromCodePoint(point);
-        index = close + 1;
-        continue;
-      }
-      const hex = source.slice(index + 1, index + 5);
-      if (!/^[a-f0-9]{4}$/i.test(hex)) return { valid: false, end: source.length, value: '' };
-      value += String.fromCodePoint(Number.parseInt(hex, 16));
-      index += 5;
-      continue;
-    }
-    return { valid: false, end: source.length, value: '' };
+    const escape = readJavaScriptEscapeSequence(source, index);
+    if (!escape.valid) return { valid: false, end: source.length, value: '' };
+    value += escape.value;
+    index = escape.end;
   }
   return { valid: false, end: source.length, value: '' };
 }
@@ -211,13 +207,19 @@ function canStartJavaScriptRegex(tokens) {
   if (previous.type === 'identifier') {
     return new Set(['await', 'case', 'delete', 'in', 'instanceof', 'of', 'return', 'throw', 'typeof', 'void', 'yield']).has(previous.value);
   }
-  if (previous.type === 'number' || previous.type === 'string' || previous.type === 'regex') return false;
+  if (previous.type === 'number' || previous.type === 'string' || previous.type === 'template' || previous.type === 'regex') return false;
   return !new Set([')', ']', '}']).has(previous.value);
 }
 
 function tokenizeJavaScriptAuthority(source) {
   const tokens = [];
-  const contexts = [{ kind: 'code', templateExpression: false, braceDepth: 0 }];
+  const contexts = [{ kind: 'code', templateExpression: false, braceDepth: 0, localTokens: [] }];
+  const pushToken = (token) => {
+    const frozen = Object.freeze(token);
+    tokens.push(frozen);
+    const codeContext = contexts.at(-1);
+    if (codeContext?.kind === 'code') codeContext.localTokens.push(frozen);
+  };
   let index = 0;
   while (index < source.length) {
     const context = contexts.at(-1);
@@ -225,14 +227,40 @@ function tokenizeJavaScriptAuthority(source) {
     const next = source[index + 1];
     if (context.kind === 'template') {
       if (current === '\\') {
-        index += 2;
+        const escape = readJavaScriptEscapeSequence(source, index);
+        if (!escape.valid) return { valid: false, tokens: Object.freeze(tokens) };
+        context.currentChunk += escape.value;
+        index = escape.end;
       } else if (current === '`') {
+        context.chunks.push(context.currentChunk);
         contexts.pop();
         index += 1;
+        const collapsed = context.chunks.join('');
+        let constantValue = '';
+        for (let part = 0; part < context.chunks.length; part += 1) {
+          constantValue += context.chunks[part];
+          if (part < context.expressionValues.length) {
+            if (context.expressionValues[part] === null) {
+              constantValue = null;
+              break;
+            }
+            constantValue += context.expressionValues[part];
+          }
+        }
+        const bounded = (value) => typeof value === 'string' && value.length <= MAX_FOLDED_AUTHORITY_STRING_LENGTH;
+        const authorityValues = unique([
+          ...context.chunks.filter(bounded),
+          bounded(collapsed) ? collapsed : '',
+          bounded(constantValue) ? constantValue : '',
+        ].filter(Boolean));
+        pushToken({ type: 'template', value: constantValue || '', constant: constantValue !== null, authorityValues: Object.freeze(authorityValues) });
       } else if (current === '$' && next === '{') {
-        contexts.push({ kind: 'code', templateExpression: true, braceDepth: 1 });
+        context.chunks.push(context.currentChunk);
+        context.currentChunk = '';
+        contexts.push({ kind: 'code', templateExpression: true, braceDepth: 1, localTokens: [] });
         index += 2;
       } else {
+        context.currentChunk += current;
         index += 1;
       }
       continue;
@@ -252,34 +280,34 @@ function tokenizeJavaScriptAuthority(source) {
       index = close + 2;
       continue;
     }
-    if (current === '/' && canStartJavaScriptRegex(tokens)) {
+    if (current === '/' && canStartJavaScriptRegex(context.localTokens)) {
       const regexToken = readJavaScriptRegex(source, index);
       if (!regexToken.valid) return { valid: false, tokens: Object.freeze(tokens) };
-      tokens.push(Object.freeze({ type: 'regex', value: '' }));
+      pushToken({ type: 'regex', value: '' });
       index = regexToken.end;
       continue;
     }
     if (current === "'" || current === '"') {
       const stringToken = readJavaScriptString(source, index);
       if (!stringToken.valid) return { valid: false, tokens: Object.freeze(tokens) };
-      tokens.push(Object.freeze({ type: 'string', value: stringToken.value }));
+      pushToken({ type: 'string', value: stringToken.value });
       index = stringToken.end;
       continue;
     }
     if (current === '`') {
-      contexts.push({ kind: 'template' });
+      contexts.push({ kind: 'template', chunks: [], currentChunk: '', expressionValues: [] });
       index += 1;
       continue;
     }
     const identifier = source.slice(index).match(/^[A-Za-z_$][A-Za-z0-9_$]*/)?.[0] || '';
     if (identifier) {
-      tokens.push(Object.freeze({ type: 'identifier', value: identifier }));
+      pushToken({ type: 'identifier', value: identifier });
       index += identifier.length;
       continue;
     }
     const number = source.slice(index).match(/^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/)?.[0] || '';
     if (number) {
-      tokens.push(Object.freeze({ type: 'number', value: number }));
+      pushToken({ type: 'number', value: number });
       index += number.length;
       continue;
     }
@@ -288,11 +316,15 @@ function tokenizeJavaScriptAuthority(source) {
     if (context.templateExpression && current === '}') {
       context.braceDepth -= 1;
       index += 1;
-      if (context.braceDepth === 0) contexts.pop();
-      else tokens.push(Object.freeze({ type: 'punctuator', value: current }));
+      if (context.braceDepth === 0) {
+        const folded = foldConstantStringExpression(context.localTokens, 0);
+        const constantValue = folded && folded.end === context.localTokens.length ? folded.value : null;
+        contexts.pop();
+        contexts.at(-1).expressionValues.push(constantValue);
+      } else pushToken({ type: 'punctuator', value: current });
       continue;
     }
-    tokens.push(Object.freeze({ type: 'punctuator', value: current }));
+    pushToken({ type: 'punctuator', value: current });
     index += 1;
   }
   return { valid: contexts.length === 1, tokens: Object.freeze(tokens) };
@@ -303,7 +335,7 @@ function foldConstantStringExpression(tokens, start, depth = 0) {
   const first = tokens[start];
   let value = '';
   let cursor = start;
-  if (first?.type === 'string') {
+  if (first?.type === 'string' || (first?.type === 'template' && first.constant === true)) {
     value = first.value;
     cursor += 1;
   } else if (first?.type === 'punctuator' && first.value === '(') {
@@ -329,7 +361,8 @@ function foldConstantStringExpression(tokens, start, depth = 0) {
 function constantAuthorityStrings(tokens) {
   const values = [];
   for (let index = 0; index < tokens.length; index += 1) {
-    if (tokens[index]?.type !== 'string' && tokens[index]?.value !== '(') continue;
+    if (tokens[index]?.type === 'template') values.push(...tokens[index].authorityValues);
+    if (tokens[index]?.type !== 'string' && tokens[index]?.type !== 'template' && tokens[index]?.value !== '(') continue;
     const folded = foldConstantStringExpression(tokens, index);
     if (folded) values.push(folded.value);
   }

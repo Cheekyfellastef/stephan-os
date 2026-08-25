@@ -121,6 +121,18 @@ function successorInput(overrides = {}) {
   };
 }
 
+function analyzeProviderPoolInjection(injection) {
+  const hostileSources = sources();
+  const content = `${hostileSources[0].content}\n${injection}\n`;
+  hostileSources[0] = {
+    ...hostileSources[0],
+    size: Buffer.byteLength(content, 'utf8'),
+    blobSha: blobSha(content),
+    content,
+  };
+  return analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
+}
+
 test('standalone successor specialist covers only the exact two-file provider-pool core escalation', () => {
   const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput());
   assert.equal(result.eligible, true);
@@ -182,21 +194,78 @@ test('successor profile lexically rejects aliased, commented, escaped, dynamic, 
     "globalThis[('pro' + ('ce' + 'ss'))]['getBuiltin' + 'Module']('child_' + ('pro' + 'cess'));",
     "export function widened(injected) { injected['sp' + 'awn']('cmd.exe'); }",
     "export function widened(injected) { injected['exec' + 'FileSync']('cmd.exe'); }",
+    "export function widened(injected) { injected[`sp${''}awn`]('cmd.exe'); }",
+    "export function widened(injected, maybe) { injected[`sp${maybe}awn`]('cmd.exe'); }",
+    "export function widened(injected) { injected[`sp\\u0061wn`]('cmd.exe'); }",
+    "const moduleName = `child_${''}process`; const { run } = await import(moduleName); run('cmd.exe');",
+    "const moduleName = `${`child_`}${`process`}`; const { run } = await import(moduleName); run('cmd.exe');",
     "const make = (() => {}).constructor; make('return globalThis')();",
     "const load = globalThis['require']; load('child_' + 'process');",
     "const innocent = /[/*]/; const result = await import /* comment */ ('node:child_process');",
   ]) {
-    const hostileSources = sources();
-    const content = `${hostileSources[0].content}\n${processImport}\n`;
-    hostileSources[0] = {
-      ...hostileSources[0],
-      size: Buffer.byteLength(content, 'utf8'),
-      blobSha: blobSha(content),
-      content,
-    };
-    const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
+    const result = analyzeProviderPoolInjection(processImport);
     assert.equal(result.eligible, true);
     assert.equal(result.clean, false);
     assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
   }
+});
+
+test('every split point of authority names remains visible through static and dynamic template substitutions', () => {
+  for (const authorityName of [
+    'AsyncFunction',
+    'Bun',
+    'Deno',
+    'Function',
+    'WebAssembly',
+    '_linkedBinding',
+    'binding',
+    'child_process',
+    'constructor',
+    'createRequire',
+    'dlopen',
+    'eval',
+    'exec',
+    'execFile',
+    'execFileSync',
+    'execSync',
+    'fork',
+    'fs',
+    'fs/promises',
+    'getBuiltinModule',
+    'global',
+    'globalThis',
+    'module',
+    'node:child_process',
+    'node:fs',
+    'node:fs/promises',
+    'node:module',
+    'process',
+    'require',
+    'spawn',
+    'spawnSync',
+  ]) {
+    for (let split = 1; split < authorityName.length; split += 1) {
+      const left = authorityName.slice(0, split);
+      const right = authorityName.slice(split);
+      for (const substitution of ["${''}", '${maybe}']) {
+        const result = analyzeProviderPoolInjection(`export function widened(injected, maybe) { injected[\`${left}${substitution}${right}\`]('cmd.exe'); }`);
+        assert.equal(result.clean, false, `${authorityName}:${split}:${substitution}`);
+        assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
+      }
+    }
+  }
+});
+
+test('successor template analysis preserves benign dynamic proof strings', () => {
+  const benignSources = sources();
+  const content = `${benignSources[0].content}\nconst proofRef = \`proofs/openclaw/${'${receiptId}'}\`;\n`;
+  benignSources[0] = {
+    ...benignSources[0],
+    size: Buffer.byteLength(content, 'utf8'),
+    blobSha: blobSha(content),
+    content,
+  };
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: benignSources }));
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true);
 });
