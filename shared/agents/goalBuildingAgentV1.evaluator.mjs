@@ -29,8 +29,10 @@ export function evaluateGoalBuildingProgramme(input = {}) {
   if (!SHA_40.test(expectedHead)) evidenceProblems.push('expected-head-invalid');
   const protectedMainHead = text(input.protectedMainHead).toLowerCase();
   const installedMainHead = text(input.installedMainHead).toLowerCase();
+  const physicalExecutionRequired = input.physicalExecutionRequired === true;
   if (!SHA_40.test(protectedMainHead)) evidenceProblems.push('protected-main-head-invalid');
-  if (!SHA_40.test(installedMainHead)) evidenceProblems.push('installed-main-head-invalid');
+  if (physicalExecutionRequired && !SHA_40.test(installedMainHead)) evidenceProblems.push('installed-main-head-invalid');
+  if (!physicalExecutionRequired && installedMainHead && !SHA_40.test(installedMainHead)) evidenceProblems.push('installed-main-head-invalid');
   if (SHA_40.test(expectedHead) && SHA_40.test(protectedMainHead) && protectedMainHead !== expectedHead) evidenceProblems.push('expected-protected-main-contradiction');
   if (SHA_40.test(expectedHead) && SHA_40.test(installedMainHead) && installedMainHead !== expectedHead) blockingReasons.push('installed-main-head-mismatch');
 
@@ -42,17 +44,35 @@ export function evaluateGoalBuildingProgramme(input = {}) {
   blockingReasons.push(...surfaceResult.blockingReasons, ...programmeResult.blockingReasons, ...blockerResult.blockingReasons);
   degradedReasons.push(...surfaceResult.degradedReasons, ...programmeResult.degradedReasons, ...blockerResult.degradedReasons);
 
-  const derivedIndependentWorkContinues = programmeResult.productiveMissions.length > 0
-    || (programmeResult.eligibleQueuedGoalCount === 0
-      && programmeResult.activeMissions.length > 0
-      && programmeResult.waitingMissions.length === programmeResult.activeMissions.length);
+  const activeMissionById = new Map(programmeResult.activeMissions.map((mission) => [mission.missionId, mission]));
+  const accountedMissionIds = new Set();
   for (const blocker of blockerResult.blockers) {
-    if (blocker.independentWorkContinues && !derivedIndependentWorkContinues) {
+    const correlatedMission = blocker.missionId ? activeMissionById.get(blocker.missionId) : null;
+    if (blocker.missionId && !correlatedMission) {
+      evidenceProblems.push(`blocker-mission-unknown:${blocker.blockerId || 'missing'}`);
+    }
+    if (correlatedMission && blocker.goalId && blocker.goalId !== correlatedMission.goalId) {
+      evidenceProblems.push(`blocker-goal-mismatch:${blocker.blockerId || 'missing'}`);
+    }
+    if (correlatedMission && blocker.ownerId && blocker.route && blocker.nextAction
+      && (!blocker.goalId || blocker.goalId === correlatedMission.goalId)) {
+      accountedMissionIds.add(correlatedMission.missionId);
+    }
+
+    const distinctProductiveMission = programmeResult.productiveMissions.some((mission) => {
+      if (blocker.missionId && mission.missionId === blocker.missionId) return false;
+      if (blocker.goalId && mission.goalId === blocker.goalId) return false;
+      return true;
+    });
+    const exactOperatorWait = blocker.route === 'REQUEST_EXACT_OPERATOR_APPROVAL'
+      && operatorAction.required
+      && correlatedMission
+      && ['WAITING_FOR_OPERATOR', 'READY_FOR_OPERATOR_APPROVAL'].includes(correlatedMission.phase);
+    if (blocker.independentWorkContinues && !distinctProductiveMission && !exactOperatorWait) {
       evidenceProblems.push(`independent-work-claim-unproven:${blocker.blockerId || 'missing'}`);
     }
   }
 
-  const accountedMissionIds = new Set(blockerResult.blockers.filter((blocker) => blocker.ownerId && blocker.route && blocker.nextAction).map((blocker) => blocker.missionId).filter(Boolean));
   for (const mission of [...programmeResult.waitingMissions, ...programmeResult.stalledMissions]) {
     if (!accountedMissionIds.has(mission.missionId)) blockingReasons.push(`mission-blocker-unowned:${mission.missionId || 'missing'}`);
   }
@@ -71,10 +91,11 @@ export function evaluateGoalBuildingProgramme(input = {}) {
     if (timestampVerdict(surface.observedAtUtc, { ...timing, maxAgeMs: policy.maxAgeMs }) !== 'CURRENT') return false;
     return !policy.headBound || surface.head === expectedHead;
   });
+  const installedHeadSatisfied = !surfaceResult.physicalExecutionRequired || installedMainHead === expectedHead;
   const isCapableOfBuilding = uniqueEvidenceProblems.length === 0
     && SHA_40.test(expectedHead)
     && protectedMainHead === expectedHead
-    && installedMainHead === expectedHead
+    && installedHeadSatisfied
     && coreSurfacesHealthy
     && !uniqueBlockingReasons.some((reason) => reason.startsWith('surface-') || reason.includes('head-mismatch') || reason.includes('head-unbound'));
   const missionWorker = surfaceResult.byId.get('missionWorker');
@@ -96,7 +117,7 @@ export function evaluateGoalBuildingProgramme(input = {}) {
     && !allActiveMissionsManagedWait) state = GOAL_BUILDING_OPERATING_STATES.BLOCKED;
 
   const reasons = [...uniqueEvidenceProblems, ...uniqueBlockingReasons, ...uniqueDegradedReasons];
-  const nextAction = chooseNextAction(programmeResult, blockerResult.blockers, operatorAction, reasons);
+  const nextAction = chooseNextAction(programmeResult, blockerResult.blockers, operatorAction, reasons, state);
   const summary = buildSummary({
     state,
     isCapableOfBuilding,
@@ -105,6 +126,13 @@ export function evaluateGoalBuildingProgramme(input = {}) {
     blockingReasons: uniqueBlockingReasons,
     degradedReasons: uniqueDegradedReasons,
   });
+
+  let programmeMode = 'ACTIVE_PROGRESS_NOT_PROVEN';
+  if (state === GOAL_BUILDING_OPERATING_STATES.SAFE_HOLD) programmeMode = 'SAFE_HOLD';
+  else if (state === GOAL_BUILDING_OPERATING_STATES.BLOCKED) programmeMode = 'BLOCKED';
+  else if (isActuallyBuilding) programmeMode = 'ACTIVE_PROGRESS_PROVEN';
+  else if (programmeResult.activeMissions.length === 0 && programmeResult.eligibleQueuedGoalCount === 0) programmeMode = 'IDLE_NO_ELIGIBLE_WORK';
+  else if (allActiveMissionsManagedWait) programmeMode = 'GOVERNED_WAIT';
 
   return Object.freeze({
     schemaVersion: GOAL_BUILDING_AGENT_SCHEMA_VERSION,
@@ -116,9 +144,7 @@ export function evaluateGoalBuildingProgramme(input = {}) {
     state,
     isCapableOfBuilding,
     isActuallyBuilding,
-    programmeMode: isActuallyBuilding
-      ? 'ACTIVE_PROGRESS_PROVEN'
-      : (programmeResult.activeMissions.length === 0 && programmeResult.eligibleQueuedGoalCount === 0 ? 'IDLE_NO_ELIGIBLE_WORK' : 'ACTIVE_PROGRESS_NOT_PROVEN'),
+    programmeMode,
     physicalExecutionRequired: surfaceResult.physicalExecutionRequired,
     activeMissionCount: programmeResult.activeMissions.length,
     productiveMissionCount: programmeResult.productiveMissions.length,
