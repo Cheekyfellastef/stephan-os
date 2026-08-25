@@ -160,3 +160,24 @@ test('successor profile remains exact-lineage and exact-source bound', () => {
   assert.equal(badSource.clean, false);
   assert.ok(badSource.findings.some((item) => item.code === 'openclaw-provider-pool-source-evidence-invalid'));
 });
+
+test('successor profile rejects aliased bare, node-prefixed, and dynamic process imports', () => {
+  for (const processImport of [
+    "import { spawn as run } from 'child_process'; run('cmd.exe');",
+    "import { execFile as run } from 'node:child_process'; run('cmd.exe');",
+    "const { spawn: run } = await import('child_process'); run('cmd.exe');",
+  ]) {
+    const hostileSources = sources();
+    const content = `${hostileSources[0].content}\n${processImport}\n`;
+    hostileSources[0] = {
+      ...hostileSources[0],
+      size: Buffer.byteLength(content, 'utf8'),
+      blobSha: blobSha(content),
+      content,
+    };
+    const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
+    assert.equal(result.eligible, true);
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
+  }
+});

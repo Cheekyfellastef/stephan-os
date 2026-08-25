@@ -108,7 +108,7 @@ function reviewProviderPool(source, path, findings) {
     ['duplicateDispatchAllowed: false', 'openclaw-provider-pool-duplicate-dispatch-denial-missing'],
   ]);
   forbidPatterns(findings, source, path, [
-    [/from ['"]node:(?:child_process|fs|fs\/promises)['"]|require\(['"](?:child_process|fs)['"]\)/, 'openclaw-provider-pool-local-execution-authority-forbidden'],
+    [/(?:from\s*|require\s*\(|import\s*\()\s*['"](?:node:)?(?:child_process|fs|fs\/promises)['"]/, 'openclaw-provider-pool-local-execution-authority-forbidden'],
     [/\b(?:exec|execSync|execFile|spawn|spawnSync|fork)\s*\(|shell\s*:\s*true|\beval\s*\(|new\s+Function\s*\(/i, 'openclaw-provider-pool-dynamic-execution-forbidden'],
   ]);
 }
