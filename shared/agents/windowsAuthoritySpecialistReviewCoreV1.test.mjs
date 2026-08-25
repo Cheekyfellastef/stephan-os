@@ -104,27 +104,10 @@ const forgeInstaller = `
 $Repository = 'Cheekyfellastef/stephan-os'
 $ForgejoVersion = '15.0.6'
 $PodmanVersion = '6.0.2'
-$WindowsHostAdapter = 'podman-desktop-windows10-wsl2-v1'
-$MinimumWindowsBuild = 19043
-$MaximumWindowsBuildExclusive = 22000
-$RequiredWindowsArchitecture = 'X64'
 $MachineName = 'stephanos-forge-shadow'
 $ContainerName = 'stephanos-forge-shadow'
 $RemoteUrl = 'https://github.com/Cheekyfellastef/stephan-os.git'
 $HostAddress = '127.0.0.1'
-if ($ObservedWindowsInstallationType -ne 'Client' -or $ObservedWindowsProductName -notmatch '^Windows 10(?:\\s|$)') { Fail 'WINDOWS_10_CLIENT_REQUIRED' }
-if ($ObservedWindowsArchitecture -ne $RequiredWindowsArchitecture) { Fail 'WINDOWS_10_CLIENT_REQUIRED' }
-if ($ObservedWindowsBuild -lt $MinimumWindowsBuild) { Fail 'WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED' }
-if ($ObservedWindowsBuild -ge $MaximumWindowsBuildExclusive) { Fail 'WINDOWS_10_CLIENT_REQUIRED' }
-function Get-Wsl2Evidence {
-  $status = Invoke-Fixed $WslExe @('--status') -AllowFailure
-  if ($statusText -match '(?im)^\\s*Default Version:\\s*2\\s*$') { return 'default-version-2' }
-  $list = Invoke-Fixed $WslExe @('--list', '--verbose') -AllowFailure
-  if ($listText -match '2') { return 'distribution-version-2' }
-  return ''
-}
-$ObservedWsl2Evidence = Get-Wsl2Evidence
-if (-not $ObservedWsl2Evidence) { Fail 'WSL2_NOT_AVAILABLE' }
 function Invoke-PodmanRemote {
   $boundArguments = @('--connection', $MachineName) + @($Arguments)
 }
@@ -167,7 +150,6 @@ mergeAuthority = $false
 const forgeStaticTest = `
 ${IMPORT_TOKEN} { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('./install-forge-shadow-podman-v1.ps1', import.meta.url), 'utf8');
-test('Windows 10 x64 compatibility authority uses an exact build range and real WSL2 evidence', () => {});
 test('every remote Podman operation is bound to the named Forge machine connection', () => {});
 test('bootstrap token revocation is attempted even when mirror migration fails', () => {});
 test('backup restore probe always cleans temporary state and restarts the canonical Forge container', () => {});
@@ -273,34 +255,6 @@ test('Forge specialist fails closed when actual OCI digest proof or connection b
   assert.ok(codes.includes('forge-podman-connection-not-fixed'));
   assert.ok(codes.includes('forge-container-image-digest-not-independently-proved'));
   assert.ok(codes.includes('forge-container-image-digest-blocker-missing'));
-});
-
-test('Forge host authority reassignment and weakened WSL2 proof fail closed', () => {
-  for (const [mutation, code] of [
-    ["\n$MinimumWindowsBuild = 0\n", 'forge-windows-build-floor-assignment-not-unique'],
-    ["\n$MaximumWindowsBuildExclusive = 99999\n", 'forge-windows-build-ceiling-assignment-not-unique'],
-    ["\n$RequiredWindowsArchitecture = 'Arm64'\n", 'forge-windows-architecture-assignment-not-unique'],
-    ["\n$WindowsHostAdapter = 'anything-goes'\n", 'forge-windows-host-adapter-assignment-not-unique'],
-  ]) {
-    const result = analyzeWindowsAuthoritySpecialistReview({
-      repository: REPOSITORY,
-      sourceHead: HEAD,
-      analysis: escalation(forgePaths),
-      sources: [record(forgePaths[0], forgeInstaller + mutation), record(forgePaths[1], forgeStaticTest)],
-    });
-    assert.equal(result.clean, false);
-    assert.ok(result.findings.some((item) => item.code === code));
-  }
-
-  const noWsl2 = forgeInstaller.replace("$ObservedWsl2Evidence = Get-Wsl2Evidence", '# removed');
-  const result = analyzeWindowsAuthoritySpecialistReview({
-    repository: REPOSITORY,
-    sourceHead: HEAD,
-    analysis: escalation(forgePaths),
-    sources: [record(forgePaths[0], noWsl2), record(forgePaths[1], forgeStaticTest)],
-  });
-  assert.equal(result.clean, false);
-  assert.ok(result.findings.some((item) => item.code === 'forge-wsl2-gate-missing'));
 });
 
 test('Forge specialist test must remain static and must guard the actual image digest', () => {

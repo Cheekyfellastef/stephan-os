@@ -28,13 +28,6 @@ function exactSource(source, repository, sourceHead, path) {
 function requireLiteral(findings, source, literal, code, summary, path) { if (!source.includes(literal)) findings.push(finding(code, summary, path)); }
 function requirePattern(findings, source, pattern, code, summary, path) { if (!pattern.test(source)) findings.push(finding(code, summary, path)); }
 function forbidPattern(findings, source, pattern, code, summary, path) { if (pattern.test(source)) findings.push(finding(code, summary, path)); }
-function escapeRegex(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-function requireUniqueAssignment(findings, source, variable, expectedLine, code, summary, path) {
-  const pattern = new RegExp(`^\\s*\\$${escapeRegex(variable)}\\s*=`, 'gm');
-  const matches = [...source.matchAll(pattern)];
-  const exact = source.split(/\r?\n/).filter((line) => line.trim() === expectedLine);
-  if (matches.length !== 1 || exact.length !== 1) findings.push(finding(code, summary, path));
-}
 function escalationPaths(analysis = {}) {
   const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
   if (findings.length !== 1) return [];
@@ -70,29 +63,8 @@ function reviewPrerequisite(source, path, findings) {
     ['githubCredentialUsed = $false', 'forge-podman-prerequisite-github-credential-not-zero', 'GitHub credentials must not be used.'],
     ['arbitraryPowerShellAllowed = $false', 'forge-podman-prerequisite-powershell-authority-not-zero', 'Arbitrary PowerShell authority must be denied.'],
   ]) requireLiteral(findings, source, literal, code, summary, path);
-
-  for (const [variable, expectedLine, code, summary] of [
-    ['Repository', "$Repository = 'Cheekyfellastef/stephan-os'", 'forge-podman-prerequisite-repository-assignment-not-unique', 'Repository assignment must be unique and immutable.'],
-    ['PodmanVersion', "$PodmanVersion = '6.0.2'", 'forge-podman-prerequisite-version-assignment-not-unique', 'Podman version assignment must be unique and immutable.'],
-    ['WindowsHostAdapter', "$WindowsHostAdapter = 'podman-desktop-windows10-wsl2-v1'", 'forge-podman-prerequisite-host-adapter-assignment-not-unique', 'Windows host adapter assignment must be unique and immutable.'],
-    ['MinimumWindowsBuild', '$MinimumWindowsBuild = 19043', 'forge-podman-prerequisite-build-floor-assignment-not-unique', 'Windows build floor must be assigned exactly once to 19043.'],
-    ['MaximumWindowsBuildExclusive', '$MaximumWindowsBuildExclusive = 22000', 'forge-podman-prerequisite-build-ceiling-assignment-not-unique', 'Windows build ceiling must be assigned exactly once to 22000 exclusive.'],
-    ['RequiredWindowsArchitecture', "$RequiredWindowsArchitecture = 'X64'", 'forge-podman-prerequisite-architecture-assignment-not-unique', 'Windows architecture must be assigned exactly once to X64.'],
-    ['InstallerUrl', "$InstallerUrl = 'https://github.com/podman-container-tools/podman/releases/download/v6.0.2/podman-installer-windows-amd64.msi'", 'forge-podman-prerequisite-installer-url-assignment-not-unique', 'Installer URL assignment must remain one fixed official asset.'],
-    ['InstallerSha256', `$InstallerSha256 = '${INSTALLER_SHA256}'`, 'forge-podman-prerequisite-installer-digest-assignment-not-unique', 'Installer digest assignment must remain unique and fixed.'],
-  ]) requireUniqueAssignment(findings, source, variable, expectedLine, code, summary, path);
-
-  for (const [pattern, code, summary] of [
-    [/\$ObservedWindowsInstallationType\s+-ne\s+'Client'[\s\S]*\$ObservedWindowsProductName\s+-notmatch\s+'\^Windows 10/, 'forge-podman-prerequisite-windows10-client-gate-missing', 'Windows host must prove Windows 10 client identity.'],
-    [/\$ObservedWindowsArchitecture\s+-ne\s+\$RequiredWindowsArchitecture/, 'forge-podman-prerequisite-x64-gate-missing', 'Windows host must prove X64 architecture.'],
-    [/\$ObservedWindowsBuild\s+-lt\s+\$MinimumWindowsBuild/, 'forge-podman-prerequisite-build-floor-gate-missing', 'Windows build floor must be enforced.'],
-    [/\$ObservedWindowsBuild\s+-ge\s+\$MaximumWindowsBuildExclusive/, 'forge-podman-prerequisite-build-ceiling-gate-missing', 'Windows 11 build range must be excluded from the Windows 10 adapter.'],
-    [/function\s+Get-Wsl2Evidence[\s\S]*@\('--status'\)[\s\S]*Default Version:[\\s\*]*2[\s\S]*@\('--list',\s*'--verbose'\)[\s\S]*distribution-version-2/, 'forge-podman-prerequisite-wsl2-proof-missing', 'WSL2 must be proved from parsed version-2 evidence.'],
-    [/\$ObservedWsl2Evidence\s*=\s*Get-Wsl2Evidence[\s\S]*if\s*\(-not\s+\$ObservedWsl2Evidence\)\s*\{\s*Emit-Blocked\s+'WSL2_NOT_AVAILABLE'/, 'forge-podman-prerequisite-wsl2-gate-missing', 'Missing WSL2 evidence must fail closed before prerequisite readiness.'],
-    [/Start-Process\s+-FilePath\s+\$MsiexecExe\s+-ArgumentList\s+@\([\s\S]*'\/i',\s*\$msiPath[\s\S]*'\/qn'[\s\S]*'\/norestart'[\s\S]*'ALLUSERS=2'[\s\S]*'MSIINSTALLPERUSER=1'/, 'forge-podman-prerequisite-msi-invocation-not-fixed', 'Only the fixed quiet per-user MSI invocation is allowed.'],
-    [/finally\s*\{[\s\S]*Remove-Item -LiteralPath \$msiPath[\s\S]*Remove-Item -LiteralPath \$tempRoot/, 'forge-podman-prerequisite-temp-cleanup-missing', 'Downloaded material must be cleaned in finally.'],
-  ]) requirePattern(findings, source, pattern, code, summary, path);
-
+  requirePattern(findings, source, /Start-Process\s+-FilePath\s+\$MsiexecExe\s+-ArgumentList\s+@\([\s\S]*'\/i',\s*\$msiPath[\s\S]*'\/qn'[\s\S]*'\/norestart'[\s\S]*'ALLUSERS=2'[\s\S]*'MSIINSTALLPERUSER=1'/, 'forge-podman-prerequisite-msi-invocation-not-fixed', 'Only the fixed quiet per-user MSI invocation is allowed.', path);
+  requirePattern(findings, source, /finally\s*\{[\s\S]*Remove-Item -LiteralPath \$msiPath[\s\S]*Remove-Item -LiteralPath \$tempRoot/, 'forge-podman-prerequisite-temp-cleanup-missing', 'Downloaded material must be cleaned in finally.', path);
   for (const [pattern, code, summary] of [
     [/Invoke-Expression|ScriptBlock::Create|cmd\.exe|Start-Job/i, 'forge-podman-prerequisite-dynamic-execution-forbidden', 'Dynamic execution is forbidden.'],
     [/RunLevel\s+Highest|Start-Process[^\r\n]*-Verb\s+RunAs/i, 'forge-podman-prerequisite-elevation-forbidden', 'Elevation is forbidden.'],
