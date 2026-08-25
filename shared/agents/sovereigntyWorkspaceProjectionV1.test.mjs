@@ -145,17 +145,23 @@ function codexStatus(overrides = {}) {
 }
 
 function laneStatus(statusId, route, overrides = {}) {
+  const workerId = `${route.toLowerCase()}-worker`;
+  const proof = `receipts/${route.toLowerCase()}/capacity.json`;
   return {
     schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.status',
     statusId,
+    participantId: workerId,
     timestampUtc: '2026-08-14T11:58:00.000Z',
-    proofRefs: [`receipts/${route.toLowerCase()}/capacity.json`],
+    status: 'READY',
+    summary: `${route} capacity is READY.`,
+    proofRefs: [proof],
     capacityReceipt: {
       schemaVersion: 'stephanos.build-lane-capacity-receipt.v1',
       receiptId: `${route.toLowerCase()}-capacity`,
       route,
       repository: 'Cheekyfellastef/stephan-os',
-      workerId: `${route.toLowerCase()}-worker`,
+      workerId,
       state: 'READY',
       supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
       supportedTaskClasses: ['FOCUSED_REPAIR'],
@@ -166,8 +172,11 @@ function laneStatus(statusId, route, overrides = {}) {
       authorityReceiptIds: route === 'FOUNDRY_FORGE'
         ? [FORGE_M2_RECEIPT_ID, FORGE_M3_RECEIPT_ID]
         : [GITHUB_AUTHORITY_ID],
-      proofRefs: [`receipts/${route.toLowerCase()}/capacity.json`],
+      proofRefs: [proof],
     },
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
     ...overrides,
   };
 }
@@ -241,6 +250,29 @@ test('Sovereignty keeps GitHub capacity UNKNOWN without the same exact independe
     }, { nowMs: NOW_MS });
     assert.equal(observations[1].truthState, 'UNKNOWN');
     assert.equal(observations[1].capacityState, 'UNKNOWN');
+  }
+});
+
+test('Sovereignty requires the same canonical outer build-lane status as production routing', () => {
+  const canonical = laneStatus('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB');
+  const cases = [
+    { ...canonical, kind: 'stephanos.shared_workspace.goal' },
+    { ...canonical, participantId: 'foreign-worker' },
+    { ...canonical, timestampUtc: '2026-08-14T11:57:00.000Z' },
+    { ...canonical, status: 'STALE' },
+    { ...canonical, proofRefs: ['receipts/chatgpt_github/other.json'] },
+    { ...canonical, sourceMutationAllowed: true },
+    { ...canonical, duplicateDispatchAllowed: true },
+  ];
+  for (const githubLaneStatus of cases) {
+    const observations = createSovereigntyCapacityObservationsV1({
+      githubLaneStatus,
+      githubLaneAuthorityReceipts: [githubAuthority()],
+      sourceHead: GITHUB_SOURCE_HEAD,
+    }, { nowMs: NOW_MS });
+    assert.equal(observations[1].truthState, 'UNKNOWN');
+    assert.equal(observations[1].capacityState, 'UNKNOWN');
+    assert.equal(observations[1].metrics.queueDepth, null);
   }
 });
 
