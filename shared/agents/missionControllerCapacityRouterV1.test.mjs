@@ -11,7 +11,9 @@ import {
   createBuildLaneCapacityStatusRecord,
   publishBuildLaneCapacityToSharedWorkspace,
   routeMissionControllerCapacity,
+  validateBuildLaneAuthorityReceipt,
   validateBuildLaneCapacityReceipt,
+  validateBuildLaneCapacityStatusRecord,
 } from './missionControllerCapacityRouterV1.mjs';
 
 const NOW = '2026-08-10T12:00:00.000Z';
@@ -203,6 +205,47 @@ test('GitHub fallback requires an independently supplied exact authority chain',
   assert.equal(allowed.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
   assert.equal(allowed.workerId, githubReceipt().workerId);
   assert.ok(allowed.proofRefs.includes('receipts/github-builder/authority-proof.json'));
+});
+
+test('authority receipts reject any operation outside the exact source-only allowlist', () => {
+  const expected = {
+    receiptId: githubAuthority().receiptId,
+    route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
+    repository: REPOSITORY,
+    sourceHead: SOURCE_HEAD,
+    workerId: githubReceipt().workerId,
+    taskClass: 'FOCUSED_REPAIR',
+    nowUtc: NOW,
+  };
+  assert.equal(validateBuildLaneAuthorityReceipt(githubAuthority(), expected).valid, true);
+  for (const privilegedOperation of ['MERGE_PULL_REQUEST', 'ARBITRARY_SHELL', 'DEPLOY_RUNTIME']) {
+    const widened = githubAuthority({
+      authorizedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS', privilegedOperation],
+    });
+    assert.equal(validateBuildLaneAuthorityReceipt(widened, expected).valid, false, privilegedOperation);
+  }
+});
+
+test('capacity status requires the exact STATUS envelope and rejects outer authority widening', () => {
+  const status = createBuildLaneCapacityStatusRecord(githubReceipt(), { nowUtc: NOW });
+  const expected = {
+    route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
+    repository: REPOSITORY,
+    nowUtc: NOW,
+  };
+  assert.equal(validateBuildLaneCapacityStatusRecord(status, expected).valid, true);
+  assert.equal(validateBuildLaneCapacityStatusRecord({
+    ...status,
+    kind: 'stephanos.shared_workspace.goal',
+  }, expected).valid, false);
+  assert.equal(validateBuildLaneCapacityStatusRecord({
+    ...status,
+    duplicateDispatchAllowed: true,
+  }, expected).valid, false);
+  assert.equal(validateBuildLaneCapacityStatusRecord({
+    ...status,
+    sourceMutationAllowed: true,
+  }, expected).valid, false);
 });
 
 test('a lane worker can publish its fresh capacity receipt to the canonical fabric status path', async () => {
