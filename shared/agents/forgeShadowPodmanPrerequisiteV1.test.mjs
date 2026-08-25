@@ -63,9 +63,13 @@ function prerequisiteReceipt() {
     podmanVersion: '6.0.2',
     windowsHostAdapter: WINDOWS_HOST_ADAPTER,
     minimumWindowsBuild: 19043,
+    maximumWindowsBuildExclusive: 22000,
+    requiredWindowsArchitecture: 'X64',
     observedWindowsBuild: 19045,
     observedWindowsProductName: 'Windows 10 Pro',
     observedWindowsInstallationType: 'Client',
+    observedWindowsArchitecture: 'X64',
+    wsl2Evidence: 'default-version-2',
     compatibilityAuthority: 'podman-desktop-v1.29.1-win32-x64-podman-v6.0.2',
     podmanDesktopVersion: '1.29.1',
     podmanDesktopSourceCommit: PODMAN_DESKTOP_SOURCE_COMMIT,
@@ -165,7 +169,7 @@ test('prerequisite executor proves exact source, installs only fixed Podman, the
   assert.deepEqual(manifest.args.slice(0, 3), ['manifest', 'inspect', '--tls-verify=true']);
 });
 
-test('fixed prerequisite admits the Podman Desktop Windows 10 compatibility contract without adding a second installer', () => {
+test('fixed prerequisite admits only the exact Windows 10 x64 WSL2 compatibility contract without adding a second installer', () => {
   const source = readFileSync(new URL('../../scripts/windows/install-forge-shadow-podman-prerequisite-v1.ps1', import.meta.url), 'utf8');
   const parameterBlock = source.slice(0, source.indexOf('Set-StrictMode'));
   assert.match(source, /podman-installer-windows-amd64\.msi/);
@@ -178,6 +182,8 @@ test('fixed prerequisite admits the Podman Desktop Windows 10 compatibility cont
   assert.match(source, /PODMAN_USER_VERSION_NOT_PROVEN/);
   assert.match(source, /\$WindowsHostAdapter = 'podman-desktop-windows10-wsl2-v1'/);
   assert.match(source, /\$MinimumWindowsBuild = 19043/);
+  assert.match(source, /\$MaximumWindowsBuildExclusive = 22000/);
+  assert.match(source, /\$RequiredWindowsArchitecture = 'X64'/);
   assert.match(source, /\$PodmanDesktopVersion = '1\.29\.1'/);
   assert.match(source, new RegExp(PODMAN_DESKTOP_SOURCE_COMMIT));
   assert.match(source, new RegExp(PODMAN_DESKTOP_PODMAN_MANIFEST_BLOB));
@@ -186,6 +192,16 @@ test('fixed prerequisite admits the Podman Desktop Windows 10 compatibility cont
   assert.match(source, /WINDOWS_PRODUCT_IDENTITY_UNAVAILABLE/);
   assert.match(source, /\$ObservedWindowsInstallationType -ne 'Client'/);
   assert.match(source, /\$ObservedWindowsProductName -notmatch '\^Windows 10/);
+  assert.match(source, /RuntimeInformation\]::OSArchitecture\.ToString\(\)/);
+  assert.match(source, /\$ObservedWindowsBuild -ge \$MaximumWindowsBuildExclusive/);
+  assert.match(source, /function Get-Wsl2Evidence/);
+  assert.match(source, /@\('--status'\)/);
+  assert.match(source, /@\('--list', '--verbose'\)/);
+  assert.match(source, /Default Version:\\s\*2/);
+  assert.match(source, /distribution-version-2/);
+  assert.match(source, /\$ObservedWsl2Evidence = Get-Wsl2Evidence/);
+  assert.match(source, /if \(-not \$ObservedWsl2Evidence\) \{ Emit-Blocked 'WSL2_NOT_AVAILABLE' \}/);
+  assert.doesNotMatch(source, /\$wslStatus = Invoke-Fixed/);
   assert.doesNotMatch(source, /WINDOWS_11_OR_NEWER_REQUIRED/);
   assert.doesNotMatch(source, /podman-desktop-1\.29\.1-setup-x64\.exe/);
   assert.doesNotMatch(parameterBlock, /\$(?:Url|Uri|Path|Executable|Command|Args|Token|Credential)\b/i);
