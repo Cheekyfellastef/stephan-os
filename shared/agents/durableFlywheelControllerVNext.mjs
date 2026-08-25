@@ -19,6 +19,7 @@ import {
   buildMissionWorkerAction,
   projectMissionWorkerActionState,
 } from './missionOrchestratorWorker.mjs';
+import { MISSION_PROVIDER_ROUTE_INTENT } from './missionControllerCapacityRouterV1.mjs';
 
 export const DURABLE_FLYWHEEL_CONTROLLER_SCHEMA = 'stephanos.durable-flywheel-controller.vnext';
 export const DURABLE_FLYWHEEL_CYCLE_RECEIPT_SCHEMA = 'stephanos.durable-flywheel-cycle-receipt.vnext';
@@ -134,6 +135,19 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capa
   const actionId = text(action?.actionId).toLowerCase();
   const adapter = workerAdapter(action);
   if (action?.executable !== true || !WORKER_SAFE_ID.test(actionId) || !adapter) return null;
+  let providerRouteIntent = null;
+  if (action.actionKind === 'agent-handoff' && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(currentPhase)) {
+    const selectedMission = projection?.criticalBacklog?.selectedItem?.mission;
+    providerRouteIntent = text(
+      activeMission?.providerRouteIntent || selectedMission?.providerRouteIntent,
+      'AUTO',
+    ).toUpperCase();
+    const selectedCapacityRoute = text(action.capacityRoute).toUpperCase();
+    const validProviderRouteIntent = Object.values(MISSION_PROVIDER_ROUTE_INTENT).includes(providerRouteIntent);
+    if (!validProviderRouteIntent
+      || !selectedCapacityRoute
+      || (providerRouteIntent !== 'AUTO' && providerRouteIntent !== selectedCapacityRoute)) return null;
+  }
   const identity = projectionIdentity(projection);
   return freeze({
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
@@ -147,6 +161,7 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capa
     actionKind: text(action.actionKind),
     adapter,
     operation: text(action.operation),
+    providerRouteIntent,
     capacityRoute: text(action.capacityRoute),
     capacityReceiptId: text(action.capacityReceiptId) || null,
     capacityProofRefs: freeze(list(action.capacityProofRefs)),

@@ -80,6 +80,38 @@ test('repository directory ownership conflicts with descendant files but not sib
   });
 });
 
+test('repository path resources are canonical before hierarchical conflict indexing', () => {
+  const aliases = [
+    'repo:cheekyfellastef/stephan-os:path:shared/x/../agents/example.mjs',
+    'repo:cheekyfellastef/stephan-os:path:shared/./agents/example.mjs',
+    'repo:cheekyfellastef/stephan-os:path:shared//agents/example.mjs',
+    'repo:cheekyfellastef/stephan-os:path:/shared/agents/example.mjs',
+    'repo:cheekyfellastef/stephan-os:path:shared/agents/example.mjs/',
+  ];
+  const result = selectResourceDisjointCandidates(aliases.map((resourceId, index) => ({
+    candidateId:`alias-${index}`,
+    resourceIds:[resourceId],
+  })), {
+    limit:5,
+    activeResourceIds:['repo:cheekyfellastef/stephan-os:path:shared/agents'],
+  });
+  assert.deepEqual(result.selected, []);
+  assert.deepEqual(result.held.map(({ reasonCode }) => reasonCode), aliases.map(() => 'RESOURCE_SCOPE_REQUIRED'));
+
+  const invalidActive = selectResourceDisjointCandidates([
+    { candidateId:'otherwise-safe', resourceIds:['goal:42'] },
+  ], {
+    limit:5,
+    activeResourceIds:['repo:cheekyfellastef/stephan-os:path:shared/./agents'],
+  });
+  assert.deepEqual(invalidActive.reasonCodes, ['INVALID_PARALLEL_SELECTION_POLICY']);
+
+  const duplicateScope = selectResourceDisjointCandidates([
+    { candidateId:'duplicate-scope', resourceIds:['goal:42', 'GOAL:42'] },
+  ], { limit:5, activeResourceIds:[] });
+  assert.equal(duplicateScope.held[0].reasonCode, 'RESOURCE_SCOPE_REQUIRED');
+});
+
 test('resource selection fails closed for duplicate candidate identities', () => {
   const result = selectResourceDisjointCandidates([
     { candidateId:'duplicate', resourceIds:['goal:1'] },

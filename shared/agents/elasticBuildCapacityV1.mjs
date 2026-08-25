@@ -16,18 +16,27 @@ function denseArray(value) {
   return true;
 }
 
-function resourceIds(value) {
-  if (!denseArray(value)) return null;
-  const normalized = value.map((entry) => typeof entry === 'string' ? entry.trim().toLowerCase() : '');
-  if (normalized.some((entry) => !SAFE_RESOURCE_ID.test(entry))) return null;
-  return [...new Set(normalized)].sort();
-}
-
 function repositoryPathResource(value) {
   const match = /^repo:([^:]+\/[^:]+):path:(.+)$/.exec(value);
   if (!match) return null;
-  const path = match[2].replace(/\/+$/, '');
-  return path ? { repository:match[1], path } : null;
+  const segments = match[2].split('/');
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) return null;
+  return { repository:match[1], path:segments.join('/') };
+}
+
+function canonicalResourceId(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!SAFE_RESOURCE_ID.test(normalized)) return null;
+  if (!normalized.startsWith('repo:') || !normalized.includes(':path:')) return normalized;
+  const parsed = repositoryPathResource(normalized);
+  return parsed ? `repo:${parsed.repository}:path:${parsed.path}` : null;
+}
+
+function resourceIds(value) {
+  if (!denseArray(value)) return null;
+  const normalized = value.map(canonicalResourceId);
+  if (normalized.some((entry) => entry === null) || new Set(normalized).size !== normalized.length) return null;
+  return normalized.sort();
 }
 
 function resourceConflictIndex(initial = []) {
@@ -64,6 +73,31 @@ function resourceConflictIndex(initial = []) {
   };
   for (const resourceId of initial) add(resourceId);
   return { add, conflicts };
+}
+
+export function projectCanonicalResourceIds(value) {
+  const normalized = resourceIds(value);
+  return freeze({
+    valid:normalized !== null,
+    resourceIds:normalized ?? [],
+    finalVerdict:normalized === null ? 'RESOURCE_IDS_INVALID' : 'RESOURCE_IDS_CANONICAL',
+  });
+}
+
+export function adjudicateResourceScopeOverlap(left, right) {
+  const leftProjection = projectCanonicalResourceIds(left);
+  const rightProjection = projectCanonicalResourceIds(right);
+  if (!leftProjection.valid || !rightProjection.valid) {
+    return freeze({ valid:false, overlaps:false, conflictingResourceIds:[], finalVerdict:'RESOURCE_SCOPE_OVERLAP_INVALID' });
+  }
+  const owned = resourceConflictIndex(leftProjection.resourceIds);
+  const conflictingResourceIds = rightProjection.resourceIds.filter((resourceId) => owned.conflicts(resourceId));
+  return freeze({
+    valid:true,
+    overlaps:conflictingResourceIds.length > 0,
+    conflictingResourceIds,
+    finalVerdict:conflictingResourceIds.length ? 'RESOURCE_SCOPES_OVERLAP' : 'RESOURCE_SCOPES_DISJOINT',
+  });
 }
 
 function freeze(value) {

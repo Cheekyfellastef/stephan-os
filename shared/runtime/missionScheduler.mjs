@@ -2,6 +2,8 @@ import {
   MAXIMUM_BUILD_LANES,
   MINIMUM_BUILD_LANES,
   deriveElasticBuildWidth,
+  adjudicateResourceScopeOverlap,
+  projectCanonicalResourceIds,
   selectResourceDisjointCandidates,
 } from '../agents/elasticBuildCapacityV1.mjs';
 
@@ -677,15 +679,28 @@ function buildMissionSchedulerInternal(input = {}, inspectionFailure = false) {
   if (capacityPolicy.status !== 'SAFE_HOLD_INVALID_CAPACITY' && authoritative.length > maximumActiveLanes) {
     contradictions.push({ code:'ACTIVE_LANE_CAPACITY_EXCEEDED', issues:authoritative.map((goal) => goal.issue), maximumActiveLanes });
   }
-  if (authoritative.length > 1) {
-    const unscoped = authoritative.filter((goal) => goal.resourceIds.length === 0).map((goal) => goal.issue);
-    if (unscoped.length) contradictions.push({ code:'ACTIVE_RESOURCE_SCOPE_MISSING', issues:unscoped });
-    const owners = new Map();
+  if (authoritative.length > 0) {
+    if (authoritative.length > 1) {
+      const unscoped = authoritative.filter((goal) => goal.resourceIds.length === 0).map((goal) => goal.issue);
+      if (unscoped.length) contradictions.push({ code:'ACTIVE_RESOURCE_SCOPE_MISSING', issues:unscoped });
+    }
     for (const goal of authoritative) {
-      for (const resourceId of goal.resourceIds) {
-        const owner = owners.get(resourceId);
-        if (owner) contradictions.push({ code:'ACTIVE_RESOURCE_CONFLICT', resourceId, issues:[owner, goal.issue] });
-        else owners.set(resourceId, goal.issue);
+      if (!projectCanonicalResourceIds(goal.resourceIds).valid) {
+        contradictions.push({ code:'ACTIVE_RESOURCE_EVIDENCE_INVALID', issue:goal.issue, reason:'resource-ids-non-canonical' });
+      }
+    }
+    for (let leftIndex = 0; leftIndex < authoritative.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < authoritative.length; rightIndex += 1) {
+        const left = authoritative[leftIndex];
+        const right = authoritative[rightIndex];
+        const overlap = adjudicateResourceScopeOverlap(left.resourceIds, right.resourceIds);
+        if (overlap.valid && overlap.overlaps) {
+          contradictions.push({
+            code:'ACTIVE_RESOURCE_CONFLICT',
+            resourceIds:overlap.conflictingResourceIds,
+            issues:[left.issue, right.issue],
+          });
+        }
       }
     }
   }

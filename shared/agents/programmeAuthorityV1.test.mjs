@@ -62,6 +62,7 @@ function goalRecord(overrides = {}) {
     status: 'READY',
     prerequisites: [],
     route: 'CHATGPT_GITHUB',
+    providerRouteIntent: 'AUTO',
     ...overrides,
   };
 }
@@ -774,6 +775,7 @@ test('scheduler goals are constructed from durable records and the canonical lan
       state: 'READY',
       prerequisites: '#1286',
       route: 'CHATGPT_GITHUB',
+      providerRouteIntent: 'AUTO',
       evidenceAt: NOW,
     })],
   });
@@ -1027,6 +1029,7 @@ test('active mission and same-issue durable goal must agree on all scheduling au
     repository: REPOSITORY,
     branch: mission.git.branch,
     route: 'CHATGPT_GITHUB',
+    providerRouteIntent: 'AUTO',
     resourceIds: resources,
   });
   const build = (goal) => buildSchedulerGoalsFromProgrammeSources({
@@ -1049,6 +1052,7 @@ test('active mission and same-issue durable goal must agree on all scheduling au
     { ...exactGoal, repository: 'other/repository' },
     { ...exactGoal, branch: 'openclaw/foreign-branch' },
     { ...exactGoal, route: 'FOUNDRY_FORGE' },
+    { ...exactGoal, providerRouteIntent: 'CHATGPT_GITHUB' },
     { ...exactGoal, resourceIds: ['repo:cheekyfellastef/stephan-os:path:unrelated'] },
     { ...exactGoal, resourceIds: [...resources, resources[0]] },
   ]) {
@@ -1056,6 +1060,9 @@ test('active mission and same-issue durable goal must agree on all scheduling au
     assert.equal(conflict.valid, false);
     assert.ok(conflict.blockers.includes('critical-backlog-active-mission-goal-authority-conflict'));
   }
+  const invalidProviderIntent = build({ ...exactGoal, providerRouteIntent: 'NOT_A_PROVIDER' });
+  assert.equal(invalidProviderIntent.valid, false);
+  assert.ok(invalidProviderIntent.blockers.includes('goal-record-0-provider-route-intent-invalid'));
 });
 
 test('authoritative projection holds without a real mutation lease even when a receipt has a leaseKey', () => {

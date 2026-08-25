@@ -14,6 +14,7 @@ import {
   createMonitorDefinition,
 } from './monitorMultiplexer.mjs';
 import { validateProtectedApprovalReceipt } from './operatorMergeApprovalGate.mjs';
+import { MISSION_PROVIDER_ROUTE_INTENT } from './missionControllerCapacityRouterV1.mjs';
 
 export const CANONICAL_IMPLEMENTATION_LANE_SCHEMA = 'stephanos.canonical-implementation-lane.v1';
 export const SOURCE_MUTATION_LEASE_SCHEMA = 'stephanos.source-mutation-lease.v1';
@@ -54,6 +55,7 @@ const IDLE_SELECTION_CONTROLLER_STATES = new Set(['IDLE', 'RECONCILING']);
 const TERMINAL_LANE_CONTROLLER_STATES = new Set(['FINALIZING', 'RECONCILING']);
 const ACTIVE_EXECUTION_RECEIPT_STATES = new Set(['queued', 'accepted', 'started', 'progress']);
 const FAILED_EXECUTION_RECEIPT_STATES = new Set(['failed', 'cancelled']);
+const PROVIDER_ROUTE_INTENTS = new Set(Object.values(MISSION_PROVIDER_ROUTE_INTENT));
 const AFFIRMATIVE_PROGRESS_PROOF_STATUSES = new Set([
   'COMPLETE',
   'COMPLETED',
@@ -928,6 +930,11 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       blockers.push(`goal-record-${index}-approval-receipt-invalid`);
       continue;
     }
+    const providerRouteIntent = text(record.providerRouteIntent, 'AUTO').toUpperCase();
+    if (!PROVIDER_ROUTE_INTENTS.has(providerRouteIntent)) {
+      blockers.push(`goal-record-${index}-provider-route-intent-invalid`);
+      continue;
+    }
     goals.push({
       issue: issueNumber,
       title: text(record.title, `Goal #${issueNumber}`),
@@ -937,6 +944,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       criticalPathWeight: Number.isFinite(record.criticalPathWeight) ? record.criticalPathWeight : 0,
       reversibility: text(record.reversibility, 'UNKNOWN').toUpperCase(),
       route: ownValueOr(record, 'route', 'WAITING_FOR_EXTERNAL_CONDITION'),
+      providerRouteIntent,
       activePr: prAliases.value,
       repository: text(record.repository) || null,
       branch: text(record.branch) || null,
@@ -974,6 +982,10 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
     const selectedRepository = text(selectedMission?.repository);
     const selectedBranch = text(selectedMission?.branch);
     const activePhase = text(activeMission?.currentPhase).toUpperCase();
+    const providerRouteIntent = text(
+      activeMission?.providerRouteIntent || selectedMission?.providerRouteIntent,
+      'AUTO',
+    ).toUpperCase();
     const resourceIds = unique(list(activeMission?.allowedFiles || selectedMission?.allowedFiles).map((value) => {
       const scope = text(value).replace(/\\/g, '/').replace(/\/\*\*$/, '').toLowerCase();
       return scope ? `repo:${repository.toLowerCase()}:path:${scope}` : '';
@@ -987,6 +999,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       && branch
       && branch === selectedBranch
       && activePhase
+      && PROVIDER_ROUTE_INTENTS.has(providerRouteIntent)
       && !['BLOCKED', 'AWAITING_OPERATOR_APPROVAL', 'COMPLETE', 'CANCELLED'].includes(activePhase)
       && resourceIds.length > 0
     );
@@ -999,6 +1012,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
         text(existingGoal.repository).toLowerCase() !== repository.toLowerCase()
         || text(existingGoal.branch) !== branch
         || text(existingGoal.route).toUpperCase() !== activeRoute
+        || text(existingGoal.providerRouteIntent).toUpperCase() !== providerRouteIntent
         || !sameExactStringSet(existingGoal.resourceIds, resourceIds)
       )) {
         blockers.push('critical-backlog-active-mission-goal-authority-conflict');
@@ -1012,6 +1026,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
           criticalPathWeight: Number.isFinite(selectedItem.priority) ? Math.max(1, 10_000 - selectedItem.priority) : 1,
           reversibility: 'HIGH',
           route: text(selectedMission.route, 'CHATGPT_GITHUB'),
+          providerRouteIntent,
           activePr: null,
           repository,
           branch,
@@ -1055,6 +1070,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       route: existing
         ? ownValueOr(existing, 'route', 'WAITING_FOR_EXTERNAL_CONDITION')
         : 'CHATGPT_GITHUB',
+      providerRouteIntent: existing?.providerRouteIntent ?? 'AUTO',
       activePr: lane.prNumber,
       repository: lane.repository,
       branch: lane.branch,

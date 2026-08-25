@@ -150,6 +150,7 @@ test('ACTIVE source work receives one exact proven fallback grant when Codex cap
     allowedFiles: ['shared/agents/controller.mjs'],
     requiredTests: ['node --test shared/agents/controller.test.mjs'],
     requiredEvidence: ['focused tests'],
+    providerRouteIntent: 'CHATGPT_GITHUB',
     dispatch: { adapter: 'codex', status: 'pending' },
     git: { branch: BRANCH, worktreePath: '/bounded/worktree' },
   };
@@ -194,11 +195,64 @@ test('ACTIVE source work receives one exact proven fallback grant when Codex cap
 
   assert.equal(result.status, 'ACTIVE');
   assert.equal(result.workerActionGrant.adapter, 'chatgpt-github');
+  assert.equal(result.workerActionGrant.providerRouteIntent, 'CHATGPT_GITHUB');
   assert.equal(result.workerActionGrant.capacityRoute, 'CHATGPT_GITHUB');
   assert.equal(result.workerActionGrant.capacityReceiptId, 'github-builder-capacity-controller-test');
   assert.deepEqual(result.workerActionGrant.capacityProofRefs, ['receipts/github-builder/capacity.json']);
   assert.equal(result.workerActionGrant.mergeAuthority, false);
   assert.equal(result.workerActionGrant.leaseSeizureAllowed, false);
+});
+
+test('provider AUTO intent binds the capacity-selected route while explicit intent rejects substitution', async () => {
+  const sourceMission = {
+    missionId: 'critical-1497-provider-intent-test',
+    revision: 4,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    title: 'Repair provider intent routing',
+    repository: REPOSITORY,
+    operatorIntent: 'Repair the bounded provider route.',
+    intendedOutcome: 'The provider selection is exactly bound.',
+    allowedFiles: ['shared/agents/provider-intent.mjs'],
+    requiredTests: ['node --test shared/agents/provider-intent.test.mjs'],
+    requiredEvidence: ['focused tests'],
+    dispatch: { adapter: 'codex', status: 'pending' },
+    git: { branch: BRANCH, worktreePath: '/bounded/worktree' },
+  };
+  const codexCapacity = {
+    nowUtc: NOW,
+    codexStatus: {
+      schemaVersion: 'shared-agent-workspace-record.v1',
+      statusId: 'codex-capacity-current',
+      truthState: 'CURRENT',
+      meterTruthUsable: true,
+      observedAtUtc: NOW,
+      remainingPercent: 100,
+      availability: 'AVAILABLE',
+      confidence: 'high',
+    },
+  };
+  const run = (providerRouteIntent) => {
+    const fixture = machineryFor(activeProjection({
+      criticalBacklog: {
+        selectedItem: { mission: { providerRouteIntent } },
+        activeMission: { ...sourceMission, providerRouteIntent },
+      },
+    }), { loadCapacityRoutingInput: async () => codexCapacity });
+    return runDurableFlywheelStartupCycle(fixture.machinery, {
+      nowUtc: NOW,
+      sourceRevision: SOURCE_REVISION,
+      env: {},
+    });
+  };
+
+  const automatic = await run('AUTO');
+  assert.equal(automatic.status, 'ACTIVE');
+  assert.equal(automatic.workerActionGrant.providerRouteIntent, 'AUTO');
+  assert.equal(automatic.workerActionGrant.capacityRoute, 'CODEX');
+
+  const substituted = await run('CHATGPT_GITHUB');
+  assert.equal(substituted.status, 'HOLD');
+  assert.ok(substituted.blockers.includes('mission-worker:exact-action-grant-unavailable'));
 });
 
 test('READY projection continues the already-active backlog mission with one exact native worktree grant', async () => {
