@@ -21,41 +21,54 @@ function providerPoolCoreContentFor(path) {
   if (path.endsWith('/openClawProviderPoolQualificationV1.mjs')) return `
 ${'import'} { routeMissionControllerCapacity } from './missionControllerCapacityRouterV1.mjs';
 ${'import'} { createHash as allowedHash } from 'node:crypto';
-${'import'} { validateExecutionReceipt as allowedReceipt } from './executionReceiptV1.mjs';
+${'import'} { toSharedWorkspaceExecutionReceipt, validateExecutionReceipt as allowedReceipt } from './executionReceiptV1.mjs';
 ${'import'} { validateSharedWorkspaceRecord as allowedWorkspace } from './sharedAgentWorkspaceStore.mjs';
-const allowedPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const allowedRatio = 1 / 2;
-validateExecutionReceipt
-toSharedWorkspaceExecutionReceipt
-validateSharedWorkspaceRecord
 const OPENCLAW_QUALIFICATION_ISSUE = 1725;
-export function validateOpenClawQualificationAuthorityChain
-issueNumber: OPENCLAW_QUALIFICATION_ISSUE
-execution.workerType !== 'openclaw'
-execution.state !== 'completed'
-execution.operatorActionRequired !== false
-canonicalJson(host.realWorkWorkspaceReceipt) !== canonicalJson(canonicalWorkspace.record)
-authority.participantId !== 'stephanos'
-authority.relatedIssue !== String(OPENCLAW_QUALIFICATION_ISSUE)
-authority.receivedRecordId !== execution.receiptId
-authority.disposition !== OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION
-candidate.qualificationAuthorityReceiptId === expected.authorityReceiptId
-const host = snapshot(trustedHostContext);
-const openClawPoolEligible = qualification.valid && authority.valid && capacity.valid;
-mergeAuthority: false
-leaseSeizureAllowed: false
-duplicateDispatchAllowed: false
+function canonicalJson(value) { return JSON.stringify(value); }
+function snapshot(value) { return value; }
+export function validateOpenClawQualificationAuthorityChain(input, trustedHostContext, expected = {}) {
+  const host = snapshot(trustedHostContext);
+  const execution = host.realWorkExecutionReceipt;
+  const canonicalWorkspace = toSharedWorkspaceExecutionReceipt(execution);
+  const authority = host.qualificationAuthorityReceipt;
+  allowedReceipt(execution, { issueNumber: OPENCLAW_QUALIFICATION_ISSUE });
+  allowedWorkspace(authority);
+  if (execution.workerType !== 'openclaw'
+    || execution.state !== 'completed'
+    || execution.operatorActionRequired !== false
+    || canonicalJson(host.realWorkWorkspaceReceipt) !== canonicalJson(canonicalWorkspace.record)
+    || authority.participantId !== 'stephanos'
+    || authority.relatedIssue !== String(OPENCLAW_QUALIFICATION_ISSUE)
+    || authority.receivedRecordId !== execution.receiptId
+    || authority.disposition !== OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION) return { valid: false };
+  return { valid: true };
+}
+export function validateOpenClawProviderCapacity(candidate, expected = {}) {
+  return candidate.qualificationAuthorityReceiptId === expected.authorityReceiptId;
+}
+export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContext = {}) {
+  routeMissionControllerCapacity(input);
+  const host = snapshot(trustedHostContext);
+  const qualification = { valid: Boolean(host.qualificationReceipt) };
+  const authority = { valid: Boolean(host.qualificationAuthorityReceipt) };
+  const capacity = { valid: Boolean(host.capacityReceipt) };
+  const openClawPoolEligible = qualification.valid && authority.valid && capacity.valid;
+  return { openClawPoolEligible, mergeAuthority: false, leaseSeizureAllowed: false, duplicateDispatchAllowed: false };
+}
 `;
   if (path.endsWith('/openClawProviderPoolQualificationV1.test.mjs')) return `
-requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt
-capacity is unusable without the exact validated qualification authority, worker and task class
-caller-shaped qualification, capacity and fake authority evidence cannot self-admit OpenClaw
-syntactically valid trusted qualification without canonical authority cannot route
-existing mutation owner is preserved even when OpenClaw is canonically qualified
-normal AUTO routing does not silently replace a healthy existing provider policy
-assert.equal(result.mergeAuthority, false)
-assert.equal(result.leaseSeizureAllowed, false)
-assert.equal(result.duplicateDispatchAllowed, false)
+${'import'} assert from 'node:assert/strict';
+${'import'} test from 'node:test';
+const result = { mergeAuthority: false, leaseSeizureAllowed: false, duplicateDispatchAllowed: false };
+test('requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt', () => {});
+test('capacity is unusable without the exact validated qualification authority, worker and task class', () => {});
+test('caller-shaped qualification, capacity and fake authority evidence cannot self-admit OpenClaw', () => {});
+test('syntactically valid trusted qualification without canonical authority cannot route', () => {});
+test('existing mutation owner is preserved even when OpenClaw is canonically qualified', () => {});
+test('normal AUTO routing does not silently replace a healthy existing provider policy', () => {});
+assert.equal(result.mergeAuthority, false);
+assert.equal(result.leaseSeizureAllowed, false);
+assert.equal(result.duplicateDispatchAllowed, false);
 `;
   throw new Error(`unexpected provider-pool core path ${path}`);
 }
@@ -133,6 +146,18 @@ function analyzeProviderPoolInjection(injection) {
   return analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
 }
 
+function analyzeProviderPoolTestInjection(injection) {
+  const hostileSources = sources();
+  const content = `${hostileSources[1].content}\n${injection}\n`;
+  hostileSources[1] = {
+    ...hostileSources[1],
+    size: Buffer.byteLength(content, 'utf8'),
+    blobSha: blobSha(content),
+    content,
+  };
+  return analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
+}
+
 test('standalone successor specialist covers only the exact two-file provider-pool core escalation', () => {
   const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput());
   assert.equal(result.eligible, true);
@@ -162,6 +187,13 @@ test('successor profile rejects invalid PR identity, unsafe branch identity, inc
 });
 
 test('successor profile remains exact-lineage and exact-source bound', () => {
+  const linearSuccessor = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({
+    lineageEvidence: lineage(SUCCESSOR_HEAD, SUCCESSOR_BASE, {
+      parents: ['1111111111111111111111111111111111111111'],
+    }),
+  }));
+  assert.equal(linearSuccessor.clean, true);
+
   const movedMain = '2222222222222222222222222222222222222222';
   const drift = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({
     lineageEvidence: lineage(SUCCESSOR_HEAD, SUCCESSOR_BASE, { liveMainAfterSha: movedMain }),
@@ -176,6 +208,19 @@ test('successor profile remains exact-lineage and exact-source bound', () => {
   assert.equal(badSource.eligible, true);
   assert.equal(badSource.clean, false);
   assert.ok(badSource.findings.some((item) => item.code === 'openclaw-provider-pool-source-evidence-invalid'));
+
+  for (const parents of [
+    [],
+    [SUCCESSOR_HEAD],
+    ['1111111111111111111111111111111111111111', '1111111111111111111111111111111111111111'],
+    ['1111111111111111111111111111111111111111', '2222222222222222222222222222222222222222', '3333333333333333333333333333333333333333'],
+  ]) {
+    const invalidParents = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({
+      lineageEvidence: lineage(SUCCESSOR_HEAD, SUCCESSOR_BASE, { parents }),
+    }));
+    assert.equal(invalidParents.clean, false);
+    assert.equal(invalidParents.findings[0].code, 'openclaw-provider-pool-reconciliation-lineage-invalid');
+  }
 });
 
 test('successor profile lexically rejects aliased, commented, escaped, dynamic, and process-builtin authority', () => {
@@ -205,6 +250,70 @@ test('successor profile lexically rejects aliased, commented, escaped, dynamic, 
   ]) {
     const result = analyzeProviderPoolInjection(processImport);
     assert.equal(result.eligible, true);
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
+  }
+});
+
+test('successor profile requires authority gates in executable function structure rather than comments', () => {
+  const hostileSources = sources();
+  const content = hostileSources[0].content
+    .replace("execution.workerType !== 'openclaw'", "true /* execution.workerType !== 'openclaw' */")
+    .replace('const openClawPoolEligible = qualification.valid && authority.valid && capacity.valid;', `
+      /* const openClawPoolEligible = qualification.valid && authority.valid && capacity.valid; */
+      const openClawPoolEligible = true;`)
+    .replace('mergeAuthority: false', '/* mergeAuthority: false */ mergeAuthority: true')
+    .replace('leaseSeizureAllowed: false', '/* leaseSeizureAllowed: false */ leaseSeizureAllowed: true');
+  hostileSources[0] = {
+    ...hostileSources[0],
+    size: Buffer.byteLength(content, 'utf8'),
+    blobSha: blobSha(content),
+    content,
+  };
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-worker-type-binding-missing'));
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-complete-chain-gate-missing'));
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-merge-denial-missing'));
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-lease-denial-missing'));
+});
+
+test('successor profile applies execution and filesystem authority review to the test source', () => {
+  for (const injection of [
+    "import { execFileSync as run } from 'node:child_process'; run('cmd.exe');",
+    "import { spawn as launch } from 'child_process'; launch('powershell.exe');",
+    "import { writeFile as save } from 'node:fs/promises'; save('outside.json', 'authority');",
+    "const { execFileSync: run } = await import('node:child_process'); run('cmd.exe');",
+    "const load = process.getBuiltinModule('node:child_process'); load.execSync('cmd.exe');",
+    "import { readMissionControllerCapacityRoutingInput as readHost } from '../../stephanos-server/services/programmeAuthorityService.js'; readHost({});",
+  ]) {
+    const result = analyzeProviderPoolTestInjection(injection);
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
+  }
+});
+
+test('successor profile preserves inert authority-name strings used as deterministic test data', () => {
+  const result = analyzeProviderPoolTestInjection(`
+    const inertFixture = Object.freeze({
+      operation: 'spawn',
+      specifier: 'node:child_process',
+      sample: "execFileSync('cmd.exe')",
+      template: \`globalThis['process']\`,
+    });
+    assert.equal(inertFixture.operation, 'spawn');
+  `);
+  assert.equal(result.clean, true);
+});
+
+test('successor profile allows only exact non-mutating imports from approved local modules', () => {
+  for (const injection of [
+    "import { writeAtomicJson as save } from './sharedAgentWorkspaceStore.mjs'; save(root, ['escape'], {});",
+    "import { ensureSharedWorkspaceLayout as prepare } from './sharedAgentWorkspaceStore.mjs'; prepare({ root });",
+    "import workspaceStore from './sharedAgentWorkspaceStore.mjs'; workspaceStore.writeAtomicJson(root, ['escape'], {});",
+    "import * as workspaceStore from './sharedAgentWorkspaceStore.mjs'; workspaceStore.writeAtomicJson(root, ['escape'], {});",
+  ]) {
+    const result = analyzeProviderPoolInjection(injection);
     assert.equal(result.clean, false);
     assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
   }

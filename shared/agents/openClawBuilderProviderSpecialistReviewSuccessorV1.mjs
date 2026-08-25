@@ -66,21 +66,16 @@ function exactLineage(lineage, repository, sourceHead, baseSha) {
     && lineage?.baseSha === baseSha
     && lineage?.liveMainBeforeSha === baseSha
     && lineage?.liveMainAfterSha === baseSha
-    && parents.includes(baseSha)
+    && parents.length >= 1
+    && parents.length <= 2
+    && parents.every((parent) => SHA.test(text(parent)) && text(parent) !== sourceHead)
+    && unique(parents).length === parents.length
     && lineage?.comparison?.status === 'ahead'
     && Number.isSafeInteger(lineage?.comparison?.aheadBy)
     && lineage.comparison.aheadBy > 0
     && lineage?.comparison?.behindBy === 0
     && lineage?.comparison?.baseCommitSha === baseSha
     && lineage?.comparison?.mergeBaseCommitSha === baseSha;
-}
-
-function requireLiterals(findings, source, path, rules) {
-  for (const [literal, code] of rules) if (!source.includes(literal)) findings.push(finding(code, path));
-}
-
-function forbidPatterns(findings, source, path, rules) {
-  for (const [pattern, code] of rules) if (pattern.test(source)) findings.push(finding(code, path));
 }
 
 const FORBIDDEN_LOCAL_MODULES = new Set([
@@ -93,12 +88,55 @@ const FORBIDDEN_LOCAL_MODULES = new Set([
   'node:fs/promises',
   'node:module',
 ]);
-const ALLOWED_STATIC_MODULES = new Set([
-  './executionReceiptV1.mjs',
-  './missionControllerCapacityRouterV1.mjs',
-  './sharedAgentWorkspaceStore.mjs',
-  'node:crypto',
-]);
+const IMPLEMENTATION_IMPORT_POLICY = Object.freeze({
+  './executionReceiptV1.mjs': new Set([
+    'toSharedWorkspaceExecutionReceipt',
+    'validateExecutionReceipt',
+  ]),
+  './missionControllerCapacityRouterV1.mjs': new Set([
+    'MISSION_CONTROLLER_ROUTE',
+    'routeMissionControllerCapacity',
+  ]),
+  './sharedAgentWorkspaceStore.mjs': new Set([
+    'SHARED_WORKSPACE_RECORD_KINDS',
+    'SHARED_WORKSPACE_RECORD_SCHEMA_VERSION',
+    'createSharedWorkspaceReceiptRecord',
+    'createSharedWorkspaceStatusRecord',
+    'validateSharedWorkspaceRecord',
+  ]),
+  'node:crypto': new Set([
+    'createHash',
+    'createPublicKey',
+    'sign',
+    'verify',
+  ]),
+});
+const TEST_IMPORT_POLICY = Object.freeze({
+  './executionReceiptV1.mjs': new Set([
+    'createExecutionReceipt',
+    'toSharedWorkspaceExecutionReceipt',
+  ]),
+  './openClawProviderPoolQualificationV1.mjs': new Set([
+    'OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION',
+    'OPENCLAW_PROVIDER_CAPACITY_SCHEMA',
+    'OPENCLAW_PROVIDER_POOL_COMPONENT_FILES',
+    'OPENCLAW_PROVIDER_POOL_HOST_CONTEXT_SCHEMA',
+    'OPENCLAW_PROVIDER_POOL_QUALIFICATION_SCHEMA',
+    'OPENCLAW_PROVIDER_ROUTE',
+    'prepareOpenClawProviderPoolPublication',
+    'routeWithQualifiedOpenClawProvider',
+    'validateOpenClawProviderCapacity',
+    'validateOpenClawProviderPoolStatusRecord',
+    'validateOpenClawProviderQualification',
+    'validateOpenClawQualificationAuthorityChain',
+  ]),
+  './sharedAgentWorkspaceStore.mjs': new Set([
+    'createSharedWorkspaceReceiptRecord',
+  ]),
+  'node:assert/strict': new Set(['default']),
+  'node:crypto': new Set(['generateKeyPairSync']),
+  'node:test': new Set(['default']),
+});
 const DANGEROUS_AUTHORITY_TOKENS = new Set([
   'AsyncFunction',
   'Bun',
@@ -358,72 +396,218 @@ function foldConstantStringExpression(tokens, start, depth = 0) {
   return Object.freeze({ value, end: cursor });
 }
 
-function constantAuthorityStrings(tokens) {
-  const values = [];
-  for (let index = 0; index < tokens.length; index += 1) {
-    if (tokens[index]?.type === 'template') values.push(...tokens[index].authorityValues);
-    if (tokens[index]?.type !== 'string' && tokens[index]?.type !== 'template' && tokens[index]?.value !== '(') continue;
-    const folded = foldConstantStringExpression(tokens, index);
-    if (folded) values.push(folded.value);
-  }
-  return Object.freeze(values);
+function canPrecedeComputedMember(token) {
+  return token?.type === 'identifier'
+    || token?.type === 'number'
+    || token?.type === 'string'
+    || token?.type === 'template'
+    || (token?.type === 'punctuator' && new Set([')', ']', '}', '.']).has(token.value));
 }
 
-function reviewLocalModuleAuthority(source, path, findings) {
+function computedAuthorityStrings(tokens) {
+  const values = [];
+  for (let index = 1; index < tokens.length - 1; index += 1) {
+    if (tokens[index]?.type !== 'punctuator' || tokens[index].value !== '[') continue;
+    if (!canPrecedeComputedMember(tokens[index - 1])) continue;
+    const expression = tokens[index + 1];
+    const folded = foldConstantStringExpression(tokens, index + 1);
+    if (folded && tokens[folded.end]?.type === 'punctuator' && tokens[folded.end].value === ']') {
+      values.push(folded.value);
+    }
+    let depth = 1;
+    for (let cursor = index + 1; cursor < tokens.length && depth > 0; cursor += 1) {
+      const candidate = tokens[cursor];
+      if (candidate?.type === 'template') values.push(...candidate.authorityValues);
+      if (candidate?.type !== 'punctuator') continue;
+      if (candidate.value === '[') depth += 1;
+      if (candidate.value === ']') depth -= 1;
+    }
+    if (expression?.type === 'template') values.push(...expression.authorityValues);
+  }
+  return Object.freeze(unique(values));
+}
+
+function sameToken(left, right) {
+  return left?.type === right?.type && left?.value === right?.value;
+}
+
+function tokenSequence(source) {
+  const lexical = tokenizeJavaScriptAuthority(source);
+  return lexical.valid ? lexical.tokens : Object.freeze([]);
+}
+
+function includesTokenSequence(tokens, expected) {
+  if (expected.length === 0 || expected.length > tokens.length) return false;
+  for (let start = 0; start <= tokens.length - expected.length; start += 1) {
+    if (expected.every((token, offset) => sameToken(tokens[start + offset], token))) return true;
+  }
+  return false;
+}
+
+function functionBodyTokens(tokens, functionName) {
+  let matchedBody = null;
+  for (let index = 0; index < tokens.length - 2; index += 1) {
+    if (tokens[index]?.type !== 'identifier' || tokens[index].value !== 'function') continue;
+    if (tokens[index + 1]?.type !== 'identifier' || tokens[index + 1].value !== functionName) continue;
+    let parametersOpen = index + 2;
+    while (parametersOpen < tokens.length
+      && !(tokens[parametersOpen]?.type === 'punctuator' && tokens[parametersOpen].value === '(')) parametersOpen += 1;
+    if (parametersOpen >= tokens.length) return Object.freeze([]);
+    let parameterDepth = 1;
+    let parametersClose = parametersOpen + 1;
+    for (; parametersClose < tokens.length && parameterDepth > 0; parametersClose += 1) {
+      if (tokens[parametersClose]?.type !== 'punctuator') continue;
+      if (tokens[parametersClose].value === '(') parameterDepth += 1;
+      if (tokens[parametersClose].value === ')') parameterDepth -= 1;
+    }
+    if (parameterDepth !== 0) return Object.freeze([]);
+    let open = parametersClose;
+    while (open < tokens.length && !(tokens[open]?.type === 'punctuator' && tokens[open].value === '{')) open += 1;
+    if (open >= tokens.length) return Object.freeze([]);
+    let depth = 1;
+    for (let close = open + 1; close < tokens.length; close += 1) {
+      if (tokens[close]?.type !== 'punctuator') continue;
+      if (tokens[close].value === '{') depth += 1;
+      if (tokens[close].value === '}') depth -= 1;
+      if (depth === 0) {
+        if (matchedBody !== null) return Object.freeze([]);
+        matchedBody = Object.freeze(tokens.slice(open + 1, close));
+        index = close;
+        break;
+      }
+    }
+    if (depth !== 0) return Object.freeze([]);
+  }
+  return matchedBody ?? Object.freeze([]);
+}
+
+function requireExecutableSequences(findings, tokens, path, rules) {
+  for (const [source, code] of rules) {
+    if (!includesTokenSequence(tokens, tokenSequence(source))) findings.push(finding(code, path));
+  }
+}
+
+function requireFunctionSequences(findings, tokens, path, functionName, missingCode, rules) {
+  const body = functionBodyTokens(tokens, functionName);
+  if (body.length === 0) {
+    findings.push(finding(missingCode, path));
+    return;
+  }
+  requireExecutableSequences(findings, body, path, rules);
+}
+
+function parseNamedImportBindings(tokens) {
+  const bindings = [];
+  let cursor = 1;
+  while (cursor < tokens.length - 1) {
+    const imported = tokens[cursor];
+    if (imported?.type !== 'identifier') return null;
+    cursor += 1;
+    let local = imported.value;
+    if (tokens[cursor]?.type === 'identifier' && tokens[cursor].value === 'as') {
+      if (tokens[cursor + 1]?.type !== 'identifier') return null;
+      local = tokens[cursor + 1].value;
+      cursor += 2;
+    }
+    bindings.push(Object.freeze({ imported: imported.value, local }));
+    if (tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === ',') cursor += 1;
+    else if (!(tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === '}')) return null;
+  }
+  return tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === '}'
+    ? Object.freeze(bindings)
+    : null;
+}
+
+function parseImportBindings(tokens) {
+  if (tokens.length === 0) return null;
+  const first = tokens[0];
+  if (first?.type === 'punctuator' && first.value === '{') return parseNamedImportBindings(tokens);
+  if (first?.type === 'punctuator' && first.value === '*') return null;
+  if (first?.type !== 'identifier') return null;
+  const bindings = [{ imported: 'default', local: first.value }];
+  if (tokens.length === 1) return Object.freeze(bindings.map((binding) => Object.freeze(binding)));
+  if (!(tokens[1]?.type === 'punctuator' && tokens[1].value === ',')) return null;
+  if (tokens[2]?.type === 'punctuator' && tokens[2].value === '{') {
+    const named = parseNamedImportBindings(tokens.slice(2));
+    return named ? Object.freeze([...bindings.map((binding) => Object.freeze(binding)), ...named]) : null;
+  }
+  return null;
+}
+
+function staticImportDeclarations(tokens) {
+  const declarations = [];
+  let valid = true;
+  let dynamicLoader = false;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token?.type !== 'identifier' || token.value !== 'import') continue;
+    const next = tokens[index + 1];
+    if (next?.type === 'punctuator' && next.value === '(') {
+      dynamicLoader = true;
+      continue;
+    }
+    if (next?.type === 'string') {
+      valid = false;
+      continue;
+    }
+    let from = -1;
+    for (let cursor = index + 1; cursor < tokens.length; cursor += 1) {
+      if (tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === ';') break;
+      if (tokens[cursor]?.type === 'identifier' && tokens[cursor].value === 'from') {
+        from = cursor;
+        break;
+      }
+    }
+    const specifier = tokens[from + 1];
+    const bindings = from > index + 1 ? parseImportBindings(tokens.slice(index + 1, from)) : null;
+    if (!bindings || bindings.length === 0 || specifier?.type !== 'string') {
+      valid = false;
+      continue;
+    }
+    declarations.push(Object.freeze({ specifier: specifier.value, bindings }));
+  }
+  return Object.freeze({ valid, dynamicLoader, declarations: Object.freeze(declarations) });
+}
+
+function reviewLocalModuleAuthority(source, path, findings, importPolicy) {
   const lexical = tokenizeJavaScriptAuthority(source);
   if (!lexical.valid) {
     findings.push(finding('openclaw-provider-pool-javascript-lexical-invalid', path));
-    return;
+    return lexical;
   }
-  const authorityStrings = constantAuthorityStrings(lexical.tokens);
+  const authorityStrings = computedAuthorityStrings(lexical.tokens);
   const forbiddenModule = authorityStrings.some((value) => FORBIDDEN_LOCAL_MODULES.has(value));
   const dangerousToken = lexical.tokens.some((token) => (
     token.type === 'identifier'
     && DANGEROUS_AUTHORITY_TOKENS.has(token.value)
   )) || authorityStrings.some((value) => DANGEROUS_AUTHORITY_TOKENS.has(value));
-  const staticModules = [];
-  let invalidImport = false;
-  let dynamicLoader = false;
-  for (let tokenIndex = 0; tokenIndex < lexical.tokens.length; tokenIndex += 1) {
-    const token = lexical.tokens[tokenIndex];
-    if (token.type !== 'identifier' || token.value !== 'import') continue;
-    const nextToken = lexical.tokens[tokenIndex + 1];
-    if (nextToken?.type === 'punctuator' && nextToken.value === '(') {
-      dynamicLoader = true;
-      continue;
-    }
-    if (nextToken?.type === 'string') {
-      staticModules.push(nextToken.value);
-      continue;
-    }
-    let foundFrom = false;
-    for (let cursor = tokenIndex + 1; cursor < lexical.tokens.length; cursor += 1) {
-      const candidate = lexical.tokens[cursor];
-      if (candidate?.type === 'punctuator' && candidate.value === ';') break;
-      if (candidate?.type === 'identifier' && candidate.value === 'from') {
-        foundFrom = true;
-        const specifier = lexical.tokens[cursor + 1];
-        if (specifier?.type === 'string') staticModules.push(specifier.value);
-        else invalidImport = true;
-        break;
-      }
-    }
-    if (!foundFrom) invalidImport = true;
-  }
-  const unapprovedStaticModule = staticModules.some((specifier) => !ALLOWED_STATIC_MODULES.has(specifier));
-  if (forbiddenModule || dangerousToken || dynamicLoader || invalidImport || unapprovedStaticModule) {
+  const imports = staticImportDeclarations(lexical.tokens);
+  const unapprovedCapability = imports.declarations.some(({ specifier, bindings }) => {
+    const allowedBindings = importPolicy[specifier];
+    return !allowedBindings || bindings.some(({ imported }) => !allowedBindings.has(imported));
+  });
+  if (forbiddenModule || dangerousToken || imports.dynamicLoader || !imports.valid || unapprovedCapability) {
     findings.push(finding('openclaw-provider-pool-local-execution-authority-forbidden', path));
   }
+  return lexical;
 }
 
 function reviewProviderPool(source, path, findings) {
-  requireLiterals(findings, source, path, [
+  const lexical = reviewLocalModuleAuthority(source, path, findings, IMPLEMENTATION_IMPORT_POLICY);
+  if (!lexical.valid) return;
+  requireExecutableSequences(findings, lexical.tokens, path, [
     ["import { routeMissionControllerCapacity } from './missionControllerCapacityRouterV1.mjs';", 'openclaw-provider-pool-canonical-router-missing'],
     ['validateExecutionReceipt', 'openclaw-provider-pool-execution-validator-missing'],
     ['toSharedWorkspaceExecutionReceipt', 'openclaw-provider-pool-workspace-projection-missing'],
     ['validateSharedWorkspaceRecord', 'openclaw-provider-pool-workspace-validator-missing'],
     ['const OPENCLAW_QUALIFICATION_ISSUE = 1725;', 'openclaw-provider-pool-goal-not-fixed'],
     ['export function validateOpenClawQualificationAuthorityChain', 'openclaw-provider-pool-authority-chain-gate-missing'],
+    ['export function validateOpenClawProviderCapacity', 'openclaw-provider-pool-capacity-gate-missing'],
+    ['export function routeWithQualifiedOpenClawProvider', 'openclaw-provider-pool-route-gate-missing'],
+  ]);
+  requireFunctionSequences(findings, lexical.tokens, path,
+    'validateOpenClawQualificationAuthorityChain',
+    'openclaw-provider-pool-authority-chain-gate-missing', [
     ['issueNumber: OPENCLAW_QUALIFICATION_ISSUE', 'openclaw-provider-pool-execution-goal-binding-missing'],
     ["execution.workerType !== 'openclaw'", 'openclaw-provider-pool-worker-type-binding-missing'],
     ["execution.state !== 'completed'", 'openclaw-provider-pool-completed-execution-gate-missing'],
@@ -433,27 +617,33 @@ function reviewProviderPool(source, path, findings) {
     ['authority.relatedIssue !== String(OPENCLAW_QUALIFICATION_ISSUE)', 'openclaw-provider-pool-authority-goal-binding-missing'],
     ['authority.receivedRecordId !== execution.receiptId', 'openclaw-provider-pool-authority-execution-binding-missing'],
     ['authority.disposition !== OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION', 'openclaw-provider-pool-production-disposition-gate-missing'],
+  ]);
+  requireFunctionSequences(findings, lexical.tokens, path,
+    'validateOpenClawProviderCapacity',
+    'openclaw-provider-pool-capacity-gate-missing', [
     ['candidate.qualificationAuthorityReceiptId === expected.authorityReceiptId', 'openclaw-provider-pool-capacity-authority-binding-missing'],
+  ]);
+  requireFunctionSequences(findings, lexical.tokens, path,
+    'routeWithQualifiedOpenClawProvider',
+    'openclaw-provider-pool-route-gate-missing', [
     ['const host = snapshot(trustedHostContext);', 'openclaw-provider-pool-trusted-host-only-gate-missing'],
     ['const openClawPoolEligible = qualification.valid && authority.valid && capacity.valid;', 'openclaw-provider-pool-complete-chain-gate-missing'],
     ['mergeAuthority: false', 'openclaw-provider-pool-merge-denial-missing'],
     ['leaseSeizureAllowed: false', 'openclaw-provider-pool-lease-denial-missing'],
     ['duplicateDispatchAllowed: false', 'openclaw-provider-pool-duplicate-dispatch-denial-missing'],
   ]);
-  reviewLocalModuleAuthority(source, path, findings);
-  forbidPatterns(findings, source, path, [
-    [/\b(?:exec|execSync|execFile|spawn|spawnSync|fork)\s*\(|shell\s*:\s*true|\beval\s*\(|new\s+Function\s*\(/i, 'openclaw-provider-pool-dynamic-execution-forbidden'],
-  ]);
 }
 
 function reviewProviderPoolTests(source, path, findings) {
-  requireLiterals(findings, source, path, [
-    ['requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt', 'openclaw-provider-pool-authority-chain-positive-test-missing'],
-    ['capacity is unusable without the exact validated qualification authority, worker and task class', 'openclaw-provider-pool-capacity-binding-test-missing'],
-    ['caller-shaped qualification, capacity and fake authority evidence cannot self-admit OpenClaw', 'openclaw-provider-pool-caller-forgery-test-missing'],
-    ['syntactically valid trusted qualification without canonical authority cannot route', 'openclaw-provider-pool-syntax-only-forgery-test-missing'],
-    ['existing mutation owner is preserved even when OpenClaw is canonically qualified', 'openclaw-provider-pool-owner-preservation-test-missing'],
-    ['normal AUTO routing does not silently replace a healthy existing provider policy', 'openclaw-provider-pool-no-silent-route-replacement-test-missing'],
+  const lexical = reviewLocalModuleAuthority(source, path, findings, TEST_IMPORT_POLICY);
+  if (!lexical.valid) return;
+  requireExecutableSequences(findings, lexical.tokens, path, [
+    ["test('requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt'", 'openclaw-provider-pool-authority-chain-positive-test-missing'],
+    ["test('capacity is unusable without the exact validated qualification authority, worker and task class'", 'openclaw-provider-pool-capacity-binding-test-missing'],
+    ["test('caller-shaped qualification, capacity and fake authority evidence cannot self-admit OpenClaw'", 'openclaw-provider-pool-caller-forgery-test-missing'],
+    ["test('syntactically valid trusted qualification without canonical authority cannot route'", 'openclaw-provider-pool-syntax-only-forgery-test-missing'],
+    ["test('existing mutation owner is preserved even when OpenClaw is canonically qualified'", 'openclaw-provider-pool-owner-preservation-test-missing'],
+    ["test('normal AUTO routing does not silently replace a healthy existing provider policy'", 'openclaw-provider-pool-no-silent-route-replacement-test-missing'],
     ['assert.equal(result.mergeAuthority, false)', 'openclaw-provider-pool-merge-denial-test-missing'],
     ['assert.equal(result.leaseSeizureAllowed, false)', 'openclaw-provider-pool-lease-denial-test-missing'],
     ['assert.equal(result.duplicateDispatchAllowed, false)', 'openclaw-provider-pool-duplicate-dispatch-test-missing'],
