@@ -504,6 +504,23 @@ function callArgumentRange(tokens, openIndex, requestedIndex) {
   return null;
 }
 
+function callOpenAfterCallee(tokens, calleeStart, calleeEnd) {
+  let start = calleeStart;
+  let end = calleeEnd;
+  while (tokens[start - 1]?.type === 'punctuator'
+    && tokens[start - 1].value === '('
+    && matchingPunctuator(tokens, start - 1, '(', ')') === end + 1) {
+    start -= 1;
+    end += 1;
+  }
+  if (tokens[end + 1]?.type === 'punctuator' && tokens[end + 1].value === '(') return end + 1;
+  if (tokens[end + 1]?.type === 'punctuator'
+    && tokens[end + 1].value === '?.'
+    && tokens[end + 2]?.type === 'punctuator'
+    && tokens[end + 2].value === '(') return end + 2;
+  return -1;
+}
+
 function reflectivePropertyKeyRanges(tokens) {
   const ranges = [];
   for (let index = 0; index < tokens.length - 3; index += 1) {
@@ -513,20 +530,17 @@ function reflectivePropertyKeyRanges(tokens) {
     let callOpen = -1;
     if (access?.type === 'punctuator' && new Set(['.', '?.']).has(access.value)) {
       const method = tokens[index + 2];
-      const open = tokens[index + 3];
       if (method?.type === 'identifier'
-        && REFLECTIVE_PROPERTY_KEY_METHODS.has(method.value)
-        && open?.type === 'punctuator'
-        && open.value === '(') callOpen = index + 3;
+        && REFLECTIVE_PROPERTY_KEY_METHODS.has(method.value)) {
+        callOpen = callOpenAfterCallee(tokens, index, index + 2);
+      }
     } else if (access?.type === 'punctuator' && access.value === '[') {
       const methodClose = matchingPunctuator(tokens, index + 1, '[', ']');
       if (methodClose <= index + 1) continue;
       const methodPattern = parseComputedAuthorityPattern(tokens, index + 2, methodClose);
       const couldSelectReflectiveMethod = !methodPattern
         || [...REFLECTIVE_PROPERTY_KEY_METHODS].some((method) => authorityPatternCanResolve(methodPattern, method));
-      if (couldSelectReflectiveMethod
-        && tokens[methodClose + 1]?.type === 'punctuator'
-        && tokens[methodClose + 1].value === '(') callOpen = methodClose + 1;
+      if (couldSelectReflectiveMethod) callOpen = callOpenAfterCallee(tokens, index, methodClose);
     }
     if (callOpen < 0) continue;
     const range = callArgumentRange(tokens, callOpen, 1);
@@ -746,11 +760,80 @@ function topLevelReturnStatements(tokens) {
   return Object.freeze(returnStatements(tokens).filter(({ index }) => curlyDepthAt[index] === 0));
 }
 
+function statementEnd(tokens, start) {
+  if (start < 0 || start >= tokens.length) return -1;
+  const token = tokens[start];
+  if (token?.type === 'punctuator' && token.value === '{') {
+    const close = matchingPunctuator(tokens, start, '{', '}');
+    return close < 0 ? -1 : close + 1;
+  }
+  if (token?.type === 'identifier' && token.value === 'if') {
+    const conditionOpen = start + 1;
+    const conditionClose = matchingPunctuator(tokens, conditionOpen, '(', ')');
+    if (conditionClose < 0) return -1;
+    const consequentEnd = statementEnd(tokens, conditionClose + 1);
+    if (consequentEnd < 0) return -1;
+    if (tokens[consequentEnd]?.type === 'identifier' && tokens[consequentEnd].value === 'else') {
+      return statementEnd(tokens, consequentEnd + 1);
+    }
+    return consequentEnd;
+  }
+  if (token?.type === 'identifier' && new Set(['for', 'while', 'with']).has(token.value)) {
+    const conditionOpen = start + 1;
+    const conditionClose = matchingPunctuator(tokens, conditionOpen, '(', ')');
+    return conditionClose < 0 ? -1 : statementEnd(tokens, conditionClose + 1);
+  }
+  if (token?.type === 'identifier' && token.value === 'do') {
+    const bodyEnd = statementEnd(tokens, start + 1);
+    if (bodyEnd < 0
+      || tokens[bodyEnd]?.type !== 'identifier'
+      || tokens[bodyEnd].value !== 'while') return -1;
+    const conditionClose = matchingPunctuator(tokens, bodyEnd + 1, '(', ')');
+    if (conditionClose < 0) return -1;
+    return tokens[conditionClose + 1]?.type === 'punctuator'
+      && tokens[conditionClose + 1].value === ';'
+      ? conditionClose + 2
+      : conditionClose + 1;
+  }
+  const depth = { round: 0, square: 0, curly: 0 };
+  for (let index = start; index < tokens.length; index += 1) {
+    const current = tokens[index];
+    if (current?.type !== 'punctuator') continue;
+    if (current.value === '(') depth.round += 1;
+    else if (current.value === ')') depth.round -= 1;
+    else if (current.value === '[') depth.square += 1;
+    else if (current.value === ']') depth.square -= 1;
+    else if (current.value === '{') depth.curly += 1;
+    else if (current.value === '}') depth.curly -= 1;
+    if (depth.round < 0 || depth.square < 0 || depth.curly < 0) return -1;
+    if (current.value === ';' && depth.round === 0 && depth.square === 0 && depth.curly === 0) return index + 1;
+  }
+  return -1;
+}
+
+function directStatementStarts(tokens) {
+  const starts = new Set();
+  let cursor = 0;
+  while (cursor < tokens.length) {
+    while (tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === ';') cursor += 1;
+    if (cursor >= tokens.length) break;
+    starts.add(cursor);
+    const end = statementEnd(tokens, cursor);
+    if (end <= cursor) return new Set();
+    cursor = end;
+  }
+  return starts;
+}
+
 function conditionalExitGuard(tokens, conditionSource, safeReturns) {
+  const statementStarts = directStatementStarts(tokens);
   let curlyDepth = 0;
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
-    if (curlyDepth === 0 && token?.type === 'identifier' && token.value === 'if') {
+    if (curlyDepth === 0
+      && statementStarts.has(index)
+      && token?.type === 'identifier'
+      && token.value === 'if') {
       const conditionOpen = index + 1;
       const conditionClose = matchingPunctuator(tokens, conditionOpen, '(', ')');
       if (conditionClose > conditionOpen

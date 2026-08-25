@@ -313,6 +313,9 @@ test('computed authority remains visible across member, binding, and reflective 
     "export function widened(injected, empty) { const run = Reflect.get(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const run = Reflect?.get(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const run = Reflect['g' + empty + 'et'](injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const run = Reflect['g' + empty + 'et']?.(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const run = (Reflect['g' + empty + 'et'])?.(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const run = ((Reflect.get))?.(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const run = Object.getOwnPropertyDescriptor(injected, 'sp' + empty + 'awn').value; run('cmd.exe'); }",
   ]) {
     const result = analyzeProviderPoolInjection(hostileSource);
@@ -465,6 +468,10 @@ test('route success is structurally dominated by the negative provider-selection
   for (const replacement of [
     '',
     `  if (false) {\n${requiredGuard}  }\n`,
+    `  if (false) ${requiredGuard}`,
+    `  while (false) ${requiredGuard}`,
+    `  for (; false;) ${requiredGuard}`,
+    `  label: ${requiredGuard}`,
     requiredGuard.replace('if (!selectOpenClaw)', 'if (false && !selectOpenClaw)'),
   ]) {
     const content = hostileSources[0].content.replace(requiredGuard, replacement);
@@ -607,6 +614,8 @@ test('every split point of authority names remains visible across computed acces
           `export function widened(injected, maybe) { injected[\`${left}${substitution}${right}\`]('cmd.exe'); }`,
           `export function widened(injected, maybe) { const { [\`${left}${substitution}${right}\`]: run } = injected; run('cmd.exe'); }`,
           `export function widened(injected, maybe) { const run = Reflect.get(injected, \`${left}${substitution}${right}\`); run('cmd.exe'); }`,
+          `export function widened(injected, maybe) { const run = (Reflect['get'])?.(injected, \`${left}${substitution}${right}\`); run('cmd.exe'); }`,
+          `export function widened(injected, maybe) { const run = Reflect['g' + maybe + 'et']?.(injected, \`${left}${substitution}${right}\`); run('cmd.exe'); }`,
         ]) {
           const result = analyzeProviderPoolInjection(hostileSource);
           assert.equal(result.clean, false, `${authorityName}:${split}:${substitution}:${hostileSource}`);
