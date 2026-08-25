@@ -346,6 +346,10 @@ test('computed authority remains visible across member, binding, and reflective 
     "export function widened(injected, empty) { const receivers = [Reflect]; let R; [R] = receivers; let getter; ({ get: getter } = R); const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const groups = [[Reflect.get]]; let methods; [methods] = groups; let getter; [getter] = methods; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const groups = [[Reflect]]; let receivers; [receivers] = groups; let R; [R] = receivers; let getter; ({ get: getter } = R); const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { let getters; [...getters] = [Reflect.get]; const getter = getters[0]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const helper = { render() {} }; let getters; [, ...getters] = [helper.render, Reflect.get]; const getter = getters[0]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const helper = { render() {} }; const methods = [helper.render, Reflect.get]; let getters; [, ...getters] = methods; const getter = getters[0]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const groups = [[Reflect.get]]; let methods; [...methods] = groups; let getters; [...getters] = methods[0]; const getter = getters[0]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const methods = [Reflect.get]; const getter = methods[0]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const methods = [Reflect.get]; const getter = methods?.[0]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const methods = [Reflect.get]; const getter = (0, methods)[0]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
@@ -429,6 +433,16 @@ test('container value possibilities traverse every bounded source and target ele
     assert.ok(destructuredResult.findings.some((item) => (
       item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'
     )));
+
+    const restSource = `export function widened(injected, empty) { const helper = { render() {} }; const methods = [${[
+      ...safeValues,
+      'Reflect.get',
+    ].join(',')}]; let getters; [${Array.from({ length: width - 1 }, () => '').join(',')}, ...getters] = methods; const getter = getters[0]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }`;
+    const restResult = analyzeProviderPoolInjection(restSource);
+    assert.equal(restResult.clean, false, `rest width ${width}`);
+    assert.ok(restResult.findings.some((item) => (
+      item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'
+    )));
   }
 });
 
@@ -486,6 +500,8 @@ test('successor profile rejects global network capabilities without rejecting in
     "const helper = { render() {} }; let detached; ({ render: detached } = helper); detached();",
     "const helper = { render() {} }; const methods = [helper.render]; const alias = (0, methods); let detached; [detached] = alias; detached();",
     "const helper = { render() {} }; const methods = [helper.render, Reflect.get]; const detached = methods[0]; detached();",
+    "const helper = { render() {} }; let methods; [...methods] = [helper.render]; const detached = methods[0]; detached();",
+    "const helper = { render() {} }; let methods; [, ...methods] = [Reflect.get, helper.render]; const detached = methods[0]; detached();",
     "const helper = { render() {} }; const safe = []; const methods = [helper.render, ...safe, Reflect.get]; const detached = methods[0]; detached();",
     "const helper = { render() {} }; let getter; [getter = Reflect.get] = [helper.render]; getter();",
     "const helper = { render() {} }; let getter; [[getter] = [Reflect.get]] = [[helper.render]]; getter();",

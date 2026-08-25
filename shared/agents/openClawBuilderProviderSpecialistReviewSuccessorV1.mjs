@@ -854,7 +854,7 @@ function uniqueRanges(ranges) {
   const seen = new Set();
   return Object.freeze(ranges.filter((range) => {
     if (!range) return false;
-    const key = `${range.start}:${range.end}`;
+    const key = `${range.start}:${range.end}:${range.offset ?? 0}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -913,7 +913,7 @@ function arrayRuntimeMinimumLength(tokens, arrayRange, arrayAliases, depth = 0) 
       )));
     }
   }
-  return length;
+  return Math.max(0, length - (arrayRange?.offset ?? 0));
 }
 
 function arrayElementPossibility(tokens, arrayRange, requestedIndex, arrayAliases, depth = 0) {
@@ -924,14 +924,18 @@ function arrayElementPossibility(tokens, arrayRange, requestedIndex, arrayAliase
     mayBeReflectiveMethod: true,
     mayBeReflectiveReceiver: true,
   });
+  const offset = arrayRange?.offset ?? 0;
+  const absoluteRequestedIndex = requestedIndex === null ? null : requestedIndex + offset;
   const elements = arrayLiteralElementRanges(tokens, arrayRange);
   const firstSpread = elements.findIndex((element) => (
     tokens[element.start]?.type === 'punctuator' && tokens[element.start].value === '...'
   ));
-  const selected = requestedIndex === null
-    ? elements
-    : firstSpread < 0 || requestedIndex < firstSpread
-      ? elements.slice(requestedIndex, requestedIndex + 1)
+  const selected = absoluteRequestedIndex === null
+    ? firstSpread < 0 || offset < firstSpread
+      ? elements.slice(offset)
+      : elements.slice(firstSpread)
+    : firstSpread < 0 || absoluteRequestedIndex < firstSpread
+      ? elements.slice(absoluteRequestedIndex, absoluteRequestedIndex + 1)
       : elements.slice(firstSpread);
   const possible = [];
   let mayBeUndefined = false;
@@ -975,8 +979,13 @@ function arrayElementPossibility(tokens, arrayRange, requestedIndex, arrayAliase
       mayBeReflectiveReceiver ||= spread.mayBeReflectiveReceiver;
     }
   }
-  const mayBeAbsent = requestedIndex !== null
-    && arrayRuntimeMinimumLength(tokens, arrayRange, arrayAliases, depth + 1) <= requestedIndex;
+  const mayBeAbsent = absoluteRequestedIndex !== null
+    && arrayRuntimeMinimumLength(
+      tokens,
+      Object.freeze({ start: arrayRange.start, end: arrayRange.end }),
+      arrayAliases,
+      depth + 1,
+    ) <= absoluteRequestedIndex;
   return Object.freeze({
     ranges: uniqueRanges(possible),
     mayBeAbsent,
@@ -1326,6 +1335,7 @@ function recordDestructuringAssignmentAliases(
   addReceiverAlias,
   addArrayAlias,
   depth = 0,
+  arrayValueOverrides = null,
 ) {
   if (depth > MAX_FOLDED_AUTHORITY_EXPRESSION_DEPTH) return;
   const pattern = stripTransparentRange(tokens, patternRange.start, patternRange.end);
@@ -1350,7 +1360,8 @@ function recordDestructuringAssignmentAliases(
     );
     return;
   }
-  const arrayValues = reflectiveArrayExpressionRanges(tokens, value.start, value.end, arrayAliases);
+  const arrayValues = arrayValueOverrides
+    ?? reflectiveArrayExpressionRanges(tokens, value.start, value.end, arrayAliases);
   if (tokens[pattern.start]?.type !== 'punctuator'
     || tokens[pattern.start].value !== '['
     || matchingPunctuator(tokens, pattern.start, '[', ']') !== pattern.end - 1) return;
@@ -1373,7 +1384,35 @@ function recordDestructuringAssignmentAliases(
     const sourceRanges = uniqueRanges(sourceRangeGroups.flat());
     if (targetRange.start >= targetRange.end) continue;
     const target = stripTransparentRange(tokens, targetRange.start, targetRange.end);
-    if (tokens[target.start]?.type === 'punctuator' && tokens[target.start].value === '...') continue;
+    if (tokens[target.start]?.type === 'punctuator' && tokens[target.start].value === '...') {
+      const restTarget = stripTransparentRange(tokens, target.start + 1, target.end);
+      const restArrays = arrayValues.map((arrayValue) => Object.freeze({
+        start: arrayValue.start,
+        end: arrayValue.end,
+        offset: (arrayValue.offset ?? 0) + elementIndex,
+      }));
+      if (tokens[restTarget.start]?.type === 'identifier'
+        && restTarget.end === restTarget.start + 1) {
+        for (const restArray of restArrays) {
+          addArrayAlias(tokens[restTarget.start].value, restArray);
+        }
+      } else if (restArrays.length > 0) {
+        recordDestructuringAssignmentAliases(
+          tokens,
+          restTarget,
+          value,
+          aliases,
+          receiverAliases,
+          arrayAliases,
+          addAlias,
+          addReceiverAlias,
+          addArrayAlias,
+          depth + 1,
+          restArrays,
+        );
+      }
+      continue;
+    }
 
     const fallback = topLevelAssignment(tokens, target.start, target.end);
     const targetEnd = fallback >= 0 ? fallback : target.end;
@@ -1473,7 +1512,11 @@ function reflectiveMethodAliases(tokens) {
   };
   const addArrayAlias = (name, arrayRange) => {
     const current = arrayAliases.get(name) ?? Object.freeze([]);
-    if (current.some((range) => range.start === arrayRange.start && range.end === arrayRange.end)) return false;
+    if (current.some((range) => (
+      range.start === arrayRange.start
+      && range.end === arrayRange.end
+      && (range.offset ?? 0) === (arrayRange.offset ?? 0)
+    ))) return false;
     arrayAliases.set(name, Object.freeze([...current, arrayRange]));
     return true;
   };
