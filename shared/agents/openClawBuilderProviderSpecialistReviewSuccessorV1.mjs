@@ -165,6 +165,12 @@ const DANGEROUS_AUTHORITY_TOKENS = new Set([
 ]);
 const MAX_FOLDED_AUTHORITY_STRING_LENGTH = 128;
 const MAX_FOLDED_AUTHORITY_EXPRESSION_DEPTH = 32;
+const JAVASCRIPT_MULTI_PUNCTUATORS = Object.freeze([
+  '>>>=', '===', '!==', '>>>', '**=', '&&=', '||=', '??=', '...', '=>', '++', '--',
+  '**', '&&', '||', '??', '==', '!=', '<=', '>=', '<<', '>>', '+=', '-=', '*=',
+  '/=', '%=', '&=', '|=', '^=', '?.',
+]);
+const REGEX_DISALLOWED_AFTER_PUNCTUATORS = new Set([')', ']', '}', '++', '--']);
 
 function readJavaScriptEscapeSequence(source, start) {
   let index = start + 1;
@@ -246,7 +252,7 @@ function canStartJavaScriptRegex(tokens) {
     return new Set(['await', 'case', 'delete', 'in', 'instanceof', 'of', 'return', 'throw', 'typeof', 'void', 'yield']).has(previous.value);
   }
   if (previous.type === 'number' || previous.type === 'string' || previous.type === 'template' || previous.type === 'regex') return false;
-  return !new Set([')', ']', '}']).has(previous.value);
+  return !REGEX_DISALLOWED_AFTER_PUNCTUATORS.has(previous.value);
 }
 
 function tokenizeJavaScriptAuthority(source) {
@@ -362,8 +368,9 @@ function tokenizeJavaScriptAuthority(source) {
       } else pushToken({ type: 'punctuator', value: current });
       continue;
     }
-    pushToken({ type: 'punctuator', value: current });
-    index += 1;
+    const multiPunctuator = JAVASCRIPT_MULTI_PUNCTUATORS.find((candidate) => source.startsWith(candidate, index));
+    pushToken({ type: 'punctuator', value: multiPunctuator || current });
+    index += (multiPunctuator || current).length;
   }
   return { valid: contexts.length === 1, tokens: Object.freeze(tokens) };
 }
@@ -442,6 +449,94 @@ function includesTokenSequence(tokens, expected) {
     if (expected.every((token, offset) => sameToken(tokens[start + offset], token))) return true;
   }
   return false;
+}
+
+function tokenSequenceIndex(tokens, expected, start = 0) {
+  if (expected.length === 0 || expected.length > tokens.length) return -1;
+  for (let index = start; index <= tokens.length - expected.length; index += 1) {
+    if (expected.every((token, offset) => sameToken(tokens[index + offset], token))) return index;
+  }
+  return -1;
+}
+
+function sameTokenSequence(tokens, source) {
+  const expected = tokenSequence(source);
+  return tokens.length === expected.length
+    && expected.length > 0
+    && expected.every((token, index) => sameToken(tokens[index], token));
+}
+
+function returnStatements(tokens) {
+  const statements = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (tokens[index]?.type !== 'identifier' || tokens[index].value !== 'return') continue;
+    const returnIndex = index;
+    const expression = [];
+    const depth = { round: 0, square: 0, curly: 0 };
+    let terminated = false;
+    for (let cursor = index + 1; cursor < tokens.length; cursor += 1) {
+      const token = tokens[cursor];
+      if (token?.type === 'punctuator') {
+        if (token.value === ';' && depth.round === 0 && depth.square === 0 && depth.curly === 0) {
+          terminated = true;
+          index = cursor;
+          break;
+        }
+        if (token.value === '(') depth.round += 1;
+        else if (token.value === ')') depth.round -= 1;
+        else if (token.value === '[') depth.square += 1;
+        else if (token.value === ']') depth.square -= 1;
+        else if (token.value === '{') depth.curly += 1;
+        else if (token.value === '}') depth.curly -= 1;
+        if (depth.round < 0 || depth.square < 0 || depth.curly < 0) break;
+      }
+      expression.push(token);
+    }
+    statements.push(Object.freeze({
+      index: returnIndex,
+      expression: Object.freeze(expression),
+      terminated,
+    }));
+  }
+  return Object.freeze(statements);
+}
+
+function blockedAuthorityReturn(tokens) {
+  return tokens.length === 4
+    && tokens[0]?.type === 'identifier' && tokens[0].value === 'blockedAuthority'
+    && tokens[1]?.type === 'punctuator' && tokens[1].value === '('
+    && tokens[2]?.type === 'string'
+    && tokens[3]?.type === 'punctuator' && tokens[3].value === ')';
+}
+
+function requireFunctionReturnPolicy(findings, tokens, path, options) {
+  const body = functionBodyTokens(tokens, options.functionName);
+  if (body.length === 0) return;
+  const dominancePositions = options.requiredBeforeSuccess.map((source) => (
+    tokenSequenceIndex(body, tokenSequence(source))
+  ));
+  if (dominancePositions.some((index) => index < 0)) return;
+
+  const statements = returnStatements(body);
+  let successfulReturnCount = 0;
+  for (const statement of statements) {
+    const allowedSafe = options.safeReturns.some((source) => sameTokenSequence(statement.expression, source))
+      || (options.allowBlockedAuthority === true && blockedAuthorityReturn(statement.expression));
+    const allowedSuccess = options.successReturns.some((source) => sameTokenSequence(statement.expression, source));
+    if (!statement.terminated || (!allowedSafe && !allowedSuccess)) {
+      findings.push(finding(options.invalidReturnCode, path));
+      continue;
+    }
+    if (allowedSuccess) {
+      successfulReturnCount += 1;
+      if (dominancePositions.some((index) => index > statement.index)) {
+        findings.push(finding(options.undominatedSuccessCode, path));
+      }
+    }
+  }
+  if (successfulReturnCount !== options.successReturns.length) {
+    findings.push(finding(options.successReturnCountCode, path));
+  }
 }
 
 function functionBodyTokens(tokens, functionName) {
@@ -632,6 +727,82 @@ function reviewProviderPool(source, path, findings) {
     ['leaseSeizureAllowed: false', 'openclaw-provider-pool-lease-denial-missing'],
     ['duplicateDispatchAllowed: false', 'openclaw-provider-pool-duplicate-dispatch-denial-missing'],
   ]);
+  requireFunctionReturnPolicy(findings, lexical.tokens, path, {
+    functionName: 'validateOpenClawQualificationAuthorityChain',
+    requiredBeforeSuccess: [
+      'issueNumber: OPENCLAW_QUALIFICATION_ISSUE',
+      "execution.workerType !== 'openclaw'",
+      "execution.state !== 'completed'",
+      'execution.operatorActionRequired !== false',
+      'canonicalJson(host.realWorkWorkspaceReceipt) !== canonicalJson(canonicalWorkspace.record)',
+      "authority.participantId !== 'stephanos'",
+      'authority.relatedIssue !== String(OPENCLAW_QUALIFICATION_ISSUE)',
+      'authority.receivedRecordId !== execution.receiptId',
+      'authority.disposition !== OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION',
+    ],
+    allowBlockedAuthority: true,
+    safeReturns: [],
+    successReturns: [`Object.freeze({
+      valid: true,
+      reason: 'OPENCLAW_QUALIFICATION_AUTHORITY_CHAIN_VALID',
+      authorityReceiptId: authority.receiptId,
+      realWorkReceiptId: execution.receiptId,
+      proofRefs,
+    })`],
+    invalidReturnCode: 'openclaw-provider-pool-authority-return-shape-invalid',
+    undominatedSuccessCode: 'openclaw-provider-pool-authority-success-not-gate-dominated',
+    successReturnCountCode: 'openclaw-provider-pool-authority-success-return-count-invalid',
+  });
+  requireFunctionReturnPolicy(findings, lexical.tokens, path, {
+    functionName: 'routeWithQualifiedOpenClawProvider',
+    requiredBeforeSuccess: [
+      'const base = routeMissionControllerCapacity(input);',
+      'const host = snapshot(trustedHostContext);',
+      'const qualification = validateOpenClawProviderQualification(host?.qualificationReceipt, expected);',
+      'const openClawPoolEligible = qualification.valid && authority.valid && capacity.valid;',
+      'const selectOpenClaw = openClawPoolEligible && (explicitOpenClawPreference || baseUnavailable);',
+    ],
+    allowBlockedAuthority: false,
+    safeReturns: [
+      'Object.freeze({ ...base, providerPoolPreference: preference, openClawPoolEligible: false })',
+      `Object.freeze({
+        ...base,
+        providerPoolPreference: preference,
+        openClawPoolEligible,
+        openClawQualification: qualification,
+        openClawQualificationAuthority: authority,
+        openClawCapacity: capacity,
+        providerPoolBlockers: Object.freeze(blockers),
+      })`,
+    ],
+    successReturns: [`Object.freeze({
+      ...base,
+      route: OPENCLAW_PROVIDER_ROUTE,
+      adapter: OPENCLAW_PROVIDER_ADAPTER,
+      workerId: capacity.receipt.workerId,
+      dispatchAllowed: true,
+      selectedCapacityReceiptId: capacity.receipt.receiptId,
+      selectedQualificationReceiptId: qualification.receipt.qualificationId,
+      selectedQualificationAuthorityReceiptId: authority.authorityReceiptId,
+      proofRefs: Object.freeze([...new Set([
+        ...authority.proofRefs,
+        ...capacity.receipt.proofRefs,
+      ])]),
+      blockers: Object.freeze([]),
+      providerPoolPreference: preference,
+      openClawPoolEligible: true,
+      openClawQualification: qualification,
+      openClawQualificationAuthority: authority,
+      openClawCapacity: capacity,
+      mergeAuthority: false,
+      leaseSeizureAllowed: false,
+      duplicateDispatchAllowed: false,
+      finalVerdict: 'MISSION_CONTROLLER_OPENCLAW_POOL_ROUTE_READY',
+    })`],
+    invalidReturnCode: 'openclaw-provider-pool-route-return-shape-invalid',
+    undominatedSuccessCode: 'openclaw-provider-pool-route-success-not-gate-dominated',
+    successReturnCountCode: 'openclaw-provider-pool-route-success-return-count-invalid',
+  });
 }
 
 function reviewProviderPoolTests(source, path, findings) {

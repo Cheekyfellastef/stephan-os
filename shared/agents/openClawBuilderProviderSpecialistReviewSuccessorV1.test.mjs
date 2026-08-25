@@ -26,6 +26,7 @@ ${'import'} { validateSharedWorkspaceRecord as allowedWorkspace } from './shared
 const OPENCLAW_QUALIFICATION_ISSUE = 1725;
 function canonicalJson(value) { return JSON.stringify(value); }
 function snapshot(value) { return value; }
+function blockedAuthority(reason) { return { valid: false, reason }; }
 export function validateOpenClawQualificationAuthorityChain(input, trustedHostContext, expected = {}) {
   const host = snapshot(trustedHostContext);
   const execution = host.realWorkExecutionReceipt;
@@ -40,20 +41,55 @@ export function validateOpenClawQualificationAuthorityChain(input, trustedHostCo
     || authority.participantId !== 'stephanos'
     || authority.relatedIssue !== String(OPENCLAW_QUALIFICATION_ISSUE)
     || authority.receivedRecordId !== execution.receiptId
-    || authority.disposition !== OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION) return { valid: false };
-  return { valid: true };
+    || authority.disposition !== OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION) return blockedAuthority('OPENCLAW_PRODUCTION_ELIGIBILITY_AUTHORITY_INVALID');
+  const proofRefs = [];
+  return Object.freeze({
+    valid: true,
+    reason: 'OPENCLAW_QUALIFICATION_AUTHORITY_CHAIN_VALID',
+    authorityReceiptId: authority.receiptId,
+    realWorkReceiptId: execution.receiptId,
+    proofRefs,
+  });
 }
 export function validateOpenClawProviderCapacity(candidate, expected = {}) {
   return candidate.qualificationAuthorityReceiptId === expected.authorityReceiptId;
 }
 export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContext = {}) {
-  routeMissionControllerCapacity(input);
+  const base = routeMissionControllerCapacity(input);
+  const preference = 'AUTO';
+  const expected = {};
   const host = snapshot(trustedHostContext);
-  const qualification = { valid: Boolean(host.qualificationReceipt) };
+  const qualification = validateOpenClawProviderQualification(host?.qualificationReceipt, expected);
   const authority = { valid: Boolean(host.qualificationAuthorityReceipt) };
-  const capacity = { valid: Boolean(host.capacityReceipt) };
+  const capacity = { valid: Boolean(host.capacityReceipt), receipt: { workerId: 'openclaw', receiptId: 'capacity', proofRefs: [] } };
   const openClawPoolEligible = qualification.valid && authority.valid && capacity.valid;
-  return { openClawPoolEligible, mergeAuthority: false, leaseSeizureAllowed: false, duplicateDispatchAllowed: false };
+  const explicitOpenClawPreference = false;
+  const baseUnavailable = false;
+  const selectOpenClaw = openClawPoolEligible && (explicitOpenClawPreference || baseUnavailable);
+  return Object.freeze({
+    ...base,
+    route: OPENCLAW_PROVIDER_ROUTE,
+    adapter: OPENCLAW_PROVIDER_ADAPTER,
+    workerId: capacity.receipt.workerId,
+    dispatchAllowed: true,
+    selectedCapacityReceiptId: capacity.receipt.receiptId,
+    selectedQualificationReceiptId: qualification.receipt.qualificationId,
+    selectedQualificationAuthorityReceiptId: authority.authorityReceiptId,
+    proofRefs: Object.freeze([...new Set([
+      ...authority.proofRefs,
+      ...capacity.receipt.proofRefs,
+    ])]),
+    blockers: Object.freeze([]),
+    providerPoolPreference: preference,
+    openClawPoolEligible: true,
+    openClawQualification: qualification,
+    openClawQualificationAuthority: authority,
+    openClawCapacity: capacity,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+    duplicateDispatchAllowed: false,
+    finalVerdict: 'MISSION_CONTROLLER_OPENCLAW_POOL_ROUTE_READY',
+  });
 }
 `;
   if (path.endsWith('/openClawProviderPoolQualificationV1.test.mjs')) return `
@@ -253,6 +289,79 @@ test('successor profile lexically rejects aliased, commented, escaped, dynamic, 
     assert.equal(result.clean, false);
     assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
   }
+});
+
+test('postfix increment and decrement keep following division executable rather than hiding it as a regex', () => {
+  for (const postfix of ['++', '--']) {
+    const result = analyzeProviderPoolInjection(`
+      let quotient = 1;
+      quotient${postfix} / process.getBuiltinModule('child_process').spawn('cmd.exe') / 2;
+    `);
+    assert.equal(result.clean, false, postfix);
+    assert.ok(result.findings.some((item) => (
+      item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'
+    )), postfix);
+  }
+});
+
+test('successful authority and route returns must be gate-dominated and match the closed return contract', () => {
+  const hostileSources = sources();
+  const content = hostileSources[0].content
+    .replace(
+      'export function validateOpenClawQualificationAuthorityChain(input, trustedHostContext, expected = {}) {',
+      `export function validateOpenClawQualificationAuthorityChain(input, trustedHostContext, expected = {}) {
+        return { valid: true };`,
+    )
+    .replace(
+      'export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContext = {}) {',
+      `export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContext = {}) {
+        return { mergeAuthority: true, leaseSeizureAllowed: true, duplicateDispatchAllowed: true };`,
+    );
+  hostileSources[0] = {
+    ...hostileSources[0],
+    size: Buffer.byteLength(content, 'utf8'),
+    blobSha: blobSha(content),
+    content,
+  };
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-authority-return-shape-invalid'));
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-route-return-shape-invalid'));
+});
+
+test('an otherwise valid success return cannot be copied ahead of its authority gates', () => {
+  const hostileSources = sources();
+  const authoritySuccess = hostileSources[0].content.match(
+    /return Object\.freeze\(\{\n    valid: true,[\s\S]*?\n  \}\);/,
+  )?.[0];
+  const routeSuccess = hostileSources[0].content.match(
+    /return Object\.freeze\(\{\n    \.\.\.base,\n    route: OPENCLAW_PROVIDER_ROUTE,[\s\S]*?finalVerdict: 'MISSION_CONTROLLER_OPENCLAW_POOL_ROUTE_READY',\n  \}\);/,
+  )?.[0];
+  assert.ok(authoritySuccess);
+  assert.ok(routeSuccess);
+  const content = hostileSources[0].content
+    .replace(
+      'export function validateOpenClawQualificationAuthorityChain(input, trustedHostContext, expected = {}) {',
+      `export function validateOpenClawQualificationAuthorityChain(input, trustedHostContext, expected = {}) {
+        ${authoritySuccess}`,
+    )
+    .replace(
+      'export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContext = {}) {',
+      `export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContext = {}) {
+        ${routeSuccess}`,
+    );
+  hostileSources[0] = {
+    ...hostileSources[0],
+    size: Buffer.byteLength(content, 'utf8'),
+    blobSha: blobSha(content),
+    content,
+  };
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-authority-success-not-gate-dominated'));
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-route-success-not-gate-dominated'));
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-authority-success-return-count-invalid'));
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-route-success-return-count-invalid'));
 });
 
 test('successor profile requires authority gates in executable function structure rather than comments', () => {
