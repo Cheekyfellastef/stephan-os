@@ -1018,7 +1018,8 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
         goals.push(candidate);
       } else {
         const existing = goals[existingIndex];
-        const identityConflict = (existing.repository !== null && existing.repository.toLowerCase() !== repository.toLowerCase())
+        const identityConflict = existing.state === 'ACTIVE'
+          || (existing.repository !== null && existing.repository.toLowerCase() !== repository.toLowerCase())
           || (existing.branch !== null && existing.branch !== branch)
           || ['COMPLETE', 'CLOSED', 'CANCELLED', 'SUPERSEDED'].includes(existing.state);
         if (identityConflict) blockers.push('critical-backlog-scheduler-goal-conflict');

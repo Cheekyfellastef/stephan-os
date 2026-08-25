@@ -1017,6 +1017,32 @@ test('source-controlled critical backlog is admitted without a duplicate workspa
   );
 });
 
+test('critical backlog scheduler admission preserves and rejects a conflicting active goal', () => {
+  const selectedItem = DEFAULT_CRITICAL_BACKLOG[0];
+  const existingActiveGoal = goalRecord({
+    goalId: 'goal-1291',
+    issueNumber: 1291,
+    repository: selectedItem.mission.repository,
+    branch: selectedItem.mission.branch,
+    title: 'Existing active durable goal',
+    status: 'ACTIVE',
+    route: 'CHATGPT_GITHUB',
+  });
+  const goals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [existingActiveGoal],
+    criticalBacklog: buildCriticalBacklogProjection(),
+  });
+
+  assert.equal(goals.valid, false);
+  assert.ok(goals.blockers.includes('critical-backlog-scheduler-goal-conflict'));
+  assert.equal(goals.goals.length, 1);
+  assert.equal(goals.goals[0].state, 'ACTIVE');
+  assert.equal(goals.goals[0].route, 'CHATGPT_GITHUB');
+  assert.equal(goals.goals[0].repository, selectedItem.mission.repository);
+  assert.equal(goals.goals[0].branch, selectedItem.mission.branch);
+});
+
 test('critical backlog scheduler admission fails closed on mission identity drift', () => {
   const selectedItem = DEFAULT_CRITICAL_BACKLOG[0];
   const criticalBacklog = buildCriticalBacklogProjection({
