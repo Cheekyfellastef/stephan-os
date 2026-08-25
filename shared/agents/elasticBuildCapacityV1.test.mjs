@@ -87,6 +87,11 @@ test('repository path resources are canonical before hierarchical conflict index
     'repo:cheekyfellastef/stephan-os:path:shared//agents/example.mjs',
     'repo:cheekyfellastef/stephan-os:path:/shared/agents/example.mjs',
     'repo:cheekyfellastef/stephan-os:path:shared/agents/example.mjs/',
+    'repo:cheekyfellastef/stephan-os:path:shared/agents./example.mjs',
+    'repo:cheekyfellastef/stephan-os:path:shared/agents/example.mjs.',
+    'repo:cheekyfellastef/stephan-os:path:shared/agents/example.mjs:stream',
+    'repo:cheekyfellastef/stephan-os:path:shared/con/readme.md',
+    'repo:cheekyfellastef/stephan-os:path:shared/LPT1.txt/readme.md',
   ];
   const result = selectResourceDisjointCandidates(aliases.map((resourceId, index) => ({
     candidateId:`alias-${index}`,

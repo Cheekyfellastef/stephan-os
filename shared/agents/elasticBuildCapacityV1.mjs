@@ -3,6 +3,8 @@ export const MINIMUM_BUILD_LANES = 5;
 export const MAXIMUM_BUILD_LANES = 16;
 
 const SAFE_RESOURCE_ID = /^[a-z0-9][a-z0-9._:/-]{0,239}$/i;
+const SAFE_REPOSITORY_PATH_SEGMENT = /^[a-z0-9._-]+$/i;
+const WIN32_RESERVED_PATH_STEM = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 
 function integer(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : null;
@@ -20,7 +22,15 @@ function repositoryPathResource(value) {
   const match = /^repo:([^:]+\/[^:]+):path:(.+)$/.exec(value);
   if (!match) return null;
   const segments = match[2].split('/');
-  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) return null;
+  if (segments.some((segment) => (
+    !segment
+    || segment === '.'
+    || segment === '..'
+    || !SAFE_REPOSITORY_PATH_SEGMENT.test(segment)
+    || segment.endsWith('.')
+    || segment.endsWith(' ')
+    || WIN32_RESERVED_PATH_STEM.test(segment)
+  ))) return null;
   return { repository:match[1], path:segments.join('/') };
 }
 

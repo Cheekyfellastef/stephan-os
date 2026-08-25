@@ -125,6 +125,15 @@ test('active resource authority uses the canonical hierarchical overlap model', 
   assert.ok(aliased.contradictions.some(({ code, reason }) => (
     code === 'ACTIVE_RESOURCE_EVIDENCE_INVALID' && reason === 'resource-ids-non-canonical'
   )));
+
+  const win32Aliased = buildMissionScheduler({
+    now:NOW,
+    goals:[active(1, ['repo:cheekyfellastef/stephan-os:path:shared/agents/example.mjs.'])],
+  });
+  assert.equal(win32Aliased.failClosed, true);
+  assert.ok(win32Aliased.contradictions.some(({ code, reason }) => (
+    code === 'ACTIVE_RESOURCE_EVIDENCE_INVALID' && reason === 'resource-ids-non-canonical'
+  )));
 });
 
 test('scheduler exposes five resource-disjoint ready candidates without granting mutation authority', () => {
