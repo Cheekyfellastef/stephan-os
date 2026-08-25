@@ -37,6 +37,7 @@ import {
   extractPersonalRepositoryArtifactZip,
   parsePersonalRepositoryDispatchInputs,
   validatePersonalRepositoryApprovalReceipt,
+  validatePersonalRepositoryCheckRuns,
   validatePersonalRepositoryCheckRunsWithBoundedReread,
   validatePersonalRepositoryConfiguration,
   validatePersonalRepositoryDispatchExecution,
@@ -573,10 +574,19 @@ async function loadSelectedIndependentReview(context, identity) {
   });
 }
 
-async function collectEvidence(context, expected = {}) {
-  const execution = await currentWorkflowExecution(context);
-  const identity = context.dispatch.identity;
-  const [repository, pullRequest, liveMainRef, headCommit, comparison, review, environment, workflowRuns, checkRuns, commitStatuses] = await Promise.all([
+async function readPersonalRepositoryAuthoritySnapshot(context, identity) {
+  const [
+    execution,
+    repository,
+    pullRequest,
+    liveMainRef,
+    headCommit,
+    comparison,
+    review,
+    environment,
+    independentReview,
+  ] = await Promise.all([
+    currentWorkflowExecution(context),
     apiJson(`/repos/${context.owner}/${context.repo}`, { authorization: 'ruleset-proof' }),
     apiJson(`/repos/${context.owner}/${context.repo}/pulls/${identity.prNumber}`),
     apiJson(`/repos/${context.owner}/${context.repo}/git/ref/heads/main`),
@@ -584,16 +594,35 @@ async function collectEvidence(context, expected = {}) {
     apiJson(`/repos/${context.owner}/${context.repo}/compare/${identity.baseSha}...${identity.sourceHead}`),
     pullRequestReviewState(context.owner, context.repo, identity.prNumber),
     apiJson(`/repos/${context.owner}/${context.repo}/environments/operator-merge-approval`),
+    loadSelectedIndependentReview(context, identity),
+  ]);
+  return Object.freeze({
+    execution,
+    repository,
+    pullRequest,
+    liveMainRef,
+    headCommit,
+    comparison,
+    review,
+    environment,
+    independentReview,
+  });
+}
+
+async function collectEvidence(context, expected = {}) {
+  const identity = context.dispatch.identity;
+  const [initialAuthority, workflowRuns, checkRuns, commitStatuses] = await Promise.all([
+    readPersonalRepositoryAuthoritySnapshot(context, identity),
     apiCollection(`/repos/${context.owner}/${context.repo}/actions/runs?head_sha=${identity.sourceHead}`, 'workflow_runs'),
     apiCollection(`/repos/${context.owner}/${context.repo}/commits/${identity.sourceHead}/check-runs?filter=latest`, 'check_runs'),
     apiCollection(`/repos/${context.owner}/${context.repo}/commits/${identity.sourceHead}/statuses`, null),
   ]);
+  const { review, independentReview } = initialAuthority;
   const initialWorkflowRuns = await hydrateExactHeadWorkflowRuns(
     context,
     identity.sourceHead,
     workflowRuns.items,
   );
-  const independentReview = await loadSelectedIndependentReview(context, identity);
   const initialCheckSnapshot = Object.freeze({
     checkRuns: checkRuns.items,
     workflowRuns: initialWorkflowRuns,
@@ -637,6 +666,40 @@ async function collectEvidence(context, expected = {}) {
       snapshotAttempts: checks.snapshotAttempts,
     });
   }
+  const refreshedAuthority = await readPersonalRepositoryAuthoritySnapshot(context, identity);
+  const refreshedCheckExpectation = buildPersonalRepositoryCheckExpectation({
+    repository: context.repository,
+    identity,
+    mergeStateStatus: refreshedAuthority.review.mergeStateStatus,
+  });
+  if (!refreshedCheckExpectation.valid) {
+    fail('Refreshed exact check expectation is incomplete or unsafe.', {
+      blockers: refreshedCheckExpectation.blockers,
+    });
+  }
+  const finalChecks = validatePersonalRepositoryCheckRuns(
+    checks.selectedSnapshot.checkRuns,
+    checks.selectedSnapshot.workflowRuns,
+    checks.selectedSnapshot.commitStatuses,
+    refreshedCheckExpectation.expected,
+    { cleanIndependentReviewProved: refreshedAuthority.independentReview.reviewMode === 'clean-independent' },
+  );
+  if (!finalChecks.valid) {
+    fail('Authority changed after exact-head check convergence.', {
+      blockers: finalChecks.blockers,
+    });
+  }
+  const {
+    execution,
+    repository,
+    pullRequest,
+    liveMainRef,
+    headCommit,
+    comparison,
+    review: refreshedReview,
+    environment,
+    independentReview: refreshedIndependentReview,
+  } = refreshedAuthority;
   const acceptedWorkflowRuns = checks.selectedSnapshot.workflowRuns;
   const evidence = validatePersonalRepositoryEvidence({
     repository: context.repository,
@@ -649,15 +712,15 @@ async function collectEvidence(context, expected = {}) {
     liveMainRef,
     headCommit,
     comparison,
-    ...review,
+    ...refreshedReview,
   }, {
     ...identity,
     workflowRunId: context.runId,
     workflowRunAttempt: context.runAttempt,
     ...expected,
   }, {
-    cleanIndependentReviewProved: independentReview.reviewMode === 'clean-independent',
-    reviewEscalationChecksProved: checks.valid,
+    cleanIndependentReviewProved: refreshedIndependentReview.reviewMode === 'clean-independent',
+    reviewEscalationChecksProved: finalChecks.valid,
   });
   if (!evidence.valid) {
     fail('Personal-repository PR, exact head/tree/base or review state is stale.', {
@@ -699,11 +762,19 @@ async function collectEvidence(context, expected = {}) {
     configurationSnapshotSha256: configuration.configurationSnapshotSha256,
     retryablePriorFailures: execution.retryablePriorFailures,
     workflows: workflows.evidence,
-    checks: checks.evidence,
-    independentReview,
+    checks: finalChecks.evidence,
+    independentReview: refreshedIndependentReview,
   });
   const evidenceSha256 = sha256(JSON.stringify(canonicalJson(packet)));
-  return { evidence, workflows, checks, configuration, independentReview, packet, evidenceSha256 };
+  return {
+    evidence,
+    workflows,
+    checks: finalChecks,
+    configuration,
+    independentReview: refreshedIndependentReview,
+    packet,
+    evidenceSha256,
+  };
 }
 
 function expectedAdmittedEvidence() {
