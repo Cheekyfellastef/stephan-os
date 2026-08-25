@@ -511,40 +511,7 @@ function callArgumentRange(tokens, openIndex, requestedIndex) {
 }
 
 function arrayElementRange(tokens, expressionRange, requestedIndex) {
-  let start = expressionRange?.start ?? -1;
-  let end = expressionRange?.end ?? -1;
-  while (tokens[start]?.type === 'punctuator'
-    && tokens[start].value === '('
-    && matchingPunctuator(tokens, start, '(', ')') === end - 1) {
-    start += 1;
-    end -= 1;
-  }
-  if (tokens[start]?.type !== 'punctuator'
-    || tokens[start].value !== '['
-    || matchingPunctuator(tokens, start, '[', ']') !== end - 1) return null;
-  let elementIndex = 0;
-  let elementStart = start + 1;
-  const depth = { round: 0, square: 0, curly: 0 };
-  for (let index = elementStart; index < end; index += 1) {
-    const token = tokens[index];
-    if (token?.type === 'punctuator') {
-      if (token.value === '(') depth.round += 1;
-      else if (token.value === ')') depth.round -= 1;
-      else if (token.value === '[') depth.square += 1;
-      else if (token.value === ']' && depth.square > 0) depth.square -= 1;
-      else if (token.value === '{') depth.curly += 1;
-      else if (token.value === '}') depth.curly -= 1;
-      const atElementBoundary = depth.round === 0 && depth.square === 0 && depth.curly === 0;
-      const closesOuterArray = token.value === ']' && index === end - 1;
-      if (atElementBoundary && (token.value === ',' || closesOuterArray)) {
-        if (elementIndex === requestedIndex) return Object.freeze({ start: elementStart, end: index });
-        if (closesOuterArray) return null;
-        elementIndex += 1;
-        elementStart = index + 1;
-      }
-    }
-  }
-  return null;
+  return arrayLiteralElementRanges(tokens, expressionRange)[requestedIndex] ?? null;
 }
 
 function callOpenAfterCallee(tokens, calleeStart, calleeEnd) {
@@ -831,25 +798,21 @@ function fixedObjectKey(tokens, start, end) {
   return token?.type === 'identifier' || token?.type === 'string' ? token.value : null;
 }
 
-function objectLiteralDefinesMember(tokens, receiverName, propertyName) {
+function objectLiteralDefinesMember(tokens, receiverName, propertyName, memberReadIndex) {
   let definingObject = null;
   let assignmentCount = 0;
-  let memberWrite = false;
-  for (let index = 0; index < tokens.length - 2; index += 1) {
-    if (tokens[index]?.type === 'identifier'
-      && tokens[index].value === receiverName
-      && tokens[index + 1]?.type === 'punctuator'
-      && tokens[index + 1].value === '.'
-      && tokens[index + 2]?.type === 'identifier'
-      && tokens[index + 2].value === propertyName
-      && tokens[index + 3]?.type === 'punctuator'
-      && tokens[index + 3].value === '=') memberWrite = true;
+  let receiverRemainsClosed = true;
+  for (let index = 0; index < tokens.length; index += 1) {
     if (tokens[index]?.type !== 'identifier'
-      || tokens[index].value !== receiverName
-      || tokens[index + 1]?.type !== 'punctuator'
-      || tokens[index + 1].value !== '=') continue;
+      || tokens[index].value !== receiverName) continue;
+    const declarationBinding = tokens[index + 1]?.type === 'punctuator'
+      && tokens[index + 1].value === '='
+      && tokens[index - 1]?.type === 'identifier'
+      && tokens[index - 1].value === 'const';
+    if (index !== memberReadIndex && !declarationBinding) receiverRemainsClosed = false;
+    if (tokens[index + 1]?.type !== 'punctuator' || tokens[index + 1].value !== '=') continue;
     assignmentCount += 1;
-    if (tokens[index - 1]?.type !== 'identifier' || tokens[index - 1].value !== 'const') continue;
+    if (!declarationBinding) continue;
     const end = assignmentExpressionEnd(tokens, index + 2);
     const range = end < 0 ? null : stripTransparentRange(tokens, index + 2, end);
     if (range
@@ -857,7 +820,7 @@ function objectLiteralDefinesMember(tokens, receiverName, propertyName) {
       && tokens[range.start].value === '{'
       && matchingPunctuator(tokens, range.start, '{', '}') === range.end - 1) definingObject = range;
   }
-  if (assignmentCount !== 1 || memberWrite || !definingObject) return false;
+  if (assignmentCount !== 1 || !receiverRemainsClosed || !definingObject) return false;
   return objectEntryRanges(tokens, definingObject).some((entry) => {
     const colon = topLevelColon(tokens, entry.start, entry.end);
     const keyEnd = colon >= 0 ? colon : entry.start + 1;
@@ -899,11 +862,32 @@ function uniqueRanges(ranges) {
 }
 
 function arrayLiteralElementRanges(tokens, arrayRange) {
+  const array = stripTransparentRange(tokens, arrayRange?.start ?? -1, arrayRange?.end ?? -1);
+  if (tokens[array.start]?.type !== 'punctuator'
+    || tokens[array.start].value !== '['
+    || matchingPunctuator(tokens, array.start, '[', ']') !== array.end - 1) return Object.freeze([]);
   const ranges = [];
-  for (let elementIndex = 0; elementIndex < 32; elementIndex += 1) {
-    const element = arrayElementRange(tokens, arrayRange, elementIndex);
-    if (!element) break;
-    ranges.push(element);
+  let elementStart = array.start + 1;
+  const depth = { round: 0, square: 0, curly: 0 };
+  for (let index = elementStart; index < array.end; index += 1) {
+    const token = tokens[index];
+    if (token?.type !== 'punctuator') continue;
+    if (token.value === '(') depth.round += 1;
+    else if (token.value === ')') depth.round -= 1;
+    else if (token.value === '[') depth.square += 1;
+    else if (token.value === ']' && depth.square > 0) depth.square -= 1;
+    else if (token.value === '{') depth.curly += 1;
+    else if (token.value === '}') depth.curly -= 1;
+    const atElementBoundary = depth.round === 0 && depth.square === 0 && depth.curly === 0;
+    const closesOuterArray = token.value === ']' && index === array.end - 1;
+    if (!atElementBoundary) continue;
+    if (token.value === ',') {
+      ranges.push(Object.freeze({ start: elementStart, end: index }));
+      elementStart = index + 1;
+    } else if (closesOuterArray && elementStart < index) {
+      ranges.push(Object.freeze({ start: elementStart, end: index }));
+    }
+    if (closesOuterArray) break;
   }
   return Object.freeze(ranges);
 }
@@ -1111,7 +1095,12 @@ function expressionMayBeUndefined(tokens, range) {
     && tokens[expression.start + 1]?.type === 'punctuator'
     && tokens[expression.start + 1].value === '.'
     && tokens[expression.start + 2]?.type === 'identifier') {
-    return !objectLiteralDefinesMember(tokens, first.value, tokens[expression.start + 2].value);
+    return !objectLiteralDefinesMember(
+      tokens,
+      first.value,
+      tokens[expression.start + 2].value,
+      expression.start,
+    );
   }
   return true;
 }
@@ -1366,8 +1355,9 @@ function recordDestructuringAssignmentAliases(
     || tokens[pattern.start].value !== '['
     || matchingPunctuator(tokens, pattern.start, '[', ']') !== pattern.end - 1) return;
 
-  for (let elementIndex = 0; elementIndex < 32; elementIndex += 1) {
-    const targetRange = arrayElementRange(tokens, pattern, elementIndex);
+  const targetRanges = arrayLiteralElementRanges(tokens, pattern);
+  for (let elementIndex = 0; elementIndex < targetRanges.length; elementIndex += 1) {
+    const targetRange = targetRanges[elementIndex];
     const sourcePossibilities = arrayValues.length > 0
       ? arrayValues.map((arrayValue) => (
         arrayElementPossibility(tokens, arrayValue, elementIndex, arrayAliases, depth + 1)
@@ -1381,8 +1371,7 @@ function recordDestructuringAssignmentAliases(
       })];
     const sourceRangeGroups = sourcePossibilities.map((possibility) => possibility.ranges);
     const sourceRanges = uniqueRanges(sourceRangeGroups.flat());
-    if (!targetRange && sourceRanges.length === 0) break;
-    if (!targetRange || targetRange.start >= targetRange.end) continue;
+    if (targetRange.start >= targetRange.end) continue;
     const target = stripTransparentRange(tokens, targetRange.start, targetRange.end);
     if (tokens[target.start]?.type === 'punctuator' && tokens[target.start].value === '...') continue;
 

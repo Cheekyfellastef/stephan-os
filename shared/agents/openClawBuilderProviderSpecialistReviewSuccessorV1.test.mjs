@@ -376,6 +376,11 @@ test('container value possibilities fail closed without activating unreachable d
     "export function widened(injected, empty, values) { let getter; [getter = Reflect.get] = [...values, helper.render]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty, maybe) { let getter; [getter = Reflect.get] = [maybe.value]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const maybe = { value() {} }; maybe.value = undefined; let getter; [getter = Reflect.get] = [maybe.value]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const maybe = { value() {} }; maybe['value'] = undefined; let getter; [getter = Reflect.get] = [maybe.value]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const maybe = { value() {} }; delete maybe.value; let getter; [getter = Reflect.get] = [maybe.value]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const maybe = { value() {} }; const alias = maybe; alias.value = undefined; let getter; [getter = Reflect.get] = [maybe.value]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const maybe = { value() {} }; Object.defineProperty(maybe, 'value', { value: undefined }); let getter; [getter = Reflect.get] = [maybe.value]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const maybe = { value() {} }; let getter; [getter = Reflect.get] = [maybe.value]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); return maybe; }",
     "export function widened(injected, empty, maybe) { let getter; [getter = Reflect.get] = maybe; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { let getter; [{ render: getter = Reflect.get }] = [{}]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { let getter; [{ nested: { render: getter = Reflect.get } = {} }] = [{ nested: {} }]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
@@ -395,6 +400,35 @@ test('container value possibilities fail closed without activating unreachable d
   ]) {
     const result = analyzeProviderPoolInjection(benignSource);
     assert.equal(result.clean, true, `${benignSource}: ${JSON.stringify(result.findings)}`);
+  }
+});
+
+test('container value possibilities traverse every bounded source and target element', () => {
+  for (const width of [31, 32, 33, 64]) {
+    const safeValues = Array.from({ length: width - 1 }, () => 'helper.render');
+    const indexedSource = `export function widened(injected, empty) { const helper = { render() {} }; const methods = [${[
+      ...safeValues,
+      'Reflect.get',
+    ].join(',')}]; const getter = methods[${width - 1}]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }`;
+    const indexedResult = analyzeProviderPoolInjection(indexedSource);
+    assert.equal(indexedResult.clean, false, `indexed width ${width}`);
+    assert.ok(indexedResult.findings.some((item) => (
+      item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'
+    )));
+
+    const targets = [
+      ...Array.from({ length: width - 1 }, (_, index) => `safe${index}`),
+      'getter = Reflect.get',
+    ];
+    const destructuredSource = `export function widened(injected, empty) { const helper = { render() {} }; const [${targets.join(',')}] = [${[
+      ...safeValues,
+      'undefined',
+    ].join(',')}]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }`;
+    const destructuredResult = analyzeProviderPoolInjection(destructuredSource);
+    assert.equal(destructuredResult.clean, false, `destructured width ${width}`);
+    assert.ok(destructuredResult.findings.some((item) => (
+      item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'
+    )));
   }
 });
 
