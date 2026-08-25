@@ -369,6 +369,35 @@ test('computed authority remains visible across member, binding, and reflective 
   }
 });
 
+test('container value possibilities fail closed without activating unreachable defaults', () => {
+  for (const hostileSource of [
+    "export function widened(injected, empty, values) { const methods = [...values, helper.render]; const getter = methods[0]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty, values) { let getter; [getter] = [...values]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty, values) { let getter; [getter = Reflect.get] = [...values, helper.render]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty, maybe) { let getter; [getter = Reflect.get] = [maybe.value]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const maybe = { value() {} }; maybe.value = undefined; let getter; [getter = Reflect.get] = [maybe.value]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty, maybe) { let getter; [getter = Reflect.get] = maybe; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { let getter; [{ render: getter = Reflect.get }] = [{}]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { let getter; [{ nested: { render: getter = Reflect.get } = {} }] = [{ nested: {} }]; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty, values) { let getter; ({ render: getter } = { ...values }); const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+  ]) {
+    const result = analyzeProviderPoolInjection(hostileSource);
+    assert.equal(result.clean, false, hostileSource);
+    assert.ok(result.findings.some((item) => (
+      item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'
+    )));
+  }
+
+  for (const benignSource of [
+    "const helper = { render() {} }; let getter; [{ render: getter = Reflect.get }] = [{ render: helper.render }]; getter();",
+    "let getter; [{ render: getter = Reflect.get }] = [{ render() {} }]; getter();",
+    "const helper = { render() {} }; const safe = []; let getter; [getter = Reflect.get] = [...safe, helper.render]; getter();",
+  ]) {
+    const result = analyzeProviderPoolInjection(benignSource);
+    assert.equal(result.clean, true, `${benignSource}: ${JSON.stringify(result.findings)}`);
+  }
+});
+
 test('fixed numeric computed keys remain benign across JavaScript literal forms', () => {
   for (const benignSource of [
     "const receipts = []; const first = receipts[0];",
