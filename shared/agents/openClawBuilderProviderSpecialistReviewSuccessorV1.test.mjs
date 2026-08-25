@@ -275,6 +275,7 @@ test('successor profile lexically rejects aliased, commented, escaped, dynamic, 
     "globalThis[('pro' + ('ce' + 'ss'))]['getBuiltin' + 'Module']('child_' + ('pro' + 'cess'));",
     "export function widened(injected) { injected['sp' + 'awn']('cmd.exe'); }",
     "export function widened(injected, empty) { injected['sp' + empty + 'awn']('cmd.exe'); }",
+    "export function widened(injected, empty) { const run = injected['sp' + empty + 'awn']; run('cmd.exe'); }",
     "export function widened(injected) { injected['exec' + 'FileSync']('cmd.exe'); }",
     "export function widened(injected) { injected[`sp${''}awn`]('cmd.exe'); }",
     "export function widened(injected, maybe) { injected[`sp${maybe}awn`]('cmd.exe'); }",
@@ -301,7 +302,9 @@ test('successor profile rejects direct global network execution without rejectin
     "const networkFixture = Object.freeze({ operation: 'fetch', url: 'https://example.invalid' });",
     "const client = {}; client.fetch();",
     "const helper = { render() { return 'proof'; } }; helper['render']();",
+    "const helper = {}; const detached = helper['render'];",
     `const helper = {}; helper[\`render-${'${mode}'}\`]();`,
+    `const helper = {}; const detached = helper[\`render-${'${mode}'}\`];`,
     `const proofRef = \`proofs/openclaw/${'${receiptId}'}\`;`,
   ]) {
     const benign = analyzeProviderPoolInjection(benignSource);

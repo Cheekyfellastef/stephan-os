@@ -543,7 +543,7 @@ function computedAuthorityStrings(tokens) {
         if (depth === 0) closeIndex = cursor;
       }
     }
-    if (closeIndex > index && tokens[closeIndex + 1]?.type === 'punctuator' && tokens[closeIndex + 1].value === '(') {
+    if (closeIndex > index) {
       const memberTokens = tokens.slice(index + 1, closeIndex);
       const aggregateTemplate = memberTokens.at(-1);
       const templateOwnsExpression = aggregateTemplate?.type === 'template'
