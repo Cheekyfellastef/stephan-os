@@ -5,7 +5,8 @@ This document advances issue #1671 from the M2 deployment-admission contract int
 ## Fixed runtime identity
 
 - repository: `Cheekyfellastef/stephan-os`
-- Windows host posture: Windows 10 client build 19043 or newer with WSL2 available, admitted only through `podman-desktop-windows10-wsl2-v1`
+- Windows host posture: Windows 10 client, x64, build 19043 through 21999 inclusive, with real WSL2 evidence, admitted only through `podman-desktop-windows10-wsl2-v1`
+- WSL2 evidence: either `Default Version: 2` from `wsl.exe --status` or a version-2 distribution from `wsl.exe --list --verbose`
 - container engine: Podman `6.0.2`
 - machine: `stephanos-forge-shadow`
 - machine provider: WSL
@@ -43,7 +44,7 @@ Credential material is not proof. Receipts expose only the fact that containment
 
 The runtime planner and fixed Windows adapter progress only through these states:
 
-1. prove the allowlisted Windows host adapter, Windows 10 client product identity, build 19043+, WSL2, `main` and the exact source head;
+1. prove the allowlisted Windows host adapter, Windows 10 client identity, x64 architecture, exact build range 19043-21999, real WSL2 evidence, `main` and the exact source head;
 2. prove Podman 6.0.2 from one of two source-controlled installation paths, or stop at a separately authorised host prerequisite;
 3. initialise the fixed rootless WSL Podman machine if absent;
 4. start that exact machine if stopped;
@@ -64,6 +65,8 @@ The runtime planner and fixed Windows adapter progress only through these states
 19. require the restored service to become healthy and expose the exact expected `main` head;
 20. tear down the restore probe, restart the canonical shadow, and re-prove service health and privilege identity;
 21. only then return `FORGE_SHADOW_M2_READY` and permit a separate M3 runner slice.
+
+The host gate does not accept `wsl.exe` existence or command success as WSL2 proof. A WSL1-only or unconfigured host blocks before Podman or Forge runtime mutation. Build 22000 or newer is outside this Windows-10-only adapter even if a legacy registry product string still says Windows 10, and a non-x64 host cannot consume the fixed amd64 Podman asset.
 
 A wrong mirror head on a new or unsealed runtime blocks. An existing sealed canonical mirror at an older exact head may use the explicitly approved one-shot refresh above only after its Forge API metadata re-proves the fixed owner, repository name, pull-mirror type and canonical GitHub remote; it cannot accept another owner, repository, remote, ref, URL, schedule or target head. The same metadata is re-proved after resealing. Failure to reach `ExpectedHead`, revoke the temporary token, reseal, or re-prove exact object/tree parity blocks M2 readiness.
 
@@ -129,7 +132,7 @@ A backup is not called restorable merely because it can be hashed or copied. The
 
 ## Strict runtime facts
 
-The pure runtime planner treats observed runtime facts as typed evidence. Every declared boolean fact must be a JavaScript boolean, `windowsBuild` must be a non-negative safe integer, and `windowsHostAdapter`, `windowsProductName`, `windowsInstallationType`, `podmanVersion` plus `mirrorSourceHead` must be strings. The Windows adapter additionally requires `InstallationType=Client` and a Windows 10 product name, so a numerically compatible Windows Server build cannot impersonate the client adapter. Stringified values such as `"false"`, numeric truthiness, nulls or arrays fail closed and cannot be promoted into runtime authority.
+The pure runtime planner treats observed runtime facts as typed evidence. Every declared boolean fact must be a JavaScript boolean; `windowsBuild` must be a non-negative safe integer; and `windowsHostAdapter`, `windowsProductName`, `windowsInstallationType`, `windowsArchitecture`, `wsl2Evidence`, `podmanVersion` and `mirrorSourceHead` must be strings. The Windows adapter additionally requires `InstallationType=Client`, a Windows 10 product identity, build 19043-21999, architecture `X64`, `wsl2Available=true`, and closed WSL2 evidence of either `default-version-2` or `distribution-version-2`. Stringified values, numeric truthiness, command-exists-only WSL claims, nulls or arrays fail closed and cannot be promoted into runtime authority.
 
 ## Fixed Windows adapter
 
@@ -150,7 +153,11 @@ M2 is not complete from service health alone. `FORGE_SHADOW_M2_READY` requires a
 - canonical repository identity;
 - exact canonical `main` head;
 - exact Forgejo OCI digest;
-- allowlisted Windows host adapter, Windows 10 client product identity, build 19043+ and WSL2 proof;
+- allowlisted Windows host adapter;
+- Windows 10 client product identity;
+- build 19043 through 21999 inclusive;
+- x64 OS architecture;
+- parsed WSL2 proof, not command availability;
 - Podman 6.0.2 proof;
 - rootless machine proof;
 - loopback-only published service;
