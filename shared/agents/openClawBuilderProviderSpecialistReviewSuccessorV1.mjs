@@ -798,6 +798,70 @@ function fixedArrayIndex(tokens, start, end) {
   }
 }
 
+function uniqueRanges(ranges) {
+  const seen = new Set();
+  return Object.freeze(ranges.filter((range) => {
+    if (!range) return false;
+    const key = `${range.start}:${range.end}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }));
+}
+
+function arrayLiteralElementRanges(tokens, arrayRange) {
+  const ranges = [];
+  for (let elementIndex = 0; elementIndex < 32; elementIndex += 1) {
+    const element = arrayElementRange(tokens, arrayRange, elementIndex);
+    if (!element) break;
+    ranges.push(element);
+  }
+  return Object.freeze(ranges);
+}
+
+function arrayElementPossibleRanges(tokens, arrayRange, requestedIndex, arrayAliases, depth = 0) {
+  if (depth > MAX_FOLDED_AUTHORITY_EXPRESSION_DEPTH) return Object.freeze([]);
+  const elements = arrayLiteralElementRanges(tokens, arrayRange);
+  const firstSpread = elements.findIndex((element) => (
+    tokens[element.start]?.type === 'punctuator' && tokens[element.start].value === '...'
+  ));
+  const selected = requestedIndex === null
+    ? elements
+    : firstSpread < 0 || requestedIndex < firstSpread
+      ? elements.slice(requestedIndex, requestedIndex + 1)
+      : elements.slice(firstSpread);
+  const possible = [];
+  for (const element of selected) {
+    if (element.start >= element.end) continue;
+    if (tokens[element.start]?.type !== 'punctuator' || tokens[element.start].value !== '...') {
+      possible.push(element);
+      continue;
+    }
+    const spreadStart = element.start + 1;
+    const spreadArrays = reflectiveArrayExpressionRanges(
+      tokens,
+      spreadStart,
+      element.end,
+      arrayAliases,
+      depth + 1,
+    );
+    if (spreadArrays.length === 0) {
+      possible.push(Object.freeze({ start: spreadStart, end: element.end }));
+      continue;
+    }
+    for (const spreadArray of spreadArrays) {
+      possible.push(...arrayElementPossibleRanges(
+        tokens,
+        spreadArray,
+        null,
+        arrayAliases,
+        depth + 1,
+      ));
+    }
+  }
+  return uniqueRanges(possible);
+}
+
 function reflectiveArrayElementRanges(tokens, start, end, arrayAliases, depth = 0) {
   if (depth > MAX_FOLDED_AUTHORITY_EXPRESSION_DEPTH || start >= end) return Object.freeze([]);
   const range = stripTransparentRange(tokens, start, end);
@@ -817,48 +881,69 @@ function reflectiveArrayElementRanges(tokens, start, end, arrayAliases, depth = 
   const baseEnd = tokens[accessOpen - 1]?.type === 'punctuator' && tokens[accessOpen - 1].value === '?.'
     ? accessOpen - 1
     : accessOpen;
-  const arrayRange = reflectiveArrayExpressionRange(tokens, start, baseEnd, arrayAliases, depth + 1);
-  if (!arrayRange) return Object.freeze([]);
+  const arrayRanges = reflectiveArrayExpressionRanges(tokens, start, baseEnd, arrayAliases, depth + 1);
+  if (arrayRanges.length === 0) return Object.freeze([]);
   const fixedIndex = fixedArrayIndex(tokens, accessOpen + 1, end - 1);
-  if (fixedIndex !== null) {
-    const element = arrayElementRange(tokens, arrayRange, fixedIndex);
-    return Object.freeze(element ? [element] : []);
-  }
   const possible = [];
-  for (let elementIndex = 0; elementIndex < 32; elementIndex += 1) {
-    const element = arrayElementRange(tokens, arrayRange, elementIndex);
-    if (!element) break;
-    if (element.start < element.end) possible.push(element);
+  for (const arrayRange of arrayRanges) {
+    possible.push(...arrayElementPossibleRanges(
+      tokens,
+      arrayRange,
+      fixedIndex,
+      arrayAliases,
+      depth + 1,
+    ));
   }
-  return Object.freeze(possible);
+  return uniqueRanges(possible);
 }
 
-function reflectiveArrayExpressionRange(tokens, start, end, arrayAliases, depth = 0) {
-  if (depth > MAX_FOLDED_AUTHORITY_EXPRESSION_DEPTH || start >= end) return null;
+function reflectiveArrayExpressionRanges(tokens, start, end, arrayAliases, depth = 0) {
+  if (depth > MAX_FOLDED_AUTHORITY_EXPRESSION_DEPTH || start >= end) return Object.freeze([]);
   const range = stripTransparentRange(tokens, start, end);
   start = range.start;
   end = range.end;
   const comma = topLevelComma(tokens, start, end);
   if (comma >= start) {
-    return reflectiveArrayExpressionRange(tokens, comma + 1, end, arrayAliases, depth + 1);
+    return reflectiveArrayExpressionRanges(tokens, comma + 1, end, arrayAliases, depth + 1);
   }
   if (tokens[start]?.type === 'punctuator'
     && tokens[start].value === '['
-    && matchingPunctuator(tokens, start, '[', ']') === end - 1) return range;
+    && matchingPunctuator(tokens, start, '[', ']') === end - 1) return Object.freeze([range]);
   if (end === start + 1 && tokens[start]?.type === 'identifier') {
-    return arrayAliases.get(tokens[start].value) ?? null;
+    return arrayAliases.get(tokens[start].value) ?? Object.freeze([]);
   }
   const elementRanges = reflectiveArrayElementRanges(tokens, start, end, arrayAliases, depth + 1);
-  if (elementRanges.length === 1) {
-    return reflectiveArrayExpressionRange(
+  const arrays = [];
+  for (const elementRange of elementRanges) {
+    arrays.push(...reflectiveArrayExpressionRanges(
       tokens,
-      elementRanges[0].start,
-      elementRanges[0].end,
+      elementRange.start,
+      elementRange.end,
       arrayAliases,
       depth + 1,
-    );
+    ));
   }
-  return null;
+  return uniqueRanges(arrays);
+}
+
+function expressionMayBeUndefined(tokens, range) {
+  if (!range || range.start >= range.end) return true;
+  const expression = stripTransparentRange(tokens, range.start, range.end);
+  const first = tokens[expression.start];
+  if (expression.end === expression.start + 1) {
+    if (first?.type !== 'identifier') return false;
+    return !new Set(['false', 'null', 'true']).has(first.value);
+  }
+  if (first?.type === 'identifier' && first.value === 'void') return true;
+  if (first?.type === 'punctuator' && new Set(['[', '{']).has(first.value)) return false;
+  if (first?.type !== 'identifier') return true;
+  let cursor = expression.start + 1;
+  while (cursor < expression.end) {
+    if (tokens[cursor]?.type !== 'punctuator' || tokens[cursor].value !== '.') return true;
+    if (tokens[cursor + 1]?.type !== 'identifier') return true;
+    cursor += 2;
+  }
+  return false;
 }
 
 function recordReflectiveObjectPatternAliases(tokens, open, close, addAlias) {
@@ -924,16 +1009,19 @@ function recordDestructuringAssignmentAliases(
     }
     return;
   }
-  const arrayValue = reflectiveArrayExpressionRange(tokens, value.start, value.end, arrayAliases);
+  const arrayValues = reflectiveArrayExpressionRanges(tokens, value.start, value.end, arrayAliases);
   if (tokens[pattern.start]?.type !== 'punctuator'
     || tokens[pattern.start].value !== '['
     || matchingPunctuator(tokens, pattern.start, '[', ']') !== pattern.end - 1
-    || !arrayValue) return;
+    || arrayValues.length === 0) return;
 
   for (let elementIndex = 0; elementIndex < 32; elementIndex += 1) {
     const targetRange = arrayElementRange(tokens, pattern, elementIndex);
-    const sourceRange = arrayElementRange(tokens, arrayValue, elementIndex);
-    if (!targetRange && !sourceRange) break;
+    const sourceRangeGroups = arrayValues.map((arrayValue) => (
+      arrayElementPossibleRanges(tokens, arrayValue, elementIndex, arrayAliases, depth + 1)
+    ));
+    const sourceRanges = uniqueRanges(sourceRangeGroups.flat());
+    if (!targetRange && sourceRanges.length === 0) break;
     if (!targetRange || targetRange.start >= targetRange.end) continue;
     const target = stripTransparentRange(tokens, targetRange.start, targetRange.end);
     if (tokens[target.start]?.type === 'punctuator' && tokens[target.start].value === '...') continue;
@@ -941,8 +1029,15 @@ function recordDestructuringAssignmentAliases(
     const fallback = topLevelAssignment(tokens, target.start, target.end);
     const targetEnd = fallback >= 0 ? fallback : target.end;
     const nestedTarget = Object.freeze({ start: target.start, end: targetEnd });
+    const fallbackReachable = fallback >= 0 && (
+      sourceRangeGroups.some((ranges) => ranges.length === 0)
+      || sourceRanges.some((range) => expressionMayBeUndefined(tokens, range))
+    );
     if (tokens[target.start]?.type === 'identifier' && targetEnd === target.start + 1) {
-      for (const range of [sourceRange, fallback >= 0 ? { start: fallback + 1, end: target.end } : null]) {
+      const candidateRanges = fallbackReachable
+        ? [...sourceRanges, { start: fallback + 1, end: target.end }]
+        : sourceRanges;
+      for (const range of candidateRanges) {
         if (!range || range.start >= range.end) continue;
         for (const descriptor of reflectiveExpressionDescriptors(tokens, range.start, range.end, aliases)) {
           addAlias(tokens[target.start].value, descriptor);
@@ -950,12 +1045,16 @@ function recordDestructuringAssignmentAliases(
         if (reflectiveReceiverExpression(tokens, range.start, range.end, receiverAliases)) {
           addReceiverAlias(tokens[target.start].value);
         }
-        const nestedArray = reflectiveArrayExpressionRange(tokens, range.start, range.end, arrayAliases);
-        if (nestedArray) addArrayAlias(tokens[target.start].value, nestedArray);
+        for (const nestedArray of reflectiveArrayExpressionRanges(
+          tokens,
+          range.start,
+          range.end,
+          arrayAliases,
+        )) addArrayAlias(tokens[target.start].value, nestedArray);
       }
       continue;
     }
-    if (sourceRange && sourceRange.start < sourceRange.end) {
+    for (const sourceRange of sourceRanges) {
       recordDestructuringAssignmentAliases(
         tokens,
         nestedTarget,
@@ -969,7 +1068,7 @@ function recordDestructuringAssignmentAliases(
         depth + 1,
       );
     }
-    if (fallback >= 0 && fallback + 1 < target.end) {
+    if (fallbackReachable && fallback + 1 < target.end) {
       recordDestructuringAssignmentAliases(
         tokens,
         nestedTarget,
@@ -1002,6 +1101,12 @@ function reflectiveMethodAliases(tokens) {
     if (descriptor.boundPropertyRange) boundPropertyRanges.push(descriptor.boundPropertyRange);
     return true;
   };
+  const addArrayAlias = (name, arrayRange) => {
+    const current = arrayAliases.get(name) ?? Object.freeze([]);
+    if (current.some((range) => range.start === arrayRange.start && range.end === arrayRange.end)) return false;
+    arrayAliases.set(name, Object.freeze([...current, arrayRange]));
+    return true;
+  };
   let changed = true;
   while (changed) {
     changed = false;
@@ -1012,13 +1117,12 @@ function reflectiveMethodAliases(tokens) {
         || tokens[index + 1].value !== '=') continue;
       const rhsStart = index + 2;
       const rhsEnd = assignmentExpressionEnd(tokens, rhsStart);
-      const arrayRange = rhsEnd < 0
-        ? null
-        : reflectiveArrayExpressionRange(tokens, rhsStart, rhsEnd, arrayAliases);
-      const current = arrayAliases.get(alias.value);
-      if (!arrayRange || (current?.start === arrayRange.start && current?.end === arrayRange.end)) continue;
-      arrayAliases.set(alias.value, arrayRange);
-      changed = true;
+      const arrayRanges = rhsEnd < 0
+        ? Object.freeze([])
+        : reflectiveArrayExpressionRanges(tokens, rhsStart, rhsEnd, arrayAliases);
+      for (const arrayRange of arrayRanges) {
+        if (addArrayAlias(alias.value, arrayRange)) changed = true;
+      }
     }
     for (let index = 0; index < tokens.length - 3; index += 1) {
       const alias = tokens[index];
@@ -1031,7 +1135,7 @@ function reflectiveMethodAliases(tokens) {
         ? Object.freeze([])
         : reflectiveArrayElementRanges(tokens, rhsStart, rhsEnd, arrayAliases);
       if (rhsEnd < 0
-        || reflectiveArrayExpressionRange(tokens, rhsStart, rhsEnd, arrayAliases)
+        || reflectiveArrayExpressionRanges(tokens, rhsStart, rhsEnd, arrayAliases).length > 0
         || !(reflectiveReceiverExpression(tokens, rhsStart, rhsEnd, receiverAliases)
           || receiverElementRanges.some((range) => (
             reflectiveReceiverExpression(tokens, range.start, range.end, receiverAliases)
@@ -1071,11 +1175,7 @@ function reflectiveMethodAliases(tokens) {
           }
         },
         (name, arrayRange) => {
-          const current = arrayAliases.get(name);
-          if (current?.start !== arrayRange.start || current?.end !== arrayRange.end) {
-            arrayAliases.set(name, arrayRange);
-            changed = true;
-          }
+          if (addArrayAlias(name, arrayRange)) changed = true;
         },
       );
     }
@@ -1086,7 +1186,8 @@ function reflectiveMethodAliases(tokens) {
         || tokens[index + 1].value !== '=') continue;
       const rhsStart = index + 2;
       const rhsEnd = assignmentExpressionEnd(tokens, rhsStart);
-      if (rhsEnd < 0 || reflectiveArrayExpressionRange(tokens, rhsStart, rhsEnd, arrayAliases)) continue;
+      if (rhsEnd < 0
+        || reflectiveArrayExpressionRanges(tokens, rhsStart, rhsEnd, arrayAliases).length > 0) continue;
       const elementRanges = reflectiveArrayElementRanges(tokens, rhsStart, rhsEnd, arrayAliases);
       const ranges = elementRanges.length > 0
         ? elementRanges
