@@ -209,6 +209,44 @@ test('protected merge entry constructs one repository-bound check expectation', 
   assert.doesNotMatch(source, /expected:\s*\{\s*\.\.\.identity,\s*mergeStateStatus:/);
 });
 
+test('protected merge entry refreshes every authority input after bounded check convergence', () => {
+  const source = readFileSync(PERSONAL_REPOSITORY_MERGE_ENTRY, 'utf8');
+  const helper = source.match(
+    /async function readPersonalRepositoryAuthoritySnapshot\([\s\S]*?\n}\n\nasync function collectEvidence/,
+  )?.[0] || '';
+  for (const requiredRead of [
+    /currentWorkflowExecution\(context\)/,
+    /apiJson\(`\/repos\/\$\{context\.owner}\/\$\{context\.repo}`, \{ authorization: 'ruleset-proof' \}\)/,
+    /pulls\/\$\{identity\.prNumber}/,
+    /git\/ref\/heads\/main/,
+    /git\/commits\/\$\{identity\.sourceHead}/,
+    /compare\/\$\{identity\.baseSha}\.\.\.\$\{identity\.sourceHead}/,
+    /pullRequestReviewState\(context\.owner, context\.repo, identity\.prNumber\)/,
+    /environments\/operator-merge-approval/,
+    /loadSelectedIndependentReview\(context, identity\)/,
+  ]) assert.match(helper, requiredRead);
+
+  const convergenceIndex = source.indexOf(
+    'const checks = await validatePersonalRepositoryCheckRunsWithBoundedReread',
+  );
+  const refreshIndex = source.indexOf(
+    'const refreshedAuthority = await readPersonalRepositoryAuthoritySnapshot(context, identity);',
+  );
+  assert.ok(convergenceIndex > 0);
+  assert.ok(refreshIndex > convergenceIndex);
+  assert.equal(
+    source.match(/readPersonalRepositoryAuthoritySnapshot\(context, identity\)/g)?.length,
+    3,
+  );
+  assert.match(
+    source.slice(refreshIndex),
+    /mergeStateStatus: refreshedAuthority\.review\.mergeStateStatus,[\s\S]*validatePersonalRepositoryCheckRuns\([\s\S]*refreshedCheckExpectation\.expected/,
+  );
+  assert.match(source.slice(refreshIndex), /\.\.\.refreshedReview,/);
+  assert.match(source.slice(refreshIndex), /repository,\s*environment,\s*integrationId/);
+  assert.match(source.slice(refreshIndex), /independentReview: refreshedIndependentReview/);
+});
+
 test('in-process artifact ZIP reader accepts exact stored and deflated single-entry archives', () => {
   for (const [method, dataDescriptor] of [[0, false], [8, false], [0, true], [8, true]]) {
     const fixture = singleEntryZip({ method, dataDescriptor });
