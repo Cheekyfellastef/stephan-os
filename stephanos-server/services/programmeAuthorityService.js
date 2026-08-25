@@ -299,7 +299,7 @@ export async function readMissionControllerCapacityRoutingInput({
   repoRoot,
   nowUtc,
   sourceRevision,
-  openClawPublisherPublicKeyPem = '',
+  env = process.env,
   readFileImpl = readFile,
 } = {}) {
   const names = {
@@ -328,13 +328,22 @@ export async function readMissionControllerCapacityRoutingInput({
         return [key, result.present && !result.error ? result.value : null];
       })))
     : null;
+  const publisherKeyPath = text(env?.STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH);
+  let publisherPublicKeyPem = '';
+  if (publisherKeyPath) {
+    try {
+      publisherPublicKeyPem = text(await readFileImpl(publisherKeyPath, 'utf8'));
+    } catch {
+      publisherPublicKeyPem = '';
+    }
+  }
   const openClawValidation = loaded.openClaw && componentRecords
     ? validateOpenClawProviderPoolStatusRecord(loaded.openClaw, componentRecords, {
         repository: 'Cheekyfellastef/stephan-os',
         taskClass: text(loaded.openClaw.taskClass),
         sourceHead: text(sourceRevision).toLowerCase(),
         nowUtc,
-        publisherPublicKeyPem:openClawPublisherPublicKeyPem,
+        publisherPublicKeyPem,
       })
     : null;
   return Object.freeze({

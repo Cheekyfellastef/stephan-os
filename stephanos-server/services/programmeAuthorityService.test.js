@@ -383,7 +383,7 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
   });
 });
 
-test('capacity routing input rejects caller-shaped OpenClaw status without independent publisher records', async () => {
+test('capacity routing input independently loads the supervised publisher key and rejects caller-shaped OpenClaw status', async () => {
   await fixture(async ({ root, repoRoot }) => {
     const hostContext = {
       schemaVersion: 'stephanos.openclaw-provider-pool-host-context.v1',
@@ -398,14 +398,23 @@ test('capacity routing input rejects caller-shaped OpenClaw status without indep
       `${JSON.stringify({ hostContext })}\n`,
       'utf8',
     );
+    const publisherKeyPath = path.join(root, 'publisher-public.pem');
+    await writeFile(publisherKeyPath, 'not-a-valid-public-key', 'utf8');
+    const reads = [];
     const routing = await readMissionControllerCapacityRoutingInput({
       root,
       repoRoot,
       nowUtc: NOW,
       sourceRevision: HEAD,
+      env: { STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH: publisherKeyPath },
+      readFileImpl: async (...args) => {
+        reads.push(args[0]);
+        return readFile(...args);
+      },
     });
     assert.equal(routing.sourceHead, HEAD);
     assert.equal(routing.openClawHostContext, null);
+    assert.equal(reads.includes(publisherKeyPath), true);
     assert.equal(routing.codexStatus, null);
     assert.equal(routing.githubLaneReceipt, null);
     assert.equal(routing.forgeLaneReceipt, null);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -24,6 +24,7 @@ import {
   validateOpenClawProviderQualification,
   validateOpenClawQualificationAuthorityChain,
 } from './openClawProviderPoolQualificationV1.mjs';
+import { readMissionControllerCapacityRoutingInput } from '../../stephanos-server/services/programmeAuthorityService.js';
 
 const NOW = '2026-08-19T13:30:00.000Z';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -281,6 +282,16 @@ test('publishes only the complete trusted OpenClaw qualification chain to the ca
     );
     assert.equal(validatedPublication.valid, true, validatedPublication.reason);
     assert.deepEqual(validatedPublication.hostContext, trustedHostContext());
+    const publisherPublicKeyPath = join(root, 'publisher-public.pem');
+    await writeFile(publisherPublicKeyPath, PUBLISHER_PUBLIC_KEY_PEM, 'utf8');
+    const productionRouting = await readMissionControllerCapacityRoutingInput({
+      root,
+      repoRoot:process.cwd(),
+      nowUtc:NOW,
+      sourceRevision:HEAD,
+      env:{ STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH:publisherPublicKeyPath },
+    });
+    assert.deepEqual(productionRouting.openClawHostContext, trustedHostContext());
     assert.equal(validateOpenClawProviderPoolStatusRecord(
       { ...persisted, publisherId: 'forged-publisher' },
       components,

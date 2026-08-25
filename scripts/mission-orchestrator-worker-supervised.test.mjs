@@ -154,9 +154,13 @@ test('supervised worker gates source work through the durable controller', async
   let workerTicks = 0;
   let observedOptions = null;
   const head = 'a'.repeat(40);
+  const publisherPublicKeyPath = 'C:\\MissionRunner\\keys\\stephanos-github-authorization-public.pem';
   const exitCode = await runSupervisedMissionWorker({
     argv: ['--once'],
-    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: head },
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: head,
+      STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH: publisherPublicKeyPath,
+    },
     stdout: output.stream,
     stderr: sink().stream,
     bootstrapMailbox,
@@ -173,5 +177,6 @@ test('supervised worker gates source work through the durable controller', async
   assert.equal(workerTicks, 0);
   assert.equal(observedOptions.sourceRevision, head);
   assert.equal(observedOptions.env.STEPHANOS_MISSION_WORKER_HEAD_SHA, head);
+  assert.equal(observedOptions.env.STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH, publisherPublicKeyPath);
   assert.match(output.read(), /"authority-held"/);
 });
