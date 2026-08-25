@@ -1,7 +1,7 @@
 # Stephanos Goal Building Agent V1
 
-Status: M1 source contract  
-Canonical goal: #2002  
+Status: M1 source contract
+Canonical goal: #2002
 Participant ID: `goal-building-agent`
 
 ## Purpose
@@ -57,7 +57,9 @@ The V1 evaluator keeps two booleans separate.
 
 ### `isCapableOfBuilding`
 
-True only when the required canonical control surfaces are present, fresh, healthy and bound to the expected protected-main identity. For goals requiring physical execution, the physical Battle Bridge surfaces are added to the required set.
+True only when the required canonical control surfaces are present, fresh, healthy and bound to the expected protected-main identity. Source-only and GitHub-hosted work does not require an installed physical-head receipt. When physical execution is required, the installed head and the physical Battle Bridge surfaces become mandatory and must bind to the expected head.
+
+If optional installed-head or physical evidence is supplied for source-only work, it is still validated. A contradictory supplied physical receipt cannot be hidden by setting `physicalExecutionRequired=false`.
 
 ### `isActuallyBuilding`
 
@@ -143,7 +145,7 @@ When `physicalExecutionRequired=true`, it additionally requires:
 
 Each surface has a closed healthy-state set, a fixed freshness window and an explicit head-binding policy. Unknown surfaces, duplicate surfaces, future-dated observations and a healthy state carrying a blocker are contradictions and enter `SAFE_HOLD`.
 
-Optional known surface evidence is still validated when present. A caller cannot hide contradictory physical evidence by setting `physicalExecutionRequired=false` after including it.
+Optional known surface evidence is still validated when present.
 
 ## Mission truth
 
@@ -167,7 +169,7 @@ Terminal missions cannot remain in the active set. Duplicate active goals or lan
 
 ## Blocker ownership
 
-Every blocker must have one owner, one closed-world route and one next action.
+Every blocker must have one owner, one closed-world route, one next action and canonical goal or mission lineage.
 
 Allowed routes are:
 
@@ -179,9 +181,13 @@ REQUEST_EXACT_OPERATOR_APPROVAL
 EXTERNAL_OR_UNQUALIFIED_SAFE_HOLD
 ```
 
-The `independentWorkContinues` field is not trusted by itself. The evaluator checks whether productive missions exist or whether no independent eligible work exists. An unprovable continuation claim enters `SAFE_HOLD`.
+The `independentWorkContinues` field is not trusted by itself. It is accepted only when a different productive mission, outside the blocker's mission and goal lineage, proves current useful progress. The blocked mission cannot prove its own continuation, and an all-waiting programme cannot manufacture useful progress from waiting-state records.
 
-A waiting or blocked mission without a correlated owned blocker is `GOAL_BUILDING_BLOCKED`.
+An exact operator-approval wait is treated separately: it may remain a fully governed boundary when the operator target is explicit, the waiting mission is correlated and no eligible independent capacity is stranded. It still does not produce `isActuallyBuilding=true`.
+
+A blocker that names an unknown active mission or mismatches the correlated goal enters `SAFE_HOLD`. A waiting or blocked mission without a correlated owned blocker is `GOAL_BUILDING_BLOCKED`.
+
+When more than one blocker has an action, selection is deterministic: severity first, then oldest observation, then the fixed repair-route priority, then blocker identity. Caller array order never selects programme authority.
 
 ## Operating states
 
@@ -199,7 +205,7 @@ Trusted evidence proves that useful progress cannot currently be claimed. Exampl
 
 ### `SAFE_HOLD`
 
-Evidence is malformed, future-dated, duplicated, contradictory, unknown or otherwise unsafe to reconcile. The agent reports the contradiction and does not guess.
+Evidence is malformed, future-dated, duplicated, contradictory, unknown or otherwise unsafe to reconcile. The agent reports the contradiction and does not guess. `SAFE_HOLD` also overrides ordinary idle/progress labels and caller-supplied next actions until programme evidence is repaired.
 
 ## Status and Q&A
 
@@ -219,9 +225,9 @@ The M1 participant record publishes a bounded projection through the existing Sh
 
 ## Current bootstrap case
 
-At M1 creation, current protected and physical main were `3b4709fc203e055084c668998490d99d4384521b`, while the latest Mission Worker evidence remained bound to predecessor `f60765af26d44f73290e148e882ec13f608a7087` and the active recovery mission remained `critical-1291-worker-watchdog-repair` at `CREATE_WORKTREE`.
+At M1 creation, protected and physical main were `3b4709fc203e055084c668998490d99d4384521b`, while the latest Mission Worker evidence remained bound to predecessor `f60765af26d44f73290e148e882ec13f608a7087` and the active recovery mission remained `critical-1291-worker-watchdog-repair` at `CREATE_WORKTREE`.
 
-The V1 evaluator therefore has a regression proving that a `RUNNING` worker on the predecessor head cannot produce `isActuallyBuilding=true`.
+The V1 evaluator therefore has regressions proving that a `RUNNING` worker on a predecessor head cannot produce `isActuallyBuilding=true`, a blocked mission cannot count itself as independent progress, and source-only work is not falsely blocked by absence of a physical installed-head receipt.
 
 ## M1 boundary
 
@@ -232,7 +238,7 @@ M1 adds:
 - the four-state certificate;
 - deterministic status Q&A;
 - a bounded Shared Workspace participant-status record;
-- negative tests for false progress, stale heads, stale progress, idle capacity, ownerless blockers, unknown evidence, future evidence and unsafe authority widening.
+- negative tests for false progress, stale heads, stale progress, idle capacity, ownerless or lineage-free blockers, unknown evidence, future evidence, deterministic blocker priority and unsafe authority widening.
 
 M1 performs no runtime activation and introduces no scheduler, worker, repair or merge authority.
 
