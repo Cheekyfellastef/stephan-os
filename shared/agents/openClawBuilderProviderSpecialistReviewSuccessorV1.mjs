@@ -443,7 +443,7 @@ function canPrecedeComputedMember(token) {
     || token?.type === 'number'
     || token?.type === 'string'
     || token?.type === 'template'
-    || (token?.type === 'punctuator' && new Set([')', ']', '}', '.']).has(token.value));
+    || (token?.type === 'punctuator' && new Set([')', ']', '}', '.', '?.']).has(token.value));
 }
 
 function parseComputedAuthorityPattern(tokens, start, end, depth = 0) {
@@ -467,7 +467,12 @@ function parseComputedAuthorityPattern(tokens, start, end, depth = 0) {
       cursor += 1;
       return true;
     }
-    if (token?.type === 'identifier' || token?.type === 'number') {
+    if (token?.type === 'number') {
+      append({ kind: 'fixed', value: token.value });
+      cursor += 1;
+      return true;
+    }
+    if (token?.type === 'identifier') {
       append({ kind: 'unknown' });
       cursor += 1;
       return true;

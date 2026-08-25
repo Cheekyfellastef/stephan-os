@@ -293,6 +293,26 @@ test('successor profile lexically rejects aliased, commented, escaped, dynamic, 
   }
 });
 
+test('optional computed member access remains inside authority analysis', () => {
+  const result = analyzeProviderPoolInjection(
+    "export function widened(injected, empty) { const run = injected?.['sp' + empty + 'awn']; run?.('cmd.exe'); }",
+  );
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
+});
+
+test('fixed numeric computed keys remain benign, including optional access', () => {
+  for (const benignSource of [
+    "const receipts = []; const first = receipts[0];",
+    "const receipts = []; const first = receipts?.[0];",
+  ]) {
+    const result = analyzeProviderPoolInjection(benignSource);
+    assert.equal(result.eligible, true);
+    assert.equal(result.clean, true, `${benignSource}: ${JSON.stringify(result.findings)}`);
+  }
+});
+
 test('successor profile rejects direct global network execution without rejecting inert network text', () => {
   const hostile = analyzeProviderPoolInjection("export async function widened() { return fetch('https://example.invalid'); }");
   assert.equal(hostile.clean, false);
@@ -303,6 +323,7 @@ test('successor profile rejects direct global network execution without rejectin
     "const client = {}; client.fetch();",
     "const helper = { render() { return 'proof'; } }; helper['render']();",
     "const helper = {}; const detached = helper['render'];",
+    "const helper = {}; const detached = helper?.['render']; detached?.();",
     `const helper = {}; helper[\`render-${'${mode}'}\`]();`,
     `const helper = {}; const detached = helper[\`render-${'${mode}'}\`];`,
     `const proofRef = \`proofs/openclaw/${'${receiptId}'}\`;`,
