@@ -115,6 +115,34 @@ test('missing and stale status cannot be painted green', () => {
   assert.equal(stale.state, 'STALE');
 });
 
+test('projection recognizes source-bound post-sync head and Ignition generatedAt fields', () => {
+  const postSync = projectBeaconStatus({
+    timestampUtc: '2026-08-18T14:20:00Z',
+    afterHead: HEAD,
+    classification: 'REFRESH_COMPLETE',
+  }, { id: 'postSyncRefresh', staleAfterMs: 60_000 }, Date.parse('2026-08-18T14:31:00Z'));
+  assert.equal(postSync.state, 'STALE');
+  assert.equal(postSync.head, HEAD);
+  assert.equal(postSync.rawState, 'REFRESH_COMPLETE');
+
+  const ignition = projectBeaconStatus({
+    generatedAt: '2026-08-18T14:30:30Z',
+    trafficLight: 'green',
+  }, { id: 'ignition', staleAfterMs: 60_000 }, Date.parse('2026-08-18T14:31:00Z'));
+  assert.equal(ignition.state, 'GREEN');
+  assert.equal(ignition.observedAtUtc, '2026-08-18T14:30:30.000Z');
+});
+
+test('mission worker phase is usable state evidence instead of collapsing to UNKNOWN', () => {
+  const worker = projectBeaconStatus({
+    timestampUtc: '2026-08-18T14:30:30Z',
+    phase: 'MISSION_WORKER_TICK_PASS',
+    headSha: HEAD,
+  }, { id: 'missionWorker', staleAfterMs: 60_000 }, Date.parse('2026-08-18T14:31:00Z'));
+  assert.equal(worker.state, 'MISSION_WORKER_TICK_PASS');
+  assert.equal(worker.head, HEAD);
+});
+
 test('fresh receipt-index READY cannot hide an exact-head command that never reaches ACCEPTED', () => {
   const ingress = projectMailboxIngressLiveness([commandComment()], {
     sourceHead: HEAD,
@@ -135,6 +163,7 @@ test('fresh receipt-index READY cannot hide an exact-head command that never rea
   const mailbox = record.surfaces.find((surface) => surface.id === 'mailbox');
   assert.equal(mailbox.state, 'BLOCKED_COMMAND_INGRESS_UNOBSERVED');
   assert.equal(mailbox.blocker, 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED');
+  assert.equal(mailbox.ingressState, 'BLOCKED_COMMAND_INGRESS_UNOBSERVED');
   assert.ok(record.blockers.includes('mailbox:PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED'));
   assert.equal(record.freshness, 'DEGRADED');
 });
@@ -237,12 +266,34 @@ test('unavailable ingress observation downgrades a locally READY mailbox but nev
   assert.equal(stale.state, 'STALE');
 });
 
-test('beacon body is one bounded marker plus json record', () => {
+test('beacon embeds complete-state telemetry and separates read-only diagnosis from consequential repair', () => {
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-08-21T00:20:00.000Z'),
+    statusRecords: {
+      githubSync: status({ timestampUtc: '2026-08-21T00:19:30.000Z', classification: 'SYNC_NO_CHANGE' }),
+      postSyncRefresh: status({ timestampUtc: '2026-08-20T23:00:00.000Z', afterHead: HEAD, classification: 'REFRESH_COMPLETE', sourceHead: '' }),
+      ignition: { generatedAt: '2026-08-20T23:00:00.000Z', trafficLight: 'green' },
+      battleBridge: status({ timestampUtc: '2026-08-21T00:19:30.000Z', status: 'READY' }),
+      mailbox: status({ timestampUtc: '2026-08-21T00:19:30.000Z', status: 'READY' }),
+      missionWorker: status({ timestampUtc: '2026-08-21T00:19:30.000Z', phase: 'MISSION_WORKER_TICK_PASS', status: '', headSha: HEAD, sourceHead: '' }),
+    },
+    mailboxIngressObservation: { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 },
+  });
+  assert.equal(record.telemetry.schemaVersion, 'stephanos.battle-bridge-telemetry-autorepair.v1');
+  assert.equal(record.telemetry.coverage.find((entry) => entry.surfaceId === 'postSyncRefresh').answered, true);
+  assert.equal(record.telemetry.coverage.find((entry) => entry.surfaceId === 'recoveryMesh').answered, false);
+  assert.equal(record.telemetry.repairCandidates.find((entry) => entry.surfaceId === 'recoveryMesh').repairDisposition, 'EXACT_INTERACTIVE_AUTHORIZATION_REQUIRED');
+  assert.equal(record.operatorAuthorizationState, 'OPERATOR_AUTHORIZATION_NOT_PRESENT');
+  assert.equal(record.operatorNeeded, true);
+});
+
+test('beacon body is one bounded marker plus json record without secret-bearing material', () => {
   const record = buildBattleBridgeOutboundBeacon({ sourceHead: HEAD, now: new Date('2026-08-18T14:31:00Z') });
   const body = buildBattleBridgeOutboundBeaconBody(record);
   assert.match(body, new RegExp(BATTLE_BRIDGE_OUTBOUND_BEACON_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(body, /stephanos\.battle-bridge-outbound-health-beacon\.v1/);
-  assert.doesNotMatch(body, /password|private key|authorization|bearer/i);
+  assert.doesNotMatch(body, /password|private key|bearer/i);
 });
 
 test('invalid source head fails closed', () => {
