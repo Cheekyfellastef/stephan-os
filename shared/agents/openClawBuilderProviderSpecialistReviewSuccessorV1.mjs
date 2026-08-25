@@ -739,6 +739,31 @@ function stripTransparentRange(tokens, start, end) {
   return Object.freeze({ start, end });
 }
 
+function reflectiveReceiverExpression(tokens, start, end, receiverAliases, depth = 0) {
+  if (depth > MAX_FOLDED_AUTHORITY_EXPRESSION_DEPTH || start >= end) return false;
+  const range = stripTransparentRange(tokens, start, end);
+  start = range.start;
+  end = range.end;
+  const comma = topLevelComma(tokens, start, end);
+  if (comma >= start) {
+    return reflectiveReceiverExpression(tokens, comma + 1, end, receiverAliases, depth + 1);
+  }
+  if (end === start + 1
+    && tokens[start]?.type === 'identifier'
+    && receiverAliases.has(tokens[start].value)) return true;
+  if (tokens.slice(start, end).some((token) => (
+    token?.type === 'punctuator' && token.value === '{'
+  ))) return false;
+  for (let index = start; index < end; index += 1) {
+    const token = tokens[index];
+    if (token?.type !== 'identifier' || !receiverAliases.has(token.value)) continue;
+    const next = tokens[index + 1];
+    if (next?.type === 'punctuator' && new Set(['.', '?.', '[']).has(next.value)) continue;
+    return true;
+  }
+  return false;
+}
+
 function topLevelAssignment(tokens, start, end) {
   const depth = { round: 0, square: 0, curly: 0 };
   for (let index = start; index < end; index += 1) {
@@ -756,10 +781,66 @@ function topLevelAssignment(tokens, start, end) {
   return -1;
 }
 
-function recordArrayAssignmentAliases(tokens, patternRange, valueRange, aliases, addAlias, depth = 0) {
+function recordReflectiveObjectPatternAliases(tokens, open, close, addAlias) {
+  let cursor = open + 1;
+  while (cursor < close) {
+    let couldSelect = false;
+    if (tokens[cursor]?.type === 'identifier') {
+      couldSelect = REFLECTIVE_PROPERTY_KEY_METHODS.has(tokens[cursor].value);
+      if (couldSelect
+        && !(tokens[cursor + 1]?.type === 'punctuator' && tokens[cursor + 1].value === ':')) {
+        addAlias(tokens[cursor].value, Object.freeze({
+          end: cursor,
+          propertyIndex: 1,
+          boundPropertyRange: null,
+        }));
+        cursor += 1;
+        continue;
+      }
+    } else if (tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === '[') {
+      const keyClose = matchingPunctuator(tokens, cursor, '[', ']');
+      if (keyClose < 0 || keyClose >= close) break;
+      const pattern = parseComputedAuthorityPattern(tokens, cursor + 1, keyClose);
+      couldSelect = !pattern
+        || [...REFLECTIVE_PROPERTY_KEY_METHODS].some((method) => authorityPatternCanResolve(pattern, method));
+      cursor = keyClose;
+    }
+    if (couldSelect
+      && tokens[cursor + 1]?.type === 'punctuator'
+      && tokens[cursor + 1].value === ':'
+      && tokens[cursor + 2]?.type === 'identifier') {
+      addAlias(tokens[cursor + 2].value, Object.freeze({
+        end: cursor + 2,
+        propertyIndex: 1,
+        boundPropertyRange: null,
+      }));
+    }
+    while (cursor < close
+      && !(tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === ',')) cursor += 1;
+    cursor += 1;
+  }
+}
+
+function recordDestructuringAssignmentAliases(
+  tokens,
+  patternRange,
+  valueRange,
+  aliases,
+  receiverAliases,
+  addAlias,
+  depth = 0,
+) {
   if (depth > MAX_FOLDED_AUTHORITY_EXPRESSION_DEPTH) return;
   const pattern = stripTransparentRange(tokens, patternRange.start, patternRange.end);
   const value = stripTransparentRange(tokens, valueRange.start, valueRange.end);
+  if (tokens[pattern.start]?.type === 'punctuator'
+    && tokens[pattern.start].value === '{'
+    && matchingPunctuator(tokens, pattern.start, '{', '}') === pattern.end - 1) {
+    if (reflectiveReceiverExpression(tokens, value.start, value.end, receiverAliases)) {
+      recordReflectiveObjectPatternAliases(tokens, pattern.start, pattern.end - 1, addAlias);
+    }
+    return;
+  }
   if (tokens[pattern.start]?.type !== 'punctuator'
     || tokens[pattern.start].value !== '['
     || matchingPunctuator(tokens, pattern.start, '[', ']') !== pattern.end - 1
@@ -777,6 +858,7 @@ function recordArrayAssignmentAliases(tokens, patternRange, valueRange, aliases,
 
     const fallback = topLevelAssignment(tokens, target.start, target.end);
     const targetEnd = fallback >= 0 ? fallback : target.end;
+    const nestedTarget = Object.freeze({ start: target.start, end: targetEnd });
     if (tokens[target.start]?.type === 'identifier' && targetEnd === target.start + 1) {
       for (const range of [sourceRange, fallback >= 0 ? { start: fallback + 1, end: target.end } : null]) {
         if (!range || range.start >= range.end) continue;
@@ -787,13 +869,33 @@ function recordArrayAssignmentAliases(tokens, patternRange, valueRange, aliases,
       continue;
     }
     if (sourceRange && sourceRange.start < sourceRange.end) {
-      recordArrayAssignmentAliases(tokens, target, sourceRange, aliases, addAlias, depth + 1);
+      recordDestructuringAssignmentAliases(
+        tokens,
+        nestedTarget,
+        sourceRange,
+        aliases,
+        receiverAliases,
+        addAlias,
+        depth + 1,
+      );
+    }
+    if (fallback >= 0 && fallback + 1 < target.end) {
+      recordDestructuringAssignmentAliases(
+        tokens,
+        nestedTarget,
+        Object.freeze({ start: fallback + 1, end: target.end }),
+        aliases,
+        receiverAliases,
+        addAlias,
+        depth + 1,
+      );
     }
   }
 }
 
 function reflectiveMethodAliases(tokens) {
   const aliases = new Map();
+  const receiverAliases = new Set(['Object', 'Reflect']);
   const boundPropertyRanges = [];
   const addAlias = (name, descriptor) => {
     const current = aliases.get(name) ?? [];
@@ -809,6 +911,19 @@ function reflectiveMethodAliases(tokens) {
   let changed = true;
   while (changed) {
     changed = false;
+    for (let index = 0; index < tokens.length - 3; index += 1) {
+      const alias = tokens[index];
+      if (alias?.type !== 'identifier'
+        || tokens[index + 1]?.type !== 'punctuator'
+        || tokens[index + 1].value !== '=') continue;
+      const rhsStart = index + 2;
+      const rhsEnd = assignmentExpressionEnd(tokens, rhsStart);
+      if (rhsEnd < 0
+        || !reflectiveReceiverExpression(tokens, rhsStart, rhsEnd, receiverAliases)
+        || receiverAliases.has(alias.value)) continue;
+      receiverAliases.add(alias.value);
+      changed = true;
+    }
     for (let index = 0; index < tokens.length - 4; index += 1) {
       if (tokens[index]?.type !== 'punctuator' || tokens[index].value !== '[') continue;
       const previous = tokens[index - 1];
@@ -823,11 +938,12 @@ function reflectiveMethodAliases(tokens) {
       const rhsStart = close + 2;
       const rhsEnd = assignmentExpressionEnd(tokens, rhsStart);
       if (rhsEnd < 0) continue;
-      recordArrayAssignmentAliases(
+      recordDestructuringAssignmentAliases(
         tokens,
         Object.freeze({ start: index, end: close + 1 }),
         Object.freeze({ start: rhsStart, end: rhsEnd }),
         aliases,
+        receiverAliases,
         (name, descriptor) => {
           if (addAlias(name, descriptor)) changed = true;
         },
@@ -853,47 +969,11 @@ function reflectiveMethodAliases(tokens) {
         || tokens[close + 1].value !== '=') continue;
       const rhsStart = close + 2;
       const rhsEnd = assignmentExpressionEnd(tokens, rhsStart);
-      const receiver = rhsEnd < 0 ? null : stripTransparentRange(tokens, rhsStart, rhsEnd);
-      if (receiver?.end !== receiver.start + 1
-        || tokens[receiver.start]?.type !== 'identifier'
-        || !new Set(['Object', 'Reflect']).has(tokens[receiver.start].value)) continue;
-      let cursor = index + 1;
-      while (cursor < close) {
-        let couldSelect = false;
-        if (tokens[cursor]?.type === 'identifier') {
-          couldSelect = REFLECTIVE_PROPERTY_KEY_METHODS.has(tokens[cursor].value);
-          if (couldSelect
-            && !(tokens[cursor + 1]?.type === 'punctuator' && tokens[cursor + 1].value === ':')) {
-            if (addAlias(tokens[cursor].value, Object.freeze({
-              end: cursor,
-              propertyIndex: 1,
-              boundPropertyRange: null,
-            }))) changed = true;
-            cursor += 1;
-            continue;
-          }
-        } else if (tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === '[') {
-          const keyClose = matchingPunctuator(tokens, cursor, '[', ']');
-          if (keyClose < 0 || keyClose >= close) break;
-          const pattern = parseComputedAuthorityPattern(tokens, cursor + 1, keyClose);
-          couldSelect = !pattern
-            || [...REFLECTIVE_PROPERTY_KEY_METHODS].some((method) => authorityPatternCanResolve(pattern, method));
-          cursor = keyClose;
-        }
-        if (couldSelect
-          && tokens[cursor + 1]?.type === 'punctuator'
-          && tokens[cursor + 1].value === ':'
-          && tokens[cursor + 2]?.type === 'identifier') {
-          if (addAlias(tokens[cursor + 2].value, Object.freeze({
-            end: cursor + 2,
-            propertyIndex: 1,
-            boundPropertyRange: null,
-          }))) changed = true;
-        }
-        while (cursor < close
-          && !(tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === ',')) cursor += 1;
-        cursor += 1;
-      }
+      if (rhsEnd < 0
+        || !reflectiveReceiverExpression(tokens, rhsStart, rhsEnd, receiverAliases)) continue;
+      recordReflectiveObjectPatternAliases(tokens, index, close, (name, descriptor) => {
+        if (addAlias(name, descriptor)) changed = true;
+      });
     }
   }
   return Object.freeze({ aliases, boundPropertyRanges: Object.freeze(boundPropertyRanges) });
