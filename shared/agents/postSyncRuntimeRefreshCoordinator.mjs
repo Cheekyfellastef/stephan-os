@@ -80,6 +80,9 @@ const NO_RUNTIME_EXACT = new Set([
   'README.md',
   'scripts/publish-battle-bridge-main-advance-signal.mjs',
   'shared/agents/battleBridgeMainAdvanceSignalV1.mjs',
+  'scripts/operator-protected-personal-repository-merge.mjs',
+  'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+  'scripts/ignite-stephanos-local.mjs',
 ]);
 
 const LAUNCHER_CRITICAL_SOURCE_PATHS = new Set([
