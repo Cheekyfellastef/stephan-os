@@ -109,6 +109,25 @@ test('preserves Codex as an already-proven non-Windows source route without inve
   assert.equal(result.grants[0].selectedCapacityReceiptId, null);
 });
 
+test('rejects continuity grants whose worker cannot be represented as a Shared Workspace participant', () => {
+  for (const workerId of [
+    'shared/fabric-builder',
+    'shared:fabric-builder',
+    'shared@fabric-builder',
+    `w${'x'.repeat(81)}`,
+  ]) {
+    const result = buildGitHubContinuityExecutionBatch({
+      repository,
+      expectedSourceHead: head,
+      nowUtc,
+      continuityPlan: plan([githubTask({ workerId })]),
+    });
+    assert.equal(result.finalVerdict, 'GITHUB_CONTINUITY_EXECUTION_BLOCKED');
+    assert.equal(result.blocker, 'GITHUB_CONTINUITY_CONTINUE_TASK_INVALID');
+    assert.equal(result.grantCount, 0);
+  }
+});
+
 test('rejects identity drift between the continuity plan and execution envelope', () => {
   const result = buildGitHubContinuityExecutionBatch({
     repository,
