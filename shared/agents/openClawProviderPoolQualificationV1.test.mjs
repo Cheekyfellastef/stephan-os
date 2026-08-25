@@ -1,14 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { createExecutionReceipt, toSharedWorkspaceExecutionReceipt } from './executionReceiptV1.mjs';
-import { createSharedWorkspaceReceiptRecord } from './sharedAgentWorkspaceStore.mjs';
+import {
+  createSharedWorkspaceReceiptRecord,
+  ensureSharedWorkspaceLayout,
+} from './sharedAgentWorkspaceStore.mjs';
 import {
   OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION,
   OPENCLAW_PROVIDER_CAPACITY_SCHEMA,
   OPENCLAW_PROVIDER_POOL_HOST_CONTEXT_SCHEMA,
   OPENCLAW_PROVIDER_POOL_QUALIFICATION_SCHEMA,
   OPENCLAW_PROVIDER_ROUTE,
+  publishOpenClawProviderPoolToSharedWorkspace,
   routeWithQualifiedOpenClawProvider,
   validateOpenClawProviderCapacity,
   validateOpenClawProviderQualification,
@@ -230,6 +237,40 @@ test('capacity is unusable without the exact validated qualification authority, 
   assert.equal(validateOpenClawProviderCapacity(capacity({ qualificationAuthorityReceiptId: 'foreign-authority' }), expected).valid, false);
   assert.equal(validateOpenClawProviderCapacity(capacity({ workerId: 'foreign-openclaw' }), expected).valid, false);
   assert.equal(validateOpenClawProviderCapacity(capacity({ supportedTaskClasses: ['WINDOWS_RUNTIME_PROOF'] }), expected).valid, false);
+});
+
+test('publishes only the complete trusted OpenClaw qualification chain to the canonical status path', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'openclaw-provider-pool-'));
+  try {
+    await ensureSharedWorkspaceLayout({ root, repoRoot: process.cwd() });
+    const publication = await publishOpenClawProviderPoolToSharedWorkspace(
+      root,
+      trustedHostContext(),
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW },
+      { repoRoot: process.cwd(), nowMs: Date.parse(NOW) },
+    );
+    assert.equal(publication.ok, true, publication.reason);
+    assert.equal(publication.record.statusId, 'openclaw-provider-pool-current');
+    assert.equal(publication.record.sourceHead, HEAD);
+    assert.equal(publication.record.sourceMutationAllowed, false);
+    assert.equal(publication.record.mergeAuthority, false);
+    const persisted = JSON.parse(await readFile(
+      join(root, 'status', 'openclaw-provider-pool-current.json'),
+      'utf8',
+    ));
+    assert.deepEqual(persisted.hostContext, trustedHostContext());
+
+    const rejected = await publishOpenClawProviderPoolToSharedWorkspace(
+      root,
+      trustedHostContext({ capacityReceipt: capacity({ qualificationIds: ['foreign'] }) }),
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW },
+      { repoRoot: process.cwd(), nowMs: Date.parse(NOW) },
+    );
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.reason, 'OPENCLAW_CAPACITY_INVALID');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('selects canonically qualified OpenClaw before Codex exhaustion when the scheduler prefers it', () => {

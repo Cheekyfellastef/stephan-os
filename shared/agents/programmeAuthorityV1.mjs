@@ -933,6 +933,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       operatorPriority: ownValueOr(record, 'operatorPriority', false),
       operatorApprovalReceipt: approvalReceipt.value,
       evidenceAt: ownValueOr(record, 'evidenceAt', record.timestampUtc),
+      resourceIds: ownValueOr(record, 'resourceIds', []),
       resultProofRefs: ownValueOr(record, 'resultProofRefs', []),
       reusableCapabilityId: text(record.reusableCapabilityId) || null,
       sharedLessonId: text(record.sharedLessonId) || null,
@@ -942,6 +943,72 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       duplicateOf: record.duplicateOf ?? null,
       supersededBy: record.supersededBy ?? null,
     });
+  }
+  const conveyor = input.criticalBacklog;
+  if (
+    conveyor?.decision === 'WAIT_ACTIVE_MISSION'
+    && conveyor?.finalVerdict === 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE'
+  ) {
+    const selectedItem = conveyor.selectedItem;
+    const activeMission = conveyor.activeMission;
+    const selectedMission = selectedItem?.mission;
+    const issueNumbers = list(selectedItem?.issueNumbers).map((value) => number(value)).filter(Boolean);
+    const issueNumber = issueNumbers[0] ?? null;
+    const missionId = text(activeMission?.missionId).toLowerCase();
+    const selectedMissionId = text(selectedMission?.missionId).toLowerCase();
+    const repository = text(activeMission?.repository);
+    const branch = text(activeMission?.git?.branch || selectedMission?.branch);
+    const selectedRepository = text(selectedMission?.repository);
+    const selectedBranch = text(selectedMission?.branch);
+    const activePhase = text(activeMission?.currentPhase).toUpperCase();
+    const resourceIds = unique(list(activeMission?.allowedFiles || selectedMission?.allowedFiles).map((value) => {
+      const scope = text(value).replace(/\\/g, '/').replace(/\/\*\*$/, '').toLowerCase();
+      return scope ? `repo:${repository.toLowerCase()}:path:${scope}` : '';
+    }).filter(Boolean));
+    const valid = Boolean(
+      issueNumber
+      && SAFE_ID.test(missionId)
+      && missionId === selectedMissionId
+      && SAFE_REPOSITORY.test(repository)
+      && repository.toLowerCase() === selectedRepository.toLowerCase()
+      && branch
+      && branch === selectedBranch
+      && activePhase
+      && !['BLOCKED', 'AWAITING_OPERATOR_APPROVAL', 'COMPLETE', 'CANCELLED'].includes(activePhase)
+      && resourceIds.length > 0
+    );
+    if (!valid) {
+      blockers.push('critical-backlog-active-mission-not-scheduler-admissible');
+    } else if (!goals.some((goal) => goal.issue === issueNumber)) {
+      goals.push({
+        issue: issueNumber,
+        title: text(activeMission.title, selectedMission.title || `Goal #${issueNumber}`),
+        state: 'QUEUED',
+        prerequisites: [],
+        priority: Number.isFinite(selectedItem.priority) ? selectedItem.priority : 0,
+        criticalPathWeight: Number.isFinite(selectedItem.priority) ? Math.max(1, 10_000 - selectedItem.priority) : 1,
+        reversibility: 'HIGH',
+        route: text(selectedMission.route, 'CHATGPT_GITHUB'),
+        activePr: null,
+        repository,
+        branch,
+        headSha: null,
+        proofState: 'UNKNOWN',
+        approvalRequired: false,
+        operatorPriority: true,
+        operatorApprovalReceipt: null,
+        evidenceAt: nowUtc,
+        resourceIds,
+        resultProofRefs: [],
+        reusableCapabilityId: null,
+        sharedLessonId: null,
+        repairCycleCount: 0,
+        structuralReviewProofRefs: [],
+        modelTestProofRefs: [],
+        duplicateOf: null,
+        supersededBy: null,
+      });
+    }
   }
   if (lane?.valid && lane.active) {
     const existing = goals.find((goal) => goal.issue === lane.issueNumber);
@@ -973,6 +1040,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       operatorPriority: ownValueOr(existing, 'operatorPriority', false),
       operatorApprovalReceipt: ownValueOr(existing, 'operatorApprovalReceipt', null),
       evidenceAt: ownValueOr(existing, 'evidenceAt', nowUtc),
+      resourceIds: ownValueOr(existing, 'resourceIds', []),
       resultProofRefs: ownValueOr(existing, 'resultProofRefs', []),
       reusableCapabilityId: existing?.reusableCapabilityId ?? null,
       sharedLessonId: existing?.sharedLessonId ?? null,

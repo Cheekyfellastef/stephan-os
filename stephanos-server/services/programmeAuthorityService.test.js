@@ -11,6 +11,7 @@ import {
   finalizeTerminalImplementationLane,
   publishProgrammeControllerHeartbeat,
   readAuthoritativeProgrammeProjection,
+  readMissionControllerCapacityRoutingInput,
   readSourceMutationLease,
   releaseSourceMutationLease,
   renewSourceMutationLease,
@@ -382,6 +383,35 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
   });
 });
 
+test('capacity routing input loads the trusted OpenClaw host context and exact controller source head', async () => {
+  await fixture(async ({ root, repoRoot }) => {
+    const hostContext = {
+      schemaVersion: 'stephanos.openclaw-provider-pool-host-context.v1',
+      qualificationReceipt: { receiptId: 'qualification' },
+      capacityReceipt: { receiptId: 'capacity' },
+      realWorkExecutionReceipt: { receiptId: 'execution' },
+      realWorkWorkspaceReceipt: { receiptId: 'workspace' },
+      qualificationAuthorityReceipt: { receiptId: 'authority' },
+    };
+    await writeFile(
+      path.join(root, 'status', 'openclaw-provider-pool-current.json'),
+      `${JSON.stringify({ hostContext })}\n`,
+      'utf8',
+    );
+    const routing = await readMissionControllerCapacityRoutingInput({
+      root,
+      repoRoot,
+      nowUtc: NOW,
+      sourceRevision: HEAD,
+    });
+    assert.equal(routing.sourceHead, HEAD);
+    assert.deepEqual(routing.openClawHostContext, hostContext);
+    assert.equal(routing.codexStatus, null);
+    assert.equal(routing.githubLaneReceipt, null);
+    assert.equal(routing.forgeLaneReceipt, null);
+  });
+});
+
 test('production composition reads real Shared Workspace, receipt, heartbeat, scheduler and conveyor contracts', async () => {
   await fixture(async ({ root, home, repoRoot }) => {
     await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
@@ -469,6 +499,56 @@ test('production composition reads real Shared Workspace, receipt, heartbeat, sc
     assert.equal(staleProcesses.status, 'HOLD');
     assert.ok(staleProcesses.controllerHeartbeat.errors.includes('controller-source-revision-mismatch'));
     assert.ok(staleProcesses.workerHeartbeat.errors.includes('worker-head-mismatch'));
+  });
+});
+
+test('production composition restarts an already-active critical mission when durable goal records are empty', async () => {
+  await fixture(async ({ root, home, repoRoot }) => {
+    await publishWorkerHeartbeat(home);
+    await publishProgrammeControllerHeartbeat({
+      controllerId: 'durable-flywheel-controller',
+      sourceRevision: HEAD,
+      cycleState: 'RECONCILING',
+      activeLaneId: '',
+      lastSuccessfulReconciliationUtc: '',
+      lastPublishedReceiptId: '',
+      timestampUtc: NOW,
+      boundedMutationSteps: 0,
+      proofRefs: [],
+    }, { root, repoRoot });
+    const mission = {
+      missionId: 'critical-1291-worker-watchdog-repair',
+      revision: 1,
+      title: 'Repair and prove Mission Orchestrator Worker self-heal',
+      repository: REPOSITORY,
+      currentPhase: 'CREATE_WORKTREE',
+      allowedFiles: ['scripts/battle-bridge-worker-watchdog.mjs', 'shared/agents/**'],
+      git: { branch: 'openclaw/critical-1291-worker-watchdog-repair' },
+    };
+    const projection = await readAuthoritativeProgrammeProjection({
+      root,
+      home,
+      repoRoot,
+      nowUtc: NOW,
+      env: {},
+      testOnly: true,
+      dependencies: {
+        readRepositoryHead: async () => ({
+          ok: true,
+          reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+          branch: 'main',
+          headSha: HEAD,
+        }),
+        listMissionRecords: async () => [mission],
+      },
+    });
+    assert.equal(projection.status, 'READY', projection.blockers.join(','));
+    assert.equal(projection.scheduler.selectedGoal, '#1291');
+    assert.deepEqual(projection.scheduler.parallelCandidates, ['#1291']);
+    assert.equal(projection.criticalBacklog.activeMission.missionId, mission.missionId);
+    assert.equal(projection.criticalBacklog.decision, 'WAIT_ACTIVE_MISSION');
+    assert.equal(projection.lane, null);
+    assert.equal(projection.mutationLease, null);
   });
 });
 

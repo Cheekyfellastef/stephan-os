@@ -54,6 +54,28 @@ test('routes implementation and repair to Codex as the sole active writer', () =
   }
 });
 
+test('accepts an exact controller grant for the qualified OpenClaw provider route', () => {
+  const state = { ...base, currentPhase: 'AGENT_IMPLEMENTATION' };
+  const preview = buildMissionWorkerAction(state, { now });
+  const action = buildMissionWorkerAction(state, {
+    now,
+    actionGrant: {
+      schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+      missionId: state.missionId,
+      capacityRoute: 'OPENCLAW_LOCAL',
+      adapter: 'openclaw-local',
+      workerId: 'battle-bridge-openclaw-01',
+      capacityReceiptId: 'openclaw-capacity-current',
+      capacityProofRefs: ['receipts/openclaw/capacity.json'],
+    },
+  });
+  assert.notEqual(preview.adapter, 'openclaw-local');
+  assert.equal(action.adapter, 'openclaw-local');
+  assert.equal(action.capacityRoute, 'OPENCLAW_LOCAL');
+  assert.equal(action.activeWriter, 'battle-bridge-openclaw-01');
+  assert.equal(action.capacityReceiptId, 'openclaw-capacity-current');
+});
+
 test('routes live runtime investigation to read-only OpenClaw', () => {
   const action = buildMissionWorkerAction({ ...base, currentPhase: 'LIVE_RUNTIME_INVESTIGATION', browserProofRequired: true }, { now });
   assert.equal(action.adapter, 'openclaw-readonly');

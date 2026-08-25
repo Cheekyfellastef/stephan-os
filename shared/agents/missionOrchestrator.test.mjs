@@ -110,6 +110,23 @@ test('implementation intake chooses OpenClaw worktree setup then Codex as the so
   assert.equal(afterWorktree.activeWriter, 'Codex');
 });
 
+test('qualified OpenClaw local is a registered implementation adapter', () => {
+  let state = createMissionOrchestratorState(base, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'worktree-openclaw-local'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', {
+    agentId: 'openclaw-local',
+    adapter: 'openclaw-local',
+  });
+  assert.equal(state.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(state.dispatch.adapter, 'openclaw-local');
+  assert.equal(state.dispatch.status, 'running');
+  assert.equal(state.activeWriter, 'openclaw-local');
+});
+
 test('unsafe, vague, or evidence-free intent blocks before dispatch', () => {
   const unsafe = createMissionOrchestratorState({
     ...base,

@@ -949,6 +949,52 @@ test('scheduler goals are constructed from durable records and the canonical lan
   )));
 });
 
+test('active critical backlog mission remains visible to the scheduler without a duplicate goal record', () => {
+  const mission = {
+    missionId: 'critical-1291-worker-watchdog-repair',
+    title: 'Repair and prove Mission Orchestrator Worker self-heal',
+    repository: REPOSITORY,
+    currentPhase: 'CREATE_WORKTREE',
+    allowedFiles: ['scripts/battle-bridge-worker-watchdog.mjs', 'shared/agents/**'],
+    git: { branch: 'openclaw/critical-1291-worker-watchdog-repair' },
+  };
+  const selectedItem = {
+    itemId: 'worker-watchdog-self-heal',
+    priority: 10,
+    issueNumbers: [1291],
+    mission: {
+      missionId: mission.missionId,
+      title: mission.title,
+      repository: REPOSITORY,
+      branch: mission.git.branch,
+      allowedFiles: mission.allowedFiles,
+    },
+  };
+  const result = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [],
+    criticalBacklog: {
+      decision: 'WAIT_ACTIVE_MISSION',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
+      selectedItem,
+      activeMission: mission,
+    },
+  });
+  assert.equal(result.valid, true, result.blockers.join(','));
+  assert.equal(result.goals.length, 1);
+  assert.equal(result.goals[0].issue, 1291);
+  assert.equal(result.goals[0].state, 'QUEUED');
+  assert.equal(result.goals[0].route, 'CHATGPT_GITHUB');
+  assert.deepEqual(result.goals[0].resourceIds, [
+    'repo:cheekyfellastef/stephan-os:path:scripts/battle-bridge-worker-watchdog.mjs',
+    'repo:cheekyfellastef/stephan-os:path:shared/agents',
+  ]);
+
+  const scheduler = buildMissionScheduler({ now: NOW, goals: result.goals });
+  assert.equal(scheduler.selectedGoal, '#1291');
+  assert.deepEqual(scheduler.parallelCandidates, ['#1291']);
+});
+
 test('authoritative projection holds without a real mutation lease even when a receipt has a leaseKey', () => {
   const controllerHeartbeat = projectProgrammeControllerHeartbeat(createProgrammeControllerHeartbeat({
     controllerId: 'durable-flywheel-controller',

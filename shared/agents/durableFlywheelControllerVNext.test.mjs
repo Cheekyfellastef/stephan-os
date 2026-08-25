@@ -201,6 +201,54 @@ test('ACTIVE source work receives one exact proven fallback grant when Codex cap
   assert.equal(result.workerActionGrant.leaseSeizureAllowed, false);
 });
 
+test('READY projection continues the already-active backlog mission with one exact native worktree grant', async () => {
+  const activeMission = {
+    missionId: 'critical-1291-worker-watchdog-repair',
+    revision: 1,
+    currentPhase: 'CREATE_WORKTREE',
+    title: 'Repair and prove Mission Orchestrator Worker self-heal',
+    repository: REPOSITORY,
+    repositoryRoot: 'C:\\repo',
+    baseBranch: 'main',
+    allowedFiles: ['shared/agents/**'],
+    git: {
+      branch: 'openclaw/critical-1291-worker-watchdog-repair',
+      worktreePath: 'C:\\worktree',
+    },
+  };
+  const fixture = machineryFor(projection('READY', {
+    scheduler: { selectedGoal: '#1291', decisionReceipt: { selectedIssue: 1291 } },
+    criticalBacklog: {
+      decision: 'WAIT_ACTIVE_MISSION',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
+      activeMission,
+    },
+  }), {
+    ensureBacklogMission: async () => ({
+      ok: true,
+      createdMission: false,
+      projection: {
+        decision: 'WAIT_ACTIVE_MISSION',
+        finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
+        activeMission,
+      },
+    }),
+    loadCapacityRoutingInput: async () => null,
+  });
+  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+  assert.equal(result.status, 'READY', JSON.stringify(result));
+  assert.equal(result.allowWorkerTick, true);
+  assert.equal(result.workerActionGrant.missionId, activeMission.missionId);
+  assert.equal(result.workerActionGrant.currentPhase, 'CREATE_WORKTREE');
+  assert.equal(result.workerActionGrant.adapter, 'openclaw-signed');
+  assert.equal(result.workerActionGrant.operation, 'create-worktree');
+  assert.match(result.nextAction, /continue the conveyor-authorized mission/i);
+});
+
 test('canonical HOLD projection preserves authority blockers and forbids work', async () => {
   const fixture = machineryFor(projection('HOLD', {
     blockers: [

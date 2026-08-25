@@ -1,4 +1,5 @@
 import { routeMissionControllerCapacity } from './missionControllerCapacityRouterV1.mjs';
+import { MISSION_CONTROLLER_ROUTE } from './missionControllerCapacityRouterV1.mjs';
 import {
   toSharedWorkspaceExecutionReceipt,
   validateExecutionReceipt,
@@ -6,13 +7,15 @@ import {
 import {
   SHARED_WORKSPACE_RECORD_KINDS,
   SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
+  createSharedWorkspaceStatusRecord,
   validateSharedWorkspaceRecord,
+  writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
 
 export const OPENCLAW_PROVIDER_POOL_QUALIFICATION_SCHEMA = 'stephanos.openclaw-provider-pool-qualification.v1';
 export const OPENCLAW_PROVIDER_CAPACITY_SCHEMA = 'stephanos.openclaw-provider-capacity-receipt.v1';
 export const OPENCLAW_PROVIDER_POOL_HOST_CONTEXT_SCHEMA = 'stephanos.openclaw-provider-pool-host-context.v1';
-export const OPENCLAW_PROVIDER_ROUTE = 'OPENCLAW_LOCAL';
+export const OPENCLAW_PROVIDER_ROUTE = MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL;
 export const OPENCLAW_PROVIDER_ADAPTER = 'openclaw-local';
 export const OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION = 'OPENCLAW_TASK_CLASS_PRODUCTION_ELIGIBLE';
 
@@ -349,6 +352,83 @@ export function validateOpenClawProviderCapacity(receipt, expected = {}) {
     valid: Boolean(valid),
     receipt: valid ? candidate : null,
     reason: valid ? 'OPENCLAW_CAPACITY_VALID' : 'OPENCLAW_CAPACITY_INVALID',
+  });
+}
+
+export async function publishOpenClawProviderPoolToSharedWorkspace(root, trustedHostContext = {}, expected = {}, options = {}) {
+  const repository = text(expected.repository);
+  const taskClass = text(expected.taskClass);
+  const sourceHead = text(expected.sourceHead).toLowerCase();
+  const nowUtc = text(expected.nowUtc);
+  const host = snapshot(trustedHostContext);
+  const qualification = validateOpenClawProviderQualification(host?.qualificationReceipt, {
+    repository,
+    taskClass,
+    sourceHead,
+    nowUtc,
+  });
+  const authority = qualification.valid
+    ? validateOpenClawQualificationAuthorityChain(qualification.receipt, host, {
+        repository,
+        taskClass,
+        sourceHead,
+        nowUtc,
+      })
+    : blockedAuthority('OPENCLAW_QUALIFICATION_CLAIM_INVALID');
+  const capacity = authority.valid
+    ? validateOpenClawProviderCapacity(host?.capacityReceipt, {
+        repository,
+        taskClass,
+        qualificationId: qualification.receipt.qualificationId,
+        authorityReceiptId: authority.authorityReceiptId,
+        workerId: qualification.receipt.providerInstance,
+        nowUtc,
+      })
+    : Object.freeze({ valid: false, receipt: null, reason: 'OPENCLAW_CAPACITY_NOT_EVALUATED' });
+  if (!qualification.valid || !authority.valid || !capacity.valid) {
+    return Object.freeze({
+      ok: false,
+      reason: !qualification.valid
+        ? qualification.reason
+        : !authority.valid
+          ? authority.reason
+          : capacity.reason,
+      record: null,
+    });
+  }
+  const proofRefs = Object.freeze([...new Set([
+    ...authority.proofRefs,
+    ...capacity.receipt.proofRefs,
+  ])]);
+  const record = Object.freeze({
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'openclaw-provider-pool-current',
+      participantId: qualification.receipt.providerInstance,
+      timestampUtc: capacity.receipt.observedAtUtc,
+      status: 'READY',
+      summary: `Qualified OpenClaw capacity is READY for ${taskClass} at ${sourceHead}.`,
+      proofRefs,
+    }),
+    repository,
+    taskClass,
+    sourceHead,
+    hostContext: host,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+    duplicateDispatchAllowed: false,
+  });
+  const validation = validateSharedWorkspaceRecord(record, { nowMs: Date.parse(nowUtc) });
+  if (!validation.valid) {
+    return Object.freeze({ ok: false, reason: validation.errors[0], record, validation });
+  }
+  const write = await writeAtomicJson(root, ['status', 'openclaw-provider-pool-current.json'], record, options);
+  return Object.freeze({
+    ok: write.ok === true,
+    reason: write.ok ? 'OPENCLAW_PROVIDER_POOL_PUBLISHED' : write.reason,
+    record,
+    validation,
+    write,
   });
 }
 

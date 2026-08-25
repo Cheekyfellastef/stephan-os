@@ -1,10 +1,48 @@
 export const STEPHANOS_CAPABILITY_REGISTRY_SCHEMA = 'stephanos.capability-registry.v1';
-export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.4.0';
+export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.5.0';
 export const STEPHANOS_CAPABILITY_REGISTRY_REPOSITORY = 'Cheekyfellastef/stephan-os';
 
 const SAFE_CAPABILITY_ID = /^[a-z0-9][a-z0-9.-]{2,80}$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const ABSOLUTE_PATH_PATTERN = /(?:^|["'\s])(?:[a-z]:[\\/]|\\\\|\/(?:users|home|workspace|tmp)\/)/i;
+
+export const STEPHANOS_BUILD_SYSTEMS = Object.freeze([
+  Object.freeze({
+    systemId: 'openclaw',
+    providerRoute: 'OPENCLAW_LOCAL',
+    role: 'qualified-local-builder',
+    statusSource: 'openclaw-provider-pool-current',
+    operations: Object.freeze(['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS']),
+  }),
+  Object.freeze({
+    systemId: 'codex',
+    providerRoute: 'CODEX',
+    role: 'meter-governed-source-builder',
+    statusSource: 'codex-capacity-current',
+    operations: Object.freeze(['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS']),
+  }),
+  Object.freeze({
+    systemId: 'github',
+    providerRoute: 'CHATGPT_GITHUB',
+    role: 'github-first-source-builder',
+    statusSource: 'chatgpt-github-build-capacity-current',
+    operations: Object.freeze(['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS']),
+  }),
+  Object.freeze({
+    systemId: 'foundry-forge',
+    providerRoute: 'FOUNDRY_FORGE',
+    role: 'isolated-sidecar-builder',
+    statusSource: 'foundry-forge-build-capacity-current',
+    operations: Object.freeze(['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS']),
+  }),
+  Object.freeze({
+    systemId: 'stephanos-machinery',
+    providerRoute: 'STEPHANOS_NATIVE',
+    role: 'native-build-pipeline',
+    statusSource: 'authoritative-programme-projection',
+    operations: Object.freeze(['SCHEDULE_RESOURCE_DISJOINT_GOALS', 'CREATE_ISOLATED_WORKTREE', 'BUILD_ARTIFACTS', 'RUN_FOCUSED_TESTS', 'JUDGE_EVIDENCE']),
+  }),
+]);
 
 function descriptor(input) {
   return Object.freeze({
@@ -37,6 +75,15 @@ function compactDescriptor(capability) {
 }
 
 export const STEPHANOS_CAPABILITIES = Object.freeze([
+  descriptor({
+    capabilityId: 'five-system-build-fabric',
+    category: 'programme-orchestration',
+    purpose: 'Routes resource-disjoint durable work across OpenClaw, Codex, GitHub, Foundry Forge and native Stephanos machinery, admitting only freshly proven provider capacity.',
+    ownerIssue: 1291,
+    discoveryRoute: 'capability-registry:five-system-build-fabric',
+    statusSource: 'authoritative-programme-projection',
+    operations: ['ROUTE_PROVEN_BUILD_CAPACITY', 'ADMIT_RESOURCE_DISJOINT_PARALLEL_GOALS', 'FAIL_CLOSED_ON_STALE_CAPACITY'],
+  }),
   descriptor({
     capabilityId: 'source-publication-continuity-router',
     category: 'source-publication-policy',
@@ -280,6 +327,33 @@ function safetyProjection() {
   });
 }
 
+function buildFabricProjection() {
+  return Object.freeze({
+    systemCount: STEPHANOS_BUILD_SYSTEMS.length,
+    minimumParallelLanes: 5,
+    maximumParallelLanes: 16,
+    admissionMode: 'RESOURCE_DISJOINT',
+    capacityTruth: 'FRESH_RECEIPTS_REQUIRED',
+    systems: STEPHANOS_BUILD_SYSTEMS,
+    sourceMutationLeaseRequired: true,
+    duplicateDispatchAllowed: false,
+    mergeAuthority: false,
+  });
+}
+
+function buildFabricSummary() {
+  return Object.freeze({
+    systemCount: STEPHANOS_BUILD_SYSTEMS.length,
+    systemIds: Object.freeze(STEPHANOS_BUILD_SYSTEMS.map(({ systemId }) => systemId)),
+    minimumParallelLanes: 5,
+    maximumParallelLanes: 16,
+    admissionMode: 'RESOURCE_DISJOINT',
+    capacityTruth: 'FRESH_RECEIPTS_REQUIRED',
+    duplicateDispatchAllowed: false,
+    mergeAuthority: false,
+  });
+}
+
 export function buildStephanosCapabilityRegistryProjection({ sourceHead = '', generatedAtUtc = new Date(0).toISOString() } = {}) {
   const validation = validateStephanosCapabilityRegistry();
   return Object.freeze({
@@ -290,6 +364,7 @@ export function buildStephanosCapabilityRegistryProjection({ sourceHead = '', ge
     sourceHead: SHA_PATTERN.test(String(sourceHead || '')) ? String(sourceHead).toLowerCase() : '',
     generatedAtUtc: String(generatedAtUtc || ''),
     bootstrap: bootstrapProjection(),
+    buildFabric: buildFabricProjection(),
     capabilities: STEPHANOS_CAPABILITIES,
     safety: safetyProjection(),
     validation,
@@ -307,6 +382,7 @@ export function buildStephanosCapabilityRegistrySummary({ sourceHead = '', gener
     sourceHead: SHA_PATTERN.test(String(sourceHead || '')) ? String(sourceHead).toLowerCase() : '',
     generatedAtUtc: String(generatedAtUtc || ''),
     bootstrap: bootstrapProjection(),
+    buildFabric: buildFabricSummary(),
     capabilities: Object.freeze(STEPHANOS_CAPABILITIES.map(compactDescriptor)),
     safety: safetyProjection(),
     capabilityCount: validation.capabilityCount,

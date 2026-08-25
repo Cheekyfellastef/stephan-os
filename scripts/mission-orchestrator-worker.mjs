@@ -541,7 +541,7 @@ export async function runMissionWorkerTick(options = {}) {
       ...workerOptions,
       executeOpenClawReadonlyAction: (action, claim) => executeOpenClawReadonlyAction(action, claim, options),
     });
-  } else if (['chatgpt-github', 'foundry-forge'].includes(selection.entry.adapter)) {
+  } else if (['openclaw-local', 'chatgpt-github', 'foundry-forge'].includes(selection.entry.adapter)) {
     processed = { processed: false, reason: 'proven-external-lane-handoff-pending', adapter: selection.entry.adapter, queuePath: selection.entry.path };
   } else {
     processed = { processed: false, reason: 'granted-action-adapter-not-supported-by-worker' };

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
@@ -119,6 +119,75 @@ test('publishes one exact external fallback handoff and accepts its grounded res
   }, options);
   assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
   assert.equal(collected.state.dispatch.adapter, 'chatgpt-github');
+});
+
+test('publishes and collects one exact qualified OpenClaw local handoff', async () => {
+  const options = await runtime();
+  const missionId = 'openclaw-qualified-fallback-test';
+  await createMissionRecord({
+    ...intent,
+    missionId,
+    branch: 'openclaw/openclaw-qualified-fallback-test',
+  }, options);
+  const ready = await appendMissionEvent(missionId, {
+    eventId: 'openclaw-qualified-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'openclaw-qualified-worktree-proof'),
+  }, options);
+  const capacityBinding = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    missionId,
+    capacityRoute: 'OPENCLAW_LOCAL',
+    adapter: 'openclaw-local',
+    workerId: 'battle-bridge-openclaw-01',
+    capacityReceiptId: 'openclaw-qualified-capacity',
+    capacityProofRefs: ['receipts/openclaw/capacity.json'],
+  };
+  const action = buildMissionWorkerAction(ready.state, {
+    ...options,
+    actionGrant: capacityBinding,
+  });
+  const grant = {
+    ...capacityBinding,
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: 'a'.repeat(40),
+    boundedActionCount: 1,
+    missionRevision: ready.state.revision,
+    currentPhase: ready.state.currentPhase,
+    actionId: action.actionId,
+    actionKind: action.actionKind,
+    operation: '',
+    repository: ready.state.repository,
+    branch: ready.state.git.branch,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  };
+  const dispatch = await publishNextMissionWorkerAction({
+    ...options,
+    sourceRevision: grant.sourceRevision,
+    actionGrant: grant,
+  });
+  assert.equal(dispatch.published, true);
+  assert.equal(dispatch.adapter, 'openclaw-local');
+  assert.equal(dispatch.action.capacityRoute, 'OPENCLAW_LOCAL');
+  assert.equal(dispatch.fabricPublication.ok, true);
+  const queued = await readMissionWorkerQueue(options);
+  assert.deepEqual(queued.map(({ adapter }) => adapter), ['openclaw-local']);
+  const handoff = JSON.parse(await readFile(dispatch.fabricPublication.path, 'utf8'));
+  assert.equal(handoff.toParticipantId, 'openclaw');
+  const collected = await collectAgentWorkerResult({
+    missionId,
+    actionId: action.actionId,
+    adapter: 'openclaw-local',
+    success: true,
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: proof('openclaw result', 'openclaw-result'),
+    evidenceReceipts: [proof('focused test output', 'openclaw-evidence')],
+  }, options);
+  assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
+  assert.equal(collected.state.dispatch.adapter, 'openclaw-local');
 });
 
 test('publisher rejects a stale mission revision before signing or queueing', async () => {

@@ -294,6 +294,7 @@ export async function readMissionControllerCapacityRoutingInput({
   root,
   repoRoot,
   nowUtc,
+  sourceRevision,
   readFileImpl = readFile,
 } = {}) {
   const names = {
@@ -301,6 +302,7 @@ export async function readMissionControllerCapacityRoutingInput({
     github: 'chatgpt-github-build-capacity-current.json',
     forge: 'foundry-forge-build-capacity-current.json',
     forgeSidecar: 'foundry-forge-sidecar-current.json',
+    openClaw: 'openclaw-provider-pool-current.json',
   };
   const resolved = Object.fromEntries(Object.entries(names).map(([key, file]) => [
     key,
@@ -313,10 +315,12 @@ export async function readMissionControllerCapacityRoutingInput({
   })));
   return Object.freeze({
     nowUtc,
+    sourceHead: text(sourceRevision).toLowerCase(),
     codexStatus: loaded.codexStatus,
     githubLaneReceipt: loaded.github?.capacityReceipt ?? loaded.github,
     forgeLaneReceipt: loaded.forge?.capacityReceipt ?? loaded.forge,
     forgeSidecar: loaded.forgeSidecar?.forgeSidecar ?? loaded.forgeSidecar,
+    openClawHostContext: loaded.openClaw?.hostContext ?? loaded.openClaw,
   });
 }
 
@@ -1167,11 +1171,13 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
       nowUtc,
     })
     : null;
+  const criticalBacklog = deps.buildCriticalBacklogProjection({ missionRecords });
   const schedulerGoals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc,
     lane,
     goalRecords: workspaceFeed?.records?.goalRecords,
     trustedOperatorApprovalReceipts: github?.trustedOperatorApprovalReceipts,
+    criticalBacklog,
   });
   const scheduler = deps.buildMissionScheduler({
     now: nowUtc,
@@ -1181,7 +1187,6 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     proofRefs: proof.proofRefs,
     correlationId: text(options.correlationId, `programme-${nowUtc.replace(/[^0-9]/g, '').slice(0, 14)}`),
   });
-  const criticalBacklog = deps.buildCriticalBacklogProjection({ missionRecords });
   const sourceHead = repositoryHeadValid ? repositoryHeadRead.headSha : '';
   const machineryInventory = deps.buildCapabilityRegistry({
     sourceHead,

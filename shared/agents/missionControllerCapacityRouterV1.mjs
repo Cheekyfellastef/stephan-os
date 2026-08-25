@@ -18,6 +18,7 @@ export const MISSION_CONTROLLER_ROUTE = Object.freeze({
   CODEX: 'CODEX',
   CHATGPT_GITHUB: 'CHATGPT_GITHUB',
   FOUNDRY_FORGE: 'FOUNDRY_FORGE',
+  OPENCLAW_LOCAL: 'OPENCLAW_LOCAL',
   WAIT_FOR_PROVEN_CAPACITY: 'WAIT_FOR_PROVEN_CAPACITY',
 });
 
@@ -30,7 +31,12 @@ const ROUTE_ADAPTER = Object.freeze({
   [MISSION_CONTROLLER_ROUTE.CODEX]: 'codex',
   [MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB]: 'chatgpt-github',
   [MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE]: 'foundry-forge',
+  [MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL]: 'openclaw-local',
 });
+const BUILD_LANE_RECEIPT_ROUTES = new Set([
+  MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
+  MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
+]);
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:@/-]{2,239}$/i;
 const SAFE_REF = /^(?:proof|proofs|receipts|evidence\/receipts)\/[A-Za-z0-9][A-Za-z0-9._/@:#-]{0,239}$/;
@@ -117,8 +123,7 @@ export function validateBuildLaneCapacityReceipt(receipt, expected = {}) {
   const valid = exactKeys(receipt, RECEIPT_KEYS)
     && receipt.schemaVersion === BUILD_LANE_CAPACITY_RECEIPT_SCHEMA
     && SAFE_ID.test(text(receipt.receiptId))
-    && Object.values(MISSION_CONTROLLER_ROUTE).includes(route)
-    && route !== MISSION_CONTROLLER_ROUTE.CODEX
+    && BUILD_LANE_RECEIPT_ROUTES.has(route)
     && receipt.repository === expected.repository
     && REPOSITORY.test(text(receipt.repository))
     && SAFE_ID.test(text(receipt.workerId))
