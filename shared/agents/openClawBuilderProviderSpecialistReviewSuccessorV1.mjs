@@ -181,11 +181,15 @@ const REFLECTIVE_PROPERTY_KEY_METHODS = new Set([
   'set',
 ]);
 
+function isJavaScriptLineTerminator(value) {
+  return value === '\r' || value === '\n' || value === '\u2028' || value === '\u2029';
+}
+
 function readJavaScriptEscapeSequence(source, start) {
   let index = start + 1;
   if (index >= source.length) return { valid: false, end: source.length, value: '' };
   const escaped = source[index];
-  if (escaped === '\r' || escaped === '\n') {
+  if (isJavaScriptLineTerminator(escaped)) {
     if (escaped === '\r' && source[index + 1] === '\n') index += 1;
     return { valid: true, end: index + 1, value: '' };
   }
@@ -218,7 +222,7 @@ function readJavaScriptString(source, start) {
   while (index < source.length) {
     const current = source[index];
     if (current === quote) return { valid: true, end: index + 1, value };
-    if (current === '\r' || current === '\n') return { valid: false, end: source.length, value: '' };
+    if (isJavaScriptLineTerminator(current)) return { valid: false, end: source.length, value: '' };
     if (current !== '\\') {
       value += current;
       index += 1;
@@ -237,7 +241,7 @@ function readJavaScriptRegex(source, start) {
   let inClass = false;
   while (index < source.length) {
     const current = source[index];
-    if (current === '\r' || current === '\n') return { valid: false, end: source.length };
+    if (isJavaScriptLineTerminator(current)) return { valid: false, end: source.length };
     if (current === '\\') {
       index += 2;
       continue;
@@ -342,19 +346,19 @@ function tokenizeJavaScriptAuthority(source) {
       continue;
     }
     if (/\s/.test(current)) {
-      if (current === '\r' || current === '\n') lineTerminatorBeforeNextToken = true;
+      if (isJavaScriptLineTerminator(current)) lineTerminatorBeforeNextToken = true;
       index += 1;
       continue;
     }
     if (current === '/' && next === '/') {
       index += 2;
-      while (index < source.length && source[index] !== '\r' && source[index] !== '\n') index += 1;
+      while (index < source.length && !isJavaScriptLineTerminator(source[index])) index += 1;
       continue;
     }
     if (current === '/' && next === '*') {
       const close = source.indexOf('*/', index + 2);
       if (close < 0) return { valid: false, tokens: Object.freeze(tokens) };
-      if (/\r|\n/.test(source.slice(index, close + 2))) lineTerminatorBeforeNextToken = true;
+      if (/[\r\n\u2028\u2029]/u.test(source.slice(index, close + 2))) lineTerminatorBeforeNextToken = true;
       index = close + 2;
       continue;
     }
@@ -504,15 +508,45 @@ function callArgumentRange(tokens, openIndex, requestedIndex) {
   return null;
 }
 
-function callOpenAfterCallee(tokens, calleeStart, calleeEnd) {
-  let start = calleeStart;
-  let end = calleeEnd;
-  while (tokens[start - 1]?.type === 'punctuator'
-    && tokens[start - 1].value === '('
-    && matchingPunctuator(tokens, start - 1, '(', ')') === end + 1) {
-    start -= 1;
-    end += 1;
+function arrayElementRange(tokens, expressionRange, requestedIndex) {
+  let start = expressionRange?.start ?? -1;
+  let end = expressionRange?.end ?? -1;
+  while (tokens[start]?.type === 'punctuator'
+    && tokens[start].value === '('
+    && matchingPunctuator(tokens, start, '(', ')') === end - 1) {
+    start += 1;
+    end -= 1;
   }
+  if (tokens[start]?.type !== 'punctuator'
+    || tokens[start].value !== '['
+    || matchingPunctuator(tokens, start, '[', ']') !== end - 1) return null;
+  let elementIndex = 0;
+  let elementStart = start + 1;
+  const depth = { round: 0, square: 0, curly: 0 };
+  for (let index = elementStart; index < end; index += 1) {
+    const token = tokens[index];
+    if (token?.type === 'punctuator') {
+      if (token.value === '(') depth.round += 1;
+      else if (token.value === ')') depth.round -= 1;
+      else if (token.value === '[') depth.square += 1;
+      else if (token.value === ']' && depth.square > 0) depth.square -= 1;
+      else if (token.value === '{') depth.curly += 1;
+      else if (token.value === '}') depth.curly -= 1;
+      const atElementBoundary = depth.round === 0 && depth.square === 0 && depth.curly === 0;
+      if (atElementBoundary && (token.value === ',' || token.value === ']')) {
+        if (elementIndex === requestedIndex) return Object.freeze({ start: elementStart, end: index });
+        if (token.value === ']') return null;
+        elementIndex += 1;
+        elementStart = index + 1;
+      }
+    }
+  }
+  return null;
+}
+
+function callOpenAfterCallee(tokens, calleeStart, calleeEnd) {
+  const bounds = transparentCalleeBounds(tokens, calleeStart, calleeEnd);
+  const { end } = bounds;
   if (tokens[end + 1]?.type === 'punctuator' && tokens[end + 1].value === '(') return end + 1;
   if (tokens[end + 1]?.type === 'punctuator'
     && tokens[end + 1].value === '?.'
@@ -521,29 +555,165 @@ function callOpenAfterCallee(tokens, calleeStart, calleeEnd) {
   return -1;
 }
 
+function transparentCalleeBounds(tokens, calleeStart, calleeEnd) {
+  let start = calleeStart;
+  let end = calleeEnd;
+  while (tokens[start - 1]?.type === 'punctuator'
+    && tokens[start - 1].value === '('
+    && matchingPunctuator(tokens, start - 1, '(', ')') === end + 1) {
+    start -= 1;
+    end += 1;
+  }
+  return Object.freeze({ start, end });
+}
+
+function reflectiveMethodReferenceEnd(tokens, start, depth = 0) {
+  if (depth > MAX_FOLDED_AUTHORITY_EXPRESSION_DEPTH) return -1;
+  if (tokens[start]?.type === 'punctuator' && tokens[start].value === '(') {
+    const close = matchingPunctuator(tokens, start, '(', ')');
+    if (close <= start + 1) return -1;
+    const innerEnd = reflectiveMethodReferenceEnd(tokens, start + 1, depth + 1);
+    return innerEnd === close - 1 ? close : -1;
+  }
+  const receiver = tokens[start];
+  const access = tokens[start + 1];
+  if (receiver?.type !== 'identifier' || !new Set(['Object', 'Reflect']).has(receiver.value)) return -1;
+  if (access?.type === 'punctuator' && new Set(['.', '?.']).has(access.value)) {
+    const method = tokens[start + 2];
+    return method?.type === 'identifier' && REFLECTIVE_PROPERTY_KEY_METHODS.has(method.value)
+      ? start + 2
+      : -1;
+  }
+  if (access?.type !== 'punctuator' || access.value !== '[') return -1;
+  const methodClose = matchingPunctuator(tokens, start + 1, '[', ']');
+  if (methodClose <= start + 1) return -1;
+  const methodPattern = parseComputedAuthorityPattern(tokens, start + 2, methodClose);
+  const couldSelectReflectiveMethod = !methodPattern
+    || [...REFLECTIVE_PROPERTY_KEY_METHODS].some((method) => authorityPatternCanResolve(methodPattern, method));
+  return couldSelectReflectiveMethod ? methodClose : -1;
+}
+
+function boundReflectiveMethodReferenceEnd(tokens, start) {
+  const referenceEnd = reflectiveMethodReferenceEnd(tokens, start);
+  if (referenceEnd < 0) return -1;
+  const bounds = transparentCalleeBounds(tokens, start, referenceEnd);
+  const access = tokens[bounds.end + 1];
+  const method = tokens[bounds.end + 2];
+  if (access?.type !== 'punctuator'
+    || !new Set(['.', '?.']).has(access.value)
+    || method?.type !== 'identifier'
+    || method.value !== 'bind') return referenceEnd;
+  const bindOpen = callOpenAfterCallee(tokens, bounds.start, bounds.end + 2);
+  if (bindOpen < 0) return -1;
+  return matchingPunctuator(tokens, bindOpen, '(', ')');
+}
+
+function reflectiveMethodAliases(tokens) {
+  const aliases = new Set();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let index = 0; index < tokens.length - 3; index += 1) {
+      const alias = tokens[index];
+      if (alias?.type !== 'identifier'
+        || tokens[index + 1]?.type !== 'punctuator'
+        || tokens[index + 1].value !== '=') continue;
+      const rhs = tokens[index + 2];
+      let rhsEnd = boundReflectiveMethodReferenceEnd(tokens, index + 2);
+      if (rhsEnd < 0 && rhs?.type === 'identifier' && aliases.has(rhs.value)) rhsEnd = index + 2;
+      if (rhsEnd < 0) continue;
+      const terminator = tokens[rhsEnd + 1];
+      if (terminator?.type !== 'punctuator' || !new Set([';', ',', ')']).has(terminator.value)) continue;
+      if (!aliases.has(alias.value)) {
+        aliases.add(alias.value);
+        changed = true;
+      }
+    }
+    for (let index = 0; index < tokens.length - 6; index += 1) {
+      if (tokens[index]?.type !== 'identifier'
+        || !new Set(['const', 'let', 'var']).has(tokens[index].value)
+        || tokens[index + 1]?.type !== 'punctuator'
+        || tokens[index + 1].value !== '{') continue;
+      const close = matchingPunctuator(tokens, index + 1, '{', '}');
+      if (close < 0
+        || tokens[close + 1]?.type !== 'punctuator'
+        || tokens[close + 1].value !== '='
+        || tokens[close + 2]?.type !== 'identifier'
+        || !new Set(['Object', 'Reflect']).has(tokens[close + 2].value)) continue;
+      let cursor = index + 2;
+      while (cursor < close) {
+        let couldSelect = false;
+        if (tokens[cursor]?.type === 'identifier') {
+          couldSelect = REFLECTIVE_PROPERTY_KEY_METHODS.has(tokens[cursor].value);
+          if (couldSelect
+            && !(tokens[cursor + 1]?.type === 'punctuator' && tokens[cursor + 1].value === ':')) {
+            if (!aliases.has(tokens[cursor].value)) {
+              aliases.add(tokens[cursor].value);
+              changed = true;
+            }
+            cursor += 1;
+            continue;
+          }
+        } else if (tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === '[') {
+          const keyClose = matchingPunctuator(tokens, cursor, '[', ']');
+          if (keyClose < 0 || keyClose >= close) break;
+          const pattern = parseComputedAuthorityPattern(tokens, cursor + 1, keyClose);
+          couldSelect = !pattern
+            || [...REFLECTIVE_PROPERTY_KEY_METHODS].some((method) => authorityPatternCanResolve(pattern, method));
+          cursor = keyClose;
+        }
+        if (couldSelect
+          && tokens[cursor + 1]?.type === 'punctuator'
+          && tokens[cursor + 1].value === ':'
+          && tokens[cursor + 2]?.type === 'identifier'
+          && !aliases.has(tokens[cursor + 2].value)) {
+          aliases.add(tokens[cursor + 2].value);
+          changed = true;
+        }
+        while (cursor < close
+          && !(tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === ',')) cursor += 1;
+        cursor += 1;
+      }
+    }
+  }
+  return aliases;
+}
+
+function reflectiveCallPropertyRange(tokens, calleeStart, calleeEnd) {
+  const directOpen = callOpenAfterCallee(tokens, calleeStart, calleeEnd);
+  if (directOpen >= 0) return callArgumentRange(tokens, directOpen, 1);
+  const bounds = transparentCalleeBounds(tokens, calleeStart, calleeEnd);
+  const access = tokens[bounds.end + 1];
+  const method = tokens[bounds.end + 2];
+  if (access?.type !== 'punctuator'
+    || !new Set(['.', '?.']).has(access.value)
+    || method?.type !== 'identifier'
+    || !new Set(['apply', 'bind', 'call']).has(method.value)) return null;
+  const borrowedOpen = callOpenAfterCallee(tokens, bounds.start, bounds.end + 2);
+  if (borrowedOpen < 0) return null;
+  if (method.value === 'call') return callArgumentRange(tokens, borrowedOpen, 2);
+  if (method.value === 'apply') {
+    const argumentArray = callArgumentRange(tokens, borrowedOpen, 1);
+    return arrayElementRange(tokens, argumentArray, 1) ?? argumentArray;
+  }
+  const close = matchingPunctuator(tokens, borrowedOpen, '(', ')');
+  return close < 0 ? null : Object.freeze({ start: borrowedOpen + 1, end: close });
+}
+
 function reflectivePropertyKeyRanges(tokens) {
   const ranges = [];
   for (let index = 0; index < tokens.length - 3; index += 1) {
-    const receiver = tokens[index];
-    const access = tokens[index + 1];
-    if (receiver?.type !== 'identifier' || !new Set(['Object', 'Reflect']).has(receiver.value)) continue;
-    let callOpen = -1;
-    if (access?.type === 'punctuator' && new Set(['.', '?.']).has(access.value)) {
-      const method = tokens[index + 2];
-      if (method?.type === 'identifier'
-        && REFLECTIVE_PROPERTY_KEY_METHODS.has(method.value)) {
-        callOpen = callOpenAfterCallee(tokens, index, index + 2);
-      }
-    } else if (access?.type === 'punctuator' && access.value === '[') {
-      const methodClose = matchingPunctuator(tokens, index + 1, '[', ']');
-      if (methodClose <= index + 1) continue;
-      const methodPattern = parseComputedAuthorityPattern(tokens, index + 2, methodClose);
-      const couldSelectReflectiveMethod = !methodPattern
-        || [...REFLECTIVE_PROPERTY_KEY_METHODS].some((method) => authorityPatternCanResolve(methodPattern, method));
-      if (couldSelectReflectiveMethod) callOpen = callOpenAfterCallee(tokens, index, methodClose);
-    }
-    if (callOpen < 0) continue;
-    const range = callArgumentRange(tokens, callOpen, 1);
+    const referenceEnd = reflectiveMethodReferenceEnd(tokens, index);
+    if (referenceEnd < 0) continue;
+    const range = reflectiveCallPropertyRange(tokens, index, referenceEnd);
+    if (range) ranges.push(range);
+    index = referenceEnd;
+  }
+  const aliases = reflectiveMethodAliases(tokens);
+  for (let index = 0; index < tokens.length; index += 1) {
+    const alias = tokens[index];
+    if (alias?.type !== 'identifier' || !aliases.has(alias.value)) continue;
+    const range = reflectiveCallPropertyRange(tokens, index, index);
     if (range) ranges.push(range);
   }
   return Object.freeze(ranges);
@@ -983,37 +1153,49 @@ function parseImportBindings(tokens) {
   return null;
 }
 
-function staticImportDeclarations(tokens) {
+function staticModuleDeclarations(tokens) {
   const declarations = [];
   let valid = true;
   let dynamicLoader = false;
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
-    if (token?.type !== 'identifier' || token.value !== 'import') continue;
+    const isImport = token?.type === 'identifier' && token.value === 'import';
+    const isReExport = token?.type === 'identifier' && token.value === 'export';
+    if (!isImport && !isReExport) continue;
     const next = tokens[index + 1];
-    if (next?.type === 'punctuator' && next.value === '(') {
+    if (isImport && next?.type === 'punctuator' && next.value === '(') {
       dynamicLoader = true;
       continue;
     }
-    if (next?.type === 'string') {
+    if (isImport && next?.type === 'string') {
       valid = false;
       continue;
     }
     let from = -1;
     for (let cursor = index + 1; cursor < tokens.length; cursor += 1) {
       if (tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === ';') break;
-      if (tokens[cursor]?.type === 'identifier' && tokens[cursor].value === 'from') {
+      if (tokens[cursor]?.type === 'identifier'
+        && tokens[cursor].value === 'from'
+        && tokens[cursor + 1]?.type === 'string') {
         from = cursor;
         break;
       }
     }
+    if (isReExport && from < 0) continue;
     const specifier = tokens[from + 1];
-    const bindings = from > index + 1 ? parseImportBindings(tokens.slice(index + 1, from)) : null;
-    if (!bindings || bindings.length === 0 || specifier?.type !== 'string') {
+    const bindings = from > index + 1
+      ? (isImport
+        ? parseImportBindings(tokens.slice(index + 1, from))
+        : parseNamedImportBindings(tokens.slice(index + 1, from)))
+      : null;
+    const terminatedExactly = tokens[from + 2]?.type === 'punctuator'
+      && tokens[from + 2].value === ';';
+    if (!bindings || bindings.length === 0 || specifier?.type !== 'string' || !terminatedExactly) {
       valid = false;
       continue;
     }
     declarations.push(Object.freeze({ specifier: specifier.value, bindings }));
+    index = from + 2;
   }
   return Object.freeze({ valid, dynamicLoader, declarations: Object.freeze(declarations) });
 }
@@ -1036,7 +1218,7 @@ function reviewLocalModuleAuthority(source, path, findings, importPolicy) {
     && !(tokens[index - 1]?.type === 'punctuator' && new Set(['.', '?.']).has(tokens[index - 1].value))
     && !(tokens[index - 1]?.type === 'identifier' && tokens[index - 1].value === 'function')
   ));
-  const imports = staticImportDeclarations(lexical.tokens);
+  const imports = staticModuleDeclarations(lexical.tokens);
   const unapprovedCapability = imports.declarations.some(({ specifier, bindings }) => {
     const allowedBindings = importPolicy[specifier];
     return !allowedBindings || bindings.some(({ imported }) => !allowedBindings.has(imported));

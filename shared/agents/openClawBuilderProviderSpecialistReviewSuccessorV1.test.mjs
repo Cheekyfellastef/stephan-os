@@ -316,6 +316,16 @@ test('computed authority remains visible across member, binding, and reflective 
     "export function widened(injected, empty) { const run = Reflect['g' + empty + 'et']?.(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const run = (Reflect['g' + empty + 'et'])?.(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const run = ((Reflect.get))?.(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const run = Reflect.get.call(null, injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const run = (Reflect['get']).call?.(null, injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const run = Reflect.get.apply(null, [injected, 'sp' + empty + 'awn']); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const getter = Reflect.get; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const getter = Reflect.get; const borrowed = getter; const run = borrowed.call(null, injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const getter = Reflect.get.bind(Reflect); const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const run = Reflect.get.bind(Reflect, injected)('sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const { get: getter } = Reflect; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const { get } = Reflect; const run = get(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const { ['g' + empty + 'et']: getter } = Reflect; const run = getter(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
     "export function widened(injected, empty) { const run = Object.getOwnPropertyDescriptor(injected, 'sp' + empty + 'awn').value; run('cmd.exe'); }",
   ]) {
     const result = analyzeProviderPoolInjection(hostileSource);
@@ -367,6 +377,9 @@ test('successor profile rejects global network capabilities without rejecting in
     "const helper = { render() {} }; const { ['render']: detached } = helper; detached();",
     "const helper = { render() {} }; const detached = Reflect.get(helper, 'render'); detached();",
     "const helper = { render() {} }; const detached = Reflect['get'](helper, 'render'); detached();",
+    "const helper = { render() {} }; const detached = Reflect.get.call(null, helper, 'render'); detached();",
+    "const helper = { render() {} }; const detached = Reflect.get.apply(null, [helper, 'render']); detached();",
+    "const helper = { render() {} }; const getter = Reflect.get; const detached = getter(helper, 'render'); detached();",
     `const helper = {}; helper[\`render-${'${mode}'}\`]();`,
     `const helper = {}; const detached = helper[\`render-${'${mode}'}\`];`,
     `const proofRef = \`proofs/openclaw/${'${receiptId}'}\`;`,
@@ -488,8 +501,18 @@ test('route success is structurally dominated by the negative provider-selection
   }
 });
 
-test('a line terminator after return cannot attach the following success expression', () => {
-  for (const returnPrefix of ['return\n  ', 'return /*\n  */ ', 'return // detached\n  ']) {
+test('every JavaScript line terminator after return detaches the following success expression', () => {
+  for (const returnPrefix of [
+    'return\n  ',
+    'return\r  ',
+    'return\r\n  ',
+    'return\u2028  ',
+    'return\u2029  ',
+    'return /*\n  */ ',
+    'return /*\u2028*/ ',
+    'return // detached\n  ',
+    'return // detached\u2029  ',
+  ]) {
     const hostileSources = sources();
     const content = hostileSources[0].content.replace(
       'return Object.freeze({\n    valid: true,',
@@ -565,11 +588,22 @@ test('successor profile allows only exact non-mutating imports from approved loc
     "import { ensureSharedWorkspaceLayout as prepare } from './sharedAgentWorkspaceStore.mjs'; prepare({ root });",
     "import workspaceStore from './sharedAgentWorkspaceStore.mjs'; workspaceStore.writeAtomicJson(root, ['escape'], {});",
     "import * as workspaceStore from './sharedAgentWorkspaceStore.mjs'; workspaceStore.writeAtomicJson(root, ['escape'], {});",
+    "export {} from 'data:text/javascript,globalThis.__probe__%3D1';",
+    "export * from 'node:child_process';",
+    "export { spawn as run } from 'node:child_process';",
+    "export { writeAtomicJson as save } from './sharedAgentWorkspaceStore.mjs';",
+    "export { createHash as safeHash } from 'node:crypto' with { type: 'json' };",
+    "import { createHash as safeHash } from 'node:crypto' with { type: 'json' };",
   ]) {
     const result = analyzeProviderPoolInjection(injection);
     assert.equal(result.clean, false);
     assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
   }
+
+  const approvedReExport = analyzeProviderPoolInjection(
+    "export { createHash as independentlyBoundHash } from 'node:crypto';",
+  );
+  assert.equal(approvedReExport.clean, true, JSON.stringify(approvedReExport.findings));
 });
 
 test('every split point of authority names remains visible across computed access forms', () => {
@@ -616,6 +650,8 @@ test('every split point of authority names remains visible across computed acces
           `export function widened(injected, maybe) { const run = Reflect.get(injected, \`${left}${substitution}${right}\`); run('cmd.exe'); }`,
           `export function widened(injected, maybe) { const run = (Reflect['get'])?.(injected, \`${left}${substitution}${right}\`); run('cmd.exe'); }`,
           `export function widened(injected, maybe) { const run = Reflect['g' + maybe + 'et']?.(injected, \`${left}${substitution}${right}\`); run('cmd.exe'); }`,
+          `export function widened(injected, maybe) { const run = Reflect.get.call(null, injected, \`${left}${substitution}${right}\`); run('cmd.exe'); }`,
+          `export function widened(injected, maybe) { const getter = Reflect.get; const run = getter(injected, \`${left}${substitution}${right}\`); run('cmd.exe'); }`,
         ]) {
           const result = analyzeProviderPoolInjection(hostileSource);
           assert.equal(result.clean, false, `${authorityName}:${split}:${substitution}:${hostileSource}`);
