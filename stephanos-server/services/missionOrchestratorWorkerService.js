@@ -15,6 +15,7 @@ import {
 } from './missionOrchestratorStore.js';
 import {
   createSharedWorkspaceHandoffRecord,
+  isSharedWorkspaceParticipantId,
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 
@@ -84,11 +85,15 @@ async function publishExternalLaneHandoff(state, action, options = {}) {
     || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE;
   const identity = encodedMissionIdentity(state.missionId);
   const proofRefs = Array.isArray(action.capacityProofRefs) ? action.capacityProofRefs : [];
+  const workerId = text(action.workerId);
+  if (!isSharedWorkspaceParticipantId(workerId)) {
+    return { ok: false, reason: 'WORKER_ID_NOT_SHARED_WORKSPACE_REPRESENTABLE', path: '' };
+  }
   const handoff = createSharedWorkspaceHandoffRecord({
     handoffId: action.actionId,
     participantId: 'mission-orchestrator',
     fromParticipantId: 'mission-orchestrator',
-    toParticipantId: text(action.workerId, action.adapter === 'chatgpt-github' ? 'chatgpt' : 'future-agent'),
+    toParticipantId: workerId,
     timestampUtc: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString(),
     correlationId: state.missionId,
     relatedIssue: `#${identity.issueNumber || 1292}`,
@@ -112,6 +117,9 @@ async function publishExternalLaneHandoff(state, action, options = {}) {
       leaseSeizureAllowed: false,
     }),
   });
+  if (handoff.toParticipantId !== workerId) {
+    return { ok: false, reason: 'SHARED_WORKSPACE_HANDOFF_RECIPIENT_MISMATCH', path: '' };
+  }
   return writeAtomicJson(root, ['outbox', `${action.actionId}.json`], handoff, {
     repoRoot: options.repoRoot,
     nowMs: Date.parse(handoff.timestampUtc),
@@ -322,6 +330,16 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
       reason: 'unsupported-worker-adapter',
       action,
       path: '',
+    };
+  }
+  if (['openclaw-local', 'chatgpt-github', 'foundry-forge'].includes(adapter)
+      && !isSharedWorkspaceParticipantId(action.workerId)) {
+    return {
+      published: false,
+      reason: 'worker-id-not-shared-workspace-representable',
+      action,
+      path: '',
+      adapter,
     };
   }
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);

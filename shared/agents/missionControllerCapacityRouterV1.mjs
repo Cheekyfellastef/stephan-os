@@ -7,6 +7,7 @@ import {
 import { adjudicateForgeSidecarCapacity } from './stallSentinelReviewPipelineV1.mjs';
 import {
   createSharedWorkspaceStatusRecord,
+  isSharedWorkspaceParticipantId,
   validateSharedWorkspaceRecord,
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
@@ -133,7 +134,7 @@ export function validateBuildLaneCapacityReceipt(receipt, expected = {}) {
     && BUILD_LANE_RECEIPT_ROUTES.has(route)
     && receipt.repository === expected.repository
     && REPOSITORY.test(text(receipt.repository))
-    && SAFE_ID.test(text(receipt.workerId))
+    && isSharedWorkspaceParticipantId(receipt.workerId)
     && receipt.state === 'READY'
     && operations?.includes('SOURCE_CONSTRUCTION')
     && operations?.includes('FOCUSED_TESTS')

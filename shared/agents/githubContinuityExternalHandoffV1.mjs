@@ -10,6 +10,7 @@ import {
 import { buildMissionWorkerAction } from './missionOrchestratorWorker.mjs';
 import {
   createSharedWorkspaceHandoffRecord,
+  isSharedWorkspaceParticipantId,
   validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
 
@@ -149,7 +150,7 @@ function validateGrant(g, identity) {
   if (g.schemaVersion!==GITHUB_CONTINUITY_EXECUTION_GRANT_SCHEMA) return 'execution-grant-schema-invalid';
   if (g.repository!==identity.repository || text(g.expectedSourceHead).toLowerCase()!==identity.expectedSourceHead) return 'execution-grant-identity-mismatch';
   if (![g.grantId,g.missionId,g.taskId].every((v)=>SAFE_ID.test(text(v)))) return 'execution-grant-id-invalid';
-  if (!Object.values(MISSION_CONTROLLER_ROUTE).includes(route) || !SAFE_ID.test(adapter) || !SAFE_ID.test(text(g.workerId)) || proofRefs===null) return 'execution-grant-route-evidence-invalid';
+  if (!Object.values(MISSION_CONTROLLER_ROUTE).includes(route) || !SAFE_ID.test(adapter) || !isSharedWorkspaceParticipantId(g.workerId) || proofRefs===null) return 'execution-grant-route-evidence-invalid';
   if (route===MISSION_CONTROLLER_ROUTE.CODEX) {
     if (receiptId!==null || adapter!=='codex' || text(g.workerId)!=='codex') return 'execution-grant-codex-binding-invalid';
   } else if (!SAFE_ID.test(receiptId||'') || proofRefs.length<1) return 'execution-grant-capacity-evidence-invalid';

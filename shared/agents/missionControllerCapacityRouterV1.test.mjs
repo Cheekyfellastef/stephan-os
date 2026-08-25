@@ -138,6 +138,13 @@ test('fallback receipts must be exact, fresh, bounded and repository-scoped', ()
     taskClass: 'FOCUSED_REPAIR',
     nowUtc: NOW,
   }).valid, false);
+  for (const workerId of ['worker/name', 'worker:name', 'worker@name', 'w'.repeat(82)]) {
+    assert.equal(validateBuildLaneCapacityReceipt(githubReceipt({ workerId }), {
+      repository: REPOSITORY,
+      taskClass: 'FOCUSED_REPAIR',
+      nowUtc: NOW,
+    }).valid, false, workerId);
+  }
 });
 
 test('a lane worker can publish its fresh capacity receipt to the canonical fabric status path', async () => {

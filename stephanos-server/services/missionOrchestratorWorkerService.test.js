@@ -123,6 +123,53 @@ test('publishes one exact external fallback handoff and accepts its grounded res
   assert.equal(collected.state.dispatch.adapter, 'chatgpt-github');
 });
 
+test('rejects an unrepresentable external worker before queue or handoff publication', async () => {
+  const options = await runtime();
+  const missionId = 'unrepresentable-worker-test';
+  await createMissionRecord({
+    ...intent,
+    missionId,
+    branch: 'openclaw/unrepresentable-worker-test',
+  }, options);
+  const ready = await appendMissionEvent(missionId, {
+    eventId: 'unrepresentable-worker-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'unrepresentable-worker-worktree-proof'),
+  }, options);
+  const capacityBinding = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    missionId,
+    capacityRoute: 'CHATGPT_GITHUB',
+    adapter: 'chatgpt-github',
+    workerId: 'shared-fabric/foreign-worker',
+    capacityReceiptId: 'unrepresentable-worker-capacity',
+    capacityProofRefs: ['receipts/github-builder/capacity.json'],
+  };
+  const action = buildMissionWorkerAction(ready.state, { ...options, actionGrant: capacityBinding });
+  const grant = {
+    ...capacityBinding,
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: 'a'.repeat(40),
+    boundedActionCount: 1,
+    missionRevision: ready.state.revision,
+    currentPhase: ready.state.currentPhase,
+    actionId: action.actionId,
+    actionKind: action.actionKind,
+    operation: '',
+    repository: ready.state.repository,
+    branch: ready.state.git.branch,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  };
+  const dispatch = await publishNextMissionWorkerAction({ ...options, actionGrant: grant });
+  assert.equal(dispatch.published, false);
+  assert.equal(dispatch.reason, 'worker-id-not-shared-workspace-representable');
+  assert.deepEqual(await readMissionWorkerQueue(options), []);
+  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.status, 'pending');
+});
+
 test('publishes and collects one exact qualified OpenClaw local handoff', async () => {
   const options = await runtime();
   const missionId = 'openclaw-qualified-fallback-test';
