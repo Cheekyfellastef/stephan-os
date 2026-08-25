@@ -120,10 +120,14 @@ test('qualified OpenClaw local is a registered implementation adapter', () => {
   state = event(state, 'AGENT_DISPATCHED', {
     agentId: 'openclaw-local',
     adapter: 'openclaw-local',
+    actionId: 'openclaw-local-action-001',
+    workerId: 'battle-bridge-openclaw-01',
   });
   assert.equal(state.currentPhase, 'AGENT_IMPLEMENTATION');
   assert.equal(state.dispatch.adapter, 'openclaw-local');
   assert.equal(state.dispatch.status, 'running');
+  assert.equal(state.dispatch.actionId, 'openclaw-local-action-001');
+  assert.equal(state.dispatch.workerId, 'battle-bridge-openclaw-01');
   assert.equal(state.activeWriter, 'openclaw-local');
 });
 

@@ -152,7 +152,7 @@ export function buildMissionWorkerAction(state, options = {}) {
     const activeWriter = adapter === 'codex' ? 'Codex' : owner;
     return {
       schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, adapter), missionId: state.missionId,
-      actionKind: 'agent-handoff', adapter, capacityRoute: route, capacityReceiptId: text(capacity?.selectedCapacityReceiptId),
+      actionKind: 'agent-handoff', adapter, workerId: owner, capacityRoute: route, capacityReceiptId: text(capacity?.selectedCapacityReceiptId),
       capacityProofRefs: Array.isArray(capacity?.proofRefs) ? capacity.proofRefs : [], owner, activeWriter,
       operatorIntent: state.operatorIntent, intendedOutcome: state.intendedOutcome, repository: state.repository,
       worktreePath: state.git?.worktreePath || '', branch: state.git?.branch || '', allowedFiles: state.allowedFiles || [],
@@ -163,7 +163,7 @@ export function buildMissionWorkerAction(state, options = {}) {
   if (state.currentPhase === 'LIVE_RUNTIME_INVESTIGATION') {
     return {
       schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'openclaw-readonly'), missionId: state.missionId,
-      actionKind: 'agent-handoff', adapter: 'openclaw-readonly', owner: 'openclaw-standalone', activeWriter: 'none',
+      actionKind: 'agent-handoff', adapter: 'openclaw-readonly', workerId: 'openclaw-standalone', owner: 'openclaw-standalone', activeWriter: 'none',
       operatorIntent: state.operatorIntent, intendedOutcome: state.intendedOutcome, repository: state.repository,
       repositoryRoot: state.repositoryRoot, requiredEvidence: state.requiredEvidence || [], browserProofRequired: state.browserProofRequired === true,
       executable: true, blockers: [], finalVerdict: 'READY_TO_DISPATCH_OPENCLAW_READONLY',

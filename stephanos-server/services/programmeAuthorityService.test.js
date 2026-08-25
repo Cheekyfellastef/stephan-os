@@ -383,7 +383,7 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
   });
 });
 
-test('capacity routing input loads the trusted OpenClaw host context and exact controller source head', async () => {
+test('capacity routing input rejects caller-shaped OpenClaw status without independent publisher records', async () => {
   await fixture(async ({ root, repoRoot }) => {
     const hostContext = {
       schemaVersion: 'stephanos.openclaw-provider-pool-host-context.v1',
@@ -405,7 +405,7 @@ test('capacity routing input loads the trusted OpenClaw host context and exact c
       sourceRevision: HEAD,
     });
     assert.equal(routing.sourceHead, HEAD);
-    assert.deepEqual(routing.openClawHostContext, hostContext);
+    assert.equal(routing.openClawHostContext, null);
     assert.equal(routing.codexStatus, null);
     assert.equal(routing.githubLaneReceipt, null);
     assert.equal(routing.forgeLaneReceipt, null);

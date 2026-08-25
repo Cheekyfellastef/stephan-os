@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,12 +13,14 @@ import {
 import {
   OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION,
   OPENCLAW_PROVIDER_CAPACITY_SCHEMA,
+  OPENCLAW_PROVIDER_POOL_COMPONENT_FILES,
   OPENCLAW_PROVIDER_POOL_HOST_CONTEXT_SCHEMA,
   OPENCLAW_PROVIDER_POOL_QUALIFICATION_SCHEMA,
   OPENCLAW_PROVIDER_ROUTE,
   publishOpenClawProviderPoolToSharedWorkspace,
   routeWithQualifiedOpenClawProvider,
   validateOpenClawProviderCapacity,
+  validateOpenClawProviderPoolStatusRecord,
   validateOpenClawProviderQualification,
   validateOpenClawQualificationAuthorityChain,
 } from './openClawProviderPoolQualificationV1.mjs';
@@ -25,6 +28,9 @@ import {
 const NOW = '2026-08-19T13:30:00.000Z';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = '8501a5657abe3fc5e815d9b35d9920003a4a1843';
+const { privateKey:PUBLISHER_PRIVATE_KEY, publicKey:PUBLISHER_PUBLIC_KEY } = generateKeyPairSync('ed25519');
+const PUBLISHER_PRIVATE_KEY_PEM = PUBLISHER_PRIVATE_KEY.export({ type:'pkcs8', format:'pem' });
+const PUBLISHER_PUBLIC_KEY_PEM = PUBLISHER_PUBLIC_KEY.export({ type:'spki', format:'pem' });
 
 function mission(overrides = {}) {
   return {
@@ -250,7 +256,7 @@ test('publishes only the complete trusted OpenClaw qualification chain to the ca
       root,
       trustedHostContext(),
       { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW },
-      { repoRoot: process.cwd(), nowMs: Date.parse(NOW) },
+      { repoRoot: process.cwd(), nowMs: Date.parse(NOW), publisherPrivateKeyPem:PUBLISHER_PRIVATE_KEY_PEM },
     );
     assert.equal(publication.ok, true, publication.reason);
     assert.equal(publication.record.statusId, 'openclaw-provider-pool-current');
@@ -261,7 +267,47 @@ test('publishes only the complete trusted OpenClaw qualification chain to the ca
       join(root, 'status', 'openclaw-provider-pool-current.json'),
       'utf8',
     ));
-    assert.deepEqual(persisted.hostContext, trustedHostContext());
+    assert.equal(Object.hasOwn(persisted, 'hostContext'), false);
+    const components = Object.fromEntries(await Promise.all(Object.entries(
+      OPENCLAW_PROVIDER_POOL_COMPONENT_FILES,
+    ).map(async ([componentKey, file]) => [
+      componentKey,
+      JSON.parse(await readFile(join(root, 'receipts', file), 'utf8')),
+    ])));
+    const validatedPublication = validateOpenClawProviderPoolStatusRecord(
+      persisted,
+      components,
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW, publisherPublicKeyPem:PUBLISHER_PUBLIC_KEY_PEM },
+    );
+    assert.equal(validatedPublication.valid, true, validatedPublication.reason);
+    assert.deepEqual(validatedPublication.hostContext, trustedHostContext());
+    assert.equal(validateOpenClawProviderPoolStatusRecord(
+      { ...persisted, publisherId: 'forged-publisher' },
+      components,
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW, publisherPublicKeyPem:PUBLISHER_PUBLIC_KEY_PEM },
+    ).valid, false);
+    assert.equal(validateOpenClawProviderPoolStatusRecord(
+      persisted,
+      {
+        ...components,
+        capacityReceipt: {
+          ...components.capacityReceipt,
+          payload: capacity({ supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS', 'ARBITRARY_SHELL'] }),
+        },
+      },
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW, publisherPublicKeyPem:PUBLISHER_PUBLIC_KEY_PEM },
+    ).valid, false);
+    assert.equal(validateOpenClawProviderPoolStatusRecord(
+      { ...persisted, summary: 'Tampered after publication.' },
+      components,
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW, publisherPublicKeyPem:PUBLISHER_PUBLIC_KEY_PEM },
+    ).valid, false);
+    const foreignKeys = generateKeyPairSync('ed25519');
+    assert.equal(validateOpenClawProviderPoolStatusRecord(
+      persisted,
+      components,
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW, publisherPublicKeyPem:foreignKeys.publicKey.export({ type:'spki', format:'pem' }) },
+    ).valid, false);
 
     const rejected = await publishOpenClawProviderPoolToSharedWorkspace(
       root,

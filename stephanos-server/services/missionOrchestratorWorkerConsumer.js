@@ -96,6 +96,7 @@ async function processAgentClaim(adapter, options, execute) {
       missionId: action.missionId,
       actionId: action.actionId,
       adapter,
+      workerId: action.workerId,
       success: execution.success === true,
       resultId: execution.resultId || action.actionId,
       changedFiles: execution.changedFiles || [],
@@ -123,7 +124,7 @@ async function processAgentClaim(adapter, options, execute) {
     return { processed: true, claim, applied, result, resultPath };
   } catch (error) {
     try {
-      await collectAgentWorkerResult({ missionId: action.missionId, actionId: action.actionId, adapter, success: false, error: error?.message || `${adapter} execution failed.` }, options);
+      await collectAgentWorkerResult({ missionId: action.missionId, actionId: action.actionId, adapter, workerId: action.workerId, success: false, error: error?.message || `${adapter} execution failed.` }, options);
     } catch {
       // Preserve the original adapter failure in the queue result.
     }

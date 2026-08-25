@@ -41,6 +41,10 @@ import { buildCriticalBacklogProjection } from '../../shared/agents/criticalBack
 import { buildStephanosCapabilityRegistryProjection } from '../../shared/agents/stephanosCapabilityRegistry.mjs';
 import { buildMissionScheduler } from '../../shared/runtime/missionScheduler.mjs';
 import {
+  OPENCLAW_PROVIDER_POOL_COMPONENT_FILES,
+  validateOpenClawProviderPoolStatusRecord,
+} from '../../shared/agents/openClawProviderPoolQualificationV1.mjs';
+import {
   fetchGithubPrEvidence,
   resolveGithubTokenConfig,
 } from './githubPrEvidenceService.js';
@@ -295,6 +299,7 @@ export async function readMissionControllerCapacityRoutingInput({
   repoRoot,
   nowUtc,
   sourceRevision,
+  openClawPublisherPublicKeyPem = '',
   readFileImpl = readFile,
 } = {}) {
   const names = {
@@ -313,6 +318,25 @@ export async function readMissionControllerCapacityRoutingInput({
     const result = await readJson(entry.path, readFileImpl);
     return [key, result.present && !result.error ? result.value : null];
   })));
+  const componentPaths = Object.fromEntries(Object.entries(OPENCLAW_PROVIDER_POOL_COMPONENT_FILES).map(([key, file]) => [
+    key,
+    authorityPath(root, repoRoot, 'receipts', file),
+  ]));
+  const componentRecords = Object.values(componentPaths).every((entry) => entry.ok)
+    ? Object.fromEntries(await Promise.all(Object.entries(componentPaths).map(async ([key, entry]) => {
+        const result = await readJson(entry.path, readFileImpl);
+        return [key, result.present && !result.error ? result.value : null];
+      })))
+    : null;
+  const openClawValidation = loaded.openClaw && componentRecords
+    ? validateOpenClawProviderPoolStatusRecord(loaded.openClaw, componentRecords, {
+        repository: 'Cheekyfellastef/stephan-os',
+        taskClass: text(loaded.openClaw.taskClass),
+        sourceHead: text(sourceRevision).toLowerCase(),
+        nowUtc,
+        publisherPublicKeyPem:openClawPublisherPublicKeyPem,
+      })
+    : null;
   return Object.freeze({
     nowUtc,
     sourceHead: text(sourceRevision).toLowerCase(),
@@ -320,7 +344,7 @@ export async function readMissionControllerCapacityRoutingInput({
     githubLaneReceipt: loaded.github?.capacityReceipt ?? loaded.github,
     forgeLaneReceipt: loaded.forge?.capacityReceipt ?? loaded.forge,
     forgeSidecar: loaded.forgeSidecar?.forgeSidecar ?? loaded.forgeSidecar,
-    openClawHostContext: loaded.openClaw?.hostContext ?? loaded.openClaw,
+    openClawHostContext: openClawValidation?.valid === true ? openClawValidation.hostContext : null,
   });
 }
 

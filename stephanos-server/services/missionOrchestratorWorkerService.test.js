@@ -41,7 +41,7 @@ test('publishes worktree then one Codex dispatch and collects grounded result', 
   const dispatch = await publishMissionWorkerAction(ready.state, options);
   assert.equal(dispatch.adapter, 'codex');
   assert.equal((await readMissionWorkerQueue(options)).some((entry) => entry.adapter === 'codex'), true);
-  const collected = await collectAgentWorkerResult({ missionId: intent.missionId, actionId: dispatch.action.actionId, adapter: 'codex', success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result'), evidenceReceipts: [proof('focused test output', 'evidence')] }, options);
+  const collected = await collectAgentWorkerResult({ missionId: intent.missionId, actionId: dispatch.action.actionId, adapter: 'codex', workerId: dispatch.action.workerId, success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result'), evidenceReceipts: [proof('focused test output', 'evidence')] }, options);
   assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
   assert.equal((await readMissionRecord(intent.missionId, options)).state.dispatch.status, 'complete');
 });
@@ -97,6 +97,7 @@ test('publishes one exact external fallback handoff and accepts its grounded res
     capacityRoute: action.capacityRoute,
     capacityReceiptId: action.capacityReceiptId,
     capacityProofRefs: action.capacityProofRefs,
+    workerId: action.workerId,
     repository: ready.state.repository,
     branch: ready.state.git.branch,
     mergeAuthority: false,
@@ -112,6 +113,7 @@ test('publishes one exact external fallback handoff and accepts its grounded res
     missionId,
     actionId: action.actionId,
     adapter: 'chatgpt-github',
+    workerId: action.workerId,
     success: true,
     changedFiles: ['shared/agents/example.mjs'],
     receipt: proof('github builder result', 'github-builder-result'),
@@ -176,11 +178,30 @@ test('publishes and collects one exact qualified OpenClaw local handoff', async 
   const queued = await readMissionWorkerQueue(options);
   assert.deepEqual(queued.map(({ adapter }) => adapter), ['openclaw-local']);
   const handoff = JSON.parse(await readFile(dispatch.fabricPublication.path, 'utf8'));
-  assert.equal(handoff.toParticipantId, 'openclaw');
+  assert.equal(handoff.toParticipantId, 'battle-bridge-openclaw-01');
+  const handoffBody = JSON.parse(handoff.body);
+  assert.equal(handoffBody.workerId, 'battle-bridge-openclaw-01');
+  await assert.rejects(() => collectAgentWorkerResult({
+    missionId,
+    actionId: `${action.actionId}-stale`,
+    adapter: 'openclaw-local',
+    workerId: action.workerId,
+    success: true,
+    receipt: proof('stale openclaw result', 'stale-openclaw-result'),
+  }, options), /action does not match/);
+  await assert.rejects(() => collectAgentWorkerResult({
+    missionId,
+    actionId: action.actionId,
+    adapter: 'openclaw-local',
+    workerId: 'foreign-openclaw-worker',
+    success: true,
+    receipt: proof('foreign openclaw result', 'foreign-openclaw-result'),
+  }, options), /worker does not match/);
   const collected = await collectAgentWorkerResult({
     missionId,
     actionId: action.actionId,
     adapter: 'openclaw-local',
+    workerId: action.workerId,
     success: true,
     changedFiles: ['shared/agents/example.mjs'],
     receipt: proof('openclaw result', 'openclaw-result'),

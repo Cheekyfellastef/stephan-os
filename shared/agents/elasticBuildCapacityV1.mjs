@@ -23,6 +23,49 @@ function resourceIds(value) {
   return [...new Set(normalized)].sort();
 }
 
+function repositoryPathResource(value) {
+  const match = /^repo:([^:]+\/[^:]+):path:(.+)$/.exec(value);
+  if (!match) return null;
+  const path = match[2].replace(/\/+$/, '');
+  return path ? { repository:match[1], path } : null;
+}
+
+function resourceConflictIndex(initial = []) {
+  const exact = new Set();
+  const roots = new Map();
+  const add = (resourceId) => {
+    exact.add(resourceId);
+    const parsed = repositoryPathResource(resourceId);
+    if (!parsed) return;
+    let node = roots.get(parsed.repository);
+    if (!node) {
+      node = { terminal:false, children:new Map() };
+      roots.set(parsed.repository, node);
+    }
+    for (const segment of parsed.path.split('/')) {
+      if (!node.children.has(segment)) node.children.set(segment, { terminal:false, children:new Map() });
+      node = node.children.get(segment);
+    }
+    node.terminal = true;
+  };
+  const conflicts = (resourceId) => {
+    if (exact.has(resourceId)) return true;
+    const parsed = repositoryPathResource(resourceId);
+    if (!parsed) return false;
+    let node = roots.get(parsed.repository);
+    if (!node) return false;
+    if (node.terminal) return true;
+    for (const segment of parsed.path.split('/')) {
+      node = node.children.get(segment);
+      if (!node) return false;
+      if (node.terminal) return true;
+    }
+    return node.children.size > 0;
+  };
+  for (const resourceId of initial) add(resourceId);
+  return { add, conflicts };
+}
+
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
   if (Array.isArray(value)) return Object.freeze(value.map(freeze));
@@ -113,7 +156,7 @@ export function selectResourceDisjointCandidates(candidates = [], options = {}) 
     reasonCodes:['DUPLICATE_CANDIDATE_ID', ...(candidateIds.some((id) => !duplicateCandidateIds.has(id)) ? ['INVALID_CANDIDATE_INVENTORY'] : [])],
   });
 
-  const owned = new Set(active);
+  const owned = resourceConflictIndex(active);
   const selected = [];
   const held = [];
   for (const candidate of candidates) {
@@ -123,7 +166,7 @@ export function selectResourceDisjointCandidates(candidates = [], options = {}) 
       held.push({ candidateId:id || null, reasonCode:'RESOURCE_SCOPE_REQUIRED' });
       continue;
     }
-    const conflicts = resources.filter((resourceId) => owned.has(resourceId));
+    const conflicts = resources.filter((resourceId) => owned.conflicts(resourceId));
     if (conflicts.length) {
       held.push({ candidateId:id, reasonCode:'RESOURCE_CONFLICT', conflictingResourceIds:conflicts });
       continue;

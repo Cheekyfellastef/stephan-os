@@ -87,11 +87,7 @@ async function publishExternalLaneHandoff(state, action, options = {}) {
     handoffId: action.actionId,
     participantId: 'mission-orchestrator',
     fromParticipantId: 'mission-orchestrator',
-    toParticipantId: action.adapter === 'chatgpt-github'
-      ? 'chatgpt'
-      : action.adapter === 'openclaw-local'
-        ? 'openclaw'
-        : 'future-agent',
+    toParticipantId: text(action.workerId, action.adapter === 'chatgpt-github' ? 'chatgpt' : 'future-agent'),
     timestampUtc: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString(),
     correlationId: state.missionId,
     relatedIssue: `#${identity.issueNumber || 1292}`,
@@ -103,6 +99,7 @@ async function publishExternalLaneHandoff(state, action, options = {}) {
       missionId: state.missionId,
       actionId: action.actionId,
       adapter: action.adapter,
+      workerId: action.workerId,
       capacityRoute: action.capacityRoute,
       capacityReceiptId: action.capacityReceiptId,
       repository: state.repository,
@@ -256,6 +253,9 @@ function validateExactActionGrant(state, action, grant, options = {}) {
     }
     if (text(grant?.capacityReceiptId) !== text(action?.capacityReceiptId)) {
       errors.push('action-grant-capacity-receipt-mismatch');
+    }
+    if (!text(action?.workerId) || text(grant?.workerId) !== text(action?.workerId)) {
+      errors.push('action-grant-worker-mismatch');
     }
     if (JSON.stringify(grant?.capacityProofRefs || []) !== JSON.stringify(action?.capacityProofRefs || [])) {
       errors.push('action-grant-capacity-proof-mismatch');
@@ -454,6 +454,8 @@ export async function publishMissionWorkerAction(inputState, options = {}) {
       eventType: 'AGENT_DISPATCHED',
       agentId: action.adapter === 'openclaw-readonly' ? 'openclaw-readonly' : action.adapter,
       adapter: action.adapter,
+      actionId: action.actionId,
+      workerId: action.workerId,
       summary: `${action.adapter} handoff published to the durable worker queue.`,
     }, options);
   }
@@ -563,7 +565,9 @@ export async function collectAgentWorkerResult(result, options = {}) {
   const current = await readMissionRecord(missionId, options);
   if (current.state.dispatch?.status !== 'running') throw new Error('Mission has no active agent dispatch.');
   if (adapter !== current.state.dispatch.adapter) throw new Error('Agent result adapter does not match the active dispatch.');
-  let collected = await appendMissionEvent(missionId, { eventId: `result-${actionId}`.slice(0, 128), eventType: 'AGENT_RESULT_RECEIVED', success: result.success === true, resultId: text(result.resultId, actionId), changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
+  if (actionId !== text(current.state.dispatch.actionId).toLowerCase()) throw new Error('Agent result action does not match the active dispatch.');
+  if (text(result?.workerId) !== text(current.state.dispatch.workerId)) throw new Error('Agent result worker does not match the active dispatch.');
+  let collected = await appendMissionEvent(missionId, { eventId: `result-${actionId}`.slice(0, 128), eventType: 'AGENT_RESULT_RECEIVED', actionId, workerId: text(result.workerId), success: result.success === true, resultId: text(result.resultId, actionId), changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
   const evidenceReceipts = Array.isArray(result.evidenceReceipts) ? result.evidenceReceipts : [];
   if (result.success === true && evidenceReceipts.length) {
     collected = await appendMissionEvent(missionId, {

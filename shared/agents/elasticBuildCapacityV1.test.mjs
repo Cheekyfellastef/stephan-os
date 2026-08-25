@@ -58,6 +58,28 @@ test('missing, malformed, sparse or active-conflicting resource scope is never a
   assert.deepEqual(sparse.reasonCodes, ['INVALID_CANDIDATE_INVENTORY']);
 });
 
+test('repository directory ownership conflicts with descendant files but not sibling paths', () => {
+  const result = selectResourceDisjointCandidates([
+    {
+      candidateId:'descendant-conflict',
+      resourceIds:['repo:cheekyfellastef/stephan-os:path:shared/agents/example.mjs'],
+    },
+    {
+      candidateId:'sibling-safe',
+      resourceIds:['repo:cheekyfellastef/stephan-os:path:shared/runtime/example.mjs'],
+    },
+  ], {
+    limit:5,
+    activeResourceIds:['repo:cheekyfellastef/stephan-os:path:shared/agents'],
+  });
+  assert.deepEqual(result.selected.map(({ candidateId }) => candidateId), ['sibling-safe']);
+  assert.deepEqual(result.held[0], {
+    candidateId:'descendant-conflict',
+    reasonCode:'RESOURCE_CONFLICT',
+    conflictingResourceIds:['repo:cheekyfellastef/stephan-os:path:shared/agents/example.mjs'],
+  });
+});
+
 test('resource selection fails closed for duplicate candidate identities', () => {
   const result = selectResourceDisjointCandidates([
     { candidateId:'duplicate', resourceIds:['goal:1'] },

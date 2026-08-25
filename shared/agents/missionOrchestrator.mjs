@@ -243,7 +243,7 @@ export function createMissionOrchestratorState(input = {}, options = {}) {
       : [{ agentId: 'openclaw-standalone', label: 'OpenClaw Standalone', role: 'github-executor-and-verifier', status: 'waiting' }],
     activeWriter: 'none',
     simultaneousWritersAllowed: false,
-    dispatch: { adapter: resolvedMissionKind === 'live-runtime-investigation' ? 'openclaw-readonly' : 'codex', status: 'pending', startedAt: '', completedAt: '', resultId: '' },
+    dispatch: { adapter: resolvedMissionKind === 'live-runtime-investigation' ? 'openclaw-readonly' : 'codex', status: 'pending', actionId: '', workerId: '', startedAt: '', completedAt: '', resultId: '' },
     git: { branch, baseBranch: text(input.baseBranch, 'main'), worktreePath: text(input.worktreePath), worktreeReady: false, changedFiles: [], commitSha: '', pushed: false, clean: false },
     pullRequest: { number: null, url: '', headSha: '', state: 'none', mergeable: false, checks: [], merged: false, mergeCommitSha: '' },
     repair: { currentRound: 0, maximumRounds: MAX_REPAIR_ROUNDS, history: [] },
@@ -317,9 +317,20 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
       return block(state, 'Dispatched agent does not match a registered deterministic adapter.', timestamp);
     }
     if (state.dispatch.status === 'running') return block(state, 'A mission agent is already running.', timestamp);
-    state.dispatch = { ...state.dispatch, adapter, status: 'running', startedAt: timestamp, completedAt: '', resultId: '' };
+    const dispatchedActionId = text(event.actionId).toLowerCase();
+    const dispatchedWorkerId = text(event.workerId);
+    if (adapter === 'openclaw-local' && (!dispatchedActionId || !dispatchedWorkerId)) {
+      return block(state, 'Agent dispatch requires exact action and worker identity.', timestamp);
+    }
+    state.dispatch = { ...state.dispatch, adapter, status: 'running', actionId: dispatchedActionId, workerId: dispatchedWorkerId, startedAt: timestamp, completedAt: '', resultId: '' };
   } else if (eventType === 'AGENT_RESULT_RECEIVED') {
     if (state.dispatch.status !== 'running') return block(state, 'Agent result arrived without an active dispatch.', timestamp);
+    if (state.dispatch.adapter === 'openclaw-local' && (
+      text(event.actionId).toLowerCase() !== state.dispatch.actionId
+      || text(event.workerId) !== state.dispatch.workerId
+    )) {
+      return block(state, 'Agent result does not match the active action and worker.', timestamp);
+    }
     if (event.success !== true) {
       state.dispatch.status = 'failed';
       return block(state, text(event.error, 'Agent execution failed.'), timestamp);
