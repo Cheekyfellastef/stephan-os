@@ -20,6 +20,11 @@ function blobSha(content) {
 function providerPoolCoreContentFor(path) {
   if (path.endsWith('/openClawProviderPoolQualificationV1.mjs')) return `
 ${'import'} { routeMissionControllerCapacity } from './missionControllerCapacityRouterV1.mjs';
+${'import'} { createHash as allowedHash } from 'node:crypto';
+${'import'} { validateExecutionReceipt as allowedReceipt } from './executionReceiptV1.mjs';
+${'import'} { validateSharedWorkspaceRecord as allowedWorkspace } from './sharedAgentWorkspaceStore.mjs';
+const allowedPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const allowedRatio = 1 / 2;
 validateExecutionReceipt
 toSharedWorkspaceExecutionReceipt
 validateSharedWorkspaceRecord
@@ -161,11 +166,21 @@ test('successor profile remains exact-lineage and exact-source bound', () => {
   assert.ok(badSource.findings.some((item) => item.code === 'openclaw-provider-pool-source-evidence-invalid'));
 });
 
-test('successor profile rejects aliased bare, node-prefixed, and dynamic process imports', () => {
+test('successor profile lexically rejects aliased, commented, escaped, dynamic, and process-builtin authority', () => {
   for (const processImport of [
     "import { spawn as run } from 'child_process'; run('cmd.exe');",
     "import { execFile as run } from 'node:child_process'; run('cmd.exe');",
     "const { spawn: run } = await import('child_process'); run('cmd.exe');",
+    "const { spawn: run } = await import /* comment */ ('node:child_process'); run('cmd.exe');",
+    "const { spawn: run } = await import('child_pro\\u0063ess'); run('cmd.exe');",
+    "const moduleName = 'child_' + 'process'; const { spawn: run } = await import(moduleName); run('cmd.exe');",
+    "process.getBuiltinModule('child_process').spawn('cmd.exe');",
+    "const result = `${await import /* comment */ ('node:child_process')}`;",
+    "import { request as send } from 'node:https'; send('https://example.invalid');",
+    "globalThis['process']['getBuiltin' + 'Module']('child_' + 'process');",
+    "const make = (() => {}).constructor; make('return globalThis')();",
+    "const load = globalThis['require']; load('child_' + 'process');",
+    "const innocent = /[/*]/; const result = await import /* comment */ ('node:child_process');",
   ]) {
     const hostileSources = sources();
     const content = `${hostileSources[0].content}\n${processImport}\n`;
