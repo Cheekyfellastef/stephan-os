@@ -35,15 +35,54 @@ test('complete exact-head telemetry is answerable with no repair candidate', () 
   assert.equal(projection.finalVerdict, 'BATTLE_BRIDGE_COMPLETE_STATE_ANSWERABLE');
 });
 
-test('source-bound post-sync proof remains valid when its clock age is stale but its exact head is current', () => {
+test('source-bound terminal-success post-sync proof remains valid when its clock age is stale but its exact head is current', () => {
   const projection = buildBattleBridgeTelemetryAutorepairProjection({
     sourceHead: HEAD,
-    surfaces: COMPLETE.map((entry) => entry.id === 'postSyncRefresh' ? surface('postSyncRefresh', 'STALE') : entry),
+    surfaces: COMPLETE.map((entry) => entry.id === 'postSyncRefresh'
+      ? surface('postSyncRefresh', 'STALE', { rawState: 'REFRESH_COMPLETE' })
+      : entry),
   });
   const postSync = projection.coverage.find((entry) => entry.surfaceId === 'postSyncRefresh');
   assert.equal(postSync.answered, true);
   assert.equal(postSync.state, 'CURRENT_EXACT_HEAD_EVENT_PROOF');
   assert.equal(postSync.gapClass, 'NONE');
+});
+
+test('stale exact-head blocked post-sync proof remains an explicit consequential repair candidate', () => {
+  const projection = buildBattleBridgeTelemetryAutorepairProjection({
+    sourceHead: HEAD,
+    surfaces: COMPLETE.map((entry) => entry.id === 'postSyncRefresh'
+      ? surface('postSyncRefresh', 'STALE', {
+        rawState: 'BLOCKED_REFRESH_FAILED',
+        blocker: 'BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED',
+      })
+      : entry),
+  });
+  const postSync = projection.coverage.find((entry) => entry.surfaceId === 'postSyncRefresh');
+  assert.equal(postSync.answered, false);
+  assert.equal(postSync.state, 'BLOCKED_REFRESH_FAILED');
+  assert.equal(postSync.gapClass, 'OBSERVED_FAILURE_OR_BLOCKER');
+  const repair = projection.repairCandidates.find((entry) => entry.surfaceId === 'postSyncRefresh');
+  assert.equal(repair.blocker, 'BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED');
+  assert.equal(repair.repairRoute, 'POST_SYNC_REFRESH');
+  assert.equal(repair.repairDisposition, 'EXACT_INTERACTIVE_AUTHORIZATION_REQUIRED');
+});
+
+test('stale exact-head post-sync plan is not promoted to terminal event proof', () => {
+  const projection = buildBattleBridgeTelemetryAutorepairProjection({
+    sourceHead: HEAD,
+    surfaces: COMPLETE.map((entry) => entry.id === 'postSyncRefresh'
+      ? surface('postSyncRefresh', 'STALE', { rawState: 'REFRESH_READY' })
+      : entry),
+  });
+  const postSync = projection.coverage.find((entry) => entry.surfaceId === 'postSyncRefresh');
+  assert.equal(postSync.answered, false);
+  assert.equal(postSync.state, 'REFRESH_READY');
+  assert.equal(postSync.gapClass, 'STALE_EVIDENCE');
+  assert.match(
+    projection.repairCandidates.find((entry) => entry.surfaceId === 'postSyncRefresh').blocker,
+    /not terminal-success proof/,
+  );
 });
 
 test('stale or unproven runtime surfaces become explicit repair candidates rather than false green', () => {
