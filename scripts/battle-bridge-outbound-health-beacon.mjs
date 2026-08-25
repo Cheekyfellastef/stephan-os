@@ -99,9 +99,9 @@ function recordObservedAt(record = {}) {
 
 function recordRawState(record = {}) {
   return text(
-    record.status
-    || record.classification
+    record.classification
     || record.finalVerdict
+    || record.status
     || record.state
     || record.phase
     || record.tickVerdict
