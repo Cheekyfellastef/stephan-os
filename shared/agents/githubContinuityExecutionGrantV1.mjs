@@ -4,6 +4,7 @@ import {
   GITHUB_CONTINUITY_STATE,
 } from './githubContinuityModeV1.mjs';
 import { MISSION_CONTROLLER_ROUTE } from './missionControllerCapacityRouterV1.mjs';
+import { isSharedWorkspaceParticipantId } from './sharedAgentWorkspaceStore.mjs';
 
 export const GITHUB_CONTINUITY_EXECUTION_GRANT_SCHEMA = 'stephanos.github-continuity-execution-grant.v1';
 export const GITHUB_CONTINUITY_EXECUTION_BATCH_SCHEMA = 'stephanos.github-continuity-execution-batch.v1';
@@ -83,7 +84,7 @@ function buildGrant(plan, item, index, nowUtc) {
     && SAFE_ID.test(taskId)
     && ALLOWED_ROUTES.has(route)
     && SAFE_ID.test(adapter)
-    && SAFE_ID.test(workerId)
+    && isSharedWorkspaceParticipantId(workerId)
     && proofRefs !== null
     && (route === MISSION_CONTROLLER_ROUTE.CODEX
       ? receiptId === null
