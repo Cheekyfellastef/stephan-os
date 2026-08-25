@@ -20,6 +20,22 @@ import {
   timestampVerdict,
 } from './goalBuildingAgentV1.contract.mjs';
 
+const BLOCKER_SEVERITY_PRIORITY = Object.freeze({
+  P0: 0,
+  P1: 1,
+  P2: 2,
+  P3: 3,
+  INFO: 4,
+});
+
+const BLOCKER_ROUTE_PRIORITY = new Map([
+  ['SELF_RECOVERABLE_BY_EXISTING_BOUNDED_CONTRACT', 0],
+  ['DELEGATE_BOUNDED_REPAIR', 1],
+  ['REQUEST_QUALIFIED_REVIEW_OR_PROOF', 2],
+  ['REQUEST_EXACT_OPERATOR_APPROVAL', 3],
+  ['EXTERNAL_OR_UNQUALIFIED_SAFE_HOLD', 4],
+]);
+
 export function validateSurfaceSet(input, expectedHead, timing) {
   const evidenceProblems = [];
   const blockingReasons = [];
@@ -178,11 +194,16 @@ export function validateBlockers(input, timing) {
     if (!['P0', 'P1', 'P2', 'P3', 'INFO'].includes(blocker.severity)) evidenceProblems.push(`blocker-severity-unknown:${blocker.blockerId || 'missing'}`);
     if (!blocker.ownerId) blockingReasons.push(`blocker-owner-missing:${blocker.blockerId || 'missing'}`);
     if (!GOAL_BUILDING_BLOCKER_ROUTES.includes(blocker.route)) evidenceProblems.push(`blocker-route-unknown:${blocker.blockerId || 'missing'}`);
+    if (!blocker.missionId && !blocker.goalId) evidenceProblems.push(`blocker-lineage-missing:${blocker.blockerId || 'missing'}`);
     if (!blocker.nextAction) blockingReasons.push(`blocker-next-action-missing:${blocker.blockerId || 'missing'}`);
     const timestamp = timestampVerdict(blocker.firstObservedAtUtc, { ...timing, maxAgeMs: Number.POSITIVE_INFINITY });
     if (timestamp === 'INVALID' || timestamp === 'FUTURE') evidenceProblems.push(`blocker-time-${timestamp.toLowerCase()}:${blocker.blockerId || 'missing'}`);
-    if (!blocker.independentWorkContinues && ['P0', 'P1'].includes(blocker.severity)) blockingReasons.push(`programme-blocker:${blocker.blockerId || 'missing'}`);
-    else if (!blocker.independentWorkContinues) degradedReasons.push(`owned-blocker:${blocker.blockerId || 'missing'}`);
+    const exactOperatorBoundary = blocker.route === 'REQUEST_EXACT_OPERATOR_APPROVAL';
+    if (!blocker.independentWorkContinues && ['P0', 'P1'].includes(blocker.severity) && !exactOperatorBoundary) {
+      blockingReasons.push(`programme-blocker:${blocker.blockerId || 'missing'}`);
+    } else if (!blocker.independentWorkContinues && !exactOperatorBoundary) {
+      degradedReasons.push(`owned-blocker:${blocker.blockerId || 'missing'}`);
+    }
   }
 
   return { blockers: Object.freeze(blockers), evidenceProblems, blockingReasons, degradedReasons };
@@ -200,9 +221,27 @@ export function validateOperatorAction(input = {}) {
   return Object.freeze({ required, target, evidenceProblems });
 }
 
-export function chooseNextAction(programme, blockers, operatorAction, reasons) {
+export function prioritizeBlockers(blockers = []) {
+  return [...blockers].sort((left, right) => {
+    const severityDelta = (BLOCKER_SEVERITY_PRIORITY[left.severity] ?? 99) - (BLOCKER_SEVERITY_PRIORITY[right.severity] ?? 99);
+    if (severityDelta !== 0) return severityDelta;
+    const leftObserved = Date.parse(left.firstObservedAtUtc);
+    const rightObserved = Date.parse(right.firstObservedAtUtc);
+    const ageDelta = (Number.isFinite(leftObserved) ? leftObserved : Number.POSITIVE_INFINITY)
+      - (Number.isFinite(rightObserved) ? rightObserved : Number.POSITIVE_INFINITY);
+    if (ageDelta !== 0) return ageDelta;
+    const routeDelta = (BLOCKER_ROUTE_PRIORITY.get(left.route) ?? 99) - (BLOCKER_ROUTE_PRIORITY.get(right.route) ?? 99);
+    if (routeDelta !== 0) return routeDelta;
+    return String(left.blockerId).localeCompare(String(right.blockerId));
+  });
+}
+
+export function chooseNextAction(programme, blockers, operatorAction, reasons, state = '') {
+  if (state === GOAL_BUILDING_OPERATING_STATES.SAFE_HOLD) {
+    return 'Repair contradictory or invalid programme evidence before any consequential action.';
+  }
   if (operatorAction.required) return operatorAction.target;
-  const routed = blockers.find((blocker) => blocker.nextAction);
+  const routed = prioritizeBlockers(blockers).find((blocker) => blocker.nextAction);
   if (routed) return routed.nextAction;
   const mission = programme.productiveMissions.find((item) => item.nextAction)
     || programme.waitingMissions.find((item) => item.nextAction)
