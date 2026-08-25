@@ -67,11 +67,14 @@ test('windowless launcher pins recovery mesh to one fixed source runner', async 
   assert.match(hidden, /RECOVERY_LOCK_MULTIPLE_LINKS_REJECTED/);
   assert.doesNotMatch(hidden, /\[System\.IO\.File\]::Delete\(\$lockPath\)/);
   assert.match(verifier, /Mutex\]::OpenExisting\('Local\\StephanosBattleBridgeRecoveryMeshV1'\)/);
-  assert.match(verifier, /node\.ParentProcessId -ne \$LauncherPid/);
+  assert.match(verifier, /node\.ParentProcessId -eq \$LauncherPid/);
   assert.match(verifier, /C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe/);
   assert.match(verifier, /launcher\.ExecutablePath/);
   assert.match(verifier, /node\.ExecutablePath/);
-  assert.match(verifier, /launcher\.CommandLine, \$expectedCommandLine/);
+  assert.match(verifier, /\$expectedCommandLine = '\"\{0\}\"  -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"\{1\}\"'/);
+  assert.match(verifier, /\$launcherCommandLineMatches = \$launcher -and \[string\]::Equals\(\[string\]\$launcher\.CommandLine, \$expectedCommandLine/);
+  assert.match(verifier, /\$processLineageMatches = \[int\]\$verifier\.ParentProcessId -eq \$NodePid -and \[int\]\$node\.ParentProcessId -eq \$LauncherPid/);
+  assert.match(verifier, /if \(-not \$processLineageMatches -or -not \$nodeExecutableMatches -or -not \$launcherExecutableMatches -or -not \$launcherCommandLineMatches\)/);
   assert.doesNotMatch(verifier, /CommandLine -notmatch/);
   assert.match(verifier, /RECOVERY_MESH_MUTEX_NOT_OWNED_BY_LAUNCHER/);
   assert.doesNotMatch(hidden, /["']-Command["']|Invoke-Expression|Start-Process/);
