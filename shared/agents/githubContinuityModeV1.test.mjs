@@ -111,6 +111,7 @@ test('unavailable Battle Bridge enters continuity mode, continues source work, a
   const source = result.tasks.find((item) => item.missionId === 'source-1');
   assert.equal(source.disposition, CONTINUITY_TASK_DISPOSITION.CONTINUE);
   assert.equal(source.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
+  assert.equal(source.workerId, githubReceipt().workerId);
   assert.equal(source.dispatchAllowed, true);
 
   const windows = result.tasks.find((item) => item.missionId === 'windows-1');

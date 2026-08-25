@@ -70,6 +70,7 @@ function buildGrant(plan, item, index, nowUtc) {
   const taskId = text(item?.taskId);
   const route = text(item?.route).toUpperCase();
   const adapter = text(item?.adapter);
+  const workerId = text(item?.workerId);
   const proofRefs = uniqueSafeRefs(item?.proofRefs);
   const receiptId = item?.selectedCapacityReceiptId === null
     ? null
@@ -82,6 +83,7 @@ function buildGrant(plan, item, index, nowUtc) {
     && SAFE_ID.test(taskId)
     && ALLOWED_ROUTES.has(route)
     && SAFE_ID.test(adapter)
+    && SAFE_ID.test(workerId)
     && proofRefs !== null
     && (route === MISSION_CONTROLLER_ROUTE.CODEX
       ? receiptId === null
@@ -98,6 +100,7 @@ function buildGrant(plan, item, index, nowUtc) {
     taskId,
     route,
     adapter,
+    workerId,
     selectedCapacityReceiptId: receiptId,
     proofRefs: freeze([...proofRefs]),
     grantedAtUtc: nowUtc,

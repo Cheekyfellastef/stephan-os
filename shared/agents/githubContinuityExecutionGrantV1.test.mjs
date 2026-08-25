@@ -47,6 +47,7 @@ function githubTask(overrides = {}) {
     disposition: CONTINUITY_TASK_DISPOSITION.CONTINUE,
     route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
     adapter: 'chatgpt-github',
+    workerId: 'shared-fabric-chatgpt-github-builder-01',
     dispatchAllowed: true,
     selectedCapacityReceiptId: 'github-capacity-current-001',
     proofRefs: ['receipts/github-capacity-current-001'],
@@ -82,6 +83,7 @@ test('emits only source-only grants while runtime-held work remains held', () =>
   assert.equal(result.grants[0].executionScope, 'SOURCE_ONLY_EXISTING_ROUTE');
   assert.equal(result.grants[0].windowsBound, false);
   assert.equal(result.grants[0].selectedCapacityReceiptId, 'github-capacity-current-001');
+  assert.equal(result.grants[0].workerId, 'shared-fabric-chatgpt-github-builder-01');
   assert.equal(result.grants[0].mergeAuthorityAdded, false);
   assert.equal(result.grants[0].runtimeMutationAuthorityAdded, false);
   assert.equal(result.grants[0].duplicateDispatchAllowed, false);
@@ -92,6 +94,7 @@ test('preserves Codex as an already-proven non-Windows source route without inve
     taskId: 'source-repair',
     route: MISSION_CONTROLLER_ROUTE.CODEX,
     adapter: 'codex',
+    workerId: 'codex',
     selectedCapacityReceiptId: null,
     proofRefs: [],
   });
