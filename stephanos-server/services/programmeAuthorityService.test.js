@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,6 +33,7 @@ import {
   BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
   BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
   MISSION_CONTROLLER_ROUTE,
+  createBuildLanePublisherAttestation,
   createBuildLaneCapacityStatusRecord,
 } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 import {
@@ -429,6 +431,12 @@ test('capacity routing input independently loads the supervised publisher key an
 
 test('capacity routing independently binds GitHub status to an exact authority receipt', async () => {
   await fixture(async ({ root, repoRoot }) => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+    const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' });
+    const foreignPublicKeyPem = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' });
+    const publisherKeyPath = path.join(path.dirname(root), 'github-publisher-public-key.pem');
+    const foreignKeyPath = path.join(path.dirname(root), 'foreign-publisher-public-key.pem');
     const authorityId = 'github-build-authority-programme-test';
     const workerId = 'shared-fabric-chatgpt-github-builder-01';
     const capacityReceipt = {
@@ -471,28 +479,70 @@ test('capacity routing independently binds GitHub status to an exact authority r
     const status = createBuildLaneCapacityStatusRecord(capacityReceipt, { nowUtc: NOW });
     const statusPath = path.join(root, 'status', 'chatgpt-github-build-capacity-current.json');
     const authorityPath = path.join(root, 'receipts', `${authorityId}.json`);
+    const attestationPath = path.join(root, 'receipts', 'chatgpt-github-build-capacity-attestation-current.json');
     await writeFile(statusPath, `${JSON.stringify(status)}\n`, 'utf8');
     await writeFile(authorityPath, `${JSON.stringify(authorityReceipt)}\n`, 'utf8');
+    await writeFile(attestationPath, `${JSON.stringify(createBuildLanePublisherAttestation(
+      status,
+      [authorityReceipt],
+      privateKeyPem,
+    ))}\n`, 'utf8');
+    await writeFile(publisherKeyPath, publicKeyPem, 'utf8');
+    await writeFile(foreignKeyPath, foreignPublicKeyPem, 'utf8');
 
-    const proven = await readMissionControllerCapacityRoutingInput({
-      root, repoRoot, nowUtc: NOW, sourceRevision: HEAD, env: {},
-    });
-    assert.equal(proven.githubLaneReceipt.receiptId, capacityReceipt.receiptId);
-    assert.equal(proven.githubLaneAuthorityReceipts[0].receiptId, authorityId);
+    try {
+      const proven = await readMissionControllerCapacityRoutingInput({
+        root,
+        repoRoot,
+        nowUtc: NOW,
+        sourceRevision: HEAD,
+        env: { STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH: publisherKeyPath },
+      });
+      assert.equal(proven.githubLaneReceipt.receiptId, capacityReceipt.receiptId);
+      assert.equal(proven.githubLaneAuthorityReceipts[0].receiptId, authorityId);
 
-    await rm(authorityPath);
-    const missingAuthority = await readMissionControllerCapacityRoutingInput({
-      root, repoRoot, nowUtc: NOW, sourceRevision: HEAD, env: {},
-    });
-    assert.equal(missingAuthority.githubLaneReceipt, null);
-    assert.deepEqual(missingAuthority.githubLaneAuthorityReceipts, []);
+      for (const env of [
+        {},
+        { STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH: foreignKeyPath },
+      ]) {
+        const rejected = await readMissionControllerCapacityRoutingInput({
+          root, repoRoot, nowUtc: NOW, sourceRevision: HEAD, env,
+        });
+        assert.equal(rejected.githubLaneReceipt, null);
+        assert.deepEqual(rejected.githubLaneAuthorityReceipts, []);
+      }
 
-    await writeFile(authorityPath, `${JSON.stringify(authorityReceipt)}\n`, 'utf8');
-    await writeFile(statusPath, `${JSON.stringify({ ...status, participantId: 'foreign-worker' })}\n`, 'utf8');
-    const retargetedStatus = await readMissionControllerCapacityRoutingInput({
-      root, repoRoot, nowUtc: NOW, sourceRevision: HEAD, env: {},
-    });
-    assert.equal(retargetedStatus.githubLaneReceipt, null);
+      const canonicalAttestation = createBuildLanePublisherAttestation(status, [authorityReceipt], privateKeyPem);
+      await writeFile(attestationPath, `${JSON.stringify({
+        ...canonicalAttestation,
+        statusDigest: `sha256:${'0'.repeat(64)}`,
+      })}\n`, 'utf8');
+      const alteredAttestation = await readMissionControllerCapacityRoutingInput({
+        root,
+        repoRoot,
+        nowUtc: NOW,
+        sourceRevision: HEAD,
+        env: { STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH: publisherKeyPath },
+      });
+      assert.equal(alteredAttestation.githubLaneReceipt, null);
+
+      await writeFile(attestationPath, `${JSON.stringify(canonicalAttestation)}\n`, 'utf8');
+      await writeFile(authorityPath, `${JSON.stringify({
+        ...authorityReceipt,
+        workerId: 'foreign-worker',
+      })}\n`, 'utf8');
+      const alteredAuthority = await readMissionControllerCapacityRoutingInput({
+        root,
+        repoRoot,
+        nowUtc: NOW,
+        sourceRevision: HEAD,
+        env: { STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH: publisherKeyPath },
+      });
+      assert.equal(alteredAuthority.githubLaneReceipt, null);
+    } finally {
+      await rm(publisherKeyPath, { force: true });
+      await rm(foreignKeyPath, { force: true });
+    }
   });
 });
 

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -9,11 +10,13 @@ import {
   BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
   MISSION_CONTROLLER_ROUTE,
   createBuildLaneCapacityStatusRecord,
+  createBuildLanePublisherAttestation,
   publishBuildLaneCapacityToSharedWorkspace,
   routeMissionControllerCapacity,
   validateBuildLaneAuthorityReceipt,
   validateBuildLaneCapacityReceipt,
   validateBuildLaneCapacityStatusRecord,
+  validateBuildLanePublisherAttestation,
 } from './missionControllerCapacityRouterV1.mjs';
 
 const NOW = '2026-08-10T12:00:00.000Z';
@@ -246,6 +249,38 @@ test('capacity status requires the exact STATUS envelope and rejects outer autho
     ...status,
     sourceMutationAllowed: true,
   }, expected).valid, false);
+});
+
+test('GitHub publisher attestation binds the exact status and independently loaded authority set', () => {
+  const publisher = generateKeyPairSync('ed25519');
+  const foreignPublisher = generateKeyPairSync('ed25519');
+  const privateKeyPem = publisher.privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const publicKeyPem = publisher.publicKey.export({ type: 'spki', format: 'pem' });
+  const foreignPublicKeyPem = foreignPublisher.publicKey.export({ type: 'spki', format: 'pem' });
+  const status = createBuildLaneCapacityStatusRecord(githubReceipt(), { nowUtc: NOW });
+  const authority = githubAuthority();
+  const attestation = createBuildLanePublisherAttestation(status, [authority], privateKeyPem);
+
+  assert.ok(attestation);
+  assert.equal(validateBuildLanePublisherAttestation(attestation, status, [authority], publicKeyPem), true);
+  assert.equal(validateBuildLanePublisherAttestation(attestation, status, [authority], foreignPublicKeyPem), false);
+  assert.equal(validateBuildLanePublisherAttestation(attestation, {
+    ...status,
+    summary: 'Substituted capacity summary.',
+  }, [authority], publicKeyPem), false);
+  assert.equal(validateBuildLanePublisherAttestation(attestation, status, [{
+    ...authority,
+    workerId: 'foreign-github-worker',
+  }], publicKeyPem), false);
+  assert.equal(validateBuildLanePublisherAttestation({
+    ...attestation,
+    mergeAuthority: true,
+  }, status, [authority], publicKeyPem), false);
+  assert.equal(validateBuildLanePublisherAttestation({
+    ...attestation,
+    statusDigest: `sha256:${'0'.repeat(64)}`,
+  }, status, [authority], publicKeyPem), false);
+  assert.equal(validateBuildLanePublisherAttestation(attestation, status, [], publicKeyPem), false);
 });
 
 test('a lane worker can publish its fresh capacity receipt to the canonical fabric status path', async () => {

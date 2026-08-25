@@ -48,6 +48,7 @@ import {
   MISSION_CONTROLLER_ROUTE,
   validateBuildLaneCapacityAuthorityChain,
   validateBuildLaneCapacityStatusRecord,
+  validateBuildLanePublisherAttestation,
 } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 import {
   fetchGithubPrEvidence,
@@ -391,12 +392,30 @@ export async function readMissionControllerCapacityRoutingInput({
       githubAuthorityRecords,
       { sourceHead, taskClass, nowUtc },
     ).valid);
+  const githubAttestationPath = authorityPath(
+    root,
+    repoRoot,
+    'receipts',
+    'chatgpt-github-build-capacity-attestation-current.json',
+  );
+  const loadedGithubAttestation = githubAttestationPath.ok
+    ? await readJson(githubAttestationPath.path, readFileImpl)
+    : { present: false };
+  const githubPublisherAuthenticated = githubAuthorityValid
+    && loadedGithubAttestation.present
+    && !loadedGithubAttestation.error
+    && validateBuildLanePublisherAttestation(
+      loadedGithubAttestation.value,
+      loaded.github,
+      githubAuthorityRecords,
+      publisherPublicKeyPem,
+    );
   return Object.freeze({
     nowUtc,
     sourceHead,
     codexStatus: loaded.codexStatus,
-    githubLaneReceipt: githubAuthorityValid ? githubLaneReceipt : null,
-    githubLaneAuthorityReceipts: githubAuthorityValid ? Object.freeze(githubAuthorityRecords) : Object.freeze([]),
+    githubLaneReceipt: githubPublisherAuthenticated ? githubLaneReceipt : null,
+    githubLaneAuthorityReceipts: githubPublisherAuthenticated ? Object.freeze(githubAuthorityRecords) : Object.freeze([]),
     forgeLaneReceipt: forgeStatusValidation?.valid === true ? forgeStatusValidation.receipt : null,
     forgeSidecar: loaded.forgeSidecar?.forgeSidecar ?? loaded.forgeSidecar,
     openClawHostContext: openClawValidation?.valid === true ? openClawValidation.hostContext : null,

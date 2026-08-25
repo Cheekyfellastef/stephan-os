@@ -4,6 +4,7 @@ import {
   buildCodexCapacityProjection,
   createMeterObservation,
 } from './codexCapacityGovernorV1.mjs';
+import { createHash, createPublicKey, sign, verify } from 'node:crypto';
 import { adjudicateForgeSidecarCapacity } from './stallSentinelReviewPipelineV1.mjs';
 import {
   SHARED_WORKSPACE_RECORD_KINDS,
@@ -16,6 +17,7 @@ import {
 export const MISSION_CONTROLLER_CAPACITY_ROUTER_SCHEMA = 'stephanos.mission-controller-capacity-router.v1';
 export const BUILD_LANE_CAPACITY_RECEIPT_SCHEMA = 'stephanos.build-lane-capacity-receipt.v1';
 export const BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA = 'stephanos.build-lane-authority-receipt.v1';
+export const BUILD_LANE_PUBLISHER_ATTESTATION_SCHEMA = 'stephanos.build-lane-publisher-attestation.v1';
 
 export const MISSION_CONTROLLER_ROUTE = Object.freeze({
   CODEX: 'CODEX',
@@ -49,6 +51,10 @@ const CAPACITY_STATUS_KEYS = Object.freeze([
   'summary', 'proofRefs', 'capacityReceipt', 'sourceMutationAllowed',
   'mergeAuthority', 'leaseSeizureAllowed',
 ]);
+const PUBLISHER_ATTESTATION_KEYS = Object.freeze([
+  'schemaVersion', 'algorithm', 'publicKeySha256', 'statusDigest',
+  'authorityReceiptDigests', 'signature',
+]);
 const SOURCE_ONLY_AUTHORIZED_OPERATIONS = Object.freeze([
   'SOURCE_CONSTRUCTION',
   'FOCUSED_TESTS',
@@ -64,6 +70,8 @@ const BUILD_LANE_RECEIPT_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
 ]);
 const FULL_SHA = /^[0-9a-f]{40}$/i;
+const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/;
+const BASE64_SIGNATURE = /^[A-Za-z0-9+/]{80,}={0,2}$/;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:@/-]{2,239}$/i;
 const SAFE_REF = /^(?:proof|proofs|receipts|evidence\/receipts)\/[A-Za-z0-9][A-Za-z0-9._/@:#-]{0,239}$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -93,6 +101,89 @@ function exactStringSet(value, expected) {
     && expected.every((entry) => values.includes(entry));
 }
 function frozen(value) { return Object.freeze(value); }
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+function digest(value) {
+  return `sha256:${createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex')}`;
+}
+function publicKeyDigest(keyInput) {
+  const publicKey = createPublicKey(keyInput);
+  return `sha256:${createHash('sha256').update(publicKey.export({ type: 'spki', format: 'der' })).digest('hex')}`;
+}
+
+export function createBuildLanePublisherAttestation(status, authorityReceipts, privateKeyPem) {
+  const receipts = list(authorityReceipts);
+  if (!text(privateKeyPem) || !status || receipts.length === 0) return null;
+  const authorityReceiptDigests = Object.fromEntries(receipts.map((receipt) => [
+    text(receipt?.receiptId),
+    digest(receipt),
+  ]));
+  if (Object.keys(authorityReceiptDigests).some((receiptId) => !receiptId)
+    || Object.keys(authorityReceiptDigests).length !== receipts.length) return null;
+  const payload = frozen({
+    statusDigest: digest(status),
+    authorityReceiptDigests: frozen(authorityReceiptDigests),
+  });
+  try {
+    return frozen({
+      schemaVersion: BUILD_LANE_PUBLISHER_ATTESTATION_SCHEMA,
+      algorithm: 'Ed25519',
+      publicKeySha256: publicKeyDigest(privateKeyPem),
+      ...payload,
+      signature: sign(null, Buffer.from(canonicalJson(payload), 'utf8'), privateKeyPem).toString('base64'),
+    });
+  } catch {
+    return null;
+  }
+}
+
+export function validateBuildLanePublisherAttestation(attestation, status, authorityReceipts, publicKeyPem) {
+  const receipts = list(authorityReceipts);
+  if (!text(publicKeyPem)
+    || !exactKeys(attestation, PUBLISHER_ATTESTATION_KEYS)
+    || attestation.schemaVersion !== BUILD_LANE_PUBLISHER_ATTESTATION_SCHEMA
+    || attestation.algorithm !== 'Ed25519'
+    || !SHA256_DIGEST.test(text(attestation.publicKeySha256))
+    || !SHA256_DIGEST.test(text(attestation.statusDigest))
+    || !BASE64_SIGNATURE.test(text(attestation.signature))
+    || !attestation.authorityReceiptDigests
+    || typeof attestation.authorityReceiptDigests !== 'object'
+    || Array.isArray(attestation.authorityReceiptDigests)) return false;
+  const authorityReceiptIds = uniqueStrings(status?.capacityReceipt?.authorityReceiptIds);
+  if (!authorityReceiptIds
+    || receipts.length !== authorityReceiptIds.length
+    || !exactKeys(attestation.authorityReceiptDigests, authorityReceiptIds)) return false;
+  const receiptsById = new Map(receipts.map((receipt) => [text(receipt?.receiptId), receipt]));
+  if (receiptsById.size !== receipts.length
+    || authorityReceiptIds.some((receiptId) => !receiptsById.has(receiptId))) return false;
+  const payload = {
+    statusDigest: digest(status),
+    authorityReceiptDigests: Object.fromEntries(authorityReceiptIds.map((receiptId) => [
+      receiptId,
+      digest(receiptsById.get(receiptId)),
+    ])),
+  };
+  try {
+    return attestation.publicKeySha256 === publicKeyDigest(publicKeyPem)
+      && canonicalJson(payload) === canonicalJson({
+        statusDigest: attestation.statusDigest,
+        authorityReceiptDigests: attestation.authorityReceiptDigests,
+      })
+      && verify(
+        null,
+        Buffer.from(canonicalJson(payload), 'utf8'),
+        publicKeyPem,
+        Buffer.from(attestation.signature, 'base64'),
+      );
+  } catch {
+    return false;
+  }
+}
 
 function taskForMission(mission = {}, explicitTask = {}) {
   const allowedFiles = list(mission.allowedFiles);
