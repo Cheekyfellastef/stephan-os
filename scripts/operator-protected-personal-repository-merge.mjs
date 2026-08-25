@@ -21,12 +21,17 @@ import {
   validateIndependentReviewWorkflowDispatchExecutionV1,
 } from '../shared/agents/independentReviewWorkflowDispatchExecutionV1.mjs';
 import {
+  independentReviewWorkflowDispatchRunNameV1,
+} from '../shared/agents/independentReviewWorkflowDispatchLaunchReceiptV1.mjs';
+import {
   PERSONAL_REPOSITORY_APPROVAL_JOB,
   PERSONAL_REPOSITORY_EVIDENCE_JOB,
   PERSONAL_REPOSITORY_MERGE_JOB,
+  PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
+  buildPersonalRepositoryCheckExpectation,
   executeBoundedPersonalRepositoryRead,
   executePersonalRepositoryArtifactArchiveTransport,
   extractPersonalRepositoryArtifactZip,
@@ -48,7 +53,6 @@ const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-personal-repository-protected-squash';
 const MAX_API_PAGES = 20;
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
-const CHECK_SNAPSHOT_REREAD_DELAY_MS = 1_000;
 const COMPLETION_MARKER = '<!-- stephanos-personal-repository-protected-squash-completion -->';
 const mode = String(process.argv[2] || '').trim().toLowerCase();
 
@@ -260,7 +264,7 @@ async function currentWorkflowExecution(context) {
     `/repos/${context.owner}/${context.repo}/actions/workflows/${definition.id}/runs?event=workflow_dispatch`,
     'workflow_runs',
   )).items;
-  const execution = validatePersonalRepositoryDispatchExecution({
+  let execution = validatePersonalRepositoryDispatchExecution({
     definitions,
     run,
     priorRuns: dispatchRuns,
@@ -271,11 +275,41 @@ async function currentWorkflowExecution(context) {
     workflowRunId: context.runId,
     workflowRunAttempt: context.runAttempt,
   });
+  if (execution.replayRunIds.length !== 0) {
+    if (execution.blockers.includes('personal-repository-prior-run-attempt-limit-exceeded')) {
+      fail('Prior protected merge attempts exceed the bounded all-attempt proof estate.', {
+        blockers: ['personal-repository-prior-run-attempt-limit-exceeded'],
+        observedAttempts: execution.sameBasePriorAttemptCount,
+      });
+    }
+    if (execution.replayRunIds.length > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX) {
+      fail('Prior protected merge attempts exceed the bounded job-proof estate.', {
+        blockers: ['personal-repository-prior-run-jobs-limit-exceeded'],
+        priorRunIds: execution.replayRunIds,
+      });
+    }
+    const priorRunJobSets = await Promise.all(execution.replayRunIds.map(async (runId) => ({
+      runId,
+      jobs: (await apiCollection(`/repos/${context.owner}/${context.repo}/actions/runs/${runId}/jobs?filter=all`, 'jobs')).items,
+    })));
+    execution = validatePersonalRepositoryDispatchExecution({
+      definitions,
+      run,
+      priorRuns: dispatchRuns,
+      priorRunJobSets,
+    }, {
+      repository: context.repository,
+      sourceHead: context.dispatch.identity.sourceHead,
+      baseSha: context.dispatch.identity.baseSha,
+      workflowRunId: context.runId,
+      workflowRunAttempt: context.runAttempt,
+    });
+  }
   const expectedDisplayTitle = `Protected operator merge ${context.dispatch.identity.sourceHead}`;
   const triggeringActor = text(run?.triggering_actor?.login || run?.actor?.login).toLowerCase();
   const runIdentityMismatches = [...new Set([
     ...execution.currentMismatches,
-    ...(text(run?.name) === text(definition.name) ? [] : ['workflow-name']),
+    ...(text(run?.name) === expectedDisplayTitle ? [] : ['run-name']),
     ...(text(run?.display_title) === expectedDisplayTitle ? [] : ['display-title']),
     ...(triggeringActor === OPERATOR_MERGE_REVIEWER.toLowerCase() ? [] : ['triggering-actor']),
   ])];
@@ -302,7 +336,13 @@ async function currentWorkflowExecution(context) {
       blockers: execution.blockers,
     });
   }
-  return { definitions, definition, run };
+  return {
+    definitions,
+    definition,
+    run,
+    retryablePriorRunIds: execution.retryablePriorRunIds,
+    retryablePriorFailures: execution.retryablePriorFailures,
+  };
 }
 
 async function pullRequestReviewState(owner, repo, prNumber) {
@@ -460,6 +500,11 @@ async function loadSelectedIndependentReview(context, identity) {
       expectedWorkflowId: definition.id,
       workflowRunId: selected.independentReviewWorkflowRunId,
       workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+      expectedWorkflowRunName: independentReviewWorkflowDispatchRunNameV1({
+        prNumber: identity.prNumber,
+        sourceHead: identity.sourceHead,
+        handoffBindingSha256: 'legacy-pull-request-target',
+      }),
     });
   if (!workflowValidation.valid) {
     fail('Selected independent review run is failed, stale or ambiguously bound.', {
@@ -554,10 +599,19 @@ async function collectEvidence(context, expected = {}) {
     workflowRuns: initialWorkflowRuns,
     commitStatuses: commitStatuses.items,
   });
+  const checkExpectation = buildPersonalRepositoryCheckExpectation({
+    repository: context.repository,
+    identity,
+    mergeStateStatus: review.mergeStateStatus,
+  });
+  if (!checkExpectation.valid) {
+    fail('Exact check expectation is incomplete or unsafe.', {
+      blockers: checkExpectation.blockers,
+    });
+  }
   const checks = await validatePersonalRepositoryCheckRunsWithBoundedReread({
     readSnapshot: async (attempt) => {
       if (attempt === 1) return initialCheckSnapshot;
-      await new Promise((resolve) => setTimeout(resolve, CHECK_SNAPSHOT_REREAD_DELAY_MS));
       const [freshWorkflowRunSummaries, freshCheckRuns, freshCommitStatuses] = await Promise.all([
         apiCollection(`/repos/${context.owner}/${context.repo}/actions/runs?head_sha=${identity.sourceHead}`, 'workflow_runs'),
         apiCollection(`/repos/${context.owner}/${context.repo}/commits/${identity.sourceHead}/check-runs?filter=latest`, 'check_runs'),
@@ -574,7 +628,7 @@ async function collectEvidence(context, expected = {}) {
         commitStatuses: freshCommitStatuses.items,
       });
     },
-    expected: { ...identity, mergeStateStatus: review.mergeStateStatus },
+    expected: checkExpectation.expected,
     options: { cleanIndependentReviewProved: independentReview.reviewMode === 'clean-independent' },
   });
   if (!checks.valid) {
@@ -643,6 +697,7 @@ async function collectEvidence(context, expected = {}) {
     requiredCheckIntegrationId: integrationId,
     activeRulesetIds: configuration.activeRulesetIds,
     configurationSnapshotSha256: configuration.configurationSnapshotSha256,
+    retryablePriorFailures: execution.retryablePriorFailures,
     workflows: workflows.evidence,
     checks: checks.evidence,
     independentReview,
@@ -753,6 +808,7 @@ async function main() {
       evidenceSha256: collected.evidenceSha256,
       ...identity,
       independentReview: collected.independentReview,
+      retryablePriorFailures: collected.packet.retryablePriorFailures,
       requiredWorkflowRuns: collected.workflows.evidence,
       activeRulesetIds: collected.configuration.activeRulesetIds,
     }, null, 2)}\n`);
