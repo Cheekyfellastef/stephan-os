@@ -274,6 +274,7 @@ test('successor profile lexically rejects aliased, commented, escaped, dynamic, 
     "globalThis['pro' + 'cess']['getBuiltin' + 'Module']('child_' + 'pro' + 'cess')['sp' + 'awn']('cmd.exe');",
     "globalThis[('pro' + ('ce' + 'ss'))]['getBuiltin' + 'Module']('child_' + ('pro' + 'cess'));",
     "export function widened(injected) { injected['sp' + 'awn']('cmd.exe'); }",
+    "export function widened(injected, empty) { injected['sp' + empty + 'awn']('cmd.exe'); }",
     "export function widened(injected) { injected['exec' + 'FileSync']('cmd.exe'); }",
     "export function widened(injected) { injected[`sp${''}awn`]('cmd.exe'); }",
     "export function widened(injected, maybe) { injected[`sp${maybe}awn`]('cmd.exe'); }",
@@ -288,6 +289,23 @@ test('successor profile lexically rejects aliased, commented, escaped, dynamic, 
     assert.equal(result.eligible, true);
     assert.equal(result.clean, false);
     assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
+  }
+});
+
+test('successor profile rejects direct global network execution without rejecting inert network text', () => {
+  const hostile = analyzeProviderPoolInjection("export async function widened() { return fetch('https://example.invalid'); }");
+  assert.equal(hostile.clean, false);
+  assert.ok(hostile.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
+
+  for (const benignSource of [
+    "const networkFixture = Object.freeze({ operation: 'fetch', url: 'https://example.invalid' });",
+    "const client = {}; client.fetch();",
+    "const helper = { render() { return 'proof'; } }; helper['render']();",
+    `const helper = {}; helper[\`render-${'${mode}'}\`]();`,
+    `const proofRef = \`proofs/openclaw/${'${receiptId}'}\`;`,
+  ]) {
+    const benign = analyzeProviderPoolInjection(benignSource);
+    assert.equal(benign.clean, true, `${benignSource}: ${JSON.stringify(benign.findings)}`);
   }
 });
 
@@ -362,6 +380,26 @@ test('an otherwise valid success return cannot be copied ahead of its authority 
   assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-route-success-not-gate-dominated'));
   assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-authority-success-return-count-invalid'));
   assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-route-success-return-count-invalid'));
+});
+
+test('a line terminator after return cannot attach the following success expression', () => {
+  for (const returnPrefix of ['return\n  ', 'return /*\n  */ ', 'return // detached\n  ']) {
+    const hostileSources = sources();
+    const content = hostileSources[0].content.replace(
+      'return Object.freeze({\n    valid: true,',
+      `${returnPrefix}Object.freeze({\n    valid: true,`,
+    );
+    hostileSources[0] = {
+      ...hostileSources[0],
+      size: Buffer.byteLength(content, 'utf8'),
+      blobSha: blobSha(content),
+      content,
+    };
+    const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
+    assert.equal(result.clean, false, returnPrefix);
+    assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-authority-return-shape-invalid'));
+    assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-authority-success-return-count-invalid'));
+  }
 });
 
 test('successor profile requires authority gates in executable function structure rather than comments', () => {
