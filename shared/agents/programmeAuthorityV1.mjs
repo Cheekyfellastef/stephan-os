@@ -133,6 +133,19 @@ function unique(values) {
   return [...new Set(values)];
 }
 
+function sameExactStringSet(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right)) return false;
+  const normalize = (values) => values.map((value) => text(value)).filter(Boolean).sort();
+  const normalizedLeft = normalize(left);
+  const normalizedRight = normalize(right);
+  return normalizedLeft.length === left.length
+    && normalizedRight.length === right.length
+    && unique(normalizedLeft).length === normalizedLeft.length
+    && unique(normalizedRight).length === normalizedRight.length
+    && normalizedLeft.length === normalizedRight.length
+    && normalizedLeft.every((value, index) => value === normalizedRight[index]);
+}
+
 function freeze(value) {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
   if (Array.isArray(value)) return Object.freeze(value.map(freeze));
@@ -979,35 +992,46 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
     );
     if (!valid) {
       blockers.push('critical-backlog-active-mission-not-scheduler-admissible');
-    } else if (!goals.some((goal) => goal.issue === issueNumber)) {
-      goals.push({
-        issue: issueNumber,
-        title: text(activeMission.title, selectedMission.title || `Goal #${issueNumber}`),
-        state: 'QUEUED',
-        prerequisites: [],
-        priority: Number.isFinite(selectedItem.priority) ? selectedItem.priority : 0,
-        criticalPathWeight: Number.isFinite(selectedItem.priority) ? Math.max(1, 10_000 - selectedItem.priority) : 1,
-        reversibility: 'HIGH',
-        route: text(selectedMission.route, 'CHATGPT_GITHUB'),
-        activePr: null,
-        repository,
-        branch,
-        headSha: null,
-        proofState: 'UNKNOWN',
-        approvalRequired: false,
-        operatorPriority: true,
-        operatorApprovalReceipt: null,
-        evidenceAt: nowUtc,
-        resourceIds,
-        resultProofRefs: [],
-        reusableCapabilityId: null,
-        sharedLessonId: null,
-        repairCycleCount: 0,
-        structuralReviewProofRefs: [],
-        modelTestProofRefs: [],
-        duplicateOf: null,
-        supersededBy: null,
-      });
+    } else {
+      const existingGoal = goals.find((goal) => goal.issue === issueNumber);
+      const activeRoute = text(selectedMission.route, 'CHATGPT_GITHUB').toUpperCase();
+      if (existingGoal && (
+        text(existingGoal.repository).toLowerCase() !== repository.toLowerCase()
+        || text(existingGoal.branch) !== branch
+        || text(existingGoal.route).toUpperCase() !== activeRoute
+        || !sameExactStringSet(existingGoal.resourceIds, resourceIds)
+      )) {
+        blockers.push('critical-backlog-active-mission-goal-authority-conflict');
+      } else if (!existingGoal) {
+        goals.push({
+          issue: issueNumber,
+          title: text(activeMission.title, selectedMission.title || `Goal #${issueNumber}`),
+          state: 'QUEUED',
+          prerequisites: [],
+          priority: Number.isFinite(selectedItem.priority) ? selectedItem.priority : 0,
+          criticalPathWeight: Number.isFinite(selectedItem.priority) ? Math.max(1, 10_000 - selectedItem.priority) : 1,
+          reversibility: 'HIGH',
+          route: text(selectedMission.route, 'CHATGPT_GITHUB'),
+          activePr: null,
+          repository,
+          branch,
+          headSha: null,
+          proofState: 'UNKNOWN',
+          approvalRequired: false,
+          operatorPriority: true,
+          operatorApprovalReceipt: null,
+          evidenceAt: nowUtc,
+          resourceIds,
+          resultProofRefs: [],
+          reusableCapabilityId: null,
+          sharedLessonId: null,
+          repairCycleCount: 0,
+          structuralReviewProofRefs: [],
+          modelTestProofRefs: [],
+          duplicateOf: null,
+          supersededBy: null,
+        });
+      }
     }
   }
   if (lane?.valid && lane.active) {
