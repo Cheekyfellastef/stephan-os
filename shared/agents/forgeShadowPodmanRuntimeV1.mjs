@@ -15,6 +15,10 @@ export const FORGE_SHADOW_LOCAL_OWNER = 'stephanos-shadow';
 export const FORGE_SHADOW_REMOTE_URL = 'https://github.com/Cheekyfellastef/stephan-os.git';
 export const FORGE_SHADOW_WINDOWS_HOST_ADAPTER = 'podman-desktop-windows10-wsl2-v1';
 export const FORGE_SHADOW_MINIMUM_WINDOWS_BUILD = 19043;
+export const FORGE_SHADOW_MAXIMUM_WINDOWS_BUILD_EXCLUSIVE = 22000;
+export const FORGE_SHADOW_REQUIRED_WINDOWS_ARCHITECTURE = 'X64';
+
+const WSL2_EVIDENCE = Object.freeze(['default-version-2', 'distribution-version-2']);
 
 export const FORGE_SHADOW_PODMAN_DECISIONS = Object.freeze({
   BLOCKED: 'FORGE_SHADOW_PODMAN_BLOCKED',
@@ -40,7 +44,9 @@ const FACT_KEYS = Object.freeze([
   'windowsHostAdapter',
   'windowsProductName',
   'windowsInstallationType',
+  'windowsArchitecture',
   'wsl2Available',
+  'wsl2Evidence',
   'podmanPresent',
   'podmanVersion',
   'machineExists',
@@ -64,6 +70,8 @@ const BOOLEAN_FACT_KEYS = Object.freeze(FACT_KEYS.filter((key) => ![
   'windowsHostAdapter',
   'windowsProductName',
   'windowsInstallationType',
+  'windowsArchitecture',
+  'wsl2Evidence',
   'podmanVersion',
   'mirrorSourceHead',
 ].includes(key)));
@@ -71,6 +79,8 @@ const STRING_FACT_KEYS = Object.freeze([
   'windowsHostAdapter',
   'windowsProductName',
   'windowsInstallationType',
+  'windowsArchitecture',
+  'wsl2Evidence',
   'podmanVersion',
   'mirrorSourceHead',
 ]);
@@ -143,6 +153,8 @@ function fixedIdentity(imageDigest) {
     remoteUrl: FORGE_SHADOW_REMOTE_URL,
     windowsHostAdapter: FORGE_SHADOW_WINDOWS_HOST_ADAPTER,
     minimumWindowsBuild: FORGE_SHADOW_MINIMUM_WINDOWS_BUILD,
+    maximumWindowsBuildExclusive: FORGE_SHADOW_MAXIMUM_WINDOWS_BUILD_EXCLUSIVE,
+    requiredWindowsArchitecture: FORGE_SHADOW_REQUIRED_WINDOWS_ARCHITECTURE,
   });
 }
 
@@ -171,10 +183,18 @@ export function planForgeShadowPodmanRuntime(input = {}) {
     if (facts.windowsInstallationType !== 'Client' || !/^Windows 10(?:\s|$)/.test(facts.windowsProductName)) {
       blockers.push('windows-10-client-not-proved');
     }
-    if (facts.windowsBuild < FORGE_SHADOW_MINIMUM_WINDOWS_BUILD) {
-      blockers.push('windows-10-build-19043-or-newer-not-proved');
+    if (
+      facts.windowsBuild < FORGE_SHADOW_MINIMUM_WINDOWS_BUILD
+      || facts.windowsBuild >= FORGE_SHADOW_MAXIMUM_WINDOWS_BUILD_EXCLUSIVE
+    ) {
+      blockers.push('windows-10-build-range-not-proved');
     }
-    if (facts.wsl2Available !== true) blockers.push('wsl2-not-proved');
+    if (facts.windowsArchitecture !== FORGE_SHADOW_REQUIRED_WINDOWS_ARCHITECTURE) {
+      blockers.push('windows-x64-not-proved');
+    }
+    if (facts.wsl2Available !== true || !WSL2_EVIDENCE.includes(facts.wsl2Evidence)) {
+      blockers.push('wsl2-not-proved');
+    }
     if (facts.githubCredentialPresent !== false) blockers.push('github-credential-not-allowed');
     if (facts.machineRootful === true) blockers.push('podman-machine-rootful-not-allowed');
     if (facts.bootstrapCredentialContained === false && facts.bootstrapIdentityPresent === true) {
