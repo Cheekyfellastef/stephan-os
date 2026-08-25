@@ -6,6 +6,7 @@ import {
 } from './codexCapacityGovernorV1.mjs';
 import { adjudicateForgeSidecarCapacity } from './stallSentinelReviewPipelineV1.mjs';
 import {
+  SHARED_WORKSPACE_RECORD_KINDS,
   createSharedWorkspaceStatusRecord,
   isSharedWorkspaceParticipantId,
   validateSharedWorkspaceRecord,
@@ -43,6 +44,15 @@ const AUTHORITY_RECEIPT_KEYS = Object.freeze([
   'mergeAuthorityAdded', 'deploymentAuthorityAdded', 'runtimeMutationAuthorityAdded',
   'protectedMergeDispatchAllowed', 'duplicateDispatchAllowed', 'arbitraryCommandAllowed',
 ]);
+const CAPACITY_STATUS_KEYS = Object.freeze([
+  'schemaVersion', 'kind', 'statusId', 'participantId', 'timestampUtc', 'status',
+  'summary', 'proofRefs', 'capacityReceipt', 'sourceMutationAllowed',
+  'mergeAuthority', 'leaseSeizureAllowed',
+]);
+const SOURCE_ONLY_AUTHORIZED_OPERATIONS = Object.freeze([
+  'SOURCE_CONSTRUCTION',
+  'FOCUSED_TESTS',
+]);
 const ROUTE_ADAPTER = Object.freeze({
   [MISSION_CONTROLLER_ROUTE.CODEX]: 'codex',
   [MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB]: 'chatgpt-github',
@@ -76,6 +86,11 @@ function exactKeys(value, keys) {
 function uniqueStrings(value) {
   const values = list(value).map(text).filter(Boolean);
   return values.length === new Set(values).size ? values : null;
+}
+function exactStringSet(value, expected) {
+  const values = uniqueStrings(value);
+  return values?.length === expected.length
+    && expected.every((entry) => values.includes(entry));
 }
 function frozen(value) { return Object.freeze(value); }
 
@@ -185,8 +200,7 @@ export function validateBuildLaneAuthorityReceipt(receipt, expected = {}) {
     && text(receipt.sourceHead).toLowerCase() === text(expected.sourceHead).toLowerCase()
     && isSharedWorkspaceParticipantId(receipt.workerId)
     && receipt.workerId === expected.workerId
-    && operations?.includes('SOURCE_CONSTRUCTION')
-    && operations?.includes('FOCUSED_TESTS')
+    && exactStringSet(operations, SOURCE_ONLY_AUTHORIZED_OPERATIONS)
     && classes?.includes(expected.taskClass)
     && proofRefs?.length > 0
     && proofRefs.every((ref) => SAFE_REF.test(ref) && !ref.includes('..'))
@@ -253,7 +267,9 @@ export function validateBuildLaneCapacityStatusRecord(record, expected = {}) {
     taskClass,
     nowUtc: expected.nowUtc,
   }).valid);
-  const valid = recordValidation.valid && !recordValidation.stale
+  const valid = exactKeys(record, CAPACITY_STATUS_KEYS)
+    && recordValidation.valid && !recordValidation.stale
+    && record?.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
     && record?.statusId === expectedStatusId
     && record?.participantId === receipt?.workerId
     && record?.timestampUtc === receipt?.observedAtUtc
