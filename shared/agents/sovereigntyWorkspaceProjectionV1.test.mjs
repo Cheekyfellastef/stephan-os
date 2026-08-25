@@ -9,6 +9,10 @@ import {
   createSovereigntyCapacityObservationsV1,
   validateSovereigntySystemObservationV1,
 } from './sovereigntyWorkspaceProjectionV1.mjs';
+import {
+  BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
+  MISSION_CONTROLLER_ROUTE,
+} from './missionControllerCapacityRouterV1.mjs';
 
 const NOW = '2026-08-14T12:00:00.000Z';
 const NOW_MS = Date.parse(NOW);
@@ -16,6 +20,8 @@ const FORGE_HEAD = 'a'.repeat(40);
 const FORGE_TREE = 'b'.repeat(40);
 const FORGE_M2_RECEIPT_ID = 'forge-m2-runtime-proof';
 const FORGE_M3_RECEIPT_ID = 'forge-m3-runtime-proof';
+const GITHUB_SOURCE_HEAD = 'c'.repeat(40);
+const GITHUB_AUTHORITY_ID = 'github-sovereignty-authority';
 
 function canonicalJson(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -159,9 +165,34 @@ function laneStatus(statusId, route, overrides = {}) {
       p95StartLatencySeconds: 20,
       authorityReceiptIds: route === 'FOUNDRY_FORGE'
         ? [FORGE_M2_RECEIPT_ID, FORGE_M3_RECEIPT_ID]
-        : [],
+        : [GITHUB_AUTHORITY_ID],
       proofRefs: [`receipts/${route.toLowerCase()}/capacity.json`],
     },
+    ...overrides,
+  };
+}
+
+function githubAuthority(overrides = {}) {
+  return {
+    schemaVersion: BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
+    receiptId: GITHUB_AUTHORITY_ID,
+    route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
+    repository: 'Cheekyfellastef/stephan-os',
+    sourceHead: GITHUB_SOURCE_HEAD,
+    workerId: 'chatgpt_github-worker',
+    authorizedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+    authorizedTaskClasses: ['FOCUSED_REPAIR'],
+    issuedAtUtc: '2026-08-14T11:30:00.000Z',
+    expiresAtUtc: '2026-08-14T13:00:00.000Z',
+    proofRefs: ['receipts/chatgpt_github/authority.json'],
+    sourceDispatchAllowed: true,
+    sourceMutationAuthorityAdded: false,
+    mergeAuthorityAdded: false,
+    deploymentAuthorityAdded: false,
+    runtimeMutationAuthorityAdded: false,
+    protectedMergeDispatchAllowed: false,
+    duplicateDispatchAllowed: false,
+    arbitraryCommandAllowed: false,
     ...overrides,
   };
 }
@@ -181,6 +212,8 @@ test('canonical Codex, GitHub and authority-proven Forge capacity evidence norma
   const observations = createSovereigntyCapacityObservationsV1({
     codexStatus: codexStatus(),
     githubLaneStatus: laneStatus('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB'),
+    githubLaneAuthorityReceipts: [githubAuthority()],
+    sourceHead: GITHUB_SOURCE_HEAD,
     forgeLaneStatus: laneStatus('foundry-forge-build-capacity-current', 'FOUNDRY_FORGE'),
     forgeSidecar: forgeSidecar(),
   }, { nowMs: NOW_MS });
@@ -192,6 +225,23 @@ test('canonical Codex, GitHub and authority-proven Forge capacity evidence norma
   assert.equal(observations[0].metrics.throughputPerHour, null);
   assert.equal(observations[1].metrics.queueDepth, 0);
   assert.equal(observations[2].metrics.costPerUsefulResult, null);
+});
+
+test('Sovereignty keeps GitHub capacity UNKNOWN without the same exact independent authority chain', () => {
+  const githubLaneStatus = laneStatus('chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB');
+  for (const githubLaneAuthorityReceipts of [
+    [],
+    [githubAuthority({ workerId: 'foreign-github-worker' })],
+    [githubAuthority({ sourceHead: 'd'.repeat(40) })],
+  ]) {
+    const observations = createSovereigntyCapacityObservationsV1({
+      githubLaneStatus,
+      githubLaneAuthorityReceipts,
+      sourceHead: GITHUB_SOURCE_HEAD,
+    }, { nowMs: NOW_MS });
+    assert.equal(observations[1].truthState, 'UNKNOWN');
+    assert.equal(observations[1].capacityState, 'UNKNOWN');
+  }
 });
 
 test('two independently evidenced providers make one capability visibly diversified', () => {

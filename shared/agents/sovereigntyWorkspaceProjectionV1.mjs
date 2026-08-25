@@ -1,5 +1,8 @@
 import { CODEX_AVAILABILITY } from './codexCapacityGovernorV1.mjs';
-import { validateBuildLaneCapacityReceipt } from './missionControllerCapacityRouterV1.mjs';
+import {
+  validateBuildLaneCapacityAuthorityChain,
+  validateBuildLaneCapacityReceipt,
+} from './missionControllerCapacityRouterV1.mjs';
 import { adjudicateForgeSidecarCapacity } from './stallSentinelReviewPipelineV1.mjs';
 
 export const SOVEREIGNTY_WORKSPACE_SCHEMA_VERSION = 'stephanos.sovereignty-workspace-projection.v1';
@@ -328,7 +331,8 @@ function unknownBuildLaneMetrics() {
 }
 
 function forgeAuthorityBound(receipt, expectedRoute, authority) {
-  if (expectedRoute !== 'FOUNDRY_FORGE') return true;
+  if (expectedRoute === 'CHATGPT_GITHUB') return authority?.valid === true;
+  if (expectedRoute !== 'FOUNDRY_FORGE') return false;
   return authority?.canCarryRealWork === true
     && text(authority.m2ReceiptId) !== ''
     && text(authority.m3RuntimeReceiptId) !== ''
@@ -409,6 +413,15 @@ export function createSovereigntyCapacityObservationsV1(input = {}, options = {}
           ? 'UNAVAILABLE'
           : 'UNKNOWN';
   const forgeAuthority = adjudicateForgeSidecarCapacity(input.forgeSidecar, { nowUtc });
+  const githubAuthority = validateBuildLaneCapacityAuthorityChain(
+    input.githubLaneStatus?.capacityReceipt,
+    input.githubLaneAuthorityReceipts,
+    {
+      sourceHead: input.sourceHead,
+      taskClass: DEFAULT_BUILD_TASK_CLASS,
+      nowUtc,
+    },
+  );
   return Object.freeze([
     Object.freeze({
       schemaVersion: SOVEREIGNTY_SYSTEM_OBSERVATION_SCHEMA_VERSION,
@@ -431,7 +444,7 @@ export function createSovereigntyCapacityObservationsV1(input = {}, options = {}
       }),
       explanation: codexCurrent ? 'Codex capacity is derived from the canonical authenticated meter publication.' : 'Codex capacity is UNKNOWN because canonical fresh well-formed meter evidence is unavailable.',
     }),
-    Object.freeze(normalizeBuildLaneStatus(input.githubLaneStatus, 'chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', 'chatgpt-github', 'github', 'HOSTED_BUILD_LANE', nowMs)),
+    Object.freeze(normalizeBuildLaneStatus(input.githubLaneStatus, 'chatgpt-github-build-capacity-current', 'CHATGPT_GITHUB', 'chatgpt-github', 'github', 'HOSTED_BUILD_LANE', nowMs, githubAuthority)),
     Object.freeze(normalizeBuildLaneStatus(input.forgeLaneStatus, 'foundry-forge-build-capacity-current', 'FOUNDRY_FORGE', 'foundry-forge', 'stephanos-local', 'LOCAL_OR_SELF_HOSTED_BUILD_LANE', nowMs, forgeAuthority)),
   ]);
 }
