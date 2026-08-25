@@ -1,0 +1,160 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import test from 'node:test';
+
+import {
+  OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1,
+  analyzeOpenClawBuilderProviderSpecialistReviewV1,
+} from './openClawBuilderProviderSpecialistReviewV1.mjs';
+
+const REPOSITORY = 'Cheekyfellastef/stephan-os';
+const SUCCESSOR_PR = 1999;
+const SUCCESSOR_HEAD = '76ef0a47750275ac48a3cfafa11ec9b7843e7304';
+const SUCCESSOR_BASE = 'f60765af26d44f73290e148e882ec13f608a7087';
+
+function blobSha(content) {
+  const bytes = Buffer.from(content, 'utf8');
+  return createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+}
+
+function providerPoolCoreContentFor(path) {
+  if (path.endsWith('/openClawProviderPoolQualificationV1.mjs')) return `
+${'import'} { routeMissionControllerCapacity } from './missionControllerCapacityRouterV1.mjs';
+validateExecutionReceipt
+toSharedWorkspaceExecutionReceipt
+validateSharedWorkspaceRecord
+const OPENCLAW_QUALIFICATION_ISSUE = 1725;
+export function validateOpenClawQualificationAuthorityChain
+issueNumber: OPENCLAW_QUALIFICATION_ISSUE
+execution.workerType !== 'openclaw'
+execution.state !== 'completed'
+execution.operatorActionRequired !== false
+canonicalJson(host.realWorkWorkspaceReceipt) !== canonicalJson(canonicalWorkspace.record)
+authority.participantId !== 'stephanos'
+authority.relatedIssue !== String(OPENCLAW_QUALIFICATION_ISSUE)
+authority.receivedRecordId !== execution.receiptId
+authority.disposition !== OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION
+candidate.qualificationAuthorityReceiptId === expected.authorityReceiptId
+const host = snapshot(trustedHostContext);
+const openClawPoolEligible = qualification.valid && authority.valid && capacity.valid;
+mergeAuthority: false
+leaseSeizureAllowed: false
+duplicateDispatchAllowed: false
+`;
+  if (path.endsWith('/openClawProviderPoolQualificationV1.test.mjs')) return `
+requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt
+capacity is unusable without the exact validated qualification authority, worker and task class
+caller-shaped qualification, capacity and fake authority evidence cannot self-admit OpenClaw
+syntactically valid trusted qualification without canonical authority cannot route
+existing mutation owner is preserved even when OpenClaw is canonically qualified
+normal AUTO routing does not silently replace a healthy existing provider policy
+assert.equal(result.mergeAuthority, false)
+assert.equal(result.leaseSeizureAllowed, false)
+assert.equal(result.duplicateDispatchAllowed, false)
+`;
+  throw new Error(`unexpected provider-pool core path ${path}`);
+}
+
+function analysis(paths = OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1) {
+  return {
+    findings: paths.map((path) => ({
+      severity: 'P0',
+      code: 'unsupported-high-risk-surface',
+      path,
+    })),
+  };
+}
+
+function sources(head = SUCCESSOR_HEAD) {
+  return OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1.map((path) => {
+    const content = providerPoolCoreContentFor(path);
+    return {
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: REPOSITORY,
+      path,
+      ref: head,
+      exists: true,
+      size: Buffer.byteLength(content, 'utf8'),
+      blobSha: blobSha(content),
+      content,
+    };
+  });
+}
+
+function lineage(head = SUCCESSOR_HEAD, base = SUCCESSOR_BASE, overrides = {}) {
+  return {
+    schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1',
+    repository: REPOSITORY,
+    sourceHead: head,
+    sourceCommitSha: head,
+    baseSha: base,
+    liveMainBeforeSha: base,
+    liveMainAfterSha: base,
+    parents: ['1111111111111111111111111111111111111111', base],
+    comparison: {
+      status: 'ahead',
+      aheadBy: 1,
+      behindBy: 0,
+      baseCommitSha: base,
+      mergeBaseCommitSha: base,
+    },
+    ...overrides,
+  };
+}
+
+function successorInput(overrides = {}) {
+  return {
+    repository: REPOSITORY,
+    prNumber: SUCCESSOR_PR,
+    branch: 'codex/five-builder-flywheel-repair',
+    sourceHead: SUCCESSOR_HEAD,
+    baseSha: SUCCESSOR_BASE,
+    lineageEvidence: lineage(),
+    analysis: analysis(),
+    sources: sources(),
+    ...overrides,
+  };
+}
+
+test('successor PR may use the existing provider-pool specialist only for the exact two-file core escalation', () => {
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewV1(successorInput());
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true);
+  assert.deepEqual(result.reviewedPaths, OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1);
+  assert.equal(result.proofRefs.length, OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1.length);
+  assert.equal(result.finalVerdict, 'OPENCLAW_BUILDER_PROVIDER_SPECIALIST_CLEAN');
+});
+
+test('successor profile rejects invalid PR identity, unsafe branch identity, incomplete scope and widened four-file scope', () => {
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(successorInput({ prNumber: 0 })).eligible, false);
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(successorInput({ branch: '../escape' })).eligible, false);
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(successorInput({
+    analysis: analysis(OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1.slice(0, 1)),
+  })).eligible, false);
+
+  const widened = [
+    ...OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1,
+    'shared/agents/openClawTaskClassPromotionCandidateV1.mjs',
+    'shared/agents/openClawTaskClassPromotionCandidateV1.test.mjs',
+  ];
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(successorInput({
+    analysis: analysis(widened),
+  })).eligible, false);
+});
+
+test('successor profile remains exact-lineage and exact-source bound', () => {
+  const movedMain = '2222222222222222222222222222222222222222';
+  const drift = analyzeOpenClawBuilderProviderSpecialistReviewV1(successorInput({
+    lineageEvidence: lineage(SUCCESSOR_HEAD, SUCCESSOR_BASE, { liveMainAfterSha: movedMain }),
+  }));
+  assert.equal(drift.eligible, true);
+  assert.equal(drift.clean, false);
+  assert.equal(drift.findings[0].code, 'openclaw-provider-pool-reconciliation-lineage-invalid');
+
+  const tampered = sources();
+  tampered[0] = { ...tampered[0], blobSha: '3333333333333333333333333333333333333333' };
+  const badSource = analyzeOpenClawBuilderProviderSpecialistReviewV1(successorInput({ sources: tampered }));
+  assert.equal(badSource.eligible, true);
+  assert.equal(badSource.clean, false);
+  assert.ok(badSource.findings.some((item) => item.code === 'openclaw-provider-pool-source-evidence-invalid'));
+});
