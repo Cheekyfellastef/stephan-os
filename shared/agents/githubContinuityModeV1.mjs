@@ -168,6 +168,8 @@ function taskPlan(input, item, host) {
     githubLaneReceipt: input.githubLaneReceipt,
     forgeLaneReceipt: input.forgeLaneReceipt,
     forgeSidecar: input.forgeSidecar,
+    githubLaneAuthorityReceipts: input.githubLaneAuthorityReceipts,
+    sourceHead: input.expectedSourceHead,
   });
 
   const existingDispatch = normalized.mission?.dispatch?.status === 'running';

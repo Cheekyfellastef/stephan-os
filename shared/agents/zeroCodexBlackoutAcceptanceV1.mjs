@@ -102,7 +102,9 @@ export function evaluateZeroCodexZc1Routing(input = {}) {
     mission: input.mission,
     task: input.task,
     codexStatus: zeroCodexStatus(nowUtc),
+    sourceHead,
     githubLaneReceipt: input.githubLaneReceipt,
+    githubLaneAuthorityReceipts: input.githubLaneAuthorityReceipts,
     forgeSidecar: input.forgeSidecar,
     forgeLaneReceipt: input.forgeLaneReceipt,
   });

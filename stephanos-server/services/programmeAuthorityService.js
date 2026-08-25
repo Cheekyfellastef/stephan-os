@@ -45,6 +45,11 @@ import {
   validateOpenClawProviderPoolStatusRecord,
 } from '../../shared/agents/openClawProviderPoolQualificationV1.mjs';
 import {
+  MISSION_CONTROLLER_ROUTE,
+  validateBuildLaneCapacityAuthorityChain,
+  validateBuildLaneCapacityStatusRecord,
+} from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
+import {
   fetchGithubPrEvidence,
   resolveGithubTokenConfig,
 } from './githubPrEvidenceService.js';
@@ -346,12 +351,53 @@ export async function readMissionControllerCapacityRoutingInput({
         publisherPublicKeyPem,
       })
     : null;
+  const repository = 'Cheekyfellastef/stephan-os';
+  const sourceHead = text(sourceRevision).toLowerCase();
+  const githubStatusValidation = loaded.github
+    ? validateBuildLaneCapacityStatusRecord(loaded.github, {
+        route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
+        repository,
+        nowUtc,
+      })
+    : null;
+  const forgeStatusValidation = loaded.forge
+    ? validateBuildLaneCapacityStatusRecord(loaded.forge, {
+        route: MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
+        repository,
+        nowUtc,
+      })
+    : null;
+  const githubLaneReceipt = githubStatusValidation?.valid === true
+    ? githubStatusValidation.receipt
+    : null;
+  const githubAuthorityRecords = [];
+  let githubAuthorityFilesValid = Boolean(githubLaneReceipt);
+  for (const receiptId of githubLaneReceipt?.authorityReceiptIds || []) {
+    const resolvedAuthority = authorityPath(root, repoRoot, 'receipts', `${receiptId}.json`);
+    if (!resolvedAuthority.ok) {
+      githubAuthorityFilesValid = false;
+      break;
+    }
+    const loadedAuthority = await readJson(resolvedAuthority.path, readFileImpl);
+    if (!loadedAuthority.present || loadedAuthority.error) {
+      githubAuthorityFilesValid = false;
+      break;
+    }
+    githubAuthorityRecords.push(loadedAuthority.value);
+  }
+  const githubAuthorityValid = githubAuthorityFilesValid
+    && githubLaneReceipt.supportedTaskClasses.every((taskClass) => validateBuildLaneCapacityAuthorityChain(
+      githubLaneReceipt,
+      githubAuthorityRecords,
+      { sourceHead, taskClass, nowUtc },
+    ).valid);
   return Object.freeze({
     nowUtc,
-    sourceHead: text(sourceRevision).toLowerCase(),
+    sourceHead,
     codexStatus: loaded.codexStatus,
-    githubLaneReceipt: loaded.github?.capacityReceipt ?? loaded.github,
-    forgeLaneReceipt: loaded.forge?.capacityReceipt ?? loaded.forge,
+    githubLaneReceipt: githubAuthorityValid ? githubLaneReceipt : null,
+    githubLaneAuthorityReceipts: githubAuthorityValid ? Object.freeze(githubAuthorityRecords) : Object.freeze([]),
+    forgeLaneReceipt: forgeStatusValidation?.valid === true ? forgeStatusValidation.receipt : null,
     forgeSidecar: loaded.forgeSidecar?.forgeSidecar ?? loaded.forgeSidecar,
     openClawHostContext: openClawValidation?.valid === true ? openClawValidation.hostContext : null,
   });

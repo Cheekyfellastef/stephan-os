@@ -9,7 +9,7 @@ import {
   renderDurableFlywheelReceipt,
   runDurableFlywheelStartupCycle,
 } from './durableFlywheelControllerVNext.mjs';
-import { BUILD_LANE_CAPACITY_RECEIPT_SCHEMA } from './missionControllerCapacityRouterV1.mjs';
+import { BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA, BUILD_LANE_CAPACITY_RECEIPT_SCHEMA } from './missionControllerCapacityRouterV1.mjs';
 
 const NOW = '2026-07-30T13:00:00.000Z';
 const SOURCE_REVISION = 'a'.repeat(40);
@@ -159,6 +159,7 @@ test('ACTIVE source work receives one exact proven fallback grant when Codex cap
   }), {
     loadCapacityRoutingInput: async () => ({
       nowUtc: NOW,
+      sourceHead: SOURCE_REVISION,
       codexStatus: {
         schemaVersion: 'shared-agent-workspace-record.v1',
         statusId: 'codex-capacity-current',
@@ -182,9 +183,30 @@ test('ACTIVE source work receives one exact proven fallback grant when Codex cap
         expiresAtUtc: '2026-07-30T13:15:00.000Z',
         queueDepth: 0,
         p95StartLatencySeconds: 15,
-        authorityReceiptIds: [],
+        authorityReceiptIds: ['github-builder-authority-controller-test'],
         proofRefs: ['receipts/github-builder/capacity.json'],
       },
+      githubLaneAuthorityReceipts: [{
+        schemaVersion: BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
+        receiptId: 'github-builder-authority-controller-test',
+        route: 'CHATGPT_GITHUB',
+        repository: REPOSITORY,
+        sourceHead: SOURCE_REVISION,
+        workerId: 'shared-fabric-chatgpt-github-builder-01',
+        authorizedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+        authorizedTaskClasses: ['FOCUSED_REPAIR'],
+        issuedAtUtc: '2026-07-30T11:55:00.000Z',
+        expiresAtUtc: '2026-07-30T14:00:00.000Z',
+        proofRefs: ['receipts/github-builder/authority.json'],
+        sourceDispatchAllowed: true,
+        sourceMutationAuthorityAdded: false,
+        mergeAuthorityAdded: false,
+        deploymentAuthorityAdded: false,
+        runtimeMutationAuthorityAdded: false,
+        protectedMergeDispatchAllowed: false,
+        duplicateDispatchAllowed: false,
+        arbitraryCommandAllowed: false,
+      }],
     }),
   });
   const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
@@ -198,7 +220,10 @@ test('ACTIVE source work receives one exact proven fallback grant when Codex cap
   assert.equal(result.workerActionGrant.providerRouteIntent, 'CHATGPT_GITHUB');
   assert.equal(result.workerActionGrant.capacityRoute, 'CHATGPT_GITHUB');
   assert.equal(result.workerActionGrant.capacityReceiptId, 'github-builder-capacity-controller-test');
-  assert.deepEqual(result.workerActionGrant.capacityProofRefs, ['receipts/github-builder/capacity.json']);
+  assert.deepEqual(result.workerActionGrant.capacityProofRefs, [
+    'receipts/github-builder/capacity.json',
+    'receipts/github-builder/authority.json',
+  ]);
   assert.equal(result.workerActionGrant.mergeAuthority, false);
   assert.equal(result.workerActionGrant.leaseSeizureAllowed, false);
 });

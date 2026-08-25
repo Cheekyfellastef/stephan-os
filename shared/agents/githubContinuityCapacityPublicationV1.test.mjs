@@ -10,6 +10,7 @@ import {
   publishGitHubContinuityCapacityPublicationV1,
 } from './githubContinuityCapacityPublicationV1.mjs';
 import {
+  BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
   MISSION_CONTROLLER_ROUTE,
   routeMissionControllerCapacity,
   validateBuildLaneCapacityReceipt,
@@ -18,6 +19,8 @@ import {
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const OBSERVED = '2026-08-17T16:00:00.000Z';
 const NOW = '2026-08-17T16:01:00.000Z';
+const SOURCE_HEAD = 'a'.repeat(40);
+const AUTHORITY_ID = 'github-build-authority-20260817';
 
 function observation(overrides = {}) {
   return {
@@ -30,8 +33,33 @@ function observation(overrides = {}) {
     expiresAtUtc: '2026-08-17T16:04:00.000Z',
     queueDepth: 0,
     p95StartLatencySeconds: 15,
-    authorityReceiptIds: [],
+    authorityReceiptIds: [AUTHORITY_ID],
     proofRefs: ['receipts/github-builder/exact-host-persistence.json'],
+    ...overrides,
+  };
+}
+
+function authority(overrides = {}) {
+  return {
+    schemaVersion: BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
+    receiptId: AUTHORITY_ID,
+    route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
+    repository: REPOSITORY,
+    sourceHead: SOURCE_HEAD,
+    workerId: observation().workerId,
+    authorizedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+    authorizedTaskClasses: ['FOCUSED_REPAIR', 'MULTI_MODULE_IMPLEMENTATION'],
+    issuedAtUtc: OBSERVED,
+    expiresAtUtc: '2026-08-17T20:00:00.000Z',
+    proofRefs: ['receipts/github-builder/authority-proof.json'],
+    sourceDispatchAllowed: true,
+    sourceMutationAuthorityAdded: false,
+    mergeAuthorityAdded: false,
+    deploymentAuthorityAdded: false,
+    runtimeMutationAuthorityAdded: false,
+    protectedMergeDispatchAllowed: false,
+    duplicateDispatchAllowed: false,
+    arbitraryCommandAllowed: false,
     ...overrides,
   };
 }
@@ -83,6 +111,8 @@ test('fresh M4 capacity evidence routes exhausted-Codex source work to the exist
     mission: mission(),
     codexStatus: exhaustedCodexStatus(),
     githubLaneReceipt: built.receipt,
+    githubLaneAuthorityReceipts: [authority()],
+    sourceHead: SOURCE_HEAD,
   });
   assert.equal(routed.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
   assert.equal(routed.adapter, 'chatgpt-github');
@@ -125,6 +155,7 @@ test('fails closed on stale/overlong evidence, Codex masquerading and missing pr
   for (const candidate of [
     observation({ expiresAtUtc: '2026-08-17T16:10:00.000Z' }),
     observation({ route: MISSION_CONTROLLER_ROUTE.CODEX }),
+    observation({ authorityReceiptIds: [] }),
     observation({ proofRefs: [] }),
     observation({ queueDepth: -1 }),
   ]) {

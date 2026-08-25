@@ -29,6 +29,12 @@ import {
 import { ensureSharedWorkspaceLayout } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { createSharedWorkspaceProofRecord } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import {
+  BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
+  BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
+  MISSION_CONTROLLER_ROUTE,
+  createBuildLaneCapacityStatusRecord,
+} from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
+import {
   createMissionWorkerHeartbeatRecord,
   resolveCanonicalMissionWorkerPaths,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
@@ -418,6 +424,75 @@ test('capacity routing input independently loads the supervised publisher key an
     assert.equal(routing.codexStatus, null);
     assert.equal(routing.githubLaneReceipt, null);
     assert.equal(routing.forgeLaneReceipt, null);
+  });
+});
+
+test('capacity routing independently binds GitHub status to an exact authority receipt', async () => {
+  await fixture(async ({ root, repoRoot }) => {
+    const authorityId = 'github-build-authority-programme-test';
+    const workerId = 'shared-fabric-chatgpt-github-builder-01';
+    const capacityReceipt = {
+      schemaVersion: BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
+      receiptId: 'github-build-capacity-programme-test',
+      route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
+      repository: REPOSITORY,
+      workerId,
+      state: 'READY',
+      supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+      supportedTaskClasses: ['FOCUSED_REPAIR'],
+      observedAtUtc: '2026-07-30T09:59:00.000Z',
+      expiresAtUtc: '2026-07-30T10:10:00.000Z',
+      queueDepth: 0,
+      p95StartLatencySeconds: 5,
+      authorityReceiptIds: [authorityId],
+      proofRefs: ['receipts/github-builder/capacity.json'],
+    };
+    const authorityReceipt = {
+      schemaVersion: BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
+      receiptId: authorityId,
+      route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
+      repository: REPOSITORY,
+      sourceHead: HEAD,
+      workerId,
+      authorizedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+      authorizedTaskClasses: ['FOCUSED_REPAIR'],
+      issuedAtUtc: '2026-07-30T09:30:00.000Z',
+      expiresAtUtc: '2026-07-30T11:00:00.000Z',
+      proofRefs: ['receipts/github-builder/authority.json'],
+      sourceDispatchAllowed: true,
+      sourceMutationAuthorityAdded: false,
+      mergeAuthorityAdded: false,
+      deploymentAuthorityAdded: false,
+      runtimeMutationAuthorityAdded: false,
+      protectedMergeDispatchAllowed: false,
+      duplicateDispatchAllowed: false,
+      arbitraryCommandAllowed: false,
+    };
+    const status = createBuildLaneCapacityStatusRecord(capacityReceipt, { nowUtc: NOW });
+    const statusPath = path.join(root, 'status', 'chatgpt-github-build-capacity-current.json');
+    const authorityPath = path.join(root, 'receipts', `${authorityId}.json`);
+    await writeFile(statusPath, `${JSON.stringify(status)}\n`, 'utf8');
+    await writeFile(authorityPath, `${JSON.stringify(authorityReceipt)}\n`, 'utf8');
+
+    const proven = await readMissionControllerCapacityRoutingInput({
+      root, repoRoot, nowUtc: NOW, sourceRevision: HEAD, env: {},
+    });
+    assert.equal(proven.githubLaneReceipt.receiptId, capacityReceipt.receiptId);
+    assert.equal(proven.githubLaneAuthorityReceipts[0].receiptId, authorityId);
+
+    await rm(authorityPath);
+    const missingAuthority = await readMissionControllerCapacityRoutingInput({
+      root, repoRoot, nowUtc: NOW, sourceRevision: HEAD, env: {},
+    });
+    assert.equal(missingAuthority.githubLaneReceipt, null);
+    assert.deepEqual(missingAuthority.githubLaneAuthorityReceipts, []);
+
+    await writeFile(authorityPath, `${JSON.stringify(authorityReceipt)}\n`, 'utf8');
+    await writeFile(statusPath, `${JSON.stringify({ ...status, participantId: 'foreign-worker' })}\n`, 'utf8');
+    const retargetedStatus = await readMissionControllerCapacityRoutingInput({
+      root, repoRoot, nowUtc: NOW, sourceRevision: HEAD, env: {},
+    });
+    assert.equal(retargetedStatus.githubLaneReceipt, null);
   });
 });
 

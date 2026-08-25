@@ -14,6 +14,7 @@ import {
 
 export const MISSION_CONTROLLER_CAPACITY_ROUTER_SCHEMA = 'stephanos.mission-controller-capacity-router.v1';
 export const BUILD_LANE_CAPACITY_RECEIPT_SCHEMA = 'stephanos.build-lane-capacity-receipt.v1';
+export const BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA = 'stephanos.build-lane-authority-receipt.v1';
 
 export const MISSION_CONTROLLER_ROUTE = Object.freeze({
   CODEX: 'CODEX',
@@ -35,6 +36,13 @@ const RECEIPT_KEYS = Object.freeze([
   'supportedOperations', 'supportedTaskClasses', 'observedAtUtc', 'expiresAtUtc',
   'queueDepth', 'p95StartLatencySeconds', 'authorityReceiptIds', 'proofRefs',
 ]);
+const AUTHORITY_RECEIPT_KEYS = Object.freeze([
+  'schemaVersion', 'receiptId', 'route', 'repository', 'sourceHead', 'workerId',
+  'authorizedOperations', 'authorizedTaskClasses', 'issuedAtUtc', 'expiresAtUtc',
+  'proofRefs', 'sourceDispatchAllowed', 'sourceMutationAuthorityAdded',
+  'mergeAuthorityAdded', 'deploymentAuthorityAdded', 'runtimeMutationAuthorityAdded',
+  'protectedMergeDispatchAllowed', 'duplicateDispatchAllowed', 'arbitraryCommandAllowed',
+]);
 const ROUTE_ADAPTER = Object.freeze({
   [MISSION_CONTROLLER_ROUTE.CODEX]: 'codex',
   [MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB]: 'chatgpt-github',
@@ -50,6 +58,7 @@ const SAFE_ID = /^[a-z0-9][a-z0-9._:@/-]{2,239}$/i;
 const SAFE_REF = /^(?:proof|proofs|receipts|evidence\/receipts)\/[A-Za-z0-9][A-Za-z0-9._/@:#-]{0,239}$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const MAX_RECEIPT_LIFETIME_MS = 60 * 60 * 1000;
+const MAX_AUTHORITY_LIFETIME_MS = 24 * 60 * 60 * 1000;
 const MAX_METER_AGE_MINUTES = 15;
 
 function text(value) { return typeof value === 'string' ? value.trim() : ''; }
@@ -139,7 +148,9 @@ export function validateBuildLaneCapacityReceipt(receipt, expected = {}) {
     && operations?.includes('SOURCE_CONSTRUCTION')
     && operations?.includes('FOCUSED_TESTS')
     && classes?.includes(expected.taskClass)
-    && authorities !== null
+    && authorities?.length > 0
+    && authorities.every((receiptId) => isSharedWorkspaceParticipantId(receiptId)
+      && isSharedWorkspaceParticipantId(`${receiptId}.json`))
     && proofRefs?.length > 0
     && proofRefs.every((ref) => SAFE_REF.test(ref) && !ref.includes('..'))
     && nowMs !== null && observedAtMs !== null && expiresAtMs !== null
@@ -151,6 +162,109 @@ export function validateBuildLaneCapacityReceipt(receipt, expected = {}) {
     && Number.isFinite(receipt.p95StartLatencySeconds)
     && receipt.p95StartLatencySeconds >= 0 && receipt.p95StartLatencySeconds <= 24 * 60 * 60;
   return frozen({ valid: Boolean(valid), route, receipt: valid ? receipt : null });
+}
+
+export function validateBuildLaneAuthorityReceipt(receipt, expected = {}) {
+  const nowMs = timestamp(expected.nowUtc);
+  const issuedAtMs = timestamp(receipt?.issuedAtUtc);
+  const expiresAtMs = timestamp(receipt?.expiresAtUtc);
+  const route = text(receipt?.route).toUpperCase();
+  const operations = uniqueStrings(receipt?.authorizedOperations);
+  const classes = uniqueStrings(receipt?.authorizedTaskClasses);
+  const proofRefs = uniqueStrings(receipt?.proofRefs);
+  const valid = exactKeys(receipt, AUTHORITY_RECEIPT_KEYS)
+    && receipt.schemaVersion === BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA
+    && isSharedWorkspaceParticipantId(receipt.receiptId)
+    && isSharedWorkspaceParticipantId(`${receipt.receiptId}.json`)
+    && receipt.receiptId === expected.receiptId
+    && BUILD_LANE_RECEIPT_ROUTES.has(route)
+    && route === text(expected.route).toUpperCase()
+    && receipt.repository === expected.repository
+    && REPOSITORY.test(text(receipt.repository))
+    && FULL_SHA.test(text(receipt.sourceHead))
+    && text(receipt.sourceHead).toLowerCase() === text(expected.sourceHead).toLowerCase()
+    && isSharedWorkspaceParticipantId(receipt.workerId)
+    && receipt.workerId === expected.workerId
+    && operations?.includes('SOURCE_CONSTRUCTION')
+    && operations?.includes('FOCUSED_TESTS')
+    && classes?.includes(expected.taskClass)
+    && proofRefs?.length > 0
+    && proofRefs.every((ref) => SAFE_REF.test(ref) && !ref.includes('..'))
+    && nowMs !== null && issuedAtMs !== null && expiresAtMs !== null
+    && issuedAtMs <= nowMs + 60_000
+    && expiresAtMs > nowMs
+    && expiresAtMs > issuedAtMs
+    && expiresAtMs - issuedAtMs <= MAX_AUTHORITY_LIFETIME_MS
+    && receipt.sourceDispatchAllowed === true
+    && [receipt.sourceMutationAuthorityAdded, receipt.mergeAuthorityAdded,
+      receipt.deploymentAuthorityAdded, receipt.runtimeMutationAuthorityAdded,
+      receipt.protectedMergeDispatchAllowed, receipt.duplicateDispatchAllowed,
+      receipt.arbitraryCommandAllowed].every((value) => value === false);
+  return frozen({ valid: Boolean(valid), route, receipt: valid ? receipt : null });
+}
+
+export function validateBuildLaneCapacityAuthorityChain(capacityReceipt, authorityReceipts, expected = {}) {
+  const authorityIds = uniqueStrings(capacityReceipt?.authorityReceiptIds);
+  const records = Array.isArray(authorityReceipts) ? authorityReceipts : [];
+  if (!authorityIds?.length || records.length !== authorityIds.length) {
+    return frozen({ valid: false, receipts: frozen([]), proofRefs: frozen([]), reason: 'BUILD_LANE_AUTHORITY_SET_MISMATCH' });
+  }
+  const byId = new Map();
+  for (const record of records) {
+    const receiptId = text(record?.receiptId);
+    if (!receiptId || byId.has(receiptId)) {
+      return frozen({ valid: false, receipts: frozen([]), proofRefs: frozen([]), reason: 'BUILD_LANE_AUTHORITY_ID_DUPLICATE' });
+    }
+    byId.set(receiptId, record);
+  }
+  const validated = [];
+  for (const receiptId of authorityIds) {
+    const result = validateBuildLaneAuthorityReceipt(byId.get(receiptId), {
+      receiptId,
+      route: capacityReceipt.route,
+      repository: capacityReceipt.repository,
+      sourceHead: expected.sourceHead,
+      workerId: capacityReceipt.workerId,
+      taskClass: expected.taskClass,
+      nowUtc: expected.nowUtc,
+    });
+    if (!result.valid) {
+      return frozen({ valid: false, receipts: frozen([]), proofRefs: frozen([]), reason: 'BUILD_LANE_AUTHORITY_RECEIPT_INVALID' });
+    }
+    validated.push(result.receipt);
+  }
+  return frozen({
+    valid: true,
+    receipts: frozen(validated),
+    proofRefs: frozen([...new Set(validated.flatMap((record) => record.proofRefs))]),
+    reason: 'BUILD_LANE_AUTHORITY_PROVEN',
+  });
+}
+
+export function validateBuildLaneCapacityStatusRecord(record, expected = {}) {
+  const receipt = record?.capacityReceipt;
+  const recordValidation = validateSharedWorkspaceRecord(record, { nowMs: timestamp(expected.nowUtc) });
+  const classes = uniqueStrings(receipt?.supportedTaskClasses);
+  const expectedStatusId = text(expected.route).toUpperCase() === MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB
+    ? 'chatgpt-github-build-capacity-current'
+    : 'foundry-forge-build-capacity-current';
+  const receiptsValid = classes?.length > 0 && classes.every((taskClass) => validateBuildLaneCapacityReceipt(receipt, {
+    repository: expected.repository,
+    taskClass,
+    nowUtc: expected.nowUtc,
+  }).valid);
+  const valid = recordValidation.valid && !recordValidation.stale
+    && record?.statusId === expectedStatusId
+    && record?.participantId === receipt?.workerId
+    && record?.timestampUtc === receipt?.observedAtUtc
+    && record?.status === 'READY'
+    && text(receipt?.route).toUpperCase() === text(expected.route).toUpperCase()
+    && JSON.stringify(record?.proofRefs || []) === JSON.stringify(receipt?.proofRefs || [])
+    && record?.sourceMutationAllowed === false
+    && record?.mergeAuthority === false
+    && record?.leaseSeizureAllowed === false
+    && receiptsValid;
+  return frozen({ valid: Boolean(valid), receipt: valid ? receipt : null, validation: recordValidation });
 }
 
 export function createBuildLaneCapacityStatusRecord(receipt, options = {}) {
@@ -196,9 +310,9 @@ export async function publishBuildLaneCapacityToSharedWorkspace(root, receipt, o
   });
 }
 
-function candidateForReceipt(receipt, expected) {
+function candidateForReceipt(receipt, expected, authority = null) {
   const validation = validateBuildLaneCapacityReceipt(receipt, expected);
-  if (!validation.valid) return null;
+  if (!validation.valid || authority?.valid === false) return null;
   return frozen({
     route: validation.route,
     adapter: ROUTE_ADAPTER[validation.route],
@@ -207,7 +321,7 @@ function candidateForReceipt(receipt, expected) {
     p95StartLatencySeconds: receipt.p95StartLatencySeconds,
     receiptId: receipt.receiptId,
     authorityReceiptIds: frozen([...receipt.authorityReceiptIds]),
-    proofRefs: frozen([...receipt.proofRefs]),
+    proofRefs: frozen([...new Set([...receipt.proofRefs, ...(authority?.proofRefs || [])])]),
   });
 }
 
@@ -215,7 +329,12 @@ function selectFallback(input, task, nowUtc) {
   const expected = { repository: text(input.mission?.repository), taskClass: task.taskClass, nowUtc };
   const candidates = [];
   if (!task.windowsBound) {
-    const github = candidateForReceipt(input.githubLaneReceipt, expected);
+    const githubAuthority = validateBuildLaneCapacityAuthorityChain(
+      input.githubLaneReceipt,
+      input.githubLaneAuthorityReceipts,
+      { sourceHead: input.sourceHead, taskClass: task.taskClass, nowUtc },
+    );
+    const github = candidateForReceipt(input.githubLaneReceipt, expected, githubAuthority);
     if (github?.route === MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB) candidates.push(github);
   }
   const forge = adjudicateForgeSidecarCapacity(input.forgeSidecar, { nowUtc });

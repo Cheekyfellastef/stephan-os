@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 
 import {
   BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
+  BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
   MISSION_CONTROLLER_ROUTE,
   createBuildLaneCapacityStatusRecord,
   publishBuildLaneCapacityToSharedWorkspace,
@@ -15,6 +16,7 @@ import {
 
 const NOW = '2026-08-10T12:00:00.000Z';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
+const SOURCE_HEAD = 'a'.repeat(40);
 
 function mission(overrides = {}) {
   return {
@@ -58,8 +60,33 @@ function githubReceipt(overrides = {}) {
     expiresAtUtc: '2026-08-10T12:14:00.000Z',
     queueDepth: 0,
     p95StartLatencySeconds: 20,
-    authorityReceiptIds: [],
+    authorityReceiptIds: ['github-build-authority-001'],
     proofRefs: ['receipts/github-builder/capacity.json'],
+    ...overrides,
+  };
+}
+
+function githubAuthority(overrides = {}) {
+  return {
+    schemaVersion: BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
+    receiptId: 'github-build-authority-001',
+    route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
+    repository: REPOSITORY,
+    sourceHead: SOURCE_HEAD,
+    workerId: githubReceipt().workerId,
+    authorizedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+    authorizedTaskClasses: ['FOCUSED_REPAIR', 'MULTI_MODULE_IMPLEMENTATION'],
+    issuedAtUtc: '2026-08-10T11:55:00.000Z',
+    expiresAtUtc: '2026-08-10T13:00:00.000Z',
+    proofRefs: ['receipts/github-builder/authority-proof.json'],
+    sourceDispatchAllowed: true,
+    sourceMutationAuthorityAdded: false,
+    mergeAuthorityAdded: false,
+    deploymentAuthorityAdded: false,
+    runtimeMutationAuthorityAdded: false,
+    protectedMergeDispatchAllowed: false,
+    duplicateDispatchAllowed: false,
+    arbitraryCommandAllowed: false,
     ...overrides,
   };
 }
@@ -77,6 +104,8 @@ test('low Codex capacity routes an unowned source repair to a freshly proven Git
     mission: mission(),
     codexStatus: codexStatus({ remainingPercent: 3 }),
     githubLaneReceipt: githubReceipt(),
+    githubLaneAuthorityReceipts: [githubAuthority()],
+    sourceHead: SOURCE_HEAD,
   });
   assert.equal(result.codex.dispatchAllowed, false);
   assert.equal(result.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
@@ -138,6 +167,11 @@ test('fallback receipts must be exact, fresh, bounded and repository-scoped', ()
     taskClass: 'FOCUSED_REPAIR',
     nowUtc: NOW,
   }).valid, false);
+  assert.equal(validateBuildLaneCapacityReceipt(githubReceipt({ authorityReceiptIds: ['a'.repeat(77)] }), {
+    repository: REPOSITORY,
+    taskClass: 'FOCUSED_REPAIR',
+    nowUtc: NOW,
+  }).valid, false);
   for (const workerId of ['worker/name', 'worker:name', 'worker@name', 'w'.repeat(82)]) {
     assert.equal(validateBuildLaneCapacityReceipt(githubReceipt({ workerId }), {
       repository: REPOSITORY,
@@ -145,6 +179,30 @@ test('fallback receipts must be exact, fresh, bounded and repository-scoped', ()
       nowUtc: NOW,
     }).valid, false, workerId);
   }
+});
+
+test('GitHub fallback requires an independently supplied exact authority chain', () => {
+  const base = {
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 3 }),
+    githubLaneReceipt: githubReceipt(),
+  };
+  for (const authorityReceipts of [
+    [],
+    [githubAuthority({ workerId: 'foreign-github-worker' })],
+    [githubAuthority({ sourceHead: 'b'.repeat(40) })],
+    [githubAuthority({ sourceDispatchAllowed: false })],
+  ]) {
+    const result = routeMissionControllerCapacity({ ...base, githubLaneAuthorityReceipts: authorityReceipts });
+    assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+    assert.equal(result.dispatchAllowed, false);
+  }
+  const allowed = routeMissionControllerCapacity({ ...base, githubLaneAuthorityReceipts: [githubAuthority()] });
+  assert.equal(allowed.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
+  assert.equal(allowed.workerId, githubReceipt().workerId);
+  assert.ok(allowed.proofRefs.includes('receipts/github-builder/authority-proof.json'));
 });
 
 test('a lane worker can publish its fresh capacity receipt to the canonical fabric status path', async () => {
