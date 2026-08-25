@@ -19,6 +19,8 @@ $ForgejoVersion = '15.0.6'
 $PodmanVersion = '6.0.2'
 $WindowsHostAdapter = 'podman-desktop-windows10-wsl2-v1'
 $MinimumWindowsBuild = 19043
+$MaximumWindowsBuildExclusive = 22000
+$RequiredWindowsArchitecture = 'X64'
 $PodmanDesktopVersion = '1.29.1'
 $PodmanDesktopSourceCommit = 'a969ee0e0b07285122dd4988a58edb0a1a25d5fc'
 $PodmanDesktopPodmanManifestBlob = '5acfedd1c3171414aa218a1d5d95ea7529687809'
@@ -48,6 +50,8 @@ $ForgejoImageDigest = $ForgejoImageDigest.ToLowerInvariant()
 $ObservedWindowsBuild = [Environment]::OSVersion.Version.Build
 $ObservedWindowsProductName = ''
 $ObservedWindowsInstallationType = ''
+$ObservedWindowsArchitecture = ''
+$ObservedWsl2Evidence = ''
 $ImageRef = "$ImageRepository@$ForgejoImageDigest"
 $ApiRoot = "http://$HostAddress`:$HostPort/api/v1"
 $RestoreApiRoot = "http://$HostAddress`:$RestorePort/api/v1"
@@ -63,9 +67,13 @@ function Fail([string]$Blocker, [hashtable]$Details = @{}) {
         imageDigest = $ForgejoImageDigest
         windowsHostAdapter = $WindowsHostAdapter
         minimumWindowsBuild = $MinimumWindowsBuild
+        maximumWindowsBuildExclusive = $MaximumWindowsBuildExclusive
+        requiredWindowsArchitecture = $RequiredWindowsArchitecture
         observedWindowsBuild = $ObservedWindowsBuild
         observedWindowsProductName = $ObservedWindowsProductName
         observedWindowsInstallationType = $ObservedWindowsInstallationType
+        observedWindowsArchitecture = $ObservedWindowsArchitecture
+        wsl2Evidence = $ObservedWsl2Evidence
         compatibilityAuthority = $CompatibilityAuthority
         podmanDesktopVersion = $PodmanDesktopVersion
         podmanDesktopSourceCommit = $PodmanDesktopSourceCommit
@@ -91,6 +99,27 @@ function Invoke-Fixed([string]$Exe, [string[]]$Arguments, [switch]$AllowFailure)
         throw "Fixed executable failed with exit code $code"
     }
     return [pscustomobject]@{ ExitCode = $code; Output = $output }
+}
+
+function Get-Wsl2Evidence {
+    $status = Invoke-Fixed $WslExe @('--status') -AllowFailure
+    if ($status.ExitCode -eq 0) {
+        $statusText = (($status.Output -join "`n") -replace "`0", '')
+        if ($statusText -match '(?im)^\s*Default Version:\s*2\s*$') {
+            return 'default-version-2'
+        }
+    }
+
+    $list = Invoke-Fixed $WslExe @('--list', '--verbose') -AllowFailure
+    if ($list.ExitCode -eq 0) {
+        $listText = (($list.Output -join "`n") -replace "`0", '')
+        foreach ($line in @($listText -split '\r?\n')) {
+            if ($line -match '^\s*\*?\s*\S.*\s+2\s*$') {
+                return 'distribution-version-2'
+            }
+        }
+    }
+    return ''
 }
 
 function Invoke-PodmanRemote([string]$Podman, [string[]]$Arguments, [switch]$AllowFailure) {
@@ -600,17 +629,24 @@ try {
     $windowsIdentity = Get-ItemProperty -LiteralPath $WindowsCurrentVersionKey -ErrorAction Stop
     $ObservedWindowsProductName = ([string]$windowsIdentity.ProductName).Trim()
     $ObservedWindowsInstallationType = ([string]$windowsIdentity.InstallationType).Trim()
+    $ObservedWindowsArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
 } catch {
     Fail 'WINDOWS_PRODUCT_IDENTITY_UNAVAILABLE'
 }
 if ($ObservedWindowsInstallationType -ne 'Client' -or $ObservedWindowsProductName -notmatch '^Windows 10(?:\s|$)') {
     Fail 'WINDOWS_10_CLIENT_REQUIRED'
 }
+if ($ObservedWindowsArchitecture -ne $RequiredWindowsArchitecture) {
+    Fail 'WINDOWS_10_CLIENT_REQUIRED' @{ observedWindowsArchitecture = $ObservedWindowsArchitecture }
+}
 
 if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) { Fail 'CANONICAL_REPOSITORY_ROOT_MISSING' }
 if (-not (Test-Path -LiteralPath $GitExe -PathType Leaf)) { Fail 'FIXED_GIT_EXECUTABLE_MISSING' }
 if (-not (Test-Path -LiteralPath $WslExe -PathType Leaf)) { Fail 'WSL_EXECUTABLE_MISSING' }
 if ($ObservedWindowsBuild -lt $MinimumWindowsBuild) { Fail 'WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED' }
+if ($ObservedWindowsBuild -ge $MaximumWindowsBuildExclusive) {
+    Fail 'WINDOWS_10_CLIENT_REQUIRED' @{ observedWindowsBuild = $ObservedWindowsBuild }
+}
 
 $branch = ((Invoke-Fixed $GitExe @('-C', $RepoRoot, 'branch', '--show-current')).Output -join '').Trim()
 if ($branch -ne 'main') { Fail 'CANONICAL_REPOSITORY_NOT_MAIN' @{ branch = $branch } }
@@ -618,8 +654,8 @@ $localHead = ((Invoke-Fixed $GitExe @('-C', $RepoRoot, 'rev-parse', 'HEAD')).Out
 if ($localHead -ne $ExpectedHead) { Fail 'CANONICAL_REPOSITORY_HEAD_MISMATCH' @{ localHead = $localHead } }
 $localTree = ((Invoke-Fixed $GitExe @('-C', $RepoRoot, 'rev-parse', "$ExpectedHead^{tree}")).Output -join '').Trim().ToLowerInvariant()
 
-$wslStatus = Invoke-Fixed $WslExe @('--status') -AllowFailure
-if ($wslStatus.ExitCode -ne 0) { Fail 'WSL2_NOT_AVAILABLE' }
+$ObservedWsl2Evidence = Get-Wsl2Evidence
+if (-not $ObservedWsl2Evidence) { Fail 'WSL2_NOT_AVAILABLE' }
 
 $PodmanExe = Get-PodmanExe
 if (-not $PodmanExe) { Fail 'PODMAN_6_0_2_USER_PREREQUISITE_REQUIRED' }
@@ -639,9 +675,13 @@ if ($WhatIfPreference) {
         podmanVersion = $PodmanVersion
         windowsHostAdapter = $WindowsHostAdapter
         minimumWindowsBuild = $MinimumWindowsBuild
+        maximumWindowsBuildExclusive = $MaximumWindowsBuildExclusive
+        requiredWindowsArchitecture = $RequiredWindowsArchitecture
         observedWindowsBuild = $ObservedWindowsBuild
         observedWindowsProductName = $ObservedWindowsProductName
         observedWindowsInstallationType = $ObservedWindowsInstallationType
+        observedWindowsArchitecture = $ObservedWindowsArchitecture
+        wsl2Evidence = $ObservedWsl2Evidence
         compatibilityAuthority = $CompatibilityAuthority
         podmanDesktopVersion = $PodmanDesktopVersion
         podmanDesktopSourceCommit = $PodmanDesktopSourceCommit
@@ -803,9 +843,13 @@ try {
         podmanVersion = $PodmanVersion
         windowsHostAdapter = $WindowsHostAdapter
         minimumWindowsBuild = $MinimumWindowsBuild
+        maximumWindowsBuildExclusive = $MaximumWindowsBuildExclusive
+        requiredWindowsArchitecture = $RequiredWindowsArchitecture
         observedWindowsBuild = $ObservedWindowsBuild
         observedWindowsProductName = $ObservedWindowsProductName
         observedWindowsInstallationType = $ObservedWindowsInstallationType
+        observedWindowsArchitecture = $ObservedWindowsArchitecture
+        wsl2Evidence = $ObservedWsl2Evidence
         compatibilityAuthority = $CompatibilityAuthority
         podmanDesktopVersion = $PodmanDesktopVersion
         podmanDesktopSourceCommit = $PodmanDesktopSourceCommit
