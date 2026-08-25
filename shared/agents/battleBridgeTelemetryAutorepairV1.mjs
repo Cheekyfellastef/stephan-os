@@ -1,6 +1,11 @@
 export const BATTLE_BRIDGE_TELEMETRY_AUTOREPAIR_SCHEMA = 'stephanos.battle-bridge-telemetry-autorepair.v1';
 
 const SHA40 = /^[0-9a-f]{40}$/;
+const SOURCE_BOUND_EVENT_SUCCESS_STATES = Object.freeze([
+  'REFRESH_COMPLETE',
+  'NO_RUNTIME_REFRESH_REQUIRED',
+  'POST_SYNC_RUNTIME_REFRESH_PASS',
+]);
 
 const SURFACE_POLICY = Object.freeze({
   githubSync: Object.freeze({
@@ -61,6 +66,10 @@ function normalizedState(surface = {}) {
   return text(surface.state || 'UNKNOWN', 120).toUpperCase();
 }
 
+function normalizedRawState(surface = {}) {
+  return text(surface.rawState || surface.state || 'UNKNOWN', 120).toUpperCase();
+}
+
 function isBadState(state) {
   return state === 'STALE'
     || state === 'UNKNOWN'
@@ -72,6 +81,7 @@ function isBadState(state) {
 
 function classifyGap({ surface, sourceHead, policy }) {
   const state = normalizedState(surface);
+  const rawState = normalizedRawState(surface);
   const head = validHead(surface.head);
   const exactHead = validHead(sourceHead);
   const headMismatch = Boolean(head && exactHead && head !== exactHead);
@@ -86,11 +96,30 @@ function classifyGap({ surface, sourceHead, policy }) {
   }
 
   if (state === 'STALE' && policy.proofClass === 'SOURCE_BOUND_EVENT_PROOF' && head && head === exactHead) {
+    if (SOURCE_BOUND_EVENT_SUCCESS_STATES.includes(rawState)) {
+      return Object.freeze({
+        gapClass: 'NONE',
+        state: 'CURRENT_EXACT_HEAD_EVENT_PROOF',
+        head,
+        blocker: '',
+      });
+    }
+    if (rawState === 'APPROVAL_REQUIRED_OPENCLAW'
+        || rawState.includes('BLOCK')
+        || rawState.includes('FAIL')
+        || rawState.includes('ERROR')) {
+      return Object.freeze({
+        gapClass: 'OBSERVED_FAILURE_OR_BLOCKER',
+        state: rawState,
+        head,
+        blocker: text(surface.blocker || rawState),
+      });
+    }
     return Object.freeze({
-      gapClass: 'NONE',
-      state: 'CURRENT_EXACT_HEAD_EVENT_PROOF',
+      gapClass: 'STALE_EVIDENCE',
+      state: rawState,
       head,
-      blocker: '',
+      blocker: text(surface.blocker || `Current-head source-bound event is not terminal-success proof: ${rawState}`),
     });
   }
 
