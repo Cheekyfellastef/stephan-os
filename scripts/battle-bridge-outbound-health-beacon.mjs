@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
+import { buildBattleBridgeTelemetryAutorepairProjection } from '../shared/agents/battleBridgeTelemetryAutorepairV1.mjs';
 import {
   MAILBOX_RECEIPT_GITHUB_ISSUE,
   MAILBOX_RECEIPT_GITHUB_REPOSITORY,
@@ -61,34 +62,89 @@ function readJsonBounded(path) {
   }
 }
 
+function nestedHead(record = {}) {
+  return record.backendIdentity?.sourceHead
+    || record.sourceTruth?.head
+    || record.sourceTruthVerdict?.sourceHead
+    || record.servedRuntimeProof?.sourceHead
+    || '';
+}
+
 function recordHead(record = {}) {
   return safeSha(
     record.localHeadAfter
     || record.localHead
     || record.sourceHead
     || record.headSha
+    || record.afterHead
+    || record.currentHead
     || record.expectedHead
-    || record.remoteHeadObserved,
+    || record.remoteHeadObserved
+    || nestedHead(record),
   );
+}
+
+function recordObservedAt(record = {}) {
+  return timestamp(
+    record.timestampUtc
+    || record.observedAtUtc
+    || record.heartbeatAt
+    || record.completedAt
+    || record.updatedAtUtc
+    || record.generatedAt
+    || record.generatedAtUtc
+    || record.publishedAtUtc,
+  );
+}
+
+function recordRawState(record = {}) {
+  return text(
+    record.status
+    || record.classification
+    || record.finalVerdict
+    || record.state
+    || record.phase
+    || record.tickVerdict
+    || record.readiness
+    || record.trafficLight
+    || 'UNKNOWN',
+    120,
+  ).toUpperCase();
+}
+
+function serviceFacts(record = {}) {
+  const facts = record.observedServiceFacts || record.services || {};
+  if (!facts || typeof facts !== 'object' || Array.isArray(facts)) return Object.freeze({});
+  const allowed = {};
+  for (const [id, value] of Object.entries(facts)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    allowed[id] = Object.freeze({
+      ready: value.ready === true,
+      state: text(value.state || '', 40),
+    });
+  }
+  return Object.freeze(allowed);
 }
 
 export function projectBeaconStatus(record, spec, nowMs = Date.now()) {
   if (!record) {
-    return Object.freeze({ id: spec.id, state: 'UNPROVEN', observedAtUtc: '', ageMs: null, head: '', blocker: 'STATUS_MISSING' });
+    return Object.freeze({ id: spec.id, state: 'UNPROVEN', rawState: 'UNPROVEN', observedAtUtc: '', ageMs: null, head: '', blocker: 'STATUS_MISSING', serviceFacts: Object.freeze({}) });
   }
-  const observedAtUtc = timestamp(record.timestampUtc || record.observedAtUtc || record.heartbeatAt || record.completedAt);
+  const observedAtUtc = recordObservedAt(record);
   const observedMs = Date.parse(observedAtUtc);
   const ageMs = Number.isFinite(observedMs) ? Math.max(0, nowMs - observedMs) : null;
   const stale = ageMs === null || ageMs > spec.staleAfterMs;
-  const raw = text(record.status || record.classification || record.finalVerdict || record.state || 'UNKNOWN', 120).toUpperCase();
-  const blocker = text(record.blocker || record.exactNextAction || '', 180);
+  const rawState = recordRawState(record);
+  const blocker = text(record.blocker || record.exactNextAction || record.blockerId || '', 180);
   return Object.freeze({
     id: spec.id,
-    state: stale ? 'STALE' : (raw || 'UNKNOWN'),
+    state: stale ? 'STALE' : (rawState || 'UNKNOWN'),
+    rawState,
     observedAtUtc,
     ageMs,
     head: recordHead(record),
     blocker,
+    serviceFacts: serviceFacts(record),
   });
 }
 
@@ -168,12 +224,22 @@ export function projectMailboxIngressLiveness(comments = [], {
 }
 
 function combineMailboxStatus(localStatus, ingressObservation) {
-  if (!ingressObservation || ingressObservation.state === 'OBSERVED') return localStatus;
-  if (localStatus.state === 'STALE' || localStatus.state === 'UNPROVEN' || localStatus.state.includes('BLOCK')) return localStatus;
+  if (!ingressObservation || ingressObservation.state === 'OBSERVED') return Object.freeze({
+    ...localStatus,
+    ingressState: ingressObservation?.state || 'UNKNOWN',
+    ingressBlocker: ingressObservation?.blocker || '',
+  });
+  if (localStatus.state === 'STALE' || localStatus.state === 'UNPROVEN' || localStatus.state.includes('BLOCK')) return Object.freeze({
+    ...localStatus,
+    ingressState: ingressObservation.state,
+    ingressBlocker: ingressObservation.blocker,
+  });
   return Object.freeze({
     ...localStatus,
     state: ingressObservation.state,
     blocker: ingressObservation.blocker,
+    ingressState: ingressObservation.state,
+    ingressBlocker: ingressObservation.blocker,
   });
 }
 
@@ -186,9 +252,9 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     const projected = projectBeaconStatus(statusRecords[spec.id] || null, spec, nowMs);
     return spec.id === 'mailbox' ? combineMailboxStatus(projected, mailboxIngressObservation) : projected;
   });
-  const blockers = surfaces
-    .filter((surface) => surface.state === 'STALE' || surface.state === 'UNPROVEN' || surface.state.includes('BLOCK'))
-    .map((surface) => `${surface.id}:${surface.blocker || surface.state}`)
+  const telemetry = buildBattleBridgeTelemetryAutorepairProjection({ sourceHead: head, surfaces });
+  const blockers = telemetry.repairCandidates
+    .map((candidate) => `${candidate.surfaceId}:${candidate.blocker || candidate.gapClass}`)
     .slice(0, 12);
   return Object.freeze({
     schemaVersion: BATTLE_BRIDGE_OUTBOUND_BEACON_SCHEMA,
@@ -201,6 +267,12 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     blockerCount: blockers.length,
     blockers: Object.freeze(blockers),
     freshness: blockers.length > 0 ? 'DEGRADED' : 'FRESH',
+    completeStateAnswerable: telemetry.completeStateAnswerable,
+    telemetryCompleteness: telemetry.telemetryCompleteness,
+    operatorNeeded: telemetry.operatorNeededNow,
+    operatorAuthorizationState: telemetry.operatorAuthorizationState,
+    nextAutomaticAction: telemetry.nextAutomaticAction,
+    telemetry,
     readOnly: true,
     sourceMutationAllowed: false,
     taskMutationAllowed: false,
