@@ -66,6 +66,18 @@ export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContex
   const explicitOpenClawPreference = false;
   const baseUnavailable = false;
   const selectOpenClaw = openClawPoolEligible && (explicitOpenClawPreference || baseUnavailable);
+  if (!selectOpenClaw) {
+    const blockers = [];
+    return Object.freeze({
+      ...base,
+      providerPoolPreference: preference,
+      openClawPoolEligible,
+      openClawQualification: qualification,
+      openClawQualificationAuthority: authority,
+      openClawCapacity: capacity,
+      providerPoolBlockers: Object.freeze(blockers),
+    });
+  }
   return Object.freeze({
     ...base,
     route: OPENCLAW_PROVIDER_ROUTE,
@@ -293,19 +305,38 @@ test('successor profile lexically rejects aliased, commented, escaped, dynamic, 
   }
 });
 
-test('optional computed member access remains inside authority analysis', () => {
-  const result = analyzeProviderPoolInjection(
+test('computed authority remains visible across member, binding, and reflective access forms', () => {
+  for (const hostileSource of [
     "export function widened(injected, empty) { const run = injected?.['sp' + empty + 'awn']; run?.('cmd.exe'); }",
-  );
-  assert.equal(result.eligible, true);
-  assert.equal(result.clean, false);
-  assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
+    "export function widened(injected, empty) { const { ['sp' + empty + 'awn']: run } = injected; run('cmd.exe'); }",
+    "export function widened(injected, empty) { function pick({ ['sp' + empty + 'awn']: run }) { run('cmd.exe'); } pick(injected); }",
+    "export function widened(injected, empty) { const run = Reflect.get(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const run = Reflect?.get(injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const run = Reflect['g' + empty + 'et'](injected, 'sp' + empty + 'awn'); run('cmd.exe'); }",
+    "export function widened(injected, empty) { const run = Object.getOwnPropertyDescriptor(injected, 'sp' + empty + 'awn').value; run('cmd.exe'); }",
+  ]) {
+    const result = analyzeProviderPoolInjection(hostileSource);
+    assert.equal(result.eligible, true);
+    assert.equal(result.clean, false, hostileSource);
+    assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
+  }
 });
 
-test('fixed numeric computed keys remain benign, including optional access', () => {
+test('fixed numeric computed keys remain benign across JavaScript literal forms', () => {
   for (const benignSource of [
     "const receipts = []; const first = receipts[0];",
     "const receipts = []; const first = receipts?.[0];",
+    "const receipts = []; const first = receipts[0x0];",
+    "const receipts = []; const first = receipts[0Xf];",
+    "const receipts = []; const first = receipts[0b0];",
+    "const receipts = []; const first = receipts[0o0];",
+    "const receipts = []; const first = receipts[0n];",
+    "const receipts = []; const first = receipts[0xFF_FFn];",
+    "const receipts = []; const first = receipts[1_000];",
+    "const receipts = []; const first = receipts[1e3];",
+    "const receipts = []; const first = receipts[.5];",
+    "const receipts = []; const { [0x0]: first } = receipts;",
+    "const receipts = []; const first = Reflect.get(receipts, 0n);",
   ]) {
     const result = analyzeProviderPoolInjection(benignSource);
     assert.equal(result.eligible, true);
@@ -313,10 +344,16 @@ test('fixed numeric computed keys remain benign, including optional access', () 
   }
 });
 
-test('successor profile rejects direct global network execution without rejecting inert network text', () => {
-  const hostile = analyzeProviderPoolInjection("export async function widened() { return fetch('https://example.invalid'); }");
-  assert.equal(hostile.clean, false);
-  assert.ok(hostile.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
+test('successor profile rejects global network capabilities without rejecting inert network text', () => {
+  for (const hostileSource of [
+    "export async function widened() { return fetch('https://example.invalid'); }",
+    "export function widened() { const socket = new WebSocket('wss://example.invalid'); socket.send('proof'); }",
+    "export function widened() { return new EventSource('https://example.invalid/events'); }",
+  ]) {
+    const hostile = analyzeProviderPoolInjection(hostileSource);
+    assert.equal(hostile.clean, false, hostileSource);
+    assert.ok(hostile.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
+  }
 
   for (const benignSource of [
     "const networkFixture = Object.freeze({ operation: 'fetch', url: 'https://example.invalid' });",
@@ -324,6 +361,9 @@ test('successor profile rejects direct global network execution without rejectin
     "const helper = { render() { return 'proof'; } }; helper['render']();",
     "const helper = {}; const detached = helper['render'];",
     "const helper = {}; const detached = helper?.['render']; detached?.();",
+    "const helper = { render() {} }; const { ['render']: detached } = helper; detached();",
+    "const helper = { render() {} }; const detached = Reflect.get(helper, 'render'); detached();",
+    "const helper = { render() {} }; const detached = Reflect['get'](helper, 'render'); detached();",
     `const helper = {}; helper[\`render-${'${mode}'}\`]();`,
     `const helper = {}; const detached = helper[\`render-${'${mode}'}\`];`,
     `const proofRef = \`proofs/openclaw/${'${receiptId}'}\`;`,
@@ -404,6 +444,41 @@ test('an otherwise valid success return cannot be copied ahead of its authority 
   assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-route-success-not-gate-dominated'));
   assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-authority-success-return-count-invalid'));
   assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-route-success-return-count-invalid'));
+});
+
+test('route success is structurally dominated by the negative provider-selection exit', () => {
+  const hostileSources = sources();
+  const requiredGuard = `  if (!selectOpenClaw) {
+    const blockers = [];
+    return Object.freeze({
+      ...base,
+      providerPoolPreference: preference,
+      openClawPoolEligible,
+      openClawQualification: qualification,
+      openClawQualificationAuthority: authority,
+      openClawCapacity: capacity,
+      providerPoolBlockers: Object.freeze(blockers),
+    });
+  }
+`;
+  assert.ok(hostileSources[0].content.includes(requiredGuard));
+  for (const replacement of [
+    '',
+    `  if (false) {\n${requiredGuard}  }\n`,
+    requiredGuard.replace('if (!selectOpenClaw)', 'if (false && !selectOpenClaw)'),
+  ]) {
+    const content = hostileSources[0].content.replace(requiredGuard, replacement);
+    const mutatedSources = [...hostileSources];
+    mutatedSources[0] = {
+      ...hostileSources[0],
+      size: Buffer.byteLength(content, 'utf8'),
+      blobSha: blobSha(content),
+      content,
+    };
+    const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: mutatedSources }));
+    assert.equal(result.clean, false, replacement);
+    assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-route-success-not-gate-dominated'));
+  }
 });
 
 test('a line terminator after return cannot attach the following success expression', () => {
@@ -490,7 +565,7 @@ test('successor profile allows only exact non-mutating imports from approved loc
   }
 });
 
-test('every split point of authority names remains visible through static and dynamic template substitutions', () => {
+test('every split point of authority names remains visible across computed access forms', () => {
   for (const authorityName of [
     'AsyncFunction',
     'Bun',
@@ -528,9 +603,15 @@ test('every split point of authority names remains visible through static and dy
       const left = authorityName.slice(0, split);
       const right = authorityName.slice(split);
       for (const substitution of ["${''}", '${maybe}']) {
-        const result = analyzeProviderPoolInjection(`export function widened(injected, maybe) { injected[\`${left}${substitution}${right}\`]('cmd.exe'); }`);
-        assert.equal(result.clean, false, `${authorityName}:${split}:${substitution}`);
-        assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
+        for (const hostileSource of [
+          `export function widened(injected, maybe) { injected[\`${left}${substitution}${right}\`]('cmd.exe'); }`,
+          `export function widened(injected, maybe) { const { [\`${left}${substitution}${right}\`]: run } = injected; run('cmd.exe'); }`,
+          `export function widened(injected, maybe) { const run = Reflect.get(injected, \`${left}${substitution}${right}\`); run('cmd.exe'); }`,
+        ]) {
+          const result = analyzeProviderPoolInjection(hostileSource);
+          assert.equal(result.clean, false, `${authorityName}:${split}:${substitution}:${hostileSource}`);
+          assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
+        }
       }
     }
   }
