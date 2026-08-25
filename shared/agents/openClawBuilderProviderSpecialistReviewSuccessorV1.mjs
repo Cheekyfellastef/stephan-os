@@ -535,9 +535,10 @@ function arrayElementRange(tokens, expressionRange, requestedIndex) {
       else if (token.value === '{') depth.curly += 1;
       else if (token.value === '}') depth.curly -= 1;
       const atElementBoundary = depth.round === 0 && depth.square === 0 && depth.curly === 0;
-      if (atElementBoundary && (token.value === ',' || token.value === ']')) {
+      const closesOuterArray = token.value === ']' && index === end - 1;
+      if (atElementBoundary && (token.value === ',' || closesOuterArray)) {
         if (elementIndex === requestedIndex) return Object.freeze({ start: elementStart, end: index });
-        if (token.value === ']') return null;
+        if (closesOuterArray) return null;
         elementIndex += 1;
         elementStart = index + 1;
       }
@@ -728,6 +729,69 @@ function reflectiveExpressionDescriptors(tokens, start, end, aliases, depth = 0)
   return Object.freeze([]);
 }
 
+function stripTransparentRange(tokens, start, end) {
+  while (tokens[start]?.type === 'punctuator'
+    && tokens[start].value === '('
+    && matchingPunctuator(tokens, start, '(', ')') === end - 1) {
+    start += 1;
+    end -= 1;
+  }
+  return Object.freeze({ start, end });
+}
+
+function topLevelAssignment(tokens, start, end) {
+  const depth = { round: 0, square: 0, curly: 0 };
+  for (let index = start; index < end; index += 1) {
+    const token = tokens[index];
+    if (token?.type !== 'punctuator') continue;
+    const atBoundary = depth.round === 0 && depth.square === 0 && depth.curly === 0;
+    if (atBoundary && token.value === '=') return index;
+    if (token.value === '(') depth.round += 1;
+    else if (token.value === ')') depth.round -= 1;
+    else if (token.value === '[') depth.square += 1;
+    else if (token.value === ']') depth.square -= 1;
+    else if (token.value === '{') depth.curly += 1;
+    else if (token.value === '}') depth.curly -= 1;
+  }
+  return -1;
+}
+
+function recordArrayAssignmentAliases(tokens, patternRange, valueRange, aliases, addAlias, depth = 0) {
+  if (depth > MAX_FOLDED_AUTHORITY_EXPRESSION_DEPTH) return;
+  const pattern = stripTransparentRange(tokens, patternRange.start, patternRange.end);
+  const value = stripTransparentRange(tokens, valueRange.start, valueRange.end);
+  if (tokens[pattern.start]?.type !== 'punctuator'
+    || tokens[pattern.start].value !== '['
+    || matchingPunctuator(tokens, pattern.start, '[', ']') !== pattern.end - 1
+    || tokens[value.start]?.type !== 'punctuator'
+    || tokens[value.start].value !== '['
+    || matchingPunctuator(tokens, value.start, '[', ']') !== value.end - 1) return;
+
+  for (let elementIndex = 0; elementIndex < 32; elementIndex += 1) {
+    const targetRange = arrayElementRange(tokens, pattern, elementIndex);
+    const sourceRange = arrayElementRange(tokens, value, elementIndex);
+    if (!targetRange && !sourceRange) break;
+    if (!targetRange || targetRange.start >= targetRange.end) continue;
+    const target = stripTransparentRange(tokens, targetRange.start, targetRange.end);
+    if (tokens[target.start]?.type === 'punctuator' && tokens[target.start].value === '...') continue;
+
+    const fallback = topLevelAssignment(tokens, target.start, target.end);
+    const targetEnd = fallback >= 0 ? fallback : target.end;
+    if (tokens[target.start]?.type === 'identifier' && targetEnd === target.start + 1) {
+      for (const range of [sourceRange, fallback >= 0 ? { start: fallback + 1, end: target.end } : null]) {
+        if (!range || range.start >= range.end) continue;
+        for (const descriptor of reflectiveExpressionDescriptors(tokens, range.start, range.end, aliases)) {
+          addAlias(tokens[target.start].value, descriptor);
+        }
+      }
+      continue;
+    }
+    if (sourceRange && sourceRange.start < sourceRange.end) {
+      recordArrayAssignmentAliases(tokens, target, sourceRange, aliases, addAlias, depth + 1);
+    }
+  }
+}
+
 function reflectiveMethodAliases(tokens) {
   const aliases = new Map();
   const boundPropertyRanges = [];
@@ -745,6 +809,30 @@ function reflectiveMethodAliases(tokens) {
   let changed = true;
   while (changed) {
     changed = false;
+    for (let index = 0; index < tokens.length - 4; index += 1) {
+      if (tokens[index]?.type !== 'punctuator' || tokens[index].value !== '[') continue;
+      const previous = tokens[index - 1];
+      const beginsPattern = index === 0
+        || (previous?.type === 'identifier' && new Set(['const', 'let', 'var', 'return', 'yield']).has(previous.value))
+        || (previous?.type === 'punctuator' && new Set(['(', '[', '{', '}', ',', ';', '=']).has(previous.value));
+      if (!beginsPattern) continue;
+      const close = matchingPunctuator(tokens, index, '[', ']');
+      if (close < 0
+        || tokens[close + 1]?.type !== 'punctuator'
+        || tokens[close + 1].value !== '=') continue;
+      const rhsStart = close + 2;
+      const rhsEnd = assignmentExpressionEnd(tokens, rhsStart);
+      if (rhsEnd < 0) continue;
+      recordArrayAssignmentAliases(
+        tokens,
+        Object.freeze({ start: index, end: close + 1 }),
+        Object.freeze({ start: rhsStart, end: rhsEnd }),
+        aliases,
+        (name, descriptor) => {
+          if (addAlias(name, descriptor)) changed = true;
+        },
+      );
+    }
     for (let index = 0; index < tokens.length - 3; index += 1) {
       const alias = tokens[index];
       if (alias?.type !== 'identifier'
@@ -757,18 +845,19 @@ function reflectiveMethodAliases(tokens) {
         if (addAlias(alias.value, descriptor)) changed = true;
       }
     }
-    for (let index = 0; index < tokens.length - 6; index += 1) {
-      if (tokens[index]?.type !== 'identifier'
-        || !new Set(['const', 'let', 'var']).has(tokens[index].value)
-        || tokens[index + 1]?.type !== 'punctuator'
-        || tokens[index + 1].value !== '{') continue;
-      const close = matchingPunctuator(tokens, index + 1, '{', '}');
+    for (let index = 0; index < tokens.length - 5; index += 1) {
+      if (tokens[index]?.type !== 'punctuator' || tokens[index].value !== '{') continue;
+      const close = matchingPunctuator(tokens, index, '{', '}');
       if (close < 0
         || tokens[close + 1]?.type !== 'punctuator'
-        || tokens[close + 1].value !== '='
-        || tokens[close + 2]?.type !== 'identifier'
-        || !new Set(['Object', 'Reflect']).has(tokens[close + 2].value)) continue;
-      let cursor = index + 2;
+        || tokens[close + 1].value !== '=') continue;
+      const rhsStart = close + 2;
+      const rhsEnd = assignmentExpressionEnd(tokens, rhsStart);
+      const receiver = rhsEnd < 0 ? null : stripTransparentRange(tokens, rhsStart, rhsEnd);
+      if (receiver?.end !== receiver.start + 1
+        || tokens[receiver.start]?.type !== 'identifier'
+        || !new Set(['Object', 'Reflect']).has(tokens[receiver.start].value)) continue;
+      let cursor = index + 1;
       while (cursor < close) {
         let couldSelect = false;
         if (tokens[cursor]?.type === 'identifier') {
