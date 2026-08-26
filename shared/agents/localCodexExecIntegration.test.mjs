@@ -1173,10 +1173,21 @@ test('worker binds a PR-head review to both the approved PR head and exact curre
     },
   };
   const gitEnvironments = [];
+  const githubCalls = [];
   const run = ({ observedHead = expectedHead, observedBase = baseHead, baseBranch = 'main', mainHead = baseHead } = {}) => validateExactHeadAtWorkerStart(task, {
     platform: 'win32',
+    environment: {
+      SYSTEMROOT: 'C:\\Windows',
+      USERPROFILE: 'C:\\Users\\Operator',
+      APPDATA: 'C:\\Users\\Operator\\AppData\\Roaming',
+      GH_HOST: 'hostile.example',
+      GH_CONFIG_DIR: 'C:\\hostile-gh',
+      GH_TOKEN: 'hostile-token',
+      GITHUB_TOKEN: 'hostile-token',
+    },
     spawnSyncFn(executable, args, options) {
       if (executable === 'git.exe') gitEnvironments.push(options.env);
+      if (executable === 'gh.exe') githubCalls.push({ args, environment: options.env });
       if (executable === 'gh.exe' && args[1]?.endsWith('/pulls/2000')) {
         return {
           status: 0,
@@ -1204,6 +1215,12 @@ test('worker binds a PR-head review to both the approved PR head and exact curre
   assert.equal(gitEnvironments.every((environment) => environment.GIT_CONFIG_NOSYSTEM === '1'), true);
   assert.equal(gitEnvironments.every((environment) => environment.GIT_DIR === undefined), true);
   assert.equal(gitEnvironments.every((environment) => environment.GIT_OBJECT_DIRECTORY === undefined), true);
+  assert.ok(githubCalls.length >= 2);
+  assert.equal(githubCalls.every(({ args }) => args.includes('--hostname') && args.includes('github.com')), true);
+  assert.equal(githubCalls.every(({ environment }) => environment.GH_HOST === undefined), true);
+  assert.equal(githubCalls.every(({ environment }) => environment.GH_CONFIG_DIR === undefined), true);
+  assert.equal(githubCalls.every(({ environment }) => environment.GH_TOKEN === undefined), true);
+  assert.equal(githubCalls.every(({ environment }) => environment.GITHUB_TOKEN === undefined), true);
 });
 
 test('worker rejects pre-existing source dirt before accepting an exact-head runtime proof', () => {

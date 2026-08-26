@@ -89,15 +89,19 @@ function gitCapture(repoRoot, args, spawnSyncFn = spawnSync) {
 
 function processCapture(spawnSyncFn, executable, args, options = {}) {
   const gitExecutable = /(^|[\\/])git(?:\.exe)?$/i.test(String(executable || ''));
+  const githubExecutable = /(^|[\\/])gh(?:\.exe)?$/i.test(String(executable || ''));
+  const authorityEnvironment = options.environment || process.env;
   const result = spawnSyncFn(executable, args, {
     cwd: options.cwd,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
     timeout: 120000,
-    env: options.env || (gitExecutable
-      ? createBattleBridgeMinimalChildEnvironment(process.env, { git: true, platform: options.platform || process.platform })
-      : undefined),
+    env: gitExecutable
+      ? createBattleBridgeMinimalChildEnvironment(authorityEnvironment, { git: true, platform: options.platform || process.platform })
+      : githubExecutable
+        ? createBattleBridgeMinimalChildEnvironment(authorityEnvironment, { platform: options.platform || process.platform })
+        : options.env,
   });
   return {
     ok: !result.error && result.status === 0,
@@ -107,15 +111,19 @@ function processCapture(spawnSyncFn, executable, args, options = {}) {
 
 function processTextCapture(spawnSyncFn, executable, args, options = {}) {
   const gitExecutable = /(^|[\\/])git(?:\.exe)?$/i.test(String(executable || ''));
+  const githubExecutable = /(^|[\\/])gh(?:\.exe)?$/i.test(String(executable || ''));
+  const authorityEnvironment = options.environment || process.env;
   const result = spawnSyncFn(executable, args, {
     cwd: options.cwd,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
     timeout: 120000,
-    env: options.env || (gitExecutable
-      ? createBattleBridgeMinimalChildEnvironment(process.env, { git: true, platform: options.platform || process.platform })
-      : undefined),
+    env: gitExecutable
+      ? createBattleBridgeMinimalChildEnvironment(authorityEnvironment, { git: true, platform: options.platform || process.platform })
+      : githubExecutable
+        ? createBattleBridgeMinimalChildEnvironment(authorityEnvironment, { platform: options.platform || process.platform })
+        : options.env,
   });
   return {
     ok: !result.error && result.status === 0,
@@ -126,6 +134,7 @@ function processTextCapture(spawnSyncFn, executable, args, options = {}) {
 export function validateExactHeadAtWorkerStart(task, {
   spawnSyncFn = spawnSync,
   platform = process.platform,
+  environment = process.env,
   verificationPhase = 'worker-start',
   checkSourceStatus = true,
 } = {}) {
@@ -153,7 +162,8 @@ export function validateExactHeadAtWorkerStart(task, {
     const prLookup = processTextCapture(
       spawnSyncFn,
       platform === 'win32' ? 'gh.exe' : 'gh',
-      ['api', `repos/${repository}/pulls/${prNumber}`],
+      ['api', `repos/${repository}/pulls/${prNumber}`, '--hostname', 'github.com'],
+      { platform, environment },
     );
     let prIdentity;
     try { prIdentity = prLookup.ok ? JSON.parse(prLookup.stdout) : null; } catch { prIdentity = null; }
@@ -174,7 +184,8 @@ export function validateExactHeadAtWorkerStart(task, {
     const main = processCapture(
       spawnSyncFn,
       platform === 'win32' ? 'gh.exe' : 'gh',
-      ['api', `repos/${repository}/commits/main`, '--jq', '.sha'],
+      ['api', `repos/${repository}/commits/main`, '--hostname', 'github.com', '--jq', '.sha'],
+      { platform, environment },
     );
     if (!main.ok || !/^[0-9a-f]{40}$/.test(main.stdout)) {
       return Object.freeze({ ok: false, required: true, blocker: 'GITHUB_MAIN_HEAD_LOOKUP_FAILED', expectedHead, pullRequestHead, githubMainHead, branch: expectedBranch, verificationPhase });
@@ -186,7 +197,8 @@ export function validateExactHeadAtWorkerStart(task, {
     const gh = processCapture(
       spawnSyncFn,
       platform === 'win32' ? 'gh.exe' : 'gh',
-      ['api', `repos/${repository}/pulls/${prNumber}`, '--jq', '.head.sha'],
+      ['api', `repos/${repository}/pulls/${prNumber}`, '--hostname', 'github.com', '--jq', '.head.sha'],
+      { platform, environment },
     );
     if (!gh.ok || !/^[0-9a-f]{40}$/.test(gh.stdout)) {
       return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_LOOKUP_FAILED', expectedHead, branch: expectedBranch, verificationPhase });
@@ -208,7 +220,8 @@ export function validateExactHeadAtWorkerStart(task, {
     const prLookup = processTextCapture(
       spawnSyncFn,
       platform === 'win32' ? 'gh.exe' : 'gh',
-      ['api', `repos/${repository}/pulls/${prNumber}`],
+      ['api', `repos/${repository}/pulls/${prNumber}`, '--hostname', 'github.com'],
+      { platform, environment },
     );
     let prIdentity;
     try { prIdentity = prLookup.ok ? JSON.parse(prLookup.stdout) : null; } catch { prIdentity = null; }
@@ -230,7 +243,8 @@ export function validateExactHeadAtWorkerStart(task, {
     const main = processCapture(
       spawnSyncFn,
       platform === 'win32' ? 'gh.exe' : 'gh',
-      ['api', `repos/${repository}/commits/main`, '--jq', '.sha'],
+      ['api', `repos/${repository}/commits/main`, '--hostname', 'github.com', '--jq', '.sha'],
+      { platform, environment },
     );
     if (!main.ok || !/^[0-9a-f]{40}$/.test(main.stdout)) {
       return Object.freeze({ ok: false, required: true, blocker: 'GITHUB_MAIN_HEAD_LOOKUP_FAILED', expectedHead, pullRequestHead, mergeCommitHead, branch: expectedBranch, verificationPhase });
@@ -263,7 +277,7 @@ export function validateExactHeadAtWorkerStart(task, {
     spawnSyncFn,
     platform === 'win32' ? 'git.exe' : 'git',
     ['rev-parse', 'HEAD'],
-    { cwd: task.repoRoot, platform },
+    { cwd: task.repoRoot, platform, environment },
   );
   if (!git.ok || !/^[0-9a-f]{40}$/.test(git.stdout)) {
     return Object.freeze({ ok: false, required: true, blocker: 'LOCAL_HEAD_LOOKUP_FAILED', expectedHead, pullRequestHead, mergeCommitHead, githubMainHead, mergeCommitIncluded, branch: expectedBranch, verificationPhase });
@@ -303,7 +317,7 @@ export function validateExactHeadAtWorkerStart(task, {
     spawnSyncFn,
     platform === 'win32' ? 'git.exe' : 'git',
     ['status', '--porcelain=v1', '--untracked-files=all'],
-    { cwd: task.repoRoot, platform },
+    { cwd: task.repoRoot, platform, environment },
   );
   if (!status.ok) {
     return Object.freeze({
