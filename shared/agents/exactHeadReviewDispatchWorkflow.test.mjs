@@ -19,7 +19,7 @@ test('serializes every mutating coordinator trigger through one PR-scoped author
   const workflow = readWorkflow();
 
   assert.match(workflow, /\n  plan:\n[\s\S]*STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY:\s*'true'/);
-  assert.match(workflow, /targets:\s*\$\{\{ steps\.plan\.outputs\.targets \}\}/);
+  assert.match(workflow, /targets:\s*\$\{\{ steps\.admit\.outputs\.targets \}\}/);
   assert.match(workflow, /target:\s*\$\{\{ fromJSON\(needs\.plan\.outputs\.targets\) \}\}/);
   assert.match(
     workflow,
@@ -74,7 +74,7 @@ test('every real planning dependency is gated away from pull-request verificatio
   const workflow = readWorkflow();
   const plan = workflowJob(workflow, 'plan', 'coordinate');
   const admitted = /if: >-\n          github\.event_name != 'pull_request' &&\n          \(github\.event_name != 'issue_comment' \|\| github\.event\.issue\.pull_request != null\)/g;
-  assert.equal([...plan.matchAll(admitted)].length, 3);
+  assert.equal([...plan.matchAll(admitted)].length, 4);
   assert.match(plan, /permissions:\n      actions: read\n      contents: read\n      issues: read\n      pull-requests: read/);
   assert.match(workflow, /coordinate:\n    needs: plan\n    if: >-\n      needs\.plan\.outputs\.targets != ''/);
 });
