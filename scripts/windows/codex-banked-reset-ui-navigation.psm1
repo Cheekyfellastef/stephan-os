@@ -458,6 +458,7 @@ function Open-CodexUsagePanel {
             $windows += [pscustomobject]@{ Element = $window; Name = $name; ProcessName = $processName; ProcessId = $processId }
         } catch { continue }
     }
+    $windows = @(Select-CodexUniqueProcessCandidates -Candidates @($windows))
 
     if ($windows.Count -eq 0) {
         return [pscustomobject]@{

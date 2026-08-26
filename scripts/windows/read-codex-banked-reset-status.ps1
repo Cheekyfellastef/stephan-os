@@ -87,6 +87,7 @@ foreach ($window in $topWindows) {
         $windowCandidates += [pscustomobject]@{ Element = $window; Name = $windowName; ProcessName = $processName; ProcessId = $processId }
     } catch { continue }
 }
+$windowCandidates = @(Select-CodexUniqueProcessCandidates -Candidates @($windowCandidates))
 
 if ($windowCandidates.Count -eq 0) {
     Block 'BLOCKED_RESET_STATUS_AUTHENTICATED_APP_WINDOW_NOT_FOUND' @{

@@ -121,4 +121,19 @@ $desktopResult = Resolve-CodexUsageSurfaceEvidence -Snapshot $desktop -ProcessNa
 Assert-Equal $desktopResult.valid $true 'desktop compatibility'
 Assert-Equal $desktopResult.surfaceKind 'authenticated-desktop-codex-usage' 'desktop identity'
 
-[Console]::Out.WriteLine('codex-usage-surface-evidence: 9/9 adversarial fixtures passed')
+$sameProcessWindows = @(
+    [pscustomobject]@{ ProcessId = 4401; ProcessName = 'msedge'; Name = 'Codex' }
+    [pscustomobject]@{ ProcessId = 4401; ProcessName = 'msedge'; Name = 'Codex Analytics' }
+)
+$sameProcessResult = @(Select-CodexUniqueProcessCandidates -Candidates $sameProcessWindows)
+Assert-Equal $sameProcessResult.Count 1 'same-process window deduplication'
+Assert-Equal $sameProcessResult[0].ProcessId 4401 'same-process identity preservation'
+
+$distinctProcessWindows = @(
+    [pscustomobject]@{ ProcessId = 4401; ProcessName = 'msedge'; Name = 'Codex Analytics' }
+    [pscustomobject]@{ ProcessId = 4402; ProcessName = 'msedge'; Name = 'Codex Analytics' }
+)
+$distinctProcessResult = @(Select-CodexUniqueProcessCandidates -Candidates $distinctProcessWindows)
+Assert-Equal $distinctProcessResult.Count 2 'distinct-process ambiguity preservation'
+
+[Console]::Out.WriteLine('codex-usage-surface-evidence: 10/10 adversarial fixtures passed')

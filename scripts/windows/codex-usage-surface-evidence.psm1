@@ -31,6 +31,44 @@ function New-CodexUsageEvidenceResult {
     }
 }
 
+function Select-CodexUniqueProcessCandidates {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$Candidates
+    )
+
+    $groups = @{}
+    foreach ($candidate in @($Candidates)) {
+        if ($null -eq $candidate) { continue }
+        try {
+            $processId = [int]$candidate.ProcessId
+            $processName = Convert-ToCodexUsageSafeText $candidate.ProcessName 80
+            $windowName = Convert-ToCodexUsageSafeText $candidate.Name 160
+        } catch {
+            continue
+        }
+        if ($processId -le 0 -or $processName -notin @('ChatGPT', 'Codex', 'msedge')) { continue }
+        $key = [string]$processId
+        if (-not $groups.ContainsKey($key)) { $groups[$key] = @() }
+        $groups[$key] += [pscustomobject]@{
+            Candidate = $candidate
+            ProcessName = $processName
+            WindowName = $windowName
+        }
+    }
+
+    $selected = @()
+    foreach ($key in @($groups.Keys | Sort-Object { [int]$_ })) {
+        $group = @($groups[$key])
+        $processNames = @($group | Select-Object -ExpandProperty ProcessName -Unique)
+        if ($processNames.Count -ne 1) { continue }
+        $ordered = @($group | Sort-Object WindowName)
+        if ($ordered.Count -gt 0) { $selected += $ordered[0].Candidate }
+    }
+    return @($selected)
+}
+
 function Resolve-CodexUsageSurfaceEvidence {
     [CmdletBinding()]
     param(
@@ -166,4 +204,4 @@ function Resolve-CodexUsageSurfaceEvidence {
         @('authenticated-desktop-codex-usage', 'desktop-meter-structurally-bound')
 }
 
-Export-ModuleMember -Function Resolve-CodexUsageSurfaceEvidence
+Export-ModuleMember -Function Resolve-CodexUsageSurfaceEvidence, Select-CodexUniqueProcessCandidates
