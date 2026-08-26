@@ -375,6 +375,62 @@ function Get-StephanosBrowserSurfaceDefinition([string]$Id, [string]$Label, [str
   }
 }
 
+function Initialize-StephanosWindowProbe {
+  if ('StephanosIgnitionWindowProbe' -as [type]) { return }
+
+  Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class StephanosIgnitionWindowProbe
+{
+    public sealed class WindowRecord
+    {
+        public long Handle { get; set; }
+        public string Title { get; set; }
+    }
+
+    private delegate bool EnumWindowsCallback(IntPtr windowHandle, IntPtr state);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr state);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr windowHandle, out uint processId);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr windowHandle);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr windowHandle, StringBuilder title, int maximumCount);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextLength(IntPtr windowHandle);
+
+    public static WindowRecord[] GetVisibleTopLevelWindows(int expectedProcessId)
+    {
+        var windows = new List<WindowRecord>();
+        EnumWindows(delegate(IntPtr windowHandle, IntPtr state)
+        {
+            uint processId;
+            GetWindowThreadProcessId(windowHandle, out processId);
+            if (processId != (uint)expectedProcessId || !IsWindowVisible(windowHandle)) return true;
+
+            var titleLength = GetWindowTextLength(windowHandle);
+            if (titleLength <= 0) return true;
+            var title = new StringBuilder(titleLength + 1);
+            GetWindowText(windowHandle, title, title.Capacity);
+            windows.Add(new WindowRecord { Handle = windowHandle.ToInt64(), Title = title.ToString() });
+            return true;
+        }, IntPtr.Zero);
+        return windows.ToArray();
+    }
+}
+'@
+}
+
 function Get-VerifiedEdgeAppSurface([System.Collections.IDictionary]$Surface, [string]$EdgeExecutable) {
   $profileArgument = "--user-data-dir=`"$($Surface.ProfilePath)`""
   $appArgument = "--app=$($Surface.Url)"
@@ -386,18 +442,23 @@ function Get-VerifiedEdgeAppSurface([System.Collections.IDictionary]$Surface, [s
       -and $commandLine.IndexOf($appArgument, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
   })
 
+  Initialize-StephanosWindowProbe
   foreach ($candidate in $processes) {
     try {
       $process = Get-Process -Id ([int]$candidate.ProcessId) -ErrorAction Stop
       $path = [System.IO.Path]::GetFullPath([string]$process.Path)
       if (-not [string]::Equals($path, $EdgeExecutable, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
-      if ([int64]$process.MainWindowHandle -eq 0) { continue }
-      if (-not [string]::Equals([string]$process.MainWindowTitle, [string]$Surface.ExpectedTitle, [System.StringComparison]::Ordinal)) { continue }
-      return [ordered]@{
-        pid = [int]$candidate.ProcessId
-        processStartTimeUtc = $process.StartTime.ToUniversalTime().ToString('o')
-        windowHandle = [int64]$process.MainWindowHandle
-        windowTitle = [string]$process.MainWindowTitle
+      $surfaceWindow = @([StephanosIgnitionWindowProbe]::GetVisibleTopLevelWindows([int]$candidate.ProcessId)) | Where-Object {
+        [int64]$_.Handle -ne 0 `
+          -and [string]::Equals([string]$_.Title, [string]$Surface.ExpectedTitle, [System.StringComparison]::Ordinal)
+      } | Select-Object -First 1
+      if ($surfaceWindow) {
+        return [ordered]@{
+          pid = [int]$candidate.ProcessId
+          processStartTimeUtc = $process.StartTime.ToUniversalTime().ToString('o')
+          windowHandle = [int64]$surfaceWindow.Handle
+          windowTitle = [string]$surfaceWindow.Title
+        }
       }
     }
     catch {}
