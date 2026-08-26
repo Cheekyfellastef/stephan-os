@@ -38,6 +38,7 @@ import {
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { FORGE_SHADOW_BATTLE_BRIDGE_OPERATION } from '../shared/agents/forgeShadowBattleBridgeAdapterV1.mjs';
 import { publishCodexCapacityToSharedWorkspace } from '../shared/agents/codexCapacitySharedWorkspace.mjs';
+import { refreshBattleBridgeCodexCapacity } from '../shared/agents/battleBridgeCodexCapacityRefreshV1.mjs';
 import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/recoveryAdapterBlockerClassifier.mjs';
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 
@@ -1481,12 +1482,26 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     now,
     publish: publicationBudget.publish,
   });
-  if (batch.verdict === 'NO_COMMAND_READY') return Object.freeze({
-    ...batch,
-    terminalizedRejectionCount: rejectedTerminal.length,
-    receiptPublicationOutbox: publicationOutbox,
-    receiptPublicationBudget: publicationBudget.snapshot(),
-  });
+  if (batch.verdict === 'NO_COMMAND_READY') {
+    const capacityRefresh = await refreshBattleBridgeCodexCapacity({
+      nowUtc: now().toISOString(),
+      sourceIdentity: readCanonicalSourceIdentity(),
+      checkpoint: state.codexCapacityRefresh ?? null,
+      workspaceRoot: sharedWorkspaceRoot,
+      repoRoot,
+    });
+    if (capacityRefresh.checkpoint) {
+      state.codexCapacityRefresh = capacityRefresh.checkpoint;
+      saveState(state);
+    }
+    return Object.freeze({
+      ...batch,
+      terminalizedRejectionCount: rejectedTerminal.length,
+      receiptPublicationOutbox: publicationOutbox,
+      receiptPublicationBudget: publicationBudget.snapshot(),
+      capacityRefresh,
+    });
+  }
   if (!batch.ok) return batch;
 
   const accepted = new Map();

@@ -162,6 +162,10 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.doesNotMatch(mailboxSource, /for \(const selected of batch\.commands\) \{[\s\S]{0,500}state: 'ACCEPTED'/);
   assert.match(mailboxSource, /maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH/);
   assert.match(mailboxSource, /deferredCount: batch\.deferredCount/);
+  assert.match(mailboxSource, /batch\.verdict === 'NO_COMMAND_READY'[\s\S]{0,900}refreshBattleBridgeCodexCapacity\(\{/);
+  assert.match(mailboxSource, /sourceIdentity: readCanonicalSourceIdentity\(\)/);
+  assert.match(mailboxSource, /checkpoint: state\.codexCapacityRefresh \?\? null/);
+  assert.match(mailboxSource, /state\.codexCapacityRefresh = capacityRefresh\.checkpoint/);
   assert.match(mailboxSource, /updateStephanosFromChat\(\{[\s\S]{0,180}expectedHead: command\.expectedHead/);
   assert.doesNotMatch(mailboxSource, /BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE\s*=\s*[^1]*2|issueNumber:\s*1508/);
 
