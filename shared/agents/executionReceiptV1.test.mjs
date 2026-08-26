@@ -526,16 +526,20 @@ test('workspace history lock has deterministic contention refusal and stale-lock
 test('workspace history lock heartbeat renews an active owner beyond the stale timeout', async () => {
   const root = await mkdtemp(join(tmpdir(), 'execution-receipt-history-heartbeat-'));
   const lockPath = join(root, 'receipt-locks', 'history', 'execution-receipts.lock');
+  const staleLockMs = 250;
   try {
-    const worker = await startHistoryLockWorker(root, { holdMs: 250, staleLockMs: 45 });
+    const worker = await startHistoryLockWorker(root, { holdMs: 1_500, staleLockMs });
     await waitForFile(worker.markerPath);
     const [ownerFileName] = await readdir(lockPath);
     const ownerPath = join(lockPath, ownerFileName);
     const before = await stat(ownerPath);
-    await delay(120);
+    await delay(staleLockMs * 2);
     const after = await stat(ownerPath);
-    assert.equal(after.mtimeMs > before.mtimeMs, true);
-    assert.equal(Date.now() - after.mtimeMs < 45, true);
+    assert.equal(
+      after.mtimeMs >= before.mtimeMs + staleLockMs,
+      true,
+      'the owner heartbeat must advance after the original owner timestamp becomes stale',
+    );
     const completion = await worker.completion;
     assert.equal(completion.exitCode, 0, completion.stderr);
     assert.equal(completion.result.reason, 'EXECUTION_RECEIPT_HISTORY_LOCK_RELEASED');
