@@ -36,3 +36,5 @@ test('Q&A rejection diagnostic rejects malformed or unsafe classifications', () 
   const diagnostic = buildSharedWorkspaceQaAnswerDiagnosticV1({ errors: ['answer-record-missing'] });
   assert.equal(diagnostic.classification, 'WORKSPACE_QA_COGNITION_REJECTED_UNCLASSIFIED');
 });
+
+// Source-neutral CI synchronize-event nudge; removed in the immediately following commit.
