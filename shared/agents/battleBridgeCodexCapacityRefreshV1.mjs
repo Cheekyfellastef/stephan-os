@@ -30,6 +30,10 @@ function timestamp(value) {
   return Number.isFinite(milliseconds) ? new Date(milliseconds).toISOString() : '';
 }
 
+function stringValue(value) {
+  return typeof value === 'string' ? value : '';
+}
+
 function reason(value, fallback) {
   const normalized = typeof value === 'string' ? value.trim().toUpperCase() : '';
   return SAFE_REASON.test(normalized) ? normalized : fallback;
@@ -102,7 +106,7 @@ function usablePriorCheckpoint(value, nowMs) {
   if (ownValue(value, 'schemaVersion') !== BATTLE_BRIDGE_CODEX_CAPACITY_REFRESH_SCHEMA) return null;
   const lastAttemptAtUtc = timestamp(ownValue(value, 'lastAttemptAtUtc'));
   const nextEligibleAtUtc = timestamp(ownValue(value, 'nextEligibleAtUtc'));
-  const sourceHead = String(ownValue(value, 'sourceHead') || '').toLowerCase();
+  const sourceHead = stringValue(ownValue(value, 'sourceHead')).toLowerCase();
   const lastAttemptMs = Date.parse(lastAttemptAtUtc);
   const nextEligibleMs = Date.parse(nextEligibleAtUtc);
   if (!lastAttemptAtUtc || !nextEligibleAtUtc || !SHA_40.test(sourceHead)
@@ -121,7 +125,7 @@ export async function refreshBattleBridgeCodexCapacity(input = {}, deps = {}) {
   const nowMs = Date.parse(nowUtc);
   if (!nowUtc) return blocked('CODEX_CAPACITY_REFRESH_TIME_INVALID');
   const sourceIdentity = ownValue(input, 'sourceIdentity');
-  const sourceHead = String(ownValue(sourceIdentity, 'sourceHead') || '').toLowerCase();
+  const sourceHead = stringValue(ownValue(sourceIdentity, 'sourceHead')).toLowerCase();
   if (ownValue(sourceIdentity, 'ok') !== true
     || ownValue(sourceIdentity, 'branch') !== 'main'
     || !SHA_40.test(sourceHead)) {
@@ -168,7 +172,7 @@ export async function refreshBattleBridgeCodexCapacity(input = {}, deps = {}) {
   try {
     status = await readStatus(command, {
       now: new Date(nowMs),
-      repoRoot: String(ownValue(input, 'repoRoot') || ''),
+      repoRoot: stringValue(ownValue(input, 'repoRoot')),
     });
   } catch {
     status = null;
@@ -182,7 +186,7 @@ export async function refreshBattleBridgeCodexCapacity(input = {}, deps = {}) {
     && ownValue(status, 'usageSurfaceMatched') === true
     && ownValue(status, 'readOnly') === true
     && ownValue(status, 'pressAttempted') === false
-    && Number(ownValue(status, 'pressCount')) === 0
+    && ownValue(status, 'pressCount') === 0
     && ownValue(status, 'arbitraryShellAllowed') === false
     && ownValue(status, 'arbitraryBrowserAutomationAllowed') === false
     && ownValue(status, 'credentialsMayBeReadOrExported') === false;
@@ -197,10 +201,11 @@ export async function refreshBattleBridgeCodexCapacity(input = {}, deps = {}) {
     return blocked(statusBlocker, { attempted: true, checkpoint: refreshCheckpoint });
   }
   const rawRemainingPercent = ownValue(status, 'remainingPercent');
-  const remainingPercent = Number.isFinite(Number(rawRemainingPercent))
-    && Number(rawRemainingPercent) >= 0
-    && Number(rawRemainingPercent) <= 100
-    ? Number(rawRemainingPercent)
+  const remainingPercent = typeof rawRemainingPercent === 'number'
+    && Number.isFinite(rawRemainingPercent)
+    && rawRemainingPercent >= 0
+    && rawRemainingPercent <= 100
+    ? rawRemainingPercent
     : undefined;
   const safeStatusResult = Object.freeze({
     ok: true,
@@ -224,19 +229,19 @@ export async function refreshBattleBridgeCodexCapacity(input = {}, deps = {}) {
   });
   let publication;
   try {
-    publication = await publishCapacity(String(ownValue(input, 'workspaceRoot') || ''), {
+    publication = await publishCapacity(stringValue(ownValue(input, 'workspaceRoot')), {
       statusResult: safeStatusResult,
       timestampUtc: nowUtc,
       proofRefs: safeStatusResult.proofRefs,
     }, {
-      repoRoot: String(ownValue(input, 'repoRoot') || ''),
+      repoRoot: stringValue(ownValue(input, 'repoRoot')),
       nowMs,
     });
   } catch {
     publication = null;
   }
   const slice = ownValue(publication, 'slice');
-  const truthState = String(ownValue(slice, 'truthState') || '').toUpperCase();
+  const truthState = stringValue(ownValue(slice, 'truthState')).toUpperCase();
   const publicationValid = ownValue(publication, 'ok') === true
     && ownValue(publication, 'finalVerdict') === 'CODEX_CAPACITY_WORKSPACE_PUBLISH_PASS'
     && ownValue(slice, 'schemaVersion') === 'stephanos.codex-capacity-workspace.v1'

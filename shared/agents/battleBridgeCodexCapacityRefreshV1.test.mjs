@@ -227,6 +227,92 @@ test('accessor-shaped optional status data is not invoked or forwarded', async (
   assert.equal(result.dispatchAllowed, false);
 });
 
+test('coercion-shaped identity and checkpoint values fail closed without invocation', async () => {
+  let coercionInvoked = false;
+  const hostile = {
+    [Symbol.toPrimitive]() {
+      coercionInvoked = true;
+      return HEAD;
+    },
+  };
+  let calls = 0;
+  const invalidIdentity = await refreshBattleBridgeCodexCapacity(input({
+    sourceIdentity: { ok: true, branch: 'main', sourceHead: hostile },
+  }), {
+    readStatus: async () => { calls += 1; },
+    publishCapacity: async () => { calls += 1; },
+  });
+  assert.equal(invalidIdentity.ok, false);
+  assert.equal(invalidIdentity.blocker, 'CODEX_CAPACITY_REFRESH_SOURCE_IDENTITY_INVALID');
+  assert.equal(calls, 0);
+
+  const checkpointResult = await refreshBattleBridgeCodexCapacity(input({
+    checkpoint: {
+      schemaVersion: BATTLE_BRIDGE_CODEX_CAPACITY_REFRESH_SCHEMA,
+      lastAttemptAtUtc: new Date(Date.parse(NOW) - 60_000).toISOString(),
+      nextEligibleAtUtc: new Date(Date.parse(NOW) + 60_000).toISOString(),
+      sourceHead: hostile,
+    },
+  }), {
+    readStatus: async (command) => {
+      calls += 1;
+      return status(command);
+    },
+    publishCapacity: async () => publication(),
+  });
+  assert.equal(checkpointResult.ok, true);
+  assert.equal(checkpointResult.attempted, true);
+  assert.equal(calls, 1);
+  assert.equal(coercionInvoked, false);
+});
+
+test('coercion-shaped status scalars cannot become meter or reset truth', async () => {
+  let coercionInvoked = false;
+  const hostile = {
+    valueOf() {
+      coercionInvoked = true;
+      return 0;
+    },
+  };
+  let publishes = 0;
+  const invalidPressCount = await refreshBattleBridgeCodexCapacity(input(), {
+    readStatus: async (command) => status(command, { pressCount: hostile }),
+    publishCapacity: async () => { publishes += 1; },
+  });
+  assert.equal(invalidPressCount.ok, false);
+  assert.equal(invalidPressCount.blocker, 'CODEX_CAPACITY_REFRESH_READER_INVALID');
+  assert.equal(publishes, 0);
+
+  let forwardedStatus = null;
+  const invalidPercent = await refreshBattleBridgeCodexCapacity(input(), {
+    readStatus: async (command) => status(command, { remainingPercent: hostile }),
+    publishCapacity: async (_root, payload) => {
+      forwardedStatus = payload.statusResult;
+      return publication();
+    },
+  });
+  assert.equal(invalidPercent.ok, true);
+  assert.equal(forwardedStatus.remainingPercent, undefined);
+  assert.equal(coercionInvoked, false);
+});
+
+test('coercion-shaped published truth state is rejected without invocation', async () => {
+  let coercionInvoked = false;
+  const hostile = {
+    toString() {
+      coercionInvoked = true;
+      return 'CURRENT';
+    },
+  };
+  const result = await refreshBattleBridgeCodexCapacity(input(), {
+    readStatus: async (command) => status(command),
+    publishCapacity: async () => publication({ truthState: hostile }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CODEX_CAPACITY_REFRESH_PUBLICATION_INVALID');
+  assert.equal(coercionInvoked, false);
+});
+
 test('truthful unknown publication remains non-routable', async () => {
   const result = await refreshBattleBridgeCodexCapacity(input(), {
     readStatus: async (command) => status(command, { meterSummary: 'Codex usage unavailable' }),
