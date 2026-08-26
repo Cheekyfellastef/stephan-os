@@ -1823,12 +1823,10 @@ function authorityStringsForExpression(tokens, start, end) {
   const pattern = templateOwnsExpression
     ? aggregateTemplate.authorityPatternParts
     : parseComputedAuthorityPattern(tokens, start, end);
-  const staticallyNamedProperty = Array.isArray(pattern)
-    && pattern.every((part) => part.kind === 'fixed');
   const authorityNames = [
     ...DANGEROUS_AUTHORITY_TOKENS,
     ...FORBIDDEN_LOCAL_MODULES,
-    ...(staticallyNamedProperty ? FORBIDDEN_GLOBAL_CAPABILITIES : []),
+    ...FORBIDDEN_GLOBAL_CAPABILITIES,
   ];
   if (!pattern) values.push('spawn');
   else for (const authorityName of authorityNames) {

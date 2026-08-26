@@ -1063,6 +1063,20 @@ test('every split point of authority names remains visible across computed acces
   }
 });
 
+test('caller-completed computed names cannot recover forbidden network capabilities', () => {
+  for (const hostileSource of [
+    "export function widened(input, suffix) { return input['fet' + suffix]('https://example.invalid'); }",
+    "export function widened(input, suffix) { return new input['Event' + suffix]('https://example.invalid'); }",
+    "export function widened(input, suffix) { return new input['Web' + suffix]('wss://example.invalid'); }",
+  ]) {
+    const result = analyzeProviderPoolInjection(hostileSource);
+    assert.equal(result.clean, false, hostileSource);
+    assert.ok(result.findings.some((item) => (
+      item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'
+    )));
+  }
+});
+
 test('successor template analysis preserves benign dynamic proof strings', () => {
   const benignSources = sources();
   const content = `${benignSources[0].content}\nconst proofRef = \`proofs/openclaw/${'${receiptId}'}\`;\n`;
