@@ -49,6 +49,7 @@ jobs:
       - name: Run coordinator regressions
         run: |
           npm run stephanos:exact-head-review:test
+          node --test shared/agents/codexReviewCapacityFailoverV1.test.mjs
           node --test shared/agents/exactHeadReviewCoordinatorAuthority.test.mjs
           node --test shared/agents/independentReviewRetryPlanner.test.mjs
           node --test shared/agents/exactHeadReviewDispatchWorkflow.test.mjs
@@ -66,6 +67,7 @@ jobs:
 
       - name: Parse review coordinator sources
         run: |
+          node --check shared/agents/codexReviewCapacityFailoverV1.mjs
           node --check shared/agents/exactHeadReviewDispatchCoordinator.mjs
           node --check shared/agents/exactHeadReviewCoordinatorAuthority.mjs
           node --check shared/agents/independentReviewRetryPlanner.mjs
@@ -137,10 +139,17 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Classify trusted Codex review-capacity outage
+        id: provider_failover
+        if: >-
+          github.event_name == 'issue_comment' &&
+          github.event.issue.pull_request != null
+        run: node shared/agents/codexReviewCapacityFailoverV1.mjs
+
       - name: Download the exact triggering independent-review artifact
         if: >-
           github.event_name == 'workflow_run' &&
-          github.event.workflow_run.name == 'Independent Merge Security Review' &&
+          github.event.workflow_run.path == '.github/workflows/independent-merge-security-review.yml' &&
           github.event.workflow_run.conclusion == 'success'
         uses: actions/download-artifact@v4
         with:
@@ -159,7 +168,7 @@ jobs:
           STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY: 'true'
           STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ inputs.pr_number || '' }}
           STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
-          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Independent Merge Security Review' && github.event.workflow_run.conclusion == 'success' }}
+          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.path == '.github/workflows/independent-merge-security-review.yml' && github.event.workflow_run.conclusion == 'success' }}
           STEPHANOS_TRIGGER_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/triggering-independent-review/independent-review-result.json
           STEPHANOS_TRIGGER_REVIEW_RUN_ID: ${{ github.event.workflow_run.id || '' }}
           STEPHANOS_TRIGGER_REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
@@ -201,7 +210,7 @@ jobs:
       - name: Download the exact triggering independent-review artifact
         if: >-
           github.event_name == 'workflow_run' &&
-          github.event.workflow_run.name == 'Independent Merge Security Review' &&
+          github.event.workflow_run.path == '.github/workflows/independent-merge-security-review.yml' &&
           github.event.workflow_run.conclusion == 'success'
         uses: actions/download-artifact@v4
         with:
@@ -217,7 +226,7 @@ jobs:
           STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ matrix.target.prNumber }}
           STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
           STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES: '10'
-          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Independent Merge Security Review' && github.event.workflow_run.conclusion == 'success' }}
+          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.path == '.github/workflows/independent-merge-security-review.yml' && github.event.workflow_run.conclusion == 'success' }}
           STEPHANOS_TRIGGER_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/triggering-independent-review/independent-review-result.json
           STEPHANOS_TRIGGER_REVIEW_RUN_ID: ${{ github.event.workflow_run.id || '' }}
           STEPHANOS_TRIGGER_REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
