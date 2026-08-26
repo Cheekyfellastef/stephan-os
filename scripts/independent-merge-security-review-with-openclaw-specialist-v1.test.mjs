@@ -23,6 +23,11 @@ test('OpenClaw specialist can act only on an exact digest-bound findings artifac
   assert.match(text, /stephanos\.independent-review\.findings-artifact/);
   assert.match(text, /artifact\?\.payloadSha256 !== independentReviewFindingsArtifactPayloadSha256\(artifact\)/);
   assert.match(text, /analyzeOpenClawBuilderProviderSpecialistReviewV1/);
+  assert.equal(
+    [...text.matchAll(/findingsArtifactEvidence: artifact/g)].length,
+    2,
+    'both the eligibility probe and full specialist review must consume the exact validated artifact',
+  );
   assert.match(text, /if \(!probe\.eligible\) process\.exit\(child\.status \|\| 1\);/);
   assert.match(text, /if \(!specialist\.eligible\) process\.exit\(child\.status \|\| 1\);/);
 });

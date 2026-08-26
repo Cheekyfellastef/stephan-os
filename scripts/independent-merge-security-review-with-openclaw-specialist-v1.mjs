@@ -164,6 +164,7 @@ async function main() {
     baseSha: artifact.baseSha,
     lineageEvidence,
     analysis: artifact.analysis,
+    findingsArtifactEvidence: artifact,
     sources: [],
   });
   if (!probe.eligible) process.exit(child.status || 1);
@@ -177,6 +178,7 @@ async function main() {
     baseSha: artifact.baseSha,
     lineageEvidence,
     analysis: artifact.analysis,
+    findingsArtifactEvidence: artifact,
     sources,
   });
   if (!specialist.eligible) process.exit(child.status || 1);
