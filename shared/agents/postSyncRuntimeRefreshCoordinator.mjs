@@ -56,6 +56,7 @@ const NATURAL_EXACT = new Set([
   'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
   'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
   'scripts/windows/restart-approved-stephanos-runtime.ps1',
+  'windows/Launch-Stephanos-Local.ps1',
 ]);
 
 const NATURAL_PREFIXES = Object.freeze([
