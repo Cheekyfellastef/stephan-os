@@ -210,6 +210,9 @@ export function assessCodexIntegration(integration = {}) {
 }
 
 export function createDispatchPacket(record, input = {}) {
+  const readOnlyPullRequestWorktree = input.readOnlyPullRequestWorktree
+    ? Object.freeze({ ...input.readOnlyPullRequestWorktree })
+    : null;
   return Object.freeze({
     schemaVersion: AUTOMATED_CODEX_DISPATCHER_SCHEMA_VERSION,
     kind: 'stephanos.automated_codex_dispatcher.dispatch_packet',
@@ -220,6 +223,7 @@ export function createDispatchPacket(record, input = {}) {
     prompt: record.prompt,
     requestedProofCommands: [...record.requestedProofCommands],
     exactHeadProof: record.exactHeadProof ? { ...record.exactHeadProof } : null,
+    readOnlyPullRequestWorktree,
     approvalRequirements: { ...record.approvalRequirements },
     queueRecordRef: record.jobId,
     sharedWorkspaceOnly: true,

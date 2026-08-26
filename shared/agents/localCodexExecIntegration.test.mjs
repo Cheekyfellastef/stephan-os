@@ -381,6 +381,45 @@ test('local integration preserves merged-main provenance through task status and
   assert.deepEqual(JSON.parse(readFileSync(receipt.taskPath, 'utf8')).exactHeadProof, mergedPacket.exactHeadProof);
 });
 
+test('local integration preserves only an exact descriptor-safe read-only PR worktree receipt', () => {
+  const roots = tempRoots();
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    spawnFn: () => ({ pid: 4244, unref() {} }),
+  });
+  const value = packet('codex-job-read-only-pr-worktree');
+  value.readOnlyPullRequestWorktree = {
+    schemaVersion: 'stephanos.read-only-pull-request-worktree.v1',
+    repositoryRoot: resolve(roots.repoRoot),
+    sourceHead: value.exactHeadProof.expectedHead,
+    commonDirectory: resolve(roots.repoRoot, '.git'),
+    cleanTrackedAndUntracked: true,
+    ignoredFilesAbsent: true,
+    sourceMutationAllowed: false,
+  };
+  const receipt = integration.dispatch(value);
+  const status = integration.readStatus(value.jobId);
+  assert.equal(receipt.accepted, true);
+  assert.deepEqual(status.readOnlyPullRequestWorktree, value.readOnlyPullRequestWorktree);
+  assert.equal(status.safety.ignoredFilesMustRemainAbsent, true);
+
+  const forgedRoots = tempRoots();
+  const forgedIntegration = createLocalCodexExecIntegration({
+    ...forgedRoots,
+    spawnFn: () => assert.fail('invalid worktree receipt must not spawn a worker'),
+  });
+  const forged = packet('codex-job-forged-read-only-pr-worktree');
+  forged.readOnlyPullRequestWorktree = {
+    ...value.readOnlyPullRequestWorktree,
+    repositoryRoot: resolve(forgedRoots.repoRoot),
+    extraAuthority: true,
+  };
+  assert.throws(
+    () => forgedIntegration.dispatch(forged),
+    /invalid read-only PR worktree receipt/,
+  );
+});
+
 test('browser proof PASS trusts only exact machine-owned scenario evidence', () => {
   const task = packet();
   const modelPass = JSON.stringify({
@@ -1216,6 +1255,44 @@ test('worker persists BLOCKED before browser or child execution when exact-head 
   assert.equal(result.blocker, 'PRE_EXISTING_SOURCE_DIRT');
   assert.equal(integration.readStatus('codex-job-dirty-source').status, 'BLOCKED');
   assert.equal(integration.readResult('codex-job-dirty-source').blocker, 'PRE_EXISTING_SOURCE_DIRT');
+});
+
+test('worker blocks before browser or child execution when a read-only PR worktree gains ignored content', async () => {
+  const roots = tempRoots();
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    spawnFn: () => ({ pid: 334, unref() {} }),
+  });
+  const value = packet('codex-job-ignored-worktree-content');
+  value.readOnlyPullRequestWorktree = {
+    schemaVersion: 'stephanos.read-only-pull-request-worktree.v1',
+    repositoryRoot: resolve(roots.repoRoot),
+    sourceHead: value.exactHeadProof.expectedHead,
+    commonDirectory: resolve(roots.repoRoot, '.git'),
+    cleanTrackedAndUntracked: true,
+    ignoredFilesAbsent: true,
+    sourceMutationAllowed: false,
+  };
+  const dispatchReceipt = integration.dispatch(value);
+  const expectedHead = value.exactHeadProof.expectedHead;
+  let browserCalls = 0;
+  const result = await runCodexWorker(dispatchReceipt.taskPath, {
+    platform: 'win32',
+    runtimeBundleFactory: exactRuntimeBundleFactory,
+    spawnFn: () => assert.fail('Codex child must not start with ignored worktree content'),
+    spawnSyncFn(executable, args) {
+      if (executable === process.execPath) browserCalls += 1;
+      if (args[0] === 'status') return { status: 0, stdout: '', stderr: '' };
+      if (args[0] === 'ls-files') return { status: 0, stdout: 'node_modules/hostile-instructions.md\n', stderr: '' };
+      if (args.includes('--git-common-dir')) return { status: 0, stdout: `${resolve(roots.repoRoot, '.git')}\n`, stderr: '' };
+      return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+    },
+    visibilityPublisher: async () => ({ ok: true }),
+  });
+  assert.equal(browserCalls, 0);
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.blocker, 'PRE_EXISTING_IGNORED_WORKTREE_CONTENT');
+  assert.equal(result.ignoredBefore, 'node_modules/hostile-instructions.md');
 });
 
 test('worker blocks before browser or child execution when the bracketing source status lookup fails', async () => {

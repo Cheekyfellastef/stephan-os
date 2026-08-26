@@ -317,7 +317,12 @@ export function validateRemoteCodexBattleBridgeAttachment(handoff, attachment, {
   if (attachment?.surfaceId !== 'stephanos-codex-dispatch-local-mcp') return blocked('BATTLE_BRIDGE_ATTACHMENT_SURFACE_MISMATCH');
   if (attachment?.attached !== true || attachment?.can_local_windows_proof !== true) return blocked('BATTLE_BRIDGE_EXECUTION_SURFACE_NOT_ATTACHED');
   if (!['win32', 'windows'].includes(String(attachment?.platform || '').toLowerCase())) return blocked('BATTLE_BRIDGE_PLATFORM_NOT_WINDOWS');
-  if (String(attachment?.sourceHead || '').toLowerCase() !== String(handoff.expectedHead || '').toLowerCase()) return blocked('BATTLE_BRIDGE_ATTACHMENT_HEAD_MISMATCH');
+  const attachmentHead = String(attachment?.sourceHead || '').toLowerCase();
+  if (!SHA40.test(attachmentHead)) return blocked('BATTLE_BRIDGE_ATTACHMENT_HEAD_INVALID');
+  if (handoff.exactHeadProof.proofTarget === 'MERGED_MAIN'
+      && attachmentHead !== String(handoff.expectedHead || '').toLowerCase()) {
+    return blocked('BATTLE_BRIDGE_ATTACHMENT_HEAD_MISMATCH');
+  }
   if (!SHA64.test(String(attachment?.serverSourceSha256 || ''))) return blocked('BATTLE_BRIDGE_SERVER_SHA256_INVALID');
   if (!String(attachment?.surfaceReceipt || '').trim()) return blocked('BATTLE_BRIDGE_SURFACE_RECEIPT_MISSING');
   const tools = Array.isArray(attachment?.toolsListed) ? attachment.toolsListed : [];

@@ -1801,8 +1801,20 @@ export async function runCodexWorker(taskPath, {
   const expectedDistFingerprint = exactHeadValidation.required
     ? String(exactHeadRuntimeBundle?.expectedDistFingerprint || '').trim().toLowerCase()
     : '';
+  const ignoredFilesMustRemainAbsent = task.safety?.ignoredFilesMustRemainAbsent === true;
+  const worktreeCommonDirectory = String(task.readOnlyPullRequestWorktree?.commonDirectory || '');
+  const pathIdentity = (value) => {
+    const normalized = resolve(String(value || ''));
+    return platform === 'win32' ? normalized.toLowerCase() : normalized;
+  };
   const sourceHeadBefore = gitCapture(task.repoRoot, ['rev-parse', 'HEAD'], spawnSyncFn);
   const statusBefore = gitCapture(task.repoRoot, ['status', '--porcelain=v1', '--untracked-files=all'], spawnSyncFn);
+  const commonDirectoryBefore = ignoredFilesMustRemainAbsent
+    ? gitCapture(task.repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir'], spawnSyncFn)
+    : Object.freeze({ ok: true, stdout: '', stderr: '' });
+  const ignoredBefore = ignoredFilesMustRemainAbsent
+    ? gitCapture(task.repoRoot, ['ls-files', '--others', '--ignored', '--exclude-standard'], spawnSyncFn)
+    : Object.freeze({ ok: true, stdout: '', stderr: '' });
   const dirtBefore = classifyPostTaskDirt(statusBefore.stdout);
   let preExecutionBlocker = '';
   if (exactHeadValidation.required) {
@@ -1817,6 +1829,12 @@ export async function runCodexWorker(taskPath, {
     else if (sourceHeadBefore.stdout !== exactHeadValidation.expectedHead) preExecutionBlocker = 'EXPECTED_HEAD_MISMATCH';
     else if (!statusBefore.ok) preExecutionBlocker = 'LOCAL_SOURCE_STATUS_LOOKUP_FAILED';
     else if (!dirtBefore.safe) preExecutionBlocker = 'PRE_EXISTING_SOURCE_DIRT';
+    else if (!commonDirectoryBefore.ok
+      || pathIdentity(commonDirectoryBefore.stdout) !== pathIdentity(worktreeCommonDirectory)) {
+      preExecutionBlocker = 'READ_ONLY_PR_WORKTREE_IDENTITY_CHANGED';
+    }
+    else if (!ignoredBefore.ok) preExecutionBlocker = 'LOCAL_IGNORED_FILE_STATUS_LOOKUP_FAILED';
+    else if (ignoredBefore.stdout) preExecutionBlocker = 'PRE_EXISTING_IGNORED_WORKTREE_CONTENT';
   }
   if (preExecutionBlocker) {
     const completedAt = now();
@@ -1838,6 +1856,9 @@ export async function runCodexWorker(taskPath, {
       expectedDistManifestPath,
       sourceHeadBefore: sourceHeadBefore.stdout,
       statusBeforeOk: statusBefore.ok,
+      ignoredBeforeOk: ignoredBefore.ok,
+      ignoredBefore: ignoredBefore.stdout,
+      commonDirectoryBefore: commonDirectoryBefore.stdout,
       dirtBefore,
       blocker: preExecutionBlocker,
       nextOperatorAction: `Repair the exact-head source blocker before retrying: ${preExecutionBlocker}.`,
@@ -2071,6 +2092,12 @@ export async function runCodexWorker(taskPath, {
     : Object.freeze({ ok: true, required: false });
   const sourceHeadAfter = gitCapture(task.repoRoot, ['rev-parse', 'HEAD'], spawnSyncFn);
   const statusAfter = gitCapture(task.repoRoot, ['status', '--porcelain=v1', '--untracked-files=all'], spawnSyncFn);
+  const commonDirectoryAfter = ignoredFilesMustRemainAbsent
+    ? gitCapture(task.repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir'], spawnSyncFn)
+    : Object.freeze({ ok: true, stdout: '', stderr: '' });
+  const ignoredAfter = ignoredFilesMustRemainAbsent
+    ? gitCapture(task.repoRoot, ['ls-files', '--others', '--ignored', '--exclude-standard'], spawnSyncFn)
+    : Object.freeze({ ok: true, stdout: '', stderr: '' });
   const dirtAfter = classifyPostTaskDirt(statusAfter.stdout);
   const dirtDelta = compareDirtSnapshots(dirtBefore, dirtAfter);
   const runtimeDistFingerprintAfter = exactHeadValidation.required
@@ -2099,9 +2126,20 @@ export async function runCodexWorker(taskPath, {
     sourceHeadUnchanged,
     sourceHeadBound,
   } = sourceSafety;
-  const passed = execution.passed && browserProof.ok && sourceSafe;
-  const finalStatus = passed ? 'DONE' : (sourceSafe ? 'FAILED' : 'BLOCKED');
-  const safetyBlocker = !sourceSafety.exactHeadStatusAvailable
+  const ignoredFilesSafe = !ignoredFilesMustRemainAbsent
+    || (ignoredBefore.ok && !ignoredBefore.stdout && ignoredAfter.ok && !ignoredAfter.stdout);
+  const worktreeIdentitySafe = !ignoredFilesMustRemainAbsent
+    || (commonDirectoryBefore.ok && commonDirectoryAfter.ok
+      && pathIdentity(commonDirectoryBefore.stdout) === pathIdentity(worktreeCommonDirectory)
+      && pathIdentity(commonDirectoryAfter.stdout) === pathIdentity(worktreeCommonDirectory));
+  const executionSourceSafe = sourceSafe && ignoredFilesSafe && worktreeIdentitySafe;
+  const passed = execution.passed && browserProof.ok && executionSourceSafe;
+  const finalStatus = passed ? 'DONE' : (executionSourceSafe ? 'FAILED' : 'BLOCKED');
+  const safetyBlocker = !worktreeIdentitySafe
+    ? 'READ_ONLY_PR_WORKTREE_IDENTITY_CHANGED'
+    : (!ignoredFilesSafe
+    ? 'IGNORED_WORKTREE_CONTAMINATION_DETECTED'
+    : (!sourceSafety.exactHeadStatusAvailable
     ? 'LOCAL_SOURCE_STATUS_LOOKUP_FAILED'
     : (!sourceSafety.exactHeadExecutionBound
       ? 'EXACT_HEAD_TARGET_CHANGED_DURING_PROOF'
@@ -2109,10 +2147,10 @@ export async function runCodexWorker(taskPath, {
         ? 'LOCAL_HEAD_CHANGED_DURING_PROOF'
         : (!sourceSafety.exactHeadRuntimeBound
           ? 'GENERATED_RUNTIME_INTEGRITY_MISMATCH'
-          : 'SOURCE_MUTATION_DETECTED')));
+          : 'SOURCE_MUTATION_DETECTED')))));
   const finalBlocker = passed
     ? ''
-    : (sourceSafe
+    : (executionSourceSafe
       ? (browserProof.blocker || execution.reason || 'CODEX_EXEC_FAILED')
       : safetyBlocker);
   let result = {
@@ -2137,6 +2175,13 @@ export async function runCodexWorker(taskPath, {
     sourceHeadUnchanged,
     sourceHeadBound,
     sourceSafety,
+    ignoredFilesMustRemainAbsent,
+    ignoredBefore: ignoredBefore.stdout,
+    ignoredAfter: ignoredAfter.stdout,
+    ignoredFilesSafe,
+    commonDirectoryBefore: commonDirectoryBefore.stdout,
+    commonDirectoryAfter: commonDirectoryAfter.stdout,
+    worktreeIdentitySafe,
     exactHeadRuntimeBundle,
     expectedDistFingerprint,
     expectedDistManifestPath,
@@ -2181,11 +2226,14 @@ export async function runCodexWorker(taskPath, {
       approvalPolicy: 'never',
       sandboxMode: 'read-only',
       nestedDispatchMcpEnabled: false,
+      ignoredFilesMustRemainAbsent,
+      ignoredFilesSafe,
+      worktreeIdentitySafe,
       isolationMechanism: 'ignore-user-config',
     },
     nextOperatorAction: passed
       ? 'Review the returned proof and decide whether the owning goal may advance.'
-      : (!sourceSafe
+      : (!executionSourceSafe
         ? 'Inspect the task logs and source dirt. Do not auto-discard changes.'
         : `Inspect the task logs and repair the precise runtime blocker: ${browserProof.blocker || execution.reason || 'CODEX_EXEC_FAILED'}.`),
   };
