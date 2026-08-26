@@ -5,6 +5,134 @@ import path from 'node:path';
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
 const MAX_PATCH_BYTES = 2_000_000;
+const DYNAMIC_EXECUTION_RE = /(?:\beval\s*\(|\bnew\s+Function\s*\(|\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(|child_process\.(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(|shell:\s*true)/m;
+
+function addedPatchSource(patch) {
+  return String(patch || '')
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
+    .map((line) => line.slice(1))
+    .join('\n');
+}
+
+export function maskInertJavaScriptForDynamicReview(source = '') {
+  const input = String(source);
+  const output = [...input];
+  const stack = [{ type: 'code', templateExpression: false, braceDepth: 0 }];
+  const mask = (index) => {
+    if (input[index] !== '\n' && input[index] !== '\r') output[index] = ' ';
+  };
+  const push = (frame) => stack.push(frame);
+  const pop = () => stack.pop();
+
+  for (let index = 0; index < input.length; index += 1) {
+    const frame = stack[stack.length - 1];
+
+    if (frame.type === 'line-comment') {
+      if (input[index] === '\n') pop();
+      else mask(index);
+      continue;
+    }
+
+    if (frame.type === 'block-comment') {
+      mask(index);
+      if (input[index] === '*' && input[index + 1] === '/') {
+        mask(index + 1);
+        index += 1;
+        pop();
+      }
+      continue;
+    }
+
+    if (frame.type === 'single' || frame.type === 'double') {
+      const quote = frame.type === 'single' ? "'" : '"';
+      mask(index);
+      if (input[index] === '\\') {
+        if (index + 1 < input.length) {
+          mask(index + 1);
+          index += 1;
+        }
+      } else if (input[index] === quote) {
+        pop();
+      }
+      continue;
+    }
+
+    if (frame.type === 'template') {
+      mask(index);
+      if (input[index] === '\\') {
+        if (index + 1 < input.length) {
+          mask(index + 1);
+          index += 1;
+        }
+        continue;
+      }
+      if (input[index] === '`') {
+        pop();
+        continue;
+      }
+      if (input[index] === '$' && input[index + 1] === '{') {
+        mask(index + 1);
+        index += 1;
+        push({ type: 'code', templateExpression: true, braceDepth: 0 });
+      }
+      continue;
+    }
+
+    if (input[index] === '/' && input[index + 1] === '/') {
+      mask(index);
+      mask(index + 1);
+      index += 1;
+      push({ type: 'line-comment' });
+      continue;
+    }
+    if (input[index] === '/' && input[index + 1] === '*') {
+      mask(index);
+      mask(index + 1);
+      index += 1;
+      push({ type: 'block-comment' });
+      continue;
+    }
+    if (input[index] === "'") {
+      mask(index);
+      push({ type: 'single' });
+      continue;
+    }
+    if (input[index] === '"') {
+      mask(index);
+      push({ type: 'double' });
+      continue;
+    }
+    if (input[index] === '`') {
+      mask(index);
+      push({ type: 'template' });
+      continue;
+    }
+
+    if (frame.templateExpression) {
+      if (input[index] === '{') {
+        frame.braceDepth += 1;
+      } else if (input[index] === '}') {
+        if (frame.braceDepth === 0) {
+          mask(index);
+          pop();
+        } else {
+          frame.braceDepth -= 1;
+        }
+      }
+    }
+  }
+
+  if (stack.at(-1)?.type === 'line-comment') stack.pop();
+  if (stack.length !== 1 || stack[0].type !== 'code') return input;
+  return output.join('');
+}
+
+export function patchAddsDynamicExecution(patch = '') {
+  const source = addedPatchSource(patch);
+  const masked = maskInertJavaScriptForDynamicReview(source);
+  return DYNAMIC_EXECUTION_RE.test(masked);
+}
 
 export function reviewExactHead({ repository, prNumber, baseSha, headSha, changedFiles, patch }) {
   const findings = [];
@@ -51,7 +179,7 @@ export function reviewExactHead({ repository, prNumber, baseSha, headSha, change
     if (/^\+\s*(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})\s*$/m.test(patch)) {
       add('P0', 'SECRET_PATTERN', 'Potential credential or private key added.');
     }
-    if (/^\+.*(?:\beval\s*\(|\bnew\s+Function\s*\(|\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(|child_process\.(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(|shell:\s*true)/m.test(patch)) {
+    if (patchAddsDynamicExecution(patch)) {
       add('P2', 'DYNAMIC_EXECUTION', 'New dynamic or shell execution requires escalated review.');
     }
   }
