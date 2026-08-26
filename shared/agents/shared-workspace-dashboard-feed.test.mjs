@@ -64,6 +64,8 @@ test('current shared workspace records produce ready feed and refresh operator a
   assert.equal(feed.state, DASHBOARD_FEED_STATES.READY);
   assert.equal(feed.readOnly, true);
   assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1290').statusTruth, 'CURRENT');
+  assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1287').statusTruth, 'UNKNOWN');
+  assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1287').proofTruth, 'UNKNOWN');
   assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1284').capabilityTruth, 'CURRENT');
   assert.equal(feed.operatorAttention.localProofNeeded.includes('#1290'), false);
 });

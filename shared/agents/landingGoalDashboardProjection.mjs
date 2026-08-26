@@ -77,8 +77,10 @@ function latestForIssue(records, issue) {
 }
 
 function cardFor(issue, title, input, options) {
-  const statusRecord = latestForIssue(input.statusRecords, issue) || input.latest?.status || null;
-  const proofRecord = latestForIssue(input.proofRecords, issue) || input.latest?.proof || null;
+  // Per-goal truth must be issue-bound. A workspace-wide latest record proves that
+  // the feed is fresh, but it cannot prove the status or proof state of every goal.
+  const statusRecord = latestForIssue(input.statusRecords, issue);
+  const proofRecord = latestForIssue(input.proofRecords, issue);
   const capabilityRecord = latestForIssue(input.capabilityRecords, issue) || (/#1284|#1286/.test(issue) ? input.latest?.capability : null);
   const statusFreshness = freshness(statusRecord, options.nowMs, options.staleAfterMs);
   const proofFreshness = freshness(proofRecord, options.nowMs, options.staleAfterMs);

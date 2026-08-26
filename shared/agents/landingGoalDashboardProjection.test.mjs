@@ -35,6 +35,28 @@ test('landing dashboard projects queue dispatcher, supervisor, and OpenClaw ladd
   assert.equal(projection.openClawCapabilityLadder.guardrails.sourceRepositoryWritesAllowed, false);
 });
 
+test('landing dashboard never projects unrelated latest workspace evidence onto every goal', () => {
+  const now = '2026-07-07T00:00:00.000Z';
+  const projection = buildLandingGoalDashboardProjection({
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+    sharedWorkspace: {
+      latest: {
+        status: { statusId: 'programme-controller-heartbeat', timestampUtc: now, status: 'HOLD', summary: 'Programme controller is HOLD.' },
+        proof: { proofId: 'worker-watchdog-proof', timestampUtc: now, status: 'PASS', summary: 'Worker watchdog is healthy.' },
+      },
+    },
+    statusRecords: [{ statusId: 'programme-controller-heartbeat', timestampUtc: now, status: 'HOLD', summary: 'Programme controller is HOLD.' }],
+    proofRecords: [{ proofId: 'worker-watchdog-proof', timestampUtc: now, status: 'PASS', summary: 'Worker watchdog is healthy.' }],
+  });
+
+  assert.equal(projection.sourceTruth, 'CURRENT');
+  assert.equal(projection.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
+  assert.equal(projection.goals.every((goal) => goal.statusTruth === 'UNKNOWN'), true);
+  assert.equal(projection.goals.every((goal) => goal.proofTruth === 'UNKNOWN'), true);
+  assert.equal(projection.goals.some((goal) => goal.summary === 'Programme controller is HOLD.'), false);
+});
+
 
 test('landing dashboard consumes build lane manager for Captain Bridge fields', () => {
   const projection = buildLandingGoalDashboardProjection({
