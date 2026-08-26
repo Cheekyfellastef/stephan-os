@@ -31,18 +31,9 @@ test('protects the exact OpenClaw reviewer-specialist composition boundary', () 
   ]);
 
   for (const path of OPENCLAW_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1) {
-    const result = analyzeIndependentSecurityReview({
-      changedFiles: [path],
-      diff: diffFor(path),
-    });
-    assert.ok(result.findings.some((item) => (
-      item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE
-      && item.path === path
-    )), path);
-    assert.equal(result.findings.some((item) => (
-      item.code === 'unsupported-high-risk-surface'
-      && item.path === path
-    )), false, path);
+    const result = analyzeIndependentSecurityReview({ changedFiles: [path], diff: diffFor(path) });
+    assert.ok(result.findings.some((item) => item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE && item.path === path), path);
+    assert.equal(result.findings.some((item) => item.code === 'unsupported-high-risk-surface' && item.path === path), false, path);
     assert.equal(isApprovalBoundaryBootstrapAnalysis(result), true, path);
   }
 });
@@ -55,18 +46,9 @@ test('protects successor OpenClaw reviewer-specialist sources as bootstrap bound
   ]);
 
   for (const path of OPENCLAW_SUCCESSOR_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1) {
-    const result = analyzeIndependentSecurityReview({
-      changedFiles: [path],
-      diff: diffFor(path),
-    });
-    assert.ok(result.findings.some((item) => (
-      item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE
-      && item.path === path
-    )), path);
-    assert.equal(result.findings.some((item) => (
-      item.code === 'unsupported-high-risk-surface'
-      && item.path === path
-    )), false, path);
+    const result = analyzeIndependentSecurityReview({ changedFiles: [path], diff: diffFor(path) });
+    assert.ok(result.findings.some((item) => item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE && item.path === path), path);
+    assert.equal(result.findings.some((item) => item.code === 'unsupported-high-risk-surface' && item.path === path), false, path);
     assert.equal(isApprovalBoundaryBootstrapAnalysis(result), true, path);
   }
 });
@@ -80,18 +62,9 @@ test('protects exact workflow-dispatch review identity consumers as bootstrap bo
   ]);
 
   for (const path of REVIEW_DISPATCH_IDENTITY_BOUNDARY_PATHS_V1) {
-    const result = analyzeIndependentSecurityReview({
-      changedFiles: [path],
-      diff: diffFor(path),
-    });
-    assert.ok(result.findings.some((item) => (
-      item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE
-      && item.path === path
-    )), path);
-    assert.equal(result.findings.some((item) => (
-      item.code === 'unsupported-high-risk-surface'
-      && item.path === path
-    )), false, path);
+    const result = analyzeIndependentSecurityReview({ changedFiles: [path], diff: diffFor(path) });
+    assert.ok(result.findings.some((item) => item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE && item.path === path), path);
+    assert.equal(result.findings.some((item) => item.code === 'unsupported-high-risk-surface' && item.path === path), false, path);
     assert.equal(isApprovalBoundaryBootstrapAnalysis(result), true, path);
   }
 });
@@ -105,9 +78,7 @@ test('combined workflow-dispatch identity self-change remains qualified bootstra
   assert.equal(result.counts.P0, REVIEW_DISPATCH_IDENTITY_BOUNDARY_PATHS_V1.length);
   assert.equal(result.counts.P1, 0);
   assert.equal(result.counts.P2, 0);
-  assert.equal(result.findings.every((item) => (
-    item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE
-  )), true);
+  assert.equal(result.findings.every((item) => item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE), true);
   assert.equal(isApprovalBoundaryBootstrapAnalysis(result), true);
 });
 
@@ -120,9 +91,7 @@ test('combined OpenClaw reviewer-specialist self-change remains a qualified boot
   assert.equal(result.counts.P0, OPENCLAW_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1.length);
   assert.equal(result.counts.P1, 0);
   assert.equal(result.counts.P2, 0);
-  assert.equal(result.findings.every((item) => (
-    item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE
-  )), true);
+  assert.equal(result.findings.every((item) => item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE), true);
   assert.equal(isApprovalBoundaryBootstrapAnalysis(result), true);
 });
 
@@ -135,49 +104,29 @@ test('combined successor OpenClaw reviewer-specialist self-change remains qualif
   assert.equal(result.counts.P0, OPENCLAW_SUCCESSOR_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1.length);
   assert.equal(result.counts.P1, 0);
   assert.equal(result.counts.P2, 0);
-  assert.equal(result.findings.every((item) => (
-    item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE
-  )), true);
+  assert.equal(result.findings.every((item) => item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE), true);
   assert.equal(isApprovalBoundaryBootstrapAnalysis(result), true);
 });
 
 test('unrelated OpenClaw high-risk source remains unsupported and blocks bootstrap', () => {
   const unrelated = 'integrations/openclaw/arbitrary-provider/index.mjs';
   const result = analyzeIndependentSecurityReview({
-    changedFiles: [
-      'shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs',
-      unrelated,
-    ],
-    diff: [
-      diffFor('shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs'),
-      diffFor(unrelated),
-    ].join('\n'),
+    changedFiles: ['shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs', unrelated],
+    diff: [diffFor('shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs'), diffFor(unrelated)].join('\n'),
   });
-  assert.ok(result.findings.some((item) => (
-    item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE
-    && item.path === 'shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs'
-  )));
-  assert.ok(result.findings.some((item) => (
-    item.code === 'unsupported-high-risk-surface'
-    && item.path === unrelated
-  )));
+  assert.ok(result.findings.some((item) => item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE && item.path === 'shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs'));
+  assert.ok(result.findings.some((item) => item.code === 'unsupported-high-risk-surface' && item.path === unrelated));
   assert.equal(isApprovalBoundaryBootstrapAnalysis(result), false);
 });
 
 test('successor bootstrap classification does not bless unrelated high-risk source', () => {
   const successor = 'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs';
-  const unrelated = 'shared/agents/arbitraryHighRiskReviewerV1.mjs';
+  const unrelated = 'integrations/openclaw/arbitrary-provider/index.mjs';
   const result = analyzeIndependentSecurityReview({
     changedFiles: [successor, unrelated],
     diff: [diffFor(successor), diffFor(unrelated)].join('\n'),
   });
-  assert.ok(result.findings.some((item) => (
-    item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE
-    && item.path === successor
-  )));
-  assert.ok(result.findings.some((item) => (
-    item.code === 'unsupported-high-risk-surface'
-    && item.path === unrelated
-  )));
+  assert.ok(result.findings.some((item) => item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE && item.path === successor));
+  assert.ok(result.findings.some((item) => item.code === 'unsupported-high-risk-surface' && item.path === unrelated));
   assert.equal(isApprovalBoundaryBootstrapAnalysis(result), false);
 });
