@@ -31,6 +31,12 @@ export const OPENCLAW_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1 = Object.freeze([
   'shared/agents/openClawBuilderProviderSpecialistReviewV1.test.mjs',
 ]);
 
+export const OPENCLAW_SUCCESSOR_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1 = Object.freeze([
+  'shared/agents/openClawBuilderProviderSpecialistReviewLegacyV1.mjs',
+  'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs',
+  'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.test.mjs',
+]);
+
 export const REVIEW_DISPATCH_IDENTITY_BOUNDARY_PATHS_V1 = Object.freeze([
   'shared/agents/independentReviewWorkflowDispatchExecutionV1.mjs',
   'shared/agents/independentReviewWorkflowDispatchExecutionV1.test.mjs',
@@ -40,6 +46,7 @@ export const REVIEW_DISPATCH_IDENTITY_BOUNDARY_PATHS_V1 = Object.freeze([
 
 const EXTENDED_APPROVAL_BOUNDARY_PATHS_V1 = Object.freeze([
   ...OPENCLAW_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1,
+  ...OPENCLAW_SUCCESSOR_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1,
   ...REVIEW_DISPATCH_IDENTITY_BOUNDARY_PATHS_V1,
 ]);
 
