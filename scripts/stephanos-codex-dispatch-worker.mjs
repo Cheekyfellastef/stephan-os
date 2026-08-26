@@ -36,6 +36,7 @@ import {
   createScenarioSourceGitEnvironment,
   evaluateMusicRatingPreservesPlaybackScenarioEvidence,
 } from './browser-proof-runner.mjs';
+import { createBattleBridgeMinimalChildEnvironment } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 const APPROVED_GENERATED_PREFIXES = Object.freeze([
   'apps/stephanos/dist/',
@@ -71,7 +72,12 @@ function writeJson(path, value) {
 }
 
 function gitCapture(repoRoot, args, spawnSyncFn = spawnSync) {
-  const result = spawnSyncFn('git', args, { cwd: repoRoot, encoding: 'utf8', shell: false });
+  const result = spawnSyncFn('git', args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    shell: false,
+    env: createBattleBridgeMinimalChildEnvironment(process.env, { git: true, platform: process.platform }),
+  });
   return {
     ok: !result.error && result.status === 0,
     status: result.status,
@@ -82,13 +88,16 @@ function gitCapture(repoRoot, args, spawnSyncFn = spawnSync) {
 }
 
 function processCapture(spawnSyncFn, executable, args, options = {}) {
+  const gitExecutable = /(^|[\\/])git(?:\.exe)?$/i.test(String(executable || ''));
   const result = spawnSyncFn(executable, args, {
     cwd: options.cwd,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
     timeout: 120000,
-    env: options.env,
+    env: options.env || (gitExecutable
+      ? createBattleBridgeMinimalChildEnvironment(process.env, { git: true, platform: options.platform || process.platform })
+      : undefined),
   });
   return {
     ok: !result.error && result.status === 0,
@@ -97,12 +106,16 @@ function processCapture(spawnSyncFn, executable, args, options = {}) {
 }
 
 function processTextCapture(spawnSyncFn, executable, args, options = {}) {
+  const gitExecutable = /(^|[\\/])git(?:\.exe)?$/i.test(String(executable || ''));
   const result = spawnSyncFn(executable, args, {
     cwd: options.cwd,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
     timeout: 120000,
+    env: options.env || (gitExecutable
+      ? createBattleBridgeMinimalChildEnvironment(process.env, { git: true, platform: options.platform || process.platform })
+      : undefined),
   });
   return {
     ok: !result.error && result.status === 0,
@@ -250,7 +263,7 @@ export function validateExactHeadAtWorkerStart(task, {
     spawnSyncFn,
     platform === 'win32' ? 'git.exe' : 'git',
     ['rev-parse', 'HEAD'],
-    { cwd: task.repoRoot },
+    { cwd: task.repoRoot, platform },
   );
   if (!git.ok || !/^[0-9a-f]{40}$/.test(git.stdout)) {
     return Object.freeze({ ok: false, required: true, blocker: 'LOCAL_HEAD_LOOKUP_FAILED', expectedHead, pullRequestHead, mergeCommitHead, githubMainHead, mergeCommitIncluded, branch: expectedBranch, verificationPhase });
@@ -290,7 +303,7 @@ export function validateExactHeadAtWorkerStart(task, {
     spawnSyncFn,
     platform === 'win32' ? 'git.exe' : 'git',
     ['status', '--porcelain=v1', '--untracked-files=all'],
-    { cwd: task.repoRoot },
+    { cwd: task.repoRoot, platform },
   );
   if (!status.ok) {
     return Object.freeze({

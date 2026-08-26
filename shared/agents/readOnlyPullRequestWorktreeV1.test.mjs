@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import {
+  createReadOnlyPullRequestGitProbe,
   parseGitWorktreeListPorcelainZ,
   reproveReadOnlyPullRequestWorktree,
   resolveReadOnlyPullRequestWorktree,
@@ -67,6 +68,42 @@ test('parses bounded NUL-delimited linked worktree records', () => {
   }]);
   assert.deepEqual(parseGitWorktreeListPorcelainZ(''), []);
   assert.deepEqual(parseGitWorktreeListPorcelainZ('x'.repeat(300_000)), []);
+});
+
+test('fixed Git probes discard ambient repository, object-store, replacement, and configuration authority', () => {
+  const calls = [];
+  const gitProbe = createReadOnlyPullRequestGitProbe({
+    platform: 'win32',
+    environment: {
+      SYSTEMROOT: 'C:\\Windows',
+      USERPROFILE: 'C:\\Users\\Operator',
+      GIT_DIR: 'C:\\hostile.git',
+      Git_Work_Tree: 'C:\\hostile-worktree',
+      GIT_OBJECT_DIRECTORY: 'C:\\hostile-objects',
+      GIT_REPLACE_REF_BASE: 'refs/hostile',
+      GIT_CONFIG_GLOBAL: 'C:\\hostile.gitconfig',
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'alias.status',
+      GIT_CONFIG_VALUE_0: '!hostile',
+    },
+    spawnSyncFn(executable, args, options) {
+      calls.push({ executable, args, options });
+      return { status: 0, stdout: `${HEAD}\n`, stderr: '' };
+    },
+  });
+  assert.equal(gitProbe(CANONICAL, ['rev-parse', 'HEAD']).stdout, HEAD);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].executable, 'C:\\Program Files\\Git\\cmd\\git.exe');
+  assert.ok(calls[0].args.includes('-C'));
+  assert.deepEqual(calls[0].args.slice(-2), ['rev-parse', 'HEAD']);
+  assert.equal(calls[0].options.shell, false);
+  assert.equal(calls[0].options.env.GIT_DIR, undefined);
+  assert.equal(calls[0].options.env.Git_Work_Tree, undefined);
+  assert.equal(calls[0].options.env.GIT_OBJECT_DIRECTORY, undefined);
+  assert.equal(calls[0].options.env.GIT_REPLACE_REF_BASE, undefined);
+  assert.equal(calls[0].options.env.GIT_NO_REPLACE_OBJECTS, '1');
+  assert.equal(calls[0].options.env.GIT_CONFIG_NOSYSTEM, '1');
+  assert.notEqual(calls[0].options.env.GIT_CONFIG_VALUE_0, '!hostile');
 });
 
 test('resolves one exact clean linked worktree without caller-selected path authority', () => {

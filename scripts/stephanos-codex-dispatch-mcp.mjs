@@ -30,6 +30,7 @@ import {
   reproveReadOnlyPullRequestWorktree,
   resolveReadOnlyPullRequestWorktree,
 } from '../shared/agents/readOnlyPullRequestWorktreeV1.mjs';
+import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 export const STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA = 'stephanos.codex-dispatch-mcp.v1';
 export const STEPHANOS_CODEX_DISPATCH_MCP_NAME = 'stephanos-codex-dispatch';
@@ -189,11 +190,11 @@ function normalizeClientSession(clientSession = {}, clientInfo = {}) {
 
 function readSourceHead(repoRoot) {
   if (!repoRoot) return '';
-  const gitExecutable = process.env.STEPHANOS_GIT_EXE
-    || (process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git');
+  const gitExecution = resolveBattleBridgeGitExecution({ platform: process.platform, environment: process.env });
   try {
-    return boundedText(execFileSync(gitExecutable, ['-C', repoRoot, 'rev-parse', 'HEAD'], {
+    return boundedText(execFileSync(gitExecution.executable, [...gitExecution.fixedConfigArgs, '-C', repoRoot, 'rev-parse', 'HEAD'], {
       encoding: 'utf8',
+      env: gitExecution.environment,
       windowsHide: true,
       timeout: 15_000,
     }), 40).toLowerCase();

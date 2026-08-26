@@ -2,6 +2,7 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { resolveBattleBridgeGitExecution } from './battleBridgeExecutionBoundaryV1.mjs';
 
 export const READ_ONLY_PULL_REQUEST_WORKTREE_SCHEMA = 'stephanos.read-only-pull-request-worktree.v1';
 
@@ -33,22 +34,28 @@ function defaultAllowedRoots() {
   ]);
 }
 
-function defaultGitProbe(repositoryRoot, args) {
-  const executable = process.env.STEPHANOS_GIT_EXE
-    || (process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git');
-  const result = spawnSync(executable, ['-C', repositoryRoot, ...args], {
-    encoding: 'utf8',
-    windowsHide: true,
-    shell: false,
-    timeout: 20_000,
-    maxBuffer: MAX_WORKTREE_LIST_BYTES,
-  });
-  return Object.freeze({
-    ok: result.status === 0 && !result.error,
-    status: Number.isInteger(result.status) ? result.status : -1,
-    stdout: String(result.stdout || '').trim(),
-    stderr: String(result.stderr || '').trim().slice(0, 400),
-  });
+export function createReadOnlyPullRequestGitProbe({
+  environment = process.env,
+  platform = process.platform,
+  spawnSyncFn = spawnSync,
+} = {}) {
+  const execution = resolveBattleBridgeGitExecution({ platform, environment });
+  return function probe(repositoryRoot, args) {
+    const result = spawnSyncFn(execution.executable, [...execution.fixedConfigArgs, '-C', repositoryRoot, ...args], {
+      encoding: 'utf8',
+      env: execution.environment,
+      windowsHide: true,
+      shell: false,
+      timeout: 20_000,
+      maxBuffer: MAX_WORKTREE_LIST_BYTES,
+    });
+    return Object.freeze({
+      ok: result.status === 0 && !result.error,
+      status: Number.isInteger(result.status) ? result.status : -1,
+      stdout: String(result.stdout || '').trim(),
+      stderr: String(result.stderr || '').trim().slice(0, 400),
+    });
+  };
 }
 
 export function parseGitWorktreeListPorcelainZ(payload) {
@@ -135,7 +142,7 @@ export function resolveReadOnlyPullRequestWorktree({
   expectedHead,
   proofTarget,
   allowedRoots = defaultAllowedRoots(),
-  gitProbe = defaultGitProbe,
+  gitProbe = createReadOnlyPullRequestGitProbe(),
   filesystem = {},
 } = {}) {
   const canonicalRoot = resolve(String(canonicalRepositoryRoot || ''));
@@ -170,7 +177,7 @@ export function resolveReadOnlyPullRequestWorktree({
 
 export function reproveReadOnlyPullRequestWorktree(worktree, {
   canonicalRepositoryRoot,
-  gitProbe = defaultGitProbe,
+  gitProbe = createReadOnlyPullRequestGitProbe(),
 } = {}) {
   if (worktree?.schemaVersion !== READ_ONLY_PULL_REQUEST_WORKTREE_SCHEMA
       || worktree?.sourceMutationAllowed !== false

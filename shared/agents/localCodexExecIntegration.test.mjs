@@ -1172,9 +1172,11 @@ test('worker binds a PR-head review to both the approved PR head and exact curre
       proofScenario: 'base-bound-specialist-review',
     },
   };
+  const gitEnvironments = [];
   const run = ({ observedHead = expectedHead, observedBase = baseHead, baseBranch = 'main', mainHead = baseHead } = {}) => validateExactHeadAtWorkerStart(task, {
     platform: 'win32',
-    spawnSyncFn(executable, args) {
+    spawnSyncFn(executable, args, options) {
+      if (executable === 'git.exe') gitEnvironments.push(options.env);
       if (executable === 'gh.exe' && args[1]?.endsWith('/pulls/2000')) {
         return {
           status: 0,
@@ -1197,6 +1199,11 @@ test('worker binds a PR-head review to both the approved PR head and exact curre
   assert.equal(run({ observedBase: 'c'.repeat(40) }).blocker, 'PR_BASE_HEAD_MISMATCH');
   assert.equal(run({ baseBranch: 'release' }).blocker, 'PR_BASE_BRANCH_MISMATCH');
   assert.equal(run({ mainHead: 'c'.repeat(40) }).blocker, 'GITHUB_MAIN_HEAD_MISMATCH');
+  assert.ok(gitEnvironments.length >= 2);
+  assert.equal(gitEnvironments.every((environment) => environment.GIT_NO_REPLACE_OBJECTS === '1'), true);
+  assert.equal(gitEnvironments.every((environment) => environment.GIT_CONFIG_NOSYSTEM === '1'), true);
+  assert.equal(gitEnvironments.every((environment) => environment.GIT_DIR === undefined), true);
+  assert.equal(gitEnvironments.every((environment) => environment.GIT_OBJECT_DIRECTORY === undefined), true);
 });
 
 test('worker rejects pre-existing source dirt before accepting an exact-head runtime proof', () => {
