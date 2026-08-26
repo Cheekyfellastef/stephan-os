@@ -115,7 +115,7 @@ test('Git topology rejects linked critical metadata descendants', () => {
   mkdirSync(path.join(root, '.git'), { recursive: true });
   writeFileSync(path.join(root, '.git', 'config'), '[core]\n\trepositoryformatversion = 0\n');
   writeFileSync(path.join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n');
-  symlinkSync(target, path.join(root, '.git', 'objects'), 'dir');
+  symlinkSync(target, path.join(root, '.git', 'objects'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.equal(inspectBattleBridgeGitTopology(root).blocker, 'CANONICAL_GIT_REPARSE_POINT_PRESENT');
 });
 
