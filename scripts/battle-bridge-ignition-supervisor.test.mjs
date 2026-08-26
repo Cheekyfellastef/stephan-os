@@ -831,6 +831,7 @@ test('approved OpenClaw gateway start uses config-safe start command shape, env 
     sharedWorkspace: workspace,
     token: 'test-token',
     approved: true,
+    platform: 'linux',
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
     spawnFn: (command, args, options) => {
@@ -877,6 +878,7 @@ test('approved OpenClaw gateway start runs without token and writes non-skipped 
     sharedWorkspace: workspace,
     env: {},
     approved: true,
+    platform: 'linux',
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
     spawnFn: (command, args, options) => {
@@ -951,6 +953,7 @@ test('Windows OpenClaw gateway execution uses cmd.exe wrapper for openclaw.cmd i
     env: { APPDATA: appData, Path: '' },
     approved: true,
     platform: 'win32',
+    existsSync: (candidate) => candidate === cmdShim,
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
     spawnFn: (command, args, options) => { spawnCalls.push({ command, args, options }); return child; },
@@ -1260,6 +1263,7 @@ test('approved backend repair command captures stdout stderr exit code and canon
   const spawnCalls = [];
   const promise = runApprovedBackend8787Start({
     sharedWorkspace: workspace,
+    platform: 'linux',
     spawnFn: (command, args, options) => {
       spawnCalls.push({ command, args, options });
       queueMicrotask(() => {
