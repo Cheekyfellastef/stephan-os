@@ -99,7 +99,7 @@ function reviewRescue(source, path, findings) {
   requirePatterns(findings, source, path, [
     [/Read-FixedGitText -Arguments @\('-C', \$repoRoot, 'rev-parse', "\$observedHead`\$\{tree\}"\)/, 'no-faff-rescue-tree-binding-missing'],
     [/\$origin -notmatch '\^\(https:\\\/\\\/github\\\.com\\\/Cheekyfellastef\\\/stephan-os/, 'no-faff-rescue-origin-guard-missing'],
-    [/\(\$taskProof \| Where-Object \{ \$_\.present -ne \$true \}\)\.Count -gt 0/, 'no-faff-rescue-task-set-failclosed-missing'],
+    [/@\(\$taskProof \| Where-Object \{ \$_\.present -ne \$true \}\)\.Count -gt 0/, 'no-faff-rescue-task-set-failclosed-missing'],
   ]);
   forbidPatterns(findings, source, path, [
     [/\b(?:Start-ScheduledTask|Register-ScheduledTask|New-ScheduledTask)\b/i, 'no-faff-rescue-direct-task-mutation-forbidden'],

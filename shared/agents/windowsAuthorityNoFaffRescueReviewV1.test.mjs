@@ -82,7 +82,7 @@ Stop-BoundedRescue -Blocker 'EXACT_TREE_PROOF_FAILED'
 Invoke-FixedInstaller -Path $recoveryInstaller -ExpectedTaskName $recoveryTaskName
 Invoke-FixedInstaller -Path $mailboxInstaller -ExpectedTaskName $mailboxTaskName
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-if (($taskProof | Where-Object { $_.present -ne $true }).Count -gt 0) { throw 'missing' }
+if (@($taskProof | Where-Object { $_.present -ne $true }).Count -gt 0) { throw 'missing' }
 & $fixedPowerShellExe -File $dispatchInstaller -RepositoryRoot $repoRoot
 & $fixedPowerShellExe -File $dispatchStatus -RepositoryRoot $repoRoot
 blocker = if ($dispatchProof.localBridgeReady -eq $true) { 'CHATGPT_DESKTOP_PLUGIN_ATTACHMENT_REQUIRED' }
@@ -155,6 +155,18 @@ test('qualifies exact no-faff rescue surfaces', () => {
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true);
   assert.deepEqual(result.reviewedPaths, paths);
+});
+
+test('rejects scalar-unsafe task proof counting under strict mode', () => {
+  const unsafe = rescue.replace(
+    'if (@($taskProof | Where-Object { $_.present -ne $true }).Count -gt 0)',
+    'if (($taskProof | Where-Object { $_.present -ne $true }).Count -gt 0)',
+  );
+  const result = review(sources(unsafe));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some(
+    ({ code }) => code === 'no-faff-rescue-task-set-failclosed-missing',
+  ));
 });
 
 test('rejects direct task/source/credential/Forge authority', () => {

@@ -197,7 +197,7 @@ $taskProof = foreach ($taskName in @($syncTaskName, $recoveryTaskName, $mailboxT
     }
 }
 
-if (($taskProof | Where-Object { $_.present -ne $true }).Count -gt 0) {
+if (@($taskProof | Where-Object { $_.present -ne $true }).Count -gt 0) {
     Stop-BoundedRescue -Blocker 'CONTROL_PLANE_TASK_PROOF_FAILED'
 }
 
