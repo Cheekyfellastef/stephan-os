@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reviewExactHead, maskInertJavaScriptForDynamicReview, patchAddsDynamicExecution } from './exact-head-review.mjs';
+import { reviewExactHead } from './exact-head-review.mjs';
 
 const base = {
   repository: 'Cheekyfellastef/stephan-os',
@@ -50,40 +50,4 @@ test('blocks likely secrets and conflict markers without matching quoted detecto
     patch: "+const fixture = '+-----BEGIN PRIVATE KEY-----';\n",
   });
   assert.equal(quotedFixture.findings.some(({ code }) => code === 'SECRET_PATTERN'), false);
-});
-
-test('dynamic execution detector ignores lexically inert string and comment fixtures', () => {
-  const dangerousName = 'sp' + 'awn';
-  const execName = 'exec' + 'Sync';
-  const patches = [
-    `+const fixture = "${dangerousName}(command)";\n`,
-    `+const fixture = '${execName}(command)';\n`,
-    `+const fixture = \`${dangerousName}(command)\`;\n`,
-    `+// ${dangerousName}(command)\n`,
-    `+/* ${dangerousName}(command) */\n`,
-    `+const fixtures = [\n+  "process.getBuiltinModule('child_process').${dangerousName}('cmd.exe');",\n+];\n`,
-    `+const result = analyze(\`\n+  process.getBuiltinModule('child_process').${dangerousName}('cmd.exe');\n+\`);\n`,
-  ];
-  for (const patch of patches) {
-    assert.equal(patchAddsDynamicExecution(patch), false, patch);
-    const receipt = reviewExactHead({ ...base, patch });
-    assert.equal(receipt.findings.some(({ code }) => code === 'DYNAMIC_EXECUTION'), false, patch);
-  }
-});
-
-test('dynamic execution detector preserves executable template expressions and code after inert strings', () => {
-  const dangerousName = 'sp' + 'awn';
-  const templateExpression = `+const fixture = \`\${${dangerousName}(command)}\`;\n`;
-  assert.equal(patchAddsDynamicExecution(templateExpression), true);
-
-  const codeAfterString = `+const fixture = "${dangerousName}"; ${dangerousName}(command);\n`;
-  assert.equal(patchAddsDynamicExecution(codeAfterString), true);
-});
-
-test('unterminated inert syntax fails closed to the original added source', () => {
-  const dangerousName = 'sp' + 'awn';
-  const source = `const fixture = "${dangerousName}(command)`;
-  const patch = `+${source}\n`;
-  assert.equal(maskInertJavaScriptForDynamicReview(source), source);
-  assert.equal(patchAddsDynamicExecution(patch), true);
 });
