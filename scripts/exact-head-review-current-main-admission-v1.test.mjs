@@ -16,6 +16,7 @@ const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const MAIN = '3c14072e57d1235e897a89226405dfee569c3ecf';
 const OLD_MAIN = 'ddff35b514125e71b4d742e433628b79538887da';
 const HEAD = 'dea9de4cee5346fef3cd21b010e3c93e7b8b9ec6';
+const WORKFLOW_URL = new URL('../.github/workflows/exact-head-review-dispatch.yml', new URL('../', import.meta.url));
 
 function pr(number, baseSha = MAIN, overrides = {}) {
   return {
@@ -122,4 +123,13 @@ test('CLI writes only admitted targets and a bounded held summary', async () => 
   assert.match(output, /^targets=\[\]$/m);
   assert.match(output, /BASE_NOT_EXACT_CURRENT_MAIN/);
   assert.doesNotMatch(output, /test-token/);
+});
+
+test('workflow filters the global plan and rechecks each matrix target before any coordinator mutation', () => {
+  const workflow = fs.readFileSync(WORKFLOW_URL, 'utf8').replaceAll('\r\n', '\n');
+  assert.match(workflow, /outputs:\n\s+targets: \$\{\{ steps\.admit\.outputs\.targets \}\}/);
+  assert.match(workflow, /- name: Admit only exact-current-main review targets[\s\S]*?id: admit[\s\S]*?scripts\/exact-head-review-current-main-admission-v1\.mjs/);
+  assert.match(workflow, /- name: Recheck target exact-current-main admission[\s\S]*?id: recheck_current_main[\s\S]*?scripts\/exact-head-review-current-main-admission-v1\.mjs/);
+  assert.match(workflow, /- name: Evaluate and advance one PR-scoped exact-head review state\n\s+id: coordinate\n\s+if: steps\.recheck_current_main\.outputs\.targets != '\[\]'/);
+  assert.doesNotMatch(workflow, /continue-on-error:\s*true/);
 });
