@@ -1,0 +1,1 @@
+# Stephanos Question Novelty Authority V1
