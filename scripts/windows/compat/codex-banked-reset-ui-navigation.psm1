@@ -67,14 +67,17 @@ $script:BaseNavigationModule = Import-Module $baseModulePath -Force -PassThru -E
 
 function Open-CodexUsagePanel {
     [CmdletBinding()]
-    param()
+    param(
+        [switch]$AllowReadOnlyEdgeAnalytics
+    )
 
     & $script:BaseNavigationModule {
         $script:CodexPopupFallbackUsed = $false
     }
     $result = & $script:BaseNavigationModule {
-        Open-CodexUsagePanel
-    }
+        param([bool]$AllowEdgeAnalytics)
+        Open-CodexUsagePanel -AllowReadOnlyEdgeAnalytics:$AllowEdgeAnalytics
+    } $AllowReadOnlyEdgeAnalytics.IsPresent
     $fallbackUsed = & $script:BaseNavigationModule {
         [bool]$script:CodexPopupFallbackUsed
     }
