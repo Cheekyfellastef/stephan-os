@@ -6,7 +6,10 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
+import {
+  BATTLE_BRIDGE_CONTROL_PLANE_TASKS,
+  reconcileBattleBridgeControlPlane,
+} from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import {
   buildPostSyncRefreshProjection,
   classifyPostSyncRefresh,
@@ -27,6 +30,7 @@ export const POST_SYNC_REFRESH_RESULT_MARKER = 'POST_SYNC_REFRESH_RESULT=';
 export const POST_SYNC_REFRESH_LOCK_STALE_AFTER_MS = 15 * 60 * 1000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const MAX_CHANGED_PATHS = 4000;
+const CONTROL_PLANE_TASK_IDS = new Set(BATTLE_BRIDGE_CONTROL_PLANE_TASKS.map((task) => task.id));
 
 function text(value) {
   return String(value ?? '').trim();
@@ -38,6 +42,13 @@ function splitLines(value) {
 
 function isSafeHead(value) {
   return SHA_PATTERN.test(text(value));
+}
+
+export function projectControlPlaneFailureBlocker(reconcile = {}) {
+  const blocker = text(reconcile?.blocker);
+  if (!blocker) return '';
+  const failedTaskId = text(reconcile?.failedTaskId);
+  return CONTROL_PLANE_TASK_IDS.has(failedTaskId) ? `${blocker}:${failedTaskId}` : blocker;
 }
 
 function processIsAlive(pid) {
@@ -335,7 +346,7 @@ export async function runBattleBridgePostSyncRefresh({
       ? adapter.reconcileControlPlane({ afterHead: normalizedAfter, paths })
       : Object.freeze({ ok: false, skipped: true, blocker: '', sourceHead: '', exactHeadProofOk: false });
     const effectiveExecution = execution.ok === true && controlPlaneReconcile.ok !== true
-      ? Object.freeze({ ...execution, ok: false, blocker: controlPlaneReconcile.blocker || 'CONTROL_PLANE_RECONCILE_BLOCKED', exactHeadProofOk: false })
+      ? Object.freeze({ ...execution, ok: false, blocker: projectControlPlaneFailureBlocker(controlPlaneReconcile) || 'CONTROL_PLANE_RECONCILE_BLOCKED', exactHeadProofOk: false })
       : execution;
 
     const projection = buildPostSyncRefreshProjection(effectiveExecution, { beforeHead: normalizedBefore, afterHead: normalizedAfter });
