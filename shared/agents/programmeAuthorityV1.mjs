@@ -14,6 +14,10 @@ import {
   createMonitorDefinition,
 } from './monitorMultiplexer.mjs';
 import { validateProtectedApprovalReceipt } from './operatorMergeApprovalGate.mjs';
+import {
+  CRITICAL_BACKLOG_CONVEYOR_SCHEMA,
+  CRITICAL_BACKLOG_DECISION,
+} from './criticalBacklogConveyor.mjs';
 
 export const CANONICAL_IMPLEMENTATION_LANE_SCHEMA = 'stephanos.canonical-implementation-lane.v1';
 export const SOURCE_MUTATION_LEASE_SCHEMA = 'stephanos.source-mutation-lease.v1';
@@ -34,6 +38,7 @@ export const MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS = 60 * 1000;
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
+const SAFE_MISSION_ID = /^[a-z0-9][a-z0-9._-]{2,127}$/;
 const SAFE_BRANCH = /^[a-z0-9][a-z0-9._/-]{0,239}$/i;
 const SAFE_REPOSITORY = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
@@ -942,6 +947,93 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       duplicateOf: record.duplicateOf ?? null,
       supersededBy: record.supersededBy ?? null,
     });
+  }
+  const conveyor = input.criticalBacklog;
+  const conveyorDecision = text(conveyor?.decision);
+  const conveyorActionable = [
+    CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION,
+    CRITICAL_BACKLOG_DECISION.WAIT_ACTIVE_MISSION,
+  ].includes(conveyorDecision);
+  if (conveyorActionable) {
+    const selectedItem = conveyor?.selectedItem;
+    const mission = selectedItem?.mission;
+    const issueNumbers = list(selectedItem?.issueNumbers).map((value) => number(value));
+    const primaryIssue = issueNumbers[0] ?? null;
+    const repository = text(mission?.repository);
+    const branch = text(mission?.branch);
+    const missionId = text(mission?.missionId).toLowerCase();
+    const expectedVerdict = conveyorDecision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION
+      ? 'CRITICAL_BACKLOG_MISSION_READY'
+      : 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE';
+    const sourceValid = conveyor?.schemaVersion === CRITICAL_BACKLOG_CONVEYOR_SCHEMA
+      && conveyor?.validation?.valid === true
+      && text(conveyor?.finalVerdict) === expectedVerdict
+      && primaryIssue !== null
+      && issueNumbers.every((value) => value !== null)
+      && issueNumbers.length === new Set(issueNumbers).size
+      && SAFE_REPOSITORY.test(repository)
+      && SAFE_BRANCH.test(branch)
+      && SAFE_MISSION_ID.test(missionId)
+      && Boolean(text(selectedItem?.headlineApprovalRef))
+      && Boolean(text(mission?.title));
+    const activeMission = conveyor?.activeMission;
+    const continuationValid = conveyorDecision !== CRITICAL_BACKLOG_DECISION.WAIT_ACTIVE_MISSION || Boolean(
+      activeMission
+      && text(activeMission.missionId).toLowerCase() === missionId
+      && text(activeMission.repository).toLowerCase() === repository.toLowerCase()
+      && text(activeMission?.git?.branch) === branch,
+    );
+    if (!sourceValid || !continuationValid) {
+      blockers.push('critical-backlog-scheduler-admission-invalid');
+    } else {
+      const existingIndex = goals.findIndex((goal) => goal.issue === primaryIssue);
+      const candidate = {
+        issue: primaryIssue,
+        title: text(mission.title, `Goal #${primaryIssue}`),
+        state: 'QUEUED',
+        prerequisites: [],
+        priority: Math.max(1, 1_000_000 - Number(selectedItem.priority || 0)),
+        criticalPathWeight: 1_000_000,
+        reversibility: 'HIGH',
+        route: 'OPENCLAW_LOCAL',
+        activePr: null,
+        repository,
+        branch,
+        headSha: null,
+        proofState: 'UNKNOWN',
+        approvalRequired: false,
+        operatorPriority: true,
+        operatorApprovalReceipt: null,
+        evidenceAt: nowUtc,
+        resultProofRefs: [],
+        reusableCapabilityId: null,
+        sharedLessonId: null,
+        repairCycleCount: 0,
+        structuralReviewProofRefs: [],
+        modelTestProofRefs: [],
+        duplicateOf: null,
+        supersededBy: null,
+      };
+      if (existingIndex < 0) {
+        goals.push(candidate);
+      } else {
+        const existing = goals[existingIndex];
+        const identityConflict = existing.state === 'ACTIVE'
+          || (existing.repository !== null && existing.repository.toLowerCase() !== repository.toLowerCase())
+          || (existing.branch !== null && existing.branch !== branch)
+          || ['COMPLETE', 'CLOSED', 'CANCELLED', 'SUPERSEDED'].includes(existing.state);
+        if (identityConflict) blockers.push('critical-backlog-scheduler-goal-conflict');
+        else goals[existingIndex] = {
+          ...candidate,
+          ...existing,
+          state: 'QUEUED',
+          route: 'OPENCLAW_LOCAL',
+          operatorPriority: true,
+          repository,
+          branch,
+        };
+      }
+    }
   }
   if (lane?.valid && lane.active) {
     const existing = goals.find((goal) => goal.issue === lane.issueNumber);
