@@ -209,6 +209,44 @@ test('protected merge entry constructs one repository-bound check expectation', 
   assert.doesNotMatch(source, /expected:\s*\{\s*\.\.\.identity,\s*mergeStateStatus:/);
 });
 
+test('protected merge entry refreshes every authority input after bounded check convergence', () => {
+  const source = readFileSync(PERSONAL_REPOSITORY_MERGE_ENTRY, 'utf8');
+  const helper = source.match(
+    /async function readPersonalRepositoryAuthoritySnapshot\([\s\S]*?\n}\n\nasync function collectEvidence/,
+  )?.[0] || '';
+  for (const requiredRead of [
+    /currentWorkflowExecution\(context\)/,
+    /apiJson\(`\/repos\/\$\{context\.owner}\/\$\{context\.repo}`, \{ authorization: 'ruleset-proof' \}\)/,
+    /pulls\/\$\{identity\.prNumber}/,
+    /git\/ref\/heads\/main/,
+    /git\/commits\/\$\{identity\.sourceHead}/,
+    /compare\/\$\{identity\.baseSha}\.\.\.\$\{identity\.sourceHead}/,
+    /pullRequestReviewState\(context\.owner, context\.repo, identity\.prNumber\)/,
+    /environments\/operator-merge-approval/,
+    /loadSelectedIndependentReview\(context, identity\)/,
+  ]) assert.match(helper, requiredRead);
+
+  const convergenceIndex = source.indexOf(
+    'const checks = await validatePersonalRepositoryCheckRunsWithBoundedReread',
+  );
+  const refreshIndex = source.indexOf(
+    'const refreshedAuthority = await readPersonalRepositoryAuthoritySnapshot(context, identity);',
+  );
+  assert.ok(convergenceIndex > 0);
+  assert.ok(refreshIndex > convergenceIndex);
+  assert.equal(
+    source.match(/readPersonalRepositoryAuthoritySnapshot\(context, identity\)/g)?.length,
+    3,
+  );
+  assert.match(
+    source.slice(refreshIndex),
+    /mergeStateStatus: refreshedAuthority\.review\.mergeStateStatus,[\s\S]*validatePersonalRepositoryCheckRuns\([\s\S]*refreshedCheckExpectation\.expected/,
+  );
+  assert.match(source.slice(refreshIndex), /\.\.\.refreshedReview,/);
+  assert.match(source.slice(refreshIndex), /repository,\s*environment,\s*integrationId/);
+  assert.match(source.slice(refreshIndex), /independentReview: refreshedIndependentReview/);
+});
+
 test('in-process artifact ZIP reader accepts exact stored and deflated single-entry archives', () => {
   for (const [method, dataDescriptor] of [[0, false], [8, false], [0, true], [8, true]]) {
     const fixture = singleEntryZip({ method, dataDescriptor });
@@ -1769,7 +1807,7 @@ test('UNSTABLE admission binds the one failing check to the exact reviewed escal
 });
 
 test('deadline convergence admits every exact snapshot arrival within the bounded window', async () => {
-  assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS, 60_000);
+  assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS, 120_000);
   assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_POLL_INTERVAL_MS, 5_000);
   const escalationRun = escalationWorkflowRun();
   const greenRun = workflowRuns()[0];
@@ -1786,7 +1824,7 @@ test('deadline convergence admits every exact snapshot arrival within the bounde
     ...exactSnapshot,
     workflowRuns: workflowRuns(),
   };
-  for (const exactSnapshotAttempt of [1, 2, 3, 4, 7, 13]) {
+  for (const exactSnapshotAttempt of [1, 2, 3, 4, 7, 13, 25]) {
     let clockMs = 0;
     const reads = [];
     const waits = [];
@@ -1884,7 +1922,7 @@ test('deadline convergence expires closed for persistent GitHub identity inconsi
   assert.equal(blocked.selectedSnapshot, null);
   assert.equal(blocked.convergenceDeadlineReached, true);
   assert.equal(clockMs, PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS);
-  assert.equal(reads, 13);
+  assert.equal(reads, 25);
   assert.equal(blocked.snapshotAttempts.every((snapshot) => snapshot.retryable), true);
 });
 
@@ -1918,7 +1956,7 @@ test('deadline convergence expires closed for a persistent hostile check identit
   assert.equal(blocked.selectedSnapshot, null);
   assert.equal(blocked.convergenceDeadlineReached, true);
   assert.equal(clockMs, PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS);
-  assert.equal(reads, 13);
+  assert.equal(reads, 25);
   assert.deepEqual(blocked.blockers, ['personal-repository-check-run-identity-invalid']);
   assert.equal(blocked.snapshotAttempts.every((snapshot) => snapshot.retryable), true);
 });
