@@ -53,6 +53,13 @@ test('protects successor OpenClaw reviewer-specialist sources as bootstrap bound
   }
 });
 
+test('successor bootstrap registry is closed to exactly the three successor specialist sources', () => {
+  assert.equal(OPENCLAW_SUCCESSOR_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1.length, 3);
+  assert.equal(new Set(OPENCLAW_SUCCESSOR_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1).size, 3);
+  assert.equal(OPENCLAW_SUCCESSOR_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1.every((path) => path.startsWith('shared/agents/openClawBuilderProviderSpecialistReview')), true);
+  assert.equal(OPENCLAW_SUCCESSOR_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1.some((path) => path.includes('*')), false);
+});
+
 test('protects exact workflow-dispatch review identity consumers as bootstrap boundaries', () => {
   assert.deepEqual(REVIEW_DISPATCH_IDENTITY_BOUNDARY_PATHS_V1, [
     'shared/agents/independentReviewWorkflowDispatchExecutionV1.mjs',
