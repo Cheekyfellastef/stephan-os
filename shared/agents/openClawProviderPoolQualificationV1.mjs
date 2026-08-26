@@ -127,6 +127,8 @@ const PROVIDER_POOL_STATUS_KEYS = Object.freeze([
   'status',
   'summary',
   'proofRefs',
+  'relatedIssue',
+  'relatedPr',
   'repository',
   'taskClass',
   'sourceHead',
