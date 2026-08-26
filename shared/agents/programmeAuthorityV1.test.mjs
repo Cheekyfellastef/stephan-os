@@ -39,6 +39,10 @@ import {
   projectMissionWorkerHeartbeat,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 import { buildMissionScheduler } from '../runtime/missionScheduler.mjs';
+import {
+  DEFAULT_CRITICAL_BACKLOG,
+  buildCriticalBacklogProjection,
+} from './criticalBacklogConveyor.mjs';
 
 const NOW = '2026-07-30T10:00:00.000Z';
 const HEAD = 'a'.repeat(40);
@@ -62,7 +66,6 @@ function goalRecord(overrides = {}) {
     status: 'READY',
     prerequisites: [],
     route: 'CHATGPT_GITHUB',
-    providerRouteIntent: 'AUTO',
     ...overrides,
   };
 }
@@ -775,7 +778,6 @@ test('scheduler goals are constructed from durable records and the canonical lan
       state: 'READY',
       prerequisites: '#1286',
       route: 'CHATGPT_GITHUB',
-      providerRouteIntent: 'AUTO',
       evidenceAt: NOW,
     })],
   });
@@ -951,180 +953,115 @@ test('scheduler goals are constructed from durable records and the canonical lan
   )));
 });
 
-test('active critical backlog mission remains visible to the scheduler without a duplicate goal record', () => {
-  const mission = {
-    missionId: 'critical-1291-worker-watchdog-repair',
-    title: 'Repair and prove Mission Orchestrator Worker self-heal',
-    repository: REPOSITORY,
+test('source-controlled critical backlog is admitted without a duplicate workspace goal record', () => {
+  const selectedItem = DEFAULT_CRITICAL_BACKLOG[0];
+  const activeMission = {
+    missionId: selectedItem.mission.missionId,
+    repository: selectedItem.mission.repository,
+    git: { branch: selectedItem.mission.branch },
     currentPhase: 'CREATE_WORKTREE',
-    allowedFiles: ['scripts/battle-bridge-worker-watchdog.mjs', 'shared/agents/**'],
-    git: { branch: 'openclaw/critical-1291-worker-watchdog-repair' },
   };
-  const selectedItem = {
-    itemId: 'worker-watchdog-self-heal',
-    priority: 10,
-    issueNumbers: [1291],
-    mission: {
-      missionId: mission.missionId,
-      title: mission.title,
-      repository: REPOSITORY,
-      branch: mission.git.branch,
-      allowedFiles: mission.allowedFiles,
-    },
-  };
-  const result = buildSchedulerGoalsFromProgrammeSources({
+  const criticalBacklog = buildCriticalBacklogProjection({ missionRecords: [activeMission] });
+  const goals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
     goalRecords: [],
-    criticalBacklog: {
-      decision: 'WAIT_ACTIVE_MISSION',
-      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
-      selectedItem,
-      activeMission: mission,
-    },
+    criticalBacklog,
   });
-  assert.equal(result.valid, true, result.blockers.join(','));
-  assert.equal(result.goals.length, 1);
-  assert.equal(result.goals[0].issue, 1291);
-  assert.equal(result.goals[0].state, 'QUEUED');
-  assert.equal(result.goals[0].route, 'CHATGPT_GITHUB');
-  assert.deepEqual(result.goals[0].resourceIds, [
-    'repo:cheekyfellastef/stephan-os:path:scripts/battle-bridge-worker-watchdog.mjs',
-    'repo:cheekyfellastef/stephan-os:path:shared/agents',
-  ]);
 
-  const scheduler = buildMissionScheduler({ now: NOW, goals: result.goals });
+  assert.equal(goals.valid, true, goals.blockers.join(','));
+  assert.equal(goals.goals.length, 1);
+  assert.deepEqual(goals.goals[0], {
+    issue: 1291,
+    title: selectedItem.mission.title,
+    state: 'QUEUED',
+    prerequisites: [],
+    priority: 999990,
+    criticalPathWeight: 1000000,
+    reversibility: 'HIGH',
+    route: 'OPENCLAW_LOCAL',
+    activePr: null,
+    repository: selectedItem.mission.repository,
+    branch: selectedItem.mission.branch,
+    headSha: null,
+    proofState: 'UNKNOWN',
+    approvalRequired: false,
+    operatorPriority: true,
+    operatorApprovalReceipt: null,
+    evidenceAt: NOW,
+    resultProofRefs: [],
+    reusableCapabilityId: null,
+    sharedLessonId: null,
+    repairCycleCount: 0,
+    structuralReviewProofRefs: [],
+    modelTestProofRefs: [],
+    duplicateOf: null,
+    supersededBy: null,
+  });
+
+  const scheduler = buildMissionScheduler({ now: NOW, goals: goals.goals });
+  assert.equal(scheduler.failClosed, false);
   assert.equal(scheduler.selectedGoal, '#1291');
-  assert.deepEqual(scheduler.parallelCandidates, ['#1291']);
+  assert.equal(scheduler.selectedRoute, 'OPENCLAW_LOCAL');
+  assert.equal(scheduler.decisionReceipt.status, 'LANE_SELECTED');
+
+  const nextMissionGoals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [],
+    criticalBacklog: buildCriticalBacklogProjection(),
+  });
+  assert.equal(nextMissionGoals.valid, true, nextMissionGoals.blockers.join(','));
+  assert.equal(nextMissionGoals.goals[0].issue, 1291);
+  assert.equal(
+    buildMissionScheduler({ now: NOW, goals: nextMissionGoals.goals }).decisionReceipt.status,
+    'LANE_SELECTED',
+  );
 });
 
-test('active mission and same-issue durable goal must agree on all scheduling authority', () => {
-  const mission = {
-    missionId: 'critical-1291-worker-watchdog-repair',
-    title: 'Repair and prove Mission Orchestrator Worker self-heal',
-    repository: REPOSITORY,
-    currentPhase: 'CREATE_WORKTREE',
-    allowedFiles: ['scripts/battle-bridge-worker-watchdog.mjs', 'shared/agents/**'],
-    git: { branch: 'openclaw/critical-1291-worker-watchdog-repair' },
-  };
-  const selectedItem = {
-    itemId: 'worker-watchdog-self-heal',
-    priority: 10,
-    issueNumbers: [1291],
-    mission: {
-      missionId: mission.missionId,
-      title: mission.title,
-      repository: REPOSITORY,
-      branch: mission.git.branch,
-      route: 'CHATGPT_GITHUB',
-      allowedFiles: mission.allowedFiles,
-    },
-  };
-  const resources = [
-    'repo:cheekyfellastef/stephan-os:path:scripts/battle-bridge-worker-watchdog.mjs',
-    'repo:cheekyfellastef/stephan-os:path:shared/agents',
-  ];
-  const exactGoal = goalRecord({
+test('critical backlog scheduler admission preserves and rejects a conflicting active goal', () => {
+  const selectedItem = DEFAULT_CRITICAL_BACKLOG[0];
+  const existingActiveGoal = goalRecord({
     goalId: 'goal-1291',
     issueNumber: 1291,
-    repository: REPOSITORY,
-    branch: mission.git.branch,
+    repository: selectedItem.mission.repository,
+    branch: selectedItem.mission.branch,
+    title: 'Existing active durable goal',
+    status: 'ACTIVE',
     route: 'CHATGPT_GITHUB',
-    providerRouteIntent: 'AUTO',
-    resourceIds: resources,
   });
-  const build = (goal) => buildSchedulerGoalsFromProgrammeSources({
+  const goals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
-    goalRecords: [goal],
-    criticalBacklog: {
-      decision: 'WAIT_ACTIVE_MISSION',
-      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
-      selectedItem,
-      activeMission: mission,
-    },
+    goalRecords: [existingActiveGoal],
+    criticalBacklog: buildCriticalBacklogProjection(),
   });
 
-  const exact = build(exactGoal);
-  assert.equal(exact.valid, true, exact.blockers.join(','));
-  assert.equal(exact.goals.length, 1);
-  assert.deepEqual(exact.goals[0].resourceIds, resources);
-
-  for (const conflictingGoal of [
-    { ...exactGoal, repository: 'other/repository' },
-    { ...exactGoal, branch: 'openclaw/foreign-branch' },
-    { ...exactGoal, route: 'FOUNDRY_FORGE' },
-    { ...exactGoal, providerRouteIntent: 'CHATGPT_GITHUB' },
-    { ...exactGoal, resourceIds: ['repo:cheekyfellastef/stephan-os:path:unrelated'] },
-    { ...exactGoal, resourceIds: [...resources, resources[0]] },
-  ]) {
-    const conflict = build(conflictingGoal);
-    assert.equal(conflict.valid, false);
-    assert.ok(conflict.blockers.includes('critical-backlog-active-mission-goal-authority-conflict'));
-  }
-  const invalidProviderIntent = build({ ...exactGoal, providerRouteIntent: 'NOT_A_PROVIDER' });
-  assert.equal(invalidProviderIntent.valid, false);
-  assert.ok(invalidProviderIntent.blockers.includes('goal-record-0-provider-route-intent-invalid'));
+  assert.equal(goals.valid, false);
+  assert.ok(goals.blockers.includes('critical-backlog-scheduler-goal-conflict'));
+  assert.equal(goals.goals.length, 1);
+  assert.equal(goals.goals[0].state, 'ACTIVE');
+  assert.equal(goals.goals[0].route, 'CHATGPT_GITHUB');
+  assert.equal(goals.goals[0].repository, selectedItem.mission.repository);
+  assert.equal(goals.goals[0].branch, selectedItem.mission.branch);
 });
 
-test('newly selected critical mission and same-issue durable goal share one scheduling authority', () => {
-  const mission = {
-    missionId: 'critical-1291-worker-watchdog-repair',
-    title: 'Repair and prove Mission Orchestrator Worker self-heal',
-    repository: REPOSITORY,
-    branch: 'openclaw/critical-1291-worker-watchdog-repair',
-    route: 'CHATGPT_GITHUB',
-    providerRouteIntent: 'AUTO',
-    allowedFiles: ['scripts/battle-bridge-worker-watchdog.mjs', 'shared/agents/**'],
-  };
-  const selectedItem = {
-    itemId: 'worker-watchdog-self-heal',
-    priority: 10,
-    issueNumbers: [1291],
-    mission,
-  };
-  const resources = [
-    'repo:cheekyfellastef/stephan-os:path:scripts/battle-bridge-worker-watchdog.mjs',
-    'repo:cheekyfellastef/stephan-os:path:shared/agents',
-  ];
-  const exactGoal = goalRecord({
-    goalId: 'goal-1291',
-    issueNumber: 1291,
-    repository: REPOSITORY,
-    branch: mission.branch,
-    route: mission.route,
-    providerRouteIntent: mission.providerRouteIntent,
-    resourceIds: resources,
+test('critical backlog scheduler admission fails closed on mission identity drift', () => {
+  const selectedItem = DEFAULT_CRITICAL_BACKLOG[0];
+  const criticalBacklog = buildCriticalBacklogProjection({
+    missionRecords: [{
+      missionId: selectedItem.mission.missionId,
+      repository: selectedItem.mission.repository,
+      git: { branch: 'openclaw/wrong-branch' },
+      currentPhase: 'CREATE_WORKTREE',
+    }],
   });
-  const build = (goalRecords) => buildSchedulerGoalsFromProgrammeSources({
+  const goals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
-    goalRecords,
-    criticalBacklog: {
-      decision: 'CREATE_NEXT_MISSION',
-      finalVerdict: 'CRITICAL_BACKLOG_MISSION_READY',
-      selectedItem,
-      activeMission: null,
-    },
+    goalRecords: [],
+    criticalBacklog,
   });
 
-  const synthesized = build([]);
-  assert.equal(synthesized.valid, true, synthesized.blockers.join(','));
-  assert.equal(synthesized.goals.length, 1);
-  assert.deepEqual(synthesized.goals[0].resourceIds, resources);
-
-  const exact = build([exactGoal]);
-  assert.equal(exact.valid, true, exact.blockers.join(','));
-  assert.equal(exact.goals.length, 1);
-
-  for (const conflictingGoal of [
-    { ...exactGoal, repository: 'other/repository' },
-    { ...exactGoal, branch: 'openclaw/foreign-branch' },
-    { ...exactGoal, route: 'FOUNDRY_FORGE' },
-    { ...exactGoal, providerRouteIntent: 'CHATGPT_GITHUB' },
-    { ...exactGoal, resourceIds: ['repo:cheekyfellastef/stephan-os:path:unrelated'] },
-  ]) {
-    const conflict = build([conflictingGoal]);
-    assert.equal(conflict.valid, false);
-    assert.ok(conflict.blockers.includes('critical-backlog-next-mission-goal-authority-conflict'));
-  }
+  assert.equal(goals.valid, false);
+  assert.equal(goals.goals.length, 0);
+  assert.ok(goals.blockers.includes('critical-backlog-scheduler-admission-invalid'));
 });
 
 test('authoritative projection holds without a real mutation lease even when a receipt has a leaseKey', () => {

@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,7 +11,6 @@ import {
   finalizeTerminalImplementationLane,
   publishProgrammeControllerHeartbeat,
   readAuthoritativeProgrammeProjection,
-  readMissionControllerCapacityRoutingInput,
   readSourceMutationLease,
   releaseSourceMutationLease,
   renewSourceMutationLease,
@@ -29,13 +27,6 @@ import {
 } from '../../shared/agents/executionReceiptV1.mjs';
 import { ensureSharedWorkspaceLayout } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { createSharedWorkspaceProofRecord } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
-import {
-  BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
-  BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
-  MISSION_CONTROLLER_ROUTE,
-  createBuildLanePublisherAttestation,
-  createBuildLaneCapacityStatusRecord,
-} from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 import {
   createMissionWorkerHeartbeatRecord,
   resolveCanonicalMissionWorkerPaths,
@@ -391,161 +382,6 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
   });
 });
 
-test('capacity routing input independently loads the supervised publisher key and rejects caller-shaped OpenClaw status', async () => {
-  await fixture(async ({ root, repoRoot }) => {
-    const hostContext = {
-      schemaVersion: 'stephanos.openclaw-provider-pool-host-context.v1',
-      qualificationReceipt: { receiptId: 'qualification' },
-      capacityReceipt: { receiptId: 'capacity' },
-      realWorkExecutionReceipt: { receiptId: 'execution' },
-      realWorkWorkspaceReceipt: { receiptId: 'workspace' },
-      qualificationAuthorityReceipt: { receiptId: 'authority' },
-    };
-    await writeFile(
-      path.join(root, 'status', 'openclaw-provider-pool-current.json'),
-      `${JSON.stringify({ hostContext })}\n`,
-      'utf8',
-    );
-    const publisherKeyPath = path.join(root, 'publisher-public.pem');
-    await writeFile(publisherKeyPath, 'not-a-valid-public-key', 'utf8');
-    const reads = [];
-    const routing = await readMissionControllerCapacityRoutingInput({
-      root,
-      repoRoot,
-      nowUtc: NOW,
-      sourceRevision: HEAD,
-      env: { STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH: publisherKeyPath },
-      readFileImpl: async (...args) => {
-        reads.push(args[0]);
-        return readFile(...args);
-      },
-    });
-    assert.equal(routing.sourceHead, HEAD);
-    assert.equal(routing.openClawHostContext, null);
-    assert.equal(reads.includes(publisherKeyPath), true);
-    assert.equal(routing.codexStatus, null);
-    assert.equal(routing.githubLaneReceipt, null);
-    assert.equal(routing.forgeLaneReceipt, null);
-  });
-});
-
-test('capacity routing independently binds GitHub status to an exact authority receipt', async () => {
-  await fixture(async ({ root, repoRoot }) => {
-    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
-    const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' });
-    const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' });
-    const foreignPublicKeyPem = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' });
-    const publisherKeyPath = path.join(path.dirname(root), 'github-publisher-public-key.pem');
-    const foreignKeyPath = path.join(path.dirname(root), 'foreign-publisher-public-key.pem');
-    const authorityId = 'github-build-authority-programme-test';
-    const workerId = 'shared-fabric-chatgpt-github-builder-01';
-    const capacityReceipt = {
-      schemaVersion: BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
-      receiptId: 'github-build-capacity-programme-test',
-      route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
-      repository: REPOSITORY,
-      workerId,
-      state: 'READY',
-      supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
-      supportedTaskClasses: ['FOCUSED_REPAIR'],
-      observedAtUtc: '2026-07-30T09:59:00.000Z',
-      expiresAtUtc: '2026-07-30T10:10:00.000Z',
-      queueDepth: 0,
-      p95StartLatencySeconds: 5,
-      authorityReceiptIds: [authorityId],
-      proofRefs: ['receipts/github-builder/capacity.json'],
-    };
-    const authorityReceipt = {
-      schemaVersion: BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
-      receiptId: authorityId,
-      route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
-      repository: REPOSITORY,
-      sourceHead: HEAD,
-      workerId,
-      authorizedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
-      authorizedTaskClasses: ['FOCUSED_REPAIR'],
-      issuedAtUtc: '2026-07-30T09:30:00.000Z',
-      expiresAtUtc: '2026-07-30T11:00:00.000Z',
-      proofRefs: ['receipts/github-builder/authority.json'],
-      sourceDispatchAllowed: true,
-      sourceMutationAuthorityAdded: false,
-      mergeAuthorityAdded: false,
-      deploymentAuthorityAdded: false,
-      runtimeMutationAuthorityAdded: false,
-      protectedMergeDispatchAllowed: false,
-      duplicateDispatchAllowed: false,
-      arbitraryCommandAllowed: false,
-    };
-    const status = createBuildLaneCapacityStatusRecord(capacityReceipt, { nowUtc: NOW });
-    const statusPath = path.join(root, 'status', 'chatgpt-github-build-capacity-current.json');
-    const authorityPath = path.join(root, 'receipts', `${authorityId}.json`);
-    const attestationPath = path.join(root, 'receipts', 'chatgpt-github-build-capacity-attestation-current.json');
-    await writeFile(statusPath, `${JSON.stringify(status)}\n`, 'utf8');
-    await writeFile(authorityPath, `${JSON.stringify(authorityReceipt)}\n`, 'utf8');
-    await writeFile(attestationPath, `${JSON.stringify(createBuildLanePublisherAttestation(
-      status,
-      [authorityReceipt],
-      privateKeyPem,
-    ))}\n`, 'utf8');
-    await writeFile(publisherKeyPath, publicKeyPem, 'utf8');
-    await writeFile(foreignKeyPath, foreignPublicKeyPem, 'utf8');
-
-    try {
-      const proven = await readMissionControllerCapacityRoutingInput({
-        root,
-        repoRoot,
-        nowUtc: NOW,
-        sourceRevision: HEAD,
-        env: { STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH: publisherKeyPath },
-      });
-      assert.equal(proven.githubLaneReceipt.receiptId, capacityReceipt.receiptId);
-      assert.equal(proven.githubLaneAuthorityReceipts[0].receiptId, authorityId);
-
-      for (const env of [
-        {},
-        { STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH: foreignKeyPath },
-      ]) {
-        const rejected = await readMissionControllerCapacityRoutingInput({
-          root, repoRoot, nowUtc: NOW, sourceRevision: HEAD, env,
-        });
-        assert.equal(rejected.githubLaneReceipt, null);
-        assert.deepEqual(rejected.githubLaneAuthorityReceipts, []);
-      }
-
-      const canonicalAttestation = createBuildLanePublisherAttestation(status, [authorityReceipt], privateKeyPem);
-      await writeFile(attestationPath, `${JSON.stringify({
-        ...canonicalAttestation,
-        statusDigest: `sha256:${'0'.repeat(64)}`,
-      })}\n`, 'utf8');
-      const alteredAttestation = await readMissionControllerCapacityRoutingInput({
-        root,
-        repoRoot,
-        nowUtc: NOW,
-        sourceRevision: HEAD,
-        env: { STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH: publisherKeyPath },
-      });
-      assert.equal(alteredAttestation.githubLaneReceipt, null);
-
-      await writeFile(attestationPath, `${JSON.stringify(canonicalAttestation)}\n`, 'utf8');
-      await writeFile(authorityPath, `${JSON.stringify({
-        ...authorityReceipt,
-        workerId: 'foreign-worker',
-      })}\n`, 'utf8');
-      const alteredAuthority = await readMissionControllerCapacityRoutingInput({
-        root,
-        repoRoot,
-        nowUtc: NOW,
-        sourceRevision: HEAD,
-        env: { STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH: publisherKeyPath },
-      });
-      assert.equal(alteredAuthority.githubLaneReceipt, null);
-    } finally {
-      await rm(publisherKeyPath, { force: true });
-      await rm(foreignKeyPath, { force: true });
-    }
-  });
-});
-
 test('production composition reads real Shared Workspace, receipt, heartbeat, scheduler and conveyor contracts', async () => {
   await fixture(async ({ root, home, repoRoot }) => {
     await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
@@ -636,29 +472,20 @@ test('production composition reads real Shared Workspace, receipt, heartbeat, sc
   });
 });
 
-test('production composition restarts an already-active critical mission when durable goal records are empty', async () => {
+test('production composition admits an active critical mission when the workspace has no goal records', async () => {
   await fixture(async ({ root, home, repoRoot }) => {
-    await publishWorkerHeartbeat(home);
     await publishProgrammeControllerHeartbeat({
       controllerId: 'durable-flywheel-controller',
       sourceRevision: HEAD,
-      cycleState: 'RECONCILING',
-      activeLaneId: '',
-      lastSuccessfulReconciliationUtc: '',
-      lastPublishedReceiptId: '',
+      cycleState: 'IDLE',
+      activeLaneId: null,
+      lastSuccessfulReconciliationUtc: NOW,
+      lastPublishedReceiptId: 'wait-for-durable-goal-evidence',
       timestampUtc: NOW,
       boundedMutationSteps: 0,
-      proofRefs: [],
     }, { root, repoRoot });
-    const mission = {
-      missionId: 'critical-1291-worker-watchdog-repair',
-      revision: 1,
-      title: 'Repair and prove Mission Orchestrator Worker self-heal',
-      repository: REPOSITORY,
-      currentPhase: 'CREATE_WORKTREE',
-      allowedFiles: ['scripts/battle-bridge-worker-watchdog.mjs', 'shared/agents/**'],
-      git: { branch: 'openclaw/critical-1291-worker-watchdog-repair' },
-    };
+    await publishWorkerHeartbeat(home);
+
     const projection = await readAuthoritativeProgrammeProjection({
       root,
       home,
@@ -667,22 +494,31 @@ test('production composition restarts an already-active critical mission when du
       env: {},
       testOnly: true,
       dependencies: {
+        readWorkspaceFeed: async () => ({
+          state: 'ready',
+          records: { goalRecords: [], statusRecords: [], proofRecords: [] },
+        }),
         readRepositoryHead: async () => ({
           ok: true,
           reason: 'CANONICAL_REPOSITORY_HEAD_READ',
           branch: 'main',
           headSha: HEAD,
         }),
-        listMissionRecords: async () => [mission],
+        listMissionRecords: async () => [{
+          missionId: 'critical-1291-worker-watchdog-repair',
+          repository: REPOSITORY,
+          git: { branch: 'openclaw/critical-1291-worker-watchdog-repair' },
+          currentPhase: 'CREATE_WORKTREE',
+        }],
       },
     });
-    assert.equal(projection.status, 'READY', projection.blockers.join(','));
-    assert.equal(projection.scheduler.selectedGoal, '#1291');
-    assert.deepEqual(projection.scheduler.parallelCandidates, ['#1291']);
-    assert.equal(projection.criticalBacklog.activeMission.missionId, mission.missionId);
+
     assert.equal(projection.criticalBacklog.decision, 'WAIT_ACTIVE_MISSION');
-    assert.equal(projection.lane, null);
-    assert.equal(projection.mutationLease, null);
+    assert.equal(projection.scheduler.failClosed, false);
+    assert.equal(projection.scheduler.selectedGoal, '#1291');
+    assert.equal(projection.scheduler.selectedRoute, 'OPENCLAW_LOCAL');
+    assert.equal(projection.scheduler.decisionReceipt.status, 'LANE_SELECTED');
+    assert.equal(projection.status, 'READY', projection.blockers.join(','));
   });
 });
 

@@ -14,7 +14,10 @@ import {
   createMonitorDefinition,
 } from './monitorMultiplexer.mjs';
 import { validateProtectedApprovalReceipt } from './operatorMergeApprovalGate.mjs';
-import { MISSION_PROVIDER_ROUTE_INTENT } from './missionControllerCapacityRouterV1.mjs';
+import {
+  CRITICAL_BACKLOG_CONVEYOR_SCHEMA,
+  CRITICAL_BACKLOG_DECISION,
+} from './criticalBacklogConveyor.mjs';
 
 export const CANONICAL_IMPLEMENTATION_LANE_SCHEMA = 'stephanos.canonical-implementation-lane.v1';
 export const SOURCE_MUTATION_LEASE_SCHEMA = 'stephanos.source-mutation-lease.v1';
@@ -35,6 +38,7 @@ export const MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS = 60 * 1000;
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
+const SAFE_MISSION_ID = /^[a-z0-9][a-z0-9._-]{2,127}$/;
 const SAFE_BRANCH = /^[a-z0-9][a-z0-9._/-]{0,239}$/i;
 const SAFE_REPOSITORY = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
@@ -55,7 +59,6 @@ const IDLE_SELECTION_CONTROLLER_STATES = new Set(['IDLE', 'RECONCILING']);
 const TERMINAL_LANE_CONTROLLER_STATES = new Set(['FINALIZING', 'RECONCILING']);
 const ACTIVE_EXECUTION_RECEIPT_STATES = new Set(['queued', 'accepted', 'started', 'progress']);
 const FAILED_EXECUTION_RECEIPT_STATES = new Set(['failed', 'cancelled']);
-const PROVIDER_ROUTE_INTENTS = new Set(Object.values(MISSION_PROVIDER_ROUTE_INTENT));
 const AFFIRMATIVE_PROGRESS_PROOF_STATUSES = new Set([
   'COMPLETE',
   'COMPLETED',
@@ -133,19 +136,6 @@ function ownValueOr(object, key, fallback) {
 
 function unique(values) {
   return [...new Set(values)];
-}
-
-function sameExactStringSet(left, right) {
-  if (!Array.isArray(left) || !Array.isArray(right)) return false;
-  const normalize = (values) => values.map((value) => text(value)).filter(Boolean).sort();
-  const normalizedLeft = normalize(left);
-  const normalizedRight = normalize(right);
-  return normalizedLeft.length === left.length
-    && normalizedRight.length === right.length
-    && unique(normalizedLeft).length === normalizedLeft.length
-    && unique(normalizedRight).length === normalizedRight.length
-    && normalizedLeft.length === normalizedRight.length
-    && normalizedLeft.every((value, index) => value === normalizedRight[index]);
 }
 
 function freeze(value) {
@@ -865,66 +855,6 @@ export function projectProgrammeControllerHeartbeat(record = {}, options = {}) {
   });
 }
 
-function projectCriticalMissionSchedulingAuthority(conveyor) {
-  const active = conveyor?.decision === 'WAIT_ACTIVE_MISSION'
-    && conveyor?.finalVerdict === 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE';
-  const creating = conveyor?.decision === 'CREATE_NEXT_MISSION'
-    && conveyor?.finalVerdict === 'CRITICAL_BACKLOG_MISSION_READY';
-  if (!active && !creating) return null;
-  const selectedItem = conveyor.selectedItem;
-  const selectedMission = selectedItem?.mission;
-  const executableMission = active ? conveyor.activeMission : selectedMission;
-  const issueNumbers = list(selectedItem?.issueNumbers).map((value) => number(value)).filter(Boolean);
-  const issueNumber = issueNumbers[0] ?? null;
-  const missionId = text(executableMission?.missionId).toLowerCase();
-  const selectedMissionId = text(selectedMission?.missionId).toLowerCase();
-  const repository = text(executableMission?.repository);
-  const branch = text(executableMission?.git?.branch || executableMission?.branch || selectedMission?.branch);
-  const selectedRepository = text(selectedMission?.repository);
-  const selectedBranch = text(selectedMission?.branch);
-  const currentPhase = text(executableMission?.currentPhase).toUpperCase();
-  const providerRouteIntent = text(
-    executableMission?.providerRouteIntent || selectedMission?.providerRouteIntent,
-    'AUTO',
-  ).toUpperCase();
-  const rawScopes = list(executableMission?.allowedFiles || selectedMission?.allowedFiles);
-  const resourceIds = rawScopes.map((value) => {
-    const scope = text(value).replace(/\\/g, '/').replace(/\/\*\*$/, '').toLowerCase();
-    return scope ? `repo:${repository.toLowerCase()}:path:${scope}` : '';
-  });
-  const valid = Boolean(
-    issueNumber
-    && SAFE_ID.test(missionId)
-    && missionId === selectedMissionId
-    && SAFE_REPOSITORY.test(repository)
-    && repository.toLowerCase() === selectedRepository.toLowerCase()
-    && SAFE_BRANCH.test(branch)
-    && !branch.includes('..')
-    && branch === selectedBranch
-    && PROVIDER_ROUTE_INTENTS.has(providerRouteIntent)
-    && resourceIds.length > 0
-    && resourceIds.every(Boolean)
-    && unique(resourceIds).length === resourceIds.length
-    && (!active || (
-      currentPhase
-      && !['BLOCKED', 'AWAITING_OPERATOR_APPROVAL', 'COMPLETE', 'CANCELLED'].includes(currentPhase)
-    ))
-  );
-  return {
-    active,
-    valid,
-    selectedItem,
-    selectedMission,
-    executableMission,
-    issueNumber,
-    repository,
-    branch,
-    providerRouteIntent,
-    route:text(selectedMission?.route, 'CHATGPT_GITHUB').toUpperCase(),
-    resourceIds,
-  };
-}
-
 export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
   const blockers = [];
   const lane = input.lane ?? null;
@@ -990,11 +920,6 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       blockers.push(`goal-record-${index}-approval-receipt-invalid`);
       continue;
     }
-    const providerRouteIntent = text(record.providerRouteIntent, 'AUTO').toUpperCase();
-    if (!PROVIDER_ROUTE_INTENTS.has(providerRouteIntent)) {
-      blockers.push(`goal-record-${index}-provider-route-intent-invalid`);
-      continue;
-    }
     goals.push({
       issue: issueNumber,
       title: text(record.title, `Goal #${issueNumber}`),
@@ -1004,7 +929,6 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       criticalPathWeight: Number.isFinite(record.criticalPathWeight) ? record.criticalPathWeight : 0,
       reversibility: text(record.reversibility, 'UNKNOWN').toUpperCase(),
       route: ownValueOr(record, 'route', 'WAITING_FOR_EXTERNAL_CONDITION'),
-      providerRouteIntent,
       activePr: prAliases.value,
       repository: text(record.repository) || null,
       branch: text(record.branch) || null,
@@ -1014,7 +938,6 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       operatorPriority: ownValueOr(record, 'operatorPriority', false),
       operatorApprovalReceipt: approvalReceipt.value,
       evidenceAt: ownValueOr(record, 'evidenceAt', record.timestampUtc),
-      resourceIds: ownValueOr(record, 'resourceIds', []),
       resultProofRefs: ownValueOr(record, 'resultProofRefs', []),
       reusableCapabilityId: text(record.reusableCapabilityId) || null,
       sharedLessonId: text(record.sharedLessonId) || null,
@@ -1026,67 +949,89 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
     });
   }
   const conveyor = input.criticalBacklog;
-  const criticalMission = projectCriticalMissionSchedulingAuthority(conveyor);
-  if (criticalMission) {
-    const {
-      active,
-      valid,
-      selectedItem,
-      selectedMission,
-      executableMission,
-      issueNumber,
-      repository,
-      branch,
-      providerRouteIntent,
-      route,
-      resourceIds,
-    } = criticalMission;
-    if (!valid) {
-      blockers.push(active
-        ? 'critical-backlog-active-mission-not-scheduler-admissible'
-        : 'critical-backlog-next-mission-not-scheduler-admissible');
+  const conveyorDecision = text(conveyor?.decision);
+  const conveyorActionable = [
+    CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION,
+    CRITICAL_BACKLOG_DECISION.WAIT_ACTIVE_MISSION,
+  ].includes(conveyorDecision);
+  if (conveyorActionable) {
+    const selectedItem = conveyor?.selectedItem;
+    const mission = selectedItem?.mission;
+    const issueNumbers = list(selectedItem?.issueNumbers).map((value) => number(value));
+    const primaryIssue = issueNumbers[0] ?? null;
+    const repository = text(mission?.repository);
+    const branch = text(mission?.branch);
+    const missionId = text(mission?.missionId).toLowerCase();
+    const expectedVerdict = conveyorDecision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION
+      ? 'CRITICAL_BACKLOG_MISSION_READY'
+      : 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE';
+    const sourceValid = conveyor?.schemaVersion === CRITICAL_BACKLOG_CONVEYOR_SCHEMA
+      && conveyor?.validation?.valid === true
+      && text(conveyor?.finalVerdict) === expectedVerdict
+      && primaryIssue !== null
+      && issueNumbers.every((value) => value !== null)
+      && issueNumbers.length === new Set(issueNumbers).size
+      && SAFE_REPOSITORY.test(repository)
+      && SAFE_BRANCH.test(branch)
+      && SAFE_MISSION_ID.test(missionId)
+      && Boolean(text(selectedItem?.headlineApprovalRef))
+      && Boolean(text(mission?.title));
+    const activeMission = conveyor?.activeMission;
+    const continuationValid = conveyorDecision !== CRITICAL_BACKLOG_DECISION.WAIT_ACTIVE_MISSION || Boolean(
+      activeMission
+      && text(activeMission.missionId).toLowerCase() === missionId
+      && text(activeMission.repository).toLowerCase() === repository.toLowerCase()
+      && text(activeMission?.git?.branch) === branch,
+    );
+    if (!sourceValid || !continuationValid) {
+      blockers.push('critical-backlog-scheduler-admission-invalid');
     } else {
-      const existingGoal = goals.find((goal) => goal.issue === issueNumber);
-      if (existingGoal && (
-        text(existingGoal.repository).toLowerCase() !== repository.toLowerCase()
-        || text(existingGoal.branch) !== branch
-        || text(existingGoal.route).toUpperCase() !== route
-        || text(existingGoal.providerRouteIntent).toUpperCase() !== providerRouteIntent
-        || !sameExactStringSet(existingGoal.resourceIds, resourceIds)
-      )) {
-        blockers.push(active
-          ? 'critical-backlog-active-mission-goal-authority-conflict'
-          : 'critical-backlog-next-mission-goal-authority-conflict');
-      } else if (!existingGoal) {
-        goals.push({
-          issue: issueNumber,
-          title: text(executableMission.title, selectedMission.title || `Goal #${issueNumber}`),
+      const existingIndex = goals.findIndex((goal) => goal.issue === primaryIssue);
+      const candidate = {
+        issue: primaryIssue,
+        title: text(mission.title, `Goal #${primaryIssue}`),
+        state: 'QUEUED',
+        prerequisites: [],
+        priority: Math.max(1, 1_000_000 - Number(selectedItem.priority || 0)),
+        criticalPathWeight: 1_000_000,
+        reversibility: 'HIGH',
+        route: 'OPENCLAW_LOCAL',
+        activePr: null,
+        repository,
+        branch,
+        headSha: null,
+        proofState: 'UNKNOWN',
+        approvalRequired: false,
+        operatorPriority: true,
+        operatorApprovalReceipt: null,
+        evidenceAt: nowUtc,
+        resultProofRefs: [],
+        reusableCapabilityId: null,
+        sharedLessonId: null,
+        repairCycleCount: 0,
+        structuralReviewProofRefs: [],
+        modelTestProofRefs: [],
+        duplicateOf: null,
+        supersededBy: null,
+      };
+      if (existingIndex < 0) {
+        goals.push(candidate);
+      } else {
+        const existing = goals[existingIndex];
+        const identityConflict = existing.state === 'ACTIVE'
+          || (existing.repository !== null && existing.repository.toLowerCase() !== repository.toLowerCase())
+          || (existing.branch !== null && existing.branch !== branch)
+          || ['COMPLETE', 'CLOSED', 'CANCELLED', 'SUPERSEDED'].includes(existing.state);
+        if (identityConflict) blockers.push('critical-backlog-scheduler-goal-conflict');
+        else goals[existingIndex] = {
+          ...candidate,
+          ...existing,
           state: 'QUEUED',
-          prerequisites: [],
-          priority: Number.isFinite(selectedItem.priority) ? selectedItem.priority : 0,
-          criticalPathWeight: Number.isFinite(selectedItem.priority) ? Math.max(1, 10_000 - selectedItem.priority) : 1,
-          reversibility: 'HIGH',
-          route,
-          providerRouteIntent,
-          activePr: null,
+          route: 'OPENCLAW_LOCAL',
+          operatorPriority: true,
           repository,
           branch,
-          headSha: null,
-          proofState: 'UNKNOWN',
-          approvalRequired: false,
-          operatorPriority: true,
-          operatorApprovalReceipt: null,
-          evidenceAt: nowUtc,
-          resourceIds,
-          resultProofRefs: [],
-          reusableCapabilityId: null,
-          sharedLessonId: null,
-          repairCycleCount: 0,
-          structuralReviewProofRefs: [],
-          modelTestProofRefs: [],
-          duplicateOf: null,
-          supersededBy: null,
-        });
+        };
       }
     }
   }
@@ -1111,7 +1056,6 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       route: existing
         ? ownValueOr(existing, 'route', 'WAITING_FOR_EXTERNAL_CONDITION')
         : 'CHATGPT_GITHUB',
-      providerRouteIntent: existing?.providerRouteIntent ?? 'AUTO',
       activePr: lane.prNumber,
       repository: lane.repository,
       branch: lane.branch,
@@ -1121,7 +1065,6 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       operatorPriority: ownValueOr(existing, 'operatorPriority', false),
       operatorApprovalReceipt: ownValueOr(existing, 'operatorApprovalReceipt', null),
       evidenceAt: ownValueOr(existing, 'evidenceAt', nowUtc),
-      resourceIds: ownValueOr(existing, 'resourceIds', []),
       resultProofRefs: ownValueOr(existing, 'resultProofRefs', []),
       reusableCapabilityId: existing?.reusableCapabilityId ?? null,
       sharedLessonId: existing?.sharedLessonId ?? null,

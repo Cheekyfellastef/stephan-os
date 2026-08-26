@@ -41,16 +41,6 @@ import { buildCriticalBacklogProjection } from '../../shared/agents/criticalBack
 import { buildStephanosCapabilityRegistryProjection } from '../../shared/agents/stephanosCapabilityRegistry.mjs';
 import { buildMissionScheduler } from '../../shared/runtime/missionScheduler.mjs';
 import {
-  OPENCLAW_PROVIDER_POOL_COMPONENT_FILES,
-  validateOpenClawProviderPoolStatusRecord,
-} from '../../shared/agents/openClawProviderPoolQualificationV1.mjs';
-import {
-  MISSION_CONTROLLER_ROUTE,
-  validateBuildLaneCapacityAuthorityChain,
-  validateBuildLaneCapacityStatusRecord,
-  validateBuildLanePublisherAttestation,
-} from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
-import {
   fetchGithubPrEvidence,
   resolveGithubTokenConfig,
 } from './githubPrEvidenceService.js';
@@ -304,8 +294,6 @@ export async function readMissionControllerCapacityRoutingInput({
   root,
   repoRoot,
   nowUtc,
-  sourceRevision,
-  env = process.env,
   readFileImpl = readFile,
 } = {}) {
   const names = {
@@ -313,7 +301,6 @@ export async function readMissionControllerCapacityRoutingInput({
     github: 'chatgpt-github-build-capacity-current.json',
     forge: 'foundry-forge-build-capacity-current.json',
     forgeSidecar: 'foundry-forge-sidecar-current.json',
-    openClaw: 'openclaw-provider-pool-current.json',
   };
   const resolved = Object.fromEntries(Object.entries(names).map(([key, file]) => [
     key,
@@ -324,101 +311,12 @@ export async function readMissionControllerCapacityRoutingInput({
     const result = await readJson(entry.path, readFileImpl);
     return [key, result.present && !result.error ? result.value : null];
   })));
-  const componentPaths = Object.fromEntries(Object.entries(OPENCLAW_PROVIDER_POOL_COMPONENT_FILES).map(([key, file]) => [
-    key,
-    authorityPath(root, repoRoot, 'receipts', file),
-  ]));
-  const componentRecords = Object.values(componentPaths).every((entry) => entry.ok)
-    ? Object.fromEntries(await Promise.all(Object.entries(componentPaths).map(async ([key, entry]) => {
-        const result = await readJson(entry.path, readFileImpl);
-        return [key, result.present && !result.error ? result.value : null];
-      })))
-    : null;
-  const publisherKeyPath = text(env?.STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH);
-  let publisherPublicKeyPem = '';
-  if (publisherKeyPath) {
-    try {
-      publisherPublicKeyPem = text(await readFileImpl(publisherKeyPath, 'utf8'));
-    } catch {
-      publisherPublicKeyPem = '';
-    }
-  }
-  const openClawValidation = loaded.openClaw && componentRecords
-    ? validateOpenClawProviderPoolStatusRecord(loaded.openClaw, componentRecords, {
-        repository: 'Cheekyfellastef/stephan-os',
-        taskClass: text(loaded.openClaw.taskClass),
-        sourceHead: text(sourceRevision).toLowerCase(),
-        nowUtc,
-        publisherPublicKeyPem,
-      })
-    : null;
-  const repository = 'Cheekyfellastef/stephan-os';
-  const sourceHead = text(sourceRevision).toLowerCase();
-  const githubStatusValidation = loaded.github
-    ? validateBuildLaneCapacityStatusRecord(loaded.github, {
-        route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
-        repository,
-        nowUtc,
-      })
-    : null;
-  const forgeStatusValidation = loaded.forge
-    ? validateBuildLaneCapacityStatusRecord(loaded.forge, {
-        route: MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
-        repository,
-        nowUtc,
-      })
-    : null;
-  const githubLaneReceipt = githubStatusValidation?.valid === true
-    ? githubStatusValidation.receipt
-    : null;
-  const githubAuthorityRecords = [];
-  let githubAuthorityFilesValid = Boolean(githubLaneReceipt);
-  for (const receiptId of githubLaneReceipt?.authorityReceiptIds || []) {
-    const resolvedAuthority = authorityPath(root, repoRoot, 'receipts', `${receiptId}.json`);
-    if (!resolvedAuthority.ok) {
-      githubAuthorityFilesValid = false;
-      break;
-    }
-    const loadedAuthority = await readJson(resolvedAuthority.path, readFileImpl);
-    if (!loadedAuthority.present || loadedAuthority.error) {
-      githubAuthorityFilesValid = false;
-      break;
-    }
-    githubAuthorityRecords.push(loadedAuthority.value);
-  }
-  const githubAuthorityValid = githubAuthorityFilesValid
-    && githubLaneReceipt.supportedTaskClasses.every((taskClass) => validateBuildLaneCapacityAuthorityChain(
-      githubLaneReceipt,
-      githubAuthorityRecords,
-      { sourceHead, taskClass, nowUtc },
-    ).valid);
-  const githubAttestationPath = authorityPath(
-    root,
-    repoRoot,
-    'receipts',
-    'chatgpt-github-build-capacity-attestation-current.json',
-  );
-  const loadedGithubAttestation = githubAttestationPath.ok
-    ? await readJson(githubAttestationPath.path, readFileImpl)
-    : { present: false };
-  const githubPublisherAuthenticated = githubAuthorityValid
-    && loadedGithubAttestation.present
-    && !loadedGithubAttestation.error
-    && validateBuildLanePublisherAttestation(
-      loadedGithubAttestation.value,
-      loaded.github,
-      githubAuthorityRecords,
-      publisherPublicKeyPem,
-    );
   return Object.freeze({
     nowUtc,
-    sourceHead,
     codexStatus: loaded.codexStatus,
-    githubLaneReceipt: githubPublisherAuthenticated ? githubLaneReceipt : null,
-    githubLaneAuthorityReceipts: githubPublisherAuthenticated ? Object.freeze(githubAuthorityRecords) : Object.freeze([]),
-    forgeLaneReceipt: forgeStatusValidation?.valid === true ? forgeStatusValidation.receipt : null,
+    githubLaneReceipt: loaded.github?.capacityReceipt ?? loaded.github,
+    forgeLaneReceipt: loaded.forge?.capacityReceipt ?? loaded.forge,
     forgeSidecar: loaded.forgeSidecar?.forgeSidecar ?? loaded.forgeSidecar,
-    openClawHostContext: openClawValidation?.valid === true ? openClawValidation.hostContext : null,
   });
 }
 
