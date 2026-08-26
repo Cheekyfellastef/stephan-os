@@ -10,12 +10,12 @@ const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = 'a'.repeat(40);
 const BLOBS = Object.freeze({
   'scripts/battle-bridge-control-plane-self-repair.test.mjs': 'f72094e4f92b7168768a5e38b7e43de07ff752a8',
-  'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': '7f54c6f911d0f7012121b615b8cb6d84adffb46a',
+  'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': 'a8e4b0dc13593017979b000e5caa7f7d97e2d98d',
   'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '1da7c432fd051f7b9249d881638d21b131fa98a4',
   'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs': 'c724540a727aab7881dd3b06b52aa7cf9d86f7d8',
   'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs': '95ead85880038b3bf630a1d95e134f5f3deeb936',
   'shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs': 'dbc82832cdf528ea144d21338971aa309d4ee667',
-  'shared/agents/postSyncRuntimeRefreshCoordinator.mjs': '908e55aa2c87250e59e6dbce198bad562f783696',
+  'shared/agents/postSyncRuntimeRefreshCoordinator.mjs': 'e92065e6c0d61365ff6f1b7c8aec75200e5102b6',
 });
 
 function analysis(overrides = {}) {
