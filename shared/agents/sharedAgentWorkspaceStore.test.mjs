@@ -44,9 +44,12 @@ test('directory layout creation creates only allowed workspace tree', async () =
 
 test('valid message/status/proof/capability records pass deterministic validators', () => {
   const message = createSharedWorkspaceMessage({ messageId: 'msg-1', sender: 'codex', recipient: 'operator', kind: 'status', summary: 'Ready.', status: 'READY' });
+  const status = createSharedWorkspaceStatusRecord({ statusId: 'status-1', timestampUtc: '2026-07-07T00:00:00Z', relatedIssue: '#1290', relatedPr: '#2011', status: 'READY' });
+  assert.equal(status.relatedIssue, '#1290');
+  assert.equal(status.relatedPr, '#2011');
   assert.equal(validateSharedWorkspaceMessage(message).valid, true);
   for (const record of [
-    createSharedWorkspaceStatusRecord({ statusId: 'status-1', timestampUtc: '2026-07-07T00:00:00Z', status: 'READY' }),
+    status,
     createSharedWorkspaceProofRecord({ proofId: 'proof-1', timestampUtc: '2026-07-07T00:00:01Z', status: 'PASS', correlationId: 'issue-1290', relatedIssue: '1290', proofRefs: ['proof-1'] }),
     createAgentCapabilityRecord({ agentId: 'codex', timestampUtc: '2026-07-07T00:00:02Z', mode: 'source_writer', trustedBuilder: true }),
   ]) {

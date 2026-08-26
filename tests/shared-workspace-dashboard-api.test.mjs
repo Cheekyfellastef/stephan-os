@@ -49,24 +49,26 @@ async function readyWorkspace() {
 
   await writeJson(root, 'status', 'status-1290.json', {
     ...createSharedWorkspaceStatusRecord({
-      statusId: 'status-1290',
+      statusId: 'workspace-ready',
       timestampUtc: NOW,
+      relatedIssue: '#1290',
       status: 'CURRENT',
       summary: '#1290 Shared Workspace current',
       proofRefs: ['proof/status'],
     }),
-    relatedGoal: '#1290',
   });
 
   await writeJson(root, 'proof', 'proof-1290.json', {
     ...createSharedWorkspaceProofRecord({
-      proofId: 'proof-1290',
+      proofId: 'workspace-proof',
       timestampUtc: NOW,
+      correlationId: 'verification-run',
+      relatedIssue: '#1290',
       status: 'PASS',
       summary: '#1290 proof current',
+      proofRefs: ['proof/shared-workspace'],
       refs: ['proof/shared-workspace'],
     }),
-    relatedGoal: '#1290',
   });
 
   await writeJson(root, 'capabilities', 'openclaw.json', {

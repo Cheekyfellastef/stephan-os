@@ -237,7 +237,7 @@ export async function aggregateLatestSharedWorkspaceStatus(rootInput, options = 
 }
 
 export function createSharedWorkspaceStatusRecord(input = {}) {
-  return { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS, statusId: safeId(input.statusId) || 'status-current', participantId: safeId(input.participantId || input.agentId) || 'codex', timestampUtc: text(input.timestampUtc, 'pending'), status: text(input.status, 'pending'), summary: text(input.summary, 'No summary supplied.'), proofRefs: list(input.proofRefs) };
+  return { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS, statusId: safeId(input.statusId) || 'status-current', participantId: safeId(input.participantId || input.agentId) || 'codex', timestampUtc: text(input.timestampUtc, 'pending'), relatedIssue: text(input.relatedIssue, ''), relatedPr: text(input.relatedPr, ''), status: text(input.status, 'pending'), summary: text(input.summary, 'No summary supplied.'), proofRefs: list(input.proofRefs) };
 }
 export function createSharedWorkspaceGoalRecord(input = {}) {
   return { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.GOAL, goalId: safeId(input.goalId) || 'goal-current', participantId: safeId(input.participantId || input.agentId) || 'codex', timestampUtc: text(input.timestampUtc, 'pending'), title: text(input.title, 'Untitled goal'), status: text(input.status, 'open') };
