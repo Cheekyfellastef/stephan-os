@@ -69,10 +69,15 @@ function freshness(record, nowMs, staleAfterMs) {
 }
 
 function latestForIssue(records, issue) {
-  const normalized = String(issue).replace(/^#/, '');
+  const normalized = String(issue).replace(/^#/, '').toLowerCase();
+  const matchesIssue = (value) => String(value || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .includes(normalized);
   return list(records)
-    .filter((record) => [record.relatedGoal, record.issue, record.issueNumber, record.goalId, record.currentClaim, record.correlationId]
-      .some((value) => String(value || '').includes(normalized)))
+    .filter((record) => [record.relatedIssue, record.relatedGoal, record.issue, record.issueNumber, record.goalId, record.currentClaim, record.correlationId, record.statusId, record.proofId]
+      .some(matchesIssue))
     .sort((a, b) => (ms(b.timestampUtc || b.checkedAtUtc || b.createdAt) || 0) - (ms(a.timestampUtc || a.checkedAtUtc || a.createdAt) || 0))[0] || null;
 }
 
@@ -85,6 +90,7 @@ function cardFor(issue, title, input, options) {
   const statusFreshness = freshness(statusRecord, options.nowMs, options.staleAfterMs);
   const proofFreshness = freshness(proofRecord, options.nowMs, options.staleAfterMs);
   const capabilityFreshness = freshness(capabilityRecord, options.nowMs, options.staleAfterMs);
+  const proofRefs = list(proofRecord?.refs);
   const blockers = [];
   if (statusFreshness.truth !== CURRENT) blockers.push(`${statusFreshness.truth}_STATUS_RECORD`);
   if (proofFreshness.truth !== CURRENT) blockers.push(`${proofFreshness.truth}_PROOF_RECORD`);
@@ -96,7 +102,7 @@ function cardFor(issue, title, input, options) {
     proofTruth: proofFreshness.truth,
     capabilityTruth: /#1284|#1286/.test(issue) ? capabilityFreshness.truth : 'not-required',
     summary: text(statusRecord?.summary || proofRecord?.summary, blockers.length ? 'Live workspace evidence is missing or stale.' : 'Current workspace evidence found.'),
-    proofRefs: list(proofRecord?.refs || proofRecord?.proofRefs || statusRecord?.proofRefs),
+    proofRefs: proofRefs.length ? proofRefs : list(proofRecord?.proofRefs || statusRecord?.proofRefs),
     blockers,
     exactNextAction: blockers.length ? (proofFreshness.exactNextAction || statusFreshness.exactNextAction || capabilityFreshness.exactNextAction) : 'Review current proof refs and continue through approval-gated platform loop.',
   });
