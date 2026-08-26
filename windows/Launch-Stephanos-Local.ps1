@@ -846,7 +846,7 @@ function Open-CockpitSurface([string]$Url, [string]$Label, [string]$Id, [string]
     if ($proof) { return }
   }
 
-  Write-LiveLog "Edge app-window reuse unavailable for $Label; falling back to the registered default browser."
+  Write-LiveLog "Edge app-window reuse unavailable for ${Label}; falling back to the registered default browser."
 
   $openAttempts = @(
     [ordered]@{
