@@ -48,7 +48,7 @@ const AUTHORITY_RECEIPT_KEYS = Object.freeze([
 ]);
 const CAPACITY_STATUS_KEYS = Object.freeze([
   'schemaVersion', 'kind', 'statusId', 'participantId', 'timestampUtc', 'status',
-  'summary', 'proofRefs', 'capacityReceipt', 'sourceMutationAllowed',
+  'summary', 'proofRefs', 'relatedIssue', 'relatedPr', 'capacityReceipt', 'sourceMutationAllowed',
   'mergeAuthority', 'leaseSeizureAllowed',
 ]);
 const PUBLISHER_ATTESTATION_KEYS = Object.freeze([
