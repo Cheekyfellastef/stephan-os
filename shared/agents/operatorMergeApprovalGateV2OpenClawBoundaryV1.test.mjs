@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   OPENCLAW_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1,
   OPENCLAW_SUCCESSOR_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1,
+  TRUSTED_EXACT_HEAD_REVIEW_BOUNDARY_PATHS_V1,
   REVIEW_DISPATCH_IDENTITY_BOUNDARY_PATHS_V1,
   analyzeIndependentSecurityReview,
 } from './operatorMergeApprovalGateV2.mjs';
@@ -58,6 +59,33 @@ test('successor bootstrap registry is closed to exactly the three successor spec
   assert.equal(new Set(OPENCLAW_SUCCESSOR_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1).size, 3);
   assert.equal(OPENCLAW_SUCCESSOR_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1.every((path) => path.startsWith('shared/agents/openClawBuilderProviderSpecialistReview')), true);
   assert.equal(OPENCLAW_SUCCESSOR_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1.some((path) => path.includes('*')), false);
+});
+
+test('protects trusted exact-head reviewer source and regressions as bootstrap boundaries', () => {
+  assert.deepEqual(TRUSTED_EXACT_HEAD_REVIEW_BOUNDARY_PATHS_V1, [
+    'scripts/exact-head-review.mjs',
+    'scripts/exact-head-review.test.mjs',
+  ]);
+
+  for (const path of TRUSTED_EXACT_HEAD_REVIEW_BOUNDARY_PATHS_V1) {
+    const result = analyzeIndependentSecurityReview({ changedFiles: [path], diff: diffFor(path) });
+    assert.ok(result.findings.some((item) => item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE && item.path === path), path);
+    assert.equal(result.findings.some((item) => item.code === 'unsupported-high-risk-surface' && item.path === path), false, path);
+    assert.equal(isApprovalBoundaryBootstrapAnalysis(result), true, path);
+  }
+});
+
+test('combined trusted exact-head reviewer self-change remains bootstrap-only', () => {
+  const result = analyzeIndependentSecurityReview({
+    changedFiles: [...TRUSTED_EXACT_HEAD_REVIEW_BOUNDARY_PATHS_V1],
+    diff: TRUSTED_EXACT_HEAD_REVIEW_BOUNDARY_PATHS_V1.map(diffFor).join('\n'),
+  });
+  assert.equal(result.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_FINDINGS');
+  assert.equal(result.counts.P0, TRUSTED_EXACT_HEAD_REVIEW_BOUNDARY_PATHS_V1.length);
+  assert.equal(result.counts.P1, 0);
+  assert.equal(result.counts.P2, 0);
+  assert.equal(result.findings.every((item) => item.code === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE), true);
+  assert.equal(isApprovalBoundaryBootstrapAnalysis(result), true);
 });
 
 test('protects exact workflow-dispatch review identity consumers as bootstrap boundaries', () => {
