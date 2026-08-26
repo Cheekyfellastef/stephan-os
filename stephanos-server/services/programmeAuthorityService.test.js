@@ -472,6 +472,56 @@ test('production composition reads real Shared Workspace, receipt, heartbeat, sc
   });
 });
 
+test('production composition admits an active critical mission when the workspace has no goal records', async () => {
+  await fixture(async ({ root, home, repoRoot }) => {
+    await publishProgrammeControllerHeartbeat({
+      controllerId: 'durable-flywheel-controller',
+      sourceRevision: HEAD,
+      cycleState: 'IDLE',
+      activeLaneId: null,
+      lastSuccessfulReconciliationUtc: NOW,
+      lastPublishedReceiptId: 'wait-for-durable-goal-evidence',
+      timestampUtc: NOW,
+      boundedMutationSteps: 0,
+    }, { root, repoRoot });
+    await publishWorkerHeartbeat(home);
+
+    const projection = await readAuthoritativeProgrammeProjection({
+      root,
+      home,
+      repoRoot,
+      nowUtc: NOW,
+      env: {},
+      testOnly: true,
+      dependencies: {
+        readWorkspaceFeed: async () => ({
+          state: 'ready',
+          records: { goalRecords: [], statusRecords: [], proofRecords: [] },
+        }),
+        readRepositoryHead: async () => ({
+          ok: true,
+          reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+          branch: 'main',
+          headSha: HEAD,
+        }),
+        listMissionRecords: async () => [{
+          missionId: 'critical-1291-worker-watchdog-repair',
+          repository: REPOSITORY,
+          git: { branch: 'openclaw/critical-1291-worker-watchdog-repair' },
+          currentPhase: 'CREATE_WORKTREE',
+        }],
+      },
+    });
+
+    assert.equal(projection.criticalBacklog.decision, 'WAIT_ACTIVE_MISSION');
+    assert.equal(projection.scheduler.failClosed, false);
+    assert.equal(projection.scheduler.selectedGoal, '#1291');
+    assert.equal(projection.scheduler.selectedRoute, 'OPENCLAW_LOCAL');
+    assert.equal(projection.scheduler.decisionReceipt.status, 'LANE_SELECTED');
+    assert.equal(projection.status, 'READY', projection.blockers.join(','));
+  });
+});
+
 test('missing mutation lease cannot be replaced by an execution receipt correlation field', async () => {
   await fixture(async ({ root, home, repoRoot }) => {
     await publishControllerHeartbeat(root, repoRoot);
