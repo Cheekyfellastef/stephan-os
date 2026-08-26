@@ -78,7 +78,7 @@ test('supervised worker writes running and final heartbeat around a successful t
     runControllerCycle: allowWorkerTick,
     runTick: async (options) => {
       tickOptions = options;
-      return { publish: { ok: true } };
+      return { publish: { published: true } };
     },
     writeHeartbeat: async (input) => { heartbeats.push(input); },
     setIntervalFn: timer.setIntervalFn,
@@ -230,7 +230,7 @@ test('worker logs only bounded authority-relevant controller and tick truth', ()
   const tick = createMissionWorkerTickLogProjection({
     status: 'DONE',
     finalVerdict: 'MISSION_WORKER_DONE',
-    publish: { ok: true, huge },
+    publish: { published: true, huge },
     evidence: { huge },
   }, '2026-08-26T02:20:01.000Z');
   assert.equal(JSON.stringify(controller).length < 1_000, true);

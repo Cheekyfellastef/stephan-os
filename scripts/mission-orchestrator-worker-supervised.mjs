@@ -73,7 +73,7 @@ export function createMissionWorkerTickLogProjection(result, checkedAt) {
     phase: boundedText(ownData(result, 'phase'), 96),
     finalVerdict: boundedText(ownData(result, 'finalVerdict'), 120),
     blocker: boundedText(ownData(result, 'blocker'), 160),
-    publishOk: ownData(publication, 'ok') === true,
+    publishOk: ownData(publication, 'published') === true,
   });
 }
 
