@@ -34,8 +34,13 @@ test('repeat ignition presses reuse exact verified Edge app windows instead of d
   assert.match(script, /opened-new-window/);
   assert.match(script, /--app=\$\(\$Surface\.Url\)/);
   assert.match(script, /--user-data-dir=/);
-  assert.match(script, /\$process\.MainWindowHandle -eq 0/);
-  assert.match(script, /\$process\.MainWindowTitle, \[string\]\$Surface\.ExpectedTitle/);
+  assert.match(script, /GetVisibleTopLevelWindows\(\[int\]\$candidate\.ProcessId\)/);
+  assert.match(script, /GetWindowThreadProcessId/);
+  assert.match(script, /IsWindowVisible/);
+  assert.match(script, /\[string\]\$_\.Title, \[string\]\$Surface\.ExpectedTitle/);
+  assert.match(script, /windowHandle = \[int64\]\$surfaceWindow\.Handle/);
+  assert.doesNotMatch(script, /\$process\.MainWindowHandle/);
+  assert.doesNotMatch(script, /\$process\.MainWindowTitle/);
   assert.match(script, /arbitraryBrowserExecutableAllowed = \$false/);
 });
 
