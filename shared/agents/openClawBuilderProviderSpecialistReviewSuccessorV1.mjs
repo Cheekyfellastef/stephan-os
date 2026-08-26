@@ -2348,6 +2348,252 @@ function staticModuleDeclarations(tokens) {
   return Object.freeze({ valid, dynamicLoader, declarations: Object.freeze(declarations) });
 }
 
+const BINDING_ASSIGNMENT_OPERATORS = new Set([
+  '=', '+=', '-=', '*=', '/=', '%=', '**=', '&&=', '||=', '??=', '&=', '|=', '^=', '<<=', '>>=', '>>>=',
+]);
+
+function topLevelSegments(tokens, separator = ',') {
+  const segments = [];
+  const depth = { round: 0, square: 0, curly: 0 };
+  let start = 0;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token?.type !== 'punctuator') continue;
+    if (token.value === separator && depth.round === 0 && depth.square === 0 && depth.curly === 0) {
+      segments.push(tokens.slice(start, index));
+      start = index + 1;
+      continue;
+    }
+    if (token.value === '(') depth.round += 1;
+    else if (token.value === ')') depth.round -= 1;
+    else if (token.value === '[') depth.square += 1;
+    else if (token.value === ']') depth.square -= 1;
+    else if (token.value === '{') depth.curly += 1;
+    else if (token.value === '}') depth.curly -= 1;
+  }
+  segments.push(tokens.slice(start));
+  return segments;
+}
+
+function topLevelPunctuatorIndex(tokens, values) {
+  const expected = values instanceof Set ? values : new Set(values);
+  const depth = { round: 0, square: 0, curly: 0 };
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token?.type !== 'punctuator') continue;
+    if (depth.round === 0 && depth.square === 0 && depth.curly === 0 && expected.has(token.value)) return index;
+    if (token.value === '(') depth.round += 1;
+    else if (token.value === ')') depth.round -= 1;
+    else if (token.value === '[') depth.square += 1;
+    else if (token.value === ']') depth.square -= 1;
+    else if (token.value === '{') depth.curly += 1;
+    else if (token.value === '}') depth.curly -= 1;
+  }
+  return -1;
+}
+
+function bindingNamesFromPattern(rawTokens) {
+  let tokens = rawTokens.filter(Boolean);
+  while (tokens[0]?.type === 'punctuator' && tokens[0].value === '...') tokens = tokens.slice(1);
+  const defaultIndex = topLevelPunctuatorIndex(tokens, new Set(['=']));
+  if (defaultIndex >= 0) tokens = tokens.slice(0, defaultIndex);
+  if (tokens.length === 1 && tokens[0]?.type === 'identifier') return [tokens[0].value];
+  if (tokens[0]?.type === 'punctuator' && tokens[0].value === '['
+    && matchingPunctuator(tokens, 0, '[', ']') === tokens.length - 1) {
+    return topLevelSegments(tokens.slice(1, -1)).flatMap(bindingNamesFromPattern);
+  }
+  if (tokens[0]?.type === 'punctuator' && tokens[0].value === '{'
+    && matchingPunctuator(tokens, 0, '{', '}') === tokens.length - 1) {
+    return topLevelSegments(tokens.slice(1, -1)).flatMap((property) => {
+      let candidate = property;
+      if (candidate[0]?.type === 'punctuator' && candidate[0].value === '...') candidate = candidate.slice(1);
+      const colon = topLevelPunctuatorIndex(candidate, new Set([':']));
+      if (colon >= 0) return bindingNamesFromPattern(candidate.slice(colon + 1));
+      return bindingNamesFromPattern(candidate);
+    });
+  }
+  return [];
+}
+
+function reverseMatchingPunctuator(tokens, closeIndex, openValue, closeValue) {
+  if (tokens[closeIndex]?.type !== 'punctuator' || tokens[closeIndex].value !== closeValue) return -1;
+  let depth = 0;
+  for (let index = closeIndex; index >= 0; index -= 1) {
+    const token = tokens[index];
+    if (token?.type !== 'punctuator') continue;
+    if (token.value === closeValue) depth += 1;
+    else if (token.value === openValue) {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function declaredBindingNames(tokens) {
+  const names = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token?.type !== 'identifier') continue;
+    if (new Set(['const', 'let', 'var']).has(token.value)) {
+      let end = index + 1;
+      const depth = { round: 0, square: 0, curly: 0 };
+      for (; end < tokens.length; end += 1) {
+        const current = tokens[end];
+        if (current?.type !== 'punctuator') continue;
+        if (current.value === ';' && depth.round === 0 && depth.square === 0 && depth.curly === 0) break;
+        if (current.value === '(') depth.round += 1;
+        else if (current.value === ')') depth.round -= 1;
+        else if (current.value === '[') depth.square += 1;
+        else if (current.value === ']') depth.square -= 1;
+        else if (current.value === '{') depth.curly += 1;
+        else if (current.value === '}') depth.curly -= 1;
+      }
+      for (const declaration of topLevelSegments(tokens.slice(index + 1, end))) {
+        const initializer = topLevelPunctuatorIndex(declaration, BINDING_ASSIGNMENT_OPERATORS);
+        names.push(...bindingNamesFromPattern(initializer >= 0 ? declaration.slice(0, initializer) : declaration));
+      }
+      index = Math.max(index, end - 1);
+      continue;
+    }
+    if (token.value === 'function') {
+      let cursor = index + 1;
+      if (tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === '*') cursor += 1;
+      if (tokens[cursor]?.type === 'identifier') {
+        names.push(tokens[cursor].value);
+        cursor += 1;
+      }
+      while (cursor < tokens.length && !(tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === '(')) cursor += 1;
+      const close = matchingPunctuator(tokens, cursor, '(', ')');
+      if (close > cursor) names.push(...topLevelSegments(tokens.slice(cursor + 1, close)).flatMap(bindingNamesFromPattern));
+      continue;
+    }
+    if (token.value === 'class' && tokens[index + 1]?.type === 'identifier') names.push(tokens[index + 1].value);
+    if (token.value === 'catch' && tokens[index + 1]?.type === 'punctuator' && tokens[index + 1].value === '(') {
+      const close = matchingPunctuator(tokens, index + 1, '(', ')');
+      if (close > index + 1) names.push(...bindingNamesFromPattern(tokens.slice(index + 2, close)));
+    }
+  }
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (tokens[index]?.type !== 'punctuator' || tokens[index].value !== '=>') continue;
+    if (tokens[index - 1]?.type === 'identifier') names.push(tokens[index - 1].value);
+    else if (tokens[index - 1]?.type === 'punctuator' && tokens[index - 1].value === ')') {
+      const open = reverseMatchingPunctuator(tokens, index - 1, '(', ')');
+      if (open >= 0) names.push(...topLevelSegments(tokens.slice(open + 1, index - 1)).flatMap(bindingNamesFromPattern));
+    }
+  }
+  return names;
+}
+
+function bindingIsAssigned(tokens, name) {
+  return tokens.some((token, index) => {
+    if (token?.type !== 'identifier' || token.value !== name) return false;
+    if (tokens[index - 1]?.type === 'punctuator' && new Set(['.', '?.']).has(tokens[index - 1].value)) return false;
+    const directAssignment = (tokens[index + 1]?.type === 'punctuator'
+        && (BINDING_ASSIGNMENT_OPERATORS.has(tokens[index + 1].value) || new Set(['++', '--']).has(tokens[index + 1].value)))
+      || (tokens[index - 1]?.type === 'punctuator' && new Set(['++', '--']).has(tokens[index - 1].value))
+      || (tokens[index + 1]?.type === 'identifier' && new Set(['in', 'of']).has(tokens[index + 1].value));
+    if (directAssignment) return true;
+    for (let open = index - 1; open >= 0; open -= 1) {
+      if (tokens[open]?.type === 'punctuator' && tokens[open].value === ';') break;
+      const openValue = tokens[open]?.type === 'punctuator' ? tokens[open].value : '';
+      if (!new Set(['{', '[']).has(openValue)) continue;
+      const close = matchingPunctuator(tokens, open, openValue, openValue === '{' ? '}' : ']');
+      if (close <= index) continue;
+      const following = tokens[close + 1];
+      if ((following?.type === 'punctuator' && BINDING_ASSIGNMENT_OPERATORS.has(following.value))
+        || (following?.type === 'identifier' && new Set(['in', 'of']).has(following.value))) return true;
+    }
+    return false;
+  });
+}
+
+function topLevelBindingIsAssigned(tokens, name) {
+  let curlyDepth = 0;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (curlyDepth === 0 && token?.type === 'identifier' && token.value === name) {
+      if (!(tokens[index - 1]?.type === 'punctuator' && new Set(['.', '?.']).has(tokens[index - 1].value))) {
+        const directlyAssigned = tokens[index + 1]?.type === 'punctuator'
+          && (BINDING_ASSIGNMENT_OPERATORS.has(tokens[index + 1].value)
+            || new Set(['++', '--']).has(tokens[index + 1].value));
+        const prefixAssigned = tokens[index - 1]?.type === 'punctuator'
+          && new Set(['++', '--']).has(tokens[index - 1].value);
+        if (directlyAssigned || prefixAssigned) return true;
+      }
+    }
+    if (token?.type !== 'punctuator') continue;
+    if (token.value === '{') curlyDepth += 1;
+    else if (token.value === '}') curlyDepth -= 1;
+  }
+  return false;
+}
+
+function exactImportedLocal(imports, specifier, imported, local = imported) {
+  const bindings = imports.declarations
+    .filter((declaration) => declaration.specifier === specifier)
+    .flatMap((declaration) => declaration.bindings)
+    .filter((binding) => binding.imported === imported && binding.local === local);
+  return bindings.length === 1;
+}
+
+function topLevelFunctionDeclarationCount(tokens, name) {
+  let curlyDepth = 0;
+  let count = 0;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (curlyDepth === 0 && token?.type === 'identifier' && token.value === 'function') {
+      let cursor = index + 1;
+      if (tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === '*') cursor += 1;
+      if (tokens[cursor]?.type === 'identifier' && tokens[cursor].value === name) count += 1;
+    }
+    if (token?.type !== 'punctuator') continue;
+    if (token.value === '{') curlyDepth += 1;
+    else if (token.value === '}') curlyDepth -= 1;
+  }
+  return count;
+}
+
+function functionParameterNames(tokens, name) {
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (tokens[index]?.type !== 'identifier' || tokens[index].value !== 'function') continue;
+    let cursor = index + 1;
+    if (tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === '*') cursor += 1;
+    if (tokens[cursor]?.type !== 'identifier' || tokens[cursor].value !== name) continue;
+    cursor += 1;
+    if (tokens[cursor]?.type !== 'punctuator' || tokens[cursor].value !== '(') return [];
+    const close = matchingPunctuator(tokens, cursor, '(', ')');
+    return close > cursor ? topLevelSegments(tokens.slice(cursor + 1, close)).flatMap(bindingNamesFromPattern) : [];
+  }
+  return [];
+}
+
+function trustedBindingsAreClosed(tokens, imports, options) {
+  const requiredImports = options.requiredImports || [];
+  if (requiredImports.some(({ specifier, imported, local }) => !exactImportedLocal(imports, specifier, imported, local))) return false;
+  const importedLocals = imports.declarations.flatMap((declaration) => declaration.bindings.map((binding) => binding.local));
+  const helperNames = options.helperNames || [];
+  const protectedNames = [...new Set([...importedLocals, ...helperNames])];
+  const declarations = declaredBindingNames(tokens);
+  for (const name of importedLocals) {
+    if (declarations.includes(name) || bindingIsAssigned(tokens, name)) return false;
+  }
+  for (const name of helperNames) {
+    if (topLevelFunctionDeclarationCount(tokens, name) !== 1
+      || topLevelBindingIsAssigned(tokens, name)) return false;
+  }
+  for (const functionName of options.protectedFunctions || []) {
+    const body = functionBodyTokens(tokens, functionName);
+    const parameters = functionParameterNames(tokens, functionName);
+    if (body.length === 0 || parameters.length === 0) return false;
+    const nested = declaredBindingNames(body);
+    if ([...parameters, ...protectedNames].some((name) => (
+      nested.includes(name) || bindingIsAssigned(body, name)
+    ))) return false;
+  }
+  return protectedNames.every((name) => typeof name === 'string' && name.length > 0);
+}
+
 function reviewLocalModuleAuthority(source, path, findings, importPolicy) {
   const lexical = tokenizeJavaScriptAuthority(source);
   if (!lexical.valid) {
@@ -2396,6 +2642,23 @@ function reviewLocalModuleAuthority(source, path, findings, importPolicy) {
 function reviewProviderPool(source, path, findings) {
   const lexical = reviewLocalModuleAuthority(source, path, findings, IMPLEMENTATION_IMPORT_POLICY);
   if (!lexical.valid) return;
+  const imports = staticModuleDeclarations(lexical.tokens);
+  if (!trustedBindingsAreClosed(lexical.tokens, imports, {
+    requiredImports: [
+      { specifier: './missionControllerCapacityRouterV1.mjs', imported: 'routeMissionControllerCapacity' },
+      { specifier: './executionReceiptV1.mjs', imported: 'toSharedWorkspaceExecutionReceipt' },
+      { specifier: './executionReceiptV1.mjs', imported: 'validateExecutionReceipt' },
+      { specifier: './sharedAgentWorkspaceStore.mjs', imported: 'validateSharedWorkspaceRecord' },
+    ],
+    helperNames: ['canonicalJson', 'snapshot', 'blockedAuthority'],
+    protectedFunctions: [
+      'validateOpenClawQualificationAuthorityChain',
+      'validateOpenClawProviderCapacity',
+      'routeWithQualifiedOpenClawProvider',
+    ],
+  })) {
+    findings.push(finding('openclaw-provider-pool-trusted-binding-resolution-invalid', path));
+  }
   const executionValidationBinding = `const executionValidation = validateExecutionReceipt(execution, {
     repository: expected.repository,
     issueNumber: OPENCLAW_QUALIFICATION_ISSUE,
@@ -2539,6 +2802,20 @@ function reviewProviderPool(source, path, findings) {
 function reviewProviderPoolTests(source, path, findings) {
   const lexical = reviewLocalModuleAuthority(source, path, findings, TEST_IMPORT_POLICY);
   if (!lexical.valid) return;
+  const imports = staticModuleDeclarations(lexical.tokens);
+  if (!trustedBindingsAreClosed(lexical.tokens, imports, {
+    requiredImports: [
+      { specifier: 'node:assert/strict', imported: 'default', local: 'assert' },
+      { specifier: 'node:test', imported: 'default', local: 'test' },
+      { specifier: './openClawProviderPoolQualificationV1.mjs', imported: 'OPENCLAW_PROVIDER_ROUTE' },
+      { specifier: './openClawProviderPoolQualificationV1.mjs', imported: 'routeWithQualifiedOpenClawProvider' },
+      { specifier: './openClawProviderPoolQualificationV1.mjs', imported: 'validateOpenClawProviderCapacity' },
+      { specifier: './openClawProviderPoolQualificationV1.mjs', imported: 'validateOpenClawQualificationAuthorityChain' },
+    ],
+    protectedFunctions: [],
+  })) {
+    findings.push(finding('openclaw-provider-pool-test-trusted-binding-resolution-invalid', path));
+  }
   requireExecutableSequences(findings, lexical.tokens, path, [
     ["test('requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt'", 'openclaw-provider-pool-authority-chain-positive-test-missing'],
     ["test('capacity is unusable without the exact validated qualification authority, worker and task class'", 'openclaw-provider-pool-capacity-binding-test-missing'],

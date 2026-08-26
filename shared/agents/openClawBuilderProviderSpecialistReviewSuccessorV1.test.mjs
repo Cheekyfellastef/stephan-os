@@ -23,7 +23,7 @@ function providerPoolCoreContentFor(path) {
 ${'import'} { routeMissionControllerCapacity } from './missionControllerCapacityRouterV1.mjs';
 ${'import'} { createHash as allowedHash } from 'node:crypto';
 ${'import'} { toSharedWorkspaceExecutionReceipt, validateExecutionReceipt } from './executionReceiptV1.mjs';
-${'import'} { validateSharedWorkspaceRecord as allowedWorkspace } from './sharedAgentWorkspaceStore.mjs';
+${'import'} { validateSharedWorkspaceRecord } from './sharedAgentWorkspaceStore.mjs';
 const OPENCLAW_QUALIFICATION_ISSUE = 1725;
 function canonicalJson(value) { return JSON.stringify(value); }
 function snapshot(value) { return value; }
@@ -48,7 +48,7 @@ export function validateOpenClawQualificationAuthorityChain(input, trustedHostCo
     expectedHead: expected.sourceHead,
     executionId: qualification.receipt.realWorkTaskId,
   });
-  allowedWorkspace(authority);
+  validateSharedWorkspaceRecord(authority);
   if (!executionValidation.valid
     || execution.workerType !== 'openclaw'
     || execution.state !== 'completed'
@@ -125,6 +125,12 @@ export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContex
   if (path.endsWith('/openClawProviderPoolQualificationV1.test.mjs')) return `
 ${'import'} assert from 'node:assert/strict';
 ${'import'} test from 'node:test';
+${'import'} {
+  OPENCLAW_PROVIDER_ROUTE,
+  routeWithQualifiedOpenClawProvider,
+  validateOpenClawProviderCapacity,
+  validateOpenClawQualificationAuthorityChain,
+} from './openClawProviderPoolQualificationV1.mjs';
 test('requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt', () => {
   assert.equal(validateOpenClawQualificationAuthorityChain(qualification(), trustedHostContext(), expected).valid, true);
   assert.equal(validateOpenClawQualificationAuthorityChain(qualification(), trustedHostContext({}), expected).valid, false);
@@ -293,6 +299,73 @@ test('standalone successor specialist covers only the exact two-file provider-po
   assert.deepEqual(result.reviewedPaths, OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1);
   assert.equal(result.proofRefs.length, OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1.length + 1);
   assert.equal(result.finalVerdict, 'OPENCLAW_BUILDER_PROVIDER_SPECIALIST_CLEAN');
+});
+
+test('trusted provider bindings cannot be shadowed or reassigned behind matching authority tokens', () => {
+  const hostileSources = sources();
+  const content = hostileSources[0].content.replace(
+    'export function validateOpenClawQualificationAuthorityChain(input, trustedHostContext, expected = {}) {',
+    `export function validateOpenClawQualificationAuthorityChain(input, trustedHostContext, expected = {}) {
+      const snapshot = () => ({
+        realWorkExecutionReceipt: { receiptId: 'forged' },
+        realWorkWorkspaceReceipt: {},
+        qualificationAuthorityReceipt: {},
+      });
+      const validateExecutionReceipt = () => ({ valid: true });
+      const toSharedWorkspaceExecutionReceipt = () => ({ record: {} });
+      input = { receipt: { realWorkTaskId: 'forged' } };`,
+  );
+  hostileSources[0] = {
+    ...hostileSources[0],
+    size: Buffer.byteLength(content, 'utf8'),
+    blobSha: blobSha(content),
+    content,
+  };
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => (
+    item.code === 'openclaw-provider-pool-trusted-binding-resolution-invalid'
+  )));
+
+  const destructuringSources = sources();
+  const destructuringContent = destructuringSources[0].content.replace(
+    'const qualification = input;',
+    `({ validateExecutionReceipt } = attackerBindings);
+  const qualification = input;`,
+  );
+  destructuringSources[0] = {
+    ...destructuringSources[0],
+    size: Buffer.byteLength(destructuringContent, 'utf8'),
+    blobSha: blobSha(destructuringContent),
+    content: destructuringContent,
+  };
+  const destructuring = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({
+    sources: destructuringSources,
+  }));
+  assert.equal(destructuring.clean, false);
+  assert.ok(destructuring.findings.some((item) => (
+    item.code === 'openclaw-provider-pool-trusted-binding-resolution-invalid'
+  )));
+});
+
+test('required test assertions must resolve to the trusted node assert binding', () => {
+  const hostileSources = sources();
+  const content = hostileSources[1].content.replaceAll(
+    '() => {',
+    `() => {
+      const assert = Object.freeze({ equal() {}, notEqual() {}, ok() {} });`,
+  );
+  hostileSources[1] = {
+    ...hostileSources[1],
+    size: Buffer.byteLength(content, 'utf8'),
+    blobSha: blobSha(content),
+    content,
+  };
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => (
+    item.code === 'openclaw-provider-pool-test-trusted-binding-resolution-invalid'
+  )));
 });
 
 test('successor profile rejects invalid PR identity, unsafe branch identity, incomplete scope and widened four-file scope', () => {
