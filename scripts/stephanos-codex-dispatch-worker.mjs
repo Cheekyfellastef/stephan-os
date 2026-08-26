@@ -36,7 +36,11 @@ import {
   createScenarioSourceGitEnvironment,
   evaluateMusicRatingPreservesPlaybackScenarioEvidence,
 } from './browser-proof-runner.mjs';
-import { createBattleBridgeMinimalChildEnvironment } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import {
+  BATTLE_BRIDGE_GITHUB_HOST,
+  createBattleBridgeMinimalChildEnvironment,
+  resolveBattleBridgeGitHubCliExecutable,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 const APPROVED_GENERATED_PREFIXES = Object.freeze([
   'apps/stephanos/dist/',
@@ -152,6 +156,7 @@ export function validateExactHeadAtWorkerStart(task, {
   let mergeCommitHead = '';
   let githubMainHead = '';
   let mergeCommitIncluded = false;
+  const githubExecutable = resolveBattleBridgeGitHubCliExecutable(platform);
   if (proofTarget === 'PULL_REQUEST_HEAD_BASE_BOUND') {
     pullRequestHead = String(proof.pullRequestHead || '').trim().toLowerCase();
     githubMainHead = String(proof.githubMainHead || '').trim().toLowerCase();
@@ -161,8 +166,8 @@ export function validateExactHeadAtWorkerStart(task, {
     }
     const prLookup = processTextCapture(
       spawnSyncFn,
-      platform === 'win32' ? 'gh.exe' : 'gh',
-      ['api', `repos/${repository}/pulls/${prNumber}`, '--hostname', 'github.com'],
+      githubExecutable,
+      ['api', `repos/${repository}/pulls/${prNumber}`, '--hostname', BATTLE_BRIDGE_GITHUB_HOST],
       { platform, environment },
     );
     let prIdentity;
@@ -183,8 +188,8 @@ export function validateExactHeadAtWorkerStart(task, {
     }
     const main = processCapture(
       spawnSyncFn,
-      platform === 'win32' ? 'gh.exe' : 'gh',
-      ['api', `repos/${repository}/commits/main`, '--hostname', 'github.com', '--jq', '.sha'],
+      githubExecutable,
+      ['api', `repos/${repository}/commits/main`, '--hostname', BATTLE_BRIDGE_GITHUB_HOST, '--jq', '.sha'],
       { platform, environment },
     );
     if (!main.ok || !/^[0-9a-f]{40}$/.test(main.stdout)) {
@@ -196,8 +201,8 @@ export function validateExactHeadAtWorkerStart(task, {
   } else if (proofTarget === 'PULL_REQUEST_HEAD') {
     const gh = processCapture(
       spawnSyncFn,
-      platform === 'win32' ? 'gh.exe' : 'gh',
-      ['api', `repos/${repository}/pulls/${prNumber}`, '--hostname', 'github.com', '--jq', '.head.sha'],
+      githubExecutable,
+      ['api', `repos/${repository}/pulls/${prNumber}`, '--hostname', BATTLE_BRIDGE_GITHUB_HOST, '--jq', '.head.sha'],
       { platform, environment },
     );
     if (!gh.ok || !/^[0-9a-f]{40}$/.test(gh.stdout)) {
@@ -219,8 +224,8 @@ export function validateExactHeadAtWorkerStart(task, {
     }
     const prLookup = processTextCapture(
       spawnSyncFn,
-      platform === 'win32' ? 'gh.exe' : 'gh',
-      ['api', `repos/${repository}/pulls/${prNumber}`, '--hostname', 'github.com'],
+      githubExecutable,
+      ['api', `repos/${repository}/pulls/${prNumber}`, '--hostname', BATTLE_BRIDGE_GITHUB_HOST],
       { platform, environment },
     );
     let prIdentity;
@@ -242,8 +247,8 @@ export function validateExactHeadAtWorkerStart(task, {
     }
     const main = processCapture(
       spawnSyncFn,
-      platform === 'win32' ? 'gh.exe' : 'gh',
-      ['api', `repos/${repository}/commits/main`, '--hostname', 'github.com', '--jq', '.sha'],
+      githubExecutable,
+      ['api', `repos/${repository}/commits/main`, '--hostname', BATTLE_BRIDGE_GITHUB_HOST, '--jq', '.sha'],
       { platform, environment },
     );
     if (!main.ok || !/^[0-9a-f]{40}$/.test(main.stdout)) {

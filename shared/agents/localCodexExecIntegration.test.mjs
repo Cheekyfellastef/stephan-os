@@ -45,6 +45,7 @@ import {
   STEPHANOS_DIST_MANIFEST_SCHEMA_VERSION,
   computeStephanosDistManifestFingerprint,
 } from '../../scripts/stephanos-build-utils.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
 
 function tempRoots() {
   const root = mkdtempSync(join(tmpdir(), 'stephanos-codex-dispatch-'));
@@ -745,7 +746,7 @@ test('worker revalidates both PR and checkout heads immediately before execution
     },
   });
   assert.equal(valid.ok, true);
-  assert.deepEqual(calls.map((call) => call.executable), ['gh.exe', 'git.exe', 'git.exe']);
+  assert.deepEqual(calls.map((call) => call.executable), [BATTLE_BRIDGE_WINDOWS_HOST.githubCli, 'git.exe', 'git.exe']);
   assert.equal(calls[1].cwd, 'C:\\stephan-os');
   assert.equal(valid.sourceDirtClean, true);
 });
@@ -1123,7 +1124,7 @@ test('worker revalidates merged-main PR provenance current main ancestry and loc
     platform: 'win32',
     spawnSyncFn(executable, args, options) {
       calls.push({ executable, args, options });
-      if (executable === 'gh.exe' && args[1]?.endsWith('/pulls/1628')) {
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli && args[1]?.endsWith('/pulls/1628')) {
         return {
           status: 0,
           stdout: JSON.stringify({
@@ -1136,7 +1137,7 @@ test('worker revalidates merged-main PR provenance current main ancestry and loc
           stderr: '',
         };
       }
-      if (executable === 'gh.exe') return { status: 0, stdout: `${currentMainHead}\n`, stderr: '' };
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli) return { status: 0, stdout: `${currentMainHead}\n`, stderr: '' };
       if (args[0] === 'merge-base') return { status: 0, stdout: '', stderr: '' };
       if (args[0] === 'rev-parse') return { status: 0, stdout: `${currentMainHead}\n`, stderr: '' };
       if (args[0] === 'status') return { status: 0, stdout: ' M apps/stephanos/dist/index.html\n', stderr: '' };
@@ -1187,15 +1188,15 @@ test('worker binds a PR-head review to both the approved PR head and exact curre
     },
     spawnSyncFn(executable, args, options) {
       if (executable === 'git.exe') gitEnvironments.push(options.env);
-      if (executable === 'gh.exe') githubCalls.push({ args, environment: options.env });
-      if (executable === 'gh.exe' && args[1]?.endsWith('/pulls/2000')) {
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli) githubCalls.push({ args, environment: options.env });
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli && args[1]?.endsWith('/pulls/2000')) {
         return {
           status: 0,
           stdout: JSON.stringify({ head: { sha: observedHead }, base: { ref: baseBranch, sha: observedBase } }),
           stderr: '',
         };
       }
-      if (executable === 'gh.exe') return { status: 0, stdout: `${mainHead}\n`, stderr: '' };
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli) return { status: 0, stdout: `${mainHead}\n`, stderr: '' };
       if (args[0] === 'rev-parse') return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
       if (args[0] === 'status') return { status: 0, stdout: '', stderr: '' };
       assert.fail(`unexpected command: ${executable} ${args.join(' ')}`);
@@ -1235,7 +1236,7 @@ test('worker rejects pre-existing source dirt before accepting an exact-head run
   }, {
     platform: 'win32',
     spawnSyncFn(executable, args) {
-      if (executable === 'gh.exe' || args[0] === 'rev-parse') {
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli || args[0] === 'rev-parse') {
         return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
       }
       return {
@@ -1262,7 +1263,7 @@ test('worker permits generated runtime dirt when committed source is clean', () 
   }, {
     platform: 'win32',
     spawnSyncFn(executable, args) {
-      if (executable === 'gh.exe' || args[0] === 'rev-parse') {
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli || args[0] === 'rev-parse') {
         return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
       }
       return { status: 0, stdout: ' M apps/stephanos/dist/index.html\n', stderr: '' };
@@ -1284,7 +1285,7 @@ test('worker fails closed when exact-head source status cannot be read', () => {
   }, {
     platform: 'win32',
     spawnSyncFn(executable, args) {
-      if (executable === 'gh.exe' || args[0] === 'rev-parse') {
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli || args[0] === 'rev-parse') {
         return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
       }
       return { status: 1, stdout: '', stderr: 'status unavailable' };
@@ -1311,7 +1312,7 @@ test('worker persists BLOCKED before browser or child execution when exact-head 
         browserRunnerCalls += 1;
         return { status: 1, stdout: '', stderr: '' };
       }
-      if (executable === 'gh.exe' || args[0] === 'rev-parse') {
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli || args[0] === 'rev-parse') {
         return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
       }
       return { status: 0, stdout: ' M scripts/dirty-source.mjs\n', stderr: '' };
