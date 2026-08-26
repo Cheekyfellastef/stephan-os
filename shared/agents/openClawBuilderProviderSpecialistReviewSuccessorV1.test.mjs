@@ -6,6 +6,7 @@ import {
   OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1,
   analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1,
 } from './openClawBuilderProviderSpecialistReviewSuccessorV1.mjs';
+import { buildIndependentReviewFindingsArtifact } from './operatorMergeReviewArtifactV1.mjs';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const SUCCESSOR_PR = 1999;
@@ -41,7 +42,9 @@ export function validateOpenClawQualificationAuthorityChain(input, trustedHostCo
     || authority.participantId !== 'stephanos'
     || authority.relatedIssue !== String(OPENCLAW_QUALIFICATION_ISSUE)
     || authority.receivedRecordId !== execution.receiptId
-    || authority.disposition !== OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION) return blockedAuthority('OPENCLAW_PRODUCTION_ELIGIBILITY_AUTHORITY_INVALID');
+    || authority.disposition !== OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION) {
+    return blockedAuthority('OPENCLAW_PRODUCTION_ELIGIBILITY_AUTHORITY_INVALID');
+  }
   const proofRefs = [];
   return Object.freeze({
     valid: true,
@@ -107,27 +110,58 @@ export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContex
   if (path.endsWith('/openClawProviderPoolQualificationV1.test.mjs')) return `
 ${'import'} assert from 'node:assert/strict';
 ${'import'} test from 'node:test';
-const result = { mergeAuthority: false, leaseSeizureAllowed: false, duplicateDispatchAllowed: false };
-test('requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt', () => {});
-test('capacity is unusable without the exact validated qualification authority, worker and task class', () => {});
-test('caller-shaped qualification, capacity and fake authority evidence cannot self-admit OpenClaw', () => {});
-test('syntactically valid trusted qualification without canonical authority cannot route', () => {});
-test('existing mutation owner is preserved even when OpenClaw is canonically qualified', () => {});
-test('normal AUTO routing does not silently replace a healthy existing provider policy', () => {});
-assert.equal(result.mergeAuthority, false);
-assert.equal(result.leaseSeizureAllowed, false);
-assert.equal(result.duplicateDispatchAllowed, false);
+test('requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt', () => {
+  assert.equal(validateOpenClawQualificationAuthorityChain(qualification(), trustedHostContext(), expected).valid, true);
+  assert.equal(validateOpenClawQualificationAuthorityChain(qualification(), trustedHostContext({}), expected).valid, false);
+});
+test('capacity is unusable without the exact validated qualification authority, worker and task class', () => {
+  assert.equal(validateOpenClawProviderCapacity(capacity(), expected).valid, true);
+  assert.equal(validateOpenClawProviderCapacity(capacity({ qualificationIds: ['foreign-qualification'] }), expected).valid, false);
+});
+test('caller-shaped qualification, capacity and fake authority evidence cannot self-admit OpenClaw', () => {
+  const result = routeWithQualifiedOpenClawProvider(routeInput());
+  assert.notEqual(result.route, OPENCLAW_PROVIDER_ROUTE);
+  assert.equal(result.openClawPoolEligible, false);
+});
+test('syntactically valid trusted qualification without canonical authority cannot route', () => {
+  const result = routeWithQualifiedOpenClawProvider(routeInput());
+  assert.notEqual(result.route, OPENCLAW_PROVIDER_ROUTE);
+  assert.ok(result.providerPoolBlockers.includes('openclaw-qualification-authority-not-proven'));
+});
+test('existing mutation owner is preserved even when OpenClaw is canonically qualified', () => {
+  const result = routeWithQualifiedOpenClawProvider(routeInput());
+  assert.equal(result.dispatchAllowed, false);
+  assert.equal(result.adapter, 'chatgpt-github');
+});
+test('normal AUTO routing does not silently replace a healthy existing provider policy', () => {
+  const result = routeWithQualifiedOpenClawProvider(routeInput());
+  assert.equal(result.route, 'CODEX');
+  assert.equal(result.openClawPoolEligible, true);
+});
+test('selects canonically qualified OpenClaw before Codex exhaustion when the scheduler prefers it', () => {
+  const result = routeWithQualifiedOpenClawProvider(routeInput());
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.equal(result.duplicateDispatchAllowed, false);
+});
 `;
   throw new Error(`unexpected provider-pool core path ${path}`);
 }
 
 function analysis(paths = OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1) {
-  return {
-    findings: paths.map((path) => ({
+  const findings = paths.map((path) => ({
       severity: 'P0',
       code: 'unsupported-high-risk-surface',
+      summary: 'This high-risk surface requires a separate qualified specialist reviewer.',
       path,
-    })),
+    }));
+  return {
+    schemaVersion: 'stephanos.independent-security-analysis.v1',
+    findings,
+    counts: { P0: findings.length, P1: 0, P2: 0 },
+    verdict: 'findings',
+    proofRefs: paths.map((path) => `proofs/changed-file/${path}`),
+    finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_FINDINGS',
   };
 }
 
@@ -169,7 +203,7 @@ function lineage(head = SUCCESSOR_HEAD, base = SUCCESSOR_BASE, overrides = {}) {
 }
 
 function successorInput(overrides = {}) {
-  return {
+  const input = {
     repository: REPOSITORY,
     prNumber: SUCCESSOR_PR,
     branch: 'codex/five-builder-flywheel-repair',
@@ -180,6 +214,37 @@ function successorInput(overrides = {}) {
     sources: sources(),
     ...overrides,
   };
+  if (!Object.hasOwn(overrides, 'findingsArtifactEvidence')) {
+    let artifact;
+    try {
+      artifact = buildIndependentReviewFindingsArtifact({
+        repository: input.repository,
+        prNumber: input.prNumber,
+        branch: input.branch,
+        sourceHead: input.sourceHead,
+        baseSha: input.baseSha,
+        workflowRunId: 32911603137,
+        workflowRunAttempt: 1,
+        createdAtUtc: '2026-08-25T23:37:50.352Z',
+        analysis: input.analysis,
+      });
+    } catch {
+      artifact = buildIndependentReviewFindingsArtifact({
+        repository: REPOSITORY,
+        prNumber: SUCCESSOR_PR,
+        branch: 'codex/five-builder-flywheel-repair',
+        sourceHead: SUCCESSOR_HEAD,
+        baseSha: SUCCESSOR_BASE,
+        workflowRunId: 32911603137,
+        workflowRunAttempt: 1,
+        createdAtUtc: '2026-08-25T23:37:50.352Z',
+        analysis: input.analysis,
+      });
+    }
+    input.analysis = artifact.analysis;
+    input.findingsArtifactEvidence = artifact;
+  }
+  return input;
 }
 
 function analyzeProviderPoolInjection(injection) {
@@ -211,7 +276,7 @@ test('standalone successor specialist covers only the exact two-file provider-po
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true);
   assert.deepEqual(result.reviewedPaths, OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1);
-  assert.equal(result.proofRefs.length, OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1.length);
+  assert.equal(result.proofRefs.length, OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1.length + 1);
   assert.equal(result.finalVerdict, 'OPENCLAW_BUILDER_PROVIDER_SPECIALIST_CLEAN');
 });
 
@@ -232,6 +297,18 @@ test('successor profile rejects invalid PR identity, unsafe branch identity, inc
   assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({
     analysis: analysis(widened),
   })).eligible, false);
+});
+
+test('digest-bound review evidence cannot be replayed onto another PR or branch', () => {
+  const exact = successorInput();
+  const replayed = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1({
+    ...exact,
+    prNumber: SUCCESSOR_PR + 1,
+    branch: 'codex/replayed-provider-review',
+  });
+  assert.equal(replayed.eligible, true);
+  assert.equal(replayed.clean, false);
+  assert.equal(replayed.findings[0].code, 'openclaw-provider-pool-review-artifact-identity-invalid');
 });
 
 test('successor profile remains exact-lineage and exact-source bound', () => {
@@ -472,7 +549,9 @@ test('successor profile rejects global network capabilities without rejecting in
   for (const hostileSource of [
     "export async function widened() { return fetch('https://example.invalid'); }",
     "export function widened() { const socket = new WebSocket('wss://example.invalid'); socket.send('proof'); }",
+    "export function widened(input) { return new input.WebSocket('wss://example.invalid'); }",
     "export function widened() { return new EventSource('https://example.invalid/events'); }",
+    "const client = {}; client.fetch();",
   ]) {
     const hostile = analyzeProviderPoolInjection(hostileSource);
     assert.equal(hostile.clean, false, hostileSource);
@@ -481,7 +560,7 @@ test('successor profile rejects global network capabilities without rejecting in
 
   for (const benignSource of [
     "const networkFixture = Object.freeze({ operation: 'fetch', url: 'https://example.invalid' });",
-    "const client = {}; client.fetch();",
+    "const client = { fetch() { return 'proof'; } }; client.fetch();",
     "const helper = { render() { return 'proof'; } }; helper['render']();",
     "const helper = {}; const detached = helper['render'];",
     "const helper = {}; const detached = helper?.['render']; detached?.();",
@@ -587,6 +666,23 @@ test('an otherwise valid success return cannot be copied ahead of its authority 
   assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-route-success-not-gate-dominated'));
   assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-authority-success-return-count-invalid'));
   assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-route-success-return-count-invalid'));
+});
+
+test('authority predicates must be top-level failure guards rather than inert operands', () => {
+  const hostileSources = sources();
+  const content = hostileSources[0].content.replace(
+    "if (execution.workerType !== 'openclaw'",
+    "if (false && (execution.workerType !== 'openclaw')",
+  );
+  hostileSources[0] = {
+    ...hostileSources[0],
+    size: Buffer.byteLength(content, 'utf8'),
+    blobSha: blobSha(content),
+    content,
+  };
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-authority-success-not-gate-dominated'));
 });
 
 test('route success is structurally dominated by the negative provider-selection exit', () => {
@@ -696,6 +792,23 @@ test('successor profile applies execution and filesystem authority review to the
     assert.equal(result.clean, false);
     assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'));
   }
+});
+
+test('named adversarial tests require their executable assertions inside the corresponding callback', () => {
+  const hostileSources = sources();
+  const content = hostileSources[1].content.replace(
+    /test\('requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt', \(\) => \{[\s\S]*?\n\}\);/,
+    "test('requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt', () => {});",
+  );
+  hostileSources[1] = {
+    ...hostileSources[1],
+    size: Buffer.byteLength(content, 'utf8'),
+    blobSha: blobSha(content),
+    content,
+  };
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-authority-chain-positive-test-missing'));
 });
 
 test('successor profile preserves inert authority-name strings used as deterministic test data', () => {

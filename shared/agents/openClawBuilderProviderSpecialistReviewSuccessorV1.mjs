@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 
+import { independentReviewFindingsArtifactPayloadSha256 } from './operatorMergeReviewArtifactV1.mjs';
+
 export const OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1 = Object.freeze([
   'shared/agents/openClawProviderPoolQualificationV1.mjs',
   'shared/agents/openClawProviderPoolQualificationV1.test.mjs',
@@ -9,6 +11,7 @@ const SCHEMA = 'stephanos.openclaw-builder-provider-specialist-review.v1';
 const SOURCE_SCHEMA = 'stephanos.windows-authority-source.v1';
 const CANONICAL_REPOSITORY = 'Cheekyfellastef/stephan-os';
 const SHA = /^[a-f0-9]{40}$/;
+const SHA256 = /^[a-f0-9]{64}$/;
 const SAFE_BRANCH = /^[A-Za-z0-9._/-]{1,255}$/;
 const LEGACY_PROFILE_PRS = new Set([1910, 1905]);
 const text = (value) => String(value ?? '').trim();
@@ -76,6 +79,20 @@ function exactLineage(lineage, repository, sourceHead, baseSha) {
     && lineage?.comparison?.behindBy === 0
     && lineage?.comparison?.baseCommitSha === baseSha
     && lineage?.comparison?.mergeBaseCommitSha === baseSha;
+}
+
+function exactFindingsArtifactIdentity(artifact, analysis, repository, prNumber, branch, sourceHead, baseSha) {
+  return artifact?.schemaVersion === 'stephanos.independent-review-findings-artifact.v1'
+    && artifact?.kind === 'stephanos.independent-review.findings-artifact'
+    && artifact?.artifactFile === 'independent-review-result.json'
+    && artifact?.repository === repository
+    && artifact?.prNumber === prNumber
+    && artifact?.branch === branch
+    && artifact?.sourceHead === sourceHead
+    && artifact?.baseSha === baseSha
+    && artifact?.analysis === analysis
+    && SHA256.test(text(artifact?.payloadSha256))
+    && artifact.payloadSha256 === independentReviewFindingsArtifactPayloadSha256(artifact);
 }
 
 const FORBIDDEN_LOCAL_MODULES = new Set([
@@ -1970,7 +1987,7 @@ function directStatementStarts(tokens) {
   return starts;
 }
 
-function conditionalExitGuard(tokens, conditionSource, safeReturns) {
+function conditionalExitGuard(tokens, conditionSource, safeReturns, allowBlockedAuthority = false) {
   const statementStarts = directStatementStarts(tokens);
   let curlyDepth = 0;
   for (let index = 0; index < tokens.length; index += 1) {
@@ -1990,9 +2007,65 @@ function conditionalExitGuard(tokens, conditionSource, safeReturns) {
           const branchReturns = topLevelReturnStatements(branch);
           const closesSafely = branchReturns.length === 1
             && branchReturns[0].terminated
-            && safeReturns.some((source) => sameTokenSequence(branchReturns[0].expression, source));
+            && (safeReturns.some((source) => sameTokenSequence(branchReturns[0].expression, source))
+              || (allowBlockedAuthority && blockedAuthorityReturn(branchReturns[0].expression)));
           if (closesSafely) return Object.freeze({ start: index, end: blockClose });
         }
+      }
+    }
+    if (token?.type !== 'punctuator') continue;
+    if (token.value === '{') curlyDepth += 1;
+    else if (token.value === '}') curlyDepth -= 1;
+  }
+  return null;
+}
+
+function topLevelLogicalRanges(tokens, operator) {
+  const ranges = [];
+  const depth = { round: 0, square: 0, curly: 0 };
+  let start = 0;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token?.type !== 'punctuator') continue;
+    const atBoundary = depth.round === 0 && depth.square === 0 && depth.curly === 0;
+    if (atBoundary && token.value === operator) {
+      ranges.push(Object.freeze({ start, end: index }));
+      start = index + 1;
+      continue;
+    }
+    if (token.value === '(') depth.round += 1;
+    else if (token.value === ')') depth.round -= 1;
+    else if (token.value === '[') depth.square += 1;
+    else if (token.value === ']') depth.square -= 1;
+    else if (token.value === '{') depth.curly += 1;
+    else if (token.value === '}') depth.curly -= 1;
+  }
+  ranges.push(Object.freeze({ start, end: tokens.length }));
+  return Object.freeze(ranges);
+}
+
+function dominatingFailureGuard(tokens, predicateSource, safeReturns, allowBlockedAuthority) {
+  const statementStarts = directStatementStarts(tokens);
+  let curlyDepth = 0;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (curlyDepth === 0 && statementStarts.has(index) && token?.type === 'identifier' && token.value === 'if') {
+      const conditionOpen = index + 1;
+      const conditionClose = matchingPunctuator(tokens, conditionOpen, '(', ')');
+      const blockOpen = conditionClose + 1;
+      const blockClose = matchingPunctuator(tokens, blockOpen, '{', '}');
+      if (conditionClose > conditionOpen && blockClose > blockOpen) {
+        const condition = tokens.slice(conditionOpen + 1, conditionClose);
+        const predicateIsTopLevelDisjunct = topLevelLogicalRanges(condition, '||').some((range) => {
+          const stripped = stripTransparentRange(condition, range.start, range.end);
+          return sameTokenSequence(condition.slice(stripped.start, stripped.end), predicateSource);
+        });
+        const branchReturns = topLevelReturnStatements(tokens.slice(blockOpen + 1, blockClose));
+        const closesSafely = branchReturns.length === 1
+          && branchReturns[0].terminated
+          && (safeReturns.some((source) => sameTokenSequence(branchReturns[0].expression, source))
+            || (allowBlockedAuthority && blockedAuthorityReturn(branchReturns[0].expression)));
+        if (predicateIsTopLevelDisjunct && closesSafely) return Object.freeze({ start: index, end: blockClose });
       }
     }
     if (token?.type !== 'punctuator') continue;
@@ -2009,8 +2082,16 @@ function requireFunctionReturnPolicy(findings, tokens, path, options) {
     tokenSequenceIndex(body, tokenSequence(source))
   ));
   if (dominancePositions.some((index) => index < 0)) return;
+  const failureGuards = (options.requiredGuardPredicates || []).map((source) => (
+    dominatingFailureGuard(body, source, options.safeReturns, options.allowBlockedAuthority === true)
+  ));
   const successGuard = options.successGuard
-    ? conditionalExitGuard(body, options.successGuard.condition, options.safeReturns)
+    ? conditionalExitGuard(
+        body,
+        options.successGuard.condition,
+        options.safeReturns,
+        options.allowBlockedAuthority === true,
+      )
     : null;
   const successGuardDominated = successGuard !== null
     && dominancePositions.every((index) => index < successGuard.start);
@@ -2028,6 +2109,7 @@ function requireFunctionReturnPolicy(findings, tokens, path, options) {
     if (allowedSuccess) {
       successfulReturnCount += 1;
       if (dominancePositions.some((index) => index > statement.index)
+        || failureGuards.some((guard) => guard === null || guard.end >= statement.index)
         || (options.successGuard && (!successGuardDominated || statement.index <= successGuard.end))) {
         findings.push(finding(options.undominatedSuccessCode, path));
       }
@@ -2073,6 +2155,38 @@ function functionBodyTokens(tokens, functionName) {
     if (depth !== 0) return Object.freeze([]);
   }
   return matchedBody ?? Object.freeze([]);
+}
+
+function namedTestBodyTokens(tokens, testName) {
+  const bodies = [];
+  for (let index = 0; index < tokens.length - 6; index += 1) {
+    if (tokens[index]?.type !== 'identifier' || tokens[index].value !== 'test') continue;
+    if (tokens[index + 1]?.type !== 'punctuator' || tokens[index + 1].value !== '(') continue;
+    if (tokens[index + 2]?.type !== 'string' || tokens[index + 2].value !== testName) continue;
+    const callClose = matchingPunctuator(tokens, index + 1, '(', ')');
+    if (callClose < 0) continue;
+    let arrow = index + 3;
+    while (arrow < callClose && !(tokens[arrow]?.type === 'punctuator' && tokens[arrow].value === '=>')) arrow += 1;
+    if (arrow >= callClose) continue;
+    const bodyOpen = arrow + 1;
+    const bodyClose = matchingPunctuator(tokens, bodyOpen, '{', '}');
+    if (bodyClose < 0 || bodyClose > callClose) continue;
+    bodies.push(Object.freeze(tokens.slice(bodyOpen + 1, bodyClose)));
+  }
+  return bodies.length === 1 ? bodies[0] : Object.freeze([]);
+}
+
+function requireNamedTestBehavior(findings, tokens, path, specifications) {
+  for (const specification of specifications) {
+    const body = namedTestBodyTokens(tokens, specification.name);
+    if (body.length === 0) {
+      findings.push(finding(specification.missingCode, path));
+      continue;
+    }
+    for (const [source, code] of specification.assertions) {
+      if (!includesTokenSequence(body, tokenSequence(source))) findings.push(finding(code, path));
+    }
+  }
 }
 
 function requireExecutableSequences(findings, tokens, path, rules) {
@@ -2187,12 +2301,21 @@ function reviewLocalModuleAuthority(source, path, findings, importPolicy) {
     token.type === 'identifier'
     && DANGEROUS_AUTHORITY_TOKENS.has(token.value)
   )) || authorityStrings.some((value) => DANGEROUS_AUTHORITY_TOKENS.has(value));
-  const forbiddenGlobalReference = lexical.tokens.some((token, index, tokens) => (
-    token.type === 'identifier'
-    && FORBIDDEN_GLOBAL_CAPABILITIES.has(token.value)
-    && !(tokens[index - 1]?.type === 'punctuator' && new Set(['.', '?.']).has(tokens[index - 1].value))
-    && !(tokens[index - 1]?.type === 'identifier' && tokens[index - 1].value === 'function')
-  ));
+  const forbiddenGlobalReference = lexical.tokens.some((token, index, tokens) => {
+    if (token.type !== 'identifier' || !FORBIDDEN_GLOBAL_CAPABILITIES.has(token.value)) return false;
+    if (tokens[index - 1]?.type === 'identifier' && tokens[index - 1].value === 'function') return false;
+    const objectMemberKey = tokens[index - 1]?.type === 'punctuator'
+      && new Set(['{', ',']).has(tokens[index - 1].value)
+      && tokens[index + 1]?.type === 'punctuator'
+      && new Set([':', '(']).has(tokens[index + 1].value);
+    if (objectMemberKey) return false;
+    const qualified = tokens[index - 1]?.type === 'punctuator'
+      && new Set(['.', '?.']).has(tokens[index - 1].value);
+    if (!qualified) return true;
+    const receiverIndex = index - 2;
+    return tokens[receiverIndex]?.type !== 'identifier'
+      || !objectLiteralDefinesMember(tokens, tokens[receiverIndex].value, token.value, receiverIndex);
+  });
   const imports = staticModuleDeclarations(lexical.tokens);
   const unapprovedCapability = imports.declarations.some(({ specifier, bindings }) => {
     const allowedBindings = importPolicy[specifier];
@@ -2248,6 +2371,16 @@ function reviewProviderPool(source, path, findings) {
     functionName: 'validateOpenClawQualificationAuthorityChain',
     requiredBeforeSuccess: [
       'issueNumber: OPENCLAW_QUALIFICATION_ISSUE',
+      "execution.workerType !== 'openclaw'",
+      "execution.state !== 'completed'",
+      'execution.operatorActionRequired !== false',
+      'canonicalJson(host.realWorkWorkspaceReceipt) !== canonicalJson(canonicalWorkspace.record)',
+      "authority.participantId !== 'stephanos'",
+      'authority.relatedIssue !== String(OPENCLAW_QUALIFICATION_ISSUE)',
+      'authority.receivedRecordId !== execution.receiptId',
+      'authority.disposition !== OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION',
+    ],
+    requiredGuardPredicates: [
       "execution.workerType !== 'openclaw'",
       "execution.state !== 'completed'",
       'execution.operatorActionRequired !== false',
@@ -2337,6 +2470,65 @@ function reviewProviderPoolTests(source, path, findings) {
     ['assert.equal(result.leaseSeizureAllowed, false)', 'openclaw-provider-pool-lease-denial-test-missing'],
     ['assert.equal(result.duplicateDispatchAllowed, false)', 'openclaw-provider-pool-duplicate-dispatch-test-missing'],
   ]);
+  requireNamedTestBehavior(findings, lexical.tokens, path, [
+    {
+      name: 'requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt',
+      missingCode: 'openclaw-provider-pool-authority-chain-positive-test-missing',
+      assertions: [
+        ['assert.equal(validateOpenClawQualificationAuthorityChain(qualification(), trustedHostContext(), expected).valid, true)', 'openclaw-provider-pool-authority-chain-positive-assertion-missing'],
+        ['expected).valid, false)', 'openclaw-provider-pool-authority-chain-negative-assertion-missing'],
+      ],
+    },
+    {
+      name: 'capacity is unusable without the exact validated qualification authority, worker and task class',
+      missingCode: 'openclaw-provider-pool-capacity-binding-test-missing',
+      assertions: [
+        ['assert.equal(validateOpenClawProviderCapacity(capacity(), expected).valid, true)', 'openclaw-provider-pool-capacity-positive-assertion-missing'],
+        ["assert.equal(validateOpenClawProviderCapacity(capacity({ qualificationIds: ['foreign-qualification'] }), expected).valid, false)", 'openclaw-provider-pool-capacity-negative-assertion-missing'],
+      ],
+    },
+    {
+      name: 'caller-shaped qualification, capacity and fake authority evidence cannot self-admit OpenClaw',
+      missingCode: 'openclaw-provider-pool-caller-forgery-test-missing',
+      assertions: [
+        ['assert.notEqual(result.route, OPENCLAW_PROVIDER_ROUTE)', 'openclaw-provider-pool-caller-forgery-route-assertion-missing'],
+        ['assert.equal(result.openClawPoolEligible, false)', 'openclaw-provider-pool-caller-forgery-eligibility-assertion-missing'],
+      ],
+    },
+    {
+      name: 'syntactically valid trusted qualification without canonical authority cannot route',
+      missingCode: 'openclaw-provider-pool-syntax-only-forgery-test-missing',
+      assertions: [
+        ['assert.notEqual(result.route, OPENCLAW_PROVIDER_ROUTE)', 'openclaw-provider-pool-syntax-only-route-assertion-missing'],
+        ["assert.ok(result.providerPoolBlockers.includes('openclaw-qualification-authority-not-proven'))", 'openclaw-provider-pool-syntax-only-blocker-assertion-missing'],
+      ],
+    },
+    {
+      name: 'existing mutation owner is preserved even when OpenClaw is canonically qualified',
+      missingCode: 'openclaw-provider-pool-owner-preservation-test-missing',
+      assertions: [
+        ['assert.equal(result.dispatchAllowed, false)', 'openclaw-provider-pool-owner-preservation-dispatch-assertion-missing'],
+        ["assert.equal(result.adapter, 'chatgpt-github')", 'openclaw-provider-pool-owner-preservation-adapter-assertion-missing'],
+      ],
+    },
+    {
+      name: 'normal AUTO routing does not silently replace a healthy existing provider policy',
+      missingCode: 'openclaw-provider-pool-no-silent-route-replacement-test-missing',
+      assertions: [
+        ["assert.equal(result.route, 'CODEX')", 'openclaw-provider-pool-no-silent-route-assertion-missing'],
+        ['assert.equal(result.openClawPoolEligible, true)', 'openclaw-provider-pool-no-silent-route-eligibility-assertion-missing'],
+      ],
+    },
+    {
+      name: 'selects canonically qualified OpenClaw before Codex exhaustion when the scheduler prefers it',
+      missingCode: 'openclaw-provider-pool-authority-denial-test-missing',
+      assertions: [
+        ['assert.equal(result.mergeAuthority, false)', 'openclaw-provider-pool-merge-denial-test-missing'],
+        ['assert.equal(result.leaseSeizureAllowed, false)', 'openclaw-provider-pool-lease-denial-test-missing'],
+        ['assert.equal(result.duplicateDispatchAllowed, false)', 'openclaw-provider-pool-duplicate-dispatch-test-missing'],
+      ],
+    },
+  ]);
 }
 
 export function analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(input = {}) {
@@ -2365,6 +2557,24 @@ export function analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(input 
     finalVerdict: 'OPENCLAW_BUILDER_PROVIDER_SPECIALIST_NOT_APPLICABLE',
   });
 
+  if (!exactFindingsArtifactIdentity(
+    input.findingsArtifactEvidence,
+    input.analysis,
+    repository,
+    prNumber,
+    branch,
+    sourceHead,
+    baseSha,
+  )) return Object.freeze({
+    schemaVersion: SCHEMA,
+    eligible: true,
+    clean: false,
+    reviewedPaths: Object.freeze(paths),
+    findings: Object.freeze([finding('openclaw-provider-pool-review-artifact-identity-invalid', paths[0])]),
+    proofRefs: Object.freeze([]),
+    finalVerdict: 'OPENCLAW_BUILDER_PROVIDER_SPECIALIST_FINDINGS',
+  });
+
   if (!exactLineage(input.lineageEvidence, repository, sourceHead, baseSha)) return Object.freeze({
     schemaVersion: SCHEMA,
     eligible: true,
@@ -2377,7 +2587,9 @@ export function analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(input 
 
   const sources = Array.isArray(input.sources) ? input.sources : [];
   const findings = [];
-  const proofRefs = [];
+  const proofRefs = [
+    `proofs/independent-review-artifact/pr-${prNumber}/${branch}@${sourceHead}#${input.findingsArtifactEvidence.payloadSha256}`,
+  ];
   for (const path of OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1) {
     const candidates = sources.filter((source) => text(source?.path) === path);
     if (candidates.length !== 1 || !exactSource(candidates[0], repository, sourceHead, path)) {
