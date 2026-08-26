@@ -1,12 +1,218 @@
 #!/usr/bin/env node
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { ensureBattleBridgeGitHubCommandMailbox } from '../shared/agents/battleBridgeGitHubCommandMailboxBootstrap.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
+import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
 import { runMissionWorkerTick } from './mission-orchestrator-worker.mjs';
 import { writeMissionWorkerHeartbeat } from './mission-orchestrator-worker-heartbeat.mjs';
+
+export const MISSION_WORKER_LOG_PROJECTION_SCHEMA = 'stephanos.mission-worker-log-projection.v1';
+export const MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE = 75;
+
+const SHA_40 = /^[0-9a-f]{40}$/;
+const MAX_GIT_STATUS_BYTES = 64 * 1024;
+
+function ownData(value, key) {
+  if (!value || typeof value !== 'object') return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function boundedText(value, maximum = 240) {
+  return typeof value === 'string' ? value.trim().slice(0, maximum) : '';
+}
+
+function boundedTextList(value, maximumItems = 8) {
+  if (!Array.isArray(value) || value.length > maximumItems) return [];
+  const output = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !Object.hasOwn(descriptor, 'value')) return [];
+    const item = boundedText(descriptor.value, 160);
+    if (item) output.push(item);
+  }
+  return output;
+}
+
+export function createMissionWorkerControllerLogProjection(controller, checkedAt) {
+  const grant = ownData(controller, 'workerActionGrant');
+  return Object.freeze({
+    schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA,
+    event: 'controller-cycle',
+    checkedAt: boundedText(checkedAt, 48),
+    status: boundedText(ownData(controller, 'status'), 64),
+    action: boundedText(ownData(controller, 'action'), 96),
+    finalVerdict: boundedText(ownData(controller, 'finalVerdict'), 120),
+    allowWorkerTick: ownData(controller, 'allowWorkerTick') === true,
+    blockers: Object.freeze(boundedTextList(ownData(controller, 'blockers'))),
+    missionId: boundedText(ownData(grant, 'missionId'), 160),
+    actionId: boundedText(ownData(grant, 'actionId'), 160),
+    adapter: boundedText(ownData(grant, 'adapter'), 64),
+  });
+}
+
+export function createMissionWorkerTickLogProjection(result, checkedAt) {
+  const publication = ownData(result, 'publish');
+  return Object.freeze({
+    schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA,
+    event: 'worker-tick',
+    checkedAt: boundedText(checkedAt, 48),
+    status: boundedText(ownData(result, 'status'), 64),
+    state: boundedText(ownData(result, 'state'), 64),
+    phase: boundedText(ownData(result, 'phase'), 96),
+    finalVerdict: boundedText(ownData(result, 'finalVerdict'), 120),
+    blocker: boundedText(ownData(result, 'blocker'), 160),
+    publishOk: ownData(publication, 'ok') === true,
+  });
+}
+
+function stableLogSignature(projection) {
+  const { checkedAt: _checkedAt, ...stable } = projection;
+  return JSON.stringify(stable);
+}
+
+function processResultText(result, key) {
+  const value = ownData(result, key);
+  return typeof value === 'string' ? value : '';
+}
+
+function invalidRepositoryIdentity(blocker, overrides = {}) {
+  return Object.freeze({
+    valid: false,
+    canonical: false,
+    branch: '',
+    headSha: '',
+    sourceClean: false,
+    worktreeClean: false,
+    runtimeDirtCount: 0,
+    blocker,
+    ...overrides,
+  });
+}
+
+function runBoundedGitObservation({ repositoryRoot, spawnSyncFn, args }) {
+  let result;
+  try {
+    result = spawnSyncFn(BATTLE_BRIDGE_WINDOWS_HOST.git, ['-C', repositoryRoot, ...args], {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+      windowsHide: true,
+      shell: false,
+      timeout: 10_000,
+      maxBuffer: MAX_GIT_STATUS_BYTES,
+    });
+  } catch {
+    return Object.freeze({ ok: false, stdout: '' });
+  }
+  const status = ownData(result, 'status');
+  const signal = ownData(result, 'signal');
+  const error = ownData(result, 'error');
+  const stdout = processResultText(result, 'stdout');
+  const ok = status === 0
+    && signal === null
+    && error === undefined
+    && Buffer.byteLength(stdout, 'utf8') <= MAX_GIT_STATUS_BYTES;
+  return Object.freeze({ ok, stdout: ok ? stdout : '' });
+}
+
+function parsePorcelainV2Identity(stdout) {
+  let branch = '';
+  let headSha = '';
+  for (const line of stdout.split(/\r?\n/)) {
+    if (line.startsWith('# branch.head ')) {
+      if (branch) return null;
+      branch = line.slice('# branch.head '.length).trim();
+    } else if (line.startsWith('# branch.oid ')) {
+      if (headSha) return null;
+      headSha = line.slice('# branch.oid '.length).trim().toLowerCase();
+    }
+  }
+  return branch && SHA_40.test(headSha) ? Object.freeze({ branch, headSha }) : null;
+}
+
+export function inspectMissionWorkerRepositoryIdentity({
+  env = process.env,
+  spawnSyncFn = spawnSync,
+} = {}) {
+  const repositoryRoot = boundedText(env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT, 1024);
+  const expectedHeadSha = boundedText(env.STEPHANOS_MISSION_WORKER_HEAD_SHA, 40).toLowerCase();
+  if (!path.isAbsolute(repositoryRoot) || !SHA_40.test(expectedHeadSha)) {
+    return invalidRepositoryIdentity('MISSION_WORKER_LAUNCH_IDENTITY_INVALID');
+  }
+
+  const identityArgs = ['status', '--porcelain=v2', '--branch', '--untracked-files=no'];
+  const identityBeforeRead = runBoundedGitObservation({ repositoryRoot, spawnSyncFn, args: identityArgs });
+  const dirtRead = runBoundedGitObservation({
+    repositoryRoot,
+    spawnSyncFn,
+    args: ['status', '--porcelain=v1', '--untracked-files=normal'],
+  });
+  const identityAfterRead = runBoundedGitObservation({ repositoryRoot, spawnSyncFn, args: identityArgs });
+  if (!identityBeforeRead.ok || !dirtRead.ok || !identityAfterRead.ok) {
+    return invalidRepositoryIdentity('MISSION_WORKER_REPOSITORY_IDENTITY_READ_FAILED');
+  }
+
+  const identityBefore = parsePorcelainV2Identity(identityBeforeRead.stdout);
+  const identityAfter = parsePorcelainV2Identity(identityAfterRead.stdout);
+  if (!identityBefore || !identityAfter) {
+    return invalidRepositoryIdentity('MISSION_WORKER_REPOSITORY_IDENTITY_AMBIGUOUS');
+  }
+  if (identityBefore.branch !== identityAfter.branch || identityBefore.headSha !== identityAfter.headSha) {
+    return invalidRepositoryIdentity('MISSION_WORKER_REPOSITORY_IDENTITY_CHANGED_DURING_READ');
+  }
+
+  const dirtLines = dirtRead.stdout.split(/\r?\n/).filter(Boolean);
+  const dirt = classifyDirt(dirtLines);
+  const sourceClean = dirt.blocksSync === false;
+  const worktreeClean = dirtLines.length === 0;
+  const runtimeDirtCount = Array.isArray(dirt.runtimeOnly) ? dirt.runtimeOnly.length : 0;
+  const { branch, headSha } = identityAfter;
+  const canonical = branch === 'main' && headSha === expectedHeadSha && sourceClean;
+  return Object.freeze({
+    valid: true,
+    canonical,
+    branch,
+    headSha,
+    sourceClean,
+    worktreeClean,
+    runtimeDirtCount,
+    blocker: canonical
+      ? ''
+      : branch !== 'main'
+        ? 'CANONICAL_REPOSITORY_BRANCH_NOT_MAIN'
+        : !sourceClean
+          ? 'MISSION_WORKER_CANONICAL_SOURCE_DIRTY'
+          : 'MISSION_WORKER_CANONICAL_HEAD_CHANGED',
+  });
+}
+
+export function createMissionWorkerRepositoryLogProjection(identity, checkedAt, reloadRequired = false) {
+  return Object.freeze({
+    schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA,
+    event: 'repository-identity',
+    checkedAt: boundedText(checkedAt, 48),
+    valid: ownData(identity, 'valid') === true,
+    canonical: ownData(identity, 'canonical') === true,
+    branch: boundedText(ownData(identity, 'branch'), 120),
+    headSha: boundedText(ownData(identity, 'headSha'), 40).toLowerCase(),
+    sourceClean: ownData(identity, 'sourceClean') === true,
+    worktreeClean: ownData(identity, 'worktreeClean') === true,
+    runtimeDirtCount: Number.isInteger(ownData(identity, 'runtimeDirtCount'))
+      ? Math.max(0, Math.min(ownData(identity, 'runtimeDirtCount'), 10_000))
+      : 0,
+    reloadRequired,
+    blocker: boundedText(ownData(identity, 'blocker'), 160),
+  });
+}
 
 export async function runSupervisedMissionWorker({
   argv = process.argv.slice(2),
@@ -17,6 +223,11 @@ export async function runSupervisedMissionWorker({
   runControllerCycle = runDurableFlywheelStartupCycle,
   runTick = runMissionWorkerTick,
   writeHeartbeat = writeMissionWorkerHeartbeat,
+  inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity,
+  identityProbeIntervalMs = Math.max(
+    Number.parseInt(env.STEPHANOS_MISSION_WORKER_IDENTITY_PROBE_INTERVAL_MS || '30000', 10) || 30_000,
+    1_000,
+  ),
   sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
   setIntervalFn = setInterval,
   clearIntervalFn = clearInterval,
@@ -29,6 +240,12 @@ export async function runSupervisedMissionWorker({
     1000,
   );
   let exitCode = 0;
+  let lastControllerLogSignature = '';
+  let lastRepositoryLogSignature = '';
+  let lastTickLogSignature = '';
+  let repositoryDriftObserved = false;
+  let cachedRepositoryIdentity = null;
+  let nextIdentityProbeAtMs = 0;
 
   try {
     const mailboxBootstrap = await bootstrapMailbox({ env });
@@ -45,6 +262,63 @@ export async function runSupervisedMissionWorker({
 
   do {
     const checkedAt = now();
+    const checkedAtMs = Date.parse(checkedAt);
+    const shouldProbeIdentity = cachedRepositoryIdentity === null
+      || !Number.isFinite(checkedAtMs)
+      || checkedAtMs >= nextIdentityProbeAtMs;
+    if (shouldProbeIdentity) {
+      try {
+        cachedRepositoryIdentity = await inspectRepositoryIdentity({ env });
+      } catch {
+        cachedRepositoryIdentity = Object.freeze({
+          valid: false,
+          canonical: false,
+          branch: '',
+          headSha: '',
+          sourceClean: false,
+          worktreeClean: false,
+          runtimeDirtCount: 0,
+          blocker: 'MISSION_WORKER_REPOSITORY_IDENTITY_READ_FAILED',
+        });
+      }
+      nextIdentityProbeAtMs = Number.isFinite(checkedAtMs)
+        ? checkedAtMs + Math.max(Number(identityProbeIntervalMs) || 0, 0)
+        : 0;
+    }
+    const identity = cachedRepositoryIdentity;
+    const identityValid = ownData(identity, 'valid') === true;
+    const identityCanonical = ownData(identity, 'canonical') === true;
+    const observedBranch = boundedText(ownData(identity, 'branch'), 120);
+    const observedHeadSha = boundedText(ownData(identity, 'headSha'), 40).toLowerCase();
+    const observedSourceClean = ownData(identity, 'sourceClean') === true;
+    const expectedHeadSha = boundedText(env.STEPHANOS_MISSION_WORKER_HEAD_SHA, 40).toLowerCase();
+    const recoveredLaunchIdentity = identityValid
+      && observedBranch === 'main'
+      && observedHeadSha === expectedHeadSha
+      && observedSourceClean;
+    const changedCanonicalHead = identityValid
+      && observedBranch === 'main'
+      && SHA_40.test(observedHeadSha)
+      && observedHeadSha !== expectedHeadSha
+      && observedSourceClean;
+    const reloadRequired = changedCanonicalHead || (repositoryDriftObserved && recoveredLaunchIdentity);
+    const repositoryLog = createMissionWorkerRepositoryLogProjection(identity, checkedAt, reloadRequired);
+    const repositoryLogSignature = stableLogSignature(repositoryLog);
+    if (once || repositoryLogSignature !== lastRepositoryLogSignature) {
+      stdout.write(`${JSON.stringify(repositoryLog)}\n`);
+      lastRepositoryLogSignature = repositoryLogSignature;
+    }
+    if (reloadRequired) {
+      stderr.write(`${JSON.stringify({
+        schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA,
+        event: 'worker-reload',
+        checkedAt,
+        finalVerdict: 'MISSION_WORKER_CANONICAL_RELOAD_REQUIRED',
+        exitCode: MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE,
+      })}\n`);
+      return MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE;
+    }
+    if (identityValid && !identityCanonical) repositoryDriftObserved = true;
     let lastTickVerdict = 'MISSION_WORKER_TICK_PASS';
     let heartbeatWriteFailed = false;
     let heartbeatWrites = Promise.resolve();
@@ -72,13 +346,23 @@ export async function runSupervisedMissionWorker({
         nowUtc: checkedAt,
         sourceRevision: env.STEPHANOS_MISSION_WORKER_HEAD_SHA,
       });
-      stdout.write(`${JSON.stringify({ checkedAt, controller })}\n`);
+      const controllerLog = createMissionWorkerControllerLogProjection(controller, checkedAt);
+      const controllerLogSignature = stableLogSignature(controllerLog);
+      if (once || controllerLogSignature !== lastControllerLogSignature) {
+        stdout.write(`${JSON.stringify(controllerLog)}\n`);
+        lastControllerLogSignature = controllerLogSignature;
+      }
       if (controller?.allowWorkerTick === true) {
         const result = await runTick({
           env,
           actionGrant: controller.workerActionGrant,
         });
-        stdout.write(`${JSON.stringify({ checkedAt, ...result })}\n`);
+        const tickLog = createMissionWorkerTickLogProjection(result, checkedAt);
+        const tickLogSignature = stableLogSignature(tickLog);
+        if (once || tickLogSignature !== lastTickLogSignature) {
+          stdout.write(`${JSON.stringify(tickLog)}\n`);
+          lastTickLogSignature = tickLogSignature;
+        }
       }
     } catch (error) {
       lastTickVerdict = 'MISSION_WORKER_TICK_FAILED';
