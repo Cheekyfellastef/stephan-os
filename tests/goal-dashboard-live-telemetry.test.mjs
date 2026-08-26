@@ -116,14 +116,18 @@ test('standalone Goal Dashboard renders ready Shared Workspace feed before stati
         battleBridgeSupervisor: { overallState: 'CURRENT', services: [{ serviceId: 'publisher-loop', state: 'CURRENT' }] },
         openClawCapabilityLadder: { canRunNow: ['read-only-proof'], needsApproval: ['windows-action'], blocked: [] },
         operatorAttention: { approvals: [], localProofNeeded: [], blockers: [], exactNextAction: 'Review live proof refs.' },
-        goals: [{ issue: '#1290', title: 'Shared Agent Workspace', statusTruth: 'CURRENT', proofTruth: 'CURRENT', blockers: [], exactNextAction: 'Continue.' }],
+        goals: [
+          { issue: '#1290', title: 'Shared Agent Workspace', statusTruth: 'CURRENT', proofTruth: 'CURRENT', blockers: [], exactNextAction: 'Continue.' },
+          { issue: '#1287', title: 'Verification Harness', statusTruth: 'CURRENT', proofTruth: 'STALE', blockers: ['STALE_PROOF_RECORD'], exactNextAction: 'Refresh proof.' },
+          { issue: '#1291', title: 'Battle Bridge Supervisor', statusTruth: 'CURRENT', proofTruth: 'UNKNOWN', blockers: ['UNKNOWN_PROOF_RECORD'], exactNextAction: 'Publish proof.' },
+        ],
       },
     }) } : { ok: false, json: async () => ({}) },
   });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(telemetry.get('source-badge').textContent, 'READY');
   assert.match(telemetry.get('goal-data-source').textContent, /READY Shared Agent Workspace feed/);
-  assert.equal(telemetry.get('proof-state').textContent, 'CURRENT');
+  assert.equal(telemetry.get('proof-state').textContent, 'CURRENT 1 · STALE 1 · UNKNOWN 1');
   assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-shared-workspace');
 });
 
