@@ -16,6 +16,8 @@ export const MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE = 75;
 
 const SHA_40 = /^[0-9a-f]{40}$/;
 const MAX_GIT_STATUS_BYTES = 64 * 1024;
+const PROGRESS_RECHECK_INTERVAL_MS = 250;
+const MAX_CONSECUTIVE_PROGRESS_RECHECKS = 8;
 
 function ownData(value, key) {
   if (!value || typeof value !== 'object') return undefined;
@@ -83,6 +85,13 @@ function stableLogSignature(projection) {
 function processResultText(result, key) {
   const value = ownData(result, key);
   return typeof value === 'string' ? value : '';
+}
+
+export function missionWorkerTickMadeProgress(result) {
+  const publication = ownData(result, 'publish');
+  const processing = ownData(result, 'processed');
+  return ownData(publication, 'published') === true
+    || ownData(processing, 'processed') === true;
 }
 
 function invalidRepositoryIdentity(blocker, overrides = {}) {
@@ -246,6 +255,7 @@ export async function runSupervisedMissionWorker({
   let repositoryDriftObserved = false;
   let cachedRepositoryIdentity = null;
   let nextIdentityProbeAtMs = 0;
+  let consecutiveProgressRechecks = 0;
 
   try {
     const mailboxBootstrap = await bootstrapMailbox({ env });
@@ -322,6 +332,7 @@ export async function runSupervisedMissionWorker({
     let lastTickVerdict = 'MISSION_WORKER_TICK_PASS';
     let heartbeatWriteFailed = false;
     let heartbeatWrites = Promise.resolve();
+    let tickMadeProgress = false;
 
     const queueHeartbeat = (lastTickVerdictValue, timestampUtc = now()) => {
       heartbeatWrites = heartbeatWrites.then(async () => {
@@ -357,6 +368,7 @@ export async function runSupervisedMissionWorker({
           env,
           actionGrant: controller.workerActionGrant,
         });
+        tickMadeProgress = missionWorkerTickMadeProgress(result);
         const tickLog = createMissionWorkerTickLogProjection(result, checkedAt);
         const tickLogSignature = stableLogSignature(tickLog);
         if (once || tickLogSignature !== lastTickLogSignature) {
@@ -376,7 +388,17 @@ export async function runSupervisedMissionWorker({
     await queueHeartbeat(lastTickVerdict);
     if (heartbeatWriteFailed && once) exitCode = 1;
 
-    if (!once) await sleep(Math.max(Number.isFinite(intervalMs) ? intervalMs : 2000, 250));
+    if (!once) {
+      const steadyDelayMs = Math.max(Number.isFinite(intervalMs) ? intervalMs : 2000, 250);
+      let delayMs = steadyDelayMs;
+      if (tickMadeProgress && consecutiveProgressRechecks < MAX_CONSECUTIVE_PROGRESS_RECHECKS) {
+        consecutiveProgressRechecks += 1;
+        delayMs = PROGRESS_RECHECK_INTERVAL_MS;
+      } else {
+        consecutiveProgressRechecks = 0;
+      }
+      await sleep(delayMs);
+    }
   } while (!once);
   return exitCode;
 }

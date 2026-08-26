@@ -6,6 +6,7 @@ import {
   createMissionWorkerControllerLogProjection,
   createMissionWorkerTickLogProjection,
   inspectMissionWorkerRepositoryIdentity,
+  missionWorkerTickMadeProgress,
   MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE,
   runSupervisedMissionWorker,
 } from './mission-orchestrator-worker-supervised.mjs';
@@ -499,6 +500,47 @@ test('persistent worker bounds repository identity probes to the configured cade
     },
   }), /stop-after-cadence-proof/);
   assert.equal(identityReads, 2);
+});
+
+test('worker fast-follows proven progress with a bounded burst then restores the steady delay', async () => {
+  const delays = [];
+  let cycles = 0;
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: { STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000' },
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: allowWorkerTick,
+    runTick: async () => {
+      cycles += 1;
+      return cycles % 2
+        ? { publish: { published: true }, processed: { processed: false } }
+        : { publish: { published: false }, processed: { processed: true } };
+    },
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async (delayMs) => {
+      delays.push(delayMs);
+      if (delays.length === 9) throw new Error('stop-after-bounded-fast-follow');
+    },
+  }), /stop-after-bounded-fast-follow/);
+  assert.equal(cycles, 9);
+  assert.deepEqual(delays, [250, 250, 250, 250, 250, 250, 250, 250, 2000]);
+});
+
+test('worker progress detection is descriptor-safe and ignores caller-shaped getters', () => {
+  let touched = 0;
+  const publication = {};
+  Object.defineProperty(publication, 'published', {
+    enumerable: true,
+    get() { touched += 1; return true; },
+  });
+  assert.equal(missionWorkerTickMadeProgress({ publish: publication }), false);
+  assert.equal(touched, 0);
+  assert.equal(missionWorkerTickMadeProgress({ processed: { processed: true } }), true);
 });
 
 test('long-running worker suppresses unchanged controller telemetry', async () => {
