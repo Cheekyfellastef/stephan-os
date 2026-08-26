@@ -458,8 +458,6 @@ function Open-CodexUsagePanel {
             $windows += [pscustomobject]@{ Element = $window; Name = $name; ProcessName = $processName; ProcessId = $processId }
         } catch { continue }
     }
-    $windows = @(Select-CodexUniqueProcessCandidates -Candidates @($windows))
-
     if ($windows.Count -eq 0) {
         return [pscustomobject]@{
             ok = $false
@@ -471,12 +469,13 @@ function Open-CodexUsagePanel {
         }
     }
 
+    $processCandidates = @(Select-CodexUniqueProcessCandidates -Candidates @($windows))
+    $processSnapshots = @{}
     $matchingWindows = @()
-    $inspectedWindows = @()
-    foreach ($window in $windows) {
+    foreach ($window in $processCandidates) {
         $snapshot = Get-CodexProcessSnapshot -Root $root -ProcessId $window.ProcessId
+        $processSnapshots[[string]$window.ProcessId] = @($snapshot)
         $evidence = Resolve-CodexUsageSurfaceEvidence -Snapshot @($snapshot) -ProcessName $window.ProcessName
-        $inspectedWindows += [pscustomobject]@{ Window = $window; Snapshot = $snapshot; Evidence = $evidence }
         $edgeAllowed = $window.ProcessName -ne 'msedge' -or $AllowReadOnlyEdgeAnalytics.IsPresent
         if ($edgeAllowed -and $evidence.valid -eq $true) {
             $matchingWindows += [pscustomobject]@{ Window = $window; Snapshot = $snapshot; Evidence = $evidence }
@@ -510,9 +509,20 @@ function Open-CodexUsagePanel {
         }
     }
 
-    $windows = @($inspectedWindows | Where-Object {
-        Test-CodexDesktopAppWindowEvidence -Window $_.Window -Snapshot $_.Snapshot
-    } | ForEach-Object { $_.Window })
+    $navigationWindows = @()
+    foreach ($window in @($windows)) {
+        $processKey = [string]$window.ProcessId
+        if ($processSnapshots.ContainsKey($processKey)) {
+            $snapshot = @($processSnapshots[$processKey])
+        } else {
+            $snapshot = @(Get-CodexProcessSnapshot -Root $root -ProcessId $window.ProcessId)
+            $processSnapshots[$processKey] = @($snapshot)
+        }
+        if (Test-CodexDesktopAppWindowEvidence -Window $window -Snapshot $snapshot) {
+            $navigationWindows += $window
+        }
+    }
+    $windows = @($navigationWindows)
 
     if ($windows.Count -ne 1) {
         return [pscustomobject]@{

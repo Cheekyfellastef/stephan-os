@@ -68,7 +68,10 @@ test('requires structural usage-panel proof rather than matching reset words alo
   assert.match(usageEvidence, /EDGE_USAGE_RESET_TIME_NOT_FOUND/);
   assert.match(usageEvidence, /EDGE_BANKED_RESET_ACTION_NOT_FOUND/);
   assert.match(usageEvidence, /function Select-CodexUniqueProcessCandidates/);
-  assert.match(navigation, /Select-CodexUniqueProcessCandidates -Candidates @\(\$windows\)/);
+  assert.match(navigation, /\$processCandidates = @\(Select-CodexUniqueProcessCandidates -Candidates @\(\$windows\)\)/);
+  assert.doesNotMatch(navigation, /\$windows = @\(Select-CodexUniqueProcessCandidates/);
+  assert.match(navigation, /foreach \(\$window in \$processCandidates\)/);
+  assert.match(navigation, /foreach \(\$window in @\(\$windows\)\)[\s\S]*Test-CodexDesktopAppWindowEvidence -Window \$window -Snapshot \$snapshot/);
   assert.match(statusCore, /Select-CodexUniqueProcessCandidates -Candidates @\(\$windowCandidates\)/);
   assert.match(navigation, /BLOCKED_RESET_USAGE_PANEL_NOT_PROVEN/);
 });
