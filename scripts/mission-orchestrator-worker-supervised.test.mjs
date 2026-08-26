@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { runSupervisedMissionWorker } from './mission-orchestrator-worker-supervised.mjs';
+import {
+  createMissionWorkerControllerLogProjection,
+  createMissionWorkerTickLogProjection,
+  runSupervisedMissionWorker,
+} from './mission-orchestrator-worker-supervised.mjs';
 
 function sink() {
   let value = '';
@@ -61,7 +65,8 @@ test('supervised worker writes running and final heartbeat around a successful t
   ]);
   assert.equal(timer.wasCleared(), true);
   assert.deepEqual(tickOptions.actionGrant, actionGrant);
-  assert.match(output.read(), /"publish"/);
+  assert.match(output.read(), /"event":"worker-tick"/);
+  assert.match(output.read(), /"publishOk":true/);
   assert.equal(errors.read(), '');
 });
 
@@ -174,4 +179,58 @@ test('supervised worker gates source work through the durable controller', async
   assert.equal(observedOptions.sourceRevision, head);
   assert.equal(observedOptions.env.STEPHANOS_MISSION_WORKER_HEAD_SHA, head);
   assert.match(output.read(), /"authority-held"/);
+});
+
+test('worker logs only bounded authority-relevant controller and tick truth', () => {
+  const huge = 'x'.repeat(2_000_000);
+  const controller = createMissionWorkerControllerLogProjection({
+    status: 'HOLD',
+    action: 'HOLD',
+    finalVerdict: 'PROGRAMME_HOLD',
+    allowWorkerTick: false,
+    blockers: ['capacity-unavailable'],
+    projection: { huge },
+    actionResult: { huge },
+  }, '2026-08-26T02:20:00.000Z');
+  const tick = createMissionWorkerTickLogProjection({
+    status: 'DONE',
+    finalVerdict: 'MISSION_WORKER_DONE',
+    publish: { ok: true, huge },
+    evidence: { huge },
+  }, '2026-08-26T02:20:01.000Z');
+  assert.equal(JSON.stringify(controller).length < 1_000, true);
+  assert.equal(JSON.stringify(tick).length < 1_000, true);
+  assert.equal(JSON.stringify(controller).includes(huge), false);
+  assert.equal(JSON.stringify(tick).includes(huge), false);
+  assert.equal(controller.blockers[0], 'capacity-unavailable');
+  assert.equal(tick.publishOk, true);
+});
+
+test('long-running worker suppresses unchanged controller telemetry', async () => {
+  const output = sink();
+  let sleeps = 0;
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: {},
+    stdout: output.stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    runControllerCycle: async () => ({
+      status: 'HOLD',
+      action: 'HOLD',
+      finalVerdict: 'PROGRAMME_HOLD',
+      allowWorkerTick: false,
+      blockers: ['capacity-unavailable'],
+    }),
+    runTick: async () => ({}),
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      sleeps += 1;
+      if (sleeps >= 2) throw new Error('stop-test-loop');
+    },
+  }), /stop-test-loop/);
+  const controllerLines = output.read().split('\n').filter((line) => line.includes('"event":"controller-cycle"'));
+  assert.equal(controllerLines.length, 1);
 });

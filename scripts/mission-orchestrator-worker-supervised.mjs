@@ -8,6 +8,71 @@ import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheel
 import { runMissionWorkerTick } from './mission-orchestrator-worker.mjs';
 import { writeMissionWorkerHeartbeat } from './mission-orchestrator-worker-heartbeat.mjs';
 
+export const MISSION_WORKER_LOG_PROJECTION_SCHEMA = 'stephanos.mission-worker-log-projection.v1';
+
+function ownData(value, key) {
+  if (!value || typeof value !== 'object') return undefined;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function boundedText(value, maximum = 240) {
+  return typeof value === 'string' ? value.trim().slice(0, maximum) : '';
+}
+
+function boundedTextList(value, maximumItems = 8) {
+  if (!Array.isArray(value) || value.length > maximumItems) return [];
+  const output = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !Object.hasOwn(descriptor, 'value')) return [];
+    const item = boundedText(descriptor.value, 160);
+    if (item) output.push(item);
+  }
+  return output;
+}
+
+export function createMissionWorkerControllerLogProjection(controller, checkedAt) {
+  const grant = ownData(controller, 'workerActionGrant');
+  return Object.freeze({
+    schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA,
+    event: 'controller-cycle',
+    checkedAt: boundedText(checkedAt, 48),
+    status: boundedText(ownData(controller, 'status'), 64),
+    action: boundedText(ownData(controller, 'action'), 96),
+    finalVerdict: boundedText(ownData(controller, 'finalVerdict'), 120),
+    allowWorkerTick: ownData(controller, 'allowWorkerTick') === true,
+    blockers: Object.freeze(boundedTextList(ownData(controller, 'blockers'))),
+    missionId: boundedText(ownData(grant, 'missionId'), 160),
+    actionId: boundedText(ownData(grant, 'actionId'), 160),
+    adapter: boundedText(ownData(grant, 'adapter'), 64),
+  });
+}
+
+export function createMissionWorkerTickLogProjection(result, checkedAt) {
+  const publication = ownData(result, 'publish');
+  return Object.freeze({
+    schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA,
+    event: 'worker-tick',
+    checkedAt: boundedText(checkedAt, 48),
+    status: boundedText(ownData(result, 'status'), 64),
+    state: boundedText(ownData(result, 'state'), 64),
+    phase: boundedText(ownData(result, 'phase'), 96),
+    finalVerdict: boundedText(ownData(result, 'finalVerdict'), 120),
+    blocker: boundedText(ownData(result, 'blocker'), 160),
+    publishOk: ownData(publication, 'ok') === true,
+  });
+}
+
+function stableLogSignature(projection) {
+  const { checkedAt: _checkedAt, ...stable } = projection;
+  return JSON.stringify(stable);
+}
+
 export async function runSupervisedMissionWorker({
   argv = process.argv.slice(2),
   env = process.env,
@@ -29,6 +94,8 @@ export async function runSupervisedMissionWorker({
     1000,
   );
   let exitCode = 0;
+  let lastControllerLogSignature = '';
+  let lastTickLogSignature = '';
 
   try {
     const mailboxBootstrap = await bootstrapMailbox({ env });
@@ -72,13 +139,23 @@ export async function runSupervisedMissionWorker({
         nowUtc: checkedAt,
         sourceRevision: env.STEPHANOS_MISSION_WORKER_HEAD_SHA,
       });
-      stdout.write(`${JSON.stringify({ checkedAt, controller })}\n`);
+      const controllerLog = createMissionWorkerControllerLogProjection(controller, checkedAt);
+      const controllerLogSignature = stableLogSignature(controllerLog);
+      if (once || controllerLogSignature !== lastControllerLogSignature) {
+        stdout.write(`${JSON.stringify(controllerLog)}\n`);
+        lastControllerLogSignature = controllerLogSignature;
+      }
       if (controller?.allowWorkerTick === true) {
         const result = await runTick({
           env,
           actionGrant: controller.workerActionGrant,
         });
-        stdout.write(`${JSON.stringify({ checkedAt, ...result })}\n`);
+        const tickLog = createMissionWorkerTickLogProjection(result, checkedAt);
+        const tickLogSignature = stableLogSignature(tickLog);
+        if (once || tickLogSignature !== lastTickLogSignature) {
+          stdout.write(`${JSON.stringify(tickLog)}\n`);
+          lastTickLogSignature = tickLogSignature;
+        }
       }
     } catch (error) {
       lastTickVerdict = 'MISSION_WORKER_TICK_FAILED';
