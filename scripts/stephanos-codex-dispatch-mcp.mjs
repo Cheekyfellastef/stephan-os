@@ -452,10 +452,10 @@ export function createCodexDispatchMcpHandler({
         let executionMode = 'canonical-attached-head';
         let linkedWorktreeReceipt = null;
         if (controlHead !== argumentValidation.handoff.expectedHead) {
-          if (argumentValidation.handoff.exactHeadProof.proofTarget !== 'PULL_REQUEST_HEAD') {
+          if (argumentValidation.handoff.exactHeadProof.proofTarget !== 'PULL_REQUEST_HEAD_BASE_BOUND') {
             return asTextResult({
               ok: false,
-              blocker: 'BATTLE_BRIDGE_EXECUTION_HEAD_MISMATCH',
+              blocker: 'BATTLE_BRIDGE_PR_WORKTREE_BASE_BOUND_PROOF_REQUIRED',
               expectedHead: argumentValidation.handoff.expectedHead,
               observedHead: controlHead,
             }, true);

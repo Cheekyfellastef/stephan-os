@@ -1154,6 +1154,51 @@ test('worker revalidates merged-main PR provenance current main ancestry and loc
   assert.equal(ancestryCall.options.env.GIT_NO_REPLACE_OBJECTS, '1');
 });
 
+test('worker binds a PR-head review to both the approved PR head and exact current main base', () => {
+  const expectedHead = 'a'.repeat(40);
+  const baseHead = 'b'.repeat(40);
+  const task = {
+    repoRoot: 'C:\\stephan-os',
+    branch: 'main',
+    exactHeadProof: {
+      repository: 'Cheekyfellastef/stephan-os',
+      prNumber: 2000,
+      expectedHead,
+      proofTarget: 'PULL_REQUEST_HEAD_BASE_BOUND',
+      pullRequestHead: expectedHead,
+      mergeCommitHead: '',
+      githubMainHead: baseHead,
+      mergeCommitIncluded: false,
+      proofScenario: 'base-bound-specialist-review',
+    },
+  };
+  const run = ({ observedHead = expectedHead, observedBase = baseHead, baseBranch = 'main', mainHead = baseHead } = {}) => validateExactHeadAtWorkerStart(task, {
+    platform: 'win32',
+    spawnSyncFn(executable, args) {
+      if (executable === 'gh.exe' && args[1]?.endsWith('/pulls/2000')) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ head: { sha: observedHead }, base: { ref: baseBranch, sha: observedBase } }),
+          stderr: '',
+        };
+      }
+      if (executable === 'gh.exe') return { status: 0, stdout: `${mainHead}\n`, stderr: '' };
+      if (args[0] === 'rev-parse') return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+      if (args[0] === 'status') return { status: 0, stdout: '', stderr: '' };
+      assert.fail(`unexpected command: ${executable} ${args.join(' ')}`);
+    },
+  });
+  const accepted = run();
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.proofTarget, 'PULL_REQUEST_HEAD_BASE_BOUND');
+  assert.equal(accepted.pullRequestHead, expectedHead);
+  assert.equal(accepted.githubMainHead, baseHead);
+  assert.equal(run({ observedHead: 'c'.repeat(40) }).blocker, 'PR_HEAD_MISMATCH');
+  assert.equal(run({ observedBase: 'c'.repeat(40) }).blocker, 'PR_BASE_HEAD_MISMATCH');
+  assert.equal(run({ baseBranch: 'release' }).blocker, 'PR_BASE_BRANCH_MISMATCH');
+  assert.equal(run({ mainHead: 'c'.repeat(40) }).blocker, 'GITHUB_MAIN_HEAD_MISMATCH');
+});
+
 test('worker rejects pre-existing source dirt before accepting an exact-head runtime proof', () => {
   const expectedHead = 'a'.repeat(40);
   const result = validateExactHeadAtWorkerStart({

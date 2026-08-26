@@ -130,7 +130,46 @@ export function validateExactHeadAtWorkerStart(task, {
   let mergeCommitHead = '';
   let githubMainHead = '';
   let mergeCommitIncluded = false;
-  if (proofTarget === 'PULL_REQUEST_HEAD') {
+  if (proofTarget === 'PULL_REQUEST_HEAD_BASE_BOUND') {
+    pullRequestHead = String(proof.pullRequestHead || '').trim().toLowerCase();
+    githubMainHead = String(proof.githubMainHead || '').trim().toLowerCase();
+    if (pullRequestHead !== expectedHead || !/^[0-9a-f]{40}$/.test(githubMainHead)
+        || String(proof.mergeCommitHead || '').trim() || proof.mergeCommitIncluded === true) {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_BASE_BOUND_PROOF_INVALID', expectedHead, branch: expectedBranch, verificationPhase });
+    }
+    const prLookup = processTextCapture(
+      spawnSyncFn,
+      platform === 'win32' ? 'gh.exe' : 'gh',
+      ['api', `repos/${repository}/pulls/${prNumber}`],
+    );
+    let prIdentity;
+    try { prIdentity = prLookup.ok ? JSON.parse(prLookup.stdout) : null; } catch { prIdentity = null; }
+    if (!prIdentity || typeof prIdentity !== 'object') {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_IDENTITY_LOOKUP_FAILED', expectedHead, branch: expectedBranch, verificationPhase });
+    }
+    const observedPullRequestHead = String(prIdentity?.head?.sha || '').trim().toLowerCase();
+    const observedBaseHead = String(prIdentity?.base?.sha || '').trim().toLowerCase();
+    if (observedPullRequestHead !== pullRequestHead) {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_MISMATCH', expectedHead, pullRequestHead: observedPullRequestHead, githubMainHead, branch: expectedBranch, verificationPhase });
+    }
+    if (String(prIdentity?.base?.ref || '') !== 'main') {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_BASE_BRANCH_MISMATCH', expectedHead, pullRequestHead, githubMainHead, branch: expectedBranch, verificationPhase });
+    }
+    if (observedBaseHead !== githubMainHead) {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_BASE_HEAD_MISMATCH', expectedHead, pullRequestHead, githubMainHead: observedBaseHead, branch: expectedBranch, verificationPhase });
+    }
+    const main = processCapture(
+      spawnSyncFn,
+      platform === 'win32' ? 'gh.exe' : 'gh',
+      ['api', `repos/${repository}/commits/main`, '--jq', '.sha'],
+    );
+    if (!main.ok || !/^[0-9a-f]{40}$/.test(main.stdout)) {
+      return Object.freeze({ ok: false, required: true, blocker: 'GITHUB_MAIN_HEAD_LOOKUP_FAILED', expectedHead, pullRequestHead, githubMainHead, branch: expectedBranch, verificationPhase });
+    }
+    if (main.stdout !== githubMainHead) {
+      return Object.freeze({ ok: false, required: true, blocker: 'GITHUB_MAIN_HEAD_MISMATCH', expectedHead, pullRequestHead, githubMainHead: main.stdout, branch: expectedBranch, verificationPhase });
+    }
+  } else if (proofTarget === 'PULL_REQUEST_HEAD') {
     const gh = processCapture(
       spawnSyncFn,
       platform === 'win32' ? 'gh.exe' : 'gh',

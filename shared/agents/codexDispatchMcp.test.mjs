@@ -16,6 +16,7 @@ import {
 
 const HEAD = 'a'.repeat(40);
 const OTHER_HEAD = 'c'.repeat(40);
+const BASE_HEAD = 'd'.repeat(40);
 const NOW = '2026-08-08T12:00:00.000Z';
 const TASK = 'Run the exact Battle Bridge ignition proof and return evidence.';
 
@@ -33,8 +34,17 @@ function exactHeadProof() {
   };
 }
 
-function remoteDispatchArgs({ observedAt = NOW } = {}) {
-  const proof = exactHeadProof();
+function exactBaseBoundHeadProof() {
+  return {
+    ...exactHeadProof(),
+    proofTarget: 'PULL_REQUEST_HEAD_BASE_BOUND',
+    pullRequestHead: HEAD,
+    githubMainHead: BASE_HEAD,
+    proofScenario: 'battle-bridge-base-bound-specialist-review',
+  };
+}
+
+function remoteDispatchArgs({ observedAt = NOW, proof = exactHeadProof(), surfaceHead = HEAD } = {}) {
   const receiptResult = createRemoteCodexOperatorApprovalReceipt({
     approvalId: 'approval-battle-bridge-ignition',
     requestId: 'remote-battle-bridge-ignition-1706',
@@ -69,7 +79,7 @@ function remoteDispatchArgs({ observedAt = NOW } = {}) {
     platform: 'win32',
     can_local_windows_proof: true,
     repositoryRoot: 'C:\\repo',
-    sourceHead: HEAD,
+    sourceHead: surfaceHead,
     serverSourceSha256: 'b'.repeat(64),
     toolsListed: ['dispatch_codex_task', 'get_codex_task_status', 'read_codex_task_result'],
     requiredDispatchToolsPresent: true,
@@ -435,8 +445,10 @@ test('dispatch rejects stale or mismatched transported attachments', async () =>
 test('PR-head dispatch uses one server-resolved clean linked worktree while the control plane remains on main', async () => {
   const targetRoot = 'C:\\approved-review-worktree';
   const integration = fakeIntegration();
-  const args = structuredClone(remoteDispatchArgs());
-  args.surfaceAttachment.sourceHead = OTHER_HEAD;
+  const args = structuredClone(remoteDispatchArgs({
+    proof: exactBaseBoundHeadProof(),
+    surfaceHead: BASE_HEAD,
+  }));
   let resolveCalls = 0;
   let reproofCalls = 0;
   let factoryCalls = 0;
@@ -444,13 +456,13 @@ test('PR-head dispatch uses one server-resolved clean linked worktree while the 
     integration: fakeIntegration(),
     hostOps: fakeHostOps(),
     ...windowsAttachmentOptions({
-      readRepositoryHead: (root) => root === targetRoot ? HEAD : OTHER_HEAD,
+      readRepositoryHead: (root) => root === targetRoot ? HEAD : BASE_HEAD,
     }),
     resolveReadOnlyReviewWorktree(input) {
       resolveCalls += 1;
       assert.equal(input.canonicalRepositoryRoot, 'C:\\repo');
       assert.equal(input.expectedHead, HEAD);
-      assert.equal(input.proofTarget, 'PULL_REQUEST_HEAD');
+      assert.equal(input.proofTarget, 'PULL_REQUEST_HEAD_BASE_BOUND');
       return {
         ok: true,
         worktree: {
@@ -480,7 +492,7 @@ test('PR-head dispatch uses one server-resolved clean linked worktree while the 
   assert.equal(result.isError, false);
   assert.equal(result.structuredContent.ok, true);
   assert.equal(result.structuredContent.executionProof.mode, 'registered-read-only-pr-worktree');
-  assert.equal(result.structuredContent.executionProof.controlHead, OTHER_HEAD);
+  assert.equal(result.structuredContent.executionProof.controlHead, BASE_HEAD);
   assert.equal(result.structuredContent.executionProof.sourceHead, HEAD);
   assert.equal(result.structuredContent.executionProof.sourceMutationAllowed, false);
   assert.equal(resolveCalls, 1);
@@ -491,12 +503,14 @@ test('PR-head dispatch uses one server-resolved clean linked worktree while the 
 
 test('PR-head dispatch fails before queue creation when no exact clean worktree is proven', async () => {
   const integration = fakeIntegration();
-  const args = structuredClone(remoteDispatchArgs());
-  args.surfaceAttachment.sourceHead = OTHER_HEAD;
+  const args = structuredClone(remoteDispatchArgs({
+    proof: exactBaseBoundHeadProof(),
+    surfaceHead: BASE_HEAD,
+  }));
   const handler = createCodexDispatchMcpHandler({
     integration,
     hostOps: fakeHostOps(),
-    ...windowsAttachmentOptions({ readRepositoryHead: () => OTHER_HEAD }),
+    ...windowsAttachmentOptions({ readRepositoryHead: () => BASE_HEAD }),
     resolveReadOnlyReviewWorktree: () => ({
       ok: false,
       verdict: 'BLOCKED',

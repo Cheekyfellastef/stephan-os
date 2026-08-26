@@ -140,7 +140,9 @@ export function resolveReadOnlyPullRequestWorktree({
 } = {}) {
   const canonicalRoot = resolve(String(canonicalRepositoryRoot || ''));
   const head = String(expectedHead || '').toLowerCase();
-  if (proofTarget !== 'PULL_REQUEST_HEAD') return blocked('READ_ONLY_PR_WORKTREE_TARGET_INVALID');
+  if (!['PULL_REQUEST_HEAD', 'PULL_REQUEST_HEAD_BASE_BOUND'].includes(proofTarget)) {
+    return blocked('READ_ONLY_PR_WORKTREE_TARGET_INVALID');
+  }
   if (!SHA40.test(head)) return blocked('READ_ONLY_PR_WORKTREE_HEAD_INVALID');
   if (!Array.isArray(allowedRoots) || allowedRoots.length < 1 || allowedRoots.length > 8) {
     return blocked('READ_ONLY_PR_WORKTREE_ALLOWED_ROOTS_INVALID');

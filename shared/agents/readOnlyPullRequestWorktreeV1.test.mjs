@@ -50,7 +50,7 @@ function resolveCandidate(overrides = {}) {
   return resolveReadOnlyPullRequestWorktree({
     canonicalRepositoryRoot: CANONICAL,
     expectedHead: HEAD,
-    proofTarget: 'PULL_REQUEST_HEAD',
+    proofTarget: 'PULL_REQUEST_HEAD_BASE_BOUND',
     allowedRoots: [ALLOWED],
     filesystem,
     ...overrides,
