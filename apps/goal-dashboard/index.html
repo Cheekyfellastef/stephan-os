@@ -927,6 +927,15 @@
         };
       }
 
+      function summarizeGoalProofTruth(goalRecords = []) {
+        const counts = { CURRENT: 0, STALE: 0, UNKNOWN: 0 };
+        (Array.isArray(goalRecords) ? goalRecords : []).forEach((goal) => {
+          const truth = String(goal?.proofTruth || 'UNKNOWN').toUpperCase();
+          counts[truth === 'CURRENT' || truth === 'STALE' ? truth : 'UNKNOWN'] += 1;
+        });
+        return `CURRENT ${counts.CURRENT} · STALE ${counts.STALE} · UNKNOWN ${counts.UNKNOWN}`;
+      }
+
       function renderLiveMissionOperationsTelemetry(feed) {
         if (!feed || !['stephanos.mission-operations-feed.v1', 'stephanos.live-goal-projection.v1'].includes(feed.schemaVersion)) return false;
         const liveProjection = feed.schemaVersion === 'stephanos.live-goal-projection.v1' ? feed : null;
@@ -981,7 +990,7 @@
         setTelemetryText('dashboard-feed-endpoint', feed.endpoint || resolveSharedWorkspaceDashboardFeedEndpoint());
         setTelemetryText('dashboard-last-refresh', feed.lastRefreshUtc || 'unknown');
         setTelemetryText('dashboard-workspace-root', safeDisplayPath(feed.workspaceRoot));
-        setTelemetryText('proof-state', projection.sourceTruth || 'UNKNOWN');
+        setTelemetryText('proof-state', summarizeGoalProofTruth(projection.goals));
         setTelemetryText('next-operator-action', feed.exactNextAction || projection.operatorAttention?.exactNextAction || 'UNKNOWN');
         setTelemetryText('telemetry-blocker', `Shared Agent Workspace dashboard feed is read-only (${feed.state || 'unknown'}). ${feed.exactNextAction || 'Missing records remain UNKNOWN; stale records remain STALE.'}`);
         if (!['ready', 'stale'].includes(feed.state)) {
