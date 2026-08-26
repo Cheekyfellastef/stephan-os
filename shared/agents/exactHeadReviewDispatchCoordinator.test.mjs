@@ -175,7 +175,7 @@ test('blocks review dispatch when a required workflow fails', () => {
   runs[4] = { ...runs[4], conclusion: 'failure' };
   const result = evaluateExactHeadReviewDispatch(baseInput({ workflowRuns: runs }));
   assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.BLOCKED_WORKFLOWS);
-  assert.deepEqual(result.failedWorkflows, [REQUIRED_EXACT_HEAD_WORKFLOWS[4]]);
+  assert.deepEqual(result.failedWorkflows, [REQUIRED_EXACT_HEAD_REVIEW_WORKFLOWS?.[4] ?? REQUIRED_EXACT_HEAD_WORKFLOWS[4]]);
 });
 
 test('precomputes during CI but blocks receipt consumption until every review thread is resolved', () => {
@@ -782,7 +782,7 @@ test('wires the trusted coordinator identity through the runner and trusted work
   assert.match(runner, /EXACT_HEAD_REVIEW_PLAN_TARGETS/);
   assert.match(runner, /mutation execution requires exactly one PR-scoped coordinator target/);
   assert.doesNotMatch(workflow, /github\.event\.workflow_run\.pull_requests\[0\]\.number/);
-  assert.match(workflow, /targets:\s*\$\{\{ steps\.plan\.outputs\.targets \}\}/);
+  assert.match(workflow, /targets:\s*\$\{\{ steps\.admit\.outputs\.targets \}\}/);
   assert.match(workflow, /target:\s*\$\{\{ fromJSON\(needs\.plan\.outputs\.targets\) \}\}/);
   assert.match(workflow, /group: exact-head-review-dispatch-\$\{\{ github\.repository \}\}-pr-\$\{\{ matrix\.target\.prNumber \}\}/);
   assert.match(workflow, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR:\s*\$\{\{ matrix\.target\.prNumber \}\}/);
