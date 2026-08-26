@@ -16,7 +16,7 @@ const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const MAIN = '3c14072e57d1235e897a89226405dfee569c3ecf';
 const OLD_MAIN = 'ddff35b514125e71b4d742e433628b79538887da';
 const HEAD = 'dea9de4cee5346fef3cd21b010e3c93e7b8b9ec6';
-const WORKFLOW_URL = new URL('../.github/workflows/exact-head-review-dispatch.yml', new URL('../', import.meta.url));
+const WORKFLOW_URL = new URL('../.github/workflows/exact-head-review-dispatch.yml', import.meta.url);
 
 function pr(number, baseSha = MAIN, overrides = {}) {
   return {
