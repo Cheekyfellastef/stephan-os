@@ -582,6 +582,10 @@ test('an exact durable release marker is inactive evidence and cannot strand the
           git: { branch: 'openclaw/critical-1291-worker-watchdog-repair' },
           currentPhase: 'CREATE_WORKTREE',
         }],
+        readCapacityRoutingInput: async () => ({
+          provenRouteIds: ['CODEX', 'CHATGPT_GITHUB', 'FOUNDRY_FORGE', 'OPENCLAW_LOCAL'],
+          availableExecutorSlots: 4,
+        }),
         fetchGithubPrEvidence: async () => {
           githubFetches += 1;
           throw new Error('a released lease must not retain GitHub lane authority');
