@@ -114,6 +114,35 @@ test('returns a blocker-bearing invalid result for non-object ingress payloads',
   }
 });
 
+test('rejects malformed timestamps instead of accepting Date.parse normalization', () => {
+  for (const createdAtUtc of [
+    '2026-02-31T13:10:00.000Z',
+    '2025-02-29T13:10:00.000Z',
+    '2026-13-01T13:10:00.000Z',
+    '2026-08-22T24:00:00.000Z',
+    '2026-08-22T13:60:00.000Z',
+    '2026-08-22T13:10:60.000Z',
+    '2026-08-22 13:10:00.000Z',
+    '0Z',
+  ]) {
+    assert.throws(
+      () => buildRepositoryEngineeringKnowledgePackV1(canonicalInput({ createdAtUtc })),
+      /created-at-invalid/,
+      createdAtUtc,
+    );
+  }
+
+  const leapDay = buildRepositoryEngineeringKnowledgePackV1(canonicalInput({
+    createdAtUtc: '2024-02-29T13:10:00.000Z',
+  }));
+  assert.equal(leapDay.createdAtUtc, '2024-02-29T13:10:00.000Z');
+
+  const offset = buildRepositoryEngineeringKnowledgePackV1(canonicalInput({
+    createdAtUtc: '2026-08-22T13:10:00.000+01:00',
+  }));
+  assert.equal(offset.createdAtUtc, '2026-08-22T12:10:00.000Z');
+});
+
 test('uses locale-independent ordering for content-addressed arrays', () => {
   const first = buildRepositoryEngineeringKnowledgePackV1(canonicalInput({
     invariants: ['ä invariant', 'z invariant'],
