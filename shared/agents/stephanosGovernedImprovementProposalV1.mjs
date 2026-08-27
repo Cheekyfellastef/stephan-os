@@ -41,6 +41,14 @@ export const STEPHANOS_IMPROVEMENT_AUTHORITY_REQUIREMENTS = Object.freeze({
   AUTHORITY_OR_CONSTITUTION_CHANGE: 'HIGH_RISK_OPERATOR_JUDGMENT_REQUIRED',
 });
 
+const CONSEQUENTIAL_UNOWNED_CHANGE_CLASSES = new Set([
+  'EXACT_HEAD_MERGE',
+  'DEPLOYMENT',
+  'WINDOWS_RUNTIME_MUTATION',
+  'OPENCLAW_MUTATION',
+  'SPENDING_OR_EXTERNAL_ACCOUNT',
+]);
+
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,120}$/i;
 const SAFE_REF = /^(?:#[1-9][0-9]*|[a-z0-9][a-z0-9._:/-]{0,180})$/i;
@@ -123,6 +131,24 @@ function safeRefs(value, { minimum = 0, maximum = 16 } = {}) {
   return Object.freeze(refs);
 }
 
+function safeResourceScope(value) {
+  const normalized = safeRef(value);
+  if (!normalized) return '';
+  const canonical = normalized.replace(/\/+$/, '');
+  if (!canonical) return '';
+  const parts = canonical.split('/');
+  if (parts.some((part) => !part || part === '.' || part === '..')) return '';
+  return canonical;
+}
+
+function safeResourceScopes(value, { minimum = 0, maximum = 16 } = {}) {
+  if (!Array.isArray(value) || value.length < minimum || value.length > maximum) return null;
+  const scopes = value.map((item) => safeResourceScope(item));
+  if (scopes.some((item) => !item)) return null;
+  if (new Set(scopes).size !== scopes.length) return null;
+  return Object.freeze(scopes);
+}
+
 function exactKeys(value, allowed) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const keys = Object.keys(value);
@@ -188,10 +214,10 @@ function dataOnlySnapshot(value, path = '$', depth = 0, budget = { count: 0 }) {
 }
 
 function scopeOverlap(left, right) {
-  if (left === right) return true;
   const a = left.replace(/\/+$/, '');
   const b = right.replace(/\/+$/, '');
   if (!a || !b) return true;
+  if (a === b) return true;
   return a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
@@ -290,7 +316,7 @@ export function planStephanosGovernedImprovementProposalV1(input = {}) {
       return blocked(base, 'SAFE_HOLD', 'active-writer-envelope-invalid', 'REFRESH_RESOURCE_OWNERSHIP');
     }
     const writerId = safeId(packet.architecture.activeWriter.writerId);
-    const resourceScopes = safeRefs(packet.architecture.activeWriter.resourceScopes, { minimum: 1, maximum: 16 });
+    const resourceScopes = safeResourceScopes(packet.architecture.activeWriter.resourceScopes, { minimum: 1, maximum: 16 });
     if (!writerId || !resourceScopes) {
       return blocked(base, 'SAFE_HOLD', 'active-writer-evidence-invalid', 'REFRESH_RESOURCE_OWNERSHIP');
     }
@@ -345,7 +371,7 @@ export function planStephanosGovernedImprovementProposalV1(input = {}) {
   const expectedBenefit = text(packet.proposal.expectedBenefit, 1200);
   const blastRadius = text(packet.proposal.blastRadius, 600);
   const reversibility = text(packet.proposal.reversibility, 600);
-  const resourceScopes = safeRefs(packet.proposal.resourceScopes, { minimum: 1, maximum: 16 });
+  const resourceScopes = safeResourceScopes(packet.proposal.resourceScopes, { minimum: 1, maximum: 16 });
   const requiredReview = safeRefs(packet.proposal.requiredReview, { minimum: 1, maximum: 12 });
   const requiredProof = safeRefs(packet.proposal.requiredProof, { minimum: 1, maximum: 16 });
   const rollbackPlan = text(packet.proposal.rollbackPlan, 1000);
@@ -384,6 +410,24 @@ export function planStephanosGovernedImprovementProposalV1(input = {}) {
       'new-goal-scope-conflicts-with-existing-owner',
       'RECLASSIFY_CHANGE_UNDER_EXISTING_OWNER',
     );
+  }
+
+  if (!owner && CONSEQUENTIAL_UNOWNED_CHANGE_CLASSES.has(changeClass)) {
+    return Object.freeze({
+      ...blocked(
+        { ...base, authorityRequired },
+        'SAFE_HOLD',
+        'consequential-change-has-no-canonical-owner',
+        `ESTABLISH_CANONICAL_OWNER_BEFORE_${authorityRequired}`,
+      ),
+      recommendation: Object.freeze({
+        proposalId,
+        changeClass,
+        summary,
+        rootCauseSummary,
+        resourceScopes,
+      }),
+    });
   }
 
   if (!owner) {
