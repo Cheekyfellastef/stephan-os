@@ -60,12 +60,22 @@ const DIRECT_OR_ADAPTABLE = new Set([
   'REUSE_WITH_ATTRIBUTION_OR_CONDITIONS',
   'ADAPTATION_ALLOWED',
 ]);
+const DIRECT_REUSE_ROUTES = new Set([
+  'DIRECT_REUSE_ALLOWED',
+  'REUSE_WITH_ATTRIBUTION_OR_CONDITIONS',
+]);
 const REJECT_ROUTES = new Set(['REJECT_RIGHTS_BOUNDARY', 'REJECT_STALE_OR_INCOMPATIBLE']);
 const VERSIONED_CLASSES = new Set([
   'OFFICIAL_SPECIFICATION',
   'CANONICAL_UPSTREAM_REPOSITORY',
   'OFFICIAL_RELEASE_NOTES',
   'SECURITY_ADVISORY',
+  'LICENCE_COMPATIBLE_REFERENCE_IMPLEMENTATION',
+  'VERIFIED_INTERNAL_IMPLEMENTATION',
+  'OPERATOR_AUTHORISED_LOCAL_SOURCE_EVIDENCE',
+]);
+const HASH_PINNED_CLASSES = new Set([
+  'CANONICAL_UPSTREAM_REPOSITORY',
   'LICENCE_COMPATIBLE_REFERENCE_IMPLEMENTATION',
   'VERIFIED_INTERNAL_IMPLEMENTATION',
   'OPERATOR_AUTHORISED_LOCAL_SOURCE_EVIDENCE',
@@ -93,9 +103,16 @@ const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,119}$/i;
 const SAFE_REF = /^[a-z0-9][a-z0-9._:/#@+-]{0,239}$/i;
 const CANONICAL_ISSUE_OWNER_REF = /^#[1-9][0-9]{0,9}$/;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
+const IMMUTABLE_HASH = /^(?:[0-9a-f]{40}|sha256:[0-9a-f]{64})$/i;
+const MUTABLE_REVISION_ALIAS = /^(?:main|master|head|latest|current|stable|trunk|default|tip|nightly|next|dev|develop)$/i;
+const MUTABLE_BRANCH_REF = /^(?:refs\/heads\/|heads\/|branch:)/i;
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function canonical(value) {
@@ -154,6 +171,14 @@ function safeLocation(value) {
   }
 }
 
+function immutableRevision(sourceClass, value) {
+  const normalized = text(value);
+  if (!normalized || normalized.length > 160 || !safeRef(normalized)) return null;
+  if (MUTABLE_REVISION_ALIAS.test(normalized) || MUTABLE_BRANCH_REF.test(normalized)) return null;
+  if (HASH_PINNED_CLASSES.has(sourceClass) && !IMMUTABLE_HASH.test(normalized)) return null;
+  return IMMUTABLE_HASH.test(normalized) ? normalized.toLowerCase() : normalized;
+}
+
 function normalizedList(value, { field, blockers, min = 0, max = 32, normalize = safeRef } = {}) {
   if (!Array.isArray(value)) {
     blockers.push(`${field}-must-be-array`);
@@ -177,7 +202,7 @@ function normalizedList(value, { field, blockers, min = 0, max = 32, normalize =
     seen.add(key);
     result.push(normalized);
   }
-  return result.sort((left, right) => left.localeCompare(right));
+  return result.sort(compareText);
 }
 
 function authorityIsZero(authority) {
@@ -207,9 +232,17 @@ export function validateSoftwareEngineeringSourceRecordInputV1(input = {}) {
   const publisherOrOwner = safeRef(input.publisherOrOwner);
   if (!publisherOrOwner) blockers.push('publisher-or-owner-invalid');
 
-  const revisionOrVersion = text(input.revisionOrVersion);
-  if (VERSIONED_CLASSES.has(sourceClass) && !revisionOrVersion) blockers.push('revision-or-version-required');
-  if (revisionOrVersion && revisionOrVersion.length > 160) blockers.push('revision-or-version-too-long');
+  const suppliedRevisionOrVersion = text(input.revisionOrVersion);
+  let revisionOrVersion = suppliedRevisionOrVersion || null;
+  if (suppliedRevisionOrVersion && (!safeRef(suppliedRevisionOrVersion) || suppliedRevisionOrVersion.length > 160)) {
+    blockers.push('revision-or-version-invalid');
+  }
+  if (VERSIONED_CLASSES.has(sourceClass)) {
+    const immutable = immutableRevision(sourceClass, suppliedRevisionOrVersion);
+    if (!suppliedRevisionOrVersion) blockers.push('revision-or-version-required');
+    else if (!immutable) blockers.push('immutable-revision-or-version-required');
+    else revisionOrVersion = immutable;
+  }
 
   const retrievedAtUtc = timestamp(input.retrievedAtUtc);
   if (!retrievedAtUtc) blockers.push('retrieved-at-invalid');
@@ -280,7 +313,7 @@ export function validateSoftwareEngineeringSourceRecordInputV1(input = {}) {
     sourceClass,
     canonicalLocation,
     publisherOrOwner,
-    revisionOrVersion: revisionOrVersion || null,
+    revisionOrVersion,
     retrievedAtUtc,
     freshnessRequirement,
     licence: licence || 'UNKNOWN',
@@ -310,10 +343,18 @@ export function buildSoftwareEngineeringSourceRecordV1(input = {}) {
   return validation.record;
 }
 
+function revalidateSoftwareEngineeringSourceRecordV1(source) {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
+  const validation = validateSoftwareEngineeringSourceRecordInputV1(source);
+  if (!validation.valid || !validation.record) return null;
+  if (canonicalJson(validation.record) !== canonicalJson(source)) return null;
+  return validation.record;
+}
+
 export function buildSoftwareEngineeringTechniqueCandidateV1(input = {}) {
-  const source = input.sourceRecord;
-  if (!source || source.schemaVersion !== SOFTWARE_ENGINEERING_SOURCE_RECORD_SCHEMA_V1) {
-    throw new Error('technique candidate requires one validated software engineering source record');
+  const source = revalidateSoftwareEngineeringSourceRecordV1(input.sourceRecord);
+  if (!source) {
+    throw new Error('technique candidate requires one exact revalidated software engineering source record');
   }
   if (!['ADMITTED', 'REFERENCE_ONLY'].includes(source.status) || source.freshness !== 'FRESH' || source.availability !== 'AVAILABLE') {
     throw new Error('technique candidate source is not fresh and available');
@@ -362,7 +403,7 @@ export function buildSoftwareEngineeringTechniqueCandidateV1(input = {}) {
     applicableDomains,
     failureModes,
     reuseRoute: source.reuseRoute,
-    directCodeReuseAllowed: DIRECT_OR_ADAPTABLE.has(source.reuseRoute),
+    directCodeReuseAllowed: DIRECT_REUSE_ROUTES.has(source.reuseRoute),
     implementationContextAllowed: source.reuseRoute !== 'REFERENCE_ONLY',
     status: 'METHOD_CANDIDATE',
     authority: SOFTWARE_ENGINEERING_SOURCE_AUTHORITY_V1,
@@ -376,11 +417,14 @@ export function buildSoftwareEngineeringTechniqueCandidateV1(input = {}) {
 export function selectPreferredSoftwareEngineeringSourceV1(records, { claim } = {}) {
   const normalizedClaim = safeRef(claim);
   if (!normalizedClaim) throw new Error('claim identity is required');
-  const candidates = (Array.isArray(records) ? records : []).filter((record) => (
-    record?.schemaVersion === SOFTWARE_ENGINEERING_SOURCE_RECORD_SCHEMA_V1
-    && Array.isArray(record.claimsSupported)
-    && record.claimsSupported.includes(normalizedClaim)
+  const validatedRecords = (Array.isArray(records) ? records : [])
+    .map(revalidateSoftwareEngineeringSourceRecordV1)
+    .filter(Boolean);
+  const candidates = validatedRecords.filter((record) => (
+    record.claimsSupported.includes(normalizedClaim)
     && record.availability === 'AVAILABLE'
+    && record.status !== 'REJECTED'
+    && record.freshness !== 'STALE'
   ));
   const conflictingPrimary = candidates.filter((record) => record.primarySource && (
     record.status === 'CONFLICTING' || record.freshness === 'CONFLICTING' || record.conflicts.length > 0
@@ -389,7 +433,7 @@ export function selectPreferredSoftwareEngineeringSourceV1(records, { claim } = 
     return deepFreeze({
       decision: 'CONFLICTING_PRIMARY_SOURCES',
       source: null,
-      conflictingSourceRecordIds: conflictingPrimary.map((record) => record.recordId).sort(),
+      conflictingSourceRecordIds: conflictingPrimary.map((record) => record.recordId).sort(compareText),
     });
   }
   const eligible = candidates.filter((record) => (
@@ -397,7 +441,7 @@ export function selectPreferredSoftwareEngineeringSourceV1(records, { claim } = 
     && ['ADMITTED', 'REFERENCE_ONLY'].includes(record.status)
   )).sort((left, right) => (
     (SOURCE_PRIORITY[right.sourceClass] ?? 0) - (SOURCE_PRIORITY[left.sourceClass] ?? 0)
-    || left.recordId.localeCompare(right.recordId)
+    || compareText(left.recordId, right.recordId)
   ));
   if (!eligible.length) return deepFreeze({ decision: 'NO_FRESH_SOURCE', source: null, conflictingSourceRecordIds: [] });
   return deepFreeze({ decision: 'SOURCE_SELECTED', source: eligible[0], conflictingSourceRecordIds: [] });
