@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Inspect', 'StartApprovedWorkerTask')]
-    [string]$Mode = 'Inspect'
+    [string]$Mode = 'Inspect',
+
+    [string]$DeadlineUtc = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,10 +17,19 @@ if (-not $env:USERPROFILE) {
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'))
 $workerPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\mission-orchestrator-worker-supervised.mjs'))
 $workerLauncherPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\start-mission-orchestrator-worker.ps1'))
+$runtimeRestartPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\restart-approved-stephanos-runtime.ps1'))
 $windowlessLauncherPath = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'))
+$canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
+$canonicalNode = 'C:\Program Files\nodejs\node.exe'
+$canonicalPowerShell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+$publicRemote = 'https://github.com/Cheekyfellastef/stephan-os.git'
 $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'))
 $heartbeatPath = Join-Path $workspaceRoot 'status\mission-orchestrator-worker-heartbeat.json'
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+
+if ($Mode -eq 'Inspect' -and -not [string]::IsNullOrWhiteSpace($DeadlineUtc)) {
+    throw 'Inspect mode cannot receive restart authority.'
+}
 
 function Test-CanonicalWorkerTaskAction {
     param([object]$ScheduledTask)
@@ -97,15 +108,18 @@ function Test-CanonicalWorkerProcessCommandLine {
 
     if (-not $Process -or [string]::IsNullOrWhiteSpace($CommandLine)) { return $false }
     $arguments = @(ConvertFrom-WindowsCommandLine -CommandLine $CommandLine)
-    if ($arguments.Count -lt 2) { return $false }
+    if ($arguments.Count -ne 2) { return $false }
 
-    $executePath = if (-not [string]::IsNullOrWhiteSpace([string]$Process.ExecutablePath)) {
-        [string]$Process.ExecutablePath
-    } else {
-        [string]$arguments[0]
+    if ([string]::IsNullOrWhiteSpace([string]$Process.ExecutablePath)) { return $false }
+    try {
+        $resolvedExecutePath = [System.IO.Path]::GetFullPath([string]$Process.ExecutablePath)
+        $commandExecutable = [System.IO.Path]::GetFullPath([string]$arguments[0])
     }
-    $executeLeaf = [System.IO.Path]::GetFileName($executePath)
-    if ($executeLeaf -notin @('node.exe', 'node')) { return $false }
+    catch {
+        return $false
+    }
+    if (-not [string]::Equals($resolvedExecutePath, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+    if (-not [string]::Equals($commandExecutable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
 
     try {
         $scriptArgument = [System.IO.Path]::GetFullPath([string]$arguments[1])
@@ -121,25 +135,186 @@ function Test-CanonicalWorkerProcessCommandLine {
     )
 }
 
+function Read-PublicMainHead {
+    param([string]$GitExecutable)
+
+    $output = @(& $GitExecutable 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw ('git ls-remote failed: {0}' -f (($output | ForEach-Object { [string]$_ }) -join ' '))
+    }
+    $matchingLines = @($output | Where-Object { [string]$_ -match '^[0-9a-fA-F]{40}\s+refs/heads/main$' })
+    if ($matchingLines.Count -ne 1) {
+        throw 'The public main reference did not resolve to exactly one commit.'
+    }
+    $fields = ([string]$matchingLines[0]).Trim() -split '\s+'
+    if ($fields.Count -ne 2 -or $fields[1] -ne 'refs/heads/main' -or $fields[0] -notmatch '^[0-9a-fA-F]{40}$') {
+        throw 'The public main reference response is malformed.'
+    }
+    return $fields[0].ToLowerInvariant()
+}
+
 $taskActionMatchesCanonicalWorker = Test-CanonicalWorkerTaskAction -ScheduledTask $task
 
+$repositoryBranch = ''
+$repositoryHead = ''
+$repositoryTrackedClean = $false
+$repositoryHeadReadError = ''
+$remoteMainHead = ''
+$remoteMainHeadReadError = ''
+$gitAvailable = $false
+try {
+    foreach ($requiredExecutable in @($canonicalGit, $canonicalNode, $canonicalPowerShell)) {
+        if (-not (Test-Path -LiteralPath $requiredExecutable -PathType Leaf)) {
+            throw ('Required canonical executable is missing: {0}' -f $requiredExecutable)
+        }
+    }
+    $gitAvailable = $true
+    $repositoryBranchOutput = @(& $canonicalGit -C $repositoryRoot symbolic-ref --quiet --short HEAD 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw ('git symbolic-ref failed: {0}' -f (($repositoryBranchOutput | ForEach-Object { [string]$_ }) -join ' '))
+    }
+    $repositoryBranch = ([string]$repositoryBranchOutput[0]).Trim()
+    $repositoryHeadOutput = @(& $canonicalGit -C $repositoryRoot rev-parse --verify HEAD 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw ('git rev-parse failed: {0}' -f (($repositoryHeadOutput | ForEach-Object { [string]$_ }) -join ' '))
+    }
+    $repositoryHead = ([string]$repositoryHeadOutput[0]).Trim().ToLowerInvariant()
+    if ($repositoryBranch -ne 'main' -or $repositoryHead -notmatch '^[0-9a-f]{40}$') {
+        throw 'Canonical repository branch/head proof is invalid.'
+    }
+    $trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw ('git status failed: {0}' -f (($trackedStatus | ForEach-Object { [string]$_ }) -join ' '))
+    }
+    if ($trackedStatus.Count -ne 0) {
+        throw 'Canonical repository tracked source is dirty.'
+    }
+    $repositoryTrackedClean = $true
+}
+catch {
+    $repositoryBranch = ''
+    $repositoryHead = ''
+    $repositoryTrackedClean = $false
+    $repositoryHeadReadError = $_.Exception.Message
+}
+if ($gitAvailable) {
+    try {
+        $remoteMainHead = Read-PublicMainHead -GitExecutable $canonicalGit
+    }
+    catch {
+        $remoteMainHead = ''
+        $remoteMainHeadReadError = $_.Exception.Message
+    }
+}
+
 if ($Mode -eq 'StartApprovedWorkerTask') {
+    $parsedDeadlineUtc = [datetime]::MinValue
+    if (-not [datetime]::TryParse($DeadlineUtc, [ref]$parsedDeadlineUtc)) {
+        throw 'The worker restart deadline is missing or malformed.'
+    }
+    $parsedDeadlineUtc = $parsedDeadlineUtc.ToUniversalTime()
+    if ($parsedDeadlineUtc -le [datetime]::UtcNow -or $parsedDeadlineUtc -gt [datetime]::UtcNow.AddSeconds(95)) {
+        throw 'The worker restart deadline is outside the bounded watchdog window.'
+    }
+    $canonicalDeadlineUtc = $parsedDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
     if (-not $task -or [string]$task.TaskName -ne $taskName) {
         throw 'The fixed Mission Orchestrator worker task is not installed.'
     }
     if (-not $taskActionMatchesCanonicalWorker) {
         throw 'The fixed Mission Orchestrator worker task action is not canonical.'
     }
-    Start-ScheduledTask -TaskName $taskName
+    if ($repositoryBranch -ne 'main' -or $repositoryHead -notmatch '^[0-9a-f]{40}$' `
+        -or -not $repositoryTrackedClean `
+        -or $remoteMainHead -notmatch '^[0-9a-f]{40}$' -or $repositoryHead -ne $remoteMainHead) {
+        throw 'The canonical repository head is not proven as exact current public main for fixed worker restart.'
+    }
+    if (-not (Test-Path -LiteralPath $runtimeRestartPath -PathType Leaf)) {
+        throw 'The approved runtime restart adapter is missing.'
+    }
+    $restartArguments = @(
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        $runtimeRestartPath,
+        '-Target',
+        'mission-worker',
+        '-ExpectedHead',
+        $repositoryHead,
+        '-TimeoutSeconds',
+        '30',
+        '-DeadlineUtc',
+        $canonicalDeadlineUtc
+    )
+    $restartStartedAtUtc = [datetime]::UtcNow
+    $restartOutput = @(& $canonicalPowerShell @restartArguments 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'The approved runtime restart adapter failed.'
+    }
+    $restartJson = ($restartOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+    $restartReceipt = $restartJson | ConvertFrom-Json
+    $restartStartedWorkerPid = 0
+    $restartWorkerStartedAtUtc = [datetime]::MinValue
+    $restartWorkerPidValid = [int]::TryParse([string]$restartReceipt.startedWorkerPid, [ref]$restartStartedWorkerPid)
+    $restartWorkerStartedAtValid = [datetime]::TryParse([string]$restartReceipt.workerStartedAtUtc, [ref]$restartWorkerStartedAtUtc)
+    $restartReceiptValid = (
+        $restartReceipt -and
+        [string]$restartReceipt.schemaVersion -eq 'stephanos.approved-runtime-restart.v1' -and
+        [string]$restartReceipt.target -eq 'mission-worker' -and
+        [string]$restartReceipt.taskName -eq $taskName -and
+        [string]$restartReceipt.expectedHead -eq $repositoryHead -and
+        [string]$restartReceipt.sourceHead -eq $repositoryHead -and
+        [string]$restartReceipt.publicMainHead -eq $repositoryHead -and
+        [string]$restartReceipt.deadlineUtc -eq $canonicalDeadlineUtc -and
+        [string]$restartReceipt.invocationId -match '^[0-9a-f]{64}$' -and
+        $restartReceipt.invocationBound -eq $true -and
+        $restartReceipt.canonicalWorkerCommandVerified -eq $true -and
+        $restartReceipt.canonicalActionVerified -eq $true -and
+        $restartReceipt.exactHeadProofOk -eq $true -and
+        $restartReceipt.postStartSourceProofOk -eq $true -and
+        $restartReceipt.sourceTrackedClean -eq $true -and
+        $restartReceipt.proofFresh -eq $true -and
+        $restartWorkerPidValid -and
+        $restartStartedWorkerPid -gt 0 -and
+        $restartWorkerStartedAtValid -and
+        $restartWorkerStartedAtUtc.ToUniversalTime() -ge $restartStartedAtUtc -and
+        $restartReceipt.cleanupAttempted -eq $false -and
+        $restartReceipt.cleanupCompleted -eq $false -and
+        $restartReceipt.ok -eq $true -and
+        [string]$restartReceipt.finalVerdict -eq 'APPROVED_RUNTIME_RESTART_PASS'
+    )
+    if (-not $restartReceiptValid) {
+        throw 'The approved runtime restart receipt is invalid.'
+    }
     [pscustomobject]@{
         mode = $Mode
         taskName = $taskName
         taskActionMatchesCanonicalWorker = $true
         started = $true
+        restarted = $true
+        sourceHead = $repositoryHead
+        remoteMainHead = [string]$restartReceipt.publicMainHead
+        exactHeadProofOk = $true
+        sourceTrackedClean = $true
+        proofFresh = $true
+        startedWorkerPid = $restartStartedWorkerPid
+        workerStartedAtUtc = $restartWorkerStartedAtUtc.ToUniversalTime().ToString('o')
+        invocationId = [string]$restartReceipt.invocationId
+        deadlineUtc = [string]$restartReceipt.deadlineUtc
+        invocationBound = $true
+        canonicalWorkerCommandVerified = $true
+        postStartSourceProofOk = $true
+        cleanupAttempted = $false
+        cleanupCompleted = $false
+        terminatedVerifiedOwnedProcess = [bool]$restartReceipt.terminatedVerifiedOwnedProcess
+        verifiedOwnedProcessTerminationOnly = $true
+        restartVerdict = [string]$restartReceipt.finalVerdict
         arbitraryTaskNameAllowed = $false
+        arbitraryProcessKillAllowed = $false
         arbitraryPowerShellAllowed = $false
         visiblePowerShellRequired = $false
-    } | ConvertTo-Json -Depth 4
+    } | ConvertTo-Json -Depth 5
     exit 0
 }
 
@@ -173,6 +348,21 @@ $commandLineMatchesCanonicalWorker = Test-CanonicalWorkerProcessCommandLine `
         taskPath = if ($task) { [string]$task.TaskPath } else { '' }
         status = if ($task) { [string]$task.State } else { 'Missing' }
         actionMatchesCanonicalWorker = [bool]$taskActionMatchesCanonicalWorker
+    }
+    repository = [pscustomobject]@{
+        repositoryRoot = $repositoryRoot
+        branch = $repositoryBranch
+        headSha = $repositoryHead
+        remoteMainHeadSha = $remoteMainHead
+        trackedClean = [bool]$repositoryTrackedClean
+        headMatchesRemoteMain = (
+            $repositoryHead -match '^[0-9a-f]{40}$' -and
+            $remoteMainHead -match '^[0-9a-f]{40}$' -and
+            $repositoryHead -eq $remoteMainHead
+        )
+        headProven = (-not [string]::IsNullOrWhiteSpace($repositoryHead))
+        headReadError = $repositoryHeadReadError
+        remoteMainHeadReadError = $remoteMainHeadReadError
     }
     process = [pscustomobject]@{
         running = [bool]$workerProcess

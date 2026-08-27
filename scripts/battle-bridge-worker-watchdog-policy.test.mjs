@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -9,6 +10,10 @@ import {
 } from './battle-bridge-worker-watchdog-policy.mjs';
 
 const NOW = Date.parse('2026-07-15T02:00:00.000Z');
+const PROBE_SCRIPT = readFileSync(
+  new URL('./windows/probe-mission-orchestrator-worker-watchdog.ps1', import.meta.url),
+  'utf8',
+);
 
 function healthyInput() {
   return {
@@ -17,6 +22,13 @@ function healthyInput() {
       taskName: APPROVED_WORKER_TASK,
       status: 'Running',
       actionMatchesCanonicalWorker: true,
+    },
+    repository: {
+      repositoryRoot: 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os',
+      branch: 'main',
+      headSha: 'a'.repeat(40),
+      remoteMainHeadSha: 'a'.repeat(40),
+      trackedClean: true,
     },
     process: {
       running: true,
@@ -111,6 +123,64 @@ test('wrong repository or branch cannot prove canonical main or expose a repair 
   assert.ok(result.blockers.includes('worker-not-proven-from-canonical-main'));
 });
 
+test('old-head heartbeat is not healthy and authorizes only the fixed worker restart', () => {
+  const input = healthyInput();
+  input.heartbeat.headSha = 'b'.repeat(40);
+  const result = buildWorkerWatchdogRecoveryDecision(input);
+  assert.equal(result.assessment.canonicalRepositoryHeadProven, true);
+  assert.equal(result.assessment.heartbeatMatchesCanonicalRepositoryHead, false);
+  assert.equal(result.assessment.sourceHead, '');
+  assert.equal(result.assessment.healthy, false);
+  assert.equal(result.action, 'START_APPROVED_WORKER_TASK');
+  assert.equal(result.restartTaskName, APPROVED_WORKER_TASK);
+  assert.ok(result.blockers.includes('worker-heartbeat-head-mismatch'));
+});
+
+test('unproven repository head fails closed without restart authority', () => {
+  for (const headSha of ['', 'not-a-sha']) {
+    const input = healthyInput();
+    input.repository.headSha = headSha;
+    const result = buildWorkerWatchdogRecoveryDecision(input);
+    assert.equal(result.assessment.canonicalRepositoryHeadProven, false);
+    assert.equal(result.assessment.heartbeatMatchesCanonicalRepositoryHead, false);
+    assert.equal(result.assessment.sourceHead, '');
+    assert.equal(result.assessment.restartPermitted, false);
+    assert.equal(result.action, 'BLOCKED');
+    assert.ok(result.blockers.includes('canonical-repository-head-unproven'));
+  }
+});
+
+test('missing, malformed or different remote main truth blocks restart authority', () => {
+  for (const remoteMainHeadSha of ['', 'not-a-sha', 'b'.repeat(40)]) {
+    const input = healthyInput();
+    input.repository.remoteMainHeadSha = remoteMainHeadSha;
+    input.process.running = false;
+    input.process.commandLineMatchesCanonicalWorker = false;
+    const result = buildWorkerWatchdogRecoveryDecision(input);
+    assert.equal(result.assessment.canonicalRepositoryHeadProven, false);
+    assert.equal(result.assessment.restartPermitted, false);
+    assert.equal(result.action, 'BLOCKED');
+    assert.equal(result.restartTaskName, '');
+    assert.ok(result.blockers.includes('canonical-repository-head-unproven'));
+    if (remoteMainHeadSha === 'b'.repeat(40)) {
+      assert.ok(result.blockers.includes('canonical-repository-head-stale'));
+    } else {
+      assert.ok(result.blockers.includes('remote-main-head-unproven'));
+    }
+  }
+});
+
+test('tracked source drift blocks healthy and restart verdicts', () => {
+  const input = healthyInput();
+  input.repository.trackedClean = false;
+  const result = buildWorkerWatchdogRecoveryDecision(input);
+  assert.equal(result.assessment.canonicalRepositoryTrackedClean, false);
+  assert.equal(result.assessment.healthy, false);
+  assert.equal(result.assessment.restartPermitted, false);
+  assert.equal(result.action, 'BLOCKED');
+  assert.ok(result.blockers.includes('canonical-repository-tracked-dirty'));
+});
+
 test('command line and heartbeat pid must bind to the canonical worker process', () => {
   const commandLineInput = healthyInput();
   commandLineInput.process.commandLineMatchesCanonicalWorker = false;
@@ -150,6 +220,39 @@ test('invalid correlation blocks restart authorization and clears task target', 
   assert.equal(result.action, 'BLOCKED');
   assert.equal(result.restartTaskName, '');
   assert.ok(result.blockers.includes('invalid-issue-or-pr-correlation'));
+});
+
+test('Windows probe binds repository truth to fixed read-only git commands', () => {
+  assert.match(PROBE_SCRIPT, /\$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git\.exe'/);
+  assert.match(PROBE_SCRIPT, /\$canonicalPowerShell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe'/);
+  assert.doesNotMatch(PROBE_SCRIPT, /Get-Command (?:git|powershell)(?:\.exe)?\b/i);
+  assert.match(PROBE_SCRIPT, /-C \$repositoryRoot symbolic-ref --quiet --short HEAD/);
+  assert.match(PROBE_SCRIPT, /-C \$repositoryRoot rev-parse --verify HEAD/);
+  assert.match(PROBE_SCRIPT, /status '--porcelain=v1' '--untracked-files=no'/);
+  assert.match(PROBE_SCRIPT, /https:\/\/github\.com\/Cheekyfellastef\/stephan-os\.git/);
+  assert.match(PROBE_SCRIPT, /& \$GitExecutable 'ls-remote' '--exit-code' \$publicRemote 'refs\/heads\/main'/);
+  assert.match(PROBE_SCRIPT, /\$repositoryHead -ne \$remoteMainHead/);
+  assert.match(PROBE_SCRIPT, /repositoryRoot = \$repositoryRoot/);
+  assert.match(PROBE_SCRIPT, /headSha = \$repositoryHead/);
+  assert.match(PROBE_SCRIPT, /remoteMainHeadSha = \$remoteMainHead/);
+  assert.match(PROBE_SCRIPT, /restart-approved-stephanos-runtime\.ps1/);
+  assert.match(PROBE_SCRIPT, /& \$canonicalPowerShell @restartArguments/);
+  assert.match(PROBE_SCRIPT, /'mission-worker'/);
+  assert.match(PROBE_SCRIPT, /'-ExpectedHead'/);
+  assert.match(PROBE_SCRIPT, /\$repositoryHead/);
+  assert.match(PROBE_SCRIPT, /'-TimeoutSeconds',[\s\S]*'30'/);
+  assert.match(PROBE_SCRIPT, /stephanos\.approved-runtime-restart\.v1/);
+  assert.match(PROBE_SCRIPT, /APPROVED_RUNTIME_RESTART_PASS/);
+  assert.match(PROBE_SCRIPT, /terminatedVerifiedOwnedProcess/);
+  assert.match(PROBE_SCRIPT, /\[string\]\$restartReceipt\.publicMainHead -eq \$repositoryHead/);
+  assert.match(PROBE_SCRIPT, /\$restartReceipt\.postStartSourceProofOk -eq \$true/);
+  assert.match(PROBE_SCRIPT, /\$restartReceipt\.sourceTrackedClean -eq \$true/);
+  assert.match(PROBE_SCRIPT, /\$restartReceipt\.cleanupAttempted -eq \$false/);
+  assert.match(PROBE_SCRIPT, /\$restartReceipt\.cleanupCompleted -eq \$false/);
+  assert.match(PROBE_SCRIPT, /\$restartStartedWorkerPid -gt 0/);
+  assert.doesNotMatch(PROBE_SCRIPT, /trackedStatusAfterRestart|remoteMainHeadAfterRestart|repositoryHeadAfterRestart|repositoryBranchAfterRestart/);
+  assert.doesNotMatch(PROBE_SCRIPT, /Stop-ScheduledTask|Stop-Process/);
+  assert.doesNotMatch(PROBE_SCRIPT, /Invoke-Expression|Start-Process/);
 });
 
 test('forbidden command surfaces remain absent', () => {
