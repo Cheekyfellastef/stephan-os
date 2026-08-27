@@ -96,6 +96,24 @@ test('fails closed on missing or ambiguous ownership and malformed exact identit
     () => buildRepositoryEngineeringKnowledgePackV1(canonicalInput({ baseTree: 'not-a-tree' })),
     /base-tree-invalid/,
   );
+  for (const repository of ['../repo', 'owner/..', './repo', 'owner/.']) {
+    assert.throws(
+      () => buildRepositoryEngineeringKnowledgePackV1(canonicalInput({ repository })),
+      /repository-invalid/,
+    );
+  }
+});
+
+test('uses locale-independent ordering for content-addressed arrays', () => {
+  const first = buildRepositoryEngineeringKnowledgePackV1(canonicalInput({
+    invariants: ['ä invariant', 'z invariant'],
+  }));
+  const second = buildRepositoryEngineeringKnowledgePackV1(canonicalInput({
+    invariants: ['z invariant', 'ä invariant'],
+  }));
+
+  assert.deepEqual(first.invariants, ['z invariant', 'ä invariant']);
+  assert.equal(first.packId, second.packId);
 });
 
 test('refuses stale or conflicting knowledge', () => {
@@ -137,4 +155,24 @@ test('a later head or tree change invalidates the old pack', () => {
     baseHead: HEAD,
     baseTree: 'd'.repeat(40),
   }), false);
+});
+
+test('currentness revalidates content identity and rejects substituted payloads', () => {
+  const pack = buildRepositoryEngineeringKnowledgePackV1(canonicalInput());
+  const tamperedInvariant = {
+    ...structuredClone(pack),
+    invariants: [...pack.invariants, 'substituted invariant'],
+  };
+  const tamperedId = {
+    ...structuredClone(pack),
+    packId: 'repository-engineering-pack-000000000000000000000000',
+  };
+  const widenedShape = {
+    ...structuredClone(pack),
+    untrustedExtraField: 'must not be ignored',
+  };
+
+  assert.equal(isRepositoryEngineeringKnowledgePackCurrentV1(tamperedInvariant, { baseHead: HEAD, baseTree: TREE }), false);
+  assert.equal(isRepositoryEngineeringKnowledgePackCurrentV1(tamperedId, { baseHead: HEAD, baseTree: TREE }), false);
+  assert.equal(isRepositoryEngineeringKnowledgePackCurrentV1(widenedShape, { baseHead: HEAD, baseTree: TREE }), false);
 });
