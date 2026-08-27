@@ -62,7 +62,7 @@ function daysInMonth(year, month) {
 
 function explicitTimestamp(value) {
   const normalized = text(value);
-  const match = STRICT_TIMESTAMP.exec(normalized);
+  const match = normalized.match(STRICT_TIMESTAMP);
   if (!match) return null;
 
   const year = Number(match[1]);
