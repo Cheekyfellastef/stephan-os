@@ -80,7 +80,11 @@ function explicitTimestamp(value) {
   if (offsetHour < 0 || offsetHour > 23 || offsetMinute < 0 || offsetMinute > 59) return null;
 
   const parsed = Date.parse(normalized);
-  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+  if (!Number.isFinite(parsed)) return null;
+  const instant = new Date(parsed);
+  const normalizedYear = instant.getUTCFullYear();
+  if (normalizedYear < 1 || normalizedYear > 9999) return null;
+  return instant.toISOString();
 }
 
 function exactSha(value) {
