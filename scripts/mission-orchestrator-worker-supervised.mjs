@@ -13,6 +13,7 @@ import { writeMissionWorkerHeartbeat } from './mission-orchestrator-worker-heart
 
 export const MISSION_WORKER_LOG_PROJECTION_SCHEMA = 'stephanos.mission-worker-log-projection.v1';
 export const MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE = 75;
+export const MISSION_WORKER_LOG_MAX_BYTES = 1_024;
 
 const SHA_40 = /^[0-9a-f]{40}$/;
 const MAX_GIT_STATUS_BYTES = 64 * 1024;
@@ -29,20 +30,40 @@ function ownData(value, key) {
   }
 }
 
-function boundedText(value, maximum = 240) {
-  return typeof value === 'string' ? value.trim().slice(0, maximum) : '';
-}
-
-function boundedTextList(value, maximumItems = 8) {
-  if (!Array.isArray(value) || value.length > maximumItems) return [];
-  const output = [];
-  for (let index = 0; index < value.length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-    if (!descriptor || !Object.hasOwn(descriptor, 'value')) return [];
-    const item = boundedText(descriptor.value, 160);
-    if (item) output.push(item);
+function boundedText(value, maximumEncodedBytes = 96) {
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim();
+  let encodedBytes = 0;
+  let output = '';
+  for (const character of normalized) {
+    const encodedCharacter = JSON.stringify(character).slice(1, -1);
+    const nextBytes = Buffer.byteLength(encodedCharacter);
+    if (encodedBytes + nextBytes > maximumEncodedBytes) break;
+    output += character;
+    encodedBytes += nextBytes;
   }
   return output;
+}
+
+function boundedTextList(value, maximumItems = 4, maximumItemEncodedBytes = 48) {
+  try {
+    if (!Array.isArray(value)) return [];
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
+    const length = lengthDescriptor && Object.hasOwn(lengthDescriptor, 'value')
+      ? lengthDescriptor.value
+      : Number.NaN;
+    if (!Number.isInteger(length) || length < 0 || length > maximumItems) return [];
+    const output = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')) return [];
+      const item = boundedText(descriptor.value, maximumItemEncodedBytes);
+      if (item) output.push(item);
+    }
+    return output;
+  } catch {
+    return [];
+  }
 }
 
 export function createMissionWorkerControllerLogProjection(controller, checkedAt) {
@@ -50,15 +71,15 @@ export function createMissionWorkerControllerLogProjection(controller, checkedAt
   return Object.freeze({
     schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA,
     event: 'controller-cycle',
-    checkedAt: boundedText(checkedAt, 48),
-    status: boundedText(ownData(controller, 'status'), 64),
-    action: boundedText(ownData(controller, 'action'), 96),
-    finalVerdict: boundedText(ownData(controller, 'finalVerdict'), 120),
+    checkedAt: boundedText(checkedAt, 32),
+    status: boundedText(ownData(controller, 'status'), 32),
+    action: boundedText(ownData(controller, 'action'), 48),
+    finalVerdict: boundedText(ownData(controller, 'finalVerdict'), 64),
     allowWorkerTick: ownData(controller, 'allowWorkerTick') === true,
     blockers: Object.freeze(boundedTextList(ownData(controller, 'blockers'))),
-    missionId: boundedText(ownData(grant, 'missionId'), 160),
-    actionId: boundedText(ownData(grant, 'actionId'), 160),
-    adapter: boundedText(ownData(grant, 'adapter'), 64),
+    missionId: boundedText(ownData(grant, 'missionId'), 96),
+    actionId: boundedText(ownData(grant, 'actionId'), 96),
+    adapter: boundedText(ownData(grant, 'adapter'), 32),
   });
 }
 
@@ -67,12 +88,12 @@ export function createMissionWorkerTickLogProjection(result, checkedAt) {
   return Object.freeze({
     schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA,
     event: 'worker-tick',
-    checkedAt: boundedText(checkedAt, 48),
-    status: boundedText(ownData(result, 'status'), 64),
-    state: boundedText(ownData(result, 'state'), 64),
-    phase: boundedText(ownData(result, 'phase'), 96),
-    finalVerdict: boundedText(ownData(result, 'finalVerdict'), 120),
-    blocker: boundedText(ownData(result, 'blocker'), 160),
+    checkedAt: boundedText(checkedAt, 32),
+    status: boundedText(ownData(result, 'status'), 32),
+    state: boundedText(ownData(result, 'state'), 32),
+    phase: boundedText(ownData(result, 'phase'), 48),
+    finalVerdict: boundedText(ownData(result, 'finalVerdict'), 64),
+    blocker: boundedText(ownData(result, 'blocker'), 96),
     publishOk: ownData(publication, 'published') === true,
   });
 }
@@ -329,6 +350,27 @@ export async function runSupervisedMissionWorker({
       return MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE;
     }
     if (identityValid && !identityCanonical) repositoryDriftObserved = true;
+    if (!identityCanonical) {
+      consecutiveProgressRechecks = 0;
+      let heartbeatWriteFailed = false;
+      try {
+        await writeHeartbeat({
+          env,
+          timestampUtc: checkedAt,
+          lastTickVerdict: 'MISSION_WORKER_RUNNING',
+        });
+      } catch (error) {
+        heartbeatWriteFailed = true;
+        stderr.write(`${JSON.stringify({
+          checkedAt,
+          finalVerdict: 'MISSION_WORKER_HEARTBEAT_WRITE_FAILED',
+          error: error?.message || String(error),
+        })}\n`);
+      }
+      if (once) return heartbeatWriteFailed ? 1 : 0;
+      await sleep(Math.max(Number.isFinite(intervalMs) ? intervalMs : 2000, 250));
+      continue;
+    }
     let lastTickVerdict = 'MISSION_WORKER_TICK_PASS';
     let heartbeatWriteFailed = false;
     let heartbeatWrites = Promise.resolve();

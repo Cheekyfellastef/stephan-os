@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  MISSION_WORKER_LOG_MAX_BYTES,
   createMissionWorkerRepositoryLogProjection,
   createMissionWorkerControllerLogProjection,
   createMissionWorkerTickLogProjection,
@@ -70,7 +71,7 @@ test('supervised worker writes running and final heartbeat around a successful t
   let tickOptions = null;
   const exitCode = await runSupervisedMissionWorker({
     argv: ['--once'],
-    env: {},
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40) },
     stdout: output.stream,
     stderr: errors.stream,
     bootstrapMailbox,
@@ -106,7 +107,10 @@ test('supervised worker refreshes heartbeat while a long tick is still running',
 
   const workerPromise = runSupervisedMissionWorker({
     argv: ['--once'],
-    env: { STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS: '1000' },
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS: '1000',
+    },
     stdout: sink().stream,
     stderr: sink().stream,
     bootstrapMailbox,
@@ -144,7 +148,7 @@ test('supervised worker records failed tick heartbeat and exits non-zero in once
   const timer = timerHarness();
   const exitCode = await runSupervisedMissionWorker({
     argv: ['--once'],
-    env: {},
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40) },
     stdout: output.stream,
     stderr: errors.stream,
     bootstrapMailbox,
@@ -168,7 +172,7 @@ test('heartbeat write failure is visible and non-zero in once mode', async () =>
   const timer = timerHarness();
   const exitCode = await runSupervisedMissionWorker({
     argv: ['--once'],
-    env: {},
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40) },
     stdout: sink().stream,
     stderr: errors.stream,
     bootstrapMailbox,
@@ -363,6 +367,7 @@ test('worker waits safely through branch drift then exits once for canonical rel
   const head = 'a'.repeat(40);
   let identityReads = 0;
   let controllerCycles = 0;
+  const heartbeats = [];
   const output = sink();
   const errors = sink();
   const exitCode = await runSupervisedMissionWorker({
@@ -378,14 +383,16 @@ test('worker waits safely through branch drift then exits once for canonical rel
     },
     runControllerCycle: async () => { controllerCycles += 1; return { status: 'HOLD', allowWorkerTick: false }; },
     runTick: async () => assert.fail('worker tick must remain held'),
-    writeHeartbeat: async () => {},
+    writeHeartbeat: async (heartbeat) => { heartbeats.push(heartbeat); },
     identityProbeIntervalMs: 0,
     setIntervalFn: () => 17,
     clearIntervalFn: () => {},
     sleep: async () => {},
   });
   assert.equal(exitCode, MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE);
-  assert.equal(controllerCycles, 1);
+  assert.equal(controllerCycles, 0);
+  assert.equal(heartbeats.length, 1);
+  assert.equal(heartbeats[0].lastTickVerdict, 'MISSION_WORKER_RUNNING');
   assert.match(output.read(), /CANONICAL_REPOSITORY_BRANCH_NOT_MAIN/);
   assert.match(output.read(), /"reloadRequired":true/);
   assert.match(errors.read(), /MISSION_WORKER_CANONICAL_RELOAD_REQUIRED/);
@@ -414,6 +421,7 @@ test('worker exits before controller execution when canonical main advances thro
 
 test('worker does not reload across unpublished source dirt even when main head differs', async () => {
   let controllerCycles = 0;
+  const heartbeats = [];
   const errors = sink();
   const exitCode = await runSupervisedMissionWorker({
     argv: ['--once'],
@@ -433,12 +441,14 @@ test('worker does not reload across unpublished source dirt even when main head 
     }),
     runControllerCycle: async () => { controllerCycles += 1; return { status: 'HOLD', allowWorkerTick: false }; },
     runTick: async () => assert.fail('worker tick must remain held'),
-    writeHeartbeat: async () => {},
+    writeHeartbeat: async (heartbeat) => { heartbeats.push(heartbeat); },
     setIntervalFn: () => 17,
     clearIntervalFn: () => {},
   });
   assert.equal(exitCode, 0);
-  assert.equal(controllerCycles, 1);
+  assert.equal(controllerCycles, 0);
+  assert.equal(heartbeats.length, 1);
+  assert.equal(heartbeats[0].lastTickVerdict, 'MISSION_WORKER_RUNNING');
   assert.doesNotMatch(errors.read(), /MISSION_WORKER_CANONICAL_RELOAD_REQUIRED/);
 });
 
@@ -468,7 +478,7 @@ test('a transient unproven identity read does not create a reload loop', async (
     },
   }).catch((error) => error);
   assert.match(exitCode.message, /stop-after-recovery/);
-  assert.equal(controllerCycles, 2);
+  assert.equal(controllerCycles, 1);
 });
 
 test('persistent worker bounds repository identity probes to the configured cadence', async () => {
@@ -507,7 +517,10 @@ test('worker fast-follows proven progress with a bounded burst then restores the
   let cycles = 0;
   await assert.rejects(runSupervisedMissionWorker({
     argv: [],
-    env: { STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000' },
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000',
+    },
     stdout: sink().stream,
     stderr: sink().stream,
     bootstrapMailbox,
@@ -543,12 +556,48 @@ test('worker progress detection is descriptor-safe and ignores caller-shaped get
   assert.equal(missionWorkerTickMadeProgress({ processed: { processed: true } }), true);
 });
 
+test('worker log byte bounds hold for escaped Unicode fields and accessor-shaped lists', () => {
+  const hostile = '"\\\n💥'.repeat(2_000);
+  const controller = createMissionWorkerControllerLogProjection({
+    status: hostile,
+    action: hostile,
+    finalVerdict: hostile,
+    allowWorkerTick: true,
+    blockers: [hostile, hostile, hostile, hostile],
+    workerActionGrant: {
+      missionId: hostile,
+      actionId: hostile,
+      adapter: hostile,
+    },
+  }, hostile);
+  const tick = createMissionWorkerTickLogProjection({
+    status: hostile,
+    state: hostile,
+    phase: hostile,
+    finalVerdict: hostile,
+    blocker: hostile,
+    publish: { ok: true },
+  }, hostile);
+  assert.equal(Buffer.byteLength(`${JSON.stringify(controller)}\n`) <= MISSION_WORKER_LOG_MAX_BYTES, true);
+  assert.equal(Buffer.byteLength(`${JSON.stringify(tick)}\n`) <= MISSION_WORKER_LOG_MAX_BYTES, true);
+
+  let getterCalls = 0;
+  const blockers = [];
+  Object.defineProperty(blockers, '0', {
+    get() { getterCalls += 1; return 'must-not-run'; },
+  });
+  blockers.length = 1;
+  const accessorProjection = createMissionWorkerControllerLogProjection({ blockers }, hostile);
+  assert.deepEqual(accessorProjection.blockers, []);
+  assert.equal(getterCalls, 0);
+});
+
 test('long-running worker suppresses unchanged controller telemetry', async () => {
   const output = sink();
   let sleeps = 0;
   await assert.rejects(runSupervisedMissionWorker({
     argv: [],
-    env: {},
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40) },
     stdout: output.stream,
     stderr: sink().stream,
     bootstrapMailbox,
