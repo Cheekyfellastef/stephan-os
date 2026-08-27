@@ -4,6 +4,8 @@ const SAFE_SHA = /^[0-9a-f]{40}$/;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/;
 const SAFE_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/;
 const MAX_EVIDENCE_ITEMS = 64;
+const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+const CANONICAL_ASSESSMENTS = new WeakSet();
 
 function deepFreezeOwned(value, seen = new Set()) {
   if (!value || typeof value !== 'object' || seen.has(value)) return value;
@@ -83,7 +85,7 @@ function readEvidenceArray(value) {
   }
 }
 
-function strictUtcTimestamp(value) {
+function strictUtcTimestamp(value, assessmentTimeMs) {
   if (typeof value !== 'string' || !SAFE_TIMESTAMP.test(value)) return false;
   const year = Number(value.slice(0, 4));
   const month = Number(value.slice(5, 7));
@@ -91,14 +93,16 @@ function strictUtcTimestamp(value) {
   const hour = Number(value.slice(11, 13));
   const minute = Number(value.slice(14, 16));
   const second = Number(value.slice(17, 19));
-  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return false;
+  if (year < 1 || month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return false;
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
   const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   if (day < 1 || day > daysInMonth[month - 1]) return false;
-  return !Number.isNaN(Date.parse(value));
+  const observedAtMs = Date.parse(value);
+  if (Number.isNaN(observedAtMs) || !Number.isFinite(assessmentTimeMs)) return false;
+  return observedAtMs <= assessmentTimeMs + MAX_FUTURE_CLOCK_SKEW_MS;
 }
 
-function normalizeEvidenceItem(value, expectedClass, exactHeadSha) {
+function normalizeEvidenceItem(value, expectedClass, exactHeadSha, assessmentTimeMs) {
   const record = readPlainRecord(value);
   if (!record) return null;
   const allowed = expectedClass === 'physical'
@@ -111,7 +115,7 @@ function normalizeEvidenceItem(value, expectedClass, exactHeadSha) {
   if (!SAFE_ID.test(record.frontId || '') || !SAFE_ID.test(record.proofId || '')) return null;
   if (record.evidenceClass !== expectedClass || record.verdict !== 'PASS') return null;
   if (record.headSha !== exactHeadSha || !SAFE_SHA.test(record.headSha || '')) return null;
-  if (!strictUtcTimestamp(record.observedAt)) return null;
+  if (!strictUtcTimestamp(record.observedAt, assessmentTimeMs)) return null;
   const front = FRONT_BY_ID.get(record.frontId);
   if (!front || front.evidenceClass !== expectedClass) return null;
   if (expectedClass === 'runtime' && !SAFE_ID.test(record.runtimeIdentity || '')) return null;
@@ -121,13 +125,13 @@ function normalizeEvidenceItem(value, expectedClass, exactHeadSha) {
   return Object.freeze({ ...record });
 }
 
-function collectClassEvidence(value, expectedClass, exactHeadSha) {
+function collectClassEvidence(value, expectedClass, exactHeadSha, assessmentTimeMs) {
   const array = readEvidenceArray(value);
   if (!array) return { valid: false, items: [] };
   const seenFronts = new Set();
   const items = [];
   for (const candidate of array) {
-    const item = normalizeEvidenceItem(candidate, expectedClass, exactHeadSha);
+    const item = normalizeEvidenceItem(candidate, expectedClass, exactHeadSha, assessmentTimeMs);
     if (!item || seenFronts.has(item.frontId)) return { valid: false, items: [] };
     seenFronts.add(item.frontId);
     items.push(item);
@@ -143,7 +147,7 @@ function missingFronts(items, evidenceClass) {
 }
 
 function result(status, blockerClass, exactHeadSha, sourceEvidence, runtimeEvidence, physicalEvidence, missing) {
-  return deepFreezeOwned({
+  const assessment = deepFreezeOwned({
     schema: STARFIELD_VR_OPERATOR_EVIDENCE_SCHEMA,
     status,
     blockerClass,
@@ -161,9 +165,12 @@ function result(status, blockerClass, exactHeadSha, sourceEvidence, runtimeEvide
     },
     boundary: STARFIELD_VR_OPERATOR_EVIDENCE_BOUNDARY,
   });
+  CANONICAL_ASSESSMENTS.add(assessment);
+  return assessment;
 }
 
 export function assessStarfieldVrOperatorEvidence(input) {
+  const assessmentTimeMs = Date.now();
   const record = readPlainRecord(input);
   const invalid = () => result('BLOCKED', 'PRODUCT_SOURCE_GAP', '', [], [], [], {
     source: STARFIELD_VR_EVIDENCE_FRONTS.filter((front) => front.evidenceClass === 'source').map((front) => front.id),
@@ -173,11 +180,11 @@ export function assessStarfieldVrOperatorEvidence(input) {
   if (!record) return invalid();
   const allowed = ['exactHeadSha', 'sourceEvidence', 'runtimeEvidence', 'physicalEvidence'];
   if (Object.keys(record).some((key) => !allowed.includes(key))) return invalid();
-  if (!SAFE_SHA.test(record.exactHeadSha || '')) return invalid();
+  if (!SAFE_SHA.test(record.exactHeadSha || '') || !Number.isFinite(assessmentTimeMs)) return invalid();
 
-  const source = collectClassEvidence(record.sourceEvidence, 'source', record.exactHeadSha);
-  const runtime = collectClassEvidence(record.runtimeEvidence, 'runtime', record.exactHeadSha);
-  const physical = collectClassEvidence(record.physicalEvidence, 'physical', record.exactHeadSha);
+  const source = collectClassEvidence(record.sourceEvidence, 'source', record.exactHeadSha, assessmentTimeMs);
+  const runtime = collectClassEvidence(record.runtimeEvidence, 'runtime', record.exactHeadSha, assessmentTimeMs);
+  const physical = collectClassEvidence(record.physicalEvidence, 'physical', record.exactHeadSha, assessmentTimeMs);
   if (!source.valid || !runtime.valid || !physical.valid) return invalid();
 
   const missing = {
@@ -203,6 +210,7 @@ function expectedFrontCount(evidenceClass) {
 }
 
 function validatedAssessmentForPlan(assessment) {
+  if (!assessment || typeof assessment !== 'object' || !CANONICAL_ASSESSMENTS.has(assessment)) return null;
   const record = readPlainRecord(assessment);
   if (!record || record.schema !== STARFIELD_VR_OPERATOR_EVIDENCE_SCHEMA || !SAFE_SHA.test(record.exactHeadSha || '')) return null;
 

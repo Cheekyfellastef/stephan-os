@@ -105,6 +105,26 @@ test('minimal manufactured physical assessment cannot create Quest operator step
   assert.deepEqual(plan.steps, []);
 });
 
+test('coherent manufactured assessment cannot bypass canonical assessor provenance', () => {
+  const plan = buildStarfieldVrOperatorTestPlan({
+    schema: STARFIELD_VR_OPERATOR_EVIDENCE_SCHEMA,
+    status: 'PHYSICAL_HEADSET_REQUIRED',
+    blockerClass: 'OPERATOR_PHYSICAL_TEST_REQUIRED',
+    exactHeadSha: HEAD,
+    evidenceCounts: { source: 2, runtime: 4, physical: 2 },
+    missing: { source: [], runtime: [], physical: ['quest3-headset'] },
+    evidenceRefs: { source: [], runtime: [], physical: [] },
+    boundary: STARFIELD_VR_OPERATOR_EVIDENCE_BOUNDARY,
+  });
+  assert.equal(plan.status, 'INVALID_ASSESSMENT');
+  assert.deepEqual(plan.steps, []);
+
+  const canonical = assess({ physicalEvidence: physicalEvidence().slice(1) });
+  assert.equal(buildStarfieldVrOperatorTestPlan(canonical).status, 'OPERATOR_TEST_REQUIRED');
+  const copied = { ...canonical };
+  assert.equal(buildStarfieldVrOperatorTestPlan(copied).status, 'INVALID_ASSESSMENT');
+});
+
 test('test plan disappears when no physical evidence is pending', () => {
   const plan = buildStarfieldVrOperatorTestPlan(assess());
   assert.equal(plan.status, 'NO_PHYSICAL_TEST_PENDING');
@@ -137,6 +157,20 @@ test('calendar-invalid evidence timestamps fail closed', () => {
   const leapDay = sourceEvidence();
   leapDay[0].observedAt = '2024-02-29T15:30:00Z';
   assert.notEqual(assess({ sourceEvidence: leapDay }).status, 'BLOCKED');
+});
+
+test('future-dated evidence timestamps fail closed', () => {
+  const badSource = sourceEvidence();
+  badSource[0].observedAt = '9999-12-31T23:59:59Z';
+  assert.equal(assess({ sourceEvidence: badSource }).status, 'BLOCKED');
+
+  const badRuntime = runtimeEvidence();
+  badRuntime[0].observedAt = '9999-12-31T23:59:59Z';
+  assert.equal(assess({ runtimeEvidence: badRuntime }).status, 'BLOCKED');
+
+  const badPhysical = physicalEvidence();
+  badPhysical[0].observedAt = '9999-12-31T23:59:59Z';
+  assert.equal(assess({ physicalEvidence: badPhysical }).status, 'BLOCKED');
 });
 
 test('physical evidence requires Quest 3 and explicit operator receipt identity', () => {
