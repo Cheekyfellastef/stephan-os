@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  MISSION_WORKER_LOG_MAX_BYTES,
   createMissionWorkerControllerLogProjection,
   createMissionWorkerTickLogProjection,
   runSupervisedMissionWorker,
@@ -204,6 +205,42 @@ test('worker logs only bounded authority-relevant controller and tick truth', ()
   assert.equal(JSON.stringify(tick).includes(huge), false);
   assert.equal(controller.blockers[0], 'capacity-unavailable');
   assert.equal(tick.publishOk, true);
+});
+
+test('worker log byte bounds hold for escaped Unicode fields and accessor-shaped lists', () => {
+  const hostile = '"\\\n💥'.repeat(2_000);
+  const controller = createMissionWorkerControllerLogProjection({
+    status: hostile,
+    action: hostile,
+    finalVerdict: hostile,
+    allowWorkerTick: true,
+    blockers: [hostile, hostile, hostile, hostile],
+    workerActionGrant: {
+      missionId: hostile,
+      actionId: hostile,
+      adapter: hostile,
+    },
+  }, hostile);
+  const tick = createMissionWorkerTickLogProjection({
+    status: hostile,
+    state: hostile,
+    phase: hostile,
+    finalVerdict: hostile,
+    blocker: hostile,
+    publish: { ok: true },
+  }, hostile);
+  assert.equal(Buffer.byteLength(`${JSON.stringify(controller)}\n`) <= MISSION_WORKER_LOG_MAX_BYTES, true);
+  assert.equal(Buffer.byteLength(`${JSON.stringify(tick)}\n`) <= MISSION_WORKER_LOG_MAX_BYTES, true);
+
+  let getterCalls = 0;
+  const blockers = [];
+  Object.defineProperty(blockers, '0', {
+    get() { getterCalls += 1; return 'must-not-run'; },
+  });
+  blockers.length = 1;
+  const accessorProjection = createMissionWorkerControllerLogProjection({ blockers }, hostile);
+  assert.deepEqual(accessorProjection.blockers, []);
+  assert.equal(getterCalls, 0);
 });
 
 test('long-running worker suppresses unchanged controller telemetry', async () => {
