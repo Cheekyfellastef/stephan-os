@@ -142,7 +142,7 @@ function publicDecision(decision, receipt = null, evidenceCurrent = false) {
   });
 }
 
-function validDecisionReceipt(record = {}) {
+function validDecisionReceipt(record = {}, options = {}) {
   const expectedStatus = record.action === 'APPROVE' ? OPERATOR_DECISION_STATUS.APPROVED : OPERATOR_DECISION_STATUS.REJECTED;
   return validateSharedWorkspaceRecord(record).valid
     && record.operatorDecisionSchemaVersion === OPERATOR_DECISION_RECEIPT_SCHEMA_VERSION
@@ -154,7 +154,8 @@ function validDecisionReceipt(record = {}) {
     && record.receivedRecordId === record.decisionId
     && record.correlationId === record.decisionId
     && record.resultingStatus === expectedStatus
-    && record.routedToCodex === true
+    && typeof record.routedToCodex === 'boolean'
+    && (options.requireRouted === false || record.routedToCodex === true)
     && record.actionExecuted === false
     && record.protectedActionAuthorityGranted === false;
 }
@@ -238,7 +239,7 @@ function receiptRecord(decision, input, nowUtc) {
     reason: input.reason,
     requestFingerprint: input.requestFingerprint,
     resultingStatus: approved ? OPERATOR_DECISION_STATUS.APPROVED : OPERATOR_DECISION_STATUS.REJECTED,
-    routedToCodex: true,
+    routedToCodex: false,
     actionExecuted: false,
     protectedActionAuthorityGranted: false,
   };
@@ -249,7 +250,7 @@ async function writeExclusiveReceipt(root, record, options = {}) {
   if (!validation.valid) fail(503, 'INVALID_DECISION_RECEIPT', validation.errors.join(','));
   const layout = await ensureSharedWorkspaceLayout({ root, repoRoot: options.repoRoot });
   if (!layout.ok) fail(503, 'WORKSPACE_UNAVAILABLE', layout.reason);
-  const filename = `${record.receiptId}.json`;
+  const filename = text(options.filename, `${record.receiptId}.json`);
   const resolved = resolveSharedWorkspacePath({ root: layout.root, repoRoot: options.repoRoot, segments: ['receipts', filename] });
   if (!resolved.ok) fail(503, 'WORKSPACE_UNAVAILABLE', resolved.reason);
   const tempPath = `${resolved.path}.${process.pid}.${randomUUID()}.tmp`;
@@ -297,7 +298,8 @@ async function writeCodexHandoff(root, decision, receipt, options = {}) {
       protectedActionAuthorityGranted: false,
     }),
   });
-  return writeAtomicJson(root, ['inbox', `${handoffId}.json`], handoff, {
+  const writeHandoff = options.writeHandoff || writeAtomicJson;
+  return writeHandoff(root, ['inbox', `${handoffId}.json`], handoff, {
     repoRoot: options.repoRoot,
     nowMs: options.nowMs,
   });
@@ -333,7 +335,7 @@ export async function recordOperatorApprovalDecision(input = {}, options = {}) {
   if (fingerprintOperatorDecision(decision) !== requestFingerprint) fail(409, 'STALE_DECISION', 'The decision changed. Refresh the inbox before deciding.');
   if (card.receipt) {
     if (card.receipt.commandId === commandId && card.receipt.action === action) {
-      const handoff = await writeCodexHandoff(root, decision, card.receipt, { repoRoot: options.repoRoot, nowMs: options.nowMs });
+      const handoff = await writeCodexHandoff(root, decision, card.receipt, { repoRoot: options.repoRoot, nowMs: options.nowMs, writeHandoff: options.writeHandoff });
       if (!handoff.ok) fail(503, 'CODEX_HANDOFF_FAILED', handoff.reason);
       return Object.freeze({
         ok: true,
@@ -351,18 +353,37 @@ export async function recordOperatorApprovalDecision(input = {}, options = {}) {
 
   const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
   const nowUtc = new Date(nowMs).toISOString();
-  const requestedReceipt = receiptRecord(decision, { action, commandId, requestFingerprint, reason }, nowUtc);
+  const requestedPendingReceipt = receiptRecord(decision, { action, commandId, requestFingerprint, reason }, nowUtc);
+  const pendingFilename = `${requestedPendingReceipt.receiptId}.pending.json`;
+  const pendingWrite = await writeExclusiveReceipt(root, requestedPendingReceipt, {
+    repoRoot: options.repoRoot,
+    nowMs,
+    filename: pendingFilename,
+  });
+  const pendingReceipt = pendingWrite.record;
+  if (!validDecisionReceipt(pendingReceipt, { requireRouted: false }) || pendingReceipt.routedToCodex !== false) {
+    fail(409, 'INVALID_EXISTING_DECISION_RECEIPT', 'An invalid pending decision receipt already occupies this decision.');
+  }
+  if (pendingReceipt.commandId !== commandId || pendingReceipt.action !== action || pendingReceipt.requestFingerprint !== requestFingerprint) {
+    fail(409, 'DECISION_ALREADY_RECORDED', `This decision was already recorded as ${pendingReceipt.action}.`);
+  }
+  const handoff = await writeCodexHandoff(root, decision, pendingReceipt, {
+    repoRoot: options.repoRoot,
+    nowMs,
+    writeHandoff: options.writeHandoff,
+  });
+  if (!handoff.ok) fail(503, 'CODEX_HANDOFF_FAILED', handoff.reason);
+  const requestedReceipt = { ...pendingReceipt, routedToCodex: true };
   const written = await writeExclusiveReceipt(root, requestedReceipt, { repoRoot: options.repoRoot, nowMs });
   const existing = written.record;
   if (!validDecisionReceipt(existing)) fail(409, 'INVALID_EXISTING_DECISION_RECEIPT', 'An invalid decision receipt already occupies this decision.');
   if (existing.commandId !== commandId || existing.action !== action || existing.requestFingerprint !== requestFingerprint) {
     fail(409, 'DECISION_ALREADY_RECORDED', `This decision was already recorded as ${existing.action}.`);
   }
-  const handoff = await writeCodexHandoff(root, decision, existing, { repoRoot: options.repoRoot, nowMs });
-  if (!handoff.ok) fail(503, 'CODEX_HANDOFF_FAILED', handoff.reason);
+  try { await unlink(pendingWrite.path); } catch {}
   return Object.freeze({
     ok: true,
-    duplicate: written.duplicate,
+    duplicate: pendingWrite.duplicate || written.duplicate,
     decisionId,
     action,
     resultingStatus: existing.resultingStatus,

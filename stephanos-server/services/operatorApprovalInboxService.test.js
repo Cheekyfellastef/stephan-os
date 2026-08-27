@@ -92,6 +92,52 @@ test('approve writes one exact-decision receipt and a Codex handoff, then retrie
   assert.equal(refreshed.decisions[0].status, 'APPROVED');
 });
 
+test('a failed Codex handoff leaves an unrouted outbox receipt and remains safely retryable', async (t) => {
+  const { root, options } = await fixture(t);
+  const request = decision();
+  const input = {
+    decisionId: request.decisionId,
+    action: 'APPROVE',
+    commandId: 'operator-click-outbox-retry',
+    requestFingerprint: fingerprintOperatorDecision(request),
+    reason: '',
+  };
+
+  await assert.rejects(
+    () => recordOperatorApprovalDecision(input, {
+      ...options,
+      writeHandoff: async () => ({ ok: false, reason: 'TEST_HANDOFF_WRITE_FAILED' }),
+    }),
+    (error) => error?.statusCode === 503 && error?.code === 'CODEX_HANDOFF_FAILED',
+  );
+
+  const namesAfterFailure = await readdir(join(root, 'receipts'));
+  assert.equal(namesAfterFailure.filter((name) => name.endsWith('.pending.json')).length, 1);
+  assert.equal(namesAfterFailure.filter((name) => name.startsWith('operator-decision-') && !name.endsWith('.pending.json')).length, 0);
+  const pending = JSON.parse(await readFile(join(root, 'receipts', namesAfterFailure.find((name) => name.endsWith('.pending.json'))), 'utf8'));
+  assert.equal(pending.routedToCodex, false);
+  const inboxAfterFailure = await readOperatorApprovalInbox(options);
+  assert.equal(inboxAfterFailure.pendingCount, 1);
+  assert.equal(inboxAfterFailure.decisions[0].receipt, null);
+  assert.equal(inboxAfterFailure.decisions[0].actionable, true);
+  assert.equal((await readdir(join(root, 'inbox'))).filter((name) => name.endsWith('-codex.json')).length, 0);
+  await assert.rejects(
+    () => recordOperatorApprovalDecision({ ...input, action: 'DENY', commandId: 'operator-click-outbox-conflict' }, options),
+    (error) => error?.statusCode === 409 && error?.code === 'DECISION_ALREADY_RECORDED',
+  );
+
+  const recovered = await recordOperatorApprovalDecision(input, options);
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.duplicate, true);
+  assert.equal(recovered.routedToCodex, true);
+  const namesAfterRecovery = await readdir(join(root, 'receipts'));
+  assert.equal(namesAfterRecovery.filter((name) => name.endsWith('.pending.json')).length, 0);
+  assert.equal(namesAfterRecovery.filter((name) => name.startsWith('operator-decision-') && name.endsWith('.json')).length, 1);
+  const refreshed = await readOperatorApprovalInbox(options);
+  assert.equal(refreshed.pendingCount, 0);
+  assert.equal(refreshed.decisions[0].receipt.routedToCodex, true);
+});
+
 test('a conflicting second decision and a stale fingerprint both fail closed', async (t) => {
   const { options } = await fixture(t);
   const request = decision();
