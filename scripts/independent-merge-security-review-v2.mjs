@@ -280,6 +280,7 @@ async function main() {
   const deterministicBootstrapRequired = isApprovalBoundaryBootstrapAnalysis(deterministicAnalysis);
   const specialistProbe = adjudicateQualifiedSpecialistReview({
     analysis: deterministicAnalysis,
+    codexRequired: false,
     reviews: [],
     comments: [],
     repository,
@@ -297,6 +298,7 @@ async function main() {
     const comments = await resolveQualifiedSpecialistCommentHeads(owner, repo, rawComments);
     specialist = adjudicateQualifiedSpecialistReview({
       analysis: deterministicAnalysis,
+      codexRequired: false,
       reviews,
       comments,
       repository,
