@@ -104,6 +104,16 @@ test('fails closed on missing or ambiguous ownership and malformed exact identit
   }
 });
 
+test('returns a blocker-bearing invalid result for non-object ingress payloads', () => {
+  for (const input of [null, [], 'not-a-pack', 42, true]) {
+    const result = validateRepositoryEngineeringKnowledgePackInputV1(input);
+    assert.equal(result.valid, false);
+    assert.deepEqual(result.blockers, ['input-must-be-object']);
+    assert.equal(result.observedBytes, null);
+    assert.equal(result.pack, null);
+  }
+});
+
 test('uses locale-independent ordering for content-addressed arrays', () => {
   const first = buildRepositoryEngineeringKnowledgePackV1(canonicalInput({
     invariants: ['ä invariant', 'z invariant'],
