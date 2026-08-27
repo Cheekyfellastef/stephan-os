@@ -9,13 +9,14 @@ import {
   validateRepositoryEngineeringKnowledgePackInputV1,
 } from './repositoryEngineeringKnowledgePackV1.mjs';
 
+const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = 'a'.repeat(40);
 const TREE = 'b'.repeat(40);
 
 function canonicalInput(overrides = {}) {
   return {
     originatingGoalOrWorkId: '#1957',
-    repository: 'Cheekyfellastef/stephan-os',
+    repository: REPOSITORY,
     baseHead: HEAD,
     baseTree: TREE,
     createdAtUtc: '2026-08-22T13:10:00.000Z',
@@ -63,7 +64,11 @@ test('builds one deterministic immutable exact-current repository engineering pa
   assert.equal(first.authority.runtimeMutationAllowed, false);
   assert.equal(Object.isFrozen(first), true);
   assert.equal(Object.isFrozen(first.authority), true);
-  assert.equal(isRepositoryEngineeringKnowledgePackCurrentV1(first, { baseHead: HEAD, baseTree: TREE }), true);
+  assert.equal(isRepositoryEngineeringKnowledgePackCurrentV1(first, {
+    repository: REPOSITORY,
+    baseHead: HEAD,
+    baseTree: TREE,
+  }), true);
 });
 
 test('rejects duplicate, unsafe and absolute relevant paths', () => {
@@ -155,6 +160,24 @@ test('uses locale-independent ordering for content-addressed arrays', () => {
   assert.equal(first.packId, second.packId);
 });
 
+test('fails closed before iterating over-limit arrays', () => {
+  let getterReads = 0;
+  const oversized = Array.from({ length: 49 }, (_, index) => `invariant-${index}`);
+  Object.defineProperty(oversized, 0, {
+    enumerable: true,
+    configurable: true,
+    get() {
+      getterReads += 1;
+      throw new Error('over-limit array element must not be read');
+    },
+  });
+
+  const result = validateRepositoryEngineeringKnowledgePackInputV1(canonicalInput({ invariants: oversized }));
+  assert.equal(result.valid, false);
+  assert.ok(result.blockers.includes('invariants-too-long'));
+  assert.equal(getterReads, 0);
+});
+
 test('refuses stale or conflicting knowledge', () => {
   assert.throws(
     () => buildRepositoryEngineeringKnowledgePackV1(canonicalInput({ freshness: 'STALE' })),
@@ -184,15 +207,26 @@ test('fails closed when the compact pack exceeds its declared byte budget', () =
   assert.ok(result.blockers.includes('pack-size-budget-exceeded'));
 });
 
-test('a later head or tree change invalidates the old pack', () => {
+test('a later repository, head or tree change invalidates the old pack', () => {
   const pack = buildRepositoryEngineeringKnowledgePackV1(canonicalInput());
   assert.equal(isRepositoryEngineeringKnowledgePackCurrentV1(pack, {
+    repository: 'Cheekyfellastef/stephan-os-fork',
+    baseHead: HEAD,
+    baseTree: TREE,
+  }), false);
+  assert.equal(isRepositoryEngineeringKnowledgePackCurrentV1(pack, {
+    repository: REPOSITORY,
     baseHead: 'c'.repeat(40),
     baseTree: TREE,
   }), false);
   assert.equal(isRepositoryEngineeringKnowledgePackCurrentV1(pack, {
+    repository: REPOSITORY,
     baseHead: HEAD,
     baseTree: 'd'.repeat(40),
+  }), false);
+  assert.equal(isRepositoryEngineeringKnowledgePackCurrentV1(pack, {
+    baseHead: HEAD,
+    baseTree: TREE,
   }), false);
 });
 
@@ -210,8 +244,9 @@ test('currentness revalidates content identity and rejects substituted payloads'
     ...structuredClone(pack),
     untrustedExtraField: 'must not be ignored',
   };
+  const currentness = { repository: REPOSITORY, baseHead: HEAD, baseTree: TREE };
 
-  assert.equal(isRepositoryEngineeringKnowledgePackCurrentV1(tamperedInvariant, { baseHead: HEAD, baseTree: TREE }), false);
-  assert.equal(isRepositoryEngineeringKnowledgePackCurrentV1(tamperedId, { baseHead: HEAD, baseTree: TREE }), false);
-  assert.equal(isRepositoryEngineeringKnowledgePackCurrentV1(widenedShape, { baseHead: HEAD, baseTree: TREE }), false);
+  assert.equal(isRepositoryEngineeringKnowledgePackCurrentV1(tamperedInvariant, currentness), false);
+  assert.equal(isRepositoryEngineeringKnowledgePackCurrentV1(tamperedId, currentness), false);
+  assert.equal(isRepositoryEngineeringKnowledgePackCurrentV1(widenedShape, currentness), false);
 });
