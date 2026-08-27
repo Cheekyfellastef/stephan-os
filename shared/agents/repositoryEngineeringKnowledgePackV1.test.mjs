@@ -129,6 +129,8 @@ test('rejects malformed timestamps instead of accepting Date.parse normalization
     '2026-08-22T13:10:60.000Z',
     '2026-08-22 13:10:00.000Z',
     '0Z',
+    '0001-01-01T00:00:00+23:59',
+    '9999-12-31T23:59:59-23:59',
   ]) {
     assert.throws(
       () => buildRepositoryEngineeringKnowledgePackV1(canonicalInput({ createdAtUtc })),
@@ -146,6 +148,11 @@ test('rejects malformed timestamps instead of accepting Date.parse normalization
     createdAtUtc: '2026-08-22T13:10:00.000+01:00',
   }));
   assert.equal(offset.createdAtUtc, '2026-08-22T12:10:00.000Z');
+
+  const lowerBoundary = buildRepositoryEngineeringKnowledgePackV1(canonicalInput({
+    createdAtUtc: '0001-01-02T00:00:00+23:59',
+  }));
+  assert.equal(lowerBoundary.createdAtUtc, '0001-01-01T00:01:00.000Z');
 });
 
 test('uses locale-independent ordering for content-addressed arrays', () => {
