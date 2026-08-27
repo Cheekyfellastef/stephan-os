@@ -12,8 +12,71 @@ const staleFeed = {
   reason: 'STALE_WORKSPACE_RECORDS',
   workspaceRoot: 'C:\\proof\\shared-workspace',
   exactNextAction: 'Refresh stale proof records.',
+  records: {
+    goalRecords: [],
+    statusRecords: [{ statusId: 'status-1' }],
+    proofRecords: [{ proofId: 'proof-1' }],
+    capabilityRecords: [{ capabilityId: 'capability-1' }],
+  },
+  livePortfolio: {
+    state: 'ready',
+    source: 'LIVE_GITHUB_READ_MODEL',
+    githubOpenPrCount: 2,
+    workspaceGoalCount: 1,
+  },
   projection: {
     portfolioSource: 'BASE_PROJECTION_FALLBACK',
+    queueDispatcher: {
+      dispatcherState: 'IDLE',
+      capabilityMode: 'AUTOMATED_GUARDED',
+      queueDepth: 2,
+      currentJob: 'job-42',
+    },
+    battleBridgeSupervisor: {
+      overallState: 'ATTENTION_REQUIRED',
+      services: [{ serviceId: 'backend', state: 'STALE' }],
+    },
+    openClawCapabilityLadder: {
+      canRunNow: ['repo_scout', 'test_runner'],
+      needsApproval: ['approval_gated_writer'],
+      blocked: ['pr_helper'],
+      exactNextAction: 'Run a bounded scout.',
+    },
+    captainsBridge: {
+      activeLane: { laneId: 'lane-42' },
+      exactNextAction: 'Resolve the current blocker.',
+      milestone: { status: 'complete_guarded', implementedGoals: ['G10', 'G11'] },
+      buildOrchestration: {
+        phase: 'BLOCKED',
+        actor: 'OPERATOR_NEEDED',
+        selectedGoal: 'G13',
+        selectedLane: 'lane-42',
+        signals: { BLOCKER: true, OPERATOR_NEEDED: true, CODEX_NEEDED: false },
+      },
+      mergePipeline: {
+        phase: 'PROOF',
+        prNumber: 2027,
+        headSha: '0b8321de6e5a42dc3ab06c1b02c8f2c14376ecf0',
+        missingEvidence: ['INDEPENDENT_REVIEW'],
+        finalVerdict: 'CAPTAINS_BRIDGE_MERGE_PIPELINE_HELD',
+      },
+      runtimeHealth: {
+        overallTrafficLight: 'AMBER',
+        services: [
+          { serviceId: 'mission-worker', trafficLight: 'AMBER', freshness: 'STALE' },
+          { serviceId: 'shared-workspace-feed', trafficLight: 'AMBER', freshness: 'STALE' },
+          { serviceId: 'dashboard', trafficLight: 'AMBER', freshness: 'STALE' },
+        ],
+      },
+      operatorTimeline: {
+        events: [{ title: 'Independent review launched', timestampUtc: '2026-08-27T08:59:55Z', detail: 'Exact-head review.' }],
+        exactNextAction: 'Wait for the immutable review receipt.',
+      },
+      workspaceDiscovery: {
+        summary: { active: 1, blocked: 1, stale: 1, orphaned: 0 },
+        finalVerdict: 'WORKSPACE_DISCOVERY_PROJECTED',
+      },
+    },
     goals: [{
       issue: '#1291',
       title: 'Battle Bridge Supervisor',
@@ -104,6 +167,23 @@ test('served Goal Dashboard visibly distinguishes and renders a stale canonical 
     assert.equal(await page.locator('#goal-grid .goal-card h3').textContent(), 'Battle Bridge Supervisor');
     assert.match(await page.locator('#goal-grid .goal-card .meta').textContent(), /Status STALE · Proof STALE/);
     assert.equal(await page.locator('[data-live-telemetry-field="telemetry-blocker"]').textContent(), 'STALE_WORKSPACE_RECORDS');
+    assert.equal(await page.locator('#source-mesh .source-node').count(), 9);
+    assert.match(await page.locator('[data-source-id="shared-workspace"] output').textContent(), /STALE · STALE_WORKSPACE_RECORDS/);
+    assert.equal(await page.locator('[data-source-id="shared-workspace"]').getAttribute('data-truth'), 'STALE');
+    assert.match(await page.locator('[data-source-id="live-portfolio"] output').textContent(), /READY · LIVE_GITHUB_READ_MODEL/);
+    assert.equal(await page.locator('[data-source-id="live-portfolio"]').getAttribute('data-truth'), 'STALE');
+    assert.match(await page.locator('[data-source-id="dispatcher"] output').textContent(), /IDLE · AUTOMATED_GUARDED/);
+    assert.match(await page.locator('[data-source-id="merge-pipeline"] output').textContent(), /PROOF · PR 2027/);
+    assert.match(await page.locator('#movement-list').textContent(), /Independent review launched/);
+    assert.match(await page.locator('#timeline').textContent(), /Wait for the immutable review receipt/);
+    assert.equal(await page.locator('[data-runtime="worker"]').getAttribute('data-truth'), 'STALE');
+    assert.equal(await page.locator('[data-health="scheduler"]').getAttribute('data-truth'), 'STALE');
+    assert.equal(await page.locator('[data-health="review"]').getAttribute('data-truth'), 'STALE');
+    assert.equal(await page.locator('[data-health="openclaw"]').getAttribute('data-truth'), 'STALE');
+    assert.equal(await page.locator('[data-health="autonomy"]').getAttribute('data-truth'), 'CONFLICTING');
+    assert.equal(await page.locator('[data-live-telemetry-field="active-goal-queue"]').textContent(), 'job-42');
+    assert.equal(await page.locator('[data-live-telemetry-field="active-proof-lane"]').textContent(), 'lane-42');
+    assert.match(await page.locator('#truth-boundary').textContent(), /Live backend projection loaded in read-only mode/);
     assert.ok((await page.screenshot({ fullPage: true })).length > 10_000);
     assert.deepEqual(consoleErrors, []);
   } finally {
