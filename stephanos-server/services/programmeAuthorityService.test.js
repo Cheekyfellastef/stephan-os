@@ -522,6 +522,84 @@ test('production composition admits an active critical mission when the workspac
   });
 });
 
+test('an exact durable release marker is inactive evidence and cannot strand the next critical mission', async () => {
+  await fixture(async ({ root, home, repoRoot }) => {
+    const claimed = await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
+    assert.equal(claimed.ok, true);
+    const interruptedRelease = await releaseSourceMutationLease({
+      ...leaseInput(),
+      nowUtc: NOW,
+    }, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        unlink: async () => {
+          const error = new Error('simulated process loss after exact release publication');
+          error.code = 'EIO';
+          throw error;
+        },
+      },
+    });
+    assert.equal(interruptedRelease.ok, false);
+    assert.equal(interruptedRelease.reason, 'SOURCE_MUTATION_LEASE_RELEASE_FAILED');
+    const releasedRead = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
+    assert.equal(releasedRead.reason, 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT');
+
+    await publishProgrammeControllerHeartbeat({
+      controllerId: 'durable-flywheel-controller',
+      sourceRevision: HEAD,
+      cycleState: 'IDLE',
+      activeLaneId: null,
+      lastSuccessfulReconciliationUtc: NOW,
+      lastPublishedReceiptId: 'released-lease-observed',
+      timestampUtc: NOW,
+      boundedMutationSteps: 0,
+    }, { root, repoRoot });
+    await publishWorkerHeartbeat(home);
+    let githubFetches = 0;
+    const projection = await readAuthoritativeProgrammeProjection({
+      root,
+      home,
+      repoRoot,
+      nowUtc: NOW,
+      env: {},
+      testOnly: true,
+      dependencies: {
+        readWorkspaceFeed: async () => ({
+          state: 'ready',
+          records: { goalRecords: [], statusRecords: [], proofRecords: [] },
+        }),
+        readRepositoryHead: async () => ({
+          ok: true,
+          reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+          branch: 'main',
+          headSha: HEAD,
+        }),
+        listMissionRecords: async () => [{
+          missionId: 'critical-1291-worker-watchdog-repair',
+          repository: REPOSITORY,
+          git: { branch: 'openclaw/critical-1291-worker-watchdog-repair' },
+          currentPhase: 'CREATE_WORKTREE',
+        }],
+        fetchGithubPrEvidence: async () => {
+          githubFetches += 1;
+          throw new Error('a released lease must not retain GitHub lane authority');
+        },
+      },
+    });
+
+    assert.equal(githubFetches, 0);
+    assert.equal(projection.mutationLease, null);
+    assert.equal(projection.lane, null);
+    assert.equal(projection.sourceReads.lease, 'SOURCE_MUTATION_LEASE_RELEASED_INACTIVE');
+    assert.equal(projection.scheduler.selectedGoal, '#1291');
+    assert.equal(projection.scheduler.selectedRoute, 'OPENCLAW_LOCAL');
+    assert.equal(projection.status, 'READY', projection.blockers.join(','));
+    assert.equal(projection.blockers.includes('source:SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'), false);
+  });
+});
+
 test('missing mutation lease cannot be replaced by an execution receipt correlation field', async () => {
   await fixture(async ({ root, home, repoRoot }) => {
     await publishControllerHeartbeat(root, repoRoot);
