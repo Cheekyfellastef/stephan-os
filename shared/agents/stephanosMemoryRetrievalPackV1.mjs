@@ -98,8 +98,8 @@ const AUTHORITY_RANK = new Map([
   [STEPHANOS_MEMORY_AUTHORITY_CLASS.SHARED_AUTHORITY, 0],
   [STEPHANOS_MEMORY_AUTHORITY_CLASS.PENDING_LOCAL_INTENT, 1],
   [STEPHANOS_MEMORY_AUTHORITY_CLASS.LOCAL_MIRROR, 2],
-  [STEPHANOS_MEMORY_AUTHORITY_CLASS.INFERRED, 3],
-  [STEPHANOS_MEMORY_AUTHORITY_CLASS.STALE_EVIDENCE, 4],
+  [STEPHANOS_MEMORY_AUTHORITY_CLASS.STALE_EVIDENCE, 3],
+  [STEPHANOS_MEMORY_AUTHORITY_CLASS.INFERRED, 4],
   [STEPHANOS_MEMORY_AUTHORITY_CLASS.UNKNOWN, 5],
 ]);
 const FRESHNESS_RANK = new Map([
@@ -187,7 +187,7 @@ function denseStringList(value, maximum = MAX_LIST_VALUES) {
   for (let index = 0; index < value.length; index += 1) {
     if (!Object.hasOwn(value, index) || typeof value[index] !== 'string') return null;
     const item = value[index].trim();
-    if (!item || item.length > 240 || !SAFE_TEXT.test(item)) return null;
+    if (!safeString(item, 240)) return null;
     output.push(item);
   }
   return [...new Set(output)];
@@ -499,8 +499,8 @@ export function buildStephanosMemoryRetrievalPackV1(input = {}) {
   }
   eligible.sort(rankRecords);
 
+  const unresolvedContradictions = contradictionLedger(eligible);
   const selectedRecords = [];
-  let actualBytes = 0;
   let truncated = false;
   for (const record of eligible) {
     if (selectedRecords.length >= budget.maxRecords) {
@@ -508,16 +508,16 @@ export function buildStephanosMemoryRetrievalPackV1(input = {}) {
       break;
     }
     const projection = selectedProjection(record, selectionReasons(record, selectors));
-    const candidateBytes = Buffer.byteLength(JSON.stringify(projection), 'utf8');
-    if (actualBytes + candidateBytes > budget.maxBytes) {
+    const prospectiveRecords = [...selectedRecords, projection];
+    const prospectiveBytes = Buffer.byteLength(JSON.stringify(prospectiveRecords), 'utf8');
+    if (prospectiveBytes > budget.maxBytes) {
       truncated = true;
       continue;
     }
     selectedRecords.push(projection);
-    actualBytes += candidateBytes;
   }
+  const actualBytes = Buffer.byteLength(JSON.stringify(selectedRecords), 'utf8');
 
-  const unresolvedContradictions = contradictionLedger(selectedRecords);
   const canonicalPayload = {
     packKind,
     selectors,
