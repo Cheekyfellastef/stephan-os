@@ -130,7 +130,10 @@ async function githubJson(url, auth, options = {}) {
       timeout,
     ]);
     if (!response.ok) { const error = new Error(`GitHub API request failed (${response.status})`); error.status = response.status; throw error; }
-    return response.json();
+    return await Promise.race([
+      Promise.resolve().then(() => response.json()),
+      timeout,
+    ]);
   } finally {
     clearTimeout(timeoutId);
   }
