@@ -14,6 +14,10 @@ const PROBE_SCRIPT = readFileSync(
   new URL('./windows/probe-mission-orchestrator-worker-watchdog.ps1', import.meta.url),
   'utf8',
 );
+const RESTART_SCRIPT = readFileSync(
+  new URL('./windows/restart-approved-stephanos-runtime.ps1', import.meta.url),
+  'utf8',
+);
 
 function healthyInput() {
   const launchIdentityId = '1'.repeat(64);
@@ -310,6 +314,29 @@ test('Windows probe binds repository truth and health to fixed launch-identity e
   assert.doesNotMatch(PROBE_SCRIPT, /trackedStatusAfterRestart|remoteMainHeadAfterRestart|repositoryHeadAfterRestart|repositoryBranchAfterRestart/);
   assert.doesNotMatch(PROBE_SCRIPT, /Stop-ScheduledTask|Stop-Process/);
   assert.doesNotMatch(PROBE_SCRIPT, /Invoke-Expression|Start-Process/);
+});
+
+test('worker restart request lifecycle cannot leave one failed invocation as a permanent fixed-path wedge', () => {
+  assert.match(RESTART_SCRIPT, /function Read-CanonicalMissionWorkerRestartRequest/);
+  assert.match(RESTART_SCRIPT, /function Reclaim-ExpiredMissionWorkerRestartRequest/);
+  assert.match(RESTART_SCRIPT, /function Remove-ExactOwnedMissionWorkerRestartRequest/);
+  assert.match(RESTART_SCRIPT, /MISSION_WORKER_RESTART_REQUEST_INVALID/);
+  assert.match(RESTART_SCRIPT, /MISSION_WORKER_RESTART_REQUEST_ALREADY_PRESENT/);
+  assert.match(RESTART_SCRIPT, /MISSION_WORKER_RESTART_REQUEST_CHANGED_BEFORE_RECLAIM/);
+  assert.match(RESTART_SCRIPT, /MISSION_WORKER_RESTART_REQUEST_RECLAIM_FAILED/);
+  assert.match(RESTART_SCRIPT, /MISSION_WORKER_RESTART_REQUEST_CLEANUP_IDENTITY_CHANGED/);
+  assert.match(RESTART_SCRIPT, /MISSION_WORKER_RESTART_REQUEST_CLEANUP_FAILED/);
+  assert.match(RESTART_SCRIPT, /\$windowSeconds -le 0 -or \$windowSeconds -gt 95/);
+  assert.match(RESTART_SCRIPT, /\[string\]\$recheck\.Raw -ne \[string\]\$observed\.Raw/);
+  assert.match(RESTART_SCRIPT, /\[string\]\$observed\.Record\.invocationId -ne \$ExpectedInvocationId/);
+  assert.match(RESTART_SCRIPT, /\[string\]\$observed\.Record\.headSha -ne \$ExpectedHead/);
+  assert.match(RESTART_SCRIPT, /\$observed\.DeadlineUtc\.Ticks -ne \$ExpectedDeadlineUtc\.ToUniversalTime\(\)\.Ticks/);
+  const reclaim = RESTART_SCRIPT.indexOf('Reclaim-ExpiredMissionWorkerRestartRequest');
+  const write = RESTART_SCRIPT.indexOf('Write-BoundedAtomicJson -Path $script:restartRequestPath', reclaim);
+  const ownership = RESTART_SCRIPT.indexOf('$script:restartRequestWritten = $true', write);
+  assert.ok(reclaim >= 0 && write > reclaim && ownership > write);
+  assert.ok((RESTART_SCRIPT.match(/Remove-ExactOwnedMissionWorkerRestartRequest/g) || []).length >= 3);
+  assert.doesNotMatch(RESTART_SCRIPT, /Remove-Item[^\n]*(?:restart-claim|restart-receipt|restart-confirm|restart-heartbeat)-\*/i);
 });
 
 test('forbidden command surfaces remain absent', () => {
