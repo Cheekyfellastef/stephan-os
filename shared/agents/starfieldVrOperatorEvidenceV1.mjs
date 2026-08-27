@@ -83,6 +83,21 @@ function readEvidenceArray(value) {
   }
 }
 
+function strictUtcTimestamp(value) {
+  if (typeof value !== 'string' || !SAFE_TIMESTAMP.test(value)) return false;
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  const hour = Number(value.slice(11, 13));
+  const minute = Number(value.slice(14, 16));
+  const second = Number(value.slice(17, 19));
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (day < 1 || day > daysInMonth[month - 1]) return false;
+  return !Number.isNaN(Date.parse(value));
+}
+
 function normalizeEvidenceItem(value, expectedClass, exactHeadSha) {
   const record = readPlainRecord(value);
   if (!record) return null;
@@ -96,7 +111,7 @@ function normalizeEvidenceItem(value, expectedClass, exactHeadSha) {
   if (!SAFE_ID.test(record.frontId || '') || !SAFE_ID.test(record.proofId || '')) return null;
   if (record.evidenceClass !== expectedClass || record.verdict !== 'PASS') return null;
   if (record.headSha !== exactHeadSha || !SAFE_SHA.test(record.headSha || '')) return null;
-  if (!SAFE_TIMESTAMP.test(record.observedAt || '') || Number.isNaN(Date.parse(record.observedAt))) return null;
+  if (!strictUtcTimestamp(record.observedAt)) return null;
   const front = FRONT_BY_ID.get(record.frontId);
   if (!front || front.evidenceClass !== expectedClass) return null;
   if (expectedClass === 'runtime' && !SAFE_ID.test(record.runtimeIdentity || '')) return null;
@@ -183,12 +198,72 @@ export function assessStarfieldVrOperatorEvidence(input) {
   return result('EVIDENCE_COMPLETE', null, record.exactHeadSha, source.items, runtime.items, physical.items, missing);
 }
 
-export function buildStarfieldVrOperatorTestPlan(assessment) {
+function expectedFrontCount(evidenceClass) {
+  return STARFIELD_VR_EVIDENCE_FRONTS.filter((front) => front.evidenceClass === evidenceClass).length;
+}
+
+function validatedAssessmentForPlan(assessment) {
   const record = readPlainRecord(assessment);
-  if (!record || record.schema !== STARFIELD_VR_OPERATOR_EVIDENCE_SCHEMA || !Array.isArray(record.missing?.physical)) {
+  if (!record || record.schema !== STARFIELD_VR_OPERATOR_EVIDENCE_SCHEMA || !SAFE_SHA.test(record.exactHeadSha || '')) return null;
+
+  const missing = readPlainRecord(record.missing);
+  const counts = readPlainRecord(record.evidenceCounts);
+  if (!missing || !counts) return null;
+  const missingSource = readEvidenceArray(missing.source);
+  const missingRuntime = readEvidenceArray(missing.runtime);
+  const missingPhysical = readEvidenceArray(missing.physical);
+  if (!missingSource || !missingRuntime || !missingPhysical) return null;
+  if (missingSource.some((id) => typeof id !== 'string')
+    || missingRuntime.some((id) => typeof id !== 'string')
+    || missingPhysical.some((id) => typeof id !== 'string')) return null;
+
+  const countKeys = Object.keys(counts).sort();
+  if (JSON.stringify(countKeys) !== JSON.stringify(['physical', 'runtime', 'source'])) return null;
+  if (![counts.source, counts.runtime, counts.physical].every((count) => Number.isSafeInteger(count) && count >= 0)) return null;
+
+  const sourceCount = expectedFrontCount('source');
+  const runtimeCount = expectedFrontCount('runtime');
+  const physicalCount = expectedFrontCount('physical');
+
+  if (record.status === 'EVIDENCE_COMPLETE') {
+    if (record.blockerClass !== null
+      || missingSource.length !== 0
+      || missingRuntime.length !== 0
+      || missingPhysical.length !== 0
+      || counts.source !== sourceCount
+      || counts.runtime !== runtimeCount
+      || counts.physical !== physicalCount) return null;
+    return { record, missingPhysical, complete: true };
+  }
+
+  const allowedPhysical = new Set(
+    STARFIELD_VR_EVIDENCE_FRONTS
+      .filter((front) => front.evidenceClass === 'physical')
+      .map((front) => front.id),
+  );
+  if (record.status !== 'PHYSICAL_HEADSET_REQUIRED'
+    || record.blockerClass !== 'OPERATOR_PHYSICAL_TEST_REQUIRED'
+    || missingSource.length !== 0
+    || missingRuntime.length !== 0
+    || missingPhysical.length === 0
+    || new Set(missingPhysical).size !== missingPhysical.length
+    || missingPhysical.some((id) => !allowedPhysical.has(id))
+    || counts.source !== sourceCount
+    || counts.runtime !== runtimeCount
+    || counts.physical !== physicalCount - missingPhysical.length) return null;
+
+  return { record, missingPhysical, complete: false };
+}
+
+export function buildStarfieldVrOperatorTestPlan(assessment) {
+  const validated = validatedAssessmentForPlan(assessment);
+  if (!validated) {
     return deepFreezeOwned({ schema: STARFIELD_VR_OPERATOR_EVIDENCE_SCHEMA, status: 'INVALID_ASSESSMENT', steps: [] });
   }
-  const physicalFronts = new Set(record.missing.physical);
+  if (validated.complete) {
+    return deepFreezeOwned({ schema: STARFIELD_VR_OPERATOR_EVIDENCE_SCHEMA, status: 'NO_PHYSICAL_TEST_PENDING', steps: [] });
+  }
+  const physicalFronts = new Set(validated.missingPhysical);
   const steps = STARFIELD_VR_EVIDENCE_FRONTS
     .filter((front) => front.evidenceClass === 'physical' && physicalFronts.has(front.id))
     .map((front) => ({
@@ -197,5 +272,5 @@ export function buildStarfieldVrOperatorTestPlan(assessment) {
       requires: ['explicit operator action', 'Quest 3', 'approved runtime state'],
       authority: 'observation-only',
     }));
-  return deepFreezeOwned({ schema: STARFIELD_VR_OPERATOR_EVIDENCE_SCHEMA, status: steps.length ? 'OPERATOR_TEST_REQUIRED' : 'NO_PHYSICAL_TEST_PENDING', steps });
+  return deepFreezeOwned({ schema: STARFIELD_VR_OPERATOR_EVIDENCE_SCHEMA, status: 'OPERATOR_TEST_REQUIRED', steps });
 }

@@ -81,6 +81,30 @@ test('physical gaps remain explicit operator gates', () => {
   assert.ok(plan.steps.every((step) => step.authority === 'observation-only'));
 });
 
+test('source or runtime gaps never surface Quest operator steps', () => {
+  const sourceGap = buildStarfieldVrOperatorTestPlan(assess({
+    sourceEvidence: [item('source-baseline', 'source')],
+  }));
+  assert.equal(sourceGap.status, 'INVALID_ASSESSMENT');
+  assert.deepEqual(sourceGap.steps, []);
+
+  const runtimeGap = buildStarfieldVrOperatorTestPlan(assess({ runtimeEvidence: [] }));
+  assert.equal(runtimeGap.status, 'INVALID_ASSESSMENT');
+  assert.deepEqual(runtimeGap.steps, []);
+});
+
+test('minimal manufactured physical assessment cannot create Quest operator steps', () => {
+  const plan = buildStarfieldVrOperatorTestPlan({
+    schema: STARFIELD_VR_OPERATOR_EVIDENCE_SCHEMA,
+    status: 'PHYSICAL_HEADSET_REQUIRED',
+    blockerClass: 'OPERATOR_PHYSICAL_TEST_REQUIRED',
+    exactHeadSha: HEAD,
+    missing: { source: [], runtime: [], physical: ['quest3-headset'] },
+  });
+  assert.equal(plan.status, 'INVALID_ASSESSMENT');
+  assert.deepEqual(plan.steps, []);
+});
+
 test('test plan disappears when no physical evidence is pending', () => {
   const plan = buildStarfieldVrOperatorTestPlan(assess());
   assert.equal(plan.status, 'NO_PHYSICAL_TEST_PENDING');
@@ -99,6 +123,20 @@ test('non-PASS evidence does not become proof', () => {
   const bad = runtimeEvidence();
   bad[0].verdict = 'WARN';
   assert.equal(assess({ runtimeEvidence: bad }).status, 'BLOCKED');
+});
+
+test('calendar-invalid evidence timestamps fail closed', () => {
+  const badSource = sourceEvidence();
+  badSource[0].observedAt = '2026-02-31T15:30:00Z';
+  assert.equal(assess({ sourceEvidence: badSource }).status, 'BLOCKED');
+
+  const badRuntime = runtimeEvidence();
+  badRuntime[0].observedAt = '2025-02-29T15:30:00Z';
+  assert.equal(assess({ runtimeEvidence: badRuntime }).status, 'BLOCKED');
+
+  const leapDay = sourceEvidence();
+  leapDay[0].observedAt = '2024-02-29T15:30:00Z';
+  assert.notEqual(assess({ sourceEvidence: leapDay }).status, 'BLOCKED');
 });
 
 test('physical evidence requires Quest 3 and explicit operator receipt identity', () => {
