@@ -154,6 +154,7 @@ test('standalone Goal Dashboard renders stale Shared Workspace evidence without 
   });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calls.length, 1);
+  assert.match(calls[0], /\/api\/shared-workspace\/dashboard-feed$/);
   assert.equal(telemetry.get('source-badge').textContent, 'STALE');
   assert.equal(telemetry.get('source-badge').attrs['data-truth'], 'STALE');
   assert.match(telemetry.get('goal-data-source').textContent, /STALE Shared Agent Workspace feed/);

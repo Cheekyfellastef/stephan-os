@@ -14,12 +14,13 @@ import { SPECIALIZED_NON_DASHBOARD_STATUS_FILES } from './sharedWorkspaceSpecial
 import {
   createAgentCapabilityRecord,
   createSharedWorkspaceProofRecord,
+  createSharedWorkspaceReceiptRecord,
   createSharedWorkspaceStatusRecord,
 } from './sharedAgentWorkspaceStore.mjs';
 
 async function tempWorkspace() {
   const root = await mkdtemp(join(tmpdir(), 'stephanos-dashboard-feed-test-'));
-  await Promise.all(['status', 'proof', 'capabilities'].map((directory) => mkdir(join(root, directory), { recursive: true })));
+  await Promise.all(['status', 'proof', 'capabilities', 'receipts'].map((directory) => mkdir(join(root, directory), { recursive: true })));
   return root;
 }
 
@@ -68,6 +69,56 @@ test('current shared workspace records produce ready feed and refresh operator a
   assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1287').proofTruth, 'UNKNOWN');
   assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1284').capabilityTruth, 'CURRENT');
   assert.equal(feed.operatorAttention.localProofNeeded.includes('#1290'), false);
+});
+
+test('shared receipts are exposed to every dashboard-feed participant', async () => {
+  const root = await tempWorkspace();
+  const now = '2026-07-07T00:00:00.000Z';
+  const receipt = {
+    ...createSharedWorkspaceReceiptRecord({
+      receiptId: 'operator-decision-shared-status',
+      participantId: 'operator',
+      timestampUtc: now,
+      correlationId: 'merge-pr-2034-abcdef12',
+      relatedIssue: '#2034',
+      relatedPr: '#2034',
+      receivedRecordId: 'merge-pr-2034-abcdef12',
+      disposition: 'operator-approved-handoff-only',
+      summary: 'Operator approved the exact shared decision.',
+      proofRefs: ['receipts/operator-decision-shared-status.json'],
+    }),
+    operatorDecisionSchemaVersion: 'stephanos.operator-decision-receipt.v1',
+    decisionId: 'merge-pr-2034-abcdef12',
+    action: 'APPROVE',
+    resultingStatus: 'APPROVED',
+  };
+  await writeJson(root, 'receipts', 'operator-decision-shared-status.json', receipt);
+  await writeJson(root, 'receipts', 'operator-decision-unrouted.pending.json', {
+    ...receipt,
+    receiptId: 'operator-decision-unrouted',
+    decisionId: 'merge-pr-2034-pending123',
+    correlationId: 'merge-pr-2034-pending123',
+    receivedRecordId: 'merge-pr-2034-pending123',
+    routedToStephanos: false,
+  });
+  await writeJson(root, 'receipts', 'unrelated-cycle-receipt.json', createSharedWorkspaceReceiptRecord({
+    receiptId: 'unrelated-cycle-receipt',
+    participantId: 'durable-flywheel-controller',
+    timestampUtc: now,
+    correlationId: 'unrelated-cycle',
+    relatedIssue: '#1497',
+    receivedRecordId: 'unrelated-cycle',
+    disposition: 'ready',
+    summary: 'An unrelated internal receipt is not exposed by the dashboard feed.',
+    proofRefs: ['receipts/unrelated-cycle-receipt.json'],
+  }));
+
+  const feed = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
+  assert.equal(feed.state, DASHBOARD_FEED_STATES.READY);
+  assert.equal(feed.records.receiptRecords.length, 1);
+  assert.equal(feed.records.receiptRecords[0].action, 'APPROVE');
+  assert.equal(feed.records.receiptRecords[0].resultingStatus, 'APPROVED');
+  assert.equal(feed.records.receiptRecords[0].decisionId, 'merge-pr-2034-abcdef12');
 });
 
 test('stale records show stale and exact refresh action', async () => {

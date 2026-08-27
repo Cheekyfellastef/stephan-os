@@ -28,8 +28,8 @@ test('standalone Goal Dashboard shows V4 implemented and blocked browser-proof t
   }
 });
 
-test('Goal Dashboard publishes human-language cards and six real view controls', () => {
-  for (const view of ['overview', 'build-fronts', 'goals', 'proof', 'runtime', 'history']) {
+test('Goal Dashboard publishes human-language cards and seven real view controls', () => {
+  for (const view of ['overview', 'build-fronts', 'goals', 'proof', 'runtime', 'history', 'approvals']) {
     assert.match(html, new RegExp(`role="tab" data-dashboard-view="${view}"`));
     assert.match(html, new RegExp(`data-dashboard-page="${view}"`));
   }
@@ -40,5 +40,10 @@ test('Goal Dashboard publishes human-language cards and six real view controls',
     'Technical details',
     'initializeDashboardNavigation()',
     "window.addEventListener('popstate'",
+    'Decisions that genuinely need you',
+    'Stephanos maintenance',
+    'data-decision-action="APPROVE"',
+    'data-decision-action="DENY"',
+    '/api/operator-approvals/',
   ]) assert.equal(html.includes(phrase), true, `missing dashboard usability contract: ${phrase}`);
 });
