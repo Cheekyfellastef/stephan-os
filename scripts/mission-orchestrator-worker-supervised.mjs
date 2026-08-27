@@ -254,10 +254,6 @@ export async function runSupervisedMissionWorker({
   runTick = runMissionWorkerTick,
   writeHeartbeat = writeMissionWorkerHeartbeat,
   inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity,
-  identityProbeIntervalMs = Math.max(
-    Number.parseInt(env.STEPHANOS_MISSION_WORKER_IDENTITY_PROBE_INTERVAL_MS || '30000', 10) || 30_000,
-    1_000,
-  ),
   sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
   setIntervalFn = setInterval,
   clearIntervalFn = clearInterval,
@@ -274,8 +270,6 @@ export async function runSupervisedMissionWorker({
   let lastRepositoryLogSignature = '';
   let lastTickLogSignature = '';
   let repositoryDriftObserved = false;
-  let cachedRepositoryIdentity = null;
-  let nextIdentityProbeAtMs = 0;
   let consecutiveProgressRechecks = 0;
 
   try {
@@ -293,30 +287,21 @@ export async function runSupervisedMissionWorker({
 
   do {
     const checkedAt = now();
-    const checkedAtMs = Date.parse(checkedAt);
-    const shouldProbeIdentity = cachedRepositoryIdentity === null
-      || !Number.isFinite(checkedAtMs)
-      || checkedAtMs >= nextIdentityProbeAtMs;
-    if (shouldProbeIdentity) {
-      try {
-        cachedRepositoryIdentity = await inspectRepositoryIdentity({ env });
-      } catch {
-        cachedRepositoryIdentity = Object.freeze({
-          valid: false,
-          canonical: false,
-          branch: '',
-          headSha: '',
-          sourceClean: false,
-          worktreeClean: false,
-          runtimeDirtCount: 0,
-          blocker: 'MISSION_WORKER_REPOSITORY_IDENTITY_READ_FAILED',
-        });
-      }
-      nextIdentityProbeAtMs = Number.isFinite(checkedAtMs)
-        ? checkedAtMs + Math.max(Number(identityProbeIntervalMs) || 0, 0)
-        : 0;
+    let identity;
+    try {
+      identity = await inspectRepositoryIdentity({ env });
+    } catch {
+      identity = Object.freeze({
+        valid: false,
+        canonical: false,
+        branch: '',
+        headSha: '',
+        sourceClean: false,
+        worktreeClean: false,
+        runtimeDirtCount: 0,
+        blocker: 'MISSION_WORKER_REPOSITORY_IDENTITY_READ_FAILED',
+      });
     }
-    const identity = cachedRepositoryIdentity;
     const identityValid = ownData(identity, 'valid') === true;
     const identityCanonical = ownData(identity, 'canonical') === true;
     const observedBranch = boundedText(ownData(identity, 'branch'), 120);

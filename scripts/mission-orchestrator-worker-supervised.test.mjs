@@ -389,7 +389,6 @@ test('worker waits safely through branch drift then exits once for canonical rel
     runControllerCycle: async () => { controllerCycles += 1; return { status: 'HOLD', allowWorkerTick: false }; },
     runTick: async () => assert.fail('worker tick must remain held'),
     writeHeartbeat: async (heartbeat) => { heartbeats.push(heartbeat); },
-    identityProbeIntervalMs: 0,
     setIntervalFn: () => 17,
     clearIntervalFn: () => {},
     sleep: async () => {},
@@ -474,7 +473,6 @@ test('a transient unproven identity read does not create a reload loop', async (
     runControllerCycle: async () => { controllerCycles += 1; return { status: 'HOLD', allowWorkerTick: false }; },
     runTick: async () => assert.fail('worker tick must remain held'),
     writeHeartbeat: async () => { heartbeatWrites += 1; },
-    identityProbeIntervalMs: 0,
     setIntervalFn: () => 17,
     clearIntervalFn: () => {},
     sleep: async () => {
@@ -488,11 +486,10 @@ test('a transient unproven identity read does not create a reload loop', async (
   assert.equal(controllerCycles, 1);
 });
 
-test('persistent worker bounds repository identity probes to the configured cadence', async () => {
+test('persistent worker re-probes repository identity before every controller cycle', async () => {
   const head = 'a'.repeat(40);
-  let clockMs = Date.parse('2026-08-26T12:00:00.000Z');
   let identityReads = 0;
-  let sleeps = 0;
+  let controllerCycles = 0;
   await assert.rejects(runSupervisedMissionWorker({
     argv: [],
     env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: head },
@@ -501,22 +498,22 @@ test('persistent worker bounds repository identity probes to the configured cade
     bootstrapMailbox,
     inspectRepositoryIdentity: async () => {
       identityReads += 1;
-      return { valid: true, canonical: true, branch: 'main', headSha: head, sourceClean: true, worktreeClean: true, runtimeDirtCount: 0, blocker: '' };
+      if (identityReads === 1) {
+        return { valid: true, canonical: true, branch: 'main', headSha: head, sourceClean: true, worktreeClean: true, runtimeDirtCount: 0, blocker: '' };
+      }
+      return { valid: true, canonical: false, branch: 'main', headSha: head, sourceClean: false, worktreeClean: false, runtimeDirtCount: 0, blocker: 'MISSION_WORKER_CANONICAL_SOURCE_DIRTY' };
     },
-    identityProbeIntervalMs: 30_000,
-    runControllerCycle: async () => ({ status: 'HOLD', allowWorkerTick: false }),
+    runControllerCycle: async () => { controllerCycles += 1; return { status: 'HOLD', allowWorkerTick: false }; },
     runTick: async () => assert.fail('worker tick must remain held'),
     writeHeartbeat: async () => {},
     setIntervalFn: () => 17,
     clearIntervalFn: () => {},
-    now: () => new Date(clockMs).toISOString(),
     sleep: async () => {
-      sleeps += 1;
-      clockMs += 2_000;
-      if (sleeps >= 16) throw new Error('stop-after-cadence-proof');
+      if (identityReads >= 2) throw new Error('stop-after-fresh-identity-proof');
     },
-  }), /stop-after-cadence-proof/);
+  }), /stop-after-fresh-identity-proof/);
   assert.equal(identityReads, 2);
+  assert.equal(controllerCycles, 1);
 });
 
 test('worker fast-follows proven progress with a bounded burst then restores the steady delay', async () => {
