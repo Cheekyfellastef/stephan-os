@@ -134,6 +134,7 @@ function normalizedList(value, {
   normalize = safeText,
   min = 0,
   max = 32,
+  caseSensitive = false,
 } = {}) {
   if (!Array.isArray(value)) {
     blockers.push(`${field}-must-be-array`);
@@ -152,7 +153,7 @@ function normalizedList(value, {
       blockers.push(`${field}-item-invalid`);
       continue;
     }
-    const key = normalized.toLowerCase();
+    const key = caseSensitive ? normalized : normalized.toLowerCase();
     if (seen.has(key)) {
       blockers.push(`${field}-duplicate`);
       continue;
@@ -204,6 +205,7 @@ function buildValidatedPack(input, blockers) {
     normalize: normalizePath,
     min: 1,
     max: 64,
+    caseSensitive: true,
   });
   const interfacesAndSchemas = normalizedList(input.interfacesAndSchemas ?? [], {
     field: 'interfaces-and-schemas',
@@ -239,6 +241,7 @@ function buildValidatedPack(input, blockers) {
     normalize: normalizePath,
     min: 1,
     max: 64,
+    caseSensitive: true,
   });
   const externalEvidenceRefs = normalizedList(input.externalEvidenceRefs ?? [], {
     field: 'external-evidence-refs',
