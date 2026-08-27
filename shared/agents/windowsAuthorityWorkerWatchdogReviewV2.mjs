@@ -56,6 +56,17 @@ function exactEscalationPaths(analysis = {}) {
   return [...paths].sort();
 }
 
+function exactV2CandidateIdentity(input = {}) {
+  const lineage = input?.lineageEvidence;
+  return text(input.repository) === REPOSITORY
+    && Number(input.prNumber) === PR_NUMBER
+    && text(input.branch) === BRANCH
+    && lineage?.schemaVersion === 'stephanos.windows-authority-reconciliation-lineage.v1'
+    && Array.isArray(lineage.parents)
+    && lineage.parents.length === 2
+    && lineage.parents[0] === WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_ANCHOR_V2;
+}
+
 function exactSource(source, repository, sourceHead, path) {
   if (!source || typeof source !== 'object' || Array.isArray(source)) return false;
   const content = typeof source.content === 'string' ? source.content : '';
@@ -194,7 +205,7 @@ export function reviewCurrentWorkerWatchdogSourceSemanticsV2(path, source) {
 
 export function analyzeWindowsAuthorityWorkerWatchdogReviewV2(input = {}) {
   const paths = exactEscalationPaths(input.analysis);
-  if (paths.length === 0) {
+  if (paths.length === 0 || !exactV2CandidateIdentity(input)) {
     return Object.freeze({
       schemaVersion: SCHEMA,
       eligible: false,
