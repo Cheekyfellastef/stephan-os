@@ -547,7 +547,13 @@ test('production composition exposes exact interrupted terminal release to the e
       nowUtc: NOW,
       env: {},
       testOnly: true,
-      dependencies: projectionDependencies(),
+      dependencies: projectionDependencies(githubMerged(), {
+        readCurrentExecutionReceipt: async () => ({
+          ok: false,
+          receipt: null,
+          reason: 'CURRENT_EXECUTION_RECEIPT_READ_FAILED',
+        }),
+      }),
     });
 
     assert.equal(projection.sourceReads.lease, 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT');
@@ -557,7 +563,8 @@ test('production composition exposes exact interrupted terminal release to the e
     assert.equal(projection.status, 'TERMINAL_RECONCILIATION_REQUIRED', projection.blockers.join(','));
     assert.equal(projection.terminalReconciliationState, 'REQUIRED');
     assert.equal(projection.blockers.includes('source:SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'), false);
-    assert.equal(projection.blockers.some((blocker) => blocker.startsWith('source:EXECUTION_RECEIPT_')), false);
+    assert.equal(projection.sourceReads.executionReceipt, 'CURRENT_EXECUTION_RECEIPT_READ_FAILED');
+    assert.equal(projection.blockers.includes('source:CURRENT_EXECUTION_RECEIPT_READ_FAILED'), false);
   });
 });
 
