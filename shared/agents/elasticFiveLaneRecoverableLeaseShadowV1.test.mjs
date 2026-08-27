@@ -76,6 +76,19 @@ test('multiple active writers for one resource force safe hold', () => {
   assert.deepEqual(result.reasonCodes, ['MULTIPLE_ACTIVE_WRITERS_FOR_RESOURCE']);
 });
 
+test('two active leases for one resource fail even when they claim the same owner', () => {
+  const input = fixture();
+  input.leases[0].resourceId = 'repo:main';
+  input.leases[1] = activeLease(2, {
+    ownerId: input.leases[0].ownerId,
+    resourceId: 'repo:main',
+    processIdentity: 'second-process-for-same-owner',
+  });
+  const result = projectElasticFiveLaneRecoverableLeaseShadowV1(input);
+  assert.equal(result.state, 'SAFE_HOLD');
+  assert.deepEqual(result.reasonCodes, ['MULTIPLE_ACTIVE_WRITERS_FOR_RESOURCE']);
+});
+
 test('forged lease and replayed nonce each fail closed', () => {
   const forged = fixture();
   forged.leases[0].signatureVerified = false;

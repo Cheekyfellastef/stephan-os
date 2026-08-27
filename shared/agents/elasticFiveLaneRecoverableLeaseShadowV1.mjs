@@ -130,11 +130,14 @@ function project(input) {
     if (classification.blocker) return safeHold(leases, [classification.blocker]);
     const resourceId = text(lease.resourceId, 180);
     if (classification.active) {
-      const existing = activeWriterByResource.get(resourceId);
-      if (existing && existing !== text(lease.ownerId, 140)) {
+      if (activeWriterByResource.has(resourceId)) {
         return safeHold(leases, ['MULTIPLE_ACTIVE_WRITERS_FOR_RESOURCE']);
       }
-      activeWriterByResource.set(resourceId, text(lease.ownerId, 140));
+      activeWriterByResource.set(resourceId, Object.freeze({
+        ownerId: text(lease.ownerId, 140),
+        processIdentity: text(lease.processIdentity, 180),
+        leaseId,
+      }));
     }
     projected.push(Object.freeze({
       leaseId,
