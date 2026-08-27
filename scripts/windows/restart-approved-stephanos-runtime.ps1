@@ -35,6 +35,10 @@ $operationDeadlineUtc = [datetime]::MaxValue
 $invocationId = ''
 $invocationBound = $false
 $canonicalWorkerCommandVerified = $false
+$restartRequestPath = ''
+$restartRequestWritten = $false
+$restartRequestCleanupAttempted = $false
+$restartRequestCleanupCompleted = $false
 
 function Stop-WithBlocker {
     param([Parameter(Mandatory = $true)][string]$Code)
@@ -324,6 +328,113 @@ function Test-ExactJsonPropertyEstate {
         if ([string]$actualProperties[$index] -ne [string]$ExpectedProperties[$index]) { return $false }
     }
     return $true
+}
+
+function Read-CanonicalMissionWorkerRestartRequest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ExpectedTaskName,
+        [Parameter(Mandatory = $true)][string]$ExpectedRepoRoot
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    try {
+        $item = Get-Item -LiteralPath $Path -Force
+        if ($item.PSIsContainer `
+            -or $item.LinkType `
+            -or (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) `
+            -or $item.Length -le 0 `
+            -or $item.Length -gt 8192) { return $null }
+        $raw = Get-Content -LiteralPath $Path -Raw
+        if ([Text.Encoding]::UTF8.GetByteCount($raw) -gt 8192) { return $null }
+        $record = $raw | ConvertFrom-Json
+        $expectedProperties = @(
+            'schemaVersion', 'invocationId', 'taskName', 'repositoryRoot', 'headSha', 'requestedAtUtc', 'deadlineUtc'
+        )
+        if (-not (Test-ExactJsonPropertyEstate -Record $record -ExpectedProperties $expectedProperties)) { return $null }
+        if ([string]$record.schemaVersion -ne 'stephanos.mission-worker-restart-request.v1' `
+            -or [string]$record.invocationId -notmatch '^[0-9a-f]{64}$' `
+            -or [string]$record.taskName -ne $ExpectedTaskName `
+            -or [string]$record.repositoryRoot -ne $ExpectedRepoRoot `
+            -or [string]$record.headSha -notmatch '^[0-9a-f]{40}$') { return $null }
+        $requestedAtUtc = [datetime]::MinValue
+        $deadlineUtc = [datetime]::MinValue
+        if (-not [datetime]::TryParse([string]$record.requestedAtUtc, [ref]$requestedAtUtc) `
+            -or -not [datetime]::TryParse([string]$record.deadlineUtc, [ref]$deadlineUtc)) { return $null }
+        $requestedAtUtc = $requestedAtUtc.ToUniversalTime()
+        $deadlineUtc = $deadlineUtc.ToUniversalTime()
+        $windowSeconds = ($deadlineUtc - $requestedAtUtc).TotalSeconds
+        if ($windowSeconds -le 0 -or $windowSeconds -gt 95 `
+            -or $requestedAtUtc -gt [datetime]::UtcNow.AddSeconds(30)) { return $null }
+        return [PSCustomObject]@{
+            Record = $record
+            Raw = $raw
+            RequestedAtUtc = $requestedAtUtc
+            DeadlineUtc = $deadlineUtc
+        }
+    }
+    catch { return $null }
+}
+
+function Reclaim-ExpiredMissionWorkerRestartRequest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ExpectedTaskName,
+        [Parameter(Mandatory = $true)][string]$ExpectedRepoRoot
+    )
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $observed = Read-CanonicalMissionWorkerRestartRequest `
+        -Path $Path `
+        -ExpectedTaskName $ExpectedTaskName `
+        -ExpectedRepoRoot $ExpectedRepoRoot
+    if (-not $observed) { Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_INVALID' }
+    if ($observed.DeadlineUtc -gt [datetime]::UtcNow) {
+        Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_ALREADY_PRESENT'
+    }
+    $recheck = Read-CanonicalMissionWorkerRestartRequest `
+        -Path $Path `
+        -ExpectedTaskName $ExpectedTaskName `
+        -ExpectedRepoRoot $ExpectedRepoRoot
+    if (-not $recheck -or [string]$recheck.Raw -ne [string]$observed.Raw) {
+        Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_CHANGED_BEFORE_RECLAIM'
+    }
+    Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $Path) { Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_RECLAIM_FAILED' }
+}
+
+function Remove-ExactOwnedMissionWorkerRestartRequest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ExpectedInvocationId,
+        [Parameter(Mandatory = $true)][string]$ExpectedTaskName,
+        [Parameter(Mandatory = $true)][string]$ExpectedRepoRoot,
+        [Parameter(Mandatory = $true)][string]$ExpectedHead,
+        [Parameter(Mandatory = $true)][datetime]$ExpectedDeadlineUtc
+    )
+    $script:restartRequestCleanupAttempted = $true
+    if (-not (Test-Path -LiteralPath $Path)) {
+        $script:restartRequestCleanupCompleted = $true
+        return
+    }
+    $observed = Read-CanonicalMissionWorkerRestartRequest `
+        -Path $Path `
+        -ExpectedTaskName $ExpectedTaskName `
+        -ExpectedRepoRoot $ExpectedRepoRoot
+    if (-not $observed `
+        -or [string]$observed.Record.invocationId -ne $ExpectedInvocationId `
+        -or [string]$observed.Record.headSha -ne $ExpectedHead `
+        -or $observed.DeadlineUtc.Ticks -ne $ExpectedDeadlineUtc.ToUniversalTime().Ticks) {
+        Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_CLEANUP_IDENTITY_CHANGED'
+    }
+    $recheck = Read-CanonicalMissionWorkerRestartRequest `
+        -Path $Path `
+        -ExpectedTaskName $ExpectedTaskName `
+        -ExpectedRepoRoot $ExpectedRepoRoot
+    if (-not $recheck -or [string]$recheck.Raw -ne [string]$observed.Raw) {
+        Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_CLEANUP_IDENTITY_CHANGED'
+    }
+    Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $Path) { Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_CLEANUP_FAILED' }
+    $script:restartRequestCleanupCompleted = $true
 }
 
 function Get-VerifiedWorkerProcessFromHeartbeat {
@@ -863,11 +974,12 @@ try {
         $script:invocationId = New-CryptographicInvocationId
         if ($script:invocationId -notmatch '^[0-9a-f]{64}$') { Stop-WithBlocker 'MISSION_WORKER_INVOCATION_ID_GENERATION_FAILED' }
         $statusRoot = Split-Path -Parent $heartbeatPath
-        $restartRequestPath = Join-Path $statusRoot 'mission-orchestrator-worker-restart-request.json'
-        if (Test-Path -LiteralPath $restartRequestPath) {
-            Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_ALREADY_PRESENT'
-        }
-        Write-BoundedAtomicJson -Path $restartRequestPath -Value ([PSCustomObject]@{
+        $script:restartRequestPath = Join-Path $statusRoot 'mission-orchestrator-worker-restart-request.json'
+        Reclaim-ExpiredMissionWorkerRestartRequest `
+            -Path $script:restartRequestPath `
+            -ExpectedTaskName $plan.TaskName `
+            -ExpectedRepoRoot $repoRoot
+        Write-BoundedAtomicJson -Path $script:restartRequestPath -Value ([PSCustomObject]@{
             schemaVersion = 'stephanos.mission-worker-restart-request.v1'
             invocationId = $script:invocationId
             taskName = $plan.TaskName
@@ -876,6 +988,7 @@ try {
             requestedAtUtc = [datetime]::UtcNow.ToString('o')
             deadlineUtc = $script:operationDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
         })
+        $script:restartRequestWritten = $true
 
         $workerTaskStarted = $false
         $startupBlocker = ''
@@ -985,6 +1098,7 @@ try {
         }
 
         if ($startupBlocker) {
+            $cleanupBlocker = ''
             if ($workerTaskStarted) {
                 try {
                     Stop-NewlyStartedOwnedWorker `
@@ -1007,9 +1121,24 @@ try {
                     })) {
                         $cleanupBlocker = 'MISSION_WORKER_DEADLINE_SELF_CLEANUP_NOT_PROVEN'
                     }
-                    Stop-WithBlocker $cleanupBlocker
                 }
             }
+            try {
+                Remove-ExactOwnedMissionWorkerRestartRequest `
+                    -Path $script:restartRequestPath `
+                    -ExpectedInvocationId $script:invocationId `
+                    -ExpectedTaskName $plan.TaskName `
+                    -ExpectedRepoRoot $repoRoot `
+                    -ExpectedHead $ExpectedHead `
+                    -ExpectedDeadlineUtc $script:operationDeadlineUtc
+            }
+            catch {
+                $cleanupBlocker = [string]$_.Exception.Message
+                if ($cleanupBlocker -notmatch '^[A-Z0-9_:-]{3,120}$') {
+                    $cleanupBlocker = 'MISSION_WORKER_RESTART_REQUEST_CLEANUP_FAILED'
+                }
+            }
+            if ($cleanupBlocker) { Stop-WithBlocker $cleanupBlocker }
             Stop-WithBlocker $startupBlocker
         }
 
@@ -1061,6 +1190,23 @@ catch {
     }
     $blocker = [string]$_.Exception.Message
     if ($blocker -notmatch '^[A-Z0-9_:-]{3,120}$') { $blocker = 'APPROVED_RUNTIME_RESTART_FAILED' }
+    if ($Target -eq 'mission-worker' `
+        -and $restartRequestWritten `
+        -and -not [string]::IsNullOrWhiteSpace($restartRequestPath) `
+        -and $invocationId -match '^[0-9a-f]{64}$') {
+        try {
+            Remove-ExactOwnedMissionWorkerRestartRequest `
+                -Path $restartRequestPath `
+                -ExpectedInvocationId $invocationId `
+                -ExpectedTaskName 'Stephanos Mission Orchestrator Worker' `
+                -ExpectedRepoRoot $repoRoot `
+                -ExpectedHead $ExpectedHead `
+                -ExpectedDeadlineUtc $operationDeadlineUtc
+        }
+        catch {
+            $blocker = 'MISSION_WORKER_RESTART_REQUEST_CLEANUP_FAILED'
+        }
+    }
     [PSCustomObject]@{
         schemaVersion = 'stephanos.approved-runtime-restart.v1'
         target = $Target
