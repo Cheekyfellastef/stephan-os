@@ -68,7 +68,16 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     if (['success', 'passed'].includes(conclusion)) status = 'passed';
     if (['failure', 'failed', 'timed_out', 'action_required'].includes(conclusion)) status = 'failed';
     if (conclusion === 'cancelled') status = 'cancelled';
-    return { id: text(run.id, `workflow-${index + 1}`), name: text(run.name, 'unknown'), status, prNumber: Number(run.prNumber || run.pull_requests?.[0]?.number || 0) || null, goalId: text(run.goalId), url: text(run.url || run.html_url), updatedAt: text(run.updatedAt || run.updated_at || run.run_started_at) };
+    return {
+      id: text(run.id, `workflow-${index + 1}`),
+      name: text(run.name, 'unknown'),
+      status,
+      prNumber: Number(run.prNumber || run.pull_requests?.[0]?.number || 0) || null,
+      headSha: text(run.headSha || run.head_sha, ''),
+      goalId: text(run.goalId),
+      url: text(run.url || run.html_url),
+      updatedAt: text(run.updatedAt || run.updated_at || run.run_started_at),
+    };
   });
   const blockers = [];
   if (!available) blockers.push('github_adapter_unavailable');
