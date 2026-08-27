@@ -610,7 +610,13 @@ test('production composition never promotes an open lane from an interrupted rel
       nowUtc: NOW,
       env: {},
       testOnly: true,
-      dependencies: projectionDependencies(githubOpen()),
+      dependencies: projectionDependencies(githubOpen(), {
+        readCurrentExecutionReceipt: async () => ({
+          ok: false,
+          receipt: null,
+          reason: 'CURRENT_EXECUTION_RECEIPT_READ_FAILED',
+        }),
+      }),
     });
 
     assert.equal(projection.lane.valid, true);
@@ -618,6 +624,7 @@ test('production composition never promotes an open lane from an interrupted rel
     assert.equal(projection.lane.terminal, false);
     assert.equal(projection.status, 'HOLD');
     assert.ok(projection.blockers.includes('source:SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'));
+    assert.ok(projection.blockers.includes('source:CURRENT_EXECUTION_RECEIPT_READ_FAILED'));
     assert.equal(projection.terminalReconciliationState, 'NOT_REQUIRED');
   });
 });
