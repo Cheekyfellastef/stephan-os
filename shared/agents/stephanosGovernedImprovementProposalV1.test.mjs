@@ -344,3 +344,64 @@ test('parent and child resource scopes block duplicate writers in either directi
     assert.equal(result.dispatchAllowed, false);
   }
 });
+
+test('trailing separators normalize before resource-scope overlap checks', () => {
+  const cases = [
+    [['shared/agents/'], ['shared/agents']],
+    [['shared/agents'], ['shared/agents/']],
+  ];
+  for (const [writerScopes, proposalScopes] of cases) {
+    const result = planStephanosGovernedImprovementProposalV1(packet({
+      architecture: {
+        activeWriter: {
+          writerId: 'writer-existing-agent',
+          resourceScopes: writerScopes,
+        },
+      },
+      proposal: { resourceScopes: proposalScopes },
+    }));
+    assert.equal(result.status, 'EXISTING_IMPLEMENTATION_OWNER_ACTIVE');
+    assert.equal(result.blocker, 'resource-owned-by:writer-existing-agent');
+  }
+});
+
+test('traversal-shaped resource scopes fail closed', () => {
+  const proposalResult = planStephanosGovernedImprovementProposalV1(packet({
+    proposal: { resourceScopes: ['shared/agents/bar/../foo.mjs'] },
+  }));
+  assert.equal(proposalResult.status, 'SAFE_HOLD');
+  assert.equal(proposalResult.blocker, 'improvement-proposal-incomplete');
+
+  const writerResult = planStephanosGovernedImprovementProposalV1(packet({
+    architecture: {
+      activeWriter: {
+        writerId: 'writer-existing-agent',
+        resourceScopes: ['shared/agents/./foo.mjs'],
+      },
+    },
+  }));
+  assert.equal(writerResult.status, 'SAFE_HOLD');
+  assert.equal(writerResult.blocker, 'active-writer-evidence-invalid');
+});
+
+test('unowned consequential proposals preserve their explicit authority requirement', () => {
+  const cases = [
+    ['EXACT_HEAD_MERGE', 'EXACT_HEAD_MERGE_AUTHORIZATION_REQUIRED'],
+    ['DEPLOYMENT', 'DEPLOYMENT_AUTHORIZATION_REQUIRED'],
+    ['WINDOWS_RUNTIME_MUTATION', 'WINDOWS_RUNTIME_MUTATION_AUTHORIZATION_REQUIRED'],
+    ['OPENCLAW_MUTATION', 'OPENCLAW_MUTATION_AUTHORIZATION_REQUIRED'],
+    ['SPENDING_OR_EXTERNAL_ACCOUNT', 'SPENDING_OR_EXTERNAL_ACCOUNT_AUTHORIZATION_REQUIRED'],
+  ];
+  for (const [changeClass, authorityRequired] of cases) {
+    const result = planStephanosGovernedImprovementProposalV1(packet({
+      architecture: { existingOwner: null },
+      proposal: { changeClass },
+    }));
+    assert.equal(result.status, 'SAFE_HOLD');
+    assert.equal(result.blocker, 'consequential-change-has-no-canonical-owner');
+    assert.equal(result.authorityRequired, authorityRequired);
+    assert.match(result.nextAction, new RegExp(authorityRequired));
+    assert.equal(result.proposalReady, false);
+    assert.equal(result.goalCreationAllowed, false);
+  }
+});
