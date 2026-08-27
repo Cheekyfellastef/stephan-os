@@ -178,6 +178,9 @@ test('served Goal Dashboard visibly distinguishes and renders a stale canonical 
     assert.equal(await page.locator('[data-source-id="live-portfolio"] output').textContent(), 'Needs refreshing');
     assert.match(await page.locator('[data-source-id="live-portfolio"] .plain-language').textContent(), /GitHub is connected.*2 open pull requests/i);
     assert.equal(await page.locator('[data-source-id="live-portfolio"]').getAttribute('data-truth'), 'STALE');
+    const openClawCopy = await page.locator('[data-source-id="openclaw"] .plain-language').textContent();
+    assert.match(openClawCopy, /capacity report needs refreshing.*last listed 2 runnable/i);
+    assert.doesNotMatch(openClawCopy, /can run now/i);
     assert.match(await page.locator('[data-source-id="dispatcher"] .plain-language').textContent(), /2 jobs waiting/i);
     assert.match(await page.locator('[data-source-id="merge-pipeline"] .plain-language').textContent(), /Pull request #2027/i);
     assert.match(await page.locator('#movement-list').textContent(), /Independent review launched/);
