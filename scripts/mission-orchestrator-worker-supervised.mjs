@@ -175,7 +175,7 @@ export function inspectMissionWorkerRepositoryIdentity({
 } = {}) {
   const repositoryRoot = boundedText(env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT, 1024);
   const expectedHeadSha = boundedText(env.STEPHANOS_MISSION_WORKER_HEAD_SHA, 40).toLowerCase();
-  if (!path.isAbsolute(repositoryRoot) || !SHA_40.test(expectedHeadSha)) {
+  if (!path.win32.isAbsolute(repositoryRoot) || !SHA_40.test(expectedHeadSha)) {
     return invalidRepositoryIdentity('MISSION_WORKER_LAUNCH_IDENTITY_INVALID');
   }
 
