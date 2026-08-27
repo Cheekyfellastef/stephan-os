@@ -13,7 +13,7 @@ import { analyzeWindowsAuthoritySpecialistReview } from './windowsAuthoritySpeci
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const PR_NUMBER = 2029;
 const BRANCH = 'codex/mission-worker-log-bounds-current-main-v1';
-const SOURCE_PARENT = '5bd646c62443f3d6c4dc18e391c7cde82d0325dd';
+const SOURCE_PARENT = '2afec067dd7ec0a2497570e77108609c8068c1e8';
 const SOURCE_HEAD = 'fa060c23329c3a589b30f1eb8e2d58e7ebf0af6a';
 const BASE_SHA = '7d39556dc877fb1d8eb1ef289a82ceb8c26b779b';
 const PATH = WINDOWS_AUTHORITY_WORKER_LOG_BOUNDS_PATHS_V1[0];
