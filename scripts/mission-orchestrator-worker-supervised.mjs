@@ -352,22 +352,7 @@ export async function runSupervisedMissionWorker({
     if (identityValid && !identityCanonical) repositoryDriftObserved = true;
     if (!identityCanonical) {
       consecutiveProgressRechecks = 0;
-      let heartbeatWriteFailed = false;
-      try {
-        await writeHeartbeat({
-          env,
-          timestampUtc: checkedAt,
-          lastTickVerdict: 'MISSION_WORKER_RUNNING',
-        });
-      } catch (error) {
-        heartbeatWriteFailed = true;
-        stderr.write(`${JSON.stringify({
-          checkedAt,
-          finalVerdict: 'MISSION_WORKER_HEARTBEAT_WRITE_FAILED',
-          error: error?.message || String(error),
-        })}\n`);
-      }
-      if (once) return heartbeatWriteFailed ? 1 : 0;
+      if (once) return 0;
       await sleep(Math.max(Number.isFinite(intervalMs) ? intervalMs : 2000, 250));
       continue;
     }

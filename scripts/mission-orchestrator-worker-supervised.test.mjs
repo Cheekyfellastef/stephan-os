@@ -396,8 +396,7 @@ test('worker waits safely through branch drift then exits once for canonical rel
   });
   assert.equal(exitCode, MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE);
   assert.equal(controllerCycles, 0);
-  assert.equal(heartbeats.length, 1);
-  assert.equal(heartbeats[0].lastTickVerdict, 'MISSION_WORKER_RUNNING');
+  assert.equal(heartbeats.length, 0);
   assert.match(output.read(), /CANONICAL_REPOSITORY_BRANCH_NOT_MAIN/);
   assert.match(output.read(), /"reloadRequired":true/);
   assert.match(errors.read(), /MISSION_WORKER_CANONICAL_RELOAD_REQUIRED/);
@@ -424,7 +423,7 @@ test('worker exits before controller execution when canonical main advances thro
   assert.match(output.read(), /"runtimeDirtCount":6/);
 });
 
-test('worker does not reload across unpublished source dirt even when main head differs', async () => {
+test('worker neither reloads nor refreshes affirmative heartbeat across unpublished source dirt', async () => {
   let controllerCycles = 0;
   const heartbeats = [];
   const errors = sink();
@@ -452,8 +451,7 @@ test('worker does not reload across unpublished source dirt even when main head 
   });
   assert.equal(exitCode, 0);
   assert.equal(controllerCycles, 0);
-  assert.equal(heartbeats.length, 1);
-  assert.equal(heartbeats[0].lastTickVerdict, 'MISSION_WORKER_RUNNING');
+  assert.equal(heartbeats.length, 0);
   assert.doesNotMatch(errors.read(), /MISSION_WORKER_CANONICAL_RELOAD_REQUIRED/);
 });
 
@@ -461,6 +459,7 @@ test('a transient unproven identity read does not create a reload loop', async (
   const head = 'a'.repeat(40);
   let identityReads = 0;
   let controllerCycles = 0;
+  let heartbeatWrites = 0;
   const exitCode = await runSupervisedMissionWorker({
     argv: [],
     env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: head },
@@ -474,11 +473,14 @@ test('a transient unproven identity read does not create a reload loop', async (
     },
     runControllerCycle: async () => { controllerCycles += 1; return { status: 'HOLD', allowWorkerTick: false }; },
     runTick: async () => assert.fail('worker tick must remain held'),
-    writeHeartbeat: async () => {},
+    writeHeartbeat: async () => { heartbeatWrites += 1; },
     identityProbeIntervalMs: 0,
     setIntervalFn: () => 17,
     clearIntervalFn: () => {},
     sleep: async () => {
+      if (identityReads === 1) {
+        assert.equal(heartbeatWrites, 0, 'unproven repository identity must not refresh affirmative heartbeat truth');
+      }
       if (identityReads >= 2) throw new Error('stop-after-recovery');
     },
   }).catch((error) => error);
