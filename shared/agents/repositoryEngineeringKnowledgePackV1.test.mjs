@@ -84,6 +84,16 @@ test('rejects duplicate, unsafe and absolute relevant paths', () => {
   }
 });
 
+test('preserves case-distinct repository paths and tests', () => {
+  const result = validateRepositoryEngineeringKnowledgePackInputV1(canonicalInput({
+    relevantPaths: ['A/module.mjs', 'a/module.mjs'],
+    requiredTests: ['A/module.test.mjs', 'a/module.test.mjs'],
+  }));
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.pack.relevantPaths, ['A/module.mjs', 'a/module.mjs']);
+  assert.deepEqual(result.pack.requiredTests, ['A/module.test.mjs', 'a/module.test.mjs']);
+});
+
 test('fails closed on missing or ambiguous ownership and malformed exact identity', () => {
   assert.throws(
     () => buildRepositoryEngineeringKnowledgePackV1(canonicalInput({ ownerRefs: [] })),
