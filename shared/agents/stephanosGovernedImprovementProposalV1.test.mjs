@@ -298,3 +298,49 @@ test('accessor-backed array elements fail closed without invoking getters', () =
   assert.equal(result.proposalReady, false);
   assert.equal(invoked, false);
 });
+
+test('authority-bearing proposals are held before unknown-root-cause research routing', () => {
+  const cases = [
+    { attemptsAuthorityWidening: true, changeClass: 'BOUNDED_SOURCE_CHANGE' },
+    { attemptsAuthorityWidening: false, changeClass: 'AUTHORITY_OR_CONSTITUTION_CHANGE' },
+  ];
+  for (const proposal of cases) {
+    const result = planStephanosGovernedImprovementProposalV1(packet({
+      diagnosis: {
+        rootCauseState: 'UNKNOWN',
+        rootCauseSummary: '',
+        researchRoute: 'DIRECT_BOUNDED_RESEARCH',
+        researchRefs: [],
+      },
+      proposal,
+    }));
+    assert.equal(result.status, 'OPERATOR_JUDGMENT_REQUIRED');
+    assert.equal(result.authorityRequired, 'HIGH_RISK_OPERATOR_JUDGMENT_REQUIRED');
+    assert.equal(result.nextAction, 'PRESENT_HIGH_RISK_IMPROVEMENT_FOR_EXPLICIT_OPERATOR_JUDGMENT');
+    assert.equal(result.proposalReady, false);
+    assert.equal(result.dispatchAllowed, false);
+    assert.equal(result.authorityWideningAllowed, false);
+  }
+});
+
+test('parent and child resource scopes block duplicate writers in either direction', () => {
+  const cases = [
+    [['shared/agents'], ['shared/agents/foo.mjs']],
+    [['shared/agents/foo.mjs'], ['shared/agents']],
+  ];
+  for (const [writerScopes, proposalScopes] of cases) {
+    const result = planStephanosGovernedImprovementProposalV1(packet({
+      architecture: {
+        activeWriter: {
+          writerId: 'writer-existing-agent',
+          resourceScopes: writerScopes,
+        },
+      },
+      proposal: { resourceScopes: proposalScopes },
+    }));
+    assert.equal(result.status, 'EXISTING_IMPLEMENTATION_OWNER_ACTIVE');
+    assert.equal(result.blocker, 'resource-owned-by:writer-existing-agent');
+    assert.equal(result.proposalReady, false);
+    assert.equal(result.dispatchAllowed, false);
+  }
+});
