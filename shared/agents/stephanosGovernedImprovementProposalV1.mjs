@@ -106,6 +106,15 @@ function safeRef(value) {
   return SAFE_REF.test(normalized) ? normalized : '';
 }
 
+function safeRepository(value) {
+  if (typeof value !== 'string' || value !== value.trim()) return '';
+  const normalized = text(value, 180);
+  if (!SAFE_REPOSITORY.test(normalized)) return '';
+  const [owner, repository] = normalized.split('/');
+  if (owner === '.' || owner === '..' || repository === '.' || repository === '..') return '';
+  return normalized;
+}
+
 function safeRefs(value, { minimum = 0, maximum = 16 } = {}) {
   if (!Array.isArray(value) || value.length < minimum || value.length > maximum) return null;
   const refs = value.map((item) => safeRef(item));
@@ -224,7 +233,7 @@ export function planStephanosGovernedImprovementProposalV1(input = {}) {
   const gapSummary = text(packet.gap.gapSummary, 1000);
   const operatorOutcome = text(packet.gap.operatorOutcome, 1000);
   const evidenceRefs = safeRefs(packet.gap.evidenceRefs, { minimum: 1, maximum: 16 });
-  const repository = text(packet.architecture.repository, 180);
+  const repository = safeRepository(packet.architecture.repository);
   const snapshotId = safeId(packet.architecture.snapshotId);
   const sourceHead = text(packet.architecture.sourceHead, 40).toLowerCase();
 
@@ -233,7 +242,7 @@ export function planStephanosGovernedImprovementProposalV1(input = {}) {
     || !gapSummary
     || !operatorOutcome
     || !evidenceRefs
-    || !SAFE_REPOSITORY.test(repository)
+    || !repository
     || !snapshotId
     || !FULL_SHA.test(sourceHead)) {
     return blocked(base, 'SAFE_HOLD', 'gap-or-architecture-evidence-invalid', 'REFRESH_CANONICAL_GAP_EVIDENCE');
