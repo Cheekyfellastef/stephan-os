@@ -184,7 +184,7 @@ export function inspectMissionWorkerRepositoryIdentity({
   const dirtRead = runBoundedGitObservation({
     repositoryRoot,
     spawnSyncFn,
-    args: ['status', '--porcelain=v1', '--untracked-files=normal'],
+    args: ['status', '--porcelain=v1', '--untracked-files=all'],
   });
   const identityAfterRead = runBoundedGitObservation({ repositoryRoot, spawnSyncFn, args: identityArgs });
   if (!identityBeforeRead.ok || !dirtRead.ok || !identityAfterRead.ok) {

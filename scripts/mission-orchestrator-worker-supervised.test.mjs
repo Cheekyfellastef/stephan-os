@@ -254,6 +254,11 @@ test('repository identity reader brackets canonical runtime dirt with stable exa
     ' M apps/stephanos/dist/stephanos-build.json',
     ' M stephanos-server/data/memory/durable-memory.json',
     '?? apps/stephanos/dist/assets/index-new.js',
+    '?? memory/.dreams/events.jsonl',
+    '?? memory/.dreams/session-ingestion.json',
+    '?? memory/dreaming/deep/2026-08-27.md',
+    '?? memory/dreaming/light/2026-08-27.md',
+    '?? memory/dreaming/rem/2026-08-27.md',
   ].join('\n');
   const result = inspectMissionWorkerRepositoryIdentity({
     env: {
@@ -274,7 +279,7 @@ test('repository identity reader brackets canonical runtime dirt with stable exa
   assert.equal(result.canonical, true);
   assert.equal(result.sourceClean, true);
   assert.equal(result.worktreeClean, false);
-  assert.equal(result.runtimeDirtCount, 5);
+  assert.equal(result.runtimeDirtCount, 10);
   assert.equal(calls.length, 3);
   for (const call of calls) {
     assert.match(call.executable, /Git\\cmd\\git\.exe$/);
@@ -282,7 +287,7 @@ test('repository identity reader brackets canonical runtime dirt with stable exa
     assert.equal(call.options.maxBuffer, 64 * 1024);
   }
   assert.deepEqual(calls[0].args.slice(2), ['status', '--porcelain=v2', '--branch', '--untracked-files=no']);
-  assert.deepEqual(calls[1].args.slice(2), ['status', '--porcelain=v1', '--untracked-files=normal']);
+  assert.deepEqual(calls[1].args.slice(2), ['status', '--porcelain=v1', '--untracked-files=all']);
   assert.deepEqual(calls[2].args, calls[0].args);
 });
 
