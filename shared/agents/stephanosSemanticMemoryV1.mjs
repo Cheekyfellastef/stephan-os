@@ -30,6 +30,7 @@ const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
 const SAFE_PREDICATE = /^[a-z][a-z0-9._:-]{0,95}$/i;
 const SAFE_REF = /^(?:operator|participant|project|architecture|goal|intent|pr|component|runtime|world|provider|surface|claim|decision|correction|receipt|evidence|workspace|memory):\/\/[a-z0-9][a-z0-9._:/#-]{0,220}$/i;
 const SENSITIVE_TEXT = /\b(?:api[-_ ]?key|password|passwd|secret|bearer|authorization|private[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|cookie|session[-_ ]?cookie|raw prompt|raw response|psychological profile|mental diagnosis|personality disorder)\b/i;
+const GENERIC_TOKEN_CREDENTIAL = /(?:\btoken\b["']?\s*[:=]\s*["']?\S+|\btoken\b\s+(?:credential|secret)\b|\btoken\b\s+[a-z0-9._~+/=-]{16,}\b)/i;
 const LOCAL_PATH = /(?:^|\s)(?:[A-Za-z]:\\|\\\\|\/home\/|\/Users\/|\/etc\/|\.\.\/|\.\.\\)/;
 const CLAIM_KEYS = Object.freeze([
   'schemaVersion',
@@ -121,12 +122,16 @@ function exactTimestamp(value) {
   return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
 }
 
+function containsSensitiveText(value) {
+  return SENSITIVE_TEXT.test(value) || GENERIC_TOKEN_CREDENTIAL.test(value);
+}
+
 function safeText(value, maximum) {
   return typeof value === 'string'
     && value === value.trim()
     && value.length > 0
     && value.length <= maximum
-    && !SENSITIVE_TEXT.test(value)
+    && !containsSensitiveText(value)
     && !LOCAL_PATH.test(value);
 }
 
@@ -134,7 +139,7 @@ function safeRef(value) {
   return typeof value === 'string'
     && SAFE_REF.test(value)
     && !value.includes('..')
-    && !SENSITIVE_TEXT.test(value)
+    && !containsSensitiveText(value)
     && !LOCAL_PATH.test(value);
 }
 
@@ -142,7 +147,7 @@ function safeTag(value) {
   return typeof value === 'string'
     && SAFE_ID.test(value)
     && value.length <= 80
-    && !SENSITIVE_TEXT.test(value);
+    && !containsSensitiveText(value);
 }
 
 function normalizedBoundedNumber(value) {
@@ -189,7 +194,8 @@ function normalizeClaim(value, index) {
   if (claim === INVALID) return { claim: null, errors: [`claim-${index}:invalid-exact-data-shape`] };
 
   if (claim.schemaVersion !== STEPHANOS_SEMANTIC_MEMORY_SCHEMA_VERSION) errors.push('schemaVersion-mismatch');
-  if (!SAFE_ID.test(claim.claimId || '')) errors.push('claimId-invalid');
+  const claimId = typeof claim.claimId === 'string' && SAFE_ID.test(claim.claimId) ? claim.claimId : '';
+  if (!claimId) errors.push('claimId-invalid');
   if (!safeRef(claim.subjectRef)) errors.push('subjectRef-invalid');
   if (typeof claim.predicate !== 'string' || !SAFE_PREDICATE.test(claim.predicate)) errors.push('predicate-invalid');
   if (!safeText(claim.valueSummary, 640)) errors.push('valueSummary-invalid');
@@ -224,7 +230,7 @@ function normalizeClaim(value, index) {
 
   const supersedesClaimId = normalizeOptionalClaimId(claim.supersedesClaimId, 'supersedesClaimId', errors);
   const supersededByClaimId = normalizeOptionalClaimId(claim.supersededByClaimId, 'supersededByClaimId', errors);
-  if (supersedesClaimId === claim.claimId || supersededByClaimId === claim.claimId) errors.push('claim-cannot-supersede-itself');
+  if (supersedesClaimId === claimId || supersededByClaimId === claimId) errors.push('claim-cannot-supersede-itself');
   if (state === 'SUPERSEDED' && !supersededByClaimId) errors.push('superseded-state-requires-supersededByClaimId');
   if (state === 'CURRENT' && supersededByClaimId) errors.push('current-state-cannot-have-supersededByClaimId');
 
@@ -232,11 +238,11 @@ function normalizeClaim(value, index) {
   const proofRefs = safeStringList(claim.proofRefs, 'proofRefs', errors, safeRef);
   if (!sourceRefs.length && !proofRefs.length) errors.push('source-or-proof-ref-required');
   const contradictionClaimIds = safeStringList(claim.contradictionClaimIds, 'contradictionClaimIds', errors, (item) => SAFE_ID.test(item));
-  if (contradictionClaimIds.includes(claim.claimId)) errors.push('claim-cannot-contradict-itself');
+  if (claimId && contradictionClaimIds.includes(claimId)) errors.push('claim-cannot-contradict-itself');
   const tags = safeStringList(claim.tags, 'tags', errors, safeTag);
 
   const normalized = Object.freeze({
-    claimId: claim.claimId,
+    claimId,
     subjectRef: claim.subjectRef,
     predicate: claim.predicate,
     semanticKey: `${claim.subjectRef}|${claim.predicate}`,
