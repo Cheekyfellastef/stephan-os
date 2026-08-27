@@ -31,6 +31,10 @@ import {
   INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES,
   validateIndependentReviewArtifact,
 } from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
+import {
+  mapGitHubIndependentReviewJobV1,
+  mapGitHubIndependentReviewRunV1,
+} from '../shared/agents/exactHeadIndependentReviewRunV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-exact-head-review-dispatch-v1';
@@ -188,45 +192,6 @@ function mapWorkflowRun(run) {
   };
 }
 
-function mapIndependentReviewRun(run) {
-  return {
-    id: run?.id ?? null,
-    run_attempt: Number(run?.run_attempt ?? 0),
-    workflow_id: Number(run?.workflow_id ?? 0),
-    name: text(run?.name),
-    path: text(run?.path),
-    event: text(run?.event),
-    repository: { full_name: text(run?.repository?.full_name) },
-    head_sha: text(run?.head_sha),
-    status: text(run?.status),
-    conclusion: text(run?.conclusion),
-    pull_requests: Array.isArray(run?.pull_requests)
-      ? run.pull_requests.map((pullRequest) => ({
-        number: positiveInteger(pullRequest?.number, 0),
-        head: {
-          sha: text(pullRequest?.head?.sha),
-          ref: text(pullRequest?.head?.ref),
-        },
-        base: {
-          sha: text(pullRequest?.base?.sha),
-          ref: text(pullRequest?.base?.ref),
-        },
-      }))
-      : [],
-  };
-}
-
-function mapIndependentReviewJob(job) {
-  return {
-    id: job?.id ?? null,
-    name: text(job?.name),
-    run_attempt: Number(job?.run_attempt ?? 0),
-    run_url: text(job?.run_url),
-    status: text(job?.status),
-    conclusion: text(job?.conclusion),
-  };
-}
-
 async function unresolvedThreadCount(owner, repo, prNumber, token) {
   const query = `query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved} pageInfo{hasNextPage}}}}}`;
   const payload = await githubRequest('/graphql', {
@@ -317,8 +282,8 @@ async function loadIndependentReviewEvidence({ owner, repo, repository, token, c
         `/repos/${owner}/${repo}/actions/runs/${session.workflowRunId}/attempts/${session.workflowRunAttempt}/jobs`,
         { token, itemKey: 'jobs' },
       );
-      independentReviewRuns.push(mapIndependentReviewRun(rawRun));
-      independentReviewJobsByRunId[String(session.workflowRunId)] = rawJobs.map(mapIndependentReviewJob);
+      independentReviewRuns.push(mapGitHubIndependentReviewRunV1(rawRun));
+      independentReviewJobsByRunId[String(session.workflowRunId)] = rawJobs.map(mapGitHubIndependentReviewJobV1);
     } catch (error) {
       console.warn(`INDEPENDENT_REVIEW_EVIDENCE_UNAVAILABLE=${session.workflowRunId}:${session.workflowRunAttempt}:${error instanceof Error ? error.message : String(error)}`);
     }
@@ -534,6 +499,7 @@ async function main() {
     return;
   }
   const timeoutMinutes = positiveInteger(process.env.STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES, Math.round(DEFAULT_REVIEW_RECEIPT_TIMEOUT_MS / 60000));
+  const deferMissingReceiptEscalation = text(process.env.STEPHANOS_DEFER_MISSING_RECEIPT_ESCALATION).toLowerCase() === 'true';
   const results = [];
   let stalled = false;
   for (const context of contexts.sort((left, right) => left.pr.number - right.pr.number)) {
@@ -591,6 +557,11 @@ async function main() {
         break;
 
       case EXACT_HEAD_REVIEW_DECISION.ESCALATE_MISSING_RECEIPT:
+        if (deferMissingReceiptEscalation) {
+          console.log('EXACT_HEAD_REVIEW_ESCALATION_DEFERRED_FOR_RECOVERY=true');
+          appendOutput('recovery_deferred', 'true');
+          break;
+        }
         commentId = await postPrComment({
           owner,
           repo,
@@ -609,7 +580,12 @@ async function main() {
         break;
 
       case EXACT_HEAD_REVIEW_DECISION.STALLED_MISSING_RECEIPT:
-        stalled = true;
+        if (deferMissingReceiptEscalation) {
+          console.log('EXACT_HEAD_REVIEW_STALL_DEFERRED_FOR_RECOVERY=true');
+          appendOutput('recovery_deferred', 'true');
+        } else {
+          stalled = true;
+        }
         break;
 
       default:

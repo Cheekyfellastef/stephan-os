@@ -761,7 +761,9 @@ test('requires workflow completion timestamps and ignores pre-proof dispatch mar
 
 test('wires the trusted coordinator identity through the runner and trusted workflow', () => {
   const runner = fs.readFileSync(new URL('../../scripts/exact-head-review-dispatch.mjs', import.meta.url), 'utf8');
-  const workflow = fs.readFileSync(new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url), 'utf8');
+  const workflow = fs
+    .readFileSync(new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url), 'utf8')
+    .replace(/\r\n?/g, '\n');
   assert.match(runner, /bounded GitHub token actor is not authorised/);
   assert.match(runner, /selectReviewCoordinatorCredential\(process\.env\)/);
   assert.match(runner, /const laneAuthorityLogin = trustedLaneAuthorityLogin\(owner\)/);
