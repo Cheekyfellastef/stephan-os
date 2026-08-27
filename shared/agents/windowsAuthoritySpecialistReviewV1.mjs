@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const CORE_PATH = './windowsAuthoritySpecialistReviewCoreV1.mjs';
 const NO_FAFF_PATH = './windowsAuthorityNoFaffRescueReviewV2.mjs';
+const TASK_PROOF_COUNT_PATH = './windowsAuthorityBattleBridgeTaskProofCountReviewV1.mjs';
 const MAILBOX_RECOVERY_GUARDIAN_PATH = './windowsAuthorityMailboxRecoveryGuardianReviewV1.mjs';
 const RECOVERY_GUARDIAN_PATH = './windowsAuthorityRecoveryMeshGuardianReviewV1.mjs';
 const RECOVERY_MESH_LAUNCH_LIVENESS_PATH = './windowsAuthorityRecoveryMeshLaunchLivenessReviewV1.mjs';
@@ -21,6 +22,7 @@ const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1
 
 const CORE_BLOB_SHA = '4424046455d8fd7724f1ae8b7c53b7c6529668df';
 const NO_FAFF_BLOB_SHA = 'f6c2a92f4e2ffebb57e197e72ed0279a896c9ffe';
+const TASK_PROOF_COUNT_BLOB_SHA = '8588954d6c474a626049e452655934aea385e209';
 const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '0750137480031f19a364915095c69b7ab6061799';
 const RECOVERY_GUARDIAN_BLOB_SHA = '60228170b62d8313bebece5e9e8655cfc45497a5';
 const RECOVERY_MESH_LAUNCH_LIVENESS_BLOB_SHA = '14aa47756a08f0fdc24e1bf630fad36c557488b2';
@@ -38,6 +40,7 @@ const FORGE_PODMAN_PREREQUISITE_BLOB_SHA = '0a0c98287f20145e31bf8aa3978d0ba4196c
 const IGNITION_CONVERGENCE_BLOB_SHA = '8115a382c5c7b9a0bfe5611d4931fcbd969d1162';
 
 const EXPECTED_NO_FAFF_PATHS = Object.freeze(['scripts/windows/repair-battle-bridge-control-plane-now.ps1','scripts/windows/Repair-Battle-Bridge-Control-Plane-Now.cmd','scripts/windows/repair-battle-bridge-control-plane-now.test.mjs','scripts/windows/status-stephanos-codex-dispatch-plugin.ps1']);
+const EXPECTED_TASK_PROOF_COUNT_PATHS = Object.freeze(['scripts/windows/repair-battle-bridge-control-plane-now.ps1','scripts/windows/repair-battle-bridge-control-plane-now.test.mjs']);
 const EXPECTED_MAILBOX_RECOVERY_GUARDIAN_PATHS = Object.freeze(['scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1']);
 const EXPECTED_RECOVERY_GUARDIAN_PATHS = Object.freeze(['scripts/windows/install-battle-bridge-recovery-mesh.ps1','scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1','scripts/windows/run-stephanos-scheduled-task-windowless.vbs','scripts/windows/uninstall-battle-bridge-recovery-mesh.ps1','scripts/windows/request-battle-bridge-recovery.ps1']);
 const EXPECTED_RECOVERY_MESH_LAUNCH_LIVENESS_PATHS = Object.freeze(['scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1']);
@@ -57,6 +60,7 @@ function gitBlobSha(content) { const bytes = Buffer.from(content, 'utf8'); retur
 function provePinnedModule(path, expectedBlobSha) { const url = new URL(path, import.meta.url); const content = readFileSync(url, 'utf8'); const observedBlobSha = gitBlobSha(content); if (observedBlobSha !== expectedBlobSha) throw new Error(`WINDOWS_AUTHORITY_SPECIALIST_PIN_MISMATCH:${path}:${observedBlobSha}`); return url; }
 const coreUrl = provePinnedModule(CORE_PATH, CORE_BLOB_SHA);
 const noFaffUrl = provePinnedModule(NO_FAFF_PATH, NO_FAFF_BLOB_SHA);
+const taskProofCountUrl = provePinnedModule(TASK_PROOF_COUNT_PATH, TASK_PROOF_COUNT_BLOB_SHA);
 const mailboxRecoveryGuardianUrl = provePinnedModule(MAILBOX_RECOVERY_GUARDIAN_PATH, MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA);
 const recoveryGuardianUrl = provePinnedModule(RECOVERY_GUARDIAN_PATH, RECOVERY_GUARDIAN_BLOB_SHA);
 const recoveryMeshLaunchLivenessUrl = provePinnedModule(RECOVERY_MESH_LAUNCH_LIVENESS_PATH, RECOVERY_MESH_LAUNCH_LIVENESS_BLOB_SHA);
@@ -74,6 +78,7 @@ const forgePodmanPrerequisiteUrl = provePinnedModule(FORGE_PODMAN_PREREQUISITE_P
 const ignitionConvergenceUrl = provePinnedModule(IGNITION_CONVERGENCE_PATH, IGNITION_CONVERGENCE_BLOB_SHA);
 const core = await import(coreUrl.href);
 const noFaff = await import(noFaffUrl.href);
+const taskProofCount = await import(taskProofCountUrl.href);
 const mailboxRecoveryGuardian = await import(mailboxRecoveryGuardianUrl.href);
 const recoveryGuardian = await import(recoveryGuardianUrl.href);
 const recoveryMeshLaunchLiveness = await import(recoveryMeshLaunchLivenessUrl.href);
@@ -91,6 +96,7 @@ const forgePodmanPrerequisite = await import(forgePodmanPrerequisiteUrl.href);
 const ignitionConvergence = await import(ignitionConvergenceUrl.href);
 if (JSON.stringify(workerWatchdog.WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1) !== JSON.stringify(['scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1','scripts/windows/start-mission-orchestrator-worker.ps1'])) throw new Error('WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(noFaff.WINDOWS_AUTHORITY_NO_FAFF_RESCUE_PATHS_V1) !== JSON.stringify(EXPECTED_NO_FAFF_PATHS)) throw new Error('WINDOWS_AUTHORITY_NO_FAFF_PATH_INVENTORY_MISMATCH');
+if (JSON.stringify(taskProofCount.WINDOWS_AUTHORITY_BATTLE_BRIDGE_TASK_PROOF_COUNT_PATHS_V1) !== JSON.stringify(EXPECTED_TASK_PROOF_COUNT_PATHS)) throw new Error('WINDOWS_AUTHORITY_TASK_PROOF_COUNT_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(mailboxRecoveryGuardian.WINDOWS_AUTHORITY_MAILBOX_RECOVERY_GUARDIAN_PATHS_V1) !== JSON.stringify(EXPECTED_MAILBOX_RECOVERY_GUARDIAN_PATHS)) throw new Error('WINDOWS_AUTHORITY_MAILBOX_RECOVERY_GUARDIAN_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(recoveryGuardian.WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1) !== JSON.stringify(EXPECTED_RECOVERY_GUARDIAN_PATHS)) throw new Error('WINDOWS_AUTHORITY_RECOVERY_GUARDIAN_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(recoveryMeshLaunchLiveness.WINDOWS_AUTHORITY_RECOVERY_MESH_LAUNCH_LIVENESS_PATHS_V1) !== JSON.stringify(EXPECTED_RECOVERY_MESH_LAUNCH_LIVENESS_PATHS)) throw new Error('WINDOWS_AUTHORITY_RECOVERY_MESH_LAUNCH_LIVENESS_PATH_INVENTORY_MISMATCH');
@@ -109,6 +115,7 @@ export const WINDOWS_AUTHORITY_SPECIALIST_SCHEMA_VERSION = core.WINDOWS_AUTHORIT
 export const WINDOWS_AUTHORITY_SOURCE_SCHEMA_VERSION = core.WINDOWS_AUTHORITY_SOURCE_SCHEMA_VERSION;
 export const WINDOWS_AUTHORITY_SOURCE_MAX_BYTES = core.WINDOWS_AUTHORITY_SOURCE_MAX_BYTES;
 export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
+  const taskProofCountResult = taskProofCount.analyzeWindowsAuthorityBattleBridgeTaskProofCountReviewV1(input); if (taskProofCountResult.eligible) return taskProofCountResult;
   const lifeboatActivationResult = lifeboatActivation.analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview(input); if (lifeboatActivationResult.eligible) return lifeboatActivationResult;
   const legacyBackendMigrationResult = legacyBackendMigration.analyzeWindowsAuthorityLegacyBackendMigrationReviewV1(input); if (legacyBackendMigrationResult.eligible) return legacyBackendMigrationResult;
   const ignitionConvergenceResult = ignitionConvergence.analyzeWindowsAuthorityIgnitionConvergenceReview(input); if (ignitionConvergenceResult.eligible) return ignitionConvergenceResult;
