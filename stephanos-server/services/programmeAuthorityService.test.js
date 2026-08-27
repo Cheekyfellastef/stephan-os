@@ -140,6 +140,68 @@ async function publishControllerHeartbeat(root, repoRoot) {
   }, { root, repoRoot });
 }
 
+async function publishTerminalControllerHeartbeat(root, repoRoot) {
+  return publishProgrammeControllerHeartbeat({
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: HEAD,
+    cycleState: 'FINALIZING',
+    activeLaneId: LANE_ID,
+    lastSuccessfulReconciliationUtc: '2026-07-30T09:59:00.000Z',
+    lastPublishedReceiptId: 'terminal-projection-1617',
+    timestampUtc: NOW,
+    boundedMutationSteps: 1,
+  }, { root, repoRoot });
+}
+
+function projectionDependencies(github = githubMerged(), overrides = {}) {
+  return {
+    resolveGithubTokenConfig: async () => ({
+      configured: true,
+      token: 'not-published',
+      authority: 'test-only',
+    }),
+    fetchGithubPrEvidence: async () => github,
+    readRepositoryHead: async () => ({
+      ok: true,
+      reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+      branch: 'main',
+      headSha: HEAD,
+    }),
+    listMissionRecords: async () => [],
+    ...overrides,
+  };
+}
+
+async function interruptTerminalRelease(root, repoRoot) {
+  const claimed = await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
+  assert.equal(claimed.ok, true);
+  const interrupted = await finalizeTerminalImplementationLane({
+    ...leaseInput(),
+    nowUtc: NOW,
+  }, {
+    root,
+    repoRoot,
+    testOnly: true,
+    dependencies: {
+      resolveGithubTokenConfig: async () => ({
+        configured: true,
+        token: 'not-published',
+        authority: 'test-only',
+      }),
+      fetchGithubPrEvidence: async () => githubMerged(),
+      unlink: async () => {
+        const error = new Error('simulated crash after durable release publication');
+        error.code = 'EIO';
+        throw error;
+      },
+    },
+  });
+  assert.equal(interrupted.ok, false);
+  assert.equal(interrupted.reason, 'SOURCE_MUTATION_LEASE_RELEASE_FAILED');
+  assert.equal(interrupted.terminalEvidencePublished, true);
+  return { claimed, interrupted };
+}
+
 async function publishExecutionReceipt(root, repoRoot) {
   const record = createExecutionReceipt({
     receiptId: 'execution-1617-1',
@@ -469,6 +531,109 @@ test('production composition reads real Shared Workspace, receipt, heartbeat, sc
     assert.equal(staleProcesses.status, 'HOLD');
     assert.ok(staleProcesses.controllerHeartbeat.errors.includes('controller-source-revision-mismatch'));
     assert.ok(staleProcesses.workerHeartbeat.errors.includes('worker-head-mismatch'));
+  });
+});
+
+test('production composition exposes exact interrupted terminal release to the existing finalizer', async () => {
+  await fixture(async ({ root, home, repoRoot }) => {
+    await interruptTerminalRelease(root, repoRoot);
+    await publishTerminalControllerHeartbeat(root, repoRoot);
+    await publishWorkerHeartbeat(home);
+
+    const projection = await readAuthoritativeProgrammeProjection({
+      root,
+      home,
+      repoRoot,
+      nowUtc: NOW,
+      env: {},
+      testOnly: true,
+      dependencies: projectionDependencies(),
+    });
+
+    assert.equal(projection.sourceReads.lease, 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT');
+    assert.equal(projection.lane.valid, true);
+    assert.equal(projection.lane.terminal, true);
+    assert.equal(projection.lane.active, false);
+    assert.equal(projection.status, 'TERMINAL_RECONCILIATION_REQUIRED', projection.blockers.join(','));
+    assert.equal(projection.terminalReconciliationState, 'REQUIRED');
+    assert.equal(projection.blockers.includes('source:SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'), false);
+    assert.equal(projection.blockers.some((blocker) => blocker.startsWith('source:EXECUTION_RECEIPT_')), false);
+  });
+});
+
+test('production composition rejects a conflicting release marker for a terminal lane', async () => {
+  await fixture(async ({ root, home, repoRoot }) => {
+    const claimed = await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
+    assert.equal(claimed.ok, true);
+    const releaseRecord = createSourceMutationLeaseReleaseRecord(claimed.record, { timestampUtc: NOW });
+    await writeFile(
+      path.join(root, 'status', `${releaseRecord.statusId}.json`),
+      `${JSON.stringify({ ...releaseRecord, headSha: 'c'.repeat(40) }, null, 2)}\n`,
+      'utf8',
+    );
+    await publishTerminalControllerHeartbeat(root, repoRoot);
+    await publishWorkerHeartbeat(home);
+
+    const projection = await readAuthoritativeProgrammeProjection({
+      root,
+      home,
+      repoRoot,
+      nowUtc: NOW,
+      env: {},
+      testOnly: true,
+      dependencies: projectionDependencies(),
+    });
+
+    assert.equal(projection.status, 'HOLD');
+    assert.ok(projection.blockers.includes('source:SOURCE_MUTATION_LEASE_RELEASE_RECORD_CONFLICT'));
+    assert.equal(projection.terminalReconciliationState, 'REQUIRED');
+  });
+});
+
+test('production composition never promotes an open lane from an interrupted release marker', async () => {
+  await fixture(async ({ root, home, repoRoot }) => {
+    await interruptTerminalRelease(root, repoRoot);
+    await publishControllerHeartbeat(root, repoRoot);
+    await publishWorkerHeartbeat(home);
+
+    const projection = await readAuthoritativeProgrammeProjection({
+      root,
+      home,
+      repoRoot,
+      nowUtc: NOW,
+      env: {},
+      testOnly: true,
+      dependencies: projectionDependencies(githubOpen()),
+    });
+
+    assert.equal(projection.lane.valid, true);
+    assert.equal(projection.lane.active, true);
+    assert.equal(projection.lane.terminal, false);
+    assert.equal(projection.status, 'HOLD');
+    assert.ok(projection.blockers.includes('source:SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'));
+    assert.equal(projection.terminalReconciliationState, 'NOT_REQUIRED');
+  });
+});
+
+test('production composition preserves unrelated blockers during interrupted terminal release', async () => {
+  await fixture(async ({ root, home, repoRoot }) => {
+    await interruptTerminalRelease(root, repoRoot);
+    await publishTerminalControllerHeartbeat(root, repoRoot);
+
+    const projection = await readAuthoritativeProgrammeProjection({
+      root,
+      home,
+      repoRoot,
+      nowUtc: NOW,
+      env: {},
+      testOnly: true,
+      dependencies: projectionDependencies(),
+    });
+
+    assert.equal(projection.lane.terminal, true);
+    assert.equal(projection.status, 'HOLD');
+    assert.ok(projection.blockers.includes('source:mission-worker-heartbeat-unavailable'));
+    assert.equal(projection.blockers.includes('source:SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'), false);
   });
 });
 

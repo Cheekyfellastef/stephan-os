@@ -1188,15 +1188,25 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     sourceHead,
     generatedAtUtc: nowUtc,
   });
+  const interruptedTerminalLeaseRelease = Boolean(
+    leaseRead.ok === false
+    && leaseRead.present === true
+    && leaseRead.reason === 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'
+    && lane?.valid === true
+    && lane?.terminal === true
+    && lane?.active !== true
+  );
   const sourceBlockers = [
-    ...(!leaseRead.ok ? [`source:${leaseRead.reason}`] : []),
+    ...(!leaseRead.ok && !interruptedTerminalLeaseRelease ? [`source:${leaseRead.reason}`] : []),
     ...(!controllerHeartbeatRead.ok ? [`source:${controllerHeartbeatRead.reason}`] : []),
     ...(!workerHeartbeatRead.ok ? ['source:mission-worker-heartbeat-unavailable'] : []),
     ...(!repositoryHeadValid ? [`source:${repositoryHeadRead.reason || 'CANONICAL_REPOSITORY_HEAD_INVALID'}`] : []),
     ...(!schedulerGoals.valid ? schedulerGoals.blockers.map((blocker) => `source:${blocker}`) : []),
     ...(selector.requested && !selector.complete ? ['source:lane-selector-incomplete-or-invalid'] : []),
     ...(githubIdentity && github?.status !== 'fetched' ? ['source:github-pr-evidence-unavailable'] : []),
-    ...(lease && executionRead?.ok === false ? [`source:${executionRead.reason}`] : []),
+    ...(lease && executionRead?.ok === false && !interruptedTerminalLeaseRelease
+      ? [`source:${executionRead.reason}`]
+      : []),
   ];
   const projection = buildAuthoritativeProgrammeProjection({
     nowUtc,
