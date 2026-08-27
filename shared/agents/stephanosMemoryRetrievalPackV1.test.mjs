@@ -76,6 +76,16 @@ test('unsafe proof refs fail closed rather than leaking path data', () => {
   assert.ok(result.validationErrors.includes('record-1:unsafe-proof-ref'));
 });
 
+test('relationship refs and dense list fields reject sensitive or local-path material', () => {
+  const localPath = build([record({ relationshipRefs: ['C:\\Users\\operator\\private.txt'] })]);
+  assert.equal(localPath.valid, false);
+  assert.ok(localPath.validationErrors.includes('record-1:relationshipRefs-invalid'));
+
+  const credential = build([record({ relationshipRefs: ['access token secret'] })]);
+  assert.equal(credential.valid, false);
+  assert.ok(credential.validationErrors.includes('record-1:relationshipRefs-invalid'));
+});
+
 test('unsupported raw fields are omitted and provider-specific input does not enter output', () => {
   const input = record();
   input.rawPayload = { provider: 'some-provider', token: 'should-not-be-read' };
@@ -110,6 +120,21 @@ test('fresh higher-authority current evidence sorts before stale local evidence'
   assert.deepEqual(result.selectedRecordIds, ['record-fresh', 'record-stale']);
 });
 
+test('stale evidence outranks inference in the canonical memory authority order', () => {
+  const stale = record({
+    recordId: 'record-stale-authority',
+    authorityClass: 'STALE_EVIDENCE',
+    freshness: 'FRESH',
+  });
+  const inferred = record({
+    recordId: 'record-inferred-authority',
+    authorityClass: 'INFERRED',
+    freshness: 'FRESH',
+  });
+  const result = build([inferred, stale]);
+  assert.deepEqual(result.selectedRecordIds, ['record-stale-authority', 'record-inferred-authority']);
+});
+
 test('superseded evidence is excluded by default and can be included only as historical', () => {
   const historical = record({ recordId: 'record-old', currentState: 'SUPERSEDED' });
   assert.deepEqual(build([historical]).selectedRecordIds, []);
@@ -126,6 +151,16 @@ test('contradictory current records remain explicit', () => {
   assert.deepEqual(result.unresolvedContradictions, ['record-a', 'record-b']);
 });
 
+test('contradictions are detected before record-count truncation can hide them', () => {
+  const first = record({ recordId: 'record-a', summary: 'Current state is A.' });
+  const second = record({ recordId: 'record-b', summary: 'Current state is B.' });
+  const result = build([first, second], { budget: { maxRecords: 1, maxBytes: 32768 } });
+  assert.equal(result.budget.truncated, true);
+  assert.deepEqual(result.selectedRecordIds, ['record-a']);
+  assert.equal(result.verdict, 'CONFLICTING_EVIDENCE');
+  assert.deepEqual(result.unresolvedContradictions, ['record-a', 'record-b']);
+});
+
 test('record-count budget truncates deterministically', () => {
   const result = build([
     record({ recordId: 'record-a' }),
@@ -136,6 +171,15 @@ test('record-count budget truncates deterministically', () => {
   assert.equal(result.budget.truncated, true);
   assert.equal(result.budget.actualRecords, 2);
   assert.deepEqual(result.selectedRecordIds, ['record-a', 'record-b']);
+});
+
+test('byte budget reports the exact serialized selected-record array size', () => {
+  const result = build([record({ recordId: 'record-a' }), record({ recordId: 'record-b' })]);
+  assert.equal(result.budget.actualBytes, Buffer.byteLength(JSON.stringify(result.selectedRecords), 'utf8'));
+  assert.ok(result.budget.actualBytes <= result.budget.maxBytes);
+
+  const empty = build([], { budget: { maxRecords: 24, maxBytes: 32768 } });
+  assert.equal(empty.budget.actualBytes, Buffer.byteLength('[]', 'utf8'));
 });
 
 test('operator relationship pack rejects psychological inference while retaining explicit teaching', () => {
