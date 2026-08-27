@@ -927,6 +927,49 @@ test('successor profile applies execution and filesystem authority review to the
   }
 });
 
+test('property enumeration cannot recover caller-supplied execution authority', () => {
+  for (const hostileSource of [
+    "export function widened(input) { Object.values(input)[0]('cmd.exe'); }",
+    "export function widened(input) { Object.entries(input)[0][1]('cmd.exe'); }",
+    "export function widened(input) { Object.getOwnPropertyDescriptors(input).only.value('cmd.exe'); }",
+    "export function widened(input) { const enumerate = Object['val' + 'ues']; enumerate(input)[0]('cmd.exe'); }",
+    "export function widened(input) { const { values: enumerate } = Object; enumerate(input)[0]('cmd.exe'); }",
+  ]) {
+    const result = analyzeProviderPoolInjection(hostileSource);
+    assert.equal(result.clean, false, hostileSource);
+    assert.ok(result.findings.some((item) => (
+      item.code === 'openclaw-provider-pool-local-execution-authority-forbidden'
+    )));
+  }
+
+  const keysOnly = analyzeProviderPoolInjection(
+    'export function listKeys(input) { return Object.keys(input); }',
+  );
+  assert.equal(keysOnly.clean, true, JSON.stringify(keysOnly.findings));
+});
+
+test('required adversarial callbacks cannot be skipped or marked todo', () => {
+  for (const option of ['skip', 'todo']) {
+    const hostileSources = sources();
+    const content = hostileSources[1].content.replaceAll(
+      "', () => {",
+      `', { ${option}: true }, () => {`,
+    );
+    assert.notEqual(content, hostileSources[1].content);
+    hostileSources[1] = {
+      ...hostileSources[1],
+      size: Buffer.byteLength(content, 'utf8'),
+      blobSha: blobSha(content),
+      content,
+    };
+    const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
+    assert.equal(result.clean, false, option);
+    assert.ok(result.findings.some((item) => (
+      item.code === 'openclaw-provider-pool-authority-chain-positive-test-missing'
+    )), option);
+  }
+});
+
 test('named adversarial tests require their executable assertions inside the corresponding callback', () => {
   const hostileSources = sources();
   const content = hostileSources[1].content.replace(

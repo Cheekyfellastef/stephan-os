@@ -189,6 +189,11 @@ const JAVASCRIPT_MULTI_PUNCTUATORS = Object.freeze([
 ]);
 const REGEX_DISALLOWED_AFTER_PUNCTUATORS = new Set([')', ']', '}', '++', '--']);
 const FORBIDDEN_GLOBAL_CAPABILITIES = new Set(['EventSource', 'WebSocket', 'fetch']);
+const ENUMERATED_VALUE_AUTHORITY_METHODS = new Set([
+  'entries',
+  'getOwnPropertyDescriptors',
+  'values',
+]);
 const CALLBACK_PREFIX_CONTROL_FLOW = new Set([
   'break',
   'continue',
@@ -514,28 +519,29 @@ function isComputedPropertyAccess(tokens, closeIndex) {
 }
 
 function callArgumentRange(tokens, openIndex, requestedIndex) {
+  const closeIndex = matchingPunctuator(tokens, openIndex, '(', ')');
+  if (closeIndex < 0) return null;
   let argumentIndex = 0;
   let start = openIndex + 1;
   const depth = { round: 0, square: 0, curly: 0 };
-  for (let index = start; index < tokens.length; index += 1) {
+  for (let index = start; index <= closeIndex; index += 1) {
     const token = tokens[index];
-    if (token?.type === 'punctuator') {
-      if (token.value === '(') depth.round += 1;
-      else if (token.value === ')' && depth.round > 0) depth.round -= 1;
-      else if (token.value === '[') depth.square += 1;
-      else if (token.value === ']') depth.square -= 1;
-      else if (token.value === '{') depth.curly += 1;
-      else if (token.value === '}') depth.curly -= 1;
-      const atArgumentBoundary = depth.round === 0 && depth.square === 0 && depth.curly === 0;
-      if (atArgumentBoundary && (token.value === ',' || token.value === ')')) {
-        if (argumentIndex === requestedIndex) {
-          return index === start ? null : Object.freeze({ start, end: index });
-        }
-        if (token.value === ')') return null;
-        argumentIndex += 1;
-        start = index + 1;
+    if (token?.type !== 'punctuator') continue;
+    const atArgumentBoundary = depth.round === 0 && depth.square === 0 && depth.curly === 0;
+    if (atArgumentBoundary && (token.value === ',' || index === closeIndex)) {
+      if (argumentIndex === requestedIndex) {
+        return index === start ? null : Object.freeze({ start, end: index });
       }
+      if (index === closeIndex) return null;
+      argumentIndex += 1;
+      start = index + 1;
     }
+    if (token.value === '(') depth.round += 1;
+    else if (token.value === ')') depth.round -= 1;
+    else if (token.value === '[') depth.square += 1;
+    else if (token.value === ']') depth.square -= 1;
+    else if (token.value === '{') depth.curly += 1;
+    else if (token.value === '}') depth.curly -= 1;
   }
   return null;
 }
@@ -595,7 +601,9 @@ function reflectiveMethodReferenceEnd(tokens, start, depth = 0) {
 
 function callArgumentRanges(tokens, openIndex) {
   const ranges = [];
-  for (let index = 0; index < 32; index += 1) {
+  const closeIndex = matchingPunctuator(tokens, openIndex, '(', ')');
+  if (closeIndex < 0) return Object.freeze(ranges);
+  for (let index = 0; index < closeIndex - openIndex; index += 1) {
     const range = callArgumentRange(tokens, openIndex, index);
     if (!range) break;
     ranges.push(range);
@@ -1851,6 +1859,83 @@ function computedAuthorityStrings(tokens) {
   ))));
 }
 
+function expressionProvesFixedObjectMember(tokens, start, end, member) {
+  const expression = stripTransparentRange(tokens, start, end);
+  if (expression.end === expression.start + 1 && tokens[expression.start]?.type === 'identifier') {
+    return objectLiteralDefinesMember(tokens, tokens[expression.start].value, member, expression.start);
+  }
+  const property = objectLiteralPropertyPossibility(tokens, expression, member);
+  return property.entries.length > 0
+    && property.mayBeAbsent === false
+    && property.mayBeReflectiveMethod === false
+    && property.mayBeReflectiveReceiver === false
+    && property.entries.every((entry) => entry.mayBeUndefined === false);
+}
+
+function enumerationCanRecoverUnprovenAuthority(tokens) {
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token?.type === 'identifier'
+      && ENUMERATED_VALUE_AUTHORITY_METHODS.has(token.value)
+      && tokens[index - 1]?.type === 'punctuator'
+      && new Set(['.', '?.']).has(tokens[index - 1].value)) {
+      const receiverIndex = index - 2;
+      if (!expressionProvesFixedObjectMember(tokens, receiverIndex, receiverIndex + 1, token.value)) return true;
+    }
+
+    if (token?.type !== 'punctuator' || token.value !== '[' || !isComputedMemberAccess(tokens, index)) continue;
+    const closeIndex = matchingPunctuator(tokens, index, '[', ']');
+    if (closeIndex < 0) return true;
+    const pattern = parseComputedAuthorityPattern(tokens, index + 1, closeIndex);
+    if (pattern) {
+      for (const method of ENUMERATED_VALUE_AUTHORITY_METHODS) {
+        if (!authorityPatternCanResolve(pattern, method)) continue;
+        const receiverIndex = tokens[index - 1]?.type === 'punctuator'
+          && tokens[index - 1].value === '?.'
+          ? index - 2
+          : index - 1;
+        if (!expressionProvesFixedObjectMember(tokens, receiverIndex, receiverIndex + 1, method)) return true;
+      }
+    }
+    index = closeIndex;
+  }
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (tokens[index]?.type !== 'punctuator' || tokens[index].value !== '{') continue;
+    const closeIndex = matchingPunctuator(tokens, index, '{', '}');
+    if (closeIndex < 0) return true;
+    if (tokens[closeIndex + 1]?.type !== 'punctuator' || tokens[closeIndex + 1].value !== '=') {
+      continue;
+    }
+    const pattern = Object.freeze({ start: index, end: closeIndex + 1 });
+    const selectedMethods = new Set();
+    for (const entry of objectEntryRanges(tokens, pattern)) {
+      if (tokens[entry.start]?.type === 'punctuator' && tokens[entry.start].value === '[') {
+        const keyClose = matchingPunctuator(tokens, entry.start, '[', ']');
+        if (keyClose < 0 || keyClose >= entry.end) return true;
+        const keyPattern = parseComputedAuthorityPattern(tokens, entry.start + 1, keyClose);
+        if (keyPattern) {
+          for (const method of ENUMERATED_VALUE_AUTHORITY_METHODS) {
+            if (authorityPatternCanResolve(keyPattern, method)) selectedMethods.add(method);
+          }
+        }
+        continue;
+      }
+      const colon = topLevelColon(tokens, entry.start, entry.end);
+      const key = fixedObjectKey(tokens, entry.start, colon >= 0 ? colon : entry.start + 1);
+      if (key !== null && ENUMERATED_VALUE_AUTHORITY_METHODS.has(key)) selectedMethods.add(key);
+    }
+    if (selectedMethods.size === 0) continue;
+    const rhsStart = closeIndex + 2;
+    const rhsEnd = assignmentExpressionEnd(tokens, rhsStart);
+    if (rhsEnd < 0 || [...selectedMethods].some((method) => (
+      !expressionProvesFixedObjectMember(tokens, rhsStart, rhsEnd, method)
+    ))) return true;
+    index = closeIndex;
+  }
+  return false;
+}
+
 function sameToken(left, right) {
   return left?.type === right?.type && left?.value === right?.value;
 }
@@ -2220,12 +2305,24 @@ function namedTestBodyTokens(tokens, testName) {
     if (tokens[index + 2]?.type !== 'string' || tokens[index + 2].value !== testName) continue;
     const callClose = matchingPunctuator(tokens, index + 1, '(', ')');
     if (callClose < 0) continue;
-    let arrow = index + 3;
-    while (arrow < callClose && !(tokens[arrow]?.type === 'punctuator' && tokens[arrow].value === '=>')) arrow += 1;
-    if (arrow >= callClose) continue;
+    const arguments_ = callArgumentRanges(tokens, index + 1);
+    if (arguments_.length !== 2
+      || arguments_[0].start !== index + 2
+      || arguments_[0].end !== index + 3) continue;
+    const callback = stripTransparentRange(tokens, arguments_[1].start, arguments_[1].end);
+    let cursor = callback.start;
+    if (tokens[cursor]?.type === 'identifier' && tokens[cursor].value === 'async') cursor += 1;
+    if (tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === '(') {
+      const parametersClose = matchingPunctuator(tokens, cursor, '(', ')');
+      if (parametersClose < 0 || parametersClose >= callback.end) continue;
+      cursor = parametersClose + 1;
+    } else if (tokens[cursor]?.type === 'identifier') cursor += 1;
+    else continue;
+    const arrow = cursor;
+    if (tokens[arrow]?.type !== 'punctuator' || tokens[arrow].value !== '=>') continue;
     const bodyOpen = arrow + 1;
     const bodyClose = matchingPunctuator(tokens, bodyOpen, '{', '}');
-    if (bodyClose < 0 || bodyClose > callClose) continue;
+    if (bodyClose < 0 || bodyClose !== callback.end - 1) continue;
     bodies.push(Object.freeze(tokens.slice(bodyOpen + 1, bodyClose)));
   }
   return bodies.length === 1 ? bodies[0] : Object.freeze([]);
@@ -2601,6 +2698,7 @@ function reviewLocalModuleAuthority(source, path, findings, importPolicy) {
   const authorityStrings = computedAuthorityStrings(lexical.tokens);
   const forbiddenModule = authorityStrings.some((value) => FORBIDDEN_LOCAL_MODULES.has(value));
   const forbiddenComputedGlobal = authorityStrings.some((value) => FORBIDDEN_GLOBAL_CAPABILITIES.has(value));
+  const unprovenEnumeratedAuthority = enumerationCanRecoverUnprovenAuthority(lexical.tokens);
   const dangerousToken = lexical.tokens.some((token) => (
     token.type === 'identifier'
     && DANGEROUS_AUTHORITY_TOKENS.has(token.value)
@@ -2627,6 +2725,7 @@ function reviewLocalModuleAuthority(source, path, findings, importPolicy) {
   });
   if (forbiddenModule
     || forbiddenComputedGlobal
+    || unprovenEnumeratedAuthority
     || dangerousToken
     || forbiddenGlobalReference
     || imports.dynamicLoader
