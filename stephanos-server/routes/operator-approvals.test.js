@@ -82,7 +82,9 @@ test('approval API is closed-world and records a bounded handoff without executi
   });
   const accepted = await acceptedResponse.json();
   assert.equal(acceptedResponse.status, 200);
-  assert.equal(accepted.routedToCodex, true);
+  assert.equal(accepted.routedToCodex, false);
+  assert.equal(accepted.routedToStephanos, true);
+  assert.equal(accepted.codexMeterRequired, false);
   assert.equal(accepted.actionExecuted, false);
   assert.equal(accepted.protectedActionAuthorityGranted, false);
   assert.equal(accepted.protectedFollowUpRequired, true);

@@ -87,13 +87,13 @@ test('approval tab renders genuine decisions separately and sends approve and de
         decisionId: projectionDecisions[0].decisionId,
         decisionKind: 'MERGE_APPROVAL',
         title: 'Protected merge #2032',
-        question: 'Should Codex continue the protected merge process for #2032 at version dddddddd?',
+        question: 'Should Stephanos continue the protected merge process for #2032 at version dddddddd?',
         summary: projectionDecisions[0].summary,
         relatedPr: '#2032', expectedHeadSha: HEAD, expectedVersion: 'dddddddd', riskLevel: 'HIGH',
         status: recorded.get(projectionDecisions[0].decisionId)?.status || 'WAITING_FOR_OPERATOR_APPROVAL',
         pending: !recorded.has(projectionDecisions[0].decisionId),
         actionable: !recorded.has(projectionDecisions[0].decisionId),
-        approveEffect: 'Records your decision for Codex. The protected gate is still required.',
+        approveEffect: 'Records your decision for Stephanos. The protected gate is still required.',
         denyEffect: 'Records do not continue.', protectedFollowUpRequired: true, requestFingerprint: 'a'.repeat(64),
         receipt: recorded.get(projectionDecisions[0].decisionId)?.receipt || null,
       },
@@ -101,13 +101,13 @@ test('approval tab renders genuine decisions separately and sends approve and de
         decisionId: projectionDecisions[1].decisionId,
         decisionKind: 'SERVICE_RESTART_APPROVAL',
         title: 'Restart a Stephanos service',
-        question: 'Should Codex continue with this service restart request?',
+        question: 'Should Stephanos continue with this service restart request?',
         summary: projectionDecisions[1].summary,
         relatedGoal: '#1281', expectedVersion: '', riskLevel: 'CONSEQUENTIAL',
         status: recorded.get(projectionDecisions[1].decisionId)?.status || 'WAITING_FOR_OPERATOR_APPROVAL',
         pending: !recorded.has(projectionDecisions[1].decisionId),
         actionable: !recorded.has(projectionDecisions[1].decisionId),
-        approveEffect: 'Records your decision and sends a bounded handoff to Codex.',
+        approveEffect: 'Records your decision and sends a bounded handoff to Stephanos.',
         denyEffect: 'Records do not continue.', protectedFollowUpRequired: false, requestFingerprint: 'b'.repeat(64),
         receipt: recorded.get(projectionDecisions[1].decisionId)?.receipt || null,
       },
@@ -139,9 +139,9 @@ test('approval tab renders genuine decisions separately and sends approve and de
       const decisionId = decodeURIComponent(match[1]);
       posts.push({ decisionId, payload });
       const status = payload.action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
-      recorded.set(decisionId, { status, receipt: { receiptId: `receipt-${decisionId}`, action: payload.action, timestampUtc: '2026-08-27T10:00:00.000Z', routedToCodex: true } });
+      recorded.set(decisionId, { status, receipt: { receiptId: `receipt-${decisionId}`, action: payload.action, timestampUtc: '2026-08-27T10:00:00.000Z', routedToCodex: false, routedToStephanos: true, codexMeterRequired: false } });
       response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-      response.end(JSON.stringify({ ok: true, decisionId, action: payload.action, resultingStatus: status, routedToCodex: true, actionExecuted: false, protectedActionAuthorityGranted: false, protectedFollowUpRequired: decisionId.startsWith('merge-pr-') }));
+      response.end(JSON.stringify({ ok: true, decisionId, action: payload.action, resultingStatus: status, routedToCodex: false, routedToStephanos: true, codexMeterRequired: false, actionExecuted: false, protectedActionAuthorityGranted: false, protectedFollowUpRequired: decisionId.startsWith('merge-pr-') }));
       return;
     }
     response.writeHead(204, { 'cache-control': 'no-store' });
@@ -192,7 +192,7 @@ test('approval tab renders genuine decisions separately and sends approve and de
     assert.match(posts[0].payload.commandId, /^dashboard-/);
     assert.equal(await page.locator('.decision-card[data-status="APPROVED"]').count(), 1);
     assert.equal(await page.locator('.decision-card[data-status="REJECTED"]').count(), 1);
-    assert.match(await page.locator('.decision-card[data-status="APPROVED"]').textContent(), /No protected action was silently executed/);
+    assert.match(await page.locator('.decision-card[data-status="APPROVED"]').textContent(), /did not use the Codex meter/);
     assert.deepEqual(consoleErrors, []);
     assert.ok((await page.screenshot({ fullPage: true })).length > 10_000);
   } finally {

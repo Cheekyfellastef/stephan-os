@@ -60,7 +60,7 @@ test('inbox exposes human decision cards and separates routine maintenance', asy
   assert.equal(inbox.actionExecutionAllowed, false);
 });
 
-test('approve writes one exact-decision receipt and a Codex handoff, then retries idempotently', async (t) => {
+test('approve writes one exact-decision receipt and a Stephanos handoff, then retries idempotently', async (t) => {
   const { root, options } = await fixture(t);
   const request = decision();
   const input = {
@@ -80,19 +80,23 @@ test('approve writes one exact-decision receipt and a Codex handoff, then retrie
   assert.equal(second.duplicate, true);
 
   const receiptNames = (await readdir(join(root, 'receipts'))).filter((name) => name.startsWith('operator-decision-') && name.endsWith('.json'));
-  const handoffNames = (await readdir(join(root, 'inbox'))).filter((name) => name.endsWith('-codex.json'));
+  const handoffNames = (await readdir(join(root, 'inbox'))).filter((name) => name.endsWith('-stephanos.json'));
   assert.equal(receiptNames.length, 1);
   assert.equal(handoffNames.length, 1);
   const handoff = JSON.parse(await readFile(join(root, 'inbox', handoffNames[0]), 'utf8'));
-  assert.equal(handoff.toParticipantId, 'codex');
-  assert.equal(JSON.parse(handoff.body).actionExecuted, false);
+  assert.equal(handoff.toParticipantId, 'stephanos');
+  const handoffBody = JSON.parse(handoff.body);
+  assert.equal(handoffBody.actionExecuted, false);
+  assert.equal(handoffBody.codexMeterRequired, false);
+  assert.equal(handoffBody.reconciliationAuthority, 'durable-flywheel-controller');
+  assert.equal(handoffBody.capacityRouterSchemaVersion, 'stephanos.mission-controller-capacity-router.v1');
 
   const refreshed = await readOperatorApprovalInbox(options);
   assert.equal(refreshed.pendingCount, 0);
   assert.equal(refreshed.decisions[0].status, 'APPROVED');
 });
 
-test('a failed Codex handoff leaves an unrouted outbox receipt and remains safely retryable', async (t) => {
+test('a failed Stephanos handoff leaves an unrouted outbox receipt and remains safely retryable', async (t) => {
   const { root, options } = await fixture(t);
   const request = decision();
   const input = {
@@ -108,7 +112,7 @@ test('a failed Codex handoff leaves an unrouted outbox receipt and remains safel
       ...options,
       writeHandoff: async () => ({ ok: false, reason: 'TEST_HANDOFF_WRITE_FAILED' }),
     }),
-    (error) => error?.statusCode === 503 && error?.code === 'CODEX_HANDOFF_FAILED',
+    (error) => error?.statusCode === 503 && error?.code === 'STEPHANOS_HANDOFF_FAILED',
   );
 
   const namesAfterFailure = await readdir(join(root, 'receipts'));
@@ -116,11 +120,12 @@ test('a failed Codex handoff leaves an unrouted outbox receipt and remains safel
   assert.equal(namesAfterFailure.filter((name) => name.startsWith('operator-decision-') && !name.endsWith('.pending.json')).length, 0);
   const pending = JSON.parse(await readFile(join(root, 'receipts', namesAfterFailure.find((name) => name.endsWith('.pending.json'))), 'utf8'));
   assert.equal(pending.routedToCodex, false);
+  assert.equal(pending.routedToStephanos, false);
   const inboxAfterFailure = await readOperatorApprovalInbox(options);
   assert.equal(inboxAfterFailure.pendingCount, 1);
   assert.equal(inboxAfterFailure.decisions[0].receipt, null);
   assert.equal(inboxAfterFailure.decisions[0].actionable, true);
-  assert.equal((await readdir(join(root, 'inbox'))).filter((name) => name.endsWith('-codex.json')).length, 0);
+  assert.equal((await readdir(join(root, 'inbox'))).filter((name) => name.endsWith('-stephanos.json')).length, 0);
   await assert.rejects(
     () => recordOperatorApprovalDecision({ ...input, action: 'DENY', commandId: 'operator-click-outbox-conflict' }, options),
     (error) => error?.statusCode === 409 && error?.code === 'DECISION_ALREADY_RECORDED',
@@ -129,13 +134,49 @@ test('a failed Codex handoff leaves an unrouted outbox receipt and remains safel
   const recovered = await recordOperatorApprovalDecision(input, options);
   assert.equal(recovered.ok, true);
   assert.equal(recovered.duplicate, true);
-  assert.equal(recovered.routedToCodex, true);
+  assert.equal(recovered.routedToCodex, false);
+  assert.equal(recovered.routedToStephanos, true);
   const namesAfterRecovery = await readdir(join(root, 'receipts'));
   assert.equal(namesAfterRecovery.filter((name) => name.endsWith('.pending.json')).length, 0);
   assert.equal(namesAfterRecovery.filter((name) => name.startsWith('operator-decision-') && name.endsWith('.json')).length, 1);
   const refreshed = await readOperatorApprovalInbox(options);
   assert.equal(refreshed.pendingCount, 0);
-  assert.equal(refreshed.decisions[0].receipt.routedToCodex, true);
+  assert.equal(refreshed.decisions[0].receipt.routedToCodex, false);
+  assert.equal(refreshed.decisions[0].receipt.routedToStephanos, true);
+});
+
+test('approve and deny stay available when the Codex meter is empty', async (t) => {
+  const approvedFixture = await fixture(t);
+  const approvedRequest = decision();
+  const approved = await recordOperatorApprovalDecision({
+    decisionId: approvedRequest.decisionId,
+    action: 'APPROVE',
+    commandId: 'operator-click-zero-codex-approve',
+    requestFingerprint: fingerprintOperatorDecision(approvedRequest),
+  }, {
+    ...approvedFixture.options,
+    codexStatus: { remainingPercent: 0, availability: 'METER_STALLED' },
+  });
+  assert.equal(approved.ok, true);
+  assert.equal(approved.routedToStephanos, true);
+  assert.equal(approved.routedToCodex, false);
+  assert.equal(approved.codexMeterRequired, false);
+
+  const deniedFixture = await fixture(t);
+  const deniedRequest = decision();
+  const denied = await recordOperatorApprovalDecision({
+    decisionId: deniedRequest.decisionId,
+    action: 'DENY',
+    commandId: 'operator-click-zero-codex-deny',
+    requestFingerprint: fingerprintOperatorDecision(deniedRequest),
+  }, {
+    ...deniedFixture.options,
+    codexStatus: { remainingPercent: 0, availability: 'METER_STALLED' },
+  });
+  assert.equal(denied.ok, true);
+  assert.equal(denied.resultingStatus, 'REJECTED');
+  assert.equal(denied.routedToStephanos, true);
+  assert.equal(denied.codexMeterRequired, false);
 });
 
 test('a conflicting second decision and a stale fingerprint both fail closed', async (t) => {

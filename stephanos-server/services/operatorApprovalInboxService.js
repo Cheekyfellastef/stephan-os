@@ -15,6 +15,9 @@ import {
   OPERATOR_DECISION_STATUS,
   validateOperatorDecision,
 } from '../../shared/agents/operatorAutomationLayer.mjs';
+import {
+  MISSION_CONTROLLER_CAPACITY_ROUTER_SCHEMA,
+} from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 
 export const OPERATOR_APPROVAL_INBOX_SCHEMA_VERSION = 'stephanos.operator-approval-inbox.v1';
 export const OPERATOR_DECISION_RECEIPT_SCHEMA_VERSION = 'stephanos.operator-decision-receipt.v1';
@@ -80,9 +83,9 @@ function decisionTitle(decision) {
 
 function decisionQuestion(decision) {
   if (decision.decisionKind === OPERATOR_DECISION_KIND.MERGE_APPROVAL) {
-    return `Should Codex continue the protected merge process for ${decision.relatedPr} at version ${decision.expectedHeadSha.slice(0, 8)}?`;
+    return `Should Stephanos continue the protected merge process for ${decision.relatedPr} at version ${decision.expectedHeadSha.slice(0, 8)}?`;
   }
-  return `Should Codex continue with this ${text(decision.decisionKind).toLowerCase().replaceAll('_', ' ')} request?`;
+  return `Should Stephanos continue with this ${text(decision.decisionKind).toLowerCase().replaceAll('_', ' ')} request?`;
 }
 
 function decisionNotExpired(decision, nowMs) {
@@ -126,9 +129,9 @@ function publicDecision(decision, receipt = null, evidenceCurrent = false) {
     blockingReason: pending && !actionable ? 'This exact decision is expired or its authority-bearing evidence is not current. Refresh it before deciding.' : '',
     riskLevel: protectedFollowUpRequired ? 'HIGH' : 'CONSEQUENTIAL',
     approveEffect: protectedFollowUpRequired
-      ? 'Records your decision for Codex. The separate protected exact-version merge gate still has to accept it before any merge.'
-      : 'Records your decision and sends a bounded handoff to Codex. It does not execute the action by itself.',
-    denyEffect: 'Records “do not continue” and sends that instruction to Codex.',
+      ? 'Records your decision for Stephanos. The separate protected exact-version merge gate still has to accept it before any merge.'
+      : 'Records your decision and sends a bounded handoff to the Stephanos build coordinator. It does not execute the action by itself.',
+    denyEffect: 'Records “do not continue” and sends that instruction to the Stephanos build coordinator.',
     protectedFollowUpRequired,
     requestFingerprint: fingerprintOperatorDecision(decision),
     receipt: receipt ? Object.freeze({
@@ -138,6 +141,8 @@ function publicDecision(decision, receipt = null, evidenceCurrent = false) {
       resultingStatus: receipt.resultingStatus,
       timestampUtc: receipt.timestampUtc,
       routedToCodex: receipt.routedToCodex === true,
+      routedToStephanos: receipt.routedToStephanos === true,
+      codexMeterRequired: false,
     }) : null,
   });
 }
@@ -155,7 +160,8 @@ function validDecisionReceipt(record = {}, options = {}) {
     && record.correlationId === record.decisionId
     && record.resultingStatus === expectedStatus
     && typeof record.routedToCodex === 'boolean'
-    && (options.requireRouted === false || record.routedToCodex === true)
+    && (record.routedToStephanos === undefined || typeof record.routedToStephanos === 'boolean')
+    && (options.requireRouted === false || record.routedToStephanos === true || record.routedToCodex === true)
     && record.actionExecuted === false
     && record.protectedActionAuthorityGranted === false;
 }
@@ -211,7 +217,7 @@ export async function readOperatorApprovalInbox(input = {}) {
     decisions: Object.freeze(cards),
     maintenanceActions: Object.freeze(maintenanceActions),
     exactNextAction: cards.some((card) => card.pending)
-      ? 'Review each genuine decision. Every response is recorded and routed to Codex without silently executing the protected action.'
+      ? 'Review each genuine decision. Every response is recorded for Stephanos without depending on the Codex meter or silently executing the protected action.'
       : (maintenanceActions.length ? 'Codex and Housekeeper own the listed routine maintenance work.' : 'No operator decision is waiting.'),
   });
 }
@@ -230,7 +236,7 @@ function receiptRecord(decision, input, nowUtc) {
       proofRefs: [`receipts/${receiptId}.json`],
       receivedRecordId: decision.decisionId,
       disposition: approved ? 'operator-approved-handoff-only' : 'operator-denied',
-      summary: approved ? `Operator approved ${decision.decisionId} for Codex handoff.` : `Operator denied ${decision.decisionId}.`,
+      summary: approved ? `Operator approved ${decision.decisionId} for Stephanos reconciliation.` : `Operator denied ${decision.decisionId}.`,
     }),
     operatorDecisionSchemaVersion: OPERATOR_DECISION_RECEIPT_SCHEMA_VERSION,
     decisionId: decision.decisionId,
@@ -240,6 +246,8 @@ function receiptRecord(decision, input, nowUtc) {
     requestFingerprint: input.requestFingerprint,
     resultingStatus: approved ? OPERATOR_DECISION_STATUS.APPROVED : OPERATOR_DECISION_STATUS.REJECTED,
     routedToCodex: false,
+    routedToStephanos: false,
+    codexMeterRequired: false,
     actionExecuted: false,
     protectedActionAuthorityGranted: false,
   };
@@ -274,19 +282,19 @@ async function writeExclusiveReceipt(root, record, options = {}) {
   }
 }
 
-async function writeCodexHandoff(root, decision, receipt, options = {}) {
-  const handoffId = `${receipt.receiptId}-codex`;
+async function writeStephanosHandoff(root, decision, receipt, options = {}) {
+  const handoffId = `${receipt.receiptId}-stephanos`;
   const handoff = createSharedWorkspaceHandoffRecord({
     handoffId,
     participantId: 'operator',
     fromParticipantId: 'operator',
-    toParticipantId: 'codex',
+    toParticipantId: 'stephanos',
     timestampUtc: receipt.timestampUtc,
     correlationId: decision.decisionId,
     relatedIssue: decision.relatedGoal || '#1282',
     relatedPr: decision.relatedPr,
     proofRefs: [`receipts/${receipt.receiptId}.json`],
-    summary: `${receipt.action} decision for ${decision.decisionId} is ready for Codex to reconcile.`,
+    summary: `${receipt.action} decision for ${decision.decisionId} is ready for Stephanos to reconcile.`,
     body: JSON.stringify({
       schemaVersion: OPERATOR_DECISION_RECEIPT_SCHEMA_VERSION,
       decisionId: decision.decisionId,
@@ -296,6 +304,11 @@ async function writeCodexHandoff(root, decision, receipt, options = {}) {
       expectedHeadSha: decision.expectedHeadSha,
       actionExecuted: false,
       protectedActionAuthorityGranted: false,
+      reconciliationAuthority: 'durable-flywheel-controller',
+      capacityRouterSchemaVersion: MISSION_CONTROLLER_CAPACITY_ROUTER_SCHEMA,
+      capacityRouteSelected: false,
+      codexMeterRequired: false,
+      buildExecutionAuthorityGranted: false,
     }),
   });
   const writeHandoff = options.writeHandoff || writeAtomicJson;
@@ -335,13 +348,15 @@ export async function recordOperatorApprovalDecision(input = {}, options = {}) {
   if (fingerprintOperatorDecision(decision) !== requestFingerprint) fail(409, 'STALE_DECISION', 'The decision changed. Refresh the inbox before deciding.');
   if (card.receipt) {
     if (card.receipt.commandId === commandId && card.receipt.action === action) {
-      const handoff = await writeCodexHandoff(root, decision, card.receipt, { repoRoot: options.repoRoot, nowMs: options.nowMs, writeHandoff: options.writeHandoff });
-      if (!handoff.ok) fail(503, 'CODEX_HANDOFF_FAILED', handoff.reason);
+      const handoff = await writeStephanosHandoff(root, decision, card.receipt, { repoRoot: options.repoRoot, nowMs: options.nowMs, writeHandoff: options.writeHandoff });
+      if (!handoff.ok) fail(503, 'STEPHANOS_HANDOFF_FAILED', handoff.reason);
       return Object.freeze({
         ok: true,
         duplicate: true,
         card,
-        routedToCodex: true,
+        routedToCodex: false,
+        routedToStephanos: true,
+        codexMeterRequired: false,
         actionExecuted: false,
         protectedActionAuthorityGranted: false,
         protectedFollowUpRequired: decision.decisionKind === OPERATOR_DECISION_KIND.MERGE_APPROVAL,
@@ -361,19 +376,19 @@ export async function recordOperatorApprovalDecision(input = {}, options = {}) {
     filename: pendingFilename,
   });
   const pendingReceipt = pendingWrite.record;
-  if (!validDecisionReceipt(pendingReceipt, { requireRouted: false }) || pendingReceipt.routedToCodex !== false) {
+  if (!validDecisionReceipt(pendingReceipt, { requireRouted: false }) || pendingReceipt.routedToCodex !== false || pendingReceipt.routedToStephanos !== false) {
     fail(409, 'INVALID_EXISTING_DECISION_RECEIPT', 'An invalid pending decision receipt already occupies this decision.');
   }
   if (pendingReceipt.commandId !== commandId || pendingReceipt.action !== action || pendingReceipt.requestFingerprint !== requestFingerprint) {
     fail(409, 'DECISION_ALREADY_RECORDED', `This decision was already recorded as ${pendingReceipt.action}.`);
   }
-  const handoff = await writeCodexHandoff(root, decision, pendingReceipt, {
+  const handoff = await writeStephanosHandoff(root, decision, pendingReceipt, {
     repoRoot: options.repoRoot,
     nowMs,
     writeHandoff: options.writeHandoff,
   });
-  if (!handoff.ok) fail(503, 'CODEX_HANDOFF_FAILED', handoff.reason);
-  const requestedReceipt = { ...pendingReceipt, routedToCodex: true };
+  if (!handoff.ok) fail(503, 'STEPHANOS_HANDOFF_FAILED', handoff.reason);
+  const requestedReceipt = { ...pendingReceipt, routedToStephanos: true };
   const written = await writeExclusiveReceipt(root, requestedReceipt, { repoRoot: options.repoRoot, nowMs });
   const existing = written.record;
   if (!validDecisionReceipt(existing)) fail(409, 'INVALID_EXISTING_DECISION_RECEIPT', 'An invalid decision receipt already occupies this decision.');
@@ -388,7 +403,9 @@ export async function recordOperatorApprovalDecision(input = {}, options = {}) {
     action,
     resultingStatus: existing.resultingStatus,
     receiptId: existing.receiptId,
-    routedToCodex: true,
+    routedToCodex: false,
+    routedToStephanos: true,
+    codexMeterRequired: false,
     actionExecuted: false,
     protectedActionAuthorityGranted: false,
     protectedFollowUpRequired: decision.decisionKind === OPERATOR_DECISION_KIND.MERGE_APPROVAL,
