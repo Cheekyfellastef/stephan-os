@@ -202,6 +202,43 @@ test('rejects secrets, raw logs and local paths from semantic value summaries', 
   }
 });
 
+test('rejects generic token credentials while preserving ordinary token terminology', () => {
+  for (const valueSummary of [
+    'token=abcdef0123456789abcdef0123456789',
+    'token: abcdef0123456789abcdef0123456789',
+    'token abcdef0123456789abcdef0123456789',
+    'token credential must stay private',
+  ]) {
+    const result = buildStephanosSemanticMemoryV1({
+      observedAtUtc: OBSERVED_AT,
+      claims: [currentClaim({ claimId: 'claim-generic-token-secret', supersedesClaimId: null, valueSummary })],
+    });
+    assert.equal(result.valid, false, valueSummary);
+    assert(result.validationErrors.some((error) => error.includes('valueSummary-invalid')), valueSummary);
+  }
+
+  const ordinary = buildStephanosSemanticMemoryV1({
+    observedAtUtc: OBSERVED_AT,
+    claims: [currentClaim({
+      claimId: 'claim-token-budget',
+      supersedesClaimId: null,
+      valueSummary: 'The Codex token budget is currently constrained.',
+    })],
+  });
+  assert.equal(ordinary.valid, true);
+});
+
+test('non-string hostile claim IDs fail closed without throwing', () => {
+  const hostile = currentClaim({ claimId: Symbol('hostile-claim-id'), supersedesClaimId: null });
+  let result;
+  assert.doesNotThrow(() => {
+    result = buildStephanosSemanticMemoryV1({ observedAtUtc: OBSERVED_AT, claims: [hostile] });
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.verdict, 'SAFE_HOLD');
+  assert(result.validationErrors.some((error) => error.includes('claimId-invalid')));
+});
+
 test('rejects accessors, custom prototypes and sparse arrays before reading authority-bearing fields', () => {
   let accessorReads = 0;
   const hostile = currentClaim({ claimId: 'claim-hostile', supersedesClaimId: null });
