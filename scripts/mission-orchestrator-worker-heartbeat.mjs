@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -174,7 +174,12 @@ export async function writeMissionWorkerHeartbeat({
   });
   await mkdir(path.dirname(paths.heartbeatPath), { recursive: true });
   const temporaryPath = `${paths.heartbeatPath}.${pid}.${randomUUID()}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(record, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
-  await rename(temporaryPath, paths.heartbeatPath);
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(record, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+    await rename(temporaryPath, paths.heartbeatPath);
+  } catch (error) {
+    try { await unlink(temporaryPath); } catch {}
+    throw error;
+  }
   return Object.freeze({ ok: true, heartbeatPath: paths.heartbeatPath, record });
 }

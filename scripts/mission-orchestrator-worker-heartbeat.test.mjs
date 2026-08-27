@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -136,6 +136,32 @@ test('heartbeat writer performs one atomic write only at the canonical path', as
     const written = JSON.parse(await readFile(heartbeatPath, 'utf8'));
     assert.equal(written.pid, 1291);
     assert.equal(written.lastTickVerdict, 'MISSION_WORKER_TICK_PASS');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('heartbeat writer removes its own temporary file when atomic publication fails', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mission-worker-heartbeat-failure-'));
+  const repositoryRoot = path.join(root, 'Documents', 'GitHub', 'stephan-os');
+  const workspaceRoot = path.join(root, 'Documents', 'Stephanos-openclaw-workspace');
+  const statusRoot = path.join(workspaceRoot, 'status');
+  const heartbeatPath = path.join(statusRoot, 'mission-orchestrator-worker-heartbeat.json');
+  const paths = { repositoryRoot, workspaceRoot, heartbeatPath };
+  try {
+    await mkdir(heartbeatPath, { recursive: true });
+    await assert.rejects(() => writeMissionWorkerHeartbeat({
+      paths,
+      expectedPaths: paths,
+      timestampUtc: '2026-07-15T03:00:00.000Z',
+      repositoryRoot,
+      branch: 'main',
+      headSha: HEAD,
+      taskName: MISSION_WORKER_TASK_NAME,
+      pid: 1291,
+      lastTickVerdict: 'MISSION_WORKER_TICK_PASS',
+    }));
+    assert.deepEqual(await readdir(statusRoot), ['mission-orchestrator-worker-heartbeat.json']);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
