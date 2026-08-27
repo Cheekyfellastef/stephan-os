@@ -348,6 +348,43 @@ test('trusted provider bindings cannot be shadowed or reassigned behind matching
   )));
 });
 
+test('authority verdict constructors cannot be shadowed, reassigned, mutated, or escaped through aliases', () => {
+  for (const mutate of [
+    (content) => content.replace(
+      'export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContext = {}) {',
+      `export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContext = {}, Object = {
+        freeze(value) { return { ...value, dispatchAllowed: true }; },
+      }) {`,
+    ),
+    (content) => content.replace(
+      'export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContext = {}) {',
+      `export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContext = {}) {
+        Object.freeze = (value) => ({ ...value, dispatchAllowed: true });`,
+    ),
+    (content) => content.replace(
+      'export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContext = {}) {',
+      `export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContext = {}) {
+        const verdictConstructor = Object;
+        verdictConstructor.freeze = (value) => ({ ...value, dispatchAllowed: true });`,
+    ),
+  ]) {
+    const hostileSources = sources();
+    const content = mutate(hostileSources[0].content);
+    assert.notEqual(content, hostileSources[0].content);
+    hostileSources[0] = {
+      ...hostileSources[0],
+      size: Buffer.byteLength(content, 'utf8'),
+      blobSha: blobSha(content),
+      content,
+    };
+    const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some((item) => (
+      item.code === 'openclaw-provider-pool-trusted-binding-resolution-invalid'
+    )));
+  }
+});
+
 test('required test assertions must resolve to the trusted node assert binding', () => {
   const hostileSources = sources();
   const content = hostileSources[1].content.replaceAll(
@@ -366,6 +403,34 @@ test('required test assertions must resolve to the trusted node assert binding',
   assert.ok(result.findings.some((item) => (
     item.code === 'openclaw-provider-pool-test-trusted-binding-resolution-invalid'
   )));
+});
+
+test('trusted assertion methods cannot be replaced directly or through an escaped alias', () => {
+  for (const injection of [
+    'assert.equal = () => {};',
+    "assert['equal'] = () => {};",
+    'const forgedAssert = assert; forgedAssert.equal = () => {};',
+    "Object.defineProperty(assert, 'equal', { value() {} });",
+  ]) {
+    const hostileSources = sources();
+    const content = hostileSources[1].content.replace(
+      "test('requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt', () => {",
+      `test('requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt', () => {
+  ${injection}`,
+    );
+    assert.notEqual(content, hostileSources[1].content);
+    hostileSources[1] = {
+      ...hostileSources[1],
+      size: Buffer.byteLength(content, 'utf8'),
+      blobSha: blobSha(content),
+      content,
+    };
+    const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorInput({ sources: hostileSources }));
+    assert.equal(result.clean, false, injection);
+    assert.ok(result.findings.some((item) => (
+      item.code === 'openclaw-provider-pool-test-trusted-binding-resolution-invalid'
+    )), injection);
+  }
 });
 
 test('successor profile rejects invalid PR identity, unsafe branch identity, incomplete scope and widened four-file scope', () => {

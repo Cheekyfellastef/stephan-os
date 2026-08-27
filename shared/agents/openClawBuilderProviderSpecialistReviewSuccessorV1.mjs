@@ -2603,6 +2603,85 @@ function bindingIsAssigned(tokens, name) {
   });
 }
 
+function bindingIsDirectlyAssigned(tokens, name) {
+  return tokens.some((token, index) => {
+    if (token?.type !== 'identifier' || token.value !== name) return false;
+    if (tokens[index - 1]?.type === 'punctuator' && new Set(['.', '?.']).has(tokens[index - 1].value)) return false;
+    return (tokens[index + 1]?.type === 'punctuator'
+        && (BINDING_ASSIGNMENT_OPERATORS.has(tokens[index + 1].value)
+          || new Set(['++', '--']).has(tokens[index + 1].value)))
+      || (tokens[index - 1]?.type === 'punctuator' && new Set(['++', '--']).has(tokens[index - 1].value))
+      || (tokens[index + 1]?.type === 'identifier' && new Set(['in', 'of']).has(tokens[index + 1].value));
+  });
+}
+
+function tokenIsWithinStaticImport(tokens, index) {
+  let start = index;
+  while (start > 0 && !(tokens[start - 1]?.type === 'punctuator' && tokens[start - 1].value === ';')) {
+    start -= 1;
+  }
+  return tokens[start]?.type === 'identifier' && tokens[start].value === 'import';
+}
+
+function bindingMemberIsAssigned(tokens, name) {
+  return tokens.some((token, index) => {
+    if (token?.type !== 'identifier' || token.value !== name) return false;
+    if (tokens[index - 1]?.type === 'punctuator' && new Set(['.', '?.']).has(tokens[index - 1].value)) return false;
+    let cursor = index + 1;
+    let member = false;
+    while (cursor < tokens.length) {
+      if (tokens[cursor]?.type === 'punctuator'
+        && new Set(['.', '?.']).has(tokens[cursor].value)
+        && tokens[cursor + 1]?.type === 'identifier') {
+        member = true;
+        cursor += 2;
+        continue;
+      }
+      if (tokens[cursor]?.type === 'punctuator' && tokens[cursor].value === '[') {
+        const close = matchingPunctuator(tokens, cursor, '[', ']');
+        if (close < 0) return true;
+        member = true;
+        cursor = close + 1;
+        continue;
+      }
+      break;
+    }
+    if (!member) return false;
+    const postfixMutation = tokens[cursor]?.type === 'punctuator'
+      && (BINDING_ASSIGNMENT_OPERATORS.has(tokens[cursor].value)
+        || new Set(['++', '--']).has(tokens[cursor].value));
+    const prefixMutation = (tokens[index - 1]?.type === 'punctuator'
+      && new Set(['++', '--']).has(tokens[index - 1].value))
+      || (tokens[index - 1]?.type === 'identifier' && tokens[index - 1].value === 'delete');
+    return postfixMutation || prefixMutation;
+  });
+}
+
+function trustedIntrinsicReferencesAreClosed(tokens, name) {
+  return tokens.every((token, index) => {
+    if (token?.type !== 'identifier' || token.value !== name) return true;
+    if (tokens[index - 1]?.type === 'punctuator' && new Set(['.', '?.']).has(tokens[index - 1].value)) return true;
+    const next = tokens[index + 1];
+    if (next?.type === 'punctuator' && new Set(['.', '?.', '[', '(']).has(next.value)) return true;
+    if (tokens[index - 1]?.type === 'identifier'
+      && new Set(['instanceof', 'new', 'typeof']).has(tokens[index - 1].value)) return true;
+    return false;
+  });
+}
+
+function trustedMethodBindingIsClosed(tokens, name) {
+  return tokens.every((token, index) => {
+    if (token?.type !== 'identifier' || token.value !== name) return true;
+    if (tokenIsWithinStaticImport(tokens, index)) return true;
+    if (tokens[index - 1]?.type === 'punctuator' && new Set(['.', '?.']).has(tokens[index - 1].value)) return true;
+    return tokens[index + 1]?.type === 'punctuator'
+      && tokens[index + 1].value === '.'
+      && tokens[index + 2]?.type === 'identifier'
+      && tokens[index + 3]?.type === 'punctuator'
+      && tokens[index + 3].value === '(';
+  });
+}
+
 function topLevelBindingIsAssigned(tokens, name) {
   let curlyDepth = 0;
   for (let index = 0; index < tokens.length; index += 1) {
@@ -2668,10 +2747,27 @@ function trustedBindingsAreClosed(tokens, imports, options) {
   if (requiredImports.some(({ specifier, imported, local }) => !exactImportedLocal(imports, specifier, imported, local))) return false;
   const importedLocals = imports.declarations.flatMap((declaration) => declaration.bindings.map((binding) => binding.local));
   const helperNames = options.helperNames || [];
-  const protectedNames = [...new Set([...importedLocals, ...helperNames])];
+  const protectedGlobals = options.protectedGlobals || [];
+  const nonEscapingGlobals = options.nonEscapingGlobals || [];
+  const protectedMemberBindings = options.protectedMemberBindings || [];
+  const protectedNames = [...new Set([...importedLocals, ...helperNames, ...protectedGlobals])];
   const declarations = declaredBindingNames(tokens);
   for (const name of importedLocals) {
     if (declarations.includes(name) || bindingIsAssigned(tokens, name)) return false;
+  }
+  for (const name of protectedGlobals) {
+    const assigned = nonEscapingGlobals.includes(name)
+      ? bindingIsAssigned(tokens, name)
+      : bindingIsDirectlyAssigned(tokens, name);
+    if (declarations.includes(name)
+      || assigned
+      || bindingMemberIsAssigned(tokens, name)
+      || (nonEscapingGlobals.includes(name) && !trustedIntrinsicReferencesAreClosed(tokens, name))) return false;
+  }
+  for (const name of protectedMemberBindings) {
+    if (!importedLocals.includes(name)
+      || bindingMemberIsAssigned(tokens, name)
+      || !trustedMethodBindingIsClosed(tokens, name)) return false;
   }
   for (const name of helperNames) {
     if (topLevelFunctionDeclarationCount(tokens, name) !== 1
@@ -2747,6 +2843,21 @@ function reviewProviderPool(source, path, findings) {
       { specifier: './executionReceiptV1.mjs', imported: 'validateExecutionReceipt' },
       { specifier: './sharedAgentWorkspaceStore.mjs', imported: 'validateSharedWorkspaceRecord' },
     ],
+    protectedGlobals: [
+      'Array',
+      'Boolean',
+      'Date',
+      'JSON',
+      'Number',
+      'Object',
+      'Reflect',
+      'Set',
+      'String',
+      'TypeError',
+      'WeakMap',
+      'WeakSet',
+    ],
+    nonEscapingGlobals: ['Object', 'Set'],
     helperNames: ['canonicalJson', 'snapshot', 'blockedAuthority'],
     protectedFunctions: [
       'validateOpenClawQualificationAuthorityChain',
@@ -2909,6 +3020,7 @@ function reviewProviderPoolTests(source, path, findings) {
       { specifier: './openClawProviderPoolQualificationV1.mjs', imported: 'validateOpenClawProviderCapacity' },
       { specifier: './openClawProviderPoolQualificationV1.mjs', imported: 'validateOpenClawQualificationAuthorityChain' },
     ],
+    protectedMemberBindings: ['assert'],
     protectedFunctions: [],
   })) {
     findings.push(finding('openclaw-provider-pool-test-trusted-binding-resolution-invalid', path));
