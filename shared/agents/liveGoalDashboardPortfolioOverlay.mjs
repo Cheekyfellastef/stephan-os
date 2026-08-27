@@ -1,3 +1,5 @@
+import { buildGoalDashboardOperatorAttention } from './goalDashboardOperatorAttention.mjs';
+
 export const LIVE_GOAL_DASHBOARD_PORTFOLIO_SCHEMA = 'stephanos.live-goal-dashboard-portfolio-overlay.v1';
 
 const CURRENT = 'CURRENT';
@@ -255,6 +257,12 @@ export function overlayGoalDashboardWithLivePortfolio(input = {}) {
     ? cardBlockers
     : [...new Set([...list(baseAttention.blockers), ...cardBlockers])];
   const firstAction = goals.find((goal) => text(goal.exactNextAction))?.exactNextAction || text(baseAttention.exactNextAction, 'Refresh canonical programme evidence.');
+  const operatorAttention = buildGoalDashboardOperatorAttention({
+    goals,
+    blockers,
+    explicitDecisions: baseAttention.approvals,
+    exactNextAction: blockers.length ? firstAction : (dynamicPortfolio ? firstAction : text(baseAttention.exactNextAction, firstAction)),
+  });
 
   return Object.freeze({
     ...baseProjection,
@@ -266,12 +274,7 @@ export function overlayGoalDashboardWithLivePortfolio(input = {}) {
     goals,
     liveGithubPrCount: githubCards.length,
     liveWorkspaceGoalCount: workspaceCards.length,
-    operatorAttention: Object.freeze({
-      ...baseAttention,
-      blockers,
-      localProofNeeded: goals.filter((goal) => goal.proofTruth !== CURRENT).map((goal) => goal.issue),
-      exactNextAction: blockers.length ? firstAction : (dynamicPortfolio ? firstAction : text(baseAttention.exactNextAction, firstAction)),
-    }),
+    operatorAttention,
     finalVerdict: blockers.length ? 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED' : (dynamicTruth === CURRENT ? 'LANDING_GOAL_DASHBOARD_CURRENT' : 'LANDING_GOAL_DASHBOARD_STALE_OR_UNKNOWN'),
   });
 }
