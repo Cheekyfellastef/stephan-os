@@ -30,9 +30,6 @@ const SHA_40 = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
 const WORKER_SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,159}$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
-const INTERRUPTED_RELEASE_MARKER = 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT';
-const INTERRUPTED_RELEASE_SOURCE_BLOCKER = `source:${INTERRUPTED_RELEASE_MARKER}`;
-const TERMINAL_AUTHORITY_BLOCKER = 'controller-heartbeat-terminal-lane-authority-unproven';
 const KNOWN_PROJECTION_STATES = new Set([
   'HOLD',
   'TERMINAL_RECONCILIATION_REQUIRED',
@@ -104,49 +101,6 @@ function projectionIdentity(projection = {}) {
     leaseId: text(projection?.mutationLease?.leaseId),
     ownerId: text(projection?.mutationLease?.ownerId),
   });
-}
-
-function exactInterruptedTerminalReleaseProjection(projection = {}, options = {}) {
-  const lane = projection?.lane;
-  const lease = projection?.mutationLease;
-  if (
-    projection?.sourceConstructionMode !== 'production-contracts'
-    || projection?.sourceReads?.lease !== INTERRUPTED_RELEASE_MARKER
-    || projection?.terminalReconciliationState !== 'REQUIRED'
-    || lane?.valid !== true
-    || lane?.terminal !== true
-    || lane?.active === true
-    || !lease
-  ) return false;
-
-  const identity = projectionIdentity(projection);
-  if (
-    !identity.laneId
-    || !identity.repository
-    || !identity.issueNumber
-    || !identity.prNumber
-    || !identity.branch
-    || !identity.headSha
-    || !identity.leaseId
-    || !identity.ownerId
-  ) return false;
-
-  const exactLeaseIdentity = text(lease.laneId) === identity.laneId
-    && text(lease.repository).toLowerCase() === identity.repository.toLowerCase()
-    && positiveInteger(lease.issueNumber) === identity.issueNumber
-    && positiveInteger(lease.prNumber) === identity.prNumber
-    && text(lease.branch) === identity.branch
-    && sha(lease.headSha) === identity.headSha
-    && text(lease.leaseId) === identity.leaseId
-    && text(lease.ownerId) === identity.ownerId;
-  if (!exactLeaseIdentity) return false;
-
-  const blockers = list(projection?.blockers).map((blocker) => text(blocker)).filter(Boolean);
-  const allowed = options.allowAuthorityBootstrap === true
-    ? new Set([INTERRUPTED_RELEASE_SOURCE_BLOCKER, TERMINAL_AUTHORITY_BLOCKER])
-    : new Set([INTERRUPTED_RELEASE_SOURCE_BLOCKER]);
-  return blockers.includes(INTERRUPTED_RELEASE_SOURCE_BLOCKER)
-    && blockers.every((blocker) => allowed.has(blocker));
 }
 
 function workerAdapter(action = {}) {
@@ -267,22 +221,15 @@ export function reconcileDurableFlywheelController(projection = {}, options = {}
   }
   if (!observedAtUtc) blockers.push('controller-observation-time-invalid');
   if (!sourceRevision) blockers.push('controller-source-revision-invalid');
-  const reportedStatus = text(projection?.status).toUpperCase();
-  const interruptedTerminalReleaseRecovery = reportedStatus === 'HOLD'
-    && exactInterruptedTerminalReleaseProjection(projection);
-  const status = interruptedTerminalReleaseRecovery
-    ? 'TERMINAL_RECONCILIATION_REQUIRED'
-    : reportedStatus;
+  const status = text(projection?.status).toUpperCase();
   if (!KNOWN_PROJECTION_STATES.has(status)) blockers.push('authoritative-programme-status-invalid');
-  if (reportedStatus === 'HOLD' && !interruptedTerminalReleaseRecovery) {
-    blockers.push(...list(projection?.blockers).map((blocker) => `authority:${text(blocker)}`));
-  }
+  if (status === 'HOLD') blockers.push(...list(projection?.blockers).map((blocker) => `authority:${text(blocker)}`));
   if (blockers.length) {
     return holdResult('authoritative-programme-reconciliation-blocked', {
       blockers,
       observedAtUtc: observedAtUtc || null,
       sourceRevision: sourceRevision || null,
-      projectionStatus: reportedStatus || null,
+      projectionStatus: status || null,
       activeLane: projection?.lane ?? null,
     });
   }
@@ -294,7 +241,7 @@ export function reconcileDurableFlywheelController(projection = {}, options = {}
     finalVerdict: 'DURABLE_FLYWHEEL_CONTROLLER_READY',
     observedAtUtc,
     sourceRevision,
-    projectionStatus: reportedStatus,
+    projectionStatus: status,
     activeLane: projection?.lane ?? null,
     laneIdentity: identity,
     blockers: [],
@@ -408,17 +355,11 @@ function transitionAuthorityResult(projection, sourceRevision, nowUtc, transitio
 
 function hasOnlyTransitionAuthorityBlocker(projection, transitionState) {
   const expected = transitionState === 'FINALIZING'
-    ? TERMINAL_AUTHORITY_BLOCKER
+    ? 'controller-heartbeat-terminal-lane-authority-unproven'
     : 'controller-heartbeat-active-lane-authority-unproven';
-  const blockers = list(projection?.blockers);
-  if (
-    projection?.status === 'HOLD'
-    && blockers.length === 1
-    && blockers[0] === expected
-  ) return true;
-  return transitionState === 'FINALIZING'
-    && blockers.includes(expected)
-    && exactInterruptedTerminalReleaseProjection(projection, { allowAuthorityBootstrap: true });
+  return projection?.status === 'HOLD'
+    && list(projection?.blockers).length === 1
+    && projection.blockers[0] === expected;
 }
 
 export async function publishDurableFlywheelCycleReceipt(receipt, options = {}) {

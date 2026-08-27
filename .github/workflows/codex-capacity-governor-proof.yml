@@ -16,7 +16,6 @@ on:
       - 'shared/agents/missionControllerCapacityRouterV1.test.mjs'
       - 'shared/agents/durableFlywheelControllerVNext.mjs'
       - 'shared/agents/durableFlywheelControllerVNext.test.mjs'
-      - 'shared/agents/durableFlywheelControllerVNext.terminal-reconciliation.test.mjs'
       - 'shared/agents/missionOrchestrator.mjs'
       - 'shared/agents/missionOrchestratorWorker.mjs'
       - 'shared/agents/stallSentinelReviewPipelineV1.mjs'
@@ -73,7 +72,7 @@ jobs:
         run: node --test shared/agents/codexCapacitySharedWorkspace.test.mjs
 
       - name: Meter-aware controller routing proof
-        run: node --test shared/agents/missionControllerCapacityRouterV1.test.mjs shared/agents/durableFlywheelControllerVNext.test.mjs shared/agents/durableFlywheelControllerVNext.terminal-reconciliation.test.mjs shared/agents/missionOrchestrator.test.mjs shared/agents/missionOrchestratorWorker.test.mjs shared/agents/stallSentinelReviewPipelineV1.test.mjs shared/runtime/missionScheduler.test.mjs stephanos-server/services/programmeAuthorityService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js scripts/mission-orchestrator-worker.test.mjs
+        run: node --test shared/agents/missionControllerCapacityRouterV1.test.mjs shared/agents/durableFlywheelControllerVNext.test.mjs shared/agents/missionOrchestrator.test.mjs shared/agents/missionOrchestratorWorker.test.mjs shared/agents/stallSentinelReviewPipelineV1.test.mjs shared/runtime/missionScheduler.test.mjs stephanos-server/services/programmeAuthorityService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js scripts/mission-orchestrator-worker.test.mjs
 
       - name: Battle Bridge reset mailbox proof
         run: node --test shared/agents/battleBridgeGitHubCommandMailbox.test.mjs shared/agents/codexBankedResetBattleBridgeExecutor.test.mjs shared/agents/codexBankedResetStatusBattleBridgeReader.test.mjs
