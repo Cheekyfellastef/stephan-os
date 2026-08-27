@@ -186,7 +186,7 @@ function Write-BoundedAtomicJson {
     $json = $Value | ConvertTo-Json -Depth 6 -Compress
     if ([Text.Encoding]::UTF8.GetByteCount($json) -gt 8192) { throw 'Mission worker restart record exceeds the fixed bound.' }
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $Path)) | Out-Null
-    $temporaryPath = "$Path.$PID.$([guid]::NewGuid().ToString('N')).tmp"
+    $temporaryPath = "${Path}.${PID}.$([guid]::NewGuid().ToString('N')).tmp"
     $encoding = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($temporaryPath, "$json`n", $encoding)
     Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
@@ -201,7 +201,7 @@ function Write-BoundedCreateOnlyJson {
     if ([Text.Encoding]::UTF8.GetByteCount($json) -gt 8192) { throw 'Mission worker immutable launch record exceeds the fixed bound.' }
     [System.IO.Directory]::CreateDirectory((Split-Path -Parent $Path)) | Out-Null
     if (Test-Path -LiteralPath $Path) { throw 'Mission worker immutable launch record already exists.' }
-    $temporaryPath = "$Path.$PID.$([guid]::NewGuid().ToString('N')).tmp"
+    $temporaryPath = "${Path}.${PID}.$([guid]::NewGuid().ToString('N')).tmp"
     $encoding = New-Object System.Text.UTF8Encoding($false)
     try {
         [System.IO.File]::WriteAllText($temporaryPath, "$json`n", $encoding)

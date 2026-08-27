@@ -110,7 +110,7 @@ function Write-BoundedAtomicJson {
     if ([Text.Encoding]::UTF8.GetByteCount($json) -gt 8192) { Stop-WithBlocker 'MISSION_WORKER_INVOCATION_RECORD_TOO_LARGE' }
     $parent = Split-Path -Parent $Path
     [System.IO.Directory]::CreateDirectory($parent) | Out-Null
-    $temporaryPath = "$Path.$PID.$([guid]::NewGuid().ToString('N')).tmp"
+    $temporaryPath = "${Path}.${PID}.$([guid]::NewGuid().ToString('N')).tmp"
     $encoding = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($temporaryPath, "$json`n", $encoding)
     Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
