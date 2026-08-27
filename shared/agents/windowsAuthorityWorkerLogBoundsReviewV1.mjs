@@ -14,7 +14,7 @@ const REVIEWED_IDENTITY = Object.freeze({
   prNumber: 2029,
   branch: 'codex/mission-worker-log-bounds-current-main-v1',
 });
-const REVIEWED_SOURCE_PARENT = '0a63e7a9db9a9d3e90c7f9dacd40bb9369c3d0a2';
+const REVIEWED_SOURCE_PARENT = 'bdb04c4c0d95aa821dfd6244b925d816ccb54b61';
 const REVIEWED_SOURCE_MANIFEST = Object.freeze({
   blobSha: '5b3375d3cfffa186a1d375e5f5cdbf5513054cab',
   size: 10873,
