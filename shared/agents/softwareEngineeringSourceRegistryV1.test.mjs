@@ -37,6 +37,20 @@ function sourceInput(overrides = {}) {
   };
 }
 
+function techniqueInput(sourceRecord, overrides = {}) {
+  return {
+    sourceRecord,
+    techniqueId: 'bounded-parser-pattern',
+    name: 'BoundedParserPattern',
+    problemSolved: 'UntrustedInputParsing',
+    method: 'ValidateBeforeTransformation',
+    evidenceRefs: ['evidence:example-parser-source'],
+    applicableDomains: ['software-engineering', 'shared-agents'],
+    failureModes: ['silent-truncation'],
+    ...overrides,
+  };
+}
+
 test('admits a current official technical source with zero authority', () => {
   const record = buildSoftwareEngineeringSourceRecordV1(sourceInput());
   assert.equal(record.schemaVersion, SOFTWARE_ENGINEERING_SOURCE_RECORD_SCHEMA_V1);
@@ -92,11 +106,31 @@ test('blocks direct reuse when version or licence evidence is missing', () => {
   assert.throws(
     () => buildSoftwareEngineeringSourceRecordV1(sourceInput({
       sourceClass: 'CANONICAL_UPSTREAM_REPOSITORY',
+      revisionOrVersion: '0'.repeat(40),
       licence: 'UNKNOWN',
       reuseRoute: 'DIRECT_REUSE_ALLOWED',
     })),
     /licence-required-for-reuse/,
   );
+});
+
+test('versioned source classes reject mutable aliases and branch refs', () => {
+  for (const revisionOrVersion of ['main', 'HEAD', 'latest', 'refs/heads/release']) {
+    assert.throws(
+      () => buildSoftwareEngineeringSourceRecordV1(sourceInput({
+        sourceClass: 'CANONICAL_UPSTREAM_REPOSITORY',
+        canonicalLocation: 'https://github.com/example/project',
+        publisherOrOwner: 'example',
+        revisionOrVersion,
+        licence: 'MIT',
+        rightsEvidence: ['evidence:example-project-license'],
+        reuseRoute: 'DIRECT_REUSE_ALLOWED',
+        evidencePlane: 'DIRECT_PUBLIC_SOURCE',
+      })),
+      /immutable-revision-or-version-required/,
+      revisionOrVersion,
+    );
+  }
 });
 
 test('fresh official evidence outranks stale secondary material', () => {
@@ -141,6 +175,28 @@ test('conflicting primary evidence remains an explicit hold', () => {
   assert.deepEqual(selection.conflictingSourceRecordIds, [conflicting.recordId]);
 });
 
+test('stale rejected primary evidence cannot veto a fresh admitted source', () => {
+  const fresh = buildSoftwareEngineeringSourceRecordV1(sourceInput());
+  const staleRejected = buildSoftwareEngineeringSourceRecordV1(sourceInput({
+    sourceId: 'obsolete-release-note',
+    sourceClass: 'OFFICIAL_RELEASE_NOTES',
+    canonicalLocation: 'https://nodejs.org/en/blog/release/obsolete',
+    publisherOrOwner: 'Node.js',
+    revisionOrVersion: 'v20.0.0',
+    evidencePlane: 'OFFICIAL_RELEASE_OR_SECURITY_NOTICE',
+    reuseRoute: 'REJECT_STALE_OR_INCOMPATIBLE',
+    conflicts: ['claim:obsolete-conflict'],
+    freshness: 'STALE',
+    status: 'REJECTED',
+  }));
+  const selection = selectPreferredSoftwareEngineeringSourceV1([staleRejected, fresh], {
+    claim: 'claim:node-test-runner-current',
+  });
+  assert.equal(selection.decision, 'SOURCE_SELECTED');
+  assert.equal(selection.source.recordId, fresh.recordId);
+  assert.deepEqual(selection.conflictingSourceRecordIds, []);
+});
+
 test('reference-only proprietary evidence can yield principles but not direct implementation context', () => {
   const reference = buildSoftwareEngineeringSourceRecordV1(sourceInput({
     sourceId: 'commercial-product-reference',
@@ -170,7 +226,7 @@ test('reference-only proprietary evidence can yield principles but not direct im
   assert.equal(technique.implementationContextAllowed, false);
 });
 
-test('a technique candidate preserves exact source, evidence and reuse constraints', () => {
+test('an adaptation-only source never grants direct code reuse', () => {
   const source = buildSoftwareEngineeringSourceRecordV1(sourceInput({
     sourceId: 'example-upstream',
     sourceClass: 'CANONICAL_UPSTREAM_REPOSITORY',
@@ -183,20 +239,49 @@ test('a technique candidate preserves exact source, evidence and reuse constrain
     evidencePlane: 'DIRECT_PUBLIC_SOURCE',
     claimsSupported: ['claim:bounded-parser-pattern'],
   }));
-  const technique = buildSoftwareEngineeringTechniqueCandidateV1({
-    sourceRecord: source,
-    techniqueId: 'bounded-parser-pattern',
-    name: 'BoundedParserPattern',
-    problemSolved: 'UntrustedInputParsing',
-    method: 'ValidateBeforeTransformation',
-    evidenceRefs: ['evidence:example-parser-source'],
-    applicableDomains: ['software-engineering', 'shared-agents'],
-    failureModes: ['silent-truncation'],
-  });
+  const technique = buildSoftwareEngineeringTechniqueCandidateV1(techniqueInput(source));
   assert.equal(technique.sourceRecordId, source.recordId);
   assert.equal(technique.sourceRevisionOrVersion, source.revisionOrVersion);
   assert.equal(technique.reuseRoute, 'ADAPTATION_ALLOWED');
-  assert.equal(technique.directCodeReuseAllowed, true);
+  assert.equal(technique.directCodeReuseAllowed, false);
+  assert.equal(technique.implementationContextAllowed, true);
+});
+
+test('technique candidates revalidate the complete source record and content identity', () => {
+  const source = buildSoftwareEngineeringSourceRecordV1(sourceInput({
+    sourceId: 'example-upstream',
+    sourceClass: 'CANONICAL_UPSTREAM_REPOSITORY',
+    canonicalLocation: 'https://github.com/example/project',
+    publisherOrOwner: 'example',
+    revisionOrVersion: '0123456789abcdef0123456789abcdef01234567',
+    licence: 'MIT',
+    rightsEvidence: ['evidence:example-project-license'],
+    reuseRoute: 'DIRECT_REUSE_ALLOWED',
+    evidencePlane: 'DIRECT_PUBLIC_SOURCE',
+    claimsSupported: ['claim:bounded-parser-pattern'],
+  }));
+  const forgedLicence = { ...structuredClone(source), licence: 'UNKNOWN' };
+  const forgedRecordId = { ...structuredClone(source), recordId: 'software-engineering-source-000000000000000000000000' };
+  const widenedAuthority = {
+    ...structuredClone(source),
+    authority: { ...source.authority, sourceMutationAllowed: true },
+  };
+  for (const forged of [forgedLicence, forgedRecordId, widenedAuthority]) {
+    assert.throws(
+      () => buildSoftwareEngineeringTechniqueCandidateV1(techniqueInput(forged)),
+      /exact revalidated software engineering source record/,
+    );
+  }
+});
+
+test('source selection ignores forged records and uses only exact revalidated evidence', () => {
+  const official = buildSoftwareEngineeringSourceRecordV1(sourceInput());
+  const forged = { ...structuredClone(official), recordId: 'software-engineering-source-forged' };
+  const selection = selectPreferredSoftwareEngineeringSourceV1([forged, official], {
+    claim: 'claim:node-test-runner-current',
+  });
+  assert.equal(selection.decision, 'SOURCE_SELECTED');
+  assert.equal(selection.source.recordId, official.recordId);
 });
 
 test('authority widening is rejected before source admission', () => {
