@@ -63,6 +63,14 @@ function exactSha(value) {
   return FULL_SHA.test(normalized) ? normalized : null;
 }
 
+function safeRepository(value) {
+  const normalized = text(value).toLowerCase();
+  if (!SAFE_REPOSITORY.test(normalized)) return null;
+  const parts = normalized.split('/');
+  if (parts.length !== 2 || parts.some((part) => part === '.' || part === '..')) return null;
+  return normalized;
+}
+
 function safeRef(value) {
   const normalized = text(value);
   return CANONICAL_ISSUE_REF.test(normalized) || SAFE_REF.test(normalized) ? normalized : null;
@@ -84,6 +92,11 @@ function normalizePath(value) {
   if (parts.some((part) => !part || part === '.' || part === '..')) return null;
   if (!/^[a-z0-9._/-]+$/i.test(normalized)) return null;
   return normalized;
+}
+
+function compareCanonicalText(left, right) {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 function normalizedList(value, {
@@ -115,7 +128,7 @@ function normalizedList(value, {
     seen.add(key);
     result.push(normalized);
   }
-  return result.sort((left, right) => left.localeCompare(right));
+  return result.sort(compareCanonicalText);
 }
 
 function authorityIsZero(authority) {
@@ -125,8 +138,8 @@ function authorityIsZero(authority) {
 }
 
 function buildValidatedPack(input, blockers) {
-  const repository = text(input.repository).toLowerCase();
-  if (!SAFE_REPOSITORY.test(repository)) blockers.push('repository-invalid');
+  const repository = safeRepository(input.repository);
+  if (!repository) blockers.push('repository-invalid');
 
   const baseHead = exactSha(input.baseHead);
   const baseTree = exactSha(input.baseTree);
@@ -292,12 +305,16 @@ export function buildRepositoryEngineeringKnowledgePackV1(input = {}) {
 }
 
 export function isRepositoryEngineeringKnowledgePackCurrentV1(pack, { baseHead, baseTree } = {}) {
-  return Boolean(pack
-    && pack.schemaVersion === REPOSITORY_ENGINEERING_KNOWLEDGE_PACK_SCHEMA_V1
-    && pack.freshness === 'CURRENT'
-    && pack.baseHead === exactSha(baseHead)
-    && pack.baseTree === exactSha(baseTree)
-    && Array.isArray(pack.conflicts)
-    && pack.conflicts.length === 0
-    && authorityIsZero(pack.authority));
+  if (!pack || typeof pack !== 'object' || Array.isArray(pack)) return false;
+  const expectedHead = exactSha(baseHead);
+  const expectedTree = exactSha(baseTree);
+  if (!expectedHead || !expectedTree) return false;
+
+  const validation = validateRepositoryEngineeringKnowledgePackInputV1(pack);
+  return Boolean(validation.valid
+    && validation.pack
+    && validation.pack.packId === pack.packId
+    && canonicalJson(validation.pack) === canonicalJson(pack)
+    && validation.pack.baseHead === expectedHead
+    && validation.pack.baseTree === expectedTree);
 }
