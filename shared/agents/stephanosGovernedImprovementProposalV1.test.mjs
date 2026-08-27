@@ -239,3 +239,44 @@ test('malformed or traversal-shaped repository identities fail closed', () => {
     assert.equal(result.proposalReady, false, repository);
   }
 });
+
+test('hidden own properties cannot smuggle authority data', () => {
+  const hidden = packet();
+  Object.defineProperty(hidden, 'executeNow', {
+    enumerable: false,
+    value: true,
+  });
+  const hiddenResult = planStephanosGovernedImprovementProposalV1(hidden);
+  assert.equal(hiddenResult.status, 'SAFE_HOLD');
+  assert.equal(hiddenResult.blocker, 'invalid-data-only-envelope');
+
+  const symbol = packet();
+  symbol[Symbol('executeNow')] = true;
+  const symbolResult = planStephanosGovernedImprovementProposalV1(symbol);
+  assert.equal(symbolResult.status, 'SAFE_HOLD');
+  assert.equal(symbolResult.blocker, 'invalid-data-only-envelope');
+});
+
+test('hostile reflection failures fail closed even when arbitrary values are thrown', () => {
+  const hostile = new Proxy(packet(), {
+    getPrototypeOf() {
+      throw null;
+    },
+  });
+  const result = planStephanosGovernedImprovementProposalV1(hostile);
+  assert.equal(result.status, 'SAFE_HOLD');
+  assert.equal(result.blocker, 'invalid-data-only-envelope');
+  assert.equal(result.proposalReady, false);
+});
+
+test('new-goal scope cannot request duplicate authority when a canonical owner exists', () => {
+  const result = planStephanosGovernedImprovementProposalV1(packet({
+    proposal: { changeClass: 'NEW_GOAL_SCOPE' },
+  }));
+  assert.equal(result.status, 'SAFE_HOLD');
+  assert.equal(result.blocker, 'new-goal-scope-conflicts-with-existing-owner');
+  assert.equal(result.nextAction, 'RECLASSIFY_CHANGE_UNDER_EXISTING_OWNER');
+  assert.equal(result.authorityRequired, '');
+  assert.equal(result.proposalReady, false);
+  assert.equal(result.goalCreationAllowed, false);
+});

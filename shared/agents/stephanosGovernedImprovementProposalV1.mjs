@@ -150,6 +150,10 @@ function dataOnlySnapshot(value, path = '$', depth = 0, budget = { count: 0 }) {
   if (Array.isArray(value)) {
     if (Object.getPrototypeOf(value) !== Array.prototype) throw new Error(`${path}: custom array rejected`);
     if (value.length > 64) throw new Error(`${path}: array too large`);
+    const ownKeys = Reflect.ownKeys(value);
+    if (ownKeys.some((key) => typeof key !== 'string')) throw new Error(`${path}: symbol-keyed array property rejected`);
+    const expectedKeys = new Set(['length', ...Array.from({ length: value.length }, (_, index) => String(index))]);
+    if (ownKeys.some((key) => !expectedKeys.has(key))) throw new Error(`${path}: extra array property rejected`);
     for (let index = 0; index < value.length; index += 1) {
       if (!Object.prototype.hasOwnProperty.call(value, index)) throw new Error(`${path}: sparse array rejected`);
     }
@@ -157,8 +161,12 @@ function dataOnlySnapshot(value, path = '$', depth = 0, budget = { count: 0 }) {
   }
 
   if (Object.getPrototypeOf(value) !== Object.prototype) throw new Error(`${path}: custom object rejected`);
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.some((key) => typeof key !== 'string')) throw new Error(`${path}: symbol-keyed property rejected`);
   const descriptors = Object.getOwnPropertyDescriptors(value);
-  for (const [key, descriptor] of Object.entries(descriptors)) {
+  for (const key of ownKeys) {
+    const descriptor = descriptors[key];
+    if (!descriptor.enumerable) throw new Error(`${path}.${key}: non-enumerable property rejected`);
     if (!('value' in descriptor)) throw new Error(`${path}.${key}: accessor rejected`);
     if (key === '__proto__' || key === 'prototype' || key === 'constructor') {
       throw new Error(`${path}.${key}: prototype-shaping key rejected`);
@@ -166,7 +174,7 @@ function dataOnlySnapshot(value, path = '$', depth = 0, budget = { count: 0 }) {
   }
 
   const result = {};
-  for (const key of Object.keys(value)) {
+  for (const key of ownKeys) {
     result[key] = dataOnlySnapshot(descriptors[key].value, `${path}.${key}`, depth + 1, budget);
   }
   return result;
@@ -198,7 +206,7 @@ export function planStephanosGovernedImprovementProposalV1(input = {}) {
   let packet;
   try {
     packet = dataOnlySnapshot(input);
-  } catch (error) {
+  } catch {
     return blocked(
       {
         schemaVersion: STEPHANOS_GOVERNED_IMPROVEMENT_PROPOSAL_SCHEMA_VERSION,
@@ -208,7 +216,7 @@ export function planStephanosGovernedImprovementProposalV1(input = {}) {
         authorityRequired: '',
       },
       'SAFE_HOLD',
-      `invalid-data-only-envelope:${error.message}`,
+      'invalid-data-only-envelope',
       'REPAIR_IMPROVEMENT_INPUT_ENVELOPE',
     );
   }
@@ -349,6 +357,15 @@ export function planStephanosGovernedImprovementProposalV1(input = {}) {
       'OPERATOR_JUDGMENT_REQUIRED',
       'self-improvement-cannot-widen-its-own-authority',
       'PRESENT_HIGH_RISK_IMPROVEMENT_FOR_EXPLICIT_OPERATOR_JUDGMENT',
+    );
+  }
+
+  if (owner && changeClass === 'NEW_GOAL_SCOPE') {
+    return blocked(
+      { ...base, authorityRequired: '' },
+      'SAFE_HOLD',
+      'new-goal-scope-conflicts-with-existing-owner',
+      'RECLASSIFY_CHANGE_UNDER_EXISTING_OWNER',
     );
   }
 
