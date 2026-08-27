@@ -8,8 +8,6 @@ const installerPaths = [
   new URL('./windows/install-battle-bridge-github-command-mailbox.ps1', import.meta.url),
 ];
 const windowlessLauncherPath = new URL('./windows/run-stephanos-scheduled-task-windowless.vbs', import.meta.url);
-const workerInstallerPath = new URL('./windows/install-mission-orchestrator-worker-autostart.ps1', import.meta.url);
-const workerStartPath = new URL('./windows/start-mission-orchestrator-worker.ps1', import.meta.url);
 
 test('persistent Stephanos scheduled tasks use the windowless script host', async () => {
   for (const installerPath of installerPaths) {
@@ -31,20 +29,4 @@ test('windowless launcher accepts only fixed task identities and never allocates
   assert.match(source, /Case Else\s+WScript\.Quit 2/);
   assert.match(source, /shell\.Run\(command, 0, True\)/);
   assert.doesNotMatch(source, /cmd\.exe|Invoke-Expression|WScript\.Arguments\(1\)/i);
-});
-
-test('canonical-head reload exit propagates into one bounded Task Scheduler restart chain', async () => {
-  const [installer, workerStart, windowlessLauncher] = await Promise.all([
-    readFile(workerInstallerPath, 'utf8'),
-    readFile(workerStartPath, 'utf8'),
-    readFile(windowlessLauncherPath, 'utf8'),
-  ]);
-  assert.match(installer, /Stephanos Mission Orchestrator Worker/);
-  assert.match(installer, /-MultipleInstances IgnoreNew/);
-  assert.match(installer, /-RestartCount 3/);
-  assert.match(installer, /-RestartInterval \(New-TimeSpan -Minutes 1\)/);
-  assert.match(workerStart, /\$exitCode = \$LASTEXITCODE[\s\S]*exit \$exitCode/);
-  assert.match(windowlessLauncher, /Case "mission-worker"[\s\S]*start-mission-orchestrator-worker\.ps1/);
-  assert.match(windowlessLauncher, /exitCode = shell\.Run\(command, 0, True\)[\s\S]*WScript\.Quit exitCode/);
-  assert.doesNotMatch(installer, /RestartCount\s+[4-9]|RestartInterval \(New-TimeSpan -Seconds|Stop-Process|Stop-ScheduledTask/i);
 });

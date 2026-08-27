@@ -13,7 +13,7 @@ $taskArgs = "//B //NoLogo `"$escapedLauncherPath`" mission-worker"
 $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $taskArgs
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 if ($PSCmdlet.ShouldProcess($taskName, 'Register or update scheduled task')) {
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Runs the Stephanos Mission Orchestrator persistent local worker.' -Force | Out-Null
 }
