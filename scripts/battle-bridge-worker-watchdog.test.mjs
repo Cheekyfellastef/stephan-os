@@ -30,6 +30,9 @@ function workerObservation({
   repositoryHead = 'a'.repeat(40),
   heartbeatHead = repositoryHead,
 } = {}) {
+  const launchIdentityId = '1'.repeat(64);
+  const heartbeatMs = Date.parse(timestampUtc);
+  const workerStartedAtUtc = new Date((Number.isFinite(heartbeatMs) ? heartbeatMs : Date.now()) - 60_000).toISOString();
   return {
     scheduledTask: {
       taskName: APPROVED_WORKER_TASK,
@@ -48,6 +51,9 @@ function workerObservation({
       taskName: healthy ? APPROVED_WORKER_TASK : '',
       pid: healthy ? 1291 : 0,
       commandLineMatchesCanonicalWorker: healthy,
+      startedAtUtc: workerStartedAtUtc,
+      launchIdentityId,
+      launchIdentityVerified: healthy,
     },
     heartbeat: {
       timestampUtc,
@@ -56,6 +62,8 @@ function workerObservation({
       headSha: heartbeatHead,
       taskName: APPROVED_WORKER_TASK,
       pid: healthy ? 1291 : 0,
+      launchIdentityId,
+      workerStartedAtUtc,
     },
   };
 }
