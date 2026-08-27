@@ -13,6 +13,7 @@ import {
 const repository = 'Cheekyfellastef/stephan-os';
 const sourceHead = 'f'.repeat(40);
 const baseSha = 'e'.repeat(40);
+const legacyV1Anchor = 'e0b9f8786a51211d2b0ca3a394ee4bc1876855fd';
 
 function lineage(overrides = {}) {
   return {
@@ -32,6 +33,16 @@ function lineage(overrides = {}) {
       mergeBaseCommitSha: baseSha,
     },
     ...overrides,
+  };
+}
+
+function exactEscalationAnalysis() {
+  return {
+    findings: WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V2.map((path) => ({
+      severity: 'P0',
+      code: 'unsupported-high-risk-surface',
+      path,
+    })),
   };
 }
 
@@ -159,4 +170,36 @@ test('V2 is inapplicable outside the exact three-path high-risk escalation', () 
   });
   assert.equal(result.eligible, false);
   assert.equal(result.clean, false);
+});
+
+test('legacy V1 watchdog lineage falls through instead of being claimed by V2', () => {
+  const result = analyzeWindowsAuthorityWorkerWatchdogReviewV2({
+    repository,
+    prNumber: 2045,
+    branch: 'codex/worker-watchdog-current-main-binding-v2',
+    sourceHead,
+    baseSha,
+    lineageEvidence: lineage({ parents: [legacyV1Anchor, baseSha] }),
+    analysis: exactEscalationAnalysis(),
+    sources: [],
+  });
+  assert.equal(result.eligible, false);
+  assert.equal(result.clean, false);
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_WORKER_WATCHDOG_V2_NOT_APPLICABLE');
+});
+
+test('malformed genuine V2 lineage remains V2-owned and fails closed', () => {
+  const result = analyzeWindowsAuthorityWorkerWatchdogReviewV2({
+    repository,
+    prNumber: 2045,
+    branch: 'codex/worker-watchdog-current-main-binding-v2',
+    sourceHead,
+    baseSha,
+    lineageEvidence: lineage({ liveMainAfterSha: '0'.repeat(40) }),
+    analysis: exactEscalationAnalysis(),
+    sources: [],
+  });
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'windows-authority-v2-reviewed-lineage-mismatch'));
 });
