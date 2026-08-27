@@ -136,7 +136,10 @@ function normalizedList(value, {
     return [];
   }
   if (value.length < min) blockers.push(`${field}-too-short`);
-  if (value.length > max) blockers.push(`${field}-too-long`);
+  if (value.length > max) {
+    blockers.push(`${field}-too-long`);
+    return [];
+  }
   const result = [];
   const seen = new Set();
   for (const item of value) {
@@ -338,17 +341,19 @@ export function buildRepositoryEngineeringKnowledgePackV1(input = {}) {
   return validation.pack;
 }
 
-export function isRepositoryEngineeringKnowledgePackCurrentV1(pack, { baseHead, baseTree } = {}) {
+export function isRepositoryEngineeringKnowledgePackCurrentV1(pack, { repository, baseHead, baseTree } = {}) {
   if (!pack || typeof pack !== 'object' || Array.isArray(pack)) return false;
+  const expectedRepository = safeRepository(repository);
   const expectedHead = exactSha(baseHead);
   const expectedTree = exactSha(baseTree);
-  if (!expectedHead || !expectedTree) return false;
+  if (!expectedRepository || !expectedHead || !expectedTree) return false;
 
   const validation = validateRepositoryEngineeringKnowledgePackInputV1(pack);
   return Boolean(validation.valid
     && validation.pack
     && validation.pack.packId === pack.packId
     && canonicalJson(validation.pack) === canonicalJson(pack)
+    && validation.pack.repository === expectedRepository
     && validation.pack.baseHead === expectedHead
     && validation.pack.baseTree === expectedTree);
 }
