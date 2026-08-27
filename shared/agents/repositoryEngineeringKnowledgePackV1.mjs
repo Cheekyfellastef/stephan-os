@@ -8,7 +8,7 @@ const SAFE_REPOSITORY = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const SAFE_REF = /^[a-z0-9][a-z0-9._:/#-]{0,159}$/i;
 const CANONICAL_ISSUE_REF = /^#[1-9][0-9]{0,9}$/;
 const SAFE_TEXT = /^[^\u0000-\u001f\u007f]{1,500}$/u;
-const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
+const STRICT_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|([+-])(\d{2}):(\d{2}))$/i;
 const ALLOWED_FRESHNESS = new Set(['CURRENT']);
 
 export const REPOSITORY_ENGINEERING_KNOWLEDGE_PACK_AUTHORITY_V1 = Object.freeze({
@@ -51,9 +51,34 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function isLeapYear(year) {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+function daysInMonth(year, month) {
+  if (month === 2) return isLeapYear(year) ? 29 : 28;
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
 function explicitTimestamp(value) {
   const normalized = text(value);
-  if (!normalized || !EXPLICIT_TIMEZONE.test(normalized)) return null;
+  const match = STRICT_TIMESTAMP.exec(normalized);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offsetHour = match[10] === undefined ? 0 : Number(match[10]);
+  const offsetMinute = match[11] === undefined ? 0 : Number(match[11]);
+
+  if (year < 1 || month < 1 || month > 12) return null;
+  if (day < 1 || day > daysInMonth(year, month)) return null;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) return null;
+  if (offsetHour < 0 || offsetHour > 23 || offsetMinute < 0 || offsetMinute > 59) return null;
+
   const parsed = Date.parse(normalized);
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
 }
