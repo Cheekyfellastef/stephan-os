@@ -8,6 +8,7 @@ import { projectCaptainsBridgeRuntimeHealth } from './captainsBridgeRuntimeHealt
 import { projectOperatorTimeline } from './operatorTimeline.mjs';
 import { projectWorkspaceAutoDiscovery } from './workspaceAutoDiscovery.mjs';
 import { projectSelfExplainingStephanos } from './selfExplainingStephanos.mjs';
+import { buildGoalDashboardOperatorAttention } from './goalDashboardOperatorAttention.mjs';
 
 export const LANDING_GOAL_DASHBOARD_SCHEMA_VERSION = 'stephanos.landing-goal-dashboard-projection.v1';
 export const LANDING_DASHBOARD_GOALS = Object.freeze([
@@ -153,8 +154,14 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     exactNextAction: buildOrchestration.signals.OPERATOR_NEEDED ? buildOrchestration.exactNextAction : (mergePipeline.phase !== 'COMPLETE' ? mergePipeline.exactNextAction : runtimeHealth.exactNextAction),
     consumesSharedProjections: ['Shared Agent Workspace', 'Codex Dispatch Queue', 'Automated Codex Dispatcher', 'Battle Bridge Supervisor', 'Git Branch Intelligence'],
   });
-  const approvals = goals.filter((goal) => goal.issue === '#1286' || goal.issue === '#1293' || goal.blockers.some((blocker) => blocker.includes('UNKNOWN'))).map((goal) => `${goal.issue}: ${goal.exactNextAction}`);
   const blockers = [...new Set(goals.flatMap((goal) => goal.blockers))];
+  const operatorAttention = buildGoalDashboardOperatorAttention({
+    goals,
+    blockers,
+    exactNextAction: blockers.length
+      ? 'Codex and Housekeeper must publish or refresh missing Shared Workspace status, proof, and capability records; do not claim live proof until records are current.'
+      : 'Review any genuine approval-gated next step and keep the dashboard truth-preserving.',
+  });
   return Object.freeze({
     schemaVersion: LANDING_GOAL_DASHBOARD_SCHEMA_VERSION,
     kind: 'stephanos.landing_goal_dashboard.projection',
@@ -168,7 +175,7 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     battleBridgeSupervisor: Object.freeze({ services: supervisorHealth, overallState: supervisorHealth.some((s) => ['STALE', 'UNKNOWN', 'FAILED', 'DEGRADED'].includes(s.state)) ? 'ATTENTION_REQUIRED' : 'CURRENT' }),
     openClawCapabilityLadder: Object.freeze({ canRunNow: openClaw.canRunNow, needsApproval: openClaw.needsApproval, blocked: openClaw.blocked, exactNextAction: openClaw.exactNextAction, guardrails: openClaw.guardrails }),
     captainsBridge: captainBridge,
-    operatorAttention: Object.freeze({ approvals, localProofNeeded: goals.filter((goal) => goal.proofTruth !== CURRENT).map((goal) => goal.issue), blockers, exactNextAction: blockers.length ? 'Publish or refresh missing Shared Workspace status/proof/capability records; do not claim live proof until records are current.' : 'Review approval-gated next step and keep UI read-only.' }),
+    operatorAttention,
     finalVerdict: blockers.length ? 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED' : 'LANDING_GOAL_DASHBOARD_CURRENT',
   });
 }
