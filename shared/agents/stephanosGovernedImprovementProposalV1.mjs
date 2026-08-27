@@ -154,10 +154,17 @@ function dataOnlySnapshot(value, path = '$', depth = 0, budget = { count: 0 }) {
     if (ownKeys.some((key) => typeof key !== 'string')) throw new Error(`${path}: symbol-keyed array property rejected`);
     const expectedKeys = new Set(['length', ...Array.from({ length: value.length }, (_, index) => String(index))]);
     if (ownKeys.some((key) => !expectedKeys.has(key))) throw new Error(`${path}: extra array property rejected`);
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const items = [];
     for (let index = 0; index < value.length; index += 1) {
-      if (!Object.prototype.hasOwnProperty.call(value, index)) throw new Error(`${path}: sparse array rejected`);
+      const key = String(index);
+      const descriptor = descriptors[key];
+      if (!descriptor) throw new Error(`${path}: sparse array rejected`);
+      if (!descriptor.enumerable) throw new Error(`${path}[${index}]: non-enumerable array element rejected`);
+      if (!('value' in descriptor)) throw new Error(`${path}[${index}]: accessor rejected`);
+      items.push(dataOnlySnapshot(descriptor.value, `${path}[${index}]`, depth + 1, budget));
     }
-    return value.map((item, index) => dataOnlySnapshot(item, `${path}[${index}]`, depth + 1, budget));
+    return items;
   }
 
   if (Object.getPrototypeOf(value) !== Object.prototype) throw new Error(`${path}: custom object rejected`);

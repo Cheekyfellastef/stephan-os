@@ -280,3 +280,21 @@ test('new-goal scope cannot request duplicate authority when a canonical owner e
   assert.equal(result.proposalReady, false);
   assert.equal(result.goalCreationAllowed, false);
 });
+
+test('accessor-backed array elements fail closed without invoking getters', () => {
+  let invoked = false;
+  const candidate = packet();
+  Object.defineProperty(candidate.gap.evidenceRefs, '0', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      invoked = true;
+      return 'evidence/ui-audit-1';
+    },
+  });
+  const result = planStephanosGovernedImprovementProposalV1(candidate);
+  assert.equal(result.status, 'SAFE_HOLD');
+  assert.equal(result.blocker, 'invalid-data-only-envelope');
+  assert.equal(result.proposalReady, false);
+  assert.equal(invoked, false);
+});
