@@ -221,3 +221,21 @@ test('sparse or custom arrays fail closed', () => {
   custom.gap.evidenceRefs = refs;
   assert.equal(planStephanosGovernedImprovementProposalV1(custom).status, 'SAFE_HOLD');
 });
+
+test('malformed or traversal-shaped repository identities fail closed', () => {
+  for (const repository of [
+    '../stephan-os',
+    './stephan-os',
+    'Cheekyfellastef/..',
+    'Cheekyfellastef/.',
+    'Cheekyfellastef//stephan-os',
+    ' Cheekyfellastef/stephan-os ',
+  ]) {
+    const result = planStephanosGovernedImprovementProposalV1(packet({
+      architecture: { repository },
+    }));
+    assert.equal(result.status, 'SAFE_HOLD', repository);
+    assert.equal(result.blocker, 'gap-or-architecture-evidence-invalid', repository);
+    assert.equal(result.proposalReady, false, repository);
+  }
+});
