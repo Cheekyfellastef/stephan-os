@@ -129,6 +129,36 @@ test('standalone Goal Dashboard renders ready Shared Workspace feed before stati
   assert.match(telemetry.get('goal-data-source').textContent, /READY Shared Agent Workspace feed/);
   assert.equal(telemetry.get('proof-state').textContent, 'CURRENT 1 · STALE 1 · UNKNOWN 1');
   assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-shared-workspace');
+  assert.equal(grid.attrs['data-goal-dashboard-feed-state'], 'ready');
+});
+
+test('standalone Goal Dashboard renders stale Shared Workspace evidence without downgrading to static fallback', async () => {
+  const calls = [];
+  const { telemetry, grid } = runDashboard({
+    fetchImpl: async (url) => {
+      calls.push(url);
+      return { ok: true, json: async () => ({
+        schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
+        state: 'stale',
+        reason: 'STALE_WORKSPACE_RECORDS',
+        workspaceRoot: '/tmp/shared-workspace-live',
+        exactNextAction: 'Refresh stale records.',
+        projection: {
+          portfolioSource: 'BASE_PROJECTION_FALLBACK',
+          goals: [{ issue: '#1291', title: 'Battle Bridge Supervisor', statusTruth: 'STALE', proofTruth: 'STALE', blockers: ['STALE_STATUS_RECORD'], exactNextAction: 'Refresh proof.' }],
+          operatorAttention: { blockers: ['STALE_STATUS_RECORD'], exactNextAction: 'Refresh stale records.' },
+        },
+      }) };
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  assert.equal(telemetry.get('source-badge').textContent, 'STALE');
+  assert.match(telemetry.get('goal-data-source').textContent, /STALE Shared Agent Workspace feed/);
+  assert.equal(telemetry.get('telemetry-blocker').textContent, 'STALE_WORKSPACE_RECORDS');
+  assert.equal(telemetry.get('next-operator-action').textContent, 'Refresh stale records.');
+  assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-shared-workspace');
+  assert.equal(grid.attrs['data-goal-dashboard-feed-state'], 'stale');
 });
 
 test('standalone Goal Dashboard does not claim live proof without backend data and gates non-local fetches', async () => {
