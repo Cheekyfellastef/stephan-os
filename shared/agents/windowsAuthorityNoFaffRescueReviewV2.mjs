@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 const V1_PATH = './windowsAuthorityNoFaffRescueReviewV1.mjs';
-const V1_BLOB_SHA = '06d3d9da13f930be1f907187d13e7f0df898b6a2';
+const V1_BLOB_SHA = '92ce7b8fdecd0637244aedcb7b2e6d66458b8507';
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
 
 const RESCUE_PATH = 'scripts/windows/repair-battle-bridge-control-plane-now.ps1';

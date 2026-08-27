@@ -44,6 +44,11 @@ test('rescue resolves the exact commit tree without leaking a literal PowerShell
   assert.doesNotMatch(ps1, /\$observedHead`\$\{tree\}/);
 });
 
+test('task proof counting is collection-safe under Windows PowerShell strict mode', () => {
+  assert.ok(ps1.includes('if (@($taskProof | Where-Object { $_.present -ne $true }).Count -gt 0)'));
+  assert.ok(!ps1.includes('if (($taskProof | Where-Object { $_.present -ne $true }).Count -gt 0)'));
+});
+
 test('dispatch readiness requires a fresh exact-head Windows tools-list attachment proof and separates local Codex from remote transport', () => {
   assert.match(status, /surface-attachment-latest\.json/);
   assert.match(status, /stephanos\.codex-dispatch-surface-attachment\.v1/);
