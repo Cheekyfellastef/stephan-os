@@ -277,6 +277,15 @@ function buildValidatedPack(input, blockers) {
 }
 
 export function validateRepositoryEngineeringKnowledgePackInputV1(input = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return deepFreeze({
+      valid: false,
+      blockers: ['input-must-be-object'],
+      observedBytes: null,
+      pack: null,
+    });
+  }
+
   const blockers = [];
   const candidate = buildValidatedPack(input, blockers);
   if (blockers.length === 0) {
