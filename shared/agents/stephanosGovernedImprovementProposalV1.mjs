@@ -187,9 +187,16 @@ function dataOnlySnapshot(value, path = '$', depth = 0, budget = { count: 0 }) {
   return result;
 }
 
+function scopeOverlap(left, right) {
+  if (left === right) return true;
+  const a = left.replace(/\/+$/, '');
+  const b = right.replace(/\/+$/, '');
+  if (!a || !b) return true;
+  return a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+}
+
 function overlap(left, right) {
-  const set = new Set(left);
-  return right.some((item) => set.has(item));
+  return left.some((leftScope) => right.some((rightScope) => scopeOverlap(leftScope, rightScope)));
 }
 
 function blocked(base, status, blocker, nextAction) {
@@ -298,6 +305,22 @@ export function planStephanosGovernedImprovementProposalV1(input = {}) {
   if (!['KNOWN', 'UNKNOWN'].includes(rootCauseState) || !researchRefs) {
     return blocked(base, 'SAFE_HOLD', 'diagnosis-envelope-invalid', 'REPAIR_DIAGNOSIS_EVIDENCE');
   }
+
+  const changeClass = text(packet.proposal.changeClass, 80);
+  const attemptsAuthorityWidening = packet.proposal.attemptsAuthorityWidening;
+  if (!STEPHANOS_IMPROVEMENT_CHANGE_CLASSES.includes(changeClass)
+    || typeof attemptsAuthorityWidening !== 'boolean') {
+    return blocked(base, 'SAFE_HOLD', 'improvement-proposal-incomplete', 'COMPLETE_BOUNDED_IMPROVEMENT_PROPOSAL');
+  }
+  if (attemptsAuthorityWidening || changeClass === 'AUTHORITY_OR_CONSTITUTION_CHANGE') {
+    return blocked(
+      { ...base, authorityRequired: 'HIGH_RISK_OPERATOR_JUDGMENT_REQUIRED' },
+      'OPERATOR_JUDGMENT_REQUIRED',
+      'self-improvement-cannot-widen-its-own-authority',
+      'PRESENT_HIGH_RISK_IMPROVEMENT_FOR_EXPLICIT_OPERATOR_JUDGMENT',
+    );
+  }
+
   if (rootCauseState === 'UNKNOWN') {
     if (!['DIRECT_BOUNDED_RESEARCH', 'SPECIALIST_RESEARCH', 'MULTI_AGENT_RESEARCH_COUNCIL', 'EXPERIMENT_REQUIRED'].includes(researchRoute)) {
       return blocked(base, 'SAFE_HOLD', 'unknown-root-cause-without-bounded-research-route', 'SELECT_BOUNDED_RESEARCH_ROUTE');
@@ -314,7 +337,6 @@ export function planStephanosGovernedImprovementProposalV1(input = {}) {
   }
 
   const proposalId = safeId(packet.proposal.proposalId);
-  const changeClass = text(packet.proposal.changeClass, 80);
   const summary = text(packet.proposal.summary, 1200);
   const whyThisChange = text(packet.proposal.whyThisChange, 1200);
   const alternatives = Array.isArray(packet.proposal.alternatives)
@@ -327,10 +349,8 @@ export function planStephanosGovernedImprovementProposalV1(input = {}) {
   const requiredReview = safeRefs(packet.proposal.requiredReview, { minimum: 1, maximum: 12 });
   const requiredProof = safeRefs(packet.proposal.requiredProof, { minimum: 1, maximum: 16 });
   const rollbackPlan = text(packet.proposal.rollbackPlan, 1000);
-  const attemptsAuthorityWidening = packet.proposal.attemptsAuthorityWidening;
 
   if (!proposalId
-    || !STEPHANOS_IMPROVEMENT_CHANGE_CLASSES.includes(changeClass)
     || !summary
     || !whyThisChange
     || alternatives.length < 1
@@ -341,8 +361,7 @@ export function planStephanosGovernedImprovementProposalV1(input = {}) {
     || !resourceScopes
     || !requiredReview
     || !requiredProof
-    || !rollbackPlan
-    || typeof attemptsAuthorityWidening !== 'boolean') {
+    || !rollbackPlan) {
     return blocked(base, 'SAFE_HOLD', 'improvement-proposal-incomplete', 'COMPLETE_BOUNDED_IMPROVEMENT_PROPOSAL');
   }
 
@@ -355,15 +374,6 @@ export function planStephanosGovernedImprovementProposalV1(input = {}) {
       'EXISTING_IMPLEMENTATION_OWNER_ACTIVE',
       `resource-owned-by:${activeWriter.writerId}`,
       'WAIT_FOR_OR_RECONCILE_EXISTING_OWNER',
-    );
-  }
-
-  if (attemptsAuthorityWidening || changeClass === 'AUTHORITY_OR_CONSTITUTION_CHANGE') {
-    return blocked(
-      { ...base, authorityRequired: 'HIGH_RISK_OPERATOR_JUDGMENT_REQUIRED' },
-      'OPERATOR_JUDGMENT_REQUIRED',
-      'self-improvement-cannot-widen-its-own-authority',
-      'PRESENT_HIGH_RISK_IMPROVEMENT_FOR_EXPLICIT_OPERATOR_JUDGMENT',
     );
   }
 
