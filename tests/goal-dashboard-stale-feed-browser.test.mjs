@@ -165,15 +165,21 @@ test('served Goal Dashboard visibly distinguishes and renders a stale canonical 
     assert.equal(await page.locator('#goal-grid').getAttribute('data-goal-dashboard-feed-state'), 'stale');
     assert.equal(await page.locator('#goal-grid .goal-card').count(), 1);
     assert.equal(await page.locator('#goal-grid .goal-card h3').textContent(), 'Battle Bridge Supervisor');
-    assert.match(await page.locator('#goal-grid .goal-card .meta').textContent(), /Status STALE · Proof STALE/);
+    assert.match(await page.locator('#goal-grid .goal-card .human-status').textContent(), /Progress: Needs refreshing/);
+    assert.match(await page.locator('#goal-grid .goal-card .human-status').textContent(), /Evidence: Needs refreshing/);
+    assert.match(await page.locator('#goal-grid .goal-card .human-blocker').textContent(), /saved status record is out of date/i);
+    assert.match(await page.locator('#goal-grid .goal-card .technical-details').textContent(), /Status STALE · Proof STALE/);
     assert.equal(await page.locator('[data-live-telemetry-field="telemetry-blocker"]').textContent(), 'STALE_WORKSPACE_RECORDS');
     assert.equal(await page.locator('#source-mesh .source-node').count(), 9);
-    assert.match(await page.locator('[data-source-id="shared-workspace"] output').textContent(), /STALE · STALE_WORKSPACE_RECORDS/);
+    assert.equal(await page.locator('[data-source-id="shared-workspace"] output').textContent(), 'Needs refreshing');
+    assert.match(await page.locator('[data-source-id="shared-workspace"] .plain-language').textContent(), /records are connected.*old.*refreshing/i);
+    assert.match(await page.locator('[data-source-id="shared-workspace"] .technical-details').textContent(), /STALE · STALE_WORKSPACE_RECORDS/);
     assert.equal(await page.locator('[data-source-id="shared-workspace"]').getAttribute('data-truth'), 'STALE');
-    assert.match(await page.locator('[data-source-id="live-portfolio"] output').textContent(), /READY · LIVE_GITHUB_READ_MODEL/);
+    assert.equal(await page.locator('[data-source-id="live-portfolio"] output').textContent(), 'Needs refreshing');
+    assert.match(await page.locator('[data-source-id="live-portfolio"] .plain-language').textContent(), /GitHub is connected.*2 open pull requests/i);
     assert.equal(await page.locator('[data-source-id="live-portfolio"]').getAttribute('data-truth'), 'STALE');
-    assert.match(await page.locator('[data-source-id="dispatcher"] output').textContent(), /IDLE · AUTOMATED_GUARDED/);
-    assert.match(await page.locator('[data-source-id="merge-pipeline"] output').textContent(), /PROOF · PR 2027/);
+    assert.match(await page.locator('[data-source-id="dispatcher"] .plain-language').textContent(), /2 jobs waiting/i);
+    assert.match(await page.locator('[data-source-id="merge-pipeline"] .plain-language').textContent(), /Pull request #2027/i);
     assert.match(await page.locator('#movement-list').textContent(), /Independent review launched/);
     assert.match(await page.locator('#timeline').textContent(), /Wait for the immutable review receipt/);
     assert.equal(await page.locator('[data-runtime="worker"]').getAttribute('data-truth'), 'STALE');
@@ -184,6 +190,23 @@ test('served Goal Dashboard visibly distinguishes and renders a stale canonical 
     assert.equal(await page.locator('[data-live-telemetry-field="active-goal-queue"]').textContent(), 'job-42');
     assert.equal(await page.locator('[data-live-telemetry-field="active-proof-lane"]').textContent(), 'lane-42');
     assert.match(await page.locator('#truth-boundary').textContent(), /Live backend projection loaded in read-only mode/);
+
+    await page.getByRole('tab', { name: 'Goals' }).click();
+    assert.equal(new URL(page.url()).hash, '#goals');
+    assert.equal(await page.getByRole('tab', { name: 'Goals' }).getAttribute('aria-selected'), 'true');
+    assert.equal(await page.locator('[data-dashboard-page="goals"]').isVisible(), true);
+    assert.equal(await page.locator('[data-dashboard-page="overview"]').first().isVisible(), false);
+    assert.match(await page.locator('#dashboard-view-description').textContent(), /what it means.*what is in the way.*what happens next/i);
+
+    await page.getByRole('tab', { name: 'Runtime' }).click();
+    assert.equal(new URL(page.url()).hash, '#runtime');
+    assert.equal(await page.locator('[data-dashboard-page="runtime"]').first().isVisible(), true);
+    assert.equal(await page.locator('[data-dashboard-page="goals"]').isVisible(), false);
+
+    await page.goBack();
+    await page.waitForFunction(() => location.hash === '#goals');
+    assert.equal(await page.getByRole('tab', { name: 'Goals' }).getAttribute('aria-selected'), 'true');
+    assert.equal(await page.locator('[data-dashboard-page="goals"]').isVisible(), true);
     assert.ok((await page.screenshot({ fullPage: true })).length > 10_000);
     assert.deepEqual(consoleErrors, []);
   } finally {
