@@ -1,15 +1,34 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
 export const MISSION_WORKER_HEARTBEAT_SCHEMA = 'stephanos.mission-orchestrator-worker-heartbeat.v1';
+export const MISSION_WORKER_LAUNCH_IDENTITY_SCHEMA = 'stephanos.mission-worker-launch-identity.v1';
 export const MISSION_WORKER_TASK_NAME = 'Stephanos Mission Orchestrator Worker';
 export const MISSION_WORKER_HEARTBEAT_FILE = 'mission-orchestrator-worker-heartbeat.json';
 export const DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS = 120_000;
+export const MAX_MISSION_WORKER_LAUNCH_IDENTITY_BYTES = 8_192;
 const SHA_40 = /^[0-9a-f]{40}$/i;
+const ID_64 = /^[0-9a-f]{64}$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
+const CANONICAL_NODE = 'C:\\Program Files\\nodejs\\node.exe';
+const LAUNCH_IDENTITY_KEYS = Object.freeze([
+  'schemaVersion',
+  'launchIdentityId',
+  'launchKind',
+  'restartInvocationId',
+  'taskName',
+  'repositoryRoot',
+  'branch',
+  'headSha',
+  'workerPid',
+  'workerStartedAtUtc',
+  'canonicalNode',
+  'canonicalWorkerScript',
+  'createdAtUtc',
+]);
 const AFFIRMATIVE_WORKER_TICK_VERDICTS = new Set([
   'MISSION_WORKER_RUNNING',
   'MISSION_WORKER_TICK_RUNNING',
@@ -37,6 +56,8 @@ export function createMissionWorkerHeartbeatRecord({
   branch,
   headSha,
   pid = process.pid,
+  launchIdentityId,
+  workerStartedAtUtc,
   taskName = MISSION_WORKER_TASK_NAME,
   lastTickVerdict = 'MISSION_WORKER_RUNNING',
 } = {}) {
@@ -45,12 +66,22 @@ export function createMissionWorkerHeartbeatRecord({
   const normalizedHead = text(headSha).toLowerCase();
   const normalizedTaskName = text(taskName);
   const normalizedPid = Number.parseInt(pid, 10);
-  if (!Number.isFinite(Date.parse(timestampUtc))) throw new Error('Mission worker heartbeat timestamp is invalid.');
+  const normalizedLaunchIdentityId = text(launchIdentityId).toLowerCase();
+  const normalizedWorkerStartedAtUtc = text(workerStartedAtUtc);
+  const timestampMs = EXPLICIT_TIMEZONE.test(text(timestampUtc)) ? Date.parse(timestampUtc) : Number.NaN;
+  const workerStartedAtMs = EXPLICIT_TIMEZONE.test(normalizedWorkerStartedAtUtc)
+    ? Date.parse(normalizedWorkerStartedAtUtc)
+    : Number.NaN;
+  if (!Number.isFinite(timestampMs)) throw new Error('Mission worker heartbeat timestamp is invalid.');
   if (!resolvedRepositoryRoot) throw new Error('Mission worker heartbeat repository root is required.');
   if (normalizedBranch !== 'main') throw new Error('Mission worker heartbeat requires branch main.');
   if (!SHA_40.test(normalizedHead)) throw new Error('Mission worker heartbeat requires a 40-character Git head.');
   if (normalizedTaskName !== MISSION_WORKER_TASK_NAME) throw new Error('Mission worker heartbeat task identity is not allowlisted.');
   if (!Number.isInteger(normalizedPid) || normalizedPid <= 0) throw new Error('Mission worker heartbeat pid is invalid.');
+  if (!ID_64.test(normalizedLaunchIdentityId)) throw new Error('Mission worker heartbeat launch identity is invalid.');
+  if (!Number.isFinite(workerStartedAtMs) || workerStartedAtMs >= timestampMs) {
+    throw new Error('Mission worker heartbeat process-start identity is invalid.');
+  }
   return Object.freeze({
     schemaVersion: MISSION_WORKER_HEARTBEAT_SCHEMA,
     timestampUtc,
@@ -59,6 +90,8 @@ export function createMissionWorkerHeartbeatRecord({
     headSha: normalizedHead,
     taskName: normalizedTaskName,
     pid: normalizedPid,
+    launchIdentityId: normalizedLaunchIdentityId,
+    workerStartedAtUtc: normalizedWorkerStartedAtUtc,
     lastTickVerdict: text(lastTickVerdict, 'MISSION_WORKER_RUNNING'),
     arbitraryShellAllowed: false,
     sourceMutationAllowed: false,
@@ -73,8 +106,12 @@ export function projectMissionWorkerHeartbeat(record = {}, {
 } = {}) {
   const errors = [];
   const heartbeatTimestamp = text(record?.timestampUtc);
+  const workerStartedAtTimestamp = text(record?.workerStartedAtUtc);
   const observationTimestamp = text(nowUtc);
   const heartbeatMs = EXPLICIT_TIMEZONE.test(heartbeatTimestamp) ? Date.parse(heartbeatTimestamp) : Number.NaN;
+  const workerStartedAtMs = EXPLICIT_TIMEZONE.test(workerStartedAtTimestamp)
+    ? Date.parse(workerStartedAtTimestamp)
+    : Number.NaN;
   const nowMs = EXPLICIT_TIMEZONE.test(observationTimestamp) ? Date.parse(observationTimestamp) : Number.NaN;
   const boundedMaxAgeMs = Number.isFinite(maxAgeMs) && maxAgeMs > 0
     ? maxAgeMs
@@ -106,6 +143,11 @@ export function projectMissionWorkerHeartbeat(record = {}, {
   else if (text(record?.headSha).toLowerCase() !== normalizedExpectedHead) errors.push('worker-head-mismatch');
   if (text(record?.taskName) !== MISSION_WORKER_TASK_NAME) errors.push('worker-task-not-allowlisted');
   if (!Number.isInteger(record?.pid) || record.pid <= 0) errors.push('invalid-worker-pid');
+  if (!ID_64.test(text(record?.launchIdentityId))) errors.push('invalid-worker-launch-identity');
+  if (!Number.isFinite(workerStartedAtMs)) errors.push('invalid-worker-process-start-identity');
+  else if (Number.isFinite(heartbeatMs) && workerStartedAtMs >= heartbeatMs) {
+    errors.push('worker-heartbeat-not-after-process-start');
+  }
   if (!AFFIRMATIVE_WORKER_TICK_VERDICTS.has(text(record?.lastTickVerdict))) {
     errors.push('worker-last-tick-not-affirmative');
   }
@@ -130,6 +172,12 @@ export function projectMissionWorkerHeartbeat(record = {}, {
     expectedHeadSha: SHA_40.test(normalizedExpectedHead) ? normalizedExpectedHead : null,
     taskName: text(record?.taskName),
     pid: Number.isInteger(record?.pid) ? record.pid : null,
+    launchIdentityId: ID_64.test(text(record?.launchIdentityId))
+      ? text(record?.launchIdentityId).toLowerCase()
+      : null,
+    workerStartedAtUtc: Number.isFinite(workerStartedAtMs)
+      ? new Date(workerStartedAtMs).toISOString()
+      : null,
     lastTickVerdict: text(record?.lastTickVerdict),
     errors: Object.freeze([...new Set(errors)]),
     authority: 'mission-worker-only',
@@ -139,6 +187,90 @@ export function projectMissionWorkerHeartbeat(record = {}, {
       : fresh
         ? 'MISSION_WORKER_HEARTBEAT_FRESH'
         : 'MISSION_WORKER_HEARTBEAT_STALE',
+  });
+}
+
+function exactOwnKeyEstate(record, expectedKeys) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
+  const keys = Object.keys(record);
+  return keys.length === expectedKeys.length && expectedKeys.every((key, index) => keys[index] === key);
+}
+
+export async function readMissionWorkerLaunchIdentityReceipt({
+  launchIdentityId,
+  launchReceiptPath,
+  expectedPaths,
+  repositoryRoot,
+  branch,
+  headSha,
+  taskName = MISSION_WORKER_TASK_NAME,
+  pid = process.pid,
+  expectedCanonicalNode = CANONICAL_NODE,
+  expectedWorkerScript = path.resolve(expectedPaths?.repositoryRoot || repositoryRoot, 'scripts', 'mission-orchestrator-worker-supervised.mjs'),
+  readFileFn = readFile,
+  lstatFn = lstat,
+} = {}) {
+  const normalizedLaunchIdentityId = text(launchIdentityId).toLowerCase();
+  if (!ID_64.test(normalizedLaunchIdentityId)) {
+    throw new Error('Mission worker launch identity is invalid.');
+  }
+  const statusRoot = path.resolve(expectedPaths.workspaceRoot, 'status');
+  const canonicalReceiptPath = path.resolve(
+    statusRoot,
+    `mission-orchestrator-worker-launch-identity-${normalizedLaunchIdentityId}.json`,
+  );
+  if (path.resolve(text(launchReceiptPath)) !== canonicalReceiptPath) {
+    throw new Error('Mission worker launch identity receipt path is not canonical.');
+  }
+  const receiptStat = await lstatFn(canonicalReceiptPath);
+  if (!receiptStat?.isFile?.() || receiptStat.isSymbolicLink?.() || receiptStat.size <= 0
+      || receiptStat.size > MAX_MISSION_WORKER_LAUNCH_IDENTITY_BYTES) {
+    throw new Error('Mission worker launch identity receipt file is invalid.');
+  }
+  const raw = await readFileFn(canonicalReceiptPath);
+  const bytes = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+  if (bytes.length <= 0 || bytes.length > MAX_MISSION_WORKER_LAUNCH_IDENTITY_BYTES) {
+    throw new Error('Mission worker launch identity receipt exceeds the fixed bound.');
+  }
+  let receipt;
+  try {
+    receipt = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    throw new Error('Mission worker launch identity receipt is malformed.');
+  }
+  if (!exactOwnKeyEstate(receipt, LAUNCH_IDENTITY_KEYS)) {
+    throw new Error('Mission worker launch identity receipt key estate is invalid.');
+  }
+  const normalizedPid = Number.parseInt(pid, 10);
+  const workerStartedAtMs = EXPLICIT_TIMEZONE.test(text(receipt.workerStartedAtUtc))
+    ? Date.parse(receipt.workerStartedAtUtc)
+    : Number.NaN;
+  const createdAtMs = EXPLICIT_TIMEZONE.test(text(receipt.createdAtUtc))
+    ? Date.parse(receipt.createdAtUtc)
+    : Number.NaN;
+  const normalizedRestartInvocationId = text(receipt.restartInvocationId).toLowerCase();
+  if (receipt.schemaVersion !== MISSION_WORKER_LAUNCH_IDENTITY_SCHEMA
+      || text(receipt.launchIdentityId).toLowerCase() !== normalizedLaunchIdentityId
+      || !['ordinary', 'guarded-restart'].includes(receipt.launchKind)
+      || (receipt.launchKind === 'guarded-restart' && normalizedRestartInvocationId !== normalizedLaunchIdentityId)
+      || (receipt.launchKind === 'ordinary' && normalizedRestartInvocationId !== '')
+      || text(receipt.taskName) !== taskName
+      || path.resolve(text(receipt.repositoryRoot)) !== path.resolve(repositoryRoot)
+      || text(receipt.branch).toLowerCase() !== text(branch).toLowerCase()
+      || text(receipt.headSha).toLowerCase() !== text(headSha).toLowerCase()
+      || Number.parseInt(receipt.workerPid, 10) !== normalizedPid
+      || !Number.isFinite(workerStartedAtMs)
+      || !Number.isFinite(createdAtMs)
+      || createdAtMs < workerStartedAtMs
+      || !path.win32.isAbsolute(text(receipt.canonicalNode))
+      || text(receipt.canonicalNode).toLowerCase() !== text(expectedCanonicalNode).toLowerCase()
+      || path.resolve(text(receipt.canonicalWorkerScript)) !== path.resolve(expectedWorkerScript)) {
+    throw new Error('Mission worker launch identity receipt does not match the canonical worker.');
+  }
+  return Object.freeze({
+    launchIdentityId: normalizedLaunchIdentityId,
+    workerStartedAtUtc: text(receipt.workerStartedAtUtc),
+    receipt: Object.freeze({ ...receipt }),
   });
 }
 
@@ -152,7 +284,11 @@ export async function writeMissionWorkerHeartbeat({
   headSha = env.STEPHANOS_MISSION_WORKER_HEAD_SHA,
   taskName = env.STEPHANOS_MISSION_WORKER_TASK_NAME || MISSION_WORKER_TASK_NAME,
   pid = process.pid,
+  launchIdentityId = env.STEPHANOS_MISSION_WORKER_LAUNCH_ID,
+  launchReceiptPath = env.STEPHANOS_MISSION_WORKER_LAUNCH_RECEIPT_PATH,
   lastTickVerdict,
+  readFileFn,
+  lstatFn,
 } = {}) {
   if (path.resolve(paths.repositoryRoot) !== path.resolve(expectedPaths.repositoryRoot)) {
     throw new Error('Mission worker heartbeat repository path is not canonical.');
@@ -163,6 +299,18 @@ export async function writeMissionWorkerHeartbeat({
   if (path.resolve(repositoryRoot) !== path.resolve(expectedPaths.repositoryRoot)) {
     throw new Error('Mission worker heartbeat source repository is not canonical.');
   }
+  const launchIdentity = await readMissionWorkerLaunchIdentityReceipt({
+    launchIdentityId,
+    launchReceiptPath,
+    expectedPaths,
+    repositoryRoot,
+    branch,
+    headSha,
+    taskName,
+    pid,
+    readFileFn,
+    lstatFn,
+  });
   const record = createMissionWorkerHeartbeatRecord({
     timestampUtc,
     repositoryRoot,
@@ -170,6 +318,8 @@ export async function writeMissionWorkerHeartbeat({
     headSha,
     taskName,
     pid,
+    launchIdentityId: launchIdentity.launchIdentityId,
+    workerStartedAtUtc: launchIdentity.workerStartedAtUtc,
     lastTickVerdict,
   });
   await mkdir(path.dirname(paths.heartbeatPath), { recursive: true });
