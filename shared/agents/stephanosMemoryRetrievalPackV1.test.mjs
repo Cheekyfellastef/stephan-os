@@ -151,6 +151,14 @@ test('contradictory current records remain explicit', () => {
   assert.deepEqual(result.unresolvedContradictions, ['record-a', 'record-b']);
 });
 
+test('pack identity binds the complete projected result rather than record ids alone', () => {
+  const first = build([record({ recordId: 'record-stable', summary: 'Current state is A.' })]);
+  const changedSummary = build([record({ recordId: 'record-stable', summary: 'Current state is B.' })]);
+  const changedAuthority = build([record({ recordId: 'record-stable', authorityClass: 'LOCAL_MIRROR' })]);
+  assert.notEqual(first.packId, changedSummary.packId);
+  assert.notEqual(first.packId, changedAuthority.packId);
+});
+
 test('contradictions are detected before record-count truncation can hide them', () => {
   const first = record({ recordId: 'record-a', summary: 'Current state is A.' });
   const second = record({ recordId: 'record-b', summary: 'Current state is B.' });
@@ -209,6 +217,39 @@ test('operator relationship pack rejects psychological inference while retaining
   assert.equal(result.valid, true);
   assert.deepEqual(result.selectedRecordIds, ['operator-explicit']);
   assert.equal(result.sensitiveDataOmitted, true);
+});
+
+test('operator relationship pack screens every projected textual field for psychological inference', () => {
+  const neutralSummaryUnsafeTag = record({
+    recordId: 'operator-tag-inference',
+    namespace: 'operator',
+    type: 'inference',
+    summary: 'A low-authority interaction observation.',
+    tags: ['mood'],
+    authorityClass: 'INFERRED',
+    relationshipEvidenceClass: 'LOW_AUTHORITY_INTERACTION_INFERENCE',
+    personOrParticipant: 'operator',
+  });
+  const neutralSummaryUnsafeMetadata = record({
+    recordId: 'operator-metadata-inference',
+    namespace: 'operator',
+    type: 'inference',
+    summary: 'Another low-authority interaction observation.',
+    relationshipRefs: ['hidden motivation'],
+    authorityClass: 'INFERRED',
+    relationshipEvidenceClass: 'LOW_AUTHORITY_INTERACTION_INFERENCE',
+    personOrParticipant: 'operator',
+  });
+  const result = buildStephanosMemoryRetrievalPackV1({
+    packKind: 'OPERATOR_RELATIONSHIP_PACK',
+    records: [neutralSummaryUnsafeTag, neutralSummaryUnsafeMetadata],
+    selectors: {},
+    budget: { maxRecords: 24, maxBytes: 32768 },
+  });
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.selectedRecordIds, []);
+  assert.equal(result.sensitiveDataOmitted, true);
+  assert.ok(result.omissionReasons.includes('operator-relationship-unsupported-inference-omitted'));
 });
 
 test('selectors preserve exact reasons and read-only authority', () => {
