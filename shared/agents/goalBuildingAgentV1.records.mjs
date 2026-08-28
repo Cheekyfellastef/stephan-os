@@ -27,6 +27,10 @@ import {
   unique,
 } from './goalBuildingAgentV1.contract.mjs';
 import { evaluateGoalBuildingProgramme } from './goalBuildingAgentV1.evaluator.mjs';
+import {
+  GOAL_BUILDING_RUNTIME_STATES,
+  projectGoalBuildingRuntimeTruth,
+} from './goalBuildingAgentV1.observation.mjs';
 
 export function createGoalBuildingAgentCapabilityRecord(input = {}) {
   const base = createAgentCapabilityRecord({
@@ -99,16 +103,50 @@ export function buildGoalBuildingAgentReadiness(input = {}) {
   });
 }
 
+function runtimeTruthFor(input, certificate) {
+  if (input.runtimeTruth && typeof input.runtimeTruth === 'object') return input.runtimeTruth;
+  if (!input.workerBeacon && !input.missionWorkerBeacon) return null;
+  return projectGoalBuildingRuntimeTruth({ ...input, certificate });
+}
+
+function runtimeBuildingAnswer(runtimeTruth, certificate) {
+  if (runtimeTruth.state === GOAL_BUILDING_RUNTIME_STATES.BUILDING) {
+    const identity = runtimeTruth.currentGoalId || runtimeTruth.currentMissionId || runtimeTruth.workerTaskId || 'current goal';
+    const movement = runtimeTruth.secondsSinceMeaningfulMovement === null
+      ? 'meaningful movement is current'
+      : `last meaningful movement was ${runtimeTruth.secondsSinceMeaningfulMovement}s ago`;
+    return `Yes. BUILDING is physically proven for ${identity} at ${runtimeTruth.currentPhase || 'active execution'}; ${movement}.`;
+  }
+  if (runtimeTruth.state === GOAL_BUILDING_RUNTIME_STATES.ALIVE_BUT_STALLED) {
+    const age = runtimeTruth.secondsSinceMeaningfulMovement === null
+      ? 'meaningful movement is unproven'
+      : `no meaningful movement for ${runtimeTruth.secondsSinceMeaningfulMovement}s`;
+    return `No. The Mission Worker is alive but stalled: ${age}. ${runtimeTruth.stallReason || runtimeTruth.blocker || certificate.summary}`;
+  }
+  if (runtimeTruth.state === GOAL_BUILDING_RUNTIME_STATES.BLOCKED) {
+    return `No. Goal building is BLOCKED: ${runtimeTruth.blocker || certificate.summary}`;
+  }
+  if (runtimeTruth.state === GOAL_BUILDING_RUNTIME_STATES.IDLE) {
+    return 'No build is active. The exact-current worker is healthy and truthfully IDLE with no eligible work proven.';
+  }
+  return `No. Active goal building is UNKNOWN rather than proven. ${runtimeTruth.blocker || certificate.summary}`;
+}
+
 export function answerGoalBuildingQuestion(input = {}) {
   const certificate = input.certificate || evaluateGoalBuildingProgramme(input);
+  const runtimeTruth = runtimeTruthFor(input, certificate);
   const question = boundedText(input.question, '', 300).toLowerCase();
   let questionKind = 'PROGRAMME_STATUS';
   let answer = certificate.summary;
   if (/actually building|building now|is stephanos building|what.*building/.test(question)) {
     questionKind = 'ACTIVE_BUILD_TRUTH';
-    answer = certificate.isActuallyBuilding
-      ? `Yes. Durable progress is proven for ${certificate.productiveMissionCount} active mission(s): ${certificate.activeMissions.filter((mission) => PRODUCTIVE_MISSION_PHASES.has(mission.phase)).slice(0, 5).map((mission) => `${mission.goalId} at ${mission.phase}`).join('; ')}.`
-      : `No. Active goal-building progress is not currently proven. ${certificate.summary}`;
+    if (runtimeTruth) {
+      answer = runtimeBuildingAnswer(runtimeTruth, certificate);
+    } else {
+      answer = certificate.isActuallyBuilding
+        ? `Yes. Durable progress is proven for ${certificate.productiveMissionCount} active mission(s): ${certificate.activeMissions.filter((mission) => PRODUCTIVE_MISSION_PHASES.has(mission.phase)).slice(0, 5).map((mission) => `${mission.goalId} at ${mission.phase}`).join('; ')}.`
+        : `No. Active goal-building progress is not currently proven. ${certificate.summary}`;
+    }
   } else if (/who.*own|owner|who.*fix/.test(question)) {
     questionKind = 'BLOCKER_OWNERSHIP';
     answer = certificate.blockers.length > 0
@@ -116,8 +154,12 @@ export function answerGoalBuildingQuestion(input = {}) {
       : 'No owned blocker is currently recorded.';
   } else if (/block|slow|stuck|stall/.test(question)) {
     questionKind = 'BLOCKER_STATUS';
-    const reasons = [...certificate.blockingReasons, ...certificate.degradedReasons].slice(0, MAX_STATUS_ITEMS);
-    answer = reasons.length > 0 ? `Current programme-health defects: ${reasons.join('; ')}.` : 'No programme-health blocker is currently recorded.';
+    if (runtimeTruth?.stalled) {
+      answer = `The Mission Worker is alive but stalled: ${runtimeTruth.stallReason || runtimeTruth.blocker || 'meaningful movement is not recent'}.`;
+    } else {
+      const reasons = [...certificate.blockingReasons, ...certificate.degradedReasons].slice(0, MAX_STATUS_ITEMS);
+      answer = reasons.length > 0 ? `Current programme-health defects: ${reasons.join('; ')}.` : 'No programme-health blocker is currently recorded.';
+    }
   } else if (/need me|operator|approval/.test(question)) {
     questionKind = 'OPERATOR_ACTION';
     answer = certificate.operatorActionRequired
@@ -130,7 +172,7 @@ export function answerGoalBuildingQuestion(input = {}) {
       : `Stephanos is not at 100 percent. Evidence: ${[...certificate.evidenceProblems, ...certificate.blockingReasons, ...certificate.degradedReasons].slice(0, MAX_STATUS_ITEMS).join('; ') || 'active progress is not proven'}.`;
   } else if (/next|what happens/.test(question)) {
     questionKind = 'NEXT_ACTION';
-    answer = certificate.nextAction;
+    answer = runtimeTruth?.nextAutomaticAction || certificate.nextAction;
   }
   return Object.freeze({
     schemaVersion: GOAL_BUILDING_AGENT_SCHEMA_VERSION,
@@ -139,17 +181,19 @@ export function answerGoalBuildingQuestion(input = {}) {
     answer: boundedText(answer, 'Programme status unavailable.', 1200),
     state: certificate.state,
     isCapableOfBuilding: certificate.isCapableOfBuilding,
-    isActuallyBuilding: certificate.isActuallyBuilding,
+    isActuallyBuilding: runtimeTruth ? runtimeTruth.buildingProven : certificate.isActuallyBuilding,
+    runtimeTruthState: runtimeTruth?.state || '',
+    secondsSinceMeaningfulMovement: runtimeTruth?.secondsSinceMeaningfulMovement ?? null,
     evidenceHead: certificate.expectedHead,
     evaluatedAtUtc: certificate.evaluatedAtUtc,
   });
 }
 
-function statusBody(certificate) {
-  return JSON.stringify({
+function statusBody(certificate, runtimeTruth = null) {
+  const body = {
     state: certificate.state,
     isCapableOfBuilding: certificate.isCapableOfBuilding,
-    isActuallyBuilding: certificate.isActuallyBuilding,
+    isActuallyBuilding: runtimeTruth ? runtimeTruth.buildingProven : certificate.isActuallyBuilding,
     programmeMode: certificate.programmeMode,
     expectedHead: certificate.expectedHead,
     activeMissionCount: certificate.activeMissionCount,
@@ -182,15 +226,18 @@ function statusBody(certificate) {
     degradedReasons: certificate.degradedReasons.slice(0, MAX_STATUS_ITEMS),
     operatorActionRequired: certificate.operatorActionRequired,
     operatorActionTarget: certificate.operatorActionTarget,
-    nextAction: certificate.nextAction,
+    nextAction: runtimeTruth?.nextAutomaticAction || certificate.nextAction,
     safetyLocks: certificate.safetyLocks,
-  });
+  };
+  if (runtimeTruth) body.runtimeTruth = runtimeTruth;
+  return JSON.stringify(body);
 }
 
 export function createGoalBuildingAgentParticipantStatusRecord(input = {}) {
   const timestampUtc = text(input.timestampUtc, new Date().toISOString());
   const proofRefs = list(input.proofRefs).map(String);
   const certificate = input.certificate || evaluateGoalBuildingProgramme(input);
+  const runtimeTruth = runtimeTruthFor(input, certificate);
   const record = Object.freeze({
     schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
     kind: SHARED_WORKSPACE_RECORD_KINDS.PARTICIPANT_STATUS,
@@ -200,8 +247,8 @@ export function createGoalBuildingAgentParticipantStatusRecord(input = {}) {
     correlationId: safeId(input.correlationId, 'goal-building-agent-v1'),
     relatedIssue: GOAL_BUILDING_AGENT_RELATED_ISSUE,
     status: certificate.state,
-    summary: certificate.summary,
-    body: statusBody(certificate),
+    summary: runtimeTruth ? runtimeBuildingAnswer(runtimeTruth, certificate) : certificate.summary,
+    body: statusBody(certificate, runtimeTruth),
     proofRefs,
   });
   const validation = validateSharedWorkspaceRecord(record, input.validationOptions || {});
@@ -226,12 +273,14 @@ export function createGoalBuildingAgentWorkspaceRecords(input = {}) {
   const capability = createGoalBuildingAgentCapabilityRecord({ ...input, timestampUtc, proofRefs });
   const readiness = buildGoalBuildingAgentReadiness({ ...input, capability });
   const certificate = input.certificate || evaluateGoalBuildingProgramme(input);
-  const status = createGoalBuildingAgentParticipantStatusRecord({ ...input, timestampUtc, proofRefs, certificate });
+  const runtimeTruth = runtimeTruthFor(input, certificate);
+  const status = createGoalBuildingAgentParticipantStatusRecord({ ...input, timestampUtc, proofRefs, certificate, runtimeTruth });
   return Object.freeze({
     schemaVersion: GOAL_BUILDING_AGENT_SCHEMA_VERSION,
     capability,
     readiness,
     certificate,
+    runtimeTruth,
     status,
     validations: Object.freeze({
       capability: validateSharedWorkspaceRecord(capability, input.validationOptions || {}),
