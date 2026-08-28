@@ -12,6 +12,11 @@ export {
 } from './goalBuildingAgentV1.contract.mjs';
 export { evaluateGoalBuildingProgramme } from './goalBuildingAgentV1.evaluator.mjs';
 export {
+  GOAL_BUILDING_RUNTIME_TRUTH_SCHEMA_VERSION,
+  GOAL_BUILDING_RUNTIME_STATES,
+  projectGoalBuildingRuntimeTruth,
+} from './goalBuildingAgentV1.observation.mjs';
+export {
   answerGoalBuildingQuestion,
   buildGoalBuildingAgentReadiness,
   createGoalBuildingAgentCapabilityRecord,
