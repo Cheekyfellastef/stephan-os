@@ -258,20 +258,28 @@ const PROTECTED_WORKFLOW_SOURCE_KEYS = Object.freeze([
 
 const PROTECTED_WORKFLOW_FINAL_POLICIES = Object.freeze({
   '.github/workflows/independent-merge-security-review.yml': Object.freeze({
-    event: 'pull_request_target',
-    checkoutRefExpression: 'github\\.event\\.pull_request\\.base\\.sha',
+    events: Object.freeze(['pull_request_target']),
+    checkoutRefExpressions: Object.freeze([
+      Object.freeze({ expression: 'github\\.event\\.pull_request\\.base\\.sha', count: 1 }),
+    ]),
     checkoutCount: 1,
     permissionSignatures: Object.freeze([
       'actions:read,contents:read,issues:write,pull-requests:read',
     ]),
   }),
   '.github/workflows/operator-merge-approval-gate.yml': Object.freeze({
-    event: 'merge_group',
-    checkoutRefExpression: 'github\\.event\\.merge_group\\.base_sha',
-    checkoutCount: 2,
+    events: Object.freeze(['merge_group', 'workflow_dispatch']),
+    checkoutRefExpressions: Object.freeze([
+      Object.freeze({ expression: 'github\\.event\\.merge_group\\.base_sha', count: 2 }),
+      Object.freeze({ expression: 'github\\.sha', count: 3 }),
+    ]),
+    checkoutCount: 5,
     permissionSignatures: Object.freeze([
       'actions:read,checks:read,contents:read,pull-requests:read',
       'actions:read,checks:read,contents:read,pull-requests:read',
+      'actions:read,checks:read,contents:read,deployments:read,pull-requests:read',
+      'actions:read,checks:read,contents:read,deployments:read,pull-requests:read',
+      'actions:read,checks:read,contents:write,deployments:read,issues:write,pull-requests:write',
     ]),
   }),
 });
@@ -308,6 +316,26 @@ function yamlEventKeys(source) {
     const indent = indentation(line);
     if (indent === 0) break;
     const directKey = line.match(/^ {2}([a-zA-Z0-9_-]+):(?:\s.*)?$/);
+    if (directKey) keys.push(directKey[1]);
+  }
+  return keys;
+}
+
+function yamlWorkflowDispatchInputKeys(source) {
+  const lines = String(source).split(/\r?\n/);
+  const dispatchIndex = lines.findIndex((line) => /^ {2}workflow_dispatch:\s*$/.test(line));
+  if (dispatchIndex < 0) return [];
+  const inputsIndex = lines.findIndex((line, index) => (
+    index > dispatchIndex && /^ {4}inputs:\s*$/.test(line)
+  ));
+  if (inputsIndex < 0) return [];
+  const keys = [];
+  for (let index = inputsIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    const indent = indentation(line);
+    if (indent <= 4) break;
+    const directKey = line.match(/^ {6}([a-zA-Z0-9_-]+):\s*$/);
     if (directKey) keys.push(directKey[1]);
   }
   return keys;
@@ -380,26 +408,60 @@ function validateProtectedWorkflowYaml(path, source) {
   const blockers = [];
   if (!policy) return Object.freeze({ valid: false, blockers: Object.freeze(['protected-workflow-policy-missing']) });
   const events = yamlEventKeys(source);
-  if (events.length !== 1 || events[0] !== policy.event) {
+  if (events.length !== policy.events.length
+    || events.some((event, index) => event !== policy.events[index])) {
     blockers.push('protected-workflow-trigger-not-exact');
   }
-  if (policy.event === 'merge_group'
+  if (policy.events.includes('merge_group')
     && !/^ {4}types:\s*\[checks_requested\]\s*$/m.test(source)) {
     blockers.push('protected-workflow-merge-group-action-not-exact');
   }
+  if (policy.events.includes('workflow_dispatch')) {
+    const requiredInputs = [
+      'mode',
+      'pr_number',
+      'expected_branch',
+      'expected_head',
+      'expected_head_tree',
+      'expected_base',
+      'independent_review_run_id',
+      'independent_review_run_attempt',
+      'independent_review_artifact_id',
+      'independent_review_artifact_digest',
+      'independent_review_payload_sha256',
+    ];
+    const dispatchInputs = yamlWorkflowDispatchInputKeys(source);
+    if (dispatchInputs.length !== requiredInputs.length
+      || dispatchInputs.some((input, index) => input !== requiredInputs[index])
+      || !/^run-name: Protected operator merge \$\{\{ github\.event\.merge_group\.head_sha \|\| inputs\.expected_head \|\| github\.run_id \}\}\s*$/m.test(source)) {
+      blockers.push('protected-workflow-dispatch-inputs-not-exact');
+    }
+  }
   const checkouts = checkoutBlocks(source);
   if (checkouts.length !== policy.checkoutCount) blockers.push('protected-workflow-checkout-count-mismatch');
+  const observedRefCounts = new Map(policy.checkoutRefExpressions.map((entry) => [entry.expression, 0]));
   for (const checkout of checkouts) {
-    const expectedRefPattern = new RegExp(
-      `^ {${checkout.usesIndent + 2}}ref:\\s*\\$\\{\\{\\s*${policy.checkoutRefExpression}\\s*\\}\\}\\s*$`,
-    );
+    const matchingRefs = policy.checkoutRefExpressions.filter((entry) => {
+      const pattern = new RegExp(
+        `^ {${checkout.usesIndent + 2}}ref:\\s*\\$\\{\\{\\s*${entry.expression}\\s*\\}\\}\\s*$`,
+      );
+      return checkout.lines.filter((line) => pattern.test(line)).length === 1;
+    });
     const persistPattern = new RegExp(
       `^ {${checkout.usesIndent + 2}}persist-credentials:\\s*false\\s*$`,
     );
     if (checkout.uses !== 'uses: actions/checkout@v4'
-      || checkout.lines.filter((line) => expectedRefPattern.test(line)).length !== 1
+      || matchingRefs.length !== 1
       || checkout.lines.filter((line) => persistPattern.test(line)).length !== 1) {
       blockers.push('protected-workflow-checkout-not-exact-base');
+    } else {
+      const expression = matchingRefs[0].expression;
+      observedRefCounts.set(expression, observedRefCounts.get(expression) + 1);
+    }
+  }
+  for (const expectedRef of policy.checkoutRefExpressions) {
+    if (observedRefCounts.get(expectedRef.expression) !== expectedRef.count) {
+      blockers.push('protected-workflow-checkout-ref-count-mismatch');
     }
   }
   if (/github\.event\.pull_request\.head\.sha/.test(source)
@@ -907,6 +969,7 @@ export function validateIndependentReviewWorkflowRun(run = {}, jobs = [], option
   const expectedBaseBranch = text(options.expectedBaseBranch);
   const expectedBaseSha = text(options.expectedBaseSha).toLowerCase();
   const expectedWorkflowId = strictPositiveInteger(options.expectedWorkflowId);
+  const expectedWorkflowRunName = text(options.expectedWorkflowRunName || INDEPENDENT_REVIEW_WORKFLOW_NAME);
   const workflowRunId = integer(options.workflowRunId);
   const workflowRunAttempt = integer(options.workflowRunAttempt);
   const blockers = [];
@@ -929,7 +992,11 @@ export function validateIndependentReviewWorkflowRun(run = {}, jobs = [], option
   if (!expectedWorkflowId || strictPositiveInteger(run.workflow_id) !== expectedWorkflowId) {
     blockers.push('independent-review-workflow-id-mismatch');
   }
-  if (text(run.name) !== INDEPENDENT_REVIEW_WORKFLOW_NAME) blockers.push('independent-review-workflow-name-mismatch');
+  if (text(run.name) !== expectedWorkflowRunName) blockers.push('independent-review-workflow-name-mismatch');
+  if (Object.hasOwn(options, 'expectedWorkflowRunName')
+    && text(run.display_title) !== expectedWorkflowRunName) {
+    blockers.push('independent-review-workflow-display-title-mismatch');
+  }
   if (canonicalWorkflowRunPath(run) !== INDEPENDENT_REVIEW_WORKFLOW_PATH) {
     blockers.push('independent-review-workflow-path-mismatch');
   }

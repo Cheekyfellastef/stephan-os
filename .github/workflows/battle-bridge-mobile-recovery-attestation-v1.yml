@@ -1,0 +1,48 @@
+name: Battle Bridge Mobile Recovery Attestation
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+concurrency:
+  group: battle-bridge-mobile-recovery-attestation-${{ github.event.comment.id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  attest-owner-recovery-request:
+    name: attest-owner-recovery-request
+    if: >-
+      github.event.issue.number == 1814 &&
+      github.event.comment.user.login == github.repository_owner &&
+      github.event.comment.author_association == 'OWNER' &&
+      github.event.sender.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out trusted canonical main attester
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Prove mobile recovery contract regressions
+        run: >-
+          node --test
+          shared/agents/battleBridgeMobileRecoveryLifeboatV1.test.mjs
+          scripts/battle-bridge-mobile-recovery-attestation-v1.test.mjs
+
+      - name: Attest exact owner recovery request without runtime authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/battle-bridge-mobile-recovery-attestation-v1.mjs
