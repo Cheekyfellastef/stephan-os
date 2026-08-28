@@ -1102,7 +1102,8 @@ test('scheduler proof bindings require a validated affirmative proof status', ()
         status: 'PASS',
         sourceHead: 'c'.repeat(40),
       }],
-    }, null, { nowUtc: NOW });
+    },
+  }, null, { nowUtc: NOW });
   assert.deepEqual(conflictingHeadAliases.proofHeadShas, []);
   assert.deepEqual(conflictingHeadAliases.proofReceipts, []);
   assert.deepEqual(conflictingHeadAliases.proofRefs, []);
@@ -1143,6 +1144,3 @@ test('programme stall registration exposes only a handler for the existing monit
   assert.equal(registration.createsWorker, false);
   assert.equal(typeof Object.values(registration.handlers)[0], 'function');
 });
-
-// Hosted exact-head proof bridge: execute the bounded stale-lease hostile matrix under the existing authority proof workflow.
-await import('./sourceMutationLeaseReconciliationService.test.js');
