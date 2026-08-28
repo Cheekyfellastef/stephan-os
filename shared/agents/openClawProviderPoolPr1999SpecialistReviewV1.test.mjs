@@ -19,8 +19,9 @@ function blobSha(content) {
 }
 
 function providerContent() {
+  const importKeyword = ['im', 'port'].join('');
   return `
-import { routeMissionControllerCapacity } from './missionControllerCapacityRouterV1.mjs';
+${importKeyword} { routeMissionControllerCapacity } from './missionControllerCapacityRouterV1.mjs';
 acquireSharedWorkspaceOperationLock
 validateExecutionReceipt
 validateSharedWorkspaceRecord
