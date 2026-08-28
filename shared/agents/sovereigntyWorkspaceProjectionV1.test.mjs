@@ -156,6 +156,8 @@ function laneStatus(statusId, route, overrides = {}) {
     status: 'READY',
     summary: `${route} capacity is READY.`,
     proofRefs: [proof],
+    relatedIssue: '',
+    relatedPr: '',
     capacityReceipt: {
       schemaVersion: 'stephanos.build-lane-capacity-receipt.v1',
       receiptId: `${route.toLowerCase()}-capacity`,
