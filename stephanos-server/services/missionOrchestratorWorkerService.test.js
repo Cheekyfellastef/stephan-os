@@ -358,7 +358,14 @@ test('publisher rejects retargeting and publishes only the exact granted mission
 });
 
 test('repair transition is projected, granted, applied, and queued as one exact post-repair action', async () => {
-  const options = await runtime();
+  const options = {
+    ...(await runtime()),
+    testOnly: true,
+    sourceExecutionDependencies: {
+      claimSourceMutationLease: async (input) => ({ ok: true, record: { ...input } }),
+      appendExecutionReceipt: async () => ({ ok: true }),
+    },
+  };
   const missionId = 'goal-1497-pr-1617';
   let current = await createMissionRecord({
     ...intent,
