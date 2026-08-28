@@ -167,6 +167,96 @@ function Test-ExactJsonPropertyEstate {
     return $true
 }
 
+$missionWorkerRestartFailureProperties = @(
+    'schemaVersion', 'target', 'expectedHead', 'exactHeadProofOk', 'postStartSourceProofOk',
+    'startedWorkerPid', 'workerStartedAtUtc', 'invocationId', 'deadlineUtc', 'invocationBound',
+    'canonicalWorkerCommandVerified', 'cleanupAttempted', 'cleanupCompleted', 'unrelatedTasksChanged',
+    'arbitraryTaskTargetAllowed', 'arbitraryProcessKillAllowed', 'verifiedOwnedProcessTerminationOnly',
+    'liveOpenClawUpdatePerformed', 'ok', 'blocker', 'finalVerdict'
+)
+$missionWorkerRestartFailureBlockers = @(
+    'MISSION_WORKER_RESTART_DEADLINE_EXHAUSTED',
+    'MISSION_WORKER_INVOCATION_RECORD_TOO_LARGE',
+    'MISSION_WORKER_RESTART_REQUEST_INVALID',
+    'MISSION_WORKER_RESTART_REQUEST_ALREADY_PRESENT',
+    'MISSION_WORKER_RESTART_REQUEST_CHANGED_BEFORE_RECLAIM',
+    'MISSION_WORKER_RESTART_REQUEST_RECLAIM_FAILED',
+    'MISSION_WORKER_RESTART_REQUEST_CLEANUP_IDENTITY_CHANGED',
+    'MISSION_WORKER_RESTART_REQUEST_CLEANUP_FAILED',
+    'MISSION_WORKER_CLEANUP_TASK_NOT_ALLOWLISTED',
+    'MISSION_WORKER_CLEANUP_INVOCATION_ID_INVALID',
+    'MISSION_WORKER_CLEANUP_INVOCATION_CLAIM_NOT_PROVEN',
+    'MISSION_WORKER_CLEANUP_LAUNCH_RECEIPT_NOT_PROVEN',
+    'MISSION_WORKER_CLEANUP_LAUNCH_RECEIPT_MISMATCH',
+    'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN',
+    'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED',
+    'MISSION_WORKER_CLEANUP_PROCESS_DID_NOT_STOP',
+    'MISSION_WORKER_CLEANUP_TASK_MISSING',
+    'MISSION_WORKER_CLEANUP_TASK_DID_NOT_STOP',
+    'MISSION_WORKER_RESTART_DEADLINE_REQUIRED',
+    'MISSION_WORKER_RESTART_DEADLINE_INVALID',
+    'MISSION_WORKER_EXISTING_PROCESS_IDENTITY_CHANGED',
+    'MISSION_WORKER_EXISTING_PROCESS_CAPABILITY_CHANGED',
+    'MISSION_WORKER_VERIFIED_PROCESS_DID_NOT_STOP',
+    'MISSION_WORKER_INVOCATION_ID_GENERATION_FAILED',
+    'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT',
+    'MISSION_WORKER_FRESH_INSTANCE_NOT_PROVEN',
+    'MISSION_WORKER_INVOCATION_IDENTITY_NOT_PROVEN',
+    'MISSION_WORKER_TASK_NOT_RUNNING_AFTER_START',
+    'MISSION_WORKER_POST_START_PROOF_FAILED',
+    'MISSION_WORKER_POST_START_CLEANUP_FAILED',
+    'MISSION_WORKER_DEADLINE_SELF_CLEANUP_NOT_PROVEN'
+)
+
+function Read-ValidatedMissionWorkerRestartFailureBlocker {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Output,
+        [Parameter(Mandatory = $true)][string]$ExpectedHead,
+        [Parameter(Mandatory = $true)][string]$ExpectedDeadlineUtc
+    )
+
+    $restartJson = ($Output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+    $restartBytes = [Text.Encoding]::UTF8.GetByteCount($restartJson)
+    if ($restartBytes -le 0 -or $restartBytes -gt 8192) { return '' }
+    try { $receipt = $restartJson | ConvertFrom-Json }
+    catch { return '' }
+
+    if (-not (Test-ExactJsonPropertyEstate -Record $receipt -ExpectedProperties $missionWorkerRestartFailureProperties)) { return '' }
+    if ([string]$receipt.schemaVersion -ne 'stephanos.approved-runtime-restart.v1' `
+        -or [string]$receipt.target -ne 'mission-worker' `
+        -or [string]$receipt.expectedHead -ne $ExpectedHead `
+        -or [string]$receipt.deadlineUtc -ne $ExpectedDeadlineUtc `
+        -or -not ($receipt.exactHeadProofOk -is [bool]) -or $receipt.exactHeadProofOk -ne $false `
+        -or -not ($receipt.postStartSourceProofOk -is [bool]) -or $receipt.postStartSourceProofOk -ne $false `
+        -or -not ($receipt.invocationBound -is [bool]) `
+        -or -not ($receipt.canonicalWorkerCommandVerified -is [bool]) `
+        -or -not ($receipt.cleanupAttempted -is [bool]) `
+        -or -not ($receipt.cleanupCompleted -is [bool]) `
+        -or -not ($receipt.unrelatedTasksChanged -is [bool]) -or $receipt.unrelatedTasksChanged -ne $false `
+        -or -not ($receipt.arbitraryTaskTargetAllowed -is [bool]) -or $receipt.arbitraryTaskTargetAllowed -ne $false `
+        -or -not ($receipt.arbitraryProcessKillAllowed -is [bool]) -or $receipt.arbitraryProcessKillAllowed -ne $false `
+        -or -not ($receipt.verifiedOwnedProcessTerminationOnly -is [bool]) -or $receipt.verifiedOwnedProcessTerminationOnly -ne $true `
+        -or -not ($receipt.liveOpenClawUpdatePerformed -is [bool]) -or $receipt.liveOpenClawUpdatePerformed -ne $false `
+        -or -not ($receipt.ok -is [bool]) -or $receipt.ok -ne $false `
+        -or [string]$receipt.finalVerdict -ne 'APPROVED_RUNTIME_RESTART_BLOCKED') {
+        return ''
+    }
+
+    $failurePid = 0
+    if (-not [int]::TryParse([string]$receipt.startedWorkerPid, [ref]$failurePid) -or $failurePid -lt 0) { return '' }
+    $failureInvocationId = [string]$receipt.invocationId
+    if ($failureInvocationId -and $failureInvocationId -notmatch '^[0-9a-f]{64}$') { return '' }
+    $failureStartedAtUtc = [string]$receipt.workerStartedAtUtc
+    if ($failureStartedAtUtc) {
+        $parsedFailureStartedAtUtc = [datetime]::MinValue
+        if (-not [datetime]::TryParse($failureStartedAtUtc, [ref]$parsedFailureStartedAtUtc)) { return '' }
+    }
+
+    $blocker = [string]$receipt.blocker
+    if ($missionWorkerRestartFailureBlockers -notcontains $blocker) { return '' }
+    return $blocker
+}
+
 function Get-VerifiedWorkerLaunchIdentity {
     param(
         [object]$Heartbeat,
@@ -333,6 +423,11 @@ if ($Mode -eq 'StartApprovedWorkerTask') {
     $restartStartedAtUtc = [datetime]::UtcNow
     $restartOutput = @(& $canonicalPowerShell @restartArguments 2>&1)
     if ($LASTEXITCODE -ne 0) {
+        $typedRestartBlocker = Read-ValidatedMissionWorkerRestartFailureBlocker `
+            -Output $restartOutput `
+            -ExpectedHead $repositoryHead `
+            -ExpectedDeadlineUtc $canonicalDeadlineUtc
+        if ($typedRestartBlocker) { throw $typedRestartBlocker }
         throw 'The approved runtime restart adapter failed.'
     }
     $restartJson = ($restartOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
