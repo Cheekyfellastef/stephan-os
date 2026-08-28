@@ -42,8 +42,10 @@ test('restart adapter implements the exact bounded HardLink exception and retain
   assert.ok(guard.includes('Test-Path -LiteralPath $canonicalGit -PathType Leaf'));
   assert.ok(guard.includes('Get-Item -LiteralPath $canonicalGit -Force'));
   assert.ok(guard.includes('$canonicalGitItem.PSIsContainer'));
-  assert.ok(guard.includes("-not [string]::IsNullOrEmpty([string]$canonicalGitItem.LinkType)"));
-  assert.ok(guard.includes("[string]$canonicalGitItem.LinkType -ne 'HardLink'"));
+  assert.ok(guard.includes('$canonicalGitLinkType = [string]$canonicalGitItem.LinkType'));
+  assert.ok(guard.includes('-not [string]::IsNullOrEmpty($canonicalGitLinkType)'));
+  assert.ok(guard.includes("$canonicalGitLinkType -ne 'HardLink'"));
+  assert.equal((guard.match(/\$canonicalGitItem\.LinkType/g) || []).length, 1);
   assert.ok(guard.includes('[System.IO.FileAttributes]::ReparsePoint'));
   assert.ok(guard.includes("Stop-WithBlocker 'CANONICAL_GIT_IDENTITY_INVALID'"));
   assert.ok(guard.includes('$resolvedCanonicalGit = [System.IO.Path]::GetFullPath($canonicalGitItem.FullName)'));
