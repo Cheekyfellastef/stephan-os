@@ -5,7 +5,11 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createExecutionReceipt, toSharedWorkspaceExecutionReceipt } from './executionReceiptV1.mjs';
+import {
+  acquireSharedWorkspaceOperationLock,
+  createExecutionReceipt,
+  toSharedWorkspaceExecutionReceipt,
+} from './executionReceiptV1.mjs';
 import {
   createSharedWorkspaceReceiptRecord,
   ensureSharedWorkspaceLayout,
@@ -15,6 +19,7 @@ import {
   OPENCLAW_PROVIDER_CAPACITY_SCHEMA,
   OPENCLAW_PROVIDER_POOL_COMPONENT_FILES,
   OPENCLAW_PROVIDER_POOL_HOST_CONTEXT_SCHEMA,
+  OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_SEGMENTS,
   OPENCLAW_PROVIDER_POOL_QUALIFICATION_SCHEMA,
   OPENCLAW_PROVIDER_ROUTE,
   publishOpenClawProviderPoolToSharedWorkspace,
@@ -339,6 +344,92 @@ test('publishes only the complete trusted OpenClaw qualification chain to the ca
     );
     assert.equal(rejectedPrivilegedOperation.ok, false);
     assert.equal(rejectedPrivilegedOperation.reason, 'OPENCLAW_CAPACITY_INVALID');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('serializes concurrent OpenClaw provider-pool generations behind one fixed operation lock', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'openclaw-provider-pool-lock-'));
+  const expected = { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW };
+  const firstHost = trustedHostContext();
+  const secondQualification = qualification({
+    qualificationId: 'openclaw-oc2-qualification-generation-b',
+    authorityReceiptId: 'openclaw-oc2-authority-generation-b',
+    providerInstance: 'battle-bridge-openclaw-02',
+    realWorkTaskId: 'openclaw-oc2-real-task-002',
+    realWorkReceiptId: 'openclaw-oc2-real-receipt-002',
+  });
+  const secondExecution = realWorkExecution({
+    receiptId: secondQualification.realWorkReceiptId,
+    workerId: secondQualification.providerInstance,
+    executionId: secondQualification.realWorkTaskId,
+    leaseKey: secondQualification.realWorkTaskId,
+  });
+  const secondHost = trustedHostContext({
+    qualificationReceipt: secondQualification,
+    capacityReceipt: capacity({
+      receiptId: 'openclaw-capacity-generation-b',
+      workerId: secondQualification.providerInstance,
+      qualificationIds: [secondQualification.qualificationId],
+      qualificationAuthorityReceiptId: secondQualification.authorityReceiptId,
+    }),
+    realWorkExecutionReceipt: secondExecution,
+  });
+  const publishOptions = {
+    repoRoot: process.cwd(),
+    nowMs: Date.parse(NOW),
+    publisherPrivateKeyPem: PUBLISHER_PRIVATE_KEY_PEM,
+    operationLockTimeoutMs: 100,
+    operationLockRetryMs: 1,
+    operationStaleLockMs: 5_000,
+    operationLockHeartbeatMs: 10,
+  };
+  try {
+    await ensureSharedWorkspaceLayout({ root, repoRoot: process.cwd() });
+    const firstPublication = await publishOpenClawProviderPoolToSharedWorkspace(root, firstHost, expected, publishOptions);
+    assert.equal(firstPublication.ok, true, firstPublication.reason);
+
+    const heldLock = await acquireSharedWorkspaceOperationLock(
+      root,
+      OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_SEGMENTS,
+      publishOptions,
+    );
+    assert.equal(heldLock.ok, true, heldLock.reason);
+    try {
+      const blocked = await publishOpenClawProviderPoolToSharedWorkspace(root, secondHost, expected, {
+        ...publishOptions,
+        operationLockTimeoutMs: 10,
+      });
+      assert.equal(blocked.ok, false);
+      assert.equal(blocked.reason, 'SHARED_WORKSPACE_OPERATION_LOCK_TIMEOUT');
+
+      const persisted = JSON.parse(await readFile(join(root, 'status', 'openclaw-provider-pool-current.json'), 'utf8'));
+      const components = Object.fromEntries(await Promise.all(Object.entries(OPENCLAW_PROVIDER_POOL_COMPONENT_FILES).map(
+        async ([componentKey, file]) => [componentKey, JSON.parse(await readFile(join(root, 'receipts', file), 'utf8'))],
+      )));
+      const stillFirst = validateOpenClawProviderPoolStatusRecord(persisted, components, {
+        ...expected,
+        publisherPublicKeyPem: PUBLISHER_PUBLIC_KEY_PEM,
+      });
+      assert.equal(stillFirst.valid, true, stillFirst.reason);
+      assert.deepEqual(stillFirst.hostContext, firstHost);
+    } finally {
+      assert.equal(await heldLock.release(), true);
+    }
+
+    const secondPublication = await publishOpenClawProviderPoolToSharedWorkspace(root, secondHost, expected, publishOptions);
+    assert.equal(secondPublication.ok, true, secondPublication.reason);
+    const finalStatus = JSON.parse(await readFile(join(root, 'status', 'openclaw-provider-pool-current.json'), 'utf8'));
+    const finalComponents = Object.fromEntries(await Promise.all(Object.entries(OPENCLAW_PROVIDER_POOL_COMPONENT_FILES).map(
+      async ([componentKey, file]) => [componentKey, JSON.parse(await readFile(join(root, 'receipts', file), 'utf8'))],
+    )));
+    const finalValidation = validateOpenClawProviderPoolStatusRecord(finalStatus, finalComponents, {
+      ...expected,
+      publisherPublicKeyPem: PUBLISHER_PUBLIC_KEY_PEM,
+    });
+    assert.equal(finalValidation.valid, true, finalValidation.reason);
+    assert.deepEqual(finalValidation.hostContext, secondHost);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

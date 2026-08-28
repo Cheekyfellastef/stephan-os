@@ -2,6 +2,7 @@ import { routeMissionControllerCapacity } from './missionControllerCapacityRoute
 import { createHash, createPublicKey, sign as signPayload, verify as verifyPayload } from 'node:crypto';
 import { MISSION_CONTROLLER_ROUTE } from './missionControllerCapacityRouterV1.mjs';
 import {
+  acquireSharedWorkspaceOperationLock,
   toSharedWorkspaceExecutionReceipt,
   validateExecutionReceipt,
 } from './executionReceiptV1.mjs';
@@ -25,6 +26,11 @@ export const OPENCLAW_PROVIDER_POOL_COMPONENT_FILES = Object.freeze({
   realWorkWorkspaceReceipt: 'openclaw-provider-pool-workspace-receipt-current.json',
   qualificationAuthorityReceipt: 'openclaw-provider-pool-authority-current.json',
 });
+export const OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_SEGMENTS = Object.freeze([
+  'receipt-locks',
+  'openclaw-provider-pool',
+  'publication.lock',
+]);
 export const OPENCLAW_PROVIDER_ROUTE = MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL;
 export const OPENCLAW_PROVIDER_ADAPTER = 'openclaw-local';
 export const OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION = 'OPENCLAW_TASK_CLASS_PRODUCTION_ELIGIBLE';
@@ -680,31 +686,133 @@ export async function publishOpenClawProviderPoolToSharedWorkspace(root, trusted
   if (!validation.valid) {
     return Object.freeze({ ok: false, reason: validation.reason, record, componentRecords, validation });
   }
-  const componentWrites = Object.freeze(Object.fromEntries(await Promise.all(COMPONENT_KEYS.map(async (componentKey) => [
-    componentKey,
-    await writeAtomicJson(root, ['receipts', OPENCLAW_PROVIDER_POOL_COMPONENT_FILES[componentKey]], componentRecords[componentKey], options),
-  ]))));
-  const failedComponent = COMPONENT_KEYS.find((componentKey) => componentWrites[componentKey]?.ok !== true);
-  if (failedComponent) {
+
+  const operationLockOptions = {
+    repoRoot: options.repoRoot,
+    operationLockTimeoutMs: options.operationLockTimeoutMs,
+    operationLockRetryMs: options.operationLockRetryMs,
+    operationStaleLockMs: options.operationStaleLockMs,
+    operationLockHeartbeatMs: options.operationLockHeartbeatMs,
+  };
+  let operationLock;
+  try {
+    operationLock = await acquireSharedWorkspaceOperationLock(
+      root,
+      OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_SEGMENTS,
+      operationLockOptions,
+    );
+  } catch (error) {
     return Object.freeze({
       ok:false,
-      reason:`OPENCLAW_PROVIDER_POOL_COMPONENT_WRITE_FAILED:${failedComponent}`,
+      reason:'OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_FAILED',
+      errorCode:text(error?.code),
       record,
       componentRecords,
-      componentWrites,
       validation,
     });
   }
-  const write = await writeAtomicJson(root, ['status', 'openclaw-provider-pool-current.json'], record, options);
-  return Object.freeze({
-    ok: write.ok === true,
-    reason: write.ok ? 'OPENCLAW_PROVIDER_POOL_PUBLISHED' : write.reason,
-    record,
-    componentRecords,
-    componentWrites,
-    validation,
-    write,
-  });
+  if (operationLock?.ok !== true) {
+    return Object.freeze({
+      ok:false,
+      reason:operationLock?.reason || 'OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_FAILED',
+      record,
+      componentRecords,
+      validation,
+    });
+  }
+
+  let result = null;
+  let publicationError = null;
+  try {
+    if (!(await operationLock.verifyOwnership())) {
+      result = Object.freeze({
+        ok:false,
+        reason:'OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_OWNERSHIP_LOST',
+        record,
+        componentRecords,
+        validation,
+      });
+    } else {
+      const componentWrites = Object.freeze(Object.fromEntries(await Promise.all(COMPONENT_KEYS.map(async (componentKey) => [
+        componentKey,
+        await writeAtomicJson(root, ['receipts', OPENCLAW_PROVIDER_POOL_COMPONENT_FILES[componentKey]], componentRecords[componentKey], options),
+      ]))));
+      const failedComponent = COMPONENT_KEYS.find((componentKey) => componentWrites[componentKey]?.ok !== true);
+      if (failedComponent) {
+        result = Object.freeze({
+          ok:false,
+          reason:`OPENCLAW_PROVIDER_POOL_COMPONENT_WRITE_FAILED:${failedComponent}`,
+          record,
+          componentRecords,
+          componentWrites,
+          validation,
+        });
+      } else if (!(await operationLock.verifyOwnership())) {
+        result = Object.freeze({
+          ok:false,
+          reason:'OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_OWNERSHIP_LOST',
+          record,
+          componentRecords,
+          componentWrites,
+          validation,
+        });
+      } else {
+        const write = await writeAtomicJson(root, ['status', 'openclaw-provider-pool-current.json'], record, options);
+        if (write.ok !== true) {
+          result = Object.freeze({
+            ok:false,
+            reason:write.reason,
+            record,
+            componentRecords,
+            componentWrites,
+            validation,
+            write,
+          });
+        } else if (!(await operationLock.verifyOwnership())) {
+          result = Object.freeze({
+            ok:false,
+            reason:'OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_OWNERSHIP_LOST',
+            record,
+            componentRecords,
+            componentWrites,
+            validation,
+            write,
+          });
+        } else {
+          result = Object.freeze({
+            ok:true,
+            reason:'OPENCLAW_PROVIDER_POOL_PUBLISHED',
+            record,
+            componentRecords,
+            componentWrites,
+            validation,
+            write,
+          });
+        }
+      }
+    }
+  } catch (error) {
+    publicationError = error;
+  }
+
+  let released = false;
+  try {
+    released = await operationLock.release();
+  } catch {
+    released = false;
+  }
+  if (!released) {
+    return Object.freeze({
+      ok:false,
+      reason:'OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_RELEASE_FAILED',
+      record,
+      componentRecords,
+      validation,
+      priorResult:result,
+    });
+  }
+  if (publicationError) throw publicationError;
+  return result;
 }
 
 function requestedRoute(input = {}) {
