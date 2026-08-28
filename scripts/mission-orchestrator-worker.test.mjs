@@ -11,6 +11,20 @@ import {
   parseCodexJsonLines,
   selectGrantedMissionWorkerQueueItem,
 } from './mission-orchestrator-worker.mjs';
+import {
+  buildMissionWorkerAction,
+  projectMissionWorkerActionState,
+} from '../shared/agents/missionOrchestratorWorker.mjs';
+import { readCurrentExecutionReceipt } from '../shared/agents/executionReceiptV1.mjs';
+import {
+  appendMissionEvent,
+  createMissionRecord,
+} from '../stephanos-server/services/missionOrchestratorStore.js';
+import {
+  publishNextMissionWorkerAction,
+  readMissionWorkerQueue,
+} from '../stephanos-server/services/missionOrchestratorWorkerService.js';
+import { processNextCodexItem } from '../stephanos-server/services/missionOrchestratorWorkerConsumer.js';
 
 const OC1_HEAD = '8501a5657abe3fc5e815d9b35d9920003a4a1843';
 const OC1_MISSION_ID = 'critical-1725-openclaw-oc1';
@@ -291,4 +305,188 @@ test('OC1 Gateway response with wrong exact source lineage fails closed', async 
   assert.equal(result.error, 'OPENCLAW_OC1_GATEWAY_RESULT_LINEAGE_INVALID');
   assert.deepEqual(result.changedFiles, []);
   assert.deepEqual(result.evidenceReceipts, []);
+});
+
+test('exact PR source dispatch claims lease, records execution lifecycle, and releases only after terminal receipt', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'source-lifecycle-'));
+  const releaseCalls = [];
+  const claimCalls = [];
+  const options = {
+    root: join(parent, 'state'),
+    snapshotRoot: join(parent, 'proof'),
+    queueRoot: join(parent, 'queue'),
+    sharedWorkspaceRoot: join(parent, 'workspace'),
+    testOnly: true,
+    sourceExecutionDependencies: {
+      async claimSourceMutationLease(input) {
+        claimCalls.push(input);
+        return {
+          ok: true,
+          claimed: true,
+          record: {
+            leaseId: input.leaseId,
+            laneId: input.laneId,
+            repository: input.repository,
+            issueNumber: input.issueNumber,
+            prNumber: input.prNumber,
+            branch: input.branch,
+            headSha: input.headSha,
+            ownerId: input.ownerId,
+          },
+        };
+      },
+      async releaseSourceMutationLease(input) {
+        releaseCalls.push(input);
+        return { ok: true, released: true, reason: 'TEST_EXACT_LEASE_RELEASED' };
+      },
+    },
+  };
+  const missionId = 'goal-1497-pr-1617';
+  const sourceProof = (requirement, receiptId) => ({
+    receiptId,
+    requirement,
+    source: 'test',
+    evidenceType: 'command-output',
+    verified: true,
+    exitCode: 0,
+  });
+  const intent = {
+    missionId,
+    operatorIntent: 'Repair one exact PR-backed source lane.',
+    intendedOutcome: 'Prove lease-bound worker execution.',
+    missionKind: 'implementation',
+    repository: 'Cheekyfellastef/stephan-os',
+    repositoryRoot: 'C:\\repo',
+    branch: 'openclaw/source-lifecycle',
+    worktreePath: 'C:\\worktree',
+    allowedFiles: ['shared/agents/**'],
+    requiredEvidence: ['focused test output'],
+    requiredTests: ['node --test focused.test.mjs'],
+  };
+  let current = await createMissionRecord(intent, options);
+  const append = async (eventId, eventType, fields = {}) => {
+    current = await appendMissionEvent(missionId, { eventId, eventType, ...fields }, options);
+  };
+  await append('source-worktree', 'WORKTREE_READY', {
+    worktreePath: intent.worktreePath,
+    clean: true,
+    receipt: sourceProof('isolated worktree', 'source-worktree'),
+  });
+  const initialAction = buildMissionWorkerAction(current.state, options);
+  await append('source-dispatch', 'AGENT_DISPATCHED', {
+    agentId: 'codex',
+    adapter: 'codex',
+    actionId: initialAction.actionId,
+    workerId: initialAction.workerId,
+  });
+  await append('source-result', 'AGENT_RESULT_RECEIVED', {
+    actionId: initialAction.actionId,
+    workerId: initialAction.workerId,
+    success: true,
+    resultId: 'source-result',
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: sourceProof('codex result', 'source-result'),
+  });
+  await append('source-evidence', 'EVIDENCE_RECORDED', {
+    receipts: [sourceProof('focused test output', 'source-focused')],
+  });
+  await append('source-commit', 'GIT_OPERATION_COMPLETED', {
+    operation: 'commit',
+    commitSha: '1'.repeat(40),
+    clean: true,
+    receipt: sourceProof('signed git commit', 'source-commit'),
+  });
+  await append('source-push', 'GIT_OPERATION_COMPLETED', {
+    operation: 'push',
+    success: true,
+    receipt: sourceProof('signed git push', 'source-push'),
+  });
+  await append('source-pr', 'PULL_REQUEST_OPENED', {
+    prNumber: 1617,
+    prUrl: 'https://github.com/Cheekyfellastef/stephan-os/pull/1617',
+    headSha: '2'.repeat(40),
+    mergeable: true,
+    receipt: sourceProof('pull request creation', 'source-pr'),
+  });
+  await append('source-checks', 'PULL_REQUEST_CHECKS_UPDATED', {
+    prNumber: 1617,
+    headSha: '2'.repeat(40),
+    prState: 'open',
+    mergeable: true,
+    checks: [{ name: 'Build Stephanos UI', status: 'failure', required: true }],
+    receipt: sourceProof('pull request checks', 'source-checks'),
+  });
+  assert.equal(current.state.currentPhase, 'REPAIR_REQUIRED');
+
+  const actionState = projectMissionWorkerActionState(current.state, options);
+  const action = buildMissionWorkerAction(actionState, options);
+  const grant = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: 'a'.repeat(40),
+    boundedActionCount: 1,
+    missionId,
+    missionRevision: actionState.revision,
+    currentPhase: actionState.currentPhase,
+    actionId: action.actionId,
+    actionKind: action.actionKind,
+    adapter: 'codex',
+    operation: '',
+    capacityRoute: action.capacityRoute,
+    capacityReceiptId: action.capacityReceiptId,
+    capacityProofRefs: action.capacityProofRefs,
+    workerId: action.workerId,
+    laneId: missionId,
+    repository: intent.repository,
+    issueNumber: 1497,
+    prNumber: 1617,
+    branch: intent.branch,
+    headSha: '2'.repeat(40),
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  };
+  const published = await publishNextMissionWorkerAction({ ...options, actionGrant: grant });
+  assert.equal(published.published, true);
+  assert.equal(claimCalls.length, 1);
+  assert.equal(releaseCalls.length, 0);
+  const queued = await readMissionWorkerQueue(options);
+  assert.equal(queued.length, 1);
+  const binding = queued[0].item.sourceExecution;
+  assert.equal(binding.prNumber, 1617);
+  assert.equal(binding.headSha, '2'.repeat(40));
+  const queuedReceipt = await readCurrentExecutionReceipt(options.sharedWorkspaceRoot, {
+    executionId: binding.executionId,
+    leaseKey: binding.leaseId,
+    expectedHead: binding.headSha,
+  });
+  assert.equal(queuedReceipt.ok, true);
+  assert.equal(queuedReceipt.receipt.state, 'queued');
+
+  const processed = await processNextCodexItem({
+    ...options,
+    actionGrant: grant,
+    executeCodexAction: async () => ({
+      success: true,
+      resultId: 'source-lifecycle-worker-result',
+      changedFiles: ['shared/agents/example.mjs'],
+      receipt: sourceProof('codex result', 'source-lifecycle-result'),
+      evidenceReceipts: [sourceProof('focused test output', 'source-lifecycle-evidence')],
+      completedAt: new Date().toISOString(),
+    }),
+  });
+  assert.equal(processed.processed, true);
+  assert.equal(processed.result.finalVerdict, 'MISSION_WORKER_ITEM_COMPLETE');
+  const terminalReceipt = await readCurrentExecutionReceipt(options.sharedWorkspaceRoot, {
+    executionId: binding.executionId,
+    leaseKey: binding.leaseId,
+    expectedHead: binding.headSha,
+  });
+  assert.equal(terminalReceipt.ok, true);
+  assert.equal(terminalReceipt.receipt.state, 'completed');
+  assert.equal(terminalReceipt.receipt.sequence, 4);
+  assert.equal(releaseCalls.length, 1);
+  assert.equal(releaseCalls[0].leaseId, binding.leaseId);
+  assert.equal(releaseCalls[0].prNumber, binding.prNumber);
+  assert.equal(releaseCalls[0].headSha, binding.headSha);
+  assert.equal(releaseCalls[0].ownerId, binding.ownerId);
 });
