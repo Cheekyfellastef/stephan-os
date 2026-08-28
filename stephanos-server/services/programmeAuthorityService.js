@@ -50,6 +50,10 @@ import {
   projectMissionWorkerHeartbeat,
   resolveCanonicalMissionWorkerPaths,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
+import {
+  OPENCLAW_PROVIDER_POOL_COMPONENT_FILES,
+  validateOpenClawProviderPoolStatusRecord,
+} from '../../shared/agents/openClawProviderPoolQualificationV1.mjs';
 
 export const PROGRAMME_AUTHORITY_SERVICE_SCHEMA = 'stephanos.programme-authority-service.v1';
 export const SOURCE_MUTATION_LEASE_FILE = `${SOURCE_MUTATION_LEASE_STATUS_ID}.json`;
@@ -294,6 +298,8 @@ export async function readMissionControllerCapacityRoutingInput({
   root,
   repoRoot,
   nowUtc,
+  sourceRevision,
+  env = process.env,
   readFileImpl = readFile,
 } = {}) {
   const names = {
@@ -301,6 +307,7 @@ export async function readMissionControllerCapacityRoutingInput({
     github: 'chatgpt-github-build-capacity-current.json',
     forge: 'foundry-forge-build-capacity-current.json',
     forgeSidecar: 'foundry-forge-sidecar-current.json',
+    openClawStatus: 'openclaw-provider-pool-current.json',
   };
   const resolved = Object.fromEntries(Object.entries(names).map(([key, file]) => [
     key,
@@ -311,12 +318,57 @@ export async function readMissionControllerCapacityRoutingInput({
     const result = await readJson(entry.path, readFileImpl);
     return [key, result.present && !result.error ? result.value : null];
   })));
+
+  let openClawHostContext = null;
+  const sourceHead = text(sourceRevision).toLowerCase();
+  const publisherPublicKeyPath = text(env?.STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH);
+  const componentPaths = Object.fromEntries(Object.entries(OPENCLAW_PROVIDER_POOL_COMPONENT_FILES).map(([key, file]) => [
+    key,
+    authorityPath(root, repoRoot, 'receipts', file),
+  ]));
+  if (
+    loaded.openClawStatus
+    && SHA_40.test(sourceHead)
+    && publisherPublicKeyPath
+    && Object.values(componentPaths).every((entry) => entry.ok)
+  ) {
+    const componentLoads = Object.fromEntries(await Promise.all(Object.entries(componentPaths).map(async ([key, entry]) => {
+      const result = await readJson(entry.path, readFileImpl);
+      return [key, result.present && !result.error ? result.value : null];
+    })));
+    const completeComponents = Object.values(componentLoads).every(Boolean);
+    let publisherPublicKeyPem = '';
+    try {
+      const candidate = await readFileImpl(publisherPublicKeyPath, 'utf8');
+      if (typeof candidate === 'string' && candidate.length > 0 && candidate.length <= 16_384) {
+        publisherPublicKeyPem = candidate;
+      }
+    } catch {
+      publisherPublicKeyPem = '';
+    }
+    if (completeComponents && publisherPublicKeyPem) {
+      const validation = validateOpenClawProviderPoolStatusRecord(
+        loaded.openClawStatus,
+        componentLoads,
+        {
+          repository: text(loaded.openClawStatus.repository),
+          taskClass: text(loaded.openClawStatus.taskClass),
+          sourceHead,
+          nowUtc,
+          publisherPublicKeyPem,
+        },
+      );
+      if (validation.valid) openClawHostContext = validation.hostContext;
+    }
+  }
+
   return Object.freeze({
     nowUtc,
     codexStatus: loaded.codexStatus,
     githubLaneReceipt: loaded.github?.capacityReceipt ?? loaded.github,
     forgeLaneReceipt: loaded.forge?.capacityReceipt ?? loaded.forge,
     forgeSidecar: loaded.forgeSidecar?.forgeSidecar ?? loaded.forgeSidecar,
+    openClawHostContext,
   });
 }
 
