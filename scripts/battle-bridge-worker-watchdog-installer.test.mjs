@@ -133,6 +133,43 @@ function strictRestartInvocationBoundary({ probe, restart, launcher }) {
     && !launcher.includes('$processStartInfo.Arguments +=');
 }
 
+function typedRestartFailureBoundary({ probe, restart }) {
+  const propertyEstate = probe.match(/\$missionWorkerRestartFailureProperties = @\(([\s\S]*?)\n\)/)?.[1] || '';
+  const blockerEstate = probe.match(/\$missionWorkerRestartFailureBlockers = @\(([\s\S]*?)\n\)/)?.[1] || '';
+  const probeBlockers = new Set([...blockerEstate.matchAll(/'(MISSION_WORKER_[A-Z0-9_:-]+)'/g)].map((match) => match[1]));
+  const adapterBlockers = new Set([...restart.matchAll(/'(MISSION_WORKER_[A-Z0-9_:-]+)'/g)].map((match) => match[1]));
+  const nonZero = probe.indexOf('if ($LASTEXITCODE -ne 0) {');
+  const typedRead = probe.indexOf('Read-ValidatedMissionWorkerRestartFailureBlocker `', nonZero);
+  const typedThrow = probe.indexOf('if ($typedRestartBlocker) { throw $typedRestartBlocker }', typedRead);
+  const genericThrow = probe.indexOf("throw 'The approved runtime restart adapter failed.'", typedThrow);
+  return propertyEstate.includes("'schemaVersion', 'target', 'expectedHead', 'exactHeadProofOk', 'postStartSourceProofOk'")
+    && propertyEstate.includes("'liveOpenClawUpdatePerformed', 'ok', 'blocker', 'finalVerdict'")
+    && probe.includes('Test-ExactJsonPropertyEstate -Record $receipt -ExpectedProperties $missionWorkerRestartFailureProperties')
+    && probe.includes("[string]$receipt.schemaVersion -ne 'stephanos.approved-runtime-restart.v1'")
+    && probe.includes("[string]$receipt.target -ne 'mission-worker'")
+    && probe.includes('[string]$receipt.expectedHead -ne $ExpectedHead')
+    && probe.includes('[string]$receipt.deadlineUtc -ne $ExpectedDeadlineUtc')
+    && probe.includes('$receipt.exactHeadProofOk -ne $false')
+    && probe.includes('$receipt.postStartSourceProofOk -ne $false')
+    && probe.includes('$receipt.unrelatedTasksChanged -ne $false')
+    && probe.includes('$receipt.arbitraryTaskTargetAllowed -ne $false')
+    && probe.includes('$receipt.arbitraryProcessKillAllowed -ne $false')
+    && probe.includes('$receipt.verifiedOwnedProcessTerminationOnly -ne $true')
+    && probe.includes('$receipt.liveOpenClawUpdatePerformed -ne $false')
+    && probe.includes('$receipt.ok -ne $false')
+    && probe.includes("[string]$receipt.finalVerdict -ne 'APPROVED_RUNTIME_RESTART_BLOCKED'")
+    && probe.includes('if ($missionWorkerRestartFailureBlockers -notcontains $blocker) { return \'\' }')
+    && probe.includes('$restartBytes -le 0 -or $restartBytes -gt 8192')
+    && probeBlockers.size > 0
+    && [...probeBlockers].every((blocker) => adapterBlockers.has(blocker))
+    && [...adapterBlockers].every((blocker) => probeBlockers.has(blocker))
+    && nonZero >= 0
+    && typedRead > nonZero
+    && typedThrow > typedRead
+    && genericThrow > typedThrow
+    && !/Write-Output\s+\$restartOutput|throw\s+\$restartJson|throw\s+\$restartOutput/.test(probe);
+}
+
 test('installer exposes only StartNow and registers hidden limited fixed watchdog plus visibility reconciler', async () => {
   const source = await readFile(installPath, 'utf8');
   assert.deepEqual([...parameterBlock(source).matchAll(/\[switch\]\s*\$(\w+)/g)].map((match) => match[1]), ['StartNow']);
@@ -230,6 +267,30 @@ test('internal probe permits only inspect or exact-head canonical worker restart
   assert.match(source, /wscript\.exe/);
   assert.doesNotMatch(source, /IndexOf\(\$workerPath/);
   assert.doesNotMatch(source, /\[string\]\$TaskName|Stop-ScheduledTask|Stop-Process|Invoke-Expression|Restart-Computer|shutdown\.exe/i);
+});
+
+test('typed mission-worker restart failures are bounded to the exact blocked adapter contract', async () => {
+  const [probe, restart] = await Promise.all([
+    readFile(probePath, 'utf8'),
+    readFile(restartPath, 'utf8'),
+  ]);
+  assert.equal(typedRestartFailureBoundary({ probe, restart }), true);
+
+  const attacks = [
+    { probe: probe.replace("[string]$receipt.target -ne 'mission-worker'", '$false'), restart },
+    { probe: probe.replace('[string]$receipt.expectedHead -ne $ExpectedHead', '$false'), restart },
+    { probe: probe.replace('[string]$receipt.deadlineUtc -ne $ExpectedDeadlineUtc', '$false'), restart },
+    { probe: probe.replace('$receipt.arbitraryTaskTargetAllowed -ne $false', '$false'), restart },
+    { probe: probe.replace('$receipt.arbitraryProcessKillAllowed -ne $false', '$false'), restart },
+    { probe: probe.replace('$receipt.liveOpenClawUpdatePerformed -ne $false', '$false'), restart },
+    { probe: probe.replace("[string]$receipt.finalVerdict -ne 'APPROVED_RUNTIME_RESTART_BLOCKED'", '$false'), restart },
+    { probe: probe.replace("'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT',", "'MISSION_WORKER_ATTACKER_SELECTED',"), restart },
+    { probe: probe.replace('if ($typedRestartBlocker) { throw $typedRestartBlocker }', '# typed blocker suppressed'), restart },
+    { probe: probe.replace("throw 'The approved runtime restart adapter failed.'", 'Write-Output $restartOutput'), restart },
+  ];
+  for (const [index, attack] of attacks.entries()) {
+    assert.equal(typedRestartFailureBoundary(attack), false, `typed failure attack ${index} must fail closed`);
+  }
 });
 
 test('worker launcher is pinned to canonical main and supervised heartbeat loop', async () => {
