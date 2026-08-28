@@ -381,12 +381,37 @@ function matches(record, selectors) {
   return true;
 }
 
+function containsPsychologicalInference(record) {
+  const projectedText = [
+    record.recordId,
+    record.namespace,
+    record.type,
+    record.source,
+    record.summary,
+    ...record.tags,
+    ...record.relationshipRefs,
+    record.observedAtUtc,
+    record.updatedAtUtc,
+    record.authorityClass,
+    record.freshness,
+    record.currentState,
+    ...record.proofRefs,
+    ...record.sourceRefs,
+    record.relatedGoalRef,
+    record.relatedPrRef,
+    record.component,
+    record.personOrParticipant,
+    record.relationshipEvidenceClass,
+  ];
+  return projectedText.some((value) => typeof value === 'string' && PSYCHOLOGICAL_INFERENCE.test(value));
+}
+
 function relationshipAllowed(record) {
   if (!['EXPLICIT_OPERATOR', 'OPERATOR_CORRECTION', 'LOW_AUTHORITY_INTERACTION_INFERENCE'].includes(record.relationshipEvidenceClass)) {
     return false;
   }
   if (record.relationshipEvidenceClass === 'LOW_AUTHORITY_INTERACTION_INFERENCE'
-      && PSYCHOLOGICAL_INFERENCE.test(record.summary)) {
+      && containsPsychologicalInference(record)) {
     return false;
   }
   return true;
@@ -517,12 +542,28 @@ export function buildStephanosMemoryRetrievalPackV1(input = {}) {
     selectedRecords.push(projection);
   }
   const actualBytes = Buffer.byteLength(JSON.stringify(selectedRecords), 'utf8');
+  const selectedRecordIds = selectedRecords.map((record) => record.recordId);
+  const omissionReasons = [...new Set(omissions)];
+  const verdict = unresolvedContradictions.length ? 'CONFLICTING_EVIDENCE' : (truncated ? 'BOUNDED_PARTIAL' : 'READY');
+  const resultBudget = {
+    maxRecords: budget.maxRecords,
+    maxBytes: budget.maxBytes,
+    actualRecords: selectedRecords.length,
+    actualBytes,
+    truncated,
+  };
 
   const canonicalPayload = {
+    schemaVersion: STEPHANOS_MEMORY_RETRIEVAL_PACK_SCHEMA_VERSION,
     packKind,
     selectors,
-    selectedRecordIds: selectedRecords.map((record) => record.recordId),
-    budget: { maxRecords: budget.maxRecords, maxBytes: budget.maxBytes },
+    selectedRecords,
+    selectedRecordIds,
+    unresolvedContradictions,
+    sensitiveDataOmitted: omissionReasons.length > 0,
+    omissionReasons,
+    budget: resultBudget,
+    verdict,
   };
   const packId = `memory-pack-${createHash('sha256').update(JSON.stringify(canonicalPayload)).digest('hex').slice(0, 24)}`;
 
@@ -530,19 +571,13 @@ export function buildStephanosMemoryRetrievalPackV1(input = {}) {
     schemaVersion: STEPHANOS_MEMORY_RETRIEVAL_PACK_SCHEMA_VERSION,
     packKind,
     packId,
-    verdict: unresolvedContradictions.length ? 'CONFLICTING_EVIDENCE' : (truncated ? 'BOUNDED_PARTIAL' : 'READY'),
+    verdict,
     selectedRecords: Object.freeze(selectedRecords),
-    selectedRecordIds: Object.freeze(selectedRecords.map((record) => record.recordId)),
+    selectedRecordIds: Object.freeze(selectedRecordIds),
     unresolvedContradictions,
-    sensitiveDataOmitted: omissions.length > 0,
-    omissionReasons: Object.freeze([...new Set(omissions)]),
-    budget: Object.freeze({
-      maxRecords: budget.maxRecords,
-      maxBytes: budget.maxBytes,
-      actualRecords: selectedRecords.length,
-      actualBytes,
-      truncated,
-    }),
+    sensitiveDataOmitted: omissionReasons.length > 0,
+    omissionReasons: Object.freeze(omissionReasons),
+    budget: Object.freeze(resultBudget),
     authority: AUTHORITY,
     valid: true,
     validationErrors: Object.freeze([]),
