@@ -86,6 +86,18 @@ test('relationship refs and dense list fields reject sensitive or local-path mat
   assert.ok(credential.validationErrors.includes('record-1:relationshipRefs-invalid'));
 });
 
+test('general absolute and relative local path forms are rejected from projected text', () => {
+  for (const value of ['/root/private.json', '/var/lib/stephanos/private-data', '/workspace/operator-data', './private.txt', '../private.txt']) {
+    const summary = build([record({ summary: `Do not project ${value}` })]);
+    assert.equal(summary.valid, false, value);
+    assert.ok(summary.validationErrors.includes('record-1:summary-sensitive-or-invalid'), value);
+
+    const tag = build([record({ tags: [value] })]);
+    assert.equal(tag.valid, false, value);
+    assert.ok(tag.validationErrors.includes('record-1:tags-invalid'), value);
+  }
+});
+
 test('unsupported raw fields are omitted and provider-specific input does not enter output', () => {
   const input = record();
   input.rawPayload = { provider: 'some-provider', token: 'should-not-be-read' };
@@ -143,12 +155,20 @@ test('superseded evidence is excluded by default and can be included only as his
   assert.equal(included.selectedRecords[0].currentState, 'SUPERSEDED');
 });
 
-test('contradictory current records remain explicit', () => {
+test('distinct bounded record identities do not become false contradictions', () => {
+  const first = record({ recordId: 'record-a', summary: 'Decision A is current.' });
+  const second = record({ recordId: 'record-b', summary: 'Decision B is current.' });
+  const result = build([first, second]);
+  assert.equal(result.verdict, 'READY');
+  assert.deepEqual(result.unresolvedContradictions, []);
+});
+
+test('materially different current projections of the same bounded record identity remain explicit', () => {
   const first = record({ recordId: 'record-a', summary: 'Current state is A.' });
-  const second = record({ recordId: 'record-b', summary: 'Current state is B.' });
+  const second = record({ recordId: 'record-a', summary: 'Current state is B.' });
   const result = build([first, second]);
   assert.equal(result.verdict, 'CONFLICTING_EVIDENCE');
-  assert.deepEqual(result.unresolvedContradictions, ['record-a', 'record-b']);
+  assert.deepEqual(result.unresolvedContradictions, ['record-a']);
 });
 
 test('pack identity binds the complete projected result rather than record ids alone', () => {
@@ -161,12 +181,12 @@ test('pack identity binds the complete projected result rather than record ids a
 
 test('contradictions are detected before record-count truncation can hide them', () => {
   const first = record({ recordId: 'record-a', summary: 'Current state is A.' });
-  const second = record({ recordId: 'record-b', summary: 'Current state is B.' });
+  const second = record({ recordId: 'record-a', summary: 'Current state is B.' });
   const result = build([first, second], { budget: { maxRecords: 1, maxBytes: 32768 } });
   assert.equal(result.budget.truncated, true);
   assert.deepEqual(result.selectedRecordIds, ['record-a']);
   assert.equal(result.verdict, 'CONFLICTING_EVIDENCE');
-  assert.deepEqual(result.unresolvedContradictions, ['record-a', 'record-b']);
+  assert.deepEqual(result.unresolvedContradictions, ['record-a']);
 });
 
 test('record-count budget truncates deterministically', () => {
