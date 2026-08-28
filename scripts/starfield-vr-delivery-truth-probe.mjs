@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -75,11 +74,6 @@ function readGitHead() {
   return '';
 }
 
-function sha256File(path) {
-  if (!existsSync(path) || !lstatSync(path).isFile()) return '';
-  return createHash('sha256').update(readFileSync(path)).digest('hex');
-}
-
 const installer = readBoundedJson(installerReceiptPath);
 const receipt = installer.record;
 const receiptValid = Boolean(receipt
@@ -111,7 +105,6 @@ const observation = {
     ? receipt.finalVerdict
     : '',
   installedSourceHead,
-  shortcutSha256: desktopIconPresent ? sha256File(shortcutPath) : '',
 };
 
 mkdirSync(dirname(outputPath), { recursive: true });
