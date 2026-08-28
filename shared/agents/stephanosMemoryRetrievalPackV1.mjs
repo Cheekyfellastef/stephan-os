@@ -91,7 +91,7 @@ const SAFE_GOAL_REF = /^#[1-9][0-9]{0,9}$/;
 const SAFE_PR_REF = /^#[1-9][0-9]{0,9}$/;
 const SAFE_REF = /^(?:(?:issue|pr|receipt|evidence|workspace|memory|operator|runtime|project|github|shared-workspace):\/\/[a-z0-9][a-z0-9._:/#-]{0,220}|(?:proof|proofs|receipt|receipts|evidence|github|shared-workspace|runtime|memory)\/[a-z0-9._/#:-]{1,220})$/i;
 const SENSITIVE_TEXT = /\b(?:api[-_ ]?key|password|passwd|secret|bearer|authorization|private[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|cookie|session[-_ ]?cookie|sort[-_ ]?code|iban|swift|raw prompt|raw response|psychological profile|mental diagnosis)\b/i;
-const LOCAL_PATH = /(?:^|\s)(?:[A-Za-z]:\\|\\\\|\/home\/|\/Users\/|\/etc\/|\.\.\/|\.\.\\)/;
+const LOCAL_PATH = /(?:^|\s)(?:[A-Za-z]:[\\/]|\\\\|\.{1,2}[\\/]|\/[A-Za-z0-9._-]+(?:[\\/][^\s]*)?)/;
 const PSYCHOLOGICAL_INFERENCE = /\b(?:mood|depressed|anxious|diagnos(?:e|is)|mental state|personality disorder|hidden motivation|secretly wants|intimate|trauma|psychological profile)\b/i;
 
 const AUTHORITY_RANK = new Map([
@@ -454,7 +454,7 @@ function contradictionLedger(records) {
   const conflicting = new Set(records.filter((record) => record.freshness === 'CONFLICTING').map((record) => record.recordId));
   const groups = new Map();
   for (const record of records.filter((item) => item.currentState === 'CURRENT')) {
-    const key = [record.namespace, record.type, record.component, record.personOrParticipant, record.relatedGoalRef].join('|');
+    const key = record.recordId;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(record);
   }
