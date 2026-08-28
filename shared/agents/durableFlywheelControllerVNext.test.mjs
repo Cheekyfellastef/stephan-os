@@ -77,6 +77,26 @@ function activeProjection(overrides = {}) {
   });
 }
 
+function readySourceMission(overrides = {}) {
+  return {
+    missionId: 'critical-1497-ready-source-repair',
+    revision: 2,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    title: 'Repair READY source lease bootstrap',
+    repository: REPOSITORY,
+    operatorIntent: 'Repair the bounded READY source lease bootstrap.',
+    intendedOutcome: 'Source work receives one exact canonical mutation lease.',
+    allowedFiles: ['shared/agents/durableFlywheelControllerVNext.mjs'],
+    requiredTests: ['node --test shared/agents/durableFlywheelControllerVNext.test.mjs'],
+    requiredEvidence: ['exact source mutation lease'],
+    providerRouteIntent: 'AUTO',
+    dispatch: { adapter: 'codex', status: 'pending' },
+    git: { branch: BRANCH, worktreePath: '/bounded/worktree' },
+    pullRequest: { number: 1617, headSha: LANE_HEAD },
+    ...overrides,
+  };
+}
+
 function machineryFor(authoritativeProjection, overrides = {}) {
   const heartbeats = [];
   const receipts = [];
@@ -326,6 +346,223 @@ test('READY projection continues the already-active backlog mission with one exa
   assert.equal(result.workerActionGrant.adapter, 'openclaw-signed');
   assert.equal(result.workerActionGrant.operation, 'create-worktree');
   assert.match(result.nextAction, /continue the conveyor-authorized mission/i);
+});
+
+test('READY source work claims, rereads, and exposes only the exact active canonical lease', async () => {
+  const sourceMission = readySourceMission();
+  let claimedInput = null;
+  const fixture = machineryFor(projection('READY', {
+    scheduler: { selectedGoal: '#1497', decisionReceipt: { selectedIssue: 1497 } },
+  }), {
+    ensureBacklogMission: async () => ({
+      ok: true,
+      createdMission: true,
+      projection: {
+        decision: 'ADMIT_MISSION',
+        finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_MISSION_ADMITTED',
+        activeMission: sourceMission,
+      },
+    }),
+    loadCapacityRoutingInput: async () => null,
+    claimSourceMutationLease: async (input) => {
+      claimedInput = input;
+      return { ok: true, claimed: true, record: input };
+    },
+    readSourceMutationLease: async () => ({
+      ok: true,
+      present: true,
+      reason: 'SOURCE_MUTATION_LEASE_ACTIVE',
+      validation: { valid: true, active: true, stale: false },
+      record: {
+        ...claimedInput,
+        mergeAuthority: false,
+        leaseSeizureAllowed: false,
+      },
+    }),
+  });
+
+  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(result.status, 'READY', JSON.stringify(result));
+  assert.equal(result.action, 'LEASE_CANONICAL_CONVEYOR_MISSION');
+  assert.equal(result.allowWorkerTick, true);
+  assert.equal(result.workerActionGrant.adapter, 'codex');
+  assert.equal(result.workerActionGrant.laneId, LANE_ID);
+  assert.equal(result.workerActionGrant.repository, REPOSITORY);
+  assert.equal(result.workerActionGrant.issueNumber, 1497);
+  assert.equal(result.workerActionGrant.prNumber, 1617);
+  assert.equal(result.workerActionGrant.branch, BRANCH);
+  assert.equal(result.workerActionGrant.headSha, LANE_HEAD);
+  assert.equal(claimedInput.laneId, LANE_ID);
+  assert.equal(claimedInput.repository, REPOSITORY);
+  assert.equal(claimedInput.issueNumber, 1497);
+  assert.equal(claimedInput.prNumber, 1617);
+  assert.equal(claimedInput.branch, BRANCH);
+  assert.equal(claimedInput.headSha, LANE_HEAD);
+  assert.equal(claimedInput.ownerId, 'codex');
+  assert.match(claimedInput.leaseId, /^source-lease-[0-9a-f]{24}$/);
+  assert.deepEqual(result.verifiedSourceMutationLeaseIdentity, {
+    leaseId: claimedInput.leaseId,
+    laneId: LANE_ID,
+    repository: REPOSITORY,
+    issueNumber: 1497,
+    prNumber: 1617,
+    branch: BRANCH,
+    headSha: LANE_HEAD,
+    ownerId: 'codex',
+  });
+  assert.deepEqual(
+    fixture.heartbeats.map(({ cycleState }) => cycleState),
+    ['STARTING', 'RECONCILING', 'ACTIVE_LANE'],
+  );
+});
+
+test('READY source work with incomplete exact PR identity fails closed before lease claim', async () => {
+  const sourceMission = readySourceMission({ pullRequest: undefined });
+  let claims = 0;
+  const fixture = machineryFor(projection('READY', {
+    scheduler: { selectedGoal: '#1497', decisionReceipt: { selectedIssue: 1497 } },
+  }), {
+    ensureBacklogMission: async () => ({
+      ok: true,
+      createdMission: true,
+      projection: { activeMission: sourceMission },
+    }),
+    loadCapacityRoutingInput: async () => null,
+    claimSourceMutationLease: async () => {
+      claims += 1;
+      return { ok: true };
+    },
+  });
+
+  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+  assert.ok(result.blockers.includes('source-mutation-lease:grant-identity-incomplete'));
+  assert.equal(result.workerActionGrant, undefined);
+  assert.equal(claims, 0);
+});
+
+test('READY source work cannot seize a conflicting canonical lease', async () => {
+  const sourceMission = readySourceMission();
+  const fixture = machineryFor(projection('READY', {
+    scheduler: { selectedGoal: '#1497', decisionReceipt: { selectedIssue: 1497 } },
+  }), {
+    ensureBacklogMission: async () => ({
+      ok: true,
+      createdMission: true,
+      projection: { activeMission: sourceMission },
+    }),
+    loadCapacityRoutingInput: async () => null,
+    claimSourceMutationLease: async () => ({
+      ok: false,
+      claimed: false,
+      reason: 'SOURCE_MUTATION_LEASE_ALREADY_OWNED',
+      leaseSeizureAllowed: false,
+    }),
+  });
+
+  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+  assert.ok(result.blockers.includes('source-mutation-lease:SOURCE_MUTATION_LEASE_ALREADY_OWNED'));
+  assert.equal(result.workerActionGrant, undefined);
+});
+
+test('READY source work rejects stale or mismatched canonical lease reread after a successful claim', async () => {
+  const sourceMission = readySourceMission();
+  let claimedInput = null;
+  const fixture = machineryFor(projection('READY', {
+    scheduler: { selectedGoal: '#1497', decisionReceipt: { selectedIssue: 1497 } },
+  }), {
+    ensureBacklogMission: async () => ({
+      ok: true,
+      createdMission: true,
+      projection: { activeMission: sourceMission },
+    }),
+    loadCapacityRoutingInput: async () => null,
+    claimSourceMutationLease: async (input) => {
+      claimedInput = input;
+      return { ok: true, claimed: true, record: input };
+    },
+    readSourceMutationLease: async () => ({
+      ok: true,
+      present: true,
+      reason: 'SOURCE_MUTATION_LEASE_ACTIVE',
+      validation: { valid: true, active: true, stale: false },
+      record: {
+        ...claimedInput,
+        headSha: 'c'.repeat(40),
+        mergeAuthority: false,
+        leaseSeizureAllowed: false,
+      },
+    }),
+  });
+
+  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+  assert.ok(result.blockers.includes('source-mutation-lease:canonical-reread-mismatch'));
+  assert.equal(result.workerActionGrant, undefined);
+});
+
+test('READY read-only runtime investigation remains lease-free', async () => {
+  const readOnlyMission = {
+    missionId: 'critical-1497-readonly-investigation',
+    revision: 0,
+    currentPhase: 'LIVE_RUNTIME_INVESTIGATION',
+    repository: REPOSITORY,
+    requiredEvidence: ['runtime diagnosis'],
+  };
+  let leaseCalls = 0;
+  const fixture = machineryFor(projection('READY', {
+    scheduler: { selectedGoal: '#1497', decisionReceipt: { selectedIssue: 1497 } },
+  }), {
+    ensureBacklogMission: async () => ({
+      ok: true,
+      createdMission: true,
+      projection: { activeMission: readOnlyMission },
+    }),
+    loadCapacityRoutingInput: async () => null,
+    claimSourceMutationLease: async () => {
+      leaseCalls += 1;
+      throw new Error('read-only work must not claim a source lease');
+    },
+    readSourceMutationLease: async () => {
+      leaseCalls += 1;
+      throw new Error('read-only work must not read a source lease');
+    },
+  });
+
+  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(result.status, 'READY', JSON.stringify(result));
+  assert.equal(result.allowWorkerTick, true);
+  assert.equal(result.workerActionGrant.adapter, 'openclaw-readonly');
+  assert.equal(leaseCalls, 0);
 });
 
 test('canonical HOLD projection preserves authority blockers and forbids work', async () => {

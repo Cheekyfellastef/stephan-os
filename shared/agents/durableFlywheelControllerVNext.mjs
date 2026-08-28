@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
 } from './programmeAuthorityV1.mjs';
@@ -6,10 +7,12 @@ import {
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
 import {
+  claimSourceMutationLease,
   finalizeTerminalImplementationLane,
   publishProgrammeControllerHeartbeat,
   readAuthoritativeProgrammeProjection,
   readMissionControllerCapacityRoutingInput,
+  readSourceMutationLease,
   resolveProgrammeAuthorityPaths,
 } from '../../stephanos-server/services/programmeAuthorityService.js';
 import {
@@ -29,6 +32,8 @@ export const DURABLE_FLYWHEEL_CONTROLLER_ISSUE = 1497;
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
 const WORKER_SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,159}$/i;
+const SAFE_BRANCH = /^[a-z0-9][a-z0-9._/-]{0,239}$/i;
+const SAFE_REPOSITORY = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const KNOWN_PROJECTION_STATES = new Set([
   'HOLD',
@@ -36,6 +41,12 @@ const KNOWN_PROJECTION_STATES = new Set([
   'ACTIVE',
   'READY',
   'IDLE',
+]);
+const SOURCE_MUTATION_ADAPTERS = new Set([
+  'codex',
+  'openclaw-local',
+  'chatgpt-github',
+  'foundry-forge',
 ]);
 
 function text(value, fallback = '') {
@@ -78,6 +89,11 @@ function requiredFunction(value, name) {
   return value;
 }
 
+function compactId(prefix, values = []) {
+  const digest = createHash('sha256').update(JSON.stringify(values)).digest('hex').slice(0, 24);
+  return `${prefix}-${digest}`;
+}
+
 function receiptId(nowUtc) {
   const timestamp = nowUtc.replace(/[^0-9]/g, '').slice(0, 17);
   return `durable-flywheel-${timestamp || 'invalid'}`;
@@ -100,6 +116,46 @@ function projectionIdentity(projection = {}) {
     headSha: sha(lane?.headSha),
     leaseId: text(projection?.mutationLease?.leaseId),
     ownerId: text(projection?.mutationLease?.ownerId),
+  });
+}
+
+function conflictingIdentity(left, right) {
+  return left !== null && left !== '' && right !== null && right !== '' && left !== right;
+}
+
+function exactWorkerGrantIdentity(projection = {}, actionState = {}) {
+  const projected = projectionIdentity(projection);
+  const mission = {
+    laneId: text(actionState?.laneId),
+    repository: text(actionState?.repository),
+    issueNumber: positiveInteger(actionState?.issueNumber ?? actionState?.goalNumber),
+    prNumber: positiveInteger(actionState?.prNumber ?? actionState?.pullRequest?.number),
+    branch: text(actionState?.branch ?? actionState?.git?.branch),
+    headSha: sha(actionState?.headSha ?? actionState?.git?.headSha ?? actionState?.pullRequest?.headSha),
+  };
+  if (
+    conflictingIdentity(projected.laneId, mission.laneId)
+    || conflictingIdentity(projected.repository, mission.repository)
+    || conflictingIdentity(projected.issueNumber, mission.issueNumber)
+    || conflictingIdentity(projected.prNumber, mission.prNumber)
+    || conflictingIdentity(projected.branch, mission.branch)
+    || conflictingIdentity(projected.headSha, mission.headSha)
+  ) return null;
+  const issueNumber = projected.issueNumber ?? mission.issueNumber;
+  const prNumber = projected.prNumber ?? mission.prNumber;
+  const laneId = projected.laneId || mission.laneId || (issueNumber && prNumber
+    ? `goal-${issueNumber}-pr-${prNumber}`
+    : '');
+  if (laneId && !SAFE_ID.test(laneId)) return null;
+  return freeze({
+    laneId,
+    repository: projected.repository || mission.repository,
+    issueNumber,
+    prNumber,
+    branch: projected.branch || mission.branch,
+    headSha: projected.headSha || mission.headSha,
+    leaseId: projected.leaseId,
+    ownerId: projected.ownerId,
   });
 }
 
@@ -148,7 +204,8 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capa
       || !selectedCapacityRoute
       || (providerRouteIntent !== 'AUTO' && providerRouteIntent !== selectedCapacityRoute)) return null;
   }
-  const identity = projectionIdentity(projection);
+  const identity = exactWorkerGrantIdentity(projection, actionState);
+  if (!identity) return null;
   return freeze({
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
     grantId: `grant-${actionId}`.slice(0, 80),
@@ -176,6 +233,77 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capa
     mergeAuthority: false,
     leaseSeizureAllowed: false,
   });
+}
+
+function sourceMutationLeasePlan(grant, nowUtc, proofRefs = []) {
+  const adapter = text(grant?.adapter).toLowerCase();
+  const required = grant?.actionKind === 'agent-handoff' && SOURCE_MUTATION_ADAPTERS.has(adapter);
+  if (!required) return freeze({ required: false, complete: true, expected: null, claimInput: null });
+  const laneId = text(grant?.laneId);
+  const repository = text(grant?.repository);
+  const issueNumber = positiveInteger(grant?.issueNumber);
+  const prNumber = positiveInteger(grant?.prNumber);
+  const branch = text(grant?.branch);
+  const headSha = sha(grant?.headSha);
+  const ownerId = text(grant?.workerId);
+  const complete = Boolean(
+    SAFE_ID.test(laneId)
+    && SAFE_REPOSITORY.test(repository)
+    && issueNumber
+    && prNumber
+    && SAFE_BRANCH.test(branch)
+    && !branch.includes('..')
+    && headSha
+    && SAFE_ID.test(ownerId)
+  );
+  if (!complete) return freeze({ required: true, complete: false, expected: null, claimInput: null });
+  const leaseId = compactId('source-lease', [
+    laneId,
+    text(grant?.actionId),
+    repository,
+    prNumber,
+    headSha,
+  ]);
+  const expected = freeze({
+    leaseId,
+    laneId,
+    repository,
+    issueNumber,
+    prNumber,
+    branch,
+    headSha,
+    ownerId,
+  });
+  return freeze({
+    required: true,
+    complete: true,
+    expected,
+    claimInput: freeze({ ...expected, nowUtc, proofRefs: freeze(list(proofRefs)) }),
+  });
+}
+
+function exactActiveSourceMutationLease(read, expected) {
+  if (
+    read?.ok !== true
+    || read?.present !== true
+    || read?.validation?.valid !== true
+    || read?.validation?.active !== true
+    || !read?.record
+    || !expected
+  ) return false;
+  for (const [field, normalize] of [
+    ['leaseId', text],
+    ['laneId', text],
+    ['repository', text],
+    ['issueNumber', positiveInteger],
+    ['prNumber', positiveInteger],
+    ['branch', text],
+    ['headSha', sha],
+    ['ownerId', text],
+  ]) {
+    if (normalize(read.record[field]) !== normalize(expected[field])) return false;
+  }
+  return read.record.mergeAuthority === false && read.record.leaseSeizureAllowed === false;
 }
 
 function holdResult(reason, additions = {}) {
@@ -412,6 +540,8 @@ function productionMachinery(overrides = {}) {
     ensureBacklogMission: overrides.ensureBacklogMission ?? ensureCriticalBacklogMission,
     publishReceipt: overrides.publishReceipt ?? publishDurableFlywheelCycleReceipt,
     loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readMissionControllerCapacityRoutingInput,
+    claimSourceMutationLease: overrides.claimSourceMutationLease ?? claimSourceMutationLease,
+    readSourceMutationLease: overrides.readSourceMutationLease ?? readSourceMutationLease,
   });
 }
 
@@ -456,6 +586,9 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
   let transitionAuthorityHeartbeatPublication = null;
   let missionAdmissionReceipt = null;
   let missionAdmissionReceiptPublication = null;
+  let sourceMutationLeaseClaim = null;
+  let sourceMutationLeaseRead = null;
+  let verifiedSourceMutationLeaseIdentity = null;
   let projection = await loadProjection(serviceOptions);
   const transitionState = projection?.lane?.active === true
     ? 'ACTIVE_LANE'
@@ -639,14 +772,62 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
             sourceRevision,
           });
         } else {
-          result = freeze({
-            ...result,
+          const leasePlan = sourceMutationLeasePlan(
             workerActionGrant,
-            allowWorkerTick: true,
-            nextAction: actionResult.createdMission
-              ? 'Allow the existing Mission Worker to process the newly created canonical mission.'
-              : 'Allow the existing Mission Worker to continue the conveyor-authorized mission.',
-          });
+            nowUtc,
+            [`receipts/${missionAdmissionReceipt.receiptId}.json`],
+          );
+          if (leasePlan.required && !leasePlan.complete) {
+            result = holdResult('source-mutation-lease:grant-identity-incomplete', {
+              observedAtUtc: nowUtc,
+              sourceRevision,
+            });
+          } else if (leasePlan.required) {
+            sourceMutationLeaseClaim = await requiredFunction(
+              deps.claimSourceMutationLease,
+              'claimSourceMutationLease',
+            )(leasePlan.claimInput, serviceOptions);
+            if (sourceMutationLeaseClaim?.ok !== true) {
+              result = holdResult(`source-mutation-lease:${text(
+                sourceMutationLeaseClaim?.reason,
+                'claim-failed',
+              )}`, {
+                observedAtUtc: nowUtc,
+                sourceRevision,
+              });
+            } else {
+              sourceMutationLeaseRead = await requiredFunction(
+                deps.readSourceMutationLease,
+                'readSourceMutationLease',
+              )(serviceOptions);
+              if (!exactActiveSourceMutationLease(sourceMutationLeaseRead, leasePlan.expected)) {
+                result = holdResult('source-mutation-lease:canonical-reread-mismatch', {
+                  observedAtUtc: nowUtc,
+                  sourceRevision,
+                });
+              } else {
+                verifiedSourceMutationLeaseIdentity = leasePlan.expected;
+                result = freeze({
+                  ...result,
+                  action: 'LEASE_CANONICAL_CONVEYOR_MISSION',
+                  workerActionGrant,
+                  allowWorkerTick: true,
+                  nextAction: actionResult.createdMission
+                    ? 'Allow the existing Mission Worker to process the newly created lease-bound canonical mission.'
+                    : 'Allow the existing Mission Worker to continue the lease-bound conveyor-authorized mission.',
+                });
+              }
+            }
+          } else {
+            result = freeze({
+              ...result,
+              workerActionGrant,
+              allowWorkerTick: true,
+              nextAction: actionResult.createdMission
+                ? 'Allow the existing Mission Worker to process the newly created canonical mission.'
+                : 'Allow the existing Mission Worker to continue the conveyor-authorized mission.',
+            });
+          }
         }
       }
     }
@@ -662,15 +843,18 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       blockers: result.blockers,
     });
   }
+  const leasedReadyLaneId = text(verifiedSourceMutationLeaseIdentity?.laneId);
   const finalState = result.status === 'HOLD'
     ? 'HOLD'
-    : result.status === 'ACTIVE'
+    : result.status === 'ACTIVE' || leasedReadyLaneId
       ? 'ACTIVE_LANE'
       : 'IDLE';
   const finalHeartbeat = await publishHeartbeat(heartbeatInput({
     state: finalState,
     sourceRevision,
-    activeLaneId: finalState === 'ACTIVE_LANE' ? text(projection?.lane?.laneId) : '',
+    activeLaneId: finalState === 'ACTIVE_LANE'
+      ? text(projection?.lane?.laneId, leasedReadyLaneId)
+      : '',
     nowUtc,
     cycleReceiptId: receipt.receiptId,
     boundedMutationSteps: result.boundedMutationSteps,
@@ -692,6 +876,9 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     transitionAuthorityHeartbeatPublication,
     missionAdmissionReceipt,
     missionAdmissionReceiptPublication,
+    sourceMutationLeaseClaim,
+    sourceMutationLeaseRead,
+    verifiedSourceMutationLeaseIdentity,
     cycleReceipt: receipt,
     receiptPublication,
     heartbeatPublication: finalHeartbeat,
