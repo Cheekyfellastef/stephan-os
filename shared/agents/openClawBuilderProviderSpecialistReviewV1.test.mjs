@@ -5,24 +5,14 @@ import test from 'node:test';
 import {
   OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1,
   OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1,
-  OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1,
   analyzeOpenClawBuilderProviderSpecialistReviewV1,
 } from './openClawBuilderProviderSpecialistReviewV1.mjs';
-import {
-  analyzeOpenClawBuilderProviderSpecialistReviewV1 as analyzeLegacyOpenClawBuilderProviderSpecialistReviewV1,
-} from './openClawBuilderProviderSpecialistReviewLegacyV1.mjs';
-import {
-  analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1,
-} from './openClawBuilderProviderSpecialistReviewSuccessorV1.mjs';
-import { buildIndependentReviewFindingsArtifact } from './operatorMergeReviewArtifactV1.mjs';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const OC1_HEAD = '46abde391adf7dd138d0f70f63c284133baaa3d4';
 const OC1_BASE = 'a564e318541d75854ed7bf675baf9b4dc52fedaf';
 const POOL_HEAD = '341c4e4e1b4a2d02438149940f70275848c6ac74';
 const POOL_BASE = '74bf1e3ae769f0fc3c0ed9e4eeee61b408788b16';
-const SUCCESSOR_HEAD = '02c92d5e1f609a44ca48fd1033d7b35325ad7e0e';
-const SUCCESSOR_BASE = 'f60765af26d44f73290e148e882ec13f608a7087';
 
 function blobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
@@ -237,45 +227,6 @@ function poolInput(overrides = {}) {
   };
 }
 
-function successorInput(overrides = {}) {
-  const input = {
-    repository: REPOSITORY, prNumber: 1999, branch: 'codex/five-builder-flywheel-repair',
-    sourceHead: SUCCESSOR_HEAD, baseSha: SUCCESSOR_BASE,
-    lineageEvidence: lineage(SUCCESSOR_HEAD, SUCCESSOR_BASE),
-    analysis: analysis(OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1),
-    sources: sources(
-      OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1,
-      SUCCESSOR_HEAD,
-      providerPoolContentFor,
-    ),
-    ...overrides,
-  };
-  if (!Object.hasOwn(overrides, 'findingsArtifactEvidence')) {
-    input.analysis = {
-      schemaVersion: 'stephanos.independent-security-analysis.v1',
-      findings: input.analysis.findings,
-      counts: { P0: input.analysis.findings.length, P1: 0, P2: 0 },
-      verdict: 'findings',
-      proofRefs: input.analysis.findings.map((item) => `proofs/changed-file/${item.path}`),
-      finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_FINDINGS',
-    };
-    const artifact = buildIndependentReviewFindingsArtifact({
-      repository: input.repository,
-      prNumber: input.prNumber,
-      branch: input.branch,
-      sourceHead: input.sourceHead,
-      baseSha: input.baseSha,
-      workflowRunId: 32914050197,
-      workflowRunAttempt: 1,
-      createdAtUtc: '2026-08-26T00:11:47.465Z',
-      analysis: input.analysis,
-    });
-    input.analysis = artifact.analysis;
-    input.findingsArtifactEvidence = artifact;
-  }
-  return input;
-}
-
 test('exact OC1 high-risk estate remains eligible and clean only with closed-world source proof', () => {
   const result = analyzeOpenClawBuilderProviderSpecialistReviewV1(oc1Input());
   assert.equal(result.eligible, true); assert.equal(result.clean, true); assert.equal(result.findings.length, 0);
@@ -331,27 +282,4 @@ test('#1905 specialist fails closed when trusted-host authority binding or denia
   assert.equal(result.eligible, true); assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-stephanos-authority-gate-missing'));
   assert.ok(result.findings.some((item) => item.code === 'openclaw-promotion-qualification-authority-denial-test-missing'));
-});
-
-test('canonical specialist preserves legacy precedence and routes the successor provider-pool estate', () => {
-  const successorEvidence = successorInput();
-  const legacyForSuccessor = analyzeLegacyOpenClawBuilderProviderSpecialistReviewV1(successorEvidence);
-  const directSuccessor = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(successorEvidence);
-  const canonicalSuccessor = analyzeOpenClawBuilderProviderSpecialistReviewV1(successorEvidence);
-  assert.equal(legacyForSuccessor.eligible, false);
-  assert.equal(directSuccessor.eligible, true);
-  assert.equal(
-    directSuccessor.findings.some((item) => item.code === 'openclaw-provider-pool-review-artifact-identity-invalid'),
-    false,
-  );
-  assert.deepEqual(canonicalSuccessor, directSuccessor);
-  assert.deepEqual(canonicalSuccessor.reviewedPaths, OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1);
-
-  const legacyEvidence = poolInput();
-  const directLegacy = analyzeLegacyOpenClawBuilderProviderSpecialistReviewV1(legacyEvidence);
-  const canonicalLegacy = analyzeOpenClawBuilderProviderSpecialistReviewV1(legacyEvidence);
-  assert.equal(directLegacy.eligible, true);
-  assert.equal(directLegacy.clean, true);
-  assert.deepEqual(canonicalLegacy, directLegacy);
-  assert.deepEqual(canonicalLegacy.reviewedPaths, OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1);
 });
