@@ -239,6 +239,13 @@ test('worker launcher is pinned to canonical main and supervised heartbeat loop'
   assert.match(source, /\$branch -ne 'main'/);
   assert.match(source, /STEPHANOS_MISSION_WORKER_HEAD_SHA/);
   assert.match(source, /STEPHANOS_MISSION_WORKER_TASK_NAME/);
+  assert.match(source, /function Invoke-BoundedWorkerLogRetention/);
+  assert.match(source, /function Write-BoundedWorkerLogLine/);
+  assert.match(source, /\$maximumLogBytes = 64MB/);
+  assert.match(source, /\$retainedArchiveBytes = 8MB/);
+  assert.match(source, /Invoke-BoundedWorkerLogRetention -LogRoot \$logRoot -LogPath \$logPath -ArchivePath \$workerLogArchivePath/);
+  assert.equal((source.match(/Write-BoundedWorkerLogLine -LogRoot \$logRoot -LogPath \$logPath -ArchivePath \$workerLogArchivePath/g) || []).length, 3);
+  assert.doesNotMatch(source, /Out-File -LiteralPath \$logPath -Append/);
   assert.match(source, /status '--porcelain=v1' '--untracked-files=no'/);
   assert.match(source, /ls-remote' '--exit-code' \$publicRemote 'refs\/heads\/main'/);
   assert.doesNotMatch(source, /& \$canonicalNode \$workerScript/);

@@ -14,8 +14,14 @@ const PROBE_SCRIPT = readFileSync(
   new URL('./windows/probe-mission-orchestrator-worker-watchdog.ps1', import.meta.url),
   'utf8',
 );
+const RESTART_SCRIPT = readFileSync(
+  new URL('./windows/restart-approved-stephanos-runtime.ps1', import.meta.url),
+  'utf8',
+);
 
 function healthyInput() {
+  const launchIdentityId = '1'.repeat(64);
+  const workerStartedAtUtc = '2026-07-15T01:58:00.000Z';
   return {
     nowMs: NOW,
     scheduledTask: {
@@ -35,6 +41,9 @@ function healthyInput() {
       taskName: APPROVED_WORKER_TASK,
       pid: 1291,
       commandLineMatchesCanonicalWorker: true,
+      startedAtUtc: workerStartedAtUtc,
+      launchIdentityId,
+      launchIdentityVerified: true,
     },
     heartbeat: {
       timestampUtc: '2026-07-15T01:59:30.000Z',
@@ -43,6 +52,8 @@ function healthyInput() {
       headSha: 'a'.repeat(40),
       taskName: APPROVED_WORKER_TASK,
       pid: 1291,
+      launchIdentityId,
+      workerStartedAtUtc,
     },
   };
 }
@@ -52,6 +63,9 @@ test('healthy canonical worker is a no-op and exposes its exact validated source
   assert.equal(result.action, 'NO_OP');
   assert.equal(result.assessment.healthy, true);
   assert.equal(result.assessment.taskActionMatchesCanonicalWorker, true);
+  assert.equal(result.assessment.processLaunchIdentityVerified, true);
+  assert.equal(result.assessment.heartbeatLaunchIdentityMatchesProcess, true);
+  assert.equal(result.assessment.heartbeatProcessStartMatchesProcess, true);
   assert.equal(result.assessment.sourceHead, 'a'.repeat(40));
   assert.equal(result.restartTaskName, '');
 });
@@ -91,6 +105,7 @@ test('approved stopped canonical task authorizes only the fixed task', () => {
   input.scheduledTask.status = 'Ready';
   input.process.running = false;
   input.process.commandLineMatchesCanonicalWorker = false;
+  input.process.launchIdentityVerified = false;
   const result = buildWorkerWatchdogRecoveryDecision(input);
   assert.equal(result.action, 'START_APPROVED_WORKER_TASK');
   assert.equal(result.restartTaskName, APPROVED_WORKER_TASK);
@@ -156,6 +171,7 @@ test('missing, malformed or different remote main truth blocks restart authority
     input.repository.remoteMainHeadSha = remoteMainHeadSha;
     input.process.running = false;
     input.process.commandLineMatchesCanonicalWorker = false;
+    input.process.launchIdentityVerified = false;
     const result = buildWorkerWatchdogRecoveryDecision(input);
     assert.equal(result.assessment.canonicalRepositoryHeadProven, false);
     assert.equal(result.assessment.restartPermitted, false);
@@ -203,6 +219,44 @@ test('heartbeat task identity must be the fixed approved task', () => {
   assert.ok(result.blockers.includes('worker-heartbeat-task-not-allowlisted'));
 });
 
+test('missing or malformed launch identity can never paint the worker healthy', () => {
+  for (const launchIdentityId of ['', 'not-a-launch-id']) {
+    const input = healthyInput();
+    input.heartbeat.launchIdentityId = launchIdentityId;
+    const result = buildWorkerWatchdogRecoveryDecision(input);
+    assert.equal(result.assessment.healthy, false);
+    assert.equal(result.action, 'START_APPROVED_WORKER_TASK');
+    assert.ok(result.blockers.includes('worker-heartbeat-launch-identity-invalid'));
+  }
+});
+
+test('heartbeat launch identity must match the independently verified live process launch identity', () => {
+  const input = healthyInput();
+  input.process.launchIdentityId = '2'.repeat(64);
+  const result = buildWorkerWatchdogRecoveryDecision(input);
+  assert.equal(result.assessment.healthy, false);
+  assert.equal(result.assessment.heartbeatLaunchIdentityMatchesProcess, false);
+  assert.ok(result.blockers.includes('worker-launch-identity-mismatch'));
+});
+
+test('heartbeat process-start identity must exactly match the live process creation time', () => {
+  const input = healthyInput();
+  input.process.startedAtUtc = '2026-07-15T01:58:01.000Z';
+  const result = buildWorkerWatchdogRecoveryDecision(input);
+  assert.equal(result.assessment.healthy, false);
+  assert.equal(result.assessment.heartbeatProcessStartMatchesProcess, false);
+  assert.ok(result.blockers.includes('worker-process-start-mismatch'));
+});
+
+test('canonical command line and pid are insufficient without an independently verified launch receipt', () => {
+  const input = healthyInput();
+  input.process.launchIdentityVerified = false;
+  const result = buildWorkerWatchdogRecoveryDecision(input);
+  assert.equal(result.assessment.healthy, false);
+  assert.equal(result.assessment.processHealthy, false);
+  assert.ok(result.blockers.includes('worker-launch-identity-unproven'));
+});
+
 test('issue and PR correlations require exact numeric boundaries', () => {
   assert.equal(isCanonicalIssueOrPrCorrelation('issue:#1291'), true);
   assert.equal(isCanonicalIssueOrPrCorrelation('pr:#1375'), true);
@@ -215,6 +269,7 @@ test('invalid correlation blocks restart authorization and clears task target', 
   const input = healthyInput();
   input.process.running = false;
   input.process.commandLineMatchesCanonicalWorker = false;
+  input.process.launchIdentityVerified = false;
   input.related = 'issue:#1291-extra';
   const result = buildWorkerWatchdogRecoveryDecision(input);
   assert.equal(result.action, 'BLOCKED');
@@ -222,7 +277,7 @@ test('invalid correlation blocks restart authorization and clears task target', 
   assert.ok(result.blockers.includes('invalid-issue-or-pr-correlation'));
 });
 
-test('Windows probe binds repository truth to fixed read-only git commands', () => {
+test('Windows probe binds repository truth and health to fixed launch-identity evidence', () => {
   assert.match(PROBE_SCRIPT, /\$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git\.exe'/);
   assert.match(PROBE_SCRIPT, /\$canonicalPowerShell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe'/);
   assert.doesNotMatch(PROBE_SCRIPT, /Get-Command (?:git|powershell)(?:\.exe)?\b/i);
@@ -250,9 +305,38 @@ test('Windows probe binds repository truth to fixed read-only git commands', () 
   assert.match(PROBE_SCRIPT, /\$restartReceipt\.cleanupAttempted -eq \$false/);
   assert.match(PROBE_SCRIPT, /\$restartReceipt\.cleanupCompleted -eq \$false/);
   assert.match(PROBE_SCRIPT, /\$restartStartedWorkerPid -gt 0/);
+  assert.match(PROBE_SCRIPT, /function Get-VerifiedWorkerLaunchIdentity/);
+  assert.match(PROBE_SCRIPT, /mission-orchestrator-worker-launch-identity-\$launchIdentityId\.json/);
+  assert.match(PROBE_SCRIPT, /launchIdentityVerified = \[bool\]\$launchIdentity/);
+  assert.match(PROBE_SCRIPT, /launchIdentityId = \[string\]\$heartbeat\.launchIdentityId/);
+  assert.match(PROBE_SCRIPT, /workerStartedAtUtc = \[string\]\$heartbeat\.workerStartedAtUtc/);
+  assert.match(PROBE_SCRIPT, /startedAtUtc = \$workerProcessStartedAtUtc/);
   assert.doesNotMatch(PROBE_SCRIPT, /trackedStatusAfterRestart|remoteMainHeadAfterRestart|repositoryHeadAfterRestart|repositoryBranchAfterRestart/);
   assert.doesNotMatch(PROBE_SCRIPT, /Stop-ScheduledTask|Stop-Process/);
   assert.doesNotMatch(PROBE_SCRIPT, /Invoke-Expression|Start-Process/);
+});
+
+test('worker restart request lifecycle cannot leave one failed invocation as a permanent fixed-path wedge', () => {
+  assert.match(RESTART_SCRIPT, /function Read-CanonicalMissionWorkerRestartRequest/);
+  assert.match(RESTART_SCRIPT, /function Reclaim-ExpiredMissionWorkerRestartRequest/);
+  assert.match(RESTART_SCRIPT, /function Remove-ExactOwnedMissionWorkerRestartRequest/);
+  assert.match(RESTART_SCRIPT, /MISSION_WORKER_RESTART_REQUEST_INVALID/);
+  assert.match(RESTART_SCRIPT, /MISSION_WORKER_RESTART_REQUEST_ALREADY_PRESENT/);
+  assert.match(RESTART_SCRIPT, /MISSION_WORKER_RESTART_REQUEST_CHANGED_BEFORE_RECLAIM/);
+  assert.match(RESTART_SCRIPT, /MISSION_WORKER_RESTART_REQUEST_RECLAIM_FAILED/);
+  assert.match(RESTART_SCRIPT, /MISSION_WORKER_RESTART_REQUEST_CLEANUP_IDENTITY_CHANGED/);
+  assert.match(RESTART_SCRIPT, /MISSION_WORKER_RESTART_REQUEST_CLEANUP_FAILED/);
+  assert.match(RESTART_SCRIPT, /\$windowSeconds -le 0 -or \$windowSeconds -gt 95/);
+  assert.match(RESTART_SCRIPT, /\[string\]\$recheck\.Raw -ne \[string\]\$observed\.Raw/);
+  assert.match(RESTART_SCRIPT, /\[string\]\$observed\.Record\.invocationId -ne \$ExpectedInvocationId/);
+  assert.match(RESTART_SCRIPT, /\[string\]\$observed\.Record\.headSha -ne \$ExpectedHead/);
+  assert.match(RESTART_SCRIPT, /\$observed\.DeadlineUtc\.Ticks -ne \$ExpectedDeadlineUtc\.ToUniversalTime\(\)\.Ticks/);
+  const reclaim = RESTART_SCRIPT.indexOf('Reclaim-ExpiredMissionWorkerRestartRequest');
+  const write = RESTART_SCRIPT.indexOf('Write-BoundedAtomicJson -Path $script:restartRequestPath', reclaim);
+  const ownership = RESTART_SCRIPT.indexOf('$script:restartRequestWritten = $true', write);
+  assert.ok(reclaim >= 0 && write > reclaim && ownership > write);
+  assert.ok((RESTART_SCRIPT.match(/Remove-ExactOwnedMissionWorkerRestartRequest/g) || []).length >= 3);
+  assert.doesNotMatch(RESTART_SCRIPT, /Remove-Item[^\n]*(?:restart-claim|restart-receipt|restart-confirm|restart-heartbeat)-\*/i);
 });
 
 test('forbidden command surfaces remain absent', () => {

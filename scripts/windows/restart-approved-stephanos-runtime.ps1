@@ -17,6 +17,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
+$backendExpectedHeadHandoffPath = $null
+$backendTaskDisabledByRepair = $false
+$canonicalNode = 'C:\Program Files\nodejs\node.exe'
 
 $canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
@@ -32,6 +35,10 @@ $operationDeadlineUtc = [datetime]::MaxValue
 $invocationId = ''
 $invocationBound = $false
 $canonicalWorkerCommandVerified = $false
+$restartRequestPath = ''
+$restartRequestWritten = $false
+$restartRequestCleanupAttempted = $false
+$restartRequestCleanupCompleted = $false
 
 function Stop-WithBlocker {
     param([Parameter(Mandatory = $true)][string]$Code)
@@ -107,7 +114,7 @@ function Write-BoundedAtomicJson {
     if ([Text.Encoding]::UTF8.GetByteCount($json) -gt 8192) { Stop-WithBlocker 'MISSION_WORKER_INVOCATION_RECORD_TOO_LARGE' }
     $parent = Split-Path -Parent $Path
     [System.IO.Directory]::CreateDirectory($parent) | Out-Null
-    $temporaryPath = "$Path.$PID.$([guid]::NewGuid().ToString('N')).tmp"
+    $temporaryPath = "${Path}.${PID}.$([guid]::NewGuid().ToString('N')).tmp"
     $encoding = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($temporaryPath, "$json`n", $encoding)
     Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
@@ -252,10 +259,17 @@ function Get-VerifiedBackendListener {
     $processId = [int]$processIds[0]
     $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
     if (-not $process) { Stop-WithBlocker 'BACKEND_LISTENER_PROCESS_MISSING' }
-    $name = ([string]$process.Name).ToLowerInvariant()
-    $commandLine = ([string]$process.CommandLine).Replace('\', '/').ToLowerInvariant()
-    if ($name -notin @('node.exe', 'node')) { Stop-WithBlocker 'BACKEND_LISTENER_NOT_NODE' }
-    if (-not $commandLine.Contains('stephanos-server/server.js')) { Stop-WithBlocker 'BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED' }
+    $executable = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
+    if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { Stop-WithBlocker 'BACKEND_LISTENER_NOT_CANONICAL_NODE' }
+    $canonicalBootstrapEval = "import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)"
+    $commandLine = (([string]$process.CommandLine -replace '\s+', ' ').Trim())
+    $expectedCommands = @(
+        "`"$canonicalNode`" --input-type=module --eval `"$canonicalBootstrapEval`"",
+        "$canonicalNode --input-type=module --eval `"$canonicalBootstrapEval`""
+    )
+    if (-not @($expectedCommands | Where-Object { [string]::Equals($commandLine, $_, [System.StringComparison]::OrdinalIgnoreCase) }).Count) {
+        Stop-WithBlocker 'BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED'
+    }
     return [PSCustomObject]@{ ProcessId = $processId }
 }
 
@@ -282,6 +296,26 @@ function Read-FreshBackendReceipt {
     catch { return $null }
 }
 
+function Publish-BackendExpectedHeadHandoff {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Head
+    )
+    $directory = Split-Path -Parent $Path
+    [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+    $temporaryPath = "${Path}.$PID.tmp"
+    $issuedAtUtc = [datetime]::UtcNow
+    [PSCustomObject]@{
+        schemaVersion = 'stephanos.backend-expected-head-handoff.v1'
+        target = 'backend'
+        expectedHead = $Head
+        issuedAtUtc = $issuedAtUtc.ToString('o')
+        expiresAtUtc = $issuedAtUtc.AddMinutes(2).ToString('o')
+        issuerPid = $PID
+    } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $temporaryPath -Encoding utf8
+    Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+}
+
 function Test-ExactJsonPropertyEstate {
     param(
         [Parameter(Mandatory = $true)][object]$Record,
@@ -294,6 +328,113 @@ function Test-ExactJsonPropertyEstate {
         if ([string]$actualProperties[$index] -ne [string]$ExpectedProperties[$index]) { return $false }
     }
     return $true
+}
+
+function Read-CanonicalMissionWorkerRestartRequest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ExpectedTaskName,
+        [Parameter(Mandatory = $true)][string]$ExpectedRepoRoot
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    try {
+        $item = Get-Item -LiteralPath $Path -Force
+        if ($item.PSIsContainer `
+            -or $item.LinkType `
+            -or (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) `
+            -or $item.Length -le 0 `
+            -or $item.Length -gt 8192) { return $null }
+        $raw = Get-Content -LiteralPath $Path -Raw
+        if ([Text.Encoding]::UTF8.GetByteCount($raw) -gt 8192) { return $null }
+        $record = $raw | ConvertFrom-Json
+        $expectedProperties = @(
+            'schemaVersion', 'invocationId', 'taskName', 'repositoryRoot', 'headSha', 'requestedAtUtc', 'deadlineUtc'
+        )
+        if (-not (Test-ExactJsonPropertyEstate -Record $record -ExpectedProperties $expectedProperties)) { return $null }
+        if ([string]$record.schemaVersion -ne 'stephanos.mission-worker-restart-request.v1' `
+            -or [string]$record.invocationId -notmatch '^[0-9a-f]{64}$' `
+            -or [string]$record.taskName -ne $ExpectedTaskName `
+            -or [string]$record.repositoryRoot -ne $ExpectedRepoRoot `
+            -or [string]$record.headSha -notmatch '^[0-9a-f]{40}$') { return $null }
+        $requestedAtUtc = [datetime]::MinValue
+        $deadlineUtc = [datetime]::MinValue
+        if (-not [datetime]::TryParse([string]$record.requestedAtUtc, [ref]$requestedAtUtc) `
+            -or -not [datetime]::TryParse([string]$record.deadlineUtc, [ref]$deadlineUtc)) { return $null }
+        $requestedAtUtc = $requestedAtUtc.ToUniversalTime()
+        $deadlineUtc = $deadlineUtc.ToUniversalTime()
+        $windowSeconds = ($deadlineUtc - $requestedAtUtc).TotalSeconds
+        if ($windowSeconds -le 0 -or $windowSeconds -gt 95 `
+            -or $requestedAtUtc -gt [datetime]::UtcNow.AddSeconds(30)) { return $null }
+        return [PSCustomObject]@{
+            Record = $record
+            Raw = $raw
+            RequestedAtUtc = $requestedAtUtc
+            DeadlineUtc = $deadlineUtc
+        }
+    }
+    catch { return $null }
+}
+
+function Reclaim-ExpiredMissionWorkerRestartRequest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ExpectedTaskName,
+        [Parameter(Mandatory = $true)][string]$ExpectedRepoRoot
+    )
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $observed = Read-CanonicalMissionWorkerRestartRequest `
+        -Path $Path `
+        -ExpectedTaskName $ExpectedTaskName `
+        -ExpectedRepoRoot $ExpectedRepoRoot
+    if (-not $observed) { Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_INVALID' }
+    if ($observed.DeadlineUtc -gt [datetime]::UtcNow) {
+        Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_ALREADY_PRESENT'
+    }
+    $recheck = Read-CanonicalMissionWorkerRestartRequest `
+        -Path $Path `
+        -ExpectedTaskName $ExpectedTaskName `
+        -ExpectedRepoRoot $ExpectedRepoRoot
+    if (-not $recheck -or [string]$recheck.Raw -ne [string]$observed.Raw) {
+        Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_CHANGED_BEFORE_RECLAIM'
+    }
+    Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $Path) { Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_RECLAIM_FAILED' }
+}
+
+function Remove-ExactOwnedMissionWorkerRestartRequest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ExpectedInvocationId,
+        [Parameter(Mandatory = $true)][string]$ExpectedTaskName,
+        [Parameter(Mandatory = $true)][string]$ExpectedRepoRoot,
+        [Parameter(Mandatory = $true)][string]$ExpectedHead,
+        [Parameter(Mandatory = $true)][datetime]$ExpectedDeadlineUtc
+    )
+    $script:restartRequestCleanupAttempted = $true
+    if (-not (Test-Path -LiteralPath $Path)) {
+        $script:restartRequestCleanupCompleted = $true
+        return
+    }
+    $observed = Read-CanonicalMissionWorkerRestartRequest `
+        -Path $Path `
+        -ExpectedTaskName $ExpectedTaskName `
+        -ExpectedRepoRoot $ExpectedRepoRoot
+    if (-not $observed `
+        -or [string]$observed.Record.invocationId -ne $ExpectedInvocationId `
+        -or [string]$observed.Record.headSha -ne $ExpectedHead `
+        -or $observed.DeadlineUtc.Ticks -ne $ExpectedDeadlineUtc.ToUniversalTime().Ticks) {
+        Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_CLEANUP_IDENTITY_CHANGED'
+    }
+    $recheck = Read-CanonicalMissionWorkerRestartRequest `
+        -Path $Path `
+        -ExpectedTaskName $ExpectedTaskName `
+        -ExpectedRepoRoot $ExpectedRepoRoot
+    if (-not $recheck -or [string]$recheck.Raw -ne [string]$observed.Raw) {
+        Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_CLEANUP_IDENTITY_CHANGED'
+    }
+    Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $Path) { Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_CLEANUP_FAILED' }
+    $script:restartRequestCleanupCompleted = $true
 }
 
 function Get-VerifiedWorkerProcessFromHeartbeat {
@@ -721,16 +862,22 @@ try {
     $expectedArguments = "//B //NoLogo `"$launcherPath`" $($plan.Role)"
     if ($actualExecute -ne $wscriptExe) { Stop-WithBlocker 'APPROVED_TASK_EXECUTABLE_MISMATCH' }
     if ([string]$action.Arguments -ne $expectedArguments) { Stop-WithBlocker 'APPROVED_TASK_ARGUMENTS_MISMATCH' }
+    if ($Target -eq 'backend' -and [string]$task.Settings.MultipleInstances -ne 'IgnoreNew') {
+        Stop-WithBlocker 'APPROVED_BACKEND_TASK_MULTIPLE_INSTANCES_MISMATCH'
+    }
 
     $beforeState = [string]$task.State
     $startedAtUtc = [datetime]::UtcNow
     $terminatedVerifiedOwnedProcess = $false
 
     if ($Target -eq 'backend') {
-        if ([string]$task.State -eq 'Running') {
+        $backendExpectedHeadHandoffPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\control\backend-expected-head-handoff.json'
+        Disable-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop | Out-Null
+        $backendTaskDisabledByRepair = $true
+        if ([string]$task.State -in @('Running', 'Queued')) {
             Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
             if (-not (Wait-Until -Seconds 30 -Condition {
-                [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -ne 'Running'
+                [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -eq 'Disabled'
             })) { Stop-WithBlocker 'BACKEND_TASK_DID_NOT_STOP' }
         }
         $listener = Get-VerifiedBackendListener
@@ -741,6 +888,20 @@ try {
                 Stop-WithBlocker 'BACKEND_LISTENER_DID_NOT_STOP'
             }
         }
+        $prePublishTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop
+        if ([string]$prePublishTask.State -ne 'Disabled') {
+            Stop-WithBlocker 'BACKEND_TASK_NOT_QUIESCENT_BEFORE_HANDOFF'
+        }
+        if ([string]$prePublishTask.Settings.MultipleInstances -ne 'IgnoreNew') {
+            Stop-WithBlocker 'BACKEND_TASK_MULTIPLE_INSTANCES_MISMATCH_BEFORE_HANDOFF'
+        }
+        Publish-BackendExpectedHeadHandoff -Path $backendExpectedHeadHandoffPath -Head $ExpectedHead
+        Enable-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop | Out-Null
+        $backendTaskDisabledByRepair = $false
+        $preStartTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop
+        if ([string]$preStartTask.Settings.MultipleInstances -ne 'IgnoreNew') {
+            Stop-WithBlocker 'BACKEND_TASK_MULTIPLE_INSTANCES_MISMATCH_BEFORE_START'
+        }
         Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
         if (-not (Wait-Until -Seconds $TimeoutSeconds -Condition { $null -ne (Test-BackendHealth) })) {
             Stop-WithBlocker 'BACKEND_HEALTH_TIMEOUT'
@@ -749,6 +910,7 @@ try {
         if (-not (Wait-Until -Seconds $TimeoutSeconds -Condition {
             $null -ne (Read-FreshBackendReceipt -ReceiptPath $backendReceiptPath -StartedAfterUtc $startedAtUtc -ExpectedSourceHead $ExpectedHead)
         })) { Stop-WithBlocker 'BACKEND_EXACT_HEAD_RECEIPT_TIMEOUT' }
+        Remove-Item -LiteralPath $backendExpectedHeadHandoffPath -Force -ErrorAction SilentlyContinue
         $proofKind = 'backend-health-and-runtime-receipt'
         $proofFresh = $true
     }
@@ -812,11 +974,12 @@ try {
         $script:invocationId = New-CryptographicInvocationId
         if ($script:invocationId -notmatch '^[0-9a-f]{64}$') { Stop-WithBlocker 'MISSION_WORKER_INVOCATION_ID_GENERATION_FAILED' }
         $statusRoot = Split-Path -Parent $heartbeatPath
-        $restartRequestPath = Join-Path $statusRoot 'mission-orchestrator-worker-restart-request.json'
-        if (Test-Path -LiteralPath $restartRequestPath) {
-            Stop-WithBlocker 'MISSION_WORKER_RESTART_REQUEST_ALREADY_PRESENT'
-        }
-        Write-BoundedAtomicJson -Path $restartRequestPath -Value ([PSCustomObject]@{
+        $script:restartRequestPath = Join-Path $statusRoot 'mission-orchestrator-worker-restart-request.json'
+        Reclaim-ExpiredMissionWorkerRestartRequest `
+            -Path $script:restartRequestPath `
+            -ExpectedTaskName $plan.TaskName `
+            -ExpectedRepoRoot $repoRoot
+        Write-BoundedAtomicJson -Path $script:restartRequestPath -Value ([PSCustomObject]@{
             schemaVersion = 'stephanos.mission-worker-restart-request.v1'
             invocationId = $script:invocationId
             taskName = $plan.TaskName
@@ -825,6 +988,7 @@ try {
             requestedAtUtc = [datetime]::UtcNow.ToString('o')
             deadlineUtc = $script:operationDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
         })
+        $script:restartRequestWritten = $true
 
         $workerTaskStarted = $false
         $startupBlocker = ''
@@ -934,6 +1098,7 @@ try {
         }
 
         if ($startupBlocker) {
+            $cleanupBlocker = ''
             if ($workerTaskStarted) {
                 try {
                     Stop-NewlyStartedOwnedWorker `
@@ -956,9 +1121,24 @@ try {
                     })) {
                         $cleanupBlocker = 'MISSION_WORKER_DEADLINE_SELF_CLEANUP_NOT_PROVEN'
                     }
-                    Stop-WithBlocker $cleanupBlocker
                 }
             }
+            try {
+                Remove-ExactOwnedMissionWorkerRestartRequest `
+                    -Path $script:restartRequestPath `
+                    -ExpectedInvocationId $script:invocationId `
+                    -ExpectedTaskName $plan.TaskName `
+                    -ExpectedRepoRoot $repoRoot `
+                    -ExpectedHead $ExpectedHead `
+                    -ExpectedDeadlineUtc $script:operationDeadlineUtc
+            }
+            catch {
+                $cleanupBlocker = [string]$_.Exception.Message
+                if ($cleanupBlocker -notmatch '^[A-Z0-9_:-]{3,120}$') {
+                    $cleanupBlocker = 'MISSION_WORKER_RESTART_REQUEST_CLEANUP_FAILED'
+                }
+            }
+            if ($cleanupBlocker) { Stop-WithBlocker $cleanupBlocker }
             Stop-WithBlocker $startupBlocker
         }
 
@@ -1002,8 +1182,31 @@ try {
     exit 0
 }
 catch {
+    if ($backendExpectedHeadHandoffPath) {
+        Remove-Item -LiteralPath $backendExpectedHeadHandoffPath -Force -ErrorAction SilentlyContinue
+    }
+    if ($backendTaskDisabledByRepair) {
+        Enable-ScheduledTask -TaskName 'Stephanos Battle Bridge Backend' -TaskPath '\' -ErrorAction SilentlyContinue | Out-Null
+    }
     $blocker = [string]$_.Exception.Message
     if ($blocker -notmatch '^[A-Z0-9_:-]{3,120}$') { $blocker = 'APPROVED_RUNTIME_RESTART_FAILED' }
+    if ($Target -eq 'mission-worker' `
+        -and $restartRequestWritten `
+        -and -not [string]::IsNullOrWhiteSpace($restartRequestPath) `
+        -and $invocationId -match '^[0-9a-f]{64}$') {
+        try {
+            Remove-ExactOwnedMissionWorkerRestartRequest `
+                -Path $restartRequestPath `
+                -ExpectedInvocationId $invocationId `
+                -ExpectedTaskName 'Stephanos Mission Orchestrator Worker' `
+                -ExpectedRepoRoot $repoRoot `
+                -ExpectedHead $ExpectedHead `
+                -ExpectedDeadlineUtc $operationDeadlineUtc
+        }
+        catch {
+            $blocker = 'MISSION_WORKER_RESTART_REQUEST_CLEANUP_FAILED'
+        }
+    }
     [PSCustomObject]@{
         schemaVersion = 'stephanos.approved-runtime-restart.v1'
         target = $Target

@@ -358,7 +358,7 @@ test('trusted workflow serializes every bounded retry under the same PR authorit
   assert.ok(retryStepStart >= 0, 'bounded retry step must exist');
   const retryStep = COORDINATOR_WORKFLOW.slice(retryStepStart);
 
-  assert.match(COORDINATOR_WORKFLOW, /targets:\s*\$\{\{ steps\.plan\.outputs\.targets \}\}/);
+  assert.match(COORDINATOR_WORKFLOW, /targets:\s*\$\{\{ steps\.admit\.outputs\.targets \}\}/);
   assert.match(COORDINATOR_WORKFLOW, /target:\s*\$\{\{ fromJSON\(needs\.plan\.outputs\.targets\) \}\}/);
   assert.match(
     COORDINATOR_WORKFLOW,

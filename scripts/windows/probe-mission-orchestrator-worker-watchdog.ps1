@@ -153,6 +153,89 @@ function Read-PublicMainHead {
     return $fields[0].ToLowerInvariant()
 }
 
+function Test-ExactJsonPropertyEstate {
+    param(
+        [Parameter(Mandatory = $true)][object]$Record,
+        [Parameter(Mandatory = $true)][string[]]$ExpectedProperties
+    )
+    if (-not $Record -or -not $Record.PSObject) { return $false }
+    $actualProperties = @($Record.PSObject.Properties.Name)
+    if ($actualProperties.Count -ne $ExpectedProperties.Count) { return $false }
+    for ($index = 0; $index -lt $ExpectedProperties.Count; $index += 1) {
+        if ([string]$actualProperties[$index] -ne [string]$ExpectedProperties[$index]) { return $false }
+    }
+    return $true
+}
+
+function Get-VerifiedWorkerLaunchIdentity {
+    param(
+        [object]$Heartbeat,
+        [object]$Process,
+        [bool]$CommandLineMatchesCanonicalWorker
+    )
+
+    if (-not $Heartbeat -or -not $Process -or -not $CommandLineMatchesCanonicalWorker) { return $null }
+    try {
+        $launchIdentityId = [string]$Heartbeat.launchIdentityId
+        if ($launchIdentityId -notmatch '^[0-9a-f]{64}$') { return $null }
+        $heartbeatTimestampUtc = [datetime]::Parse([string]$Heartbeat.timestampUtc).ToUniversalTime()
+        $heartbeatWorkerStartedAtUtc = [datetime]::Parse([string]$Heartbeat.workerStartedAtUtc).ToUniversalTime()
+        $processStartedAtUtc = ([datetime]$Process.CreationDate).ToUniversalTime()
+        if ($heartbeatWorkerStartedAtUtc.Ticks -ne $processStartedAtUtc.Ticks `
+            -or $heartbeatTimestampUtc -le $processStartedAtUtc `
+            -or $heartbeatTimestampUtc -gt [datetime]::UtcNow) { return $null }
+
+        $launchReceiptPath = Join-Path (Split-Path -Parent $heartbeatPath) "mission-orchestrator-worker-launch-identity-$launchIdentityId.json"
+        if (-not (Test-Path -LiteralPath $launchReceiptPath -PathType Leaf)) { return $null }
+        $launchReceiptItem = Get-Item -LiteralPath $launchReceiptPath -Force
+        if ($launchReceiptItem.PSIsContainer `
+            -or $launchReceiptItem.LinkType `
+            -or (($launchReceiptItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) `
+            -or $launchReceiptItem.Length -le 0 `
+            -or $launchReceiptItem.Length -gt 8192) { return $null }
+        $launchReceiptRaw = Get-Content -LiteralPath $launchReceiptPath -Raw
+        if ([Text.Encoding]::UTF8.GetByteCount($launchReceiptRaw) -gt 8192) { return $null }
+        $launchReceipt = $launchReceiptRaw | ConvertFrom-Json
+        $expectedLaunchReceiptProperties = @(
+            'schemaVersion', 'launchIdentityId', 'launchKind', 'restartInvocationId', 'taskName',
+            'repositoryRoot', 'branch', 'headSha', 'workerPid', 'workerStartedAtUtc',
+            'canonicalNode', 'canonicalWorkerScript', 'createdAtUtc'
+        )
+        if (-not (Test-ExactJsonPropertyEstate -Record $launchReceipt -ExpectedProperties $expectedLaunchReceiptProperties)) { return $null }
+        if ([string]$launchReceipt.schemaVersion -ne 'stephanos.mission-worker-launch-identity.v1' `
+            -or [string]$launchReceipt.launchIdentityId -ne $launchIdentityId `
+            -or [string]$launchReceipt.taskName -ne $taskName `
+            -or [string]$launchReceipt.repositoryRoot -ne $repositoryRoot `
+            -or [string]$launchReceipt.branch -ne 'main' `
+            -or [string]$launchReceipt.headSha -ne [string]$Heartbeat.headSha `
+            -or [int]$launchReceipt.workerPid -ne [int]$Process.ProcessId `
+            -or -not [string]::Equals([string]$launchReceipt.canonicalNode, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase) `
+            -or -not [string]::Equals([System.IO.Path]::GetFullPath([string]$launchReceipt.canonicalWorkerScript), $workerPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $null
+        }
+        if ([string]$launchReceipt.launchKind -eq 'guarded-restart') {
+            if ([string]$launchReceipt.restartInvocationId -ne $launchIdentityId) { return $null }
+        }
+        elseif ([string]$launchReceipt.launchKind -eq 'ordinary') {
+            if (-not [string]::IsNullOrEmpty([string]$launchReceipt.restartInvocationId)) { return $null }
+        }
+        else { return $null }
+
+        $receiptWorkerStartedAtUtc = [datetime]::Parse([string]$launchReceipt.workerStartedAtUtc).ToUniversalTime()
+        $receiptCreatedAtUtc = [datetime]::Parse([string]$launchReceipt.createdAtUtc).ToUniversalTime()
+        if ($receiptWorkerStartedAtUtc.Ticks -ne $processStartedAtUtc.Ticks `
+            -or $receiptCreatedAtUtc -lt $processStartedAtUtc `
+            -or $receiptCreatedAtUtc -gt $heartbeatTimestampUtc) { return $null }
+        return [PSCustomObject]@{
+            LaunchIdentityId = $launchIdentityId
+            WorkerStartedAtUtc = $processStartedAtUtc
+            LaunchReceiptPath = $launchReceiptPath
+            Verified = $true
+        }
+    }
+    catch { return $null }
+}
+
 $taskActionMatchesCanonicalWorker = Test-CanonicalWorkerTaskAction -ScheduledTask $task
 
 $repositoryBranch = ''
@@ -341,6 +424,15 @@ $commandLine = if ($workerProcess) { [string]$workerProcess.CommandLine } else {
 $commandLineMatchesCanonicalWorker = Test-CanonicalWorkerProcessCommandLine `
     -Process $workerProcess `
     -CommandLine $commandLine
+$launchIdentity = Get-VerifiedWorkerLaunchIdentity `
+    -Heartbeat $heartbeat `
+    -Process $workerProcess `
+    -CommandLineMatchesCanonicalWorker $commandLineMatchesCanonicalWorker
+$workerProcessStartedAtUtc = ''
+if ($workerProcess) {
+    try { $workerProcessStartedAtUtc = ([datetime]$workerProcess.CreationDate).ToUniversalTime().ToString('o') }
+    catch { $workerProcessStartedAtUtc = '' }
+}
 
 [pscustomobject]@{
     scheduledTask = [pscustomobject]@{
@@ -369,6 +461,9 @@ $commandLineMatchesCanonicalWorker = Test-CanonicalWorkerProcessCommandLine `
         taskName = if ($commandLineMatchesCanonicalWorker) { $taskName } else { '' }
         pid = if ($workerProcess) { [int]$workerProcess.ProcessId } else { 0 }
         commandLineMatchesCanonicalWorker = [bool]$commandLineMatchesCanonicalWorker
+        startedAtUtc = $workerProcessStartedAtUtc
+        launchIdentityId = if ($launchIdentity) { [string]$launchIdentity.LaunchIdentityId } else { '' }
+        launchIdentityVerified = [bool]$launchIdentity
     }
     heartbeat = if ($heartbeat) {
         [pscustomobject]@{
@@ -378,6 +473,8 @@ $commandLineMatchesCanonicalWorker = Test-CanonicalWorkerProcessCommandLine `
             headSha = [string]$heartbeat.headSha
             taskName = [string]$heartbeat.taskName
             pid = [int]$heartbeat.pid
+            launchIdentityId = [string]$heartbeat.launchIdentityId
+            workerStartedAtUtc = [string]$heartbeat.workerStartedAtUtc
             lastTickVerdict = [string]$heartbeat.lastTickVerdict
         }
     } else {
@@ -388,6 +485,8 @@ $commandLineMatchesCanonicalWorker = Test-CanonicalWorkerProcessCommandLine `
             headSha = ''
             taskName = ''
             pid = 0
+            launchIdentityId = ''
+            workerStartedAtUtc = ''
             lastTickVerdict = ''
         }
     }

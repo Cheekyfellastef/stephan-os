@@ -6,6 +6,7 @@ export const DEFAULT_HEARTBEAT_MAX_AGE_MS = 120_000;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,120}$/i;
 const EXACT_ISSUE_OR_PR = /^(?:issue|pr):#[1-9][0-9]*$/i;
 const SHA_40 = /^[0-9a-f]{40}$/i;
+const ID_64 = /^[0-9a-f]{64}$/i;
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -42,6 +43,8 @@ export function assessMissionOrchestratorWorker(input = {}) {
   const heartbeatAgeMs = Number.isFinite(heartbeatTimestamp) ? nowMs - heartbeatTimestamp : null;
   const repositoryRoot = normalizePath(input.heartbeat?.repositoryRoot);
   const heartbeatHead = text(input.heartbeat?.headSha).toLowerCase();
+  const heartbeatLaunchIdentityId = text(input.heartbeat?.launchIdentityId).toLowerCase();
+  const heartbeatWorkerStartedAtMs = Date.parse(text(input.heartbeat?.workerStartedAtUtc));
   const canonicalRepositoryRoot = normalizePath(input.repository?.repositoryRoot);
   const canonicalRepositoryBranch = text(input.repository?.branch).toLowerCase();
   const canonicalRepositoryHead = text(input.repository?.headSha).toLowerCase();
@@ -58,6 +61,20 @@ export function assessMissionOrchestratorWorker(input = {}) {
   const heartbeatTaskName = text(input.heartbeat?.taskName);
   const processPid = positiveInteger(input.process?.pid);
   const heartbeatPid = positiveInteger(input.heartbeat?.pid);
+  const processStartedAtMs = Date.parse(text(input.process?.startedAtUtc));
+  const processLaunchIdentityId = text(input.process?.launchIdentityId).toLowerCase();
+  const processLaunchIdentityVerified = input.process?.launchIdentityVerified === true;
+  const heartbeatLaunchIdentityValid = ID_64.test(heartbeatLaunchIdentityId);
+  const processLaunchIdentityValid = ID_64.test(processLaunchIdentityId);
+  const heartbeatLaunchIdentityMatchesProcess = heartbeatLaunchIdentityValid
+    && processLaunchIdentityValid
+    && heartbeatLaunchIdentityId === processLaunchIdentityId;
+  const heartbeatProcessStartMatchesProcess = Number.isFinite(heartbeatWorkerStartedAtMs)
+    && Number.isFinite(processStartedAtMs)
+    && heartbeatWorkerStartedAtMs === processStartedAtMs;
+  const heartbeatProcessStartPrecedesHeartbeat = Number.isFinite(heartbeatWorkerStartedAtMs)
+    && Number.isFinite(heartbeatTimestamp)
+    && heartbeatWorkerStartedAtMs < heartbeatTimestamp;
   const repositoryFromCanonicalMain = repositoryRoot.endsWith(CANONICAL_REPOSITORY_SUFFIX)
     && text(input.heartbeat?.branch).toLowerCase() === 'main'
     && SHA_40.test(heartbeatHead);
@@ -75,7 +92,10 @@ export function assessMissionOrchestratorWorker(input = {}) {
   const processHealthy = input.process?.running === true
     && text(input.process?.taskName) === APPROVED_WORKER_TASK
     && processPid !== null
-    && processCommandLineVerified;
+    && processCommandLineVerified
+    && processLaunchIdentityVerified
+    && processLaunchIdentityValid
+    && Number.isFinite(processStartedAtMs);
   const heartbeatTaskApproved = heartbeatTaskName === APPROVED_WORKER_TASK;
   const heartbeatPidMatchesProcess = processPid !== null && heartbeatPid === processPid;
   const heartbeatFresh = heartbeatAgeMs !== null
@@ -85,7 +105,12 @@ export function assessMissionOrchestratorWorker(input = {}) {
     && repositoryFromCanonicalMain
     && heartbeatMatchesCanonicalRepositoryHead
     && heartbeatTaskApproved
-    && heartbeatPidMatchesProcess;
+    && heartbeatPidMatchesProcess
+    && heartbeatLaunchIdentityValid
+    && heartbeatLaunchIdentityMatchesProcess
+    && heartbeatProcessStartMatchesProcess
+    && heartbeatProcessStartPrecedesHeartbeat
+    && processLaunchIdentityVerified;
   const healthy = taskStateHealthy && processHealthy && heartbeatHealthy;
   const blockers = [];
 
@@ -97,8 +122,21 @@ export function assessMissionOrchestratorWorker(input = {}) {
   }
   if (!processHealthy) blockers.push('worker-process-proof-missing');
   if (input.process?.running === true && !processCommandLineVerified) blockers.push('worker-command-line-not-canonical');
+  if (input.process?.running === true && !processLaunchIdentityVerified) blockers.push('worker-launch-identity-unproven');
+  if (input.process?.running === true && !processLaunchIdentityValid) blockers.push('worker-process-launch-identity-invalid');
+  if (input.process?.running === true && !Number.isFinite(processStartedAtMs)) blockers.push('worker-process-start-time-invalid');
   if (!Number.isFinite(heartbeatTimestamp)) blockers.push('worker-heartbeat-malformed');
   else if (!heartbeatFresh) blockers.push('worker-heartbeat-stale');
+  if (!heartbeatLaunchIdentityValid) blockers.push('worker-heartbeat-launch-identity-invalid');
+  if (!Number.isFinite(heartbeatWorkerStartedAtMs)) blockers.push('worker-heartbeat-process-start-time-invalid');
+  else if (!heartbeatProcessStartPrecedesHeartbeat) blockers.push('worker-heartbeat-not-after-process-start');
+  if (heartbeatLaunchIdentityValid && processLaunchIdentityValid && !heartbeatLaunchIdentityMatchesProcess) {
+    blockers.push('worker-launch-identity-mismatch');
+  }
+  if (Number.isFinite(heartbeatWorkerStartedAtMs) && Number.isFinite(processStartedAtMs)
+      && !heartbeatProcessStartMatchesProcess) {
+    blockers.push('worker-process-start-mismatch');
+  }
   if (!remoteMainHeadProven) blockers.push('remote-main-head-unproven');
   if (!canonicalRepositoryTrackedClean) blockers.push('canonical-repository-tracked-dirty');
   if (localRepositoryIdentityProven && remoteMainHeadProven && canonicalRepositoryHead !== remoteMainHead) {
@@ -123,9 +161,21 @@ export function assessMissionOrchestratorWorker(input = {}) {
     taskStateHealthy,
     processHealthy,
     processCommandLineVerified,
+    processLaunchIdentityVerified,
+    processLaunchIdentityValid,
+    processLaunchIdentityId: processLaunchIdentityValid ? processLaunchIdentityId : '',
+    processStartedAtUtc: Number.isFinite(processStartedAtMs) ? new Date(processStartedAtMs).toISOString() : '',
     heartbeatFresh,
     heartbeatTaskApproved,
     heartbeatPidMatchesProcess,
+    heartbeatLaunchIdentityValid,
+    heartbeatLaunchIdentityMatchesProcess,
+    heartbeatProcessStartMatchesProcess,
+    heartbeatProcessStartPrecedesHeartbeat,
+    heartbeatLaunchIdentityId: heartbeatLaunchIdentityValid ? heartbeatLaunchIdentityId : '',
+    heartbeatWorkerStartedAtUtc: Number.isFinite(heartbeatWorkerStartedAtMs)
+      ? new Date(heartbeatWorkerStartedAtMs).toISOString()
+      : '',
     repositoryFromCanonicalMain,
     canonicalRepositoryHead,
     canonicalRepositoryTrackedClean,

@@ -8,18 +8,31 @@ function sink() {
   return { stream: { write(chunk) { value += chunk; } }, read: () => value };
 }
 
+const workerHead = 'a'.repeat(40);
+const canonicalIdentity = async () => ({
+  valid: true,
+  canonical: true,
+  branch: 'main',
+  headSha: workerHead,
+  sourceClean: true,
+  worktreeClean: true,
+  runtimeDirtCount: 0,
+  blocker: '',
+});
+
 test('supervised worker self-bootstraps mailbox before its first mission tick', async () => {
   const events = [];
   const output = sink();
   const exitCode = await runSupervisedMissionWorker({
     argv: ['--once'],
-    env: {},
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: workerHead },
     stdout: output.stream,
     stderr: sink().stream,
     bootstrapMailbox: async () => {
       events.push('bootstrap');
       return { ok: true, status: 'MAILBOX_SELF_BOOTSTRAP_INSTALLED' };
     },
+    inspectRepositoryIdentity: canonicalIdentity,
     runControllerCycle: async () => ({
       status: 'ACTIVE',
       allowWorkerTick: true,
@@ -43,10 +56,11 @@ test('bootstrap failure is visible but the long-running worker path remains avai
   let tickRan = false;
   const exitCode = await runSupervisedMissionWorker({
     argv: ['--once'],
-    env: {},
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: workerHead },
     stdout: sink().stream,
     stderr: errors.stream,
     bootstrapMailbox: async () => { throw new Error('registration denied'); },
+    inspectRepositoryIdentity: canonicalIdentity,
     runControllerCycle: async () => ({
       status: 'ACTIVE',
       allowWorkerTick: true,
