@@ -11,7 +11,10 @@ import { BATTLE_BRIDGE_RUNTIME_DATA_PATHS } from './battleBridgeDirtyDataPreserv
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createSourceMutationLeaseRecord } from './programmeAuthorityV1.mjs';
+import {
+  createSourceMutationLeaseRecord,
+  createSourceMutationLeaseReleaseRecord,
+} from './programmeAuthorityV1.mjs';
 
 function scriptedSpawn(script) {
   const calls = [];
@@ -470,6 +473,8 @@ test('direct diagnostics report live worker telemetry only when canonical eviden
     headSha: fullHead,
     taskName: 'Stephanos Mission Orchestrator Worker',
     pid: 1631,
+    launchIdentityId: '1'.repeat(64),
+    workerStartedAtUtc: '2026-07-31T15:58:00.000Z',
     lastTickVerdict: 'MISSION_WORKER_TICK_RUNNING',
     arbitraryShellAllowed: false,
     sourceMutationAllowed: false,
@@ -559,4 +564,105 @@ test('direct diagnostics report live worker telemetry only when canonical eviden
   assert.equal(result.workerTelemetry.lease.active, true);
   assert.equal(result.workerTelemetry.latestExecutionReceipt.executionId, 'exec-1631');
   assert.equal(result.workerTelemetry.operatorActionRequired, false);
+});
+
+test('direct diagnostics treat only an exact release record as safely inactive lease evidence', async () => {
+  const fullHead = 'd'.repeat(40);
+  const nowUtc = '2026-07-31T16:00:00.000Z';
+  const repository = '/repo';
+  const lease = createSourceMutationLeaseRecord({
+    laneId: 'lane-goal-1507-pr-1631',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 1507,
+    prNumber: 1631,
+    branch: 'main',
+    headSha: fullHead,
+    ownerId: 'worker-1631',
+    acquiredAtUtc: '2026-07-31T15:59:00.000Z',
+    renewedAtUtc: '2026-07-31T15:59:30.000Z',
+    expiresAtUtc: '2026-07-31T17:00:00.000Z',
+  });
+  const release = createSourceMutationLeaseReleaseRecord(lease, { timestampUtc: nowUtc });
+  const heartbeat = {
+    schemaVersion: 'stephanos.mission-orchestrator-worker-heartbeat.v1',
+    timestampUtc: '2026-07-31T15:59:30.000Z',
+    repositoryRoot: repository,
+    branch: 'main',
+    headSha: fullHead,
+    taskName: 'Stephanos Mission Orchestrator Worker',
+    pid: 1631,
+    launchIdentityId: '2'.repeat(64),
+    workerStartedAtUtc: '2026-07-31T15:58:00.000Z',
+    lastTickVerdict: 'MISSION_WORKER_TICK_PASS',
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+  };
+  const spawnSyncFn = scriptedSpawn({
+    'git rev-parse --show-toplevel': { stdout: `${repository}\n` },
+    'git branch --show-current': { stdout: 'main\n' },
+    'git rev-parse HEAD': { stdout: `${fullHead}\n` },
+    'git rev-parse --abbrev-ref --symbolic-full-name @{upstream}': { stdout: 'origin/main\n' },
+    'git status --branch --untracked-files=all': { stdout: 'On branch main\nYour branch is up to date with origin/main.\n' },
+    'git rev-list --left-right --count HEAD...@{upstream}': { stdout: '0\t0\n' },
+  });
+  const workerInspection = {
+    ok: true,
+    blocker: '',
+    observation: {
+      scheduledTask: {
+        taskName: 'Stephanos Mission Orchestrator Worker',
+        status: 'Running',
+        actionMatchesCanonicalWorker: true,
+      },
+      process: {
+        running: true,
+        pid: 1631,
+        taskName: 'Stephanos Mission Orchestrator Worker',
+        commandLineMatchesCanonicalWorker: true,
+      },
+    },
+  };
+  const readWithRelease = (releaseRecord) => (filePath) => {
+    if (filePath.endsWith('mission-orchestrator-worker-heartbeat.json')) return { state: 'present', value: heartbeat };
+    if (filePath.endsWith('source-mutation-lease-current.json')) return { state: 'present', value: lease };
+    if (filePath.endsWith(`${release.statusId}.json`)) return { state: 'present', value: releaseRecord };
+    return { state: 'absent', value: null };
+  };
+
+  const accepted = await runBattleBridgeDiagnostics({
+    repoRoot: repository,
+    endpoints: [],
+    spawnSyncFn,
+    nowFn: () => new Date(nowUtc),
+    workspaceRoot: '/telemetry-fixture',
+    workerInspection,
+    readRecord: readWithRelease(release),
+  });
+  assert.equal(accepted.status, 'DONE');
+  assert.equal(accepted.workerTelemetry.ok, true);
+  assert.equal(accepted.workerTelemetry.workerStatus, 'IDLE');
+  assert.equal(accepted.workerTelemetry.lease.active, false);
+  assert.equal(accepted.workerTelemetry.lease.released, true);
+  assert.equal(accepted.workerTelemetry.lease.releaseRecordValid, true);
+  assert.deepEqual(accepted.workerTelemetry.blockers, []);
+
+  const rejected = await runBattleBridgeDiagnostics({
+    repoRoot: repository,
+    endpoints: [],
+    spawnSyncFn: scriptedSpawn({
+      'git rev-parse --show-toplevel': { stdout: `${repository}\n` },
+      'git branch --show-current': { stdout: 'main\n' },
+      'git rev-parse HEAD': { stdout: `${fullHead}\n` },
+      'git rev-parse --abbrev-ref --symbolic-full-name @{upstream}': { stdout: 'origin/main\n' },
+      'git status --branch --untracked-files=all': { stdout: 'On branch main\nYour branch is up to date with origin/main.\n' },
+      'git rev-list --left-right --count HEAD...@{upstream}': { stdout: '0\t0\n' },
+    }),
+    nowFn: () => new Date(nowUtc),
+    workspaceRoot: '/telemetry-fixture',
+    workerInspection,
+    readRecord: readWithRelease({ ...release, headSha: 'e'.repeat(40) }),
+  });
+  assert.equal(rejected.workerTelemetry.ok, false);
+  assert.ok(rejected.workerTelemetry.blockers.includes('SOURCE_MUTATION_LEASE_RELEASE_RECORD_INVALID'));
+  assert.equal(rejected.workerTelemetry.lease.released, false);
 });

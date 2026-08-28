@@ -72,6 +72,11 @@ function safeId(value) {
   return SAFE_SEGMENT.test(text(value)) ? text(value) : '';
 }
 
+export function isSharedWorkspaceParticipantId(value) {
+  const normalized = text(value);
+  return Boolean(normalized && safeId(normalized) === normalized);
+}
+
 function bytes(value) {
   return Buffer.byteLength(String(value ?? ''), 'utf8');
 }
