@@ -69,9 +69,14 @@ test('supervised worker writes running and final heartbeat around a successful t
   const heartbeats = [];
   const timer = timerHarness();
   let tickOptions = null;
+  const env = {
+    STEPHANOS_MISSION_WORKER_LAUNCH_ID: 'b'.repeat(64),
+    STEPHANOS_MISSION_WORKER_LAUNCH_RECEIPT_PATH: 'C:\\bounded\\launch-receipt.json',
+    STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+  };
   const exitCode = await runSupervisedMissionWorker({
     argv: ['--once'],
-    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40) },
+    env,
     stdout: output.stream,
     stderr: errors.stream,
     bootstrapMailbox,
@@ -90,6 +95,7 @@ test('supervised worker writes running and final heartbeat around a successful t
     'MISSION_WORKER_TICK_RUNNING',
     'MISSION_WORKER_TICK_PASS',
   ]);
+  assert.ok(heartbeats.every((heartbeat) => heartbeat.env === env));
   assert.equal(timer.wasCleared(), true);
   assert.deepEqual(tickOptions.actionGrant, actionGrant);
   assert.match(output.read(), /"event":"worker-tick"/);
