@@ -14,7 +14,7 @@ function canonicalGitGuard(source) {
 }
 
 function canonicalNodeGuard(source) {
-  const start = source.indexOf("if (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf))");
+  const start = source.indexOf('$canonicalNodeItem = Get-Item -LiteralPath $canonicalNode -Force');
   const end = source.indexOf('$branchOutput = @(& $canonicalGit', start);
   return start >= 0 && end > start ? source.slice(start, end) : '';
 }
