@@ -92,6 +92,14 @@ function forbidPatterns(findings, source, path, rules) {
   for (const [pattern, code] of rules) if (pattern.test(source)) findings.push(finding(code, path));
 }
 
+function forbidPr1999ProviderPoolAuthority(findings, source, path) {
+  forbidPatterns(findings, source, path, [
+    [/from ['"]node:(?:child_process|http|https|net)['"]|require\(['"](?:child_process|http|https|net)['"]\)/, 'pr1999-provider-pool-process-network-authority-forbidden'],
+    [/\b(?:exec|execSync|execFile|spawn|spawnSync|fork)\s*\(|shell\s*:\s*true|\beval\s*\(|new\s+Function\s*\(/i, 'pr1999-provider-pool-dynamic-execution-forbidden'],
+    [/\bgit(?:\.exe)?\b[^\r\n]*(?:push|reset|clean|rebase|checkout|switch|merge|stash|fetch)\b/i, 'pr1999-provider-pool-git-mutation-forbidden'],
+  ]);
+}
+
 function reviewPr1999ProviderPool(source, path, findings) {
   requireLiterals(findings, source, path, [
     ["import { routeMissionControllerCapacity } from './missionControllerCapacityRouterV1.mjs';", 'pr1999-provider-pool-canonical-router-missing'],
@@ -134,11 +142,7 @@ function reviewPr1999ProviderPool(source, path, findings) {
     [/writeAtomicJson\(root, \['receipts',[\s\S]*OPENCLAW_PROVIDER_POOL_COMPONENT_FILES\[componentKey\]/, 'pr1999-provider-pool-component-write-not-canonical'],
     [/writeAtomicJson\(root, \['status', 'openclaw-provider-pool-current\.json'\]/, 'pr1999-provider-pool-status-write-not-canonical'],
   ]);
-  forbidPatterns(findings, source, path, [
-    [/from ['"]node:(?:child_process|http|https|net)['"]|require\(['"](?:child_process|http|https|net)['"]\)/, 'pr1999-provider-pool-process-network-authority-forbidden'],
-    [/\b(?:exec|execSync|execFile|spawn|spawnSync|fork)\s*\(|shell\s*:\s*true|\beval\s*\(|new\s+Function\s*\(/i, 'pr1999-provider-pool-dynamic-execution-forbidden'],
-    [/\bgit(?:\.exe)?\b[^\r\n]*(?:push|reset|clean|rebase|checkout|switch|merge|stash|fetch)\b/i, 'pr1999-provider-pool-git-mutation-forbidden'],
-  ]);
+  forbidPr1999ProviderPoolAuthority(findings, source, path);
 }
 
 function reviewPr1999ProviderPoolTests(source, path, findings) {
@@ -191,6 +195,11 @@ function analyzeOpenClawProviderPoolPr1999SpecialistReviewV1(input = {}) {
     const candidates = sources.filter((source) => text(source?.path) === path);
     if (candidates.length !== 1 || !exactPr1999Source(candidates[0], sourceHead, path)) {
       findings.push(finding('pr1999-provider-pool-source-evidence-invalid', path));
+      if (!path.endsWith('.test.mjs')) {
+        for (const candidate of candidates) {
+          if (typeof candidate?.content === 'string') forbidPr1999ProviderPoolAuthority(findings, candidate.content, path);
+        }
+      }
       continue;
     }
     if (path.endsWith('.test.mjs')) reviewPr1999ProviderPoolTests(candidates[0].content, path, findings);
