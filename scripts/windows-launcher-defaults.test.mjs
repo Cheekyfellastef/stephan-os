@@ -224,7 +224,7 @@ test('professional ignition emits support snapshot and proof transcript with exa
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /\$ignitionTranscriptPath = Join-Path \$ignitionProofRoot 'ignition-proof-transcript\.jsonl'/m, 'proof transcript path must be deterministic');
   assert.match(script, /\$ignitionSupportSnapshotPath = Join-Path \$ignitionProofRoot 'support-snapshot\.json'/m, 'support snapshot path must be deterministic');
-  assert.match(script, /function Write-IgnitionTranscript[\s\S]*Add-Content -LiteralPath \$ignitionTranscriptPath/m, 'launcher must append proof transcript events');
+  assert.match(script, /function Write-IgnitionTranscript[\s\S]*Add-IgnitionUtf8NoBomLine -Path \$ignitionTranscriptPath/m, 'launcher must append proof transcript events through the BOM-free ignition writer');
   assert.match(script, /function Write-IgnitionSupportSnapshot[\s\S]*schema = 'stephanos\.ignition\.support-snapshot\.v1'[\s\S]*runtimePort = 4173/m, 'launcher must emit support snapshot for local proof');
   assert.match(script, /exactHeadApprovalRequired = \$true[\s\S]*exactHeadApprovalStatus = 'required-before-merge-proof'/m, 'exact-head approval must remain required for merge proof');
 });

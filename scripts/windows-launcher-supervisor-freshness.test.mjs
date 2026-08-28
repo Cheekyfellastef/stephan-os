@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import {
   evaluateServedRuntimeExactHeadProof,
   runBattleBridgeIgnitionSupervisor,
@@ -59,6 +60,7 @@ test('self-consistent stale served commit and marker are rejected against curren
 });
 
 test('blocked served-runtime status preserves exact rejection proof', async () => {
+  const sharedWorkspace = await mkdtemp(join(tmpdir(), 'stephanos-launcher-supervisor-freshness-'));
   const staleProof = Object.freeze({
     ready: false,
     currentHead: '51600ceb1234567890abcdef1234567890abcdef',
@@ -69,20 +71,25 @@ test('blocked served-runtime status preserves exact rejection proof', async () =
     gitCommitMatches: false,
     runtimeMarkerMatches: false,
   });
-  const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {},
-    publisherFn: async () => {},
-    sourceTruthFn: () => canonicalSourceTruth(),
-    collectFactsFn: async () => readyReport(),
-    plannerFn: (facts) => facts,
-    currentHeadFn: () => staleProof.currentHead,
-    runtimeProofFn: async () => staleProof,
-    repairFn: async ({ stdout }) => { stdout.write(JSON.stringify({ ready: true })); return 0; },
-    stdout: { write() {} },
-  });
-  assert.equal(result.ok, false);
-  assert.equal(result.status.blockerId, 'served-runtime-stale');
-  assert.deepEqual(result.status.services.stephanosUi4173.servedRuntimeProof, staleProof);
+  try {
+    const result = await runBattleBridgeIgnitionSupervisor({
+      sharedWorkspace,
+      housekeepFn: () => {},
+      publisherFn: async () => {},
+      sourceTruthFn: () => canonicalSourceTruth(),
+      collectFactsFn: async () => readyReport(),
+      plannerFn: (facts) => facts,
+      currentHeadFn: () => staleProof.currentHead,
+      runtimeProofFn: async () => staleProof,
+      repairFn: async ({ stdout }) => { stdout.write(JSON.stringify({ ready: true })); return 0; },
+      stdout: { write() {} },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.status.blockerId, 'served-runtime-stale');
+    assert.deepEqual(result.status.services.stephanosUi4173.servedRuntimeProof, staleProof);
+  } finally {
+    await rm(sharedWorkspace, { recursive: true, force: true });
+  }
 });
 
 test('Windows launcher ignores supervisor records from a previous ignition run', async () => {
