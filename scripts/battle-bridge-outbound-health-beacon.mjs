@@ -6,6 +6,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
+import { buildBattleBridgeTelemetryAutorepairProjection } from '../shared/agents/battleBridgeTelemetryAutorepairV1.mjs';
+import { projectMissionWorkerBeaconState } from '../shared/agents/missionWorkerBeaconStateV1.mjs';
 import {
   MAILBOX_RECEIPT_GITHUB_ISSUE,
   MAILBOX_RECEIPT_GITHUB_REPOSITORY,
@@ -61,34 +63,180 @@ function readJsonBounded(path) {
   }
 }
 
+function nestedHead(record = {}) {
+  return record.backendIdentity?.sourceHead
+    || record.sourceTruth?.head
+    || record.sourceTruthVerdict?.sourceHead
+    || record.servedRuntimeProof?.sourceHead
+    || '';
+}
+
 function recordHead(record = {}) {
   return safeSha(
     record.localHeadAfter
     || record.localHead
     || record.sourceHead
     || record.headSha
+    || record.afterHead
+    || record.currentHead
     || record.expectedHead
-    || record.remoteHeadObserved,
+    || record.remoteHeadObserved
+    || nestedHead(record),
   );
 }
 
-export function projectBeaconStatus(record, spec, nowMs = Date.now()) {
-  if (!record) {
-    return Object.freeze({ id: spec.id, state: 'UNPROVEN', observedAtUtc: '', ageMs: null, head: '', blocker: 'STATUS_MISSING' });
+function recordObservedAt(record = {}) {
+  return timestamp(
+    record.timestampUtc
+    || record.observedAtUtc
+    || record.heartbeatAt
+    || record.completedAt
+    || record.updatedAtUtc
+    || record.generatedAt
+    || record.generatedAtUtc
+    || record.publishedAtUtc,
+  );
+}
+
+function recordRawState(record = {}) {
+  return text(
+    record.classification
+    || record.finalVerdict
+    || record.status
+    || record.state
+    || record.phase
+    || record.tickVerdict
+    || record.readiness
+    || record.trafficLight
+    || 'UNKNOWN',
+    120,
+  ).toUpperCase();
+}
+
+function serviceFacts(record = {}) {
+  const facts = record.observedServiceFacts || record.services || {};
+  if (!facts || typeof facts !== 'object' || Array.isArray(facts)) return Object.freeze({});
+  const allowed = {};
+  for (const [id, value] of Object.entries(facts)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    allowed[id] = Object.freeze({
+      ready: value.ready === true,
+      state: text(value.state || '', 40),
+      head: safeSha(value.head || value.sourceHead || value.runtimeHead || value.expectedHead),
+    });
   }
-  const observedAtUtc = timestamp(record.timestampUtc || record.observedAtUtc || record.heartbeatAt || record.completedAt);
+  return Object.freeze(allowed);
+}
+
+function numericCount(value) {
+  const count = Number(value);
+  return Number.isInteger(count) && count >= 0 ? count : null;
+}
+
+function dirtFacts(record = {}) {
+  const source = record.dirtClassification || record.dirtSummary || record.sourceDirt || record.dirt || null;
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    return Object.freeze({ known: false, blocksSync: false, blockingCount: 0 });
+  }
+  const tracked = numericCount(source.trackedSourceCount) ?? (Array.isArray(source.trackedSource) ? source.trackedSource.length : null);
+  const untracked = numericCount(source.untrackedSourceCount) ?? (Array.isArray(source.untrackedSource) ? source.untrackedSource.length : null);
+  const unknown = numericCount(source.unknownCount) ?? (Array.isArray(source.unknown) ? source.unknown.length : null);
+  const runtimeOnly = numericCount(source.runtimeOnlyCount) ?? (Array.isArray(source.runtimeOnly) ? source.runtimeOnly.length : null);
+  const generated = numericCount(source.generatedSourceCount) ?? (Array.isArray(source.generatedSource) ? source.generatedSource.length : null);
+  const known = [tracked, untracked, unknown, runtimeOnly, generated].some((value) => value !== null) || typeof source.blocksSync === 'boolean';
+  const blockingCount = (tracked || 0) + (untracked || 0) + (unknown || 0);
+  return Object.freeze({
+    known,
+    blocksSync: source.blocksSync === true || blockingCount > 0,
+    blockingCount,
+    trackedSourceCount: tracked ?? 0,
+    untrackedSourceCount: untracked ?? 0,
+    unknownCount: unknown ?? 0,
+    runtimeOnlyCount: runtimeOnly ?? 0,
+    generatedSourceCount: generated ?? 0,
+    pathValuesPublished: false,
+  });
+}
+
+function housekeeperFacts(record = {}) {
+  const source = record.housekeeper || record.housekeeperStatus || record.housekeep || record.housekeeperCycle || null;
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    return Object.freeze({ observed: false, state: 'UNPROVEN', observedAtUtc: '', head: '', blocker: '' });
+  }
+  return Object.freeze({
+    observed: true,
+    state: text(source.state || source.status || source.finalVerdict || 'UNKNOWN', 80).toUpperCase(),
+    observedAtUtc: timestamp(source.observedAtUtc || source.timestampUtc || source.completedAt || source.generatedAtUtc),
+    head: safeSha(source.head || source.sourceHead || source.expectedHead),
+    blocker: text(source.blocker || source.blockerId || '', 120),
+  });
+}
+
+function runtimeHeads(record = {}) {
+  const served = record.servedRuntimeProof || record.servedRuntime || {};
+  const build = record.buildProof || record.build || {};
+  return Object.freeze({
+    builtHead: safeSha(record.builtHead || record.buildHead || build.head || build.sourceHead),
+    servedHead: safeSha(record.servedHead || served.head || served.sourceHead || served.expectedHead),
+    runtimeHead: safeSha(record.runtimeHead || record.backendIdentity?.sourceHead || record.runtimeIdentity?.sourceHead),
+  });
+}
+
+export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHead = '') {
+  if (!record) {
+    return Object.freeze({
+      id: spec.id,
+      state: 'UNPROVEN',
+      rawState: 'UNPROVEN',
+      observedAtUtc: '',
+      ageMs: null,
+      head: '',
+      blocker: 'STATUS_MISSING',
+      serviceFacts: Object.freeze({}),
+      dirtFacts: Object.freeze({ known: false, blocksSync: false, blockingCount: 0 }),
+      housekeeperFacts: Object.freeze({ observed: false, state: 'UNPROVEN', observedAtUtc: '', head: '', blocker: '' }),
+      runtimeHeads: Object.freeze({ builtHead: '', servedHead: '', runtimeHead: '' }),
+    });
+  }
+  const observedAtUtc = recordObservedAt(record);
   const observedMs = Date.parse(observedAtUtc);
   const ageMs = Number.isFinite(observedMs) ? Math.max(0, nowMs - observedMs) : null;
   const stale = ageMs === null || ageMs > spec.staleAfterMs;
-  const raw = text(record.status || record.classification || record.finalVerdict || record.state || 'UNKNOWN', 120).toUpperCase();
-  const blocker = text(record.blocker || record.exactNextAction || '', 180);
+  const rawState = recordRawState(record);
+  const blocker = text(record.blocker || record.exactNextAction || record.blockerId || '', 180);
+  if (spec.id === 'missionWorker' && safeSha(expectedHead)) {
+    const missionWorkerFacts = projectMissionWorkerBeaconState(record, {
+      nowMs,
+      staleAfterMs: spec.staleAfterMs,
+      expectedHead,
+    });
+    return Object.freeze({
+      id: spec.id,
+      state: missionWorkerFacts.state,
+      rawState: missionWorkerFacts.rawState,
+      observedAtUtc: missionWorkerFacts.observedAtUtc,
+      ageMs: missionWorkerFacts.ageMs,
+      head: missionWorkerFacts.head,
+      blocker: missionWorkerFacts.blocker || blocker,
+      serviceFacts: serviceFacts(record),
+      dirtFacts: dirtFacts(record),
+      housekeeperFacts: housekeeperFacts(record),
+      runtimeHeads: runtimeHeads(record),
+      missionWorkerFacts,
+    });
+  }
   return Object.freeze({
     id: spec.id,
-    state: stale ? 'STALE' : (raw || 'UNKNOWN'),
+    state: stale ? 'STALE' : (rawState || 'UNKNOWN'),
+    rawState,
     observedAtUtc,
     ageMs,
     head: recordHead(record),
     blocker,
+    serviceFacts: serviceFacts(record),
+    dirtFacts: dirtFacts(record),
+    housekeeperFacts: housekeeperFacts(record),
+    runtimeHeads: runtimeHeads(record),
   });
 }
 
@@ -168,27 +316,37 @@ export function projectMailboxIngressLiveness(comments = [], {
 }
 
 function combineMailboxStatus(localStatus, ingressObservation) {
-  if (!ingressObservation || ingressObservation.state === 'OBSERVED') return localStatus;
-  if (localStatus.state === 'STALE' || localStatus.state === 'UNPROVEN' || localStatus.state.includes('BLOCK')) return localStatus;
+  if (!ingressObservation || ingressObservation.state === 'OBSERVED') return Object.freeze({
+    ...localStatus,
+    ingressState: ingressObservation?.state || 'UNKNOWN',
+    ingressBlocker: ingressObservation?.blocker || '',
+  });
+  if (localStatus.state === 'STALE' || localStatus.state === 'UNPROVEN' || localStatus.state.includes('BLOCK')) return Object.freeze({
+    ...localStatus,
+    ingressState: ingressObservation.state,
+    ingressBlocker: ingressObservation.blocker,
+  });
   return Object.freeze({
     ...localStatus,
     state: ingressObservation.state,
     blocker: ingressObservation.blocker,
+    ingressState: ingressObservation.state,
+    ingressBlocker: ingressObservation.blocker,
   });
 }
 
-export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}, mailboxIngressObservation = null, now = new Date() } = {}) {
+export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}, mailboxIngressObservation = null, qualifiedRepairPolicies = [], now = new Date() } = {}) {
   const head = safeSha(sourceHead);
   if (!head) throw new Error('OUTBOUND_BEACON_SOURCE_HEAD_INVALID');
   const observedAtUtc = now.toISOString();
   const nowMs = now.getTime();
   const surfaces = STATUS_SPECS.map((spec) => {
-    const projected = projectBeaconStatus(statusRecords[spec.id] || null, spec, nowMs);
+    const projected = projectBeaconStatus(statusRecords[spec.id] || null, spec, nowMs, head);
     return spec.id === 'mailbox' ? combineMailboxStatus(projected, mailboxIngressObservation) : projected;
   });
-  const blockers = surfaces
-    .filter((surface) => surface.state === 'STALE' || surface.state === 'UNPROVEN' || surface.state.includes('BLOCK'))
-    .map((surface) => `${surface.id}:${surface.blocker || surface.state}`)
+  const telemetry = buildBattleBridgeTelemetryAutorepairProjection({ sourceHead: head, surfaces, qualifiedRepairPolicies });
+  const blockers = telemetry.repairCandidates
+    .map((candidate) => `${candidate.surfaceId}:${candidate.blocker || candidate.gapClass}`)
     .slice(0, 12);
   return Object.freeze({
     schemaVersion: BATTLE_BRIDGE_OUTBOUND_BEACON_SCHEMA,
@@ -201,6 +359,12 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     blockerCount: blockers.length,
     blockers: Object.freeze(blockers),
     freshness: blockers.length > 0 ? 'DEGRADED' : 'FRESH',
+    completeStateAnswerable: telemetry.completeStateAnswerable,
+    telemetryCompleteness: telemetry.telemetryCompleteness,
+    operatorNeeded: telemetry.operatorNeededNow,
+    operatorAuthorizationState: telemetry.operatorAuthorizationState,
+    nextAutomaticAction: telemetry.nextAutomaticAction,
+    telemetry,
     readOnly: true,
     sourceMutationAllowed: false,
     taskMutationAllowed: false,

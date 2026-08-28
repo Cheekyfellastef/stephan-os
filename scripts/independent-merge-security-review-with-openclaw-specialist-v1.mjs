@@ -15,18 +15,15 @@ import {
   WINDOWS_AUTHORITY_SOURCE_MAX_BYTES,
   WINDOWS_AUTHORITY_SOURCE_SCHEMA_VERSION,
 } from '../shared/agents/windowsAuthoritySpecialistReviewV1.mjs';
-import {
-  OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1,
-  analyzeOpenClawBuilderProviderSpecialistReviewV1,
-} from '../shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs';
+import { analyzeOpenClawBuilderProviderSpecialistReviewV1 } from '../shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-independent-review-openclaw-specialist-v1';
 const PRIOR_WRAPPER = 'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs';
-
-function text(value) {
-  return String(value ?? '').trim();
-}
+const SHA = /^[a-f0-9]{40}$/;
+const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const text = (value) => String(value ?? '').trim();
+const unique = (values) => [...new Set(values)];
 
 function exactArtifactPath() {
   const runnerTemp = text(process.env.RUNNER_TEMP);
@@ -40,15 +37,7 @@ function exactArtifactPath() {
 
 function writeReplacementArtifact(path, artifact) {
   fs.rmSync(path, { force: false });
-  fs.writeFileSync(path, `${JSON.stringify(artifact, null, 2)}\n`, {
-    encoding: 'utf8',
-    flag: 'wx',
-    mode: 0o600,
-  });
-}
-
-function unique(values) {
-  return [...new Set(values)];
+  fs.writeFileSync(path, `${JSON.stringify(artifact, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
 }
 
 function counts(findings) {
@@ -97,13 +86,9 @@ async function exactHeadSource(repository, path, sourceHead) {
     `/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(sourceHead)}`,
     Math.ceil(WINDOWS_AUTHORITY_SOURCE_MAX_BYTES * 4 / 3) + 65_536,
   );
-  if (payload?.type !== 'file'
-    || payload?.path !== path
-    || payload?.encoding !== 'base64'
-    || !Number.isSafeInteger(payload?.size)
-    || payload.size <= 0
-    || payload.size > WINDOWS_AUTHORITY_SOURCE_MAX_BYTES
-    || !/^[a-f0-9]{40}$/.test(text(payload?.sha))) {
+  if (payload?.type !== 'file' || payload?.path !== path || payload?.encoding !== 'base64'
+    || !Number.isSafeInteger(payload?.size) || payload.size <= 0 || payload.size > WINDOWS_AUTHORITY_SOURCE_MAX_BYTES
+    || !SHA.test(text(payload?.sha))) {
     throw new Error(`OpenClaw specialist source ${path} is not one bounded exact-head file.`);
   }
   const bytes = strictBase64(payload.content, path);
@@ -128,9 +113,7 @@ async function exactReconciliationLineage(repository, sourceHead, baseSha) {
     githubJson(`/repos/${owner}/${repo}/compare/${encodeURIComponent(baseSha)}...${encodeURIComponent(sourceHead)}`, 2 * 1024 * 1024),
   ]);
   const liveMainAfter = await githubJson(`/repos/${owner}/${repo}/git/ref/heads/main`, 65_536);
-  const parents = Array.isArray(sourceCommit?.parents)
-    ? sourceCommit.parents.map((parent) => text(parent?.sha).toLowerCase())
-    : [];
+  const parents = Array.isArray(sourceCommit?.parents) ? sourceCommit.parents.map((parent) => text(parent?.sha).toLowerCase()) : [];
   return Object.freeze({
     schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1',
     repository,
@@ -154,15 +137,10 @@ function validateFindingsArtifact(artifact) {
   if (artifact?.schemaVersion !== 'stephanos.independent-review-findings-artifact.v1'
     || artifact?.kind !== 'stephanos.independent-review.findings-artifact'
     || artifact?.artifactFile !== INDEPENDENT_REVIEW_ARTIFACT_FILE
-    || typeof artifact?.repository !== 'string'
-    || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(artifact.repository)
-    || !Number.isSafeInteger(artifact?.prNumber)
-    || artifact.prNumber <= 0
-    || typeof artifact?.branch !== 'string'
-    || artifact.branch.length === 0
-    || artifact.branch.length > 255
-    || !/^[a-f0-9]{40}$/.test(text(artifact?.sourceHead))
-    || !/^[a-f0-9]{40}$/.test(text(artifact?.baseSha))
+    || !REPOSITORY.test(text(artifact?.repository))
+    || !Number.isSafeInteger(artifact?.prNumber) || artifact.prNumber <= 0
+    || typeof artifact?.branch !== 'string' || artifact.branch.length === 0 || artifact.branch.length > 255
+    || !SHA.test(text(artifact?.sourceHead)) || !SHA.test(text(artifact?.baseSha))
     || artifact?.payloadSha256 !== independentReviewFindingsArtifactPayloadSha256(artifact)) {
     throw new Error('Original findings artifact is invalid or not digest-bound.');
   }
@@ -172,12 +150,7 @@ function validateFindingsArtifact(artifact) {
 async function main() {
   if (process.env.GITHUB_ACTIONS !== 'true') throw new Error('OpenClaw specialist wrapper may run only inside GitHub Actions.');
   const artifactPath = exactArtifactPath();
-  const child = spawnSync(process.execPath, [PRIOR_WRAPPER], {
-    stdio: 'inherit',
-    shell: false,
-    windowsHide: true,
-    env: process.env,
-  });
+  const child = spawnSync(process.execPath, [PRIOR_WRAPPER], { stdio: 'inherit', shell: false, windowsHide: true, env: process.env });
   if (child.status === 0) return;
   if (!fs.existsSync(artifactPath)) process.exit(child.status || 1);
 
@@ -195,9 +168,7 @@ async function main() {
   });
   if (!probe.eligible) process.exit(child.status || 1);
 
-  const sources = await Promise.all(OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1.map((path) => (
-    exactHeadSource(artifact.repository, path, artifact.sourceHead)
-  )));
+  const sources = await Promise.all(probe.reviewedPaths.map((path) => exactHeadSource(artifact.repository, path, artifact.sourceHead)));
   const specialist = analyzeOpenClawBuilderProviderSpecialistReviewV1({
     repository: artifact.repository,
     prNumber: artifact.prNumber,
@@ -217,10 +188,7 @@ async function main() {
       findings: Object.freeze(specialist.findings),
       counts: counts(specialist.findings),
       verdict: 'findings',
-      proofRefs: Object.freeze(unique([
-        ...(Array.isArray(artifact.analysis?.proofRefs) ? artifact.analysis.proofRefs : []),
-        ...specialist.proofRefs,
-      ])),
+      proofRefs: Object.freeze(unique([...(Array.isArray(artifact.analysis?.proofRefs) ? artifact.analysis.proofRefs : []), ...specialist.proofRefs])),
       finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_FINDINGS',
     });
     writeReplacementArtifact(artifactPath, buildIndependentReviewFindingsArtifact({
@@ -244,10 +212,7 @@ async function main() {
     findings: Object.freeze([]),
     counts: Object.freeze({ P0: 0, P1: 0, P2: 0 }),
     verdict: 'clean',
-    proofRefs: Object.freeze(unique([
-      ...(Array.isArray(artifact.analysis?.proofRefs) ? artifact.analysis.proofRefs : []),
-      ...specialist.proofRefs,
-    ])),
+    proofRefs: Object.freeze(unique([...(Array.isArray(artifact.analysis?.proofRefs) ? artifact.analysis.proofRefs : []), ...specialist.proofRefs])),
     finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_CLEAN',
   });
   const replacement = buildIndependentReviewArtifact({

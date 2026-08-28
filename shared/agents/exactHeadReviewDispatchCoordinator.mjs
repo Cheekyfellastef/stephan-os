@@ -2,12 +2,14 @@ import {
   INDEPENDENT_REVIEW_JOB,
   PROTECTED_REVIEW_MARKER,
   parseIndependentReviewSessionId,
-  validateIndependentReviewWorkflowRun,
   validateTrustedProtectedReviewReceipt,
 } from './operatorMergeApprovalGate.mjs';
+import {
+  validateExactHeadIndependentReviewRunV1,
+} from './exactHeadIndependentReviewRunV1.mjs';
 
 export const EXACT_HEAD_REVIEW_DISPATCH_SCHEMA = 'stephanos.exact-head-review-dispatch.v1';
-export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.1.0';
+export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.1.1';
 
 export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'OpenClaw GitHub Operator',
@@ -200,7 +202,7 @@ function markerComment(comments, kind, headSha, { trustedCoordinatorLogin, notBe
     if (afterItem && !itemCausallyFollows(comment, afterItem)) return false;
     if (notBeforeMs === null) return true;
     const timestamp = itemTimestamp(comment);
-    return timestamp !== null && timestamp > notBeforeMs;
+    return timestamp !== null && timestamp >= notBeforeMs;
   }));
 }
 
@@ -256,7 +258,8 @@ function providerNeutralReviewReceipt(item, context = {}) {
   const workflowRunId = Number(session.workflowRunId);
   const workflowRunAttempt = Number(session.workflowRunAttempt);
   const workflowId = Number(context.independentReviewWorkflowId);
-  const run = (Array.isArray(context.independentReviewRuns) ? context.independentReviewRuns : []).find((candidate) => (
+  const allRuns = Array.isArray(context.independentReviewRuns) ? context.independentReviewRuns : [];
+  const run = allRuns.find((candidate) => (
     Number(candidate?.id) === workflowRunId
     && Number(candidate?.run_attempt ?? candidate?.runAttempt) === workflowRunAttempt
   ));
@@ -279,7 +282,11 @@ function providerNeutralReviewReceipt(item, context = {}) {
   });
   if (!receiptValidation.valid || receiptValidation.operatorBootstrapRequired === true) return null;
 
-  const workflowValidation = validateIndependentReviewWorkflowRun(run || {}, jobs, {
+  const workflowValidation = validateExactHeadIndependentReviewRunV1({
+    run: run || {},
+    allRuns,
+    jobs,
+    comments: Array.isArray(context.comments) ? context.comments : [],
     repository: text(context.repository),
     prNumber: Number(context.prNumber),
     expectedHead: text(context.headSha).toLowerCase(),
@@ -511,6 +518,7 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
     independentReviewRuns: input.independentReviewRuns,
     independentReviewJobsByRunId: input.independentReviewJobsByRunId,
     trustedCoordinatorLogin,
+    comments,
   };
   const precomputedReceipt = latestPrecomputedProviderNeutralReceipt(comments, reviewContext);
 

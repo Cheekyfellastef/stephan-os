@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const workflowUrl = new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url);
 const readWorkflow = () => fs.readFileSync(workflowUrl, 'utf8').replaceAll('\r\n', '\n');
+const INDEPENDENT_REVIEW_WORKFLOW_ID = 318073448;
 
 function step(source, name, nextName = null) {
   const marker = `      - name: ${name}\n`;
@@ -51,4 +52,14 @@ test('successful artifact recovery adds no second review dispatch, reviewer, or 
   assert.equal((workflow.match(/node scripts\/recover-successful-independent-review-v1\.mjs/g) || []).length, 1);
   assert.doesNotMatch(workflow, /recover-successful-independent-review[\s\S]*?\/dispatches/);
   assert.doesNotMatch(workflow, /recover-successful-independent-review[\s\S]*?rerun-failed-jobs/);
+});
+
+test('workflow-run artifact consumption binds the immutable canonical workflow id instead of lossy path or run-name metadata', () => {
+  const workflow = readWorkflow();
+  const canonicalWorkflowIdCheck = `github.event.workflow_run.workflow_id == ${INDEPENDENT_REVIEW_WORKFLOW_ID}`;
+  const staticRunNameCheck = "github.event.workflow_run.name == 'Independent Merge Security Review'";
+
+  assert.equal(workflow.split(canonicalWorkflowIdCheck).length - 1, 4);
+  assert.doesNotMatch(workflow, /github\.event\.workflow_run\.path/);
+  assert.equal(workflow.split(staticRunNameCheck).length - 1, 0);
 });
