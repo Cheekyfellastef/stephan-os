@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
@@ -18,6 +19,19 @@ import {
   isSharedWorkspaceParticipantId,
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
+  appendExecutionReceipt,
+  createExecutionReceipt,
+  readCurrentExecutionReceipt,
+} from '../../shared/agents/executionReceiptV1.mjs';
+import {
+  claimSourceMutationLease,
+  releaseSourceMutationLease,
+} from './programmeAuthorityService.js';
+
+const SOURCE_EXECUTION_BINDING_SCHEMA = 'stephanos.source-build-execution-binding.v1';
+const SOURCE_MUTATION_ADAPTERS = new Set(['codex', 'openclaw-local', 'chatgpt-github', 'foundry-forge']);
+const EXECUTION_RECEIPT_PROOF_REFS = Object.freeze(['receipts/execution-receipts.jsonl']);
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -77,6 +91,269 @@ function encodedMissionIdentity(value) {
     issueNumber: positiveInteger(criticalGoal?.[1]),
     prNumber: null,
   };
+}
+
+function sourceWorkspaceRoot(options = {}) {
+  return text(
+    options.sharedWorkspaceRoot
+      || options.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
+      || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+  );
+}
+
+function sourceExecutionDependencies(options = {}) {
+  const overrides = options.testOnly === true && options.sourceExecutionDependencies
+    ? options.sourceExecutionDependencies
+    : {};
+  return {
+    claimSourceMutationLease: overrides.claimSourceMutationLease ?? claimSourceMutationLease,
+    releaseSourceMutationLease: overrides.releaseSourceMutationLease ?? releaseSourceMutationLease,
+    appendExecutionReceipt: overrides.appendExecutionReceipt ?? appendExecutionReceipt,
+    readCurrentExecutionReceipt: overrides.readCurrentExecutionReceipt ?? readCurrentExecutionReceipt,
+  };
+}
+
+function sourceWorkerType(adapter) {
+  return ({
+    codex: 'remote-codex',
+    'openclaw-local': 'openclaw',
+    'chatgpt-github': 'github-first',
+    'foundry-forge': 'orchestration-engine',
+  })[adapter] || '';
+}
+
+function compactId(prefix, values = []) {
+  const digest = createHash('sha256').update(JSON.stringify(values)).digest('hex').slice(0, 24);
+  return `${prefix}-${digest}`;
+}
+
+function executionWorkerId(value) {
+  const normalized = text(value).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+/, '').slice(0, 80);
+  return /^[a-z0-9]/.test(normalized) ? normalized : compactId('worker', [value]);
+}
+
+function nowUtc(options = {}, afterUtc = '') {
+  const requested = options.now instanceof Date ? options.now : new Date();
+  let timestamp = Number.isFinite(requested.getTime()) ? requested.getTime() : Date.now();
+  const after = Date.parse(text(afterUtc));
+  if (Number.isFinite(after) && timestamp <= after) timestamp = after + 1;
+  return new Date(timestamp).toISOString();
+}
+
+function exactPrSourceGrant(action, grant, adapter) {
+  return Boolean(
+    action?.actionKind === 'agent-handoff'
+    && SOURCE_MUTATION_ADAPTERS.has(adapter)
+    && grant?.schemaVersion === 'stephanos.mission-worker-action-grant.v1'
+    && text(grant.controllerId) === 'durable-flywheel-controller'
+    && text(grant.laneId)
+    && text(grant.repository)
+    && positiveInteger(grant.issueNumber)
+    && positiveInteger(grant.prNumber)
+    && text(grant.branch)
+    && /^[0-9a-f]{40}$/.test(text(grant.headSha).toLowerCase())
+    && text(grant.workerId) === text(action.workerId)
+  );
+}
+
+function exactClaimBinding(record, expected) {
+  return Boolean(
+    record
+    && text(record.leaseId) === expected.leaseId
+    && text(record.laneId) === expected.laneId
+    && text(record.repository) === expected.repository
+    && positiveInteger(record.issueNumber) === expected.issueNumber
+    && positiveInteger(record.prNumber) === expected.prNumber
+    && text(record.branch) === expected.branch
+    && text(record.headSha).toLowerCase() === expected.headSha
+    && text(record.ownerId) === expected.ownerId
+  );
+}
+
+function createSourceExecutionBinding(action, grant, lease) {
+  const executionId = compactId('source-exec', [
+    grant.laneId,
+    action.actionId,
+    grant.repository,
+    grant.prNumber,
+    grant.headSha,
+  ]);
+  return Object.freeze({
+    schemaVersion: SOURCE_EXECUTION_BINDING_SCHEMA,
+    leaseId: lease.leaseId,
+    laneId: lease.laneId,
+    repository: lease.repository,
+    issueNumber: lease.issueNumber,
+    prNumber: lease.prNumber,
+    branch: lease.branch,
+    headSha: lease.headSha,
+    ownerId: lease.ownerId,
+    executionId,
+    receiptWorkerId: executionWorkerId(action.workerId),
+    workerType: sourceWorkerType(action.adapter),
+    actionId: action.actionId,
+    missionId: action.missionId,
+    adapter: action.adapter,
+    actionWorkerId: action.workerId,
+    queuedReceiptId: `${executionId}-queued`,
+    releaseOnlyExactLease: true,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  });
+}
+
+function createSourceExecutionReceipt(binding, state, previous = null, options = {}) {
+  const sequence = previous ? previous.sequence + 1 : 1;
+  return createExecutionReceipt({
+    receiptId: sequence === 1 ? binding.queuedReceiptId : `${binding.executionId}-${state}-${sequence}`,
+    repository: binding.repository,
+    issueNumber: binding.issueNumber,
+    prNumber: binding.prNumber,
+    branch: binding.branch,
+    sourceHead: binding.headSha,
+    workerId: binding.receiptWorkerId,
+    workerType: binding.workerType,
+    executionId: binding.executionId,
+    leaseKey: binding.leaseId,
+    state,
+    phase: text(options.phase, `source-${state}`),
+    sequence,
+    predecessorReceiptId: previous?.receiptId || '',
+    timestampUtc: nowUtc(options, previous?.timestampUtc),
+    blocker: state === 'failed' ? text(options.blocker, 'source execution failed before worker claim') : '',
+    operatorActionRequired: false,
+    proofRefs: EXECUTION_RECEIPT_PROOF_REFS,
+    expectedNextAction: ['completed', 'failed', 'cancelled'].includes(state)
+      ? ''
+      : text(options.expectedNextAction, 'advance exact source execution'),
+  });
+}
+
+async function releaseExactSourceExecution(binding, options = {}, afterUtc = '') {
+  const deps = sourceExecutionDependencies(options);
+  const root = sourceWorkspaceRoot(options);
+  return deps.releaseSourceMutationLease({
+    leaseId: binding.leaseId,
+    laneId: binding.laneId,
+    repository: binding.repository,
+    issueNumber: binding.issueNumber,
+    prNumber: binding.prNumber,
+    branch: binding.branch,
+    headSha: binding.headSha,
+    ownerId: binding.ownerId,
+    nowUtc: nowUtc(options, afterUtc),
+  }, {
+    root,
+    repoRoot: options.repoRoot,
+    env: options.env || process.env,
+  });
+}
+
+async function terminalizeFailedSourceExecution(binding, reason, options = {}) {
+  if (!binding) return { ok: true, terminalized: false, released: false, reason: 'SOURCE_EXECUTION_NOT_APPLICABLE' };
+  const deps = sourceExecutionDependencies(options);
+  const root = sourceWorkspaceRoot(options);
+  const current = await deps.readCurrentExecutionReceipt(root, {
+    executionId: binding.executionId,
+    leaseKey: binding.leaseId,
+    expectedHead: binding.headSha,
+  }, { repoRoot: options.repoRoot });
+  if (!current?.ok || !current.receipt) {
+    return { ok: false, terminalized: false, released: false, reason: `SOURCE_EXECUTION_RECEIPT_READ_FAILED:${text(current?.reason, 'missing-current-receipt')}`, current };
+  }
+  let receipt = current.receipt;
+  if (!['completed', 'failed', 'cancelled'].includes(receipt.state)) {
+    const failed = createSourceExecutionReceipt(binding, 'failed', receipt, {
+      ...options,
+      phase: 'queue-publication-failed',
+      blocker: reason,
+    });
+    const append = await deps.appendExecutionReceipt(root, failed, { repoRoot: options.repoRoot });
+    if (!append?.ok) {
+      return { ok: false, terminalized: false, released: false, reason: `SOURCE_EXECUTION_TERMINAL_RECEIPT_FAILED:${text(append?.reason)}`, append };
+    }
+    receipt = failed;
+  }
+  const release = await releaseExactSourceExecution(binding, options, receipt.timestampUtc);
+  return {
+    ok: release?.ok === true,
+    terminalized: true,
+    released: release?.ok === true,
+    reason: release?.ok === true ? 'SOURCE_EXECUTION_FAILED_AND_RELEASED' : `SOURCE_EXECUTION_RELEASE_FAILED:${text(release?.reason)}`,
+    receipt,
+    release,
+  };
+}
+
+async function prepareSourceExecution(action, grant, adapter, options = {}) {
+  if (!exactPrSourceGrant(action, grant, adapter)) {
+    return { ok: true, binding: null, queuedReceipt: null, claim: null };
+  }
+  const root = sourceWorkspaceRoot(options);
+  if (!root) return { ok: false, reason: 'SOURCE_EXECUTION_SHARED_WORKSPACE_ROOT_MISSING', binding: null };
+  const deps = sourceExecutionDependencies(options);
+  const leaseId = compactId('source-lease', [grant.laneId, action.actionId, grant.repository, grant.prNumber, grant.headSha]);
+  const expected = {
+    leaseId,
+    laneId: text(grant.laneId),
+    repository: text(grant.repository),
+    issueNumber: positiveInteger(grant.issueNumber),
+    prNumber: positiveInteger(grant.prNumber),
+    branch: text(grant.branch),
+    headSha: text(grant.headSha).toLowerCase(),
+    ownerId: text(action.workerId),
+  };
+  const claim = await deps.claimSourceMutationLease({
+    ...expected,
+    nowUtc: nowUtc(options),
+    proofRefs: EXECUTION_RECEIPT_PROOF_REFS,
+  }, {
+    root,
+    repoRoot: options.repoRoot,
+    env: options.env || process.env,
+  });
+  if (claim?.ok !== true || !exactClaimBinding(claim.record, expected)) {
+    return {
+      ok: false,
+      reason: claim?.ok === true ? 'SOURCE_MUTATION_LEASE_CLAIM_BINDING_MISMATCH' : `SOURCE_MUTATION_LEASE_CLAIM_FAILED:${text(claim?.reason)}`,
+      claim,
+      binding: null,
+    };
+  }
+  const binding = createSourceExecutionBinding(action, grant, claim.record);
+  const queuedReceipt = createSourceExecutionReceipt(binding, 'queued', null, {
+    ...options,
+    phase: 'source-dispatch-queued',
+    expectedNextAction: 'Mission Worker claims the exact queued source action.',
+  });
+  const append = await deps.appendExecutionReceipt(root, queuedReceipt, { repoRoot: options.repoRoot });
+  if (append?.ok !== true) {
+    const release = await releaseExactSourceExecution(binding, options, queuedReceipt.timestampUtc);
+    return {
+      ok: false,
+      reason: `SOURCE_EXECUTION_QUEUED_RECEIPT_FAILED:${text(append?.reason)}`,
+      claim,
+      append,
+      release,
+      binding: null,
+    };
+  }
+  return { ok: true, binding, queuedReceipt, claim, append };
+}
+
+async function exactExistingQueueItem(path, expected) {
+  try {
+    const item = JSON.parse(await readFile(path, 'utf8'));
+    return Boolean(
+      item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+      && text(item.adapter) === expected.adapter
+      && text(item.actionId) === expected.actionId
+      && text(item.missionId) === expected.missionId
+      && JSON.stringify(item.sourceExecution || null) === JSON.stringify(expected.sourceExecution || null)
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function publishExternalLaneHandoff(state, action, options = {}) {
@@ -363,20 +640,69 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
       };
     }
   }
+
+  const sourcePreparation = await prepareSourceExecution(action, options.actionGrant, adapter, options);
+  if (sourcePreparation.ok !== true) {
+    return {
+      published: false,
+      reason: sourcePreparation.reason,
+      action,
+      payload,
+      path: '',
+      adapter,
+      sourceExecutionPreparation: sourcePreparation,
+    };
+  }
+  const sourceExecution = sourcePreparation.binding;
   const path = resolve(paths.pending, `${action.actionId}.json`);
-  const published = await createImmutableJson(path, {
+  const queueItem = {
     schemaVersion: 'stephanos.mission-worker-queue-item.v1',
     adapter,
     actionId: action.actionId,
     missionId: state.missionId,
     createdAt: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString(),
+    ...(sourceExecution ? { sourceExecution } : {}),
     payload,
-  });
+  };
+  let published;
+  try {
+    published = await createImmutableJson(path, queueItem);
+  } catch (error) {
+    const cleanup = sourceExecution
+      ? await terminalizeFailedSourceExecution(sourceExecution, `queue-write:${error?.code || error?.message || 'failed'}`, options)
+      : null;
+    return {
+      published: false,
+      reason: 'worker-queue-publication-failed',
+      action,
+      payload,
+      path: '',
+      adapter,
+      sourceExecution,
+      sourceExecutionCleanup: cleanup,
+    };
+  }
   if (!published) {
+    const exactExisting = await exactExistingQueueItem(path, queueItem);
+    if (sourceExecution && !exactExisting) {
+      const cleanup = await terminalizeFailedSourceExecution(sourceExecution, 'conflicting-worker-queue-item', options);
+      return {
+        published: false,
+        reason: 'source-action-queue-conflict',
+        action,
+        path: '',
+        adapter,
+        sourceExecution,
+        sourceExecutionCleanup: cleanup,
+      };
+    }
     if (['openclaw-local', 'chatgpt-github', 'foundry-forge'].includes(adapter)) {
       const fabricPublication = await publishExternalLaneHandoff(state, action, options);
       if (fabricPublication?.ok !== true) {
-        await unlink(path).catch(() => {});
+        const removed = await unlink(path).then(() => true).catch(() => false);
+        const cleanup = sourceExecution && removed
+          ? await terminalizeFailedSourceExecution(sourceExecution, `shared-workspace-handoff:${text(fabricPublication?.reason, 'publication-failed')}`, options)
+          : null;
         return {
           published: false,
           reason: `shared-workspace-handoff:${text(fabricPublication?.reason, 'publication-failed')}`,
@@ -384,6 +710,8 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
           path: '',
           adapter,
           fabricPublication,
+          sourceExecution,
+          sourceExecutionCleanup: cleanup,
         };
       }
       return {
@@ -395,6 +723,20 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
         adapter,
         fabricPublication,
         queueItemReused: true,
+        sourceExecution,
+      };
+    }
+    if (sourceExecution && exactExisting) {
+      return {
+        published: true,
+        reason: 'source-action-publication-reconciled',
+        action,
+        payload,
+        path,
+        adapter,
+        fabricPublication: null,
+        queueItemReused: true,
+        sourceExecution,
       };
     }
     return {
@@ -408,7 +750,10 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
   if (['openclaw-local', 'chatgpt-github', 'foundry-forge'].includes(adapter)) {
     fabricPublication = await publishExternalLaneHandoff(state, action, options);
     if (fabricPublication?.ok !== true) {
-      await unlink(path).catch(() => {});
+      const removed = await unlink(path).then(() => true).catch(() => false);
+      const cleanup = sourceExecution && removed
+        ? await terminalizeFailedSourceExecution(sourceExecution, `shared-workspace-handoff:${text(fabricPublication?.reason, 'publication-failed')}`, options)
+        : null;
       return {
         published: false,
         reason: `shared-workspace-handoff:${text(fabricPublication?.reason, 'publication-failed')}`,
@@ -416,6 +761,8 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
         path: '',
         adapter,
         fabricPublication,
+        sourceExecution,
+        sourceExecutionCleanup: cleanup,
       };
     }
   }
@@ -427,6 +774,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     path,
     adapter,
     fabricPublication,
+    sourceExecution,
   };
 }
 
@@ -469,15 +817,30 @@ export async function publishMissionWorkerAction(inputState, options = {}) {
   };
   if (result.published && result.action.actionKind === 'agent-handoff') {
     const action = result.action;
-    await appendMissionEvent(state.missionId, {
-      eventId: `dispatch-${action.actionId}`.slice(0, 128),
-      eventType: 'AGENT_DISPATCHED',
-      agentId: action.adapter === 'openclaw-readonly' ? 'openclaw-readonly' : action.adapter,
-      adapter: action.adapter,
-      actionId: action.actionId,
-      workerId: action.workerId,
-      summary: `${action.adapter} handoff published to the durable worker queue.`,
-    }, options);
+    try {
+      await appendMissionEvent(state.missionId, {
+        eventId: `dispatch-${action.actionId}`.slice(0, 128),
+        eventType: 'AGENT_DISPATCHED',
+        agentId: action.adapter === 'openclaw-readonly' ? 'openclaw-readonly' : action.adapter,
+        adapter: action.adapter,
+        actionId: action.actionId,
+        workerId: action.workerId,
+        summary: `${action.adapter} handoff published to the durable worker queue.`,
+      }, options);
+    } catch (error) {
+      if (!result.sourceExecution) throw error;
+      const removed = await unlink(result.path).then(() => true).catch(() => false);
+      const cleanup = removed
+        ? await terminalizeFailedSourceExecution(result.sourceExecution, `agent-dispatched-event:${error?.message || 'failed'}`, options)
+        : null;
+      return {
+        ...result,
+        published: false,
+        reason: removed ? 'agent-dispatched-event-failed' : 'agent-dispatched-event-failed-queue-ownership-uncertain',
+        path: '',
+        sourceExecutionCleanup: cleanup,
+      };
+    }
   }
   return result;
 }
@@ -515,19 +878,19 @@ export async function publishNextMissionWorkerAction(options = {}) {
         };
       }
       if (state.currentPhase === 'REPAIR_REQUIRED') {
-        const prepared = await beginRepairIfRequired(state, options);
-        if (prepared.preconditionFailed) {
+        const preparedRepair = await beginRepairIfRequired(state, options);
+        if (preparedRepair.preconditionFailed) {
           return {
             published: false,
             reason: 'repair-transition-precondition-failed',
-            blockers: [prepared.reason || 'mission-state-precondition-failed'],
+            blockers: [preparedRepair.reason || 'mission-state-precondition-failed'],
             action: preview,
             path: '',
             repairStarted: false,
           };
         }
-        actionState = prepared.state;
-        repairStarted = prepared.repairStarted;
+        actionState = preparedRepair.state;
+        repairStarted = preparedRepair.repairStarted;
         const actualAction = buildMissionWorkerAction(actionState, options);
         const actualValidation = validateExactActionGrant(
           actionState,
