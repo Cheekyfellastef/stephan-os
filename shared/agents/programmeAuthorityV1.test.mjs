@@ -518,6 +518,8 @@ test('controller and Mission Worker heartbeats remain distinct authorities', () 
 
   const worker = createMissionWorkerHeartbeatRecord({
     timestampUtc: NOW,
+    workerStartedAtUtc: '2026-07-30T09:59:00.000Z',
+    launchIdentityId: 'a'.repeat(64),
     repositoryRoot: process.cwd(),
     branch: 'main',
     headSha: HEAD,
