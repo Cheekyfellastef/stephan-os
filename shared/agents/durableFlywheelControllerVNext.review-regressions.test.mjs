@@ -311,7 +311,7 @@ test('active-lane mutation authority is exposed only after its durable transitio
     missionKind: 'implementation',
     repository: 'Cheekyfellastef/stephan-os',
     repositoryRoot: 'C:\\repo',
-    branch: lane.branch,
+    branch: 'openclaw/goal-1497-pr-1617',
     worktreePath: 'C:\\worktree',
     allowedFiles: ['shared/agents/**'],
     requiredEvidence: ['focused test output'],
