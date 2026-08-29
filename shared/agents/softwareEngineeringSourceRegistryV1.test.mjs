@@ -114,6 +114,54 @@ test('blocks direct reuse when version or licence evidence is missing', () => {
   );
 });
 
+test('reference-only classes and evidence planes cannot grant direct or adaptation implementation rights', () => {
+  for (const reuseRoute of ['DIRECT_REUSE_ALLOWED', 'REUSE_WITH_ATTRIBUTION_OR_CONDITIONS', 'ADAPTATION_ALLOWED']) {
+    const secondaryClass = validateSoftwareEngineeringSourceRecordInputV1(sourceInput({
+      sourceId: `secondary-${reuseRoute.toLowerCase()}`,
+      sourceClass: 'SECONDARY_REFERENCE_ONLY',
+      canonicalLocation: 'https://example.com/reference',
+      publisherOrOwner: 'example-author',
+      revisionOrVersion: null,
+      licence: 'MIT',
+      rightsEvidence: ['evidence:reference-licence'],
+      reuseRoute,
+      evidencePlane: 'SECONDARY_REFERENCE',
+    }));
+    assert.equal(secondaryClass.valid, false, reuseRoute);
+    assert.ok(secondaryClass.blockers.includes('reuse-route-incompatible-with-source-evidence'), reuseRoute);
+
+    const secondaryPlane = validateSoftwareEngineeringSourceRecordInputV1(sourceInput({
+      sourceId: `secondary-plane-${reuseRoute.toLowerCase()}`,
+      licence: 'MIT',
+      rightsEvidence: ['evidence:reference-licence'],
+      reuseRoute,
+      evidencePlane: 'SECONDARY_REFERENCE',
+    }));
+    assert.equal(secondaryPlane.valid, false, reuseRoute);
+    assert.ok(secondaryPlane.blockers.includes('reuse-route-incompatible-with-source-evidence'), reuseRoute);
+  }
+});
+
+test('fresh evidence rejects impossible future retrieval timestamps beyond bounded clock skew', () => {
+  const asOfUtc = '2026-08-29T20:00:00.000Z';
+  const acceptedBoundary = validateSoftwareEngineeringSourceRecordInputV1(sourceInput({
+    retrievedAtUtc: '2026-08-29T20:05:00.000Z',
+  }), { asOfUtc });
+  assert.equal(acceptedBoundary.valid, true);
+
+  const impossibleFuture = validateSoftwareEngineeringSourceRecordInputV1(sourceInput({
+    retrievedAtUtc: '2026-08-29T20:05:00.001Z',
+  }), { asOfUtc });
+  assert.equal(impossibleFuture.valid, false);
+  assert.ok(impossibleFuture.blockers.includes('retrieved-at-in-future'));
+
+  const farFuture = validateSoftwareEngineeringSourceRecordInputV1(sourceInput({
+    retrievedAtUtc: '2099-01-01T00:00:00.000Z',
+  }), { asOfUtc });
+  assert.equal(farFuture.valid, false);
+  assert.ok(farFuture.blockers.includes('retrieved-at-in-future'));
+});
+
 test('versioned source classes reject mutable aliases and branch refs', () => {
   for (const revisionOrVersion of ['main', 'HEAD', 'latest', 'refs/heads/release']) {
     assert.throws(
