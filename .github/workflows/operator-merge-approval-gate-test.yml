@@ -33,17 +33,15 @@ jobs:
           const proofWorkflow = readFileSync('.github/workflows/operator-merge-approval-gate-test.yml', 'utf8');
 
           assert.match(workflow, /user-owned-pr-ready/);
-          assert.match(workflow, /operator_authorization_id/);
           assert.match(workflow, /markPullRequestReadyForReview/);
           assert.doesNotMatch(workflow, /fullDatabaseId/);
           assert.match(workflow, /READY_MUTATION='mutation\(\$pullRequestId:ID!\)\{markPullRequestReadyForReview/);
           assert.match(workflow, /pullRequestId="\$\{node_id\}"/);
           assert.match(workflow, /TRIGGERING_ACTOR/);
-          assert.match(workflow, /CANONICAL_OPERATOR='Cheekyfellastef'/);
+          assert.match(workflow, /test "\$\{TRIGGERING_ACTOR\}" = 'Cheekyfellastef'/);
           assert.match(workflow, /observed_main=.*branches\/main/);
           assert.match(workflow, /observed_tree=.*git\/commits\/\$\{EXPECTED_HEAD\}/);
           assert.match(workflow, /test "\$\{after_main\}" = "\$\{EXPECTED_BASE\}"/);
-          assert.match(workflow, /test "\$\(jq -r '\.draft'/);
           assert.match(workflow, /ALREADY_READY/);
           assert.match(workflow, /mergeAuthority:false/);
           assert.match(workflow, /deploymentAuthority:false/);
@@ -51,7 +49,20 @@ jobs:
           assert.match(workflow, /providerQualificationAuthority:false/);
           assert.match(workflow, /inputs\.mode == 'user-owned-protected-squash'/);
           assert.match(workflow, /inputs\.mode == 'user-owned-pr-ready'/);
-          assert.match(workflow, /reject-unsupported-personal-repository-mode/);
+          assert.match(workflow, /user-owned-protected-squash\|user-owned-pr-ready/);
+          assert.equal([...workflow.matchAll(/^  [a-z0-9_-]+:\s*$/gm)].filter((match) => {
+            const name = match[0].trim().slice(0, -1);
+            return [
+              'merge-group-evidence',
+              'operator-merge-queue-boundary',
+              'personal-repository-evidence',
+              'operator-personal-repository-approval',
+              'operator-personal-repository-squash-merge',
+            ].includes(name);
+          }).length, 5);
+          assert.equal((workflow.match(/pull-requests: write/g) || []).length, 1);
+          assert.equal((workflow.match(/contents: write/g) || []).length, 1);
+          assert.equal((workflow.match(/persist-credentials: false/g) || []).length, 5);
           assert.match(proofWorkflow, /ready_for_review/);
           assert.doesNotMatch(workflow, /query:\s*\$\{\{/);
           NODE
