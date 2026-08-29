@@ -301,7 +301,7 @@ test('active-lane mutation authority is exposed only after its durable transitio
     repository: 'Cheekyfellastef/stephan-os',
     issueNumber: 1497,
     prNumber: 1617,
-    branch: 'feat/durable-flywheel-controller-vnext',
+    branch: 'codex/durable-flywheel-controller-vnext',
     headSha: 'b'.repeat(40),
   };
   const activeMission = createMissionOrchestratorState({
