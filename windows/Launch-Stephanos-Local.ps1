@@ -117,7 +117,7 @@ function Write-IgnitionTranscript([hashtable]$Event) {
     proofWorkspace = $ignitionProofRoot
   }
   foreach ($key in $Event.Keys) { $record[$key] = $Event[$key] }
-  Add-Content -LiteralPath $ignitionTranscriptPath -Encoding UTF8 -Value ($record | ConvertTo-Json -Depth 10 -Compress)
+  Add-IgnitionUtf8NoBomLine -Path $ignitionTranscriptPath -Value ($record | ConvertTo-Json -Depth 10 -Compress)
 }
 
 function Write-LiveLog([string]$Message) {
@@ -128,6 +128,24 @@ function Write-LiveLog([string]$Message) {
 function Initialize-IgnitionProofWorkspace {
   New-Item -ItemType Directory -Force -Path $ignitionProofRoot | Out-Null
   New-Item -ItemType Directory -Force -Path (Join-Path $ignitionProofRoot 'logs') | Out-Null
+}
+
+function Write-IgnitionUtf8NoBomText([string]$Path, [string]$Value) {
+  $parent = Split-Path -Parent $Path
+  if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+  $encoding = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($Path, $Value, $encoding)
+}
+
+function Add-IgnitionUtf8NoBomLine([string]$Path, [string]$Value) {
+  $parent = Split-Path -Parent $Path
+  if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+  $encoding = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::AppendAllText($Path, "$Value$([Environment]::NewLine)", $encoding)
+}
+
+function Write-IgnitionJson([string]$Path, [object]$Value, [int]$Depth = 10) {
+  Write-IgnitionUtf8NoBomText -Path $Path -Value ($Value | ConvertTo-Json -Depth $Depth)
 }
 
 function Get-IgnitionStageSnapshot([string]$CurrentStageId) {
@@ -251,7 +269,7 @@ function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extr
   Initialize-IgnitionProofWorkspace
   $supervisorStatus = Convert-SupervisorRecordToIgnitionStatus -SupervisorRecord (Get-BattleBridgeSupervisorCurrentRecord) -FallbackPhase $Phase -FallbackMessage $Message
   if ($supervisorStatus -and ($supervisorStatus.trafficLight -eq 'green' -or $supervisorStatus.phase -eq 'blocked')) {
-    $supervisorStatus | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $ignitionStatusPath -Encoding UTF8
+    Write-IgnitionJson -Path $ignitionStatusPath -Value $supervisorStatus -Depth 12
     Write-IgnitionTranscript -Event @{ event = 'ignition-status'; phase = $supervisorStatus.phase; message = $supervisorStatus.message; currentStage = $supervisorStatus.currentStage; blocker = $supervisorStatus.blocker; battleBridgeSupervisorCurrentPath = $supervisorStatus.battleBridgeSupervisorCurrentPath }
     Update-IgnitionSplashScreen -Status $supervisorStatus
     return
@@ -288,7 +306,7 @@ function Write-IgnitionStatus([string]$Phase, [string]$Message, [hashtable]$Extr
     destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs'); transcriptPath = $ignitionTranscriptPath; supportSnapshotPath = $ignitionSupportSnapshotPath }
   }
   foreach ($key in $Extra.Keys) { $payload[$key] = $Extra[$key] }
-  $payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ignitionStatusPath -Encoding UTF8
+  Write-IgnitionJson -Path $ignitionStatusPath -Value $payload -Depth 8
   Write-IgnitionTranscript -Event @{ event = 'ignition-status'; phase = $Phase; message = $Message; currentStage = $currentStage; blocker = if ($Extra.ContainsKey('blocker')) { $Extra.blocker } else { '' } }
   Update-IgnitionSplashScreen -Status $payload
 }
@@ -485,14 +503,15 @@ function Write-StephanosBrowserSurfaceReceipt([System.Collections.IDictionary]$S
   $script:browserSurfaceReceipts = @($script:browserSurfaceReceipts | Where-Object { $_.id -ne $Surface.Id }) + @($record)
   $supervisor = Get-BattleBridgeSupervisorCurrentRecord
   $sourceHead = if ($supervisor -and [string]$supervisor.sourceTruthVerdict.expectedHead -match '^[0-9a-f]{40}$') { [string]$supervisor.sourceTruthVerdict.expectedHead } else { '' }
-  [ordered]@{
+  $browserSurfaceProjection = [ordered]@{
     schemaVersion = 'stephanos.ignition-browser-surface-receipt.v1'
     generatedAt = (Get-Date).ToUniversalTime().ToString('o')
     sourceHead = $sourceHead
     edgeAppIsolation = 'fixed-per-surface-profile'
     arbitraryBrowserExecutableAllowed = $false
     surfaces = @($script:browserSurfaceReceipts)
-  } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ignitionBrowserSurfaceReceiptPath -Encoding UTF8
+  }
+  Write-IgnitionJson -Path $ignitionBrowserSurfaceReceiptPath -Value $browserSurfaceProjection -Depth 8
   return $record
 }
 
@@ -974,7 +993,7 @@ function Write-IgnitionSupportSnapshot([string]$Verdict, [hashtable]$Extra = @{}
     logRoot = (Join-Path $ignitionProofRoot 'logs')
   }
   foreach ($key in $Extra.Keys) { $snapshot[$key] = $Extra[$key] }
-  $snapshot | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ignitionSupportSnapshotPath -Encoding UTF8
+  Write-IgnitionJson -Path $ignitionSupportSnapshotPath -Value $snapshot -Depth 10
   Write-IgnitionTranscript -Event @{ event = 'support-snapshot'; verdict = $Verdict; supportSnapshotPath = $ignitionSupportSnapshotPath }
 }
 
