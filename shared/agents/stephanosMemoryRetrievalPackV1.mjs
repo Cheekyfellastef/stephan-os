@@ -46,6 +46,7 @@ const ABSOLUTE_MAX_RECORDS = 64;
 const DEFAULT_MAX_BYTES = 32 * 1024;
 const ABSOLUTE_MAX_BYTES = 64 * 1024;
 const MAX_LIST_VALUES = 32;
+const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1_000;
 
 const RECORD_KEYS = Object.freeze([
   'recordId',
@@ -193,7 +194,7 @@ function denseStringList(value, maximum = MAX_LIST_VALUES) {
   return [...new Set(output)];
 }
 
-function normalizeRecord(value, index, errors, omissions) {
+function normalizeRecord(value, index, errors, omissions, asOfMs) {
   const descriptors = safePlainObject(value);
   const prefix = `record-${index + 1}`;
   if (!descriptors) {
@@ -225,6 +226,12 @@ function normalizeRecord(value, index, errors, omissions) {
   const updatedAtMs = exactIso(updatedAtUtc);
   if (observedAtMs === null) errors.push(`${prefix}:observedAtUtc-invalid`);
   if (updatedAtMs === null) errors.push(`${prefix}:updatedAtUtc-invalid`);
+  if (observedAtMs !== null && observedAtMs > asOfMs + MAX_FUTURE_CLOCK_SKEW_MS) {
+    errors.push(`${prefix}:observedAtUtc-in-future`);
+  }
+  if (updatedAtMs !== null && updatedAtMs > asOfMs + MAX_FUTURE_CLOCK_SKEW_MS) {
+    errors.push(`${prefix}:updatedAtUtc-in-future`);
+  }
   if (observedAtMs !== null && updatedAtMs !== null && updatedAtMs < observedAtMs) {
     errors.push(`${prefix}:updated-before-observed`);
   }
@@ -267,6 +274,10 @@ function normalizeRecord(value, index, errors, omissions) {
   ).trim().toUpperCase();
   if (!RELATIONSHIP_EVIDENCE_CLASSES.has(relationshipEvidenceClass)) {
     errors.push(`${prefix}:relationshipEvidenceClass-invalid`);
+  }
+  if (relationshipEvidenceClass === 'LOW_AUTHORITY_INTERACTION_INFERENCE'
+      && authorityClass !== STEPHANOS_MEMORY_AUTHORITY_CLASS.INFERRED) {
+    errors.push(`${prefix}:relationship-inference-authority-incompatible`);
   }
 
   if (errors.some((error) => error.startsWith(`${prefix}:`))) return null;
@@ -501,6 +512,12 @@ export function buildStephanosMemoryRetrievalPackV1(input = {}) {
     errors.push('records-exceed-input-bound');
   }
 
+  const explicitAsOfUtc = ownData(top, 'asOfUtc');
+  const asOfMs = explicitAsOfUtc === undefined || explicitAsOfUtc === null
+    ? Date.now()
+    : exactIso(explicitAsOfUtc);
+  if (asOfMs === null) errors.push('asOfUtc-invalid');
+
   const selectors = normalizeSelectors(ownData(top, 'selectors'), errors);
   const budget = normalizeBudget(ownData(top, 'budget'), errors);
   if (errors.length) return emptyResult(packKind, errors, omissions);
@@ -511,7 +528,7 @@ export function buildStephanosMemoryRetrievalPackV1(input = {}) {
       errors.push(`record-${index + 1}:sparse-array-entry`);
       continue;
     }
-    const record = normalizeRecord(recordsInput[index], index, errors, omissions);
+    const record = normalizeRecord(recordsInput[index], index, errors, omissions, asOfMs);
     if (record) normalized.push(record);
   }
   if (errors.length) return emptyResult(packKind, errors, omissions);
