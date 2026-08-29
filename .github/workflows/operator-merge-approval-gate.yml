@@ -143,15 +143,15 @@ jobs:
       deployments: read
       pull-requests: read
     outputs:
-      repository: ${{ steps.evidence.outputs.repository }}
-      pr_number: ${{ steps.evidence.outputs.pr_number }}
-      branch: ${{ steps.evidence.outputs.branch }}
-      source_head: ${{ steps.evidence.outputs.source_head }}
-      source_tree: ${{ steps.evidence.outputs.source_tree }}
-      base_sha: ${{ steps.evidence.outputs.base_sha }}
-      workflow_run_id: ${{ steps.evidence.outputs.workflow_run_id }}
-      workflow_run_attempt: ${{ steps.evidence.outputs.workflow_run_attempt }}
-      evidence_sha256: ${{ steps.evidence.outputs.evidence_sha256 }}
+      repository: ${{ steps.evidence.outputs.repository || steps.ready_evidence.outputs.repository }}
+      pr_number: ${{ steps.evidence.outputs.pr_number || steps.ready_evidence.outputs.pr_number }}
+      branch: ${{ steps.evidence.outputs.branch || steps.ready_evidence.outputs.branch }}
+      source_head: ${{ steps.evidence.outputs.source_head || steps.ready_evidence.outputs.source_head }}
+      source_tree: ${{ steps.evidence.outputs.source_tree || steps.ready_evidence.outputs.source_tree }}
+      base_sha: ${{ steps.evidence.outputs.base_sha || steps.ready_evidence.outputs.base_sha }}
+      workflow_run_id: ${{ steps.evidence.outputs.workflow_run_id || steps.ready_evidence.outputs.workflow_run_id }}
+      workflow_run_attempt: ${{ steps.evidence.outputs.workflow_run_attempt || steps.ready_evidence.outputs.workflow_run_attempt }}
+      evidence_sha256: ${{ steps.evidence.outputs.evidence_sha256 || steps.ready_evidence.outputs.evidence_sha256 }}
     steps:
       - name: Check out the trusted exact dispatch base
         uses: actions/checkout@v4
@@ -171,12 +171,104 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: stephan-os
           permission-administration: write
+      - name: Reject unsupported personal-repository lifecycle mode
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          case "${MODE}" in
+            user-owned-protected-squash|user-owned-pr-ready) ;;
+            *) exit 1 ;;
+          esac
       - name: Collect exact personal-repository evidence after protected admission
         id: evidence
+        if: ${{ inputs.mode == 'user-owned-protected-squash' }}
         env:
           GH_TOKEN: ${{ github.token }}
           STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}
         run: node scripts/operator-protected-personal-repository-merge.mjs evidence
+      - name: Collect exact draft-to-ready evidence before protected approval
+        id: ready_evidence
+        if: ${{ inputs.mode == 'user-owned-pr-ready' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_BRANCH: ${{ inputs.expected_branch }}
+          EXPECTED_HEAD: ${{ inputs.expected_head }}
+          EXPECTED_HEAD_TREE: ${{ inputs.expected_head_tree }}
+          EXPECTED_BASE: ${{ inputs.expected_base }}
+          REVIEW_RUN_ID: ${{ inputs.independent_review_run_id }}
+          REVIEW_RUN_ATTEMPT: ${{ inputs.independent_review_run_attempt }}
+          REVIEW_ARTIFACT_ID: ${{ inputs.independent_review_artifact_id }}
+          REVIEW_ARTIFACT_DIGEST: ${{ inputs.independent_review_artifact_digest }}
+          REVIEW_PAYLOAD_SHA256: ${{ inputs.independent_review_payload_sha256 }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          readonly CANONICAL_REPOSITORY='Cheekyfellastef/stephan-os'
+          readonly CANONICAL_OPERATOR='Cheekyfellastef'
+          [[ "${REPOSITORY}" == "${CANONICAL_REPOSITORY}" ]]
+          [[ "${TRIGGERING_ACTOR}" == "${CANONICAL_OPERATOR}" ]]
+          [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${EXPECTED_BRANCH}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$ ]]
+          [[ "${EXPECTED_HEAD}" =~ ^[a-f0-9]{40}$ ]]
+          [[ "${EXPECTED_HEAD_TREE}" =~ ^[a-f0-9]{40}$ ]]
+          [[ "${EXPECTED_BASE}" =~ ^[a-f0-9]{40}$ ]]
+          [[ "${REVIEW_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${REVIEW_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${REVIEW_ARTIFACT_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${REVIEW_ARTIFACT_DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "${REVIEW_PAYLOAD_SHA256}" =~ ^[a-f0-9]{64}$ ]]
+
+          observed_main="$(gh api "/repos/${REPOSITORY}/branches/main" --jq '.commit.sha')"
+          test "${observed_main}" = "${EXPECTED_BASE}"
+          test "$(git rev-parse HEAD)" = "${EXPECTED_BASE}"
+          pr_json="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          test "$(jq -r '.number' <<<"${pr_json}")" = "${PR_NUMBER}"
+          test "$(jq -r '.state' <<<"${pr_json}")" = 'open'
+          test "$(jq -r '.head.ref' <<<"${pr_json}")" = "${EXPECTED_BRANCH}"
+          test "$(jq -r '.head.sha' <<<"${pr_json}")" = "${EXPECTED_HEAD}"
+          test "$(jq -r '.head.repo.full_name' <<<"${pr_json}")" = "${CANONICAL_REPOSITORY}"
+          test "$(jq -r '.base.ref' <<<"${pr_json}")" = 'main'
+          test "$(jq -r '.base.sha' <<<"${pr_json}")" = "${EXPECTED_BASE}"
+          test "$(jq -r '.base.repo.full_name' <<<"${pr_json}")" = "${CANONICAL_REPOSITORY}"
+          observed_tree="$(gh api "/repos/${REPOSITORY}/git/commits/${EXPECTED_HEAD}" --jq '.tree.sha')"
+          test "${observed_tree}" = "${EXPECTED_HEAD_TREE}"
+          draft="$(jq -r '.draft' <<<"${pr_json}")"
+          [[ "${draft}" == 'true' || "${draft}" == 'false' ]]
+
+          evidence_json="$(jq -cn \
+            --arg repository "${REPOSITORY}" \
+            --argjson prNumber "${PR_NUMBER}" \
+            --arg branch "${EXPECTED_BRANCH}" \
+            --arg sourceHead "${EXPECTED_HEAD}" \
+            --arg sourceTree "${EXPECTED_HEAD_TREE}" \
+            --arg baseSha "${EXPECTED_BASE}" \
+            --arg triggeringActor "${TRIGGERING_ACTOR}" \
+            --argjson reviewRunId "${REVIEW_RUN_ID}" \
+            --argjson reviewRunAttempt "${REVIEW_RUN_ATTEMPT}" \
+            --argjson reviewArtifactId "${REVIEW_ARTIFACT_ID}" \
+            --arg reviewArtifactDigest "${REVIEW_ARTIFACT_DIGEST}" \
+            --arg reviewPayloadSha256 "${REVIEW_PAYLOAD_SHA256}" \
+            --argjson draft "${draft}" \
+            --argjson workflowRunId "${WORKFLOW_RUN_ID}" \
+            --argjson workflowRunAttempt "${WORKFLOW_RUN_ATTEMPT}" \
+            '{schemaVersion:"stephanos.personal-repository-ready-evidence.v1",repository:$repository,prNumber:$prNumber,branch:$branch,sourceHead:$sourceHead,sourceTree:$sourceTree,baseSha:$baseSha,triggeringActor:$triggeringActor,reviewRunId:$reviewRunId,reviewRunAttempt:$reviewRunAttempt,reviewArtifactId:$reviewArtifactId,reviewArtifactDigest:$reviewArtifactDigest,reviewPayloadSha256:$reviewPayloadSha256,draft:$draft,workflowRunId:$workflowRunId,workflowRunAttempt:$workflowRunAttempt}')"
+          evidence_sha256="$(printf '%s' "${evidence_json}" | sha256sum | awk '{print $1}')"
+          echo "repository=${REPOSITORY}" >> "${GITHUB_OUTPUT}"
+          echo "pr_number=${PR_NUMBER}" >> "${GITHUB_OUTPUT}"
+          echo "branch=${EXPECTED_BRANCH}" >> "${GITHUB_OUTPUT}"
+          echo "source_head=${EXPECTED_HEAD}" >> "${GITHUB_OUTPUT}"
+          echo "source_tree=${EXPECTED_HEAD_TREE}" >> "${GITHUB_OUTPUT}"
+          echo "base_sha=${EXPECTED_BASE}" >> "${GITHUB_OUTPUT}"
+          echo "workflow_run_id=${WORKFLOW_RUN_ID}" >> "${GITHUB_OUTPUT}"
+          echo "workflow_run_attempt=${WORKFLOW_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
+          echo "evidence_sha256=${evidence_sha256}" >> "${GITHUB_OUTPUT}"
 
   operator-personal-repository-approval:
     name: operator-personal-repository-approval
@@ -193,8 +285,8 @@ jobs:
       deployments: read
       pull-requests: read
     outputs:
-      approval_receipt: ${{ steps.approval.outputs.approval_receipt }}
-      approval_receipt_sha256: ${{ steps.approval.outputs.approval_receipt_sha256 }}
+      approval_receipt: ${{ steps.approval.outputs.approval_receipt || steps.ready_approval.outputs.approval_receipt }}
+      approval_receipt_sha256: ${{ steps.approval.outputs.approval_receipt_sha256 || steps.ready_approval.outputs.approval_receipt_sha256 }}
     steps:
       - name: Check out the same trusted exact dispatch base
         uses: actions/checkout@v4
@@ -216,6 +308,7 @@ jobs:
           permission-administration: write
       - name: Re-prove immutable evidence after protected approval
         id: approval
+        if: ${{ inputs.mode == 'user-owned-protected-squash' }}
         env:
           GH_TOKEN: ${{ github.token }}
           STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}
@@ -229,6 +322,50 @@ jobs:
           STEPHANOS_EXPECTED_WORKFLOW_RUN_ATTEMPT: ${{ needs.personal-repository-evidence.outputs.workflow_run_attempt }}
           STEPHANOS_EXPECTED_EVIDENCE_SHA256: ${{ needs.personal-repository-evidence.outputs.evidence_sha256 }}
         run: node scripts/operator-protected-personal-repository-merge.mjs approve
+      - name: Re-prove exact ready identity after protected approval
+        id: ready_approval
+        if: ${{ inputs.mode == 'user-owned-pr-ready' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ needs.personal-repository-evidence.outputs.repository }}
+          PR_NUMBER: ${{ needs.personal-repository-evidence.outputs.pr_number }}
+          EXPECTED_BRANCH: ${{ needs.personal-repository-evidence.outputs.branch }}
+          EXPECTED_HEAD: ${{ needs.personal-repository-evidence.outputs.source_head }}
+          EXPECTED_HEAD_TREE: ${{ needs.personal-repository-evidence.outputs.source_tree }}
+          EXPECTED_BASE: ${{ needs.personal-repository-evidence.outputs.base_sha }}
+          EVIDENCE_SHA256: ${{ needs.personal-repository-evidence.outputs.evidence_sha256 }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test "${TRIGGERING_ACTOR}" = 'Cheekyfellastef'
+          [[ "${EVIDENCE_SHA256}" =~ ^[a-f0-9]{64}$ ]]
+          test "$(gh api "/repos/${REPOSITORY}/branches/main" --jq '.commit.sha')" = "${EXPECTED_BASE}"
+          test "$(git rev-parse HEAD)" = "${EXPECTED_BASE}"
+          pr_json="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          test "$(jq -r '.state' <<<"${pr_json}")" = 'open'
+          test "$(jq -r '.head.ref' <<<"${pr_json}")" = "${EXPECTED_BRANCH}"
+          test "$(jq -r '.head.sha' <<<"${pr_json}")" = "${EXPECTED_HEAD}"
+          test "$(jq -r '.base.sha' <<<"${pr_json}")" = "${EXPECTED_BASE}"
+          test "$(gh api "/repos/${REPOSITORY}/git/commits/${EXPECTED_HEAD}" --jq '.tree.sha')" = "${EXPECTED_HEAD_TREE}"
+          approval_json="$(jq -cn \
+            --arg repository "${REPOSITORY}" \
+            --argjson prNumber "${PR_NUMBER}" \
+            --arg branch "${EXPECTED_BRANCH}" \
+            --arg sourceHead "${EXPECTED_HEAD}" \
+            --arg sourceTree "${EXPECTED_HEAD_TREE}" \
+            --arg baseSha "${EXPECTED_BASE}" \
+            --arg evidenceSha256 "${EVIDENCE_SHA256}" \
+            --arg triggeringActor "${TRIGGERING_ACTOR}" \
+            --argjson workflowRunId "${WORKFLOW_RUN_ID}" \
+            --argjson workflowRunAttempt "${WORKFLOW_RUN_ATTEMPT}" \
+            '{schemaVersion:"stephanos.personal-repository-ready-approval.v1",repository:$repository,prNumber:$prNumber,branch:$branch,sourceHead:$sourceHead,sourceTree:$sourceTree,baseSha:$baseSha,evidenceSha256:$evidenceSha256,triggeringActor:$triggeringActor,workflowRunId:$workflowRunId,workflowRunAttempt:$workflowRunAttempt}')"
+          approval_receipt="$(printf '%s' "${approval_json}" | base64 -w0 | tr '+/' '-_' | tr -d '=')"
+          approval_sha256="$(printf '%s' "${approval_json}" | sha256sum | awk '{print $1}')"
+          echo "approval_receipt=${approval_receipt}" >> "${GITHUB_OUTPUT}"
+          echo "approval_receipt_sha256=${approval_sha256}" >> "${GITHUB_OUTPUT}"
 
   operator-personal-repository-squash-merge:
     name: operator-personal-repository-squash-merge
@@ -265,6 +402,7 @@ jobs:
           repositories: stephan-os
           permission-administration: write
       - name: Re-prove, squash exact head and publish the bounded receipt
+        if: ${{ inputs.mode == 'user-owned-protected-squash' }}
         env:
           GH_TOKEN: ${{ github.token }}
           STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}
@@ -279,3 +417,95 @@ jobs:
           STEPHANOS_EXPECTED_EVIDENCE_SHA256: ${{ needs.personal-repository-evidence.outputs.evidence_sha256 }}
           STEPHANOS_APPROVAL_RECEIPT: ${{ needs.operator-personal-repository-approval.outputs.approval_receipt }}
         run: node scripts/operator-protected-personal-repository-merge.mjs merge
+      - name: Mark exact authorized pull request ready and publish lifecycle proof
+        if: ${{ inputs.mode == 'user-owned-pr-ready' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ needs.personal-repository-evidence.outputs.repository }}
+          PR_NUMBER: ${{ needs.personal-repository-evidence.outputs.pr_number }}
+          EXPECTED_BRANCH: ${{ needs.personal-repository-evidence.outputs.branch }}
+          EXPECTED_HEAD: ${{ needs.personal-repository-evidence.outputs.source_head }}
+          EXPECTED_HEAD_TREE: ${{ needs.personal-repository-evidence.outputs.source_tree }}
+          EXPECTED_BASE: ${{ needs.personal-repository-evidence.outputs.base_sha }}
+          EVIDENCE_SHA256: ${{ needs.personal-repository-evidence.outputs.evidence_sha256 }}
+          APPROVAL_RECEIPT: ${{ needs.operator-personal-repository-approval.outputs.approval_receipt }}
+          APPROVAL_RECEIPT_SHA256: ${{ needs.operator-personal-repository-approval.outputs.approval_receipt_sha256 }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          readonly READY_MUTATION='mutation($pullRequestId:ID!){markPullRequestReadyForReview(input:{pullRequestId:$pullRequestId}){pullRequest{id isDraft}}}'
+          test "${TRIGGERING_ACTOR}" = 'Cheekyfellastef'
+          [[ "${EVIDENCE_SHA256}" =~ ^[a-f0-9]{64}$ ]]
+          [[ "${APPROVAL_RECEIPT}" =~ ^[A-Za-z0-9_-]+$ ]]
+          [[ "${APPROVAL_RECEIPT_SHA256}" =~ ^[a-f0-9]{64}$ ]]
+          test "$(gh api "/repos/${REPOSITORY}/branches/main" --jq '.commit.sha')" = "${EXPECTED_BASE}"
+          test "$(git rev-parse HEAD)" = "${EXPECTED_BASE}"
+          before_json="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          test "$(jq -r '.number' <<<"${before_json}")" = "${PR_NUMBER}"
+          test "$(jq -r '.state' <<<"${before_json}")" = 'open'
+          test "$(jq -r '.head.ref' <<<"${before_json}")" = "${EXPECTED_BRANCH}"
+          test "$(jq -r '.head.sha' <<<"${before_json}")" = "${EXPECTED_HEAD}"
+          test "$(jq -r '.head.repo.full_name' <<<"${before_json}")" = "${REPOSITORY}"
+          test "$(jq -r '.base.ref' <<<"${before_json}")" = 'main'
+          test "$(jq -r '.base.sha' <<<"${before_json}")" = "${EXPECTED_BASE}"
+          test "$(jq -r '.base.repo.full_name' <<<"${before_json}")" = "${REPOSITORY}"
+          test "$(gh api "/repos/${REPOSITORY}/git/commits/${EXPECTED_HEAD}" --jq '.tree.sha')" = "${EXPECTED_HEAD_TREE}"
+          node_id="$(jq -r '.node_id' <<<"${before_json}")"
+          [[ "${node_id}" =~ ^PR_[A-Za-z0-9_-]+$ ]]
+
+          before_draft="$(jq -r '.draft' <<<"${before_json}")"
+          mutation_performed=false
+          result='ALREADY_READY'
+          if [[ "${before_draft}" == 'true' ]]; then
+            mutation_json="$(gh api graphql -f query="${READY_MUTATION}" -F pullRequestId="${node_id}")"
+            test "$(jq -r '.data.markPullRequestReadyForReview.pullRequest.id' <<<"${mutation_json}")" = "${node_id}"
+            test "$(jq -r '.data.markPullRequestReadyForReview.pullRequest.isDraft' <<<"${mutation_json}")" = 'false'
+            mutation_performed=true
+            result='READY_FOR_REVIEW'
+          else
+            test "${before_draft}" = 'false'
+          fi
+
+          after_main="$(gh api "/repos/${REPOSITORY}/branches/main" --jq '.commit.sha')"
+          test "${after_main}" = "${EXPECTED_BASE}"
+          after_json="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          test "$(jq -r '.number' <<<"${after_json}")" = "${PR_NUMBER}"
+          test "$(jq -r '.state' <<<"${after_json}")" = 'open'
+          test "$(jq -r '.draft' <<<"${after_json}")" = 'false'
+          test "$(jq -r '.head.ref' <<<"${after_json}")" = "${EXPECTED_BRANCH}"
+          test "$(jq -r '.head.sha' <<<"${after_json}")" = "${EXPECTED_HEAD}"
+          test "$(jq -r '.base.sha' <<<"${after_json}")" = "${EXPECTED_BASE}"
+          test "$(gh api "/repos/${REPOSITORY}/git/commits/${EXPECTED_HEAD}" --jq '.tree.sha')" = "${EXPECTED_HEAD_TREE}"
+
+          mkdir -p ready-proof
+          jq -n \
+            --arg schemaVersion 'stephanos.personal-repository-ready.v1' \
+            --arg repository "${REPOSITORY}" \
+            --argjson prNumber "${PR_NUMBER}" \
+            --arg branch "${EXPECTED_BRANCH}" \
+            --arg head "${EXPECTED_HEAD}" \
+            --arg headTree "${EXPECTED_HEAD_TREE}" \
+            --arg base "${EXPECTED_BASE}" \
+            --arg triggeringActor "${TRIGGERING_ACTOR}" \
+            --argjson workflowRunId "${WORKFLOW_RUN_ID}" \
+            --argjson workflowRunAttempt "${WORKFLOW_RUN_ATTEMPT}" \
+            --arg evidenceSha256 "${EVIDENCE_SHA256}" \
+            --arg approvalReceiptSha256 "${APPROVAL_RECEIPT_SHA256}" \
+            --arg result "${result}" \
+            --argjson beforeDraft "${before_draft}" \
+            --argjson afterDraft false \
+            --argjson mutationPerformed "${mutation_performed}" \
+            '{schemaVersion:$schemaVersion,repository:$repository,prNumber:$prNumber,branch:$branch,head:$head,headTree:$headTree,base:$base,triggeringActor:$triggeringActor,workflowRunId:$workflowRunId,workflowRunAttempt:$workflowRunAttempt,evidenceSha256:$evidenceSha256,approvalReceiptSha256:$approvalReceiptSha256,beforeDraft:$beforeDraft,afterDraft:$afterDraft,mutationPerformed:$mutationPerformed,result:$result,mergeAuthority:false,deploymentAuthority:false,runtimeMutationAuthority:false,providerQualificationAuthority:false}' \
+            > ready-proof/receipt.json
+          sha256sum ready-proof/receipt.json > ready-proof/receipt.sha256
+      - name: Upload bounded ready lifecycle receipt
+        if: ${{ inputs.mode == 'user-owned-pr-ready' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: stephanos-pr-ready-${{ inputs.pr_number }}-${{ inputs.expected_head }}
+          path: ready-proof/
+          if-no-files-found: error
+          retention-days: 30

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -83,6 +83,27 @@ test('atomic JSON write behavior writes complete replacement without temp residu
     assert.equal(parsed.status, 'SECOND');
     const files = await readdir(join(root, 'status'));
     assert.deepEqual(files, ['status-atomic.json']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('atomic JSON write removes its own temporary file when replacement fails', async () => {
+  const root = await tempWorkspace();
+  try {
+    const statusRoot = join(root, 'status');
+    const target = join(statusRoot, 'status-atomic.json');
+    await mkdir(target, { recursive: true });
+    const record = createSharedWorkspaceStatusRecord({
+      statusId: 'status-atomic',
+      timestampUtc: '2026-07-07T00:00:00Z',
+      status: 'FIRST',
+    });
+    await assert.rejects(() => writeAtomicJson(
+      root,
+      ['status', 'status-atomic.json'],
+      record,
+      { repoRoot: REPO_ROOT },
+    ));
+    assert.deepEqual(await readdir(statusRoot), ['status-atomic.json']);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
