@@ -120,6 +120,43 @@ test('missing authority and freshness remain UNKNOWN and are never promoted', ()
   assert.equal(result.selectedRecords[0].freshness, 'UNKNOWN');
 });
 
+test('future-dated memory is rejected beyond the bounded trusted as-of clock skew', () => {
+  const asOfUtc = '2026-08-17T12:00:00.000Z';
+  const atBoundary = build([record({
+    observedAtUtc: '2026-08-17T12:05:00.000Z',
+    updatedAtUtc: '2026-08-17T12:05:00.000Z',
+  })], { asOfUtc });
+  assert.equal(atBoundary.valid, true);
+
+  const futureObservation = build([record({
+    observedAtUtc: '2026-08-17T12:05:00.001Z',
+    updatedAtUtc: '2026-08-17T12:05:00.001Z',
+  })], { asOfUtc });
+  assert.equal(futureObservation.valid, false);
+  assert.ok(futureObservation.validationErrors.includes('record-1:observedAtUtc-in-future'));
+  assert.ok(futureObservation.validationErrors.includes('record-1:updatedAtUtc-in-future'));
+
+  const futureUpdate = build([record({
+    observedAtUtc: '2026-08-17T12:00:00.000Z',
+    updatedAtUtc: '2026-08-17T12:05:00.001Z',
+  })], { asOfUtc });
+  assert.equal(futureUpdate.valid, false);
+  assert.ok(futureUpdate.validationErrors.includes('record-1:updatedAtUtc-in-future'));
+
+  const impossibleFuture = build([record({
+    observedAtUtc: '2099-01-01T00:00:00.000Z',
+    updatedAtUtc: '2099-01-01T00:00:00.000Z',
+  })], { asOfUtc });
+  assert.equal(impossibleFuture.valid, false);
+  assert.ok(impossibleFuture.validationErrors.includes('record-1:observedAtUtc-in-future'));
+});
+
+test('explicit trusted as-of time must itself be an exact UTC instant', () => {
+  const result = build([record()], { asOfUtc: 'not-a-time' });
+  assert.equal(result.valid, false);
+  assert.ok(result.validationErrors.includes('asOfUtc-invalid'));
+});
+
 test('fresh higher-authority current evidence sorts before stale local evidence', () => {
   const stale = record({
     recordId: 'record-stale',
@@ -208,6 +245,43 @@ test('byte budget reports the exact serialized selected-record array size', () =
 
   const empty = build([], { budget: { maxRecords: 24, maxBytes: 32768 } });
   assert.equal(empty.budget.actualBytes, Buffer.byteLength('[]', 'utf8'));
+});
+
+test('low-authority relationship inference cannot claim shared authority', () => {
+  const incompatible = buildStephanosMemoryRetrievalPackV1({
+    packKind: 'OPERATOR_RELATIONSHIP_PACK',
+    records: [record({
+      recordId: 'operator-inference-inflated',
+      namespace: 'operator',
+      type: 'inference',
+      summary: 'A neutral low-authority interaction observation.',
+      authorityClass: 'SHARED_AUTHORITY',
+      relationshipEvidenceClass: 'LOW_AUTHORITY_INTERACTION_INFERENCE',
+      personOrParticipant: 'operator',
+    })],
+    selectors: {},
+    budget: { maxRecords: 24, maxBytes: 32768 },
+  });
+  assert.equal(incompatible.valid, false);
+  assert.ok(incompatible.validationErrors.includes('record-1:relationship-inference-authority-incompatible'));
+
+  const correctlyBounded = buildStephanosMemoryRetrievalPackV1({
+    packKind: 'OPERATOR_RELATIONSHIP_PACK',
+    records: [record({
+      recordId: 'operator-inference-bounded',
+      namespace: 'operator',
+      type: 'inference',
+      summary: 'A neutral low-authority interaction observation.',
+      authorityClass: 'INFERRED',
+      relationshipEvidenceClass: 'LOW_AUTHORITY_INTERACTION_INFERENCE',
+      personOrParticipant: 'operator',
+    })],
+    selectors: {},
+    budget: { maxRecords: 24, maxBytes: 32768 },
+  });
+  assert.equal(correctlyBounded.valid, true);
+  assert.deepEqual(correctlyBounded.selectedRecordIds, ['operator-inference-bounded']);
+  assert.equal(correctlyBounded.selectedRecords[0].authorityClass, 'INFERRED');
 });
 
 test('operator relationship pack rejects psychological inference while retaining explicit teaching', () => {
