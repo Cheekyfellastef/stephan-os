@@ -23,6 +23,38 @@ jobs:
         run: |
           set -o pipefail
           npm run stephanos:operator-merge-approval:test 2>&1 | tee operator-merge-test.log
+      - name: Prove bounded native ready lifecycle source
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+
+          const workflow = readFileSync('.github/workflows/operator-merge-approval-gate.yml', 'utf8');
+          const proofWorkflow = readFileSync('.github/workflows/operator-merge-approval-gate-test.yml', 'utf8');
+
+          assert.match(workflow, /user-owned-pr-ready/);
+          assert.match(workflow, /operator_authorization_id/);
+          assert.match(workflow, /markPullRequestReadyForReview/);
+          assert.doesNotMatch(workflow, /fullDatabaseId/);
+          assert.match(workflow, /READY_MUTATION='mutation\(\$pullRequestId:ID!\)\{markPullRequestReadyForReview/);
+          assert.match(workflow, /pullRequestId="\$\{node_id\}"/);
+          assert.match(workflow, /TRIGGERING_ACTOR/);
+          assert.match(workflow, /CANONICAL_OPERATOR='Cheekyfellastef'/);
+          assert.match(workflow, /observed_main=.*branches\/main/);
+          assert.match(workflow, /observed_tree=.*git\/commits\/\$\{EXPECTED_HEAD\}/);
+          assert.match(workflow, /test "\$\{after_main\}" = "\$\{EXPECTED_BASE\}"/);
+          assert.match(workflow, /test "\$\(jq -r '\.draft'/);
+          assert.match(workflow, /ALREADY_READY/);
+          assert.match(workflow, /mergeAuthority:false/);
+          assert.match(workflow, /deploymentAuthority:false/);
+          assert.match(workflow, /runtimeMutationAuthority:false/);
+          assert.match(workflow, /providerQualificationAuthority:false/);
+          assert.match(workflow, /inputs\.mode == 'user-owned-protected-squash'/);
+          assert.match(workflow, /inputs\.mode == 'user-owned-pr-ready'/);
+          assert.match(workflow, /reject-unsupported-personal-repository-mode/);
+          assert.match(proofWorkflow, /ready_for_review/);
+          assert.doesNotMatch(workflow, /query:\s*\$\{\{/);
+          NODE
       - name: Upload bounded test log
         if: always()
         uses: actions/upload-artifact@v4
