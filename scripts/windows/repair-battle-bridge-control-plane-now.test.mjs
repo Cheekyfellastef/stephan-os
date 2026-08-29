@@ -49,6 +49,11 @@ test('rescue preserves unsigned Task Scheduler HRESULT values without Int32 over
   assert.doesNotMatch(ps1, /lastTaskResult = if \(\$info\) \{ \[int\]\$info\.LastTaskResult \}/);
 });
 
+test('rescue materializes filtered task proofs before Count under StrictMode', () => {
+  assert.match(ps1, /if \(@\(\$taskProof \| Where-Object \{ \$_\.present -ne \$true \}\)\.Count -gt 0\)/);
+  assert.doesNotMatch(ps1, /if \(\(\$taskProof \| Where-Object \{ \$_\.present -ne \$true \}\)\.Count -gt 0\)/);
+});
+
 test('dispatch readiness requires a fresh exact-head Windows tools-list attachment proof and separates local Codex from remote transport', () => {
   assert.match(status, /surface-attachment-latest\.json/);
   assert.match(status, /stephanos\.codex-dispatch-surface-attachment\.v1/);
