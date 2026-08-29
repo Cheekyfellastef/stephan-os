@@ -327,6 +327,7 @@ test('active-lane mutation authority is exposed only after its durable transitio
     criticalBacklog: { activeMission },
   });
   let reads = 0;
+  let claimedInput = null;
   const events = [];
   const receipts = [];
   const heartbeats = [];
@@ -345,6 +346,21 @@ test('active-lane mutation authority is exposed only after its durable transitio
       receipts.push(receipt);
       return { ok: true };
     },
+    claimSourceMutationLease: async (input) => {
+      claimedInput = input;
+      return { ok: true, claimed: true, record: input };
+    },
+    readSourceMutationLease: async () => ({
+      ok: true,
+      present: true,
+      reason: 'SOURCE_MUTATION_LEASE_ACTIVE',
+      validation: { valid: true, active: true, stale: false },
+      record: {
+        ...claimedInput,
+        mergeAuthority: false,
+        leaseSeizureAllowed: false,
+      },
+    }),
   }, {
     nowUtc: NOW,
     sourceRevision: SOURCE_REVISION,
