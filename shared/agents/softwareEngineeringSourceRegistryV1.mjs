@@ -87,6 +87,8 @@ const PRIMARY_CLASSES = new Set([
   'SECURITY_ADVISORY',
   'CANONICAL_UPSTREAM_REPOSITORY',
 ]);
+const REFERENCE_ONLY_CLASSES = new Set(['SECONDARY_REFERENCE_ONLY']);
+const REFERENCE_ONLY_EVIDENCE_PLANES = new Set(['SECONDARY_REFERENCE', 'STEPHANOS_INFERENCE']);
 const SOURCE_PRIORITY = Object.freeze({
   OFFICIAL_SPECIFICATION: 100,
   SECURITY_ADVISORY: 95,
@@ -106,6 +108,7 @@ const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const IMMUTABLE_HASH = /^(?:[0-9a-f]{40}|sha256:[0-9a-f]{64})$/i;
 const MUTABLE_REVISION_ALIAS = /^(?:main|master|head|latest|current|stable|trunk|default|tip|nightly|next|dev|develop)$/i;
 const MUTABLE_BRANCH_REF = /^(?:refs\/heads\/|heads\/|branch:)/i;
+const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -218,7 +221,14 @@ function expectedStatus({ reuseRoute, freshness, conflicts }) {
   return 'ADMITTED';
 }
 
-export function validateSoftwareEngineeringSourceRecordInputV1(input = {}) {
+function reuseRouteCompatibleWithEvidence(sourceClass, evidencePlane, reuseRoute) {
+  if ((REFERENCE_ONLY_CLASSES.has(sourceClass) || REFERENCE_ONLY_EVIDENCE_PLANES.has(evidencePlane))
+    && DIRECT_OR_ADAPTABLE.has(reuseRoute)) return false;
+  if (sourceClass === 'REJECTED_OR_UNSAFE_SOURCE' && !REJECT_ROUTES.has(reuseRoute)) return false;
+  return true;
+}
+
+export function validateSoftwareEngineeringSourceRecordInputV1(input = {}, { asOfUtc = new Date().toISOString() } = {}) {
   const blockers = [];
   const sourceId = safeId(input.sourceId);
   if (!sourceId) blockers.push('source-id-invalid');
@@ -246,6 +256,12 @@ export function validateSoftwareEngineeringSourceRecordInputV1(input = {}) {
 
   const retrievedAtUtc = timestamp(input.retrievedAtUtc);
   if (!retrievedAtUtc) blockers.push('retrieved-at-invalid');
+  const evaluatedAtUtc = timestamp(asOfUtc);
+  if (!evaluatedAtUtc) blockers.push('evaluation-as-of-invalid');
+  if (retrievedAtUtc && evaluatedAtUtc
+    && Date.parse(retrievedAtUtc) > Date.parse(evaluatedAtUtc) + MAX_FUTURE_CLOCK_SKEW_MS) {
+    blockers.push('retrieved-at-in-future');
+  }
 
   const freshnessRequirement = safeRef(input.freshnessRequirement);
   if (!freshnessRequirement) blockers.push('freshness-requirement-invalid');
@@ -273,6 +289,10 @@ export function validateSoftwareEngineeringSourceRecordInputV1(input = {}) {
 
   const evidencePlane = text(input.evidencePlane).toUpperCase();
   if (!EVIDENCE_PLANES.has(evidencePlane)) blockers.push('evidence-plane-invalid');
+  if (SOURCE_CLASSES.has(sourceClass) && EVIDENCE_PLANES.has(evidencePlane) && REUSE_ROUTES.has(reuseRoute)
+    && !reuseRouteCompatibleWithEvidence(sourceClass, evidencePlane, reuseRoute)) {
+    blockers.push('reuse-route-incompatible-with-source-evidence');
+  }
 
   const claimsSupported = normalizedList(input.claimsSupported, {
     field: 'claims-supported',
@@ -337,8 +357,8 @@ export function validateSoftwareEngineeringSourceRecordInputV1(input = {}) {
   return deepFreeze({ valid: true, blockers: [], record: deepFreeze({ ...candidate, recordId }) });
 }
 
-export function buildSoftwareEngineeringSourceRecordV1(input = {}) {
-  const validation = validateSoftwareEngineeringSourceRecordInputV1(input);
+export function buildSoftwareEngineeringSourceRecordV1(input = {}, options = {}) {
+  const validation = validateSoftwareEngineeringSourceRecordInputV1(input, options);
   if (!validation.valid) throw new Error(`software engineering source rejected: ${validation.blockers.join(', ')}`);
   return validation.record;
 }
