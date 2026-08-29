@@ -80,9 +80,30 @@ export function mirrorBattleBridgeCompleteStateToSharedWorkspace({ workspaceRoot
 }
 
 export function compareBattleBridgeCompleteStateMirrors(githubRecord, sharedWorkspaceRecord) {
-  if (!githubRecord || typeof githubRecord !== 'object' || !sharedWorkspaceRecord || typeof sharedWorkspaceRecord !== 'object') {
+  if (!githubRecord || typeof githubRecord !== 'object' || Array.isArray(githubRecord)
+      || !sharedWorkspaceRecord || typeof sharedWorkspaceRecord !== 'object' || Array.isArray(sharedWorkspaceRecord)) {
     return Object.freeze({ state: 'UNPROVEN', consistent: false, mismatches: Object.freeze(['record-missing']) });
   }
+
+  const invalidRecords = [];
+  try {
+    assertMirrorRecord(githubRecord);
+  } catch {
+    invalidRecords.push('github-record-invalid');
+  }
+  try {
+    assertMirrorRecord(sharedWorkspaceRecord);
+  } catch {
+    invalidRecords.push('shared-workspace-record-invalid');
+  }
+  if (invalidRecords.length > 0) {
+    return Object.freeze({
+      state: 'UNPROVEN',
+      consistent: false,
+      mismatches: Object.freeze(invalidRecords),
+    });
+  }
+
   const fields = [
     'schemaVersion',
     'repository',
