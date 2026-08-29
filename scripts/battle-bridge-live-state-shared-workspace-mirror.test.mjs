@@ -65,6 +65,22 @@ test('GitHub and Shared Workspace live-state disagreement fails closed as CONFLI
   assert.ok(consistency.mismatches.includes('sourceHead'));
 });
 
+test('identical invalid live-state records never masquerade as consistent truth', () => {
+  const invalidIdentity = { ...completeStateRecord(), schemaVersion: 'forged.schema.v1' };
+  assert.deepEqual(compareBattleBridgeCompleteStateMirrors(invalidIdentity, { ...invalidIdentity }), {
+    state: 'UNPROVEN',
+    consistent: false,
+    mismatches: ['github-record-invalid', 'shared-workspace-record-invalid'],
+  });
+
+  const widenedAuthority = { ...completeStateRecord(), processRestartAllowed: true };
+  assert.deepEqual(compareBattleBridgeCompleteStateMirrors(widenedAuthority, { ...widenedAuthority }), {
+    state: 'UNPROVEN',
+    consistent: false,
+    mismatches: ['github-record-invalid', 'shared-workspace-record-invalid'],
+  });
+});
+
 test('complete-state mirror rejects any widened authority before persistence', () => {
   const root = mkdtempSync(join(tmpdir(), 'stephanos-live-state-authority-'));
   const repoRoot = join(root, 'repo');
