@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Exact personal-repository fallback mode
+        description: Exact personal-repository lifecycle mode
         required: true
         type: string
       pr_number:
@@ -30,25 +30,29 @@ on:
         description: Exact full current main SHA
         required: true
         type: string
+      operator_authorization_id:
+        description: Bounded operator authorization provenance for lifecycle-only actions
+        required: false
+        type: string
       independent_review_run_id:
         description: Selected immutable independent-review run ID
-        required: true
+        required: false
         type: string
       independent_review_run_attempt:
         description: Selected immutable independent-review attempt
-        required: true
+        required: false
         type: string
       independent_review_artifact_id:
         description: Selected immutable independent-review artifact ID
-        required: true
+        required: false
         type: string
       independent_review_artifact_digest:
         description: Selected immutable independent-review archive digest
-        required: true
+        required: false
         type: string
       independent_review_payload_sha256:
         description: Selected immutable independent-review payload SHA-256
-        required: true
+        required: false
         type: string
 
 concurrency:
@@ -58,6 +62,132 @@ concurrency:
 permissions: {}
 
 jobs:
+  reject-unsupported-personal-repository-mode:
+    name: reject-unsupported-personal-repository-mode
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'user-owned-protected-squash' && inputs.mode != 'user-owned-pr-ready' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject unsupported lifecycle mode
+        run: exit 1
+
+  operator-personal-repository-ready:
+    name: operator-personal-repository-ready
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'user-owned-pr-ready' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: operator-merge-approval
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check out trusted exact current main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.expected_base }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Prove identity, mark exact PR ready, and prove post-state
+        id: ready
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_BRANCH: ${{ inputs.expected_branch }}
+          EXPECTED_HEAD: ${{ inputs.expected_head }}
+          EXPECTED_HEAD_TREE: ${{ inputs.expected_head_tree }}
+          EXPECTED_BASE: ${{ inputs.expected_base }}
+          OPERATOR_AUTHORIZATION_ID: ${{ inputs.operator_authorization_id }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          readonly CANONICAL_REPOSITORY='Cheekyfellastef/stephan-os'
+          readonly CANONICAL_OPERATOR='Cheekyfellastef'
+          readonly READY_MUTATION='mutation($pullRequestId:ID!){markPullRequestReadyForReview(input:{pullRequestId:$pullRequestId}){pullRequest{id isDraft}}}'
+
+          [[ "${REPOSITORY}" == "${CANONICAL_REPOSITORY}" ]]
+          [[ "${TRIGGERING_ACTOR}" == "${CANONICAL_OPERATOR}" ]]
+          [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${EXPECTED_BRANCH}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$ ]]
+          [[ "${EXPECTED_HEAD}" =~ ^[a-f0-9]{40}$ ]]
+          [[ "${EXPECTED_HEAD_TREE}" =~ ^[a-f0-9]{40}$ ]]
+          [[ "${EXPECTED_BASE}" =~ ^[a-f0-9]{40}$ ]]
+          [[ "${OPERATOR_AUTHORIZATION_ID}" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{7,160}$ ]]
+
+          observed_main="$(gh api "/repos/${REPOSITORY}/branches/main" --jq '.commit.sha')"
+          test "${observed_main}" = "${EXPECTED_BASE}"
+          test "$(git rev-parse HEAD)" = "${EXPECTED_BASE}"
+
+          before_json="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          test "$(jq -r '.number' <<<"${before_json}")" = "${PR_NUMBER}"
+          test "$(jq -r '.state' <<<"${before_json}")" = 'open'
+          test "$(jq -r '.head.ref' <<<"${before_json}")" = "${EXPECTED_BRANCH}"
+          test "$(jq -r '.head.sha' <<<"${before_json}")" = "${EXPECTED_HEAD}"
+          test "$(jq -r '.head.repo.full_name' <<<"${before_json}")" = "${CANONICAL_REPOSITORY}"
+          test "$(jq -r '.base.ref' <<<"${before_json}")" = 'main'
+          test "$(jq -r '.base.sha' <<<"${before_json}")" = "${EXPECTED_BASE}"
+          test "$(jq -r '.base.repo.full_name' <<<"${before_json}")" = "${CANONICAL_REPOSITORY}"
+          node_id="$(jq -r '.node_id' <<<"${before_json}")"
+          [[ "${node_id}" =~ ^PR_[A-Za-z0-9_-]+$ ]]
+
+          observed_tree="$(gh api "/repos/${REPOSITORY}/git/commits/${EXPECTED_HEAD}" --jq '.tree.sha')"
+          test "${observed_tree}" = "${EXPECTED_HEAD_TREE}"
+
+          before_draft="$(jq -r '.draft' <<<"${before_json}")"
+          mutation_performed=false
+          result='ALREADY_READY'
+          if [[ "${before_draft}" == 'true' ]]; then
+            mutation_json="$(gh api graphql -f query="${READY_MUTATION}" -F pullRequestId="${node_id}")"
+            test "$(jq -r '.data.markPullRequestReadyForReview.pullRequest.id' <<<"${mutation_json}")" = "${node_id}"
+            test "$(jq -r '.data.markPullRequestReadyForReview.pullRequest.isDraft' <<<"${mutation_json}")" = 'false'
+            mutation_performed=true
+            result='READY_FOR_REVIEW'
+          else
+            test "${before_draft}" = 'false'
+          fi
+
+          after_main="$(gh api "/repos/${REPOSITORY}/branches/main" --jq '.commit.sha')"
+          test "${after_main}" = "${EXPECTED_BASE}"
+          after_json="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          test "$(jq -r '.number' <<<"${after_json}")" = "${PR_NUMBER}"
+          test "$(jq -r '.state' <<<"${after_json}")" = 'open'
+          test "$(jq -r '.draft' <<<"${after_json}")" = 'false'
+          test "$(jq -r '.head.ref' <<<"${after_json}")" = "${EXPECTED_BRANCH}"
+          test "$(jq -r '.head.sha' <<<"${after_json}")" = "${EXPECTED_HEAD}"
+          test "$(jq -r '.head.repo.full_name' <<<"${after_json}")" = "${CANONICAL_REPOSITORY}"
+          test "$(jq -r '.base.ref' <<<"${after_json}")" = 'main'
+          test "$(jq -r '.base.sha' <<<"${after_json}")" = "${EXPECTED_BASE}"
+          test "$(jq -r '.base.repo.full_name' <<<"${after_json}")" = "${CANONICAL_REPOSITORY}"
+          test "$(gh api "/repos/${REPOSITORY}/git/commits/${EXPECTED_HEAD}" --jq '.tree.sha')" = "${EXPECTED_HEAD_TREE}"
+
+          mkdir -p ready-proof
+          jq -n \
+            --arg schemaVersion 'stephanos.personal-repository-ready.v1' \
+            --arg repository "${REPOSITORY}" \
+            --argjson prNumber "${PR_NUMBER}" \
+            --arg branch "${EXPECTED_BRANCH}" \
+            --arg head "${EXPECTED_HEAD}" \
+            --arg headTree "${EXPECTED_HEAD_TREE}" \
+            --arg base "${EXPECTED_BASE}" \
+            --arg authorizationId "${OPERATOR_AUTHORIZATION_ID}" \
+            --arg triggeringActor "${TRIGGERING_ACTOR}" \
+            --arg result "${result}" \
+            --argjson beforeDraft "${before_draft}" \
+            --argjson afterDraft false \
+            --argjson mutationPerformed "${mutation_performed}" \
+            '{schemaVersion:$schemaVersion,repository:$repository,prNumber:$prNumber,branch:$branch,head:$head,headTree:$headTree,base:$base,authorizationId:$authorizationId,triggeringActor:$triggeringActor,beforeDraft:$beforeDraft,afterDraft:$afterDraft,mutationPerformed:$mutationPerformed,result:$result,mergeAuthority:false,deploymentAuthority:false,runtimeMutationAuthority:false,providerQualificationAuthority:false}' \
+            > ready-proof/receipt.json
+          sha256sum ready-proof/receipt.json > ready-proof/receipt.sha256
+          echo "result=${result}" >> "${GITHUB_OUTPUT}"
+      - name: Upload bounded lifecycle receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: stephanos-pr-ready-${{ inputs.pr_number }}-${{ inputs.expected_head }}
+          path: ready-proof/
+          if-no-files-found: error
+          retention-days: 30
+
   merge-group-evidence:
     name: merge-group-evidence
     if: ${{ github.event_name == 'merge_group' }}
@@ -131,7 +261,7 @@ jobs:
 
   personal-repository-evidence:
     name: personal-repository-evidence
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'user-owned-protected-squash' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
@@ -180,7 +310,7 @@ jobs:
 
   operator-personal-repository-approval:
     name: operator-personal-repository-approval
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'user-owned-protected-squash' }}
     needs: [personal-repository-evidence]
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -232,7 +362,7 @@ jobs:
 
   operator-personal-repository-squash-merge:
     name: operator-personal-repository-squash-merge
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'user-owned-protected-squash' }}
     needs: [personal-repository-evidence, operator-personal-repository-approval]
     runs-on: ubuntu-latest
     timeout-minutes: 20
