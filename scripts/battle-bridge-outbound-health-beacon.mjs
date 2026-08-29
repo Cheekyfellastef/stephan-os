@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { buildBattleBridgeTelemetryAutorepairProjection } from '../shared/agents/battleBridgeTelemetryAutorepairV1.mjs';
+import { projectMissionWorkerBeaconState } from '../shared/agents/missionWorkerBeaconStateV1.mjs';
 import {
   MAILBOX_RECEIPT_GITHUB_ISSUE,
   MAILBOX_RECEIPT_GITHUB_REPOSITORY,
@@ -181,7 +182,7 @@ function runtimeHeads(record = {}) {
   });
 }
 
-export function projectBeaconStatus(record, spec, nowMs = Date.now()) {
+export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHead = '') {
   if (!record) {
     return Object.freeze({
       id: spec.id,
@@ -203,6 +204,27 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now()) {
   const stale = ageMs === null || ageMs > spec.staleAfterMs;
   const rawState = recordRawState(record);
   const blocker = text(record.blocker || record.exactNextAction || record.blockerId || '', 180);
+  if (spec.id === 'missionWorker' && safeSha(expectedHead)) {
+    const missionWorkerFacts = projectMissionWorkerBeaconState(record, {
+      nowMs,
+      staleAfterMs: spec.staleAfterMs,
+      expectedHead,
+    });
+    return Object.freeze({
+      id: spec.id,
+      state: missionWorkerFacts.state,
+      rawState: missionWorkerFacts.rawState,
+      observedAtUtc: missionWorkerFacts.observedAtUtc,
+      ageMs: missionWorkerFacts.ageMs,
+      head: missionWorkerFacts.head,
+      blocker: missionWorkerFacts.blocker || blocker,
+      serviceFacts: serviceFacts(record),
+      dirtFacts: dirtFacts(record),
+      housekeeperFacts: housekeeperFacts(record),
+      runtimeHeads: runtimeHeads(record),
+      missionWorkerFacts,
+    });
+  }
   return Object.freeze({
     id: spec.id,
     state: stale ? 'STALE' : (rawState || 'UNKNOWN'),
@@ -319,7 +341,7 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
   const observedAtUtc = now.toISOString();
   const nowMs = now.getTime();
   const surfaces = STATUS_SPECS.map((spec) => {
-    const projected = projectBeaconStatus(statusRecords[spec.id] || null, spec, nowMs);
+    const projected = projectBeaconStatus(statusRecords[spec.id] || null, spec, nowMs, head);
     return spec.id === 'mailbox' ? combineMailboxStatus(projected, mailboxIngressObservation) : projected;
   });
   const telemetry = buildBattleBridgeTelemetryAutorepairProjection({ sourceHead: head, surfaces, qualifiedRepairPolicies });
