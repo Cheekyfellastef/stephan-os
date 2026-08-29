@@ -20,6 +20,8 @@ The contract exists to answer a narrow question: **which bounded memory records 
 
 The builder imports the canonical authority classes from `shared/runtime/stephanosMemoryAdequacy.mjs` and never upgrades missing or malformed authority/freshness claims. Unknown authority remains `UNKNOWN`; unknown freshness remains `UNKNOWN`.
 
+Memory timestamps are bounded against a trusted evaluation instant. Callers may provide exact `asOfUtc` for deterministic evaluation; otherwise the builder uses the current runtime clock. Observed or updated timestamps more than five minutes ahead of that instant fail closed, so impossible future memory cannot masquerade as `FRESH`/`CURRENT` evidence or win recency ordering.
+
 The output denies every authority-bearing operation:
 
 ```text
@@ -76,6 +78,8 @@ The builder enforces an explicit record-count and serialized-byte budget. Defaul
 - explicit operator correction;
 - clearly labelled low-authority interaction inference.
 
+A record labelled `LOW_AUTHORITY_INTERACTION_INFERENCE` must also carry the canonical `INFERRED` authority class. Any attempt to pair that speculative evidence class with `SHARED_AUTHORITY` or another stronger authority fails closed instead of allowing relationship inference to outrank operator-grounded truth.
+
 Low-authority inference containing mood diagnosis, hidden-motivation claims, psychological profiling or intimate-fact inference is omitted. The pack is not a hidden emotional dossier.
 
 ## Focused proof
@@ -84,7 +88,7 @@ Low-authority inference containing mood diagnosis, hidden-motivation claims, psy
 node --test shared/agents/stephanosMemoryRetrievalPackV1.test.mjs
 ```
 
-The focused suite covers unsupported pack kinds, invalid/oversized inputs, unsafe refs, unsupported/raw-field stripping, unknown authority/freshness preservation, authority/freshness ordering, superseded-state handling, contradiction preservation, deterministic budget truncation, relationship-inference rejection, selector reasons, provider-neutral output and zero authority.
+The focused suite covers unsupported pack kinds, invalid/oversized inputs, unsafe refs, unsupported/raw-field stripping, unknown authority/freshness preservation, future-time rejection with deterministic clock-skew boundaries, authority/freshness ordering, speculative relationship-authority inflation rejection, superseded-state handling, contradiction preservation, deterministic budget truncation, relationship-inference rejection, selector reasons, provider-neutral output and zero authority.
 
 ## What this slice does not prove
 
