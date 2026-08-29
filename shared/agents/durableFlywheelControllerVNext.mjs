@@ -138,8 +138,6 @@ function exactWorkerGrantIdentity(projection = {}, actionState = {}) {
     || conflictingIdentity(projected.repository, mission.repository)
     || conflictingIdentity(projected.issueNumber, mission.issueNumber)
     || conflictingIdentity(projected.prNumber, mission.prNumber)
-    || conflictingIdentity(projected.branch, mission.branch)
-    || conflictingIdentity(projected.headSha, mission.headSha)
   ) return null;
   const issueNumber = projected.issueNumber ?? mission.issueNumber;
   const prNumber = projected.prNumber ?? mission.prNumber;
