@@ -38,6 +38,7 @@ claims[]
 Each claim carries exactly:
 
 ```text
+schemaVersion
 claimId
 subjectRef
 predicate
@@ -103,6 +104,8 @@ A claim is projected into `currentClaims` only when it is both `CURRENT` and tem
 
 A claim that says `CURRENT` but starts in the future or has already expired is not treated as current truth. It remains visible as history/evidence rather than being promoted by its state label alone.
 
+A claim whose `lastVerifiedAtUtc` is later than the supplied `observedAtUtc` is internally impossible evidence and fails closed rather than being projected as current truth.
+
 Supersession must stay within one exact semantic key:
 
 ```text
@@ -165,11 +168,12 @@ It rejects or safe-holds:
 - sparse/custom arrays;
 - duplicate or unsafe references;
 - malformed timestamps and confidence values;
+- verification timestamps later than the observation instant;
 - cross-key or non-reciprocal supersession;
 - supersession cycles;
 - self-contradiction/self-supersession;
 - missing referenced contradiction/supersession claims;
-- secret-shaped text, raw prompt/response language and local-path-shaped values;
+- secret-shaped text, raw prompt/response language and absolute local-path-shaped values;
 - oversized claim sets and normalized serialized payloads.
 
 ## Read-only authority boundary
@@ -225,9 +229,10 @@ The focused deterministic suite covers:
 6. semantic-key and reciprocal supersession enforcement;
 7. supersession-cycle rejection;
 8. future/expired state not becoming current truth;
-9. sensitive/raw/local-path rejection;
-10. accessor/custom-prototype/sparse-array rejection;
-11. deterministic identity and zero mutation authority.
+9. sensitive/raw/absolute-local-path rejection, including generic-token linking verbs;
+10. verification-after-observation rejection;
+11. accessor/custom-prototype/sparse-array rejection;
+12. deterministic identity and zero mutation authority.
 
 ## Truth boundary
 
