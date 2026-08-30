@@ -35,9 +35,10 @@ export const BATTLE_BRIDGE_GITHUB_SYNC_EXECUTOR_SCHEMA = 'stephanos.battle-bridg
 export const BATTLE_BRIDGE_GITHUB_SYNC_TASK_NAME = 'Stephanos Battle Bridge GitHub Sync';
 export const BATTLE_BRIDGE_SYNC_HOUSEKEEPER_COMMAND = Object.freeze({
   id: 'battle-bridge-sync-existing-housekeeper',
-  script: 'scripts/ignite-stephanos-local.mjs',
-  argv: Object.freeze(['--mode=housekeep']),
+  script: 'scripts/battle-bridge-sync-housekeeper-runner.mjs',
+  argv: Object.freeze([]),
   shell: false,
+  exactHeadBound: true,
   sourceOwnedMutationAllowed: false,
   allowlistedWorkspaceCleanupAllowed: true,
   rawPathPublicationAllowed: false,
@@ -50,6 +51,7 @@ export const BATTLE_BRIDGE_GITHUB_SYNC_AUTHORITY = Object.freeze({
   branchSwitchAllowed: false,
   resetCleanStashRebaseAllowed: false,
   delegatedHousekeeperAllowlistedCleanupAllowed: true,
+  delegatedHousekeeperExactHeadBound: true,
   delegatedHousekeeperSourceOwnedMutationAllowed: false,
   delegatedHousekeeperRawPathPublicationAllowed: false,
   pushAllowed: false,
@@ -174,14 +176,19 @@ function mayAttemptHousekeeper({ evaluation, facts } = {}) {
 
 export function runBoundedSyncHousekeeper({
   repoRoot,
+  expectedHead,
   environment = process.env,
   platform = process.platform,
   spawnSyncFn = spawnSync,
 } = {}) {
+  const boundHead = text(expectedHead).toLowerCase();
+  if (!SHA_PATTERN.test(boundHead)) {
+    return sanitizeHousekeeperObservation({ attempted: false, state: 'UNPROVEN', reason: 'HOUSEKEEPER_EXPECTED_HEAD_INVALID' });
+  }
   const scriptPath = path.resolve(repoRoot, BATTLE_BRIDGE_SYNC_HOUSEKEEPER_COMMAND.script);
   const childEnvironment = {
     ...createBattleBridgeMinimalChildEnvironment(environment, { git: true, platform }),
-    STEPHANOS_IGNITION_MODE: 'housekeep',
+    STEPHANOS_EXPECTED_HEAD: boundHead,
   };
   let result = null;
   try {
@@ -498,7 +505,7 @@ export async function runBattleBridgeGitHubSync({
       const gate = mayAttemptHousekeeper({ evaluation: earlyBlocker, facts: before });
       if (gate.ok) {
         try {
-          housekeeperObservation = await Promise.resolve(housekeeperFn({ repoRoot, environment: env, platform }));
+          housekeeperObservation = await Promise.resolve(housekeeperFn({ repoRoot, expectedHead: before.localHead, environment: env, platform }));
         } catch {
           housekeeperObservation = sanitizeHousekeeperObservation({ state: 'UNPROVEN', reason: 'HOUSEKEEPER_EXECUTION_FAILED' });
         }
