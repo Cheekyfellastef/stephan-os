@@ -95,7 +95,7 @@ test('Shared Workspace participant status contains the same runtime truth withou
     timestampUtc,
     nowMs,
     validationOptions: { nowMs },
-    proofRefs: ['status/mission-worker-heartbeat-current.json'],
+    proofRefs: ['evidence/receipts/mission-worker-heartbeat-current.json'],
   });
   const body = JSON.parse(records.status.body);
 
