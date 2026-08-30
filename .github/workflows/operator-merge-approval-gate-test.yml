@@ -23,6 +23,61 @@ jobs:
         run: |
           set -o pipefail
           npm run stephanos:operator-merge-approval:test 2>&1 | tee operator-merge-test.log
+      - name: Prove bounded native ready lifecycle source
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+
+          const workflow = readFileSync('.github/workflows/operator-merge-approval-gate.yml', 'utf8');
+          const proofWorkflow = readFileSync('.github/workflows/operator-merge-approval-gate-test.yml', 'utf8');
+
+          assert.match(workflow, /user-owned-pr-ready/);
+          assert.match(workflow, /markPullRequestReadyForReview/);
+          assert.doesNotMatch(workflow, /fullDatabaseId/);
+          assert.match(workflow, /READY_MUTATION='mutation\(\$pullRequestId:ID!\)\{markPullRequestReadyForReview/);
+          assert.match(workflow, /pullRequestId="\$\{node_id\}"/);
+          assert.match(workflow, /TRIGGERING_ACTOR/);
+          assert.match(workflow, /test "\$\{TRIGGERING_ACTOR\}" = 'Cheekyfellastef'/);
+          assert.match(workflow, /observed_main=.*branches\/main/);
+          assert.match(workflow, /observed_tree=.*git\/commits\/\$\{EXPECTED_HEAD\}/);
+          assert.match(workflow, /test "\$\{after_main\}" = "\$\{EXPECTED_BASE\}"/);
+          assert.match(workflow, /ALREADY_READY/);
+          assert.match(workflow, /mergeAuthority:false/);
+          assert.match(workflow, /deploymentAuthority:false/);
+          assert.match(workflow, /runtimeMutationAuthority:false/);
+          assert.match(workflow, /providerQualificationAuthority:false/);
+          assert.match(workflow, /inputs\.mode == 'user-owned-protected-squash'/);
+          assert.match(workflow, /inputs\.mode == 'user-owned-pr-ready'/);
+          assert.match(workflow, /user-owned-protected-squash\|user-owned-pr-ready/);
+          assert.equal([...workflow.matchAll(/^  [a-z0-9_-]+:\s*$/gm)].filter((match) => {
+            const name = match[0].trim().slice(0, -1);
+            return [
+              'merge-group-evidence',
+              'operator-merge-queue-boundary',
+              'personal-repository-evidence',
+              'operator-personal-repository-approval',
+              'operator-personal-repository-squash-merge',
+            ].includes(name);
+          }).length, 5);
+          assert.equal((workflow.match(/pull-requests: write/g) || []).length, 1);
+          assert.equal((workflow.match(/contents: write/g) || []).length, 1);
+          assert.equal((workflow.match(/persist-credentials: false/g) || []).length, 5);
+          assert.equal((workflow.match(/^    environment:\n      name: operator-merge-approval$/gm) || []).length, 1);
+          const mergeQueueStart = workflow.indexOf('  operator-merge-queue-boundary:');
+          const personalStart = workflow.indexOf('  personal-repository-evidence:');
+          const approvalStart = workflow.indexOf('  operator-personal-repository-approval:');
+          const finalStart = workflow.indexOf('  operator-personal-repository-squash-merge:');
+          assert.ok(mergeQueueStart >= 0 && personalStart > mergeQueueStart && approvalStart > personalStart && finalStart > approvalStart);
+          assert.match(workflow.slice(mergeQueueStart, personalStart), /environment:\n      name: operator-merge-approval/);
+          assert.doesNotMatch(workflow.slice(personalStart, approvalStart), /environment:\n      name: operator-merge-approval/);
+          assert.doesNotMatch(workflow.slice(approvalStart, finalStart), /environment:\n      name: operator-merge-approval/);
+          assert.doesNotMatch(workflow.slice(finalStart), /environment:\n      name: operator-merge-approval/);
+          assert.match(workflow.slice(personalStart), /CANONICAL_OPERATOR='Cheekyfellastef'/);
+          assert.match(workflow.slice(approvalStart), /test "\$\{TRIGGERING_ACTOR\}" = 'Cheekyfellastef'/);
+          assert.match(proofWorkflow, /ready_for_review/);
+          assert.doesNotMatch(workflow, /query:\s*\$\{\{/);
+          NODE
       - name: Upload bounded test log
         if: always()
         uses: actions/upload-artifact@v4
