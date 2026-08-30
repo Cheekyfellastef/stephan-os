@@ -192,13 +192,15 @@ test('rejects secrets, raw logs and local paths from semantic value summaries', 
     'The access token is abc123.',
     'Preserve the raw prompt from the provider.',
     'Use C:\\Users\\Stephan\\secret.txt as the memory fact.',
+    'Use /root/.ssh/id_rsa as the memory fact.',
+    'Read /workspace/agent/cache.db as the memory fact.',
   ]) {
     const result = buildStephanosSemanticMemoryV1({
       observedAtUtc: OBSERVED_AT,
       claims: [currentClaim({ claimId: 'claim-sensitive', supersedesClaimId: null, valueSummary })],
     });
-    assert.equal(result.valid, false);
-    assert(result.validationErrors.some((error) => error.includes('valueSummary-invalid')));
+    assert.equal(result.valid, false, valueSummary);
+    assert(result.validationErrors.some((error) => error.includes('valueSummary-invalid')), valueSummary);
   }
 });
 
@@ -208,6 +210,8 @@ test('rejects generic token credentials while preserving ordinary token terminol
     'token: abcdef0123456789abcdef0123456789',
     'token abcdef0123456789abcdef0123456789',
     'token credential must stay private',
+    'GitHub token is ghp_abcdefghijklmnopqrstuvwxyz123456',
+    'GitHub token was ghp_abcdefghijklmnopqrstuvwxyz123456',
   ]) {
     const result = buildStephanosSemanticMemoryV1({
       observedAtUtc: OBSERVED_AT,
@@ -226,6 +230,20 @@ test('rejects generic token credentials while preserving ordinary token terminol
     })],
   });
   assert.equal(ordinary.valid, true);
+});
+
+test('verification timestamps after the observation instant fail closed', () => {
+  const result = buildStephanosSemanticMemoryV1({
+    observedAtUtc: OBSERVED_AT,
+    claims: [currentClaim({
+      claimId: 'claim-future-verification',
+      supersedesClaimId: null,
+      lastVerifiedAtUtc: '2026-08-18T08:00:00.000Z',
+    })],
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.verdict, 'SAFE_HOLD');
+  assert(result.validationErrors.some((error) => error.includes('lastVerifiedAtUtc-after-observedAtUtc')));
 });
 
 test('non-string hostile claim IDs fail closed without throwing', () => {
