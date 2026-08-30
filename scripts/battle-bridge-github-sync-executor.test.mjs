@@ -110,6 +110,7 @@ test('no-change run fetches safely and publishes auditable external receipt', as
     assert.equal(status.classification, SYNC_CLASSIFICATIONS.SYNC_NO_CHANGE);
     assert.equal(status.authority.liveOpenClawUpdateAllowed, false);
     assert.equal(status.authority.delegatedHousekeeperAllowlistedCleanupAllowed, true);
+    assert.equal(status.authority.delegatedHousekeeperExactHeadBound, true);
     assert.equal(status.proofRefs.length, 1);
   } finally { await rm(fx.root, { recursive: true, force: true }); }
 });
@@ -147,7 +148,7 @@ test('clean fast-forward applies only ff-only source update then stops for refre
   } finally { await rm(fx.root, { recursive: true, force: true }); }
 });
 
-test('dirty untracked source invokes the existing Housekeeper once, rechecks, and remains blocked when source dirt survives', async () => {
+test('dirty untracked source invokes the existing Housekeeper once at the exact local head, rechecks, and remains blocked when source dirt survives', async () => {
   const fx = await fixture();
   try {
     const git = fakeGit({ status: '?? scripts/local-work.mjs\n' });
@@ -156,8 +157,9 @@ test('dirty untracked source invokes the existing Housekeeper once, rechecks, an
       paths: fx.paths,
       expectedPaths: fx.expectedPaths,
       git,
-      housekeeperFn: () => {
+      housekeeperFn: ({ expectedHead }) => {
         housekeeperCalls += 1;
+        assert.equal(expectedHead, A);
         return housekeeperObservation({ state: 'BLOCKED', sourceDirtCount: 1 });
       },
     });
@@ -184,8 +186,9 @@ test('Housekeeper-cleared untracked dirt is re-proved before fetch and can retur
       paths: fx.paths,
       expectedPaths: fx.expectedPaths,
       git,
-      housekeeperFn: () => {
+      housekeeperFn: ({ expectedHead }) => {
         housekeeperCalls += 1;
+        assert.equal(expectedHead, A);
         return housekeeperObservation({ state: 'READY' });
       },
     });
@@ -223,10 +226,11 @@ test('tracked source dirt skips Housekeeper execution, blocks before fetch, and 
   } finally { await rm(fx.root, { recursive: true, force: true }); }
 });
 
-test('bounded Housekeeper subprocess uses a fixed Node script, minimal Git environment, and publishes counts rather than paths', () => {
+test('bounded Housekeeper subprocess uses the exact-head runner, minimal Git environment, and publishes counts rather than paths', () => {
   const calls = [];
   const observation = runBoundedSyncHousekeeper({
     repoRoot: '/canonical/repo',
+    expectedHead: A,
     platform: 'linux',
     environment: { PATH: '/attacker', NODE_OPTIONS: '--require=/attacker/inject.cjs', HOME: '/home/test' },
     spawnSyncFn: (command, argv, options) => {
@@ -247,14 +251,16 @@ test('bounded Housekeeper subprocess uses a fixed Node script, minimal Git envir
       };
     },
   });
+  assert.equal(BATTLE_BRIDGE_SYNC_HOUSEKEEPER_COMMAND.exactHeadBound, true);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].command, process.execPath);
-  assert.deepEqual(calls[0].argv, ['/canonical/repo/scripts/ignite-stephanos-local.mjs', '--mode=housekeep']);
+  assert.deepEqual(calls[0].argv, ['/canonical/repo/scripts/battle-bridge-sync-housekeeper-runner.mjs']);
   assert.equal(calls[0].options.cwd, '/canonical/repo');
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.env.PATH, '/usr/bin:/bin');
   assert.equal(calls[0].options.env.NODE_OPTIONS, undefined);
   assert.equal(calls[0].options.env.GIT_CONFIG_NOSYSTEM, '1');
+  assert.equal(calls[0].options.env.STEPHANOS_EXPECTED_HEAD, A);
   assert.equal(observation.state, 'BLOCKED');
   assert.equal(observation.sourceDirtCount, 2);
   assert.equal(observation.hardBlockCount, 1);
@@ -264,6 +270,23 @@ test('bounded Housekeeper subprocess uses a fixed Node script, minimal Git envir
   assert.equal('ignitionHardBlockPaths' in observation, false);
   assert.equal(JSON.stringify(observation).includes('secret-shaped-path'), false);
   assert.equal(JSON.stringify(observation).includes('local detail'), false);
+});
+
+test('bounded Housekeeper refuses to spawn without a concrete exact local head', () => {
+  let spawnCalls = 0;
+  const observation = runBoundedSyncHousekeeper({
+    repoRoot: '/canonical/repo',
+    expectedHead: 'not-a-sha',
+    platform: 'linux',
+    spawnSyncFn: () => {
+      spawnCalls += 1;
+      throw new Error('must not spawn');
+    },
+  });
+  assert.equal(spawnCalls, 0);
+  assert.equal(observation.attempted, false);
+  assert.equal(observation.state, 'UNPROVEN');
+  assert.equal(observation.reason, 'HOUSEKEEPER_EXPECTED_HEAD_INVALID');
 });
 
 test('wrong remote and non-main branch block before fetch', async () => {
