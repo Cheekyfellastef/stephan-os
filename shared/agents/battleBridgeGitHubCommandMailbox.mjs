@@ -13,9 +13,12 @@ import {
 
 export * from './battleBridgeGitHubCommandMailboxBaseV1.mjs';
 
+export const BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION = 'SYNC_CODEX_DISPATCH_BRIDGE';
+
 export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   ...base.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
   BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
+  BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
 ]);
 
 const UPDATE_STEPHANOS_FROM_CHAT_OPERATION = 'UPDATE_STEPHANOS_FROM_CHAT';
@@ -39,11 +42,12 @@ function hasOwn(object, field) {
 }
 
 function validateRuntimeDataPreservationCommandShape(command = {}) {
+  const operation = String(command?.operation || '');
   const profilePresent = hasOwn(command, 'preservationProfile');
   const approvalPresent = hasOwn(command, 'preservationApproval');
-  const requested = profilePresent || approvalPresent;
+  const requested = profilePresent || approvalPresent || operation === BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION;
   if (!requested) return Object.freeze({ ok: true, requested: false });
-  if (String(command?.operation || '') !== UPDATE_STEPHANOS_FROM_CHAT_OPERATION) {
+  if (operation !== BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION) {
     return fail('COMMAND_PRESERVATION_FIELDS_NOT_ALLOWED', { requested: true });
   }
   const profile = String(command?.preservationProfile || '').trim();
@@ -81,6 +85,9 @@ function withoutRuntimeDataPreservationFields(command = {}) {
 
 function translateRuntimeDataPreservationForBase(command = {}, shape = {}) {
   const translated = withoutRuntimeDataPreservationFields(command);
+  if (String(translated.operation || '') === BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION) {
+    translated.operation = UPDATE_STEPHANOS_FROM_CHAT_OPERATION;
+  }
   if (shape?.ok === true) return translated;
   return {
     ...translated,
@@ -147,7 +154,7 @@ export function validateBattleBridgeGitHubCommand(command = {}, options = {}) {
   }
 
   const envelope = base.validateBattleBridgeGitHubCommand(
-    preservation.requested ? withoutRuntimeDataPreservationFields(command) : command,
+    preservation.requested ? translateRuntimeDataPreservationForBase(command, preservation) : command,
     options,
   );
   if (!envelope?.ok || !preservation.requested) return envelope;
@@ -155,6 +162,7 @@ export function validateBattleBridgeGitHubCommand(command = {}, options = {}) {
     ...envelope,
     command: Object.freeze({
       ...envelope.command,
+      operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
       preservationProfile: preservation.profile,
       preservationApproval: preservation.approval,
     }),
@@ -162,7 +170,10 @@ export function validateBattleBridgeGitHubCommand(command = {}, options = {}) {
 }
 
 export function classifyBattleBridgeMailboxOperation(operation = '') {
-  if (String(operation || '') === BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION) {
+  if ([
+    BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
+    BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
+  ].includes(String(operation || ''))) {
     return base.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
   }
   return base.classifyBattleBridgeMailboxOperation(operation);
@@ -212,6 +223,7 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
           ...entry,
           command: Object.freeze({
             ...entry.command,
+            operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
             preservationProfile: preservationOriginal.shape.profile,
             preservationApproval: preservationOriginal.shape.approval,
           }),
@@ -318,7 +330,7 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
     if (options?.syncCodexDispatchBridgeFn !== undefined
       && typeof options.syncCodexDispatchBridgeFn !== 'function') {
       return fail('COMMAND_PRESERVATION_SYNC_HANDLER_INVALID', {
-        operation: UPDATE_STEPHANOS_FROM_CHAT_OPERATION,
+        operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
         requestId: String(command?.requestId || ''),
       });
     }
@@ -340,7 +352,7 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
       });
     } catch (error) {
       return fail('COMMAND_PRESERVATION_SYNC_FAILED', {
-        operation: UPDATE_STEPHANOS_FROM_CHAT_OPERATION,
+        operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
         requestId: String(command?.requestId || ''),
         error: error?.message || String(error),
       });
@@ -350,7 +362,7 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
         ok: false,
         verdict: 'COMMAND_EXECUTION_BLOCKED',
         blocker: String(preservationSync?.blocker || 'COMMAND_PRESERVATION_SYNC_BLOCKED'),
-        operation: UPDATE_STEPHANOS_FROM_CHAT_OPERATION,
+        operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
         requestId: String(command?.requestId || ''),
         result: preservationSync,
       });
@@ -361,15 +373,21 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
         ok: false,
         verdict: 'COMMAND_EXECUTION_BLOCKED',
         blocker: 'COMMAND_PRESERVATION_TARGET_HEAD_MISMATCH',
-        operation: UPDATE_STEPHANOS_FROM_CHAT_OPERATION,
+        operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
         requestId: String(command?.requestId || ''),
         result: preservationSync,
       });
     }
-    const update = await base.executeBattleBridgeGitHubCommand(command, options);
     return Object.freeze({
-      ...update,
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
+      requestId: String(command?.requestId || ''),
+      sourceHead: afterHead,
+      expectedHead: preservation.expectedHead,
+      result: preservationSync,
       preservationSync,
+      runtimeRefreshAttempted: false,
     });
   }
 
