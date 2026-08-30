@@ -7,12 +7,18 @@ import { fileURLToPath } from 'node:url';
 import {
   createSourceMutationLeaseReleaseRecord,
   validateSourceMutationLease,
+  validateSourceMutationLeaseReleaseRecord,
 } from './programmeAuthorityV1.mjs';
 import {
   DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS,
   projectMissionWorkerHeartbeat,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 import { resolveForgeShadowM2DigestOnBattleBridge } from './forgeShadowM2DigestResolverV1.mjs';
+import {
+  BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE,
+  preserveBattleBridgeDirtyData,
+} from './battleBridgeDirtyDataPreservationV1.mjs';
+import { classifyDirt } from '../../scripts/battle-bridge-github-sync-policy.mjs';
 
 export const DEFAULT_CODEX_DISPATCH_REPO_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 export const DEFAULT_BATTLE_BRIDGE_ENDPOINTS = Object.freeze([
@@ -27,6 +33,7 @@ export const CODEX_DISPATCH_TEST_ARGS = Object.freeze([
   'shared/agents/localCodexExecIntegration.test.mjs',
   'shared/agents/codexDispatchMcp.test.mjs',
   'shared/agents/codexDispatchHostOps.test.mjs',
+  'shared/agents/battleBridgeDirtyDataPreservationV1.test.mjs',
   'shared/agents/forgeShadowM2DigestResolverV1.test.mjs',
   'shared/agents/stephanosChatUpdate.test.mjs',
   'shared/agents/remoteCodexTaskVisibility.test.mjs',
@@ -41,6 +48,7 @@ const SAFE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
 const MAX_TELEMETRY_JSON_BYTES = 256 * 1024;
 const ACTIVE_TASK_STATUSES = new Set(['DISPATCHED', 'CLAIMED', 'RUNNING', 'WAITING_PROOF']);
+const CANONICAL_ORIGIN = /^(?:https:\/\/github\.com\/Cheekyfellastef\/stephan-os(?:\.git)?\/?|git@github\.com:Cheekyfellastef\/stephan-os(?:\.git)?|ssh:\/\/git@github\.com\/Cheekyfellastef\/stephan-os(?:\.git)?\/?)$/i;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -276,7 +284,22 @@ export function collectBattleBridgeWorkerTelemetry({
       releaseMarker = Object.freeze({ state: 'unverifiable', value: null, blocker: 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_INVALID' });
     }
   }
-  const leaseActive = Boolean(lease && leaseValidation.valid && leaseValidation.active && releaseMarker.state !== 'present');
+  const releaseValidation = releaseMarker.state === 'present'
+    ? validateSourceMutationLeaseReleaseRecord(releaseMarker.value, lease, { nowUtc })
+    : Object.freeze({
+      valid: false,
+      errors: Object.freeze([releaseMarker.state === 'unverifiable'
+        ? releaseMarker.blocker || 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_INVALID'
+        : 'source-mutation-lease-release-not-observed']),
+      finalVerdict: 'SOURCE_MUTATION_LEASE_RELEASE_NOT_OBSERVED',
+    });
+  const releasedLeaseIsSafelyInactive = releaseMarker.state === 'present' && releaseValidation.valid;
+  const leaseActive = Boolean(
+    lease
+    && leaseValidation.valid
+    && leaseValidation.active
+    && !releasedLeaseIsSafelyInactive,
+  );
   const identity = taskIdentity({
     task: activeTask,
     lease: leaseActive ? lease : null,
@@ -304,7 +327,8 @@ export function collectBattleBridgeWorkerTelemetry({
   if (activeTask && !taskId) blockers.push('ACTIVE_TASK_ID_NOT_OBSERVED');
   if (activeTask && !latestReceipt) blockers.push('ACTIVE_TASK_RECEIPT_NOT_OBSERVED');
   if (lease && !leaseValidation.valid) blockers.push('SOURCE_MUTATION_LEASE_INVALID');
-  if (releaseMarker.state === 'present') blockers.push('SOURCE_MUTATION_LEASE_RELEASED');
+  if (releaseMarker.state === 'unverifiable') blockers.push(releaseMarker.blocker || 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_INVALID');
+  if (releaseMarker.state === 'present' && !releaseValidation.valid) blockers.push('SOURCE_MUTATION_LEASE_RELEASE_RECORD_INVALID');
   const workerActive = inspectionProven && processHealthy && heartbeatProjection.valid && heartbeatProjection.fresh;
   const operatorActionRequired = activeTask?.operatorActionRequired === true
     || latestReceipt?.operatorActionRequired === true;
@@ -338,6 +362,8 @@ export function collectBattleBridgeWorkerTelemetry({
       observed: true,
       valid: leaseValidation.valid === true,
       active: leaseActive,
+      released: releasedLeaseIsSafelyInactive,
+      releaseRecordValid: releaseValidation.valid === true,
       leaseId: safeId(lease.leaseId),
       laneId: safeId(lease.laneId),
       ownerId: safeId(lease.ownerId),
@@ -377,6 +403,11 @@ function bounded(value = '', limit = 6000) {
   return text.length > limit ? `${text.slice(0, limit)}\n...[truncated]` : text;
 }
 
+function boundedGitStatus(value = '', limit = 6000) {
+  const text = String(value || '').trimEnd();
+  return text.length > limit ? `${text.slice(0, limit)}\n...[truncated]` : text;
+}
+
 export function parseTapTestSummary(value = '') {
   const output = String(value || '');
   const countKeys = ['tests', 'pass', 'fail', 'cancelled', 'skipped', 'todo'];
@@ -396,7 +427,12 @@ export function parseTapTestSummary(value = '') {
   return Object.freeze({ summaryComplete: countKeys.every((key) => observedCounts.has(key)), ...counts, failingTests });
 }
 
-function capture(spawnSyncFn, command, args, { cwd, timeout = 120000, captureTapSummary = false } = {}) {
+function capture(spawnSyncFn, command, args, {
+  cwd,
+  timeout = 120000,
+  captureTapSummary = false,
+  preserveGitStatusColumns = false,
+} = {}) {
   const result = spawnSyncFn(command, args, {
     cwd,
     encoding: 'utf8',
@@ -411,7 +447,7 @@ function capture(spawnSyncFn, command, args, { cwd, timeout = 120000, captureTap
     ok: !result?.error && result?.status === 0,
     status: result?.status ?? null,
     signal: result?.signal ?? null,
-    stdout: bounded(stdout),
+    stdout: preserveGitStatusColumns ? boundedGitStatus(stdout) : bounded(stdout),
     stderr: bounded(result?.stderr),
     error: result?.error?.message || '',
     ...(captureTapSummary ? { tapSummary: parseTapTestSummary(stdout) } : {}),
@@ -419,7 +455,11 @@ function capture(spawnSyncFn, command, args, { cwd, timeout = 120000, captureTap
 }
 
 function git(spawnSyncFn, repoRoot, args, timeout) {
-  return capture(spawnSyncFn, 'git', args, { cwd: repoRoot, timeout });
+  return capture(spawnSyncFn, 'git', args, {
+    cwd: repoRoot,
+    timeout,
+    preserveGitStatusColumns: args[0] === 'status' && args.includes('--porcelain=v1'),
+  });
 }
 
 function parseAheadBehind(output = '') {
@@ -451,6 +491,14 @@ export function syncCodexDispatchBridge({
   operatorApproval = '',
   spawnSyncFn = spawnSync,
   nodeCommand = process.execPath,
+  preservationProfile = '',
+  preservationApproval = '',
+  workspaceRoot = resolveBattleBridgeTelemetryPaths().workspaceRoot,
+  expectedPreservationPaths = Object.freeze({
+    repoRoot: DEFAULT_CODEX_DISPATCH_REPO_ROOT,
+    workspaceRoot: resolveBattleBridgeTelemetryPaths().workspaceRoot,
+  }),
+  nowFn = () => new Date(),
 } = {}) {
   if (operatorApproval !== 'operator-approved') {
     return Object.freeze({
@@ -480,6 +528,22 @@ export function syncCodexDispatchBridge({
   const statusBefore = git(spawnSyncFn, repoRoot, ['status', '--porcelain=v1', '--untracked-files=all']);
   if (!beforeHead.ok || !statusBefore.ok) {
     return Object.freeze({ ok: false, status: 'FAILED', verdict: 'FAIL', blocker: 'LOCAL_STATE_READ_FAILED', beforeHead, statusBefore });
+  }
+
+  let preservation = null;
+  let statusBeforeSync = statusBefore;
+  if (preservationProfile || preservationApproval) {
+    if (preservationProfile !== BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE) {
+      return Object.freeze({ ok: false, status: 'BLOCKED', verdict: 'FAIL', blocker: 'PRESERVATION_PROFILE_NOT_ALLOWED' });
+    }
+    const repositoryTopLevel = git(spawnSyncFn, repoRoot, ['rev-parse', '--show-toplevel']);
+    const originUrl = git(spawnSyncFn, repoRoot, ['remote', 'get-url', 'origin']);
+    if (!repositoryTopLevel.ok || resolve(repositoryTopLevel.stdout) !== resolve(repoRoot)) {
+      return Object.freeze({ ok: false, status: 'BLOCKED', verdict: 'FAIL', blocker: 'NON_CANONICAL_REPOSITORY_PATH' });
+    }
+    if (!originUrl.ok || !CANONICAL_ORIGIN.test(originUrl.stdout)) {
+      return Object.freeze({ ok: false, status: 'BLOCKED', verdict: 'FAIL', blocker: 'NON_CANONICAL_ORIGIN' });
+    }
   }
 
   const fetchResult = git(spawnSyncFn, repoRoot, ['fetch', 'origin', expectedBranch], 120000);
@@ -519,6 +583,65 @@ export function syncCodexDispatchBridge({
     });
   }
 
+  if (preservationProfile) {
+    const preservationHead = git(spawnSyncFn, repoRoot, ['rev-parse', 'HEAD']);
+    if (!preservationHead.ok) {
+      return Object.freeze({
+        ok: false,
+        status: 'FAILED',
+        verdict: 'FAIL',
+        blocker: 'PRESERVATION_SOURCE_HEAD_READ_FAILED',
+        beforeHead: beforeHead.stdout,
+        preservationHead,
+        statusBefore: statusBefore.stdout,
+        fileMovePerformed: false,
+        destructiveCleanupPerformed: false,
+      });
+    }
+    if (preservationHead.stdout !== beforeHead.stdout) {
+      return Object.freeze({
+        ok: false,
+        status: 'BLOCKED',
+        verdict: 'FAIL',
+        blocker: 'PRESERVATION_SOURCE_HEAD_CHANGED',
+        beforeHead: beforeHead.stdout,
+        preservationHead: preservationHead.stdout,
+        statusBefore: statusBefore.stdout,
+        fileMovePerformed: false,
+        destructiveCleanupPerformed: false,
+        nextOperatorAction: 'Retry only after the canonical checkout is stable; no runtime-data files were moved.',
+      });
+    }
+    preservation = preserveBattleBridgeDirtyData({
+      repoRoot,
+      workspaceRoot,
+      expectedRepoRoot: expectedPreservationPaths.repoRoot,
+      expectedWorkspaceRoot: expectedPreservationPaths.workspaceRoot,
+      profile: preservationProfile,
+      operatorApproval: preservationApproval,
+      statusLines: String(statusBefore.stdout).split(/\r?\n/).filter(Boolean),
+      sourceHead: preservationHead.stdout,
+      now: nowFn(),
+    });
+    if (!preservation.ok) return Object.freeze({ ...preservation, beforeHead: beforeHead.stdout, statusBefore: statusBefore.stdout });
+    statusBeforeSync = git(spawnSyncFn, repoRoot, ['status', '--porcelain=v1', '--untracked-files=all']);
+    if (!statusBeforeSync.ok) {
+      return Object.freeze({ ok: false, status: 'FAILED', verdict: 'FAIL', blocker: 'POST_PRESERVATION_STATUS_READ_FAILED', preservation });
+    }
+    const postPreservationDirt = classifyDirt(String(statusBeforeSync.stdout).split(/\r?\n/).filter(Boolean));
+    if (postPreservationDirt.blocksSync || postPreservationDirt.generatedSource.length) {
+      return Object.freeze({
+        ok: false,
+        status: 'BLOCKED',
+        verdict: 'FAIL',
+        blocker: 'POST_PRESERVATION_DIRT_BLOCKED',
+        preservation,
+        postPreservationDirt,
+        statusBeforeSync: statusBeforeSync.stdout,
+      });
+    }
+  }
+
   let fastForward = null;
   if (counts.behind > 0) {
     fastForward = git(spawnSyncFn, repoRoot, ['merge', '--ff-only', approvedTargetHead], 120000);
@@ -552,6 +675,7 @@ export function syncCodexDispatchBridge({
   });
   const restartRequired = filesChanged.some((path) => [
     'scripts/stephanos-codex-dispatch-mcp.mjs',
+    'shared/agents/battleBridgeDirtyDataPreservationV1.mjs',
     'shared/agents/codexDispatchHostOps.mjs',
     'shared/agents/stephanosChatUpdate.mjs',
   ].includes(path));
@@ -586,10 +710,12 @@ export function syncCodexDispatchBridge({
     filesChanged,
     preExistingDirt: Boolean(statusBefore.stdout),
     statusBefore: statusBefore.stdout,
+    statusBeforeSync: statusBeforeSync.stdout,
     statusAfter: statusAfter.stdout,
     fetchResult,
     fastForward,
     tests,
+    preservation,
     restartRequired,
     publicExposureChanged: false,
     destructiveCleanupPerformed: false,

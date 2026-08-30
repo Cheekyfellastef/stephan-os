@@ -9,7 +9,7 @@ permissions:
   actions: write
   contents: read
   issues: write
-  pull-requests: read
+  pull-requests: write
 
 concurrency:
   group: protected-workflow-dispatch-mailbox-${{ github.event.comment.id || github.run_id }}
@@ -34,7 +34,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Validate exact mailbox command and dispatch fixed protected merge workflow
+      - name: Validate exact owner command and perform only the fixed protected lifecycle action
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/dispatch-protected-merge-from-mailbox.mjs
