@@ -34,7 +34,7 @@ function certificate() {
       goalId: 'goal-runtime-1',
       laneId: 'lane-runtime-1',
       ownerId: 'goal-building-agent',
-      phase: 'IMPLEMENTING',
+      phase: 'IMPLEMENT',
       authorityHead: head,
       observedAtUtc: '2026-08-28T09:44:55.000Z',
       lastProgressAtUtc: '2026-08-28T09:44:40.000Z',
