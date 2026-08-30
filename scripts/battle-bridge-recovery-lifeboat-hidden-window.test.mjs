@@ -23,3 +23,44 @@ test('Battle Bridge Recovery Lifeboat scheduled task has no direct PowerShell co
   assert.match(launcher, /run-battle-bridge-recovery-lifeboat-active-v1\.ps1/);
   assert.doesNotMatch(launcher, /WScript\.Arguments/);
 });
+
+test('already-current healthy Lifeboat reinstall is a proved idempotent success', async () => {
+  const installer = await readFile(installerUrl, 'utf8');
+
+  assert.doesNotMatch(installer, /Candidate lifeboat bank is not distinct from the active known-good bank/);
+  assert.match(installer, /function Assert-ActivePayloadManifest/);
+  assert.match(installer, /active manifest file does not match active state/);
+  assert.match(installer, /Read-FreshHealthyHeartbeat -BankId \$activeBank -ExpectedManifest/);
+  assert.match(installer, /Assert-ActivePayloadManifest -BankId \$activeBank -ExpectedManifest/);
+
+  assert.match(installer, /function Assert-CanonicalScheduledTask/);
+  assert.match(installer, /Get-ScheduledTask -TaskName \$taskName -ErrorAction Stop/);
+  assert.match(installer, /\$actions\.Count -ne 1/);
+  assert.match(installer, /\$actions\[0\]\.Execute -ne \$wscriptExe/);
+  assert.match(installer, /\$actions\[0\]\.Arguments -ne \$expectedArguments/);
+  assert.match(installer, /\$task\.Principal\.UserId -ne \$CurrentUser/);
+  assert.match(installer, /\$task\.Principal\.LogonType -ne 'Interactive'/);
+  assert.match(installer, /\$task\.Principal\.RunLevel -ne 'Limited'/);
+
+  const sameManifestBranch = installer.match(/if \(\$null -ne \$activeState -and \$manifestSha256 -eq \[string\]\$activeState\.manifestSha256\) \{([\s\S]*?)\n\}/);
+  assert.ok(sameManifestBranch, 'same-manifest branch must exist');
+  assert.match(sameManifestBranch[1], /Assert-CanonicalScheduledTask -CurrentUser \$currentUser/);
+  assert.match(sameManifestBranch[1], /Remove-Item -LiteralPath \$stageRoot -Recurse -Force/);
+  assert.match(sameManifestBranch[1], /installDisposition = 'ALREADY_CURRENT_HEALTHY'/);
+  assert.match(sameManifestBranch[1], /changed = \$false/);
+  assert.match(sameManifestBranch[1], /activeBankAfter = \$activeBank/);
+  assert.match(sameManifestBranch[1], /scheduledTaskIdentityReproved = \$true/);
+  assert.match(sameManifestBranch[1], /if \(\$StartNow -and \$PSCmdlet\.ShouldProcess\(\$taskName, 'Start existing canonical Battle Bridge recovery lifeboat task'\)\)/);
+  assert.match(sameManifestBranch[1], /return/);
+  assert.doesNotMatch(sameManifestBranch[1], /Register-ScheduledTask/);
+  assert.doesNotMatch(sameManifestBranch[1], /Write-AtomicJson/);
+
+  assert.match(installer, /installDisposition = 'PROMOTED_CANDIDATE'/);
+  assert.match(installer, /changed = \$true/);
+  assert.match(installer, /activeBankOverwriteAllowed = \$false/);
+  assert.match(installer, /dualBankOverwriteAllowed = \$false/);
+  assert.match(installer, /arbitraryShellAllowed = \$false/);
+  assert.match(installer, /gitMutationAllowed = \$false/);
+  assert.match(installer, /sourceMutationAllowed = \$false/);
+  assert.match(installer, /pcRestartAllowed = \$false/);
+});
