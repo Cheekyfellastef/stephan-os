@@ -42,7 +42,6 @@ import {
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
   validatePersonalRepositoryEvidence,
-  validatePersonalRepositoryReadOnlyPriorFailure,
   validatePersonalRepositoryRulesetProofRequest,
   validatePersonalRepositoryRulesetProofResponse,
   validatePersonalRepositorySquashCompletion,
@@ -253,20 +252,6 @@ function appendOutputs(values) {
   );
 }
 
-function workflowRepository(run = {}) {
-  return text(run?.repository?.full_name || run?.repository);
-}
-
-function canonicalMailboxWorkflowPath(run = {}, repository = '') {
-  let path = text(run?.path);
-  if (repository && path.startsWith(`${repository}/`)) path = path.slice(repository.length + 1);
-  const at = path.indexOf('@');
-  if (at === -1) return path;
-  if (at === 0 || at === path.length - 1 || path.indexOf('@', at + 1) !== -1) return '';
-  if (!['main', 'refs/heads/main'].includes(path.slice(at + 1))) return '';
-  return path.slice(0, at);
-}
-
 function mailboxTransportActor(run = {}) {
   return text(run?.triggering_actor?.login || run?.actor?.login).toLowerCase();
 }
@@ -355,6 +340,7 @@ async function currentWorkflowExecution(context) {
     baseSha: context.dispatch.identity.baseSha,
     workflowRunId: context.runId,
     workflowRunAttempt: context.runAttempt,
+    mailboxAuthorization: authorization,
   });
   if (execution.replayRunIds.length !== 0) {
     if (execution.blockers.includes('personal-repository-prior-run-attempt-limit-exceeded')) {
@@ -384,15 +370,14 @@ async function currentWorkflowExecution(context) {
       baseSha: context.dispatch.identity.baseSha,
       workflowRunId: context.runId,
       workflowRunAttempt: context.runAttempt,
+      mailboxAuthorization: authorization,
     });
   }
 
   const expectedDisplayTitle = `Protected operator merge ${context.dispatch.identity.sourceHead}`;
   const transportActor = mailboxTransportActor(run);
-  const actorMismatchCount = execution.currentMismatches.filter((item) => item === 'triggering-actor').length;
   const runIdentityMismatches = [...new Set([
-    ...execution.currentMismatches.filter((item) => item !== 'triggering-actor'),
-    ...(actorMismatchCount === 1 ? [] : ['triggering-actor-provenance-shape']),
+    ...execution.currentMismatches,
     ...(text(run?.name) === expectedDisplayTitle ? [] : ['run-name']),
     ...(text(run?.display_title) === expectedDisplayTitle ? [] : ['display-title']),
     ...(transportActor === MAILBOX_TRANSPORT_ACTOR ? [] : ['transport-actor']),
@@ -403,12 +388,9 @@ async function currentWorkflowExecution(context) {
       mismatches: runIdentityMismatches,
     });
   }
-  const remainingExecutionBlockers = execution.blockers.filter((blocker) => (
-    blocker !== 'personal-repository-workflow-run-identity-mismatch'
-  ));
-  if (remainingExecutionBlockers.length !== 0) {
+  if (execution.blockers.length !== 0) {
     fail('Protected merge workflow execution evidence is incomplete or invalid.', {
-      blockers: remainingExecutionBlockers,
+      blockers: execution.blockers,
     });
   }
   if (execution.malformedPriorRunIds.length !== 0) {
@@ -424,55 +406,14 @@ async function currentWorkflowExecution(context) {
     });
   }
 
-  const mailboxPriorRuns = dispatchRuns.filter((candidate) => (
-    exactPositiveInteger(candidate?.id)
-    && exactPositiveInteger(candidate?.id) !== context.runId
-    && exactPositiveInteger(candidate?.workflow_id) === definition.id
-    && text(candidate?.name) === expectedDisplayTitle
-    && text(candidate?.display_title) === expectedDisplayTitle
-    && text(candidate?.event) === 'workflow_dispatch'
-    && workflowRepository(candidate) === context.repository
-    && text(candidate?.head_sha).toLowerCase() === context.dispatch.identity.baseSha
-    && text(candidate?.head_branch) === 'main'
-    && canonicalMailboxWorkflowPath(candidate, context.repository) === definition.path
-    && mailboxTransportActor(candidate) === MAILBOX_TRANSPORT_ACTOR
-  ));
-  if (mailboxPriorRuns.length > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX) {
-    fail('Prior mailbox protected merge attempts exceed the bounded job-proof estate.', {
-      blockers: ['personal-repository-prior-run-jobs-limit-exceeded'],
-      priorRunIds: mailboxPriorRuns.map((candidate) => candidate.id),
-    });
-  }
-  const mailboxRetryablePriorFailures = [];
-  for (const candidate of mailboxPriorRuns) {
-    const jobs = (await apiCollection(
-      `/repos/${context.owner}/${context.repo}/actions/runs/${candidate.id}/jobs?filter=all`,
-      'jobs',
-    )).items;
-    const retryValidation = validatePersonalRepositoryReadOnlyPriorFailure(candidate, jobs);
-    if (!retryValidation.valid) {
-      fail('A prior mailbox protected merge attempt already crossed or ambiguously approached an authority boundary.', {
-        blockers: ['personal-repository-prior-attempt-exists', ...retryValidation.blockers],
-        priorRunIds: [candidate.id],
-      });
-    }
-    mailboxRetryablePriorFailures.push(retryValidation.receipt);
-  }
-
   return {
     definitions,
     definition,
     run,
     authorization,
     transportActor,
-    retryablePriorRunIds: Object.freeze([
-      ...execution.retryablePriorRunIds,
-      ...mailboxRetryablePriorFailures.map((receipt) => receipt.runId),
-    ]),
-    retryablePriorFailures: Object.freeze([
-      ...execution.retryablePriorFailures,
-      ...mailboxRetryablePriorFailures,
-    ]),
+    retryablePriorRunIds: execution.retryablePriorRunIds,
+    retryablePriorFailures: execution.retryablePriorFailures,
   };
 }
 
