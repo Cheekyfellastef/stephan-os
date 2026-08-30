@@ -7,6 +7,10 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import {
+  BATTLE_BRIDGE_CONTROL_PLANE_TASKS,
+  reconcileBattleBridgeControlPlane,
+} from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
+import {
   buildPostSyncRefreshProjection,
   classifyPostSyncRefresh,
   executePostSyncRefreshPlan,
@@ -26,6 +30,7 @@ export const POST_SYNC_REFRESH_RESULT_MARKER = 'POST_SYNC_REFRESH_RESULT=';
 export const POST_SYNC_REFRESH_LOCK_STALE_AFTER_MS = 15 * 60 * 1000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const MAX_CHANGED_PATHS = 4000;
+const CONTROL_PLANE_TASK_IDS = new Set(BATTLE_BRIDGE_CONTROL_PLANE_TASKS.map((task) => task.id));
 
 function text(value) {
   return String(value ?? '').trim();
@@ -37,6 +42,13 @@ function splitLines(value) {
 
 function isSafeHead(value) {
   return SHA_PATTERN.test(text(value));
+}
+
+export function projectControlPlaneFailureBlocker(reconcile = {}) {
+  const blocker = text(reconcile?.blocker);
+  if (!blocker) return '';
+  const failedTaskId = text(reconcile?.failedTaskId);
+  return CONTROL_PLANE_TASK_IDS.has(failedTaskId) ? `${blocker}:${failedTaskId}` : blocker;
 }
 
 function processIsAlive(pid) {
@@ -114,7 +126,7 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
       return { ok: true, paths: parsed.paths };
     },
     async refreshUi({ afterHead }) {
-      const result = await refreshUiFn();
+      const result = await refreshUiFn({ expectedHead: afterHead });
       const sourceHead = text(result?.currentHead).toLowerCase();
       const exactHeadProofOk = sourceHead === text(afterHead).toLowerCase() && result?.exactHeadProof?.ready === true;
       return {
@@ -144,6 +156,14 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         canonicalActionVerified: payload.canonicalActionVerified === true,
         unrelatedTasksChanged: payload.unrelatedTasksChanged === true,
       };
+    },
+    reconcileControlPlane({ afterHead, paths }) {
+      return reconcileBattleBridgeControlPlane({
+        repoRoot: paths.repoRoot,
+        expectedHead: afterHead,
+        platform: process.platform,
+        spawnSyncFn,
+      });
     },
     confirmNaturalReload({ afterHead, repoRoot }) {
       const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: repoRoot, spawnSyncFn });
@@ -207,6 +227,7 @@ async function publishProjection({ workspaceRoot, repoRoot, projection, afterHea
   const proofRefs = [receiptRelative];
   const summary = `Post-sync runtime refresh ${projection.classification}`;
   const proof = Object.freeze({
+    ...projection,
     ...createSharedWorkspaceProofRecord({
       proofId: `post-sync-refresh-${afterHead.slice(0, 16)}-${phase}`,
       timestampUtc: now.toISOString(),
@@ -222,12 +243,12 @@ async function publishProjection({ workspaceRoot, repoRoot, projection, afterHea
     proofRefs,
     receiptType: 'post-sync-runtime-refresh',
     phase,
-    ...projection,
   });
   const receiptWrite = await writeAtomicJson(workspaceRoot, ['receipts', 'post-sync-runtime-refresh', receiptFile], proof, { repoRoot });
   if (!receiptWrite.ok) return { ok: false, blocker: 'POST_SYNC_REFRESH_RECEIPT_WRITE_FAILED' };
 
   const status = Object.freeze({
+    ...projection,
     ...createSharedWorkspaceStatusRecord({
       statusId: 'post-sync-runtime-refresh-current',
       participantId: 'mission-orchestrator',
@@ -237,7 +258,6 @@ async function publishProjection({ workspaceRoot, repoRoot, projection, afterHea
       proofRefs,
     }),
     phase,
-    ...projection,
   });
   const statusWrite = await writeAtomicJson(workspaceRoot, ['status', 'post-sync-runtime-refresh-current.json'], status, { repoRoot });
   if (!statusWrite.ok) return { ok: false, blocker: 'POST_SYNC_REFRESH_STATUS_WRITE_FAILED' };
@@ -321,17 +341,26 @@ export async function runBattleBridgePostSyncRefresh({
         if (!checkpointPublication.ok) throw new Error(checkpointPublication.blocker);
       },
     });
-    const projection = buildPostSyncRefreshProjection(execution, { beforeHead: normalizedBefore, afterHead: normalizedAfter });
-    const publication = await publishProjection({ workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot, projection, afterHead: normalizedAfter, phase: execution.ok ? 'complete' : 'blocked', now: new Date() });
+
+    const controlPlaneReconcile = execution.ok === true
+      ? adapter.reconcileControlPlane({ afterHead: normalizedAfter, paths })
+      : Object.freeze({ ok: false, skipped: true, blocker: '', sourceHead: '', exactHeadProofOk: false });
+    const effectiveExecution = execution.ok === true && controlPlaneReconcile.ok !== true
+      ? Object.freeze({ ...execution, ok: false, blocker: projectControlPlaneFailureBlocker(controlPlaneReconcile) || 'CONTROL_PLANE_RECONCILE_BLOCKED', exactHeadProofOk: false })
+      : execution;
+
+    const projection = buildPostSyncRefreshProjection(effectiveExecution, { beforeHead: normalizedBefore, afterHead: normalizedAfter });
+    const publication = await publishProjection({ workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot, projection, afterHead: normalizedAfter, phase: effectiveExecution.ok ? 'complete' : 'blocked', now: new Date() });
     if (!publication.ok) return Object.freeze({ ok: false, blocker: publication.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
     return Object.freeze({
       ...projection,
-      ok: execution.ok === true,
+      ok: effectiveExecution.ok === true,
       proofRefs: publication.proofRefs,
       sourceHead: normalizedAfter,
-      exactHeadProofOk: execution.exactHeadProofOk === true,
-      blocker: execution.blocker || '',
-      finalVerdict: execution.ok === true ? 'POST_SYNC_RUNTIME_REFRESH_PASS' : 'POST_SYNC_RUNTIME_REFRESH_BLOCKED',
+      exactHeadProofOk: effectiveExecution.exactHeadProofOk === true && controlPlaneReconcile.ok === true,
+      controlPlaneReconcile,
+      blocker: effectiveExecution.blocker || '',
+      finalVerdict: effectiveExecution.ok === true ? 'POST_SYNC_RUNTIME_REFRESH_PASS' : 'POST_SYNC_RUNTIME_REFRESH_BLOCKED',
     });
   } finally {
     await rm(lock.lockPath, { force: true }).catch(() => {});

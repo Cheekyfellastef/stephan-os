@@ -2,10 +2,16 @@ name: Build Stephanos UI
 
 on:
   push:
+    branches:
+      - main
     paths:
       - 'stephanos-ui/**'
       - 'shared/ai/**'
       - 'shared/runtime/**'
+      - 'shared/agents/**'
+      - 'shared/agents/vrResearchAgentV1*.mjs'
+      - 'shared/agents/vrResearchWorkspaceProjectionV1*.mjs'
+      - 'VR-Research-Lab/lab-workspace.json'
       - 'system/apps/app_validator.js'
       - 'scripts/**'
       - 'windows/**'
@@ -25,51 +31,108 @@ on:
   pull_request:
 
 jobs:
-  build:
+  scheduler-tests:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Preflight frontend path and lockfile
+      - name: Run mission scheduler and elastic-capacity tests
         run: |
-          echo "Frontend package path: stephanos-ui"
-          test -f stephanos-ui/package.json || (echo "Missing required file: stephanos-ui/package.json" && exit 1)
-          test -f stephanos-ui/package-lock.json || (echo "Missing required file: stephanos-ui/package-lock.json (run npm install in stephanos-ui and commit lockfile)" && exit 1)
+          node --test --test-concurrency=1 \
+            shared/runtime/missionScheduler*.test.mjs \
+            shared/agents/elasticBuildCapacityV1.test.mjs \
+            shared/agents/boundedParallelConstructionLanesV1.test.mjs
 
-      - name: Install dependencies
-        working-directory: stephanos-ui
-        run: npm ci
-
-      - name: Run Stephanos routing guardrails tests
+  runtime-guardrail-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run runtime guardrail and provider tests
         run: |
-          node --test \
+          node --test --test-concurrency=1 \
             shared/runtime/runtimeGuardrails.test.mjs \
             shared/runtime/runtimeStatusModel.test.mjs \
             shared/runtime/stephanosHomeNode.test.mjs \
             shared/runtime/stephanosSessionMemory.test.mjs \
             stephanos-server/tests/runtime-status-model.test.js \
-            stephanos-server/tests/provider-routing.test.js \
-            stephanos-ui/src/components/StatusPanel.render.test.mjs \
+            stephanos-server/tests/provider-routing.test.js
+
+  surface-ignition-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run surface, ignition, and build utility tests
+        run: |
+          node --test --test-concurrency=1 \
             scripts/stephanos-build-utils.test.mjs \
             scripts/windows-ignition-browser-surfaces.test.mjs \
             scripts/run-battle-bridge-ignition.test.mjs \
             scripts/refresh-stephanos-ui-4173.test.mjs
 
+  vr-research-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run VR Research Agent and workspace projection tests
+        run: |
+          node --test --test-concurrency=1 \
+            shared/agents/vrResearchAgentV1.test.mjs \
+            shared/agents/vrResearchWorkspaceProjectionV1.test.mjs
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: stephanos-ui/package-lock.json
+      - name: Preflight frontend path and lockfile
+        run: |
+          echo "Frontend package path: stephanos-ui"
+          test -f stephanos-ui/package.json || (echo "Missing required file: stephanos-ui/package.json" && exit 1)
+          test -f stephanos-ui/package-lock.json || (echo "Missing required file: stephanos-ui/package-lock.json (run npm install in stephanos-ui and commit lockfile)" && exit 1)
+      - name: Install dependencies
+        working-directory: stephanos-ui
+        run: npm ci
+      - name: Run dependency-backed surface render test
+        run: node --test --test-concurrency=1 stephanos-ui/src/components/StatusPanel.render.test.mjs
       - name: Build Stephanos UI pipeline from repo root
         run: npm run stephanos:build
-
       - name: Verify generated Stephanos dist from repo root
         run: npm run stephanos:verify
-
       - name: Upload built Stephanos dist artifact
         uses: actions/upload-artifact@v4
         with:

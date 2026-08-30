@@ -1,315 +1,418 @@
-import {
-  CODEX_BANKED_RESET_EXECUTION_SURFACE,
-  CODEX_BANKED_RESET_OPERATION,
-  CODEX_BANKED_RESET_POLICY_REF,
-  executeCodexBankedResetOnBattleBridge,
-} from './codexBankedResetBattleBridgeExecutor.mjs';
-import {
-  CODEX_BANKED_RESET_STATUS_OPERATION,
-  readCodexBankedResetStatusOnBattleBridge,
-} from './codexBankedResetStatusBattleBridgeReader.mjs';
-import {
-  OPERATOR_MERGE_PROTECTION_OPERATION,
-  activateOperatorMergeProtectionOnBattleBridge,
-} from './battleBridgeGitHubCommandMailboxAdmin.mjs';
+import { spawnSync } from 'node:child_process';
 
-export const BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA = 'stephanos.battle-bridge-github-command.v1';
-export const BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE = 1507;
-export const BATTLE_BRIDGE_GITHUB_COMMAND_AUTHOR = 'Cheekyfellastef';
-export const BATTLE_BRIDGE_GITHUB_COMMAND_MARKER = 'stephanos-battle-bridge-command';
+import * as base from './battleBridgeGitHubCommandMailboxBaseV1.mjs';
+import {
+  BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
+  executeApprovedBackendRestartOnBattleBridge,
+  normalizeApprovedBackendRestartCommand,
+  validateApprovedBackendRestartCommandShape,
+} from './battleBridgeApprovedBackendRestartMailboxV1.mjs';
+import {
+  BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE,
+} from './battleBridgeDirtyDataPreservationV1.mjs';
+
+export * from './battleBridgeGitHubCommandMailboxBaseV1.mjs';
+
+export const BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION = 'SYNC_CODEX_DISPATCH_BRIDGE';
 
 export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
-  'UPDATE_STEPHANOS_FROM_CHAT',
-  'INSTALL_UNATTENDED_GITHUB_SYNC',
-  'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
-  'READ_DEPLOYMENT_STATUS',
-  'READ_CAPABILITY_REGISTRY',
-  'READ_SHARED_WORKSPACE_STATUS',
-  'READ_CRITICAL_BACKLOG_STATUS',
-  'READ_MAILBOX_RECEIPT',
-  'RUN_WORKER_WATCHDOG_ACCEPTANCE',
-  'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
-  OPERATOR_MERGE_PROTECTION_OPERATION,
-  CODEX_BANKED_RESET_STATUS_OPERATION,
-  CODEX_BANKED_RESET_OPERATION,
+  ...base.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
+  BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
+  BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
 ]);
 
-const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
-const RESET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,120}$/;
+const UPDATE_STEPHANOS_FROM_CHAT_OPERATION = 'UPDATE_STEPHANOS_FROM_CHAT';
+const BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_APPROVAL = 'operator-approved';
+const INVALID_PRESERVATION_EXPIRY = '1970-01-01T00:00:00.000Z';
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
-const MAX_FUTURE_WINDOW_MS = 6 * 60 * 60 * 1000;
-const RESET_COMMAND_FIELDS = Object.freeze([
-  'resetId',
-  'resetExpiresAtUtc',
-  'latestSafeExecutionUtc',
-  'standingOperatorPolicyRef',
-  'executionSurface',
-  'fixedUiActionOnly',
-  'singlePressOnly',
-]);
-const FORBIDDEN_RESET_COMMAND_FIELDS = Object.freeze([
-  'url', 'uri', 'selector', 'xpath', 'javascript', 'script', 'command', 'executable',
-  'args', 'arguments', 'profilePath', 'userDataDir', 'cookie', 'cookies', 'token', 'credential',
+const PRESERVATION_TERMINAL_BLOCKERS = new Set([
+  'COMMAND_PRESERVATION_FIELDS_NOT_ALLOWED',
+  'COMMAND_PRESERVATION_FIELDS_INCOMPLETE',
+  'COMMAND_PRESERVATION_PROFILE_NOT_ALLOWED',
+  'COMMAND_PRESERVATION_APPROVAL_REQUIRED',
+  'COMMAND_PRESERVATION_EXPECTED_HEAD_REQUIRED',
 ]);
 
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
 }
 
-function hasValue(value) {
-  return value !== undefined && value !== null && value !== '';
+function hasOwn(object, field) {
+  return Object.prototype.hasOwnProperty.call(object || {}, field);
 }
 
-function unsafeAutomationField(command) {
-  return FORBIDDEN_RESET_COMMAND_FIELDS.find((field) => hasValue(command[field])) || '';
-}
-
-function validateResetFields(command, { nowMs, expiresAtMs }) {
-  const unsafeField = unsafeAutomationField(command);
-  if (unsafeField) return fail('RESET_COMMAND_UNSAFE_FIELD_PRESENT', { field: unsafeField });
-  if (!RESET_ID_PATTERN.test(String(command.resetId || ''))) return fail('RESET_COMMAND_RESET_ID_INVALID');
-  if (command.standingOperatorPolicyRef !== CODEX_BANKED_RESET_POLICY_REF) return fail('RESET_COMMAND_POLICY_MISMATCH');
-  if (command.executionSurface !== CODEX_BANKED_RESET_EXECUTION_SURFACE) return fail('RESET_COMMAND_EXECUTION_SURFACE_MISMATCH');
-  if (command.fixedUiActionOnly !== true) return fail('RESET_COMMAND_FIXED_UI_ACTION_REQUIRED');
-  if (command.singlePressOnly !== true) return fail('RESET_COMMAND_SINGLE_PRESS_REQUIRED');
-
-  const resetExpiresAtMs = Date.parse(String(command.resetExpiresAtUtc || ''));
-  const latestSafeExecutionMs = Date.parse(String(command.latestSafeExecutionUtc || ''));
-  if (!Number.isFinite(resetExpiresAtMs) || !Number.isFinite(latestSafeExecutionMs)) {
-    return fail('RESET_COMMAND_TIME_INVALID');
+function validateRuntimeDataPreservationCommandShape(command = {}) {
+  const operation = String(command?.operation || '');
+  const profilePresent = hasOwn(command, 'preservationProfile');
+  const approvalPresent = hasOwn(command, 'preservationApproval');
+  const requested = profilePresent || approvalPresent || operation === BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION;
+  if (!requested) return Object.freeze({ ok: true, requested: false });
+  if (operation !== BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION) {
+    return fail('COMMAND_PRESERVATION_FIELDS_NOT_ALLOWED', { requested: true });
   }
-  if (resetExpiresAtMs <= nowMs) return fail('RESET_COMMAND_SELECTED_RESET_EXPIRED');
-  if (latestSafeExecutionMs <= nowMs) return fail('RESET_COMMAND_ACTION_EXPIRED');
-  if (latestSafeExecutionMs > expiresAtMs) return fail('RESET_COMMAND_LATEST_SAFE_AFTER_COMMAND_EXPIRY');
-  if (latestSafeExecutionMs > resetExpiresAtMs) return fail('RESET_COMMAND_LATEST_SAFE_AFTER_RESET_EXPIRY');
-
+  const profile = String(command?.preservationProfile || '').trim();
+  const approval = String(command?.preservationApproval || '').trim();
+  if (!profilePresent || !approvalPresent || !profile || !approval) {
+    return fail('COMMAND_PRESERVATION_FIELDS_INCOMPLETE', { requested: true });
+  }
+  if (profile !== BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE) {
+    return fail('COMMAND_PRESERVATION_PROFILE_NOT_ALLOWED', { requested: true });
+  }
+  if (approval !== BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_APPROVAL) {
+    return fail('COMMAND_PRESERVATION_APPROVAL_REQUIRED', { requested: true });
+  }
+  const expectedHead = String(command?.expectedHead || '').trim().toLowerCase();
+  if (!SHA_PATTERN.test(expectedHead)) {
+    return fail('COMMAND_PRESERVATION_EXPECTED_HEAD_REQUIRED', { requested: true });
+  }
   return Object.freeze({
     ok: true,
-    reset: Object.freeze({
-      resetId: String(command.resetId),
-      resetExpiresAtUtc: new Date(resetExpiresAtMs).toISOString(),
-      latestSafeExecutionUtc: new Date(latestSafeExecutionMs).toISOString(),
-      standingOperatorPolicyRef: CODEX_BANKED_RESET_POLICY_REF,
-      executionSurface: CODEX_BANKED_RESET_EXECUTION_SURFACE,
-      fixedUiActionOnly: true,
-      singlePressOnly: true,
-    }),
+    requested: true,
+    profile: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE,
+    approval: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_APPROVAL,
+    expectedHead,
   });
 }
 
-export function extractBattleBridgeGitHubCommand(body = '') {
-  const text = String(body || '');
-  const fence = '```';
-  const pattern = new RegExp(`${fence}${BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\\s*([\\s\\S]*?)${fence}`, 'i');
-  const match = text.match(pattern);
-  if (!match) return fail('COMMAND_MARKER_MISSING');
-  try {
-    const command = JSON.parse(match[1].trim());
-    return Object.freeze({ ok: true, command });
-  } catch (error) {
-    return fail('COMMAND_JSON_INVALID', { error: error?.message || String(error) });
-  }
+function withoutRuntimeDataPreservationFields(command = {}) {
+  const {
+    preservationProfile: _preservationProfile,
+    preservationApproval: _preservationApproval,
+    ...rest
+  } = command || {};
+  return rest;
 }
 
-export function validateBattleBridgeGitHubCommand(command = {}, {
-  authorLogin = '',
-  now = new Date(),
-} = {}) {
-  if (authorLogin !== BATTLE_BRIDGE_GITHUB_COMMAND_AUTHOR) {
-    return fail('COMMAND_AUTHOR_NOT_ALLOWED', { authorLogin });
+function translateRuntimeDataPreservationForBase(command = {}, shape = {}) {
+  const translated = withoutRuntimeDataPreservationFields(command);
+  if (String(translated.operation || '') === BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION) {
+    translated.operation = UPDATE_STEPHANOS_FROM_CHAT_OPERATION;
   }
-  if (command.schemaVersion !== BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA) {
-    return fail('COMMAND_SCHEMA_MISMATCH');
-  }
-  if (!REQUEST_ID_PATTERN.test(String(command.requestId || ''))) {
-    return fail('COMMAND_REQUEST_ID_INVALID');
-  }
-  if (!BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(command.operation)) {
-    return fail('COMMAND_OPERATION_NOT_ALLOWED', { operation: command.operation || '' });
-  }
-  if (command.repository !== BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY) {
-    return fail('COMMAND_REPOSITORY_MISMATCH');
-  }
-  if (Number(command.issueNumber) !== BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE) {
-    return fail('COMMAND_ISSUE_MISMATCH');
-  }
-  if (command.branch !== 'main') return fail('COMMAND_BRANCH_NOT_ALLOWED');
-  if (command.operatorApproval !== 'operator-approved') {
-    return fail('COMMAND_OPERATOR_APPROVAL_REQUIRED');
-  }
-  if (command.expectedHead && !SHA_PATTERN.test(String(command.expectedHead))) {
-    return fail('COMMAND_EXPECTED_HEAD_INVALID');
-  }
-  if (command.operation === CODEX_BANKED_RESET_STATUS_OPERATION) {
-    const unsafeField = unsafeAutomationField(command);
-    if (unsafeField) return fail('RESET_STATUS_COMMAND_UNSAFE_FIELD_PRESENT', { field: unsafeField });
-  }
-  const targetRequestId = String(command.targetRequestId || '');
-  if (command.operation === 'READ_MAILBOX_RECEIPT' && !REQUEST_ID_PATTERN.test(targetRequestId)) {
-    return fail('COMMAND_TARGET_REQUEST_ID_INVALID');
-  }
-  if (command.operation !== 'READ_MAILBOX_RECEIPT' && targetRequestId) {
-    return fail('COMMAND_TARGET_REQUEST_ID_NOT_ALLOWED');
-  }
-
-  const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
-  const expiresAtMs = new Date(command.expiresAt || '').getTime();
-  if (!Number.isFinite(nowMs) || !Number.isFinite(expiresAtMs)) {
-    return fail('COMMAND_EXPIRY_INVALID');
-  }
-  if (expiresAtMs <= nowMs) return fail('COMMAND_EXPIRED');
-  if (expiresAtMs - nowMs > MAX_FUTURE_WINDOW_MS) {
-    return fail('COMMAND_EXPIRY_TOO_FAR_AHEAD');
-  }
-
-  let reset = null;
-  if (command.operation === CODEX_BANKED_RESET_OPERATION) {
-    const resetValidation = validateResetFields(command, { nowMs, expiresAtMs });
-    if (!resetValidation.ok) return resetValidation;
-    reset = resetValidation.reset;
-  } else {
-    const unexpectedResetField = RESET_COMMAND_FIELDS.find((field) => hasValue(command[field]));
-    if (unexpectedResetField) return fail('RESET_COMMAND_FIELD_NOT_ALLOWED', { field: unexpectedResetField });
-  }
-
-  return Object.freeze({
-    ok: true,
-    verdict: 'COMMAND_ACCEPTED',
-    command: Object.freeze({
-      schemaVersion: command.schemaVersion,
-      requestId: String(command.requestId),
-      operation: command.operation,
-      repository: command.repository,
-      issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
-      branch: 'main',
-      operatorApproval: 'operator-approved',
-      expectedHead: String(command.expectedHead || ''),
-      targetRequestId: command.operation === 'READ_MAILBOX_RECEIPT' ? targetRequestId : '',
-      expiresAt: new Date(expiresAtMs).toISOString(),
-      ...(reset || {}),
-    }),
-  });
+  if (shape?.ok === true) return translated;
+  return {
+    ...translated,
+    expiresAt: INVALID_PRESERVATION_EXPIRY,
+  };
 }
 
-export function selectNextBattleBridgeGitHubCommand(comments = [], {
-  consumedRequestIds = new Set(),
-  now = new Date(),
-} = {}) {
-  const ordered = [...comments].sort((a, b) => Number(a?.id || 0) - Number(b?.id || 0));
-  const rejected = [];
-  for (const comment of ordered) {
-    const extracted = extractBattleBridgeGitHubCommand(comment?.body || '');
-    if (!extracted.ok) continue;
-    const validated = validateBattleBridgeGitHubCommand(extracted.command, {
-      authorLogin: comment?.user?.login || '',
-      now,
-    });
-    if (!validated.ok) {
-      rejected.push(Object.freeze({ commentId: comment?.id || null, ...validated }));
-      continue;
+function translateApprovedBackendRestartForBase(command = {}, { shapeValid = true } = {}) {
+  return {
+    ...command,
+    operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
+    ...(shapeValid ? {} : { targetRequestId: 'invalid-restart-shape' }),
+  };
+}
+
+function translatedComment(comment = {}, translatedCommand = {}) {
+  return {
+    ...comment,
+    body: `\`\`\`${base.BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(translatedCommand)}\n\`\`\``,
+  };
+}
+
+function createExactOriginMainGuard(spawnSyncFn, expectedHead) {
+  const approvedHead = String(expectedHead || '').trim().toLowerCase();
+  return (command, argv, options) => {
+    const result = spawnSyncFn(command, argv, options);
+    const args = Array.isArray(argv) ? argv.map(String) : [];
+    if (String(command || '').toLowerCase().endsWith('git')
+      && args[0] === 'rev-parse'
+      && args[1] === 'origin/main'
+      && !result?.error
+      && result?.status === 0) {
+      const observedHead = String(result?.stdout || '').trim().toLowerCase();
+      if (observedHead !== approvedHead) {
+        return {
+          ...result,
+          status: 1,
+          stderr: 'APPROVED_TARGET_HEAD_MISMATCH',
+        };
+      }
     }
-    if (consumedRequestIds.has(validated.command.requestId)) continue;
+    return result;
+  };
+}
+
+export function isTerminalizableOwnerCommandBlocker(value) {
+  const blocker = String(value || '');
+  return PRESERVATION_TERMINAL_BLOCKERS.has(blocker)
+    || base.isTerminalizableOwnerCommandBlocker(blocker);
+}
+
+export function validateBattleBridgeGitHubCommand(command = {}, options = {}) {
+  const preservation = validateRuntimeDataPreservationCommandShape(command);
+  if (!preservation.ok) return preservation;
+
+  if (String(command?.operation || '') === BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION) {
+    const shape = validateApprovedBackendRestartCommandShape(command);
+    if (!shape.ok) return shape;
+    const envelope = base.validateBattleBridgeGitHubCommand(
+      translateApprovedBackendRestartForBase(command),
+      options,
+    );
+    return normalizeApprovedBackendRestartCommand(command, envelope);
+  }
+
+  const envelope = base.validateBattleBridgeGitHubCommand(
+    preservation.requested ? translateRuntimeDataPreservationForBase(command, preservation) : command,
+    options,
+  );
+  if (!envelope?.ok || !preservation.requested) return envelope;
+  return Object.freeze({
+    ...envelope,
+    command: Object.freeze({
+      ...envelope.command,
+      operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
+      preservationProfile: preservation.profile,
+      preservationApproval: preservation.approval,
+    }),
+  });
+}
+
+export function classifyBattleBridgeMailboxOperation(operation = '') {
+  if ([
+    BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
+    BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
+  ].includes(String(operation || ''))) {
+    return base.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
+  }
+  return base.classifyBattleBridgeMailboxOperation(operation);
+}
+
+export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}) {
+  const backendOriginals = new Map();
+  const preservationOriginals = new Map();
+  const translated = (Array.isArray(comments) ? comments : []).map((comment) => {
+    const extracted = base.extractBattleBridgeGitHubCommand(comment?.body || '');
+    if (!extracted.ok) return comment;
+
+    const preservation = validateRuntimeDataPreservationCommandShape(extracted.command);
+    if (preservation.requested) {
+      preservationOriginals.set(String(comment?.id ?? ''), Object.freeze({
+        command: extracted.command,
+        shape: preservation,
+      }));
+      return translatedComment(
+        comment,
+        translateRuntimeDataPreservationForBase(extracted.command, preservation),
+      );
+    }
+
+    if (extracted.command?.operation !== BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION) {
+      return comment;
+    }
+    const shape = validateApprovedBackendRestartCommandShape(extracted.command);
+    backendOriginals.set(String(comment?.id ?? ''), Object.freeze({
+      command: extracted.command,
+      shapeValid: shape.ok === true,
+    }));
+    return translatedComment(
+      comment,
+      translateApprovedBackendRestartForBase(extracted.command, { shapeValid: shape.ok === true }),
+    );
+  });
+
+  const selected = base.selectBattleBridgeGitHubCommandBatch(translated, options);
+  if (!selected?.ok) return selected;
+
+  const commands = Array.isArray(selected.commands)
+    ? selected.commands.map((entry) => {
+      const preservationOriginal = preservationOriginals.get(String(entry?.commentId ?? ''));
+      if (preservationOriginal?.shape?.ok === true) {
+        return Object.freeze({
+          ...entry,
+          command: Object.freeze({
+            ...entry.command,
+            operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
+            preservationProfile: preservationOriginal.shape.profile,
+            preservationApproval: preservationOriginal.shape.approval,
+          }),
+          partition: base.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
+        });
+      }
+      const backendOriginal = backendOriginals.get(String(entry?.commentId ?? ''));
+      if (!backendOriginal?.shapeValid) return entry;
+      return Object.freeze({
+        ...entry,
+        command: Object.freeze({
+          ...entry.command,
+          operation: BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
+          expectedHead: String(backendOriginal.command.expectedHead || '').toLowerCase(),
+        }),
+        partition: base.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
+      });
+    })
+    : [];
+
+  const rejected = Array.isArray(selected.rejected)
+    ? selected.rejected.map((entry) => {
+      const original = preservationOriginals.get(String(entry?.commentId ?? ''));
+      if (!original || original.shape?.ok === true) return entry;
+      return Object.freeze({
+        ...entry,
+        blocker: original.shape.blocker,
+      });
+    })
+    : selected.rejected;
+
+  const terminalRejections = Array.isArray(selected.terminalRejections)
+    ? selected.terminalRejections.map((entry) => {
+      const preservationOriginal = preservationOriginals.get(String(entry?.commentId ?? ''));
+      if (preservationOriginal) {
+        return Object.freeze({
+          ...entry,
+          blocker: preservationOriginal.shape?.ok === true
+            ? entry.blocker
+            : preservationOriginal.shape.blocker,
+          command: Object.freeze({
+            ...entry.command,
+            operation: String(preservationOriginal.command?.operation || entry.command?.operation || ''),
+            expectedHead: String(preservationOriginal.command?.expectedHead || entry.command?.expectedHead || '').toLowerCase(),
+            ...(preservationOriginal.shape?.ok === true ? {
+              preservationProfile: preservationOriginal.shape.profile,
+              preservationApproval: preservationOriginal.shape.approval,
+            } : {}),
+          }),
+        });
+      }
+      const backendOriginal = backendOriginals.get(String(entry?.commentId ?? ''));
+      if (!backendOriginal) return entry;
+      return Object.freeze({
+        ...entry,
+        command: Object.freeze({
+          ...entry.command,
+          operation: BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
+        }),
+      });
+    })
+    : [];
+
+  return Object.freeze({
+    ...selected,
+    ...(Array.isArray(selected.commands) ? { commands: Object.freeze(commands) } : {}),
+    ...(Array.isArray(selected.rejected) ? { rejected: Object.freeze(rejected) } : {}),
+    terminalRejections: Object.freeze(terminalRejections),
+  });
+}
+
+export function selectNextBattleBridgeGitHubCommand(comments = [], options = {}) {
+  const batch = selectBattleBridgeGitHubCommandBatch(comments, { ...options, maxBatch: 1 });
+  if (!batch.ok || batch.verdict === 'NO_COMMAND_READY') return batch;
+  const selected = batch.commands[0];
+  return Object.freeze({
+    ok: true,
+    verdict: 'COMMAND_READY',
+    commentId: selected.commentId,
+    commentUrl: selected.commentUrl,
+    command: selected.command,
+    partition: selected.partition,
+    rejected: batch.rejected,
+    terminalRejections: batch.terminalRejections,
+  });
+}
+
+export function buildBattleBridgeGitHubCommandReceipt(args = {}) {
+  const receipt = base.buildBattleBridgeGitHubCommandReceipt(args);
+  const preservation = validateRuntimeDataPreservationCommandShape(args?.command || {});
+  if (!preservation.ok || !preservation.requested) return receipt;
+  return Object.freeze({
+    ...receipt,
+    preservationProfile: preservation.profile,
+    preservationApproved: true,
+  });
+}
+
+export async function executeBattleBridgeGitHubCommand(command, options = {}) {
+  const preservation = validateRuntimeDataPreservationCommandShape(command);
+  if (!preservation.ok) return preservation;
+
+  if (preservation.requested) {
+    if (options?.syncCodexDispatchBridgeFn !== undefined
+      && typeof options.syncCodexDispatchBridgeFn !== 'function') {
+      return fail('COMMAND_PRESERVATION_SYNC_HANDLER_INVALID', {
+        operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
+        requestId: String(command?.requestId || ''),
+      });
+    }
+    let syncFn = options?.syncCodexDispatchBridgeFn;
+    if (typeof syncFn !== 'function') {
+      const module = await import('./codexDispatchHostOps.mjs');
+      syncFn = module.syncCodexDispatchBridge;
+    }
+    const rawSpawnSyncFn = typeof options?.spawnSyncFn === 'function' ? options.spawnSyncFn : spawnSync;
+    const guardedSpawnSyncFn = createExactOriginMainGuard(rawSpawnSyncFn, preservation.expectedHead);
+    let preservationSync;
+    try {
+      preservationSync = await syncFn({
+        expectedBranch: 'main',
+        operatorApproval: command.operatorApproval,
+        preservationProfile: preservation.profile,
+        preservationApproval: preservation.approval,
+        spawnSyncFn: guardedSpawnSyncFn,
+      });
+    } catch (error) {
+      return fail('COMMAND_PRESERVATION_SYNC_FAILED', {
+        operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
+        requestId: String(command?.requestId || ''),
+        error: error?.message || String(error),
+      });
+    }
+    if (!preservationSync?.ok) {
+      return Object.freeze({
+        ok: false,
+        verdict: 'COMMAND_EXECUTION_BLOCKED',
+        blocker: String(preservationSync?.blocker || 'COMMAND_PRESERVATION_SYNC_BLOCKED'),
+        operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
+        requestId: String(command?.requestId || ''),
+        result: preservationSync,
+      });
+    }
+    const afterHead = String(preservationSync?.afterHead || '').trim().toLowerCase();
+    if (afterHead !== preservation.expectedHead) {
+      return Object.freeze({
+        ok: false,
+        verdict: 'COMMAND_EXECUTION_BLOCKED',
+        blocker: 'COMMAND_PRESERVATION_TARGET_HEAD_MISMATCH',
+        operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
+        requestId: String(command?.requestId || ''),
+        result: preservationSync,
+      });
+    }
     return Object.freeze({
       ok: true,
-      verdict: 'COMMAND_READY',
-      commentId: comment?.id || null,
-      commentUrl: comment?.html_url || comment?.url || '',
-      command: validated.command,
-      rejected,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
+      requestId: String(command?.requestId || ''),
+      sourceHead: afterHead,
+      expectedHead: preservation.expectedHead,
+      result: preservationSync,
+      preservationSync,
+      runtimeRefreshAttempted: false,
     });
   }
-  return Object.freeze({ ok: true, verdict: 'NO_COMMAND_READY', rejected });
-}
 
-export async function executeBattleBridgeGitHubCommand(command, {
-  updateStephanos,
-  installUnattendedSync,
-  runDiagnostics,
-  readDeploymentStatus,
-  readCapabilityRegistry,
-  readSharedWorkspaceStatus,
-  readCriticalBacklogStatus,
-  readMailboxReceipt,
-  runWorkerWatchdogAcceptance,
-  runMonitorMultiplexerAcceptance,
-  activateOperatorMergeProtection = activateOperatorMergeProtectionOnBattleBridge,
-  readCodexBankedResetStatus = readCodexBankedResetStatusOnBattleBridge,
-  redeemBankedCodexReset = executeCodexBankedResetOnBattleBridge,
-} = {}) {
-  const handlers = {
-    UPDATE_STEPHANOS_FROM_CHAT: updateStephanos,
-    INSTALL_UNATTENDED_GITHUB_SYNC: installUnattendedSync,
-    RUN_BATTLE_BRIDGE_DIAGNOSTICS: runDiagnostics,
-    READ_DEPLOYMENT_STATUS: readDeploymentStatus,
-    READ_CAPABILITY_REGISTRY: readCapabilityRegistry,
-    READ_SHARED_WORKSPACE_STATUS: readSharedWorkspaceStatus,
-    READ_CRITICAL_BACKLOG_STATUS: readCriticalBacklogStatus,
-    READ_MAILBOX_RECEIPT: readMailboxReceipt,
-    RUN_WORKER_WATCHDOG_ACCEPTANCE: runWorkerWatchdogAcceptance,
-    RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
-    [OPERATOR_MERGE_PROTECTION_OPERATION]: activateOperatorMergeProtection,
-    [CODEX_BANKED_RESET_STATUS_OPERATION]: readCodexBankedResetStatus,
-    [CODEX_BANKED_RESET_OPERATION]: redeemBankedCodexReset,
-  };
-  const handler = handlers[command?.operation];
-  if (typeof handler !== 'function') {
-    return fail('COMMAND_HANDLER_NOT_CONFIGURED', { operation: command?.operation || '' });
+  if (String(command?.operation || '') !== BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION) {
+    return base.executeBattleBridgeGitHubCommand(command, options);
   }
+  const shape = validateApprovedBackendRestartCommandShape(command);
+  if (!shape.ok) return shape;
+  const executor = typeof options?.restartApprovedBackend === 'function'
+    ? options.restartApprovedBackend
+    : executeApprovedBackendRestartOnBattleBridge;
   try {
-    const result = await handler(command);
+    const result = await executor(command);
     return Object.freeze({
       ok: result?.ok !== false,
       verdict: result?.ok === false ? 'COMMAND_EXECUTION_BLOCKED' : 'COMMAND_EXECUTION_COMPLETE',
-      operation: command.operation,
-      requestId: command.requestId,
+      operation: BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
+      requestId: String(command?.requestId || ''),
       result,
     });
   } catch (error) {
     return fail('COMMAND_EXECUTION_FAILED', {
-      operation: command?.operation || '',
-      requestId: command?.requestId || '',
+      operation: BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
+      requestId: String(command?.requestId || ''),
       error: error?.message || String(error),
     });
   }
-}
-
-export function buildBattleBridgeGitHubCommandReceipt({
-  command,
-  state,
-  acceptedAt,
-  heartbeatAt,
-  completedAt = '',
-  result = null,
-  blocker = '',
-  proofRefs = [],
-} = {}) {
-  return Object.freeze({
-    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
-    requestId: String(command?.requestId || ''),
-    operation: String(command?.operation || ''),
-    repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
-    issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
-    branch: 'main',
-    expectedHead: String(command?.expectedHead || ''),
-    resetId: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.resetId || '') : '',
-    resetExpiresAtUtc: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.resetExpiresAtUtc || '') : '',
-    latestSafeExecutionUtc: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.latestSafeExecutionUtc || '') : '',
-    standingOperatorPolicyRef: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.standingOperatorPolicyRef || '') : '',
-    fixedUiActionOnly: command?.operation === CODEX_BANKED_RESET_OPERATION ? command?.fixedUiActionOnly === true : false,
-    singlePressOnly: command?.operation === CODEX_BANKED_RESET_OPERATION ? command?.singlePressOnly === true : false,
-    readOnly: command?.operation === CODEX_BANKED_RESET_STATUS_OPERATION,
-    state: String(state || ''),
-    acceptedAt: String(acceptedAt || ''),
-    heartbeatAt: String(heartbeatAt || ''),
-    completedAt: String(completedAt || ''),
-    blocker: String(blocker || ''),
-    proofRefs: Array.isArray(proofRefs) ? proofRefs.slice(0, 20).map(String) : [],
-    result,
-    arbitraryShellAllowed: false,
-    destructiveGitAllowed: false,
-    liveOpenClawUpdateAllowed: false,
-    arbitraryBrowserAutomationAllowed: false,
-    credentialsMayBeReadOrExported: false,
-  });
 }

@@ -1,32 +1,98 @@
-import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
-import http from 'node:http';
-import aiRouter from './routes/ai.js';
-import aiAdminRouter from './routes/ai-admin.js';
-import memoryRouter from './routes/memory.js';
-import tileStateRouter from './routes/tile-state.js';
-import localShellRouter from './routes/local-shell.js';
-import musicRouter from './routes/music.js';
-import setupRouter from './routes/setup.js';
-import githubRouter from './routes/github.js';
-import missionOperationsRouter from './routes/mission-operations.js';
-import buildConciergeRouter from './routes/build-concierge.js';
-import goalProjectionRouter from './routes/goal-projection.js';
-import sharedWorkspaceRouter from './routes/shared-workspace.js';
-import { startBattleBridgePublisherLoopForBackend } from './services/battleBridgePublisherLifecycle.js';
-import { createLogger } from './utils/logger.js';
-import { DEFAULT_PROVIDER_KEY } from '../shared/ai/providerDefaults.mjs';
-import {
+import { spawnSync } from 'node:child_process';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const backendSourceFile = fileURLToPath(import.meta.url);
+const canonicalRepoRoot = resolve(dirname(backendSourceFile), '..');
+const canonicalGitDirectory = resolve(canonicalRepoRoot, '.git');
+
+function minimalBackendChildGitEnvironment() {
+  const allowedNames = new Set([
+    'systemroot',
+    'windir',
+    'comspec',
+    'pathext',
+    'temp',
+    'tmp',
+    'tmpdir',
+  ]);
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => allowedNames.has(name.toLowerCase())),
+  );
+}
+
+function enforceBattleBridgeBackendChildExpectedHead() {
+  const expectedHead = String(process.env.STEPHANOS_BACKEND_SOURCE_HEAD || '').trim().toLowerCase();
+  if (!expectedHead) return;
+  if (!/^[0-9a-f]{40}$/.test(expectedHead)) {
+    throw new Error('BACKEND_CHILD_EXPECTED_HEAD_INVALID');
+  }
+
+  const gitExecutable = process.platform === 'win32'
+    ? 'C:\\Program Files\\Git\\cmd\\git.exe'
+    : '/usr/bin/git';
+  const proof = spawnSync(gitExecutable, [
+    `--git-dir=${canonicalGitDirectory}`,
+    `--work-tree=${canonicalRepoRoot}`,
+    'rev-parse',
+    'HEAD',
+  ], {
+    cwd: canonicalRepoRoot,
+    env: minimalBackendChildGitEnvironment(),
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 5_000,
+    maxBuffer: 64 * 1024,
+  });
+  if (proof.error || proof.status !== 0) {
+    throw new Error('BACKEND_CHILD_EXACT_HEAD_PROOF_FAILED');
+  }
+  const observedHead = String(proof.stdout || '').split(/\r?\n/, 1)[0].trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(observedHead)) {
+    throw new Error('BACKEND_CHILD_EXACT_HEAD_PROOF_INVALID');
+  }
+  if (observedHead !== expectedHead) {
+    throw new Error(`BACKEND_CHILD_EXPECTED_HEAD_MISMATCH expected=${expectedHead} observed=${observedHead}`);
+  }
+}
+
+const backendExpectedHead = String(process.env.STEPHANOS_BACKEND_SOURCE_HEAD || '').trim().toLowerCase();
+if (backendExpectedHead
+  && globalThis[Symbol.for('stephanos.backend.exact-head-bootstrap')] !== backendExpectedHead) {
+  throw new Error('BACKEND_CHILD_IMMUTABLE_BOOTSTRAP_REQUIRED');
+}
+enforceBattleBridgeBackendChildExpectedHead();
+
+await import('dotenv/config');
+const { default: express } = await import('express');
+const { default: cors } = await import('cors');
+const { default: http } = await import('node:http');
+const { default: aiRouter } = await import('./routes/ai.js');
+const { default: aiAdminRouter } = await import('./routes/ai-admin.js');
+const { default: memoryRouter } = await import('./routes/memory.js');
+const { default: tileStateRouter } = await import('./routes/tile-state.js');
+const { default: localShellRouter } = await import('./routes/local-shell.js');
+const { default: musicRouter } = await import('./routes/music.js');
+const { default: setupRouter } = await import('./routes/setup.js');
+const { default: githubRouter } = await import('./routes/github.js');
+const { default: missionOperationsRouter } = await import('./routes/mission-operations.js');
+const { default: buildConciergeRouter } = await import('./routes/build-concierge.js');
+const { default: goalProjectionRouter } = await import('./routes/goal-projection.js');
+const { default: sharedWorkspaceRouter } = await import('./routes/shared-workspace.js');
+const { default: operatorApprovalsRouter } = await import('./routes/operator-approvals.js');
+const { startBattleBridgePublisherLoopForBackend } = await import('./services/battleBridgePublisherLifecycle.js');
+const { createLogger } = await import('./utils/logger.js');
+const { DEFAULT_PROVIDER_KEY } = await import('../shared/ai/providerDefaults.mjs');
+const {
   buildHealthDiagnostics,
   getServerPort,
   isAllowedPrivateFrontendOrigin,
   resolveAllowedOrigins,
-} from './config/runtimeConfig.js';
-import { isAllowedTailscaleFrontendOrigin } from './config/tailscaleOrigin.js';
-import { memoryService } from './services/memoryService.js';
-import { durableMemoryService } from './services/durableMemoryService.js';
-import { providerSecretStore } from './services/providerSecretStore.js';
+} = await import('./config/runtimeConfig.js');
+const { isAllowedTailscaleFrontendOrigin } = await import('./config/tailscaleOrigin.js');
+const { memoryService } = await import('./services/memoryService.js');
+const { durableMemoryService } = await import('./services/durableMemoryService.js');
+const { providerSecretStore } = await import('./services/providerSecretStore.js');
 
 const logger = createLogger('server');
 const app = express();
@@ -35,6 +101,12 @@ const PORT = getServerPort();
 const allowedOrigins = resolveAllowedOrigins();
 const allowedOriginsSet = new Set(allowedOrigins);
 const healthUrl = `http://127.0.0.1:${PORT}/api/health`;
+const backendSourceHead = String(process.env.STEPHANOS_BACKEND_SOURCE_HEAD || '').trim().toLowerCase();
+const backendIdentity = Object.freeze({
+  schemaVersion: 'stephanos.backend-runtime-identity.v1',
+  runtimeId: 'stephanos-battle-bridge-backend',
+  sourceHead: /^[0-9a-f]{40}$/.test(backendSourceHead) ? backendSourceHead : '',
+});
 
 app.use(
   cors({
@@ -63,10 +135,14 @@ app.use(
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/api/health', (req, res) => {
-  res.json(buildHealthDiagnostics(process.env, req, {
-    providerSecretStatus: providerSecretStore.getMaskedStatusSnapshot(),
-    secretAuthority: 'backend-local-secret-store',
-  }));
+  res.json({
+    ...buildHealthDiagnostics(process.env, req, {
+      providerSecretStatus: providerSecretStore.getMaskedStatusSnapshot(),
+      secretAuthority: 'backend-local-secret-store',
+    }),
+    schemaVersion: 'stephanos.backend-health.v1',
+    backendIdentity,
+  });
 });
 
 memoryService.load();
@@ -80,10 +156,15 @@ app.use('/api/local', localShellRouter);
 app.use('/api/music', musicRouter);
 app.use('/api/setup', setupRouter);
 app.use('/api/github', githubRouter);
-app.use('/api/mission-operations', missionOperationsRouter);
+app.use('/api/mission-operations', (req, res, next) => {
+  const originalJson = res.json.bind(res);
+  res.json = (body) => originalJson({ ...body, backendIdentity });
+  next();
+}, missionOperationsRouter);
 app.use('/api/build-concierge', buildConciergeRouter);
 app.use('/api/goal-projection', goalProjectionRouter);
 app.use('/api/shared-workspace', sharedWorkspaceRouter);
+app.use('/api/operator-approvals', operatorApprovalsRouter);
 
 app.use((error, _req, res, next) => {
   if (error?.message?.startsWith('CORS origin denied:')) {
@@ -168,6 +249,7 @@ server.on('error', async (error) => {
   process.exit(1);
 });
 
+enforceBattleBridgeBackendChildExpectedHead();
 server.listen(PORT, () => {
   void startBackendPublisherLoop();
   logger.info(`Stephanos server listening on http://localhost:${PORT}`);

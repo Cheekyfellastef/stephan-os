@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { refreshMailboxReceiptIndex } from '../shared/agents/mailboxReceiptIndex.mjs';
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import { runBattleBridgeGitHubCommandMailbox } from './battle-bridge-github-command-mailbox.mjs';
+import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 
 const defaultRepoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const DEFAULT_INDEX_HEARTBEAT_INTERVAL_MS = 15_000;
@@ -18,6 +19,18 @@ function blockedIndexRefresh() {
     projection: Object.freeze({ activeReceipt: null, recentReceipts: [] }),
     arbitraryFilesystemAccess: false,
     commandExecutionAccess: false,
+    sourceMutationAccess: false,
+  });
+}
+
+function blockedGuardLease(lease) {
+  return Object.freeze({
+    ok: false,
+    blocker: String(lease?.blocker || 'MAILBOX_OUTBOX_GUARD_LEASE_UNPROVEN'),
+    finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED',
+    arbitraryFilesystemAccess: false,
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
     sourceMutationAccess: false,
   });
 }
@@ -62,13 +75,21 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
     });
   }
 
+  const verifyGuardLease = () => verifyMailboxOutboxGuardLease({ env });
+  const initialLease = verifyGuardLease();
+  if (!initialLease.ok) return blockedGuardLease(initialLease);
+
   const refresh = async (timestampUtc) => {
+    const leaseBefore = verifyGuardLease();
+    if (!leaseBefore.ok) return blockedGuardLease(leaseBefore);
     try {
       const result = await refreshIndex({
         root: workspace.root,
         repoRoot: actualRepoRoot,
         timestampUtc,
       });
+      const leaseAfter = verifyGuardLease();
+      if (!leaseAfter.ok) return blockedGuardLease(leaseAfter);
       return result && typeof result === 'object' ? result : blockedIndexRefresh();
     } catch {
       return blockedIndexRefresh();
@@ -96,7 +117,12 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
 
   let mailbox;
   try {
-    mailbox = await runMailbox({ now });
+    const leaseBeforeMailbox = verifyGuardLease();
+    mailbox = leaseBeforeMailbox.ok
+      ? await runMailbox({ now })
+      : blockedGuardLease(leaseBeforeMailbox);
+    const leaseAfterMailbox = verifyGuardLease();
+    if (!leaseAfterMailbox.ok) mailbox = blockedGuardLease(leaseAfterMailbox);
   } catch {
     mailbox = {
       ok: false,
@@ -120,6 +146,15 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
     indexBlocker,
     finalVerdict: ok ? 'MAILBOX_WITH_RECEIPT_INDEX_READY' : 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED',
     mailboxVerdict: String(mailbox?.finalVerdict || mailbox?.verdict || ''),
+    mailboxSelectedCount: Number(mailbox?.selectedCount || 0),
+    mailboxReadyCount: Number(mailbox?.readyCount || 0),
+    mailboxDeferredCount: Number(mailbox?.deferredCount || 0),
+    mailboxControlCount: Number(mailbox?.controlCount || 0),
+    mailboxObservationCount: Number(mailbox?.observationCount || 0),
+    mailboxBlockedCount: Number(mailbox?.blockedCount || 0),
+    mailboxMaxConcurrencyObserved: Number(mailbox?.maxConcurrencyObserved || 0),
+    mailboxControlSerialized: mailbox?.controlSerialized === true,
+    duplicateMailboxAllowed: false,
     indexBeforeVerdict: String(before?.finalVerdict || ''),
     indexAfterVerdict: String(after?.finalVerdict || ''),
     indexHeartbeatIntervalMs: boundedHeartbeatIntervalMs,

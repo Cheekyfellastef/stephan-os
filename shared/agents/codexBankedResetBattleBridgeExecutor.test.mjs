@@ -83,7 +83,7 @@ test('fails closed outside Windows and never invents a generic command', () => {
   assert.equal(result.blocker, 'WINDOWS_REQUIRED');
 });
 
-test('builds one fixed PowerShell file invocation with shell disabled', () => {
+test('builds one fixed STA PowerShell file invocation with shell disabled', () => {
   const root = tempRepo();
   const result = buildCodexBankedResetPowerShellInvocation(command(), {
     platform: 'win32', repoRoot: root, now,
@@ -94,6 +94,8 @@ test('builds one fixed PowerShell file invocation with shell disabled', () => {
   assert.equal(result.args.filter((value) => value === '-File').length, 1);
   assert.match(result.scriptPath, /invoke-codex-banked-reset-ui-with-navigation\.ps1$/);
   assert.ok(result.args.includes('banked-reset-1'));
+  assert.equal(result.args.includes('-Sta'), true);
+  assert.equal(result.args.includes('-NonInteractive'), false);
   assert.equal(result.args.some((value) => /https?:|javascript|selector|cookie|token/i.test(String(value))), false);
 });
 
@@ -129,7 +131,7 @@ test('normalizes only a proven single press with changed before-and-after meter 
   }
 });
 
-test('executes the fixed invocation and parses bounded labeled ancestry proof', () => {
+test('executes the fixed invocation once in STA mode and parses bounded labeled ancestry proof', () => {
   const root = tempRepo();
   const seen = [];
   const result = executeCodexBankedResetOnBattleBridge(command(), {
@@ -155,6 +157,8 @@ test('executes the fixed invocation and parses bounded labeled ancestry proof', 
   assert.equal(seen.length, 1);
   assert.equal(seen[0].exe, 'powershell.exe');
   assert.equal(seen[0].options.shell, false);
+  assert.equal(seen[0].args.includes('-Sta'), true);
+  assert.equal(seen[0].args.includes('-NonInteractive'), false);
 });
 
 test('never retries an uncertain press result', () => {
