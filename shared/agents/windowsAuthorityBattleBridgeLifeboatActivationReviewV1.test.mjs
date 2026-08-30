@@ -270,7 +270,15 @@ test('idempotent reinstall profile rejects stale pins and any missing same-manif
   assert.ok(weakened.findings.some((item) => item.code === 'lifeboat-idempotent-task-reproof-not-bound'));
 });
 
-test('specialist rejects broadened unsupported surfaces, widened source estate and wrong pinned source identity', () => {
+test('specialist rejects broadened unsupported surfaces, duplicate findings, widened source estate and wrong pinned source identity', () => {
+  const duplicateSingleton = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: idempotentAnalysis({ findings: [...idempotentAnalysis().findings, ...idempotentAnalysis().findings] }),
+    sources: [],
+  });
+  assert.equal(duplicateSingleton.eligible, false);
+
   const broadened = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
     repository: REPOSITORY,
     sourceHead: HEAD,
