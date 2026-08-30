@@ -32,6 +32,7 @@ jobs:
           const workflow = readFileSync('.github/workflows/operator-merge-approval-gate.yml', 'utf8');
           const proofWorkflow = readFileSync('.github/workflows/operator-merge-approval-gate-test.yml', 'utf8');
           const mailboxPolicy = readFileSync('shared/agents/protectedWorkflowDispatchMailboxV1.mjs', 'utf8');
+          const personalPolicy = readFileSync('shared/agents/operatorPersonalRepositoryMergeV1.mjs', 'utf8');
           const mailboxDispatch = readFileSync('scripts/dispatch-protected-merge-from-mailbox.mjs', 'utf8');
           const mergeExecutor = readFileSync('scripts/operator-protected-personal-repository-merge.mjs', 'utf8');
 
@@ -79,8 +80,15 @@ jobs:
           assert.match(mergeExecutor, /validateProtectedWorkflowAuthorizationComment/);
           assert.match(mergeExecutor, /STEPHANOS_AUTHORIZATION_COMMENT_ID/);
           assert.match(mergeExecutor, /execution\.authorization\.operatorAuthor/);
-          assert.match(mergeExecutor, /validatePersonalRepositoryReadOnlyPriorFailure/);
-          assert.match(mergeExecutor, /item !== 'triggering-actor'/);
+          assert.match(personalPolicy, /mailboxAuthorization/);
+          assert.match(personalPolicy, /github-actions\[bot\]/);
+          assert.match(personalPolicy, /OPERATOR_MERGE_REVIEWER/);
+          assert.match(personalPolicy, /strictPositiveInteger\(mailboxAuthorization\.commentId\)/);
+          assert.match(personalPolicy, /personal-repository-mailbox-authorization-provenance-invalid/);
+          assert.match(mergeExecutor, /mailboxAuthorization: authorization/);
+          assert.doesNotMatch(mergeExecutor, /item !== 'triggering-actor'/);
+          assert.doesNotMatch(mergeExecutor, /actorMismatchCount/);
+          assert.doesNotMatch(mergeExecutor, /mailboxPriorRuns/);
           assert.match(mergeExecutor, /personal-repository-prior-attempt-exists/);
           assert.doesNotMatch(mergeExecutor, /operatorAuthor:\s*MAILBOX_TRANSPORT_ACTOR/);
 
