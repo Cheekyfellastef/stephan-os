@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -22,10 +23,12 @@ export const BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY = 'Cheekyfellastef/stephan
 export const BATTLE_BRIDGE_OUTBOUND_BEACON_OWNER = 'Cheekyfellastef';
 export const MAILBOX_INGRESS_GRACE_MS = 10 * 60 * 1000;
 export const MAILBOX_INGRESS_LOOKBACK_MS = 4 * 60 * 60 * 1000;
+export const DIRT_ITEM_IDENTITY_SCHEME = 'sha256-domain-separated-path-v1';
 
 const SHA = /^[0-9a-f]{40}$/;
 const MAX_STATUS_BYTES = 64 * 1024;
 const MAX_GITHUB_BYTES = 512 * 1024;
+const MAX_DIRT_IDENTITIES = 64;
 const STATUS_SPECS = Object.freeze([
   Object.freeze({ id: 'githubSync', path: 'status/battle-bridge-github-sync-current.json', staleAfterMs: 180_000 }),
   Object.freeze({ id: 'postSyncRefresh', path: 'status/post-sync-runtime-refresh-current.json', staleAfterMs: 300_000 }),
@@ -133,6 +136,68 @@ function numericCount(value) {
   return Number.isInteger(count) && count >= 0 ? count : null;
 }
 
+function dirtPathValue(value) {
+  if (typeof value === 'string') return value;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+  return value.path || value.relativePath || value.file || value.fileName || value.name || '';
+}
+
+function normalizeDirtPath(value) {
+  const path = String(dirtPathValue(value) || '').trim();
+  if (!path || path.length > 4096) return '';
+  return path
+    .replaceAll('\\', '/')
+    .replace(/^\.\/+/, '')
+    .replace(/\/{2,}/g, '/')
+    .toLowerCase();
+}
+
+function dirtItemId(classification, normalizedPath) {
+  return createHash('sha256')
+    .update(`stephanos.battle-bridge.dirt.v1\0${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}\0${classification}\0${normalizedPath}`)
+    .digest('hex');
+}
+
+function dirtItemIdentities(source) {
+  const buckets = [
+    ['tracked-source', ['trackedSource', 'trackedSourcePaths']],
+    ['untracked-source', ['untrackedSource', 'untrackedSourcePaths']],
+    ['unknown', ['unknown', 'unknownPaths']],
+    ['generated-source', ['generatedSource', 'generatedSourcePaths']],
+    ['runtime-only', ['runtimeOnly', 'runtimeOnlyPaths']],
+    ['blocking-hidden', ['hiddenSource', 'hidden', 'hiddenPaths']],
+    ['blocking-sample', ['blockingSamples']],
+  ];
+  const blockingClasses = new Set(['tracked-source', 'untracked-source', 'unknown', 'blocking-hidden', 'blocking-sample']);
+  const seenPaths = new Set();
+  const identities = [];
+  let limitReached = false;
+  for (const [classification, keys] of buckets) {
+    for (const key of keys) {
+      const values = Array.isArray(source[key]) ? source[key] : [];
+      for (const value of values) {
+        const normalizedPath = normalizeDirtPath(value);
+        if (!normalizedPath || seenPaths.has(normalizedPath)) continue;
+        seenPaths.add(normalizedPath);
+        if (identities.length >= MAX_DIRT_IDENTITIES) {
+          limitReached = true;
+          continue;
+        }
+        identities.push(Object.freeze({
+          classification,
+          id: dirtItemId(classification, normalizedPath),
+        }));
+      }
+    }
+  }
+  const blockingIdentityCount = identities.filter((item) => blockingClasses.has(item.classification)).length;
+  return Object.freeze({
+    identities: Object.freeze(identities),
+    blockingIdentityCount,
+    limitReached,
+  });
+}
+
 function dirtFacts(record = {}) {
   const source = record.dirtClassification || record.dirtSummary || record.sourceDirt || record.dirt || null;
   if (!source || typeof source !== 'object' || Array.isArray(source)) {
@@ -145,6 +210,14 @@ function dirtFacts(record = {}) {
   const generated = numericCount(source.generatedSourceCount) ?? (Array.isArray(source.generatedSource) ? source.generatedSource.length : null);
   const known = [tracked, untracked, unknown, runtimeOnly, generated].some((value) => value !== null) || typeof source.blocksSync === 'boolean';
   const blockingCount = (tracked || 0) + (untracked || 0) + (unknown || 0);
+  const identity = dirtItemIdentities(source);
+  const identityCoverage = blockingCount === 0
+    ? 'NOT_REQUIRED'
+    : identity.blockingIdentityCount >= blockingCount
+      ? 'COMPLETE'
+      : identity.blockingIdentityCount > 0
+        ? 'PARTIAL'
+        : 'UNAVAILABLE';
   return Object.freeze({
     known,
     blocksSync: source.blocksSync === true || blockingCount > 0,
@@ -155,6 +228,13 @@ function dirtFacts(record = {}) {
     runtimeOnlyCount: runtimeOnly ?? 0,
     generatedSourceCount: generated ?? 0,
     pathValuesPublished: false,
+    pathIdentityValuesPublished: identity.identities.length > 0,
+    pathIdentityScheme: DIRT_ITEM_IDENTITY_SCHEME,
+    pathIdentityLimit: MAX_DIRT_IDENTITIES,
+    pathIdentityLimitReached: identity.limitReached,
+    blockingIdentityCount: identity.blockingIdentityCount,
+    identityCoverage,
+    itemIdentities: identity.identities,
   });
 }
 
