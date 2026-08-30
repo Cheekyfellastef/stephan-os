@@ -765,3 +765,37 @@ test('timestamp accessors are never invoked', () => {
   assert.equal(nowCalls, 0);
   assert.equal(answeredCalls, 0);
 });
+
+test('directly deserialized contradictory answer truth states fail before proof verification', () => {
+  const q = request('SOURCE_STACK', 0);
+  const canonical = answerVrResearchQuestion(q, projection(), qaInput()).answer;
+  const cases = [
+    [{ ...canonical, freshness: 'STALE', epistemicState: 'UNKNOWN', cannotAnswerReason: 'contradictory' }, 'answer-grounded-requires-fresh'],
+    [{ ...canonical, epistemicState: 'UNKNOWN' }, 'answer-grounded-epistemic-state-invalid'],
+    [{ ...canonical, cannotAnswerReason: 'should not exist' }, 'answer-grounded-cannot-have-refusal-reason'],
+    [{ ...canonical, answerVerdict: 'GAP_KNOWLEDGE', epistemicState: 'UNKNOWN', cannotAnswerReason: 'knowledge gap', freshness: 'UNKNOWN' }, 'answer-knowledge-gap-requires-fresh'],
+    [{ ...canonical, answerVerdict: 'GAP_KNOWLEDGE', epistemicState: 'KNOWN_FROM_CANONICAL_STATE', cannotAnswerReason: 'knowledge gap' }, 'answer-knowledge-gap-epistemic-state-invalid'],
+    [{ ...canonical, answerVerdict: 'GAP_KNOWLEDGE', epistemicState: 'UNKNOWN', cannotAnswerReason: null }, 'answer-gap-refusal-reason-required'],
+    [{ ...canonical, answerVerdict: 'GAP_FRESHNESS', freshness: 'FRESH', epistemicState: 'UNKNOWN', cannotAnswerReason: 'freshness gap' }, 'answer-freshness-gap-state-invalid'],
+    [{ ...canonical, answerVerdict: 'GAP_FRESHNESS', freshness: 'STALE', epistemicState: 'UNKNOWN', cannotAnswerReason: 'freshness gap' }, 'answer-freshness-gap-epistemic-state-mismatch'],
+    [{ ...canonical, answerVerdict: 'GAP_FRESHNESS', freshness: 'UNKNOWN', epistemicState: 'UNKNOWN', cannotAnswerReason: null }, 'answer-gap-refusal-reason-required'],
+    [{ ...canonical, answerVerdict: 'ANSWERED_CONFIDENT' }, 'answer-verdict-invalid'],
+    [{ ...canonical, freshness: 'RECENT' }, 'answer-freshness-invalid'],
+    [{ ...canonical, epistemicState: 'ASSUMED' }, 'answer-epistemic-state-invalid'],
+  ];
+
+  for (const [answer, expectedError] of cases) {
+    let verifierCalls = 0;
+    const workspace = createVrResearchQaWorkspaceAnswerRecord(q, answer, {
+      proofVerifier(ref, binding) {
+        verifierCalls += 1;
+        return { verified: true, proofRef: ref, ...binding };
+      },
+      validationOptions: { nowMs },
+    });
+    assert.equal(workspace.answerValidation.valid, false, expectedError);
+    assert.ok(workspace.answerValidation.errors.includes(expectedError), workspace.answerValidation.errors.join(', '));
+    assert.equal(verifierCalls, 0, expectedError);
+    assert.equal(workspace.validation.valid, false, expectedError);
+  }
+});

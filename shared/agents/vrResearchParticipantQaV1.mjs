@@ -37,6 +37,19 @@ const MAX_CANONICAL_NODES = 8192;
 const MAX_CANONICAL_STRING_LENGTH = 16_384;
 const MAX_DATE_MS = 8_640_000_000_000_000;
 const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+const WORKSPACE_ANSWER_VERDICTS = new Set([
+  'ANSWERED_GROUNDED',
+  'GAP_KNOWLEDGE',
+  'GAP_FRESHNESS',
+]);
+const WORKSPACE_ANSWER_FRESHNESS_STATES = new Set(['FRESH', 'STALE', 'UNKNOWN']);
+const WORKSPACE_ANSWER_EPISTEMIC_STATES = new Set([
+  'KNOWN_FROM_CANONICAL_STATE',
+  'PROPOSED',
+  'UNKNOWN',
+  'STALE',
+]);
+const GROUNDED_EPISTEMIC_STATES = new Set(['KNOWN_FROM_CANONICAL_STATE', 'PROPOSED']);
 const VR_FACT_ALLOWED_FIELDS = new Set([
   'sourceId',
   'title',
@@ -702,8 +715,34 @@ function validateWorkspaceAnswerForRequest(answer, request) {
   if (answer.questionId !== request.questionId) errors.push('answer-questionId-mismatch');
   if (answer.responderParticipantId !== VR_RESEARCH_PARTICIPANT_ID) errors.push('answer-responder-mismatch');
   if (!timestamp(answer.answeredAtUtc)) errors.push('answer-answeredAtUtc-invalid');
-  if (!text(answer.answerVerdict)) errors.push('answer-verdict-required');
-  if (!text(answer.freshness)) errors.push('answer-freshness-required');
+
+  const verdict = text(answer.answerVerdict);
+  const freshness = text(answer.freshness);
+  const epistemicState = text(answer.epistemicState);
+  const reasonPresent = typeof answer.cannotAnswerReason === 'string' && answer.cannotAnswerReason.length > 0;
+
+  if (!WORKSPACE_ANSWER_VERDICTS.has(verdict)) errors.push('answer-verdict-invalid');
+  if (!WORKSPACE_ANSWER_FRESHNESS_STATES.has(freshness)) errors.push('answer-freshness-invalid');
+  if (!WORKSPACE_ANSWER_EPISTEMIC_STATES.has(epistemicState)) errors.push('answer-epistemic-state-invalid');
+
+  if (WORKSPACE_ANSWER_VERDICTS.has(verdict)
+    && WORKSPACE_ANSWER_FRESHNESS_STATES.has(freshness)
+    && WORKSPACE_ANSWER_EPISTEMIC_STATES.has(epistemicState)) {
+    if (verdict === 'ANSWERED_GROUNDED') {
+      if (freshness !== 'FRESH') errors.push('answer-grounded-requires-fresh');
+      if (!GROUNDED_EPISTEMIC_STATES.has(epistemicState)) errors.push('answer-grounded-epistemic-state-invalid');
+      if (answer.cannotAnswerReason !== null) errors.push('answer-grounded-cannot-have-refusal-reason');
+    } else if (verdict === 'GAP_KNOWLEDGE') {
+      if (freshness !== 'FRESH') errors.push('answer-knowledge-gap-requires-fresh');
+      if (epistemicState !== 'UNKNOWN') errors.push('answer-knowledge-gap-epistemic-state-invalid');
+      if (!reasonPresent) errors.push('answer-gap-refusal-reason-required');
+    } else if (verdict === 'GAP_FRESHNESS') {
+      if (!['STALE', 'UNKNOWN'].includes(freshness)) errors.push('answer-freshness-gap-state-invalid');
+      if (epistemicState !== freshness) errors.push('answer-freshness-gap-epistemic-state-mismatch');
+      if (!reasonPresent) errors.push('answer-gap-refusal-reason-required');
+    }
+  }
+
   return Object.freeze({ valid: errors.length === 0, errors: Object.freeze(errors) });
 }
 
