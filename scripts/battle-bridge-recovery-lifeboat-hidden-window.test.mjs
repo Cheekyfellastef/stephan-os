@@ -42,18 +42,20 @@ test('already-current healthy Lifeboat reinstall is a proved idempotent success'
   assert.match(installer, /\$task\.Principal\.LogonType -ne 'Interactive'/);
   assert.match(installer, /\$task\.Principal\.RunLevel -ne 'Limited'/);
 
-  const sameManifestBranch = installer.match(/if \(\$null -ne \$activeState -and \$manifestSha256 -eq \[string\]\$activeState\.manifestSha256\) \{([\s\S]*?)\n\}/);
-  assert.ok(sameManifestBranch, 'same-manifest branch must exist');
-  assert.match(sameManifestBranch[1], /Assert-CanonicalScheduledTask -CurrentUser \$currentUser/);
-  assert.match(sameManifestBranch[1], /Remove-Item -LiteralPath \$stageRoot -Recurse -Force/);
-  assert.match(sameManifestBranch[1], /installDisposition = 'ALREADY_CURRENT_HEALTHY'/);
-  assert.match(sameManifestBranch[1], /changed = \$false/);
-  assert.match(sameManifestBranch[1], /activeBankAfter = \$activeBank/);
-  assert.match(sameManifestBranch[1], /scheduledTaskIdentityReproved = \$true/);
-  assert.match(sameManifestBranch[1], /if \(\$StartNow -and \$PSCmdlet\.ShouldProcess\(\$taskName, 'Start existing canonical Battle Bridge recovery lifeboat task'\)\)/);
-  assert.match(sameManifestBranch[1], /return/);
-  assert.doesNotMatch(sameManifestBranch[1], /Register-ScheduledTask/);
-  assert.doesNotMatch(sameManifestBranch[1], /Write-AtomicJson/);
+  const branchStart = installer.indexOf('if ($null -ne $activeState -and $manifestSha256 -eq [string]$activeState.manifestSha256) {');
+  const branchEnd = installer.indexOf('\n$targetRoot = Join-Path $banksRoot $targetBank', branchStart);
+  assert.ok(branchStart >= 0 && branchEnd > branchStart, 'same-manifest branch must be bounded before candidate promotion');
+  const sameManifestBranch = installer.slice(branchStart, branchEnd);
+  assert.match(sameManifestBranch, /Assert-CanonicalScheduledTask -CurrentUser \$currentUser/);
+  assert.match(sameManifestBranch, /Remove-Item -LiteralPath \$stageRoot -Recurse -Force/);
+  assert.match(sameManifestBranch, /installDisposition = 'ALREADY_CURRENT_HEALTHY'/);
+  assert.match(sameManifestBranch, /changed = \$false/);
+  assert.match(sameManifestBranch, /activeBankAfter = \$activeBank/);
+  assert.match(sameManifestBranch, /scheduledTaskIdentityReproved = \$true/);
+  assert.match(sameManifestBranch, /if \(\$StartNow -and \$PSCmdlet\.ShouldProcess\(\$taskName, 'Start existing canonical Battle Bridge recovery lifeboat task'\)\)/);
+  assert.match(sameManifestBranch, /return/);
+  assert.doesNotMatch(sameManifestBranch, /Register-ScheduledTask/);
+  assert.doesNotMatch(sameManifestBranch, /Write-AtomicJson/);
 
   assert.match(installer, /installDisposition = 'PROMOTED_CANDIDATE'/);
   assert.match(installer, /changed = \$true/);
