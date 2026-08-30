@@ -6,6 +6,7 @@ export const PROTECTED_WORKFLOW_DISPATCH_REPOSITORY = 'Cheekyfellastef/stephan-o
 export const PROTECTED_WORKFLOW_DISPATCH_ISSUE = 1507;
 export const PROTECTED_WORKFLOW_DISPATCH_AUTHOR = 'Cheekyfellastef';
 export const PROTECTED_WORKFLOW_DISPATCH_PATH = '.github/workflows/operator-merge-approval-gate.yml';
+export const PROTECTED_WORKFLOW_DISPATCH_WORKFLOW_ID = 'operator-merge-approval-gate.yml';
 export const PROTECTED_WORKFLOW_DISPATCH_MODE = 'user-owned-protected-squash';
 export const PROTECTED_WORKFLOW_READY_MODE = 'user-owned-pr-ready';
 export const PROTECTED_WORKFLOW_DISPATCH_MAX_WINDOW_MS = 10 * 60 * 1000;
@@ -144,7 +145,7 @@ export function buildProtectedWorkflowDispatchRequest(command = {}) {
   const c = validation.command;
   return Object.freeze({
     ok: true,
-    path: `/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/actions/workflows/${PROTECTED_WORKFLOW_DISPATCH_PATH}/dispatches`,
+    path: `/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/actions/workflows/${PROTECTED_WORKFLOW_DISPATCH_WORKFLOW_ID}/dispatches`,
     method: 'POST',
     body: Object.freeze({
       ref: 'main',
