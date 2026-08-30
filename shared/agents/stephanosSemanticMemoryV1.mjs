@@ -30,8 +30,8 @@ const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
 const SAFE_PREDICATE = /^[a-z][a-z0-9._:-]{0,95}$/i;
 const SAFE_REF = /^(?:operator|participant|project|architecture|goal|intent|pr|component|runtime|world|provider|surface|claim|decision|correction|receipt|evidence|workspace|memory):\/\/[a-z0-9][a-z0-9._:/#-]{0,220}$/i;
 const SENSITIVE_TEXT = /\b(?:api[-_ ]?key|password|passwd|secret|bearer|authorization|private[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|cookie|session[-_ ]?cookie|raw prompt|raw response|psychological profile|mental diagnosis|personality disorder)\b/i;
-const GENERIC_TOKEN_CREDENTIAL = /(?:\btoken\b["']?\s*[:=]\s*["']?\S+|\btoken\b\s+(?:credential|secret)\b|\btoken\b\s+[a-z0-9._~+/=-]{16,}\b)/i;
-const LOCAL_PATH = /(?:^|\s)(?:[A-Za-z]:\\|\\\\|\/home\/|\/Users\/|\/etc\/|\.\.\/|\.\.\\)/;
+const GENERIC_TOKEN_CREDENTIAL = /(?:\btoken\b["']?\s*[:=]\s*["']?\S+|\btoken\b\s+(?:credential|secret)\b|\btoken\b\s+(?:is|was|equals?)\s+["']?[a-z0-9._~+/=-]{16,}\b|\btoken\b\s+[a-z0-9._~+/=-]{16,}\b)/i;
+const LOCAL_PATH = /(?:^|\s)(?:[A-Za-z]:\\|\\\\|\/(?!\/)[^\s/]+(?:\/[^\s]*)?|\.\.\/|\.\.\\)/;
 const CLAIM_KEYS = Object.freeze([
   'schemaVersion',
   'claimId',
@@ -188,7 +188,7 @@ function safeStringList(value, field, errors, validator) {
   return output;
 }
 
-function normalizeClaim(value, index) {
+function normalizeClaim(value, index, observedAtMs) {
   const errors = [];
   const claim = exactObject(value, CLAIM_KEYS);
   if (claim === INVALID) return { claim: null, errors: [`claim-${index}:invalid-exact-data-shape`] };
@@ -227,6 +227,7 @@ function normalizeClaim(value, index) {
   const lastVerifiedAtMs = lastVerifiedAtUtc ? Date.parse(lastVerifiedAtUtc) : null;
   if (validUntilMs !== null && validUntilMs < validFromMs) errors.push('validUntilUtc-before-validFromUtc');
   if (lastVerifiedAtMs !== null && lastVerifiedAtMs < validFromMs) errors.push('lastVerifiedAtUtc-before-validFromUtc');
+  if (lastVerifiedAtMs !== null && observedAtMs !== null && lastVerifiedAtMs > observedAtMs) errors.push('lastVerifiedAtUtc-after-observedAtUtc');
 
   const supersedesClaimId = normalizeOptionalClaimId(claim.supersedesClaimId, 'supersedesClaimId', errors);
   const supersededByClaimId = normalizeOptionalClaimId(claim.supersededByClaimId, 'supersededByClaimId', errors);
@@ -317,8 +318,9 @@ export function buildStephanosSemanticMemoryV1(input = {}) {
   const errors = [];
   const observed = exactObject(input, INPUT_KEYS);
   if (observed === INVALID) return safeHold(['input-invalid-exact-data-shape']);
-  if (!exactTimestamp(observed.observedAtUtc)) errors.push('observedAtUtc-invalid');
-  const observedAtMs = exactTimestamp(observed.observedAtUtc) ? Date.parse(observed.observedAtUtc) : 0;
+  const observedAtValid = exactTimestamp(observed.observedAtUtc);
+  if (!observedAtValid) errors.push('observedAtUtc-invalid');
+  const observedAtMs = observedAtValid ? Date.parse(observed.observedAtUtc) : null;
 
   let descriptors;
   try {
@@ -338,7 +340,7 @@ export function buildStephanosSemanticMemoryV1(input = {}) {
         errors.push(`claim-${index}:must-be-own-enumerable-data-entry`);
         continue;
       }
-      const normalized = normalizeClaim(descriptor.value, index);
+      const normalized = normalizeClaim(descriptor.value, index, observedAtMs);
       errors.push(...normalized.errors);
       if (normalized.claim) claims.push(normalized.claim);
     }
