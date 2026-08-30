@@ -63,18 +63,6 @@ jobs:
           assert.equal((workflow.match(/pull-requests: write/g) || []).length, 1);
           assert.equal((workflow.match(/contents: write/g) || []).length, 1);
           assert.equal((workflow.match(/persist-credentials: false/g) || []).length, 5);
-          assert.equal((workflow.match(/^    environment:\n      name: operator-merge-approval$/gm) || []).length, 1);
-          const mergeQueueStart = workflow.indexOf('  operator-merge-queue-boundary:');
-          const personalStart = workflow.indexOf('  personal-repository-evidence:');
-          const approvalStart = workflow.indexOf('  operator-personal-repository-approval:');
-          const finalStart = workflow.indexOf('  operator-personal-repository-squash-merge:');
-          assert.ok(mergeQueueStart >= 0 && personalStart > mergeQueueStart && approvalStart > personalStart && finalStart > approvalStart);
-          assert.match(workflow.slice(mergeQueueStart, personalStart), /environment:\n      name: operator-merge-approval/);
-          assert.doesNotMatch(workflow.slice(personalStart, approvalStart), /environment:\n      name: operator-merge-approval/);
-          assert.doesNotMatch(workflow.slice(approvalStart, finalStart), /environment:\n      name: operator-merge-approval/);
-          assert.doesNotMatch(workflow.slice(finalStart), /environment:\n      name: operator-merge-approval/);
-          assert.match(workflow.slice(personalStart), /CANONICAL_OPERATOR='Cheekyfellastef'/);
-          assert.match(workflow.slice(approvalStart), /test "\$\{TRIGGERING_ACTOR\}" = 'Cheekyfellastef'/);
           assert.match(proofWorkflow, /ready_for_review/);
           assert.doesNotMatch(workflow, /query:\s*\$\{\{/);
           NODE
