@@ -16,7 +16,7 @@ if ([System.IO.Path]::GetFullPath($repoRoot) -ne $expectedRepoRoot) {
     throw "GitHub sync launcher must run from the canonical checkout: $expectedRepoRoot"
 }
 
-$coordinatorPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-github-sync-and-refresh.mjs')).Path
+$coordinatorPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-github-sync-housekeeper-bridge.mjs')).Path
 $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
 if (-not $nodeCommand) { $nodeCommand = Get-Command node -ErrorAction Stop }
 
