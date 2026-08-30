@@ -7,6 +7,7 @@ import {
   PROTECTED_WORKFLOW_DISPATCH_OPERATION,
   PROTECTED_WORKFLOW_READY_OPERATION,
   PROTECTED_WORKFLOW_DISPATCH_PATH,
+  PROTECTED_WORKFLOW_DISPATCH_WORKFLOW_ID,
   PROTECTED_WORKFLOW_DISPATCH_REPOSITORY,
   PROTECTED_WORKFLOW_DISPATCH_SCHEMA,
   PROTECTED_WORKFLOW_DISPATCH_MODE,
@@ -80,7 +81,18 @@ test('rejects wrong author, issue, arbitrary operation and arbitrary capability 
   assert.equal(validate({ ...baseCommand, operation: 'DISPATCH_ANY_WORKFLOW' }).blocker,
     'PROTECTED_WORKFLOW_DISPATCH_OPERATION_NOT_ALLOWED');
   for (const [field, value] of [
-    ['workflow', 'evil.yml'], ['ref', 'feature'], ['command', 'rm -rf .'], ['query', 'mutation Evil'],
+    ['workflow', 'evil.yml'],
+    ['workflowId', 'evil.yml'],
+    ['workflowPath', '.github/workflows/evil.yml'],
+    ['ref', 'feature'],
+    ['url', 'https://example.invalid/evil'],
+    ['query', 'mutation Evil'],
+    ['graphql', 'mutation Evil'],
+    ['command', 'rm -rf .'],
+    ['shell', 'bash'],
+    ['powershell', 'Write-Host evil'],
+    ['token', 'secret'],
+    ['credential', 'secret'],
   ]) {
     assert.equal(validate({ ...baseCommand, [field]: value }).blocker,
       'PROTECTED_WORKFLOW_DISPATCH_FIELD_NOT_ALLOWED');
@@ -100,13 +112,17 @@ test('rejects malformed immutable identities, branch traversal and overlong wind
     'PROTECTED_WORKFLOW_DISPATCH_EXPIRY_TOO_FAR_AHEAD');
 });
 
-test('merge maps only to fixed canonical workflow/ref and exact 11 inputs', () => {
+test('merge maps only to fixed canonical workflow filename, ref and exact 11 inputs', () => {
   const request = buildProtectedWorkflowDispatchRequest(baseCommand);
   assert.equal(request.ok, true);
+  assert.equal(PROTECTED_WORKFLOW_DISPATCH_PATH, '.github/workflows/operator-merge-approval-gate.yml');
+  assert.equal(PROTECTED_WORKFLOW_DISPATCH_WORKFLOW_ID, 'operator-merge-approval-gate.yml');
   assert.equal(request.path,
-    `/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/actions/workflows/${PROTECTED_WORKFLOW_DISPATCH_PATH}/dispatches`);
+    `/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/actions/workflows/${PROTECTED_WORKFLOW_DISPATCH_WORKFLOW_ID}/dispatches`);
+  assert.equal(request.path.includes('/.github/workflows/'), false);
   assert.equal(request.method, 'POST');
   assert.equal(request.body.ref, 'main');
+  assert.equal(request.body.inputs.mode, PROTECTED_WORKFLOW_DISPATCH_MODE);
   assert.deepEqual(Object.keys(request.body.inputs).sort(), [
     'expected_base', 'expected_branch', 'expected_head', 'expected_head_tree',
     'independent_review_artifact_digest', 'independent_review_artifact_id',
@@ -117,15 +133,22 @@ test('merge maps only to fixed canonical workflow/ref and exact 11 inputs', () =
     'PROTECTED_WORKFLOW_DISPATCH_REQUEST_NOT_MERGE_OPERATION');
 });
 
-test('receipts keep ready operation separate from merge/runtime/deployment authority', () => {
+test('receipts preserve canonical workflow identity and keep ready separate from merge/runtime authority', () => {
   const receipt = buildProtectedWorkflowDispatchReceipt(readyCommand, NOW, 'READY_FOR_REVIEW_PROVEN');
   assert.equal(receipt.operation, PROTECTED_WORKFLOW_READY_OPERATION);
   assert.equal(receipt.mode, PROTECTED_WORKFLOW_READY_MODE);
+  assert.equal(receipt.workflow, PROTECTED_WORKFLOW_DISPATCH_PATH);
+  assert.equal(receipt.workflowRef, 'main');
   assert.equal(receipt.lifecycleResult, 'READY_FOR_REVIEW_PROVEN');
   assert.equal(receipt.arbitraryWorkflowAllowed, false);
+  assert.equal(receipt.arbitraryRefAllowed, false);
+  assert.equal(receipt.arbitraryInputAllowed, false);
   assert.equal(receipt.arbitraryGraphqlAllowed, false);
+  assert.equal(receipt.arbitraryShellAllowed, false);
+  assert.equal(receipt.credentialExportAllowed, false);
   assert.equal(receipt.mergeAuthorityByReadyOperation, false);
   assert.equal(receipt.directMainWriteAllowed, false);
   assert.equal(receipt.deploymentAuthority, false);
   assert.equal(receipt.runtimeMutationAuthority, false);
+  assert.equal(receipt.providerQualificationAuthority, false);
 });
