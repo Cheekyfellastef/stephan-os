@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'scripts/battle-bridge-github-sync-*.mjs'
+      - 'shared/agents/battleBridgeGitHubCommandMailbox.mjs'
+      - 'shared/agents/battleBridgeGitHubRuntimeDataPreservationMailboxV1.test.mjs'
       - 'scripts/windows/install-battle-bridge-github-sync.ps1'
       - 'scripts/windows/status-battle-bridge-github-sync.ps1'
       - 'scripts/windows/uninstall-battle-bridge-github-sync.ps1'
@@ -11,6 +13,8 @@ on:
   push:
     paths:
       - 'scripts/battle-bridge-github-sync-*.mjs'
+      - 'shared/agents/battleBridgeGitHubCommandMailbox.mjs'
+      - 'shared/agents/battleBridgeGitHubRuntimeDataPreservationMailboxV1.test.mjs'
       - 'scripts/windows/install-battle-bridge-github-sync.ps1'
       - 'scripts/windows/status-battle-bridge-github-sync.ps1'
       - 'scripts/windows/uninstall-battle-bridge-github-sync.ps1'
@@ -38,6 +42,7 @@ jobs:
         run: |
           node --check scripts/battle-bridge-github-sync-policy.mjs
           node --check scripts/battle-bridge-github-sync-executor.mjs
+          node --check shared/agents/battleBridgeGitHubCommandMailbox.mjs
 
       - name: Parse Windows installer scripts
         shell: pwsh
@@ -60,7 +65,8 @@ jobs:
             scripts/battle-bridge-github-sync-policy.test.mjs \
             scripts/battle-bridge-github-sync-command-registry.test.mjs \
             scripts/battle-bridge-github-sync-executor.test.mjs \
-            scripts/battle-bridge-github-sync-installer.test.mjs
+            scripts/battle-bridge-github-sync-installer.test.mjs \
+            shared/agents/battleBridgeGitHubRuntimeDataPreservationMailboxV1.test.mjs
 
       - name: Check pull request patch whitespace
         if: github.event_name == 'pull_request'
