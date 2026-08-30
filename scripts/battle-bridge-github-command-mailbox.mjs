@@ -15,12 +15,14 @@ import {
   buildStephanosCapabilityRegistrySummary,
   validateStephanosCapabilityRegistry,
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
+import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
 import { runBattleBridgeMonitorMultiplexerCanary } from './battle-bridge-monitor-multiplexer-canary.mjs';
 import {
   BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
   BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
   BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+  MISSION_ORCHESTRATOR_CANCEL_OPERATION,
   buildBattleBridgeGitHubCommandReceipt,
   executeBattleBridgeGitHubCommand,
   executeBattleBridgeGitHubCommandBatch,
@@ -65,6 +67,7 @@ const FORGE_BACKUP_VOLUME_PATTERN = /^stephanos-forge-shadow-backup-[0-9a-f]{16}
 const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'UPDATE_STEPHANOS_FROM_CHAT',
   'INSTALL_UNATTENDED_GITHUB_SYNC',
+  MISSION_ORCHESTRATOR_CANCEL_OPERATION,
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
   'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
   'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
@@ -559,6 +562,10 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
     expectedHead: projectedReceiptExpectedHead(receipt, operationResult),
+    missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
+    commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
+    currentPhase: safeConveyorId(operationResult?.currentPhase),
+    duplicate: operationResult?.duplicate === true,
     ...forgeM2HeaderProjection(receipt, operationResult),
     prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
     proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
@@ -585,6 +592,10 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       blocker: safeTelemetryText(operationResult?.blocker, 240),
       finalVerdict: safeTelemetryText(operationResult?.finalVerdict, 160).toUpperCase(),
       expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
+      missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
+      commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
+      currentPhase: safeConveyorId(operationResult?.currentPhase),
+      duplicate: operationResult?.duplicate === true,
       prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
       proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
       proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
@@ -656,6 +667,10 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
     expectedHead: projectedReceiptExpectedHead(receipt, operationResult),
+    missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
+    commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
+    currentPhase: safeConveyorId(operationResult?.currentPhase),
+    duplicate: operationResult?.duplicate === true,
     ...forgeM2HeaderProjection(receipt, operationResult),
     prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
     proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
@@ -680,6 +695,10 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         blocker: safeTelemetryText(operationResult?.blocker, 240),
         finalVerdict: safeTelemetryText(operationResult?.finalVerdict, 160).toUpperCase(),
         expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
+        missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
+        commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
+        currentPhase: safeConveyorId(operationResult?.currentPhase),
+        duplicate: operationResult?.duplicate === true,
         prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
         proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
         proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
@@ -1299,6 +1318,55 @@ async function readCriticalBacklogStatus(command = {}) {
   };
 }
 
+export async function cancelMissionOrchestratorMission(command = {}, {
+  readSourceIdentity = readCanonicalSourceIdentity,
+  cancelMission = cancelBoundedMission,
+} = {}) {
+  const identity = await readSourceIdentity(command);
+  if (!identity.ok) return identity;
+  try {
+    const result = await cancelMission({
+      missionId: command.missionId,
+      commandId: command.commandId,
+      reason: command.reason,
+    });
+    const missionId = safeConveyorId(result?.state?.missionId || command.missionId);
+    const currentPhase = safeConveyorId(result?.state?.currentPhase);
+    const cancelled = currentPhase === 'CANCELLED';
+    return {
+      ...identity,
+      ok: cancelled,
+      blocker: cancelled ? '' : 'MISSION_CANCEL_POSTCONDITION_FAILED',
+      finalVerdict: cancelled
+        ? 'MISSION_ORCHESTRATOR_MISSION_CANCELLED'
+        : 'MISSION_ORCHESTRATOR_MISSION_CANCEL_BLOCKED',
+      missionId,
+      commandId: safeTelemetryId(command.commandId),
+      currentPhase,
+      duplicate: result?.duplicate === true,
+      eventId: safeTelemetryId(result?.eventId),
+      operatorActionRequired: result?.state?.operatorActionRequired === true,
+      arbitraryFilesystemAccess: false,
+      commandExecutionAccess: false,
+      sourceMutationAccess: false,
+    };
+  } catch {
+    return {
+      ...identity,
+      ok: false,
+      blocker: 'MISSION_CANCEL_FAILED',
+      finalVerdict: 'MISSION_ORCHESTRATOR_MISSION_CANCEL_BLOCKED',
+      missionId: safeConveyorId(command.missionId),
+      commandId: safeTelemetryId(command.commandId),
+      currentPhase: '',
+      duplicate: false,
+      arbitraryFilesystemAccess: false,
+      commandExecutionAccess: false,
+      sourceMutationAccess: false,
+    };
+  }
+}
+
 export async function readMailboxReceipt(command = {}, {
   readSourceIdentity = readCanonicalSourceIdentity,
   receiptRoot = canonicalReceiptRoot,
@@ -1367,6 +1435,7 @@ async function executeSelectedMailboxCommand(selected, receiptRef) {
     readSharedWorkspaceStatus,
     readCriticalBacklogStatus,
     readMailboxReceipt,
+    cancelMissionOrchestratorMission,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
     installRecoveryMesh: installBattleBridgeRecoveryMesh,
     wakeRecoveryMesh: (command) => wakeBattleBridgeRecoveryMesh(command, { receiptRef }),

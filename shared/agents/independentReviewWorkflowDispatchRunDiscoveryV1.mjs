@@ -6,6 +6,7 @@ export const INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_RUN_DISCOVERY_SCHEMA = 'stepha
 
 const RUNNING = new Set(['queued', 'in_progress', 'waiting', 'requested', 'pending']);
 const TERMINAL = new Set(['completed']);
+const GITHUB_TIMESTAMP_PRECISION_MS = 1000;
 
 function text(value) {
   return String(value ?? '').trim();
@@ -29,20 +30,28 @@ function compareRuns(left, right) {
   return positiveInteger(left?.id) - positiveInteger(right?.id);
 }
 
+function sameOrLaterGithubTimestamp(runCreatedAt, requestedAtUtc) {
+  const createdAt = Date.parse(text(runCreatedAt));
+  const requestedAt = Date.parse(text(requestedAtUtc));
+  return Number.isFinite(createdAt)
+    && Number.isFinite(requestedAt)
+    && Math.floor(createdAt / GITHUB_TIMESTAMP_PRECISION_MS)
+      >= Math.floor(requestedAt / GITHUB_TIMESTAMP_PRECISION_MS);
+}
+
 function exactDispatchRun(run, receipt) {
-  const createdAt = Date.parse(text(run?.created_at));
-  const requestedAt = Date.parse(receipt.requestedAtUtc);
+  const runName = text(run?.name);
+  const exactAllowedRunName = runName === receipt.workflowName || runName === receipt.runName;
   return positiveInteger(run?.id) > 0
     && positiveInteger(run?.workflow_id) === receipt.workflowId
-    && text(run?.name) === receipt.workflowName
+    && exactAllowedRunName
     && text(run?.path) === receipt.workflowPath
     && text(run?.event) === 'workflow_dispatch'
     && normalizedRepository(run?.repository?.full_name) === normalizedRepository(receipt.repository)
     && text(run?.head_branch) === 'main'
     && text(run?.head_sha).toLowerCase() === receipt.baseSha
     && text(run?.display_title) === receipt.runName
-    && Number.isFinite(createdAt)
-    && createdAt >= requestedAt;
+    && sameOrLaterGithubTimestamp(run?.created_at, receipt.requestedAtUtc);
 }
 
 export function discoverIndependentReviewWorkflowDispatchRunV1(input = {}) {
