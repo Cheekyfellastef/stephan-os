@@ -15,11 +15,13 @@ import {
   buildProtectedWorkflowDispatchReceipt,
   buildProtectedWorkflowDispatchRequest,
   extractProtectedWorkflowDispatch,
+  validateProtectedWorkflowAuthorizationComment,
   validateProtectedWorkflowDispatch,
 } from './protectedWorkflowDispatchMailboxV1.mjs';
 
 const NOW = new Date('2026-08-30T06:50:00.000Z');
 const AUTHORED = new Date('2026-08-30T06:49:00.000Z');
+const AUTHORIZATION_COMMENT_ID = 5470670379;
 const baseCommand = Object.freeze({
   schemaVersion: PROTECTED_WORKFLOW_DISPATCH_SCHEMA,
   requestId: 'protected-dispatch-pr1951-001',
@@ -45,6 +47,13 @@ const readyCommand = Object.freeze({
   requestId: 'protected-ready-pr1951-001',
   operation: PROTECTED_WORKFLOW_READY_OPERATION,
   mode: PROTECTED_WORKFLOW_READY_MODE,
+});
+const authorizationComment = Object.freeze({
+  id: AUTHORIZATION_COMMENT_ID,
+  issue_url: `https://api.github.com/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/issues/${PROTECTED_WORKFLOW_DISPATCH_ISSUE}`,
+  created_at: AUTHORED.toISOString(),
+  user: Object.freeze({ login: PROTECTED_WORKFLOW_DISPATCH_AUTHOR }),
+  body: `before\n\`\`\`${PROTECTED_WORKFLOW_DISPATCH_MARKER}\n${JSON.stringify(baseCommand)}\n\`\`\`\nafter`,
 });
 
 function validate(candidate = baseCommand, overrides = {}) {
@@ -93,6 +102,9 @@ test('rejects wrong author, issue, arbitrary operation and arbitrary capability 
     ['powershell', 'Write-Host evil'],
     ['token', 'secret'],
     ['credential', 'secret'],
+    ['operator', PROTECTED_WORKFLOW_DISPATCH_AUTHOR],
+    ['authorizationCommentId', AUTHORIZATION_COMMENT_ID],
+    ['authorization_comment_id', AUTHORIZATION_COMMENT_ID],
   ]) {
     assert.equal(validate({ ...baseCommand, [field]: value }).blocker,
       'PROTECTED_WORKFLOW_DISPATCH_FIELD_NOT_ALLOWED');
@@ -112,8 +124,58 @@ test('rejects malformed immutable identities, branch traversal and overlong wind
     'PROTECTED_WORKFLOW_DISPATCH_EXPIRY_TOO_FAR_AHEAD');
 });
 
-test('merge maps only to fixed canonical workflow filename, ref and exact 11 inputs', () => {
-  const request = buildProtectedWorkflowDispatchRequest(baseCommand);
+test('re-proves one exact owner-authored authorization comment and rejects provenance drift', () => {
+  const accepted = validateProtectedWorkflowAuthorizationComment(authorizationComment, baseCommand, {
+    now: NOW,
+    expectedCommentId: AUTHORIZATION_COMMENT_ID,
+  });
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.commentId, AUTHORIZATION_COMMENT_ID);
+  assert.equal(accepted.command.requestId, baseCommand.requestId);
+
+  assert.equal(validateProtectedWorkflowAuthorizationComment({
+    ...authorizationComment,
+    user: { login: 'github-actions[bot]' },
+  }, baseCommand, { now: NOW, expectedCommentId: AUTHORIZATION_COMMENT_ID }).blocker,
+  'PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_AUTHOR_MISMATCH');
+  assert.equal(validateProtectedWorkflowAuthorizationComment({
+    ...authorizationComment,
+    issue_url: `https://api.github.com/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/issues/1508`,
+  }, baseCommand, { now: NOW, expectedCommentId: AUTHORIZATION_COMMENT_ID }).blocker,
+  'PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_ISSUE_MISMATCH');
+  assert.equal(validateProtectedWorkflowAuthorizationComment(authorizationComment, baseCommand, {
+    now: NOW,
+    expectedCommentId: AUTHORIZATION_COMMENT_ID + 1,
+  }).blocker, 'PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_ID_MISMATCH');
+  assert.equal(validateProtectedWorkflowAuthorizationComment(authorizationComment, baseCommand, {
+    now: new Date('2026-08-30T06:56:00.000Z'),
+    expectedCommentId: AUTHORIZATION_COMMENT_ID,
+  }).blocker, 'PROTECTED_WORKFLOW_DISPATCH_EXPIRED');
+
+  for (const [field, value] of [
+    ['prNumber', 1952],
+    ['expectedBranch', 'agent/other-v1'],
+    ['expectedHead', 'a'.repeat(40)],
+    ['expectedHeadTree', 'b'.repeat(40)],
+    ['expectedBase', 'c'.repeat(40)],
+    ['independentReviewRunId', baseCommand.independentReviewRunId + 1],
+    ['independentReviewRunAttempt', 2],
+    ['independentReviewArtifactId', baseCommand.independentReviewArtifactId + 1],
+    ['independentReviewArtifactDigest', `sha256:${'d'.repeat(64)}`],
+    ['independentReviewPayloadSha256', 'e'.repeat(64)],
+  ]) {
+    assert.equal(validateProtectedWorkflowAuthorizationComment(
+      authorizationComment,
+      { ...baseCommand, [field]: value },
+      { now: NOW, expectedCommentId: AUTHORIZATION_COMMENT_ID },
+    ).blocker, 'PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_IDENTITY_MISMATCH');
+  }
+});
+
+test('merge maps only to fixed canonical workflow filename, ref and exact provenance-bound inputs', () => {
+  const request = buildProtectedWorkflowDispatchRequest(baseCommand, {
+    authorizationCommentId: AUTHORIZATION_COMMENT_ID,
+  });
   assert.equal(request.ok, true);
   assert.equal(PROTECTED_WORKFLOW_DISPATCH_PATH, '.github/workflows/operator-merge-approval-gate.yml');
   assert.equal(PROTECTED_WORKFLOW_DISPATCH_WORKFLOW_ID, 'operator-merge-approval-gate.yml');
@@ -123,14 +185,18 @@ test('merge maps only to fixed canonical workflow filename, ref and exact 11 inp
   assert.equal(request.method, 'POST');
   assert.equal(request.body.ref, 'main');
   assert.equal(request.body.inputs.mode, PROTECTED_WORKFLOW_DISPATCH_MODE);
+  assert.equal(request.body.inputs.authorization_comment_id, String(AUTHORIZATION_COMMENT_ID));
   assert.deepEqual(Object.keys(request.body.inputs).sort(), [
-    'expected_base', 'expected_branch', 'expected_head', 'expected_head_tree',
+    'authorization_comment_id', 'expected_base', 'expected_branch', 'expected_head', 'expected_head_tree',
     'independent_review_artifact_digest', 'independent_review_artifact_id',
     'independent_review_payload_sha256', 'independent_review_run_attempt',
     'independent_review_run_id', 'mode', 'pr_number',
   ].sort());
-  assert.equal(buildProtectedWorkflowDispatchRequest(readyCommand).blocker,
-    'PROTECTED_WORKFLOW_DISPATCH_REQUEST_NOT_MERGE_OPERATION');
+  assert.equal(buildProtectedWorkflowDispatchRequest(baseCommand).blocker,
+    'PROTECTED_WORKFLOW_DISPATCH_AUTHORIZATION_COMMENT_ID_INVALID');
+  assert.equal(buildProtectedWorkflowDispatchRequest(readyCommand, {
+    authorizationCommentId: AUTHORIZATION_COMMENT_ID,
+  }).blocker, 'PROTECTED_WORKFLOW_DISPATCH_REQUEST_NOT_MERGE_OPERATION');
 });
 
 test('receipts preserve canonical workflow identity and keep ready separate from merge/runtime authority', () => {
