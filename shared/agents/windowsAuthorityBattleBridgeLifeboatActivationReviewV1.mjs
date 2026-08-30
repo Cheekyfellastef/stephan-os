@@ -46,11 +46,14 @@ function normalizedUnsupportedPaths(analysis) {
 }
 
 function escalationProfile(analysis) {
+  const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
   const paths = normalizedUnsupportedPaths(analysis);
   if (!paths) return null;
-  if (JSON.stringify(paths) === JSON.stringify([...HISTORIC_ESCALATED_PATHS].sort())
+  if (findings.length === HISTORIC_ESCALATED_PATHS.length
+      && JSON.stringify(paths) === JSON.stringify([...HISTORIC_ESCALATED_PATHS].sort())
       && paths.length === HISTORIC_ESCALATED_PATHS.length) return 'HISTORIC_ACTIVATION';
-  if (JSON.stringify(paths) === JSON.stringify([...IDEMPOTENT_ESCALATED_PATHS].sort())
+  if (findings.length === IDEMPOTENT_ESCALATED_PATHS.length
+      && JSON.stringify(paths) === JSON.stringify([...IDEMPOTENT_ESCALATED_PATHS].sort())
       && paths.length === IDEMPOTENT_ESCALATED_PATHS.length) return 'IDEMPOTENT_REINSTALL';
   return null;
 }
