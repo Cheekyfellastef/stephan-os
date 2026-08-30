@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   BATTLE_BRIDGE_GITHUB_COMMAND_MARKER,
   BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA,
+  BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
   executeBattleBridgeGitHubCommand,
   isTerminalizableOwnerCommandBlocker,
   selectBattleBridgeGitHubCommandBatch,
@@ -21,7 +22,7 @@ function command(overrides = {}) {
   return {
     schemaVersion: BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA,
     requestId: 'runtime-data-preservation-0001',
-    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
     issueNumber: 1507,
     branch: 'main',
@@ -45,7 +46,7 @@ function comment(payload = command(), overrides = {}) {
   };
 }
 
-test('accepts only the exact #1983 preservation pair on the existing update operation', () => {
+test('accepts the exact #1983 preservation pair only on the dedicated sync operation', () => {
   const accepted = validateBattleBridgeGitHubCommand(command(), {
     authorLogin: 'Cheekyfellastef',
     now: NOW,
@@ -53,7 +54,7 @@ test('accepts only the exact #1983 preservation pair on the existing update oper
   });
   assert.equal(accepted.ok, true);
   assert.equal(accepted.verdict, 'COMMAND_ACCEPTED');
-  assert.equal(accepted.command.operation, 'UPDATE_STEPHANOS_FROM_CHAT');
+  assert.equal(accepted.command.operation, BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION);
   assert.equal(accepted.command.preservationProfile, BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE);
   assert.equal(accepted.command.preservationApproval, 'operator-approved');
 
@@ -72,6 +73,19 @@ test('accepts only the exact #1983 preservation pair on the existing update oper
     now: NOW,
     authoredAt: NOW,
   }).blocker, 'COMMAND_PRESERVATION_FIELDS_INCOMPLETE');
+
+  const missingPair = command();
+  delete missingPair.preservationProfile;
+  delete missingPair.preservationApproval;
+  assert.equal(validateBattleBridgeGitHubCommand(missingPair, {
+    authorLogin: 'Cheekyfellastef',
+    now: NOW,
+    authoredAt: NOW,
+  }).blocker, 'COMMAND_PRESERVATION_FIELDS_INCOMPLETE');
+
+  assert.equal(validateBattleBridgeGitHubCommand(command({
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+  }), { authorLogin: 'Cheekyfellastef', now: NOW, authoredAt: NOW }).blocker, 'COMMAND_PRESERVATION_FIELDS_NOT_ALLOWED');
 
   assert.equal(validateBattleBridgeGitHubCommand(command({
     operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
@@ -92,12 +106,12 @@ test('accepts only the exact #1983 preservation pair on the existing update oper
   ]) assert.equal(isTerminalizableOwnerCommandBlocker(blocker), true);
 });
 
-test('mailbox selection preserves the exact preservation pair and terminalizes malformed requests', () => {
+test('mailbox selection preserves the dedicated sync operation and exact preservation pair', () => {
   const batch = selectBattleBridgeGitHubCommandBatch([comment()], { now: NOW });
   assert.equal(batch.ok, true);
   assert.equal(batch.verdict, 'COMMAND_BATCH_READY');
   assert.equal(batch.commands.length, 1);
-  assert.equal(batch.commands[0].command.operation, 'UPDATE_STEPHANOS_FROM_CHAT');
+  assert.equal(batch.commands[0].command.operation, BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION);
   assert.equal(batch.commands[0].command.preservationProfile, BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE);
   assert.equal(batch.commands[0].command.preservationApproval, 'operator-approved');
 
@@ -109,7 +123,7 @@ test('mailbox selection preserves the exact preservation pair and terminalizes m
   assert.equal(rejected.terminalRejections[0].blocker, 'COMMAND_PRESERVATION_PROFILE_NOT_ALLOWED');
 });
 
-test('preservation-capable update runs the #1983 sync first then reuses the existing update handler', async () => {
+test('dedicated preservation sync runs #1983 and terminates without the update/runtime handler', async () => {
   const validated = validateBattleBridgeGitHubCommand(command(), {
     authorLogin: 'Cheekyfellastef',
     now: NOW,
@@ -131,22 +145,17 @@ test('preservation-capable update runs the #1983 sync first then reuses the exis
         preservation: { ok: true, profile: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE },
       };
     },
-    updateStephanos: async (payload = {}) => {
+    updateStephanos: async () => {
       updateCalls += 1;
-      assert.equal(payload.operation, 'UPDATE_STEPHANOS_FROM_CHAT');
-      assert.equal(payload.preservationProfile, BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE);
-      assert.equal(payload.preservationApproval, 'operator-approved');
-      return {
-        ok: true,
-        status: 'DONE',
-        finalVerdict: 'SOURCE_AND_RUNTIME_EXACT_HEAD',
-        sourceHead: HEAD,
-      };
+      return { ok: true, status: 'DONE', finalVerdict: 'SOURCE_AND_RUNTIME_EXACT_HEAD' };
     },
   });
 
   assert.equal(result.ok, true);
-  assert.equal(updateCalls, 1);
+  assert.equal(result.verdict, 'COMMAND_EXECUTION_COMPLETE');
+  assert.equal(result.operation, BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION);
+  assert.equal(result.runtimeRefreshAttempted, false);
+  assert.equal(updateCalls, 0);
   assert.equal(syncInput.expectedBranch, 'main');
   assert.equal(syncInput.operatorApproval, 'operator-approved');
   assert.equal(syncInput.preservationProfile, BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE);
@@ -188,7 +197,7 @@ test('moving origin/main is rejected before #1983 can preserve against a superse
   assert.equal(updateCalls, 0);
 });
 
-test('a preservation sync whose final head differs from the approved head blocks before runtime refresh', async () => {
+test('a preservation sync whose final head differs from the approved head blocks without runtime refresh', async () => {
   let updateCalls = 0;
   const validated = validateBattleBridgeGitHubCommand(command(), {
     authorLogin: 'Cheekyfellastef',
@@ -208,7 +217,7 @@ test('a preservation sync whose final head differs from the approved head blocks
 });
 
 test('ordinary updates remain on the existing path with no preservation pre-sync', async () => {
-  const ordinary = command();
+  const ordinary = command({ operation: 'UPDATE_STEPHANOS_FROM_CHAT' });
   delete ordinary.preservationProfile;
   delete ordinary.preservationApproval;
   const validated = validateBattleBridgeGitHubCommand(ordinary, {
