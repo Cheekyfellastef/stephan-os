@@ -14,6 +14,8 @@ const MOBILE_RECOVERY_VERIFICATION_JOURNAL_PATH = './windowsAuthorityMobileRecov
 const MOBILE_RECOVERY_GITHUB_CONSUMER_PATH = './windowsAuthorityMobileRecoveryGitHubConsumerReviewV1.mjs';
 const MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATH = './windowsAuthorityMobileRecoveryLifeboatInstallerReviewV1.mjs';
 const LIFEBOAT_ACTIVATION_PATH = './windowsAuthorityBattleBridgeLifeboatActivationReviewV1.mjs';
+const WORKER_LOG_BOUNDS_PATH = './windowsAuthorityWorkerLogBoundsReviewV1.mjs';
+const WORKER_WATCHDOG_V2_PATH = './windowsAuthorityWorkerWatchdogReviewV2.mjs';
 const WORKER_WATCHDOG_PATH = './windowsAuthorityWorkerWatchdogReviewV1.mjs';
 const FORGE_M3_EXECUTOR_PATH = './windowsAuthorityForgeM3ExecutorReviewV1.mjs';
 const FORGE_PODMAN_PREREQUISITE_PATH = './windowsAuthorityForgePodmanPrerequisiteReviewV1.mjs';
@@ -32,7 +34,9 @@ const MOBILE_RECOVERY_VERIFICATION_JOURNAL_BLOB_SHA = 'b4b3a6dd6c0226331d4faf682
 const MOBILE_RECOVERY_GITHUB_CONSUMER_BLOB_SHA = '7b0a62a712c2340293ffe09aee0154ae9e9766de';
 const MOBILE_RECOVERY_LIFEBOAT_INSTALLER_BLOB_SHA = '6ca86bcd68e034950b3d01fdabb12e3eb07055e1';
 const LIFEBOAT_ACTIVATION_BLOB_SHA = '3b837486b4d9cfff2ed7f5ed14ade4ff50167c08';
-const WORKER_WATCHDOG_BLOB_SHA = 'b69e048ea9857b713e2faa17a1bbecec62fed84d';
+const WORKER_LOG_BOUNDS_BLOB_SHA = 'daa4936e117e7b16daf4c0ccf72baea0d7203dfb';
+const WORKER_WATCHDOG_V2_BLOB_SHA = '6a78171d976b1a36d8892b98fcf90bf54591dbeb';
+const WORKER_WATCHDOG_BLOB_SHA = '148972def36e1af880f21876f4203f802c697ecb';
 const FORGE_M3_EXECUTOR_BLOB_SHA = '7177c695d5a12b009785676440ce83163897f8f2';
 const FORGE_PODMAN_PREREQUISITE_BLOB_SHA = '0a0c98287f20145e31bf8aa3978d0ba4196cbcce';
 const IGNITION_CONVERGENCE_BLOB_SHA = '8115a382c5c7b9a0bfe5611d4931fcbd969d1162';
@@ -49,6 +53,7 @@ const EXPECTED_MOBILE_RECOVERY_VERIFICATION_JOURNAL_PATHS = Object.freeze(['docs
 const EXPECTED_MOBILE_RECOVERY_GITHUB_CONSUMER_PATHS = Object.freeze(['docs/architecture/battle-bridge-recovery-lifeboat-github-consumer-v1.md','scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1','scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1','scripts/windows/run-battle-bridge-recovery-lifeboat-bank-v1.ps1','shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs']);
 const EXPECTED_MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATHS = Object.freeze(['docs/architecture/battle-bridge-recovery-lifeboat-ab-installer-v1.md','scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1','scripts/windows/run-battle-bridge-recovery-lifeboat-active-v1.ps1','scripts/windows/run-battle-bridge-recovery-lifeboat-bank-v1.ps1','shared/agents/battleBridgeRecoveryLifeboatInstallV1.mjs','shared/agents/battleBridgeRecoveryLifeboatInstallV1.test.mjs']);
 const EXPECTED_LIFEBOAT_ACTIVATION_PATHS = Object.freeze(['scripts/battle-bridge-control-plane-self-repair.test.mjs','scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs','scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1','scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs','shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs','shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs','shared/agents/postSyncRuntimeRefreshCoordinator.mjs']);
+const EXPECTED_WORKER_LOG_BOUNDS_PATHS = Object.freeze(['scripts/windows/start-mission-orchestrator-worker.ps1']);
 const EXPECTED_FORGE_M3_EXECUTOR_PATHS = Object.freeze(['scripts/windows/invoke-forge-shadow-m3-fixed-proof-executors-v1.ps1','scripts/windows/invoke-forge-shadow-m3-fixed-proof-executors-v1.test.mjs']);
 const EXPECTED_FORGE_PODMAN_PREREQUISITE_PATHS = Object.freeze(['scripts/windows/install-forge-shadow-podman-prerequisite-v1.ps1']);
 const EXPECTED_IGNITION_CONVERGENCE_PATHS = Object.freeze(['scripts/windows/probe-battle-bridge-recovery-mesh.ps1','scripts/windows/repair-stephanos-battle-bridge.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1','scripts/windows/start-stephanos-backend.ps1']);
@@ -68,6 +73,8 @@ const mobileRecoveryVerificationJournalUrl = provePinnedModule(MOBILE_RECOVERY_V
 const mobileRecoveryGitHubConsumerUrl = provePinnedModule(MOBILE_RECOVERY_GITHUB_CONSUMER_PATH, MOBILE_RECOVERY_GITHUB_CONSUMER_BLOB_SHA);
 const mobileRecoveryLifeboatInstallerUrl = provePinnedModule(MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATH, MOBILE_RECOVERY_LIFEBOAT_INSTALLER_BLOB_SHA);
 const lifeboatActivationUrl = provePinnedModule(LIFEBOAT_ACTIVATION_PATH, LIFEBOAT_ACTIVATION_BLOB_SHA);
+const workerLogBoundsUrl = provePinnedModule(WORKER_LOG_BOUNDS_PATH, WORKER_LOG_BOUNDS_BLOB_SHA);
+const workerWatchdogV2Url = provePinnedModule(WORKER_WATCHDOG_V2_PATH, WORKER_WATCHDOG_V2_BLOB_SHA);
 const workerWatchdogUrl = provePinnedModule(WORKER_WATCHDOG_PATH, WORKER_WATCHDOG_BLOB_SHA);
 const forgeM3ExecutorUrl = provePinnedModule(FORGE_M3_EXECUTOR_PATH, FORGE_M3_EXECUTOR_BLOB_SHA);
 const forgePodmanPrerequisiteUrl = provePinnedModule(FORGE_PODMAN_PREREQUISITE_PATH, FORGE_PODMAN_PREREQUISITE_BLOB_SHA);
@@ -85,11 +92,15 @@ const mobileRecoveryVerificationJournal = await import(mobileRecoveryVerificatio
 const mobileRecoveryGitHubConsumer = await import(mobileRecoveryGitHubConsumerUrl.href);
 const mobileRecoveryLifeboatInstaller = await import(mobileRecoveryLifeboatInstallerUrl.href);
 const lifeboatActivation = await import(lifeboatActivationUrl.href);
+const workerLogBounds = await import(workerLogBoundsUrl.href);
+const workerWatchdogV2 = await import(workerWatchdogV2Url.href);
 const workerWatchdog = await import(workerWatchdogUrl.href);
 const forgeM3Executor = await import(forgeM3ExecutorUrl.href);
 const forgePodmanPrerequisite = await import(forgePodmanPrerequisiteUrl.href);
 const ignitionConvergence = await import(ignitionConvergenceUrl.href);
+if (JSON.stringify(workerWatchdogV2.WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V2) !== JSON.stringify(['scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1','scripts/windows/start-mission-orchestrator-worker.ps1'])) throw new Error('WINDOWS_AUTHORITY_WORKER_WATCHDOG_V2_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(workerWatchdog.WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1) !== JSON.stringify(['scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1','scripts/windows/start-mission-orchestrator-worker.ps1'])) throw new Error('WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATH_INVENTORY_MISMATCH');
+if (JSON.stringify(workerLogBounds.WINDOWS_AUTHORITY_WORKER_LOG_BOUNDS_PATHS_V1) !== JSON.stringify(EXPECTED_WORKER_LOG_BOUNDS_PATHS)) throw new Error('WINDOWS_AUTHORITY_WORKER_LOG_BOUNDS_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(noFaff.WINDOWS_AUTHORITY_NO_FAFF_RESCUE_PATHS_V1) !== JSON.stringify(EXPECTED_NO_FAFF_PATHS)) throw new Error('WINDOWS_AUTHORITY_NO_FAFF_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(mailboxRecoveryGuardian.WINDOWS_AUTHORITY_MAILBOX_RECOVERY_GUARDIAN_PATHS_V1) !== JSON.stringify(EXPECTED_MAILBOX_RECOVERY_GUARDIAN_PATHS)) throw new Error('WINDOWS_AUTHORITY_MAILBOX_RECOVERY_GUARDIAN_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(recoveryGuardian.WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1) !== JSON.stringify(EXPECTED_RECOVERY_GUARDIAN_PATHS)) throw new Error('WINDOWS_AUTHORITY_RECOVERY_GUARDIAN_PATH_INVENTORY_MISMATCH');
@@ -112,6 +123,8 @@ export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
   const lifeboatActivationResult = lifeboatActivation.analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview(input); if (lifeboatActivationResult.eligible) return lifeboatActivationResult;
   const legacyBackendMigrationResult = legacyBackendMigration.analyzeWindowsAuthorityLegacyBackendMigrationReviewV1(input); if (legacyBackendMigrationResult.eligible) return legacyBackendMigrationResult;
   const ignitionConvergenceResult = ignitionConvergence.analyzeWindowsAuthorityIgnitionConvergenceReview(input); if (ignitionConvergenceResult.eligible) return ignitionConvergenceResult;
+  const workerLogBoundsResult = workerLogBounds.analyzeWindowsAuthorityWorkerLogBoundsReviewV1(input); if (workerLogBoundsResult.eligible) return workerLogBoundsResult;
+  const workerWatchdogV2Result = workerWatchdogV2.analyzeWindowsAuthorityWorkerWatchdogReviewV2(input); if (workerWatchdogV2Result.eligible) return workerWatchdogV2Result;
   const workerWatchdogResult = workerWatchdog.analyzeWindowsAuthorityWorkerWatchdogReview(input); if (workerWatchdogResult.eligible) return workerWatchdogResult;
   const recoveryMeshLaunchLivenessResult = recoveryMeshLaunchLiveness.analyzeWindowsAuthorityRecoveryMeshLaunchLivenessReviewV1(input); if (recoveryMeshLaunchLivenessResult.eligible) return recoveryMeshLaunchLivenessResult;
   const openClawRecoveryResult = openClawRecovery.analyzeWindowsAuthorityOpenClawRecoveryReview(input); if (openClawRecoveryResult.eligible) return openClawRecoveryResult;

@@ -23,6 +23,13 @@ export const BATTLE_BRIDGE_WORKER_WATCHDOG_SCHEMA = 'stephanos.battle-bridge-wor
 export const BATTLE_BRIDGE_WORKER_WATCHDOG_TASK_NAME = 'Stephanos Mission Orchestrator Worker Watchdog';
 export const WORKER_WATCHDOG_LOCK_STALE_AFTER_MS = 2 * 60 * 1000;
 export const WORKER_WATCHDOG_RESTART_COOLDOWN_MS = 5 * 60 * 1000;
+export const WORKER_WATCHDOG_RUN_BUDGET_MS = 110_000;
+export const WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS = 5_000;
+export const WORKER_WATCHDOG_START_TIMEOUT_MS = 95_000;
+export const WORKER_WATCHDOG_RECOVERY_PROBE_TIMEOUT_MS = 5_000;
+export const WORKER_WATCHDOG_PUBLICATION_RESERVE_MS = 5_000;
+export const WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS = 10_000;
+export const CANONICAL_WINDOWS_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 export const WORKER_WATCHDOG_AUTHORITY = Object.freeze({
   approvedWorkerTask: APPROVED_WORKER_TASK,
   arbitraryShellAllowed: false,
@@ -31,11 +38,14 @@ export const WORKER_WATCHDOG_AUTHORITY = Object.freeze({
   processKillAllowed: false,
   pcRestartAllowed: false,
   sourceMutationAllowed: false,
+  verifiedOwnedWorkerTerminationAllowed: true,
   visiblePowerShellRequired: false,
   maximumStartsPerRun: 1,
 });
 
 const FIXED_PROBE_MODES = new Set(['Inspect', 'StartApprovedWorkerTask']);
+const EXPLICIT_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+const INVOCATION_ID = /^[0-9a-f]{64}$/;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -88,13 +98,25 @@ export function validateCanonicalWorkerWatchdogPaths({ paths, expectedPaths }) {
 export function createFixedWorkerProbeAdapter({
   probeScriptPath,
   spawnSyncFn = spawnSync,
-  powerShellExecutable = 'powershell.exe',
+  powerShellExecutable = CANONICAL_WINDOWS_POWERSHELL,
 } = {}) {
   const fixedProbePath = path.resolve(text(probeScriptPath));
   return Object.freeze({
-    run(mode) {
+    run(mode, { timeoutMs, deadlineUtc = '' } = {}) {
       if (!FIXED_PROBE_MODES.has(mode)) throw new Error(`Unsupported worker watchdog probe mode: ${mode}`);
-      const result = spawnSyncFn(powerShellExecutable, [
+      const boundedTimeoutMs = Number.isSafeInteger(timeoutMs) && timeoutMs > 0
+        ? timeoutMs
+        : (mode === 'StartApprovedWorkerTask'
+          ? WORKER_WATCHDOG_START_TIMEOUT_MS
+          : WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS);
+      const boundedDeadlineUtc = text(deadlineUtc);
+      if (mode === 'StartApprovedWorkerTask' && !EXPLICIT_UTC.test(boundedDeadlineUtc)) {
+        throw new Error('Worker watchdog restart deadline must be an explicit UTC timestamp.');
+      }
+      if (mode === 'Inspect' && boundedDeadlineUtc) {
+        throw new Error('Worker watchdog inspect mode cannot receive restart authority.');
+      }
+      const argumentsList = [
         '-NoProfile',
         '-NonInteractive',
         '-ExecutionPolicy',
@@ -103,10 +125,13 @@ export function createFixedWorkerProbeAdapter({
         fixedProbePath,
         '-Mode',
         mode,
-      ], {
+      ];
+      if (mode === 'StartApprovedWorkerTask') argumentsList.push('-DeadlineUtc', boundedDeadlineUtc);
+      const result = spawnSyncFn(powerShellExecutable, argumentsList, {
         encoding: 'utf8',
         shell: false,
         windowsHide: true,
+        timeout: boundedTimeoutMs,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       if (result.error || result.status !== 0) {
@@ -200,6 +225,7 @@ async function publishWatchdogRecords({
   restartAttemptedAtUtc = '',
   recoveryProbeCount = 0,
   probeError = '',
+  restartProof = null,
 }) {
   const timestampUtc = now.toISOString();
   const stamp = isoStamp(now);
@@ -219,6 +245,11 @@ async function publishWatchdogRecords({
     recoveryProbeCount,
     probeError,
     workerKilledObserved: false,
+    verifiedOwnedWorkerTerminationObserved: restartProof?.terminatedVerifiedOwnedProcess === true,
+    restartExactHeadProofOk: restartProof?.exactHeadProofOk === true,
+    restartProofFresh: restartProof?.proofFresh === true,
+    restartSourceHead: text(restartProof?.sourceHead),
+    restartVerdict: text(restartProof?.restartVerdict),
     supervisorDetectedWorkerDown: initialAssessment?.healthy === false,
     supervisorRestartedWorker: restartAttempted,
     workerRecovered: finalAssessment?.healthy === true,
@@ -307,6 +338,11 @@ export async function runBattleBridgeWorkerWatchdog({
   sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
   clock = () => Date.now(),
 } = {}) {
+  const runStartedAtMs = Number(clock()) || Date.now();
+  const remainingRunBudgetMs = () => Math.max(
+    0,
+    WORKER_WATCHDOG_RUN_BUDGET_MS - ((Number(clock()) || Date.now()) - runStartedAtMs),
+  );
   const pathValidation = validateCanonicalWorkerWatchdogPaths({ paths, expectedPaths });
   if (!pathValidation.ok) return Object.freeze({ ok: false, classification: 'WORKER_WATCHDOG_BLOCKED', pathValidation });
   if (!(await pathIsDirectory(paths.repoRoot))) return Object.freeze({ ok: false, classification: 'WORKER_WATCHDOG_BLOCKED', reason: 'CANONICAL_REPOSITORY_MISSING' });
@@ -327,7 +363,7 @@ export async function runBattleBridgeWorkerWatchdog({
   }
 
   try {
-    const initialProbe = probeAdapter.run('Inspect');
+    const initialProbe = probeAdapter.run('Inspect', { timeoutMs: WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS });
     if (!initialProbe.ok) {
       const publication = await publishWatchdogRecords({ workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot, now, classification: 'WORKER_WATCHDOG_PROBE_FAILED', probeError: initialProbe.error });
       return Object.freeze({ ok: false, classification: 'WORKER_WATCHDOG_PROBE_FAILED', initialProbe, publication });
@@ -358,9 +394,38 @@ export async function runBattleBridgeWorkerWatchdog({
       return Object.freeze({ ok: false, classification: 'WORKER_WATCHDOG_RECOVERY_COOLDOWN', decision, publication });
     }
 
-    const startResult = probeAdapter.run('StartApprovedWorkerTask');
+    const startTimeoutMs = Math.min(
+      WORKER_WATCHDOG_START_TIMEOUT_MS,
+      Math.max(1, remainingRunBudgetMs() - WORKER_WATCHDOG_PUBLICATION_RESERVE_MS),
+    );
+    const restartDeadlineMs = (Number(clock()) || Date.now())
+      + Math.max(1, startTimeoutMs - WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS);
+    const restartDeadlineUtc = new Date(restartDeadlineMs).toISOString();
+    const startResult = probeAdapter.run('StartApprovedWorkerTask', {
+      timeoutMs: startTimeoutMs,
+      deadlineUtc: restartDeadlineUtc,
+    });
     const restartAttemptedAtUtc = now.toISOString();
-    if (!startResult.ok || startResult.data?.started !== true || startResult.data?.taskName !== APPROVED_WORKER_TASK) {
+    if (!startResult.ok
+      || startResult.data?.started !== true
+      || startResult.data?.restarted !== true
+      || startResult.data?.taskName !== APPROVED_WORKER_TASK
+      || startResult.data?.sourceHead !== initialAssessment.canonicalRepositoryHead
+      || startResult.data?.remoteMainHead !== initialAssessment.canonicalRepositoryHead
+      || startResult.data?.exactHeadProofOk !== true
+      || startResult.data?.postStartSourceProofOk !== true
+      || startResult.data?.sourceTrackedClean !== true
+      || startResult.data?.proofFresh !== true
+      || !Number.isSafeInteger(startResult.data?.startedWorkerPid)
+      || startResult.data.startedWorkerPid <= 0
+      || !Number.isFinite(Date.parse(text(startResult.data?.workerStartedAtUtc)))
+      || !INVOCATION_ID.test(text(startResult.data?.invocationId))
+      || startResult.data?.deadlineUtc !== restartDeadlineUtc
+      || startResult.data?.invocationBound !== true
+      || startResult.data?.canonicalWorkerCommandVerified !== true
+      || startResult.data?.cleanupAttempted !== false
+      || startResult.data?.cleanupCompleted !== false
+      || startResult.data?.restartVerdict !== 'APPROVED_RUNTIME_RESTART_PASS') {
       const publication = await publishWatchdogRecords({
         workspaceRoot: paths.workspaceRoot,
         repoRoot: paths.repoRoot,
@@ -371,6 +436,7 @@ export async function runBattleBridgeWorkerWatchdog({
         restartAttempted: true,
         restartAttemptedAtUtc,
         probeError: startResult.error || 'Fixed worker task start was not proven.',
+        restartProof: startResult.data,
       });
       return Object.freeze({ ok: false, classification: 'WORKER_WATCHDOG_START_FAILED', decision, startResult, publication });
     }
@@ -379,9 +445,21 @@ export async function runBattleBridgeWorkerWatchdog({
     let recoveryProbeCount = 0;
     let lastProbeError = '';
     for (let attempt = 1; attempt <= decision.boundedProbeAttempts; attempt += 1) {
+      const requiredBudgetMs = decision.boundedProbeIntervalMs
+        + WORKER_WATCHDOG_RECOVERY_PROBE_TIMEOUT_MS
+        + WORKER_WATCHDOG_PUBLICATION_RESERVE_MS;
+      if (remainingRunBudgetMs() < requiredBudgetMs) {
+        lastProbeError = 'Worker watchdog run budget exhausted before the next recovery probe.';
+        break;
+      }
       await sleep(decision.boundedProbeIntervalMs);
       recoveryProbeCount = attempt;
-      const recoveryProbe = probeAdapter.run('Inspect');
+      const recoveryProbe = probeAdapter.run('Inspect', {
+        timeoutMs: Math.min(
+          WORKER_WATCHDOG_RECOVERY_PROBE_TIMEOUT_MS,
+          Math.max(1, remainingRunBudgetMs() - WORKER_WATCHDOG_PUBLICATION_RESERVE_MS),
+        ),
+      });
       if (!recoveryProbe.ok) {
         lastProbeError = recoveryProbe.error;
         continue;
@@ -405,6 +483,7 @@ export async function runBattleBridgeWorkerWatchdog({
       restartAttemptedAtUtc,
       recoveryProbeCount,
       probeError: lastProbeError,
+      restartProof: startResult.data,
     });
     return Object.freeze({ ok: recovered, classification, decision, startResult, initialAssessment, finalAssessment, recoveryProbeCount, publication });
   } catch (error) {
