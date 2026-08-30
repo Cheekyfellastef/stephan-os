@@ -16,7 +16,7 @@ function mission(overrides = {}) {
     goalId: 'goal-1',
     laneId: 'lane-1',
     ownerId: 'goal-building-agent',
-    phase: 'IMPLEMENTING',
+    phase: 'IMPLEMENT',
     authorityHead: head,
     observedAtUtc: '2026-08-28T09:29:50.000Z',
     lastProgressAtUtc: '2026-08-28T09:29:40.000Z',
