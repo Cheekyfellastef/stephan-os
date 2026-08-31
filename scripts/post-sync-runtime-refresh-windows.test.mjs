@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { backendStarterInvocation } from './run-battle-bridge-ignition.mjs';
 import { createExactHeadSourceLoader } from '../stephanos-server/backend-exact-head-loader.mjs';
 import { fixedBackendExecutable } from '../stephanos-server/services/fixedBackendExecutable.js';
+await import('./post-sync-runtime-refresh-windows-canonical-git-hardlink.test.mjs');
 
 const restartSource = await readFile(new URL('./windows/restart-approved-stephanos-runtime.ps1', import.meta.url), 'utf8');
 const workerStartSource = await readFile(new URL('./windows/start-mission-orchestrator-worker.ps1', import.meta.url), 'utf8');
