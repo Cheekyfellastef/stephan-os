@@ -899,6 +899,7 @@ test('exact owner review request can substitute only for missing canonical lane 
   const baseInput = {
     repository: 'Cheekyfellastef/stephan-os',
     now: '2026-08-31T04:21:30.000Z',
+    trustedCoordinatorLogin: 'Cheekyfellastef',
     canonicalLaneConfirmed: false,
     ownerExactHeadReviewRequested: true,
     pr: {
