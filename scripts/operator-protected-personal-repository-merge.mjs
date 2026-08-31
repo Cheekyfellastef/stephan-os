@@ -42,6 +42,11 @@ import {
 import {
   validatePersonalRepositoryReviewAdmission,
 } from '../shared/agents/operatorPersonalRepositoryReviewAdmissionV1.mjs';
+import {
+  PROVENANCE_BOOTSTRAP_BRANCH,
+  PROVENANCE_BOOTSTRAP_PR,
+  validateProvenanceBootstrapFindingsCompatibilityV1,
+} from '../shared/agents/operatorPersonalRepositoryProvenanceBootstrapV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-personal-repository-protected-squash';
@@ -430,7 +435,10 @@ async function loadSelectedIndependentReview(context, identity, environmentName)
     workflowRunId: selected.independentReviewWorkflowRunId,
     workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
   });
-  if (!workflowValidation.valid) {
+  const provenanceBootstrapCandidate = !workflowValidation.valid
+    && identity.prNumber === PROVENANCE_BOOTSTRAP_PR
+    && identity.branch === PROVENANCE_BOOTSTRAP_BRANCH;
+  if (!workflowValidation.valid && !provenanceBootstrapCandidate) {
     fail('Selected independent review run is failed, stale or ambiguously bound.', {
       blockers: workflowValidation.blockers,
     });
@@ -466,6 +474,56 @@ async function loadSelectedIndependentReview(context, identity, environmentName)
     extractPersonalRepositoryArtifactZip(archiveBytes, INDEPENDENT_REVIEW_ARTIFACT_FILE).toString('utf8'),
     'Independent review artifact payload is invalid JSON.',
   );
+  if (provenanceBootstrapCandidate) {
+    const encodedPath = (value) => value.split('/').map(encodeURIComponent).join('/');
+    const [workflowFile, gateFile] = await Promise.all([
+      apiJson(`/repos/${context.owner}/${context.repo}/contents/${encodedPath('.github/workflows/operator-merge-approval-gate.yml')}?ref=${encodeURIComponent(identity.sourceHead)}`),
+      apiJson(`/repos/${context.owner}/${context.repo}/contents/${encodedPath('shared/agents/operatorMergeApprovalGate.mjs')}?ref=${encodeURIComponent(identity.sourceHead)}`),
+    ]);
+    const decodeExactSource = (payload, expectedPath) => {
+      if (payload?.type !== 'file'
+        || payload?.path !== expectedPath
+        || payload?.encoding !== 'base64'
+        || text(payload?.sha) === ''
+        || typeof payload?.content !== 'string') {
+        fail('Provenance bootstrap exact-head source evidence is missing or malformed.', {
+          blockers: ['provenance-bootstrap-source-evidence-invalid'],
+          path: expectedPath,
+        });
+      }
+      return Buffer.from(payload.content.replace(/\s/g, ''), 'base64').toString('utf8');
+    };
+    const compatibility = validateProvenanceBootstrapFindingsCompatibilityV1({
+      artifact,
+      run,
+      jobs,
+      workflowSource: decodeExactSource(workflowFile, '.github/workflows/operator-merge-approval-gate.yml'),
+      gateSource: decodeExactSource(gateFile, 'shared/agents/operatorMergeApprovalGate.mjs'),
+    }, {
+      sourceHead: identity.sourceHead,
+      baseSha: identity.baseSha,
+      workflowRunId: selected.independentReviewWorkflowRunId,
+      workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+      protectedEnvironmentAdmitted: environmentName === OPERATOR_MERGE_ENVIRONMENT,
+      environmentName,
+    });
+    if (artifact.payloadSha256 !== selected.independentReviewPayloadSha256 || !compatibility.valid) {
+      fail('Selected provenance-bootstrap findings artifact is invalid, stale or not independently bounded.', {
+        blockers: compatibility.blockers,
+      });
+    }
+    return Object.freeze({
+      workflowRunId: selected.independentReviewWorkflowRunId,
+      workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+      artifactId: selected.independentReviewArtifactId,
+      artifactDigest: selected.independentReviewArtifactDigest,
+      payloadSha256: selected.independentReviewPayloadSha256,
+      reviewMode: compatibility.reviewMode,
+      findings: compatibility.findings,
+      operatorProtectedApprovalRequired: compatibility.operatorProtectedApprovalRequired,
+    });
+  }
+
   const validation = validateIndependentReviewArtifact(artifact, {
     repository: context.repository,
     prNumber: identity.prNumber,
