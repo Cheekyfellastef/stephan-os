@@ -3,13 +3,15 @@ import test from 'node:test';
 
 import {
   WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V4,
-  WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_ANCHOR_V4,
+  WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_BASE_V4,
+  WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_HEAD_V4,
+  WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_PARENT_V4,
   analyzeWindowsAuthorityWorkerWatchdogReviewV4,
   validateWorkerWatchdogReconciliationLineageV4,
 } from './windowsAuthorityWorkerWatchdogReviewV4.mjs';
 
-const baseSha = 'b'.repeat(40);
-const sourceHead = 'c'.repeat(40);
+const baseSha = WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_BASE_V4;
+const sourceHead = WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_HEAD_V4;
 const analysis = {
   findings: WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V4.map((path) => ({
     severity: 'P0',
@@ -25,10 +27,10 @@ const lineageEvidence = {
   baseSha,
   liveMainBeforeSha: baseSha,
   liveMainAfterSha: baseSha,
-  parents: [WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_ANCHOR_V4, baseSha],
+  parents: [WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_PARENT_V4],
   comparison: {
     status: 'ahead',
-    aheadBy: 6,
+    aheadBy: 9,
     behindBy: 0,
     baseCommitSha: baseSha,
     mergeBaseCommitSha: baseSha,
@@ -45,7 +47,7 @@ const baseInput = {
   sources: [],
 };
 
-test('PR #2066 V4 profile requests exactly the two escalated Windows sources', () => {
+test('PR #2066 V4 profile requests exactly the repaired two-file Windows source estate', () => {
   const result = analyzeWindowsAuthorityWorkerWatchdogReviewV4(baseInput);
   assert.equal(result.eligible, true);
   assert.equal(result.clean, false);
@@ -53,11 +55,22 @@ test('PR #2066 V4 profile requests exactly the two escalated Windows sources', (
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_WORKER_WATCHDOG_V4_SOURCE_REQUIRED');
 });
 
-test('PR #2066 V4 profile binds one preservation continuation to the reviewed orphan-reclaim anchor', () => {
+test('PR #2066 V4 profile is pinned to the exact repaired head, base and parent', () => {
   assert.equal(validateWorkerWatchdogReconciliationLineageV4(baseInput), true);
   assert.equal(validateWorkerWatchdogReconciliationLineageV4({
     ...baseInput,
-    lineageEvidence: { ...lineageEvidence, parents: ['d'.repeat(40), baseSha] },
+    sourceHead: 'c'.repeat(40),
+  }), false);
+  assert.equal(validateWorkerWatchdogReconciliationLineageV4({
+    ...baseInput,
+    baseSha: 'd'.repeat(40),
+  }), false);
+  assert.equal(validateWorkerWatchdogReconciliationLineageV4({
+    ...baseInput,
+    lineageEvidence: {
+      ...lineageEvidence,
+      parents: ['e'.repeat(40)],
+    },
   }), false);
   assert.equal(validateWorkerWatchdogReconciliationLineageV4({
     ...baseInput,
