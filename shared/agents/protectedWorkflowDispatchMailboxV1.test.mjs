@@ -48,6 +48,23 @@ const readyCommand = Object.freeze({
   operation: PROTECTED_WORKFLOW_READY_OPERATION,
   mode: PROTECTED_WORKFLOW_READY_MODE,
 });
+
+const readyOnlyCommand = Object.freeze({
+  schemaVersion: PROTECTED_WORKFLOW_DISPATCH_SCHEMA,
+  requestId: 'protected-ready-pr1868-001',
+  operation: PROTECTED_WORKFLOW_READY_OPERATION,
+  repository: PROTECTED_WORKFLOW_DISPATCH_REPOSITORY,
+  issueNumber: PROTECTED_WORKFLOW_DISPATCH_ISSUE,
+  operatorApproval: 'operator-approved',
+  expiresAt: '2026-08-30T06:55:00.000Z',
+  mode: PROTECTED_WORKFLOW_READY_MODE,
+  prNumber: 1868,
+  expectedBranch: 'agent/personal-repository-bootstrap-policy-v1',
+  expectedHead: 'a'.repeat(40),
+  expectedHeadTree: 'b'.repeat(40),
+  expectedBase: 'c'.repeat(40),
+});
+
 const authorizationComment = Object.freeze({
   id: AUTHORIZATION_COMMENT_ID,
   issue_url: `https://api.github.com/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/issues/${PROTECTED_WORKFLOW_DISPATCH_ISSUE}`,
@@ -217,4 +234,33 @@ test('receipts preserve canonical workflow identity and keep ready separate from
   assert.equal(receipt.deploymentAuthority, false);
   assert.equal(receipt.runtimeMutationAuthority, false);
   assert.equal(receipt.providerQualificationAuthority, false);
+});
+
+test('ready-only schema omits independent review identity', () => {
+  const result = validate(readyOnlyCommand);
+  assert.equal(result.ok, true, result.blocker);
+  assert.equal(result.command.independentReviewRunId, 0);
+  assert.equal(result.command.independentReviewRunAttempt, 0);
+  assert.equal(result.command.independentReviewArtifactId, 0);
+  assert.equal(result.command.independentReviewArtifactDigest, '');
+  assert.equal(result.command.independentReviewPayloadSha256, '');
+});
+
+test('ready-only schema preserves immutable identity checks', () => {
+  assert.equal(validate({ ...readyOnlyCommand, expectedHead: 'bad' }).blocker, 'PROTECTED_WORKFLOW_DISPATCH_HEAD_INVALID');
+  assert.equal(validate({ ...readyOnlyCommand, expectedHeadTree: 'bad' }).blocker, 'PROTECTED_WORKFLOW_DISPATCH_HEAD_TREE_INVALID');
+  assert.equal(validate({ ...readyOnlyCommand, expectedBase: 'bad' }).blocker, 'PROTECTED_WORKFLOW_DISPATCH_BASE_INVALID');
+  assert.equal(validate({ ...readyOnlyCommand, expiresAt: '2026-08-30T06:49:30.000Z' }).blocker, 'PROTECTED_WORKFLOW_DISPATCH_EXPIRED');
+});
+
+test('merge schema still requires independent review identity', () => {
+  const missingRun = { ...baseCommand };
+  delete missingRun.independentReviewRunId;
+  assert.equal(validate(missingRun).blocker, 'PROTECTED_WORKFLOW_DISPATCH_REVIEW_IDENTITY_INVALID');
+  const missingDigest = { ...baseCommand };
+  delete missingDigest.independentReviewArtifactDigest;
+  assert.equal(validate(missingDigest).blocker, 'PROTECTED_WORKFLOW_DISPATCH_ARTIFACT_DIGEST_INVALID');
+  const missingPayload = { ...baseCommand };
+  delete missingPayload.independentReviewPayloadSha256;
+  assert.equal(validate(missingPayload).blocker, 'PROTECTED_WORKFLOW_DISPATCH_PAYLOAD_DIGEST_INVALID');
 });
