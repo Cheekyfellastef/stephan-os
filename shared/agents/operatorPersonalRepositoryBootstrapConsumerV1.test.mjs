@@ -43,3 +43,17 @@ test('review admission remains non-authorizing and final merge stays exact-head 
   assert.match(text, /method: 'PUT',[\s\S]*merge_method: 'squash',[\s\S]*sha: receipt\.sourceHead/s);
   assert.doesNotMatch(text, /git\s+(?:push|reset|clean|rebase)|gh\s+pr\s+merge|Restart-Computer|Stop-Process|shutdown\.exe|taskkill|Invoke-Expression|\beval\s*\(/i);
 });
+
+
+test('consumer admits only the exact bounded #1581 provenance-bootstrap findings path', async () => {
+  const text = await source();
+  assert.match(text, /PROVENANCE_BOOTSTRAP_PR/);
+  assert.match(text, /PROVENANCE_BOOTSTRAP_BRANCH/);
+  assert.match(text, /validateProvenanceBootstrapFindingsCompatibilityV1/);
+  assert.match(text, /provenanceBootstrapCandidate/);
+  assert.match(text, /operator-merge-approval-gate\.yml/);
+  assert.match(text, /operatorMergeApprovalGate\.mjs/);
+  assert.match(text, /artifact\.payloadSha256 !== selected\.independentReviewPayloadSha256/);
+  assert.match(text, /protectedEnvironmentAdmitted: environmentName === OPERATOR_MERGE_ENVIRONMENT/);
+  assert.doesNotMatch(text, /provenanceBootstrapCandidate\s*=\s*!workflowValidation\.valid\s*;/);
+});
