@@ -145,6 +145,29 @@ function freeze(value) {
   return Object.freeze(value);
 }
 
+function isBoundedPlainData(value, depth = 0, state = { nodes: 0, seen: new Set() }) {
+  if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) return true;
+  if (typeof value !== 'object' || depth > 8 || state.nodes >= 256 || state.seen.has(value)) return false;
+  state.nodes += 1;
+  state.seen.add(value);
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== Array.prototype && prototype !== null) return false;
+    const keys = Reflect.ownKeys(value);
+    if (keys.length > 128 || keys.some((key) => typeof key !== 'string')) return false;
+    for (const key of keys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) return false;
+      if (!isBoundedPlainData(descriptor.value, depth + 1, state)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  } finally {
+    state.seen.delete(value);
+  }
+}
+
 function laneIdentityFromId(laneId) {
   const normalized = text(laneId);
   const match = /(?:^|-)goal-([1-9]\d*)-pr-([1-9]\d*)(?:-|$)/i.exec(normalized);
@@ -493,6 +516,82 @@ export function createSourceMutationLeaseReleaseRecord(lease = {}, input = {}) {
     releaseOnlyExactLease: true,
     executionReceiptLeaseKeyIsCorrelationOnly: true,
     mergeAuthority: false,
+  });
+}
+
+export function validateSourceMutationLeaseReleaseRecord(record = {}, lease = {}, options = {}) {
+  if (!isBoundedPlainData(record) || !isBoundedPlainData(lease) || !isBoundedPlainData(options)) {
+    return Object.freeze({
+      valid: false,
+      errors: Object.freeze(['release-input-not-bounded-plain-data']),
+      finalVerdict: 'SOURCE_MUTATION_LEASE_RELEASE_BLOCKED',
+    });
+  }
+  const errors = [];
+  const nowUtc = text(options.nowUtc);
+  const nowMs = timestamp(nowUtc);
+  const releasedAtMs = timestamp(record?.releasedAtUtc);
+  const acquiredAtMs = timestamp(record?.acquiredAtUtc);
+  const renewedAtMs = timestamp(record?.renewedAtUtc);
+  const leaseValidation = lease?.schema === SOURCE_MUTATION_LEASE_SCHEMA
+    ? validateSourceMutationLease(lease, { nowUtc })
+    : null;
+  const workspaceValidation = validateSharedWorkspaceRecord(record, {
+    nowMs: nowMs ?? undefined,
+  });
+  for (const error of workspaceValidation.errors) errors.push(`workspace:${error}`);
+  for (const error of leaseValidation?.errors ?? []) errors.push(`lease:${error}`);
+  const expected = createSourceMutationLeaseReleaseRecord(lease, {
+    timestampUtc: record?.releasedAtUtc,
+  });
+  if (!record || typeof record !== 'object' || Array.isArray(record)) errors.push('invalid-record');
+  if (record?.schema !== SOURCE_MUTATION_LEASE_RELEASE_SCHEMA) errors.push('invalid-schema');
+  if (record?.schemaVersion !== SHARED_WORKSPACE_RECORD_SCHEMA_VERSION) errors.push('invalid-workspace-schema');
+  if (record?.kind !== SHARED_WORKSPACE_RECORD_KINDS.STATUS) errors.push('invalid-workspace-kind');
+  if (record?.statusId !== expected.statusId) errors.push('release-status-id-mismatch');
+  if (record?.participantId !== 'source-mutation-lease-authority') errors.push('invalid-participant-id');
+  if (record?.status !== 'RELEASED') errors.push('release-status-not-released');
+  if (record?.timestampUtc !== record?.releasedAtUtc) errors.push('release-status-timestamp-mismatch');
+  for (const key of [
+    'leaseId',
+    'laneId',
+    'repository',
+    'issueNumber',
+    'prNumber',
+    'branch',
+    'headSha',
+    'ownerId',
+  ]) {
+    if (record?.[key] !== lease?.[key]) errors.push(`release-${key}-mismatch`);
+  }
+  if (text(lease?.acquiredAtUtc) && record?.acquiredAtUtc !== lease.acquiredAtUtc) {
+    errors.push('release-acquiredAtUtc-mismatch');
+  }
+  if (text(lease?.renewedAtUtc) && record?.renewedAtUtc !== lease.renewedAtUtc) {
+    errors.push('release-renewedAtUtc-mismatch');
+  }
+  if (record?.releaseOnlyExactLease !== true) errors.push('release-not-exact-lease-only');
+  if (record?.executionReceiptLeaseKeyIsCorrelationOnly !== true) errors.push('release-correlation-policy-invalid');
+  if (record?.mergeAuthority !== false) errors.push('release-merge-authority-invalid');
+  if (nowMs === null) errors.push('invalid-observation-time');
+  if (releasedAtMs === null) errors.push('invalid-released-at');
+  if (acquiredAtMs === null) errors.push('invalid-release-acquired-at');
+  if (renewedAtMs === null) errors.push('invalid-release-renewed-at');
+  if (releasedAtMs !== null && acquiredAtMs !== null && releasedAtMs < acquiredAtMs) {
+    errors.push('release-precedes-acquisition');
+  }
+  if (releasedAtMs !== null && renewedAtMs !== null && releasedAtMs < renewedAtMs) {
+    errors.push('release-precedes-renewal');
+  }
+  if (releasedAtMs !== null && nowMs !== null && releasedAtMs - nowMs > MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS) {
+    errors.push('release-time-in-future');
+  }
+  return freeze({
+    valid: errors.length === 0,
+    errors,
+    finalVerdict: errors.length === 0
+      ? 'SOURCE_MUTATION_LEASE_RELEASE_PASS'
+      : 'SOURCE_MUTATION_LEASE_RELEASE_BLOCKED',
   });
 }
 
