@@ -818,8 +818,10 @@ try {
 
     if (-not (Test-Path -LiteralPath $canonicalGit -PathType Leaf)) { Stop-WithBlocker 'CANONICAL_GIT_MISSING' }
     $canonicalGitItem = Get-Item -LiteralPath $canonicalGit -Force
+    $canonicalGitLinkType = [string]$canonicalGitItem.LinkType
     if ($canonicalGitItem.PSIsContainer `
-        -or $canonicalGitItem.LinkType `
+        -or (-not [string]::IsNullOrEmpty($canonicalGitLinkType) `
+            -and $canonicalGitLinkType -ne 'HardLink') `
         -or (($canonicalGitItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
         Stop-WithBlocker 'CANONICAL_GIT_IDENTITY_INVALID'
     }
