@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import {
   WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V4,
-  WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_ANCHOR_V4,
+  WINDOWS_AUTHORITY_WORKER_WATCHDOG_REPAIRED_HEAD_V4,
   analyzeWindowsAuthorityWorkerWatchdogReviewV4,
   validateWorkerWatchdogReconciliationLineageV4,
 } from './windowsAuthorityWorkerWatchdogReviewV4.mjs';
@@ -25,10 +25,10 @@ const lineageEvidence = {
   baseSha,
   liveMainBeforeSha: baseSha,
   liveMainAfterSha: baseSha,
-  parents: [WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_ANCHOR_V4, baseSha],
+  parents: [WINDOWS_AUTHORITY_WORKER_WATCHDOG_REPAIRED_HEAD_V4, baseSha],
   comparison: {
     status: 'ahead',
-    aheadBy: 6,
+    aheadBy: 9,
     behindBy: 0,
     baseCommitSha: baseSha,
     mergeBaseCommitSha: baseSha,
@@ -45,7 +45,7 @@ const baseInput = {
   sources: [],
 };
 
-test('PR #2066 V4 profile requests exactly the two escalated Windows sources', () => {
+test('PR #2066 V4 profile requests exactly the repaired two-file Windows source estate', () => {
   const result = analyzeWindowsAuthorityWorkerWatchdogReviewV4(baseInput);
   assert.equal(result.eligible, true);
   assert.equal(result.clean, false);
@@ -53,17 +53,50 @@ test('PR #2066 V4 profile requests exactly the two escalated Windows sources', (
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_WORKER_WATCHDOG_V4_SOURCE_REQUIRED');
 });
 
-test('PR #2066 V4 profile binds one preservation continuation to the reviewed orphan-reclaim anchor', () => {
+test('PR #2066 V4 profile accepts only one exact preservation merge of repaired head onto live main', () => {
   assert.equal(validateWorkerWatchdogReconciliationLineageV4(baseInput), true);
   assert.equal(validateWorkerWatchdogReconciliationLineageV4({
     ...baseInput,
-    lineageEvidence: { ...lineageEvidence, parents: ['d'.repeat(40), baseSha] },
+    sourceHead: WINDOWS_AUTHORITY_WORKER_WATCHDOG_REPAIRED_HEAD_V4,
+    lineageEvidence: {
+      ...lineageEvidence,
+      sourceHead: WINDOWS_AUTHORITY_WORKER_WATCHDOG_REPAIRED_HEAD_V4,
+      sourceCommitSha: WINDOWS_AUTHORITY_WORKER_WATCHDOG_REPAIRED_HEAD_V4,
+    },
+  }), false);
+  assert.equal(validateWorkerWatchdogReconciliationLineageV4({
+    ...baseInput,
+    lineageEvidence: {
+      ...lineageEvidence,
+      parents: ['d'.repeat(40), baseSha],
+    },
+  }), false);
+  assert.equal(validateWorkerWatchdogReconciliationLineageV4({
+    ...baseInput,
+    lineageEvidence: {
+      ...lineageEvidence,
+      parents: [WINDOWS_AUTHORITY_WORKER_WATCHDOG_REPAIRED_HEAD_V4, 'd'.repeat(40)],
+    },
+  }), false);
+  assert.equal(validateWorkerWatchdogReconciliationLineageV4({
+    ...baseInput,
+    lineageEvidence: {
+      ...lineageEvidence,
+      parents: [baseSha, WINDOWS_AUTHORITY_WORKER_WATCHDOG_REPAIRED_HEAD_V4],
+    },
   }), false);
   assert.equal(validateWorkerWatchdogReconciliationLineageV4({
     ...baseInput,
     lineageEvidence: {
       ...lineageEvidence,
       comparison: { ...lineageEvidence.comparison, behindBy: 1 },
+    },
+  }), false);
+  assert.equal(validateWorkerWatchdogReconciliationLineageV4({
+    ...baseInput,
+    lineageEvidence: {
+      ...lineageEvidence,
+      liveMainAfterSha: 'e'.repeat(40),
     },
   }), false);
 });
