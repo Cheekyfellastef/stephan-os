@@ -274,9 +274,9 @@ test('stale canonical worker reclaim is unique, task-quiescent and process-capab
   const helperStart = source.indexOf('function Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat');
   const freshWorkerStart = source.indexOf('function Get-VerifiedFreshWorkerInstance', helperStart);
   const missionWorkerBranch = source.indexOf("$heartbeatPath = Join-Path $env:USERPROFILE 'Documents\\Stephanos-openclaw-workspace\\status\\mission-orchestrator-worker-heartbeat.json'");
-  const taskStop = source.indexOf("Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\\\'", missionWorkerBranch);
+  const taskStop = source.indexOf("Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\'", missionWorkerBranch);
   const reclaim = source.indexOf('$orphanWorker = Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat -ExpectedRepoRoot $repoRoot', missionWorkerBranch);
-  const guardedStart = source.indexOf("Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\\\'", reclaim);
+  const guardedStart = source.indexOf("Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\'", reclaim);
   const helperSource = source.slice(helperStart, freshWorkerStart);
 
   assert.ok(helperStart >= 0);
