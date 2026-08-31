@@ -13,6 +13,7 @@ import {
   canonicalLaneEvidence,
   exactHeadReviewProgress,
   evaluateExactHeadReviewDispatch,
+  explicitOwnerExactHeadReviewRequest,
   parseOptionalManualPrNumber,
 } from '../shared/agents/exactHeadReviewDispatchCoordinator.mjs';
 import {
@@ -423,7 +424,16 @@ async function discoverCanonicalContexts({ owner, repo, repository, token, laneA
   }));
 }
 
-async function loadRequestedCanonicalContexts({ owner, repo, repository, token, laneAuthorityLogin, prNumbers, triggeringArtifact }) {
+async function loadRequestedCanonicalContexts({
+  owner,
+  repo,
+  repository,
+  token,
+  laneAuthorityLogin,
+  prNumbers,
+  triggeringArtifact,
+  explicitOwnerReviewRequest = null,
+}) {
   const contexts = await mapWithConcurrency([...new Set(prNumbers)], 4, (prNumber) => loadPrContext({
     owner,
     repo,
@@ -433,7 +443,17 @@ async function loadRequestedCanonicalContexts({ owner, repo, repository, token, 
     laneAuthorityLogin,
     triggeringArtifact,
   }));
-  return contexts.filter((context) => context.canonicalLaneConfirmed);
+  return contexts.map((context) => {
+    const explicitMatch = explicitOwnerReviewRequest?.authorized === true
+      && context.pr.number === explicitOwnerReviewRequest.prNumber
+      && context.pr.headSha === explicitOwnerReviewRequest.headSha;
+    if (!context.canonicalLaneConfirmed && !explicitMatch) return null;
+    return {
+      ...context,
+      ownerExactHeadReviewRequested: explicitMatch,
+      ownerExactHeadReviewCommentId: explicitMatch ? explicitOwnerReviewRequest.commentId : null,
+    };
+  }).filter(Boolean);
 }
 
 function appendSummary(lines) {
@@ -470,9 +490,19 @@ async function main() {
   const triggeringArtifact = triggeringIndependentReviewArtifact();
   const planOnly = text(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY).toLowerCase() === 'true';
   const manualPrNumber = parseOptionalManualPrNumber(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PR);
+  const explicitOwnerReviewRequest = explicitOwnerExactHeadReviewRequest({ event, laneAuthorityLogin });
   const requestedNumbers = candidateReviewPrNumbers({ event, manualPrNumber });
   const contextLoader = requestedNumbers.length ? loadRequestedCanonicalContexts : discoverCanonicalContexts;
-  const contexts = await contextLoader({ owner, repo, repository, token, laneAuthorityLogin, prNumbers: requestedNumbers, triggeringArtifact });
+  const contexts = await contextLoader({
+    owner,
+    repo,
+    repository,
+    token,
+    laneAuthorityLogin,
+    prNumbers: requestedNumbers,
+    triggeringArtifact,
+    explicitOwnerReviewRequest,
+  });
 
   if (planOnly) {
     const targets = contexts
@@ -510,6 +540,7 @@ async function main() {
       receiptTimeoutMs: timeoutMinutes * 60 * 1000,
       trustedCoordinatorLogin: MACHINE_COORDINATOR_SENTINEL_LOGIN,
       canonicalLaneConfirmed: context.canonicalLaneConfirmed,
+      ownerExactHeadReviewRequested: context.ownerExactHeadReviewRequested === true,
       pr: context.pr,
       workflowRuns: context.workflowRuns,
       independentReviewWorkflowId: context.independentReviewWorkflowId,
