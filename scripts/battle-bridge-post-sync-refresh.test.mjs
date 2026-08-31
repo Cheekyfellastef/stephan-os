@@ -4,7 +4,10 @@ import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { runBattleBridgePostSyncRefresh } from './battle-bridge-post-sync-refresh.mjs';
+import {
+  projectControlPlaneFailureBlocker,
+  runBattleBridgePostSyncRefresh,
+} from './battle-bridge-post-sync-refresh.mjs';
 
 const source = await readFile(new URL('./battle-bridge-post-sync-refresh.mjs', import.meta.url), 'utf8');
 
@@ -24,6 +27,7 @@ test('runtime adapters are fixed to UI backend worker natural reload and bounded
   assert.match(source, /reconcileBattleBridgeControlPlane/);
   assert.doesNotMatch(source, /reconcile-battle-bridge-control-plane\.ps1/);
   assert.doesNotMatch(source, /WAKE_BATTLE_BRIDGE_RECOVERY_MESH/);
+  assert.match(source, /refreshUiFn\(\{ expectedHead: afterHead \}\)/);
 });
 
 test('control-plane repair runs only after normal exact-head refresh execution passes', () => {
@@ -33,6 +37,60 @@ test('control-plane repair runs only after normal exact-head refresh execution p
   assert.ok(reconcileIndex > executeIndex);
   assert.match(source, /execution\.ok === true\s*\? adapter\.reconcileControlPlane/);
   assert.match(source, /exactHeadProofOk: effectiveExecution\.exactHeadProofOk === true && controlPlaneReconcile\.ok === true/);
+});
+
+test('control-plane failure telemetry appends only canonical fixed task identities', () => {
+  assert.equal(
+    projectControlPlaneFailureBlocker({
+      blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+      failedTaskId: 'recoveryMesh',
+    }),
+    'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryMesh',
+  );
+  assert.equal(
+    projectControlPlaneFailureBlocker({
+      blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+      failedTaskId: '../../secrets',
+    }),
+    'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+  );
+  assert.equal(projectControlPlaneFailureBlocker({ failedTaskId: 'recoveryMesh' }), '');
+});
+
+test('fixed control-plane failure identity is persisted into remote-readable post-sync status', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'post-sync-control-plane-failure-'));
+  try {
+    const paths = { repoRoot: join(root, 'repo'), workspaceRoot: join(root, 'workspace'), restartScript: join(root, 'unused.ps1') };
+    await mkdir(paths.repoRoot, { recursive: true });
+    const beforeHead = 'c'.repeat(40);
+    const afterHead = 'd'.repeat(40);
+    const result = await runBattleBridgePostSyncRefresh({
+      beforeHead,
+      afterHead,
+      paths,
+      expectedPaths: paths,
+      now: new Date('2026-08-26T14:00:00.000Z'),
+      adapter: {
+        inspectHeads: () => ({ ok: true, sourceHead: afterHead, exactHeadProofOk: true }),
+        changedPaths: () => ({ ok: true, paths: ['docs/runtime-proof.md'] }),
+        reconcileControlPlane: () => ({
+          ok: false,
+          blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+          failedTaskId: 'recoveryMesh',
+          sourceHead: afterHead,
+          exactHeadProofOk: false,
+        }),
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryMesh');
+    assert.equal(result.controlPlaneReconcile.failedTaskId, 'recoveryMesh');
+    const status = JSON.parse(await readFile(join(paths.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json'), 'utf8'));
+    assert.equal(status.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryMesh');
+    assert.doesNotMatch(JSON.stringify(status), /\.\.\/|secrets/i);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('workspace publication contains bounded projections and relative proof refs', () => {
