@@ -9,13 +9,19 @@ export const WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V4 = Object.freeze([
 
 export const WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_ANCHOR_V4 =
   '84f41d8c42ea615fa40a7bed57b84ffca085ddbd';
+export const WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_HEAD_V4 =
+  'edff74ceaf64e9006bd60da72a2eb9776d59c07c';
+export const WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_BASE_V4 =
+  'b4ba9c594870ffbef146f1632d1a6ca9d0037c04';
+export const WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_PARENT_V4 =
+  'e552edaa9babfac6634c1d79f0b10516a7052631';
 
 export const WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_MANIFEST_V4 = Object.freeze({
   'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1': Object.freeze({
     blobSha: '1c22a57ea23013ff9de3c947294aa05231a90798',
   }),
   'scripts/windows/restart-approved-stephanos-runtime.ps1': Object.freeze({
-    blobSha: '882fc8a69134ab9917417a8e85909980bf3714bd',
+    blobSha: 'de4088bef6c8f763e7883410c4e7fb5be3998638',
   }),
 });
 
@@ -54,6 +60,10 @@ const REQUIRED_RESTART_PATTERNS = Object.freeze([
   /MISSION_WORKER_CANONICAL_PROCESS_IDENTITY_AMBIGUOUS/,
   /\[System\.Diagnostics\.Process\]::GetProcessById\(\$processId\)/,
   /\$capabilityProcessStartedAtUtc\s*=\s*\$processCapability\.StartTime\.ToUniversalTime\(\)/,
+  /if\s*\(\[string\]\$task\.State\s+-in\s+@\('Running',\s*'Queued'\)\)/,
+  /-notin\s+@\('Running',\s*'Queued'\)/,
+  /\$preOrphanReclaimTask\s*=\s*Get-ScheduledTask/,
+  /if\s*\(\[string\]\$preOrphanReclaimTask\.State\s+-in\s+@\('Running',\s*'Queued'\)\)/,
   /if\s*\(-not\s+\$oldWorker\)\s*\{[\s\S]*Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat/,
   /\$reverifiedOrphanProcessCapability\.Kill\(\)/,
   /\$reverifiedOrphanProcessCapability\.WaitForExit\(10000\)/,
@@ -84,20 +94,6 @@ function exactDataRecord(value, expectedKeys) {
   });
 }
 
-function exactParentEstate(parents) {
-  if (!Array.isArray(parents) || parents.length !== 2) return false;
-  const keys = Reflect.ownKeys(parents).map(String);
-  if (keys.length !== 3 || keys[0] !== '0' || keys[1] !== '1' || keys[2] !== 'length') return false;
-  const first = Object.getOwnPropertyDescriptor(parents, '0');
-  const second = Object.getOwnPropertyDescriptor(parents, '1');
-  const length = Object.getOwnPropertyDescriptor(parents, 'length');
-  return Boolean(first && second && length
-    && Object.hasOwn(first, 'value') && Object.hasOwn(second, 'value') && Object.hasOwn(length, 'value')
-    && first.enumerable === true && second.enumerable === true && length.value === 2
-    && typeof first.value === 'string' && SHA.test(first.value)
-    && typeof second.value === 'string' && SHA.test(second.value));
-}
-
 function exactReviewedIdentity(input) {
   return Boolean(input
     && typeof input === 'object'
@@ -112,9 +108,8 @@ export function validateWorkerWatchdogReconciliationLineageV4(input = {}) {
     const sourceHead = text(input.sourceHead).toLowerCase();
     const baseSha = text(input.baseSha).toLowerCase();
     const lineage = input.lineageEvidence;
-    if (!SHA.test(sourceHead) || !SHA.test(baseSha)
-      || sourceHead === WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_ANCHOR_V4
-      || sourceHead === baseSha
+    if (sourceHead !== WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_HEAD_V4
+      || baseSha !== WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_BASE_V4
       || !exactDataRecord(lineage, LINEAGE_KEYS)
       || lineage.schemaVersion !== LINEAGE_SCHEMA
       || lineage.repository !== REVIEWED_IDENTITY.repository
@@ -123,9 +118,10 @@ export function validateWorkerWatchdogReconciliationLineageV4(input = {}) {
       || lineage.baseSha !== baseSha
       || lineage.liveMainBeforeSha !== baseSha
       || lineage.liveMainAfterSha !== baseSha
-      || !exactParentEstate(lineage.parents)
-      || lineage.parents[0] !== WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_ANCHOR_V4
-      || lineage.parents[1] !== baseSha
+      || !Array.isArray(lineage.parents)
+      || Reflect.ownKeys(lineage.parents).map(String).join(',') !== '0,length'
+      || lineage.parents.length !== 1
+      || lineage.parents[0] !== WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_PARENT_V4
       || !exactDataRecord(lineage.comparison, COMPARISON_KEYS)) return false;
     const comparison = lineage.comparison;
     return comparison.status === 'ahead'
@@ -193,7 +189,7 @@ function semanticFindings(path, source) {
     if (!pattern.test(source)) {
       findings.push(finding(
         'windows-authority-v4-orphan-reclaim-boundary-missing',
-        'The PR #2066 source must preserve the closed-world stale-worker orphan reclaim boundary.',
+        'The repaired PR #2066 source must preserve queued-task quiescence and the closed-world stale-worker reclaim boundary.',
         path,
       ));
       break;
@@ -241,7 +237,7 @@ export function analyzeWindowsAuthorityWorkerWatchdogReviewV4(input = {}) {
       clean: false,
       findings: [finding(
         'windows-authority-v4-reviewed-lineage-mismatch',
-        'The PR #2066 source head must be one exact current-main preservation continuation of the reviewed orphan-reclaim anchor.',
+        'The PR #2066 source must be the exact repaired head/base/parent lineage reviewed for orphan reclaim.',
       )],
       finalVerdict: 'WINDOWS_AUTHORITY_WORKER_WATCHDOG_V4_BLOCKED',
     });
@@ -276,7 +272,7 @@ export function analyzeWindowsAuthorityWorkerWatchdogReviewV4(input = {}) {
     if (!exactSource(source, REVIEWED_IDENTITY.repository, text(input.sourceHead).toLowerCase(), path)) {
       findings.push(finding(
         'windows-authority-v4-reviewed-source-mismatch',
-        'The PR #2066 Windows source does not match the exact reviewed orphan-reclaim blob.',
+        'The PR #2066 Windows source does not match the exact repaired reviewed blob.',
         path,
       ));
       continue;
@@ -293,6 +289,8 @@ export function analyzeWindowsAuthorityWorkerWatchdogReviewV4(input = {}) {
       'windows-authority:worker-watchdog-v4',
       'pr:2066',
       `reviewed-anchor:${WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_ANCHOR_V4}`,
+      `reviewed-head:${WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_HEAD_V4}`,
+      `reviewed-base:${WINDOWS_AUTHORITY_WORKER_WATCHDOG_REVIEWED_BASE_V4}`,
       ...proofRefs,
     ] : proofRefs,
     finalVerdict: clean
