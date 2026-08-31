@@ -17,6 +17,11 @@ import {
   validateIndependentReviewArtifactSet,
 } from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
 import {
+  PROVENANCE_BOOTSTRAP_BRANCH,
+  PROVENANCE_BOOTSTRAP_PR,
+  validateProvenanceBootstrapFindingsCompatibilityV1,
+} from '../shared/agents/operatorPersonalRepositoryProvenanceBootstrapV1.mjs';
+import {
   validateIndependentReviewWorkflowDispatchExecutionV1,
 } from '../shared/agents/independentReviewWorkflowDispatchExecutionV1.mjs';
 import {
@@ -529,7 +534,7 @@ async function collectRulesetConfiguration(
   });
 }
 
-async function loadSelectedIndependentReview(context, identity) {
+async function loadSelectedIndependentReview(context, identity, environmentName) {
   const definitions = (await apiCollection(
     `/repos/${context.owner}/${context.repo}/actions/workflows`,
     'workflows',
@@ -578,7 +583,10 @@ async function loadSelectedIndependentReview(context, identity) {
         handoffBindingSha256: 'legacy-pull-request-target',
       }),
     });
-  if (!workflowValidation.valid) {
+  const provenanceBootstrapCandidate = !workflowValidation.valid
+    && identity.prNumber === PROVENANCE_BOOTSTRAP_PR
+    && identity.branch === PROVENANCE_BOOTSTRAP_BRANCH;
+  if (!workflowValidation.valid && !provenanceBootstrapCandidate) {
     fail('Selected independent review run is failed, stale or ambiguously bound.', {
       blockers: workflowValidation.blockers,
     });
@@ -614,6 +622,55 @@ async function loadSelectedIndependentReview(context, identity) {
     extractPersonalRepositoryArtifactZip(archiveBytes, INDEPENDENT_REVIEW_ARTIFACT_FILE).toString('utf8'),
     'Independent review artifact payload is invalid JSON.',
   );
+  if (provenanceBootstrapCandidate) {
+    const encodedPath = (value) => value.split('/').map(encodeURIComponent).join('/');
+    const [workflowFile, gateFile] = await Promise.all([
+      apiJson(`/repos/${context.owner}/${context.repo}/contents/${encodedPath('.github/workflows/operator-merge-approval-gate.yml')}?ref=${encodeURIComponent(identity.sourceHead)}`),
+      apiJson(`/repos/${context.owner}/${context.repo}/contents/${encodedPath('shared/agents/operatorMergeApprovalGate.mjs')}?ref=${encodeURIComponent(identity.sourceHead)}`),
+    ]);
+    const decodeExactSource = (payload, expectedPath) => {
+      if (payload?.type !== 'file'
+        || payload?.path !== expectedPath
+        || payload?.encoding !== 'base64'
+        || !text(payload?.sha)
+        || typeof payload?.content !== 'string') {
+        fail('Provenance bootstrap exact-head source evidence is missing or malformed.', {
+          blockers: ['provenance-bootstrap-source-evidence-invalid'],
+          path: expectedPath,
+        });
+      }
+      return Buffer.from(payload.content.replace(/\s/g, ''), 'base64').toString('utf8');
+    };
+    const compatibility = validateProvenanceBootstrapFindingsCompatibilityV1({
+      artifact,
+      run,
+      jobs,
+      workflowSource: decodeExactSource(workflowFile, '.github/workflows/operator-merge-approval-gate.yml'),
+      gateSource: decodeExactSource(gateFile, 'shared/agents/operatorMergeApprovalGate.mjs'),
+    }, {
+      sourceHead: identity.sourceHead,
+      baseSha: identity.baseSha,
+      workflowRunId: selected.independentReviewWorkflowRunId,
+      workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+      protectedEnvironmentAdmitted: environmentName === OPERATOR_MERGE_ENVIRONMENT,
+      environmentName,
+    });
+    if (artifact.payloadSha256 !== selected.independentReviewPayloadSha256 || !compatibility.valid) {
+      fail('Selected provenance-bootstrap findings artifact is invalid, stale or not independently bounded.', {
+        blockers: compatibility.blockers,
+      });
+    }
+    return Object.freeze({
+      workflowRunId: selected.independentReviewWorkflowRunId,
+      workflowRunAttempt: selected.independentReviewWorkflowRunAttempt,
+      artifactId: selected.independentReviewArtifactId,
+      artifactDigest: selected.independentReviewArtifactDigest,
+      payloadSha256: selected.independentReviewPayloadSha256,
+      reviewMode: compatibility.reviewMode,
+      findings: compatibility.findings,
+    });
+  }
+
   const validation = validateIndependentReviewArtifact(artifact, {
     repository: context.repository,
     prNumber: identity.prNumber,
@@ -655,7 +712,6 @@ async function readPersonalRepositoryAuthoritySnapshot(context, identity) {
     comparison,
     review,
     environment,
-    independentReview,
   ] = await Promise.all([
     currentWorkflowExecution(context),
     apiJson(`/repos/${context.owner}/${context.repo}`, { authorization: 'ruleset-proof' }),
@@ -665,8 +721,12 @@ async function readPersonalRepositoryAuthoritySnapshot(context, identity) {
     apiJson(`/repos/${context.owner}/${context.repo}/compare/${identity.baseSha}...${identity.sourceHead}`),
     pullRequestReviewState(context.owner, context.repo, identity.prNumber),
     apiJson(`/repos/${context.owner}/${context.repo}/environments/operator-merge-approval`),
-    loadSelectedIndependentReview(context, identity),
   ]);
+  const independentReview = await loadSelectedIndependentReview(
+    context,
+    identity,
+    text(environment?.name),
+  );
   return Object.freeze({
     execution,
     repository,
