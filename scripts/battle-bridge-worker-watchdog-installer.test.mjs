@@ -269,6 +269,33 @@ test('internal probe permits only inspect or exact-head canonical worker restart
   assert.doesNotMatch(source, /\[string\]\$TaskName|Stop-ScheduledTask|Stop-Process|Invoke-Expression|Restart-Computer|shutdown\.exe/i);
 });
 
+test('stale canonical worker reclaim is unique, task-quiescent and process-capability bound', async () => {
+  const source = await readFile(restartPath, 'utf8');
+  const helperStart = source.indexOf('function Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat');
+  const freshWorkerStart = source.indexOf('function Get-VerifiedFreshWorkerInstance', helperStart);
+  const missionWorkerBranch = source.indexOf("$heartbeatPath = Join-Path $env:USERPROFILE 'Documents\\Stephanos-openclaw-workspace\\status\\mission-orchestrator-worker-heartbeat.json'");
+  const taskStop = source.indexOf("Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\\\'", missionWorkerBranch);
+  const reclaim = source.indexOf('$orphanWorker = Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat -ExpectedRepoRoot $repoRoot', missionWorkerBranch);
+  const guardedStart = source.indexOf("Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\\\'", reclaim);
+  const helperSource = source.slice(helperStart, freshWorkerStart);
+
+  assert.ok(helperStart >= 0);
+  assert.ok(freshWorkerStart > helperStart);
+  assert.ok(taskStop > missionWorkerBranch);
+  assert.ok(reclaim > taskStop);
+  assert.ok(guardedStart > reclaim);
+  assert.match(helperSource, /Get-CimInstance Win32_Process -Filter "Name = 'node\.exe'"/);
+  assert.match(helperSource, /Test-ExactCanonicalWorkerProcess -Process \$process -ExpectedRepoRoot \$ExpectedRepoRoot/);
+  assert.match(helperSource, /\$canonicalWorkers\.Count -gt 1/);
+  assert.match(helperSource, /MISSION_WORKER_CANONICAL_PROCESS_IDENTITY_AMBIGUOUS/);
+  assert.match(helperSource, /\[System\.Diagnostics\.Process\]::GetProcessById\(\$processId\)/);
+  assert.match(helperSource, /\$processCapability\.StartTime\.ToUniversalTime\(\)/);
+  assert.match(source, /\$orphanWorkerRecheck\.ProcessStartedAtUtc\.Ticks -ne \$orphanWorker\.ProcessStartedAtUtc\.Ticks/);
+  assert.match(source, /\$reverifiedOrphanProcessCapability\.Kill\(\)/);
+  assert.match(source, /\$reverifiedOrphanProcessCapability\.WaitForExit\(10000\)/);
+  assert.doesNotMatch(helperSource, /Stop-Process|Invoke-Expression|Start-Process|cmd\.exe/i);
+});
+
 test('typed mission-worker restart failures are bounded to the exact blocked adapter contract', async () => {
   const [probe, restart] = await Promise.all([
     readFile(probePath, 'utf8'),
