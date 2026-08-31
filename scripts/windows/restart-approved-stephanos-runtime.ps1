@@ -981,10 +981,10 @@ try {
     else {
         $heartbeatPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\mission-orchestrator-worker-heartbeat.json'
         $oldWorker = Get-VerifiedWorkerProcessFromHeartbeat -HeartbeatPath $heartbeatPath -ExpectedRepoRoot $repoRoot
-        if ([string]$task.State -eq 'Running') {
+        if ([string]$task.State -in @('Running', 'Queued')) {
             Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
             if (-not (Wait-UntilOperationDeadline -ReserveSeconds 12 -Condition {
-                [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -ne 'Running'
+                [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -notin @('Running', 'Queued')
             })) { Stop-WithBlocker 'MISSION_WORKER_TASK_DID_NOT_STOP' }
         }
         if ($oldWorker) {
@@ -1030,6 +1030,10 @@ try {
         }
 
         if (-not $oldWorker) {
+            $preOrphanReclaimTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop
+            if ([string]$preOrphanReclaimTask.State -in @('Running', 'Queued')) {
+                Stop-WithBlocker 'MISSION_WORKER_TASK_DID_NOT_STOP'
+            }
             $orphanWorker = Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat -ExpectedRepoRoot $repoRoot
             if ($orphanWorker) {
                 $orphanWorkerRecheck = $null
