@@ -27,11 +27,14 @@ const ALLOWED_FIELDS = new Set([
   'independentReviewRunId', 'independentReviewRunAttempt', 'independentReviewArtifactId',
   'independentReviewArtifactDigest', 'independentReviewPayloadSha256',
 ]);
-const AUTHORIZATION_IDENTITY_FIELDS = Object.freeze([
+const READY_AUTHORIZATION_IDENTITY_FIELDS = Object.freeze([
   'operation', 'repository', 'issueNumber', 'operatorApproval', 'mode', 'prNumber', 'expectedBranch',
-  'expectedHead', 'expectedHeadTree', 'expectedBase', 'independentReviewRunId',
-  'independentReviewRunAttempt', 'independentReviewArtifactId', 'independentReviewArtifactDigest',
-  'independentReviewPayloadSha256',
+  'expectedHead', 'expectedHeadTree', 'expectedBase',
+]);
+const MERGE_AUTHORIZATION_IDENTITY_FIELDS = Object.freeze([
+  ...READY_AUTHORIZATION_IDENTITY_FIELDS,
+  'independentReviewRunId', 'independentReviewRunAttempt', 'independentReviewArtifactId',
+  'independentReviewArtifactDigest', 'independentReviewPayloadSha256',
 ]);
 const AUTHORIZATION_COMMENT_ISSUE_URL = `https://api.github.com/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/issues/${PROTECTED_WORKFLOW_DISPATCH_ISSUE}`;
 
@@ -116,11 +119,13 @@ export function validateProtectedWorkflowDispatch(command = {}, {
   if (!SHA40.test(expectedHead)) return fail('PROTECTED_WORKFLOW_DISPATCH_HEAD_INVALID');
   if (!SHA40.test(expectedHeadTree)) return fail('PROTECTED_WORKFLOW_DISPATCH_HEAD_TREE_INVALID');
   if (!SHA40.test(expectedBase)) return fail('PROTECTED_WORKFLOW_DISPATCH_BASE_INVALID');
-  if (!independentReviewRunId || !independentReviewRunAttempt || !independentReviewArtifactId) {
-    return fail('PROTECTED_WORKFLOW_DISPATCH_REVIEW_IDENTITY_INVALID');
+  if (operation === PROTECTED_WORKFLOW_DISPATCH_OPERATION) {
+    if (!independentReviewRunId || !independentReviewRunAttempt || !independentReviewArtifactId) {
+      return fail('PROTECTED_WORKFLOW_DISPATCH_REVIEW_IDENTITY_INVALID');
+    }
+    if (!ARTIFACT_DIGEST.test(independentReviewArtifactDigest)) return fail('PROTECTED_WORKFLOW_DISPATCH_ARTIFACT_DIGEST_INVALID');
+    if (!SHA256.test(independentReviewPayloadSha256)) return fail('PROTECTED_WORKFLOW_DISPATCH_PAYLOAD_DIGEST_INVALID');
   }
-  if (!ARTIFACT_DIGEST.test(independentReviewArtifactDigest)) return fail('PROTECTED_WORKFLOW_DISPATCH_ARTIFACT_DIGEST_INVALID');
-  if (!SHA256.test(independentReviewPayloadSha256)) return fail('PROTECTED_WORKFLOW_DISPATCH_PAYLOAD_DIGEST_INVALID');
 
   const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
   const authoredAtMs = authoredAt instanceof Date ? authoredAt.getTime() : Date.parse(String(authoredAt));
@@ -191,7 +196,10 @@ export function validateProtectedWorkflowAuthorizationComment(comment = {}, expe
   if (!validation.ok) return validation;
   const expected = normalizeAuthorizationExpected(expectedCommand);
   const observed = validation.command;
-  for (const field of AUTHORIZATION_IDENTITY_FIELDS) {
+  const authorizationIdentityFields = observed.operation === PROTECTED_WORKFLOW_DISPATCH_OPERATION
+    ? MERGE_AUTHORIZATION_IDENTITY_FIELDS
+    : READY_AUTHORIZATION_IDENTITY_FIELDS;
+  for (const field of authorizationIdentityFields) {
     if (observed[field] !== expected[field]) {
       return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_IDENTITY_MISMATCH', { field });
     }
