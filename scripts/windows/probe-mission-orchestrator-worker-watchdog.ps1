@@ -574,8 +574,8 @@ if ($workerProcess) {
             headSha = [string]$heartbeat.headSha
             taskName = [string]$heartbeat.taskName
             pid = [int]$heartbeat.pid
-            launchIdentityId = [string]$heartbeat.launchIdentityId
-            workerStartedAtUtc = [string]$heartbeat.workerStartedAtUtc
+            launchIdentityId = if ($heartbeat.PSObject.Properties['launchIdentityId']) { [string]$heartbeat.launchIdentityId } else { '' }
+            workerStartedAtUtc = if ($heartbeat.PSObject.Properties['workerStartedAtUtc']) { [string]$heartbeat.workerStartedAtUtc } else { '' }
             lastTickVerdict = [string]$heartbeat.lastTickVerdict
         }
     } else {
