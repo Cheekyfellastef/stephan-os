@@ -1,3 +1,5 @@
+import os from 'node:os';
+import { resolve } from 'node:path';
 import {
   createMissionRecord,
   listMissionRecords,
@@ -56,7 +58,13 @@ function missionIdForIssue(issueNumber) {
 }
 
 function branchForIssue(issueNumber) {
-  return `orchestrator/critical-${issueNumber}-elastic-goal`;
+  return `openclaw/elastic-goal-${issueNumber}`;
+}
+
+function defaultWorktreeRoot(options = {}) {
+  const env = options.env ?? process.env;
+  const home = env.USERPROFILE || env.HOME || os.homedir();
+  return resolve(home, 'Documents', 'GitHub', 'stephan-os-worktrees');
 }
 
 function sourceScope(candidate = {}, portfolioGoal = {}) {
@@ -103,6 +111,10 @@ function candidateIssue(candidate = {}) {
 
 function missionMatchesIssue(state, issueNumber) {
   return issueFromMissionId(state?.missionId) === issueNumber;
+}
+
+function missionTerminal(state = {}) {
+  return TERMINAL_PHASES.has(text(state.currentPhase).toUpperCase());
 }
 
 function missionRunnable(state = {}) {
@@ -169,8 +181,10 @@ function compatibilityCandidateInventory(scheduler = {}, goalRecords = []) {
 
 function missionInput(issueNumber, goal, scope, options = {}) {
   const title = text(goal?.title, `Goal #${issueNumber}`);
+  const missionId = missionIdForIssue(issueNumber);
+  const worktreeRoot = text(options.worktreeRoot) || defaultWorktreeRoot(options);
   return {
-    missionId: missionIdForIssue(issueNumber),
+    missionId,
     title: `Elastic goal #${issueNumber}: ${title}`,
     operatorIntent: [
       `Build durable GitHub goal #${issueNumber} through the canonical elastic Goal Flywheel.`,
@@ -183,7 +197,7 @@ function missionInput(issueNumber, goal, scope, options = {}) {
     repositoryRoot: text(options.repoRoot),
     baseBranch: 'main',
     branch: branchForIssue(issueNumber),
-    worktreePath: '',
+    worktreePath: resolve(worktreeRoot, missionId),
     allowedFiles: scope.allowedFiles,
     requiredEvidence: [`Goal #${issueNumber} bounded implementation and focused verification evidence`],
     requiredTests: ['npm run stephanos:verify'],
@@ -221,7 +235,7 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     }
     const existing = records.find((state) => missionMatchesIssue(state, issueNumber));
     if (existing) {
-      if (TERMINAL_PHASES.has(text(existing.currentPhase).toUpperCase())) {
+      if (missionTerminal(existing)) {
         held.push({ issueNumber, reason: 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION', missionId: existing.missionId });
       } else {
         admitted.push({ issueNumber, missionId: existing.missionId, existing: true, mission: existing });
@@ -273,6 +287,7 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
     env,
     now,
     repoRoot: input.repoRoot ?? options.repoRoot,
+    root: input.orchestratorRoot ?? options.orchestratorRoot,
     snapshotRoot: input.snapshotRoot ?? options.snapshotRoot,
   };
   const workspaceRoot = input.workspaceRoot
@@ -293,6 +308,8 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
   }
   const plan = planElasticGoalMissionAdmissions(input.scheduler, before, {
     ...missionStoreOptions,
+    env,
+    worktreeRoot: input.worktreeRoot ?? options.worktreeRoot,
     goalRecords,
   });
   if (!plan.ok) return freeze({ ...plan, workspaceFeedState: text(workspaceFeed?.state, 'not-read') });
@@ -321,8 +338,10 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
   }
   const after = await listRecords(missionStoreOptions);
   const candidateIssues = new Set(plan.admitted.map(({ issueNumber }) => issueNumber));
-  const elasticMissions = after.filter((state) => candidateIssues.has(issueFromMissionId(state?.missionId)));
+  const elasticMissions = after.filter((state) => issueFromMissionId(state?.missionId) !== null);
   const runnableMissions = elasticMissions.filter(missionRunnable);
+  const activeMissions = elasticMissions.filter((state) => !missionTerminal(state));
+  const selectedMission = runnableMissions[0] ?? activeMissions[0] ?? null;
   return freeze({
     schemaVersion: ELASTIC_GOAL_MISSION_ADMISSION_SCHEMA,
     ok: true,
@@ -330,13 +349,18 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
       ? 'ELASTIC_GOAL_MISSIONS_CREATED'
       : runnableMissions.length
         ? 'ELASTIC_GOAL_MISSIONS_AVAILABLE'
-        : 'ELASTIC_GOAL_MISSIONS_HELD',
+        : activeMissions.length
+          ? 'ELASTIC_GOAL_MISSIONS_OCCUPIED'
+          : 'ELASTIC_GOAL_MISSIONS_HELD',
     createdMissionCount: created.length,
     existingMissionCount: existing.length,
     admittedIssueNumbers: [...candidateIssues],
     createdMissions: created,
     existingMissions: existing,
+    elasticMissions,
+    activeMissions,
     runnableMissions,
+    selectedMission,
     held,
     desiredWidth: plan.desiredWidth,
     remainingAdmissionSlots: plan.remainingAdmissionSlots,
