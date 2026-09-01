@@ -1,4 +1,5 @@
 import {
+  WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS,
   WORKER_WATCHDOG_START_TIMEOUT_MS,
   createFixedWorkerProbeAdapter,
   resolveCanonicalWorkerWatchdogPaths,
@@ -31,6 +32,32 @@ function blocked(blocker, details = {}) {
     sourceMutationAllowed: false,
     liveOpenClawUpdateAllowed: false,
     ...details,
+  });
+}
+
+function sourceIdentityFromInspect(inspect, expectedHead) {
+  if (!inspect?.ok) {
+    return Object.freeze({ ok: false, blocker: 'MISSION_WORKER_DIAGNOSTIC_LINK_SOURCE_INSPECT_FAILED' });
+  }
+  const repository = inspect?.data?.repository || {};
+  const sourceHead = String(repository?.headSha || '').trim().toLowerCase();
+  const remoteMainHead = String(repository?.remoteMainHeadSha || '').trim().toLowerCase();
+  const branch = String(repository?.branch || '');
+  const exact = branch === 'main'
+    && sourceHead === expectedHead
+    && remoteMainHead === expectedHead
+    && repository?.trackedClean === true
+    && repository?.headMatchesRemoteMain === true
+    && repository?.headProven === true;
+  return Object.freeze({
+    ok: exact,
+    blocker: exact ? '' : 'MISSION_WORKER_DIAGNOSTIC_LINK_SOURCE_IDENTITY_NOT_PROVEN',
+    sourceHead,
+    remoteMainHead,
+    branch,
+    expectedHeadMatch: exact,
+    sourceTrackedClean: repository?.trackedClean === true,
+    headMatchesRemoteMain: repository?.headMatchesRemoteMain === true,
   });
 }
 
@@ -75,28 +102,6 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
   if (!SHA_PATTERN.test(canonicalExpectedHead)) {
     return blocked('MISSION_WORKER_DIAGNOSTIC_LINK_EXPECTED_HEAD_REQUIRED');
   }
-  if (typeof readSourceIdentity !== 'function') {
-    return blocked('MISSION_WORKER_DIAGNOSTIC_LINK_SOURCE_IDENTITY_READER_REQUIRED', {
-      expectedHead: canonicalExpectedHead,
-    });
-  }
-
-  const identity = await readSourceIdentity({ expectedHead: canonicalExpectedHead });
-  if (!identity?.ok) {
-    return blocked(String(identity?.blocker || 'MISSION_WORKER_DIAGNOSTIC_LINK_SOURCE_IDENTITY_NOT_PROVEN'), {
-      expectedHead: canonicalExpectedHead,
-      sourceHead: String(identity?.sourceHead || '').toLowerCase(),
-      branch: String(identity?.branch || ''),
-    });
-  }
-  const sourceHead = String(identity?.sourceHead || '').toLowerCase();
-  if (sourceHead !== canonicalExpectedHead || identity?.branch !== 'main' || identity?.expectedHeadMatch !== true) {
-    return blocked('MISSION_WORKER_DIAGNOSTIC_LINK_SOURCE_IDENTITY_NOT_PROVEN', {
-      expectedHead: canonicalExpectedHead,
-      sourceHead,
-      branch: String(identity?.branch || ''),
-    });
-  }
 
   const paths = resolvePaths();
   const expectedPaths = resolveCanonicalWorkerWatchdogPaths();
@@ -104,7 +109,39 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
   if (!pathValidation?.ok) {
     return blocked('MISSION_WORKER_DIAGNOSTIC_LINK_CANONICAL_PATH_NOT_PROVEN', {
       expectedHead: canonicalExpectedHead,
+    });
+  }
+  const adapter = createProbeAdapter({ probeScriptPath: paths.probeScriptPath });
+  if (!adapter || typeof adapter.run !== 'function') {
+    return blocked('MISSION_WORKER_DIAGNOSTIC_LINK_ADAPTER_NOT_AVAILABLE', {
+      expectedHead: canonicalExpectedHead,
+    });
+  }
+
+  const identity = typeof readSourceIdentity === 'function'
+    ? await readSourceIdentity({ expectedHead: canonicalExpectedHead })
+    : sourceIdentityFromInspect(
+      adapter.run('Inspect', { timeoutMs: WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS }),
+      canonicalExpectedHead,
+    );
+  if (!identity?.ok) {
+    return blocked(String(identity?.blocker || 'MISSION_WORKER_DIAGNOSTIC_LINK_SOURCE_IDENTITY_NOT_PROVEN'), {
+      expectedHead: canonicalExpectedHead,
+      sourceHead: String(identity?.sourceHead || '').toLowerCase(),
+      remoteMainHead: String(identity?.remoteMainHead || '').toLowerCase(),
+      branch: String(identity?.branch || ''),
+    });
+  }
+  const sourceHead = String(identity?.sourceHead || '').toLowerCase();
+  const identityExact = sourceHead === canonicalExpectedHead
+    && identity?.branch === 'main'
+    && identity?.expectedHeadMatch === true;
+  if (!identityExact) {
+    return blocked('MISSION_WORKER_DIAGNOSTIC_LINK_SOURCE_IDENTITY_NOT_PROVEN', {
+      expectedHead: canonicalExpectedHead,
       sourceHead,
+      remoteMainHead: String(identity?.remoteMainHead || '').toLowerCase(),
+      branch: String(identity?.branch || ''),
     });
   }
 
@@ -116,14 +153,6 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
     });
   }
   const deadlineUtc = new Date(startedAt.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS).toISOString();
-  const adapter = createProbeAdapter({ probeScriptPath: paths.probeScriptPath });
-  if (!adapter || typeof adapter.run !== 'function') {
-    return blocked('MISSION_WORKER_DIAGNOSTIC_LINK_ADAPTER_NOT_AVAILABLE', {
-      expectedHead: canonicalExpectedHead,
-      sourceHead,
-    });
-  }
-
   const start = adapter.run('StartApprovedWorkerTask', {
     timeoutMs: WORKER_WATCHDOG_START_TIMEOUT_MS,
     deadlineUtc,
