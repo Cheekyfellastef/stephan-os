@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createFixedPostSyncRuntimeAdapter } from './battle-bridge-post-sync-refresh.mjs';
+import {
+  POST_SYNC_REFRESH_TARGETS,
+  classifyPostSyncRefresh,
+} from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 
 const HEAD = 'a'.repeat(40);
 const paths = {
@@ -20,6 +24,20 @@ function successPayload() {
     unrelatedTasksChanged: false,
   });
 }
+
+test('post-sync restart coordinator delivery selects the existing Mission Worker target', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/battle-bridge-post-sync-refresh.mjs',
+    'scripts/battle-bridge-worker-watchdog-post-sync-deadline.test.mjs',
+  ]);
+
+  assert.equal(plan.automaticExecutionAllowed, true);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
+  assert.equal(plan.noRuntimePathCount, 1);
+});
 
 test('post-sync mission-worker restart carries one bounded deadline while backend remains unchanged', () => {
   const calls = [];
