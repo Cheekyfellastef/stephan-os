@@ -91,8 +91,8 @@ test('ACTIVE controller publishes the exact worker action instead of only report
   });
 
   assert.equal(result.status, 'ACTIVE');
-  assert.equal(result.action, 'DISPATCH_EXISTING_ACTIVE_LANE');
-  assert.equal(result.allowWorkerTick, false);
+  assert.equal(result.action, 'ADVANCE_EXISTING_ACTIVE_LANE');
+  assert.equal(result.allowWorkerTick, true);
   assert.equal(result.workerActionDispatchPublished, true);
   assert.equal(result.workerActionGrant.boundedActionCount, 1);
   assert.equal(fixture.dispatches.length, 1);
