@@ -60,7 +60,8 @@ test('Mission Worker launcher scopes Git stderr isolation only to canonical Git 
   const source = await readFile(new URL('./windows/start-mission-orchestrator-worker.ps1', import.meta.url), 'utf8');
   const save = "$previousGitRedirectStderr = [Environment]::GetEnvironmentVariable('GIT_REDIRECT_STDERR', 'Process')";
   const enable = "$env:GIT_REDIRECT_STDERR = 'off'";
-  const cleanProof = "$trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)";
+  const cleanProof = "$trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)";
+  const contaminatedCleanProof = "$trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)";
   const restore = "Remove-Item Env:GIT_REDIRECT_STDERR -ErrorAction SilentlyContinue";
   const restoreExisting = '$env:GIT_REDIRECT_STDERR = $previousGitRedirectStderr';
   const workerLaunch = '$processStartInfo = New-Object System.Diagnostics.ProcessStartInfo';
@@ -70,6 +71,7 @@ test('Mission Worker launcher scopes Git stderr isolation only to canonical Git 
   assert.ok(source.indexOf(save) >= 0);
   assert.ok(source.indexOf(enable) > source.indexOf(save));
   assert.ok(source.indexOf(cleanProof) > source.indexOf(enable));
+  assert.equal(source.includes(contaminatedCleanProof), false);
   assert.ok(source.indexOf(restore) > source.indexOf(cleanProof));
   assert.ok(source.indexOf(restoreExisting) > source.indexOf(cleanProof));
   assert.ok(source.indexOf(startInvocation) > source.indexOf(restore));
