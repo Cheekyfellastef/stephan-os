@@ -5,7 +5,9 @@ import {
 import {
   MAXIMUM_BUILD_LANES,
   projectCanonicalResourceIds,
+  selectResourceDisjointCandidates,
 } from '../../shared/agents/elasticBuildCapacityV1.mjs';
+import { readSharedWorkspaceDashboardFeed } from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
 
 export const ELASTIC_GOAL_MISSION_ADMISSION_SCHEMA = 'stephanos.elastic-goal-mission-admission.v1';
 
@@ -39,6 +41,13 @@ function freeze(value) {
 
 function issueFromMissionId(value) {
   const match = /^critical-([1-9]\d*)-elastic-goal(?:$|[-_.])/.exec(text(value).toLowerCase());
+  return positiveInteger(match?.[1]);
+}
+
+function issueFromGoalRecord(record = {}) {
+  const direct = positiveInteger(record.issue ?? record.issueNumber ?? record.relatedIssue);
+  if (direct) return direct;
+  const match = /(?:^|[-_.])(?:goal|issue)-([1-9]\d*)(?:$|[-_.])/.exec(text(record.goalId).toLowerCase());
   return positiveInteger(match?.[1]);
 }
 
@@ -84,6 +93,10 @@ function goalForIssue(scheduler, issueNumber) {
   return list(scheduler?.portfolio).find((goal) => positiveInteger(goal?.issue) === issueNumber) ?? null;
 }
 
+function recordForIssue(goalRecords, issueNumber) {
+  return list(goalRecords).find((record) => issueFromGoalRecord(record) === issueNumber) ?? null;
+}
+
 function candidateIssue(candidate = {}) {
   return positiveInteger(candidate.issue ?? candidate.candidateId);
 }
@@ -109,6 +122,49 @@ function schedulerEligible(scheduler = {}) {
     && Array.isArray(scheduler.parallelCandidateDetails)
     && scheduler.parallelCandidateDetails.length <= MAXIMUM_BUILD_LANES
   );
+}
+
+function compatibilityCandidateInventory(scheduler = {}, goalRecords = []) {
+  if (scheduler.parallelCandidateDetails.length > 0) {
+    return freeze({
+      candidates: scheduler.parallelCandidateDetails,
+      held: [],
+      compatibilityEnrichmentUsed: false,
+    });
+  }
+  const activeIssues = new Set(list(scheduler.activeGoals).map(positiveInteger).filter(Boolean));
+  const activeResourceIds = [];
+  for (const issueNumber of activeIssues) {
+    const record = recordForIssue(goalRecords, issueNumber);
+    const resourceProjection = projectCanonicalResourceIds(record?.resourceIds ?? []);
+    if (resourceProjection.valid) activeResourceIds.push(...resourceProjection.resourceIds);
+  }
+  const ready = list(scheduler.portfolio)
+    .filter((goal) => text(goal.lifecycle).toUpperCase() === 'READY')
+    .map((goal) => {
+      const issueNumber = positiveInteger(goal.issue);
+      const record = recordForIssue(goalRecords, issueNumber);
+      return {
+        candidateId: `#${issueNumber}`,
+        issue: issueNumber,
+        route: goal.route,
+        resourceIds: record?.resourceIds ?? [],
+      };
+    });
+  const selection = selectResourceDisjointCandidates(ready, {
+    limit: Math.min(
+      MAXIMUM_BUILD_LANES,
+      Number.isSafeInteger(scheduler.elasticCapacity?.remainingAdmissionSlots)
+        ? scheduler.elasticCapacity.remainingAdmissionSlots
+        : 0,
+    ),
+    activeResourceIds,
+  });
+  return freeze({
+    candidates: selection.selected,
+    held: selection.held,
+    compatibilityEnrichmentUsed: true,
+  });
 }
 
 function missionInput(issueNumber, goal, scope, options = {}) {
@@ -149,10 +205,15 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     });
   }
   const records = list(missionRecords);
+  const inventory = compatibilityCandidateInventory(scheduler, options.goalRecords);
   const admitted = [];
-  const held = [];
+  const held = inventory.held.map((item) => ({
+    issueNumber: candidateIssue(item),
+    reason: text(item.reasonCode, 'ELASTIC_SELECTION_HELD'),
+    resourceIds: list(item.conflictingResourceIds),
+  }));
   const runnableMissions = records.filter(missionRunnable);
-  for (const candidate of scheduler.parallelCandidateDetails) {
+  for (const candidate of inventory.candidates) {
     const issueNumber = candidateIssue(candidate);
     if (!issueNumber) {
       held.push({ issueNumber: null, reason: 'CANDIDATE_ISSUE_INVALID' });
@@ -172,7 +233,8 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
       held.push({ issueNumber, reason: 'SCHEDULER_READY_GOAL_NOT_PROVEN' });
       continue;
     }
-    const scope = sourceScope(candidate, goal);
+    const record = recordForIssue(options.goalRecords, issueNumber);
+    const scope = sourceScope(candidate, record ? { ...goal, resourceIds: record.resourceIds } : goal);
     if (!scope.valid) {
       held.push({ issueNumber, reason: scope.reason, resourceIds: scope.resourceIds });
       continue;
@@ -194,6 +256,7 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     runnableMissions,
     desiredWidth: scheduler.elasticCapacity.desiredWidth,
     remainingAdmissionSlots: scheduler.elasticCapacity.remainingAdmissionSlots,
+    compatibilityEnrichmentUsed: inventory.compatibilityEnrichmentUsed,
     mergeAuthority: false,
     runtimeMutationAuthority: false,
   });
@@ -205,17 +268,34 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
   const deps = options.testOnly === true && options.dependencies ? options.dependencies : {};
   const listRecords = deps.listMissionRecords ?? listMissionRecords;
   const createRecord = deps.createMissionRecord ?? createMissionRecord;
-  const storeOptions = {
-    ...options,
+  const readWorkspaceFeed = deps.readWorkspaceFeed ?? readSharedWorkspaceDashboardFeed;
+  const missionStoreOptions = {
     env,
     now,
     repoRoot: input.repoRoot ?? options.repoRoot,
-    root: input.root ?? options.root,
     snapshotRoot: input.snapshotRoot ?? options.snapshotRoot,
   };
-  const before = await listRecords(storeOptions);
-  const plan = planElasticGoalMissionAdmissions(input.scheduler, before, storeOptions);
-  if (!plan.ok) return plan;
+  const workspaceRoot = input.workspaceRoot
+    ?? options.workspaceRoot
+    ?? env.STEPHANOS_SHARED_AGENT_WORKSPACE;
+  const before = await listRecords(missionStoreOptions);
+  let goalRecords = list(input.goalRecords);
+  let workspaceFeed = null;
+  if (goalRecords.length === 0 && workspaceRoot) {
+    workspaceFeed = await readWorkspaceFeed({
+      root: workspaceRoot,
+      repoRoot: missionStoreOptions.repoRoot,
+      nowMs: now.getTime(),
+    });
+    if (['ready', 'stale'].includes(text(workspaceFeed?.state).toLowerCase())) {
+      goalRecords = list(workspaceFeed?.records?.goalRecords);
+    }
+  }
+  const plan = planElasticGoalMissionAdmissions(input.scheduler, before, {
+    ...missionStoreOptions,
+    goalRecords,
+  });
+  if (!plan.ok) return freeze({ ...plan, workspaceFeedState: text(workspaceFeed?.state, 'not-read') });
 
   const created = [];
   const existing = [];
@@ -227,19 +307,19 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
     }
     try {
       const result = await createRecord(admission.missionInput, {
-        ...storeOptions,
+        ...missionStoreOptions,
         createdBy: 'durable-flywheel-controller',
       });
       if (result?.state) created.push(result.state);
       else held.push({ issueNumber: admission.issueNumber, reason: 'MISSION_CREATE_RESULT_INVALID' });
     } catch (error) {
-      const refreshed = await listRecords(storeOptions);
+      const refreshed = await listRecords(missionStoreOptions);
       const raced = refreshed.find((state) => missionMatchesIssue(state, admission.issueNumber));
       if (raced) existing.push(raced);
       else held.push({ issueNumber: admission.issueNumber, reason: `MISSION_CREATE_FAILED:${text(error?.message, 'unknown')}` });
     }
   }
-  const after = await listRecords(storeOptions);
+  const after = await listRecords(missionStoreOptions);
   const candidateIssues = new Set(plan.admitted.map(({ issueNumber }) => issueNumber));
   const elasticMissions = after.filter((state) => candidateIssues.has(issueFromMissionId(state?.missionId)));
   const runnableMissions = elasticMissions.filter(missionRunnable);
@@ -260,6 +340,8 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
     held,
     desiredWidth: plan.desiredWidth,
     remainingAdmissionSlots: plan.remainingAdmissionSlots,
+    compatibilityEnrichmentUsed: plan.compatibilityEnrichmentUsed,
+    workspaceFeedState: text(workspaceFeed?.state, goalRecords.length ? 'supplied' : 'not-read'),
     mergeAuthority: false,
     runtimeMutationAuthority: false,
   });
