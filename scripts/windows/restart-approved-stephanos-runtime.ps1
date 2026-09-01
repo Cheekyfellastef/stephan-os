@@ -219,7 +219,7 @@ function Read-CanonicalWorkerSourceProof {
         Stop-WithBlocker 'EXPECTED_HEAD_MISMATCH'
     }
 
-    $trackedStatus = @(& $GitExecutable -C $RepositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
+    $trackedStatus = @(& $GitExecutable -C $RepositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
     $trackedStatusExitCode = $LASTEXITCODE
     if ($trackedStatusExitCode -ne 0 -or $trackedStatus.Count -ne 0) {
         if ($Phase -eq 'POST_START') { Stop-WithBlocker 'CANONICAL_TRACKED_SOURCE_CHANGED_DURING_WORKER_START' }
