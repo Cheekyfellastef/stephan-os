@@ -308,7 +308,7 @@ export async function runBattleBridgePostSyncRefresh({
     return Object.freeze({ ok: false, blocker: 'POST_SYNC_REFRESH_NON_CANONICAL_PATH', exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
   }
   await mkdir(paths.workspaceRoot, { recursive: true });
-  const lock = await acquireLock(workspaceRoot, now);
+  const lock = await acquireLock(paths.workspaceRoot, now);
   if (!lock.ok) return Object.freeze({ ok: false, blocker: lock.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
   try {
     const inspection = adapter.inspectHeads({ beforeHead: normalizedBefore, afterHead: normalizedAfter, repoRoot: paths.repoRoot });
