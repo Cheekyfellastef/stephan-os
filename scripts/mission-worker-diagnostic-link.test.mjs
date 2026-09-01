@@ -21,6 +21,21 @@ function identity(overrides = {}) {
   };
 }
 
+function inspectData(overrides = {}) {
+  return {
+    mode: 'Inspect',
+    repository: {
+      branch: 'main',
+      headSha: HEAD,
+      remoteMainHeadSha: HEAD,
+      trackedClean: true,
+      headMatchesRemoteMain: true,
+      headProven: true,
+      ...overrides,
+    },
+  };
+}
+
 function successData(overrides = {}) {
   return {
     mode: 'StartApprovedWorkerTask',
@@ -83,6 +98,49 @@ test('requires an exact 40-character expected head before any start route exists
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_EXPECTED_HEAD_REQUIRED');
   assert.equal(identityRead, false);
+});
+
+test('default route physically inspects exact main before StartApprovedWorkerTask', async () => {
+  const calls = [];
+  const deps = dependencies({
+    readSourceIdentity: undefined,
+    createProbeAdapter: () => ({
+      run: (mode, options) => {
+        calls.push({ mode, options });
+        if (mode === 'Inspect') return { ok: true, data: inspectData() };
+        if (mode === 'StartApprovedWorkerTask') {
+          return { ok: true, data: successData({ deadlineUtc: options.deadlineUtc }) };
+        }
+        throw new Error(`unexpected mode ${mode}`);
+      },
+    }),
+  });
+  const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, deps);
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls.map((call) => call.mode), ['Inspect', 'StartApprovedWorkerTask']);
+  assert.equal(calls[0].options.timeoutMs, 12_000);
+  assert.equal(calls[1].options.timeoutMs, 95_000);
+  assert.equal(calls[1].options.deadlineUtc, '2026-09-01T18:01:20.000Z');
+});
+
+test('default physical inspect mismatch prevents any worker start attempt', async () => {
+  const calls = [];
+  const deps = dependencies({
+    readSourceIdentity: undefined,
+    createProbeAdapter: () => ({
+      run: (mode, options) => {
+        calls.push({ mode, options });
+        return {
+          ok: true,
+          data: inspectData({ remoteMainHeadSha: '1'.repeat(40), headMatchesRemoteMain: false }),
+        };
+      },
+    }),
+  });
+  const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, deps);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_SOURCE_IDENTITY_NOT_PROVEN');
+  assert.deepEqual(calls.map((call) => call.mode), ['Inspect']);
 });
 
 test('fails closed when current source identity is not exact approved main', async () => {
