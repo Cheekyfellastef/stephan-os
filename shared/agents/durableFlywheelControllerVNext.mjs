@@ -19,6 +19,9 @@ import {
   ensureCriticalBacklogMission,
 } from '../../stephanos-server/services/criticalBacklogConveyorService.js';
 import {
+  publishNextMissionWorkerAction,
+} from '../../stephanos-server/services/missionOrchestratorWorkerService.js';
+import {
   buildMissionWorkerAction,
   projectMissionWorkerActionState,
 } from './missionOrchestratorWorker.mjs';
@@ -304,6 +307,30 @@ function exactActiveSourceMutationLease(read, expected) {
   return read.record.mergeAuthority === false && read.record.leaseSeizureAllowed === false;
 }
 
+async function publishExactWorkerAction(deps, workerActionGrant, serviceOptions) {
+  const dispatch = await requiredFunction(
+    deps.publishWorkerAction,
+    'publishWorkerAction',
+  )({ ...serviceOptions, actionGrant: workerActionGrant });
+  return freeze({
+    published: dispatch?.published === true,
+    actionGrantAccepted: dispatch?.actionGrantAccepted === true,
+    reason: text(dispatch?.reason),
+    actionId: text(dispatch?.action?.actionId),
+    result: dispatch ?? null,
+  });
+}
+
+function withWorkerDispatch(result, workerActionGrant, dispatch) {
+  return freeze({
+    ...result,
+    workerActionGrant,
+    workerActionDispatchPublished: dispatch?.published === true,
+    workerActionDispatchAccepted: dispatch?.actionGrantAccepted === true,
+    workerActionDispatchReason: text(dispatch?.reason) || null,
+  });
+}
+
 function holdResult(reason, additions = {}) {
   const blockers = [...new Set([
     reason,
@@ -391,7 +418,7 @@ export function reconcileDurableFlywheelController(projection = {}, options = {}
       ...common,
       action: 'ADVANCE_EXISTING_ACTIVE_LANE',
       allowWorkerTick: true,
-      nextAction: 'Allow the existing Mission Worker to advance one bounded action under the current lease.',
+      nextAction: 'Publish the exact Mission Worker action now; retain the supervised worker tick as an idempotent fallback.',
     });
   }
   if (status === 'READY') {
@@ -445,6 +472,9 @@ function createCycleReceipt(result, projection, nowUtc, options = {}) {
     workerActionGrantId: text(result.workerActionGrant?.grantId) || null,
     workerMissionId: text(result.workerActionGrant?.missionId) || null,
     workerActionId: text(result.workerActionGrant?.actionId) || null,
+    workerActionDispatchPublished: result.workerActionDispatchPublished === true,
+    workerActionDispatchAccepted: result.workerActionDispatchAccepted === true,
+    workerActionDispatchReason: text(result.workerActionDispatchReason) || null,
     chatMemoryAuthoritative: false,
     createsReplacementMachinery: false,
     mergeAuthority: false,
@@ -540,6 +570,7 @@ function productionMachinery(overrides = {}) {
     loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readMissionControllerCapacityRoutingInput,
     claimSourceMutationLease: overrides.claimSourceMutationLease ?? claimSourceMutationLease,
     readSourceMutationLease: overrides.readSourceMutationLease ?? readSourceMutationLease,
+    publishWorkerAction: overrides.publishWorkerAction ?? publishNextMissionWorkerAction,
   });
 }
 
@@ -587,6 +618,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
   let sourceMutationLeaseClaim = null;
   let sourceMutationLeaseRead = null;
   let verifiedSourceMutationLeaseIdentity = null;
+  let workerDispatchResult = null;
   let projection = await loadProjection(serviceOptions);
   const transitionState = projection?.lane?.active === true
     ? 'ACTIVE_LANE'
@@ -723,7 +755,8 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
         activeLane: projection.lane,
       });
     } else {
-      result = freeze({ ...result, workerActionGrant });
+      workerDispatchResult = await publishExactWorkerAction(deps, workerActionGrant, serviceOptions);
+      result = withWorkerDispatch(result, workerActionGrant, workerDispatchResult);
     }
   } else if (result.status === 'READY') {
     missionAdmissionReceipt = createCycleReceipt(
@@ -805,26 +838,34 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
                 });
               } else {
                 verifiedSourceMutationLeaseIdentity = leasePlan.expected;
-                result = freeze({
+                workerDispatchResult = await publishExactWorkerAction(
+                  deps,
+                  workerActionGrant,
+                  serviceOptions,
+                );
+                result = withWorkerDispatch(freeze({
                   ...result,
                   action: 'LEASE_CANONICAL_CONVEYOR_MISSION',
-                  workerActionGrant,
                   allowWorkerTick: true,
                   nextAction: actionResult.createdMission
-                    ? 'Allow the existing Mission Worker to process the newly created lease-bound canonical mission.'
-                    : 'Allow the existing Mission Worker to continue the lease-bound conveyor-authorized mission.',
-                });
+                    ? 'The controller published the newly created lease-bound mission; the supervised worker tick remains an idempotent fallback.'
+                    : 'The controller published the lease-bound conveyor mission; the supervised worker tick remains an idempotent fallback.',
+                }), workerActionGrant, workerDispatchResult);
               }
             }
           } else {
-            result = freeze({
-              ...result,
+            workerDispatchResult = await publishExactWorkerAction(
+              deps,
               workerActionGrant,
+              serviceOptions,
+            );
+            result = withWorkerDispatch(freeze({
+              ...result,
               allowWorkerTick: true,
               nextAction: actionResult.createdMission
-                ? 'Allow the existing Mission Worker to process the newly created canonical mission.'
-                : 'Allow the existing Mission Worker to continue the conveyor-authorized mission.',
-            });
+                ? 'The controller published the newly created canonical mission; the supervised worker tick remains an idempotent fallback.'
+                : 'The controller published the conveyor-authorized mission; the supervised worker tick remains an idempotent fallback.',
+            }), workerActionGrant, workerDispatchResult);
           }
         }
       }
@@ -877,6 +918,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     sourceMutationLeaseClaim,
     sourceMutationLeaseRead,
     verifiedSourceMutationLeaseIdentity,
+    workerDispatchResult,
     cycleReceipt: receipt,
     receiptPublication,
     heartbeatPublication: finalHeartbeat,
@@ -893,6 +935,7 @@ export function renderDurableFlywheelReceipt(result) {
     `Projection-Status: ${text(result.projectionStatus, 'unproven')}`,
     `Action: ${text(result.action, 'none')}`,
     `Worker-Tick-Allowed: ${result.allowWorkerTick === true}`,
+    `Worker-Action-Published: ${result.workerActionDispatchPublished === true}`,
     'Chat-Memory-Authoritative: false',
     'Creates-Replacement-Machinery: false',
     'Merge-Authority: false',
