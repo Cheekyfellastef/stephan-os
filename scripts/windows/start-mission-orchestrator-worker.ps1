@@ -133,7 +133,7 @@ function Write-BoundedWorkerLogLine {
     if ($singleLine.Length -gt $maximumLineCharacters) {
         $singleLine = $singleLine.Substring(0, $maximumLineCharacters - $truncationMarker.Length) + $truncationMarker
     }
-    Invoke-BoundedWorkerLogRetention -LogRoot $logRoot -LogPath $logPath -ArchivePath $workerLogArchivePath
+    Invoke-BoundedWorkerLogRetention -LogRoot $LogRoot -LogPath $LogPath -ArchivePath $ArchivePath
     $utf8WithoutBom = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::AppendAllText([System.IO.Path]::GetFullPath($LogPath), "$singleLine`r`n", $utf8WithoutBom)
     Invoke-BoundedWorkerLogRetention -LogRoot $LogRoot -LogPath $LogPath -ArchivePath $ArchivePath
