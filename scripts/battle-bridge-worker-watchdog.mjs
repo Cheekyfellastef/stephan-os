@@ -184,6 +184,7 @@ export function createFixedWorkerProbeAdapter({
         windowsHide: true,
         timeout: boundedTimeoutMs,
         stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, GIT_REDIRECT_STDERR: 'off' },
       });
       if (result.error || result.status !== 0) {
         const restartBlocker = mode === 'StartApprovedWorkerTask'
