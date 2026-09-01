@@ -238,8 +238,11 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capa
 
 function sourceMutationLeasePlan(grant, nowUtc, proofRefs = []) {
   const adapter = text(grant?.adapter).toLowerCase();
-  const required = grant?.actionKind === 'agent-handoff' && SOURCE_MUTATION_ADAPTERS.has(adapter);
-  if (!required) return freeze({ required: false, complete: true, expected: null, claimInput: null });
+  const sourceMutationAction = grant?.actionKind === 'agent-handoff'
+    && SOURCE_MUTATION_ADAPTERS.has(adapter);
+  if (!sourceMutationAction) {
+    return freeze({ required: false, complete: true, expected: null, claimInput: null });
+  }
   const laneId = text(grant?.laneId);
   const repository = text(grant?.repository);
   const issueNumber = positiveInteger(grant?.issueNumber);
@@ -247,6 +250,35 @@ function sourceMutationLeasePlan(grant, nowUtc, proofRefs = []) {
   const branch = text(grant?.branch);
   const headSha = sha(grant?.headSha);
   const ownerId = text(grant?.workerId);
+  const prIdentityAbsent = !prNumber && !headSha;
+  if (prIdentityAbsent) {
+    const prePrIsolatedSourceComplete = Boolean(
+      SAFE_REPOSITORY.test(repository)
+      && issueNumber
+      && SAFE_BRANCH.test(branch)
+      && branch.startsWith('openclaw/')
+      && !branch.includes('..')
+      && WORKER_SAFE_ID.test(ownerId)
+    );
+    return freeze({
+      required: false,
+      complete: prePrIsolatedSourceComplete,
+      expected: null,
+      claimInput: null,
+      prePrIsolatedSource: prePrIsolatedSourceComplete,
+      boundary: prePrIsolatedSourceComplete ? 'PRE_PR_ISOLATED_WORKTREE' : 'PRE_PR_IDENTITY_INCOMPLETE',
+    });
+  }
+  if (!prNumber || !headSha) {
+    return freeze({
+      required: true,
+      complete: false,
+      expected: null,
+      claimInput: null,
+      prePrIsolatedSource: false,
+      boundary: 'PARTIAL_PR_IDENTITY_BLOCKED',
+    });
+  }
   const complete = Boolean(
     SAFE_ID.test(laneId)
     && SAFE_REPOSITORY.test(repository)
@@ -257,7 +289,16 @@ function sourceMutationLeasePlan(grant, nowUtc, proofRefs = []) {
     && headSha
     && SAFE_ID.test(ownerId)
   );
-  if (!complete) return freeze({ required: true, complete: false, expected: null, claimInput: null });
+  if (!complete) {
+    return freeze({
+      required: true,
+      complete: false,
+      expected: null,
+      claimInput: null,
+      prePrIsolatedSource: false,
+      boundary: 'EXACT_PR_LEASE_IDENTITY_INCOMPLETE',
+    });
+  }
   const leaseId = compactId('source-lease', [
     laneId,
     text(grant?.actionId),
@@ -280,6 +321,8 @@ function sourceMutationLeasePlan(grant, nowUtc, proofRefs = []) {
     complete: true,
     expected,
     claimInput: freeze({ ...expected, nowUtc, proofRefs: freeze(list(proofRefs)) }),
+    prePrIsolatedSource: false,
+    boundary: 'EXACT_PR_HEAD_LEASE_REQUIRED',
   });
 }
 
@@ -808,7 +851,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
             nowUtc,
             [`receipts/${missionAdmissionReceipt.receiptId}.json`],
           );
-          if (leasePlan.required && !leasePlan.complete) {
+          if (!leasePlan.complete) {
             result = holdResult('source-mutation-lease:grant-identity-incomplete', {
               observedAtUtc: nowUtc,
               sourceRevision,
@@ -861,10 +904,15 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
             );
             result = withWorkerDispatch(freeze({
               ...result,
+              action: leasePlan.prePrIsolatedSource
+                ? 'DISPATCH_PRE_PR_ISOLATED_SOURCE_MISSION'
+                : result.action,
               allowWorkerTick: true,
-              nextAction: actionResult.createdMission
-                ? 'The controller published the newly created canonical mission; the supervised worker tick remains an idempotent fallback.'
-                : 'The controller published the conveyor-authorized mission; the supervised worker tick remains an idempotent fallback.',
+              nextAction: leasePlan.prePrIsolatedSource
+                ? 'Publish the bounded pre-PR implementation into the existing isolated openclaw worktree; require exact PR/head lease authority as soon as a PR identity exists.'
+                : actionResult.createdMission
+                  ? 'The controller published the newly created canonical mission; the supervised worker tick remains an idempotent fallback.'
+                  : 'The controller published the conveyor-authorized mission; the supervised worker tick remains an idempotent fallback.',
             }), workerActionGrant, workerDispatchResult);
           }
         }
