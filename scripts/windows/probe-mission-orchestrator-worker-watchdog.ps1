@@ -361,7 +361,7 @@ try {
     if ($repositoryBranch -ne 'main' -or $repositoryHead -notmatch '^[0-9a-f]{40}$') {
         throw 'Canonical repository branch/head proof is invalid.'
     }
-    $trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
+    $trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
     if ($LASTEXITCODE -ne 0) {
         throw ('git status failed: {0}' -f (($trackedStatus | ForEach-Object { [string]$_ }) -join ' '))
     }
