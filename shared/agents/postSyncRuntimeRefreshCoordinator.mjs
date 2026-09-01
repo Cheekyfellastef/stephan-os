@@ -185,6 +185,7 @@ function isMissionWorkerPath(path) {
     || [
       'scripts/windows/start-mission-orchestrator-worker.ps1',
       'scripts/windows/install-mission-orchestrator-worker-autostart.ps1',
+      'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1',
       'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
       'package.json',
       'package-lock.json',
