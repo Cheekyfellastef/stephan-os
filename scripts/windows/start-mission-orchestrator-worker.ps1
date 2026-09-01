@@ -133,7 +133,7 @@ function Write-BoundedWorkerLogLine {
     if ($singleLine.Length -gt $maximumLineCharacters) {
         $singleLine = $singleLine.Substring(0, $maximumLineCharacters - $truncationMarker.Length) + $truncationMarker
     }
-    Invoke-BoundedWorkerLogRetention -LogRoot $LogRoot -LogPath $LogPath -ArchivePath $ArchivePath
+    Invoke-BoundedWorkerLogRetention -LogRoot $logRoot -LogPath $logPath -ArchivePath $workerLogArchivePath
     $utf8WithoutBom = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::AppendAllText([System.IO.Path]::GetFullPath($LogPath), "$singleLine`r`n", $utf8WithoutBom)
     Invoke-BoundedWorkerLogRetention -LogRoot $LogRoot -LogPath $LogPath -ArchivePath $ArchivePath
@@ -401,7 +401,7 @@ try {
     if ($LASTEXITCODE -ne 0 -or $headSha -notmatch '^[0-9a-f]{40}$') {
         throw 'Mission Orchestrator worker could not prove a canonical 40-character Git head.'
     }
-    $trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
+    $trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
     if ($LASTEXITCODE -ne 0 -or $trackedStatus.Count -ne 0) {
         throw 'Mission Orchestrator worker requires tracked-clean exact-head source.'
     }
