@@ -5,7 +5,11 @@ import {
   MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
   runMissionWorkerDiagnosticLink,
 } from './mission-worker-diagnostic-link.mjs';
-import { resolveCanonicalWorkerWatchdogPaths } from './battle-bridge-worker-watchdog.mjs';
+import {
+  WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS,
+  WORKER_WATCHDOG_START_TIMEOUT_MS,
+  resolveCanonicalWorkerWatchdogPaths,
+} from './battle-bridge-worker-watchdog.mjs';
 
 const HEAD = 'f7a71effd7acb5fc4dd05a5a6891e050a6448d02';
 const NOW = new Date('2026-09-01T18:00:00.000Z');
@@ -118,8 +122,8 @@ test('default route physically inspects exact main before StartApprovedWorkerTas
   const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, deps);
   assert.equal(result.ok, true);
   assert.deepEqual(calls.map((call) => call.mode), ['Inspect', 'StartApprovedWorkerTask']);
-  assert.equal(calls[0].options.timeoutMs, 12_000);
-  assert.equal(calls[1].options.timeoutMs, 95_000);
+  assert.equal(calls[0].options.timeoutMs, WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS);
+  assert.equal(calls[1].options.timeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
   assert.equal(calls[1].options.deadlineUtc, '2026-09-01T18:01:20.000Z');
 });
 
@@ -194,7 +198,7 @@ test('uses only StartApprovedWorkerTask with one short generated deadline and pr
   assert.equal(result.typedRestartBlocker, 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT');
   assert.equal(result.error, undefined);
   assert.equal(observed.mode, 'StartApprovedWorkerTask');
-  assert.equal(observed.options.timeoutMs, 95_000);
+  assert.equal(observed.options.timeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
   assert.equal(observed.options.deadlineUtc, '2026-09-01T18:01:20.000Z');
   assert.match(observed.probeScriptPath, /probe-mission-orchestrator-worker-watchdog\.ps1$/i);
 });
