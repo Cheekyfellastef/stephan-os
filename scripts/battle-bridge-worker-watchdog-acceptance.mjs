@@ -13,6 +13,45 @@ const DEGRADED_BASELINE_BLOCKERS = new Set([
   'INITIAL_WORKER_PROBE_FAILED',
   'INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY',
 ]);
+const MISSION_WORKER_RESTART_FAILURE_BLOCKERS = new Set([
+  'MISSION_WORKER_RESTART_DEADLINE_EXHAUSTED',
+  'MISSION_WORKER_INVOCATION_RECORD_TOO_LARGE',
+  'MISSION_WORKER_RESTART_REQUEST_INVALID',
+  'MISSION_WORKER_RESTART_REQUEST_ALREADY_PRESENT',
+  'MISSION_WORKER_RESTART_REQUEST_CHANGED_BEFORE_RECLAIM',
+  'MISSION_WORKER_RESTART_REQUEST_RECLAIM_FAILED',
+  'MISSION_WORKER_RESTART_REQUEST_CLEANUP_IDENTITY_CHANGED',
+  'MISSION_WORKER_RESTART_REQUEST_CLEANUP_FAILED',
+  'MISSION_WORKER_CLEANUP_TASK_NOT_ALLOWLISTED',
+  'MISSION_WORKER_CLEANUP_INVOCATION_ID_INVALID',
+  'MISSION_WORKER_CLEANUP_INVOCATION_CLAIM_NOT_PROVEN',
+  'MISSION_WORKER_CLEANUP_LAUNCH_RECEIPT_NOT_PROVEN',
+  'MISSION_WORKER_CLEANUP_LAUNCH_RECEIPT_MISMATCH',
+  'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN',
+  'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED',
+  'MISSION_WORKER_CLEANUP_PROCESS_DID_NOT_STOP',
+  'MISSION_WORKER_CLEANUP_TASK_MISSING',
+  'MISSION_WORKER_CLEANUP_TASK_DID_NOT_STOP',
+  'MISSION_WORKER_RESTART_DEADLINE_REQUIRED',
+  'MISSION_WORKER_RESTART_DEADLINE_INVALID',
+  'MISSION_WORKER_TASK_DID_NOT_STOP',
+  'MISSION_WORKER_EXISTING_PROCESS_IDENTITY_CHANGED',
+  'MISSION_WORKER_EXISTING_PROCESS_CAPABILITY_CHANGED',
+  'MISSION_WORKER_VERIFIED_PROCESS_DID_NOT_STOP',
+  'MISSION_WORKER_CANONICAL_PROCESS_QUERY_FAILED',
+  'MISSION_WORKER_CANONICAL_PROCESS_IDENTITY_AMBIGUOUS',
+  'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED',
+  'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED',
+  'MISSION_WORKER_ORPHAN_PROCESS_DID_NOT_STOP',
+  'MISSION_WORKER_INVOCATION_ID_GENERATION_FAILED',
+  'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT',
+  'MISSION_WORKER_FRESH_INSTANCE_NOT_PROVEN',
+  'MISSION_WORKER_INVOCATION_IDENTITY_NOT_PROVEN',
+  'MISSION_WORKER_TASK_NOT_RUNNING_AFTER_START',
+  'MISSION_WORKER_POST_START_PROOF_FAILED',
+  'MISSION_WORKER_POST_START_CLEANUP_FAILED',
+  'MISSION_WORKER_DEADLINE_SELF_CLEANUP_NOT_PROVEN',
+]);
 
 // These are declarative pins for the byte-preserved core authority surface.
 // Existing source-contract tests intentionally assert that the public adapter
@@ -28,6 +67,18 @@ export const WORKER_WATCHDOG_CORE_AUTHORITY_MARKERS = Object.freeze([
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
+}
+
+export function extractTypedMissionWorkerRestartBlocker(status = {}) {
+  const probeError = text(status?.probeError);
+  if (!probeError) return '';
+  const candidates = probeError.match(/\bMISSION_WORKER_[A-Z0-9_]{3,100}\b/g) || [];
+  return candidates.find((candidate) => MISSION_WORKER_RESTART_FAILURE_BLOCKERS.has(candidate)) || '';
+}
+
+export function selectDegradedRecoveryBlocker(status, recoveryClassification) {
+  return extractTypedMissionWorkerRestartBlocker(status)
+    || text(recoveryClassification, core.INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.workerRestartFailure);
 }
 
 function statusTimestampMs(status) {
@@ -227,9 +278,12 @@ async function recoverDegradedBaseline(options, firstResult) {
   const classification = boundary?.ok
     ? core.INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure
     : text(boundary?.classification, core.INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.workerRestartFailure);
+  const typedRestartBlocker = extractTypedMissionWorkerRestartBlocker(latestStatus);
+  const blocker = selectDegradedRecoveryBlocker(latestStatus, classification);
 
-  return blockedRecovery(classification, firstResult, {
+  return blockedRecovery(blocker, firstResult, {
     recoveryClassification: classification,
+    restartBlocker: typedRestartBlocker,
     sourceHead: source.sourceHead,
     expectedHeadMatch: true,
     workerKilled: false,
