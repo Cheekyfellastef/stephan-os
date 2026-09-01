@@ -130,6 +130,26 @@ test('selected diagnostic command executes without rejecting legacy normalized m
   assert.equal(result.verdict, 'COMMAND_EXECUTION_COMPLETE');
 });
 
+test('empty rejected diagnostic head remains empty in the durable terminal projection', () => {
+  const invalid = command({ expectedHead: '' });
+  const body = `\`\`\`${mailbox.BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(invalid)}\n\`\`\``;
+  const result = mailbox.selectBattleBridgeGitHubCommandBatch([{
+    id: 1004,
+    html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/1507#issuecomment-1004',
+    body,
+    user: { login: mailbox.BATTLE_BRIDGE_GITHUB_COMMAND_AUTHOR },
+    created_at: AUTHORED.toISOString(),
+  }], { now: NOW });
+  assert.equal(result.ok, true);
+  assert.equal(result.verdict, 'NO_COMMAND_READY');
+  assert.equal(result.terminalRejections.length, 1);
+  assert.equal(result.terminalRejections[0].blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_EXPECTED_HEAD_REQUIRED');
+  assert.equal(result.terminalRejections[0].command.operation, MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION);
+  assert.equal(result.terminalRejections[0].command.expectedHead, '');
+  assert.notEqual(result.terminalRejections[0].command.expectedHead, '0'.repeat(40));
+  assert.deepEqual(Object.keys(result.terminalRejections[0].command).sort(), DIAGNOSTIC_FIELDS);
+});
+
 test('invalid diagnostic command terminalizes with diagnostic blocker rather than legacy translation blocker', () => {
   const invalid = command({ path: 'C:\\temp\\anything' });
   const body = `\`\`\`${mailbox.BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(invalid)}\n\`\`\``;
