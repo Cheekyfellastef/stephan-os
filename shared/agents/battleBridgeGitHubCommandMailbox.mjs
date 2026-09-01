@@ -51,6 +51,16 @@ function validateDiagnosticLinkCommandShape(command = {}) {
   return Object.freeze({ ok: true, requested: true, expectedHead });
 }
 
+function projectDiagnosticEnvelope(command = {}, expectedHead = '') {
+  const projected = {};
+  for (const field of DIAGNOSTIC_LINK_ALLOWED_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(command || {}, field)) projected[field] = command[field];
+  }
+  projected.operation = MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION;
+  projected.expectedHead = String(expectedHead || command?.expectedHead || '').trim().toLowerCase();
+  return Object.freeze(projected);
+}
+
 function translateDiagnosticLinkForLegacy(command = {}, shape = {}) {
   const translated = {};
   for (const field of DIAGNOSTIC_LINK_ALLOWED_FIELDS) {
@@ -94,11 +104,7 @@ function projectDiagnosticTerminalRejection(original = {}, options = {}) {
     commentId,
     commentUrl: String(comment?.html_url || comment?.url || ''),
     blocker: String(shape.blocker),
-    command: Object.freeze({
-      ...envelope.command,
-      operation: MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION,
-      expectedHead: originalExpectedHead,
-    }),
+    command: projectDiagnosticEnvelope(envelope.command, originalExpectedHead),
   });
 }
 
@@ -120,11 +126,7 @@ export function validateBattleBridgeGitHubCommand(command = {}, options = {}) {
   if (!envelope?.ok) return envelope;
   return Object.freeze({
     ...envelope,
-    command: Object.freeze({
-      ...envelope.command,
-      operation: MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION,
-      expectedHead: diagnostic.expectedHead,
-    }),
+    command: projectDiagnosticEnvelope(envelope.command, diagnostic.expectedHead),
   });
 }
 
@@ -160,11 +162,7 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
       if (!original?.shape?.ok) return entry;
       return Object.freeze({
         ...entry,
-        command: Object.freeze({
-          ...entry.command,
-          operation: MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION,
-          expectedHead: original.shape.expectedHead,
-        }),
+        command: projectDiagnosticEnvelope(entry.command, original.shape.expectedHead),
         partition: legacy.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
       });
     })
@@ -185,11 +183,10 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
       return Object.freeze({
         ...entry,
         blocker: original.shape?.ok === true ? entry.blocker : original.shape.blocker,
-        command: Object.freeze({
-          ...entry.command,
-          operation: MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION,
-          expectedHead: String(original.command?.expectedHead || '').trim().toLowerCase(),
-        }),
+        command: projectDiagnosticEnvelope(
+          entry.command,
+          String(original.command?.expectedHead || '').trim().toLowerCase(),
+        ),
       });
     })
     : [];
