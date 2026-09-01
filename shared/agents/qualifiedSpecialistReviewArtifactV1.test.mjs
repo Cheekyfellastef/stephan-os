@@ -159,7 +159,7 @@ test('a later operator invocation closes the original request response window', 
   assert.deepEqual(result.blockers, ['qualified-specialist-review-missing']);
 });
 
-test('a same-second higher-ID operator invocation closes the original request response window', () => {
+test('a same-second higher-ID operator invocation closes the request response window', () => {
   const original = request();
   const retry = request({
     id: 1002,
