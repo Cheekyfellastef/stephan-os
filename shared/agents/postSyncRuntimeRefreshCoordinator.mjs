@@ -19,6 +19,7 @@ export const POST_SYNC_REFRESH_TARGETS = Object.freeze({
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const SAFE_RELATIVE_PATH = /^[A-Za-z0-9._@+()\-][A-Za-z0-9._@+()\-/ ]{0,500}$/;
+const CANONICAL_WORKER_WATCHDOG_PROBE_PATH = 'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1';
 const TARGET_ORDER = Object.freeze([
   POST_SYNC_REFRESH_TARGETS.UI_4173,
   POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
@@ -122,6 +123,12 @@ export function parseGitChangedPathStatus(stdout) {
     if (parts.length !== expectedPathCount || parts.some((entry) => !String(entry ?? '').trim())) {
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_CHANGED_PATH_STATUS_INVALID', paths: Object.freeze([]) });
     }
+    const removesCanonicalProbe = status === 'D'
+      ? parts[0] === CANONICAL_WORKER_WATCHDOG_PROBE_PATH
+      : /^R[0-9]*$/.test(status) && parts[0] === CANONICAL_WORKER_WATCHDOG_PROBE_PATH;
+    if (removesCanonicalProbe) {
+      return Object.freeze({ ok: false, blocker: 'POST_SYNC_CANONICAL_WORKER_WATCHDOG_PROBE_REMOVED', paths: Object.freeze([]) });
+    }
     paths.push(...parts);
   }
   return Object.freeze({ ok: true, paths: Object.freeze([...new Set(paths)]) });
@@ -185,7 +192,7 @@ function isMissionWorkerPath(path) {
     || [
       'scripts/windows/start-mission-orchestrator-worker.ps1',
       'scripts/windows/install-mission-orchestrator-worker-autostart.ps1',
-      'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1',
+      CANONICAL_WORKER_WATCHDOG_PROBE_PATH,
       'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
       'package.json',
       'package-lock.json',
