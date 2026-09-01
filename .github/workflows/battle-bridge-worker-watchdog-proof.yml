@@ -14,6 +14,7 @@ on:
       - 'shared/agents/remoteCodexTaskVisibility*.mjs'
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
+      - 'scripts/mission-worker-git-stderr-isolation.test.mjs'
       - 'scripts/windows/*worker-watchdog.ps1'
       - 'scripts/windows/start-mission-orchestrator-worker.ps1'
       - '.github/workflows/battle-bridge-worker-watchdog-proof.yml'
@@ -30,6 +31,7 @@ on:
       - 'shared/agents/remoteCodexTaskVisibility*.mjs'
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
+      - 'scripts/mission-worker-git-stderr-isolation.test.mjs'
       - 'scripts/windows/*worker-watchdog.ps1'
       - 'scripts/windows/start-mission-orchestrator-worker.ps1'
       - '.github/workflows/battle-bridge-worker-watchdog-proof.yml'
@@ -95,6 +97,9 @@ jobs:
 
       - name: Test worker heartbeat
         run: node --test scripts/mission-orchestrator-worker-heartbeat.test.mjs
+
+      - name: Test Mission Worker Git stderr isolation
+        run: node --test scripts/mission-worker-git-stderr-isolation.test.mjs
 
       - name: Test supervised worker
         run: node --test scripts/mission-orchestrator-worker-supervised.test.mjs
