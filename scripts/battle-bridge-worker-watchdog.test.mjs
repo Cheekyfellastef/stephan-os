@@ -434,7 +434,7 @@ test('fixed probe adapter refuses ambiguous or unallowlisted restart blocker pro
     });
     assert.equal(blocked.ok, false);
     assert.equal(blocked.restartBlocker, '');
-    assert.notEqual(blocked.error, 'MISSION_WORKER_NOT_ALLOWLISTED');
+    assert.equal(blocked.error, stderr);
   }
 });
 
