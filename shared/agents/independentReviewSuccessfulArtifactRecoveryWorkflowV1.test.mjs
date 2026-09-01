@@ -88,4 +88,3 @@ test('workflow-run artifact intake recovers terminal artifacts from both success
   assert.doesNotMatch(workflow, /github\.event\.workflow_run\.conclusion == 'success'/);
   assert.doesNotMatch(workflow, /contains\(fromJSON\('\["success","failure","cancelled"\]'\)/);
 });
-
