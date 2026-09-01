@@ -254,15 +254,16 @@ async function publishProjection({ workspaceRoot, repoRoot, projection, afterHea
   const status = Object.freeze({
     ...projection,
     ...createSharedWorkspaceStatusRecord({
-      statusId: 'battle-bridge-worker-watchdog-current',
+      statusId: 'post-sync-runtime-refresh-current',
+      participantId: 'mission-orchestrator',
       timestampUtc: now.toISOString(),
-      status: classification,
+      status: projection.classification,
       summary,
       proofRefs,
     }),
-    ...common,
+    phase,
   });
-  const statusWrite = await writeAtomicJson(workspaceRoot, ['status', 'battle-bridge-worker-watchdog-current.json'], statusRecord, { repoRoot });
+  const statusWrite = await writeAtomicJson(workspaceRoot, ['status', 'post-sync-runtime-refresh-current.json'], status, { repoRoot });
   if (!statusWrite.ok) return { ok: false, blocker: 'POST_SYNC_REFRESH_STATUS_WRITE_FAILED' };
 
   const event = Object.freeze({
