@@ -138,13 +138,17 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
     },
     restartApprovedTarget({ target, afterHead, paths }) {
       if (!['backend', 'mission-worker'].includes(target)) return { ok: false, blocker: 'RUNTIME_TARGET_NOT_ALLOWLISTED', exactHeadProofOk: false, sourceHead: '' };
-      const result = fixedRun('powershell.exe', [
+      const restartArguments = [
         '-NoProfile',
         '-ExecutionPolicy', 'Bypass',
         '-File', paths.restartScript,
         '-Target', target,
         '-ExpectedHead', afterHead,
-      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 240_000 });
+      ];
+      if (target === 'mission-worker') {
+        restartArguments.push('-DeadlineUtc', new Date(Date.now() + 90_000).toISOString());
+      }
+      const result = fixedRun('powershell.exe', restartArguments, { cwd: paths.repoRoot, spawnSyncFn, timeout: 240_000 });
       const payload = parseJsonOutput(result.stdout);
       if (!payload) return { ok: false, blocker: 'APPROVED_RUNTIME_RESTART_RESPONSE_INVALID', exactHeadProofOk: false, sourceHead: '' };
       return {
@@ -250,16 +254,15 @@ async function publishProjection({ workspaceRoot, repoRoot, projection, afterHea
   const status = Object.freeze({
     ...projection,
     ...createSharedWorkspaceStatusRecord({
-      statusId: 'post-sync-runtime-refresh-current',
-      participantId: 'mission-orchestrator',
+      statusId: 'battle-bridge-worker-watchdog-current',
       timestampUtc: now.toISOString(),
-      status: projection.classification,
+      status: classification,
       summary,
       proofRefs,
     }),
-    phase,
+    ...common,
   });
-  const statusWrite = await writeAtomicJson(workspaceRoot, ['status', 'post-sync-runtime-refresh-current.json'], status, { repoRoot });
+  const statusWrite = await writeAtomicJson(workspaceRoot, ['status', 'battle-bridge-worker-watchdog-current.json'], statusRecord, { repoRoot });
   if (!statusWrite.ok) return { ok: false, blocker: 'POST_SYNC_REFRESH_STATUS_WRITE_FAILED' };
 
   const event = Object.freeze({
