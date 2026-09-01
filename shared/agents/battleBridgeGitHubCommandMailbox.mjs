@@ -27,6 +27,7 @@ const DIAGNOSTIC_LINK_TERMINAL_BLOCKERS = new Set([
   'MISSION_WORKER_DIAGNOSTIC_LINK_EXPECTED_HEAD_REQUIRED',
   'MISSION_WORKER_DIAGNOSTIC_LINK_FIELD_NOT_ALLOWED',
 ]);
+const DIAGNOSTIC_EXPECTED_HEAD_UNSET = Symbol('DIAGNOSTIC_EXPECTED_HEAD_UNSET');
 
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
@@ -51,13 +52,16 @@ function validateDiagnosticLinkCommandShape(command = {}) {
   return Object.freeze({ ok: true, requested: true, expectedHead });
 }
 
-function projectDiagnosticEnvelope(command = {}, expectedHead = '') {
+function projectDiagnosticEnvelope(command = {}, expectedHead = DIAGNOSTIC_EXPECTED_HEAD_UNSET) {
   const projected = {};
   for (const field of DIAGNOSTIC_LINK_ALLOWED_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(command || {}, field)) projected[field] = command[field];
   }
   projected.operation = MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION;
-  projected.expectedHead = String(expectedHead || command?.expectedHead || '').trim().toLowerCase();
+  const projectedExpectedHead = expectedHead === DIAGNOSTIC_EXPECTED_HEAD_UNSET
+    ? command?.expectedHead
+    : expectedHead;
+  projected.expectedHead = String(projectedExpectedHead ?? '').trim().toLowerCase();
   return Object.freeze(projected);
 }
 
