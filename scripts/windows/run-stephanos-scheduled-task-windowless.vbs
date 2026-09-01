@@ -57,10 +57,6 @@ If Not fileSystem.FileExists(targetPath) Then
   WScript.Quit 4
 End If
 
-If taskId = "mission-worker" Or taskId = "worker-watchdog" Then
-  shell.Environment("PROCESS")("GIT_REDIRECT_STDERR") = "off"
-End If
-
 exitCode = shell.Run(command, 0, True)
 WScript.Quit exitCode
 
