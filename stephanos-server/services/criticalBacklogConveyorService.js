@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  CRITICAL_BACKLOG_CONVEYOR_SCHEMA,
   CRITICAL_BACKLOG_DECISION,
   DEFAULT_CRITICAL_BACKLOG,
   buildCriticalBacklogMissionInput,
@@ -19,6 +20,8 @@ import {
   createMissionRecord,
   listMissionRecords,
 } from './missionOrchestratorStore.js';
+import { readAuthoritativeProgrammeProjection } from './programmeAuthorityService.js';
+import { ensureElasticGoalMissions } from './elasticGoalMissionAdmissionService.js';
 
 export const CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA = 'stephanos.critical-backlog-conveyor-service.v1';
 
@@ -35,6 +38,41 @@ function text(value, fallback = '') {
 
 function eventId(value) {
   return `critical-backlog-${createHash('sha256').update(value).digest('hex').slice(0, 20)}`;
+}
+
+function elasticIssueNumber(mission = {}) {
+  const match = /^critical-([1-9]\d*)-elastic-goal(?:$|[-_.])/.exec(text(mission.missionId).toLowerCase());
+  const parsed = Number(match?.[1]);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function elasticControllerProjection(admission = {}) {
+  const mission = admission.selectedMission;
+  const issueNumber = elasticIssueNumber(mission);
+  if (!mission || !issueNumber) return null;
+  return Object.freeze({
+    schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SCHEMA,
+    validation: Object.freeze({ valid: true, errors: Object.freeze([]), finalVerdict: 'CRITICAL_BACKLOG_PASS' }),
+    decision: CRITICAL_BACKLOG_DECISION.WAIT_EXTERNAL_ACTIVE_MISSION,
+    selectedItem: Object.freeze({
+      itemId: `elastic-goal-${issueNumber}`,
+      priority: 0,
+      issueNumbers: Object.freeze([issueNumber]),
+      headlineApprovalRef: 'mission-scheduler-elastic-admission',
+      mission,
+    }),
+    activeMission: mission,
+    completedItemIds: Object.freeze([]),
+    remainingItemIds: Object.freeze([]),
+    elasticMissionIds: Object.freeze((admission.elasticMissions || []).map((item) => text(item.missionId)).filter(Boolean)),
+    exactNextAction: `Advance scheduler-admitted elastic goal mission ${text(mission.missionId)} by one bounded Mission Worker action.`,
+    oneActiveMissionEnforced: false,
+    elasticGoalMissionsUseSchedulerCapacity: true,
+    duplicateCodexDispatchAllowed: false,
+    mergeAuthority: false,
+    exactHeadApprovalRequired: true,
+    finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
+  });
 }
 
 export function resolveCriticalBacklogRuntimePaths({
@@ -119,7 +157,8 @@ export async function publishCriticalBacklogProjection(projection, {
     completedItemIds: [...(projection.completedItemIds || [])],
     remainingItemIds: [...(projection.remainingItemIds || [])],
     exactNextAction: text(projection.exactNextAction),
-    oneActiveMissionEnforced: true,
+    oneActiveMissionEnforced: projection.oneActiveMissionEnforced !== false,
+    elasticGoalMissionsUseSchedulerCapacity: projection.elasticGoalMissionsUseSchedulerCapacity === true,
     duplicateCodexDispatchAllowed: false,
     mergeAuthority: false,
     exactHeadApprovalRequired: true,
@@ -175,7 +214,71 @@ export async function ensureCriticalBacklogMission({
   listMissions = listMissionRecords,
   createMission = createMissionRecord,
   publishProjection = publishCriticalBacklogProjection,
+  readProgrammeProjection = readAuthoritativeProgrammeProjection,
+  ensureElasticMissions = ensureElasticGoalMissions,
 } = {}) {
+  const nowUtc = now instanceof Date ? now.toISOString() : new Date().toISOString();
+  let elasticAdmission = null;
+  try {
+    const authoritative = await readProgrammeProjection({
+      env,
+      nowUtc,
+      root: paths.workspaceRoot,
+      repoRoot: paths.repoRoot,
+      orchestratorRoot: paths.orchestratorRoot,
+      snapshotRoot: paths.snapshotRoot,
+    });
+    if (
+      authoritative?.status === 'READY'
+      && authoritative?.scheduler?.failClosed === false
+      && authoritative?.scheduler?.elasticCapacity?.status === 'RUNNING'
+    ) {
+      elasticAdmission = await ensureElasticMissions({
+        scheduler: authoritative.scheduler,
+        env,
+        now,
+        repoRoot: paths.repoRoot,
+        workspaceRoot: paths.workspaceRoot,
+        worktreeRoot: paths.worktreeRoot,
+        orchestratorRoot: paths.orchestratorRoot,
+        snapshotRoot: paths.snapshotRoot,
+      });
+      const elasticProjection = elasticAdmission?.ok === true
+        ? elasticControllerProjection(elasticAdmission)
+        : null;
+      if (elasticProjection) {
+        return Object.freeze({
+          schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
+          ok: true,
+          classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+          projection: elasticProjection,
+          createdMission: Number(elasticAdmission.createdMissionCount || 0) > 0,
+          duplicateCreateObserved: false,
+          missionRecord: Object.freeze({
+            missionId: elasticAdmission.selectedMission.missionId,
+            currentPhase: elasticAdmission.selectedMission.currentPhase,
+          }),
+          preflightPublication: null,
+          publication: null,
+          elasticAdmission,
+          arbitraryShellAllowed: false,
+          destructiveGitAllowed: false,
+          duplicateActiveMissionAllowed: false,
+          mergeAuthority: false,
+          finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_PASS',
+        });
+      }
+    }
+  } catch (error) {
+    elasticAdmission = Object.freeze({
+      ok: false,
+      classification: 'ELASTIC_GOAL_ADMISSION_DIAGNOSTIC_FAILED',
+      reason: text(error?.message, 'unknown'),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+
   let missionRecords = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
   let projection = buildCriticalBacklogProjection({ backlog, missionRecords });
   let createdMission = false;
@@ -196,6 +299,7 @@ export async function ensureCriticalBacklogMission({
         missionRecord: null,
         preflightPublication,
         publication: preflightPublication,
+        elasticAdmission,
         arbitraryShellAllowed: false,
         destructiveGitAllowed: false,
         duplicateActiveMissionAllowed: false,
@@ -244,6 +348,7 @@ export async function ensureCriticalBacklogMission({
       : null,
     preflightPublication,
     publication,
+    elasticAdmission,
     arbitraryShellAllowed: false,
     destructiveGitAllowed: false,
     duplicateActiveMissionAllowed: false,
