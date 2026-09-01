@@ -68,6 +68,40 @@ function translatedComment(comment = {}, translatedCommand = {}) {
   };
 }
 
+function projectDiagnosticTerminalRejection(original = {}, options = {}) {
+  const command = original?.command || {};
+  const shape = original?.shape || {};
+  const comment = original?.comment || {};
+  if (shape?.ok === true || !DIAGNOSTIC_LINK_TERMINAL_BLOCKERS.has(String(shape?.blocker || ''))) return null;
+
+  const originalExpectedHead = String(command?.expectedHead || '').trim().toLowerCase();
+  const validationHead = SHA_PATTERN.test(originalExpectedHead)
+    ? originalExpectedHead
+    : '0'.repeat(40);
+  const envelope = legacy.validateBattleBridgeGitHubCommand(
+    translateDiagnosticLinkForLegacy(command, { ok: true, expectedHead: validationHead }),
+    {
+      authorLogin: String(comment?.user?.login || ''),
+      now: options?.now || new Date(),
+      authoredAt: comment?.created_at || options?.now || new Date(),
+    },
+  );
+  if (!envelope?.ok) return null;
+
+  const commentId = Number(comment?.id || 0);
+  if (!Number.isSafeInteger(commentId) || commentId < 1) return null;
+  return Object.freeze({
+    commentId,
+    commentUrl: String(comment?.html_url || comment?.url || ''),
+    blocker: String(shape.blocker),
+    command: Object.freeze({
+      ...envelope.command,
+      operation: MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION,
+      expectedHead: originalExpectedHead,
+    }),
+  });
+}
+
 export function isTerminalizableOwnerCommandBlocker(value) {
   const blocker = String(value || '');
   return DIAGNOSTIC_LINK_TERMINAL_BLOCKERS.has(blocker)
@@ -112,6 +146,7 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
     diagnosticOriginals.set(String(comment?.id ?? ''), Object.freeze({
       command: extracted.command,
       shape,
+      comment,
     }));
     return translatedComment(comment, translateDiagnosticLinkForLegacy(extracted.command, shape));
   });
@@ -158,6 +193,22 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
       });
     })
     : [];
+
+  const terminalRequestIds = new Set(
+    terminalRejections.map((entry) => String(entry?.command?.requestId || '')).filter(Boolean),
+  );
+  if (Array.isArray(selected.rejected)) {
+    for (const entry of selected.rejected) {
+      const original = diagnosticOriginals.get(String(entry?.commentId ?? ''));
+      if (!original || original.shape?.ok === true) continue;
+      const terminal = projectDiagnosticTerminalRejection(original, options);
+      if (!terminal) continue;
+      const requestId = String(terminal.command?.requestId || '');
+      if (options?.consumedRequestIds?.has?.(requestId) || terminalRequestIds.has(requestId)) continue;
+      terminalRequestIds.add(requestId);
+      terminalRejections.push(terminal);
+    }
+  }
 
   return Object.freeze({
     ...selected,
