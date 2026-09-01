@@ -20,6 +20,7 @@ export const POST_SYNC_REFRESH_TARGETS = Object.freeze({
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const SAFE_RELATIVE_PATH = /^[A-Za-z0-9._@+()\-][A-Za-z0-9._@+()\-/ ]{0,500}$/;
 const CANONICAL_WORKER_WATCHDOG_PROBE_PATH = 'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1';
+const MISSION_WORKER_POST_SYNC_COORDINATOR_PATH = 'scripts/battle-bridge-post-sync-refresh.mjs';
 const TARGET_ORDER = Object.freeze([
   POST_SYNC_REFRESH_TARGETS.UI_4173,
   POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
@@ -185,6 +186,7 @@ function isBackendPath(path) {
 }
 
 function isMissionWorkerPath(path) {
+  if (path === MISSION_WORKER_POST_SYNC_COORDINATOR_PATH) return true;
   if (NATURAL_EXACT.has(path)) return false;
   return (path.startsWith('shared/agents/') && !NATURAL_EXACT.has(path))
     || path.startsWith('scripts/mission-orchestrator-worker')
