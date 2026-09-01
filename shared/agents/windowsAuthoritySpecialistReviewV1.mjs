@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const CORE_PATH = './windowsAuthoritySpecialistReviewCoreV1.mjs';
 const NO_FAFF_PATH = './windowsAuthorityNoFaffRescueReviewV2.mjs';
+const MAILBOX_CADENCE_PATH = './windowsAuthorityMailboxCadenceReviewV1.mjs';
 const MAILBOX_RECOVERY_GUARDIAN_PATH = './windowsAuthorityMailboxRecoveryGuardianReviewV1.mjs';
 const RECOVERY_GUARDIAN_PATH = './windowsAuthorityRecoveryMeshGuardianReviewV1.mjs';
 const RECOVERY_MESH_LAUNCH_LIVENESS_PATH = './windowsAuthorityRecoveryMeshLaunchLivenessReviewV1.mjs';
@@ -25,6 +26,7 @@ const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1
 
 const CORE_BLOB_SHA = '4424046455d8fd7724f1ae8b7c53b7c6529668df';
 const NO_FAFF_BLOB_SHA = 'f6c2a92f4e2ffebb57e197e72ed0279a896c9ffe';
+const MAILBOX_CADENCE_BLOB_SHA = 'd1319d542b219c786a36e8063f4080369f1f9a51';
 const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '0750137480031f19a364915095c69b7ab6061799';
 const RECOVERY_GUARDIAN_BLOB_SHA = '60228170b62d8313bebece5e9e8655cfc45497a5';
 const RECOVERY_MESH_LAUNCH_LIVENESS_BLOB_SHA = '14aa47756a08f0fdc24e1bf630fad36c557488b2';
@@ -46,6 +48,7 @@ const FORGE_PODMAN_PREREQUISITE_BLOB_SHA = '0a0c98287f20145e31bf8aa3978d0ba4196c
 const IGNITION_CONVERGENCE_BLOB_SHA = '8115a382c5c7b9a0bfe5611d4931fcbd969d1162';
 
 const EXPECTED_NO_FAFF_PATHS = Object.freeze(['scripts/windows/repair-battle-bridge-control-plane-now.ps1','scripts/windows/Repair-Battle-Bridge-Control-Plane-Now.cmd','scripts/windows/repair-battle-bridge-control-plane-now.test.mjs','scripts/windows/status-stephanos-codex-dispatch-plugin.ps1']);
+const EXPECTED_MAILBOX_CADENCE_PATHS = Object.freeze(['scripts/windows/install-battle-bridge-github-command-mailbox.ps1']);
 const EXPECTED_MAILBOX_RECOVERY_GUARDIAN_PATHS = Object.freeze(['scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1']);
 const EXPECTED_RECOVERY_GUARDIAN_PATHS = Object.freeze(['scripts/windows/install-battle-bridge-recovery-mesh.ps1','scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1','scripts/windows/run-stephanos-scheduled-task-windowless.vbs','scripts/windows/uninstall-battle-bridge-recovery-mesh.ps1','scripts/windows/request-battle-bridge-recovery.ps1']);
 const EXPECTED_RECOVERY_MESH_LAUNCH_LIVENESS_PATHS = Object.freeze(['scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1']);
@@ -66,6 +69,7 @@ function gitBlobSha(content) { const bytes = Buffer.from(content, 'utf8'); retur
 function provePinnedModule(path, expectedBlobSha) { const url = new URL(path, import.meta.url); const content = readFileSync(url, 'utf8'); const observedBlobSha = gitBlobSha(content); if (observedBlobSha !== expectedBlobSha) throw new Error(`WINDOWS_AUTHORITY_SPECIALIST_PIN_MISMATCH:${path}:${observedBlobSha}`); return url; }
 const coreUrl = provePinnedModule(CORE_PATH, CORE_BLOB_SHA);
 const noFaffUrl = provePinnedModule(NO_FAFF_PATH, NO_FAFF_BLOB_SHA);
+const mailboxCadenceUrl = provePinnedModule(MAILBOX_CADENCE_PATH, MAILBOX_CADENCE_BLOB_SHA);
 const mailboxRecoveryGuardianUrl = provePinnedModule(MAILBOX_RECOVERY_GUARDIAN_PATH, MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA);
 const recoveryGuardianUrl = provePinnedModule(RECOVERY_GUARDIAN_PATH, RECOVERY_GUARDIAN_BLOB_SHA);
 const recoveryMeshLaunchLivenessUrl = provePinnedModule(RECOVERY_MESH_LAUNCH_LIVENESS_PATH, RECOVERY_MESH_LAUNCH_LIVENESS_BLOB_SHA);
@@ -87,6 +91,7 @@ const forgePodmanPrerequisiteUrl = provePinnedModule(FORGE_PODMAN_PREREQUISITE_P
 const ignitionConvergenceUrl = provePinnedModule(IGNITION_CONVERGENCE_PATH, IGNITION_CONVERGENCE_BLOB_SHA);
 const core = await import(coreUrl.href);
 const noFaff = await import(noFaffUrl.href);
+const mailboxCadence = await import(mailboxCadenceUrl.href);
 const mailboxRecoveryGuardian = await import(mailboxRecoveryGuardianUrl.href);
 const recoveryGuardian = await import(recoveryGuardianUrl.href);
 const recoveryMeshLaunchLiveness = await import(recoveryMeshLaunchLivenessUrl.href);
@@ -112,6 +117,7 @@ if (JSON.stringify(workerWatchdogV2.WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V2) 
 if (JSON.stringify(workerWatchdog.WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1) !== JSON.stringify(['scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1','scripts/windows/start-mission-orchestrator-worker.ps1'])) throw new Error('WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(workerLogBounds.WINDOWS_AUTHORITY_WORKER_LOG_BOUNDS_PATHS_V1) !== JSON.stringify(EXPECTED_WORKER_LOG_BOUNDS_PATHS)) throw new Error('WINDOWS_AUTHORITY_WORKER_LOG_BOUNDS_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(noFaff.WINDOWS_AUTHORITY_NO_FAFF_RESCUE_PATHS_V1) !== JSON.stringify(EXPECTED_NO_FAFF_PATHS)) throw new Error('WINDOWS_AUTHORITY_NO_FAFF_RESCUE_PATH_INVENTORY_MISMATCH');
+if (JSON.stringify(mailboxCadence.WINDOWS_AUTHORITY_MAILBOX_CADENCE_PATHS_V1) !== JSON.stringify(EXPECTED_MAILBOX_CADENCE_PATHS)) throw new Error('WINDOWS_AUTHORITY_MAILBOX_CADENCE_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(mailboxRecoveryGuardian.WINDOWS_AUTHORITY_MAILBOX_RECOVERY_GUARDIAN_PATHS_V1) !== JSON.stringify(EXPECTED_MAILBOX_RECOVERY_GUARDIAN_PATHS)) throw new Error('WINDOWS_AUTHORITY_MAILBOX_RECOVERY_GUARDIAN_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(recoveryGuardian.WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1) !== JSON.stringify(EXPECTED_RECOVERY_GUARDIAN_PATHS)) throw new Error('WINDOWS_AUTHORITY_RECOVERY_GUARDIAN_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(recoveryMeshLaunchLiveness.WINDOWS_AUTHORITY_RECOVERY_MESH_LAUNCH_LIVENESS_PATHS_V1) !== JSON.stringify(EXPECTED_RECOVERY_MESH_LAUNCH_LIVENESS_PATHS)) throw new Error('WINDOWS_AUTHORITY_RECOVERY_MESH_LAUNCH_LIVENESS_PATH_INVENTORY_MISMATCH');
@@ -147,6 +153,7 @@ export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
   const mobileRecoveryLifeboatInstallerResult = mobileRecoveryLifeboatInstaller.analyzeWindowsAuthorityMobileRecoveryLifeboatInstallerReview(input); if (mobileRecoveryLifeboatInstallerResult.eligible) return mobileRecoveryLifeboatInstallerResult;
   const forgeM3ExecutorResult = forgeM3Executor.analyzeWindowsAuthorityForgeM3ExecutorReview(input); if (forgeM3ExecutorResult.eligible) return forgeM3ExecutorResult;
   const forgePodmanPrerequisiteResult = forgePodmanPrerequisite.analyzeWindowsAuthorityForgePodmanPrerequisiteReview(input); if (forgePodmanPrerequisiteResult.eligible) return forgePodmanPrerequisiteResult;
+  const mailboxCadenceResult = mailboxCadence.analyzeWindowsAuthorityMailboxCadenceReviewV1(input); if (mailboxCadenceResult.eligible) return mailboxCadenceResult;
   const coreResult = core.analyzeWindowsAuthoritySpecialistReview(input); if (coreResult.eligible) return coreResult;
   const noFaffResult = noFaff.analyzeWindowsAuthorityNoFaffRescueReview(input); if (noFaffResult.eligible) return noFaffResult;
   const mailboxRecoveryGuardianResult = mailboxRecoveryGuardian.analyzeWindowsAuthorityMailboxRecoveryGuardianReview(input); if (mailboxRecoveryGuardianResult.eligible) return mailboxRecoveryGuardianResult;
