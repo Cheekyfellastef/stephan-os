@@ -351,17 +351,27 @@ function exactActiveSourceMutationLease(read, expected) {
 }
 
 async function publishExactWorkerAction(deps, workerActionGrant, serviceOptions) {
-  const dispatch = await requiredFunction(
-    deps.publishWorkerAction,
-    'publishWorkerAction',
-  )({ ...serviceOptions, actionGrant: workerActionGrant });
-  return freeze({
-    published: dispatch?.published === true,
-    actionGrantAccepted: dispatch?.actionGrantAccepted === true,
-    reason: text(dispatch?.reason),
-    actionId: text(dispatch?.action?.actionId),
-    result: dispatch ?? null,
-  });
+  try {
+    const dispatch = await requiredFunction(
+      deps.publishWorkerAction,
+      'publishWorkerAction',
+    )({ ...serviceOptions, actionGrant: workerActionGrant });
+    return freeze({
+      published: dispatch?.published === true,
+      actionGrantAccepted: dispatch?.actionGrantAccepted === true,
+      reason: text(dispatch?.reason),
+      actionId: text(dispatch?.action?.actionId, text(workerActionGrant?.actionId)),
+      result: dispatch ?? null,
+    });
+  } catch (error) {
+    return freeze({
+      published: false,
+      actionGrantAccepted: false,
+      reason: `worker-action-publication-exception:${text(error?.message, 'unknown')}`,
+      actionId: text(workerActionGrant?.actionId),
+      result: null,
+    });
+  }
 }
 
 function withWorkerDispatch(result, workerActionGrant, dispatch) {
