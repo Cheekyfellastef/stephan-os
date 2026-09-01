@@ -138,7 +138,7 @@ function Test-CanonicalWorkerProcessCommandLine {
 function Read-PublicMainHead {
     param([string]$GitExecutable)
 
-    $output = @(& $GitExecutable 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>&1)
+    $output = @(& $GitExecutable 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>$null)
     if ($LASTEXITCODE -ne 0) {
         throw ('git ls-remote failed: {0}' -f (($output | ForEach-Object { [string]$_ }) -join ' '))
     }
@@ -348,12 +348,12 @@ try {
         }
     }
     $gitAvailable = $true
-    $repositoryBranchOutput = @(& $canonicalGit -C $repositoryRoot symbolic-ref --quiet --short HEAD 2>&1)
+    $repositoryBranchOutput = @(& $canonicalGit -C $repositoryRoot symbolic-ref --quiet --short HEAD 2>$null)
     if ($LASTEXITCODE -ne 0) {
         throw ('git symbolic-ref failed: {0}' -f (($repositoryBranchOutput | ForEach-Object { [string]$_ }) -join ' '))
     }
     $repositoryBranch = ([string]$repositoryBranchOutput[0]).Trim()
-    $repositoryHeadOutput = @(& $canonicalGit -C $repositoryRoot rev-parse --verify HEAD 2>&1)
+    $repositoryHeadOutput = @(& $canonicalGit -C $repositoryRoot rev-parse --verify HEAD 2>$null)
     if ($LASTEXITCODE -ne 0) {
         throw ('git rev-parse failed: {0}' -f (($repositoryHeadOutput | ForEach-Object { [string]$_ }) -join ' '))
     }
