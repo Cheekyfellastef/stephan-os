@@ -21,6 +21,7 @@ test('cleanup fallback can prove only a newly-created exact canonical worker whe
   assert.match(helper, /ProcessStartedAtUtc/);
   assert.match(helper, /Ticks\s*-le\s*\$StartedAfterUtc\.ToUniversalTime\(\)\.Ticks/);
   assert.match(helper, /Get-ScheduledTask/);
+  assert.ok(helper.includes("-TaskPath '\\\\'"));
   assert.match(helper, /Running/);
   assert.match(helper, /Queued/);
   assert.match(helper, /ProcessCapability/);
@@ -36,7 +37,7 @@ test('cleanup still prefers exact invocation launch receipt and only falls back 
   const receipt = cleanup.indexOf('Get-VerifiedInvocationProcessFromLaunchReceipt');
   const fallback = cleanup.indexOf('Get-VerifiedCleanupFallbackWorkerProcess');
   assert.ok(claim >= 0 && receipt > claim && fallback > receipt);
-  assert.match(cleanup, /MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_NOT_PROVEN/);
+  assert.match(cleanup, /MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN/);
   assert.match(cleanup, /ExpectedProcessId/);
   assert.match(cleanup, /ExpectedProcessStartedAtUtc/);
 });
@@ -44,8 +45,8 @@ test('cleanup still prefers exact invocation launch receipt and only falls back 
 test('cleanup fallback remains fail closed on pre-existing, ambiguous, changed, or non-canonical workers', () => {
   const helper = sliceFunction('Get-VerifiedCleanupFallbackWorkerProcess', 'Stop-NewlyStartedOwnedWorker');
   assert.match(helper, /Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat/);
-  assert.match(helper, /MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_NOT_PROVEN/);
-  assert.match(helper, /MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_IDENTITY_CHANGED/);
+  assert.match(helper, /MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN/);
+  assert.match(helper, /MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED/);
   assert.match(helper, /ProcessId/);
   assert.match(helper, /ProcessStartedAtUtc/);
   assert.doesNotMatch(helper, /Kill\(/);
