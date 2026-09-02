@@ -46,6 +46,22 @@ test('recovers one already-successful workflow-dispatch artifact through the exi
   assert.match(consume, /node scripts\/exact-head-review-dispatch\.mjs/);
 });
 
+test('defers stale-receipt escalation until successful artifact recovery has been attempted', () => {
+  const workflow = readWorkflow();
+  const coordinate = step(workflow, 'Evaluate and advance one PR-scoped exact-head review state', 'Bind exact coordinator-run provenance to the exact review handoff');
+  const consume = step(workflow, 'Consume recovered successful independent review result', 'Finalize a genuinely unrecoverable missing receipt');
+  const finalize = step(workflow, 'Finalize a genuinely unrecoverable missing receipt');
+
+  assert.match(coordinate, /STEPHANOS_DEFER_MISSING_RECEIPT_ESCALATION:\s*'true'/);
+  assert.doesNotMatch(consume, /STEPHANOS_DEFER_MISSING_RECEIPT_ESCALATION/);
+  assert.match(finalize, /steps\.coordinate\.outputs\.recovery_deferred == 'true'/);
+  assert.match(finalize, /steps\.retry\.outputs\.decision == 'ALREADY_SUCCESSFUL'/);
+  assert.match(finalize, /steps\.launch_missing\.outputs\.decision == 'ALREADY_SUCCESSFUL'/);
+  assert.match(finalize, /steps\.consume_recovered_review\.outcome != 'success'/);
+  assert.match(finalize, /STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED:\s*'false'/);
+  assert.equal((workflow.match(/Finalize a genuinely unrecoverable missing receipt/g) || []).length, 1);
+});
+
 test('successful artifact recovery adds no second review dispatch, reviewer, or direct receipt parser', () => {
   const workflow = readWorkflow();
   assert.equal((workflow.match(/node scripts\/launch-missing-independent-review-v1\.mjs/g) || []).length, 1);

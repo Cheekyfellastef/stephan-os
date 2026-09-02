@@ -55,7 +55,7 @@ test('summary remains machine-readable and bounded for GitHub receipts', () => {
   assert.doesNotMatch(json, MACHINE_PATH_PATTERN);
 });
 
-test('mailbox receipt reads, watchdog acceptance, shared workspace and post-sync refresh are discoverable capabilities', () => {
+test('mailbox receipt reads, watchdog acceptance, diagnostic link, shared workspace and post-sync refresh are discoverable capabilities', () => {
   const mailbox = findStephanosCapability('battle-bridge-github-command-mailbox');
   const workspace = findStephanosCapability('shared-agent-workspace');
   const refresh = findStephanosCapability('post-sync-runtime-refresh-coordinator');
@@ -63,6 +63,7 @@ test('mailbox receipt reads, watchdog acceptance, shared workspace and post-sync
   assert.ok(mailbox.operations.includes('READ_SHARED_WORKSPACE_STATUS'));
   assert.ok(mailbox.operations.includes('READ_MAILBOX_RECEIPT'));
   assert.ok(mailbox.operations.includes('RUN_WORKER_WATCHDOG_ACCEPTANCE'));
+  assert.ok(mailbox.operations.includes('RUN_MISSION_WORKER_DIAGNOSTIC_LINK'));
   assert.ok(mailbox.operations.includes('INSTALL_BATTLE_BRIDGE_RECOVERY_MESH'));
   assert.ok(mailbox.operations.includes('WAKE_BATTLE_BRIDGE_RECOVERY_MESH'));
   assert.equal(mailbox.runtimeMutationAllowed, true);
