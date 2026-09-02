@@ -48,155 +48,8 @@ jobs:
             pr_number="${ISSUE_PR_NUMBER}"
             marker_prefix='<!-- stephanos:provider-neutral-assurance:v1 head='
             marker_suffix=' -->'
-            first_line="${COMMENT_BODY%%      - name: Checkout trusted reviewer
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.identity.outputs.base_sha }}
-          persist-credentials: false
-
-      - name: Verify trusted reviewer source
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "${{ steps.identity.outputs.base_sha }}"
-
-      - name: Admit exact current-main review target
-        id: admission
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ steps.identity.outputs.pr_number }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          export STEPHANOS_REVIEW_PLAN_TARGETS="[{\"prNumber\":${PR_NUMBER}}]"
-          node scripts/exact-head-review-current-main-admission-v1.mjs
-
-      - name: Require exact current-main admission
-        env:
-          PR_NUMBER: ${{ steps.identity.outputs.pr_number }}
-          ADMITTED_TARGETS: ${{ steps.admission.outputs.targets }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "${ADMITTED_TARGETS}" = "[{\"prNumber\":${PR_NUMBER}}]"
-
-      - name: Run trusted engine regressions
-        run: node --test scripts/exact-head-review.test.mjs
-
-      - name: Build immutable exact-head review input
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ steps.identity.outputs.pr_number }}
-          BASE_SHA: ${{ steps.identity.outputs.base_sha }}
-          HEAD_SHA: ${{ steps.identity.outputs.head_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p review-proof
-
-          observed_before="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
-          test "${observed_before}" = "${HEAD_SHA}"
-
-          gh api --paginate "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" \
-            --jq '.[].filename' > review-proof/changed-files.txt
-          gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}" \
-            -H 'Accept: application/vnd.github.v3.diff' > review-proof/pull-request.patch
-
-          observed_after="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
-          test "${observed_after}" = "${HEAD_SHA}"
-
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs';
-          const changedFiles = fs.readFileSync('review-proof/changed-files.txt', 'utf8').split(/\r?\n/).filter(Boolean);
-          const patch = fs.readFileSync('review-proof/pull-request.patch', 'utf8');
-          fs.writeFileSync('review-proof/input.json', JSON.stringify({
-            repository: process.env.REPOSITORY,
-            prNumber: Number(process.env.PR_NUMBER),
-            baseSha: process.env.BASE_SHA,
-            headSha: process.env.HEAD_SHA,
-            changedFiles,
-            patch,
-          }));
-          NODE
-
-      - name: Review exact head with trusted engine
-        run: node scripts/exact-head-review.mjs review-proof/input.json review-proof/receipt.json
-
-      - name: Upload SHA-bound review receipt
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: exact-head-review-${{ steps.identity.outputs.pr_number }}-${{ steps.identity.outputs.head_sha }}
-          path: review-proof/
-          if-no-files-found: error
-          retention-days: 30
-\n'*}"
-            first_line="${first_line%      - name: Checkout trusted reviewer
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.identity.outputs.base_sha }}
-          persist-credentials: false
-
-      - name: Verify trusted reviewer source
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "${{ steps.identity.outputs.base_sha }}"
-
-      - name: Run trusted engine regressions
-        run: node --test scripts/exact-head-review.test.mjs
-
-      - name: Build immutable exact-head review input
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ steps.identity.outputs.pr_number }}
-          BASE_SHA: ${{ steps.identity.outputs.base_sha }}
-          HEAD_SHA: ${{ steps.identity.outputs.head_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p review-proof
-
-          observed_before="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
-          test "${observed_before}" = "${HEAD_SHA}"
-
-          gh api --paginate "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" \
-            --jq '.[].filename' > review-proof/changed-files.txt
-          gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}" \
-            -H 'Accept: application/vnd.github.v3.diff' > review-proof/pull-request.patch
-
-          observed_after="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
-          test "${observed_after}" = "${HEAD_SHA}"
-
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs';
-          const changedFiles = fs.readFileSync('review-proof/changed-files.txt', 'utf8').split(/\r?\n/).filter(Boolean);
-          const patch = fs.readFileSync('review-proof/pull-request.patch', 'utf8');
-          fs.writeFileSync('review-proof/input.json', JSON.stringify({
-            repository: process.env.REPOSITORY,
-            prNumber: Number(process.env.PR_NUMBER),
-            baseSha: process.env.BASE_SHA,
-            headSha: process.env.HEAD_SHA,
-            changedFiles,
-            patch,
-          }));
-          NODE
-
-      - name: Review exact head with trusted engine
-        run: node scripts/exact-head-review.mjs review-proof/input.json review-proof/receipt.json
-
-      - name: Upload SHA-bound review receipt
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: exact-head-review-${{ steps.identity.outputs.pr_number }}-${{ steps.identity.outputs.head_sha }}
-          path: review-proof/
-          if-no-files-found: error
-          retention-days: 30
-\r'}"
+            first_line="${COMMENT_BODY%%$'\n'*}"
+            first_line="${first_line%$'\r'}"
             [[ "${first_line}" == "${marker_prefix}"*"${marker_suffix}" ]]
             expected_head="${first_line#${marker_prefix}}"
             expected_head="${expected_head%${marker_suffix}}"
@@ -228,6 +81,27 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ steps.identity.outputs.base_sha }}"
+
+      - name: Admit exact current-main review target
+        id: admission
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.identity.outputs.pr_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export STEPHANOS_REVIEW_PLAN_TARGETS="[{\"prNumber\":${PR_NUMBER}}]"
+          node scripts/exact-head-review-current-main-admission-v1.mjs
+
+      - name: Require exact current-main admission
+        env:
+          PR_NUMBER: ${{ steps.identity.outputs.pr_number }}
+          ADMITTED_TARGETS: ${{ steps.admission.outputs.targets }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${ADMITTED_TARGETS}" = "[{\"prNumber\":${PR_NUMBER}}]"
 
       - name: Run trusted engine regressions
         run: node --test scripts/exact-head-review.test.mjs
