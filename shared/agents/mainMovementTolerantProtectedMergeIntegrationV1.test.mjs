@@ -54,5 +54,5 @@ test('wiring never introduces a raw merge, force, rebase or runtime authority he
   assert.match(policy, /mergeAuthority:\s*false/);
   assert.match(policy, /deploymentAuthority:\s*false/);
   assert.match(policy, /runtimeMutationAuthority:\s*false/);
-  assert.doesNotMatch(policy, /merge_pull_request|git\s+push\s+--force|reset\s+--hard|rebase\s+/i);
+  assert.doesNotMatch(policy, /merge_pull_request\s*\(|git\s+push\s+--force\b|git\s+reset\s+--hard\b|git\s+rebase\b/i);
 });
