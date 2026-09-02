@@ -1,3 +1,7 @@
+import {
+  isProvenanceBootstrapDispatchCompatibilityTarget,
+} from './operatorPersonalRepositoryProvenanceBootstrapV1.mjs';
+
 export const INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_EXECUTION_SCHEMA = 'stephanos.independent-review-workflow-dispatch-execution.v1';
 
 const WORKFLOW_NAME = 'Independent Merge Security Review';
@@ -98,6 +102,15 @@ export function validateIndependentReviewWorkflowDispatchExecutionV1(run = {}, j
     || text(reviewJob?.conclusion).toLowerCase() !== 'success'
     || (text(reviewJob?.run_url) && !text(reviewJob.run_url).endsWith(`/actions/runs/${workflowRunId}`))) {
     blockers.push('dispatch-review-job-not-green');
+  }
+
+  if (blockers.length === 0 && isProvenanceBootstrapDispatchCompatibilityTarget({
+    prNumber,
+    expectedBranch,
+    expectedHead,
+    expectedBaseSha,
+  })) {
+    blockers.push('dispatch-review-qualified-bootstrap-compatibility-required');
   }
 
   return Object.freeze({
