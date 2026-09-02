@@ -345,7 +345,7 @@ test('READY projection continues the already-active backlog mission with one exa
   assert.equal(result.workerActionGrant.currentPhase, 'CREATE_WORKTREE');
   assert.equal(result.workerActionGrant.adapter, 'openclaw-signed');
   assert.equal(result.workerActionGrant.operation, 'create-worktree');
-  assert.match(result.nextAction, /continue the conveyor-authorized mission/i);
+  assert.match(result.nextAction, /published the conveyor-authorized mission/i);
 });
 
 test('READY source work claims, rereads, and exposes only the exact active canonical lease', async () => {
