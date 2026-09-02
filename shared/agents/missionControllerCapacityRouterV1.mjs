@@ -50,6 +50,13 @@ const REROUTABLE_EXECUTION_SURFACE_FAILURES = new Set([
   EXECUTION_SURFACE_FAILURE_CLASS.UNKNOWN_INFRASTRUCTURE_FAILURE,
 ]);
 
+export const MISSION_CONTROLLER_LIVENESS = Object.freeze({
+  KEEP_ENABLED: 'KEEP_ENABLED',
+  DISABLE_OPERATOR_REQUESTED: 'DISABLE_OPERATOR_REQUESTED',
+  DISABLE_SAFE_HOLD: 'DISABLE_SAFE_HOLD',
+});
+const EXECUTION_SURFACE_SUPPRESSION_MS = 15 * 60 * 1000;
+
 const RECEIPT_KEYS = Object.freeze([
   'schemaVersion', 'receiptId', 'route', 'repository', 'workerId', 'state',
   'supportedOperations', 'supportedTaskClasses', 'observedAtUtc', 'expiresAtUtc',
@@ -150,15 +157,47 @@ export function classifyExecutionSurfaceFailure(observation = {}, expected = {})
     || ['CONNECTOR_ERROR', 'TOOL_UNAVAILABLE', 'EXECUTION_SURFACE_UNAVAILABLE'].includes(code)) {
     classification = EXECUTION_SURFACE_FAILURE_CLASS.CHATGPT_CONNECTOR_FAILURE;
   }
+  const reroutable = REROUTABLE_EXECUTION_SURFACE_FAILURES.has(classification);
   return frozen({
     valid: true,
     route,
     classification,
-    reroutable: REROUTABLE_EXECUTION_SURFACE_FAILURES.has(classification),
+    reroutable,
     attemptCount,
     expectedReceiptObserved: false,
     observedAtUtc: observation.observedAtUtc,
+    suppressRouteUntilUtc: reroutable
+      ? new Date(nowMs + EXECUTION_SURFACE_SUPPRESSION_MS).toISOString()
+      : '',
     reason: 'EXECUTION_SURFACE_FAILURE_CLASSIFIED',
+  });
+}
+
+export function decideMissionControllerLiveness(input = {}) {
+  const explicitOperatorDisable = input.explicitOperatorDisable === true;
+  const safeHold = input.safeHold === true;
+  const contradictoryEvidenceProved = input.contradictoryEvidenceProved === true;
+  if (explicitOperatorDisable) {
+    return frozen({
+      state: MISSION_CONTROLLER_LIVENESS.DISABLE_OPERATOR_REQUESTED,
+      keepEnabled: false,
+      disableAllowed: true,
+      reason: 'EXPLICIT_OPERATOR_DISABLE',
+    });
+  }
+  if (safeHold && contradictoryEvidenceProved) {
+    return frozen({
+      state: MISSION_CONTROLLER_LIVENESS.DISABLE_SAFE_HOLD,
+      keepEnabled: false,
+      disableAllowed: true,
+      reason: 'PROVED_SAFE_HOLD',
+    });
+  }
+  return frozen({
+    state: MISSION_CONTROLLER_LIVENESS.KEEP_ENABLED,
+    keepEnabled: true,
+    disableAllowed: false,
+    reason: safeHold ? 'SAFE_HOLD_NOT_PROVED' : 'CONTROLLER_REMAINS_WORK_CONSERVING',
   });
 }
 function exactKeys(value, keys) {
@@ -538,12 +577,14 @@ function selectFallback(input, task, nowUtc, excludedRoutes = new Set()) {
 export function routeMissionControllerCapacity(input = {}) {
   const nowUtc = text(input.nowUtc);
   const task = taskForMission(input.mission, input.task);
+  const controllerLiveness = decideMissionControllerLiveness(input.controllerLiveness);
   const base = {
     schemaVersion: MISSION_CONTROLLER_CAPACITY_ROUTER_SCHEMA,
     missionId: text(input.mission?.missionId),
     repository: text(input.mission?.repository),
     task,
     evaluatedAtUtc: nowUtc,
+    controllerLiveness,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
     duplicateDispatchAllowed: false,
