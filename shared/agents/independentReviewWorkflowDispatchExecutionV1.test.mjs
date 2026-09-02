@@ -131,3 +131,41 @@ test('accepts only an explicitly trusted main workflow ref suffix', () => {
     options(),
   ).valid, false);
 });
+
+test('routes only the exact PR #2100 tuple into the one-time qualified-bootstrap compatibility path', () => {
+  const bootstrapPr = 2100;
+  const bootstrapHead = '24ca1d1f91ab95a41f749fea3e30a66a8fd832dd';
+  const bootstrapBase = 'e8ffb503867ed37affb4744340a61f04135755e6';
+  const bootstrapBranch = 'review/non-codex-mission-worker-cleanup-specialist-v1';
+  const bootstrapName = `stephanos-independent-review-pr-${bootstrapPr}-head-${bootstrapHead}-binding-${binding}`;
+  const bootstrapRun = run({
+    name: bootstrapName,
+    display_title: bootstrapName,
+    head_sha: bootstrapBase,
+  });
+  const exact = validateIndependentReviewWorkflowDispatchExecutionV1(
+    bootstrapRun,
+    jobs(),
+    options({
+      prNumber: bootstrapPr,
+      expectedHead: bootstrapHead,
+      expectedBranch: bootstrapBranch,
+      expectedBaseSha: bootstrapBase,
+    }),
+  );
+  assert.equal(exact.valid, false);
+  assert.deepEqual(exact.blockers, ['dispatch-review-qualified-bootstrap-compatibility-required']);
+
+  const adjacent = validateIndependentReviewWorkflowDispatchExecutionV1(
+    bootstrapRun,
+    jobs(),
+    options({
+      prNumber: bootstrapPr,
+      expectedHead: bootstrapHead,
+      expectedBranch: 'review/not-the-bootstrap-branch',
+      expectedBaseSha: bootstrapBase,
+    }),
+  );
+  assert.equal(adjacent.valid, true);
+  assert.equal(adjacent.blockers.includes('dispatch-review-qualified-bootstrap-compatibility-required'), false);
+});
