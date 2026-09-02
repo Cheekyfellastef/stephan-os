@@ -37,6 +37,27 @@ test('detects common child-process execution entry points', () => {
   }
 });
 
+test('ignores inert execution-shaped strings and direct RegExp exec while retaining real execution calls', () => {
+  for (const patch of [
+    "+const fixture = \"spawnSync('powershell.exe')\";\n",
+    "+const fixture = 'exec(command)';\n",
+    "+const fixture = \`shell: true spawnSync(command)\`;\n",
+    "+const match = /^goal-(\\d+)-pr-(\\d+)$/i.exec(text(missionId));\n",
+  ]) {
+    const receipt = reviewExactHead({ ...base, patch });
+    assert.equal(receipt.findings.some(({ code }) => code === 'DYNAMIC_EXECUTION'), false, patch);
+  }
+
+  for (const patch of [
+    "+spawnSync('powershell.exe', [], { shell: false });\n",
+    "+child_process.exec(command);\n",
+    "+const fixture = 'spawnSync(command)'; spawnSync(command);\n",
+  ]) {
+    const receipt = reviewExactHead({ ...base, patch });
+    assert.equal(receipt.findings.some(({ code }) => code === 'DYNAMIC_EXECUTION'), true, patch);
+  }
+});
+
 test('blocks likely secrets and conflict markers without matching quoted detector fixtures', () => {
   const receipt = reviewExactHead({
     ...base,
