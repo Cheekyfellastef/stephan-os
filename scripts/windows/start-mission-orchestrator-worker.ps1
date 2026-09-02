@@ -401,7 +401,7 @@ try {
     if ($LASTEXITCODE -ne 0 -or $headSha -notmatch '^[0-9a-f]{40}$') {
         throw 'Mission Orchestrator worker could not prove a canonical 40-character Git head.'
     }
-    $trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
+    $trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
     if ($LASTEXITCODE -ne 0 -or $trackedStatus.Count -ne 0) {
         throw 'Mission Orchestrator worker requires tracked-clean exact-head source.'
     }

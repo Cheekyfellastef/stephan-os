@@ -56,11 +56,35 @@ test('watchdog probe child isolates Git stderr while retaining fixed PowerShell 
   assert.deepEqual(calls[0].options.stdio, ['ignore', 'pipe', 'pipe']);
 });
 
+test('watchdog source identity reads keep Git stderr out of parsed stdout while retaining fail-closed exit checks', async () => {
+  const source = await readFile(new URL('./windows/probe-mission-orchestrator-worker-watchdog.ps1', import.meta.url), 'utf8');
+  const stdoutOnlyReads = [
+    "$output = @(& $GitExecutable 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>$null)",
+    '$repositoryBranchOutput = @(& $canonicalGit -C $repositoryRoot symbolic-ref --quiet --short HEAD 2>$null)',
+    '$repositoryHeadOutput = @(& $canonicalGit -C $repositoryRoot rev-parse --verify HEAD 2>$null)',
+    "$trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)",
+  ];
+  const contaminatedReads = [
+    "$output = @(& $GitExecutable 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>&1)",
+    '$repositoryBranchOutput = @(& $canonicalGit -C $repositoryRoot symbolic-ref --quiet --short HEAD 2>&1)',
+    '$repositoryHeadOutput = @(& $canonicalGit -C $repositoryRoot rev-parse --verify HEAD 2>&1)',
+    "$trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)",
+  ];
+
+  for (const read of stdoutOnlyReads) assert.equal(source.includes(read), true, `missing stdout-only Git identity read: ${read}`);
+  for (const read of contaminatedReads) assert.equal(source.includes(read), false, `Git stderr must not contaminate parsed source proof: ${read}`);
+  assert.match(source, /if \(\$LASTEXITCODE -ne 0\) \{\s*throw \('git symbolic-ref failed:/);
+  assert.match(source, /if \(\$LASTEXITCODE -ne 0\) \{\s*throw \('git rev-parse failed:/);
+  assert.match(source, /if \(\$LASTEXITCODE -ne 0\) \{\s*throw \('git ls-remote failed:/);
+  assert.match(source, /if \(\$trackedStatus\.Count -ne 0\) \{\s*throw 'Canonical repository tracked source is dirty\.'/);
+});
+
 test('Mission Worker launcher scopes Git stderr isolation only to canonical Git preflight and restores it before worker launch', async () => {
   const source = await readFile(new URL('./windows/start-mission-orchestrator-worker.ps1', import.meta.url), 'utf8');
   const save = "$previousGitRedirectStderr = [Environment]::GetEnvironmentVariable('GIT_REDIRECT_STDERR', 'Process')";
   const enable = "$env:GIT_REDIRECT_STDERR = 'off'";
-  const cleanProof = "$trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)";
+  const cleanProof = "$trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)";
+  const contaminatedCleanProof = "$trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)";
   const restore = "Remove-Item Env:GIT_REDIRECT_STDERR -ErrorAction SilentlyContinue";
   const restoreExisting = '$env:GIT_REDIRECT_STDERR = $previousGitRedirectStderr';
   const workerLaunch = '$processStartInfo = New-Object System.Diagnostics.ProcessStartInfo';
@@ -70,6 +94,7 @@ test('Mission Worker launcher scopes Git stderr isolation only to canonical Git 
   assert.ok(source.indexOf(save) >= 0);
   assert.ok(source.indexOf(enable) > source.indexOf(save));
   assert.ok(source.indexOf(cleanProof) > source.indexOf(enable));
+  assert.equal(source.includes(contaminatedCleanProof), false);
   assert.ok(source.indexOf(restore) > source.indexOf(cleanProof));
   assert.ok(source.indexOf(restoreExisting) > source.indexOf(cleanProof));
   assert.ok(source.indexOf(startInvocation) > source.indexOf(restore));
