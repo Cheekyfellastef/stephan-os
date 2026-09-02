@@ -29,8 +29,23 @@ export const OPENCLAW_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1 = Object.freeze([
   'scripts/independent-merge-security-review-with-openclaw-specialist-v1.mjs',
   'shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs',
   'shared/agents/openClawBuilderProviderSpecialistReviewV1.test.mjs',
+  'shared/agents/openClawBuilderProviderSpecialistReviewLegacyV1.mjs',
+  'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs',
+  'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.test.mjs',
   'shared/agents/openClawOc2SpecialistReviewV1.mjs',
   'shared/agents/openClawOc2SpecialistReviewV1.test.mjs',
+]);
+
+export const REVIEW_DISPATCH_IDENTITY_BOUNDARY_PATHS_V1 = Object.freeze([
+  'shared/agents/independentReviewWorkflowDispatchExecutionV1.mjs',
+  'shared/agents/independentReviewWorkflowDispatchExecutionV1.test.mjs',
+  'shared/agents/independentReviewWorkflowDispatchRunDiscoveryV1.mjs',
+  'shared/agents/independentReviewWorkflowDispatchRunDiscoveryV1.test.mjs',
+]);
+
+const EXTENDED_APPROVAL_BOUNDARY_PATHS_V1 = Object.freeze([
+  ...OPENCLAW_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1,
+  ...REVIEW_DISPATCH_IDENTITY_BOUNDARY_PATHS_V1,
 ]);
 
 function text(value) {
@@ -53,7 +68,7 @@ function approvalBoundaryFinding(path) {
   return Object.freeze({
     severity: 'P0',
     code: APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE,
-    summary: 'A live OpenClaw reviewer-specialist boundary self-change requires a separate qualified bootstrap review and cannot self-attest clean.',
+    summary: 'A live protected review or merge identity boundary self-change requires a separate qualified bootstrap review and cannot self-attest clean.',
     path,
   });
 }
@@ -63,13 +78,13 @@ export function analyzeIndependentSecurityReview(input = {}) {
   const changedFiles = (Array.isArray(input.changedFiles) ? input.changedFiles : [])
     .flatMap(changedFilePaths)
     .filter(Boolean);
-  const activeBoundaryPaths = OPENCLAW_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1
+  const activeBoundaryPaths = EXTENDED_APPROVAL_BOUNDARY_PATHS_V1
     .filter((path) => changedFiles.includes(path));
   if (activeBoundaryPaths.length === 0) return legacy;
 
   const findings = (Array.isArray(legacy?.findings) ? legacy.findings : []).filter((item) => !(
     text(item?.code) === 'unsupported-high-risk-surface'
-    && OPENCLAW_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1.includes(text(item?.path))
+    && EXTENDED_APPROVAL_BOUNDARY_PATHS_V1.includes(text(item?.path))
   ));
   const existingApprovalBoundaryPaths = new Set(findings
     .filter((item) => text(item?.code) === APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE)
