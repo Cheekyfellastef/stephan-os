@@ -19,7 +19,7 @@ function denseArray(value) {
 }
 
 function repositoryPathResource(value) {
-  const match = /^repo:([^:]+\/[^:]+):path:(.+)$/.exec(value);
+  const match = value.match(/^repo:([^:]+\/[^:]+):path:(.+)$/);
   if (!match) return null;
   const segments = match[2].split('/');
   if (segments.some((segment) => (
