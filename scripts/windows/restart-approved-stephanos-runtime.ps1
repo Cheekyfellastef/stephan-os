@@ -794,7 +794,13 @@ function Get-VerifiedCleanupFallbackWorkerProcess {
         Stop-WithBlocker 'MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_NOT_PROVEN'
     }
 
-    $candidate = Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat -ExpectedRepoRoot $ExpectedRepoRoot
+    $candidate = $null
+    try {
+        $candidate = Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat -ExpectedRepoRoot $ExpectedRepoRoot
+    }
+    catch {
+        Stop-WithBlocker 'MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_NOT_PROVEN'
+    }
     if (-not $candidate) { Stop-WithBlocker 'MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_NOT_PROVEN' }
     if ($candidate.ProcessStartedAtUtc.ToUniversalTime().Ticks -le $StartedAfterUtc.ToUniversalTime().Ticks) {
         if ($candidate.ProcessCapability) { $candidate.ProcessCapability.Dispose() }
@@ -916,6 +922,7 @@ function Stop-NewlyStartedOwnedWorker {
         $cleanupFallbackUsed = $true
         $ExpectedProcessId = $fallbackProcess.ProcessId
         $ExpectedProcessStartedAtUtc = $fallbackProcess.ProcessStartedAtUtc
+        if ($fallbackProcess.ProcessCapability) { $fallbackProcess.ProcessCapability.Dispose() }
     }
 
     $verifiedWorker = $null
@@ -985,6 +992,10 @@ function Stop-NewlyStartedOwnedWorker {
         workerPid = $ExpectedProcessId
         workerStartedAtUtc = $ExpectedProcessStartedAtUtc.ToUniversalTime().ToString('o')
     })
+
+    if ($reverifiedWorker -and $reverifiedWorker.PSObject.Properties.Name -contains 'ProcessCapability' -and $reverifiedWorker.ProcessCapability) {
+        $reverifiedWorker.ProcessCapability.Dispose()
+    }
 
     if ($ExpectedProcessId -gt 0 -and -not (Wait-UntilOperationDeadline -ReserveSeconds 1 -Condition {
         -not (Get-CimInstance Win32_Process -Filter "ProcessId = $ExpectedProcessId" -ErrorAction SilentlyContinue)
