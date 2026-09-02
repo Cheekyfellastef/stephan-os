@@ -41,10 +41,20 @@ export const VR_RESEARCH_AGENT_ACTIONS = Object.freeze({
 
 export const VR_RESEARCH_AGENT_ROUTES = Object.freeze({
   GITHUB_FIRST: 'CHATGPT_GITHUB',
+  GITHUB_NATIVE: 'GITHUB_NATIVE',
   OPENCLAW_LOCAL: 'OPENCLAW_LOCAL',
+  FORGE: 'FORGE',
+  STEPHANOS_NATIVE: 'STEPHANOS_NATIVE',
+  SHARED_WORKSPACE_PENDING: 'SHARED_WORKSPACE_PUBLICATION_PENDING',
   BATTLE_BRIDGE: 'BATTLE_BRIDGE_FIXED_TEST',
   WAITING: 'WAITING_FOR_EXTERNAL_CONDITION',
   BLOCKED: 'BLOCKED_UNSAFE_OR_UNKNOWN',
+});
+
+export const VR_RESEARCH_PUBLICATION_STATES = Object.freeze({
+  NOT_REQUIRED: 'NOT_REQUIRED',
+  ROUTABLE: 'ROUTABLE',
+  PRESERVED_PENDING_WRITER: 'PRESERVED_PENDING_WRITER',
 });
 
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
@@ -155,10 +165,39 @@ export function buildVrResearchAgentReadModel(input = {}) {
   });
 }
 
-function routeForAction(action, input = {}) {
-  const available = input.availableSurfaces && typeof input.availableSurfaces === 'object'
+function availableSurfaces(input = {}) {
+  return input.availableSurfaces && typeof input.availableSurfaces === 'object'
     ? input.availableSurfaces
     : {};
+}
+
+function chatgptGithubWriteBlocked(available = {}) {
+  return available.openAiGithubWriteBlocked === true
+    || available.chatgptGithubWrite === false
+    || available.chatgptGithubCommentWrite === false
+    || available.chatgptGithubCommentWriteAvailable === false;
+}
+
+export function selectVrResearchPublicationRoute(input = {}) {
+  const available = availableSurfaces(input);
+  if (!chatgptGithubWriteBlocked(available)) return VR_RESEARCH_AGENT_ROUTES.GITHUB_FIRST;
+  if (available.githubNativePublisher === true || available.githubNativeCommentWrite === true) {
+    return VR_RESEARCH_AGENT_ROUTES.GITHUB_NATIVE;
+  }
+  if (available.openClawPublisher === true || available.openClawGithubCommentWrite === true) {
+    return VR_RESEARCH_AGENT_ROUTES.OPENCLAW_LOCAL;
+  }
+  if (available.forgePublisher === true || available.forgeGithubCommentWrite === true) {
+    return VR_RESEARCH_AGENT_ROUTES.FORGE;
+  }
+  if (available.stephanosNativePublisher === true || available.stephanosNativeGithubCommentWrite === true) {
+    return VR_RESEARCH_AGENT_ROUTES.STEPHANOS_NATIVE;
+  }
+  return VR_RESEARCH_AGENT_ROUTES.SHARED_WORKSPACE_PENDING;
+}
+
+function routeForAction(action, input = {}) {
+  const available = availableSurfaces(input);
   if (action === VR_RESEARCH_AGENT_ACTIONS.REQUEST_RUNTIME_EVIDENCE) {
     return available.battleBridge === true
       ? VR_RESEARCH_AGENT_ROUTES.BATTLE_BRIDGE
@@ -168,7 +207,39 @@ function routeForAction(action, input = {}) {
     return VR_RESEARCH_AGENT_ROUTES.OPENCLAW_LOCAL;
   }
   if (action === VR_RESEARCH_AGENT_ACTIONS.NO_ACTION) return VR_RESEARCH_AGENT_ROUTES.WAITING;
-  return VR_RESEARCH_AGENT_ROUTES.GITHUB_FIRST;
+  return selectVrResearchPublicationRoute(input);
+}
+
+function discoveryCandidateIds(readModel = {}) {
+  return list(readModel.discoveryCandidates)
+    .map((candidate, index) => text(candidate?.id || candidate?.candidateId, `candidate-${index + 1}`))
+    .sort();
+}
+
+function publicationPlan(action, readModel, input = {}) {
+  const required = action === VR_RESEARCH_AGENT_ACTIONS.TRIAGE_DISCOVERY;
+  const route = required ? selectVrResearchPublicationRoute(input) : null;
+  const candidateIds = required ? discoveryCandidateIds(readModel) : [];
+  const targetIssue = required ? `#${VR_RESEARCH_AGENT_PROGRAMME.discoveryIssue}` : null;
+  const deduplicationKey = required
+    ? `vr-research-publication-${canonicalHash({ action, targetIssue, candidateIds }).slice(0, 24)}`
+    : null;
+  return Object.freeze({
+    required,
+    targetIssue,
+    route,
+    state: !required
+      ? VR_RESEARCH_PUBLICATION_STATES.NOT_REQUIRED
+      : route === VR_RESEARCH_AGENT_ROUTES.SHARED_WORKSPACE_PENDING
+        ? VR_RESEARCH_PUBLICATION_STATES.PRESERVED_PENDING_WRITER
+        : VR_RESEARCH_PUBLICATION_STATES.ROUTABLE,
+    candidateIds: Object.freeze(candidateIds),
+    candidatePreserved: required,
+    deduplicationKey,
+    mergeAuthority: false,
+    sourceMutationAuthority: false,
+    runtimeAuthority: false,
+  });
 }
 
 function proposal(action, reason, readModel, input = {}) {
@@ -180,6 +251,7 @@ function proposal(action, reason, readModel, input = {}) {
     programmeStage: readModel.programmeStage,
     sourceCount: readModel.sourceSummary.sourceCount,
   }).slice(0, 20)}`;
+  const publication = publicationPlan(action, readModel, input);
   return Object.freeze({
     schemaVersion: VR_RESEARCH_AGENT_SCHEMA_VERSION,
     agentId: VR_RESEARCH_AGENT_ID,
@@ -189,6 +261,7 @@ function proposal(action, reason, readModel, input = {}) {
     reason,
     relatedIssue: `#${VR_RESEARCH_AGENT_PROGRAMME.programmeIssue}`,
     requiresOperator: action === VR_RESEARCH_AGENT_ACTIONS.REQUEST_RUNTIME_EVIDENCE,
+    publication,
     mutatesSource: false,
     executesRuntime: false,
     mergeAuthority: false,
@@ -199,9 +272,7 @@ function proposal(action, reason, readModel, input = {}) {
 export function planVrResearchAgentCycle(input = {}) {
   const readModel = buildVrResearchAgentReadModel(input);
   if (!readModel.ready) {
-    const action = readModel.verdict === VR_RESEARCH_AGENT_VERDICTS.WORKSPACE_MISSING
-      ? VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE
-      : VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE;
+    const action = VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE;
     return Object.freeze({
       schemaVersion: VR_RESEARCH_AGENT_SCHEMA_VERSION,
       agentId: VR_RESEARCH_AGENT_ID,
@@ -267,6 +338,7 @@ export function createVrResearchAgentWorkspaceRecords(input = {}) {
       requiresOperator: cycle.proposal.requiresOperator,
       freshness: cycle.readModel.freshness,
       sourceCount: cycle.readModel.sourceSummary.sourceCount,
+      publication: cycle.proposal.publication,
     }),
     proofRefs,
   };
