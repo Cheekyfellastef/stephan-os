@@ -21,7 +21,7 @@ test('cleanup fallback can prove only a newly-created exact canonical worker whe
   assert.match(helper, /ProcessStartedAtUtc/);
   assert.match(helper, /Ticks\s*-le\s*\$StartedAfterUtc\.ToUniversalTime\(\)\.Ticks/);
   assert.match(helper, /Get-ScheduledTask/);
-  assert.ok(helper.includes("-TaskPath '\\\\'"));
+  assert.match(helper, /-TaskPath '\\'/);
   assert.match(helper, /Running/);
   assert.match(helper, /Queued/);
   assert.match(helper, /ProcessCapability/);
