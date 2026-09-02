@@ -918,7 +918,7 @@ function Stop-NewlyStartedOwnedWorker {
             -ExpectedRepoRoot $ExpectedRepoRoot `
             -ExpectedProcessId $ExpectedProcessId `
             -ExpectedProcessStartedAtUtc $ExpectedProcessStartedAtUtc
-        if (-not $fallbackProcess) { Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN' }
+        if (-not $fallbackProcess) { Stop-WithBlocker 'MISSION_WORKER_CLEANUP_LAUNCH_RECEIPT_NOT_PROVEN' }
         $cleanupFallbackUsed = $true
         $ExpectedProcessId = $fallbackProcess.ProcessId
         $ExpectedProcessStartedAtUtc = $fallbackProcess.ProcessStartedAtUtc
