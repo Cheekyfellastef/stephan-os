@@ -31,6 +31,12 @@ function positiveInteger(value) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
+function nonnegativeInteger(value) {
+  if ((typeof value !== 'number' && typeof value !== 'string') || text(value) === '') return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
 function faultText(value) {
   if (!value) return '';
   if (typeof value === 'string') return value;
@@ -77,6 +83,7 @@ export function planProtectedReadyExecutionRoute(input = {}) {
   const head = text(input.head).toLowerCase();
   const headTree = text(input.headTree).toLowerCase();
   const base = text(input.base).toLowerCase();
+  const unresolvedReviewThreads = nonnegativeInteger(input.unresolvedReviewThreads);
   const clientMutationFault = classifyProtectedReadyClientFault(input.clientMutationFailure);
 
   if (repository !== PROTECTED_WORKFLOW_DISPATCH_REPOSITORY) {
@@ -117,7 +124,7 @@ export function planProtectedReadyExecutionRoute(input = {}) {
   if (input.readyTransitionAuthorized !== true) {
     return hold('PROTECTED_READY_OPERATOR_AUTHORIZATION_REQUIRED', clientMutationFault);
   }
-  if (input.exactHeadReviewClean !== true || positiveInteger(input.unresolvedReviewThreads) !== 0) {
+  if (input.exactHeadReviewClean !== true || unresolvedReviewThreads !== 0) {
     return hold('PROTECTED_READY_REVIEW_NOT_CLEAN', clientMutationFault);
   }
   if (input.protectedMailboxAvailable !== true) {
