@@ -42,14 +42,14 @@ function freeze(value) {
 }
 
 function issueFromMissionId(value) {
-  const match = /^critical-([1-9]\d*)-elastic-goal(?:$|[-_.])/.exec(text(value).toLowerCase());
+  const match = text(value).toLowerCase().match(/^critical-([1-9]\d*)-elastic-goal(?:$|[-_.])/);
   return positiveInteger(match?.[1]);
 }
 
 function issueFromGoalRecord(record = {}) {
   const direct = positiveInteger(record.issue ?? record.issueNumber ?? record.relatedIssue);
   if (direct) return direct;
-  const match = /(?:^|[-_.])(?:goal|issue)-([1-9]\d*)(?:$|[-_.])/.exec(text(record.goalId).toLowerCase());
+  const match = text(record.goalId).toLowerCase().match(/(?:^|[-_.])(?:goal|issue)-([1-9]\d*)(?:$|[-_.])/);
   return positiveInteger(match?.[1]);
 }
 
@@ -75,7 +75,7 @@ function sourceScope(candidate = {}, portfolioGoal = {}) {
   const repositories = new Set();
   const paths = [];
   for (const resourceId of projection.resourceIds) {
-    const match = REPOSITORY_PATH_RESOURCE.exec(resourceId);
+    const match = resourceId.match(REPOSITORY_PATH_RESOURCE);
     if (!match) continue;
     repositories.add(match[1]);
     paths.push(match[2]);
