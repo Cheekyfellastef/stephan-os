@@ -788,7 +788,7 @@ function Get-VerifiedCleanupFallbackWorkerProcess {
     if ([string]$Plan.TaskName -ne 'Stephanos Mission Orchestrator Worker') {
         Stop-WithBlocker 'MISSION_WORKER_CLEANUP_TASK_NOT_ALLOWLISTED'
     }
-    $cleanupTask = Get-ScheduledTask -TaskName $Plan.TaskName -TaskPath '\\' -ErrorAction SilentlyContinue
+    $cleanupTask = Get-ScheduledTask -TaskName $Plan.TaskName -TaskPath '\' -ErrorAction SilentlyContinue
     if (-not $cleanupTask) { Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN' }
     if ([string]$cleanupTask.State -in @('Running', 'Queued')) {
         Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN'
