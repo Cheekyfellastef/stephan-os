@@ -34,6 +34,22 @@ export const MISSION_PROVIDER_ROUTE_INTENT = Object.freeze({
   OPENCLAW_LOCAL: MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL,
 });
 
+export const EXECUTION_SURFACE_FAILURE_CLASS = Object.freeze({
+  SOURCE_OR_TEST_FAILURE: 'SOURCE_OR_TEST_FAILURE',
+  GITHUB_REJECTION: 'GITHUB_REJECTION',
+  CHATGPT_CONNECTOR_FAILURE: 'CHATGPT_CONNECTOR_FAILURE',
+  PROVIDER_EXHAUSTION: 'PROVIDER_EXHAUSTION',
+  AUTHORIZATION_GATE: 'AUTHORIZATION_GATE',
+  RUNTIME_GATE: 'RUNTIME_GATE',
+  UNKNOWN_INFRASTRUCTURE_FAILURE: 'UNKNOWN_INFRASTRUCTURE_FAILURE',
+});
+const REROUTABLE_EXECUTION_SURFACE_FAILURES = new Set([
+  EXECUTION_SURFACE_FAILURE_CLASS.GITHUB_REJECTION,
+  EXECUTION_SURFACE_FAILURE_CLASS.CHATGPT_CONNECTOR_FAILURE,
+  EXECUTION_SURFACE_FAILURE_CLASS.PROVIDER_EXHAUSTION,
+  EXECUTION_SURFACE_FAILURE_CLASS.UNKNOWN_INFRASTRUCTURE_FAILURE,
+]);
+
 const RECEIPT_KEYS = Object.freeze([
   'schemaVersion', 'receiptId', 'route', 'repository', 'workerId', 'state',
   'supportedOperations', 'supportedTaskClasses', 'observedAtUtc', 'expiresAtUtc',
@@ -86,6 +102,64 @@ function timestamp(value) {
   if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(normalized)) return null;
   const parsed = Date.parse(normalized);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function classifyExecutionSurfaceFailure(observation = {}, expected = {}) {
+  const route = text(observation.route).toUpperCase();
+  const reason = text(observation.reason).toLowerCase();
+  const code = text(observation.errorCode).toUpperCase();
+  const httpStatus = Number(observation.httpStatus);
+  const attemptCount = Number(observation.attemptCount);
+  const observedAtMs = timestamp(observation.observedAtUtc);
+  const nowMs = timestamp(expected.nowUtc);
+  const exactIdentity = text(observation.missionId) === text(expected.missionId)
+    && text(observation.repository) === text(expected.repository)
+    && FULL_SHA.test(text(observation.sourceHead))
+    && text(observation.sourceHead).toLowerCase() === text(expected.sourceHead).toLowerCase()
+    && Object.values(MISSION_CONTROLLER_ROUTE).includes(route)
+    && route !== MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY
+    && Number.isSafeInteger(attemptCount) && attemptCount >= 1 && attemptCount <= 2
+    && observation.expectedReceiptObserved === false
+    && observedAtMs !== null && nowMs !== null
+    && observedAtMs <= nowMs + 60_000
+    && nowMs - observedAtMs <= 15 * 60 * 1000;
+  if (!exactIdentity) {
+    return frozen({
+      valid: false,
+      route,
+      classification: '',
+      reroutable: false,
+      reason: 'EXECUTION_SURFACE_FAILURE_OBSERVATION_INVALID',
+    });
+  }
+
+  let classification = EXECUTION_SURFACE_FAILURE_CLASS.UNKNOWN_INFRASTRUCTURE_FAILURE;
+  if (/test|assert|compile|lint|source|regression/.test(reason)) {
+    classification = EXECUTION_SURFACE_FAILURE_CLASS.SOURCE_OR_TEST_FAILURE;
+  } else if (/approval|authori[sz]ation|permission gate|operator gate/.test(reason)) {
+    classification = EXECUTION_SURFACE_FAILURE_CLASS.AUTHORIZATION_GATE;
+  } else if (/runtime gate|windows authority|consequential runtime|deployment gate/.test(reason)) {
+    classification = EXECUTION_SURFACE_FAILURE_CLASS.RUNTIME_GATE;
+  } else if (httpStatus === 401 || httpStatus === 403 || httpStatus === 409 || httpStatus === 422
+    || /github rejection|resource not accessible|ruleset|ref update rejected/.test(reason)) {
+    classification = EXECUTION_SURFACE_FAILURE_CLASS.GITHUB_REJECTION;
+  } else if (/meter|quota|usage limit|capacity exhausted|rate limit/.test(reason)
+    || ['QUOTA_EXCEEDED', 'RATE_LIMITED', 'METER_EXHAUSTED'].includes(code)) {
+    classification = EXECUTION_SURFACE_FAILURE_CLASS.PROVIDER_EXHAUSTION;
+  } else if (/chatgpt|connector|tool surface|tool call|execution surface|mutation surface/.test(reason)
+    || ['CONNECTOR_ERROR', 'TOOL_UNAVAILABLE', 'EXECUTION_SURFACE_UNAVAILABLE'].includes(code)) {
+    classification = EXECUTION_SURFACE_FAILURE_CLASS.CHATGPT_CONNECTOR_FAILURE;
+  }
+  return frozen({
+    valid: true,
+    route,
+    classification,
+    reroutable: REROUTABLE_EXECUTION_SURFACE_FAILURES.has(classification),
+    attemptCount,
+    expectedReceiptObserved: false,
+    observedAtUtc: observation.observedAtUtc,
+    reason: 'EXECUTION_SURFACE_FAILURE_CLASSIFIED',
+  });
 }
 function exactKeys(value, keys) {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -432,10 +506,10 @@ function candidateForReceipt(receipt, expected, authority = null) {
   });
 }
 
-function selectFallback(input, task, nowUtc) {
+function selectFallback(input, task, nowUtc, excludedRoutes = new Set()) {
   const expected = { repository: text(input.mission?.repository), taskClass: task.taskClass, nowUtc };
   const candidates = [];
-  if (!task.windowsBound) {
+  if (!task.windowsBound && !excludedRoutes.has(MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB)) {
     const githubAuthority = validateBuildLaneCapacityAuthorityChain(
       input.githubLaneReceipt,
       input.githubLaneAuthorityReceipts,
@@ -447,7 +521,8 @@ function selectFallback(input, task, nowUtc) {
   const forge = adjudicateForgeSidecarCapacity(input.forgeSidecar, { nowUtc });
   const forgeCandidate = candidateForReceipt(input.forgeLaneReceipt, expected);
   if (
-    forge?.canCarryRealWork === true
+    !excludedRoutes.has(MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE)
+    && forge?.canCarryRealWork === true
     && forgeCandidate?.route === MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE
     && forgeCandidate.authorityReceiptIds.includes(forge.m2ReceiptId)
     && forgeCandidate.authorityReceiptIds.includes(forge.m3RuntimeReceiptId)
@@ -479,13 +554,28 @@ export function routeMissionControllerCapacity(input = {}) {
   if (input.mission?.dispatch?.status === 'running') {
     return frozen({ ...base, route: text(input.mission.dispatch.adapter).toUpperCase(), adapter: text(input.mission.dispatch.adapter), dispatchAllowed: false, blockers: frozen(['existing-agent-dispatch-owns-mission']), finalVerdict: 'MISSION_CONTROLLER_EXISTING_DISPATCH_PRESERVED' });
   }
-  const codex = codexProjection(input.codexStatus, task, nowUtc);
-  if (codex.dispatchAllowed) {
-    return frozen({ ...base, route: MISSION_CONTROLLER_ROUTE.CODEX, adapter: ROUTE_ADAPTER.CODEX, dispatchAllowed: true, codex, selectedCapacityReceiptId: null, proofRefs: frozen([]), blockers: frozen([]), finalVerdict: 'MISSION_CONTROLLER_ROUTE_READY' });
+  const surfaceFailure = input.executionSurfaceFailure
+    ? classifyExecutionSurfaceFailure(input.executionSurfaceFailure, {
+      nowUtc,
+      missionId: base.missionId,
+      repository: base.repository,
+      sourceHead: input.sourceHead,
+    })
+    : null;
+  if (surfaceFailure && !surfaceFailure.valid) {
+    return frozen({ ...base, route: MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY, adapter: '', dispatchAllowed: false, executionSurfaceFailure: surfaceFailure, blockers: frozen(['execution-surface-failure-observation-invalid']), finalVerdict: 'MISSION_CONTROLLER_CAPACITY_BLOCKED' });
   }
-  const fallback = selectFallback(input, task, nowUtc);
+  if (surfaceFailure && !surfaceFailure.reroutable) {
+    return frozen({ ...base, route: MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY, adapter: '', dispatchAllowed: false, executionSurfaceFailure: surfaceFailure, blockers: frozen([`execution-surface-failure-parked:${surfaceFailure.classification.toLowerCase()}`]), finalVerdict: 'MISSION_CONTROLLER_EXECUTION_FAILURE_PARKED' });
+  }
+  const excludedRoutes = new Set(surfaceFailure?.reroutable ? [surfaceFailure.route] : []);
+  const codex = codexProjection(input.codexStatus, task, nowUtc);
+  if (codex.dispatchAllowed && !excludedRoutes.has(MISSION_CONTROLLER_ROUTE.CODEX)) {
+    return frozen({ ...base, route: MISSION_CONTROLLER_ROUTE.CODEX, adapter: ROUTE_ADAPTER.CODEX, dispatchAllowed: true, codex, executionSurfaceFailure: surfaceFailure, selectedCapacityReceiptId: null, proofRefs: frozen([]), blockers: frozen([]), finalVerdict: surfaceFailure ? 'MISSION_CONTROLLER_EXECUTION_SURFACE_REROUTED' : 'MISSION_CONTROLLER_ROUTE_READY' });
+  }
+  const fallback = selectFallback(input, task, nowUtc, excludedRoutes);
   if (fallback.selected) {
-    return frozen({ ...base, route: fallback.selected.route, adapter: fallback.selected.adapter, workerId: fallback.selected.workerId, dispatchAllowed: true, codex, fallbackCandidates: fallback.candidates, selectedCapacityReceiptId: fallback.selected.receiptId, proofRefs: fallback.selected.proofRefs, blockers: frozen([]), finalVerdict: 'MISSION_CONTROLLER_FALLBACK_ROUTE_READY' });
+    return frozen({ ...base, route: fallback.selected.route, adapter: fallback.selected.adapter, workerId: fallback.selected.workerId, dispatchAllowed: true, codex, executionSurfaceFailure: surfaceFailure, fallbackCandidates: fallback.candidates, selectedCapacityReceiptId: fallback.selected.receiptId, proofRefs: fallback.selected.proofRefs, blockers: frozen([]), finalVerdict: surfaceFailure ? 'MISSION_CONTROLLER_EXECUTION_SURFACE_REROUTED' : 'MISSION_CONTROLLER_FALLBACK_ROUTE_READY' });
   }
   return frozen({
     ...base,
@@ -493,6 +583,7 @@ export function routeMissionControllerCapacity(input = {}) {
     adapter: '',
     dispatchAllowed: false,
     codex,
+    executionSurfaceFailure: surfaceFailure,
     fallbackCandidates: fallback.candidates,
     blockers: frozen(['codex-capacity-unavailable', task.windowsBound ? 'proven-windows-capable-fallback-unavailable' : 'proven-build-fallback-unavailable']),
     finalVerdict: 'MISSION_CONTROLLER_CAPACITY_BLOCKED',
