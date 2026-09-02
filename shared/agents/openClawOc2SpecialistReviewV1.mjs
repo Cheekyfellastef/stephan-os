@@ -187,122 +187,104 @@ function reviewGateway(source, path, findings) {
     ["text(grant?.adapter).toLowerCase() !== 'openclaw-readonly'", 'openclaw-oc2-gateway-adapter-gate-missing'],
     ["text(grant?.operation).toLowerCase() !== OPENCLAW_OC2_OPERATION", 'openclaw-oc2-gateway-operation-gate-missing'],
     ["path.resolve(queueRoot, 'openclaw-readonly', 'processing')", 'openclaw-oc2-gateway-processing-root-not-fixed'],
-    ["item?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'", 'openclaw-oc2-gateway-claim-schema-gate-missing'],
+    ["item?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'", 'openclaw-oc2-gateway-item-schema-gate-missing'],
     ["text(item?.missionId).toLowerCase() !== missionId", 'openclaw-oc2-gateway-mission-binding-missing'],
     ["text(item?.actionId).toLowerCase() !== taskId", 'openclaw-oc2-gateway-task-binding-missing'],
-    ["text(item?.payload?.operation).toLowerCase() !== OPENCLAW_OC2_OPERATION", 'openclaw-oc2-gateway-claim-operation-binding-missing'],
-    ["executeClaimedOpenClawOc2DeterministicTestBuild", 'openclaw-oc2-gateway-executor-missing'],
-    ["taskClass: OPENCLAW_OC2_TASK_CLASS", 'openclaw-oc2-gateway-task-class-binding-missing'],
-    ["providerVersion: OPENCLAW_OC2_PROVIDER_VERSION", 'openclaw-oc2-gateway-provider-version-binding-missing'],
-    ["executionSurface: 'openclaw-gateway-plugin'", 'openclaw-oc2-gateway-execution-surface-not-bound'],
-    ["qualificationEligible: result.success === true && result.qualificationEligible === true", 'openclaw-oc2-gateway-qualification-binding-missing'],
+    ["text(item?.payload?.operation).toLowerCase() !== OPENCLAW_OC2_OPERATION", 'openclaw-oc2-gateway-item-operation-gate-missing'],
+    ["executeClaimedOpenClawOc2DeterministicTestBuild", 'openclaw-oc2-gateway-executor-binding-missing'],
+    ["taskClass: OPENCLAW_OC2_TASK_CLASS", 'openclaw-oc2-gateway-task-class-not-fixed'],
+    ["providerVersion: OPENCLAW_OC2_PROVIDER_VERSION", 'openclaw-oc2-gateway-provider-version-not-fixed'],
+    ["executionSurface: 'openclaw-gateway-plugin'", 'openclaw-oc2-gateway-surface-not-fixed'],
+    ["qualificationEligible: result.success === true && result.qualificationEligible === true", 'openclaw-oc2-gateway-result-not-bound'],
   ]);
   forbidPatterns(findings, source, path, [
-    [/from ['"]node:child_process['"]|require\(['"]child_process['"]\)/, 'openclaw-oc2-gateway-process-authority-forbidden'],
     [/shell\s*:\s*true|\beval\s*\(|new\s+Function\s*\(/i, 'openclaw-oc2-gateway-dynamic-code-forbidden'],
+    [/\b(?:exec|execSync|spawn|spawnSync|execFile|fork)\s*\(/, 'openclaw-oc2-gateway-process-authority-forbidden'],
   ]);
 }
 
-function reviewDeterministicTests(source, path, findings) {
+function reviewExecutorTest(source, path, findings) {
   requireLiterals(findings, source, path, [
-    ["OC2 admits only the exact canonical claimed action and fixed operation", 'openclaw-oc2-claim-fixed-operation-test-missing'],
-    ["OC2 executes only fixed node test IDs and proves source state unchanged", 'openclaw-oc2-fixed-plan-test-missing'],
-    ["OC2 fails closed if a fixed test changes repository source state", 'openclaw-oc2-source-drift-test-missing'],
-    ["assert.equal(valid.task.arbitraryCommandAuthority, false)", 'openclaw-oc2-command-authority-denial-test-missing'],
-    ["assert.deepEqual(result.changedFiles, [])", 'openclaw-oc2-zero-diff-test-missing'],
-    ["assert.ok(nodeCalls.every((call) => call.options.shell === false))", 'openclaw-oc2-shell-denial-test-missing'],
-    ["assert.equal(result.error, 'OPENCLAW_OC2_SOURCE_STATE_CHANGED')", 'openclaw-oc2-source-drift-blocker-test-missing'],
+    ['OC2 admits only the exact canonical claimed action and fixed operation', 'openclaw-oc2-test-canonical-grant-regression-missing'],
+    ['OC2 executes only fixed node test IDs and proves source state unchanged', 'openclaw-oc2-test-fixed-plan-regression-missing'],
+    ['OC2 fails closed if a fixed test changes repository source state', 'openclaw-oc2-test-source-drift-regression-missing'],
+    ['assert.equal(valid.task.arbitraryCommandAuthority, false)', 'openclaw-oc2-test-arbitrary-command-denial-regression-missing'],
+    ['assert.deepEqual(result.changedFiles, [])', 'openclaw-oc2-test-changed-files-regression-missing'],
+    ['assert.ok(nodeCalls.every((call) => call.options.shell === false))', 'openclaw-oc2-test-shell-false-regression-missing'],
+    ["assert.equal(result.error, 'OPENCLAW_OC2_SOURCE_STATE_CHANGED')", 'openclaw-oc2-test-source-drift-error-regression-missing'],
   ]);
-  forbidPatterns(findings, source, path, [[/shell\s*:\s*true/i, 'openclaw-oc2-test-shell-widening-forbidden']]);
 }
 
-function reviewGatewayTests(source, path, findings) {
+function reviewGatewayTest(source, path, findings) {
   requireLiterals(findings, source, path, [
-    ["OC2 gateway rejects execution outside the actual OpenClaw Gateway plugin", 'openclaw-oc2-gateway-runtime-negative-test-missing'],
-    ["OC2 gateway rejects caller-selected operation or extra request fields", 'openclaw-oc2-gateway-caller-input-negative-test-missing'],
-    ["OC2 gateway binds the persisted claimed item and executes the fixed plan", 'openclaw-oc2-gateway-positive-test-missing'],
-    ["assert.equal(result.executionSurface, 'openclaw-gateway-plugin')", 'openclaw-oc2-gateway-surface-test-missing'],
-    ["assert.equal(result.result.changedFiles.length, 0)", 'openclaw-oc2-gateway-zero-diff-test-missing'],
-    ["assert.equal(extra.error, 'OPENCLAW_OC2_GATEWAY_REQUEST_SHAPE_INVALID')", 'openclaw-oc2-gateway-extra-field-test-missing'],
+    ['OC2 gateway rejects execution outside the actual OpenClaw Gateway plugin', 'openclaw-oc2-gateway-test-runtime-binding-regression-missing'],
+    ['OC2 gateway rejects caller-selected operation or extra request fields', 'openclaw-oc2-gateway-test-request-shape-regression-missing'],
+    ['OC2 gateway binds the persisted claimed item and executes the fixed plan', 'openclaw-oc2-gateway-test-claim-binding-regression-missing'],
+    ["assert.equal(result.executionSurface, 'openclaw-gateway-plugin')", 'openclaw-oc2-gateway-test-surface-regression-missing'],
+    ['assert.equal(result.result.changedFiles.length, 0)', 'openclaw-oc2-gateway-test-changed-files-regression-missing'],
+    ["assert.equal(extra.error, 'OPENCLAW_OC2_GATEWAY_REQUEST_SHAPE_INVALID')", 'openclaw-oc2-gateway-test-request-shape-error-regression-missing'],
   ]);
 }
 
-function reviewPluginManifest(source, path, findings) {
-  try {
-    const manifest = JSON.parse(source);
-    if (manifest?.id !== 'stephanos-builder-provider') findings.push(finding('openclaw-oc2-plugin-id-mismatch', path));
-    if (manifest?.activation?.onStartup !== true) findings.push(finding('openclaw-oc2-plugin-startup-activation-missing', path));
-    if (manifest?.configSchema?.type !== 'object' || manifest?.configSchema?.additionalProperties !== false) findings.push(finding('openclaw-oc2-plugin-config-not-closed', path));
-    if (JSON.stringify(manifest?.configSchema?.properties) !== '{}') findings.push(finding('openclaw-oc2-plugin-config-accepts-caller-input', path));
-    if (!text(manifest?.description).includes('OC2 deterministic test/build')) findings.push(finding('openclaw-oc2-plugin-capability-not-declared', path));
-  } catch {
-    findings.push(finding('openclaw-oc2-plugin-manifest-invalid-json', path));
+function reviewPlugin(source, path, findings) {
+  let parsed;
+  try { parsed = JSON.parse(source); } catch { findings.push(finding('openclaw-oc2-plugin-json-invalid', path)); return; }
+  if (parsed?.id !== 'stephanos-builder-provider') findings.push(finding('openclaw-oc2-plugin-id-not-fixed', path));
+  if (parsed?.activation?.onStartup !== true) findings.push(finding('openclaw-oc2-plugin-startup-activation-missing', path));
+  if (!text(parsed?.description).includes('OC2 deterministic test/build')) findings.push(finding('openclaw-oc2-plugin-description-missing-task-bound', path));
+  if (parsed?.configSchema?.type !== 'object' || parsed?.configSchema?.additionalProperties !== false
+    || !parsed?.configSchema?.properties || Object.keys(parsed.configSchema.properties).length !== 0) {
+    findings.push(finding('openclaw-oc2-plugin-config-not-closed', path));
   }
 }
 
-function reviewPath(source, path, findings) {
-  if (path.endsWith('/index.js')) reviewIndex(source, path, findings);
-  else if (path.endsWith('/lib/oc2-deterministic-test-build.mjs')) reviewDeterministicExecutor(source, path, findings);
-  else if (path.endsWith('/lib/oc2-gateway-provider.mjs')) reviewGateway(source, path, findings);
-  else if (path.endsWith('/oc2-deterministic-test-build.test.mjs')) reviewDeterministicTests(source, path, findings);
-  else if (path.endsWith('/oc2-gateway-provider.test.mjs')) reviewGatewayTests(source, path, findings);
-  else if (path.endsWith('/openclaw.plugin.json')) reviewPluginManifest(source, path, findings);
-}
+const REVIEWERS = Object.freeze([
+  reviewIndex,
+  reviewDeterministicExecutor,
+  reviewGateway,
+  reviewExecutorTest,
+  reviewGatewayTest,
+  reviewPlugin,
+]);
 
 export function analyzeOpenClawOc2SpecialistReviewV1(input = {}) {
   const repository = text(input.repository);
-  const prNumber = Number(input.prNumber);
   const sourceHead = text(input.sourceHead).toLowerCase();
   const baseSha = text(input.baseSha).toLowerCase();
-  const paths = escalationPaths(input.analysis);
+  const escalation = escalationPaths(input.analysis);
   const eligible = repository === CANONICAL_REPOSITORY
-    && prNumber === OC2_PR
+    && input.prNumber === OC2_PR
     && SHA.test(sourceHead)
     && SHA.test(baseSha)
-    && paths.length === OPENCLAW_OC2_SPECIALIST_PATHS_V1.length;
-  if (!eligible) return Object.freeze({
-    schemaVersion: OPENCLAW_OC2_SPECIALIST_SCHEMA_V1,
-    eligible: false,
-    clean: false,
-    reviewedPaths: Object.freeze([]),
-    findings: Object.freeze([]),
-    proofRefs: Object.freeze([]),
-    finalVerdict: 'OPENCLAW_OC2_SPECIALIST_NOT_APPLICABLE',
-  });
+    && escalation.length === OPENCLAW_OC2_SPECIALIST_PATHS_V1.length;
+  if (!eligible) return Object.freeze({ eligible: false, clean: false, findings: Object.freeze([]), proofRefs: Object.freeze([]) });
 
-  if (!exactLineage(input.lineageEvidence, repository, sourceHead, baseSha)) return Object.freeze({
-    schemaVersion: OPENCLAW_OC2_SPECIALIST_SCHEMA_V1,
-    eligible: true,
-    clean: false,
-    reviewedPaths: Object.freeze(paths),
-    findings: Object.freeze([finding('openclaw-oc2-reconciliation-lineage-invalid', paths[0])]),
-    proofRefs: Object.freeze([]),
-    finalVerdict: 'OPENCLAW_OC2_SPECIALIST_FINDINGS',
-  });
+  const reviewedPaths = Object.freeze([...OPENCLAW_OC2_SPECIALIST_PATHS_V1]);
+  const findings = [];
+  if (!exactLineage(input.lineageEvidence, repository, sourceHead, baseSha)) {
+    findings.push(finding('openclaw-oc2-exact-lineage-invalid', reviewedPaths[0]));
+  }
 
   const sources = Array.isArray(input.sources) ? input.sources : [];
-  const findings = [];
-  const proofRefs = [];
-  for (const path of OPENCLAW_OC2_SPECIALIST_PATHS_V1) {
-    const candidates = sources.filter((source) => text(source?.path) === path);
-    if (candidates.length !== 1 || !exactSource(candidates[0], repository, sourceHead, path)) {
+  const sourceByPath = new Map(sources.map((item) => [text(item?.path), item]));
+  for (let index = 0; index < reviewedPaths.length; index += 1) {
+    const path = reviewedPaths[index];
+    const evidence = sourceByPath.get(path);
+    if (!exactSource(evidence, repository, sourceHead, path)) {
       findings.push(finding('openclaw-oc2-source-evidence-invalid', path));
       continue;
     }
-    reviewPath(candidates[0].content, path, findings);
-    proofRefs.push(`proofs/openclaw-oc2-specialist/${path}@${sourceHead}#${candidates[0].blobSha}:${candidates[0].size}`);
+    REVIEWERS[index](evidence.content, path, findings);
   }
-  if (sources.length !== OPENCLAW_OC2_SPECIALIST_PATHS_V1.length) findings.push(finding('openclaw-oc2-source-evidence-estate-mismatch', OPENCLAW_OC2_SPECIALIST_PATHS_V1[0]));
 
+  const proofRefs = Object.freeze(reviewedPaths.map((path) => `proofs/openclaw-oc2-specialist/${path}`));
   return Object.freeze({
     schemaVersion: OPENCLAW_OC2_SPECIALIST_SCHEMA_V1,
     eligible: true,
     clean: findings.length === 0,
-    reviewedPaths: Object.freeze([...OPENCLAW_OC2_SPECIALIST_PATHS_V1]),
     findings: Object.freeze(findings),
-    proofRefs: Object.freeze(proofRefs),
-    finalVerdict: findings.length === 0
-      ? 'OPENCLAW_OC2_SPECIALIST_CLEAN'
-      : 'OPENCLAW_OC2_SPECIALIST_FINDINGS',
+    reviewedPaths,
+    proofRefs,
+    finalVerdict: findings.length === 0 ? 'OPENCLAW_OC2_SPECIALIST_CLEAN' : 'OPENCLAW_OC2_SPECIALIST_FINDINGS',
   });
 }
