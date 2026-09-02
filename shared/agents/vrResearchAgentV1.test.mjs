@@ -6,10 +6,12 @@ import {
   VR_RESEARCH_AGENT_ID,
   VR_RESEARCH_AGENT_ROUTES,
   VR_RESEARCH_AGENT_VERDICTS,
+  VR_RESEARCH_PUBLICATION_STATES,
   buildVrResearchAgentReadModel,
   createVrResearchAgentCapabilityRecord,
   createVrResearchAgentWorkspaceRecords,
   planVrResearchAgentCycle,
+  selectVrResearchPublicationRoute,
 } from './vrResearchAgentV1.mjs';
 
 const NOW = Date.parse('2026-08-03T14:30:00.000Z');
@@ -82,6 +84,10 @@ test('discovery triage can use OpenClaw when available but remains proposal-only
   });
   assert.equal(cycle.proposal.action, VR_RESEARCH_AGENT_ACTIONS.TRIAGE_DISCOVERY);
   assert.equal(cycle.proposal.route, VR_RESEARCH_AGENT_ROUTES.OPENCLAW_LOCAL);
+  assert.equal(cycle.proposal.publication.required, true);
+  assert.equal(cycle.proposal.publication.targetIssue, '#1596');
+  assert.equal(cycle.proposal.publication.state, VR_RESEARCH_PUBLICATION_STATES.ROUTABLE);
+  assert.equal(cycle.proposal.publication.route, VR_RESEARCH_AGENT_ROUTES.GITHUB_FIRST);
   assert.equal(cycle.proposal.mutatesSource, false);
   assert.equal(cycle.proposal.executesRuntime, false);
   assert.equal(cycle.proposal.mergeAuthority, false);
@@ -130,6 +136,94 @@ test('equivalent research state produces a deterministic proposal identity', () 
   const second = planVrResearchAgentCycle(input);
   assert.equal(first.proposal.actionId, second.proposal.actionId);
   assert.equal(first.proposal.action, VR_RESEARCH_AGENT_ACTIONS.UPDATE_CAPABILITY_GRAPH);
+});
+
+test('blocked ChatGPT GitHub writes fail over to qualified non-OpenAI publication routes', () => {
+  const blocked = { chatgptGithubCommentWrite: false };
+  assert.equal(
+    selectVrResearchPublicationRoute({ availableSurfaces: { ...blocked, githubNativePublisher: true } }),
+    VR_RESEARCH_AGENT_ROUTES.GITHUB_NATIVE,
+  );
+  assert.equal(
+    selectVrResearchPublicationRoute({ availableSurfaces: { ...blocked, openClawPublisher: true } }),
+    VR_RESEARCH_AGENT_ROUTES.OPENCLAW_LOCAL,
+  );
+  assert.equal(
+    selectVrResearchPublicationRoute({ availableSurfaces: { ...blocked, forgePublisher: true } }),
+    VR_RESEARCH_AGENT_ROUTES.FORGE,
+  );
+  assert.equal(
+    selectVrResearchPublicationRoute({ availableSurfaces: { ...blocked, stephanosNativePublisher: true } }),
+    VR_RESEARCH_AGENT_ROUTES.STEPHANOS_NATIVE,
+  );
+});
+
+test('blocked ChatGPT GitHub write with no qualified publisher preserves discovery for later publication', () => {
+  const cycle = planVrResearchAgentCycle({
+    nowMs: NOW,
+    workspaceProjection: freshProjection({ discoveryCandidates: [{ id: 'candidate-uevr-d3d12-state' }] }),
+    sourceRegistry: registry(),
+    availableSurfaces: { chatgptGithubCommentWrite: false },
+  });
+  assert.equal(cycle.proposal.action, VR_RESEARCH_AGENT_ACTIONS.TRIAGE_DISCOVERY);
+  assert.equal(cycle.proposal.publication.required, true);
+  assert.equal(cycle.proposal.publication.route, VR_RESEARCH_AGENT_ROUTES.SHARED_WORKSPACE_PENDING);
+  assert.equal(cycle.proposal.publication.state, VR_RESEARCH_PUBLICATION_STATES.PRESERVED_PENDING_WRITER);
+  assert.equal(cycle.proposal.publication.candidatePreserved, true);
+  assert.deepEqual(cycle.proposal.publication.candidateIds, ['candidate-uevr-d3d12-state']);
+  assert.equal(cycle.proposal.publication.targetIssue, '#1596');
+  assert.equal(cycle.proposal.publication.mergeAuthority, false);
+  assert.equal(cycle.proposal.publication.sourceMutationAuthority, false);
+  assert.equal(cycle.proposal.publication.runtimeAuthority, false);
+});
+
+test('publication deduplication identity survives provider failover', () => {
+  const base = {
+    nowMs: NOW,
+    workspaceProjection: freshProjection({
+      discoveryCandidates: [
+        { id: 'candidate-a' },
+        { id: 'candidate-b' },
+      ],
+    }),
+    sourceRegistry: registry(),
+  };
+  const githubNative = planVrResearchAgentCycle({
+    ...base,
+    availableSurfaces: { chatgptGithubCommentWrite: false, githubNativePublisher: true },
+  });
+  const openClaw = planVrResearchAgentCycle({
+    ...base,
+    availableSurfaces: { chatgptGithubCommentWrite: false, openClawPublisher: true },
+  });
+  assert.equal(githubNative.proposal.publication.route, VR_RESEARCH_AGENT_ROUTES.GITHUB_NATIVE);
+  assert.equal(openClaw.proposal.publication.route, VR_RESEARCH_AGENT_ROUTES.OPENCLAW_LOCAL);
+  assert.equal(
+    githubNative.proposal.publication.deduplicationKey,
+    openClaw.proposal.publication.deduplicationKey,
+  );
+});
+
+test('workspace records retain publication state for another participant to pick up', () => {
+  const cycle = planVrResearchAgentCycle({
+    nowMs: NOW,
+    workspaceProjection: freshProjection({ discoveryCandidates: [{ id: 'research-1' }] }),
+    sourceRegistry: registry(),
+    availableSurfaces: { chatgptGithubCommentWrite: false },
+  });
+  const records = createVrResearchAgentWorkspaceRecords({
+    cycle,
+    timestampUtc: '2026-08-03T14:30:00.000Z',
+    correlationId: 'vr-research-agent-v1-test',
+    validationOptions: { nowMs: NOW },
+  });
+  assert.equal(records.validations.capability.valid, true);
+  assert.equal(records.validations.status.valid, true);
+  assert.equal(records.status.participantId, VR_RESEARCH_AGENT_ID);
+  assert.match(records.status.summary, /PROPOSE_DISCOVERY_TRIAGE/);
+  const body = JSON.parse(records.status.body);
+  assert.equal(body.publication.state, VR_RESEARCH_PUBLICATION_STATES.PRESERVED_PENDING_WRITER);
+  assert.equal(body.publication.targetIssue, '#1596');
 });
 
 test('workspace records validate against the canonical Shared Agent Workspace contract', () => {
