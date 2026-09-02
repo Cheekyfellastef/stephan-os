@@ -33,7 +33,7 @@ const WORKFLOW_ID = 326000001;
 const COORDINATOR_WORKFLOW = readFileSync(
   new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url),
   'utf8',
-);
+).replace(/\r\n?/g, '\n');
 const COORDINATOR_RUNNER = readFileSync(
   new URL('../../scripts/exact-head-review-dispatch.mjs', import.meta.url),
   'utf8',
@@ -358,7 +358,7 @@ test('trusted workflow serializes every bounded retry under the same PR authorit
   assert.ok(retryStepStart >= 0, 'bounded retry step must exist');
   const retryStep = COORDINATOR_WORKFLOW.slice(retryStepStart);
 
-  assert.match(COORDINATOR_WORKFLOW, /targets:\s*\$\{\{ steps\.plan\.outputs\.targets \}\}/);
+  assert.match(COORDINATOR_WORKFLOW, /targets:\s*\$\{\{ steps\.admit\.outputs\.targets \}\}/);
   assert.match(COORDINATOR_WORKFLOW, /target:\s*\$\{\{ fromJSON\(needs\.plan\.outputs\.targets\) \}\}/);
   assert.match(
     COORDINATOR_WORKFLOW,
