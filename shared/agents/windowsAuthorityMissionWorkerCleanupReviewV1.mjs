@@ -19,7 +19,7 @@ const finding = (code, summary) => Object.freeze({ severity: 'P0', code, summary
 
 function blobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
-  return createHash('sha1').update(`blob ${bytes.length}\\0`).update(bytes).digest('hex');
+  return createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
 }
 
 function exactEscalation(analysis = {}) {
