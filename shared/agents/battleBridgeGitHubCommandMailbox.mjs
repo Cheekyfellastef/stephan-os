@@ -1,291 +1,215 @@
-import { spawnSync } from 'node:child_process';
-
-import * as base from './battleBridgeGitHubCommandMailboxBaseV1.mjs';
+import * as legacy from './battleBridgeGitHubCommandMailboxLegacyV1.mjs';
 import {
-  BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
-  executeApprovedBackendRestartOnBattleBridge,
-  normalizeApprovedBackendRestartCommand,
-  validateApprovedBackendRestartCommandShape,
-} from './battleBridgeApprovedBackendRestartMailboxV1.mjs';
-import {
-  BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE,
-} from './battleBridgeDirtyDataPreservationV1.mjs';
+  MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION,
+  runMissionWorkerDiagnosticLink,
+} from '../../scripts/mission-worker-diagnostic-link.mjs';
 
-export * from './battleBridgeGitHubCommandMailboxBaseV1.mjs';
-
-export const BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION = 'SYNC_CODEX_DISPATCH_BRIDGE';
+export * from './battleBridgeGitHubCommandMailboxLegacyV1.mjs';
 
 export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
-  ...base.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
-  BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
-  BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
+  ...legacy.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
+  MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION,
 ]);
 
-const UPDATE_STEPHANOS_FROM_CHAT_OPERATION = 'UPDATE_STEPHANOS_FROM_CHAT';
-const BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_APPROVAL = 'operator-approved';
-const INVALID_PRESERVATION_EXPIRY = '1970-01-01T00:00:00.000Z';
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
-const PRESERVATION_TERMINAL_BLOCKERS = new Set([
-  'COMMAND_PRESERVATION_FIELDS_NOT_ALLOWED',
-  'COMMAND_PRESERVATION_FIELDS_INCOMPLETE',
-  'COMMAND_PRESERVATION_PROFILE_NOT_ALLOWED',
-  'COMMAND_PRESERVATION_APPROVAL_REQUIRED',
-  'COMMAND_PRESERVATION_EXPECTED_HEAD_REQUIRED',
+const DIAGNOSTIC_LINK_ALLOWED_FIELDS = new Set([
+  'schemaVersion',
+  'requestId',
+  'operation',
+  'repository',
+  'issueNumber',
+  'branch',
+  'operatorApproval',
+  'expectedHead',
+  'expiresAt',
 ]);
+const DIAGNOSTIC_LINK_TERMINAL_BLOCKERS = new Set([
+  'MISSION_WORKER_DIAGNOSTIC_LINK_EXPECTED_HEAD_REQUIRED',
+  'MISSION_WORKER_DIAGNOSTIC_LINK_FIELD_NOT_ALLOWED',
+]);
+const DIAGNOSTIC_EXPECTED_HEAD_UNSET = Symbol('DIAGNOSTIC_EXPECTED_HEAD_UNSET');
 
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
 }
 
-function hasOwn(object, field) {
-  return Object.prototype.hasOwnProperty.call(object || {}, field);
-}
-
-function validateRuntimeDataPreservationCommandShape(command = {}) {
-  const operation = String(command?.operation || '');
-  const profilePresent = hasOwn(command, 'preservationProfile');
-  const approvalPresent = hasOwn(command, 'preservationApproval');
-  const requested = profilePresent || approvalPresent || operation === BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION;
-  if (!requested) return Object.freeze({ ok: true, requested: false });
-  if (operation !== BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION) {
-    return fail('COMMAND_PRESERVATION_FIELDS_NOT_ALLOWED', { requested: true });
+function validateDiagnosticLinkCommandShape(command = {}) {
+  if (String(command?.operation || '') !== MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION) {
+    return Object.freeze({ ok: true, requested: false });
   }
-  const profile = String(command?.preservationProfile || '').trim();
-  const approval = String(command?.preservationApproval || '').trim();
-  if (!profilePresent || !approvalPresent || !profile || !approval) {
-    return fail('COMMAND_PRESERVATION_FIELDS_INCOMPLETE', { requested: true });
-  }
-  if (profile !== BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE) {
-    return fail('COMMAND_PRESERVATION_PROFILE_NOT_ALLOWED', { requested: true });
-  }
-  if (approval !== BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_APPROVAL) {
-    return fail('COMMAND_PRESERVATION_APPROVAL_REQUIRED', { requested: true });
+  const unexpectedField = Object.keys(command)
+    .find((field) => !DIAGNOSTIC_LINK_ALLOWED_FIELDS.has(field));
+  if (unexpectedField) {
+    return fail('MISSION_WORKER_DIAGNOSTIC_LINK_FIELD_NOT_ALLOWED', {
+      requested: true,
+      field: unexpectedField,
+    });
   }
   const expectedHead = String(command?.expectedHead || '').trim().toLowerCase();
   if (!SHA_PATTERN.test(expectedHead)) {
-    return fail('COMMAND_PRESERVATION_EXPECTED_HEAD_REQUIRED', { requested: true });
+    return fail('MISSION_WORKER_DIAGNOSTIC_LINK_EXPECTED_HEAD_REQUIRED', { requested: true });
   }
-  return Object.freeze({
-    ok: true,
-    requested: true,
-    profile: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE,
-    approval: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_APPROVAL,
-    expectedHead,
-  });
+  return Object.freeze({ ok: true, requested: true, expectedHead });
 }
 
-function withoutRuntimeDataPreservationFields(command = {}) {
-  const {
-    preservationProfile: _preservationProfile,
-    preservationApproval: _preservationApproval,
-    ...rest
-  } = command || {};
-  return rest;
-}
-
-function translateRuntimeDataPreservationForBase(command = {}, shape = {}) {
-  const translated = withoutRuntimeDataPreservationFields(command);
-  if (String(translated.operation || '') === BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION) {
-    translated.operation = UPDATE_STEPHANOS_FROM_CHAT_OPERATION;
+function projectDiagnosticEnvelope(command = {}, expectedHead = DIAGNOSTIC_EXPECTED_HEAD_UNSET) {
+  const projected = {};
+  for (const field of DIAGNOSTIC_LINK_ALLOWED_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(command || {}, field)) projected[field] = command[field];
   }
-  if (shape?.ok === true) return translated;
-  return {
-    ...translated,
-    expiresAt: INVALID_PRESERVATION_EXPIRY,
-  };
+  projected.operation = MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION;
+  const projectedExpectedHead = expectedHead === DIAGNOSTIC_EXPECTED_HEAD_UNSET
+    ? command?.expectedHead
+    : expectedHead;
+  projected.expectedHead = String(projectedExpectedHead ?? '').trim().toLowerCase();
+  return Object.freeze(projected);
 }
 
-function translateApprovedBackendRestartForBase(command = {}, { shapeValid = true } = {}) {
-  return {
-    ...command,
-    operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
-    ...(shapeValid ? {} : { targetRequestId: 'invalid-restart-shape' }),
-  };
+function translateDiagnosticLinkForLegacy(command = {}, shape = {}) {
+  const translated = {};
+  for (const field of DIAGNOSTIC_LINK_ALLOWED_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(command || {}, field)) translated[field] = command[field];
+  }
+  translated.operation = 'RUN_WORKER_WATCHDOG_ACCEPTANCE';
+  translated.expectedHead = shape?.ok === true ? shape.expectedHead : 'invalid';
+  return translated;
 }
 
 function translatedComment(comment = {}, translatedCommand = {}) {
   return {
     ...comment,
-    body: `\`\`\`${base.BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(translatedCommand)}\n\`\`\``,
+    body: `\`\`\`${legacy.BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(translatedCommand)}\n\`\`\``,
   };
 }
 
-function createExactOriginMainGuard(spawnSyncFn, expectedHead) {
-  const approvedHead = String(expectedHead || '').trim().toLowerCase();
-  return (command, argv, options) => {
-    const result = spawnSyncFn(command, argv, options);
-    const args = Array.isArray(argv) ? argv.map(String) : [];
-    if (String(command || '').toLowerCase().endsWith('git')
-      && args[0] === 'rev-parse'
-      && args[1] === 'origin/main'
-      && !result?.error
-      && result?.status === 0) {
-      const observedHead = String(result?.stdout || '').trim().toLowerCase();
-      if (observedHead !== approvedHead) {
-        return {
-          ...result,
-          status: 1,
-          stderr: 'APPROVED_TARGET_HEAD_MISMATCH',
-        };
-      }
-    }
-    return result;
-  };
+function projectDiagnosticTerminalRejection(original = {}, options = {}) {
+  const command = original?.command || {};
+  const shape = original?.shape || {};
+  const comment = original?.comment || {};
+  if (shape?.ok === true || !DIAGNOSTIC_LINK_TERMINAL_BLOCKERS.has(String(shape?.blocker || ''))) return null;
+
+  const originalExpectedHead = String(command?.expectedHead || '').trim().toLowerCase();
+  const validationHead = SHA_PATTERN.test(originalExpectedHead)
+    ? originalExpectedHead
+    : '0'.repeat(40);
+  const envelope = legacy.validateBattleBridgeGitHubCommand(
+    translateDiagnosticLinkForLegacy(command, { ok: true, expectedHead: validationHead }),
+    {
+      authorLogin: String(comment?.user?.login || ''),
+      now: options?.now || new Date(),
+      authoredAt: comment?.created_at || options?.now || new Date(),
+    },
+  );
+  if (!envelope?.ok) return null;
+
+  const commentId = Number(comment?.id || 0);
+  if (!Number.isSafeInteger(commentId) || commentId < 1) return null;
+  return Object.freeze({
+    commentId,
+    commentUrl: String(comment?.html_url || comment?.url || ''),
+    blocker: String(shape.blocker),
+    command: projectDiagnosticEnvelope(envelope.command, originalExpectedHead),
+  });
 }
 
 export function isTerminalizableOwnerCommandBlocker(value) {
   const blocker = String(value || '');
-  return PRESERVATION_TERMINAL_BLOCKERS.has(blocker)
-    || base.isTerminalizableOwnerCommandBlocker(blocker);
+  return DIAGNOSTIC_LINK_TERMINAL_BLOCKERS.has(blocker)
+    || legacy.isTerminalizableOwnerCommandBlocker(blocker);
 }
 
 export function validateBattleBridgeGitHubCommand(command = {}, options = {}) {
-  const preservation = validateRuntimeDataPreservationCommandShape(command);
-  if (!preservation.ok) return preservation;
+  const diagnostic = validateDiagnosticLinkCommandShape(command);
+  if (!diagnostic.ok) return diagnostic;
+  if (!diagnostic.requested) return legacy.validateBattleBridgeGitHubCommand(command, options);
 
-  if (String(command?.operation || '') === BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION) {
-    const shape = validateApprovedBackendRestartCommandShape(command);
-    if (!shape.ok) return shape;
-    const envelope = base.validateBattleBridgeGitHubCommand(
-      translateApprovedBackendRestartForBase(command),
-      options,
-    );
-    return normalizeApprovedBackendRestartCommand(command, envelope);
-  }
-
-  const envelope = base.validateBattleBridgeGitHubCommand(
-    preservation.requested ? translateRuntimeDataPreservationForBase(command, preservation) : command,
+  const envelope = legacy.validateBattleBridgeGitHubCommand(
+    translateDiagnosticLinkForLegacy(command, diagnostic),
     options,
   );
-  if (!envelope?.ok || !preservation.requested) return envelope;
+  if (!envelope?.ok) return envelope;
   return Object.freeze({
     ...envelope,
-    command: Object.freeze({
-      ...envelope.command,
-      operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
-      preservationProfile: preservation.profile,
-      preservationApproval: preservation.approval,
-    }),
+    command: projectDiagnosticEnvelope(envelope.command, diagnostic.expectedHead),
   });
 }
 
 export function classifyBattleBridgeMailboxOperation(operation = '') {
-  if ([
-    BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
-    BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
-  ].includes(String(operation || ''))) {
-    return base.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
+  if (String(operation || '') === MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION) {
+    return legacy.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
   }
-  return base.classifyBattleBridgeMailboxOperation(operation);
+  return legacy.classifyBattleBridgeMailboxOperation(operation);
 }
 
 export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}) {
-  const backendOriginals = new Map();
-  const preservationOriginals = new Map();
+  const diagnosticOriginals = new Map();
   const translated = (Array.isArray(comments) ? comments : []).map((comment) => {
-    const extracted = base.extractBattleBridgeGitHubCommand(comment?.body || '');
-    if (!extracted.ok) return comment;
-
-    const preservation = validateRuntimeDataPreservationCommandShape(extracted.command);
-    if (preservation.requested) {
-      preservationOriginals.set(String(comment?.id ?? ''), Object.freeze({
-        command: extracted.command,
-        shape: preservation,
-      }));
-      return translatedComment(
-        comment,
-        translateRuntimeDataPreservationForBase(extracted.command, preservation),
-      );
-    }
-
-    if (extracted.command?.operation !== BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION) {
+    const extracted = legacy.extractBattleBridgeGitHubCommand(comment?.body || '');
+    if (!extracted.ok || extracted.command?.operation !== MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION) {
       return comment;
     }
-    const shape = validateApprovedBackendRestartCommandShape(extracted.command);
-    backendOriginals.set(String(comment?.id ?? ''), Object.freeze({
+    const shape = validateDiagnosticLinkCommandShape(extracted.command);
+    diagnosticOriginals.set(String(comment?.id ?? ''), Object.freeze({
       command: extracted.command,
-      shapeValid: shape.ok === true,
-    }));
-    return translatedComment(
+      shape,
       comment,
-      translateApprovedBackendRestartForBase(extracted.command, { shapeValid: shape.ok === true }),
-    );
+    }));
+    return translatedComment(comment, translateDiagnosticLinkForLegacy(extracted.command, shape));
   });
 
-  const selected = base.selectBattleBridgeGitHubCommandBatch(translated, options);
+  const selected = legacy.selectBattleBridgeGitHubCommandBatch(translated, options);
   if (!selected?.ok) return selected;
 
   const commands = Array.isArray(selected.commands)
     ? selected.commands.map((entry) => {
-      const preservationOriginal = preservationOriginals.get(String(entry?.commentId ?? ''));
-      if (preservationOriginal?.shape?.ok === true) {
-        return Object.freeze({
-          ...entry,
-          command: Object.freeze({
-            ...entry.command,
-            operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
-            preservationProfile: preservationOriginal.shape.profile,
-            preservationApproval: preservationOriginal.shape.approval,
-          }),
-          partition: base.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
-        });
-      }
-      const backendOriginal = backendOriginals.get(String(entry?.commentId ?? ''));
-      if (!backendOriginal?.shapeValid) return entry;
+      const original = diagnosticOriginals.get(String(entry?.commentId ?? ''));
+      if (!original?.shape?.ok) return entry;
       return Object.freeze({
         ...entry,
-        command: Object.freeze({
-          ...entry.command,
-          operation: BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
-          expectedHead: String(backendOriginal.command.expectedHead || '').toLowerCase(),
-        }),
-        partition: base.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
+        command: projectDiagnosticEnvelope(entry.command, original.shape.expectedHead),
+        partition: legacy.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
       });
     })
     : [];
 
   const rejected = Array.isArray(selected.rejected)
     ? selected.rejected.map((entry) => {
-      const original = preservationOriginals.get(String(entry?.commentId ?? ''));
-      if (!original || original.shape?.ok === true) return entry;
-      return Object.freeze({
-        ...entry,
-        blocker: original.shape.blocker,
-      });
+      const original = diagnosticOriginals.get(String(entry?.commentId ?? ''));
+      if (!original || original.shape?.ok) return entry;
+      return Object.freeze({ ...entry, blocker: original.shape.blocker });
     })
     : selected.rejected;
 
   const terminalRejections = Array.isArray(selected.terminalRejections)
     ? selected.terminalRejections.map((entry) => {
-      const preservationOriginal = preservationOriginals.get(String(entry?.commentId ?? ''));
-      if (preservationOriginal) {
-        return Object.freeze({
-          ...entry,
-          blocker: preservationOriginal.shape?.ok === true
-            ? entry.blocker
-            : preservationOriginal.shape.blocker,
-          command: Object.freeze({
-            ...entry.command,
-            operation: String(preservationOriginal.command?.operation || entry.command?.operation || ''),
-            expectedHead: String(preservationOriginal.command?.expectedHead || entry.command?.expectedHead || '').toLowerCase(),
-            ...(preservationOriginal.shape?.ok === true ? {
-              preservationProfile: preservationOriginal.shape.profile,
-              preservationApproval: preservationOriginal.shape.approval,
-            } : {}),
-          }),
-        });
-      }
-      const backendOriginal = backendOriginals.get(String(entry?.commentId ?? ''));
-      if (!backendOriginal) return entry;
+      const original = diagnosticOriginals.get(String(entry?.commentId ?? ''));
+      if (!original) return entry;
       return Object.freeze({
         ...entry,
-        command: Object.freeze({
-          ...entry.command,
-          operation: BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
-        }),
+        blocker: original.shape?.ok === true ? entry.blocker : original.shape.blocker,
+        command: projectDiagnosticEnvelope(
+          entry.command,
+          String(original.command?.expectedHead || '').trim().toLowerCase(),
+        ),
       });
     })
     : [];
+
+  const terminalRequestIds = new Set(
+    terminalRejections.map((entry) => String(entry?.command?.requestId || '')).filter(Boolean),
+  );
+  if (Array.isArray(selected.rejected)) {
+    for (const entry of selected.rejected) {
+      const original = diagnosticOriginals.get(String(entry?.commentId ?? ''));
+      if (!original || original.shape?.ok === true) continue;
+      const terminal = projectDiagnosticTerminalRejection(original, options);
+      if (!terminal) continue;
+      const requestId = String(terminal.command?.requestId || '');
+      if (options?.consumedRequestIds?.has?.(requestId) || terminalRequestIds.has(requestId)) continue;
+      terminalRequestIds.add(requestId);
+      terminalRejections.push(terminal);
+    }
+  }
 
   return Object.freeze({
     ...selected,
@@ -311,108 +235,29 @@ export function selectNextBattleBridgeGitHubCommand(comments = [], options = {})
   });
 }
 
-export function buildBattleBridgeGitHubCommandReceipt(args = {}) {
-  const receipt = base.buildBattleBridgeGitHubCommandReceipt(args);
-  const preservation = validateRuntimeDataPreservationCommandShape(args?.command || {});
-  if (!preservation.ok || !preservation.requested) return receipt;
-  return Object.freeze({
-    ...receipt,
-    preservationProfile: preservation.profile,
-    preservationApproved: true,
-  });
-}
-
 export async function executeBattleBridgeGitHubCommand(command, options = {}) {
-  const preservation = validateRuntimeDataPreservationCommandShape(command);
-  if (!preservation.ok) return preservation;
-
-  if (preservation.requested) {
-    if (options?.syncCodexDispatchBridgeFn !== undefined
-      && typeof options.syncCodexDispatchBridgeFn !== 'function') {
-      return fail('COMMAND_PRESERVATION_SYNC_HANDLER_INVALID', {
-        operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
-        requestId: String(command?.requestId || ''),
-      });
-    }
-    let syncFn = options?.syncCodexDispatchBridgeFn;
-    if (typeof syncFn !== 'function') {
-      const module = await import('./codexDispatchHostOps.mjs');
-      syncFn = module.syncCodexDispatchBridge;
-    }
-    const rawSpawnSyncFn = typeof options?.spawnSyncFn === 'function' ? options.spawnSyncFn : spawnSync;
-    const guardedSpawnSyncFn = createExactOriginMainGuard(rawSpawnSyncFn, preservation.expectedHead);
-    let preservationSync;
-    try {
-      preservationSync = await syncFn({
-        expectedBranch: 'main',
-        operatorApproval: command.operatorApproval,
-        preservationProfile: preservation.profile,
-        preservationApproval: preservation.approval,
-        spawnSyncFn: guardedSpawnSyncFn,
-      });
-    } catch (error) {
-      return fail('COMMAND_PRESERVATION_SYNC_FAILED', {
-        operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
-        requestId: String(command?.requestId || ''),
-        error: error?.message || String(error),
-      });
-    }
-    if (!preservationSync?.ok) {
-      return Object.freeze({
-        ok: false,
-        verdict: 'COMMAND_EXECUTION_BLOCKED',
-        blocker: String(preservationSync?.blocker || 'COMMAND_PRESERVATION_SYNC_BLOCKED'),
-        operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
-        requestId: String(command?.requestId || ''),
-        result: preservationSync,
-      });
-    }
-    const afterHead = String(preservationSync?.afterHead || '').trim().toLowerCase();
-    if (afterHead !== preservation.expectedHead) {
-      return Object.freeze({
-        ok: false,
-        verdict: 'COMMAND_EXECUTION_BLOCKED',
-        blocker: 'COMMAND_PRESERVATION_TARGET_HEAD_MISMATCH',
-        operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
-        requestId: String(command?.requestId || ''),
-        result: preservationSync,
-      });
-    }
-    return Object.freeze({
-      ok: true,
-      verdict: 'COMMAND_EXECUTION_COMPLETE',
-      operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
-      requestId: String(command?.requestId || ''),
-      sourceHead: afterHead,
-      expectedHead: preservation.expectedHead,
-      result: preservationSync,
-      preservationSync,
-      runtimeRefreshAttempted: false,
-    });
+  if (String(command?.operation || '') !== MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION) {
+    return legacy.executeBattleBridgeGitHubCommand(command, options);
   }
-
-  if (String(command?.operation || '') !== BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION) {
-    return base.executeBattleBridgeGitHubCommand(command, options);
-  }
-  const shape = validateApprovedBackendRestartCommandShape(command);
+  const shape = validateDiagnosticLinkCommandShape(command);
   if (!shape.ok) return shape;
-  const executor = typeof options?.restartApprovedBackend === 'function'
-    ? options.restartApprovedBackend
-    : executeApprovedBackendRestartOnBattleBridge;
+  const executor = typeof options?.runMissionWorkerDiagnosticLinkFn === 'function'
+    ? options.runMissionWorkerDiagnosticLinkFn
+    : runMissionWorkerDiagnosticLink;
   try {
-    const result = await executor(command);
+    const result = await executor({ expectedHead: shape.expectedHead });
     return Object.freeze({
       ok: result?.ok !== false,
       verdict: result?.ok === false ? 'COMMAND_EXECUTION_BLOCKED' : 'COMMAND_EXECUTION_COMPLETE',
-      operation: BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
+      operation: MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION,
       requestId: String(command?.requestId || ''),
+      ...(result?.ok === false ? { blocker: String(result?.blocker || 'MISSION_WORKER_DIAGNOSTIC_LINK_EXECUTION_FAILED') } : {}),
       result,
     });
-  } catch (error) {
-    return fail('COMMAND_EXECUTION_FAILED', {
-      operation: BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
+  } catch {
+    return fail('MISSION_WORKER_DIAGNOSTIC_LINK_EXECUTION_FAILED', {
+      operation: MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION,
       requestId: String(command?.requestId || ''),
-      error: error?.message || String(error),
     });
   }
 }
