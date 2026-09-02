@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { backendStarterInvocation } from './run-battle-bridge-ignition.mjs';
 import { createExactHeadSourceLoader } from '../stephanos-server/backend-exact-head-loader.mjs';
 import { fixedBackendExecutable } from '../stephanos-server/services/fixedBackendExecutable.js';
+await import('./post-sync-runtime-refresh-windows-canonical-git-hardlink.test.mjs');
 
 const restartSource = await readFile(new URL('./windows/restart-approved-stephanos-runtime.ps1', import.meta.url), 'utf8');
 const workerStartSource = await readFile(new URL('./windows/start-mission-orchestrator-worker.ps1', import.meta.url), 'utf8');
@@ -54,7 +55,7 @@ async function simulateBackendImportBoundary(observedHeads, expectedHead) {
   let listenerStarted = false;
   try {
     proveExpectedHead();
-    await Promise.resolve(); // backend module loading boundary
+    await Promise.resolve();
     proveExpectedHead();
     listenerStarted = true;
     return { listenerStarted, error: null };
@@ -971,10 +972,10 @@ test('fresh-worker and launcher heartbeat proof reject every future instant befo
 test('existing-worker cleanup terminates only through the exact final process capability', () => {
   assert.equal(exactExistingWorkerProcessCapabilityBoundary(restartSource), true);
   for (const mutation of [
-    restartSource.replace('[System.Diagnostics.Process]::GetProcessById($processId)', 'Get-Process -Id $processId'),
-    restartSource.replace('$null = $processCapability.Handle', '$null = $processId'),
-    restartSource.replace('$processCapability.StartTime.ToUniversalTime()', '$heartbeatProcessStartedAtUtc'),
-    restartSource.replace('ProcessCapability = $processCapability', 'ProcessCapability = $processId'),
+    restartSource.replaceAll('[System.Diagnostics.Process]::GetProcessById($processId)', 'Get-Process -Id $processId'),
+    restartSource.replaceAll('$null = $processCapability.Handle', '$null = $processId'),
+    restartSource.replaceAll('$processCapability.StartTime.ToUniversalTime()', '$heartbeatProcessStartedAtUtc'),
+    restartSource.replaceAll('ProcessCapability = $processCapability', 'ProcessCapability = $processId'),
     restartSource.replace('$reverifiedProcessCapability.HasExited', '$false'),
     restartSource.replace('$null = $reverifiedProcessCapability.Handle', '$null = $oldWorker.ProcessId'),
     restartSource.replace('$reverifiedProcessCapability.StartTime.ToUniversalTime()', '$oldWorker.ProcessStartedAtUtc'),

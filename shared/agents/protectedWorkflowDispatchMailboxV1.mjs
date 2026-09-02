@@ -27,6 +27,16 @@ const ALLOWED_FIELDS = new Set([
   'independentReviewRunId', 'independentReviewRunAttempt', 'independentReviewArtifactId',
   'independentReviewArtifactDigest', 'independentReviewPayloadSha256',
 ]);
+const READY_AUTHORIZATION_IDENTITY_FIELDS = Object.freeze([
+  'operation', 'repository', 'issueNumber', 'operatorApproval', 'mode', 'prNumber', 'expectedBranch',
+  'expectedHead', 'expectedHeadTree', 'expectedBase',
+]);
+const MERGE_AUTHORIZATION_IDENTITY_FIELDS = Object.freeze([
+  ...READY_AUTHORIZATION_IDENTITY_FIELDS,
+  'independentReviewRunId', 'independentReviewRunAttempt', 'independentReviewArtifactId',
+  'independentReviewArtifactDigest', 'independentReviewPayloadSha256',
+]);
+const AUTHORIZATION_COMMENT_ISSUE_URL = `https://api.github.com/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/issues/${PROTECTED_WORKFLOW_DISPATCH_ISSUE}`;
 
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, blocker, details: Object.freeze(details) });
@@ -36,6 +46,26 @@ function positiveInteger(value) {
   if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return value;
   const text = String(value ?? '');
   return POSITIVE_INTEGER.test(text) ? Number(text) : 0;
+}
+
+function normalizeAuthorizationExpected(expected = {}) {
+  return Object.freeze({
+    operation: String(expected.operation || ''),
+    repository: String(expected.repository || ''),
+    issueNumber: positiveInteger(expected.issueNumber),
+    operatorApproval: String(expected.operatorApproval || ''),
+    mode: String(expected.mode || ''),
+    prNumber: positiveInteger(expected.prNumber),
+    expectedBranch: String(expected.expectedBranch || ''),
+    expectedHead: String(expected.expectedHead || '').toLowerCase(),
+    expectedHeadTree: String(expected.expectedHeadTree || '').toLowerCase(),
+    expectedBase: String(expected.expectedBase || '').toLowerCase(),
+    independentReviewRunId: positiveInteger(expected.independentReviewRunId),
+    independentReviewRunAttempt: positiveInteger(expected.independentReviewRunAttempt),
+    independentReviewArtifactId: positiveInteger(expected.independentReviewArtifactId),
+    independentReviewArtifactDigest: String(expected.independentReviewArtifactDigest || '').toLowerCase(),
+    independentReviewPayloadSha256: String(expected.independentReviewPayloadSha256 || '').toLowerCase(),
+  });
 }
 
 export function extractProtectedWorkflowDispatch(body = '') {
@@ -89,11 +119,13 @@ export function validateProtectedWorkflowDispatch(command = {}, {
   if (!SHA40.test(expectedHead)) return fail('PROTECTED_WORKFLOW_DISPATCH_HEAD_INVALID');
   if (!SHA40.test(expectedHeadTree)) return fail('PROTECTED_WORKFLOW_DISPATCH_HEAD_TREE_INVALID');
   if (!SHA40.test(expectedBase)) return fail('PROTECTED_WORKFLOW_DISPATCH_BASE_INVALID');
-  if (!independentReviewRunId || !independentReviewRunAttempt || !independentReviewArtifactId) {
-    return fail('PROTECTED_WORKFLOW_DISPATCH_REVIEW_IDENTITY_INVALID');
+  if (operation === PROTECTED_WORKFLOW_DISPATCH_OPERATION) {
+    if (!independentReviewRunId || !independentReviewRunAttempt || !independentReviewArtifactId) {
+      return fail('PROTECTED_WORKFLOW_DISPATCH_REVIEW_IDENTITY_INVALID');
+    }
+    if (!ARTIFACT_DIGEST.test(independentReviewArtifactDigest)) return fail('PROTECTED_WORKFLOW_DISPATCH_ARTIFACT_DIGEST_INVALID');
+    if (!SHA256.test(independentReviewPayloadSha256)) return fail('PROTECTED_WORKFLOW_DISPATCH_PAYLOAD_DIGEST_INVALID');
   }
-  if (!ARTIFACT_DIGEST.test(independentReviewArtifactDigest)) return fail('PROTECTED_WORKFLOW_DISPATCH_ARTIFACT_DIGEST_INVALID');
-  if (!SHA256.test(independentReviewPayloadSha256)) return fail('PROTECTED_WORKFLOW_DISPATCH_PAYLOAD_DIGEST_INVALID');
 
   const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
   const authoredAtMs = authoredAt instanceof Date ? authoredAt.getTime() : Date.parse(String(authoredAt));
@@ -131,10 +163,61 @@ export function validateProtectedWorkflowDispatch(command = {}, {
   });
 }
 
-export function buildProtectedWorkflowDispatchRequest(command = {}) {
+export function validateProtectedWorkflowAuthorizationComment(comment = {}, expectedCommand = {}, {
+  now = new Date(),
+  expectedCommentId = 0,
+} = {}) {
+  const commentId = positiveInteger(comment?.id);
+  const requiredCommentId = positiveInteger(expectedCommentId);
+  if (!commentId || (requiredCommentId && commentId !== requiredCommentId)) {
+    return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_ID_MISMATCH');
+  }
+  if (String(comment?.issue_url || '') !== AUTHORIZATION_COMMENT_ISSUE_URL) {
+    return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_ISSUE_MISMATCH');
+  }
+  const authorLogin = String(comment?.user?.login || '');
+  if (authorLogin !== PROTECTED_WORKFLOW_DISPATCH_AUTHOR) {
+    return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_AUTHOR_MISMATCH');
+  }
+  const body = String(comment?.body || '');
+  const marker = PROTECTED_WORKFLOW_DISPATCH_MARKER.toLowerCase();
+  if (body.toLowerCase().split(marker).length - 1 !== 1) {
+    return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_COMMAND_COUNT_INVALID');
+  }
+  const extracted = extractProtectedWorkflowDispatch(body);
+  if (!extracted.ok) return extracted;
+  const authoredAt = new Date(comment?.created_at || 0);
+  const validation = validateProtectedWorkflowDispatch(extracted.command, {
+    authorLogin,
+    issueNumber: PROTECTED_WORKFLOW_DISPATCH_ISSUE,
+    now,
+    authoredAt,
+  });
+  if (!validation.ok) return validation;
+  const expected = normalizeAuthorizationExpected(expectedCommand);
+  const observed = validation.command;
+  const authorizationIdentityFields = observed.operation === PROTECTED_WORKFLOW_DISPATCH_OPERATION
+    ? MERGE_AUTHORIZATION_IDENTITY_FIELDS
+    : READY_AUTHORIZATION_IDENTITY_FIELDS;
+  for (const field of authorizationIdentityFields) {
+    if (observed[field] !== expected[field]) {
+      return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_IDENTITY_MISMATCH', { field });
+    }
+  }
+  return Object.freeze({
+    ok: true,
+    commentId,
+    authoredAtUtc: authoredAt.toISOString(),
+    command: observed,
+  });
+}
+
+export function buildProtectedWorkflowDispatchRequest(command = {}, { authorizationCommentId = 0 } = {}) {
   if (command?.operation !== PROTECTED_WORKFLOW_DISPATCH_OPERATION) {
     return fail('PROTECTED_WORKFLOW_DISPATCH_REQUEST_NOT_MERGE_OPERATION');
   }
+  const commentId = positiveInteger(authorizationCommentId);
+  if (!commentId) return fail('PROTECTED_WORKFLOW_DISPATCH_AUTHORIZATION_COMMENT_ID_INVALID');
   const validation = validateProtectedWorkflowDispatch(command, {
     authorLogin: PROTECTED_WORKFLOW_DISPATCH_AUTHOR,
     issueNumber: PROTECTED_WORKFLOW_DISPATCH_ISSUE,
@@ -161,6 +244,7 @@ export function buildProtectedWorkflowDispatchRequest(command = {}) {
         independent_review_artifact_id: String(c.independentReviewArtifactId),
         independent_review_artifact_digest: c.independentReviewArtifactDigest,
         independent_review_payload_sha256: c.independentReviewPayloadSha256,
+        authorization_comment_id: String(commentId),
       }),
     }),
   });

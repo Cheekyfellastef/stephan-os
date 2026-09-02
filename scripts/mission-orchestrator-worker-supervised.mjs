@@ -271,19 +271,7 @@ export async function runSupervisedMissionWorker({
   let lastTickLogSignature = '';
   let repositoryDriftObserved = false;
   let consecutiveProgressRechecks = 0;
-
-  try {
-    const mailboxBootstrap = await bootstrapMailbox({ env });
-    stdout.write(`${JSON.stringify({ checkedAt: now(), ...mailboxBootstrap })}\n`);
-  } catch (error) {
-    stderr.write(`${JSON.stringify({
-      checkedAt: now(),
-      finalVerdict: 'MAILBOX_SELF_BOOTSTRAP_FAILED',
-      error: error?.message || String(error),
-      operatorNeeded: true,
-    })}\n`);
-    if (once) exitCode = 1;
-  }
+  let mailboxBootstrapPending = true;
 
   do {
     const checkedAt = now();
@@ -364,6 +352,22 @@ export async function runSupervisedMissionWorker({
     }, heartbeatIntervalMs);
 
     try {
+      if (mailboxBootstrapPending) {
+        mailboxBootstrapPending = false;
+        try {
+          const mailboxBootstrap = await bootstrapMailbox({ env });
+          stdout.write(`${JSON.stringify({ checkedAt: now(), ...mailboxBootstrap })}\n`);
+        } catch (error) {
+          stderr.write(`${JSON.stringify({
+            checkedAt: now(),
+            finalVerdict: 'MAILBOX_SELF_BOOTSTRAP_FAILED',
+            error: error?.message || String(error),
+            operatorNeeded: true,
+          })}\n`);
+          if (once) exitCode = 1;
+        }
+      }
+
       const controller = await runControllerCycle({}, {
         env,
         nowUtc: checkedAt,
