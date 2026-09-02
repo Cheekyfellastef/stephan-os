@@ -4,8 +4,8 @@ import { buildOpenClawGitHubOperation } from './openClawGitHubOperator.mjs';
 import { applyMissionOrchestratorEvent } from './missionOrchestrator.mjs';
 import {
   MISSION_CONTROLLER_ROUTE,
-  routeMissionControllerCapacity,
 } from './missionControllerCapacityRouterV1.mjs';
+import { routeProviderIndependentMissionCapacityV1 } from './providerIndependentMissionCapacityRouteV1.mjs';
 
 const OPENCLAW_BRANCH_PATTERN = /^openclaw\/[a-z0-9][a-z0-9._/-]{2,127}$/;
 const SHA40_PATTERN = /^[a-f0-9]{40}$/;
@@ -89,11 +89,20 @@ function capacityRouteForMission(state, options = {}) {
       blockers: [],
     };
   }
-  if (!options.capacityRouting) return null;
-  return routeMissionControllerCapacity({
+  if (!options.capacityRouting) {
+    return {
+      route: MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY,
+      adapter: '',
+      dispatchAllowed: false,
+      blockers: ['provider-independent-capacity-routing-unavailable'],
+    };
+  }
+  return routeProviderIndependentMissionCapacityV1({
     ...options.capacityRouting,
     nowUtc: options.capacityRouting.nowUtc || nowIso(options),
     mission: state,
+    preferNonOpenAi: options.capacityRouting.preferNonOpenAi !== false,
+    openAiBlackout: options.capacityRouting.openAiBlackout === true,
   });
 }
 
