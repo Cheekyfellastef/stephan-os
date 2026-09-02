@@ -104,6 +104,7 @@ export function validateProtectedWorkflowDispatch(command = {}, {
   issueNumber = 0,
   now = new Date(),
   authoredAt = now,
+  allowExpiredMaterialAuthorization = false,
 } = {}) {
   if (authorLogin !== PROTECTED_WORKFLOW_DISPATCH_AUTHOR) return fail('PROTECTED_WORKFLOW_DISPATCH_AUTHOR_NOT_ALLOWED');
   if (Number(issueNumber) !== PROTECTED_WORKFLOW_DISPATCH_ISSUE) return fail('PROTECTED_WORKFLOW_DISPATCH_ISSUE_MISMATCH');
@@ -163,7 +164,12 @@ export function validateProtectedWorkflowDispatch(command = {}, {
   if (!Number.isFinite(nowMs) || !Number.isFinite(authoredAtMs) || !Number.isFinite(expiresAtMs)) {
     return fail('PROTECTED_WORKFLOW_DISPATCH_EXPIRY_INVALID');
   }
-  if (expiresAtMs <= nowMs || expiresAtMs <= authoredAtMs) return fail('PROTECTED_WORKFLOW_DISPATCH_EXPIRED');
+  const historicalMaterialAuthorization = allowExpiredMaterialAuthorization === true
+    && operation === PROTECTED_WORKFLOW_DISPATCH_OPERATION;
+  if (expiresAtMs <= authoredAtMs) return fail('PROTECTED_WORKFLOW_DISPATCH_EXPIRED');
+  if (expiresAtMs <= nowMs && !historicalMaterialAuthorization) {
+    return fail('PROTECTED_WORKFLOW_DISPATCH_EXPIRED');
+  }
   if (expiresAtMs - authoredAtMs > PROTECTED_WORKFLOW_DISPATCH_MAX_WINDOW_MS) {
     return fail('PROTECTED_WORKFLOW_DISPATCH_EXPIRY_TOO_FAR_AHEAD');
   }
@@ -199,6 +205,7 @@ export function validateProtectedWorkflowDispatch(command = {}, {
 export function validateProtectedWorkflowAuthorizationComment(comment = {}, expectedCommand = {}, {
   now = new Date(),
   expectedCommentId = 0,
+  allowExpiredMaterialAuthorization = false,
 } = {}) {
   const commentId = positiveInteger(comment?.id);
   const requiredCommentId = positiveInteger(expectedCommentId);
@@ -225,6 +232,7 @@ export function validateProtectedWorkflowAuthorizationComment(comment = {}, expe
     issueNumber: PROTECTED_WORKFLOW_DISPATCH_ISSUE,
     now,
     authoredAt,
+    allowExpiredMaterialAuthorization,
   });
   if (!validation.ok) return validation;
   const expected = normalizeAuthorizationExpected(expectedCommand);
