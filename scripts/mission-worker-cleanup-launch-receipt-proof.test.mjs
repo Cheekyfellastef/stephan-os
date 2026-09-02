@@ -7,7 +7,9 @@ const source = await readFile(new URL('./windows/restart-approved-stephanos-runt
 function sliceFunction(name, nextName) {
   const start = source.indexOf(`function ${name}`);
   assert.notEqual(start, -1, `${name} must exist`);
-  const end = nextName ? source.indexOf(`function ${nextName}`, start + 1) : source.length;
+  const end = nextName
+    ? source.indexOf(`function ${nextName}`, start + 1)
+    : source.indexOf('\ntry {\n    if (-not $env:USERPROFILE)', start + 1);
   assert.ok(end > start, `${name} must have a bounded body`);
   return source.slice(start, end);
 }
