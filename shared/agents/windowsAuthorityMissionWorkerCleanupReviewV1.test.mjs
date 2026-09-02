@@ -13,7 +13,7 @@ const PATH = WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_PATHS_V1[0];
 
 function gitBlobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
-  return createHash('sha1').update(`blob ${bytes.length}\\0`).update(bytes).digest('hex');
+  return createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
 }
 
 const GOOD_SOURCE = `
