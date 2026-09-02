@@ -8,9 +8,11 @@ import { tmpdir } from 'node:os';
 import {
   BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
   BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
+  EXECUTION_SURFACE_FAILURE_CLASS,
   MISSION_CONTROLLER_ROUTE,
   createBuildLaneCapacityStatusRecord,
   createBuildLanePublisherAttestation,
+  classifyExecutionSurfaceFailure,
   publishBuildLaneCapacityToSharedWorkspace,
   routeMissionControllerCapacity,
   validateBuildLaneAuthorityReceipt,
@@ -71,6 +73,22 @@ function githubReceipt(overrides = {}) {
   };
 }
 
+function executionSurfaceFailure(overrides = {}) {
+  return {
+    missionId: mission().missionId,
+    repository: REPOSITORY,
+    sourceHead: SOURCE_HEAD,
+    route: MISSION_CONTROLLER_ROUTE.CODEX,
+    reason: 'provider usage limit reached before execution receipt',
+    errorCode: 'METER_EXHAUSTED',
+    httpStatus: 0,
+    attemptCount: 1,
+    expectedReceiptObserved: false,
+    observedAtUtc: '2026-08-10T11:59:30.000Z',
+    ...overrides,
+  };
+}
+
 function githubAuthority(overrides = {}) {
   return {
     schemaVersion: BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
@@ -119,6 +137,79 @@ test('low Codex capacity routes an unowned source repair to a freshly proven Git
   assert.equal(result.selectedCapacityReceiptId, githubReceipt().receiptId);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('fresh missing-receipt provider exhaustion is classified without widening authority', () => {
+  const result = classifyExecutionSurfaceFailure(executionSurfaceFailure(), {
+    nowUtc: NOW,
+    missionId: mission().missionId,
+    repository: REPOSITORY,
+    sourceHead: SOURCE_HEAD,
+  });
+  assert.equal(result.valid, true);
+  assert.equal(result.classification, EXECUTION_SURFACE_FAILURE_CLASS.PROVIDER_EXHAUSTION);
+  assert.equal(result.reroutable, true);
+  assert.equal(result.expectedReceiptObserved, false);
+});
+
+test('failed Codex execution surface reroutes the same exact mission to proven GitHub capacity', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus(),
+    githubLaneReceipt: githubReceipt(),
+    githubLaneAuthorityReceipts: [githubAuthority()],
+    executionSurfaceFailure: executionSurfaceFailure(),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
+  assert.equal(result.adapter, 'chatgpt-github');
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.finalVerdict, 'MISSION_CONTROLLER_EXECUTION_SURFACE_REROUTED');
+  assert.equal(result.executionSurfaceFailure.classification, EXECUTION_SURFACE_FAILURE_CLASS.PROVIDER_EXHAUSTION);
+  assert.equal(result.duplicateDispatchAllowed, false);
+  assert.equal(result.mergeAuthority, false);
+});
+
+test('source or test failure is parked instead of being misclassified as provider failover', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus(),
+    githubLaneReceipt: githubReceipt(),
+    githubLaneAuthorityReceipts: [githubAuthority()],
+    executionSurfaceFailure: executionSurfaceFailure({
+      reason: 'focused regression test assertion failed',
+      errorCode: 'TEST_FAILURE',
+    }),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.equal(result.finalVerdict, 'MISSION_CONTROLLER_EXECUTION_FAILURE_PARKED');
+  assert.equal(result.executionSurfaceFailure.classification, EXECUTION_SURFACE_FAILURE_CLASS.SOURCE_OR_TEST_FAILURE);
+});
+
+test('unbounded retries or a receipt-present observation cannot suppress a healthy route', () => {
+  for (const observation of [
+    executionSurfaceFailure({ attemptCount: 3 }),
+    executionSurfaceFailure({ expectedReceiptObserved: true }),
+    executionSurfaceFailure({ sourceHead: 'b'.repeat(40) }),
+  ]) {
+    const result = routeMissionControllerCapacity({
+      nowUtc: NOW,
+      sourceHead: SOURCE_HEAD,
+      mission: mission(),
+      codexStatus: codexStatus(),
+      githubLaneReceipt: githubReceipt(),
+      githubLaneAuthorityReceipts: [githubAuthority()],
+      executionSurfaceFailure: observation,
+    });
+    assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+    assert.equal(result.dispatchAllowed, false);
+    assert.equal(result.finalVerdict, 'MISSION_CONTROLLER_CAPACITY_BLOCKED');
+    assert.ok(result.blockers.includes('execution-surface-failure-observation-invalid'));
+  }
 });
 
 test('missing or stale meter truth cannot be silently treated as Codex capacity', () => {
