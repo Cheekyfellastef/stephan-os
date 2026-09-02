@@ -9,10 +9,12 @@ import {
   BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
   BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
   EXECUTION_SURFACE_FAILURE_CLASS,
+  MISSION_CONTROLLER_LIVENESS,
   MISSION_CONTROLLER_ROUTE,
   createBuildLaneCapacityStatusRecord,
   createBuildLanePublisherAttestation,
   classifyExecutionSurfaceFailure,
+  decideMissionControllerLiveness,
   publishBuildLaneCapacityToSharedWorkspace,
   routeMissionControllerCapacity,
   validateBuildLaneAuthorityReceipt,
@@ -169,6 +171,52 @@ test('failed Codex execution surface reroutes the same exact mission to proven G
   assert.equal(result.executionSurfaceFailure.classification, EXECUTION_SURFACE_FAILURE_CLASS.PROVIDER_EXHAUSTION);
   assert.equal(result.duplicateDispatchAllowed, false);
   assert.equal(result.mergeAuthority, false);
+});
+
+test('execution-surface failure suppresses only the failed route and keeps the controller enabled', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus(),
+    githubLaneReceipt: githubReceipt(),
+    githubLaneAuthorityReceipts: [githubAuthority()],
+    executionSurfaceFailure: executionSurfaceFailure(),
+  });
+  assert.equal(result.controllerLiveness.state, MISSION_CONTROLLER_LIVENESS.KEEP_ENABLED);
+  assert.equal(result.controllerLiveness.keepEnabled, true);
+  assert.equal(result.controllerLiveness.disableAllowed, false);
+  assert.equal(result.executionSurfaceFailure.route, MISSION_CONTROLLER_ROUTE.CODEX);
+  assert.equal(result.executionSurfaceFailure.suppressRouteUntilUtc, '2026-08-10T12:15:00.000Z');
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
+});
+
+test('controller disablement requires explicit operator disable or proved SAFE_HOLD', () => {
+  const ordinaryFailure = decideMissionControllerLiveness({
+    executionSurfaceUnavailable: true,
+  });
+  assert.equal(ordinaryFailure.state, MISSION_CONTROLLER_LIVENESS.KEEP_ENABLED);
+  assert.equal(ordinaryFailure.disableAllowed, false);
+
+  const unprovedSafeHold = decideMissionControllerLiveness({
+    safeHold: true,
+    contradictoryEvidenceProved: false,
+  });
+  assert.equal(unprovedSafeHold.state, MISSION_CONTROLLER_LIVENESS.KEEP_ENABLED);
+  assert.equal(unprovedSafeHold.disableAllowed, false);
+
+  const provedSafeHold = decideMissionControllerLiveness({
+    safeHold: true,
+    contradictoryEvidenceProved: true,
+  });
+  assert.equal(provedSafeHold.state, MISSION_CONTROLLER_LIVENESS.DISABLE_SAFE_HOLD);
+  assert.equal(provedSafeHold.disableAllowed, true);
+
+  const operatorDisable = decideMissionControllerLiveness({
+    explicitOperatorDisable: true,
+  });
+  assert.equal(operatorDisable.state, MISSION_CONTROLLER_LIVENESS.DISABLE_OPERATOR_REQUESTED);
+  assert.equal(operatorDisable.disableAllowed, true);
 });
 
 test('source or test failure is parked instead of being misclassified as provider failover', () => {
