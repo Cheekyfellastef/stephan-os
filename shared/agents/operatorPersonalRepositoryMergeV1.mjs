@@ -1453,6 +1453,13 @@ export function validatePersonalRepositoryCheckRuns(
     } else if (supersededDraftSkip) {
       disposition = 'superseded-draft-skip';
     } else if (cleanIndependentReviewProved
+      && conclusion === 'skipped'
+      && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
+      && path === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
+      && text(run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
+      && name === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check) {
+      disposition = 'clean-independent-review-superseded-draft-skip';
+    } else if (cleanIndependentReviewProved
       && mergeStateStatus === 'UNSTABLE'
       && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
       && path === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
