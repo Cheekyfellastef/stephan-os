@@ -10,6 +10,37 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
 
+function Get-CanonicalTrackedSourceAssessment {
+    param([string]$GitExecutable, [string]$RepositoryRoot)
+    $runtimeMemoryPath = 'stephanos-server/data/memory/durable-memory.json'
+    $runtimeUiDistPrefix = 'apps/stephanos/dist/'
+    $trackedStatus = @(& $GitExecutable -C $RepositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
+    if ($LASTEXITCODE -ne 0) { throw 'Canonical tracked source inspection failed.' }
+    $sourceDirt = @()
+    foreach ($raw in @($trackedStatus)) {
+        $line = [string]$raw
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        if ($line.Length -lt 4) {
+            $sourceDirt += $line
+            continue
+        }
+        $status = $line.Substring(0, 2)
+        $pathSegment = $line.Substring(3).Trim()
+        if ($pathSegment.Contains(' -> ')) {
+            $sourceDirt += $line
+            continue
+        }
+        $path = $pathSegment.Trim('"').Replace('\', '/')
+        if ($status -eq ' M' -and $path -eq $runtimeMemoryPath) { continue }
+        if (($status -eq ' M' -or $status -eq ' D') -and $path.StartsWith($runtimeUiDistPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        $sourceDirt += $line
+    }
+    return [pscustomobject]@{
+        SourceDirt = @($sourceDirt)
+        SourceClean = ($sourceDirt.Count -eq 0)
+    }
+}
+
 $taskName = 'Stephanos Mission Orchestrator Worker'
 if (-not $env:USERPROFILE) {
     throw 'USERPROFILE is required to resolve canonical worker watchdog paths.'
@@ -138,7 +169,7 @@ function Test-CanonicalWorkerProcessCommandLine {
 function Read-PublicMainHead {
     param([string]$GitExecutable)
 
-    $output = @(& $GitExecutable 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>&1)
+    $output = @(& $GitExecutable 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>$null)
     if ($LASTEXITCODE -ne 0) {
         throw ('git ls-remote failed: {0}' -f (($output | ForEach-Object { [string]$_ }) -join ' '))
     }
@@ -199,6 +230,11 @@ $missionWorkerRestartFailureBlockers = @(
     'MISSION_WORKER_EXISTING_PROCESS_IDENTITY_CHANGED',
     'MISSION_WORKER_EXISTING_PROCESS_CAPABILITY_CHANGED',
     'MISSION_WORKER_VERIFIED_PROCESS_DID_NOT_STOP',
+    'MISSION_WORKER_CANONICAL_PROCESS_QUERY_FAILED',
+    'MISSION_WORKER_CANONICAL_PROCESS_IDENTITY_AMBIGUOUS',
+    'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED',
+    'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED',
+    'MISSION_WORKER_ORPHAN_PROCESS_DID_NOT_STOP',
     'MISSION_WORKER_INVOCATION_ID_GENERATION_FAILED',
     'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT',
     'MISSION_WORKER_FRESH_INSTANCE_NOT_PROVEN',
@@ -343,12 +379,12 @@ try {
         }
     }
     $gitAvailable = $true
-    $repositoryBranchOutput = @(& $canonicalGit -C $repositoryRoot symbolic-ref --quiet --short HEAD 2>&1)
+    $repositoryBranchOutput = @(& $canonicalGit -C $repositoryRoot symbolic-ref --quiet --short HEAD 2>$null)
     if ($LASTEXITCODE -ne 0) {
         throw ('git symbolic-ref failed: {0}' -f (($repositoryBranchOutput | ForEach-Object { [string]$_ }) -join ' '))
     }
     $repositoryBranch = ([string]$repositoryBranchOutput[0]).Trim()
-    $repositoryHeadOutput = @(& $canonicalGit -C $repositoryRoot rev-parse --verify HEAD 2>&1)
+    $repositoryHeadOutput = @(& $canonicalGit -C $repositoryRoot rev-parse --verify HEAD 2>$null)
     if ($LASTEXITCODE -ne 0) {
         throw ('git rev-parse failed: {0}' -f (($repositoryHeadOutput | ForEach-Object { [string]$_ }) -join ' '))
     }
@@ -356,11 +392,8 @@ try {
     if ($repositoryBranch -ne 'main' -or $repositoryHead -notmatch '^[0-9a-f]{40}$') {
         throw 'Canonical repository branch/head proof is invalid.'
     }
-    $trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
-    if ($LASTEXITCODE -ne 0) {
-        throw ('git status failed: {0}' -f (($trackedStatus | ForEach-Object { [string]$_ }) -join ' '))
-    }
-    if ($trackedStatus.Count -ne 0) {
+    $sourceAssessment = Get-CanonicalTrackedSourceAssessment -GitExecutable $canonicalGit -RepositoryRoot $repositoryRoot
+    if (-not $sourceAssessment.SourceClean) {
         throw 'Canonical repository tracked source is dirty.'
     }
     $repositoryTrackedClean = $true
@@ -569,8 +602,8 @@ if ($workerProcess) {
             headSha = [string]$heartbeat.headSha
             taskName = [string]$heartbeat.taskName
             pid = [int]$heartbeat.pid
-            launchIdentityId = [string]$heartbeat.launchIdentityId
-            workerStartedAtUtc = [string]$heartbeat.workerStartedAtUtc
+            launchIdentityId = if ($heartbeat.PSObject.Properties['launchIdentityId']) { [string]$heartbeat.launchIdentityId } else { '' }
+            workerStartedAtUtc = if ($heartbeat.PSObject.Properties['workerStartedAtUtc']) { [string]$heartbeat.workerStartedAtUtc } else { '' }
             lastTickVerdict = [string]$heartbeat.lastTickVerdict
         }
     } else {

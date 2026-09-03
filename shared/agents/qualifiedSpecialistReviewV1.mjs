@@ -221,11 +221,14 @@ function responseMatches(comment = {}, options = {}) {
   const reviewedCommitRef = qualifiedSpecialistCommentHeadRef(comment);
   const resolvedCommitId = text(comment?.resolved_commit_id ?? comment?.resolvedCommitId).toLowerCase();
   const sourceHead = text(options.sourceHead).toLowerCase();
+  const reviewedHeadMatches = reviewedCommitRef.length >= 7
+    && sourceHead.startsWith(reviewedCommitRef);
+  const resolvedHeadMatches = !resolvedCommitId || resolvedCommitId === sourceHead;
   return isTrustedProviderResponse(comment)
     && Buffer.byteLength(body, 'utf8') <= MAX_SPECIALIST_COMMENT_BODY_BYTES
     && /^Codex Review:\s*Didn't find any major issues\./i.test(body)
-    && reviewedCommitRef.length >= 7
-    && resolvedCommitId === sourceHead
+    && reviewedHeadMatches
+    && resolvedHeadMatches
     && Number.isFinite(createdAtMs)
     && Number.isFinite(updatedAtMs)
     && updatedAtMs === createdAtMs;
