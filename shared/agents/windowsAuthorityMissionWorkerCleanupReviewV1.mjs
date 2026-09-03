@@ -151,7 +151,7 @@ function inspectSource(source) {
   if (!capabilityHandle || !capabilityExit || !capabilityId || !capabilityStart) {
     findings.push(finding('mission-worker-cleanup-capability-recheck-missing', 'Handle, exit state, exact PID and exact start time must be revalidated.'));
   }
-  requireIn(fallback, /MISSION_WORKER_CLEANUP_(?:FALLBACK_)?PROCESS_IDENTITY_NOT_PROVEN/, 'mission-worker-cleanup-not-proven-blocker-missing', 'Unproven fallback identity must fail with the typed cleanup blocker.');
+  requireIn(fallback, /MISSION_WORKER_CLEANUP_(?:PROCESS_IDENTITY_NOT_PROVEN|FALLBACK_PROCESS_NOT_PROVEN)/, 'mission-worker-cleanup-not-proven-blocker-missing', 'Unproven fallback identity must fail with the typed cleanup blocker.');
   requireIn(fallback, /MISSION_WORKER_CLEANUP_(?:FALLBACK_)?PROCESS_IDENTITY_CHANGED/, 'mission-worker-cleanup-identity-changed-blocker-missing', 'Changed fallback identity must fail with the typed cleanup blocker.');
 
   const preferred = cleanup.indexOf('Get-VerifiedInvocationProcessFromLaunchReceipt');
