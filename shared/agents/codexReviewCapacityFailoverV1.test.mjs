@@ -74,7 +74,9 @@ test('forged actor, non-PR issue and ordinary review do not trigger provider fai
 });
 
 test('exact-head workflow routes PR issue comments through failover classification before the existing coordinator', () => {
-  const workflow = fs.readFileSync(new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url), 'utf8');
+  const workflow = fs
+    .readFileSync(new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url), 'utf8')
+    .replace(/\r\n?/g, '\n');
   assert.match(workflow, /issue_comment:\n    types:\n      - created/);
   assert.match(workflow, /Classify trusted Codex review-capacity outage/);
   assert.match(workflow, /node shared\/agents\/codexReviewCapacityFailoverV1\.mjs/);
