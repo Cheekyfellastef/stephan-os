@@ -73,6 +73,12 @@ Apply rules to the authority surface actually affected; do not impose high-risk 
 - Fail over without rebuilding the source change. Preserve exact base, head, tree, branch and PR identity; never force-push, overwrite an unrelated remote branch, create a duplicate PR, or bypass review and merge protection.
 - Only report `SOURCE_PUBLICATION_CAPACITY_UNAVAILABLE` after bounded workspace discovery and every registered route has produced unavailable or invalid evidence.
 
+## Protected ready-transition continuity
+- For authorised draft-to-ready transitions, prefer the existing #1507 protected workflow-dispatch mailbox and `MARK_PROTECTED_PR_READY` route over any client-side GraphQL convenience mutation.
+- Treat connected-client failures mentioning `Repository.fullDatabaseId` / `undefinedField` as a known client schema defect, not as evidence that GitHub or the protected ready route is unavailable.
+- Do not retry that broken client mutation, invent caller-supplied GraphQL, or create a second ready/merge mechanism. Use `protectedReadyExecutionRouteV1` to select the canonical route and fail closed if its exact identity, review, mailbox, or operator-authority predicates are missing.
+- The ready operation grants no merge, deployment, runtime, provider, credential, ruleset, or branch-mutation authority beyond the exact protected ready transition.
+
 ## Professionalisation clause
 - Every programme goal must preserve or improve production-grade reliability, maintainability, operator trust, and reusable capability.
 - Individual bounded repairs should remain narrow when they contribute to a proven goal-level outcome; do not gold-plate or expand scope merely to appear comprehensive.
