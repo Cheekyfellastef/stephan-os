@@ -831,8 +831,7 @@ function Get-VerifiedCleanupFallbackWorkerProcess {
         if ($processCapability.HasExited -or $processCapability.Id -ne [int]$candidate.ProcessId) {
             Stop-WithBlocker 'MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_IDENTITY_CHANGED'
         }
-        $capabilityStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
-        if ($capabilityStartedAtUtc.Ticks -ne $candidate.ProcessStartedAtUtc.ToUniversalTime().Ticks) {
+        if ($processCapability.StartTime.ToUniversalTime().Ticks -ne $candidate.ProcessStartedAtUtc.ToUniversalTime().Ticks) {
             Stop-WithBlocker 'MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_IDENTITY_CHANGED'
         }
 
