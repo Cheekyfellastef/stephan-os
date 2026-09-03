@@ -134,8 +134,18 @@ const ORPHAN_SAFE_SOURCE = replaceExactlyOnce(
             Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
         }`,
   ),
-  '            ProcessStartedAtUtc = $processStartedAtUtc',
-  '            ProcessStartedAtUtc = $capabilityProcessStartedAtUtc',
+  `        return [PSCustomObject]@{
+            ProcessId = $processId
+            ProcessStartedAtUtc = $processStartedAtUtc
+            ProcessCapability = $processCapability
+            CanonicalWorkerCommandVerified = $true
+        }`,
+  `        return [PSCustomObject]@{
+            ProcessId = $processId
+            ProcessStartedAtUtc = $capabilityProcessStartedAtUtc
+            ProcessCapability = $processCapability
+            CanonicalWorkerCommandVerified = $true
+        }`,
 );
 
 assert.equal(gitBlobSha(ORPHAN_SAFE_SOURCE), '24bdbd048e30eda6641a8122d60e9262521af376');
