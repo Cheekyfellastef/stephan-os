@@ -400,6 +400,74 @@ test('restart proof cannot claim success without post-start source and cleanup t
   }
 });
 
+test('fixed probe adapter preserves exactly one allowlisted typed Mission Worker restart blocker', () => {
+  const adapter = createFixedWorkerProbeAdapter({
+    probeScriptPath: 'C:\\canonical\\probe.ps1',
+    spawnSyncFn() {
+      return {
+        status: 1,
+        stdout: '',
+        stderr: 'At probe.ps1:1 MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT',
+      };
+    },
+  });
+  const blocked = adapter.run('StartApprovedWorkerTask', {
+    deadlineUtc: '2026-08-12T20:01:00.000Z',
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.restartBlocker, 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT');
+  assert.equal(blocked.error, 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT');
+});
+
+test('fixed probe adapter refuses ambiguous or unallowlisted restart blocker promotion', () => {
+  const results = [
+    'MISSION_WORKER_NOT_ALLOWLISTED',
+    'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT MISSION_WORKER_TASK_NOT_RUNNING_AFTER_START',
+  ];
+  for (const stderr of results) {
+    const adapter = createFixedWorkerProbeAdapter({
+      probeScriptPath: 'C:\\canonical\\probe.ps1',
+      spawnSyncFn: () => ({ status: 1, stdout: '', stderr }),
+    });
+    const blocked = adapter.run('StartApprovedWorkerTask', {
+      deadlineUtc: '2026-08-12T20:01:00.000Z',
+    });
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.restartBlocker, '');
+    assert.equal(blocked.error, stderr);
+  }
+});
+
+test('watchdog Shared Workspace status preserves a typed restart blocker without widening restart authority', async () => {
+  await withFixture(async ({ paths }) => {
+    const probeAdapter = {
+      run(mode) {
+        if (mode === 'Inspect') return { ok: true, data: workerObservation({ paths, healthy: false }) };
+        return {
+          ok: false,
+          restartBlocker: 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT',
+          error: 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT',
+        };
+      },
+    };
+    const result = await runBattleBridgeWorkerWatchdog({
+      paths,
+      expectedPaths: paths,
+      probeAdapter,
+      now: new Date(),
+      sleep: async () => {},
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.classification, 'WORKER_WATCHDOG_START_FAILED');
+    const status = await readCurrentStatus(paths);
+    assert.equal(status.restartBlocker, 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT');
+    assert.equal(status.probeError, 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT');
+    assert.equal(status.supervisorRestartedWorker, true);
+    assert.equal(status.workerRecovered, false);
+    assertOrdinaryWatchdogDidNotClaimCanaryKill(status);
+  });
+});
+
 test('fixed probe adapter uses one script, two modes, no shell and hidden PowerShell', () => {
   const calls = [];
   const adapter = createFixedWorkerProbeAdapter({
