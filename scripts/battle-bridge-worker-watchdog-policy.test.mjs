@@ -308,8 +308,10 @@ test('Windows probe binds repository truth and health to fixed launch-identity e
   assert.match(PROBE_SCRIPT, /function Get-VerifiedWorkerLaunchIdentity/);
   assert.match(PROBE_SCRIPT, /mission-orchestrator-worker-launch-identity-\$launchIdentityId\.json/);
   assert.match(PROBE_SCRIPT, /launchIdentityVerified = \[bool\]\$launchIdentity/);
-  assert.match(PROBE_SCRIPT, /launchIdentityId = \[string\]\$heartbeat\.launchIdentityId/);
-  assert.match(PROBE_SCRIPT, /workerStartedAtUtc = \[string\]\$heartbeat\.workerStartedAtUtc/);
+  assert.match(PROBE_SCRIPT, /launchIdentityId = if \(\$heartbeat\.PSObject\.Properties\['launchIdentityId'\]\) \{ \[string\]\$heartbeat\.launchIdentityId \} else \{ '' \}/);
+  assert.match(PROBE_SCRIPT, /workerStartedAtUtc = if \(\$heartbeat\.PSObject\.Properties\['workerStartedAtUtc'\]\) \{ \[string\]\$heartbeat\.workerStartedAtUtc \} else \{ '' \}/);
+  assert.doesNotMatch(PROBE_SCRIPT, /^\s*launchIdentityId = \[string\]\$heartbeat\.launchIdentityId/m);
+  assert.doesNotMatch(PROBE_SCRIPT, /^\s*workerStartedAtUtc = \[string\]\$heartbeat\.workerStartedAtUtc/m);
   assert.match(PROBE_SCRIPT, /startedAtUtc = \$workerProcessStartedAtUtc/);
   assert.doesNotMatch(PROBE_SCRIPT, /trackedStatusAfterRestart|remoteMainHeadAfterRestart|repositoryHeadAfterRestart|repositoryBranchAfterRestart/);
   assert.doesNotMatch(PROBE_SCRIPT, /Stop-ScheduledTask|Stop-Process/);
