@@ -62,14 +62,40 @@ function Stop-NewlyStartedOwnedWorker {
 }
 `;
 
-const LEGACY_SAFE_SOURCE = SAFE_EQUIVALENT_SOURCE
-  .replace("if ([string]$Plan.TaskName -ne 'Stephanos Mission Orchestrator Worker') {\n    Stop-WithBlocker 'MISSION_WORKER_CLEANUP_TASK_NOT_ALLOWLISTED'\n  }\n  $cleanupTask = Get-ScheduledTask -TaskName $Plan.TaskName", "$cleanupTask = Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker'")
-  .replace('$reread = Get-CimInstance', '$reRead = Get-CimInstance')
-  .replace('-Process $reread', '-Process $reRead')
-  .replace('GetProcessById([int]$candidate.ProcessId)', 'GetProcessById($candidate.ProcessId)')
-  .replace("if ($processCapability.HasExited -or $processCapability.Id -ne [int]$candidate.ProcessId) {\n    Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED'\n  }\n  $null = $processCapability.Handle", "$null = $processCapability.Handle\n  if ($processCapability.HasExited -or $processCapability.Id -ne $candidate.ProcessId) {\n    Stop-WithBlocker 'MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_IDENTITY_CHANGED'\n  }")
-  .replaceAll('MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN', 'MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_NOT_PROVEN')
-  .replace("if ($verifiedInvocationProcess) {\n    $ExpectedProcessId = $verifiedInvocationProcess.ProcessId\n  }\n  else {", "if (-not $verifiedInvocationProcess) {");
+const LEGACY_SAFE_SOURCE = `
+function Get-VerifiedCleanupFallbackWorkerProcess {
+  param([datetime]$StartedAfterUtc, [string]$ExpectedRepoRoot, [int]$ExpectedProcessId, [datetime]$ExpectedProcessStartedAtUtc)
+  $task = Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker' -TaskPath '\\'
+  if ([string]$task.State -in @('Running', 'Queued')) {
+    throw 'MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_NOT_PROVEN'
+  }
+  $candidate = Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat -ExpectedRepoRoot $ExpectedRepoRoot
+  if ($candidate.ProcessStartedAtUtc.ToUniversalTime().Ticks -le $StartedAfterUtc.ToUniversalTime().Ticks) {
+    throw 'MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_NOT_PROVEN'
+  }
+  $reRead = Get-CimInstance Win32_Process -Filter "ProcessId = $($candidate.ProcessId)"
+  if (-not (Test-ExactCanonicalWorkerProcess -Process $reRead -ExpectedRepoRoot $ExpectedRepoRoot)) {
+    throw 'MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_IDENTITY_CHANGED'
+  }
+  $processCapability = [System.Diagnostics.Process]::GetProcessById($candidate.ProcessId)
+  $null = $processCapability.Handle
+  if ($processCapability.HasExited -or $processCapability.Id -ne $candidate.ProcessId) {
+    throw 'MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_IDENTITY_CHANGED'
+  }
+  $capabilityProcessStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+  if ($capabilityProcessStartedAtUtc.Ticks -ne $candidate.ProcessStartedAtUtc.ToUniversalTime().Ticks) {
+    throw 'MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_IDENTITY_CHANGED'
+  }
+}
+function Stop-NewlyStartedOwnedWorker {
+  $verifiedInvocationProcess = Get-VerifiedInvocationProcessFromLaunchReceipt
+  if (-not $verifiedInvocationProcess) {
+    $fallbackProcess = Get-VerifiedCleanupFallbackWorkerProcess -StartedAfterUtc $StartedAfterUtc -ExpectedRepoRoot $ExpectedRepoRoot
+  }
+  $verifiedWorker = Get-VerifiedCleanupFallbackWorkerProcess -StartedAfterUtc $StartedAfterUtc -ExpectedRepoRoot $ExpectedRepoRoot
+  $reverifiedWorker = Get-VerifiedCleanupFallbackWorkerProcess -StartedAfterUtc $StartedAfterUtc -ExpectedRepoRoot $ExpectedRepoRoot -ExpectedProcessId $verifiedWorker.ProcessId -ExpectedProcessStartedAtUtc $verifiedWorker.ProcessStartedAtUtc
+}
+`;
 
 function input(source = SAFE_EQUIVALENT_SOURCE, overrides = {}) {
   return {
