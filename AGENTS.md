@@ -120,3 +120,12 @@ A change is done when it:
 3. keeps PR scope clean and reviewable,
 4. leaves clear evidence and no hidden side effects,
 5. contributes to the parent goal’s result/capability/lesson contract or explicitly records bounded debt.
+
+
+## Goal, issue, and pull-request naming in operator communication
+- When referring to a durable Stephanos goal, GitHub issue, or pull request in operator-facing chat/reporting, always include both its identifier and its exact current title on first mention. Preferred form: `#1657 — OpenClaw Standalone autonomy programme` or `PR #2099 — Route builder ignition around blocked OpenAI surfaces`.
+- Do not present a bare issue/goal/PR number to the operator when the exact title is already known or can be safely read from canonical GitHub/durable state.
+- If a title is not already in the current evidence packet, retrieve it from canonical GitHub/durable state before using the item in an operator-facing approval list, blocker queue, status summary, continuation report, merge-readiness list, or goal-progress answer.
+- Never invent, abbreviate into a materially different meaning, or silently substitute a stale title. If exact title retrieval is unavailable, say `#<number> — title unavailable from current evidence` rather than guessing.
+- In dense follow-up prose, a bare number may be used only after the same response has already established the exact `#number — title` binding and no ambiguity can result. Approval packets and merge/runtime gates should repeat the exact title even if it appeared earlier.
+- This rule applies across general Stephanos controllers, scoped programme controllers, builders, reviewers, recovery agents, Forge/Foundry/OpenClaw/native provider chats, dashboards that generate operator-facing text, and future agent/bootstrap contexts that consume this repository instruction.
