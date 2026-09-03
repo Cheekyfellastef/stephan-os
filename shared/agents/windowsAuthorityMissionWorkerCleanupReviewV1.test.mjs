@@ -94,6 +94,17 @@ test('canonical restart-request helper may precede the cleanup functions without
   assert.equal(result.findings.some((item) => item.code === 'mission-worker-cleanup-functions-missing'), false);
 });
 
+test('top-level script text cannot satisfy an empty final cleanup function', () => {
+  const forged = GOOD_SOURCE.replace(
+    'function Stop-NewlyStartedOwnedWorker {',
+    'function Stop-NewlyStartedOwnedWorker {}\\n',
+  );
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(forged));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-receipt-not-preferred'));
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-fallback-reverification-missing'));
+});
+
 test('wrong PR, branch, path or escalation cannot enter the profile', () => {
   assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(GOOD_SOURCE, { prNumber: 2098 })).eligible, false);
   assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(GOOD_SOURCE, { branch: 'other' })).eligible, false);

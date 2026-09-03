@@ -72,11 +72,47 @@ function functionSlice(source, name) {
   const marker = `function ${name}`;
   const start = source.indexOf(marker);
   if (start < 0) return '';
-  const searchStart = start + marker.length;
-  const remainder = source.slice(searchStart);
-  const nextFunction = /\r?\nfunction\s+[A-Za-z0-9-]+\s*\{/.exec(remainder);
-  const end = nextFunction ? searchStart + nextFunction.index : source.length;
-  return source.slice(start, end);
+  const open = source.indexOf('{', start + marker.length);
+  if (open < 0) return '';
+
+  let depth = 0;
+  let state = 'code';
+  for (let index = open; index < source.length; index += 1) {
+    const current = source[index];
+    const next = source[index + 1];
+
+    if (state === 'line-comment') {
+      if (current === '\n') state = 'code';
+      continue;
+    }
+    if (state === 'block-comment') {
+      if (current === '#' && next === '>') { state = 'code'; index += 1; }
+      continue;
+    }
+    if (state === 'single-quote') {
+      if (current === "'" && next === "'") { index += 1; continue; }
+      if (current === "'") state = 'code';
+      continue;
+    }
+    if (state === 'double-quote') {
+      if (current === '`') { index += 1; continue; }
+      if (current === '"') state = 'code';
+      continue;
+    }
+
+    if (current === '#') { state = 'line-comment'; continue; }
+    if (current === '<' && next === '#') { state = 'block-comment'; index += 1; continue; }
+    if (current === "'") { state = 'single-quote'; continue; }
+    if (current === '"') { state = 'double-quote'; continue; }
+    if (current === '`') { index += 1; continue; }
+    if (current === '{') { depth += 1; continue; }
+    if (current === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+      if (depth < 0) return '';
+    }
+  }
+  return '';
 }
 
 function inspectSource(source) {
