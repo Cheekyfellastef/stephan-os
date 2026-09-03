@@ -10,6 +10,8 @@ export const MISSION_WORKER_TASK_NAME = 'Stephanos Mission Orchestrator Worker';
 export const MISSION_WORKER_HEARTBEAT_FILE = 'mission-orchestrator-worker-heartbeat.json';
 export const DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS = 120_000;
 export const MAX_MISSION_WORKER_LAUNCH_IDENTITY_BYTES = 8_192;
+export const MISSION_WORKER_LAUNCH_RECEIPT_RETRY_ATTEMPTS = 40;
+export const MISSION_WORKER_LAUNCH_RECEIPT_RETRY_DELAY_MS = 50;
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const ID_64 = /^[0-9a-f]{64}$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
@@ -274,6 +276,19 @@ export async function readMissionWorkerLaunchIdentityReceipt({
   });
 }
 
+async function readMissionWorkerLaunchIdentityReceiptAfterCreateRace(input, sleepFn) {
+  for (let attempt = 0; attempt < MISSION_WORKER_LAUNCH_RECEIPT_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await readMissionWorkerLaunchIdentityReceipt(input);
+    } catch (error) {
+      const receiptNotCreatedYet = error?.code === 'ENOENT';
+      if (!receiptNotCreatedYet || attempt + 1 >= MISSION_WORKER_LAUNCH_RECEIPT_RETRY_ATTEMPTS) throw error;
+      await sleepFn(MISSION_WORKER_LAUNCH_RECEIPT_RETRY_DELAY_MS);
+    }
+  }
+  throw new Error('Mission worker launch identity receipt retry bound exhausted.');
+}
+
 export async function writeMissionWorkerHeartbeat({
   env = process.env,
   paths = resolveCanonicalMissionWorkerPaths({ env }),
@@ -289,6 +304,7 @@ export async function writeMissionWorkerHeartbeat({
   lastTickVerdict,
   readFileFn,
   lstatFn,
+  sleepFn = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
 } = {}) {
   if (path.resolve(paths.repositoryRoot) !== path.resolve(expectedPaths.repositoryRoot)) {
     throw new Error('Mission worker heartbeat repository path is not canonical.');
@@ -299,7 +315,7 @@ export async function writeMissionWorkerHeartbeat({
   if (path.resolve(repositoryRoot) !== path.resolve(expectedPaths.repositoryRoot)) {
     throw new Error('Mission worker heartbeat source repository is not canonical.');
   }
-  const launchIdentity = await readMissionWorkerLaunchIdentityReceipt({
+  const launchIdentity = await readMissionWorkerLaunchIdentityReceiptAfterCreateRace({
     launchIdentityId,
     launchReceiptPath,
     expectedPaths,
@@ -310,7 +326,7 @@ export async function writeMissionWorkerHeartbeat({
     pid,
     readFileFn,
     lstatFn,
-  });
+  }, sleepFn);
   const record = createMissionWorkerHeartbeatRecord({
     timestampUtc,
     repositoryRoot,
