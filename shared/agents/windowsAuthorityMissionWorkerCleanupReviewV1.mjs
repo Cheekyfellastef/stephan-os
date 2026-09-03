@@ -68,16 +68,57 @@ function exactSource(source, sourceHead) {
     && source.blobSha === blobSha(content));
 }
 
-function functionSlice(source, name, nextName) {
-  const start = source.indexOf(`function ${name}`);
-  const end = source.indexOf(`function ${nextName}`, start + 1);
-  return start >= 0 && end > start ? source.slice(start, end) : '';
+function functionSlice(source, name) {
+  const marker = `function ${name}`;
+  const start = source.indexOf(marker);
+  if (start < 0) return '';
+  const open = source.indexOf('{', start + marker.length);
+  if (open < 0) return '';
+
+  let depth = 0;
+  let state = 'code';
+  for (let index = open; index < source.length; index += 1) {
+    const current = source[index];
+    const next = source[index + 1];
+
+    if (state === 'line-comment') {
+      if (current === '\n') state = 'code';
+      continue;
+    }
+    if (state === 'block-comment') {
+      if (current === '#' && next === '>') { state = 'code'; index += 1; }
+      continue;
+    }
+    if (state === 'single-quote') {
+      if (current === "'" && next === "'") { index += 1; continue; }
+      if (current === "'") state = 'code';
+      continue;
+    }
+    if (state === 'double-quote') {
+      if (current === '`') { index += 1; continue; }
+      if (current === '"') state = 'code';
+      continue;
+    }
+
+    if (current === '#') { state = 'line-comment'; continue; }
+    if (current === '<' && next === '#') { state = 'block-comment'; index += 1; continue; }
+    if (current === "'") { state = 'single-quote'; continue; }
+    if (current === '"') { state = 'double-quote'; continue; }
+    if (current === '`') { index += 1; continue; }
+    if (current === '{') { depth += 1; continue; }
+    if (current === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, index + 1);
+      if (depth < 0) return '';
+    }
+  }
+  return '';
 }
 
 function inspectSource(source) {
   const findings = [];
-  const fallback = functionSlice(source, 'Get-VerifiedCleanupFallbackWorkerProcess', 'Stop-NewlyStartedOwnedWorker');
-  const cleanup = functionSlice(source, 'Stop-NewlyStartedOwnedWorker', 'Remove-ExactOwnedMissionWorkerRestartRequest');
+  const fallback = functionSlice(source, 'Get-VerifiedCleanupFallbackWorkerProcess');
+  const cleanup = functionSlice(source, 'Stop-NewlyStartedOwnedWorker');
   const requireIn = (area, pattern, code, summary) => {
     if (!pattern.test(area)) findings.push(finding(code, summary));
   };
@@ -86,7 +127,7 @@ function inspectSource(source) {
   };
 
   if (!fallback || !cleanup) {
-    findings.push(finding('mission-worker-cleanup-functions-missing', 'Both bounded fallback and cleanup functions must be present in the expected order.'));
+    findings.push(finding('mission-worker-cleanup-functions-missing', 'Both bounded fallback and cleanup functions must be present.'));
     return findings;
   }
 

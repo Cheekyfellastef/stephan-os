@@ -17,6 +17,7 @@ function gitBlobSha(content) {
 }
 
 const GOOD_SOURCE = `
+function Remove-ExactOwnedMissionWorkerRestartRequest {}
 function Get-VerifiedCleanupFallbackWorkerProcess {
   param([datetime]$StartedAfterUtc, [string]$ExpectedRepoRoot, [int]$ExpectedProcessId, [datetime]$ExpectedProcessStartedAtUtc)
   $notProven = 'MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_NOT_PROVEN'
@@ -38,7 +39,6 @@ function Stop-NewlyStartedOwnedWorker {
   }
   $reverifiedWorker = Get-VerifiedCleanupFallbackWorkerProcess -ExpectedProcessId $verifiedWorker.ProcessId -ExpectedProcessStartedAtUtc $verifiedWorker.ProcessStartedAtUtc
 }
-function Remove-ExactOwnedMissionWorkerRestartRequest {}
 `;
 
 function input(source = GOOD_SOURCE, overrides = {}) {
@@ -88,6 +88,23 @@ test('exact #2097 cleanup escalation is cleared without Codex by the protected d
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_CLEAN');
 });
 
+test('canonical restart-request helper may precede the cleanup functions without invalidating review', () => {
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(GOOD_SOURCE));
+  assert.equal(result.clean, true);
+  assert.equal(result.findings.some((item) => item.code === 'mission-worker-cleanup-functions-missing'), false);
+});
+
+test('top-level script text cannot satisfy an empty final cleanup function', () => {
+  const forged = GOOD_SOURCE.replace(
+    'function Stop-NewlyStartedOwnedWorker {',
+    'function Stop-NewlyStartedOwnedWorker {}\\n',
+  );
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(forged));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-receipt-not-preferred'));
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-fallback-reverification-missing'));
+});
+
 test('wrong PR, branch, path or escalation cannot enter the profile', () => {
   assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(GOOD_SOURCE, { prNumber: 2098 })).eligible, false);
   assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(GOOD_SOURCE, { branch: 'other' })).eligible, false);
@@ -120,7 +137,7 @@ test('receipt preference, re-verification and quiescence are mandatory', () => {
 test('generic termination, arbitrary shell and caller-selected authority are rejected', () => {
   const widened = GOOD_SOURCE
     .replace('[string]$ExpectedRepoRoot', '[string]$ExpectedRepoRoot, [string]$TaskName')
-    .replace('function Stop-NewlyStartedOwnedWorker {', "Stop-Process -Id $candidate.ProcessId\nfunction Stop-NewlyStartedOwnedWorker {");
+    .replace('function Stop-NewlyStartedOwnedWorker {', "function Stop-NewlyStartedOwnedWorker {\n  Stop-Process -Id $candidate.ProcessId");
   const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(widened));
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-generic-execution-forbidden'));
