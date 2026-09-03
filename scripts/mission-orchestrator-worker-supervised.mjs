@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { ensureBattleBridgeGitHubCommandMailbox } from '../shared/agents/battleBridgeGitHubCommandMailboxBootstrap.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
+import { readMissionControllerCapacityRoutingInput } from '../stephanos-server/services/programmeAuthorityService.js';
 import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
 import { runMissionWorkerTick } from './mission-orchestrator-worker.mjs';
 import { writeMissionWorkerHeartbeat } from './mission-orchestrator-worker-heartbeat.mjs';
@@ -251,6 +252,7 @@ export async function runSupervisedMissionWorker({
   stderr = process.stderr,
   bootstrapMailbox = ensureBattleBridgeGitHubCommandMailbox,
   runControllerCycle = runDurableFlywheelStartupCycle,
+  loadCapacityRoutingInput = readMissionControllerCapacityRoutingInput,
   runTick = runMissionWorkerTick,
   writeHeartbeat = writeMissionWorkerHeartbeat,
   inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity,
@@ -368,9 +370,14 @@ export async function runSupervisedMissionWorker({
         }
       }
 
+      const capacityRoutingOptions = {
+        root: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+        repoRoot: env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT,
+        nowUtc: checkedAt,
+      };
       const controller = await runControllerCycle({}, {
         env,
-        nowUtc: checkedAt,
+        ...capacityRoutingOptions,
         sourceRevision: env.STEPHANOS_MISSION_WORKER_HEAD_SHA,
       });
       const controllerLog = createMissionWorkerControllerLogProjection(controller, checkedAt);
@@ -380,9 +387,14 @@ export async function runSupervisedMissionWorker({
         lastControllerLogSignature = controllerLogSignature;
       }
       if (controller?.allowWorkerTick === true) {
+        const capacityRoute = boundedText(ownData(controller?.workerActionGrant, 'capacityRoute'), 48);
+        const capacityRouting = capacityRoute
+          ? await loadCapacityRoutingInput(capacityRoutingOptions)
+          : undefined;
         const result = await runTick({
           env,
           actionGrant: controller.workerActionGrant,
+          capacityRouting,
         });
         tickMadeProgress = missionWorkerTickMadeProgress(result);
         const tickLog = createMissionWorkerTickLogProjection(result, checkedAt);
