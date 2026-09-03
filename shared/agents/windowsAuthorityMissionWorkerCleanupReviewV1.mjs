@@ -257,9 +257,10 @@ export function analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input = {}) 
     findings.push(finding('mission-worker-cleanup-source-evidence-invalid', 'Review requires one content-derived exact-head source record.'));
   } else if (profile === 'cleanup') {
     findings.push(...inspectCleanupSource(sources[0].content));
-  } else if (sourceHead !== ORPHAN_CAPABILITY_HEAD || sources[0].blobSha !== ORPHAN_CAPABILITY_BLOB_SHA) {
-    findings.push(finding('mission-worker-orphan-exact-source-not-pinned', 'Orphan capability approval requires the exact expected source head and full runtime-script blob.'));
   } else {
+    if (sourceHead !== ORPHAN_CAPABILITY_HEAD || sources[0].blobSha !== ORPHAN_CAPABILITY_BLOB_SHA) {
+      findings.push(finding('mission-worker-orphan-exact-source-not-pinned', 'Orphan capability approval requires the exact expected source head and full runtime-script blob.'));
+    }
     findings.push(...inspectOrphanCapabilitySource(sources[0].content));
   }
   const clean = findings.length === 0;
