@@ -9,6 +9,8 @@ import {
 
 const HEAD = '75b1c5521b88f32166ff92a6bbd8bce5546d5ee4';
 const BASE = '1995e63cfea17533d17a0244233a117f0a86900c';
+const ORPHAN_HEAD = '5e04abd527ae76f782799014e1c84c150ae0e7fe';
+const ORPHAN_BASE = '6555b6d9c7823522e1f4090d8ef160865e3beac1';
 const PATH = WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_PATHS_V1[0];
 
 function gitBlobSha(content) {
@@ -97,6 +99,61 @@ function Stop-NewlyStartedOwnedWorker {
 }
 `;
 
+const ORPHAN_SAFE_SOURCE = `
+function Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat {
+  param([Parameter(Mandatory = $true)][string]$ExpectedRepoRoot)
+  $canonicalWorkers = @()
+  $nodeProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction Stop)
+  foreach ($process in $nodeProcesses) {
+    if (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot) {
+      $canonicalWorkers += $process
+    }
+  }
+  if ($canonicalWorkers.Count -gt 1) {
+    Stop-WithBlocker 'MISSION_WORKER_CANONICAL_PROCESS_IDENTITY_AMBIGUOUS'
+  }
+  if ($canonicalWorkers.Count -eq 0) { return $null }
+  $candidate = $canonicalWorkers[0]
+  $processId = [int]$candidate.ProcessId
+  if ($processId -le 0) {
+    Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
+  }
+  $candidateStartedAtUtc = ([datetime]$candidate.CreationDate).ToUniversalTime()
+  $processCapability = $null
+  $retainProcessCapability = $false
+  try {
+    $processCapability = [System.Diagnostics.Process]::GetProcessById($processId)
+    if ($processCapability.HasExited -or $processCapability.Id -ne $processId) {
+      Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED'
+    }
+    $null = $processCapability.Handle
+    $capabilityProcessStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+    $candidateReRead = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+    if (-not $candidateReRead -or -not (Test-ExactCanonicalWorkerProcess -Process $candidateReRead -ExpectedRepoRoot $ExpectedRepoRoot)) {
+      Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
+    }
+    $candidateReReadStartedAtUtc = ([datetime]$candidateReRead.CreationDate).ToUniversalTime()
+    if ($candidateReReadStartedAtUtc.Ticks -ne $candidateStartedAtUtc.Ticks) {
+      Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
+    }
+    $retainProcessCapability = $true
+    return [PSCustomObject]@{
+      ProcessId = $processId
+      ProcessStartedAtUtc = $capabilityProcessStartedAtUtc
+      ProcessCapability = $processCapability
+      CanonicalWorkerCommandVerified = $true
+    }
+  }
+  catch {
+    if ([string]$_.Exception.Message -like 'MISSION_WORKER_*') { throw }
+    Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED'
+  }
+  finally {
+    if ($processCapability -and -not $retainProcessCapability) { $processCapability.Dispose() }
+  }
+}
+`;
+
 function input(source = SAFE_EQUIVALENT_SOURCE, overrides = {}) {
   return {
     repository: 'Cheekyfellastef/stephan-os',
@@ -118,25 +175,46 @@ function input(source = SAFE_EQUIVALENT_SOURCE, overrides = {}) {
       liveMainAfterSha: BASE,
       parents: ['1111111111111111111111111111111111111111', BASE],
       comparison: {
-        status: 'ahead',
-        aheadBy: 22,
-        behindBy: 0,
-        baseCommitSha: BASE,
-        mergeBaseCommitSha: BASE,
+        status: 'ahead', aheadBy: 22, behindBy: 0,
+        baseCommitSha: BASE, mergeBaseCommitSha: BASE,
       },
     },
     sources: [{
       schemaVersion: 'stephanos.windows-authority-source.v1',
-      repository: 'Cheekyfellastef/stephan-os',
-      path: PATH,
-      ref: HEAD,
-      exists: true,
-      size: Buffer.byteLength(source, 'utf8'),
-      blobSha: gitBlobSha(source),
-      content: source,
+      repository: 'Cheekyfellastef/stephan-os', path: PATH, ref: HEAD, exists: true,
+      size: Buffer.byteLength(source, 'utf8'), blobSha: gitBlobSha(source), content: source,
     }],
     ...overrides,
   };
+}
+
+function orphanInput(source = ORPHAN_SAFE_SOURCE, overrides = {}) {
+  return input(source, {
+    prNumber: 2105,
+    branch: 'fix/mission-worker-orphan-capability-starttime-v1',
+    sourceHead: ORPHAN_HEAD,
+    baseSha: ORPHAN_BASE,
+    lineageEvidence: {
+      schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      sourceHead: ORPHAN_HEAD,
+      sourceCommitSha: ORPHAN_HEAD,
+      baseSha: ORPHAN_BASE,
+      liveMainBeforeSha: ORPHAN_BASE,
+      liveMainAfterSha: ORPHAN_BASE,
+      parents: [ORPHAN_BASE],
+      comparison: {
+        status: 'ahead', aheadBy: 2, behindBy: 0,
+        baseCommitSha: ORPHAN_BASE, mergeBaseCommitSha: ORPHAN_BASE,
+      },
+    },
+    sources: [{
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os', path: PATH, ref: ORPHAN_HEAD, exists: true,
+      size: Buffer.byteLength(source, 'utf8'), blobSha: gitBlobSha(source), content: source,
+    }],
+    ...overrides,
+  });
 }
 
 test('accepts the current #2097 safe semantic equivalents without textual assertion drift', () => {
@@ -153,8 +231,7 @@ test('continues to accept the previously recognized literal safe spelling', () =
 
 test('validated Plan task binding is mandatory when the task literal is not inlined', () => {
   const unsafe = SAFE_EQUIVALENT_SOURCE.replace(
-    "if ([string]$Plan.TaskName -ne 'Stephanos Mission Orchestrator Worker') {\n    Stop-WithBlocker 'MISSION_WORKER_CLEANUP_TASK_NOT_ALLOWLISTED'\n  }",
-    '',
+    "if ([string]$Plan.TaskName -ne 'Stephanos Mission Orchestrator Worker') {\n    Stop-WithBlocker 'MISSION_WORKER_CLEANUP_TASK_NOT_ALLOWLISTED'\n  }", '',
   );
   const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(unsafe));
   assert.equal(result.clean, false);
@@ -171,10 +248,8 @@ test('root Scheduled Task path remains mandatory', () => {
 test('PowerShell variable case does not weaken exact canonical command recheck', () => {
   const upper = SAFE_EQUIVALENT_SOURCE.replaceAll('$reread', '$reRead');
   assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(upper)).clean, true);
-
   const missing = SAFE_EQUIVALENT_SOURCE.replace(
-    'if (-not (Test-ExactCanonicalWorkerProcess -Process $reread -ExpectedRepoRoot $ExpectedRepoRoot)) {',
-    'if (-not $reread) {',
+    'if (-not (Test-ExactCanonicalWorkerProcess -Process $reread -ExpectedRepoRoot $ExpectedRepoRoot)) {', 'if (-not $reread) {',
   );
   const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(missing));
   assert.equal(result.clean, false);
@@ -183,10 +258,7 @@ test('PowerShell variable case does not weaken exact canonical command recheck',
 
 test('explicit integer cast is accepted but capability binding to another PID is rejected', () => {
   assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input()).clean, true);
-  const unsafe = SAFE_EQUIVALENT_SOURCE.replace(
-    'GetProcessById([int]$candidate.ProcessId)',
-    'GetProcessById([int]$ExpectedProcessId)',
-  );
+  const unsafe = SAFE_EQUIVALENT_SOURCE.replace('GetProcessById([int]$candidate.ProcessId)', 'GetProcessById([int]$ExpectedProcessId)');
   const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(unsafe));
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-capability-bind-missing'));
@@ -208,7 +280,6 @@ test('capability safety facts are order independent but individually mandatory',
 test('resolved cleanup blocker contract and historical fallback blocker contract are both typed and closed', () => {
   assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input()).clean, true);
   assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(LEGACY_SAFE_SOURCE)).clean, true);
-
   const missingNotProven = SAFE_EQUIVALENT_SOURCE.replaceAll('MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN', 'UNRELATED_BLOCKER');
   const missingChanged = SAFE_EQUIVALENT_SOURCE.replaceAll('MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED', 'UNRELATED_BLOCKER');
   assert.ok(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(missingNotProven)).findings.some((item) => item.code === 'mission-worker-cleanup-not-proven-blocker-missing'));
@@ -246,15 +317,70 @@ test('generic termination, arbitrary shell and caller-selected authority remain 
   assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-caller-authority-forbidden'));
 });
 
-test('wrong PR, branch, current-main lineage or source proof fail closed', () => {
+test('wrong cleanup PR, branch, current-main lineage or source proof fail closed', () => {
   assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(SAFE_EQUIVALENT_SOURCE, { prNumber: 2098 })).eligible, false);
   assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(SAFE_EQUIVALENT_SOURCE, { branch: 'other' })).eligible, false);
-
   const drift = input();
   drift.lineageEvidence.liveMainAfterSha = '2222222222222222222222222222222222222222';
   assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(drift).clean, false);
-
   const malformed = input();
   malformed.sources[0].blobSha = '3333333333333333333333333333333333333333';
   assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(malformed).clean, false);
+});
+
+test('exact #2105 orphan capability rebinding profile is eligible and clean', () => {
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(orphanInput());
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true);
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_MISSION_WORKER_ORPHAN_CAPABILITY_CLEAN');
+  assert.ok(result.proofRefs.some((item) => item.includes('same-api-starttime-rebound')));
+});
+
+test('#2105 requires post-bind CIM command and creation identity rechecks', () => {
+  for (const unsafe of [
+    ORPHAN_SAFE_SOURCE.replace('Test-ExactCanonicalWorkerProcess -Process $candidateReRead -ExpectedRepoRoot $ExpectedRepoRoot', '$true'),
+    ORPHAN_SAFE_SOURCE.replace('$candidateReReadStartedAtUtc.Ticks -ne $candidateStartedAtUtc.Ticks', '$false'),
+  ]) {
+    const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(orphanInput(unsafe));
+    assert.equal(result.clean, false);
+  }
+});
+
+test('#2105 requires same-api Process.StartTime identity and forbids cross-api tick equality', () => {
+  const wrongReturn = ORPHAN_SAFE_SOURCE.replace('ProcessStartedAtUtc = $capabilityProcessStartedAtUtc', 'ProcessStartedAtUtc = $candidateStartedAtUtc');
+  let result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(orphanInput(wrongReturn));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-orphan-same-api-return-missing'));
+
+  const crossApi = ORPHAN_SAFE_SOURCE.replace(
+    '$candidateReRead = Get-CimInstance Win32_Process',
+    "if ($capabilityProcessStartedAtUtc.Ticks -ne $candidateStartedAtUtc.Ticks) { Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED' }\n    $candidateReRead = Get-CimInstance Win32_Process",
+  );
+  result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(orphanInput(crossApi));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-orphan-cross-api-tick-equality-forbidden'));
+});
+
+test('#2105 keeps exact PID capability, handle and canonical uniqueness proofs mandatory', () => {
+  for (const [unsafe, code] of [
+    [ORPHAN_SAFE_SOURCE.replace('GetProcessById($processId)', 'GetProcessById(1234)'), 'mission-worker-orphan-capability-bind-missing'],
+    [ORPHAN_SAFE_SOURCE.replace('$null = $processCapability.Handle', '$null = 1'), 'mission-worker-orphan-capability-handle-missing'],
+    [ORPHAN_SAFE_SOURCE.replace("if ($canonicalWorkers.Count -gt 1) {", 'if ($false) {'), 'mission-worker-orphan-uniqueness-missing'],
+  ]) {
+    const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(orphanInput(unsafe));
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some((item) => item.code === code));
+  }
+});
+
+test('#2105 rejects generic process authority, caller PID and wrong identity', () => {
+  const widened = ORPHAN_SAFE_SOURCE
+    .replace('[string]$ExpectedRepoRoot)', '[string]$ExpectedRepoRoot, [int]$ProcessId)')
+    .replace('$canonicalWorkers = @()', '$canonicalWorkers = @()\n  Stop-Process -Id $ProcessId');
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(orphanInput(widened));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-orphan-generic-execution-forbidden'));
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-orphan-caller-authority-forbidden'));
+  assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(orphanInput(ORPHAN_SAFE_SOURCE, { branch: 'other' })).eligible, false);
+  assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(orphanInput(ORPHAN_SAFE_SOURCE, { prNumber: 2106 })).eligible, false);
 });
