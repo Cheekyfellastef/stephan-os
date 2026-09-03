@@ -174,10 +174,12 @@ function chooseRouteForTask(task, routeRecords, capability, { forceNonOpenAi = f
   const originalHealthy = originalRoutes
     .filter((route) => routeCanCarryTask(route, task, capability))
     .sort((a, b) => a.priority - b.priority || a.routeId.localeCompare(b.routeId));
+  const allowedOriginalHealthy = originalHealthy
+    .filter((route) => !forceNonOpenAi || route.providerFamily !== 'OPENAI');
 
-  if (!forceNonOpenAi && originalHealthy.length > 0) {
+  if (allowedOriginalHealthy.length > 0) {
     return Object.freeze({
-      selectedRoute: originalHealthy[0],
+      selectedRoute: allowedOriginalHealthy[0],
       failover: false,
       originalProviderBlocked: false,
       blocker: '',
@@ -185,10 +187,10 @@ function chooseRouteForTask(task, routeRecords, capability, { forceNonOpenAi = f
   }
 
   const originalProviderBlocked = originalRoutes.some((route) => route.providerFamily === 'OPENAI'
-    && route.capabilityHealth?.[capability] !== 'HEALTHY');
+    && (forceNonOpenAi || route.capabilityHealth?.[capability] !== 'HEALTHY'));
   const requireNonOpenAi = forceNonOpenAi || originalProviderBlocked;
   const alternatives = validRoutes
-    .filter((route) => route.adapterId !== task.sourceAdapter || originalHealthy.length === 0)
+    .filter((route) => route.adapterId !== task.sourceAdapter || allowedOriginalHealthy.length === 0)
     .filter((route) => !requireNonOpenAi || route.providerFamily !== 'OPENAI')
     .filter((route) => routeCanCarryTask(route, task, capability))
     .sort((a, b) => a.priority - b.priority || a.routeId.localeCompare(b.routeId));
