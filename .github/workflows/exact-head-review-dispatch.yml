@@ -53,6 +53,7 @@ jobs:
           node --test shared/agents/exactHeadReviewCoordinatorAuthority.test.mjs
           node --test shared/agents/independentReviewRetryPlanner.test.mjs
           node --test shared/agents/exactHeadReviewDispatchWorkflow.test.mjs
+          node --test shared/agents/exactHeadReviewWorkflowRunArtifactIntakeV1.test.mjs
           node --test shared/agents/independentReviewSuccessfulArtifactRecoveryWorkflowV1.test.mjs
           node --test shared/agents/independentReviewHandoffProvenanceV1.test.mjs
           node --test shared/agents/independentReviewHandoffRunReceiptV1.test.mjs
@@ -62,6 +63,7 @@ jobs:
           node --test shared/agents/independentReviewWorkflowDispatchLaunchReceiptV1.test.mjs
           node --test shared/agents/independentReviewWorkflowDispatchRunDiscoveryV1.test.mjs
           node --test scripts/bind-independent-review-handoff-provenance-v1.test.mjs
+          node --test scripts/exact-head-review-current-main-admission-v1.test.mjs
           node --test scripts/launch-missing-independent-review-v1.test.mjs
           node --test scripts/recover-successful-independent-review-v1.test.mjs
 
@@ -79,6 +81,7 @@ jobs:
           node --check shared/agents/independentReviewWorkflowDispatchLaunchReceiptV1.mjs
           node --check shared/agents/independentReviewWorkflowDispatchRunDiscoveryV1.mjs
           node --check scripts/bind-independent-review-handoff-provenance-v1.mjs
+          node --check scripts/exact-head-review-current-main-admission-v1.mjs
           node --check scripts/exact-head-review-dispatch.mjs
           node --check scripts/retry-independent-review.mjs
           node --check scripts/launch-missing-independent-review-v1.mjs
@@ -108,7 +111,7 @@ jobs:
       issues: read
       pull-requests: read
     outputs:
-      targets: ${{ steps.plan.outputs.targets }}
+      targets: ${{ steps.admit.outputs.targets }}
     steps:
       - name: Publish pull-request neutral planning truth
         if: github.event_name == 'pull_request'
@@ -149,7 +152,7 @@ jobs:
       - name: Download the exact triggering independent-review artifact
         if: >-
           github.event_name == 'workflow_run' &&
-          github.event.workflow_run.path == '.github/workflows/independent-merge-security-review.yml' &&
+          github.event.workflow_run.workflow_id == 318073448 &&
           github.event.workflow_run.conclusion == 'success'
         uses: actions/download-artifact@v4
         with:
@@ -168,11 +171,22 @@ jobs:
           STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY: 'true'
           STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ inputs.pr_number || '' }}
           STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
-          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.path == '.github/workflows/independent-merge-security-review.yml' && github.event.workflow_run.conclusion == 'success' }}
+          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.workflow_id == 318073448 && github.event.workflow_run.conclusion == 'success' }}
           STEPHANOS_TRIGGER_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/triggering-independent-review/independent-review-result.json
           STEPHANOS_TRIGGER_REVIEW_RUN_ID: ${{ github.event.workflow_run.id || '' }}
           STEPHANOS_TRIGGER_REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
         run: node scripts/exact-head-review-dispatch.mjs
+
+      - name: Admit only exact-current-main review targets
+        id: admit
+        if: >-
+          steps.plan.outcome == 'success' &&
+          github.event_name != 'pull_request' &&
+          (github.event_name != 'issue_comment' || github.event.issue.pull_request != null)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STEPHANOS_REVIEW_PLAN_TARGETS: ${{ steps.plan.outputs.targets }}
+        run: node scripts/exact-head-review-current-main-admission-v1.mjs
 
   coordinate:
     needs: plan
@@ -207,10 +221,18 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Recheck target exact-current-main admission
+        id: recheck_current_main
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STEPHANOS_REVIEW_PLAN_TARGETS: '[{"prNumber":${{ matrix.target.prNumber }}}]'
+        run: node scripts/exact-head-review-current-main-admission-v1.mjs
+
       - name: Download the exact triggering independent-review artifact
         if: >-
+          steps.recheck_current_main.outputs.targets != '[]' &&
           github.event_name == 'workflow_run' &&
-          github.event.workflow_run.path == '.github/workflows/independent-merge-security-review.yml' &&
+          github.event.workflow_run.workflow_id == 318073448 &&
           github.event.workflow_run.conclusion == 'success'
         uses: actions/download-artifact@v4
         with:
@@ -221,15 +243,17 @@ jobs:
 
       - name: Evaluate and advance one PR-scoped exact-head review state
         id: coordinate
+        if: steps.recheck_current_main.outputs.targets != '[]'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ matrix.target.prNumber }}
           STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
           STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES: '10'
-          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.path == '.github/workflows/independent-merge-security-review.yml' && github.event.workflow_run.conclusion == 'success' }}
+          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.workflow_id == 318073448 && github.event.workflow_run.conclusion == 'success' }}
           STEPHANOS_TRIGGER_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/triggering-independent-review/independent-review-result.json
           STEPHANOS_TRIGGER_REVIEW_RUN_ID: ${{ github.event.workflow_run.id || '' }}
           STEPHANOS_TRIGGER_REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
+          STEPHANOS_DEFER_MISSING_RECEIPT_ESCALATION: 'true'
         run: node scripts/exact-head-review-dispatch.mjs
 
       - name: Bind exact coordinator-run provenance to the exact review handoff
@@ -315,6 +339,7 @@ jobs:
           run-id: ${{ steps.recover_successful.outputs.run_id }}
 
       - name: Consume recovered successful independent review result
+        id: consume_recovered_review
         if: >-
           always() &&
           steps.download_recovered_review.outcome == 'success'
@@ -327,4 +352,22 @@ jobs:
           STEPHANOS_TRIGGER_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/recovered-independent-review/independent-review-result.json
           STEPHANOS_TRIGGER_REVIEW_RUN_ID: ${{ steps.recover_successful.outputs.run_id }}
           STEPHANOS_TRIGGER_REVIEW_RUN_ATTEMPT: ${{ steps.recover_successful.outputs.run_attempt }}
+        run: node scripts/exact-head-review-dispatch.mjs
+
+      - name: Finalize a genuinely unrecoverable missing receipt
+        if: >-
+          always() &&
+          steps.coordinate.outputs.recovery_deferred == 'true' &&
+          (
+            steps.retry.outcome == 'failure' ||
+            steps.retry.outputs.decision == 'ALREADY_SUCCESSFUL' ||
+            steps.launch_missing.outcome == 'failure' ||
+            (steps.launch_missing.outputs.decision == 'ALREADY_SUCCESSFUL' && steps.consume_recovered_review.outcome != 'success')
+          )
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ matrix.target.prNumber }}
+          STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
+          STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES: '10'
+          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: 'false'
         run: node scripts/exact-head-review-dispatch.mjs

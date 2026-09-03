@@ -7,7 +7,6 @@ import {
   PROGRAMME_CONTROLLER_HEARTBEAT_STATUS_ID,
   PROGRAMME_STALL_MONITOR_HANDLER_ID,
   MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS,
-  SOURCE_MUTATION_LEASE_RELEASE_SCHEMA,
   SOURCE_MUTATION_LEASE_STATUS_ID,
   TERMINAL_LANE_FINALIZATION_SCHEMA,
   buildAuthoritativeProgrammeProjection,
@@ -24,6 +23,7 @@ import {
   projectProgrammeControllerHeartbeat,
   renewSourceMutationLeaseRecord,
   validateSourceMutationLease,
+  validateSourceMutationLeaseReleaseRecord,
 } from '../../shared/agents/programmeAuthorityV1.mjs';
 import {
   SHARED_WORKSPACE_RECORD_KINDS,
@@ -1138,7 +1138,18 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     expectedSourceRevision,
   );
 
-  const lease = leaseRead.present ? leaseRead.record : null;
+  const releasedLeaseIsSafelyInactive = Boolean(
+    !leaseRead.ok
+    && leaseRead.present
+    && leaseRead.reason === 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'
+    && leaseRead.validation?.valid === true
+    && leaseRead.validation?.active === false
+    && leaseRead.validation?.finalVerdict === 'SOURCE_MUTATION_LEASE_RELEASED'
+    && leaseRead.releaseRecord,
+  );
+  const lease = releasedLeaseIsSafelyInactive
+    ? null
+    : (leaseRead.present ? leaseRead.record : null);
   const githubIdentity = lease ?? (selector.complete ? selector : null);
   const github = githubIdentity ? await githubEvidenceForLaneIdentity(githubIdentity, options, deps) : null;
   const executionRead = lease
@@ -1167,11 +1178,13 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
       nowUtc,
     })
     : null;
+  const criticalBacklog = deps.buildCriticalBacklogProjection({ missionRecords });
   const schedulerGoals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc,
     lane,
     goalRecords: workspaceFeed?.records?.goalRecords,
     trustedOperatorApprovalReceipts: github?.trustedOperatorApprovalReceipts,
+    criticalBacklog,
   });
   const scheduler = deps.buildMissionScheduler({
     now: nowUtc,
@@ -1181,14 +1194,13 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     proofRefs: proof.proofRefs,
     correlationId: text(options.correlationId, `programme-${nowUtc.replace(/[^0-9]/g, '').slice(0, 14)}`),
   });
-  const criticalBacklog = deps.buildCriticalBacklogProjection({ missionRecords });
   const sourceHead = repositoryHeadValid ? repositoryHeadRead.headSha : '';
   const machineryInventory = deps.buildCapabilityRegistry({
     sourceHead,
     generatedAtUtc: nowUtc,
   });
   const sourceBlockers = [
-    ...(!leaseRead.ok ? [`source:${leaseRead.reason}`] : []),
+    ...(!leaseRead.ok && !releasedLeaseIsSafelyInactive ? [`source:${leaseRead.reason}`] : []),
     ...(!controllerHeartbeatRead.ok ? [`source:${controllerHeartbeatRead.reason}`] : []),
     ...(!workerHeartbeatRead.ok ? ['source:mission-worker-heartbeat-unavailable'] : []),
     ...(!repositoryHeadValid ? [`source:${repositoryHeadRead.reason || 'CANONICAL_REPOSITORY_HEAD_INVALID'}`] : []),
@@ -1223,7 +1235,9 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     sourceReads: Object.freeze({
       workspaceConfig,
       repositoryHead: repositoryHeadRead.reason,
-      lease: leaseRead.reason,
+      lease: releasedLeaseIsSafelyInactive
+        ? 'SOURCE_MUTATION_LEASE_RELEASED_INACTIVE'
+        : leaseRead.reason,
       controllerHeartbeat: controllerHeartbeatRead.reason,
         workerHeartbeat: workerHeartbeatRead.projection.finalVerdict,
         github: github?.status ?? 'not-required',
@@ -1264,43 +1278,7 @@ function exactTerminalReceipt(record, records) {
 }
 
 function exactSourceMutationLeaseRelease(record, identity, nowUtc) {
-  const expected = createSourceMutationLeaseReleaseRecord(identity, {
-    timestampUtc: record?.releasedAtUtc,
-  });
-  const releasedAtMs = Date.parse(text(record?.releasedAtUtc));
-  const acquiredAtMs = Date.parse(text(record?.acquiredAtUtc));
-  const renewedAtMs = Date.parse(text(record?.renewedAtUtc));
-  const nowMs = Date.parse(text(nowUtc));
-  return Boolean(
-    record
-    && validateSharedWorkspaceRecord(record).valid
-    && record.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
-    && record.schema === SOURCE_MUTATION_LEASE_RELEASE_SCHEMA
-    && record.statusId === expected.statusId
-    && record.participantId === 'source-mutation-lease-authority'
-    && record.status === 'RELEASED'
-    && record.timestampUtc === record.releasedAtUtc
-    && record.leaseId === identity.leaseId
-    && record.laneId === identity.laneId
-    && record.repository === identity.repository
-    && record.issueNumber === identity.issueNumber
-    && record.prNumber === identity.prNumber
-    && record.branch === identity.branch
-    && record.headSha === identity.headSha
-    && record.ownerId === identity.ownerId
-    && (!text(identity.acquiredAtUtc) || record.acquiredAtUtc === identity.acquiredAtUtc)
-    && (!text(identity.renewedAtUtc) || record.renewedAtUtc === identity.renewedAtUtc)
-    && record.releaseOnlyExactLease === true
-    && record.executionReceiptLeaseKeyIsCorrelationOnly === true
-    && record.mergeAuthority === false
-    && Number.isFinite(releasedAtMs)
-    && Number.isFinite(acquiredAtMs)
-    && Number.isFinite(renewedAtMs)
-    && Number.isFinite(nowMs)
-    && releasedAtMs >= acquiredAtMs
-    && releasedAtMs >= renewedAtMs
-    && releasedAtMs - nowMs <= 60_000
-  );
+  return validateSourceMutationLeaseReleaseRecord(record, identity, { nowUtc }).valid;
 }
 
 function terminalIdentity(input = {}) {
