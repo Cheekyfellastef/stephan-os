@@ -69,7 +69,10 @@ function operationClaims(state, operation, options = {}) {
 }
 
 function blocked(state, reason) {
-  return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'blocked'), missionId: state.missionId, actionKind: 'blocked', executable: false, blockers: [reason], finalVerdict: 'BLOCKED' };
+  const blockers = (Array.isArray(reason) ? reason : [reason])
+    .map((item) => text(item))
+    .filter(Boolean);
+  return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'blocked'), missionId: state.missionId, actionKind: 'blocked', executable: false, blockers, finalVerdict: 'BLOCKED' };
 }
 
 function capacityRouteForMission(state, options = {}) {
@@ -153,7 +156,9 @@ export function buildMissionWorkerAction(state, options = {}) {
   if (['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(state.currentPhase)) {
     const capacity = capacityRouteForMission(state, options);
     if (capacity && (capacity.dispatchAllowed !== true || !text(capacity.adapter))) {
-      return blocked(state, (capacity.blockers || []).join(' ') || 'No freshly proven build lane can accept this mission.');
+      return blocked(state, (capacity.blockers || []).length > 0
+        ? capacity.blockers
+        : 'No freshly proven build lane can accept this mission.');
     }
     const adapter = text(capacity?.adapter, 'codex');
     const route = text(capacity?.route, MISSION_CONTROLLER_ROUTE.CODEX).toUpperCase();
