@@ -17,6 +17,7 @@ function gitBlobSha(content) {
 }
 
 const GOOD_SOURCE = `
+function Remove-ExactOwnedMissionWorkerRestartRequest {}
 function Get-VerifiedCleanupFallbackWorkerProcess {
   param([datetime]$StartedAfterUtc, [string]$ExpectedRepoRoot, [int]$ExpectedProcessId, [datetime]$ExpectedProcessStartedAtUtc)
   $notProven = 'MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_NOT_PROVEN'
@@ -38,7 +39,6 @@ function Stop-NewlyStartedOwnedWorker {
   }
   $reverifiedWorker = Get-VerifiedCleanupFallbackWorkerProcess -ExpectedProcessId $verifiedWorker.ProcessId -ExpectedProcessStartedAtUtc $verifiedWorker.ProcessStartedAtUtc
 }
-function Remove-ExactOwnedMissionWorkerRestartRequest {}
 `;
 
 function input(source = GOOD_SOURCE, overrides = {}) {
@@ -86,6 +86,12 @@ test('exact #2097 cleanup escalation is cleared without Codex by the protected d
   assert.equal(result.clean, true);
   assert.equal(result.findings.length, 0);
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_CLEAN');
+});
+
+test('canonical restart-request helper may precede the cleanup functions without invalidating review', () => {
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(GOOD_SOURCE));
+  assert.equal(result.clean, true);
+  assert.equal(result.findings.some((item) => item.code === 'mission-worker-cleanup-functions-missing'), false);
 });
 
 test('wrong PR, branch, path or escalation cannot enter the profile', () => {
