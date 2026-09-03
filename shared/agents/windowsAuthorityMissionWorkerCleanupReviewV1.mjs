@@ -131,9 +131,9 @@ function inspectSource(source) {
     return findings;
   }
 
-  const fixedTaskLiteral = /Get-ScheduledTask\s+-TaskName\s+'Stephanos Mission Orchestrator Worker'\s+-TaskPath\s+'\\\\'/i.test(fallback);
+  const fixedTaskLiteral = /Get-ScheduledTask\s+-TaskName\s+'Stephanos Mission Orchestrator Worker'\s+-TaskPath\s+'\\'/i.test(fallback);
   const fixedTaskViaValidatedPlan = /if\s*\(\s*\[string\]\s*\$Plan\.TaskName\s+-ne\s+'Stephanos Mission Orchestrator Worker'\s*\)\s*\{[\s\S]*?Stop-WithBlocker\s+'MISSION_WORKER_CLEANUP_TASK_NOT_ALLOWLISTED'[\s\S]*?\}/i.test(fallback)
-    && /Get-ScheduledTask\s+-TaskName\s+\$Plan\.TaskName\s+-TaskPath\s+'\\\\'/i.test(fallback);
+    && /Get-ScheduledTask\s+-TaskName\s+\$Plan\.TaskName\s+-TaskPath\s+'\\'/i.test(fallback);
   if (!fixedTaskLiteral && !fixedTaskViaValidatedPlan) {
     findings.push(finding('mission-worker-cleanup-task-not-fixed', 'Fallback must inspect only the fixed Mission Worker Scheduled Task.'));
   }
