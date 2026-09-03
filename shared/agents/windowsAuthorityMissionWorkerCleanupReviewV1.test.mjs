@@ -381,9 +381,11 @@ test('#2105 keeps exact PID capability, handle and canonical uniqueness proofs m
 });
 
 test('#2105 rejects generic process authority, caller PID and wrong identity', () => {
-  const widened = ORPHAN_SAFE_SOURCE
-    .replace('[string]$ExpectedRepoRoot)', '[string]$ExpectedRepoRoot, [int]$ProcessId)')
-    .replace('$canonicalWorkers = @()', '$canonicalWorkers = @()\n  Stop-Process -Id $ProcessId');
+  const widened = replaceExactlyOnce(
+    ORPHAN_SAFE_SOURCE,
+    '[Parameter(Mandatory = $true)][string]$ExpectedRepoRoot\n    )',
+    '[Parameter(Mandatory = $true)][string]$ExpectedRepoRoot,\n        [int]$ProcessId\n    )',
+  ).replace('$canonicalWorkers = @()', '$canonicalWorkers = @()\n  Stop-Process -Id $ProcessId');
   const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(orphanInput(widened));
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'mission-worker-orphan-generic-execution-forbidden'));
