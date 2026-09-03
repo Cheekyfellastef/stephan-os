@@ -100,6 +100,42 @@ test('resource conflict and active width overflow fail closed', () => {
   assert.ok(overWidth.contradictions.some(({code}) => code === 'ACTIVE_LANE_CAPACITY_EXCEEDED'));
 });
 
+test('active resource authority uses the canonical hierarchical overlap model', () => {
+  const active = (issue, resourceIds) => goal(issue, {
+    state:'ACTIVE',
+    branch:`agent/active-${issue}`,
+    route:'CHATGPT_GITHUB',
+    resourceIds,
+  });
+  const hierarchical = buildMissionScheduler({
+    now:NOW,
+    goals:[
+      active(1, ['repo:cheekyfellastef/stephan-os:path:shared/agents']),
+      active(2, ['repo:cheekyfellastef/stephan-os:path:shared/agents/example.mjs']),
+    ],
+  });
+  assert.equal(hierarchical.failClosed, true);
+  assert.ok(hierarchical.contradictions.some(({ code }) => code === 'ACTIVE_RESOURCE_CONFLICT'));
+
+  const aliased = buildMissionScheduler({
+    now:NOW,
+    goals:[active(1, ['repo:cheekyfellastef/stephan-os:path:shared/./agents'])],
+  });
+  assert.equal(aliased.failClosed, true);
+  assert.ok(aliased.contradictions.some(({ code, reason }) => (
+    code === 'ACTIVE_RESOURCE_EVIDENCE_INVALID' && reason === 'resource-ids-non-canonical'
+  )));
+
+  const win32Aliased = buildMissionScheduler({
+    now:NOW,
+    goals:[active(1, ['repo:cheekyfellastef/stephan-os:path:shared/agents/example.mjs.'])],
+  });
+  assert.equal(win32Aliased.failClosed, true);
+  assert.ok(win32Aliased.contradictions.some(({ code, reason }) => (
+    code === 'ACTIVE_RESOURCE_EVIDENCE_INVALID' && reason === 'resource-ids-non-canonical'
+  )));
+});
+
 test('scheduler exposes five resource-disjoint ready candidates without granting mutation authority', () => {
   const goals = Array.from({ length:7 }, (_, index) => goal(index + 1, {
     priority:100 - index,
