@@ -131,23 +131,39 @@ function inspectSource(source) {
     return findings;
   }
 
-  requireIn(fallback, /Get-ScheduledTask\s+-TaskName\s+'Stephanos Mission Orchestrator Worker'\s+-TaskPath\s+'\\'/, 'mission-worker-cleanup-task-not-fixed', 'Fallback must inspect only the fixed Mission Worker Scheduled Task.');
-  requireIn(fallback, /State[^\r\n]*-in\s+@\('Running',\s*'Queued'\)/, 'mission-worker-cleanup-task-quiescence-missing', 'Fallback must reject Running or Queued task state.');
-  requireIn(fallback, /Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat\s+-ExpectedRepoRoot\s+\$ExpectedRepoRoot/, 'mission-worker-cleanup-canonical-selector-missing', 'Fallback must reuse the exact canonical worker selector.');
-  requireIn(fallback, /ProcessStartedAtUtc\.ToUniversalTime\(\)\.Ticks\s+-le\s+\$StartedAfterUtc\.ToUniversalTime\(\)\.Ticks/, 'mission-worker-cleanup-freshness-boundary-missing', 'Pre-existing worker processes must remain ineligible.');
-  requireIn(fallback, /Get-CimInstance\s+Win32_Process\s+-Filter\s+"ProcessId = \$\(\$candidate\.ProcessId\)"/, 'mission-worker-cleanup-process-reread-missing', 'Candidate PID must be re-read before capability binding.');
-  requireIn(fallback, /Test-ExactCanonicalWorkerProcess\s+-Process\s+\$reRead\s+-ExpectedRepoRoot\s+\$ExpectedRepoRoot/, 'mission-worker-cleanup-command-recheck-missing', 'Re-read process must still match the exact canonical command.');
-  requireIn(fallback, /\[System\.Diagnostics\.Process\]::GetProcessById\(\$candidate\.ProcessId\)/, 'mission-worker-cleanup-capability-bind-missing', 'Cleanup must bind a Process capability to the exact candidate PID.');
-  requireIn(fallback, /\$null\s*=\s*\$processCapability\.Handle[\s\S]*\$processCapability\.HasExited[\s\S]*\$processCapability\.StartTime\.ToUniversalTime\(\)\.Ticks/, 'mission-worker-cleanup-capability-recheck-missing', 'Handle, exit state and exact start time must be revalidated.');
-  requireIn(fallback, /MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_NOT_PROVEN/, 'mission-worker-cleanup-not-proven-blocker-missing', 'Unproven fallback identity must fail with the typed blocker.');
-  requireIn(fallback, /MISSION_WORKER_CLEANUP_FALLBACK_PROCESS_IDENTITY_CHANGED/, 'mission-worker-cleanup-identity-changed-blocker-missing', 'Changed fallback identity must fail with the typed blocker.');
+  const fixedTaskLiteral = /Get-ScheduledTask\s+-TaskName\s+'Stephanos Mission Orchestrator Worker'\s+-TaskPath\s+'\\\\'/i.test(fallback);
+  const fixedTaskViaValidatedPlan = /if\s*\(\s*\[string\]\s*\$Plan\.TaskName\s+-ne\s+'Stephanos Mission Orchestrator Worker'\s*\)\s*\{[\s\S]*?Stop-WithBlocker\s+'MISSION_WORKER_CLEANUP_TASK_NOT_ALLOWLISTED'[\s\S]*?\}/i.test(fallback)
+    && /Get-ScheduledTask\s+-TaskName\s+\$Plan\.TaskName\s+-TaskPath\s+'\\\\'/i.test(fallback);
+  if (!fixedTaskLiteral && !fixedTaskViaValidatedPlan) {
+    findings.push(finding('mission-worker-cleanup-task-not-fixed', 'Fallback must inspect only the fixed Mission Worker Scheduled Task.'));
+  }
+  requireIn(fallback, /State[^\r\n]*-in\s+@\('Running',\s*'Queued'\)/i, 'mission-worker-cleanup-task-quiescence-missing', 'Fallback must reject Running or Queued task state.');
+  requireIn(fallback, /Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat\s+-ExpectedRepoRoot\s+\$ExpectedRepoRoot/i, 'mission-worker-cleanup-canonical-selector-missing', 'Fallback must reuse the exact canonical worker selector.');
+  requireIn(fallback, /ProcessStartedAtUtc\.ToUniversalTime\(\)\.Ticks\s+-le\s+\$StartedAfterUtc\.ToUniversalTime\(\)\.Ticks/i, 'mission-worker-cleanup-freshness-boundary-missing', 'Pre-existing worker processes must remain ineligible.');
+  requireIn(fallback, /Get-CimInstance\s+Win32_Process\s+-Filter\s+"ProcessId = \$\(\$candidate\.ProcessId\)"/i, 'mission-worker-cleanup-process-reread-missing', 'Candidate PID must be re-read before capability binding.');
+  requireIn(fallback, /Test-ExactCanonicalWorkerProcess\s+-Process\s+\$reread\s+-ExpectedRepoRoot\s+\$ExpectedRepoRoot/i, 'mission-worker-cleanup-command-recheck-missing', 'Re-read process must still match the exact canonical command.');
+  requireIn(fallback, /\[System\.Diagnostics\.Process\]::GetProcessById\(\s*(?:\[int\]\s*)?\$candidate\.ProcessId\s*\)/i, 'mission-worker-cleanup-capability-bind-missing', 'Cleanup must bind a Process capability to the exact candidate PID.');
+  const capabilityHandle = /\$null\s*=\s*\$processCapability\.Handle/i.test(fallback);
+  const capabilityExit = /\$processCapability\.HasExited/i.test(fallback);
+  const capabilityId = /\$processCapability\.Id\s+-ne\s+(?:\[int\]\s*)?\$candidate\.ProcessId/i.test(fallback);
+  const capabilityStart = /\$processCapability\.StartTime\.ToUniversalTime\(\)/i.test(fallback)
+    && /(?:capabilityStartedAtUtc|capabilityProcessStartedAtUtc)\.Ticks\s+-ne\s+\$candidate\.ProcessStartedAtUtc\.ToUniversalTime\(\)\.Ticks/i.test(fallback);
+  if (!capabilityHandle || !capabilityExit || !capabilityId || !capabilityStart) {
+    findings.push(finding('mission-worker-cleanup-capability-recheck-missing', 'Handle, exit state, exact PID and exact start time must be revalidated.'));
+  }
+  requireIn(fallback, /MISSION_WORKER_CLEANUP_(?:FALLBACK_)?PROCESS_IDENTITY_NOT_PROVEN/, 'mission-worker-cleanup-not-proven-blocker-missing', 'Unproven fallback identity must fail with the typed cleanup blocker.');
+  requireIn(fallback, /MISSION_WORKER_CLEANUP_(?:FALLBACK_)?PROCESS_IDENTITY_CHANGED/, 'mission-worker-cleanup-identity-changed-blocker-missing', 'Changed fallback identity must fail with the typed cleanup blocker.');
 
   const preferred = cleanup.indexOf('Get-VerifiedInvocationProcessFromLaunchReceipt');
   const fallbackUse = cleanup.indexOf('Get-VerifiedCleanupFallbackWorkerProcess');
   if (preferred < 0 || fallbackUse < 0 || preferred >= fallbackUse) {
     findings.push(finding('mission-worker-cleanup-receipt-not-preferred', 'Launch-receipt proof must remain the preferred cleanup ownership proof.'));
   }
-  requireIn(cleanup, /if\s*\(-not\s+\$verifiedInvocationProcess\)[\s\S]*Get-VerifiedCleanupFallbackWorkerProcess/, 'mission-worker-cleanup-fallback-not-narrow', 'Fallback must be reachable only when launch-receipt proof is unavailable.');
+  const negatedFallback = /if\s*\(\s*-not\s+\$verifiedInvocationProcess\s*\)[\s\S]*?Get-VerifiedCleanupFallbackWorkerProcess/i.test(cleanup);
+  const elseFallback = /if\s*\(\s*\$verifiedInvocationProcess\s*\)[\s\S]*?\}\s*else\s*\{[\s\S]*?Get-VerifiedCleanupFallbackWorkerProcess/i.test(cleanup);
+  if (!negatedFallback && !elseFallback) {
+    findings.push(finding('mission-worker-cleanup-fallback-not-narrow', 'Fallback must be reachable only when launch-receipt proof is unavailable.'));
+  }
   const fallbackCalls = cleanup.match(/Get-VerifiedCleanupFallbackWorkerProcess/g) || [];
   if (fallbackCalls.length < 2) {
     findings.push(finding('mission-worker-cleanup-fallback-reverification-missing', 'The same fallback contract must reverify identity before cancellation.'));
