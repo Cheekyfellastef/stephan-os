@@ -132,7 +132,9 @@ const ORPHAN_SAFE_SOURCE = replaceExactlyOnce(
         $candidateReReadStartedAtUtc = ([datetime]$candidateReRead.CreationDate).ToUniversalTime()
         if ($candidateReReadStartedAtUtc.Ticks -ne $candidateStartedAtUtc.Ticks) {
             Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
-        }`,
+        }
+
+`,
   ),
   `        return [PSCustomObject]@{
             ProcessId = $processId
