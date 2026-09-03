@@ -12,6 +12,8 @@ const CLEANUP_PR_NUMBER = 2097;
 const CLEANUP_BRANCH = 'fix/mission-worker-cleanup-launch-receipt-proof-v1';
 const ORPHAN_CAPABILITY_PR_NUMBER = 2105;
 const ORPHAN_CAPABILITY_BRANCH = 'fix/mission-worker-orphan-capability-starttime-v1';
+const ORPHAN_CAPABILITY_HEAD = '5e04abd527ae76f782799014e1c84c150ae0e7fe';
+const ORPHAN_CAPABILITY_BLOB_SHA = '24bdbd048e30eda6641a8122d60e9262521af376';
 const PATH = WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_PATHS_V1[0];
 const SHA = /^[a-f0-9]{40}$/;
 const MAX_SOURCE_BYTES = 256 * 1024;
@@ -197,14 +199,13 @@ function inspectOrphanCapabilitySource(source) {
   requireIn(/\$canonicalWorkers\.Count\s+-gt\s+1[\s\S]*MISSION_WORKER_CANONICAL_PROCESS_IDENTITY_AMBIGUOUS/i, 'mission-worker-orphan-uniqueness-missing', 'Ambiguous canonical worker selection must remain fail closed.');
   requireIn(/\$processId\s*=\s*\[int\]\$candidate\.ProcessId/i, 'mission-worker-orphan-fixed-pid-missing', 'The live process capability must bind to the uniquely selected candidate PID.');
   requireIn(/\[System\.Diagnostics\.Process\]::GetProcessById\(\$processId\)/i, 'mission-worker-orphan-capability-bind-missing', 'Orphan reclaim must bind a System.Diagnostics.Process capability to the fixed PID.');
-  requireIn(/\$processCapability\.HasExited/i, 'mission-worker-orphan-capability-exit-check-missing', 'Bound process capability must be proven live.');
-  requireIn(/\$processCapability\.Id\s+-ne\s+\$processId/i, 'mission-worker-orphan-capability-id-check-missing', 'Bound process capability must retain the exact PID.');
+  requireIn(/if\s*\(\s*\$processCapability\.HasExited\s+-or\s+\$processCapability\.Id\s+-ne\s+\$processId\s*\)\s*\{[\s\S]*?Stop-WithBlocker\s+'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED'[\s\S]*?\}/i, 'mission-worker-orphan-capability-rejection-missing', 'Exited or PID-rebound capabilities must enter the typed fail-closed branch.');
   requireIn(/\$null\s*=\s*\$processCapability\.Handle/i, 'mission-worker-orphan-capability-handle-missing', 'Bound process capability must expose a usable handle.');
   requireIn(/\$capabilityProcessStartedAtUtc\s*=\s*\$processCapability\.StartTime\.ToUniversalTime\(\)/i, 'mission-worker-orphan-capability-starttime-missing', 'Returned process identity must originate from the live Process capability start time.');
   requireIn(/\$candidateReRead\s*=\s*Get-CimInstance\s+Win32_Process\s+-Filter\s+"ProcessId = \$processId"/i, 'mission-worker-orphan-cim-reread-missing', 'The same PID must be re-read through CIM after capability binding.');
-  requireIn(/Test-ExactCanonicalWorkerProcess\s+-Process\s+\$candidateReRead\s+-ExpectedRepoRoot\s+\$ExpectedRepoRoot/i, 'mission-worker-orphan-cim-command-recheck-missing', 'The post-bind CIM observation must still match the exact canonical worker command.');
+  requireIn(/if\s*\(\s*-not\s+\$candidateReRead\s+-or\s+-not\s*\(\s*Test-ExactCanonicalWorkerProcess\s+-Process\s+\$candidateReRead\s+-ExpectedRepoRoot\s+\$ExpectedRepoRoot\s*\)\s*\)\s*\{[\s\S]*?Stop-WithBlocker\s+'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'[\s\S]*?\}/i, 'mission-worker-orphan-cim-command-rejection-missing', 'Missing or non-canonical post-bind CIM observations must enter the typed fail-closed branch.');
   requireIn(/\$candidateReReadStartedAtUtc\s*=\s*\(\[datetime\]\$candidateReRead\.CreationDate\)\.ToUniversalTime\(\)/i, 'mission-worker-orphan-cim-creation-reread-missing', 'Post-bind CIM creation identity must be materialized.');
-  requireIn(/\$candidateReReadStartedAtUtc\.Ticks\s+-ne\s+\$candidateStartedAtUtc\.Ticks/i, 'mission-worker-orphan-cim-identity-stability-missing', 'The two CIM observations must retain the same creation identity.');
+  requireIn(/if\s*\(\s*\$candidateReReadStartedAtUtc\.Ticks\s+-ne\s+\$candidateStartedAtUtc\.Ticks\s*\)\s*\{[\s\S]*?Stop-WithBlocker\s+'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'[\s\S]*?\}/i, 'mission-worker-orphan-cim-identity-rejection-missing', 'Changed CIM creation identity must enter the typed fail-closed branch.');
   requireIn(/ProcessStartedAtUtc\s*=\s*\$capabilityProcessStartedAtUtc/i, 'mission-worker-orphan-same-api-return-missing', 'Subsequent rechecks must receive the Process capability start identity.');
   requireIn(/ProcessCapability\s*=\s*\$processCapability/i, 'mission-worker-orphan-capability-return-missing', 'The exact live Process capability must be returned with the identity.');
   requireIn(/MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED/, 'mission-worker-orphan-capability-blocker-missing', 'Capability failure must retain the typed orphan blocker.');
@@ -256,6 +257,8 @@ export function analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input = {}) 
     findings.push(finding('mission-worker-cleanup-source-evidence-invalid', 'Review requires one content-derived exact-head source record.'));
   } else if (profile === 'cleanup') {
     findings.push(...inspectCleanupSource(sources[0].content));
+  } else if (sourceHead !== ORPHAN_CAPABILITY_HEAD || sources[0].blobSha !== ORPHAN_CAPABILITY_BLOB_SHA) {
+    findings.push(finding('mission-worker-orphan-exact-source-not-pinned', 'Orphan capability approval requires the exact expected source head and full runtime-script blob.'));
   } else {
     findings.push(...inspectOrphanCapabilitySource(sources[0].content));
   }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -99,60 +100,45 @@ function Stop-NewlyStartedOwnedWorker {
 }
 `;
 
-const ORPHAN_SAFE_SOURCE = `
-function Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat {
-  param([Parameter(Mandatory = $true)][string]$ExpectedRepoRoot)
-  $canonicalWorkers = @()
-  $nodeProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction Stop)
-  foreach ($process in $nodeProcesses) {
-    if (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot) {
-      $canonicalWorkers += $process
-    }
-  }
-  if ($canonicalWorkers.Count -gt 1) {
-    Stop-WithBlocker 'MISSION_WORKER_CANONICAL_PROCESS_IDENTITY_AMBIGUOUS'
-  }
-  if ($canonicalWorkers.Count -eq 0) { return $null }
-  $candidate = $canonicalWorkers[0]
-  $processId = [int]$candidate.ProcessId
-  if ($processId -le 0) {
-    Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
-  }
-  $candidateStartedAtUtc = ([datetime]$candidate.CreationDate).ToUniversalTime()
-  $processCapability = $null
-  $retainProcessCapability = $false
-  try {
-    $processCapability = [System.Diagnostics.Process]::GetProcessById($processId)
-    if ($processCapability.HasExited -or $processCapability.Id -ne $processId) {
-      Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED'
-    }
-    $null = $processCapability.Handle
-    $capabilityProcessStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
-    $candidateReRead = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
-    if (-not $candidateReRead -or -not (Test-ExactCanonicalWorkerProcess -Process $candidateReRead -ExpectedRepoRoot $ExpectedRepoRoot)) {
-      Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
-    }
-    $candidateReReadStartedAtUtc = ([datetime]$candidateReRead.CreationDate).ToUniversalTime()
-    if ($candidateReReadStartedAtUtc.Ticks -ne $candidateStartedAtUtc.Ticks) {
-      Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
-    }
-    $retainProcessCapability = $true
-    return [PSCustomObject]@{
-      ProcessId = $processId
-      ProcessStartedAtUtc = $capabilityProcessStartedAtUtc
-      ProcessCapability = $processCapability
-      CanonicalWorkerCommandVerified = $true
-    }
-  }
-  catch {
-    if ([string]$_.Exception.Message -like 'MISSION_WORKER_*') { throw }
-    Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED'
-  }
-  finally {
-    if ($processCapability -and -not $retainProcessCapability) { $processCapability.Dispose() }
-  }
+function replaceExactlyOnce(source, expected, replacement) {
+  const first = source.indexOf(expected);
+  assert.notEqual(first, -1, 'expected production source fragment must exist');
+  assert.equal(source.indexOf(expected, first + 1), -1, 'production source fragment must be unique');
+  return source.slice(0, first) + replacement + source.slice(first + expected.length);
 }
-`;
+
+const ORPHAN_BASE_SOURCE = readFileSync(
+  new URL('../../scripts/windows/restart-approved-stephanos-runtime.ps1', import.meta.url),
+  'utf8',
+);
+
+const ORPHAN_SAFE_SOURCE = replaceExactlyOnce(
+  replaceExactlyOnce(
+    replaceExactlyOnce(
+      ORPHAN_BASE_SOURCE,
+      '    $processStartedAtUtc = ([datetime]$candidate.CreationDate).ToUniversalTime()',
+      '    $candidateStartedAtUtc = ([datetime]$candidate.CreationDate).ToUniversalTime()',
+    ),
+    `        $capabilityProcessStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+        if ($capabilityProcessStartedAtUtc.Ticks -ne $processStartedAtUtc.Ticks) {
+            Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED'
+        }`,
+    `        $capabilityProcessStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+
+        $candidateReRead = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+        if (-not $candidateReRead -or -not (Test-ExactCanonicalWorkerProcess -Process $candidateReRead -ExpectedRepoRoot $ExpectedRepoRoot)) {
+            Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
+        }
+        $candidateReReadStartedAtUtc = ([datetime]$candidateReRead.CreationDate).ToUniversalTime()
+        if ($candidateReReadStartedAtUtc.Ticks -ne $candidateStartedAtUtc.Ticks) {
+            Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
+        }`,
+  ),
+  '            ProcessStartedAtUtc = $processStartedAtUtc',
+  '            ProcessStartedAtUtc = $capabilityProcessStartedAtUtc',
+);
+
+assert.equal(gitBlobSha(ORPHAN_SAFE_SOURCE), '24bdbd048e30eda6641a8122d60e9262521af376');
 
 function input(source = SAFE_EQUIVALENT_SOURCE, overrides = {}) {
   return {
@@ -336,14 +322,23 @@ test('exact #2105 orphan capability rebinding profile is eligible and clean', ()
   assert.ok(result.proofRefs.some((item) => item.includes('same-api-starttime-rebound')));
 });
 
-test('#2105 requires post-bind CIM command and creation identity rechecks', () => {
-  for (const unsafe of [
-    ORPHAN_SAFE_SOURCE.replace('Test-ExactCanonicalWorkerProcess -Process $candidateReRead -ExpectedRepoRoot $ExpectedRepoRoot', '$true'),
-    ORPHAN_SAFE_SOURCE.replace('$candidateReReadStartedAtUtc.Ticks -ne $candidateStartedAtUtc.Ticks', '$false'),
+test('#2105 binds capability and CIM observations to typed fail-closed branches', () => {
+  for (const [unsafe, code] of [
+    [ORPHAN_SAFE_SOURCE.replace('if ($processCapability.HasExited -or $processCapability.Id -ne $processId) {', 'if ($false) {'), 'mission-worker-orphan-exact-source-not-pinned'],
+    [ORPHAN_SAFE_SOURCE.replace('if (-not $candidateReRead -or -not (Test-ExactCanonicalWorkerProcess -Process $candidateReRead -ExpectedRepoRoot $ExpectedRepoRoot)) {', 'if ($false) {'), 'mission-worker-orphan-exact-source-not-pinned'],
+    [ORPHAN_SAFE_SOURCE.replace('if ($candidateReReadStartedAtUtc.Ticks -ne $candidateStartedAtUtc.Ticks) {', 'if ($false) {'), 'mission-worker-orphan-exact-source-not-pinned'],
   ]) {
     const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(orphanInput(unsafe));
     assert.equal(result.clean, false);
+    assert.ok(result.findings.some((item) => item.code === code));
   }
+});
+
+test('#2105 full-source pin rejects unsafe mutations outside the selector', () => {
+  const unsafe = `${ORPHAN_SAFE_SOURCE}\nStop-Process -Id 1234\n`;
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(orphanInput(unsafe));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-orphan-exact-source-not-pinned'));
 });
 
 test('#2105 requires same-api Process.StartTime identity and forbids cross-api tick equality', () => {
