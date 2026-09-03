@@ -146,7 +146,7 @@ export function buildGitHubContinuityCapacityPublicationV1(rawInput = {}) {
   const observedAtMs = isoMs(observedAtUtc);
   const expiresAtMs = isoMs(expiresAtUtc);
   const supportedTaskClasses = uniqueList(input.supportedTaskClasses, (item) => TASK_CLASS.test(item), 1);
-  const authorityReceiptIds = uniqueList(input.authorityReceiptIds, (item) => SAFE_ID.test(item), 1);
+  const authorityReceiptIds = uniqueList(input.authorityReceiptIds, (item) => SAFE_ID.test(item), 0);
   const proofRefs = uniqueList(input.proofRefs, (item) => SAFE_REF.test(item) && !item.includes('..'), 1);
 
   if (!ROUTES.has(route) || !REPOSITORY.test(repository) || !SAFE_ID.test(receiptId) || !SAFE_ID.test(workerId)) {

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
   BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
   MISSION_CONTROLLER_ROUTE,
 } from './missionControllerCapacityRouterV1.mjs';
@@ -43,33 +42,8 @@ function githubReceipt(overrides = {}) {
     expiresAtUtc: '2026-08-19T15:44:00.000Z',
     queueDepth: 0,
     p95StartLatencySeconds: 10,
-    authorityReceiptIds: ['github-zero-codex-authority-20260819'],
+    authorityReceiptIds: [],
     proofRefs: ['receipts/zero-codex/github-capacity.json'],
-    ...overrides,
-  };
-}
-
-function githubAuthority(overrides = {}) {
-  return {
-    schemaVersion: BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
-    receiptId: 'github-zero-codex-authority-20260819',
-    route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
-    repository: REPOSITORY,
-    sourceHead: SOURCE_HEAD,
-    workerId: githubReceipt().workerId,
-    authorizedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
-    authorizedTaskClasses: ['FOCUSED_REPAIR'],
-    issuedAtUtc: '2026-08-19T15:20:00.000Z',
-    expiresAtUtc: '2026-08-19T16:20:00.000Z',
-    proofRefs: ['receipts/zero-codex/github-authority.json'],
-    sourceDispatchAllowed: true,
-    sourceMutationAuthorityAdded: false,
-    mergeAuthorityAdded: false,
-    deploymentAuthorityAdded: false,
-    runtimeMutationAuthorityAdded: false,
-    protectedMergeDispatchAllowed: false,
-    duplicateDispatchAllowed: false,
-    arbitraryCommandAllowed: false,
     ...overrides,
   };
 }
@@ -80,7 +54,6 @@ test('ZC1 routes a bounded source repair to a proven non-Codex GitHub lane at ze
     sourceHead: SOURCE_HEAD,
     mission: mission(),
     githubLaneReceipt: githubReceipt(),
-    githubLaneAuthorityReceipts: [githubAuthority()],
   });
 
   assert.equal(result.schemaVersion, ZERO_CODEX_BLACKOUT_ZC1_SCHEMA);
@@ -122,7 +95,6 @@ test('ZC1 does not route Windows-bound work to a GitHub-only fallback just to ob
     }),
     task: { taskClass: 'WINDOWS_RUNTIME_PROOF', windowsBound: true },
     githubLaneReceipt: githubReceipt({ supportedTaskClasses: ['WINDOWS_RUNTIME_PROOF'] }),
-    githubLaneAuthorityReceipts: [githubAuthority({ authorizedTaskClasses: ['WINDOWS_RUNTIME_PROOF'] })],
   });
 
   assert.equal(result.finalVerdict, ZERO_CODEX_ZC1_VERDICT.BLOCKED_BY_PARITY_GAP);
@@ -141,7 +113,6 @@ test('ZC1 fails closed on stale or malformed non-Codex capacity rather than pret
       sourceHead: SOURCE_HEAD,
       mission: mission(),
       githubLaneReceipt: receipt,
-      githubLaneAuthorityReceipts: [githubAuthority()],
     });
     assert.equal(result.finalVerdict, ZERO_CODEX_ZC1_VERDICT.BLOCKED_BY_PARITY_GAP);
     assert.equal(result.dispatchAllowed, false);

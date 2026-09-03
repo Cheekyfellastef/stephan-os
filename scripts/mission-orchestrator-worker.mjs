@@ -15,10 +15,6 @@ import {
   readMissionWorkerQueue,
 } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
 import {
-  isExactSourceMutationGrant,
-  reconcileStaleSourceMutationLease,
-} from '../stephanos-server/services/sourceMutationLeaseReconciliationService.js';
-import {
   OPENCLAW_OC1_ISSUE,
   OPENCLAW_OC1_PROVIDER,
   OPENCLAW_OC1_PROVIDER_VERSION,
@@ -496,30 +492,6 @@ export function selectGrantedMissionWorkerQueueItem(queue = [], actionGrant = {}
   return { ok: true, reason: 'exact-action-queue-item-selected', entry: matches[0] };
 }
 
-export async function reconcileStaleSourceLeaseForGrant(actionGrant = {}, options = {}) {
-  if (!isExactSourceMutationGrant(actionGrant)) {
-    return {
-      ok: true,
-      reconciled: false,
-      released: false,
-      reason: 'STALE_SOURCE_LEASE_RECONCILIATION_NOT_APPLICABLE',
-      leaseSeizureAllowed: false,
-    };
-  }
-  const reconcile = options.reconcileStaleSourceMutationLeaseImpl || reconcileStaleSourceMutationLease;
-  const root = options.sharedWorkspaceRoot
-    || options.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
-    || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE;
-  return reconcile(
-    { nowUtc: completedAt(options) },
-    {
-      ...options,
-      root,
-      repoRoot: options.repoRoot,
-    },
-  );
-}
-
 export async function runMissionWorkerTick(options = {}) {
   const actionGrant = options.actionGrant;
   const grantCheck = selectGrantedMissionWorkerQueueItem([], actionGrant);
@@ -536,29 +508,16 @@ export async function runMissionWorkerTick(options = {}) {
       || options.env?.STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH
       || process.env.STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH,
   };
-  const staleLeaseReconciliation = await reconcileStaleSourceLeaseForGrant(actionGrant, workerOptions);
-  if (staleLeaseReconciliation?.ok !== true) {
-    const reason = `stale-source-lease-reconciliation:${text(staleLeaseReconciliation?.reason, 'blocked')}`;
-    return {
-      publish: {
-        published: false,
-        reason,
-        staleLeaseReconciliation,
-      },
-      processed: { processed: false, reason },
-      staleLeaseReconciliation,
-    };
-  }
   const publish = await publishNextMissionWorkerAction(workerOptions);
   if (publish.reason === 'action-grant-mismatch' || publish.reason?.startsWith('action-grant-mission-')) {
-    return { publish, processed: { processed: false, reason: publish.reason }, staleLeaseReconciliation };
+    return { publish, processed: { processed: false, reason: publish.reason } };
   }
   const selection = selectGrantedMissionWorkerQueueItem(
     await readMissionWorkerQueue(workerOptions),
     actionGrant,
   );
   if (!selection.ok) {
-    return { publish, processed: { processed: false, reason: selection.reason }, staleLeaseReconciliation };
+    return { publish, processed: { processed: false, reason: selection.reason } };
   }
   let processed;
   if (selection.entry.adapter === 'openclaw-signed') {
@@ -582,12 +541,12 @@ export async function runMissionWorkerTick(options = {}) {
       ...workerOptions,
       executeOpenClawReadonlyAction: (action, claim) => executeOpenClawReadonlyAction(action, claim, options),
     });
-  } else if (['openclaw-local', 'chatgpt-github', 'foundry-forge'].includes(selection.entry.adapter)) {
+  } else if (['chatgpt-github', 'foundry-forge'].includes(selection.entry.adapter)) {
     processed = { processed: false, reason: 'proven-external-lane-handoff-pending', adapter: selection.entry.adapter, queuePath: selection.entry.path };
   } else {
     processed = { processed: false, reason: 'granted-action-adapter-not-supported-by-worker' };
   }
-  return { publish, actionGrant, staleLeaseReconciliation, processed };
+  return { publish, actionGrant, processed };
 }
 
 async function main() {

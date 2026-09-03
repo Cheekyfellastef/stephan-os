@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
 } from './programmeAuthorityV1.mjs';
@@ -7,25 +6,19 @@ import {
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
 import {
-  claimSourceMutationLease,
   finalizeTerminalImplementationLane,
   publishProgrammeControllerHeartbeat,
   readAuthoritativeProgrammeProjection,
   readMissionControllerCapacityRoutingInput,
-  readSourceMutationLease,
   resolveProgrammeAuthorityPaths,
 } from '../../stephanos-server/services/programmeAuthorityService.js';
 import {
   ensureCriticalBacklogMission,
 } from '../../stephanos-server/services/criticalBacklogConveyorService.js';
 import {
-  publishNextMissionWorkerAction,
-} from '../../stephanos-server/services/missionOrchestratorWorkerService.js';
-import {
   buildMissionWorkerAction,
   projectMissionWorkerActionState,
 } from './missionOrchestratorWorker.mjs';
-import { MISSION_PROVIDER_ROUTE_INTENT } from './missionControllerCapacityRouterV1.mjs';
 
 export const DURABLE_FLYWHEEL_CONTROLLER_SCHEMA = 'stephanos.durable-flywheel-controller.vnext';
 export const DURABLE_FLYWHEEL_CYCLE_RECEIPT_SCHEMA = 'stephanos.durable-flywheel-cycle-receipt.vnext';
@@ -35,8 +28,6 @@ export const DURABLE_FLYWHEEL_CONTROLLER_ISSUE = 1497;
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
 const WORKER_SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,159}$/i;
-const SAFE_BRANCH = /^[a-z0-9][a-z0-9._/-]{0,239}$/i;
-const SAFE_REPOSITORY = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const KNOWN_PROJECTION_STATES = new Set([
   'HOLD',
@@ -44,12 +35,6 @@ const KNOWN_PROJECTION_STATES = new Set([
   'ACTIVE',
   'READY',
   'IDLE',
-]);
-const SOURCE_MUTATION_ADAPTERS = new Set([
-  'codex',
-  'openclaw-local',
-  'chatgpt-github',
-  'foundry-forge',
 ]);
 
 function text(value, fallback = '') {
@@ -92,11 +77,6 @@ function requiredFunction(value, name) {
   return value;
 }
 
-function compactId(prefix, values = []) {
-  const digest = createHash('sha256').update(JSON.stringify(values)).digest('hex').slice(0, 24);
-  return `${prefix}-${digest}`;
-}
-
 function receiptId(nowUtc) {
   const timestamp = nowUtc.replace(/[^0-9]/g, '').slice(0, 17);
   return `durable-flywheel-${timestamp || 'invalid'}`;
@@ -119,44 +99,6 @@ function projectionIdentity(projection = {}) {
     headSha: sha(lane?.headSha),
     leaseId: text(projection?.mutationLease?.leaseId),
     ownerId: text(projection?.mutationLease?.ownerId),
-  });
-}
-
-function conflictingIdentity(left, right) {
-  return left !== null && left !== '' && right !== null && right !== '' && left !== right;
-}
-
-function exactWorkerGrantIdentity(projection = {}, actionState = {}) {
-  const projected = projectionIdentity(projection);
-  const mission = {
-    laneId: text(actionState?.laneId),
-    repository: text(actionState?.repository),
-    issueNumber: positiveInteger(actionState?.issueNumber ?? actionState?.goalNumber),
-    prNumber: positiveInteger(actionState?.prNumber ?? actionState?.pullRequest?.number),
-    branch: text(actionState?.branch ?? actionState?.git?.branch),
-    headSha: sha(actionState?.headSha ?? actionState?.git?.headSha ?? actionState?.pullRequest?.headSha),
-  };
-  if (
-    conflictingIdentity(projected.laneId, mission.laneId)
-    || conflictingIdentity(projected.repository, mission.repository)
-    || conflictingIdentity(projected.issueNumber, mission.issueNumber)
-    || conflictingIdentity(projected.prNumber, mission.prNumber)
-  ) return null;
-  const issueNumber = projected.issueNumber ?? mission.issueNumber;
-  const prNumber = projected.prNumber ?? mission.prNumber;
-  const laneId = projected.laneId || mission.laneId || (issueNumber && prNumber
-    ? `goal-${issueNumber}-pr-${prNumber}`
-    : '');
-  if (laneId && !SAFE_ID.test(laneId)) return null;
-  return freeze({
-    laneId,
-    repository: projected.repository || mission.repository,
-    issueNumber,
-    prNumber,
-    branch: projected.branch || mission.branch,
-    headSha: projected.headSha || mission.headSha,
-    leaseId: projected.leaseId,
-    ownerId: projected.ownerId,
   });
 }
 
@@ -192,21 +134,7 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capa
   const actionId = text(action?.actionId).toLowerCase();
   const adapter = workerAdapter(action);
   if (action?.executable !== true || !WORKER_SAFE_ID.test(actionId) || !adapter) return null;
-  let providerRouteIntent = null;
-  if (action.actionKind === 'agent-handoff' && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(currentPhase)) {
-    const selectedMission = projection?.criticalBacklog?.selectedItem?.mission;
-    providerRouteIntent = text(
-      activeMission?.providerRouteIntent || selectedMission?.providerRouteIntent,
-      'AUTO',
-    ).toUpperCase();
-    const selectedCapacityRoute = text(action.capacityRoute).toUpperCase();
-    const validProviderRouteIntent = Object.values(MISSION_PROVIDER_ROUTE_INTENT).includes(providerRouteIntent);
-    if (!validProviderRouteIntent
-      || !selectedCapacityRoute
-      || (providerRouteIntent !== 'AUTO' && providerRouteIntent !== selectedCapacityRoute)) return null;
-  }
-  const identity = exactWorkerGrantIdentity(projection, actionState);
-  if (!identity) return null;
+  const identity = projectionIdentity(projection);
   return freeze({
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
     grantId: `grant-${actionId}`.slice(0, 80),
@@ -219,7 +147,6 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capa
     actionKind: text(action.actionKind),
     adapter,
     operation: text(action.operation),
-    providerRouteIntent,
     capacityRoute: text(action.capacityRoute),
     capacityReceiptId: text(action.capacityReceiptId) || null,
     capacityProofRefs: freeze(list(action.capacityProofRefs)),
@@ -233,154 +160,6 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capa
     boundedActionCount: 1,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
-  });
-}
-
-function sourceMutationLeasePlan(grant, nowUtc, proofRefs = []) {
-  const adapter = text(grant?.adapter).toLowerCase();
-  const sourceMutationAction = grant?.actionKind === 'agent-handoff'
-    && SOURCE_MUTATION_ADAPTERS.has(adapter);
-  if (!sourceMutationAction) {
-    return freeze({ required: false, complete: true, expected: null, claimInput: null });
-  }
-  const laneId = text(grant?.laneId);
-  const repository = text(grant?.repository);
-  const issueNumber = positiveInteger(grant?.issueNumber);
-  const prNumber = positiveInteger(grant?.prNumber);
-  const branch = text(grant?.branch);
-  const headSha = sha(grant?.headSha);
-  const ownerId = text(grant?.workerId);
-  const prIdentityAbsent = !prNumber && !headSha;
-  if (prIdentityAbsent) {
-    const prePrIsolatedSourceComplete = Boolean(
-      SAFE_REPOSITORY.test(repository)
-      && issueNumber
-      && SAFE_BRANCH.test(branch)
-      && branch.startsWith('openclaw/')
-      && !branch.includes('..')
-      && WORKER_SAFE_ID.test(ownerId)
-    );
-    return freeze({
-      required: false,
-      complete: prePrIsolatedSourceComplete,
-      expected: null,
-      claimInput: null,
-      prePrIsolatedSource: prePrIsolatedSourceComplete,
-      boundary: prePrIsolatedSourceComplete ? 'PRE_PR_ISOLATED_WORKTREE' : 'PRE_PR_IDENTITY_INCOMPLETE',
-    });
-  }
-  if (!prNumber || !headSha) {
-    return freeze({
-      required: true,
-      complete: false,
-      expected: null,
-      claimInput: null,
-      prePrIsolatedSource: false,
-      boundary: 'PARTIAL_PR_IDENTITY_BLOCKED',
-    });
-  }
-  const complete = Boolean(
-    SAFE_ID.test(laneId)
-    && SAFE_REPOSITORY.test(repository)
-    && issueNumber
-    && prNumber
-    && SAFE_BRANCH.test(branch)
-    && !branch.includes('..')
-    && headSha
-    && SAFE_ID.test(ownerId)
-  );
-  if (!complete) {
-    return freeze({
-      required: true,
-      complete: false,
-      expected: null,
-      claimInput: null,
-      prePrIsolatedSource: false,
-      boundary: 'EXACT_PR_LEASE_IDENTITY_INCOMPLETE',
-    });
-  }
-  const leaseId = compactId('source-lease', [
-    laneId,
-    text(grant?.actionId),
-    repository,
-    prNumber,
-    headSha,
-  ]);
-  const expected = freeze({
-    leaseId,
-    laneId,
-    repository,
-    issueNumber,
-    prNumber,
-    branch,
-    headSha,
-    ownerId,
-  });
-  return freeze({
-    required: true,
-    complete: true,
-    expected,
-    claimInput: freeze({ ...expected, nowUtc, proofRefs: freeze(list(proofRefs)) }),
-    prePrIsolatedSource: false,
-    boundary: 'EXACT_PR_HEAD_LEASE_REQUIRED',
-  });
-}
-
-function exactActiveSourceMutationLease(read, expected) {
-  if (
-    read?.ok !== true
-    || read?.present !== true
-    || read?.validation?.valid !== true
-    || read?.validation?.active !== true
-    || !read?.record
-    || !expected
-  ) return false;
-  for (const [field, normalize] of [
-    ['leaseId', text],
-    ['laneId', text],
-    ['repository', text],
-    ['issueNumber', positiveInteger],
-    ['prNumber', positiveInteger],
-    ['branch', text],
-    ['headSha', sha],
-    ['ownerId', text],
-  ]) {
-    if (normalize(read.record[field]) !== normalize(expected[field])) return false;
-  }
-  return read.record.mergeAuthority === false && read.record.leaseSeizureAllowed === false;
-}
-
-async function publishExactWorkerAction(deps, workerActionGrant, serviceOptions) {
-  try {
-    const dispatch = await requiredFunction(
-      deps.publishWorkerAction,
-      'publishWorkerAction',
-    )({ ...serviceOptions, actionGrant: workerActionGrant });
-    return freeze({
-      published: dispatch?.published === true,
-      actionGrantAccepted: dispatch?.actionGrantAccepted === true,
-      reason: text(dispatch?.reason),
-      actionId: text(dispatch?.action?.actionId, text(workerActionGrant?.actionId)),
-      result: dispatch ?? null,
-    });
-  } catch (error) {
-    return freeze({
-      published: false,
-      actionGrantAccepted: false,
-      reason: `worker-action-publication-exception:${text(error?.message, 'unknown')}`,
-      actionId: text(workerActionGrant?.actionId),
-      result: null,
-    });
-  }
-}
-
-function withWorkerDispatch(result, workerActionGrant, dispatch) {
-  return freeze({
-    ...result,
-    workerActionGrant,
-    workerActionDispatchPublished: dispatch?.published === true,
-    workerActionDispatchAccepted: dispatch?.actionGrantAccepted === true,
-    workerActionDispatchReason: text(dispatch?.reason) || null,
   });
 }
 
@@ -471,7 +250,7 @@ export function reconcileDurableFlywheelController(projection = {}, options = {}
       ...common,
       action: 'ADVANCE_EXISTING_ACTIVE_LANE',
       allowWorkerTick: true,
-      nextAction: 'Publish the exact Mission Worker action now; retain the supervised worker tick as an idempotent fallback.',
+      nextAction: 'Allow the existing Mission Worker to advance one bounded action under the current lease.',
     });
   }
   if (status === 'READY') {
@@ -525,9 +304,6 @@ function createCycleReceipt(result, projection, nowUtc, options = {}) {
     workerActionGrantId: text(result.workerActionGrant?.grantId) || null,
     workerMissionId: text(result.workerActionGrant?.missionId) || null,
     workerActionId: text(result.workerActionGrant?.actionId) || null,
-    workerActionDispatchPublished: result.workerActionDispatchPublished === true,
-    workerActionDispatchAccepted: result.workerActionDispatchAccepted === true,
-    workerActionDispatchReason: text(result.workerActionDispatchReason) || null,
     chatMemoryAuthoritative: false,
     createsReplacementMachinery: false,
     mergeAuthority: false,
@@ -621,9 +397,6 @@ function productionMachinery(overrides = {}) {
     ensureBacklogMission: overrides.ensureBacklogMission ?? ensureCriticalBacklogMission,
     publishReceipt: overrides.publishReceipt ?? publishDurableFlywheelCycleReceipt,
     loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readMissionControllerCapacityRoutingInput,
-    claimSourceMutationLease: overrides.claimSourceMutationLease ?? claimSourceMutationLease,
-    readSourceMutationLease: overrides.readSourceMutationLease ?? readSourceMutationLease,
-    publishWorkerAction: overrides.publishWorkerAction ?? publishNextMissionWorkerAction,
   });
 }
 
@@ -668,10 +441,6 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
   let transitionAuthorityHeartbeatPublication = null;
   let missionAdmissionReceipt = null;
   let missionAdmissionReceiptPublication = null;
-  let sourceMutationLeaseClaim = null;
-  let sourceMutationLeaseRead = null;
-  let verifiedSourceMutationLeaseIdentity = null;
-  let workerDispatchResult = null;
   let projection = await loadProjection(serviceOptions);
   const transitionState = projection?.lane?.active === true
     ? 'ACTIVE_LANE'
@@ -808,8 +577,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
         activeLane: projection.lane,
       });
     } else {
-      workerDispatchResult = await publishExactWorkerAction(deps, workerActionGrant, serviceOptions);
-      result = withWorkerDispatch(result, workerActionGrant, workerDispatchResult);
+      result = freeze({ ...result, workerActionGrant });
     }
   } else if (result.status === 'READY') {
     missionAdmissionReceipt = createCycleReceipt(
@@ -856,75 +624,14 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
             sourceRevision,
           });
         } else {
-          const leasePlan = sourceMutationLeasePlan(
+          result = freeze({
+            ...result,
             workerActionGrant,
-            nowUtc,
-            [`receipts/${missionAdmissionReceipt.receiptId}.json`],
-          );
-          if (!leasePlan.complete) {
-            result = holdResult('source-mutation-lease:grant-identity-incomplete', {
-              observedAtUtc: nowUtc,
-              sourceRevision,
-            });
-          } else if (leasePlan.required) {
-            sourceMutationLeaseClaim = await requiredFunction(
-              deps.claimSourceMutationLease,
-              'claimSourceMutationLease',
-            )(leasePlan.claimInput, serviceOptions);
-            if (sourceMutationLeaseClaim?.ok !== true) {
-              result = holdResult(`source-mutation-lease:${text(
-                sourceMutationLeaseClaim?.reason,
-                'claim-failed',
-              )}`, {
-                observedAtUtc: nowUtc,
-                sourceRevision,
-              });
-            } else {
-              sourceMutationLeaseRead = await requiredFunction(
-                deps.readSourceMutationLease,
-                'readSourceMutationLease',
-              )(serviceOptions);
-              if (!exactActiveSourceMutationLease(sourceMutationLeaseRead, leasePlan.expected)) {
-                result = holdResult('source-mutation-lease:canonical-reread-mismatch', {
-                  observedAtUtc: nowUtc,
-                  sourceRevision,
-                });
-              } else {
-                verifiedSourceMutationLeaseIdentity = leasePlan.expected;
-                workerDispatchResult = await publishExactWorkerAction(
-                  deps,
-                  workerActionGrant,
-                  serviceOptions,
-                );
-                result = withWorkerDispatch(freeze({
-                  ...result,
-                  action: 'LEASE_CANONICAL_CONVEYOR_MISSION',
-                  allowWorkerTick: true,
-                  nextAction: actionResult.createdMission
-                    ? 'The controller published the newly created lease-bound mission; the supervised worker tick remains an idempotent fallback.'
-                    : 'The controller published the lease-bound conveyor mission; the supervised worker tick remains an idempotent fallback.',
-                }), workerActionGrant, workerDispatchResult);
-              }
-            }
-          } else {
-            workerDispatchResult = await publishExactWorkerAction(
-              deps,
-              workerActionGrant,
-              serviceOptions,
-            );
-            result = withWorkerDispatch(freeze({
-              ...result,
-              action: leasePlan.prePrIsolatedSource
-                ? 'DISPATCH_PRE_PR_ISOLATED_SOURCE_MISSION'
-                : result.action,
-              allowWorkerTick: true,
-              nextAction: leasePlan.prePrIsolatedSource
-                ? 'Publish the bounded pre-PR implementation into the existing isolated openclaw worktree; require exact PR/head lease authority as soon as a PR identity exists.'
-                : actionResult.createdMission
-                  ? 'The controller published the newly created canonical mission; the supervised worker tick remains an idempotent fallback.'
-                  : 'The controller published the conveyor-authorized mission; the supervised worker tick remains an idempotent fallback.',
-            }), workerActionGrant, workerDispatchResult);
-          }
+            allowWorkerTick: true,
+            nextAction: actionResult.createdMission
+              ? 'Allow the existing Mission Worker to process the newly created canonical mission.'
+              : 'Allow the existing Mission Worker to continue the conveyor-authorized mission.',
+          });
         }
       }
     }
@@ -940,18 +647,15 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       blockers: result.blockers,
     });
   }
-  const leasedReadyLaneId = text(verifiedSourceMutationLeaseIdentity?.laneId);
   const finalState = result.status === 'HOLD'
     ? 'HOLD'
-    : result.status === 'ACTIVE' || leasedReadyLaneId
+    : result.status === 'ACTIVE'
       ? 'ACTIVE_LANE'
       : 'IDLE';
   const finalHeartbeat = await publishHeartbeat(heartbeatInput({
     state: finalState,
     sourceRevision,
-    activeLaneId: finalState === 'ACTIVE_LANE'
-      ? text(projection?.lane?.laneId, leasedReadyLaneId)
-      : '',
+    activeLaneId: finalState === 'ACTIVE_LANE' ? text(projection?.lane?.laneId) : '',
     nowUtc,
     cycleReceiptId: receipt.receiptId,
     boundedMutationSteps: result.boundedMutationSteps,
@@ -973,10 +677,6 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     transitionAuthorityHeartbeatPublication,
     missionAdmissionReceipt,
     missionAdmissionReceiptPublication,
-    sourceMutationLeaseClaim,
-    sourceMutationLeaseRead,
-    verifiedSourceMutationLeaseIdentity,
-    workerDispatchResult,
     cycleReceipt: receipt,
     receiptPublication,
     heartbeatPublication: finalHeartbeat,
@@ -993,7 +693,6 @@ export function renderDurableFlywheelReceipt(result) {
     `Projection-Status: ${text(result.projectionStatus, 'unproven')}`,
     `Action: ${text(result.action, 'none')}`,
     `Worker-Tick-Allowed: ${result.allowWorkerTick === true}`,
-    `Worker-Action-Published: ${result.workerActionDispatchPublished === true}`,
     'Chat-Memory-Authoritative: false',
     'Creates-Replacement-Machinery: false',
     'Merge-Authority: false',

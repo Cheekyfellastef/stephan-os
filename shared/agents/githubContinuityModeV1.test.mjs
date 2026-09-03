@@ -9,7 +9,7 @@ import {
   planGitHubContinuityMode,
   validateBattleBridgeContinuityHealth,
 } from './githubContinuityModeV1.mjs';
-import { BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA, MISSION_CONTROLLER_ROUTE } from './missionControllerCapacityRouterV1.mjs';
+import { MISSION_CONTROLLER_ROUTE } from './missionControllerCapacityRouterV1.mjs';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = '000ef68d9eaed3715e87311f7d90df26a1203588';
@@ -49,32 +49,8 @@ function githubReceipt(taskClass = 'FOCUSED_REPAIR') {
     expiresAtUtc: '2026-08-16T16:00:00.000Z',
     queueDepth: 0,
     p95StartLatencySeconds: 3,
-    authorityReceiptIds: ['github-continuity-authority-001'],
+    authorityReceiptIds: [],
     proofRefs: ['proofs/github/continuity-capacity.json'],
-  };
-}
-
-function githubAuthority() {
-  return {
-    schemaVersion: BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
-    receiptId: 'github-continuity-authority-001',
-    route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
-    repository: REPOSITORY,
-    sourceHead: HEAD,
-    workerId: githubReceipt().workerId,
-    authorizedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
-    authorizedTaskClasses: ['FOCUSED_REPAIR'],
-    issuedAtUtc: '2026-08-16T15:25:00.000Z',
-    expiresAtUtc: '2026-08-16T16:00:00.000Z',
-    proofRefs: ['proofs/github/continuity-authority.json'],
-    sourceDispatchAllowed: true,
-    sourceMutationAuthorityAdded: false,
-    mergeAuthorityAdded: false,
-    deploymentAuthorityAdded: false,
-    runtimeMutationAuthorityAdded: false,
-    protectedMergeDispatchAllowed: false,
-    duplicateDispatchAllowed: false,
-    arbitraryCommandAllowed: false,
   };
 }
 
@@ -115,7 +91,6 @@ function input(overrides = {}) {
     tasks: [sourceMission(), windowsMission()],
     codexStatus: {},
     githubLaneReceipt: githubReceipt(),
-    githubLaneAuthorityReceipts: [githubAuthority()],
     forgeLaneReceipt: null,
     forgeSidecar: null,
     ...overrides,
@@ -136,7 +111,6 @@ test('unavailable Battle Bridge enters continuity mode, continues source work, a
   const source = result.tasks.find((item) => item.missionId === 'source-1');
   assert.equal(source.disposition, CONTINUITY_TASK_DISPOSITION.CONTINUE);
   assert.equal(source.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
-  assert.equal(source.workerId, githubReceipt().workerId);
   assert.equal(source.dispatchAllowed, true);
 
   const windows = result.tasks.find((item) => item.missionId === 'windows-1');

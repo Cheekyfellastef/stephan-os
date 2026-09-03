@@ -168,8 +168,6 @@ function taskPlan(input, item, host) {
     githubLaneReceipt: input.githubLaneReceipt,
     forgeLaneReceipt: input.forgeLaneReceipt,
     forgeSidecar: input.forgeSidecar,
-    githubLaneAuthorityReceipts: input.githubLaneAuthorityReceipts,
-    sourceHead: input.expectedSourceHead,
   });
 
   const existingDispatch = normalized.mission?.dispatch?.status === 'running';
@@ -181,7 +179,6 @@ function taskPlan(input, item, host) {
       disposition: CONTINUITY_TASK_DISPOSITION.PRESERVE_EXISTING_DISPATCH,
       route: route.route,
       adapter: route.adapter,
-      workerId: text(route.workerId || normalized.mission?.dispatch?.workerId),
       dispatchAllowed: false,
       selectedCapacityReceiptId: route.selectedCapacityReceiptId ?? null,
       proofRefs: frozen(list(route.proofRefs)),
@@ -221,7 +218,6 @@ function taskPlan(input, item, host) {
       disposition: CONTINUITY_TASK_DISPOSITION.CONTINUE,
       route: route.route,
       adapter: route.adapter,
-      workerId: text(route.workerId || route.adapter),
       dispatchAllowed: true,
       selectedCapacityReceiptId: route.selectedCapacityReceiptId ?? null,
       proofRefs: frozen(list(route.proofRefs)),

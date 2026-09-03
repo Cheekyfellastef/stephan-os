@@ -10,7 +10,6 @@ import {
 import { buildMissionWorkerAction } from './missionOrchestratorWorker.mjs';
 import {
   createSharedWorkspaceHandoffRecord,
-  isSharedWorkspaceParticipantId,
   validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
 
@@ -38,14 +37,14 @@ const BUILD_KEYS = new Set(['repository', 'expectedSourceHead', 'nowUtc', 'execu
 const COMPLETION_INPUT_KEYS = new Set(['handoff', 'completionReceipt', 'missionState']);
 const GRANT_KEYS = Object.freeze([
   'schemaVersion','grantId','repository','expectedSourceHead','missionId','taskId','route','adapter',
-  'workerId','selectedCapacityReceiptId','proofRefs','grantedAtUtc','executionScope','windowsBound',
+  'selectedCapacityReceiptId','proofRefs','grantedAtUtc','executionScope','windowsBound',
   'existingDispatchTakeoverAllowed','sourceMutationAuthorityAdded','mergeAuthorityAdded',
   'deploymentAuthorityAdded','runtimeMutationAuthorityAdded','protectedMergeDispatchAllowed',
   'leaseSeizureAllowed','duplicateDispatchAllowed','arbitraryCommandAllowed',
 ]);
 const COMPLETION_KEYS = Object.freeze([
   'schemaVersion','handoffId','grantId','missionId','taskId','repository','expectedSourceHead','adapter',
-  'capacityRoute','workerId','success','resultId','changedFiles','receipt','proofRefs','completedAtUtc','error',
+  'capacityRoute','success','resultId','changedFiles','receipt','proofRefs','completedAtUtc','error',
   'sourceMutationAuthorityAdded','mergeAuthorityAdded','deploymentAuthorityAdded','runtimeMutationAuthorityAdded',
   'protectedMergeDispatchAllowed','duplicateDispatchAllowed','arbitraryCommandAllowed',
 ]);
@@ -150,9 +149,9 @@ function validateGrant(g, identity) {
   if (g.schemaVersion!==GITHUB_CONTINUITY_EXECUTION_GRANT_SCHEMA) return 'execution-grant-schema-invalid';
   if (g.repository!==identity.repository || text(g.expectedSourceHead).toLowerCase()!==identity.expectedSourceHead) return 'execution-grant-identity-mismatch';
   if (![g.grantId,g.missionId,g.taskId].every((v)=>SAFE_ID.test(text(v)))) return 'execution-grant-id-invalid';
-  if (!Object.values(MISSION_CONTROLLER_ROUTE).includes(route) || !SAFE_ID.test(adapter) || !isSharedWorkspaceParticipantId(g.workerId) || proofRefs===null) return 'execution-grant-route-evidence-invalid';
+  if (!Object.values(MISSION_CONTROLLER_ROUTE).includes(route) || !SAFE_ID.test(adapter) || proofRefs===null) return 'execution-grant-route-evidence-invalid';
   if (route===MISSION_CONTROLLER_ROUTE.CODEX) {
-    if (receiptId!==null || adapter!=='codex' || text(g.workerId)!=='codex') return 'execution-grant-codex-binding-invalid';
+    if (receiptId!==null || adapter!=='codex') return 'execution-grant-codex-binding-invalid';
   } else if (!SAFE_ID.test(receiptId||'') || proofRefs.length<1) return 'execution-grant-capacity-evidence-invalid';
   if (isoMs(g.grantedAtUtc)===null || g.executionScope!=='SOURCE_ONLY_EXISTING_ROUTE' || g.windowsBound!==false) return 'execution-grant-scope-or-time-invalid';
   if ([g.existingDispatchTakeoverAllowed,g.sourceMutationAuthorityAdded,g.mergeAuthorityAdded,g.deploymentAuthorityAdded,
@@ -173,7 +172,7 @@ function validateMissionState(s,g,repository) {
 }
 function workerGrant(g) {
   return Object.freeze({schemaVersion:'stephanos.mission-worker-action-grant.v1',missionId:g.missionId,capacityRoute:g.route,
-    adapter:g.adapter,workerId:g.workerId,capacityReceiptId:g.selectedCapacityReceiptId,capacityProofRefs:Object.freeze([...g.proofRefs])});
+    adapter:g.adapter,workerId:g.adapter,capacityReceiptId:g.selectedCapacityReceiptId,capacityProofRefs:Object.freeze([...g.proofRefs])});
 }
 function preflightWorkspaceHandoff(handoff, action, grant, nowMs) {
   if (!handoff || handoff.handoffId!==action.actionId || handoff.correlationId!==action.missionId) return 'shared-workspace-handoff-identity-invalid';
@@ -184,7 +183,6 @@ function preflightWorkspaceHandoff(handoff, action, grant, nowMs) {
   return body?.schemaVersion===GITHUB_CONTINUITY_EXTERNAL_HANDOFF_BODY_SCHEMA && body.actionId===action.actionId
     && body.grantId===grant.grantId && body.taskId===grant.taskId && body.expectedSourceHead===grant.expectedSourceHead
     && body.repository===grant.repository && body.adapter===action.adapter
-    && body.workerId===action.workerId
     && text(body.capacityRoute).toUpperCase()===text(action.capacityRoute).toUpperCase()
     && body.capacityReceiptId===action.capacityReceiptId && body.mergeAuthority===false && body.leaseSeizureAllowed===false
     ? '' : 'shared-workspace-handoff-body-binding-invalid';
@@ -215,7 +213,6 @@ export function buildGitHubContinuityExternalHandoffV1(rawInput={}) {
   const identity=issueIdentity(input.missionState.missionId);
   const body=Object.freeze({schemaVersion:GITHUB_CONTINUITY_EXTERNAL_HANDOFF_BODY_SCHEMA,missionId:input.missionState.missionId,
     taskId:input.executionGrant.taskId,grantId:input.executionGrant.grantId,actionId:action.actionId,adapter:action.adapter,
-    workerId:action.workerId,
     capacityRoute:action.capacityRoute,capacityReceiptId:action.capacityReceiptId,repository,expectedSourceHead,
     branch:input.missionState.git?.branch||'',allowedFiles:Object.freeze([...(action.allowedFiles||[])]),
     requiredTests:Object.freeze([...(action.requiredTests||[])]),requiredEvidence:Object.freeze([...(action.requiredEvidence||[])]),
@@ -257,7 +254,6 @@ function validPreparedHandoff(h) {
   try { b=JSON.parse(w.body); } catch { return false; }
   return b?.schemaVersion===GITHUB_CONTINUITY_EXTERNAL_HANDOFF_BODY_SCHEMA&&b.actionId===h.actionId&&b.grantId===h.grantId
     &&b.taskId===h.taskId&&b.repository===h.repository&&b.expectedSourceHead===h.expectedSourceHead&&b.adapter===q.adapter
-    &&b.workerId===q.payload?.workerId
     &&text(b.capacityRoute).toUpperCase()===text(q.payload?.capacityRoute).toUpperCase();
 }
 
@@ -269,11 +265,9 @@ export function adjudicateGitHubContinuityExternalCompletionV1(rawInput={}) {
   if (!c||!exactKeys(c,COMPLETION_KEYS)||c.schemaVersion!==GITHUB_CONTINUITY_EXTERNAL_COMPLETION_SCHEMA) return blockedCompletion('completion-receipt-shape-invalid');
   const proofRefs=refs(c.proofRefs,1), files=changedFiles(c.changedFiles), completedAt=isoMs(c.completedAtUtc);
   if (!proofRefs||!files||completedAt===null) return blockedCompletion('completion-evidence-invalid');
-  const workerId=text(h.queueItemCandidate.payload?.workerId);
   if (c.repository!==h.repository||text(c.expectedSourceHead).toLowerCase()!==h.expectedSourceHead||c.handoffId!==h.handoffId
       ||c.grantId!==h.grantId||c.missionId!==h.queueItemCandidate.missionId||c.taskId!==h.taskId||c.adapter!==h.queueItemCandidate.adapter
-      ||text(c.capacityRoute).toUpperCase()!==text(h.queueItemCandidate.payload?.capacityRoute).toUpperCase()
-      ||!workerId||text(c.workerId)!==workerId||text(c.workerId)!==text(h.queueItemCandidate.payload?.workerId)) return blockedCompletion('completion-handoff-identity-mismatch');
+      ||text(c.capacityRoute).toUpperCase()!==text(h.queueItemCandidate.payload?.capacityRoute).toUpperCase()) return blockedCompletion('completion-handoff-identity-mismatch');
   if ([c.sourceMutationAuthorityAdded,c.mergeAuthorityAdded,c.deploymentAuthorityAdded,c.runtimeMutationAuthorityAdded,
     c.protectedMergeDispatchAllowed,c.duplicateDispatchAllowed,c.arbitraryCommandAllowed].some((v)=>v!==false)) return blockedCompletion('completion-authority-invalid');
   if (typeof c.success!=='boolean') return blockedCompletion('completion-success-invalid');
@@ -281,11 +275,10 @@ export function adjudicateGitHubContinuityExternalCompletionV1(rawInput={}) {
     if (!SAFE_ID.test(text(c.resultId))||text(c.error)||!validMissionReceipt(c.receipt)) return blockedCompletion('completion-success-payload-invalid');
   } else if (!text(c.error)||files.length>0||c.resultId!=='') return blockedCompletion('completion-failure-payload-invalid');
   if (!s||s.schemaVersion!==MISSION_ORCHESTRATOR_SCHEMA_VERSION||s.missionId!==c.missionId||s.repository!==c.repository
-      ||text(s.dispatch?.status).toLowerCase()!=='running'||text(s.dispatch?.adapter)!==c.adapter
-      ||text(s.dispatch?.actionId)!==h.actionId||text(s.dispatch?.workerId)!==workerId||!workerId) return blockedCompletion('completion-mission-state-mismatch');
+      ||text(s.dispatch?.status).toLowerCase()!=='running'||text(s.dispatch?.adapter)!==c.adapter) return blockedCompletion('completion-mission-state-mismatch');
   const event=Object.freeze({schemaVersion:MISSION_ORCHESTRATOR_EVENT_SCHEMA_VERSION,missionId:c.missionId,eventType:'AGENT_RESULT_RECEIVED',timestamp:c.completedAtUtc,
     summary:c.success?`GitHub Continuity external lane completed ${c.taskId}.`:`GitHub Continuity external lane failed ${c.taskId}.`,
-    actionId:h.actionId,workerId:c.workerId,success:c.success,resultId:c.resultId,changedFiles:files,receipt:c.receipt,error:c.error});
+    success:c.success,resultId:c.resultId,changedFiles:files,receipt:c.receipt,error:c.error});
   const projected=applyMissionOrchestratorEvent(s,event,{now:new Date(c.completedAtUtc)});
   if (c.success===true) {
     if (projected?.dispatch?.status!=='complete'||projected?.dispatch?.resultId!==c.resultId||text(projected?.currentPhase).toUpperCase()==='BLOCKED') return blockedCompletion('completion-event-preflight-failed');

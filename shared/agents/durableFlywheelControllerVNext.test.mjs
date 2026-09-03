@@ -9,7 +9,7 @@ import {
   renderDurableFlywheelReceipt,
   runDurableFlywheelStartupCycle,
 } from './durableFlywheelControllerVNext.mjs';
-import { BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA, BUILD_LANE_CAPACITY_RECEIPT_SCHEMA } from './missionControllerCapacityRouterV1.mjs';
+import { BUILD_LANE_CAPACITY_RECEIPT_SCHEMA } from './missionControllerCapacityRouterV1.mjs';
 
 const NOW = '2026-07-30T13:00:00.000Z';
 const SOURCE_REVISION = 'a'.repeat(40);
@@ -75,26 +75,6 @@ function activeProjection(overrides = {}) {
     },
     ...overrides,
   });
-}
-
-function readySourceMission(overrides = {}) {
-  return {
-    missionId: 'critical-1497-ready-source-repair',
-    revision: 2,
-    currentPhase: 'AGENT_IMPLEMENTATION',
-    title: 'Repair READY source lease bootstrap',
-    repository: REPOSITORY,
-    operatorIntent: 'Repair the bounded READY source lease bootstrap.',
-    intendedOutcome: 'Source work receives one exact canonical mutation lease.',
-    allowedFiles: ['shared/agents/durableFlywheelControllerVNext.mjs'],
-    requiredTests: ['node --test shared/agents/durableFlywheelControllerVNext.test.mjs'],
-    requiredEvidence: ['exact source mutation lease'],
-    providerRouteIntent: 'AUTO',
-    dispatch: { adapter: 'codex', status: 'pending' },
-    git: { branch: BRANCH, worktreePath: '/bounded/worktree' },
-    pullRequest: { number: 1617, headSha: LANE_HEAD },
-    ...overrides,
-  };
 }
 
 function machineryFor(authoritativeProjection, overrides = {}) {
@@ -170,7 +150,6 @@ test('ACTIVE source work receives one exact proven fallback grant when Codex cap
     allowedFiles: ['shared/agents/controller.mjs'],
     requiredTests: ['node --test shared/agents/controller.test.mjs'],
     requiredEvidence: ['focused tests'],
-    providerRouteIntent: 'CHATGPT_GITHUB',
     dispatch: { adapter: 'codex', status: 'pending' },
     git: { branch: BRANCH, worktreePath: '/bounded/worktree' },
   };
@@ -179,7 +158,6 @@ test('ACTIVE source work receives one exact proven fallback grant when Codex cap
   }), {
     loadCapacityRoutingInput: async () => ({
       nowUtc: NOW,
-      sourceHead: SOURCE_REVISION,
       codexStatus: {
         schemaVersion: 'shared-agent-workspace-record.v1',
         statusId: 'codex-capacity-current',
@@ -203,30 +181,9 @@ test('ACTIVE source work receives one exact proven fallback grant when Codex cap
         expiresAtUtc: '2026-07-30T13:15:00.000Z',
         queueDepth: 0,
         p95StartLatencySeconds: 15,
-        authorityReceiptIds: ['github-builder-authority-controller-test'],
+        authorityReceiptIds: [],
         proofRefs: ['receipts/github-builder/capacity.json'],
       },
-      githubLaneAuthorityReceipts: [{
-        schemaVersion: BUILD_LANE_AUTHORITY_RECEIPT_SCHEMA,
-        receiptId: 'github-builder-authority-controller-test',
-        route: 'CHATGPT_GITHUB',
-        repository: REPOSITORY,
-        sourceHead: SOURCE_REVISION,
-        workerId: 'shared-fabric-chatgpt-github-builder-01',
-        authorizedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
-        authorizedTaskClasses: ['FOCUSED_REPAIR'],
-        issuedAtUtc: '2026-07-30T11:55:00.000Z',
-        expiresAtUtc: '2026-07-30T14:00:00.000Z',
-        proofRefs: ['receipts/github-builder/authority.json'],
-        sourceDispatchAllowed: true,
-        sourceMutationAuthorityAdded: false,
-        mergeAuthorityAdded: false,
-        deploymentAuthorityAdded: false,
-        runtimeMutationAuthorityAdded: false,
-        protectedMergeDispatchAllowed: false,
-        duplicateDispatchAllowed: false,
-        arbitraryCommandAllowed: false,
-      }],
     }),
   });
   const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
@@ -237,332 +194,11 @@ test('ACTIVE source work receives one exact proven fallback grant when Codex cap
 
   assert.equal(result.status, 'ACTIVE');
   assert.equal(result.workerActionGrant.adapter, 'chatgpt-github');
-  assert.equal(result.workerActionGrant.providerRouteIntent, 'CHATGPT_GITHUB');
   assert.equal(result.workerActionGrant.capacityRoute, 'CHATGPT_GITHUB');
   assert.equal(result.workerActionGrant.capacityReceiptId, 'github-builder-capacity-controller-test');
-  assert.deepEqual(result.workerActionGrant.capacityProofRefs, [
-    'receipts/github-builder/capacity.json',
-    'receipts/github-builder/authority.json',
-  ]);
+  assert.deepEqual(result.workerActionGrant.capacityProofRefs, ['receipts/github-builder/capacity.json']);
   assert.equal(result.workerActionGrant.mergeAuthority, false);
   assert.equal(result.workerActionGrant.leaseSeizureAllowed, false);
-});
-
-test('provider AUTO intent binds the capacity-selected route while explicit intent rejects substitution', async () => {
-  const sourceMission = {
-    missionId: 'critical-1497-provider-intent-test',
-    revision: 4,
-    currentPhase: 'AGENT_IMPLEMENTATION',
-    title: 'Repair provider intent routing',
-    repository: REPOSITORY,
-    operatorIntent: 'Repair the bounded provider route.',
-    intendedOutcome: 'The provider selection is exactly bound.',
-    allowedFiles: ['shared/agents/provider-intent.mjs'],
-    requiredTests: ['node --test shared/agents/provider-intent.test.mjs'],
-    requiredEvidence: ['focused tests'],
-    dispatch: { adapter: 'codex', status: 'pending' },
-    git: { branch: BRANCH, worktreePath: '/bounded/worktree' },
-  };
-  const codexCapacity = {
-    nowUtc: NOW,
-    codexStatus: {
-      schemaVersion: 'shared-agent-workspace-record.v1',
-      statusId: 'codex-capacity-current',
-      truthState: 'CURRENT',
-      meterTruthUsable: true,
-      observedAtUtc: NOW,
-      remainingPercent: 100,
-      availability: 'AVAILABLE',
-      confidence: 'high',
-    },
-  };
-  const run = (providerRouteIntent) => {
-    const fixture = machineryFor(activeProjection({
-      criticalBacklog: {
-        selectedItem: { mission: { providerRouteIntent } },
-        activeMission: { ...sourceMission, providerRouteIntent },
-      },
-    }), { loadCapacityRoutingInput: async () => codexCapacity });
-    return runDurableFlywheelStartupCycle(fixture.machinery, {
-      nowUtc: NOW,
-      sourceRevision: SOURCE_REVISION,
-      env: {},
-    });
-  };
-
-  const automatic = await run('AUTO');
-  assert.equal(automatic.status, 'ACTIVE');
-  assert.equal(automatic.workerActionGrant.providerRouteIntent, 'AUTO');
-  assert.equal(automatic.workerActionGrant.capacityRoute, 'CODEX');
-
-  const substituted = await run('CHATGPT_GITHUB');
-  assert.equal(substituted.status, 'HOLD');
-  assert.ok(substituted.blockers.includes('mission-worker:exact-action-grant-unavailable'));
-});
-
-test('READY projection continues the already-active backlog mission with one exact native worktree grant', async () => {
-  const activeMission = {
-    missionId: 'critical-1291-worker-watchdog-repair',
-    revision: 1,
-    currentPhase: 'CREATE_WORKTREE',
-    title: 'Repair and prove Mission Orchestrator Worker self-heal',
-    repository: REPOSITORY,
-    repositoryRoot: 'C:\\repo',
-    baseBranch: 'main',
-    allowedFiles: ['shared/agents/**'],
-    git: {
-      branch: 'openclaw/critical-1291-worker-watchdog-repair',
-      worktreePath: 'C:\\worktree',
-    },
-  };
-  const fixture = machineryFor(projection('READY', {
-    scheduler: { selectedGoal: '#1291', decisionReceipt: { selectedIssue: 1291 } },
-    criticalBacklog: {
-      decision: 'WAIT_ACTIVE_MISSION',
-      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
-      activeMission,
-    },
-  }), {
-    ensureBacklogMission: async () => ({
-      ok: true,
-      createdMission: false,
-      projection: {
-        decision: 'WAIT_ACTIVE_MISSION',
-        finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
-        activeMission,
-      },
-    }),
-    loadCapacityRoutingInput: async () => null,
-  });
-  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
-    nowUtc: NOW,
-    sourceRevision: SOURCE_REVISION,
-    env: {},
-  });
-  assert.equal(result.status, 'READY', JSON.stringify(result));
-  assert.equal(result.allowWorkerTick, true);
-  assert.equal(result.workerActionGrant.missionId, activeMission.missionId);
-  assert.equal(result.workerActionGrant.currentPhase, 'CREATE_WORKTREE');
-  assert.equal(result.workerActionGrant.adapter, 'openclaw-signed');
-  assert.equal(result.workerActionGrant.operation, 'create-worktree');
-  assert.match(result.nextAction, /published the conveyor-authorized mission/i);
-});
-
-test('READY source work claims, rereads, and exposes only the exact active canonical lease', async () => {
-  const sourceMission = readySourceMission();
-  let claimedInput = null;
-  const fixture = machineryFor(projection('READY', {
-    scheduler: { selectedGoal: '#1497', decisionReceipt: { selectedIssue: 1497 } },
-  }), {
-    ensureBacklogMission: async () => ({
-      ok: true,
-      createdMission: true,
-      projection: {
-        decision: 'ADMIT_MISSION',
-        finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_MISSION_ADMITTED',
-        activeMission: sourceMission,
-      },
-    }),
-    loadCapacityRoutingInput: async () => null,
-    claimSourceMutationLease: async (input) => {
-      claimedInput = input;
-      return { ok: true, claimed: true, record: input };
-    },
-    readSourceMutationLease: async () => ({
-      ok: true,
-      present: true,
-      reason: 'SOURCE_MUTATION_LEASE_ACTIVE',
-      validation: { valid: true, active: true, stale: false },
-      record: {
-        ...claimedInput,
-        mergeAuthority: false,
-        leaseSeizureAllowed: false,
-      },
-    }),
-  });
-
-  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
-    nowUtc: NOW,
-    sourceRevision: SOURCE_REVISION,
-    env: {},
-  });
-
-  assert.equal(result.status, 'READY', JSON.stringify(result));
-  assert.equal(result.action, 'LEASE_CANONICAL_CONVEYOR_MISSION');
-  assert.equal(result.allowWorkerTick, true);
-  assert.equal(result.workerActionGrant.adapter, 'codex');
-  assert.equal(result.workerActionGrant.laneId, LANE_ID);
-  assert.equal(result.workerActionGrant.repository, REPOSITORY);
-  assert.equal(result.workerActionGrant.issueNumber, 1497);
-  assert.equal(result.workerActionGrant.prNumber, 1617);
-  assert.equal(result.workerActionGrant.branch, BRANCH);
-  assert.equal(result.workerActionGrant.headSha, LANE_HEAD);
-  assert.equal(claimedInput.laneId, LANE_ID);
-  assert.equal(claimedInput.repository, REPOSITORY);
-  assert.equal(claimedInput.issueNumber, 1497);
-  assert.equal(claimedInput.prNumber, 1617);
-  assert.equal(claimedInput.branch, BRANCH);
-  assert.equal(claimedInput.headSha, LANE_HEAD);
-  assert.equal(claimedInput.ownerId, 'codex');
-  assert.match(claimedInput.leaseId, /^source-lease-[0-9a-f]{24}$/);
-  assert.deepEqual(result.verifiedSourceMutationLeaseIdentity, {
-    leaseId: claimedInput.leaseId,
-    laneId: LANE_ID,
-    repository: REPOSITORY,
-    issueNumber: 1497,
-    prNumber: 1617,
-    branch: BRANCH,
-    headSha: LANE_HEAD,
-    ownerId: 'codex',
-  });
-  assert.deepEqual(
-    fixture.heartbeats.map(({ cycleState }) => cycleState),
-    ['STARTING', 'RECONCILING', 'ACTIVE_LANE'],
-  );
-});
-
-test('READY source work with incomplete exact PR identity fails closed before lease claim', async () => {
-  const sourceMission = readySourceMission({ pullRequest: undefined });
-  let claims = 0;
-  const fixture = machineryFor(projection('READY', {
-    scheduler: { selectedGoal: '#1497', decisionReceipt: { selectedIssue: 1497 } },
-  }), {
-    ensureBacklogMission: async () => ({
-      ok: true,
-      createdMission: true,
-      projection: { activeMission: sourceMission },
-    }),
-    loadCapacityRoutingInput: async () => null,
-    claimSourceMutationLease: async () => {
-      claims += 1;
-      return { ok: true };
-    },
-  });
-
-  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
-    nowUtc: NOW,
-    sourceRevision: SOURCE_REVISION,
-    env: {},
-  });
-
-  assert.equal(result.status, 'HOLD');
-  assert.equal(result.allowWorkerTick, false);
-  assert.ok(result.blockers.includes('source-mutation-lease:grant-identity-incomplete'));
-  assert.equal(result.workerActionGrant, undefined);
-  assert.equal(claims, 0);
-});
-
-test('READY source work cannot seize a conflicting canonical lease', async () => {
-  const sourceMission = readySourceMission();
-  const fixture = machineryFor(projection('READY', {
-    scheduler: { selectedGoal: '#1497', decisionReceipt: { selectedIssue: 1497 } },
-  }), {
-    ensureBacklogMission: async () => ({
-      ok: true,
-      createdMission: true,
-      projection: { activeMission: sourceMission },
-    }),
-    loadCapacityRoutingInput: async () => null,
-    claimSourceMutationLease: async () => ({
-      ok: false,
-      claimed: false,
-      reason: 'SOURCE_MUTATION_LEASE_ALREADY_OWNED',
-      leaseSeizureAllowed: false,
-    }),
-  });
-
-  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
-    nowUtc: NOW,
-    sourceRevision: SOURCE_REVISION,
-    env: {},
-  });
-
-  assert.equal(result.status, 'HOLD');
-  assert.equal(result.allowWorkerTick, false);
-  assert.ok(result.blockers.includes('source-mutation-lease:SOURCE_MUTATION_LEASE_ALREADY_OWNED'));
-  assert.equal(result.workerActionGrant, undefined);
-});
-
-test('READY source work rejects stale or mismatched canonical lease reread after a successful claim', async () => {
-  const sourceMission = readySourceMission();
-  let claimedInput = null;
-  const fixture = machineryFor(projection('READY', {
-    scheduler: { selectedGoal: '#1497', decisionReceipt: { selectedIssue: 1497 } },
-  }), {
-    ensureBacklogMission: async () => ({
-      ok: true,
-      createdMission: true,
-      projection: { activeMission: sourceMission },
-    }),
-    loadCapacityRoutingInput: async () => null,
-    claimSourceMutationLease: async (input) => {
-      claimedInput = input;
-      return { ok: true, claimed: true, record: input };
-    },
-    readSourceMutationLease: async () => ({
-      ok: true,
-      present: true,
-      reason: 'SOURCE_MUTATION_LEASE_ACTIVE',
-      validation: { valid: true, active: true, stale: false },
-      record: {
-        ...claimedInput,
-        headSha: 'c'.repeat(40),
-        mergeAuthority: false,
-        leaseSeizureAllowed: false,
-      },
-    }),
-  });
-
-  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
-    nowUtc: NOW,
-    sourceRevision: SOURCE_REVISION,
-    env: {},
-  });
-
-  assert.equal(result.status, 'HOLD');
-  assert.equal(result.allowWorkerTick, false);
-  assert.ok(result.blockers.includes('source-mutation-lease:canonical-reread-mismatch'));
-  assert.equal(result.workerActionGrant, undefined);
-});
-
-test('READY read-only runtime investigation remains lease-free', async () => {
-  const readOnlyMission = {
-    missionId: 'critical-1497-readonly-investigation',
-    revision: 0,
-    currentPhase: 'LIVE_RUNTIME_INVESTIGATION',
-    repository: REPOSITORY,
-    requiredEvidence: ['runtime diagnosis'],
-  };
-  let leaseCalls = 0;
-  const fixture = machineryFor(projection('READY', {
-    scheduler: { selectedGoal: '#1497', decisionReceipt: { selectedIssue: 1497 } },
-  }), {
-    ensureBacklogMission: async () => ({
-      ok: true,
-      createdMission: true,
-      projection: { activeMission: readOnlyMission },
-    }),
-    loadCapacityRoutingInput: async () => null,
-    claimSourceMutationLease: async () => {
-      leaseCalls += 1;
-      throw new Error('read-only work must not claim a source lease');
-    },
-    readSourceMutationLease: async () => {
-      leaseCalls += 1;
-      throw new Error('read-only work must not read a source lease');
-    },
-  });
-
-  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
-    nowUtc: NOW,
-    sourceRevision: SOURCE_REVISION,
-    env: {},
-  });
-
-  assert.equal(result.status, 'READY', JSON.stringify(result));
-  assert.equal(result.allowWorkerTick, true);
-  assert.equal(result.workerActionGrant.adapter, 'openclaw-readonly');
-  assert.equal(leaseCalls, 0);
 });
 
 test('canonical HOLD projection preserves authority blockers and forbids work', async () => {

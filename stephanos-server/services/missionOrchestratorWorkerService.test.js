@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
@@ -23,6 +23,27 @@ const intent = {
   worktreePath: 'C:\\worktree', allowedFiles: ['shared/agents/**'], requiredEvidence: ['focused test output'], requiredTests: ['node --test focused.test.mjs'],
 };
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
+
+function freshCodexCapacityRouting() {
+  const now = new Date();
+  return {
+    nowUtc: now.toISOString(),
+    codexStatus: {
+      schemaVersion: 'shared-agent-workspace-record.v1',
+      statusId: 'codex-capacity-current',
+      truthState: 'CURRENT',
+      meterTruthUsable: true,
+      observedAtUtc: new Date(now.getTime() - 1000).toISOString(),
+      remainingPercent: 90,
+      availability: 'AVAILABLE',
+      confidence: 'high',
+      naturalResetAtUtc: '',
+    },
+    githubLaneReceipt: null,
+    forgeLaneReceipt: null,
+    forgeSidecar: null,
+  };
+}
 async function runtime() {
   const parent = await mkdtemp(join(tmpdir(), 'mission-worker-service-'));
   const { privateKey } = generateKeyPairSync('ed25519');
@@ -35,13 +56,14 @@ test('queue root defaults below Mission Runner orchestrator state', () => {
 
 test('publishes worktree then one Codex dispatch and collects grounded result', async () => {
   const options = await runtime();
+  options.capacityRouting = freshCodexCapacityRouting();
   const created = await createMissionRecord(intent, options);
   assert.equal((await publishMissionWorkerAction(created.state, options)).adapter, 'openclaw-signed');
   const ready = await appendMissionEvent(intent.missionId, { eventId: 'worktree-1', eventType: 'WORKTREE_READY', worktreePath: intent.worktreePath, clean: true, receipt: proof('isolated worktree', 'worktree') }, options);
   const dispatch = await publishMissionWorkerAction(ready.state, options);
   assert.equal(dispatch.adapter, 'codex');
   assert.equal((await readMissionWorkerQueue(options)).some((entry) => entry.adapter === 'codex'), true);
-  const collected = await collectAgentWorkerResult({ missionId: intent.missionId, actionId: dispatch.action.actionId, adapter: 'codex', workerId: dispatch.action.workerId, success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result'), evidenceReceipts: [proof('focused test output', 'evidence')] }, options);
+  const collected = await collectAgentWorkerResult({ missionId: intent.missionId, actionId: dispatch.action.actionId, adapter: 'codex', success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result'), evidenceReceipts: [proof('focused test output', 'evidence')] }, options);
   assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
   assert.equal((await readMissionRecord(intent.missionId, options)).state.dispatch.status, 'complete');
 });
@@ -77,31 +99,9 @@ test('publishes one exact external fallback handoff and accepts its grounded res
       expiresAtUtc: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
       queueDepth: 0,
       p95StartLatencySeconds: 10,
-      authorityReceiptIds: ['github-fallback-authority-receipt'],
+      authorityReceiptIds: [],
       proofRefs: ['receipts/github-builder/capacity.json'],
     },
-    sourceHead: 'a'.repeat(40),
-    githubLaneAuthorityReceipts: [{
-      schemaVersion: 'stephanos.build-lane-authority-receipt.v1',
-      receiptId: 'github-fallback-authority-receipt',
-      route: 'CHATGPT_GITHUB',
-      repository: intent.repository,
-      sourceHead: 'a'.repeat(40),
-      workerId: 'shared-fabric-chatgpt-github-builder-01',
-      authorizedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
-      authorizedTaskClasses: ['FOCUSED_REPAIR'],
-      issuedAtUtc: new Date(Date.now() - 2000).toISOString(),
-      expiresAtUtc: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      proofRefs: ['receipts/github-builder/authority.json'],
-      sourceDispatchAllowed: true,
-      sourceMutationAuthorityAdded: false,
-      mergeAuthorityAdded: false,
-      deploymentAuthorityAdded: false,
-      runtimeMutationAuthorityAdded: false,
-      protectedMergeDispatchAllowed: false,
-      duplicateDispatchAllowed: false,
-      arbitraryCommandAllowed: false,
-    }],
   };
   const action = buildMissionWorkerAction(ready.state, { ...options, capacityRouting });
   const grant = {
@@ -119,7 +119,6 @@ test('publishes one exact external fallback handoff and accepts its grounded res
     capacityRoute: action.capacityRoute,
     capacityReceiptId: action.capacityReceiptId,
     capacityProofRefs: action.capacityProofRefs,
-    workerId: action.workerId,
     repository: ready.state.repository,
     branch: ready.state.git.branch,
     mergeAuthority: false,
@@ -135,7 +134,6 @@ test('publishes one exact external fallback handoff and accepts its grounded res
     missionId,
     actionId: action.actionId,
     adapter: 'chatgpt-github',
-    workerId: action.workerId,
     success: true,
     changedFiles: ['shared/agents/example.mjs'],
     receipt: proof('github builder result', 'github-builder-result'),
@@ -143,141 +141,6 @@ test('publishes one exact external fallback handoff and accepts its grounded res
   }, options);
   assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
   assert.equal(collected.state.dispatch.adapter, 'chatgpt-github');
-});
-
-test('rejects an unrepresentable external worker before queue or handoff publication', async () => {
-  const options = await runtime();
-  const missionId = 'unrepresentable-worker-test';
-  await createMissionRecord({
-    ...intent,
-    missionId,
-    branch: 'openclaw/unrepresentable-worker-test',
-  }, options);
-  const ready = await appendMissionEvent(missionId, {
-    eventId: 'unrepresentable-worker-worktree',
-    eventType: 'WORKTREE_READY',
-    worktreePath: intent.worktreePath,
-    clean: true,
-    receipt: proof('isolated worktree', 'unrepresentable-worker-worktree-proof'),
-  }, options);
-  const capacityBinding = {
-    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
-    missionId,
-    capacityRoute: 'CHATGPT_GITHUB',
-    adapter: 'chatgpt-github',
-    workerId: 'shared-fabric/foreign-worker',
-    capacityReceiptId: 'unrepresentable-worker-capacity',
-    capacityProofRefs: ['receipts/github-builder/capacity.json'],
-  };
-  const action = buildMissionWorkerAction(ready.state, { ...options, actionGrant: capacityBinding });
-  const grant = {
-    ...capacityBinding,
-    controllerId: 'durable-flywheel-controller',
-    sourceRevision: 'a'.repeat(40),
-    boundedActionCount: 1,
-    missionRevision: ready.state.revision,
-    currentPhase: ready.state.currentPhase,
-    actionId: action.actionId,
-    actionKind: action.actionKind,
-    operation: '',
-    repository: ready.state.repository,
-    branch: ready.state.git.branch,
-    mergeAuthority: false,
-    leaseSeizureAllowed: false,
-  };
-  const dispatch = await publishNextMissionWorkerAction({ ...options, actionGrant: grant });
-  assert.equal(dispatch.published, false);
-  assert.equal(dispatch.reason, 'worker-id-not-shared-workspace-representable');
-  assert.deepEqual(await readMissionWorkerQueue(options), []);
-  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.status, 'pending');
-});
-
-test('publishes and collects one exact qualified OpenClaw local handoff', async () => {
-  const options = await runtime();
-  const missionId = 'openclaw-qualified-fallback-test';
-  await createMissionRecord({
-    ...intent,
-    missionId,
-    branch: 'openclaw/openclaw-qualified-fallback-test',
-  }, options);
-  const ready = await appendMissionEvent(missionId, {
-    eventId: 'openclaw-qualified-worktree',
-    eventType: 'WORKTREE_READY',
-    worktreePath: intent.worktreePath,
-    clean: true,
-    receipt: proof('isolated worktree', 'openclaw-qualified-worktree-proof'),
-  }, options);
-  const capacityBinding = {
-    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
-    missionId,
-    capacityRoute: 'OPENCLAW_LOCAL',
-    adapter: 'openclaw-local',
-    workerId: 'battle-bridge-openclaw-01',
-    capacityReceiptId: 'openclaw-qualified-capacity',
-    capacityProofRefs: ['receipts/openclaw/capacity.json'],
-  };
-  const action = buildMissionWorkerAction(ready.state, {
-    ...options,
-    actionGrant: capacityBinding,
-  });
-  const grant = {
-    ...capacityBinding,
-    controllerId: 'durable-flywheel-controller',
-    sourceRevision: 'a'.repeat(40),
-    boundedActionCount: 1,
-    missionRevision: ready.state.revision,
-    currentPhase: ready.state.currentPhase,
-    actionId: action.actionId,
-    actionKind: action.actionKind,
-    operation: '',
-    repository: ready.state.repository,
-    branch: ready.state.git.branch,
-    mergeAuthority: false,
-    leaseSeizureAllowed: false,
-  };
-  const dispatch = await publishNextMissionWorkerAction({
-    ...options,
-    sourceRevision: grant.sourceRevision,
-    actionGrant: grant,
-  });
-  assert.equal(dispatch.published, true);
-  assert.equal(dispatch.adapter, 'openclaw-local');
-  assert.equal(dispatch.action.capacityRoute, 'OPENCLAW_LOCAL');
-  assert.equal(dispatch.fabricPublication.ok, true);
-  const queued = await readMissionWorkerQueue(options);
-  assert.deepEqual(queued.map(({ adapter }) => adapter), ['openclaw-local']);
-  const handoff = JSON.parse(await readFile(dispatch.fabricPublication.path, 'utf8'));
-  assert.equal(handoff.toParticipantId, 'battle-bridge-openclaw-01');
-  const handoffBody = JSON.parse(handoff.body);
-  assert.equal(handoffBody.workerId, 'battle-bridge-openclaw-01');
-  await assert.rejects(() => collectAgentWorkerResult({
-    missionId,
-    actionId: `${action.actionId}-stale`,
-    adapter: 'openclaw-local',
-    workerId: action.workerId,
-    success: true,
-    receipt: proof('stale openclaw result', 'stale-openclaw-result'),
-  }, options), /action does not match/);
-  await assert.rejects(() => collectAgentWorkerResult({
-    missionId,
-    actionId: action.actionId,
-    adapter: 'openclaw-local',
-    workerId: 'foreign-openclaw-worker',
-    success: true,
-    receipt: proof('foreign openclaw result', 'foreign-openclaw-result'),
-  }, options), /worker does not match/);
-  const collected = await collectAgentWorkerResult({
-    missionId,
-    actionId: action.actionId,
-    adapter: 'openclaw-local',
-    workerId: action.workerId,
-    success: true,
-    changedFiles: ['shared/agents/example.mjs'],
-    receipt: proof('openclaw result', 'openclaw-result'),
-    evidenceReceipts: [proof('focused test output', 'openclaw-evidence')],
-  }, options);
-  assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
-  assert.equal(collected.state.dispatch.adapter, 'openclaw-local');
 });
 
 test('publisher rejects a stale mission revision before signing or queueing', async () => {
@@ -319,10 +182,6 @@ test('publisher rejects retargeting and publishes only the exact granted mission
     actionKind: action.actionKind,
     adapter: 'openclaw-signed',
     operation: action.operation,
-    capacityRoute: '',
-    capacityReceiptId: null,
-    capacityProofRefs: [],
-    workerId: 'openclaw-standalone',
     repository: second.state.repository,
     branch: second.state.git.branch,
     mergeAuthority: false,
@@ -358,14 +217,8 @@ test('publisher rejects retargeting and publishes only the exact granted mission
 });
 
 test('repair transition is projected, granted, applied, and queued as one exact post-repair action', async () => {
-  const options = {
-    ...(await runtime()),
-    testOnly: true,
-    sourceExecutionDependencies: {
-      claimSourceMutationLease: async (input) => ({ ok: true, record: { ...input } }),
-      appendExecutionReceipt: async () => ({ ok: true }),
-    },
-  };
+  const options = await runtime();
+  options.capacityRouting = freshCodexCapacityRouting();
   const missionId = 'goal-1497-pr-1617';
   let current = await createMissionRecord({
     ...intent,
@@ -384,15 +237,8 @@ test('repair transition is projected, granted, applied, and queued as one exact 
     clean: true,
     receipt: proof('isolated worktree', 'repair-worktree'),
   });
-  const initialRepairAction = buildMissionWorkerAction(current.state, options);
-  await append('repair-dispatch', 'AGENT_DISPATCHED', {
-    agentId: 'codex',
-    actionId: initialRepairAction.actionId,
-    workerId: initialRepairAction.workerId,
-  });
+  await append('repair-dispatch', 'AGENT_DISPATCHED', { agentId: 'codex' });
   await append('repair-result', 'AGENT_RESULT_RECEIVED', {
-    actionId: initialRepairAction.actionId,
-    workerId: initialRepairAction.workerId,
     success: true,
     resultId: 'repair-result',
     changedFiles: ['shared/agents/example.mjs'],
@@ -443,10 +289,6 @@ test('repair transition is projected, granted, applied, and queued as one exact 
     actionKind: action.actionKind,
     adapter: 'codex',
     operation: '',
-    capacityRoute: action.capacityRoute,
-    capacityReceiptId: action.capacityReceiptId,
-    capacityProofRefs: action.capacityProofRefs,
-    workerId: action.workerId,
     laneId: missionId,
     repository: actionState.repository,
     issueNumber: 1497,
@@ -519,75 +361,4 @@ test('repair transition is projected, granted, applied, and queued as one exact 
   const queued = await readMissionWorkerQueue(options);
   assert.equal(queued.length, 1);
   assert.equal(queued[0].item.payload.actionId, grant.actionId);
-});
-
-test('pre-upgrade running dispatch is durably reconciled from one exact queue action', async () => {
-  const options = await runtime();
-  const missionId = 'legacy-running-dispatch-test';
-  await createMissionRecord({
-    ...intent,
-    missionId,
-    branch: 'openclaw/legacy-running-dispatch-test',
-  }, options);
-  const ready = await appendMissionEvent(missionId, {
-    eventId: 'legacy-worktree-ready',
-    eventType: 'WORKTREE_READY',
-    worktreePath: intent.worktreePath,
-    clean: true,
-    receipt: proof('isolated worktree', 'legacy-worktree-proof'),
-  }, options);
-  const action = buildMissionWorkerAction(ready.state, options);
-  const { workerId: _removedWorkerId, ...legacyAction } = action;
-  const pendingRoot = join(options.queueRoot, 'codex', 'pending');
-  await mkdir(pendingRoot, { recursive: true });
-  await writeFile(join(pendingRoot, `${action.actionId}.json`), `${JSON.stringify({
-    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
-    adapter: 'codex',
-    actionId: action.actionId,
-    missionId,
-    createdAt: new Date().toISOString(),
-    payload: legacyAction,
-  }, null, 2)}\n`, 'utf8');
-  const running = await appendMissionEvent(missionId, {
-    eventId: 'legacy-agent-dispatched',
-    eventType: 'AGENT_DISPATCHED',
-    agentId: 'codex',
-    adapter: 'codex',
-    actionId: action.actionId,
-    workerId: action.workerId,
-    summary: 'Dispatch persisted before the legacy-shape fixture is applied.',
-  }, options);
-  const runningRecord = await readMissionRecord(missionId, options);
-  const legacyState = {
-    ...running.state,
-    dispatch: { ...running.state.dispatch, actionId: '', workerId: '' },
-  };
-  await writeFile(runningRecord.statePath, `${JSON.stringify(legacyState, null, 2)}\n`, 'utf8');
-  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.actionId, '');
-  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.workerId, '');
-
-  await assert.rejects(() => collectAgentWorkerResult({
-    missionId,
-    actionId: action.actionId,
-    adapter: 'codex',
-    workerId: 'foreign-worker',
-    success: true,
-    receipt: proof('codex result', 'legacy-foreign-result'),
-  }, options), /worker does not match the legacy dispatch/);
-  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.actionId, '');
-
-  const collected = await collectAgentWorkerResult({
-    missionId,
-    actionId: action.actionId,
-    adapter: 'codex',
-    workerId: legacyAction.owner,
-    success: true,
-    changedFiles: ['shared/agents/example.mjs'],
-    receipt: proof('codex result', 'legacy-result'),
-    evidenceReceipts: [proof('focused test output', 'legacy-evidence')],
-  }, options);
-  assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
-  assert.equal(collected.state.dispatch.actionId, action.actionId);
-  assert.equal(collected.state.dispatch.workerId, 'codex');
-  assert.ok(collected.state.timeline.some(({ eventType }) => eventType === 'AGENT_DISPATCH_BINDING_RECONCILED'));
 });

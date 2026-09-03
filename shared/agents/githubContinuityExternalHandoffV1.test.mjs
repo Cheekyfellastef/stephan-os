@@ -53,7 +53,6 @@ function grant(overrides = {}) {
     grantId: 'continuity:goal-1637-pr-1830-continuity:source-step:1', repository: REPOSITORY,
     expectedSourceHead: HEAD, missionId: 'goal-1637-pr-1830-continuity', taskId: 'source-step',
     route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB, adapter: 'chatgpt-github',
-    workerId: 'shared-fabric-chatgpt-github-builder-01',
     selectedCapacityReceiptId: 'github-capacity-current-001', proofRefs: ['receipts/github-capacity-current-001'],
     grantedAtUtc: NOW, executionScope: 'SOURCE_ONLY_EXISTING_ROUTE', windowsBound: false,
     existingDispatchTakeoverAllowed: false, sourceMutationAuthorityAdded: false, mergeAuthorityAdded: false,
@@ -70,15 +69,11 @@ function build(overrides = {}) {
   });
 }
 
-function runningMission(handoffOrAdapter = 'chatgpt-github') {
+function runningMission(adapter = 'chatgpt-github') {
   const ready = readyMission();
-  const handoff = typeof handoffOrAdapter === 'object' ? handoffOrAdapter : null;
-  const adapter = handoff?.queueItemCandidate?.adapter || handoffOrAdapter;
   const running = applyMissionOrchestratorEvent(ready, {
     schemaVersion: MISSION_ORCHESTRATOR_EVENT_SCHEMA_VERSION, missionId: ready.missionId,
     eventType: 'AGENT_DISPATCHED', timestamp: NOW, adapter, agentId: adapter,
-    actionId: handoff?.actionId || 'running-action-001',
-    workerId: handoff?.queueItemCandidate?.payload?.workerId || adapter,
   }, { now: new Date(NOW) });
   assert.equal(running.dispatch.status, 'running');
   return running;
@@ -90,7 +85,6 @@ function completion(handoff, overrides = {}) {
     handoffId: handoff.handoffId, grantId: handoff.grantId, missionId: handoff.queueItemCandidate.missionId,
     taskId: handoff.taskId, repository: handoff.repository, expectedSourceHead: handoff.expectedSourceHead,
     adapter: handoff.queueItemCandidate.adapter, capacityRoute: handoff.queueItemCandidate.payload.capacityRoute,
-    workerId: handoff.queueItemCandidate.payload.workerId,
     success: true, resultId: 'external-result-001', changedFiles: [FILE],
     receipt: receipt('source proof', { receiptId: 'external-source-proof', source: 'chatgpt-github', evidenceType: 'EXTERNAL_LANE_COMPLETION', sha256: 'c'.repeat(64) }),
     proofRefs: ['receipts/external-source-proof'], completedAtUtc: '2026-08-17T14:31:00.000Z', error: '',
@@ -109,7 +103,6 @@ test('maps one external M2 grant to existing queue/workspace schemas without pub
   const body = JSON.parse(result.sharedWorkspaceHandoffCandidate.body);
   assert.equal(body.schemaVersion, GITHUB_CONTINUITY_EXTERNAL_HANDOFF_BODY_SCHEMA);
   assert.equal(body.grantId, grant().grantId);
-  assert.equal(body.workerId, grant().workerId);
   assert.equal(body.expectedSourceHead, HEAD);
   assert.equal(body.mergeAuthority, false);
   assert.equal(result.authority.queueWriteAllowed, false);
@@ -139,14 +132,13 @@ test('REPAIR_REQUIRED cannot be externalized until canonical mission service per
 test('Foundry stays bound to its route while Codex remains on the existing in-process path', () => {
   const foundry = build({ executionGrant: grant({
     route: MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE, adapter: 'foundry-forge',
-    workerId: 'foundry-forge-builder-01',
     selectedCapacityReceiptId: 'foundry-capacity-current-001', proofRefs: ['receipts/foundry-capacity-current-001'],
   }) });
   assert.equal(foundry.state, GITHUB_CONTINUITY_EXTERNAL_HANDOFF_STATE.EXTERNAL_HANDOFF_CANDIDATE_READY);
   assert.equal(foundry.queueItemCandidate.adapter, 'foundry-forge');
 
   const codex = build({ executionGrant: grant({
-    route: MISSION_CONTROLLER_ROUTE.CODEX, adapter: 'codex', workerId: 'codex', selectedCapacityReceiptId: null, proofRefs: [],
+    route: MISSION_CONTROLLER_ROUTE.CODEX, adapter: 'codex', selectedCapacityReceiptId: null, proofRefs: [],
   }) });
   assert.equal(codex.state, GITHUB_CONTINUITY_EXTERNAL_HANDOFF_STATE.EXISTING_IN_PROCESS_ROUTE_PRESERVED);
   assert.equal(codex.queueItemCandidate, null);
@@ -173,11 +165,10 @@ test('an already-running mission dispatch cannot be taken over', () => {
 test('successful portable completion preflights canonical AGENT_RESULT_RECEIVED', () => {
   const handoff = build();
   const result = adjudicateGitHubContinuityExternalCompletionV1({
-    handoff, completionReceipt: completion(handoff), missionState: runningMission(handoff),
+    handoff, completionReceipt: completion(handoff), missionState: runningMission(),
   });
   assert.equal(result.valid, true, result.blockers.join(', '));
   assert.equal(result.eventCandidate.eventType, 'AGENT_RESULT_RECEIVED');
-  assert.equal(result.eventCandidate.workerId, handoff.queueItemCandidate.payload.workerId);
   assert.equal(result.projectedMissionState.dispatch.status, 'complete');
   assert.equal(result.projectedMissionState.currentPhase, 'GITHUB_COMMIT');
   assert.deepEqual(result.projectedMissionState.git.changedFiles, [FILE]);
@@ -187,55 +178,20 @@ test('completion rejects fabricated handoff correlation, scope drift and authori
   const handoff = build();
   const fabricated = { ...handoff, handoffId: 'fabricated-handoff-id' };
   assert.equal(adjudicateGitHubContinuityExternalCompletionV1({
-    handoff: fabricated, completionReceipt: completion(handoff), missionState: runningMission(handoff),
+    handoff: fabricated, completionReceipt: completion(handoff), missionState: runningMission(),
   }).valid, false);
 
   const scope = adjudicateGitHubContinuityExternalCompletionV1({
-    handoff, completionReceipt: completion(handoff, { changedFiles: ['shared/agents/unrelated.mjs'] }), missionState: runningMission(handoff),
+    handoff, completionReceipt: completion(handoff, { changedFiles: ['shared/agents/unrelated.mjs'] }), missionState: runningMission(),
   });
   assert.equal(scope.valid, false);
   assert.ok(scope.blockers.includes('completion-event-preflight-failed'));
 
   const authority = adjudicateGitHubContinuityExternalCompletionV1({
-    handoff, completionReceipt: completion(handoff, { mergeAuthorityAdded: true }), missionState: runningMission(handoff),
+    handoff, completionReceipt: completion(handoff, { mergeAuthorityAdded: true }), missionState: runningMission(),
   });
   assert.equal(authority.valid, false);
   assert.ok(authority.blockers.includes('completion-authority-invalid'));
-});
-
-test('completion requires the executing worker to assert its exact dispatch identity', () => {
-  const handoffs = [
-    build(),
-    build({ executionGrant: grant({
-      route: MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE, adapter: 'foundry-forge',
-      workerId: 'foundry-forge-builder-01', selectedCapacityReceiptId: 'foundry-capacity-current-001',
-      proofRefs: ['receipts/foundry-capacity-current-001'],
-    }) }),
-  ];
-
-  for (const handoff of handoffs) {
-    const missionState = runningMission(handoff);
-    const expectedWorkerId = handoff.queueItemCandidate.payload.workerId;
-    const mismatched = adjudicateGitHubContinuityExternalCompletionV1({
-      handoff, completionReceipt: completion(handoff, { workerId: 'foreign-external-worker' }), missionState,
-    });
-    assert.equal(mismatched.valid, false);
-    assert.ok(mismatched.blockers.includes('completion-handoff-identity-mismatch'));
-
-    const omittedReceipt = completion(handoff);
-    delete omittedReceipt.workerId;
-    const omitted = adjudicateGitHubContinuityExternalCompletionV1({
-      handoff, completionReceipt: omittedReceipt, missionState,
-    });
-    assert.equal(omitted.valid, false);
-    assert.ok(omitted.blockers.includes('completion-receipt-shape-invalid'));
-
-    const accepted = adjudicateGitHubContinuityExternalCompletionV1({
-      handoff, completionReceipt: completion(handoff, { workerId: expectedWorkerId }), missionState,
-    });
-    assert.equal(accepted.valid, true, accepted.blockers.join(', '));
-    assert.equal(accepted.eventCandidate.workerId, expectedWorkerId);
-  }
 });
 
 test('external failure remains a blocked canonical mission result', () => {
@@ -243,7 +199,7 @@ test('external failure remains a blocked canonical mission result', () => {
   const result = adjudicateGitHubContinuityExternalCompletionV1({
     handoff,
     completionReceipt: completion(handoff, { success: false, resultId: '', changedFiles: [], receipt: null, error: 'external lane failed' }),
-    missionState: runningMission(handoff),
+    missionState: runningMission(),
   });
   assert.equal(result.valid, true, result.blockers.join(', '));
   assert.equal(result.finalVerdict, 'GITHUB_CONTINUITY_EXTERNAL_FAILURE_EVENT_READY');

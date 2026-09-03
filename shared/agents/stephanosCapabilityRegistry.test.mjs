@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STEPHANOS_CAPABILITIES,
-  STEPHANOS_BUILD_SYSTEMS,
   buildStephanosCapabilityRegistryProjection,
   buildStephanosCapabilityRegistrySummary,
   findStephanosCapability,
@@ -47,35 +46,11 @@ test('source publication failover and receipt-proven Forge construction are disc
   assert.ok(forge.operations.includes('CONSTRUCT_NONCONFLICTING_SLICE'));
 });
 
-test('canonical build fabric names five systems and admits only resource-disjoint receipt-proven work', () => {
-  const projection = buildStephanosCapabilityRegistryProjection({ sourceHead: head, generatedAtUtc: '2026-08-25T12:00:00.000Z' });
-  assert.equal(STEPHANOS_BUILD_SYSTEMS.length, 5);
-  assert.deepEqual(STEPHANOS_BUILD_SYSTEMS.map(({ systemId }) => systemId), [
-    'openclaw',
-    'codex',
-    'github',
-    'foundry-forge',
-    'stephanos-machinery',
-  ]);
-  assert.equal(projection.buildFabric.systemCount, 5);
-  assert.equal(projection.buildFabric.minimumParallelLanes, 5);
-  assert.equal(projection.buildFabric.maximumParallelLanes, 16);
-  assert.equal(projection.buildFabric.admissionMode, 'RESOURCE_DISJOINT');
-  assert.equal(projection.buildFabric.capacityTruth, 'FRESH_RECEIPTS_REQUIRED');
-  assert.equal(projection.buildFabric.sourceMutationLeaseRequired, true);
-  assert.equal(projection.buildFabric.duplicateDispatchAllowed, false);
-  assert.equal(projection.buildFabric.mergeAuthority, false);
-  const native = projection.buildFabric.systems.find(({ systemId }) => systemId === 'stephanos-machinery');
-  assert.ok(native.operations.includes('BUILD_ARTIFACTS'));
-  assert.ok(native.operations.includes('JUDGE_EVIDENCE'));
-});
-
 test('summary remains machine-readable and bounded for GitHub receipts', () => {
   const summary = buildStephanosCapabilityRegistrySummary({ sourceHead: head, generatedAtUtc: '2026-07-17T12:00:00.000Z' });
   const json = JSON.stringify(summary);
   assert.equal(summary.finalVerdict, 'STEPHANOS_CAPABILITY_REGISTRY_PASS');
   assert.equal(summary.capabilityCount, STEPHANOS_CAPABILITIES.length);
-  assert.equal(summary.buildFabric.systemCount, 5);
   assert.ok(Buffer.byteLength(json, 'utf8') < 8 * 1024);
   assert.doesNotMatch(json, MACHINE_PATH_PATTERN);
 });
