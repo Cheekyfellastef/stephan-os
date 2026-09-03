@@ -84,6 +84,25 @@ Apply rules to the authority surface actually affected; do not impose high-risk 
 - Do not claim that the alternative route executed, published, merged, deployed or became qualified until its own exact receipt/proof is present.
 - Controller/build-chat reporting must distinguish `CHATGPT_GITHUB_WRITE_BLOCKED` from global GitHub unavailability. When another qualified route exists, the expected posture is “same mission handed to provider-neutral continuity fabric,” not “programme blocked by GitHub.”
 
+
+## Source artifact escrow continuity
+- When a source change already exists but every currently attempted publication route is unavailable, preserve the exact verified diff/commit/tree as a durable escrow artifact instead of rebuilding the change or asking the original executor to recreate it.
+- Reuse the existing `sourceArtifactEscrowContinuityV1` / source-publication continuity machinery. Bind escrow to repository, canonical owner, branch, exact base/head/tree/diff identity and proof; retire it only after canonical publication is independently proven.
+- A failed original publication surface does not invalidate the source artifact. Try only registered, qualified publication routes and fail closed when all route evidence is unavailable or invalid.
+- Do not create a duplicate PR, branch, implementation lane or mutation owner merely because publication is delayed.
+
+## Review artifact continuity
+- A successful independent review whose normal terminal artifact/comment publication failed is not equivalent to “review never happened.” First inspect the existing workflow run/attempt and immutable artifacts, then use the canonical successful-review artifact recovery path when its exact predicates match.
+- Reuse `independentReviewSuccessfulArtifactRecoveryWorkflowV1`, the exact-head review dispatcher and existing recovery script. Never manufacture a clean review, substitute another run/head/base, or convert missing evidence into success.
+- Do not blindly rerun expensive review when an exact successful review result already exists and only publication/terminalization failed. Recover the authenticated artifact first; rerun only when recovery is inapplicable or invalid.
+- Review recovery grants no ready, merge, deployment, runtime or self-approval authority.
+
+## Provider/review capacity continuity
+- Treat Codex/Work quota exhaustion, provider outage, queue saturation, or reviewer-capacity loss as a provider-capacity event, not as permission to stop unrelated eligible work.
+- Reuse the existing provider-neutral review/qualification routes, OpenClaw/Forge/native capacity, #1898-#1901 continuity contracts and canonical scheduler/provider pool. Preserve the same task identity and review requirement while selecting another already-qualified provider.
+- Never downgrade required review class, specialist coverage, exact-head/base binding, source evidence, or independence merely to avoid a provider outage.
+- If no qualified alternative exists for that exact task class, park only that lane with a typed blocker and continue resource-disjoint eligible work.
+
 ## Protected ready-transition continuity
 - For authorised draft-to-ready transitions, prefer the existing #1507 protected workflow-dispatch mailbox and `MARK_PROTECTED_PR_READY` route over any client-side GraphQL convenience mutation.
 - Treat connected-client failures mentioning `Repository.fullDatabaseId` / `undefinedField` as a known client schema defect, not as evidence that GitHub or the protected ready route is unavailable.
