@@ -133,7 +133,6 @@ const ORPHAN_SAFE_SOURCE = replaceExactlyOnce(
         if ($candidateReReadStartedAtUtc.Ticks -ne $candidateStartedAtUtc.Ticks) {
             Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
         }
-
 `,
   ),
   `        return [PSCustomObject]@{
