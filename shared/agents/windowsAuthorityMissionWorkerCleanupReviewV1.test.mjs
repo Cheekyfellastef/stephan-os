@@ -137,7 +137,7 @@ test('receipt preference, re-verification and quiescence are mandatory', () => {
 test('generic termination, arbitrary shell and caller-selected authority are rejected', () => {
   const widened = GOOD_SOURCE
     .replace('[string]$ExpectedRepoRoot', '[string]$ExpectedRepoRoot, [string]$TaskName')
-    .replace('function Stop-NewlyStartedOwnedWorker {', "Stop-Process -Id $candidate.ProcessId\nfunction Stop-NewlyStartedOwnedWorker {");
+    .replace('function Stop-NewlyStartedOwnedWorker {', "function Stop-NewlyStartedOwnedWorker {\n  Stop-Process -Id $candidate.ProcessId");
   const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(widened));
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-generic-execution-forbidden'));
