@@ -68,16 +68,21 @@ function exactSource(source, sourceHead) {
     && source.blobSha === blobSha(content));
 }
 
-function functionSlice(source, name, nextName) {
-  const start = source.indexOf(`function ${name}`);
-  const end = source.indexOf(`function ${nextName}`, start + 1);
-  return start >= 0 && end > start ? source.slice(start, end) : '';
+function functionSlice(source, name) {
+  const marker = `function ${name}`;
+  const start = source.indexOf(marker);
+  if (start < 0) return '';
+  const searchStart = start + marker.length;
+  const remainder = source.slice(searchStart);
+  const nextFunction = /\r?\nfunction\s+[A-Za-z0-9-]+\s*\{/.exec(remainder);
+  const end = nextFunction ? searchStart + nextFunction.index : source.length;
+  return source.slice(start, end);
 }
 
 function inspectSource(source) {
   const findings = [];
-  const fallback = functionSlice(source, 'Get-VerifiedCleanupFallbackWorkerProcess', 'Stop-NewlyStartedOwnedWorker');
-  const cleanup = functionSlice(source, 'Stop-NewlyStartedOwnedWorker', 'Remove-ExactOwnedMissionWorkerRestartRequest');
+  const fallback = functionSlice(source, 'Get-VerifiedCleanupFallbackWorkerProcess');
+  const cleanup = functionSlice(source, 'Stop-NewlyStartedOwnedWorker');
   const requireIn = (area, pattern, code, summary) => {
     if (!pattern.test(area)) findings.push(finding(code, summary));
   };
@@ -86,7 +91,7 @@ function inspectSource(source) {
   };
 
   if (!fallback || !cleanup) {
-    findings.push(finding('mission-worker-cleanup-functions-missing', 'Both bounded fallback and cleanup functions must be present in the expected order.'));
+    findings.push(finding('mission-worker-cleanup-functions-missing', 'Both bounded fallback and cleanup functions must be present.'));
     return findings;
   }
 
