@@ -107,6 +107,16 @@ function replaceExactlyOnce(source, expected, replacement) {
   return source.slice(0, first) + replacement + source.slice(first + expected.length);
 }
 
+function replaceInOrphanSelector(source, expected, replacement) {
+  const start = source.indexOf('function Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat');
+  assert.notEqual(start, -1, 'orphan selector must exist');
+  const end = source.indexOf('\nfunction Get-VerifiedFreshWorkerInstance', start);
+  assert.notEqual(end, -1, 'orphan selector boundary must exist');
+  const selector = source.slice(start, end);
+  const updatedSelector = replaceExactlyOnce(selector, expected, replacement);
+  return source.slice(0, start) + updatedSelector + source.slice(end);
+}
+
 const ORPHAN_BASE_SOURCE = readFileSync(
   new URL('../../scripts/windows/restart-approved-stephanos-runtime.ps1', import.meta.url),
   'utf8',
@@ -369,9 +379,9 @@ test('#2105 requires same-api Process.StartTime identity and forbids cross-api t
 
 test('#2105 keeps exact PID capability, handle and canonical uniqueness proofs mandatory', () => {
   for (const [unsafe, code] of [
-    [ORPHAN_SAFE_SOURCE.replace('GetProcessById($processId)', 'GetProcessById(1234)'), 'mission-worker-orphan-capability-bind-missing'],
-    [ORPHAN_SAFE_SOURCE.replace('$null = $processCapability.Handle', '$null = 1'), 'mission-worker-orphan-capability-handle-missing'],
-    [ORPHAN_SAFE_SOURCE.replace("if ($canonicalWorkers.Count -gt 1) {", 'if ($false) {'), 'mission-worker-orphan-uniqueness-missing'],
+    [replaceInOrphanSelector(ORPHAN_SAFE_SOURCE, 'GetProcessById($processId)', 'GetProcessById(1234)'), 'mission-worker-orphan-capability-bind-missing'],
+    [replaceInOrphanSelector(ORPHAN_SAFE_SOURCE, '$null = $processCapability.Handle', '$null = 1'), 'mission-worker-orphan-capability-handle-missing'],
+    [replaceInOrphanSelector(ORPHAN_SAFE_SOURCE, "if ($canonicalWorkers.Count -gt 1) {", 'if ($false) {'), 'mission-worker-orphan-uniqueness-missing'],
   ]) {
     const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(orphanInput(unsafe));
     assert.equal(result.clean, false);
@@ -380,7 +390,7 @@ test('#2105 keeps exact PID capability, handle and canonical uniqueness proofs m
 });
 
 test('#2105 rejects generic process authority, caller PID and wrong identity', () => {
-  const widened = replaceExactlyOnce(
+  const widened = replaceInOrphanSelector(
     ORPHAN_SAFE_SOURCE,
     '[Parameter(Mandatory = $true)][string]$ExpectedRepoRoot\n    )',
     '[Parameter(Mandatory = $true)][string]$ExpectedRepoRoot,\n        [int]$ProcessId\n    )',
