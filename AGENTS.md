@@ -73,6 +73,17 @@ Apply rules to the authority surface actually affected; do not impose high-risk 
 - Fail over without rebuilding the source change. Preserve exact base, head, tree, branch and PR identity; never force-push, overwrite an unrelated remote branch, create a duplicate PR, or bypass review and merge protection.
 - Only report `SOURCE_PUBLICATION_CAPACITY_UNAVAILABLE` after bounded workspace discovery and every registered route has produced unavailable or invalid evidence.
 
+
+## GitHub write-surface continuity
+- Treat a connected ChatGPT/OpenAI GitHub write rejection that occurs before a durable execution receipt as a **route-specific execution-surface failure**, not as evidence that GitHub, the repository, the mission, or all publication capacity is blocked.
+- Record the affected capability as `WRITE_BLOCKED` / `EXECUTION_SURFACE_FAILURE` for that provider surface, preserve the exact mission/task/goal identity, canonical owner, branch, base/head/tree, resource leases, review state, approval packet, source diff/artifact and required proof, then continue through the existing provider-neutral routing and continuity machinery.
+- Reuse the canonical #2099 provider-failover path and existing publication/continuity routes. Select only an already-qualified healthy route such as OpenClaw, Foundry/Forge, Stephanos Native, an approved GitHub App blob/tree/commit/ref path, or the existing Battle Bridge handoff when its bounded contract admits the task.
+- Do **not** rebuild the same source change, create a duplicate branch/PR/controller/scheduler/worker, seize another writer's lease, force-push, weaken review, or widen authority merely because one connected write surface failed.
+- Do not repeatedly retry a known-broken client mutation when another qualified route is available. Park only the failed surface/action, release nonessential capacity where allowed, and continue resource-disjoint eligible work in the same controller run.
+- A provider substitution does not inherit new authority. Protected ready, merge, deployment, runtime, credential, spending and other consequential gates remain independently binding.
+- Do not claim that the alternative route executed, published, merged, deployed or became qualified until its own exact receipt/proof is present.
+- Controller/build-chat reporting must distinguish `CHATGPT_GITHUB_WRITE_BLOCKED` from global GitHub unavailability. When another qualified route exists, the expected posture is “same mission handed to provider-neutral continuity fabric,” not “programme blocked by GitHub.”
+
 ## Protected ready-transition continuity
 - For authorised draft-to-ready transitions, prefer the existing #1507 protected workflow-dispatch mailbox and `MARK_PROTECTED_PR_READY` route over any client-side GraphQL convenience mutation.
 - Treat connected-client failures mentioning `Repository.fullDatabaseId` / `undefinedField` as a known client schema defect, not as evidence that GitHub or the protected ready route is unavailable.
