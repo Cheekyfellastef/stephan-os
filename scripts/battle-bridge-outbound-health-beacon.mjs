@@ -7,12 +7,14 @@ import { fileURLToPath } from 'node:url';
 
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { buildBattleBridgeTelemetryAutorepairProjection } from '../shared/agents/battleBridgeTelemetryAutorepairV1.mjs';
+import { projectMissionWorkerBeaconState } from '../shared/agents/missionWorkerBeaconStateV1.mjs';
 import {
   MAILBOX_RECEIPT_GITHUB_ISSUE,
   MAILBOX_RECEIPT_GITHUB_REPOSITORY,
   extractTrustedMailboxCommandComment,
   extractTrustedMailboxReceiptComment,
 } from '../shared/agents/mailboxReceiptIndexGitHubMirror.mjs';
+import { projectBoundedMissionWorkerRestartBlocker } from './battle-bridge-worker-watchdog-acceptance.mjs';
 
 export const BATTLE_BRIDGE_OUTBOUND_BEACON_SCHEMA = 'stephanos.battle-bridge-outbound-health-beacon.v1';
 export const BATTLE_BRIDGE_OUTBOUND_BEACON_MARKER = '<!-- stephanos-battle-bridge-outbound-health-beacon -->';
@@ -25,6 +27,24 @@ export const MAILBOX_INGRESS_LOOKBACK_MS = 4 * 60 * 60 * 1000;
 const SHA = /^[0-9a-f]{40}$/;
 const MAX_STATUS_BYTES = 64 * 1024;
 const MAX_GITHUB_BYTES = 512 * 1024;
+const WORKER_WATCHDOG_CLASSIFICATIONS = new Set([
+  'WORKER_WATCHDOG_HEALTHY',
+  'WORKER_WATCHDOG_RECOVERED',
+  'WORKER_WATCHDOG_RECOVERY_FAILED',
+  'WORKER_WATCHDOG_RECOVERY_COOLDOWN',
+  'WORKER_WATCHDOG_BLOCKED',
+  'WORKER_WATCHDOG_PROBE_FAILED',
+  'WORKER_WATCHDOG_START_FAILED',
+  'WORKER_WATCHDOG_LIVE_LOCK',
+]);
+const WORKER_WATCHDOG_SUCCESS_CLASSIFICATIONS = new Set([
+  'WORKER_WATCHDOG_HEALTHY',
+  'WORKER_WATCHDOG_RECOVERED',
+]);
+const WATCHDOG_RESTART_VERDICTS = new Set([
+  'APPROVED_RUNTIME_RESTART_PASS',
+  'APPROVED_RUNTIME_RESTART_BLOCKED',
+]);
 const STATUS_SPECS = Object.freeze([
   Object.freeze({ id: 'githubSync', path: 'status/battle-bridge-github-sync-current.json', staleAfterMs: 180_000 }),
   Object.freeze({ id: 'postSyncRefresh', path: 'status/post-sync-runtime-refresh-current.json', staleAfterMs: 300_000 }),
@@ -32,6 +52,7 @@ const STATUS_SPECS = Object.freeze([
   Object.freeze({ id: 'battleBridge', path: 'status/battle-bridge-current.json', staleAfterMs: 300_000 }),
   Object.freeze({ id: 'recoveryMesh', path: 'status/battle-bridge-recovery-mesh-current.json', staleAfterMs: 180_000 }),
   Object.freeze({ id: 'mailbox', path: 'status/battle-bridge-mailbox-receipt-index.json', staleAfterMs: 420_000 }),
+  Object.freeze({ id: 'workerWatchdog', path: 'status/battle-bridge-worker-watchdog-current.json', staleAfterMs: 180_000 }),
   Object.freeze({ id: 'missionWorker', path: 'status/mission-orchestrator-worker-heartbeat.json', staleAfterMs: 180_000 }),
 ]);
 
@@ -181,7 +202,65 @@ function runtimeHeads(record = {}) {
   });
 }
 
-export function projectBeaconStatus(record, spec, nowMs = Date.now()) {
+function safeWatchdogClassification(value) {
+  const classification = text(value, 120).toUpperCase();
+  return WORKER_WATCHDOG_CLASSIFICATIONS.has(classification) ? classification : 'UNKNOWN';
+}
+
+function safeWatchdogRestartVerdict(value) {
+  const verdict = text(value, 120).toUpperCase();
+  return WATCHDOG_RESTART_VERDICTS.has(verdict) ? verdict : '';
+}
+
+export function projectWorkerWatchdogBeaconFacts(record = {}, expectedHead = '') {
+  const classification = safeWatchdogClassification(record.classification || record.status);
+  const restartBlocker = projectBoundedMissionWorkerRestartBlocker(record.restartBlocker);
+  const expected = safeSha(expectedHead);
+  const initial = record.initialAssessment && typeof record.initialAssessment === 'object' && !Array.isArray(record.initialAssessment)
+    ? record.initialAssessment
+    : {};
+  const final = record.finalAssessment && typeof record.finalAssessment === 'object' && !Array.isArray(record.finalAssessment)
+    ? record.finalAssessment
+    : {};
+  const sourceHead = safeSha(record.restartSourceHead || final.sourceHead || initial.canonicalRepositoryHead);
+  const heartbeatAgeMs = numericCount(final.heartbeatAgeMs ?? initial.heartbeatAgeMs);
+  const exactHeadMatch = Boolean(expected && sourceHead && expected === sourceHead);
+  let exactNextAction = 'READ_WATCHDOG_FAILURE_BOUNDARY';
+  if (restartBlocker) exactNextAction = 'REPAIR_TYPED_MISSION_WORKER_RESTART_BLOCKER';
+  else if (WORKER_WATCHDOG_SUCCESS_CLASSIFICATIONS.has(classification) && exactHeadMatch) {
+    exactNextAction = 'VERIFY_MISSION_WORKER_HEARTBEAT_AND_BUILD_EXECUTION';
+  } else if (classification === 'WORKER_WATCHDOG_RECOVERY_COOLDOWN') {
+    exactNextAction = 'WAIT_FOR_EXISTING_WATCHDOG_RESTART_COOLDOWN';
+  } else if (classification === 'UNKNOWN') {
+    exactNextAction = 'READ_ONLY_WATCHDOG_STATUS_REPAIR';
+  }
+  return Object.freeze({
+    classification,
+    restartBlocker,
+    restartVerdict: safeWatchdogRestartVerdict(record.restartVerdict),
+    sourceHead,
+    expectedHead: expected,
+    exactHeadMatch,
+    restartAttempted: record.restartAttempted === true,
+    restartExactHeadProofOk: record.restartExactHeadProofOk === true,
+    restartProofFresh: record.restartProofFresh === true,
+    taskActionMatchesCanonicalWorker: initial.taskActionMatchesCanonicalWorker === true,
+    processHealthy: final.processHealthy === true,
+    processLaunchIdentityVerified: final.processLaunchIdentityVerified === true,
+    heartbeatFresh: final.heartbeatFresh === true,
+    heartbeatAgeMs,
+    supervisorDetectedWorkerDown: record.supervisorDetectedWorkerDown === true,
+    supervisorRestartedWorker: record.supervisorRestartedWorker === true,
+    workerRecovered: record.workerRecovered === true,
+    workerFromMain: record.workerFromMain === true,
+    exactNextAction,
+    arbitraryPathPublished: false,
+    arbitraryCommandLinePublished: false,
+    rawErrorPublished: false,
+  });
+}
+
+export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHead = '') {
   if (!record) {
     return Object.freeze({
       id: spec.id,
@@ -203,6 +282,49 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now()) {
   const stale = ageMs === null || ageMs > spec.staleAfterMs;
   const rawState = recordRawState(record);
   const blocker = text(record.blocker || record.exactNextAction || record.blockerId || '', 180);
+  if (spec.id === 'workerWatchdog' && safeSha(expectedHead)) {
+    const workerWatchdogFacts = projectWorkerWatchdogBeaconFacts(record, expectedHead);
+    const watchdogBlocker = workerWatchdogFacts.restartBlocker
+      || (!WORKER_WATCHDOG_SUCCESS_CLASSIFICATIONS.has(workerWatchdogFacts.classification)
+        && workerWatchdogFacts.classification !== 'UNKNOWN'
+        ? workerWatchdogFacts.classification
+        : blocker);
+    return Object.freeze({
+      id: spec.id,
+      state: stale ? 'STALE' : workerWatchdogFacts.classification,
+      rawState: workerWatchdogFacts.classification,
+      observedAtUtc,
+      ageMs,
+      head: workerWatchdogFacts.sourceHead,
+      blocker: watchdogBlocker,
+      serviceFacts: Object.freeze({}),
+      dirtFacts: Object.freeze({ known: false, blocksSync: false, blockingCount: 0 }),
+      housekeeperFacts: Object.freeze({ observed: false, state: 'UNPROVEN', observedAtUtc: '', head: '', blocker: '' }),
+      runtimeHeads: Object.freeze({ builtHead: '', servedHead: '', runtimeHead: '' }),
+      workerWatchdogFacts,
+    });
+  }
+  if (spec.id === 'missionWorker' && safeSha(expectedHead)) {
+    const missionWorkerFacts = projectMissionWorkerBeaconState(record, {
+      nowMs,
+      staleAfterMs: spec.staleAfterMs,
+      expectedHead,
+    });
+    return Object.freeze({
+      id: spec.id,
+      state: missionWorkerFacts.state,
+      rawState: missionWorkerFacts.rawState,
+      observedAtUtc: missionWorkerFacts.observedAtUtc,
+      ageMs: missionWorkerFacts.ageMs,
+      head: missionWorkerFacts.head,
+      blocker: missionWorkerFacts.blocker || blocker,
+      serviceFacts: serviceFacts(record),
+      dirtFacts: dirtFacts(record),
+      housekeeperFacts: housekeeperFacts(record),
+      runtimeHeads: runtimeHeads(record),
+      missionWorkerFacts,
+    });
+  }
   return Object.freeze({
     id: spec.id,
     state: stale ? 'STALE' : (rawState || 'UNKNOWN'),
@@ -319,7 +441,7 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
   const observedAtUtc = now.toISOString();
   const nowMs = now.getTime();
   const surfaces = STATUS_SPECS.map((spec) => {
-    const projected = projectBeaconStatus(statusRecords[spec.id] || null, spec, nowMs);
+    const projected = projectBeaconStatus(statusRecords[spec.id] || null, spec, nowMs, head);
     return spec.id === 'mailbox' ? combineMailboxStatus(projected, mailboxIngressObservation) : projected;
   });
   const telemetry = buildBattleBridgeTelemetryAutorepairProjection({ sourceHead: head, surfaces, qualifiedRepairPolicies });

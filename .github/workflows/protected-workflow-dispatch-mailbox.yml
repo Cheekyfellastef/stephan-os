@@ -1,0 +1,40 @@
+name: Protected Workflow Dispatch Mailbox
+run-name: Protected workflow dispatch ${{ github.event.comment.id || github.run_id }}
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: protected-workflow-dispatch-mailbox-${{ github.event.comment.id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: >-
+      github.event.issue.number == 1507 &&
+      github.event.comment.user.login == 'Cheekyfellastef' &&
+      !github.event.issue.pull_request &&
+      contains(github.event.comment.body, 'stephanos-protected-workflow-dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out canonical main dispatcher
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Validate exact owner command and perform only the fixed protected lifecycle action
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/dispatch-protected-merge-from-mailbox.mjs

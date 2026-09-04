@@ -200,7 +200,10 @@ $taskProof = foreach ($taskName in @($syncTaskName, $recoveryTaskName, $mailboxT
     }
 }
 
-if (($taskProof | Where-Object { $_.present -ne $true }).Count -gt 0) {
+# PowerShell unwraps a one-item pipeline to a scalar under StrictMode. Materialize
+# the filtered proof as an array so zero, one, and many missing tasks share the
+# same deterministic Count contract.
+if (@($taskProof | Where-Object { $_.present -ne $true }).Count -gt 0) {
     Stop-BoundedRescue -Blocker 'CONTROL_PLANE_TASK_PROOF_FAILED'
 }
 
