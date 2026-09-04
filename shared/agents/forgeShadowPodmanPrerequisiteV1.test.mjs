@@ -201,6 +201,10 @@ test('fixed prerequisite admits only the exact Windows 10 x64 WSL2 compatibility
   assert.match(source, /distribution-version-2/);
   assert.match(source, /\$ObservedWsl2Evidence = Get-Wsl2Evidence/);
   assert.match(source, /if \(-not \$ObservedWsl2Evidence\) \{ Emit-Blocked 'WSL2_NOT_AVAILABLE' \}/);
+  assert.match(source, /\$previousErrorActionPreference = \$ErrorActionPreference/);
+  assert.match(source, /\$ErrorActionPreference = 'Continue'/);
+  assert.match(source, /\$ErrorActionPreference = \$previousErrorActionPreference/);
+  assert.match(source, /& \$Exe @Arguments 2>&1/);
   assert.doesNotMatch(source, /\$wslStatus = Invoke-Fixed/);
   assert.doesNotMatch(source, /WINDOWS_11_OR_NEWER_REQUIRED/);
   assert.doesNotMatch(source, /podman-desktop-1\.29\.1-setup-x64\.exe/);
