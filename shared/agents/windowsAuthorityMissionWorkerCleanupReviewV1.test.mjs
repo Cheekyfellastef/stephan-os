@@ -84,14 +84,14 @@ function Stop-NewlyStartedOwnedWorker {
 `;
 
 const ORPHAN_SAFE_SOURCE = readFileSync(
-  new URL('../../scripts/windows/restart-approved-stephanos-runtime.ps1', import.meta.url),
+  new URL('./fixtures/mission-worker-orphan-capability-2105.ps1', import.meta.url),
   'utf8',
 );
 
 assert.equal(
   gitBlobSha(ORPHAN_SAFE_SOURCE),
   ORPHAN_BLOB_SHA,
-  'current protected source must remain the exact already-hardened #2105 blob',
+  'historical #2105 source fixture must remain the exact already-hardened blob',
 );
 
 function input(source = SAFE_EQUIVALENT_SOURCE, overrides = {}) {
