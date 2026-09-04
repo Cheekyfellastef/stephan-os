@@ -39,8 +39,8 @@ async function stateAtChecks(options) {
   await createMissionRecord(input, options);
   const append = (eventId, eventType, fields) => appendMissionEvent(input.missionId, { eventId, eventType, ...fields }, options);
   await append('worktree-inspection-001', 'WORKTREE_READY', { worktreePath: input.worktreePath, clean: true, receipt: proof('isolated worktree', 'worktree') });
-  await append('dispatch-inspection-001', 'AGENT_DISPATCHED', { agentId: 'codex' });
-  await append('result-inspection-001', 'AGENT_RESULT_RECEIVED', { success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result') });
+  await append('dispatch-inspection-001', 'AGENT_DISPATCHED', { agentId: 'codex', actionId: 'codex-inspection-action', workerId: 'codex' });
+  await append('result-inspection-001', 'AGENT_RESULT_RECEIVED', { actionId: 'codex-inspection-action', workerId: 'codex', success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result') });
   await append('evidence-inspection-001', 'EVIDENCE_RECORDED', { receipts: [proof('focused test output', 'evidence')] });
   await append('commit-inspection-001', 'GIT_OPERATION_COMPLETED', { operation: 'commit', commitSha: 'a'.repeat(40), clean: true, receipt: proof('signed git commit', 'commit') });
   await append('push-inspection-001', 'GIT_OPERATION_COMPLETED', { operation: 'push', success: true, receipt: proof('signed git push', 'push') });

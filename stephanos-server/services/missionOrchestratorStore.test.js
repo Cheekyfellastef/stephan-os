@@ -85,10 +85,10 @@ test('event ids are single-use and duplicate delivery does not change state revi
     requiredEvidence: ['browser proof'],
     requiredTests: [],
   }, options);
-  const first = await append(options, 'runtime-store-test', 'dispatch-runtime-001', 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  const first = await append(options, 'runtime-store-test', 'dispatch-runtime-001', 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone', actionId: 'runtime-action-001', workerId: 'openclaw-standalone' });
   assert.equal(first.duplicate, false);
   assert.equal(first.state.dispatch.status, 'running');
-  const duplicate = await append(options, 'runtime-store-test', 'dispatch-runtime-001', 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  const duplicate = await append(options, 'runtime-store-test', 'dispatch-runtime-001', 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone', actionId: 'runtime-action-001', workerId: 'openclaw-standalone' });
   assert.equal(duplicate.duplicate, true);
   assert.equal(duplicate.state.revision, first.state.revision);
 });
@@ -111,6 +111,8 @@ test('conditional appends fail atomically without consuming the event id', async
     eventId: 'conditional-dispatch',
     eventType: 'AGENT_DISPATCHED',
     agentId: 'codex',
+    actionId: 'conditional-codex-action',
+    workerId: 'codex',
     expectedRevision: created.state.revision,
     expectedCurrentPhase: created.state.currentPhase,
   }, options);
@@ -129,6 +131,8 @@ test('conditional appends fail atomically without consuming the event id', async
     eventId: 'conditional-dispatch',
     eventType: 'AGENT_DISPATCHED',
     agentId: 'codex',
+    actionId: 'conditional-codex-action',
+    workerId: 'codex',
     expectedRevision: ready.state.revision,
     expectedCurrentPhase: ready.state.currentPhase,
   }, options);
@@ -204,8 +208,10 @@ test('verified runtime evidence advances to complete and updates the Mission Ope
     requiredEvidence: ['browser proof'],
     requiredTests: [],
   }, options);
-  await append(options, 'runtime-complete-test', 'dispatch-runtime-002', 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  await append(options, 'runtime-complete-test', 'dispatch-runtime-002', 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone', actionId: 'runtime-action-002', workerId: 'openclaw-standalone' });
   const completed = await append(options, 'runtime-complete-test', 'result-runtime-002', 'AGENT_RESULT_RECEIVED', {
+    actionId: 'runtime-action-002',
+    workerId: 'openclaw-standalone',
     success: true,
     resultId: 'browser-result',
     changedFiles: [],
@@ -220,8 +226,8 @@ test('approval event log redacts the raw token while state keeps only its hash',
   const options = await roots();
   await createMissionRecord(base, options);
   await append(options, base.missionId, 'worktree-ready-001', 'WORKTREE_READY', { worktreePath: base.worktreePath, clean: true, receipt: proof('isolated worktree', 'worktree-proof') });
-  await append(options, base.missionId, 'codex-dispatch-001', 'AGENT_DISPATCHED', { agentId: 'codex' });
-  await append(options, base.missionId, 'codex-result-001', 'AGENT_RESULT_RECEIVED', { success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'codex-proof') });
+  await append(options, base.missionId, 'codex-dispatch-001', 'AGENT_DISPATCHED', { agentId: 'codex', actionId: 'codex-store-action', workerId: 'codex' });
+  await append(options, base.missionId, 'codex-result-001', 'AGENT_RESULT_RECEIVED', { actionId: 'codex-store-action', workerId: 'codex', success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'codex-proof') });
   await append(options, base.missionId, 'evidence-001', 'EVIDENCE_RECORDED', { receipts: [proof('focused test output', 'test-proof')] });
   await append(options, base.missionId, 'commit-001', 'GIT_OPERATION_COMPLETED', { operation: 'commit', commitSha: '1'.repeat(40), clean: true, receipt: proof('signed commit', 'commit-proof') });
   await append(options, base.missionId, 'push-001', 'GIT_OPERATION_COMPLETED', { operation: 'push', success: true, receipt: proof('signed push', 'push-proof') });
