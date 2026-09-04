@@ -16,8 +16,10 @@ on:
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
       - 'scripts/mission-worker-git-stderr-isolation.test.mjs'
+      - 'scripts/mission-worker-cleanup-launch-receipt-proof.test.mjs'
       - 'scripts/windows/*worker-watchdog.ps1'
       - 'scripts/windows/start-mission-orchestrator-worker.ps1'
+      - 'scripts/windows/restart-approved-stephanos-runtime.ps1'
       - '.github/workflows/battle-bridge-worker-watchdog-proof.yml'
   push:
     paths:
@@ -34,8 +36,10 @@ on:
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
       - 'scripts/mission-worker-git-stderr-isolation.test.mjs'
+      - 'scripts/mission-worker-cleanup-launch-receipt-proof.test.mjs'
       - 'scripts/windows/*worker-watchdog.ps1'
       - 'scripts/windows/start-mission-orchestrator-worker.ps1'
+      - 'scripts/windows/restart-approved-stephanos-runtime.ps1'
       - '.github/workflows/battle-bridge-worker-watchdog-proof.yml'
 
 permissions:
@@ -84,7 +88,8 @@ jobs:
             'scripts/windows/status-battle-bridge-worker-watchdog.ps1',
             'scripts/windows/uninstall-battle-bridge-worker-watchdog.ps1',
             'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1',
-            'scripts/windows/start-mission-orchestrator-worker.ps1'
+            'scripts/windows/start-mission-orchestrator-worker.ps1',
+            'scripts/windows/restart-approved-stephanos-runtime.ps1'
           ) | ForEach-Object {
             $tokens = $null
             $parseErrors = $null
@@ -104,6 +109,9 @@ jobs:
 
       - name: Test Mission Worker Git stderr isolation
         run: node --test scripts/mission-worker-git-stderr-isolation.test.mjs
+
+      - name: Test Mission Worker cleanup launch receipt proof
+        run: node --test scripts/mission-worker-cleanup-launch-receipt-proof.test.mjs
 
       - name: Test supervised worker
         run: node --test scripts/mission-orchestrator-worker-supervised.test.mjs
