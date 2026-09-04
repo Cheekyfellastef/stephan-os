@@ -166,7 +166,7 @@ test('current #2097 cleanup semantic equivalents remain eligible and clean', () 
 
 test('cleanup fallback remains narrow, exact and typed', () => {
   for (const [unsafe, code] of [
-    [SAFE_EQUIVALENT_SOURCE.replace("-TaskPath '\\\\'", "-TaskPath '\\\\Other\\\\'"), 'mission-worker-cleanup-task-not-fixed'],
+    [SAFE_EQUIVALENT_SOURCE.replace("Stephanos Mission Orchestrator Worker", "Other Mission Worker"), 'mission-worker-cleanup-task-not-fixed'],
     [SAFE_EQUIVALENT_SOURCE.replace('$null = $processCapability.Handle', '$null = 1'), 'mission-worker-cleanup-capability-recheck-missing'],
     [SAFE_EQUIVALENT_SOURCE.replace('GetProcessById([int]$candidate.ProcessId)', 'GetProcessById([int]$ExpectedProcessId)'), 'mission-worker-cleanup-capability-bind-missing'],
     [SAFE_EQUIVALENT_SOURCE.replaceAll('MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN', 'UNRELATED_BLOCKER'), 'mission-worker-cleanup-not-proven-blocker-missing'],
