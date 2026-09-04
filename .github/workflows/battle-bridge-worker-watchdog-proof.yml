@@ -77,6 +77,7 @@ jobs:
           node --check shared/agents/chatGptParticipantBridgeV1.mjs
           node --check shared/agents/remoteCodexTaskVisibility.mjs
           node --check scripts/mission-orchestrator-worker-heartbeat.mjs
+          node --check scripts/mission-orchestrator-worker-heartbeat-active-claim.mjs
           node --check scripts/mission-orchestrator-worker-supervised.mjs
 
       - name: Parse Windows watchdog scripts
@@ -105,7 +106,7 @@ jobs:
         run: node --test scripts/battle-bridge-worker-watchdog-policy.test.mjs
 
       - name: Test worker heartbeat
-        run: node --test scripts/mission-orchestrator-worker-heartbeat.test.mjs
+        run: node --test scripts/mission-orchestrator-worker-heartbeat.test.mjs scripts/mission-orchestrator-worker-heartbeat-active-claim.test.mjs
 
       - name: Test Mission Worker Git stderr isolation
         run: node --test scripts/mission-worker-git-stderr-isolation.test.mjs
