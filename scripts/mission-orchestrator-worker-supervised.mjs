@@ -260,6 +260,7 @@ export async function runSupervisedMissionWorker({
   readActiveClaim = readMissionWorkerActiveClaim,
   inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity,
   sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
+  sleepActiveClaimProbe = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
   activeClaimProbeIntervalMs = MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS,
   setIntervalFn = setInterval,
   clearIntervalFn = clearInterval,
@@ -424,7 +425,7 @@ export async function runSupervisedMissionWorker({
               await queueHeartbeat('MISSION_WORKER_TICK_RUNNING');
               return;
             }
-            await sleep(claimProbeIntervalMs);
+            await sleepActiveClaimProbe(claimProbeIntervalMs);
           }
         };
 
