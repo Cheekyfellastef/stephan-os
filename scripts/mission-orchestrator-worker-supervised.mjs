@@ -9,12 +9,14 @@ import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindows
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
 import { readMissionControllerCapacityRoutingInput } from '../stephanos-server/services/programmeAuthorityService.js';
 import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
+import { readMissionWorkerActiveClaim } from './mission-orchestrator-worker-heartbeat-active-claim.mjs';
 import { runMissionWorkerTick } from './mission-orchestrator-worker.mjs';
 import { writeMissionWorkerHeartbeat } from './mission-orchestrator-worker-heartbeat.mjs';
 
 export const MISSION_WORKER_LOG_PROJECTION_SCHEMA = 'stephanos.mission-worker-log-projection.v1';
 export const MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE = 75;
 export const MISSION_WORKER_LOG_MAX_BYTES = 1_024;
+export const MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS = 10;
 
 const SHA_40 = /^[0-9a-f]{40}$/;
 const MAX_GIT_STATUS_BYTES = 64 * 1024;
@@ -255,8 +257,10 @@ export async function runSupervisedMissionWorker({
   loadCapacityRoutingInput = readMissionControllerCapacityRoutingInput,
   runTick = runMissionWorkerTick,
   writeHeartbeat = writeMissionWorkerHeartbeat,
+  readActiveClaim = readMissionWorkerActiveClaim,
   inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity,
   sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
+  activeClaimProbeIntervalMs = MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS,
   setIntervalFn = setInterval,
   clearIntervalFn = clearInterval,
   now = () => new Date().toISOString(),
@@ -266,6 +270,10 @@ export async function runSupervisedMissionWorker({
   const heartbeatIntervalMs = Math.max(
     Number.parseInt(env.STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS || '30000', 10) || 30000,
     1000,
+  );
+  const claimProbeIntervalMs = Math.max(
+    Number.isFinite(activeClaimProbeIntervalMs) ? activeClaimProbeIntervalMs : MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS,
+    1,
   );
   let exitCode = 0;
   let lastControllerLogSignature = '';
@@ -400,14 +408,38 @@ export async function runSupervisedMissionWorker({
           ? await loadCapacityRoutingInput(capacityRoutingOptions)
           : undefined;
         activeActionGrant = actionGrant;
+        let tickSettled = false;
+        let activeClaimHeartbeatPublished = false;
+        const watchActiveClaim = async () => {
+          while (!tickSettled && !activeClaimHeartbeatPublished) {
+            let activeClaim = null;
+            try {
+              activeClaim = await readActiveClaim({ env, actionGrant });
+            } catch {
+              activeClaim = null;
+            }
+            if (tickSettled) return;
+            if (activeClaim) {
+              activeClaimHeartbeatPublished = true;
+              await queueHeartbeat('MISSION_WORKER_TICK_RUNNING');
+              return;
+            }
+            await sleep(claimProbeIntervalMs);
+          }
+        };
+
         let result;
+        const tickPromise = runTick({
+          env,
+          actionGrant,
+          capacityRouting,
+        });
+        const activeClaimWatcher = watchActiveClaim();
         try {
-          result = await runTick({
-            env,
-            actionGrant,
-            capacityRouting,
-          });
+          result = await tickPromise;
         } finally {
+          tickSettled = true;
+          await activeClaimWatcher;
           activeActionGrant = undefined;
         }
         tickMadeProgress = missionWorkerTickMadeProgress(result);
