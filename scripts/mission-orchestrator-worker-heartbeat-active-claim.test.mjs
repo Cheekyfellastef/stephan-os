@@ -60,6 +60,40 @@ function sink() {
   return { write() {} };
 }
 
+function canonicalIdentity() {
+  return {
+    valid: true,
+    canonical: true,
+    branch: 'main',
+    headSha: HEAD,
+    sourceClean: true,
+    worktreeClean: true,
+    runtimeDirtCount: 0,
+    blocker: '',
+  };
+}
+
+function controllerFor(actionGrant) {
+  return {
+    status: 'RUNNING',
+    action: 'DISPATCH',
+    finalVerdict: 'MISSION_WORKER_ACTION_GRANTED',
+    allowWorkerTick: true,
+    blockers: [],
+    workerActionGrant: actionGrant,
+  };
+}
+
+function workerEnv() {
+  return {
+    STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os',
+    STEPHANOS_MISSION_WORKER_HEAD_SHA: HEAD,
+    STEPHANOS_MISSION_WORKER_BRANCH: 'main',
+    STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000',
+    STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS: '30000',
+  };
+}
+
 test('active claim requires the exact granted action in the exact processing queue', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mission-worker-active-claim-'));
   const actionGrant = grant();
@@ -125,42 +159,19 @@ test('running heartbeat is not advertised until a real active claim is proven', 
   assert.equal(partialClaim.activeTaskId, undefined);
 });
 
-test('supervised worker binds only its in-flight exact grant to running heartbeats', async () => {
+test('supervised worker binds only its in-flight exact grant to periodic running heartbeats', async () => {
   const actionGrant = grant();
   const heartbeats = [];
   let timerCallback = null;
-  const env = {
-    STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os',
-    STEPHANOS_MISSION_WORKER_HEAD_SHA: HEAD,
-    STEPHANOS_MISSION_WORKER_BRANCH: 'main',
-    STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000',
-    STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS: '30000',
-  };
 
   const exitCode = await runSupervisedMissionWorker({
     argv: ['--once'],
-    env,
+    env: workerEnv(),
     stdout: sink(),
     stderr: sink(),
     bootstrapMailbox: async () => ({ ok: true, status: 'MAILBOX_ALREADY_REGISTERED' }),
-    inspectRepositoryIdentity: async () => ({
-      valid: true,
-      canonical: true,
-      branch: 'main',
-      headSha: HEAD,
-      sourceClean: true,
-      worktreeClean: true,
-      runtimeDirtCount: 0,
-      blocker: '',
-    }),
-    runControllerCycle: async () => ({
-      status: 'RUNNING',
-      action: 'DISPATCH',
-      finalVerdict: 'MISSION_WORKER_ACTION_GRANTED',
-      allowWorkerTick: true,
-      blockers: [],
-      workerActionGrant: actionGrant,
-    }),
+    inspectRepositoryIdentity: async () => canonicalIdentity(),
+    runControllerCycle: async () => controllerFor(actionGrant),
     runTick: async () => {
       timerCallback();
       return {
@@ -168,7 +179,10 @@ test('supervised worker binds only its in-flight exact grant to running heartbea
         processed: { processed: true },
       };
     },
+    readActiveClaim: async () => null,
     writeHeartbeat: async (input) => { heartbeats.push(input); },
+    sleep: (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+    activeClaimProbeIntervalMs: 1,
     setIntervalFn: (callback) => {
       timerCallback = callback;
       return 7;
@@ -185,4 +199,94 @@ test('supervised worker binds only its in-flight exact grant to running heartbea
   assert.deepEqual(heartbeats[1].activeActionGrant, actionGrant);
   assert.equal(heartbeats[2].lastTickVerdict, 'MISSION_WORKER_TICK_PASS');
   assert.equal(heartbeats[2].activeActionGrant, undefined);
+});
+
+test('short claimed tick emits one active heartbeat without waiting for the periodic timer', async () => {
+  const actionGrant = grant();
+  const heartbeats = [];
+  let tickStarted = false;
+  let releaseTick;
+  let claimReads = 0;
+
+  const exitCodePromise = runSupervisedMissionWorker({
+    argv: ['--once'],
+    env: workerEnv(),
+    stdout: sink(),
+    stderr: sink(),
+    bootstrapMailbox: async () => ({ ok: true, status: 'MAILBOX_ALREADY_REGISTERED' }),
+    inspectRepositoryIdentity: async () => canonicalIdentity(),
+    runControllerCycle: async () => controllerFor(actionGrant),
+    runTick: async () => {
+      tickStarted = true;
+      await new Promise((resolve) => { releaseTick = resolve; });
+      return {
+        publish: { published: true },
+        processed: { processed: true },
+      };
+    },
+    readActiveClaim: async () => {
+      claimReads += 1;
+      if (!tickStarted) return null;
+      const claim = {
+        activeTaskId: actionGrant.actionId,
+        activeReceiptId: `claim:${'c'.repeat(64)}`,
+        executionPhase: 'processing:codex',
+      };
+      queueMicrotask(() => releaseTick());
+      return claim;
+    },
+    writeHeartbeat: async (input) => { heartbeats.push(input); },
+    sleep: (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+    activeClaimProbeIntervalMs: 1,
+    setIntervalFn: () => 7,
+    clearIntervalFn: () => {},
+    now: () => '2026-09-04T16:00:01.000Z',
+  });
+
+  const exitCode = await exitCodePromise;
+  assert.equal(exitCode, 0);
+  assert.ok(claimReads >= 1);
+  assert.equal(heartbeats.length, 3);
+  assert.equal(heartbeats[0].activeActionGrant, undefined);
+  assert.equal(heartbeats[1].lastTickVerdict, 'MISSION_WORKER_TICK_RUNNING');
+  assert.deepEqual(heartbeats[1].activeActionGrant, actionGrant);
+  assert.equal(heartbeats[2].lastTickVerdict, 'MISSION_WORKER_TICK_PASS');
+  assert.equal(heartbeats[2].activeActionGrant, undefined);
+});
+
+test('claim watcher stops when the tick finishes and never publishes stale activity afterward', async () => {
+  const actionGrant = grant();
+  const heartbeats = [];
+  let claimReads = 0;
+
+  const exitCode = await runSupervisedMissionWorker({
+    argv: ['--once'],
+    env: workerEnv(),
+    stdout: sink(),
+    stderr: sink(),
+    bootstrapMailbox: async () => ({ ok: true, status: 'MAILBOX_ALREADY_REGISTERED' }),
+    inspectRepositoryIdentity: async () => canonicalIdentity(),
+    runControllerCycle: async () => controllerFor(actionGrant),
+    runTick: async () => ({
+      publish: { published: true },
+      processed: { processed: true },
+    }),
+    readActiveClaim: async () => {
+      claimReads += 1;
+      return null;
+    },
+    writeHeartbeat: async (input) => { heartbeats.push(input); },
+    sleep: () => new Promise((resolve) => setImmediate(resolve)),
+    activeClaimProbeIntervalMs: 1,
+    setIntervalFn: () => 7,
+    clearIntervalFn: () => {},
+    now: () => '2026-09-04T16:00:01.000Z',
+  });
+
+  assert.equal(exitCode, 0);
+  assert.ok(claimReads >= 1);
+  assert.equal(heartbeats.length, 2);
+  assert.equal(heartbeats[0].activeActionGrant, undefined);
+  assert.equal(heartbeats[1].lastTickVerdict, 'MISSION_WORKER_TICK_PASS');
+  assert.equal(heartbeats[1].activeActionGrant, undefined);
 });
