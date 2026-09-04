@@ -621,7 +621,7 @@ function Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat {
         Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
     }
 
-    $processStartedAtUtc = ([datetime]$candidate.CreationDate).ToUniversalTime()
+    $candidateStartedAtUtc = ([datetime]$candidate.CreationDate).ToUniversalTime()
     $processCapability = $null
     $retainProcessCapability = $false
     try {
@@ -631,13 +631,20 @@ function Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat {
         }
         $null = $processCapability.Handle
         $capabilityProcessStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
-        if ($capabilityProcessStartedAtUtc.Ticks -ne $processStartedAtUtc.Ticks) {
-            Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED'
+
+        $candidateReRead = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+        if (-not $candidateReRead -or -not (Test-ExactCanonicalWorkerProcess -Process $candidateReRead -ExpectedRepoRoot $ExpectedRepoRoot)) {
+            Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
         }
+        $candidateReReadStartedAtUtc = ([datetime]$candidateReRead.CreationDate).ToUniversalTime()
+        if ($candidateReReadStartedAtUtc.Ticks -ne $candidateStartedAtUtc.Ticks) {
+            Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
+        }
+
         $retainProcessCapability = $true
         return [PSCustomObject]@{
             ProcessId = $processId
-            ProcessStartedAtUtc = $processStartedAtUtc
+            ProcessStartedAtUtc = $capabilityProcessStartedAtUtc
             ProcessCapability = $processCapability
             CanonicalWorkerCommandVerified = $true
         }

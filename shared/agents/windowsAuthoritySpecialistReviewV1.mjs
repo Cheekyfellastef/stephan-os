@@ -16,6 +16,7 @@ const MOBILE_RECOVERY_GITHUB_CONSUMER_PATH = './windowsAuthorityMobileRecoveryGi
 const MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATH = './windowsAuthorityMobileRecoveryLifeboatInstallerReviewV1.mjs';
 const LIFEBOAT_ACTIVATION_PATH = './windowsAuthorityBattleBridgeLifeboatActivationReviewV1.mjs';
 const WORKER_LOG_BOUNDS_PATH = './windowsAuthorityWorkerLogBoundsReviewV1.mjs';
+const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupReviewV1.mjs';
 const WORKER_WATCHDOG_V4_PATH = './windowsAuthorityWorkerWatchdogReviewV4.mjs';
 const WORKER_WATCHDOG_V3_PATH = './windowsAuthorityWorkerWatchdogReviewV3.mjs';
 const WORKER_WATCHDOG_V2_PATH = './windowsAuthorityWorkerWatchdogReviewV2.mjs';
@@ -39,6 +40,7 @@ const MOBILE_RECOVERY_GITHUB_CONSUMER_BLOB_SHA = '7b0a62a712c2340293ffe09aee0154
 const MOBILE_RECOVERY_LIFEBOAT_INSTALLER_BLOB_SHA = '6ca86bcd68e034950b3d01fdabb12e3eb07055e1';
 const LIFEBOAT_ACTIVATION_BLOB_SHA = 'd53a21c582fa85c016418e3cf9827a9de8abb8bf';
 const WORKER_LOG_BOUNDS_BLOB_SHA = 'daa4936e117e7b16daf4c0ccf72baea0d7203dfb';
+const MISSION_WORKER_CLEANUP_BLOB_SHA = '907c95a364c4b5eb5e083788b52056071d78e3a2';
 const WORKER_WATCHDOG_V4_BLOB_SHA = '0caa887c8dd818a105d70d4aeee2c20332eb9675';
 const WORKER_WATCHDOG_V3_BLOB_SHA = 'fbce68bc252bc5580ce17bc1dc3bdc919b364865';
 const WORKER_WATCHDOG_V2_BLOB_SHA = '6a78171d976b1a36d8892b98fcf90bf54591dbeb';
@@ -82,6 +84,7 @@ const mobileRecoveryGitHubConsumerUrl = provePinnedModule(MOBILE_RECOVERY_GITHUB
 const mobileRecoveryLifeboatInstallerUrl = provePinnedModule(MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATH, MOBILE_RECOVERY_LIFEBOAT_INSTALLER_BLOB_SHA);
 const lifeboatActivationUrl = provePinnedModule(LIFEBOAT_ACTIVATION_PATH, LIFEBOAT_ACTIVATION_BLOB_SHA);
 const workerLogBoundsUrl = provePinnedModule(WORKER_LOG_BOUNDS_PATH, WORKER_LOG_BOUNDS_BLOB_SHA);
+const missionWorkerCleanupUrl = provePinnedModule(MISSION_WORKER_CLEANUP_PATH, MISSION_WORKER_CLEANUP_BLOB_SHA);
 const workerWatchdogV4Url = provePinnedModule(WORKER_WATCHDOG_V4_PATH, WORKER_WATCHDOG_V4_BLOB_SHA);
 const workerWatchdogV3Url = provePinnedModule(WORKER_WATCHDOG_V3_PATH, WORKER_WATCHDOG_V3_BLOB_SHA);
 const workerWatchdogV2Url = provePinnedModule(WORKER_WATCHDOG_V2_PATH, WORKER_WATCHDOG_V2_BLOB_SHA);
@@ -104,6 +107,7 @@ const mobileRecoveryGitHubConsumer = await import(mobileRecoveryGitHubConsumerUr
 const mobileRecoveryLifeboatInstaller = await import(mobileRecoveryLifeboatInstallerUrl.href);
 const lifeboatActivation = await import(lifeboatActivationUrl.href);
 const workerLogBounds = await import(workerLogBoundsUrl.href);
+const missionWorkerCleanup = await import(missionWorkerCleanupUrl.href);
 const workerWatchdogV4 = await import(workerWatchdogV4Url.href);
 const workerWatchdogV3 = await import(workerWatchdogV3Url.href);
 const workerWatchdogV2 = await import(workerWatchdogV2Url.href);
@@ -111,6 +115,7 @@ const workerWatchdog = await import(workerWatchdogUrl.href);
 const forgeM3Executor = await import(forgeM3ExecutorUrl.href);
 const forgePodmanPrerequisite = await import(forgePodmanPrerequisiteUrl.href);
 const ignitionConvergence = await import(ignitionConvergenceUrl.href);
+if (JSON.stringify(missionWorkerCleanup.WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_PATHS_V1) !== JSON.stringify(['scripts/windows/restart-approved-stephanos-runtime.ps1'])) throw new Error('WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(workerWatchdogV4.WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V4) !== JSON.stringify(['scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1'])) throw new Error('WINDOWS_AUTHORITY_WORKER_WATCHDOG_V4_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(workerWatchdogV3.WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V3) !== JSON.stringify(['scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1'])) throw new Error('WINDOWS_AUTHORITY_WORKER_WATCHDOG_V3_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(workerWatchdogV2.WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V2) !== JSON.stringify(['scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1','scripts/windows/start-mission-orchestrator-worker.ps1'])) throw new Error('WINDOWS_AUTHORITY_WORKER_WATCHDOG_V2_PATH_INVENTORY_MISMATCH');
@@ -140,6 +145,7 @@ export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
   const legacyBackendMigrationResult = legacyBackendMigration.analyzeWindowsAuthorityLegacyBackendMigrationReviewV1(input); if (legacyBackendMigrationResult.eligible) return legacyBackendMigrationResult;
   const ignitionConvergenceResult = ignitionConvergence.analyzeWindowsAuthorityIgnitionConvergenceReview(input); if (ignitionConvergenceResult.eligible) return ignitionConvergenceResult;
   const workerLogBoundsResult = workerLogBounds.analyzeWindowsAuthorityWorkerLogBoundsReviewV1(input); if (workerLogBoundsResult.eligible) return workerLogBoundsResult;
+  const missionWorkerCleanupResult = missionWorkerCleanup.analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input); if (missionWorkerCleanupResult.eligible) return missionWorkerCleanupResult;
   const workerWatchdogV4Result = workerWatchdogV4.analyzeWindowsAuthorityWorkerWatchdogReviewV4(input); if (workerWatchdogV4Result.eligible) return workerWatchdogV4Result;
   const workerWatchdogV3Result = workerWatchdogV3.analyzeWindowsAuthorityWorkerWatchdogReviewV3(input); if (workerWatchdogV3Result.eligible) return workerWatchdogV3Result;
   const workerWatchdogV2Result = workerWatchdogV2.analyzeWindowsAuthorityWorkerWatchdogReviewV2(input); if (workerWatchdogV2Result.eligible) return workerWatchdogV2Result;
