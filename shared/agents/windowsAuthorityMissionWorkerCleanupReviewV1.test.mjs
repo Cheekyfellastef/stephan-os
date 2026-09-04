@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -83,16 +83,15 @@ function Stop-NewlyStartedOwnedWorker {
 }
 `;
 
-const ORPHAN_SAFE_SOURCE = execFileSync(
-  'git',
-  ['cat-file', 'blob', ORPHAN_BLOB_SHA],
-  { encoding: 'utf8' },
+const ORPHAN_SAFE_SOURCE = readFileSync(
+  new URL('../../scripts/windows/restart-approved-stephanos-runtime.ps1', import.meta.url),
+  'utf8',
 );
 
 assert.equal(
   gitBlobSha(ORPHAN_SAFE_SOURCE),
   ORPHAN_BLOB_SHA,
-  'historical #2105 source fixture must remain the exact already-hardened blob',
+  'current protected source must remain the exact already-hardened #2105 blob',
 );
 
 function input(source = SAFE_EQUIVALENT_SOURCE, overrides = {}) {
