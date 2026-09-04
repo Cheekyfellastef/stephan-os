@@ -8,6 +8,27 @@ import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.j
 import { processNextGitHubInspectionItem } from './missionOrchestratorWorkerConsumer.js';
 
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
+
+function freshCodexCapacityRouting() {
+  const now = new Date();
+  return {
+    nowUtc: now.toISOString(),
+    codexStatus: {
+      schemaVersion: 'shared-agent-workspace-record.v1',
+      statusId: 'codex-capacity-current',
+      truthState: 'CURRENT',
+      meterTruthUsable: true,
+      observedAtUtc: new Date(now.getTime() - 1000).toISOString(),
+      remainingPercent: 90,
+      availability: 'AVAILABLE',
+      confidence: 'high',
+      naturalResetAtUtc: '',
+    },
+    githubLaneReceipt: null,
+    forgeLaneReceipt: null,
+    forgeSidecar: null,
+  };
+}
 async function runtime() {
   const parent = await mkdtemp(join(tmpdir(), 'mission-github-inspection-'));
   return { root: join(parent, 'state'), snapshotRoot: join(parent, 'proof'), queueRoot: join(parent, 'queue') };
@@ -28,6 +49,7 @@ async function stateAtChecks(options) {
 
 test('failed checks become repair state and start one bounded Codex round', async () => {
   const options = await runtime();
+  options.capacityRouting = freshCodexCapacityRouting();
   const atChecks = await stateAtChecks(options);
   await publishMissionWorkerAction(atChecks.state, options);
   const processed = await processNextGitHubInspectionItem({ ...options, inspectGitHub: async () => ({ execution: { success: true, commandOutputHash: 'c'.repeat(64), completedAt: new Date().toISOString() }, inspection: { prNumber: 1300, headSha: 'b'.repeat(40), prState: 'open', mergeable: true, checks: [{ name: 'Build', status: 'failure', required: true }] } }) });
