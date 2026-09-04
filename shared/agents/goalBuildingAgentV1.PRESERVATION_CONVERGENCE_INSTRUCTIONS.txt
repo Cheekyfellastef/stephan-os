@@ -1,0 +1,5 @@
+protected-main=1669c642cd73802beedad9c0b0caed4842d87d71
+protected-main-tree=8c622c2a2f341dac58b51e302f1f4eb3b8c797bc
+canonical-pr=2003
+canonical-branch=agent/goal-building-agent-v1
+method=two-parent forward preservation commit; main tree plus unchanged canonical PR-owned blobs; no force/rebase/reset
