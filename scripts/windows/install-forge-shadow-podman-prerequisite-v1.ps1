@@ -78,8 +78,14 @@ function Emit-Blocked([string]$Blocker, [hashtable]$Details = @{}) {
 }
 
 function Invoke-Fixed([string]$Exe, [string[]]$Arguments, [switch]$AllowFailure) {
-    $output = @(& $Exe @Arguments 2>&1 | ForEach-Object { [string]$_ })
-    $code = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& $Exe @Arguments 2>&1 | ForEach-Object { [string]$_ })
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if ($code -ne 0 -and -not $AllowFailure) {
         throw "Fixed executable failed with exit code $code"
     }
