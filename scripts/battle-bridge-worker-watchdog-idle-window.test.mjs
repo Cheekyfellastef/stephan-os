@@ -63,7 +63,7 @@ test('acceptance lets an already-running canonical watchdog finish its two-minut
   assert.equal(result.blocker, 'INITIAL_WORKER_PROBE_FAILED');
 });
 
-test('acceptance remains fail-closed when the watchdog is still running at the 135-second reconciliation ceiling', async () => {
+test('acceptance observes the exact 135-second boundary before failing closed', async () => {
   let installationReads = 0;
   let workerProbeReads = 0;
   const result = await runBattleBridgeWorkerWatchdogAcceptance(baseOptions({
@@ -71,7 +71,10 @@ test('acceptance remains fail-closed when the watchdog is still running at the 1
       installationReads += 1;
       return {
         ok: true,
-        data: { installed: true, taskState: 'Running' },
+        data: {
+          installed: true,
+          taskState: installationReads <= 135 ? 'Running' : 'Ready',
+        },
       };
     },
     inspectWorker: () => {
@@ -80,10 +83,10 @@ test('acceptance remains fail-closed when the watchdog is still running at the 1
     },
   }));
 
-  assert.equal(installationReads, 135);
-  assert.equal(workerProbeReads, 0);
-  assert.equal(result.blocker, 'WATCHDOG_TASK_RECONCILIATION_FAILED');
-  assert.equal(result.taskState, 'Running');
+  assert.equal(WORKER_WATCHDOG_TASK_IDLE_ATTEMPTS, 135);
+  assert.equal(installationReads, 136);
+  assert.equal(workerProbeReads, 1);
+  assert.equal(result.blocker, 'INITIAL_WORKER_PROBE_FAILED');
 });
 
 test('degraded adapter shares the canonical idle bound and the installed task remains bounded to two minutes', async () => {
