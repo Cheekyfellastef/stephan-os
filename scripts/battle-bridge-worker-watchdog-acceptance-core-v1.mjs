@@ -26,7 +26,11 @@ const RECOVERY_STATUS_ATTEMPTS = 30;
 const RECOVERY_STATUS_INTERVAL_MS = 1_000;
 const FINAL_WORKER_PROBE_ATTEMPTS = 10;
 const FINAL_WORKER_PROBE_INTERVAL_MS = 1_000;
-const TASK_IDLE_ATTEMPTS = 30;
+// The installed watchdog task has a fixed two-minute execution limit. Allow
+// an already-running canonical instance to finish, plus a fixed 15-second
+// scheduling margin, before failing reconciliation closed.
+export const WORKER_WATCHDOG_TASK_IDLE_ATTEMPTS = 135;
+const TASK_IDLE_ATTEMPTS = WORKER_WATCHDOG_TASK_IDLE_ATTEMPTS;
 const TASK_IDLE_INTERVAL_MS = 1_000;
 const HEARTBEAT_MAX_AGE_MS = 120_000;
 
