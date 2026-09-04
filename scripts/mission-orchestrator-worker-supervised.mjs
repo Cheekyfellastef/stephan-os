@@ -274,6 +274,7 @@ export async function runSupervisedMissionWorker({
   let repositoryDriftObserved = false;
   let consecutiveProgressRechecks = 0;
   let mailboxBootstrapPending = true;
+  let activeActionGrant;
 
   do {
     const checkedAt = now();
@@ -337,9 +338,15 @@ export async function runSupervisedMissionWorker({
     let tickMadeProgress = false;
 
     const queueHeartbeat = (lastTickVerdictValue, timestampUtc = now()) => {
+      const heartbeatActionGrant = activeActionGrant;
       heartbeatWrites = heartbeatWrites.then(async () => {
         try {
-          await writeHeartbeat({ env, timestampUtc, lastTickVerdict: lastTickVerdictValue });
+          await writeHeartbeat({
+            env,
+            timestampUtc,
+            lastTickVerdict: lastTickVerdictValue,
+            activeActionGrant: heartbeatActionGrant,
+          });
         } catch (error) {
           heartbeatWriteFailed = true;
           stderr.write(`${JSON.stringify({ checkedAt: timestampUtc, finalVerdict: 'MISSION_WORKER_HEARTBEAT_WRITE_FAILED', error: error.message })}\n`);
@@ -387,15 +394,22 @@ export async function runSupervisedMissionWorker({
         lastControllerLogSignature = controllerLogSignature;
       }
       if (controller?.allowWorkerTick === true) {
-        const capacityRoute = boundedText(ownData(controller?.workerActionGrant, 'capacityRoute'), 48);
+        const actionGrant = controller.workerActionGrant;
+        const capacityRoute = boundedText(ownData(actionGrant, 'capacityRoute'), 48);
         const capacityRouting = capacityRoute
           ? await loadCapacityRoutingInput(capacityRoutingOptions)
           : undefined;
-        const result = await runTick({
-          env,
-          actionGrant: controller.workerActionGrant,
-          capacityRouting,
-        });
+        activeActionGrant = actionGrant;
+        let result;
+        try {
+          result = await runTick({
+            env,
+            actionGrant,
+            capacityRouting,
+          });
+        } finally {
+          activeActionGrant = undefined;
+        }
         tickMadeProgress = missionWorkerTickMadeProgress(result);
         const tickLog = createMissionWorkerTickLogProjection(result, checkedAt);
         const tickLogSignature = stableLogSignature(tickLog);
@@ -405,6 +419,7 @@ export async function runSupervisedMissionWorker({
         }
       }
     } catch (error) {
+      activeActionGrant = undefined;
       lastTickVerdict = 'MISSION_WORKER_TICK_FAILED';
       stderr.write(`${JSON.stringify({ checkedAt, finalVerdict: lastTickVerdict, error: error.message })}\n`);
       if (once) exitCode = 1;
