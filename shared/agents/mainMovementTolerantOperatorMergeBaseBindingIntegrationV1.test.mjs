@@ -18,7 +18,17 @@ test('operator merge base binding consumes main-movement-tolerant authorization 
   );
   assert.match(
     baseBindingSource,
-    /mainMovementTolerant|evaluateMainMovementTolerantOperatorAuthorizationV1/,
-    'protected merge base binding must consume the canonical main-movement-tolerant authorization policy rather than treating expected_base as operator-judgment freshness',
+    /evaluateMainMovementTolerantOperatorAuthorizationV1\s*\(/,
+    'protected merge base binding must actually invoke the canonical evaluator, not merely mention or import it',
+  );
+  assert.match(
+    baseBindingSource,
+    /authorizationReusable|protectedExecutionReady|MAIN_MOVEMENT_TOLERANT_AUTHORIZATION_VERDICT/,
+    'protected merge base binding must consume the evaluator result before treating moved-main authorization as admissible',
+  );
+  assert.doesNotMatch(
+    baseBindingSource,
+    /reusableAcrossHeads\s*[:=]\s*true|reusableAcrossBases\s*[:=]\s*true/,
+    'integration must not globally weaken exact-head or exact-base receipt binding',
   );
 });
