@@ -31,6 +31,10 @@ export function deriveMailboxCapacityEvidenceFromScheduler({
     observedAtUtc: text(observedAtUtc),
     blocker,
     mutationAuthority: false,
+    sourceMutationAuthority: false,
+    runtimeMutationAuthority: false,
+    approvalAuthority: false,
+    protectedMergeAuthority: false,
   });
 
   const expectedHead = text(currentHead).toLowerCase();
@@ -74,5 +78,9 @@ export function deriveMailboxCapacityEvidenceFromScheduler({
     availableExecutorSlots,
     blocker: '',
     mutationAuthority: false,
+    sourceMutationAuthority: false,
+    runtimeMutationAuthority: false,
+    approvalAuthority: false,
+    protectedMergeAuthority: false,
   });
 }
