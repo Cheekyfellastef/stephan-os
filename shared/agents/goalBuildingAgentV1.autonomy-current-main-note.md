@@ -1,0 +1,1 @@
+Automatic goal-building source remains gated on preservation convergence to protected main 1669c642cd73802beedad9c0b0caed4842d87d71 and fresh hosted proof. This note grants no merge or runtime authority.
