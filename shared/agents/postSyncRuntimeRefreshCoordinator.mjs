@@ -57,6 +57,8 @@ const NATURAL_EXACT = new Set([
   'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
   'scripts/windows/restart-approved-stephanos-runtime.ps1',
   'windows/Launch-Stephanos-Local.ps1',
+  'scripts/windows/install-forge-shadow-podman-prerequisite-v1.ps1',
+  'scripts/windows/install-forge-shadow-podman-v1.ps1',
 ]);
 
 const NATURAL_PREFIXES = Object.freeze([
