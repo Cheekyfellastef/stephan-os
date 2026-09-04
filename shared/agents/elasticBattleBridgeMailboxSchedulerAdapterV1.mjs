@@ -32,18 +32,12 @@ export function selectElasticBattleBridgeMailboxBatchFromScheduler(comments = []
     staleAfterMs,
   });
 
-  if (!capacity.ok || !resources.ok) {
+  if (!resources.ok) {
     return selectBattleBridgeGitHubCommandBatch(comments, {
       ...legacyOptions,
+      maxBatch: 1,
       now,
       consumedRequestIds,
-      elasticCapacityEvidence: {
-        ok: false,
-        exactSourceBound: false,
-        provenWidth: 1,
-        observedAtUtc,
-      },
-      elasticCommandMetadata: {},
     });
   }
 
@@ -56,11 +50,20 @@ export function selectElasticBattleBridgeMailboxBatchFromScheduler(comments = []
     });
   }
 
+  const capacityEvidence = capacity.ok
+    ? capacity
+    : Object.freeze({
+      ok: false,
+      exactSourceBound: false,
+      provenWidth: 1,
+      observedAtUtc,
+    });
+
   return selectBattleBridgeGitHubCommandBatch(comments, {
     ...legacyOptions,
     now,
     consumedRequestIds,
-    elasticCapacityEvidence: capacity,
+    elasticCapacityEvidence: capacityEvidence,
     elasticCapacityStaleAfterMs: staleAfterMs,
     elasticCommandMetadata: Object.freeze(metadata),
   });
