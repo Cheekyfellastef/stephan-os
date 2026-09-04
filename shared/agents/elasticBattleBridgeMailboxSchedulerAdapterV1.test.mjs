@@ -6,6 +6,9 @@ import { selectElasticBattleBridgeMailboxBatchFromScheduler } from './elasticBat
 
 const HEAD = 'bff514af59d7580917a665a06140a8eaebca2add';
 const NOW = new Date('2026-09-04T16:40:00Z');
+const OWNED_REQUEST = 'req-owned-001';
+const REQUEST_A = 'req-a-001';
+const REQUEST_B = 'req-b-001';
 
 function command(requestId) {
   return {
@@ -51,9 +54,9 @@ function snapshot(overrides = {}) {
     mutationAuthority: false,
     activeResourceIds: ['file:owned'],
     commandClaims: [
-      { requestId: 'req-owned', resourceIds: ['file:owned'] },
-      { requestId: 'req-a', resourceIds: ['file:a'] },
-      { requestId: 'req-b', resourceIds: ['file:b'] },
+      { requestId: OWNED_REQUEST, resourceIds: ['file:owned'] },
+      { requestId: REQUEST_A, resourceIds: ['file:a'] },
+      { requestId: REQUEST_B, resourceIds: ['file:b'] },
     ],
     ...overrides,
   };
@@ -61,22 +64,22 @@ function snapshot(overrides = {}) {
 
 test('uses scheduler width and parks commands conflicting with active scheduler resources', () => {
   const result = selectElasticBattleBridgeMailboxBatchFromScheduler([
-    comment('req-owned', 1),
-    comment('req-a', 2),
-    comment('req-b', 3),
+    comment(OWNED_REQUEST, 1),
+    comment(REQUEST_A, 2),
+    comment(REQUEST_B, 3),
   ], { schedulerCapacity: capacity(), schedulerSnapshot: snapshot(), currentHead: HEAD, now: NOW, maxBatch: 4 });
 
   assert.equal(result.ok, true);
-  assert.deepEqual(result.commands.map((entry) => entry.command.requestId), ['req-a', 'req-b']);
+  assert.deepEqual(result.commands.map((entry) => entry.command.requestId), [REQUEST_A, REQUEST_B]);
   assert.equal(result.elasticDispatch.width, 3);
-  assert.equal(result.elasticDispatch.parked.some((entry) => entry.requestId === 'req-owned'), true);
+  assert.equal(result.elasticDispatch.parked.some((entry) => entry.requestId === OWNED_REQUEST), true);
   assert.equal(result.elasticDispatch.duplicateMailboxAllowed, false);
 });
 
 test('invalid capacity truth collapses elastic admission to width one', () => {
   const result = selectElasticBattleBridgeMailboxBatchFromScheduler([
-    comment('req-a', 2),
-    comment('req-b', 3),
+    comment(REQUEST_A, 2),
+    comment(REQUEST_B, 3),
   ], { schedulerCapacity: capacity({ status: 'DEGRADED_CAPACITY' }), schedulerSnapshot: snapshot(), currentHead: HEAD, now: NOW, maxBatch: 4 });
   assert.equal(result.commands.length, 1);
   assert.equal(result.elasticDispatch.width, 1);
@@ -85,8 +88,8 @@ test('invalid capacity truth collapses elastic admission to width one', () => {
 
 test('invalid resource truth falls back to canonical single-command mailbox', () => {
   const result = selectElasticBattleBridgeMailboxBatchFromScheduler([
-    comment('req-a', 2),
-    comment('req-b', 3),
+    comment(REQUEST_A, 2),
+    comment(REQUEST_B, 3),
   ], { schedulerCapacity: capacity(), schedulerSnapshot: snapshot({ sourceHead: '0'.repeat(40) }), currentHead: HEAD, now: NOW, maxBatch: 4 });
   assert.equal(result.commands.length, 1);
   assert.equal(Object.hasOwn(result, 'elasticDispatch'), false);
