@@ -18,6 +18,7 @@ on:
       - 'scripts/battle-bridge-recovery-mesh.mjs'
       - 'scripts/battle-bridge-recovery-mesh.test.mjs'
       - 'scripts/battle-bridge-recovery-mesh-installer.test.mjs'
+      - 'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs'
       - 'scripts/battle-bridge-backend-freshness-probe.mjs'
       - 'scripts/battle-bridge-backend-freshness-probe.test.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.mjs'
@@ -26,6 +27,7 @@ on:
       - 'scripts/battle-bridge-outbound-health-beacon.test.mjs'
       - 'scripts/battle-bridge-control-plane-self-repair.test.mjs'
       - 'scripts/windows/*battle-bridge-recovery-mesh.ps1'
+      - 'scripts/windows/*battle-bridge-recovery-lifeboat-v1.ps1'
       - 'scripts/windows/*battle-bridge-outbound-health-beacon.ps1'
       - 'scripts/windows/run-stephanos-scheduled-task-windowless.vbs'
       - 'scripts/windows/request-battle-bridge-recovery.ps1'
@@ -88,6 +90,7 @@ jobs:
           scripts/battle-bridge-backend-freshness-probe.test.mjs
           scripts/battle-bridge-recovery-mesh.test.mjs
           scripts/battle-bridge-recovery-mesh-installer.test.mjs
+          scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs
           scripts/battle-bridge-github-command-mailbox.test.mjs
           scripts/battle-bridge-outbound-health-beacon.test.mjs
           scripts/battle-bridge-control-plane-self-repair.test.mjs

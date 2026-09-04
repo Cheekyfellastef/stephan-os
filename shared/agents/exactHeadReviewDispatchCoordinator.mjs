@@ -138,6 +138,33 @@ export function parseOptionalManualPrNumber(value) {
   return parsed;
 }
 
+export function explicitOwnerExactHeadReviewRequest({ event = {}, laneAuthorityLogin = '' } = {}) {
+  const authority = normalizedLogin(laneAuthorityLogin);
+  const comment = event?.comment && typeof event.comment === 'object' ? event.comment : {};
+  const issue = event?.issue && typeof event.issue === 'object' ? event.issue : {};
+  const prNumber = Number(issue?.number);
+  const author = normalizedLogin(comment?.user?.login);
+  const authorType = normalizedLogin(comment?.user?.type);
+  const body = commentBody(comment);
+  const match = body.match(/^\s*\/stephanos-review\s+([0-9a-f]{40})(?=\s|$)/i);
+  const headSha = match?.[1]?.toLowerCase() || '';
+  const authorized = Boolean(
+    authority
+    && issue?.pull_request
+    && Number.isSafeInteger(prNumber)
+    && prNumber > 0
+    && author === authority
+    && authorType === 'user'
+    && FULL_SHA_PATTERN.test(headSha)
+  );
+  return Object.freeze({
+    authorized,
+    prNumber: authorized ? prNumber : null,
+    headSha: authorized ? headSha : '',
+    commentId: authorized && Number.isSafeInteger(Number(comment?.id)) ? Number(comment.id) : null,
+  });
+}
+
 export function candidateReviewPrNumbers({ event = {}, manualPrNumber = null } = {}) {
   if (manualPrNumber !== null && manualPrNumber !== undefined) {
     const parsed = Number(manualPrNumber);
@@ -472,15 +499,16 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
   }
 
   const canonicalConfirmed = input.canonicalLaneConfirmed === true;
+  const ownerExactHeadReviewRequested = input.ownerExactHeadReviewRequested === true;
   const sameRepository = pr.sameRepository === true;
   const open = text(pr.state).toLowerCase() === 'open';
   const baseRef = text(pr.baseRef ?? pr.base_ref);
-  if (!canonicalConfirmed || !sameRepository || !open || baseRef !== 'main') {
+  if ((!canonicalConfirmed && !ownerExactHeadReviewRequested) || !sameRepository || !open || baseRef !== 'main') {
     return Object.freeze({
       ...base,
       decision: EXACT_HEAD_REVIEW_DECISION.INELIGIBLE,
-      reason: !canonicalConfirmed
-        ? 'canonical implementation lane evidence is missing'
+      reason: (!canonicalConfirmed && !ownerExactHeadReviewRequested)
+        ? 'canonical implementation lane evidence or exact owner review request is missing'
         : (!sameRepository ? 'cross-repository pull requests are not eligible' : (!open ? 'pull request is not open' : 'pull request does not target main')),
     });
   }
