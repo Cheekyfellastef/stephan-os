@@ -68,6 +68,7 @@ test('WSL2 source route is fixed, source-bound, typed and explicitly non-rebooti
   assert.match(source, /scripts\/windows\/enable-forge-wsl2-prerequisite-v1\.ps1/);
   assert.match(source, /workingBlob === identity\.committedBlob/);
   assert.match(source, /receipt\.rebootPerformed !== false/);
+  assert.match(source, /receipt\.githubCredentialUsed !== false/);
   assert.match(source, /FORGE_WSL2_REBOOT_REQUIRED/);
   assert.match(wslScript, /Microsoft-Windows-Subsystem-Linux/);
   assert.match(wslScript, /VirtualMachinePlatform/);
@@ -78,12 +79,11 @@ test('WSL2 source route is fixed, source-bound, typed and explicitly non-rebooti
   assert.doesNotMatch(wslScript, /Restart-Computer|shutdown\.exe/i);
 });
 
-test('WSL2 wrapper grants no generic command, credential or provider surface', () => {
+test('WSL2 wrapper grants no generic command, credential acquisition or provider surface', () => {
   for (const forbidden of [
     /Invoke-Expression/i,
     /child_process[^\n]*exec\b/i,
-    /credential/i,
-    /token/i,
+    /resolveGithubTokenConfig|GITHUB_TOKEN|GH_TOKEN|credential-manager|gh(?:\.exe)?\s+auth/i,
     /providerChangeAllowed\s*[:=]\s*true/i,
     /mergeAuthority\s*[:=]\s*true/i,
   ]) {
