@@ -8,9 +8,9 @@ async function source() {
   return readFile(sourceUrl, 'utf8');
 }
 
-test('entry keeps legacy pull_request_target on the existing specialist reviewer unchanged', async () => {
+test('entry routes through the composed OpenClaw specialist reviewer while preserving the legacy delegate', async () => {
   const text = await source();
-  assert.match(text, /const REVIEW_WRAPPER = 'scripts\/independent-merge-security-review-with-windows-specialist-v1\.mjs';/);
+  assert.match(text, /const REVIEW_WRAPPER = 'scripts\/independent-merge-security-review-with-openclaw-specialist-v1\.mjs';/);
   assert.match(text, /if \(eventName === 'pull_request_target'\) \{[\s\S]*?const child = launch\(process\.env\);/);
   assert.match(text, /spawnSync\(process\.execPath, \[REVIEW_WRAPPER\],[\s\S]*?shell: false,[\s\S]*?env,/);
   assert.doesNotMatch(text, /independent-merge-security-review-v2\.mjs/);

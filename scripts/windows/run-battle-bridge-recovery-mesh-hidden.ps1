@@ -13,6 +13,61 @@ if ([System.IO.Path]::GetFullPath($repoRoot) -ne $expectedRepoRoot) { throw "Rec
 $runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-recovery-mesh.mjs')).Path
 $nodeExecutable = 'C:\Program Files\nodejs\node.exe'
 if (-not (Test-Path -LiteralPath $nodeExecutable -PathType Leaf)) { throw "Canonical Node executable missing: $nodeExecutable" }
+$workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'))
+$launchStatusPath = Join-Path $workspaceRoot 'status\battle-bridge-recovery-mesh-launch-current.json'
+
+function Write-RecoveryMeshLaunchStatus {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet(
+            'RECOVERY_MESH_HIDDEN_WRAPPER_STARTED',
+            'RECOVERY_MESH_MUTEX_BUSY',
+            'RECOVERY_MESH_STALE_LOCK_RECLAIM_FAILED',
+            'RECOVERY_MESH_RUNNER_STARTING',
+            'RECOVERY_MESH_RUNNER_COMPLETED',
+            'RECOVERY_MESH_RUNNER_FAILED',
+            'RECOVERY_MESH_HIDDEN_WRAPPER_FAILED'
+        )]
+        [string]$Classification,
+        [bool]$RunnerStarted = $false,
+        [bool]$RunnerCompleted = $false,
+        [int]$RunnerExitCode = -1,
+        [bool]$RunnerResultParsed = $false,
+        [string]$RunnerClassification = ''
+    )
+
+    $statusDirectory = Split-Path -Parent $launchStatusPath
+    New-Item -ItemType Directory -Path $statusDirectory -Force | Out-Null
+    $temporaryPath = "${launchStatusPath}.$PID.tmp"
+    $isBlocked = $Classification -match '(?:FAILED|BUSY|BLOCKED)'
+    $record = [ordered]@{
+        schemaVersion = 'stephanos.battle-bridge-recovery-mesh-launch.v1'
+        timestampUtc = (Get-Date).ToUniversalTime().ToString('o')
+        status = $Classification
+        classification = $Classification
+        blocker = if ($isBlocked) { $Classification } else { '' }
+        hiddenWrapperStarted = $true
+        runnerStarted = $RunnerStarted
+        runnerCompleted = $RunnerCompleted
+        runnerExitCode = $RunnerExitCode
+        runnerResultParsed = $RunnerResultParsed
+        runnerClassification = $RunnerClassification
+        visiblePowerShellRequired = $false
+        arbitraryShellAllowed = $false
+        arbitraryPowerShellAllowed = $false
+        sourceMutationAllowed = $false
+        pcRestartAllowed = $false
+    }
+    $record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporaryPath -Encoding UTF8
+    Move-Item -LiteralPath $temporaryPath -Destination $launchStatusPath -Force
+}
+
+trap {
+    try { Write-RecoveryMeshLaunchStatus -Classification 'RECOVERY_MESH_HIDDEN_WRAPPER_FAILED' } catch {}
+    exit 2
+}
+
+Write-RecoveryMeshLaunchStatus -Classification 'RECOVERY_MESH_HIDDEN_WRAPPER_STARTED'
 
 if (-not ('StephanosRecoveryMeshLauncherPathIdentity' -as [type])) {
     Add-Type -TypeDefinition @'
@@ -102,7 +157,10 @@ $mutex = New-Object System.Threading.Mutex($false, 'Local\StephanosBattleBridgeR
 $mutexHeld = $false
 try {
     try { $mutexHeld = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $mutexHeld = $true }
-    if (-not $mutexHeld) { exit 3 }
+    if (-not $mutexHeld) {
+        Write-RecoveryMeshLaunchStatus -Classification 'RECOVERY_MESH_MUTEX_BUSY'
+        exit 3
+    }
 
     # Holding the OS-owned named mutex proves that no recovery runner owns the
     # advisory Node lock. Reclaim it regardless of PID reuse.
@@ -111,7 +169,7 @@ try {
     if (Test-Path -LiteralPath $lockPath -PathType Leaf) {
         try {
             $lockRecord = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
-            if ([int]$lockRecord.pid -le 0 -or [string]$lockRecord.token -notmatch '^[a-f0-9-]{36}$') { exit 4 }
+            if ([int]$lockRecord.pid -le 0 -or [string]$lockRecord.token -notmatch '^[a-f0-9-]{36}$') { throw 'RECOVERY_LOCK_RECORD_INVALID' }
             $lockIdentity = [StephanosRecoveryMeshLauncherPathIdentity]::Read($lockPath, $true)
             Assert-RecoveryLockPathBaseline -Baseline $lockPathBaseline
             $lockHandle = [StephanosRecoveryMeshLauncherPathIdentity]::OpenVerifiedForDelete($lockPath, $lockIdentity)
@@ -119,13 +177,40 @@ try {
                 Assert-RecoveryLockPathBaseline -Baseline $lockPathBaseline
                 [StephanosRecoveryMeshLauncherPathIdentity]::DeleteByHandle($lockHandle)
             } finally { $lockHandle.Dispose() }
-        } catch { exit 4 }
+        } catch {
+            Write-RecoveryMeshLaunchStatus -Classification 'RECOVERY_MESH_STALE_LOCK_RECLAIM_FAILED'
+            exit 4
+        }
     }
 
     $env:STEPHANOS_RECOVERY_MESH_MUTEX_HELD = '1'
     $env:STEPHANOS_RECOVERY_MESH_LAUNCHER_PID = [string]$PID
-    & $nodeExecutable $runnerPath *> $null
-    exit $LASTEXITCODE
+    Write-RecoveryMeshLaunchStatus -Classification 'RECOVERY_MESH_RUNNER_STARTING' -RunnerStarted $true
+    $runnerOutput = @(& $nodeExecutable $runnerPath 2>&1)
+    $runnerExitCode = $LASTEXITCODE
+    $runnerText = ($runnerOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+    $runnerResult = $null
+    try { $runnerResult = $runnerText | ConvertFrom-Json } catch { $runnerResult = $null }
+    $runnerResultParsed = $null -ne $runnerResult
+    $runnerClassification = if ($runnerResultParsed) { [string]$runnerResult.classification } else { '' }
+    if ($runnerResultParsed -and $runnerExitCode -eq 0) {
+        Write-RecoveryMeshLaunchStatus `
+            -Classification 'RECOVERY_MESH_RUNNER_COMPLETED' `
+            -RunnerStarted $true `
+            -RunnerCompleted $true `
+            -RunnerExitCode $runnerExitCode `
+            -RunnerResultParsed $true `
+            -RunnerClassification $runnerClassification
+    } else {
+        Write-RecoveryMeshLaunchStatus `
+            -Classification 'RECOVERY_MESH_RUNNER_FAILED' `
+            -RunnerStarted $true `
+            -RunnerCompleted $true `
+            -RunnerExitCode $runnerExitCode `
+            -RunnerResultParsed $runnerResultParsed `
+            -RunnerClassification $runnerClassification
+    }
+    exit $runnerExitCode
 } finally {
     if ($mutexHeld) { $mutex.ReleaseMutex() }
     $mutex.Dispose()
