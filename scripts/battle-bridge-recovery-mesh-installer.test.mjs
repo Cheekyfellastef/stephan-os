@@ -67,11 +67,14 @@ test('windowless launcher pins recovery mesh to one fixed source runner', async 
   assert.match(hidden, /RECOVERY_LOCK_MULTIPLE_LINKS_REJECTED/);
   assert.doesNotMatch(hidden, /\[System\.IO\.File\]::Delete\(\$lockPath\)/);
   assert.match(verifier, /Mutex\]::OpenExisting\('Local\\StephanosBattleBridgeRecoveryMeshV1'\)/);
-  assert.match(verifier, /node\.ParentProcessId -ne \$LauncherPid/);
+  assert.match(verifier, /node\.ParentProcessId -eq \$LauncherPid/);
   assert.match(verifier, /C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe/);
   assert.match(verifier, /launcher\.ExecutablePath/);
   assert.match(verifier, /node\.ExecutablePath/);
-  assert.match(verifier, /launcher\.CommandLine, \$expectedCommandLine/);
+  assert.match(verifier, /\$expectedCommandLine = '\"\{0\}\"  -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"\{1\}\"'/);
+  assert.match(verifier, /\$launcherCommandLineMatches = \$launcher -and \[string\]::Equals\(\[string\]\$launcher\.CommandLine, \$expectedCommandLine/);
+  assert.match(verifier, /\$processLineageMatches = \[int\]\$verifier\.ParentProcessId -eq \$NodePid -and \[int\]\$node\.ParentProcessId -eq \$LauncherPid/);
+  assert.match(verifier, /if \(-not \$processLineageMatches -or -not \$nodeExecutableMatches -or -not \$launcherExecutableMatches -or -not \$launcherCommandLineMatches\)/);
   assert.doesNotMatch(verifier, /CommandLine -notmatch/);
   assert.match(verifier, /RECOVERY_MESH_MUTEX_NOT_OWNED_BY_LAUNCHER/);
   assert.doesNotMatch(hidden, /["']-Command["']|Invoke-Expression|Start-Process/);
@@ -136,8 +139,9 @@ test('canonical task definition beside an unrelated listener cannot establish ba
   assert.match(probe, /BACKEND_LISTENER_EXECUTABLE_FOREIGN/);
   assert.match(probe, /function Test-CanonicalBackendCommandLine/);
   assert.match(probe, /-replace '\\s\+', ' '/);
-  assert.match(probe, /'node stephanos-server\/server\.js'/);
-  assert.match(probe, /'node\.exe stephanos-server\/server\.js'/);
+  assert.match(probe, /STEPHANOS_BACKEND_BOOTSTRAP_BASE64/);
+  assert.match(probe, /--input-type=module --eval/);
+  assert.match(probe, /Test-CanonicalBackendCommandLine -CommandLine \(\[string\]\$process\.CommandLine\) -ExpectedSourceHead \$ExpectedSourceHead/);
   assert.match(probe, /BACKEND_LISTENER_COMMAND_FOREIGN/);
   assert.match(probe, /receipt\.pid -eq \$listenerAfter\.pid/);
   assert.doesNotMatch(probe, /CommandLine -match|Invoke-Expression/i);
@@ -210,18 +214,22 @@ test('uninstall removes only the coordinator and preserves every underlying serv
   assert.doesNotMatch(uninstall, /Remove-Item|git\s+|Stop-Process|Restart-Computer/i);
 });
 
-test('exact-head backend authority tolerates only canonical unstaged runtime-memory dirt', async () => {
+test('exact-head backend authority tolerates only canonical unstaged runtime-memory and UI-dist dirt', async () => {
   const [starter, probe] = await Promise.all([
     source('start-stephanos-backend.ps1'),
     source('probe-battle-bridge-recovery-mesh.ps1'),
   ]);
   assert.match(starter, /status '--porcelain=v1' '--untracked-files=no'/);
   assert.match(starter, /\$runtimeMemoryPath = 'stephanos-server\/data\/memory\/durable-memory\.json'/);
+  assert.match(starter, /\$runtimeDistPrefix = 'apps\/stephanos\/dist\/'/);
   assert.match(starter, /\$status -eq ' M' -and \$path -eq \$runtimeMemoryPath/);
+  assert.match(starter, /function Test-RuntimeUiDistStatus[\s\S]*\$Status -eq ' M' -or \$Status -eq ' D'/);
+  assert.match(starter, /Test-RuntimeUiDistStatus -Status \$status[\s\S]*\$path\.StartsWith\(\$runtimeDistPrefix, \[System\.StringComparison\]::Ordinal\)/);
   assert.match(starter, /Backend startup requires source-tracked files to be unmodified at exact head/);
-  assert.match(starter, /trackedWorktreeClean = -not \$RuntimeMemoryDirty/);
+  assert.match(starter, /trackedWorktreeClean = -not \(\$RuntimeMemoryDirty -or \$RuntimeDistDirty\)/);
   assert.match(starter, /sourceWorktreeClean = \$true/);
   assert.match(starter, /runtimeMemoryDirtTolerated = \$RuntimeMemoryDirty/);
+  assert.match(starter, /runtimeDistDirtTolerated = \$RuntimeDistDirty/);
   assert.match(probe, /function Get-CanonicalTrackedWorktreeAssessment/);
   assert.match(probe, /function Assert-CanonicalSourceWorktreeClean/);
   assert.equal((probe.match(/Assert-CanonicalSourceWorktreeClean -GitExecutable/g) || []).length, 2);

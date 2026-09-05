@@ -1,9 +1,15 @@
 #!/usr/bin/env node
 
+import fs from 'node:fs';
+
 import {
   INDEPENDENT_REVIEW_RETRY_DECISION,
   planIndependentReviewRetry,
 } from '../shared/agents/independentReviewRetryPlanner.mjs';
+import {
+  buildIndependentReviewRunQueryV1,
+  selectIndependentReviewRunCandidatesV1,
+} from '../shared/agents/independentReviewRunDiscoveryV1.mjs';
 import {
   INDEPENDENT_REVIEW_WORKFLOW_NAME,
   INDEPENDENT_REVIEW_WORKFLOW_PATH,
@@ -21,6 +27,12 @@ function text(value) {
 function positiveInteger(value) {
   const number = Number(value);
   return Number.isSafeInteger(number) && number > 0 ? number : 0;
+}
+
+function appendOutput(name, value) {
+  const outputPath = text(process.env.GITHUB_OUTPUT);
+  if (!outputPath) return;
+  fs.appendFileSync(outputPath, `${name}=${String(value ?? '').replace(/\r?\n/g, ' ')}\n`);
 }
 
 function repositoryParts(repository) {
@@ -118,10 +130,11 @@ async function loadCanonicalWorkflow(owner, repo) {
   };
 }
 
-async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, expectedHead) {
-  const encodedHead = encodeURIComponent(expectedHead);
-  const path = `/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?event=pull_request_target&head_sha=${encodedHead}&per_page=100&page=1`;
-  const payload = await githubRequest(path);
+async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, headRef, expectedHead, expectedBase) {
+  const query = buildIndependentReviewRunQueryV1({ workflowId, expectedHead });
+  const trustedQueryPrefix = `/actions/workflows/${workflowId}/runs?event=pull_request_target`;
+  if (!query.startsWith(trustedQueryPrefix)) throw new Error('review-run discovery escaped the trusted workflow/event route');
+  const payload = await githubRequest(`/repos/${owner}/${repo}${query}`);
   const listed = payload?.workflow_runs;
   if (!Array.isArray(listed)) {
     throw new Error('bounded exact-head review-run payload is not workflow_runs');
@@ -129,14 +142,13 @@ async function loadRecentReviewRuns(owner, repo, workflowId, prNumber, expectedH
   if (positiveInteger(payload?.total_count) > listed.length) {
     throw new Error('bounded exact-head review-run query exceeded 100 records');
   }
-  const candidates = listed
-    .filter((run) => (
-      text(run?.head_sha).toLowerCase() === expectedHead
-      && Array.isArray(run?.pull_requests)
-      && run.pull_requests.some((pr) => positiveInteger(pr?.number) === prNumber)
-    ))
-    .sort((left, right) => positiveInteger(right?.id) - positiveInteger(left?.id))
-    .slice(0, MAX_RUN_DETAILS);
+  const candidates = selectIndependentReviewRunCandidatesV1({
+    runs: listed,
+    prNumber,
+    headRef,
+    expectedHead,
+    expectedBase,
+  }).slice(0, MAX_RUN_DETAILS);
   const details = [];
   for (const candidate of candidates) {
     details.push(mapRun(await githubRequest(`/repos/${owner}/${repo}/actions/runs/${positiveInteger(candidate.id)}`)));
@@ -179,7 +191,15 @@ async function main() {
     throw new Error('pull-request base is not exact current main');
   }
 
-  const runs = await loadRecentReviewRuns(owner, repo, workflow.id, prNumber, expectedHead);
+  const runs = await loadRecentReviewRuns(
+    owner,
+    repo,
+    workflow.id,
+    prNumber,
+    pr.headRef,
+    expectedHead,
+    pr.baseSha,
+  );
   const plan = planIndependentReviewRetry({ repository, workflow, pr, runs });
   console.log(`INDEPENDENT_REVIEW_RETRY_DECISION=${plan.decision}`);
   console.log(`INDEPENDENT_REVIEW_RETRY_PR=${plan.prNumber ?? ''}`);
@@ -188,19 +208,26 @@ async function main() {
   console.log(`INDEPENDENT_REVIEW_RETRY_RUN_ID=${plan.runId ?? ''}`);
   console.log(`INDEPENDENT_REVIEW_RETRY_ATTEMPT=${plan.runAttempt ?? ''}`);
   console.log(`INDEPENDENT_REVIEW_RETRY_REASON=${plan.reason}`);
+  appendOutput('decision', plan.decision);
+  appendOutput('exact_head', plan.exactHead);
+  appendOutput('exact_base', plan.exactBase);
+  appendOutput('workflow_id', plan.workflowId ?? '');
 
   if (plan.decision === INDEPENDENT_REVIEW_RETRY_DECISION.RERUN_FAILED_JOBS) {
     await githubRequest(`/repos/${owner}/${repo}/actions/runs/${plan.runId}/rerun-failed-jobs`, {
       method: 'POST',
     });
     console.log('INDEPENDENT_REVIEW_RETRY_REQUESTED=true');
+    appendOutput('mutation', 'rerun-failed-jobs');
     return;
   }
   if ([
     INDEPENDENT_REVIEW_RETRY_DECISION.WAIT_RUNNING,
     INDEPENDENT_REVIEW_RETRY_DECISION.ALREADY_SUCCESSFUL,
+    INDEPENDENT_REVIEW_RETRY_DECISION.NO_MATCHING_RUN,
   ].includes(plan.decision)) {
     console.log('INDEPENDENT_REVIEW_RETRY_REQUESTED=false');
+    appendOutput('mutation', 'none');
     return;
   }
   process.exitCode = 2;

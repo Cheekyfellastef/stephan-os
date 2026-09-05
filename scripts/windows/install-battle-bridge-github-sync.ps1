@@ -29,7 +29,7 @@ $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $intervalTrigger = New-ScheduledTaskTrigger `
     -Once `
     -At (Get-Date).AddMinutes(1) `
-    -RepetitionInterval (New-TimeSpan -Minutes 15) `
+    -RepetitionInterval (New-TimeSpan -Minutes 1) `
     -RepetitionDuration (New-TimeSpan -Days 3650)
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet `
@@ -40,14 +40,14 @@ $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 
-if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded unattended GitHub sync task')) {
+if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded near-real-time unattended GitHub sync task')) {
     Register-ScheduledTask `
         -TaskName $taskName `
         -Action $action `
         -Trigger @($logonTrigger, $intervalTrigger) `
         -Principal $principal `
         -Settings $settings `
-        -Description 'Safely fetches and fast-forwards only the canonical stephan-os main checkout; never refreshes or updates OpenClaw.' `
+        -Description 'Safely fetches and fast-forwards only the canonical stephan-os main checkout every minute; never refreshes or updates OpenClaw.' `
         -Force | Out-Null
     if ($StartNow) {
         Start-ScheduledTask -TaskName $taskName
@@ -60,7 +60,7 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded unattended Gi
     currentUser = $currentUser
     executable = $wscriptExe
     launcherPath = $launcherPath
-    intervalMinutes = 15
+    intervalMinutes = 1
     atLogon = $true
     hidden = $true
     runLevel = 'Limited'

@@ -193,11 +193,17 @@ $taskProof = foreach ($taskName in @($syncTaskName, $recoveryTaskName, $mailboxT
         taskName = $taskName
         present = [bool]($null -ne $task)
         state = if ($task) { [string]$task.State } else { '' }
-        lastTaskResult = if ($info) { [int]$info.LastTaskResult } else { $null }
+        # Task Scheduler exposes HRESULT-style results as UInt32 values. Keep the
+        # complete value in Int64 so failures such as 0x80070120 remain reportable
+        # instead of crashing the rescue receipt projection under StrictMode.
+        lastTaskResult = if ($info) { [int64]$info.LastTaskResult } else { $null }
     }
 }
 
-if (($taskProof | Where-Object { $_.present -ne $true }).Count -gt 0) {
+# PowerShell unwraps a one-item pipeline to a scalar under StrictMode. Materialize
+# the filtered proof as an array so zero, one, and many missing tasks share the
+# same deterministic Count contract.
+if (@($taskProof | Where-Object { $_.present -ne $true }).Count -gt 0) {
     Stop-BoundedRescue -Blocker 'CONTROL_PLANE_TASK_PROOF_FAILED'
 }
 

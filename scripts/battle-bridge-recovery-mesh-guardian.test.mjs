@@ -56,6 +56,7 @@ test('guardian proves the complete launched mailbox and Recovery Mesh runner cha
     'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
     'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
     'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1',
+    'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
     'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs',
     'scripts/battle-bridge-github-command-mailbox.mjs',
     'scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1',
@@ -85,12 +86,16 @@ test('guardian may repair the fixed mailbox while source is a trusted ancestor',
 
 test('guardian validates the legacy fixed mailbox installer receipt before versioning its projection', () => {
   for (const field of [
-    'taskName', 'installed', 'startedNow', 'receiptIndexEnabled', 'intervalMinutes', 'runLevel',
+    'taskName', 'installed', 'startedNow', 'receiptIndexEnabled', 'outboxGuardEnabled',
+    'runnerPath', 'childRunnerPath', 'intervalMinutes', 'runLevel',
     'arbitraryShellAllowed', 'destructiveGitAllowed', 'liveOpenClawUpdateAllowed',
   ]) assert.match(guardian, new RegExp(`mailboxInstallerReceiptRaw\\.${field}`));
   assert.match(guardian, /MAILBOX_REPAIR_RECEIPT_REJECTED/);
   assert.match(guardian, /MAILBOX_REPAIR_NORMALIZED_RECEIPT_REJECTED/);
   assert.match(mailboxInstaller, /receiptIndexEnabled = \$true/);
+  assert.match(mailboxInstaller, /outboxGuardEnabled = \$true/);
+  assert.match(mailboxInstaller, /battle-bridge-github-command-mailbox-outbox-guard-v1\.mjs/);
+  assert.match(mailboxInstaller, /childRunnerPath = \$childRunnerPath/);
   assert.match(mailboxInstaller, /intervalMinutes = 5/);
   assert.match(mailboxInstaller, /runLevel = 'Limited'/);
   assert.match(mailboxInstaller, /startedNow = \[bool\]\$StartNow/);
@@ -146,4 +151,22 @@ test('windowless launcher retains only fixed identities', () => {
   assert.match(launcher, /run-battle-bridge-recovery-mesh-guardian-hidden\.ps1/);
   assert.match(launcher, /Case "github-command-mailbox"/);
   assert.doesNotMatch(launcher, /WScript\.Arguments\(1\)|ExecuteGlobal|Eval\(/i);
+});
+
+test('guardian binds qualified and unqualified task principals through resolved Windows SID identity', () => {
+  assert.match(guardian, /function Resolve-WindowsAccountSid/);
+  assert.match(guardian, /System\.Security\.Principal\.NTAccount/);
+  assert.match(guardian, /System\.Security\.Principal\.SecurityIdentifier/);
+  assert.match(guardian, /COMPUTERNAME/);
+  assert.match(guardian, /function Test-TaskPrincipalMatchesCurrentUser/);
+  assert.match(guardian, /WindowsIdentity\]::GetCurrent\(\)/);
+  assert.match(guardian, /\$identity\.User\.Value/);
+  assert.match(guardian, /IsNullOrWhiteSpace\(\$principalSid\)/);
+  assert.match(guardian, /IsNullOrWhiteSpace\(\$currentSid\)/);
+  assert.match(guardian, /StringComparison\]::Ordinal/);
+  assert.match(guardian, /principalMatchesCurrentUser = Test-TaskPrincipalMatchesCurrentUser/);
+  assert.doesNotMatch(
+    guardian,
+    /\[string\]::Equals\(\[string\]\$Task\.Principal\.UserId,\s*\$currentUser/
+  );
 });
