@@ -27,9 +27,143 @@ export const PERSONAL_REPOSITORY_REQUIRED_CHECK = 'protected-merge-source-proof'
 export const PERSONAL_REPOSITORY_MODE = 'user-owned-protected-squash';
 export const PERSONAL_REPOSITORY_AUTHORITY = 'github-actions-protected-environment-exact-head-squash-only';
 export const PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS = 3;
-export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS = 2;
+export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS = 120_000;
+export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_POLL_INTERVAL_MS = 5_000;
 export const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES = 256 * 1024;
 export const PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES = 256 * 1024;
+export const PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX = 8;
+
+export function validatePersonalRepositoryPriorJobEnvelope(run = {}, job = {}) {
+  const blockers = [];
+  const repository = workflowRepository(run);
+  const runId = strictPositiveInteger(run?.id);
+  const runAttempt = strictPositiveInteger(job?.run_attempt);
+  const jobId = strictPositiveInteger(job?.id);
+  const expectedJobUrl = `https://api.github.com/repos/${repository}/actions/jobs/${jobId}`;
+  const expectedRunUrl = `https://api.github.com/repos/${repository}/actions/runs/${runId}`;
+  const expectedCheckRunUrl = `https://api.github.com/repos/${repository}/check-runs/${jobId}`;
+  const expectedHtmlUrl = `https://github.com/${repository}/actions/runs/${runId}/job/${jobId}`;
+  if (!REPOSITORY_PATTERN.test(repository)) blockers.push('prior-job-repository-invalid');
+  if (!runId) blockers.push('prior-run-id-invalid');
+  if (!jobId) blockers.push('prior-job-id-invalid');
+  if (!runAttempt || runAttempt > strictPositiveInteger(run?.run_attempt)) blockers.push('prior-job-attempt-invalid');
+  if (strictPositiveInteger(job?.run_id) !== runId) blockers.push('prior-job-parent-run-mismatch');
+  if (text(job?.workflow_name) !== text(run?.name)) blockers.push('prior-job-workflow-name-mismatch');
+  if (text(job?.head_branch) !== text(run?.head_branch)) blockers.push('prior-job-head-branch-mismatch');
+  if (text(job?.head_sha).toLowerCase() !== text(run?.head_sha).toLowerCase()) blockers.push('prior-job-head-sha-mismatch');
+  if (text(job?.url) !== expectedJobUrl) blockers.push('prior-job-api-url-mismatch');
+  if (text(job?.run_url) !== expectedRunUrl) blockers.push('prior-job-run-url-mismatch');
+  if (text(job?.check_run_url) !== expectedCheckRunUrl) blockers.push('prior-job-check-run-url-mismatch');
+  if (text(job?.html_url) !== expectedHtmlUrl) blockers.push('prior-job-html-url-mismatch');
+  return Object.freeze({
+    valid: blockers.length === 0,
+    receipt: blockers.length === 0 ? Object.freeze({
+      id: jobId,
+      runId,
+      runAttempt,
+      workflowName: text(job?.workflow_name),
+      headBranch: text(job?.head_branch),
+      headSha: text(job?.head_sha).toLowerCase(),
+      name: text(job?.name),
+      status: text(job?.status).toLowerCase(),
+      conclusion: text(job?.conclusion).toLowerCase(),
+      url: text(job?.url),
+      runUrl: text(job?.run_url),
+      checkRunUrl: text(job?.check_run_url),
+      htmlUrl: text(job?.html_url),
+    }) : null,
+    blockers: Object.freeze(unique(blockers)),
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_PRIOR_JOB_ENVELOPE_BLOCKED'
+      : 'PERSONAL_REPOSITORY_PRIOR_JOB_ENVELOPE_READY',
+  });
+}
+
+export function validatePersonalRepositoryReadOnlyPriorFailure(run = {}, jobs = []) {
+  const blockers = [];
+  const runId = strictPositiveInteger(run?.id);
+  const runAttempt = strictPositiveInteger(run?.run_attempt);
+  if (!runId) blockers.push('prior-run-id-invalid');
+  if (!runAttempt) blockers.push('prior-run-attempt-invalid');
+  if (runAttempt > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX) {
+    blockers.push('prior-run-attempt-limit-exceeded');
+  }
+  const boundedRunAttempt = runAttempt > 0 && runAttempt <= PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX
+    ? runAttempt
+    : 0;
+  if (text(run?.status).toLowerCase() !== 'completed') blockers.push('prior-run-not-completed');
+  if (text(run?.conclusion).toLowerCase() !== 'failure') blockers.push('prior-run-not-failed');
+  if (!Array.isArray(jobs)) blockers.push('prior-run-jobs-invalid');
+  const jobList = Array.isArray(jobs) ? jobs : [];
+  const authorityJobNames = new Set([
+    PERSONAL_REPOSITORY_EVIDENCE_JOB,
+    PERSONAL_REPOSITORY_APPROVAL_JOB,
+    PERSONAL_REPOSITORY_MERGE_JOB,
+  ]);
+  const authorityJobs = jobList.filter((job) => authorityJobNames.has(text(job?.name)));
+  if (boundedRunAttempt && authorityJobs.length !== boundedRunAttempt * authorityJobNames.size) {
+    blockers.push('prior-run-authority-job-estate-not-exact');
+  }
+  const exactJob = (name, attempt) => {
+    const matches = authorityJobs.filter((job) => (
+      text(job?.name) === name && strictPositiveInteger(job?.run_attempt) === attempt
+    ));
+    if (matches.length !== 1) blockers.push(`prior-run-job-not-exact:${attempt}:${name}`);
+    return matches.length === 1 ? matches[0] : {};
+  };
+  const selectedJobs = [];
+  for (let attempt = 1; attempt <= boundedRunAttempt; attempt += 1) {
+    const evidence = exactJob(PERSONAL_REPOSITORY_EVIDENCE_JOB, attempt);
+    const approval = exactJob(PERSONAL_REPOSITORY_APPROVAL_JOB, attempt);
+    const merge = exactJob(PERSONAL_REPOSITORY_MERGE_JOB, attempt);
+    selectedJobs.push(evidence, approval, merge);
+    if (text(evidence?.status).toLowerCase() !== 'completed'
+      || text(evidence?.conclusion).toLowerCase() !== 'failure') {
+      blockers.push(`prior-run-evidence-job-not-failed:${attempt}`);
+    }
+    if (text(approval?.status).toLowerCase() !== 'completed'
+      || text(approval?.conclusion).toLowerCase() !== 'skipped') {
+      blockers.push(`prior-run-approval-job-not-skipped:${attempt}`);
+    }
+    if (text(merge?.status).toLowerCase() !== 'completed'
+      || text(merge?.conclusion).toLowerCase() !== 'skipped') {
+      blockers.push(`prior-run-merge-job-not-skipped:${attempt}`);
+    }
+  }
+  const jobIds = selectedJobs.map((job) => strictPositiveInteger(job?.id));
+  if (jobIds.some((id) => !id) || new Set(jobIds).size !== selectedJobs.length) {
+    blockers.push('prior-run-job-id-invalid');
+  }
+  const jobEnvelopeReceipts = [];
+  for (const job of selectedJobs) {
+    const envelope = validatePersonalRepositoryPriorJobEnvelope(run, job);
+    if (!envelope.valid) {
+      blockers.push(...envelope.blockers.map((blocker) => `prior-run-job-envelope:${blocker}`));
+    } else jobEnvelopeReceipts.push(envelope.receipt);
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    receipt: blockers.length === 0 ? Object.freeze({
+      runId,
+      runAttempt,
+      status: 'completed',
+      conclusion: 'failure',
+      jobs: Object.freeze(jobEnvelopeReceipts),
+    }) : null,
+    blockers: Object.freeze(unique(blockers)),
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_PRIOR_FAILURE_NOT_RETRYABLE'
+      : 'PERSONAL_REPOSITORY_PRIOR_FAILURE_READ_ONLY',
+  });
+}
+
+const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_TRANSIENT_BLOCKERS = new Set([
+  // GitHub exposes check runs and workflow runs through separate eventually-consistent collections.
+  'personal-repository-check-runs-invalid',
+  'personal-repository-check-workflow-run-missing',
+  'personal-repository-check-run-identity-invalid',
+  'personal-repository-review-escalation-check-not-exact',
+]);
 
 const ZIP_LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
 const ZIP_CENTRAL_DIRECTORY_HEADER_SIGNATURE = 0x02014b50;
@@ -834,13 +968,43 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     : {};
   const priorRunsValid = Array.isArray(input?.priorRuns);
   const priorRuns = priorRunsValid ? input.priorRuns : [];
+  const priorRunJobSetsValid = input?.priorRunJobSets === undefined || Array.isArray(input.priorRunJobSets);
+  const priorRunJobSets = Array.isArray(input?.priorRunJobSets) ? input.priorRunJobSets : [];
   const repository = text(expected.repository);
   const sourceHead = text(expected.sourceHead).toLowerCase();
   const baseSha = text(expected.baseSha).toLowerCase();
   const workflowRunId = strictPositiveInteger(expected.workflowRunId);
   const workflowRunAttempt = strictPositiveInteger(expected.workflowRunAttempt);
   const expectedTitle = personalRepositoryDispatchTitle(sourceHead);
-  const expectedActor = OPERATOR_MERGE_REVIEWER.toLowerCase();
+  const nativeOwnerActor = OPERATOR_MERGE_REVIEWER.toLowerCase();
+  const mailboxAuthorization = expected?.mailboxAuthorization;
+  const mailboxAuthorizationKeys = mailboxAuthorization && typeof mailboxAuthorization === 'object'
+    && !Array.isArray(mailboxAuthorization)
+    ? Object.keys(mailboxAuthorization).sort()
+    : [];
+  const expectedMailboxAuthorizationKeys = [
+    'authorizedAtUtc',
+    'commentId',
+    'operatorAuthor',
+    'requestId',
+    'transportActor',
+  ];
+  const mailboxAuthorizationSupplied = expected?.mailboxAuthorization !== undefined;
+  const mailboxAuthorizationValid = Boolean(
+    mailboxAuthorizationSupplied
+    && mailboxAuthorization
+    && mailboxAuthorizationKeys.length === expectedMailboxAuthorizationKeys.length
+    && mailboxAuthorizationKeys.every((key, index) => key === expectedMailboxAuthorizationKeys[index])
+    && strictPositiveInteger(mailboxAuthorization.commentId)
+    && text(mailboxAuthorization.requestId)
+    && text(mailboxAuthorization.operatorAuthor).toLowerCase() === nativeOwnerActor
+    && text(mailboxAuthorization.transportActor).toLowerCase() === 'github-actions[bot]'
+    && EXPLICIT_TIMEZONE.test(text(mailboxAuthorization.authorizedAtUtc))
+    && Number.isFinite(new Date(mailboxAuthorization.authorizedAtUtc).getTime())
+  );
+  const expectedActor = mailboxAuthorizationValid
+    ? 'github-actions[bot]'
+    : nativeOwnerActor;
   const currentMismatches = [
     ['run-id', strictPositiveInteger(run?.id) === workflowRunId],
     ['run-attempt', strictPositiveInteger(run?.run_attempt) === workflowRunAttempt],
@@ -858,7 +1022,10 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
 
   const malformedPriorRunIds = [];
   const replayRunIds = [];
+  const retryablePriorRunIds = [];
+  const retryablePriorFailures = [];
   const differentBasePriorRunIds = [];
+  let sameBasePriorAttemptCount = 0;
   // GitHub keeps the workflow run ID when a run is retried and increments
   // run_attempt. The current exact run identity therefore proves that an
   // earlier attempt already existed even though the runs listing exposes only
@@ -892,13 +1059,48 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
       malformedPriorRunIds.push(candidateId || 0);
       continue;
     }
-    if (candidateBase === baseSha) replayRunIds.push(candidateId);
-    else differentBasePriorRunIds.push(candidateId);
+    if (candidateBase === baseSha) {
+      sameBasePriorAttemptCount = Math.min(
+        PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX + 1,
+        sameBasePriorAttemptCount + Math.min(
+          strictPositiveInteger(candidate?.run_attempt),
+          PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX + 1,
+        ),
+      );
+      const matchingJobSets = priorRunJobSets.filter((item) => strictPositiveInteger(item?.runId) === candidateId);
+      const retryValidation = matchingJobSets.length === 1
+        ? validatePersonalRepositoryReadOnlyPriorFailure(candidate, matchingJobSets[0]?.jobs)
+        : { valid: false };
+      if (retryValidation.valid) {
+        retryablePriorRunIds.push(candidateId);
+        retryablePriorFailures.push(retryValidation.receipt);
+      }
+      else replayRunIds.push(candidateId);
+    } else differentBasePriorRunIds.push(candidateId);
+  }
+
+  const retryableJobIds = retryablePriorFailures.flatMap((receipt) => receipt.jobs.map((job) => job.id));
+  const retryableProofDuplicate = new Set(retryablePriorRunIds).size !== retryablePriorRunIds.length
+    || new Set(retryableJobIds).size !== retryableJobIds.length;
+  const priorAttemptLimitExceeded = sameBasePriorAttemptCount > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX;
+  if (priorAttemptLimitExceeded || retryableProofDuplicate) {
+    replayRunIds.push(...retryablePriorRunIds);
+    retryablePriorRunIds.length = 0;
+    retryablePriorFailures.length = 0;
   }
 
   const blockers = [
     ...definitionValidation.blockers,
     ...(!priorRunsValid ? ['personal-repository-prior-runs-invalid'] : []),
+    ...(!priorRunJobSetsValid ? ['personal-repository-prior-run-jobs-invalid'] : []),
+    ...(priorRunJobSets.length > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX
+      ? ['personal-repository-prior-run-jobs-limit-exceeded']
+      : []),
+    ...(priorAttemptLimitExceeded ? ['personal-repository-prior-run-attempt-limit-exceeded'] : []),
+    ...(retryableProofDuplicate ? ['personal-repository-prior-run-proof-duplicate'] : []),
+    ...(mailboxAuthorizationSupplied && !mailboxAuthorizationValid
+      ? ['personal-repository-mailbox-authorization-provenance-invalid']
+      : []),
     ...(currentMismatches.length ? ['personal-repository-workflow-run-identity-mismatch'] : []),
     ...(malformedPriorRunIds.length ? ['personal-repository-prior-attempt-invalid'] : []),
     ...(replayRunIds.length ? ['personal-repository-prior-attempt-exists'] : []),
@@ -908,7 +1110,10 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     definition,
     currentMismatches: Object.freeze(currentMismatches),
     malformedPriorRunIds: Object.freeze(malformedPriorRunIds.sort((left, right) => left - right)),
-    replayRunIds: Object.freeze(replayRunIds.sort((left, right) => left - right)),
+    replayRunIds: Object.freeze(unique(replayRunIds).sort((left, right) => left - right)),
+    retryablePriorRunIds: Object.freeze(retryablePriorRunIds.sort((left, right) => left - right)),
+    retryablePriorFailures: Object.freeze(retryablePriorFailures.sort((left, right) => left.runId - right.runId)),
+    sameBasePriorAttemptCount,
     differentBasePriorRunIds: Object.freeze(differentBasePriorRunIds.sort((left, right) => left - right)),
     blockers: Object.freeze(unique(blockers)),
     finalVerdict: blockers.length
@@ -1096,6 +1301,46 @@ export function validatePersonalRepositoryWorkflowRunHydration(
   });
 }
 
+export function buildPersonalRepositoryCheckExpectation({
+  repository = '',
+  identity = {},
+  mergeStateStatus = '',
+} = {}) {
+  const expected = Object.freeze({
+    repository: text(repository),
+    prNumber: strictPositiveInteger(identity?.prNumber),
+    branch: text(identity?.branch),
+    sourceHead: text(identity?.sourceHead).toLowerCase(),
+    baseSha: text(identity?.baseSha).toLowerCase(),
+    mergeStateStatus: text(mergeStateStatus).toUpperCase(),
+  });
+  const blockers = [];
+  if (!REPOSITORY_PATTERN.test(expected.repository)) {
+    blockers.push('personal-repository-check-expectation-repository-invalid');
+  }
+  if (!expected.prNumber) blockers.push('personal-repository-check-expectation-pr-invalid');
+  if (!BRANCH_PATTERN.test(expected.branch) || expected.branch.includes('..')) {
+    blockers.push('personal-repository-check-expectation-branch-invalid');
+  }
+  if (!SHA_PATTERN.test(expected.sourceHead)) {
+    blockers.push('personal-repository-check-expectation-head-invalid');
+  }
+  if (!SHA_PATTERN.test(expected.baseSha)) {
+    blockers.push('personal-repository-check-expectation-base-invalid');
+  }
+  if (!['CLEAN', 'UNSTABLE'].includes(expected.mergeStateStatus)) {
+    blockers.push('personal-repository-check-expectation-merge-state-invalid');
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    expected: blockers.length === 0 ? expected : null,
+    blockers: Object.freeze(blockers),
+    finalVerdict: blockers.length
+      ? 'PERSONAL_REPOSITORY_CHECK_EXPECTATION_BLOCKED'
+      : 'PERSONAL_REPOSITORY_CHECK_EXPECTATION_READY',
+  });
+}
+
 export function validatePersonalRepositoryCheckRuns(
   checkRuns = [],
   workflowRuns = [],
@@ -1120,19 +1365,9 @@ export function validatePersonalRepositoryCheckRuns(
   if (!Array.isArray(workflowRuns)) blockers.push('personal-repository-check-workflow-runs-invalid');
   if (!Array.isArray(commitStatuses)) blockers.push('personal-repository-commit-statuses-invalid');
 
-  for (const status of Array.isArray(commitStatuses) ? commitStatuses : []) {
-    if (text(status?.sha).toLowerCase() !== sourceHead
-      || text(status?.state).toLowerCase() !== 'success') {
-      blockers.push('personal-repository-commit-status-not-exact-green');
-    }
-  }
-
-  for (const check of Array.isArray(checkRuns) ? checkRuns : []) {
+  const exactCheckBindings = (Array.isArray(checkRuns) ? checkRuns : []).map((check) => {
     const checkId = strictPositiveInteger(check?.id);
     const checkSuiteId = strictPositiveInteger(check?.check_suite?.id);
-    const name = text(check?.name);
-    const status = text(check?.status).toLowerCase();
-    const conclusion = text(check?.conclusion).toLowerCase();
     const matchingRuns = (Array.isArray(workflowRuns) ? workflowRuns : []).filter((run) => (
       strictPositiveInteger(run?.check_suite_id) === checkSuiteId
       && text(run?.head_sha).toLowerCase() === sourceHead
@@ -1140,6 +1375,7 @@ export function validatePersonalRepositoryCheckRuns(
     const run = matchingRuns[0];
     const bindings = Array.isArray(run?.pull_requests) ? run.pull_requests : [];
     const binding = bindings.length === 1 ? bindings[0] : null;
+    const detailsUrl = `https://github.com/${repository}/actions/runs/${run?.id}/job/${checkId}`;
     const exactRun = matchingRuns.length === 1
       && strictPositiveInteger(run?.id)
       && strictPositiveInteger(run?.run_attempt)
@@ -1149,20 +1385,61 @@ export function validatePersonalRepositoryCheckRuns(
       && text(binding?.head?.sha).toLowerCase() === sourceHead
       && text(binding?.head?.ref) === branch
       && text(binding?.base?.sha).toLowerCase() === baseSha
-      && text(binding?.base?.ref) === 'main';
+      && text(binding?.base?.ref) === 'main'
+      && text(check?.details_url) === detailsUrl;
+    return Object.freeze({ check, checkId, checkSuiteId, matchingRuns, run, exactRun });
+  });
+
+  for (const status of Array.isArray(commitStatuses) ? commitStatuses : []) {
+    if (text(status?.sha).toLowerCase() !== sourceHead
+      || text(status?.state).toLowerCase() !== 'success') {
+      blockers.push('personal-repository-commit-status-not-exact-green');
+    }
+  }
+
+  for (const checkBinding of exactCheckBindings) {
+    const { check, checkId, checkSuiteId, matchingRuns, run, exactRun } = checkBinding;
+    const name = text(check?.name);
+    const status = text(check?.status).toLowerCase();
+    const conclusion = text(check?.conclusion).toLowerCase();
     const workflow = text(run?.name);
     const path = canonicalWorkflowPath(run, repository);
-    const detailsUrl = `https://github.com/${repository}/actions/runs/${run?.id}/job/${checkId}`;
 
     if (!checkId || !checkSuiteId || !name
       || text(check?.head_sha).toLowerCase() !== sourceHead
       || text(check?.app?.slug) !== 'github-actions'
-      || strictPositiveInteger(check?.app?.id) !== 15368
-      || text(check?.details_url) !== detailsUrl
-      || !exactRun) {
+      || strictPositiveInteger(check?.app?.id) !== 15368) {
       blockers.push('personal-repository-check-run-identity-invalid');
       continue;
     }
+    if (matchingRuns.length === 0) {
+      blockers.push('personal-repository-check-workflow-run-missing');
+      continue;
+    }
+    if (!exactRun) {
+      blockers.push('personal-repository-check-run-identity-invalid');
+      continue;
+    }
+
+    const supersededDraftSkip = conclusion === 'skipped'
+      && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
+      && path === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
+      && text(run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
+      && name === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check
+      && exactCheckBindings.some((candidate) => (
+        candidate !== checkBinding
+        && candidate.exactRun
+        && strictPositiveInteger(candidate.run?.id) > strictPositiveInteger(run?.id)
+        && text(candidate.check?.head_sha).toLowerCase() === sourceHead
+        && text(candidate.check?.status).toLowerCase() === 'completed'
+        && text(candidate.check?.conclusion).toLowerCase() === 'success'
+        && text(candidate.check?.name) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check
+        && text(candidate.check?.app?.slug) === 'github-actions'
+        && strictPositiveInteger(candidate.check?.app?.id) === 15368
+        && text(candidate.run?.name) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
+        && canonicalWorkflowPath(candidate.run, repository) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
+        && text(candidate.run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
+      ));
 
     let disposition = 'green';
     if (status !== 'completed') {
@@ -1173,6 +1450,8 @@ export function validatePersonalRepositoryCheckRuns(
     } else if (conclusion === 'skipped'
       && PERSONAL_REPOSITORY_NEUTRAL_SKIPPED_CHECKS.has(`${workflow}\0${name}`)) {
       disposition = 'neutral-skip';
+    } else if (supersededDraftSkip) {
+      disposition = 'superseded-draft-skip';
     } else if (cleanIndependentReviewProved
       && mergeStateStatus === 'UNSTABLE'
       && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
@@ -1221,10 +1500,14 @@ export function validatePersonalRepositoryCheckRuns(
 
 export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
   readSnapshot,
+  waitBeforeReread = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+  monotonicNow = () => performance.now(),
   expected = {},
   options = {},
 } = {}) {
-  if (typeof readSnapshot !== 'function') {
+  if (typeof readSnapshot !== 'function'
+    || typeof waitBeforeReread !== 'function'
+    || typeof monotonicNow !== 'function') {
     return Object.freeze({
       valid: false,
       evidence: Object.freeze([]),
@@ -1233,13 +1516,31 @@ export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
       snapshotAttempt: 0,
       snapshotAttempts: Object.freeze([]),
       selectedSnapshot: null,
+      convergenceDeadlineReached: false,
       finalVerdict: 'PERSONAL_REPOSITORY_CHECK_RUNS_BLOCKED',
     });
   }
 
   const snapshotAttempts = [];
+  const startedAtMs = monotonicNow();
+  const deadlineMs = startedAtMs + PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS;
+  if (!Number.isFinite(startedAtMs)) {
+    return Object.freeze({
+      valid: false,
+      evidence: Object.freeze([]),
+      admittedReviewEscalations: 0,
+      blockers: Object.freeze(['personal-repository-check-snapshot-clock-invalid']),
+      snapshotAttempt: 0,
+      snapshotAttempts: Object.freeze([]),
+      selectedSnapshot: null,
+      convergenceDeadlineReached: false,
+      finalVerdict: 'PERSONAL_REPOSITORY_CHECK_RUNS_BLOCKED',
+    });
+  }
   let validation = null;
-  for (let attempt = 1; attempt <= PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS; attempt += 1) {
+  let attempt = 0;
+  while (true) {
+    attempt += 1;
     const snapshot = await readSnapshot(attempt);
     validation = validatePersonalRepositoryCheckRuns(
       snapshot?.checkRuns,
@@ -1248,9 +1549,14 @@ export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
       expected,
       options,
     );
+    const retryable = validation.blockers.length > 0
+      && validation.blockers.every((blocker) => (
+        PERSONAL_REPOSITORY_CHECK_SNAPSHOT_TRANSIENT_BLOCKERS.has(blocker)
+      ));
     snapshotAttempts.push(Object.freeze({
       attempt,
       valid: validation.valid,
+      retryable,
       blockers: validation.blockers,
     }));
     if (validation.valid) {
@@ -1264,16 +1570,42 @@ export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
         snapshotAttempt: attempt,
         snapshotAttempts: Object.freeze(snapshotAttempts),
         selectedSnapshot,
+        convergenceDeadlineReached: false,
+      });
+    }
+
+    const beforeWaitMs = monotonicNow();
+    const remainingMs = deadlineMs - beforeWaitMs;
+    if (!retryable || !Number.isFinite(beforeWaitMs) || remainingMs <= 0) {
+      return Object.freeze({
+        ...validation,
+        snapshotAttempt: 0,
+        snapshotAttempts: Object.freeze(snapshotAttempts),
+        selectedSnapshot: null,
+        convergenceDeadlineReached: retryable && Number.isFinite(beforeWaitMs) && remainingMs <= 0,
+      });
+    }
+    await waitBeforeReread(Math.min(
+      PERSONAL_REPOSITORY_CHECK_SNAPSHOT_POLL_INTERVAL_MS,
+      remainingMs,
+    ));
+    const afterWaitMs = monotonicNow();
+    if (!Number.isFinite(afterWaitMs) || afterWaitMs <= beforeWaitMs) {
+      return Object.freeze({
+        ...validation,
+        valid: false,
+        blockers: Object.freeze(unique([
+          ...validation.blockers,
+          'personal-repository-check-snapshot-clock-invalid',
+        ])),
+        snapshotAttempt: 0,
+        snapshotAttempts: Object.freeze(snapshotAttempts),
+        selectedSnapshot: null,
+        convergenceDeadlineReached: false,
+        finalVerdict: 'PERSONAL_REPOSITORY_CHECK_RUNS_BLOCKED',
       });
     }
   }
-
-  return Object.freeze({
-    ...validation,
-    snapshotAttempt: 0,
-    snapshotAttempts: Object.freeze(snapshotAttempts),
-    selectedSnapshot: null,
-  });
 }
 
 export function validatePersonalRepositoryEvidence(input = {}, expected = {}, options = {}) {
