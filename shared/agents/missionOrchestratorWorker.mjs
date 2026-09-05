@@ -33,7 +33,7 @@ function expiresAt(options = {}) {
   return new Date(now.getTime() + Math.min(Math.max(lifetimeMs, 60_000), 24 * 60 * 60 * 1000)).toISOString();
 }
 
-function actionId(state, kind) {
+export function createMissionWorkerActionId(state, kind) {
   const seed = `${state.missionId}:${state.revision}:${state.currentPhase}:${kind}`;
   return `${state.missionId}-r${state.revision}-${createHash('sha256').update(seed).digest('hex').slice(0, 12)}`;
 }
@@ -48,7 +48,7 @@ function receiptRequirement(operation) {
 
 function operationClaims(state, operation, options = {}) {
   const claims = {
-    authorizationId: actionId(state, operation), missionId: state.missionId, operation,
+    authorizationId: createMissionWorkerActionId(state, operation), missionId: state.missionId, operation,
     repository: state.repository,
     repositoryRoot: operation === 'create-worktree' ? text(state.repositoryRoot) : text(state.git?.worktreePath),
     defaultBranch: state.baseBranch || 'main', baseBranch: state.git?.baseBranch || state.baseBranch || 'main',
@@ -72,7 +72,7 @@ function blocked(state, reason) {
   const blockers = (Array.isArray(reason) ? reason : [reason])
     .map((item) => text(item))
     .filter(Boolean);
-  return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'blocked'), missionId: state.missionId, actionKind: 'blocked', executable: false, blockers, finalVerdict: 'BLOCKED' };
+  return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: createMissionWorkerActionId(state, 'blocked'), missionId: state.missionId, actionKind: 'blocked', executable: false, blockers, finalVerdict: 'BLOCKED' };
 }
 
 function capacityRouteForMission(state, options = {}) {
@@ -122,13 +122,13 @@ export function projectMissionWorkerActionState(state, options = {}) {
 export function buildMissionWorkerAction(state, options = {}) {
   if (!state || typeof state !== 'object') return blocked({ missionId: 'invalid', revision: 0, currentPhase: 'BLOCKED' }, 'Mission state is required.');
   if (['COMPLETE', 'CANCELLED', 'BLOCKED', 'AWAITING_OPERATOR_APPROVAL'].includes(state.currentPhase)) {
-    return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'wait'), missionId: state.missionId, actionKind: 'wait', executable: false, reason: state.currentPhase, finalVerdict: 'NO_ACTION_REQUIRED' };
+    return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: createMissionWorkerActionId(state, 'wait'), missionId: state.missionId, actionKind: 'wait', executable: false, reason: state.currentPhase, finalVerdict: 'NO_ACTION_REQUIRED' };
   }
 
   if (state.currentPhase === 'CHECK_PULL_REQUEST') {
     if (!Number.isInteger(state.pullRequest?.number) || !SHA40_PATTERN.test(text(state.pullRequest?.headSha))) return blocked(state, 'Pull request inspection requires an exact pull request number and lowercase head SHA.');
     return {
-      schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'check-pr'), missionId: state.missionId,
+      schemaVersion: 'stephanos.mission-worker-action.v1', actionId: createMissionWorkerActionId(state, 'check-pr'), missionId: state.missionId,
       actionKind: 'github-inspection', adapter: 'openclaw-github-readonly', operation: 'check-pr', owner: 'openclaw-standalone', activeWriter: 'none',
       repository: state.repository, repositoryRoot: state.git?.worktreePath || state.repositoryRoot, prNumber: state.pullRequest.number,
       expectedHeadSha: state.pullRequest.headSha, receiptRequirement: receiptRequirement('check-pr'), executable: true, blockers: [], finalVerdict: 'READY_TO_INSPECT_PULL_REQUEST',
@@ -165,8 +165,8 @@ export function buildMissionWorkerAction(state, options = {}) {
     const owner = adapter === 'codex' ? 'codex' : text(capacity?.workerId, adapter);
     const activeWriter = adapter === 'codex' ? 'Codex' : owner;
     return {
-      schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, adapter), missionId: state.missionId,
-      actionKind: 'agent-handoff', adapter, capacityRoute: route, capacityReceiptId: text(capacity?.selectedCapacityReceiptId),
+      schemaVersion: 'stephanos.mission-worker-action.v1', actionId: createMissionWorkerActionId(state, adapter), missionId: state.missionId,
+      actionKind: 'agent-handoff', adapter, workerId: owner, capacityRoute: route, capacityReceiptId: text(capacity?.selectedCapacityReceiptId),
       capacityProofRefs: Array.isArray(capacity?.proofRefs) ? capacity.proofRefs : [], owner, activeWriter,
       operatorIntent: state.operatorIntent, intendedOutcome: state.intendedOutcome, repository: state.repository,
       worktreePath: state.git?.worktreePath || '', branch: state.git?.branch || '', allowedFiles: state.allowedFiles || [],
@@ -176,18 +176,18 @@ export function buildMissionWorkerAction(state, options = {}) {
   }
   if (state.currentPhase === 'LIVE_RUNTIME_INVESTIGATION') {
     return {
-      schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'openclaw-readonly'), missionId: state.missionId,
-      actionKind: 'agent-handoff', adapter: 'openclaw-readonly', owner: 'openclaw-standalone', activeWriter: 'none',
+      schemaVersion: 'stephanos.mission-worker-action.v1', actionId: createMissionWorkerActionId(state, 'openclaw-readonly'), missionId: state.missionId,
+      actionKind: 'agent-handoff', adapter: 'openclaw-readonly', workerId: 'openclaw-standalone', owner: 'openclaw-standalone', activeWriter: 'none',
       operatorIntent: state.operatorIntent, intendedOutcome: state.intendedOutcome, repository: state.repository,
       repositoryRoot: state.repositoryRoot, requiredEvidence: state.requiredEvidence || [], browserProofRequired: state.browserProofRequired === true,
       executable: true, blockers: [], finalVerdict: 'READY_TO_DISPATCH_OPENCLAW_READONLY',
     };
   }
   if (state.currentPhase === 'VERIFYING') {
-    return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'verification'), missionId: state.missionId, actionKind: 'evidence-judgment', owner: 'verification-judge', activeWriter: 'none', requiredEvidence: state.requiredEvidence || [], receipts: state.evidenceReceipts || [], executable: true, blockers: [], finalVerdict: 'READY_TO_JUDGE_EVIDENCE' };
+    return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: createMissionWorkerActionId(state, 'verification'), missionId: state.missionId, actionKind: 'evidence-judgment', owner: 'verification-judge', activeWriter: 'none', requiredEvidence: state.requiredEvidence || [], receipts: state.evidenceReceipts || [], executable: true, blockers: [], finalVerdict: 'READY_TO_JUDGE_EVIDENCE' };
   }
   if (state.currentPhase === 'LOCAL_DEPLOYMENT') {
-    return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'local-deployment'), missionId: state.missionId, actionKind: 'local-deployment', owner: 'openclaw-standalone', activeWriter: 'none', repository: state.repository, repositoryRoot: state.repositoryRoot, mergeCommitSha: state.pullRequest?.mergeCommitSha || '', steps: ['sync', 'build', 'verify', 'restart'].filter((step) => state.deployment?.[step]?.status !== 'success'), executable: true, blockers: [], finalVerdict: 'READY_FOR_LOCAL_DEPLOYMENT' };
+    return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: createMissionWorkerActionId(state, 'local-deployment'), missionId: state.missionId, actionKind: 'local-deployment', owner: 'openclaw-standalone', activeWriter: 'none', repository: state.repository, repositoryRoot: state.repositoryRoot, mergeCommitSha: state.pullRequest?.mergeCommitSha || '', steps: ['sync', 'build', 'verify', 'restart'].filter((step) => state.deployment?.[step]?.status !== 'success'), executable: true, blockers: [], finalVerdict: 'READY_FOR_LOCAL_DEPLOYMENT' };
   }
   return blocked(state, `Unsupported mission phase: ${text(state.currentPhase, 'unknown')}`);
 }

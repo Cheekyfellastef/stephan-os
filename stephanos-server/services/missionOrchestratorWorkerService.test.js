@@ -63,7 +63,7 @@ test('publishes worktree then one Codex dispatch and collects grounded result', 
   const dispatch = await publishMissionWorkerAction(ready.state, options);
   assert.equal(dispatch.adapter, 'codex');
   assert.equal((await readMissionWorkerQueue(options)).some((entry) => entry.adapter === 'codex'), true);
-  const collected = await collectAgentWorkerResult({ missionId: intent.missionId, actionId: dispatch.action.actionId, adapter: 'codex', success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result'), evidenceReceipts: [proof('focused test output', 'evidence')] }, options);
+  const collected = await collectAgentWorkerResult({ missionId: intent.missionId, actionId: dispatch.action.actionId, adapter: 'codex', workerId: dispatch.action.workerId, success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result'), evidenceReceipts: [proof('focused test output', 'evidence')] }, options);
   assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
   assert.equal((await readMissionRecord(intent.missionId, options)).state.dispatch.status, 'complete');
 });
@@ -71,7 +71,7 @@ test('publishes worktree then one Codex dispatch and collects grounded result', 
 test('publishes one exact external fallback handoff and accepts its grounded result', async () => {
   const options = await runtime();
   const missionId = 'github-fallback-test';
-  const created = await createMissionRecord({
+  await createMissionRecord({
     ...intent,
     missionId,
     branch: 'openclaw/github-fallback-test',
@@ -99,9 +99,31 @@ test('publishes one exact external fallback handoff and accepts its grounded res
       expiresAtUtc: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
       queueDepth: 0,
       p95StartLatencySeconds: 10,
-      authorityReceiptIds: [],
+      authorityReceiptIds: ['github-fallback-authority-receipt'],
       proofRefs: ['receipts/github-builder/capacity.json'],
     },
+    sourceHead: 'a'.repeat(40),
+    githubLaneAuthorityReceipts: [{
+      schemaVersion: 'stephanos.build-lane-authority-receipt.v1',
+      receiptId: 'github-fallback-authority-receipt',
+      route: 'CHATGPT_GITHUB',
+      repository: intent.repository,
+      sourceHead: 'a'.repeat(40),
+      workerId: 'shared-fabric-chatgpt-github-builder-01',
+      authorizedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+      authorizedTaskClasses: ['FOCUSED_REPAIR'],
+      issuedAtUtc: new Date(Date.now() - 2000).toISOString(),
+      expiresAtUtc: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      proofRefs: ['receipts/github-builder/authority.json'],
+      sourceDispatchAllowed: true,
+      sourceMutationAuthorityAdded: false,
+      mergeAuthorityAdded: false,
+      deploymentAuthorityAdded: false,
+      runtimeMutationAuthorityAdded: false,
+      protectedMergeDispatchAllowed: false,
+      duplicateDispatchAllowed: false,
+      arbitraryCommandAllowed: false,
+    }],
   };
   const action = buildMissionWorkerAction(ready.state, { ...options, capacityRouting });
   const grant = {
@@ -119,6 +141,7 @@ test('publishes one exact external fallback handoff and accepts its grounded res
     capacityRoute: action.capacityRoute,
     capacityReceiptId: action.capacityReceiptId,
     capacityProofRefs: action.capacityProofRefs,
+    workerId: action.workerId,
     repository: ready.state.repository,
     branch: ready.state.git.branch,
     mergeAuthority: false,
@@ -134,6 +157,7 @@ test('publishes one exact external fallback handoff and accepts its grounded res
     missionId,
     actionId: action.actionId,
     adapter: 'chatgpt-github',
+    workerId: action.workerId,
     success: true,
     changedFiles: ['shared/agents/example.mjs'],
     receipt: proof('github builder result', 'github-builder-result'),
@@ -237,8 +261,15 @@ test('repair transition is projected, granted, applied, and queued as one exact 
     clean: true,
     receipt: proof('isolated worktree', 'repair-worktree'),
   });
-  await append('repair-dispatch', 'AGENT_DISPATCHED', { agentId: 'codex' });
+  const initialRepairAction = buildMissionWorkerAction(current.state, options);
+  await append('repair-dispatch', 'AGENT_DISPATCHED', {
+    agentId: 'codex',
+    actionId: initialRepairAction.actionId,
+    workerId: initialRepairAction.workerId,
+  });
   await append('repair-result', 'AGENT_RESULT_RECEIVED', {
+    actionId: initialRepairAction.actionId,
+    workerId: initialRepairAction.workerId,
     success: true,
     resultId: 'repair-result',
     changedFiles: ['shared/agents/example.mjs'],
@@ -289,6 +320,10 @@ test('repair transition is projected, granted, applied, and queued as one exact 
     actionKind: action.actionKind,
     adapter: 'codex',
     operation: '',
+    capacityRoute: action.capacityRoute,
+    capacityReceiptId: action.capacityReceiptId,
+    capacityProofRefs: action.capacityProofRefs,
+    workerId: action.workerId,
     laneId: missionId,
     repository: actionState.repository,
     issueNumber: 1497,

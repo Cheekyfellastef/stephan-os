@@ -53,8 +53,14 @@ function advanceToOpenPullRequest() {
     clean: true,
     receipt: receipt('isolated worktree', 'worktree-receipt'),
   });
-  state = event(state, 'AGENT_DISPATCHED', { agentId: 'codex' });
+  state = event(state, 'AGENT_DISPATCHED', {
+    agentId: 'codex',
+    actionId: 'codex-action-1',
+    workerId: 'codex',
+  });
   state = event(state, 'AGENT_RESULT_RECEIVED', {
+    actionId: 'codex-action-1',
+    workerId: 'codex',
     success: true,
     resultId: 'codex-result-1',
     changedFiles: ['shared/agents/missionOrchestrator.mjs', 'shared/agents/missionOrchestrator.test.mjs'],
@@ -108,6 +114,58 @@ test('implementation intake chooses OpenClaw worktree setup then Codex as the so
   assert.equal(afterWorktree.currentPhase, 'AGENT_IMPLEMENTATION');
   assert.equal(afterWorktree.activeAgent.agentId, 'codex');
   assert.equal(afterWorktree.activeWriter, 'Codex');
+});
+
+test('qualified OpenClaw local is a registered implementation adapter', () => {
+  let state = createMissionOrchestratorState(base, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'worktree-openclaw-local'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', {
+    agentId: 'openclaw-local',
+    adapter: 'openclaw-local',
+    actionId: 'openclaw-local-action-001',
+    workerId: 'battle-bridge-openclaw-01',
+  });
+  assert.equal(state.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(state.dispatch.adapter, 'openclaw-local');
+  assert.equal(state.dispatch.status, 'running');
+  assert.equal(state.dispatch.actionId, 'openclaw-local-action-001');
+  assert.equal(state.dispatch.workerId, 'battle-bridge-openclaw-01');
+  assert.equal(state.activeWriter, 'openclaw-local');
+});
+
+test('every new agent handoff and result requires the same exact action and worker identity', () => {
+  let ready = createMissionOrchestratorState(base, { now: new Date(timestamp(0)) });
+  ready = event(ready, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'worktree-exact-binding'),
+  });
+  for (const incomplete of [
+    { agentId: 'codex', workerId: 'codex' },
+    { agentId: 'codex', actionId: 'codex-exact-action' },
+  ]) {
+    const blocked = event(ready, 'AGENT_DISPATCHED', incomplete);
+    assert.equal(blocked.currentPhase, 'BLOCKED');
+    assert.match(blocked.blockers.join(' '), /exact action and worker identity/i);
+  }
+
+  const running = event(ready, 'AGENT_DISPATCHED', {
+    agentId: 'codex',
+    actionId: 'codex-exact-action',
+    workerId: 'codex',
+  });
+  const stale = event(running, 'AGENT_RESULT_RECEIVED', {
+    actionId: 'codex-stale-action',
+    workerId: 'codex',
+    success: true,
+    receipt: receipt('codex result', 'codex-stale-result'),
+  });
+  assert.equal(stale.currentPhase, 'BLOCKED');
+  assert.match(stale.blockers.join(' '), /active action and worker/i);
 });
 
 test('unsafe, vague, or evidence-free intent blocks before dispatch', () => {
@@ -240,8 +298,14 @@ test('live runtime investigation dispatches OpenClaw read-only and completes onl
   assert.equal(state.activeAgent.agentId, 'openclaw-standalone');
   assert.equal(state.activeWriter, 'none');
 
-  state = event(state, 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  state = event(state, 'AGENT_DISPATCHED', {
+    agentId: 'openclaw-standalone',
+    actionId: 'openclaw-readonly-action-1',
+    workerId: 'openclaw-standalone',
+  });
   state = event(state, 'AGENT_RESULT_RECEIVED', {
+    actionId: 'openclaw-readonly-action-1',
+    workerId: 'openclaw-standalone',
     success: true,
     resultId: 'openclaw-browser-result',
     changedFiles: [],

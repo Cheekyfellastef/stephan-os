@@ -7,7 +7,11 @@ import {
   routeProviderIndependentMissionCapacityV1,
 } from './providerIndependentMissionCapacityRouteV1.mjs';
 
-function plannerFor({ normalRoute = MISSION_CONTROLLER_ROUTE.CODEX, independentReady = true } = {}) {
+function plannerFor({
+  normalRoute = MISSION_CONTROLLER_ROUTE.CODEX,
+  independentReady = true,
+  independentRoute = MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
+} = {}) {
   return (input = {}) => {
     const stripped = input.codexStatus === null && input.githubLaneReceipt === null;
     if (stripped) {
@@ -21,12 +25,14 @@ function plannerFor({ normalRoute = MISSION_CONTROLLER_ROUTE.CODEX, independentR
         });
       }
       return Object.freeze({
-        route: MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
-        adapter: 'foundry-forge',
-        workerId: 'forge-builder-01',
+        route: independentRoute,
+        adapter: independentRoute === MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL ? 'openclaw-local' : 'foundry-forge',
+        workerId: independentRoute === MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL ? 'openclaw-worker-01' : 'forge-builder-01',
         dispatchAllowed: true,
         blockers: Object.freeze([]),
-        finalVerdict: 'MISSION_CONTROLLER_FALLBACK_ROUTE_READY',
+        finalVerdict: independentRoute === MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL
+          ? 'MISSION_CONTROLLER_OPENCLAW_POOL_ROUTE_READY'
+          : 'MISSION_CONTROLLER_FALLBACK_ROUTE_READY',
       });
     }
     return Object.freeze({
@@ -41,7 +47,7 @@ function plannerFor({ normalRoute = MISSION_CONTROLLER_ROUTE.CODEX, independentR
 
 const TEST_OPTIONS = (planner) => ({ testOnly: true, routePlanner: planner });
 
-test('prefers a proven non-OpenAI route before otherwise healthy OpenAI capacity', () => {
+test('prefers a proven Forge route before otherwise healthy OpenAI capacity', () => {
   const result = routeProviderIndependentMissionCapacityV1({
     preferNonOpenAi: true,
     codexStatus: { available: true },
@@ -51,6 +57,22 @@ test('prefers a proven non-OpenAI route before otherwise healthy OpenAI capacity
   assert.equal(result.providerIndependenceSchema, PROVIDER_INDEPENDENT_MISSION_CAPACITY_ROUTE_V1_SCHEMA);
   assert.equal(result.route, MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE);
   assert.equal(result.adapter, 'foundry-forge');
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.nonOpenAiAttempted, true);
+  assert.equal(result.nonOpenAiRouteSelected, true);
+  assert.equal(result.openAiCriticalPathRequired, false);
+  assert.equal(result.finalVerdict, 'MISSION_CONTROLLER_PROVIDER_INDEPENDENT_ROUTE_READY');
+});
+
+test('qualified OpenClaw is a first-class non-OpenAI route rather than an OpenAI critical path', () => {
+  const result = routeProviderIndependentMissionCapacityV1({
+    preferNonOpenAi: true,
+    codexStatus: { available: true },
+    githubLaneReceipt: { available: true },
+  }, TEST_OPTIONS(plannerFor({ independentRoute: MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL })));
+
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL);
+  assert.equal(result.adapter, 'openclaw-local');
   assert.equal(result.dispatchAllowed, true);
   assert.equal(result.nonOpenAiAttempted, true);
   assert.equal(result.nonOpenAiRouteSelected, true);

@@ -3,6 +3,8 @@ export const MINIMUM_BUILD_LANES = 5;
 export const MAXIMUM_BUILD_LANES = 16;
 
 const SAFE_RESOURCE_ID = /^[a-z0-9][a-z0-9._:/-]{0,239}$/i;
+const SAFE_REPOSITORY_PATH_SEGMENT = /^[a-z0-9._-]+$/i;
+const WIN32_RESERVED_PATH_STEM = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 
 function integer(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : null;
@@ -16,11 +18,96 @@ function denseArray(value) {
   return true;
 }
 
+function repositoryPathResource(value) {
+  const match = value.match(/^repo:([^:]+\/[^:]+):path:(.+)$/);
+  if (!match) return null;
+  const segments = match[2].split('/');
+  if (segments.some((segment) => (
+    !segment
+    || segment === '.'
+    || segment === '..'
+    || !SAFE_REPOSITORY_PATH_SEGMENT.test(segment)
+    || segment.endsWith('.')
+    || segment.endsWith(' ')
+    || WIN32_RESERVED_PATH_STEM.test(segment)
+  ))) return null;
+  return { repository:match[1], path:segments.join('/') };
+}
+
+function canonicalResourceId(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!SAFE_RESOURCE_ID.test(normalized)) return null;
+  if (!normalized.startsWith('repo:') || !normalized.includes(':path:')) return normalized;
+  const parsed = repositoryPathResource(normalized);
+  return parsed ? `repo:${parsed.repository}:path:${parsed.path}` : null;
+}
+
 function resourceIds(value) {
   if (!denseArray(value)) return null;
-  const normalized = value.map((entry) => typeof entry === 'string' ? entry.trim().toLowerCase() : '');
-  if (normalized.some((entry) => !SAFE_RESOURCE_ID.test(entry))) return null;
-  return [...new Set(normalized)].sort();
+  const normalized = value.map(canonicalResourceId);
+  if (normalized.some((entry) => entry === null) || new Set(normalized).size !== normalized.length) return null;
+  return normalized.sort();
+}
+
+function resourceConflictIndex(initial = []) {
+  const exact = new Set();
+  const roots = new Map();
+  const add = (resourceId) => {
+    exact.add(resourceId);
+    const parsed = repositoryPathResource(resourceId);
+    if (!parsed) return;
+    let node = roots.get(parsed.repository);
+    if (!node) {
+      node = { terminal:false, children:new Map() };
+      roots.set(parsed.repository, node);
+    }
+    for (const segment of parsed.path.split('/')) {
+      if (!node.children.has(segment)) node.children.set(segment, { terminal:false, children:new Map() });
+      node = node.children.get(segment);
+    }
+    node.terminal = true;
+  };
+  const conflicts = (resourceId) => {
+    if (exact.has(resourceId)) return true;
+    const parsed = repositoryPathResource(resourceId);
+    if (!parsed) return false;
+    let node = roots.get(parsed.repository);
+    if (!node) return false;
+    if (node.terminal) return true;
+    for (const segment of parsed.path.split('/')) {
+      node = node.children.get(segment);
+      if (!node) return false;
+      if (node.terminal) return true;
+    }
+    return node.children.size > 0;
+  };
+  for (const resourceId of initial) add(resourceId);
+  return { add, conflicts };
+}
+
+export function projectCanonicalResourceIds(value) {
+  const normalized = resourceIds(value);
+  return freeze({
+    valid:normalized !== null,
+    resourceIds:normalized ?? [],
+    finalVerdict:normalized === null ? 'RESOURCE_IDS_INVALID' : 'RESOURCE_IDS_CANONICAL',
+  });
+}
+
+export function adjudicateResourceScopeOverlap(left, right) {
+  const leftProjection = projectCanonicalResourceIds(left);
+  const rightProjection = projectCanonicalResourceIds(right);
+  if (!leftProjection.valid || !rightProjection.valid) {
+    return freeze({ valid:false, overlaps:false, conflictingResourceIds:[], finalVerdict:'RESOURCE_SCOPE_OVERLAP_INVALID' });
+  }
+  const owned = resourceConflictIndex(leftProjection.resourceIds);
+  const conflictingResourceIds = rightProjection.resourceIds.filter((resourceId) => owned.conflicts(resourceId));
+  return freeze({
+    valid:true,
+    overlaps:conflictingResourceIds.length > 0,
+    conflictingResourceIds,
+    finalVerdict:conflictingResourceIds.length ? 'RESOURCE_SCOPES_OVERLAP' : 'RESOURCE_SCOPES_DISJOINT',
+  });
 }
 
 function freeze(value) {
@@ -113,7 +200,7 @@ export function selectResourceDisjointCandidates(candidates = [], options = {}) 
     reasonCodes:['DUPLICATE_CANDIDATE_ID', ...(candidateIds.some((id) => !duplicateCandidateIds.has(id)) ? ['INVALID_CANDIDATE_INVENTORY'] : [])],
   });
 
-  const owned = new Set(active);
+  const owned = resourceConflictIndex(active);
   const selected = [];
   const held = [];
   for (const candidate of candidates) {
@@ -123,7 +210,7 @@ export function selectResourceDisjointCandidates(candidates = [], options = {}) 
       held.push({ candidateId:id || null, reasonCode:'RESOURCE_SCOPE_REQUIRED' });
       continue;
     }
-    const conflicts = resources.filter((resourceId) => owned.has(resourceId));
+    const conflicts = resources.filter((resourceId) => owned.conflicts(resourceId));
     if (conflicts.length) {
       held.push({ candidateId:id, reasonCode:'RESOURCE_CONFLICT', conflictingResourceIds:conflicts });
       continue;

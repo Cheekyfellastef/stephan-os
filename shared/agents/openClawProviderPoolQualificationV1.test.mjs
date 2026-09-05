@@ -1,23 +1,42 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { generateKeyPairSync } from 'node:crypto';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { createExecutionReceipt, toSharedWorkspaceExecutionReceipt } from './executionReceiptV1.mjs';
-import { createSharedWorkspaceReceiptRecord } from './sharedAgentWorkspaceStore.mjs';
+import {
+  acquireSharedWorkspaceOperationLock,
+  createExecutionReceipt,
+  toSharedWorkspaceExecutionReceipt,
+} from './executionReceiptV1.mjs';
+import {
+  createSharedWorkspaceReceiptRecord,
+  ensureSharedWorkspaceLayout,
+} from './sharedAgentWorkspaceStore.mjs';
 import {
   OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION,
   OPENCLAW_PROVIDER_CAPACITY_SCHEMA,
+  OPENCLAW_PROVIDER_POOL_COMPONENT_FILES,
   OPENCLAW_PROVIDER_POOL_HOST_CONTEXT_SCHEMA,
+  OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_SEGMENTS,
   OPENCLAW_PROVIDER_POOL_QUALIFICATION_SCHEMA,
   OPENCLAW_PROVIDER_ROUTE,
+  publishOpenClawProviderPoolToSharedWorkspace,
   routeWithQualifiedOpenClawProvider,
   validateOpenClawProviderCapacity,
+  validateOpenClawProviderPoolStatusRecord,
   validateOpenClawProviderQualification,
   validateOpenClawQualificationAuthorityChain,
 } from './openClawProviderPoolQualificationV1.mjs';
+import { readMissionControllerCapacityRoutingInput } from '../../stephanos-server/services/programmeAuthorityService.js';
 
 const NOW = '2026-08-19T13:30:00.000Z';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = '8501a5657abe3fc5e815d9b35d9920003a4a1843';
+const { privateKey:PUBLISHER_PRIVATE_KEY, publicKey:PUBLISHER_PUBLIC_KEY } = generateKeyPairSync('ed25519');
+const PUBLISHER_PRIVATE_KEY_PEM = PUBLISHER_PRIVATE_KEY.export({ type:'pkcs8', format:'pem' });
+const PUBLISHER_PUBLIC_KEY_PEM = PUBLISHER_PUBLIC_KEY.export({ type:'spki', format:'pem' });
 
 function mission(overrides = {}) {
   return {
@@ -230,6 +249,190 @@ test('capacity is unusable without the exact validated qualification authority, 
   assert.equal(validateOpenClawProviderCapacity(capacity({ qualificationAuthorityReceiptId: 'foreign-authority' }), expected).valid, false);
   assert.equal(validateOpenClawProviderCapacity(capacity({ workerId: 'foreign-openclaw' }), expected).valid, false);
   assert.equal(validateOpenClawProviderCapacity(capacity({ supportedTaskClasses: ['WINDOWS_RUNTIME_PROOF'] }), expected).valid, false);
+  assert.equal(validateOpenClawProviderCapacity(capacity({
+    supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS', 'MERGE_PULL_REQUEST'],
+  }), expected).valid, false);
+});
+
+test('publishes only the complete trusted OpenClaw qualification chain to the canonical status path', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'openclaw-provider-pool-'));
+  try {
+    await ensureSharedWorkspaceLayout({ root, repoRoot: process.cwd() });
+    const publication = await publishOpenClawProviderPoolToSharedWorkspace(
+      root,
+      trustedHostContext(),
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW },
+      { repoRoot: process.cwd(), nowMs: Date.parse(NOW), publisherPrivateKeyPem:PUBLISHER_PRIVATE_KEY_PEM },
+    );
+    assert.equal(publication.ok, true, publication.reason);
+    assert.equal(publication.record.statusId, 'openclaw-provider-pool-current');
+    assert.equal(publication.record.sourceHead, HEAD);
+    assert.equal(publication.record.sourceMutationAllowed, false);
+    assert.equal(publication.record.mergeAuthority, false);
+    const persisted = JSON.parse(await readFile(
+      join(root, 'status', 'openclaw-provider-pool-current.json'),
+      'utf8',
+    ));
+    assert.equal(Object.hasOwn(persisted, 'hostContext'), false);
+    const components = Object.fromEntries(await Promise.all(Object.entries(
+      OPENCLAW_PROVIDER_POOL_COMPONENT_FILES,
+    ).map(async ([componentKey, file]) => [
+      componentKey,
+      JSON.parse(await readFile(join(root, 'receipts', file), 'utf8')),
+    ])));
+    const validatedPublication = validateOpenClawProviderPoolStatusRecord(
+      persisted,
+      components,
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW, publisherPublicKeyPem:PUBLISHER_PUBLIC_KEY_PEM },
+    );
+    assert.equal(validatedPublication.valid, true, validatedPublication.reason);
+    assert.deepEqual(validatedPublication.hostContext, trustedHostContext());
+    const publisherPublicKeyPath = join(root, 'publisher-public.pem');
+    await writeFile(publisherPublicKeyPath, PUBLISHER_PUBLIC_KEY_PEM, 'utf8');
+    const productionRouting = await readMissionControllerCapacityRoutingInput({
+      root,
+      repoRoot:process.cwd(),
+      nowUtc:NOW,
+      sourceRevision:HEAD,
+      env:{ STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH:publisherPublicKeyPath },
+    });
+    assert.deepEqual(productionRouting.openClawHostContext, trustedHostContext());
+    assert.equal(validateOpenClawProviderPoolStatusRecord(
+      { ...persisted, publisherId: 'forged-publisher' },
+      components,
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW, publisherPublicKeyPem:PUBLISHER_PUBLIC_KEY_PEM },
+    ).valid, false);
+    assert.equal(validateOpenClawProviderPoolStatusRecord(
+      persisted,
+      {
+        ...components,
+        capacityReceipt: {
+          ...components.capacityReceipt,
+          payload: capacity({ supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS', 'ARBITRARY_SHELL'] }),
+        },
+      },
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW, publisherPublicKeyPem:PUBLISHER_PUBLIC_KEY_PEM },
+    ).valid, false);
+    assert.equal(validateOpenClawProviderPoolStatusRecord(
+      { ...persisted, summary: 'Tampered after publication.' },
+      components,
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW, publisherPublicKeyPem:PUBLISHER_PUBLIC_KEY_PEM },
+    ).valid, false);
+    const foreignKeys = generateKeyPairSync('ed25519');
+    assert.equal(validateOpenClawProviderPoolStatusRecord(
+      persisted,
+      components,
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW, publisherPublicKeyPem:foreignKeys.publicKey.export({ type:'spki', format:'pem' }) },
+    ).valid, false);
+
+    const rejected = await publishOpenClawProviderPoolToSharedWorkspace(
+      root,
+      trustedHostContext({ capacityReceipt: capacity({ qualificationIds: ['foreign'] }) }),
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW },
+      { repoRoot: process.cwd(), nowMs: Date.parse(NOW) },
+    );
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.reason, 'OPENCLAW_CAPACITY_INVALID');
+
+    const rejectedPrivilegedOperation = await publishOpenClawProviderPoolToSharedWorkspace(
+      root,
+      trustedHostContext({ capacityReceipt: capacity({
+        supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS', 'ARBITRARY_SHELL'],
+      }) }),
+      { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW },
+      { repoRoot: process.cwd(), nowMs: Date.parse(NOW) },
+    );
+    assert.equal(rejectedPrivilegedOperation.ok, false);
+    assert.equal(rejectedPrivilegedOperation.reason, 'OPENCLAW_CAPACITY_INVALID');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('serializes concurrent OpenClaw provider-pool generations behind one fixed operation lock', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'openclaw-provider-pool-lock-'));
+  const expected = { repository: REPOSITORY, taskClass: 'FOCUSED_REPAIR', sourceHead: HEAD, nowUtc: NOW };
+  const firstHost = trustedHostContext();
+  const secondQualification = qualification({
+    qualificationId: 'openclaw-oc2-qualification-generation-b',
+    authorityReceiptId: 'openclaw-oc2-authority-generation-b',
+    providerInstance: 'battle-bridge-openclaw-02',
+    realWorkTaskId: 'openclaw-oc2-real-task-002',
+    realWorkReceiptId: 'openclaw-oc2-real-receipt-002',
+  });
+  const secondExecution = realWorkExecution({
+    receiptId: secondQualification.realWorkReceiptId,
+    workerId: secondQualification.providerInstance,
+    executionId: secondQualification.realWorkTaskId,
+    leaseKey: secondQualification.realWorkTaskId,
+  });
+  const secondHost = trustedHostContext({
+    qualificationReceipt: secondQualification,
+    capacityReceipt: capacity({
+      receiptId: 'openclaw-capacity-generation-b',
+      workerId: secondQualification.providerInstance,
+      qualificationIds: [secondQualification.qualificationId],
+      qualificationAuthorityReceiptId: secondQualification.authorityReceiptId,
+    }),
+    realWorkExecutionReceipt: secondExecution,
+  });
+  const publishOptions = {
+    repoRoot: process.cwd(),
+    nowMs: Date.parse(NOW),
+    publisherPrivateKeyPem: PUBLISHER_PRIVATE_KEY_PEM,
+    operationLockTimeoutMs: 100,
+    operationLockRetryMs: 1,
+    operationStaleLockMs: 5_000,
+    operationLockHeartbeatMs: 10,
+  };
+  try {
+    await ensureSharedWorkspaceLayout({ root, repoRoot: process.cwd() });
+    const firstPublication = await publishOpenClawProviderPoolToSharedWorkspace(root, firstHost, expected, publishOptions);
+    assert.equal(firstPublication.ok, true, firstPublication.reason);
+
+    const heldLock = await acquireSharedWorkspaceOperationLock(
+      root,
+      OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_SEGMENTS,
+      publishOptions,
+    );
+    assert.equal(heldLock.ok, true, heldLock.reason);
+    try {
+      const blocked = await publishOpenClawProviderPoolToSharedWorkspace(root, secondHost, expected, {
+        ...publishOptions,
+        operationLockTimeoutMs: 10,
+      });
+      assert.equal(blocked.ok, false);
+      assert.equal(blocked.reason, 'SHARED_WORKSPACE_OPERATION_LOCK_TIMEOUT');
+
+      const persisted = JSON.parse(await readFile(join(root, 'status', 'openclaw-provider-pool-current.json'), 'utf8'));
+      const components = Object.fromEntries(await Promise.all(Object.entries(OPENCLAW_PROVIDER_POOL_COMPONENT_FILES).map(
+        async ([componentKey, file]) => [componentKey, JSON.parse(await readFile(join(root, 'receipts', file), 'utf8'))],
+      )));
+      const stillFirst = validateOpenClawProviderPoolStatusRecord(persisted, components, {
+        ...expected,
+        publisherPublicKeyPem: PUBLISHER_PUBLIC_KEY_PEM,
+      });
+      assert.equal(stillFirst.valid, true, stillFirst.reason);
+      assert.deepEqual(stillFirst.hostContext, firstHost);
+    } finally {
+      assert.equal(await heldLock.release(), true);
+    }
+
+    const secondPublication = await publishOpenClawProviderPoolToSharedWorkspace(root, secondHost, expected, publishOptions);
+    assert.equal(secondPublication.ok, true, secondPublication.reason);
+    const finalStatus = JSON.parse(await readFile(join(root, 'status', 'openclaw-provider-pool-current.json'), 'utf8'));
+    const finalComponents = Object.fromEntries(await Promise.all(Object.entries(OPENCLAW_PROVIDER_POOL_COMPONENT_FILES).map(
+      async ([componentKey, file]) => [componentKey, JSON.parse(await readFile(join(root, 'receipts', file), 'utf8'))],
+    )));
+    const finalValidation = validateOpenClawProviderPoolStatusRecord(finalStatus, finalComponents, {
+      ...expected,
+      publisherPublicKeyPem: PUBLISHER_PUBLIC_KEY_PEM,
+    });
+    assert.equal(finalValidation.valid, true, finalValidation.reason);
+    assert.deepEqual(finalValidation.hostContext, secondHost);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('selects canonically qualified OpenClaw before Codex exhaustion when the scheduler prefers it', () => {

@@ -50,6 +50,10 @@ import {
   projectMissionWorkerHeartbeat,
   resolveCanonicalMissionWorkerPaths,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
+import {
+  OPENCLAW_PROVIDER_POOL_COMPONENT_FILES,
+  validateOpenClawProviderPoolStatusRecord,
+} from '../../shared/agents/openClawProviderPoolQualificationV1.mjs';
 
 export const PROGRAMME_AUTHORITY_SERVICE_SCHEMA = 'stephanos.programme-authority-service.v1';
 export const SOURCE_MUTATION_LEASE_FILE = `${SOURCE_MUTATION_LEASE_STATUS_ID}.json`;
@@ -294,6 +298,8 @@ export async function readMissionControllerCapacityRoutingInput({
   root,
   repoRoot,
   nowUtc,
+  sourceRevision,
+  env = process.env,
   readFileImpl = readFile,
 } = {}) {
   const names = {
@@ -301,6 +307,7 @@ export async function readMissionControllerCapacityRoutingInput({
     github: 'chatgpt-github-build-capacity-current.json',
     forge: 'foundry-forge-build-capacity-current.json',
     forgeSidecar: 'foundry-forge-sidecar-current.json',
+    openClawStatus: 'openclaw-provider-pool-current.json',
   };
   const resolved = Object.fromEntries(Object.entries(names).map(([key, file]) => [
     key,
@@ -311,12 +318,57 @@ export async function readMissionControllerCapacityRoutingInput({
     const result = await readJson(entry.path, readFileImpl);
     return [key, result.present && !result.error ? result.value : null];
   })));
+
+  let openClawHostContext = null;
+  const sourceHead = text(sourceRevision).toLowerCase();
+  const publisherPublicKeyPath = text(env?.STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH);
+  const componentPaths = Object.fromEntries(Object.entries(OPENCLAW_PROVIDER_POOL_COMPONENT_FILES).map(([key, file]) => [
+    key,
+    authorityPath(root, repoRoot, 'receipts', file),
+  ]));
+  if (
+    loaded.openClawStatus
+    && SHA_40.test(sourceHead)
+    && publisherPublicKeyPath
+    && Object.values(componentPaths).every((entry) => entry.ok)
+  ) {
+    const componentLoads = Object.fromEntries(await Promise.all(Object.entries(componentPaths).map(async ([key, entry]) => {
+      const result = await readJson(entry.path, readFileImpl);
+      return [key, result.present && !result.error ? result.value : null];
+    })));
+    const completeComponents = Object.values(componentLoads).every(Boolean);
+    let publisherPublicKeyPem = '';
+    try {
+      const candidate = await readFileImpl(publisherPublicKeyPath, 'utf8');
+      if (typeof candidate === 'string' && candidate.length > 0 && candidate.length <= 16_384) {
+        publisherPublicKeyPem = candidate;
+      }
+    } catch {
+      publisherPublicKeyPem = '';
+    }
+    if (completeComponents && publisherPublicKeyPem) {
+      const validation = validateOpenClawProviderPoolStatusRecord(
+        loaded.openClawStatus,
+        componentLoads,
+        {
+          repository: text(loaded.openClawStatus.repository),
+          taskClass: text(loaded.openClawStatus.taskClass),
+          sourceHead,
+          nowUtc,
+          publisherPublicKeyPem,
+        },
+      );
+      if (validation.valid) openClawHostContext = validation.hostContext;
+    }
+  }
+
   return Object.freeze({
     nowUtc,
     codexStatus: loaded.codexStatus,
     githubLaneReceipt: loaded.github?.capacityReceipt ?? loaded.github,
     forgeLaneReceipt: loaded.forge?.capacityReceipt ?? loaded.forge,
     forgeSidecar: loaded.forgeSidecar?.forgeSidecar ?? loaded.forgeSidecar,
+    openClawHostContext,
   });
 }
 
@@ -1634,5 +1686,395 @@ export function buildProgrammeStallMonitorRegistration(options = {}) {
     createsScheduler: false,
     createsWorker: false,
     finalVerdict: 'PROGRAMME_STALL_MONITOR_REGISTERED_WITH_EXISTING_MULTIPLEXER',
+  });
+}
+
+const STALE_SOURCE_LEASE_TERMINAL_EXECUTION_STATES = new Set(['completed', 'failed', 'cancelled']);
+const STALE_SOURCE_LEASE_TERMINAL_MISSION_PHASES = new Set(['COMPLETE', 'CANCELLED']);
+const STALE_SOURCE_LEASE_TERMINAL_WORKER_STATES = new Set(['complete', 'completed', 'failed', 'cancelled']);
+const STALE_SOURCE_LEASE_EXPECTED_IDENTITY_KEYS = Object.freeze([
+  'leaseId',
+  'laneId',
+  'repository',
+  'issueNumber',
+  'prNumber',
+  'branch',
+  'headSha',
+  'ownerId',
+]);
+
+function staleSourceLeaseReconciliationResult(ok, additions = {}) {
+  return Object.freeze({
+    schemaVersion: PROGRAMME_AUTHORITY_SERVICE_SCHEMA,
+    operation: 'reconcile-stale-source-mutation-lease',
+    ok,
+    reconciled: false,
+    released: false,
+    leaseSeizureAllowed: false,
+    successorLeaseClaimed: false,
+    ...additions,
+  });
+}
+
+function staleSourceLeaseExpectedIdentity(input = {}) {
+  const requested = STALE_SOURCE_LEASE_EXPECTED_IDENTITY_KEYS.some((key) => (
+    input[key] !== undefined && input[key] !== null && String(input[key]).trim()
+  ));
+  if (!requested) return Object.freeze({ requested: false, complete: true, identity: null });
+  const identity = terminalIdentity(input);
+  return Object.freeze({ requested: true, complete: identity.complete, identity });
+}
+
+function exactStaleExecutionIdentity(receipt, lease) {
+  return Boolean(
+    receipt
+    && lease
+    && text(receipt.repository) === text(lease.repository)
+    && positiveInteger(receipt.issueNumber) === positiveInteger(lease.issueNumber)
+    && positiveInteger(receipt.prNumber) === positiveInteger(lease.prNumber)
+    && text(receipt.branch) === text(lease.branch)
+    && text(receipt.sourceHead).toLowerCase() === text(lease.headSha).toLowerCase()
+    && text(receipt.leaseKey) === text(lease.leaseId)
+    && text(receipt.workerId) === text(lease.ownerId)
+  );
+}
+
+function staleSourceLeaseGithubFacts(github, lease) {
+  if (github?.status !== 'fetched') {
+    return Object.freeze({ valid: false, terminal: false, reason: 'STALE_SOURCE_LEASE_GITHUB_EVIDENCE_BLOCKED' });
+  }
+  const prState = text(github.prState).toUpperCase();
+  const merged = github.merged === true;
+  const identityMatches = Boolean(
+    text(github.repository) === text(lease.repository)
+    && positiveInteger(github.prNumber) === positiveInteger(lease.prNumber)
+    && text(github.headBranch) === text(lease.branch)
+    && text(github.headSha).toLowerCase() === text(lease.headSha).toLowerCase()
+  );
+  if (!identityMatches) {
+    return Object.freeze({ valid: false, terminal: false, reason: 'STALE_SOURCE_LEASE_GITHUB_IDENTITY_MISMATCH' });
+  }
+  if ((merged && prState === 'OPEN') || (!merged && prState === 'MERGED')) {
+    return Object.freeze({ valid: false, terminal: false, reason: 'STALE_SOURCE_LEASE_GITHUB_STATE_CONTRADICTORY' });
+  }
+  const terminal = merged || prState === 'CLOSED' || prState === 'MERGED';
+  if (!terminal) {
+    return Object.freeze({ valid: true, terminal: false, reason: 'STALE_SOURCE_LEASE_HISTORICAL_PR_NONTERMINAL' });
+  }
+  const mergeCommitSha = text(github.mergeCommitSha).toLowerCase();
+  const mergedAtUtc = safeNow(github.mergedAtUtc ?? github.mergedAt);
+  if (merged && (!SHA_40.test(mergeCommitSha) || !mergedAtUtc)) {
+    return Object.freeze({ valid: false, terminal: false, reason: 'STALE_SOURCE_LEASE_GITHUB_TERMINAL_EVIDENCE_INCOMPLETE' });
+  }
+  return Object.freeze({
+    valid: true,
+    terminal: true,
+    reason: 'STALE_SOURCE_LEASE_GITHUB_TERMINAL',
+    repository: text(github.repository),
+    prNumber: positiveInteger(github.prNumber),
+    branch: text(github.headBranch),
+    headSha: text(github.headSha).toLowerCase(),
+    prState,
+    merged,
+    mergeCommitSha: merged ? mergeCommitSha : '',
+    mergedAtUtc: merged ? mergedAtUtc : '',
+  });
+}
+
+function sameStaleSourceLeaseGithubFacts(first, second) {
+  return Boolean(
+    first?.valid === true
+    && first?.terminal === true
+    && second?.valid === true
+    && second?.terminal === true
+    && first.repository === second.repository
+    && first.prNumber === second.prNumber
+    && first.branch === second.branch
+    && first.headSha === second.headSha
+    && first.prState === second.prState
+    && first.merged === second.merged
+    && first.mergeCommitSha === second.mergeCommitSha
+    && first.mergedAtUtc === second.mergedAtUtc
+  );
+}
+
+function missionLaneNumbers(missionId) {
+  const match = /^goal-(\d+)-pr-(\d+)$/i.exec(text(missionId));
+  if (!match) return Object.freeze({ issueNumber: null, prNumber: null });
+  return Object.freeze({ issueNumber: positiveInteger(match[1]), prNumber: positiveInteger(match[2]) });
+}
+
+function exactRequiredAliases(values, expected, normalize = text) {
+  const supplied = values.filter((value) => (
+    value !== undefined && value !== null && String(value).trim()
+  ));
+  if (!supplied.length) return false;
+  const canonicalExpected = normalize(expected);
+  return supplied.every((value) => normalize(value) === canonicalExpected);
+}
+
+function staleSourceLeaseMissionLineage(mission, lease) {
+  if (!mission || text(mission.missionId) !== text(lease.laneId)) {
+    return Object.freeze({ exact: false, terminal: false, live: false, reason: 'STALE_SOURCE_LEASE_MISSION_IDENTITY_MISMATCH' });
+  }
+  const laneNumbers = missionLaneNumbers(mission.missionId);
+  const exact = Boolean(
+    exactRequiredAliases([mission.repository, mission.repositoryFullName], lease.repository)
+    && exactRequiredAliases([mission.issueNumber, laneNumbers.issueNumber], lease.issueNumber, positiveInteger)
+    && exactRequiredAliases([mission.prNumber, mission.pullRequest?.number, laneNumbers.prNumber], lease.prNumber, positiveInteger)
+    && exactRequiredAliases([mission.branch, mission.git?.branch, mission.pullRequest?.headBranch], lease.branch)
+    && exactRequiredAliases(
+      [mission.headSha, mission.sourceHead, mission.pullRequest?.headSha, mission.git?.commitSha],
+      text(lease.headSha).toLowerCase(),
+      (value) => text(value).toLowerCase(),
+    )
+    && exactRequiredAliases([mission.ownerId, mission.workerId, mission.dispatch?.workerId], lease.ownerId)
+    && exactRequiredAliases(
+      [mission.leaseId, mission.leaseKey, mission.dispatch?.leaseId, mission.dispatch?.leaseKey],
+      lease.leaseId,
+    )
+  );
+  if (!exact) {
+    return Object.freeze({ exact: false, terminal: false, live: false, reason: 'STALE_SOURCE_LEASE_MISSION_IDENTITY_MISMATCH' });
+  }
+  const phase = text(mission.currentPhase).toUpperCase();
+  const workerState = text(mission.dispatch?.status).toLowerCase();
+  const activeWriter = text(mission.activeWriter).toLowerCase();
+  const activeAgentState = text(mission.activeAgent?.status).toLowerCase();
+  const live = Boolean(
+    workerState === 'running'
+    || (activeWriter && activeWriter !== 'none' && activeWriter !== 'idle')
+    || activeAgentState === 'running'
+  );
+  const terminal = STALE_SOURCE_LEASE_TERMINAL_MISSION_PHASES.has(phase)
+    && STALE_SOURCE_LEASE_TERMINAL_WORKER_STATES.has(workerState)
+    && !live;
+  return Object.freeze({
+    exact: true,
+    terminal,
+    live,
+    reason: terminal
+      ? 'STALE_SOURCE_LEASE_MISSION_AND_WORKER_TERMINAL'
+      : 'STALE_SOURCE_LEASE_NONTERMINAL_MISSION_OR_WORKER_PRESENT',
+    missionId: text(mission.missionId),
+    phase,
+    workerState,
+  });
+}
+
+export async function reconcileStaleSourceMutationLease(input = {}, options = {}) {
+  const nowUtc = safeNow(input.nowUtc);
+  if (!nowUtc) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: 'STALE_SOURCE_LEASE_RECONCILIATION_TIME_INVALID',
+    });
+  }
+  const deps = dependencies(options);
+  const layout = await ensureSharedWorkspaceLayout({ root: options.root, repoRoot: options.repoRoot });
+  if (!layout.ok) return staleSourceLeaseReconciliationResult(false, { reason: layout.reason });
+
+  const current = await readSourceMutationLease({
+    root: layout.root,
+    repoRoot: options.repoRoot,
+    nowUtc,
+    readFileImpl: deps.readFile,
+  });
+  if (current.ok && !current.present) {
+    return staleSourceLeaseReconciliationResult(true, {
+      idempotent: true,
+      reason: 'STALE_SOURCE_LEASE_RECONCILIATION_NOT_REQUIRED',
+      current,
+    });
+  }
+  const releaseMarkerPresent = Boolean(
+    !current.ok
+    && current.present
+    && current.record
+    && current.reason === 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'
+  );
+  if ((!current.ok && !releaseMarkerPresent) || !current.present || !current.record) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: `STALE_SOURCE_LEASE_CURRENT_STATE_BLOCKED:${text(current.reason, 'unknown')}`,
+      current,
+    });
+  }
+
+  const lease = current.record;
+  const validation = validateSourceMutationLease(lease, { nowUtc });
+  if (!validation.valid) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: 'STALE_SOURCE_LEASE_IDENTITY_INVALID',
+      validation,
+    });
+  }
+  if (validation.active && !releaseMarkerPresent) {
+    return staleSourceLeaseReconciliationResult(true, {
+      reason: 'STALE_SOURCE_LEASE_RECONCILIATION_NOT_REQUIRED_ACTIVE_LEASE',
+      current,
+      validation,
+    });
+  }
+  if (!validation.stale && !releaseMarkerPresent) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: 'STALE_SOURCE_LEASE_STATE_AMBIGUOUS',
+      current,
+      validation,
+    });
+  }
+
+  const expected = staleSourceLeaseExpectedIdentity(input);
+  if (expected.requested && !expected.complete) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: 'STALE_SOURCE_LEASE_EXPECTED_IDENTITY_INCOMPLETE',
+    });
+  }
+  if (expected.requested) {
+    const exactExpected = validateSourceMutationLease(lease, { nowUtc, expected: expected.identity });
+    if (!exactExpected.valid) {
+      return staleSourceLeaseReconciliationResult(false, {
+        reason: 'STALE_SOURCE_LEASE_EXPECTED_IDENTITY_MISMATCH',
+        exactBindingErrors: exactExpected.errors,
+      });
+    }
+  }
+
+  const github = await githubEvidenceForLaneIdentity(lease, options, deps);
+  const githubFacts = staleSourceLeaseGithubFacts(github, lease);
+  if (!githubFacts.valid || !githubFacts.terminal) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: githubFacts.reason,
+      github,
+      githubFacts,
+    });
+  }
+
+  const execution = await deps.readCurrentExecutionReceipt(
+    layout.root,
+    {
+      leaseKey: lease.leaseId,
+      repository: lease.repository,
+      issueNumber: lease.issueNumber,
+      branch: lease.branch,
+      expectedHead: lease.headSha,
+    },
+    { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) },
+  );
+  if (!execution?.receipt) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: 'STALE_SOURCE_LEASE_EXECUTION_LINEAGE_MISSING',
+      execution,
+    });
+  }
+  if (execution.ok !== true) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: `STALE_SOURCE_LEASE_EXECUTION_EVIDENCE_BLOCKED:${text(execution.reason, 'unknown')}`,
+      execution,
+    });
+  }
+  if (!exactStaleExecutionIdentity(execution.receipt, lease)) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: 'STALE_SOURCE_LEASE_EXECUTION_IDENTITY_MISMATCH',
+      execution,
+    });
+  }
+  if (!STALE_SOURCE_LEASE_TERMINAL_EXECUTION_STATES.has(text(execution.receipt.state).toLowerCase())) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: 'STALE_SOURCE_LEASE_NONTERMINAL_EXECUTION_PRESENT',
+      execution,
+    });
+  }
+
+  const missions = await deps.listMissionRecords({
+    root: options.orchestratorRoot,
+    snapshotRoot: options.snapshotRoot,
+    env: options.env || process.env,
+  });
+  if (!Array.isArray(missions)) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: 'STALE_SOURCE_LEASE_MISSION_STATE_UNAVAILABLE',
+    });
+  }
+  const candidates = missions.filter((mission) => text(mission?.missionId) === text(lease.laneId));
+  if (!candidates.length) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: 'STALE_SOURCE_LEASE_MISSION_LINEAGE_MISSING',
+    });
+  }
+  if (candidates.length !== 1) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: 'STALE_SOURCE_LEASE_MISSION_LINEAGE_AMBIGUOUS',
+      matchingMissionCount: candidates.length,
+    });
+  }
+  const missionLineage = staleSourceLeaseMissionLineage(candidates[0], lease);
+  if (!missionLineage.exact) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: missionLineage.reason,
+      missionLineage,
+    });
+  }
+  if (!missionLineage.terminal || missionLineage.live) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: 'STALE_SOURCE_LEASE_NONTERMINAL_MISSION_OR_WORKER_PRESENT',
+      missionLineage,
+    });
+  }
+
+  const githubRecheck = await githubEvidenceForLaneIdentity(lease, options, deps);
+  const githubRecheckFacts = staleSourceLeaseGithubFacts(githubRecheck, lease);
+  if (!sameStaleSourceLeaseGithubFacts(githubFacts, githubRecheckFacts)) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: 'STALE_SOURCE_LEASE_GITHUB_CHANGED_BEFORE_RELEASE',
+      githubFacts,
+      githubRecheckFacts,
+    });
+  }
+
+  const release = await releaseSourceMutationLease({
+    nowUtc,
+    leaseId: lease.leaseId,
+    laneId: lease.laneId,
+    repository: lease.repository,
+    issueNumber: lease.issueNumber,
+    prNumber: lease.prNumber,
+    branch: lease.branch,
+    headSha: lease.headSha,
+    ownerId: lease.ownerId,
+  }, {
+    ...options,
+    root: layout.root,
+    dependencies: options.dependencies,
+  });
+  if (!release.ok) {
+    return staleSourceLeaseReconciliationResult(false, {
+      reason: release.reason === 'SOURCE_MUTATION_LEASE_OPERATION_BUSY'
+        ? 'STALE_SOURCE_LEASE_RECONCILIATION_BUSY'
+        : 'STALE_SOURCE_LEASE_CANONICAL_RELEASE_FAILED',
+      release,
+      exactTerminalLineageProved: true,
+    });
+  }
+  return staleSourceLeaseReconciliationResult(true, {
+    reconciled: true,
+    released: release.released === true,
+    idempotent: release.idempotent === true,
+    reason: release.released === true
+      ? 'STALE_SOURCE_LEASE_RECONCILED_AND_RELEASED'
+      : 'STALE_SOURCE_LEASE_ALREADY_RELEASED_AFTER_EXACT_PROOF',
+    leaseId: lease.leaseId,
+    laneId: lease.laneId,
+    repository: lease.repository,
+    issueNumber: lease.issueNumber,
+    prNumber: lease.prNumber,
+    branch: lease.branch,
+    headSha: lease.headSha,
+    ownerId: lease.ownerId,
+    executionState: text(execution.receipt.state).toLowerCase(),
+    missionPhase: missionLineage.phase,
+    workerState: missionLineage.workerState,
+    githubFacts,
+    release,
+    releaseOnlyExactLease: true,
+    exactTerminalLineageProved: true,
   });
 }

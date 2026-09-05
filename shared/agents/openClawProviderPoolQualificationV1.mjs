@@ -1,18 +1,37 @@
 import { routeMissionControllerCapacity } from './missionControllerCapacityRouterV1.mjs';
+import { createHash, createPublicKey, sign as signPayload, verify as verifyPayload } from 'node:crypto';
+import { MISSION_CONTROLLER_ROUTE } from './missionControllerCapacityRouterV1.mjs';
 import {
+  acquireSharedWorkspaceOperationLock,
   toSharedWorkspaceExecutionReceipt,
   validateExecutionReceipt,
 } from './executionReceiptV1.mjs';
 import {
   SHARED_WORKSPACE_RECORD_KINDS,
   SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
+  createSharedWorkspaceReceiptRecord,
+  createSharedWorkspaceStatusRecord,
   validateSharedWorkspaceRecord,
+  writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
 
 export const OPENCLAW_PROVIDER_POOL_QUALIFICATION_SCHEMA = 'stephanos.openclaw-provider-pool-qualification.v1';
 export const OPENCLAW_PROVIDER_CAPACITY_SCHEMA = 'stephanos.openclaw-provider-capacity-receipt.v1';
 export const OPENCLAW_PROVIDER_POOL_HOST_CONTEXT_SCHEMA = 'stephanos.openclaw-provider-pool-host-context.v1';
-export const OPENCLAW_PROVIDER_ROUTE = 'OPENCLAW_LOCAL';
+export const OPENCLAW_PROVIDER_POOL_PUBLISHER_ID = 'stephanos-openclaw-provider-pool-publisher-v1';
+export const OPENCLAW_PROVIDER_POOL_COMPONENT_FILES = Object.freeze({
+  qualificationReceipt: 'openclaw-provider-pool-qualification-current.json',
+  capacityReceipt: 'openclaw-provider-pool-capacity-current.json',
+  realWorkExecutionReceipt: 'openclaw-provider-pool-execution-current.json',
+  realWorkWorkspaceReceipt: 'openclaw-provider-pool-workspace-receipt-current.json',
+  qualificationAuthorityReceipt: 'openclaw-provider-pool-authority-current.json',
+});
+export const OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_SEGMENTS = Object.freeze([
+  'receipt-locks',
+  'openclaw-provider-pool',
+  'publication.lock',
+]);
+export const OPENCLAW_PROVIDER_ROUTE = MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL;
 export const OPENCLAW_PROVIDER_ADAPTER = 'openclaw-local';
 export const OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION = 'OPENCLAW_TASK_CLASS_PRODUCTION_ELIGIBLE';
 
@@ -26,6 +45,15 @@ const MAX_QUALIFICATION_LAG_MS = 10 * 60 * 1000;
 const MAX_SNAPSHOT_DEPTH = 12;
 const MAX_SNAPSHOT_NODES = 4096;
 const OPENCLAW_QUALIFICATION_ISSUE = 1725;
+const OPENCLAW_CAPACITY_OPERATIONS = Object.freeze([
+  'SOURCE_CONSTRUCTION',
+  'FOCUSED_TESTS',
+]);
+const COMPONENT_KEYS = Object.freeze(Object.keys(OPENCLAW_PROVIDER_POOL_COMPONENT_FILES));
+const COMPONENT_DISPOSITION = 'OPENCLAW_PROVIDER_POOL_COMPONENT';
+const PUBLISHER_ATTESTATION_SCHEMA = 'stephanos.openclaw-provider-pool-publisher-attestation.v1';
+const DIGEST = /^sha256:[0-9a-f]{64}$/;
+const BASE64_SIGNATURE = /^[A-Za-z0-9+/]+={0,2}$/;
 
 const QUALIFICATION_KEYS = Object.freeze([
   'schemaVersion',
@@ -86,6 +114,45 @@ const WORKSPACE_RECEIPT_KEYS = Object.freeze([
   'receivedRecordId',
   'disposition',
   'summary',
+]);
+
+const COMPONENT_RECORD_KEYS = Object.freeze([
+  ...WORKSPACE_RECEIPT_KEYS,
+  'publisherId',
+  'componentKey',
+  'componentDigest',
+  'payload',
+]);
+
+const PROVIDER_POOL_STATUS_KEYS = Object.freeze([
+  'schemaVersion',
+  'kind',
+  'statusId',
+  'participantId',
+  'timestampUtc',
+  'status',
+  'summary',
+  'proofRefs',
+  'relatedIssue',
+  'relatedPr',
+  'repository',
+  'taskClass',
+  'sourceHead',
+  'publisherId',
+  'hostContextDigests',
+  'sourceMutationAllowed',
+  'mergeAuthority',
+  'leaseSeizureAllowed',
+  'duplicateDispatchAllowed',
+  'publisherAttestation',
+]);
+
+const PUBLISHER_ATTESTATION_KEYS = Object.freeze([
+  'schemaVersion',
+  'algorithm',
+  'publicKeySha256',
+  'payloadDigest',
+  'signature',
 ]);
 
 function text(value) {
@@ -196,6 +263,51 @@ function canonicalJson(value) {
     return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
   }
   return JSON.stringify(value);
+}
+
+function payloadDigest(value) {
+  return `sha256:${createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex')}`;
+}
+
+function publicKeySha256(keyInput) {
+  const publicKey = createPublicKey(keyInput);
+  const der = publicKey.export({ type:'spki', format:'der' });
+  return `sha256:${createHash('sha256').update(der).digest('hex')}`;
+}
+
+function createPublisherAttestation(unsignedStatus, privateKeyPem) {
+  const canonical = canonicalJson(unsignedStatus);
+  return Object.freeze({
+    schemaVersion:PUBLISHER_ATTESTATION_SCHEMA,
+    algorithm:'Ed25519',
+    publicKeySha256:publicKeySha256(privateKeyPem),
+    payloadDigest:payloadDigest(unsignedStatus),
+    signature:signPayload(null, Buffer.from(canonical, 'utf8'), privateKeyPem).toString('base64'),
+  });
+}
+
+function validatePublisherAttestation(status, publicKeyPem) {
+  const attestation = status?.publisherAttestation;
+  if (!text(publicKeyPem)
+    || !exactKeys(attestation, PUBLISHER_ATTESTATION_KEYS)
+    || attestation.schemaVersion !== PUBLISHER_ATTESTATION_SCHEMA
+    || attestation.algorithm !== 'Ed25519'
+    || !DIGEST.test(attestation.publicKeySha256)
+    || !DIGEST.test(attestation.payloadDigest)
+    || !BASE64_SIGNATURE.test(text(attestation.signature))) return false;
+  const { publisherAttestation: ignored, ...unsignedStatus } = status;
+  try {
+    return attestation.publicKeySha256 === publicKeySha256(publicKeyPem)
+      && attestation.payloadDigest === payloadDigest(unsignedStatus)
+      && verifyPayload(
+        null,
+        Buffer.from(canonicalJson(unsignedStatus), 'utf8'),
+        publicKeyPem,
+        Buffer.from(attestation.signature, 'base64'),
+      );
+  } catch {
+    return false;
+  }
 }
 
 function qualificationSummary(receipt) {
@@ -332,8 +444,7 @@ export function validateOpenClawProviderCapacity(receipt, expected = {}) {
     && WORKSPACE_SAFE_ID.test(text(candidate.workerId))
     && candidate.workerId === expected.workerId
     && candidate.state === 'READY'
-    && operations?.includes('SOURCE_CONSTRUCTION')
-    && operations?.includes('FOCUSED_TESTS')
+    && sameStrings(operations, OPENCLAW_CAPACITY_OPERATIONS)
     && taskClasses?.includes(expected.taskClass)
     && qualificationIds?.includes(expected.qualificationId)
     && candidate.qualificationAuthorityReceiptId === expected.authorityReceiptId
@@ -350,6 +461,358 @@ export function validateOpenClawProviderCapacity(receipt, expected = {}) {
     receipt: valid ? candidate : null,
     reason: valid ? 'OPENCLAW_CAPACITY_VALID' : 'OPENCLAW_CAPACITY_INVALID',
   });
+}
+
+function buildComponentRecords(host, proofRefs) {
+  const timestampUtc = host.capacityReceipt.observedAtUtc;
+  const correlationId = host.qualificationReceipt.qualificationId;
+  return Object.freeze(Object.fromEntries(COMPONENT_KEYS.map((componentKey) => {
+    const payload = host[componentKey];
+    const record = Object.freeze({
+      ...createSharedWorkspaceReceiptRecord({
+        receiptId: `openclaw-${componentKey}-current`,
+        participantId: 'stephanos',
+        timestampUtc,
+        correlationId,
+        relatedIssue: String(OPENCLAW_QUALIFICATION_ISSUE),
+        relatedPr: '',
+        proofRefs,
+        receivedRecordId: `${componentKey}-payload`,
+        disposition: COMPONENT_DISPOSITION,
+        summary: `Canonical OpenClaw provider-pool ${componentKey} component.`,
+      }),
+      publisherId: OPENCLAW_PROVIDER_POOL_PUBLISHER_ID,
+      componentKey,
+      componentDigest: payloadDigest(payload),
+      payload,
+    });
+    return [componentKey, record];
+  })));
+}
+
+export function validateOpenClawProviderPoolStatusRecord(record, independentlyLoadedComponents, expected = {}) {
+  const status = snapshot(record);
+  const components = snapshot(independentlyLoadedComponents);
+  const nowUtc = text(expected.nowUtc);
+  const statusValidation = validateSharedWorkspaceRecord(status, {
+    nowMs: timestamp(nowUtc) ?? undefined,
+    staleAfterMs: MAX_RECEIPT_LIFETIME_MS,
+  });
+  if (!exactKeys(status, PROVIDER_POOL_STATUS_KEYS)
+    || !validatePublisherAttestation(status, expected.publisherPublicKeyPem)
+    || !statusValidation.valid
+    || statusValidation.stale === true
+    || status.kind !== SHARED_WORKSPACE_RECORD_KINDS.STATUS
+    || status.statusId !== 'openclaw-provider-pool-current'
+    || status.status !== 'READY'
+    || status.repository !== expected.repository
+    || status.taskClass !== expected.taskClass
+    || status.sourceHead !== text(expected.sourceHead).toLowerCase()
+    || status.publisherId !== OPENCLAW_PROVIDER_POOL_PUBLISHER_ID
+    || status.sourceMutationAllowed !== false
+    || status.mergeAuthority !== false
+    || status.leaseSeizureAllowed !== false
+    || status.duplicateDispatchAllowed !== false
+    || !exactKeys(status.hostContextDigests, COMPONENT_KEYS)
+    || !exactKeys(components, COMPONENT_KEYS)) {
+    return Object.freeze({ valid:false, hostContext:null, reason:'OPENCLAW_PROVIDER_POOL_STATUS_INVALID' });
+  }
+
+  const hostPayload = {};
+  for (const componentKey of COMPONENT_KEYS) {
+    const component = components[componentKey];
+    const validation = validateSharedWorkspaceRecord(component, {
+      nowMs: timestamp(nowUtc) ?? undefined,
+      staleAfterMs: MAX_RECEIPT_LIFETIME_MS,
+    });
+    if (!exactKeys(component, COMPONENT_RECORD_KEYS)
+      || !validation.valid
+      || validation.stale === true
+      || component.kind !== SHARED_WORKSPACE_RECORD_KINDS.RECEIPT
+      || component.publisherId !== OPENCLAW_PROVIDER_POOL_PUBLISHER_ID
+      || component.componentKey !== componentKey
+      || component.componentDigest !== payloadDigest(component.payload)
+      || component.componentDigest !== status.hostContextDigests[componentKey]
+      || !DIGEST.test(component.componentDigest)) {
+      return Object.freeze({ valid:false, hostContext:null, reason:`OPENCLAW_PROVIDER_POOL_COMPONENT_INVALID:${componentKey}` });
+    }
+    hostPayload[componentKey] = component.payload;
+  }
+
+  const host = Object.freeze({
+    schemaVersion: OPENCLAW_PROVIDER_POOL_HOST_CONTEXT_SCHEMA,
+    ...hostPayload,
+  });
+  const qualification = validateOpenClawProviderQualification(host.qualificationReceipt, {
+    repository: expected.repository,
+    taskClass: expected.taskClass,
+    sourceHead: expected.sourceHead,
+    nowUtc,
+  });
+  const authority = qualification.valid
+    ? validateOpenClawQualificationAuthorityChain(qualification.receipt, host, {
+        repository: expected.repository,
+        taskClass: expected.taskClass,
+        sourceHead: expected.sourceHead,
+        nowUtc,
+      })
+    : blockedAuthority('OPENCLAW_QUALIFICATION_CLAIM_INVALID');
+  const capacity = authority.valid
+    ? validateOpenClawProviderCapacity(host.capacityReceipt, {
+        repository: expected.repository,
+        taskClass: expected.taskClass,
+        qualificationId: qualification.receipt.qualificationId,
+        authorityReceiptId: authority.authorityReceiptId,
+        workerId: qualification.receipt.providerInstance,
+        nowUtc,
+      })
+    : Object.freeze({ valid:false, receipt:null, reason:'OPENCLAW_CAPACITY_NOT_EVALUATED' });
+  if (!qualification.valid || !authority.valid || !capacity.valid) {
+    return Object.freeze({ valid:false, hostContext:null, reason:'OPENCLAW_PROVIDER_POOL_AUTHORITY_CHAIN_INVALID' });
+  }
+  const proofRefs = Object.freeze([...new Set([...authority.proofRefs, ...capacity.receipt.proofRefs])]);
+  const componentMetadataValid = COMPONENT_KEYS.every((componentKey) => {
+    const component = components[componentKey];
+    return component.participantId === 'stephanos'
+      && component.timestampUtc === capacity.receipt.observedAtUtc
+      && component.correlationId === qualification.receipt.qualificationId
+      && component.relatedIssue === String(OPENCLAW_QUALIFICATION_ISSUE)
+      && component.relatedPr === ''
+      && component.receivedRecordId === `${componentKey}-payload`
+      && component.disposition === COMPONENT_DISPOSITION
+      && component.summary === `Canonical OpenClaw provider-pool ${componentKey} component.`
+      && sameStrings(component.proofRefs, proofRefs);
+  });
+  if (!componentMetadataValid
+    || status.participantId !== capacity.receipt.workerId
+    || status.timestampUtc !== capacity.receipt.observedAtUtc
+    || status.summary !== `Qualified OpenClaw capacity is READY for ${expected.taskClass} at ${text(expected.sourceHead).toLowerCase()}.`
+    || !sameStrings(status.proofRefs, proofRefs)) {
+    return Object.freeze({ valid:false, hostContext:null, reason:'OPENCLAW_PROVIDER_POOL_PROVENANCE_INVALID' });
+  }
+  return Object.freeze({ valid:true, hostContext:host, reason:'OPENCLAW_PROVIDER_POOL_STATUS_VALID' });
+}
+
+export async function publishOpenClawProviderPoolToSharedWorkspace(root, trustedHostContext = {}, expected = {}, options = {}) {
+  const repository = text(expected.repository);
+  const taskClass = text(expected.taskClass);
+  const sourceHead = text(expected.sourceHead).toLowerCase();
+  const nowUtc = text(expected.nowUtc);
+  const host = snapshot(trustedHostContext);
+  const qualification = validateOpenClawProviderQualification(host?.qualificationReceipt, {
+    repository,
+    taskClass,
+    sourceHead,
+    nowUtc,
+  });
+  const authority = qualification.valid
+    ? validateOpenClawQualificationAuthorityChain(qualification.receipt, host, {
+        repository,
+        taskClass,
+        sourceHead,
+        nowUtc,
+      })
+    : blockedAuthority('OPENCLAW_QUALIFICATION_CLAIM_INVALID');
+  const capacity = authority.valid
+    ? validateOpenClawProviderCapacity(host?.capacityReceipt, {
+        repository,
+        taskClass,
+        qualificationId: qualification.receipt.qualificationId,
+        authorityReceiptId: authority.authorityReceiptId,
+        workerId: qualification.receipt.providerInstance,
+        nowUtc,
+      })
+    : Object.freeze({ valid: false, receipt: null, reason: 'OPENCLAW_CAPACITY_NOT_EVALUATED' });
+  if (!qualification.valid || !authority.valid || !capacity.valid) {
+    return Object.freeze({
+      ok: false,
+      reason: !qualification.valid
+        ? qualification.reason
+        : !authority.valid
+          ? authority.reason
+          : capacity.reason,
+      record: null,
+    });
+  }
+  const proofRefs = Object.freeze([...new Set([
+    ...authority.proofRefs,
+    ...capacity.receipt.proofRefs,
+  ])]);
+  const componentRecords = buildComponentRecords(host, proofRefs);
+  const hostContextDigests = Object.freeze(Object.fromEntries(COMPONENT_KEYS.map((componentKey) => [
+    componentKey,
+    componentRecords[componentKey].componentDigest,
+  ])));
+  const unsignedRecord = Object.freeze({
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'openclaw-provider-pool-current',
+      participantId: qualification.receipt.providerInstance,
+      timestampUtc: capacity.receipt.observedAtUtc,
+      status: 'READY',
+      summary: `Qualified OpenClaw capacity is READY for ${taskClass} at ${sourceHead}.`,
+      proofRefs,
+    }),
+    repository,
+    taskClass,
+    sourceHead,
+    publisherId: OPENCLAW_PROVIDER_POOL_PUBLISHER_ID,
+    hostContextDigests,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+    duplicateDispatchAllowed: false,
+  });
+  let record;
+  try {
+    record = Object.freeze({
+      ...unsignedRecord,
+      publisherAttestation:createPublisherAttestation(unsignedRecord, options.publisherPrivateKeyPem),
+    });
+  } catch {
+    return Object.freeze({
+      ok:false,
+      reason:'OPENCLAW_PROVIDER_POOL_PUBLISHER_ATTESTATION_UNAVAILABLE',
+      record:null,
+      componentRecords,
+    });
+  }
+  const validation = validateOpenClawProviderPoolStatusRecord(record, componentRecords, {
+    repository,
+    taskClass,
+    sourceHead,
+    nowUtc,
+    publisherPublicKeyPem:createPublicKey(options.publisherPrivateKeyPem).export({ type:'spki', format:'pem' }),
+  });
+  if (!validation.valid) {
+    return Object.freeze({ ok: false, reason: validation.reason, record, componentRecords, validation });
+  }
+
+  const operationLockOptions = {
+    repoRoot: options.repoRoot,
+    operationLockTimeoutMs: options.operationLockTimeoutMs,
+    operationLockRetryMs: options.operationLockRetryMs,
+    operationStaleLockMs: options.operationStaleLockMs,
+    operationLockHeartbeatMs: options.operationLockHeartbeatMs,
+  };
+  let operationLock;
+  try {
+    operationLock = await acquireSharedWorkspaceOperationLock(
+      root,
+      OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_SEGMENTS,
+      operationLockOptions,
+    );
+  } catch (error) {
+    return Object.freeze({
+      ok:false,
+      reason:'OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_FAILED',
+      errorCode:text(error?.code),
+      record,
+      componentRecords,
+      validation,
+    });
+  }
+  if (operationLock?.ok !== true) {
+    return Object.freeze({
+      ok:false,
+      reason:operationLock?.reason || 'OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_FAILED',
+      record,
+      componentRecords,
+      validation,
+    });
+  }
+
+  let result = null;
+  let publicationError = null;
+  try {
+    if (!(await operationLock.verifyOwnership())) {
+      result = Object.freeze({
+        ok:false,
+        reason:'OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_OWNERSHIP_LOST',
+        record,
+        componentRecords,
+        validation,
+      });
+    } else {
+      const componentWrites = Object.freeze(Object.fromEntries(await Promise.all(COMPONENT_KEYS.map(async (componentKey) => [
+        componentKey,
+        await writeAtomicJson(root, ['receipts', OPENCLAW_PROVIDER_POOL_COMPONENT_FILES[componentKey]], componentRecords[componentKey], options),
+      ]))));
+      const failedComponent = COMPONENT_KEYS.find((componentKey) => componentWrites[componentKey]?.ok !== true);
+      if (failedComponent) {
+        result = Object.freeze({
+          ok:false,
+          reason:`OPENCLAW_PROVIDER_POOL_COMPONENT_WRITE_FAILED:${failedComponent}`,
+          record,
+          componentRecords,
+          componentWrites,
+          validation,
+        });
+      } else if (!(await operationLock.verifyOwnership())) {
+        result = Object.freeze({
+          ok:false,
+          reason:'OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_OWNERSHIP_LOST',
+          record,
+          componentRecords,
+          componentWrites,
+          validation,
+        });
+      } else {
+        const write = await writeAtomicJson(root, ['status', 'openclaw-provider-pool-current.json'], record, options);
+        if (write.ok !== true) {
+          result = Object.freeze({
+            ok:false,
+            reason:write.reason,
+            record,
+            componentRecords,
+            componentWrites,
+            validation,
+            write,
+          });
+        } else if (!(await operationLock.verifyOwnership())) {
+          result = Object.freeze({
+            ok:false,
+            reason:'OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_OWNERSHIP_LOST',
+            record,
+            componentRecords,
+            componentWrites,
+            validation,
+            write,
+          });
+        } else {
+          result = Object.freeze({
+            ok:true,
+            reason:'OPENCLAW_PROVIDER_POOL_PUBLISHED',
+            record,
+            componentRecords,
+            componentWrites,
+            validation,
+            write,
+          });
+        }
+      }
+    }
+  } catch (error) {
+    publicationError = error;
+  }
+
+  let released = false;
+  try {
+    released = await operationLock.release();
+  } catch {
+    released = false;
+  }
+  if (!released) {
+    return Object.freeze({
+      ok:false,
+      reason:'OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_RELEASE_FAILED',
+      record,
+      componentRecords,
+      validation,
+      priorResult:result,
+    });
+  }
+  if (publicationError) throw publicationError;
+  return result;
 }
 
 function requestedRoute(input = {}) {

@@ -1,8 +1,24 @@
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { buildMissionEventFromWorkerResult } from '../../shared/agents/missionOrchestratorWorkerResult.mjs';
+import {
+  appendExecutionReceipt,
+  createExecutionReceipt,
+  readCurrentExecutionReceipt,
+} from '../../shared/agents/executionReceiptV1.mjs';
+import { releaseSourceMutationLease } from './programmeAuthorityService.js';
 import { appendMissionEvent } from './missionOrchestratorStore.js';
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
+
+const SOURCE_EXECUTION_BINDING_SCHEMA = 'stephanos.source-build-execution-binding.v1';
+const SOURCE_EXECUTION_TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled']);
+const EXECUTION_RECEIPT_PROOF_REFS = Object.freeze(['receipts/execution-receipts.jsonl']);
+
+function text(value, fallback = '') {
+  if (value === null || value === undefined) return fallback;
+  const normalized = String(value).trim();
+  return normalized || fallback;
+}
 
 function queuePaths(root, adapter) {
   const adapterRoot = resolve(root, adapter);
@@ -11,6 +27,156 @@ function queuePaths(root, adapter) {
 
 async function ensurePaths(paths) {
   await Promise.all(Object.values(paths).map((path) => mkdir(path, { recursive: true })));
+}
+
+function sourceWorkspaceRoot(options = {}) {
+  return text(
+    options.sharedWorkspaceRoot
+      || options.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
+      || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+  );
+}
+
+function sourceExecutionDependencies(options = {}) {
+  const overrides = options.testOnly === true && options.sourceExecutionDependencies
+    ? options.sourceExecutionDependencies
+    : {};
+  return {
+    appendExecutionReceipt: overrides.appendExecutionReceipt ?? appendExecutionReceipt,
+    readCurrentExecutionReceipt: overrides.readCurrentExecutionReceipt ?? readCurrentExecutionReceipt,
+    releaseSourceMutationLease: overrides.releaseSourceMutationLease ?? releaseSourceMutationLease,
+  };
+}
+
+function nowUtc(options = {}, afterUtc = '') {
+  const requested = options.now instanceof Date ? options.now : new Date();
+  let timestamp = Number.isFinite(requested.getTime()) ? requested.getTime() : Date.now();
+  const after = Date.parse(text(afterUtc));
+  if (Number.isFinite(after) && timestamp <= after) timestamp = after + 1;
+  return new Date(timestamp).toISOString();
+}
+
+function validSourceExecutionBinding(binding, item, adapter) {
+  return Boolean(
+    binding?.schemaVersion === SOURCE_EXECUTION_BINDING_SCHEMA
+    && text(binding.leaseId)
+    && text(binding.laneId)
+    && text(binding.repository)
+    && Number.isSafeInteger(Number(binding.issueNumber))
+    && Number(binding.issueNumber) > 0
+    && Number.isSafeInteger(Number(binding.prNumber))
+    && Number(binding.prNumber) > 0
+    && text(binding.branch)
+    && /^[0-9a-f]{40}$/.test(text(binding.headSha).toLowerCase())
+    && text(binding.ownerId)
+    && text(binding.executionId)
+    && text(binding.receiptWorkerId)
+    && text(binding.workerType)
+    && text(binding.actionId).toLowerCase() === text(item?.actionId).toLowerCase()
+    && text(binding.missionId).toLowerCase() === text(item?.missionId).toLowerCase()
+    && text(binding.adapter).toLowerCase() === text(adapter).toLowerCase()
+    && text(binding.actionWorkerId) === text(item?.payload?.workerId || item?.payload?.owner)
+    && binding.releaseOnlyExactLease === true
+    && binding.mergeAuthority === false
+    && binding.leaseSeizureAllowed === false
+  );
+}
+
+function createTransitionReceipt(binding, state, previous, options = {}) {
+  return createExecutionReceipt({
+    receiptId: `${binding.executionId}-${state}-${previous.sequence + 1}`,
+    repository: binding.repository,
+    issueNumber: binding.issueNumber,
+    prNumber: binding.prNumber,
+    branch: binding.branch,
+    sourceHead: binding.headSha,
+    workerId: binding.receiptWorkerId,
+    workerType: binding.workerType,
+    executionId: binding.executionId,
+    leaseKey: binding.leaseId,
+    state,
+    phase: text(options.phase, `source-${state}`),
+    sequence: previous.sequence + 1,
+    predecessorReceiptId: previous.receiptId,
+    timestampUtc: nowUtc(options, previous.timestampUtc),
+    blocker: state === 'failed' ? text(options.blocker, 'source worker failed') : '',
+    operatorActionRequired: false,
+    proofRefs: EXECUTION_RECEIPT_PROOF_REFS,
+    expectedNextAction: SOURCE_EXECUTION_TERMINAL_STATES.has(state)
+      ? ''
+      : text(options.expectedNextAction, 'advance exact source execution'),
+  });
+}
+
+async function currentSourceExecutionReceipt(binding, options = {}) {
+  const deps = sourceExecutionDependencies(options);
+  const root = sourceWorkspaceRoot(options);
+  if (!root) return { ok: false, reason: 'SOURCE_EXECUTION_SHARED_WORKSPACE_ROOT_MISSING', receipt: null };
+  return deps.readCurrentExecutionReceipt(root, {
+    executionId: binding.executionId,
+    leaseKey: binding.leaseId,
+    expectedHead: binding.headSha,
+  }, { repoRoot: options.repoRoot });
+}
+
+async function appendSourceExecutionTransition(binding, state, options = {}) {
+  const current = await currentSourceExecutionReceipt(binding, options);
+  if (!current?.ok || !current.receipt) {
+    return { ok: false, reason: `SOURCE_EXECUTION_CURRENT_RECEIPT_UNAVAILABLE:${text(current?.reason)}`, current, receipt: null };
+  }
+  if (SOURCE_EXECUTION_TERMINAL_STATES.has(current.receipt.state)) {
+    return state === current.receipt.state
+      ? { ok: true, reason: 'SOURCE_EXECUTION_TERMINAL_ALREADY_RECORDED', current, receipt: current.receipt, idempotent: true }
+      : { ok: false, reason: 'SOURCE_EXECUTION_CONFLICTING_TERMINAL_STATE', current, receipt: null };
+  }
+  const receipt = createTransitionReceipt(binding, state, current.receipt, options);
+  const deps = sourceExecutionDependencies(options);
+  const append = await deps.appendExecutionReceipt(sourceWorkspaceRoot(options), receipt, { repoRoot: options.repoRoot });
+  return {
+    ok: append?.ok === true,
+    reason: append?.ok === true ? 'SOURCE_EXECUTION_TRANSITION_APPENDED' : `SOURCE_EXECUTION_TRANSITION_FAILED:${text(append?.reason)}`,
+    current,
+    receipt,
+    append,
+  };
+}
+
+async function releaseExactSourceExecution(binding, options = {}, afterUtc = '') {
+  const deps = sourceExecutionDependencies(options);
+  return deps.releaseSourceMutationLease({
+    leaseId: binding.leaseId,
+    laneId: binding.laneId,
+    repository: binding.repository,
+    issueNumber: Number(binding.issueNumber),
+    prNumber: Number(binding.prNumber),
+    branch: binding.branch,
+    headSha: binding.headSha,
+    ownerId: binding.ownerId,
+    nowUtc: nowUtc(options, afterUtc),
+  }, {
+    root: sourceWorkspaceRoot(options),
+    repoRoot: options.repoRoot,
+    env: options.env || process.env,
+  });
+}
+
+async function terminalizeAndRelease(binding, success, error, options = {}) {
+  if (!binding) return { ok: true, terminalized: false, released: false };
+  const targetState = success ? 'completed' : 'failed';
+  const transition = await appendSourceExecutionTransition(binding, targetState, {
+    ...options,
+    phase: success ? 'source-worker-completed' : 'source-worker-failed',
+    blocker: success ? '' : text(error, 'source worker failed'),
+  });
+  if (!transition.ok) return { ok: false, terminalized: false, released: false, transition };
+  const release = await releaseExactSourceExecution(binding, options, transition.receipt.timestampUtc);
+  return {
+    ok: release?.ok === true,
+    terminalized: true,
+    released: release?.ok === true,
+    transition,
+    release,
+  };
 }
 
 export async function claimNextMissionWorkerItem(adapter, options = {}) {
@@ -42,8 +208,29 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
       ) {
         continue;
       }
+      const sourceExecution = item?.sourceExecution || null;
+      if (sourceExecution && !validSourceExecutionBinding(sourceExecution, item, adapter)) {
+        throw new Error('Source execution queue binding is invalid or retargeted.');
+      }
       await rename(pendingPath, processingPath);
-      return { adapter, item, processingPath, paths };
+      let acceptedReceipt = null;
+      if (sourceExecution) {
+        const accepted = await appendSourceExecutionTransition(sourceExecution, 'accepted', {
+          ...options,
+          phase: 'source-worker-accepted',
+          expectedNextAction: 'Worker starts the exact claimed source action.',
+        });
+        if (!accepted.ok) {
+          try {
+            await rename(processingPath, pendingPath);
+          } catch {
+            throw new Error(`Source execution accepted receipt failed and queue claim could not be rolled back: ${accepted.reason}`);
+          }
+          throw new Error(`Source execution accepted receipt failed: ${accepted.reason}`);
+        }
+        acceptedReceipt = accepted.receipt;
+      }
+      return { adapter, item, processingPath, paths, sourceExecution, acceptedReceipt };
     } catch (error) {
       if (['ENOENT', 'EEXIST'].includes(error?.code)) continue;
       throw error;
@@ -90,12 +277,23 @@ async function processAgentClaim(adapter, options, execute) {
   if (!claim) return { processed: false, reason: 'queue-empty' };
   claim.options = options;
   const action = claim.item.payload;
+  const workerId = String(action?.workerId || action?.owner || '').trim();
+  let lifecycleTerminalized = false;
   try {
+    if (claim.sourceExecution) {
+      const started = await appendSourceExecutionTransition(claim.sourceExecution, 'started', {
+        ...options,
+        phase: 'source-worker-started',
+        expectedNextAction: 'Worker reports exact source result and grounded proof.',
+      });
+      if (!started.ok) throw new Error(`Source execution started receipt failed: ${started.reason}`);
+    }
     const execution = await execute(action, claim);
     const applied = await collectAgentWorkerResult({
       missionId: action.missionId,
       actionId: action.actionId,
       adapter,
+      workerId,
       success: execution.success === true,
       resultId: execution.resultId || action.actionId,
       changedFiles: execution.changedFiles || [],
@@ -103,6 +301,16 @@ async function processAgentClaim(adapter, options, execute) {
       evidenceReceipts: execution.evidenceReceipts || [],
       error: execution.error || '',
     }, options);
+    if (claim.sourceExecution) {
+      const terminal = await terminalizeAndRelease(
+        claim.sourceExecution,
+        execution.success === true,
+        execution.error || '',
+        options,
+      );
+      if (!terminal.ok) throw new Error(`Source execution terminal lifecycle failed: ${terminal.transition?.reason || terminal.release?.reason || 'unknown failure'}`);
+      lifecycleTerminalized = true;
+    }
     const result = {
       schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
       actionId: action.actionId,
@@ -122,8 +330,15 @@ async function processAgentClaim(adapter, options, execute) {
     const resultPath = await finishClaim(claim, result, execution.success === true);
     return { processed: true, claim, applied, result, resultPath };
   } catch (error) {
+    if (claim.sourceExecution && !lifecycleTerminalized) {
+      try {
+        await terminalizeAndRelease(claim.sourceExecution, false, error?.message || `${adapter} execution failed.`, options);
+      } catch {
+        // Do not mask the original execution or lifecycle failure.
+      }
+    }
     try {
-      await collectAgentWorkerResult({ missionId: action.missionId, actionId: action.actionId, adapter, success: false, error: error?.message || `${adapter} execution failed.` }, options);
+      await collectAgentWorkerResult({ missionId: action.missionId, actionId: action.actionId, adapter, workerId, success: false, error: error?.message || `${adapter} execution failed.` }, options);
     } catch {
       // Preserve the original adapter failure in the queue result.
     }

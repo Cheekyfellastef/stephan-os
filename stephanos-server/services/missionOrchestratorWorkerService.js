@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import { readFile, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
   buildMissionWorkerAction,
+  createMissionWorkerActionId,
   issueMissionWorkerAuthorization,
   projectMissionWorkerActionState,
 } from '../../shared/agents/missionOrchestratorWorker.mjs';
@@ -14,8 +16,22 @@ import {
 } from './missionOrchestratorStore.js';
 import {
   createSharedWorkspaceHandoffRecord,
+  isSharedWorkspaceParticipantId,
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
+  appendExecutionReceipt,
+  createExecutionReceipt,
+  readCurrentExecutionReceipt,
+} from '../../shared/agents/executionReceiptV1.mjs';
+import {
+  claimSourceMutationLease,
+  releaseSourceMutationLease,
+} from './programmeAuthorityService.js';
+
+const SOURCE_EXECUTION_BINDING_SCHEMA = 'stephanos.source-build-execution-binding.v1';
+const SOURCE_MUTATION_ADAPTERS = new Set(['codex', 'openclaw-local', 'chatgpt-github', 'foundry-forge']);
+const EXECUTION_RECEIPT_PROOF_REFS = Object.freeze(['receipts/execution-receipts.jsonl']);
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -48,7 +64,7 @@ async function createImmutableJson(path, value) {
 function adapterForAction(action) {
   if (action.actionKind === 'signed-openclaw-operation') return 'openclaw-signed';
   if (action.actionKind === 'github-inspection') return 'openclaw-github-readonly';
-  if (action.actionKind === 'agent-handoff' && ['codex', 'openclaw-readonly', 'chatgpt-github', 'foundry-forge'].includes(action.adapter)) return action.adapter;
+  if (action.actionKind === 'agent-handoff' && ['codex', 'openclaw-local', 'openclaw-readonly', 'chatgpt-github', 'foundry-forge'].includes(action.adapter)) return action.adapter;
   if (action.actionKind === 'local-deployment') return 'openclaw-local-deployment';
   if (action.actionKind === 'evidence-judgment') return 'verification';
   return '';
@@ -77,17 +93,284 @@ function encodedMissionIdentity(value) {
   };
 }
 
+function sourceWorkspaceRoot(options = {}) {
+  return text(
+    options.sharedWorkspaceRoot
+      || options.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
+      || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+  );
+}
+
+function sourceExecutionDependencies(options = {}) {
+  const overrides = options.testOnly === true && options.sourceExecutionDependencies
+    ? options.sourceExecutionDependencies
+    : {};
+  return {
+    claimSourceMutationLease: overrides.claimSourceMutationLease ?? claimSourceMutationLease,
+    releaseSourceMutationLease: overrides.releaseSourceMutationLease ?? releaseSourceMutationLease,
+    appendExecutionReceipt: overrides.appendExecutionReceipt ?? appendExecutionReceipt,
+    readCurrentExecutionReceipt: overrides.readCurrentExecutionReceipt ?? readCurrentExecutionReceipt,
+  };
+}
+
+function sourceWorkerType(adapter) {
+  return ({
+    codex: 'remote-codex',
+    'openclaw-local': 'openclaw',
+    'chatgpt-github': 'github-first',
+    'foundry-forge': 'orchestration-engine',
+  })[adapter] || '';
+}
+
+function compactId(prefix, values = []) {
+  const digest = createHash('sha256').update(JSON.stringify(values)).digest('hex').slice(0, 24);
+  return `${prefix}-${digest}`;
+}
+
+function executionWorkerId(value) {
+  const normalized = text(value).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+/, '').slice(0, 80);
+  return /^[a-z0-9]/.test(normalized) ? normalized : compactId('worker', [value]);
+}
+
+function nowUtc(options = {}, afterUtc = '') {
+  const requested = options.now instanceof Date ? options.now : new Date();
+  let timestamp = Number.isFinite(requested.getTime()) ? requested.getTime() : Date.now();
+  const after = Date.parse(text(afterUtc));
+  if (Number.isFinite(after) && timestamp <= after) timestamp = after + 1;
+  return new Date(timestamp).toISOString();
+}
+
+function exactPrSourceGrant(action, grant, adapter) {
+  return Boolean(
+    action?.actionKind === 'agent-handoff'
+    && SOURCE_MUTATION_ADAPTERS.has(adapter)
+    && grant?.schemaVersion === 'stephanos.mission-worker-action-grant.v1'
+    && text(grant.controllerId) === 'durable-flywheel-controller'
+    && text(grant.laneId)
+    && text(grant.repository)
+    && positiveInteger(grant.issueNumber)
+    && positiveInteger(grant.prNumber)
+    && text(grant.branch)
+    && /^[0-9a-f]{40}$/.test(text(grant.headSha).toLowerCase())
+    && text(grant.workerId) === text(action.workerId)
+  );
+}
+
+function exactClaimBinding(record, expected) {
+  return Boolean(
+    record
+    && text(record.leaseId) === expected.leaseId
+    && text(record.laneId) === expected.laneId
+    && text(record.repository) === expected.repository
+    && positiveInteger(record.issueNumber) === expected.issueNumber
+    && positiveInteger(record.prNumber) === expected.prNumber
+    && text(record.branch) === expected.branch
+    && text(record.headSha).toLowerCase() === expected.headSha
+    && text(record.ownerId) === expected.ownerId
+  );
+}
+
+function createSourceExecutionBinding(action, grant, lease) {
+  const executionId = compactId('source-exec', [
+    grant.laneId,
+    action.actionId,
+    grant.repository,
+    grant.prNumber,
+    grant.headSha,
+  ]);
+  return Object.freeze({
+    schemaVersion: SOURCE_EXECUTION_BINDING_SCHEMA,
+    leaseId: lease.leaseId,
+    laneId: lease.laneId,
+    repository: lease.repository,
+    issueNumber: lease.issueNumber,
+    prNumber: lease.prNumber,
+    branch: lease.branch,
+    headSha: lease.headSha,
+    ownerId: lease.ownerId,
+    executionId,
+    receiptWorkerId: executionWorkerId(action.workerId),
+    workerType: sourceWorkerType(action.adapter),
+    actionId: action.actionId,
+    missionId: action.missionId,
+    adapter: action.adapter,
+    actionWorkerId: action.workerId,
+    queuedReceiptId: `${executionId}-queued`,
+    releaseOnlyExactLease: true,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  });
+}
+
+function createSourceExecutionReceipt(binding, state, previous = null, options = {}) {
+  const sequence = previous ? previous.sequence + 1 : 1;
+  return createExecutionReceipt({
+    receiptId: sequence === 1 ? binding.queuedReceiptId : `${binding.executionId}-${state}-${sequence}`,
+    repository: binding.repository,
+    issueNumber: binding.issueNumber,
+    prNumber: binding.prNumber,
+    branch: binding.branch,
+    sourceHead: binding.headSha,
+    workerId: binding.receiptWorkerId,
+    workerType: binding.workerType,
+    executionId: binding.executionId,
+    leaseKey: binding.leaseId,
+    state,
+    phase: text(options.phase, `source-${state}`),
+    sequence,
+    predecessorReceiptId: previous?.receiptId || '',
+    timestampUtc: nowUtc(options, previous?.timestampUtc),
+    blocker: state === 'failed' ? text(options.blocker, 'source execution failed before worker claim') : '',
+    operatorActionRequired: false,
+    proofRefs: EXECUTION_RECEIPT_PROOF_REFS,
+    expectedNextAction: ['completed', 'failed', 'cancelled'].includes(state)
+      ? ''
+      : text(options.expectedNextAction, 'advance exact source execution'),
+  });
+}
+
+async function releaseExactSourceExecution(binding, options = {}, afterUtc = '') {
+  const deps = sourceExecutionDependencies(options);
+  const root = sourceWorkspaceRoot(options);
+  return deps.releaseSourceMutationLease({
+    leaseId: binding.leaseId,
+    laneId: binding.laneId,
+    repository: binding.repository,
+    issueNumber: binding.issueNumber,
+    prNumber: binding.prNumber,
+    branch: binding.branch,
+    headSha: binding.headSha,
+    ownerId: binding.ownerId,
+    nowUtc: nowUtc(options, afterUtc),
+  }, {
+    root,
+    repoRoot: options.repoRoot,
+    env: options.env || process.env,
+  });
+}
+
+async function terminalizeFailedSourceExecution(binding, reason, options = {}) {
+  if (!binding) return { ok: true, terminalized: false, released: false, reason: 'SOURCE_EXECUTION_NOT_APPLICABLE' };
+  const deps = sourceExecutionDependencies(options);
+  const root = sourceWorkspaceRoot(options);
+  const current = await deps.readCurrentExecutionReceipt(root, {
+    executionId: binding.executionId,
+    leaseKey: binding.leaseId,
+    expectedHead: binding.headSha,
+  }, { repoRoot: options.repoRoot });
+  if (!current?.ok || !current.receipt) {
+    return { ok: false, terminalized: false, released: false, reason: `SOURCE_EXECUTION_RECEIPT_READ_FAILED:${text(current?.reason, 'missing-current-receipt')}`, current };
+  }
+  let receipt = current.receipt;
+  if (!['completed', 'failed', 'cancelled'].includes(receipt.state)) {
+    const failed = createSourceExecutionReceipt(binding, 'failed', receipt, {
+      ...options,
+      phase: 'queue-publication-failed',
+      blocker: reason,
+    });
+    const append = await deps.appendExecutionReceipt(root, failed, { repoRoot: options.repoRoot });
+    if (!append?.ok) {
+      return { ok: false, terminalized: false, released: false, reason: `SOURCE_EXECUTION_TERMINAL_RECEIPT_FAILED:${text(append?.reason)}`, append };
+    }
+    receipt = failed;
+  }
+  const release = await releaseExactSourceExecution(binding, options, receipt.timestampUtc);
+  return {
+    ok: release?.ok === true,
+    terminalized: true,
+    released: release?.ok === true,
+    reason: release?.ok === true ? 'SOURCE_EXECUTION_FAILED_AND_RELEASED' : `SOURCE_EXECUTION_RELEASE_FAILED:${text(release?.reason)}`,
+    receipt,
+    release,
+  };
+}
+
+async function prepareSourceExecution(action, grant, adapter, options = {}) {
+  if (!exactPrSourceGrant(action, grant, adapter)) {
+    return { ok: true, binding: null, queuedReceipt: null, claim: null };
+  }
+  const root = sourceWorkspaceRoot(options);
+  if (!root) return { ok: false, reason: 'SOURCE_EXECUTION_SHARED_WORKSPACE_ROOT_MISSING', binding: null };
+  const deps = sourceExecutionDependencies(options);
+  const leaseId = compactId('source-lease', [grant.laneId, action.actionId, grant.repository, grant.prNumber, grant.headSha]);
+  const expected = {
+    leaseId,
+    laneId: text(grant.laneId),
+    repository: text(grant.repository),
+    issueNumber: positiveInteger(grant.issueNumber),
+    prNumber: positiveInteger(grant.prNumber),
+    branch: text(grant.branch),
+    headSha: text(grant.headSha).toLowerCase(),
+    ownerId: text(action.workerId),
+  };
+  const claim = await deps.claimSourceMutationLease({
+    ...expected,
+    nowUtc: nowUtc(options),
+    proofRefs: EXECUTION_RECEIPT_PROOF_REFS,
+  }, {
+    root,
+    repoRoot: options.repoRoot,
+    env: options.env || process.env,
+  });
+  if (claim?.ok !== true || !exactClaimBinding(claim.record, expected)) {
+    return {
+      ok: false,
+      reason: claim?.ok === true ? 'SOURCE_MUTATION_LEASE_CLAIM_BINDING_MISMATCH' : `SOURCE_MUTATION_LEASE_CLAIM_FAILED:${text(claim?.reason)}`,
+      claim,
+      binding: null,
+    };
+  }
+  const binding = createSourceExecutionBinding(action, grant, claim.record);
+  const queuedReceipt = createSourceExecutionReceipt(binding, 'queued', null, {
+    ...options,
+    phase: 'source-dispatch-queued',
+    expectedNextAction: 'Mission Worker claims the exact queued source action.',
+  });
+  const append = await deps.appendExecutionReceipt(root, queuedReceipt, { repoRoot: options.repoRoot });
+  if (append?.ok !== true) {
+    const release = await releaseExactSourceExecution(binding, options, queuedReceipt.timestampUtc);
+    return {
+      ok: false,
+      reason: `SOURCE_EXECUTION_QUEUED_RECEIPT_FAILED:${text(append?.reason)}`,
+      claim,
+      append,
+      release,
+      binding: null,
+    };
+  }
+  return { ok: true, binding, queuedReceipt, claim, append };
+}
+
+async function exactExistingQueueItem(path, expected) {
+  try {
+    const item = JSON.parse(await readFile(path, 'utf8'));
+    return Boolean(
+      item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+      && text(item.adapter) === expected.adapter
+      && text(item.actionId) === expected.actionId
+      && text(item.missionId) === expected.missionId
+      && JSON.stringify(item.sourceExecution || null) === JSON.stringify(expected.sourceExecution || null)
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function publishExternalLaneHandoff(state, action, options = {}) {
   const root = options.sharedWorkspaceRoot
     || options.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
     || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE;
   const identity = encodedMissionIdentity(state.missionId);
   const proofRefs = Array.isArray(action.capacityProofRefs) ? action.capacityProofRefs : [];
+  const workerId = text(action.workerId);
+  if (!isSharedWorkspaceParticipantId(workerId)) {
+    return { ok: false, reason: 'WORKER_ID_NOT_SHARED_WORKSPACE_REPRESENTABLE', path: '' };
+  }
   const handoff = createSharedWorkspaceHandoffRecord({
     handoffId: action.actionId,
     participantId: 'mission-orchestrator',
     fromParticipantId: 'mission-orchestrator',
-    toParticipantId: action.adapter === 'chatgpt-github' ? 'chatgpt' : 'future-agent',
+    toParticipantId: workerId,
     timestampUtc: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString(),
     correlationId: state.missionId,
     relatedIssue: `#${identity.issueNumber || 1292}`,
@@ -99,6 +382,7 @@ async function publishExternalLaneHandoff(state, action, options = {}) {
       missionId: state.missionId,
       actionId: action.actionId,
       adapter: action.adapter,
+      workerId: action.workerId,
       capacityRoute: action.capacityRoute,
       capacityReceiptId: action.capacityReceiptId,
       repository: state.repository,
@@ -110,6 +394,9 @@ async function publishExternalLaneHandoff(state, action, options = {}) {
       leaseSeizureAllowed: false,
     }),
   });
+  if (handoff.toParticipantId !== workerId) {
+    return { ok: false, reason: 'SHARED_WORKSPACE_HANDOFF_RECIPIENT_MISMATCH', path: '' };
+  }
   return writeAtomicJson(root, ['outbox', `${action.actionId}.json`], handoff, {
     repoRoot: options.repoRoot,
     nowMs: Date.parse(handoff.timestampUtc),
@@ -245,7 +532,8 @@ function validateExactActionGrant(state, action, grant, options = {}) {
   if (text(grant?.operation) !== text(action?.operation)) {
     errors.push('action-grant-operation-mismatch');
   }
-  const capacityScoped = Object.hasOwn(grant || {}, 'capacityRoute') || ['chatgpt-github', 'foundry-forge'].includes(action?.adapter);
+  const agentHandoff = action?.actionKind === 'agent-handoff';
+  const capacityScoped = agentHandoff && ['codex', 'openclaw-local', 'chatgpt-github', 'foundry-forge'].includes(action?.adapter);
   if (capacityScoped) {
     if (text(grant?.capacityRoute) !== text(action?.capacityRoute)) {
       errors.push('action-grant-capacity-route-mismatch');
@@ -256,6 +544,9 @@ function validateExactActionGrant(state, action, grant, options = {}) {
     if (JSON.stringify(grant?.capacityProofRefs || []) !== JSON.stringify(action?.capacityProofRefs || [])) {
       errors.push('action-grant-capacity-proof-mismatch');
     }
+  }
+  if (agentHandoff && (!text(action?.workerId) || text(grant?.workerId) !== text(action?.workerId))) {
+    errors.push('action-grant-worker-mismatch');
   }
   if (grant?.mergeAuthority !== false || grant?.leaseSeizureAllowed !== false) {
     errors.push('action-grant-authority-expanded');
@@ -318,6 +609,16 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
       path: '',
     };
   }
+  if (['openclaw-local', 'chatgpt-github', 'foundry-forge'].includes(adapter)
+      && !isSharedWorkspaceParticipantId(action.workerId)) {
+    return {
+      published: false,
+      reason: 'worker-id-not-shared-workspace-representable',
+      action,
+      path: '',
+      adapter,
+    };
+  }
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) throw new Error('Mission worker queue directory is not configured.');
   const paths = queuePaths(root, adapter);
@@ -339,20 +640,69 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
       };
     }
   }
+
+  const sourcePreparation = await prepareSourceExecution(action, options.actionGrant, adapter, options);
+  if (sourcePreparation.ok !== true) {
+    return {
+      published: false,
+      reason: sourcePreparation.reason,
+      action,
+      payload,
+      path: '',
+      adapter,
+      sourceExecutionPreparation: sourcePreparation,
+    };
+  }
+  const sourceExecution = sourcePreparation.binding;
   const path = resolve(paths.pending, `${action.actionId}.json`);
-  const published = await createImmutableJson(path, {
+  const queueItem = {
     schemaVersion: 'stephanos.mission-worker-queue-item.v1',
     adapter,
     actionId: action.actionId,
     missionId: state.missionId,
     createdAt: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString(),
+    ...(sourceExecution ? { sourceExecution } : {}),
     payload,
-  });
+  };
+  let published;
+  try {
+    published = await createImmutableJson(path, queueItem);
+  } catch (error) {
+    const cleanup = sourceExecution
+      ? await terminalizeFailedSourceExecution(sourceExecution, `queue-write:${error?.code || error?.message || 'failed'}`, options)
+      : null;
+    return {
+      published: false,
+      reason: 'worker-queue-publication-failed',
+      action,
+      payload,
+      path: '',
+      adapter,
+      sourceExecution,
+      sourceExecutionCleanup: cleanup,
+    };
+  }
   if (!published) {
-    if (['chatgpt-github', 'foundry-forge'].includes(adapter)) {
+    const exactExisting = await exactExistingQueueItem(path, queueItem);
+    if (sourceExecution && !exactExisting) {
+      const cleanup = await terminalizeFailedSourceExecution(sourceExecution, 'conflicting-worker-queue-item', options);
+      return {
+        published: false,
+        reason: 'source-action-queue-conflict',
+        action,
+        path: '',
+        adapter,
+        sourceExecution,
+        sourceExecutionCleanup: cleanup,
+      };
+    }
+    if (['openclaw-local', 'chatgpt-github', 'foundry-forge'].includes(adapter)) {
       const fabricPublication = await publishExternalLaneHandoff(state, action, options);
       if (fabricPublication?.ok !== true) {
-        await unlink(path).catch(() => {});
+        const removed = await unlink(path).then(() => true).catch(() => false);
+        const cleanup = sourceExecution && removed
+          ? await terminalizeFailedSourceExecution(sourceExecution, `shared-workspace-handoff:${text(fabricPublication?.reason, 'publication-failed')}`, options)
+          : null;
         return {
           published: false,
           reason: `shared-workspace-handoff:${text(fabricPublication?.reason, 'publication-failed')}`,
@@ -360,6 +710,8 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
           path: '',
           adapter,
           fabricPublication,
+          sourceExecution,
+          sourceExecutionCleanup: cleanup,
         };
       }
       return {
@@ -371,6 +723,20 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
         adapter,
         fabricPublication,
         queueItemReused: true,
+        sourceExecution,
+      };
+    }
+    if (sourceExecution && exactExisting) {
+      return {
+        published: true,
+        reason: 'source-action-publication-reconciled',
+        action,
+        payload,
+        path,
+        adapter,
+        fabricPublication: null,
+        queueItemReused: true,
+        sourceExecution,
       };
     }
     return {
@@ -381,10 +747,13 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     };
   }
   let fabricPublication = null;
-  if (['chatgpt-github', 'foundry-forge'].includes(adapter)) {
+  if (['openclaw-local', 'chatgpt-github', 'foundry-forge'].includes(adapter)) {
     fabricPublication = await publishExternalLaneHandoff(state, action, options);
     if (fabricPublication?.ok !== true) {
-      await unlink(path).catch(() => {});
+      const removed = await unlink(path).then(() => true).catch(() => false);
+      const cleanup = sourceExecution && removed
+        ? await terminalizeFailedSourceExecution(sourceExecution, `shared-workspace-handoff:${text(fabricPublication?.reason, 'publication-failed')}`, options)
+        : null;
       return {
         published: false,
         reason: `shared-workspace-handoff:${text(fabricPublication?.reason, 'publication-failed')}`,
@@ -392,6 +761,8 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
         path: '',
         adapter,
         fabricPublication,
+        sourceExecution,
+        sourceExecutionCleanup: cleanup,
       };
     }
   }
@@ -403,6 +774,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     path,
     adapter,
     fabricPublication,
+    sourceExecution,
   };
 }
 
@@ -445,13 +817,30 @@ export async function publishMissionWorkerAction(inputState, options = {}) {
   };
   if (result.published && result.action.actionKind === 'agent-handoff') {
     const action = result.action;
-    await appendMissionEvent(state.missionId, {
-      eventId: `dispatch-${action.actionId}`.slice(0, 128),
-      eventType: 'AGENT_DISPATCHED',
-      agentId: action.adapter === 'openclaw-readonly' ? 'openclaw-readonly' : action.adapter,
-      adapter: action.adapter,
-      summary: `${action.adapter} handoff published to the durable worker queue.`,
-    }, options);
+    try {
+      await appendMissionEvent(state.missionId, {
+        eventId: `dispatch-${action.actionId}`.slice(0, 128),
+        eventType: 'AGENT_DISPATCHED',
+        agentId: action.adapter === 'openclaw-readonly' ? 'openclaw-readonly' : action.adapter,
+        adapter: action.adapter,
+        actionId: action.actionId,
+        workerId: action.workerId,
+        summary: `${action.adapter} handoff published to the durable worker queue.`,
+      }, options);
+    } catch (error) {
+      if (!result.sourceExecution) throw error;
+      const removed = await unlink(result.path).then(() => true).catch(() => false);
+      const cleanup = removed
+        ? await terminalizeFailedSourceExecution(result.sourceExecution, `agent-dispatched-event:${error?.message || 'failed'}`, options)
+        : null;
+      return {
+        ...result,
+        published: false,
+        reason: removed ? 'agent-dispatched-event-failed' : 'agent-dispatched-event-failed-queue-ownership-uncertain',
+        path: '',
+        sourceExecutionCleanup: cleanup,
+      };
+    }
   }
   return result;
 }
@@ -489,19 +878,19 @@ export async function publishNextMissionWorkerAction(options = {}) {
         };
       }
       if (state.currentPhase === 'REPAIR_REQUIRED') {
-        const prepared = await beginRepairIfRequired(state, options);
-        if (prepared.preconditionFailed) {
+        const preparedRepair = await beginRepairIfRequired(state, options);
+        if (preparedRepair.preconditionFailed) {
           return {
             published: false,
             reason: 'repair-transition-precondition-failed',
-            blockers: [prepared.reason || 'mission-state-precondition-failed'],
+            blockers: [preparedRepair.reason || 'mission-state-precondition-failed'],
             action: preview,
             path: '',
             repairStarted: false,
           };
         }
-        actionState = prepared.state;
-        repairStarted = prepared.repairStarted;
+        actionState = preparedRepair.state;
+        repairStarted = preparedRepair.repairStarted;
         const actualAction = buildMissionWorkerAction(actionState, options);
         const actualValidation = validateExactActionGrant(
           actionState,
@@ -536,7 +925,7 @@ export async function publishNextMissionWorkerAction(options = {}) {
 export async function readMissionWorkerQueue(options = {}) {
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) return [];
-  const adapters = ['openclaw-signed', 'openclaw-github-readonly', 'codex', 'chatgpt-github', 'foundry-forge', 'openclaw-readonly', 'openclaw-local-deployment', 'verification'];
+  const adapters = ['openclaw-signed', 'openclaw-github-readonly', 'codex', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'openclaw-readonly', 'openclaw-local-deployment', 'verification'];
   const result = [];
   for (const adapter of adapters) {
     const paths = queuePaths(root, adapter);
@@ -551,15 +940,78 @@ export async function readMissionWorkerQueue(options = {}) {
   return result.sort((left, right) => String(left.item?.createdAt || '').localeCompare(String(right.item?.createdAt || '')));
 }
 
+async function readLegacyDispatchQueueBinding(state, actionId, options = {}) {
+  const adapter = text(state?.dispatch?.adapter).toLowerCase();
+  const missionId = text(state?.missionId).toLowerCase();
+  const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
+  if (!root) throw new Error('Mission worker queue directory is not configured.');
+  const paths = queuePaths(root, adapter);
+  const candidates = [];
+  for (const stage of ['pending', 'processing']) {
+    const path = resolve(paths[stage], `${actionId}.json`);
+    try {
+      const item = JSON.parse(await readFile(path, 'utf8'));
+      const payload = item?.payload;
+      const workerId = text(payload?.workerId || payload?.owner);
+      if (
+        item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+        && text(item.adapter).toLowerCase() === adapter
+        && text(item.missionId).toLowerCase() === missionId
+        && text(item.actionId).toLowerCase() === actionId
+        && text(payload?.missionId).toLowerCase() === missionId
+        && text(payload?.actionId).toLowerCase() === actionId
+        && text(payload?.adapter).toLowerCase() === adapter
+        && payload?.actionKind === 'agent-handoff'
+        && workerId
+      ) candidates.push({ actionId, workerId });
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw new Error('Legacy dispatch queue binding could not be verified.');
+    }
+  }
+  if (candidates.length !== 1) throw new Error('Legacy dispatch requires one exact durable queue binding.');
+  return candidates[0];
+}
+
+async function reconcileLegacyRunningDispatch(state, result, options = {}) {
+  const storedActionId = text(state?.dispatch?.actionId).toLowerCase();
+  const storedWorkerId = text(state?.dispatch?.workerId);
+  if (storedActionId && storedWorkerId) return state;
+  if (storedActionId || storedWorkerId) throw new Error('Active dispatch binding is incomplete.');
+  if (!Number.isSafeInteger(state?.revision) || state.revision < 1) {
+    throw new Error('Legacy dispatch revision cannot be reconciled.');
+  }
+  const adapter = text(state.dispatch?.adapter).toLowerCase();
+  const expectedActionId = createMissionWorkerActionId({ ...state, revision:state.revision - 1 }, adapter).toLowerCase();
+  const resultActionId = text(result?.actionId).toLowerCase();
+  if (resultActionId !== expectedActionId) throw new Error('Agent result action does not match the legacy dispatch.');
+  const binding = await readLegacyDispatchQueueBinding(state, expectedActionId, options);
+  if (text(result?.workerId) !== binding.workerId) throw new Error('Agent result worker does not match the legacy dispatch.');
+  const reconciled = await appendMissionEvent(state.missionId, {
+    eventId: `reconcile-${expectedActionId}`.slice(0, 128),
+    eventType: 'AGENT_DISPATCH_BINDING_RECONCILED',
+    expectedRevision: state.revision,
+    expectedCurrentPhase: state.currentPhase,
+    adapter,
+    actionId: binding.actionId,
+    workerId: binding.workerId,
+    summary: 'Pre-upgrade running dispatch bound to its one exact durable queue action before result acceptance.',
+  }, options);
+  if (reconciled.preconditionFailed === true) throw new Error('Legacy dispatch changed during binding reconciliation.');
+  return reconciled.state;
+}
+
 export async function collectAgentWorkerResult(result, options = {}) {
   const missionId = text(result?.missionId).toLowerCase();
   const actionId = text(result?.actionId).toLowerCase();
   const adapter = text(result?.adapter).toLowerCase();
-  if (!missionId || !actionId || !['codex', 'openclaw-readonly', 'chatgpt-github', 'foundry-forge'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
+  if (!missionId || !actionId || !['codex', 'openclaw-local', 'openclaw-readonly', 'chatgpt-github', 'foundry-forge'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
   const current = await readMissionRecord(missionId, options);
   if (current.state.dispatch?.status !== 'running') throw new Error('Mission has no active agent dispatch.');
   if (adapter !== current.state.dispatch.adapter) throw new Error('Agent result adapter does not match the active dispatch.');
-  let collected = await appendMissionEvent(missionId, { eventId: `result-${actionId}`.slice(0, 128), eventType: 'AGENT_RESULT_RECEIVED', success: result.success === true, resultId: text(result.resultId, actionId), changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
+  const dispatchState = await reconcileLegacyRunningDispatch(current.state, result, options);
+  if (actionId !== text(dispatchState.dispatch.actionId).toLowerCase()) throw new Error('Agent result action does not match the active dispatch.');
+  if (text(result?.workerId) !== text(dispatchState.dispatch.workerId)) throw new Error('Agent result worker does not match the active dispatch.');
+  let collected = await appendMissionEvent(missionId, { eventId: `result-${actionId}`.slice(0, 128), eventType: 'AGENT_RESULT_RECEIVED', actionId, workerId: text(result.workerId), success: result.success === true, resultId: text(result.resultId, actionId), changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
   const evidenceReceipts = Array.isArray(result.evidenceReceipts) ? result.evidenceReceipts : [];
   if (result.success === true && evidenceReceipts.length) {
     collected = await appendMissionEvent(missionId, {
