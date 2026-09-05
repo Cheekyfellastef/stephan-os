@@ -23,6 +23,27 @@ const intent = {
   worktreePath: 'C:\\worktree', allowedFiles: ['shared/agents/**'], requiredEvidence: ['focused test output'], requiredTests: ['node --test focused.test.mjs'],
 };
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
+
+function freshCodexCapacityRouting() {
+  const now = new Date();
+  return {
+    nowUtc: now.toISOString(),
+    codexStatus: {
+      schemaVersion: 'shared-agent-workspace-record.v1',
+      statusId: 'codex-capacity-current',
+      truthState: 'CURRENT',
+      meterTruthUsable: true,
+      observedAtUtc: new Date(now.getTime() - 1000).toISOString(),
+      remainingPercent: 90,
+      availability: 'AVAILABLE',
+      confidence: 'high',
+      naturalResetAtUtc: '',
+    },
+    githubLaneReceipt: null,
+    forgeLaneReceipt: null,
+    forgeSidecar: null,
+  };
+}
 async function runtime() {
   const parent = await mkdtemp(join(tmpdir(), 'mission-worker-service-'));
   const { privateKey } = generateKeyPairSync('ed25519');
@@ -35,6 +56,7 @@ test('queue root defaults below Mission Runner orchestrator state', () => {
 
 test('publishes worktree then one Codex dispatch and collects grounded result', async () => {
   const options = await runtime();
+  options.capacityRouting = freshCodexCapacityRouting();
   const created = await createMissionRecord(intent, options);
   assert.equal((await publishMissionWorkerAction(created.state, options)).adapter, 'openclaw-signed');
   const ready = await appendMissionEvent(intent.missionId, { eventId: 'worktree-1', eventType: 'WORKTREE_READY', worktreePath: intent.worktreePath, clean: true, receipt: proof('isolated worktree', 'worktree') }, options);
@@ -196,6 +218,7 @@ test('publisher rejects retargeting and publishes only the exact granted mission
 
 test('repair transition is projected, granted, applied, and queued as one exact post-repair action', async () => {
   const options = await runtime();
+  options.capacityRouting = freshCodexCapacityRouting();
   const missionId = 'goal-1497-pr-1617';
   let current = await createMissionRecord({
     ...intent,

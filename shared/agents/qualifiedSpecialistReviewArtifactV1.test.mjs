@@ -106,16 +106,38 @@ test('authenticated scoped request and app response mint one provider-neutral sp
   assert.equal(validation.valid, true, validation.blockers.join(', '));
 });
 
+test('real GitHub issue-comment response binds reviewed commit when resolved_commit_id is absent', () => {
+  const result = adjudicate([request(), response({ resolved_commit_id: undefined })]);
+  assert.equal(result.required, true);
+  assert.equal(result.valid, true, result.blockers.join(', '));
+  assert.equal(result.analysis.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_CLEAN');
+  assert.equal(result.artifact.response.reviewedCommitRef, sourceHead.slice(0, 10));
+  assert.equal(result.artifact.response.resolvedCommitId, '');
+
+  const validation = validateQualifiedSpecialistReviewArtifact(result.artifact, {
+    repository,
+    prNumber,
+    branch,
+    sourceHead,
+    baseSha,
+    paths,
+  });
+  assert.equal(validation.valid, true, validation.blockers.join(', '));
+});
+
 test('specialist artifact path fails closed on forged provenance, stale head, edits and incomplete scope', () => {
   const cases = [
     [request(), response({ resolved_commit_id: 'c'.repeat(40) })],
+    [request(), response({
+      resolved_commit_id: undefined,
+      body: `Codex Review: Didn't find any major issues. Nice work!\n\n**Reviewed commit:** \`${'c'.repeat(10)}\``,
+    })],
     [request(), response({ performed_via_github_app: null })],
     [request(), response({ user: { login: 'foreign-bot[bot]', id: 199175422, type: 'Bot' } })],
     [request(), response({ updated_at: '2026-08-20T18:50:15Z' })],
     [request({ author_association: 'NONE' }), response()],
     [request({ body: request().body.replace(paths[0], '') }), response()],
     [request(), response({ body: `Codex Review: Found an issue.\n\n**Reviewed commit:** \`${sourceHead.slice(0, 10)}\`` })],
-    [request(), response({ resolved_commit_id: undefined })],
   ];
   for (const comments of cases) {
     const result = adjudicate(comments);

@@ -7,13 +7,16 @@ import { fileURLToPath } from 'node:url';
 import { ensureBattleBridgeGitHubCommandMailbox } from '../shared/agents/battleBridgeGitHubCommandMailboxBootstrap.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
+import { readMissionControllerCapacityRoutingInput } from '../stephanos-server/services/programmeAuthorityService.js';
 import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
+import { readMissionWorkerActiveClaim } from './mission-orchestrator-worker-heartbeat-active-claim.mjs';
 import { runMissionWorkerTick } from './mission-orchestrator-worker.mjs';
 import { writeMissionWorkerHeartbeat } from './mission-orchestrator-worker-heartbeat.mjs';
 
 export const MISSION_WORKER_LOG_PROJECTION_SCHEMA = 'stephanos.mission-worker-log-projection.v1';
 export const MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE = 75;
 export const MISSION_WORKER_LOG_MAX_BYTES = 1_024;
+export const MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS = 10;
 
 const SHA_40 = /^[0-9a-f]{40}$/;
 const MAX_GIT_STATUS_BYTES = 64 * 1024;
@@ -251,10 +254,14 @@ export async function runSupervisedMissionWorker({
   stderr = process.stderr,
   bootstrapMailbox = ensureBattleBridgeGitHubCommandMailbox,
   runControllerCycle = runDurableFlywheelStartupCycle,
+  loadCapacityRoutingInput = readMissionControllerCapacityRoutingInput,
   runTick = runMissionWorkerTick,
   writeHeartbeat = writeMissionWorkerHeartbeat,
+  readActiveClaim = readMissionWorkerActiveClaim,
   inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity,
   sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
+  sleepActiveClaimProbe = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
+  activeClaimProbeIntervalMs = MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS,
   setIntervalFn = setInterval,
   clearIntervalFn = clearInterval,
   now = () => new Date().toISOString(),
@@ -265,25 +272,18 @@ export async function runSupervisedMissionWorker({
     Number.parseInt(env.STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS || '30000', 10) || 30000,
     1000,
   );
+  const claimProbeIntervalMs = Math.max(
+    Number.isFinite(activeClaimProbeIntervalMs) ? activeClaimProbeIntervalMs : MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS,
+    1,
+  );
   let exitCode = 0;
   let lastControllerLogSignature = '';
   let lastRepositoryLogSignature = '';
   let lastTickLogSignature = '';
   let repositoryDriftObserved = false;
   let consecutiveProgressRechecks = 0;
-
-  try {
-    const mailboxBootstrap = await bootstrapMailbox({ env });
-    stdout.write(`${JSON.stringify({ checkedAt: now(), ...mailboxBootstrap })}\n`);
-  } catch (error) {
-    stderr.write(`${JSON.stringify({
-      checkedAt: now(),
-      finalVerdict: 'MAILBOX_SELF_BOOTSTRAP_FAILED',
-      error: error?.message || String(error),
-      operatorNeeded: true,
-    })}\n`);
-    if (once) exitCode = 1;
-  }
+  let mailboxBootstrapPending = true;
+  let activeActionGrant;
 
   do {
     const checkedAt = now();
@@ -347,9 +347,15 @@ export async function runSupervisedMissionWorker({
     let tickMadeProgress = false;
 
     const queueHeartbeat = (lastTickVerdictValue, timestampUtc = now()) => {
+      const heartbeatActionGrant = activeActionGrant;
       heartbeatWrites = heartbeatWrites.then(async () => {
         try {
-          await writeHeartbeat({ env, timestampUtc, lastTickVerdict: lastTickVerdictValue });
+          await writeHeartbeat({
+            env,
+            timestampUtc,
+            lastTickVerdict: lastTickVerdictValue,
+            activeActionGrant: heartbeatActionGrant,
+          });
         } catch (error) {
           heartbeatWriteFailed = true;
           stderr.write(`${JSON.stringify({ checkedAt: timestampUtc, finalVerdict: 'MISSION_WORKER_HEARTBEAT_WRITE_FAILED', error: error.message })}\n`);
@@ -364,9 +370,30 @@ export async function runSupervisedMissionWorker({
     }, heartbeatIntervalMs);
 
     try {
+      if (mailboxBootstrapPending) {
+        mailboxBootstrapPending = false;
+        try {
+          const mailboxBootstrap = await bootstrapMailbox({ env });
+          stdout.write(`${JSON.stringify({ checkedAt: now(), ...mailboxBootstrap })}\n`);
+        } catch (error) {
+          stderr.write(`${JSON.stringify({
+            checkedAt: now(),
+            finalVerdict: 'MAILBOX_SELF_BOOTSTRAP_FAILED',
+            error: error?.message || String(error),
+            operatorNeeded: true,
+          })}\n`);
+          if (once) exitCode = 1;
+        }
+      }
+
+      const capacityRoutingOptions = {
+        root: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+        repoRoot: env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT,
+        nowUtc: checkedAt,
+      };
       const controller = await runControllerCycle({}, {
         env,
-        nowUtc: checkedAt,
+        ...capacityRoutingOptions,
         sourceRevision: env.STEPHANOS_MISSION_WORKER_HEAD_SHA,
       });
       const controllerLog = createMissionWorkerControllerLogProjection(controller, checkedAt);
@@ -376,10 +403,46 @@ export async function runSupervisedMissionWorker({
         lastControllerLogSignature = controllerLogSignature;
       }
       if (controller?.allowWorkerTick === true) {
-        const result = await runTick({
+        const actionGrant = controller.workerActionGrant;
+        const capacityRoute = boundedText(ownData(actionGrant, 'capacityRoute'), 48);
+        const capacityRouting = capacityRoute
+          ? await loadCapacityRoutingInput(capacityRoutingOptions)
+          : undefined;
+        activeActionGrant = actionGrant;
+        let tickSettled = false;
+        let activeClaimHeartbeatPublished = false;
+        const watchActiveClaim = async () => {
+          while (!tickSettled && !activeClaimHeartbeatPublished) {
+            let activeClaim = null;
+            try {
+              activeClaim = await readActiveClaim({ env, actionGrant });
+            } catch {
+              activeClaim = null;
+            }
+            if (tickSettled) return;
+            if (activeClaim) {
+              activeClaimHeartbeatPublished = true;
+              await queueHeartbeat('MISSION_WORKER_TICK_RUNNING');
+              return;
+            }
+            await sleepActiveClaimProbe(claimProbeIntervalMs);
+          }
+        };
+
+        let result;
+        const tickPromise = runTick({
           env,
-          actionGrant: controller.workerActionGrant,
+          actionGrant,
+          capacityRouting,
         });
+        const activeClaimWatcher = watchActiveClaim();
+        try {
+          result = await tickPromise;
+        } finally {
+          tickSettled = true;
+          await activeClaimWatcher;
+          activeActionGrant = undefined;
+        }
         tickMadeProgress = missionWorkerTickMadeProgress(result);
         const tickLog = createMissionWorkerTickLogProjection(result, checkedAt);
         const tickLogSignature = stableLogSignature(tickLog);
@@ -389,6 +452,7 @@ export async function runSupervisedMissionWorker({
         }
       }
     } catch (error) {
+      activeActionGrant = undefined;
       lastTickVerdict = 'MISSION_WORKER_TICK_FAILED';
       stderr.write(`${JSON.stringify({ checkedAt, finalVerdict: lastTickVerdict, error: error.message })}\n`);
       if (once) exitCode = 1;
