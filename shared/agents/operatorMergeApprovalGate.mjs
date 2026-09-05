@@ -429,6 +429,7 @@ function validateProtectedWorkflowYaml(path, source) {
       'independent_review_artifact_id',
       'independent_review_artifact_digest',
       'independent_review_payload_sha256',
+      'authorization_comment_id',
     ];
     const dispatchInputs = yamlWorkflowDispatchInputKeys(source);
     if (dispatchInputs.length !== requiredInputs.length
