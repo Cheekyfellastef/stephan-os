@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getDefaultSharedWorkspaceRoot } from './sharedWorkspaceRuntimeConfig.mjs';
@@ -70,6 +70,11 @@ function assertNoSecrets(value, path = []) {
 
 function safeId(value) {
   return SAFE_SEGMENT.test(text(value)) ? text(value) : '';
+}
+
+export function isSharedWorkspaceParticipantId(value) {
+  const normalized = text(value);
+  return Boolean(normalized && safeId(normalized) === normalized);
 }
 
 function bytes(value) {
@@ -190,8 +195,13 @@ export async function writeAtomicJson(rootInput, segments, record, options = {})
   await mkdir(dirname(resolved.path), { recursive: true });
   const tempPath = `${resolved.path}.${process.pid}.${randomUUID()}.tmp`;
   const payload = `${JSON.stringify(record, null, 2)}\n`;
-  await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
-  await rename(tempPath, resolved.path);
+  try {
+    await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
+    await rename(tempPath, resolved.path);
+  } catch (error) {
+    try { await unlink(tempPath); } catch {}
+    throw error;
+  }
   return { ok: true, reason: 'ATOMIC_JSON_WRITTEN', path: resolved.path, bytes: Buffer.byteLength(payload) };
 }
 
@@ -237,7 +247,7 @@ export async function aggregateLatestSharedWorkspaceStatus(rootInput, options = 
 }
 
 export function createSharedWorkspaceStatusRecord(input = {}) {
-  return { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS, statusId: safeId(input.statusId) || 'status-current', participantId: safeId(input.participantId || input.agentId) || 'codex', timestampUtc: text(input.timestampUtc, 'pending'), status: text(input.status, 'pending'), summary: text(input.summary, 'No summary supplied.'), proofRefs: list(input.proofRefs) };
+  return { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS, statusId: safeId(input.statusId) || 'status-current', participantId: safeId(input.participantId || input.agentId) || 'codex', timestampUtc: text(input.timestampUtc, 'pending'), relatedIssue: text(input.relatedIssue, ''), relatedPr: text(input.relatedPr, ''), status: text(input.status, 'pending'), summary: text(input.summary, 'No summary supplied.'), proofRefs: list(input.proofRefs) };
 }
 export function createSharedWorkspaceGoalRecord(input = {}) {
   return { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.GOAL, goalId: safeId(input.goalId) || 'goal-current', participantId: safeId(input.participantId || input.agentId) || 'codex', timestampUtc: text(input.timestampUtc, 'pending'), title: text(input.title, 'Untitled goal'), status: text(input.status, 'open') };
