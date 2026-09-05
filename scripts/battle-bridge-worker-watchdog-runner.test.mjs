@@ -27,7 +27,7 @@ function healthyWatchdog(head = EXACT_HEAD) {
   };
 }
 
-test('runner reconciles visibility, relay and critical backlog before worker and control-plane recovery', async () => {
+test('runner prioritizes worker and control-plane recovery before auxiliary reconciliation', async () => {
   const calls = [];
   const result = await runBattleBridgeWorkerWatchdogRunner({
     visibilityObserver: async () => {
@@ -53,7 +53,7 @@ test('runner reconciles visibility, relay and critical backlog before worker and
     },
   });
 
-  assert.deepEqual(calls, ['visibility', 'participant-relay', 'critical-backlog', 'watchdog', 'control-plane-recovery']);
+  assert.deepEqual(calls, ['watchdog', 'control-plane-recovery', 'visibility', 'participant-relay', 'critical-backlog']);
   assert.equal(result.ok, true);
   assert.equal(result.visibilityOk, true);
   assert.equal(result.participantRelayOk, true);
