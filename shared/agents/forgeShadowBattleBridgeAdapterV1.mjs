@@ -1,12 +1,58 @@
-import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
-import * as core from './forgeShadowBattleBridgeAdapterV1Core.mjs';
 
-export * from './forgeShadowBattleBridgeAdapterV1Core.mjs';
+const CORE_PATH = './forgeShadowBattleBridgeAdapterV1Core.mjs';
+const CORE_BLOB_SHA = '99622313a17c197b15ac22547d223875aa8fa023';
+const LEGACY_PREREQUISITE_START = 'if (normalized.prerequisiteOnly)';
+const LEGACY_PREREQUISITE_LAUNCH_INVARIANTS = Object.freeze([
+  'BATTLE_BRIDGE_WINDOWS_HOST.powershell',
+  "'-File', installerPath",
+  "'-ExpectedHead', normalized.expectedHead",
+  "'-OperatorApproved'",
+]);
+const LEGACY_PREREQUISITE_END = "return fail('FORGE_SHADOW_PODMAN_PREREQUISITE_RECEIPT_TOO_LARGE')";
+
+function gitBlobSha(content) {
+  const bytes = Buffer.from(content, 'utf8');
+  return createHash('sha1').update(`blob ${bytes.length}\0`, 'utf8').update(bytes).digest('hex');
+}
+function provePinnedCore() {
+  const url = new URL(CORE_PATH, import.meta.url);
+  const content = readFileSync(url, 'utf8');
+  const observedBlobSha = gitBlobSha(content);
+  if (observedBlobSha !== CORE_BLOB_SHA) {
+    throw new Error(`FORGE_SHADOW_BATTLE_BRIDGE_CORE_PIN_MISMATCH:${observedBlobSha}`);
+  }
+  return Object.freeze({ url, content });
+}
+function proveLegacyPodmanPrerequisiteLaunchInvariants(source) {
+  const start = source.indexOf(LEGACY_PREREQUISITE_START);
+  const end = source.indexOf(LEGACY_PREREQUISITE_END, start);
+  if (start < 0 || end <= start) throw new Error('FORGE_SHADOW_LEGACY_PREREQUISITE_LAUNCH_MISSING');
+  const launch = source.slice(start, end);
+  for (const invariant of LEGACY_PREREQUISITE_LAUNCH_INVARIANTS) {
+    if (!launch.includes(invariant)) throw new Error(`FORGE_SHADOW_LEGACY_PREREQUISITE_LAUNCH_MISMATCH:${invariant}`);
+  }
+  if (launch.includes('-Confirm:$false') || launch.includes("'-Command'") || launch.includes("'-EncodedCommand'")) {
+    throw new Error('FORGE_SHADOW_LEGACY_PREREQUISITE_LAUNCH_AUTHORITY_WIDENED');
+  }
+}
+
+const coreModule = provePinnedCore();
+proveLegacyPodmanPrerequisiteLaunchInvariants(coreModule.content);
+const core = await import(coreModule.url.href);
+
+export const FORGE_SHADOW_BATTLE_BRIDGE_OPERATION = core.FORGE_SHADOW_BATTLE_BRIDGE_OPERATION;
+export const FORGE_SHADOW_BATTLE_BRIDGE_VERSION = core.FORGE_SHADOW_BATTLE_BRIDGE_VERSION;
+export const FORGE_SHADOW_BATTLE_BRIDGE_BOUNDARY = core.FORGE_SHADOW_BATTLE_BRIDGE_BOUNDARY;
+export const FORGE_SHADOW_BATTLE_BRIDGE_REPOSITORY = core.FORGE_SHADOW_BATTLE_BRIDGE_REPOSITORY;
+export const forgeShadowBattleBridgeFields = core.forgeShadowBattleBridgeFields;
+export const validateForgeShadowBattleBridgeCommand = core.validateForgeShadowBattleBridgeCommand;
 
 export const FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1 = Object.freeze([
   'forge-wsl2-enable-authorized-20260905-v1',
