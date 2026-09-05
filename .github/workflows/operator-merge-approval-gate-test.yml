@@ -23,7 +23,7 @@ jobs:
         run: |
           set -o pipefail
           npm run stephanos:operator-merge-approval:test 2>&1 | tee operator-merge-test.log
-      - name: Prove bounded native ready lifecycle source
+      - name: Prove bounded native ready lifecycle and mailbox provenance source
         run: |
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
@@ -31,6 +31,10 @@ jobs:
 
           const workflow = readFileSync('.github/workflows/operator-merge-approval-gate.yml', 'utf8');
           const proofWorkflow = readFileSync('.github/workflows/operator-merge-approval-gate-test.yml', 'utf8');
+          const mailboxPolicy = readFileSync('shared/agents/protectedWorkflowDispatchMailboxV1.mjs', 'utf8');
+          const personalPolicy = readFileSync('shared/agents/operatorPersonalRepositoryMergeV1.mjs', 'utf8');
+          const mailboxDispatch = readFileSync('scripts/dispatch-protected-merge-from-mailbox.mjs', 'utf8');
+          const mergeExecutor = readFileSync('scripts/operator-protected-personal-repository-merge.mjs', 'utf8');
 
           assert.match(workflow, /user-owned-pr-ready/);
           assert.match(workflow, /markPullRequestReadyForReview/);
@@ -50,6 +54,44 @@ jobs:
           assert.match(workflow, /inputs\.mode == 'user-owned-protected-squash'/);
           assert.match(workflow, /inputs\.mode == 'user-owned-pr-ready'/);
           assert.match(workflow, /user-owned-protected-squash\|user-owned-pr-ready/);
+
+          // Mailbox transport provenance is a separate, event-derived authority proof.
+          assert.match(workflow, /authorization_comment_id:/);
+          assert.match(workflow, /Prove exact owner-authored mailbox authorization/);
+          assert.match(workflow, /validateProtectedWorkflowAuthorizationComment/);
+          assert.match(workflow, /test "\$\{TRANSPORT_ACTOR\}" = 'github-actions\[bot\]'/);
+          assert.match(workflow, /STEPHANOS_AUTHORIZATION_COMMENT_ID/);
+          assert.doesNotMatch(workflow, /CANONICAL_OPERATOR='github-actions\[bot\]'/);
+          assert.doesNotMatch(workflow, /gh api[^\n]*\/pulls\/[^\n]*\/merge/);
+
+          assert.match(mailboxPolicy, /validateProtectedWorkflowAuthorizationComment/);
+          assert.match(mailboxPolicy, /PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_AUTHOR_MISMATCH/);
+          assert.match(mailboxPolicy, /PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_IDENTITY_MISMATCH/);
+          assert.match(mailboxPolicy, /authorization_comment_id: String\(commentId\)/);
+          assert.doesNotMatch(mailboxPolicy, /'authorizationCommentId'/);
+          assert.doesNotMatch(mailboxPolicy, /'authorization_comment_id'/);
+          assert.doesNotMatch(mailboxPolicy, /'operator'/);
+
+          assert.match(mailboxDispatch, /event\?\.comment\?\.id/);
+          assert.match(mailboxDispatch, /buildProtectedWorkflowDispatchRequest\(command, \{ authorizationCommentId \}\)/);
+          assert.doesNotMatch(mailboxDispatch, /\/pulls\/\$\{[^}]+\}\/merge/);
+
+          assert.match(mergeExecutor, /MAILBOX_TRANSPORT_ACTOR = 'github-actions\[bot\]'/);
+          assert.match(mergeExecutor, /validateProtectedWorkflowAuthorizationComment/);
+          assert.match(mergeExecutor, /STEPHANOS_AUTHORIZATION_COMMENT_ID/);
+          assert.match(mergeExecutor, /execution\.authorization\.operatorAuthor/);
+          assert.match(personalPolicy, /mailboxAuthorization/);
+          assert.match(personalPolicy, /github-actions\[bot\]/);
+          assert.match(personalPolicy, /OPERATOR_MERGE_REVIEWER/);
+          assert.match(personalPolicy, /strictPositiveInteger\(mailboxAuthorization\.commentId\)/);
+          assert.match(personalPolicy, /personal-repository-mailbox-authorization-provenance-invalid/);
+          assert.match(mergeExecutor, /mailboxAuthorization: authorization/);
+          assert.doesNotMatch(mergeExecutor, /item !== 'triggering-actor'/);
+          assert.doesNotMatch(mergeExecutor, /actorMismatchCount/);
+          assert.doesNotMatch(mergeExecutor, /mailboxPriorRuns/);
+          assert.match(mergeExecutor, /personal-repository-prior-attempt-exists/);
+          assert.doesNotMatch(mergeExecutor, /operatorAuthor:\s*MAILBOX_TRANSPORT_ACTOR/);
+
           assert.equal([...workflow.matchAll(/^  [a-z0-9_-]+:\s*$/gm)].filter((match) => {
             const name = match[0].trim().slice(0, -1);
             return [
