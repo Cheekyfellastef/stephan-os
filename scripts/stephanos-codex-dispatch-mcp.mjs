@@ -20,6 +20,7 @@ import {
   runBattleBridgeDiagnostics,
   syncCodexDispatchBridge,
 } from '../shared/agents/codexDispatchHostOps.mjs';
+import { BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE } from '../shared/agents/battleBridgeDirtyDataPreservationV1.mjs';
 import { updateStephanosFromChat } from '../shared/agents/stephanosChatUpdate.mjs';
 import {
   validateRemoteCodexBattleBridgeAttachment,
@@ -106,7 +107,7 @@ const TOOLS = Object.freeze([
   {
     name: 'sync_codex_dispatch_bridge',
     title: 'Sync and test the Codex dispatch bridge',
-    description: 'Operator-approved, fast-forward-only sync of the canonical main branch followed by the dispatch bridge regression tests. It never resets, cleans, stashes, force-checks out, or discards local work.',
+    description: 'Operator-approved, fast-forward-only sync of canonical main followed by dispatch bridge regression tests. An optional separately approved fixed preservation profile may move only its exact untracked runtime-data estate into the canonical external workspace after non-divergence proof. No caller-selected paths are accepted. It never resets, cleans, stashes, force-checks out, or discards local work.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -114,6 +115,8 @@ const TOOLS = Object.freeze([
       properties: {
         operatorApproval: { type: 'string', enum: ['operator-approved'] },
         expectedBranch: { type: 'string', enum: ['main'], default: 'main' },
+        preservationProfile: { type: 'string', enum: [BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE] },
+        preservationApproval: { type: 'string', enum: ['operator-approved'] },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
@@ -468,9 +471,19 @@ export function createCodexDispatchMcpHandler({
         return asTextResult(result ? { ok: true, taskId: args.taskId, result } : { ok: false, taskId: args.taskId, blocker: 'RESULT_NOT_READY' }, !result);
       }
       if (name === 'sync_codex_dispatch_bridge') {
+        if (args.preservationProfile && args.preservationApproval !== 'operator-approved') {
+          return asTextResult({ ok: false, blocker: 'PRESERVATION_APPROVAL_REQUIRED' }, true);
+        }
+        if (args.preservationApproval && !args.preservationProfile) {
+          return asTextResult({ ok: false, blocker: 'PRESERVATION_PROFILE_REQUIRED' }, true);
+        }
         const result = await hostOps.syncCodexDispatchBridge({
           operatorApproval: args.operatorApproval,
           expectedBranch: args.expectedBranch || 'main',
+          ...(args.preservationProfile ? {
+            preservationProfile: args.preservationProfile,
+            preservationApproval: args.preservationApproval,
+          } : {}),
         });
         return asTextResult(result, !result.ok);
       }
