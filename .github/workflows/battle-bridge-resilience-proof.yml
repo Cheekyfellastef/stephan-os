@@ -5,18 +5,44 @@ on:
     paths:
       - 'scripts/battle-bridge-ignition-supervisor.mjs'
       - 'scripts/battle-bridge-ignition-supervisor.test.mjs'
+      - 'scripts/battle-bridge-ignition-supervisor-windows-npm.test.mjs'
+      - 'scripts/battle-bridge-ui-4173-repair.mjs'
+      - 'scripts/battle-bridge-ui-4173-repair.test.mjs'
+      - 'scripts/battle-bridge-repair.mjs'
+      - 'scripts/refresh-stephanos-ui-4173.mjs'
+      - 'scripts/refresh-stephanos-ui-4173.test.mjs'
+      - 'scripts/battle-bridge-post-sync-refresh.mjs'
+      - 'scripts/battle-bridge-post-sync-refresh.test.mjs'
+      - 'scripts/ignite-stephanos-local.mjs'
+      - 'scripts/ignite-stephanos-local.test.mjs'
       - 'scripts/battle-bridge-recovery-mesh.mjs'
       - 'scripts/battle-bridge-recovery-mesh.test.mjs'
       - 'scripts/battle-bridge-recovery-mesh-installer.test.mjs'
+      - 'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs'
       - 'scripts/battle-bridge-backend-freshness-probe.mjs'
       - 'scripts/battle-bridge-backend-freshness-probe.test.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.test.mjs'
+      - 'scripts/battle-bridge-outbound-health-beacon.mjs'
+      - 'scripts/battle-bridge-outbound-health-beacon.test.mjs'
+      - 'scripts/battle-bridge-control-plane-self-repair.test.mjs'
       - 'scripts/windows/*battle-bridge-recovery-mesh.ps1'
+      - 'scripts/windows/*battle-bridge-recovery-lifeboat-v1.ps1'
+      - 'scripts/windows/*battle-bridge-outbound-health-beacon.ps1'
+      - 'scripts/windows/run-stephanos-scheduled-task-windowless.vbs'
       - 'scripts/windows/request-battle-bridge-recovery.ps1'
       - 'scripts/windows/install-stephanos-backend-autostart.ps1'
+      - 'scripts/windows/repair-stephanos-battle-bridge.ps1'
+      - 'scripts/windows/start-stephanos-backend.ps1'
+      - 'scripts/post-sync-runtime-refresh-windows.test.mjs'
       - 'shared/agents/backendFreshnessSupervisor.mjs'
       - 'shared/agents/backendFreshnessSupervisor.test.mjs'
+      - 'shared/agents/battleBridgeExecutionBoundaryV1.mjs'
+      - 'shared/agents/battleBridgeExecutionBoundaryV1.test.mjs'
+      - 'shared/agents/battleBridgeWindowsHosts.mjs'
+      - 'shared/agents/backendExpectedHeadHandoffV1.mjs'
+      - 'shared/agents/backendExpectedHeadHandoffV1.test.mjs'
+      - 'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs'
       - 'scripts/windows-launcher-supervisor-freshness.test.mjs'
       - 'scripts/windows-launcher-defaults.test.mjs'
       - 'tests/windows-launcher-ignition.test.mjs'
@@ -49,17 +75,31 @@ jobs:
         run: >-
           node --test
           scripts/battle-bridge-ignition-supervisor.test.mjs
+          scripts/battle-bridge-ignition-supervisor-windows-npm.test.mjs
+          scripts/battle-bridge-ui-4173-repair.test.mjs
+          scripts/refresh-stephanos-ui-4173.test.mjs
+          scripts/battle-bridge-post-sync-refresh.test.mjs
+          scripts/ignite-stephanos-local.test.mjs
           scripts/windows-launcher-supervisor-freshness.test.mjs
           scripts/windows-launcher-defaults.test.mjs
           tests/windows-launcher-ignition.test.mjs
           shared/agents/battleBridgeRecoveryMeshV1.test.mjs
           shared/agents/backendFreshnessSupervisor.test.mjs
+          shared/agents/battleBridgeExecutionBoundaryV1.test.mjs
+          shared/agents/backendExpectedHeadHandoffV1.test.mjs
           scripts/battle-bridge-backend-freshness-probe.test.mjs
           scripts/battle-bridge-recovery-mesh.test.mjs
           scripts/battle-bridge-recovery-mesh-installer.test.mjs
+          scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs
           scripts/battle-bridge-github-command-mailbox.test.mjs
+          scripts/battle-bridge-outbound-health-beacon.test.mjs
+          scripts/battle-bridge-control-plane-self-repair.test.mjs
+          scripts/post-sync-runtime-refresh-windows.test.mjs
           integrations/openclaw/stephanos-ignite-command/lib/recovery-wake.test.mjs
           integrations/openclaw/stephanos-ignite-command/manifest.test.mjs
+
+      - name: Parse outbound beacon
+        run: node --check scripts/battle-bridge-outbound-health-beacon.mjs
 
       - name: Launcher script guard
         run: npm run stephanos:guard:scripts

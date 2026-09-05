@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { providerSecretStore } from './providerSecretStore.js';
+import { fixedBackendExecutable } from './fixedBackendExecutable.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -20,7 +21,7 @@ async function readGhCliToken(options = {}) {
   if (typeof options.ghTokenProvider === 'function') return asText(await options.ghTokenProvider(), '');
   try {
     const execImpl = options.execFile || execFileAsync;
-    const result = await execImpl('gh', ['auth', 'token'], { timeout: 5000, windowsHide: true });
+    const result = await execImpl(fixedBackendExecutable('githubCli'), ['auth', 'token'], { timeout: 5000, windowsHide: true });
     return asText(result?.stdout ?? result, '');
   } catch {
     return '';

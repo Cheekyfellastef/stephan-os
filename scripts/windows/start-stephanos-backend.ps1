@@ -1,14 +1,17 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [int]$StartupTimeoutSeconds = 90,
-    [int]$PollIntervalSeconds = 3
+    [int]$PollIntervalSeconds = 3,
+    [string]$ExpectedHead = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $canonicalGit = 'C:\Program Files\Git\cmd\git.exe'
 $canonicalNpm = 'C:\Program Files\nodejs\npm.cmd'
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
+$canonicalBootstrapEval = "import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)"
 $runtimeMemoryPath = 'stephanos-server/data/memory/durable-memory.json'
+$runtimeDistPrefix = 'apps/stephanos/dist/'
 
 function Test-BackendHealth {
     param([string]$Url, [string]$ExpectedSourceHead)
@@ -26,21 +29,40 @@ function Test-BackendHealth {
 function Test-CanonicalBackendCommandLine {
     param([string]$CommandLine)
     $commandLine = (([string]$CommandLine -replace '\s+', ' ').Trim())
-    $expectedQuotedCommand = "`"$canonicalNode`" stephanos-server/server.js"
-    $expectedUnquotedCommand = "$canonicalNode stephanos-server/server.js"
-    if ([string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase) `
-        -or [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $true
+    $expectedCommands = @(
+        "`"$canonicalNode`" --input-type=module --eval `"$canonicalBootstrapEval`"",
+        "$canonicalNode --input-type=module --eval `"$canonicalBootstrapEval`""
+    )
+    foreach ($expectedCommand in $expectedCommands) {
+        if ([string]::Equals($commandLine, $expectedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
     }
-    $expectedNpmNodeCommand = 'node stephanos-server/server.js'
-    $expectedNpmNodeExeCommand = 'node.exe stephanos-server/server.js'
-    return [string]::Equals($commandLine, $expectedNpmNodeCommand, [System.StringComparison]::OrdinalIgnoreCase) `
-        -or [string]::Equals($commandLine, $expectedNpmNodeExeCommand, [System.StringComparison]::OrdinalIgnoreCase)
+    return $false
+}
+
+function Test-RuntimeUiDistStatus {
+    param([string]$Status)
+    return $Status -eq ' M' -or $Status -eq ' D'
+}
+
+function Convert-ProcessCreationDateToUtcText {
+    param([object]$CreationDate)
+    if ($CreationDate -is [DateTime]) {
+        return ([DateTime]$CreationDate).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    }
+    if ($CreationDate -is [DateTimeOffset]) {
+        return ([DateTimeOffset]$CreationDate).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    }
+    $creationText = [string]$CreationDate
+    if ([string]::IsNullOrWhiteSpace($creationText)) { throw 'BACKEND_LISTENER_CREATION_TIME_MISSING' }
+    return [System.Management.ManagementDateTimeConverter]::ToDateTime($creationText).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 }
 
 function Get-TrackedWorktreeAssessment {
     param([string[]]$StatusLines)
     $runtimeMemoryDirty = $false
+    $runtimeDistDirty = $false
     $sourceDirt = @()
     foreach ($raw in @($StatusLines)) {
         $line = [string]$raw
@@ -60,10 +82,15 @@ function Get-TrackedWorktreeAssessment {
             $runtimeMemoryDirty = $true
             continue
         }
+        if ((Test-RuntimeUiDistStatus -Status $status) -and $path.StartsWith($runtimeDistPrefix, [System.StringComparison]::Ordinal)) {
+            $runtimeDistDirty = $true
+            continue
+        }
         $sourceDirt += $line
     }
     return [PSCustomObject]@{
         RuntimeMemoryDirty = [bool]$runtimeMemoryDirty
+        RuntimeDistDirty = [bool]$runtimeDistDirty
         SourceDirt = @($sourceDirt)
     }
 }
@@ -79,7 +106,7 @@ function Get-VerifiedBackendListener {
         $executable = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
         if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
         if (-not (Test-CanonicalBackendCommandLine -CommandLine ([string]$process.CommandLine))) { return $null }
-        $processStartTimeUtc = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$process.CreationDate).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        $processStartTimeUtc = Convert-ProcessCreationDateToUtcText -CreationDate $process.CreationDate
         return [PSCustomObject]@{ ProcessId = $processId; ProcessStartTimeUtc = $processStartTimeUtc }
     }
     catch { return $null }
@@ -93,7 +120,8 @@ function Write-BackendRuntimeReceipt {
         [int]$ProcessId,
         [string]$ProcessStartTimeUtc,
         [string]$HealthUrl,
-        [bool]$RuntimeMemoryDirty
+        [bool]$RuntimeMemoryDirty,
+        [bool]$RuntimeDistDirty
     )
     $statusDir = Join-Path $WorkspaceRoot 'status'
     [System.IO.Directory]::CreateDirectory($statusDir) | Out-Null
@@ -109,9 +137,10 @@ function Write-BackendRuntimeReceipt {
         processStartTimeUtc = $ProcessStartTimeUtc
         healthUrl = 'loopback-backend-health'
         exactHeadProofOk = $true
-        trackedWorktreeClean = -not $RuntimeMemoryDirty
+        trackedWorktreeClean = -not ($RuntimeMemoryDirty -or $RuntimeDistDirty)
         sourceWorktreeClean = $true
         runtimeMemoryDirtTolerated = $RuntimeMemoryDirty
+        runtimeDistDirtTolerated = $RuntimeDistDirty
         arbitraryShellAllowed = $false
         sourceMutationAllowed = $false
         pathValuesPublished = $false
@@ -126,7 +155,8 @@ function Publish-VerifiedBackendRuntimeReceipt {
         [string]$Branch,
         [string]$HeadSha,
         [string]$HealthUrl,
-        [bool]$RuntimeMemoryDirty
+        [bool]$RuntimeMemoryDirty,
+        [bool]$RuntimeDistDirty
     )
     if (-not $Listener) { throw 'Backend listener identity is required before publishing its runtime receipt.' }
     Write-BackendRuntimeReceipt `
@@ -136,7 +166,8 @@ function Publish-VerifiedBackendRuntimeReceipt {
         -ProcessId $Listener.ProcessId `
         -ProcessStartTimeUtc $Listener.ProcessStartTimeUtc `
         -HealthUrl $HealthUrl `
-        -RuntimeMemoryDirty $RuntimeMemoryDirty
+        -RuntimeMemoryDirty $RuntimeMemoryDirty `
+        -RuntimeDistDirty $RuntimeDistDirty
     $confirmedListener = Get-VerifiedBackendListener
     if (-not $confirmedListener `
         -or $confirmedListener.ProcessId -ne $Listener.ProcessId `
@@ -149,6 +180,64 @@ function Publish-VerifiedBackendRuntimeReceipt {
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
 Set-Location -Path $repoRoot
+$canonicalGitDirectory = Join-Path $repoRoot '.git'
+if (-not (Test-Path -LiteralPath $canonicalGitDirectory -PathType Container)) {
+    throw 'Backend startup requires the canonical repository Git directory.'
+}
+$canonicalGitArguments = @("--git-dir=$canonicalGitDirectory", "--work-tree=$repoRoot")
+foreach ($entry in @(Get-ChildItem Env:)) {
+    if ([string]$entry.Name -like 'GIT_*') {
+        Remove-Item -LiteralPath ("Env:{0}" -f [string]$entry.Name) -Force -ErrorAction SilentlyContinue
+    }
+}
+$env:GIT_CONFIG_NOSYSTEM = '1'
+$env:GIT_CONFIG_GLOBAL = 'NUL'
+$env:GIT_ATTR_NOSYSTEM = '1'
+$env:GIT_NO_REPLACE_OBJECTS = '1'
+$env:GIT_TERMINAL_PROMPT = '0'
+$env:GCM_INTERACTIVE = 'Never'
+
+function Assert-ExpectedHeadImmediatelyBeforeMutation {
+    param([Parameter(Mandatory = $true)][string]$Mutation)
+    $headOutput = @(& $canonicalGit @canonicalGitArguments rev-parse HEAD 2>$null)
+    $headExitCode = $LASTEXITCODE
+    if ($headExitCode -ne 0) { throw "Canonical Git head proof failed before ${Mutation}." }
+    $observedHead = [string]($headOutput | Select-Object -First 1)
+    $observedHead = $observedHead.Trim().ToLowerInvariant()
+    if ($observedHead -ne $boundExpectedHead) {
+        throw "BACKEND_START_EXPECTED_HEAD_MISMATCH before ${Mutation}: expected=$boundExpectedHead observed=$observedHead"
+    }
+    return $observedHead
+}
+
+function Read-BackendExpectedHeadHandoff {
+    if (-not $env:USERPROFILE) { return $null }
+    $handoffPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\control\backend-expected-head-handoff.json'
+    if (-not (Test-Path -LiteralPath $handoffPath -PathType Leaf)) { return $null }
+    $consumedPath = "${handoffPath}.consumed-$PID"
+    try {
+        Move-Item -LiteralPath $handoffPath -Destination $consumedPath -ErrorAction Stop
+    }
+    catch { throw 'BACKEND_EXPECTED_HEAD_HANDOFF_CONSUME_FAILED' }
+    try {
+        $handoff = Get-Content -LiteralPath $consumedPath -Raw | ConvertFrom-Json
+        if ([string]$handoff.schemaVersion -ne 'stephanos.backend-expected-head-handoff.v1') { throw 'BACKEND_EXPECTED_HEAD_HANDOFF_SCHEMA_INVALID' }
+        if ([string]$handoff.target -ne 'backend') { throw 'BACKEND_EXPECTED_HEAD_HANDOFF_TARGET_INVALID' }
+        $handoffHead = ([string]$handoff.expectedHead).Trim().ToLowerInvariant()
+        if ($handoffHead -notmatch '^[0-9a-f]{40}$') { throw 'BACKEND_EXPECTED_HEAD_HANDOFF_HEAD_INVALID' }
+        $issuedAtUtc = [datetime]::Parse([string]$handoff.issuedAtUtc).ToUniversalTime()
+        $expiresAtUtc = [datetime]::Parse([string]$handoff.expiresAtUtc).ToUniversalTime()
+        $nowUtc = [datetime]::UtcNow
+        if ($expiresAtUtc -le $nowUtc) { throw 'BACKEND_EXPECTED_HEAD_HANDOFF_EXPIRED' }
+        if ($expiresAtUtc -le $issuedAtUtc -or $issuedAtUtc -gt $nowUtc.AddSeconds(30) -or $expiresAtUtc -gt $issuedAtUtc.AddMinutes(2).AddSeconds(5)) {
+            throw 'BACKEND_EXPECTED_HEAD_HANDOFF_TIME_INVALID'
+        }
+        return $handoffHead
+    }
+    finally {
+        Remove-Item -LiteralPath $consumedPath -Force -ErrorAction SilentlyContinue
+    }
+}
 
 foreach ($requiredExecutable in @($canonicalGit, $canonicalNpm, $canonicalNode)) {
     if (-not (Test-Path -LiteralPath $requiredExecutable -PathType Leaf)) {
@@ -156,11 +245,11 @@ foreach ($requiredExecutable in @($canonicalGit, $canonicalNpm, $canonicalNode))
     }
 }
 
-$branchOutput = @(& $canonicalGit -C $repoRoot branch --show-current 2>$null)
+$branchOutput = @(& $canonicalGit @canonicalGitArguments branch --show-current 2>$null)
 $branchExitCode = $LASTEXITCODE
 if ($branchExitCode -ne 0) { throw 'Backend startup could not inspect the canonical Git branch.' }
 $branchRaw = $branchOutput | Select-Object -First 1
-$headOutput = @(& $canonicalGit -C $repoRoot rev-parse HEAD 2>$null)
+$headOutput = @(& $canonicalGit @canonicalGitArguments rev-parse HEAD 2>$null)
 $headExitCode = $LASTEXITCODE
 if ($headExitCode -ne 0) { throw 'Backend startup could not inspect the canonical Git head.' }
 $headRaw = $headOutput | Select-Object -First 1
@@ -168,13 +257,33 @@ $branch = if ($branchRaw) { ([string]$branchRaw).Trim() } else { '' }
 $headSha = if ($headRaw) { ([string]$headRaw).Trim().ToLowerInvariant() } else { '' }
 if ($branch -ne 'main') { throw 'Backend startup requires canonical branch main.' }
 if ($headSha -notmatch '^[0-9a-f]{40}$') { throw 'Backend startup could not prove a canonical 40-character Git head.' }
-$trackedStatus = @(& $canonicalGit -C $repoRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
+$providedExpectedHead = ([string]$ExpectedHead).Trim().ToLowerInvariant()
+if ($providedExpectedHead -and $providedExpectedHead -notmatch '^[0-9a-f]{40}$') { throw 'Backend startup received an invalid expected-head binding.' }
+if (-not $providedExpectedHead) {
+    $providedExpectedHead = [string](Read-BackendExpectedHeadHandoff)
+}
+$upstreamOutput = @(& $canonicalGit @canonicalGitArguments rev-parse '--abbrev-ref' '--symbolic-full-name' '@{u}' 2>$null)
+$upstreamExitCode = $LASTEXITCODE
+if ($upstreamExitCode -ne 0) { throw 'Backend startup could not prove the canonical upstream.' }
+$upstream = [string]($upstreamOutput | Select-Object -First 1)
+$upstream = $upstream.Trim()
+if ($upstream -ne 'origin/main') { throw "Backend startup requires canonical upstream origin/main; observed=$upstream" }
+$originHeadOutput = @(& $canonicalGit @canonicalGitArguments rev-parse origin/main 2>$null)
+$originHeadExitCode = $LASTEXITCODE
+if ($originHeadExitCode -ne 0) { throw 'Backend startup could not prove origin/main.' }
+$originHead = [string]($originHeadOutput | Select-Object -First 1)
+$originHead = $originHead.Trim().ToLowerInvariant()
+if ($originHead -ne $headSha) { throw "Backend startup requires synchronized main: head=$headSha origin/main=$originHead" }
+$boundExpectedHead = if ($providedExpectedHead) { $providedExpectedHead } else { $headSha }
+if ($headSha -ne $boundExpectedHead) { throw "Backend startup expected-head binding mismatch: expected=$boundExpectedHead observed=$headSha" }
+$trackedStatus = @(& $canonicalGit @canonicalGitArguments status '--porcelain=v1' '--untracked-files=no' 2>$null)
 if ($LASTEXITCODE -ne 0) { throw 'Backend startup could not inspect tracked worktree state.' }
 $trackedAssessment = Get-TrackedWorktreeAssessment -StatusLines $trackedStatus
 if ($trackedAssessment.SourceDirt.Count -ne 0) {
     throw 'Backend startup requires source-tracked files to be unmodified at exact head.'
 }
 $runtimeMemoryDirty = [bool]$trackedAssessment.RuntimeMemoryDirty
+$runtimeDistDirty = [bool]$trackedAssessment.RuntimeDistDirty
 
 $healthUrl = 'http://127.0.0.1:8787/api/health'
 $userHome = if ($env:USERPROFILE) { $env:USERPROFILE } elseif ($env:HOME) { $env:HOME } else { throw 'USERPROFILE or HOME is required.' }
@@ -211,13 +320,131 @@ function Write-LatestBackendErrorTail {
     Get-Content -Path $latestStderr.FullName -Tail $TailLineCount | ForEach-Object { Write-Log $_ }
 }
 
+function Get-ExactHeadBackendBootstrapBase64 {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$HeadSha
+    )
+    if ($RepositoryRoot.Contains('"')) {
+        throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_PATH_INVALID'
+    }
+    if (-not [string]::Equals([System.IO.Path]::GetFullPath($RepositoryRoot), $repoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_REPOSITORY_MISMATCH'
+    }
+    $bootstrapGitPath = 'stephanos-server/backend-bootstrap.mjs'
+    $expectedBlobOutput = @(& $canonicalGit @canonicalGitArguments rev-parse "${HeadSha}:$bootstrapGitPath" 2>$null)
+    if ($LASTEXITCODE -ne 0) { throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_BLOB_PROOF_FAILED' }
+    $expectedBlob = ([string]($expectedBlobOutput | Select-Object -First 1)).Trim().ToLowerInvariant()
+    if ($expectedBlob -notmatch '^[0-9a-f]{40}$') { throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_BLOB_PROOF_INVALID' }
+
+    $temporaryPath = Join-Path ([System.IO.Path]::GetTempPath()) "stephanos-backend-bootstrap-$PID-$([guid]::NewGuid().ToString('N')).tmp"
+    $temporaryErrorPath = "${temporaryPath}.stderr"
+    try {
+        Remove-Item -LiteralPath $temporaryPath, $temporaryErrorPath -Force -ErrorAction SilentlyContinue
+        $gitArguments = @("--git-dir=`"$canonicalGitDirectory`"", "--work-tree=`"$repoRoot`"", 'show', "${HeadSha}:$bootstrapGitPath")
+        $materialization = Start-Process -FilePath $canonicalGit `
+            -ArgumentList $gitArguments `
+            -WorkingDirectory $RepositoryRoot `
+            -RedirectStandardOutput $temporaryPath `
+            -RedirectStandardError $temporaryErrorPath `
+            -WindowStyle Hidden `
+            -Wait `
+            -PassThru
+        if ($materialization.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $temporaryPath -PathType Leaf)) {
+            throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_MATERIALIZATION_FAILED'
+        }
+        $bootstrapBytes = [System.IO.File]::ReadAllBytes($temporaryPath)
+        if ($bootstrapBytes.Length -le 0 -or $bootstrapBytes.Length -gt 524288) {
+            throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_SIZE_INVALID'
+        }
+        $headerBytes = [System.Text.Encoding]::UTF8.GetBytes("blob $($bootstrapBytes.Length)`0")
+        $blobBytes = New-Object byte[] ($headerBytes.Length + $bootstrapBytes.Length)
+        [System.Buffer]::BlockCopy($headerBytes, 0, $blobBytes, 0, $headerBytes.Length)
+        [System.Buffer]::BlockCopy($bootstrapBytes, 0, $blobBytes, $headerBytes.Length, $bootstrapBytes.Length)
+        $sha1 = [System.Security.Cryptography.SHA1]::Create()
+        try {
+            $observedBlob = -join ($sha1.ComputeHash($blobBytes) | ForEach-Object { $_.ToString('x2') })
+        }
+        finally {
+            $sha1.Dispose()
+        }
+        if ($observedBlob -ne $expectedBlob) { throw 'BACKEND_EXACT_HEAD_BOOTSTRAP_HASH_MISMATCH' }
+        return [Convert]::ToBase64String($bootstrapBytes)
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryPath, $temporaryErrorPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Start-BackendNodeWithMinimalEnvironment {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string]$StandardOutputPath,
+        [Parameter(Mandatory = $true)][string]$StandardErrorPath,
+        [Parameter(Mandatory = $true)][string]$SourceHead,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$BootstrapBase64
+    )
+    $originalEnvironment = @{}
+    foreach ($entry in @(Get-ChildItem Env:)) {
+        $originalEnvironment[[string]$entry.Name] = [string]$entry.Value
+    }
+
+    $minimalEnvironment = @{}
+    $allowedWindowsEnvironmentNames = @(
+        'SystemRoot', 'WINDIR', 'TEMP', 'TMP',
+        'SystemDrive', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+        'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA',
+        'ProgramFiles', 'ProgramFiles(x86)', 'CommonProgramFiles', 'CommonProgramFiles(x86)'
+    )
+    foreach ($name in $allowedWindowsEnvironmentNames) {
+        $value = [Environment]::GetEnvironmentVariable($name, 'Process')
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            $minimalEnvironment[$name] = $value
+        }
+    }
+    $minimalEnvironment['PATH'] = 'C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Program Files\nodejs;C:\Program Files\Git\cmd;C:\Program Files\GitHub CLI'
+    $minimalEnvironment['PATHEXT'] = '.COM;.EXE;.BAT;.CMD'
+    $minimalEnvironment['GIT_NO_REPLACE_OBJECTS'] = '1'
+    $minimalEnvironment['STEPHANOS_BACKEND_SOURCE_HEAD'] = $SourceHead
+    $minimalEnvironment['STEPHANOS_BACKEND_REPO_ROOT'] = $RepositoryRoot
+    $minimalEnvironment['STEPHANOS_BACKEND_BOOTSTRAP_BASE64'] = $BootstrapBase64
+
+    try {
+        foreach ($entry in @(Get-ChildItem Env:)) {
+            [Environment]::SetEnvironmentVariable([string]$entry.Name, $null, 'Process')
+        }
+        foreach ($name in $minimalEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable([string]$name, [string]$minimalEnvironment[$name], 'Process')
+        }
+        return Start-Process -FilePath $canonicalNode `
+            -ArgumentList $Arguments `
+            -WorkingDirectory $WorkingDirectory `
+            -RedirectStandardOutput $StandardOutputPath `
+            -RedirectStandardError $StandardErrorPath `
+            -WindowStyle Hidden `
+            -PassThru
+    }
+    finally {
+        foreach ($entry in @(Get-ChildItem Env:)) {
+            [Environment]::SetEnvironmentVariable([string]$entry.Name, $null, 'Process')
+        }
+        foreach ($name in $originalEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable([string]$name, [string]$originalEnvironment[$name], 'Process')
+        }
+    }
+}
+
 Write-Log "Stephanos Battle Bridge backend start requested from canonical main ${headSha}."
 Write-Log "Backend health endpoint: $healthUrl"
 Write-Log ("Runtime memory dirt tolerated: {0}" -f $runtimeMemoryDirty)
+Write-Log ("Runtime UI dist dirt tolerated: {0}" -f $runtimeDistDirty)
 Write-Log 'Frontend/dist server not started by this backend script (port 4173).'
 Write-Log 'Ensuring OpenClaw readonly adapter stub lifecycle (execution remains disabled).'
 
 try {
+    Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'OpenClaw readonly adapter ensure' | Out-Null
     $openClawEnsureOutput = & $canonicalNpm run --silent openclaw:stub:ensure 2>&1 | Out-String
     Write-Log ("openclaw:stub:ensure -> {0}" -f $openClawEnsureOutput.Trim())
 }
@@ -230,22 +457,26 @@ $existingListener = if (Test-BackendHealth -Url $healthUrl -ExpectedSourceHead $
     Get-VerifiedBackendListener
 } else { $null }
 if ($existingListener) {
-    Publish-VerifiedBackendRuntimeReceipt -Listener $existingListener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl -RuntimeMemoryDirty $runtimeMemoryDirty
+    Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend runtime receipt publication' | Out-Null
+    Publish-VerifiedBackendRuntimeReceipt -Listener $existingListener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl -RuntimeMemoryDirty $runtimeMemoryDirty -RuntimeDistDirty $runtimeDistDirty
     Write-Log 'Backend already healthy; exact listener receipt refreshed without starting a new process.'
     exit 0
 }
 
-$arguments = @('run', 'stephanos:backend')
-$env:STEPHANOS_BACKEND_SOURCE_HEAD = $headSha
-Write-Log ("Starting backend with command: {0} {1}" -f $canonicalNpm, ($arguments -join ' '))
-if ($PSCmdlet.ShouldProcess("$canonicalNpm $($arguments -join ' ')", 'Start Stephanos backend')) {
-    $process = Start-Process -FilePath $canonicalNpm `
-        -ArgumentList $arguments `
+$arguments = @('--input-type=module', '--eval', "`"$canonicalBootstrapEval`"")
+Write-Log ("Starting backend with fixed Node and process-bound exact-head bootstrap: {0} {1}" -f $canonicalNode, ($arguments -join ' '))
+if ($PSCmdlet.ShouldProcess("$canonicalNode $($arguments -join ' ')", 'Start Stephanos backend')) {
+    Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'exact-head bootstrap capture' | Out-Null
+    $bootstrapBase64 = Get-ExactHeadBackendBootstrapBase64 -RepositoryRoot $repoRoot -HeadSha $headSha
+    Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'backend process start' | Out-Null
+    $process = Start-BackendNodeWithMinimalEnvironment `
+        -Arguments $arguments `
         -WorkingDirectory $repoRoot `
-        -RedirectStandardOutput $stdoutLogPath `
-        -RedirectStandardError $stderrLogPath `
-        -WindowStyle Hidden `
-        -PassThru
+        -StandardOutputPath $stdoutLogPath `
+        -StandardErrorPath $stderrLogPath `
+        -SourceHead $headSha `
+        -RepositoryRoot $repoRoot `
+        -BootstrapBase64 $bootstrapBase64
     Write-Log ("Start-Process launched with PID {0}." -f $process.Id)
 }
 else {
@@ -264,7 +495,7 @@ while ((Get-Date) -lt $deadline) {
 }
 
 if ($listener) {
-    Publish-VerifiedBackendRuntimeReceipt -Listener $listener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl -RuntimeMemoryDirty $runtimeMemoryDirty
+    Publish-VerifiedBackendRuntimeReceipt -Listener $listener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl -RuntimeMemoryDirty $runtimeMemoryDirty -RuntimeDistDirty $runtimeDistDirty
     Write-Log "Backend health, stable listener identity and exact-head runtime receipt succeeded within $StartupTimeoutSeconds seconds."
     exit 0
 }

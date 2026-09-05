@@ -20,7 +20,10 @@ import {
   buildIndependentReviewArtifact,
 } from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
 import { resolve } from 'node:path';
-import { adjudicateQualifiedSpecialistReview } from '../shared/agents/qualifiedSpecialistReviewV1.mjs';
+import {
+  adjudicateQualifiedSpecialistReview,
+  qualifiedSpecialistCommentHeadRef,
+} from '../shared/agents/qualifiedSpecialistReviewV1.mjs';
 import { TextDecoder } from 'node:util';
 
 const API_VERSION = '2022-11-28';
@@ -83,6 +86,27 @@ async function githubPages(path, itemKey = null) {
     if (pageItems.length < 100) return items;
   }
   throw new Error(`Pagination exceeded ${MAX_PAGES * 100} records for ${path}`);
+}
+
+async function resolveQualifiedSpecialistCommentHeads(owner, repo, comments = []) {
+  return Promise.all(comments.map(async (comment) => {
+    const reviewedCommitRef = qualifiedSpecialistCommentHeadRef(comment);
+    if (!reviewedCommitRef) return comment;
+    try {
+      const commit = await githubRequest(
+        `/repos/${owner}/${repo}/commits/${encodeURIComponent(reviewedCommitRef)}`,
+        { allowNotFound: true, maxResponseBytes: 512 * 1024 },
+      );
+      const resolvedCommitId = text(commit?.sha).toLowerCase();
+      return /^[a-f0-9]{40}$/.test(resolvedCommitId)
+        ? Object.freeze({ ...comment, resolved_commit_id: resolvedCommitId })
+        : comment;
+    } catch {
+      // A malformed, ambiguous or unavailable abbreviated commit cannot seal
+      // the review, but it must not deny service to deterministic analysis.
+      return comment;
+    }
+  }));
 }
 
 function changedFilePaths(files = []) {
@@ -234,10 +258,9 @@ async function main() {
   // Review the immutable head/base immediately. CI and unresolved-thread
   // evidence remain mandatory at the independent merge-consumption boundary;
   // serializing analysis behind them only delays feedback and wastes runners.
-  const [files, diff, reviews] = await Promise.all([
+  const [files, diff] = await Promise.all([
     githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/files`),
     githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`, { accept: 'application/vnd.github.v3.diff' }),
-    githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`),
   ]);
   const protectedWorkflowPaths = PROTECTED_WORKFLOW_SOURCE_PATHS.filter((path) => (
     changedFilePaths(files).includes(path)
@@ -254,22 +277,43 @@ async function main() {
     protectedWorkflowSources,
     requireReviewerFilesInDiff: false,
   });
-  const specialist = adjudicateQualifiedSpecialistReview({
+  const deterministicBootstrapRequired = isApprovalBoundaryBootstrapAnalysis(deterministicAnalysis);
+  const specialistProbe = adjudicateQualifiedSpecialistReview({
     analysis: deterministicAnalysis,
-    reviews,
+    reviews: [],
+    comments: [],
     repository,
     prNumber,
     branch,
     sourceHead,
     baseSha,
   });
-  const analysis = specialist.required && specialist.valid
+  let specialist = specialistProbe;
+  if (!deterministicBootstrapRequired && specialistProbe.required) {
+    const [reviews, rawComments] = await Promise.all([
+      githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`),
+      githubPages(`/repos/${owner}/${repo}/issues/${prNumber}/comments`),
+    ]);
+    const comments = await resolveQualifiedSpecialistCommentHeads(owner, repo, rawComments);
+    specialist = adjudicateQualifiedSpecialistReview({
+      analysis: deterministicAnalysis,
+      reviews,
+      comments,
+      repository,
+      prNumber,
+      branch,
+      sourceHead,
+      baseSha,
+    });
+  }
+  const analysis = !deterministicBootstrapRequired && specialist.required && specialist.valid
     ? specialist.analysis
     : deterministicAnalysis;
   console.log(`SPECIALIST_REVIEW_DECISION=${specialist.required ? (specialist.valid ? 'SEALED' : 'REQUIRED') : 'NOT_REQUIRED'}`);
   console.log(`SPECIALIST_REVIEW_ID=${specialist.reviewId || ''}`);
+  console.log(`SPECIALIST_REVIEW_ARTIFACT_SHA256=${specialist.artifact?.payloadSha256 || ''}`);
 
-  const bootstrapRequired = isApprovalBoundaryBootstrapAnalysis(analysis);
+  const bootstrapRequired = deterministicBootstrapRequired || isApprovalBoundaryBootstrapAnalysis(analysis);
   const finalPullRequest = await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`);
   const finalMainRef = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/main`);
   if (text(finalPullRequest?.head?.sha).toLowerCase() !== sourceHead || text(finalPullRequest?.state).toLowerCase() !== 'open') {
@@ -322,6 +366,7 @@ async function main() {
     workflowRunAttempt: runAttempt,
     createdAtUtc,
     analysis,
+    specialistReviewArtifact: specialist.artifact,
   });
   const artifactPath = writeReviewArtifact(artifact);
   const receipt = artifact.receipt;

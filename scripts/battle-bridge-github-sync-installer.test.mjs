@@ -20,10 +20,12 @@ test('installer exposes only StartNow and registers hidden limited fixed task', 
   assert.match(source, /run-stephanos-scheduled-task-windowless\.vbs/);
   assert.match(source, /\/\/B \/\/NoLogo/);
   assert.match(source, /github-sync/);
-  assert.match(source, /-RepetitionInterval \(New-TimeSpan -Minutes 15\)/);
+  assert.match(source, /-RepetitionInterval \(New-TimeSpan -Minutes 1\)/);
+  assert.match(source, /intervalMinutes = 1/);
   assert.match(source, /-AtLogOn/);
   assert.match(source, /-Hidden/);
   assert.match(source, /-RunLevel Limited/);
+  assert.match(source, /-MultipleInstances IgnoreNew/);
   assert.doesNotMatch(source, /reset --hard|git clean|git checkout|git push|Invoke-Expression|Start-Process powershell/i);
 });
 
