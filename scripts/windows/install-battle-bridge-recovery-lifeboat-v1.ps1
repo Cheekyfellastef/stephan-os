@@ -65,16 +65,42 @@ function Read-FreshHealthyHeartbeat([string]$BankId, [string]$ExpectedManifest =
     return $heartbeat
 }
 
+function Assert-ActivePayloadManifest([string]$BankId, [string]$ExpectedManifest) {
+    $activeManifestPath = Join-Path (Join-Path $banksRoot $BankId) 'manifest.sha256'
+    if (-not (Test-Path -LiteralPath $activeManifestPath -PathType Leaf)) { throw "Lifeboat bank $BankId active manifest file is missing." }
+    $activeManifest = ([string](Get-Content -LiteralPath $activeManifestPath -Raw)).Trim().ToLowerInvariant()
+    if ($activeManifest -notmatch '^[a-f0-9]{64}$') { throw "Lifeboat bank $BankId active manifest file is invalid." }
+    if ($activeManifest -ne $ExpectedManifest) { throw "Lifeboat bank $BankId active manifest file does not match active state." }
+    return $activeManifestPath
+}
+
+function Assert-CanonicalScheduledTask([string]$CurrentUser) {
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
+    $actions = @($task.Actions)
+    if ($actions.Count -ne 1) { throw 'Existing lifeboat scheduled task action count is not canonical.' }
+    $expectedArguments = "//B //Nologo `"$installedWindowlessLauncher`""
+    if ([string]$actions[0].Execute -ne $wscriptExe) { throw 'Existing lifeboat scheduled task executable is not canonical.' }
+    if ([string]$actions[0].Arguments -ne $expectedArguments) { throw 'Existing lifeboat scheduled task arguments are not canonical.' }
+    if ([string]$task.Principal.UserId -ne $CurrentUser) { throw 'Existing lifeboat scheduled task principal is not canonical.' }
+    if ([string]$task.Principal.LogonType -ne 'Interactive') { throw 'Existing lifeboat scheduled task logon type is not canonical.' }
+    if ([string]$task.Principal.RunLevel -ne 'Limited') { throw 'Existing lifeboat scheduled task run level is not canonical.' }
+    return $task
+}
+
 [System.IO.Directory]::CreateDirectory($lifeboatRoot) | Out-Null
 [System.IO.Directory]::CreateDirectory($banksRoot) | Out-Null
 [System.IO.Directory]::CreateDirectory($stateRoot) | Out-Null
 [System.IO.Directory]::CreateDirectory($statusRoot) | Out-Null
 [System.IO.Directory]::CreateDirectory($stagingRoot) | Out-Null
 
+$activeState = Read-ActiveState
+
 if (Test-Path -LiteralPath $installedLauncher -PathType Leaf) {
     if ((Get-Sha256 $installedLauncher) -ne (Get-Sha256 $sourceLauncher)) {
         throw 'Installed immutable lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.'
     }
+} elseif ($null -ne $activeState) {
+    throw 'Existing lifeboat active state requires the immutable active-bank launcher to already be installed.'
 } elseif ($PSCmdlet.ShouldProcess($installedLauncher, 'Install immutable lifeboat active-bank launcher')) {
     Copy-Item -LiteralPath $sourceLauncher -Destination $installedLauncher
 }
@@ -83,14 +109,18 @@ if (Test-Path -LiteralPath $installedWindowlessLauncher -PathType Leaf) {
     if ((Get-Sha256 $installedWindowlessLauncher) -ne (Get-Sha256 $sourceWindowlessLauncher)) {
         throw 'Installed immutable windowless lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.'
     }
+} elseif ($null -ne $activeState) {
+    throw 'Existing lifeboat active state requires the immutable windowless launcher to already be installed.'
 } elseif ($PSCmdlet.ShouldProcess($installedWindowlessLauncher, 'Install immutable windowless lifeboat launcher')) {
     Copy-Item -LiteralPath $sourceWindowlessLauncher -Destination $installedWindowlessLauncher
 }
 $windowlessLauncherSha256 = Get-Sha256 $installedWindowlessLauncher
 
-$activeState = Read-ActiveState
 $activeBank = if ($null -eq $activeState) { '' } else { [string]$activeState.activeBank }
-if ($activeBank) { $null = Read-FreshHealthyHeartbeat -BankId $activeBank -ExpectedManifest ([string]$activeState.manifestSha256) }
+if ($activeBank) {
+    $null = Read-FreshHealthyHeartbeat -BankId $activeBank -ExpectedManifest ([string]$activeState.manifestSha256)
+    $null = Assert-ActivePayloadManifest -BankId $activeBank -ExpectedManifest ([string]$activeState.manifestSha256)
+}
 $targetBank = if ($activeBank -eq 'A') { 'B' } else { 'A' }
 if ($targetBank -eq $activeBank) { throw 'Lifeboat installer must never target the active bank.' }
 
@@ -115,8 +145,55 @@ try { $manifestSha256 = ([BitConverter]::ToString($sha.ComputeHash($manifestByte
 Set-Content -LiteralPath (Join-Path $stageRoot 'manifest.sha256') -Value $manifestSha256 -Encoding ASCII
 
 if ($null -ne $activeState -and $manifestSha256 -eq [string]$activeState.manifestSha256) {
+    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $null = Assert-CanonicalScheduledTask -CurrentUser $currentUser
     Remove-Item -LiteralPath $stageRoot -Recurse -Force
-    throw 'Candidate lifeboat bank is not distinct from the active known-good bank.'
+    $startedNow = $false
+    if ($StartNow -and $PSCmdlet.ShouldProcess($taskName, 'Start existing canonical Battle Bridge recovery lifeboat task')) {
+        Start-ScheduledTask -TaskName $taskName
+        $startedNow = $true
+    }
+    $rollbackBank = if ($activeState.PSObject.Properties['rollbackBank']) { [string]$activeState.rollbackBank } else { '' }
+    [pscustomobject]@{
+        schemaVersion = 'stephanos.battle-bridge-recovery-lifeboat-install.v1'
+        taskName = $taskName
+        lifeboatRoot = $lifeboatRoot
+        activeBankBefore = $activeBank
+        activeBankAfter = $activeBank
+        rollbackBank = $rollbackBank
+        candidateVersion = $candidateVersion
+        candidateManifestSha256 = $manifestSha256
+        installDisposition = 'ALREADY_CURRENT_HEALTHY'
+        changed = $false
+        candidateHeartbeatRequiredBeforePromotion = $true
+        payloadHashVerificationRequired = $true
+        githubClaimConsumerIncluded = $true
+        githubEndpointFixed = $true
+        githubTokenRequired = $false
+        productionRedundancyReady = [bool]($rollbackBank -in @('A', 'B'))
+        immutableLauncher = $true
+        windowlessLauncher = $true
+        windowlessLauncherSha256 = $windowlessLauncherSha256
+        scheduledTaskExecutable = $wscriptExe
+        scheduledTaskIdentityReproved = $true
+        directPowerShellTaskLaunch = $false
+        repoCheckoutRequiredAfterInstall = $false
+        openClawGatewayRequiredAfterInstall = $false
+        intervalMinutes = 2
+        atLogon = $true
+        runLevel = 'Limited'
+        startedNow = $startedNow
+        activeBankOverwriteAllowed = $false
+        dualBankOverwriteAllowed = $false
+        arbitraryPathAllowed = $false
+        arbitraryTaskNameAllowed = $false
+        arbitraryExecutableAllowed = $false
+        arbitraryShellAllowed = $false
+        gitMutationAllowed = $false
+        sourceMutationAllowed = $false
+        pcRestartAllowed = $false
+    } | ConvertTo-Json -Depth 6
+    return
 }
 
 $targetRoot = Join-Path $banksRoot $targetBank
@@ -176,6 +253,8 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register fixed independent Battle Bridge
     rollbackBank = $activeBank
     candidateVersion = $candidateVersion
     candidateManifestSha256 = $manifestSha256
+    installDisposition = 'PROMOTED_CANDIDATE'
+    changed = $true
     candidateHeartbeatRequiredBeforePromotion = $true
     payloadHashVerificationRequired = $true
     githubClaimConsumerIncluded = $true
@@ -186,6 +265,7 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register fixed independent Battle Bridge
     windowlessLauncher = $true
     windowlessLauncherSha256 = $windowlessLauncherSha256
     scheduledTaskExecutable = $wscriptExe
+    scheduledTaskIdentityReproved = $false
     directPowerShellTaskLaunch = $false
     repoCheckoutRequiredAfterInstall = $false
     openClawGatewayRequiredAfterInstall = $false
