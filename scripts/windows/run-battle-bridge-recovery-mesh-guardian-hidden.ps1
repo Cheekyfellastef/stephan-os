@@ -110,6 +110,52 @@ function Read-FixedGitHubJson {
     catch { Stop-Guardian -Blocker 'FIXED_GITHUB_COMPARE_JSON_INVALID' }
 }
 
+function Resolve-WindowsAccountSid {
+    param([string]$AccountName)
+
+    $candidate = ([string]$AccountName).Trim()
+    if ([string]::IsNullOrWhiteSpace($candidate)) { return '' }
+
+    $names = @($candidate)
+    if (-not $candidate.Contains('\') -and -not [string]::IsNullOrWhiteSpace($env:COMPUTERNAME)) {
+        $names += "$env:COMPUTERNAME\$candidate"
+    }
+
+    foreach ($name in @($names | Select-Object -Unique)) {
+        try {
+            $account = New-Object System.Security.Principal.NTAccount($name)
+            $sid = $account.Translate([System.Security.Principal.SecurityIdentifier])
+            if ($sid -and -not [string]::IsNullOrWhiteSpace([string]$sid.Value)) {
+                return [string]$sid.Value
+            }
+        } catch {
+            # Unresolvable principals fail closed.
+        }
+    }
+
+    return ''
+}
+
+function Test-TaskPrincipalMatchesCurrentUser {
+    param([string]$PrincipalUserId)
+
+    $principalSid = Resolve-WindowsAccountSid -AccountName $PrincipalUserId
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $currentSid = if ($identity -and $identity.User) {
+        [string]$identity.User.Value
+    } else {
+        ''
+    }
+
+    return -not [string]::IsNullOrWhiteSpace($principalSid) `
+        -and -not [string]::IsNullOrWhiteSpace($currentSid) `
+        -and [string]::Equals(
+            $principalSid,
+            $currentSid,
+            [System.StringComparison]::Ordinal
+        )
+}
+
 function Test-MailboxTaskIdentity {
     param(
         [object]$Task,
@@ -122,8 +168,8 @@ function Test-MailboxTaskIdentity {
         if (-not [string]::Equals($execute, $wscriptExe, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
         $expectedArguments = "//B //NoLogo `"$ExpectedLauncherPath`" github-command-mailbox"
         if (-not [string]::Equals(([string]$action.Arguments).Trim(), $expectedArguments, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
-        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-        return [string]::Equals([string]$Task.Principal.UserId, $currentUser, [System.StringComparison]::OrdinalIgnoreCase) `
+        $principalMatchesCurrentUser = Test-TaskPrincipalMatchesCurrentUser -PrincipalUserId ([string]$Task.Principal.UserId)
+        return $principalMatchesCurrentUser `
             -and [string]$Task.Principal.LogonType -eq 'Interactive' `
             -and [string]$Task.Principal.RunLevel -eq 'Limited' `
             -and [string]$Task.Settings.MultipleInstances -eq 'IgnoreNew' `
@@ -143,8 +189,8 @@ function Test-RecoveryTaskIdentity {
         if (-not [string]::Equals($execute, $wscriptExe, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
         $expectedArguments = "//B //NoLogo `"$ExpectedLauncherPath`" recovery-mesh"
         if (-not [string]::Equals(([string]$action.Arguments).Trim(), $expectedArguments, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
-        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-        return [string]::Equals([string]$Task.Principal.UserId, $currentUser, [System.StringComparison]::OrdinalIgnoreCase) `
+        $principalMatchesCurrentUser = Test-TaskPrincipalMatchesCurrentUser -PrincipalUserId ([string]$Task.Principal.UserId)
+        return $principalMatchesCurrentUser `
             -and [string]$Task.Principal.LogonType -eq 'Interactive' `
             -and [string]$Task.Principal.RunLevel -eq 'Limited' `
             -and [string]$Task.Settings.MultipleInstances -eq 'IgnoreNew' `

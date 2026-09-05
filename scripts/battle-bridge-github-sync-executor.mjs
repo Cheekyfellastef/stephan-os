@@ -18,6 +18,7 @@ import {
   createSharedWorkspaceStatusRecord,
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { createBattleBridgeMinimalChildEnvironment } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import {
   CANONICAL_SYNC_CONTRACT,
   FIXED_GIT_COMMANDS,
@@ -32,6 +33,16 @@ import {
 
 export const BATTLE_BRIDGE_GITHUB_SYNC_EXECUTOR_SCHEMA = 'stephanos.battle-bridge-github-sync-executor.v1';
 export const BATTLE_BRIDGE_GITHUB_SYNC_TASK_NAME = 'Stephanos Battle Bridge GitHub Sync';
+export const BATTLE_BRIDGE_SYNC_HOUSEKEEPER_COMMAND = Object.freeze({
+  id: 'battle-bridge-sync-existing-housekeeper',
+  script: 'scripts/battle-bridge-sync-housekeeper-runner.mjs',
+  argv: Object.freeze([]),
+  shell: false,
+  exactHeadBound: true,
+  sourceOwnedMutationAllowed: false,
+  allowlistedWorkspaceCleanupAllowed: true,
+  rawPathPublicationAllowed: false,
+});
 export const BATTLE_BRIDGE_GITHUB_SYNC_AUTHORITY = Object.freeze({
   canonicalRepositoryOnly: true,
   fastForwardOnly: true,
@@ -39,6 +50,10 @@ export const BATTLE_BRIDGE_GITHUB_SYNC_AUTHORITY = Object.freeze({
   arbitraryPowerShellAllowed: false,
   branchSwitchAllowed: false,
   resetCleanStashRebaseAllowed: false,
+  delegatedHousekeeperAllowlistedCleanupAllowed: true,
+  delegatedHousekeeperExactHeadBound: true,
+  delegatedHousekeeperSourceOwnedMutationAllowed: false,
+  delegatedHousekeeperRawPathPublicationAllowed: false,
   pushAllowed: false,
   runtimeRefreshAllowed: false,
   liveOpenClawUpdateAllowed: false,
@@ -63,6 +78,7 @@ export const FIXED_SYNC_GIT_COMMANDS = Object.freeze({
 const FIXED_COMMAND_IDS = new Map(Object.values(FIXED_SYNC_GIT_COMMANDS).map((command) => [command.id, command]));
 const FORBIDDEN_ARG_PATTERN = /^(?:checkout|switch|reset|clean|stash|rebase|push|branch)$/i;
 const SHA_PATTERN = /^[a-f0-9]{40}$/i;
+const HOUSEKEEPER_STATUS_PREFIX = '[HOUSEKEEP] status=';
 export const SYNC_LOCK_STALE_AFTER_MS = 10 * 60 * 1000;
 
 function text(value) {
@@ -80,6 +96,128 @@ function splitLines(value) {
 function within(parent, child) {
   const relative = path.relative(path.resolve(parent), path.resolve(child));
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function boundedCount(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function parseHousekeeperStatus(stdout = '') {
+  const line = splitLines(stdout).reverse().find((candidate) => candidate.startsWith(HOUSEKEEPER_STATUS_PREFIX));
+  if (!line) return null;
+  try {
+    const parsed = JSON.parse(line.slice(HOUSEKEEPER_STATUS_PREFIX.length));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeHousekeeperObservation({ attempted = true, state = 'UNPROVEN', status = null, exitCode = null, reason = '' } = {}) {
+  return Object.freeze({
+    schemaVersion: 'stephanos.battle-bridge-sync-housekeeper-observation.v1',
+    attempted,
+    state,
+    reason,
+    exitCode: Number.isInteger(exitCode) ? exitCode : null,
+    readyToEnterCommandDeck: status?.ignitionReadyToEnterCommandDeck === true,
+    sourceDirtCount: boundedCount(status?.ignitionSourceDirtCount),
+    hardBlockCount: boundedCount(status?.ignitionHardBlockCount),
+    dependencyWarningCount: boundedCount(status?.ignitionDependencyWarningCount),
+    autoCleanedCount: boundedCount(status?.ignitionAutoCleaned),
+    runtimeCleanedCount: boundedCount(status?.ignitionRuntimeCleaned),
+    openClawWorkspaceMovedCount: boundedCount(status?.ignitionOpenClawWorkspaceMoved),
+    sourceOwnedMutationAllowed: false,
+    rawPathValuesPublished: false,
+    arbitraryShellAllowed: false,
+    commandIdentity: BATTLE_BRIDGE_SYNC_HOUSEKEEPER_COMMAND.id,
+  });
+}
+
+function skippedHousekeeperObservation(reason, evaluation = {}) {
+  const dirt = evaluation?.dirt || {};
+  return Object.freeze({
+    schemaVersion: 'stephanos.battle-bridge-sync-housekeeper-observation.v1',
+    attempted: false,
+    state: 'SKIPPED_FAIL_CLOSED',
+    reason,
+    exitCode: null,
+    readyToEnterCommandDeck: false,
+    sourceDirtCount: (dirt.trackedSource?.length || 0) + (dirt.untrackedSource?.length || 0),
+    hardBlockCount: dirt.unknown?.length || 0,
+    dependencyWarningCount: 0,
+    autoCleanedCount: 0,
+    runtimeCleanedCount: 0,
+    openClawWorkspaceMovedCount: 0,
+    sourceOwnedMutationAllowed: false,
+    rawPathValuesPublished: false,
+    arbitraryShellAllowed: false,
+    commandIdentity: BATTLE_BRIDGE_SYNC_HOUSEKEEPER_COMMAND.id,
+  });
+}
+
+function mayAttemptHousekeeper({ evaluation, facts } = {}) {
+  if (evaluation?.classification !== SYNC_CLASSIFICATIONS.BLOCKED_DIRTY_SOURCE) {
+    return Object.freeze({ ok: false, reason: 'HOUSEKEEPER_NOT_REQUIRED' });
+  }
+  if (!SHA_PATTERN.test(text(facts?.localHead))) {
+    return Object.freeze({ ok: false, reason: 'HOUSEKEEPER_LOCAL_HEAD_UNPROVEN' });
+  }
+  const dirt = evaluation?.dirt || {};
+  if ((dirt.trackedSource?.length || 0) > 0) {
+    return Object.freeze({ ok: false, reason: 'HOUSEKEEPER_TRACKED_SOURCE_DIRT_PRESENT' });
+  }
+  if ((dirt.unknown?.length || 0) > 0) {
+    return Object.freeze({ ok: false, reason: 'HOUSEKEEPER_UNKNOWN_DIRT_PRESENT' });
+  }
+  return Object.freeze({ ok: true, reason: 'HOUSEKEEPER_BOUNDED_ATTEMPT_ALLOWED' });
+}
+
+export function runBoundedSyncHousekeeper({
+  repoRoot,
+  expectedHead,
+  environment = process.env,
+  platform = process.platform,
+  spawnSyncFn = spawnSync,
+} = {}) {
+  const boundHead = text(expectedHead).toLowerCase();
+  if (!SHA_PATTERN.test(boundHead)) {
+    return sanitizeHousekeeperObservation({ attempted: false, state: 'UNPROVEN', reason: 'HOUSEKEEPER_EXPECTED_HEAD_INVALID' });
+  }
+  const scriptPath = path.resolve(repoRoot, BATTLE_BRIDGE_SYNC_HOUSEKEEPER_COMMAND.script);
+  const childEnvironment = {
+    ...createBattleBridgeMinimalChildEnvironment(environment, { git: true, platform }),
+    STEPHANOS_EXPECTED_HEAD: boundHead,
+  };
+  let result = null;
+  try {
+    result = spawnSyncFn(process.execPath, [scriptPath, ...BATTLE_BRIDGE_SYNC_HOUSEKEEPER_COMMAND.argv], {
+      cwd: repoRoot,
+      env: childEnvironment,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 4 * 1024 * 1024,
+    });
+  } catch {
+    return sanitizeHousekeeperObservation({ state: 'UNPROVEN', reason: 'HOUSEKEEPER_SPAWN_FAILED' });
+  }
+  const status = parseHousekeeperStatus(result?.stdout || '');
+  if (result?.error) {
+    return sanitizeHousekeeperObservation({ state: 'UNPROVEN', status, exitCode: result?.status, reason: 'HOUSEKEEPER_SPAWN_FAILED' });
+  }
+  if (!status) {
+    return sanitizeHousekeeperObservation({ state: 'UNPROVEN', exitCode: result?.status, reason: 'HOUSEKEEPER_STATUS_UNPROVEN' });
+  }
+  const ready = result?.status === 0 && status.ignitionReadyToEnterCommandDeck === true;
+  return sanitizeHousekeeperObservation({
+    state: ready ? 'READY' : 'BLOCKED',
+    status,
+    exitCode: result?.status,
+    reason: ready ? 'HOUSEKEEPER_ALLOWLISTS_CONVERGED' : 'HOUSEKEEPER_PRESERVED_BLOCKING_DIRT',
+  });
 }
 
 export function resolveCanonicalSyncPaths({ env = process.env, home = os.homedir() } = {}) {
@@ -182,6 +320,7 @@ async function publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, n
     taskName: BATTLE_BRIDGE_GITHUB_SYNC_TASK_NAME,
     syncRecordKind,
     ...boundedFields,
+    ...(facts.housekeeperObservation ? { housekeeperObservation: facts.housekeeperObservation } : {}),
     authority: BATTLE_BRIDGE_GITHUB_SYNC_AUTHORITY,
   };
   const receiptRecord = Object.freeze({
@@ -334,6 +473,8 @@ export async function runBattleBridgeGitHubSync({
   expectedPaths = resolveCanonicalSyncPaths({ env }),
   processIsAliveFn = defaultProcessIsAlive,
   staleAfterMs = SYNC_LOCK_STALE_AFTER_MS,
+  housekeeperFn = runBoundedSyncHousekeeper,
+  platform = process.platform,
 } = {}) {
   const { repoRoot, workspaceRoot } = paths;
   const pathValidation = validateCanonicalSyncPaths({ repoRoot, workspaceRoot, expectedPaths });
@@ -357,12 +498,45 @@ export async function runBattleBridgeGitHubSync({
   }
 
   try {
-    const before = await collectPreFetchFacts({ git, repoRoot });
-    const earlyBlocker = preFetchBlocker(before);
+    let before = await collectPreFetchFacts({ git, repoRoot });
+    let earlyBlocker = preFetchBlocker(before);
+    let housekeeperObservation = null;
+    if (earlyBlocker?.classification === SYNC_CLASSIFICATIONS.BLOCKED_DIRTY_SOURCE) {
+      const gate = mayAttemptHousekeeper({ evaluation: earlyBlocker, facts: before });
+      if (gate.ok) {
+        try {
+          housekeeperObservation = await Promise.resolve(housekeeperFn({ repoRoot, expectedHead: before.localHead, environment: env, platform }));
+        } catch {
+          housekeeperObservation = sanitizeHousekeeperObservation({ state: 'UNPROVEN', reason: 'HOUSEKEEPER_EXECUTION_FAILED' });
+        }
+        const headBeforeHousekeeper = before.localHead;
+        const afterHousekeeper = await collectPreFetchFacts({ git, repoRoot });
+        before = { ...afterHousekeeper, housekeeperObservation };
+        if (afterHousekeeper.localHead !== headBeforeHousekeeper) {
+          earlyBlocker = blockedEvaluation(
+            SYNC_CLASSIFICATIONS.BLOCKED_HEAD_PROOF_MISSING,
+            'Canonical local HEAD changed during the bounded Housekeeper pass; stop before fetch and re-prove source identity.',
+            afterHousekeeper.statusLines,
+          );
+        } else {
+          earlyBlocker = preFetchBlocker(before);
+          if (!earlyBlocker && housekeeperObservation?.state !== 'READY') {
+            earlyBlocker = blockedEvaluation(
+              SYNC_CLASSIFICATIONS.BLOCKED_DIRTY_SOURCE,
+              'Housekeeper did not prove a ready bounded outcome; preserve local state and rerun the canonical sync proof.',
+              afterHousekeeper.statusLines,
+            );
+          }
+        }
+      } else {
+        housekeeperObservation = skippedHousekeeperObservation(gate.reason, earlyBlocker);
+        before = { ...before, housekeeperObservation };
+      }
+    }
     if (earlyBlocker) {
       const heartbeat = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation: earlyBlocker, facts: before, now, kind: 'heartbeat' });
       const publication = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation: earlyBlocker, facts: before, now, kind: 'blocker' });
-      return Object.freeze({ ok: false, evaluation: earlyBlocker, facts: before, heartbeat, publication });
+      return Object.freeze({ ok: false, evaluation: earlyBlocker, facts: before, housekeeperObservation, heartbeat, publication });
     }
 
     const fetchResult = git.run(FIXED_SYNC_GIT_COMMANDS.fetchOriginMain.id, repoRoot);
@@ -371,7 +545,7 @@ export async function runBattleBridgeGitHubSync({
       const evaluation = evaluateSyncPolicy(facts);
       const heartbeat = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, now, kind: 'heartbeat' });
       const publication = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, now, kind: 'blocker' });
-      return Object.freeze({ ok: false, evaluation, facts, fetchResult, heartbeat, publication });
+      return Object.freeze({ ok: false, evaluation, facts, fetchResult, housekeeperObservation, heartbeat, publication });
     }
 
     const remoteResult = git.run(FIXED_SYNC_GIT_COMMANDS.remoteHead.id, repoRoot);
@@ -389,7 +563,7 @@ export async function runBattleBridgeGitHubSync({
 
     if (evaluation.classification !== SYNC_CLASSIFICATIONS.SYNC_FAST_FORWARD_READY) {
       const receipt = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts, now, kind: evaluation.operatorNeeded ? 'blocker' : 'receipt' });
-      return Object.freeze({ ok: evaluation.classification === SYNC_CLASSIFICATIONS.SYNC_NO_CHANGE, evaluation, facts, heartbeat, plan, receipt });
+      return Object.freeze({ ok: evaluation.classification === SYNC_CLASSIFICATIONS.SYNC_NO_CHANGE, evaluation, facts, housekeeperObservation, heartbeat, plan, receipt });
     }
 
     const mergeResult = git.run(FIXED_SYNC_GIT_COMMANDS.mergeFfOnlyOriginMain.id, repoRoot);
@@ -397,7 +571,7 @@ export async function runBattleBridgeGitHubSync({
       const failedFacts = { ...facts, mergeAttempted: true, mergeOk: false };
       evaluation = evaluateSyncPolicy(failedFacts);
       const publication = await publishSyncRecord({ workspaceRoot, repoRoot, evaluation, facts: failedFacts, now, kind: 'blocker' });
-      return Object.freeze({ ok: false, evaluation, facts: failedFacts, mergeResult, heartbeat, plan, publication });
+      return Object.freeze({ ok: false, evaluation, facts: failedFacts, mergeResult, housekeeperObservation, heartbeat, plan, publication });
     }
 
     const afterResult = git.run(FIXED_SYNC_GIT_COMMANDS.localHead.id, repoRoot);
@@ -423,6 +597,7 @@ export async function runBattleBridgeGitHubSync({
       liveOpenClawUpdatePerformed: false,
       evaluation,
       facts: appliedFacts,
+      housekeeperObservation,
       heartbeat,
       plan,
       receipt,
