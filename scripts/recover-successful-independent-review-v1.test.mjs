@@ -72,6 +72,17 @@ function comment(receipt, overrides = {}) {
   };
 }
 
+function terminalResultComment(receipt, overrides = {}) {
+  return comment(receipt, {
+    body: renderIndependentReviewWorkflowDispatchLaunchReceiptCommentV1(receipt)
+      .replace(
+        '## Provider-neutral independent-review missing-run launch receipt',
+        '## Provider-neutral independent-review launch — terminal clean result',
+      ),
+    ...overrides,
+  });
+}
+
 test('selects only the trusted exact PR/head/base launch receipt and ignores historical heads', () => {
   const current = launchReceipt();
   const historical = launchReceipt({ sourceHead: OTHER_HEAD });
@@ -79,6 +90,20 @@ test('selects only the trusted exact PR/head/base launch receipt and ignores his
     comment(historical, { id: 2 }),
     comment(current),
     comment(current, { id: 3, user: { login: 'Cheekyfellastef', id: 267490109 } }),
+  ], {
+    repository: 'Cheekyfellastef/stephan-os',
+    prNumber: 1944,
+    expectedHead: HEAD,
+    expectedBase: BASE,
+  });
+  assert.equal(selected.launchKeySha256, current.launchKeySha256);
+});
+
+test('ignores trusted historical terminal-result comments that reuse the launch marker prefix', () => {
+  const current = launchReceipt();
+  const selected = selectSuccessfulReviewRecoveryLaunchReceiptV1([
+    terminalResultComment(current, { id: 2 }),
+    comment(current),
   ], {
     repository: 'Cheekyfellastef/stephan-os',
     prNumber: 1944,

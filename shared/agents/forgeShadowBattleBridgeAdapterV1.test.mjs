@@ -50,6 +50,15 @@ function readyReceipt(overrides = {}) {
     imageDigest: DIGEST,
     forgejoVersion: '15.0.6',
     podmanVersion: '6.0.2',
+    windowsHostAdapter: 'podman-desktop-windows10-wsl2-v1',
+    minimumWindowsBuild: 19043,
+    observedWindowsBuild: 19045,
+    observedWindowsProductName: 'Windows 10 Pro',
+    observedWindowsInstallationType: 'Client',
+    compatibilityAuthority: 'podman-desktop-v1.29.1-win32-x64-podman-v6.0.2',
+    podmanDesktopVersion: '1.29.1',
+    podmanDesktopSourceCommit: 'a969ee0e0b07285122dd4988a58edb0a1a25d5fc',
+    podmanDesktopPodmanManifestBlob: '5acfedd1c3171414aa218a1d5d95ea7529687809',
     machine: 'stephanos-forge-shadow',
     podmanConnection: 'stephanos-forge-shadow',
     container: 'stephanos-forge-shadow',
@@ -182,6 +191,10 @@ test('executor rebinds exact main head, tree and installer blob before and after
 
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'FORGE_SHADOW_M2_READY');
+  assert.equal(result.windowsHostAdapter, 'podman-desktop-windows10-wsl2-v1');
+  assert.equal(result.observedWindowsBuild, 19045);
+  assert.equal(result.observedWindowsProductName, 'Windows 10 Pro');
+  assert.equal(result.observedWindowsInstallationType, 'Client');
   assert.equal(result.readyForM3, true);
   assert.equal(result.canonicalTree, TREE);
   assert.equal(result.installerBlob, INSTALLER_BLOB);
@@ -252,6 +265,8 @@ test('installer failure or malformed runtime identity is not promoted to M2 read
     { status: 0, stdout: JSON.stringify(readyReceipt({ mirrorTree: 'f'.repeat(40) })), stderr: '' },
     { status: 0, stdout: JSON.stringify(readyReceipt({ backupDigest: 'f'.repeat(64) })), stderr: '' },
     { status: 0, stdout: JSON.stringify(readyReceipt({ backupVolume: '../unsafe' })), stderr: '' },
+    { status: 0, stdout: JSON.stringify(readyReceipt({ observedWindowsProductName: 'Windows Server 2022 Standard' })), stderr: '' },
+    { status: 0, stdout: JSON.stringify(readyReceipt({ observedWindowsInstallationType: 'Server' })), stderr: '' },
   ]) {
     const result = await executeForgeShadowM2OnBattleBridge(command(), {
       platform: 'win32',

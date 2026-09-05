@@ -9,7 +9,6 @@ import {
 } from '../shared/agents/independentReviewTerminalFindingsPublicationV1.mjs';
 import {
   planIndependentReviewPreArtifactFailureReceiptV1,
-  renderIndependentReviewPreArtifactFailureReceiptV1,
 } from '../shared/agents/independentReviewPreArtifactFailureReceiptV1.mjs';
 
 const API_VERSION = '2022-11-28';
@@ -19,6 +18,7 @@ const TRUSTED_GITHUB_ACTIONS_REVIEWER = Object.freeze({
   id: 41898282,
 });
 const MAX_COMMENT_PAGES = 20;
+const PRE_ARTIFACT_FAILURE_FILE = 'independent-review-pre-artifact-failure.json';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -49,6 +49,12 @@ function exactArtifactPath() {
   const actual = path.resolve(requested);
   if (expected !== actual) throw new Error('terminal findings publisher accepts only the exact runner-temp review artifact');
   return actual;
+}
+
+function exactPreArtifactFailurePath() {
+  const runnerTemp = text(process.env.RUNNER_TEMP);
+  if (!runnerTemp) throw new Error('runner temp is required for pre-artifact failure publication');
+  return path.resolve(runnerTemp, PRE_ARTIFACT_FAILURE_FILE);
 }
 
 async function githubRequest(pathname, { method = 'GET', body = null } = {}) {
@@ -149,17 +155,16 @@ async function main() {
     if (failurePlan.publishAllowed !== true) {
       throw new Error(`pre-artifact review failure identity is invalid: ${failurePlan.errors.join(',')}`);
     }
-    const published = await publishExactComment(
-      owner,
-      repo,
-      prNumber,
-      failurePlan.marker,
-      renderIndependentReviewPreArtifactFailureReceiptV1(failurePlan),
-      'pre-artifact review failure receipt marker is duplicated',
-    );
-    console.log(`INDEPENDENT_REVIEW_PRE_ARTIFACT_FAILURE_COMMENT=${published.id}`);
-    appendOutput('mutation', published.created ? 'publish-pre-artifact-failure' : 'none');
-    appendOutput('comment_id', published.id);
+    const failurePath = exactPreArtifactFailurePath();
+    fs.writeFileSync(failurePath, `${JSON.stringify(failurePlan.receipt, null, 2)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+    console.log(`INDEPENDENT_REVIEW_PRE_ARTIFACT_FAILURE_FILE=${failurePath}`);
+    console.log(`INDEPENDENT_REVIEW_PRE_ARTIFACT_FAILURE_RUN=${failurePlan.receipt.runIdentityHint}`);
+    appendOutput('mutation', 'write-pre-artifact-failure-artifact');
+    appendOutput('pre_artifact_receipt_path', failurePath);
     return;
   }
 

@@ -492,6 +492,48 @@ test('sync tool forwards only an approved main fast-forward request to bounded h
   });
 });
 
+test('sync tool exposes only the fixed Battle Bridge runtime-data preservation profile and requires separate approval', async () => {
+  const hostOps = fakeHostOps();
+  const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps });
+  await initializeCompatibleSession(handler);
+  const listed = await handler('tools/list');
+  const syncTool = listed.tools.find((tool) => tool.name === 'sync_codex_dispatch_bridge');
+  assert.deepEqual(syncTool.inputSchema.properties.preservationProfile.enum, ['battle-bridge-runtime-data-v1']);
+  assert.equal(syncTool.inputSchema.properties.repoRoot, undefined);
+  assert.equal(syncTool.inputSchema.properties.paths, undefined);
+
+  const denied = await handler('tools/call', {
+    name: 'sync_codex_dispatch_bridge',
+    arguments: {
+      operatorApproval: 'operator-approved',
+      expectedBranch: 'main',
+      preservationProfile: 'battle-bridge-runtime-data-v1',
+    },
+  });
+  assert.equal(denied.isError, true);
+  assert.equal(denied.structuredContent.blocker, 'PRESERVATION_APPROVAL_REQUIRED');
+
+  const approved = await handler('tools/call', {
+    name: 'sync_codex_dispatch_bridge',
+    arguments: {
+      operatorApproval: 'operator-approved',
+      expectedBranch: 'main',
+      preservationProfile: 'battle-bridge-runtime-data-v1',
+      preservationApproval: 'operator-approved',
+    },
+  });
+  assert.equal(approved.isError, false);
+  assert.deepEqual(hostOps.calls.at(-1), {
+    tool: 'sync',
+    args: {
+      operatorApproval: 'operator-approved',
+      expectedBranch: 'main',
+      preservationProfile: 'battle-bridge-runtime-data-v1',
+      preservationApproval: 'operator-approved',
+    },
+  });
+});
+
 test('full update tool requires approval and returns exact-head host proof without a Codex child', async () => {
   const hostOps = fakeHostOps();
   const integration = fakeIntegration();

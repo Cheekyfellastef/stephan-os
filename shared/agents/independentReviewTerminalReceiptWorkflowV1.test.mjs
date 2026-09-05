@@ -28,8 +28,8 @@ test('review job reserves bounded execution time for immutable artifact and term
     ['Check out trusted current-main reviewer', 'Resolve exact immutable coordinator handoff artifact', 4],
     ['Resolve exact immutable coordinator handoff artifact', 'Download exact immutable coordinator handoff receipt', 4],
     ['Download exact immutable coordinator handoff receipt', 'Build exact workflow-dispatch review preflight', 4],
-    ['Build exact workflow-dispatch review preflight', 'Prove bounded Windows authority specialist policy', 4],
-    ['Prove bounded Windows authority specialist policy', 'Review the complete exact-head and exact-base diff without mutation authority', 5],
+    ['Build exact workflow-dispatch review preflight', 'Prove bounded specialist policy', 4],
+    ['Prove bounded specialist policy', 'Review the complete exact-head and exact-base diff without mutation authority', 5],
     ['Review the complete exact-head and exact-base diff without mutation authority', 'Upload the exact-run immutable independent review result', 15],
     ['Upload the exact-run immutable independent review result', 'Surface terminal exact-head findings or pre-artifact failure', 4],
   ];
