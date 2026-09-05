@@ -3,13 +3,17 @@ import { readFileSync } from 'node:fs';
 
 const BASE_PATH = './windowsAuthoritySpecialistReviewV1Base.mjs';
 const WSL2_PATH = './windowsAuthorityForgeWsl2PrerequisiteReviewV1.mjs';
+const MAILBOX_CADENCE_PATH = './windowsAuthorityMailboxCadenceReviewV1.mjs';
 const BASE_BLOB_SHA = '85ea1cdebe4bc721ad6673db73ce0f63927a763e';
 const WSL2_BLOB_SHA = 'a03ab69af51d0a39a0d43d72df515f4a5a8329c0';
+const MAILBOX_CADENCE_BLOB_SHA = 'd1319d542b219c786a36e8063f4080369f1f9a51';
 
-// These legacy specialist pins remain top-level invariants even though their
-// implementation stays inside the exact pinned base router.
+// These legacy specialist pins and route markers remain top-level invariants
+// even though the historical implementation stays inside the exact pinned base router.
 const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '0750137480031f19a364915095c69b7ab6061799';
 const WORKER_WATCHDOG_BLOB_SHA = '148972def36e1af880f21876f4203f802c697ecb';
+const MAILBOX_CADENCE_ROUTE = 'mailboxCadence.analyzeWindowsAuthorityMailboxCadenceReviewV1';
+const MAILBOX_CADENCE_INVENTORY_GUARD = 'WINDOWS_AUTHORITY_MAILBOX_CADENCE_PATH_INVENTORY_MISMATCH';
 const MAILBOX_RECOVERY_ROUTE = 'analyzeWindowsAuthorityMailboxRecoveryGuardianReview';
 const LEGACY_RECOVERY_MESH_ROUTE = 'analyzeWindowsAuthorityRecoveryMeshGuardianReview';
 const WORKER_WATCHDOG_ROUTE = 'analyzeWindowsAuthorityWorkerWatchdogReview';
@@ -29,11 +33,26 @@ function provePinnedModule(path, expectedBlobSha) {
   return Object.freeze({ url, content });
 }
 function proveLegacyRoutingInvariants(source) {
+  if (!source.includes(`MAILBOX_CADENCE_PATH = '${MAILBOX_CADENCE_PATH}'`)) {
+    throw new Error('WINDOWS_AUTHORITY_MAILBOX_CADENCE_PATH_MISMATCH');
+  }
+  if (!source.includes(`MAILBOX_CADENCE_BLOB_SHA = '${MAILBOX_CADENCE_BLOB_SHA}'`)) {
+    throw new Error('WINDOWS_AUTHORITY_MAILBOX_CADENCE_PIN_MISMATCH');
+  }
+  if (!source.includes(MAILBOX_CADENCE_INVENTORY_GUARD)) {
+    throw new Error('WINDOWS_AUTHORITY_MAILBOX_CADENCE_INVENTORY_GUARD_MISSING');
+  }
   if (!source.includes(`MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '${MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA}'`)) {
     throw new Error('WINDOWS_AUTHORITY_MAILBOX_RECOVERY_GUARDIAN_PIN_MISMATCH');
   }
   if (!source.includes(`WORKER_WATCHDOG_BLOB_SHA = '${WORKER_WATCHDOG_BLOB_SHA}'`)) {
     throw new Error('WINDOWS_AUTHORITY_WORKER_WATCHDOG_PIN_MISMATCH');
+  }
+
+  const cadenceIndex = source.indexOf(MAILBOX_CADENCE_ROUTE);
+  const cadenceCoreIndex = source.indexOf(LEGACY_CORE_ROUTE);
+  if (cadenceIndex < 0 || cadenceCoreIndex < 0 || cadenceIndex >= cadenceCoreIndex) {
+    throw new Error('WINDOWS_AUTHORITY_MAILBOX_CADENCE_ROUTE_ORDER_MISMATCH');
   }
 
   const mailboxIndex = source.indexOf(MAILBOX_RECOVERY_ROUTE);
