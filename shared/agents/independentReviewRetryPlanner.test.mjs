@@ -33,7 +33,7 @@ const WORKFLOW_ID = 326000001;
 const COORDINATOR_WORKFLOW = readFileSync(
   new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url),
   'utf8',
-);
+).replace(/\r\n?/g, '\n');
 const COORDINATOR_RUNNER = readFileSync(
   new URL('../../scripts/exact-head-review-dispatch.mjs', import.meta.url),
   'utf8',
