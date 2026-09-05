@@ -8,7 +8,12 @@ import * as core from './forgeShadowBattleBridgeAdapterV1Core.mjs';
 
 export * from './forgeShadowBattleBridgeAdapterV1Core.mjs';
 
-const WSL2_AUTHORIZATION_FIELD = 'wsl2PrerequisiteAuthorized';
+export const FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1 = Object.freeze([
+  'forge-wsl2-enable-authorized-20260905-v1',
+  'forge-wsl2-postreboot-authorized-20260905-v1',
+]);
+
+const AUTHORIZED_REQUEST_IDS = new Set(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1);
 const WSL2_SCRIPT_RELATIVE_PATH = 'scripts/windows/enable-forge-wsl2-prerequisite-v1.ps1';
 const SHA40 = /^[0-9a-f]{40}$/;
 const WSL2_BLOCKERS = new Set([
@@ -39,7 +44,6 @@ const WSL2_BLOCKERS = new Set([
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, blocker, details: Object.freeze(details) });
 }
-
 function defaultRun(executable, args, options = {}) {
   return spawnSync(executable, args, {
     cwd: options.cwd,
@@ -50,7 +54,6 @@ function defaultRun(executable, args, options = {}) {
     maxBuffer: options.maxBuffer || 128 * 1024,
   });
 }
-
 function runExact(runCommand, executable, args, options = {}) {
   const result = runCommand(executable, args, options);
   return Object.freeze({
@@ -61,12 +64,10 @@ function runExact(runCommand, executable, args, options = {}) {
     error: result?.error?.message || '',
   });
 }
-
 function parseJson(value) {
   try { return JSON.parse(String(value || '')); }
   catch { return null; }
 }
-
 function readWsl2ScriptIdentity(runCommand, repositoryRoot, expectedHead, scriptPath) {
   const branch = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.git, ['branch', '--show-current'], { cwd: repositoryRoot, timeout: 120000 });
   const head = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.git, ['rev-parse', 'HEAD'], { cwd: repositoryRoot, timeout: 120000 });
@@ -84,18 +85,14 @@ function readWsl2ScriptIdentity(runCommand, repositoryRoot, expectedHead, script
     workingBlob: working.stdout.trim().toLowerCase(),
   });
 }
-
 function validWsl2ScriptIdentity(identity, expectedHead) {
-  return Boolean(
-    identity?.ok
+  return Boolean(identity?.ok
     && identity.branch === 'main'
     && identity.head === expectedHead
     && SHA40.test(identity.tree)
     && SHA40.test(identity.committedBlob)
-    && identity.workingBlob === identity.committedBlob
-  );
+    && identity.workingBlob === identity.committedBlob);
 }
-
 function validWsl2Receipt(receipt, command) {
   if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return false;
   if (receipt.schemaVersion !== 'stephanos.forge-wsl2-prerequisite-receipt.v1') return false;
@@ -121,39 +118,17 @@ function validWsl2Receipt(receipt, command) {
   return receipt.status === 'BLOCKED' && WSL2_BLOCKERS.has(String(receipt.blocker || ''));
 }
 
-export function forgeShadowBattleBridgeFields() {
-  return [...core.forgeShadowBattleBridgeFields(), WSL2_AUTHORIZATION_FIELD];
-}
-
-export function validateForgeShadowBattleBridgeCommand(command = {}) {
-  const base = core.validateForgeShadowBattleBridgeCommand(command);
-  if (!base.ok) return base;
-  if (command[WSL2_AUTHORIZATION_FIELD] !== undefined && typeof command[WSL2_AUTHORIZATION_FIELD] !== 'boolean') {
-    return fail('FORGE_SHADOW_COMMAND_WSL2_AUTHORIZATION_INVALID');
-  }
-  const wsl2PrerequisiteAuthorized = command[WSL2_AUTHORIZATION_FIELD] === true;
-  if (wsl2PrerequisiteAuthorized && base.command.prerequisiteOnly !== true) {
-    return fail('FORGE_SHADOW_COMMAND_WSL2_AUTHORIZATION_NOT_PREREQUISITE_ONLY');
-  }
-  return Object.freeze({
-    ok: true,
-    command: Object.freeze({ ...base.command, wsl2PrerequisiteAuthorized }),
-  });
-}
-
 export async function executeForgeShadowM2OnBattleBridge(command = {}, options = {}) {
-  const validation = validateForgeShadowBattleBridgeCommand(command);
+  const validation = core.validateForgeShadowBattleBridgeCommand(command);
   if (!validation.ok) return validation;
   const normalized = Object.freeze({
     ...command,
     ...validation.command,
     expectedHead: String(command.expectedHead || '').toLowerCase(),
   });
-
   const initial = await core.executeForgeShadowM2OnBattleBridge(normalized, options);
-  if (initial?.ok !== false || initial?.blocker !== 'WSL2_NOT_AVAILABLE' || !normalized.wsl2PrerequisiteAuthorized) {
-    return initial;
-  }
+  if (initial?.ok !== false || initial?.blocker !== 'WSL2_NOT_AVAILABLE') return initial;
+  if (normalized.prerequisiteOnly !== true || !AUTHORIZED_REQUEST_IDS.has(String(normalized.requestId || ''))) return initial;
 
   const platform = options.platform || process.platform;
   if (platform !== 'win32') return fail('FORGE_SHADOW_WINDOWS_REQUIRED');
@@ -161,29 +136,21 @@ export async function executeForgeShadowM2OnBattleBridge(command = {}, options =
   const userProfile = resolve(options.userProfile || process.env.USERPROFILE || homedir());
   const repositoryRoot = resolve(options.repositoryRoot || join(userProfile, 'Documents', 'GitHub', 'stephan-os'));
   const scriptPath = resolve(repositoryRoot, WSL2_SCRIPT_RELATIVE_PATH);
-  if (!existsSync(repositoryRoot) || !existsSync(scriptPath)) {
-    return fail('FORGE_WSL2_PREREQUISITE_SOURCE_MISSING');
-  }
+  if (!existsSync(repositoryRoot) || !existsSync(scriptPath)) return fail('FORGE_WSL2_PREREQUISITE_SOURCE_MISSING');
   const sourceBefore = readWsl2ScriptIdentity(runCommand, repositoryRoot, normalized.expectedHead, scriptPath);
   if (!validWsl2ScriptIdentity(sourceBefore, normalized.expectedHead)) {
     return fail('FORGE_WSL2_PREREQUISITE_SOURCE_IDENTITY_CHANGED', sourceBefore);
   }
 
   const invocation = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
-    '-NoProfile',
-    '-NonInteractive',
-    '-ExecutionPolicy', 'Bypass',
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-File', scriptPath,
     '-ExpectedHead', normalized.expectedHead,
     '-OperatorApproved',
   ], { cwd: repositoryRoot, timeout: 20 * 60 * 1000, maxBuffer: 128 * 1024 });
-  if (Buffer.byteLength(invocation.stdout, 'utf8') > 128 * 1024) {
-    return fail('FORGE_WSL2_PREREQUISITE_RECEIPT_TOO_LARGE');
-  }
+  if (Buffer.byteLength(invocation.stdout, 'utf8') > 128 * 1024) return fail('FORGE_WSL2_PREREQUISITE_RECEIPT_TOO_LARGE');
   const receipt = parseJson(invocation.stdout.trim());
-  if (!validWsl2Receipt(receipt, normalized)) {
-    return fail('FORGE_WSL2_PREREQUISITE_RECEIPT_INVALID', { exitCode: invocation.status });
-  }
+  if (!validWsl2Receipt(receipt, normalized)) return fail('FORGE_WSL2_PREREQUISITE_RECEIPT_INVALID', { exitCode: invocation.status });
   if (!invocation.ok) {
     return fail(String(receipt.blocker || 'FORGE_WSL2_PREREQUISITE_FAILED'), {
       stage: 'FORGE_WSL2_PREREQUISITE',
@@ -196,7 +163,6 @@ export async function executeForgeShadowM2OnBattleBridge(command = {}, options =
   if (!validWsl2ScriptIdentity(sourceAfter, normalized.expectedHead) || sourceAfter.tree !== sourceBefore.tree) {
     return fail('FORGE_WSL2_POST_PREREQUISITE_SOURCE_IDENTITY_CHANGED');
   }
-
   const retry = await core.executeForgeShadowM2OnBattleBridge(normalized, options);
   if (retry?.ok === false && retry?.blocker === 'WSL2_NOT_AVAILABLE') {
     return fail('WSL2_PROOF_NOT_READY_AFTER_CONFIGURATION', { stage: 'FORGE_WSL2_PREREQUISITE_RETRY' });
