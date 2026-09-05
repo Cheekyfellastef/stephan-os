@@ -40,9 +40,11 @@ function sameOrLaterGithubTimestamp(runCreatedAt, requestedAtUtc) {
 }
 
 function exactDispatchRun(run, receipt) {
+  const runName = text(run?.name);
+  const exactAllowedRunName = runName === receipt.workflowName || runName === receipt.runName;
   return positiveInteger(run?.id) > 0
     && positiveInteger(run?.workflow_id) === receipt.workflowId
-    && text(run?.name) === receipt.workflowName
+    && exactAllowedRunName
     && text(run?.path) === receipt.workflowPath
     && text(run?.event) === 'workflow_dispatch'
     && normalizedRepository(run?.repository?.full_name) === normalizedRepository(receipt.repository)
