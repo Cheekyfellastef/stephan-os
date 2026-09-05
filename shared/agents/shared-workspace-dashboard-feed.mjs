@@ -26,7 +26,9 @@ const DIRECTORY_BY_KIND = Object.freeze({
   proof: 'proofRecords',
   capabilities: 'capabilityRecords',
   events: 'eventRecords',
+  receipts: 'receiptRecords',
 });
+const DASHBOARD_OPERATOR_DECISION_RECEIPT_SCHEMA = 'stephanos.operator-decision-receipt.v1';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -46,7 +48,7 @@ function safePollIntervalMs(value) {
 }
 
 function emptyRecords() {
-  return { goalRecords: [], statusRecords: [], proofRecords: [], capabilityRecords: [], eventRecords: [] };
+  return { goalRecords: [], statusRecords: [], proofRecords: [], capabilityRecords: [], eventRecords: [], receiptRecords: [] };
 }
 
 function classifyFeed({ resolved, records, projection, errors }) {
@@ -100,10 +102,15 @@ async function readRecordDirectory(root, directory, options) {
   const errors = [];
   for (const name of names.filter((item) => (
     item.endsWith('.json')
+    && !(directory === 'receipts' && item.endsWith('.pending.json'))
     && !isSharedWorkspaceSpecializedStatusFile({ directory, fileName: item })
   ))) {
     try {
       const record = JSON.parse(await readFile(join(resolved.path, name), 'utf8'));
+      if (
+        directory === 'receipts'
+        && record?.operatorDecisionSchemaVersion !== DASHBOARD_OPERATOR_DECISION_RECEIPT_SCHEMA
+      ) continue;
       const validation = validateSharedWorkspaceRecord(record, options);
       if (validation.valid) records.push(record);
       else errors.push(`${directory}/${name}:${validation.errors.join(',')}`);
