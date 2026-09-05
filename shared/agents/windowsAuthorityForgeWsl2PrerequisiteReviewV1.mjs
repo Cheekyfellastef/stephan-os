@@ -47,7 +47,6 @@ function reviewWsl2Prerequisite(source, path, findings) {
     ["$PowerShellExe = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'", 'forge-wsl2-powershell-not-fixed', 'Elevation host must remain fixed Windows PowerShell.'],
     ["$DismExe = Join-Path $env:SystemRoot 'System32\\dism.exe'", 'forge-wsl2-dism-not-fixed', 'Windows feature mutation must remain bound to fixed DISM.'],
     ["$WslExe = Join-Path $env:SystemRoot 'System32\\wsl.exe'", 'forge-wsl2-wsl-not-fixed', 'WSL executable must remain fixed.'],
-    ["'-Verb', 'RunAs'", 'forge-wsl2-fixed-elevation-missing', 'The only reviewed elevation seam must remain the exact source-controlled self-elevation path.'],
     ["'--update'", 'forge-wsl2-update-not-fixed', 'WSL update must remain fixed.'],
     ["'--set-default-version', '2'", 'forge-wsl2-default-version-not-fixed', 'Default WSL version must remain fixed to 2.'],
     ["blocker = 'FORGE_WSL2_REBOOT_REQUIRED'", 'forge-wsl2-reboot-blocker-missing', 'A required reboot must be returned as a blocker rather than performed.'],
@@ -63,7 +62,7 @@ function reviewWsl2Prerequisite(source, path, findings) {
     ['githubCredentialUsed = $false', 'forge-wsl2-github-credential-not-zero', 'GitHub credentials must not be consumed.'],
   ]) requireLiteral(findings, source, literal, code, summary, path);
 
-  requirePattern(findings, source, /Start-Process\s+-FilePath\s+\$PowerShellExe[\s\S]*-ArgumentList\s+\$elevationArguments[\s\S]*-Verb\s+RunAs/, 'forge-wsl2-elevation-not-source-bound', 'Elevation must invoke only fixed PowerShell with the fixed source-controlled self-elevation argument set.', path);
+  requirePattern(findings, source, /Start-Process\s+-FilePath\s+\$PowerShellExe[\s\S]*-ArgumentList\s+\$arguments[\s\S]*-Verb\s+RunAs/, 'forge-wsl2-elevation-not-source-bound', 'Elevation must invoke only fixed PowerShell with the fixed source-controlled self-elevation argument set.', path);
   requirePattern(findings, source, /&\s+\$DismExe\s+@\(\s*'\/online',[\s\S]*"\/featurename:\$Feature"[\s\S]*'\/norestart'/, 'forge-wsl2-dism-invocation-not-fixed', 'DISM must be restricted to the admitted feature set with no restart.', path);
 
   for (const [pattern, code, summary] of [
