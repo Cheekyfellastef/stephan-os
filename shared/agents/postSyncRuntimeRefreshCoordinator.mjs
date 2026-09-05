@@ -19,6 +19,8 @@ export const POST_SYNC_REFRESH_TARGETS = Object.freeze({
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const SAFE_RELATIVE_PATH = /^[A-Za-z0-9._@+()\-][A-Za-z0-9._@+()\-/ ]{0,500}$/;
+const CANONICAL_WORKER_WATCHDOG_PROBE_PATH = 'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1';
+const MISSION_WORKER_POST_SYNC_COORDINATOR_PATH = 'scripts/battle-bridge-post-sync-refresh.mjs';
 const TARGET_ORDER = Object.freeze([
   POST_SYNC_REFRESH_TARGETS.UI_4173,
   POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
@@ -31,7 +33,10 @@ const NATURAL_EXACT = new Set([
   'shared/agents/stephanosCapabilityRegistry.mjs',
   'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
   'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs',
+  'shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.mjs',
+  'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
   'scripts/battle-bridge-github-command-mailbox.mjs',
+  'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
   'scripts/battle-bridge-github-sync-executor.mjs',
   'scripts/battle-bridge-github-sync-and-refresh.mjs',
   'scripts/battle-bridge-post-sync-refresh.mjs',
@@ -39,12 +44,18 @@ const NATURAL_EXACT = new Set([
   'scripts/battle-bridge-outbound-health-beacon.mjs',
   'scripts/chatgpt-shared-workspace-github-relay.mjs',
   'scripts/windows/probe-battle-bridge-recovery-mesh.ps1',
+  'scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1',
+  'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
+  'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1',
+  'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1',
   'scripts/windows/run-battle-bridge-github-sync-hidden.ps1',
   'scripts/windows/install-battle-bridge-github-sync.ps1',
   'scripts/windows/status-battle-bridge-github-sync.ps1',
   'scripts/windows/uninstall-battle-bridge-github-sync.ps1',
   'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1',
   'scripts/windows/run-battle-bridge-outbound-health-beacon-hidden.ps1',
+  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
+  'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
   'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
   'scripts/windows/restart-approved-stephanos-runtime.ps1',
 ]);
@@ -71,6 +82,9 @@ const NO_RUNTIME_EXACT = new Set([
   'README.md',
   'scripts/publish-battle-bridge-main-advance-signal.mjs',
   'shared/agents/battleBridgeMainAdvanceSignalV1.mjs',
+  'scripts/operator-protected-personal-repository-merge.mjs',
+  'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+  'scripts/ignite-stephanos-local.mjs',
 ]);
 
 const LAUNCHER_CRITICAL_SOURCE_PATHS = new Set([
@@ -109,6 +123,12 @@ export function parseGitChangedPathStatus(stdout) {
     const expectedPathCount = /^[CR]/.test(status) ? 2 : 1;
     if (parts.length !== expectedPathCount || parts.some((entry) => !String(entry ?? '').trim())) {
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_CHANGED_PATH_STATUS_INVALID', paths: Object.freeze([]) });
+    }
+    const removesCanonicalProbe = status === 'D'
+      ? parts[0] === CANONICAL_WORKER_WATCHDOG_PROBE_PATH
+      : /^R[0-9]*$/.test(status) && parts[0] === CANONICAL_WORKER_WATCHDOG_PROBE_PATH;
+    if (removesCanonicalProbe) {
+      return Object.freeze({ ok: false, blocker: 'POST_SYNC_CANONICAL_WORKER_WATCHDOG_PROBE_REMOVED', paths: Object.freeze([]) });
     }
     paths.push(...parts);
   }
@@ -166,6 +186,7 @@ function isBackendPath(path) {
 }
 
 function isMissionWorkerPath(path) {
+  if (path === MISSION_WORKER_POST_SYNC_COORDINATOR_PATH) return true;
   if (NATURAL_EXACT.has(path)) return false;
   return (path.startsWith('shared/agents/') && !NATURAL_EXACT.has(path))
     || path.startsWith('scripts/mission-orchestrator-worker')
@@ -173,6 +194,7 @@ function isMissionWorkerPath(path) {
     || [
       'scripts/windows/start-mission-orchestrator-worker.ps1',
       'scripts/windows/install-mission-orchestrator-worker-autostart.ps1',
+      CANONICAL_WORKER_WATCHDOG_PROBE_PATH,
       'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
       'package.json',
       'package-lock.json',

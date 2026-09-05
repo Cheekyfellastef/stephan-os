@@ -15,15 +15,18 @@ import {
   buildStephanosCapabilityRegistrySummary,
   validateStephanosCapabilityRegistry,
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
+import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
 import { runBattleBridgeMonitorMultiplexerCanary } from './battle-bridge-monitor-multiplexer-canary.mjs';
 import {
   BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
   BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
   BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+  MISSION_ORCHESTRATOR_CANCEL_OPERATION,
   buildBattleBridgeGitHubCommandReceipt,
   executeBattleBridgeGitHubCommand,
   executeBattleBridgeGitHubCommandBatch,
+  isTerminalizableOwnerCommandBlocker,
   selectBattleBridgeGitHubCommandBatch,
 } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import { dispatchExactHeadWindowsBrowserProof } from '../shared/agents/exactHeadWindowsBrowserProofDispatch.mjs';
@@ -35,8 +38,12 @@ import {
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { FORGE_SHADOW_BATTLE_BRIDGE_OPERATION } from '../shared/agents/forgeShadowBattleBridgeAdapterV1.mjs';
 import { publishCodexCapacityToSharedWorkspace } from '../shared/agents/codexCapacitySharedWorkspace.mjs';
+import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/recoveryAdapterBlockerClassifier.mjs';
+import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
+
+export const BATTLE_BRIDGE_MAILBOX_MAX_RECEIPT_PUBLICATION_ATTEMPTS_PER_CYCLE = 1;
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const expectedRepoRoot = resolve(process.env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os');
@@ -60,6 +67,7 @@ const FORGE_BACKUP_VOLUME_PATTERN = /^stephanos-forge-shadow-backup-[0-9a-f]{16}
 const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'UPDATE_STEPHANOS_FROM_CHAT',
   'INSTALL_UNATTENDED_GITHUB_SYNC',
+  MISSION_ORCHESTRATOR_CANCEL_OPERATION,
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
   'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
   'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
@@ -196,26 +204,13 @@ function safeTelemetryBranch(value) {
     : '';
 }
 
-function recoveryMeshWakeAdapterBlockerCandidates(stderr = '') {
-  const candidates = [];
-  for (const rawLine of String(stderr || '').replace(/\r/g, '').split('\n')) {
-    const line = rawLine.trim();
-    if (!line) continue;
-    if (RECOVERY_MESH_SAFE_WAKE_ADAPTER_BLOCKERS.has(line)) {
-      candidates.push(line);
-      continue;
-    }
-    const fullyQualified = line.match(/^\+\s*FullyQualifiedErrorId\s*:\s*([A-Z][A-Z0-9_]+)\s*$/i);
-    if (fullyQualified && RECOVERY_MESH_SAFE_WAKE_ADAPTER_BLOCKERS.has(fullyQualified[1].toUpperCase())) {
-      candidates.push(fullyQualified[1].toUpperCase());
-    }
-  }
-  return [...new Set(candidates)];
-}
-
 export function classifyRecoveryMeshWakeAdapterFailure(invocation = {}) {
-  const matches = recoveryMeshWakeAdapterBlockerCandidates(invocation?.stderr);
-  return matches.length === 1 ? matches[0] : 'RECOVERY_MESH_WAKE_ADAPTER_FAILED';
+  return classifyAllowlistedRecoveryAdapterBlocker({
+    stdout: invocation?.stdout,
+    stderr: invocation?.stderr,
+    allowlist: RECOVERY_MESH_SAFE_WAKE_ADAPTER_BLOCKERS,
+    fallback: 'RECOVERY_MESH_WAKE_ADAPTER_FAILED',
+  });
 }
 
 function telemetryPosture(value = {}) {
@@ -567,6 +562,10 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
     expectedHead: projectedReceiptExpectedHead(receipt, operationResult),
+    missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
+    commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
+    currentPhase: safeConveyorId(operationResult?.currentPhase),
+    duplicate: operationResult?.duplicate === true,
     ...forgeM2HeaderProjection(receipt, operationResult),
     prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
     proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
@@ -593,6 +592,10 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       blocker: safeTelemetryText(operationResult?.blocker, 240),
       finalVerdict: safeTelemetryText(operationResult?.finalVerdict, 160).toUpperCase(),
       expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
+      missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
+      commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
+      currentPhase: safeConveyorId(operationResult?.currentPhase),
+      duplicate: operationResult?.duplicate === true,
       prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
       proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
       proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
@@ -664,6 +667,10 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
     expectedHead: projectedReceiptExpectedHead(receipt, operationResult),
+    missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
+    commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
+    currentPhase: safeConveyorId(operationResult?.currentPhase),
+    duplicate: operationResult?.duplicate === true,
     ...forgeM2HeaderProjection(receipt, operationResult),
     prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
     proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
@@ -688,6 +695,10 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         blocker: safeTelemetryText(operationResult?.blocker, 240),
         finalVerdict: safeTelemetryText(operationResult?.finalVerdict, 160).toUpperCase(),
         expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
+        missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
+        commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
+        currentPhase: safeConveyorId(operationResult?.currentPhase),
+        duplicate: operationResult?.duplicate === true,
         prNumber: safeNonNegativeNumber(receipt?.prNumber || operationResult?.prNumber),
         proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
         proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
@@ -791,7 +802,7 @@ export function checkpointAcceptedMailboxReceipt(state, receipt, {
 
 export function buildRejectedMailboxTerminalReceipt(rejection, completedAt) {
   if (!rejection?.command || !SAFE_REQUEST_ID_PATTERN.test(String(rejection.command.requestId || ''))
-    || !/^COMMAND_[A-Z0-9_:-]{3,150}$/.test(String(rejection.blocker || ''))
+    || !isTerminalizableOwnerCommandBlocker(rejection.blocker)
     || !Number.isFinite(Date.parse(String(completedAt || '')))) {
     throw new Error('MAILBOX_REJECTION_RECEIPT_INVALID');
   }
@@ -838,7 +849,9 @@ export function checkpointMailboxReceiptPublication(state, receipt, publication,
       receipt: JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES)),
     }));
   }
-  state.pendingReceiptPublications = pending.slice(-100);
+  // The segmented outer guard is the durable capacity boundary. Truncating here
+  // would silently discard authority-bearing terminal receipts during an outage.
+  state.pendingReceiptPublications = pending;
   persist(state);
   return publication;
 }
@@ -852,15 +865,17 @@ export function flushMailboxReceiptPublicationOutbox(state, {
   }
   const pending = Array.isArray(state.pendingReceiptPublications) ? state.pendingReceiptPublications : [];
   const retained = [];
+  let attemptedCount = 0;
   let publishedCount = 0;
   for (const entry of pending) {
     const publication = publish(entry.receipt);
+    if (publication?.publicationDeferred !== true) attemptedCount += 1;
     if (publication?.ok === true) publishedCount += 1;
     else retained.push(entry);
   }
-  state.pendingReceiptPublications = retained.slice(-100);
+  state.pendingReceiptPublications = retained;
   persist(state);
-  return Object.freeze({ attemptedCount: pending.length, publishedCount, pendingCount: retained.length });
+  return Object.freeze({ attemptedCount, publishedCount, pendingCount: retained.length });
 }
 
 export function terminalizeRejectedMailboxCommands(state, rejections = [], {
@@ -991,6 +1006,48 @@ function postReceipt(receipt) {
     '```',
   ].join('\n');
   return run(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, ['issue', 'comment', String(BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE), '--repo', BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY, '--body', body], { timeout: 120000 });
+}
+
+export function createBoundedMailboxReceiptPublisher({
+  publish = postReceipt,
+  maxAttempts = BATTLE_BRIDGE_MAILBOX_MAX_RECEIPT_PUBLICATION_ATTEMPTS_PER_CYCLE,
+} = {}) {
+  if (typeof publish !== 'function'
+    || !Number.isSafeInteger(maxAttempts)
+    || maxAttempts < 0
+    || maxAttempts > BATTLE_BRIDGE_MAILBOX_MAX_RECEIPT_PUBLICATION_ATTEMPTS_PER_CYCLE) {
+    throw new Error('MAILBOX_RECEIPT_PUBLICATION_BUDGET_INVALID');
+  }
+  let attemptedCount = 0;
+  let deferredCount = 0;
+  return Object.freeze({
+    publish(receipt) {
+      if (attemptedCount >= maxAttempts) {
+        deferredCount += 1;
+        return Object.freeze({
+          ok: false,
+          blocker: 'MAILBOX_RECEIPT_PUBLICATION_DEFERRED',
+          publicationAttempted: false,
+          publicationDeferred: true,
+        });
+      }
+      attemptedCount += 1;
+      const publication = publish(receipt);
+      return Object.freeze({
+        ...(publication && typeof publication === 'object' ? publication : {}),
+        ok: publication?.ok === true,
+        publicationAttempted: true,
+        publicationDeferred: false,
+      });
+    },
+    snapshot() {
+      return Object.freeze({
+        maxAttempts,
+        attemptedCount,
+        deferredCount,
+      });
+    },
+  });
 }
 
 async function installUnattendedSync() {
@@ -1261,6 +1318,55 @@ async function readCriticalBacklogStatus(command = {}) {
   };
 }
 
+export async function cancelMissionOrchestratorMission(command = {}, {
+  readSourceIdentity = readCanonicalSourceIdentity,
+  cancelMission = cancelBoundedMission,
+} = {}) {
+  const identity = await readSourceIdentity(command);
+  if (!identity.ok) return identity;
+  try {
+    const result = await cancelMission({
+      missionId: command.missionId,
+      commandId: command.commandId,
+      reason: command.reason,
+    });
+    const missionId = safeConveyorId(result?.state?.missionId || command.missionId);
+    const currentPhase = safeConveyorId(result?.state?.currentPhase);
+    const cancelled = currentPhase === 'CANCELLED';
+    return {
+      ...identity,
+      ok: cancelled,
+      blocker: cancelled ? '' : 'MISSION_CANCEL_POSTCONDITION_FAILED',
+      finalVerdict: cancelled
+        ? 'MISSION_ORCHESTRATOR_MISSION_CANCELLED'
+        : 'MISSION_ORCHESTRATOR_MISSION_CANCEL_BLOCKED',
+      missionId,
+      commandId: safeTelemetryId(command.commandId),
+      currentPhase,
+      duplicate: result?.duplicate === true,
+      eventId: safeTelemetryId(result?.eventId),
+      operatorActionRequired: result?.state?.operatorActionRequired === true,
+      arbitraryFilesystemAccess: false,
+      commandExecutionAccess: false,
+      sourceMutationAccess: false,
+    };
+  } catch {
+    return {
+      ...identity,
+      ok: false,
+      blocker: 'MISSION_CANCEL_FAILED',
+      finalVerdict: 'MISSION_ORCHESTRATOR_MISSION_CANCEL_BLOCKED',
+      missionId: safeConveyorId(command.missionId),
+      commandId: safeTelemetryId(command.commandId),
+      currentPhase: '',
+      duplicate: false,
+      arbitraryFilesystemAccess: false,
+      commandExecutionAccess: false,
+      sourceMutationAccess: false,
+    };
+  }
+}
+
 export async function readMailboxReceipt(command = {}, {
   readSourceIdentity = readCanonicalSourceIdentity,
   receiptRoot = canonicalReceiptRoot,
@@ -1329,6 +1435,7 @@ async function executeSelectedMailboxCommand(selected, receiptRef) {
     readSharedWorkspaceStatus,
     readCriticalBacklogStatus,
     readMailboxReceipt,
+    cancelMissionOrchestratorMission,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
     installRecoveryMesh: installBattleBridgeRecoveryMesh,
     wakeRecoveryMesh: (command) => wakeBattleBridgeRecoveryMesh(command, { receiptRef }),
@@ -1351,13 +1458,16 @@ async function executeSelectedMailboxCommand(selected, receiptRef) {
   });
 }
 
-export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date() } = {}) {
+async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() } = {}) {
   if (process.platform !== 'win32') return { ok: false, blocker: 'WINDOWS_REQUIRED' };
   if (repoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) {
     return { ok: false, blocker: 'CANONICAL_CHECKOUT_REQUIRED', repoRoot, expectedRepoRoot };
   }
   const state = loadState();
-  const publicationOutbox = flushMailboxReceiptPublicationOutbox(state);
+  const publicationBudget = createBoundedMailboxReceiptPublisher();
+  const publicationOutbox = flushMailboxReceiptPublicationOutbox(state, {
+    publish: publicationBudget.publish,
+  });
   const comments = loadBoundedMailboxComments();
   const batch = selectBattleBridgeGitHubCommandBatch(comments, {
     consumedRequestIds: new Set([
@@ -1367,11 +1477,15 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     now: now(),
     maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
   });
-  const rejectedTerminal = terminalizeRejectedMailboxCommands(state, batch.terminalRejections, { now });
+  const rejectedTerminal = terminalizeRejectedMailboxCommands(state, batch.terminalRejections, {
+    now,
+    publish: publicationBudget.publish,
+  });
   if (batch.verdict === 'NO_COMMAND_READY') return Object.freeze({
     ...batch,
     terminalizedRejectionCount: rejectedTerminal.length,
     receiptPublicationOutbox: publicationOutbox,
+    receiptPublicationBudget: publicationBudget.snapshot(),
   });
   if (!batch.ok) return batch;
 
@@ -1391,7 +1505,7 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
       const receiptLocation = writeReceipt(receipt);
       checkpointAcceptedMailboxReceipt(state, receipt);
       const publishable = { ...receipt, receiptRef: receiptLocation.ref };
-      checkpointMailboxReceiptPublication(state, publishable, postReceipt(publishable));
+      checkpointMailboxReceiptPublication(state, publishable, publicationBudget.publish(publishable));
       accepted.set(selected.command.requestId, Object.freeze({ acceptedAt, receiptLocation }));
     },
     executeCommand: async (selected) => {
@@ -1414,7 +1528,7 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
       const receiptLocation = writeReceipt(receipt);
       checkpointTerminalMailboxReceipt(state, receipt);
       const publishable = { ...receipt, receiptRef: receiptLocation.ref };
-      checkpointMailboxReceiptPublication(state, publishable, postReceipt(publishable));
+      checkpointMailboxReceiptPublication(state, publishable, publicationBudget.publish(publishable));
       return Object.freeze({ receipt, execution, receiptLocation });
     },
   });
@@ -1456,8 +1570,33 @@ export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date
     duplicateWorkerAllowed: false,
     terminalizedRejectionCount: rejectedTerminal.length,
     receiptPublicationOutbox: publicationOutbox,
+    receiptPublicationBudget: publicationBudget.snapshot(),
     terminal: Object.freeze(terminal),
   });
+}
+
+export async function runBattleBridgeGitHubCommandMailbox({ now = () => new Date() } = {}) {
+  if (process.platform !== 'win32') return { ok: false, blocker: 'WINDOWS_REQUIRED' };
+  const leaseBefore = verifyMailboxOutboxGuardLease();
+  if (!leaseBefore.ok) return Object.freeze({
+    ok: false,
+    blocker: leaseBefore.blocker,
+    finalVerdict: 'MAILBOX_COMMAND_POLL_BLOCKED',
+    duplicateWorkerAllowed: false,
+    arbitraryShellAllowed: false,
+    sourceMutationAccess: false,
+  });
+  const result = await runBattleBridgeGitHubCommandMailboxCore({ now });
+  const leaseAfter = verifyMailboxOutboxGuardLease();
+  if (!leaseAfter.ok) return Object.freeze({
+    ok: false,
+    blocker: leaseAfter.blocker,
+    finalVerdict: 'MAILBOX_COMMAND_POLL_BLOCKED',
+    duplicateWorkerAllowed: false,
+    arbitraryShellAllowed: false,
+    sourceMutationAccess: false,
+  });
+  return result;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

@@ -96,15 +96,15 @@ test('non-eligible or non-clean specialist results remain fail closed', async ()
   assert.match(text, /finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_CLEAN'/);
 });
 
-test('base reviewer skips submitted reviews only for deterministic approval-boundary bootstrap', async () => {
+test('base reviewer skips external review evidence only for deterministic approval-boundary bootstrap', async () => {
   const text = await baseReviewerSource();
   assert.match(text, /const \[files, diff\] = await Promise\.all\(\[/);
-  assert.doesNotMatch(text, /const \[files, diff, reviews\] = await Promise\.all\(\[/);
-  assert.match(text, /const deterministicBootstrapRequired = isApprovalBoundaryBootstrapAnalysis\(deterministicAnalysis\);[\s\S]*?const specialistProbe = adjudicateQualifiedSpecialistReview\(\{[\s\S]*?reviews: \[\],[\s\S]*?\}\);/);
-  assert.match(text, /const specialist = !deterministicBootstrapRequired && specialistProbe\.required\s*\? adjudicateQualifiedSpecialistReview\(\{[\s\S]*?reviews: await githubPages\(`\/repos\/\$\{owner\}\/\$\{repo\}\/pulls\/\$\{prNumber\}\/reviews`\),[\s\S]*?\}\)\s*: specialistProbe;/);
+  assert.match(text, /const deterministicBootstrapRequired = isApprovalBoundaryBootstrapAnalysis\(deterministicAnalysis\);[\s\S]*?const specialistProbe = adjudicateQualifiedSpecialistReview\(\{[\s\S]*?reviews: \[\],[\s\S]*?comments: \[\],[\s\S]*?\}\);/);
+  assert.match(text, /if \(!deterministicBootstrapRequired && specialistProbe\.required\) \{[\s\S]*?pulls\/\$\{prNumber\}\/reviews[\s\S]*?issues\/\$\{prNumber\}\/comments[\s\S]*?resolveQualifiedSpecialistCommentHeads\(owner, repo, rawComments\)[\s\S]*?adjudicateQualifiedSpecialistReview\(\{[\s\S]*?reviews,[\s\S]*?comments,[\s\S]*?\}\);/);
+  assert.match(text, /\/commits\/\$\{encodeURIComponent\(reviewedCommitRef\)\}/);
   assert.match(text, /const analysis = !deterministicBootstrapRequired && specialist\.required && specialist\.valid\s*\? specialist\.analysis\s*:\s*deterministicAnalysis;/);
   assert.match(text, /const bootstrapRequired = deterministicBootstrapRequired \|\| isApprovalBoundaryBootstrapAnalysis\(analysis\);/);
-  assert.doesNotMatch(text, /reviews: await githubPages\([\s\S]*?allowNotFound/);
+  assert.match(text, /specialistReviewArtifact: specialist\.artifact/);
 });
 
 test('bootstrap deferral preserves exact identity revalidation and immutable artifact boundaries', async () => {

@@ -4,8 +4,34 @@ import { closeSync, lstatSync, mkdirSync, openSync, realpathSync, writeFileSync 
 import path from 'node:path';
 
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';
+import { classifyAllowlistedRecoveryAdapterBlocker } from '../../../../shared/agents/recoveryAdapterBlockerClassifier.mjs';
 
 export const OPENCLAW_RECOVERY_ROUTE = 'OPENCLAW_WHATSAPP';
+
+const FIXED_RECOVERY_ADAPTER_BLOCKERS = Object.freeze([
+  'RECOVERY_PATH_REPARSE_ANCESTOR_REJECTED',
+  'RECOVERY_PATH_ANCESTOR_IDENTITY_CHANGED',
+  'OPENCLAW_HOST_PROOF_REQUIRED',
+  'OPENCLAW_HOST_PROOF_INVALID',
+  'OPENCLAW_HOST_PROCESS_IDENTITY_INVALID',
+  'OPENCLAW_GATEWAY_PROCESS_OWNERSHIP_INVALID',
+  'OPENCLAW_GATEWAY_RUNTIME_IDENTITY_INVALID',
+  'OPENCLAW_HOST_PROOF_ALREADY_CONSUMED',
+  'RECOVERY_MESH_TASK_NOT_INSTALLED',
+  'RECOVERY_MESH_TASK_ACTION_INVALID',
+  'RECOVERY_MESH_TASK_PRINCIPAL_INVALID',
+  'RECOVERY_MESH_TASK_SETTINGS_INVALID',
+  'RECOVERY_MESH_TASK_START_FAILED',
+]);
+
+function fixedRecoveryAdapterBlocker(result = {}) {
+  return classifyAllowlistedRecoveryAdapterBlocker({
+    stdout: result?.stdout,
+    stderr: result?.stderr,
+    allowlist: FIXED_RECOVERY_ADAPTER_BLOCKERS,
+    fallback: '',
+  });
+}
 
 function buildOpenClawHostProof({ authenticatedContext, runtimeId, now = new Date(), nonce = randomUUID(), hostPid = process.pid } = {}) {
   if (authenticatedContext?.authenticatedByHost !== true || authenticatedContext?.commandName !== 'stephanos-ignite'
@@ -144,7 +170,12 @@ export async function wakeBattleBridgeRecoveryMesh({
     timeout: 30_000,
   });
   if (result?.error || result?.status !== 0) {
-    return Object.freeze({ ok: false, blocker: 'RECOVERY_WAKE_FIXED_ADAPTER_FAILED', exitCode: result?.status ?? null });
+    const adapterBlocker = fixedRecoveryAdapterBlocker(result);
+    return Object.freeze({
+      ok: false,
+      blocker: adapterBlocker || 'RECOVERY_WAKE_FIXED_ADAPTER_FAILED',
+      exitCode: result?.status ?? null,
+    });
   }
   let receipt;
   try { receipt = JSON.parse(String(result.stdout || '').replace(/^\uFEFF/, '')); } catch {
