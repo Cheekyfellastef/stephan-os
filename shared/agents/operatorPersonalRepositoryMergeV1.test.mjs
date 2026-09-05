@@ -223,7 +223,7 @@ test('protected merge entry refreshes every authority input after bounded check 
     /compare\/\$\{identity\.baseSha}\.\.\.\$\{identity\.sourceHead}/,
     /pullRequestReviewState\(context\.owner, context\.repo, identity\.prNumber\)/,
     /environments\/operator-merge-approval/,
-    /loadSelectedIndependentReview\(context, identity\)/,
+    /loadSelectedIndependentReview\([\s\S]*context,[\s\S]*identity,[\s\S]*text\(environment\?\.name\),[\s\S]*\)/,
   ]) assert.match(helper, requiredRead);
 
   const convergenceIndex = source.indexOf(
