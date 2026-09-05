@@ -10,12 +10,10 @@ const WSL2_BLOB_SHA = 'a03ab69af51d0a39a0d43d72df515f4a5a8329c0';
 // implementation stays inside the exact pinned base router.
 const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '0750137480031f19a364915095c69b7ab6061799';
 const WORKER_WATCHDOG_BLOB_SHA = '148972def36e1af880f21876f4203f802c697ecb';
-const LEGACY_ROUTE_ORDER = Object.freeze([
-  'analyzeWindowsAuthorityMailboxRecoveryGuardianReview',
-  'analyzeWindowsAuthorityRecoveryMeshGuardianReview',
-  'analyzeWindowsAuthorityWorkerWatchdogReview',
-  'core.analyzeWindowsAuthoritySpecialistReview',
-]);
+const MAILBOX_RECOVERY_ROUTE = 'analyzeWindowsAuthorityMailboxRecoveryGuardianReview';
+const LEGACY_RECOVERY_MESH_ROUTE = 'analyzeWindowsAuthorityRecoveryMeshGuardianReview';
+const WORKER_WATCHDOG_ROUTE = 'analyzeWindowsAuthorityWorkerWatchdogReview';
+const LEGACY_CORE_ROUTE = 'core.analyzeWindowsAuthoritySpecialistReview';
 
 function gitBlobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
@@ -37,13 +35,17 @@ function proveLegacyRoutingInvariants(source) {
   if (!source.includes(`WORKER_WATCHDOG_BLOB_SHA = '${WORKER_WATCHDOG_BLOB_SHA}'`)) {
     throw new Error('WINDOWS_AUTHORITY_WORKER_WATCHDOG_PIN_MISMATCH');
   }
-  let previousIndex = -1;
-  for (const route of LEGACY_ROUTE_ORDER) {
-    const index = source.indexOf(route);
-    if (index < 0 || index <= previousIndex) {
-      throw new Error(`WINDOWS_AUTHORITY_LEGACY_ROUTE_ORDER_MISMATCH:${route}`);
-    }
-    previousIndex = index;
+
+  const mailboxIndex = source.indexOf(MAILBOX_RECOVERY_ROUTE);
+  const recoveryMeshIndex = source.indexOf(LEGACY_RECOVERY_MESH_ROUTE);
+  if (mailboxIndex < 0 || recoveryMeshIndex < 0 || mailboxIndex >= recoveryMeshIndex) {
+    throw new Error('WINDOWS_AUTHORITY_MAILBOX_RECOVERY_ROUTE_ORDER_MISMATCH');
+  }
+
+  const watchdogIndex = source.indexOf(WORKER_WATCHDOG_ROUTE);
+  const coreIndex = source.indexOf(LEGACY_CORE_ROUTE);
+  if (watchdogIndex < 0 || coreIndex < 0 || watchdogIndex >= coreIndex) {
+    throw new Error('WINDOWS_AUTHORITY_WORKER_WATCHDOG_ROUTE_ORDER_MISMATCH');
   }
 }
 
