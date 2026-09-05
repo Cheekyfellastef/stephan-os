@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 const BASE_PATH = './windowsAuthoritySpecialistReviewV1Base.mjs';
 const WSL2_PATH = './windowsAuthorityForgeWsl2PrerequisiteReviewV1.mjs';
 const BASE_BLOB_SHA = '85ea1cdebe4bc721ad6673db73ce0f63927a763e';
-const WSL2_BLOB_SHA = 'ea479bd3d8a2ba71b38596d3e8691c6f07f132e1';
+const WSL2_BLOB_SHA = '9737d3dd914b5c2aea540a2be634910c7aa72e4f';
 
 function gitBlobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
