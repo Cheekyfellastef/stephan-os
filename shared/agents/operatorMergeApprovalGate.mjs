@@ -429,6 +429,7 @@ function validateProtectedWorkflowYaml(path, source) {
       'independent_review_artifact_id',
       'independent_review_artifact_digest',
       'independent_review_payload_sha256',
+      'authorization_comment_id',
     ];
     const dispatchInputs = yamlWorkflowDispatchInputKeys(source);
     if (dispatchInputs.length !== requiredInputs.length
@@ -969,6 +970,7 @@ export function validateIndependentReviewWorkflowRun(run = {}, jobs = [], option
   const expectedBaseBranch = text(options.expectedBaseBranch);
   const expectedBaseSha = text(options.expectedBaseSha).toLowerCase();
   const expectedWorkflowId = strictPositiveInteger(options.expectedWorkflowId);
+  const expectedWorkflowRunName = text(options.expectedWorkflowRunName || INDEPENDENT_REVIEW_WORKFLOW_NAME);
   const workflowRunId = integer(options.workflowRunId);
   const workflowRunAttempt = integer(options.workflowRunAttempt);
   const blockers = [];
@@ -991,7 +993,11 @@ export function validateIndependentReviewWorkflowRun(run = {}, jobs = [], option
   if (!expectedWorkflowId || strictPositiveInteger(run.workflow_id) !== expectedWorkflowId) {
     blockers.push('independent-review-workflow-id-mismatch');
   }
-  if (text(run.name) !== INDEPENDENT_REVIEW_WORKFLOW_NAME) blockers.push('independent-review-workflow-name-mismatch');
+  if (text(run.name) !== expectedWorkflowRunName) blockers.push('independent-review-workflow-name-mismatch');
+  if (Object.hasOwn(options, 'expectedWorkflowRunName')
+    && text(run.display_title) !== expectedWorkflowRunName) {
+    blockers.push('independent-review-workflow-display-title-mismatch');
+  }
   if (canonicalWorkflowRunPath(run) !== INDEPENDENT_REVIEW_WORKFLOW_PATH) {
     blockers.push('independent-review-workflow-path-mismatch');
   }

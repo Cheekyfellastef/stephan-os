@@ -1,3 +1,8 @@
+import {
+  classifyDirt,
+  DEFAULT_RUNTIME_ONLY_ALLOWLIST,
+} from './battle-bridge-github-sync-policy.mjs';
+
 export const LAUNCHER_READINESS_SCHEMA = 'stephanos.launcher-readiness-plan.v1';
 
 export const REQUIRED_SERVICES = Object.freeze([
@@ -22,6 +27,12 @@ const ALLOWED_COMMAND_PATTERNS = Object.freeze([
   /^npm\s+run\s+stephanos:ignite(?::launcher-root|:vite-dev)?$/i,
 ]);
 
+const READINESS_RUNTIME_ONLY_ALLOWLIST = Object.freeze([
+  ...DEFAULT_RUNTIME_ONLY_ALLOWLIST,
+  'runtime-activity/',
+  '.runtime/',
+]);
+
 export function createLauncherConfigFacts(input = {}) {
   const launcherMode = input.launcherMode || input.mode || 'launcher-root';
   const bootMode = input.bootMode || 'cockpit';
@@ -43,8 +54,35 @@ function normalizeObservedServices(observed = {}) {
   }));
 }
 
-function isRuntimeOnlyPath(path) {
+function isLegacyRuntimeOnlyPath(path) {
   return /^runtime-activity\//.test(path) || /^\.runtime\//.test(path) || /^apps\/stephanos\/dist\//.test(path);
+}
+
+function classifyReadinessDirt(sourceFacts = {}) {
+  const statusLines = Array.isArray(sourceFacts.statusLines) ? sourceFacts.statusLines.filter(Boolean) : [];
+  if (statusLines.length) {
+    const classified = classifyDirt(statusLines, {
+      runtimeOnlyAllowlist: READINESS_RUNTIME_ONLY_ALLOWLIST,
+    });
+    return {
+      sourceDirtyPaths: [
+        ...classified.trackedSource,
+        ...classified.untrackedSource,
+        ...classified.generatedSource,
+        ...classified.unknown,
+      ],
+      runtimeOnlyDirt: [...classified.runtimeOnly],
+    };
+  }
+
+  // Backward compatibility for older callers that only supplied paths. Exact
+  // status-qualified runtime exceptions (notably durable-memory.json) are
+  // intentionally NOT inferred from path-only evidence.
+  const dirtyPaths = Array.isArray(sourceFacts.dirtyPaths) ? sourceFacts.dirtyPaths : [];
+  return {
+    sourceDirtyPaths: dirtyPaths.filter((path) => !isLegacyRuntimeOnlyPath(path)),
+    runtimeOnlyDirt: dirtyPaths.filter(isLegacyRuntimeOnlyPath),
+  };
 }
 
 export function isAllowedLauncherStartCommand(command) {
@@ -56,9 +94,9 @@ export function planLauncherReadiness({ observedFacts = {}, launcherConfigFacts 
   const observedServices = normalizeObservedServices(observedFacts.services || observedFacts.observedServices || {});
   const missingServices = Object.values(observedServices).filter((service) => !service.ready).map((service) => service.id);
   const staleWorkspaceRecords = observedFacts.staleWorkspaceRecords || observedFacts.workspace?.staleRecords || [];
-  const dirtyPaths = sourceFacts.dirtyPaths || [];
-  const sourceDirtyPaths = dirtyPaths.filter((path) => !isRuntimeOnlyPath(path));
-  const runtimeOnlyDirt = dirtyPaths.filter(isRuntimeOnlyPath);
+  const dirt = classifyReadinessDirt(sourceFacts);
+  const sourceDirtyPaths = dirt.sourceDirtyPaths;
+  const runtimeOnlyDirt = dirt.runtimeOnlyDirt;
   const unsafeCommand = requestedStartCommand && !isAllowedLauncherStartCommand(requestedStartCommand);
   const safetyBlockers = [];
 
