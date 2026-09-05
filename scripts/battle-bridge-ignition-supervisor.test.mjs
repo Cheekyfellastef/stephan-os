@@ -100,6 +100,7 @@ function runSourceCollectorFixture({
   originHeadFinal = originHeadAfter,
   divergence = '0\t0\n',
   failOperation = '',
+  fetchAuthorityState = null,
   topologyAfter = null,
   platform = 'win32',
   environment = { PATH: 'C:\\attacker', NODE_OPTIONS: '--require=C:\\attacker\\inject.cjs' },
@@ -133,7 +134,15 @@ function runSourceCollectorFixture({
       return { status: 0, stdout: [statusBefore, statusAfter, statusFinal][counts.status - 1], stderr: '' };
     }
     if (operation === 'branch') return { status: 0, stdout: `${counts.branch === 1 ? branchBefore : branchAfter}\n`, stderr: '' };
-    if (operation === 'fetch') return { status: 0, stdout: '', stderr: '' };
+    if (operation === 'fetch') {
+      if (fetchAuthorityState) {
+        if (operationArgs.includes('--prune')) fetchAuthorityState.originMainExists = false;
+        if (operationArgs.includes('refs/heads/main:refs/remotes/origin/main')) {
+          fetchAuthorityState.originMainExists = true;
+        }
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    }
     if (operation === 'rev-list') return { status: 0, stdout: divergence, stderr: '' };
     if (operation === 'rev-parse' && operationArgs.includes('@{upstream}')) {
       counts.upstream = Number(counts.upstream || 0) + 1;
@@ -150,6 +159,9 @@ function runSourceCollectorFixture({
       return { status: 0, stdout: `${counts.headRead === 1 ? headBefore : headAfter}\n`, stderr: '' };
     }
     if (operation === 'rev-parse' && operationArgs[1] === 'origin/main') {
+      if (fetchAuthorityState?.originMainExists === false) {
+        return { status: 128, stdout: '', stderr: 'unknown revision origin/main' };
+      }
       counts.originRead = Number(counts.originRead || 0) + 1;
       return { status: 0, stdout: `${counts.originRead === 1 ? originHead : originHeadAfter}\n`, stderr: '' };
     }
@@ -307,12 +319,27 @@ test('fixed source collector ignores attacker PATH and fetches only the canonica
   assert.deepEqual(calls.slice(0, 3).map((call) => call.operationArgs[0]), ['config', 'ls-files', 'status']);
   const fetchCall = calls.find((call) => call.operationArgs[0] === 'fetch');
   assert.deepEqual(fetchCall.operationArgs, [
-    'fetch', '--prune', BATTLE_BRIDGE_CANONICAL_REMOTE_URL, 'main:refs/remotes/origin/main',
+    'fetch', BATTLE_BRIDGE_CANONICAL_REMOTE_URL, 'refs/heads/main:refs/remotes/origin/main',
   ]);
   assert.notEqual(fetchCall.options.env.PATH, 'C:\\attacker');
   assert.equal(fetchCall.options.env.NODE_OPTIONS, undefined);
   assert.equal(fetchCall.options.env.GIT_CONFIG_GLOBAL, 'NUL');
   assert.equal(fetchCall.options.shell, false);
+});
+
+test('fixed source collector preserves its canonical remote-tracking authority ref across repeated fetch proofs', () => {
+  const fetchAuthorityState = { originMainExists: true };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const { result, calls } = runSourceCollectorFixture({ fetchAuthorityState });
+    assert.equal(result.ok, true);
+    assert.equal(fetchAuthorityState.originMainExists, true);
+    const fetchCall = calls.find((call) => call.operationArgs[0] === 'fetch');
+    assert.equal(fetchCall.operationArgs.includes('--prune'), false);
+    assert.deepEqual(fetchCall.operationArgs.slice(-2), [
+      BATTLE_BRIDGE_CANONICAL_REMOTE_URL,
+      'refs/heads/main:refs/remotes/origin/main',
+    ]);
+  }
 });
 
 test('fixed source collector selects an absolute platform-valid Git executable on Linux and macOS', () => {
@@ -409,6 +436,33 @@ test('collector aligns dream-memory runtime dirt while secret-shaped children re
   assert.equal(secret.result.ok, false);
   assert.equal(secret.result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
   assert.deepEqual(secret.calls.map((call) => call.operationArgs[0]), ['config', 'ls-files', 'status']);
+});
+
+test('collector accepts the exact Battle Bridge ignored local-runtime estate without weakening child checks', () => {
+  const status = [
+    '!! .stephanos/local-state-checkpoints/',
+    '!! package-lock.json',
+    '!! stephanos-server/data/durable-memory.json',
+    '!! stephanos-server/data/local-rag/',
+    '!! stephanos-server/data/provider-secrets.json',
+    '!! stephanos-server/data/tile-state.json',
+    '!! stephanos-server/package-lock.json',
+  ].join('\n') + '\n';
+  const accepted = runSourceCollectorFixture({ statusBefore: status });
+  assert.equal(accepted.result.ok, true);
+  assert.equal(accepted.result.workingTreeDirty, false);
+  assert.deepEqual(accepted.ignoredRuntimeScanCalls[0], {
+    repoRoot: '/canonical/repo',
+    aggregatePaths: ['.stephanos/local-state-checkpoints/', 'stephanos-server/data/local-rag/'],
+  });
+
+  const blockedChild = runSourceCollectorFixture({
+    statusBefore: status,
+    ignoredRuntimeChildrenBefore: '.stephanos/local-state-checkpoints/private-key.json\n',
+  });
+  assert.equal(blockedChild.result.ok, false);
+  assert.equal(blockedChild.result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
+  assert.equal(blockedChild.calls.some((call) => call.operationArgs[0] === 'fetch'), false);
 });
 
 test('collector enumerates ignored log children before accepting the logs runtime aggregate', () => {
@@ -777,6 +831,7 @@ test('approved OpenClaw gateway start uses config-safe start command shape, env 
     sharedWorkspace: workspace,
     token: 'test-token',
     approved: true,
+    platform: 'linux',
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
     spawnFn: (command, args, options) => {
@@ -823,6 +878,7 @@ test('approved OpenClaw gateway start runs without token and writes non-skipped 
     sharedWorkspace: workspace,
     env: {},
     approved: true,
+    platform: 'linux',
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
     spawnFn: (command, args, options) => {
@@ -897,6 +953,7 @@ test('Windows OpenClaw gateway execution uses cmd.exe wrapper for openclaw.cmd i
     env: { APPDATA: appData, Path: '' },
     approved: true,
     platform: 'win32',
+    existsSync: (candidate) => candidate === cmdShim,
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
     spawnFn: (command, args, options) => { spawnCalls.push({ command, args, options }); return child; },
@@ -1206,6 +1263,7 @@ test('approved backend repair command captures stdout stderr exit code and canon
   const spawnCalls = [];
   const promise = runApprovedBackend8787Start({
     sharedWorkspace: workspace,
+    platform: 'linux',
     spawnFn: (command, args, options) => {
       spawnCalls.push({ command, args, options });
       queueMicrotask(() => {

@@ -958,6 +958,22 @@ const SECRETS_PATTERN = /(^|\/)(\.env($|\.)|.*(secret|token|credential|passwd|pa
 const ALLOWLIST_UNTRACKED_AUTOCLEAN_PREFIXES = [APPROVED_GENERATED_DIST_PREFIX];
 const KNOWN_SOURCE_PREFIXES = ['stephanos-ui/src/', 'scripts/', 'tests/', 'shared/', 'docs/'];
 const KNOWN_SOURCE_FILES = new Set(['package.json', 'package-lock.json']);
+const APPROVED_IGNORED_LOCAL_PATHS = new Set([
+  '.stephanos/build-concierge/',
+  '.stephanos/local-state-checkpoints/',
+  'package-lock.json',
+  'stephanos-server/data/durable-memory.json',
+  'stephanos-server/data/local-rag/',
+  'stephanos-server/data/provider-secrets.json',
+  'stephanos-server/data/tile-state.json',
+  'stephanos-server/package-lock.json',
+  'stephanos-ui/package-lock.json',
+]);
+const APPROVED_IGNORED_LOCAL_AGGREGATE_PATHS = new Set([
+  '.stephanos/build-concierge/',
+  '.stephanos/local-state-checkpoints/',
+  'stephanos-server/data/local-rag/',
+]);
 
 function normalizeGitPath(rawPath) {
   const trimmed = String(rawPath || '').trim();
@@ -967,20 +983,12 @@ function normalizeGitPath(rawPath) {
   return trimmed;
 }
 
-function isApprovedLocalDirtPath(path) {
-  if (APPROVED_LOCAL_FILE_PATHS.has(path)) {
-    return true;
-  }
-
-  return APPROVED_LOCAL_DIR_PREFIXES.some((prefix) => path.startsWith(prefix));
+function isApprovedIgnoredLocalPath(path) {
+  return APPROVED_IGNORED_LOCAL_PATHS.has(path);
 }
 
-function isApprovedTrackedGeneratedPath(path) {
-  return APPROVED_TRACKED_GENERATED_DIR_PREFIXES.some((prefix) => path.startsWith(prefix));
-}
-
-function isRuntimeStatePath(path) {
-  return path.startsWith(RUNTIME_STATE_DIR_PREFIX);
+function isApprovedIgnoredLocalAggregatePath(path) {
+  return APPROVED_IGNORED_LOCAL_AGGREGATE_PATHS.has(path);
 }
 
 
@@ -1014,6 +1022,10 @@ function isAllowlistedRootRuntimePath(path) {
 }
 
 function classifyStatusEntry(entry) {
+  // Ignored local state is not source truth, but the exception is deliberately
+  // status- and path-exact. Tracked/untracked lookalikes and children surfaced by
+  // aggregate scanning continue through the fail-closed source/secret checks.
+  if (entry.status === '!!' && entry.paths.every(isApprovedIgnoredLocalPath)) return 'approved-ignored-local-runtime';
   if (entry.paths.some((path) => SECRETS_PATTERN.test(path))) return 'forbidden-or-unknown';
   if (entry.paths.every((path) => isSanctionedOpenClawWorkspacePath(path))) return 'openclaw-runtime-workspace';
   if (entry.paths.some((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)))) return 'meaningful-source-dirt';
@@ -1061,7 +1073,10 @@ export function collectIgnoredRuntimeAggregatePaths(statusOutput) {
     .filter((line) => line.startsWith('!! '))
     .map(parsePorcelainStatusLine)
     .flatMap((entry) => entry.paths)
-    .filter((path) => path.endsWith('/') && classifyIgnitionDirtPath(path) === 'RUNTIME_CHECKPOINT_CLEAN');
+    .filter((path) => path.endsWith('/') && (
+      classifyIgnitionDirtPath(path) === 'RUNTIME_CHECKPOINT_CLEAN'
+      || isApprovedIgnoredLocalAggregatePath(path)
+    ));
 }
 
 export function mergeIgnoredRuntimeChildrenIntoStatus(statusOutput, ignoredChildrenOutput) {
@@ -1136,7 +1151,8 @@ export function scanIgnoredRuntimeAggregatePathsForBlockers({
     if (!aggregatePath || isAbsolute(aggregatePath) || segments.includes('..') || segments.includes('.')) {
       throw ignoredRuntimeAggregateScanError('unsafe-aggregate-path');
     }
-    if (classifyIgnitionDirtPath(`${aggregatePath}/`) !== 'RUNTIME_CHECKPOINT_CLEAN') {
+    if (classifyIgnitionDirtPath(`${aggregatePath}/`) !== 'RUNTIME_CHECKPOINT_CLEAN'
+        && !isApprovedIgnoredLocalAggregatePath(`${aggregatePath}/`)) {
       throw ignoredRuntimeAggregateScanError('non-runtime-aggregate');
     }
     const absoluteAggregate = resolve(canonicalRoot, aggregatePath);
@@ -1167,14 +1183,19 @@ export function evaluateGitStatusForIgnition(statusOutput) {
     .filter((line) => line.length > 0);
 
   const entries = lines.map(parsePorcelainStatusLine).map((entry) => ({ ...entry, category: classifyStatusEntry(entry) }));
-  const approvedEntries = entries.filter((entry) => entry.category === 'approved-generated-dist' || entry.category === 'dependency-dirt');
+  const approvedEntries = entries.filter((entry) => (
+    entry.category === 'approved-generated-dist'
+    || entry.category === 'dependency-dirt'
+    || entry.category === 'approved-ignored-local-runtime'
+  ));
+  const ignoredLocalRuntimeEntries = entries.filter((entry) => entry.category === 'approved-ignored-local-runtime');
   const runtimeStateEntries = entries.filter((entry) => entry.category === 'runtime-state');
   const transientRootDataEntries = entries.filter((entry) => entry.category === 'transient-root-data');
   const dependencyEntries = entries.filter((entry) => entry.category === 'dependency-dirt');
   const forbiddenOrUnknownEntries = entries.filter((entry) => entry.category === 'forbidden-or-unknown');
   const meaningfulEntries = entries.filter((entry) => entry.category === 'meaningful-source-dirt' || entry.category === 'forbidden-or-unknown');
 
-  return { entries, approvedEntries, runtimeStateEntries, transientRootDataEntries, dependencyEntries, forbiddenOrUnknownEntries, meaningfulEntries };
+  return { entries, approvedEntries, ignoredLocalRuntimeEntries, runtimeStateEntries, transientRootDataEntries, dependencyEntries, forbiddenOrUnknownEntries, meaningfulEntries };
 }
 
 
@@ -1945,7 +1966,7 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
   const plan = assessment.entries.map((entry) => ({
     status: entry.status,
     paths: entry.paths,
-    category: classifyIgnitionDirtPath(entry.paths[0]),
+    category: entry.category,
   }));
   console.log(`[HOUSEKEEP] mode=${dryRun ? 'dry-run' : 'clean'}`);
   if (debug || !compact) {
@@ -1957,10 +1978,14 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
   const entryPaths = assessment.entries.flatMap((entry) => entry.paths);
   const autoCleanTargets = entryPaths.filter((path) => isApprovedGeneratedDistPath(path));
   const runtimeTargets = [...entryPaths.filter((path) => path === RUNTIME_MEMORY_PATH || isAllowlistedRootRuntimePath(path)), ...runtimeDataPaths.filter((path) => isAllowlistedRootRuntimePath(path))];
-  const sourceTargets = entryPaths.filter((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)));
+  const sourceTargets = assessment.entries
+    .filter((entry) => entry.category === 'meaningful-source-dirt')
+    .flatMap((entry) => entry.paths);
   const dependencyTargets = entryPaths.filter((path) => isDependencyDirtPath(path));
-  let hardBlockTargets = [...entryPaths, ...runtimeDataPaths]
-    .filter((path) => classifyIgnitionDirtPath(path) === 'HARD_BLOCK')
+  let hardBlockTargets = [
+    ...assessment.forbiddenOrUnknownEntries.flatMap((entry) => entry.paths),
+    ...runtimeDataPaths.filter((path) => classifyIgnitionDirtPath(path) === 'HARD_BLOCK'),
+  ]
     .filter((path) => path !== 'data/' || runtimeDataPaths.some((candidate) => !isAllowlistedRootRuntimePath(candidate)));
   const movableRootOpenClawDirt = collectMovableRootOpenClawWorkspaceDirt(assessment);
   let openClawMoveResult = { destinationRoot: resolveOpenClawWorkspaceRepairPath(), migrationDirectory: null, moved: [], skipped: [] };

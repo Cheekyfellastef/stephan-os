@@ -14,6 +14,7 @@ import {
   classifyPublicationTruth,
   classifySourceUpdateTruth,
   collectApprovedTrackedGeneratedRestorePaths,
+  collectIgnoredRuntimeAggregatePaths,
   collectRuntimeStatePaths,
   evaluateDistFreshnessAgainstOrigin,
   discoverOpenClawStandaloneIdentityWithDeps,
@@ -877,6 +878,51 @@ test('ignition status evaluator allows canonical ignored runtime logs', () => {
   assert.equal(classifyIgnitionDirtPath('logs/battle-bridge/backend.stdout.log'), 'RUNTIME_CHECKPOINT_CLEAN');
 });
 
+test('ignition status evaluator admits only the exact canonical ignored local-runtime estate', () => {
+  const approved = [
+    '.stephanos/local-state-checkpoints/',
+    'package-lock.json',
+    'stephanos-server/data/durable-memory.json',
+    'stephanos-server/data/local-rag/',
+    'stephanos-server/data/provider-secrets.json',
+    'stephanos-server/data/tile-state.json',
+    'stephanos-server/package-lock.json',
+  ];
+  const evaluation = evaluateGitStatusForIgnition(approved.map((path) => `!! ${path}`).join('\n'));
+
+  assert.deepEqual(evaluation.ignoredLocalRuntimeEntries.map((entry) => entry.paths[0]), approved);
+  assert.equal(evaluation.meaningfulEntries.length, 0);
+  assert.equal(isGitWorkingTreeClean(approved.map((path) => `!! ${path}`).join('\n')), true);
+
+  const lookalikes = evaluateGitStatusForIgnition([
+    ' M package-lock.json',
+    '?? stephanos-server/data/provider-secrets.json',
+    '!! stephanos-server/data/provider-secrets-copy.json',
+    '!! .stephanos/local-state-checkpoints/token.json',
+  ].join('\n'));
+  assert.equal(lookalikes.meaningfulEntries.length, 4);
+  assert.equal(lookalikes.forbiddenOrUnknownEntries.length, 3);
+});
+
+test('ignored local-runtime aggregates retain bounded secret-child inspection', () => {
+  const aggregates = collectIgnoredRuntimeAggregatePaths([
+    '!! .stephanos/local-state-checkpoints/',
+    '!! stephanos-server/data/local-rag/',
+    '!! data/random/',
+  ].join('\n'));
+  assert.deepEqual(aggregates, [
+    '.stephanos/local-state-checkpoints/',
+    'stephanos-server/data/local-rag/',
+  ]);
+
+  const evaluation = evaluateGitStatusForIgnition([
+    '!! .stephanos/local-state-checkpoints/',
+    '!! .stephanos/local-state-checkpoints/private-key.json',
+  ].join('\n'));
+  assert.equal(evaluation.ignoredLocalRuntimeEntries.length, 1);
+  assert.equal(evaluation.meaningfulEntries.length, 1);
+});
+
 test('ignition status evaluator aligns exact dream-memory runtime prefixes without allowing secret-shaped children', () => {
   const allowed = [
     'memory/.dreams/session.json',
@@ -1084,6 +1130,82 @@ test('supervisor preservation mode never moves root OpenClaw data or cleans trac
 
   assert.deepEqual(moveRequests, []);
   assert.deepEqual(steps, []);
+});
+
+test('supervisor preservation mode carries canonical ignored local-runtime truth through housekeeping', () => {
+  const steps = [];
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (message) => logs.push(String(message));
+  try {
+    runIgnitionHousekeep({
+      dryRun: false,
+      compact: true,
+      preserveRuntimeDirt: true,
+      captureStepFn: (label) => {
+        if (label === 'git-status') return {
+          stdout: [
+            '!! .stephanos/build-concierge/',
+            '!! .stephanos/local-state-checkpoints/',
+            '!! package-lock.json',
+            '!! stephanos-server/data/durable-memory.json',
+            '!! stephanos-server/data/local-rag/',
+            '!! stephanos-server/data/provider-secrets.json',
+            '!! stephanos-server/data/tile-state.json',
+            '!! stephanos-server/package-lock.json',
+            '!! stephanos-ui/package-lock.json',
+          ].join('\n'),
+          stderr: '',
+        };
+        if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      scanIgnoredRuntimeAggregatePathsFn: () => '',
+      runStepFn: (label, command, args) => steps.push({ label, command, args }),
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(steps, []);
+  const status = JSON.parse(logs.find((line) => line.startsWith('[HOUSEKEEP] status=')).replace('[HOUSEKEEP] status=', ''));
+  assert.equal(status.ignitionStatus, 'READY');
+  assert.equal(status.ignitionSourceDirtCount, 0);
+  assert.equal(status.ignitionHardBlockCount, 0);
+  assert.equal(status.ignitionRuntimePreservationEnabled, true);
+});
+
+test('housekeeping still blocks tracked and untracked lookalikes of ignored local-runtime paths', () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (message) => logs.push(String(message));
+  try {
+    assert.throws(() => runIgnitionHousekeep({
+      dryRun: false,
+      compact: true,
+      preserveRuntimeDirt: true,
+      captureStepFn: (label) => {
+        if (label === 'git-status') return {
+          stdout: [
+            ' M package-lock.json',
+            '?? stephanos-server/data/provider-secrets.json',
+          ].join('\n'),
+          stderr: '',
+        };
+        if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      runStepFn: () => {},
+    }), /housekeep blocked/);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const status = JSON.parse(logs.find((line) => line.startsWith('[HOUSEKEEP] status=')).replace('[HOUSEKEEP] status=', ''));
+  assert.equal(status.ignitionStatus, 'BLOCKED');
+  assert.equal(status.ignitionSourceDirtCount, 1);
+  assert.equal(status.ignitionHardBlockCount, 1);
+  assert.deepEqual(status.ignitionHardBlockPaths, ['stephanos-server/data/provider-secrets.json']);
 });
 
 test('housekeep hard-blocks unknown data files and surfaces exact hardBlockPaths', () => {

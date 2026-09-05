@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { deflateRawSync } from 'node:zlib';
 import {
   PERSONAL_REPOSITORY_AUTHORITY,
   PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES,
-  PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS,
+  PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS,
+  PERSONAL_REPOSITORY_CHECK_SNAPSHOT_POLL_INTERVAL_MS,
+  PERSONAL_REPOSITORY_APPROVAL_JOB,
+  PERSONAL_REPOSITORY_EVIDENCE_JOB,
+  PERSONAL_REPOSITORY_MERGE_JOB,
   PERSONAL_REPOSITORY_MODE,
+  PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX,
   PERSONAL_REPOSITORY_READ_MAX_ATTEMPTS,
   PERSONAL_REPOSITORY_REQUIRED_CHECK,
   PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS,
@@ -15,6 +21,7 @@ import {
   buildPersonalRepositoryArtifactArchiveRequest,
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
+  buildPersonalRepositoryCheckExpectation,
   executeBoundedPersonalRepositoryRead,
   executePersonalRepositoryArtifactArchiveTransport,
   extractPersonalRepositoryArtifactZip,
@@ -29,12 +36,19 @@ import {
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
   validatePersonalRepositoryEvidence,
+  validatePersonalRepositoryPriorJobEnvelope,
   validatePersonalRepositoryRulesetProofRequest,
   validatePersonalRepositoryRulesetProofResponse,
+  validatePersonalRepositoryReadOnlyPriorFailure,
   validatePersonalRepositorySquashCompletion,
   validatePersonalRepositoryWorkflowRuns,
   validatePersonalRepositoryWorkflowRunHydration,
 } from './operatorPersonalRepositoryMergeV1.mjs';
+
+const PERSONAL_REPOSITORY_MERGE_ENTRY = new URL(
+  '../../scripts/operator-protected-personal-repository-merge.mjs',
+  import.meta.url,
+);
 
 function response(status) {
   return { status, body: { cancel: async () => {} } };
@@ -157,6 +171,81 @@ function assertZipBlocked(archive, expectedReason = null) {
     },
   );
 }
+
+test('check expectation binds trusted repository identity before exact check validation', () => {
+  const input = {
+    repository: 'Cheekyfellastef/stephan-os',
+    identity: {
+      prNumber: 1993,
+      branch: 'codex/fix-ignition-porcelain-leading-status-v1',
+      sourceHead: 'a'.repeat(40),
+      baseSha: 'b'.repeat(40),
+    },
+    mergeStateStatus: 'clean',
+  };
+  const result = buildPersonalRepositoryCheckExpectation(input);
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.expected, {
+    repository: input.repository,
+    prNumber: input.identity.prNumber,
+    branch: input.identity.branch,
+    sourceHead: input.identity.sourceHead,
+    baseSha: input.identity.baseSha,
+    mergeStateStatus: 'CLEAN',
+  });
+  assert.ok(buildPersonalRepositoryCheckExpectation({
+    ...input,
+    repository: '',
+  }).blockers.includes('personal-repository-check-expectation-repository-invalid'));
+});
+
+test('protected merge entry constructs one repository-bound check expectation', () => {
+  const source = readFileSync(PERSONAL_REPOSITORY_MERGE_ENTRY, 'utf8');
+  assert.match(
+    source,
+    /const checkExpectation = buildPersonalRepositoryCheckExpectation\(\{[\s\S]*repository: context\.repository,[\s\S]*identity,[\s\S]*mergeStateStatus: review\.mergeStateStatus,[\s\S]*\}\);/,
+  );
+  assert.match(source, /expected: checkExpectation\.expected,/);
+  assert.doesNotMatch(source, /expected:\s*\{\s*\.\.\.identity,\s*mergeStateStatus:/);
+});
+
+test('protected merge entry refreshes every authority input after bounded check convergence', () => {
+  const source = readFileSync(PERSONAL_REPOSITORY_MERGE_ENTRY, 'utf8');
+  const helper = source.match(
+    /async function readPersonalRepositoryAuthoritySnapshot\([\s\S]*?\r?\n}\r?\n\r?\nasync function collectEvidence/,
+  )?.[0] || '';
+  for (const requiredRead of [
+    /currentWorkflowExecution\(context\)/,
+    /apiJson\(`\/repos\/\$\{context\.owner}\/\$\{context\.repo}`, \{ authorization: 'ruleset-proof' \}\)/,
+    /pulls\/\$\{identity\.prNumber}/,
+    /git\/ref\/heads\/main/,
+    /git\/commits\/\$\{identity\.sourceHead}/,
+    /compare\/\$\{identity\.baseSha}\.\.\.\$\{identity\.sourceHead}/,
+    /pullRequestReviewState\(context\.owner, context\.repo, identity\.prNumber\)/,
+    /environments\/operator-merge-approval/,
+    /loadSelectedIndependentReview\([\s\S]*context,[\s\S]*identity,[\s\S]*text\(environment\?\.name\),[\s\S]*\)/,
+  ]) assert.match(helper, requiredRead);
+
+  const convergenceIndex = source.indexOf(
+    'const checks = await validatePersonalRepositoryCheckRunsWithBoundedReread',
+  );
+  const refreshIndex = source.indexOf(
+    'const refreshedAuthority = await readPersonalRepositoryAuthoritySnapshot(context, identity);',
+  );
+  assert.ok(convergenceIndex > 0);
+  assert.ok(refreshIndex > convergenceIndex);
+  assert.equal(
+    source.match(/readPersonalRepositoryAuthoritySnapshot\(context, identity\)/g)?.length,
+    3,
+  );
+  assert.match(
+    source.slice(refreshIndex),
+    /mergeStateStatus: refreshedAuthority\.review\.mergeStateStatus,[\s\S]*validatePersonalRepositoryCheckRuns\([\s\S]*refreshedCheckExpectation\.expected/,
+  );
+  assert.match(source.slice(refreshIndex), /\.\.\.refreshedReview,/);
+  assert.match(source.slice(refreshIndex), /repository,\s*environment,\s*integrationId/);
+  assert.match(source.slice(refreshIndex), /independentReview: refreshedIndependentReview/);
+});
 
 test('in-process artifact ZIP reader accepts exact stored and deflated single-entry archives', () => {
   for (const [method, dataDescriptor] of [[0, false], [8, false], [0, true], [8, true]]) {
@@ -823,6 +912,55 @@ function dispatchExecutionInput(overrides = {}) {
   };
 }
 
+function priorFailureJobs(overrides = {}, attempts = 1, parentRunId = runId + 10) {
+  const jobs = Array.from({ length: attempts }, (_, index) => {
+    const attempt = index + 1;
+    return [
+      [(attempt * 100) + 1, PERSONAL_REPOSITORY_EVIDENCE_JOB, 'failure'],
+      [(attempt * 100) + 2, PERSONAL_REPOSITORY_APPROVAL_JOB, 'skipped'],
+      [(attempt * 100) + 3, PERSONAL_REPOSITORY_MERGE_JOB, 'skipped'],
+    ].map(([id, name, conclusion]) => ({
+      id,
+      run_id: parentRunId,
+      run_attempt: attempt,
+      workflow_name: dispatchTitle,
+      head_branch: 'main',
+      head_sha: baseSha,
+      url: `https://api.github.com/repos/${repository}/actions/jobs/${id}`,
+      run_url: `https://api.github.com/repos/${repository}/actions/runs/${parentRunId}`,
+      check_run_url: `https://api.github.com/repos/${repository}/check-runs/${id}`,
+      html_url: `https://github.com/${repository}/actions/runs/${parentRunId}/job/${id}`,
+      name,
+      status: 'completed',
+      conclusion,
+    }));
+  }).flat();
+  for (const [name, mutation] of Object.entries(overrides)) {
+    for (const [index, job] of jobs.entries()) {
+      if (job.name === name) jobs[index] = { ...job, ...mutation };
+    }
+  }
+  return jobs;
+}
+
+function normalizedPriorFailureJobs(attempts = 1, parentRunId = runId + 10) {
+  return priorFailureJobs({}, attempts, parentRunId).map((job) => ({
+    id: job.id,
+    runId: job.run_id,
+    runAttempt: job.run_attempt,
+    workflowName: job.workflow_name,
+    headBranch: job.head_branch,
+    headSha: job.head_sha,
+    name: job.name,
+    status: job.status,
+    conclusion: job.conclusion,
+    url: job.url,
+    runUrl: job.run_url,
+    checkRunUrl: job.check_run_url,
+    htmlUrl: job.html_url,
+  }));
+}
+
 const expectedDispatchExecution = Object.freeze({
   repository,
   sourceHead,
@@ -1135,7 +1273,35 @@ test('current protected dispatch binds every exact dynamic run identity field', 
   assert.ok(widened.currentMismatches.length > 0);
 });
 
-test('same-base prior protected dispatch is a replay regardless of failed conclusion', () => {
+test('prior authority jobs bind one complete canonical parent-run envelope', () => {
+  const parentRunId = runId + 10;
+  const parent = dispatchRun({ id: parentRunId, status: 'completed', conclusion: 'failure' });
+  const job = priorFailureJobs({}, 1, parentRunId)[0];
+  const ready = validatePersonalRepositoryPriorJobEnvelope(parent, job);
+  assert.equal(ready.valid, true);
+  assert.deepEqual(ready.receipt, normalizedPriorFailureJobs(1, parentRunId)[0]);
+
+  const mutations = [
+    ['job-id', { id: 0 }],
+    ['parent-run', { run_id: parentRunId + 1 }],
+    ['attempt', { run_attempt: 2 }],
+    ['workflow', { workflow_name: `${dispatchTitle}-lookalike` }],
+    ['branch', { head_branch: 'lookalike-main' }],
+    ['head', { head_sha: 'f'.repeat(40) }],
+    ['job-url', { url: `${job.url}-lookalike` }],
+    ['run-url', { run_url: `${job.run_url}-lookalike` }],
+    ['check-url', { check_run_url: `${job.check_run_url}-lookalike` }],
+    ['html-url', { html_url: `${job.html_url}-lookalike` }],
+  ];
+  for (const [name, mutation] of mutations) {
+    const blocked = validatePersonalRepositoryPriorJobEnvelope(parent, { ...job, ...mutation });
+    assert.equal(blocked.valid, false, name);
+    assert.ok(blocked.blockers.length > 0, name);
+    assert.equal(blocked.receipt, null, name);
+  }
+});
+
+test('same-base prior protected dispatch remains a replay without exact read-only job proof', () => {
   const priorRunId = runId + 10;
   const blocked = validatePersonalRepositoryDispatchExecution(
     dispatchExecutionInput({
@@ -1153,6 +1319,183 @@ test('same-base prior protected dispatch is a replay regardless of failed conclu
   assert.equal(blocked.valid, false);
   assert.deepEqual(blocked.replayRunIds, [priorRunId]);
   assert.ok(blocked.blockers.includes('personal-repository-prior-attempt-exists'));
+});
+
+test('same-base failed dispatch is retryable only when evidence failed and both later authority jobs were skipped', () => {
+  for (const priorRunAttempt of [1, 2]) {
+    const priorRunId = runId + 10;
+    const priorRun = dispatchRun({
+      id: priorRunId,
+      run_attempt: priorRunAttempt,
+      status: 'completed',
+      conclusion: 'failure',
+    });
+    const jobs = priorFailureJobs({}, priorRunAttempt);
+    const retryProof = validatePersonalRepositoryReadOnlyPriorFailure(priorRun, jobs);
+    assert.equal(retryProof.valid, true);
+    assert.equal(retryProof.finalVerdict, 'PERSONAL_REPOSITORY_PRIOR_FAILURE_READ_ONLY');
+
+    const ready = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({
+        priorRuns: [dispatchRun(), priorRun],
+        priorRunJobSets: [{ runId: priorRunId, jobs }],
+      }),
+      expectedDispatchExecution,
+    );
+    assert.equal(ready.valid, true);
+    assert.deepEqual(ready.replayRunIds, []);
+    assert.deepEqual(ready.retryablePriorRunIds, [priorRunId]);
+    assert.deepEqual(ready.retryablePriorFailures, [{
+      runId: priorRunId,
+      runAttempt: priorRunAttempt,
+      status: 'completed',
+      conclusion: 'failure',
+      jobs: normalizedPriorFailureJobs(priorRunAttempt),
+    }]);
+  }
+});
+
+test('multi-attempt prior dispatch requires read-only proof for every attempt, not only the latest jobs', () => {
+  const priorRunId = runId + 10;
+  const priorRun = dispatchRun({
+    id: priorRunId,
+    run_attempt: 2,
+    status: 'completed',
+    conclusion: 'failure',
+  });
+  const latestOnly = priorFailureJobs({}, 2).filter((job) => job.run_attempt === 2);
+  const earlierMergeStarted = priorFailureJobs({}, 2).map((job) => (
+    job.run_attempt === 1 && job.name === PERSONAL_REPOSITORY_MERGE_JOB
+      ? { ...job, conclusion: 'failure' }
+      : job
+  ));
+  for (const jobs of [latestOnly, earlierMergeStarted]) {
+    const blocked = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({
+        priorRuns: [dispatchRun(), priorRun],
+        priorRunJobSets: [{ runId: priorRunId, jobs }],
+      }),
+      expectedDispatchExecution,
+    );
+    assert.equal(blocked.valid, false, JSON.stringify(jobs));
+    assert.deepEqual(blocked.replayRunIds, [priorRunId], JSON.stringify(jobs));
+    assert.deepEqual(blocked.retryablePriorFailures, [], JSON.stringify(jobs));
+  }
+});
+
+test('prior dispatch retry proof fails closed if the approval or merge job was not skipped', () => {
+  const priorRunId = runId + 10;
+  const priorRun = dispatchRun({ id: priorRunId, status: 'completed', conclusion: 'failure' });
+  const hostileJobSets = [
+    priorFailureJobs({ [PERSONAL_REPOSITORY_EVIDENCE_JOB]: { conclusion: 'success' } }),
+    priorFailureJobs({ [PERSONAL_REPOSITORY_APPROVAL_JOB]: { conclusion: 'success' } }),
+    priorFailureJobs({ [PERSONAL_REPOSITORY_MERGE_JOB]: { conclusion: 'failure' } }),
+    priorFailureJobs({ [PERSONAL_REPOSITORY_MERGE_JOB]: { status: 'in_progress', conclusion: null } }),
+    priorFailureJobs().filter((job) => job.name !== PERSONAL_REPOSITORY_MERGE_JOB),
+    [...priorFailureJobs(), { id: 104, name: PERSONAL_REPOSITORY_MERGE_JOB, status: 'completed', conclusion: 'skipped' }],
+    priorFailureJobs({ [PERSONAL_REPOSITORY_MERGE_JOB]: { id: 0 } }),
+    priorFailureJobs({ [PERSONAL_REPOSITORY_MERGE_JOB]: { id: 102 } }),
+  ];
+  for (const jobs of hostileJobSets) {
+    const blocked = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({
+        priorRuns: [dispatchRun(), priorRun],
+        priorRunJobSets: [{ runId: priorRunId, jobs }],
+      }),
+      expectedDispatchExecution,
+    );
+    assert.equal(blocked.valid, false, JSON.stringify(jobs));
+    assert.deepEqual(blocked.replayRunIds, [priorRunId], JSON.stringify(jobs));
+    assert.deepEqual(blocked.retryablePriorRunIds, [], JSON.stringify(jobs));
+  }
+
+  for (const runMutation of [
+    { status: 'in_progress', conclusion: null },
+    { status: 'completed', conclusion: 'cancelled' },
+    { status: 'completed', conclusion: 'success' },
+  ]) {
+    const mutatedRun = dispatchRun({ id: priorRunId, ...runMutation });
+    const blocked = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({
+        priorRuns: [dispatchRun(), mutatedRun],
+        priorRunJobSets: [{ runId: priorRunId, jobs: priorFailureJobs() }],
+      }),
+      expectedDispatchExecution,
+    );
+    assert.equal(blocked.valid, false, JSON.stringify(runMutation));
+    assert.deepEqual(blocked.replayRunIds, [priorRunId], JSON.stringify(runMutation));
+  }
+
+  const bounded = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({
+      priorRunJobSets: Array.from({ length: PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX + 1 }, (_, index) => ({
+        runId: runId + 100 + index,
+        jobs: priorFailureJobs(),
+      })),
+    }),
+    expectedDispatchExecution,
+  );
+  assert.equal(bounded.valid, false);
+  assert.ok(bounded.blockers.includes('personal-repository-prior-run-jobs-limit-exceeded'));
+
+  const duplicateProof = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({
+      priorRuns: [dispatchRun(), priorRun],
+      priorRunJobSets: [
+        { runId: priorRunId, jobs: priorFailureJobs() },
+        { runId: priorRunId, jobs: priorFailureJobs() },
+      ],
+    }),
+    expectedDispatchExecution,
+  );
+  assert.equal(duplicateProof.valid, false);
+  assert.deepEqual(duplicateProof.replayRunIds, [priorRunId]);
+
+  const invalidContainer = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({ priorRunJobSets: {} }),
+    expectedDispatchExecution,
+  );
+  assert.equal(invalidContainer.valid, false);
+  assert.ok(invalidContainer.blockers.includes('personal-repository-prior-run-jobs-invalid'));
+
+  const excessiveAttemptRun = dispatchRun({
+    id: priorRunId,
+    run_attempt: PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX + 1,
+    status: 'completed',
+    conclusion: 'failure',
+  });
+  assert.equal(validatePersonalRepositoryReadOnlyPriorFailure(
+    excessiveAttemptRun,
+    priorFailureJobs({}, PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX + 1),
+  ).valid, false);
+  const excessiveAttempt = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({
+      priorRuns: [dispatchRun(), excessiveAttemptRun],
+      priorRunJobSets: [{
+        runId: priorRunId,
+        jobs: priorFailureJobs({}, PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX + 1),
+      }],
+    }),
+    expectedDispatchExecution,
+  );
+  assert.equal(excessiveAttempt.valid, false);
+  assert.equal(excessiveAttempt.sameBasePriorAttemptCount, PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX + 1);
+  assert.ok(excessiveAttempt.blockers.includes('personal-repository-prior-run-attempt-limit-exceeded'));
+
+  const priorRun2 = dispatchRun({ id: priorRunId + 1, status: 'completed', conclusion: 'failure' });
+  const duplicateJobEstate = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({
+      priorRuns: [dispatchRun(), priorRun, priorRun2],
+      priorRunJobSets: [
+        { runId: priorRunId, jobs: priorFailureJobs() },
+        { runId: priorRunId + 1, jobs: priorFailureJobs({}, 1, priorRunId + 1) },
+      ],
+    }),
+    expectedDispatchExecution,
+  );
+  assert.equal(duplicateJobEstate.valid, false);
+  assert.ok(duplicateJobEstate.blockers.includes('personal-repository-prior-run-proof-duplicate'));
+  assert.deepEqual(duplicateJobEstate.retryablePriorFailures, []);
 });
 
 test('retried current workflow run is a replay even when GitHub retains or omits the run ID', () => {
@@ -1463,8 +1806,56 @@ test('UNSTABLE admission binds the one failing check to the exact reviewed escal
   assert.ok(legacyFailure.blockers.includes('personal-repository-commit-status-not-exact-green'));
 });
 
-test('one bounded fresh snapshot can recover an inconsistent GitHub check/run read without widening admission', async () => {
-  assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_MAX_ATTEMPTS, 2);
+test('a later exact successful review neutralizes only its bound historical draft skip', () => {
+  const skippedRun = escalationWorkflowRun({
+    id: 9198,
+    check_suite_id: 8198,
+    conclusion: 'skipped',
+  });
+  const successfulRun = escalationWorkflowRun({
+    id: 9199,
+    check_suite_id: 8199,
+    conclusion: 'success',
+  });
+  const skippedCheck = checkRun(skippedRun, {
+    id: 9298,
+    conclusion: 'skipped',
+  });
+  const successfulCheck = checkRun(successfulRun, {
+    id: 9299,
+    conclusion: 'success',
+  });
+  const exact = validatePersonalRepositoryCheckRuns(
+    [skippedCheck, successfulCheck],
+    [skippedRun, successfulRun],
+    [],
+    expectedEvidence,
+  );
+  assert.equal(exact.valid, true);
+  assert.equal(exact.evidence.find(({ checkId }) => checkId === 9298).disposition, 'superseded-draft-skip');
+
+  for (const [candidateCheck, candidateRun] of [
+    [successfulCheck, { ...successfulRun, id: 9197 }],
+    [{ ...successfulCheck, conclusion: 'failure' }, successfulRun],
+    [{ ...successfulCheck, head_sha: 'f'.repeat(40) }, successfulRun],
+    [{ ...successfulCheck, app: { id: 999, slug: 'github-actions' } }, successfulRun],
+    [{ ...successfulCheck, name: 'unrelated-review' }, successfulRun],
+    [successfulCheck, { ...successfulRun, path: `${repository}/.github/workflows/other.yml@refs/heads/main` }],
+  ]) {
+    const blocked = validatePersonalRepositoryCheckRuns(
+      [skippedCheck, candidateCheck],
+      [skippedRun, candidateRun],
+      [],
+      expectedEvidence,
+    );
+    assert.equal(blocked.valid, false);
+    assert.ok(blocked.blockers.length > 0);
+  }
+});
+
+test('deadline convergence admits every exact snapshot arrival within the bounded window', async () => {
+  assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS, 120_000);
+  assert.equal(PERSONAL_REPOSITORY_CHECK_SNAPSHOT_POLL_INTERVAL_MS, 5_000);
   const escalationRun = escalationWorkflowRun();
   const greenRun = workflowRuns()[0];
   const expected = { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' };
@@ -1480,35 +1871,148 @@ test('one bounded fresh snapshot can recover an inconsistent GitHub check/run re
     ...exactSnapshot,
     workflowRuns: workflowRuns(),
   };
-  const reads = [];
+  for (const exactSnapshotAttempt of [1, 2, 3, 4, 7, 13, 25]) {
+    let clockMs = 0;
+    const reads = [];
+    const waits = [];
+    const recovered = await validatePersonalRepositoryCheckRunsWithBoundedReread({
+      readSnapshot: async (attempt) => {
+        reads.push(attempt);
+        return attempt < exactSnapshotAttempt ? inconsistentSnapshot : exactSnapshot;
+      },
+      waitBeforeReread: async (delayMs) => {
+        waits.push(delayMs);
+        clockMs += delayMs;
+      },
+      monotonicNow: () => clockMs,
+      expected,
+      options: { cleanIndependentReviewProved: true },
+    });
+    assert.equal(recovered.valid, true);
+    assert.equal(recovered.snapshotAttempt, exactSnapshotAttempt);
+    assert.deepEqual(reads, Array.from({ length: exactSnapshotAttempt }, (_, index) => index + 1));
+    assert.equal(waits.length, exactSnapshotAttempt - 1);
+    assert.ok(clockMs <= PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS);
+    assert.equal(recovered.admittedReviewEscalations, 1);
+    assert.deepEqual(recovered.selectedSnapshot.workflowRuns, exactSnapshot.workflowRuns);
+    assert.notStrictEqual(recovered.selectedSnapshot.workflowRuns, exactSnapshot.workflowRuns);
+    assert.equal(Object.isFrozen(recovered.selectedSnapshot.workflowRuns), true);
+    assert.equal(recovered.convergenceDeadlineReached, false);
+  }
+});
+
+test('deadline convergence rereads a transient partial check identity but admits only the later exact snapshot', async () => {
+  const greenRun = workflowRuns()[0];
+  const expected = { ...expectedEvidence, mergeStateStatus: 'CLEAN' };
+  const exactCheck = checkRun(greenRun, {
+    id: 9301,
+    name: 'verify-mission-operations',
+    conclusion: 'success',
+  });
+  const partialSnapshot = {
+    checkRuns: [{ ...exactCheck, details_url: '' }],
+    workflowRuns: workflowRuns(),
+    commitStatuses: [],
+  };
+  const exactSnapshot = {
+    checkRuns: [exactCheck],
+    workflowRuns: workflowRuns(),
+    commitStatuses: [],
+  };
+  let clockMs = 0;
   const recovered = await validatePersonalRepositoryCheckRunsWithBoundedReread({
-    readSnapshot: async (attempt) => {
-      reads.push(attempt);
-      return attempt === 1 ? inconsistentSnapshot : exactSnapshot;
+    readSnapshot: async (attempt) => attempt === 1 ? partialSnapshot : exactSnapshot,
+    waitBeforeReread: async (delayMs) => {
+      clockMs += delayMs;
     },
+    monotonicNow: () => clockMs,
     expected,
     options: { cleanIndependentReviewProved: true },
   });
   assert.equal(recovered.valid, true);
   assert.equal(recovered.snapshotAttempt, 2);
-  assert.deepEqual(reads, [1, 2]);
-  assert.equal(recovered.admittedReviewEscalations, 1);
-  assert.deepEqual(recovered.selectedSnapshot.workflowRuns, exactSnapshot.workflowRuns);
-  assert.notStrictEqual(recovered.selectedSnapshot.workflowRuns, exactSnapshot.workflowRuns);
-  assert.equal(Object.isFrozen(recovered.selectedSnapshot.workflowRuns), true);
-  assert.ok(recovered.snapshotAttempts[0].blockers.includes('personal-repository-check-run-identity-invalid'));
+  assert.deepEqual(recovered.snapshotAttempts, [
+    {
+      attempt: 1,
+      valid: false,
+      retryable: true,
+      blockers: ['personal-repository-check-run-identity-invalid'],
+    },
+    { attempt: 2, valid: true, retryable: false, blockers: [] },
+  ]);
+  assert.equal(recovered.selectedSnapshot.checkRuns[0].details_url, exactCheck.details_url);
 });
 
-test('bounded fresh snapshot stays fail-closed for stable, stale and unrelated failures', async () => {
+test('deadline convergence expires closed for persistent GitHub identity inconsistency', async () => {
+  const escalationRun = escalationWorkflowRun();
+  const exactSnapshot = {
+    checkRuns: [checkRun(escalationRun)],
+    workflowRuns: workflowRuns(),
+    commitStatuses: [],
+  };
+  let clockMs = 0;
+  let reads = 0;
+  const blocked = await validatePersonalRepositoryCheckRunsWithBoundedReread({
+    readSnapshot: async () => {
+      reads += 1;
+      return exactSnapshot;
+    },
+    waitBeforeReread: async (delayMs) => {
+      clockMs += delayMs;
+    },
+    monotonicNow: () => clockMs,
+    expected: { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' },
+    options: { cleanIndependentReviewProved: true },
+  });
+  assert.equal(blocked.valid, false);
+  assert.equal(blocked.snapshotAttempt, 0);
+  assert.equal(blocked.selectedSnapshot, null);
+  assert.equal(blocked.convergenceDeadlineReached, true);
+  assert.equal(clockMs, PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS);
+  assert.equal(reads, 25);
+  assert.equal(blocked.snapshotAttempts.every((snapshot) => snapshot.retryable), true);
+});
+
+test('deadline convergence expires closed for a persistent hostile check identity', async () => {
+  const greenRun = workflowRuns()[0];
+  const hostileSnapshot = {
+    checkRuns: [checkRun(greenRun, {
+      id: 9301,
+      name: 'verify-mission-operations',
+      head_sha: 'f'.repeat(40),
+    })],
+    workflowRuns: workflowRuns(),
+    commitStatuses: [],
+  };
+  let clockMs = 0;
+  let reads = 0;
+  const blocked = await validatePersonalRepositoryCheckRunsWithBoundedReread({
+    readSnapshot: async () => {
+      reads += 1;
+      return hostileSnapshot;
+    },
+    waitBeforeReread: async (delayMs) => {
+      clockMs += delayMs;
+    },
+    monotonicNow: () => clockMs,
+    expected: { ...expectedEvidence, mergeStateStatus: 'CLEAN' },
+    options: { cleanIndependentReviewProved: true },
+  });
+  assert.equal(blocked.valid, false);
+  assert.equal(blocked.snapshotAttempt, 0);
+  assert.equal(blocked.selectedSnapshot, null);
+  assert.equal(blocked.convergenceDeadlineReached, true);
+  assert.equal(clockMs, PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS);
+  assert.equal(reads, 25);
+  assert.deepEqual(blocked.blockers, ['personal-repository-check-run-identity-invalid']);
+  assert.equal(blocked.snapshotAttempts.every((snapshot) => snapshot.retryable), true);
+});
+
+test('deadline convergence does not reread terminal stale and unrelated failures', async () => {
   const escalationRun = escalationWorkflowRun();
   const greenRun = workflowRuns()[0];
   const expected = { ...expectedEvidence, mergeStateStatus: 'UNSTABLE' };
   const hostileSnapshots = [
-    {
-      checkRuns: [checkRun(escalationRun, { head_sha: 'f'.repeat(40) })],
-      workflowRuns: [...workflowRuns(), escalationRun],
-      commitStatuses: [],
-    },
     {
       checkRuns: [
         checkRun(escalationRun),
@@ -1525,18 +2029,25 @@ test('bounded fresh snapshot stays fail-closed for stable, stale and unrelated f
   ];
   for (const hostileSnapshot of hostileSnapshots) {
     let reads = 0;
+    let waits = 0;
     const blocked = await validatePersonalRepositoryCheckRunsWithBoundedReread({
       readSnapshot: async () => {
         reads += 1;
         return hostileSnapshot;
       },
+      waitBeforeReread: async () => {
+        waits += 1;
+      },
+      monotonicNow: () => 0,
       expected,
       options: { cleanIndependentReviewProved: true },
     });
     assert.equal(blocked.valid, false);
     assert.equal(blocked.snapshotAttempt, 0);
     assert.equal(blocked.selectedSnapshot, null);
-    assert.equal(reads, 2);
+    assert.equal(reads, 1);
+    assert.equal(waits, 0);
+    assert.equal(blocked.snapshotAttempts[0].retryable, false);
   }
 });
 

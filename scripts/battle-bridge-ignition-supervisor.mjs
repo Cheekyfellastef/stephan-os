@@ -252,11 +252,12 @@ export function collectCanonicalIgnitionSourceTruth({
       });
     }
 
+    // Repeat-safe authority invariant: pruning an explicit URL refspec can delete
+    // the destination tracking ref on the next proof instead of refreshing it.
     capture('source-fetch', [
       'fetch',
-      '--prune',
       BATTLE_BRIDGE_CANONICAL_REMOTE_URL,
-      'main:refs/remotes/origin/main',
+      'refs/heads/main:refs/remotes/origin/main',
     ]);
     const originHead = capture('source-origin-head', ['rev-parse', 'origin/main']).trim().toLowerCase();
     const divergence = capture('source-divergence', ['rev-list', '--left-right', '--count', `HEAD...${originHead}`]).trim();
