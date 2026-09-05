@@ -5,7 +5,18 @@ import { Readable } from 'node:stream';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { evaluateUi4173Repair, resolveUi4173RepairInvocation, runUi4173Repair } from './battle-bridge-ui-4173-repair.mjs';
+import { collectUi4173ServedExactHeadProof, evaluateUi4173Repair, getUi4173RepairCurrentGitHead, resolveUi4173RepairInvocation, runUi4173Repair } from './battle-bridge-ui-4173-repair.mjs';
+import { BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+
+const EXACT_HEAD = 'a'.repeat(40);
+
+function exactHeadProof(overrides = {}) {
+  return {
+    expectedHead: EXACT_HEAD,
+    currentHeadFn: () => EXACT_HEAD,
+    ...overrides,
+  };
+}
 
 function report({ backend = true, ui = false, openclaw = true, workspace = true, verdict = 'partial-ui-missing', stale = [], safety = [] } = {}) {
   return {
@@ -85,7 +96,14 @@ function stdoutCapture() {
 }
 
 function fakeChild(pid = 4173) { const child = new EventEmitter(); child.pid = pid; child.stdout = Readable.from(['child stdout\n']); child.stderr = Readable.from(['child stderr\n']); child.unref = () => {}; queueMicrotask(() => child.emit('spawn')); return child; }
-function okFetch() { return Promise.resolve({ ok: true, status: 200 }); }
+function okFetch(url) {
+  const health = String(url).includes('__stephanos/health');
+  return Promise.resolve({
+    ok: true,
+    status: 200,
+    text: async () => health ? JSON.stringify({ ok: true, gitCommit: EXACT_HEAD, runtimeMarker: `antifriction-live-v3::${EXACT_HEAD}::fixture` }) : '<html></html>',
+  });
+}
 function failFetch() { return Promise.reject(new Error('ECONNREFUSED')); }
 function depsOk() { return { ok: true, missing: [], noLockfileDetected: true, nextOperatorAction: 'none' }; }
 function fakeCollector() {
@@ -96,10 +114,112 @@ function readyPlanner() {
   return report();
 }
 
+test('UI repair current-head proof uses the fixed platform Git boundary', () => {
+  const calls = [];
+  const head = getUi4173RepairCurrentGitHead({
+    platform: 'linux',
+    environment: { PATH: '/attacker', NODE_OPTIONS: '--require=/attacker/inject.cjs' },
+    spawnSyncFn(command, args, options) {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: `${EXACT_HEAD}\n`, stderr: '' };
+    },
+  });
+  assert.equal(head, EXACT_HEAD);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE);
+  assert.deepEqual(calls[0].args.slice(-2), ['rev-parse', 'HEAD']);
+  assert.equal(calls[0].options.env.PATH, '/usr/bin:/bin');
+  assert.equal(calls[0].options.env.NODE_OPTIONS, undefined);
+  assert.equal(calls[0].options.shell, false);
+});
+
+test('UI repair blocks exact-head drift immediately before spawn', async () => {
+  let spawnCalls = 0;
+  const { stdout, json } = stdoutCapture();
+  const code = await runUi4173Repair({
+    ...exactHeadProof({ currentHeadFn: () => 'b'.repeat(40) }),
+    dryRun: false,
+    collectFactsFn: fakeCollector,
+    plannerFn: readyPlanner,
+    preflightDepsFn: depsOk,
+    stdout,
+    spawnFn() {
+      spawnCalls += 1;
+      throw new Error('drifted UI repair must not spawn');
+    },
+  });
+  const output = json();
+  assert.equal(code, 2);
+  assert.equal(spawnCalls, 0);
+  assert.equal(output.action, 'blocked');
+  assert.equal(output.started, false);
+  assert.equal(output.expectedHead, EXACT_HEAD);
+  assert.equal(output.observedHead, 'b'.repeat(40));
+  assert.match(output.blockers.map((blocker) => blocker.id).join(','), /ui-repair-exact-head-changed/);
+});
+
+test('UI repair post-start proof rejects a served runtime that drifted from the proven head', async () => {
+  const { stdout, json } = stdoutCapture();
+  const code = await runUi4173Repair({
+    ...exactHeadProof(),
+    dryRun: false,
+    collectFactsFn: fakeCollector,
+    plannerFn: readyPlanner,
+    preflightDepsFn: depsOk,
+    stdout,
+    spawnFn: () => fakeChild(4173),
+    probeFetch: okFetch,
+    servedRuntimeProofFn: async () => ({ ready: false, expectedHead: EXACT_HEAD, gitCommit: 'b'.repeat(40) }),
+    readyTimeoutMs: 1,
+  });
+  const output = json();
+  assert.equal(code, 1);
+  assert.equal(output.ready, false);
+  assert.equal(output.action, 'start-ui-4173-exact-head-unproven');
+  assert.match(output.blockers.map((blocker) => blocker.id).join(','), /ui-repair-served-runtime-head-mismatch/);
+});
+
+test('UI repair rechecks the fixed source head after served-runtime proof before ready', async () => {
+  let headReads = 0;
+  const { stdout, json } = stdoutCapture();
+  const code = await runUi4173Repair({
+    ...exactHeadProof({
+      currentHeadFn: () => {
+        headReads += 1;
+        return headReads < 3 ? EXACT_HEAD : 'b'.repeat(40);
+      },
+    }),
+    dryRun: false,
+    collectFactsFn: fakeCollector,
+    plannerFn: readyPlanner,
+    preflightDepsFn: depsOk,
+    stdout,
+    spawnFn: () => fakeChild(4173),
+    probeFetch: okFetch,
+    readyTimeoutMs: 1,
+  });
+  const output = json();
+  assert.equal(code, 1);
+  assert.equal(headReads, 3);
+  assert.equal(output.ready, false);
+  assert.equal(output.postStartObservedHead, EXACT_HEAD);
+  assert.equal(output.postProofObservedHead, 'b'.repeat(40));
+  assert.match(output.blockers.map((blocker) => blocker.id).join(','), /ui-repair-post-start-head-changed/);
+});
+
+test('served UI repair exact-head proof requires health commit marker and dist parity', async () => {
+  const proof = await collectUi4173ServedExactHeadProof({ expectedHead: EXACT_HEAD, fetchFn: okFetch });
+  assert.equal(proof.ready, true);
+  assert.equal(proof.gitCommitMatches, true);
+  assert.equal(proof.runtimeMarkerMatches, true);
+  assert.equal(proof.distOk, true);
+});
+
 test('Windows start uses controlled cmd.exe wrapper with fixed args for the canonical npm script', async () => {
   const calls = [];
   const { stdout, json } = stdoutCapture();
   const code = await runUi4173Repair({
+    ...exactHeadProof(),
     dryRun: false,
     platform: 'win32',
     collectFactsFn: fakeCollector,
@@ -118,6 +238,7 @@ test('Windows start uses controlled cmd.exe wrapper with fixed args for the cano
   assert.deepEqual(calls[0].args, ['/d', '/s', '/c', 'npm.cmd', 'run', 'stephanos:ignite:launcher-root']);
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.cwd, process.cwd());
+  assert.equal(calls[0].options.env.STEPHANOS_EXPECTED_HEAD, EXACT_HEAD);
   const output = json();
   assert.equal(output.invocation.kind, 'CONTROLLED_WINDOWS_NPM_WRAPPER');
   assert.equal(output.invocation.command, 'cmd.exe');
@@ -135,6 +256,7 @@ test('non-Windows start remains controlled direct npm for the canonical npm scri
   const calls = [];
   const { stdout, json } = stdoutCapture();
   const code = await runUi4173Repair({
+    ...exactHeadProof(),
     dryRun: false,
     platform: 'linux',
     collectFactsFn: fakeCollector,
@@ -152,6 +274,7 @@ test('non-Windows start remains controlled direct npm for the canonical npm scri
   assert.equal(calls[0].command, 'npm');
   assert.deepEqual(calls[0].args, ['run', 'stephanos:ignite:launcher-root']);
   assert.equal(calls[0].options.cwd, process.cwd());
+  assert.equal(calls[0].options.env.STEPHANOS_EXPECTED_HEAD, EXACT_HEAD);
   const output = json();
   assert.equal(output.invocation.kind, 'CONTROLLED_DIRECT_NPM');
   assert.equal(output.invocation.command, 'npm');
@@ -165,6 +288,7 @@ test('non-Windows start remains controlled direct npm for the canonical npm scri
 test('spawn errors return structured JSON and non-zero exit', async () => {
   const { stdout, json } = stdoutCapture();
   const code = await runUi4173Repair({
+    ...exactHeadProof(),
     dryRun: false,
     platform: 'win32',
     collectFactsFn: fakeCollector,
@@ -190,6 +314,7 @@ test('spawn errors return structured JSON and non-zero exit', async () => {
 test('asynchronous spawn errors return structured JSON and non-zero exit', async () => {
   const { stdout, json } = stdoutCapture();
   const code = await runUi4173Repair({
+    ...exactHeadProof(),
     dryRun: false,
     collectFactsFn: fakeCollector,
     plannerFn: readyPlanner,
@@ -234,7 +359,7 @@ test('missing UI build dependencies block without spawning and give no-lockfile 
 test('spawned but port never opens reports not ready with log paths under shared workspace', async () => {
   const sharedWorkspace = mkdtempSync(join(tmpdir(), 'bb-ui-repair-'));
   const { stdout, json } = stdoutCapture();
-  const code = await runUi4173Repair({ dryRun: false, sharedWorkspace, collectFactsFn: fakeCollector, plannerFn: readyPlanner, stdout, preflightDepsFn: depsOk, probeFetch: failFetch, readyTimeoutMs: 1, spawnFn: () => fakeChild(4174) });
+  const code = await runUi4173Repair({ ...exactHeadProof(), dryRun: false, sharedWorkspace, collectFactsFn: fakeCollector, plannerFn: readyPlanner, stdout, preflightDepsFn: depsOk, probeFetch: failFetch, readyTimeoutMs: 1, spawnFn: () => fakeChild(4174) });
   const output = json();
   assert.equal(code, 1);
   assert.equal(output.action, 'start-ui-4173-spawned-but-not-ready');
@@ -250,7 +375,7 @@ test('child exits early reports failed with exit metadata', async () => {
   child.exitCode = 1;
   child.signalCode = null;
   const { stdout, json } = stdoutCapture();
-  const code = await runUi4173Repair({ dryRun: false, collectFactsFn: fakeCollector, plannerFn: readyPlanner, stdout, preflightDepsFn: depsOk, probeFetch: failFetch, readyTimeoutMs: 1, spawnFn: () => child });
+  const code = await runUi4173Repair({ ...exactHeadProof(), dryRun: false, collectFactsFn: fakeCollector, plannerFn: readyPlanner, stdout, preflightDepsFn: depsOk, probeFetch: failFetch, readyTimeoutMs: 1, spawnFn: () => child });
   const output = json();
   assert.equal(code, 1);
   assert.equal(output.action, 'start-ui-4173-failed');

@@ -18,7 +18,8 @@ if ([System.IO.Path]::GetFullPath($repoRoot) -ne [System.IO.Path]::GetFullPath($
     throw "Installer must run from the canonical checkout: $expectedRepoRoot"
 }
 
-$runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-github-command-mailbox-with-receipt-index.mjs')).Path
+$runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-github-command-mailbox-outbox-guard-v1.mjs')).Path
+$childRunnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-github-command-mailbox-with-receipt-index.mjs')).Path
 $wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
 if (-not (Test-Path -LiteralPath $wscriptExe -PathType Leaf)) { throw "Windowless task host is missing: $wscriptExe" }
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -26,9 +27,14 @@ $escapedLauncherPath = $launcherPath.Replace('"', '""')
 $actionArguments = "//B //NoLogo `"$escapedLauncherPath`" github-command-mailbox"
 $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $actionArguments
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
-$intervalTrigger = New-ScheduledTaskTrigger `
+$fastIntervalTrigger = New-ScheduledTaskTrigger `
     -Once `
     -At (Get-Date).AddMinutes(1) `
+    -RepetitionInterval (New-TimeSpan -Minutes 1) `
+    -RepetitionDuration (New-TimeSpan -Days 3650)
+$compatibilityIntervalTrigger = New-ScheduledTaskTrigger `
+    -Once `
+    -At (Get-Date).AddMinutes(5) `
     -RepetitionInterval (New-TimeSpan -Minutes 5) `
     -RepetitionDuration (New-TimeSpan -Days 3650)
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
@@ -44,10 +50,10 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub comman
     Register-ScheduledTask `
         -TaskName $taskName `
         -Action $action `
-        -Trigger @($logonTrigger, $intervalTrigger) `
+        -Trigger @($logonTrigger, $fastIntervalTrigger, $compatibilityIntervalTrigger) `
         -Principal $principal `
         -Settings $settings `
-        -Description 'Consumes only owner-authored, expiring, allowlisted Stephanos commands from issue 1507 and publishes a bounded Shared Workspace receipt index. No arbitrary shell, destructive Git, merge, push, or live OpenClaw update.' `
+        -Description 'Consumes only owner-authored, expiring, allowlisted Stephanos commands from issue 1507 and publishes a bounded Shared Workspace receipt index. One-minute polling is primary; the legacy five-minute trigger is retained as a compatibility fallback. No arbitrary shell, destructive Git, merge, push, or live OpenClaw update.' `
         -Force | Out-Null
     if ($StartNow) {
         Start-ScheduledTask -TaskName $taskName
@@ -61,8 +67,15 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub comman
     executable = $wscriptExe
     launcherPath = $launcherPath
     runnerPath = $runnerPath
+    childRunnerPath = $childRunnerPath
+    outboxGuardEnabled = $true
     receiptIndexEnabled = $true
     intervalMinutes = 5
+    effectivePollIntervalMinutes = 1
+    compatibilityIntervalMinutes = 5
+    pollStrategy = 'ONE_MINUTE_PRIMARY_FIVE_MINUTE_COMPATIBILITY_FALLBACK'
+    multipleInstances = 'IgnoreNew'
+    executionTimeLimitMinutes = 15
     atLogon = $true
     hidden = $true
     runLevel = 'Limited'
