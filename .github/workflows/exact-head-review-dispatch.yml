@@ -253,6 +253,7 @@ jobs:
           STEPHANOS_TRIGGER_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/triggering-independent-review/independent-review-result.json
           STEPHANOS_TRIGGER_REVIEW_RUN_ID: ${{ github.event.workflow_run.id || '' }}
           STEPHANOS_TRIGGER_REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
+          STEPHANOS_DEFER_MISSING_RECEIPT_ESCALATION: 'true'
         run: node scripts/exact-head-review-dispatch.mjs
 
       - name: Bind exact coordinator-run provenance to the exact review handoff
@@ -338,6 +339,7 @@ jobs:
           run-id: ${{ steps.recover_successful.outputs.run_id }}
 
       - name: Consume recovered successful independent review result
+        id: consume_recovered_review
         if: >-
           always() &&
           steps.download_recovered_review.outcome == 'success'
@@ -350,4 +352,22 @@ jobs:
           STEPHANOS_TRIGGER_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/recovered-independent-review/independent-review-result.json
           STEPHANOS_TRIGGER_REVIEW_RUN_ID: ${{ steps.recover_successful.outputs.run_id }}
           STEPHANOS_TRIGGER_REVIEW_RUN_ATTEMPT: ${{ steps.recover_successful.outputs.run_attempt }}
+        run: node scripts/exact-head-review-dispatch.mjs
+
+      - name: Finalize a genuinely unrecoverable missing receipt
+        if: >-
+          always() &&
+          steps.coordinate.outputs.recovery_deferred == 'true' &&
+          (
+            steps.retry.outcome == 'failure' ||
+            steps.retry.outputs.decision == 'ALREADY_SUCCESSFUL' ||
+            steps.launch_missing.outcome == 'failure' ||
+            (steps.launch_missing.outputs.decision == 'ALREADY_SUCCESSFUL' && steps.consume_recovered_review.outcome != 'success')
+          )
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ matrix.target.prNumber }}
+          STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
+          STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES: '10'
+          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: 'false'
         run: node scripts/exact-head-review-dispatch.mjs
