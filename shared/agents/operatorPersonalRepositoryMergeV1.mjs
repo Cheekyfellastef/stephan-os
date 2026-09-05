@@ -44,7 +44,7 @@ export function validatePersonalRepositoryPriorJobEnvelope(run = {}, job = {}) {
   const expectedCheckRunUrl = `https://api.github.com/repos/${repository}/check-runs/${jobId}`;
   const expectedHtmlUrl = `https://github.com/${repository}/actions/runs/${runId}/job/${jobId}`;
   if (!REPOSITORY_PATTERN.test(repository)) blockers.push('prior-job-repository-invalid');
-  if (!runId) blockers.push('prior-job-run-id-invalid');
+  if (!runId) blockers.push('prior-run-id-invalid');
   if (!jobId) blockers.push('prior-job-id-invalid');
   if (!runAttempt || runAttempt > strictPositiveInteger(run?.run_attempt)) blockers.push('prior-job-attempt-invalid');
   if (strictPositiveInteger(job?.run_id) !== runId) blockers.push('prior-job-parent-run-mismatch');
@@ -976,7 +976,35 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
   const workflowRunId = strictPositiveInteger(expected.workflowRunId);
   const workflowRunAttempt = strictPositiveInteger(expected.workflowRunAttempt);
   const expectedTitle = personalRepositoryDispatchTitle(sourceHead);
-  const expectedActor = OPERATOR_MERGE_REVIEWER.toLowerCase();
+  const nativeOwnerActor = OPERATOR_MERGE_REVIEWER.toLowerCase();
+  const mailboxAuthorization = expected?.mailboxAuthorization;
+  const mailboxAuthorizationKeys = mailboxAuthorization && typeof mailboxAuthorization === 'object'
+    && !Array.isArray(mailboxAuthorization)
+    ? Object.keys(mailboxAuthorization).sort()
+    : [];
+  const expectedMailboxAuthorizationKeys = [
+    'authorizedAtUtc',
+    'commentId',
+    'operatorAuthor',
+    'requestId',
+    'transportActor',
+  ];
+  const mailboxAuthorizationSupplied = expected?.mailboxAuthorization !== undefined;
+  const mailboxAuthorizationValid = Boolean(
+    mailboxAuthorizationSupplied
+    && mailboxAuthorization
+    && mailboxAuthorizationKeys.length === expectedMailboxAuthorizationKeys.length
+    && mailboxAuthorizationKeys.every((key, index) => key === expectedMailboxAuthorizationKeys[index])
+    && strictPositiveInteger(mailboxAuthorization.commentId)
+    && text(mailboxAuthorization.requestId)
+    && text(mailboxAuthorization.operatorAuthor).toLowerCase() === nativeOwnerActor
+    && text(mailboxAuthorization.transportActor).toLowerCase() === 'github-actions[bot]'
+    && EXPLICIT_TIMEZONE.test(text(mailboxAuthorization.authorizedAtUtc))
+    && Number.isFinite(new Date(mailboxAuthorization.authorizedAtUtc).getTime())
+  );
+  const expectedActor = mailboxAuthorizationValid
+    ? 'github-actions[bot]'
+    : nativeOwnerActor;
   const currentMismatches = [
     ['run-id', strictPositiveInteger(run?.id) === workflowRunId],
     ['run-attempt', strictPositiveInteger(run?.run_attempt) === workflowRunAttempt],
@@ -1070,6 +1098,9 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
       : []),
     ...(priorAttemptLimitExceeded ? ['personal-repository-prior-run-attempt-limit-exceeded'] : []),
     ...(retryableProofDuplicate ? ['personal-repository-prior-run-proof-duplicate'] : []),
+    ...(mailboxAuthorizationSupplied && !mailboxAuthorizationValid
+      ? ['personal-repository-mailbox-authorization-provenance-invalid']
+      : []),
     ...(currentMismatches.length ? ['personal-repository-workflow-run-identity-mismatch'] : []),
     ...(malformedPriorRunIds.length ? ['personal-repository-prior-attempt-invalid'] : []),
     ...(replayRunIds.length ? ['personal-repository-prior-attempt-exists'] : []),
@@ -1334,19 +1365,9 @@ export function validatePersonalRepositoryCheckRuns(
   if (!Array.isArray(workflowRuns)) blockers.push('personal-repository-check-workflow-runs-invalid');
   if (!Array.isArray(commitStatuses)) blockers.push('personal-repository-commit-statuses-invalid');
 
-  for (const status of Array.isArray(commitStatuses) ? commitStatuses : []) {
-    if (text(status?.sha).toLowerCase() !== sourceHead
-      || text(status?.state).toLowerCase() !== 'success') {
-      blockers.push('personal-repository-commit-status-not-exact-green');
-    }
-  }
-
-  for (const check of Array.isArray(checkRuns) ? checkRuns : []) {
+  const exactCheckBindings = (Array.isArray(checkRuns) ? checkRuns : []).map((check) => {
     const checkId = strictPositiveInteger(check?.id);
     const checkSuiteId = strictPositiveInteger(check?.check_suite?.id);
-    const name = text(check?.name);
-    const status = text(check?.status).toLowerCase();
-    const conclusion = text(check?.conclusion).toLowerCase();
     const matchingRuns = (Array.isArray(workflowRuns) ? workflowRuns : []).filter((run) => (
       strictPositiveInteger(run?.check_suite_id) === checkSuiteId
       && text(run?.head_sha).toLowerCase() === sourceHead
@@ -1354,8 +1375,6 @@ export function validatePersonalRepositoryCheckRuns(
     const run = matchingRuns[0];
     const bindings = Array.isArray(run?.pull_requests) ? run.pull_requests : [];
     const binding = bindings.length === 1 ? bindings[0] : null;
-    const workflow = text(run?.name);
-    const path = canonicalWorkflowPath(run, repository);
     const detailsUrl = `https://github.com/${repository}/actions/runs/${run?.id}/job/${checkId}`;
     const exactRun = matchingRuns.length === 1
       && strictPositiveInteger(run?.id)
@@ -1368,6 +1387,23 @@ export function validatePersonalRepositoryCheckRuns(
       && text(binding?.base?.sha).toLowerCase() === baseSha
       && text(binding?.base?.ref) === 'main'
       && text(check?.details_url) === detailsUrl;
+    return Object.freeze({ check, checkId, checkSuiteId, matchingRuns, run, exactRun });
+  });
+
+  for (const status of Array.isArray(commitStatuses) ? commitStatuses : []) {
+    if (text(status?.sha).toLowerCase() !== sourceHead
+      || text(status?.state).toLowerCase() !== 'success') {
+      blockers.push('personal-repository-commit-status-not-exact-green');
+    }
+  }
+
+  for (const checkBinding of exactCheckBindings) {
+    const { check, checkId, checkSuiteId, matchingRuns, run, exactRun } = checkBinding;
+    const name = text(check?.name);
+    const status = text(check?.status).toLowerCase();
+    const conclusion = text(check?.conclusion).toLowerCase();
+    const workflow = text(run?.name);
+    const path = canonicalWorkflowPath(run, repository);
 
     if (!checkId || !checkSuiteId || !name
       || text(check?.head_sha).toLowerCase() !== sourceHead
@@ -1385,6 +1421,26 @@ export function validatePersonalRepositoryCheckRuns(
       continue;
     }
 
+    const supersededDraftSkip = conclusion === 'skipped'
+      && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
+      && path === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
+      && text(run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
+      && name === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check
+      && exactCheckBindings.some((candidate) => (
+        candidate !== checkBinding
+        && candidate.exactRun
+        && strictPositiveInteger(candidate.run?.id) > strictPositiveInteger(run?.id)
+        && text(candidate.check?.head_sha).toLowerCase() === sourceHead
+        && text(candidate.check?.status).toLowerCase() === 'completed'
+        && text(candidate.check?.conclusion).toLowerCase() === 'success'
+        && text(candidate.check?.name) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check
+        && text(candidate.check?.app?.slug) === 'github-actions'
+        && strictPositiveInteger(candidate.check?.app?.id) === 15368
+        && text(candidate.run?.name) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
+        && canonicalWorkflowPath(candidate.run, repository) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
+        && text(candidate.run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
+      ));
+
     let disposition = 'green';
     if (status !== 'completed') {
       blockers.push('personal-repository-check-run-not-terminal');
@@ -1394,6 +1450,8 @@ export function validatePersonalRepositoryCheckRuns(
     } else if (conclusion === 'skipped'
       && PERSONAL_REPOSITORY_NEUTRAL_SKIPPED_CHECKS.has(`${workflow}\0${name}`)) {
       disposition = 'neutral-skip';
+    } else if (supersededDraftSkip) {
+      disposition = 'superseded-draft-skip';
     } else if (cleanIndependentReviewProved
       && mergeStateStatus === 'UNSTABLE'
       && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow

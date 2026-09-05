@@ -17,7 +17,9 @@ test('landing dashboard projection is read-only and shows unknowns without fake 
   assert.equal(projection.captainsBridge.milestone.status, 'complete_guarded');
   assert.equal(projection.sourceTruth, 'UNKNOWN');
   assert.equal(projection.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
-  assert.match(projection.operatorAttention.exactNextAction, /Publish or refresh missing Shared Workspace/);
+  assert.equal(projection.operatorAttention.approvals.length, 0);
+  assert.ok(projection.operatorAttention.maintenanceActions.length > 0);
+  assert.match(projection.operatorAttention.exactNextAction, /Codex and Housekeeper/);
 });
 
 test('landing dashboard projects queue dispatcher, supervisor, and OpenClaw ladder', () => {

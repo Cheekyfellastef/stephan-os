@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   createSourceMutationLeaseReleaseRecord,
   validateSourceMutationLease,
+  validateSourceMutationLeaseReleaseRecord,
 } from './programmeAuthorityV1.mjs';
 import {
   DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS,
@@ -283,7 +284,22 @@ export function collectBattleBridgeWorkerTelemetry({
       releaseMarker = Object.freeze({ state: 'unverifiable', value: null, blocker: 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_INVALID' });
     }
   }
-  const leaseActive = Boolean(lease && leaseValidation.valid && leaseValidation.active && releaseMarker.state !== 'present');
+  const releaseValidation = releaseMarker.state === 'present'
+    ? validateSourceMutationLeaseReleaseRecord(releaseMarker.value, lease, { nowUtc })
+    : Object.freeze({
+      valid: false,
+      errors: Object.freeze([releaseMarker.state === 'unverifiable'
+        ? releaseMarker.blocker || 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_INVALID'
+        : 'source-mutation-lease-release-not-observed']),
+      finalVerdict: 'SOURCE_MUTATION_LEASE_RELEASE_NOT_OBSERVED',
+    });
+  const releasedLeaseIsSafelyInactive = releaseMarker.state === 'present' && releaseValidation.valid;
+  const leaseActive = Boolean(
+    lease
+    && leaseValidation.valid
+    && leaseValidation.active
+    && !releasedLeaseIsSafelyInactive,
+  );
   const identity = taskIdentity({
     task: activeTask,
     lease: leaseActive ? lease : null,
@@ -311,7 +327,8 @@ export function collectBattleBridgeWorkerTelemetry({
   if (activeTask && !taskId) blockers.push('ACTIVE_TASK_ID_NOT_OBSERVED');
   if (activeTask && !latestReceipt) blockers.push('ACTIVE_TASK_RECEIPT_NOT_OBSERVED');
   if (lease && !leaseValidation.valid) blockers.push('SOURCE_MUTATION_LEASE_INVALID');
-  if (releaseMarker.state === 'present') blockers.push('SOURCE_MUTATION_LEASE_RELEASED');
+  if (releaseMarker.state === 'unverifiable') blockers.push(releaseMarker.blocker || 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_INVALID');
+  if (releaseMarker.state === 'present' && !releaseValidation.valid) blockers.push('SOURCE_MUTATION_LEASE_RELEASE_RECORD_INVALID');
   const workerActive = inspectionProven && processHealthy && heartbeatProjection.valid && heartbeatProjection.fresh;
   const operatorActionRequired = activeTask?.operatorActionRequired === true
     || latestReceipt?.operatorActionRequired === true;
@@ -345,6 +362,8 @@ export function collectBattleBridgeWorkerTelemetry({
       observed: true,
       valid: leaseValidation.valid === true,
       active: leaseActive,
+      released: releasedLeaseIsSafelyInactive,
+      releaseRecordValid: releaseValidation.valid === true,
       leaseId: safeId(lease.leaseId),
       laneId: safeId(lease.laneId),
       ownerId: safeId(lease.ownerId),
