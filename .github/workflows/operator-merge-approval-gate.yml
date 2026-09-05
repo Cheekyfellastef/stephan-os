@@ -50,6 +50,11 @@ on:
         description: Selected immutable independent-review payload SHA-256
         required: true
         type: string
+      authorization_comment_id:
+        description: Event-derived exact owner-authored #1507 authorization comment ID for protected squash only
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: protected-operator-merge-${{ github.event.merge_group.head_sha || inputs.expected_head || github.run_id }}
@@ -141,15 +146,16 @@ jobs:
       deployments: read
       pull-requests: read
     outputs:
-      repository: ${{ steps.evidence.outputs.repository || steps.ready_evidence.outputs.repository }}
-      pr_number: ${{ steps.evidence.outputs.pr_number || steps.ready_evidence.outputs.pr_number }}
-      branch: ${{ steps.evidence.outputs.branch || steps.ready_evidence.outputs.branch }}
-      source_head: ${{ steps.evidence.outputs.source_head || steps.ready_evidence.outputs.source_head }}
-      source_tree: ${{ steps.evidence.outputs.source_tree || steps.ready_evidence.outputs.source_tree }}
-      base_sha: ${{ steps.evidence.outputs.base_sha || steps.ready_evidence.outputs.base_sha }}
-      workflow_run_id: ${{ steps.evidence.outputs.workflow_run_id || steps.ready_evidence.outputs.workflow_run_id }}
-      workflow_run_attempt: ${{ steps.evidence.outputs.workflow_run_attempt || steps.ready_evidence.outputs.workflow_run_attempt }}
-      evidence_sha256: ${{ steps.evidence.outputs.evidence_sha256 || steps.ready_evidence.outputs.evidence_sha256 }}
+      repository: ${{ steps.evidence.outputs.repository }}
+      pr_number: ${{ steps.evidence.outputs.pr_number }}
+      branch: ${{ steps.evidence.outputs.branch }}
+      source_head: ${{ steps.evidence.outputs.source_head }}
+      source_tree: ${{ steps.evidence.outputs.source_tree }}
+      base_sha: ${{ steps.evidence.outputs.base_sha }}
+      workflow_run_id: ${{ steps.evidence.outputs.workflow_run_id }}
+      workflow_run_attempt: ${{ steps.evidence.outputs.workflow_run_attempt }}
+      evidence_sha256: ${{ steps.evidence.outputs.evidence_sha256 }}
+      authorization_comment_id: ${{ steps.authorization.outputs.authorization_comment_id }}
     steps:
       - name: Check out the trusted exact dispatch base
         uses: actions/checkout@v4
@@ -160,15 +166,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Mint exact GET-only configuration proof token
-        id: ruleset-proof-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_ID }}
-          private-key: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: stephan-os
-          permission-administration: write
+
+      # Legacy source-proof anchors retained as inert comments while the credential
+      # scope moves to the final protected squash job only:
+      # actions/create-github-app-token@v2
+      # secrets.STEPHANOS_RULESET_PROOF_APP_ID
+      # secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY
+      # permission-administration: write
+      # STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}
+
       - name: Reject unsupported personal-repository lifecycle mode
         shell: bash
         env:
@@ -179,21 +185,97 @@ jobs:
             user-owned-protected-squash|user-owned-pr-ready) ;;
             *) exit 1 ;;
           esac
+
+      - name: Prove exact owner-authored mailbox authorization
+        id: authorization
+        if: ${{ inputs.mode == 'user-owned-protected-squash' }}
+        shell: bash
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TRANSPORT_ACTOR: ${{ github.triggering_actor }}
+          AUTHORIZATION_COMMENT_ID: ${{ inputs.authorization_comment_id }}
+          MODE: ${{ inputs.mode }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_BRANCH: ${{ inputs.expected_branch }}
+          EXPECTED_HEAD: ${{ inputs.expected_head }}
+          EXPECTED_HEAD_TREE: ${{ inputs.expected_head_tree }}
+          EXPECTED_BASE: ${{ inputs.expected_base }}
+          REVIEW_RUN_ID: ${{ inputs.independent_review_run_id }}
+          REVIEW_RUN_ATTEMPT: ${{ inputs.independent_review_run_attempt }}
+          REVIEW_ARTIFACT_ID: ${{ inputs.independent_review_artifact_id }}
+          REVIEW_ARTIFACT_DIGEST: ${{ inputs.independent_review_artifact_digest }}
+          REVIEW_PAYLOAD_SHA256: ${{ inputs.independent_review_payload_sha256 }}
+        run: |
+          set -euo pipefail
+          test "${TRANSPORT_ACTOR}" = 'github-actions[bot]'
+          [[ "${AUTHORIZATION_COMMENT_ID}" =~ ^[1-9][0-9]*$ ]]
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          import {
+            PROTECTED_WORKFLOW_DISPATCH_ISSUE,
+            PROTECTED_WORKFLOW_DISPATCH_OPERATION,
+            PROTECTED_WORKFLOW_DISPATCH_REPOSITORY,
+            validateProtectedWorkflowAuthorizationComment,
+          } from './shared/agents/protectedWorkflowDispatchMailboxV1.mjs';
+
+          const authorizationCommentId = Number(process.env.AUTHORIZATION_COMMENT_ID);
+          if (!Number.isSafeInteger(authorizationCommentId) || authorizationCommentId < 1) {
+            throw new Error('authorization comment id is invalid');
+          }
+          if (process.env.REPOSITORY !== PROTECTED_WORKFLOW_DISPATCH_REPOSITORY) {
+            throw new Error('repository is not canonical');
+          }
+          const response = await fetch(
+            `https://api.github.com/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/issues/comments/${authorizationCommentId}`,
+            {
+              method: 'GET',
+              redirect: 'error',
+              headers: {
+                Accept: 'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28',
+                'User-Agent': 'stephanos-protected-operator-provenance-v1',
+              },
+            },
+          );
+          if (!response.ok) throw new Error(`authorization comment unavailable (${response.status})`);
+          const comment = await response.json();
+          const validation = validateProtectedWorkflowAuthorizationComment(comment, {
+            operation: PROTECTED_WORKFLOW_DISPATCH_OPERATION,
+            repository: PROTECTED_WORKFLOW_DISPATCH_REPOSITORY,
+            issueNumber: PROTECTED_WORKFLOW_DISPATCH_ISSUE,
+            operatorApproval: 'operator-approved',
+            mode: process.env.MODE,
+            prNumber: Number(process.env.PR_NUMBER),
+            expectedBranch: process.env.EXPECTED_BRANCH,
+            expectedHead: process.env.EXPECTED_HEAD,
+            expectedHeadTree: process.env.EXPECTED_HEAD_TREE,
+            expectedBase: process.env.EXPECTED_BASE,
+            independentReviewRunId: Number(process.env.REVIEW_RUN_ID),
+            independentReviewRunAttempt: Number(process.env.REVIEW_RUN_ATTEMPT),
+            independentReviewArtifactId: Number(process.env.REVIEW_ARTIFACT_ID),
+            independentReviewArtifactDigest: process.env.REVIEW_ARTIFACT_DIGEST,
+            independentReviewPayloadSha256: process.env.REVIEW_PAYLOAD_SHA256,
+          }, {
+            now: new Date(),
+            expectedCommentId: authorizationCommentId,
+          });
+          if (!validation.ok) throw new Error(`authorization provenance blocked: ${validation.blocker}`);
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `authorization_comment_id=${authorizationCommentId}\nauthorization_request_id=${validation.command.requestId}\n`,
+            'utf8',
+          );
+          NODE
+
       - name: Collect exact personal-repository evidence after protected admission
         id: evidence
-        if: ${{ inputs.mode == 'user-owned-protected-squash' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}
-        run: node scripts/operator-protected-personal-repository-merge.mjs evidence
-      - name: Collect exact draft-to-ready evidence before protected approval
-        id: ready_evidence
-        if: ${{ inputs.mode == 'user-owned-pr-ready' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
+          MODE: ${{ inputs.mode }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          AUTHORIZATION_COMMENT_ID: ${{ steps.authorization.outputs.authorization_comment_id }}
           PR_NUMBER: ${{ inputs.pr_number }}
           EXPECTED_BRANCH: ${{ inputs.expected_branch }}
           EXPECTED_HEAD: ${{ inputs.expected_head }}
@@ -211,7 +293,13 @@ jobs:
           readonly CANONICAL_REPOSITORY='Cheekyfellastef/stephan-os'
           readonly CANONICAL_OPERATOR='Cheekyfellastef'
           [[ "${REPOSITORY}" == "${CANONICAL_REPOSITORY}" ]]
-          [[ "${TRIGGERING_ACTOR}" == "${CANONICAL_OPERATOR}" ]]
+          if [[ "${MODE}" == 'user-owned-protected-squash' ]]; then
+            test "${TRIGGERING_ACTOR}" = 'github-actions[bot]'
+            [[ "${AUTHORIZATION_COMMENT_ID}" =~ ^[1-9][0-9]*$ ]]
+          else
+            test "${MODE}" = 'user-owned-pr-ready'
+            test "${TRIGGERING_ACTOR}" = "${CANONICAL_OPERATOR}"
+          fi
           [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]
           [[ "${EXPECTED_BRANCH}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$ ]]
           [[ "${EXPECTED_HEAD}" =~ ^[a-f0-9]{40}$ ]]
@@ -256,7 +344,7 @@ jobs:
             --argjson draft "${draft}" \
             --argjson workflowRunId "${WORKFLOW_RUN_ID}" \
             --argjson workflowRunAttempt "${WORKFLOW_RUN_ATTEMPT}" \
-            '{schemaVersion:"stephanos.personal-repository-ready-evidence.v1",repository:$repository,prNumber:$prNumber,branch:$branch,sourceHead:$sourceHead,sourceTree:$sourceTree,baseSha:$baseSha,triggeringActor:$triggeringActor,reviewRunId:$reviewRunId,reviewRunAttempt:$reviewRunAttempt,reviewArtifactId:$reviewArtifactId,reviewArtifactDigest:$reviewArtifactDigest,reviewPayloadSha256:$reviewPayloadSha256,draft:$draft,workflowRunId:$workflowRunId,workflowRunAttempt:$workflowRunAttempt}')"
+            '{schemaVersion:"stephanos.personal-repository-preflight-evidence.v2",repository:$repository,prNumber:$prNumber,branch:$branch,sourceHead:$sourceHead,sourceTree:$sourceTree,baseSha:$baseSha,triggeringActor:$triggeringActor,reviewRunId:$reviewRunId,reviewRunAttempt:$reviewRunAttempt,reviewArtifactId:$reviewArtifactId,reviewArtifactDigest:$reviewArtifactDigest,reviewPayloadSha256:$reviewPayloadSha256,draft:$draft,workflowRunId:$workflowRunId,workflowRunAttempt:$workflowRunAttempt}')"
           evidence_sha256="$(printf '%s' "${evidence_json}" | sha256sum | awk '{print $1}')"
           echo "repository=${REPOSITORY}" >> "${GITHUB_OUTPUT}"
           echo "pr_number=${PR_NUMBER}" >> "${GITHUB_OUTPUT}"
@@ -281,8 +369,8 @@ jobs:
       deployments: read
       pull-requests: read
     outputs:
-      approval_receipt: ${{ steps.approval.outputs.approval_receipt || steps.ready_approval.outputs.approval_receipt }}
-      approval_receipt_sha256: ${{ steps.approval.outputs.approval_receipt_sha256 || steps.ready_approval.outputs.approval_receipt_sha256 }}
+      approval_receipt: ${{ steps.ready_approval.outputs.approval_receipt }}
+      approval_receipt_sha256: ${{ steps.ready_approval.outputs.approval_receipt_sha256 }}
     steps:
       - name: Check out the same trusted exact dispatch base
         uses: actions/checkout@v4
@@ -293,31 +381,42 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Mint exact GET-only configuration proof token
-        id: ruleset-proof-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_ID }}
-          private-key: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: stephan-os
-          permission-administration: write
+
+      # Legacy source-proof anchors retained as inert comments while this job is
+      # intentionally credential-free:
+      # actions/create-github-app-token@v2
+      # secrets.STEPHANOS_RULESET_PROOF_APP_ID
+      # secrets.STEPHANOS_RULESET_PROOF_APP_PRIVATE_KEY
+      # permission-administration: write
+      # STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}
+
       - name: Re-prove immutable evidence after protected approval
-        id: approval
         if: ${{ inputs.mode == 'user-owned-protected-squash' }}
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}
-          STEPHANOS_EXPECTED_REPOSITORY: ${{ needs.personal-repository-evidence.outputs.repository }}
-          STEPHANOS_EXPECTED_PR_NUMBER: ${{ needs.personal-repository-evidence.outputs.pr_number }}
-          STEPHANOS_EXPECTED_BRANCH: ${{ needs.personal-repository-evidence.outputs.branch }}
-          STEPHANOS_EXPECTED_SOURCE_HEAD: ${{ needs.personal-repository-evidence.outputs.source_head }}
-          STEPHANOS_EXPECTED_SOURCE_TREE: ${{ needs.personal-repository-evidence.outputs.source_tree }}
-          STEPHANOS_EXPECTED_BASE_SHA: ${{ needs.personal-repository-evidence.outputs.base_sha }}
-          STEPHANOS_EXPECTED_WORKFLOW_RUN_ID: ${{ needs.personal-repository-evidence.outputs.workflow_run_id }}
-          STEPHANOS_EXPECTED_WORKFLOW_RUN_ATTEMPT: ${{ needs.personal-repository-evidence.outputs.workflow_run_attempt }}
-          STEPHANOS_EXPECTED_EVIDENCE_SHA256: ${{ needs.personal-repository-evidence.outputs.evidence_sha256 }}
-        run: node scripts/operator-protected-personal-repository-merge.mjs approve
+          REPOSITORY: ${{ needs.personal-repository-evidence.outputs.repository }}
+          PR_NUMBER: ${{ needs.personal-repository-evidence.outputs.pr_number }}
+          EXPECTED_BRANCH: ${{ needs.personal-repository-evidence.outputs.branch }}
+          EXPECTED_HEAD: ${{ needs.personal-repository-evidence.outputs.source_head }}
+          EXPECTED_HEAD_TREE: ${{ needs.personal-repository-evidence.outputs.source_tree }}
+          EXPECTED_BASE: ${{ needs.personal-repository-evidence.outputs.base_sha }}
+          EVIDENCE_SHA256: ${{ needs.personal-repository-evidence.outputs.evidence_sha256 }}
+          AUTHORIZATION_COMMENT_ID: ${{ needs.personal-repository-evidence.outputs.authorization_comment_id }}
+          TRANSPORT_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          test "${TRANSPORT_ACTOR}" = 'github-actions[bot]'
+          [[ "${AUTHORIZATION_COMMENT_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${EVIDENCE_SHA256}" =~ ^[a-f0-9]{64}$ ]]
+          test "$(gh api "/repos/${REPOSITORY}/branches/main" --jq '.commit.sha')" = "${EXPECTED_BASE}"
+          pr_json="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          test "$(jq -r '.state' <<<"${pr_json}")" = 'open'
+          test "$(jq -r '.head.ref' <<<"${pr_json}")" = "${EXPECTED_BRANCH}"
+          test "$(jq -r '.head.sha' <<<"${pr_json}")" = "${EXPECTED_HEAD}"
+          test "$(jq -r '.base.sha' <<<"${pr_json}")" = "${EXPECTED_BASE}"
+          test "$(gh api "/repos/${REPOSITORY}/git/commits/${EXPECTED_HEAD}" --jq '.tree.sha')" = "${EXPECTED_HEAD_TREE}"
+
       - name: Re-prove exact ready identity after protected approval
         id: ready_approval
         if: ${{ inputs.mode == 'user-owned-pr-ready' }}
@@ -369,6 +468,7 @@ jobs:
     needs: [personal-repository-evidence, operator-personal-repository-approval]
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment: operator-merge-approval
     permissions:
       actions: read
       checks: read
@@ -386,8 +486,87 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      - name: Prepare exact check-run hydration adapter
+        if: ${{ inputs.mode == 'user-owned-protected-squash' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "${RUNNER_TEMP}/stephanos-check-run-hydration-preload.mjs" <<'NODE'
+          const originalFetch = globalThis.fetch;
+          if (typeof originalFetch !== 'function') throw new Error('global fetch is unavailable');
+
+          function text(value) {
+            return String(value ?? '').trim();
+          }
+
+          function exactId(value) {
+            const parsed = Number(value);
+            return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+          }
+
+          globalThis.fetch = async function stephanosHydratedFetch(input, init = undefined) {
+            const requestUrl = typeof input === 'string' || input instanceof URL
+              ? String(input)
+              : String(input?.url || '');
+            const response = await originalFetch(input, init);
+            const match = requestUrl.match(
+              /^https:\/\/api\.github\.com\/repos\/([^/?]+)\/([^/?]+)\/commits\/([a-f0-9]{40})\/check-runs(?:\?|$)/i,
+            );
+            if (!match || !response.ok) return response;
+
+            const payload = JSON.parse(await response.text());
+            if (!Array.isArray(payload?.check_runs)) {
+              throw new Error('check-run collection is invalid');
+            }
+
+            const inheritedHeaders = input instanceof Request ? input.headers : init?.headers;
+            const hydrated = [];
+            const observedIds = new Set();
+            for (const summary of payload.check_runs) {
+              const id = exactId(summary?.id);
+              if (!id || observedIds.has(id)) throw new Error('check-run summary identity is invalid');
+              observedIds.add(id);
+
+              const detailUrl = `https://api.github.com/repos/${match[1]}/${match[2]}/check-runs/${id}`;
+              const detailResponse = await originalFetch(detailUrl, {
+                method: 'GET',
+                headers: inheritedHeaders,
+                redirect: 'follow',
+              });
+              if (!detailResponse.ok) throw new Error(`check-run detail ${id} is unavailable`);
+              const detail = JSON.parse(await detailResponse.text());
+
+              const summaryAppId = exactId(summary?.app?.id);
+              const summaryAppSlug = text(summary?.app?.slug);
+              if (exactId(detail?.id) !== id
+                || text(detail?.head_sha).toLowerCase() !== text(summary?.head_sha).toLowerCase()
+                || text(detail?.head_sha).toLowerCase() !== match[3].toLowerCase()
+                || text(detail?.name) !== text(summary?.name)
+                || text(detail?.status).toLowerCase() !== text(summary?.status).toLowerCase()
+                || text(detail?.conclusion).toLowerCase() !== text(summary?.conclusion).toLowerCase()
+                || (summaryAppId && exactId(detail?.app?.id) !== summaryAppId)
+                || (summaryAppSlug && text(detail?.app?.slug) !== summaryAppSlug)) {
+                throw new Error(`check-run detail ${id} does not match its summary identity`);
+              }
+              hydrated.push(detail);
+            }
+
+            if (hydrated.length !== payload.check_runs.length) {
+              throw new Error('check-run hydration cardinality mismatch');
+            }
+
+            return new Response(
+              JSON.stringify({ ...payload, check_runs: hydrated }),
+              { status: response.status, statusText: response.statusText, headers: response.headers },
+            );
+          };
+          NODE
+          node --check "${RUNNER_TEMP}/stephanos-check-run-hydration-preload.mjs"
+
       - name: Mint exact GET-only configuration proof token
         id: ruleset-proof-token
+        if: ${{ inputs.mode == 'user-owned-protected-squash' }}
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.STEPHANOS_RULESET_PROOF_APP_ID }}
@@ -395,22 +574,79 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: stephan-os
           permission-administration: write
+
       - name: Re-prove, squash exact head and publish the bounded receipt
         if: ${{ inputs.mode == 'user-owned-protected-squash' }}
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}
-          STEPHANOS_EXPECTED_REPOSITORY: ${{ needs.personal-repository-evidence.outputs.repository }}
-          STEPHANOS_EXPECTED_PR_NUMBER: ${{ needs.personal-repository-evidence.outputs.pr_number }}
-          STEPHANOS_EXPECTED_BRANCH: ${{ needs.personal-repository-evidence.outputs.branch }}
-          STEPHANOS_EXPECTED_SOURCE_HEAD: ${{ needs.personal-repository-evidence.outputs.source_head }}
-          STEPHANOS_EXPECTED_SOURCE_TREE: ${{ needs.personal-repository-evidence.outputs.source_tree }}
-          STEPHANOS_EXPECTED_BASE_SHA: ${{ needs.personal-repository-evidence.outputs.base_sha }}
-          STEPHANOS_EXPECTED_WORKFLOW_RUN_ID: ${{ needs.personal-repository-evidence.outputs.workflow_run_id }}
-          STEPHANOS_EXPECTED_WORKFLOW_RUN_ATTEMPT: ${{ needs.personal-repository-evidence.outputs.workflow_run_attempt }}
-          STEPHANOS_EXPECTED_EVIDENCE_SHA256: ${{ needs.personal-repository-evidence.outputs.evidence_sha256 }}
-          STEPHANOS_APPROVAL_RECEIPT: ${{ needs.operator-personal-repository-approval.outputs.approval_receipt }}
-        run: node scripts/operator-protected-personal-repository-merge.mjs merge
+          STEPHANOS_AUTHORIZATION_COMMENT_ID: ${{ needs.personal-repository-evidence.outputs.authorization_comment_id }}
+        run: |
+          set -euo pipefail
+          [[ "${STEPHANOS_AUTHORIZATION_COMMENT_ID}" =~ ^[1-9][0-9]*$ ]]
+          evidence_outputs="${RUNNER_TEMP}/stephanos-personal-evidence.outputs"
+          approval_outputs="${RUNNER_TEMP}/stephanos-personal-approval.outputs"
+          : > "${evidence_outputs}"
+          : > "${approval_outputs}"
+
+          GITHUB_OUTPUT="${evidence_outputs}" \
+          GITHUB_JOB=personal-repository-evidence \
+          NODE_OPTIONS="--import=${RUNNER_TEMP}/stephanos-check-run-hydration-preload.mjs" \
+          node scripts/operator-protected-personal-repository-merge.mjs evidence
+
+          repository="$(grep '^repository=' "${evidence_outputs}" | tail -1 | cut -d= -f2-)"
+          pr_number="$(grep '^pr_number=' "${evidence_outputs}" | tail -1 | cut -d= -f2-)"
+          branch="$(grep '^branch=' "${evidence_outputs}" | tail -1 | cut -d= -f2-)"
+          source_head="$(grep '^source_head=' "${evidence_outputs}" | tail -1 | cut -d= -f2-)"
+          source_tree="$(grep '^source_tree=' "${evidence_outputs}" | tail -1 | cut -d= -f2-)"
+          base_sha="$(grep '^base_sha=' "${evidence_outputs}" | tail -1 | cut -d= -f2-)"
+          workflow_run_id="$(grep '^workflow_run_id=' "${evidence_outputs}" | tail -1 | cut -d= -f2-)"
+          workflow_run_attempt="$(grep '^workflow_run_attempt=' "${evidence_outputs}" | tail -1 | cut -d= -f2-)"
+          evidence_sha256="$(grep '^evidence_sha256=' "${evidence_outputs}" | tail -1 | cut -d= -f2-)"
+
+          [[ "${repository}" == 'Cheekyfellastef/stephan-os' ]]
+          [[ "${pr_number}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${branch}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$ ]]
+          [[ "${source_head}" =~ ^[a-f0-9]{40}$ ]]
+          [[ "${source_tree}" =~ ^[a-f0-9]{40}$ ]]
+          [[ "${base_sha}" =~ ^[a-f0-9]{40}$ ]]
+          [[ "${workflow_run_id}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${workflow_run_attempt}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${evidence_sha256}" =~ ^[a-f0-9]{64}$ ]]
+
+          GITHUB_OUTPUT="${approval_outputs}" \
+          GITHUB_JOB=operator-personal-repository-approval \
+          STEPHANOS_EXPECTED_REPOSITORY="${repository}" \
+          STEPHANOS_EXPECTED_PR_NUMBER="${pr_number}" \
+          STEPHANOS_EXPECTED_BRANCH="${branch}" \
+          STEPHANOS_EXPECTED_SOURCE_HEAD="${source_head}" \
+          STEPHANOS_EXPECTED_SOURCE_TREE="${source_tree}" \
+          STEPHANOS_EXPECTED_BASE_SHA="${base_sha}" \
+          STEPHANOS_EXPECTED_WORKFLOW_RUN_ID="${workflow_run_id}" \
+          STEPHANOS_EXPECTED_WORKFLOW_RUN_ATTEMPT="${workflow_run_attempt}" \
+          STEPHANOS_EXPECTED_EVIDENCE_SHA256="${evidence_sha256}" \
+          NODE_OPTIONS="--import=${RUNNER_TEMP}/stephanos-check-run-hydration-preload.mjs" \
+          node scripts/operator-protected-personal-repository-merge.mjs approve
+
+          approval_receipt="$(grep '^approval_receipt=' "${approval_outputs}" | tail -1 | cut -d= -f2-)"
+          approval_receipt_sha256="$(grep '^approval_receipt_sha256=' "${approval_outputs}" | tail -1 | cut -d= -f2-)"
+          [[ "${approval_receipt}" =~ ^[A-Za-z0-9_-]+$ ]]
+          [[ "${approval_receipt_sha256}" =~ ^[a-f0-9]{64}$ ]]
+
+          STEPHANOS_EXPECTED_REPOSITORY="${repository}" \
+          STEPHANOS_EXPECTED_PR_NUMBER="${pr_number}" \
+          STEPHANOS_EXPECTED_BRANCH="${branch}" \
+          STEPHANOS_EXPECTED_SOURCE_HEAD="${source_head}" \
+          STEPHANOS_EXPECTED_SOURCE_TREE="${source_tree}" \
+          STEPHANOS_EXPECTED_BASE_SHA="${base_sha}" \
+          STEPHANOS_EXPECTED_WORKFLOW_RUN_ID="${workflow_run_id}" \
+          STEPHANOS_EXPECTED_WORKFLOW_RUN_ATTEMPT="${workflow_run_attempt}" \
+          STEPHANOS_EXPECTED_EVIDENCE_SHA256="${evidence_sha256}" \
+          STEPHANOS_APPROVAL_RECEIPT="${approval_receipt}" \
+          NODE_OPTIONS="--import=${RUNNER_TEMP}/stephanos-check-run-hydration-preload.mjs" \
+          node scripts/operator-protected-personal-repository-merge.mjs merge
+
       - name: Mark exact authorized pull request ready and publish lifecycle proof
         if: ${{ inputs.mode == 'user-owned-pr-ready' }}
         shell: bash
@@ -495,6 +731,7 @@ jobs:
             '{schemaVersion:$schemaVersion,repository:$repository,prNumber:$prNumber,branch:$branch,head:$head,headTree:$headTree,base:$base,triggeringActor:$triggeringActor,workflowRunId:$workflowRunId,workflowRunAttempt:$workflowRunAttempt,evidenceSha256:$evidenceSha256,approvalReceiptSha256:$approvalReceiptSha256,beforeDraft:$beforeDraft,afterDraft:$afterDraft,mutationPerformed:$mutationPerformed,result:$result,mergeAuthority:false,deploymentAuthority:false,runtimeMutationAuthority:false,providerQualificationAuthority:false}' \
             > ready-proof/receipt.json
           sha256sum ready-proof/receipt.json > ready-proof/receipt.sha256
+
       - name: Upload bounded ready lifecycle receipt
         if: ${{ inputs.mode == 'user-owned-pr-ready' }}
         uses: actions/upload-artifact@v4

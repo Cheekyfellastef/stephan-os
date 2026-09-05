@@ -29,6 +29,50 @@ function positiveInteger(value) {
   return Number.isSafeInteger(number) && number > 0 ? number : 0;
 }
 
+export function mapGitHubIndependentReviewRunV1(run = {}) {
+  return Object.freeze({
+    id: run?.id ?? null,
+    run_attempt: Number(run?.run_attempt ?? 0),
+    workflow_id: Number(run?.workflow_id ?? 0),
+    name: text(run?.name),
+    display_title: text(run?.display_title),
+    path: text(run?.path),
+    event: text(run?.event),
+    repository: Object.freeze({ full_name: text(run?.repository?.full_name) }),
+    head_branch: text(run?.head_branch),
+    head_sha: text(run?.head_sha),
+    status: text(run?.status),
+    conclusion: text(run?.conclusion),
+    created_at: run?.created_at ?? null,
+    updated_at: run?.updated_at ?? null,
+    run_started_at: run?.run_started_at ?? null,
+    pull_requests: Object.freeze(Array.isArray(run?.pull_requests)
+      ? run.pull_requests.map((pullRequest) => Object.freeze({
+        number: positiveInteger(pullRequest?.number),
+        head: Object.freeze({
+          sha: text(pullRequest?.head?.sha),
+          ref: text(pullRequest?.head?.ref),
+        }),
+        base: Object.freeze({
+          sha: text(pullRequest?.base?.sha),
+          ref: text(pullRequest?.base?.ref),
+        }),
+      }))
+      : []),
+  });
+}
+
+export function mapGitHubIndependentReviewJobV1(job = {}) {
+  return Object.freeze({
+    id: job?.id ?? null,
+    name: text(job?.name),
+    run_attempt: Number(job?.run_attempt ?? 0),
+    run_url: text(job?.run_url),
+    status: text(job?.status),
+    conclusion: text(job?.conclusion),
+  });
+}
+
 function actorMatches(item, expected = TRUSTED_GITHUB_ACTIONS_REVIEWER) {
   const actor = item?.user ?? item?.author ?? {};
   return text(actor?.login).toLowerCase() === expected.login
