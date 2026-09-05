@@ -24,7 +24,7 @@ function runDashboard({ fetchImpl, hostname = 'localhost', protocol = 'http:', p
       const match = String(selector).match(/data-live-telemetry-field="([^"]+)"/);
       if (!match) return null;
       const key = match[1];
-      if (!telemetry.has(key)) telemetry.set(key, { textContent: '' });
+      if (!telemetry.has(key)) telemetry.set(key, { textContent: '', attrs: {}, setAttribute(name, value) { this.attrs[name] = value; } });
       return telemetry.get(key);
     },
   };
@@ -126,9 +126,65 @@ test('standalone Goal Dashboard renders ready Shared Workspace feed before stati
   });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(telemetry.get('source-badge').textContent, 'READY');
+  assert.equal(telemetry.get('source-badge').attrs['data-truth'], 'CURRENT');
   assert.match(telemetry.get('goal-data-source').textContent, /READY Shared Agent Workspace feed/);
   assert.equal(telemetry.get('proof-state').textContent, 'CURRENT 1 · STALE 1 · UNKNOWN 1');
   assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-shared-workspace');
+  assert.equal(grid.attrs['data-goal-dashboard-feed-state'], 'ready');
+});
+
+test('standalone Goal Dashboard renders stale Shared Workspace evidence without downgrading to static fallback', async () => {
+  const calls = [];
+  const { telemetry, grid } = runDashboard({
+    fetchImpl: async (url) => {
+      calls.push(url);
+      return { ok: true, json: async () => ({
+        schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
+        state: 'stale',
+        reason: 'STALE_WORKSPACE_RECORDS',
+        workspaceRoot: '/tmp/shared-workspace-live',
+        exactNextAction: 'Refresh stale records.',
+        projection: {
+          portfolioSource: 'BASE_PROJECTION_FALLBACK',
+          goals: [{ issue: '#1291', title: 'Battle Bridge Supervisor', statusTruth: 'STALE', proofTruth: 'STALE', blockers: ['STALE_STATUS_RECORD'], exactNextAction: 'Refresh proof.' }],
+          operatorAttention: { blockers: ['STALE_STATUS_RECORD'], exactNextAction: 'Refresh stale records.' },
+        },
+      }) };
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /\/api\/shared-workspace\/dashboard-feed$/);
+  assert.equal(telemetry.get('source-badge').textContent, 'STALE');
+  assert.equal(telemetry.get('source-badge').attrs['data-truth'], 'STALE');
+  assert.match(telemetry.get('goal-data-source').textContent, /STALE Shared Agent Workspace feed/);
+  assert.equal(telemetry.get('telemetry-blocker').textContent, 'STALE_WORKSPACE_RECORDS');
+  assert.equal(telemetry.get('next-operator-action').textContent, 'Refresh stale records.');
+  assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'live-shared-workspace');
+  assert.equal(grid.attrs['data-goal-dashboard-feed-state'], 'stale');
+});
+
+test('standalone Goal Dashboard rejects stale feed labels when the canonical projection is missing', async () => {
+  const calls = [];
+  const { telemetry, grid } = runDashboard({
+    fetchImpl: async (url) => {
+      calls.push(url);
+      if (calls.length === 1) {
+        return { ok: true, json: async () => ({
+          schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
+          state: 'stale',
+          reason: 'STALE_WORKSPACE_RECORDS',
+        }) };
+      }
+      return { ok: false, json: async () => ({}) };
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 2);
+  assert.equal(telemetry.get('source-badge').textContent, 'STATIC_FALLBACK');
+  assert.equal(telemetry.get('source-badge').attrs['data-truth'], 'UNKNOWN');
+  assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'static-seed');
+  assert.equal(grid.attrs['data-goal-dashboard-feed-state'], undefined);
 });
 
 test('standalone Goal Dashboard does not claim live proof without backend data and gates non-local fetches', async () => {

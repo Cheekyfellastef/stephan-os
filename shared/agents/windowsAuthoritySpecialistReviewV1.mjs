@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const CORE_PATH = './windowsAuthoritySpecialistReviewCoreV1.mjs';
 const NO_FAFF_PATH = './windowsAuthorityNoFaffRescueReviewV2.mjs';
+const MAILBOX_CADENCE_PATH = './windowsAuthorityMailboxCadenceReviewV1.mjs';
 const MAILBOX_RECOVERY_GUARDIAN_PATH = './windowsAuthorityMailboxRecoveryGuardianReviewV1.mjs';
 const RECOVERY_GUARDIAN_PATH = './windowsAuthorityRecoveryMeshGuardianReviewV1.mjs';
 const RECOVERY_MESH_LAUNCH_LIVENESS_PATH = './windowsAuthorityRecoveryMeshLaunchLivenessReviewV1.mjs';
@@ -14,6 +15,11 @@ const MOBILE_RECOVERY_VERIFICATION_JOURNAL_PATH = './windowsAuthorityMobileRecov
 const MOBILE_RECOVERY_GITHUB_CONSUMER_PATH = './windowsAuthorityMobileRecoveryGitHubConsumerReviewV1.mjs';
 const MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATH = './windowsAuthorityMobileRecoveryLifeboatInstallerReviewV1.mjs';
 const LIFEBOAT_ACTIVATION_PATH = './windowsAuthorityBattleBridgeLifeboatActivationReviewV1.mjs';
+const WORKER_LOG_BOUNDS_PATH = './windowsAuthorityWorkerLogBoundsReviewV1.mjs';
+const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupReviewV1.mjs';
+const WORKER_WATCHDOG_V4_PATH = './windowsAuthorityWorkerWatchdogReviewV4.mjs';
+const WORKER_WATCHDOG_V3_PATH = './windowsAuthorityWorkerWatchdogReviewV3.mjs';
+const WORKER_WATCHDOG_V2_PATH = './windowsAuthorityWorkerWatchdogReviewV2.mjs';
 const WORKER_WATCHDOG_PATH = './windowsAuthorityWorkerWatchdogReviewV1.mjs';
 const FORGE_M3_EXECUTOR_PATH = './windowsAuthorityForgeM3ExecutorReviewV1.mjs';
 const FORGE_PODMAN_PREREQUISITE_PATH = './windowsAuthorityForgePodmanPrerequisiteReviewV1.mjs';
@@ -21,6 +27,7 @@ const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1
 
 const CORE_BLOB_SHA = '4424046455d8fd7724f1ae8b7c53b7c6529668df';
 const NO_FAFF_BLOB_SHA = 'f6c2a92f4e2ffebb57e197e72ed0279a896c9ffe';
+const MAILBOX_CADENCE_BLOB_SHA = 'd1319d542b219c786a36e8063f4080369f1f9a51';
 const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '0750137480031f19a364915095c69b7ab6061799';
 const RECOVERY_GUARDIAN_BLOB_SHA = '60228170b62d8313bebece5e9e8655cfc45497a5';
 const RECOVERY_MESH_LAUNCH_LIVENESS_BLOB_SHA = '14aa47756a08f0fdc24e1bf630fad36c557488b2';
@@ -31,13 +38,19 @@ const MOBILE_RECOVERY_EXECUTOR_BLOB_SHA = '95616156cc80abf66c7f8c4475f3e5a7f1c2c
 const MOBILE_RECOVERY_VERIFICATION_JOURNAL_BLOB_SHA = 'b4b3a6dd6c0226331d4faf682754b14fa1642e67';
 const MOBILE_RECOVERY_GITHUB_CONSUMER_BLOB_SHA = '7b0a62a712c2340293ffe09aee0154ae9e9766de';
 const MOBILE_RECOVERY_LIFEBOAT_INSTALLER_BLOB_SHA = '6ca86bcd68e034950b3d01fdabb12e3eb07055e1';
-const LIFEBOAT_ACTIVATION_BLOB_SHA = '3b837486b4d9cfff2ed7f5ed14ade4ff50167c08';
-const WORKER_WATCHDOG_BLOB_SHA = 'b69e048ea9857b713e2faa17a1bbecec62fed84d';
+const LIFEBOAT_ACTIVATION_BLOB_SHA = 'd53a21c582fa85c016418e3cf9827a9de8abb8bf';
+const WORKER_LOG_BOUNDS_BLOB_SHA = 'daa4936e117e7b16daf4c0ccf72baea0d7203dfb';
+const MISSION_WORKER_CLEANUP_BLOB_SHA = '907c95a364c4b5eb5e083788b52056071d78e3a2';
+const WORKER_WATCHDOG_V4_BLOB_SHA = '0caa887c8dd818a105d70d4aeee2c20332eb9675';
+const WORKER_WATCHDOG_V3_BLOB_SHA = 'fbce68bc252bc5580ce17bc1dc3bdc919b364865';
+const WORKER_WATCHDOG_V2_BLOB_SHA = '6a78171d976b1a36d8892b98fcf90bf54591dbeb';
+const WORKER_WATCHDOG_BLOB_SHA = '148972def36e1af880f21876f4203f802c697ecb';
 const FORGE_M3_EXECUTOR_BLOB_SHA = '7177c695d5a12b009785676440ce83163897f8f2';
 const FORGE_PODMAN_PREREQUISITE_BLOB_SHA = '0a0c98287f20145e31bf8aa3978d0ba4196cbcce';
 const IGNITION_CONVERGENCE_BLOB_SHA = '8115a382c5c7b9a0bfe5611d4931fcbd969d1162';
 
 const EXPECTED_NO_FAFF_PATHS = Object.freeze(['scripts/windows/repair-battle-bridge-control-plane-now.ps1','scripts/windows/Repair-Battle-Bridge-Control-Plane-Now.cmd','scripts/windows/repair-battle-bridge-control-plane-now.test.mjs','scripts/windows/status-stephanos-codex-dispatch-plugin.ps1']);
+const EXPECTED_MAILBOX_CADENCE_PATHS = Object.freeze(['scripts/windows/install-battle-bridge-github-command-mailbox.ps1']);
 const EXPECTED_MAILBOX_RECOVERY_GUARDIAN_PATHS = Object.freeze(['scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1']);
 const EXPECTED_RECOVERY_GUARDIAN_PATHS = Object.freeze(['scripts/windows/install-battle-bridge-recovery-mesh.ps1','scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1','scripts/windows/run-stephanos-scheduled-task-windowless.vbs','scripts/windows/uninstall-battle-bridge-recovery-mesh.ps1','scripts/windows/request-battle-bridge-recovery.ps1']);
 const EXPECTED_RECOVERY_MESH_LAUNCH_LIVENESS_PATHS = Object.freeze(['scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1']);
@@ -49,6 +62,7 @@ const EXPECTED_MOBILE_RECOVERY_VERIFICATION_JOURNAL_PATHS = Object.freeze(['docs
 const EXPECTED_MOBILE_RECOVERY_GITHUB_CONSUMER_PATHS = Object.freeze(['docs/architecture/battle-bridge-recovery-lifeboat-github-consumer-v1.md','scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1','scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1','scripts/windows/run-battle-bridge-recovery-lifeboat-bank-v1.ps1','shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs']);
 const EXPECTED_MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATHS = Object.freeze(['docs/architecture/battle-bridge-recovery-lifeboat-ab-installer-v1.md','scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1','scripts/windows/run-battle-bridge-recovery-lifeboat-active-v1.ps1','scripts/windows/run-battle-bridge-recovery-lifeboat-bank-v1.ps1','shared/agents/battleBridgeRecoveryLifeboatInstallV1.mjs','shared/agents/battleBridgeRecoveryLifeboatInstallV1.test.mjs']);
 const EXPECTED_LIFEBOAT_ACTIVATION_PATHS = Object.freeze(['scripts/battle-bridge-control-plane-self-repair.test.mjs','scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs','scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1','scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs','shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs','shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs','shared/agents/postSyncRuntimeRefreshCoordinator.mjs']);
+const EXPECTED_WORKER_LOG_BOUNDS_PATHS = Object.freeze(['scripts/windows/start-mission-orchestrator-worker.ps1']);
 const EXPECTED_FORGE_M3_EXECUTOR_PATHS = Object.freeze(['scripts/windows/invoke-forge-shadow-m3-fixed-proof-executors-v1.ps1','scripts/windows/invoke-forge-shadow-m3-fixed-proof-executors-v1.test.mjs']);
 const EXPECTED_FORGE_PODMAN_PREREQUISITE_PATHS = Object.freeze(['scripts/windows/install-forge-shadow-podman-prerequisite-v1.ps1']);
 const EXPECTED_IGNITION_CONVERGENCE_PATHS = Object.freeze(['scripts/windows/probe-battle-bridge-recovery-mesh.ps1','scripts/windows/repair-stephanos-battle-bridge.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1','scripts/windows/start-stephanos-backend.ps1']);
@@ -57,6 +71,7 @@ function gitBlobSha(content) { const bytes = Buffer.from(content, 'utf8'); retur
 function provePinnedModule(path, expectedBlobSha) { const url = new URL(path, import.meta.url); const content = readFileSync(url, 'utf8'); const observedBlobSha = gitBlobSha(content); if (observedBlobSha !== expectedBlobSha) throw new Error(`WINDOWS_AUTHORITY_SPECIALIST_PIN_MISMATCH:${path}:${observedBlobSha}`); return url; }
 const coreUrl = provePinnedModule(CORE_PATH, CORE_BLOB_SHA);
 const noFaffUrl = provePinnedModule(NO_FAFF_PATH, NO_FAFF_BLOB_SHA);
+const mailboxCadenceUrl = provePinnedModule(MAILBOX_CADENCE_PATH, MAILBOX_CADENCE_BLOB_SHA);
 const mailboxRecoveryGuardianUrl = provePinnedModule(MAILBOX_RECOVERY_GUARDIAN_PATH, MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA);
 const recoveryGuardianUrl = provePinnedModule(RECOVERY_GUARDIAN_PATH, RECOVERY_GUARDIAN_BLOB_SHA);
 const recoveryMeshLaunchLivenessUrl = provePinnedModule(RECOVERY_MESH_LAUNCH_LIVENESS_PATH, RECOVERY_MESH_LAUNCH_LIVENESS_BLOB_SHA);
@@ -68,12 +83,18 @@ const mobileRecoveryVerificationJournalUrl = provePinnedModule(MOBILE_RECOVERY_V
 const mobileRecoveryGitHubConsumerUrl = provePinnedModule(MOBILE_RECOVERY_GITHUB_CONSUMER_PATH, MOBILE_RECOVERY_GITHUB_CONSUMER_BLOB_SHA);
 const mobileRecoveryLifeboatInstallerUrl = provePinnedModule(MOBILE_RECOVERY_LIFEBOAT_INSTALLER_PATH, MOBILE_RECOVERY_LIFEBOAT_INSTALLER_BLOB_SHA);
 const lifeboatActivationUrl = provePinnedModule(LIFEBOAT_ACTIVATION_PATH, LIFEBOAT_ACTIVATION_BLOB_SHA);
+const workerLogBoundsUrl = provePinnedModule(WORKER_LOG_BOUNDS_PATH, WORKER_LOG_BOUNDS_BLOB_SHA);
+const missionWorkerCleanupUrl = provePinnedModule(MISSION_WORKER_CLEANUP_PATH, MISSION_WORKER_CLEANUP_BLOB_SHA);
+const workerWatchdogV4Url = provePinnedModule(WORKER_WATCHDOG_V4_PATH, WORKER_WATCHDOG_V4_BLOB_SHA);
+const workerWatchdogV3Url = provePinnedModule(WORKER_WATCHDOG_V3_PATH, WORKER_WATCHDOG_V3_BLOB_SHA);
+const workerWatchdogV2Url = provePinnedModule(WORKER_WATCHDOG_V2_PATH, WORKER_WATCHDOG_V2_BLOB_SHA);
 const workerWatchdogUrl = provePinnedModule(WORKER_WATCHDOG_PATH, WORKER_WATCHDOG_BLOB_SHA);
 const forgeM3ExecutorUrl = provePinnedModule(FORGE_M3_EXECUTOR_PATH, FORGE_M3_EXECUTOR_BLOB_SHA);
 const forgePodmanPrerequisiteUrl = provePinnedModule(FORGE_PODMAN_PREREQUISITE_PATH, FORGE_PODMAN_PREREQUISITE_BLOB_SHA);
 const ignitionConvergenceUrl = provePinnedModule(IGNITION_CONVERGENCE_PATH, IGNITION_CONVERGENCE_BLOB_SHA);
 const core = await import(coreUrl.href);
 const noFaff = await import(noFaffUrl.href);
+const mailboxCadence = await import(mailboxCadenceUrl.href);
 const mailboxRecoveryGuardian = await import(mailboxRecoveryGuardianUrl.href);
 const recoveryGuardian = await import(recoveryGuardianUrl.href);
 const recoveryMeshLaunchLiveness = await import(recoveryMeshLaunchLivenessUrl.href);
@@ -85,12 +106,23 @@ const mobileRecoveryVerificationJournal = await import(mobileRecoveryVerificatio
 const mobileRecoveryGitHubConsumer = await import(mobileRecoveryGitHubConsumerUrl.href);
 const mobileRecoveryLifeboatInstaller = await import(mobileRecoveryLifeboatInstallerUrl.href);
 const lifeboatActivation = await import(lifeboatActivationUrl.href);
+const workerLogBounds = await import(workerLogBoundsUrl.href);
+const missionWorkerCleanup = await import(missionWorkerCleanupUrl.href);
+const workerWatchdogV4 = await import(workerWatchdogV4Url.href);
+const workerWatchdogV3 = await import(workerWatchdogV3Url.href);
+const workerWatchdogV2 = await import(workerWatchdogV2Url.href);
 const workerWatchdog = await import(workerWatchdogUrl.href);
 const forgeM3Executor = await import(forgeM3ExecutorUrl.href);
 const forgePodmanPrerequisite = await import(forgePodmanPrerequisiteUrl.href);
 const ignitionConvergence = await import(ignitionConvergenceUrl.href);
+if (JSON.stringify(missionWorkerCleanup.WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_PATHS_V1) !== JSON.stringify(['scripts/windows/restart-approved-stephanos-runtime.ps1'])) throw new Error('WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_PATH_INVENTORY_MISMATCH');
+if (JSON.stringify(workerWatchdogV4.WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V4) !== JSON.stringify(['scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1'])) throw new Error('WINDOWS_AUTHORITY_WORKER_WATCHDOG_V4_PATH_INVENTORY_MISMATCH');
+if (JSON.stringify(workerWatchdogV3.WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V3) !== JSON.stringify(['scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1'])) throw new Error('WINDOWS_AUTHORITY_WORKER_WATCHDOG_V3_PATH_INVENTORY_MISMATCH');
+if (JSON.stringify(workerWatchdogV2.WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V2) !== JSON.stringify(['scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1','scripts/windows/start-mission-orchestrator-worker.ps1'])) throw new Error('WINDOWS_AUTHORITY_WORKER_WATCHDOG_V2_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(workerWatchdog.WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATHS_V1) !== JSON.stringify(['scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1','scripts/windows/start-mission-orchestrator-worker.ps1'])) throw new Error('WINDOWS_AUTHORITY_WORKER_WATCHDOG_PATH_INVENTORY_MISMATCH');
-if (JSON.stringify(noFaff.WINDOWS_AUTHORITY_NO_FAFF_RESCUE_PATHS_V1) !== JSON.stringify(EXPECTED_NO_FAFF_PATHS)) throw new Error('WINDOWS_AUTHORITY_NO_FAFF_PATH_INVENTORY_MISMATCH');
+if (JSON.stringify(workerLogBounds.WINDOWS_AUTHORITY_WORKER_LOG_BOUNDS_PATHS_V1) !== JSON.stringify(EXPECTED_WORKER_LOG_BOUNDS_PATHS)) throw new Error('WINDOWS_AUTHORITY_WORKER_LOG_BOUNDS_PATH_INVENTORY_MISMATCH');
+if (JSON.stringify(noFaff.WINDOWS_AUTHORITY_NO_FAFF_RESCUE_PATHS_V1) !== JSON.stringify(EXPECTED_NO_FAFF_PATHS)) throw new Error('WINDOWS_AUTHORITY_NO_FAFF_RESCUE_PATH_INVENTORY_MISMATCH');
+if (JSON.stringify(mailboxCadence.WINDOWS_AUTHORITY_MAILBOX_CADENCE_PATHS_V1) !== JSON.stringify(EXPECTED_MAILBOX_CADENCE_PATHS)) throw new Error('WINDOWS_AUTHORITY_MAILBOX_CADENCE_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(mailboxRecoveryGuardian.WINDOWS_AUTHORITY_MAILBOX_RECOVERY_GUARDIAN_PATHS_V1) !== JSON.stringify(EXPECTED_MAILBOX_RECOVERY_GUARDIAN_PATHS)) throw new Error('WINDOWS_AUTHORITY_MAILBOX_RECOVERY_GUARDIAN_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(recoveryGuardian.WINDOWS_AUTHORITY_RECOVERY_MESH_GUARDIAN_PATHS_V1) !== JSON.stringify(EXPECTED_RECOVERY_GUARDIAN_PATHS)) throw new Error('WINDOWS_AUTHORITY_RECOVERY_GUARDIAN_PATH_INVENTORY_MISMATCH');
 if (JSON.stringify(recoveryMeshLaunchLiveness.WINDOWS_AUTHORITY_RECOVERY_MESH_LAUNCH_LIVENESS_PATHS_V1) !== JSON.stringify(EXPECTED_RECOVERY_MESH_LAUNCH_LIVENESS_PATHS)) throw new Error('WINDOWS_AUTHORITY_RECOVERY_MESH_LAUNCH_LIVENESS_PATH_INVENTORY_MISMATCH');
@@ -112,6 +144,11 @@ export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
   const lifeboatActivationResult = lifeboatActivation.analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview(input); if (lifeboatActivationResult.eligible) return lifeboatActivationResult;
   const legacyBackendMigrationResult = legacyBackendMigration.analyzeWindowsAuthorityLegacyBackendMigrationReviewV1(input); if (legacyBackendMigrationResult.eligible) return legacyBackendMigrationResult;
   const ignitionConvergenceResult = ignitionConvergence.analyzeWindowsAuthorityIgnitionConvergenceReview(input); if (ignitionConvergenceResult.eligible) return ignitionConvergenceResult;
+  const workerLogBoundsResult = workerLogBounds.analyzeWindowsAuthorityWorkerLogBoundsReviewV1(input); if (workerLogBoundsResult.eligible) return workerLogBoundsResult;
+  const missionWorkerCleanupResult = missionWorkerCleanup.analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input); if (missionWorkerCleanupResult.eligible) return missionWorkerCleanupResult;
+  const workerWatchdogV4Result = workerWatchdogV4.analyzeWindowsAuthorityWorkerWatchdogReviewV4(input); if (workerWatchdogV4Result.eligible) return workerWatchdogV4Result;
+  const workerWatchdogV3Result = workerWatchdogV3.analyzeWindowsAuthorityWorkerWatchdogReviewV3(input); if (workerWatchdogV3Result.eligible) return workerWatchdogV3Result;
+  const workerWatchdogV2Result = workerWatchdogV2.analyzeWindowsAuthorityWorkerWatchdogReviewV2(input); if (workerWatchdogV2Result.eligible) return workerWatchdogV2Result;
   const workerWatchdogResult = workerWatchdog.analyzeWindowsAuthorityWorkerWatchdogReview(input); if (workerWatchdogResult.eligible) return workerWatchdogResult;
   const recoveryMeshLaunchLivenessResult = recoveryMeshLaunchLiveness.analyzeWindowsAuthorityRecoveryMeshLaunchLivenessReviewV1(input); if (recoveryMeshLaunchLivenessResult.eligible) return recoveryMeshLaunchLivenessResult;
   const openClawRecoveryResult = openClawRecovery.analyzeWindowsAuthorityOpenClawRecoveryReview(input); if (openClawRecoveryResult.eligible) return openClawRecoveryResult;
@@ -122,6 +159,7 @@ export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
   const mobileRecoveryLifeboatInstallerResult = mobileRecoveryLifeboatInstaller.analyzeWindowsAuthorityMobileRecoveryLifeboatInstallerReview(input); if (mobileRecoveryLifeboatInstallerResult.eligible) return mobileRecoveryLifeboatInstallerResult;
   const forgeM3ExecutorResult = forgeM3Executor.analyzeWindowsAuthorityForgeM3ExecutorReview(input); if (forgeM3ExecutorResult.eligible) return forgeM3ExecutorResult;
   const forgePodmanPrerequisiteResult = forgePodmanPrerequisite.analyzeWindowsAuthorityForgePodmanPrerequisiteReview(input); if (forgePodmanPrerequisiteResult.eligible) return forgePodmanPrerequisiteResult;
+  const mailboxCadenceResult = mailboxCadence.analyzeWindowsAuthorityMailboxCadenceReviewV1(input); if (mailboxCadenceResult.eligible) return mailboxCadenceResult;
   const coreResult = core.analyzeWindowsAuthoritySpecialistReview(input); if (coreResult.eligible) return coreResult;
   const noFaffResult = noFaff.analyzeWindowsAuthorityNoFaffRescueReview(input); if (noFaffResult.eligible) return noFaffResult;
   const mailboxRecoveryGuardianResult = mailboxRecoveryGuardian.analyzeWindowsAuthorityMailboxRecoveryGuardianReview(input); if (mailboxRecoveryGuardianResult.eligible) return mailboxRecoveryGuardianResult;
