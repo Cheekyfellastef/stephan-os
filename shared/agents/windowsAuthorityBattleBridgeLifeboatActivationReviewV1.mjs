@@ -8,12 +8,15 @@ export const WINDOWS_AUTHORITY_BATTLE_BRIDGE_LIFEBOAT_ACTIVATION_PATHS_V1 = Obje
   'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
 ]);
 
-const ESCALATED_PATHS = Object.freeze([
+const HISTORIC_ESCALATED_PATHS = Object.freeze([
   'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
   'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
 ]);
+const IDEMPOTENT_ESCALATED_PATHS = Object.freeze([
+  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
+]);
 
-const EXPECTED_BLOBS = Object.freeze({
+const HISTORIC_EXPECTED_BLOBS = Object.freeze({
   'scripts/battle-bridge-control-plane-self-repair.test.mjs': 'f72094e4f92b7168768a5e38b7e43de07ff752a8',
   'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': 'a8e4b0dc13593017979b000e5caa7f7d97e2d98d',
   'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '1da7c432fd051f7b9249d881638d21b131fa98a4',
@@ -22,6 +25,11 @@ const EXPECTED_BLOBS = Object.freeze({
   'shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs': 'dbc82832cdf528ea144d21338971aa309d4ee667',
   'shared/agents/postSyncRuntimeRefreshCoordinator.mjs': 'e92065e6c0d61365ff6f1b7c8aec75200e5102b6',
 });
+const IDEMPOTENT_EXPECTED_BLOBS = Object.freeze({
+  ...HISTORIC_EXPECTED_BLOBS,
+  'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': 'd56f6a37969f2d58a572b0471ed7651063d14796',
+  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '8003ccbf2299c8530d39b86fba8b2e36c9114dcf',
+});
 
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
 const SOURCE_SCHEMA = 'stephanos.windows-authority-source.v1';
@@ -29,16 +37,32 @@ const SHA = /^[a-f0-9]{40}$/;
 const text = (value) => String(value ?? '').trim();
 const finding = (code, path) => Object.freeze({ severity: 'P0', code, summary: code, path });
 
-function escalationMatches(analysis) {
+function normalizedUnsupportedPaths(analysis) {
   const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
-  if (findings.length !== ESCALATED_PATHS.length) return false;
+  if (!findings.length) return null;
   if (!findings.every((item) => text(item?.severity).toUpperCase() === 'P0'
-    && text(item?.code) === 'unsupported-high-risk-surface')) return false;
-  const paths = [...new Set(findings.map((item) => text(item?.path)))].sort();
-  return JSON.stringify(paths) === JSON.stringify([...ESCALATED_PATHS].sort());
+    && text(item?.code) === 'unsupported-high-risk-surface')) return null;
+  return [...new Set(findings.map((item) => text(item?.path)))].sort();
 }
 
-function exactSource(source, repository, head, path) {
+function escalationProfile(analysis) {
+  const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
+  const paths = normalizedUnsupportedPaths(analysis);
+  if (!paths) return null;
+  if (findings.length === HISTORIC_ESCALATED_PATHS.length
+      && JSON.stringify(paths) === JSON.stringify([...HISTORIC_ESCALATED_PATHS].sort())
+      && paths.length === HISTORIC_ESCALATED_PATHS.length) return 'HISTORIC_ACTIVATION';
+  if (findings.length === IDEMPOTENT_ESCALATED_PATHS.length
+      && JSON.stringify(paths) === JSON.stringify([...IDEMPOTENT_ESCALATED_PATHS].sort())
+      && paths.length === IDEMPOTENT_ESCALATED_PATHS.length) return 'IDEMPOTENT_REINSTALL';
+  return null;
+}
+
+function expectedBlobsForProfile(profile) {
+  return profile === 'IDEMPOTENT_REINSTALL' ? IDEMPOTENT_EXPECTED_BLOBS : HISTORIC_EXPECTED_BLOBS;
+}
+
+function exactSource(source, repository, head, path, expectedBlobs) {
   return Boolean(source && typeof source === 'object' && !Array.isArray(source)
     && source.schemaVersion === SOURCE_SCHEMA
     && source.repository === repository
@@ -48,7 +72,7 @@ function exactSource(source, repository, head, path) {
     && Number.isSafeInteger(source.size)
     && source.size > 0
     && source.size <= 256 * 1024
-    && source.blobSha === EXPECTED_BLOBS[path]
+    && source.blobSha === expectedBlobs[path]
     && typeof source.content === 'string'
     && source.content.length > 0);
 }
@@ -92,6 +116,51 @@ function reviewInstaller(source, path, findings) {
   forbid(findings, source, path, /Invoke-Expression|\biex\b|powershell(?:\.exe)?\s+-Command/i, 'lifeboat-dynamic-shell-forbidden');
   forbid(findings, source, path, /git(?:\.exe)?\s+(?:push|reset|clean|rebase|checkout|switch|merge|stash|fetch)\b/i, 'lifeboat-git-mutation-forbidden');
   forbid(findings, source, path, /Restart-Computer|shutdown\.exe/i, 'lifeboat-pc-restart-forbidden');
+}
+
+function reviewIdempotentReinstall(source, path, findings) {
+  for (const [literal, code] of [
+    ['function Assert-ActivePayloadManifest', 'lifeboat-idempotent-active-manifest-proof-missing'],
+    ['function Assert-CanonicalScheduledTask', 'lifeboat-idempotent-task-proof-missing'],
+    ['Read-FreshHealthyHeartbeat -BankId $activeBank -ExpectedManifest', 'lifeboat-idempotent-fresh-heartbeat-proof-missing'],
+    ['Assert-ActivePayloadManifest -BankId $activeBank -ExpectedManifest', 'lifeboat-idempotent-active-manifest-binding-missing'],
+    ['Get-ScheduledTask -TaskName $taskName -ErrorAction Stop', 'lifeboat-idempotent-task-read-missing'],
+    ['$actions.Count -ne 1', 'lifeboat-idempotent-task-action-count-missing'],
+    ['$actions[0].Execute -ne $wscriptExe', 'lifeboat-idempotent-task-executable-proof-missing'],
+    ['$actions[0].Arguments -ne $expectedArguments', 'lifeboat-idempotent-task-arguments-proof-missing'],
+    ['$task.Principal.UserId -ne $CurrentUser', 'lifeboat-idempotent-task-principal-proof-missing'],
+    ["$task.Principal.LogonType -ne 'Interactive'", 'lifeboat-idempotent-task-logon-proof-missing'],
+    ["$task.Principal.RunLevel -ne 'Limited'", 'lifeboat-idempotent-task-runlevel-proof-missing'],
+    ["installDisposition = 'PROMOTED_CANDIDATE'", 'lifeboat-promotion-disposition-missing'],
+    ['changed = $true', 'lifeboat-promotion-change-proof-missing'],
+  ]) requireLiteral(findings, source, path, literal, code);
+
+  const branchStart = source.indexOf('if ($null -ne $activeState -and $manifestSha256 -eq [string]$activeState.manifestSha256) {');
+  const branchEnd = source.indexOf('\n$targetRoot = Join-Path $banksRoot $targetBank', branchStart);
+  if (!(branchStart >= 0 && branchEnd > branchStart)) {
+    findings.push(finding('lifeboat-idempotent-bounded-branch-missing', path));
+    return;
+  }
+  const branch = source.slice(branchStart, branchEnd);
+  for (const [literal, code] of [
+    ['Assert-CanonicalScheduledTask -CurrentUser $currentUser', 'lifeboat-idempotent-task-reproof-not-bound'],
+    ['Remove-Item -LiteralPath $stageRoot -Recurse -Force', 'lifeboat-idempotent-staging-cleanup-missing'],
+    ["installDisposition = 'ALREADY_CURRENT_HEALTHY'", 'lifeboat-idempotent-disposition-missing'],
+    ['changed = $false', 'lifeboat-idempotent-changed-false-missing'],
+    ['activeBankAfter = $activeBank', 'lifeboat-idempotent-active-bank-preservation-missing'],
+    ['scheduledTaskIdentityReproved = $true', 'lifeboat-idempotent-task-reproof-receipt-missing'],
+    ["if ($StartNow -and $PSCmdlet.ShouldProcess($taskName, 'Start existing canonical Battle Bridge recovery lifeboat task'))", 'lifeboat-idempotent-start-now-boundary-missing'],
+    ['Start-ScheduledTask -TaskName $taskName', 'lifeboat-idempotent-fixed-task-start-missing'],
+    ['activeBankOverwriteAllowed = $false', 'lifeboat-idempotent-active-bank-overwrite-denial-missing'],
+    ['dualBankOverwriteAllowed = $false', 'lifeboat-idempotent-dual-bank-overwrite-denial-missing'],
+    ['arbitraryShellAllowed = $false', 'lifeboat-idempotent-shell-denial-missing'],
+    ['gitMutationAllowed = $false', 'lifeboat-idempotent-git-denial-missing'],
+    ['sourceMutationAllowed = $false', 'lifeboat-idempotent-source-denial-missing'],
+    ['pcRestartAllowed = $false', 'lifeboat-idempotent-pc-restart-denial-missing'],
+    ['return', 'lifeboat-idempotent-terminal-return-missing'],
+  ]) requireLiteral(findings, branch, path, literal, code);
+  forbid(findings, branch, path, /Register-ScheduledTask/i, 'lifeboat-idempotent-task-reregistration-forbidden');
+  forbid(findings, branch, path, /Write-AtomicJson/i, 'lifeboat-idempotent-active-state-rewrite-forbidden');
 }
 
 function reviewWindowlessLauncher(source, path, findings) {
@@ -170,7 +239,8 @@ function reviewTestEvidence(source, path, findings) {
 export function analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview(input = {}) {
   const repository = text(input.repository);
   const sourceHead = text(input.sourceHead).toLowerCase();
-  const eligible = repository === 'Cheekyfellastef/stephan-os' && SHA.test(sourceHead) && escalationMatches(input.analysis);
+  const profile = escalationProfile(input.analysis);
+  const eligible = repository === 'Cheekyfellastef/stephan-os' && SHA.test(sourceHead) && profile !== null;
   if (!eligible) return Object.freeze({
     schemaVersion: SCHEMA,
     eligible: false,
@@ -190,17 +260,20 @@ export function analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview(inpu
     finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_SOURCE_REQUIRED',
   });
 
+  const expectedBlobs = expectedBlobsForProfile(profile);
   const findings = [];
   const proofRefs = [];
   for (const path of WINDOWS_AUTHORITY_BATTLE_BRIDGE_LIFEBOAT_ACTIVATION_PATHS_V1) {
     const candidates = input.sources.filter((source) => text(source?.path) === path);
-    if (candidates.length !== 1 || !exactSource(candidates[0], repository, sourceHead, path)) {
+    if (candidates.length !== 1 || !exactSource(candidates[0], repository, sourceHead, path, expectedBlobs)) {
       findings.push(finding('windows-authority-source-evidence-invalid', path));
       continue;
     }
     const source = candidates[0].content;
-    if (path === 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1') reviewInstaller(source, path, findings);
-    else if (path === 'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs') reviewWindowlessLauncher(source, path, findings);
+    if (path === 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1') {
+      reviewInstaller(source, path, findings);
+      if (profile === 'IDEMPOTENT_REINSTALL') reviewIdempotentReinstall(source, path, findings);
+    } else if (path === 'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs') reviewWindowlessLauncher(source, path, findings);
     else if (path === 'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs') reviewControlPlane(source, path, findings);
     else if (path === 'shared/agents/postSyncRuntimeRefreshCoordinator.mjs') reviewPostSync(source, path, findings);
     else reviewTestEvidence(source, path, findings);
