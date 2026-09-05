@@ -121,6 +121,8 @@ async function publishWorkerHeartbeat(home) {
     branch: 'main',
     headSha: HEAD,
     pid: 1234,
+    launchIdentityId: '1'.repeat(64),
+    workerStartedAtUtc: '2026-07-30T09:59:00.000Z',
   });
   await mkdir(path.dirname(paths.heartbeatPath), { recursive: true });
   await writeFile(paths.heartbeatPath, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
