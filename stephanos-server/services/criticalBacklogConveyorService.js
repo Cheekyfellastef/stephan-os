@@ -5,10 +5,10 @@ import path from 'node:path';
 
 import {
   CRITICAL_BACKLOG_DECISION,
-  DEFAULT_CRITICAL_BACKLOG,
   buildCriticalBacklogMissionInput,
   buildCriticalBacklogProjection,
 } from '../../shared/agents/criticalBacklogConveyor.mjs';
+import { SELF_HOSTING_CRITICAL_BACKLOG } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import {
   createSharedWorkspaceEventRecord,
   createSharedWorkspaceStatusRecord,
@@ -168,7 +168,7 @@ export async function publishCriticalBacklogProjection(projection, {
 }
 
 export async function ensureCriticalBacklogMission({
-  backlog = DEFAULT_CRITICAL_BACKLOG,
+  backlog = SELF_HOSTING_CRITICAL_BACKLOG,
   env = process.env,
   now = new Date(),
   paths = resolveCriticalBacklogRuntimePaths({ env }),
