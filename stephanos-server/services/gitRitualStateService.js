@@ -2,12 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { getLocalShellConfig } from '../config/localShellConfig.js';
+import { fixedBackendExecutable } from './fixedBackendExecutable.js';
 
 const DIST_PREFIX = 'apps/stephanos/dist/';
 const CONFLICT_CODES = new Set(['UU', 'AA', 'DD', 'AU', 'UA', 'DU', 'UD']);
 
 function runGit(args, { cwd, spawnSyncImpl = spawnSync } = {}) {
-  const result = spawnSyncImpl('git', args, {
+  const result = spawnSyncImpl(fixedBackendExecutable('git'), args, {
     cwd,
     encoding: 'utf8',
     windowsHide: true,
