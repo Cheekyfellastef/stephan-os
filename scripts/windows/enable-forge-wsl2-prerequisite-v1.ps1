@@ -15,6 +15,7 @@ $Repository = 'Cheekyfellastef/stephan-os'
 $MinimumWindowsBuild = 19043
 $MaximumWindowsBuildExclusive = 22000
 $RequiredWindowsArchitecture = 'X64'
+$RequiredFeatures = @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform')
 $WindowsCurrentVersionKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
 $RepoRoot = Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'
 $GitExe = 'C:\Program Files\Git\cmd\git.exe'
@@ -192,18 +193,18 @@ if (-not $PSCmdlet.ShouldProcess('Windows 10 WSL2 prerequisite', 'Enable only Mi
 }
 
 $featureResults = @()
-foreach ($feature in @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform')) {
-    $probe = Invoke-Fixed $DismExe @('/online', '/Get-FeatureInfo', "/FeatureName:$feature", '/English') -AllowFailure
+foreach ($Feature in $RequiredFeatures) {
+    $probe = Invoke-Fixed $DismExe @('/online', '/Get-FeatureInfo', "/FeatureName:$Feature", '/English') -AllowFailure
     $alreadyEnabled = $probe.ExitCode -eq 0 -and (($probe.Output -join "`n") -match '(?im)^\s*State\s*:\s*Enabled\s*$')
     if ($alreadyEnabled) {
-        $featureResults += [ordered]@{ feature = $feature; alreadyEnabled = $true; exitCode = 0 }
+        $featureResults += [ordered]@{ feature = $Feature; alreadyEnabled = $true; exitCode = 0 }
         continue
     }
-    $enable = Invoke-Fixed $DismExe @('/online', '/enable-feature', "/featurename:$feature", '/all', '/norestart') -AllowFailure
+    $enable = Invoke-Fixed $DismExe @('/online', '/enable-feature', "/featurename:$Feature", '/all', '/norestart') -AllowFailure
     if ($enable.ExitCode -notin @(0, 3010)) {
-        Exit-Blocked 'WSL2_WINDOWS_FEATURE_ENABLE_FAILED' @{ feature = $feature; exitCode = $enable.ExitCode } -ToFile
+        Exit-Blocked 'WSL2_WINDOWS_FEATURE_ENABLE_FAILED' @{ feature = $Feature; exitCode = $enable.ExitCode } -ToFile
     }
-    $featureResults += [ordered]@{ feature = $feature; alreadyEnabled = $false; exitCode = $enable.ExitCode }
+    $featureResults += [ordered]@{ feature = $Feature; alreadyEnabled = $false; exitCode = $enable.ExitCode }
 }
 
 if ($featureResults | Where-Object { -not $_.alreadyEnabled }) {
