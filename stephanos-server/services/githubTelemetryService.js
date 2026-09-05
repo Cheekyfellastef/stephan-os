@@ -3,6 +3,7 @@ import { resolveGithubRepoConfig } from './githubPrEvidenceService.js';
 import { resolveGithubAuth, resolveGithubGhCliAuth } from './githubAuthResolver.js';
 
 export const GITHUB_TELEMETRY_SCHEMA = 'stephanos.github.telemetry.v1';
+export const DEFAULT_GITHUB_TELEMETRY_REQUEST_TIMEOUT_MS = 3_000;
 const WORKFLOW_STATES = new Set(['running', 'queued', 'failed', 'passed', 'cancelled']);
 function text(value, fallback = '') { const normalized = String(value ?? '').trim(); return normalized || fallback; }
 function list(value) { return Array.isArray(value) ? value : []; }
@@ -68,7 +69,16 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     if (['success', 'passed'].includes(conclusion)) status = 'passed';
     if (['failure', 'failed', 'timed_out', 'action_required'].includes(conclusion)) status = 'failed';
     if (conclusion === 'cancelled') status = 'cancelled';
-    return { id: text(run.id, `workflow-${index + 1}`), name: text(run.name, 'unknown'), status, prNumber: Number(run.prNumber || run.pull_requests?.[0]?.number || 0) || null, goalId: text(run.goalId), url: text(run.url || run.html_url), updatedAt: text(run.updatedAt || run.updated_at || run.run_started_at) };
+    return {
+      id: text(run.id, `workflow-${index + 1}`),
+      name: text(run.name, 'unknown'),
+      status,
+      prNumber: Number(run.prNumber || run.pull_requests?.[0]?.number || 0) || null,
+      headSha: text(run.headSha || run.head_sha, ''),
+      goalId: text(run.goalId),
+      url: text(run.url || run.html_url),
+      updatedAt: text(run.updatedAt || run.updated_at || run.run_started_at),
+    };
   });
   const blockers = [];
   if (!available) blockers.push('github_adapter_unavailable');
@@ -92,18 +102,52 @@ export function normalizeGithubTelemetry(raw = {}, options = {}) {
     mergeAllowed: false,
   };
 }
-async function githubJson(url, auth, fetchImpl = fetch) {
-  const response = await fetchImpl(url, { headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${auth.token}`, 'User-Agent': 'stephanos-readonly-github-telemetry' } });
-  if (!response.ok) { const error = new Error(`GitHub API request failed (${response.status})`); error.status = response.status; throw error; }
-  return response.json();
+function githubRequestTimeoutMs(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.floor(parsed)
+    : DEFAULT_GITHUB_TELEMETRY_REQUEST_TIMEOUT_MS;
+}
+async function githubJson(url, auth, options = {}) {
+  const fetchImpl = options.fetchImpl || fetch;
+  const timeoutMs = githubRequestTimeoutMs(options.requestTimeoutMs);
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      controller?.abort();
+      const error = new Error(`GitHub telemetry request timed out after ${timeoutMs}ms`);
+      error.code = 'github-telemetry-timeout';
+      reject(error);
+    }, timeoutMs);
+  });
+  try {
+    const response = await Promise.race([
+      Promise.resolve().then(() => fetchImpl(url, {
+        headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${auth.token}`, 'User-Agent': 'stephanos-readonly-github-telemetry' },
+        ...(controller ? { signal: controller.signal } : {}),
+      })),
+      timeout,
+    ]);
+    if (!response.ok) { const error = new Error(`GitHub API request failed (${response.status})`); error.status = response.status; throw error; }
+    return await Promise.race([
+      Promise.resolve().then(() => response.json()),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 async function readGithubTelemetryWithAuth(repoConfig, auth, options = {}) {
   const { owner, repo } = repoConfig;
-  const fetchImpl = options.fetchImpl || fetch;
+  const requestOptions = {
+    fetchImpl: options.fetchImpl || fetch,
+    requestTimeoutMs: options.requestTimeoutMs,
+  };
   const [notifications, prs, workflowRuns] = await Promise.all([
-    githubJson('https://api.github.com/notifications?all=false&participating=false', auth, fetchImpl),
-    githubJson(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=100`, auth, fetchImpl),
-    githubJson(`https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=50`, auth, fetchImpl),
+    githubJson('https://api.github.com/notifications?all=false&participating=false', auth, requestOptions),
+    githubJson(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=100`, auth, requestOptions),
+    githubJson(`https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=50`, auth, requestOptions),
   ]);
   return normalizeGithubTelemetry({ available: true, source: 'github-api', authAuthority: auth.authority, repository: repoConfig, notifications, pullRequests: prs, workflows: workflowRuns.workflow_runs || [] }, options);
 }

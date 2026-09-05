@@ -1,12 +1,39 @@
 name: Independent Merge Security Review
+run-name: stephanos-independent-review-pr-${{ inputs.pr_number || github.event.pull_request.number }}-head-${{ inputs.source_head || github.event.pull_request.head.sha }}-binding-${{ inputs.handoff_binding_sha256 || 'legacy-pull-request-target' }}
 
 on:
   pull_request_target:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Exact pull request number admitted by the provider-neutral review coordinator
+        required: true
+        type: string
+      source_head:
+        description: Exact pull request head SHA admitted by the provider-neutral review coordinator
+        required: true
+        type: string
+      base_sha:
+        description: Exact canonical main SHA admitted by the provider-neutral review coordinator
+        required: true
+        type: string
+      head_branch:
+        description: Exact same-repository pull request head branch
+        required: true
+        type: string
+      handoff_binding_sha256:
+        description: Exact Stage-1 provider-neutral handoff binding SHA-256
+        required: true
+        type: string
+      handoff_run_receipt_sha256:
+        description: Exact immutable coordinator handoff-run receipt SHA-256
+        required: true
+        type: string
 
 concurrency:
-  group: independent-merge-security-review-${{ github.event.pull_request.number }}
+  group: independent-merge-security-review-${{ inputs.pr_number || github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions: {}
@@ -15,7 +42,7 @@ jobs:
   independent-security-review:
     name: independent-security-review
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     permissions:
       actions: read
       contents: read
@@ -23,33 +50,107 @@ jobs:
       pull-requests: read
     steps:
       - name: Check out trusted exact-base reviewer
+        if: github.event_name == 'pull_request_target'
         uses: actions/checkout@v4
+        timeout-minutes: 4
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
           fetch-depth: 1
+
+      - name: Check out trusted current-main reviewer
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        timeout-minutes: 4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
       - uses: actions/setup-node@v4
+        timeout-minutes: 4
         with:
           node-version: 24
-      - name: Prove bounded Windows authority specialist policy
+
+      - name: Resolve exact immutable coordinator handoff artifact
+        id: handoff
+        if: github.event_name == 'workflow_dispatch'
+        timeout-minutes: 4
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/resolve-independent-review-handoff-artifact-v1.mjs
+
+      - name: Download exact immutable coordinator handoff receipt
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/download-artifact@v4
+        timeout-minutes: 4
+        with:
+          name: ${{ steps.handoff.outputs.artifact_name }}
+          path: ${{ runner.temp }}
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.handoff.outputs.coordinator_run_id }}
+
+      - name: Build exact workflow-dispatch review preflight
+        if: github.event_name == 'workflow_dispatch'
+        timeout-minutes: 4
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STEPHANOS_REVIEW_HANDOFF_RUN_RECEIPT_PATH: ${{ runner.temp }}/independent-review-handoff-run-receipt.json
+          STEPHANOS_INDEPENDENT_REVIEW_DISPATCH_PREFLIGHT_PATH: ${{ runner.temp }}/independent-review-workflow-dispatch-preflight.json
+        run: node scripts/prepare-independent-review-workflow-dispatch-v1.mjs
+
+      - name: Prove bounded specialist policy
+        timeout-minutes: 5
         run: >-
           node --test
           shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs
           shared/agents/windowsAuthoritySpecialistBoundaryV1.test.mjs
+          shared/agents/qualifiedSpecialistReviewArtifactV1.test.mjs
+          shared/agents/openClawBuilderProviderSpecialistReviewV1.test.mjs
           scripts/independent-merge-security-review-with-windows-specialist-v1.test.mjs
-      # The specialist wrapper preserves scripts/independent-merge-security-review-v2.mjs as the trusted base reviewer.
+          scripts/independent-merge-security-review-with-openclaw-specialist-v1.test.mjs
+
       - name: Review the complete exact-head and exact-base diff without mutation authority
+        timeout-minutes: 15
         env:
           GH_TOKEN: ${{ github.token }}
           STEPHANOS_INDEPENDENT_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/independent-review-result.json
-        run: node scripts/independent-merge-security-review-with-windows-specialist-v1.mjs
+          STEPHANOS_INDEPENDENT_REVIEW_DISPATCH_PREFLIGHT_PATH: ${{ runner.temp }}/independent-review-workflow-dispatch-preflight.json
+        run: node scripts/independent-merge-security-review-entry-v1.mjs
+
       - name: Upload the exact-run immutable independent review result
         id: independent-review-artifact
         if: ${{ always() }}
+        timeout-minutes: 4
         uses: actions/upload-artifact@v4
         with:
           name: stephanos-independent-review-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/independent-review-result.json
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: false
+          include-hidden-files: false
+
+      - name: Surface terminal exact-head findings or pre-artifact failure
+        id: terminal_findings
+        if: ${{ always() }}
+        timeout-minutes: 4
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STEPHANOS_INDEPENDENT_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/independent-review-result.json
+          STEPHANOS_TERMINAL_REVIEW_PR: ${{ inputs.pr_number || github.event.pull_request.number }}
+          STEPHANOS_TERMINAL_REVIEW_BRANCH: ${{ inputs.head_branch || github.event.pull_request.head.ref }}
+          STEPHANOS_TERMINAL_REVIEW_HEAD: ${{ inputs.source_head || github.event.pull_request.head.sha }}
+          STEPHANOS_TERMINAL_REVIEW_BASE: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
+        run: node scripts/publish-independent-review-terminal-findings-v1.mjs
+
+      - name: Upload exact-run pre-artifact failure receipt
+        if: ${{ always() && steps.terminal_findings.outputs.decision == 'PUBLISH_PRE_ARTIFACT_FAILURE_RECEIPT' }}
+        timeout-minutes: 4
+        uses: actions/upload-artifact@v4
+        with:
+          name: stephanos-independent-review-pre-artifact-failure-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/independent-review-pre-artifact-failure.json
           if-no-files-found: error
           retention-days: 30
           overwrite: false
