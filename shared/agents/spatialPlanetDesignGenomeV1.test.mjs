@@ -99,3 +99,31 @@ test('binds only the exact planet and genome version requested by the build orde
   const wrongVersion = planSpatialPlanetDesignGenomeBinding(validBuildOrder({ designGenomeVersion: 'genome-v2' }), created.genome);
   assert.equal(wrongVersion.status, 'BLOCKED_GENOME_VERSION_MISMATCH');
 });
+
+test('fails closed on accessor-backed and throwing Spatial Genome input without invoking getters', () => {
+  let getterCalls = 0;
+  const accessorInput = validGenomeInput();
+  Object.defineProperty(accessorInput.dimensions, 'explorationRhythm', {
+    enumerable: true,
+    configurable: true,
+    get() {
+      getterCalls += 1;
+      throw new Error('must not execute');
+    },
+  });
+
+  const created = createSpatialPlanetDesignGenome(accessorInput);
+  assert.equal(created.valid, false);
+  assert.equal(created.genome, null);
+  assert.equal(getterCalls, 0);
+
+  const validation = validateSpatialPlanetDesignGenome(accessorInput);
+  assert.equal(validation.valid, false);
+  assert.equal(getterCalls, 0);
+
+  const target = validGenomeInput();
+  const revoked = Proxy.revocable(target, {});
+  revoked.revoke();
+  assert.doesNotThrow(() => createSpatialPlanetDesignGenome(revoked.proxy));
+  assert.equal(createSpatialPlanetDesignGenome(revoked.proxy).valid, false);
+});
