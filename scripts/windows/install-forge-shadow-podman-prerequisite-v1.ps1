@@ -157,6 +157,7 @@ $ObservedWsl2Evidence = Get-Wsl2Evidence
 if (-not $ObservedWsl2Evidence) { Emit-Blocked 'WSL2_NOT_AVAILABLE' }
 
 if (-not $OperatorApproved -and -not $WhatIfPreference) { Emit-Blocked 'EXACT_RUNTIME_OPERATOR_APPROVAL_REQUIRED' }
+if ($OperatorApproved -and -not $WhatIfPreference) { $ConfirmPreference = 'None' }
 
 $existingVersion = Get-PodmanVersion $PodmanUserExe
 if ($existingVersion) {

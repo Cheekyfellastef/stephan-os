@@ -7,7 +7,7 @@ export * from './battle-bridge-worker-watchdog-acceptance-core-v1.mjs';
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const BOOTSTRAP_STATUS_ATTEMPTS = 30;
 const BOOTSTRAP_STATUS_INTERVAL_MS = 1_000;
-const TASK_IDLE_ATTEMPTS = 30;
+const TASK_IDLE_ATTEMPTS = core.WORKER_WATCHDOG_TASK_IDLE_ATTEMPTS;
 const TASK_IDLE_INTERVAL_MS = 1_000;
 const DEGRADED_BASELINE_BLOCKERS = new Set([
   'INITIAL_WORKER_PROBE_FAILED',
