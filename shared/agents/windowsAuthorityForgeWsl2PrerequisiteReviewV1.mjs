@@ -49,7 +49,7 @@ function reviewWsl2Prerequisite(source, path, findings) {
     ["$WslExe = Join-Path $env:SystemRoot 'System32\\wsl.exe'", 'forge-wsl2-wsl-not-fixed', 'WSL executable must remain fixed.'],
     ["'--update'", 'forge-wsl2-update-not-fixed', 'WSL update must remain fixed.'],
     ["'--set-default-version', '2'", 'forge-wsl2-default-version-not-fixed', 'Default WSL version must remain fixed to 2.'],
-    ["blocker = 'FORGE_WSL2_REBOOT_REQUIRED'", 'forge-wsl2-reboot-blocker-missing', 'A required reboot must be returned as a blocker rather than performed.'],
+    ["Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_REBOOT_REQUIRED'", 'forge-wsl2-reboot-blocker-missing', 'A required reboot must be returned as a blocker rather than performed.'],
     ['rebootPerformed = $false', 'forge-wsl2-reboot-authority-not-zero', 'The WSL prerequisite must not reboot the remote host itself.'],
     ['podmanMutation = $false', 'forge-wsl2-podman-authority-not-zero', 'WSL feature admission must not mutate Podman.'],
     ['forgeRuntimeMutation = $false', 'forge-wsl2-forge-authority-not-zero', 'WSL feature admission must not mutate Forge runtime.'],
@@ -63,7 +63,7 @@ function reviewWsl2Prerequisite(source, path, findings) {
   ]) requireLiteral(findings, source, literal, code, summary, path);
 
   requirePattern(findings, source, /Start-Process\s+-FilePath\s+\$PowerShellExe[\s\S]*-ArgumentList\s+\$arguments[\s\S]*-Verb\s+RunAs/, 'forge-wsl2-elevation-not-source-bound', 'Elevation must invoke only fixed PowerShell with the fixed source-controlled self-elevation argument set.', path);
-  requirePattern(findings, source, /&\s+\$DismExe\s+@\(\s*'\/online',[\s\S]*"\/featurename:\$Feature"[\s\S]*'\/norestart'/, 'forge-wsl2-dism-invocation-not-fixed', 'DISM must be restricted to the admitted feature set with no restart.', path);
+  requirePattern(findings, source, /Invoke-Fixed\s+\$DismExe\s+@\(\s*'\/online',\s*'\/enable-feature',\s*"\/featurename:\$Feature",\s*'\/all',\s*'\/norestart'\s*\)\s+-AllowFailure/, 'forge-wsl2-dism-invocation-not-fixed', 'DISM must be restricted to the admitted feature set with no restart.', path);
 
   for (const [pattern, code, summary] of [
     [/Invoke-Expression|ScriptBlock::Create|Start-Job|Invoke-Command/i, 'forge-wsl2-dynamic-execution-forbidden', 'Dynamic execution remains forbidden.'],
