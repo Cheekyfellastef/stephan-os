@@ -116,9 +116,14 @@ export function normalizeCodexBankedResetStatusResult(raw = {}, command = {}) {
   const expiryTexts = safeTextList(result.expiryTexts, { limit: 12, itemLimit: 220 });
   const resetButtons = safeTextList(result.resetButtons, { limit: 12, itemLimit: 120 });
   const usageSurfaceMatched = result.usageSurfaceMatched === true;
+  const usageSurfaceKind = [
+    'authenticated-desktop-codex-usage',
+    'authenticated-edge-codex-analytics',
+  ].includes(result.usageSurfaceKind) ? result.usageSurfaceKind : '';
   const ok = result.ok === true
     && result.finalVerdict === 'CODEX_BANKED_RESET_STATUS_READY'
     && usageSurfaceMatched
+    && Boolean(usageSurfaceKind)
     && result.pressAttempted !== true
     && Number(result.pressCount || 0) === 0;
   return Object.freeze({
@@ -133,6 +138,7 @@ export function normalizeCodexBankedResetStatusResult(raw = {}, command = {}) {
     matchedUsageControl: sanitizeText(result.matchedUsageControl, 160),
     matchedUsageLabel: sanitizeText(result.matchedUsageLabel, 160),
     usageControlResolution: sanitizeText(result.usageControlResolution, 80),
+    usageSurfaceKind,
     navigationAttempted: result.navigationAttempted === true,
     navigationRetryCount: Math.max(0, Math.min(1, Number(result.navigationRetryCount || 0))),
     profileMenuOpened: result.profileMenuOpened === true,

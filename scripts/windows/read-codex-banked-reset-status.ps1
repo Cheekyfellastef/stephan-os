@@ -59,6 +59,16 @@ try {
     Block 'BLOCKED_RESET_STATUS_UI_AUTOMATION_UNAVAILABLE' @{ error = Convert-ToSafeText $_.Exception.Message 300 }
 }
 
+$usageEvidenceModulePath = Join-Path $PSScriptRoot 'codex-usage-surface-evidence.psm1'
+if (-not (Test-Path -LiteralPath $usageEvidenceModulePath -PathType Leaf)) {
+    Block 'BLOCKED_RESET_STATUS_EVIDENCE_MODULE_MISSING'
+}
+try {
+    Import-Module $usageEvidenceModulePath -Force -ErrorAction Stop
+} catch {
+    Block 'BLOCKED_RESET_STATUS_EVIDENCE_MODULE_INVALID' @{ error = Convert-ToSafeText $_.Exception.Message 300 }
+}
+
 $root = [System.Windows.Automation.AutomationElement]::RootElement
 if ($null -eq $root) { Block 'BLOCKED_RESET_STATUS_DESKTOP_ROOT_UNAVAILABLE' }
 
@@ -74,10 +84,10 @@ foreach ($window in $topWindows) {
         $processName = ''
         try { $processName = (Get-Process -Id $processId -ErrorAction Stop).ProcessName } catch { continue }
         if ($allowedProcessNames -notcontains $processName) { continue }
-        if ($windowName -notmatch '(?i)codex|chatgpt|openai') { continue }
         $windowCandidates += [pscustomobject]@{ Element = $window; Name = $windowName; ProcessName = $processName; ProcessId = $processId }
     } catch { continue }
 }
+$windowCandidates = @(Select-CodexUniqueProcessCandidates -Candidates @($windowCandidates))
 
 if ($windowCandidates.Count -eq 0) {
     Block 'BLOCKED_RESET_STATUS_AUTHENTICATED_APP_WINDOW_NOT_FOUND' @{
@@ -85,13 +95,6 @@ if ($windowCandidates.Count -eq 0) {
         appWindowFound = $false
     }
 }
-if ($windowCandidates.Count -ne 1) {
-    Block 'BLOCKED_RESET_STATUS_MULTIPLE_APP_WINDOWS' @{
-        desktopInteractive = $true
-        appWindowFound = $true
-    }
-}
-
 function Get-SurfaceSnapshot([System.Windows.Automation.AutomationElement]$Surface) {
     $elements = $Surface.FindAll([System.Windows.Automation.TreeScope]::Descendants, $trueCondition)
     $items = @()
@@ -100,9 +103,22 @@ function Get-SurfaceSnapshot([System.Windows.Automation.AutomationElement]$Surfa
             $name = Convert-ToSafeText $element.Current.Name 220
             if (-not $name) { continue }
             $typeName = Convert-ToSafeText $element.Current.ControlType.ProgrammaticName 100
+            $automationId = Convert-ToSafeText $element.Current.AutomationId 160
+            $value = ''
+            $valuePattern = $null
+            try {
+                if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern)) {
+                    $typedValuePattern = [System.Windows.Automation.ValuePattern]$valuePattern
+                    $value = Convert-ToSafeText $typedValuePattern.Current.Value 500
+                }
+            } catch {
+                $value = ''
+            }
             $items += [pscustomobject]@{
                 Name = $name
                 Type = $typeName
+                AutomationId = $automationId
+                Value = $value
                 Enabled = [bool]$element.Current.IsEnabled
                 Offscreen = [bool]$element.Current.IsOffscreen
             }
@@ -124,19 +140,41 @@ function Get-ProcessSnapshot([int]$ProcessId) {
     return @($items)
 }
 
-$selected = $windowCandidates[0]
-$snapshot = Get-ProcessSnapshot $selected.ProcessId
-$meterTexts = @($snapshot | Where-Object {
-    $_.Name -match '\b\d{1,3}\s*%' -and $_.Name -match '(?i)usage|remaining|meter|limit|codex|weekly|five.day|5.day'
-} | Select-Object -ExpandProperty Name -Unique -First 6)
-$expiryTexts = @($snapshot | Where-Object {
-    $_.Name -match '(?i)expire|expiry|expires|banked reset|rate.limit reset'
-} | Select-Object -ExpandProperty Name -Unique -First 12)
-$resetButtons = @($snapshot | Where-Object {
-    $_.Type -match 'ControlType\.(Button|MenuItem|Hyperlink|ListItem)' -and $_.Enabled -and -not $_.Offscreen -and
-    $_.Name -match '(?i)\b(redeem|apply|use|reset)\b' -and
-    $_.Name -notmatch '(?i)billing|purchase|buy credits|add credits|auto.?top.?up'
-} | Select-Object -ExpandProperty Name -Unique -First 12)
+$matchingUsageWindows = @()
+foreach ($candidate in $windowCandidates) {
+    $candidateSnapshot = Get-ProcessSnapshot $candidate.ProcessId
+    $candidateEvidence = Resolve-CodexUsageSurfaceEvidence -Snapshot @($candidateSnapshot) -ProcessName $candidate.ProcessName
+    if ($candidateEvidence.valid -eq $true) {
+        $matchingUsageWindows += [pscustomobject]@{
+            Window = $candidate
+            Snapshot = $candidateSnapshot
+            Evidence = $candidateEvidence
+        }
+    }
+}
+
+if ($matchingUsageWindows.Count -eq 0) {
+    Block 'BLOCKED_RESET_STATUS_METER_NOT_FOUND' @{
+        desktopInteractive = $true
+        appWindowFound = $true
+        proofRefs = @('battle-bridge-ui-automation-read-only', 'same-process-usage-surface-scanned', 'usage-surface-semantic-proof-required')
+    }
+}
+if ($matchingUsageWindows.Count -ne 1) {
+    Block 'BLOCKED_RESET_STATUS_MULTIPLE_USAGE_WINDOWS' @{
+        desktopInteractive = $true
+        appWindowFound = $true
+        proofRefs = @('battle-bridge-ui-automation-read-only', 'same-process-usage-surface-scanned', 'usage-surface-ambiguity-failed-closed')
+    }
+}
+
+$selectedMatch = $matchingUsageWindows[0]
+$selected = $selectedMatch.Window
+$snapshot = @($selectedMatch.Snapshot)
+$usageEvidence = $selectedMatch.Evidence
+$meterTexts = @($usageEvidence.meterSummary)
+$expiryTexts = @($usageEvidence.expiryTexts)
+$resetButtons = @($usageEvidence.resetButtons)
 $activeTask = @($snapshot | Where-Object {
     $_.Name -match '(?i)(codex|task|job).*(running|working|in progress)|running.*(codex|task|job)'
 }).Count -gt 0
@@ -187,9 +225,10 @@ Write-Outcome ([ordered]@{
     appWindowFound = $true
     usageSurfaceMatched = $true
     matchedWindow = Convert-ToSafeText $selected.Name 160
+    usageSurfaceKind = Convert-ToSafeText $usageEvidence.surfaceKind 80
     meterSummary = Convert-ToSafeText ($meterTexts -join ' | ') 300
     expiryTexts = @($expiryTexts | ForEach-Object { Convert-ToSafeText $_ 220 })
     resetButtons = @($resetButtons | ForEach-Object { Convert-ToSafeText $_ 120 })
     activeCodexTask = [bool]$activeTask
-    proofRefs = @('battle-bridge-ui-automation-read-only', 'same-process-usage-surface-scanned', 'codex-usage-surface-observed')
+    proofRefs = @('battle-bridge-ui-automation-read-only', 'same-process-usage-surface-scanned', 'codex-usage-surface-observed') + @($usageEvidence.proofRefs)
 }) 0

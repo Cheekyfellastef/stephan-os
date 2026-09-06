@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'scripts/windows/codex-banked-reset-ui-navigation.psm1'
+      - 'scripts/windows/codex-usage-surface-evidence.psm1'
+      - 'scripts/windows/test-codex-usage-surface-evidence.ps1'
       - 'scripts/windows/compat/codex-banked-reset-ui-navigation.psm1'
       - 'scripts/windows/read-codex-banked-reset-status-with-navigation.ps1'
       - 'scripts/windows/invoke-codex-banked-reset-ui-with-navigation.ps1'
@@ -39,6 +41,8 @@ jobs:
         run: |
           $files = @(
             'scripts/windows/codex-banked-reset-ui-navigation.psm1',
+            'scripts/windows/codex-usage-surface-evidence.psm1',
+            'scripts/windows/test-codex-usage-surface-evidence.ps1',
             'scripts/windows/compat/codex-banked-reset-ui-navigation.psm1',
             'scripts/windows/read-codex-banked-reset-status-with-navigation.ps1',
             'scripts/windows/invoke-codex-banked-reset-ui-with-navigation.ps1',
@@ -58,6 +62,10 @@ jobs:
               throw "PowerShell parse failed: $file"
             }
           }
+
+      - name: Run usage-surface adversarial fixtures
+        shell: pwsh
+        run: ./scripts/windows/test-codex-usage-surface-evidence.ps1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
