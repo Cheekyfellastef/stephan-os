@@ -8,3 +8,7 @@ node_modules/
 # OpenClaw runtime workspace (operator memory/identity, ignored source-adjacent runtime state)
 runtime/openclaw-workspace/
 .stephanos/build-concierge/
+
+# Local licensed/proprietary VR reference packages and generated manifests
+VR-Research-Lab/private-reference-packages/
+VR-Research-Lab/local-manifests/
