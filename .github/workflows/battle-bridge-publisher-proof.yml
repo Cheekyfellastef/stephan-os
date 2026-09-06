@@ -38,6 +38,9 @@ jobs:
       - name: Monitor multiplexer proof
         run: npm run stephanos:monitor-multiplexer:test
 
+      - name: ChatGPT monitor admission boundary proof
+        run: npm run stephanos:monitor-admission:test
+
       - name: Monitor multiplexer canary proof
         id: monitor-canary-proof
         run: npm run stephanos:monitor-multiplexer:canary:test 2>&1 | tee monitor-multiplexer-canary-proof.log
