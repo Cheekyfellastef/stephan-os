@@ -153,7 +153,7 @@ jobs:
         if: >-
           github.event_name == 'workflow_run' &&
           github.event.workflow_run.workflow_id == 318073448 &&
-          github.event.workflow_run.conclusion == 'success'
+          contains(fromJSON('["success","failure"]'), github.event.workflow_run.conclusion)
         uses: actions/download-artifact@v4
         with:
           name: stephanos-independent-review-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}
@@ -171,7 +171,7 @@ jobs:
           STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY: 'true'
           STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ inputs.pr_number || '' }}
           STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
-          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.workflow_id == 318073448 && github.event.workflow_run.conclusion == 'success' }}
+          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.workflow_id == 318073448 && contains(fromJSON('["success","failure"]'), github.event.workflow_run.conclusion) }}
           STEPHANOS_TRIGGER_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/triggering-independent-review/independent-review-result.json
           STEPHANOS_TRIGGER_REVIEW_RUN_ID: ${{ github.event.workflow_run.id || '' }}
           STEPHANOS_TRIGGER_REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
@@ -233,7 +233,7 @@ jobs:
           steps.recheck_current_main.outputs.targets != '[]' &&
           github.event_name == 'workflow_run' &&
           github.event.workflow_run.workflow_id == 318073448 &&
-          github.event.workflow_run.conclusion == 'success'
+          contains(fromJSON('["success","failure"]'), github.event.workflow_run.conclusion)
         uses: actions/download-artifact@v4
         with:
           name: stephanos-independent-review-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}
@@ -249,7 +249,7 @@ jobs:
           STEPHANOS_EXACT_HEAD_REVIEW_PR: ${{ matrix.target.prNumber }}
           STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN: ${{ github.repository_owner }}
           STEPHANOS_REVIEW_RECEIPT_TIMEOUT_MINUTES: '10'
-          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.workflow_id == 318073448 && github.event.workflow_run.conclusion == 'success' }}
+          STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.workflow_id == 318073448 && contains(fromJSON('["success","failure"]'), github.event.workflow_run.conclusion) }}
           STEPHANOS_TRIGGER_REVIEW_ARTIFACT_PATH: ${{ runner.temp }}/triggering-independent-review/independent-review-result.json
           STEPHANOS_TRIGGER_REVIEW_RUN_ID: ${{ github.event.workflow_run.id || '' }}
           STEPHANOS_TRIGGER_REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}

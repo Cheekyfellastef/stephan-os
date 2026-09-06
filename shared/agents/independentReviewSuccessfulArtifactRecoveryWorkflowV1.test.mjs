@@ -79,3 +79,12 @@ test('workflow-run artifact consumption binds the immutable canonical workflow i
   assert.doesNotMatch(workflow, /github\.event\.workflow_run\.path/);
   assert.equal(workflow.split(staticRunNameCheck).length - 1, 0);
 });
+
+test('workflow-run artifact intake recovers terminal artifacts from both success and failure conclusions', () => {
+  const workflow = readWorkflow();
+  const recoverableConclusionCheck = 'contains(fromJSON(\'["success","failure"]\'), github.event.workflow_run.conclusion)';
+
+  assert.equal(workflow.split(recoverableConclusionCheck).length - 1, 4);
+  assert.doesNotMatch(workflow, /github\.event\.workflow_run\.conclusion == 'success'/);
+  assert.doesNotMatch(workflow, /contains\(fromJSON\('\["success","failure","cancelled"\]'\)/);
+});
