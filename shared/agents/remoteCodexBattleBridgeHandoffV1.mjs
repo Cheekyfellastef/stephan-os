@@ -92,13 +92,20 @@ function validateExactHeadProof(exactHeadProof, { repository, expectedHead } = {
       || String(exactHeadProof.expectedHead).toLowerCase() !== String(expectedHead || '').toLowerCase()) {
     return blocked('REMOTE_CODEX_EXACT_HEAD_PROOF_HEAD_MISMATCH');
   }
-  if (!['PULL_REQUEST_HEAD', 'MERGED_MAIN'].includes(exactHeadProof.proofTarget)) return blocked('REMOTE_CODEX_EXACT_HEAD_PROOF_TARGET_INVALID');
+  if (!['PULL_REQUEST_HEAD', 'PULL_REQUEST_HEAD_BASE_BOUND', 'MERGED_MAIN'].includes(exactHeadProof.proofTarget)) return blocked('REMOTE_CODEX_EXACT_HEAD_PROOF_TARGET_INVALID');
   const pullRequestHead = String(exactHeadProof.pullRequestHead || '').toLowerCase();
   const mergeCommitHead = String(exactHeadProof.mergeCommitHead || '').toLowerCase();
   const githubMainHead = String(exactHeadProof.githubMainHead || '').toLowerCase();
   if (exactHeadProof.proofTarget === 'PULL_REQUEST_HEAD'
       && (pullRequestHead || mergeCommitHead || githubMainHead || exactHeadProof.mergeCommitIncluded !== false)) {
     return blocked('REMOTE_CODEX_EXACT_HEAD_PROOF_PULL_REQUEST_FIELDS_INVALID');
+  }
+  if (exactHeadProof.proofTarget === 'PULL_REQUEST_HEAD_BASE_BOUND'
+      && (pullRequestHead !== String(expectedHead).toLowerCase()
+        || !SHA40.test(githubMainHead)
+        || mergeCommitHead
+        || exactHeadProof.mergeCommitIncluded !== false)) {
+    return blocked('REMOTE_CODEX_EXACT_HEAD_PROOF_PULL_REQUEST_BASE_BINDING_INVALID');
   }
   if (exactHeadProof.proofTarget === 'MERGED_MAIN'
       && (![pullRequestHead, mergeCommitHead, githubMainHead].every((head) => SHA40.test(head))
@@ -317,7 +324,16 @@ export function validateRemoteCodexBattleBridgeAttachment(handoff, attachment, {
   if (attachment?.surfaceId !== 'stephanos-codex-dispatch-local-mcp') return blocked('BATTLE_BRIDGE_ATTACHMENT_SURFACE_MISMATCH');
   if (attachment?.attached !== true || attachment?.can_local_windows_proof !== true) return blocked('BATTLE_BRIDGE_EXECUTION_SURFACE_NOT_ATTACHED');
   if (!['win32', 'windows'].includes(String(attachment?.platform || '').toLowerCase())) return blocked('BATTLE_BRIDGE_PLATFORM_NOT_WINDOWS');
-  if (String(attachment?.sourceHead || '').toLowerCase() !== String(handoff.expectedHead || '').toLowerCase()) return blocked('BATTLE_BRIDGE_ATTACHMENT_HEAD_MISMATCH');
+  const attachmentHead = String(attachment?.sourceHead || '').toLowerCase();
+  if (!SHA40.test(attachmentHead)) return blocked('BATTLE_BRIDGE_ATTACHMENT_HEAD_INVALID');
+  if (['PULL_REQUEST_HEAD', 'MERGED_MAIN'].includes(handoff.exactHeadProof.proofTarget)
+      && attachmentHead !== String(handoff.expectedHead || '').toLowerCase()) {
+    return blocked('BATTLE_BRIDGE_ATTACHMENT_HEAD_MISMATCH');
+  }
+  if (handoff.exactHeadProof.proofTarget === 'PULL_REQUEST_HEAD_BASE_BOUND'
+      && attachmentHead !== String(handoff.exactHeadProof.githubMainHead || '').toLowerCase()) {
+    return blocked('BATTLE_BRIDGE_ATTACHMENT_BASE_HEAD_MISMATCH');
+  }
   if (!SHA64.test(String(attachment?.serverSourceSha256 || ''))) return blocked('BATTLE_BRIDGE_SERVER_SHA256_INVALID');
   if (!String(attachment?.surfaceReceipt || '').trim()) return blocked('BATTLE_BRIDGE_SURFACE_RECEIPT_MISSING');
   const tools = Array.isArray(attachment?.toolsListed) ? attachment.toolsListed : [];

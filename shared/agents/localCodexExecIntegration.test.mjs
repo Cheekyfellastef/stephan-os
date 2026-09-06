@@ -45,6 +45,7 @@ import {
   STEPHANOS_DIST_MANIFEST_SCHEMA_VERSION,
   computeStephanosDistManifestFingerprint,
 } from '../../scripts/stephanos-build-utils.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
 
 function tempRoots() {
   const root = mkdtempSync(join(tmpdir(), 'stephanos-codex-dispatch-'));
@@ -381,6 +382,45 @@ test('local integration preserves merged-main provenance through task status and
   assert.deepEqual(JSON.parse(readFileSync(receipt.taskPath, 'utf8')).exactHeadProof, mergedPacket.exactHeadProof);
 });
 
+test('local integration preserves only an exact descriptor-safe read-only PR worktree receipt', () => {
+  const roots = tempRoots();
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    spawnFn: () => ({ pid: 4244, unref() {} }),
+  });
+  const value = packet('codex-job-read-only-pr-worktree');
+  value.readOnlyPullRequestWorktree = {
+    schemaVersion: 'stephanos.read-only-pull-request-worktree.v1',
+    repositoryRoot: resolve(roots.repoRoot),
+    sourceHead: value.exactHeadProof.expectedHead,
+    commonDirectory: resolve(roots.repoRoot, '.git'),
+    cleanTrackedAndUntracked: true,
+    ignoredFilesAbsent: true,
+    sourceMutationAllowed: false,
+  };
+  const receipt = integration.dispatch(value);
+  const status = integration.readStatus(value.jobId);
+  assert.equal(receipt.accepted, true);
+  assert.deepEqual(status.readOnlyPullRequestWorktree, value.readOnlyPullRequestWorktree);
+  assert.equal(status.safety.ignoredFilesMustRemainAbsent, true);
+
+  const forgedRoots = tempRoots();
+  const forgedIntegration = createLocalCodexExecIntegration({
+    ...forgedRoots,
+    spawnFn: () => assert.fail('invalid worktree receipt must not spawn a worker'),
+  });
+  const forged = packet('codex-job-forged-read-only-pr-worktree');
+  forged.readOnlyPullRequestWorktree = {
+    ...value.readOnlyPullRequestWorktree,
+    repositoryRoot: resolve(forgedRoots.repoRoot),
+    extraAuthority: true,
+  };
+  assert.throws(
+    () => forgedIntegration.dispatch(forged),
+    /invalid read-only PR worktree receipt/,
+  );
+});
+
 test('browser proof PASS trusts only exact machine-owned scenario evidence', () => {
   const task = packet();
   const modelPass = JSON.stringify({
@@ -706,7 +746,7 @@ test('worker revalidates both PR and checkout heads immediately before execution
     },
   });
   assert.equal(valid.ok, true);
-  assert.deepEqual(calls.map((call) => call.executable), ['gh.exe', 'git.exe', 'git.exe']);
+  assert.deepEqual(calls.map((call) => call.executable), [BATTLE_BRIDGE_WINDOWS_HOST.githubCli, 'git.exe', 'git.exe']);
   assert.equal(calls[1].cwd, 'C:\\stephan-os');
   assert.equal(valid.sourceDirtClean, true);
 });
@@ -1084,7 +1124,7 @@ test('worker revalidates merged-main PR provenance current main ancestry and loc
     platform: 'win32',
     spawnSyncFn(executable, args, options) {
       calls.push({ executable, args, options });
-      if (executable === 'gh.exe' && args[1]?.endsWith('/pulls/1628')) {
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli && args[1]?.endsWith('/pulls/1628')) {
         return {
           status: 0,
           stdout: JSON.stringify({
@@ -1097,7 +1137,7 @@ test('worker revalidates merged-main PR provenance current main ancestry and loc
           stderr: '',
         };
       }
-      if (executable === 'gh.exe') return { status: 0, stdout: `${currentMainHead}\n`, stderr: '' };
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli) return { status: 0, stdout: `${currentMainHead}\n`, stderr: '' };
       if (args[0] === 'merge-base') return { status: 0, stdout: '', stderr: '' };
       if (args[0] === 'rev-parse') return { status: 0, stdout: `${currentMainHead}\n`, stderr: '' };
       if (args[0] === 'status') return { status: 0, stdout: ' M apps/stephanos/dist/index.html\n', stderr: '' };
@@ -1115,6 +1155,75 @@ test('worker revalidates merged-main PR provenance current main ancestry and loc
   assert.equal(ancestryCall.options.env.GIT_NO_REPLACE_OBJECTS, '1');
 });
 
+test('worker binds a PR-head review to both the approved PR head and exact current main base', () => {
+  const expectedHead = 'a'.repeat(40);
+  const baseHead = 'b'.repeat(40);
+  const task = {
+    repoRoot: 'C:\\stephan-os',
+    branch: 'main',
+    exactHeadProof: {
+      repository: 'Cheekyfellastef/stephan-os',
+      prNumber: 2000,
+      expectedHead,
+      proofTarget: 'PULL_REQUEST_HEAD_BASE_BOUND',
+      pullRequestHead: expectedHead,
+      mergeCommitHead: '',
+      githubMainHead: baseHead,
+      mergeCommitIncluded: false,
+      proofScenario: 'base-bound-specialist-review',
+    },
+  };
+  const gitEnvironments = [];
+  const githubCalls = [];
+  const run = ({ observedHead = expectedHead, observedBase = baseHead, baseBranch = 'main', mainHead = baseHead } = {}) => validateExactHeadAtWorkerStart(task, {
+    platform: 'win32',
+    environment: {
+      SYSTEMROOT: 'C:\\Windows',
+      USERPROFILE: 'C:\\Users\\Operator',
+      APPDATA: 'C:\\Users\\Operator\\AppData\\Roaming',
+      GH_HOST: 'hostile.example',
+      GH_CONFIG_DIR: 'C:\\hostile-gh',
+      GH_TOKEN: 'hostile-token',
+      GITHUB_TOKEN: 'hostile-token',
+    },
+    spawnSyncFn(executable, args, options) {
+      if (executable === 'git.exe') gitEnvironments.push(options.env);
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli) githubCalls.push({ args, environment: options.env });
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli && args[1]?.endsWith('/pulls/2000')) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ head: { sha: observedHead }, base: { ref: baseBranch, sha: observedBase } }),
+          stderr: '',
+        };
+      }
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli) return { status: 0, stdout: `${mainHead}\n`, stderr: '' };
+      if (args[0] === 'rev-parse') return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+      if (args[0] === 'status') return { status: 0, stdout: '', stderr: '' };
+      assert.fail(`unexpected command: ${executable} ${args.join(' ')}`);
+    },
+  });
+  const accepted = run();
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.proofTarget, 'PULL_REQUEST_HEAD_BASE_BOUND');
+  assert.equal(accepted.pullRequestHead, expectedHead);
+  assert.equal(accepted.githubMainHead, baseHead);
+  assert.equal(run({ observedHead: 'c'.repeat(40) }).blocker, 'PR_HEAD_MISMATCH');
+  assert.equal(run({ observedBase: 'c'.repeat(40) }).blocker, 'PR_BASE_HEAD_MISMATCH');
+  assert.equal(run({ baseBranch: 'release' }).blocker, 'PR_BASE_BRANCH_MISMATCH');
+  assert.equal(run({ mainHead: 'c'.repeat(40) }).blocker, 'GITHUB_MAIN_HEAD_MISMATCH');
+  assert.ok(gitEnvironments.length >= 2);
+  assert.equal(gitEnvironments.every((environment) => environment.GIT_NO_REPLACE_OBJECTS === '1'), true);
+  assert.equal(gitEnvironments.every((environment) => environment.GIT_CONFIG_NOSYSTEM === '1'), true);
+  assert.equal(gitEnvironments.every((environment) => environment.GIT_DIR === undefined), true);
+  assert.equal(gitEnvironments.every((environment) => environment.GIT_OBJECT_DIRECTORY === undefined), true);
+  assert.ok(githubCalls.length >= 2);
+  assert.equal(githubCalls.every(({ args }) => args.includes('--hostname') && args.includes('github.com')), true);
+  assert.equal(githubCalls.every(({ environment }) => environment.GH_HOST === undefined), true);
+  assert.equal(githubCalls.every(({ environment }) => environment.GH_CONFIG_DIR === undefined), true);
+  assert.equal(githubCalls.every(({ environment }) => environment.GH_TOKEN === undefined), true);
+  assert.equal(githubCalls.every(({ environment }) => environment.GITHUB_TOKEN === undefined), true);
+});
+
 test('worker rejects pre-existing source dirt before accepting an exact-head runtime proof', () => {
   const expectedHead = 'a'.repeat(40);
   const result = validateExactHeadAtWorkerStart({
@@ -1127,7 +1236,7 @@ test('worker rejects pre-existing source dirt before accepting an exact-head run
   }, {
     platform: 'win32',
     spawnSyncFn(executable, args) {
-      if (executable === 'gh.exe' || args[0] === 'rev-parse') {
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli || args[0] === 'rev-parse') {
         return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
       }
       return {
@@ -1154,7 +1263,7 @@ test('worker permits generated runtime dirt when committed source is clean', () 
   }, {
     platform: 'win32',
     spawnSyncFn(executable, args) {
-      if (executable === 'gh.exe' || args[0] === 'rev-parse') {
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli || args[0] === 'rev-parse') {
         return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
       }
       return { status: 0, stdout: ' M apps/stephanos/dist/index.html\n', stderr: '' };
@@ -1176,7 +1285,7 @@ test('worker fails closed when exact-head source status cannot be read', () => {
   }, {
     platform: 'win32',
     spawnSyncFn(executable, args) {
-      if (executable === 'gh.exe' || args[0] === 'rev-parse') {
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli || args[0] === 'rev-parse') {
         return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
       }
       return { status: 1, stdout: '', stderr: 'status unavailable' };
@@ -1203,7 +1312,7 @@ test('worker persists BLOCKED before browser or child execution when exact-head 
         browserRunnerCalls += 1;
         return { status: 1, stdout: '', stderr: '' };
       }
-      if (executable === 'gh.exe' || args[0] === 'rev-parse') {
+      if (executable === BATTLE_BRIDGE_WINDOWS_HOST.githubCli || args[0] === 'rev-parse') {
         return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
       }
       return { status: 0, stdout: ' M scripts/dirty-source.mjs\n', stderr: '' };
@@ -1216,6 +1325,44 @@ test('worker persists BLOCKED before browser or child execution when exact-head 
   assert.equal(result.blocker, 'PRE_EXISTING_SOURCE_DIRT');
   assert.equal(integration.readStatus('codex-job-dirty-source').status, 'BLOCKED');
   assert.equal(integration.readResult('codex-job-dirty-source').blocker, 'PRE_EXISTING_SOURCE_DIRT');
+});
+
+test('worker blocks before browser or child execution when a read-only PR worktree gains ignored content', async () => {
+  const roots = tempRoots();
+  const integration = createLocalCodexExecIntegration({
+    ...roots,
+    spawnFn: () => ({ pid: 334, unref() {} }),
+  });
+  const value = packet('codex-job-ignored-worktree-content');
+  value.readOnlyPullRequestWorktree = {
+    schemaVersion: 'stephanos.read-only-pull-request-worktree.v1',
+    repositoryRoot: resolve(roots.repoRoot),
+    sourceHead: value.exactHeadProof.expectedHead,
+    commonDirectory: resolve(roots.repoRoot, '.git'),
+    cleanTrackedAndUntracked: true,
+    ignoredFilesAbsent: true,
+    sourceMutationAllowed: false,
+  };
+  const dispatchReceipt = integration.dispatch(value);
+  const expectedHead = value.exactHeadProof.expectedHead;
+  let browserCalls = 0;
+  const result = await runCodexWorker(dispatchReceipt.taskPath, {
+    platform: 'win32',
+    runtimeBundleFactory: exactRuntimeBundleFactory,
+    spawnFn: () => assert.fail('Codex child must not start with ignored worktree content'),
+    spawnSyncFn(executable, args) {
+      if (executable === process.execPath) browserCalls += 1;
+      if (args[0] === 'status') return { status: 0, stdout: '', stderr: '' };
+      if (args[0] === 'ls-files') return { status: 0, stdout: 'node_modules/hostile-instructions.md\n', stderr: '' };
+      if (args.includes('--git-common-dir')) return { status: 0, stdout: `${resolve(roots.repoRoot, '.git')}\n`, stderr: '' };
+      return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+    },
+    visibilityPublisher: async () => ({ ok: true }),
+  });
+  assert.equal(browserCalls, 0);
+  assert.equal(result.status, 'BLOCKED');
+  assert.equal(result.blocker, 'PRE_EXISTING_IGNORED_WORKTREE_CONTENT');
+  assert.equal(result.ignoredBefore, 'node_modules/hostile-instructions.md');
 });
 
 test('worker blocks before browser or child execution when the bracketing source status lookup fails', async () => {

@@ -29,6 +29,20 @@ function exactHeadProof() {
   };
 }
 
+function pullRequestHeadProof() {
+  return {
+    repository: 'Cheekyfellastef/stephan-os',
+    prNumber: 1706,
+    expectedHead: HEAD,
+    proofTarget: 'PULL_REQUEST_HEAD_BASE_BOUND',
+    pullRequestHead: HEAD,
+    mergeCommitHead: '',
+    githubMainHead: '2'.repeat(40),
+    mergeCommitIncluded: false,
+    proofScenario: 'pull-request-head-read-only-specialist-review',
+  };
+}
+
 function approvalReceipt({ task = TASK, proof = exactHeadProof(), expiresAt = EXPIRES_AT } = {}) {
   const result = createRemoteCodexOperatorApprovalReceipt({
     approvalId: 'approval-remote-codex-proof-1706',
@@ -188,7 +202,7 @@ test('fails closed without a fresh exact-head Windows attachment', () => {
     attachment({ attached: false }),
     attachment({ can_local_windows_proof: false }),
     attachment({ platform: 'linux' }),
-    attachment({ sourceHead: '1'.repeat(40) }),
+    attachment({ sourceHead: '2'.repeat(40) }),
     attachment({ serverSourceSha256: '' }),
     attachment({ surfaceReceipt: '' }),
     attachment({ toolsListed: ['dispatch_codex_task'] }),
@@ -197,6 +211,37 @@ test('fails closed without a fresh exact-head Windows attachment', () => {
   ]) {
     assert.equal(validateRemoteCodexBattleBridgeAttachment(value, bad, { now: new Date(NOW) }).ok, false);
   }
+});
+
+test('accepts a fresh Windows control attachment on the exact approved base for a separately re-proven PR-head worktree', () => {
+  const proof = pullRequestHeadProof();
+  const result = createRemoteCodexBattleBridgeHandoff({
+    requestId: REQUEST_ID,
+    owningIssue: 1507,
+    task: TASK,
+    operatorApproval: 'operator-approved',
+    operatorApprovalReceipt: approvalReceipt({ proof }),
+    expectedHead: HEAD,
+    exactHeadProof: proof,
+    requestedProofCommands: ['git rev-parse HEAD'],
+    createdAt: CREATED_AT,
+    expiresAt: EXPIRES_AT,
+  });
+  assert.equal(result.ok, true);
+  const accepted = validateRemoteCodexBattleBridgeAttachment(
+    result.handoff,
+    attachment({ sourceHead: '2'.repeat(40) }),
+    { now: new Date(NOW) },
+  );
+  assert.equal(accepted.ok, true);
+  assert.equal(
+    validateRemoteCodexBattleBridgeAttachment(result.handoff, attachment({ sourceHead: '1'.repeat(40) }), { now: new Date(NOW) }).blocker,
+    'BATTLE_BRIDGE_ATTACHMENT_BASE_HEAD_MISMATCH',
+  );
+  assert.equal(
+    validateRemoteCodexBattleBridgeAttachment(result.handoff, attachment({ sourceHead: '' }), { now: new Date(NOW) }).blocker,
+    'BATTLE_BRIDGE_ATTACHMENT_HEAD_INVALID',
+  );
 });
 
 test('maps a valid attachment to one complete exact-head dispatch authority envelope', () => {

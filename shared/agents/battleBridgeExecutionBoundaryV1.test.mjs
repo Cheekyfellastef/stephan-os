@@ -8,12 +8,15 @@ import test from 'node:test';
 
 import {
   BATTLE_BRIDGE_CANONICAL_REMOTE_URL,
+  BATTLE_BRIDGE_GITHUB_HOST,
   BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE,
+  BATTLE_BRIDGE_POSIX_GITHUB_CLI_EXECUTABLE,
   battleBridgeGitFixedConfigArgs,
   createBattleBridgeMinimalChildEnvironment,
   inspectBattleBridgeGitTopology,
   resolveBattleBridgeGitExecution,
   resolveBattleBridgeGitExecutable,
+  resolveBattleBridgeGitHubCliExecutable,
   validateBattleBridgeLocalGitConfiguration,
 } from './battleBridgeExecutionBoundaryV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
@@ -39,6 +42,18 @@ test('fixed Git executable is absolute and platform-canonical', () => {
   assert.equal(posix.environment.GIT_GRAFT_FILE, '/dev/null');
   assert.equal(posix.environment.NODE_OPTIONS, undefined);
   assert.deepEqual(battleBridgeGitFixedConfigArgs('win32').slice(0, 2), ['-c', 'core.hooksPath=NUL']);
+});
+
+test('fixed GitHub CLI executable and host are platform-canonical', () => {
+  assert.equal(BATTLE_BRIDGE_GITHUB_HOST, 'github.com');
+  assert.equal(resolveBattleBridgeGitHubCliExecutable('win32'), BATTLE_BRIDGE_WINDOWS_HOST.githubCli);
+  assert.equal(resolveBattleBridgeGitHubCliExecutable('linux'), BATTLE_BRIDGE_POSIX_GITHUB_CLI_EXECUTABLE);
+  assert.equal(resolveBattleBridgeGitHubCliExecutable('darwin'), BATTLE_BRIDGE_POSIX_GITHUB_CLI_EXECUTABLE);
+  assert.equal(path.isAbsolute(resolveBattleBridgeGitHubCliExecutable('linux')), true);
+  assert.throws(
+    () => resolveBattleBridgeGitHubCliExecutable('freebsd'),
+    /BATTLE_BRIDGE_GITHUB_CLI_PLATFORM_UNSUPPORTED:freebsd/,
+  );
 });
 
 test('minimal child environment removes Node/Git/shell injection variables', () => {
@@ -100,7 +115,7 @@ test('Git topology rejects linked critical metadata descendants', () => {
   mkdirSync(path.join(root, '.git'), { recursive: true });
   writeFileSync(path.join(root, '.git', 'config'), '[core]\n\trepositoryformatversion = 0\n');
   writeFileSync(path.join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n');
-  symlinkSync(target, path.join(root, '.git', 'objects'), 'dir');
+  symlinkSync(target, path.join(root, '.git', 'objects'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.equal(inspectBattleBridgeGitTopology(root).blocker, 'CANONICAL_GIT_REPARSE_POINT_PRESENT');
 });
 

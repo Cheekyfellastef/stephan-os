@@ -26,6 +26,11 @@ import {
   validateRemoteCodexBattleBridgeAttachment,
   validateRemoteCodexBattleBridgeHandoff,
 } from '../shared/agents/remoteCodexBattleBridgeHandoffV1.mjs';
+import {
+  reproveReadOnlyPullRequestWorktree,
+  resolveReadOnlyPullRequestWorktree,
+} from '../shared/agents/readOnlyPullRequestWorktreeV1.mjs';
+import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 export const STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA = 'stephanos.codex-dispatch-mcp.v1';
 export const STEPHANOS_CODEX_DISPATCH_MCP_NAME = 'stephanos-codex-dispatch';
@@ -185,11 +190,11 @@ function normalizeClientSession(clientSession = {}, clientInfo = {}) {
 
 function readSourceHead(repoRoot) {
   if (!repoRoot) return '';
-  const gitExecutable = process.env.STEPHANOS_GIT_EXE
-    || (process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git');
+  const gitExecution = resolveBattleBridgeGitExecution({ platform: process.platform, environment: process.env });
   try {
-    return boundedText(execFileSync(gitExecutable, ['-C', repoRoot, 'rev-parse', 'HEAD'], {
+    return boundedText(execFileSync(gitExecution.executable, [...gitExecution.fixedConfigArgs, '-C', repoRoot, 'rev-parse', 'HEAD'], {
       encoding: 'utf8',
+      env: gitExecution.environment,
       windowsHide: true,
       timeout: 15_000,
     }), 40).toLowerCase();
@@ -325,11 +330,14 @@ function approvedQueueRecord(args, now) {
 
 export function createCodexDispatchMcpHandler({
   integration = createLocalCodexExecIntegration(),
+  integrationForRepositoryRoot = ({ repoRoot }) => createLocalCodexExecIntegration({ repoRoot }),
   hostOps = { syncCodexDispatchBridge, updateStephanosFromChat, runBattleBridgeDiagnostics },
   now = () => new Date().toISOString(),
   attachmentProofPublisher = publishCodexDispatchAttachmentProof,
   attachmentIdentity = {},
   readRepositoryHead = readSourceHead,
+  resolveReadOnlyReviewWorktree = resolveReadOnlyPullRequestWorktree,
+  reproveReadOnlyReviewWorktree = reproveReadOnlyPullRequestWorktree,
 } = {}) {
   let clientInfo = {};
   let clientSession = null;
@@ -377,7 +385,7 @@ export function createCodexDispatchMcpHandler({
       return {
         protocolVersion: requestedProtocolVersion,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: STEPHANOS_CODEX_DISPATCH_MCP_NAME, version: '1.2.0' },
+        serverInfo: { name: STEPHANOS_CODEX_DISPATCH_MCP_NAME, version: '1.3.0' },
         instructions: 'Prefer direct GitHub work for source changes. Use update_stephanos_from_chat for an approved complete Battle Bridge update, sync_codex_dispatch_bridge for source-only bridge updates, run_battle_bridge_diagnostics for deterministic local proof, and dispatch_codex_task only when a real Codex child is genuinely required.',
       };
     }
@@ -417,21 +425,20 @@ export function createCodexDispatchMcpHandler({
         if (!transportedRepositoryRoot || transportedRepositoryRoot !== canonicalRepositoryRoot) {
           return asTextResult({ ok: false, blocker: 'BATTLE_BRIDGE_ATTACHMENT_REPOSITORY_ROOT_MISMATCH' }, true);
         }
-        const liveHead = readRepositoryHead(repositoryRoot);
-        if (!/^[0-9a-f]{40}$/.test(liveHead)
-            || liveHead !== argumentValidation.handoff.expectedHead) {
+        const controlHead = readRepositoryHead(repositoryRoot);
+        if (!/^[0-9a-f]{40}$/.test(controlHead)) {
           return asTextResult({
             ok: false,
-            blocker: 'BATTLE_BRIDGE_EXECUTION_HEAD_MISMATCH',
+            blocker: 'BATTLE_BRIDGE_CONTROL_HEAD_INVALID',
             expectedHead: argumentValidation.handoff.expectedHead,
-            observedHead: liveHead,
+            observedHead: controlHead,
           }, true);
         }
         const liveAttachment = createCodexDispatchAttachmentProof({
           clientInfo,
           clientSession,
           now: timestamp,
-          sourceHead: liveHead,
+          sourceHead: controlHead,
           ...processAttachmentIdentity,
         });
         const liveAttachmentValidation = validateRemoteCodexBattleBridgeAttachment(
@@ -440,8 +447,44 @@ export function createCodexDispatchMcpHandler({
           { now: new Date(timestamp) },
         );
         if (!liveAttachmentValidation.ok) return asTextResult(liveAttachmentValidation, true);
-        const executionHead = readRepositoryHead(repositoryRoot);
-        if (executionHead !== argumentValidation.handoff.expectedHead || executionHead !== liveHead) {
+
+        let executionRepositoryRoot = repositoryRoot;
+        let executionIntegration = integration;
+        let executionMode = 'canonical-attached-head';
+        let linkedWorktreeReceipt = null;
+        if (controlHead !== argumentValidation.handoff.expectedHead) {
+          if (argumentValidation.handoff.exactHeadProof.proofTarget !== 'PULL_REQUEST_HEAD_BASE_BOUND') {
+            return asTextResult({
+              ok: false,
+              blocker: 'BATTLE_BRIDGE_PR_WORKTREE_BASE_BOUND_PROOF_REQUIRED',
+              expectedHead: argumentValidation.handoff.expectedHead,
+              observedHead: controlHead,
+            }, true);
+          }
+          const resolvedWorktree = resolveReadOnlyReviewWorktree({
+            canonicalRepositoryRoot: repositoryRoot,
+            expectedHead: argumentValidation.handoff.expectedHead,
+            proofTarget: argumentValidation.handoff.exactHeadProof.proofTarget,
+          });
+          if (!resolvedWorktree?.ok) return asTextResult(resolvedWorktree, true);
+          linkedWorktreeReceipt = resolvedWorktree.worktree;
+          executionRepositoryRoot = linkedWorktreeReceipt.repositoryRoot;
+          try {
+            executionIntegration = integrationForRepositoryRoot({ repoRoot: executionRepositoryRoot });
+          } catch {
+            return asTextResult({ ok: false, blocker: 'READ_ONLY_PR_WORKTREE_INTEGRATION_UNAVAILABLE' }, true);
+          }
+          executionMode = 'registered-read-only-pr-worktree';
+        }
+
+        if (linkedWorktreeReceipt) {
+          const reproof = reproveReadOnlyReviewWorktree(linkedWorktreeReceipt, {
+            canonicalRepositoryRoot: repositoryRoot,
+          });
+          if (!reproof?.ok) return asTextResult(reproof, true);
+        }
+        const executionHead = readRepositoryHead(executionRepositoryRoot);
+        if (executionHead !== argumentValidation.handoff.expectedHead) {
           return asTextResult({
             ok: false,
             blocker: 'BATTLE_BRIDGE_EXECUTION_HEAD_CHANGED',
@@ -450,7 +493,12 @@ export function createCodexDispatchMcpHandler({
           }, true);
         }
         const queueRecord = approvedQueueRecord(args, timestamp);
-        const dispatched = dispatchQueuedCodexJob({ queueRecord, integration, now: timestamp });
+        const dispatched = dispatchQueuedCodexJob({
+          queueRecord,
+          integration: executionIntegration,
+          now: timestamp,
+          readOnlyPullRequestWorktree: linkedWorktreeReceipt,
+        });
         return asTextResult({
           ok: dispatched.finalVerdict === 'CODEX_JOB_DISPATCHED',
           schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
@@ -459,6 +507,13 @@ export function createCodexDispatchMcpHandler({
           decision: dispatched.decision,
           receipt: dispatched.dispatchReceipt || null,
           proofMetadata: dispatched.proofMetadata || null,
+          executionProof: {
+            mode: executionMode,
+            controlHead,
+            sourceHead: executionHead,
+            repositoryRoot: executionRepositoryRoot,
+            sourceMutationAllowed: false,
+          },
           nextOperatorAction: 'Use get_codex_task_status until the task reaches DONE, FAILED, or BLOCKED, then call read_codex_task_result.',
         }, dispatched.finalVerdict !== 'CODEX_JOB_DISPATCHED');
       }
