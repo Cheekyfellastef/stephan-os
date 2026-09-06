@@ -14,6 +14,7 @@ const MISSION_WORKER_CLEANUP_BLOB_SHA = '907c95a364c4b5eb5e083788b52056071d78e3a
 
 const EXPECTED_IGNITION_CONVERGENCE_PATHS = Object.freeze(['scripts/windows/probe-battle-bridge-recovery-mesh.ps1','scripts/windows/repair-stephanos-battle-bridge.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1','scripts/windows/start-stephanos-backend.ps1']);
 const EXPECTED_MISSION_WORKER_CLEANUP_PATHS = Object.freeze(['scripts/windows/restart-approved-stephanos-runtime.ps1']);
+const EXPECTED_MAILBOX_CADENCE_PATHS = Object.freeze(['scripts/windows/install-battle-bridge-github-command-mailbox.ps1']);
 
 // These legacy specialist pins and route markers remain top-level invariants
 // even though the historical implementation stays inside the exact pinned base router.
@@ -94,11 +95,16 @@ function proveLegacyRoutingInvariants(source) {
 
 const baseModule = provePinnedModule(BASE_PATH, BASE_BLOB_SHA);
 const wsl2Module = provePinnedModule(WSL2_PATH, WSL2_BLOB_SHA);
+const mailboxCadenceModule = provePinnedModule(MAILBOX_CADENCE_PATH, MAILBOX_CADENCE_BLOB_SHA);
 provePinnedModule(IGNITION_CONVERGENCE_PATH, IGNITION_CONVERGENCE_BLOB_SHA);
 provePinnedModule(MISSION_WORKER_CLEANUP_PATH, MISSION_WORKER_CLEANUP_BLOB_SHA);
 proveLegacyRoutingInvariants(baseModule.content);
 const base = await import(baseModule.url.href);
 const wsl2 = await import(wsl2Module.url.href);
+const mailboxCadence = await import(mailboxCadenceModule.url.href);
+if (JSON.stringify(mailboxCadence.WINDOWS_AUTHORITY_MAILBOX_CADENCE_PATHS_V1) !== JSON.stringify(EXPECTED_MAILBOX_CADENCE_PATHS)) {
+  throw new Error('WINDOWS_AUTHORITY_MAILBOX_CADENCE_PATH_INVENTORY_MISMATCH');
+}
 
 export * from './windowsAuthoritySpecialistReviewV1Base.mjs';
 export const WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1 = wsl2.WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1;
@@ -106,5 +112,7 @@ export const WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1 = wsl2.WINDOWS_A
 export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
   const wsl2Result = wsl2.analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input);
   if (wsl2Result.eligible) return wsl2Result;
+  const mailboxCadenceResult = mailboxCadence.analyzeWindowsAuthorityMailboxCadenceReviewV1(input);
+  if (mailboxCadenceResult.eligible) return mailboxCadenceResult;
   return base.analyzeWindowsAuthoritySpecialistReview(input);
 }
