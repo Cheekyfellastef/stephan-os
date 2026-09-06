@@ -73,6 +73,7 @@ function response(overrides = {}) {
 function adjudicate(comments) {
   return adjudicateQualifiedSpecialistReview({
     analysis: analysis(),
+    codexRequired: true,
     reviews: [],
     comments,
     repository,
@@ -82,6 +83,33 @@ function adjudicate(comments) {
     baseSha,
   });
 }
+
+test('automation output cannot admit a Codex specialist route when Codex is not required', () => {
+  const result = adjudicateQualifiedSpecialistReview({
+    analysis: analysis(),
+    codexRequired: false,
+    reviews: [],
+    comments: [
+      request({
+        body: [
+          'Programme Completion Controller',
+          request().body,
+          'CODEX_REQUIRED=false',
+        ].join('\n'),
+      }),
+      response(),
+    ],
+    repository,
+    prNumber,
+    branch,
+    sourceHead,
+    baseSha,
+  });
+  assert.equal(result.required, true);
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.blockers, ['qualified-specialist-review-provider-route-not-admitted']);
+  assert.equal(result.artifact, null);
+});
 
 test('authenticated scoped request and app response mint one provider-neutral specialist artifact', () => {
   const result = adjudicate([request(), response()]);
