@@ -68,13 +68,13 @@ test('request rejects foreign author, issue, head, expiry and any extra authorit
   }
 });
 
-test('fixed remote PowerShell preserves the exact six-file runtime profile before canonical sync', () => {
+test('fixed remote PowerShell binds preservation and fast-forward to the approved exact head', () => {
   const source = buildFixedBattleBridgeBootstrapPowerShell(HEAD);
-  assert.match(source, /stephanos-codex-dispatch-mcp\.mjs/);
-  assert.match(source, /sync_codex_dispatch_bridge/);
+  assert.match(source, /battle-bridge-exact-head-preservation-sync\.mjs/);
   assert.match(source, /battle-bridge-runtime-data-v1/);
-  assert.match(source, /preservationApproval/);
-  assert.match(source, /operator-approved/);
+  assert.match(source, /exactHeadBound -ne \$true/);
+  assert.match(source, /\$sync\.expectedHead -ne \$expectedHead/);
+  assert.match(source, /\$sync\.afterHead -ne \$expectedHead/);
   assert.match(source, /preservation\.receipt\.itemCount -ne 6/);
   assert.match(source, /preservation\.receipt\.allHashesVerified -ne \$true/);
   assert.match(source, /preservation\.destructiveCleanupPerformed -ne \$false/);
@@ -88,9 +88,10 @@ test('fixed remote PowerShell preserves the exact six-file runtime profile befor
   assert.match(source, /BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_READY/);
   assert.match(source, /liveOpenClawUpdateAllowed -ne \$false/);
   assert.match(source, /codexRequired = \$false/);
-  assert.match(source, /try \{ \$mcpOutput = @\(\$mcpInput \| & \$node \$mcp\) \} catch \{ throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_SYNC_FAILED' \}/);
+  assert.match(source, /try \{ \$syncOutput = @\(& \$node \$preservationSync \$expectedHead\) \} catch \{ throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_SYNC_FAILED' \}/);
   assert.match(source, /try \{ \$installerOutput = @\(& \$installer -StartNow\) \} catch \{ throw 'TAILSCALE_BOOTSTRAP_SYNC_INSTALLER_FAILED' \}/);
   assert.match(source, /try \{ \$statusOutput = @\(& \$statusScript\) \} catch \{ throw 'TAILSCALE_BOOTSTRAP_SYNC_STATUS_FAILED' \}/);
+  assert.doesNotMatch(source, /stephanos-codex-dispatch-mcp\.mjs|sync_codex_dispatch_bridge/);
   assert.doesNotMatch(source, /reset --hard|git clean|git stash|git rebase|git push|Restart-Computer|Stop-Computer|Invoke-Expression/i);
   assert.doesNotMatch(source, /codex\.exe|codex\.cmd|codex\s+(?:exec|run|dispatch)|openclaw-gateway|gateway\.cmd|\.openclaw/i);
   const encoded = buildFixedBattleBridgeBootstrapEncodedCommand(HEAD);
