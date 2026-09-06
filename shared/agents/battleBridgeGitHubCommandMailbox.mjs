@@ -3,6 +3,7 @@ import {
   MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION,
   runMissionWorkerDiagnosticLink,
 } from '../../scripts/mission-worker-diagnostic-link.mjs';
+import { planElasticBattleBridgeMailboxDispatch } from './elasticBattleBridgeMailboxCapacityV1.mjs';
 
 export * from './battleBridgeGitHubCommandMailboxLegacyV1.mjs';
 
@@ -141,6 +142,62 @@ export function classifyBattleBridgeMailboxOperation(operation = '') {
   return legacy.classifyBattleBridgeMailboxOperation(operation);
 }
 
+function elasticMetadata(options = {}, requestId = '') {
+  const source = options?.elasticCommandMetadata;
+  if (source instanceof Map) return source.get(requestId) || null;
+  if (source && typeof source === 'object' && !Array.isArray(source)) return source[requestId] || null;
+  return null;
+}
+
+function applyElasticMailboxPlan(commands = [], options = {}) {
+  if (!options?.elasticCapacityEvidence || !options?.elasticCommandMetadata) {
+    return Object.freeze({
+      commands: Object.freeze(commands),
+      telemetry: null,
+    });
+  }
+
+  const candidates = commands.map((entry) => {
+    const requestId = String(entry?.command?.requestId || '');
+    const metadata = elasticMetadata(options, requestId) || {};
+    return Object.freeze({
+      requestId,
+      laneId: String(metadata.laneId || requestId),
+      resources: Array.isArray(metadata.resources) ? metadata.resources : [],
+      approvalGated: metadata.approvalGated === true,
+      blocked: metadata.blocked === true,
+      providerAvailable: metadata.providerAvailable !== false,
+    });
+  });
+
+  const plan = planElasticBattleBridgeMailboxDispatch({
+    candidates,
+    capacityEvidence: options.elasticCapacityEvidence,
+    now: options.now || new Date(),
+    staleAfterMs: options.elasticCapacityStaleAfterMs,
+    consumedRequestIds: options.consumedRequestIds,
+  });
+  const selectedIds = new Set(plan.selected.map((entry) => entry.requestId));
+  const filtered = commands.filter((entry) => selectedIds.has(String(entry?.command?.requestId || '')));
+  return Object.freeze({
+    commands: Object.freeze(filtered),
+    telemetry: Object.freeze({
+      enabled: true,
+      width: plan.width,
+      capacityProven: plan.capacityProven,
+      capacityBlocker: plan.capacityBlocker,
+      selectedCount: plan.selectedCount,
+      parkedCount: plan.parkedCount,
+      deferredCount: plan.deferredCount,
+      selected: plan.selected,
+      parked: plan.parked,
+      deferred: plan.deferred,
+      workConserving: plan.workConserving,
+      duplicateMailboxAllowed: false,
+    }),
+  });
+}
+
 export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}) {
   const diagnosticOriginals = new Map();
   const translated = (Array.isArray(comments) ? comments : []).map((comment) => {
@@ -211,11 +268,13 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
     }
   }
 
+  const elastic = applyElasticMailboxPlan(commands, options);
   return Object.freeze({
     ...selected,
-    ...(Array.isArray(selected.commands) ? { commands: Object.freeze(commands) } : {}),
+    ...(Array.isArray(selected.commands) ? { commands: elastic.commands } : {}),
     ...(Array.isArray(selected.rejected) ? { rejected: Object.freeze(rejected) } : {}),
     terminalRejections: Object.freeze(terminalRejections),
+    ...(elastic.telemetry ? { elasticDispatch: elastic.telemetry } : {}),
   });
 }
 
