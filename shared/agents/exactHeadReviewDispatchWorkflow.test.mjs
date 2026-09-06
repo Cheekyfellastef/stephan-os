@@ -140,6 +140,19 @@ test('launches a missing review only after exact retry classification and immuta
   assert.doesNotMatch(launch, /curl|gh\s+api|workflow_dispatch|\/dispatches|shell:\s*true/);
 });
 
+test('binds deterministic assurance to exact current protected main and canonical admission', () => {
+  const workflow = readDeterministicReviewWorkflow();
+
+  assert.match(workflow, /current_main_sha="\$\(gh api "\/repos\/\$\{REPOSITORY\}\/git\/ref\/heads\/main" --jq '\.object\.sha'\)"/);
+  assert.match(workflow, /test "\$\{base_ref\}" = "main"/);
+  assert.match(workflow, /echo "base_sha=\$\{current_main_sha\}" >> "\$\{GITHUB_OUTPUT\}"/);
+  assert.match(workflow, /name: Admit exact current-main review target/);
+  assert.match(workflow, /node scripts\/exact-head-review-current-main-admission-v1\.mjs/);
+  assert.match(workflow, /name: Require exact current-main admission/);
+  assert.match(workflow, /test "\$\{ADMITTED_TARGETS\}" = "\[\{\\\"prNumber\\\":\$\{PR_NUMBER\}\}\]"/);
+  assert.doesNotMatch(workflow, /base_sha="\$\(jq -r '\.base\.sha'/);
+});
+
 test('isolates provider-neutral assurance intake from Codex review command vocabulary', () => {
   const workflow = readDeterministicReviewWorkflow();
 
