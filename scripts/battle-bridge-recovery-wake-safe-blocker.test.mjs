@@ -17,6 +17,15 @@ test('projects one exact whole-line Recovery Mesh adapter blocker', () => {
   );
 });
 
+test('projects the normal PowerShell script-prefixed allowlisted blocker form', () => {
+  assert.equal(
+    classifyRecoveryMeshWakeAdapterFailure({
+      stderr: 'request-battle-bridge-recovery.ps1 : RECOVERY_MESH_TASK_SETTINGS_INVALID',
+    }),
+    'RECOVERY_MESH_TASK_SETTINGS_INVALID',
+  );
+});
+
 test('projects an allowlisted PowerShell FullyQualifiedErrorId token', () => {
   assert.equal(
     classifyRecoveryMeshWakeAdapterFailure({
