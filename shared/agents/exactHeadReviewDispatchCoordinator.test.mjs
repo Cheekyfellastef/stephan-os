@@ -21,6 +21,7 @@ import {
   canonicalLaneEvidence,
   exactHeadReviewProgress,
   evaluateExactHeadReviewDispatch,
+  explicitOwnerExactHeadReviewRequest,
   isCanonicalReviewLaneComment,
   parseOptionalManualPrNumber,
 } from './exactHeadReviewDispatchCoordinator.mjs';
@@ -761,7 +762,9 @@ test('requires workflow completion timestamps and ignores pre-proof dispatch mar
 
 test('wires the trusted coordinator identity through the runner and trusted workflow', () => {
   const runner = fs.readFileSync(new URL('../../scripts/exact-head-review-dispatch.mjs', import.meta.url), 'utf8');
-  const workflow = fs.readFileSync(new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url), 'utf8');
+  const workflow = fs
+    .readFileSync(new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url), 'utf8')
+    .replace(/\r\n?/g, '\n');
   assert.match(runner, /bounded GitHub token actor is not authorised/);
   assert.match(runner, /selectReviewCoordinatorCredential\(process\.env\)/);
   assert.match(runner, /const laneAuthorityLogin = trustedLaneAuthorityLogin\(owner\)/);
@@ -782,7 +785,7 @@ test('wires the trusted coordinator identity through the runner and trusted work
   assert.match(runner, /EXACT_HEAD_REVIEW_PLAN_TARGETS/);
   assert.match(runner, /mutation execution requires exactly one PR-scoped coordinator target/);
   assert.doesNotMatch(workflow, /github\.event\.workflow_run\.pull_requests\[0\]\.number/);
-  assert.match(workflow, /targets:\s*\$\{\{ steps\.plan\.outputs\.targets \}\}/);
+  assert.match(workflow, /targets:\s*\$\{\{ steps\.admit\.outputs\.targets \}\}/);
   assert.match(workflow, /target:\s*\$\{\{ fromJSON\(needs\.plan\.outputs\.targets\) \}\}/);
   assert.match(workflow, /group: exact-head-review-dispatch-\$\{\{ github\.repository \}\}-pr-\$\{\{ matrix\.target\.prNumber \}\}/);
   assert.match(workflow, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR:\s*\$\{\{ matrix\.target\.prNumber \}\}/);
@@ -851,4 +854,80 @@ test('renders exact-head dispatch, receipt and escalation comments with durable 
   assert.throws(() => buildReviewDispatchComment({ prNumber: 0, headSha: HEAD }), /valid PR number/);
   assert.throws(() => buildReviewReceiptComment({ prNumber: -1, headSha: HEAD }), /valid PR number/);
   assert.throws(() => buildMissingReceiptEscalationComment({ prNumber: '', headSha: HEAD }), /valid PR number/);
+});
+
+
+test('exact owner review request is bounded to one PR and exact head', () => {
+  const headSha = 'a'.repeat(40);
+  const request = explicitOwnerExactHeadReviewRequest({
+    laneAuthorityLogin: 'Cheekyfellastef',
+    event: {
+      issue: { number: 1868, pull_request: { url: 'https://api.github.com/repos/Cheekyfellastef/stephan-os/pulls/1868' } },
+      comment: {
+        id: 5473673649,
+        body: '/stephanos-review ' + headSha + '\n\nQUALIFIED_BOOTSTRAP_AUTHORIZED=true',
+        user: { login: 'Cheekyfellastef', type: 'User' },
+      },
+    },
+  });
+  assert.deepEqual(request, {
+    authorized: true,
+    prNumber: 1868,
+    headSha,
+    commentId: 5473673649,
+  });
+
+  assert.equal(explicitOwnerExactHeadReviewRequest({
+    laneAuthorityLogin: 'Cheekyfellastef',
+    event: {
+      issue: { number: 1868, pull_request: {} },
+      comment: { body: '/stephanos-review ' + headSha, user: { login: 'github-actions[bot]', type: 'Bot' } },
+    },
+  }).authorized, false);
+
+  assert.equal(explicitOwnerExactHeadReviewRequest({
+    laneAuthorityLogin: 'Cheekyfellastef',
+    event: {
+      issue: { number: 1868, pull_request: {} },
+      comment: { body: '/stephanos-review short-head', user: { login: 'Cheekyfellastef', type: 'User' } },
+    },
+  }).authorized, false);
+});
+
+test('exact owner review request can substitute only for missing canonical lane evidence', () => {
+  const headSha = 'a'.repeat(40);
+  const baseInput = {
+    repository: 'Cheekyfellastef/stephan-os',
+    now: '2026-08-31T04:21:30.000Z',
+    trustedCoordinatorLogin: 'Cheekyfellastef',
+    canonicalLaneConfirmed: false,
+    ownerExactHeadReviewRequested: true,
+    pr: {
+      number: 1868,
+      state: 'open',
+      baseRef: 'main',
+      baseSha: 'b'.repeat(40),
+      headRef: 'agent/personal-repository-bootstrap-policy-v1',
+      headSha,
+      sameRepository: true,
+    },
+    workflowRuns: [],
+    unresolvedThreadCount: 0,
+    comments: [],
+    reviews: [],
+  };
+  const admitted = evaluateExactHeadReviewDispatch(baseInput);
+  assert.notEqual(admitted.decision, 'INELIGIBLE');
+
+  const blocked = evaluateExactHeadReviewDispatch({
+    ...baseInput,
+    ownerExactHeadReviewRequested: false,
+  });
+  assert.equal(blocked.decision, 'INELIGIBLE');
+
+  const crossRepo = evaluateExactHeadReviewDispatch({
+    ...baseInput,
+    pr: { ...baseInput.pr, sameRepository: false },
+  });
+  assert.equal(crossRepo.decision, 'INELIGIBLE');
 });

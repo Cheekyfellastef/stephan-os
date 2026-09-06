@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { lstat, readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 import {
   SHARED_WORKSPACE_RECORD_KINDS,
@@ -13,6 +15,8 @@ export const CHATGPT_BRIDGE_PARTICIPANT_ID = 'chatgpt-bridge';
 export const CHATGPT_BRIDGE_TRANSPORT_STATUS = 'BLOCKED_TRANSPORT_NOT_CONFIGURED';
 export const CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES = 4096;
 export const CHATGPT_BRIDGE_REDACTED_TEXT = '[REDACTED]';
+export const CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION = 'DELIVER_STEPHANOS_CONVERSATION_QUESTION';
+export const CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND = 'conversation-question';
 
 export const CHATGPT_BRIDGE_READ_OPERATIONS = Object.freeze([
   'READ_CURRENT_STATUS',
@@ -27,6 +31,7 @@ export const CHATGPT_BRIDGE_WRITE_OPERATIONS = Object.freeze([
   'WRITE_BLOCKER_CLASSIFICATION',
   'WRITE_OPERATOR_ATTENTION_REQUEST',
   'WRITE_APPROVAL_REQUEST',
+  CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
 ]);
 
 export const CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS = Object.freeze(['READ_FILE', 'WRITE_FILE', 'EXECUTE']);
@@ -41,6 +46,7 @@ export const CHATGPT_BRIDGE_RECORD_KINDS = Object.freeze({
   BLOCKER_CLASSIFICATION: 'blocker-classification',
   OPERATOR_ATTENTION_REQUEST: 'operator-attention-request',
   APPROVAL_REQUEST: 'approval-request',
+  STEPHANOS_CONVERSATION_QUESTION: CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND,
 });
 
 export const CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP = Object.freeze({
@@ -53,6 +59,7 @@ export const CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP = Object.freeze({
   WRITE_BLOCKER_CLASSIFICATION: CHATGPT_BRIDGE_RECORD_KINDS.BLOCKER_CLASSIFICATION,
   WRITE_OPERATOR_ATTENTION_REQUEST: CHATGPT_BRIDGE_RECORD_KINDS.OPERATOR_ATTENTION_REQUEST,
   WRITE_APPROVAL_REQUEST: CHATGPT_BRIDGE_RECORD_KINDS.APPROVAL_REQUEST,
+  [CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION]: CHATGPT_BRIDGE_RECORD_KINDS.STEPHANOS_CONVERSATION_QUESTION,
 });
 
 export const CHATGPT_BRIDGE_RESPONSE_STATUSES = Object.freeze([
@@ -73,6 +80,8 @@ export const CHATGPT_BRIDGE_RESPONSE_STATUSES = Object.freeze([
 const SECRET_KEY_PATTERN = /secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|env/i;
 const SECRET_VALUE_PATTERN = /BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY|xox[baprs]-|gh[pousr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{20,}|\.env\b|browser cookies?|session\b/i;
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
+const IGNITION_SUPERVISOR_STATUS_MAX_BYTES = 64 * 1024;
+const PATH_SHAPED_TEXT_PATTERN = /(?:^|[\s"'`])(?:[A-Za-z]:[\\/]|\\\\|\/(?:Users|home|var|tmp)(?:\/|\b))/i;
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -120,10 +129,112 @@ function serializedPayloadHasSecretShapedData(serializedPayload) {
   }
 }
 
+function isPlainDataObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  } catch {
+    return false;
+  }
+}
+
+function isExactStephanosQuestionDeliveryPayload(value) {
+  if (!isPlainDataObject(value)) return false;
+  try {
+    const keys = Object.keys(value).sort();
+    if (keys.length !== 1 || keys[0] !== 'questionRecord') return false;
+    const record = value.questionRecord;
+    if (!isPlainDataObject(record)) return false;
+    return record.kind === SHARED_WORKSPACE_RECORD_KINDS.MESSAGE
+      && text(record.participantId) === CHATGPT_BRIDGE_PARTICIPANT_ID
+      && text(record.recipientParticipantId).toLowerCase() === 'stephanos'
+      && text(record.channel) === 'shared-participant-qa'
+      && text(record.recordSubtype) === CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND;
+  } catch {
+    return false;
+  }
+}
+
 function sanitizedProjectionText(value) {
   const out = text(value);
   if (!out) return '';
   return SECRET_VALUE_PATTERN.test(out) ? CHATGPT_BRIDGE_REDACTED_TEXT : out;
+}
+
+function sanitizedIgnitionProjectionText(value) {
+  const out = sanitizedProjectionText(value);
+  if (!out || out === CHATGPT_BRIDGE_REDACTED_TEXT) return out;
+  return PATH_SHAPED_TEXT_PATTERN.test(out) ? CHATGPT_BRIDGE_REDACTED_TEXT : out;
+}
+
+function sanitizeIgnitionPhase(phase = null) {
+  if (!phase || typeof phase !== 'object' || Array.isArray(phase)) return null;
+  return Object.freeze({
+    state: sanitizedIgnitionProjectionText(phase.state),
+    blockerId: sanitizedIgnitionProjectionText(phase.blockerId),
+    nextOperatorAction: sanitizedIgnitionProjectionText(phase.nextOperatorAction),
+  });
+}
+
+function sanitizeIgnitionService(service = null) {
+  if (!service || typeof service !== 'object' || Array.isArray(service)) return null;
+  return Object.freeze({
+    state: sanitizedIgnitionProjectionText(service.state),
+    ready: service.ready === true,
+  });
+}
+
+export function sanitizeIgnitionSupervisorStatus(status = {}) {
+  if (!status || typeof status !== 'object' || Array.isArray(status)) {
+    return Object.freeze({ state: 'unverifiable', blockerId: 'IGNITION_STATUS_JSON_INVALID' });
+  }
+  const phases = status.phases && typeof status.phases === 'object' && !Array.isArray(status.phases)
+    ? Object.fromEntries(Object.entries(status.phases).map(([id, phase]) => [sanitizedIgnitionProjectionText(id), sanitizeIgnitionPhase(phase)]).filter(([id]) => id))
+    : {};
+  return Object.freeze({
+    state: 'observed',
+    schema: sanitizedIgnitionProjectionText(status.schema),
+    generatedAt: sanitizedIgnitionProjectionText(status.generatedAt),
+    currentPhase: sanitizedIgnitionProjectionText(status.currentPhase),
+    trafficLight: sanitizedIgnitionProjectionText(status.trafficLight),
+    blockerId: sanitizedIgnitionProjectionText(status.blockerId),
+    nextOperatorAction: sanitizedIgnitionProjectionText(status.nextOperatorAction),
+    sourceTruthVerdict: Object.freeze({
+      state: sanitizedIgnitionProjectionText(status.sourceTruthVerdict?.state),
+      verdict: sanitizedIgnitionProjectionText(status.sourceTruthVerdict?.verdict),
+    }),
+    services: Object.freeze({
+      backend8787: sanitizeIgnitionService(status.services?.backend8787),
+      openClaw18789: sanitizeIgnitionService(status.services?.openClaw18789),
+      stephanosUi4173: sanitizeIgnitionService(status.services?.stephanosUi4173),
+    }),
+    phases: Object.freeze(phases),
+  });
+}
+
+export async function readSanitizedIgnitionSupervisorStatus(input = {}) {
+  if (!input.workspaceRoot) return null;
+  const workspaceRoot = resolve(String(input.workspaceRoot));
+  const statusPath = resolve(workspaceRoot, 'status', 'battle-bridge-ignition-supervisor-current.json');
+  try {
+    const info = await lstat(statusPath);
+    if (info.isSymbolicLink() || !info.isFile()) {
+      return Object.freeze({ state: 'unverifiable', blockerId: 'IGNITION_STATUS_NOT_REGULAR_FILE' });
+    }
+    if (info.size > IGNITION_SUPERVISOR_STATUS_MAX_BYTES) {
+      return Object.freeze({ state: 'unverifiable', blockerId: 'IGNITION_STATUS_TOO_LARGE' });
+    }
+    const raw = await readFile(statusPath, 'utf8');
+    if (Buffer.byteLength(raw, 'utf8') > IGNITION_SUPERVISOR_STATUS_MAX_BYTES) {
+      return Object.freeze({ state: 'unverifiable', blockerId: 'IGNITION_STATUS_TOO_LARGE' });
+    }
+    return sanitizeIgnitionSupervisorStatus(JSON.parse(raw));
+  } catch (error) {
+    if (error?.code === 'ENOENT') return Object.freeze({ state: 'absent', blockerId: 'IGNITION_STATUS_MISSING' });
+    if (error instanceof SyntaxError) return Object.freeze({ state: 'unverifiable', blockerId: 'IGNITION_STATUS_JSON_INVALID' });
+    return Object.freeze({ state: 'unverifiable', blockerId: 'IGNITION_STATUS_READ_FAILED' });
+  }
 }
 
 function canonicalHash(value) {
@@ -188,6 +299,9 @@ export function createInertChatGptBridgeTransportAdapter() {
 
 export function buildChatGptBridgeRecord(request = {}, options = {}) {
   if (request.recordKind === 'approval-result') return { ok: false, reason: 'BLOCKED_APPROVAL_REQUIRED' };
+  if (request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION) {
+    return { ok: false, reason: 'BLOCKED_SPECIALIZED_OPERATION_REQUIRED' };
+  }
   if (!Object.values(CHATGPT_BRIDGE_RECORD_KINDS).includes(request.recordKind) || !CHATGPT_BRIDGE_WRITE_OPERATIONS.includes(request.operation)) {
     return { ok: false, reason: 'BLOCKED_RECORD_KIND_NOT_ALLOWLISTED' };
   }
@@ -252,6 +366,7 @@ export async function createSanitizedSharedWorkspaceProjection(input = {}) {
     title: sanitizedProjectionText(record.title),
     proofRefs: Array.isArray(record.proofRefs) ? record.proofRefs.map(String).filter((ref) => !SECRET_VALUE_PATTERN.test(ref)) : [],
   } : null;
+  const ignitionSupervisor = await readSanitizedIgnitionSupervisorStatus(input);
   return Object.freeze({
     schemaVersion: CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION,
     projectionKind: 'sanitized-shared-workspace-status',
@@ -261,6 +376,7 @@ export async function createSanitizedSharedWorkspaceProjection(input = {}) {
     currentGoal: sanitizeRecord(latest.goal),
     currentStatus: sanitizeRecord(latest.status),
     latestProof: sanitizeRecord(latest.proof),
+    ignitionSupervisor,
     freshnessUtc: text(input.timestampUtc, new Date(0).toISOString()),
     arbitraryFilesystemAccess: false,
     commandExecutionAccess: false,
@@ -292,6 +408,7 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
     const serializedPayload = serializePayload(request.boundedPayload);
     if (!serializedPayload.ok || serializedPayload.bytes > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (serializedPayloadHasSecretShapedData(serializedPayload)) responseStatus = 'BLOCKED_SECRET_SHAPED_DATA';
+    else if (operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION && !isExactStephanosQuestionDeliveryPayload(request.boundedPayload)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (operation === 'READ_DELIVERY_STATUS' && !validateDeliveryStatusSubject(request.boundedPayload?.statusSubject).ok) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (request.recordKind === 'approval-result') responseStatus = 'BLOCKED_APPROVAL_REQUIRED';
     else if (text(request.approvalRef)) {
