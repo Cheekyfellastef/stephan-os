@@ -37,55 +37,10 @@ const GENOME_KEYS = Object.freeze([
   'createdAtUtc',
 ]);
 const INFLUENCE_KEYS = Object.freeze(['sourceRef', 'principles', 'copyingAllowed']);
-const PROTOTYPE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
 function plain(value) {
-  try {
-    return Boolean(value && typeof value === 'object' && !Array.isArray(value)
-      && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null));
-  } catch {
-    return false;
-  }
-}
-
-function snapshotData(value, seen = new WeakSet()) {
-  if (value === null || typeof value !== 'object') return value;
-  try {
-    if (seen.has(value)) return null;
-    seen.add(value);
-    if (Array.isArray(value)) {
-      if (Object.getPrototypeOf(value) !== Array.prototype) return null;
-      const descriptors = Object.getOwnPropertyDescriptors(value);
-      const keys = Reflect.ownKeys(descriptors);
-      if (keys.some((key) => typeof key !== 'string')) return null;
-      const allowed = new Set(['length', ...Array.from({ length: value.length }, (_, index) => String(index))]);
-      if (keys.some((key) => !allowed.has(key))) return null;
-      const output = [];
-      for (let index = 0; index < value.length; index += 1) {
-        const descriptor = descriptors[String(index)];
-        if (!descriptor || !('value' in descriptor)) return null;
-        const captured = snapshotData(descriptor.value, seen);
-        if (captured === null && descriptor.value !== null) return null;
-        output.push(captured);
-      }
-      return output;
-    }
-    if (!plain(value)) return null;
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    const keys = Reflect.ownKeys(descriptors);
-    if (keys.some((key) => typeof key !== 'string' || PROTOTYPE_KEYS.has(key))) return null;
-    const output = Object.create(null);
-    for (const key of keys) {
-      const descriptor = descriptors[key];
-      if (!descriptor || !('value' in descriptor)) return null;
-      const captured = snapshotData(descriptor.value, seen);
-      if (captured === null && descriptor.value !== null) return null;
-      Object.defineProperty(output, key, { value: captured, enumerable: true, configurable: false, writable: false });
-    }
-    return output;
-  } catch {
-    return null;
-  }
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
+    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null));
 }
 
 function dense(value) {
@@ -165,23 +120,18 @@ function frozen(value) {
 
 export function validateSpatialPlanetDesignGenome(genome = {}) {
   const errors = [];
-  const candidate = snapshotData(genome);
-  if (!candidate || Array.isArray(candidate)) {
-    errors.push('genome-must-be-data-only-object');
-    return Object.freeze({ valid: false, errors: Object.freeze(errors), refusalReason: errors[0] });
-  }
-  if (!exactShape(candidate, GENOME_KEYS, errors, 'genome')) return Object.freeze({ valid: false, errors: Object.freeze(errors), refusalReason: errors[0] || '' });
-  if (candidate.schemaVersion !== SPATIAL_PLANET_DESIGN_GENOME_SCHEMA_VERSION) errors.push('schema-version-mismatch');
-  if (!SAFE_ID.test(text(candidate.genomeId, 128))) errors.push('genomeId-invalid');
-  if (!SAFE_ID.test(text(candidate.planetId, 128))) errors.push('planetId-invalid');
-  if (!SAFE_VERSION.test(text(candidate.version, 128))) errors.push('version-invalid');
-  if (!SHA.test(text(candidate.sourceHead, 40))) errors.push('sourceHead-invalid');
-  stringList(candidate.researchRefs, 'researchRefs', errors, 1);
+  if (!exactShape(genome, GENOME_KEYS, errors, 'genome')) return Object.freeze({ valid: false, errors: Object.freeze(errors), refusalReason: errors[0] || '' });
+  if (genome.schemaVersion !== SPATIAL_PLANET_DESIGN_GENOME_SCHEMA_VERSION) errors.push('schema-version-mismatch');
+  if (!SAFE_ID.test(text(genome.genomeId, 128))) errors.push('genomeId-invalid');
+  if (!SAFE_ID.test(text(genome.planetId, 128))) errors.push('planetId-invalid');
+  if (!SAFE_VERSION.test(text(genome.version, 128))) errors.push('version-invalid');
+  if (!SHA.test(text(genome.sourceHead, 40))) errors.push('sourceHead-invalid');
+  stringList(genome.researchRefs, 'researchRefs', errors, 1);
 
-  if (!dense(candidate.influences) || candidate.influences.length === 0) errors.push('influences-must-be-non-empty-dense-array');
+  if (!dense(genome.influences) || genome.influences.length === 0) errors.push('influences-must-be-non-empty-dense-array');
   else {
-    for (let index = 0; index < candidate.influences.length; index += 1) {
-      const influence = candidate.influences[index];
+    for (let index = 0; index < genome.influences.length; index += 1) {
+      const influence = genome.influences[index];
       const prefix = `influence-${index + 1}`;
       const local = [];
       exactShape(influence, INFLUENCE_KEYS, local, prefix);
@@ -192,47 +142,42 @@ export function validateSpatialPlanetDesignGenome(genome = {}) {
     }
   }
 
-  if (!plain(candidate.dimensions)) errors.push('dimensions-must-be-data-only-object');
+  if (!plain(genome.dimensions)) errors.push('dimensions-must-be-data-only-object');
   else {
-    const keys = Object.keys(candidate.dimensions);
+    const keys = Object.keys(genome.dimensions);
     for (const key of keys) if (!SPATIAL_PLANET_DESIGN_DIMENSIONS.includes(key)) errors.push(`dimensions-unknown-field:${key}`);
     for (const key of SPATIAL_PLANET_DESIGN_DIMENSIONS) {
-      if (!Object.hasOwn(candidate.dimensions, key)) errors.push(`dimensions-missing-field:${key}`);
-      else if (!text(candidate.dimensions[key], 4096)) errors.push(`dimensions-${key}-invalid`);
+      if (!Object.hasOwn(genome.dimensions, key)) errors.push(`dimensions-missing-field:${key}`);
+      else if (!text(genome.dimensions[key], 4096)) errors.push(`dimensions-${key}-invalid`);
     }
   }
 
-  budget(candidate.performanceBudget, 'performanceBudget', errors);
-  budget(candidate.comfortBudget, 'comfortBudget', errors);
-  if (!text(candidate.licencePolicy, 4096)) errors.push('licencePolicy-invalid');
-  if (!timestamp(candidate.createdAtUtc)) errors.push('createdAtUtc-invalid');
+  budget(genome.performanceBudget, 'performanceBudget', errors);
+  budget(genome.comfortBudget, 'comfortBudget', errors);
+  if (!text(genome.licencePolicy, 4096)) errors.push('licencePolicy-invalid');
+  if (!timestamp(genome.createdAtUtc)) errors.push('createdAtUtc-invalid');
   const unique = [...new Set(errors)];
   return Object.freeze({ valid: unique.length === 0, errors: Object.freeze(unique), refusalReason: unique[0] || '' });
 }
 
 export function createSpatialPlanetDesignGenome(input = {}) {
-  const source = snapshotData(input);
-  if (!source || Array.isArray(source)) {
-    const validation = Object.freeze({ valid: false, errors: Object.freeze(['genome-input-must-be-data-only-object']), refusalReason: 'genome-input-must-be-data-only-object' });
-    return frozen({ valid: false, genome: null, validation });
-  }
   const genome = frozen({
     schemaVersion: SPATIAL_PLANET_DESIGN_GENOME_SCHEMA_VERSION,
-    genomeId: source.genomeId,
-    planetId: source.planetId,
-    version: source.version,
-    sourceHead: source.sourceHead,
-    researchRefs: Array.isArray(source.researchRefs) ? [...source.researchRefs] : [],
-    influences: Array.isArray(source.influences) ? source.influences.map((entry) => ({
+    genomeId: input.genomeId,
+    planetId: input.planetId,
+    version: input.version,
+    sourceHead: input.sourceHead,
+    researchRefs: Array.isArray(input.researchRefs) ? [...input.researchRefs] : [],
+    influences: Array.isArray(input.influences) ? input.influences.map((entry) => ({
       sourceRef: entry?.sourceRef,
       principles: Array.isArray(entry?.principles) ? [...entry.principles] : [],
       copyingAllowed: false,
     })) : [],
-    dimensions: plain(source.dimensions) ? { ...source.dimensions } : {},
-    performanceBudget: plain(source.performanceBudget) ? { ...source.performanceBudget } : {},
-    comfortBudget: plain(source.comfortBudget) ? { ...source.comfortBudget } : {},
-    licencePolicy: source.licencePolicy,
-    createdAtUtc: source.createdAtUtc,
+    dimensions: plain(input.dimensions) ? { ...input.dimensions } : {},
+    performanceBudget: plain(input.performanceBudget) ? { ...input.performanceBudget } : {},
+    comfortBudget: plain(input.comfortBudget) ? { ...input.comfortBudget } : {},
+    licencePolicy: input.licencePolicy,
+    createdAtUtc: input.createdAtUtc,
   });
   const validation = validateSpatialPlanetDesignGenome(genome);
   return frozen({ valid: validation.valid, genome: validation.valid ? genome : null, validation });
@@ -253,19 +198,17 @@ export function planSpatialPlanetDesignGenomeBinding(buildOrder = {}, genome = {
   if (!buildOrderValidation.valid) return frozen({ schemaVersion: SPATIAL_PLANET_DESIGN_GENOME_BINDING_SCHEMA_VERSION, status: 'BLOCKED_INVALID_BUILD_ORDER', errors: buildOrderValidation.errors, authority });
   const genomeValidation = validateSpatialPlanetDesignGenome(genome);
   if (!genomeValidation.valid) return frozen({ schemaVersion: SPATIAL_PLANET_DESIGN_GENOME_BINDING_SCHEMA_VERSION, status: 'BLOCKED_INVALID_GENOME', errors: genomeValidation.errors, authority });
-  const safeGenome = snapshotData(genome);
-  if (!safeGenome || Array.isArray(safeGenome)) return frozen({ schemaVersion: SPATIAL_PLANET_DESIGN_GENOME_BINDING_SCHEMA_VERSION, status: 'BLOCKED_INVALID_GENOME', errors: Object.freeze(['genome-must-be-data-only-object']), authority });
-  if (buildOrder.planetId !== safeGenome.planetId) return frozen({ schemaVersion: SPATIAL_PLANET_DESIGN_GENOME_BINDING_SCHEMA_VERSION, status: 'BLOCKED_PLANET_MISMATCH', errors: Object.freeze(['planetId-mismatch']), authority });
-  if (buildOrder.designGenomeVersion !== safeGenome.version) return frozen({ schemaVersion: SPATIAL_PLANET_DESIGN_GENOME_BINDING_SCHEMA_VERSION, status: 'BLOCKED_GENOME_VERSION_MISMATCH', errors: Object.freeze(['designGenomeVersion-mismatch']), authority });
+  if (buildOrder.planetId !== genome.planetId) return frozen({ schemaVersion: SPATIAL_PLANET_DESIGN_GENOME_BINDING_SCHEMA_VERSION, status: 'BLOCKED_PLANET_MISMATCH', errors: Object.freeze(['planetId-mismatch']), authority });
+  if (buildOrder.designGenomeVersion !== genome.version) return frozen({ schemaVersion: SPATIAL_PLANET_DESIGN_GENOME_BINDING_SCHEMA_VERSION, status: 'BLOCKED_GENOME_VERSION_MISMATCH', errors: Object.freeze(['designGenomeVersion-mismatch']), authority });
   return frozen({
     schemaVersion: SPATIAL_PLANET_DESIGN_GENOME_BINDING_SCHEMA_VERSION,
     status: 'BOUND_FOR_SPATIAL_BUILD_ORDER',
     spatialBuildOrderId: buildOrder.spatialBuildOrderId,
-    planetId: safeGenome.planetId,
-    genomeId: safeGenome.genomeId,
-    genomeVersion: safeGenome.version,
-    genomeSourceHead: safeGenome.sourceHead,
-    researchRefs: safeGenome.researchRefs,
+    planetId: genome.planetId,
+    genomeId: genome.genomeId,
+    genomeVersion: genome.version,
+    genomeSourceHead: genome.sourceHead,
+    researchRefs: genome.researchRefs,
     errors: Object.freeze([]),
     authority,
   });
