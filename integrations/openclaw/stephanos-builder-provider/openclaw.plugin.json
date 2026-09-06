@@ -1,7 +1,7 @@
 {
   "id": "stephanos-builder-provider",
   "name": "Stephanos Builder Provider",
-  "description": "Adds one authenticated, fixed, read-only OC1 repository-scout task for OpenClaw provider qualification.",
+  "description": "Adds authenticated fixed OC1 repository-scout and OC2 deterministic test/build task families for OpenClaw provider qualification.",
   "activation": {
     "onStartup": true
   },

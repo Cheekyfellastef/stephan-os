@@ -25,6 +25,18 @@ import {
   OPENCLAW_OC1_GATEWAY_REQUEST_SCHEMA,
   OPENCLAW_OC1_GATEWAY_RESULT_SCHEMA,
 } from '../integrations/openclaw/stephanos-builder-provider/lib/oc1-gateway-provider.mjs';
+import {
+  OPENCLAW_OC2_ISSUE,
+  OPENCLAW_OC2_OPERATION,
+  OPENCLAW_OC2_PROVIDER,
+  OPENCLAW_OC2_PROVIDER_VERSION,
+  OPENCLAW_OC2_TASK_CLASS,
+} from '../integrations/openclaw/stephanos-builder-provider/lib/oc2-deterministic-test-build.mjs';
+import {
+  OPENCLAW_OC2_GATEWAY_METHOD,
+  OPENCLAW_OC2_GATEWAY_REQUEST_SCHEMA,
+  OPENCLAW_OC2_GATEWAY_RESULT_SCHEMA,
+} from '../integrations/openclaw/stephanos-builder-provider/lib/oc2-gateway-provider.mjs';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -271,6 +283,45 @@ function validateOpenClawOc1GatewayPayload(payload, grant) {
     && result.evidenceReceipts.every((receipt) => receipt?.verified === true);
 }
 
+function openClawOc2GatewayPayload(stdout) {
+  let parsed;
+  try { parsed = JSON.parse(String(stdout || '')); }
+  catch { return null; }
+  if (parsed?.schemaVersion === OPENCLAW_OC2_GATEWAY_RESULT_SCHEMA) return parsed;
+  if (parsed?.result?.schemaVersion === OPENCLAW_OC2_GATEWAY_RESULT_SCHEMA) return parsed.result;
+  return null;
+}
+
+function validateOpenClawOc2GatewayPayload(payload, grant) {
+  const taskId = text(grant?.actionId).toLowerCase();
+  const missionId = text(grant?.missionId).toLowerCase();
+  const sourceHead = text(grant?.sourceRevision).toLowerCase();
+  const providerInstance = text(payload?.providerInstance);
+  const result = payload?.result;
+  return payload?.schemaVersion === OPENCLAW_OC2_GATEWAY_RESULT_SCHEMA
+    && payload?.success === true
+    && payload?.qualificationEligible === true
+    && text(payload?.missionId).toLowerCase() === missionId
+    && text(payload?.goalId) === `#${OPENCLAW_OC2_ISSUE}`
+    && text(payload?.taskId).toLowerCase() === taskId
+    && text(payload?.taskClass) === OPENCLAW_OC2_TASK_CLASS
+    && text(payload?.repository) === text(grant?.repository)
+    && text(payload?.requestedSourceHead).toLowerCase() === sourceHead
+    && text(payload?.provider) === OPENCLAW_OC2_PROVIDER
+    && /^openclaw-gateway:[1-9][0-9]*$/.test(providerInstance)
+    && text(payload?.providerVersion) === OPENCLAW_OC2_PROVIDER_VERSION
+    && payload?.executionSurface === 'openclaw-gateway-plugin'
+    && result?.success === true
+    && result?.qualificationEligible === true
+    && text(result?.resultId).toLowerCase() === taskId
+    && Array.isArray(result?.changedFiles)
+    && result.changedFiles.length === 0
+    && result?.receipt?.verified === true
+    && Array.isArray(result?.evidenceReceipts)
+    && result.evidenceReceipts.length > 0
+    && result.evidenceReceipts.every((receipt) => receipt?.verified === true);
+}
+
 async function groundedOpenClawEvidence(action, finalOutput, options, timestamp) {
   const env = options.env || process.env;
   const missionRunnerRoot = text(options.missionRunnerRoot || env.STEPHANOS_MISSION_RUNNER_ROOT || (env.USERPROFILE ? resolve(env.USERPROFILE, 'Documents', 'OpenClaw-Standalone', 'mission-runner') : ''));
@@ -297,10 +348,46 @@ async function groundedOpenClawEvidence(action, finalOutput, options, timestamp)
   return receipts;
 }
 
+function gatewayFailure(error, timestamp) {
+  return {
+    success: false,
+    error,
+    completedAt: timestamp,
+    changedFiles: [],
+    evidenceReceipts: [],
+  };
+}
+
 export async function executeOpenClawReadonlyAction(action, claim, options = {}) {
   if (action?.actionKind !== 'agent-handoff' || action.adapter !== 'openclaw-readonly') throw new Error('Unsupported OpenClaw read-only worker action.');
-  if (options.actionGrant?.issueNumber === OPENCLAW_OC1_ISSUE) {
-    const grant = options.actionGrant;
+  const grant = options.actionGrant;
+  const grantOperation = text(grant?.operation).toLowerCase();
+  if (grant?.issueNumber === OPENCLAW_OC2_ISSUE && grantOperation === OPENCLAW_OC2_OPERATION) {
+    const request = {
+      schemaVersion: OPENCLAW_OC2_GATEWAY_REQUEST_SCHEMA,
+      actionGrant: grant,
+    };
+    const run = options.runCommand || defaultRun;
+    const timestamp = completedAt(options);
+    const command = run(options.openClawExecutable || process.env.STEPHANOS_OPENCLAW_EXECUTABLE || 'openclaw.cmd', [
+      'gateway', 'call', OPENCLAW_OC2_GATEWAY_METHOD,
+      '--params', JSON.stringify(request),
+      '--timeout', '120000',
+      '--json',
+    ], { cwd: text(action.repositoryRoot) || undefined, env: options.env || process.env });
+    const stdout = command.stdout || '';
+    const stderr = command.stderr || '';
+    if (command.error || command.status !== 0) {
+      return gatewayFailure(command.error?.message || stderr || stdout || `OpenClaw OC2 Gateway call exited with code ${command.status}.`, timestamp);
+    }
+    const payload = openClawOc2GatewayPayload(stdout);
+    if (!validateOpenClawOc2GatewayPayload(payload, grant)) {
+      return gatewayFailure('OPENCLAW_OC2_GATEWAY_RESULT_LINEAGE_INVALID', timestamp);
+    }
+    return payload.result;
+  }
+  if (grant?.issueNumber === OPENCLAW_OC1_ISSUE) {
+    if (grantOperation) return gatewayFailure('OPENCLAW_OC1_OPERATION_NOT_ALLOWLISTED', completedAt(options));
     const request = {
       schemaVersion: OPENCLAW_OC1_GATEWAY_REQUEST_SCHEMA,
       actionGrant: grant,
@@ -316,23 +403,11 @@ export async function executeOpenClawReadonlyAction(action, claim, options = {})
     const stdout = command.stdout || '';
     const stderr = command.stderr || '';
     if (command.error || command.status !== 0) {
-      return {
-        success: false,
-        error: command.error?.message || stderr || stdout || `OpenClaw OC1 Gateway call exited with code ${command.status}.`,
-        completedAt: timestamp,
-        changedFiles: [],
-        evidenceReceipts: [],
-      };
+      return gatewayFailure(command.error?.message || stderr || stdout || `OpenClaw OC1 Gateway call exited with code ${command.status}.`, timestamp);
     }
     const payload = openClawOc1GatewayPayload(stdout);
     if (!validateOpenClawOc1GatewayPayload(payload, grant)) {
-      return {
-        success: false,
-        error: 'OPENCLAW_OC1_GATEWAY_RESULT_LINEAGE_INVALID',
-        completedAt: timestamp,
-        changedFiles: [],
-        evidenceReceipts: [],
-      };
+      return gatewayFailure('OPENCLAW_OC1_GATEWAY_RESULT_LINEAGE_INVALID', timestamp);
     }
     return payload.result;
   }
