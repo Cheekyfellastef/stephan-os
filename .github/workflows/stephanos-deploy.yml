@@ -1,15 +1,19 @@
 name: Deploy Stephanos to GitHub Pages
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+    inputs:
+      expected_head:
+        description: Full main SHA authorized for deployment
+        required: true
+        type: string
+      approval_token:
+        description: APPROVE_STEPHANOS_PAGES_DEPLOY:<full-main-sha>
+        required: true
+        type: string
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages-${{ github.ref }}
@@ -17,11 +21,17 @@ concurrency:
 
 jobs:
   build:
+    permissions:
+      contents: read
+      pages: write
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -29,6 +39,19 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: stephanos-ui/package-lock.json
+
+      - name: Verify exact deployment approval
+        env:
+          STEPHANOS_DEPLOY_EVENT_NAME: ${{ github.event_name }}
+          STEPHANOS_DEPLOY_REPOSITORY: ${{ github.repository }}
+          STEPHANOS_DEPLOY_ACTOR: ${{ github.actor }}
+          STEPHANOS_DEPLOY_REF: ${{ github.ref }}
+          STEPHANOS_DEPLOY_REF_NAME: ${{ github.ref_name }}
+          STEPHANOS_DEPLOY_GITHUB_SHA: ${{ github.sha }}
+          STEPHANOS_DEPLOY_RUN_ATTEMPT: ${{ github.run_attempt }}
+          STEPHANOS_DEPLOY_EXPECTED_HEAD: ${{ inputs.expected_head }}
+          STEPHANOS_DEPLOY_APPROVAL_TOKEN: ${{ inputs.approval_token }}
+        run: node scripts/stephanos-pages-deployment-approval.mjs
 
       - name: Install UI dependencies
         working-directory: stephanos-ui
@@ -65,6 +88,9 @@ jobs:
           path: _site
 
   deploy:
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
