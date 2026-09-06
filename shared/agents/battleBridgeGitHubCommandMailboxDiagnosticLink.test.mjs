@@ -200,3 +200,23 @@ test('executor preserves typed downstream diagnostic blocker', async () => {
   assert.equal(result.blocker, 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT');
   assert.equal(result.result.blocker, 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT');
 });
+
+test('bounded diagnostic timeout/failure becomes a typed blocked execution eligible for terminal receipt publication', async () => {
+  const result = await mailbox.executeBattleBridgeGitHubCommand(command(), {
+    runMissionWorkerDiagnosticLinkFn: async () => ({
+      ok: false,
+      blocker: 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED',
+      finalVerdict: 'MISSION_WORKER_DIAGNOSTIC_LINK_BLOCKED',
+      diagnosticDeadlineMs: 80_000,
+      childTimeoutMs: 70_000,
+      terminalPublicationReserveMs: 10_000,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.verdict, 'COMMAND_EXECUTION_BLOCKED');
+  assert.equal(result.operation, MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION);
+  assert.equal(result.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED');
+  assert.equal(result.result.finalVerdict, 'MISSION_WORKER_DIAGNOSTIC_LINK_BLOCKED');
+  assert.equal(result.result.childTimeoutMs, 70_000);
+  assert.equal(result.result.terminalPublicationReserveMs, 10_000);
+});
