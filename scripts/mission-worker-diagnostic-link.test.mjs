@@ -220,6 +220,56 @@ test('uses only StartApprovedWorkerTask with the canonical watchdog timeout and 
   assert.match(observed.probeScriptPath, /probe-mission-orchestrator-worker-watchdog\.ps1$/i);
 });
 
+test('maps fixed PowerShell failure lines to bounded typed blockers without exposing raw error text', async () => {
+  const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
+    createProbeAdapter: () => ({
+      run: () => ({
+        ok: false,
+        restartBlocker: '',
+        error: 'The approved runtime restart adapter failed.\nAt C:\\repo\\probe.ps1:1 char:1',
+      }),
+    }),
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'APPROVED_RUNTIME_RESTART_ADAPTER_FAILED');
+  assert.equal(result.typedRestartBlocker, 'APPROVED_RUNTIME_RESTART_ADAPTER_FAILED');
+  assert.equal(result.error, undefined);
+});
+
+test('phrase mapping remains fail closed on ambiguity, substrings, and unallowlisted text', async () => {
+  const ambiguous = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
+    createProbeAdapter: () => ({
+      run: () => ({
+        ok: false,
+        restartBlocker: '',
+        error: 'The fixed Mission Orchestrator worker task is not installed.\nThe approved runtime restart adapter failed.',
+      }),
+    }),
+  }));
+  assert.equal(ambiguous.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED');
+  assert.equal(ambiguous.typedRestartBlocker, '');
+
+  const substring = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
+    createProbeAdapter: () => ({
+      run: () => ({
+        ok: false,
+        restartBlocker: '',
+        error: 'prefix The approved runtime restart adapter failed. suffix',
+      }),
+    }),
+  }));
+  assert.equal(substring.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED');
+  assert.equal(substring.typedRestartBlocker, '');
+
+  const unknown = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
+    createProbeAdapter: () => ({
+      run: () => ({ ok: false, restartBlocker: '', error: 'UNRECOGNIZED_RUNTIME_FAILURE' }),
+    }),
+  }));
+  assert.equal(unknown.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED');
+  assert.equal(unknown.typedRestartBlocker, '');
+});
+
 test('bounded child timeout or untyped execution failure returns a typed terminal blocker', async () => {
   const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
     createProbeAdapter: () => ({
