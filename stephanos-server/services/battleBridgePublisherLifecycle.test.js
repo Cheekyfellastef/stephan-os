@@ -5,8 +5,15 @@ import {
   BATTLE_BRIDGE_PUBLISHER_LIVE_SLICE_MAX_AGE_MS,
   buildBattleBridgePublisherLiveSlice,
 } from './battleBridgePublisherLifecycle.js';
+import {
+  DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS,
+  MISSION_WORKER_HEARTBEAT_SCHEMA,
+  MISSION_WORKER_TASK_NAME,
+} from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 
 const NOW = '2026-09-07T22:30:00.000Z';
+const REPOSITORY_ROOT = '/repo/stephan-os';
+const HEAD_SHA = 'ae72c8d00a5b3ae971bac1e1e527f19320b26987';
 
 function freshSupervisor(overrides = {}) {
   return {
@@ -23,18 +30,34 @@ function freshSupervisor(overrides = {}) {
 
 function freshWorker(overrides = {}) {
   return {
-    heartbeatAt: '2026-09-07T22:29:45.000Z',
+    schemaVersion: MISSION_WORKER_HEARTBEAT_SCHEMA,
+    timestampUtc: '2026-09-07T22:29:45.000Z',
+    repositoryRoot: REPOSITORY_ROOT,
+    branch: 'main',
+    headSha: HEAD_SHA,
+    taskName: MISSION_WORKER_TASK_NAME,
+    pid: 4242,
+    launchIdentityId: 'a'.repeat(64),
+    workerStartedAtUtc: '2026-09-07T22:20:00.000Z',
     lastTickVerdict: 'MISSION_WORKER_TICK_PASS',
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
     ...overrides,
   };
 }
 
-test('fresh canonical supervisor and worker evidence produce a ready live publisher slice', () => {
-  const slice = buildBattleBridgePublisherLiveSlice({
-    supervisor: freshSupervisor(),
-    worker: freshWorker(),
+function liveSlice({ supervisor = freshSupervisor(), worker = freshWorker() } = {}) {
+  return buildBattleBridgePublisherLiveSlice({
+    supervisor,
+    worker,
     timestampUtc: NOW,
+    expectedRepositoryRoot: REPOSITORY_ROOT,
+    expectedHeadSha: HEAD_SHA,
   });
+}
+
+test('fresh canonical supervisor and exact-head worker evidence produce a ready live publisher slice', () => {
+  const slice = liveSlice();
   assert.equal(slice.status, 'READY');
   assert.equal(slice.finalVerdict, 'BATTLE_BRIDGE_PUBLISHER_READY');
   assert.deepEqual(slice.services.map((entry) => [entry.serviceId, entry.status]), [
@@ -47,11 +70,7 @@ test('fresh canonical supervisor and worker evidence produce a ready live publis
 
 test('stale supervisor evidence is never repainted current by the minute publisher tick', () => {
   const staleAt = new Date(Date.parse(NOW) - BATTLE_BRIDGE_PUBLISHER_LIVE_SLICE_MAX_AGE_MS - 1).toISOString();
-  const slice = buildBattleBridgePublisherLiveSlice({
-    supervisor: freshSupervisor({ generatedAt: staleAt }),
-    worker: freshWorker(),
-    timestampUtc: NOW,
-  });
+  const slice = liveSlice({ supervisor: freshSupervisor({ generatedAt: staleAt }) });
   assert.equal(slice.status, 'UNKNOWN');
   assert.equal(slice.services.find((entry) => entry.serviceId === 'backend').status, 'UNKNOWN');
   assert.equal(slice.services.find((entry) => entry.serviceId === 'battle-bridge-supervisor').status, 'UNKNOWN');
@@ -60,7 +79,7 @@ test('stale supervisor evidence is never repainted current by the minute publish
 });
 
 test('fresh negative supervisor state is degraded rather than falsely ready', () => {
-  const slice = buildBattleBridgePublisherLiveSlice({
+  const slice = liveSlice({
     supervisor: freshSupervisor({
       trafficLight: 'amber',
       services: {
@@ -68,27 +87,36 @@ test('fresh negative supervisor state is degraded rather than falsely ready', ()
         openClaw18789: { state: 'ready', ready: true },
       },
     }),
-    worker: freshWorker(),
-    timestampUtc: NOW,
   });
   assert.equal(slice.status, 'UNKNOWN');
   assert.equal(slice.services.find((entry) => entry.serviceId === 'backend').status, 'DEGRADED');
   assert.equal(slice.services.find((entry) => entry.serviceId === 'battle-bridge-supervisor').status, 'DEGRADED');
 });
 
-test('stale or unhealthy worker heartbeat cannot be promoted to ready', () => {
-  const staleAt = new Date(Date.parse(NOW) - BATTLE_BRIDGE_PUBLISHER_LIVE_SLICE_MAX_AGE_MS - 1).toISOString();
-  const stale = buildBattleBridgePublisherLiveSlice({
-    supervisor: freshSupervisor(),
-    worker: freshWorker({ heartbeatAt: staleAt }),
-    timestampUtc: NOW,
+test('worker heartbeat older than the canonical 120-second deadline is unknown even inside supervisor freshness', () => {
+  const staleAt = new Date(Date.parse(NOW) - DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS - 1).toISOString();
+  const slice = liveSlice({
+    worker: freshWorker({
+      timestampUtc: staleAt,
+      workerStartedAtUtc: new Date(Date.parse(staleAt) - 60_000).toISOString(),
+    }),
   });
-  assert.equal(stale.services.find((entry) => entry.serviceId === 'mission-worker').status, 'UNKNOWN');
+  assert.equal(slice.services.find((entry) => entry.serviceId === 'mission-worker').status, 'UNKNOWN');
+  assert.equal(slice.status, 'UNKNOWN');
+});
 
-  const unhealthy = buildBattleBridgePublisherLiveSlice({
-    supervisor: freshSupervisor(),
-    worker: freshWorker({ lastTickVerdict: 'MISSION_WORKER_TICK_FAILED' }),
-    timestampUtc: NOW,
-  });
-  assert.equal(unhealthy.services.find((entry) => entry.serviceId === 'mission-worker').status, 'DEGRADED');
+test('wrong-head or structurally invalid worker heartbeat can never publish ready', () => {
+  const wrongHead = liveSlice({ worker: freshWorker({ headSha: 'b'.repeat(40) }) });
+  assert.equal(wrongHead.services.find((entry) => entry.serviceId === 'mission-worker').status, 'UNKNOWN');
+  assert.equal(wrongHead.status, 'UNKNOWN');
+
+  const invalid = liveSlice({ worker: freshWorker({ schemaVersion: 'wrong.schema' }) });
+  assert.equal(invalid.services.find((entry) => entry.serviceId === 'mission-worker').status, 'UNKNOWN');
+  assert.equal(invalid.status, 'UNKNOWN');
+});
+
+test('non-affirmative worker verdict remains fail closed through canonical validation', () => {
+  const slice = liveSlice({ worker: freshWorker({ lastTickVerdict: 'MISSION_WORKER_TICK_FAILED' }) });
+  assert.equal(slice.services.find((entry) => entry.serviceId === 'mission-worker').status, 'UNKNOWN');
+  assert.equal(slice.status, 'UNKNOWN');
 });
