@@ -15,6 +15,38 @@ export const MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS =
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const INVOCATION_ID_PATTERN = /^[0-9a-f]{64}$/i;
+const BOUNDED_APPROVED_RUNTIME_START_BLOCKERS = new Set([
+  'USERPROFILE_REQUIRED',
+  'NON_CANONICAL_REPOSITORY_PATH',
+  'CANONICAL_GIT_MISSING',
+  'CANONICAL_GIT_IDENTITY_INVALID',
+  'CANONICAL_GIT_PATH_MISMATCH',
+  'CANONICAL_NODE_MISSING',
+  'CANONICAL_NODE_IDENTITY_INVALID',
+  'CANONICAL_NODE_PATH_MISMATCH',
+  'CANONICAL_MAIN_REQUIRED',
+  'CANONICAL_TRACKED_SOURCE_DIRTY',
+  'CANONICAL_PUBLIC_MAIN_READ_FAILED',
+  'CANONICAL_PUBLIC_MAIN_RESPONSE_INVALID',
+  'EXPECTED_HEAD_MISMATCH',
+  'EXPECTED_HEAD_NOT_PUBLIC_MAIN',
+  'APPROVED_TASK_MISSING',
+  'APPROVED_TASK_DISABLED',
+  'APPROVED_TASK_ACTION_COUNT_INVALID',
+  'APPROVED_TASK_EXECUTABLE_MISMATCH',
+  'APPROVED_TASK_ARGUMENTS_MISMATCH',
+]);
+
+function extractBoundedApprovedRuntimeStartBlocker(...values) {
+  const candidates = new Set();
+  for (const value of values) {
+    const body = String(value ?? '').slice(0, 16 * 1024);
+    for (const match of body.matchAll(/\b[A-Z][A-Z0-9_]{2,119}\b/g)) {
+      if (BOUNDED_APPROVED_RUNTIME_START_BLOCKERS.has(match[0])) candidates.add(match[0]);
+    }
+  }
+  return candidates.size === 1 ? [...candidates][0] : '';
+}
 
 function blocked(blocker, details = {}) {
   return Object.freeze({
@@ -168,11 +200,16 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
     deadlineUtc,
   });
   if (!start?.ok) {
-    return blocked(String(start?.restartBlocker || 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED'), {
+    const typedRestartBlocker = String(start?.restartBlocker || extractBoundedApprovedRuntimeStartBlocker(
+      start?.error,
+      start?.stderr,
+      start?.stdout,
+    ));
+    return blocked(typedRestartBlocker || 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED', {
       expectedHead: canonicalExpectedHead,
       sourceHead,
       downstreamSectionReached: 'APPROVED_WORKER_START',
-      typedRestartBlocker: String(start?.restartBlocker || ''),
+      typedRestartBlocker,
       diagnosticDeadlineMs: MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
       childTimeoutMs: MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
       terminalPublicationReserveMs: MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS,
