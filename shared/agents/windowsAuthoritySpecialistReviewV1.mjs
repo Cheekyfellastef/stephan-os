@@ -6,11 +6,11 @@ const WSL2_PATH = './windowsAuthorityForgeWsl2PrerequisiteReviewV1.mjs';
 const MAILBOX_CADENCE_PATH = './windowsAuthorityMailboxCadenceReviewV1.mjs';
 const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1.mjs';
 const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupReviewV1.mjs';
-const BASE_BLOB_SHA = '85ea1cdebe4bc721ad6673db73ce0f63927a763e';
+const BASE_BLOB_SHA = '42866f4ce3957321109a306f4c4da94f97369073';
 const WSL2_BLOB_SHA = 'a03ab69af51d0a39a0d43d72df515f4a5a8329c0';
 const MAILBOX_CADENCE_BLOB_SHA = 'd1319d542b219c786a36e8063f4080369f1f9a51';
 const IGNITION_CONVERGENCE_BLOB_SHA = '8115a382c5c7b9a0bfe5611d4931fcbd969d1162';
-const MISSION_WORKER_CLEANUP_BLOB_SHA = '907c95a364c4b5eb5e083788b52056071d78e3a2';
+const MISSION_WORKER_CLEANUP_BLOB_SHA = '01486be01fceaa5bb018551ed8f95c66504c471a';
 
 const EXPECTED_IGNITION_CONVERGENCE_PATHS = Object.freeze(['scripts/windows/probe-battle-bridge-recovery-mesh.ps1','scripts/windows/repair-stephanos-battle-bridge.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1','scripts/windows/start-stephanos-backend.ps1']);
 const EXPECTED_MISSION_WORKER_CLEANUP_PATHS = Object.freeze(['scripts/windows/restart-approved-stephanos-runtime.ps1']);
