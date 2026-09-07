@@ -24,6 +24,7 @@ const OPERATION_MODE = new Map([
 const ALLOWED_FIELDS = new Set([
   'schemaVersion', 'requestId', 'operation', 'repository', 'issueNumber', 'operatorApproval', 'expiresAt',
   'mode', 'prNumber', 'expectedBranch', 'expectedHead', 'expectedHeadTree', 'expectedBase',
+  'authorizationHead', 'authorizationHeadTree', 'authorizationBase',
   'independentReviewRunId', 'independentReviewRunAttempt', 'independentReviewArtifactId',
   'independentReviewArtifactDigest', 'independentReviewPayloadSha256',
 ]);
@@ -31,10 +32,9 @@ const READY_AUTHORIZATION_IDENTITY_FIELDS = Object.freeze([
   'operation', 'repository', 'issueNumber', 'operatorApproval', 'mode', 'prNumber', 'expectedBranch',
   'expectedHead', 'expectedHeadTree', 'expectedBase',
 ]);
-const MERGE_AUTHORIZATION_IDENTITY_FIELDS = Object.freeze([
-  ...READY_AUTHORIZATION_IDENTITY_FIELDS,
-  'independentReviewRunId', 'independentReviewRunAttempt', 'independentReviewArtifactId',
-  'independentReviewArtifactDigest', 'independentReviewPayloadSha256',
+const MERGE_MATERIAL_AUTHORIZATION_IDENTITY_FIELDS = Object.freeze([
+  'operation', 'repository', 'issueNumber', 'operatorApproval', 'mode', 'prNumber', 'expectedBranch',
+  'authorizationHead', 'authorizationHeadTree', 'authorizationBase',
 ]);
 const AUTHORIZATION_COMMENT_ISSUE_URL = `https://api.github.com/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/issues/${PROTECTED_WORKFLOW_DISPATCH_ISSUE}`;
 
@@ -49,6 +49,9 @@ function positiveInteger(value) {
 }
 
 function normalizeAuthorizationExpected(expected = {}) {
+  const expectedHead = String(expected.expectedHead || '').toLowerCase();
+  const expectedHeadTree = String(expected.expectedHeadTree || '').toLowerCase();
+  const expectedBase = String(expected.expectedBase || '').toLowerCase();
   return Object.freeze({
     operation: String(expected.operation || ''),
     repository: String(expected.repository || ''),
@@ -57,14 +60,29 @@ function normalizeAuthorizationExpected(expected = {}) {
     mode: String(expected.mode || ''),
     prNumber: positiveInteger(expected.prNumber),
     expectedBranch: String(expected.expectedBranch || ''),
-    expectedHead: String(expected.expectedHead || '').toLowerCase(),
-    expectedHeadTree: String(expected.expectedHeadTree || '').toLowerCase(),
-    expectedBase: String(expected.expectedBase || '').toLowerCase(),
+    expectedHead,
+    expectedHeadTree,
+    expectedBase,
+    authorizationHead: String(expected.authorizationHead || expectedHead).toLowerCase(),
+    authorizationHeadTree: String(expected.authorizationHeadTree || expectedHeadTree).toLowerCase(),
+    authorizationBase: String(expected.authorizationBase || expectedBase).toLowerCase(),
     independentReviewRunId: positiveInteger(expected.independentReviewRunId),
     independentReviewRunAttempt: positiveInteger(expected.independentReviewRunAttempt),
     independentReviewArtifactId: positiveInteger(expected.independentReviewArtifactId),
     independentReviewArtifactDigest: String(expected.independentReviewArtifactDigest || '').toLowerCase(),
     independentReviewPayloadSha256: String(expected.independentReviewPayloadSha256 || '').toLowerCase(),
+  });
+}
+
+function materialAuthorizationIdentity(command = {}) {
+  const expectedHead = String(command.expectedHead || '').toLowerCase();
+  const expectedHeadTree = String(command.expectedHeadTree || '').toLowerCase();
+  const expectedBase = String(command.expectedBase || '').toLowerCase();
+  return Object.freeze({
+    ...command,
+    authorizationHead: String(command.authorizationHead || expectedHead).toLowerCase(),
+    authorizationHeadTree: String(command.authorizationHeadTree || expectedHeadTree).toLowerCase(),
+    authorizationBase: String(command.authorizationBase || expectedBase).toLowerCase(),
   });
 }
 
@@ -86,6 +104,7 @@ export function validateProtectedWorkflowDispatch(command = {}, {
   issueNumber = 0,
   now = new Date(),
   authoredAt = now,
+  allowExpiredMaterialAuthorization = false,
 } = {}) {
   if (authorLogin !== PROTECTED_WORKFLOW_DISPATCH_AUTHOR) return fail('PROTECTED_WORKFLOW_DISPATCH_AUTHOR_NOT_ALLOWED');
   if (Number(issueNumber) !== PROTECTED_WORKFLOW_DISPATCH_ISSUE) return fail('PROTECTED_WORKFLOW_DISPATCH_ISSUE_MISMATCH');
@@ -108,6 +127,9 @@ export function validateProtectedWorkflowDispatch(command = {}, {
   const expectedHead = String(command.expectedHead || '').toLowerCase();
   const expectedHeadTree = String(command.expectedHeadTree || '').toLowerCase();
   const expectedBase = String(command.expectedBase || '').toLowerCase();
+  const authorizationHead = String(command.authorizationHead || expectedHead).toLowerCase();
+  const authorizationHeadTree = String(command.authorizationHeadTree || expectedHeadTree).toLowerCase();
+  const authorizationBase = String(command.authorizationBase || expectedBase).toLowerCase();
   const independentReviewRunId = positiveInteger(command.independentReviewRunId);
   const independentReviewRunAttempt = positiveInteger(command.independentReviewRunAttempt);
   const independentReviewArtifactId = positiveInteger(command.independentReviewArtifactId);
@@ -119,6 +141,15 @@ export function validateProtectedWorkflowDispatch(command = {}, {
   if (!SHA40.test(expectedHead)) return fail('PROTECTED_WORKFLOW_DISPATCH_HEAD_INVALID');
   if (!SHA40.test(expectedHeadTree)) return fail('PROTECTED_WORKFLOW_DISPATCH_HEAD_TREE_INVALID');
   if (!SHA40.test(expectedBase)) return fail('PROTECTED_WORKFLOW_DISPATCH_BASE_INVALID');
+  if (!SHA40.test(authorizationHead)) return fail('PROTECTED_WORKFLOW_DISPATCH_AUTHORIZATION_HEAD_INVALID');
+  if (!SHA40.test(authorizationHeadTree)) return fail('PROTECTED_WORKFLOW_DISPATCH_AUTHORIZATION_HEAD_TREE_INVALID');
+  if (!SHA40.test(authorizationBase)) return fail('PROTECTED_WORKFLOW_DISPATCH_AUTHORIZATION_BASE_INVALID');
+  if (operation === PROTECTED_WORKFLOW_READY_OPERATION
+    && (authorizationHead !== expectedHead
+      || authorizationHeadTree !== expectedHeadTree
+      || authorizationBase !== expectedBase)) {
+    return fail('PROTECTED_WORKFLOW_READY_AUTHORIZATION_MUST_BE_EXACT_EXECUTION_IDENTITY');
+  }
   if (operation === PROTECTED_WORKFLOW_DISPATCH_OPERATION) {
     if (!independentReviewRunId || !independentReviewRunAttempt || !independentReviewArtifactId) {
       return fail('PROTECTED_WORKFLOW_DISPATCH_REVIEW_IDENTITY_INVALID');
@@ -133,7 +164,12 @@ export function validateProtectedWorkflowDispatch(command = {}, {
   if (!Number.isFinite(nowMs) || !Number.isFinite(authoredAtMs) || !Number.isFinite(expiresAtMs)) {
     return fail('PROTECTED_WORKFLOW_DISPATCH_EXPIRY_INVALID');
   }
-  if (expiresAtMs <= nowMs || expiresAtMs <= authoredAtMs) return fail('PROTECTED_WORKFLOW_DISPATCH_EXPIRED');
+  const historicalMaterialAuthorization = allowExpiredMaterialAuthorization === true
+    && operation === PROTECTED_WORKFLOW_DISPATCH_OPERATION;
+  if (expiresAtMs <= authoredAtMs) return fail('PROTECTED_WORKFLOW_DISPATCH_EXPIRED');
+  if (expiresAtMs <= nowMs && !historicalMaterialAuthorization) {
+    return fail('PROTECTED_WORKFLOW_DISPATCH_EXPIRED');
+  }
   if (expiresAtMs - authoredAtMs > PROTECTED_WORKFLOW_DISPATCH_MAX_WINDOW_MS) {
     return fail('PROTECTED_WORKFLOW_DISPATCH_EXPIRY_TOO_FAR_AHEAD');
   }
@@ -154,6 +190,9 @@ export function validateProtectedWorkflowDispatch(command = {}, {
       expectedHead,
       expectedHeadTree,
       expectedBase,
+      authorizationHead,
+      authorizationHeadTree,
+      authorizationBase,
       independentReviewRunId,
       independentReviewRunAttempt,
       independentReviewArtifactId,
@@ -166,6 +205,7 @@ export function validateProtectedWorkflowDispatch(command = {}, {
 export function validateProtectedWorkflowAuthorizationComment(comment = {}, expectedCommand = {}, {
   now = new Date(),
   expectedCommentId = 0,
+  allowExpiredMaterialAuthorization = false,
 } = {}) {
   const commentId = positiveInteger(comment?.id);
   const requiredCommentId = positiveInteger(expectedCommentId);
@@ -192,16 +232,22 @@ export function validateProtectedWorkflowAuthorizationComment(comment = {}, expe
     issueNumber: PROTECTED_WORKFLOW_DISPATCH_ISSUE,
     now,
     authoredAt,
+    allowExpiredMaterialAuthorization,
   });
   if (!validation.ok) return validation;
   const expected = normalizeAuthorizationExpected(expectedCommand);
-  const observed = validation.command;
-  const authorizationIdentityFields = observed.operation === PROTECTED_WORKFLOW_DISPATCH_OPERATION
-    ? MERGE_AUTHORIZATION_IDENTITY_FIELDS
-    : READY_AUTHORIZATION_IDENTITY_FIELDS;
-  for (const field of authorizationIdentityFields) {
-    if (observed[field] !== expected[field]) {
-      return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_IDENTITY_MISMATCH', { field });
+  const observed = materialAuthorizationIdentity(validation.command);
+  if (observed.operation === PROTECTED_WORKFLOW_DISPATCH_OPERATION) {
+    for (const field of MERGE_MATERIAL_AUTHORIZATION_IDENTITY_FIELDS) {
+      if (observed[field] !== expected[field]) {
+        return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_IDENTITY_MISMATCH', { field });
+      }
+    }
+  } else {
+    for (const field of READY_AUTHORIZATION_IDENTITY_FIELDS) {
+      if (observed[field] !== expected[field]) {
+        return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_IDENTITY_MISMATCH', { field });
+      }
     }
   }
   return Object.freeze({
@@ -209,6 +255,11 @@ export function validateProtectedWorkflowAuthorizationComment(comment = {}, expe
     commentId,
     authoredAtUtc: authoredAt.toISOString(),
     command: observed,
+    materialAuthorization: Object.freeze({
+      authorizationHead: observed.authorizationHead,
+      authorizationHeadTree: observed.authorizationHeadTree,
+      authorizationBase: observed.authorizationBase,
+    }),
   });
 }
 
@@ -239,6 +290,9 @@ export function buildProtectedWorkflowDispatchRequest(command = {}, { authorizat
         expected_head: c.expectedHead,
         expected_head_tree: c.expectedHeadTree,
         expected_base: c.expectedBase,
+        authorization_head: c.authorizationHead,
+        authorization_head_tree: c.authorizationHeadTree,
+        authorization_base: c.authorizationBase,
         independent_review_run_id: String(c.independentReviewRunId),
         independent_review_run_attempt: String(c.independentReviewRunAttempt),
         independent_review_artifact_id: String(c.independentReviewArtifactId),
@@ -265,6 +319,9 @@ export function buildProtectedWorkflowDispatchReceipt(command = {}, dispatchedAt
     expectedHead: String(command.expectedHead || ''),
     expectedHeadTree: String(command.expectedHeadTree || ''),
     expectedBase: String(command.expectedBase || ''),
+    authorizationHead: String(command.authorizationHead || command.expectedHead || ''),
+    authorizationHeadTree: String(command.authorizationHeadTree || command.expectedHeadTree || ''),
+    authorizationBase: String(command.authorizationBase || command.expectedBase || ''),
     lifecycleResult: String(lifecycleResult || ''),
     dispatchedAtUtc: (dispatchedAt instanceof Date ? dispatchedAt : new Date(dispatchedAt)).toISOString(),
     arbitraryWorkflowAllowed: false,

@@ -30,6 +30,18 @@ on:
         description: Exact full current main SHA
         required: true
         type: string
+      authorization_head:
+        description: Original operator-authorized material head SHA
+        required: true
+        type: string
+      authorization_head_tree:
+        description: Original operator-authorized material head tree SHA
+        required: true
+        type: string
+      authorization_base:
+        description: Original operator-authorization protected-main base floor
+        required: true
+        type: string
       independent_review_run_id:
         description: Selected immutable independent-review run ID
         required: true
@@ -200,6 +212,9 @@ jobs:
           EXPECTED_HEAD: ${{ inputs.expected_head }}
           EXPECTED_HEAD_TREE: ${{ inputs.expected_head_tree }}
           EXPECTED_BASE: ${{ inputs.expected_base }}
+          AUTHORIZATION_HEAD: ${{ inputs.authorization_head }}
+          AUTHORIZATION_HEAD_TREE: ${{ inputs.authorization_head_tree }}
+          AUTHORIZATION_BASE: ${{ inputs.authorization_base }}
           REVIEW_RUN_ID: ${{ inputs.independent_review_run_id }}
           REVIEW_RUN_ATTEMPT: ${{ inputs.independent_review_run_attempt }}
           REVIEW_ARTIFACT_ID: ${{ inputs.independent_review_artifact_id }}
@@ -250,6 +265,9 @@ jobs:
             expectedHead: process.env.EXPECTED_HEAD,
             expectedHeadTree: process.env.EXPECTED_HEAD_TREE,
             expectedBase: process.env.EXPECTED_BASE,
+            authorizationHead: process.env.AUTHORIZATION_HEAD,
+            authorizationHeadTree: process.env.AUTHORIZATION_HEAD_TREE,
+            authorizationBase: process.env.AUTHORIZATION_BASE,
             independentReviewRunId: Number(process.env.REVIEW_RUN_ID),
             independentReviewRunAttempt: Number(process.env.REVIEW_RUN_ATTEMPT),
             independentReviewArtifactId: Number(process.env.REVIEW_ARTIFACT_ID),
@@ -258,6 +276,7 @@ jobs:
           }, {
             now: new Date(),
             expectedCommentId: authorizationCommentId,
+            allowExpiredMaterialAuthorization: true,
           });
           if (!validation.ok) throw new Error(`authorization provenance blocked: ${validation.blocker}`);
           appendFileSync(
