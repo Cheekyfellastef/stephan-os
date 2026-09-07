@@ -1,6 +1,10 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 
 import { MAXIMUM_BUILD_LANES } from '../../shared/agents/elasticBuildCapacityV1.mjs';
+import {
+  FOUNDRY_FORGE_WORKER_CAPACITY_STATUS_PREFIX,
+  foundryForgeWorkerCapacityStatusId,
+} from '../../shared/agents/githubContinuityCapacityPublicationV1.mjs';
 import {
   MISSION_CONTROLLER_ROUTE,
   routeMissionControllerCapacity,
@@ -9,13 +13,17 @@ import {
   OPENCLAW_PROVIDER_ROUTE,
   routeWithQualifiedOpenClawProvider,
 } from '../../shared/agents/openClawProviderPoolQualificationV1.mjs';
-import { resolveSharedWorkspacePath } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
+  resolveSharedWorkspacePath,
+  validateSharedWorkspaceRecord,
+} from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { readMissionControllerCapacityRoutingInput } from './programmeAuthorityService.js';
 
 export const OPENCLAW_ELASTIC_PROVIDER_POOL_SCHEMA = 'stephanos.openclaw-elastic-provider-pool.v1';
 export const OPENCLAW_ELASTIC_PROVIDER_POOL_STATUS_FILE = 'openclaw-provider-pool-current.json';
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
+const FORGE_WORKER_CAPACITY_FILE = new RegExp(`^${FOUNDRY_FORGE_WORKER_CAPACITY_STATUS_PREFIX}[0-9a-f]{24}\\.json$`);
 const ALLOWED_EXTERNAL_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
   MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
@@ -86,34 +94,91 @@ export function openClawHostContextsFromCapacityRouting(capacityRouting = {}) {
     .slice(0, MAXIMUM_BUILD_LANES);
 }
 
+async function readForgeWorkerCapacityReceipts({
+  root,
+  repoRoot,
+  nowUtc,
+  readFileImpl,
+  readdirImpl,
+}) {
+  const resolved = resolveSharedWorkspacePath({ root, repoRoot, segments: ['status'] });
+  if (!resolved.ok) return [];
+  let names;
+  try {
+    names = await readdirImpl(resolved.path);
+  } catch {
+    return [];
+  }
+  const nowMs = Date.parse(nowUtc);
+  if (!Number.isFinite(nowMs)) return [];
+  const receipts = [];
+  for (const name of names.filter((item) => FORGE_WORKER_CAPACITY_FILE.test(String(item))).sort()) {
+    if (receipts.length >= MAXIMUM_BUILD_LANES) break;
+    try {
+      const record = JSON.parse(await readFileImpl(`${resolved.path}/${name}`, 'utf8'));
+      const validation = validateSharedWorkspaceRecord(record, { nowMs });
+      const receipt = record?.capacityReceipt;
+      const expectedStatusId = foundryForgeWorkerCapacityStatusId(receipt?.workerId);
+      if (!validation.valid || validation.stale) continue;
+      if (record.workerScopedCapacity !== true) continue;
+      if (record.statusId !== name.slice(0, -5) || record.statusId !== expectedStatusId) continue;
+      if (record.participantId !== receipt?.workerId) continue;
+      if (text(receipt?.route).toUpperCase() !== MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE) continue;
+      receipts.push(receipt);
+    } catch {}
+  }
+  return receipts;
+}
+
 export async function readElasticMissionControllerCapacityRoutingInput({
   root,
   repoRoot,
   nowUtc,
   readFileImpl = readFile,
+  readdirImpl = readdir,
   readBaseInput = readMissionControllerCapacityRoutingInput,
 } = {}) {
   const base = await readBaseInput({ root, repoRoot, nowUtc, readFileImpl });
   if (!base) return null;
+
+  const forgeLaneReceipts = Object.freeze(await readForgeWorkerCapacityReceipts({
+    root,
+    repoRoot,
+    nowUtc,
+    readFileImpl,
+    readdirImpl,
+  }));
+
   const resolved = resolveSharedWorkspacePath({
     root,
     repoRoot,
     segments: ['status', OPENCLAW_ELASTIC_PROVIDER_POOL_STATUS_FILE],
   });
   if (!resolved.ok) {
-    return Object.freeze({ ...base, openClawHostContext: null, openClawHostContexts: Object.freeze([]) });
+    return Object.freeze({
+      ...base,
+      forgeLaneReceipts,
+      openClawHostContext: null,
+      openClawHostContexts: Object.freeze([]),
+    });
   }
   let record = null;
   try {
     record = JSON.parse(await readFileImpl(resolved.path, 'utf8'));
   } catch (error) {
     if (error?.code !== 'ENOENT') {
-      return Object.freeze({ ...base, openClawHostContext: null, openClawHostContexts: Object.freeze([]) });
+      return Object.freeze({
+        ...base,
+        forgeLaneReceipts,
+        openClawHostContext: null,
+        openClawHostContexts: Object.freeze([]),
+      });
     }
   }
   const contexts = Object.freeze(safePoolContexts(record));
   return Object.freeze({
     ...base,
+    forgeLaneReceipts,
     openClawHostContext: contexts[0] ?? null,
     openClawHostContexts: contexts,
   });
@@ -139,6 +204,21 @@ export function resolveElasticExternalCapacityCandidates(
   const candidates = Array.isArray(fallback?.fallbackCandidates)
     ? fallback.fallbackCandidates.map(normalizedCandidate).filter(Boolean)
     : [];
+
+  const forgeLaneReceipts = Array.isArray(capacityRouting.forgeLaneReceipts)
+    ? capacityRouting.forgeLaneReceipts.slice(0, MAXIMUM_BUILD_LANES)
+    : [];
+  for (const forgeLaneReceipt of forgeLaneReceipts) {
+    const routed = routeCapacity({
+      ...baseInput,
+      codexStatus: null,
+      githubLaneReceipt: null,
+      forgeLaneReceipt,
+    });
+    for (const candidate of Array.isArray(routed?.fallbackCandidates) ? routed.fallbackCandidates : []) {
+      if (text(candidate?.route).toUpperCase() === MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE) candidates.push(candidate);
+    }
+  }
 
   for (const hostContext of openClawHostContextsFromCapacityRouting(capacityRouting)) {
     const routed = routeOpenClaw({
