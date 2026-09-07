@@ -6,6 +6,10 @@ import {
   BATTLE_BRIDGE_SERVICE_STATUS,
   createBattleBridgePublisherSlice,
 } from '../../shared/agents/battleBridgePublisher.mjs';
+import {
+  DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS,
+  projectMissionWorkerHeartbeat,
+} from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 import { validateSharedWorkspaceFeedConfig, MISSING_WORKSPACE_NEXT_ACTION } from './sharedWorkspaceDashboardFeedService.js';
 
 export const BATTLE_BRIDGE_PUBLISHER_LIVE_SLICE_MAX_AGE_MS = 5 * 60 * 1000;
@@ -46,24 +50,44 @@ function servicePublication(service = {}, { fresh, name }) {
   };
 }
 
-function workerPublication(worker = {}, { fresh }) {
-  const verdict = String(worker?.lastTickVerdict || worker?.phase || '').toUpperCase();
-  const healthy = fresh && ['MISSION_WORKER_RUNNING', 'MISSION_WORKER_TICK_RUNNING', 'MISSION_WORKER_TICK_PASS'].includes(verdict);
+function workerPublication(worker = {}, {
+  timestampUtc,
+  expectedRepositoryRoot,
+  expectedHeadSha,
+} = {}) {
+  const projection = projectMissionWorkerHeartbeat(worker, {
+    nowUtc: timestampUtc,
+    maxAgeMs: DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS,
+    expectedRepositoryRoot,
+    expectedHeadSha,
+  });
+  const ready = projection.valid && projection.fresh;
+  const stale = projection.valid && projection.stale;
   return {
-    status: healthy ? BATTLE_BRIDGE_SERVICE_STATUS.READY : (fresh ? BATTLE_BRIDGE_SERVICE_STATUS.DEGRADED : BATTLE_BRIDGE_SERVICE_STATUS.UNKNOWN),
-    reachable: healthy,
-    usable: healthy,
+    status: ready ? BATTLE_BRIDGE_SERVICE_STATUS.READY : BATTLE_BRIDGE_SERVICE_STATUS.UNKNOWN,
+    reachable: ready,
+    usable: ready,
     browserCompatible: false,
-    summary: healthy ? `Mission Worker heartbeat is fresh (${verdict}).` : (fresh ? `Mission Worker heartbeat is fresh but not healthy (${verdict || 'UNKNOWN'}).` : 'Mission Worker heartbeat is missing or stale.'),
-    exactNextAction: healthy ? 'Continue polling the Mission Worker heartbeat.' : 'Use the existing Mission Worker watchdog/recovery route and require a fresh heartbeat.',
+    summary: ready
+      ? `Mission Worker heartbeat is canonically valid and fresh (${projection.lastTickVerdict}).`
+      : stale
+        ? `Mission Worker heartbeat is canonically valid but stale (${projection.ageMs}ms).`
+        : `Mission Worker heartbeat failed canonical validation (${projection.errors.join(',') || projection.finalVerdict}).`,
+    exactNextAction: ready
+      ? 'Continue polling the canonical Mission Worker heartbeat.'
+      : 'Use the existing Mission Worker watchdog/recovery route and require a fresh exact-repository/exact-head canonical heartbeat.',
   };
 }
 
-export function buildBattleBridgePublisherLiveSlice({ supervisor = null, worker = null, timestampUtc } = {}) {
+export function buildBattleBridgePublisherLiveSlice({
+  supervisor = null,
+  worker = null,
+  timestampUtc,
+  expectedRepositoryRoot,
+  expectedHeadSha,
+} = {}) {
   const supervisorTimestamp = supervisor?.generatedAt || supervisor?.generatedAtUtc || supervisor?.timestampUtc || supervisor?.observedAtUtc;
-  const workerTimestamp = worker?.heartbeatAt || worker?.timestampUtc || worker?.observedAtUtc || worker?.publishedAtUtc;
   const supervisorFresh = isFresh(supervisorTimestamp, timestampUtc);
-  const workerFresh = isFresh(workerTimestamp, timestampUtc);
   const supervisorGreen = supervisorFresh && String(supervisor?.trafficLight || supervisor?.status || '').toLowerCase() === 'green';
 
   return createBattleBridgePublisherSlice({
@@ -78,7 +102,11 @@ export function buildBattleBridgePublisherLiveSlice({ supervisor = null, worker 
         summary: supervisorGreen ? 'Battle Bridge Ignition supervisor proof is fresh and green.' : (supervisorFresh ? 'Battle Bridge Ignition supervisor proof is fresh but not green.' : 'Battle Bridge Ignition supervisor proof is missing or stale.'),
         exactNextAction: supervisorGreen ? 'Continue polling the current Ignition supervisor proof.' : 'Refresh the existing Ignition supervisor proof before claiming Battle Bridge readiness.',
       },
-      'mission-worker': workerPublication(worker, { fresh: workerFresh }),
+      'mission-worker': workerPublication(worker, {
+        timestampUtc,
+        expectedRepositoryRoot,
+        expectedHeadSha,
+      }),
       'openclaw-gateway': servicePublication(supervisor?.services?.openClaw18789, { fresh: supervisorFresh, name: 'openClaw18789' }),
     },
   });
@@ -94,12 +122,22 @@ async function readWorkspaceJson(root, relativePath) {
   }
 }
 
-export async function buildBattleBridgePublisherLiveSliceFromWorkspace(root, { timestampUtc } = {}) {
+export async function buildBattleBridgePublisherLiveSliceFromWorkspace(root, {
+  timestampUtc,
+  expectedRepositoryRoot,
+  expectedHeadSha,
+} = {}) {
   const [supervisor, worker] = await Promise.all([
     readWorkspaceJson(root, ['status', 'battle-bridge-ignition-supervisor-current.json']),
     readWorkspaceJson(root, ['status', 'mission-orchestrator-worker-heartbeat.json']),
   ]);
-  return buildBattleBridgePublisherLiveSlice({ supervisor, worker, timestampUtc });
+  return buildBattleBridgePublisherLiveSlice({
+    supervisor,
+    worker,
+    timestampUtc,
+    expectedRepositoryRoot,
+    expectedHeadSha,
+  });
 }
 
 export async function startBattleBridgePublisherLoopForBackend(input = {}) {
@@ -114,12 +152,18 @@ export async function startBattleBridgePublisherLoopForBackend(input = {}) {
       stop: () => ({ stopped: true, finalVerdict: 'BATTLE_BRIDGE_PUBLISHER_LOOP_NOT_STARTED' }),
     });
   }
+  const expectedRepositoryRoot = input.repoRoot;
+  const expectedHeadSha = String(input.env?.STEPHANOS_BACKEND_SOURCE_HEAD || '').trim().toLowerCase();
   const loop = createBattleBridgeSupervisorStartupPublisher({
     root: validation.root,
     repoRoot: input.repoRoot,
     intervalMs: input.intervalMs,
     runImmediately: input.runImmediately,
-    buildSlice: ({ timestampUtc }) => buildBattleBridgePublisherLiveSliceFromWorkspace(validation.root, { timestampUtc }),
+    buildSlice: ({ timestampUtc }) => buildBattleBridgePublisherLiveSliceFromWorkspace(validation.root, {
+      timestampUtc,
+      expectedRepositoryRoot,
+      expectedHeadSha,
+    }),
   });
   return Object.freeze({
     started: true,
