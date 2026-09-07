@@ -10,6 +10,8 @@ import {
 
 const HEAD = '75b1c5521b88f32166ff92a6bbd8bce5546d5ee4';
 const BASE = '1995e63cfea17533d17a0244233a117f0a86900c';
+const RESERVE_HEAD = '5a81595bb6125e8579aa94362920e012ab6a26fb';
+const RESERVE_BASE = '373acf52588a461a7fe57a03767ca1591279d644';
 const ORPHAN_HEAD = '5e04abd527ae76f782799014e1c84c150ae0e7fe';
 const ORPHAN_BASE = '6555b6d9c7823522e1f4090d8ef160865e3beac1';
 const ORPHAN_BLOB_SHA = '24bdbd048e30eda6641a8122d60e9262521af376';
@@ -83,6 +85,18 @@ function Stop-NewlyStartedOwnedWorker {
 }
 `;
 
+const RESERVE_SAFE_SOURCE = `
+$missionWorkerStopTimeoutSeconds = 15
+$missionWorkerCleanupTimeoutSeconds = 10
+$missionWorkerFailureCleanupReserveSeconds = $missionWorkerStopTimeoutSeconds + $missionWorkerCleanupTimeoutSeconds + 5
+${SAFE_EQUIVALENT_SOURCE}
+function Invoke-MissionWorkerStartupHeartbeatProof {
+  if (-not (Wait-UntilOperationDeadline -ReserveSeconds $missionWorkerFailureCleanupReserveSeconds -Condition { return $false })) {
+    Stop-WithBlocker 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT'
+  }
+}
+`;
+
 const ORPHAN_SAFE_SOURCE = readFileSync(
   new URL('./fixtures/mission-worker-orphan-capability-2105.ps1', import.meta.url),
   'utf8',
@@ -126,6 +140,35 @@ function input(source = SAFE_EQUIVALENT_SOURCE, overrides = {}) {
     }],
     ...overrides,
   };
+}
+
+function reserveInput(source = RESERVE_SAFE_SOURCE, overrides = {}) {
+  return input(source, {
+    prNumber: 2126,
+    branch: 'fix/mission-worker-failure-cleanup-reserve-v1',
+    sourceHead: RESERVE_HEAD,
+    baseSha: RESERVE_BASE,
+    lineageEvidence: {
+      schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      sourceHead: RESERVE_HEAD,
+      sourceCommitSha: RESERVE_HEAD,
+      baseSha: RESERVE_BASE,
+      liveMainBeforeSha: RESERVE_BASE,
+      liveMainAfterSha: RESERVE_BASE,
+      parents: ['01c48ccc2d1f5628a95d3429d8db44a486f4499a', RESERVE_BASE],
+      comparison: {
+        status: 'ahead', aheadBy: 4, behindBy: 0,
+        baseCommitSha: RESERVE_BASE, mergeBaseCommitSha: RESERVE_BASE,
+      },
+    },
+    sources: [{
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os', path: PATH, ref: RESERVE_HEAD, exists: true,
+      size: Buffer.byteLength(source, 'utf8'), blobSha: gitBlobSha(source), content: source,
+    }],
+    ...overrides,
+  });
 }
 
 function orphanInput(source = ORPHAN_SAFE_SOURCE, overrides = {}) {
@@ -186,6 +229,31 @@ test('cleanup generic execution and caller-selected authority remain rejected', 
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-generic-execution-forbidden'));
   assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-caller-authority-forbidden'));
+});
+
+test('exact #2126 cleanup reserve profile is eligible and clean only on its exact branch', () => {
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(reserveInput());
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true);
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_RESERVE_CLEAN');
+  assert.ok(result.proofRefs.some((item) => item.includes('derived-failure-cleanup-window')));
+  assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(reserveInput(RESERVE_SAFE_SOURCE, { branch: 'other' })).eligible, false);
+  assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(reserveInput(RESERVE_SAFE_SOURCE, { prNumber: 2127 })).eligible, false);
+});
+
+test('#2126 reserve review rejects changed budgets, legacy reserve and duplicated wiring', () => {
+  for (const [unsafe, code] of [
+    [RESERVE_SAFE_SOURCE.replace('$missionWorkerStopTimeoutSeconds = 15', '$missionWorkerStopTimeoutSeconds = 16'), 'mission-worker-cleanup-reserve-stop-budget-changed'],
+    [RESERVE_SAFE_SOURCE.replace('$missionWorkerCleanupTimeoutSeconds = 10', '$missionWorkerCleanupTimeoutSeconds = 9'), 'mission-worker-cleanup-reserve-cleanup-budget-changed'],
+    [RESERVE_SAFE_SOURCE.replace('+ $missionWorkerCleanupTimeoutSeconds + 5', '+ $missionWorkerCleanupTimeoutSeconds + 4'), 'mission-worker-cleanup-reserve-derivation-invalid'],
+    [RESERVE_SAFE_SOURCE.replace('-ReserveSeconds $missionWorkerFailureCleanupReserveSeconds', '-ReserveSeconds 8'), 'mission-worker-cleanup-reserve-heartbeat-wait-missing'],
+    [`${RESERVE_SAFE_SOURCE}\n$missionWorkerFailureCleanupReserveSeconds = 30\n`, 'mission-worker-cleanup-reserve-shape-not-singleton'],
+  ]) {
+    const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(reserveInput(unsafe));
+    assert.equal(result.eligible, true);
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some((item) => item.code === code));
+  }
 });
 
 test('exact #2105 already-hardened source is eligible and clean without replaying the repair', () => {

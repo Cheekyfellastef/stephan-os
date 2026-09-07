@@ -240,27 +240,25 @@ test('ignores dispatch and review evidence tied to an older head', () => {
   assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
-test('records a matching Codex receipt once and then remains terminal for that head', () => {
+test('never accepts a Codex review comment as an authoritative receipt', () => {
   const external = {
     id: 91,
     body: `Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`${HEAD}\``,
     user: TRUSTED_CODEX_REVIEWER,
     createdAt: '2026-07-19T16:29:30Z',
   };
-  const record = evaluateExactHeadReviewDispatch(baseInput({ comments: [external] }));
-  assert.equal(record.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
-  assert.equal(record.externalReceiptId, 91);
+  const result = evaluateExactHeadReviewDispatch(baseInput({ comments: [external] }));
+  assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+  assert.equal(result.externalReceiptId ?? null, null);
 
-  const recorded = evaluateExactHeadReviewDispatch(baseInput({
+  const withDurableMarker = evaluateExactHeadReviewDispatch(baseInput({
     comments: [
       external,
       coordinatorComment({ id: 92, body: marker(EXACT_HEAD_REVIEW_MARKERS.RECEIPT), createdAt: '2026-07-19T16:29:40Z' }),
     ],
   }));
-  assert.equal(recorded.decision, EXACT_HEAD_REVIEW_DECISION.REVIEW_RECEIPT_RECORDED);
-  assert.equal(recorded.actionRequired, false);
+  assert.equal(withDurableMarker.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
-
 
 function providerNeutralComment({
   id = 93,
@@ -391,11 +389,11 @@ test('provider-neutral handoff never dispatches the Codex reviewer', () => {
   assert.doesNotMatch(body, /@codex review/);
 });
 
-test('accepts a review object only when its exact commit matches', () => {
+test('ignores Codex review objects regardless of exact commit identity', () => {
   const matching = evaluateExactHeadReviewDispatch(baseInput({
     reviews: [{ id: 22, commitId: HEAD, body: 'Automated review', user: TRUSTED_CODEX_REVIEWER, submittedAt: '2026-07-19T16:29:00Z' }],
   }));
-  assert.equal(matching.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+  assert.equal(matching.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 
   const stale = evaluateExactHeadReviewDispatch(baseInput({
     reviews: [{ id: 23, commitId: OLD_HEAD, body: 'Automated review', user: TRUSTED_CODEX_REVIEWER, submittedAt: '2026-07-19T16:29:00Z' }],
@@ -403,15 +401,16 @@ test('accepts a review object only when its exact commit matches', () => {
   assert.equal(stale.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
-test('accepts only the authenticated Codex GitHub App identity', () => {
-  const untrustedActors = [
+test('Codex actor identity and quota telemetry never grant authoritative review evidence', () => {
+  const actors = [
     { login: 'fake-chatgpt-codex-connector', type: 'Bot', id: 199175422 },
     { login: 'chatgpt-codex-connector', type: 'User', id: 199175422 },
     { login: 'codex', type: 'User', id: 199175422 },
     { login: 'chatgpt-codex-connector[bot]', type: 'User', id: 199175422 },
     { login: 'chatgpt-codex-connector[bot]', type: 'Bot', id: 12345 },
+    TRUSTED_CODEX_REVIEWER,
   ];
-  for (const [index, user] of untrustedActors.entries()) {
+  for (const [index, user] of actors.entries()) {
     const result = evaluateExactHeadReviewDispatch(baseInput({
       comments: [{
         id: 24 + index,
@@ -423,25 +422,15 @@ test('accepts only the authenticated Codex GitHub App identity', () => {
     assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
   }
 
-  const exactBot = evaluateExactHeadReviewDispatch(baseInput({
+  const quotaNotice = evaluateExactHeadReviewDispatch(baseInput({
     comments: [{
-      id: 25,
-      body: `Codex Review\n\n**Reviewed commit:** \`${HEAD}\``,
+      id: 31,
+      body: 'You have reached your Codex usage limits for code reviews.',
       user: TRUSTED_CODEX_REVIEWER,
-      createdAt: '2026-07-19T16:29:00Z',
+      createdAt: '2026-07-19T16:29:01Z',
     }],
   }));
-  assert.equal(exactBot.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
-
-  const ambiguousPrefix = evaluateExactHeadReviewDispatch(baseInput({
-    comments: [{
-      id: 30,
-      body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 12)}\``,
-      user: TRUSTED_CODEX_REVIEWER,
-      createdAt: '2026-07-19T16:29:00Z',
-    }],
-  }));
-  assert.equal(ambiguousPrefix.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+  assert.equal(quotaNotice.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
 test('escalates once when a posted request has no receipt after the bounded timeout', () => {
@@ -652,7 +641,7 @@ test('ignores forged coordinator markers for dispatch, receipt and escalation st
       },
     ],
   }));
-  assert.equal(forgedReceipt.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+  assert.equal(forgedReceipt.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 
   const trustedDispatch = coordinatorComment({ id: 83, body: marker(EXACT_HEAD_REVIEW_MARKERS.DISPATCH), createdAt: '2026-07-19T16:25:00Z' });
   const forgedEscalation = evaluateExactHeadReviewDispatch(baseInput({
@@ -671,7 +660,7 @@ test('ignores forged coordinator markers for dispatch, receipt and escalation st
   assert.equal(forgedEscalation.decision, EXACT_HEAD_REVIEW_DECISION.ESCALATE_MISSING_RECEIPT);
 });
 
-test('consumes precomputed exact-base receipts after workflows while generic app reviews remain post-workflow', () => {
+test('consumes precomputed exact-base provider receipts while Codex comments remain non-authoritative', () => {
   const earlyExternal = {
     id: 90,
     body: `Codex Review\n\n**Reviewed commit:** \`${HEAD}\``,
@@ -706,17 +695,15 @@ test('consumes precomputed exact-base receipts after workflows while generic app
     body: marker(EXACT_HEAD_REVIEW_MARKERS.RECEIPT),
     createdAt: '2026-07-19T16:24:00Z',
   });
-  const causal = evaluateExactHeadReviewDispatch(baseInput({ comments: [postWorkflowExternal, beforeExternalMarker] }));
-  assert.equal(causal.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+  const stillIgnored = evaluateExactHeadReviewDispatch(baseInput({ comments: [postWorkflowExternal, beforeExternalMarker] }));
+  assert.equal(stillIgnored.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
-test('orders same-second durable receipts causally and treats review IDs as incomparable', () => {
-  const externalComment = {
+test('orders provider-neutral same-second durable receipts causally and ignores Codex review IDs', () => {
+  const externalComment = providerNeutralComment({
     id: 100,
-    body: `Codex Review\n\n**Reviewed commit:** \`${HEAD}\``,
     createdAt: '2026-07-19T16:29:30Z',
-    user: TRUSTED_CODEX_REVIEWER,
-  };
+  });
   const earlierMarker = coordinatorComment({
     id: 99,
     body: marker(EXACT_HEAD_REVIEW_MARKERS.RECEIPT),
@@ -740,8 +727,8 @@ test('orders same-second durable receipts causally and treats review IDs as inco
     submittedAt: '2026-07-19T16:29:30Z',
     user: TRUSTED_CODEX_REVIEWER,
   };
-  const incomparable = evaluateExactHeadReviewDispatch(baseInput({ reviews: [externalReview], comments: [laterMarker] }));
-  assert.equal(incomparable.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+  const ignored = evaluateExactHeadReviewDispatch(baseInput({ reviews: [externalReview], comments: [laterMarker] }));
+  assert.equal(ignored.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
 test('requires workflow completion timestamps and ignores pre-proof dispatch markers', () => {
@@ -849,13 +836,14 @@ test('renders exact-head dispatch, receipt and escalation comments with durable 
 
   const escalation = buildMissingReceiptEscalationComment({ prNumber: 1559, headSha: HEAD, timeoutMinutes: 10, dispatchCommentId: 40 });
   assert.match(escalation, new RegExp(EXACT_HEAD_REVIEW_MARKERS.ESCALATION));
+  assert.match(escalation, /authenticated provider-neutral receipt/);
+  assert.doesNotMatch(escalation, /provider-neutral or Codex receipt/);
   assert.match(escalation, /Duplicate dispatch is rejected/);
 
   assert.throws(() => buildReviewDispatchComment({ prNumber: 0, headSha: HEAD }), /valid PR number/);
   assert.throws(() => buildReviewReceiptComment({ prNumber: -1, headSha: HEAD }), /valid PR number/);
   assert.throws(() => buildMissingReceiptEscalationComment({ prNumber: '', headSha: HEAD }), /valid PR number/);
 });
-
 
 test('exact owner review request is bounded to one PR and exact head', () => {
   const headSha = 'a'.repeat(40);
@@ -896,7 +884,7 @@ test('exact owner review request is bounded to one PR and exact head', () => {
 
 test('exact owner review request can substitute only for missing canonical lane evidence', () => {
   const headSha = 'a'.repeat(40);
-  const baseInput = {
+  const input = {
     repository: 'Cheekyfellastef/stephan-os',
     now: '2026-08-31T04:21:30.000Z',
     trustedCoordinatorLogin: 'Cheekyfellastef',
@@ -916,18 +904,18 @@ test('exact owner review request can substitute only for missing canonical lane 
     comments: [],
     reviews: [],
   };
-  const admitted = evaluateExactHeadReviewDispatch(baseInput);
+  const admitted = evaluateExactHeadReviewDispatch(input);
   assert.notEqual(admitted.decision, 'INELIGIBLE');
 
   const blocked = evaluateExactHeadReviewDispatch({
-    ...baseInput,
+    ...input,
     ownerExactHeadReviewRequested: false,
   });
   assert.equal(blocked.decision, 'INELIGIBLE');
 
   const crossRepo = evaluateExactHeadReviewDispatch({
-    ...baseInput,
-    pr: { ...baseInput.pr, sameRepository: false },
+    ...input,
+    pr: { ...input.pr, sameRepository: false },
   });
   assert.equal(crossRepo.decision, 'INELIGIBLE');
 });

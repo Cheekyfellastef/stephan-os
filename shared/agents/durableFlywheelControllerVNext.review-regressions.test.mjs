@@ -57,6 +57,7 @@ function baseMachinery(authoritativeProjection, calls, overrides = {}) {
             revision: 0,
             currentPhase: 'LIVE_RUNTIME_INVESTIGATION',
             repository: 'Cheekyfellastef/stephan-os',
+            git: { branch: 'openclaw/critical-1497-review-test' },
           },
         },
       };

@@ -62,6 +62,7 @@ $workerStartedAtUtc = ''
 $postStartSourceProofOk = $false
 $missionWorkerStopTimeoutSeconds = 15
 $missionWorkerCleanupTimeoutSeconds = 10
+$missionWorkerFailureCleanupReserveSeconds = $missionWorkerStopTimeoutSeconds + $missionWorkerCleanupTimeoutSeconds + 5
 $operationDeadlineUtc = [datetime]::MaxValue
 $invocationId = ''
 $invocationBound = $false
@@ -1260,7 +1261,7 @@ try {
         try {
             Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
             $workerTaskStarted = $true
-            if (-not (Wait-UntilOperationDeadline -ReserveSeconds 8 -Condition {
+            if (-not (Wait-UntilOperationDeadline -ReserveSeconds $missionWorkerFailureCleanupReserveSeconds -Condition {
                 $candidateWorker = Get-VerifiedFreshWorkerInstance `
                     -HeartbeatPath $heartbeatPath `
                     -StartedAfterUtc $startedAtUtc `
