@@ -1428,7 +1428,7 @@ try {
         startedWorkerPid = if ($Target -eq 'mission-worker') { $startedWorkerPid } else { 0 }
         workerStartedAtUtc = if ($Target -eq 'mission-worker') { $workerStartedAtUtc } else { '' }
         invocationId = if ($Target -eq 'mission-worker') { $invocationId } else { '' }
-        deadlineUtc = if ($Target -eq 'mission-worker' -and $operationDeadlineUtc -ne [datetime]::MaxValue) { $operationDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ') } else { '' }
+        deadlineUtc = if ($Target -eq 'mission-worker') { $operationDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ') } else { '' }
         invocationBound = if ($Target -eq 'mission-worker') { $invocationBound } else { $false }
         canonicalWorkerCommandVerified = if ($Target -eq 'mission-worker') { $canonicalWorkerCommandVerified } else { $false }
         cleanupAttempted = $cleanupAttempted
