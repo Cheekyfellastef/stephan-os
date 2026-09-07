@@ -4,10 +4,12 @@ import test from 'node:test';
 import {
   MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
   MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
+  MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS,
   MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS,
   runMissionWorkerDiagnosticLink,
 } from './mission-worker-diagnostic-link.mjs';
 import {
+  WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS,
   WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS,
   WORKER_WATCHDOG_START_TIMEOUT_MS,
   resolveCanonicalWorkerWatchdogPaths,
@@ -57,7 +59,7 @@ function successData(overrides = {}) {
     startedWorkerPid: 4242,
     workerStartedAtUtc: '2026-09-01T18:00:01.000Z',
     invocationId: 'a'.repeat(64),
-    deadlineUtc: new Date(NOW.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS).toISOString(),
+    deadlineUtc: new Date(NOW.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS).toISOString(),
     invocationBound: true,
     canonicalWorkerCommandVerified: true,
     postStartSourceProofOk: true,
@@ -93,10 +95,16 @@ function dependencies(overrides = {}) {
   };
 }
 
-test('diagnostic child timeout preserves the canonical watchdog start budget plus terminal publication reserve', () => {
+test('diagnostic restart authority preserves watchdog child-exit reserve plus terminal publication reserve', () => {
   assert.equal(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS, WORKER_WATCHDOG_START_TIMEOUT_MS);
-  assert.ok(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS > 0);
+  assert.equal(
+    MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS,
+    MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS - WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS,
+  );
+  assert.ok(MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS > 0);
+  assert.ok(MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS < MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS);
   assert.ok(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS < MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS);
+  assert.equal(WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS, 10_000);
   assert.equal(
     MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS - MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
     MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS,
@@ -137,8 +145,9 @@ test('default route physically inspects exact main before StartApprovedWorkerTas
   assert.deepEqual(calls.map((call) => call.mode), ['Inspect', 'StartApprovedWorkerTask']);
   assert.equal(calls[0].options.timeoutMs, WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS);
   assert.equal(calls[1].options.timeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
-  assert.equal(calls[1].options.deadlineUtc, '2026-09-01T18:01:35.000Z');
-  assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:35.000Z');
+  assert.equal(calls[1].options.deadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.restartAuthorityMs, MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS);
   assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
   assert.equal(result.deadlineUtc, result.childDeadlineUtc);
   assert.equal(result.childTimeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
@@ -217,8 +226,9 @@ test('uses only StartApprovedWorkerTask with the canonical watchdog timeout and 
   assert.equal(result.error, undefined);
   assert.equal(observed.mode, 'StartApprovedWorkerTask');
   assert.equal(observed.options.timeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
-  assert.equal(observed.options.deadlineUtc, '2026-09-01T18:01:35.000Z');
-  assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:35.000Z');
+  assert.equal(observed.options.deadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.restartAuthorityMs, MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS);
   assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
   assert.equal(result.childTimeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
   assert.equal(result.terminalPublicationReserveMs, MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS);
@@ -280,7 +290,7 @@ test('bounded child timeout or untyped execution failure returns a typed termina
     createProbeAdapter: () => ({
       run: (_mode, options) => {
         assert.equal(options.timeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
-        assert.equal(options.deadlineUtc, '2026-09-01T18:01:35.000Z');
+        assert.equal(options.deadlineUtc, '2026-09-01T18:01:25.000Z');
         return { ok: false, restartBlocker: '', error: 'ETIMEDOUT' };
       },
     }),
@@ -290,7 +300,8 @@ test('bounded child timeout or untyped execution failure returns a typed termina
   assert.equal(result.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED');
   assert.equal(result.typedRestartBlocker, '');
   assert.equal(result.error, undefined);
-  assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:35.000Z');
+  assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.restartAuthorityMs, MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS);
   assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
   assert.equal(result.childTimeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
   assert.equal(result.terminalPublicationReserveMs, MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS);
@@ -309,7 +320,8 @@ test('rejects a success receipt bound to the outer diagnostic deadline instead o
   }));
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_SUCCESS_PROOF_INVALID');
-  assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:35.000Z');
+  assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.restartAuthorityMs, MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS);
   assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
 });
 
@@ -330,8 +342,9 @@ test('successful link bridges only watchdog decision and leaves downstream safeg
   const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies());
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'MISSION_WORKER_DIAGNOSTIC_LINK_PASS');
-  assert.equal(result.deadlineUtc, '2026-09-01T18:01:35.000Z');
-  assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:35.000Z');
+  assert.equal(result.deadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.restartAuthorityMs, MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS);
   assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
   assert.equal(result.bypassedWatchdogDecision, true);
   assert.equal(result.normalWatchdogPolicyModified, false);
