@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 
 import {
   WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1,
@@ -11,7 +10,39 @@ import {
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = 'a'.repeat(40);
 const PATH = WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1[0];
-const source = readFileSync(new URL('../../scripts/windows/enable-forge-wsl2-prerequisite-v1.ps1', import.meta.url), 'utf8');
+
+// Self-contained inert source fixture. The reviewer bootstrap must not depend on
+// the unadmitted implementation file that it exists to review.
+const source = [
+  "[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]",
+  'param(',
+  "  [ValidatePattern('^[0-9a-fA-F]{40}$')]",
+  '  [string]$ExpectedHead,',
+  '  [switch]$OperatorApproved',
+  ')',
+  'Set-StrictMode -Version Latest',
+  "$Repository = 'Cheekyfellastef/stephan-os'",
+  "$RequiredFeatures = @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform')",
+  "$PowerShellExe = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
+  "$DismExe = Join-Path $env:SystemRoot 'System32\\dism.exe'",
+  "$WslExe = Join-Path $env:SystemRoot 'System32\\wsl.exe'",
+  'rebootPerformed = $false',
+  'podmanMutation = $false',
+  'forgeRuntimeMutation = $false',
+  'sourceMutation = $false',
+  'arbitraryShellAllowed = $false',
+  'arbitraryPowerShellAllowed = $false',
+  'callerSelectedPathAllowed = $false',
+  'callerSelectedExecutableAllowed = $false',
+  'callerSelectedArgumentAllowed = $false',
+  'githubCredentialUsed = $false',
+  "$arguments = @('-NoProfile', '-File', $PSCommandPath, '-ExpectedHead', $ExpectedHead, '-OperatorApproved')",
+  'Start-Process -FilePath $PowerShellExe -ArgumentList $arguments -Verb RunAs',
+  "Invoke-Fixed $DismExe @('/online', '/enable-feature', \"/featurename:$Feature\", '/all', '/norestart') -AllowFailure",
+  "Invoke-Fixed $WslExe @('--update') -AllowFailure",
+  "Invoke-Fixed $WslExe @('--set-default-version', '2') -AllowFailure",
+  "Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_REBOOT_REQUIRED'",
+].join('\n');
 
 function blobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
@@ -38,11 +69,15 @@ function input(content = source) {
   };
 }
 
-test('exact bounded Forge WSL2 source passes its dedicated specialist', () => {
+test('exact bounded Forge WSL2 source fixture passes its dedicated specialist', () => {
   const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input());
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true);
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_FORGE_WSL2_SPECIALIST_CLEAN');
+});
+
+test('reviewer bootstrap fixture is self-contained and does not read the unadmitted implementation', () => {
+  assert.equal(source.includes('enable-forge-wsl2-prerequisite-v1.ps1'), false);
 });
 
 test('automatic reboot and dynamic execution fail closed', () => {

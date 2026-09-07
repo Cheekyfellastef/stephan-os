@@ -8,6 +8,7 @@ const allowlist = ['SAFE_BLOCKER_A', 'SAFE_BLOCKER_B'];
 test('shared classifier accepts one whole-line or complete PowerShell blocker', () => {
   assert.equal(classifyAllowlistedRecoveryAdapterBlocker({ stdout: 'safe_blocker_a', allowlist, fallback: 'GENERIC' }), 'SAFE_BLOCKER_A');
   assert.equal(classifyAllowlistedRecoveryAdapterBlocker({ stderr: '+ FullyQualifiedErrorId : SAFE_BLOCKER_B', allowlist, fallback: 'GENERIC' }), 'SAFE_BLOCKER_B');
+  assert.equal(classifyAllowlistedRecoveryAdapterBlocker({ stderr: 'request-battle-bridge-recovery.ps1 : SAFE_BLOCKER_A', allowlist, fallback: 'GENERIC' }), 'SAFE_BLOCKER_A');
   assert.equal(classifyAllowlistedRecoveryAdapterBlocker({ stderr: 'noise\r\nSAFE_BLOCKER_A\r\n', allowlist, fallback: 'GENERIC' }), 'SAFE_BLOCKER_A');
 });
 
