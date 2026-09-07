@@ -256,7 +256,7 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
   env = process.env,
   now = new Date(),
   paths = resolveCriticalBacklogRuntimePaths({ env }),
-  sourceRevision = text(env.STEPHANOS_MISSION_WORKER_HEAD_SHA).toLowerCase(),
+  sourceRevision = '',
   capacityRouting = null,
   resolveCapacityCandidates = defaultExternalCapacityCandidates,
   publishWorkerAction = publishNextMissionWorkerAction,
@@ -559,7 +559,7 @@ export async function ensureCriticalBacklogMission({
         ? elasticControllerProjection(elasticAdmission)
         : null;
       if (elasticProjection) {
-        const sourceRevision = text(env.STEPHANOS_MISSION_WORKER_HEAD_SHA).toLowerCase();
+        const sourceRevision = text(authoritative?.machineryInventory?.sourceHead).toLowerCase();
         const capacityRouting = SHA_40.test(sourceRevision)
           ? await readCapacityRouting({
               root: paths.workspaceRoot,
