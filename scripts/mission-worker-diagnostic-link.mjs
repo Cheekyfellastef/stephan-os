@@ -1,4 +1,5 @@
 import {
+  WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS,
   WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS,
   WORKER_WATCHDOG_START_TIMEOUT_MS,
   createFixedWorkerProbeAdapter,
@@ -10,6 +11,8 @@ export const MISSION_WORKER_DIAGNOSTIC_LINK_SCHEMA = 'stephanos.mission-worker-d
 export const MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION = 'RUN_MISSION_WORKER_DIAGNOSTIC_LINK';
 export const MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS = 10_000;
 export const MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS = WORKER_WATCHDOG_START_TIMEOUT_MS;
+export const MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS =
+  MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS - WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS;
 export const MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS =
   MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS + MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS;
 
@@ -166,7 +169,8 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
     return blocked('MISSION_WORKER_DIAGNOSTIC_LINK_EXPECTED_HEAD_REQUIRED');
   }
 
-  if (!(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS > 0
+  if (!(MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS > 0
+    && MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS < MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS
     && MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS < MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS)) {
     return blocked('MISSION_WORKER_DIAGNOSTIC_LINK_TIMEOUT_BUDGET_INVALID', {
       expectedHead: canonicalExpectedHead,
@@ -223,7 +227,7 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
     });
   }
   const childDeadlineUtc = new Date(
-    startedAt.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
+    startedAt.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS,
   ).toISOString();
   const diagnosticDeadlineUtc = new Date(
     startedAt.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
@@ -245,6 +249,7 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
       typedRestartBlocker,
       childDeadlineUtc,
       diagnosticDeadlineUtc,
+      restartAuthorityMs: MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS,
       diagnosticDeadlineMs: MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
       childTimeoutMs: MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
       terminalPublicationReserveMs: MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS,
@@ -257,6 +262,7 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
       downstreamSectionReached: 'APPROVED_WORKER_START',
       childDeadlineUtc,
       diagnosticDeadlineUtc,
+      restartAuthorityMs: MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS,
     });
   }
 
@@ -277,6 +283,7 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
     childDeadlineUtc,
     diagnosticDeadlineUtc,
     restartVerdict: String(start.data.restartVerdict),
+    restartAuthorityMs: MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS,
     diagnosticDeadlineMs: MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
     childTimeoutMs: MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
     terminalPublicationReserveMs: MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS,

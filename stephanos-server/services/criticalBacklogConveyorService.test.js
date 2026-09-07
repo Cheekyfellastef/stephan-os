@@ -48,6 +48,27 @@ function inMemoryMissionStore(initial = []) {
 
 const now = new Date('2026-07-17T18:00:00.000Z');
 
+function activeCriticalMission(overrides = {}) {
+  const mission = DEFAULT_CRITICAL_BACKLOG[0].mission;
+  return {
+    missionId: mission.missionId,
+    title: mission.title,
+    repository: mission.repository,
+    operatorIntent: mission.operatorIntent,
+    intendedOutcome: mission.intendedOutcome,
+    allowedFiles: [...mission.allowedFiles],
+    requiredTests: [...mission.requiredTests],
+    requiredEvidence: [...mission.requiredEvidence],
+    revision: 7,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    git: {
+      branch: mission.branch,
+      worktreePath: '/bounded/critical-1291-worker-watchdog-repair',
+    },
+    ...overrides,
+  };
+}
+
 test('idle conveyor creates exactly one bounded critical mission and publishes active status', async () => {
   const paths = await roots();
   const store = inMemoryMissionStore();
@@ -133,6 +154,95 @@ test('multiple active missions fail closed and never create another lane', async
   assert.equal(result.createdMission, false);
   assert.equal(result.classification, 'BLOCKED_BY_MULTIPLE_ACTIVE_MISSIONS');
   assert.equal(store.records.length, 2);
+});
+
+test('active legacy critical implementation is dispatched through canonical proven capacity', async () => {
+  const paths = await roots();
+  const sourceHead = 'a'.repeat(40);
+  const store = inMemoryMissionStore([activeCriticalMission()]);
+  let publishCalls = 0;
+  const result = await ensureCriticalBacklogMission({
+    paths,
+    now,
+    ...store,
+    testOnly: true,
+    readProgrammeProjection: async () => ({ machineryInventory: { sourceHead } }),
+    readCapacityRouting: async () => ({ providerNeutralCapacity: 'fresh' }),
+    publishActiveMission: async (mission, options) => {
+      publishCalls += 1;
+      assert.equal(mission.missionId, DEFAULT_CRITICAL_BACKLOG[0].mission.missionId);
+      assert.equal(options.sourceRevision, sourceHead);
+      assert.equal(options.capacityRouting.providerNeutralCapacity, 'fresh');
+      return {
+        published: true,
+        adapter: 'foundry-forge',
+        action: {
+          adapter: 'foundry-forge',
+          capacityRoute: 'FOUNDRY_FORGE',
+          capacityReceiptId: 'forge-capacity-1',
+        },
+      };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'WAIT_ACTIVE_MISSION');
+  assert.equal(result.activeMissionIgnition.classification, 'CRITICAL_ACTIVE_MISSION_DISPATCH_LIVE');
+  assert.equal(result.activeMissionIgnition.published, true);
+  assert.equal(result.activeMissionIgnition.adapter, 'foundry-forge');
+  assert.equal(result.activeMissionIgnition.sourceRevision, sourceHead);
+  assert.equal(publishCalls, 1);
+});
+
+test('active legacy critical implementation exposes missing proven capacity instead of silently idling', async () => {
+  const paths = await roots();
+  const sourceHead = 'b'.repeat(40);
+  const store = inMemoryMissionStore([activeCriticalMission()]);
+  let publishCalls = 0;
+  const result = await ensureCriticalBacklogMission({
+    paths,
+    now,
+    ...store,
+    testOnly: true,
+    readProgrammeProjection: async () => ({ machineryInventory: { sourceHead } }),
+    readCapacityRouting: async () => null,
+    publishActiveMission: async () => {
+      publishCalls += 1;
+      return { published: true };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.classification, 'WAIT_ACTIVE_MISSION');
+  assert.equal(result.activeMissionIgnition.classification, 'CRITICAL_ACTIVE_MISSION_CAPACITY_ROUTING_UNAVAILABLE');
+  assert.deepEqual(result.activeMissionIgnition.blockers, ['provider-independent-capacity-routing-unavailable']);
+  assert.equal(result.finalVerdict, 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED');
+  assert.equal(publishCalls, 0);
+});
+
+test('active legacy critical implementation preserves an existing running dispatch', async () => {
+  const paths = await roots();
+  const store = inMemoryMissionStore([activeCriticalMission({
+    dispatch: { status: 'running', adapter: 'foundry-forge' },
+  })]);
+  let readCalls = 0;
+  let publishCalls = 0;
+  const result = await ensureCriticalBacklogMission({
+    paths,
+    now,
+    ...store,
+    testOnly: true,
+    readProgrammeProjection: async () => {
+      readCalls += 1;
+      return { machineryInventory: { sourceHead: 'c'.repeat(40) } };
+    },
+    publishActiveMission: async () => {
+      publishCalls += 1;
+      return { published: true };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.activeMissionIgnition.classification, 'CRITICAL_ACTIVE_MISSION_ALREADY_RUNNING');
+  assert.equal(readCalls, 1);
+  assert.equal(publishCalls, 0);
 });
 
 test('publication emits one idempotent event file for one state change', async () => {
