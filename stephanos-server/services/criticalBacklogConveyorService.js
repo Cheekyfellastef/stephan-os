@@ -26,7 +26,9 @@ export async function dispatchElasticGoalBuildsFromCanonicalMain(admission = {},
   const env = normalized.env || process.env;
   const now = normalized.now instanceof Date ? normalized.now : new Date();
   const paths = normalized.paths || resolveCriticalBacklogRuntimePaths({ env });
-  const readProgrammeProjection = normalized.readProgrammeProjection || readAuthoritativeProgrammeProjection;
+  const readProgrammeProjection = normalized.testOnly === true && typeof normalized.readProgrammeProjection === 'function'
+    ? normalized.readProgrammeProjection
+    : readAuthoritativeProgrammeProjection;
   const authoritative = await readProgrammeProjection({
     env,
     nowUtc: now.toISOString(),
