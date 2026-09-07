@@ -6,6 +6,27 @@ import {
 export * from './operatorMergeBaseBindingV1.core.mjs';
 
 /**
+ * Preserve the canonical single-owner merge-queue invariants at the public
+ * base-binding source boundary as well as in the preserved core implementation.
+ * This validator is read-only and grants no approval or merge authority.
+ */
+export function validateSingleOwnerQueuePolicyV1(policy = {}, reviews = []) {
+  const required_approving_review_count = Number(policy?.required_approving_review_count);
+  const require_last_push_approval = policy?.require_last_push_approval;
+  const require_code_owner_review = policy?.require_code_owner_review;
+  const mergeGroupChangesRequested = Array.isArray(reviews)
+    && reviews.some((review) => String(review?.state ?? '').toUpperCase() === 'CHANGES_REQUESTED');
+
+  const blockers = Object.freeze([
+    ...(required_approving_review_count !== 0 ? ['single-owner-required-review-count-must-be-zero'] : []),
+    ...(mergeGroupChangesRequested ? ['merge-group-changes-requested'] : []),
+    ...(require_last_push_approval !== false ? ['single-owner-last-push-approval-must-be-disabled'] : []),
+    ...(require_code_owner_review !== false ? ['single-owner-code-owner-review-must-be-disabled'] : []),
+  ]);
+  return Object.freeze({ ok: blockers.length === 0, blockers });
+}
+
+/**
  * Preserve exact approval-receipt binding while deciding whether prior operator
  * judgment may be carried onto a fresh execution base. This helper grants no
  * merge, deployment, runtime, ruleset or credential authority.
