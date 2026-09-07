@@ -1,6 +1,5 @@
 import {
   WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS,
-  WORKER_WATCHDOG_START_TIMEOUT_MS,
   createFixedWorkerProbeAdapter,
   resolveCanonicalWorkerWatchdogPaths,
   validateCanonicalWorkerWatchdogPaths,
@@ -9,6 +8,9 @@ import {
 export const MISSION_WORKER_DIAGNOSTIC_LINK_SCHEMA = 'stephanos.mission-worker-diagnostic-link.v1';
 export const MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION = 'RUN_MISSION_WORKER_DIAGNOSTIC_LINK';
 export const MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS = 80_000;
+export const MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS = 10_000;
+export const MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS =
+  MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS - MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS;
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const INVOCATION_ID_PATTERN = /^[0-9a-f]{64}$/i;
@@ -103,6 +105,13 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
     return blocked('MISSION_WORKER_DIAGNOSTIC_LINK_EXPECTED_HEAD_REQUIRED');
   }
 
+  if (!(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS > 0
+    && MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS < MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS)) {
+    return blocked('MISSION_WORKER_DIAGNOSTIC_LINK_TIMEOUT_BUDGET_INVALID', {
+      expectedHead: canonicalExpectedHead,
+    });
+  }
+
   const paths = resolvePaths();
   const expectedPaths = resolveCanonicalWorkerWatchdogPaths();
   const pathValidation = validatePaths({ paths, expectedPaths });
@@ -154,7 +163,7 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
   }
   const deadlineUtc = new Date(startedAt.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS).toISOString();
   const start = adapter.run('StartApprovedWorkerTask', {
-    timeoutMs: WORKER_WATCHDOG_START_TIMEOUT_MS,
+    timeoutMs: MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
     deadlineUtc,
   });
   if (!start?.ok) {
@@ -163,6 +172,9 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
       sourceHead,
       downstreamSectionReached: 'APPROVED_WORKER_START',
       typedRestartBlocker: String(start?.restartBlocker || ''),
+      diagnosticDeadlineMs: MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
+      childTimeoutMs: MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
+      terminalPublicationReserveMs: MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS,
     });
   }
   if (!successProofValid(start.data, canonicalExpectedHead)) {
@@ -188,6 +200,9 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
     invocationId: String(start.data.invocationId),
     deadlineUtc: String(start.data.deadlineUtc),
     restartVerdict: String(start.data.restartVerdict),
+    diagnosticDeadlineMs: MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
+    childTimeoutMs: MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
+    terminalPublicationReserveMs: MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS,
     exactHeadProofOk: true,
     sourceTrackedClean: true,
     proofFresh: true,
