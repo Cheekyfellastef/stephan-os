@@ -123,6 +123,15 @@ test('validated DRAFT candidate reaches promotion review without promotion autho
   assert.equal(plan.authority.runtimeMutationAllowed, false);
 });
 
+test('terminal build orders cannot reach promotion review even with complete PASS evidence', () => {
+  for (const status of ['BLOCKED', 'FAILED', 'SUPERSEDED', 'CANCELLED']) {
+    const plan = planSpatialFoundryPromotion(buildOrder({ status }), asset(), input());
+    assert.equal(plan.status, 'BLOCKED_INVALID_BUILD_ORDER', status);
+    assert.deepEqual(plan.errors, [`build-order-terminal-state:${status}`]);
+    assert.equal(plan.authority.promotionExecutionAllowed, false);
+  }
+});
+
 test('missing validation evidence remains blocked', () => {
   const plan = planSpatialFoundryPromotion(buildOrder(), asset(), input({ evidence: [] }));
   assert.equal(plan.status, 'BLOCKED_VALIDATION_NOT_READY');
@@ -143,6 +152,14 @@ test('planner cannot skip directly to a later promotion state', () => {
   const plan = planSpatialFoundryPromotion(buildOrder(), asset(), input({ requestedPromotionState: 'MAIN_ACCEPTED' }));
   assert.equal(plan.status, 'BLOCKED_REQUESTED_STATE');
   assert.equal(plan.authority.promotionExecutionAllowed, false);
+});
+
+test('explicit falsey promotion states fail closed instead of defaulting to AGENT_TESTED', () => {
+  for (const requestedPromotionState of ['', false, 0, null]) {
+    const plan = planSpatialFoundryPromotion(buildOrder(), asset(), input({ requestedPromotionState }));
+    assert.equal(plan.status, 'BLOCKED_REQUESTED_STATE');
+    assert.equal(plan.authority.promotionExecutionAllowed, false);
+  }
 });
 
 test('already-advanced integration state is not silently re-promoted', () => {
