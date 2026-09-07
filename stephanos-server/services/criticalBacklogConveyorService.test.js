@@ -10,6 +10,7 @@ import {
   SELF_HOSTING_CRITICAL_BACKLOG,
 } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import {
+  dispatchElasticGoalBuilds,
   ensureCriticalBacklogMission,
   publishCriticalBacklogProjection,
   resolveCriticalBacklogRuntimePaths,
@@ -83,6 +84,64 @@ test('completed legacy backlog creates Goal Building Agent self-hosting mission 
   assert.equal(result.projection.selectedItem?.itemId, 'goal-building-self-hosting');
   assert.equal(result.projection.activeMission?.missionId, GOAL_BUILDING_SELF_HOSTING_MISSION_ID);
   assert.notEqual(result.classification, 'BACKLOG_COMPLETE');
+});
+
+test('elastic dispatcher never treats the physical Mission Worker head as source authority', async () => {
+  const paths = await roots();
+  const result = await dispatchElasticGoalBuilds({ desiredWidth: 1 }, {
+    paths,
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'b'.repeat(40) },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.classification, 'ELASTIC_IGNITION_SOURCE_REVISION_UNPROVEN');
+  assert.equal(result.dispatchCount, 0);
+});
+
+test('elastic source-only ignition binds to authoritative canonical main instead of physical worker head', async () => {
+  const paths = await roots();
+  const canonicalMain = 'a'.repeat(40);
+  const physicalWorkerHead = 'b'.repeat(40);
+  let capacitySourceRevision = '';
+  let dispatchSourceRevision = '';
+  const mission = {
+    missionId: 'critical-2098-elastic-goal',
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    repository: 'Cheekyfellastef/stephan-os',
+    git: { branch: 'openclaw/elastic-goal-2098' },
+    allowedFiles: ['shared/agents/sovereignty'],
+  };
+  const result = await ensureCriticalBacklogMission({
+    paths,
+    now,
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: physicalWorkerHead },
+    readProgrammeProjection: async () => ({
+      status: 'READY',
+      scheduler: { failClosed: false, elasticCapacity: { status: 'RUNNING' } },
+      machineryInventory: { sourceHead: canonicalMain },
+    }),
+    ensureElasticMissions: async () => ({
+      ok: true,
+      desiredWidth: 2,
+      selectedMission: mission,
+      elasticMissions: [mission],
+      activeMissions: [mission],
+      runnableMissions: [],
+      createdMissionCount: 0,
+    }),
+    readCapacityRouting: async ({ sourceRevision }) => {
+      capacitySourceRevision = sourceRevision;
+      return {};
+    },
+    dispatchElasticBuilds: async (_admission, options) => {
+      dispatchSourceRevision = options.sourceRevision;
+      return { ok: true, classification: 'ELASTIC_EXTERNAL_BUILD_DISPATCH_NOT_REQUIRED' };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'ELASTIC_GOAL_MISSION_SELECTED');
+  assert.equal(capacitySourceRevision, canonicalMain);
+  assert.equal(dispatchSourceRevision, canonicalMain);
+  assert.notEqual(dispatchSourceRevision, physicalWorkerHead);
 });
 
 test('subsequent ticks wait on the same active mission without duplicate creation', async () => {
