@@ -28,6 +28,21 @@ The clean path:
 
 The mailbox does not call `gh pr merge`, write `main`, approve the protected environment, bypass rulesets, or replace the workflow's evidence/approval/merge jobs.
 
+## Read-only failed-attempt continuity
+
+A same-head/base workflow dispatch remains a replay by default. A later workflow may proceed only when live GitHub job evidence proves all of the following for each prior matching run:
+
+- the run is completed with conclusion `failure`;
+- GitHub's all-attempt job view contains one complete authority-job triplet for every run attempt;
+- in every attempt, the exact `personal-repository-evidence` job completed with `failure`;
+- in every attempt, the exact `operator-personal-repository-approval` job completed as `skipped`;
+- in every attempt, the exact `operator-personal-repository-squash-merge` job completed as `skipped`;
+- every authority job binds the same repository, parent run ID, attempt, dynamic workflow name, main head/branch, API job/run/check URLs and GitHub HTML run/job URL;
+- the three jobs have unique positive GitHub job identities; and
+- the summed attempt count across the complete prior-run job-proof estate stays within the fixed bound before hydration.
+
+The normalized run, attempt and complete parent-job envelopes are included in the revalidated evidence packet and therefore in its SHA-256. Missing earlier-attempt jobs, cross-run substitutions, inconsistent URLs, an active, successful, cancelled, malformed, duplicate, unbounded, approval-started or merge-started prior attempt remains blocked. Failed run deletion is not an accepted recovery path.
+
 ## Approval separation
 
 The two modes use different explicit approval tokens:

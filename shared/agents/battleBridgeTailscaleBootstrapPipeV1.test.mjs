@@ -68,17 +68,27 @@ test('request rejects foreign author, issue, head, expiry and any extra authorit
   }
 });
 
-test('fixed remote PowerShell only bootstraps canonical GitHub Sync and proves exact head', () => {
+test('fixed remote PowerShell preserves the exact six-file runtime profile before canonical sync', () => {
   const source = buildFixedBattleBridgeBootstrapPowerShell(HEAD);
+  assert.match(source, /stephanos-codex-dispatch-mcp\.mjs/);
+  assert.match(source, /sync_codex_dispatch_bridge/);
+  assert.match(source, /battle-bridge-runtime-data-v1/);
+  assert.match(source, /preservationApproval/);
+  assert.match(source, /operator-approved/);
+  assert.match(source, /preservation\.receipt\.itemCount -ne 6/);
+  assert.match(source, /preservation\.receipt\.allHashesVerified -ne \$true/);
+  assert.match(source, /preservation\.destructiveCleanupPerformed -ne \$false/);
+  assert.ok(source.includes(String.raw`C:\Program Files\nodejs\node.exe`));
+  assert.ok(source.includes(String.raw`C:\Program Files\Git\cmd\git.exe`));
   assert.match(source, /install-battle-bridge-github-sync\.ps1/);
   assert.match(source, /status-battle-bridge-github-sync\.ps1/);
   assert.match(source, /Stephanos Battle Bridge GitHub Sync/);
   assert.match(source, /-StartNow/);
-  assert.ok(source.includes(String.raw`C:\Program Files\Git\cmd\git.exe`));
   assert.match(source, new RegExp(HEAD));
   assert.match(source, /BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_READY/);
   assert.match(source, /liveOpenClawUpdateAllowed -ne \$false/);
   assert.match(source, /codexRequired = \$false/);
+  assert.match(source, /try \{ \$mcpOutput = @\(\$mcpInput \| & \$node \$mcp\) \} catch \{ throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_SYNC_FAILED' \}/);
   assert.match(source, /try \{ \$installerOutput = @\(& \$installer -StartNow\) \} catch \{ throw 'TAILSCALE_BOOTSTRAP_SYNC_INSTALLER_FAILED' \}/);
   assert.match(source, /try \{ \$statusOutput = @\(& \$statusScript\) \} catch \{ throw 'TAILSCALE_BOOTSTRAP_SYNC_STATUS_FAILED' \}/);
   assert.doesNotMatch(source, /reset --hard|git clean|git stash|git rebase|git push|Restart-Computer|Stop-Computer|Invoke-Expression/i);
@@ -88,7 +98,7 @@ test('fixed remote PowerShell only bootstraps canonical GitHub Sync and proves e
   assert.ok(encoded.length > 100);
 });
 
-test('receipt validation requires exact head and bounded safety posture', () => {
+test('receipt validation requires preservation proof, exact head and bounded safety posture', () => {
   const receipt = {
     schemaVersion: 'stephanos.battle-bridge-tailscale-bootstrap-receipt.v1',
     repository: 'Cheekyfellastef/stephan-os',
@@ -98,6 +108,9 @@ test('receipt validation requires exact head and bounded safety posture', () => 
     taskInstalled: true,
     taskState: 'Ready',
     lastTaskResult: 0,
+    preservationProfile: 'battle-bridge-runtime-data-v1',
+    preservationItemCount: 6,
+    preservationHashesVerified: true,
     codexRequired: false,
     arbitraryCommandAllowed: false,
     arbitraryPathAllowed: false,
@@ -109,6 +122,8 @@ test('receipt validation requires exact head and bounded safety posture', () => 
   };
   assert.equal(validateBattleBridgeTailscaleBootstrapReceipt(receipt, HEAD), true);
   assert.equal(validateBattleBridgeTailscaleBootstrapReceipt({ ...receipt, observedHead: 'b'.repeat(40) }, HEAD), false);
+  assert.equal(validateBattleBridgeTailscaleBootstrapReceipt({ ...receipt, preservationItemCount: 5 }, HEAD), false);
+  assert.equal(validateBattleBridgeTailscaleBootstrapReceipt({ ...receipt, preservationHashesVerified: false }, HEAD), false);
   assert.equal(validateBattleBridgeTailscaleBootstrapReceipt({ ...receipt, codexRequired: true }, HEAD), false);
   assert.equal(validateBattleBridgeTailscaleBootstrapReceipt({ ...receipt, destructiveGitAllowed: true }, HEAD), false);
 });

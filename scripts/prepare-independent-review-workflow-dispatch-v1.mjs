@@ -26,6 +26,16 @@ const INPUT_KEYS = Object.freeze([
   'handoff_binding_sha256',
   'handoff_run_receipt_sha256',
 ]);
+const WORKFLOW_ENV_KEYS = Object.freeze([
+  'GITHUB_ACTIONS',
+  'GITHUB_EVENT_NAME',
+  'GITHUB_REPOSITORY',
+  'GITHUB_WORKFLOW',
+  'GITHUB_JOB',
+  'GITHUB_REF',
+  'GITHUB_SHA',
+  'GITHUB_WORKFLOW_REF',
+]);
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const MAX_PAGES = 20;
 const RECEIPT_FILE = 'independent-review-handoff-run-receipt.json';
@@ -45,6 +55,12 @@ function exactKeys(value, keys) {
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function workflowDispatchEnvironment(environment = process.env) {
+  const snapshot = {};
+  for (const key of WORKFLOW_ENV_KEYS) snapshot[key] = text(environment[key]);
+  return Object.freeze(snapshot);
 }
 
 function exactRunnerTempPath(fileName, requested = '') {
@@ -201,7 +217,7 @@ async function main() {
   const handoffRunReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
 
   const preflight = buildIndependentReviewWorkflowDispatchPreflightV1({
-    environment: process.env,
+    environment: workflowDispatchEnvironment(),
     workflowDefinition: workflow,
     currentMainSha,
     pullRequest,

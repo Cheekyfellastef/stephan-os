@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 const workflowUrl = new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url);
+const deterministicReviewWorkflowUrl = new URL('../../.github/workflows/stephanos-exact-head-review.yml', import.meta.url);
 const readWorkflow = () => fs.readFileSync(workflowUrl, 'utf8').replaceAll('\r\n', '\n');
+const readDeterministicReviewWorkflow = () => fs.readFileSync(deterministicReviewWorkflowUrl, 'utf8').replaceAll('\r\n', '\n');
 
 function workflowJob(source, name, nextName) {
   return source.match(new RegExp(`^  ${name}:\\n[\\s\\S]*?^  ${nextName}:`, 'm'))?.[0] || '';
@@ -17,7 +19,7 @@ test('serializes every mutating coordinator trigger through one PR-scoped author
   const workflow = readWorkflow();
 
   assert.match(workflow, /\n  plan:\n[\s\S]*STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY:\s*'true'/);
-  assert.match(workflow, /targets:\s*\$\{\{ steps\.plan\.outputs\.targets \}\}/);
+  assert.match(workflow, /targets:\s*\$\{\{ steps\.admit\.outputs\.targets \}\}/);
   assert.match(workflow, /target:\s*\$\{\{ fromJSON\(needs\.plan\.outputs\.targets\) \}\}/);
   assert.match(
     workflow,
@@ -136,4 +138,35 @@ test('launches a missing review only after exact retry classification and immuta
   assert.match(launch, /STEPHANOS_REVIEW_HANDOFF_RUN_RECEIPT_PATH:\s*\$\{\{ runner\.temp \}\}\/independent-review-handoff-run-receipt\.json/);
   assert.match(launch, /node scripts\/launch-missing-independent-review-v1\.mjs/);
   assert.doesNotMatch(launch, /curl|gh\s+api|workflow_dispatch|\/dispatches|shell:\s*true/);
+});
+
+test('binds deterministic assurance to exact current protected main and canonical admission', () => {
+  const workflow = readDeterministicReviewWorkflow();
+
+  assert.match(workflow, /current_main_sha="\$\(gh api "\/repos\/\$\{REPOSITORY\}\/git\/ref\/heads\/main" --jq '\.object\.sha'\)"/);
+  assert.match(workflow, /test "\$\{base_ref\}" = "main"/);
+  assert.match(workflow, /echo "base_sha=\$\{current_main_sha\}" >> "\$\{GITHUB_OUTPUT\}"/);
+  assert.match(workflow, /name: Admit exact current-main review target/);
+  assert.match(workflow, /node scripts\/exact-head-review-current-main-admission-v1\.mjs/);
+  assert.match(workflow, /name: Require exact current-main admission/);
+  assert.match(workflow, /test "\$\{ADMITTED_TARGETS\}" = "\[\{\\\"prNumber\\\":\$\{PR_NUMBER\}\}\]"/);
+  assert.doesNotMatch(workflow, /base_sha="\$\(jq -r '\.base\.sha'/);
+});
+
+test('isolates provider-neutral assurance intake from Codex review command vocabulary', () => {
+  const workflow = readDeterministicReviewWorkflow();
+
+  assert.match(
+    workflow,
+    /startsWith\(github\.event\.comment\.body, '<!-- stephanos:provider-neutral-assurance:v1 head='\)/,
+  );
+  assert.match(workflow, /marker_prefix='<!-- stephanos:provider-neutral-assurance:v1 head='/);
+  assert.match(workflow, /marker_suffix=' -->'/);
+  assert.match(workflow, /first_line="\$\{COMMENT_BODY%%\$'\\n'\*\}"/);
+  assert.match(workflow, /expected_head="\$\{first_line#\$\{marker_prefix\}\}"/);
+  assert.match(workflow, /expected_head="\$\{expected_head%\$\{marker_suffix\}\}"/);
+  assert.match(workflow, /\[\[ "\$\{expected_head\}" =~ \^\[0-9a-fA-F\]\{40\}\$ \]\]/);
+  assert.match(workflow, /test "\$\{head_sha\}" = "\$\{expected_head\}"/);
+  assert.match(workflow, /contains\(fromJSON\('\["OWNER","MEMBER","COLLABORATOR"\]'\), github\.event\.comment\.author_association\)/);
+  assert.doesNotMatch(workflow, /\/stephanos-review|@codex|\/codex|chatgpt-codex/i);
 });

@@ -152,3 +152,21 @@ test('windowless launcher retains only fixed identities', () => {
   assert.match(launcher, /Case "github-command-mailbox"/);
   assert.doesNotMatch(launcher, /WScript\.Arguments\(1\)|ExecuteGlobal|Eval\(/i);
 });
+
+test('guardian binds qualified and unqualified task principals through resolved Windows SID identity', () => {
+  assert.match(guardian, /function Resolve-WindowsAccountSid/);
+  assert.match(guardian, /System\.Security\.Principal\.NTAccount/);
+  assert.match(guardian, /System\.Security\.Principal\.SecurityIdentifier/);
+  assert.match(guardian, /COMPUTERNAME/);
+  assert.match(guardian, /function Test-TaskPrincipalMatchesCurrentUser/);
+  assert.match(guardian, /WindowsIdentity\]::GetCurrent\(\)/);
+  assert.match(guardian, /\$identity\.User\.Value/);
+  assert.match(guardian, /IsNullOrWhiteSpace\(\$principalSid\)/);
+  assert.match(guardian, /IsNullOrWhiteSpace\(\$currentSid\)/);
+  assert.match(guardian, /StringComparison\]::Ordinal/);
+  assert.match(guardian, /principalMatchesCurrentUser = Test-TaskPrincipalMatchesCurrentUser/);
+  assert.doesNotMatch(
+    guardian,
+    /\[string\]::Equals\(\[string\]\$Task\.Principal\.UserId,\s*\$currentUser/
+  );
+});

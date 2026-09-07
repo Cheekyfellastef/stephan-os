@@ -45,9 +45,10 @@ if ([string]$state.manifestSha256 -notmatch '^[a-f0-9]{64}$') { throw 'Installed
 $bankRoot = Join-Path $lifeboatRoot "banks\$bankId"
 $runnerPath = Join-Path $bankRoot 'run-battle-bridge-recovery-lifeboat-bank-v1.ps1'
 $actionPath = Join-Path $bankRoot 'actions\battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1'
+$claimPath = Join-Path $bankRoot 'github\invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1'
 $versionPath = Join-Path $bankRoot 'version.txt'
 $manifestPath = Join-Path $bankRoot 'manifest.sha256'
-foreach ($required in @($runnerPath, $actionPath, $versionPath, $manifestPath)) {
+foreach ($required in @($runnerPath, $actionPath, $claimPath, $versionPath, $manifestPath)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required installed lifeboat component is missing: $required" }
 }
 
@@ -55,7 +56,8 @@ $version = (Get-Content -LiteralPath $versionPath -Raw).Trim()
 $manifest = (Get-Content -LiteralPath $manifestPath -Raw).Trim().ToLowerInvariant()
 $runnerHash = Get-Sha256 $runnerPath
 $actionHash = Get-Sha256 $actionPath
-$observedManifest = Get-TextSha256 "runner=$runnerHash`naction=$actionHash`nversion=$version`n"
+$claimHash = Get-Sha256 $claimPath
+$observedManifest = Get-TextSha256 "runner=$runnerHash`naction=$actionHash`nclaim=$claimHash`nversion=$version`n"
 if ($manifest -ne [string]$state.manifestSha256 -or $observedManifest -ne $manifest) { throw 'Installed lifeboat payload hash verification failed.' }
 
 $confirmed = $true

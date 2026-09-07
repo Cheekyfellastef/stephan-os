@@ -35,9 +35,15 @@ export function resolveCanonicalSyncAndRefreshPaths({ env = process.env, home = 
   });
 }
 
-function fixedNodeRun(scriptPath, args, { cwd, spawnSyncFn = spawnSync, timeout = 600_000 } = {}) {
+function fixedNodeRun(scriptPath, args, {
+  cwd,
+  spawnSyncFn = spawnSync,
+  timeout = 600_000,
+  env = process.env,
+} = {}) {
   const result = spawnSyncFn(process.execPath, [scriptPath, ...args], {
     cwd,
+    env,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
@@ -88,6 +94,7 @@ export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {
         cwd: paths.repoRoot,
         spawnSyncFn,
         timeout: 900_000,
+        env: { ...process.env, GIT_REDIRECT_STDERR: 'off' },
       });
       const result = parseMarkedJson(execution.stdout, 'POST_SYNC_REFRESH_RESULT=');
       if (!result) return { ok: false, blocker: 'POST_SYNC_REFRESH_RESPONSE_INVALID', execution };

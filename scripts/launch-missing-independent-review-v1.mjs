@@ -28,6 +28,7 @@ import {
   buildIndependentReviewWorkflowDispatchLaunchReceiptV1,
   parseIndependentReviewWorkflowDispatchLaunchReceiptCommentV1,
   renderIndependentReviewWorkflowDispatchLaunchReceiptCommentV1,
+  validateIndependentReviewWorkflowDispatchLaunchReceiptV1,
 } from '../shared/agents/independentReviewWorkflowDispatchLaunchReceiptV1.mjs';
 import {
   discoverIndependentReviewWorkflowDispatchRunV1,
@@ -37,13 +38,16 @@ import {
   INDEPENDENT_REVIEW_WORKFLOW_PATH,
 } from '../shared/agents/operatorMergeApprovalGate.mjs';
 
-const API_VERSION = '2022-11-28';
+const API_VERSION = '2026-03-10';
 const USER_AGENT = 'stephanos-independent-review-missing-run-launch-v1';
 const TRUSTED_GITHUB_ACTIONS_REVIEWER = Object.freeze({ login: 'github-actions[bot]', id: 41898282 });
 const FULL_SHA = /^[0-9a-f]{40}$/i;
+const SHA64 = /^[0-9a-f]{64}$/i;
 const MAX_PAGES = 20;
 const MAX_DISPATCH_RUN_HYDRATIONS = 20;
 const GITHUB_TIMESTAMP_PRECISION_MS = 1000;
+const DISPATCH_ACK_SCHEMA = 'stephanos.independent-review-workflow-dispatch-run-ack.v1';
+const DISPATCH_ACK_MARKER = 'stephanos:independent-review-workflow-dispatch-run:v1';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -160,13 +164,6 @@ function sameOrLaterGithubTimestamp(runCreatedAt, requestedAtUtc) {
       >= Math.floor(requestedAt / GITHUB_TIMESTAMP_PRECISION_MS);
 }
 
-function assertOptionalSummaryField(summaryValue, detailValue, label, runId, normalize = text) {
-  const summary = normalize(summaryValue);
-  if (summary && summary !== normalize(detailValue)) {
-    throw new Error(`workflow-dispatch run summary/detail ${label} mismatch for run ${runId}`);
-  }
-}
-
 function assertWorkflowDispatchSummaryDetailBinding(summary, detail, workflowId) {
   const summaryId = positiveInteger(summary?.id);
   const detailId = positiveInteger(detail?.id);
@@ -180,14 +177,6 @@ function assertWorkflowDispatchSummaryDetailBinding(summary, detail, workflowId)
   if (positiveInteger(detail?.workflow_id) !== workflowId) {
     throw new Error(`workflow-dispatch run detail workflow mismatch for run ${summaryId}`);
   }
-  assertOptionalSummaryField(summary?.name, detail?.name, 'name', summaryId);
-  assertOptionalSummaryField(summary?.path, detail?.path, 'path', summaryId);
-  assertOptionalSummaryField(summary?.event, detail?.event, 'event', summaryId);
-  assertOptionalSummaryField(summary?.repository?.full_name, detail?.repository?.full_name, 'repository', summaryId, (value) => text(value).toLowerCase());
-  assertOptionalSummaryField(summary?.head_branch, detail?.head_branch, 'head-branch', summaryId);
-  assertOptionalSummaryField(summary?.head_sha, detail?.head_sha, 'head-sha', summaryId, (value) => text(value).toLowerCase());
-  assertOptionalSummaryField(summary?.display_title, detail?.display_title, 'display-title', summaryId);
-  assertOptionalSummaryField(summary?.created_at, detail?.created_at, 'created-at', summaryId);
   const summaryAttempt = positiveInteger(summary?.run_attempt);
   if (summaryAttempt && summaryAttempt !== positiveInteger(detail?.run_attempt)) {
     throw new Error(`workflow-dispatch run summary/detail attempt mismatch for run ${summaryId}`);
@@ -213,9 +202,12 @@ function plausibleWorkflowDispatchSummary(summary, workflowId, launchReceipt) {
     throw new Error(`workflow-dispatch list returned foreign branch ${branch}`);
   }
   const displayTitle = text(summary?.display_title);
-  if (displayTitle && displayTitle !== expectedRunName) return false;
   const createdAt = text(summary?.created_at);
-  if (createdAt && !sameOrLaterGithubTimestamp(createdAt, requestedAtUtc)) return false;
+  if (createdAt) {
+    if (!sameOrLaterGithubTimestamp(createdAt, requestedAtUtc)) return false;
+  } else if (displayTitle !== expectedRunName) {
+    return false;
+  }
   if (!positiveInteger(summary?.id)) {
     if (displayTitle === expectedRunName || createdAt) {
       throw new Error('plausible workflow-dispatch summary is missing a positive run id');
@@ -260,7 +252,114 @@ async function loadPullRequestTargetRuns(owner, repo, workflowId, pr, token) {
   return rows;
 }
 
+function dispatchRunApiUrl(owner, repo, runId) {
+  return `https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}`;
+}
+
+function dispatchRunHtmlUrl(owner, repo, runId) {
+  return `https://github.com/${owner}/${repo}/actions/runs/${runId}`;
+}
+
+export function validateWorkflowDispatchCreationResponseV1(payload = {}, { owner, repo } = {}) {
+  const runId = positiveInteger(payload?.workflow_run_id);
+  if (!runId || !text(owner) || !text(repo)) {
+    throw new Error('workflow-dispatch response requires exact repository and positive run id');
+  }
+  const runUrl = dispatchRunApiUrl(owner, repo, runId);
+  const htmlUrl = dispatchRunHtmlUrl(owner, repo, runId);
+  if (text(payload?.run_url) !== runUrl || text(payload?.html_url) !== htmlUrl) {
+    throw new Error('workflow-dispatch response run URLs do not match the returned run id');
+  }
+  return Object.freeze({ workflowRunId: runId, runUrl, htmlUrl });
+}
+
+function validateDispatchAcknowledgementV1(value = {}, receipt = {}) {
+  const launch = validateIndependentReviewWorkflowDispatchLaunchReceiptV1(receipt);
+  const runId = positiveInteger(value?.workflowRunId);
+  if (text(value?.schemaVersion) !== DISPATCH_ACK_SCHEMA
+    || text(value?.launchKeySha256).toLowerCase() !== launch.launchKeySha256
+    || !runId) {
+    throw new Error('workflow-dispatch acknowledgement identity is invalid');
+  }
+  const { owner, repo } = repositoryParts(launch.repository);
+  if (text(value?.runUrl) !== dispatchRunApiUrl(owner, repo, runId)
+    || text(value?.htmlUrl) !== dispatchRunHtmlUrl(owner, repo, runId)) {
+    throw new Error('workflow-dispatch acknowledgement URLs are invalid');
+  }
+  return Object.freeze({
+    schemaVersion: DISPATCH_ACK_SCHEMA,
+    launchKeySha256: launch.launchKeySha256,
+    workflowRunId: runId,
+    runUrl: dispatchRunApiUrl(owner, repo, runId),
+    htmlUrl: dispatchRunHtmlUrl(owner, repo, runId),
+  });
+}
+
+export function renderWorkflowDispatchRunAcknowledgementV1(receipt, dispatchResponse) {
+  const launch = validateIndependentReviewWorkflowDispatchLaunchReceiptV1(receipt);
+  const { owner, repo } = repositoryParts(launch.repository);
+  const response = validateWorkflowDispatchCreationResponseV1(dispatchResponse, { owner, repo });
+  const acknowledgement = validateDispatchAcknowledgementV1({
+    schemaVersion: DISPATCH_ACK_SCHEMA,
+    launchKeySha256: launch.launchKeySha256,
+    workflowRunId: response.workflowRunId,
+    runUrl: response.runUrl,
+    htmlUrl: response.htmlUrl,
+  }, launch);
+  return [
+    `<!-- ${DISPATCH_ACK_MARKER} key=${launch.launchKeySha256} run_id=${acknowledgement.workflowRunId} -->`,
+    '## Provider-neutral independent-review dispatch acknowledgement',
+    '',
+    '```json',
+    JSON.stringify(acknowledgement, null, 2),
+    '```',
+    '',
+    'This acknowledgement binds the existing content-addressed launch to the exact GitHub Actions run returned by the canonical workflow-dispatch endpoint. It grants no additional authority.',
+  ].join('\n');
+}
+
+export function parseWorkflowDispatchRunAcknowledgementV1(body, receipt) {
+  const launch = validateIndependentReviewWorkflowDispatchLaunchReceiptV1(receipt);
+  const value = String(body ?? '');
+  const expression = new RegExp(`<!--\\s*${DISPATCH_ACK_MARKER}\\s+key=([0-9a-f]{64})\\s+run_id=([1-9][0-9]*)\\s*-->`, 'g');
+  const matches = [...value.matchAll(expression)];
+  if (matches.length === 0) return null;
+  if (matches.length !== 1) throw new Error(`workflow-dispatch acknowledgement count must be at most one, observed ${matches.length}`);
+  const match = matches[0];
+  if (match[1].toLowerCase() !== launch.launchKeySha256) {
+    throw new Error('workflow-dispatch acknowledgement launch key does not match');
+  }
+  const suffix = value.slice(match.index);
+  if (!suffix.includes('## Provider-neutral independent-review dispatch acknowledgement')) {
+    throw new Error('workflow-dispatch acknowledgement heading is missing');
+  }
+  const fenced = suffix.match(/```json\s*\n([\s\S]*?)\n```/);
+  if (!fenced) throw new Error('workflow-dispatch acknowledgement JSON is missing');
+  let parsed;
+  try { parsed = JSON.parse(fenced[1]); } catch { throw new Error('workflow-dispatch acknowledgement JSON is invalid'); }
+  const acknowledgement = validateDispatchAcknowledgementV1(parsed, launch);
+  if (acknowledgement.workflowRunId !== Number(match[2])) {
+    throw new Error('workflow-dispatch acknowledgement marker run id does not match');
+  }
+  return acknowledgement;
+}
+
 export async function loadWorkflowDispatchRuns(owner, repo, workflowId, token, launchReceipt) {
+  if (positiveInteger(launchReceipt?.prNumber) && SHA64.test(text(launchReceipt?.launchKeySha256))) {
+    const comments = await githubPages(`/repos/${owner}/${repo}/issues/${positiveInteger(launchReceipt.prNumber)}/comments`, { token });
+    const launchComment = selectExactLaunchReceiptCommentV1(comments, launchReceipt.launchKeySha256);
+    if (launchComment) {
+      const acknowledgement = parseWorkflowDispatchRunAcknowledgementV1(launchComment.body, launchReceipt);
+      if (acknowledgement) {
+        const detail = await githubRequest(`/repos/${owner}/${repo}/actions/runs/${acknowledgement.workflowRunId}`, { token });
+        if (positiveInteger(detail?.workflow_id) !== workflowId) {
+          throw new Error(`acknowledged workflow-dispatch run workflow mismatch for run ${acknowledgement.workflowRunId}`);
+        }
+        return [mapRun(detail)];
+      }
+    }
+  }
+
   const summaries = await githubPages(
     `/repos/${owner}/${repo}/actions/workflows/${workflowId}/runs?event=workflow_dispatch&branch=main`,
     { token, itemKey: 'workflow_runs' },
@@ -488,16 +587,37 @@ async function main() {
     throw new Error('persisted workflow-dispatch launch receipt comment is not canonical');
   }
 
-  await githubRequest(`/repos/${owner}/${repo}/actions/workflows/${context.workflow.id}/dispatches`, {
+  const dispatchResponse = await githubRequest(`/repos/${owner}/${repo}/actions/workflows/${context.workflow.id}/dispatches`, {
     method: 'POST',
     token,
-    body: { ref: 'main', inputs: finalReceipt.authority.reviewWorkflowDispatchAllowed ? dispatchAdmission.workflowDispatchInputs : {} },
+    body: {
+      ref: 'main',
+      inputs: finalReceipt.authority.reviewWorkflowDispatchAllowed ? dispatchAdmission.workflowDispatchInputs : {},
+      return_run_details: true,
+    },
   });
+  const acknowledgementText = renderWorkflowDispatchRunAcknowledgementV1(finalReceipt, dispatchResponse);
+  const acknowledgedBody = `${launchBody}\n\n${acknowledgementText}`;
+  const updated = await githubRequest(`/repos/${owner}/${repo}/issues/comments/${positiveInteger(created?.id)}`, {
+    method: 'PATCH',
+    token,
+    body: { body: acknowledgedBody },
+  });
+  if (text(updated?.user?.login).toLowerCase() !== TRUSTED_GITHUB_ACTIONS_REVIEWER.login
+    || positiveInteger(updated?.user?.id) !== TRUSTED_GITHUB_ACTIONS_REVIEWER.id
+    || parseIndependentReviewWorkflowDispatchLaunchReceiptCommentV1(updated?.body).launchKeySha256 !== finalReceipt.launchKeySha256) {
+    throw new Error('persisted workflow-dispatch acknowledgement comment is not canonical');
+  }
+  const acknowledgement = parseWorkflowDispatchRunAcknowledgementV1(updated.body, finalReceipt);
+  if (!acknowledgement) throw new Error('persisted workflow-dispatch acknowledgement is missing');
+
   console.log('INDEPENDENT_REVIEW_MISSING_RUN_DISPATCH_REQUESTED=true');
   console.log(`INDEPENDENT_REVIEW_MISSING_RUN_LAUNCH_KEY=${finalReceipt.launchKeySha256}`);
+  console.log(`INDEPENDENT_REVIEW_MISSING_RUN_RUN_ID=${acknowledgement.workflowRunId}`);
   appendOutput('decision', 'LAUNCH_MISSING_RUN');
   appendOutput('launch_key', finalReceipt.launchKeySha256);
   appendOutput('launch_comment_id', positiveInteger(created?.id));
+  appendOutput('run_id', acknowledgement.workflowRunId);
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';

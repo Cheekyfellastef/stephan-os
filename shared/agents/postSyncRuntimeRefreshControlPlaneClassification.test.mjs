@@ -59,3 +59,45 @@ test('outbound health beacon control-plane estate coalesces as natural reload wi
   assert.equal(plan.openClawApprovalRequired, false);
   assert.equal(plan.automaticExecutionAllowed, true);
 });
+
+test('worker watchdog and Recovery Mesh liveness repair coalesces as natural reload only', () => {
+  const plan = classifyPostSyncRefresh([
+    '.github/workflows/battle-bridge-resilience-proof.yml',
+    'scripts/battle-bridge-control-plane-self-repair.test.mjs',
+    'scripts/battle-bridge-outbound-health-beacon.mjs',
+    'scripts/battle-bridge-outbound-health-beacon.test.mjs',
+    'scripts/battle-bridge-recovery-mesh-launch-liveness.test.mjs',
+    'scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1',
+    'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs',
+    'shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs',
+    'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
+  ]);
+
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.changedPathCount, 9);
+  assert.equal(plan.noRuntimePathCount, 5);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.unsafePathCount, 0);
+  assert.equal(plan.openClawApprovalRequired, false);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+test('windowless Lifeboat delivery and its fixed control-plane reconciler naturally reload without stranding sync', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs',
+    'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
+    'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
+    'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs',
+  ]);
+
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.unsafePathCount, 0);
+  assert.equal(plan.openClawApprovalRequired, false);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});

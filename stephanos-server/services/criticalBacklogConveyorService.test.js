@@ -6,6 +6,10 @@ import { tmpdir } from 'node:os';
 
 import { DEFAULT_CRITICAL_BACKLOG } from '../../shared/agents/criticalBacklogConveyor.mjs';
 import {
+  GOAL_BUILDING_SELF_HOSTING_MISSION_ID,
+  SELF_HOSTING_CRITICAL_BACKLOG,
+} from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
+import {
   ensureCriticalBacklogMission,
   publishCriticalBacklogProjection,
   resolveCriticalBacklogRuntimePaths,
@@ -59,6 +63,26 @@ test('idle conveyor creates exactly one bounded critical mission and publishes a
   assert.equal(status.oneActiveMissionEnforced, true);
   assert.equal(status.mergeAuthority, false);
   assert.doesNotMatch(JSON.stringify(status), /critical-conveyor-.*(?:repo|worktrees)/);
+});
+
+test('completed legacy backlog creates Goal Building Agent self-hosting mission instead of idling', async () => {
+  assert.equal(SELF_HOSTING_CRITICAL_BACKLOG.length, DEFAULT_CRITICAL_BACKLOG.length + 1);
+  const paths = await roots();
+  const completedLegacy = DEFAULT_CRITICAL_BACKLOG.map((entry) => ({
+    missionId: entry.mission.missionId,
+    currentPhase: 'COMPLETE',
+  }));
+  const store = inMemoryMissionStore(completedLegacy);
+  const result = await ensureCriticalBacklogMission({ paths, now, ...store });
+  assert.equal(result.ok, true);
+  assert.equal(result.createdMission, true);
+  assert.equal(result.missionRecord?.missionId, GOAL_BUILDING_SELF_HOSTING_MISSION_ID);
+  assert.equal(result.missionRecord?.currentPhase, 'CREATE_WORKTREE');
+  assert.equal(store.records.at(-1).missionId, GOAL_BUILDING_SELF_HOSTING_MISSION_ID);
+  assert.equal(result.projection.decision, 'WAIT_ACTIVE_MISSION');
+  assert.equal(result.projection.selectedItem?.itemId, 'goal-building-self-hosting');
+  assert.equal(result.projection.activeMission?.missionId, GOAL_BUILDING_SELF_HOSTING_MISSION_ID);
+  assert.notEqual(result.classification, 'BACKLOG_COMPLETE');
 });
 
 test('subsequent ticks wait on the same active mission without duplicate creation', async () => {
