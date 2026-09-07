@@ -62,3 +62,19 @@ test('existing cleanup keeps cancellation and exact process re-verification befo
   assert.ok(waitForExit > cancel);
   assert.doesNotMatch(cleanup, /Stop-Process/);
 });
+
+test('failed startup preserves a derived cleanup reserve before heartbeat timeout', () => {
+  assert.match(source, /\$missionWorkerFailureCleanupReserveSeconds\s*=\s*\$missionWorkerStopTimeoutSeconds\s*\+\s*\$missionWorkerCleanupTimeoutSeconds\s*\+\s*5/);
+  assert.match(source, /Wait-UntilOperationDeadline\s+-ReserveSeconds\s+\$missionWorkerFailureCleanupReserveSeconds\s+-Condition\s*\{/);
+  assert.doesNotMatch(source, /Wait-UntilOperationDeadline\s+-ReserveSeconds\s+8\s+-Condition\s*\{[\s\S]{0,1200}MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT/);
+});
+
+test('failure cleanup reserve stays bounded and derives only from fixed stop and cleanup budgets', () => {
+  const stop = source.match(/\$missionWorkerStopTimeoutSeconds\s*=\s*(\d+)/);
+  const cleanup = source.match(/\$missionWorkerCleanupTimeoutSeconds\s*=\s*(\d+)/);
+  const extra = source.match(/\$missionWorkerFailureCleanupReserveSeconds\s*=\s*\$missionWorkerStopTimeoutSeconds\s*\+\s*\$missionWorkerCleanupTimeoutSeconds\s*\+\s*(\d+)/);
+  assert.ok(stop && cleanup && extra);
+  const reserve = Number(stop[1]) + Number(cleanup[1]) + Number(extra[1]);
+  assert.equal(reserve, 30);
+  assert.ok(reserve < 60);
+});
