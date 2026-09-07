@@ -3,11 +3,13 @@ import { readFileSync } from 'node:fs';
 
 const BASE_PATH = './windowsAuthoritySpecialistReviewV1Base.mjs';
 const WSL2_PATH = './windowsAuthorityForgeWsl2PrerequisiteReviewV1.mjs';
+const STARFIELD_VR_SPLASH_PATH = './windowsAuthorityStarfieldVrSplashReviewV1.mjs';
 const MAILBOX_CADENCE_PATH = './windowsAuthorityMailboxCadenceReviewV1.mjs';
 const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1.mjs';
 const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupReviewV1.mjs';
 const BASE_BLOB_SHA = '42866f4ce3957321109a306f4c4da94f97369073';
 const WSL2_BLOB_SHA = 'a03ab69af51d0a39a0d43d72df515f4a5a8329c0';
+const STARFIELD_VR_SPLASH_BLOB_SHA = '2532106b7f2d4d75db535d8c32aa1c282f98e7e4';
 const MAILBOX_CADENCE_BLOB_SHA = 'd1319d542b219c786a36e8063f4080369f1f9a51';
 const IGNITION_CONVERGENCE_BLOB_SHA = '8115a382c5c7b9a0bfe5611d4931fcbd969d1162';
 const MISSION_WORKER_CLEANUP_BLOB_SHA = '01486be01fceaa5bb018551ed8f95c66504c471a';
@@ -59,20 +61,25 @@ function proveLegacyRoutingInvariants(source) {
 
 const baseModule = provePinnedModule(BASE_PATH, BASE_BLOB_SHA);
 const wsl2Module = provePinnedModule(WSL2_PATH, WSL2_BLOB_SHA);
+const starfieldVrSplashModule = provePinnedModule(STARFIELD_VR_SPLASH_PATH, STARFIELD_VR_SPLASH_BLOB_SHA);
 const mailboxCadenceModule = provePinnedModule(MAILBOX_CADENCE_PATH, MAILBOX_CADENCE_BLOB_SHA);
 provePinnedModule(IGNITION_CONVERGENCE_PATH, IGNITION_CONVERGENCE_BLOB_SHA);
 provePinnedModule(MISSION_WORKER_CLEANUP_PATH, MISSION_WORKER_CLEANUP_BLOB_SHA);
 proveLegacyRoutingInvariants(baseModule.content);
 const base = await import(baseModule.url.href);
 const wsl2 = await import(wsl2Module.url.href);
+const starfieldVrSplash = await import(starfieldVrSplashModule.url.href);
 const mailboxCadence = await import(mailboxCadenceModule.url.href);
 
 export * from './windowsAuthoritySpecialistReviewV1Base.mjs';
 export const WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1 = wsl2.WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1;
+export const WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1 = starfieldVrSplash.WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1;
 
 export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
   const wsl2Result = wsl2.analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input);
   if (wsl2Result.eligible) return wsl2Result;
+  const starfieldVrSplashResult = starfieldVrSplash.analyzeWindowsAuthorityStarfieldVrSplashReviewV1(input);
+  if (starfieldVrSplashResult.eligible) return starfieldVrSplashResult;
   const mailboxCadenceResult = mailboxCadence.analyzeWindowsAuthorityMailboxCadenceReviewV1(input);
   if (mailboxCadenceResult.eligible) return mailboxCadenceResult;
   return base.analyzeWindowsAuthoritySpecialistReview(input);
