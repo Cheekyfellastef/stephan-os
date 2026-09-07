@@ -6,7 +6,10 @@ import { tmpdir } from 'node:os';
 
 import { DEFAULT_CRITICAL_BACKLOG } from '../../shared/agents/criticalBacklogConveyor.mjs';
 import {
-  dispatchElasticGoalBuilds,
+  GOAL_BUILDING_SELF_HOSTING_MISSION_ID,
+  SELF_HOSTING_CRITICAL_BACKLOG,
+} from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
+import {
   ensureCriticalBacklogMission,
   publishCriticalBacklogProjection,
   resolveCriticalBacklogRuntimePaths,
@@ -44,40 +47,6 @@ function inMemoryMissionStore(initial = []) {
 }
 
 const now = new Date('2026-07-17T18:00:00.000Z');
-const sourceRevision = 'a'.repeat(40);
-
-function elasticMission(issueNumber, path, overrides = {}) {
-  return {
-    missionId: `critical-${issueNumber}-elastic-goal`,
-    revision: 3,
-    currentPhase: 'AGENT_IMPLEMENTATION',
-    repository: 'Cheekyfellastef/stephan-os',
-    operatorIntent: `Build goal ${issueNumber}.`,
-    intendedOutcome: `Goal ${issueNumber} is implemented and tested.`,
-    providerRouteIntent: 'AUTO',
-    allowedFiles: [path],
-    requiredTests: ['npm run stephanos:verify'],
-    requiredEvidence: [`Goal #${issueNumber} bounded implementation and focused verification evidence`],
-    git: {
-      branch: `openclaw/elastic-goal-${issueNumber}`,
-      worktreePath: `C:/worktrees/critical-${issueNumber}-elastic-goal`,
-    },
-    dispatch: { status: 'pending' },
-    ...overrides,
-  };
-}
-
-function capacity(route, adapter, workerId, receiptId) {
-  return {
-    route,
-    adapter,
-    workerId,
-    receiptId,
-    proofRefs: [`proofs/${receiptId}.json`],
-    queueDepth: 0,
-    p95StartLatencySeconds: 1,
-  };
-}
 
 test('idle conveyor creates exactly one bounded critical mission and publishes active status', async () => {
   const paths = await roots();
@@ -94,6 +63,26 @@ test('idle conveyor creates exactly one bounded critical mission and publishes a
   assert.equal(status.oneActiveMissionEnforced, true);
   assert.equal(status.mergeAuthority, false);
   assert.doesNotMatch(JSON.stringify(status), /critical-conveyor-.*(?:repo|worktrees)/);
+});
+
+test('completed legacy backlog creates Goal Building Agent self-hosting mission instead of idling', async () => {
+  assert.equal(SELF_HOSTING_CRITICAL_BACKLOG.length, DEFAULT_CRITICAL_BACKLOG.length + 1);
+  const paths = await roots();
+  const completedLegacy = DEFAULT_CRITICAL_BACKLOG.map((entry) => ({
+    missionId: entry.mission.missionId,
+    currentPhase: 'COMPLETE',
+  }));
+  const store = inMemoryMissionStore(completedLegacy);
+  const result = await ensureCriticalBacklogMission({ paths, now, ...store });
+  assert.equal(result.ok, true);
+  assert.equal(result.createdMission, true);
+  assert.equal(result.missionRecord?.missionId, GOAL_BUILDING_SELF_HOSTING_MISSION_ID);
+  assert.equal(result.missionRecord?.currentPhase, 'CREATE_WORKTREE');
+  assert.equal(store.records.at(-1).missionId, GOAL_BUILDING_SELF_HOSTING_MISSION_ID);
+  assert.equal(result.projection.decision, 'WAIT_ACTIVE_MISSION');
+  assert.equal(result.projection.selectedItem?.itemId, 'goal-building-self-hosting');
+  assert.equal(result.projection.activeMission?.missionId, GOAL_BUILDING_SELF_HOSTING_MISSION_ID);
+  assert.notEqual(result.classification, 'BACKLOG_COMPLETE');
 });
 
 test('subsequent ticks wait on the same active mission without duplicate creation', async () => {
@@ -164,107 +153,4 @@ test('publication emits one idempotent event file for one state change', async (
   const events = await readdir(join(paths.workspaceRoot, 'events', 'critical-backlog-conveyor'));
   assert.equal(events.length, 1);
   assert.match(events[0], /^critical-backlog-[a-f0-9]{20}\.json$/);
-});
-
-test('elastic ignition publishes multiple disjoint pre-PR missions to distinct proven external capacity', async () => {
-  const paths = await roots();
-  const selected = elasticMission(101, 'shared/agents/selected.mjs');
-  const githubMission = elasticMission(102, 'shared/agents/github.mjs');
-  const forgeMission = elasticMission(103, 'shared/agents/forge.mjs');
-  const publications = [];
-  const result = await dispatchElasticGoalBuilds({
-    desiredWidth: 5,
-    selectedMission: selected,
-    activeMissions: [selected, githubMission, forgeMission],
-    runnableMissions: [selected, githubMission, forgeMission],
-  }, {
-    paths,
-    now,
-    sourceRevision,
-    capacityRouting: {},
-    resolveCapacityCandidates: (mission) => mission.missionId.includes('102')
-      ? [capacity('CHATGPT_GITHUB', 'chatgpt-github', 'github-builder-1', 'github-capacity-1')]
-      : [capacity('FOUNDRY_FORGE', 'foundry-forge', 'forge-builder-1', 'forge-capacity-1')],
-    publishWorkerAction: async ({ actionGrant }) => {
-      publications.push(actionGrant);
-      return { published: true, actionGrantAccepted: true, action: { actionId: actionGrant.actionId } };
-    },
-  });
-  assert.equal(result.ok, true);
-  assert.equal(result.dispatchCount, 2);
-  assert.equal(result.classification, 'ELASTIC_EXTERNAL_BUILD_DISPATCH_LIVE');
-  assert.equal(result.resourceDisjointOneWriterProven, true);
-  assert.equal(result.blockedLaneDoesNotStallFleet, true);
-  assert.deepEqual(publications.map(({ adapter }) => adapter), ['chatgpt-github', 'foundry-forge']);
-  assert.ok(publications.every(({ boundedActionCount, mergeAuthority, leaseSeizureAllowed }) => (
-    boundedActionCount === 1 && mergeAuthority === false && leaseSeizureAllowed === false
-  )));
-});
-
-test('elastic ignition skips a conflicting lane and still dispatches a later resource-disjoint lane', async () => {
-  const paths = await roots();
-  const selected = elasticMission(111, 'shared/agents/selected.mjs');
-  const running = elasticMission(112, 'shared/agents/conflict/**', {
-    dispatch: { status: 'running', adapter: 'chatgpt-github', workerId: 'github-running', capacityReceiptId: 'github-running-capacity' },
-  });
-  const conflict = elasticMission(113, 'shared/agents/conflict/child.mjs');
-  const safe = elasticMission(114, 'shared/runtime/safe.mjs');
-  const publications = [];
-  const result = await dispatchElasticGoalBuilds({
-    desiredWidth: 5,
-    selectedMission: selected,
-    activeMissions: [selected, running, conflict, safe],
-    runnableMissions: [selected, conflict, safe],
-  }, {
-    paths,
-    now,
-    sourceRevision,
-    capacityRouting: {},
-    resolveCapacityCandidates: () => [capacity('FOUNDRY_FORGE', 'foundry-forge', 'forge-builder-2', 'forge-capacity-2')],
-    publishWorkerAction: async ({ actionGrant }) => {
-      publications.push(actionGrant);
-      return { published: true, actionGrantAccepted: true, action: { actionId: actionGrant.actionId } };
-    },
-  });
-  assert.equal(result.dispatchCount, 1);
-  assert.equal(result.dispatched[0].missionId, safe.missionId);
-  assert.ok(result.held.some(({ missionId, reason }) => missionId === conflict.missionId && reason === 'RESOURCE_SCOPE_CONFLICT'));
-  assert.equal(result.blockedLaneDoesNotStallFleet, true);
-  assert.equal(publications.length, 1);
-});
-
-test('elastic ignition never side-dispatches PR-head work and never reuses one capacity identity', async () => {
-  const paths = await roots();
-  const selected = elasticMission(121, 'shared/agents/selected.mjs');
-  const prHead = elasticMission(122, 'shared/agents/pr-head.mjs', {
-    prNumber: 1999,
-    headSha: 'b'.repeat(40),
-    pullRequest: { number: 1999, headSha: 'b'.repeat(40) },
-  });
-  const first = elasticMission(123, 'shared/agents/first.mjs');
-  const second = elasticMission(124, 'shared/agents/second.mjs');
-  const sharedCapacity = capacity('CHATGPT_GITHUB', 'chatgpt-github', 'github-builder-one', 'github-capacity-one');
-  const publications = [];
-  const result = await dispatchElasticGoalBuilds({
-    desiredWidth: 5,
-    selectedMission: selected,
-    activeMissions: [selected, prHead, first, second],
-    runnableMissions: [selected, prHead, first, second],
-  }, {
-    paths,
-    now,
-    sourceRevision,
-    capacityRouting: {},
-    resolveCapacityCandidates: () => [sharedCapacity],
-    publishWorkerAction: async ({ actionGrant }) => {
-      publications.push(actionGrant);
-      return { published: true, actionGrantAccepted: true, action: { actionId: actionGrant.actionId } };
-    },
-  });
-  assert.equal(result.dispatchCount, 1);
-  assert.equal(publications.length, 1);
-  assert.ok(result.held.some(({ missionId, reason }) => missionId === prHead.missionId && reason === 'EXACT_PR_HEAD_LANE_REQUIRES_CANONICAL_LEASE_PATH'));
-  assert.ok(result.held.some(({ missionId, reason }) => missionId === second.missionId && reason === 'DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE'));
-  assert.equal(result.mergeAuthority, false);
-  assert.equal(result.runtimeMutationAuthority, false);
 });

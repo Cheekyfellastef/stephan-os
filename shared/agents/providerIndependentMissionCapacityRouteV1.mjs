@@ -1,7 +1,7 @@
 import {
   MISSION_CONTROLLER_ROUTE,
+  routeMissionControllerCapacity,
 } from './missionControllerCapacityRouterV1.mjs';
-import { routeWithQualifiedOpenClawProvider } from './openClawProviderPoolQualificationV1.mjs';
 
 export const PROVIDER_INDEPENDENT_MISSION_CAPACITY_ROUTE_V1_SCHEMA = 'stephanos.provider-independent-mission-capacity-route.v1';
 
@@ -17,21 +17,6 @@ function freeze(value) {
   return Object.freeze(value);
 }
 
-function trustedOpenClawSourceHead(input = {}) {
-  return text(input.sourceHead)
-    || text(input.openClawHostContext?.qualificationReceipt?.sourceHead);
-}
-
-function defaultPlanner(input = {}) {
-  const hostContext = input.openClawHostContext && typeof input.openClawHostContext === 'object'
-    ? input.openClawHostContext
-    : {};
-  return routeWithQualifiedOpenClawProvider({
-    ...input,
-    sourceHead: trustedOpenClawSourceHead(input),
-  }, hostContext);
-}
-
 function routePlanner(input, options = {}) {
   if (options.routePlanner !== undefined) {
     if (options.testOnly !== true || typeof options.routePlanner !== 'function') {
@@ -39,7 +24,7 @@ function routePlanner(input, options = {}) {
     }
     return options.routePlanner;
   }
-  return defaultPlanner;
+  return routeMissionControllerCapacity;
 }
 
 function nonOpenAiAttempt(input, planner) {
@@ -48,12 +33,6 @@ function nonOpenAiAttempt(input, planner) {
     codexStatus: null,
     githubLaneReceipt: null,
   });
-}
-
-function isIndependentBuildRoute(route) {
-  const normalized = text(route).toUpperCase();
-  return normalized === MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE
-    || normalized === MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL;
 }
 
 function decorate(result, additions = {}) {
@@ -97,7 +76,7 @@ export function routeProviderIndependentMissionCapacityV1(input = {}, options = 
 
   const independent = nonOpenAiAttempt(input, planner);
   const independentReady = independent?.dispatchAllowed === true
-    && isIndependentBuildRoute(independent.route);
+    && text(independent.route).toUpperCase() === MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE;
 
   if (independentReady) {
     return decorate({

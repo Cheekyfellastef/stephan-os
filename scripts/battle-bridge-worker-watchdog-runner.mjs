@@ -120,6 +120,22 @@ export async function runBattleBridgeWorkerWatchdogRunner({
   workerWatchdog = runBattleBridgeWorkerWatchdog,
   controlPlaneRecovery = runBattleBridgeControlPlaneBootstrapRecovery,
 } = {}) {
+  // Worker recovery is the time-critical purpose of this installed runner.
+  // Publish watchdog recovery truth before auxiliary reconciliation so a slow
+  // visibility/relay/backlog lane cannot consume the bounded acceptance window.
+  const watchdog = await workerWatchdog();
+  let controlPlaneBootstrapRecovery = null;
+  try {
+    controlPlaneBootstrapRecovery = await controlPlaneRecovery({ watchdog });
+  } catch (error) {
+    controlPlaneBootstrapRecovery = {
+      ok: false,
+      classification: 'CONTROL_PLANE_BOOTSTRAP_REPAIR_FAILED',
+      repairAttempted: false,
+      reason: error?.message || String(error),
+    };
+  }
+
   let codexVisibility = null;
   try {
     codexVisibility = await visibilityObserver();
@@ -149,19 +165,6 @@ export async function runBattleBridgeWorkerWatchdogRunner({
     criticalBacklogConveyor = {
       ok: false,
       classification: 'CRITICAL_BACKLOG_CONVEYOR_FAILED',
-      reason: error?.message || String(error),
-    };
-  }
-
-  const watchdog = await workerWatchdog();
-  let controlPlaneBootstrapRecovery = null;
-  try {
-    controlPlaneBootstrapRecovery = await controlPlaneRecovery({ watchdog });
-  } catch (error) {
-    controlPlaneBootstrapRecovery = {
-      ok: false,
-      classification: 'CONTROL_PLANE_BOOTSTRAP_REPAIR_FAILED',
-      repairAttempted: false,
       reason: error?.message || String(error),
     };
   }
