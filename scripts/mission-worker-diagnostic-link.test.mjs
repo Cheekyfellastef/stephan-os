@@ -9,6 +9,7 @@ import {
 } from './mission-worker-diagnostic-link.mjs';
 import {
   WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS,
+  WORKER_WATCHDOG_START_TIMEOUT_MS,
   resolveCanonicalWorkerWatchdogPaths,
 } from './battle-bridge-worker-watchdog.mjs';
 
@@ -92,7 +93,8 @@ function dependencies(overrides = {}) {
   };
 }
 
-test('diagnostic child timeout stays strictly inside authority with terminal publication reserve', () => {
+test('diagnostic child timeout preserves the canonical watchdog start budget plus terminal publication reserve', () => {
+  assert.equal(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS, WORKER_WATCHDOG_START_TIMEOUT_MS);
   assert.ok(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS > 0);
   assert.ok(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS < MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS);
   assert.equal(
@@ -134,9 +136,9 @@ test('default route physically inspects exact main before StartApprovedWorkerTas
   assert.equal(result.ok, true);
   assert.deepEqual(calls.map((call) => call.mode), ['Inspect', 'StartApprovedWorkerTask']);
   assert.equal(calls[0].options.timeoutMs, WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS);
-  assert.equal(calls[1].options.timeoutMs, MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS);
-  assert.equal(calls[1].options.deadlineUtc, '2026-09-01T18:01:20.000Z');
-  assert.equal(result.childTimeoutMs, MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS);
+  assert.equal(calls[1].options.timeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
+  assert.equal(calls[1].options.deadlineUtc, '2026-09-01T18:01:45.000Z');
+  assert.equal(result.childTimeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
   assert.equal(result.terminalPublicationReserveMs, MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS);
 });
 
@@ -192,7 +194,7 @@ test('fails closed before worker start when canonical probe path proof fails', a
   assert.equal(probeCalled, false);
 });
 
-test('uses only StartApprovedWorkerTask with a bounded child timeout and preserves typed restart blocker', async () => {
+test('uses only StartApprovedWorkerTask with the canonical watchdog timeout and preserves typed restart blocker', async () => {
   let observed = null;
   const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
     createProbeAdapter: ({ probeScriptPath }) => ({
@@ -211,9 +213,9 @@ test('uses only StartApprovedWorkerTask with a bounded child timeout and preserv
   assert.equal(result.typedRestartBlocker, 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT');
   assert.equal(result.error, undefined);
   assert.equal(observed.mode, 'StartApprovedWorkerTask');
-  assert.equal(observed.options.timeoutMs, MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS);
-  assert.equal(observed.options.deadlineUtc, '2026-09-01T18:01:20.000Z');
-  assert.equal(result.childTimeoutMs, MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS);
+  assert.equal(observed.options.timeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
+  assert.equal(observed.options.deadlineUtc, '2026-09-01T18:01:45.000Z');
+  assert.equal(result.childTimeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
   assert.equal(result.terminalPublicationReserveMs, MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS);
   assert.match(observed.probeScriptPath, /probe-mission-orchestrator-worker-watchdog\.ps1$/i);
 });
@@ -222,7 +224,7 @@ test('bounded child timeout or untyped execution failure returns a typed termina
   const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
     createProbeAdapter: () => ({
       run: (_mode, options) => {
-        assert.equal(options.timeoutMs, MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS);
+        assert.equal(options.timeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
         return { ok: false, restartBlocker: '', error: 'ETIMEDOUT' };
       },
     }),
@@ -232,7 +234,7 @@ test('bounded child timeout or untyped execution failure returns a typed termina
   assert.equal(result.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED');
   assert.equal(result.typedRestartBlocker, '');
   assert.equal(result.error, undefined);
-  assert.equal(result.childTimeoutMs, MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS);
+  assert.equal(result.childTimeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
   assert.equal(result.terminalPublicationReserveMs, MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS);
 });
 
