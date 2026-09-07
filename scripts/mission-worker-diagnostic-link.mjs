@@ -122,10 +122,11 @@ function sourceIdentityFromInspect(inspect, expectedHead) {
   });
 }
 
-function successProofValid(data, expectedHead) {
+function successProofValid(data, expectedHead, expectedDeadlineUtc) {
   const pid = Number(data?.startedWorkerPid || 0);
   const workerStartedAtMs = Date.parse(String(data?.workerStartedAtUtc || ''));
-  const deadlineMs = Date.parse(String(data?.deadlineUtc || ''));
+  const deadlineUtc = String(data?.deadlineUtc || '');
+  const deadlineMs = Date.parse(deadlineUtc);
   return data?.mode === 'StartApprovedWorkerTask'
     && data?.started === true
     && data?.restarted === true
@@ -139,6 +140,7 @@ function successProofValid(data, expectedHead) {
     && Number.isFinite(workerStartedAtMs)
     && INVOCATION_ID_PATTERN.test(String(data?.invocationId || ''))
     && Number.isFinite(deadlineMs)
+    && deadlineUtc === expectedDeadlineUtc
     && data?.invocationBound === true
     && data?.canonicalWorkerCommandVerified === true
     && data?.postStartSourceProofOk === true
@@ -220,10 +222,15 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
       sourceHead,
     });
   }
-  const deadlineUtc = new Date(startedAt.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS).toISOString();
+  const childDeadlineUtc = new Date(
+    startedAt.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
+  ).toISOString();
+  const diagnosticDeadlineUtc = new Date(
+    startedAt.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
+  ).toISOString();
   const start = adapter.run('StartApprovedWorkerTask', {
     timeoutMs: MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
-    deadlineUtc,
+    deadlineUtc: childDeadlineUtc,
   });
   if (!start?.ok) {
     const typedRestartBlocker = String(start?.restartBlocker || extractBoundedApprovedRuntimeStartBlocker(
@@ -236,16 +243,20 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
       sourceHead,
       downstreamSectionReached: 'APPROVED_WORKER_START',
       typedRestartBlocker,
+      childDeadlineUtc,
+      diagnosticDeadlineUtc,
       diagnosticDeadlineMs: MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
       childTimeoutMs: MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
       terminalPublicationReserveMs: MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS,
     });
   }
-  if (!successProofValid(start.data, canonicalExpectedHead)) {
+  if (!successProofValid(start.data, canonicalExpectedHead, childDeadlineUtc)) {
     return blocked('MISSION_WORKER_DIAGNOSTIC_LINK_SUCCESS_PROOF_INVALID', {
       expectedHead: canonicalExpectedHead,
       sourceHead,
       downstreamSectionReached: 'APPROVED_WORKER_START',
+      childDeadlineUtc,
+      diagnosticDeadlineUtc,
     });
   }
 
@@ -263,6 +274,8 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
     workerStartedAtUtc: String(start.data.workerStartedAtUtc),
     invocationId: String(start.data.invocationId),
     deadlineUtc: String(start.data.deadlineUtc),
+    childDeadlineUtc,
+    diagnosticDeadlineUtc,
     restartVerdict: String(start.data.restartVerdict),
     diagnosticDeadlineMs: MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
     childTimeoutMs: MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
