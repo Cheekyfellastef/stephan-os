@@ -21,6 +21,7 @@ export const SPATIAL_PROMOTION_REVIEW_STATUS = Object.freeze({
 });
 
 const FIRST_PROMOTION_STATE = 'AGENT_TESTED';
+const TERMINAL_BUILD_ORDER_STATES = new Set(['BLOCKED', 'FAILED', 'SUPERSEDED', 'CANCELLED']);
 
 function freeze(value) {
   if (!value || typeof value !== 'object') return value;
@@ -62,6 +63,13 @@ export function planSpatialFoundryPromotion(buildOrder = {}, assetRecord = {}, i
     return blocked(SPATIAL_PROMOTION_REVIEW_STATUS.BLOCKED_INVALID_BUILD_ORDER, buildOrderValidation.errors);
   }
 
+  if (TERMINAL_BUILD_ORDER_STATES.has(buildOrder.status)) {
+    return blocked(
+      SPATIAL_PROMOTION_REVIEW_STATUS.BLOCKED_INVALID_BUILD_ORDER,
+      [`build-order-terminal-state:${buildOrder.status}`],
+    );
+  }
+
   const assetValidation = validateSpatialAssetRecord(assetRecord);
   if (!assetValidation.valid) {
     return blocked(SPATIAL_PROMOTION_REVIEW_STATUS.BLOCKED_INVALID_ASSET, assetValidation.errors);
@@ -98,7 +106,9 @@ export function planSpatialFoundryPromotion(buildOrder = {}, assetRecord = {}, i
     );
   }
 
-  const requestedState = input.requestedPromotionState || FIRST_PROMOTION_STATE;
+  const requestedState = Object.hasOwn(input, 'requestedPromotionState')
+    ? input.requestedPromotionState
+    : FIRST_PROMOTION_STATE;
   if (requestedState !== FIRST_PROMOTION_STATE || !SPATIAL_PROMOTION_STATES.includes(requestedState)) {
     return blocked(
       SPATIAL_PROMOTION_REVIEW_STATUS.BLOCKED_REQUESTED_STATE,
