@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
   MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
+  MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS,
   runMissionWorkerDiagnosticLink,
 } from './mission-worker-diagnostic-link.mjs';
 import {
@@ -91,6 +93,17 @@ function dependencies(overrides = {}) {
   };
 }
 
+test('diagnostic child timeout preserves the canonical watchdog start budget plus terminal publication reserve', () => {
+  assert.equal(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS, WORKER_WATCHDOG_START_TIMEOUT_MS);
+  assert.ok(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS > 0);
+  assert.ok(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS < MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS);
+  assert.equal(
+    MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS - MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
+    MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS,
+  );
+  assert.equal(MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS, 10_000);
+});
+
 test('requires an exact 40-character expected head before any start route exists', async () => {
   let identityRead = false;
   const result = await runMissionWorkerDiagnosticLink({}, dependencies({
@@ -124,7 +137,9 @@ test('default route physically inspects exact main before StartApprovedWorkerTas
   assert.deepEqual(calls.map((call) => call.mode), ['Inspect', 'StartApprovedWorkerTask']);
   assert.equal(calls[0].options.timeoutMs, WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS);
   assert.equal(calls[1].options.timeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
-  assert.equal(calls[1].options.deadlineUtc, '2026-09-01T18:01:20.000Z');
+  assert.equal(calls[1].options.deadlineUtc, '2026-09-01T18:01:45.000Z');
+  assert.equal(result.childTimeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
+  assert.equal(result.terminalPublicationReserveMs, MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS);
 });
 
 test('default physical inspect mismatch prevents any worker start attempt', async () => {
@@ -179,7 +194,7 @@ test('fails closed before worker start when canonical probe path proof fails', a
   assert.equal(probeCalled, false);
 });
 
-test('uses only StartApprovedWorkerTask with one short generated deadline and preserves typed restart blocker', async () => {
+test('uses only StartApprovedWorkerTask with the canonical watchdog timeout and preserves typed restart blocker', async () => {
   let observed = null;
   const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
     createProbeAdapter: ({ probeScriptPath }) => ({
@@ -199,8 +214,28 @@ test('uses only StartApprovedWorkerTask with one short generated deadline and pr
   assert.equal(result.error, undefined);
   assert.equal(observed.mode, 'StartApprovedWorkerTask');
   assert.equal(observed.options.timeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
-  assert.equal(observed.options.deadlineUtc, '2026-09-01T18:01:20.000Z');
+  assert.equal(observed.options.deadlineUtc, '2026-09-01T18:01:45.000Z');
+  assert.equal(result.childTimeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
+  assert.equal(result.terminalPublicationReserveMs, MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS);
   assert.match(observed.probeScriptPath, /probe-mission-orchestrator-worker-watchdog\.ps1$/i);
+});
+
+test('bounded child timeout or untyped execution failure returns a typed terminal blocker', async () => {
+  const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
+    createProbeAdapter: () => ({
+      run: (_mode, options) => {
+        assert.equal(options.timeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
+        return { ok: false, restartBlocker: '', error: 'ETIMEDOUT' };
+      },
+    }),
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.finalVerdict, 'MISSION_WORKER_DIAGNOSTIC_LINK_BLOCKED');
+  assert.equal(result.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED');
+  assert.equal(result.typedRestartBlocker, '');
+  assert.equal(result.error, undefined);
+  assert.equal(result.childTimeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
+  assert.equal(result.terminalPublicationReserveMs, MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS);
 });
 
 test('cannot claim success without fresh exact-head canonical launch proof', async () => {
