@@ -8,6 +8,10 @@ import {
   resolveCriticalBacklogRuntimePaths,
 } from './criticalBacklogConveyorServiceCore.js';
 import { readAuthoritativeProgrammeProjection } from './programmeAuthorityService.js';
+import {
+  readElasticMissionControllerCapacityRoutingInput,
+  resolveElasticExternalCapacityCandidates,
+} from './elasticOpenClawProviderPoolService.js';
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
 
@@ -44,6 +48,7 @@ export async function dispatchElasticGoalBuildsFromCanonicalMain(admission = {},
     now,
     paths,
     sourceRevision,
+    resolveCapacityCandidates: normalized.resolveCapacityCandidates ?? resolveElasticExternalCapacityCandidates,
   });
 }
 
@@ -61,6 +66,7 @@ export async function ensureCriticalBacklogMission(options = {}) {
   return ensureCriticalBacklogMissionCore({
     ...normalized,
     backlog: normalized.backlog ?? SELF_HOSTING_CRITICAL_BACKLOG,
+    readCapacityRouting: normalized.readCapacityRouting ?? readElasticMissionControllerCapacityRoutingInput,
     dispatchElasticBuilds: normalized.dispatchElasticBuilds ?? dispatchElasticGoalBuildsFromCanonicalMain,
   });
 }
