@@ -28,6 +28,7 @@ const BOUNDED_APPROVED_RUNTIME_START_BLOCKERS = new Set([
   'CANONICAL_TRACKED_SOURCE_DIRTY',
   'CANONICAL_PUBLIC_MAIN_READ_FAILED',
   'CANONICAL_PUBLIC_MAIN_RESPONSE_INVALID',
+  'CANONICAL_EXACT_MAIN_NOT_PROVEN',
   'EXPECTED_HEAD_MISMATCH',
   'EXPECTED_HEAD_NOT_PUBLIC_MAIN',
   'APPROVED_TASK_MISSING',
@@ -35,6 +36,27 @@ const BOUNDED_APPROVED_RUNTIME_START_BLOCKERS = new Set([
   'APPROVED_TASK_ACTION_COUNT_INVALID',
   'APPROVED_TASK_EXECUTABLE_MISMATCH',
   'APPROVED_TASK_ARGUMENTS_MISMATCH',
+  'APPROVED_TASK_ACTION_INVALID',
+  'APPROVED_RUNTIME_RESTART_ADAPTER_MISSING',
+  'APPROVED_RUNTIME_RESTART_ADAPTER_FAILED',
+  'APPROVED_RUNTIME_RESTART_RECEIPT_INVALID',
+  'MISSION_WORKER_RESTART_DEADLINE_INVALID',
+]);
+
+const BOUNDED_APPROVED_RUNTIME_START_PHRASES = new Map([
+  ['USERPROFILE is required to resolve canonical worker watchdog paths.', 'USERPROFILE_REQUIRED'],
+  ['Canonical repository branch/head proof is invalid.', 'CANONICAL_MAIN_REQUIRED'],
+  ['Canonical repository tracked source is dirty.', 'CANONICAL_TRACKED_SOURCE_DIRTY'],
+  ['The public main reference did not resolve to exactly one commit.', 'CANONICAL_PUBLIC_MAIN_RESPONSE_INVALID'],
+  ['The public main reference response is malformed.', 'CANONICAL_PUBLIC_MAIN_RESPONSE_INVALID'],
+  ['The worker restart deadline is missing or malformed.', 'MISSION_WORKER_RESTART_DEADLINE_INVALID'],
+  ['The worker restart deadline is outside the bounded watchdog window.', 'MISSION_WORKER_RESTART_DEADLINE_INVALID'],
+  ['The fixed Mission Orchestrator worker task is not installed.', 'APPROVED_TASK_MISSING'],
+  ['The fixed Mission Orchestrator worker task action is not canonical.', 'APPROVED_TASK_ACTION_INVALID'],
+  ['The canonical repository head is not proven as exact current public main for fixed worker restart.', 'CANONICAL_EXACT_MAIN_NOT_PROVEN'],
+  ['The approved runtime restart adapter is missing.', 'APPROVED_RUNTIME_RESTART_ADAPTER_MISSING'],
+  ['The approved runtime restart adapter failed.', 'APPROVED_RUNTIME_RESTART_ADAPTER_FAILED'],
+  ['The approved runtime restart receipt is invalid.', 'APPROVED_RUNTIME_RESTART_RECEIPT_INVALID'],
 ]);
 
 function extractBoundedApprovedRuntimeStartBlocker(...values) {
@@ -43,6 +65,10 @@ function extractBoundedApprovedRuntimeStartBlocker(...values) {
     const body = String(value ?? '').slice(0, 16 * 1024);
     for (const match of body.matchAll(/\b[A-Z][A-Z0-9_]{2,119}\b/g)) {
       if (BOUNDED_APPROVED_RUNTIME_START_BLOCKERS.has(match[0])) candidates.add(match[0]);
+    }
+    for (const line of body.split(/\r?\n/)) {
+      const mapped = BOUNDED_APPROVED_RUNTIME_START_PHRASES.get(line.trim());
+      if (mapped && BOUNDED_APPROVED_RUNTIME_START_BLOCKERS.has(mapped)) candidates.add(mapped);
     }
   }
   return candidates.size === 1 ? [...candidates][0] : '';
