@@ -62,6 +62,7 @@ $workerStartedAtUtc = ''
 $postStartSourceProofOk = $false
 $missionWorkerStopTimeoutSeconds = 15
 $missionWorkerCleanupTimeoutSeconds = 10
+$missionWorkerFailureCleanupReserveSeconds = $missionWorkerStopTimeoutSeconds + $missionWorkerCleanupTimeoutSeconds + 5
 $operationDeadlineUtc = [datetime]::MaxValue
 $invocationId = ''
 $invocationBound = $false
@@ -1260,7 +1261,7 @@ try {
         try {
             Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
             $workerTaskStarted = $true
-            if (-not (Wait-UntilOperationDeadline -ReserveSeconds 8 -Condition {
+            if (-not (Wait-UntilOperationDeadline -ReserveSeconds $missionWorkerFailureCleanupReserveSeconds -Condition {
                 $candidateWorker = Get-VerifiedFreshWorkerInstance `
                     -HeartbeatPath $heartbeatPath `
                     -StartedAfterUtc $startedAtUtc `
@@ -1427,7 +1428,7 @@ try {
         startedWorkerPid = if ($Target -eq 'mission-worker') { $startedWorkerPid } else { 0 }
         workerStartedAtUtc = if ($Target -eq 'mission-worker') { $workerStartedAtUtc } else { '' }
         invocationId = if ($Target -eq 'mission-worker') { $invocationId } else { '' }
-        deadlineUtc = if ($Target -eq 'mission-worker') { $operationDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ') } else { '' }
+        deadlineUtc = if ($Target -eq 'mission-worker' -and $operationDeadlineUtc -ne [datetime]::MaxValue) { $operationDeadlineUtc.ToString('yyyy-MM-ddTHH:mm:ss.fffZ') } else { '' }
         invocationBound = if ($Target -eq 'mission-worker') { $invocationBound } else { $false }
         canonicalWorkerCommandVerified = if ($Target -eq 'mission-worker') { $canonicalWorkerCommandVerified } else { $false }
         cleanupAttempted = $cleanupAttempted
