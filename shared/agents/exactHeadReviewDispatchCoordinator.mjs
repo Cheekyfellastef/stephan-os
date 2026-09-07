@@ -9,7 +9,7 @@ import {
 } from './exactHeadIndependentReviewRunV1.mjs';
 
 export const EXACT_HEAD_REVIEW_DISPATCH_SCHEMA = 'stephanos.exact-head-review-dispatch.v1';
-export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.1.1';
+export const EXACT_HEAD_REVIEW_DISPATCH_VERSION = '1.1.2';
 
 export const REQUIRED_EXACT_HEAD_WORKFLOWS = Object.freeze([
   'OpenClaw GitHub Operator',
@@ -65,11 +65,6 @@ export const EXACT_HEAD_REVIEW_MARKERS = Object.freeze({
 export const DEFAULT_REVIEW_RECEIPT_TIMEOUT_MS = 10 * 60 * 1000;
 
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/i;
-const TRUSTED_CODEX_REVIEWER = Object.freeze({
-  login: 'chatgpt-codex-connector[bot]',
-  type: 'bot',
-  id: 199175422,
-});
 const TRUSTED_GITHUB_ACTIONS_REVIEWER = Object.freeze({
   login: 'github-actions[bot]',
   type: 'bot',
@@ -233,20 +228,11 @@ function markerComment(comments, kind, headSha, { trustedCoordinatorLogin, notBe
   }));
 }
 
-function reviewedCommitSha(body) {
-  const match = text(body).match(/Reviewed commit:\*?\*?\s*`?([0-9a-f]{40})`?(?![0-9a-f])/i);
-  return match?.[1]?.toLowerCase() || '';
-}
-
 function actorMatches(item, expected) {
   const actor = item?.user ?? item?.author ?? {};
   return normalizedLogin(actor?.login) === expected.login
     && normalizedLogin(actor?.type) === expected.type
     && Number(actor?.id) === expected.id;
-}
-
-function isKnownCodexReviewer(item) {
-  return actorMatches(item, TRUSTED_CODEX_REVIEWER);
 }
 
 function isKnownGitHubActionsReviewer(item) {
@@ -335,11 +321,6 @@ function providerNeutralReviewMatchesHead(item, context = {}) {
 }
 
 function reviewMatchesHead(item, context = {}) {
-  if (isKnownCodexReviewer(item)) {
-    const commitId = text(item?.commitId ?? item?.commit_id);
-    if (commitId && sameSha(commitId, context.headSha)) return true;
-    return sameSha(reviewedCommitSha(commentBody(item)), context.headSha);
-  }
   return providerNeutralReviewMatchesHead(item, context);
 }
 
@@ -350,19 +331,11 @@ function latestPrecomputedProviderNeutralReceipt(comments, context) {
   )));
 }
 
-function latestExternalReceipt(comments, reviews, context, notBeforeMs) {
+function latestExternalReceipt(comments, reviews, context) {
   return newest([
     ...(comments || []).filter((item) => reviewMatchesHead(item, context)),
     ...(reviews || []).filter((item) => reviewMatchesHead(item, context)),
-  ].filter((item) => {
-    const timestamp = itemTimestamp(item);
-    if (timestamp === null) return false;
-    // A protected provider-neutral receipt is already bound to the exact PR,
-    // head, base, workflow run and successful review job. It may be computed
-    // while CI is still running and consumed once CI becomes green. A generic
-    // app review is not exact-base-bound, so it retains the post-workflow rule.
-    return providerNeutralReviewMatchesHead(item, context) || timestamp > notBeforeMs;
-  }));
+  ].filter((item) => itemTimestamp(item) !== null));
 }
 
 function latestRunByWorkflow(workflowRuns, headSha, requiredWorkflows) {
@@ -746,6 +719,6 @@ export function buildMissingReceiptEscalationComment({ prNumber, headSha, timeou
     `Dispatch receipt: ${dispatchCommentId ?? 'present'}`,
     `Bounded wait exceeded: ${Number(timeoutMinutes)} minutes`,
     '',
-    'One exact-head review handoff was posted, but no matching authenticated provider-neutral or Codex receipt has appeared. Duplicate dispatch is rejected. The Programme Completion Controller should inspect the independent review route; no merge, mark-ready action, implementation dispatch, or runtime mutation is authorised.',
+    'One exact-head review handoff was posted, but no matching authenticated provider-neutral receipt has appeared. Duplicate dispatch is rejected. The Programme Completion Controller should inspect the independent review route; no merge, mark-ready action, implementation dispatch, or runtime mutation is authorised.',
   ].join('\n');
 }
