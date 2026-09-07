@@ -10,11 +10,11 @@ import {
 
 const HEAD = '75b1c5521b88f32166ff92a6bbd8bce5546d5ee4';
 const BASE = '1995e63cfea17533d17a0244233a117f0a86900c';
-const RESERVE_HEAD = '5a81595bb6125e8579aa94362920e012ab6a26fb';
-const RESERVE_BASE = '373acf52588a461a7fe57a03767ca1591279d644';
 const ORPHAN_HEAD = '5e04abd527ae76f782799014e1c84c150ae0e7fe';
 const ORPHAN_BASE = '6555b6d9c7823522e1f4090d8ef160865e3beac1';
 const ORPHAN_BLOB_SHA = '24bdbd048e30eda6641a8122d60e9262521af376';
+const RESERVE_HEAD = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const RESERVE_BASE = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const PATH = WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_PATHS_V1[0];
 
 function gitBlobSha(content) {
@@ -85,15 +85,15 @@ function Stop-NewlyStartedOwnedWorker {
 }
 `;
 
-const RESERVE_SAFE_SOURCE = `
+const FAILURE_CLEANUP_RESERVE_SAFE_SOURCE = `
 $missionWorkerStopTimeoutSeconds = 15
 $missionWorkerCleanupTimeoutSeconds = 10
 $missionWorkerFailureCleanupReserveSeconds = $missionWorkerStopTimeoutSeconds + $missionWorkerCleanupTimeoutSeconds + 5
 ${SAFE_EQUIVALENT_SOURCE}
-function Invoke-MissionWorkerStartupHeartbeatProof {
-  if (-not (Wait-UntilOperationDeadline -ReserveSeconds $missionWorkerFailureCleanupReserveSeconds -Condition { return $false })) {
-    Stop-WithBlocker 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT'
-  }
+function Invoke-FreshWorkerHeartbeatProof {
+  if (-not (Wait-UntilOperationDeadline -ReserveSeconds $missionWorkerFailureCleanupReserveSeconds -Condition {
+    return $false
+  })) { throw 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT' }
 }
 `;
 
@@ -142,35 +142,6 @@ function input(source = SAFE_EQUIVALENT_SOURCE, overrides = {}) {
   };
 }
 
-function reserveInput(source = RESERVE_SAFE_SOURCE, overrides = {}) {
-  return input(source, {
-    prNumber: 2126,
-    branch: 'fix/mission-worker-failure-cleanup-reserve-v1',
-    sourceHead: RESERVE_HEAD,
-    baseSha: RESERVE_BASE,
-    lineageEvidence: {
-      schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1',
-      repository: 'Cheekyfellastef/stephan-os',
-      sourceHead: RESERVE_HEAD,
-      sourceCommitSha: RESERVE_HEAD,
-      baseSha: RESERVE_BASE,
-      liveMainBeforeSha: RESERVE_BASE,
-      liveMainAfterSha: RESERVE_BASE,
-      parents: ['01c48ccc2d1f5628a95d3429d8db44a486f4499a', RESERVE_BASE],
-      comparison: {
-        status: 'ahead', aheadBy: 4, behindBy: 0,
-        baseCommitSha: RESERVE_BASE, mergeBaseCommitSha: RESERVE_BASE,
-      },
-    },
-    sources: [{
-      schemaVersion: 'stephanos.windows-authority-source.v1',
-      repository: 'Cheekyfellastef/stephan-os', path: PATH, ref: RESERVE_HEAD, exists: true,
-      size: Buffer.byteLength(source, 'utf8'), blobSha: gitBlobSha(source), content: source,
-    }],
-    ...overrides,
-  });
-}
-
 function orphanInput(source = ORPHAN_SAFE_SOURCE, overrides = {}) {
   return input(source, {
     prNumber: 2105,
@@ -194,6 +165,35 @@ function orphanInput(source = ORPHAN_SAFE_SOURCE, overrides = {}) {
     sources: [{
       schemaVersion: 'stephanos.windows-authority-source.v1',
       repository: 'Cheekyfellastef/stephan-os', path: PATH, ref: ORPHAN_HEAD, exists: true,
+      size: Buffer.byteLength(source, 'utf8'), blobSha: gitBlobSha(source), content: source,
+    }],
+    ...overrides,
+  });
+}
+
+function reserveInput(source = FAILURE_CLEANUP_RESERVE_SAFE_SOURCE, overrides = {}) {
+  return input(source, {
+    prNumber: 2126,
+    branch: 'fix/mission-worker-failure-cleanup-reserve-v1',
+    sourceHead: RESERVE_HEAD,
+    baseSha: RESERVE_BASE,
+    lineageEvidence: {
+      schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      sourceHead: RESERVE_HEAD,
+      sourceCommitSha: RESERVE_HEAD,
+      baseSha: RESERVE_BASE,
+      liveMainBeforeSha: RESERVE_BASE,
+      liveMainAfterSha: RESERVE_BASE,
+      parents: [RESERVE_BASE],
+      comparison: {
+        status: 'ahead', aheadBy: 4, behindBy: 0,
+        baseCommitSha: RESERVE_BASE, mergeBaseCommitSha: RESERVE_BASE,
+      },
+    },
+    sources: [{
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os', path: PATH, ref: RESERVE_HEAD, exists: true,
       size: Buffer.byteLength(source, 'utf8'), blobSha: gitBlobSha(source), content: source,
     }],
     ...overrides,
@@ -231,29 +231,39 @@ test('cleanup generic execution and caller-selected authority remain rejected', 
   assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-caller-authority-forbidden'));
 });
 
-test('exact #2126 cleanup reserve profile is eligible and clean only on its exact branch', () => {
+test('exact #2126 cleanup reserve profile is eligible only on its exact PR and branch and preserves inherited cleanup safety', () => {
   const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(reserveInput());
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true);
-  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_RESERVE_CLEAN');
-  assert.ok(result.proofRefs.some((item) => item.includes('derived-failure-cleanup-window')));
-  assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(reserveInput(RESERVE_SAFE_SOURCE, { branch: 'other' })).eligible, false);
-  assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(reserveInput(RESERVE_SAFE_SOURCE, { prNumber: 2127 })).eligible, false);
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_MISSION_WORKER_FAILURE_CLEANUP_RESERVE_CLEAN');
+  assert.ok(result.proofRefs.some((item) => item.includes('derived-30-second-reserve')));
+  assert.ok(result.proofRefs.some((item) => item.includes('heartbeat-timeout-preserves-cleanup-window')));
+  assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(reserveInput(FAILURE_CLEANUP_RESERVE_SAFE_SOURCE, { prNumber: 2127 })).eligible, false);
+  assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(reserveInput(FAILURE_CLEANUP_RESERVE_SAFE_SOURCE, { branch: 'other' })).eligible, false);
 });
 
-test('#2126 reserve review rejects changed budgets, legacy reserve and duplicated wiring', () => {
+test('#2126 reserve semantics fail closed on changed budgets, derivation, stale literal or reserve reassignment', () => {
   for (const [unsafe, code] of [
-    [RESERVE_SAFE_SOURCE.replace('$missionWorkerStopTimeoutSeconds = 15', '$missionWorkerStopTimeoutSeconds = 16'), 'mission-worker-cleanup-reserve-stop-budget-changed'],
-    [RESERVE_SAFE_SOURCE.replace('$missionWorkerCleanupTimeoutSeconds = 10', '$missionWorkerCleanupTimeoutSeconds = 9'), 'mission-worker-cleanup-reserve-cleanup-budget-changed'],
-    [RESERVE_SAFE_SOURCE.replace('+ $missionWorkerCleanupTimeoutSeconds + 5', '+ $missionWorkerCleanupTimeoutSeconds + 4'), 'mission-worker-cleanup-reserve-derivation-invalid'],
-    [RESERVE_SAFE_SOURCE.replace('-ReserveSeconds $missionWorkerFailureCleanupReserveSeconds', '-ReserveSeconds 8'), 'mission-worker-cleanup-reserve-heartbeat-wait-missing'],
-    [`${RESERVE_SAFE_SOURCE}\n$missionWorkerFailureCleanupReserveSeconds = 30\n`, 'mission-worker-cleanup-reserve-shape-not-singleton'],
+    [FAILURE_CLEANUP_RESERVE_SAFE_SOURCE.replace('$missionWorkerStopTimeoutSeconds = 15', '$missionWorkerStopTimeoutSeconds = 14'), 'mission-worker-failure-cleanup-stop-budget-changed'],
+    [FAILURE_CLEANUP_RESERVE_SAFE_SOURCE.replace('$missionWorkerCleanupTimeoutSeconds = 10', '$missionWorkerCleanupTimeoutSeconds = 9'), 'mission-worker-failure-cleanup-budget-changed'],
+    [FAILURE_CLEANUP_RESERVE_SAFE_SOURCE.replace('+ $missionWorkerCleanupTimeoutSeconds + 5', '+ $missionWorkerCleanupTimeoutSeconds + 50'), 'mission-worker-failure-cleanup-reserve-derivation-missing'],
+    [FAILURE_CLEANUP_RESERVE_SAFE_SOURCE.replace('-ReserveSeconds $missionWorkerFailureCleanupReserveSeconds', '-ReserveSeconds 8'), 'mission-worker-failure-cleanup-heartbeat-reserve-missing'],
+    [`${FAILURE_CLEANUP_RESERVE_SAFE_SOURCE}\n$missionWorkerFailureCleanupReserveSeconds = 8\n`, 'mission-worker-failure-cleanup-reserve-reassigned'],
   ]) {
     const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(reserveInput(unsafe));
-    assert.equal(result.eligible, true);
     assert.equal(result.clean, false);
     assert.ok(result.findings.some((item) => item.code === code));
   }
+});
+
+test('#2126 reserve profile cannot inherit generic process or shell authority', () => {
+  const widened = FAILURE_CLEANUP_RESERVE_SAFE_SOURCE.replace(
+    'function Stop-NewlyStartedOwnedWorker {',
+    "function Stop-NewlyStartedOwnedWorker {\n  Stop-Process -Id $candidate.ProcessId",
+  );
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(reserveInput(widened));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-generic-execution-forbidden'));
 });
 
 test('exact #2105 already-hardened source is eligible and clean without replaying the repair', () => {

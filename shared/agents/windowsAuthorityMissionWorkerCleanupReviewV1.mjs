@@ -10,12 +10,12 @@ const LINEAGE_SCHEMA = 'stephanos.windows-authority-reconciliation-lineage.v1';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const CLEANUP_PR_NUMBER = 2097;
 const CLEANUP_BRANCH = 'fix/mission-worker-cleanup-launch-receipt-proof-v1';
-const CLEANUP_RESERVE_PR_NUMBER = 2126;
-const CLEANUP_RESERVE_BRANCH = 'fix/mission-worker-failure-cleanup-reserve-v1';
 const ORPHAN_CAPABILITY_PR_NUMBER = 2105;
 const ORPHAN_CAPABILITY_BRANCH = 'fix/mission-worker-orphan-capability-starttime-v1';
 const ORPHAN_CAPABILITY_HEAD = '5e04abd527ae76f782799014e1c84c150ae0e7fe';
 const ORPHAN_CAPABILITY_BLOB_SHA = '24bdbd048e30eda6641a8122d60e9262521af376';
+const FAILURE_CLEANUP_RESERVE_PR_NUMBER = 2126;
+const FAILURE_CLEANUP_RESERVE_BRANCH = 'fix/mission-worker-failure-cleanup-reserve-v1';
 const PATH = WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_PATHS_V1[0];
 const SHA = /^[a-f0-9]{40}$/;
 const MAX_SOURCE_BYTES = 256 * 1024;
@@ -181,25 +181,24 @@ function inspectCleanupSource(source) {
   return findings;
 }
 
-function inspectCleanupReserveSource(source) {
+function inspectFailureCleanupReserveSource(source) {
   const findings = [...inspectCleanupSource(source)];
-  const requireIn = (pattern, code, summary) => {
+  const require = (pattern, code, summary) => {
     if (!pattern.test(source)) findings.push(finding(code, summary));
   };
-  const forbidIn = (pattern, code, summary) => {
-    if (pattern.test(source)) findings.push(finding(code, summary));
-  };
 
-  requireIn(/\$missionWorkerStopTimeoutSeconds\s*=\s*15(?:\D|$)/, 'mission-worker-cleanup-reserve-stop-budget-changed', 'The fixed Mission Worker stop budget must remain 15 seconds.');
-  requireIn(/\$missionWorkerCleanupTimeoutSeconds\s*=\s*10(?:\D|$)/, 'mission-worker-cleanup-reserve-cleanup-budget-changed', 'The fixed Mission Worker cleanup budget must remain 10 seconds.');
-  requireIn(/\$missionWorkerFailureCleanupReserveSeconds\s*=\s*\$missionWorkerStopTimeoutSeconds\s*\+\s*\$missionWorkerCleanupTimeoutSeconds\s*\+\s*5(?:\D|$)/, 'mission-worker-cleanup-reserve-derivation-invalid', 'Failure cleanup reserve must be exactly fixed stop + cleanup budgets + 5 seconds.');
-  requireIn(/Wait-UntilOperationDeadline\s+-ReserveSeconds\s+\$missionWorkerFailureCleanupReserveSeconds\s+-Condition\s*\{/i, 'mission-worker-cleanup-reserve-heartbeat-wait-missing', 'Fresh-worker heartbeat wait must reserve the derived failure cleanup window.');
-  forbidIn(/Wait-UntilOperationDeadline\s+-ReserveSeconds\s+8\s+-Condition\s*\{[\s\S]{0,1600}MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT/i, 'mission-worker-cleanup-reserve-legacy-eight-second-window-present', 'The legacy eight-second heartbeat reserve must not remain on the exact startup timeout path.');
+  require(/\$missionWorkerStopTimeoutSeconds\s*=\s*15(?:\s|$)/, 'mission-worker-failure-cleanup-stop-budget-changed', 'Failure cleanup reserve requires the fixed 15-second worker stop budget.');
+  require(/\$missionWorkerCleanupTimeoutSeconds\s*=\s*10(?:\s|$)/, 'mission-worker-failure-cleanup-budget-changed', 'Failure cleanup reserve requires the fixed 10-second cleanup budget.');
+  require(/\$missionWorkerFailureCleanupReserveSeconds\s*=\s*\$missionWorkerStopTimeoutSeconds\s*\+\s*\$missionWorkerCleanupTimeoutSeconds\s*\+\s*5(?:\s|$)/, 'mission-worker-failure-cleanup-reserve-derivation-missing', 'Failure cleanup reserve must derive exactly from 15s stop + 10s cleanup + 5s handoff margin.');
+  require(/Wait-UntilOperationDeadline\s+-ReserveSeconds\s+\$missionWorkerFailureCleanupReserveSeconds\s+-Condition\s*\{[\s\S]{0,1800}MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT/, 'mission-worker-failure-cleanup-heartbeat-reserve-missing', 'Fresh-worker heartbeat wait must preserve the derived cleanup reserve before timeout.');
 
-  const declarations = source.match(/\$missionWorkerFailureCleanupReserveSeconds\s*=/g) || [];
-  const uses = source.match(/-ReserveSeconds\s+\$missionWorkerFailureCleanupReserveSeconds\b/g) || [];
-  if (declarations.length !== 1 || uses.length !== 1) {
-    findings.push(finding('mission-worker-cleanup-reserve-shape-not-singleton', 'The derived failure cleanup reserve must have exactly one declaration and one heartbeat-wait use.'));
+  const reserveAssignments = source.match(/\$missionWorkerFailureCleanupReserveSeconds\s*=/g) || [];
+  if (reserveAssignments.length !== 1) {
+    findings.push(finding('mission-worker-failure-cleanup-reserve-reassigned', 'Failure cleanup reserve must have exactly one fixed assignment.'));
+  }
+  const staleLiteral = /Wait-UntilOperationDeadline\s+-ReserveSeconds\s+8\s+-Condition\s*\{[\s\S]{0,1800}MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT/;
+  if (staleLiteral.test(source)) {
+    findings.push(finding('mission-worker-failure-cleanup-stale-heartbeat-reserve', 'The superseded 8-second heartbeat reserve must not remain on the startup timeout path.'));
   }
   return findings;
 }
@@ -254,8 +253,8 @@ function inspectOrphanCapabilitySource(source) {
 
 function profileFor(input = {}) {
   if (Number(input.prNumber) === CLEANUP_PR_NUMBER && text(input.branch) === CLEANUP_BRANCH) return 'cleanup';
-  if (Number(input.prNumber) === CLEANUP_RESERVE_PR_NUMBER && text(input.branch) === CLEANUP_RESERVE_BRANCH) return 'cleanup-reserve';
   if (Number(input.prNumber) === ORPHAN_CAPABILITY_PR_NUMBER && text(input.branch) === ORPHAN_CAPABILITY_BRANCH) return 'orphan-capability';
+  if (Number(input.prNumber) === FAILURE_CLEANUP_RESERVE_PR_NUMBER && text(input.branch) === FAILURE_CLEANUP_RESERVE_BRANCH) return 'failure-cleanup-reserve';
   return null;
 }
 
@@ -283,8 +282,8 @@ export function analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input = {}) 
     findings.push(finding('mission-worker-cleanup-source-evidence-invalid', 'Review requires one content-derived exact-head source record.'));
   } else if (profile === 'cleanup') {
     findings.push(...inspectCleanupSource(sources[0].content));
-  } else if (profile === 'cleanup-reserve') {
-    findings.push(...inspectCleanupReserveSource(sources[0].content));
+  } else if (profile === 'failure-cleanup-reserve') {
+    findings.push(...inspectFailureCleanupReserveSource(sources[0].content));
   } else {
     if (sourceHead !== ORPHAN_CAPABILITY_HEAD || sources[0].blobSha !== ORPHAN_CAPABILITY_BLOB_SHA) {
       findings.push(finding('mission-worker-orphan-exact-source-not-pinned', 'Orphan capability approval requires the exact expected source head and full runtime-script blob.'));
@@ -295,10 +294,17 @@ export function analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input = {}) 
   const prNumber = Number(input.prNumber);
   const proofNamespace = profile === 'cleanup'
     ? 'mission-worker-cleanup'
-    : profile === 'cleanup-reserve'
-      ? 'mission-worker-cleanup-reserve'
-      : 'mission-worker-orphan-capability';
-  const cleanupProfile = profile === 'cleanup' || profile === 'cleanup-reserve';
+    : (profile === 'failure-cleanup-reserve' ? 'mission-worker-failure-cleanup-reserve' : 'mission-worker-orphan-capability');
+  const cleanVerdict = profile === 'cleanup'
+    ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_CLEAN'
+    : (profile === 'failure-cleanup-reserve'
+      ? 'WINDOWS_AUTHORITY_MISSION_WORKER_FAILURE_CLEANUP_RESERVE_CLEAN'
+      : 'WINDOWS_AUTHORITY_MISSION_WORKER_ORPHAN_CAPABILITY_CLEAN');
+  const findingsVerdict = profile === 'cleanup'
+    ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_FINDINGS'
+    : (profile === 'failure-cleanup-reserve'
+      ? 'WINDOWS_AUTHORITY_MISSION_WORKER_FAILURE_CLEANUP_RESERVE_FINDINGS'
+      : 'WINDOWS_AUTHORITY_MISSION_WORKER_ORPHAN_CAPABILITY_FINDINGS');
   return Object.freeze({
     schemaVersion: SCHEMA,
     eligible: true,
@@ -308,28 +314,16 @@ export function analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input = {}) 
     proofRefs: clean ? Object.freeze([
       `proofs/windows-authority/${proofNamespace}/pr-${prNumber}`,
       `proofs/windows-authority/${proofNamespace}/${PATH}@${sourceHead}#${sources[0].blobSha}`,
-      ...(cleanupProfile
-        ? [
-          'proofs/windows-authority/mission-worker-cleanup/launch-receipt-preferred',
-          'proofs/windows-authority/mission-worker-cleanup/exact-process-capability-reverified',
-          ...(profile === 'cleanup-reserve' ? ['proofs/windows-authority/mission-worker-cleanup-reserve/derived-failure-cleanup-window'] : []),
-        ]
-        : ['proofs/windows-authority/mission-worker-orphan-capability/cim-identity-stable', 'proofs/windows-authority/mission-worker-orphan-capability/same-api-starttime-rebound']),
+      ...(profile === 'cleanup'
+        ? ['proofs/windows-authority/mission-worker-cleanup/launch-receipt-preferred', 'proofs/windows-authority/mission-worker-cleanup/exact-process-capability-reverified']
+        : (profile === 'failure-cleanup-reserve'
+          ? ['proofs/windows-authority/mission-worker-failure-cleanup-reserve/derived-30-second-reserve', 'proofs/windows-authority/mission-worker-failure-cleanup-reserve/heartbeat-timeout-preserves-cleanup-window']
+          : ['proofs/windows-authority/mission-worker-orphan-capability/cim-identity-stable', 'proofs/windows-authority/mission-worker-orphan-capability/same-api-starttime-rebound'])),
     ]) : Object.freeze([]),
     sourceMutationAllowed: false,
     mergeAuthority: false,
     runtimeMutationAllowed: false,
     providerQualificationAuthority: false,
-    finalVerdict: clean
-      ? (profile === 'cleanup-reserve'
-        ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_RESERVE_CLEAN'
-        : profile === 'cleanup'
-          ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_CLEAN'
-          : 'WINDOWS_AUTHORITY_MISSION_WORKER_ORPHAN_CAPABILITY_CLEAN')
-      : (profile === 'cleanup-reserve'
-        ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_RESERVE_FINDINGS'
-        : profile === 'cleanup'
-          ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_FINDINGS'
-          : 'WINDOWS_AUTHORITY_MISSION_WORKER_ORPHAN_CAPABILITY_FINDINGS'),
+    finalVerdict: clean ? cleanVerdict : findingsVerdict,
   });
 }
