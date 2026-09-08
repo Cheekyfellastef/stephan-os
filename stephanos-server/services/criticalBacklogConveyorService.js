@@ -249,14 +249,17 @@ export async function dispatchElasticGoalBuildsFromCanonicalMain(admission = {},
     ...(Array.isArray(prHeadLease?.held) ? prHeadLease.held : []),
     ...(Array.isArray(prePr?.held) ? prePr.held : []),
   ]);
+  const combinedOk = prHeadLease?.ok !== false && prePr?.ok === true;
   return Object.freeze({
     ...prePr,
-    ok: prePr?.ok === true,
-    classification: dispatched.length
-      ? 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE'
-      : held.length
-        ? 'ELASTIC_GOAL_BUILD_DISPATCH_HELD'
-        : prePr?.classification,
+    ok: combinedOk,
+    classification: !combinedOk
+      ? 'ELASTIC_GOAL_BUILD_DISPATCH_PARTIAL_BLOCKED'
+      : dispatched.length
+        ? 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE'
+        : held.length
+          ? 'ELASTIC_GOAL_BUILD_DISPATCH_HELD'
+          : prePr?.classification,
     dispatchCount: dispatched.length,
     dispatched,
     held,
