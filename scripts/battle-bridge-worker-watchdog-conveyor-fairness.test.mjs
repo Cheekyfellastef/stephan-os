@@ -16,12 +16,9 @@ function healthyWatchdog() {
   };
 }
 
-test('critical backlog refresh starts even while visibility and participant lanes are unresolved', async () => {
-  let resolveVisibility;
-  let resolveRelay;
-  let visibilityTimer;
-  let relayTimer;
+test('critical backlog refresh starts before participant relay synchronous prefix', async () => {
   const calls = [];
+  let backlogStarted = false;
 
   const result = await runBattleBridgeWorkerWatchdogRunner({
     workerWatchdog: async () => {
@@ -32,28 +29,18 @@ test('critical backlog refresh starts even while visibility and participant lane
       calls.push('control-plane-recovery');
       return { ok: true, classification: 'CONTROL_PLANE_MAILBOX_HEALTHY' };
     },
-    visibilityObserver: () => {
+    visibilityObserver: async () => {
       calls.push('visibility');
-      return new Promise((resolve, reject) => {
-        resolveVisibility = resolve;
-        visibilityTimer = setTimeout(() => reject(new Error('visibility starved construction refresh')), 250);
-      });
+      return { ok: true, classification: 'REMOTE_CODEX_VISIBILITY_RECONCILED' };
     },
     participantRelay: () => {
-      calls.push('participant-relay');
-      return new Promise((resolve, reject) => {
-        resolveRelay = resolve;
-        relayTimer = setTimeout(() => reject(new Error('participant relay starved construction refresh')), 250);
-      });
+      calls.push('participant-relay-sync-prefix');
+      assert.equal(backlogStarted, true);
+      return { ok: true, classification: 'CHATGPT_SHARED_WORKSPACE_RELAY_IDLE' };
     },
     backlogConveyor: async () => {
       calls.push('critical-backlog');
-      assert.equal(typeof resolveVisibility, 'function');
-      assert.equal(typeof resolveRelay, 'function');
-      clearTimeout(visibilityTimer);
-      clearTimeout(relayTimer);
-      resolveVisibility({ ok: true, classification: 'REMOTE_CODEX_VISIBILITY_RECONCILED' });
-      resolveRelay({ ok: true, classification: 'CHATGPT_SHARED_WORKSPACE_RELAY_IDLE' });
+      backlogStarted = true;
       return { ok: true, classification: 'WAIT_ACTIVE_MISSION' };
     },
   });
@@ -61,9 +48,9 @@ test('critical backlog refresh starts even while visibility and participant lane
   assert.deepEqual(calls, [
     'watchdog',
     'control-plane-recovery',
-    'visibility',
-    'participant-relay',
     'critical-backlog',
+    'visibility',
+    'participant-relay-sync-prefix',
   ]);
   assert.equal(result.ok, true);
   assert.equal(result.visibilityOk, true);
@@ -73,19 +60,25 @@ test('critical backlog refresh starts even while visibility and participant lane
 });
 
 test('one failed auxiliary lane does not prevent construction refresh or sibling completion', async () => {
-  let conveyorCalls = 0;
+  const calls = [];
   const result = await runBattleBridgeWorkerWatchdogRunner({
     workerWatchdog: async () => healthyWatchdog(),
     controlPlaneRecovery: async () => ({ ok: true, classification: 'CONTROL_PLANE_MAILBOX_HEALTHY' }),
-    visibilityObserver: async () => { throw new Error('visibility unavailable'); },
-    participantRelay: async () => ({ ok: true, classification: 'CHATGPT_SHARED_WORKSPACE_RELAY_IDLE' }),
+    visibilityObserver: async () => {
+      calls.push('visibility');
+      throw new Error('visibility unavailable');
+    },
+    participantRelay: async () => {
+      calls.push('participant-relay');
+      return { ok: true, classification: 'CHATGPT_SHARED_WORKSPACE_RELAY_IDLE' };
+    },
     backlogConveyor: async () => {
-      conveyorCalls += 1;
+      calls.push('critical-backlog');
       return { ok: true, classification: 'WAIT_ACTIVE_MISSION' };
     },
   });
 
-  assert.equal(conveyorCalls, 1);
+  assert.deepEqual(calls, ['critical-backlog', 'visibility', 'participant-relay']);
   assert.equal(result.ok, false);
   assert.equal(result.visibilityOk, false);
   assert.equal(result.participantRelayOk, true);
