@@ -1,3 +1,6 @@
+import { access } from 'node:fs/promises';
+import { resolve } from 'node:path';
+
 import {
   buildMissionWorkerAction,
   projectMissionWorkerActionState,
@@ -9,7 +12,10 @@ import {
   renewSourceMutationLease,
 } from './programmeAuthorityService.js';
 import { readElasticMissionControllerCapacityRoutingInput } from './elasticOpenClawProviderPoolService.js';
-import { publishNextMissionWorkerAction } from './missionOrchestratorWorkerService.js';
+import {
+  publishNextMissionWorkerAction,
+  resolveMissionWorkerQueueRoot,
+} from './missionOrchestratorWorkerService.js';
 
 export const ELASTIC_PR_HEAD_LEASE_DISPATCH_SCHEMA = 'stephanos.elastic-pr-head-lease-dispatch.v1';
 
@@ -86,10 +92,25 @@ function sameLeaseIdentity(lease = {}, identity = {}) {
 }
 
 function grantAdapter(action = {}) {
+  if (action.actionKind === 'signed-openclaw-operation') return 'openclaw-signed';
   if (action.actionKind === 'github-inspection') return 'openclaw-github-readonly';
   if (action.actionKind === 'agent-handoff') return text(action.adapter).toLowerCase();
   if (action.actionKind === 'evidence-judgment') return 'verification';
   return '';
+}
+
+async function defaultActionInFlight({ adapter, actionId, env }) {
+  const root = resolveMissionWorkerQueueRoot(env);
+  if (!root || !adapter || !actionId) return false;
+  for (const state of ['pending', 'processing']) {
+    try {
+      await access(resolve(root, adapter, state, `${actionId}.json`));
+      return true;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
+  return false;
 }
 
 function exactPrHeadWorkerGrant(mission, identity, sourceRevision, capacityRouting, now) {
@@ -207,6 +228,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
   const releaseLease = normalized.releaseSourceMutationLease ?? releaseSourceMutationLease;
   const readCapacityRouting = normalized.readCapacityRouting ?? readElasticMissionControllerCapacityRoutingInput;
   const publishWorkerAction = normalized.publishWorkerAction ?? publishNextMissionWorkerAction;
+  const isActionInFlight = normalized.isActionInFlight ?? defaultActionInFlight;
 
   let leaseRead = await readLease({
     root: paths.workspaceRoot,
@@ -400,6 +422,28 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
       classification: 'ELASTIC_PR_HEAD_EXACT_ACTION_GRANT_UNAVAILABLE',
       handledMissionIds,
       held: [{ missionId: leasedEntry.identity.missionId, reason: 'EXACT_PR_HEAD_ACTION_GRANT_UNAVAILABLE' }],
+      activeLease: currentLease,
+      releasedLease,
+    });
+  }
+
+  let inFlight = false;
+  try {
+    inFlight = await isActionInFlight({ adapter: grant.adapter, actionId: grant.actionId, env });
+  } catch (error) {
+    return baseResult({
+      ok: false,
+      classification: 'ELASTIC_PR_HEAD_IN_FLIGHT_PROOF_UNAVAILABLE',
+      handledMissionIds,
+      held: [{ missionId: leasedEntry.identity.missionId, reason: `IN_FLIGHT_PROOF_FAILED:${text(error?.message, 'unknown')}` }],
+      activeLease: currentLease,
+      releasedLease,
+    });
+  }
+  if (inFlight) {
+    return baseResult({
+      classification: 'ELASTIC_PR_HEAD_ACTION_ALREADY_IN_FLIGHT',
+      handledMissionIds,
       activeLease: currentLease,
       releasedLease,
     });
