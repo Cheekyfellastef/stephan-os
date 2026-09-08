@@ -319,6 +319,111 @@ test('elastic dispatcher retries the next distinct proven capacity when the firs
   assert.equal(result.runtimeMutationAuthority, false);
 });
 
+test('elastic dispatcher reconciles an indeterminate publication on the same exact candidate before considering fallback', async () => {
+  const mission = elasticImplementationMission(92);
+  const attempts = [];
+  let firstAttempt = true;
+  const result = await dispatchElasticGoalBuilds({
+    desiredWidth: 5,
+    selectedMission: null,
+    activeMissions: [],
+    runnableMissions: [mission],
+  }, {
+    now,
+    sourceRevision: 'e'.repeat(40),
+    paths: {
+      repoRoot: '/repo',
+      workspaceRoot: '/workspace',
+      orchestratorRoot: '/orchestrator',
+      snapshotRoot: '/snapshots',
+    },
+    resolveCapacityCandidates: () => [
+      {
+        route: 'CHATGPT_GITHUB',
+        adapter: 'chatgpt-github',
+        workerId: 'github-worker',
+        receiptId: 'github-capacity-1',
+        proofRefs: ['github-capacity-proof'],
+      },
+      {
+        route: 'FOUNDRY_FORGE',
+        adapter: 'foundry-forge',
+        workerId: 'forge-worker',
+        receiptId: 'forge-capacity-1',
+        proofRefs: ['forge-capacity-proof'],
+      },
+    ],
+    publishWorkerAction: async ({ actionGrant }) => {
+      attempts.push(actionGrant.adapter);
+      if (actionGrant.adapter !== 'chatgpt-github') throw new Error('fallback-must-not-run');
+      if (firstAttempt) {
+        firstAttempt = false;
+        throw new Error('event-append-failed-after-publication');
+      }
+      return { published: true, actionGrantAccepted: true, reason: 'external-action-publication-reconciled' };
+    },
+  });
+
+  assert.deepEqual(attempts, ['chatgpt-github', 'chatgpt-github']);
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'ELASTIC_EXTERNAL_BUILD_DISPATCH_LIVE');
+  assert.equal(result.dispatchCount, 1);
+  assert.equal(result.dispatched[0].adapter, 'chatgpt-github');
+  assert.equal(result.dispatched[0].workerId, 'github-worker');
+  assert.deepEqual(result.held, []);
+});
+
+test('elastic dispatcher fails closed after repeated indeterminate publication and never assigns a second writer', async () => {
+  const mission = elasticImplementationMission(93);
+  const attempts = [];
+  const result = await dispatchElasticGoalBuilds({
+    desiredWidth: 5,
+    selectedMission: null,
+    activeMissions: [],
+    runnableMissions: [mission],
+  }, {
+    now,
+    sourceRevision: 'f'.repeat(40),
+    paths: {
+      repoRoot: '/repo',
+      workspaceRoot: '/workspace',
+      orchestratorRoot: '/orchestrator',
+      snapshotRoot: '/snapshots',
+    },
+    resolveCapacityCandidates: () => [
+      {
+        route: 'CHATGPT_GITHUB',
+        adapter: 'chatgpt-github',
+        workerId: 'github-worker',
+        receiptId: 'github-capacity-1',
+        proofRefs: ['github-capacity-proof'],
+      },
+      {
+        route: 'FOUNDRY_FORGE',
+        adapter: 'foundry-forge',
+        workerId: 'forge-worker',
+        receiptId: 'forge-capacity-1',
+        proofRefs: ['forge-capacity-proof'],
+      },
+    ],
+    publishWorkerAction: async ({ actionGrant }) => {
+      attempts.push(actionGrant.adapter);
+      if (actionGrant.adapter !== 'chatgpt-github') throw new Error('fallback-must-not-run');
+      throw new Error('event-append-still-indeterminate');
+    },
+  });
+
+  assert.deepEqual(attempts, ['chatgpt-github', 'chatgpt-github']);
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD');
+  assert.equal(result.dispatchCount, 0);
+  assert.deepEqual(result.dispatched, []);
+  assert.equal(result.held.length, 1);
+  assert.match(result.held[0].reason, /^EXTERNAL_DISPATCH_INDETERMINATE:/);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.runtimeMutationAuthority, false);
+});
+
 test('publication emits one idempotent event file for one state change', async () => {
   const paths = await roots();
   const projection = {
