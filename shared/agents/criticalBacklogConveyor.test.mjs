@@ -53,6 +53,23 @@ test('parks approval-ready work and immediately refills the construction slot', 
   assert.match(projection.exactNextAction, /zero construction capacity/i);
 });
 
+test('resumed approval merge follow-through does not collide with a refilled builder', () => {
+  const first = DEFAULT_CRITICAL_BACKLOG[0];
+  const second = DEFAULT_CRITICAL_BACKLOG[1];
+  const projection = buildCriticalBacklogProjection({
+    missionRecords: [
+      { missionId: first.mission.missionId, currentPhase: 'MERGE_PULL_REQUEST' },
+      { missionId: second.mission.missionId, currentPhase: 'AGENT_IMPLEMENTATION' },
+    ],
+  });
+  assert.equal(projection.decision, CRITICAL_BACKLOG_DECISION.WAIT_ACTIVE_MISSION);
+  assert.equal(projection.activeMission?.missionId, second.mission.missionId);
+  assert.deepEqual(projection.parkedMissionIds, [first.mission.missionId]);
+  assert.deepEqual(projection.parkedItemIds, [first.itemId]);
+  assert.equal(projection.parkedApprovalCount, 1);
+  assert.equal(projection.approvalReadyConsumesConstructionCapacity, false);
+});
+
 test('a genuine blocked mission still holds the legacy lane', () => {
   const first = DEFAULT_CRITICAL_BACKLOG[0];
   const projection = buildCriticalBacklogProjection({
