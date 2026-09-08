@@ -323,27 +323,41 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
 
     let dispatchedMission = null;
     let grantCandidateObserved = false;
+    let indeterminatePublication = false;
     let lastPublicationReason = '';
     for (const capacity of routeCandidates) {
       const grant = exactElasticExternalGrant(mission, capacity, sourceRevision, now);
       if (!grant) continue;
       grantCandidateObserved = true;
 
+      const publicationInput = {
+        env,
+        now,
+        nowUtc: now.toISOString(),
+        sourceRevision: sourceRevision.toLowerCase(),
+        repoRoot: paths.repoRoot,
+        sharedWorkspaceRoot: paths.workspaceRoot,
+        root: paths.orchestratorRoot,
+        snapshotRoot: paths.snapshotRoot,
+        actionGrant: grant,
+      };
       let publication;
       try {
-        publication = await publishWorkerAction({
-          env,
-          now,
-          nowUtc: now.toISOString(),
-          sourceRevision: sourceRevision.toLowerCase(),
-          repoRoot: paths.repoRoot,
-          sharedWorkspaceRoot: paths.workspaceRoot,
-          root: paths.orchestratorRoot,
-          snapshotRoot: paths.snapshotRoot,
-          actionGrant: grant,
-        });
+        publication = await publishWorkerAction(publicationInput);
       } catch (error) {
-        publication = { published: false, actionGrantAccepted: false, reason: `publication-exception:${text(error?.message, 'unknown')}` };
+        const firstError = text(error?.message, 'unknown');
+        try {
+          publication = await publishWorkerAction(publicationInput);
+        } catch (reconciliationError) {
+          indeterminatePublication = true;
+          lastPublicationReason = `publication-exception:${firstError};reconciliation-exception:${text(reconciliationError?.message, 'unknown')}`;
+          break;
+        }
+        if (publication?.published !== true || publication?.actionGrantAccepted !== true) {
+          indeterminatePublication = true;
+          lastPublicationReason = `publication-exception:${firstError};reconciliation:${text(publication?.reason, 'not-published')}`;
+          break;
+        }
       }
       if (publication?.published !== true || publication?.actionGrantAccepted !== true) {
         lastPublicationReason = text(publication?.reason, 'not-published');
@@ -370,9 +384,11 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
     if (dispatchedMission) continue;
     held.push(Object.freeze({
       missionId,
-      reason: grantCandidateObserved
-        ? `EXTERNAL_DISPATCH_BLOCKED:${lastPublicationReason || 'not-published'}`
-        : 'EXACT_EXTERNAL_ACTION_GRANT_UNAVAILABLE',
+      reason: indeterminatePublication
+        ? `EXTERNAL_DISPATCH_INDETERMINATE:${lastPublicationReason || 'reconciliation-required'}`
+        : grantCandidateObserved
+          ? `EXTERNAL_DISPATCH_BLOCKED:${lastPublicationReason || 'not-published'}`
+          : 'EXACT_EXTERNAL_ACTION_GRANT_UNAVAILABLE',
     }));
   }
 
