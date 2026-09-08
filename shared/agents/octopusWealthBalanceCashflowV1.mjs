@@ -8,11 +8,11 @@ import {
 export const OCTOPUS_WEALTH_BALANCE_CASHFLOW_SCHEMA_VERSION = 'stephanos.octopus-wealth-balance-cashflow.v1';
 
 export const OCTOPUS_WEALTH_M2_METRIC_ROLES = Object.freeze([
-  Object.freeze({ tentacleId: 'CASH_AND_LIQUIDITY', metricId: 'cash-liquid-assets', section: 'ASSET', units: Object.freeze(['GBP']) }),
-  Object.freeze({ tentacleId: 'ISA_AND_INVESTMENTS', metricId: 'isa-current-value', section: 'ASSET', units: Object.freeze(['GBP']) }),
-  Object.freeze({ tentacleId: 'PENSIONS_AND_RETIREMENT_BRIDGE', metricId: 'pension-current-value', section: 'ASSET', units: Object.freeze(['GBP']) }),
-  Object.freeze({ tentacleId: 'HOME_MORTGAGE_AND_EQUITY', metricId: 'home-current-value', section: 'ASSET', units: Object.freeze(['GBP']) }),
-  Object.freeze({ tentacleId: 'CARAVAN_PORTFOLIO', metricId: 'caravan-current-value', section: 'ASSET', units: Object.freeze(['GBP']) }),
+  Object.freeze({ tentacleId: 'CASH_AND_LIQUIDITY', metricId: 'cash-liquid-assets', section: 'ASSET', units: Object.freeze(['GBP']), assetPurposes: Object.freeze(['ACCOUNTING', 'ACCESSIBLE']) }),
+  Object.freeze({ tentacleId: 'ISA_AND_INVESTMENTS', metricId: 'isa-current-value', section: 'ASSET', units: Object.freeze(['GBP']), assetPurposes: Object.freeze(['ACCOUNTING', 'ACCESSIBLE']) }),
+  Object.freeze({ tentacleId: 'PENSIONS_AND_RETIREMENT_BRIDGE', metricId: 'pension-current-value', section: 'ASSET', units: Object.freeze(['GBP']), assetPurposes: Object.freeze(['ACCOUNTING', 'RETIREMENT']) }),
+  Object.freeze({ tentacleId: 'HOME_MORTGAGE_AND_EQUITY', metricId: 'home-current-value', section: 'ASSET', units: Object.freeze(['GBP']), assetPurposes: Object.freeze(['ACCOUNTING']) }),
+  Object.freeze({ tentacleId: 'CARAVAN_PORTFOLIO', metricId: 'caravan-current-value', section: 'ASSET', units: Object.freeze(['GBP']), assetPurposes: Object.freeze(['ACCOUNTING']) }),
   Object.freeze({ tentacleId: 'HOME_MORTGAGE_AND_EQUITY', metricId: 'mortgage-outstanding', section: 'LIABILITY', units: Object.freeze(['GBP']) }),
   Object.freeze({ tentacleId: 'DEBT_AND_CREDIT', metricId: 'debt-balance', section: 'LIABILITY', units: Object.freeze(['GBP']) }),
   Object.freeze({ tentacleId: 'EMPLOYMENT_SALARY_SACRIFICE_AND_TAX', metricId: 'employment-net-income', section: 'INFLOW', units: Object.freeze(['GBP_PER_YEAR', 'GBP_PER_MONTH']) }),
@@ -131,6 +131,7 @@ function emptyComponent(role, status) {
     tentacleId: role.tentacleId,
     metricId: role.metricId,
     section: role.section,
+    ...(role.section === 'ASSET' ? { assetPurposes: role.assetPurposes } : {}),
     status,
     usable: false,
     valueGbp: null,
@@ -186,6 +187,7 @@ function componentForRole(role, sourceRecords) {
     tentacleId: role.tentacleId,
     metricId: role.metricId,
     section: role.section,
+    ...(role.section === 'ASSET' ? { assetPurposes: role.assetPurposes } : {}),
     status,
     usable: status === 'USABLE',
     valueGbp,
