@@ -26,6 +26,22 @@ function workerAssessment(watchdog = {}) {
   return watchdog?.finalAssessment || watchdog?.decision?.assessment || null;
 }
 
+function startAuxiliaryLane(run, classification) {
+  try {
+    return Promise.resolve(run()).catch((error) => ({
+      ok: false,
+      classification,
+      reason: error?.message || String(error),
+    }));
+  } catch (error) {
+    return Promise.resolve({
+      ok: false,
+      classification,
+      reason: error?.message || String(error),
+    });
+  }
+}
+
 export async function runBattleBridgeControlPlaneBootstrapRecovery({
   watchdog = null,
   paths = resolveCanonicalWorkerWatchdogPaths(),
@@ -121,8 +137,10 @@ export async function runBattleBridgeWorkerWatchdogRunner({
   controlPlaneRecovery = runBattleBridgeControlPlaneBootstrapRecovery,
 } = {}) {
   // Worker recovery is the time-critical purpose of this installed runner.
-  // Publish watchdog recovery truth before auxiliary reconciliation so a slow
-  // visibility/relay/backlog lane cannot consume the bounded acceptance window.
+  // Publish watchdog recovery truth before auxiliary reconciliation. Once that
+  // boundary is complete, start the resource-disjoint auxiliary lanes together
+  // so a slow visibility or participant relay cannot starve construction-truth
+  // refresh from the watchdog task's bounded execution window.
   const watchdog = await workerWatchdog();
   let controlPlaneBootstrapRecovery = null;
   try {
@@ -136,38 +154,28 @@ export async function runBattleBridgeWorkerWatchdogRunner({
     };
   }
 
-  let codexVisibility = null;
-  try {
-    codexVisibility = await visibilityObserver();
-  } catch (error) {
-    codexVisibility = {
-      ok: false,
-      classification: 'REMOTE_CODEX_VISIBILITY_RECONCILIATION_FAILED',
-      reason: error?.message || String(error),
-    };
-  }
+  const codexVisibilityPromise = startAuxiliaryLane(
+    visibilityObserver,
+    'REMOTE_CODEX_VISIBILITY_RECONCILIATION_FAILED',
+  );
+  const chatGptSharedWorkspaceRelayPromise = startAuxiliaryLane(
+    participantRelay,
+    'CHATGPT_SHARED_WORKSPACE_RELAY_FAILED',
+  );
+  const criticalBacklogConveyorPromise = startAuxiliaryLane(
+    backlogConveyor,
+    'CRITICAL_BACKLOG_CONVEYOR_FAILED',
+  );
 
-  let chatGptSharedWorkspaceRelay = null;
-  try {
-    chatGptSharedWorkspaceRelay = await participantRelay();
-  } catch (error) {
-    chatGptSharedWorkspaceRelay = {
-      ok: false,
-      classification: 'CHATGPT_SHARED_WORKSPACE_RELAY_FAILED',
-      reason: error?.message || String(error),
-    };
-  }
-
-  let criticalBacklogConveyor = null;
-  try {
-    criticalBacklogConveyor = await backlogConveyor();
-  } catch (error) {
-    criticalBacklogConveyor = {
-      ok: false,
-      classification: 'CRITICAL_BACKLOG_CONVEYOR_FAILED',
-      reason: error?.message || String(error),
-    };
-  }
+  const [
+    codexVisibility,
+    chatGptSharedWorkspaceRelay,
+    criticalBacklogConveyor,
+  ] = await Promise.all([
+    codexVisibilityPromise,
+    chatGptSharedWorkspaceRelayPromise,
+    criticalBacklogConveyorPromise,
+  ]);
 
   const visibilityOk = codexVisibility?.ok === true;
   const participantRelayOk = chatGptSharedWorkspaceRelay?.ok === true;
