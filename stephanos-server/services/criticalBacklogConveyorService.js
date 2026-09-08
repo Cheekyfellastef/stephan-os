@@ -8,8 +8,14 @@ import {
   resolveCriticalBacklogRuntimePaths,
 } from './criticalBacklogConveyorServiceCore.js';
 import { readAuthoritativeProgrammeProjection } from './programmeAuthorityService.js';
+import {
+  readElasticMissionControllerCapacityRoutingInput,
+  resolveElasticExternalCapacityCandidates,
+} from './elasticOpenClawProviderPoolService.js';
+import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
+const ACTIVE_SOURCE_PHASES = new Set(['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED']);
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -44,6 +50,155 @@ export async function dispatchElasticGoalBuildsFromCanonicalMain(admission = {},
     now,
     paths,
     sourceRevision,
+    resolveCapacityCandidates: normalized.resolveCapacityCandidates ?? resolveElasticExternalCapacityCandidates,
+  });
+}
+
+export async function dispatchActiveCriticalMissionFromCanonicalMain(serviceResult = {}, options = {}) {
+  const normalized = options && typeof options === 'object' ? options : {};
+  const mission = serviceResult?.classification === 'WAIT_ACTIVE_MISSION'
+    ? serviceResult?.projection?.activeMission
+    : null;
+  const currentPhase = text(mission?.currentPhase).toUpperCase();
+  if (!mission || !ACTIVE_SOURCE_PHASES.has(currentPhase)) {
+    return Object.freeze({
+      ok: true,
+      classification: 'CRITICAL_ACTIVE_MISSION_DISPATCH_NOT_REQUIRED',
+      published: false,
+      missionId: text(mission?.missionId),
+      currentPhase,
+      blockers: Object.freeze([]),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+  if (text(mission?.dispatch?.status).toLowerCase() === 'running') {
+    return Object.freeze({
+      ok: true,
+      classification: 'CRITICAL_ACTIVE_MISSION_ALREADY_RUNNING',
+      published: false,
+      missionId: text(mission.missionId),
+      currentPhase,
+      blockers: Object.freeze([]),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+
+  const env = normalized.env || process.env;
+  const now = normalized.now instanceof Date ? normalized.now : new Date();
+  const paths = normalized.paths || resolveCriticalBacklogRuntimePaths({ env });
+  const readProgrammeProjection = normalized.testOnly === true && typeof normalized.readProgrammeProjection === 'function'
+    ? normalized.readProgrammeProjection
+    : readAuthoritativeProgrammeProjection;
+  const readCapacityRouting = normalized.readCapacityRouting ?? readElasticMissionControllerCapacityRoutingInput;
+  const publishActiveMission = normalized.publishActiveMission ?? publishMissionWorkerAction;
+  const authoritative = await readProgrammeProjection({
+    env,
+    nowUtc: now.toISOString(),
+    root: paths.workspaceRoot,
+    repoRoot: paths.repoRoot,
+    orchestratorRoot: paths.orchestratorRoot,
+    snapshotRoot: paths.snapshotRoot,
+  });
+  const sourceRevision = canonicalElasticSourceRevision(authoritative);
+  if (!sourceRevision) {
+    return Object.freeze({
+      ok: false,
+      classification: 'CRITICAL_ACTIVE_MISSION_SOURCE_REVISION_UNPROVEN',
+      published: false,
+      missionId: text(mission.missionId),
+      currentPhase,
+      sourceRevision: '',
+      blockers: Object.freeze(['canonical-source-revision-unproven']),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+
+  const capacityRouting = await readCapacityRouting({
+    root: paths.workspaceRoot,
+    repoRoot: paths.repoRoot,
+    nowUtc: now.toISOString(),
+    sourceRevision,
+    env,
+  });
+  if (!capacityRouting) {
+    return Object.freeze({
+      ok: false,
+      classification: 'CRITICAL_ACTIVE_MISSION_CAPACITY_ROUTING_UNAVAILABLE',
+      published: false,
+      missionId: text(mission.missionId),
+      currentPhase,
+      sourceRevision,
+      blockers: Object.freeze(['provider-independent-capacity-routing-unavailable']),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+
+  let publication;
+  try {
+    publication = await publishActiveMission(mission, {
+      ...normalized,
+      env,
+      now,
+      root: paths.orchestratorRoot,
+      snapshotRoot: paths.snapshotRoot,
+      repoRoot: paths.repoRoot,
+      sharedWorkspaceRoot: paths.workspaceRoot,
+      sourceRevision,
+      capacityRouting,
+    });
+  } catch (error) {
+    publication = {
+      published: false,
+      reason: `publication-exception:${text(error?.message, 'unknown')}`,
+      action: null,
+    };
+  }
+  if (publication?.published === true) {
+    return Object.freeze({
+      ok: true,
+      classification: 'CRITICAL_ACTIVE_MISSION_DISPATCH_LIVE',
+      published: true,
+      missionId: text(mission.missionId),
+      currentPhase,
+      sourceRevision,
+      adapter: text(publication?.adapter || publication?.action?.adapter),
+      capacityRoute: text(publication?.action?.capacityRoute),
+      capacityReceiptId: text(publication?.action?.capacityReceiptId),
+      blockers: Object.freeze([]),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+  if (publication?.reason === 'agent-already-running') {
+    return Object.freeze({
+      ok: true,
+      classification: 'CRITICAL_ACTIVE_MISSION_ALREADY_RUNNING',
+      published: false,
+      missionId: text(mission.missionId),
+      currentPhase,
+      sourceRevision,
+      blockers: Object.freeze([]),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+  const blockers = Array.isArray(publication?.action?.blockers) && publication.action.blockers.length
+    ? publication.action.blockers.map((item) => text(item)).filter(Boolean)
+    : [text(publication?.reason, 'active-mission-dispatch-not-published')];
+  return Object.freeze({
+    ok: false,
+    classification: 'CRITICAL_ACTIVE_MISSION_DISPATCH_HELD',
+    published: false,
+    missionId: text(mission.missionId),
+    currentPhase,
+    sourceRevision,
+    blockers: Object.freeze(blockers),
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
   });
 }
 
@@ -58,9 +213,22 @@ export {
 
 export async function ensureCriticalBacklogMission(options = {}) {
   const normalized = options && typeof options === 'object' ? options : {};
-  return ensureCriticalBacklogMissionCore({
+  const result = await ensureCriticalBacklogMissionCore({
     ...normalized,
     backlog: normalized.backlog ?? SELF_HOSTING_CRITICAL_BACKLOG,
+    readCapacityRouting: normalized.readCapacityRouting ?? readElasticMissionControllerCapacityRoutingInput,
     dispatchElasticBuilds: normalized.dispatchElasticBuilds ?? dispatchElasticGoalBuildsFromCanonicalMain,
   });
+  if (result?.ok !== true) return result;
+  const dispatchActiveCriticalMission = normalized.dispatchActiveCriticalMission ?? dispatchActiveCriticalMissionFromCanonicalMain;
+  const activeMissionIgnition = await dispatchActiveCriticalMission(result, normalized);
+  if (activeMissionIgnition?.ok === false) {
+    return Object.freeze({
+      ...result,
+      ok: false,
+      activeMissionIgnition,
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+    });
+  }
+  return Object.freeze({ ...result, activeMissionIgnition });
 }

@@ -1,4 +1,5 @@
 import {
+  WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS,
   WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS,
   WORKER_WATCHDOG_START_TIMEOUT_MS,
   createFixedWorkerProbeAdapter,
@@ -10,11 +11,71 @@ export const MISSION_WORKER_DIAGNOSTIC_LINK_SCHEMA = 'stephanos.mission-worker-d
 export const MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION = 'RUN_MISSION_WORKER_DIAGNOSTIC_LINK';
 export const MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS = 10_000;
 export const MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS = WORKER_WATCHDOG_START_TIMEOUT_MS;
+export const MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS =
+  MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS - WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS;
 export const MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS =
   MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS + MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS;
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const INVOCATION_ID_PATTERN = /^[0-9a-f]{64}$/i;
+const BOUNDED_APPROVED_RUNTIME_START_BLOCKERS = new Set([
+  'USERPROFILE_REQUIRED',
+  'NON_CANONICAL_REPOSITORY_PATH',
+  'CANONICAL_GIT_MISSING',
+  'CANONICAL_GIT_IDENTITY_INVALID',
+  'CANONICAL_GIT_PATH_MISMATCH',
+  'CANONICAL_NODE_MISSING',
+  'CANONICAL_NODE_IDENTITY_INVALID',
+  'CANONICAL_NODE_PATH_MISMATCH',
+  'CANONICAL_MAIN_REQUIRED',
+  'CANONICAL_TRACKED_SOURCE_DIRTY',
+  'CANONICAL_PUBLIC_MAIN_READ_FAILED',
+  'CANONICAL_PUBLIC_MAIN_RESPONSE_INVALID',
+  'CANONICAL_EXACT_MAIN_NOT_PROVEN',
+  'EXPECTED_HEAD_MISMATCH',
+  'EXPECTED_HEAD_NOT_PUBLIC_MAIN',
+  'APPROVED_TASK_MISSING',
+  'APPROVED_TASK_DISABLED',
+  'APPROVED_TASK_ACTION_COUNT_INVALID',
+  'APPROVED_TASK_EXECUTABLE_MISMATCH',
+  'APPROVED_TASK_ARGUMENTS_MISMATCH',
+  'APPROVED_TASK_ACTION_INVALID',
+  'APPROVED_RUNTIME_RESTART_ADAPTER_MISSING',
+  'APPROVED_RUNTIME_RESTART_ADAPTER_FAILED',
+  'APPROVED_RUNTIME_RESTART_RECEIPT_INVALID',
+  'MISSION_WORKER_RESTART_DEADLINE_INVALID',
+]);
+
+const BOUNDED_APPROVED_RUNTIME_START_PHRASES = new Map([
+  ['USERPROFILE is required to resolve canonical worker watchdog paths.', 'USERPROFILE_REQUIRED'],
+  ['Canonical repository branch/head proof is invalid.', 'CANONICAL_MAIN_REQUIRED'],
+  ['Canonical repository tracked source is dirty.', 'CANONICAL_TRACKED_SOURCE_DIRTY'],
+  ['The public main reference did not resolve to exactly one commit.', 'CANONICAL_PUBLIC_MAIN_RESPONSE_INVALID'],
+  ['The public main reference response is malformed.', 'CANONICAL_PUBLIC_MAIN_RESPONSE_INVALID'],
+  ['The worker restart deadline is missing or malformed.', 'MISSION_WORKER_RESTART_DEADLINE_INVALID'],
+  ['The worker restart deadline is outside the bounded watchdog window.', 'MISSION_WORKER_RESTART_DEADLINE_INVALID'],
+  ['The fixed Mission Orchestrator worker task is not installed.', 'APPROVED_TASK_MISSING'],
+  ['The fixed Mission Orchestrator worker task action is not canonical.', 'APPROVED_TASK_ACTION_INVALID'],
+  ['The canonical repository head is not proven as exact current public main for fixed worker restart.', 'CANONICAL_EXACT_MAIN_NOT_PROVEN'],
+  ['The approved runtime restart adapter is missing.', 'APPROVED_RUNTIME_RESTART_ADAPTER_MISSING'],
+  ['The approved runtime restart adapter failed.', 'APPROVED_RUNTIME_RESTART_ADAPTER_FAILED'],
+  ['The approved runtime restart receipt is invalid.', 'APPROVED_RUNTIME_RESTART_RECEIPT_INVALID'],
+]);
+
+function extractBoundedApprovedRuntimeStartBlocker(...values) {
+  const candidates = new Set();
+  for (const value of values) {
+    const body = String(value ?? '').slice(0, 16 * 1024);
+    for (const match of body.matchAll(/\b[A-Z][A-Z0-9_]{2,119}\b/g)) {
+      if (BOUNDED_APPROVED_RUNTIME_START_BLOCKERS.has(match[0])) candidates.add(match[0]);
+    }
+    for (const line of body.split(/\r?\n/)) {
+      const mapped = BOUNDED_APPROVED_RUNTIME_START_PHRASES.get(line.trim());
+      if (mapped && BOUNDED_APPROVED_RUNTIME_START_BLOCKERS.has(mapped)) candidates.add(mapped);
+    }
+  }
+  return candidates.size === 1 ? [...candidates][0] : '';
+}
 
 function blocked(blocker, details = {}) {
   return Object.freeze({
@@ -64,10 +125,11 @@ function sourceIdentityFromInspect(inspect, expectedHead) {
   });
 }
 
-function successProofValid(data, expectedHead) {
+function successProofValid(data, expectedHead, expectedDeadlineUtc) {
   const pid = Number(data?.startedWorkerPid || 0);
   const workerStartedAtMs = Date.parse(String(data?.workerStartedAtUtc || ''));
-  const deadlineMs = Date.parse(String(data?.deadlineUtc || ''));
+  const deadlineUtc = String(data?.deadlineUtc || '');
+  const deadlineMs = Date.parse(deadlineUtc);
   return data?.mode === 'StartApprovedWorkerTask'
     && data?.started === true
     && data?.restarted === true
@@ -81,6 +143,7 @@ function successProofValid(data, expectedHead) {
     && Number.isFinite(workerStartedAtMs)
     && INVOCATION_ID_PATTERN.test(String(data?.invocationId || ''))
     && Number.isFinite(deadlineMs)
+    && deadlineUtc === expectedDeadlineUtc
     && data?.invocationBound === true
     && data?.canonicalWorkerCommandVerified === true
     && data?.postStartSourceProofOk === true
@@ -106,7 +169,8 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
     return blocked('MISSION_WORKER_DIAGNOSTIC_LINK_EXPECTED_HEAD_REQUIRED');
   }
 
-  if (!(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS > 0
+  if (!(MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS > 0
+    && MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS < MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS
     && MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS < MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS)) {
     return blocked('MISSION_WORKER_DIAGNOSTIC_LINK_TIMEOUT_BUDGET_INVALID', {
       expectedHead: canonicalExpectedHead,
@@ -162,27 +226,43 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
       sourceHead,
     });
   }
-  const deadlineUtc = new Date(startedAt.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS).toISOString();
+  const childDeadlineUtc = new Date(
+    startedAt.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS,
+  ).toISOString();
+  const diagnosticDeadlineUtc = new Date(
+    startedAt.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
+  ).toISOString();
   const start = adapter.run('StartApprovedWorkerTask', {
     timeoutMs: MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
-    deadlineUtc,
+    deadlineUtc: childDeadlineUtc,
   });
   if (!start?.ok) {
-    return blocked(String(start?.restartBlocker || 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED'), {
+    const typedRestartBlocker = String(start?.restartBlocker || extractBoundedApprovedRuntimeStartBlocker(
+      start?.error,
+      start?.stderr,
+      start?.stdout,
+    ));
+    return blocked(typedRestartBlocker || 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED', {
       expectedHead: canonicalExpectedHead,
       sourceHead,
       downstreamSectionReached: 'APPROVED_WORKER_START',
-      typedRestartBlocker: String(start?.restartBlocker || ''),
+      typedRestartBlocker,
+      childDeadlineUtc,
+      diagnosticDeadlineUtc,
+      restartAuthorityMs: MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS,
       diagnosticDeadlineMs: MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
       childTimeoutMs: MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
       terminalPublicationReserveMs: MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS,
     });
   }
-  if (!successProofValid(start.data, canonicalExpectedHead)) {
+  if (!successProofValid(start.data, canonicalExpectedHead, childDeadlineUtc)) {
     return blocked('MISSION_WORKER_DIAGNOSTIC_LINK_SUCCESS_PROOF_INVALID', {
       expectedHead: canonicalExpectedHead,
       sourceHead,
       downstreamSectionReached: 'APPROVED_WORKER_START',
+      childDeadlineUtc,
+      diagnosticDeadlineUtc,
+      restartAuthorityMs: MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS,
     });
   }
 
@@ -200,7 +280,10 @@ export async function runMissionWorkerDiagnosticLink({ expectedHead } = {}, {
     workerStartedAtUtc: String(start.data.workerStartedAtUtc),
     invocationId: String(start.data.invocationId),
     deadlineUtc: String(start.data.deadlineUtc),
+    childDeadlineUtc,
+    diagnosticDeadlineUtc,
     restartVerdict: String(start.data.restartVerdict),
+    restartAuthorityMs: MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS,
     diagnosticDeadlineMs: MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
     childTimeoutMs: MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
     terminalPublicationReserveMs: MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS,
