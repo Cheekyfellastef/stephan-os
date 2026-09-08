@@ -594,7 +594,7 @@ jobs:
           repositories: stephan-os
           permission-administration: write
 
-      - name: Re-prove, gate main-movement-tolerant authorization, squash exact head and publish bounded receipt
+      - name: Re-prove, squash exact head and publish the bounded receipt after main-movement-tolerant authorization gate
         if: ${{ inputs.mode == 'user-owned-protected-squash' }}
         shell: bash
         env:
