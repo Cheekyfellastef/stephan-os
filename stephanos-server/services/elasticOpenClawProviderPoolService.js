@@ -30,6 +30,7 @@ const ALLOWED_EXTERNAL_ROUTES = new Set([
   OPENCLAW_PROVIDER_ROUTE,
 ]);
 const ALLOWED_EXTERNAL_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'openclaw-local']);
+const CURRENT_MISSION_WORKER_SOURCE_HANDOFF_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge']);
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -59,6 +60,10 @@ function normalizedCandidate(candidate = {}) {
   });
 }
 
+function sourceHandoffPriority(candidate = {}) {
+  return CURRENT_MISSION_WORKER_SOURCE_HANDOFF_ADAPTERS.has(text(candidate.adapter).toLowerCase()) ? 0 : 1;
+}
+
 function dedupeCandidates(candidates = []) {
   const byWorker = new Map();
   for (const candidate of candidates) {
@@ -74,7 +79,8 @@ function dedupeCandidates(candidates = []) {
   }
   return [...byWorker.values()]
     .sort((left, right) => (
-      left.p95StartLatencySeconds - right.p95StartLatencySeconds
+      sourceHandoffPriority(left) - sourceHandoffPriority(right)
+      || left.p95StartLatencySeconds - right.p95StartLatencySeconds
       || left.queueDepth - right.queueDepth
       || left.route.localeCompare(right.route)
       || left.workerId.localeCompare(right.workerId)
