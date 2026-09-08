@@ -30,18 +30,6 @@ on:
         description: Exact full current main SHA
         required: true
         type: string
-      authorization_head:
-        description: Original operator-authorized material head SHA
-        required: true
-        type: string
-      authorization_head_tree:
-        description: Original operator-authorized material head tree SHA
-        required: true
-        type: string
-      authorization_base:
-        description: Original operator-authorization protected-main base floor
-        required: true
-        type: string
       independent_review_run_id:
         description: Selected immutable independent-review run ID
         required: true
@@ -168,6 +156,9 @@ jobs:
       workflow_run_attempt: ${{ steps.evidence.outputs.workflow_run_attempt }}
       evidence_sha256: ${{ steps.evidence.outputs.evidence_sha256 }}
       authorization_comment_id: ${{ steps.authorization.outputs.authorization_comment_id }}
+      authorization_head: ${{ steps.authorization.outputs.authorization_head }}
+      authorization_head_tree: ${{ steps.authorization.outputs.authorization_head_tree }}
+      authorization_base: ${{ steps.authorization.outputs.authorization_base }}
     steps:
       - name: Check out the trusted exact dispatch base
         uses: actions/checkout@v4
@@ -212,9 +203,6 @@ jobs:
           EXPECTED_HEAD: ${{ inputs.expected_head }}
           EXPECTED_HEAD_TREE: ${{ inputs.expected_head_tree }}
           EXPECTED_BASE: ${{ inputs.expected_base }}
-          AUTHORIZATION_HEAD: ${{ inputs.authorization_head }}
-          AUTHORIZATION_HEAD_TREE: ${{ inputs.authorization_head_tree }}
-          AUTHORIZATION_BASE: ${{ inputs.authorization_base }}
           REVIEW_RUN_ID: ${{ inputs.independent_review_run_id }}
           REVIEW_RUN_ATTEMPT: ${{ inputs.independent_review_run_attempt }}
           REVIEW_ARTIFACT_ID: ${{ inputs.independent_review_artifact_id }}
@@ -265,9 +253,6 @@ jobs:
             expectedHead: process.env.EXPECTED_HEAD,
             expectedHeadTree: process.env.EXPECTED_HEAD_TREE,
             expectedBase: process.env.EXPECTED_BASE,
-            authorizationHead: process.env.AUTHORIZATION_HEAD,
-            authorizationHeadTree: process.env.AUTHORIZATION_HEAD_TREE,
-            authorizationBase: process.env.AUTHORIZATION_BASE,
             independentReviewRunId: Number(process.env.REVIEW_RUN_ID),
             independentReviewRunAttempt: Number(process.env.REVIEW_RUN_ATTEMPT),
             independentReviewArtifactId: Number(process.env.REVIEW_ARTIFACT_ID),
@@ -281,7 +266,7 @@ jobs:
           if (!validation.ok) throw new Error(`authorization provenance blocked: ${validation.blocker}`);
           appendFileSync(
             process.env.GITHUB_OUTPUT,
-            `authorization_comment_id=${authorizationCommentId}\nauthorization_request_id=${validation.command.requestId}\n`,
+            `authorization_comment_id=${authorizationCommentId}\nauthorization_request_id=${validation.command.requestId}\nauthorization_head=${validation.materialAuthorization.authorizationHead}\nauthorization_head_tree=${validation.materialAuthorization.authorizationHeadTree}\nauthorization_base=${validation.materialAuthorization.authorizationBase}\n`,
             'utf8',
           );
           NODE
@@ -601,9 +586,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}
           STEPHANOS_AUTHORIZATION_COMMENT_ID: ${{ needs.personal-repository-evidence.outputs.authorization_comment_id }}
-          STEPHANOS_AUTHORIZATION_HEAD: ${{ inputs.authorization_head }}
-          STEPHANOS_AUTHORIZATION_HEAD_TREE: ${{ inputs.authorization_head_tree }}
-          STEPHANOS_AUTHORIZATION_BASE: ${{ inputs.authorization_base }}
+          STEPHANOS_AUTHORIZATION_HEAD: ${{ needs.personal-repository-evidence.outputs.authorization_head }}
+          STEPHANOS_AUTHORIZATION_HEAD_TREE: ${{ needs.personal-repository-evidence.outputs.authorization_head_tree }}
+          STEPHANOS_AUTHORIZATION_BASE: ${{ needs.personal-repository-evidence.outputs.authorization_base }}
         run: |
           set -euo pipefail
           [[ "${STEPHANOS_AUTHORIZATION_COMMENT_ID}" =~ ^[1-9][0-9]*$ ]]

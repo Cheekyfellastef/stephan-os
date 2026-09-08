@@ -19,19 +19,31 @@ const personalMerge = await readFile(
   'utf8',
 );
 
-test('protected workflow distinguishes operator authorization base from fresh execution base', () => {
-  assert.match(workflow, /authorization_base:/);
-  assert.match(workflow, /AUTHORIZATION_BASE/);
+test('protected workflow derives material authorization from the owner comment, never caller workflow inputs', () => {
+  assert.doesNotMatch(workflow, /^      authorization_head:\s*$/m);
+  assert.doesNotMatch(workflow, /^      authorization_head_tree:\s*$/m);
+  assert.doesNotMatch(workflow, /^      authorization_base:\s*$/m);
+  assert.match(workflow, /authorization_head:\s*\$\{\{ steps\.authorization\.outputs\.authorization_head \}\}/);
+  assert.match(workflow, /authorization_head_tree:\s*\$\{\{ steps\.authorization\.outputs\.authorization_head_tree \}\}/);
+  assert.match(workflow, /authorization_base:\s*\$\{\{ steps\.authorization\.outputs\.authorization_base \}\}/);
+  assert.match(workflow, /validation\.materialAuthorization\.authorizationHead/);
+  assert.match(workflow, /validation\.materialAuthorization\.authorizationHeadTree/);
+  assert.match(workflow, /validation\.materialAuthorization\.authorizationBase/);
+  assert.match(workflow, /STEPHANOS_AUTHORIZATION_HEAD:\s*\$\{\{ needs\.personal-repository-evidence\.outputs\.authorization_head \}\}/);
+  assert.match(workflow, /STEPHANOS_AUTHORIZATION_BASE:\s*\$\{\{ needs\.personal-repository-evidence\.outputs\.authorization_base \}\}/);
   assert.match(workflow, /EXPECTED_BASE/);
   assert.match(workflow, /mainMovementTolerantOperatorAuthorizationV1|main-movement-tolerant/i);
   assert.match(workflow, /expected_base:/);
 });
 
-test('canonical #1507 protected dispatch carries authorizationBase separately from expectedBase', () => {
+test('canonical #1507 dispatch carries only fresh execution tuple and comment identity into workflow', () => {
   assert.match(mailbox, /authorizationBase/);
-  assert.match(mailbox, /authorization_base/);
   assert.match(mailbox, /expectedBase/);
-  assert.match(mailbox, /expected_base/);
+  assert.doesNotMatch(mailbox, /authorization_head:\s*c\.authorizationHead/);
+  assert.doesNotMatch(mailbox, /authorization_head_tree:\s*c\.authorizationHeadTree/);
+  assert.doesNotMatch(mailbox, /authorization_base:\s*c\.authorizationBase/);
+  assert.match(mailbox, /authorization_comment_id:/);
+  assert.match(mailbox, /historicalExecutionIdentity/);
 });
 
 test('base-binding policy explicitly consumes main-movement compatibility instead of globally weakening base checks', () => {
@@ -49,7 +61,7 @@ test('personal-repository executor remains exact on the fresh execution tuple', 
   assert.match(personalMerge, /mergeable|mergeStateStatus/);
 });
 
-test('wiring never introduces a raw merge, force, rebase or runtime authority helper into the compatibility policy', async () => {
+test('wiring never introduces a raw merge, force, rebase or runtime authority helper into compatibility policy', async () => {
   const policy = await readFile(new URL('./mainMovementTolerantOperatorAuthorizationV1.mjs', import.meta.url), 'utf8');
   assert.match(policy, /mergeAuthority:\s*false/);
   assert.match(policy, /deploymentAuthority:\s*false/);

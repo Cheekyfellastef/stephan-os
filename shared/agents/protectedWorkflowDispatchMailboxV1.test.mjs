@@ -82,6 +82,21 @@ function validate(candidate = baseCommand, overrides = {}) {
   });
 }
 
+function movedExecution() {
+  return {
+    ...baseCommand,
+    requestId: 'protected-dispatch-pr1951-refresh-002',
+    expectedHead: 'a'.repeat(40),
+    expectedHeadTree: 'b'.repeat(40),
+    expectedBase: 'c'.repeat(40),
+    independentReviewRunId: baseCommand.independentReviewRunId + 100,
+    independentReviewRunAttempt: 2,
+    independentReviewArtifactId: baseCommand.independentReviewArtifactId + 100,
+    independentReviewArtifactDigest: `sha256:${'d'.repeat(64)}`,
+    independentReviewPayloadSha256: 'e'.repeat(64),
+  };
+}
+
 test('extracts only the dedicated protected workflow fence', () => {
   const body = `before\n\`\`\`${PROTECTED_WORKFLOW_DISPATCH_MARKER}\n${JSON.stringify(readyCommand)}\n\`\`\`\nafter`;
   assert.deepEqual(extractProtectedWorkflowDispatch(body), { ok: true, command: { ...readyCommand } });
@@ -154,47 +169,48 @@ test('legacy exact authorization defaults material identity to the original exac
   assert.equal(result.command.authorizationBase, baseCommand.expectedBase);
 });
 
-test('re-proves one owner-authored material authorization while allowing fresh technical evidence to rotate', () => {
-  const movedExecution = {
-    ...baseCommand,
-    requestId: 'protected-dispatch-pr1951-refresh-002',
-    expectedHead: 'a'.repeat(40),
-    expectedHeadTree: 'b'.repeat(40),
-    expectedBase: 'c'.repeat(40),
+test('final execution reproof derives historical material identity from the owner comment without caller authority inputs', () => {
+  const moved = movedExecution();
+  const accepted = validateProtectedWorkflowAuthorizationComment(authorizationComment, moved, {
+    now: new Date('2026-08-30T07:10:00.000Z'),
+    expectedCommentId: AUTHORIZATION_COMMENT_ID,
+  });
+  assert.equal(accepted.ok, true, accepted.blocker);
+  assert.equal(accepted.historicalExecutionIdentity, true);
+  assert.equal(accepted.materialAuthorization.authorizationHead, baseCommand.expectedHead);
+  assert.equal(accepted.materialAuthorization.authorizationHeadTree, baseCommand.expectedHeadTree);
+  assert.equal(accepted.materialAuthorization.authorizationBase, baseCommand.expectedBase);
+});
+
+test('explicit material expectation remains exact and partial caller material identity fails closed', () => {
+  const moved = movedExecution();
+  const explicit = {
+    ...moved,
     authorizationHead: baseCommand.expectedHead,
     authorizationHeadTree: baseCommand.expectedHeadTree,
     authorizationBase: baseCommand.expectedBase,
-    independentReviewRunId: baseCommand.independentReviewRunId + 100,
-    independentReviewRunAttempt: 2,
-    independentReviewArtifactId: baseCommand.independentReviewArtifactId + 100,
-    independentReviewArtifactDigest: `sha256:${'d'.repeat(64)}`,
-    independentReviewPayloadSha256: 'e'.repeat(64),
   };
-  const accepted = validateProtectedWorkflowAuthorizationComment(authorizationComment, movedExecution, {
+  const accepted = validateProtectedWorkflowAuthorizationComment(authorizationComment, explicit, {
     now: NOW,
     expectedCommentId: AUTHORIZATION_COMMENT_ID,
   });
   assert.equal(accepted.ok, true);
-  assert.equal(accepted.materialAuthorization.authorizationHead, baseCommand.expectedHead);
-  assert.equal(accepted.materialAuthorization.authorizationHeadTree, baseCommand.expectedHeadTree);
-  assert.equal(accepted.materialAuthorization.authorizationBase, baseCommand.expectedBase);
+  assert.equal(accepted.historicalExecutionIdentity, false);
 
-  for (const [field, value] of [
-    ['prNumber', 1952],
-    ['expectedBranch', 'agent/other-v1'],
-    ['authorizationHead', 'f'.repeat(40)],
-    ['authorizationHeadTree', '0'.repeat(40)],
-    ['authorizationBase', '1'.repeat(40)],
-  ]) {
-    assert.equal(validateProtectedWorkflowAuthorizationComment(
-      authorizationComment,
-      { ...movedExecution, [field]: value },
-      { now: NOW, expectedCommentId: AUTHORIZATION_COMMENT_ID },
-    ).blocker, 'PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_IDENTITY_MISMATCH');
-  }
+  assert.equal(validateProtectedWorkflowAuthorizationComment(
+    authorizationComment,
+    { ...moved, authorizationHead: baseCommand.expectedHead },
+    { now: NOW, expectedCommentId: AUTHORIZATION_COMMENT_ID },
+  ).blocker, 'PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_MATERIAL_EXPECTATION_INCOMPLETE');
+
+  assert.equal(validateProtectedWorkflowAuthorizationComment(
+    authorizationComment,
+    { ...explicit, authorizationBase: '1'.repeat(40) },
+    { now: NOW, expectedCommentId: AUTHORIZATION_COMMENT_ID },
+  ).blocker, 'PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_IDENTITY_MISMATCH');
 });
 
-test('authorization comment provenance and expiry remain exact', () => {
+test('authorization comment provenance and exact-mode expiry remain strict', () => {
   assert.equal(validateProtectedWorkflowAuthorizationComment({
     ...authorizationComment,
     user: { login: 'github-actions[bot]' },
@@ -209,13 +225,19 @@ test('authorization comment provenance and expiry remain exact', () => {
     now: NOW,
     expectedCommentId: AUTHORIZATION_COMMENT_ID + 1,
   }).blocker, 'PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_ID_MISMATCH');
-  assert.equal(validateProtectedWorkflowAuthorizationComment(authorizationComment, baseCommand, {
+  const explicit = {
+    ...baseCommand,
+    authorizationHead: baseCommand.expectedHead,
+    authorizationHeadTree: baseCommand.expectedHeadTree,
+    authorizationBase: baseCommand.expectedBase,
+  };
+  assert.equal(validateProtectedWorkflowAuthorizationComment(authorizationComment, explicit, {
     now: new Date('2026-08-30T06:56:00.000Z'),
     expectedCommentId: AUTHORIZATION_COMMENT_ID,
   }).blocker, 'PROTECTED_WORKFLOW_DISPATCH_EXPIRED');
 });
 
-test('merge maps only to fixed canonical workflow filename, ref and separate authorization/execution inputs', () => {
+test('merge maps only to fixed canonical workflow filename, ref and fresh execution inputs', () => {
   const request = buildProtectedWorkflowDispatchRequest(baseCommand, {
     authorizationCommentId: AUTHORIZATION_COMMENT_ID,
   });
@@ -228,12 +250,11 @@ test('merge maps only to fixed canonical workflow filename, ref and separate aut
   assert.equal(request.body.ref, 'main');
   assert.equal(request.body.inputs.mode, PROTECTED_WORKFLOW_DISPATCH_MODE);
   assert.equal(request.body.inputs.authorization_comment_id, String(AUTHORIZATION_COMMENT_ID));
-  assert.equal(request.body.inputs.authorization_head, baseCommand.expectedHead);
-  assert.equal(request.body.inputs.authorization_head_tree, baseCommand.expectedHeadTree);
-  assert.equal(request.body.inputs.authorization_base, baseCommand.expectedBase);
+  assert.equal(Object.hasOwn(request.body.inputs, 'authorization_head'), false);
+  assert.equal(Object.hasOwn(request.body.inputs, 'authorization_head_tree'), false);
+  assert.equal(Object.hasOwn(request.body.inputs, 'authorization_base'), false);
   assert.deepEqual(Object.keys(request.body.inputs).sort(), [
-    'authorization_base', 'authorization_comment_id', 'authorization_head', 'authorization_head_tree',
-    'expected_base', 'expected_branch', 'expected_head', 'expected_head_tree',
+    'authorization_comment_id', 'expected_base', 'expected_branch', 'expected_head', 'expected_head_tree',
     'independent_review_artifact_digest', 'independent_review_artifact_id',
     'independent_review_payload_sha256', 'independent_review_run_attempt',
     'independent_review_run_id', 'mode', 'pr_number',

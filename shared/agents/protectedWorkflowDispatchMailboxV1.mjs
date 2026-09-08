@@ -32,8 +32,14 @@ const READY_AUTHORIZATION_IDENTITY_FIELDS = Object.freeze([
   'operation', 'repository', 'issueNumber', 'operatorApproval', 'mode', 'prNumber', 'expectedBranch',
   'expectedHead', 'expectedHeadTree', 'expectedBase',
 ]);
-const MERGE_MATERIAL_AUTHORIZATION_IDENTITY_FIELDS = Object.freeze([
+const MERGE_STABLE_AUTHORIZATION_IDENTITY_FIELDS = Object.freeze([
   'operation', 'repository', 'issueNumber', 'operatorApproval', 'mode', 'prNumber', 'expectedBranch',
+]);
+const MERGE_MATERIAL_AUTHORIZATION_IDENTITY_FIELDS = Object.freeze([
+  ...MERGE_STABLE_AUTHORIZATION_IDENTITY_FIELDS,
+  'authorizationHead', 'authorizationHeadTree', 'authorizationBase',
+]);
+const MATERIAL_AUTHORIZATION_EXPECTATION_FIELDS = Object.freeze([
   'authorizationHead', 'authorizationHeadTree', 'authorizationBase',
 ]);
 const AUTHORIZATION_COMMENT_ISSUE_URL = `https://api.github.com/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/issues/${PROTECTED_WORKFLOW_DISPATCH_ISSUE}`;
@@ -226,19 +232,31 @@ export function validateProtectedWorkflowAuthorizationComment(comment = {}, expe
   }
   const extracted = extractProtectedWorkflowDispatch(body);
   if (!extracted.ok) return extracted;
+  const explicitMaterialFields = MATERIAL_AUTHORIZATION_EXPECTATION_FIELDS
+    .filter((field) => Object.hasOwn(expectedCommand, field));
+  if (explicitMaterialFields.length !== 0
+    && explicitMaterialFields.length !== MATERIAL_AUTHORIZATION_EXPECTATION_FIELDS.length) {
+    return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_MATERIAL_EXPECTATION_INCOMPLETE');
+  }
+  const explicitMaterialAuthorization = explicitMaterialFields.length === MATERIAL_AUTHORIZATION_EXPECTATION_FIELDS.length;
+  const historicalExecutionIdentity = extracted.command?.operation === PROTECTED_WORKFLOW_DISPATCH_OPERATION
+    && explicitMaterialAuthorization === false;
   const authoredAt = new Date(comment?.created_at || 0);
   const validation = validateProtectedWorkflowDispatch(extracted.command, {
     authorLogin,
     issueNumber: PROTECTED_WORKFLOW_DISPATCH_ISSUE,
     now,
     authoredAt,
-    allowExpiredMaterialAuthorization,
+    allowExpiredMaterialAuthorization: allowExpiredMaterialAuthorization === true || historicalExecutionIdentity,
   });
   if (!validation.ok) return validation;
   const expected = normalizeAuthorizationExpected(expectedCommand);
   const observed = materialAuthorizationIdentity(validation.command);
   if (observed.operation === PROTECTED_WORKFLOW_DISPATCH_OPERATION) {
-    for (const field of MERGE_MATERIAL_AUTHORIZATION_IDENTITY_FIELDS) {
+    const fields = explicitMaterialAuthorization
+      ? MERGE_MATERIAL_AUTHORIZATION_IDENTITY_FIELDS
+      : MERGE_STABLE_AUTHORIZATION_IDENTITY_FIELDS;
+    for (const field of fields) {
       if (observed[field] !== expected[field]) {
         return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_IDENTITY_MISMATCH', { field });
       }
@@ -254,6 +272,7 @@ export function validateProtectedWorkflowAuthorizationComment(comment = {}, expe
     ok: true,
     commentId,
     authoredAtUtc: authoredAt.toISOString(),
+    historicalExecutionIdentity,
     command: observed,
     materialAuthorization: Object.freeze({
       authorizationHead: observed.authorizationHead,
@@ -290,9 +309,6 @@ export function buildProtectedWorkflowDispatchRequest(command = {}, { authorizat
         expected_head: c.expectedHead,
         expected_head_tree: c.expectedHeadTree,
         expected_base: c.expectedBase,
-        authorization_head: c.authorizationHead,
-        authorization_head_tree: c.authorizationHeadTree,
-        authorization_base: c.authorizationBase,
         independent_review_run_id: String(c.independentReviewRunId),
         independent_review_run_attempt: String(c.independentReviewRunAttempt),
         independent_review_artifact_id: String(c.independentReviewArtifactId),

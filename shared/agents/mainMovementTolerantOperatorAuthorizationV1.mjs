@@ -60,10 +60,20 @@ function filePaths(files) {
   return files ? Object.freeze(files.map((file) => file.path)) : null;
 }
 
-function comparisonPaths(comparison = {}) {
+function comparisonPaths(comparison = {}, { includeRenameSources = false } = {}) {
   if (!Array.isArray(comparison.files)) return null;
   if (comparison.files.length === 0) return Object.freeze([]);
-  return normalizePaths(comparison.files.map((file) => file?.filename ?? file?.path));
+  const values = [];
+  for (const file of comparison.files) {
+    const currentPath = file?.filename ?? file?.path;
+    values.push(currentPath);
+    if (includeRenameSources && text(file?.status).toLowerCase() === 'renamed') {
+      const previousPath = file?.previous_filename;
+      if (!previousPath) return null;
+      values.push(previousPath);
+    }
+  }
+  return normalizePaths([...new Set(values.map(path))]);
 }
 
 function equalLists(left, right) {
@@ -248,8 +258,12 @@ export function evaluateMainMovementTolerantOperatorAuthorizationV1(input = {}) 
         { allowIdentical: true },
       );
       if (!noMovement.valid) blockers.push(...noMovement.blockers.map((blocker) => `main-movement:${blocker}`));
-      const paths = comparisonPaths(observed.authorizationBaseToCurrentBaseComparison);
-      if (paths && paths.length) blockers.push('main-movement:unexpected-paths-without-movement');
+      const paths = comparisonPaths(
+        observed.authorizationBaseToCurrentBaseComparison,
+        { includeRenameSources: true },
+      );
+      if (!paths) blockers.push('main-movement:path-estate-invalid');
+      else if (paths.length) blockers.push('main-movement:unexpected-paths-without-movement');
     }
   } else {
     const movement = exactForwardComparison(
@@ -258,7 +272,10 @@ export function evaluateMainMovementTolerantOperatorAuthorizationV1(input = {}) 
       currentBase,
     );
     if (!movement.valid) blockers.push(...movement.blockers.map((blocker) => `main-movement:${blocker}`));
-    const paths = comparisonPaths(observed.authorizationBaseToCurrentBaseComparison);
+    const paths = comparisonPaths(
+      observed.authorizationBaseToCurrentBaseComparison,
+      { includeRenameSources: true },
+    );
     if (!paths) blockers.push('main-movement:path-estate-invalid');
     else movementPaths = paths;
   }

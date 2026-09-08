@@ -144,6 +144,36 @@ test('intervening main overlap with an approved path fails closed', () => {
   assert.ok(result.blockers.includes('main-movement:approved-path-overlap:shared/agents/example.mjs'));
 });
 
+test('rename away from an approved path still counts as intervening-main overlap', () => {
+  const movement = compare(authorizationBase, currentBase, [], {
+    ahead_by: 1,
+    files: [{
+      filename: 'shared/agents/example-renamed.mjs',
+      previous_filename: 'shared/agents/example.mjs',
+      status: 'renamed',
+    }],
+  });
+  const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+    authorization,
+    observed: observed({ authorizationBaseToCurrentBaseComparison: movement }),
+  });
+  assert.equal(result.authorizationReusable, false);
+  assert.ok(result.blockers.includes('main-movement:approved-path-overlap:shared/agents/example.mjs'));
+});
+
+test('malformed intervening-main rename evidence fails closed', () => {
+  const movement = compare(authorizationBase, currentBase, [], {
+    ahead_by: 1,
+    files: [{ filename: 'shared/agents/example-renamed.mjs', status: 'renamed' }],
+  });
+  const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+    authorization,
+    observed: observed({ authorizationBaseToCurrentBaseComparison: movement }),
+  });
+  assert.equal(result.authorizationReusable, false);
+  assert.ok(result.blockers.includes('main-movement:path-estate-invalid'));
+});
+
 test('canonical two-parent preservation convergence may carry unchanged operator judgment to a fresh exact head', () => {
   const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
     authorization,
