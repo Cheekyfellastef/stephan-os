@@ -1,253 +1,234 @@
-import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-
-import {
-  CRITICAL_BACKLOG_DECISION,
-  buildCriticalBacklogMissionInput,
-  buildCriticalBacklogProjection,
-} from '../../shared/agents/criticalBacklogConveyor.mjs';
 import { SELF_HOSTING_CRITICAL_BACKLOG } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import {
-  createSharedWorkspaceEventRecord,
-  createSharedWorkspaceStatusRecord,
-  resolveSharedWorkspacePath,
-  writeAtomicJson,
-} from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+  CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
+  ELASTIC_GOAL_BUILD_IGNITION_SCHEMA,
+  dispatchElasticGoalBuilds as dispatchElasticGoalBuildsCore,
+  ensureCriticalBacklogMission as ensureCriticalBacklogMissionCore,
+  publishCriticalBacklogProjection,
+  resolveCriticalBacklogRuntimePaths,
+} from './criticalBacklogConveyorServiceCore.js';
+import { readAuthoritativeProgrammeProjection } from './programmeAuthorityService.js';
 import {
-  createMissionRecord,
-  listMissionRecords,
-} from './missionOrchestratorStore.js';
+  readElasticMissionControllerCapacityRoutingInput,
+  resolveElasticExternalCapacityCandidates,
+} from './elasticOpenClawProviderPoolService.js';
+import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
 
-export const CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA = 'stephanos.critical-backlog-conveyor-service.v1';
-
-const BLOCKED_DECISIONS = new Set([
-  CRITICAL_BACKLOG_DECISION.BLOCKED_BY_INVALID_BACKLOG,
-  CRITICAL_BACKLOG_DECISION.BLOCKED_BY_MULTIPLE_ACTIVE_MISSIONS,
-  CRITICAL_BACKLOG_DECISION.BLOCKED_BY_TERMINAL_MISSION,
-]);
+const SHA_40 = /^[0-9a-f]{40}$/i;
+const ACTIVE_SOURCE_PHASES = new Set(['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED']);
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
 }
 
-function eventId(value) {
-  return `critical-backlog-${createHash('sha256').update(value).digest('hex').slice(0, 20)}`;
+export function canonicalElasticSourceRevision(authoritative = {}) {
+  const sourceRevision = text(authoritative?.machineryInventory?.sourceHead).toLowerCase();
+  return SHA_40.test(sourceRevision) ? sourceRevision : '';
 }
 
-export function resolveCriticalBacklogRuntimePaths({
-  env = process.env,
-  home = os.homedir(),
-  repoRoot,
-  workspaceRoot,
-  worktreeRoot,
-  orchestratorRoot,
-  snapshotRoot,
-} = {}) {
-  const userHome = path.resolve(env.USERPROFILE || env.HOME || home);
-  const resolved = (override, ...segments) => path.resolve(override || path.join(userHome, ...segments));
-  return Object.freeze({
-    repoRoot: resolved(repoRoot, 'Documents', 'GitHub', 'stephan-os'),
-    workspaceRoot: resolved(workspaceRoot, 'Documents', 'Stephanos-openclaw-workspace'),
-    worktreeRoot: resolved(worktreeRoot, 'Documents', 'GitHub', 'stephan-os-worktrees'),
-    orchestratorRoot: resolved(orchestratorRoot, 'Documents', 'OpenClaw-Standalone', 'mission-runner', 'orchestrator'),
-    snapshotRoot: resolved(snapshotRoot, 'Documents', 'OpenClaw-Standalone', 'mission-runner', 'proof', 'mission-operations'),
-  });
-}
-
-function projectionSignature(projection = {}) {
-  return JSON.stringify({
-    decision: projection.decision || '',
-    selectedItemId: projection.selectedItem?.itemId || '',
-    activeMissionId: projection.activeMission?.missionId || '',
-    activePhase: projection.activeMission?.currentPhase || '',
-    completedItemIds: projection.completedItemIds || [],
-    remainingItemIds: projection.remainingItemIds || [],
-  });
-}
-
-async function readPreviousProjection(paths) {
-  const resolved = resolveSharedWorkspacePath({
+export async function dispatchElasticGoalBuildsFromCanonicalMain(admission = {}, options = {}) {
+  const normalized = options && typeof options === 'object' ? options : {};
+  const env = normalized.env || process.env;
+  const now = normalized.now instanceof Date ? normalized.now : new Date();
+  const paths = normalized.paths || resolveCriticalBacklogRuntimePaths({ env });
+  const readProgrammeProjection = normalized.testOnly === true && typeof normalized.readProgrammeProjection === 'function'
+    ? normalized.readProgrammeProjection
+    : readAuthoritativeProgrammeProjection;
+  const authoritative = await readProgrammeProjection({
+    env,
+    nowUtc: now.toISOString(),
     root: paths.workspaceRoot,
     repoRoot: paths.repoRoot,
-    segments: ['status', 'critical-backlog-conveyor-current.json'],
+    orchestratorRoot: paths.orchestratorRoot,
+    snapshotRoot: paths.snapshotRoot,
   });
-  if (!resolved.ok) return null;
+  const sourceRevision = canonicalElasticSourceRevision(authoritative);
+  return dispatchElasticGoalBuildsCore(admission, {
+    ...normalized,
+    env,
+    now,
+    paths,
+    sourceRevision,
+    resolveCapacityCandidates: normalized.resolveCapacityCandidates ?? resolveElasticExternalCapacityCandidates,
+  });
+}
+
+export async function dispatchActiveCriticalMissionFromCanonicalMain(serviceResult = {}, options = {}) {
+  const normalized = options && typeof options === 'object' ? options : {};
+  const mission = serviceResult?.classification === 'WAIT_ACTIVE_MISSION'
+    ? serviceResult?.projection?.activeMission
+    : null;
+  const currentPhase = text(mission?.currentPhase).toUpperCase();
+  if (!mission || !ACTIVE_SOURCE_PHASES.has(currentPhase)) {
+    return Object.freeze({
+      ok: true,
+      classification: 'CRITICAL_ACTIVE_MISSION_DISPATCH_NOT_REQUIRED',
+      published: false,
+      missionId: text(mission?.missionId),
+      currentPhase,
+      blockers: Object.freeze([]),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+  if (text(mission?.dispatch?.status).toLowerCase() === 'running') {
+    return Object.freeze({
+      ok: true,
+      classification: 'CRITICAL_ACTIVE_MISSION_ALREADY_RUNNING',
+      published: false,
+      missionId: text(mission.missionId),
+      currentPhase,
+      blockers: Object.freeze([]),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+
+  const env = normalized.env || process.env;
+  const now = normalized.now instanceof Date ? normalized.now : new Date();
+  const paths = normalized.paths || resolveCriticalBacklogRuntimePaths({ env });
+  const readProgrammeProjection = normalized.testOnly === true && typeof normalized.readProgrammeProjection === 'function'
+    ? normalized.readProgrammeProjection
+    : readAuthoritativeProgrammeProjection;
+  const readCapacityRouting = normalized.readCapacityRouting ?? readElasticMissionControllerCapacityRoutingInput;
+  const publishActiveMission = normalized.publishActiveMission ?? publishMissionWorkerAction;
+  const authoritative = await readProgrammeProjection({
+    env,
+    nowUtc: now.toISOString(),
+    root: paths.workspaceRoot,
+    repoRoot: paths.repoRoot,
+    orchestratorRoot: paths.orchestratorRoot,
+    snapshotRoot: paths.snapshotRoot,
+  });
+  const sourceRevision = canonicalElasticSourceRevision(authoritative);
+  if (!sourceRevision) {
+    return Object.freeze({
+      ok: false,
+      classification: 'CRITICAL_ACTIVE_MISSION_SOURCE_REVISION_UNPROVEN',
+      published: false,
+      missionId: text(mission.missionId),
+      currentPhase,
+      sourceRevision: '',
+      blockers: Object.freeze(['canonical-source-revision-unproven']),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+
+  const capacityRouting = await readCapacityRouting({
+    root: paths.workspaceRoot,
+    repoRoot: paths.repoRoot,
+    nowUtc: now.toISOString(),
+    sourceRevision,
+    env,
+  });
+  if (!capacityRouting) {
+    return Object.freeze({
+      ok: false,
+      classification: 'CRITICAL_ACTIVE_MISSION_CAPACITY_ROUTING_UNAVAILABLE',
+      published: false,
+      missionId: text(mission.missionId),
+      currentPhase,
+      sourceRevision,
+      blockers: Object.freeze(['provider-independent-capacity-routing-unavailable']),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+
+  let publication;
   try {
-    const record = JSON.parse(await readFile(resolved.path, 'utf8'));
-    return {
-      decision: record.decision,
-      selectedItem: record.selectedItemId ? { itemId: record.selectedItemId } : null,
-      activeMission: record.activeMissionId ? { missionId: record.activeMissionId, currentPhase: record.activePhase } : null,
-      completedItemIds: Array.isArray(record.completedItemIds) ? record.completedItemIds : [],
-      remainingItemIds: Array.isArray(record.remainingItemIds) ? record.remainingItemIds : [],
+    publication = await publishActiveMission(mission, {
+      ...normalized,
+      env,
+      now,
+      root: paths.orchestratorRoot,
+      snapshotRoot: paths.snapshotRoot,
+      repoRoot: paths.repoRoot,
+      sharedWorkspaceRoot: paths.workspaceRoot,
+      sourceRevision,
+      capacityRouting,
+    });
+  } catch (error) {
+    publication = {
+      published: false,
+      reason: `publication-exception:${text(error?.message, 'unknown')}`,
+      action: null,
     };
-  } catch {
-    return null;
   }
-}
-
-export async function publishCriticalBacklogProjection(projection, {
-  paths,
-  now = new Date(),
-} = {}) {
-  const timestampUtc = now instanceof Date ? now.toISOString() : new Date().toISOString();
-  const selectedItemId = text(projection.selectedItem?.itemId);
-  const activeMissionId = text(projection.activeMission?.missionId);
-  const activePhase = text(projection.activeMission?.currentPhase);
-  const summary = selectedItemId
-    ? `Critical backlog ${projection.decision}: ${selectedItemId}.`
-    : `Critical backlog ${projection.decision}.`;
-  const previous = await readPreviousProjection(paths);
-  const changed = !previous || projectionSignature(previous) !== projectionSignature(projection);
-  const statusRecord = Object.freeze({
-    ...createSharedWorkspaceStatusRecord({
-      statusId: 'critical-backlog-conveyor-current',
-      participantId: 'critical-backlog-conveyor',
-      timestampUtc,
-      status: projection.finalVerdict,
-      summary,
-      proofRefs: [],
-    }),
-    schema: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
-    decision: projection.decision,
-    selectedItemId,
-    activeMissionId,
-    activePhase,
-    completedItemIds: [...(projection.completedItemIds || [])],
-    remainingItemIds: [...(projection.remainingItemIds || [])],
-    exactNextAction: text(projection.exactNextAction),
-    oneActiveMissionEnforced: true,
-    duplicateCodexDispatchAllowed: false,
-    mergeAuthority: false,
-    exactHeadApprovalRequired: true,
-  });
-
-  let eventWrite = null;
-  if (changed) {
-    const transitionEventId = eventId(projectionSignature(projection));
-    const eventRecord = Object.freeze({
-      ...createSharedWorkspaceEventRecord({
-        eventId: transitionEventId,
-        participantId: 'critical-backlog-conveyor',
-        timestampUtc,
-        eventKind: 'critical-backlog-state-changed',
-        summary,
-      }),
-      decision: projection.decision,
-      selectedItemId,
-      activeMissionId,
-      activePhase,
+  if (publication?.published === true) {
+    return Object.freeze({
+      ok: true,
+      classification: 'CRITICAL_ACTIVE_MISSION_DISPATCH_LIVE',
+      published: true,
+      missionId: text(mission.missionId),
+      currentPhase,
+      sourceRevision,
+      adapter: text(publication?.adapter || publication?.action?.adapter),
+      capacityRoute: text(publication?.action?.capacityRoute),
+      capacityReceiptId: text(publication?.action?.capacityReceiptId),
+      blockers: Object.freeze([]),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
     });
-    eventWrite = await writeAtomicJson(
-      paths.workspaceRoot,
-      ['events', 'critical-backlog-conveyor', `${transitionEventId}.json`],
-      eventRecord,
-      { repoRoot: paths.repoRoot },
-    );
-    if (!eventWrite.ok) return Object.freeze({ ok: false, reason: eventWrite.reason, statusWrite: null, eventWrite });
   }
-
-  const statusWrite = await writeAtomicJson(
-    paths.workspaceRoot,
-    ['status', 'critical-backlog-conveyor-current.json'],
-    statusRecord,
-    { repoRoot: paths.repoRoot },
-  );
-  if (!statusWrite.ok) return Object.freeze({ ok: false, reason: statusWrite.reason, statusWrite, eventWrite });
-
+  if (publication?.reason === 'agent-already-running') {
+    return Object.freeze({
+      ok: true,
+      classification: 'CRITICAL_ACTIVE_MISSION_ALREADY_RUNNING',
+      published: false,
+      missionId: text(mission.missionId),
+      currentPhase,
+      sourceRevision,
+      blockers: Object.freeze([]),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+  const blockers = Array.isArray(publication?.action?.blockers) && publication.action.blockers.length
+    ? publication.action.blockers.map((item) => text(item)).filter(Boolean)
+    : [text(publication?.reason, 'active-mission-dispatch-not-published')];
   return Object.freeze({
-    ok: true,
-    reason: changed ? 'CONVEYOR_STATUS_AND_EVENT_PUBLISHED' : 'CONVEYOR_STATUS_REFRESHED',
-    changed,
-    statusWrite,
-    eventWrite,
+    ok: false,
+    classification: 'CRITICAL_ACTIVE_MISSION_DISPATCH_HELD',
+    published: false,
+    missionId: text(mission.missionId),
+    currentPhase,
+    sourceRevision,
+    blockers: Object.freeze(blockers),
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
   });
 }
 
-export async function ensureCriticalBacklogMission({
-  backlog = SELF_HOSTING_CRITICAL_BACKLOG,
-  env = process.env,
-  now = new Date(),
-  paths = resolveCriticalBacklogRuntimePaths({ env }),
-  listMissions = listMissionRecords,
-  createMission = createMissionRecord,
-  publishProjection = publishCriticalBacklogProjection,
-} = {}) {
-  let missionRecords = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
-  let projection = buildCriticalBacklogProjection({ backlog, missionRecords });
-  let createdMission = false;
-  let duplicateCreateObserved = false;
-  let missionRecord = null;
-  let preflightPublication = null;
+export const dispatchElasticGoalBuilds = dispatchElasticGoalBuildsCore;
 
-  if (projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION) {
-    preflightPublication = await publishProjection(projection, { paths, now });
-    if (!preflightPublication.ok) {
-      return Object.freeze({
-        schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
-        ok: false,
-        classification: 'CREATE_NEXT_MISSION_PUBLICATION_BLOCKED',
-        projection,
-        createdMission: false,
-        duplicateCreateObserved: false,
-        missionRecord: null,
-        preflightPublication,
-        publication: preflightPublication,
-        arbitraryShellAllowed: false,
-        destructiveGitAllowed: false,
-        duplicateActiveMissionAllowed: false,
-        mergeAuthority: false,
-        finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
-      });
-    }
-    const worktreePath = path.resolve(paths.worktreeRoot, projection.selectedItem.mission.missionId);
-    const built = buildCriticalBacklogMissionInput(projection.selectedItem, {
-      repositoryRoot: paths.repoRoot,
-      worktreePath,
-    });
-    if (!built.ok) {
-      projection = buildCriticalBacklogProjection({ backlog: [], missionRecords });
-    } else {
-      try {
-        missionRecord = await createMission(built.mission, {
-          root: paths.orchestratorRoot,
-          snapshotRoot: paths.snapshotRoot,
-          env,
-          now,
-          createdBy: 'critical-backlog-conveyor',
-        });
-        createdMission = true;
-      } catch (error) {
-        if (!/Mission already exists:/i.test(text(error?.message))) throw error;
-        duplicateCreateObserved = true;
-      }
-      missionRecords = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
-      projection = buildCriticalBacklogProjection({ backlog, missionRecords });
-    }
-  }
+export {
+  CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
+  ELASTIC_GOAL_BUILD_IGNITION_SCHEMA,
+  publishCriticalBacklogProjection,
+  resolveCriticalBacklogRuntimePaths,
+};
 
-  const publication = await publishProjection(projection, { paths, now });
-  const blocked = BLOCKED_DECISIONS.has(projection.decision);
-  const ok = !blocked && publication.ok === true;
-  return Object.freeze({
-    schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
-    ok,
-    classification: projection.decision,
-    projection,
-    createdMission,
-    duplicateCreateObserved,
-    missionRecord: missionRecord?.state
-      ? Object.freeze({ missionId: missionRecord.state.missionId, currentPhase: missionRecord.state.currentPhase })
-      : null,
-    preflightPublication,
-    publication,
-    arbitraryShellAllowed: false,
-    destructiveGitAllowed: false,
-    duplicateActiveMissionAllowed: false,
-    mergeAuthority: false,
-    finalVerdict: ok ? 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_PASS' : 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+export async function ensureCriticalBacklogMission(options = {}) {
+  const normalized = options && typeof options === 'object' ? options : {};
+  const result = await ensureCriticalBacklogMissionCore({
+    ...normalized,
+    backlog: normalized.backlog ?? SELF_HOSTING_CRITICAL_BACKLOG,
+    readCapacityRouting: normalized.readCapacityRouting ?? readElasticMissionControllerCapacityRoutingInput,
+    dispatchElasticBuilds: normalized.dispatchElasticBuilds ?? dispatchElasticGoalBuildsFromCanonicalMain,
   });
+  if (result?.ok !== true) return result;
+  const dispatchActiveCriticalMission = normalized.dispatchActiveCriticalMission ?? dispatchActiveCriticalMissionFromCanonicalMain;
+  const activeMissionIgnition = await dispatchActiveCriticalMission(result, normalized);
+  if (activeMissionIgnition?.ok === false) {
+    return Object.freeze({
+      ...result,
+      ok: false,
+      activeMissionIgnition,
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+    });
+  }
+  return Object.freeze({ ...result, activeMissionIgnition });
 }

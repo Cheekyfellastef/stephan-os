@@ -2,10 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
   MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS,
+  MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS,
+  MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS,
   runMissionWorkerDiagnosticLink,
 } from './mission-worker-diagnostic-link.mjs';
 import {
+  WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS,
   WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS,
   WORKER_WATCHDOG_START_TIMEOUT_MS,
   resolveCanonicalWorkerWatchdogPaths,
@@ -55,7 +59,7 @@ function successData(overrides = {}) {
     startedWorkerPid: 4242,
     workerStartedAtUtc: '2026-09-01T18:00:01.000Z',
     invocationId: 'a'.repeat(64),
-    deadlineUtc: new Date(NOW.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS).toISOString(),
+    deadlineUtc: new Date(NOW.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS).toISOString(),
     invocationBound: true,
     canonicalWorkerCommandVerified: true,
     postStartSourceProofOk: true,
@@ -91,6 +95,23 @@ function dependencies(overrides = {}) {
   };
 }
 
+test('diagnostic restart authority preserves watchdog child-exit reserve plus terminal publication reserve', () => {
+  assert.equal(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS, WORKER_WATCHDOG_START_TIMEOUT_MS);
+  assert.equal(
+    MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS,
+    MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS - WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS,
+  );
+  assert.ok(MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS > 0);
+  assert.ok(MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS < MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS);
+  assert.ok(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS < MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS);
+  assert.equal(WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS, 10_000);
+  assert.equal(
+    MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS - MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
+    MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS,
+  );
+  assert.equal(MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS, 10_000);
+});
+
 test('requires an exact 40-character expected head before any start route exists', async () => {
   let identityRead = false;
   const result = await runMissionWorkerDiagnosticLink({}, dependencies({
@@ -124,7 +145,13 @@ test('default route physically inspects exact main before StartApprovedWorkerTas
   assert.deepEqual(calls.map((call) => call.mode), ['Inspect', 'StartApprovedWorkerTask']);
   assert.equal(calls[0].options.timeoutMs, WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS);
   assert.equal(calls[1].options.timeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
-  assert.equal(calls[1].options.deadlineUtc, '2026-09-01T18:01:20.000Z');
+  assert.equal(calls[1].options.deadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.restartAuthorityMs, MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS);
+  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
+  assert.equal(result.deadlineUtc, result.childDeadlineUtc);
+  assert.equal(result.childTimeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
+  assert.equal(result.terminalPublicationReserveMs, MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS);
 });
 
 test('default physical inspect mismatch prevents any worker start attempt', async () => {
@@ -179,7 +206,7 @@ test('fails closed before worker start when canonical probe path proof fails', a
   assert.equal(probeCalled, false);
 });
 
-test('uses only StartApprovedWorkerTask with one short generated deadline and preserves typed restart blocker', async () => {
+test('uses only StartApprovedWorkerTask with the canonical watchdog timeout and preserves typed restart blocker', async () => {
   let observed = null;
   const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
     createProbeAdapter: ({ probeScriptPath }) => ({
@@ -199,14 +226,112 @@ test('uses only StartApprovedWorkerTask with one short generated deadline and pr
   assert.equal(result.error, undefined);
   assert.equal(observed.mode, 'StartApprovedWorkerTask');
   assert.equal(observed.options.timeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
-  assert.equal(observed.options.deadlineUtc, '2026-09-01T18:01:20.000Z');
+  assert.equal(observed.options.deadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.restartAuthorityMs, MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS);
+  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
+  assert.equal(result.childTimeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
+  assert.equal(result.terminalPublicationReserveMs, MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS);
   assert.match(observed.probeScriptPath, /probe-mission-orchestrator-worker-watchdog\.ps1$/i);
+});
+
+test('maps fixed PowerShell failure lines to bounded typed blockers without exposing raw error text', async () => {
+  const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
+    createProbeAdapter: () => ({
+      run: () => ({
+        ok: false,
+        restartBlocker: '',
+        error: 'The approved runtime restart adapter failed.\nAt C:\\repo\\probe.ps1:1 char:1',
+      }),
+    }),
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'APPROVED_RUNTIME_RESTART_ADAPTER_FAILED');
+  assert.equal(result.typedRestartBlocker, 'APPROVED_RUNTIME_RESTART_ADAPTER_FAILED');
+  assert.equal(result.error, undefined);
+});
+
+test('phrase mapping remains fail closed on ambiguity, substrings, and unallowlisted text', async () => {
+  const ambiguous = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
+    createProbeAdapter: () => ({
+      run: () => ({
+        ok: false,
+        restartBlocker: '',
+        error: 'The fixed Mission Orchestrator worker task is not installed.\nThe approved runtime restart adapter failed.',
+      }),
+    }),
+  }));
+  assert.equal(ambiguous.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED');
+  assert.equal(ambiguous.typedRestartBlocker, '');
+
+  const substring = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
+    createProbeAdapter: () => ({
+      run: () => ({
+        ok: false,
+        restartBlocker: '',
+        error: 'prefix The approved runtime restart adapter failed. suffix',
+      }),
+    }),
+  }));
+  assert.equal(substring.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED');
+  assert.equal(substring.typedRestartBlocker, '');
+
+  const unknown = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
+    createProbeAdapter: () => ({
+      run: () => ({ ok: false, restartBlocker: '', error: 'UNRECOGNIZED_RUNTIME_FAILURE' }),
+    }),
+  }));
+  assert.equal(unknown.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED');
+  assert.equal(unknown.typedRestartBlocker, '');
+});
+
+test('bounded child timeout or untyped execution failure returns a typed terminal blocker', async () => {
+  const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
+    createProbeAdapter: () => ({
+      run: (_mode, options) => {
+        assert.equal(options.timeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
+        assert.equal(options.deadlineUtc, '2026-09-01T18:01:25.000Z');
+        return { ok: false, restartBlocker: '', error: 'ETIMEDOUT' };
+      },
+    }),
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.finalVerdict, 'MISSION_WORKER_DIAGNOSTIC_LINK_BLOCKED');
+  assert.equal(result.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED');
+  assert.equal(result.typedRestartBlocker, '');
+  assert.equal(result.error, undefined);
+  assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.restartAuthorityMs, MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS);
+  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
+  assert.equal(result.childTimeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
+  assert.equal(result.terminalPublicationReserveMs, MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS);
+});
+
+test('rejects a success receipt bound to the outer diagnostic deadline instead of the child restart deadline', async () => {
+  const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
+    createProbeAdapter: () => ({
+      run: () => ({
+        ok: true,
+        data: successData({
+          deadlineUtc: new Date(NOW.getTime() + MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS).toISOString(),
+        }),
+      }),
+    }),
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_SUCCESS_PROOF_INVALID');
+  assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.restartAuthorityMs, MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS);
+  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
 });
 
 test('cannot claim success without fresh exact-head canonical launch proof', async () => {
   const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies({
     createProbeAdapter: () => ({
-      run: () => ({ ok: true, data: successData({ proofFresh: false }) }),
+      run: (_mode, options) => ({
+        ok: true,
+        data: successData({ deadlineUtc: options.deadlineUtc, proofFresh: false }),
+      }),
     }),
   }));
   assert.equal(result.ok, false);
@@ -217,6 +342,10 @@ test('successful link bridges only watchdog decision and leaves downstream safeg
   const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies());
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'MISSION_WORKER_DIAGNOSTIC_LINK_PASS');
+  assert.equal(result.deadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
+  assert.equal(result.restartAuthorityMs, MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS);
+  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
   assert.equal(result.bypassedWatchdogDecision, true);
   assert.equal(result.normalWatchdogPolicyModified, false);
   assert.equal(result.persistentBypassInstalled, false);

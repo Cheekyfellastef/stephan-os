@@ -1,0 +1,78 @@
+{
+  "version": "stephanos.quest-entry-contract.v1",
+  "recordedDate": "2026-07-14",
+  "status": "source-scaffolded-runtime-proof-pending",
+  "preferredDelivery": {
+    "type": "immersive-webxr-pwa",
+    "distribution": "private ALPHA release channel",
+    "questLibraryIcon": true,
+    "directImmersiveLaunch": true,
+    "sameAppHomeAndCaravan": true,
+    "packageId": "com.stephanos.spatialbridge",
+    "reason": "One Quest Library icon, local rendering in both locations, and no dependency on programmatically launching Air Link."
+  },
+  "transportProfiles": {
+    "home": {
+      "label": "HOME · LOCAL QUEST",
+      "rendering": "Quest-local immersive bridge",
+      "controlPlane": "authenticated local Stephanos route to the Battle Bridge",
+      "airLinkRole": "optional separate PCVR or high-fidelity media mode, not the bridge entry requirement"
+    },
+    "caravan": {
+      "label": "CARAVAN · REMOTE STARLINK",
+      "rendering": "Quest-local immersive bridge",
+      "controlPlane": "authenticated remote Stephanos route over Starlink and Tailscale-class networking",
+      "airLinkRole": "none"
+    }
+  },
+  "pwaRequirements": {
+    "httpsHostingRequired": true,
+    "manifest": "apps/spatial-bridge/manifest.webmanifest",
+    "serviceWorker": "apps/spatial-bridge/service-worker.js",
+    "offlineFallback": "apps/spatial-bridge/offline.html",
+    "icon192": "apps/spatial-bridge/icons/icon-192.png",
+    "icon512": "apps/spatial-bridge/icons/icon-512.png",
+    "digitalAssetLinksRequired": true,
+    "assetLinksPath": "/.well-known/assetlinks.json",
+    "metaBubblewrapRequired": true,
+    "releaseChannel": "ALPHA"
+  },
+  "authorityRules": [
+    "The Quest shell never owns canonical mission state.",
+    "Offline mode is read-only and cannot cache approval authority.",
+    "A reconnect never repeats or infers approval.",
+    "The control plane remains separate from optional media streaming.",
+    "Identity, target revision, freshness, risk and expiry must be verified before any future approval path is enabled."
+  ],
+  "currentLimitations": [
+    "Current renderer is a flat source prototype embedded by the Quest entry shell.",
+    "Immersive WebXR rendering is not yet implemented or observed.",
+    "The PWA has not been packaged, signed, uploaded or installed on Quest.",
+    "Digital Asset Link values cannot be finalized until a signing key fingerprint exists.",
+    "No live Stephanos control-plane endpoint is connected."
+  ],
+  "codexWindow": {
+    "availableAfter": "2026-07-19T20:35:00+01:00",
+    "timezone": "Europe/London",
+    "workBeforeWindow": [
+      "source architecture",
+      "PWA manifest and service worker",
+      "Quest entry shell",
+      "icon assets",
+      "release-channel runbook",
+      "deterministic contract tests"
+    ],
+    "firstCodexTasks": [
+      "Run deterministic source tests at the exact PR head.",
+      "Serve the app from a trusted HTTPS origin.",
+      "Implement or integrate the first immersive WebXR captain scene.",
+      "Package with Meta forked Bubblewrap using immersive mode.",
+      "Create and preserve the signing keystore.",
+      "Generate the exact Digital Asset Link statement.",
+      "Upload to the private ALPHA release channel and invite Stephan's Meta account.",
+      "Prove that the app appears in Quest Library and launches from its icon.",
+      "Prove home LAN and caravan Starlink control-plane profiles separately."
+    ]
+  },
+  "mergeGate": "Do not describe the package as a Quest VR app until exact-head tests, immersive WebXR proof, signed packaging, Digital Asset Link verification, ALPHA-channel installation and on-headset launch evidence are complete."
+}
