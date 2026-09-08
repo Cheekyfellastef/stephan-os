@@ -19,11 +19,37 @@ test('self-cleanup observation requires terminal fixed task and absent canonical
   assert.ok(observer.includes("Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker' -TaskPath '\\' -ErrorAction Stop"));
   assert.match(observer, /\$task -and \[string\]\$task.State -in @\('Ready', 'Disabled'\)/);
   assert.doesNotMatch(observer, /'Running'|'Queued'/);
-  assert.match(observer, /Get-CimInstance Win32_Process[^\n]*-OperationTimeoutSec 1 -ErrorAction Stop/);
-  assert.match(observer, /Test-ExactCanonicalWorkerProcess -Process \$_ -ExpectedRepoRoot \$ExpectedRepoRoot/);
+  assert.match(observer, /\$nodeProcesses = @\(Get-CimInstance Win32_Process[^\n]*-OperationTimeoutSec 1 -ErrorAction Stop\)/);
+  assert.match(observer, /foreach \(\$process in \$nodeProcesses\)/);
+  assert.match(observer, /\$executablePath = \[string\]\$process\.ExecutablePath/);
+  assert.match(observer, /\$commandLine = \[string\]\$process\.CommandLine/);
+  assert.match(observer, /\[string\]::IsNullOrWhiteSpace\(\$executablePath\)[^\n]*\[string\]::IsNullOrWhiteSpace\(\$commandLine\)/);
+  assert.match(observer, /\[void\]\[System\.IO\.Path\]::GetFullPath\(\$executablePath\)/);
+  assert.match(observer, /ConvertFrom-WindowsCommandLine -CommandLine \$commandLine/);
+  assert.match(observer, /if \(\$arguments\.Count -eq 0\) \{ return \$false \}/);
+  assert.match(observer, /Test-ExactCanonicalWorkerProcess -Process \$process -ExpectedRepoRoot \$ExpectedRepoRoot/);
   assert.match(observer, /\$workers.Count -eq 0 -and \[datetime\]::UtcNow -lt \$observationDeadlineUtc/);
   assert.match(observer, /catch \{ return \$false \}/);
   assert.doesNotMatch(observer, /Stop-Process|Stop-ScheduledTask|Start-ScheduledTask|Start-Process|\.Kill\(|Write-|Set-Content|Remove-|Invoke-|New-Item/);
+});
+
+test('self-cleanup observation fails closed when a live Node identity is unavailable or malformed', () => {
+  const observer = sliceFunction('Wait-MissionWorkerSelfCleanupObservation', 'Write-BoundedAtomicJson');
+  const invariants = [
+    '$executablePath = [string]$process.ExecutablePath',
+    '$commandLine = [string]$process.CommandLine',
+    '[string]::IsNullOrWhiteSpace($executablePath) -or [string]::IsNullOrWhiteSpace($commandLine)',
+    '[void][System.IO.Path]::GetFullPath($executablePath)',
+    '$arguments = @(ConvertFrom-WindowsCommandLine -CommandLine $commandLine)',
+    'if ($arguments.Count -eq 0) { return $false }',
+  ];
+  const hasBoundary = (text) => invariants.every((invariant) => text.includes(invariant));
+  assert.equal(hasBoundary(observer), true);
+  for (const invariant of invariants) {
+    const hostile = observer.replace(invariant, '');
+    assert.notEqual(hostile, observer, `hostile mutation must remove ${invariant}`);
+    assert.equal(hasBoundary(hostile), false, `observer must reject removal of ${invariant}`);
+  }
 });
 
 test('failed cleanup preserves its typed blocker after observation and cannot claim recovery', () => {
