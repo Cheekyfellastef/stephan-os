@@ -30,6 +30,21 @@ on:
         description: Exact full current main SHA
         required: true
         type: string
+      authorization_head:
+        description: Deprecated compatibility placeholder; ignored by protected execution
+        required: false
+        default: ''
+        type: string
+      authorization_head_tree:
+        description: Deprecated compatibility placeholder; ignored by protected execution
+        required: false
+        default: ''
+        type: string
+      authorization_base:
+        description: Deprecated compatibility placeholder; ignored by protected execution
+        required: false
+        default: ''
+        type: string
       independent_review_run_id:
         description: Selected immutable independent-review run ID
         required: true
