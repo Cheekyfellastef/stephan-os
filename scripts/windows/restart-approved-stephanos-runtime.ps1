@@ -152,9 +152,21 @@ function Wait-MissionWorkerSelfCleanupObservation {
         try {
             $task = Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker' -TaskPath '\' -ErrorAction Stop
             if ($task -and [string]$task.State -in @('Ready', 'Disabled')) {
-                $workers = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -OperationTimeoutSec 1 -ErrorAction Stop | Where-Object {
-                    Test-ExactCanonicalWorkerProcess -Process $_ -ExpectedRepoRoot $ExpectedRepoRoot
-                })
+                $workers = @()
+                $nodeProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -OperationTimeoutSec 1 -ErrorAction Stop)
+                foreach ($process in $nodeProcesses) {
+                    $executablePath = [string]$process.ExecutablePath
+                    $commandLine = [string]$process.CommandLine
+                    if ([string]::IsNullOrWhiteSpace($executablePath) -or [string]::IsNullOrWhiteSpace($commandLine)) {
+                        return $false
+                    }
+                    [void][System.IO.Path]::GetFullPath($executablePath)
+                    $arguments = @(ConvertFrom-WindowsCommandLine -CommandLine $commandLine)
+                    if ($arguments.Count -eq 0) { return $false }
+                    if (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot) {
+                        $workers += $process
+                    }
+                }
                 if ($workers.Count -eq 0 -and [datetime]::UtcNow -lt $observationDeadlineUtc) {
                     return $true
                 }
