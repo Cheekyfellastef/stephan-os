@@ -317,8 +317,13 @@ jobs:
           steps.bind_handoff.outcome == 'success' &&
           steps.upload_handoff.outcome == 'success' &&
           steps.retry.outcome == 'success' &&
-          steps.retry.outputs.decision == 'NO_MATCHING_RUN' &&
-          steps.launch_missing.outcome == 'success'
+          (
+            steps.retry.outputs.decision == 'ALREADY_SUCCESSFUL' ||
+            (
+              steps.retry.outputs.decision == 'NO_MATCHING_RUN' &&
+              steps.launch_missing.outcome == 'success'
+            )
+          )
         env:
           GITHUB_TOKEN: ${{ github.token }}
           STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_PR: ${{ matrix.target.prNumber }}
@@ -360,7 +365,7 @@ jobs:
           steps.coordinate.outputs.recovery_deferred == 'true' &&
           (
             steps.retry.outcome == 'failure' ||
-            steps.retry.outputs.decision == 'ALREADY_SUCCESSFUL' ||
+            (steps.retry.outputs.decision == 'ALREADY_SUCCESSFUL' && steps.consume_recovered_review.outcome != 'success') ||
             steps.launch_missing.outcome == 'failure' ||
             (steps.launch_missing.outputs.decision == 'ALREADY_SUCCESSFUL' && steps.consume_recovered_review.outcome != 'success')
           )
