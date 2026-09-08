@@ -316,6 +316,29 @@ export async function runChatGptSharedWorkspaceGitHubRelay(options = {}) {
 
   const result = await runCoreRelay({
     ...options,
+    reconcileInboxFn: async ({ root, segments, record, resumed, writeOptions }) => {
+      if (!parseGoalProposalBody(record).applicable) return { ok: true };
+      let persisted = record;
+      if (resumed) {
+        const resolved = resolveSharedWorkspacePath({ root, repoRoot: writeOptions.repoRoot, segments });
+        if (!resolved.ok) return { ok: false, reason: resolved.reason };
+        try {
+          persisted = JSON.parse(await readFileFn(resolved.path, 'utf8'));
+        } catch {
+          return { ok: false, reason: 'CHATGPT_GOAL_INBOX_READ_FAILED' };
+        }
+        // Retry-time timestamps are not a new proposal. All other identity and
+        // payload fields must still match the original durable inbox record.
+        if (!sameJson({ ...record, timestampUtc: persisted?.timestampUtc }, persisted)) {
+          return { ok: false, reason: 'CHATGPT_GOAL_INBOX_CONFLICT' };
+        }
+      }
+      goalAdmission = await promoteChatGptGoalIntent({
+        root, segments, record: persisted, writeOptions, writeAtomicJsonFn, readFileFn,
+        nowMs: writeOptions.nowMs,
+      });
+      return goalAdmission;
+    },
     answerQuestionFn: async (questionRecord, answerOptions) => {
       const answered = await answerQuestionFn(questionRecord, answerOptions);
       qaAnswerDiagnostic = rejectionDiagnostic(answered, questionRecord);
@@ -325,29 +348,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay(options = {}) {
       const augmented = qaAnswerDiagnostic && Array.isArray(segments) && segments[0] === 'receipts'
         ? Object.freeze({ ...record, qaAnswerDiagnostic })
         : record;
-      const primaryWrite = await writeAtomicJsonFn(root, segments, augmented, writeOptions);
-      if (primaryWrite?.ok !== true) return primaryWrite;
-
-      const promotion = await promoteChatGptGoalIntent({
-        root,
-        segments,
-        record: augmented,
-        writeOptions,
-        writeAtomicJsonFn,
-        readFileFn,
-        nowMs: Number.isFinite(options.nowMs) ? options.nowMs : Date.now(),
-      });
-      if (promotion.applicable) {
-        goalAdmission = promotion;
-        if (!promotion.ok) {
-          return Object.freeze({
-            ok: false,
-            reason: promotion.reason,
-            bytes: Number.isFinite(primaryWrite.bytes) ? primaryWrite.bytes : 0,
-          });
-        }
-      }
-      return primaryWrite;
+      return writeAtomicJsonFn(root, segments, augmented, writeOptions);
     },
     adapter: Object.freeze({
       readRequest: (...args) => adapter.readRequest(...args),

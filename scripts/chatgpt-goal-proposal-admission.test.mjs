@@ -6,6 +6,8 @@ import {
   CHATGPT_GOAL_ADMISSION_STATUS,
   buildChatGptSchedulerGoalRecord,
   promoteChatGptGoalIntent,
+  runChatGptSharedWorkspaceGitHubRelay,
+  CHATGPT_SHARED_WORKSPACE_REQUEST_MARKER,
 } from './chatgpt-shared-workspace-github-relay.mjs';
 import { buildSchedulerGoalsFromProgrammeSources } from '../shared/agents/programmeAuthorityV1.mjs';
 import {
@@ -16,6 +18,56 @@ import {
 const NOW = '2026-09-08T08:20:00.000Z';
 const NOW_MS = Date.parse(NOW);
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
+
+for (const failure of ['none', 'goal-conflict', 'inbox-conflict', 'inbox-read', 'goal-read', 'goal-write']) {
+  test(`persisted inbox retry reconciles before completion: ${failure}`, async () => {
+    const records = new Map();
+    const responses = [];
+    let attempt = 0;
+    const request = { schemaVersion: 'chatgpt-participant-bridge.v1', requestId: 'goal-retry-2002',
+      operation: 'WRITE_MESSAGE', recordKind: 'goal-intent-proposal', relatedGoal: '#2002' };
+    const options = {
+      paths: { workspaceRoot: '/external-shared-workspace', repoRoot: '/repo' },
+      adapter: {
+        readRequest: () => ({ ok: true, body: `${CHATGPT_SHARED_WORKSPACE_REQUEST_MARKER}\n\`\`\`json\n${JSON.stringify({ schemaVersion: 'chatgpt-participant-bridge.v1', state: 'REQUEST_READY', request })}\n\`\`\`` }),
+        writeResponse: (body) => { responses.push(JSON.parse(body.match(/```json\s*([\s\S]*?)```/)[1])); return { ok: true }; },
+      },
+      verifyRequestFn: () => ({ accepted: true, responseStatus: 'ACCEPTED', proofRefs: [] }),
+      recordBuilder: (_request, { timestampUtc }) => ({ ok: true, record: proposal({}, { timestampUtc }) }),
+      receiptExistsFn: async ({ receiptId }) => records.has(`receipts/${receiptId}.json`),
+      recordExistsFn: async ({ segments }) => records.has(segments.join('/')),
+      readFileFn: async (file) => {
+        const key = file.replace('/external-shared-workspace/', '');
+        if (attempt === 2 && ((failure === 'inbox-read' && key.startsWith('inbox/')) || (failure === 'goal-read' && key.startsWith('goals/')))) throw new Error('read failed');
+        if (!records.has(key)) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+        return JSON.stringify(records.get(key));
+      },
+      writeAtomicJsonFn: async (_root, segments, record) => {
+        if (segments[0] === 'goals' && (attempt === 1 || failure === 'goal-write')) return { ok: false, reason: 'TRANSIENT_GOAL_WRITE_FAILURE' };
+        records.set(segments.join('/'), record);
+        return { ok: true, bytes: 100 };
+      },
+    };
+    attempt = 1;
+    const first = await runChatGptSharedWorkspaceGitHubRelay({ ...options, now: new Date(NOW) });
+    assert.equal(first.ok, false);
+    assert.deepEqual([...records.keys()], ['inbox/goal-retry-2002.json']);
+    assert.equal(responses.at(-1).completed, false);
+    if (failure === 'goal-conflict') records.set('goals/goal-2002.json', { wrong: true });
+    if (failure === 'inbox-conflict') records.set('inbox/goal-retry-2002.json', proposal({ title: 'Other goal' }));
+    attempt = 2;
+    const second = await runChatGptSharedWorkspaceGitHubRelay({ ...options, now: new Date(NOW_MS + 1000) });
+    assert.equal(second.ok, failure === 'none');
+    assert.equal(responses.at(-1).completed, failure === 'none');
+    if (failure === 'none') {
+      assert.equal(records.get('goals/goal-2002.json').timestampUtc, NOW);
+      assert.equal(second.goalAdmission.reason, 'CHATGPT_GOAL_ADMITTED');
+      assert.ok([...records.keys()].some(key => key.startsWith('receipts/')));
+    } else {
+      assert.equal([...records.keys()].some(key => /^(receipts|events)\//.test(key)), false);
+    }
+  });
+}
 
 function proposal(overrides = {}, messageOverrides = {}) {
   const boundedPayload = {
