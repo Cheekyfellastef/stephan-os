@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { dispatchElasticGoalBuildsFromCanonicalMain } from './criticalBacklogConveyorService.js';
 import {
   dispatchElasticPrHeadBuildsFromCanonicalLease,
   exactElasticPrHeadIdentity,
@@ -100,6 +101,7 @@ test('claims the canonical lease before publishing one exact PR-head worker gran
     releaseSourceMutationLease: async () => {
       throw new Error('release must not run on active work');
     },
+    isActionInFlight: async () => false,
     publishWorkerAction: async (options) => {
       calls.push(['publish', options.actionGrant]);
       return {
@@ -187,6 +189,7 @@ test('releases a parked exact lease and refills the same lease slot with the nex
     renewSourceMutationLease: async () => {
       throw new Error('renew must not run after parked lease release');
     },
+    isActionInFlight: async () => false,
     publishWorkerAction: async (options) => {
       calls.push(['publish', options.actionGrant]);
       return { published: true, actionGrantAccepted: true, adapter: 'openclaw-github-readonly' };
@@ -240,4 +243,87 @@ test('a lease owned by another canonical lane blocks PR-head takeover without se
   assert.equal(result.leaseSeizureAllowed, false);
   assert.equal(claimCount, 0);
   assert.equal(publishCount, 0);
+});
+
+test('signed PR-head commit actions use the canonical openclaw-signed adapter', async () => {
+  const candidate = mission(1802, 2096, HEAD_A, { currentPhase: 'GITHUB_COMMIT' });
+  const lease = leaseFor(candidate);
+  let publishedGrant = null;
+  const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([candidate]), {
+    now: NOW,
+    paths: PATHS,
+    sourceRevision: SOURCE,
+    readSourceMutationLease: async () => ({ ok: true, present: true, reason: 'SOURCE_MUTATION_LEASE_ACTIVE', record: lease }),
+    renewSourceMutationLease: async () => ({ ok: true, renewed: true, record: lease }),
+    claimSourceMutationLease: async () => { throw new Error('claim must not run'); },
+    releaseSourceMutationLease: async () => { throw new Error('release must not run'); },
+    isActionInFlight: async () => false,
+    publishWorkerAction: async ({ actionGrant }) => {
+      publishedGrant = actionGrant;
+      return { published: true, actionGrantAccepted: true };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'ELASTIC_PR_HEAD_DISPATCH_LIVE');
+  assert.equal(publishedGrant.actionKind, 'signed-openclaw-operation');
+  assert.equal(publishedGrant.adapter, 'openclaw-signed');
+  assert.equal(publishedGrant.operation, 'commit');
+});
+
+test('an in-flight non-handoff grant renews its lease without republishing a duplicate action', async () => {
+  const candidate = mission(1802, 2096, HEAD_A);
+  const lease = leaseFor(candidate);
+  let publishCount = 0;
+  const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([candidate]), {
+    now: NOW,
+    paths: PATHS,
+    sourceRevision: SOURCE,
+    readSourceMutationLease: async () => ({ ok: true, present: true, reason: 'SOURCE_MUTATION_LEASE_ACTIVE', record: lease }),
+    renewSourceMutationLease: async () => ({ ok: true, renewed: true, record: lease }),
+    claimSourceMutationLease: async () => { throw new Error('claim must not run'); },
+    releaseSourceMutationLease: async () => { throw new Error('release must not run'); },
+    isActionInFlight: async ({ adapter, actionId }) => {
+      assert.equal(adapter, 'openclaw-github-readonly');
+      assert.match(actionId, /^critical-1802-elastic-goal-r7-/);
+      return true;
+    },
+    publishWorkerAction: async () => {
+      publishCount += 1;
+      return { published: true, actionGrantAccepted: true };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'ELASTIC_PR_HEAD_ACTION_ALREADY_IN_FLIGHT');
+  assert.equal(publishCount, 0);
+});
+
+test('aggregate ignition preserves a failed PR-head lease verdict even when sibling pre-PR work is healthy', async () => {
+  const result = await dispatchElasticGoalBuildsFromCanonicalMain({
+    desiredWidth: 1,
+    selectedMission: null,
+    elasticMissions: [],
+    activeMissions: [],
+    runnableMissions: [],
+  }, {
+    testOnly: true,
+    now: NOW,
+    paths: PATHS,
+    readProgrammeProjection: async () => ({ machineryInventory: { sourceHead: SOURCE } }),
+    readCapacityRouting: async () => ({}),
+    dispatchPrHeadBuilds: async () => ({
+      ok: false,
+      classification: 'ELASTIC_PR_HEAD_LEASE_RENEWAL_BLOCKED',
+      dispatched: [],
+      held: [{ missionId: 'critical-1802-elastic-goal', reason: 'LEASE_RENEWAL_FAILED' }],
+      handledMissionIds: ['critical-1802-elastic-goal'],
+    }),
+    resolveCapacityCandidates: () => [],
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.classification, 'ELASTIC_GOAL_BUILD_DISPATCH_PARTIAL_BLOCKED');
+  assert.equal(result.prHeadLease.ok, false);
+  assert.equal(result.held.some((item) => item.reason === 'LEASE_RENEWAL_FAILED'), true);
 });
