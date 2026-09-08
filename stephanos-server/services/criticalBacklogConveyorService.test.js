@@ -10,6 +10,7 @@ import {
   SELF_HOSTING_CRITICAL_BACKLOG,
 } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import {
+  dispatchElasticGoalBuilds,
   ensureCriticalBacklogMission,
   publishCriticalBacklogProjection,
   resolveCriticalBacklogRuntimePaths,
@@ -66,6 +67,25 @@ function activeCriticalMission(overrides = {}) {
       worktreePath: '/bounded/critical-1291-worker-watchdog-repair',
     },
     ...overrides,
+  };
+}
+
+function elasticImplementationMission(issueNumber = 91) {
+  return {
+    missionId: `critical-${issueNumber}-elastic-goal`,
+    title: `Elastic goal ${issueNumber}`,
+    repository: 'Cheekyfellastef/stephan-os',
+    operatorIntent: `Advance durable goal #${issueNumber} through one bounded implementation lane.`,
+    intendedOutcome: `Durable goal #${issueNumber} reaches its next governed source checkpoint.`,
+    allowedFiles: [`shared/agents/elastic-goal-${issueNumber}.mjs`],
+    requiredTests: [`node --test shared/agents/elastic-goal-${issueNumber}.test.mjs`],
+    requiredEvidence: ['focused elastic-goal proof'],
+    revision: 1,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    git: {
+      branch: `openclaw/elastic-goal-${issueNumber}`,
+      worktreePath: `/bounded/critical-${issueNumber}-elastic-goal`,
+    },
   };
 }
 
@@ -243,6 +263,60 @@ test('active legacy critical implementation preserves an existing running dispat
   assert.equal(result.activeMissionIgnition.classification, 'CRITICAL_ACTIVE_MISSION_ALREADY_RUNNING');
   assert.equal(readCalls, 1);
   assert.equal(publishCalls, 0);
+});
+
+test('elastic dispatcher retries the next distinct proven capacity when the first publication path rejects the handoff', async () => {
+  const mission = elasticImplementationMission();
+  const attempts = [];
+  const result = await dispatchElasticGoalBuilds({
+    desiredWidth: 5,
+    selectedMission: null,
+    activeMissions: [],
+    runnableMissions: [mission],
+  }, {
+    now,
+    sourceRevision: 'd'.repeat(40),
+    paths: {
+      repoRoot: '/repo',
+      workspaceRoot: '/workspace',
+      orchestratorRoot: '/orchestrator',
+      snapshotRoot: '/snapshots',
+    },
+    resolveCapacityCandidates: () => [
+      {
+        route: 'CHATGPT_GITHUB',
+        adapter: 'chatgpt-github',
+        workerId: 'github-worker',
+        receiptId: 'github-capacity-1',
+        proofRefs: ['github-capacity-proof'],
+      },
+      {
+        route: 'FOUNDRY_FORGE',
+        adapter: 'foundry-forge',
+        workerId: 'forge-worker',
+        receiptId: 'forge-capacity-1',
+        proofRefs: ['forge-capacity-proof'],
+      },
+    ],
+    publishWorkerAction: async ({ actionGrant }) => {
+      attempts.push(actionGrant.adapter);
+      if (actionGrant.adapter === 'chatgpt-github') {
+        return { published: false, actionGrantAccepted: false, reason: 'github-publication-unavailable' };
+      }
+      return { published: true, actionGrantAccepted: true, reason: 'published' };
+    },
+  });
+
+  assert.deepEqual(attempts, ['chatgpt-github', 'foundry-forge']);
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'ELASTIC_EXTERNAL_BUILD_DISPATCH_LIVE');
+  assert.equal(result.dispatchCount, 1);
+  assert.equal(result.dispatched[0].adapter, 'foundry-forge');
+  assert.equal(result.dispatched[0].workerId, 'forge-worker');
+  assert.deepEqual(result.held, []);
+  assert.equal(result.blockedLaneDoesNotStallFleet, true);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.runtimeMutationAuthority, false);
 });
 
 test('publication emits one idempotent event file for one state change', async () => {
