@@ -313,53 +313,67 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
       held.push(Object.freeze({ missionId, reason: scopes.length ? 'RESOURCE_SCOPE_CONFLICT' : 'RESOURCE_SCOPE_REQUIRED' }));
       continue;
     }
-    const routeCandidates = resolveCapacityCandidates(mission, capacityRouting, sourceRevision, now.toISOString());
-    const capacity = routeCandidates.find((candidate) => !usedCapacity.has(externalCandidateKey(candidate)));
-    if (!capacity) {
+
+    const routeCandidates = resolveCapacityCandidates(mission, capacityRouting, sourceRevision, now.toISOString())
+      .filter((candidate) => !usedCapacity.has(externalCandidateKey(candidate)));
+    if (!routeCandidates.length) {
       held.push(Object.freeze({ missionId, reason: 'DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE' }));
       continue;
     }
-    const grant = exactElasticExternalGrant(mission, capacity, sourceRevision, now);
-    if (!grant) {
-      held.push(Object.freeze({ missionId, reason: 'EXACT_EXTERNAL_ACTION_GRANT_UNAVAILABLE' }));
-      continue;
-    }
-    let publication;
-    try {
-      publication = await publishWorkerAction({
-        env,
-        now,
-        nowUtc: now.toISOString(),
-        sourceRevision: sourceRevision.toLowerCase(),
-        repoRoot: paths.repoRoot,
-        sharedWorkspaceRoot: paths.workspaceRoot,
-        root: paths.orchestratorRoot,
-        snapshotRoot: paths.snapshotRoot,
-        actionGrant: grant,
-      });
-    } catch (error) {
-      publication = { published: false, actionGrantAccepted: false, reason: `publication-exception:${text(error?.message, 'unknown')}` };
-    }
-    if (publication?.published !== true || publication?.actionGrantAccepted !== true) {
-      held.push(Object.freeze({
+
+    let dispatchedMission = null;
+    let grantCandidateObserved = false;
+    let lastPublicationReason = '';
+    for (const capacity of routeCandidates) {
+      const grant = exactElasticExternalGrant(mission, capacity, sourceRevision, now);
+      if (!grant) continue;
+      grantCandidateObserved = true;
+
+      let publication;
+      try {
+        publication = await publishWorkerAction({
+          env,
+          now,
+          nowUtc: now.toISOString(),
+          sourceRevision: sourceRevision.toLowerCase(),
+          repoRoot: paths.repoRoot,
+          sharedWorkspaceRoot: paths.workspaceRoot,
+          root: paths.orchestratorRoot,
+          snapshotRoot: paths.snapshotRoot,
+          actionGrant: grant,
+        });
+      } catch (error) {
+        publication = { published: false, actionGrantAccepted: false, reason: `publication-exception:${text(error?.message, 'unknown')}` };
+      }
+      if (publication?.published !== true || publication?.actionGrantAccepted !== true) {
+        lastPublicationReason = text(publication?.reason, 'not-published');
+        continue;
+      }
+
+      dispatchedMission = Object.freeze({
         missionId,
-        reason: `EXTERNAL_DISPATCH_BLOCKED:${text(publication?.reason, 'not-published')}`,
-      }));
-      continue;
+        issueNumber: elasticIssueNumber(mission),
+        adapter: capacity.adapter,
+        route: capacity.route,
+        workerId: capacity.workerId,
+        capacityReceiptId: capacity.receiptId || null,
+        actionId: grant.actionId,
+        grantId: grant.grantId,
+        resourceScopes: Object.freeze([...scopes]),
+      });
+      dispatched.push(dispatchedMission);
+      occupiedScopes.push(...scopes);
+      usedCapacity.add(externalCandidateKey(capacity));
+      break;
     }
-    dispatched.push(Object.freeze({
+
+    if (dispatchedMission) continue;
+    held.push(Object.freeze({
       missionId,
-      issueNumber: elasticIssueNumber(mission),
-      adapter: capacity.adapter,
-      route: capacity.route,
-      workerId: capacity.workerId,
-      capacityReceiptId: capacity.receiptId || null,
-      actionId: grant.actionId,
-      grantId: grant.grantId,
-      resourceScopes: Object.freeze([...scopes]),
+      reason: grantCandidateObserved
+        ? `EXTERNAL_DISPATCH_BLOCKED:${lastPublicationReason || 'not-published'}`
+        : 'EXACT_EXTERNAL_ACTION_GRANT_UNAVAILABLE',
     }));
-    occupiedScopes.push(...scopes);
-    usedCapacity.add(externalCandidateKey(capacity));
   }
 
   return Object.freeze({
