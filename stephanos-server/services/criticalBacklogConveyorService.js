@@ -20,6 +20,7 @@ import {
   readElasticMissionControllerCapacityRoutingInput,
   resolveElasticExternalCapacityCandidates,
 } from './elasticOpenClawProviderPoolService.js';
+import { dispatchElasticPrHeadBuildsFromCanonicalLease } from './elasticPrHeadLeaseService.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
@@ -128,6 +129,65 @@ export async function publishCriticalBacklogProjection(projection, options = {})
   });
 }
 
+function missionById(admission = {}, missionId = '') {
+  const wanted = text(missionId).toLowerCase();
+  const inventory = [
+    admission.selectedMission,
+    ...(Array.isArray(admission.elasticMissions) ? admission.elasticMissions : []),
+    ...(Array.isArray(admission.activeMissions) ? admission.activeMissions : []),
+    ...(Array.isArray(admission.runnableMissions) ? admission.runnableMissions : []),
+  ];
+  return inventory.find((mission) => text(mission?.missionId).toLowerCase() === wanted) ?? null;
+}
+
+function admissionAfterPrHeadDispatch(admission = {}, prHeadLease = {}) {
+  const handled = new Set(Array.isArray(prHeadLease.handledMissionIds) ? prHeadLease.handledMissionIds : []);
+  const newlyOccupied = new Set(Array.isArray(prHeadLease.newlyOccupiedMissionIds) ? prHeadLease.newlyOccupiedMissionIds : []);
+  const dispatchedByMission = new Map(
+    (Array.isArray(prHeadLease.dispatched) ? prHeadLease.dispatched : [])
+      .map((item) => [text(item?.missionId).toLowerCase(), item]),
+  );
+  const activeById = new Map(
+    (Array.isArray(admission.activeMissions) ? admission.activeMissions : [])
+      .map((mission) => [text(mission?.missionId).toLowerCase(), mission])
+      .filter(([missionId]) => missionId),
+  );
+  for (const missionId of newlyOccupied) {
+    const mission = activeById.get(missionId) ?? missionById(admission, missionId);
+    if (!mission) continue;
+    const dispatched = dispatchedByMission.get(missionId) ?? {};
+    activeById.set(missionId, Object.freeze({
+      ...mission,
+      dispatch: Object.freeze({
+        ...(mission.dispatch ?? {}),
+        status: 'running',
+        adapter: text(dispatched.adapter),
+        workerId: text(dispatched.workerId),
+        capacityReceiptId: text(dispatched.capacityReceiptId),
+      }),
+    }));
+  }
+  const selectedMissionId = text(admission?.selectedMission?.missionId).toLowerCase();
+  const selectedRunning = text(activeById.get(selectedMissionId)?.dispatch?.status).toLowerCase() === 'running';
+  return Object.freeze({
+    ...admission,
+    selectedMission: handled.has(selectedMissionId) && !selectedRunning
+      ? null
+      : admission.selectedMission,
+    activeMissions: Object.freeze([...activeById.values()]),
+    runnableMissions: Object.freeze(
+      (Array.isArray(admission.runnableMissions) ? admission.runnableMissions : [])
+        .filter((mission) => !handled.has(text(mission?.missionId).toLowerCase())),
+    ),
+  });
+}
+
+function capacityReceiptKey(value = {}) {
+  const adapter = text(value?.adapter).toLowerCase();
+  const receiptId = text(value?.receiptId ?? value?.selectedCapacityReceiptId ?? value?.capacityReceiptId);
+  return adapter && receiptId ? `${adapter}:${receiptId}` : '';
+}
+
 export async function dispatchElasticGoalBuildsFromCanonicalMain(admission = {}, options = {}) {
   const normalized = options && typeof options === 'object' ? options : {};
   const env = normalized.env || process.env;
@@ -145,13 +205,66 @@ export async function dispatchElasticGoalBuildsFromCanonicalMain(admission = {},
     snapshotRoot: paths.snapshotRoot,
   });
   const sourceRevision = canonicalElasticSourceRevision(authoritative);
-  return dispatchElasticGoalBuildsCore(admission, {
+  const capacityRouting = normalized.capacityRouting ?? (sourceRevision
+    ? await (normalized.readCapacityRouting ?? readElasticMissionControllerCapacityRoutingInput)({
+        root: paths.workspaceRoot,
+        repoRoot: paths.repoRoot,
+        nowUtc: now.toISOString(),
+        sourceRevision,
+        env,
+      })
+    : null);
+  const dispatchPrHeadBuilds = normalized.dispatchPrHeadBuilds ?? dispatchElasticPrHeadBuildsFromCanonicalLease;
+  const prHeadLease = await dispatchPrHeadBuilds(admission, {
     ...normalized,
     env,
     now,
     paths,
     sourceRevision,
-    resolveCapacityCandidates: normalized.resolveCapacityCandidates ?? resolveElasticExternalCapacityCandidates,
+    capacityRouting,
+  });
+  const adjustedAdmission = admissionAfterPrHeadDispatch(admission, prHeadLease);
+  const consumedCapacity = new Set(
+    (Array.isArray(prHeadLease?.dispatched) ? prHeadLease.dispatched : [])
+      .map(capacityReceiptKey)
+      .filter(Boolean),
+  );
+  const baseResolver = normalized.resolveCapacityCandidates ?? resolveElasticExternalCapacityCandidates;
+  const resolveCapacityCandidates = (...args) => baseResolver(...args)
+    .filter((candidate) => !consumedCapacity.has(capacityReceiptKey(candidate)));
+  const prePr = await dispatchElasticGoalBuildsCore(adjustedAdmission, {
+    ...normalized,
+    env,
+    now,
+    paths,
+    sourceRevision,
+    capacityRouting,
+    resolveCapacityCandidates,
+  });
+  const dispatched = Object.freeze([
+    ...(Array.isArray(prHeadLease?.dispatched) ? prHeadLease.dispatched : []),
+    ...(Array.isArray(prePr?.dispatched) ? prePr.dispatched : []),
+  ]);
+  const held = Object.freeze([
+    ...(Array.isArray(prHeadLease?.held) ? prHeadLease.held : []),
+    ...(Array.isArray(prePr?.held) ? prePr.held : []),
+  ]);
+  return Object.freeze({
+    ...prePr,
+    ok: prePr?.ok === true,
+    classification: dispatched.length
+      ? 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE'
+      : held.length
+        ? 'ELASTIC_GOAL_BUILD_DISPATCH_HELD'
+        : prePr?.classification,
+    dispatchCount: dispatched.length,
+    dispatched,
+    held,
+    prHeadLease,
+    blockedLaneDoesNotStallFleet: held.length === 0 || dispatched.length > 0,
+    resourceDisjointOneWriterProven: prePr?.resourceDisjointOneWriterProven !== false,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
   });
 }
 
