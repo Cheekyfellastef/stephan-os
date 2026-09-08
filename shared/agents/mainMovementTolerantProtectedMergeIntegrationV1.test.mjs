@@ -19,10 +19,14 @@ const personalMerge = await readFile(
   'utf8',
 );
 
-test('protected workflow derives material authorization from the owner comment, never caller workflow inputs', () => {
-  assert.doesNotMatch(workflow, /^      authorization_head:\s*$/m);
-  assert.doesNotMatch(workflow, /^      authorization_head_tree:\s*$/m);
-  assert.doesNotMatch(workflow, /^      authorization_base:\s*$/m);
+test('protected workflow derives material authorization from the owner comment and ignores compatibility inputs', () => {
+  for (const field of ['authorization_head', 'authorization_head_tree', 'authorization_base']) {
+    assert.match(
+      workflow,
+      new RegExp(`^      ${field}:\\n        description: Deprecated compatibility placeholder; ignored by protected execution\\n        required: false\\n        default: ''\\n        type: string$`, 'm'),
+    );
+    assert.doesNotMatch(workflow, new RegExp(`inputs\\.${field}\\b`));
+  }
   assert.match(workflow, /authorization_head:\s*\$\{\{ steps\.authorization\.outputs\.authorization_head \}\}/);
   assert.match(workflow, /authorization_head_tree:\s*\$\{\{ steps\.authorization\.outputs\.authorization_head_tree \}\}/);
   assert.match(workflow, /authorization_base:\s*\$\{\{ steps\.authorization\.outputs\.authorization_base \}\}/);
