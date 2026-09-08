@@ -12,6 +12,8 @@ const CLEANUP_PR_NUMBER = 2097;
 const CLEANUP_BRANCH = 'fix/mission-worker-cleanup-launch-receipt-proof-v1';
 const CLEANUP_RESERVE_PR_NUMBER = 2126;
 const CLEANUP_RESERVE_BRANCH = 'fix/mission-worker-failure-cleanup-reserve-v1';
+const POST_AUTHORITY_OBSERVATION_PR_NUMBER = 2152;
+const POST_AUTHORITY_OBSERVATION_BRANCH = 'fix/mission-worker-post-authority-observation-v1';
 const ORPHAN_CAPABILITY_PR_NUMBER = 2105;
 const ORPHAN_CAPABILITY_BRANCH = 'fix/mission-worker-orphan-capability-starttime-v1';
 const ORPHAN_CAPABILITY_HEAD = '5e04abd527ae76f782799014e1c84c150ae0e7fe';
@@ -204,6 +206,45 @@ function inspectCleanupReserveSource(source) {
   return findings;
 }
 
+function inspectPostAuthorityObservationSource(source) {
+  const findings = [...inspectCleanupReserveSource(source)];
+  const observer = functionSlice(source, 'Wait-MissionWorkerSelfCleanupObservation');
+  const requireIn = (area, pattern, code, summary) => {
+    if (!pattern.test(area)) findings.push(finding(code, summary));
+  };
+  const forbidIn = (area, pattern, code, summary) => {
+    if (pattern.test(area)) findings.push(finding(code, summary));
+  };
+
+  if (!observer) {
+    findings.push(finding('mission-worker-post-authority-observer-missing', 'The bounded post-authority cleanup observer must remain present.'));
+    return findings;
+  }
+
+  requireIn(observer, /\$observationDeadlineUtc\s*=\s*\[datetime\]::UtcNow\.AddSeconds\(4\)/i, 'mission-worker-post-authority-four-second-window-missing', 'Post-authority observation must remain a fixed four-second slice.');
+  requireIn(observer, /\$reserveDeadlineUtc\s*=\s*\$script:operationDeadlineUtc\.AddSeconds\(4\)/i, 'mission-worker-post-authority-reserve-cap-missing', 'Observation must remain capped at operation deadline plus four seconds.');
+  requireIn(observer, /if\s*\(\s*\$observationDeadlineUtc\s+-gt\s+\$reserveDeadlineUtc\s*\)[\s\S]*?\$observationDeadlineUtc\s*=\s*\$reserveDeadlineUtc/i, 'mission-worker-post-authority-deadline-minimum-missing', 'Observation must select the earlier four-second deadline.');
+  requireIn(observer, /Get-ScheduledTask\s+-TaskName\s+'Stephanos Mission Orchestrator Worker'\s+-TaskPath\s+'\\'\s+-ErrorAction\s+Stop/i, 'mission-worker-post-authority-task-not-fixed', 'Observer must inspect only the fixed Mission Worker Scheduled Task.');
+  requireIn(observer, /\[string\]\$task\.State\s+-in\s+@\('Ready',\s*'Disabled'\)/i, 'mission-worker-post-authority-terminal-task-state-missing', 'Only Ready or Disabled task state may support cleanup completion.');
+  requireIn(observer, /Get-CimInstance\s+Win32_Process\s+-Filter\s+"Name = 'node\.exe'"\s+-OperationTimeoutSec\s+1\s+-ErrorAction\s+Stop/i, 'mission-worker-post-authority-node-query-not-fixed', 'Observer must use the fixed bounded Node CIM query.');
+  requireIn(observer, /foreach\s*\(\s*\$process\s+in\s+\$nodeProcesses\s*\)/i, 'mission-worker-post-authority-node-enumeration-missing', 'Every observed live Node process must be inspected explicitly.');
+  requireIn(observer, /\$executablePath\s*=\s*\[string\]\$process\.ExecutablePath/i, 'mission-worker-post-authority-executable-inspection-missing', 'Live Node executable identity must be inspected.');
+  requireIn(observer, /\$commandLine\s*=\s*\[string\]\$process\.CommandLine/i, 'mission-worker-post-authority-command-inspection-missing', 'Live Node command identity must be inspected.');
+  requireIn(observer, /IsNullOrWhiteSpace\(\$executablePath\)[^\r\n]*IsNullOrWhiteSpace\(\$commandLine\)[\s\S]*?return\s+\$false/i, 'mission-worker-post-authority-uninspectable-node-not-blocked', 'Missing live Node identity must fail closed.');
+  requireIn(observer, /\[System\.IO\.Path\]::GetFullPath\(\$executablePath\)/i, 'mission-worker-post-authority-executable-normalization-missing', 'Executable identity must be path-normalized before absence proof.');
+  requireIn(observer, /ConvertFrom-WindowsCommandLine\s+-CommandLine\s+\$commandLine/i, 'mission-worker-post-authority-command-parse-missing', 'Command identity must be parsed before absence proof.');
+  requireIn(observer, /if\s*\(\s*\$arguments\.Count\s+-eq\s+0\s*\)\s*\{\s*return\s+\$false\s*\}/i, 'mission-worker-post-authority-malformed-command-not-blocked', 'Unparseable command identity must fail closed.');
+  requireIn(observer, /Test-ExactCanonicalWorkerProcess\s+-Process\s+\$process\s+-ExpectedRepoRoot\s+\$ExpectedRepoRoot/i, 'mission-worker-post-authority-canonical-classifier-missing', 'Inspectable Node processes must reach the existing exact canonical worker classifier.');
+  requireIn(observer, /\$workers\.Count\s+-eq\s+0[^\r\n]*\[datetime\]::UtcNow\s+-lt\s+\$observationDeadlineUtc/i, 'mission-worker-post-authority-absence-proof-missing', 'Worker absence may be proven only while the bounded observation window is still open.');
+  requireIn(observer, /catch\s*\{\s*return\s+\$false\s*\}/i, 'mission-worker-post-authority-observation-failure-not-blocked', 'Observer query, path and parsing failures must fail closed.');
+  requireIn(source, /Wait-MissionWorkerSelfCleanupObservation\s+-ExpectedRepoRoot\s+\$repoRoot/i, 'mission-worker-post-authority-observer-not-wired', 'Startup cleanup failure path must invoke the bounded observer.');
+  requireIn(source, /MISSION_WORKER_DEADLINE_SELF_CLEANUP_NOT_PROVEN/, 'mission-worker-post-authority-typed-blocker-missing', 'Failed post-authority observation must preserve the typed cleanup blocker.');
+
+  forbidIn(observer, /\$script:operationDeadlineUtc\s*=/i, 'mission-worker-post-authority-deadline-mutation-forbidden', 'Observation may not extend or mutate restart authority.');
+  forbidIn(observer, /\bStop-Process\b|\bStop-ScheduledTask\b|\bStart-ScheduledTask\b|\bStart-Process\b|\.Kill\s*\(|Invoke-Expression|\biex\b|cmd(?:\.exe)?\s+\/c|powershell(?:\.exe)?\s+-command/i, 'mission-worker-post-authority-mutation-forbidden', 'Observation may not gain process, task or generic shell mutation authority.');
+  return findings;
+}
+
 function inspectOrphanCapabilitySource(source) {
   const findings = [];
   const selector = functionSlice(source, 'Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat');
@@ -255,6 +296,7 @@ function inspectOrphanCapabilitySource(source) {
 function profileFor(input = {}) {
   if (Number(input.prNumber) === CLEANUP_PR_NUMBER && text(input.branch) === CLEANUP_BRANCH) return 'cleanup';
   if (Number(input.prNumber) === CLEANUP_RESERVE_PR_NUMBER && text(input.branch) === CLEANUP_RESERVE_BRANCH) return 'cleanup-reserve';
+  if (Number(input.prNumber) === POST_AUTHORITY_OBSERVATION_PR_NUMBER && text(input.branch) === POST_AUTHORITY_OBSERVATION_BRANCH) return 'post-authority-observation';
   if (Number(input.prNumber) === ORPHAN_CAPABILITY_PR_NUMBER && text(input.branch) === ORPHAN_CAPABILITY_BRANCH) return 'orphan-capability';
   return null;
 }
@@ -285,6 +327,8 @@ export function analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input = {}) 
     findings.push(...inspectCleanupSource(sources[0].content));
   } else if (profile === 'cleanup-reserve') {
     findings.push(...inspectCleanupReserveSource(sources[0].content));
+  } else if (profile === 'post-authority-observation') {
+    findings.push(...inspectPostAuthorityObservationSource(sources[0].content));
   } else {
     if (sourceHead !== ORPHAN_CAPABILITY_HEAD || sources[0].blobSha !== ORPHAN_CAPABILITY_BLOB_SHA) {
       findings.push(finding('mission-worker-orphan-exact-source-not-pinned', 'Orphan capability approval requires the exact expected source head and full runtime-script blob.'));
@@ -297,8 +341,10 @@ export function analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input = {}) 
     ? 'mission-worker-cleanup'
     : profile === 'cleanup-reserve'
       ? 'mission-worker-cleanup-reserve'
-      : 'mission-worker-orphan-capability';
-  const cleanupProfile = profile === 'cleanup' || profile === 'cleanup-reserve';
+      : profile === 'post-authority-observation'
+        ? 'mission-worker-post-authority-observation'
+        : 'mission-worker-orphan-capability';
+  const cleanupProfile = profile === 'cleanup' || profile === 'cleanup-reserve' || profile === 'post-authority-observation';
   return Object.freeze({
     schemaVersion: SCHEMA,
     eligible: true,
@@ -312,7 +358,8 @@ export function analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input = {}) 
         ? [
           'proofs/windows-authority/mission-worker-cleanup/launch-receipt-preferred',
           'proofs/windows-authority/mission-worker-cleanup/exact-process-capability-reverified',
-          ...(profile === 'cleanup-reserve' ? ['proofs/windows-authority/mission-worker-cleanup-reserve/derived-failure-cleanup-window'] : []),
+          ...((profile === 'cleanup-reserve' || profile === 'post-authority-observation') ? ['proofs/windows-authority/mission-worker-cleanup-reserve/derived-failure-cleanup-window'] : []),
+          ...(profile === 'post-authority-observation' ? ['proofs/windows-authority/mission-worker-post-authority-observation/fail-closed-uninspectable-node'] : []),
         ]
         : ['proofs/windows-authority/mission-worker-orphan-capability/cim-identity-stable', 'proofs/windows-authority/mission-worker-orphan-capability/same-api-starttime-rebound']),
     ]) : Object.freeze([]),
@@ -323,13 +370,17 @@ export function analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input = {}) 
     finalVerdict: clean
       ? (profile === 'cleanup-reserve'
         ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_RESERVE_CLEAN'
-        : profile === 'cleanup'
-          ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_CLEAN'
-          : 'WINDOWS_AUTHORITY_MISSION_WORKER_ORPHAN_CAPABILITY_CLEAN')
+        : profile === 'post-authority-observation'
+          ? 'WINDOWS_AUTHORITY_MISSION_WORKER_POST_AUTHORITY_OBSERVATION_CLEAN'
+          : profile === 'cleanup'
+            ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_CLEAN'
+            : 'WINDOWS_AUTHORITY_MISSION_WORKER_ORPHAN_CAPABILITY_CLEAN')
       : (profile === 'cleanup-reserve'
         ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_RESERVE_FINDINGS'
-        : profile === 'cleanup'
-          ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_FINDINGS'
-          : 'WINDOWS_AUTHORITY_MISSION_WORKER_ORPHAN_CAPABILITY_FINDINGS'),
+        : profile === 'post-authority-observation'
+          ? 'WINDOWS_AUTHORITY_MISSION_WORKER_POST_AUTHORITY_OBSERVATION_FINDINGS'
+          : profile === 'cleanup'
+            ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_FINDINGS'
+            : 'WINDOWS_AUTHORITY_MISSION_WORKER_ORPHAN_CAPABILITY_FINDINGS'),
   });
 }
