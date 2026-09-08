@@ -144,6 +144,7 @@ function isTestOrDocumentation(path) {
 
 function isOpenClawPath(path) {
   if (NATURAL_EXACT.has(path)) return false;
+  if (path.startsWith('stephanos-server/')) return false;
   return path.startsWith('integrations/openclaw/')
     || path.startsWith('openclaw/')
     || /(?:^|\/)[^/]*openclaw[^/]*\.(?:mjs|js|ps1|vbs|json)$/i.test(path)
