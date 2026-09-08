@@ -87,6 +87,8 @@ function safeHold(errors, source = {}) {
     sourceModelId: typeof source.modelId === 'string' ? source.modelId : '',
     sourceObservedAtUtc: typeof source.observedAtUtc === 'string' ? source.observedAtUtc : '',
     evaluatedAtUtc: typeof source.evaluatedAtUtc === 'string' ? source.evaluatedAtUtc : '',
+    freshnessValidUntilUtc: typeof source.freshnessValidUntilUtc === 'string' ? source.freshnessValidUntilUtc : '',
+    projectionFreshness: typeof source.projectionFreshness === 'string' ? source.projectionFreshness : 'UNKNOWN',
     state: 'SAFE_HOLD',
     valid: false,
     validationErrors: freezeList(new Set(errors)),
@@ -157,7 +159,9 @@ function componentForRole(role, sourceRecords) {
 
   const record = matches[0];
   let status = 'USABLE';
-  if (!USABLE_EPISTEMIC_STATES.has(record.epistemicStatus)) {
+  if (record.ownershipBoundary !== 'HOUSEHOLD') {
+    status = 'OWNERSHIP_NOT_HOUSEHOLD';
+  } else if (!USABLE_EPISTEMIC_STATES.has(record.epistemicStatus)) {
     status = record.epistemicStatus === 'PROJECTED' ? 'PROJECTED_ONLY' : 'UNKNOWN_VALUE';
   } else if (!USABLE_FRESHNESS.has(record.freshness)) {
     status = 'STALE_EVIDENCE';
@@ -170,15 +174,17 @@ function componentForRole(role, sourceRecords) {
   let valueGbp = null;
   let annualValueGbp = null;
   let conversion = 'NONE';
-  if (status === 'USABLE') {
+  const retainNumericValue = status === 'USABLE' || status === 'PROJECTED_ONLY';
+  if (retainNumericValue && role.units.includes(record.unit) && typeof record.value === 'number' && Number.isFinite(record.value) && record.value >= 0) {
     if (role.section === 'ASSET' || role.section === 'LIABILITY') {
       valueGbp = record.value;
     } else {
       const annualized = annualize(record.value, record.unit);
-      if (!annualized) status = 'UNIT_MISMATCH';
-      else {
+      if (annualized) {
         annualValueGbp = annualized.annualValueGbp;
         conversion = annualized.conversion;
+      } else if (status === 'USABLE') {
+        status = 'UNIT_MISMATCH';
       }
     }
   }
@@ -271,7 +277,7 @@ export function buildOctopusWealthBalanceCashflowV1(input = {}) {
   let state;
   if (ambiguousMetricIds.length > 0 || unusableMetricIds.some((metricId) => {
     const component = components.find((entry) => entry.metricId === metricId);
-    return ['TENTACLE_MISMATCH', 'UNIT_MISMATCH', 'VALUE_NOT_NON_NEGATIVE', 'STALE_EVIDENCE'].includes(component.status);
+    return ['TENTACLE_MISMATCH', 'UNIT_MISMATCH', 'VALUE_NOT_NON_NEGATIVE', 'STALE_EVIDENCE', 'OWNERSHIP_NOT_HOUSEHOLD'].includes(component.status);
   })) {
     state = 'M2_RECONCILIATION_REQUIRED';
   } else if (assets.complete && liabilities.complete && inflows.complete && outflows.complete) {
@@ -283,6 +289,8 @@ export function buildOctopusWealthBalanceCashflowV1(input = {}) {
   const identityCore = {
     schemaVersion: OCTOPUS_WEALTH_BALANCE_CASHFLOW_SCHEMA_VERSION,
     sourceProjectionId: source.projectionId,
+    freshnessValidUntilUtc: source.freshnessValidUntilUtc,
+    projectionFreshness: source.projectionFreshness,
     components,
     balanceSheet,
     cashFlow,
@@ -296,6 +304,8 @@ export function buildOctopusWealthBalanceCashflowV1(input = {}) {
     sourceModelId: source.modelId,
     sourceObservedAtUtc: source.observedAtUtc,
     evaluatedAtUtc: source.evaluatedAtUtc,
+    freshnessValidUntilUtc: source.freshnessValidUntilUtc,
+    projectionFreshness: source.projectionFreshness,
     state,
     valid: true,
     validationErrors: Object.freeze([]),
