@@ -138,9 +138,9 @@ export async function runBattleBridgeWorkerWatchdogRunner({
 } = {}) {
   // Worker recovery is the time-critical purpose of this installed runner.
   // Publish watchdog recovery truth before auxiliary reconciliation. Once that
-  // boundary is complete, start the resource-disjoint auxiliary lanes together
-  // so a slow visibility or participant relay cannot starve construction-truth
-  // refresh from the watchdog task's bounded execution window.
+  // boundary is complete, enter construction-truth refresh first, before either
+  // auxiliary observer can execute a synchronous prefix. The three promises are
+  // then awaited together so sibling failure semantics remain unchanged.
   const watchdog = await workerWatchdog();
   let controlPlaneBootstrapRecovery = null;
   try {
@@ -154,6 +154,10 @@ export async function runBattleBridgeWorkerWatchdogRunner({
     };
   }
 
+  const criticalBacklogConveyorPromise = startAuxiliaryLane(
+    backlogConveyor,
+    'CRITICAL_BACKLOG_CONVEYOR_FAILED',
+  );
   const codexVisibilityPromise = startAuxiliaryLane(
     visibilityObserver,
     'REMOTE_CODEX_VISIBILITY_RECONCILIATION_FAILED',
@@ -161,10 +165,6 @@ export async function runBattleBridgeWorkerWatchdogRunner({
   const chatGptSharedWorkspaceRelayPromise = startAuxiliaryLane(
     participantRelay,
     'CHATGPT_SHARED_WORKSPACE_RELAY_FAILED',
-  );
-  const criticalBacklogConveyorPromise = startAuxiliaryLane(
-    backlogConveyor,
-    'CRITICAL_BACKLOG_CONVEYOR_FAILED',
   );
 
   const [
