@@ -1,5 +1,5 @@
 export const CRITICAL_BACKLOG_CONVEYOR_SCHEMA = 'stephanos.critical-backlog-conveyor.v1';
-export const CRITICAL_BACKLOG_CONVEYOR_VERSION = '1.0.1';
+export const CRITICAL_BACKLOG_CONVEYOR_VERSION = '1.0.2';
 
 export const CRITICAL_BACKLOG_DECISION = Object.freeze({
   CREATE_NEXT_MISSION: 'CREATE_NEXT_MISSION',
@@ -21,7 +21,7 @@ const SAFE_SOURCE_SEGMENT = /^\.?[a-z0-9][a-z0-9._-]*$/i;
 const FORBIDDEN_PATH = /(^|\/)(apps\/stephanos\/dist|runtime|runtime-data|data|tmp|\.git|node_modules)(\/|$)|(^|\/)\.env(?:\.|$)|\.(?:pem|pfx|key)$/i;
 const ELASTIC_GOAL_MISSION_ID = /^critical-[1-9]\d*-elastic-goal(?:$|[-_.])/;
 const TERMINAL_PHASES = new Set(['COMPLETE', 'CANCELLED']);
-const PARKED_PHASES = new Set(['AWAITING_OPERATOR_APPROVAL']);
+const PARKED_PHASES = new Set(['AWAITING_OPERATOR_APPROVAL', 'MERGE_PULL_REQUEST']);
 const HOLD_PHASES = new Set(['BLOCKED']);
 
 function text(value, fallback = '') {
