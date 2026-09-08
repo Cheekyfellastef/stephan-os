@@ -4,6 +4,37 @@ import test from 'node:test';
 
 const source = await readFile(new URL('./windows/restart-approved-stephanos-runtime.ps1', import.meta.url), 'utf8');
 
+test('post-authority cleanup observation uses a fixed four-second slice inside child-exit reserve', () => {
+  const observer = sliceFunction('Wait-MissionWorkerSelfCleanupObservation', 'Write-BoundedAtomicJson');
+  assert.match(observer, /\$observationDeadlineUtc = \[datetime\]::UtcNow\.AddSeconds\(4\)/);
+  assert.match(observer, /\$reserveDeadlineUtc = \$script:operationDeadlineUtc\.AddSeconds\(4\)/);
+  assert.match(observer, /if \(\$observationDeadlineUtc -gt \$reserveDeadlineUtc\)/);
+  assert.match(observer, /\$observationDeadlineUtc = \$reserveDeadlineUtc/);
+  assert.match(observer, /while \(\[datetime\]::UtcNow -lt \$observationDeadlineUtc\)/);
+  assert.doesNotMatch(observer, /\$script:operationDeadlineUtc\s*=/);
+});
+
+test('self-cleanup observation requires terminal fixed task and absent canonical worker', () => {
+  const observer = sliceFunction('Wait-MissionWorkerSelfCleanupObservation', 'Write-BoundedAtomicJson');
+  assert.ok(observer.includes("Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker' -TaskPath '\\' -ErrorAction Stop"));
+  assert.match(observer, /\$task -and \[string\]\$task.State -in @\('Ready', 'Disabled'\)/);
+  assert.doesNotMatch(observer, /'Running'|'Queued'/);
+  assert.match(observer, /Get-CimInstance Win32_Process[^\n]*-OperationTimeoutSec 1 -ErrorAction Stop/);
+  assert.match(observer, /Test-ExactCanonicalWorkerProcess -Process \$_ -ExpectedRepoRoot \$ExpectedRepoRoot/);
+  assert.match(observer, /\$workers.Count -eq 0 -and \[datetime\]::UtcNow -lt \$observationDeadlineUtc/);
+  assert.match(observer, /catch \{ return \$false \}/);
+  assert.doesNotMatch(observer, /Stop-Process|Stop-ScheduledTask|Start-ScheduledTask|Start-Process|\.Kill\(|Write-|Set-Content|Remove-|Invoke-|New-Item/);
+});
+
+test('failed cleanup preserves its typed blocker after observation and cannot claim recovery', () => {
+  const start = source.indexOf("$cleanupBlocker = [string]$_.Exception.Message", source.indexOf('if ($startupBlocker)'));
+  const end = source.indexOf('Remove-ExactOwnedMissionWorkerRestartRequest', start);
+  const fallback = source.slice(start, end);
+  assert.match(fallback, /Wait-MissionWorkerSelfCleanupObservation -ExpectedRepoRoot \$repoRoot/);
+  assert.match(fallback, /MISSION_WORKER_DEADLINE_SELF_CLEANUP_NOT_PROVEN/);
+  assert.doesNotMatch(fallback, /Wait-UntilOperationDeadline|\$cleanupBlocker\s*=\s*''|\$cleanupCompleted\s*=\s*\$true/);
+});
+
 function sliceFunction(name, nextName) {
   const start = source.indexOf(`function ${name}`);
   assert.notEqual(start, -1, `${name} must exist`);

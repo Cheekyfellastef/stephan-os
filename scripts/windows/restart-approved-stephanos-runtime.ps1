@@ -137,6 +137,35 @@ function New-CryptographicInvocationId {
     return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
 }
 
+function Wait-MissionWorkerSelfCleanupObservation {
+    param([Parameter(Mandatory = $true)][string]$ExpectedRepoRoot)
+
+    # Observation only: never extend the restart/mutation deadline. This slice
+    # is capped within the existing ten-second child-exit reserve, even if the
+    # caller reaches it late. The launcher owns cancellation and self-cleanup.
+    $observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(4)
+    $reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds(4)
+    if ($observationDeadlineUtc -gt $reserveDeadlineUtc) {
+        $observationDeadlineUtc = $reserveDeadlineUtc
+    }
+    while ([datetime]::UtcNow -lt $observationDeadlineUtc) {
+        try {
+            $task = Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker' -TaskPath '\' -ErrorAction Stop
+            if ($task -and [string]$task.State -in @('Ready', 'Disabled')) {
+                $workers = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -OperationTimeoutSec 1 -ErrorAction Stop | Where-Object {
+                    Test-ExactCanonicalWorkerProcess -Process $_ -ExpectedRepoRoot $ExpectedRepoRoot
+                })
+                if ($workers.Count -eq 0 -and [datetime]::UtcNow -lt $observationDeadlineUtc) {
+                    return $true
+                }
+            }
+        }
+        catch { return $false }
+        Start-Sleep -Milliseconds 100
+    }
+    return $false
+}
+
 function Write-BoundedAtomicJson {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -1379,9 +1408,7 @@ try {
                     if ($cleanupBlocker -notmatch '^[A-Z0-9_:-]{3,120}$') {
                         $cleanupBlocker = 'MISSION_WORKER_POST_START_CLEANUP_FAILED'
                     }
-                    if (-not (Wait-UntilOperationDeadline -Condition {
-                        [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -ne 'Running'
-                    })) {
+                    if (-not (Wait-MissionWorkerSelfCleanupObservation -ExpectedRepoRoot $repoRoot)) {
                         $cleanupBlocker = 'MISSION_WORKER_DEADLINE_SELF_CLEANUP_NOT_PROVEN'
                     }
                 }
