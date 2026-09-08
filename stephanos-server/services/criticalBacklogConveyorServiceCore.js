@@ -217,7 +217,7 @@ function exactElasticExternalGrant(mission, candidate, sourceRevision, now) {
     action?.executable !== true
     || action?.actionKind !== 'agent-handoff'
     || text(action.adapter).toLowerCase() !== candidate.adapter
-    || text(action.workerId) !== candidate.workerId
+    || text(action.owner) !== candidate.workerId
   ) return null;
   const missionId = text(actionState.missionId).toLowerCase();
   const actionId = text(action.actionId).toLowerCase();
