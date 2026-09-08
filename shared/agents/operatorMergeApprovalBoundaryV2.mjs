@@ -138,6 +138,8 @@ export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
 
 export const WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1 = Object.freeze([
   'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs',
+  'shared/agents/windowsAuthorityIgnitionConvergenceReviewV1.mjs',
+  'shared/agents/windowsAuthorityMissionWorkerCleanupReviewV1.mjs',
   'shared/agents/windowsAuthorityWorkerWatchdogReviewV1.mjs',
   'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
 ]);

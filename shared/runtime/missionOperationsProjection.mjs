@@ -73,6 +73,14 @@ function normalizeApproval(approval = {}) {
   };
 }
 
+function normalizeDeploymentStep(step = {}) {
+  return {
+    status: text(step.status, 'pending').toLowerCase(),
+    completedAt: iso(step.completedAt),
+    commitSha: text(step.commitSha),
+  };
+}
+
 function deriveOverallState({ declaredState, blockers, approvals, checks, finalVerdict }) {
   if (blockers.length) return 'BLOCKED';
   if (approvals.some((approval) => approval.status === 'pending')) return 'AWAITING_APPROVAL';
@@ -112,6 +120,8 @@ export function buildMissionOperationsProjection(input = {}, options = {}) {
     role: text(agent.role, 'support'),
     status: text(agent.status, 'unknown'),
   }));
+  const repairSource = input.repair || mission.repair || {};
+  const deploymentSource = input.deployment || mission.deployment || {};
 
   const warnings = [];
   if (!updatedAt) warnings.push('No trustworthy updated timestamp is available.');
@@ -159,6 +169,17 @@ export function buildMissionOperationsProjection(input = {}, options = {}) {
       checks,
       requiredCheckCount: checks.filter((check) => check.required).length,
       passingCheckCount: checks.filter((check) => check.required && check.status === 'success').length,
+    },
+    repair: {
+      currentRound: Number.isInteger(repairSource.currentRound) ? repairSource.currentRound : 0,
+      maximumRounds: Number.isInteger(repairSource.maximumRounds) ? repairSource.maximumRounds : 3,
+      history: list(repairSource.history),
+    },
+    deployment: {
+      sync: normalizeDeploymentStep(deploymentSource.sync),
+      build: normalizeDeploymentStep(deploymentSource.build),
+      verify: normalizeDeploymentStep(deploymentSource.verify),
+      restart: normalizeDeploymentStep(deploymentSource.restart),
     },
     blockers,
     approvals,

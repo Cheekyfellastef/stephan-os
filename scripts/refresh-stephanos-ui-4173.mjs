@@ -217,6 +217,7 @@ export async function waitForExactHeadProof({
 
 export async function refreshStephanosUi4173({
   platform = process.platform,
+  expectedHead = '',
   currentHeadFn = getCurrentGitHead,
   runStepFn = runCheckedStep,
   probeHealthFn = probeUiHealth,
@@ -225,16 +226,25 @@ export async function refreshStephanosUi4173({
   startServerFn = startStaticServerDetached,
   waitForExactHeadFn = waitForExactHeadProof,
 } = {}) {
-  const currentHead = currentHeadFn({ cwd: repoRoot });
+  const expected = String(expectedHead || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(expected)) throw new Error('UI_4173_REFRESH_EXPECTED_HEAD_REQUIRED');
+  const proveExpectedHead = () => {
+    const observed = String(currentHeadFn({ cwd: repoRoot, platform }) || '').trim().toLowerCase();
+    if (observed !== expected) throw new Error('UI_4173_REFRESH_EXPECTED_HEAD_MISMATCH');
+    return observed;
+  };
+  const currentHead = proveExpectedHead();
   const build = resolveNpmStep(platform, 'stephanos:build');
   const verify = resolveNpmStep(platform, 'stephanos:verify');
 
   runStepFn('build-current-ui', build.command, build.args);
   runStepFn('verify-current-ui', verify.command, verify.args);
+  proveExpectedHead();
 
   const before = await probeHealthFn();
   let restart = { requested: false, accepted: false };
   if (before.reachable) {
+    proveExpectedHead();
     const restartResult = await requestRestartFn();
     restart = { requested: true, ...restartResult };
     const stopped = await waitForHealthStateFn({ expectedReachable: false });
@@ -243,8 +253,9 @@ export async function refreshStephanosUi4173({
     }
   }
 
+  proveExpectedHead();
   const start = startServerFn();
-  const exactHead = await waitForExactHeadFn({ currentHead });
+  const exactHead = await waitForExactHeadFn({ currentHead: expected });
   if (!exactHead.ready) {
     throw new Error(`Replacement 4173 server failed exact-head proof (${exactHead.error || 'unknown proof failure'}). Logs: ${start.logPath || 'unavailable'}`);
   }
@@ -262,7 +273,9 @@ export async function refreshStephanosUi4173({
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    const result = await refreshStephanosUi4173();
+    const expectedHeadIndex = process.argv.indexOf('--expected-head');
+    const expectedHead = expectedHeadIndex >= 0 ? process.argv[expectedHeadIndex + 1] : '';
+    const result = await refreshStephanosUi4173({ expectedHead });
     console.log(`[UI 4173 REFRESH] result=${JSON.stringify(result)}`);
     process.exitCode = 0;
   } catch (error) {

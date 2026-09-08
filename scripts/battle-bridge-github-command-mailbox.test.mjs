@@ -5,10 +5,12 @@ import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  BATTLE_BRIDGE_MAILBOX_MAX_RECEIPT_PUBLICATION_ATTEMPTS_PER_CYCLE,
   buildRejectedMailboxTerminalReceipt,
   checkpointAcceptedMailboxReceipt,
   checkpointMailboxReceiptPublication,
   checkpointTerminalMailboxReceipt,
+  createBoundedMailboxReceiptPublisher,
   createSanitizedMailboxReceiptProjection,
   createWindowsSafeMailboxReceiptFilename,
   flushMailboxReceiptPublicationOutbox,
@@ -144,6 +146,8 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(installer, /New-ScheduledTaskAction -Execute \$wscriptExe/);
   assert.match(installer, /run-stephanos-scheduled-task-windowless\.vbs/);
   assert.match(installer, /battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
+  assert.match(installer, /runnerPath = \(Resolve-Path[\s\S]{0,180}battle-bridge-github-command-mailbox-outbox-guard-v1\.mjs/);
+  assert.match(installer, /childRunnerPath = \(Resolve-Path[\s\S]{0,180}battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
   assert.match(installer, /receiptIndexEnabled = \$true/);
   assert.match(installer, /\/\/B \/\/NoLogo/);
   assert.match(installer, /github-command-mailbox/);
@@ -169,7 +173,7 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.doesNotMatch(windowlessLauncher, /WScript\.Arguments\(1\)|cmd\.exe|Invoke-Expression/i);
 
   assert.match(hiddenLauncher, /Documents\\GitHub\\stephan-os/);
-  assert.match(hiddenLauncher, /battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
+  assert.match(hiddenLauncher, /battle-bridge-github-command-mailbox-outbox-guard-v1\.mjs/);
   assert.doesNotMatch(hiddenLauncher, /scripts\\battle-bridge-github-command-mailbox\.mjs/);
   assert.match(hiddenLauncher, /Get-Command node\.exe/);
   assert.match(hiddenLauncher, /\*> \$null/);
@@ -254,6 +258,116 @@ test('safe owner rejection is terminalized once without an accepted state', () =
   assert.equal(writes.length, 1);
   assert.equal(publications.length, 1);
   assert.deepEqual(state.consumedRequestIds, ['req-1507-rejected-1']);
+});
+
+test('expired protected merge rejection is terminalized from the selector allowlist', () => {
+  const rejection = {
+    blocker: 'PROTECTED_MERGE_EXPIRED',
+    commentUrl: 'https://github.com/Cheekyfellastef/stephan-os/issues/1507#issuecomment-8',
+    command: {
+      schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+      requestId: 'req-protected-merge-expired-1',
+      operation: 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE',
+      repository: 'Cheekyfellastef/stephan-os',
+      issueNumber: 1507,
+      branch: 'main',
+      operatorApproval: 'operator-approved',
+      expectedHead: 'a'.repeat(40),
+      expiresAt: '2026-08-11T11:00:00.000Z',
+    },
+  };
+  const receipt = buildRejectedMailboxTerminalReceipt(rejection, '2026-08-11T11:30:00.000Z');
+  assert.equal(receipt.state, 'BLOCKED');
+  assert.equal(receipt.acceptedAt, '');
+  assert.equal(receipt.blocker, 'PROTECTED_MERGE_EXPIRED');
+});
+
+test('look-alike protected merge rejection outside the selector allowlist is rejected', () => {
+  assert.throws(() => buildRejectedMailboxTerminalReceipt({
+    blocker: 'PROTECTED_MERGE_FORGED_TERMINAL_CODE',
+    command: {
+      requestId: 'req-protected-merge-forged-1',
+      operation: 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE',
+    },
+  }, '2026-08-11T11:30:00.000Z'), /MAILBOX_REJECTION_RECEIPT_INVALID/);
+});
+
+test('one shared publication budget pre-defers sustained rejection debt without loss or identity drift', () => {
+  assert.equal(BATTLE_BRIDGE_MAILBOX_MAX_RECEIPT_PUBLICATION_ATTEMPTS_PER_CYCLE, 1);
+  const oldReceipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'req-1507-old-outbox-1',
+    operation: 'READ_DEPLOYMENT_STATUS',
+    state: 'BLOCKED',
+    blocker: 'RECEIPT_PUBLICATION_FAILED',
+    completedAt: '2026-08-11T11:29:00.000Z',
+  };
+  const state = {
+    consumedRequestIds: [],
+    acceptedRequestIds: [],
+    pendingReceiptPublications: [{
+      publicationId: 'req-1507-old-outbox-1:BLOCKED:2026-08-11T11:29:00.000Z',
+      receipt: oldReceipt,
+    }],
+  };
+  const networkAttempts = [];
+  const budget = createBoundedMailboxReceiptPublisher({
+    publish: (receipt) => {
+      networkAttempts.push(receipt.requestId);
+      return { ok: false, blocker: 'SIMULATED_PUBLICATION_OUTAGE' };
+    },
+  });
+  const flushed = flushMailboxReceiptPublicationOutbox(state, {
+    publish: budget.publish,
+    persist: () => {},
+  });
+  assert.deepEqual(flushed, { attemptedCount: 1, publishedCount: 0, pendingCount: 1 });
+
+  const rejections = Array.from({ length: 150 }, (_, index) => {
+    const requestId = `req-1507-rejected-${String(index).padStart(4, '0')}`;
+    return {
+      blocker: 'COMMAND_EXPIRY_TOO_FAR_AHEAD',
+      commentUrl: `https://github.com/Cheekyfellastef/stephan-os/issues/1507#issuecomment-${index + 10}`,
+      command: {
+        schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+        requestId,
+        operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+        repository: 'Cheekyfellastef/stephan-os',
+        issueNumber: 1507,
+        branch: 'main',
+        operatorApproval: 'operator-approved',
+        expectedHead: 'a'.repeat(40),
+        expiresAt: '2026-08-11T18:00:00.000Z',
+      },
+    };
+  });
+  const terminalized = terminalizeRejectedMailboxCommands(state, rejections, {
+    now: () => new Date('2026-08-11T11:30:00.000Z'),
+    write: (receipt) => ({ ref: `receipts/github-command-mailbox/${receipt.requestId}.json` }),
+    publish: budget.publish,
+    persist: () => {},
+  });
+
+  assert.equal(terminalized.length, 150);
+  assert.deepEqual(networkAttempts, ['req-1507-old-outbox-1']);
+  assert.deepEqual(budget.snapshot(), { maxAttempts: 1, attemptedCount: 1, deferredCount: 150 });
+  assert.equal(state.pendingReceiptPublications.length, 151);
+  assert.equal(new Set(state.pendingReceiptPublications.map((entry) => entry.publicationId)).size, 151);
+  assert.deepEqual(
+    state.pendingReceiptPublications.slice(1).map((entry) => entry.receipt.requestId),
+    rejections.map((rejection) => rejection.command.requestId),
+  );
+  assert.deepEqual(state.consumedRequestIds, rejections.map((rejection) => rejection.command.requestId));
+});
+
+test('canonical mailbox wires the shared publication budget across every receipt publication phase', async () => {
+  const source = await readFile(mailboxSourcePath, 'utf8');
+  assert.match(source, /flushMailboxReceiptPublicationOutbox\(state, \{\s*publish: publicationBudget\.publish,/);
+  assert.match(source, /terminalizeRejectedMailboxCommands\(state, batch\.terminalRejections, \{\s*now,\s*publish: publicationBudget\.publish,/);
+  assert.equal(
+    [...source.matchAll(/checkpointMailboxReceiptPublication\(state, publishable, publicationBudget\.publish\(publishable\)\)/g)].length,
+    2,
+  );
 });
 
 test('failed receipt publication is retried from outbox without replaying the command', () => {

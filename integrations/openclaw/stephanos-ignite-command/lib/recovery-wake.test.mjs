@@ -85,6 +85,76 @@ test('authenticated OpenClaw plugin host is a bounded fallback when /identity se
   assert.equal(writtenProof.hostPid, 4321);
 });
 
+test('failed fixed adapter projects only an allowlisted blocker code and never raw stderr', async () => {
+  const specific = await wakeBattleBridgeRecoveryMesh({
+    platform: 'win32',
+    env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    authenticatedContext,
+    nonce: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    fetchFn: identityFetch,
+    writeHostProofFn: ({ proof }) => ({ proofId: proof.proofId }),
+    spawnSyncFn: () => ({
+      status: 1,
+      stderr: 'RECOVERY_MESH_TASK_NOT_INSTALLED',
+    }),
+  });
+  assert.deepEqual(specific, {
+    ok: false,
+    blocker: 'RECOVERY_MESH_TASK_NOT_INSTALLED',
+    exitCode: 1,
+  });
+
+  const opaque = await wakeBattleBridgeRecoveryMesh({
+    platform: 'win32',
+    env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    authenticatedContext,
+    nonce: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+    fetchFn: identityFetch,
+    writeHostProofFn: ({ proof }) => ({ proofId: proof.proofId }),
+    spawnSyncFn: () => ({ status: 5, stderr: 'C:\\private\\credential-shaped-path access denied' }),
+  });
+  assert.deepEqual(opaque, {
+    ok: false,
+    blocker: 'RECOVERY_WAKE_FIXED_ADAPTER_FAILED',
+    exitCode: 5,
+  });
+  assert.doesNotMatch(JSON.stringify(opaque), /private|credential|Stephan/i);
+});
+
+test('failed fixed adapter accepts a complete PowerShell FullyQualifiedErrorId', async () => {
+  const result = await wakeBattleBridgeRecoveryMesh({
+    platform: 'win32',
+    env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    authenticatedContext,
+    nonce: 'cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa',
+    fetchFn: identityFetch,
+    writeHostProofFn: ({ proof }) => ({ proofId: proof.proofId }),
+    spawnSyncFn: () => ({ status: 1, stderr: '+ FullyQualifiedErrorId : OPENCLAW_HOST_PROOF_REQUIRED' }),
+  });
+  assert.deepEqual(result, { ok: false, blocker: 'OPENCLAW_HOST_PROOF_REQUIRED', exitCode: 1 });
+});
+
+test('quoted source, prose, ambiguous codes, and malformed qualified identifiers fail to the generic blocker', async () => {
+  const outputs = [
+    "At adapter.ps1:27 throw 'OPENCLAW_HOST_PROOF_REQUIRED'",
+    'adapter failed because OPENCLAW_HOST_PROOF_REQUIRED was mentioned in prose',
+    'OPENCLAW_HOST_PROOF_REQUIRED\nRECOVERY_MESH_TASK_NOT_INSTALLED',
+    'FullyQualifiedErrorId : OPENCLAW_HOST_PROOF_REQUIRED,RemoteException',
+  ];
+  for (const [index, stderr] of outputs.entries()) {
+    const result = await wakeBattleBridgeRecoveryMesh({
+      platform: 'win32',
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+      authenticatedContext,
+      nonce: `${String(index + 1).repeat(8)}-bbbb-cccc-dddd-eeeeeeeeeeee`,
+      fetchFn: identityFetch,
+      writeHostProofFn: ({ proof }) => ({ proofId: proof.proofId }),
+      spawnSyncFn: () => ({ status: 1, stderr }),
+    });
+    assert.deepEqual(result, { ok: false, blocker: 'RECOVERY_WAKE_FIXED_ADAPTER_FAILED', exitCode: 1 });
+  }
+});
+
 test('non-Windows, unauthenticated, identity-less and failed adapter calls fail closed', async () => {
   assert.equal((await wakeBattleBridgeRecoveryMesh({ platform: 'linux' })).blocker, 'RECOVERY_WAKE_WINDOWS_REQUIRED');
   assert.equal((await wakeBattleBridgeRecoveryMesh({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\Stephan Callear' }, fetchFn: identityFetch })).blocker, 'RECOVERY_WAKE_OPENCLAW_AUTH_REQUIRED');
