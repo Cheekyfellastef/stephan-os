@@ -403,6 +403,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   deliveryEvidenceLoader = loadScopedDeliveryStatusEvidence,
   deliveryProjectionBuilder = buildScopedDeliveryStatusProjection,
   recordBuilder = buildChatGptBridgeRecord,
+  reconcileInboxFn = async () => ({ ok: true }),
   answerQuestionFn = answerStephanosWorkspaceQuestionRecord,
   persistConversationCanvasFn = persistStephanosConversationCanvasFromPersistedQaV1,
   writeAtomicJsonFn = writeAtomicJson,
@@ -651,6 +652,20 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         recordExistsFn,
         writeAtomicJsonFn,
       });
+      if (primaryWrite.ok) {
+        try {
+          const reconciled = await reconcileInboxFn({
+            root: paths.workspaceRoot,
+            segments: ['inbox', messageName],
+            record: workspaceRecord,
+            resumed: primaryWrite.resumed === true,
+            writeOptions: { repoRoot: paths.repoRoot, nowMs },
+          });
+          if (reconciled?.ok !== true) primaryWrite = { ok: false, reason: reconciled?.reason || 'INBOX_RECONCILIATION_FAILED', bytes: 0 };
+        } catch {
+          primaryWrite = { ok: false, reason: 'INBOX_RECONCILIATION_FAILED', bytes: 0 };
+        }
+      }
       deliveryStatus = primaryWrite.ok ? 'WORKSPACE_WRITE_PASS' : 'WORKSPACE_WRITE_FAILED';
     }
   }
