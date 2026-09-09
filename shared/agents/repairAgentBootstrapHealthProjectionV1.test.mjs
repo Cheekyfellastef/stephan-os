@@ -121,6 +121,29 @@ test('canonical raw evidence keeps all-green bootstrap no-op eligible', () => {
   assert.deepEqual(result.repairCandidates, []);
 });
 
+test('mailbox health uses canonical projection updatedAt instead of a manufactured observation time', () => {
+  const result = projectRepairAgentBootstrapCanonicalEvidenceV1({
+    expectedHead: HEAD,
+    observedAtUtc: NOW,
+    mailboxIndex: {
+      ok: true,
+      finalVerdict: 'MAILBOX_RECEIPT_INDEX_READ_READY',
+      projection: { updatedAt: '2026-09-09T08:52:00.000Z' },
+      observedAtUtc: NOW,
+    },
+    recoveryMeshStatus: healthyRecoveryMesh(),
+    recoveryLifeboatHeartbeat: healthyRecoveryLifeboat(),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'CONTROL_PLANE_BOOTSTRAP_REPAIR_REQUIRED');
+  const mailbox = result.systems.find((entry) => entry.id === 'githubCommandMailbox');
+  assert.equal(mailbox.observedAtUtc, '2026-09-09T08:52:00.000Z');
+  assert.equal(mailbox.state, 'STALE');
+  assert.equal(mailbox.repairRequired, true);
+  assert.equal(mailbox.repairRoute, 'CONTROL_PLANE_SELF_REPAIR');
+});
+
 test('healthy Recovery Mesh classification requires the complete canonical status envelope', () => {
   const mutations = [
     (record) => { delete record.schemaVersion; },
