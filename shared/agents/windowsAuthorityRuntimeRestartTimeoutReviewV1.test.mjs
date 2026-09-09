@@ -77,6 +77,10 @@ function Wait-MissionWorkerSelfCleanupObservation {
 function Invoke-PostAuthorityCleanupFailure {
   if (-not (Wait-MissionWorkerSelfCleanupObservation -ExpectedRepoRoot $repoRoot)) { $cleanupBlocker = 'MISSION_WORKER_DEADLINE_SELF_CLEANUP_NOT_PROVEN' }
 }
+function Get-IndependentRuntimeProcessObservation {
+  $runtimeProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -OperationTimeoutSec 1 -ErrorAction Stop)
+  return $runtimeProcesses
+}
 `;
 
 function input(source = SAFE_SOURCE, overrides = {}) {
@@ -129,8 +133,22 @@ test('PR #2160 exact runtime-restart timeout surface is eligible and clean when 
   assert.equal(result.runtimeMutationAllowed, false);
 });
 
-test('PR #2160 specialist rejects even one unbounded Win32 process observation', () => {
-  const unsafe = SAFE_SOURCE.replace('-OperationTimeoutSec 1 -ErrorAction SilentlyContinue', '-ErrorAction SilentlyContinue');
+test('PR #2160 specialist rejects an unbounded Win32 process observation outside inherited slices', () => {
+  const unsafe = SAFE_SOURCE.replace(
+    'Get-CimInstance Win32_Process -Filter "Name = \'node.exe\'" -OperationTimeoutSec 1 -ErrorAction Stop)\n  return $runtimeProcesses',
+    'Get-CimInstance Win32_Process -Filter "Name = \'node.exe\'" -ErrorAction Stop)\n  return $runtimeProcesses',
+  );
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(unsafe));
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-runtime-restart-process-query-unbounded'));
+});
+
+test('PR #2160 specialist rejects timeout values other than exactly one second', () => {
+  const unsafe = SAFE_SOURCE.replace(
+    'Get-CimInstance Win32_Process -Filter "Name = \'node.exe\'" -OperationTimeoutSec 1 -ErrorAction Stop)\n  return $runtimeProcesses',
+    'Get-CimInstance Win32_Process -Filter "Name = \'node.exe\'" -OperationTimeoutSec 2 -ErrorAction Stop)\n  return $runtimeProcesses',
+  );
   const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(unsafe));
   assert.equal(result.eligible, true);
   assert.equal(result.clean, false);
@@ -139,6 +157,13 @@ test('PR #2160 specialist rejects even one unbounded Win32 process observation',
 
 test('PR #2160 specialist remains exact to the canonical branch identity', () => {
   const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(SAFE_SOURCE, { branch: 'fix/not-the-runtime-restart-timeout-lane' }));
+  assert.equal(result.eligible, false);
+  assert.equal(result.clean, false);
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_NOT_APPLICABLE');
+});
+
+test('runtime-restart timeout specialist remains exact to PR #2160 identity', () => {
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(SAFE_SOURCE, { prNumber: 2152 }));
   assert.equal(result.eligible, false);
   assert.equal(result.clean, false);
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_NOT_APPLICABLE');
