@@ -51,14 +51,35 @@ function acceptedReceipt(requestId, acceptedAt) {
   };
 }
 
+function doneReceipt(requestId, acceptedAt, completedAt) {
+  return {
+    ...acceptedReceipt(requestId, acceptedAt),
+    state: 'DONE',
+    heartbeatAt: completedAt,
+    completedAt,
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_SHARED_WORKSPACE_STATUS',
+      requestId,
+      result: { ok: true, finalVerdict: 'SHARED_WORKSPACE_STATUS_READY', expectedHead: HEAD },
+    },
+  };
+}
+
 async function writeState(stateRoot, state) {
   await writeFile(join(stateRoot, 'state.json'), `${JSON.stringify(state, null, 2)}\n`, 'utf8');
 }
 
-async function writeReceipt(receiptRoot, receipt) {
+async function writeReceiptAt(root, receipt) {
   const filename = createWindowsSafeMailboxReceiptFilename(receipt.requestId);
-  await writeFile(join(receiptRoot, filename), `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
-  return join(receiptRoot, filename);
+  const path = join(root, filename);
+  await writeFile(path, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+  return path;
+}
+
+async function writeReceipt(receiptRoot, receipt) {
+  return writeReceiptAt(receiptRoot, receipt);
 }
 
 test('stale ACCEPTED ownership is terminalized without replay and queued for publication', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
@@ -90,6 +111,8 @@ test('stale ACCEPTED ownership is terminalized without replay and queued for pub
   assert.equal(state.pendingReceiptPublications.length, 1);
   assert.equal(state.pendingReceiptPublications[0].receipt.state, 'BLOCKED');
   assert.equal(state.pendingReceiptPublications[0].receipt.blocker, MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER);
+  assert.equal(state.pendingReceiptPublications[0].receipt.result.result.replayPerformed, false);
+  assert.equal(state.pendingReceiptPublications[0].receipt.result.result.duplicateMutationAllowed, false);
 
   const terminal = JSON.parse(await readFile(receiptPath, 'utf8'));
   assert.equal(terminal.state, 'BLOCKED');
@@ -124,13 +147,7 @@ test('fresh ACCEPTED ownership keeps duplicate suppression until its fixed lease
 
 test('terminal local truth clears stranded accepted state without executing again', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
   const requestId = 'accepted-terminal-request-1';
-  const receipt = {
-    ...acceptedReceipt(requestId, '2026-09-09T12:00:00.000Z'),
-    state: 'DONE',
-    heartbeatAt: '2026-09-09T12:00:05.000Z',
-    completedAt: '2026-09-09T12:00:05.000Z',
-    result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE', result: { ok: true } },
-  };
+  const receipt = doneReceipt(requestId, '2026-09-09T12:00:00.000Z', '2026-09-09T12:00:05.000Z');
   await writeState(stateRoot, {
     consumedRequestIds: [],
     acceptedRequestIds: [requestId],
@@ -151,6 +168,87 @@ test('terminal local truth clears stranded accepted state without executing agai
   const state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
   assert.deepEqual(state.acceptedRequestIds, []);
   assert.deepEqual(state.consumedRequestIds, [requestId]);
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  assert.equal(state.pendingReceiptPublications[0].receipt.state, 'DONE');
+}));
+
+test('legacy DONE wins over canonical ACCEPTED and converges terminal truth to the canonical index root', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
+  const requestId = 'accepted-cross-root-terminal-1';
+  const accepted = acceptedReceipt(requestId, '2026-09-09T12:00:00.000Z');
+  const done = doneReceipt(requestId, '2026-09-09T12:00:00.000Z', '2026-09-09T12:00:07.000Z');
+  await writeState(stateRoot, {
+    consumedRequestIds: [],
+    acceptedRequestIds: [requestId],
+    lastAcceptedReceipt: accepted,
+    pendingReceiptPublications: [{
+      publicationId: `${requestId}:ACCEPTED:2026-09-09T12:00:00.000Z`,
+      receipt: accepted,
+    }],
+  });
+  const canonicalPath = await writeReceiptAt(receiptRoot, accepted);
+  const legacyPath = await writeReceiptAt(stateRoot, done);
+
+  const result = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:21:00.000Z'),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reconciledCount, 1);
+  assert.equal(result.expiredCount, 0);
+  assert.equal(result.replayPerformed, false);
+
+  const state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
+  assert.deepEqual(state.acceptedRequestIds, []);
+  assert.deepEqual(state.consumedRequestIds, [requestId]);
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  assert.equal(state.pendingReceiptPublications[0].receipt.state, 'DONE');
+  assert.equal(state.pendingReceiptPublications.some((entry) => entry.receipt?.state === 'ACCEPTED'), false);
+
+  const canonical = JSON.parse(await readFile(canonicalPath, 'utf8'));
+  const legacy = JSON.parse(await readFile(legacyPath, 'utf8'));
+  assert.equal(canonical.state, 'DONE');
+  assert.equal(legacy.state, 'DONE');
+  assert.equal(canonical.result.result.finalVerdict, 'SHARED_WORKSPACE_STATUS_READY');
+  assert.equal(legacy.result.result.finalVerdict, 'SHARED_WORKSPACE_STATUS_READY');
+}));
+
+test('canonical DONE wins over legacy ACCEPTED regardless of root ordering', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
+  const requestId = 'accepted-cross-root-terminal-2';
+  const accepted = acceptedReceipt(requestId, '2026-09-09T12:00:00.000Z');
+  const done = doneReceipt(requestId, '2026-09-09T12:00:00.000Z', '2026-09-09T12:00:09.000Z');
+  await writeState(stateRoot, {
+    consumedRequestIds: [],
+    acceptedRequestIds: [requestId],
+    lastAcceptedReceipt: accepted,
+    pendingReceiptPublications: [{
+      publicationId: `${requestId}:ACCEPTED:2026-09-09T12:00:00.000Z`,
+      receipt: accepted,
+    }],
+  });
+  const canonicalPath = await writeReceiptAt(receiptRoot, done);
+  const legacyPath = await writeReceiptAt(stateRoot, accepted);
+
+  const result = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:21:00.000Z'),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reconciledCount, 1);
+  assert.equal(result.expiredCount, 0);
+  const state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
+  assert.deepEqual(state.acceptedRequestIds, []);
+  assert.deepEqual(state.consumedRequestIds, [requestId]);
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  assert.equal(state.pendingReceiptPublications[0].receipt.state, 'DONE');
+
+  const canonical = JSON.parse(await readFile(canonicalPath, 'utf8'));
+  const legacy = JSON.parse(await readFile(legacyPath, 'utf8'));
+  assert.equal(canonical.state, 'DONE');
+  assert.equal(legacy.state, 'DONE');
 }));
 
 test('missing accepted receipt fails closed after the lease instead of replaying an unknown mutation', async () => fixture(async ({ env, stateRoot }) => {
