@@ -217,7 +217,7 @@ function exactElasticExternalGrant(mission, candidate, sourceRevision, now) {
     action?.executable !== true
     || action?.actionKind !== 'agent-handoff'
     || text(action.adapter).toLowerCase() !== candidate.adapter
-    || text(action.workerId) !== candidate.workerId
+    || text(action.owner) !== candidate.workerId
   ) return null;
   const missionId = text(actionState.missionId).toLowerCase();
   const actionId = text(action.actionId).toLowerCase();
@@ -313,20 +313,24 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
       held.push(Object.freeze({ missionId, reason: scopes.length ? 'RESOURCE_SCOPE_CONFLICT' : 'RESOURCE_SCOPE_REQUIRED' }));
       continue;
     }
-    const routeCandidates = resolveCapacityCandidates(mission, capacityRouting, sourceRevision, now.toISOString());
-    const capacity = routeCandidates.find((candidate) => !usedCapacity.has(externalCandidateKey(candidate)));
-    if (!capacity) {
+
+    const routeCandidates = resolveCapacityCandidates(mission, capacityRouting, sourceRevision, now.toISOString())
+      .filter((candidate) => !usedCapacity.has(externalCandidateKey(candidate)));
+    if (!routeCandidates.length) {
       held.push(Object.freeze({ missionId, reason: 'DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE' }));
       continue;
     }
-    const grant = exactElasticExternalGrant(mission, capacity, sourceRevision, now);
-    if (!grant) {
-      held.push(Object.freeze({ missionId, reason: 'EXACT_EXTERNAL_ACTION_GRANT_UNAVAILABLE' }));
-      continue;
-    }
-    let publication;
-    try {
-      publication = await publishWorkerAction({
+
+    let dispatchedMission = null;
+    let grantCandidateObserved = false;
+    let indeterminatePublication = false;
+    let lastPublicationReason = '';
+    for (const capacity of routeCandidates) {
+      const grant = exactElasticExternalGrant(mission, capacity, sourceRevision, now);
+      if (!grant) continue;
+      grantCandidateObserved = true;
+
+      const publicationInput = {
         env,
         now,
         nowUtc: now.toISOString(),
@@ -336,30 +340,56 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
         root: paths.orchestratorRoot,
         snapshotRoot: paths.snapshotRoot,
         actionGrant: grant,
-      });
-    } catch (error) {
-      publication = { published: false, actionGrantAccepted: false, reason: `publication-exception:${text(error?.message, 'unknown')}` };
-    }
-    if (publication?.published !== true || publication?.actionGrantAccepted !== true) {
-      held.push(Object.freeze({
+      };
+      let publication;
+      try {
+        publication = await publishWorkerAction(publicationInput);
+      } catch (error) {
+        const firstError = text(error?.message, 'unknown');
+        try {
+          publication = await publishWorkerAction(publicationInput);
+        } catch (reconciliationError) {
+          indeterminatePublication = true;
+          lastPublicationReason = `publication-exception:${firstError};reconciliation-exception:${text(reconciliationError?.message, 'unknown')}`;
+          break;
+        }
+        if (publication?.published !== true || publication?.actionGrantAccepted !== true) {
+          indeterminatePublication = true;
+          lastPublicationReason = `publication-exception:${firstError};reconciliation:${text(publication?.reason, 'not-published')}`;
+          break;
+        }
+      }
+      if (publication?.published !== true || publication?.actionGrantAccepted !== true) {
+        lastPublicationReason = text(publication?.reason, 'not-published');
+        continue;
+      }
+
+      dispatchedMission = Object.freeze({
         missionId,
-        reason: `EXTERNAL_DISPATCH_BLOCKED:${text(publication?.reason, 'not-published')}`,
-      }));
-      continue;
+        issueNumber: elasticIssueNumber(mission),
+        adapter: capacity.adapter,
+        route: capacity.route,
+        workerId: capacity.workerId,
+        capacityReceiptId: capacity.receiptId || null,
+        actionId: grant.actionId,
+        grantId: grant.grantId,
+        resourceScopes: Object.freeze([...scopes]),
+      });
+      dispatched.push(dispatchedMission);
+      occupiedScopes.push(...scopes);
+      usedCapacity.add(externalCandidateKey(capacity));
+      break;
     }
-    dispatched.push(Object.freeze({
+
+    if (dispatchedMission) continue;
+    held.push(Object.freeze({
       missionId,
-      issueNumber: elasticIssueNumber(mission),
-      adapter: capacity.adapter,
-      route: capacity.route,
-      workerId: capacity.workerId,
-      capacityReceiptId: capacity.receiptId || null,
-      actionId: grant.actionId,
-      grantId: grant.grantId,
-      resourceScopes: Object.freeze([...scopes]),
+      reason: indeterminatePublication
+        ? `EXTERNAL_DISPATCH_INDETERMINATE:${lastPublicationReason || 'reconciliation-required'}`
+        : grantCandidateObserved
+          ? `EXTERNAL_DISPATCH_BLOCKED:${lastPublicationReason || 'not-published'}`
+          : 'EXACT_EXTERNAL_ACTION_GRANT_UNAVAILABLE',
     }));
-    occupiedScopes.push(...scopes);
-    usedCapacity.add(externalCandidateKey(capacity));
   }
 
   return Object.freeze({
