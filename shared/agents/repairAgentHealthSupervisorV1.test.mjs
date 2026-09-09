@@ -96,6 +96,24 @@ test('head-bound system on the wrong source is blocked even when its prose state
   assert.equal(result.allEightHealthy, false);
 });
 
+test('stale head-bound evidence with an unproven source hard-holds before repair routing', () => {
+  const systems = healthySystems();
+  systems.missionWorker = {
+    state: 'HEALTHY',
+    observedAtUtc: '2026-09-09T08:00:00.000Z',
+    sourceHead: '',
+  };
+
+  const result = evaluateRepairAgentHealthSupervisorV1({ expectedHead: HEAD, observedAtUtc: NOW, systems });
+  const worker = result.systems.find((system) => system.id === 'missionWorker');
+
+  assert.equal(result.ok, false);
+  assert.equal(result.classification, 'REPAIR_AGENT_HEALTH_SUPERVISOR_HARD_HOLD');
+  assert.equal(worker.state, 'HARD_HOLD');
+  assert.equal(worker.blocker, 'SYSTEM_SOURCE_HEAD_UNPROVEN');
+  assert.equal(worker.repairRequired, false);
+});
+
 test('malformed health evidence fails closed rather than triggering arbitrary repair', () => {
   const systems = healthySystems();
   systems.recoveryMesh.state = 'TOTALLY_FINE_TRUST_ME';
