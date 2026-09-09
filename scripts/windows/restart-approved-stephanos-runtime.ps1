@@ -329,7 +329,7 @@ function Get-VerifiedBackendListener {
     if ($processIds.Count -eq 0) { return $null }
     if ($processIds.Count -ne 1) { Stop-WithBlocker 'BACKEND_LISTENER_IDENTITY_AMBIGUOUS' }
     $processId = [int]$processIds[0]
-    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
     if (-not $process) { Stop-WithBlocker 'BACKEND_LISTENER_PROCESS_MISSING' }
     $executable = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
     if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { Stop-WithBlocker 'BACKEND_LISTENER_NOT_CANONICAL_NODE' }
@@ -596,7 +596,7 @@ function Get-VerifiedWorkerProcessFromHeartbeat {
         }
         finally { $sha256.Dispose() }
         $launchReceiptDigest = ([BitConverter]::ToString($launchReceiptHash)).Replace('-', '').ToLowerInvariant()
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
         if (-not (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot)) { return $null }
         $liveProcessStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
@@ -640,7 +640,7 @@ function Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat {
 
     $canonicalWorkers = @()
     try {
-        $nodeProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction Stop)
+        $nodeProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -OperationTimeoutSec 1 -ErrorAction Stop)
     }
     catch {
         Stop-WithBlocker 'MISSION_WORKER_CANONICAL_PROCESS_QUERY_FAILED'
@@ -674,7 +674,7 @@ function Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat {
         $null = $processCapability.Handle
         $capabilityProcessStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
 
-        $candidateReRead = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+        $candidateReRead = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
         if (-not $candidateReRead -or -not (Test-ExactCanonicalWorkerProcess -Process $candidateReRead -ExpectedRepoRoot $ExpectedRepoRoot)) {
             Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
         }
@@ -765,7 +765,7 @@ function Get-VerifiedFreshWorkerInstance {
         if ($boundHeartbeatTimestampUtc -le $receiptProcessStartedAtUtc `
             -or $boundHeartbeatTimestampUtc -gt $invocationHeartbeatObservedAtUtc `
             -or $timestamp -lt $boundHeartbeatTimestampUtc) { return $null }
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
         $processStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
         if ($processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks) { return $null }
@@ -808,7 +808,7 @@ function Get-VerifiedInvocationProcessFromLaunchReceipt {
         $processId = [int]$receipt.workerPid
         $processStartedAtUtc = [datetime]::Parse([string]$receipt.workerStartedAtUtc).ToUniversalTime()
         if ($processId -le 0 -or $processStartedAtUtc -le $StartedAfterUtc) { return $null }
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
         $observedStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
         if ($observedStartedAtUtc.Ticks -ne $processStartedAtUtc.Ticks) { return $null }
@@ -866,7 +866,7 @@ function Get-VerifiedCleanupFallbackWorkerProcess {
     $processCapability = $null
     $retainProcessCapability = $false
     try {
-        $reread = Get-CimInstance Win32_Process -Filter "ProcessId = $($candidate.ProcessId)" -ErrorAction SilentlyContinue
+        $reread = Get-CimInstance Win32_Process -Filter "ProcessId = $($candidate.ProcessId)" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
         if (-not $reread -or -not (Test-ExactCanonicalWorkerProcess -Process $reread -ExpectedRepoRoot $ExpectedRepoRoot)) {
             Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED'
         }
@@ -1047,7 +1047,7 @@ function Stop-NewlyStartedOwnedWorker {
     }
 
     if ($ExpectedProcessId -gt 0 -and -not (Wait-UntilOperationDeadline -ReserveSeconds 1 -Condition {
-        -not (Get-CimInstance Win32_Process -Filter "ProcessId = $ExpectedProcessId" -ErrorAction SilentlyContinue)
+        -not (Get-CimInstance Win32_Process -Filter "ProcessId = $ExpectedProcessId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue)
     })) { Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_DID_NOT_STOP' }
 
     $cleanupTask = Get-ScheduledTask -TaskName $Plan.TaskName -TaskPath '\' -ErrorAction SilentlyContinue
