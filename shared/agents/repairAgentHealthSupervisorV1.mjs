@@ -137,18 +137,6 @@ function normalizeSystem({ id, record, expectedHead, nowMs }) {
     });
   }
 
-  if (nowMs - observedAtMs > DEFAULT_STALE_AFTER_MS[id]) {
-    return Object.freeze({
-      id,
-      state: 'STALE',
-      observedAtUtc: new Date(observedAtMs).toISOString(),
-      sourceHead: text(record.sourceHead).toLowerCase(),
-      blocker: 'SYSTEM_HEALTH_RECORD_STALE',
-      repairRoute,
-      repairRequired: true,
-    });
-  }
-
   const sourceHead = text(record.sourceHead).toLowerCase();
   if (HEAD_BOUND_SYSTEMS.has(id)) {
     if (!SHA40.test(sourceHead)) {
@@ -173,6 +161,18 @@ function normalizeSystem({ id, record, expectedHead, nowMs }) {
         repairRequired: true,
       });
     }
+  }
+
+  if (nowMs - observedAtMs > DEFAULT_STALE_AFTER_MS[id]) {
+    return Object.freeze({
+      id,
+      state: 'STALE',
+      observedAtUtc: new Date(observedAtMs).toISOString(),
+      sourceHead,
+      blocker: 'SYSTEM_HEALTH_RECORD_STALE',
+      repairRoute,
+      repairRequired: true,
+    });
   }
 
   if (id === 'repairAgentHealthSupervisor' && suppliedState === 'HEALTHY' && record.crossWatchHealthy !== true) {
