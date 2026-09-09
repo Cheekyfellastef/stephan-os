@@ -36,6 +36,7 @@ const NATURAL_EXACT = new Set([
   'shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.mjs',
   'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
   'scripts/battle-bridge-github-command-mailbox.mjs',
+  'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs',
   'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
   'scripts/battle-bridge-github-sync-executor.mjs',
   'scripts/battle-bridge-github-sync-and-refresh.mjs',
