@@ -18,7 +18,30 @@ function healthyMailboxIndex() {
 }
 
 function healthyRecoveryMesh() {
-  return { classification: 'RECOVERY_MESH_ALL_SERVICES_HEALTHY', timestampUtc: NOW };
+  return {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.status',
+    statusId: 'battle-bridge-recovery-mesh-current',
+    timestampUtc: NOW,
+    status: 'RECOVERY_MESH_ALL_SERVICES_HEALTHY',
+    classification: 'RECOVERY_MESH_ALL_SERVICES_HEALTHY',
+    meshSchema: 'stephanos.battle-bridge-recovery-mesh-runner.v1',
+    proofRefs: ['receipts/battle-bridge-recovery-mesh/proof.json'],
+    final: {
+      workerHealthy: true,
+      mailboxHealthy: true,
+      backendHealthy: true,
+      gatewayHealthy: true,
+      sourceHead: HEAD,
+      branch: 'main',
+    },
+    oneExecutorEnforced: true,
+    duplicateWorkerAllowed: false,
+    arbitraryShellAllowed: false,
+    arbitraryTaskNameAllowed: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+  };
 }
 
 function healthyRecoveryLifeboat() {
@@ -96,6 +119,45 @@ test('canonical raw evidence keeps all-green bootstrap no-op eligible', () => {
   assert.equal(result.classification, 'CONTROL_PLANE_BOOTSTRAP_ALL_REQUIRED_HEALTHY');
   assert.equal(result.allRequiredHealthy, true);
   assert.deepEqual(result.repairCandidates, []);
+});
+
+test('healthy Recovery Mesh classification requires the complete canonical status envelope', () => {
+  const mutations = [
+    (record) => { delete record.schemaVersion; },
+    (record) => { delete record.kind; },
+    (record) => { delete record.statusId; },
+    (record) => { delete record.meshSchema; },
+    (record) => { record.status = 'RECOVERY_MESH_CORE_UNHEALTHY'; },
+    (record) => { record.proofRefs = []; },
+    (record) => { delete record.final.gatewayHealthy; },
+    (record) => { record.final.sourceHead = ''; },
+    (record) => { record.oneExecutorEnforced = false; },
+    (record) => { record.duplicateWorkerAllowed = true; },
+    (record) => { record.arbitraryShellAllowed = true; },
+    (record) => { record.arbitraryTaskNameAllowed = true; },
+    (record) => { record.sourceMutationAllowed = true; },
+    (record) => { record.mergeAuthority = true; },
+  ];
+
+  for (const mutate of mutations) {
+    const recoveryMeshStatus = JSON.parse(JSON.stringify(healthyRecoveryMesh()));
+    mutate(recoveryMeshStatus);
+    const result = projectRepairAgentBootstrapCanonicalEvidenceV1({
+      expectedHead: HEAD,
+      observedAtUtc: NOW,
+      mailboxIndex: healthyMailboxIndex(),
+      recoveryMeshStatus,
+      recoveryLifeboatHeartbeat: healthyRecoveryLifeboat(),
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.classification, 'CONTROL_PLANE_BOOTSTRAP_HEALTH_EVIDENCE_BLOCKED');
+    assert.equal(result.allRequiredHealthy, false);
+    assert.equal(result.systems.find((entry) => entry.id === 'recoveryMesh')?.state, 'HARD_HOLD');
+    assert.equal(result.runtimeMutationAuthority, false);
+    assert.equal(result.sourceMutationAuthority, false);
+    assert.equal(result.mergeAuthority, false);
+  }
 });
 
 test('canonical raw evidence cannot let mailbox green mask Recovery Mesh failure', () => {
