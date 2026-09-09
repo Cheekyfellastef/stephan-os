@@ -110,6 +110,35 @@ test('malformed health evidence fails closed rather than triggering arbitrary re
   assert.equal(result.arbitraryShellAllowed, false);
 });
 
+test('future-dated surface evidence hard-holds instead of being treated as infinitely fresh', () => {
+  const systems = healthySystems();
+  systems.githubSync.observedAtUtc = '2026-09-09T08:31:00.000Z';
+
+  const result = evaluateRepairAgentHealthSupervisorV1({ expectedHead: HEAD, observedAtUtc: NOW, systems });
+  const sync = result.systems.find((system) => system.id === 'githubSync');
+
+  assert.equal(result.ok, false);
+  assert.equal(sync.state, 'HARD_HOLD');
+  assert.equal(sync.blocker, 'SYSTEM_HEALTH_TIMESTAMP_FUTURE');
+  assert.equal(sync.repairRequired, false);
+});
+
+test('a ninth unknown health record is rejected by the closed-world eight-system contract', () => {
+  const systems = healthySystems();
+  systems.secretNinthController = {
+    state: 'HEALTHY',
+    observedAtUtc: '2026-09-09T08:29:30.000Z',
+    sourceHead: HEAD,
+  };
+
+  const result = evaluateRepairAgentHealthSupervisorV1({ expectedHead: HEAD, observedAtUtc: NOW, systems });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.classification, 'REPAIR_AGENT_HEALTH_SUPERVISOR_BLOCKED');
+  assert.equal(result.blocker, 'UNKNOWN_SYSTEM_HEALTH_RECORD');
+  assert.equal(result.systems.length, 0);
+});
+
 test('current masking incident stays red until Recovery Mesh and Lifeboat have independent fresh truth', () => {
   const systems = healthySystems();
   systems.githubCommandMailbox = {
