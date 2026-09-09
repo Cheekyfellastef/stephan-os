@@ -3,7 +3,7 @@
   "source_id": "github-crementif-botw-bettervr",
   "title": "Breath of the Wild BetterVR",
   "priority": "P0",
-  "status": "source-packet-admitted-awaiting-registry-reconciliation",
+  "status": "registered-pinned-snapshot",
   "repository": "Crementif/BotW-BetterVR",
   "snapshot_release": "0.9.20",
   "snapshot_commit": "0e1053d58cdfbd592522dc892b1770418a1af009",
