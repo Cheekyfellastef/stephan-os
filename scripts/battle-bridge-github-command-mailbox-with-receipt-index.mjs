@@ -20,6 +20,7 @@ import {
 const defaultRepoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const DEFAULT_INDEX_HEARTBEAT_INTERVAL_MS = 15_000;
 const MAX_LOCAL_RECEIPT_BYTES = 256 * 1024;
+const RECOVERY_SERIALIZATION_RESERVE_BYTES = 512;
 const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 
 // The installed mailbox Scheduled Task has a 15-minute execution ceiling. Give a
@@ -76,14 +77,60 @@ function readBoundedJsonFile(path) {
   }
 }
 
-function findLocalMailboxReceipt(requestId, paths) {
+function receiptEvidenceMs(receipt = {}) {
+  const value = Date.parse(String(receipt?.completedAt || receipt?.heartbeatAt || receipt?.acceptedAt || ''));
+  return Number.isFinite(value) ? value : 0;
+}
+
+function findLocalMailboxReceipts(requestId, paths) {
+  const receipts = [];
+  const seenPaths = new Set();
   for (const root of [paths.canonicalReceiptRoot, paths.mailboxStateRoot]) {
     for (const filename of getReadableMailboxReceiptFilenames(requestId)) {
-      const receipt = readBoundedJsonFile(join(root, filename));
-      if (String(receipt?.requestId || '') === requestId) return receipt;
+      const receiptPath = join(root, filename);
+      if (seenPaths.has(receiptPath)) continue;
+      seenPaths.add(receiptPath);
+      const receipt = readBoundedJsonFile(receiptPath);
+      if (String(receipt?.requestId || '') === requestId) receipts.push(receipt);
     }
   }
-  return null;
+  return receipts;
+}
+
+function selectTerminalReceipt(receipts = []) {
+  return receipts
+    .filter((receipt) => ['DONE', 'BLOCKED'].includes(String(receipt?.state || '').toUpperCase()))
+    .sort((a, b) => receiptEvidenceMs(b) - receiptEvidenceMs(a))[0] || null;
+}
+
+function selectFreshestAcceptedReceipt(receipts = []) {
+  return receipts
+    .filter((receipt) => String(receipt?.state || '').toUpperCase() === 'ACCEPTED')
+    .sort((a, b) => receiptEvidenceMs(b) - receiptEvidenceMs(a))[0] || null;
+}
+
+function compactAcceptedRecoveryReceipt(receipt) {
+  const reserveBound = Math.max(1024, MAX_LOCAL_RECEIPT_BYTES - RECOVERY_SERIALIZATION_RESERVE_BYTES);
+  const compact = JSON.parse(serializeBoundedReceiptJson(receipt, reserveBound));
+  const sourceOperationResult = receipt?.result?.result;
+  const compactOperationResult = compact?.result?.result;
+  if (sourceOperationResult && compactOperationResult) {
+    if (typeof sourceOperationResult.replayPerformed === 'boolean') {
+      compactOperationResult.replayPerformed = sourceOperationResult.replayPerformed;
+    }
+    if (typeof sourceOperationResult.duplicateMutationAllowed === 'boolean') {
+      compactOperationResult.duplicateMutationAllowed = sourceOperationResult.duplicateMutationAllowed;
+    }
+  }
+  const payload = JSON.stringify(compact, null, 2);
+  if (Buffer.byteLength(payload, 'utf8') > MAX_LOCAL_RECEIPT_BYTES) {
+    throw new Error('MAILBOX_ACCEPTED_RECOVERY_RECEIPT_TOO_LARGE');
+  }
+  return compact;
+}
+
+function serializeAcceptedRecoveryReceipt(receipt) {
+  return JSON.stringify(compactAcceptedRecoveryReceipt(receipt), null, 2);
 }
 
 function createExpiredAcceptedReceipt(acceptedReceipt, requestId, timestampUtc) {
@@ -121,8 +168,17 @@ function createExpiredAcceptedReceipt(acceptedReceipt, requestId, timestampUtc) 
   });
 }
 
+function writeTerminalReceiptCopies(paths, requestId, receipt) {
+  mkdirSync(paths.mailboxStateRoot, { recursive: true });
+  mkdirSync(paths.canonicalReceiptRoot, { recursive: true });
+  const filename = createWindowsSafeMailboxReceiptFilename(requestId);
+  const payload = `${serializeAcceptedRecoveryReceipt(receipt)}\n`;
+  writeFileSync(join(paths.mailboxStateRoot, filename), payload, 'utf8');
+  writeFileSync(join(paths.canonicalReceiptRoot, filename), payload, 'utf8');
+}
+
 function queueTerminalReceiptPublication(state, receipt) {
-  const compactReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
+  const compactReceipt = compactAcceptedRecoveryReceipt(receipt);
   const publicationId = [receipt.requestId, receipt.state, receipt.completedAt || receipt.acceptedAt || 'unknown'].join(':');
   const retained = (Array.isArray(state.pendingReceiptPublications) ? state.pendingReceiptPublications : [])
     .filter((entry) => entry?.publicationId !== publicationId)
@@ -189,33 +245,32 @@ export function reconcileStaleAcceptedMailboxReceipts({
   };
 
   for (const requestId of acceptedIds) {
-    const localReceipt = findLocalMailboxReceipt(requestId, paths)
-      || (String(state.lastAcceptedReceipt?.requestId || '') === requestId ? state.lastAcceptedReceipt : null);
+    const receipts = findLocalMailboxReceipts(requestId, paths);
+    if (String(state.lastAcceptedReceipt?.requestId || '') === requestId) receipts.push(state.lastAcceptedReceipt);
 
-    if (localReceipt && ['DONE', 'BLOCKED'].includes(String(localReceipt.state || '').toUpperCase())) {
-      checkpointTerminalMailboxReceipt(state, localReceipt, { persist });
+    const terminalReceipt = selectTerminalReceipt(receipts);
+    if (terminalReceipt) {
+      writeTerminalReceiptCopies(paths, requestId, terminalReceipt);
+      checkpointTerminalMailboxReceipt(state, terminalReceipt, { persist });
+      queueTerminalReceiptPublication(state, terminalReceipt);
       if (String(state.lastAcceptedReceipt?.requestId || '') === requestId) delete state.lastAcceptedReceipt;
       persist(state);
       reconciledCount += 1;
       continue;
     }
 
+    const localReceipt = selectFreshestAcceptedReceipt(receipts);
     const heartbeatMs = Date.parse(String(localReceipt?.heartbeatAt || localReceipt?.acceptedAt || ''));
     if (Number.isFinite(heartbeatMs) && nowMs - heartbeatMs <= leaseMs) {
       freshCount += 1;
       continue;
     }
 
-    const terminalReceipt = createExpiredAcceptedReceipt(localReceipt, requestId, timestampUtc);
-    mkdirSync(paths.mailboxStateRoot, { recursive: true });
-    mkdirSync(paths.canonicalReceiptRoot, { recursive: true });
-    const filename = createWindowsSafeMailboxReceiptFilename(requestId);
-    const payload = `${serializeBoundedReceiptJson(terminalReceipt, MAX_LOCAL_RECEIPT_BYTES)}\n`;
-    writeFileSync(join(paths.mailboxStateRoot, filename), payload, 'utf8');
-    writeFileSync(join(paths.canonicalReceiptRoot, filename), payload, 'utf8');
-    checkpointTerminalMailboxReceipt(state, terminalReceipt, { persist });
+    const expiredReceipt = createExpiredAcceptedReceipt(localReceipt, requestId, timestampUtc);
+    writeTerminalReceiptCopies(paths, requestId, expiredReceipt);
+    checkpointTerminalMailboxReceipt(state, expiredReceipt, { persist });
     if (String(state.lastAcceptedReceipt?.requestId || '') === requestId) delete state.lastAcceptedReceipt;
-    queueTerminalReceiptPublication(state, terminalReceipt);
+    queueTerminalReceiptPublication(state, expiredReceipt);
     persist(state);
     reconciledCount += 1;
     expiredCount += 1;
