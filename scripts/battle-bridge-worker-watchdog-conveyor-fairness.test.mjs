@@ -16,6 +16,31 @@ function healthyWatchdog() {
   };
 }
 
+test('critical backlog refresh starts while worker watchdog is still pending', async () => {
+  let backlogStarted = false;
+  let releaseWatchdog;
+  const pendingWatchdog = new Promise((resolve) => {
+    releaseWatchdog = resolve;
+  });
+
+  const runnerPromise = runBattleBridgeWorkerWatchdogRunner({
+    workerWatchdog: () => pendingWatchdog,
+    controlPlaneRecovery: async () => ({ ok: true, classification: 'CONTROL_PLANE_MAILBOX_HEALTHY' }),
+    visibilityObserver: async () => ({ ok: true, classification: 'REMOTE_CODEX_VISIBILITY_RECONCILED' }),
+    participantRelay: async () => ({ ok: true, classification: 'CHATGPT_SHARED_WORKSPACE_RELAY_IDLE' }),
+    backlogConveyor: async () => {
+      backlogStarted = true;
+      return { ok: true, classification: 'WAIT_ACTIVE_MISSION' };
+    },
+  });
+
+  assert.equal(backlogStarted, true);
+  releaseWatchdog(healthyWatchdog());
+  const result = await runnerPromise;
+  assert.equal(result.ok, true);
+  assert.equal(result.criticalBacklogConveyorOk, true);
+});
+
 test('critical backlog refresh starts before participant relay synchronous prefix', async () => {
   const calls = [];
   let backlogStarted = false;
@@ -47,8 +72,8 @@ test('critical backlog refresh starts before participant relay synchronous prefi
 
   assert.deepEqual(calls, [
     'watchdog',
-    'control-plane-recovery',
     'critical-backlog',
+    'control-plane-recovery',
     'visibility',
     'participant-relay-sync-prefix',
   ]);
