@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -6,24 +7,131 @@ import { fileURLToPath } from 'node:url';
 import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import { readMailboxReceiptIndex } from '../shared/agents/mailboxReceiptIndex.mjs';
 import { ensureCriticalBacklogMission } from '../stephanos-server/services/criticalBacklogConveyorService.js';
-import {
-  resolveCanonicalWorkerWatchdogPaths,
-  runBattleBridgeWorkerWatchdog,
-} from './battle-bridge-worker-watchdog.mjs';
+import { resolveCanonicalWorkerWatchdogPaths } from './battle-bridge-worker-watchdog.mjs';
 import { runChatGptSharedWorkspaceGitHubRelay } from './chatgpt-shared-workspace-github-relay.mjs';
 import { observeRemoteCodexTaskVisibility } from './remote-codex-task-visibility-observer.mjs';
 
 export const BATTLE_BRIDGE_WORKER_WATCHDOG_RUNNER_SCHEMA = 'stephanos.battle-bridge-worker-watchdog-runner-with-critical-backlog.v1';
 export const BATTLE_BRIDGE_CONTROL_PLANE_MAILBOX_STALE_AFTER_MS = 10 * 60 * 1000;
+export const BATTLE_BRIDGE_WORKER_WATCHDOG_CHILD_TIMEOUT_MS = 115_000;
+export const BATTLE_BRIDGE_WORKER_WATCHDOG_CHILD_PATH = fileURLToPath(
+  new URL('./battle-bridge-worker-watchdog-child.mjs', import.meta.url),
+);
 
+const BATTLE_BRIDGE_WORKER_WATCHDOG_CHILD_OUTPUT_MAX_BYTES = 256 * 1024;
 const SHA40 = /^[0-9a-f]{40}$/;
 const REPAIRABLE_MAILBOX_BLOCKERS = new Set([
   'MAILBOX_RECEIPT_INDEX_NOT_FOUND',
   'MAILBOX_RECEIPT_INDEX_STALE',
 ]);
+let workerWatchdogChildInFlight = null;
 
 function workerAssessment(watchdog = {}) {
   return watchdog?.finalAssessment || watchdog?.decision?.assessment || null;
+}
+
+function isolatedWatchdogFailure(classification) {
+  return Object.freeze({
+    ok: false,
+    classification,
+    childIsolationApplied: true,
+    arbitraryExecutableAllowed: false,
+    arbitraryPathAllowed: false,
+    arbitraryArgumentsAllowed: false,
+    arbitraryShellAllowed: false,
+    arbitraryEnvironmentAllowed: false,
+  });
+}
+
+function validWatchdogChildResult(value) {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && typeof value.ok === 'boolean'
+    && typeof value.classification === 'string'
+    && /^[A-Z0-9_]{3,120}$/.test(value.classification),
+  );
+}
+
+export function runIsolatedBattleBridgeWorkerWatchdog({
+  spawnChild = spawn,
+  scheduleTimeout = (handler, delayMs) => setTimeout(handler, delayMs),
+  cancelTimeout = (handle) => clearTimeout(handle),
+} = {}) {
+  if (workerWatchdogChildInFlight) return workerWatchdogChildInFlight;
+
+  const childPromise = new Promise((resolve) => {
+    let child = null;
+    try {
+      child = spawnChild(
+        process.execPath,
+        [BATTLE_BRIDGE_WORKER_WATCHDOG_CHILD_PATH],
+        {
+          cwd: path.resolve(path.dirname(BATTLE_BRIDGE_WORKER_WATCHDOG_CHILD_PATH), '..'),
+          shell: false,
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      );
+    } catch {
+      resolve(isolatedWatchdogFailure('WORKER_WATCHDOG_CHILD_LAUNCH_FAILED'));
+      return;
+    }
+
+    if (!child || typeof child.once !== 'function' || !child.stdout || typeof child.stdout.on !== 'function') {
+      try { child?.kill?.(); } catch {}
+      resolve(isolatedWatchdogFailure('WORKER_WATCHDOG_CHILD_LAUNCH_FAILED'));
+      return;
+    }
+
+    let settled = false;
+    let stdout = '';
+    let timeoutHandle = null;
+    const settle = (result) => {
+      if (settled) return;
+      settled = true;
+      if (timeoutHandle !== null) cancelTimeout(timeoutHandle);
+      resolve(result);
+    };
+
+    child.stdout.setEncoding?.('utf8');
+    child.stdout.on('data', (chunk) => {
+      if (settled) return;
+      stdout += String(chunk ?? '');
+      if (Buffer.byteLength(stdout, 'utf8') > BATTLE_BRIDGE_WORKER_WATCHDOG_CHILD_OUTPUT_MAX_BYTES) {
+        settle(isolatedWatchdogFailure('WORKER_WATCHDOG_CHILD_RESULT_INVALID'));
+        try { child.kill?.('SIGTERM'); } catch {}
+      }
+    });
+    child.stderr?.resume?.();
+
+    child.once('error', () => {
+      settle(isolatedWatchdogFailure('WORKER_WATCHDOG_CHILD_LAUNCH_FAILED'));
+    });
+    child.once('close', () => {
+      if (settled) return;
+      let result = null;
+      try {
+        result = JSON.parse(stdout.replace(/^\uFEFF/, '').trim());
+      } catch {}
+      if (!validWatchdogChildResult(result)) {
+        settle(isolatedWatchdogFailure('WORKER_WATCHDOG_CHILD_RESULT_INVALID'));
+        return;
+      }
+      settle(Object.freeze(result));
+    });
+
+    timeoutHandle = scheduleTimeout(() => {
+      settle(isolatedWatchdogFailure('WORKER_WATCHDOG_CHILD_TIMEOUT'));
+      try { child.kill?.('SIGTERM'); } catch {}
+    }, BATTLE_BRIDGE_WORKER_WATCHDOG_CHILD_TIMEOUT_MS);
+  });
+
+  workerWatchdogChildInFlight = childPromise.finally(() => {
+    workerWatchdogChildInFlight = null;
+  });
+  return workerWatchdogChildInFlight;
 }
 
 function startAuxiliaryLane(run, classification) {
@@ -133,14 +241,14 @@ export async function runBattleBridgeWorkerWatchdogRunner({
   visibilityObserver = observeRemoteCodexTaskVisibility,
   participantRelay = runChatGptSharedWorkspaceGitHubRelay,
   backlogConveyor = ensureCriticalBacklogMission,
-  workerWatchdog = runBattleBridgeWorkerWatchdog,
+  workerWatchdog = runIsolatedBattleBridgeWorkerWatchdog,
   controlPlaneRecovery = runBattleBridgeControlPlaneBootstrapRecovery,
 } = {}) {
   // Worker recovery remains the first operation started by this installed runner.
-  // Start the resource-disjoint construction-truth refresh immediately after the
-  // watchdog invocation begins, before awaiting its bounded result. This keeps a
-  // slow watchdog or control-plane recovery from consuming the scheduled-task
-  // window before the critical-backlog projection has a chance to refresh.
+  // The default watchdog executes in one transient fixed child process so its
+  // synchronous Windows restart probe cannot block this runner's event loop.
+  // Construction truth therefore starts immediately and can make asynchronous
+  // progress while the canonical watchdog remains within its bounded child run.
   const watchdogPromise = workerWatchdog();
   const criticalBacklogConveyorPromise = startAuxiliaryLane(
     backlogConveyor,
