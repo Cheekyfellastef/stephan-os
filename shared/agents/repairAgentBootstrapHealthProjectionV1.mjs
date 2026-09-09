@@ -19,6 +19,13 @@ const SYNTHETIC_HEAD_BOUND_IDS = Object.freeze([
   'repairAgentHealthSupervisor',
 ]);
 
+const RECOVERY_MESH_STATUS_SCHEMA = 'shared-agent-workspace-record.v1';
+const RECOVERY_MESH_STATUS_KIND = 'stephanos.shared_workspace.status';
+const RECOVERY_MESH_STATUS_ID = 'battle-bridge-recovery-mesh-current';
+const RECOVERY_MESH_RUNNER_SCHEMA = 'stephanos.battle-bridge-recovery-mesh-runner.v1';
+const RECOVERY_MESH_HEALTHY_CLASSIFICATION = 'RECOVERY_MESH_ALL_SERVICES_HEALTHY';
+const SHA40 = /^[0-9a-f]{40}$/i;
+
 function text(value) {
   return String(value ?? '').trim();
 }
@@ -52,6 +59,37 @@ function mailboxHealthRecord(mailboxIndex) {
   return { state: 'BLOCKED', observedAtUtc, blocker: blocker || 'MAILBOX_RECEIPT_INDEX_BLOCKED' };
 }
 
+function validRecoveryMeshProofRefs(value) {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every((item) => text(item).length > 0);
+}
+
+function validHealthyRecoveryMeshStatus(recoveryMeshStatus) {
+  const final = recoveryMeshStatus?.final;
+  return recoveryMeshStatus?.schemaVersion === RECOVERY_MESH_STATUS_SCHEMA
+    && recoveryMeshStatus?.kind === RECOVERY_MESH_STATUS_KIND
+    && recoveryMeshStatus?.statusId === RECOVERY_MESH_STATUS_ID
+    && recoveryMeshStatus?.meshSchema === RECOVERY_MESH_RUNNER_SCHEMA
+    && recoveryMeshStatus?.classification === RECOVERY_MESH_HEALTHY_CLASSIFICATION
+    && recoveryMeshStatus?.status === RECOVERY_MESH_HEALTHY_CLASSIFICATION
+    && validRecoveryMeshProofRefs(recoveryMeshStatus?.proofRefs)
+    && final
+    && typeof final === 'object'
+    && !Array.isArray(final)
+    && final.workerHealthy === true
+    && final.mailboxHealthy === true
+    && final.backendHealthy === true
+    && final.gatewayHealthy === true
+    && SHA40.test(text(final.sourceHead))
+    && recoveryMeshStatus?.oneExecutorEnforced === true
+    && recoveryMeshStatus?.duplicateWorkerAllowed === false
+    && recoveryMeshStatus?.arbitraryShellAllowed === false
+    && recoveryMeshStatus?.arbitraryTaskNameAllowed === false
+    && recoveryMeshStatus?.sourceMutationAllowed === false
+    && recoveryMeshStatus?.mergeAuthority === false;
+}
+
 function recoveryMeshHealthRecord(recoveryMeshStatus) {
   if (!recoveryMeshStatus || typeof recoveryMeshStatus !== 'object' || Array.isArray(recoveryMeshStatus)) return undefined;
   const observedAtUtc = firstTimestamp(
@@ -59,11 +97,18 @@ function recoveryMeshHealthRecord(recoveryMeshStatus) {
     recoveryMeshStatus.generatedAtUtc,
     recoveryMeshStatus.observedAtUtc,
   );
-  const healthy = recoveryMeshStatus.classification === 'RECOVERY_MESH_ALL_SERVICES_HEALTHY';
+  const healthyClaim = recoveryMeshStatus.classification === RECOVERY_MESH_HEALTHY_CLASSIFICATION;
+  if (healthyClaim && !validHealthyRecoveryMeshStatus(recoveryMeshStatus)) {
+    return {
+      state: 'HARD_HOLD',
+      observedAtUtc,
+      blocker: 'RECOVERY_MESH_HEALTHY_STATUS_INVALID',
+    };
+  }
   return {
-    state: healthy ? 'HEALTHY' : 'BLOCKED',
+    state: healthyClaim ? 'HEALTHY' : 'BLOCKED',
     observedAtUtc,
-    blocker: healthy ? '' : text(recoveryMeshStatus.blocker || recoveryMeshStatus.classification || 'RECOVERY_MESH_BLOCKED'),
+    blocker: healthyClaim ? '' : text(recoveryMeshStatus.blocker || recoveryMeshStatus.classification || 'RECOVERY_MESH_BLOCKED'),
   };
 }
 
