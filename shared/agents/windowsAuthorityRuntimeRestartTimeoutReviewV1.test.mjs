@@ -168,3 +168,35 @@ test('runtime-restart timeout specialist remains exact to PR #2160 identity', ()
   assert.equal(result.clean, false);
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_NOT_APPLICABLE');
 });
+
+test('PR #2160 specialist rejects explicit -ClassName Win32_Process without the exact timeout', () => {
+  const unsafe = `${SAFE_SOURCE}\nfunction Get-ExplicitRuntimeProcessObservation {\n  $runtimeProcesses = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'node.exe'" -ErrorAction Stop)\n  return $runtimeProcesses\n}\n`;
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(unsafe));
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-runtime-restart-process-query-unbounded'));
+});
+
+test('PR #2160 specialist binds timeout to each semicolon-separated CIM invocation', () => {
+  const unsafe = `${SAFE_SOURCE}\nfunction Get-SemicolonRuntimeProcessObservation {\n  $service = Get-CimInstance Win32_Service -OperationTimeoutSec 1 -ErrorAction Stop; $runtime = Get-CimInstance Win32_Process -ErrorAction Stop\n  return $runtime\n}\n`;
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(unsafe));
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-runtime-restart-process-query-unbounded'));
+});
+
+test('PR #2160 specialist binds timeout to each pipeline-separated CIM invocation', () => {
+  const unsafe = `${SAFE_SOURCE}\nfunction Get-PipelineRuntimeProcessObservation {\n  $runtime = Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Get-CimInstance Win32_Service -OperationTimeoutSec 1 -ErrorAction Stop }\n  return $runtime\n}\n`;
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(unsafe));
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-runtime-restart-process-query-unbounded'));
+});
+
+test('PR #2160 specialist inspects executable process queries inside interpolated strings', () => {
+  const unsafe = `${SAFE_SOURCE}\nfunction Get-InterpolatedRuntimeProcessObservation {\n  $summary = "$(Get-CimInstance Win32_Process -ErrorAction Stop)"\n  return $summary\n}\n`;
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input(unsafe));
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-runtime-restart-process-query-unbounded'));
+});

@@ -248,65 +248,103 @@ function inspectPostAuthorityObservationSource(source) {
 }
 
 function executablePowerShellSource(source) {
-  let output = '';
-  let state = 'code';
-  for (let index = 0; index < source.length; index += 1) {
-    const current = source[index];
-    const next = source[index + 1];
-    if (state === 'line-comment') {
-      if (current === '\n') { state = 'code'; output += '\n'; }
-      else output += ' ';
+  const scan = (start, stopAtClosingParen = false) => {
+    let output = '';
+    let state = 'code';
+    let parenDepth = stopAtClosingParen ? 1 : 0;
+    for (let index = start; index < source.length; index += 1) {
+      const current = source[index];
+      const next = source[index + 1];
+
+      if (state === 'line-comment') {
+        if (current === '\n') { state = 'code'; output += '\n'; }
+        else output += ' ';
+        continue;
+      }
+      if (state === 'block-comment') {
+        if (current === '#' && next === '>') { output += '  '; state = 'code'; index += 1; }
+        else output += current === '\n' ? '\n' : ' ';
+        continue;
+      }
+      if (state === 'single-quote') {
+        if (current === "'" && next === "'") { output += '  '; index += 1; continue; }
+        if (current === "'") state = 'code';
+        output += current === '\n' ? '\n' : ' ';
+        continue;
+      }
+      if (state === 'double-quote') {
+        if (current === '`') {
+          output += ' ';
+          if (next) { output += next === '\n' ? ' ' : ' '; index += 1; }
+          continue;
+        }
+        if (current === '$' && next === '(') {
+          const nested = scan(index + 2, true);
+          output += `$(${nested.output})`;
+          index = nested.end;
+          continue;
+        }
+        if (current === '"') state = 'code';
+        output += current === '\n' ? '\n' : ' ';
+        continue;
+      }
+
+      if (current === '<' && next === '#') { output += '  '; state = 'block-comment'; index += 1; continue; }
+      if (current === '#') { output += ' '; state = 'line-comment'; continue; }
+      if (current === "'") { output += ' '; state = 'single-quote'; continue; }
+      if (current === '"') { output += ' '; state = 'double-quote'; continue; }
+      if (current === '`') {
+        output += ' ';
+        if (next) { output += ' '; index += 1; }
+        continue;
+      }
+
+      if (stopAtClosingParen) {
+        if (current === '(') { parenDepth += 1; output += current; continue; }
+        if (current === ')') {
+          parenDepth -= 1;
+          if (parenDepth === 0) return { output, end: index };
+          output += current;
+          continue;
+        }
+      }
+      output += current;
+    }
+    return { output, end: source.length };
+  };
+  return scan(0).output;
+}
+
+function executablePowerShellCommands(source) {
+  const commands = [];
+  let pending = '';
+  const executable = executablePowerShellSource(source).replace(/`\r?\n/g, ' ');
+  for (let index = 0; index < executable.length; index += 1) {
+    const current = executable[index];
+    if (current === ';' || current === '|' || current === '\n' || current === '\r') {
+      if (pending.trim()) commands.push(pending.trim());
+      pending = '';
       continue;
     }
-    if (state === 'block-comment') {
-      if (current === '#' && next === '>') { output += '  '; state = 'code'; index += 1; }
-      else output += current === '\n' ? '\n' : ' ';
-      continue;
-    }
-    if (state === 'single-quote') {
-      if (current === "'" && next === "'") { output += '  '; index += 1; continue; }
-      if (current === "'") state = 'code';
-      output += current === '\n' ? '\n' : ' ';
-      continue;
-    }
-    if (state === 'double-quote') {
-      if (current === '`') { output += ' '; if (next) { output += next === '\n' ? '\n' : ' '; index += 1; } continue; }
-      if (current === '"') state = 'code';
-      output += current === '\n' ? '\n' : ' ';
-      continue;
-    }
-    if (current === '<' && next === '#') { output += '  '; state = 'block-comment'; index += 1; continue; }
-    if (current === '#') { output += ' '; state = 'line-comment'; continue; }
-    if (current === "'") { output += ' '; state = 'single-quote'; continue; }
-    if (current === '"') { output += ' '; state = 'double-quote'; continue; }
-    output += current;
+    pending += current;
   }
-  return output;
+  if (pending.trim()) commands.push(pending.trim());
+  return commands;
 }
 
 function inspectRuntimeRestartTimeoutSource(source) {
   const findings = [...inspectPostAuthorityObservationSource(source)];
-  const executable = executablePowerShellSource(source);
-  const physicalLines = executable.split(/\r?\n/);
-  const statements = [];
-  let pending = '';
-  for (const physicalLine of physicalLines) {
-    const trimmed = physicalLine.trimEnd();
-    const continued = /`\s*$/.test(trimmed);
-    pending += `${pending ? ' ' : ''}${continued ? trimmed.replace(/`\s*$/, '') : trimmed}`;
-    if (!continued) {
-      if (pending.trim()) statements.push(pending.trim());
-      pending = '';
-    }
-  }
-  if (pending.trim()) statements.push(pending.trim());
-
-  for (const statement of statements) {
-    if (!/\bGet-CimInstance\s+Win32_Process\b/i.test(statement)) continue;
-    const timeoutTokens = [...statement.matchAll(/-OperationTimeoutSec\s+([^\s;|)]+)/ig)];
-    const exactTimeouts = [...statement.matchAll(/-OperationTimeoutSec\s+1\b/ig)];
-    if (timeoutTokens.length !== 1 || exactTimeouts.length !== 1 || timeoutTokens[0][1] !== '1') {
-      findings.push(finding('mission-worker-runtime-restart-process-query-unbounded', 'Every executable Win32_Process CIM observation must use exactly -OperationTimeoutSec 1.'));
+  for (const command of executablePowerShellCommands(source)) {
+    const starts = [...command.matchAll(/\bGet-CimInstance\b/ig)].map((match) => match.index);
+    for (let index = 0; index < starts.length; index += 1) {
+      const invocation = command.slice(starts[index], starts[index + 1] ?? command.length);
+      const positionalProcess = /^Get-CimInstance\s+Win32_Process\b/i.test(invocation);
+      const namedProcess = /^Get-CimInstance\b[\s\S]*?\s-ClassName\s+Win32_Process\b/i.test(invocation);
+      if (!positionalProcess && !namedProcess) continue;
+      const timeoutTokens = [...invocation.matchAll(/-OperationTimeoutSec\s+([^\s;|)]+)/ig)];
+      if (timeoutTokens.length !== 1 || timeoutTokens[0][1] !== '1') {
+        findings.push(finding('mission-worker-runtime-restart-process-query-unbounded', 'Every executable Win32_Process CIM observation must use exactly -OperationTimeoutSec 1.'));
+      }
     }
   }
   return findings;
