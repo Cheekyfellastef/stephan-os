@@ -21,8 +21,10 @@ export const REPAIR_AGENT_HEALTH_STATES = Object.freeze([
   'HARD_HOLD',
 ]);
 
+const SYSTEM_ID_SET = new Set(REPAIR_AGENT_SYSTEM_IDS);
 const STATE_SET = new Set(REPAIR_AGENT_HEALTH_STATES);
 const SHA40 = /^[0-9a-f]{40}$/;
+const MAX_FUTURE_SKEW_MS = 30_000;
 
 const DEFAULT_STALE_AFTER_MS = Object.freeze({
   githubSync: 180_000,
@@ -63,6 +65,26 @@ function validTimestamp(value) {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
+function blockedResult({ blocker, expectedHead = '', observedAtUtc = '' }) {
+  return Object.freeze({
+    ok: false,
+    schemaVersion: REPAIR_AGENT_HEALTH_SUPERVISOR_SCHEMA,
+    classification: 'REPAIR_AGENT_HEALTH_SUPERVISOR_BLOCKED',
+    blocker,
+    expectedHead,
+    observedAtUtc,
+    systems: Object.freeze([]),
+    repairCandidates: Object.freeze([]),
+    allEightHealthy: false,
+    independentHealthTruthRequired: true,
+    selfCrossWatchRequired: true,
+    arbitraryShellAllowed: false,
+    sourceMutationAuthority: false,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+  });
+}
+
 function normalizeSystem({ id, record, expectedHead, nowMs }) {
   const repairRoute = DEFAULT_REPAIR_ROUTE[id];
   if (!record || typeof record !== 'object' || Array.isArray(record)) {
@@ -98,6 +120,18 @@ function normalizeSystem({ id, record, expectedHead, nowMs }) {
       observedAtUtc: text(record.observedAtUtc),
       sourceHead: text(record.sourceHead).toLowerCase(),
       blocker: 'SYSTEM_HEALTH_TIMESTAMP_INVALID',
+      repairRoute,
+      repairRequired: false,
+    });
+  }
+
+  if (observedAtMs - nowMs > MAX_FUTURE_SKEW_MS) {
+    return Object.freeze({
+      id,
+      state: 'HARD_HOLD',
+      observedAtUtc: new Date(observedAtMs).toISOString(),
+      sourceHead: text(record.sourceHead).toLowerCase(),
+      blocker: 'SYSTEM_HEALTH_TIMESTAMP_FUTURE',
       repairRoute,
       repairRequired: false,
     });
@@ -171,45 +205,38 @@ export function evaluateRepairAgentHealthSupervisorV1({
 } = {}) {
   const normalizedExpectedHead = text(expectedHead).toLowerCase();
   if (!SHA40.test(normalizedExpectedHead)) {
-    return Object.freeze({
-      ok: false,
-      schemaVersion: REPAIR_AGENT_HEALTH_SUPERVISOR_SCHEMA,
-      classification: 'REPAIR_AGENT_HEALTH_SUPERVISOR_BLOCKED',
-      blocker: 'EXPECTED_HEAD_INVALID',
-      expectedHead: '',
-      observedAtUtc: text(observedAtUtc),
-      systems: Object.freeze([]),
-      repairCandidates: Object.freeze([]),
-      allEightHealthy: false,
-      arbitraryShellAllowed: false,
-      sourceMutationAuthority: false,
-      mergeAuthority: false,
-      runtimeMutationAuthority: false,
-    });
+    return blockedResult({ blocker: 'EXPECTED_HEAD_INVALID', observedAtUtc: text(observedAtUtc) });
   }
 
   const nowMs = validTimestamp(observedAtUtc);
   if (nowMs === null) {
-    return Object.freeze({
-      ok: false,
-      schemaVersion: REPAIR_AGENT_HEALTH_SUPERVISOR_SCHEMA,
-      classification: 'REPAIR_AGENT_HEALTH_SUPERVISOR_BLOCKED',
+    return blockedResult({
       blocker: 'OBSERVATION_TIME_INVALID',
       expectedHead: normalizedExpectedHead,
       observedAtUtc: text(observedAtUtc),
-      systems: Object.freeze([]),
-      repairCandidates: Object.freeze([]),
-      allEightHealthy: false,
-      arbitraryShellAllowed: false,
-      sourceMutationAuthority: false,
-      mergeAuthority: false,
-      runtimeMutationAuthority: false,
+    });
+  }
+
+  if (!systems || typeof systems !== 'object' || Array.isArray(systems)) {
+    return blockedResult({
+      blocker: 'SYSTEM_HEALTH_ESTATE_INVALID',
+      expectedHead: normalizedExpectedHead,
+      observedAtUtc: new Date(nowMs).toISOString(),
+    });
+  }
+
+  const unknownIds = Object.keys(systems).filter((id) => !SYSTEM_ID_SET.has(id));
+  if (unknownIds.length > 0) {
+    return blockedResult({
+      blocker: 'UNKNOWN_SYSTEM_HEALTH_RECORD',
+      expectedHead: normalizedExpectedHead,
+      observedAtUtc: new Date(nowMs).toISOString(),
     });
   }
 
   const normalized = REPAIR_AGENT_SYSTEM_IDS.map((id) => normalizeSystem({
     id,
-    record: systems?.[id],
+    record: systems[id],
     expectedHead: normalizedExpectedHead,
     nowMs,
   }));
