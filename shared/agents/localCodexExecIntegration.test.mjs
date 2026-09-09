@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
@@ -660,6 +660,7 @@ test('worker persists terminal failure when the guarded Codex child cannot launc
   const dispatchReceipt = integration.dispatch(packet('codex-job-child-launch-fails'));
   const expectedHead = packet().exactHeadProof.expectedHead;
   const result = await runCodexWorker(dispatchReceipt.taskPath, {
+    platform: 'linux',
     spawnFn() { throw new Error('synthetic Codex CLI launch failure'); },
     spawnSyncFn(executable, args) {
       if (executable === process.execPath) {
@@ -727,8 +728,8 @@ test('worker owns the canonical build, verification, and frozen dist fingerprint
   assert.deepEqual(
     calls.map((call) => call.args[0]),
     [
-      '/approved/repo/scripts/build-stephanos-ui.mjs',
-      '/approved/repo/scripts/verify-stephanos-dist.mjs',
+      resolve('/approved/repo/scripts/build-stephanos-ui.mjs'),
+      resolve('/approved/repo/scripts/verify-stephanos-dist.mjs'),
     ],
   );
   assert.equal(calls.every((call) => call.executable === process.execPath), true);
@@ -757,6 +758,7 @@ test('exact-head runtime builds use a detached approved worktree and bind copied
   try {
     const prepared = prepareExactHeadRuntimeBundle(repoRoot, {
       expectedHead,
+      platform: 'linux',
       environment: {
         PATH: process.env.PATH,
         GIT_DIR: '/hostile/redirect',

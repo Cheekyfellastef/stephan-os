@@ -9,6 +9,7 @@ import {
   renderDurableFlywheelReceipt,
   runDurableFlywheelStartupCycle,
 } from './durableFlywheelControllerVNext.mjs';
+import { BUILD_LANE_CAPACITY_RECEIPT_SCHEMA } from './missionControllerCapacityRouterV1.mjs';
 
 const NOW = '2026-07-30T13:00:00.000Z';
 const SOURCE_REVISION = 'a'.repeat(40);
@@ -135,6 +136,69 @@ test('production canonical ACTIVE projection authorizes one existing worker tick
   assert.equal(fixture.receipts[0].repository, REPOSITORY);
   assert.equal(fixture.receipts[0].prNumber, 1617);
   assert.equal(fixture.receipts[0].headSha, LANE_HEAD);
+});
+
+test('ACTIVE source work receives one exact proven fallback grant when Codex capacity is low', async () => {
+  const sourceMission = {
+    missionId: 'critical-1497-controller-test',
+    revision: 4,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    title: 'Repair controller routing',
+    repository: REPOSITORY,
+    operatorIntent: 'Repair the bounded controller route.',
+    intendedOutcome: 'The route is proven by focused tests.',
+    allowedFiles: ['shared/agents/controller.mjs'],
+    requiredTests: ['node --test shared/agents/controller.test.mjs'],
+    requiredEvidence: ['focused tests'],
+    dispatch: { adapter: 'codex', status: 'pending' },
+    git: { branch: BRANCH, worktreePath: '/bounded/worktree' },
+  };
+  const fixture = machineryFor(activeProjection({
+    criticalBacklog: { activeMission: sourceMission },
+  }), {
+    loadCapacityRoutingInput: async () => ({
+      nowUtc: NOW,
+      codexStatus: {
+        schemaVersion: 'shared-agent-workspace-record.v1',
+        statusId: 'codex-capacity-current',
+        truthState: 'CURRENT',
+        meterTruthUsable: true,
+        observedAtUtc: NOW,
+        remainingPercent: 3,
+        availability: 'AVAILABLE',
+        confidence: 'high',
+      },
+      githubLaneReceipt: {
+        schemaVersion: BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
+        receiptId: 'github-builder-capacity-controller-test',
+        route: 'CHATGPT_GITHUB',
+        repository: REPOSITORY,
+        workerId: 'shared-fabric-chatgpt-github-builder-01',
+        state: 'READY',
+        supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+        supportedTaskClasses: ['FOCUSED_REPAIR'],
+        observedAtUtc: NOW,
+        expiresAtUtc: '2026-07-30T13:15:00.000Z',
+        queueDepth: 0,
+        p95StartLatencySeconds: 15,
+        authorityReceiptIds: [],
+        proofRefs: ['receipts/github-builder/capacity.json'],
+      },
+    }),
+  });
+  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(result.status, 'ACTIVE');
+  assert.equal(result.workerActionGrant.adapter, 'chatgpt-github');
+  assert.equal(result.workerActionGrant.capacityRoute, 'CHATGPT_GITHUB');
+  assert.equal(result.workerActionGrant.capacityReceiptId, 'github-builder-capacity-controller-test');
+  assert.deepEqual(result.workerActionGrant.capacityProofRefs, ['receipts/github-builder/capacity.json']);
+  assert.equal(result.workerActionGrant.mergeAuthority, false);
+  assert.equal(result.workerActionGrant.leaseSeizureAllowed, false);
 });
 
 test('canonical HOLD projection preserves authority blockers and forbids work', async () => {

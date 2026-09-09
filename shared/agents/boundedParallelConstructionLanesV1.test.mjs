@@ -257,6 +257,28 @@ test('capacity is bounded', () => {
   }
 });
 
+test('default construction capacity admits the fifth isolated lane and queues the sixth', () => {
+  const active = Array.from({ length:4 }, (_, index) => activeLane({
+    id:`lane-active-${index + 1}`,
+    goalId:`goal-active-${index + 1}`,
+    branch:`feat/active-${index + 1}`,
+    ownership:{ paths:[`isolated/active-${index + 1}`], contracts:[] },
+  }));
+  const fifth = evaluateConstructionLaneAdmission(candidate(), inventory({ constructionLanes:active }));
+  assert.equal(fifth.status, 'ADMITTED');
+
+  const full = evaluateConstructionLaneAdmission(candidate(), inventory({
+    constructionLanes:[...active, activeLane({
+      id:'lane-active-5',
+      goalId:'goal-active-5',
+      branch:'feat/active-5',
+      ownership:{ paths:['isolated/active-5'], contracts:[] },
+    })],
+  }));
+  assert.equal(full.status, 'SERIAL_QUEUE');
+  assert.deepEqual(full.reasonCodes, ['CONSTRUCTION_CAPACITY_FULL']);
+});
+
 test('malformed active inventory fails closed', () => {
   const result = evaluateConstructionLaneAdmission(candidate(), inventory({
     constructionLanes:[null],

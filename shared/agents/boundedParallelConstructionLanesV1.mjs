@@ -1,4 +1,5 @@
 import { validateVerifierResult } from './verificationHarness.mjs';
+import { MINIMUM_BUILD_LANES } from './elasticBuildCapacityV1.mjs';
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
@@ -8,7 +9,7 @@ const ACTIVE_STATES = new Set(['ADMITTED', 'BUILDING', 'TESTING', 'PROOF_RUNNING
 const KNOWN_STATES = new Set([...ACTIVE_STATES, ...TERMINAL_STATES]);
 const INTEGRATION_STATES = new Set([...KNOWN_STATES, 'CI_REVIEW', 'INTEGRATING']);
 const FORBIDDEN_CAPABILITIES = new Set(['MERGE', 'DEPLOY', 'APPROVE', 'LEASE_SEIZE', 'RUNTIME_MUTATE']);
-const DEFAULT_MAX_LANES = 4;
+const DEFAULT_MAX_LANES = MINIMUM_BUILD_LANES;
 const MAX_CONSTRUCTION_LEASE_MS = 24 * 60 * 60 * 1000;
 const MAX_ISSUANCE_CLOCK_SKEW_MS = 60 * 1000;
 const EXACT_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/i;

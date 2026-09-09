@@ -47,6 +47,13 @@ test('exact read-only shadow parity with a current restorable backup becomes rea
   assert.deepEqual(new Set(Object.values(result.authority)), new Set([false]));
 });
 
+test('repository identity is fixed to canonical Stephanos repository', () => {
+  const result = evaluateForgeShadowParity(observation({ repository: 'other/repo' }));
+  assert.equal(result.valid, false);
+  assert.equal(result.decision, FORGE_SHADOW_PARITY_DECISIONS.BLOCKED);
+  assert.ok(result.blockers.includes('repository-not-allowlisted'));
+});
+
 test('head or tree mismatch requires parity without claiming readiness', () => {
   for (const forge of [
     { ...observation().forge, head: 'd'.repeat(40) },

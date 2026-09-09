@@ -9,6 +9,7 @@ import {
   finalizeTerminalImplementationLane,
   publishProgrammeControllerHeartbeat,
   readAuthoritativeProgrammeProjection,
+  readMissionControllerCapacityRoutingInput,
   resolveProgrammeAuthorityPaths,
 } from '../../stephanos-server/services/programmeAuthorityService.js';
 import {
@@ -101,6 +102,51 @@ function projectionIdentity(projection = {}) {
   });
 }
 
+function encodedMissionIdentity(missionId = '') {
+  const normalized = text(missionId).toLowerCase();
+  const goalLane = /^goal-([1-9]\d*)-pr-([1-9]\d*)(?:$|[-_.])/.exec(normalized);
+  if (goalLane) {
+    return freeze({
+      issueNumber: positiveInteger(goalLane[1]),
+      prNumber: positiveInteger(goalLane[2]),
+    });
+  }
+  const criticalGoal = /^critical-([1-9]\d*)(?:$|[-_.])/.exec(normalized);
+  return freeze({
+    issueNumber: positiveInteger(criticalGoal?.[1]),
+    prNumber: null,
+  });
+}
+
+export function resolveMissionWorkerGrantIdentity(state = {}, fallback = {}) {
+  const missionId = text(state?.missionId).toLowerCase();
+  const encoded = encodedMissionIdentity(missionId);
+  const explicitIssueNumber = positiveInteger(state?.issueNumber ?? state?.relatedIssue);
+  const explicitPrNumber = positiveInteger(
+    state?.pullRequest?.number ?? state?.prNumber ?? state?.relatedPr,
+  );
+  if (
+    explicitIssueNumber
+    && encoded.issueNumber
+    && explicitIssueNumber !== encoded.issueNumber
+  ) return null;
+  if (
+    explicitPrNumber
+    && encoded.prNumber
+    && explicitPrNumber !== encoded.prNumber
+  ) return null;
+  const missionBound = Boolean(encoded.issueNumber);
+  return freeze({
+    laneId: missionId || text(fallback?.laneId),
+    repository: text(state?.repository) || text(fallback?.repository),
+    issueNumber: explicitIssueNumber ?? encoded.issueNumber ?? positiveInteger(fallback?.issueNumber),
+    prNumber: explicitPrNumber ?? encoded.prNumber ?? (missionBound ? null : positiveInteger(fallback?.prNumber)),
+    branch: text(state?.git?.branch ?? state?.branch) || (missionBound ? '' : text(fallback?.branch)),
+    headSha: sha(state?.pullRequest?.headSha ?? state?.headSha ?? state?.git?.headSha)
+      || (missionBound ? '' : sha(fallback?.headSha)),
+  });
+}
+
 function workerAdapter(action = {}) {
   if (action.actionKind === 'signed-openclaw-operation') return 'openclaw-signed';
   if (action.actionKind === 'github-inspection') return 'openclaw-github-readonly';
@@ -110,7 +156,7 @@ function workerAdapter(action = {}) {
   return '';
 }
 
-function createExactWorkerActionGrant(projection = {}, sourceRevision = '') {
+function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capacityRouting = null) {
   const activeMission = projection?.criticalBacklog?.activeMission;
   const actionState = projectMissionWorkerActionState(activeMission, {
     now: new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString()),
@@ -128,11 +174,13 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '') {
   }
   const action = buildMissionWorkerAction(actionState, {
     now: new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString()),
+    capacityRouting,
   });
   const actionId = text(action?.actionId).toLowerCase();
   const adapter = workerAdapter(action);
   if (action?.executable !== true || !WORKER_SAFE_ID.test(actionId) || !adapter) return null;
-  const identity = projectionIdentity(projection);
+  const identity = resolveMissionWorkerGrantIdentity(actionState, projectionIdentity(projection));
+  if (!identity?.laneId || !identity?.repository || !identity?.issueNumber || !identity?.branch) return null;
   return freeze({
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
     grantId: `grant-${actionId}`.slice(0, 80),
@@ -145,11 +193,15 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '') {
     actionKind: text(action.actionKind),
     adapter,
     operation: text(action.operation),
-    laneId: identity.laneId || null,
-    repository: identity.repository || text(actionState?.repository) || null,
+    capacityRoute: text(action.capacityRoute),
+    capacityReceiptId: text(action.capacityReceiptId) || null,
+    capacityProofRefs: freeze(list(action.capacityProofRefs)),
+    workerId: text(action.owner) || null,
+    laneId: identity.laneId,
+    repository: identity.repository,
     issueNumber: identity.issueNumber,
     prNumber: identity.prNumber,
-    branch: identity.branch || text(actionState?.git?.branch) || null,
+    branch: identity.branch,
     headSha: identity.headSha || null,
     boundedActionCount: 1,
     mergeAuthority: false,
@@ -390,6 +442,7 @@ function productionMachinery(overrides = {}) {
     finalizeTerminalLane: overrides.finalizeTerminalLane ?? finalizeTerminalImplementationLane,
     ensureBacklogMission: overrides.ensureBacklogMission ?? ensureCriticalBacklogMission,
     publishReceipt: overrides.publishReceipt ?? publishDurableFlywheelCycleReceipt,
+    loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readMissionControllerCapacityRoutingInput,
   });
 }
 
@@ -558,7 +611,11 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       });
     }
   } else if (result.status === 'ACTIVE') {
-    const workerActionGrant = createExactWorkerActionGrant(projection, sourceRevision);
+    const capacityRouting = await requiredFunction(
+      deps.loadCapacityRoutingInput,
+      'loadCapacityRoutingInput',
+    )(serviceOptions);
+    const workerActionGrant = createExactWorkerActionGrant(projection, sourceRevision, capacityRouting);
     if (!workerActionGrant) {
       result = holdResult('mission-worker:exact-action-grant-unavailable', {
         observedAtUtc: nowUtc,
@@ -602,7 +659,11 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
           ...projection,
           criticalBacklog: actionResult.projection,
         };
-        const workerActionGrant = createExactWorkerActionGrant(grantProjection, sourceRevision);
+        const capacityRouting = await requiredFunction(
+          deps.loadCapacityRoutingInput,
+          'loadCapacityRoutingInput',
+        )(serviceOptions);
+        const workerActionGrant = createExactWorkerActionGrant(grantProjection, sourceRevision, capacityRouting);
         if (!workerActionGrant) {
           result = holdResult('mission-worker:exact-action-grant-unavailable', {
             observedAtUtc: nowUtc,

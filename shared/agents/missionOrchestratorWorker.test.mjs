@@ -15,6 +15,26 @@ const base = {
   deployment: { sync: { status: 'pending' }, build: { status: 'pending' }, verify: { status: 'pending' }, restart: { status: 'pending' } }, evidenceReceipts: [],
 };
 
+function explicitCodexCapacityRouting() {
+  return {
+    nowUtc: now.toISOString(),
+    codexStatus: {
+      schemaVersion: 'shared-agent-workspace-record.v1',
+      statusId: 'codex-capacity-current',
+      truthState: 'CURRENT',
+      meterTruthUsable: true,
+      observedAtUtc: '2026-06-24T21:59:00.000Z',
+      remainingPercent: 80,
+      availability: 'AVAILABLE',
+      confidence: 'high',
+      naturalResetAtUtc: '',
+    },
+    githubLaneReceipt: null,
+    forgeLaneReceipt: null,
+    forgeSidecar: null,
+  };
+}
+
 test('creates a bounded signed worktree action on the OpenClaw branch family', () => {
   const action = buildMissionWorkerAction(base, { now });
   assert.equal(action.finalVerdict, 'READY_TO_ISSUE_AUTHORIZATION');
@@ -46,9 +66,12 @@ test('routes PR checks through read-only GitHub inspection so failed checks rema
   assert.equal(Object.hasOwn(action, 'authorization'), false);
 });
 
-test('routes implementation and repair to Codex as the sole active writer', () => {
+test('routes implementation and repair to Codex only when explicit fresh Codex capacity is proven', () => {
   for (const currentPhase of ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED']) {
-    const action = buildMissionWorkerAction({ ...base, currentPhase }, { now });
+    const action = buildMissionWorkerAction({ ...base, currentPhase }, {
+      now,
+      capacityRouting: explicitCodexCapacityRouting(),
+    });
     assert.equal(action.adapter, 'codex');
     assert.equal(action.activeWriter, 'Codex');
   }

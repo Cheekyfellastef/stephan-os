@@ -1,432 +1,322 @@
+import * as legacy from './battleBridgeGitHubCommandMailboxLegacyV1.mjs';
 import {
-  CODEX_BANKED_RESET_EXECUTION_SURFACE,
-  CODEX_BANKED_RESET_OPERATION,
-  CODEX_BANKED_RESET_POLICY_REF,
-  executeCodexBankedResetOnBattleBridge,
-} from './codexBankedResetBattleBridgeExecutor.mjs';
-import {
-  CODEX_BANKED_RESET_STATUS_OPERATION,
-  readCodexBankedResetStatusOnBattleBridge,
-} from './codexBankedResetStatusBattleBridgeReader.mjs';
-import { MUSIC_SPOTIFY_LINK_OPERATION, MUSIC_SPOTIFY_LINK_SOURCE, validateMusicSpotifyLinkCandidate } from './musicSpotifyLinkBridge.mjs';
-import {
-  PROTECTED_OPENCLAW_MERGE_OPERATION,
-  executeProtectedOpenClawMergeOnBattleBridge,
-  protectedOpenClawMergeFields,
-  validateProtectedOpenClawMergeCommand,
-} from './protectedOpenClawMergeMailboxAdapter.mjs';
+  MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION,
+  runMissionWorkerDiagnosticLink,
+} from '../../scripts/mission-worker-diagnostic-link.mjs';
+import { planElasticBattleBridgeMailboxDispatch } from './elasticBattleBridgeMailboxCapacityV1.mjs';
 
-export const BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA = 'stephanos.battle-bridge-github-command.v1';
-export const BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE = 1507;
-export const BATTLE_BRIDGE_GITHUB_COMMAND_AUTHOR = 'Cheekyfellastef';
-export const BATTLE_BRIDGE_GITHUB_COMMAND_MARKER = 'stephanos-battle-bridge-command';
+export * from './battleBridgeGitHubCommandMailboxLegacyV1.mjs';
 
 export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
-  'UPDATE_STEPHANOS_FROM_CHAT',
-  'INSTALL_UNATTENDED_GITHUB_SYNC',
-  'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
-  'READ_DEPLOYMENT_STATUS',
-  'READ_CAPABILITY_REGISTRY',
-  'READ_SHARED_WORKSPACE_STATUS',
-  'READ_CRITICAL_BACKLOG_STATUS',
-  'READ_MAILBOX_RECEIPT',
-  'RUN_WORKER_WATCHDOG_ACCEPTANCE',
-  'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
-  'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
-  'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
-  'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
-  PROTECTED_OPENCLAW_MERGE_OPERATION,
-  MUSIC_SPOTIFY_LINK_OPERATION,
-  CODEX_BANKED_RESET_STATUS_OPERATION,
-  CODEX_BANKED_RESET_OPERATION,
+  ...legacy.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
+  MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION,
 ]);
 
-export const WINDOWS_BROWSER_PROOF_SCENARIOS = Object.freeze([
-  'MUSIC_RATING_PRESERVES_PLAYBACK',
-]);
-export const WINDOWS_BROWSER_PROOF_TARGETS = Object.freeze([
-  'PULL_REQUEST_HEAD',
-  'MERGED_MAIN',
-]);
-
-const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
-const RESET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,120}$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
-const PR_NUMBER_PATTERN = /^[1-9][0-9]{0,9}$/;
-const MAX_FUTURE_WINDOW_MS = 6 * 60 * 60 * 1000;
-const RESET_COMMAND_FIELDS = Object.freeze([
-  'resetId',
-  'resetExpiresAtUtc',
-  'latestSafeExecutionUtc',
-  'standingOperatorPolicyRef',
-  'executionSurface',
-  'fixedUiActionOnly',
-  'singlePressOnly',
+const DIAGNOSTIC_LINK_ALLOWED_FIELDS = new Set([
+  'schemaVersion',
+  'requestId',
+  'operation',
+  'repository',
+  'issueNumber',
+  'branch',
+  'operatorApproval',
+  'expectedHead',
+  'expiresAt',
 ]);
-const FORBIDDEN_RESET_COMMAND_FIELDS = Object.freeze([
-  'url', 'uri', 'selector', 'xpath', 'javascript', 'script', 'command', 'executable',
-  'args', 'arguments', 'profilePath', 'userDataDir', 'cookie', 'cookies', 'token', 'credential',
+const DIAGNOSTIC_LINK_TERMINAL_BLOCKERS = new Set([
+  'MISSION_WORKER_DIAGNOSTIC_LINK_EXPECTED_HEAD_REQUIRED',
+  'MISSION_WORKER_DIAGNOSTIC_LINK_FIELD_NOT_ALLOWED',
 ]);
-const MUSIC_SPOTIFY_FIELDS = Object.freeze(['source', 'spotifyUri', 'targetTrackId', 'targetArtist', 'targetTitle', 'requestedAtUtc']);
+const DIAGNOSTIC_EXPECTED_HEAD_UNSET = Symbol('DIAGNOSTIC_EXPECTED_HEAD_UNSET');
 
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
 }
 
-function hasValue(value) {
-  return value !== undefined && value !== null && value !== '';
-}
-
-function unsafeAutomationField(command) {
-  return FORBIDDEN_RESET_COMMAND_FIELDS.find((field) => hasValue(command[field])) || '';
-}
-
-function validateResetFields(command, { nowMs, expiresAtMs }) {
-  const unsafeField = unsafeAutomationField(command);
-  if (unsafeField) return fail('RESET_COMMAND_UNSAFE_FIELD_PRESENT', { field: unsafeField });
-  if (!RESET_ID_PATTERN.test(String(command.resetId || ''))) return fail('RESET_COMMAND_RESET_ID_INVALID');
-  if (command.standingOperatorPolicyRef !== CODEX_BANKED_RESET_POLICY_REF) return fail('RESET_COMMAND_POLICY_MISMATCH');
-  if (command.executionSurface !== CODEX_BANKED_RESET_EXECUTION_SURFACE) return fail('RESET_COMMAND_EXECUTION_SURFACE_MISMATCH');
-  if (command.fixedUiActionOnly !== true) return fail('RESET_COMMAND_FIXED_UI_ACTION_REQUIRED');
-  if (command.singlePressOnly !== true) return fail('RESET_COMMAND_SINGLE_PRESS_REQUIRED');
-
-  const resetExpiresAtMs = Date.parse(String(command.resetExpiresAtUtc || ''));
-  const latestSafeExecutionMs = Date.parse(String(command.latestSafeExecutionUtc || ''));
-  if (!Number.isFinite(resetExpiresAtMs) || !Number.isFinite(latestSafeExecutionMs)) {
-    return fail('RESET_COMMAND_TIME_INVALID');
+function validateDiagnosticLinkCommandShape(command = {}) {
+  if (String(command?.operation || '') !== MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION) {
+    return Object.freeze({ ok: true, requested: false });
   }
-  if (resetExpiresAtMs <= nowMs) return fail('RESET_COMMAND_SELECTED_RESET_EXPIRED');
-  if (latestSafeExecutionMs <= nowMs) return fail('RESET_COMMAND_ACTION_EXPIRED');
-  if (latestSafeExecutionMs > expiresAtMs) return fail('RESET_COMMAND_LATEST_SAFE_AFTER_COMMAND_EXPIRY');
-  if (latestSafeExecutionMs > resetExpiresAtMs) return fail('RESET_COMMAND_LATEST_SAFE_AFTER_RESET_EXPIRY');
-
-  return Object.freeze({
-    ok: true,
-    reset: Object.freeze({
-      resetId: String(command.resetId),
-      resetExpiresAtUtc: new Date(resetExpiresAtMs).toISOString(),
-      latestSafeExecutionUtc: new Date(latestSafeExecutionMs).toISOString(),
-      standingOperatorPolicyRef: CODEX_BANKED_RESET_POLICY_REF,
-      executionSurface: CODEX_BANKED_RESET_EXECUTION_SURFACE,
-      fixedUiActionOnly: true,
-      singlePressOnly: true,
-    }),
-  });
-}
-
-export function extractBattleBridgeGitHubCommand(body = '') {
-  const text = String(body || '');
-  const fence = '```';
-  const pattern = new RegExp(`${fence}${BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\\s*([\\s\\S]*?)${fence}`, 'i');
-  const match = text.match(pattern);
-  if (!match) return fail('COMMAND_MARKER_MISSING');
-  try {
-    const command = JSON.parse(match[1].trim());
-    return Object.freeze({ ok: true, command });
-  } catch (error) {
-    return fail('COMMAND_JSON_INVALID', { error: error?.message || String(error) });
-  }
-}
-
-export function validateBattleBridgeGitHubCommand(command = {}, {
-  authorLogin = '',
-  now = new Date(),
-} = {}) {
-  if (authorLogin !== BATTLE_BRIDGE_GITHUB_COMMAND_AUTHOR) {
-    return fail('COMMAND_AUTHOR_NOT_ALLOWED', { authorLogin });
-  }
-  if (command.schemaVersion !== BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA) {
-    return fail('COMMAND_SCHEMA_MISMATCH');
-  }
-  if (!REQUEST_ID_PATTERN.test(String(command.requestId || ''))) {
-    return fail('COMMAND_REQUEST_ID_INVALID');
-  }
-  if (!BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(command.operation)) {
-    return fail('COMMAND_OPERATION_NOT_ALLOWED', { operation: command.operation || '' });
-  }
-  if (command.repository !== BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY) {
-    return fail('COMMAND_REPOSITORY_MISMATCH');
-  }
-  if (Number(command.issueNumber) !== BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE) {
-    return fail('COMMAND_ISSUE_MISMATCH');
-  }
-  if (command.branch !== 'main') return fail('COMMAND_BRANCH_NOT_ALLOWED');
-  if (command.operatorApproval !== 'operator-approved') {
-    return fail('COMMAND_OPERATOR_APPROVAL_REQUIRED');
-  }
-  if (command.expectedHead && !SHA_PATTERN.test(String(command.expectedHead))) {
-    return fail('COMMAND_EXPECTED_HEAD_INVALID');
-  }
-  if (['INSTALL_BATTLE_BRIDGE_RECOVERY_MESH', 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'].includes(command.operation)
-    && !SHA_PATTERN.test(String(command.expectedHead || ''))) {
-    return fail('RECOVERY_MESH_EXPECTED_HEAD_REQUIRED');
-  }
-  let protectedMerge = null;
-  if (command.operation === PROTECTED_OPENCLAW_MERGE_OPERATION) {
-    const validation = validateProtectedOpenClawMergeCommand(command, { now });
-    if (!validation.ok) return fail(validation.blocker, validation.details || {});
-    protectedMerge = validation.command;
-  } else {
-    const unexpectedProtectedMergeField = protectedOpenClawMergeFields().find((field) => hasValue(command[field]));
-    if (unexpectedProtectedMergeField) {
-      return fail('PROTECTED_MERGE_FIELD_NOT_ALLOWED', { field: unexpectedProtectedMergeField });
-    }
-  }
-  if (command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF') {
-    if (!SHA_PATTERN.test(String(command.expectedHead || ''))) {
-      return fail('WINDOWS_BROWSER_PROOF_EXPECTED_HEAD_REQUIRED');
-    }
-    if (!PR_NUMBER_PATTERN.test(String(command.prNumber || ''))) {
-      return fail('WINDOWS_BROWSER_PROOF_PR_NUMBER_INVALID');
-    }
-    if (!WINDOWS_BROWSER_PROOF_SCENARIOS.includes(String(command.proofScenario || ''))) {
-      return fail('WINDOWS_BROWSER_PROOF_SCENARIO_NOT_ALLOWED');
-    }
-    const proofTarget = String(command.proofTarget || 'PULL_REQUEST_HEAD');
-    if (!WINDOWS_BROWSER_PROOF_TARGETS.includes(proofTarget)) {
-      return fail('WINDOWS_BROWSER_PROOF_TARGET_NOT_ALLOWED');
-    }
-    if (proofTarget === 'MERGED_MAIN' && !SHA_PATTERN.test(String(command.pullRequestHead || ''))) {
-      return fail('WINDOWS_BROWSER_PROOF_PR_PROVENANCE_HEAD_REQUIRED');
-    }
-    if (proofTarget === 'PULL_REQUEST_HEAD' && hasValue(command.pullRequestHead)) {
-      return fail('WINDOWS_BROWSER_PROOF_PR_PROVENANCE_HEAD_NOT_ALLOWED');
-    }
-  } else if (command.operation !== PROTECTED_OPENCLAW_MERGE_OPERATION
-    && (hasValue(command.prNumber) || hasValue(command.proofScenario)
-      || hasValue(command.proofTarget) || hasValue(command.pullRequestHead))) {
-    return fail('WINDOWS_BROWSER_PROOF_FIELD_NOT_ALLOWED');
-  }
-  let musicSpotifyCandidate = null;
-  if (command.operation === MUSIC_SPOTIFY_LINK_OPERATION) {
-    const unsafeField = unsafeAutomationField(command);
-    if (unsafeField) return fail('MUSIC_SPOTIFY_UNSAFE_FIELD_PRESENT', { field: unsafeField });
-    if (!SHA_PATTERN.test(String(command.expectedHead || ''))) return fail('MUSIC_SPOTIFY_EXPECTED_HEAD_REQUIRED');
-    const validation = validateMusicSpotifyLinkCandidate({
-      ...command,
-      source: command.source,
-      requestedAtUtc: command.requestedAtUtc,
-    });
-    if (!validation.ok) return fail(validation.blocker);
-    musicSpotifyCandidate = validation.candidate;
-  } else {
-    const unexpectedMusicField = MUSIC_SPOTIFY_FIELDS.find((field) => hasValue(command[field]));
-    if (unexpectedMusicField) return fail('MUSIC_SPOTIFY_FIELD_NOT_ALLOWED', { field: unexpectedMusicField });
-  }
-  if (command.operation === CODEX_BANKED_RESET_STATUS_OPERATION) {
-    const unsafeField = unsafeAutomationField(command);
-    if (unsafeField) return fail('RESET_STATUS_COMMAND_UNSAFE_FIELD_PRESENT', { field: unsafeField });
-  }
-  const targetRequestId = String(command.targetRequestId || '');
-  if (command.operation === 'READ_MAILBOX_RECEIPT' && !REQUEST_ID_PATTERN.test(targetRequestId)) {
-    return fail('COMMAND_TARGET_REQUEST_ID_INVALID');
-  }
-  if (command.operation !== 'READ_MAILBOX_RECEIPT' && targetRequestId) {
-    return fail('COMMAND_TARGET_REQUEST_ID_NOT_ALLOWED');
-  }
-
-  const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
-  const expiresAtMs = new Date(command.expiresAt || '').getTime();
-  if (!Number.isFinite(nowMs) || !Number.isFinite(expiresAtMs)) {
-    return fail('COMMAND_EXPIRY_INVALID');
-  }
-  if (expiresAtMs <= nowMs) return fail('COMMAND_EXPIRED');
-  if (expiresAtMs - nowMs > MAX_FUTURE_WINDOW_MS) {
-    return fail('COMMAND_EXPIRY_TOO_FAR_AHEAD');
-  }
-
-  let reset = null;
-  if (command.operation === CODEX_BANKED_RESET_OPERATION) {
-    const resetValidation = validateResetFields(command, { nowMs, expiresAtMs });
-    if (!resetValidation.ok) return resetValidation;
-    reset = resetValidation.reset;
-  } else {
-    const unexpectedResetField = RESET_COMMAND_FIELDS.find((field) => hasValue(command[field]));
-    if (unexpectedResetField) return fail('RESET_COMMAND_FIELD_NOT_ALLOWED', { field: unexpectedResetField });
-  }
-
-  return Object.freeze({
-    ok: true,
-    verdict: 'COMMAND_ACCEPTED',
-    command: Object.freeze({
-      schemaVersion: command.schemaVersion,
-      requestId: String(command.requestId),
-      operation: command.operation,
-      repository: command.repository,
-      issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
-      branch: 'main',
-      operatorApproval: 'operator-approved',
-      expectedHead: String(command.expectedHead || ''),
-      targetRequestId: command.operation === 'READ_MAILBOX_RECEIPT' ? targetRequestId : '',
-      prNumber: ['RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF', PROTECTED_OPENCLAW_MERGE_OPERATION].includes(command.operation)
-        ? Number(command.prNumber)
-        : 0,
-      proofScenario: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF' ? String(command.proofScenario) : '',
-      proofTarget: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
-        ? String(command.proofTarget || 'PULL_REQUEST_HEAD')
-        : '',
-      pullRequestHead: command.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
-        ? String(command.pullRequestHead || '').toLowerCase()
-        : '',
-      ...(protectedMerge || {}),
-      ...(musicSpotifyCandidate ? {
-        source: MUSIC_SPOTIFY_LINK_SOURCE,
-        spotifyUri: musicSpotifyCandidate.spotifyUri,
-        targetTrackId: musicSpotifyCandidate.targetTrackId,
-        targetArtist: musicSpotifyCandidate.targetArtist,
-        targetTitle: musicSpotifyCandidate.targetTitle,
-        requestedAtUtc: musicSpotifyCandidate.requestedAtUtc,
-      } : {}),
-      expiresAt: new Date(expiresAtMs).toISOString(),
-      ...(reset || {}),
-    }),
-  });
-}
-
-export function selectNextBattleBridgeGitHubCommand(comments = [], {
-  consumedRequestIds = new Set(),
-  now = new Date(),
-} = {}) {
-  const ordered = [...comments].sort((a, b) => Number(a?.id || 0) - Number(b?.id || 0));
-  const rejected = [];
-  for (const comment of ordered) {
-    const extracted = extractBattleBridgeGitHubCommand(comment?.body || '');
-    if (!extracted.ok) continue;
-    const validated = validateBattleBridgeGitHubCommand(extracted.command, {
-      authorLogin: comment?.user?.login || '',
-      now,
-    });
-    if (!validated.ok) {
-      rejected.push(Object.freeze({ commentId: comment?.id || null, ...validated }));
-      continue;
-    }
-    if (consumedRequestIds.has(validated.command.requestId)) continue;
-    return Object.freeze({
-      ok: true,
-      verdict: 'COMMAND_READY',
-      commentId: comment?.id || null,
-      commentUrl: comment?.html_url || comment?.url || '',
-      command: validated.command,
-      rejected,
+  const unexpectedField = Object.keys(command)
+    .find((field) => !DIAGNOSTIC_LINK_ALLOWED_FIELDS.has(field));
+  if (unexpectedField) {
+    return fail('MISSION_WORKER_DIAGNOSTIC_LINK_FIELD_NOT_ALLOWED', {
+      requested: true,
+      field: unexpectedField,
     });
   }
-  return Object.freeze({ ok: true, verdict: 'NO_COMMAND_READY', rejected });
+  const expectedHead = String(command?.expectedHead || '').trim().toLowerCase();
+  if (!SHA_PATTERN.test(expectedHead)) {
+    return fail('MISSION_WORKER_DIAGNOSTIC_LINK_EXPECTED_HEAD_REQUIRED', { requested: true });
+  }
+  return Object.freeze({ ok: true, requested: true, expectedHead });
 }
 
-export async function executeBattleBridgeGitHubCommand(command, {
-  updateStephanos,
-  installUnattendedSync,
-  runDiagnostics,
-  readDeploymentStatus,
-  readCapabilityRegistry,
-  readSharedWorkspaceStatus,
-  readCriticalBacklogStatus,
-  readMailboxReceipt,
-  runWorkerWatchdogAcceptance,
-  installRecoveryMesh,
-  wakeRecoveryMesh,
-  runMonitorMultiplexerAcceptance,
-  runExactHeadWindowsBrowserProof,
-  queueVerifiedSpotifyLink,
-  executeProtectedOpenClawMerge = executeProtectedOpenClawMergeOnBattleBridge,
-  readCodexBankedResetStatus = readCodexBankedResetStatusOnBattleBridge,
-  redeemBankedCodexReset = executeCodexBankedResetOnBattleBridge,
-} = {}) {
-  const handlers = {
-    UPDATE_STEPHANOS_FROM_CHAT: updateStephanos,
-    INSTALL_UNATTENDED_GITHUB_SYNC: installUnattendedSync,
-    RUN_BATTLE_BRIDGE_DIAGNOSTICS: runDiagnostics,
-    READ_DEPLOYMENT_STATUS: readDeploymentStatus,
-    READ_CAPABILITY_REGISTRY: readCapabilityRegistry,
-    READ_SHARED_WORKSPACE_STATUS: readSharedWorkspaceStatus,
-    READ_CRITICAL_BACKLOG_STATUS: readCriticalBacklogStatus,
-    READ_MAILBOX_RECEIPT: readMailboxReceipt,
-    RUN_WORKER_WATCHDOG_ACCEPTANCE: runWorkerWatchdogAcceptance,
-    INSTALL_BATTLE_BRIDGE_RECOVERY_MESH: installRecoveryMesh,
-    WAKE_BATTLE_BRIDGE_RECOVERY_MESH: wakeRecoveryMesh,
-    RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
-    RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF: runExactHeadWindowsBrowserProof,
-    [PROTECTED_OPENCLAW_MERGE_OPERATION]: executeProtectedOpenClawMerge,
-    [MUSIC_SPOTIFY_LINK_OPERATION]: queueVerifiedSpotifyLink,
-    [CODEX_BANKED_RESET_STATUS_OPERATION]: readCodexBankedResetStatus,
-    [CODEX_BANKED_RESET_OPERATION]: redeemBankedCodexReset,
+function projectDiagnosticEnvelope(command = {}, expectedHead = DIAGNOSTIC_EXPECTED_HEAD_UNSET) {
+  const projected = {};
+  for (const field of DIAGNOSTIC_LINK_ALLOWED_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(command || {}, field)) projected[field] = command[field];
+  }
+  projected.operation = MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION;
+  const projectedExpectedHead = expectedHead === DIAGNOSTIC_EXPECTED_HEAD_UNSET
+    ? command?.expectedHead
+    : expectedHead;
+  projected.expectedHead = String(projectedExpectedHead ?? '').trim().toLowerCase();
+  return Object.freeze(projected);
+}
+
+function translateDiagnosticLinkForLegacy(command = {}, shape = {}) {
+  const translated = {};
+  for (const field of DIAGNOSTIC_LINK_ALLOWED_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(command || {}, field)) translated[field] = command[field];
+  }
+  translated.operation = 'RUN_WORKER_WATCHDOG_ACCEPTANCE';
+  translated.expectedHead = shape?.ok === true ? shape.expectedHead : 'invalid';
+  return translated;
+}
+
+function translatedComment(comment = {}, translatedCommand = {}) {
+  return {
+    ...comment,
+    body: `\`\`\`${legacy.BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(translatedCommand)}\n\`\`\``,
   };
-  const handler = handlers[command?.operation];
-  if (typeof handler !== 'function') {
-    return fail('COMMAND_HANDLER_NOT_CONFIGURED', { operation: command?.operation || '' });
+}
+
+function projectDiagnosticTerminalRejection(original = {}, options = {}) {
+  const command = original?.command || {};
+  const shape = original?.shape || {};
+  const comment = original?.comment || {};
+  if (shape?.ok === true || !DIAGNOSTIC_LINK_TERMINAL_BLOCKERS.has(String(shape?.blocker || ''))) return null;
+
+  const originalExpectedHead = String(command?.expectedHead || '').trim().toLowerCase();
+  const validationHead = SHA_PATTERN.test(originalExpectedHead)
+    ? originalExpectedHead
+    : '0'.repeat(40);
+  const envelope = legacy.validateBattleBridgeGitHubCommand(
+    translateDiagnosticLinkForLegacy(command, { ok: true, expectedHead: validationHead }),
+    {
+      authorLogin: String(comment?.user?.login || ''),
+      now: options?.now || new Date(),
+      authoredAt: comment?.created_at || options?.now || new Date(),
+    },
+  );
+  if (!envelope?.ok) return null;
+
+  const commentId = Number(comment?.id || 0);
+  if (!Number.isSafeInteger(commentId) || commentId < 1) return null;
+  return Object.freeze({
+    commentId,
+    commentUrl: String(comment?.html_url || comment?.url || ''),
+    blocker: String(shape.blocker),
+    command: projectDiagnosticEnvelope(envelope.command, originalExpectedHead),
+  });
+}
+
+export function isTerminalizableOwnerCommandBlocker(value) {
+  const blocker = String(value || '');
+  return DIAGNOSTIC_LINK_TERMINAL_BLOCKERS.has(blocker)
+    || legacy.isTerminalizableOwnerCommandBlocker(blocker);
+}
+
+export function validateBattleBridgeGitHubCommand(command = {}, options = {}) {
+  const diagnostic = validateDiagnosticLinkCommandShape(command);
+  if (!diagnostic.ok) return diagnostic;
+  if (!diagnostic.requested) return legacy.validateBattleBridgeGitHubCommand(command, options);
+
+  const envelope = legacy.validateBattleBridgeGitHubCommand(
+    translateDiagnosticLinkForLegacy(command, diagnostic),
+    options,
+  );
+  if (!envelope?.ok) return envelope;
+  return Object.freeze({
+    ...envelope,
+    command: projectDiagnosticEnvelope(envelope.command, diagnostic.expectedHead),
+  });
+}
+
+export function classifyBattleBridgeMailboxOperation(operation = '') {
+  if (String(operation || '') === MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION) {
+    return legacy.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
   }
+  return legacy.classifyBattleBridgeMailboxOperation(operation);
+}
+
+function elasticMetadata(options = {}, requestId = '') {
+  const source = options?.elasticCommandMetadata;
+  if (source instanceof Map) return source.get(requestId) || null;
+  if (source && typeof source === 'object' && !Array.isArray(source)) return source[requestId] || null;
+  return null;
+}
+
+function applyElasticMailboxPlan(commands = [], options = {}) {
+  if (!options?.elasticCapacityEvidence || !options?.elasticCommandMetadata) {
+    return Object.freeze({
+      commands: Object.freeze(commands),
+      telemetry: null,
+    });
+  }
+
+  const candidates = commands.map((entry) => {
+    const requestId = String(entry?.command?.requestId || '');
+    const metadata = elasticMetadata(options, requestId) || {};
+    return Object.freeze({
+      requestId,
+      laneId: String(metadata.laneId || requestId),
+      resources: Array.isArray(metadata.resources) ? metadata.resources : [],
+      approvalGated: metadata.approvalGated === true,
+      blocked: metadata.blocked === true,
+      providerAvailable: metadata.providerAvailable !== false,
+    });
+  });
+
+  const plan = planElasticBattleBridgeMailboxDispatch({
+    candidates,
+    capacityEvidence: options.elasticCapacityEvidence,
+    now: options.now || new Date(),
+    staleAfterMs: options.elasticCapacityStaleAfterMs,
+    consumedRequestIds: options.consumedRequestIds,
+  });
+  const selectedIds = new Set(plan.selected.map((entry) => entry.requestId));
+  const filtered = commands.filter((entry) => selectedIds.has(String(entry?.command?.requestId || '')));
+  return Object.freeze({
+    commands: Object.freeze(filtered),
+    telemetry: Object.freeze({
+      enabled: true,
+      width: plan.width,
+      capacityProven: plan.capacityProven,
+      capacityBlocker: plan.capacityBlocker,
+      selectedCount: plan.selectedCount,
+      parkedCount: plan.parkedCount,
+      deferredCount: plan.deferredCount,
+      selected: plan.selected,
+      parked: plan.parked,
+      deferred: plan.deferred,
+      workConserving: plan.workConserving,
+      duplicateMailboxAllowed: false,
+    }),
+  });
+}
+
+export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}) {
+  const diagnosticOriginals = new Map();
+  const translated = (Array.isArray(comments) ? comments : []).map((comment) => {
+    const extracted = legacy.extractBattleBridgeGitHubCommand(comment?.body || '');
+    if (!extracted.ok || extracted.command?.operation !== MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION) {
+      return comment;
+    }
+    const shape = validateDiagnosticLinkCommandShape(extracted.command);
+    diagnosticOriginals.set(String(comment?.id ?? ''), Object.freeze({
+      command: extracted.command,
+      shape,
+      comment,
+    }));
+    return translatedComment(comment, translateDiagnosticLinkForLegacy(extracted.command, shape));
+  });
+
+  const selected = legacy.selectBattleBridgeGitHubCommandBatch(translated, options);
+  if (!selected?.ok) return selected;
+
+  const commands = Array.isArray(selected.commands)
+    ? selected.commands.map((entry) => {
+      const original = diagnosticOriginals.get(String(entry?.commentId ?? ''));
+      if (!original?.shape?.ok) return entry;
+      return Object.freeze({
+        ...entry,
+        command: projectDiagnosticEnvelope(entry.command, original.shape.expectedHead),
+        partition: legacy.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
+      });
+    })
+    : [];
+
+  const rejected = Array.isArray(selected.rejected)
+    ? selected.rejected.map((entry) => {
+      const original = diagnosticOriginals.get(String(entry?.commentId ?? ''));
+      if (!original || original.shape?.ok) return entry;
+      return Object.freeze({ ...entry, blocker: original.shape.blocker });
+    })
+    : selected.rejected;
+
+  const terminalRejections = Array.isArray(selected.terminalRejections)
+    ? selected.terminalRejections.map((entry) => {
+      const original = diagnosticOriginals.get(String(entry?.commentId ?? ''));
+      if (!original) return entry;
+      return Object.freeze({
+        ...entry,
+        blocker: original.shape?.ok === true ? entry.blocker : original.shape.blocker,
+        command: projectDiagnosticEnvelope(
+          entry.command,
+          String(original.command?.expectedHead || '').trim().toLowerCase(),
+        ),
+      });
+    })
+    : [];
+
+  const terminalRequestIds = new Set(
+    terminalRejections.map((entry) => String(entry?.command?.requestId || '')).filter(Boolean),
+  );
+  if (Array.isArray(selected.rejected)) {
+    for (const entry of selected.rejected) {
+      const original = diagnosticOriginals.get(String(entry?.commentId ?? ''));
+      if (!original || original.shape?.ok === true) continue;
+      const terminal = projectDiagnosticTerminalRejection(original, options);
+      if (!terminal) continue;
+      const requestId = String(terminal.command?.requestId || '');
+      if (options?.consumedRequestIds?.has?.(requestId) || terminalRequestIds.has(requestId)) continue;
+      terminalRequestIds.add(requestId);
+      terminalRejections.push(terminal);
+    }
+  }
+
+  const elastic = applyElasticMailboxPlan(commands, options);
+  return Object.freeze({
+    ...selected,
+    ...(Array.isArray(selected.commands) ? { commands: elastic.commands } : {}),
+    ...(Array.isArray(selected.rejected) ? { rejected: Object.freeze(rejected) } : {}),
+    terminalRejections: Object.freeze(terminalRejections),
+    ...(elastic.telemetry ? { elasticDispatch: elastic.telemetry } : {}),
+  });
+}
+
+export function selectNextBattleBridgeGitHubCommand(comments = [], options = {}) {
+  const batch = selectBattleBridgeGitHubCommandBatch(comments, { ...options, maxBatch: 1 });
+  if (!batch.ok || batch.verdict === 'NO_COMMAND_READY') return batch;
+  const selected = batch.commands[0];
+  return Object.freeze({
+    ok: true,
+    verdict: 'COMMAND_READY',
+    commentId: selected.commentId,
+    commentUrl: selected.commentUrl,
+    command: selected.command,
+    partition: selected.partition,
+    rejected: batch.rejected,
+    terminalRejections: batch.terminalRejections,
+  });
+}
+
+export async function executeBattleBridgeGitHubCommand(command, options = {}) {
+  if (String(command?.operation || '') !== MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION) {
+    return legacy.executeBattleBridgeGitHubCommand(command, options);
+  }
+  const shape = validateDiagnosticLinkCommandShape(command);
+  if (!shape.ok) return shape;
+  const executor = typeof options?.runMissionWorkerDiagnosticLinkFn === 'function'
+    ? options.runMissionWorkerDiagnosticLinkFn
+    : runMissionWorkerDiagnosticLink;
   try {
-    const result = await handler(command);
+    const result = await executor({ expectedHead: shape.expectedHead });
     return Object.freeze({
       ok: result?.ok !== false,
       verdict: result?.ok === false ? 'COMMAND_EXECUTION_BLOCKED' : 'COMMAND_EXECUTION_COMPLETE',
-      operation: command.operation,
-      requestId: command.requestId,
+      operation: MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION,
+      requestId: String(command?.requestId || ''),
+      ...(result?.ok === false ? { blocker: String(result?.blocker || 'MISSION_WORKER_DIAGNOSTIC_LINK_EXECUTION_FAILED') } : {}),
       result,
     });
-  } catch (error) {
-    return fail('COMMAND_EXECUTION_FAILED', {
-      operation: command?.operation || '',
-      requestId: command?.requestId || '',
-      error: error?.message || String(error),
+  } catch {
+    return fail('MISSION_WORKER_DIAGNOSTIC_LINK_EXECUTION_FAILED', {
+      operation: MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION,
+      requestId: String(command?.requestId || ''),
     });
   }
-}
-
-export function buildBattleBridgeGitHubCommandReceipt({
-  command,
-  state,
-  acceptedAt,
-  heartbeatAt,
-  completedAt = '',
-  result = null,
-  blocker = '',
-  proofRefs = [],
-} = {}) {
-  return Object.freeze({
-    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
-    requestId: String(command?.requestId || ''),
-    operation: String(command?.operation || ''),
-    repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
-    issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
-    branch: 'main',
-    expectedHead: String(command?.expectedHead || ''),
-    prNumber: ['RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF', PROTECTED_OPENCLAW_MERGE_OPERATION].includes(command?.operation)
-      ? Number(command?.prNumber || 0)
-      : 0,
-    expectedBase: command?.operation === PROTECTED_OPENCLAW_MERGE_OPERATION ? String(command?.expectedBase || '') : '',
-    reviewRunId: command?.operation === PROTECTED_OPENCLAW_MERGE_OPERATION ? Number(command?.reviewRunId || 0) : 0,
-    reviewRunAttempt: command?.operation === PROTECTED_OPENCLAW_MERGE_OPERATION ? Number(command?.reviewRunAttempt || 0) : 0,
-    reviewJobId: command?.operation === PROTECTED_OPENCLAW_MERGE_OPERATION ? Number(command?.reviewJobId || 0) : 0,
-    reviewArtifactId: command?.operation === PROTECTED_OPENCLAW_MERGE_OPERATION ? Number(command?.reviewArtifactId || 0) : 0,
-    reviewArtifactDigest: command?.operation === PROTECTED_OPENCLAW_MERGE_OPERATION ? String(command?.reviewArtifactDigest || '') : '',
-    reviewPayloadSha256: command?.operation === PROTECTED_OPENCLAW_MERGE_OPERATION ? String(command?.reviewPayloadSha256 || '') : '',
-    proofScenario: command?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF' ? String(command?.proofScenario || '') : '',
-    proofTarget: command?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
-      ? String(command?.proofTarget || 'PULL_REQUEST_HEAD')
-      : '',
-    pullRequestHead: command?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF'
-      ? String(command?.pullRequestHead || '').toLowerCase()
-      : '',
-    resetId: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.resetId || '') : '',
-    resetExpiresAtUtc: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.resetExpiresAtUtc || '') : '',
-    latestSafeExecutionUtc: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.latestSafeExecutionUtc || '') : '',
-    standingOperatorPolicyRef: command?.operation === CODEX_BANKED_RESET_OPERATION ? String(command?.standingOperatorPolicyRef || '') : '',
-    fixedUiActionOnly: command?.operation === CODEX_BANKED_RESET_OPERATION ? command?.fixedUiActionOnly === true : false,
-    singlePressOnly: command?.operation === CODEX_BANKED_RESET_OPERATION ? command?.singlePressOnly === true : false,
-    readOnly: command?.operation === CODEX_BANKED_RESET_STATUS_OPERATION || command?.operation === 'RUN_EXACT_HEAD_WINDOWS_BROWSER_PROOF',
-    state: String(state || ''),
-    acceptedAt: String(acceptedAt || ''),
-    heartbeatAt: String(heartbeatAt || ''),
-    completedAt: String(completedAt || ''),
-    blocker: String(blocker || ''),
-    proofRefs: Array.isArray(proofRefs) ? proofRefs.slice(0, 20).map(String) : [],
-    result,
-    arbitraryShellAllowed: false,
-    destructiveGitAllowed: false,
-    liveOpenClawUpdateAllowed: false,
-    arbitraryBrowserAutomationAllowed: false,
-    credentialsMayBeReadOrExported: false,
-  });
 }

@@ -8,10 +8,7 @@ import {
   PROTECTED_WORKFLOW_SOURCE_SCHEMA_VERSION,
   PROTECTED_REVIEW_MARKER,
   analyzeIndependentSecurityReview,
-  bindRequiredExactHeadWorkflowIdentities,
-  exactHeadWorkflowFailureIsTerminal,
   isApprovalBoundaryBootstrapAnalysis,
-  validateExactHeadWorkflowRuns,
 } from '../shared/agents/operatorMergeApprovalGateV2.mjs';
 import {
   validateMainRefBaseBinding,
@@ -23,14 +20,15 @@ import {
   buildIndependentReviewArtifact,
 } from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
 import { resolve } from 'node:path';
-import { adjudicateQualifiedSpecialistReview } from '../shared/agents/qualifiedSpecialistReviewV1.mjs';
+import {
+  adjudicateQualifiedSpecialistReview,
+  qualifiedSpecialistCommentHeadRef,
+} from '../shared/agents/qualifiedSpecialistReviewV1.mjs';
 import { TextDecoder } from 'node:util';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-independent-merge-security-review-v2';
 const MAX_PAGES = 20;
-const POLL_INTERVAL_MS = 15_000;
-const POLL_TIMEOUT_MS = 10 * 60 * 1000;
 
 function text(value) {
   return String(value ?? '').trim();
@@ -44,10 +42,6 @@ function integer(value) {
 function readJson(path) {
   if (!path || !fs.existsSync(path)) throw new Error('GitHub event payload is required.');
   return JSON.parse(fs.readFileSync(path, 'utf8'));
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function githubRequest(path, {
@@ -92,6 +86,27 @@ async function githubPages(path, itemKey = null) {
     if (pageItems.length < 100) return items;
   }
   throw new Error(`Pagination exceeded ${MAX_PAGES * 100} records for ${path}`);
+}
+
+async function resolveQualifiedSpecialistCommentHeads(owner, repo, comments = []) {
+  return Promise.all(comments.map(async (comment) => {
+    const reviewedCommitRef = qualifiedSpecialistCommentHeadRef(comment);
+    if (!reviewedCommitRef) return comment;
+    try {
+      const commit = await githubRequest(
+        `/repos/${owner}/${repo}/commits/${encodeURIComponent(reviewedCommitRef)}`,
+        { allowNotFound: true, maxResponseBytes: 512 * 1024 },
+      );
+      const resolvedCommitId = text(commit?.sha).toLowerCase();
+      return /^[a-f0-9]{40}$/.test(resolvedCommitId)
+        ? Object.freeze({ ...comment, resolved_commit_id: resolvedCommitId })
+        : comment;
+    } catch {
+      // A malformed, ambiguous or unavailable abbreviated commit cannot seal
+      // the review, but it must not deny service to deterministic analysis.
+      return comment;
+    }
+  }));
 }
 
 function changedFilePaths(files = []) {
@@ -163,80 +178,6 @@ async function protectedWorkflowSourceAtHead(owner, repo, repository, path, sour
   });
 }
 
-async function unresolvedThreadCount(owner, repo, prNumber) {
-  const query = `query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved} pageInfo{hasNextPage}}}}}`;
-  const payload = await githubRequest('/graphql', {
-    method: 'POST',
-    body: { query, variables: { owner, repo, number: prNumber } },
-  });
-  const threads = payload?.data?.repository?.pullRequest?.reviewThreads;
-  if (!threads || threads.pageInfo?.hasNextPage) throw new Error('Review-thread evidence is missing or exceeds the bounded first page.');
-  return (threads.nodes || []).filter((thread) => thread?.isResolved !== true).length;
-}
-
-function mapWorkflowRun(run) {
-  return {
-    id: run?.id,
-    run_number: run?.run_number,
-    workflow_id: run?.workflow_id,
-    name: text(run?.name),
-    path: text(run?.path),
-    event: text(run?.event),
-    repository: { full_name: text(run?.repository?.full_name) },
-    head_sha: text(run?.head_sha),
-    status: text(run?.status),
-    conclusion: text(run?.conclusion),
-    pull_requests: Array.isArray(run?.pull_requests)
-      ? run.pull_requests.map((pullRequest) => ({
-        number: pullRequest?.number,
-        head: {
-          sha: text(pullRequest?.head?.sha),
-          ref: text(pullRequest?.head?.ref),
-        },
-        base: {
-          sha: text(pullRequest?.base?.sha),
-          ref: text(pullRequest?.base?.ref),
-        },
-      }))
-      : [],
-  };
-}
-
-async function waitForExactHeadWorkflows(
-  owner,
-  repo,
-  sourceHead,
-  requiredIdentities,
-  repository,
-  prNumber,
-  branch,
-  baseBranch,
-  baseSha,
-) {
-  const started = Date.now();
-  let lastVerdict = null;
-  while (Date.now() - started < POLL_TIMEOUT_MS) {
-    const runs = (await githubPages(
-      `/repos/${owner}/${repo}/actions/runs?head_sha=${encodeURIComponent(sourceHead)}&event=pull_request`,
-      'workflow_runs',
-    )).map(mapWorkflowRun);
-    lastVerdict = validateExactHeadWorkflowRuns(runs, {
-      expectedHead: sourceHead,
-      expectedPrNumber: prNumber,
-      expectedBranch: branch,
-      expectedBaseBranch: baseBranch,
-      expectedBaseSha: baseSha,
-      requiredIdentities,
-    });
-    if (lastVerdict.valid) return { runs, verdict: lastVerdict };
-    if (exactHeadWorkflowFailureIsTerminal(lastVerdict)) {
-      throw new Error(`Exact-head workflow failure: ${lastVerdict.blockers.join(', ')}`);
-    }
-    await sleep(POLL_INTERVAL_MS);
-  }
-  throw new Error(`Exact-head workflows did not become green within ${POLL_TIMEOUT_MS / 60000} minutes: ${lastVerdict?.blockers?.join(', ') || 'unknown'}`);
-}
-
 async function postComment(owner, repo, prNumber, body) {
   return githubRequest(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, {
     method: 'POST',
@@ -245,10 +186,14 @@ async function postComment(owner, repo, prNumber, body) {
 }
 
 async function postDisplayComment(owner, repo, prNumber, body) {
+  // The immutable artifact is the merge authority. This comment is only a
+  // discovery index and some GitHub App-triggered workflows cannot publish it
+  // even with the bounded workflow permission. Preserve the exact artifact;
+  // the protected merge consumer reads and validates it directly.
   try {
     return await postComment(owner, repo, prNumber, body);
   } catch (error) {
-    console.warn(`INDEPENDENT_SECURITY_REVIEW_DISPLAY_COMMENT_FAILED=${error instanceof Error ? error.message : String(error)}`);
+    console.warn(`INDEPENDENT_SECURITY_REVIEW_DISPLAY_COMMENT_UNAVAILABLE=${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
 }
@@ -310,37 +255,13 @@ async function main() {
   }
   requireExactBase(initialPullRequest, initialMainRef, baseSha, 'pre-review');
 
-  const workflowDefinitions = await githubPages(
-    `/repos/${owner}/${repo}/actions/workflows`,
-    'workflows',
-  );
-  const workflowIdentityBinding = bindRequiredExactHeadWorkflowIdentities(
-    workflowDefinitions,
-    { repository },
-  );
-  if (!workflowIdentityBinding.valid) {
-    throw new Error(`Required workflow identity binding failed: ${workflowIdentityBinding.blockers.join(', ')}`);
-  }
-
-  const [{ verdict: workflowVerdict }, files, diff, threads, reviews] = await Promise.all([
-    waitForExactHeadWorkflows(
-      owner,
-      repo,
-      sourceHead,
-      workflowIdentityBinding.identities,
-      repository,
-      prNumber,
-      branch,
-      baseBranch,
-      baseSha,
-    ),
+  // Review the immutable head/base immediately. CI and unresolved-thread
+  // evidence remain mandatory at the independent merge-consumption boundary;
+  // serializing analysis behind them only delays feedback and wastes runners.
+  const [files, diff] = await Promise.all([
     githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/files`),
     githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`, { accept: 'application/vnd.github.v3.diff' }),
-    unresolvedThreadCount(owner, repo, prNumber),
-    githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`),
   ]);
-  if (!workflowVerdict.valid) throw new Error('Exact-head workflows are not green.');
-  if (threads !== 0) throw new Error(`Independent review blocked by ${threads} unresolved review thread(s).`);
   const protectedWorkflowPaths = PROTECTED_WORKFLOW_SOURCE_PATHS.filter((path) => (
     changedFilePaths(files).includes(path)
   ));
@@ -356,22 +277,43 @@ async function main() {
     protectedWorkflowSources,
     requireReviewerFilesInDiff: false,
   });
-  const specialist = adjudicateQualifiedSpecialistReview({
+  const deterministicBootstrapRequired = isApprovalBoundaryBootstrapAnalysis(deterministicAnalysis);
+  const specialistProbe = adjudicateQualifiedSpecialistReview({
     analysis: deterministicAnalysis,
-    reviews,
+    reviews: [],
+    comments: [],
     repository,
     prNumber,
     branch,
     sourceHead,
     baseSha,
   });
-  const analysis = specialist.required && specialist.valid
+  let specialist = specialistProbe;
+  if (!deterministicBootstrapRequired && specialistProbe.required) {
+    const [reviews, rawComments] = await Promise.all([
+      githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`),
+      githubPages(`/repos/${owner}/${repo}/issues/${prNumber}/comments`),
+    ]);
+    const comments = await resolveQualifiedSpecialistCommentHeads(owner, repo, rawComments);
+    specialist = adjudicateQualifiedSpecialistReview({
+      analysis: deterministicAnalysis,
+      reviews,
+      comments,
+      repository,
+      prNumber,
+      branch,
+      sourceHead,
+      baseSha,
+    });
+  }
+  const analysis = !deterministicBootstrapRequired && specialist.required && specialist.valid
     ? specialist.analysis
     : deterministicAnalysis;
   console.log(`SPECIALIST_REVIEW_DECISION=${specialist.required ? (specialist.valid ? 'SEALED' : 'REQUIRED') : 'NOT_REQUIRED'}`);
   console.log(`SPECIALIST_REVIEW_ID=${specialist.reviewId || ''}`);
+  console.log(`SPECIALIST_REVIEW_ARTIFACT_SHA256=${specialist.artifact?.payloadSha256 || ''}`);
 
-  const bootstrapRequired = isApprovalBoundaryBootstrapAnalysis(analysis);
+  const bootstrapRequired = deterministicBootstrapRequired || isApprovalBoundaryBootstrapAnalysis(analysis);
   const finalPullRequest = await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`);
   const finalMainRef = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/main`);
   if (text(finalPullRequest?.head?.sha).toLowerCase() !== sourceHead || text(finalPullRequest?.state).toLowerCase() !== 'open') {
@@ -424,6 +366,7 @@ async function main() {
     workflowRunAttempt: runAttempt,
     createdAtUtc,
     analysis,
+    specialistReviewArtifact: specialist.artifact,
   });
   const artifactPath = writeReviewArtifact(artifact);
   const receipt = artifact.receipt;
@@ -442,7 +385,7 @@ async function main() {
     '',
     bootstrapRequired
       ? 'This receipt contains only approval-boundary self-change findings. It grants no merge authority and becomes acceptable only after the exact run is released by the protected operator environment; any other finding remains blocking.'
-      : 'This clean receipt was produced before and independently of the operator approval environment. It is bound to the exact reviewed head and exact reviewed base; any movement of either invalidates it. The reviewer has no merge, mark-ready, source-write, Battle Bridge, OpenClaw or runtime authority.',
+      : 'This clean receipt was precomputed before and independently of the operator approval environment. It is bound to the exact reviewed head and exact reviewed base; any movement of either invalidates it. CI success and zero unresolved threads remain mandatory when the receipt is consumed. The reviewer has no merge, mark-ready, source-write, Battle Bridge, OpenClaw or runtime authority.',
   ].join('\n');
   const comment = await postDisplayComment(owner, repo, prNumber, body);
   console.log(`INDEPENDENT_SECURITY_REVIEW=${bootstrapRequired ? 'operator-bootstrap-required' : 'clean'}`);

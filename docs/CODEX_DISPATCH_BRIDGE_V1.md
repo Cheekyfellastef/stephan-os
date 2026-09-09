@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Remove the normal copy-and-paste handoff between a compatible ChatGPT/Codex chat and Codex running on the Windows Battle Bridge.
+Remove the normal copy-and-paste handoff for a compatible local Codex client running on the Windows Battle Bridge, while keeping remote ChatGPT attachment as a separate authenticated-transport problem.
 
 The bridge reuses the existing Codex Dispatch Queue, Automated Codex Dispatcher, Shared Agent Workspace, Verification Harness, and Battle Bridge guardrails. It does not create a second mission system.
 
@@ -19,7 +19,7 @@ V1 is intentionally limited to operator-approved Battle Bridge proof and diagnos
 ## Execution path
 
 ```text
-compatible chat
+compatible local Codex client
 -> explicit operator confirmation
 -> dispatch_codex_task
 -> canonical #1292 queue record
@@ -64,11 +64,13 @@ The installer:
 3. registers the MCP server with the local Codex client through `codex mcp add` when available;
 4. writes an install proof to `%USERPROFILE%\Documents\Stephanos-openclaw-workspace\codex-dispatch\install-proof.json`.
 
-Restart ChatGPT desktop after installation. Install or enable the local `stephanos-codex-dispatch` plugin in the plugin/developer interface, then open a new compatible chat. Installation is not considered complete until that chat lists all three tools.
+Restart the local Codex client after installation and open a new compatible Codex session. Local installation is not considered attached until the documented `codex-mcp-client` completes the MCP initialize/initialized session handshake and that session lists all three tools.
+
+The one-click Battle Bridge control-plane rescue reuses this installer and status check. A bare or out-of-order stdio request, unsupported client, invalid version, local files, or MCP registration cannot publish even local attachment readiness. A valid local Codex handshake proves only `readyForCodexCliDispatch`; it does not prove an authenticated remote ChatGPT route and therefore cannot set `readyForRemoteChatDispatch`.
 
 ## Cross-device boundary
 
-The source-controlled V1 server is local stdio MCP. It proves direct dispatch from compatible chats running with access to the Battle Bridge plugin. Phone and remote web chats require a separately authenticated ChatGPT app or secure MCP transport to the Battle Bridge. Do not expose the MCP server or backend directly to the public internet.
+The source-controlled V1 server is local stdio MCP. Its self-declared client metadata is not an authenticated remote identity. Phone, iPad, and remote web chats require a separately reviewed and authenticated ChatGPT app or secure MCP transport to the Battle Bridge. Until that route exists, status remains `BLOCKED_AUTHENTICATED_REMOTE_MCP_TRANSPORT_REQUIRED`. Do not expose the MCP server or backend directly to the public internet.
 
 ## Proof commands
 
@@ -81,4 +83,4 @@ codex mcp list
 
 ## Done boundary
 
-Source merge proves the bridge implementation. Battle Bridge installation plus a real `tools/list`, dispatch receipt, running status, and completed proof result are required before issue #1293 may claim automatic dispatch is fully complete.
+Source merge proves only the bridge implementation. A local initialized Codex session, real `tools/list`, dispatch receipt, running status, and completed proof result prove local dispatch. Remote ChatGPT completion additionally requires an authenticated remote transport receipt; local stdio evidence alone can never satisfy that gate.

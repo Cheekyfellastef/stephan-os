@@ -1,10 +1,11 @@
 export const CRITICAL_BACKLOG_CONVEYOR_SCHEMA = 'stephanos.critical-backlog-conveyor.v1';
-export const CRITICAL_BACKLOG_CONVEYOR_VERSION = '1.0.0';
+export const CRITICAL_BACKLOG_CONVEYOR_VERSION = '1.0.2';
 
 export const CRITICAL_BACKLOG_DECISION = Object.freeze({
   CREATE_NEXT_MISSION: 'CREATE_NEXT_MISSION',
   WAIT_ACTIVE_MISSION: 'WAIT_ACTIVE_MISSION',
   WAIT_EXTERNAL_ACTIVE_MISSION: 'WAIT_EXTERNAL_ACTIVE_MISSION',
+  PARKED_APPROVALS_ONLY: 'PARKED_APPROVALS_ONLY',
   BLOCKED_BY_TERMINAL_MISSION: 'BLOCKED_BY_TERMINAL_MISSION',
   BLOCKED_BY_MULTIPLE_ACTIVE_MISSIONS: 'BLOCKED_BY_MULTIPLE_ACTIVE_MISSIONS',
   BLOCKED_BY_INVALID_BACKLOG: 'BLOCKED_BY_INVALID_BACKLOG',
@@ -18,8 +19,10 @@ const SAFE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SAFE_BRANCH = /^openclaw\/[a-z0-9][a-z0-9._/-]{2,127}$/;
 const SAFE_SOURCE_SEGMENT = /^\.?[a-z0-9][a-z0-9._-]*$/i;
 const FORBIDDEN_PATH = /(^|\/)(apps\/stephanos\/dist|runtime|runtime-data|data|tmp|\.git|node_modules)(\/|$)|(^|\/)\.env(?:\.|$)|\.(?:pem|pfx|key)$/i;
+const ELASTIC_GOAL_MISSION_ID = /^critical-[1-9]\d*-elastic-goal(?:$|[-_.])/;
 const TERMINAL_PHASES = new Set(['COMPLETE', 'CANCELLED']);
-const HOLD_PHASES = new Set(['BLOCKED', 'AWAITING_OPERATOR_APPROVAL']);
+const PARKED_PHASES = new Set(['AWAITING_OPERATOR_APPROVAL', 'MERGE_PULL_REQUEST']);
+const HOLD_PHASES = new Set(['BLOCKED']);
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -27,6 +30,7 @@ function text(value, fallback = '') {
 }
 function list(value) { return Array.isArray(value) ? value.map((item) => text(item)).filter(Boolean) : []; }
 function unique(value) { return [...new Set(list(value))]; }
+function isElasticGoalMission(record = {}) { return ELASTIC_GOAL_MISSION_ID.test(text(record.missionId).toLowerCase()); }
 function isSafeSourceScope(value) {
   const normalized = text(value).replace(/\\/g, '/');
   if (!normalized || normalized.startsWith('/') || /^[a-z]:\//i.test(normalized)) return false;
@@ -205,9 +209,11 @@ function projectionBase(validation, additions = {}) {
     version: CRITICAL_BACKLOG_CONVEYOR_VERSION,
     validation,
     oneActiveMissionEnforced: true,
+    elasticGoalMissionsUseSchedulerCapacity: true,
     duplicateCodexDispatchAllowed: false,
     mergeAuthority: false,
     exactHeadApprovalRequired: true,
+    approvalReadyConsumesConstructionCapacity: false,
     ...additions,
   });
 }
@@ -216,7 +222,7 @@ export function buildCriticalBacklogProjection({ backlog = DEFAULT_CRITICAL_BACK
   const validation = validateCriticalBacklog(backlog);
   if (!validation.valid) return projectionBase(validation, {
     decision: CRITICAL_BACKLOG_DECISION.BLOCKED_BY_INVALID_BACKLOG,
-    selectedItem: null, activeMission: null, completedItemIds: Object.freeze([]), remainingItemIds: Object.freeze([]),
+    selectedItem: null, activeMission: null, completedItemIds: Object.freeze([]), parkedItemIds: Object.freeze([]), parkedMissionIds: Object.freeze([]), remainingItemIds: Object.freeze([]),
     exactNextAction: 'Repair the source-controlled critical backlog definition.',
     finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_BLOCKED',
   });
@@ -224,17 +230,32 @@ export function buildCriticalBacklogProjection({ backlog = DEFAULT_CRITICAL_BACK
   const ordered = [...backlog].sort((a, b) => a.priority - b.priority || a.itemId.localeCompare(b.itemId));
   const records = Array.isArray(missionRecords) ? missionRecords : [];
   const recordsById = new Map(records.map((record) => [text(record?.missionId).toLowerCase(), record]));
-  const active = records.filter((record) => !TERMINAL_PHASES.has(missionPhase(record)));
+  const elasticMissionIds = records.filter(isElasticGoalMission).map((record) => text(record.missionId)).sort();
+  const parkedMissionIds = records
+    .filter((record) => !isElasticGoalMission(record) && PARKED_PHASES.has(missionPhase(record)))
+    .map((record) => text(record.missionId))
+    .sort();
+  const active = records.filter((record) => !isElasticGoalMission(record)
+    && !TERMINAL_PHASES.has(missionPhase(record))
+    && !PARKED_PHASES.has(missionPhase(record)));
   const completedItemIds = ordered.filter((entry) => missionPhase(recordsById.get(entry.mission.missionId)) === 'COMPLETE').map((entry) => entry.itemId);
-  const remainingItemIds = ordered.filter((entry) => !completedItemIds.includes(entry.itemId)).map((entry) => entry.itemId);
-  const common = { completedItemIds: Object.freeze(completedItemIds), remainingItemIds: Object.freeze(remainingItemIds) };
+  const parkedItemIds = ordered.filter((entry) => PARKED_PHASES.has(missionPhase(recordsById.get(entry.mission.missionId)))).map((entry) => entry.itemId);
+  const remainingItemIds = ordered.filter((entry) => !completedItemIds.includes(entry.itemId) && !parkedItemIds.includes(entry.itemId)).map((entry) => entry.itemId);
+  const common = {
+    completedItemIds: Object.freeze(completedItemIds),
+    parkedItemIds: Object.freeze(parkedItemIds),
+    parkedMissionIds: Object.freeze(parkedMissionIds),
+    parkedApprovalCount: parkedMissionIds.length,
+    remainingItemIds: Object.freeze(remainingItemIds),
+    elasticMissionIds: Object.freeze(elasticMissionIds),
+  };
 
   if (active.length > 1) return projectionBase(validation, {
     ...common,
     decision: CRITICAL_BACKLOG_DECISION.BLOCKED_BY_MULTIPLE_ACTIVE_MISSIONS,
     selectedItem: null, activeMission: null,
     activeMissionIds: Object.freeze(active.map((record) => text(record.missionId)).sort()),
-    exactNextAction: 'Reconcile the duplicate active mission lanes before dispatching more work.',
+    exactNextAction: 'Reconcile the duplicate legacy critical-backlog mission lanes before dispatching more legacy backlog work.',
     finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_BLOCKED',
   });
 
@@ -247,8 +268,8 @@ export function buildCriticalBacklogProjection({ backlog = DEFAULT_CRITICAL_BACK
       decision: selectedItem ? CRITICAL_BACKLOG_DECISION.WAIT_ACTIVE_MISSION : CRITICAL_BACKLOG_DECISION.WAIT_EXTERNAL_ACTIVE_MISSION,
       selectedItem, activeMission,
       exactNextAction: held
-        ? `Resolve ${missionPhase(activeMission)} for ${text(activeMission.missionId)} before starting another mission.`
-        : `Continue ${text(activeMission.missionId)} until it reaches a terminal state.`,
+        ? `Resolve ${missionPhase(activeMission)} for ${text(activeMission.missionId)} before starting another legacy backlog mission.`
+        : `Continue ${text(activeMission.missionId)} until it reaches a terminal or parked approval state.`,
       finalVerdict: held ? 'CRITICAL_BACKLOG_CONVEYOR_HELD' : 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
     });
   }
@@ -259,10 +280,10 @@ export function buildCriticalBacklogProjection({ backlog = DEFAULT_CRITICAL_BACK
       ...common,
       decision: CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION,
       selectedItem: entry, activeMission: null,
-      exactNextAction: `Create bounded mission ${entry.mission.missionId}.`,
+      exactNextAction: `Create bounded mission ${entry.mission.missionId}; parked approval packets consume zero construction capacity.`,
       finalVerdict: 'CRITICAL_BACKLOG_MISSION_READY',
     });
-    if (missionPhase(record) === 'COMPLETE') continue;
+    if (missionPhase(record) === 'COMPLETE' || PARKED_PHASES.has(missionPhase(record))) continue;
     return projectionBase(validation, {
       ...common,
       decision: CRITICAL_BACKLOG_DECISION.BLOCKED_BY_TERMINAL_MISSION,
@@ -272,11 +293,22 @@ export function buildCriticalBacklogProjection({ backlog = DEFAULT_CRITICAL_BACK
     });
   }
 
+  if (parkedMissionIds.length > 0) return projectionBase(validation, {
+    ...common,
+    decision: CRITICAL_BACKLOG_DECISION.PARKED_APPROVALS_ONLY,
+    selectedItem: null,
+    activeMission: null,
+    remainingItemIds: Object.freeze([]),
+    exactNextAction: 'Preserve the parked approval packets and keep scheduler/elastic capacity refilled; no construction slot is consumed by approval waiting.',
+    finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+  });
+
   return projectionBase(validation, {
     decision: CRITICAL_BACKLOG_DECISION.BACKLOG_COMPLETE,
     selectedItem: null, activeMission: null,
-    completedItemIds: Object.freeze(completedItemIds), remainingItemIds: Object.freeze([]),
-    exactNextAction: 'No critical backlog mission remains.',
+    completedItemIds: Object.freeze(completedItemIds), parkedItemIds: Object.freeze([]), parkedMissionIds: Object.freeze([]), remainingItemIds: Object.freeze([]),
+    elasticMissionIds: Object.freeze(elasticMissionIds),
+    exactNextAction: 'No legacy critical backlog mission remains.',
     finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE',
   });
 }

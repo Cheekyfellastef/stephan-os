@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { MINIMUM_BUILD_LANES } from './elasticBuildCapacityV1.mjs';
 import {
   appendWorkspaceJsonl,
   createSharedWorkspaceEventRecord,
@@ -19,7 +20,7 @@ export const MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE = 'chatgpt-task-outbox';
 export const MONITOR_MULTIPLEXER_MIN_INTERVAL_MS = 30_000;
 export const MONITOR_MULTIPLEXER_DEFAULT_INTERVAL_MS = 60_000;
 export const MONITOR_MULTIPLEXER_MAX_MONITORS = 1_000;
-export const MONITOR_MULTIPLEXER_DEFAULT_CONCURRENCY = 4;
+export const MONITOR_MULTIPLEXER_DEFAULT_CONCURRENCY = MINIMUM_BUILD_LANES;
 export const MONITOR_MULTIPLEXER_MAX_CONCURRENCY = 16;
 export const MONITOR_MULTIPLEXER_NOTIFICATION_BATCH_SIZE = 12;
 export const MONITOR_MULTIPLEXER_NOTIFICATION_BODY_LIMIT_BYTES = 12 * 1024;
