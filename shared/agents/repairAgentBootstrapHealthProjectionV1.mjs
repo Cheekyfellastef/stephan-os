@@ -49,6 +49,7 @@ function mailboxHealthRecord(mailboxIndex) {
   const observedAtUtc = firstTimestamp(
     mailboxIndex.timestampUtc,
     mailboxIndex.generatedAtUtc,
+    mailboxIndex.projection?.updatedAt,
     mailboxIndex.observedAtUtc,
   );
   if (mailboxIndex.ok === true) return { state: 'HEALTHY', observedAtUtc, blocker: '' };
