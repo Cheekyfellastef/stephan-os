@@ -32,6 +32,21 @@ function validEscrow(overrides = {}) {
   };
 }
 
+function expectedIdentity(overrides = {}) {
+  const escrow = validEscrow();
+  return {
+    repository: escrow.repository,
+    canonicalPr: escrow.canonicalPr,
+    canonicalBranch: escrow.canonicalBranch,
+    exactParentHead: escrow.exactParentHead,
+    exactParentTree: escrow.exactParentTree,
+    exactResultTree: escrow.exactResultTree,
+    executorIdentity: escrow.executorIdentity,
+    changedFiles: escrow.changedFiles,
+    ...overrides,
+  };
+}
+
 test('tested source worker is blocked from terminal receipt, handoff, and termination without external escrow', () => {
   const result = gateSourceWorkerCompletionV1({
     stage: 'TESTED', sourceChanged: true, testsPassed: true, terminalRequested: true, nowUtc: NOW,
@@ -56,7 +71,7 @@ test('local-only artifact does not satisfy completion gate', () => {
 test('independently readable integrity-pinned escrow admits publication continuation without widening authority', () => {
   const result = gateSourceWorkerCompletionV1({
     stage: 'TESTED', sourceChanged: true, testsPassed: true, reviewHandoffRequested: true, nowUtc: NOW,
-    escrow: validEscrow(),
+    escrow: validEscrow(), expectedIdentity: expectedIdentity(),
   });
   assert.equal(result.finalVerdict, 'SOURCE_ARTIFACT_ESCROW_PROVEN_FOR_COMPLETION');
   assert.equal(result.terminalReceiptAllowed, true);
@@ -67,6 +82,37 @@ test('independently readable integrity-pinned escrow admits publication continua
   assert.equal(result.duplicatePullRequestAllowed, false);
   assert.equal(result.mergeAllowed, false);
   assert.equal(result.runtimeMutationAllowed, false);
+});
+
+test('escrow from another mission identity cannot be replayed into completion', () => {
+  const result = gateSourceWorkerCompletionV1({
+    stage: 'TESTED', sourceChanged: true, testsPassed: true, terminalRequested: true, nowUtc: NOW,
+    escrow: validEscrow(),
+    expectedIdentity: expectedIdentity({
+      canonicalPr: 2163,
+      canonicalBranch: 'fix/1567-source-artifact-escrow-completion-gate-v1',
+      executorIdentity: 'mission-worker:1567',
+    }),
+  });
+  assert.equal(result.finalVerdict, 'SOURCE_ARTIFACT_ESCROW_IDENTITY_MISMATCH');
+  assert.equal(result.terminalReceiptAllowed, false);
+  assert.equal(result.reviewHandoffAllowed, false);
+  assert.equal(result.executorMayTerminate, false);
+  assert.ok(result.escrowErrors.includes('identity-canonicalPr-mismatch'));
+  assert.ok(result.escrowErrors.includes('identity-canonicalBranch-mismatch'));
+  assert.ok(result.escrowErrors.includes('identity-executorIdentity-mismatch'));
+});
+
+test('changed-file digest mismatch cannot be replayed into completion', () => {
+  const expected = expectedIdentity({
+    changedFiles: [{ path: 'shared/agents/example.mjs', beforeBlobSha: '1'.repeat(40), afterBlobSha: '2'.repeat(40), sha256: '4'.repeat(64) }],
+  });
+  const result = gateSourceWorkerCompletionV1({
+    stage: 'TESTED', sourceChanged: true, testsPassed: true, terminalRequested: true, nowUtc: NOW,
+    escrow: validEscrow(), expectedIdentity: expected,
+  });
+  assert.equal(result.finalVerdict, 'SOURCE_ARTIFACT_ESCROW_IDENTITY_MISMATCH');
+  assert.ok(result.escrowErrors.includes('identity-changedFiles-mismatch'));
 });
 
 test('no terminal completion is manufactured before source and test movement', () => {
