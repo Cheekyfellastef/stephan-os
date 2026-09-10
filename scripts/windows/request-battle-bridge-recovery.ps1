@@ -266,7 +266,7 @@ if ($Route -eq 'AUTHENTICATED_BREAK_GLASS') {
     $currentSourceHead = [string](& $sourceControlExecutable -C $repoRoot rev-parse HEAD)
     if ([string]$mailboxReceipt.schemaVersion -ne 'stephanos.battle-bridge-github-command-receipt.v1'
         -or [string]$mailboxReceipt.requestId -ne $EvidenceSubject -or [string]$mailboxReceipt.operation -ne 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'
-        -or [string]$mailboxReceipt.repository -ne 'Cheekyfellastef/stephan-os' -or [int]$mailboxReceipt.issueNumber -ne 1507
+        -or [string]$mailboxReceipt.repository -ne 'Cheekyfellastef/stephan-os' -or [int]$mailboxReceipt.issueNumber -ne 2158
         -or [string]$mailboxReceipt.state -notin @('ACCEPTED','DONE') -or $authorityTime -lt [DateTimeOffset]::UtcNow.AddMinutes(-5)
         -or $authorityTime -gt [DateTimeOffset]::UtcNow.AddSeconds(30) -or [string]$mailboxReceipt.expectedHead -notmatch '^[0-9a-f]{40}$'
         -or -not [string]::Equals((Split-Path -Leaf $mailboxReceiptPath), $canonicalReceiptFilename, [System.StringComparison]::Ordinal)
