@@ -1047,7 +1047,11 @@ function Stop-NewlyStartedOwnedWorker {
     }
 
     if ($ExpectedProcessId -gt 0 -and -not (Wait-UntilOperationDeadline -ReserveSeconds 1 -Condition {
-        -not (Get-CimInstance Win32_Process -Filter "ProcessId = $ExpectedProcessId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue)
+        try {
+            $cleanupProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $ExpectedProcessId" -OperationTimeoutSec 1 -ErrorAction Stop
+            return -not $cleanupProcess
+        }
+        catch { return $false }
     })) { Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_DID_NOT_STOP' }
 
     $cleanupTask = Get-ScheduledTask -TaskName $Plan.TaskName -TaskPath '\' -ErrorAction SilentlyContinue
