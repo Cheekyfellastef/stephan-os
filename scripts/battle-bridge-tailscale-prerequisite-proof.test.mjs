@@ -47,6 +47,14 @@ test('settings proof is uploaded before fail-closed and tailnet join', async () 
   assert.match(job, /if: steps\.settings\.outputs\.ready == 'true'[\s\S]*uses: tailscale\/github-action@v4/);
 });
 
+test('prerequisite SSH hop retains the fixed Battle Bridge host and user bindings', async () => {
+  const source = await workflowSource();
+  const job = source.match(/  prerequisite-proof:[\s\S]*$/)?.[0] || '';
+  assert.match(job, /BOOTSTRAP_HOST: \$\{\{ vars\.STEPHANOS_BATTLE_BRIDGE_TAILSCALE_HOST \}\}/);
+  assert.match(job, /BOOTSTRAP_USER: \$\{\{ vars\.STEPHANOS_BATTLE_BRIDGE_SSH_USER \}\}/);
+  assert.match(job, /-l "\$BOOTSTRAP_USER"[\s\S]*"\$BOOTSTRAP_HOST"/);
+});
+
 test('both remote hops use strict SSH and fixed Tailscale recovery identity', async () => {
   const source = await workflowSource();
   assert.equal((source.match(/tags: tag:stephanos-github-recovery/g) || []).length, 2);
