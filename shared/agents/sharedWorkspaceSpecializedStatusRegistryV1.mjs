@@ -63,6 +63,12 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     role: 'guarded-goal-runner-pr-proof',
   }),
   record({
+    fileName: 'ignition-browser-surfaces-current.json',
+    schemaIds: ['stephanos.ignition-browser-surface-receipt.v1'],
+    sourcePaths: ['windows/Launch-Stephanos-Local.ps1'],
+    role: 'ignition-browser-window-proof',
+  }),
+  record({
     fileName: 'mission-orchestrator-worker-heartbeat.json',
     schemaIds: ['stephanos.mission-orchestrator-worker-heartbeat.v1'],
     sourcePaths: ['scripts/mission-orchestrator-worker-heartbeat.mjs'],

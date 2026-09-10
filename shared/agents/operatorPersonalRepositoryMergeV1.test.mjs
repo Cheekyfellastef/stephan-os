@@ -212,7 +212,7 @@ test('protected merge entry constructs one repository-bound check expectation', 
 test('protected merge entry refreshes every authority input after bounded check convergence', () => {
   const source = readFileSync(PERSONAL_REPOSITORY_MERGE_ENTRY, 'utf8');
   const helper = source.match(
-    /async function readPersonalRepositoryAuthoritySnapshot\([\s\S]*?\n}\n\nasync function collectEvidence/,
+    /async function readPersonalRepositoryAuthoritySnapshot\([\s\S]*?\r?\n}\r?\n\r?\nasync function collectEvidence/,
   )?.[0] || '';
   for (const requiredRead of [
     /currentWorkflowExecution\(context\)/,
@@ -223,7 +223,7 @@ test('protected merge entry refreshes every authority input after bounded check 
     /compare\/\$\{identity\.baseSha}\.\.\.\$\{identity\.sourceHead}/,
     /pullRequestReviewState\(context\.owner, context\.repo, identity\.prNumber\)/,
     /environments\/operator-merge-approval/,
-    /loadSelectedIndependentReview\(context, identity\)/,
+    /loadSelectedIndependentReview\([\s\S]*context,[\s\S]*identity,[\s\S]*text\(environment\?\.name\),[\s\S]*\)/,
   ]) assert.match(helper, requiredRead);
 
   const convergenceIndex = source.indexOf(
@@ -1804,6 +1804,53 @@ test('UNSTABLE admission binds the one failing check to the exact reviewed escal
   );
   assert.equal(legacyFailure.valid, false);
   assert.ok(legacyFailure.blockers.includes('personal-repository-commit-status-not-exact-green'));
+});
+
+test('a later exact successful review neutralizes only its bound historical draft skip', () => {
+  const skippedRun = escalationWorkflowRun({
+    id: 9198,
+    check_suite_id: 8198,
+    conclusion: 'skipped',
+  });
+  const successfulRun = escalationWorkflowRun({
+    id: 9199,
+    check_suite_id: 8199,
+    conclusion: 'success',
+  });
+  const skippedCheck = checkRun(skippedRun, {
+    id: 9298,
+    conclusion: 'skipped',
+  });
+  const successfulCheck = checkRun(successfulRun, {
+    id: 9299,
+    conclusion: 'success',
+  });
+  const exact = validatePersonalRepositoryCheckRuns(
+    [skippedCheck, successfulCheck],
+    [skippedRun, successfulRun],
+    [],
+    expectedEvidence,
+  );
+  assert.equal(exact.valid, true);
+  assert.equal(exact.evidence.find(({ checkId }) => checkId === 9298).disposition, 'superseded-draft-skip');
+
+  for (const [candidateCheck, candidateRun] of [
+    [successfulCheck, { ...successfulRun, id: 9197 }],
+    [{ ...successfulCheck, conclusion: 'failure' }, successfulRun],
+    [{ ...successfulCheck, head_sha: 'f'.repeat(40) }, successfulRun],
+    [{ ...successfulCheck, app: { id: 999, slug: 'github-actions' } }, successfulRun],
+    [{ ...successfulCheck, name: 'unrelated-review' }, successfulRun],
+    [successfulCheck, { ...successfulRun, path: `${repository}/.github/workflows/other.yml@refs/heads/main` }],
+  ]) {
+    const blocked = validatePersonalRepositoryCheckRuns(
+      [skippedCheck, candidateCheck],
+      [skippedRun, candidateRun],
+      [],
+      expectedEvidence,
+    );
+    assert.equal(blocked.valid, false);
+    assert.ok(blocked.blockers.length > 0);
+  }
 });
 
 test('deadline convergence admits every exact snapshot arrival within the bounded window', async () => {
