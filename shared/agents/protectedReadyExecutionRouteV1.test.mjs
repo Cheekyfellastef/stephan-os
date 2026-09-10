@@ -43,7 +43,7 @@ test('authorized ready transition routes through the canonical protected mailbox
   assert.equal(result.route, PROTECTED_READY_EXECUTION_ROUTE.PROTECTED_MAILBOX);
   assert.equal(result.operation, 'MARK_PROTECTED_PR_READY');
   assert.equal(result.mode, 'user-owned-pr-ready');
-  assert.equal(result.issueNumber, 2158);
+  assert.equal(result.issueNumber, 1507);
   assert.equal(result.clientMutationFault, PROTECTED_READY_CLIENT_FAULT.FULL_DATABASE_ID_SCHEMA);
   assert.equal(result.clientMutationSuppressed, true);
   assert.equal(result.retryClientMutation, false);
