@@ -22,7 +22,7 @@ const signal = createBattleBridgeMainAdvanceSignal({
 const marker = '<!-- stephanos-battle-bridge-main-advance-signal -->';
 const fence = '```';
 const body = `${marker}\n${fence}json\n${JSON.stringify(signal, null, 2)}\n${fence}`;
-const endpoint = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1507/comments';
+const endpoint = `https://api.github.com/repos/${signal.repository}/issues/${signal.issueNumber}/comments`;
 const response = await fetch(endpoint, {
   method: 'POST',
   headers: {
