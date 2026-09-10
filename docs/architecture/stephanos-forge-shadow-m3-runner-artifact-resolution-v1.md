@@ -1,5 +1,7 @@
 # Stephanos Forge Shadow M3 Runner Artifact Resolution V1
 
+> Live-source correction: the official stable Forgejo Runner release publishes no Windows executable. The resolver remains the canonical two-artifact shape validator, but live evidence now comes from `stephanos-forge-shadow-m3-artifact-preparation-v1.md`: signed official Linux bytes plus a fixed Windows build from the exact official release source. No receipt claims an official Windows release binary exists.
+
 ## Purpose
 
 This contract turns one bounded observation of an official stable Forgejo runner release into the exact two immutable artifact observations already required by the merged M3 runtime planner:

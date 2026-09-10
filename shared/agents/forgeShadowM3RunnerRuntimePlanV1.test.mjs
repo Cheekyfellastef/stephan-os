@@ -111,9 +111,18 @@ test('emits a deterministic unexecuted runtime plan from canonical admission and
     'stephanos-forge-linux-runner-01', 'stephanos-forge-linux-runner-02',
     'stephanos-forge-linux-runner-03', 'stephanos-forge-windows-proof-runner-01',
   ]);
-  assert.equal(left.executionPlan.length, 11);
+  assert.equal(left.executionPlan.length, 14);
   assert.ok(left.executionPlan.every((step) => step.executed === false && step.requiresSeparateRuntimeAuthorization === true));
   assert.ok(left.runners.every((runner) => !runner.installed && !runner.registered && !runner.connected && !runner.executed));
+  assert.equal(left.canaryForge.sourceServiceId, 'stephanos-forge-shadow');
+  assert.equal(left.canaryForge.sourceActionsRemainDisabled, true);
+  assert.equal(left.canaryForge.sourceMutationAllowed, false);
+  assert.equal(left.canaryForge.backupDigest, BACKUP);
+  assert.equal(left.canaryForge.listener, '127.0.0.1:3342');
+  assert.equal(left.canaryForge.actionsEnabled, true);
+  assert.equal(left.canaryForge.destroyAfterExecution, true);
+  assert.ok(left.runners.every((runner) => runner.forgeService === left.canaryForge.serviceId));
+  assert.ok(left.runners.every((runner) => runner.forgeListener === left.canaryForge.listener));
 });
 
 test('reruns the canonical admission planner and rejects fake or blocked evidence', () => {
@@ -179,5 +188,10 @@ test('projects zero runtime and GitHub authority plus mandatory teardown', () =>
   assert.equal(result.teardownPolicy.quarantineOnTeardownFailure, true);
   assert.equal(result.teardownPolicy.zeroResidualRegistrationRequired, true);
   assert.equal(result.teardownPolicy.zeroResidualCredentialRequired, true);
+  assert.equal(result.teardownPolicy.destroyDisposableCanaryForge, true);
+  assert.equal(result.teardownPolicy.destroyTemporarySandboxRelay, true);
+  assert.equal(result.teardownPolicy.canonicalM2MustRemainSealedAndUnchanged, true);
   assert.equal(result.proofPolicy.credentialMaterialForbidden, true);
+  assert.equal(result.proofPolicy.disposableCanaryForgeProofRequired, true);
+  assert.equal(result.proofPolicy.canonicalM2UnchangedProofRequired, true);
 });

@@ -1,5 +1,7 @@
 # Stephanos Forge Shadow M3 Official Release Observation Execution Contract V1
 
+> Live-source correction: Forgejo's stable Runner release does not publish a Windows executable. This metadata-only planning contract is not the live M3 preparation route. The connected execution path is superseded by `stephanos-forge-shadow-m3-artifact-preparation-v1.md`, which verifies the signed official Linux binary and truthfully derives the Windows proof binary from the exact official release source.
+
 ## Purpose
 
 This source-only contract prepares the next bounded step in Forge goal #1671 after the official-release observation boundary. It creates one deterministic request envelope that a future, separately reviewed read-only observer can consume to inspect official Forgejo runner release metadata.

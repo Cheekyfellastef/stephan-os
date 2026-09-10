@@ -15,6 +15,7 @@ import { runAiActionLifecycle } from '../../shared/runtime/aiActionLifecycle.mjs
 import { initStephanosSurfacePanels } from '../../shared/runtime/stephanosSurfacePanels.mjs';
 import { catalogResultActionKey, catalogResultToMusicTileTrack, findExistingCatalogTrack, requestNativeCatalogSearch } from './engine/nativeCatalogSearch.js';
 import { applyTasteTeachingContribution, buildConversationAiPayload, buildMusicConversationPlan, removeTasteTeachingContribution, retainConversationTeachingHistory, summarizeTasteEvidence } from './engine/musicConversationPlanner.js';
+import { buildMusicDiscoverySpotlightView } from './engine/musicDiscoverySpotlightPresenter.js';
 
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const RATING_VALUES = [-2, -1, 0, 1, 2];
@@ -246,6 +247,17 @@ function wireIntelligenceExperience() {
     window.setTimeout(() => intelligenceUi.spotlight?.classList.remove('music-highlight-pulse'), 1200);
   });
   intelligenceUi.spotlight?.addEventListener('click', (event) => {
+    const searchButton = event.target.closest('[data-action="spotlight-search-catalogue"]');
+    if (searchButton) {
+      const query = String(searchButton.dataset.query || '').trim();
+      if (!query) return;
+      if (intelligenceUi.nativeSearchInput) {
+        intelligenceUi.nativeSearchInput.value = query;
+        intelligenceUi.nativeSearchInput.focus();
+      }
+      void performNativeCatalogSearch(query, { operationGeneration: musicOperationGeneration });
+      return;
+    }
     const addButton = event.target.closest('[data-action="spotlight-add"]');
     if (!addButton) return;
     const track = (state.candidates || []).find((candidate) => `${candidate.id}` === `${addButton.dataset.id}`);
@@ -945,6 +957,36 @@ function getNoveltyStatement(track = {}) {
   return 'Unrated in this tile; wider listening history is unavailable';
 }
 
+function buildMusicDiscoverySpotlightPresentation(artistName) {
+  return buildMusicDiscoverySpotlightView({
+    surface: 'DISCOVERY_SPOTLIGHT',
+    artistName: String(artistName || '').trim(),
+    maxCards: 4,
+    catalogueEvidence: [],
+    tasteEvidence: [],
+  });
+}
+
+function renderMusicDiscoverySpotlightConnections(view = {}) {
+  const status = String(view.status || 'EVIDENCE_UNAVAILABLE');
+  const cards = Array.isArray(view.cards) ? view.cards : [];
+  if (status !== 'READY' || !cards.length) {
+    return `<section class="music-card discovery-spotlight-connections" data-music-discovery-status="${escapeHtml(status)}">
+      <div class="music-card-header"><strong>Discovery connections</strong><span class="music-badge">evidence unavailable</span></div>
+      <div class="music-card-meta">${escapeHtml(view.message || 'No governed discovery connection is available yet.')}</div>
+    </section>`;
+  }
+  return `<section class="discovery-spotlight-connections" data-music-discovery-status="READY">
+    <div class="music-card-header"><div><strong>${escapeHtml(view.headline || 'Discovery connections')}</strong><div class="music-card-meta">${escapeHtml(view.message || '')}</div></div><span class="music-badge">${cards.length} connection${cards.length === 1 ? '' : 's'}</span></div>
+    ${cards.map((card) => `<article class="music-card discovery-spotlight-connection" data-evidence-class="${escapeHtml(card.evidenceClass || 'EVIDENCE_UNAVAILABLE')}">
+      <div class="music-card-header"><strong>${escapeHtml(card.title || card.artistName || 'Discovery connection')}</strong><span class="music-badge">${escapeHtml(card.evidenceLabel || 'Evidence unavailable')}</span></div>
+      <div class="music-card-meta">${escapeHtml(card.whyInteresting || 'Evidence unavailable.')}</div>
+      <div class="music-card-meta">${escapeHtml(card.evidenceReason || 'No stronger evidence is available yet.')}</div>
+      <div class="actions"><button type="button" data-action="spotlight-search-catalogue" data-query="${escapeHtml(card.action?.query || '')}"${card.action?.type === 'SEARCH_EXISTING_CATALOGUE' && card.action?.query ? '' : ' disabled'}>Search existing catalogue</button></div>
+    </article>`).join('')}
+  </section>`;
+}
+
 function renderMusicIntelligenceCentre() {
   const track = state.candidates?.[0] || state.listeningDeck?.[0] || null;
   const positiveSignalEntries = Object.entries(state.tasteDNA || {})
@@ -1011,6 +1053,9 @@ function renderMusicIntelligenceCentre() {
   if (intelligenceUi.novelty) intelligenceUi.novelty.textContent = novelty;
   if (!intelligenceUi.spotlight) return;
 
+  const discoverySpotlight = buildMusicDiscoverySpotlightPresentation(artist);
+  const discoveryConnectionsMarkup = renderMusicDiscoverySpotlightConnections(discoverySpotlight);
+
   intelligenceUi.spotlight.innerHTML = `
     <article class="spotlight-track">
       <div class="spotlight-art">
@@ -1031,7 +1076,8 @@ function renderMusicIntelligenceCentre() {
           ${inDeck ? '<span class="music-badge music-badge--success">In Listening Room</span>' : `<button type="button" data-action="spotlight-add" data-id="${escapeHtml(track.id)}">Add to Listening Room</button>`}
         </div>
       </div>
-    </article>`;
+    </article>
+    ${discoveryConnectionsMarkup}`;
 }
 
 function enhanceListeningDeckCards() {

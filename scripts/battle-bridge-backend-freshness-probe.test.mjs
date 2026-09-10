@@ -68,7 +68,7 @@ test('missing, malformed, and oversized identity content cannot establish health
   }
 });
 
-test('Windows backend recovery authority pins every executable, listener identity, and reuse receipt', async () => {
+test('Windows backend recovery authority pins every executable, normalized listener identity, and reuse receipt', async () => {
   const installer = await readFile(new URL('./windows/install-stephanos-backend-autostart.ps1', import.meta.url), 'utf8');
   const starter = await readFile(new URL('./windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
   assert.match(installer, /\$wscriptExe = 'C:\\Windows\\System32\\wscript\.exe'/);
@@ -78,16 +78,19 @@ test('Windows backend recovery authority pins every executable, listener identit
   assert.match(starter, /\$canonicalNode = 'C:\\Program Files\\nodejs\\node\.exe'/);
   assert.match(starter, /process\.ExecutablePath/);
   assert.match(starter, /StringComparison\]::OrdinalIgnoreCase/);
-  assert.match(starter, /expectedQuotedCommand/);
-  assert.match(starter, /expectedUnquotedCommand/);
+  assert.match(starter, /function Test-CanonicalBackendCommandLine/);
+  assert.match(starter, /-replace '\\s\+', ' '/);
+  assert.match(starter, /STEPHANOS_BACKEND_BOOTSTRAP_BASE64/);
+  assert.match(starter, /Get-ExactHeadBackendBootstrapBase64/);
+  assert.match(starter, /--input-type=module', '--eval'/);
   assert.match(starter, /ProcessStartTimeUtc/);
   assert.match(starter, /Publish-VerifiedBackendRuntimeReceipt/);
   assert.match(starter, /\$existingListener[\s\S]*if \(\$existingListener\)[\s\S]*Publish-VerifiedBackendRuntimeReceipt[\s\S]*exit 0/);
   assert.match(starter, /confirmedListener\.ProcessId -ne \$Listener\.ProcessId/);
   assert.match(starter, /confirmedListener\.ProcessStartTimeUtc -ne \$Listener\.ProcessStartTimeUtc/);
   assert.match(starter, /& \$canonicalNpm run --silent openclaw:stub:ensure/);
-  assert.match(starter, /Start-Process -FilePath \$canonicalNpm/);
+  assert.match(starter, /Start-Process -FilePath \$canonicalNode/);
   assert.doesNotMatch(starter, /Get-Command (?:git|npm)/i);
   assert.doesNotMatch(starter, /(^|\r?\n)\s*npm(?:\.cmd)?\s+run/im);
-  assert.doesNotMatch(starter, /\.Contains\(['"]stephanos-server\/server\.js['"]\)/i);
+  assert.doesNotMatch(starter, /CommandLine -match|Invoke-Expression|\.Contains\(['"]stephanos-server\/server\.js['"]\)/i);
 });

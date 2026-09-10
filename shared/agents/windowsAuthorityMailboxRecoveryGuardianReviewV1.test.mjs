@@ -37,6 +37,7 @@ function boundedGuardianFixture() {
     "$localHead = (Read-FixedGitText -Arguments @('-C', $repoRoot, 'rev-parse', 'HEAD')).ToLowerInvariant()",
     '$authoritySourcePaths = @(',
     "  'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',",
+    "  'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',",
     "  'scripts/windows/install-battle-bridge-recovery-mesh.ps1',",
     "  'scripts/windows/run-stephanos-scheduled-task-windowless.vbs'",
     ')',
@@ -47,6 +48,8 @@ function boundedGuardianFixture() {
     "  if ($LASTEXITCODE -ne 0) { Stop-Guardian -Blocker 'LOCAL_AUTHORITY_SOURCE_STAGED_DIRTY' }",
     '}',
     "$mailboxInstallerPath = Join-Path $repoRoot 'scripts\\windows\\install-battle-bridge-github-command-mailbox.ps1'",
+    "$mailboxRunnerPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\\battle-bridge-github-command-mailbox-outbox-guard-v1.mjs'))",
+    "$mailboxChildRunnerPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\\battle-bridge-github-command-mailbox-with-receipt-index.mjs'))",
     "$recoveryInstallerPath = Join-Path $repoRoot 'scripts\\windows\\install-battle-bridge-recovery-mesh.ps1'",
     'function Test-MailboxTaskIdentity {',
     '  $expectedArguments = "//B //NoLogo `"$ExpectedLauncherPath`" github-command-mailbox"',
@@ -203,7 +206,7 @@ test('reviewer proves Recovery Mesh repair is lexically nested inside the unique
 test('top-level specialist pins and routes the mailbox recovery reviewer before the legacy Recovery Mesh reviewer', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
-  assert.match(source, /MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '9f47c49eaab30db93897e4c5fcfce910a58ed0b9'/);
+  assert.match(source, /MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '0750137480031f19a364915095c69b7ab6061799'/);
   const mailboxRoute = source.indexOf('analyzeWindowsAuthorityMailboxRecoveryGuardianReview');
   const legacyRoute = source.indexOf('analyzeWindowsAuthorityRecoveryMeshGuardianReview');
   assert.ok(mailboxRoute > 0 && legacyRoute > mailboxRoute);
