@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 import {
   MAILBOX_RECEIPT_INDEX_GITHUB_MARKER,
   buildMailboxReceiptIndexGitHubBody,
@@ -8,7 +9,7 @@ import {
 export const MAILBOX_RECEIPT_GITHUB_COMMAND_MARKER = 'stephanos-battle-bridge-command';
 export const MAILBOX_RECEIPT_GITHUB_RECEIPT_MARKER = 'stephanos-battle-bridge-command-receipt';
 export const MAILBOX_RECEIPT_GITHUB_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const MAILBOX_RECEIPT_GITHUB_ISSUE = 1507;
+export const MAILBOX_RECEIPT_GITHUB_ISSUE = CANONICAL_MAILBOX_ISSUE;
 export const MAILBOX_RECEIPT_GITHUB_INDEX_AUTHOR = 'github-actions[bot]';
 export const MAILBOX_RECEIPT_GITHUB_TRUTH_ISSUE = 1575;
 export const MAILBOX_RECEIPT_GITHUB_TRUTH_TITLE = 'Telemetry: Battle Bridge mailbox receipt truth';
