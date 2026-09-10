@@ -16,8 +16,10 @@ on:
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
       - 'scripts/mission-worker-git-stderr-isolation.test.mjs'
+      - 'scripts/mission-worker-cleanup-launch-receipt-proof.test.mjs'
       - 'scripts/windows/*worker-watchdog.ps1'
       - 'scripts/windows/start-mission-orchestrator-worker.ps1'
+      - 'scripts/windows/restart-approved-stephanos-runtime.ps1'
       - '.github/workflows/battle-bridge-worker-watchdog-proof.yml'
   push:
     paths:
@@ -34,8 +36,10 @@ on:
       - 'scripts/mission-orchestrator-worker-heartbeat*.mjs'
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
       - 'scripts/mission-worker-git-stderr-isolation.test.mjs'
+      - 'scripts/mission-worker-cleanup-launch-receipt-proof.test.mjs'
       - 'scripts/windows/*worker-watchdog.ps1'
       - 'scripts/windows/start-mission-orchestrator-worker.ps1'
+      - 'scripts/windows/restart-approved-stephanos-runtime.ps1'
       - '.github/workflows/battle-bridge-worker-watchdog-proof.yml'
 
 permissions:
@@ -62,6 +66,7 @@ jobs:
           node --check scripts/battle-bridge-worker-watchdog.mjs
           node --check scripts/battle-bridge-worker-watchdog-acceptance.mjs
           node --check scripts/battle-bridge-worker-watchdog-runner.mjs
+          node --check scripts/battle-bridge-worker-watchdog-conveyor-fairness.test.mjs
           node --check scripts/battle-bridge-github-command-mailbox.mjs
           node --check scripts/mission-worker-diagnostic-link.mjs
           node --check scripts/chatgpt-shared-workspace-github-relay.mjs
@@ -73,6 +78,7 @@ jobs:
           node --check shared/agents/chatGptParticipantBridgeV1.mjs
           node --check shared/agents/remoteCodexTaskVisibility.mjs
           node --check scripts/mission-orchestrator-worker-heartbeat.mjs
+          node --check scripts/mission-orchestrator-worker-heartbeat-active-claim.mjs
           node --check scripts/mission-orchestrator-worker-supervised.mjs
 
       - name: Parse Windows watchdog scripts
@@ -84,7 +90,8 @@ jobs:
             'scripts/windows/status-battle-bridge-worker-watchdog.ps1',
             'scripts/windows/uninstall-battle-bridge-worker-watchdog.ps1',
             'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1',
-            'scripts/windows/start-mission-orchestrator-worker.ps1'
+            'scripts/windows/start-mission-orchestrator-worker.ps1',
+            'scripts/windows/restart-approved-stephanos-runtime.ps1'
           ) | ForEach-Object {
             $tokens = $null
             $parseErrors = $null
@@ -100,10 +107,13 @@ jobs:
         run: node --test scripts/battle-bridge-worker-watchdog-policy.test.mjs
 
       - name: Test worker heartbeat
-        run: node --test scripts/mission-orchestrator-worker-heartbeat.test.mjs
+        run: node --test scripts/mission-orchestrator-worker-heartbeat.test.mjs scripts/mission-orchestrator-worker-heartbeat-active-claim.test.mjs
 
       - name: Test Mission Worker Git stderr isolation
         run: node --test scripts/mission-worker-git-stderr-isolation.test.mjs
+
+      - name: Test Mission Worker cleanup launch receipt proof
+        run: node --test scripts/mission-worker-cleanup-launch-receipt-proof.test.mjs
 
       - name: Test supervised worker
         run: node --test scripts/mission-orchestrator-worker-supervised.test.mjs
@@ -142,7 +152,7 @@ jobs:
         run: node --test shared/agents/chatGptParticipantBridgeV1.test.mjs scripts/chatgpt-shared-workspace-github-relay.test.mjs
 
       - name: Test visibility observer, mirror and combined runner
-        run: node --test shared/agents/remoteCodexTaskVisibility.test.mjs scripts/remote-codex-task-visibility-observer.test.mjs scripts/remote-codex-github-mirror-publisher.test.mjs scripts/battle-bridge-worker-watchdog-runner.test.mjs
+        run: node --test shared/agents/remoteCodexTaskVisibility.test.mjs scripts/remote-codex-task-visibility-observer.test.mjs scripts/remote-codex-github-mirror-publisher.test.mjs scripts/battle-bridge-worker-watchdog-runner.test.mjs scripts/battle-bridge-worker-watchdog-conveyor-fairness.test.mjs
 
       - name: Test Windows script guards
         run: node --test scripts/battle-bridge-worker-watchdog-installer.test.mjs

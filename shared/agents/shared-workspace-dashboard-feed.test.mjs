@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import {
   DASHBOARD_FEED_STATES,
   MIN_DASHBOARD_FEED_POLL_INTERVAL_MS,
+  SHARED_WORKSPACE_FEED_RECORD_SCOPES,
   createLoadingSharedWorkspaceDashboardFeed,
   createSharedWorkspaceDashboardPollingContract,
   readSharedWorkspaceDashboardFeed,
@@ -20,7 +21,7 @@ import {
 
 async function tempWorkspace() {
   const root = await mkdtemp(join(tmpdir(), 'stephanos-dashboard-feed-test-'));
-  await Promise.all(['status', 'proof', 'capabilities', 'receipts'].map((directory) => mkdir(join(root, directory), { recursive: true })));
+  await Promise.all(['status', 'proof', 'capabilities', 'receipts', 'events'].map((directory) => mkdir(join(root, directory), { recursive: true })));
   return root;
 }
 
@@ -64,11 +65,41 @@ test('current shared workspace records produce ready feed and refresh operator a
   const feed = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
   assert.equal(feed.state, DASHBOARD_FEED_STATES.READY);
   assert.equal(feed.readOnly, true);
+  assert.equal(feed.recordScope, SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE);
   assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1290').statusTruth, 'CURRENT');
   assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1287').statusTruth, 'UNKNOWN');
   assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1287').proofTruth, 'UNKNOWN');
   assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1284').capabilityTruth, 'CURRENT');
   assert.equal(feed.operatorAttention.localProofNeeded.includes('#1290'), false);
+});
+
+test('machine current-state feed does not walk historical events or receipts', async () => {
+  const root = await tempWorkspace();
+  const now = '2026-07-07T00:00:00.000Z';
+  await writeJson(root, 'status', 'status-current.json', createSharedWorkspaceStatusRecord({
+    statusId: 'workspace-current',
+    timestampUtc: now,
+    status: 'CURRENT',
+  }));
+  await writeFile(join(root, 'events', 'historical-bad.json'), '{not-json\n', 'utf8');
+  await writeFile(join(root, 'receipts', 'historical-bad.json'), '{not-json\n', 'utf8');
+
+  const current = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
+  assert.equal(current.recordScope, SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE);
+  assert.equal(current.state, DASHBOARD_FEED_STATES.READY);
+  assert.deepEqual(current.errors, []);
+  assert.equal(current.records.eventRecords.length, 0);
+  assert.equal(current.records.receiptRecords.length, 0);
+
+  const full = await readSharedWorkspaceDashboardFeed({
+    root,
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+    recordScope: SHARED_WORKSPACE_FEED_RECORD_SCOPES.FULL_HISTORY,
+  });
+  assert.equal(full.recordScope, SHARED_WORKSPACE_FEED_RECORD_SCOPES.FULL_HISTORY);
+  assert.equal(full.state, DASHBOARD_FEED_STATES.ERROR);
+  assert.equal(full.errors.some((error) => error.includes('historical-bad.json:PARSE_FAILED')), true);
 });
 
 test('shared receipts are exposed to every dashboard-feed participant', async () => {
@@ -113,7 +144,12 @@ test('shared receipts are exposed to every dashboard-feed participant', async ()
     proofRefs: ['receipts/unrelated-cycle-receipt.json'],
   }));
 
-  const feed = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
+  const feed = await readSharedWorkspaceDashboardFeed({
+    root,
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+    recordScope: SHARED_WORKSPACE_FEED_RECORD_SCOPES.FULL_HISTORY,
+  });
   assert.equal(feed.state, DASHBOARD_FEED_STATES.READY);
   assert.equal(feed.records.receiptRecords.length, 1);
   assert.equal(feed.records.receiptRecords[0].action, 'APPROVE');
