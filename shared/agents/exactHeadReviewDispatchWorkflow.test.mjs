@@ -19,7 +19,7 @@ test('serializes every mutating coordinator trigger through one PR-scoped author
   const workflow = readWorkflow();
 
   assert.match(workflow, /\n  plan:\n[\s\S]*STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY:\s*'true'/);
-  assert.match(workflow, /targets:\s*\$\{\{ steps\.plan\.outputs\.targets \}\}/);
+  assert.match(workflow, /targets:\s*\$\{\{ steps\.admit\.outputs\.targets \}\}/);
   assert.match(workflow, /target:\s*\$\{\{ fromJSON\(needs\.plan\.outputs\.targets\) \}\}/);
   assert.match(
     workflow,
@@ -138,6 +138,19 @@ test('launches a missing review only after exact retry classification and immuta
   assert.match(launch, /STEPHANOS_REVIEW_HANDOFF_RUN_RECEIPT_PATH:\s*\$\{\{ runner\.temp \}\}\/independent-review-handoff-run-receipt\.json/);
   assert.match(launch, /node scripts\/launch-missing-independent-review-v1\.mjs/);
   assert.doesNotMatch(launch, /curl|gh\s+api|workflow_dispatch|\/dispatches|shell:\s*true/);
+});
+
+test('binds deterministic assurance to exact current protected main and canonical admission', () => {
+  const workflow = readDeterministicReviewWorkflow();
+
+  assert.match(workflow, /current_main_sha="\$\(gh api "\/repos\/\$\{REPOSITORY\}\/git\/ref\/heads\/main" --jq '\.object\.sha'\)"/);
+  assert.match(workflow, /test "\$\{base_ref\}" = "main"/);
+  assert.match(workflow, /echo "base_sha=\$\{current_main_sha\}" >> "\$\{GITHUB_OUTPUT\}"/);
+  assert.match(workflow, /name: Admit exact current-main review target/);
+  assert.match(workflow, /node scripts\/exact-head-review-current-main-admission-v1\.mjs/);
+  assert.match(workflow, /name: Require exact current-main admission/);
+  assert.match(workflow, /test "\$\{ADMITTED_TARGETS\}" = "\[\{\\\"prNumber\\\":\$\{PR_NUMBER\}\}\]"/);
+  assert.doesNotMatch(workflow, /base_sha="\$\(jq -r '\.base\.sha'/);
 });
 
 test('isolates provider-neutral assurance intake from Codex review command vocabulary', () => {

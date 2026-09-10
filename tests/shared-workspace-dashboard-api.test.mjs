@@ -49,24 +49,26 @@ async function readyWorkspace() {
 
   await writeJson(root, 'status', 'status-1290.json', {
     ...createSharedWorkspaceStatusRecord({
-      statusId: 'status-1290',
+      statusId: 'workspace-ready',
       timestampUtc: NOW,
+      relatedIssue: '#1290',
       status: 'CURRENT',
       summary: '#1290 Shared Workspace current',
       proofRefs: ['proof/status'],
     }),
-    relatedGoal: '#1290',
   });
 
   await writeJson(root, 'proof', 'proof-1290.json', {
     ...createSharedWorkspaceProofRecord({
-      proofId: 'proof-1290',
+      proofId: 'workspace-proof',
       timestampUtc: NOW,
+      correlationId: 'verification-run',
+      relatedIssue: '#1290',
       status: 'PASS',
       summary: '#1290 proof current',
+      proofRefs: ['proof/shared-workspace'],
       refs: ['proof/shared-workspace'],
     }),
-    relatedGoal: '#1290',
   });
 
   await writeJson(root, 'capabilities', 'openclaw.json', {
@@ -180,6 +182,37 @@ test('backend dashboard feed adapter reads existing ready workspace records', as
   assert.equal(payload.state, 'ready');
   assert.equal(payload.workspaceRoot, root);
   assert.equal(payload.projection.goals.find((goal) => goal.issue === '#1290').statusTruth, 'CURRENT');
+});
+
+test('backend dashboard feed remains responsive when optional GitHub telemetry stalls', async () => {
+  const context = await isolatedContext();
+  const root = await readyWorkspace();
+  const startedAt = Date.now();
+
+  const payload = await readBackendSharedWorkspaceDashboardFeed({
+    env: {
+      ...context.env,
+      GITHUB_REPOSITORY: 'owner/repo',
+      GITHUB_TOKEN: 'bounded-token',
+      STEPHANOS_SHARED_AGENT_WORKSPACE: root,
+    },
+    repoRoot: context.repoRoot,
+    nowMs: Date.parse(NOW),
+    staleAfterMs: 60_000,
+    liveGoalProjectionOptions: {
+      githubTelemetryOptions: {
+        fetchImpl: async () => new Promise(() => {}),
+        requestTimeoutMs: 20,
+      },
+    },
+  });
+
+  assert.equal(Date.now() - startedAt < 500, true);
+  assert.equal(payload.state, 'ready');
+  assert.equal(payload.projection.goals.find((goal) => goal.issue === '#1290').statusTruth, 'CURRENT');
+  assert.equal(payload.livePortfolio.state, 'ready');
+  assert.equal(payload.projection.portfolioSource, 'BASE_PROJECTION_FALLBACK');
+  assert.equal(payload.projection.liveGithubPrCount, 0);
 });
 
 test('backend startup publisher loop only starts for existing configured workspace and remains stoppable', async () => {

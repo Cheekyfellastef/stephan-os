@@ -20,6 +20,7 @@ export const SOURCE_PUBLICATION_BLOCKER = Object.freeze({
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const FULL_SHA = /^[0-9a-f]{40}$/i;
+const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-][0-9]{2}:[0-9]{2})$/;
 const ROUTE_PRIORITY = Object.freeze([
   SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT,
@@ -38,6 +39,16 @@ function list(value) { return Array.isArray(value) ? value : []; }
 function sameKeys(value, expected) {
   return value && typeof value === 'object' && !Array.isArray(value)
     && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort());
+}
+function safeCanonicalBranch(value) {
+  const branch = text(value);
+  return SAFE_BRANCH.test(branch)
+    && !['main', 'master'].includes(branch)
+    && !branch.startsWith('refs/')
+    && !branch.startsWith('/')
+    && !branch.endsWith('/')
+    && !branch.includes('..')
+    && !branch.includes('//');
 }
 
 function exactArtifact(artifact = {}) {
@@ -83,7 +94,8 @@ function routeCompatible(route, artifact, evidence) {
     return FULL_SHA.test(artifact.exactCommit) && operations.has('PUSH_EXACT_SOURCE_COMMIT');
   }
   if (route === SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP) {
-    return ['CREATE_BLOBS', 'CREATE_TREE', 'CREATE_COMMIT', 'CREATE_BRANCH_REF'].every((item) => operations.has(item));
+    const coreReady = ['CREATE_BLOBS', 'CREATE_TREE', 'CREATE_COMMIT'].every((item) => operations.has(item));
+    return coreReady && (operations.has('UPDATE_BRANCH_REF') || operations.has('CREATE_BRANCH_REF'));
   }
   if (route === SOURCE_PUBLICATION_ROUTE.FORGE_SIDECAR) {
     return ['M2_READY', 'M3_RUNNER_READY', 'PUBLISH_SOURCE_BRANCH'].every((item) => operations.has(item));
@@ -104,6 +116,7 @@ function baseProjection(artifact = {}) {
     routeReady: false,
     mutationAllowed: false,
     forceAllowed: false,
+    fastForwardOnly: true,
     duplicateBranchAllowed: false,
     duplicatePullRequestAllowed: false,
     preserveVerifiedArtifact: true,
@@ -123,10 +136,10 @@ export function buildSourcePublicationContinuityV1(input = {}) {
     return Object.freeze({ ...base, blocker: SOURCE_PUBLICATION_BLOCKER.REPOSITORY_NOT_FOUND, exactNextAction: 'Publish repository-not-found evidence after bounded nested-checkout discovery; do not discard or rebuild the verified artifact.', finalVerdict: SOURCE_PUBLICATION_BLOCKER.REPOSITORY_NOT_FOUND });
   }
   const artifactValid = Number.isFinite(nowMs) && FULL_SHA.test(artifact.exactBase)
-    && FULL_SHA.test(artifact.exactTree) && artifact.branch.startsWith('agent/')
+    && FULL_SHA.test(artifact.exactTree) && safeCanonicalBranch(artifact.branch)
     && (!artifact.exactCommit || FULL_SHA.test(artifact.exactCommit));
   if (!artifactValid) {
-    return Object.freeze({ ...base, blocker: SOURCE_PUBLICATION_BLOCKER.ARTIFACT_INVALID, exactNextAction: 'Preserve the current work and produce a current time, exact base, exact tree and bounded agent branch identity before publication.', finalVerdict: SOURCE_PUBLICATION_BLOCKER.ARTIFACT_INVALID });
+    return Object.freeze({ ...base, blocker: SOURCE_PUBLICATION_BLOCKER.ARTIFACT_INVALID, exactNextAction: 'Preserve the current work and produce a current time, exact base, exact tree and bounded non-protected canonical branch identity before publication.', finalVerdict: SOURCE_PUBLICATION_BLOCKER.ARTIFACT_INVALID });
   }
 
   const capabilities = input.capabilities || {};
@@ -134,7 +147,7 @@ export function buildSourcePublicationContinuityV1(input = {}) {
   const evidence = Object.fromEntries(ROUTE_PRIORITY.map((route) => [route, receiptEvidence(route, capabilities[route], artifact, nowMs)]));
   const selectedRoute = ROUTE_PRIORITY.find((route) => !failedRoutes.has(route) && routeCompatible(route, artifact, evidence[route]));
   if (selectedRoute) {
-    return Object.freeze({ ...base, selectedRoute, routeReady: true, capabilityReceipt: evidence[selectedRoute].receipt, evaluatedRoutes: ROUTE_PRIORITY, failedRoutes: Object.freeze([...failedRoutes]), blocker: '', exactNextAction: `Publish the preserved exact artifact through ${selectedRoute}; retain all review and merge protections.`, finalVerdict: 'SOURCE_PUBLICATION_ROUTE_READY' });
+    return Object.freeze({ ...base, selectedRoute, routeReady: true, capabilityReceipt: evidence[selectedRoute].receipt, evaluatedRoutes: ROUTE_PRIORITY, failedRoutes: Object.freeze([...failedRoutes]), blocker: '', exactNextAction: `Publish the preserved exact artifact through ${selectedRoute}; fast-forward the existing canonical branch only and retain all review and merge protections.`, finalVerdict: 'SOURCE_PUBLICATION_ROUTE_READY' });
   }
 
   const unresolvedRoutes = ROUTE_PRIORITY.filter((route) => !failedRoutes.has(route) && ['missing', 'invalid'].includes(evidence[route].state));

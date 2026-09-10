@@ -31,6 +31,7 @@ import {
   renewSourceMutationLeaseRecord,
   validateExecutionReceiptAgainstMutationLease,
   validateSourceMutationLease,
+  validateSourceMutationLeaseReleaseRecord,
 } from './programmeAuthorityV1.mjs';
 import { MONITOR_MULTIPLEXER_SCHEMA_VERSION } from './monitorMultiplexer.mjs';
 import {
@@ -375,6 +376,31 @@ test('source mutation lease validates, renews only the exact live owner, and nev
     leaseId:`${sharedPrefix}-two`,
   }), { timestampUtc:NOW });
   assert.notEqual(firstRelease.statusId, secondRelease.statusId);
+
+  const exactRelease = createSourceMutationLeaseReleaseRecord(record, { timestampUtc: NOW });
+  assert.equal(validateSourceMutationLeaseReleaseRecord(exactRelease, record, { nowUtc: NOW }).valid, true);
+  for (const forgedRelease of [
+    { ...exactRelease, headSha: 'b'.repeat(40) },
+    { ...exactRelease, releasedAtUtc: '2026-07-30T09:00:00.000Z', timestampUtc: '2026-07-30T09:00:00.000Z' },
+    { ...exactRelease, mergeAuthority: true },
+  ]) {
+    const validation = validateSourceMutationLeaseReleaseRecord(forgedRelease, record, { nowUtc: NOW });
+    assert.equal(validation.valid, false);
+    assert.equal(validation.finalVerdict, 'SOURCE_MUTATION_LEASE_RELEASE_BLOCKED');
+  }
+
+  let accessorReads = 0;
+  const accessorRelease = Object.defineProperty({}, 'releasedAtUtc', {
+    enumerable: true,
+    get() {
+      accessorReads += 1;
+      return NOW;
+    },
+  });
+  const accessorValidation = validateSourceMutationLeaseReleaseRecord(accessorRelease, record, { nowUtc: NOW });
+  assert.equal(accessorValidation.valid, false);
+  assert.deepEqual(accessorValidation.errors, ['release-input-not-bounded-plain-data']);
+  assert.equal(accessorReads, 0);
 });
 
 test('execution receipt leaseKey is correlation only and cannot fabricate mutation authority', () => {
@@ -492,6 +518,8 @@ test('controller and Mission Worker heartbeats remain distinct authorities', () 
 
   const worker = createMissionWorkerHeartbeatRecord({
     timestampUtc: NOW,
+    workerStartedAtUtc: '2026-07-30T09:59:00.000Z',
+    launchIdentityId: 'a'.repeat(64),
     repositoryRoot: process.cwd(),
     branch: 'main',
     headSha: HEAD,

@@ -115,6 +115,67 @@ test('missing and stale status cannot be painted green', () => {
   assert.equal(stale.state, 'STALE');
 });
 
+test('projection recognizes source-bound post-sync head and Ignition generatedAt fields', () => {
+  const postSync = projectBeaconStatus({
+    timestampUtc: '2026-08-18T14:20:00Z',
+    afterHead: HEAD,
+    classification: 'REFRESH_COMPLETE',
+  }, { id: 'postSyncRefresh', staleAfterMs: 60_000 }, Date.parse('2026-08-18T14:31:00Z'));
+  assert.equal(postSync.state, 'STALE');
+  assert.equal(postSync.head, HEAD);
+  assert.equal(postSync.rawState, 'REFRESH_COMPLETE');
+
+  const ignition = projectBeaconStatus({
+    generatedAt: '2026-08-18T14:30:30Z',
+    trafficLight: 'green',
+  }, { id: 'ignition', staleAfterMs: 60_000 }, Date.parse('2026-08-18T14:31:00Z'));
+  assert.equal(ignition.state, 'GREEN');
+  assert.equal(ignition.observedAtUtc, '2026-08-18T14:30:30.000Z');
+});
+
+test('projection publishes only sanitized dirt counts plus bounded service/runtime identity', () => {
+  const projected = projectBeaconStatus({
+    timestampUtc: '2026-08-18T14:30:30Z',
+    classification: 'SYNC_NO_CHANGE',
+    sourceHead: HEAD,
+    dirtClassification: {
+      trackedSourceCount: 1,
+      untrackedSourceCount: 2,
+      unknownCount: 0,
+      runtimeOnlyCount: 3,
+      generatedSourceCount: 4,
+      blocksSync: true,
+      blockingSamples: ['secret/private-path.txt'],
+    },
+    housekeeper: { state: 'READY', sourceHead: HEAD, completedAt: '2026-08-18T14:30:20Z' },
+    servedRuntimeProof: { sourceHead: HEAD },
+    builtHead: HEAD,
+    runtimeHead: HEAD,
+    observedServiceFacts: { backend: { ready: true, state: 'READY', sourceHead: HEAD, path: 'C:/private' } },
+  }, { id: 'githubSync', staleAfterMs: 60_000 }, Date.parse('2026-08-18T14:31:00Z'));
+  assert.equal(projected.dirtFacts.known, true);
+  assert.equal(projected.dirtFacts.blocksSync, true);
+  assert.equal(projected.dirtFacts.blockingCount, 3);
+  assert.equal(projected.dirtFacts.pathValuesPublished, false);
+  assert.equal(projected.housekeeperFacts.observed, true);
+  assert.equal(projected.housekeeperFacts.head, HEAD);
+  assert.equal(projected.runtimeHeads.builtHead, HEAD);
+  assert.equal(projected.runtimeHeads.servedHead, HEAD);
+  assert.equal(projected.runtimeHeads.runtimeHead, HEAD);
+  assert.deepEqual(projected.serviceFacts.backend, { ready: true, state: 'READY', head: HEAD });
+  assert.doesNotMatch(JSON.stringify(projected), /private-path|C:\/private/);
+});
+
+test('mission worker phase is usable state evidence instead of collapsing to UNKNOWN', () => {
+  const worker = projectBeaconStatus({
+    timestampUtc: '2026-08-18T14:30:30Z',
+    phase: 'MISSION_WORKER_TICK_PASS',
+    headSha: HEAD,
+  }, { id: 'missionWorker', staleAfterMs: 60_000 }, Date.parse('2026-08-18T14:31:00Z'));
+  assert.equal(worker.state, 'MISSION_WORKER_TICK_PASS');
+  assert.equal(worker.head, HEAD);
+});
+
 test('fresh receipt-index READY cannot hide an exact-head command that never reaches ACCEPTED', () => {
   const ingress = projectMailboxIngressLiveness([commandComment()], {
     sourceHead: HEAD,
@@ -135,6 +196,7 @@ test('fresh receipt-index READY cannot hide an exact-head command that never rea
   const mailbox = record.surfaces.find((surface) => surface.id === 'mailbox');
   assert.equal(mailbox.state, 'BLOCKED_COMMAND_INGRESS_UNOBSERVED');
   assert.equal(mailbox.blocker, 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED');
+  assert.equal(mailbox.ingressState, 'BLOCKED_COMMAND_INGRESS_UNOBSERVED');
   assert.ok(record.blockers.includes('mailbox:PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED'));
   assert.equal(record.freshness, 'DEGRADED');
 });
@@ -237,12 +299,89 @@ test('unavailable ingress observation downgrades a locally READY mailbox but nev
   assert.equal(stale.state, 'STALE');
 });
 
-test('beacon body is one bounded marker plus json record', () => {
+test('beacon embeds thirteen-class complete-state telemetry and separates read-only diagnosis from consequential repair', () => {
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-08-21T00:20:00.000Z'),
+    statusRecords: {
+      githubSync: status({
+        timestampUtc: '2026-08-21T00:19:30.000Z',
+        classification: 'SYNC_NO_CHANGE',
+        dirtClassification: { trackedSourceCount: 0, untrackedSourceCount: 0, unknownCount: 0, runtimeOnlyCount: 1, generatedSourceCount: 0, blocksSync: false },
+        housekeeper: { state: 'READY', sourceHead: HEAD, completedAt: '2026-08-21T00:19:20.000Z' },
+      }),
+      postSyncRefresh: status({ timestampUtc: '2026-08-20T23:00:00.000Z', afterHead: HEAD, classification: 'REFRESH_COMPLETE', sourceHead: '' }),
+      ignition: { generatedAt: '2026-08-20T23:00:00.000Z', trafficLight: 'green', sourceHead: HEAD },
+      battleBridge: status({
+        timestampUtc: '2026-08-21T00:19:30.000Z',
+        status: 'READY',
+        builtHead: HEAD,
+        servedRuntimeProof: { sourceHead: HEAD },
+        runtimeHead: HEAD,
+        observedServiceFacts: {
+          backend: { ready: true, state: 'READY', sourceHead: HEAD },
+          'stephanos-ui': { ready: true, state: 'READY', sourceHead: HEAD },
+          'openclaw-gateway': { ready: true, state: 'READY', sourceHead: HEAD },
+          'shared-workspace': { ready: true, state: 'READY', sourceHead: HEAD },
+        },
+      }),
+      mailbox: status({ timestampUtc: '2026-08-21T00:19:30.000Z', status: 'READY' }),
+      missionWorker: status({ timestampUtc: '2026-08-21T00:19:30.000Z', phase: 'MISSION_WORKER_TICK_PASS', status: '', headSha: HEAD, sourceHead: '' }),
+    },
+    mailboxIngressObservation: { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 },
+  });
+  assert.equal(record.telemetry.schemaVersion, 'stephanos.battle-bridge-telemetry-autorepair.v1');
+  assert.equal(record.telemetry.executive.questionCount, 13);
+  assert.equal(record.telemetry.coverage.find((entry) => entry.surfaceId === 'postSyncRefresh').answered, true);
+  assert.equal(record.telemetry.coverage.find((entry) => entry.surfaceId === 'recoveryMesh').answered, false);
+  assert.equal(record.telemetry.repairCandidates.find((entry) => entry.surfaceId === 'recoveryMesh').repairDisposition, 'EXACT_INTERACTIVE_AUTHORIZATION_REQUIRED');
+  assert.equal(record.operatorAuthorizationState, 'OPERATOR_AUTHORIZATION_NOT_PRESENT');
+  assert.equal(record.operatorNeeded, true);
+  assert.equal(record.telemetry.executive.executionAuthorizedByTelemetry, false);
+  assert.equal(record.telemetry.executive.authorityGrantedByTelemetry, false);
+});
+
+test('qualified fixed self-heal can be identified but never authorized by the beacon itself', () => {
+  const base = {
+    githubSync: status({ classification: 'SYNC_NO_CHANGE', dirtClassification: { trackedSourceCount: 0, untrackedSourceCount: 0, unknownCount: 0, blocksSync: false }, housekeeper: { state: 'READY', sourceHead: HEAD } }),
+    postSyncRefresh: status({ classification: 'REFRESH_COMPLETE' }),
+    ignition: status({ status: 'READY' }),
+    recoveryMesh: status({ status: 'READY' }),
+    mailbox: status({ status: 'READY' }),
+    missionWorker: status({ status: '', phase: 'MISSION_WORKER_TICK_PASS', headSha: HEAD, sourceHead: '' }),
+    battleBridge: status({
+      status: 'READY', builtHead: HEAD, servedRuntimeProof: { sourceHead: HEAD }, runtimeHead: HEAD,
+      observedServiceFacts: {
+        backend: { ready: false, state: 'DEGRADED', sourceHead: HEAD },
+        'stephanos-ui': { ready: true, state: 'READY', sourceHead: HEAD },
+        'openclaw-gateway': { ready: true, state: 'READY', sourceHead: HEAD },
+        'shared-workspace': { ready: true, state: 'READY', sourceHead: HEAD },
+      },
+    }),
+  };
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-08-18T14:31:00.000Z'),
+    statusRecords: base,
+    mailboxIngressObservation: { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 },
+    qualifiedRepairPolicies: [{
+      policyId: 'backend-fixed-v1', exactHead: HEAD, repairRoute: 'BACKEND_8787_RECONCILIATION', targetIds: ['backend'],
+      reviewed: true, fixedCommand: true, reversible: true, operatorNeeded: false, authorityWideningAllowed: false,
+    }],
+  });
+  assert.equal(record.telemetry.executive.qualifiedSelfHealEligible, true);
+  assert.equal(record.nextAutomaticAction, 'QUALIFIED_FIXED_SELF_HEAL');
+  assert.equal(record.operatorNeeded, false);
+  assert.equal(record.telemetry.executive.executionAuthorizedByTelemetry, false);
+  assert.equal(record.processRestartAllowed, false);
+});
+
+test('beacon body is one bounded marker plus json record without secret-bearing material', () => {
   const record = buildBattleBridgeOutboundBeacon({ sourceHead: HEAD, now: new Date('2026-08-18T14:31:00Z') });
   const body = buildBattleBridgeOutboundBeaconBody(record);
   assert.match(body, new RegExp(BATTLE_BRIDGE_OUTBOUND_BEACON_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(body, /stephanos\.battle-bridge-outbound-health-beacon\.v1/);
-  assert.doesNotMatch(body, /password|private key|authorization|bearer/i);
+  assert.doesNotMatch(body, /password|private key|bearer/i);
 });
 
 test('invalid source head fails closed', () => {
