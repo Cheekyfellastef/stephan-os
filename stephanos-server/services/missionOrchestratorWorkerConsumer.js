@@ -19,12 +19,31 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
   const paths = queuePaths(root, adapter);
   await ensurePaths(paths);
   const entries = (await readdir(paths.pending, { withFileTypes: true })).filter((entry) => entry.isFile() && entry.name.endsWith('.json')).sort((left, right) => left.name.localeCompare(right.name));
-  for (const entry of entries) {
+  const actionGrant = options.actionGrant;
+  if (actionGrant?.adapter && actionGrant.adapter !== adapter) return null;
+  const candidateEntries = actionGrant?.actionId
+    ? entries.filter((entry) => (
+      entry.name.toLowerCase() === `${String(actionGrant.actionId).toLowerCase()}.json`
+    ))
+    : entries;
+  for (const entry of candidateEntries) {
     const pendingPath = resolve(paths.pending, entry.name);
     const processingPath = resolve(paths.processing, entry.name);
     try {
+      const item = JSON.parse(await readFile(pendingPath, 'utf8'));
+      if (
+        actionGrant
+        && (
+          String(item?.missionId || '').toLowerCase()
+            !== String(actionGrant.missionId || '').toLowerCase()
+          || String(item?.actionId || '').toLowerCase()
+            !== String(actionGrant.actionId || '').toLowerCase()
+        )
+      ) {
+        continue;
+      }
       await rename(pendingPath, processingPath);
-      return { adapter, item: JSON.parse(await readFile(processingPath, 'utf8')), processingPath, paths };
+      return { adapter, item, processingPath, paths };
     } catch (error) {
       if (['ENOENT', 'EEXIST'].includes(error?.code)) continue;
       throw error;

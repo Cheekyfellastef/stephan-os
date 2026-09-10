@@ -1,0 +1,89 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const appRoot = path.join(repoRoot, 'apps', 'starfield-vr-reference-lab');
+
+test('Starfield VR Reference Lab is registered as a launcher workspace tile', () => {
+  const appsIndex = JSON.parse(fs.readFileSync(path.join(repoRoot, 'apps', 'index.json'), 'utf8'));
+  const manifest = JSON.parse(fs.readFileSync(path.join(appRoot, 'app.json'), 'utf8'));
+  assert.ok(appsIndex.includes('starfield-vr-reference-lab'));
+  assert.equal(manifest.entry, 'index.html');
+  assert.equal(manifest.launcherActionLabel, 'Enter Reference Lab');
+  assert.match(manifest.description, /Starfield VR Evolution blueprint/i);
+});
+
+test('workspace consumes the canonical shared catalogue and exposes truth and proof surfaces', () => {
+  const html = fs.readFileSync(path.join(appRoot, 'index.html'), 'utf8');
+  const source = fs.readFileSync(path.join(appRoot, 'reference-lab.js'), 'utf8');
+  assert.match(source, /shared\/vr\/starfieldVrReferenceCatalogue\.mjs/);
+  assert.match(html, /id="truth-summary"/);
+  assert.match(html, /id="recipe-tests"/);
+  assert.match(html, /id="reference-grid"/);
+  assert.match(html, /href="\.\.\/vr-research-lab\/index\.html"/);
+  assert.ok(fs.existsSync(path.join(repoRoot, 'VR-Research-Lab', 'knowledge-sources', 'starfield-vr-reference-lab', 'README.md')));
+});
+
+test('workspace DOM contract provides every node referenced by the controller', () => {
+  const html = fs.readFileSync(path.join(appRoot, 'index.html'), 'utf8');
+  const source = fs.readFileSync(path.join(appRoot, 'reference-lab.js'), 'utf8');
+  const referencedIds = [...source.matchAll(/document\.getElementById\('([^']+)'\)/g)]
+    .map((match) => match[1]);
+  assert.ok(referencedIds.length >= 14);
+  assert.equal(new Set(referencedIds).size, referencedIds.length);
+  for (const id of referencedIds) {
+    assert.equal(html.includes(`id="${id}"`), true, `missing DOM node: ${id}`);
+  }
+});
+
+test('truth boundary renders every mandatory promotion-evidence gate', () => {
+  const source = fs.readFileSync(path.join(appRoot, 'reference-lab.js'), 'utf8');
+  assert.match(
+    source,
+    /appendTextList\(nodes\.truthGates, STARFIELD_VR_EVIDENCE_BOUNDARY\.requiredPromotionEvidence\);/,
+  );
+  assert.doesNotMatch(source, /requiredPromotionEvidence\.slice/);
+});
+
+test('reference details expose pinned local evidence alongside external sources', () => {
+  const source = fs.readFileSync(path.join(appRoot, 'reference-lab.js'), 'utf8');
+  assert.match(source, /reference\.localReferences \|\| \[\]/);
+  assert.match(source, /localReferenceHref\(localReference\)/);
+  assert.match(source, /pinned local evidence/);
+  assert.match(source, /normalized\.includes\('\.\.'\)/);
+});
+
+test('copied build brief carries the selected measurable acceptance tests', () => {
+  const source = fs.readFileSync(path.join(appRoot, 'reference-lab.js'), 'utf8');
+  assert.match(source, /Selected acceptance tests:/);
+  assert.match(source, /recipe\.acceptanceTests\.map/);
+});
+
+test('copy feedback distinguishes success from failure instead of painting every outcome green', () => {
+  const source = fs.readFileSync(path.join(appRoot, 'reference-lab.js'), 'utf8');
+  const css = fs.readFileSync(path.join(appRoot, 'styles.css'), 'utf8');
+  assert.match(source, /setCopyStatus\('Build brief copied\.', 'success'\)/);
+  assert.match(source, /setCopyStatus\('Clipboard unavailable in this browser context\.', 'error'\)/);
+  assert.match(source, /setCopyStatus\('Copy failed\. The workbench remains unchanged\.', 'error'\)/);
+  assert.match(css, /\.copy-status \{[^}]*color: var\(--muted\)/s);
+  assert.match(css, /\.copy-status\.is-success \{ color: var\(--mint\); \}/);
+  assert.match(css, /\.copy-status\.is-error \{ color: #[0-9a-f]{6}; \}/i);
+});
+
+test('workspace is responsive, reduced-motion safe and has no remote runtime asset dependency', () => {
+  const html = fs.readFileSync(path.join(appRoot, 'index.html'), 'utf8');
+  const css = fs.readFileSync(path.join(appRoot, 'styles.css'), 'utf8');
+  assert.doesNotMatch(html, /https?:\/\//);
+  assert.match(css, /@media \(max-width: 720px\)/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+});
+
+test('workspace source avoids treating local workbench selection as durable authority', () => {
+  const source = fs.readFileSync(path.join(appRoot, 'reference-lab.js'), 'utf8');
+  assert.doesNotMatch(source, /localStorage|sessionStorage|indexedDB/);
+  assert.match(source, /Evidence boundary:/);
+  assert.match(source, /Clipboard unavailable/);
+});

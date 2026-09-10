@@ -1,0 +1,214 @@
+const DEFAULT_TARGET_COUNT = 10;
+const DEFAULT_LISTENING_ROOM_ADDITION_COUNT = 10;
+const DEFAULT_MINIMUM_FRESH_TARGET = 6;
+const DEFAULT_HISTORY_LIMIT = 240;
+const DEFAULT_RECENT_ID_LIMIT = 120;
+const DEFAULT_DECK_LIMIT = 20;
+
+function normalizedIdentity(value = '') {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function safeArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function safeObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+export function journeyCandidateKeys(track = {}) {
+  if (!track || typeof track !== 'object' || Array.isArray(track)) return [];
+  const keys = [];
+  const id = String(track.id || track.universalMusicId || '').trim();
+  const spotify = String(track.spotifyUri || track.spotifyUrl || '').trim().toLowerCase();
+  const artist = normalizedIdentity(track.artist);
+  const title = normalizedIdentity(track.title || track.name);
+  if (id) keys.push(`id:${id}`);
+  if (spotify) keys.push(`spotify:${spotify}`);
+  if (artist && title) keys.push(`identity:${artist}::${title}`);
+  return [...new Set(keys)];
+}
+
+export function journeyCandidateKey(track = {}) {
+  return journeyCandidateKeys(track)[0] || '';
+}
+
+function addTrackKeys(target, track) {
+  for (const key of journeyCandidateKeys(track)) target.add(key);
+}
+
+export function collectFreshJourneySeenKeys(snapshot = {}) {
+  const seen = new Set(
+    safeArray(snapshot.journeyHistoryKeys)
+      .map((key) => String(key || '').trim())
+      .filter(Boolean),
+  );
+  for (const track of safeArray(snapshot.candidates)) addTrackKeys(seen, track);
+  for (const track of safeArray(snapshot.listeningDeck)) addTrackKeys(seen, track);
+  for (const id of Object.keys(safeObject(snapshot.ratings))) {
+    if (id) seen.add(`id:${id}`);
+  }
+  return seen;
+}
+
+export function dedupeFreshJourneyCandidates(candidates = []) {
+  const seen = new Set();
+  const output = [];
+  for (const candidate of safeArray(candidates)) {
+    const keys = journeyCandidateKeys(candidate);
+    if (!keys.length || keys.some((key) => seen.has(key))) continue;
+    output.push(candidate);
+    for (const key of keys) seen.add(key);
+  }
+  return output;
+}
+
+function isCatalogueCandidate(track = {}) {
+  return track.sourceKind === 'native-catalog'
+    || track.catalogVerificationStatus === 'metadata_verified'
+    || track.catalogLinkSource === 'native-catalog-search';
+}
+
+function mergeActiveJourneyWithExistingDeck({ additions, existingDeck, deckLimit }) {
+  const boundedDeckLimit = Math.min(Math.max(Number(deckLimit) || DEFAULT_DECK_LIMIT, 10), 40);
+  const seen = new Set();
+  const active = [];
+  const preserved = [];
+  for (const track of additions) {
+    const keys = journeyCandidateKeys(track);
+    if (!keys.length || keys.some((key) => seen.has(key))) continue;
+    active.push(track);
+    keys.forEach((key) => seen.add(key));
+  }
+  for (const track of existingDeck) {
+    if (active.length + preserved.length >= boundedDeckLimit) break;
+    const keys = journeyCandidateKeys(track);
+    if (!keys.length || keys.some((key) => seen.has(key))) continue;
+    preserved.push(track);
+    keys.forEach((key) => seen.add(key));
+  }
+  return { active, preserved, listeningDeck: [...active, ...preserved] };
+}
+
+function buildFreshJourneyNotice({
+  freshCount,
+  roomCount,
+  preservedCount,
+  catalogueCount,
+  minimumFreshTarget,
+}) {
+  const sourceSummary = catalogueCount
+    ? `${catalogueCount} came from the live catalogue`
+    : 'the live catalogue returned no additional verified tracks';
+  const preservationSummary = preservedCount
+    ? ` ${preservedCount} previous Listening Room card${preservedCount === 1 ? ' was' : 's were'} preserved.`
+    : '';
+  if (freshCount < minimumFreshTarget) {
+    return `Started a source-limited journey with all ${freshCount} genuinely new track${freshCount === 1 ? '' : 's'} available in the Listening Room; ${sourceSummary}. The current sources had fewer than ${minimumFreshTarget} unseen results, so Stephanos did not recycle old songs.${preservationSummary}`;
+  }
+  return `Started a complete journey with all ${freshCount} genuinely new tracks available in the Listening Room; ${sourceSummary}. The room now contains ${roomCount} cards.${preservationSummary}`;
+}
+
+export function planFreshJourneyState({
+  snapshot = {},
+  candidates = [],
+  targetCount = DEFAULT_TARGET_COUNT,
+  listeningRoomAdditionCount = DEFAULT_LISTENING_ROOM_ADDITION_COUNT,
+  minimumFreshTarget = DEFAULT_MINIMUM_FRESH_TARGET,
+  historyLimit = DEFAULT_HISTORY_LIMIT,
+  recentIdLimit = DEFAULT_RECENT_ID_LIMIT,
+  deckLimit = DEFAULT_DECK_LIMIT,
+  startedAt = new Date().toISOString(),
+} = {}) {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+    return Object.freeze({ ok: false, reason: 'music-state-invalid', freshCount: 0, addedCount: 0 });
+  }
+
+  const seen = collectFreshJourneySeenKeys(snapshot);
+  const deduped = dedupeFreshJourneyCandidates(candidates);
+  const unseen = deduped.filter((candidate) => (
+    !journeyCandidateKeys(candidate).some((key) => seen.has(key))
+  ));
+  const boundedTarget = Math.min(Math.max(Number(targetCount) || DEFAULT_TARGET_COUNT, 1), 20);
+  const selected = unseen.slice(0, boundedTarget);
+  if (!selected.length) {
+    return Object.freeze({
+      ok: false,
+      reason: 'no-unseen-candidates',
+      freshCount: 0,
+      addedCount: 0,
+      selected: Object.freeze([]),
+    });
+  }
+
+  const existingDeck = safeArray(snapshot.listeningDeck);
+  const additionLimit = Math.min(
+    Math.max(Number(listeningRoomAdditionCount) || boundedTarget, 1),
+    boundedTarget,
+  );
+  const additions = selected.slice(0, additionLimit);
+  const mergedDeck = mergeActiveJourneyWithExistingDeck({ additions, existingDeck, deckLimit });
+
+  const selectedKeys = selected.flatMap((track) => journeyCandidateKeys(track));
+  const historyKeys = [...new Set([
+    ...safeArray(snapshot.journeyHistoryKeys).map((key) => String(key || '').trim()).filter(Boolean),
+    ...selectedKeys,
+  ])].slice(-Math.max(20, Number(historyLimit) || DEFAULT_HISTORY_LIMIT));
+  const recentIds = [...new Set([
+    ...safeArray(snapshot.recentlyShownCandidateIds).map((id) => String(id || '').trim()).filter(Boolean),
+    ...selected.map((track) => String(track.id || '').trim()).filter(Boolean),
+  ])].slice(-Math.max(20, Number(recentIdLimit) || DEFAULT_RECENT_ID_LIMIT));
+  const catalogueCount = selected.filter((track) => isCatalogueCandidate(track)).length;
+  const notice = buildFreshJourneyNotice({
+    freshCount: selected.length,
+    roomCount: mergedDeck.listeningDeck.length,
+    preservedCount: mergedDeck.preserved.length,
+    catalogueCount,
+    minimumFreshTarget,
+  });
+  const activeJourneyTrackIds = mergedDeck.active
+    .map((track) => String(track.id || track.universalMusicId || '').trim())
+    .filter(Boolean);
+
+  const nextSnapshot = {
+    ...snapshot,
+    candidates: selected,
+    listeningDeck: mergedDeck.listeningDeck,
+    activeJourneyTrackIds,
+    journeyHistoryKeys: historyKeys,
+    recentlyShownCandidateIds: recentIds,
+    lastFreshJourneyNotice: notice,
+    lastFreshJourneySummary: {
+      schemaVersion: 2,
+      startedAt,
+      freshCount: selected.length,
+      activeJourneyCount: mergedDeck.active.length,
+      addedCount: mergedDeck.active.length,
+      roomCount: mergedDeck.listeningDeck.length,
+      preservedCount: mergedDeck.preserved.length,
+      catalogueCount,
+      localCount: selected.length - catalogueCount,
+      minimumFreshTarget,
+      recycledCount: 0,
+      limitedByFreshness: selected.length < minimumFreshTarget,
+    },
+  };
+
+  return Object.freeze({
+    ok: true,
+    reason: '',
+    state: nextSnapshot,
+    selected: Object.freeze([...selected]),
+    additions: Object.freeze([...mergedDeck.active]),
+    preserved: Object.freeze([...mergedDeck.preserved]),
+    freshCount: selected.length,
+    addedCount: mergedDeck.active.length,
+    roomCount: mergedDeck.listeningDeck.length,
+    preservedCount: mergedDeck.preserved.length,
+    catalogueCount,
+    recycledCount: 0,
+    limitedByFreshness: selected.length < minimumFreshTarget,
+    notice,
+  });
+}

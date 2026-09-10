@@ -34,11 +34,15 @@ function normalizeRepoRelativePath(value) {
   return value.replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
-function parseGitPorcelain(output) {
-  return output
+function gitPorcelainLines(output) {
+  return String(output || '')
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
-    .filter(Boolean)
+    .filter(Boolean);
+}
+
+function parseGitPorcelain(output) {
+  return gitPorcelainLines(output)
     .map((line) => {
       const rawPath = line.slice(3).trim();
       const renamedPath = rawPath.includes(' -> ') ? rawPath.split(' -> ').pop() : rawPath;
@@ -47,12 +51,20 @@ function parseGitPorcelain(output) {
     .filter(Boolean);
 }
 
-function collectGitDirtyPaths(repoRoot, execFile = execFileSync) {
+function collectGitSourceFacts(repoRoot, execFile = execFileSync) {
   try {
     const output = execFile('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: repoRoot, encoding: 'utf8' });
-    return parseGitPorcelain(output);
+    return {
+      // Preserve exact two-character porcelain status so downstream policy can
+      // distinguish runtime-owned unstaged state from staged/deleted source.
+      statusLines: gitPorcelainLines(output),
+      dirtyPaths: parseGitPorcelain(output),
+    };
   } catch (error) {
-    return [`source-dirt-unknown: git status failed (${error.message})`];
+    return {
+      statusLines: [],
+      dirtyPaths: [`source-dirt-unknown: git status failed (${error.message})`],
+    };
   }
 }
 
@@ -86,7 +98,6 @@ function readWorkspaceRecord(filePath) {
   }
   return { path: filePath, mtimeMs: stat.mtimeMs, length: stat.size, parsed };
 }
-
 
 function isWindowsPlatform(platform = process.platform) {
   return platform === 'win32';
@@ -123,7 +134,6 @@ function recordStatus(record) {
   const status = record.parsed && typeof record.parsed === 'object' && !Array.isArray(record.parsed) ? record.parsed.status : undefined;
   return typeof status === 'string' ? status : null;
 }
-
 
 function workspaceEvidencePath(repoRoot, absolutePath) {
   const relativePath = path.relative(repoRoot, absolutePath);
@@ -213,11 +223,12 @@ export async function collectLauncherReadinessLiveFacts(options = {}) {
   const repoRoot = path.resolve(options.repoRoot || process.cwd());
   const services = await collectServiceFacts(options);
   const workspace = collectWorkspaceFacts(repoRoot, options);
+  const sourceFacts = collectGitSourceFacts(repoRoot, options.execFile);
   services['shared-workspace'] = { ready: workspace.ready, evidence: workspace.evidence };
   return {
     schema: LAUNCHER_READINESS_LIVE_FACTS_SCHEMA,
     observedFacts: { services, staleWorkspaceRecords: workspace.staleRecords, workspace: { staleRecords: workspace.staleRecords } },
-    sourceFacts: { dirtyPaths: collectGitDirtyPaths(repoRoot, options.execFile) },
+    sourceFacts,
     authority: LIVE_COLLECTOR_AUTHORITY,
   };
 }

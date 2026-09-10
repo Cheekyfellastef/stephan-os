@@ -787,6 +787,7 @@ export function createStephanosDistServer({
       return;
     }
 
+    const fileSize = statSync(filePath).size;
     const extension = resolveRequestExtension(requestUrl.pathname, filePath);
     const contentType = mimeTypes[extension] || resolveContentType(filePath);
     if (mimeDebugEnabled) {
@@ -802,6 +803,7 @@ export function createStephanosDistServer({
     response.writeHead(200, {
       ...baseHeaders,
       'Content-Type': contentType,
+      'Content-Length': fileSize,
     });
     if (shouldLogLiveMimeDebug(requestUrl.pathname)) {
       console.log(

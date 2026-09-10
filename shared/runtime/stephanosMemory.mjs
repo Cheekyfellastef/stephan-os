@@ -195,6 +195,12 @@ export function createStephanosSharedMemoryAdapter({
   let fallbackReason = 'not-hydrated';
   let lastSaveSource = 'none';
   let lastDiagnostics = null;
+  let backendWriteQueue = Promise.resolve();
+  let backendUpdatedAt = normalizeString(cache.updatedAt);
+  let authoritativeState = normalizeMemoryState(cache);
+  let authorityHydrated = false;
+  let nextLegacyIntentId = 0;
+  const pendingLegacyStateIntents = [];
 
   function log(event, payload = {}) {
     const target = logger && typeof logger.info === 'function' ? logger : console;
@@ -204,6 +210,32 @@ export function createStephanosSharedMemoryAdapter({
   function updateMirror(nextState) {
     cache = normalizeMemoryState(nextState);
     writeStorageState(storage, mirrorStorageKey, cache);
+  }
+
+  function projectLegacyStateIntents(baseState, intents = pendingLegacyStateIntents) {
+    return intents.reduce(
+      (projected, intent) => rebaseStateIntent(projected, intent.previousState, intent.desiredState),
+      normalizeMemoryState(baseState),
+    );
+  }
+
+  function updateProjectedMirror() {
+    updateMirror(projectLegacyStateIntents(authoritativeState));
+  }
+
+  function coalesceLegacyStateIntentsThrough(boundaryId) {
+    const applicableIntents = pendingLegacyStateIntents.filter((entry) => entry.id <= boundaryId);
+    if (applicableIntents.length <= 1) return;
+    const desiredState = projectLegacyStateIntents(authoritativeState, applicableIntents);
+    for (let index = pendingLegacyStateIntents.length - 1; index >= 0; index -= 1) {
+      if (pendingLegacyStateIntents[index].id <= boundaryId) pendingLegacyStateIntents.splice(index, 1);
+    }
+    pendingLegacyStateIntents.push({
+      id: boundaryId,
+      previousState: normalizeMemoryState(authoritativeState),
+      desiredState,
+    });
+    pendingLegacyStateIntents.sort((left, right) => left.id - right.id);
   }
 
   async function loadFromBackend() {
@@ -225,7 +257,7 @@ export function createStephanosSharedMemoryAdapter({
       body: {
         schemaVersion: STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
         updatedAt: state.updatedAt || '',
-        ifUnmodifiedSince: state.updatedAt || '',
+        ifUnmodifiedSince: backendUpdatedAt,
         records: state.records || {},
         source,
       },
@@ -235,6 +267,45 @@ export function createStephanosSharedMemoryAdapter({
         lastDiagnostics = entry;
       },
     });
+  }
+
+  function isBackendConflict(error) {
+    return Number(error?.status) === 409
+      || String(error?.payload?.error_code || '').trim() === 'DURABLE_MEMORY_CONFLICT';
+  }
+
+  async function rehydrateAuthority({ conflict = true } = {}) {
+    const response = await loadFromBackend();
+    authoritativeState = normalizeMemoryState(response?.json?.data || {});
+    backendUpdatedAt = normalizeString(authoritativeState.updatedAt);
+    authorityHydrated = true;
+    updateProjectedMirror();
+    hydrationSource = 'shared-backend';
+    fallbackReason = conflict ? 'backend-memory-conflict-resolved-by-rehydrate' : '';
+    hydrationState = 'ready';
+    return response;
+  }
+
+  async function refreshAuthority() {
+    if (!preferSharedBackend || typeof fetchImpl !== 'function') {
+      throw Object.assign(new Error('Shared durable memory backend is unavailable.'), { code: 'durable-memory-authority-unavailable' });
+    }
+    return enqueueBackendOperation(async () => {
+      const response = await rehydrateAuthority({ conflict: false });
+      hydrated = true;
+      return {
+        authorityConfirmed: true,
+        source: 'shared-backend',
+        resolvedBackendUrl: response.baseUrl,
+        state: normalizeMemoryState(authoritativeState),
+      };
+    });
+  }
+
+  function enqueueBackendOperation(operationFactory) {
+    const operation = backendWriteQueue.then(operationFactory);
+    backendWriteQueue = operation.catch(() => undefined);
+    return operation;
   }
 
   async function hydrate() {
@@ -251,7 +322,10 @@ export function createStephanosSharedMemoryAdapter({
       hydrationState = 'hydrating';
       const response = await loadFromBackend();
       const backendState = normalizeMemoryState(response?.json?.data || {});
-      updateMirror(backendState);
+      authoritativeState = backendState;
+      authorityHydrated = true;
+      updateProjectedMirror();
+      backendUpdatedAt = normalizeString(backendState.updatedAt);
       hydrationSource = 'shared-backend';
       fallbackReason = '';
       hydrated = true;
@@ -297,72 +371,242 @@ export function createStephanosSharedMemoryAdapter({
     return normalizeMemoryState(cache);
   }
 
+  function rebaseStateIntent(baseState, previousState, desiredState) {
+    const base = normalizeMemoryState(baseState);
+    const previous = normalizeMemoryState(previousState);
+    const desired = normalizeMemoryState(desiredState);
+    const records = { ...(base.records || {}) };
+    const intentKeys = new Set([
+      ...Object.keys(previous.records || {}),
+      ...Object.keys(desired.records || {}),
+    ]);
+    for (const key of intentKeys) {
+      const before = previous.records?.[key];
+      const after = desired.records?.[key];
+      if (JSON.stringify(before) === JSON.stringify(after)) continue;
+      if (after === undefined) delete records[key];
+      else records[key] = after;
+    }
+    return {
+      schemaVersion: STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
+      updatedAt: desired.updatedAt,
+      records,
+    };
+  }
+
   function writeState(state) {
     const previousState = normalizeMemoryState(cache);
     const normalizedState = normalizeMemoryState(state);
-    updateMirror(normalizedState);
-
     if (!preferSharedBackend || typeof fetchImpl !== 'function') {
+      updateMirror(normalizedState);
       lastSaveSource = 'local-mirror-fallback';
       return;
     }
+    const intent = {
+      id: ++nextLegacyIntentId,
+      previousState,
+      desiredState: normalizedState,
+    };
+    pendingLegacyStateIntents.push(intent);
+    updateProjectedMirror();
 
-    void saveToBackend(normalizedState)
-      .then((response) => {
+    void enqueueBackendOperation(async () => {
+      let attempt = 0;
+      let conflictRehydrated = false;
+      let lastError = null;
+      while (attempt < 2) {
+        try {
+          const applicableIntents = pendingLegacyStateIntents.filter((entry) => entry.id <= intent.id);
+          const rebasedState = projectLegacyStateIntents(authoritativeState, applicableIntents);
+          const response = await saveToBackend(rebasedState);
+          backendUpdatedAt = normalizeString(response?.json?.data?.updatedAt, backendUpdatedAt);
+          authoritativeState = normalizeMemoryState({
+            ...rebasedState,
+            updatedAt: backendUpdatedAt || rebasedState.updatedAt,
+          });
+          for (let index = pendingLegacyStateIntents.length - 1; index >= 0; index -= 1) {
+            if (pendingLegacyStateIntents[index].id <= intent.id) pendingLegacyStateIntents.splice(index, 1);
+          }
+          updateProjectedMirror();
+          authorityHydrated = true;
+          lastSaveSource = 'shared-backend';
+          fallbackReason = '';
+          hydrationState = 'ready';
+          log('save', {
+            sourceUsedOnLoad: hydrationSource,
+            sourceUsedOnSave: lastSaveSource,
+            hydrationCompleted: hydrated,
+            fallbackReason,
+            resolvedBackendUrl: response.baseUrl,
+            memoryRecordCount: Object.keys(authoritativeState.records || {}).length,
+            stateClass: 'shared-durable-truth',
+          });
+          return;
+        } catch (error) {
+          lastError = error;
+          if (!isBackendConflict(error) || attempt > 0) break;
+          try {
+            await rehydrateAuthority();
+            conflictRehydrated = true;
+          } catch {
+            conflictRehydrated = false;
+            break;
+          }
+          attempt += 1;
+        }
+      }
+      lastSaveSource = 'local-mirror-fallback';
+      fallbackReason = isBackendConflict(lastError)
+        ? conflictRehydrated
+          ? 'backend-memory-conflict-after-retry'
+          : 'backend-memory-conflict'
+        : normalizeString(lastError?.code || lastError?.message, 'backend-save-failed');
+      hydrationState = isBackendConflict(lastError) ? 'degraded' : hydrationState;
+      coalesceLegacyStateIntentsThrough(intent.id);
+      updateProjectedMirror();
+      log('save', {
+        sourceUsedOnLoad: hydrationSource,
+        sourceUsedOnSave: lastSaveSource,
+        hydrationCompleted: hydrated,
+        fallbackReason,
+        memoryRecordCount: Object.keys(normalizedState.records || {}).length,
+        stateClass: 'local-fallback-mirror',
+      });
+    });
+  }
+
+  async function writeStateDurably(state) {
+    const previousState = normalizeMemoryState(cache);
+    const normalizedState = normalizeMemoryState(state);
+    const legacyIntentBoundary = nextLegacyIntentId;
+    updateMirror(normalizedState);
+    if (!preferSharedBackend || typeof fetchImpl !== 'function') {
+      updateMirror(previousState);
+      throw Object.assign(new Error('Shared durable memory backend is unavailable.'), { code: 'durable-memory-authority-unavailable' });
+    }
+    try {
+      return await enqueueBackendOperation(async () => {
+        if (!authorityHydrated) await rehydrateAuthority({ conflict: false });
+        const earlierLegacyIntents = pendingLegacyStateIntents.filter((entry) => entry.id <= legacyIntentBoundary);
+        const authorityWithEarlierIntents = projectLegacyStateIntents(authoritativeState, earlierLegacyIntents);
+        const rebasedState = rebaseStateIntent(authorityWithEarlierIntents, previousState, normalizedState);
+        const backendResponse = await saveToBackend(rebasedState, 'memory-runtime-durable');
+        backendUpdatedAt = normalizeString(backendResponse?.json?.data?.updatedAt, backendUpdatedAt);
+        authoritativeState = normalizeMemoryState({
+          ...rebasedState,
+          updatedAt: backendUpdatedAt || rebasedState.updatedAt,
+        });
+        for (let index = pendingLegacyStateIntents.length - 1; index >= 0; index -= 1) {
+          if (pendingLegacyStateIntents[index].id <= legacyIntentBoundary) pendingLegacyStateIntents.splice(index, 1);
+        }
+        updateProjectedMirror();
+        authorityHydrated = true;
         lastSaveSource = 'shared-backend';
         fallbackReason = '';
         hydrationState = 'ready';
-        log('save', {
+        log('save-confirmed', {
           sourceUsedOnLoad: hydrationSource,
           sourceUsedOnSave: lastSaveSource,
           hydrationCompleted: hydrated,
           fallbackReason,
-          resolvedBackendUrl: response.baseUrl,
-          memoryRecordCount: Object.keys(normalizedState.records || {}).length,
+          resolvedBackendUrl: backendResponse.baseUrl,
+          memoryRecordCount: Object.keys(authoritativeState.records || {}).length,
           stateClass: 'shared-durable-truth',
         });
-      })
-      .catch((error) => {
-        const isConflict = Number(error?.status) === 409 || String(error?.payload?.error_code || '').trim() === 'DURABLE_MEMORY_CONFLICT';
-        lastSaveSource = 'local-mirror-fallback';
-        fallbackReason = isConflict
-          ? 'backend-memory-conflict'
-          : normalizeString(error?.code || error?.message, 'backend-save-failed');
-        hydrationState = isConflict ? 'degraded' : hydrationState;
-        if (isConflict) {
-          void loadFromBackend()
-            .then((response) => {
-              const backendState = normalizeMemoryState(response?.json?.data || {});
-              updateMirror(backendState);
-              hydrationSource = 'shared-backend';
-              fallbackReason = 'backend-memory-conflict-resolved-by-rehydrate';
-              hydrationState = 'ready';
-            })
-            .catch(() => {
-              updateMirror(previousState);
-            });
-        }
-        log('save', {
-          sourceUsedOnLoad: hydrationSource,
-          sourceUsedOnSave: lastSaveSource,
-          hydrationCompleted: hydrated,
-          fallbackReason,
-          memoryRecordCount: Object.keys(normalizedState.records || {}).length,
-          stateClass: 'local-fallback-mirror',
-        });
+        return {
+          authorityConfirmed: true,
+          source: 'shared-backend',
+          resolvedBackendUrl: backendResponse.baseUrl,
+        };
       });
+    } catch (error) {
+      if (authorityHydrated) updateProjectedMirror();
+      else updateMirror(previousState);
+      lastSaveSource = 'local-mirror-fallback';
+      fallbackReason = normalizeString(error?.code || error?.message, 'backend-save-failed');
+      throw error;
+    }
+  }
+
+  async function mutateStateDurably(mutate, { source = 'memory-runtime-durable-mutation' } = {}) {
+    if (typeof mutate !== 'function') {
+      throw new Error('Durable memory mutation requires a mutation function.');
+    }
+    if (!preferSharedBackend || typeof fetchImpl !== 'function') {
+      throw Object.assign(new Error('Shared durable memory backend is unavailable.'), { code: 'durable-memory-authority-unavailable' });
+    }
+
+    const legacyIntentBoundary = nextLegacyIntentId;
+    return enqueueBackendOperation(async () => {
+      if (!authorityHydrated) {
+        await rehydrateAuthority({ conflict: false });
+      }
+      let attempt = 0;
+      while (attempt < 2) {
+        const earlierLegacyIntents = pendingLegacyStateIntents.filter((entry) => entry.id <= legacyIntentBoundary);
+        const baseState = projectLegacyStateIntents(authoritativeState, earlierLegacyIntents);
+        const nextState = normalizeMemoryState(mutate(baseState));
+        try {
+          const response = await saveToBackend(nextState, source);
+          backendUpdatedAt = normalizeString(response?.json?.data?.updatedAt, backendUpdatedAt);
+          authoritativeState = normalizeMemoryState({
+            ...nextState,
+            updatedAt: backendUpdatedAt || nextState.updatedAt,
+          });
+          authorityHydrated = true;
+          for (let index = pendingLegacyStateIntents.length - 1; index >= 0; index -= 1) {
+            if (pendingLegacyStateIntents[index].id <= legacyIntentBoundary) pendingLegacyStateIntents.splice(index, 1);
+          }
+          updateProjectedMirror();
+          lastSaveSource = 'shared-backend';
+          fallbackReason = '';
+          hydrationState = 'ready';
+          log('mutation-confirmed', {
+            sourceUsedOnLoad: hydrationSource,
+            sourceUsedOnSave: lastSaveSource,
+            hydrationCompleted: hydrated,
+            fallbackReason,
+            resolvedBackendUrl: response.baseUrl,
+            memoryRecordCount: Object.keys(authoritativeState.records || {}).length,
+            stateClass: 'shared-durable-truth',
+          });
+          return {
+            authorityConfirmed: true,
+            source: 'shared-backend',
+            resolvedBackendUrl: response.baseUrl,
+            baseState,
+            state: authoritativeState,
+          };
+        } catch (error) {
+          if (!isBackendConflict(error) || attempt > 0) {
+            lastSaveSource = 'local-mirror-fallback';
+            fallbackReason = normalizeString(error?.code || error?.message, 'backend-save-failed');
+            throw error;
+          }
+          await rehydrateAuthority();
+          attempt += 1;
+        }
+      }
+      throw new Error('Durable memory mutation exhausted its conflict retry.');
+    });
   }
 
   return {
     mode: 'shared-backend-with-local-mirror',
     readState,
     writeState,
+    writeStateDurably,
+    mutateStateDurably,
+    refreshAuthority,
     hydrate,
     diagnostics() {
-      return {
-        stateClass: lastSaveSource === 'shared-backend' || hydrationSource === 'shared-backend'
+      const stateClass = lastSaveSource === 'local-mirror-fallback'
+        ? 'local-fallback-mirror'
+        : lastSaveSource === 'shared-backend' || hydrationSource === 'shared-backend'
           ? 'shared-durable-truth'
-          : 'local-fallback-mirror',
+          : 'local-fallback-mirror';
+      return {
+        stateClass,
         sourceUsedOnLoad: hydrationSource,
         sourceUsedOnSave: lastSaveSource,
         hydrationCompleted: hydrated,
@@ -392,8 +636,14 @@ export function createStephanosMemory({
     });
   }
 
-  function listRecords(filters = {}) {
-    const state = adapter.readState();
+  function toPublicDurableReceipt(receipt) {
+    if (!receipt || typeof receipt !== 'object') return null;
+    const { baseState: _baseState, state: _state, ...publicReceipt } = receipt;
+    return publicReceipt;
+  }
+
+  function listRecords(filters = {}, memoryState = adapter.readState()) {
+    const state = memoryState;
     const allRecords = Object.entries(state.records || {}).map(([key, record]) => {
       const [namespace = 'default', id = ''] = String(key).split('::');
       return {
@@ -421,6 +671,27 @@ export function createStephanosMemory({
       }
       return true;
     });
+  }
+
+  async function listRecordsDurably(filters = {}) {
+    if (typeof adapter.refreshAuthority !== 'function') {
+      return { records: [], authorityConfirmed: false, receipt: null };
+    }
+    try {
+      const receipt = await adapter.refreshAuthority();
+      return {
+        records: receipt?.authorityConfirmed === true ? listRecords(filters, receipt.state) : [],
+        authorityConfirmed: receipt?.authorityConfirmed === true,
+        receipt: toPublicDurableReceipt(receipt),
+      };
+    } catch (error) {
+      return {
+        records: [],
+        authorityConfirmed: false,
+        receipt: null,
+        error: normalizeString(error?.code || error?.message, 'durable-memory-read-failed'),
+      };
+    }
   }
 
   function saveRecord({
@@ -476,6 +747,81 @@ export function createStephanosMemory({
       title: normalizedRecord.summary,
       recordSource: normalizedRecord.source,
       recordSurface: normalizedRecord.surface,
+    };
+  }
+
+  async function saveRecordDurably({
+    namespace = 'default',
+    id,
+    schemaVersion = STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
+    type = 'note',
+    source: recordSource = source,
+    scope = 'runtime',
+    summary = '',
+    title = '',
+    payload = {},
+    tags = [],
+    importance = 'normal',
+    retentionHint = 'default',
+    recordSurface = surface,
+    createdAt,
+    updatedAt,
+  } = {}) {
+    const identity = normalizeRecordIdentity({ namespace, id });
+    if (!identity) {
+      throw new Error('Stephanos memory saveRecordDurably requires a non-empty id.');
+    }
+    if (typeof adapter.mutateStateDurably !== 'function' && typeof adapter.writeStateDurably !== 'function') {
+      return { record: null, authorityConfirmed: false, receipt: null };
+    }
+
+    const now = new Date().toISOString();
+    const mutate = (currentState) => {
+      const existing = currentState.records?.[identity.key] || null;
+      const normalizedRecord = normalizeRecordShape({
+        schemaVersion,
+        type,
+        source: recordSource,
+        scope,
+        summary: summary || title,
+        payload,
+        tags,
+        importance,
+        retentionHint,
+        surface: recordSurface,
+        createdAt: existing?.createdAt || createdAt || now,
+        updatedAt: updatedAt || now,
+      }, { source, surface });
+      return {
+        schemaVersion: STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
+        updatedAt: now,
+        records: {
+          ...(currentState.records || {}),
+          [identity.key]: normalizedRecord,
+        },
+      };
+    };
+    const receipt = typeof adapter.mutateStateDurably === 'function'
+      ? await adapter.mutateStateDurably(mutate, { source: 'memory-record-save-durable' })
+      : await adapter.writeStateDurably(mutate(adapter.readState()));
+
+    const confirmedRecord = receipt?.state?.records?.[identity.key]
+      || adapter.readState()?.records?.[identity.key]
+      || null;
+    const record = receipt?.authorityConfirmed === true && confirmedRecord
+      ? {
+          namespace: identity.namespace,
+          id: identity.id,
+          ...confirmedRecord,
+          title: confirmedRecord.summary,
+          recordSource: confirmedRecord.source,
+          recordSurface: confirmedRecord.surface,
+        }
+      : null;
+    return {
+      record,
+      authorityConfirmed: receipt?.authorityConfirmed === true,
+      receipt: toPublicDurableReceipt(receipt),
     };
   }
 
@@ -541,6 +887,100 @@ export function createStephanosMemory({
     return true;
   }
 
+  async function deleteRecordDurably({ namespace = 'default', id } = {}) {
+    const identity = normalizeRecordIdentity({ namespace, id });
+    if (!identity || (typeof adapter.mutateStateDurably !== 'function' && typeof adapter.writeStateDurably !== 'function')) {
+      return { deleted: false, alreadyAbsent: false, authorityConfirmed: false, receipt: null };
+    }
+    try {
+      const now = new Date().toISOString();
+      const mutate = (currentState) => {
+        const nextRecords = { ...(currentState.records || {}) };
+        delete nextRecords[identity.key];
+        return {
+          schemaVersion: STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
+          updatedAt: now,
+          records: nextRecords,
+        };
+      };
+      const fallbackBaseState = typeof adapter.mutateStateDurably === 'function' ? null : adapter.readState();
+      const receipt = typeof adapter.mutateStateDurably === 'function'
+        ? await adapter.mutateStateDurably(mutate, { source: 'memory-record-delete-durable' })
+        : await adapter.writeStateDurably(mutate(fallbackBaseState));
+      const existed = receipt?.baseState
+        ? Boolean(receipt.baseState.records?.[identity.key])
+        : Boolean(fallbackBaseState?.records?.[identity.key]);
+      return {
+        deleted: existed,
+        alreadyAbsent: !existed,
+        authorityConfirmed: receipt?.authorityConfirmed === true,
+        receipt: toPublicDurableReceipt(receipt),
+      };
+    } catch (error) {
+      return {
+        deleted: false,
+        alreadyAbsent: false,
+        authorityConfirmed: false,
+        receipt: null,
+        error: normalizeString(error?.code || error?.message, 'durable-memory-delete-failed'),
+      };
+    }
+  }
+
+  async function deleteRecordsDurably({
+    namespace = 'default',
+    idPrefix = '',
+    type = '',
+    tags = [],
+  } = {}) {
+    const normalizedNamespace = normalizeString(namespace, 'default');
+    const normalizedIdPrefix = normalizeString(idPrefix);
+    const normalizedType = normalizeString(type);
+    const requiredTags = [...new Set((Array.isArray(tags) ? tags : [tags]).map((tag) => normalizeString(tag)).filter(Boolean))];
+    if (!normalizedIdPrefix || !normalizedType || !requiredTags.length || typeof adapter.mutateStateDurably !== 'function') {
+      return { deletedCount: 0, alreadyEmpty: false, authorityConfirmed: false, receipt: null };
+    }
+    try {
+      const now = new Date().toISOString();
+      let deletedKeys = [];
+      const receipt = await adapter.mutateStateDurably((currentState) => {
+        const nextRecords = { ...(currentState.records || {}) };
+        deletedKeys = Object.entries(nextRecords).flatMap(([key, record]) => {
+          const separator = key.indexOf('::');
+          const recordNamespace = separator >= 0 ? key.slice(0, separator) : 'default';
+          const recordId = separator >= 0 ? key.slice(separator + 2) : key;
+          const recordTags = Array.isArray(record?.tags) ? record.tags : [];
+          const owned = recordNamespace === normalizedNamespace
+            && recordId.startsWith(normalizedIdPrefix)
+            && record?.type === normalizedType
+            && requiredTags.every((tag) => recordTags.includes(tag));
+          if (!owned) return [];
+          delete nextRecords[key];
+          return [key];
+        });
+        return {
+          schemaVersion: STEPHANOS_DURABLE_MEMORY_SCHEMA_VERSION,
+          updatedAt: now,
+          records: nextRecords,
+        };
+      }, { source: 'memory-owned-record-set-delete-durable' });
+      return {
+        deletedCount: deletedKeys.length,
+        alreadyEmpty: deletedKeys.length === 0,
+        authorityConfirmed: receipt?.authorityConfirmed === true,
+        receipt: toPublicDurableReceipt(receipt),
+      };
+    } catch (error) {
+      return {
+        deletedCount: 0,
+        alreadyEmpty: false,
+        authorityConfirmed: false,
+        receipt: null,
+        error: normalizeString(error?.code || error?.message, 'durable-memory-owned-set-delete-failed'),
+      };
+    }
+  }
+
   return {
     surfaceMode: detectMemorySurfaceMode(),
     adapterMode: adapter.mode || 'custom',
@@ -556,11 +996,15 @@ export function createStephanosMemory({
       hydrationCompleted: false,
     }),
     saveRecord,
+    saveRecordDurably,
     createRecord: saveRecord,
     getRecord,
     listRecords,
+    listRecordsDurably,
     updateRecord,
     deleteRecord,
+    deleteRecordDurably,
+    deleteRecordsDurably,
   };
 }
 

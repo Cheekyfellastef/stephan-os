@@ -29,7 +29,7 @@ test('migration manifest is non-destructive', () => {
         legacyPrefixes: ['memory/.dreams/'],
         resolvedExternalPath: '/runtime/memory/dreams',
         preservation: 'required',
-        reconciliation: 'copy-hash-verify-before-switch',
+        reconciliation: 'copy-hash-verify-or-versioned-preserve-before-switch',
       },
     },
   };

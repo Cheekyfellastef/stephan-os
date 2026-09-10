@@ -9,6 +9,27 @@ import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.j
 import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawReadonlyItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
 
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
+
+function freshCodexCapacityRouting() {
+  const now = new Date();
+  return {
+    nowUtc: now.toISOString(),
+    codexStatus: {
+      schemaVersion: 'shared-agent-workspace-record.v1',
+      statusId: 'codex-capacity-current',
+      truthState: 'CURRENT',
+      meterTruthUsable: true,
+      observedAtUtc: new Date(now.getTime() - 1000).toISOString(),
+      remainingPercent: 90,
+      availability: 'AVAILABLE',
+      confidence: 'high',
+      naturalResetAtUtc: '',
+    },
+    githubLaneReceipt: null,
+    forgeLaneReceipt: null,
+    forgeSidecar: null,
+  };
+}
 async function runtime() {
   const parent = await mkdtemp(join(tmpdir(), 'mission-worker-consumer-'));
   const { privateKey } = generateKeyPairSync('ed25519');
@@ -26,6 +47,28 @@ test('claims each queue item exactly once', async () => {
   assert.equal(await claimNextMissionWorkerItem('openclaw-signed', options), null);
 });
 
+test('exact action grant cannot consume another mission queue item', async () => {
+  const options = await runtime();
+  const first = await createMissionRecord(intent('claim-first'), options);
+  const second = await createMissionRecord(intent('claim-second'), options);
+  const firstPublish = await publishMissionWorkerAction(first.state, options);
+  const secondPublish = await publishMissionWorkerAction(second.state, options);
+  const granted = await claimNextMissionWorkerItem('openclaw-signed', {
+    ...options,
+    actionGrant: {
+      missionId: second.state.missionId,
+      actionId: secondPublish.action.actionId,
+      adapter: 'openclaw-signed',
+    },
+  });
+  assert.equal(granted.item.missionId, second.state.missionId);
+  assert.equal(granted.item.actionId, secondPublish.action.actionId);
+
+  const remaining = await claimNextMissionWorkerItem('openclaw-signed', options);
+  assert.equal(remaining.item.missionId, first.state.missionId);
+  assert.equal(remaining.item.actionId, firstPublish.action.actionId);
+});
+
 test('signed worktree result advances to implementation', async () => {
   const options = await runtime();
   const created = await createMissionRecord(intent('signed-test'), options);
@@ -36,6 +79,7 @@ test('signed worktree result advances to implementation', async () => {
 
 test('Codex and OpenClaw adapters collect bounded results with one active writer', async () => {
   const codexOptions = await runtime();
+  codexOptions.capacityRouting = freshCodexCapacityRouting();
   await createMissionRecord(intent('codex-test'), codexOptions);
   const ready = await appendMissionEvent('codex-test', { eventId: 'worktree', eventType: 'WORKTREE_READY', worktreePath: 'C:\\worktree', clean: true, receipt: proof('isolated worktree', 'worktree') }, codexOptions);
   await publishMissionWorkerAction(ready.state, codexOptions);

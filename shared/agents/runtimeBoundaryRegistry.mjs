@@ -25,7 +25,7 @@ export const RUNTIME_PATH_REGISTRY = Object.freeze({
     trackedExpectation: 'external-untracked',
     deterministicRegeneration: false,
     preservation: 'required',
-    reconciliation: 'copy-hash-verify-before-switch',
+    reconciliation: 'copy-hash-verify-or-versioned-preserve-before-switch',
     verifier: 'dream-runtime-boundary',
   }),
   receipts: Object.freeze({

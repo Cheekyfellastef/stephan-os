@@ -160,3 +160,22 @@ test('compact GitHub receipt preserves canary proof when the full receipt is ove
   assert.deepEqual(parsed.result.result.proofRefs, ['proof/monitor-multiplexer-canary-proof.json']);
   assert.ok(Buffer.byteLength(json, 'utf8') <= 4096);
 });
+
+test('receipt projections derive exact-head equality when the operation omits the redundant boolean', () => {
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: command().requestId,
+    operation: command().operation,
+    expectedHead,
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: command().operation,
+      requestId: command().requestId,
+      result: receiptResult({ expectedHeadMatch: undefined, payload: 'x'.repeat(20_000) }),
+    },
+  };
+  assert.equal(createSanitizedMailboxReceiptProjection(receipt).operationResult.expectedHeadMatch, true);
+  assert.equal(JSON.parse(serializeBoundedReceiptJson(receipt, 4096)).result.result.expectedHeadMatch, true);
+});

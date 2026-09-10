@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "source_id": "creator-voodoode-vr",
+  "title": "VoodooDE VR Field Evidence",
+  "priority": "P1",
+  "status": "registered-creator-field-evidence",
+  "canonical_sources": [
+    "https://www.youtube.com/@VoodooDE_VR_english",
+    "https://voodoode-vr.com/"
+  ],
+  "snapshot_date": "2026-07-31",
+  "rights": "Creator-controlled videos, captions, descriptions and screenshots. Store metadata, links and independently written summaries only.",
+  "evidence_role": "Hands-on evaluation and tutorial evidence for PCVR utilities, headsets, UEVR workflows and flat-to-VR installation tools.",
+  "seed_items": [
+    {
+      "title": "Flat Games in VR: The 1-Click Trick Nobody Tells You!",
+      "video_id": "QilI7iAjOEY",
+      "tool": "PCVR Mods Installer Hub",
+      "evidence": "One-click discovery and installation of existing VR mods across multiple engines and game families."
+    },
+    {
+      "title": "The Death of Flat Gaming? This Tool Changes Everything!",
+      "published": "2026-03-29",
+      "tool": "Unreal Easy Injector / UEVR Deluxe",
+      "evidence": "Simplified UEVR setup, profile installation, runtime configuration, DLSS tooling and beginner-facing operational workflow."
+    }
+  ],
+  "transcript_policy": "Use public captions, transcripts, descriptions and chapter markers when available. Store derived claims with timestamps, not full transcripts.",
+  "programme_links": [1593, 1594, 1595, 1596, 1597],
+  "refresh_owner": 1596,
+  "promotion_rule": "Treat demonstrations and tutorials as operational evidence. Verify tool behaviour against canonical repositories and local proof before acceptance."
+}

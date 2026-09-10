@@ -10,338 +10,6 @@ import { buildConciergeExecutionEngineV9 } from '../../shared/agents/buildConcie
 function list(value) { return Array.isArray(value) ? value : []; }
 function text(value, fallback = 'unknown') { const normalized = String(value ?? '').trim(); return normalized || fallback; }
 function unique(values = []) { return [...new Set(values.filter(Boolean).map(String))]; }
-function timestamp(value) {
-  const parsed = Date.parse(String(value || ''));
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-function normalizedStatus(value = '') { return text(value).trim().toLowerCase(); }
-function candidateIdentityKeys(candidate = {}) {
-  return unique([
-    text(candidate.candidateId || candidate.id || candidate.relatedGoal || candidate.issue || candidate.issueNumber, ''),
-    candidate.title ? `title:${normalizedStatus(candidate.title)}` : '',
-  ]);
-}
-function issueScore(issue, linkedPullRequests = []) {
-  const labels = list(issue.labels).map((label) => normalizedStatus(label));
-  const priorityLabel = labels.some((label) => /\b(p0|p1|priority|critical|active)\b/.test(label));
-  const goalLabel = labels.some((label) => /\b(goal|mission|programme)\b/.test(label));
-  const goalTitle = /\b(goal|mission|programme|dashboard|controller|repair|build)\b/i.test(text(issue.title, ''));
-  return (linkedPullRequests.length ? 1_000_000_000_000_000 : 0)
-    + (priorityLabel ? 100_000_000_000_000 : 0)
-    + (goalLabel ? 10_000_000_000_000 : 0)
-    + (goalTitle ? 1_000_000_000_000 : 0)
-    + timestamp(issue.updatedAt);
-}
-function prStatus(pr = {}) {
-  const checks = normalizedStatus(pr.checksStatus);
-  const approval = normalizedStatus(pr.approvalStatus);
-  if (checks === 'failed') return 'BLOCKED';
-  if (checks === 'pending') return 'VERIFYING';
-  if (pr.draft === true) return 'BUILDING';
-  if (checks === 'passed' && approval === 'approved') return 'REVIEW PASSED · RUNTIME PROOF UNKNOWN';
-  if (checks === 'passed') return 'READY FOR REVIEW';
-  return 'PR OPEN · PROOF UNKNOWN';
-}
-function prNextAction(pr = {}) {
-  const checks = normalizedStatus(pr.checksStatus);
-  const approval = normalizedStatus(pr.approvalStatus);
-  if (checks === 'failed') return `Repair failing checks on PR #${pr.number}; rerun exact-head verification.`;
-  if (checks === 'pending') return `Wait for PR #${pr.number} checks, then inspect the exact-head result.`;
-  if (pr.draft === true) return `Continue the bounded build on draft PR #${pr.number}; passing checks do not declare it ready for review.`;
-  if (checks === 'passed' && approval === 'approved') return `Run the required runtime/browser proof for PR #${pr.number}; GitHub review does not grant operator approval.`;
-  if (checks === 'passed') return `Request independent exact-head review for PR #${pr.number}; do not infer approval.`;
-  return `Inspect PR #${pr.number} checks and proof; unknown remains unknown.`;
-}
-function prProofIndex(pr = {}) {
-  const checks = normalizedStatus(pr.checksStatus);
-  const approval = normalizedStatus(pr.approvalStatus);
-  if (checks === 'passed' && approval === 'approved') return 5;
-  if (checks === 'passed') return 4;
-  if (checks === 'pending' || checks === 'failed') return 3;
-  return 2;
-}
-function operatorNeededForPr(pr = {}) {
-  return false;
-}
-function projectedPr(pr = {}) {
-  return Object.freeze({
-    number: pr.number,
-    url: pr.url,
-    branch: pr.branch,
-    headSha: pr.headSha,
-    draft: pr.draft,
-    checksStatus: pr.checksStatus,
-    approvalStatus: pr.approvalStatus,
-    mergeReadiness: pr.mergeReadiness,
-    supersededStatus: pr.supersededStatus,
-  });
-}
-function cardPullRequestNumbers(card = {}) {
-  return [
-    ...list(card.linkedPullRequests).map((pr) => pr.number),
-    card.linkedPr?.number,
-  ].filter(Boolean);
-}
-function activeLinkedPullRequests(linkedPullRequests = []) {
-  return [...linkedPullRequests]
-    .filter((pr) => normalizedStatus(pr.supersededStatus) !== 'superseded')
-    .sort((left, right) => timestamp(right.updatedAt) - timestamp(left.updatedAt));
-}
-function linkedPrAggregate(linkedPullRequests = []) {
-  const prs = activeLinkedPullRequests(linkedPullRequests);
-  if (!prs.length) return Object.freeze({ prs, representative: null, status: 'QUEUED · NO ACTIVE PR', checks: 'unknown', review: 'unknown' });
-  const byChecks = (state) => prs.filter((pr) => normalizedStatus(pr.checksStatus) === state);
-  const failed = byChecks('failed');
-  if (failed.length) return Object.freeze({ prs, representative: failed[0], status: 'BLOCKED', checks: 'failed', review: 'unknown' });
-  const pending = byChecks('pending');
-  if (pending.length) return Object.freeze({ prs, representative: pending[0], status: 'VERIFYING', checks: 'pending', review: 'unknown' });
-  const unknown = prs.filter((pr) => normalizedStatus(pr.checksStatus) !== 'passed');
-  if (unknown.length) return Object.freeze({ prs, representative: unknown[0], status: 'PR OPEN · PROOF UNKNOWN', checks: 'unknown', review: 'unknown' });
-  const drafts = prs.filter((pr) => pr.draft === true);
-  if (drafts.length) return Object.freeze({ prs, representative: drafts[0], status: 'BUILDING', checks: 'passed', review: 'unknown' });
-  const allApproved = prs.every((pr) => normalizedStatus(pr.approvalStatus) === 'approved');
-  return Object.freeze({
-    prs,
-    representative: prs[0],
-    status: allApproved ? 'REVIEW PASSED · RUNTIME PROOF UNKNOWN' : 'READY FOR REVIEW',
-    checks: 'passed',
-    review: allApproved ? 'approved' : 'unknown',
-  });
-}
-function issueGoalCard(issue, linkedPullRequests = [], observedAt) {
-  const aggregate = linkedPrAggregate(linkedPullRequests);
-  const linkedPr = aggregate.representative;
-  const linkedPrNumbers = aggregate.prs.map((pr) => `#${pr.number}`).join(', ');
-  const status = aggregate.status;
-  const operatorNeeded = linkedPr ? operatorNeededForPr(linkedPr) : false;
-  const nextAction = linkedPr
-    ? `${aggregate.prs.length > 1 ? `Reconcile every unsuperseded linked PR (${linkedPrNumbers}); ` : ''}${prNextAction(linkedPr)}`
-    : 'Select this durable goal through the canonical scheduler before starting a build lane.';
-  return Object.freeze({
-    issue: `#${issue.number}`,
-    issueNumber: issue.number,
-    url: issue.url,
-    title: issue.title,
-    status,
-    statusTruth: 'CURRENT',
-    sourceTruth: 'LIVE READ-ONLY GITHUB',
-    source: 'github-readonly-adapter',
-    observedAt,
-    lastUpdatedAt: issue.updatedAt || observedAt,
-    labels: list(issue.labels),
-    currentOwner: linkedPr ? (operatorNeeded ? 'Operator' : 'Codex / review lane') : 'Programme queue',
-    nextOwner: linkedPr ? (operatorNeeded ? 'Guarded merge lane' : 'Independent reviewer') : 'Bounded construction lane',
-    handoffState: linkedPr ? `issue #${issue.number} → PR${aggregate.prs.length > 1 ? 's' : ''} ${linkedPrNumbers} → ${aggregate.checks}` : `issue #${issue.number} → no active PR`,
-    milestone: linkedPr ? (aggregate.prs.length > 1 ? `${aggregate.prs.length} UNSUPERSEDED PRS · CONSERVATIVE PROOF` : `PR #${linkedPr.number} · ${linkedPr.headSha ? linkedPr.headSha.slice(0, 10) : 'HEAD UNKNOWN'}`) : 'DURABLE GOAL RECORDED',
-    operatorNeeded: operatorNeeded ? 'Yes · exact-head decision' : 'No',
-    proofIndex: linkedPr ? Math.min(...aggregate.prs.map((pr) => prProofIndex(pr))) : 1,
-    nextAction,
-    proofTruth: {
-      github: 'CURRENT',
-      checks: aggregate.checks,
-      review: aggregate.review,
-      runtime: 'unknown',
-      browser: 'unknown',
-    },
-    linkedPr: linkedPr ? projectedPr(linkedPr) : null,
-    linkedPullRequests: aggregate.prs.map(projectedPr),
-  });
-}
-function receiptGoalCard(candidate = {}, observedAt) {
-  const candidateId = text(candidate.candidateId || candidate.id || candidate.relatedGoal || candidate.title, 'receipt-goal');
-  const status = text(candidate.status || candidate.state, 'QUEUED').toUpperCase();
-  const operatorActionRequired = candidate.operatorActionRequired === true || status === 'AWAITING_APPROVAL';
-  return Object.freeze({
-    issue: text(candidate.relatedGoal || candidate.issue || candidate.issueNumber, candidateId),
-    issueNumber: null,
-    url: '',
-    title: text(candidate.title, 'Receipt-backed goal'),
-    status,
-    statusTruth: 'RECEIPT PROVIDED',
-    sourceTruth: 'READ-ONLY RECEIPT',
-    source: 'mission-operations-receipt',
-    observedAt,
-    lastUpdatedAt: text(candidate.updatedAt || candidate.createdAt),
-    labels: [],
-    currentOwner: text(candidate.currentOwner || candidate.owner, 'Build Concierge queue'),
-    nextOwner: text(candidate.nextOwner, 'Canonical dispatcher'),
-    handoffState: text(candidate.handoffState, 'receipt → queue evaluation'),
-    milestone: text(candidate.milestone, 'RECEIPT_BACKED_GOAL'),
-    operatorNeeded: operatorActionRequired ? 'Yes · mission action required' : 'No',
-    proofIndex: 1,
-    nextAction: text(candidate.nextAction, 'Inspect the receipt-backed queue state before dispatch.'),
-    proofTruth: { github: 'unknown', checks: 'unknown', review: 'unknown', runtime: 'receipt-provided', browser: 'unknown' },
-    linkedPr: null,
-  });
-}
-function orphanPrGoalCard(pr = {}, observedAt) {
-  return Object.freeze({
-    issue: `PR #${pr.number}`,
-    issueNumber: null,
-    url: '',
-    title: pr.title,
-    status: 'BLOCKED · DURABLE GOAL LINK UNKNOWN',
-    statusTruth: 'CURRENT',
-    sourceTruth: 'LIVE READ-ONLY GITHUB',
-    source: 'github-readonly-adapter',
-    observedAt,
-    lastUpdatedAt: pr.updatedAt || observedAt,
-    labels: [],
-    currentOwner: 'Codex / review lane',
-    nextOwner: 'Programme controller',
-    handoffState: `PR #${pr.number} → no durable goal issue identified`,
-    milestone: `PR #${pr.number} · ${pr.headSha ? pr.headSha.slice(0, 10) : 'HEAD UNKNOWN'}`,
-    operatorNeeded: 'No',
-    proofIndex: 2,
-    nextAction: `Bind PR #${pr.number} to its durable GitHub goal issue before treating it as programme progress.`,
-    proofTruth: {
-      github: 'CURRENT',
-      checks: pr.checksStatus || 'unknown',
-      review: pr.approvalStatus || 'unknown',
-      runtime: 'unknown',
-      browser: 'unknown',
-    },
-    linkedPr: {
-      number: pr.number,
-      url: pr.url,
-      branch: pr.branch,
-      headSha: pr.headSha,
-      draft: pr.draft,
-      checksStatus: pr.checksStatus,
-      approvalStatus: pr.approvalStatus,
-      mergeReadiness: pr.mergeReadiness,
-    },
-  });
-}
-
-export function buildLiveDashboardGoals({ githubTelemetry = {}, queue = {}, missions = [], historicalCandidates = [], observedAt = new Date().toISOString(), limit = 12 } = {}) {
-  const safeLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 24) : 12;
-  if (
-    githubTelemetry.adapterAvailable === true
-    && githubTelemetry.issueInventoryObserved === true
-    && githubTelemetry.issueInventoryComplete === true
-    && githubTelemetry.pullRequestInventoryObserved === true
-    && githubTelemetry.pullRequestInventoryComplete === true
-    && Array.isArray(githubTelemetry.issues)
-    && Array.isArray(githubTelemetry.pullRequests)
-  ) {
-    const pullRequests = list(githubTelemetry.pullRequests);
-    const openIssues = list(githubTelemetry.issues).filter((issue) => normalizedStatus(issue.state) === 'open');
-    const ranked = openIssues
-      .map((issue) => {
-        const linkedPullRequests = pullRequests.filter((pr) => list(pr.relatedIssues).includes(issue.number));
-        return { issue, linkedPullRequests, score: issueScore(issue, linkedPullRequests) };
-      })
-      .sort((left, right) => right.score - left.score || right.issue.number - left.issue.number);
-    const linkedPrNumbers = new Set(ranked.flatMap(({ linkedPullRequests }) => linkedPullRequests.map((pr) => pr.number)));
-    const orphanPrCards = pullRequests
-      .filter((pr) => normalizedStatus(pr.supersededStatus) !== 'superseded' && !linkedPrNumbers.has(pr.number))
-      .sort((left, right) => timestamp(right.updatedAt) - timestamp(left.updatedAt))
-      .map((pr) => orphanPrGoalCard(pr, observedAt));
-    const rankedCards = [
-      ...ranked.filter(({ linkedPullRequests }) => linkedPullRequests.length).map(({ issue, linkedPullRequests }) => issueGoalCard(issue, linkedPullRequests, observedAt)),
-      ...orphanPrCards,
-      ...ranked.filter(({ linkedPullRequests }) => !linkedPullRequests.length).map(({ issue, linkedPullRequests }) => issueGoalCard(issue, linkedPullRequests, observedAt)),
-    ];
-    const cards = rankedCards.slice(0, safeLimit);
-    const operatorAttention = rankedCards.filter((card) => card.operatorNeeded.startsWith('Yes'));
-    return Object.freeze({
-      schemaVersion: 'stephanos.live-dashboard-goals.v1',
-      sourceTruth: 'LIVE READ-ONLY GITHUB',
-      freshnessVerdict: 'CURRENT_AT_REQUEST',
-      observedAt,
-      totalAvailable: rankedCards.length,
-      displayedCount: cards.length,
-      activePrCount: new Set(rankedCards.flatMap(cardPullRequestNumbers)).size,
-      blockedCount: rankedCards.filter((card) => card.status.startsWith('BLOCKED')).length,
-      readyCount: rankedCards.filter((card) => card.status.startsWith('READY')).length,
-      operatorAttentionCount: operatorAttention.length,
-      cards,
-      nextAction: operatorAttention[0]?.nextAction || cards[0]?.nextAction || 'No open goal issues were returned by the verified read-only GitHub adapter.',
-    });
-  }
-
-  const historicalReferences = list(historicalCandidates).map((candidate) => Object.freeze({
-    candidateId: text(candidate.candidateId || candidate.id || candidate.title, 'historical-goal'),
-    title: text(candidate.title, 'Imported historical goal'),
-    verificationState: 'imported_unverified',
-    importedAt: text(candidate.importedAt || candidate.createdAt || candidate.updatedAt, 'unknown'),
-  }));
-  const historicalCandidateKeys = new Set(list(historicalCandidates).flatMap((candidate) => candidateIdentityKeys(candidate)));
-  const blockedCandidates = list(queue.blockedCandidates);
-  const blockedByIdentity = new Map();
-  for (const blockedCandidate of blockedCandidates) {
-    const key = candidateIdentityKeys(blockedCandidate)[0];
-    if (key) blockedByIdentity.set(key, blockedCandidate);
-  }
-  const withQueueAdjudication = (candidate = {}) => {
-    const blockedCandidate = blockedByIdentity.get(candidateIdentityKeys(candidate)[0]);
-    if (!blockedCandidate) return candidate;
-    return {
-      ...candidate,
-      blockers: list(candidate.blockers).length ? candidate.blockers : blockedCandidate.blockers,
-      rejectionReasons: list(candidate.rejectionReasons).length ? candidate.rejectionReasons : blockedCandidate.rejectionReasons,
-      status: 'BLOCKED',
-      queueAdjudication: 'blocked',
-    };
-  };
-  const missionReceiptCandidates = list(missions).map((mission) => withQueueAdjudication({
-      candidateId: mission.mission?.missionId || mission.missionId,
-      title: mission.mission?.title || mission.title,
-      status: mission.mission?.state || mission.state,
-      currentOwner: mission.agent?.label || mission.activeAgent?.label,
-      nextAction: mission.mission?.nextAction || mission.nextAction,
-      updatedAt: mission.mission?.updatedAt || mission.updatedAt,
-      operatorActionRequired: mission.operatorActionRequired === true || normalizedStatus(mission.mission?.state || mission.state) === 'awaiting_approval',
-      currentReceiptAuthority: true,
-    }));
-  const missionByIdentity = new Map(missionReceiptCandidates.map((candidate) => [candidateIdentityKeys(candidate)[0], candidate]));
-  const consumedMissionIdentities = new Set();
-  const withMissionAuthority = (candidate) => {
-    const identity = candidateIdentityKeys(candidate)[0];
-    const missionCandidate = missionByIdentity.get(identity);
-    if (!missionCandidate) return candidate;
-    consumedMissionIdentities.add(identity);
-    return missionCandidate;
-  };
-  const receiptCandidates = [
-    ...list(queue.activeProofLane).map(withQueueAdjudication).map(withMissionAuthority),
-    ...list(queue.queuedCandidates).map(withQueueAdjudication).map(withMissionAuthority),
-    ...blockedCandidates.map(withQueueAdjudication).map(withMissionAuthority),
-    ...missionReceiptCandidates.filter((candidate) => !consumedMissionIdentities.has(candidateIdentityKeys(candidate)[0])),
-  ];
-  const seen = new Set();
-  const currentReceiptCandidates = receiptCandidates
-    .filter((candidate) => {
-      const keys = candidateIdentityKeys(candidate);
-      const key = keys[0] || text(candidate.title);
-      if (keys.some((candidateKey) => historicalCandidateKeys.has(candidateKey)) && candidate.currentReceiptAuthority !== true) return false;
-      if (!Number.isFinite(Date.parse(candidate.updatedAt || candidate.createdAt || ''))) return false;
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  const currentReceiptCards = currentReceiptCandidates.map((candidate) => receiptGoalCard(candidate, observedAt));
-  const cards = currentReceiptCards.slice(0, safeLimit);
-  return Object.freeze({
-    schemaVersion: 'stephanos.live-dashboard-goals.v1',
-    sourceTruth: cards.length ? 'READ-ONLY RECEIPTS' : 'UNKNOWN',
-    freshnessVerdict: cards.length ? 'RECEIPT_TIMESTAMPS_VISIBLE' : 'NO_CURRENT_GOAL_RECORDS',
-    observedAt,
-    totalAvailable: currentReceiptCards.length,
-    displayedCount: cards.length,
-    activePrCount: 0,
-    blockedCount: currentReceiptCards.filter((card) => /BLOCKED|FAILED/.test(card.status)).length,
-    readyCount: currentReceiptCards.filter((card) => /READY/.test(card.status)).length,
-    operatorAttentionCount: currentReceiptCards.filter((card) => card.operatorNeeded.startsWith('Yes')).length,
-    cards,
-    historicalReferenceCount: historicalReferences.length,
-    historicalReferences,
-    nextAction: cards[0]?.nextAction || (historicalReferences.length
-      ? `${historicalReferences.length} imported historical reference(s) remain unverified and are excluded from current cards; publish a current canonical receipt or restore complete GitHub truth.`
-      : 'Configure the read-only GitHub adapter or publish current canonical mission receipts.'),
-  });
-}
 
 export function buildLiveGoalProjection(input = {}) {
   const now = input.now instanceof Date ? input.now : new Date();
@@ -350,45 +18,19 @@ export function buildLiveGoalProjection(input = {}) {
   const importedGoals = input.importedGoals || buildConcierge.importedGoals || { receipts: [], candidates: [] };
   const updateStatus = input.updateStatus || feed.updateStatus || {};
   const githubTelemetry = input.githubTelemetry || feed.githubTelemetry || { status: 'adapter_unavailable', adapterAvailable: false, notificationCounts: {}, pullRequests: [], workflows: [], blockers: ['github_adapter_unavailable'] };
-  const currentCreatedCandidates = list(input.createdGoalCandidates);
-  const currentAuthorityKeys = new Set([
-    ...currentCreatedCandidates.flatMap((candidate) => candidateIdentityKeys(candidate)),
-    ...list(feed.missions).flatMap((mission) => candidateIdentityKeys({
-      candidateId: mission.mission?.missionId || mission.missionId,
-      title: mission.mission?.title || mission.title,
-    })),
-  ]);
-  const historicalCandidates = list(importedGoals.candidates).filter((candidate) => (
-    !candidateIdentityKeys(candidate).some((candidateKey) => currentAuthorityKeys.has(candidateKey))
-  ));
-  const historicalCandidateKeys = new Set(historicalCandidates.flatMap((candidate) => candidateIdentityKeys(candidate)));
-  const isCurrentCandidate = (candidate) => (
-    !candidateIdentityKeys(candidate).some((candidateKey) => historicalCandidateKeys.has(candidateKey))
-  );
-  const historicalImportPresent = list(importedGoals.candidates).length > 0 || list(importedGoals.receipts).length > 0;
-  const suppliedQueue = historicalImportPresent
-    ? buildConciergeQueue({ goals: currentCreatedCandidates })
-    : (buildConcierge.queue || buildConciergeQueue({ goals: currentCreatedCandidates }));
-  const queue = {
-    ...suppliedQueue,
-    queuedCandidates: list(suppliedQueue.queuedCandidates).filter(isCurrentCandidate),
-    activeProofLane: list(suppliedQueue.activeProofLane).filter(isCurrentCandidate),
-    blockedCandidates: list(suppliedQueue.blockedCandidates).filter(isCurrentCandidate),
-    completedCandidates: list(suppliedQueue.completedCandidates).filter(isCurrentCandidate),
-    rejectedCandidates: list(suppliedQueue.rejectedCandidates).filter(isCurrentCandidate),
-  };
-  if (queue.nextSafeCandidate && !isCurrentCandidate(queue.nextSafeCandidate)) queue.nextSafeCandidate = null;
+  const allCreatedCandidates = [...list(input.createdGoalCandidates), ...list(importedGoals.candidates)];
+  const queue = buildConcierge.queue || buildConciergeQueue({ goals: allCreatedCandidates });
   const queuedCandidates = list(queue.queuedCandidates);
   const activeProofLane = list(queue.activeProofLane);
   const blockedCandidates = list(queue.blockedCandidates);
   const completedCandidates = list(queue.completedCandidates);
   const rejectedCandidates = list(queue.rejectedCandidates);
-  const currentReceipts = [
+  const receipts = [
     ...list(buildConcierge.createdGoalReceipts),
+    ...list(importedGoals.receipts),
     ...list(feed.missions).flatMap((mission) => list(mission.receipts)),
   ];
-  const receipts = currentReceipts;
-  const executionEngine = buildConciergeExecutionEngineV9({ receipts: currentReceipts });
+  const executionEngine = input.executionEngine || buildConcierge.executionEngine || buildConciergeExecutionEngineV9({ receipts });
   const blockers = unique([
     ...list(queue.blockers),
     ...list(executionEngine.blockers),
@@ -398,12 +40,11 @@ export function buildLiveGoalProjection(input = {}) {
   ]);
   const backendHealthy = input.backendStatus?.ok === true || input.backendStatus?.status === 'ok' || input.backendStatus?.status === 'live';
   const missionLive = ['ready', 'empty'].includes(text(feed.status, 'unknown'));
-  const hasLiveGoalTruth = queuedCandidates.length || currentReceipts.length || list(feed.missions).length;
+  const hasLiveGoalTruth = queuedCandidates.length || receipts.length || list(feed.missions).length;
   const sourceTruth = backendHealthy && missionLive && hasLiveGoalTruth ? 'live' : (backendHealthy ? 'mixed' : 'static-fallback');
   const githubTruth = githubTelemetry.adapterAvailable === true ? 'adapter-provided' : (queue.autoPick?.liveGithubProof === 'adapter-provided' || queue.autoPick?.liveGithubProof === 'receipt-provided' ? queue.autoPick.liveGithubProof : 'unknown');
-  const localProofTruth = currentReceipts.some((receipt) => /proof|command/i.test(`${receipt.receiptType || ''} ${receipt.status || ''}`)) ? 'receipt-provided' : 'unknown';
+  const localProofTruth = receipts.some((receipt) => /proof|command/i.test(`${receipt.receiptType || ''} ${receipt.status || ''}`)) ? 'receipt-provided' : 'unknown';
   const browserProofTruth = buildConcierge.browserProofPacket?.browserProofStatus || buildConcierge.proofPacketSummary?.browserProof || 'unknown';
-  const dashboardGoals = buildLiveDashboardGoals({ githubTelemetry, queue, missions: list(feed.missions), historicalCandidates, observedAt: now.toISOString() });
   const staleWarnings = [];
   if (feed.projectionSource === 'static-goal-dashboard-seed' || feed.githubTruth === 'not-live-readonly-static-seed') staleWarnings.push('Static goal-dashboard seed is not presented as live truth.');
   if (githubTruth === 'unknown') staleWarnings.push('GitHub truth is unknown; no receipt/adapter supplied live GitHub proof.');
@@ -429,8 +70,7 @@ export function buildLiveGoalProjection(input = {}) {
     },
     importedGoals: { status: importedGoals.receipts?.length ? 'present' : 'none', verificationState: importedGoals.receipts?.length ? 'imported_unverified' : 'none', receipts: list(importedGoals.receipts), candidates: list(importedGoals.candidates) },
     githubTelemetry,
-    dashboardGoals,
-    executionChains: buildExecutionChains({ goals: currentCreatedCandidates, githubTelemetry }),
+    executionChains: buildExecutionChains({ goals: queuedCandidates, githubTelemetry }),
     sourceTruth,
     backendStatus: input.backendStatus || { status: backendHealthy ? 'live' : 'unknown', healthRoute: '/api/health' },
     missionOperationsStatus: { status: text(feed.status, 'unknown'), source: text(feed.source, 'unknown'), route: '/api/mission-operations' },

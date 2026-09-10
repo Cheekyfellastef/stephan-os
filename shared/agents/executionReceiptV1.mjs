@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, rmdir, stat, unlink, utimes, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, readdir, rmdir, stat, unlink, utimes, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -451,27 +451,60 @@ async function acquireExecutionReceiptFileLock(root, segments, reasons, options 
       await mkdir(resolved.path, { mode: 0o700 });
       lockDirectoryCreated = true;
       await writeFile(ownerPath, `${JSON.stringify(owner)}\n`, { flag: 'wx', mode: 0o600 });
+      const directoryHandle = await open(resolved.path, 'r');
+      const acquiredDirectoryIdentity = await directoryHandle.stat({ bigint: true });
+      const verifyOwnership = async () => {
+        try {
+          const [openedIdentity, pathnameIdentity, currentOwner] = await Promise.all([
+            directoryHandle.stat({ bigint: true }),
+            lstat(resolved.path, { bigint: true }),
+            readFile(ownerPath, 'utf8').then(JSON.parse),
+          ]);
+          return openedIdentity.isDirectory()
+            && pathnameIdentity.isDirectory()
+            && openedIdentity.dev === acquiredDirectoryIdentity.dev
+            && openedIdentity.ino === acquiredDirectoryIdentity.ino
+            && pathnameIdentity.dev === acquiredDirectoryIdentity.dev
+            && pathnameIdentity.ino === acquiredDirectoryIdentity.ino
+            && currentOwner?.token === token
+            && currentOwner?.pid === process.pid
+            && text(currentOwner?.hostname).toLowerCase() === EXECUTION_RECEIPT_LOCK_HOSTNAME;
+        } catch {
+          return false;
+        }
+      };
       const stopHeartbeat = startExecutionReceiptLockHeartbeat(ownerPath, token, heartbeatMs);
       return Object.freeze({
         ok: true,
         reason: reasons.acquired,
+        verifyOwnership,
         async release() {
           await stopHeartbeat();
+          if (!(await verifyOwnership())) {
+            try { await directoryHandle.close(); } catch {}
+            return false;
+          }
           try {
             const currentOwner = JSON.parse(await readFile(ownerPath, 'utf8'));
             if (
               currentOwner?.token !== token
               || currentOwner?.pid !== process.pid
               || text(currentOwner?.hostname).toLowerCase() !== EXECUTION_RECEIPT_LOCK_HOSTNAME
-            ) return false;
+            ) {
+              await directoryHandle.close();
+              return false;
+            }
             await unlink(ownerPath);
           } catch {
+            try { await directoryHandle.close(); } catch {}
             return false;
           }
           try {
             await rmdir(resolved.path);
+            await directoryHandle.close();
             return true;
           } catch {
+            try { await directoryHandle.close(); } catch {}
             return false;
           }
         },
@@ -508,6 +541,31 @@ async function acquireExecutionReceiptLeaseLock(root, leaseKey, options = {}) {
     failed: 'EXECUTION_RECEIPT_LEASE_LOCK_FAILED',
     timeout: 'EXECUTION_RECEIPT_LEASE_LOCK_TIMEOUT',
   }, options);
+}
+
+export async function acquireSharedWorkspaceOperationLock(root, segments, options = {}) {
+  if (
+    !Array.isArray(segments)
+    || segments.length < 2
+    || !/^[a-z0-9][a-z0-9._-]{0,75}\.lock$/i.test(text(segments.at(-1)))
+  ) {
+    return Object.freeze({ ok: false, reason: 'SHARED_WORKSPACE_OPERATION_LOCK_PATH_INVALID' });
+  }
+  return acquireExecutionReceiptFileLock(root, segments, {
+    acquired: 'SHARED_WORKSPACE_OPERATION_LOCK_ACQUIRED',
+    failed: 'SHARED_WORKSPACE_OPERATION_LOCK_FAILED',
+    timeout: 'SHARED_WORKSPACE_OPERATION_LOCK_TIMEOUT',
+  }, {
+    ...options,
+    executionReceiptLockTimeoutMs: options.operationLockTimeoutMs
+      ?? options.executionReceiptLockTimeoutMs,
+    executionReceiptLockRetryMs: options.operationLockRetryMs
+      ?? options.executionReceiptLockRetryMs,
+    executionReceiptStaleLockMs: options.operationStaleLockMs
+      ?? options.executionReceiptStaleLockMs,
+    executionReceiptLockHeartbeatMs: options.operationLockHeartbeatMs
+      ?? options.executionReceiptLockHeartbeatMs,
+  });
 }
 
 export async function acquireExecutionReceiptHistoryLock(root, options = {}) {

@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, rmdir, stat, unlink, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rename, rm, rmdir, stat, unlink, utimes, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import {
   acquireExecutionReceiptHistoryLock,
+  acquireSharedWorkspaceOperationLock,
   appendExecutionReceipt,
   buildExecutionWorkerAdapterContract,
   classifyExecutionReceiptSet,
@@ -29,6 +30,40 @@ import {
 } from './codexDispatchQueue.mjs';
 
 const HEAD = 'a'.repeat(40);
+
+test('shared workspace operation lock exposes existing lock machinery only for lock paths', async () => {
+  const refused = await acquireSharedWorkspaceOperationLock(
+    process.cwd(),
+    ['status', 'source-mutation-lease-current.json'],
+  );
+  assert.equal(refused.ok, false);
+  assert.equal(refused.reason, 'SHARED_WORKSPACE_OPERATION_LOCK_PATH_INVALID');
+});
+
+test('operation lock remains bound to the acquired directory after pathname replacement', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-lock-identity-'));
+  const segments = ['receipt-locks', 'dream-migration', 'migration.lock'];
+  const lockPath = join(root, ...segments);
+  const displacedPath = `${lockPath}.displaced`;
+  try {
+    const first = await acquireSharedWorkspaceOperationLock(root, segments);
+    assert.equal(first.ok, true);
+    assert.equal(await first.verifyOwnership(), true);
+    await rename(lockPath, displacedPath);
+    const second = await acquireSharedWorkspaceOperationLock(root, segments, {
+      operationLockTimeoutMs: 50,
+      operationLockRetryMs: 2,
+    });
+    assert.equal(second.ok, true, 'replacement pathname can be acquired only as a different inode');
+    assert.equal(await first.verifyOwnership(), false);
+    assert.equal(await first.release(), false);
+    assert.equal(await second.verifyOwnership(), true);
+    assert.equal(await second.release(), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 const BASE = {
   repository: 'Cheekyfellastef/stephan-os',
   issueNumber: 1568,
@@ -104,6 +139,18 @@ async function waitForFile(path, timeoutMs = 5_000) {
       if (Date.now() - startedAt >= timeoutMs) throw new Error(`Timed out waiting for ${path}`);
       await delay(10);
     }
+  }
+}
+
+async function waitForMtimeAdvance(path, baselineMtimeMs, timeoutMs = 1_000) {
+  const startedAt = Date.now();
+  while (true) {
+    const current = await stat(path);
+    if (current.mtimeMs > baselineMtimeMs) return current;
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw new Error(`Timed out waiting for heartbeat mtime advance at ${path}`);
+    }
+    await delay(10);
   }
 }
 
@@ -492,15 +539,14 @@ test('workspace history lock heartbeat renews an active owner beyond the stale t
   const root = await mkdtemp(join(tmpdir(), 'execution-receipt-history-heartbeat-'));
   const lockPath = join(root, 'receipt-locks', 'history', 'execution-receipts.lock');
   try {
-    const worker = await startHistoryLockWorker(root, { holdMs: 250, staleLockMs: 45 });
+    const worker = await startHistoryLockWorker(root, { holdMs: 2_000, staleLockMs: 45 });
     await waitForFile(worker.markerPath);
     const [ownerFileName] = await readdir(lockPath);
     const ownerPath = join(lockPath, ownerFileName);
-    const before = await stat(ownerPath);
     await delay(120);
-    const after = await stat(ownerPath);
+    const before = await stat(ownerPath);
+    const after = await waitForMtimeAdvance(ownerPath, before.mtimeMs, 1_000);
     assert.equal(after.mtimeMs > before.mtimeMs, true);
-    assert.equal(Date.now() - after.mtimeMs < 45, true);
     const completion = await worker.completion;
     assert.equal(completion.exitCode, 0, completion.stderr);
     assert.equal(completion.result.reason, 'EXECUTION_RECEIPT_HISTORY_LOCK_RELEASED');
