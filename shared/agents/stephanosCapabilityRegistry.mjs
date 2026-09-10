@@ -1,3 +1,5 @@
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
+
 export const STEPHANOS_CAPABILITY_REGISTRY_SCHEMA = 'stephanos.capability-registry.v1';
 export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.4.1';
 export const STEPHANOS_CAPABILITY_REGISTRY_REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -107,8 +109,8 @@ export const STEPHANOS_CAPABILITIES = Object.freeze([
     capabilityId: 'battle-bridge-github-command-mailbox',
     category: 'bounded-windows-transport',
     purpose: 'Owner-authored expiring allowlisted commands from GitHub to the real Windows Battle Bridge with accepted and terminal receipts.',
-    ownerIssue: 1507,
-    discoveryRoute: 'github-issue-1507',
+    ownerIssue: CANONICAL_MAILBOX_ISSUE,
+    discoveryRoute: `github-issue-${CANONICAL_MAILBOX_ISSUE}`,
     statusSource: 'github-command-receipts',
     operations: [
       'UPDATE_STEPHANOS_FROM_CHAT',
