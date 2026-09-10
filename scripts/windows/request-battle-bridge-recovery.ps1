@@ -127,6 +127,22 @@ function Get-CanonicalMailboxReceiptFilename {
     return "_request-$digest.json"
 }
 
+function Get-CanonicalMailboxIssue {
+    $authorityPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'shared\agents\canonicalMailboxAuthorityV1.mjs'))
+    Assert-NoReparseAncestor -TargetPath $authorityPath
+    if (-not (Test-Path -LiteralPath $authorityPath -PathType Leaf)) { throw 'RECOVERY_CANONICAL_MAILBOX_AUTHORITY_INVALID' }
+    $authorityBaseline = Get-PathIdentityBaseline -TargetPaths @($authorityPath)
+    $authoritySource = Get-Content -LiteralPath $authorityPath -Raw
+    Assert-StablePathBaseline -Baseline $authorityBaseline
+    $declarations = [regex]::Matches($authoritySource, '(?m)^\s*export\s+const\s+CANONICAL_MAILBOX_ISSUE\b')
+    $assignments = [regex]::Matches($authoritySource, '(?m)^\s*export\s+const\s+CANONICAL_MAILBOX_ISSUE\s*=\s*([0-9]+)\s*;\s*$')
+    $canonicalIssue = 0
+    if ($declarations.Count -ne 1 -or $assignments.Count -ne 1
+        -or -not [int]::TryParse($assignments[0].Groups[1].Value, [ref]$canonicalIssue)
+        -or $canonicalIssue -le 0) { throw 'RECOVERY_CANONICAL_MAILBOX_AUTHORITY_INVALID' }
+    return $canonicalIssue
+}
+
 Assert-NoReparseAncestor -TargetPath $workspaceRoot
 Assert-NoReparseAncestor -TargetPath $requestRoot
 Assert-NoReparseAncestor -TargetPath $evidenceRoot
@@ -261,12 +277,13 @@ if ($Route -eq 'AUTHENTICATED_BREAK_GLASS') {
     $authorityTimeText = if ([string]$mailboxReceipt.state -eq 'DONE') { [string]$mailboxReceipt.completedAt } else { [string]$mailboxReceipt.acceptedAt }
     $authorityTime = [DateTimeOffset]::Parse($authorityTimeText)
     $canonicalReceiptFilename = Get-CanonicalMailboxReceiptFilename -RequestId ([string]$mailboxReceipt.requestId)
+    $canonicalMailboxIssue = Get-CanonicalMailboxIssue
     $sourceControlExecutable = 'C:\Program Files\Git\cmd\git.exe'
     if (-not (Test-Path -LiteralPath $sourceControlExecutable -PathType Leaf)) { throw 'RECOVERY_CANONICAL_GIT_EXECUTABLE_MISSING' }
     $currentSourceHead = [string](& $sourceControlExecutable -C $repoRoot rev-parse HEAD)
     if ([string]$mailboxReceipt.schemaVersion -ne 'stephanos.battle-bridge-github-command-receipt.v1'
         -or [string]$mailboxReceipt.requestId -ne $EvidenceSubject -or [string]$mailboxReceipt.operation -ne 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'
-        -or [string]$mailboxReceipt.repository -ne 'Cheekyfellastef/stephan-os' -or [int]$mailboxReceipt.issueNumber -ne 2158
+        -or [string]$mailboxReceipt.repository -ne 'Cheekyfellastef/stephan-os' -or [int]$mailboxReceipt.issueNumber -ne $canonicalMailboxIssue
         -or [string]$mailboxReceipt.state -notin @('ACCEPTED','DONE') -or $authorityTime -lt [DateTimeOffset]::UtcNow.AddMinutes(-5)
         -or $authorityTime -gt [DateTimeOffset]::UtcNow.AddSeconds(30) -or [string]$mailboxReceipt.expectedHead -notmatch '^[0-9a-f]{40}$'
         -or -not [string]::Equals((Split-Path -Leaf $mailboxReceiptPath), $canonicalReceiptFilename, [System.StringComparison]::Ordinal)
