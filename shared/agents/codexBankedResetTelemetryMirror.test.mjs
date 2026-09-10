@@ -23,7 +23,7 @@ function receipt(operation, result, overrides = {}) {
     requestId: overrides.requestId || `request-${operation.toLowerCase().replace(/_/g, '-')}`,
     operation,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: overrides.issueNumber ?? 2158,
     branch: 'main',
     state: overrides.state || (result.ok === false ? 'BLOCKED' : 'DONE'),
     acceptedAt: overrides.acceptedAt || '2026-07-21T09:00:00.000Z',
