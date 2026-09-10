@@ -67,7 +67,7 @@ export function createFixedRecoveryMeshMutexVerifier({ verifierScriptPath, spawn
   const fixedPath = path.resolve(verifierScriptPath);
   return Object.freeze({
     verify({ launcherPid, nodePid = process.pid } = {}) {
-      if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(nodePid) || nodePid <= 0) {
+      if (!Number.isSafeInteger(launcherPid) || launcherPid <= 0 || !Number.isSafeInteger(nodePid) || nodePid <= 0) {
         return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_MUTEX_ATTESTATION_PID_INVALID' });
       }
       const result = spawnSyncFn(BATTLE_BRIDGE_WINDOWS_POWERSHELL_EXECUTABLE, [
