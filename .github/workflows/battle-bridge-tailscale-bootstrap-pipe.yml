@@ -172,6 +172,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      BOOTSTRAP_HOST: ${{ vars.STEPHANOS_BATTLE_BRIDGE_TAILSCALE_HOST }}
+      BOOTSTRAP_USER: ${{ vars.STEPHANOS_BATTLE_BRIDGE_SSH_USER }}
     steps:
       - name: Check out canonical main
         uses: actions/checkout@v4
