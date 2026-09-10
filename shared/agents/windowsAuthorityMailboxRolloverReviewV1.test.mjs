@@ -32,7 +32,7 @@ function targetInstallerSource() {
     'Consumes only owner-authored, expiring, allowlisted Stephanos commands from issue 1507 and publishes',
     'Consumes only owner-authored, expiring, allowlisted Stephanos commands from the canonical mailbox authority issue and publishes',
   );
-  return source;
+  return source.endsWith('\n') ? source.slice(0, -1) : source;
 }
 
 function targetRecoverySource() {
