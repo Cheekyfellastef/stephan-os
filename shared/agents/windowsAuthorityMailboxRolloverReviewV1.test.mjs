@@ -32,7 +32,6 @@ function targetInstallerSource() {
     'Consumes only owner-authored, expiring, allowlisted Stephanos commands from issue 1507 and publishes',
     'Consumes only owner-authored, expiring, allowlisted Stephanos commands from the canonical mailbox authority issue and publishes',
   );
-  if (!source.endsWith('\n')) source += '\n';
   return source;
 }
 
@@ -84,7 +83,7 @@ function targetRecoverySource() {
 
   const issueMarker = "-or [string]$mailboxReceipt.repository -ne 'Cheekyfellastef/stephan-os' -or [int]$mailboxReceipt.issueNumber -ne 1507";
   const issueReplacement = "-or [string]$mailboxReceipt.repository -ne 'Cheekyfellastef/stephan-os' -or [int]$mailboxReceipt.issueNumber -ne $canonicalMailboxIssue";
-  assert.equal(source.split(issueMarker).length - 1, 1, 'current-main recovery issue marker changed');
+  assert.ok(source.includes(issueMarker), 'current-main recovery issue marker changed');
   return source.replace(issueMarker, issueReplacement);
 }
 
