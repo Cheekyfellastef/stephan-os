@@ -19,6 +19,7 @@ $wscriptPath = 'C:\Windows\System32\wscript.exe'
 $canonicalPowerShell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
 $runtimeMemoryPath = 'stephanos-server/data/memory/durable-memory.json'
+$runtimeUiDistPrefix = 'apps/stephanos/dist/'
 
 $taskSpecs = @(
     [pscustomobject]@{ Id = 'watchdog'; Name = 'Stephanos Mission Orchestrator Worker Watchdog'; LauncherId = 'worker-watchdog' },
@@ -35,7 +36,7 @@ function Test-TaskAction {
         $execute = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables([string]$action.Execute))
         if ($LauncherId -eq 'openclaw-gateway') {
             $expectedGateway = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE '.openclaw\gateway.cmd'))
-            if ([string]::Equals($execute, $expectedGateway, [System.StringComparison]::OrdinalIgnoreCase)
+            if ([string]::Equals($execute, $expectedGateway, [System.StringComparison]::OrdinalIgnoreCase) `
                 -and [string]::IsNullOrWhiteSpace([string]$action.Arguments)) { return $true }
         }
         if (-not [string]::Equals($execute, $wscriptPath, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
@@ -77,21 +78,41 @@ function Get-TaskHealth {
 }
 
 function Test-CanonicalBackendCommandLine {
-    param([string]$CommandLine)
+    param([string]$CommandLine, [string]$ExpectedSourceHead)
     $commandLine = (([string]$CommandLine -replace '\s+', ' ').Trim())
-    $expectedQuotedCommand = "`"$canonicalNode`" stephanos-server/server.js"
-    $expectedUnquotedCommand = "$canonicalNode stephanos-server/server.js"
-    if ([string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase) `
-        -or [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $true
+    $canonicalBootstrapEval = "import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)"
+    $expectedCommands = @(
+        "`"$canonicalNode`" --input-type=module --eval `"$canonicalBootstrapEval`"",
+        "$canonicalNode --input-type=module --eval `"$canonicalBootstrapEval`""
+    )
+    foreach ($expectedCommand in $expectedCommands) {
+        if ([string]::Equals($commandLine, $expectedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
     }
-    $expectedNpmNodeCommand = 'node stephanos-server/server.js'
-    $expectedNpmNodeExeCommand = 'node.exe stephanos-server/server.js'
-    return [string]::Equals($commandLine, $expectedNpmNodeCommand, [System.StringComparison]::OrdinalIgnoreCase) `
-        -or [string]::Equals($commandLine, $expectedNpmNodeExeCommand, [System.StringComparison]::OrdinalIgnoreCase)
+    return $false
+}
+
+function Test-RuntimeUiDistStatus {
+    param([string]$Status)
+    return $Status -eq ' M' -or $Status -eq ' D'
+}
+
+function Convert-ProcessCreationDateToUtcText {
+    param([object]$CreationDate)
+    if ($CreationDate -is [DateTime]) {
+        return ([DateTime]$CreationDate).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    }
+    if ($CreationDate -is [DateTimeOffset]) {
+        return ([DateTimeOffset]$CreationDate).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    }
+    $creationText = [string]$CreationDate
+    if ([string]::IsNullOrWhiteSpace($creationText)) { throw 'BACKEND_LISTENER_CREATION_TIME_MISSING' }
+    return [System.Management.ManagementDateTimeConverter]::ToDateTime($creationText).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 }
 
 function Get-BackendListenerIdentity {
+    param([string]$ExpectedSourceHead)
     try {
         $listeners = @(Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction Stop)
         $processIds = @($listeners | Select-Object -ExpandProperty OwningProcess -Unique)
@@ -101,8 +122,8 @@ function Get-BackendListenerIdentity {
         if (-not $process) { throw 'BACKEND_LISTENER_PROCESS_MISSING' }
         $executable = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
         if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'BACKEND_LISTENER_EXECUTABLE_FOREIGN' }
-        if (-not (Test-CanonicalBackendCommandLine -CommandLine ([string]$process.CommandLine))) { throw 'BACKEND_LISTENER_COMMAND_FOREIGN' }
-        $creationUtc = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$process.CreationDate).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        if (-not (Test-CanonicalBackendCommandLine -CommandLine ([string]$process.CommandLine) -ExpectedSourceHead $ExpectedSourceHead)) { throw 'BACKEND_LISTENER_COMMAND_FOREIGN' }
+        $creationUtc = Convert-ProcessCreationDateToUtcText -CreationDate $process.CreationDate
         return [pscustomobject]@{ healthy = $true; pid = $processId; creationTimeUtc = $creationUtc; blocker = '' }
     } catch {
         $reason = [string]$_.Exception.Message
@@ -117,7 +138,7 @@ function Get-BackendFreshnessHealth {
         if (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) { throw 'RECOVERY_CANONICAL_NODE_EXECUTABLE_MISSING' }
         if (-not (Test-Path -LiteralPath $backendFreshnessProbePath -PathType Leaf)) { throw 'RECOVERY_BACKEND_FRESHNESS_PROBE_MISSING' }
         if (-not $BackendTask.present -or -not $BackendTask.actionCanonical -or -not $BackendTask.authorityCanonical) { throw 'BACKEND_TASK_AUTHORITY_INVALID' }
-        $listenerBefore = Get-BackendListenerIdentity
+        $listenerBefore = Get-BackendListenerIdentity -ExpectedSourceHead $ExpectedSourceHead
         if (-not $listenerBefore.healthy) { throw $listenerBefore.blocker }
         $raw = & $canonicalNode $backendFreshnessProbePath --expected-source-head $ExpectedSourceHead
         if ($LASTEXITCODE -ne 0) { throw 'RECOVERY_BACKEND_FRESHNESS_PROBE_FAILED' }
@@ -132,7 +153,7 @@ function Get-BackendFreshnessHealth {
             -and @($routeProofs | Where-Object { $_.route -eq '/api/mission-operations' -and $_.ok -eq $true }).Count -eq 1
         if (-not (Test-Path -LiteralPath $backendRuntimeReceiptPath -PathType Leaf)) { throw 'BACKEND_RUNTIME_RECEIPT_MISSING' }
         $receipt = Get-Content -LiteralPath $backendRuntimeReceiptPath -Raw | ConvertFrom-Json
-        $listenerAfter = Get-BackendListenerIdentity
+        $listenerAfter = Get-BackendListenerIdentity -ExpectedSourceHead $ExpectedSourceHead
         if (-not $listenerAfter.healthy) { throw $listenerAfter.blocker }
         if ($listenerBefore.pid -ne $listenerAfter.pid -or $listenerBefore.creationTimeUtc -ne $listenerAfter.creationTimeUtc) { throw 'BACKEND_LISTENER_IDENTITY_CHANGED' }
         $receiptPropertyNames = @($receipt.PSObject.Properties.Name)
@@ -205,6 +226,7 @@ function Get-CanonicalTrackedWorktreeAssessment {
     $trackedStatus = @(& $GitExecutable -C $RepositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
     if ($LASTEXITCODE -ne 0) { throw 'RECOVERY_CANONICAL_TRACKED_WORKTREE_INSPECTION_FAILED' }
     $runtimeMemoryDirty = $false
+    $runtimeUiDistDirty = $false
     $sourceDirt = @()
     foreach ($raw in @($trackedStatus)) {
         $line = [string]$raw
@@ -224,9 +246,17 @@ function Get-CanonicalTrackedWorktreeAssessment {
             $runtimeMemoryDirty = $true
             continue
         }
+        if ((Test-RuntimeUiDistStatus -Status $status) -and $path.StartsWith($runtimeUiDistPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $runtimeUiDistDirty = $true
+            continue
+        }
         $sourceDirt += $line
     }
-    return [pscustomobject]@{ RuntimeMemoryDirty = [bool]$runtimeMemoryDirty; SourceDirt = @($sourceDirt) }
+    return [pscustomobject]@{
+        RuntimeMemoryDirty = [bool]$runtimeMemoryDirty
+        RuntimeUiDistDirty = [bool]$runtimeUiDistDirty
+        SourceDirt = @($sourceDirt)
+    }
 }
 function Assert-CanonicalSourceWorktreeClean {
     param([string]$GitExecutable, [string]$RepositoryRoot)
@@ -290,10 +320,12 @@ $mailboxHealthy = $mailboxTask.present `
     mode = $Mode
     sourceHead = $sourceHead
     branch = $branch
-    trackedWorktreeClean = -not [bool]$afterWorktree.RuntimeMemoryDirty
+    trackedWorktreeClean = -not [bool]($afterWorktree.RuntimeMemoryDirty -or $afterWorktree.RuntimeUiDistDirty)
     sourceWorktreeClean = $true
     runtimeMemoryDirtTolerated = [bool]$afterWorktree.RuntimeMemoryDirty
     runtimeMemoryDirtPresentBefore = [bool]$beforeWorktree.RuntimeMemoryDirty
+    runtimeUiDistDirtTolerated = [bool]$afterWorktree.RuntimeUiDistDirty
+    runtimeUiDistDirtPresentBefore = [bool]$beforeWorktree.RuntimeUiDistDirty
     backendRestartSkippedAsCurrent = [bool]$backendRestartSkippedAsCurrent
     worker = $worker
     mailbox = [pscustomobject]@{ healthy = [bool]$mailboxHealthy; state = $mailboxTask.state; lastTaskResult = $mailboxTask.lastTaskResult; lastRunAgeMs = if ([double]::IsInfinity($mailboxLastRunMs)) { -1 } else { [int64]$mailboxLastRunMs }; task = $mailboxTask }

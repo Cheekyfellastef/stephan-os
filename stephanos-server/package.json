@@ -4,8 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "nodemon server.js",
-    "start": "node server.js",
+    "dev": "nodemon backend-bootstrap.mjs",
+    "start": "node backend-bootstrap.mjs",
     "test": "node --test tests/*.test.js"
   },
   "dependencies": {

@@ -20,6 +20,8 @@ import {
   buildProtectedOpenClawMergePlan,
   validateProtectedOpenClawBootstrapFindings,
   validateProtectedOpenClawMergeChecks,
+  validateProtectedOpenClawReviewArtifactMetadata,
+  validateProtectedOpenClawReviewRunIdentity,
 } from './protectedOpenClawMergeMailboxAdapter.mjs';
 import {
   APPROVAL_BOUNDARY_PATHS_V2,
@@ -88,6 +90,105 @@ test('execution plan binds exact head, base and fixed signed OpenClaw identity',
   assert.equal(Object.hasOwn(plan.claims, 'requireExactBaseSha'), false);
   assert.equal(plan.normalized.expectedBase, base);
   assert.match(plan.claims.branch, /^openclaw\//);
+});
+
+function reviewPull() {
+  return {
+    number: command.prNumber,
+    head: { ref: 'fix/example', sha: head, repo: { full_name: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY } },
+    base: { ref: 'main', sha: base, repo: { full_name: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY } },
+  };
+}
+
+function reviewRun(overrides = {}) {
+  const name = `stephanos-independent-review-pr-${command.prNumber}-head-${head}-binding-legacy-pull-request-target`;
+  return {
+    id: command.reviewRunId,
+    run_attempt: command.reviewRunAttempt,
+    name,
+    display_title: name,
+    path: '.github/workflows/independent-merge-security-review.yml',
+    event: 'pull_request_target',
+    status: 'completed',
+    conclusion: 'success',
+    head_sha: head,
+    head_branch: 'fix/example',
+    repository: { full_name: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY },
+    head_repository: { full_name: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY },
+    pull_requests: [{
+      number: command.prNumber,
+      head: { ref: 'fix/example', sha: head, repo: { url: `https://api.github.com/repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}` } },
+      base: { ref: 'main', sha: base, repo: { url: `https://api.github.com/repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}` } },
+    }],
+    ...overrides,
+  };
+}
+
+test('protected merge accepts only the deterministic exact-bound pull-request review run', () => {
+  const pull = reviewPull();
+  const exact = reviewRun();
+  assert.equal(validateProtectedOpenClawReviewRunIdentity(exact, pull, command), true);
+  for (const changed of [
+    { name: 'Independent Merge Security Review', display_title: 'Independent Merge Security Review' },
+    { display_title: 'different' },
+    { path: '.github/workflows/other.yml' },
+    { event: 'pull_request' },
+    { head_sha: '0'.repeat(40) },
+    { head_branch: 'other' },
+    { repository: { full_name: 'other/repo' } },
+    { pull_requests: [] },
+  ]) {
+    assert.equal(validateProtectedOpenClawReviewRunIdentity({ ...exact, ...changed }, pull, command), false);
+  }
+});
+
+test('workflow-dispatch review identity is exact target-name bound while GitHub executes trusted main', () => {
+  const pull = reviewPull();
+  const binding = 'a'.repeat(64);
+  const name = `stephanos-independent-review-pr-${command.prNumber}-head-${head}-binding-${binding}`;
+  const exact = reviewRun({
+    name,
+    display_title: name,
+    event: 'workflow_dispatch',
+    head_sha: base,
+    head_branch: 'main',
+    pull_requests: [],
+  });
+  assert.equal(validateProtectedOpenClawReviewRunIdentity(exact, pull, command), true);
+  for (const changed of [
+    { name: name.replace(String(command.prNumber), '9999'), display_title: name.replace(String(command.prNumber), '9999') },
+    { name: name.replace(head, '0'.repeat(40)), display_title: name.replace(head, '0'.repeat(40)) },
+    { name: name.slice(0, -1) + 'z', display_title: name.slice(0, -1) + 'z' },
+    { head_sha: head },
+    { head_branch: 'fix/example' },
+    { pull_requests: reviewRun().pull_requests },
+  ]) {
+    assert.equal(validateProtectedOpenClawReviewRunIdentity({ ...exact, ...changed }, pull, command), false);
+  }
+});
+
+test('artifact metadata follows the validated GitHub execution ref without weakening target binding', () => {
+  const archive = (run, headSha, headBranch) => ({
+    id: command.reviewArtifactId,
+    name: `stephanos-independent-review-${command.reviewRunId}-attempt-${command.reviewRunAttempt}`,
+    expired: false,
+    digest: command.reviewArtifactDigest,
+    workflow_run: { id: command.reviewRunId, head_sha: headSha, head_branch: headBranch },
+  });
+  const pullRun = reviewRun();
+  assert.equal(validateProtectedOpenClawReviewArtifactMetadata(
+    archive(pullRun, head, 'fix/example'), command, pullRun,
+  ), true);
+  const dispatchRun = reviewRun({ event: 'workflow_dispatch', head_sha: base, head_branch: 'main' });
+  assert.equal(validateProtectedOpenClawReviewArtifactMetadata(
+    archive(dispatchRun, base, 'main'), command, dispatchRun,
+  ), true);
+  assert.equal(validateProtectedOpenClawReviewArtifactMetadata(
+    archive(dispatchRun, head, 'main'), command, dispatchRun,
+  ), false);
+  assert.equal(validateProtectedOpenClawReviewArtifactMetadata(
+    archive(dispatchRun, base, 'fix/example'), command, dispatchRun,
+  ), false);
 });
 
 test('bootstrap adapter accepts one or more unique self-change findings only', () => {
@@ -186,7 +287,8 @@ test('protected merge check inspection requests exact name, state and workflow i
 });
 
 test('feature branches emit only the pull-request build checks consumed by protected merge', () => {
-  const source = readFileSync(new URL('../../.github/workflows/build-stephanos-ui.yml', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../../.github/workflows/build-stephanos-ui.yml', import.meta.url), 'utf8')
+    .replace(/\r\n/g, '\n');
   assert.match(source, /^  push:\n    branches:\n      - main\n    paths:\s*$/m);
   assert.match(source, /^  pull_request:\s*$/m);
 });

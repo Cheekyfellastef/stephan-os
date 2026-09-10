@@ -334,7 +334,7 @@ test('fails closed if the installed watchdog Scheduled Task start is not proven'
   assert.equal(result.workerKilledObserved, true);
 });
 
-test('fails before kill when the observed worker is not canonical and healthy', async () => {
+test('degraded non-canonical worker enters fixed watchdog recovery without direct kill', async () => {
   let killCalls = 0;
   const observation = healthyObservation(101);
   observation.process.commandLineMatchesCanonicalWorker = false;
@@ -343,7 +343,12 @@ test('fails before kill when the observed worker is not canonical and healthy', 
     killWorker: () => { killCalls += 1; return { ok: true, pid: 101 }; },
   }));
   assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY');
+  assert.equal(result.priorBlocker, 'INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY');
+  assert.equal(result.blocker, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.workerRestartFailure);
+  assert.equal(result.recoveryClassification, INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.workerRestartFailure);
+  assert.equal(result.finalVerdict, 'WORKER_WATCHDOG_ACCEPTANCE_BLOCKED');
+  assert.equal(result.acceptancePass, false);
+  assert.equal(result.workerKilled, false);
   assert.equal(killCalls, 0);
 });
 
