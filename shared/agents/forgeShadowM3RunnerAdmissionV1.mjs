@@ -1,4 +1,4 @@
-import { BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE } from './battleBridgeGitHubCommandMailboxBaseV1.mjs';
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 
 const SHA40 = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -9,7 +9,7 @@ const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 
 export const FORGE_SHADOW_M3_RUNNER_ADMISSION_SCHEMA = 'stephanos.forge-shadow-m3-runner-admission.v1';
 export const FORGE_SHADOW_M3_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const FORGE_SHADOW_M3_ISSUE = BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE;
+export const FORGE_SHADOW_M3_ISSUE = CANONICAL_MAILBOX_ISSUE;
 export const FORGE_SHADOW_M2_OPERATION = 'INSTALL_FORGE_SHADOW_M2';
 export const FORGE_SHADOW_M2_VERDICT = 'FORGE_SHADOW_M2_READY';
 export const FORGE_SHADOW_M3_READY_VERDICT = 'FORGE_SHADOW_M3_RUNNER_ADMISSION_PLAN_READY';
