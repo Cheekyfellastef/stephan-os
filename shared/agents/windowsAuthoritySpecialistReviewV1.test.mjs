@@ -15,4 +15,5 @@ await import('./windowsAuthorityMissionWorkerCleanupReviewV1.test.mjs');
 await import('./windowsAuthorityForgeM3ExecutorReviewV1.test.mjs');
 await import('./windowsAuthorityForgePodmanPrerequisiteReviewV1.test.mjs');
 await import('./windowsAuthorityIgnitionConvergenceReviewV1.test.mjs');
+await import('./windowsAuthorityMailboxRolloverReviewV1.test.mjs');
 await import('./windowsAuthoritySpecialistReviewV1.mjs');
