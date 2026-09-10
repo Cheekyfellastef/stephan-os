@@ -49,10 +49,10 @@ test('trusted specialist composition pins and invokes the exact four-path igniti
 });
 
 
-test('trusted composition pins the non-Codex #2097/#2105/#2126 Mission Worker specialist before older watchdog fallbacks', async () => {
+test('trusted composition pins the non-Codex #2097/#2105/#2126/#2152/#2160 Mission Worker specialist before older watchdog fallbacks', async () => {
   const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
   assert.match(source, /MISSION_WORKER_CLEANUP_PATH = '\.\/windowsAuthorityMissionWorkerCleanupReviewV1\.mjs'/);
-  assert.match(source, /MISSION_WORKER_CLEANUP_BLOB_SHA = '01486be01fceaa5bb018551ed8f95c66504c471a'/);
+  assert.match(source, /MISSION_WORKER_CLEANUP_BLOB_SHA = '85ce19eab2434954c05dc9110581695be2ddb0d3'/);
   assert.match(source, /provePinnedModule\(MISSION_WORKER_CLEANUP_PATH, MISSION_WORKER_CLEANUP_BLOB_SHA\)/);
   assert.match(source, /WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_PATHS_V1/);
   assert.match(source, /missionWorkerCleanup\.analyzeWindowsAuthorityMissionWorkerCleanupReviewV1\(input\); if \(missionWorkerCleanupResult\.eligible\) return missionWorkerCleanupResult;/);
