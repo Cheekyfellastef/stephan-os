@@ -7,6 +7,37 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
+function Get-CanonicalTrackedSourceAssessment {
+    param([string]$GitExecutable, [string]$RepositoryRoot)
+    $runtimeMemoryPath = 'stephanos-server/data/memory/durable-memory.json'
+    $runtimeUiDistPrefix = 'apps/stephanos/dist/'
+    $trackedStatus = @(& $GitExecutable -C $RepositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
+    if ($LASTEXITCODE -ne 0) { throw 'Canonical tracked source inspection failed.' }
+    $sourceDirt = @()
+    foreach ($raw in @($trackedStatus)) {
+        $line = [string]$raw
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        if ($line.Length -lt 4) {
+            $sourceDirt += $line
+            continue
+        }
+        $status = $line.Substring(0, 2)
+        $pathSegment = $line.Substring(3).Trim()
+        if ($pathSegment.Contains(' -> ')) {
+            $sourceDirt += $line
+            continue
+        }
+        $path = $pathSegment.Trim('"').Replace('\', '/')
+        if ($status -eq ' M' -and $path -eq $runtimeMemoryPath) { continue }
+        if (($status -eq ' M' -or $status -eq ' D') -and $path.StartsWith($runtimeUiDistPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        $sourceDirt += $line
+    }
+    return [pscustomobject]@{
+        SourceDirt = @($sourceDirt)
+        SourceClean = ($sourceDirt.Count -eq 0)
+    }
+}
+
 
 # WORKER_LOG_RETENTION_FUNCTION_START
 function Invoke-BoundedWorkerLogRetention {
@@ -401,8 +432,8 @@ try {
     if ($LASTEXITCODE -ne 0 -or $headSha -notmatch '^[0-9a-f]{40}$') {
         throw 'Mission Orchestrator worker could not prove a canonical 40-character Git head.'
     }
-    $trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
-    if ($LASTEXITCODE -ne 0 -or $trackedStatus.Count -ne 0) {
+    $sourceAssessment = Get-CanonicalTrackedSourceAssessment -GitExecutable $canonicalGit -RepositoryRoot $repositoryRoot
+    if ($LASTEXITCODE -ne 0 -or -not $sourceAssessment.SourceClean) {
         throw 'Mission Orchestrator worker requires tracked-clean exact-head source.'
     }
     $remoteMain = @(& $canonicalGit 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>&1)
