@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_SCHEMA = 'stephanos.battle-bridge-tailscale-bootstrap.v1';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_MARKER = 'stephanos-battle-bridge-tailscale-bootstrap';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_OPERATION = 'BOOTSTRAP_CANONICAL_GITHUB_SYNC';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_ISSUE = 1507;
+export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_ISSUE = CANONICAL_MAILBOX_ISSUE;
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_AUTHOR = 'Cheekyfellastef';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_TAG = 'tag:stephanos-github-recovery';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_VERDICT = 'BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_READY';
