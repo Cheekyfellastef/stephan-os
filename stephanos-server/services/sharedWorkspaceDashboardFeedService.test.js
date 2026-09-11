@@ -36,4 +36,3 @@ test('backend dashboard feed reads current state without walking historical rece
   assert.equal(feed.records.receiptRecords.length, 0);
   assert.deepEqual(feed.errors, []);
 });
-

@@ -410,4 +410,3 @@ export async function recordOperatorApprovalDecision(input = {}, options = {}) {
     protectedFollowUpRequired: decision.decisionKind === OPERATOR_DECISION_KIND.MERGE_APPROVAL,
   });
 }
-
