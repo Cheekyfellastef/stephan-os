@@ -104,3 +104,12 @@ test('refuses escrow when complete-file bytes do not match the claimed Git blob 
   }, options);
   assert.equal(result, null);
 });
+
+test('source escrow reuses the Mission Worker bounded runner instead of owning child-process execution', async () => {
+  const storeSource = await readFile(new URL('./sourceArtifactEscrowStore.js', import.meta.url), 'utf8');
+  const workerSource = await readFile(new URL('../../scripts/mission-orchestrator-worker.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(storeSource, /node:child_process|spawnSync|function defaultRun/);
+  assert.match(storeSource, /const run = options\.runCommand;/);
+  assert.match(storeSource, /SOURCE_ARTIFACT_BOUNDED_RUNNER_REQUIRED/);
+  assert.match(workerSource, /runCommand: options\.runCommand \|\| defaultRun,/);
+});
