@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { buildMissionEventFromWorkerResult } from '../../shared/agents/missionOrchestratorWorkerResult.mjs';
+import { gateSourceWorkerCompletionV1 } from '../../shared/agents/sourceArtifactEscrowCompletionGateV1.mjs';
 import { appendMissionEvent } from './missionOrchestratorStore.js';
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 
@@ -66,6 +67,25 @@ function signedAction(item) {
   return { actionKind: 'signed-openclaw-operation', actionId: payload?.actionId || item?.actionId || '', missionId: payload?.missionId || item?.missionId || '', operation: payload?.operation || '', receiptRequirement: payload?.receiptRequirement || `signed ${payload?.operation || 'operation'}` };
 }
 
+function requireSourceEscrowBeforeCompletion(execution = {}) {
+  const changedFiles = Array.isArray(execution.changedFiles) ? execution.changedFiles.filter(Boolean) : [];
+  if (execution.success !== true || changedFiles.length === 0) return;
+  const gate = gateSourceWorkerCompletionV1({
+    stage: execution.stage || '',
+    sourceChanged: true,
+    testsPassed: execution.testsPassed === true,
+    terminalRequested: true,
+    escrow: execution.sourceArtifactEscrow || {},
+    nowUtc: execution.completedAt || new Date().toISOString(),
+  });
+  if (!gate.terminalReceiptAllowed) {
+    const error = new Error(gate.finalVerdict);
+    error.code = gate.finalVerdict;
+    error.completionGate = gate;
+    throw error;
+  }
+}
+
 async function applyClaimResult(claim, action, execution, inspection) {
   const event = buildMissionEventFromWorkerResult(action, execution, inspection);
   const applied = await appendMissionEvent(action.missionId, event, claim.options);
@@ -92,6 +112,7 @@ async function processAgentClaim(adapter, options, execute) {
   const action = claim.item.payload;
   try {
     const execution = await execute(action, claim);
+    requireSourceEscrowBeforeCompletion(execution);
     const applied = await collectAgentWorkerResult({
       missionId: action.missionId,
       actionId: action.actionId,
