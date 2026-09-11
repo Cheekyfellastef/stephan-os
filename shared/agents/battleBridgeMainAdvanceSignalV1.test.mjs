@@ -7,6 +7,7 @@ import {
   createBattleBridgeMainAdvanceSignal,
   validateBattleBridgeMainAdvanceSignal,
 } from './battleBridgeMainAdvanceSignalV1.mjs';
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 
 const HEAD = 'a'.repeat(40);
 const MERGED_AT = '2026-08-18T10:45:00Z';
@@ -24,7 +25,7 @@ function validSignal(overrides = {}) {
 test('main advance signal is exact-head, signal-only and grants no mutation authority', () => {
   const signal = validSignal();
   assert.equal(signal.repository, 'Cheekyfellastef/stephan-os');
-  assert.equal(signal.issueNumber, 1507);
+  assert.equal(signal.issueNumber, CANONICAL_MAILBOX_ISSUE);
   assert.equal(signal.branch, 'main');
   assert.equal(signal.event, 'PULL_REQUEST_MERGED');
   assert.equal(signal.mainHead, HEAD);

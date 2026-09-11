@@ -5,20 +5,20 @@
 Provide one independent cloud-to-Windows bootstrap path for the canonical Battle Bridge when all of these can be unavailable at once:
 
 - the local `Stephanos Battle Bridge GitHub Sync` Scheduled Task;
-- the #1507 GitHub command mailbox consumer;
+- the #2158 GitHub command mailbox consumer;
 - Codex capacity.
 
 This pipe is not a replacement mailbox, worker, recovery mesh, scheduler, truth store or merge authority. It has one operation only: restore/start the existing canonical GitHub Sync task and prove the canonical Windows checkout reaches the exact current GitHub `main` head requested by the operator.
 
 ## Route
 
-`#1507 owner comment -> GitHub-hosted Actions runner -> ephemeral Tailscale node -> Windows OpenSSH over the private tailnet -> existing install-battle-bridge-github-sync.ps1 -StartNow -> exact-head proof`
+`#2158 owner comment -> GitHub-hosted Actions runner -> ephemeral Tailscale node -> Windows OpenSSH over the private tailnet -> existing install-battle-bridge-github-sync.ps1 -StartNow -> exact-head proof`
 
 Tailscale supplies network reachability only. The Windows destination continues to use its existing OpenSSH service. No public listener is added.
 
 ## Request contract
 
-The only accepted command marker is `stephanos-battle-bridge-tailscale-bootstrap` on issue #1507 and the comment author must be `Cheekyfellastef`.
+The only accepted command marker is `stephanos-battle-bridge-tailscale-bootstrap` on issue #2158 and the comment author must be `Cheekyfellastef`.
 
 The JSON object has exactly these fields:
 
@@ -26,7 +26,7 @@ The JSON object has exactly these fields:
 - `requestId`
 - `operation`: `BOOTSTRAP_CANONICAL_GITHUB_SYNC`
 - `repository`: `Cheekyfellastef/stephan-os`
-- `issueNumber`: `1507`
+- `issueNumber`: `2158`
 - `operatorApproval`: `operator-approved`
 - `expectedHead`: exact 40-character Git SHA
 - `expiresAt`: no more than 30 minutes in the future
@@ -88,7 +88,7 @@ The matching public SSH key must be authorized for that Windows account. Prefer 
 
 A merged workflow is not proof that this pipe is live.
 
-The first real acceptance requires a #1507 request bound to the exact current `main`, a successful GitHub Actions run, and its uploaded receipt showing:
+The first real acceptance requires a #2158 request bound to the exact current `main`, a successful GitHub Actions run, and its uploaded receipt showing:
 
 - `repository: Cheekyfellastef/stephan-os`
 - `taskName: Stephanos Battle Bridge GitHub Sync`
@@ -99,4 +99,4 @@ The first real acceptance requires a #1507 request bound to the exact current `m
 - all unsafe-authority booleans false
 - `finalVerdict: BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_READY`
 
-Only after that proof may the normal #1507 mailbox/diagnostic path be expected to resume. Forge remains separately gated by its own real Windows M2 receipt.
+Only after that proof may the normal #2158 mailbox/diagnostic path be expected to resume. Forge remains separately gated by its own real Windows M2 receipt.
