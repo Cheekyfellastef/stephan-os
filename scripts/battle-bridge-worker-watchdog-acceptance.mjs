@@ -104,6 +104,7 @@ function blockedRecovery(blocker, firstResult, details = {}) {
     blocker,
     priorBlocker: text(firstResult?.blocker),
     bootstrapRecoveryOnly: details.bootstrapRecoveryOnly === true,
+    workerKilledObserved: details.workerKilledObserved === true || firstResult?.workerKilledObserved === true,
     acceptancePass: false,
     authority: core.WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY,
   });
@@ -254,7 +255,6 @@ async function recoverDegradedBaseline(options, firstResult) {
         recoveredHead: latestAssessment.headSha,
         recoveredPid: latestAssessment.pid,
         workerKilled: false,
-        workerKilledObserved: false,
         supervisorDetectedWorkerDown: latestStatus?.supervisorDetectedWorkerDown === true,
         supervisorRestartedWorker: latestStatus?.supervisorRestartedWorker === true,
         workerRecovered: true,
