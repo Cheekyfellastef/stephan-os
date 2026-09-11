@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
   BATTLE_BRIDGE_GITHUB_COMMAND_MARKER,
   BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA,
   BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
@@ -24,7 +25,7 @@ function command(overrides = {}) {
     requestId: 'runtime-data-preservation-0001',
     operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -38,7 +39,7 @@ function command(overrides = {}) {
 function comment(payload = command(), overrides = {}) {
   return {
     id: 2055001,
-    html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/1507#issuecomment-2055001',
+    html_url: `https://github.com/Cheekyfellastef/stephan-os/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}#issuecomment-2055001`,
     created_at: NOW.toISOString(),
     user: { login: 'Cheekyfellastef' },
     body: `\`\`\`${BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(payload)}\n\`\`\``,

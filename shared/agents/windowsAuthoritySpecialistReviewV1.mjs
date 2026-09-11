@@ -142,6 +142,15 @@ function forbidPattern(findings, source, pattern, code, summary, path) {
   if (pattern.test(source)) findings.push(mailboxRolloverFinding(code, summary, path));
 }
 
+const MAILBOX_INSTALLER_GENERIC_EXECUTION_PATTERN = /Invoke-Expression|\biex\b|\bStart-Process\b|\bStop-Process\b|\btaskkill(?:\.exe)?\b|cmd(?:\.exe)?\s+\/c|powershell(?:\.exe)?\s+-command/i;
+const MAILBOX_INSTALLER_SOURCE_CONTROL_COMMAND_PATTERN = /(?:^|[\r\n;{}|&]\s*)(?:git(?:\.exe)?|gh(?:\.exe)?)(?=\s|$)/im;
+
+export function hasForbiddenMailboxInstallerExecutionForTest(source) {
+  const value = String(source ?? '');
+  return MAILBOX_INSTALLER_GENERIC_EXECUTION_PATTERN.test(value)
+    || MAILBOX_INSTALLER_SOURCE_CONTROL_COMMAND_PATTERN.test(value);
+}
+
 function inspectMailboxInstaller(source) {
   const path = WINDOWS_AUTHORITY_MAILBOX_ROLLOVER_PATHS_V1[0];
   const findings = [];
@@ -156,7 +165,9 @@ function inspectMailboxInstaller(source) {
   requirePattern(findings, source, /-RepetitionInterval\s+\(New-TimeSpan\s+-Minutes\s+1\)/i, 'mailbox-rollover-installer-primary-cadence-missing', 'Installer must retain one-minute primary polling.', path);
   requirePattern(findings, source, /-RepetitionInterval\s+\(New-TimeSpan\s+-Minutes\s+5\)/i, 'mailbox-rollover-installer-compat-cadence-missing', 'Installer must retain the five-minute compatibility trigger.', path);
   requirePattern(findings, source, /Start-ScheduledTask\s+-TaskName\s+\$taskName/i, 'mailbox-rollover-installer-start-not-fixed', 'Optional immediate start must target only the fixed mailbox task.', path);
-  forbidPattern(findings, source, /Invoke-Expression|\biex\b|\bStart-Process\b|\bStop-Process\b|\btaskkill(?:\.exe)?\b|cmd(?:\.exe)?\s+\/c|powershell(?:\.exe)?\s+-command|\bgh(?:\.exe)?\b|\bgit(?:\.exe)?\b/i, 'mailbox-rollover-installer-generic-execution-forbidden', 'Installer may not gain generic shell, process or source-control execution authority.', path);
+  if (hasForbiddenMailboxInstallerExecutionForTest(source)) {
+    findings.push(mailboxRolloverFinding('mailbox-rollover-installer-generic-execution-forbidden', 'Installer may not gain generic shell, process or source-control execution authority.', path));
+  }
   return findings;
 }
 

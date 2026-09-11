@@ -59,7 +59,7 @@ async function createGitHubAuthorityFixture(paths, suffix = 'dispatch-head-race'
     requestId: mailboxRequestId,
     operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: 2158,
     state: 'ACCEPTED',
     acceptedAt: '2026-08-01T02:59:30.000Z',
     expectedHead: authorityHead,
@@ -109,7 +109,7 @@ test('runner recovers once, re-probes, publishes and keeps one executor', async 
     requestId: 'req-1507-recovery-github-0001',
     operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: 2158,
     state: 'ACCEPTED',
     acceptedAt: '2026-08-01T02:59:30.000Z',
     expectedHead: '6bafa9bdd4b62fc46821157bb4546229ad0680c7',
@@ -261,7 +261,7 @@ test('stale or head-unbound GitHub authority receipts are rejected', async () =>
   await mkdir(path.dirname(path.join(paths.workspaceRoot, ...authRef.split('/'))), { recursive: true });
   await writeFile(path.join(paths.workspaceRoot, ...mailboxRef.split('/')), JSON.stringify({
     schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1', requestId: 'req-1507-stale',
-    operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH', repository: 'Cheekyfellastef/stephan-os', issueNumber: 1507,
+    operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH', repository: 'Cheekyfellastef/stephan-os', issueNumber: 2158,
     state: 'ACCEPTED', acceptedAt: '2026-08-01T02:30:00.000Z', expectedHead: '6bafa9bdd4b62fc46821157bb4546229ad0680c7',
   }));
   await writeFile(path.join(paths.workspaceRoot, ...authRef.split('/')), JSON.stringify({
@@ -287,7 +287,7 @@ test('consumer rereads live checkout head before accepting GitHub authority', as
   await mkdir(path.dirname(path.join(paths.workspaceRoot, ...authRef.split('/'))), { recursive: true });
   await writeFile(path.join(paths.workspaceRoot, ...mailboxRef.split('/')), JSON.stringify({
     schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1', requestId: 'req-1507-head-race',
-    operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH', repository: 'Cheekyfellastef/stephan-os', issueNumber: 1507,
+    operation: 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH', repository: 'Cheekyfellastef/stephan-os', issueNumber: 2158,
     state: 'ACCEPTED', acceptedAt: '2026-08-01T02:59:30.000Z', expectedHead: '6bafa9bdd4b62fc46821157bb4546229ad0680c7',
   }));
   await writeFile(path.join(paths.workspaceRoot, ...authRef.split('/')), JSON.stringify({
