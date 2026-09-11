@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
-import { copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readlink, rm, unlink, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import {
   SOURCE_ARTIFACT_ESCROW_V1_SCHEMA,
   SOURCE_ARTIFACT_KIND,
 } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
+import { buildSourceWorkerCompletionProofV1 } from '../../shared/agents/sourceWorkerCompletionProofV1.mjs';
 import { resolveSharedWorkspaceRuntimeConfig } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 
 export const SOURCE_ARTIFACT_COMPLETE_FILE_BUNDLE_V1_SCHEMA = 'stephanos.source-artifact-complete-file-bundle.v1';
@@ -44,6 +46,14 @@ function canonicalPr(value) {
   if (value === null) return null;
   return positiveInteger(value);
 }
+function defaultRun(executable, args, options = {}) {
+  return spawnSync(executable, args, { cwd: options.cwd, env: options.env || process.env, encoding: 'utf8', shell: false, windowsHide: true });
+}
+function requiredGitText(result, label) {
+  const value = text(result?.stdout).toLowerCase();
+  if (result?.error || result?.status !== 0 || !value) throw new Error(`${label} failed: ${result?.error?.message || result?.stderr || `exit ${result?.status}`}`);
+  return value;
+}
 
 function validateArtifactFile(file = {}, changedFile = {}) {
   const path = safePath(file.path);
@@ -61,7 +71,7 @@ function validateArtifactFile(file = {}, changedFile = {}) {
   try { bytes = Buffer.from(text(file.contentBase64), 'base64'); }
   catch { return { ok: false, reason: 'SOURCE_ARTIFACT_FILE_CONTENT_INVALID' }; }
   if (deleted) {
-    if (afterBlobSha !== ZERO_SHA || bytes.length !== 0) return { ok: false, reason: 'SOURCE_ARTIFACT_DELETION_INVALID' };
+    if (afterBlobSha !== ZERO_SHA || bytes.length !== 0 || digest !== sha256(bytes)) return { ok: false, reason: 'SOURCE_ARTIFACT_DELETION_INVALID' };
   } else {
     if (!/^(100644|100755|120000)$/.test(mode)) return { ok: false, reason: 'SOURCE_ARTIFACT_FILE_MODE_INVALID' };
     if (sha256(bytes) !== digest || gitBlobSha(bytes) !== afterBlobSha) return { ok: false, reason: 'SOURCE_ARTIFACT_FILE_CONTENT_MISMATCH' };
@@ -180,5 +190,110 @@ export async function persistSourceArtifactEscrowV1(input = {}, options = {}) {
     testsRun: prepared.bundle.testsRun,
     testVerdicts: prepared.bundle.testVerdicts,
     diffCheckVerdict: 'PASS',
+  });
+}
+
+function stagedEntry(run, worktreePath, indexEnv, path) {
+  const result = run('git.exe', ['-C', worktreePath, 'ls-files', '--stage', '--', path], { cwd: worktreePath, env: indexEnv });
+  if (result.error || result.status !== 0) throw new Error(`Staged file inspection failed for ${path}.`);
+  const line = String(result.stdout || '').split(/\r?\n/).find(Boolean) || '';
+  if (!line) return { mode: '', blobSha: ZERO_SHA, deleted: true };
+  const match = /^(100644|100755|120000) ([0-9a-f]{40}) [0-3]\t/.exec(line);
+  if (!match) throw new Error(`Unsupported staged source identity for ${path}.`);
+  return { mode: match[1], blobSha: match[2], deleted: false };
+}
+
+async function sourceArtifactIdentityFromWorktree(action, execution, claim, options = {}) {
+  const worktreePath = resolve(text(action?.worktreePath));
+  const changedPaths = (Array.isArray(execution?.changedFiles) ? execution.changedFiles : []).map(safePath).filter(Boolean).sort();
+  if (!worktreePath || !changedPaths.length || changedPaths.length !== execution.changedFiles.length || new Set(changedPaths).size !== changedPaths.length) throw new Error('SOURCE_ARTIFACT_CHANGED_FILE_SET_INVALID');
+  const run = options.runCommand || defaultRun;
+  const env = options.env || process.env;
+  const exactParentHead = requiredGitText(run('git.exe', ['-C', worktreePath, 'rev-parse', 'HEAD'], { cwd: worktreePath, env }), 'Source parent HEAD inspection');
+  const exactParentTree = requiredGitText(run('git.exe', ['-C', worktreePath, 'rev-parse', 'HEAD^{tree}'], { cwd: worktreePath, env }), 'Source parent tree inspection');
+  const grantHead = text(options.actionGrant?.headSha || options.actionGrant?.sourceRevision).toLowerCase();
+  if (grantHead && grantHead !== exactParentHead) throw new Error('SOURCE_ARTIFACT_PARENT_HEAD_GRANT_MISMATCH');
+
+  const indexPath = `${claim.processingPath}.source-artifact-index`;
+  await rm(indexPath, { force: true });
+  const indexEnv = { ...env, GIT_INDEX_FILE: indexPath };
+  try {
+    for (const [args, label] of [
+      [['-C', worktreePath, 'read-tree', 'HEAD'], 'Source artifact read-tree'],
+      [['-C', worktreePath, 'add', '-A', '--', ...changedPaths], 'Source artifact staged capture'],
+    ]) {
+      const result = run('git.exe', args, { cwd: worktreePath, env: indexEnv });
+      if (result.error || result.status !== 0) throw new Error(`${label} failed.`);
+    }
+    const diffCheck = run('git.exe', ['-C', worktreePath, 'diff', '--cached', '--check', 'HEAD', '--'], { cwd: worktreePath, env: indexEnv });
+    if (diffCheck.error || diffCheck.status !== 0) throw new Error('SOURCE_ARTIFACT_DIFF_CHECK_FAILED');
+    const exactResultTree = requiredGitText(run('git.exe', ['-C', worktreePath, 'write-tree'], { cwd: worktreePath, env: indexEnv }), 'Source result tree inspection');
+    const changedFiles = [];
+    const artifactFiles = [];
+    for (const path of changedPaths) {
+      const before = run('git.exe', ['-C', worktreePath, 'rev-parse', `HEAD:${path}`], { cwd: worktreePath, env });
+      const beforeBlobSha = before.error || before.status !== 0 ? ZERO_SHA : text(before.stdout).toLowerCase();
+      const staged = stagedEntry(run, worktreePath, indexEnv, path);
+      let bytes = Buffer.alloc(0);
+      if (!staged.deleted) {
+        const absolutePath = resolve(worktreePath, path);
+        if (!within(worktreePath, absolutePath)) throw new Error('SOURCE_ARTIFACT_PATH_ESCAPE_BLOCKED');
+        bytes = staged.mode === '120000' ? Buffer.from(await readlink(absolutePath), 'utf8') : await readFile(absolutePath);
+        if (gitBlobSha(bytes) !== staged.blobSha) throw new Error(`SOURCE_ARTIFACT_BLOB_CONTENT_MISMATCH:${path}`);
+      }
+      const digest = sha256(bytes);
+      const identity = Object.freeze({ path, beforeBlobSha, afterBlobSha: staged.blobSha, sha256: digest });
+      changedFiles.push(identity);
+      artifactFiles.push(Object.freeze({ ...identity, mode: staged.mode, deleted: staged.deleted, contentBase64: bytes.toString('base64') }));
+    }
+    const grant = options.actionGrant || {};
+    const hasPrBinding = Object.hasOwn(grant, 'prNumber');
+    const canonicalPrValue = hasPrBinding ? (grant.prNumber === null ? null : positiveInteger(grant.prNumber)) : undefined;
+    return Object.freeze({
+      missionId: text(action.missionId),
+      actionId: text(action.actionId),
+      repository: text(action.repository),
+      canonicalIssue: positiveInteger(grant.issueNumber),
+      canonicalPr: canonicalPrValue,
+      canonicalBranch: text(action.branch),
+      exactParentHead,
+      exactParentTree,
+      exactResultTree,
+      executorIdentity: `mission-worker:${text(action.adapter, 'codex')}:${text(execution.resultId, action.actionId)}`,
+      changedFiles: Object.freeze(changedFiles),
+      artifactFiles: Object.freeze(artifactFiles),
+    });
+  } finally {
+    await rm(indexPath, { force: true });
+  }
+}
+
+export async function finalizeSourceArtifactEscrowFromWorktreeV1(action, execution, claim, options = {}) {
+  if (execution?.success !== true || !Array.isArray(execution.changedFiles) || execution.changedFiles.length === 0) return execution;
+  const identity = await sourceArtifactIdentityFromWorktree(action, execution, claim, options);
+  const persist = typeof options.persistSourceArtifactEscrow === 'function'
+    ? options.persistSourceArtifactEscrow
+    : (input) => persistSourceArtifactEscrowV1(input, {
+      env: options.env || process.env,
+      sharedWorkspaceRoot: options.sharedWorkspaceRoot,
+      repoRoot: options.repoRoot || process.cwd(),
+    });
+  const completion = await buildSourceWorkerCompletionProofV1({
+    ...identity,
+    success: true,
+    worktreePath: action.worktreePath,
+    requiredTests: action.requiredTests || [],
+    evidenceReceipts: execution.sourceTestReceipts || [],
+    completedAt: execution.completedAt,
+    commitMessage: text(options.commitMessage) || `Complete ${action.missionId}`,
+    persistSourceArtifactEscrow: persist,
+  });
+  return Object.freeze({
+    ...execution,
+    stage: completion.testsPassed ? 'TESTED' : 'SOURCE_CHANGED',
+    testsPassed: completion.testsPassed === true,
+    sourceArtifactEscrow: completion.sourceArtifactEscrow || null,
+    sourceArtifactIdentity: identity,
+    completionProofVerdict: completion.finalVerdict,
   });
 }
