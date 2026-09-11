@@ -7,6 +7,16 @@ import {
 } from './battle-bridge-ignition-sync-preflight.mjs';
 
 const HEAD = 'a'.repeat(40);
+const CANONICAL_REPO = '/canonical/stephan-os';
+
+function canonicalWindowsOptions(overrides = {}) {
+  return {
+    platform: 'win32',
+    repoRoot: CANONICAL_REPO,
+    canonicalRepoRoot: CANONICAL_REPO,
+    ...overrides,
+  };
+}
 
 test('non-Windows ignition sync preflight skips without invoking the Battle Bridge updater', async () => {
   let invoked = false;
@@ -25,10 +35,28 @@ test('non-Windows ignition sync preflight skips without invoking the Battle Brid
   assert.equal(result.classification, 'IGNITION_SYNC_PREFLIGHT_SKIPPED_NON_WINDOWS');
 });
 
-test('Windows ignition sync preflight reuses the canonical sync-and-refresh coordinator', async () => {
-  const calls = [];
+test('Windows proof worktree skips canonical updater instead of reaching sideways into main', async () => {
+  let invoked = false;
   const result = await runBattleBridgeIgnitionSyncPreflight({
     platform: 'win32',
+    repoRoot: '/proof/stephan-os-pr-2173',
+    canonicalRepoRoot: CANONICAL_REPO,
+    syncAndRefreshFn: async () => {
+      invoked = true;
+      return { ok: true };
+    },
+  });
+
+  assert.equal(invoked, false);
+  assert.equal(result.ok, true);
+  assert.equal(result.skipped, true);
+  assert.equal(result.classification, 'IGNITION_SYNC_PREFLIGHT_SKIPPED_NON_CANONICAL_CHECKOUT');
+  assert.equal(result.sourceHead, '');
+});
+
+test('Windows ignition sync preflight reuses the canonical sync-and-refresh coordinator', async () => {
+  const calls = [];
+  const result = await runBattleBridgeIgnitionSyncPreflight(canonicalWindowsOptions({
     syncAndRefreshFn: async (options) => {
       calls.push(options);
       return {
@@ -43,7 +71,7 @@ test('Windows ignition sync preflight reuses the canonical sync-and-refresh coor
         finalVerdict: 'SYNC_AND_REFRESH_PASS',
       };
     },
-  });
+  }));
 
   assert.deepEqual(calls, [{ platform: 'win32' }]);
   assert.equal(result.ok, true);
@@ -58,8 +86,7 @@ test('Windows ignition sync preflight reuses the canonical sync-and-refresh coor
 });
 
 test('Windows ignition sync preflight fails closed when canonical sync-and-refresh is blocked', async () => {
-  const result = await runBattleBridgeIgnitionSyncPreflight({
-    platform: 'win32',
+  const result = await runBattleBridgeIgnitionSyncPreflight(canonicalWindowsOptions({
     syncAndRefreshFn: async () => ({
       ok: false,
       blocker: 'BLOCKED_SOURCE_DIRTY',
@@ -68,7 +95,7 @@ test('Windows ignition sync preflight fails closed when canonical sync-and-refre
       refreshes: [],
       finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
     }),
-  });
+  }));
 
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'BLOCKED_SOURCE_DIRTY');
@@ -77,8 +104,7 @@ test('Windows ignition sync preflight fails closed when canonical sync-and-refre
 });
 
 test('Windows ignition sync preflight rejects a claimed success without exact-head proof', async () => {
-  const result = await runBattleBridgeIgnitionSyncPreflight({
-    platform: 'win32',
+  const result = await runBattleBridgeIgnitionSyncPreflight(canonicalWindowsOptions({
     syncAndRefreshFn: async () => ({
       ok: true,
       sourceHead: 'short-head',
@@ -87,7 +113,7 @@ test('Windows ignition sync preflight rejects a claimed success without exact-he
       controlPlaneRepairObserved: true,
       finalVerdict: 'SYNC_AND_REFRESH_PASS',
     }),
-  });
+  }));
 
   assert.equal(result.ok, false);
   assert.equal(result.sourceHead, '');
@@ -96,8 +122,7 @@ test('Windows ignition sync preflight rejects a claimed success without exact-he
 });
 
 test('Windows ignition sync preflight rejects a non-pass coordinator verdict', async () => {
-  const result = await runBattleBridgeIgnitionSyncPreflight({
-    platform: 'win32',
+  const result = await runBattleBridgeIgnitionSyncPreflight(canonicalWindowsOptions({
     syncAndRefreshFn: async () => ({
       ok: true,
       sourceHead: HEAD,
@@ -106,7 +131,7 @@ test('Windows ignition sync preflight rejects a non-pass coordinator verdict', a
       controlPlaneRepairObserved: true,
       finalVerdict: 'UNEXPECTED_SUCCESS_VERDICT',
     }),
-  });
+  }));
 
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'IGNITION_SYNC_AND_REFRESH_PROOF_INVALID');
