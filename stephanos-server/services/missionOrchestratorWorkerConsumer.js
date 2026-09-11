@@ -4,6 +4,7 @@ import { buildMissionEventFromWorkerResult } from '../../shared/agents/missionOr
 import { gateSourceWorkerCompletionV1 } from '../../shared/agents/sourceArtifactEscrowCompletionGateV1.mjs';
 import { appendMissionEvent } from './missionOrchestratorStore.js';
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
+import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 
 function queuePaths(root, adapter) {
   const adapterRoot = resolve(root, adapter);
@@ -70,12 +71,18 @@ function signedAction(item) {
 function requireSourceEscrowBeforeCompletion(execution = {}) {
   const changedFiles = Array.isArray(execution.changedFiles) ? execution.changedFiles.filter(Boolean) : [];
   if (execution.success !== true || changedFiles.length === 0) return;
+  if (!execution.sourceArtifactIdentity || typeof execution.sourceArtifactIdentity !== 'object' || Array.isArray(execution.sourceArtifactIdentity)) {
+    const error = new Error('SOURCE_ARTIFACT_ESCROW_IDENTITY_REQUIRED');
+    error.code = 'SOURCE_ARTIFACT_ESCROW_IDENTITY_REQUIRED';
+    throw error;
+  }
   const gate = gateSourceWorkerCompletionV1({
     stage: execution.stage || '',
     sourceChanged: true,
     testsPassed: execution.testsPassed === true,
     terminalRequested: true,
     escrow: execution.sourceArtifactEscrow || {},
+    expectedIdentity: execution.sourceArtifactIdentity,
     nowUtc: execution.completedAt || new Date().toISOString(),
   });
   if (!gate.terminalReceiptAllowed) {
@@ -111,7 +118,14 @@ async function processAgentClaim(adapter, options, execute) {
   claim.options = options;
   const action = claim.item.payload;
   try {
-    const execution = await execute(action, claim);
+    let execution = await execute(action, claim);
+    const changedFiles = Array.isArray(execution?.changedFiles) ? execution.changedFiles.filter(Boolean) : [];
+    if (execution?.success === true && changedFiles.length > 0) {
+      const finalize = typeof options.finalizeSourceArtifactEscrow === 'function'
+        ? options.finalizeSourceArtifactEscrow
+        : finalizeSourceArtifactEscrowFromWorktreeV1;
+      execution = await finalize(action, execution, claim, options);
+    }
     requireSourceEscrowBeforeCompletion(execution);
     const applied = await collectAgentWorkerResult({
       missionId: action.missionId,

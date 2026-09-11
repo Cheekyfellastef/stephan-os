@@ -12,6 +12,8 @@ const TASK_IDLE_INTERVAL_MS = 1_000;
 const DEGRADED_BASELINE_BLOCKERS = new Set([
   'INITIAL_WORKER_PROBE_FAILED',
   'INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY',
+  'WORKER_WATCHDOG_WORKER_RESTART_FAILURE',
+  'WORKER_WATCHDOG_RECOVERY_PUBLICATION_FAILURE',
 ]);
 const BOUNDED_MISSION_WORKER_RESTART_BLOCKERS = new Set([
   'MISSION_WORKER_RESTART_DEADLINE_EXHAUSTED',
@@ -69,6 +71,16 @@ function text(value, fallback = '') {
   return normalized || fallback;
 }
 
+export function shouldAttemptBootstrapRecovery(blocker, result = {}) {
+  const normalized = text(blocker);
+  if (!DEGRADED_BASELINE_BLOCKERS.has(normalized)) return false;
+  if (normalized === core.INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure
+    && result?.workerKilledObserved === true) {
+    return false;
+  }
+  return true;
+}
+
 export function projectBoundedMissionWorkerRestartBlocker(value) {
   const normalized = text(value);
   return BOUNDED_MISSION_WORKER_RESTART_BLOCKERS.has(normalized) ? normalized : '';
@@ -92,6 +104,7 @@ function blockedRecovery(blocker, firstResult, details = {}) {
     blocker,
     priorBlocker: text(firstResult?.blocker),
     bootstrapRecoveryOnly: details.bootstrapRecoveryOnly === true,
+    workerKilledObserved: details.workerKilledObserved === true || firstResult?.workerKilledObserved === true,
     acceptancePass: false,
     authority: core.WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY,
   });
@@ -242,7 +255,6 @@ async function recoverDegradedBaseline(options, firstResult) {
         recoveredHead: latestAssessment.headSha,
         recoveredPid: latestAssessment.pid,
         workerKilled: false,
-        workerKilledObserved: false,
         supervisorDetectedWorkerDown: latestStatus?.supervisorDetectedWorkerDown === true,
         supervisorRestartedWorker: latestStatus?.supervisorRestartedWorker === true,
         workerRecovered: true,
@@ -287,7 +299,7 @@ async function recoverDegradedBaseline(options, firstResult) {
 
 export async function runBattleBridgeWorkerWatchdogAcceptance(options = {}) {
   const firstResult = await core.runBattleBridgeWorkerWatchdogAcceptance(options);
-  if (firstResult?.ok || !DEGRADED_BASELINE_BLOCKERS.has(text(firstResult?.blocker))) {
+  if (firstResult?.ok || !shouldAttemptBootstrapRecovery(firstResult?.blocker, firstResult)) {
     return firstResult;
   }
   return recoverDegradedBaseline(options, firstResult);
