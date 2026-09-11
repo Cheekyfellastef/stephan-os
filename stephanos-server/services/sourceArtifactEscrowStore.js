@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { copyFile, mkdir, readFile, readlink, rm, unlink, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
@@ -45,9 +44,6 @@ function exactIso(value) {
 function canonicalPr(value) {
   if (value === null) return null;
   return positiveInteger(value);
-}
-function defaultRun(executable, args, options = {}) {
-  return spawnSync(executable, args, { cwd: options.cwd, env: options.env || process.env, encoding: 'utf8', shell: false, windowsHide: true });
 }
 function requiredGitText(result, label) {
   const value = text(result?.stdout).toLowerCase();
@@ -207,7 +203,8 @@ async function sourceArtifactIdentityFromWorktree(action, execution, claim, opti
   const worktreePath = resolve(text(action?.worktreePath));
   const changedPaths = (Array.isArray(execution?.changedFiles) ? execution.changedFiles : []).map(safePath).filter(Boolean).sort();
   if (!worktreePath || !changedPaths.length || changedPaths.length !== execution.changedFiles.length || new Set(changedPaths).size !== changedPaths.length) throw new Error('SOURCE_ARTIFACT_CHANGED_FILE_SET_INVALID');
-  const run = options.runCommand || defaultRun;
+  const run = options.runCommand;
+  if (typeof run !== 'function') throw new Error('SOURCE_ARTIFACT_BOUNDED_RUNNER_REQUIRED');
   const env = options.env || process.env;
   const exactParentHead = requiredGitText(run('git.exe', ['-C', worktreePath, 'rev-parse', 'HEAD'], { cwd: worktreePath, env }), 'Source parent HEAD inspection');
   const exactParentTree = requiredGitText(run('git.exe', ['-C', worktreePath, 'rev-parse', 'HEAD^{tree}'], { cwd: worktreePath, env }), 'Source parent tree inspection');
