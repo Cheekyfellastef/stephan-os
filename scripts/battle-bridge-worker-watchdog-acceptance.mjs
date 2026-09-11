@@ -12,6 +12,7 @@ const TASK_IDLE_INTERVAL_MS = 1_000;
 const DEGRADED_BASELINE_BLOCKERS = new Set([
   'INITIAL_WORKER_PROBE_FAILED',
   'INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY',
+  'WORKER_WATCHDOG_WORKER_RESTART_FAILURE',
   'WORKER_WATCHDOG_RECOVERY_PUBLICATION_FAILURE',
 ]);
 const BOUNDED_MISSION_WORKER_RESTART_BLOCKERS = new Set([
@@ -73,8 +74,10 @@ function text(value, fallback = '') {
 export function shouldAttemptBootstrapRecovery(blocker, result = {}) {
   const normalized = text(blocker);
   if (!DEGRADED_BASELINE_BLOCKERS.has(normalized)) return false;
-  if (normalized === core.INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure
-    && result?.workerKilledObserved === true) {
+  if ([
+    core.INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.workerRestartFailure,
+    core.INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure,
+  ].includes(normalized) && result?.workerKilledObserved === true) {
     return false;
   }
   return true;
