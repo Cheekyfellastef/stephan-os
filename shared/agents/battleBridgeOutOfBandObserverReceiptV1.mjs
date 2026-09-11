@@ -1,3 +1,5 @@
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
+
 export const BATTLE_BRIDGE_OUT_OF_BAND_OBSERVER_RECEIPT_SCHEMA = 'stephanos.battle-bridge-out-of-band-observer-receipt.v1';
 export const BATTLE_BRIDGE_OUT_OF_BAND_OBSERVER_RECEIPT_MARKER = '<!-- stephanos-battle-bridge-out-of-band-observer-receipt -->';
 
@@ -50,7 +52,7 @@ export function buildBattleBridgeOutOfBandObserverReceipt({
       schemaVersion: BATTLE_BRIDGE_OUT_OF_BAND_OBSERVER_RECEIPT_SCHEMA,
       requestId,
       repository: 'Cheekyfellastef/stephan-os',
-      issueNumber: 1507,
+      issueNumber: CANONICAL_MAILBOX_ISSUE,
       state: 'BLOCKED',
       blocker: 'OBSERVER_REQUEST_IDENTITY_INVALID',
       expectedHead,
@@ -104,7 +106,7 @@ export function buildBattleBridgeOutOfBandObserverReceipt({
     schemaVersion: BATTLE_BRIDGE_OUT_OF_BAND_OBSERVER_RECEIPT_SCHEMA,
     requestId,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     state,
     blocker,
     expectedHead,

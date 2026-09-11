@@ -1,6 +1,8 @@
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
+
 export const BATTLE_BRIDGE_MAIN_ADVANCE_SIGNAL_SCHEMA = 'stephanos.battle-bridge-main-advance-signal.v1';
 export const BATTLE_BRIDGE_MAIN_ADVANCE_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const BATTLE_BRIDGE_MAIN_ADVANCE_ISSUE = 1507;
+export const BATTLE_BRIDGE_MAIN_ADVANCE_ISSUE = CANONICAL_MAILBOX_ISSUE;
 export const BATTLE_BRIDGE_MAIN_ADVANCE_BRANCH = 'main';
 export const BATTLE_BRIDGE_MAIN_ADVANCE_EVENT = 'PULL_REQUEST_MERGED';
 export const BATTLE_BRIDGE_EXPRESS_SYNC_INTERVAL_MINUTES = 1;
