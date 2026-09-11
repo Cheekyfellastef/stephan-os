@@ -1,3 +1,5 @@
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
+
 export const STEPHANOS_CAPABILITY_REGISTRY_SCHEMA = 'stephanos.capability-registry.v1';
 export const STEPHANOS_CAPABILITY_REGISTRY_VERSION = '1.4.1';
 export const STEPHANOS_CAPABILITY_REGISTRY_REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -107,8 +109,8 @@ export const STEPHANOS_CAPABILITIES = Object.freeze([
     capabilityId: 'battle-bridge-github-command-mailbox',
     category: 'bounded-windows-transport',
     purpose: 'Owner-authored expiring allowlisted commands from GitHub to the real Windows Battle Bridge with accepted and terminal receipts.',
-    ownerIssue: 1507,
-    discoveryRoute: 'github-issue-1507',
+    ownerIssue: CANONICAL_MAILBOX_ISSUE,
+    discoveryRoute: `github-issue-${CANONICAL_MAILBOX_ISSUE}`,
     statusSource: 'github-command-receipts',
     operations: [
       'UPDATE_STEPHANOS_FROM_CHAT',
@@ -130,7 +132,7 @@ export const STEPHANOS_CAPABILITIES = Object.freeze([
     capabilityId: 'unattended-github-sync',
     category: 'source-deployment',
     purpose: 'Fetch and fast-forward canonical main only when source state is safe and unambiguous.',
-    ownerIssue: 1507,
+    ownerIssue: CANONICAL_MAILBOX_ISSUE,
     discoveryRoute: 'mailbox:READ_DEPLOYMENT_STATUS',
     statusSource: 'shared-agent-workspace',
     operations: ['FETCH_ORIGIN_MAIN', 'FAST_FORWARD_ONLY'],
@@ -140,7 +142,7 @@ export const STEPHANOS_CAPABILITIES = Object.freeze([
     capabilityId: 'post-sync-runtime-refresh-coordinator',
     category: 'runtime-deployment',
     purpose: 'Loads the newly deployed checkout in a fresh process, refreshes only affected registered runtimes, and requires exact-head proof before sync completion.',
-    ownerIssue: 1507,
+    ownerIssue: CANONICAL_MAILBOX_ISSUE,
     discoveryRoute: 'shared-workspace:post-sync-runtime-refresh-current',
     statusSource: 'shared-agent-workspace',
     operations: ['CLASSIFY_CHANGED_PATHS', 'REFRESH_UI_4173', 'RESTART_BACKEND_8787', 'RESTART_MISSION_WORKER', 'NATURAL_RELOAD_PROOF'],

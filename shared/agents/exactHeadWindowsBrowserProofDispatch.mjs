@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 import { createCodexQueueRecord, transitionCodexQueueRecord } from './codexDispatchQueue.mjs';
 import { dispatchQueuedCodexJob } from './automatedCodexDispatcher.mjs';
 import { createLocalCodexExecIntegration } from './localCodexExecIntegration.mjs';
@@ -40,7 +41,7 @@ export function buildExactHeadWindowsBrowserProofPacket(command = {}, timestampU
     : `pull-request head ${expectedHead}`;
   const created = createCodexQueueRecord({
     jobId: createWindowsSafeBrowserProofJobId(command.requestId),
-    issueNumber: 1507,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     branch: 'main',
     prompt: `PR #${command.prNumber}; ${targetDescription}. ${prompt}`,
     requestedProofCommands: [
