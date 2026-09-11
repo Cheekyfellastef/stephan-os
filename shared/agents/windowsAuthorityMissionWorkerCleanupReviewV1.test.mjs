@@ -10,6 +10,10 @@ import {
 
 const HEAD = '75b1c5521b88f32166ff92a6bbd8bce5546d5ee4';
 const BASE = '1995e63cfea17533d17a0244233a117f0a86900c';
+const RESERVE_HEAD = '5a81595bb6125e8579aa94362920e012ab6a26fb';
+const RESERVE_BASE = '373acf52588a461a7fe57a03767ca1591279d644';
+const POST_AUTHORITY_HEAD = 'eaaf856e8b49d590293deb4ac798220744a1a1ad';
+const POST_AUTHORITY_BASE = '5ed7621423095a0947378a27f3b5484719e6efcc';
 const ORPHAN_HEAD = '5e04abd527ae76f782799014e1c84c150ae0e7fe';
 const ORPHAN_BASE = '6555b6d9c7823522e1f4090d8ef160865e3beac1';
 const ORPHAN_BLOB_SHA = '24bdbd048e30eda6641a8122d60e9262521af376';
@@ -83,6 +87,63 @@ function Stop-NewlyStartedOwnedWorker {
 }
 `;
 
+const RESERVE_SAFE_SOURCE = `
+$missionWorkerStopTimeoutSeconds = 15
+$missionWorkerCleanupTimeoutSeconds = 10
+$missionWorkerFailureCleanupReserveSeconds = $missionWorkerStopTimeoutSeconds + $missionWorkerCleanupTimeoutSeconds + 5
+${SAFE_EQUIVALENT_SOURCE}
+function Invoke-MissionWorkerStartupHeartbeatProof {
+  if (-not (Wait-UntilOperationDeadline -ReserveSeconds $missionWorkerFailureCleanupReserveSeconds -Condition { return $false })) {
+    Stop-WithBlocker 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT'
+  }
+}
+`;
+
+const POST_AUTHORITY_SAFE_SOURCE = `
+${RESERVE_SAFE_SOURCE}
+function Wait-MissionWorkerSelfCleanupObservation {
+  param([Parameter(Mandatory = $true)][string]$ExpectedRepoRoot)
+  $observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(4)
+  $reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds(4)
+  if ($observationDeadlineUtc -gt $reserveDeadlineUtc) {
+    $observationDeadlineUtc = $reserveDeadlineUtc
+  }
+  while ([datetime]::UtcNow -lt $observationDeadlineUtc) {
+    try {
+      $task = Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker' -TaskPath '\\' -ErrorAction Stop
+      if ($task -and [string]$task.State -in @('Ready', 'Disabled')) {
+        $nodeProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -OperationTimeoutSec 1 -ErrorAction Stop)
+        $workers = @()
+        foreach ($process in $nodeProcesses) {
+          $executablePath = [string]$process.ExecutablePath
+          $commandLine = [string]$process.CommandLine
+          if ([string]::IsNullOrWhiteSpace($executablePath) -or [string]::IsNullOrWhiteSpace($commandLine)) {
+            return $false
+          }
+          [void][System.IO.Path]::GetFullPath($executablePath)
+          $arguments = @(ConvertFrom-WindowsCommandLine -CommandLine $commandLine)
+          if ($arguments.Count -eq 0) { return $false }
+          if (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot) {
+            $workers += $process
+          }
+        }
+        if ($workers.Count -eq 0 -and [datetime]::UtcNow -lt $observationDeadlineUtc) {
+          return $true
+        }
+      }
+    }
+    catch { return $false }
+    Start-Sleep -Milliseconds 100
+  }
+  return $false
+}
+function Invoke-PostAuthorityCleanupFailure {
+  if (-not (Wait-MissionWorkerSelfCleanupObservation -ExpectedRepoRoot $repoRoot)) {
+    $cleanupBlocker = 'MISSION_WORKER_DEADLINE_SELF_CLEANUP_NOT_PROVEN'
+  }
+}
+`;
+
 const ORPHAN_SAFE_SOURCE = readFileSync(
   new URL('./fixtures/mission-worker-orphan-capability-2105.ps1', import.meta.url),
   'utf8',
@@ -126,6 +187,64 @@ function input(source = SAFE_EQUIVALENT_SOURCE, overrides = {}) {
     }],
     ...overrides,
   };
+}
+
+function reserveInput(source = RESERVE_SAFE_SOURCE, overrides = {}) {
+  return input(source, {
+    prNumber: 2126,
+    branch: 'fix/mission-worker-failure-cleanup-reserve-v1',
+    sourceHead: RESERVE_HEAD,
+    baseSha: RESERVE_BASE,
+    lineageEvidence: {
+      schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      sourceHead: RESERVE_HEAD,
+      sourceCommitSha: RESERVE_HEAD,
+      baseSha: RESERVE_BASE,
+      liveMainBeforeSha: RESERVE_BASE,
+      liveMainAfterSha: RESERVE_BASE,
+      parents: ['01c48ccc2d1f5628a95d3429d8db44a486f4499a', RESERVE_BASE],
+      comparison: {
+        status: 'ahead', aheadBy: 4, behindBy: 0,
+        baseCommitSha: RESERVE_BASE, mergeBaseCommitSha: RESERVE_BASE,
+      },
+    },
+    sources: [{
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os', path: PATH, ref: RESERVE_HEAD, exists: true,
+      size: Buffer.byteLength(source, 'utf8'), blobSha: gitBlobSha(source), content: source,
+    }],
+    ...overrides,
+  });
+}
+
+function postAuthorityInput(source = POST_AUTHORITY_SAFE_SOURCE, overrides = {}) {
+  return input(source, {
+    prNumber: 2152,
+    branch: 'fix/mission-worker-post-authority-observation-v1',
+    sourceHead: POST_AUTHORITY_HEAD,
+    baseSha: POST_AUTHORITY_BASE,
+    lineageEvidence: {
+      schemaVersion: 'stephanos.windows-authority-reconciliation-lineage.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      sourceHead: POST_AUTHORITY_HEAD,
+      sourceCommitSha: POST_AUTHORITY_HEAD,
+      baseSha: POST_AUTHORITY_BASE,
+      liveMainBeforeSha: POST_AUTHORITY_BASE,
+      liveMainAfterSha: POST_AUTHORITY_BASE,
+      parents: [POST_AUTHORITY_BASE],
+      comparison: {
+        status: 'ahead', aheadBy: 3, behindBy: 0,
+        baseCommitSha: POST_AUTHORITY_BASE, mergeBaseCommitSha: POST_AUTHORITY_BASE,
+      },
+    },
+    sources: [{
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os', path: PATH, ref: POST_AUTHORITY_HEAD, exists: true,
+      size: Buffer.byteLength(source, 'utf8'), blobSha: gitBlobSha(source), content: source,
+    }],
+    ...overrides,
+  });
 }
 
 function orphanInput(source = ORPHAN_SAFE_SOURCE, overrides = {}) {
@@ -186,6 +305,81 @@ test('cleanup generic execution and caller-selected authority remain rejected', 
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-generic-execution-forbidden'));
   assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-caller-authority-forbidden'));
+});
+
+test('exact #2126 cleanup reserve profile is eligible and clean only on its exact branch', () => {
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(reserveInput());
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true);
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_RESERVE_CLEAN');
+  assert.ok(result.proofRefs.some((item) => item.includes('derived-failure-cleanup-window')));
+  assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(reserveInput(RESERVE_SAFE_SOURCE, { branch: 'other' })).eligible, false);
+  assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(reserveInput(RESERVE_SAFE_SOURCE, { prNumber: 2127 })).eligible, false);
+});
+
+test('#2126 reserve review rejects changed budgets, legacy reserve and duplicated wiring', () => {
+  for (const [unsafe, code] of [
+    [RESERVE_SAFE_SOURCE.replace('$missionWorkerStopTimeoutSeconds = 15', '$missionWorkerStopTimeoutSeconds = 16'), 'mission-worker-cleanup-reserve-stop-budget-changed'],
+    [RESERVE_SAFE_SOURCE.replace('$missionWorkerCleanupTimeoutSeconds = 10', '$missionWorkerCleanupTimeoutSeconds = 9'), 'mission-worker-cleanup-reserve-cleanup-budget-changed'],
+    [RESERVE_SAFE_SOURCE.replace('+ $missionWorkerCleanupTimeoutSeconds + 5', '+ $missionWorkerCleanupTimeoutSeconds + 4'), 'mission-worker-cleanup-reserve-derivation-invalid'],
+    [RESERVE_SAFE_SOURCE.replace('-ReserveSeconds $missionWorkerFailureCleanupReserveSeconds', '-ReserveSeconds 8'), 'mission-worker-cleanup-reserve-heartbeat-wait-missing'],
+    [`${RESERVE_SAFE_SOURCE}\n$missionWorkerFailureCleanupReserveSeconds = 30\n`, 'mission-worker-cleanup-reserve-shape-not-singleton'],
+  ]) {
+    const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(reserveInput(unsafe));
+    assert.equal(result.eligible, true);
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some((item) => item.code === code));
+  }
+});
+
+test('exact #2152 post-authority observation profile is eligible and clean only on its exact branch', () => {
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(postAuthorityInput());
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true);
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_MISSION_WORKER_POST_AUTHORITY_OBSERVATION_CLEAN');
+  assert.ok(result.proofRefs.some((item) => item.includes('fail-closed-uninspectable-node')));
+  assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(postAuthorityInput(POST_AUTHORITY_SAFE_SOURCE, { branch: 'other' })).eligible, false);
+  assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(postAuthorityInput(POST_AUTHORITY_SAFE_SOURCE, { prNumber: 2153 })).eligible, false);
+});
+
+test('#2152 observer rejects removed deadline, task and live Node identity boundaries', () => {
+  for (const [unsafe, code] of [
+    [POST_AUTHORITY_SAFE_SOURCE.replace('$observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(4)', '$observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(5)'), 'mission-worker-post-authority-four-second-window-missing'],
+    [POST_AUTHORITY_SAFE_SOURCE.replace('$reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds(4)', '$reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds(5)'), 'mission-worker-post-authority-reserve-cap-missing'],
+    [POST_AUTHORITY_SAFE_SOURCE.replace("[string]$task.State -in @('Ready', 'Disabled')", "[string]$task.State -in @('Ready', 'Running')"), 'mission-worker-post-authority-terminal-task-state-missing'],
+    [POST_AUTHORITY_SAFE_SOURCE.replace('-OperationTimeoutSec 1 -ErrorAction Stop', '-ErrorAction Stop'), 'mission-worker-post-authority-node-query-not-fixed'],
+    [POST_AUTHORITY_SAFE_SOURCE.replace('foreach ($process in $nodeProcesses)', 'foreach ($process in @())'), 'mission-worker-post-authority-node-enumeration-missing'],
+    [POST_AUTHORITY_SAFE_SOURCE.replace('$executablePath = [string]$process.ExecutablePath', '$executablePath = $null'), 'mission-worker-post-authority-executable-inspection-missing'],
+    [POST_AUTHORITY_SAFE_SOURCE.replace('$commandLine = [string]$process.CommandLine', '$commandLine = $null'), 'mission-worker-post-authority-command-inspection-missing'],
+    [POST_AUTHORITY_SAFE_SOURCE.replace('if ([string]::IsNullOrWhiteSpace($executablePath) -or [string]::IsNullOrWhiteSpace($commandLine)) {', 'if ($false) {'), 'mission-worker-post-authority-uninspectable-node-not-blocked'],
+    [POST_AUTHORITY_SAFE_SOURCE.replace('[void][System.IO.Path]::GetFullPath($executablePath)', '$null = $executablePath'), 'mission-worker-post-authority-executable-normalization-missing'],
+    [POST_AUTHORITY_SAFE_SOURCE.replace('$arguments = @(ConvertFrom-WindowsCommandLine -CommandLine $commandLine)', '$arguments = @("node", "worker")'), 'mission-worker-post-authority-command-parse-missing'],
+    [POST_AUTHORITY_SAFE_SOURCE.replace('if ($arguments.Count -eq 0) { return $false }', 'if ($false) { return $false }'), 'mission-worker-post-authority-malformed-command-not-blocked'],
+    [POST_AUTHORITY_SAFE_SOURCE.replace('Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot', '$true'), 'mission-worker-post-authority-canonical-classifier-missing'],
+    [POST_AUTHORITY_SAFE_SOURCE.replace('$workers.Count -eq 0 -and [datetime]::UtcNow -lt $observationDeadlineUtc', '$workers.Count -ge 0'), 'mission-worker-post-authority-absence-proof-missing'],
+    [POST_AUTHORITY_SAFE_SOURCE.replace('catch { return $false }', 'catch { }'), 'mission-worker-post-authority-observation-failure-not-blocked'],
+  ]) {
+    const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(postAuthorityInput(unsafe));
+    assert.equal(result.eligible, true);
+    assert.equal(result.clean, false, code);
+    assert.ok(result.findings.some((item) => item.code === code), code);
+  }
+});
+
+test('#2152 observer cannot mutate deadline, process or Scheduled Task authority', () => {
+  for (const [addition, code] of [
+    ["\n  $script:operationDeadlineUtc = [datetime]::UtcNow.AddMinutes(5)", 'mission-worker-post-authority-deadline-mutation-forbidden'],
+    ["\n  Stop-Process -Id 1234", 'mission-worker-post-authority-mutation-forbidden'],
+    ["\n  Start-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker'", 'mission-worker-post-authority-mutation-forbidden'],
+  ]) {
+    const unsafe = POST_AUTHORITY_SAFE_SOURCE.replace(
+      'function Wait-MissionWorkerSelfCleanupObservation {',
+      `function Wait-MissionWorkerSelfCleanupObservation {${addition}`,
+    );
+    const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(postAuthorityInput(unsafe));
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some((item) => item.code === code));
+  }
 });
 
 test('exact #2105 already-hardened source is eligible and clean without replaying the repair', () => {

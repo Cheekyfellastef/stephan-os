@@ -91,7 +91,11 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
   if (!validation.ok) return unavailableFeed(validation);
 
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
-  const feed = await readSharedWorkspaceDashboardFeed({ ...input, root: validation.root });
+  const feed = await readSharedWorkspaceDashboardFeed({
+    ...input,
+    root: validation.root,
+    recordScope: 'full-history',
+  });
   const live = await resolveLiveProjection(input, nowMs);
   const records = feed.records || {};
   const projection = overlayGoalDashboardWithLivePortfolio({

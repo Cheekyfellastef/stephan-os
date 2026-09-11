@@ -21,7 +21,8 @@ export function classifyAllowlistedRecoveryAdapterBlocker({
         continue;
       }
       const qualified = /^\+?\s*FullyQualifiedErrorId\s*:\s*([A-Z][A-Z0-9_]+)\s*$/i.exec(line);
-      const code = String(qualified?.[1] || '').toUpperCase();
+      const scriptPrefixed = /^[A-Za-z0-9._-]+\.ps1\s*:\s*([A-Z][A-Z0-9_]+)\s*$/i.exec(line);
+      const code = String(qualified?.[1] || scriptPrefixed?.[1] || '').toUpperCase();
       if (code && allowed.has(code)) emitted.add(code);
     }
   }
