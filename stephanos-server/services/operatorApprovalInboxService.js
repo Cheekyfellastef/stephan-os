@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { link, open, readFile, readdir, unlink } from 'node:fs/promises';
+import { link, open, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readBackendSharedWorkspaceDashboardFeed } from './sharedWorkspaceDashboardFeedService.js';
 import {
@@ -166,13 +166,12 @@ function validDecisionReceipt(record = {}, options = {}) {
     && record.protectedActionAuthorityGranted === false;
 }
 
-async function readDecisionReceipts(root, repoRoot) {
+async function readDecisionReceipts(root, repoRoot, decisions = []) {
   const resolved = resolveSharedWorkspacePath({ root, repoRoot, segments: ['receipts'] });
   if (!resolved.ok) return new Map();
-  let names = [];
-  try { names = await readdir(resolved.path); } catch { return new Map(); }
   const receipts = new Map();
-  for (const name of names.filter((item) => item.startsWith(RECEIPT_PREFIX) && item.endsWith('.json'))) {
+  for (const decision of decisions) {
+    const name = `${receiptIdForDecision(decision.decisionId)}.json`;
     try {
       const record = JSON.parse(await readFile(join(resolved.path, name), 'utf8'));
       if (validDecisionReceipt(record)) receipts.set(record.decisionId, record);
@@ -193,7 +192,7 @@ export async function readOperatorApprovalInbox(input = {}) {
   const decisions = Array.isArray(feed?.projection?.operatorAttention?.approvals)
     ? feed.projection.operatorAttention.approvals.filter((decision) => validateOperatorDecision(decision).valid)
     : [];
-  const receipts = root && root !== 'UNKNOWN' ? await readDecisionReceipts(root, input.repoRoot) : new Map();
+  const receipts = root && root !== 'UNKNOWN' ? await readDecisionReceipts(root, input.repoRoot, decisions) : new Map();
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const cards = decisions.map((decision) => publicDecision(
     decision,
@@ -411,3 +410,4 @@ export async function recordOperatorApprovalDecision(input = {}, options = {}) {
     protectedFollowUpRequired: decision.decisionKind === OPERATOR_DECISION_KIND.MERGE_APPROVAL,
   });
 }
+
