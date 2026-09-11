@@ -4,6 +4,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { SOURCE_ARTIFACT_ESCROW_V1_SCHEMA, SOURCE_ARTIFACT_KIND } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
 import { appendMissionEvent, createMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
 import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawReadonlyItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
@@ -30,6 +31,33 @@ function freshCodexCapacityRouting() {
     forgeSidecar: null,
   };
 }
+
+function validEscrow(missionId) {
+  const now = Date.now();
+  return {
+    schemaVersion: SOURCE_ARTIFACT_ESCROW_V1_SCHEMA,
+    artifactKind: SOURCE_ARTIFACT_KIND.COMPLETE_FILE_BUNDLE,
+    repository: 'Cheekyfellastef/stephan-os',
+    canonicalPr: 2163,
+    canonicalBranch: `fix/${missionId}-escrow-test`,
+    exactParentHead: 'a'.repeat(40),
+    exactParentTree: 'b'.repeat(40),
+    exactResultTree: 'c'.repeat(40),
+    localCommitSha: 'd'.repeat(40),
+    completeArtifactSha256: 'e'.repeat(64),
+    artifactRef: `shared-workspace://source-artifacts/${missionId}/proof`,
+    externallyReadable: true,
+    commitMessage: 'Test escrowed source completion',
+    executorIdentity: `mission-worker:${missionId}`,
+    createdAtUtc: new Date(now - 1000).toISOString(),
+    expiresAtUtc: new Date(now + 60_000).toISOString(),
+    changedFiles: [{ path: 'shared/agents/example.mjs', beforeBlobSha: '1'.repeat(40), afterBlobSha: '2'.repeat(40), sha256: '3'.repeat(64) }],
+    testsRun: ['node --test focused.test.mjs'],
+    testVerdicts: ['PASS'],
+    diffCheckVerdict: 'PASS',
+  };
+}
+
 async function runtime() {
   const parent = await mkdtemp(join(tmpdir(), 'mission-worker-consumer-'));
   const { privateKey } = generateKeyPairSync('ed25519');
@@ -77,13 +105,44 @@ test('signed worktree result advances to implementation', async () => {
   assert.equal(processed.applied.state.currentPhase, 'AGENT_IMPLEMENTATION');
 });
 
+test('source-changing Mission Worker result fails closed before terminal completion without external escrow', async () => {
+  const options = await runtime();
+  options.capacityRouting = freshCodexCapacityRouting();
+  await createMissionRecord(intent('unescrowed-source'), options);
+  const ready = await appendMissionEvent('unescrowed-source', { eventId: 'worktree', eventType: 'WORKTREE_READY', worktreePath: 'C:\\worktree', clean: true, receipt: proof('isolated worktree', 'worktree') }, options);
+  await publishMissionWorkerAction(ready.state, options);
+  const processed = await processNextCodexItem({
+    ...options,
+    executeCodexAction: async () => ({
+      success: true,
+      stage: 'TESTED',
+      testsPassed: true,
+      changedFiles: ['shared/agents/example.mjs'],
+      receipt: proof('codex result', 'result'),
+      evidenceReceipts: [proof('focused evidence', 'evidence')],
+      completedAt: new Date().toISOString(),
+    }),
+  });
+  assert.equal(processed.result.finalVerdict, 'MISSION_WORKER_ITEM_FAILED');
+  assert.equal(processed.result.error, 'SOURCE_ARTIFACT_ESCROW_REQUIRED');
+});
+
 test('Codex and OpenClaw adapters collect bounded results with one active writer', async () => {
   const codexOptions = await runtime();
   codexOptions.capacityRouting = freshCodexCapacityRouting();
   await createMissionRecord(intent('codex-test'), codexOptions);
   const ready = await appendMissionEvent('codex-test', { eventId: 'worktree', eventType: 'WORKTREE_READY', worktreePath: 'C:\\worktree', clean: true, receipt: proof('isolated worktree', 'worktree') }, codexOptions);
   await publishMissionWorkerAction(ready.state, codexOptions);
-  const codex = await processNextCodexItem({ ...codexOptions, executeCodexAction: async () => ({ success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result'), evidenceReceipts: [proof('focused evidence', 'evidence')] }) });
+  const codex = await processNextCodexItem({ ...codexOptions, executeCodexAction: async () => ({
+    success: true,
+    stage: 'TESTED',
+    testsPassed: true,
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: proof('codex result', 'result'),
+    evidenceReceipts: [proof('focused evidence', 'evidence')],
+    sourceArtifactEscrow: validEscrow('codex-test'),
+    completedAt: new Date().toISOString(),
+  }) });
   assert.equal(codex.applied.state.currentPhase, 'GITHUB_COMMIT');
 
   const openClawOptions = await runtime();
