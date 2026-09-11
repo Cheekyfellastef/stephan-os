@@ -76,6 +76,7 @@ function requireSourceEscrowBeforeCompletion(execution = {}) {
     testsPassed: execution.testsPassed === true,
     terminalRequested: true,
     escrow: execution.sourceArtifactEscrow || {},
+    expectedIdentity: execution.sourceArtifactIdentity,
     nowUtc: execution.completedAt || new Date().toISOString(),
   });
   if (!gate.terminalReceiptAllowed) {
