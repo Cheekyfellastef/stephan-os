@@ -5,6 +5,12 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
   const router = express.Router();
 
   router.get('/dashboard-feed', async (_req, res) => {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+
     try {
       const feed = await readBackendSharedWorkspaceDashboardFeed({
         env,
