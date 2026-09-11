@@ -74,10 +74,8 @@ function text(value, fallback = '') {
 export function shouldAttemptBootstrapRecovery(blocker, result = {}) {
   const normalized = text(blocker);
   if (!DEGRADED_BASELINE_BLOCKERS.has(normalized)) return false;
-  if ([
-    core.INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.workerRestartFailure,
-    core.INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure,
-  ].includes(normalized) && result?.workerKilledObserved === true) {
+  if (normalized === core.INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure
+    && result?.workerKilledObserved === true) {
     return false;
   }
   return true;
