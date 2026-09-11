@@ -10,6 +10,7 @@ import {
 const head = '1'.repeat(40);
 const base = '2'.repeat(40);
 const tree = '3'.repeat(40);
+const authorizationCommentId = 5640927439;
 
 const command = {
   expectedHead: head,
@@ -36,7 +37,7 @@ test('derived workflow dispatch is complete and exact-head bound', () => {
   assert.equal(plan.ok, true);
   const args = buildProtectedOperatorWorkflowDispatchArgs(plan, {
     head: { ref: 'agent/example' },
-  }, tree);
+  }, tree, authorizationCommentId);
   const fields = args.filter((value) => typeof value === 'string' && value.includes('='));
   assert.deepEqual(fields, [
     'mode=user-owned-protected-squash',
@@ -50,5 +51,6 @@ test('derived workflow dispatch is complete and exact-head bound', () => {
     'independent_review_artifact_id=9256477379',
     `independent_review_artifact_digest=sha256:${'4'.repeat(64)}`,
     `independent_review_payload_sha256=${'5'.repeat(64)}`,
+    `authorization_comment_id=${authorizationCommentId}`,
   ]);
 });
