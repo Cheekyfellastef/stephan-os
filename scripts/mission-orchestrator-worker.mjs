@@ -525,6 +525,7 @@ export async function runMissionWorkerTick(options = {}) {
   const workerOptions = {
     ...options,
     actionGrant,
+    runCommand: options.runCommand || defaultRun,
     privateKeyPath: options.privateKeyPath
       || options.env?.STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH
       || process.env.STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH,
