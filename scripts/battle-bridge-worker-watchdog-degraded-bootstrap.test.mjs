@@ -5,6 +5,7 @@ import {
   APPROVED_WATCHDOG_TASK,
   APPROVED_WORKER_TASK,
   runBattleBridgeWorkerWatchdogAcceptance,
+  shouldAttemptBootstrapRecovery,
 } from './battle-bridge-worker-watchdog-acceptance.mjs';
 
 const expectedHead = 'a'.repeat(40);
@@ -84,6 +85,12 @@ function common(overrides = {}) {
   };
   return { base, getClock: () => clockMs, ...overrides };
 }
+
+test('watchdog recovery publication failure is admitted to the existing bounded bootstrap route', () => {
+  assert.equal(shouldAttemptBootstrapRecovery('WORKER_WATCHDOG_RECOVERY_PUBLICATION_FAILURE'), true);
+  assert.equal(shouldAttemptBootstrapRecovery('INITIAL_WORKER_PROBE_FAILED'), true);
+  assert.equal(shouldAttemptBootstrapRecovery('EXPECTED_HEAD_REQUIRED'), false);
+});
 
 test('degraded baseline is repaired only through the fixed installed watchdog and never directly killed', async () => {
   const fixture = common();
