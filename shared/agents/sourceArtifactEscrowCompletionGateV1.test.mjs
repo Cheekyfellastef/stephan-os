@@ -10,6 +10,8 @@ function validEscrow(overrides = {}) {
   return {
     schemaVersion: SOURCE_ARTIFACT_ESCROW_V1_SCHEMA,
     artifactKind: SOURCE_ARTIFACT_KIND.COMPLETE_FILE_BUNDLE,
+    missionId: 'goal-1567-r1',
+    actionId: 'goal-1567-r1-action',
     repository: 'Cheekyfellastef/stephan-os',
     canonicalPr: 2162,
     canonicalBranch: 'fix/lifeboat-stale-active-recovery-v1',
@@ -35,6 +37,8 @@ function validEscrow(overrides = {}) {
 function expectedIdentity(overrides = {}) {
   const escrow = validEscrow();
   return {
+    missionId: escrow.missionId,
+    actionId: escrow.actionId,
     repository: escrow.repository,
     canonicalPr: escrow.canonicalPr,
     canonicalBranch: escrow.canonicalBranch,
@@ -89,6 +93,8 @@ test('escrow from another mission identity cannot be replayed into completion', 
     stage: 'TESTED', sourceChanged: true, testsPassed: true, terminalRequested: true, nowUtc: NOW,
     escrow: validEscrow(),
     expectedIdentity: expectedIdentity({
+      missionId: 'goal-1567-r2',
+      actionId: 'goal-1567-r2-action',
       canonicalPr: 2163,
       canonicalBranch: 'fix/1567-source-artifact-escrow-completion-gate-v1',
       executorIdentity: 'mission-worker:1567',
@@ -98,6 +104,8 @@ test('escrow from another mission identity cannot be replayed into completion', 
   assert.equal(result.terminalReceiptAllowed, false);
   assert.equal(result.reviewHandoffAllowed, false);
   assert.equal(result.executorMayTerminate, false);
+  assert.ok(result.escrowErrors.includes('identity-missionId-mismatch'));
+  assert.ok(result.escrowErrors.includes('identity-actionId-mismatch'));
   assert.ok(result.escrowErrors.includes('identity-canonicalPr-mismatch'));
   assert.ok(result.escrowErrors.includes('identity-canonicalBranch-mismatch'));
   assert.ok(result.escrowErrors.includes('identity-executorIdentity-mismatch'));
