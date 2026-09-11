@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 import process from 'node:process';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { runBattleBridgeSyncAndRefresh } from './battle-bridge-github-sync-and-refresh.mjs';
+import {
+  resolveCanonicalSyncAndRefreshPaths,
+  runBattleBridgeSyncAndRefresh,
+} from './battle-bridge-github-sync-and-refresh.mjs';
 
 export const BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_SCHEMA = 'stephanos.battle-bridge-ignition-sync-preflight.v1';
 export const BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_RESULT_MARKER = 'BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_RESULT=';
 
 const SHA40 = /^[0-9a-f]{40}$/i;
 const SAFE_BLOCKER = /^[A-Z0-9_:-]{1,160}$/;
+const CURRENT_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 function text(value) {
   return String(value ?? '').trim();
@@ -22,6 +27,13 @@ function safeHead(value) {
 function safeBlocker(value, fallback) {
   const normalized = text(value);
   return SAFE_BLOCKER.test(normalized) ? normalized : fallback;
+}
+
+function sameCheckout(left, right, platform) {
+  const normalizedLeft = resolve(text(left)).replace(/[\\/]+$/, '');
+  const normalizedRight = resolve(text(right)).replace(/[\\/]+$/, '');
+  if (platform === 'win32') return normalizedLeft.toLowerCase() === normalizedRight.toLowerCase();
+  return normalizedLeft === normalizedRight;
 }
 
 function projectSyncAndRefreshResult(result = {}) {
@@ -38,6 +50,8 @@ function projectSyncAndRefreshResult(result = {}) {
 
 export async function runBattleBridgeIgnitionSyncPreflight({
   platform = process.platform,
+  repoRoot = CURRENT_REPO_ROOT,
+  canonicalRepoRoot = resolveCanonicalSyncAndRefreshPaths().repoRoot,
   syncAndRefreshFn = runBattleBridgeSyncAndRefresh,
 } = {}) {
   if (platform !== 'win32') {
@@ -46,6 +60,18 @@ export async function runBattleBridgeIgnitionSyncPreflight({
       ok: true,
       skipped: true,
       classification: 'IGNITION_SYNC_PREFLIGHT_SKIPPED_NON_WINDOWS',
+      sourceHead: '',
+      blocker: '',
+      finalVerdict: 'IGNITION_SYNC_PREFLIGHT_SKIPPED',
+    });
+  }
+
+  if (!sameCheckout(repoRoot, canonicalRepoRoot, platform)) {
+    return Object.freeze({
+      schemaVersion: BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_SCHEMA,
+      ok: true,
+      skipped: true,
+      classification: 'IGNITION_SYNC_PREFLIGHT_SKIPPED_NON_CANONICAL_CHECKOUT',
       sourceHead: '',
       blocker: '',
       finalVerdict: 'IGNITION_SYNC_PREFLIGHT_SKIPPED',
