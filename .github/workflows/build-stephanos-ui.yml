@@ -86,6 +86,9 @@ jobs:
           node --test --test-concurrency=1 \
             scripts/stephanos-build-utils.test.mjs \
             scripts/windows-ignition-browser-surfaces.test.mjs \
+            scripts/battle-bridge-ignition-sync-preflight.test.mjs \
+            scripts/battle-bridge-ignition-sync-package-contract.test.mjs \
+            scripts/battle-bridge-github-sync-and-refresh.test.mjs \
             scripts/run-battle-bridge-ignition.test.mjs \
             scripts/refresh-stephanos-ui-4173.test.mjs
 
