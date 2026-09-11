@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 import {
   CODEX_BANKED_RESET_EXECUTION_SURFACE,
   CODEX_BANKED_RESET_OPERATION,
@@ -33,7 +34,7 @@ import {
 
 export const BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA = 'stephanos.battle-bridge-github-command.v1';
 export const BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE = 1507;
+export const BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE = CANONICAL_MAILBOX_ISSUE;
 export const BATTLE_BRIDGE_GITHUB_COMMAND_AUTHOR = 'Cheekyfellastef';
 export const BATTLE_BRIDGE_GITHUB_COMMAND_MARKER = 'stephanos-battle-bridge-command';
 export const MISSION_ORCHESTRATOR_CANCEL_OPERATION = 'CANCEL_MISSION_ORCHESTRATOR_MISSION';
