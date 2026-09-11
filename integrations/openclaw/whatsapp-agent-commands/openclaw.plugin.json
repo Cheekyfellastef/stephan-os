@@ -1,0 +1,20 @@
+{
+  "id": "stephanos-whatsapp-agent-commands",
+  "name": "Stephanos WhatsApp Agent Commands",
+  "description": "Adds authorized /standalone, /scout-coder, and /scout_coder WhatsApp commands that route to explicit OpenClaw agent lanes.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "timeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 120000,
+        "default": 90000
+      }
+    }
+  }
+}
