@@ -42,9 +42,9 @@ test('already-current healthy Lifeboat reinstall is a proved idempotent success'
   assert.match(installer, /\$task\.Principal\.LogonType -ne 'Interactive'/);
   assert.match(installer, /\$task\.Principal\.RunLevel -ne 'Limited'/);
 
-  const branchStart = installer.indexOf('if ($null -ne $activeState -and $manifestSha256 -eq [string]$activeState.manifestSha256) {');
+  const branchStart = installer.indexOf('if ($null -ne $activeState -and $activeBankFreshHealthy -and $manifestSha256 -eq [string]$activeState.manifestSha256) {');
   const branchEnd = installer.indexOf('\n$targetRoot = Join-Path $banksRoot $targetBank', branchStart);
-  assert.ok(branchStart >= 0 && branchEnd > branchStart, 'same-manifest branch must be bounded before candidate promotion');
+  assert.ok(branchStart >= 0 && branchEnd > branchStart, 'healthy same-manifest branch must be bounded before candidate promotion');
   const sameManifestBranch = installer.slice(branchStart, branchEnd);
   assert.match(sameManifestBranch, /Assert-CanonicalScheduledTask -CurrentUser \$currentUser/);
   assert.match(sameManifestBranch, /Remove-Item -LiteralPath \$stageRoot -Recurse -Force/);
