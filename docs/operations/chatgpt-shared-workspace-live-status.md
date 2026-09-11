@@ -47,7 +47,7 @@ The same projection exposes the updater observation separately as `HEALTHY`, `RU
 
 The response also contains `windowsProofCoverage`. Each of source, built runtime, served runtime, UI 4173, backend 8787, OpenClaw 18789, Shared Workspace, Recovery Mesh, GitHub Command Mailbox, Mission Worker and the Windows execution surface is independently labelled `PROVEN`, `BLOCKED`, `STALE` or `UNPROVEN`, with its original observation timestamp and age. The aggregate may report `WINDOWS_PROOF_COVERAGE_COMPLETE` only when every required surface is currently proven. Regenerating the response never changes an evidence source timestamp.
 
-Authorised chats obtain read-only Windows diagnostics through the existing #1507 `RUN_BATTLE_BRIDGE_DIAGNOSTICS` mailbox operation and read the correlated terminal receipt. Stephan is not a PowerShell, screenshot or copy/paste courier. A dormant mailbox is itself a typed control-plane blocker; it is not an instruction to ask the operator to relay the proof manually.
+Authorised chats obtain read-only Windows diagnostics through the existing #2158 `RUN_BATTLE_BRIDGE_DIAGNOSTICS` mailbox operation and read the correlated terminal receipt. Stephan is not a PowerShell, screenshot or copy/paste courier. A dormant mailbox is itself a typed control-plane blocker; it is not an instruction to ask the operator to relay the proof manually.
 
 ## Stephanos as the conversation surface
 
@@ -67,4 +67,4 @@ Missing identity or source head is `UNPROVEN`, a fresh one-way route is `DEGRADE
 
 `READ_CONVERSATION_REPLY` reads only the exact deterministic outbox record for the originating message. A reply is usable only when recipient, requested entity, conversation, thread, correlation, reply-to message and expected source head all match. Missing, mismatched, invalid or stale records return a typed blocker rather than the latest unrelated message.
 
-The source contract is not live conversational acceptance. #1506/#1507 remain incomplete until fresh no-courier round trips separately prove Stephanos, OpenClaw and Codex replies from the Windows Shared Workspace, and until a newly registered future participant can join through a capability record without source changes to the relay. A healthy port without a correlated reply does not satisfy that gate.
+The source contract is not live conversational acceptance. #1506/#2158 remain incomplete until fresh no-courier round trips separately prove Stephanos, OpenClaw and Codex replies from the Windows Shared Workspace, and until a newly registered future participant can join through a capability record without source changes to the relay. A healthy port without a correlated reply does not satisfy that gate.
