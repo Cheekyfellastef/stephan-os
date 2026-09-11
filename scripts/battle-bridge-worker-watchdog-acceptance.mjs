@@ -70,8 +70,14 @@ function text(value, fallback = '') {
   return normalized || fallback;
 }
 
-export function shouldAttemptBootstrapRecovery(blocker) {
-  return DEGRADED_BASELINE_BLOCKERS.has(text(blocker));
+export function shouldAttemptBootstrapRecovery(blocker, result = {}) {
+  const normalized = text(blocker);
+  if (!DEGRADED_BASELINE_BLOCKERS.has(normalized)) return false;
+  if (normalized === core.INSTALLED_WATCHDOG_RECOVERY_CLASSIFICATIONS.recoveryPublicationFailure
+    && result?.workerKilledObserved === true) {
+    return false;
+  }
+  return true;
 }
 
 export function projectBoundedMissionWorkerRestartBlocker(value) {
@@ -292,7 +298,7 @@ async function recoverDegradedBaseline(options, firstResult) {
 
 export async function runBattleBridgeWorkerWatchdogAcceptance(options = {}) {
   const firstResult = await core.runBattleBridgeWorkerWatchdogAcceptance(options);
-  if (firstResult?.ok || !shouldAttemptBootstrapRecovery(firstResult?.blocker)) {
+  if (firstResult?.ok || !shouldAttemptBootstrapRecovery(firstResult?.blocker, firstResult)) {
     return firstResult;
   }
   return recoverDegradedBaseline(options, firstResult);
