@@ -6,6 +6,10 @@ const SOURCE_MOVEMENT_STAGES = new Set(['SOURCE_CHANGED', 'TESTED']);
 
 function text(value) { return String(value ?? '').trim(); }
 function lower(value) { return text(value).toLowerCase(); }
+function positiveInteger(value) {
+  const normalized = Number(value);
+  return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : null;
+}
 
 function changedFileIdentity(files = []) {
   return (Array.isArray(files) ? files : [])
@@ -19,22 +23,40 @@ function changedFileIdentity(files = []) {
 }
 
 function escrowIdentityErrors(escrow = {}, expected = {}) {
-  if (!expected || typeof expected !== 'object' || Array.isArray(expected)) return [];
+  if (!expected || typeof expected !== 'object' || Array.isArray(expected)) return ['identity-expected-missing'];
   const errors = [];
-  const equalText = (field, normalizer = text) => {
+  const equalRequiredText = (field, normalizer = text) => {
     const wanted = normalizer(expected[field]);
-    if (wanted && normalizer(escrow[field]) !== wanted) errors.push(`identity-${field}-mismatch`);
+    if (!wanted) errors.push(`identity-${field}-missing`);
+    else if (normalizer(escrow[field]) !== wanted) errors.push(`identity-${field}-mismatch`);
   };
-  equalText('repository');
-  if (Number.isInteger(expected.canonicalPr) && Number(escrow.canonicalPr) !== expected.canonicalPr) errors.push('identity-canonicalPr-mismatch');
-  equalText('canonicalBranch');
-  equalText('exactParentHead', lower);
-  equalText('exactParentTree', lower);
-  equalText('exactResultTree', lower);
-  equalText('executorIdentity');
+  equalRequiredText('missionId');
+  equalRequiredText('actionId');
+  equalRequiredText('repository');
+  equalRequiredText('canonicalBranch');
+  equalRequiredText('exactParentHead', lower);
+  equalRequiredText('exactParentTree', lower);
+  equalRequiredText('exactResultTree', lower);
+  equalRequiredText('executorIdentity');
+
+  if (!Object.hasOwn(expected, 'canonicalPr')) {
+    errors.push('identity-canonicalPr-missing');
+  } else if (expected.canonicalPr === null) {
+    if (escrow.canonicalPr !== null) errors.push('identity-canonicalPr-mismatch');
+    const issue = positiveInteger(expected.canonicalIssue);
+    if (!issue) errors.push('identity-canonicalIssue-missing');
+    else if (positiveInteger(escrow.canonicalIssue) !== issue) errors.push('identity-canonicalIssue-mismatch');
+  } else {
+    const pr = positiveInteger(expected.canonicalPr);
+    if (!pr) errors.push('identity-canonicalPr-invalid');
+    else if (positiveInteger(escrow.canonicalPr) !== pr) errors.push('identity-canonicalPr-mismatch');
+    const issue = positiveInteger(expected.canonicalIssue);
+    if (issue && positiveInteger(escrow.canonicalIssue) !== issue) errors.push('identity-canonicalIssue-mismatch');
+  }
 
   const expectedFiles = changedFileIdentity(expected.changedFiles);
-  if (expectedFiles.length > 0) {
+  if (expectedFiles.length === 0) errors.push('identity-changedFiles-missing');
+  else {
     const actualFiles = changedFileIdentity(escrow.changedFiles);
     if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) errors.push('identity-changedFiles-mismatch');
   }
@@ -90,7 +112,7 @@ export function gateSourceWorkerCompletionV1(input = {}) {
       ...base,
       escrowErrors: identityErrors,
       blocker: 'SOURCE_ARTIFACT_ESCROW_IDENTITY_MISMATCH',
-      exactNextAction: 'Preserve the same mission and produce externally readable escrow whose repository, PR, branch, source trees, executor identity, and changed-file digests exactly match the claimed execution.',
+      exactNextAction: 'Preserve the same mission and produce externally readable escrow whose mission, owner, branch, source trees, executor identity, and changed-file digests exactly match the claimed execution.',
       finalVerdict: 'SOURCE_ARTIFACT_ESCROW_IDENTITY_MISMATCH',
     });
   }

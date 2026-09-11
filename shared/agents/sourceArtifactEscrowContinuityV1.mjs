@@ -35,6 +35,15 @@ const EXPLICIT_TIMEZONE = /(?:Z|[+-][0-9]{2}:[0-9]{2})$/;
 function text(value) { return String(value ?? '').trim(); }
 function list(value) { return Array.isArray(value) ? value : []; }
 function integer(value) { const parsed = Number.parseInt(value, 10); return Number.isSafeInteger(parsed) ? parsed : 0; }
+function canonicalPr(value) { return value === null ? null : integer(value); }
+function canonicalOwnerMatches(left = {}, right = {}) {
+  const leftPr = canonicalPr(left.canonicalPr);
+  const rightPr = canonicalPr(right.canonicalPr);
+  if (leftPr !== rightPr) return false;
+  if (leftPr === null) return integer(left.canonicalIssue) > 0 && integer(left.canonicalIssue) === integer(right.canonicalIssue);
+  if (integer(left.canonicalIssue) > 0 || integer(right.canonicalIssue) > 0) return integer(left.canonicalIssue) === integer(right.canonicalIssue);
+  return true;
+}
 function isoMilliseconds(value) {
   const candidate = text(value);
   return EXPLICIT_TIMEZONE.test(candidate) ? Date.parse(candidate) : Number.NaN;
@@ -65,11 +74,15 @@ export function validateSourceArtifactEscrowV1(escrow = {}, nowUtc = new Date().
   const expiresMs = isoMilliseconds(escrow.expiresAtUtc);
   const changedFiles = normalizedChangedFiles(escrow.changedFiles);
   const paths = changedFiles.map((file) => file.path);
+  const prNumber = canonicalPr(escrow.canonicalPr);
+  const issueNumber = integer(escrow.canonicalIssue);
 
   if (escrow.schemaVersion !== SOURCE_ARTIFACT_ESCROW_V1_SCHEMA) errors.push('invalid-schema-version');
   if (!Object.values(SOURCE_ARTIFACT_KIND).includes(escrow.artifactKind)) errors.push('invalid-artifact-kind');
   if (escrow.repository !== REPOSITORY) errors.push('invalid-repository');
-  if (integer(escrow.canonicalPr) < 1) errors.push('invalid-canonical-pr');
+  if (!(prNumber === null || prNumber > 0)) errors.push('invalid-canonical-pr');
+  if (prNumber === null && issueNumber < 1) errors.push('invalid-canonical-issue');
+  if (escrow.canonicalIssue !== null && escrow.canonicalIssue !== undefined && issueNumber < 1) errors.push('invalid-canonical-issue');
   if (!safeBranch(escrow.canonicalBranch)) errors.push('invalid-canonical-branch');
   if (!SHA.test(text(escrow.exactParentHead))) errors.push('invalid-parent-head');
   if (!SHA.test(text(escrow.exactParentTree))) errors.push('invalid-parent-tree');
@@ -104,7 +117,8 @@ function baseProjection(escrow = {}) {
   return {
     schemaVersion: SOURCE_ARTIFACT_PUBLICATION_RECOVERY_V1_SCHEMA,
     repository: REPOSITORY,
-    canonicalPr: integer(escrow.canonicalPr),
+    canonicalIssue: integer(escrow.canonicalIssue) || null,
+    canonicalPr: canonicalPr(escrow.canonicalPr),
     canonicalBranch: text(escrow.canonicalBranch),
     exactParentHead: text(escrow.exactParentHead).toLowerCase(),
     exactParentTree: text(escrow.exactParentTree).toLowerCase(),
@@ -125,7 +139,7 @@ function baseProjection(escrow = {}) {
 function publicationEvidenceMatches(escrow, evidence = {}) {
   return evidence.proven === true
     && evidence.repository === REPOSITORY
-    && integer(evidence.canonicalPr) === integer(escrow.canonicalPr)
+    && canonicalOwnerMatches(evidence, escrow)
     && text(evidence.canonicalBranch) === text(escrow.canonicalBranch)
     && text(evidence.previousHead).toLowerCase() === text(escrow.exactParentHead).toLowerCase()
     && SHA.test(text(evidence.newHead))
@@ -147,7 +161,7 @@ export function buildSourceArtifactPublicationRecoveryV1(input = {}) {
 
   const remote = input.canonicalRemote || {};
   if (remote.repository !== REPOSITORY
-      || integer(remote.canonicalPr) !== integer(escrow.canonicalPr)
+      || !canonicalOwnerMatches(remote, escrow)
       || text(remote.canonicalBranch) !== text(escrow.canonicalBranch)
       || text(remote.head).toLowerCase() !== text(escrow.exactParentHead).toLowerCase()) {
     return Object.freeze({ ...base, escrowValid: true, blocker: SOURCE_ARTIFACT_RECOVERY_STATE.BRANCH_DRIFTED, exactNextAction: 'Stop publication. Re-read the canonical branch and require a separately governed recovery plan; do not rebase, reset, force-update or rebuild the verified source artifact.', finalVerdict: SOURCE_ARTIFACT_RECOVERY_STATE.BRANCH_DRIFTED });
