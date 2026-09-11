@@ -9,7 +9,7 @@ import {
   createTileWorkspaceTelemetry,
 } from './tile-workspace-telemetry.js';
 
-function fixture() {
+function fixture({ observeWorkspaceLoads = false } = {}) {
   const projects = [
     { folder: 'music-tile', name: 'Music Tile', type: 'simulation', entry: 'apps/music-tile/index.html' },
     { folder: 'goal-dashboard', name: 'Goal Dashboard', type: 'workspace', entry: 'apps/goal-dashboard/index.html' },
@@ -29,13 +29,22 @@ function fixture() {
       return record;
     },
   };
+  let observerCallback = null;
+  const workspaceContent = { querySelectorAll: () => [] };
   const documentRef = {
     getElementById(id) {
-      if (id !== 'project-registry') return null;
-      return { querySelectorAll: () => ({ length: projects.length }) };
+      if (id === 'project-registry') return { querySelectorAll: () => ({ length: projects.length }) };
+      if (id === 'workspace-content' && observeWorkspaceLoads) return workspaceContent;
+      return null;
     },
   };
-  const windowRef = {};
+  const windowRef = observeWorkspaceLoads ? {
+    MutationObserver: class {
+      constructor(callback) { observerCallback = callback; }
+      observe() {}
+      disconnect() {}
+    },
+  } : {};
   const binding = createTileWorkspaceTelemetry({
     projects,
     eventBus,
@@ -45,7 +54,17 @@ function fixture() {
     documentRef,
     windowRef,
   });
-  return { projects, eventBus, systemState, services, writes, windowRef, binding };
+  return {
+    projects,
+    eventBus,
+    systemState,
+    services,
+    writes,
+    windowRef,
+    workspaceContent,
+    getObserverCallback: () => observerCallback,
+    binding,
+  };
 }
 
 test('universal telemetry starts with every registered tile covered', () => {
@@ -66,7 +85,7 @@ test('universal telemetry starts with every registered tile covered', () => {
   fx.binding.dispose();
 });
 
-test('tile launch and workspace lifecycle telemetry follow the canonical event bus', () => {
+test('mounted workspace remains LOADING until canonical load evidence arrives', () => {
   const fx = fixture();
   const music = fx.projects[0];
 
@@ -83,11 +102,25 @@ test('tile launch and workspace lifecycle telemetry follow the canonical event b
   let snapshot = fx.binding.service.getSnapshot();
   let row = snapshot.tiles.find((tile) => tile.tileId === 'music-tile');
   assert.equal(snapshot.activeTileId, 'music-tile');
-  assert.equal(row.lifecycleState, 'OPEN');
-  assert.equal(row.workspaceState, 'OPEN');
+  assert.equal(row.lifecycleState, 'MOUNTED');
+  assert.equal(row.workspaceState, 'LOADING');
   assert.equal(row.openCount, 1);
+  assert.equal(row.loadSuccessCount, 0);
   assert.ok(row.lastLaunchRequestedAt);
   assert.ok(row.lastOpenedAt);
+  assert.equal(row.lastLoadedAt, '');
+
+  fx.eventBus.emit('workspace:loaded', {
+    tileId: 'music-tile',
+    tileTitle: 'Music Tile',
+    source: 'workspace-iframe-load',
+  });
+  snapshot = fx.binding.service.getSnapshot();
+  row = snapshot.tiles.find((tile) => tile.tileId === 'music-tile');
+  assert.equal(row.lifecycleState, 'LOADED');
+  assert.equal(row.workspaceState, 'LOADED');
+  assert.equal(row.loadSuccessCount, 1);
+  assert.ok(row.lastLoadedAt);
 
   fx.eventBus.emit('workspace:closed');
   fx.eventBus.emit('tile.closed', { source: 'workspace' });
@@ -99,6 +132,32 @@ test('tile launch and workspace lifecycle telemetry follow the canonical event b
   assert.equal(row.workspaceState, 'CLOSED');
   assert.ok(row.lastClosedAt);
   assert.equal(snapshot.observedTileCount, 1);
+
+  fx.binding.dispose();
+});
+
+test('canonical workspace iframe load is converted into workspace:loaded telemetry', () => {
+  const fx = fixture({ observeWorkspaceLoads: true });
+  const listeners = new Map();
+  const iframe = {
+    tagName: 'IFRAME',
+    addEventListener(name, callback) { listeners.set(name, callback); },
+    querySelectorAll() { return []; },
+  };
+
+  fx.eventBus.emit('tile.focused', { tileId: 'goal-dashboard', tileTitle: 'Goal Dashboard', source: 'workspace' });
+  const observe = fx.getObserverCallback();
+  assert.equal(typeof observe, 'function');
+  observe([{ addedNodes: [iframe] }]);
+  assert.equal(typeof listeners.get('load'), 'function');
+
+  listeners.get('load')();
+  const row = fx.binding.service.getSnapshot().tiles.find((tile) => tile.tileId === 'goal-dashboard');
+  assert.equal(row.lifecycleState, 'LOADED');
+  assert.equal(row.workspaceState, 'LOADED');
+  assert.equal(row.loadSuccessCount, 1);
+  assert.ok(row.lastLoadedAt);
+  assert.equal(row.lastResult, 'workspace-loaded');
 
   fx.binding.dispose();
 });
@@ -120,6 +179,7 @@ test('workspace failure is visible without painting the tile healthy', () => {
   assert.equal(row.lifecycleState, 'FAILED');
   assert.equal(row.workspaceState, 'FAILED');
   assert.equal(row.failureCount, 1);
+  assert.equal(row.loadSuccessCount, 0);
   assert.equal(row.blocker, 'WORKSPACE_LAUNCH_FAILED');
   assert.ok(row.lastFailureAt);
 
