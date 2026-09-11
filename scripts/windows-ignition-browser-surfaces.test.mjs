@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
+import './battle-bridge-ignition-sync-preflight.test.mjs';
+import './battle-bridge-ignition-sync-package-contract.test.mjs';
+import './battle-bridge-github-sync-and-refresh.test.mjs';
+
 const launcherCmd = new URL('../windows/Launch-Stephanos-Local.cmd', import.meta.url);
 const launcherPs1 = new URL('../windows/Launch-Stephanos-Local.ps1', import.meta.url);
 const aiCoreHtml = new URL('../stephanos-ui/index.html', import.meta.url);
@@ -74,7 +78,7 @@ test('Windows ignition preflights only backend 8787 before entering the full sup
   const pkg = JSON.parse(await readFile(packageJson, 'utf8'));
   const entry = await readFile(ignitionEntry, 'utf8');
 
-  assert.equal(pkg.scripts['stephanos:ignite'], 'node scripts/run-battle-bridge-ignition-with-sync.mjs');
+  assert.equal(pkg.scripts['stephanos:ignite'], 'node scripts/run-battle-bridge-ignition.mjs');
   assert.equal(pkg.scripts['stephanos:ignite:supervisor'], 'node scripts/battle-bridge-ignition-supervisor.mjs');
   assert.match(entry, /backend-8787-preflight/);
   assert.match(entry, /start-stephanos-backend\.ps1/);
