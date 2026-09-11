@@ -86,9 +86,9 @@ function common(overrides = {}) {
   return { base, getClock: () => clockMs, ...overrides };
 }
 
-test('watchdog restart and publication failures enter bounded bootstrap only before any worker kill', () => {
+test('watchdog restart failure remains recoverable after the acceptance kill while publication failure fails closed', () => {
   assert.equal(shouldAttemptBootstrapRecovery('WORKER_WATCHDOG_WORKER_RESTART_FAILURE'), true);
-  assert.equal(shouldAttemptBootstrapRecovery('WORKER_WATCHDOG_WORKER_RESTART_FAILURE', { workerKilledObserved: true }), false);
+  assert.equal(shouldAttemptBootstrapRecovery('WORKER_WATCHDOG_WORKER_RESTART_FAILURE', { workerKilledObserved: true }), true);
   assert.equal(shouldAttemptBootstrapRecovery('WORKER_WATCHDOG_RECOVERY_PUBLICATION_FAILURE'), true);
   assert.equal(shouldAttemptBootstrapRecovery('WORKER_WATCHDOG_RECOVERY_PUBLICATION_FAILURE', { workerKilledObserved: true }), false);
   assert.equal(shouldAttemptBootstrapRecovery('INITIAL_WORKER_PROBE_FAILED'), true);
