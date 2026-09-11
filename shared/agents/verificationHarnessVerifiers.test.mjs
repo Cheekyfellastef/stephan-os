@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   BATTLE_BRIDGE_PREFLIGHT_PROOF_COMMAND,
   OPENCLAW_GATEWAY_VERDICTS,
+  PLUGIN_VERDICTS,
+  WORKER_VERDICTS,
   runBattleBridgePreflightVerifier,
   runVerificationHarness,
   runVerifier,
@@ -19,7 +21,7 @@ test('runner aggregates PASS checks into workspace proof emission', () => {
       BuildVerifier: { buildPassed: true, script: 'npm run stephanos:build', artifactScope: 'source-only' },
       BackendVerifier: { backendHealthy: true, httpStatus: 200, endpoint: 'http://127.0.0.1:8787/api/health' },
       FrontendVerifier: { frontendHealthy: true, uiReality: 'present', browserProof: 'provided' },
-      WorkerVerifier: { workerRunning: true, workerMode: 'read-only', taskState: 'ready' },
+      WorkerVerifier: { workerConfigured: true, workerRunning: true, workerMode: 'read-only', taskState: 'running' },
     },
   });
 
@@ -73,10 +75,36 @@ test('OpenClaw gateway verifier accepts executable gateway fixture', () => {
     command: 'node.exe npm/node_modules/openclaw/dist/index.js gateway --port 18789',
     safeRestartTarget: 'OpenClaw Gateway',
     safeRestartTargetVerified: true,
+    port: 18789,
   });
 
   assert.equal(result.status, 'PASS');
   assert.equal(result.finalVerdict, OPENCLAW_GATEWAY_VERDICTS.VERIFIED);
+});
+
+test('Worker verifier distinguishes not configured, stopped, and running states', () => {
+  const notConfigured = runVerifier('WorkerVerifier', {});
+  const stopped = runVerifier('WorkerVerifier', { workerConfigured: true, taskState: 'stopped', queueDirPresent: true });
+  const running = runVerifier('WorkerVerifier', { workerConfigured: true, workerRunning: true, taskState: 'running', queueDirPresent: true });
+
+  assert.equal(notConfigured.status, 'FAIL');
+  assert.equal(notConfigured.finalVerdict, WORKER_VERDICTS.NOT_CONFIGURED);
+  assert.equal(stopped.status, 'FAIL');
+  assert.equal(stopped.finalVerdict, WORKER_VERDICTS.CONFIGURED_STOPPED);
+  assert.equal(running.status, 'PASS');
+  assert.equal(running.finalVerdict, WORKER_VERDICTS.RUNNING);
+});
+
+test('Plugin verifier requires installed and loaded runtime evidence', () => {
+  const missing = runVerifier('PluginVerifier', { targetPluginSourcePresent: true });
+  const installed = runVerifier('PluginVerifier', { pluginInstalled: true, targetPluginSourcePresent: true, pluginId: 'stephanos-whatsapp-command' });
+  const loaded = runVerifier('PluginVerifier', { pluginInstalled: true, pluginLoaded: true, targetPluginSourcePresent: true, pluginId: 'stephanos-whatsapp-command' });
+
+  assert.equal(missing.finalVerdict, PLUGIN_VERDICTS.MISSING);
+  assert.equal(installed.status, 'FAIL');
+  assert.equal(installed.finalVerdict, PLUGIN_VERDICTS.INSTALLED_NOT_LOADED);
+  assert.equal(loaded.status, 'PASS');
+  assert.equal(loaded.finalVerdict, PLUGIN_VERDICTS.LOADED);
 });
 
 test('Battle Bridge preflight blocks with deterministic reasons', () => {
@@ -84,9 +112,9 @@ test('Battle Bridge preflight blocks with deterministic reasons', () => {
     git: { repoExists: true, branch: 'main', head: '4f0bbb24', originMain: '4f0bbb24', repoClean: true, ahead: 0, behind: 0, expectedHead: true },
     backend: { backendHealthy: true, httpStatus: 200, endpoint: 'http://127.0.0.1:8787/api/health' },
     openClawGateway: { endpoint: 'http://127.0.0.1:8790/health', httpStatus: 200, endpointIdentity: 'openclaw-readonly-adapter-stub', mode: 'readonly_status_only', canExecute: false, safeRestartTarget: 'none' },
-    worker: { workerRunning: true, workerMode: 'read-only', taskState: 'ready' },
+    worker: { workerConfigured: true, workerRunning: true, workerMode: 'read-only', taskState: 'running' },
     files: { filesPresent: true, sourcePresent: true, targetPluginSourcePresent: true },
-    plugin: { pluginRuntimePresent: true, targetPluginSourcePresent: true },
+    plugin: { pluginInstalled: true, pluginLoaded: true, targetPluginSourcePresent: true },
     task: { taskReady: true, stephanosBackendTask: 'ready' },
   }, { timestampUtc: '2026-07-01T00:00:00Z' });
 
@@ -101,9 +129,9 @@ test('Battle Bridge preflight passes only when all required evidence passes', ()
     git: { repoExists: true, branch: 'main', head: '4f0bbb24', originMain: '4f0bbb24', repoClean: true, ahead: 0, behind: 0, expectedHead: true },
     backend: { backendHealthy: true, httpStatus: 200, endpoint: 'http://127.0.0.1:8787/api/health' },
     openClawGateway: { endpoint: 'http://127.0.0.1:18789/health', httpStatus: 200, endpointIdentity: 'openclaw-executable-gateway', canExecute: true, command: 'node.exe npm/node_modules/openclaw/dist/index.js gateway --port 18789', safeRestartTarget: 'OpenClaw Gateway', safeRestartTargetVerified: true },
-    worker: { workerRunning: true, workerMode: 'read-only', taskState: 'ready' },
+    worker: { workerConfigured: true, workerRunning: true, workerMode: 'read-only', taskState: 'running' },
     files: { filesPresent: true, sourcePresent: true, targetPluginSourcePresent: true },
-    plugin: { pluginRuntimePresent: true, targetPluginSourcePresent: true },
+    plugin: { pluginInstalled: true, pluginLoaded: true, targetPluginSourcePresent: true },
     task: { taskReady: true, stephanosBackendTask: 'ready' },
   });
 
