@@ -33,11 +33,13 @@ function createRow(project = {}, now = '') {
     workspaceState: 'NEVER_OPENED',
     active: false,
     openCount: 0,
+    loadSuccessCount: 0,
     failureCount: 0,
     registeredAt: now,
     lastLaunchRequestedAt: '',
     lastFocusedAt: '',
     lastOpenedAt: '',
+    lastLoadedAt: '',
     lastClosedAt: '',
     lastFailureAt: '',
     lastEventName: '',
@@ -60,6 +62,10 @@ function renderedTileCount(documentRef) {
   }
 }
 
+function isIframe(node) {
+  return text(node?.tagName).toUpperCase() === 'IFRAME';
+}
+
 export function createTileWorkspaceTelemetry({
   projects = [],
   eventBus = null,
@@ -72,6 +78,7 @@ export function createTileWorkspaceTelemetry({
 } = {}) {
   const rows = new Map();
   const disposers = [];
+  const boundWorkspaceIframes = new WeakSet();
   let activeTileId = '';
   let lastUpdatedAt = '';
   let disposed = false;
@@ -170,6 +177,53 @@ export function createTileWorkspaceTelemetry({
     row.lastMeaningfulMovementAt = at;
   }
 
+  function emitWorkspaceLoaded(tileId, source = 'workspace-iframe-load') {
+    const normalizedTileId = tileIdFrom(tileId || activeTileId);
+    if (!normalizedTileId || disposed) return;
+    const row = rows.get(normalizedTileId);
+    eventBus?.emit?.('workspace:loaded', {
+      tileId: normalizedTileId,
+      tileTitle: row?.title || normalizedTileId,
+      source,
+      summary: `Workspace content loaded for ${row?.title || normalizedTileId}.`,
+    });
+  }
+
+  function bindWorkspaceIframe(iframe, tileId = activeTileId) {
+    if (!isIframe(iframe) || boundWorkspaceIframes.has(iframe)) return false;
+    boundWorkspaceIframes.add(iframe);
+    const boundTileId = tileIdFrom(tileId || activeTileId);
+    iframe.addEventListener?.('load', () => {
+      emitWorkspaceLoaded(boundTileId || activeTileId);
+    }, { once: true });
+    return true;
+  }
+
+  function bindWorkspaceIframesFromNode(node, tileId = activeTileId) {
+    if (!node) return;
+    if (isIframe(node)) bindWorkspaceIframe(node, tileId);
+    for (const iframe of node.querySelectorAll?.('iframe') || []) bindWorkspaceIframe(iframe, tileId);
+  }
+
+  function bindCurrentWorkspaceIframes(tileId = activeTileId) {
+    const workspaceContent = documentRef?.getElementById?.('workspace-content');
+    for (const iframe of workspaceContent?.querySelectorAll?.('iframe') || []) bindWorkspaceIframe(iframe, tileId);
+  }
+
+  function startWorkspaceLoadObserver() {
+    const workspaceContent = documentRef?.getElementById?.('workspace-content');
+    const MutationObserverCtor = windowRef?.MutationObserver || globalThis.MutationObserver;
+    if (!workspaceContent || typeof MutationObserverCtor !== 'function') return;
+    bindWorkspaceIframesFromNode(workspaceContent, activeTileId);
+    const observer = new MutationObserverCtor((mutations = []) => {
+      for (const mutation of mutations) {
+        for (const node of mutation?.addedNodes || []) bindWorkspaceIframesFromNode(node, activeTileId);
+      }
+    });
+    observer.observe(workspaceContent, { childList: true, subtree: true });
+    disposers.push(() => observer.disconnect?.());
+  }
+
   function handleEvent(envelope = {}) {
     if (disposed) return;
     const eventName = text(envelope?.name);
@@ -203,10 +257,28 @@ export function createTileWorkspaceTelemetry({
         if (activeTileId && rows.has(activeTileId) && activeTileId !== row.tileId) rows.get(activeTileId).active = false;
         activeTileId = row.tileId;
         row.active = true;
-        row.lifecycleState = 'OPEN';
-        row.workspaceState = 'OPEN';
+        if (row.workspaceState !== 'LOADED') {
+          row.lifecycleState = 'MOUNTED';
+          row.workspaceState = 'LOADING';
+        }
         if (eventName === 'workspace:opened') row.openCount += 1;
         row.lastOpenedAt = at;
+        row.blocker = '';
+        mark(row, eventName, at);
+        bindCurrentWorkspaceIframes(row.tileId);
+        changed = true;
+      }
+    } else if (eventName === 'workspace:loaded') {
+      const row = ensureRow(data);
+      if (row) {
+        if (activeTileId && rows.has(activeTileId) && activeTileId !== row.tileId) rows.get(activeTileId).active = false;
+        activeTileId = row.tileId;
+        row.active = true;
+        row.lifecycleState = 'LOADED';
+        row.workspaceState = 'LOADED';
+        row.loadSuccessCount += 1;
+        row.lastLoadedAt = at;
+        row.lastResult = 'workspace-loaded';
         row.blocker = '';
         mark(row, eventName, at);
         changed = true;
@@ -259,6 +331,7 @@ export function createTileWorkspaceTelemetry({
   lastUpdatedAt = nowFn();
 
   if (eventBus?.on) disposers.push(eventBus.on('*', handleEvent));
+  startWorkspaceLoadObserver();
 
   const service = Object.freeze({
     schemaVersion: TILE_WORKSPACE_TELEMETRY_SCHEMA,
