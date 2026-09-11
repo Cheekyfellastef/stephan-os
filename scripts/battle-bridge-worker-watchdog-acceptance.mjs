@@ -12,6 +12,7 @@ const TASK_IDLE_INTERVAL_MS = 1_000;
 const DEGRADED_BASELINE_BLOCKERS = new Set([
   'INITIAL_WORKER_PROBE_FAILED',
   'INITIAL_WORKER_NOT_CANONICAL_AND_HEALTHY',
+  'WORKER_WATCHDOG_WORKER_RESTART_FAILURE',
   'WORKER_WATCHDOG_RECOVERY_PUBLICATION_FAILURE',
 ]);
 const BOUNDED_MISSION_WORKER_RESTART_BLOCKERS = new Set([
@@ -103,6 +104,7 @@ function blockedRecovery(blocker, firstResult, details = {}) {
     blocker,
     priorBlocker: text(firstResult?.blocker),
     bootstrapRecoveryOnly: details.bootstrapRecoveryOnly === true,
+    workerKilledObserved: details.workerKilledObserved === true || firstResult?.workerKilledObserved === true,
     acceptancePass: false,
     authority: core.WORKER_WATCHDOG_ACCEPTANCE_AUTHORITY,
   });
@@ -253,7 +255,6 @@ async function recoverDegradedBaseline(options, firstResult) {
         recoveredHead: latestAssessment.headSha,
         recoveredPid: latestAssessment.pid,
         workerKilled: false,
-        workerKilledObserved: false,
         supervisorDetectedWorkerDown: latestStatus?.supervisorDetectedWorkerDown === true,
         supervisorRestartedWorker: latestStatus?.supervisorRestartedWorker === true,
         workerRecovered: true,
