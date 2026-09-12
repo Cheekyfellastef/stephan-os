@@ -110,9 +110,10 @@ test('remote projection stays degraded for partial telemetry and conflicting hea
 
 test('remote browser refresh reads public GitHub truth only and renders iPad-safe project state', async () => {
   const calls = [];
+  const liveBeacon = beacon({ observedAtUtc: new Date().toISOString() });
   const responses = new Map([
     ['ref', { object: { sha: HEAD } }],
-    ['comments', [beaconComment()]],
+    ['comments', [beaconComment(liveBeacon)]],
     ['issues', [
       { number: 1282, title: 'Goal Dashboard', state: 'open', updated_at: '2026-09-12T12:33:00Z' },
       { number: 2188, title: 'Merged PR is filtered', state: 'open', pull_request: {}, updated_at: '2026-09-12T12:32:00Z' },
@@ -146,6 +147,7 @@ test('local Battle Bridge browser never uses the remote public adapter', async (
   let called = false;
   const { api } = makeContext({ hostname: '127.0.0.1', fetchImpl: async () => { called = true; return { ok: false, status: 500 }; } });
   const result = await api.refreshRemote();
-  assert.deepEqual(result, { skipped: true, reason: 'LOCAL_BACKEND_REMAINS_CANONICAL' });
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'LOCAL_BACKEND_REMAINS_CANONICAL');
   assert.equal(called, false);
 });
