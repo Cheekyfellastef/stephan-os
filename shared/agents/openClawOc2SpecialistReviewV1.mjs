@@ -258,10 +258,12 @@ function reviewGateway(source, path, findings) {
     [/grant\?\.boundedActionCount\s*!==\s*1/, 'openclaw-oc2-gateway-bounded-action-gate-missing'],
     [/grant\?\.mergeAuthority\s*!==\s*false/, 'openclaw-oc2-gateway-merge-denial-missing'],
     [/grant\?\.leaseSeizureAllowed\s*!==\s*false/, 'openclaw-oc2-gateway-lease-denial-missing'],
-    [/path\.resolve\s*\(\s*queueRoot[\s\S]*processing/, 'openclaw-oc2-gateway-processing-root-not-fixed'],
     [/executeClaimedOpenClawOc2DeterministicTestBuild\s*\(/, 'openclaw-oc2-gateway-executor-binding-missing'],
     [/result\.success\s*===\s*true\s*&&\s*result\.qualificationEligible\s*===\s*true/, 'openclaw-oc2-gateway-result-not-bound'],
   ]);
+  if (!/path\.resolve\s*\(\s*queueRoot\s*,\s*['"]openclaw-readonly['"]\s*,\s*['"]processing['"]\s*\)/.test(stripComments(source))) {
+    findings.push(finding('openclaw-oc2-gateway-processing-root-not-fixed', path));
+  }
   forbidExecutablePatterns(findings, source, path, [
     [/\b(?:exec|execSync|spawn|spawnSync|execFile|fork)\s*\(/, 'openclaw-oc2-gateway-process-authority-forbidden'],
     [/\bshell\s*:\s*true|\beval\s*\(|new\s+Function\s*\(/i, 'openclaw-oc2-gateway-dynamic-code-forbidden'],
