@@ -47,7 +47,8 @@ jobs:
           node --test --test-concurrency=1 \
             shared/runtime/missionScheduler*.test.mjs \
             shared/agents/elasticBuildCapacityV1.test.mjs \
-            shared/agents/boundedParallelConstructionLanesV1.test.mjs
+            shared/agents/boundedParallelConstructionLanesV1.test.mjs \
+            stephanos-server/services/criticalBacklogConveyorSelectedMissionRefill.test.js
 
   runtime-guardrail-tests:
     runs-on: ubuntu-latest
