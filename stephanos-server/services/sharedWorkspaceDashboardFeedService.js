@@ -66,7 +66,27 @@ async function resolveLiveProjection(input, nowMs) {
   }
 }
 
+function hasRenderableCurrentStateEvidence(feed) {
+  const records = feed?.records || {};
+  const currentRecordCount = [
+    records.goalRecords,
+    records.statusRecords,
+    records.proofRecords,
+    records.capabilityRecords,
+  ].reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
+  return currentRecordCount > 0
+    && Array.isArray(feed?.projection?.goals)
+    && feed.projection.goals.length > 0;
+}
+
 function effectiveFeedClassification(feed, projection) {
+  if (feed?.state === 'error' && hasRenderableCurrentStateEvidence(feed)) {
+    return {
+      state: 'stale',
+      reason: 'WORKSPACE_RECORD_ERRORS_WITH_VALID_EVIDENCE',
+      exactNextAction: feed.exactNextAction || 'Repair the invalid Shared Agent Workspace record while keeping valid current-state evidence visible as degraded.',
+    };
+  }
   const dynamic = projection?.portfolioSource && projection.portfolioSource !== 'BASE_PROJECTION_FALLBACK';
   if (dynamic && projection.sourceTruth === 'CURRENT') {
     return {
