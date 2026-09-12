@@ -1,4 +1,7 @@
-import { readSharedWorkspaceDashboardFeed } from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
+import {
+  readSharedWorkspaceDashboardFeed,
+  SHARED_WORKSPACE_FEED_RECORD_SCOPES,
+} from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
 import { overlayGoalDashboardWithLivePortfolio } from '../../shared/agents/liveGoalDashboardPortfolioOverlay.mjs';
 import { validateExistingSharedWorkspaceRuntimeConfig, SHARED_WORKSPACE_NEXT_ACTION } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import { readLiveGoalProjection } from './liveGoalProjectionService.js';
@@ -94,7 +97,10 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
   const feed = await readSharedWorkspaceDashboardFeed({
     ...input,
     root: validation.root,
-    recordScope: 'full-history',
+    // The landing dashboard projects current goal/status/proof/capability truth.
+    // Walking the unbounded event and receipt history here can stall the live
+    // tile even though those records do not contribute to that projection.
+    recordScope: input.recordScope || SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE,
   });
   const live = await resolveLiveProjection(input, nowMs);
   const records = feed.records || {};
