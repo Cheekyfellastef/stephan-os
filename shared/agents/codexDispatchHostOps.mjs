@@ -554,17 +554,47 @@ function absorbTargetIdenticalDirt({
       && worktreeBlob.ok
       && EXACT_GIT_HEAD.test(targetBlob.stdout)
       && worktreeBlob.stdout === targetBlob.stdout;
+    if (!exact) {
+      proofs.push(Object.freeze({
+        path,
+        status: pathStatus.stdout,
+        targetBlob: targetBlob.stdout,
+        worktreeBlob: worktreeBlob.stdout,
+        exact,
+      }));
+      return Object.freeze({
+        ok: false,
+        blocker: 'TARGET_IDENTICAL_DIRT_MISMATCH',
+        path,
+        targetChangedPaths,
+        proofs: Object.freeze(proofs),
+        indexMutationPerformed: false,
+        worktreeMutationPerformed: false,
+        destructiveCleanupPerformed: false,
+      });
+    }
+
+    const headBlob = git(spawnSyncFn, repoRoot, ['rev-parse', `${beforeHead}:${path}`]);
+    const indexBlob = git(spawnSyncFn, repoRoot, ['rev-parse', `:${path}`]);
+    const headBlobPresent = headBlob.ok && EXACT_GIT_HEAD.test(headBlob.stdout);
+    const indexBlobPresent = indexBlob.ok && EXACT_GIT_HEAD.test(indexBlob.stdout);
+    const indexSafe = indexBlobPresent
+      ? indexBlob.stdout === targetBlob.stdout || (headBlobPresent && indexBlob.stdout === headBlob.stdout)
+      : !headBlobPresent;
     proofs.push(Object.freeze({
       path,
       status: pathStatus.stdout,
       targetBlob: targetBlob.stdout,
       worktreeBlob: worktreeBlob.stdout,
+      headBlob: headBlob.stdout,
+      indexBlob: indexBlob.stdout,
       exact,
+      indexSafe,
     }));
-    if (!exact) {
+    if (!indexSafe) {
       return Object.freeze({
         ok: false,
-        blocker: 'TARGET_IDENTICAL_DIRT_MISMATCH',
+        blocker: 'TARGET_IDENTICAL_DIRT_INDEX_CONTENT_MISMATCH',
         path,
         targetChangedPaths,
         proofs: Object.freeze(proofs),
