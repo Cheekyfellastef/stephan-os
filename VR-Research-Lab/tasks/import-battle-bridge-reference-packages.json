@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "taskId": "vr-reference-import-battle-bridge-v1",
+  "title": "Import local VR reference packages",
+  "target": "battle-bridge-windows",
+  "execution": {
+    "shell": "powershell",
+    "workingDirectory": "%USERPROFILE%\\Documents\\GitHub\\stephan-os",
+    "command": "powershell -ExecutionPolicy Bypass -File .\\scripts\\windows\\import-vr-reference-packages.ps1"
+  },
+  "expectedInputs": [
+    "%USERPROFILE%\\Downloads\\*MutaR*Starfield*",
+    "%USERPROFILE%\\Downloads\\*NoMoreFlat*Starfield*",
+    "%USERPROFILE%\\Downloads\\*Luke*Ross*RDR2*",
+    "%USERPROFILE%\\Downloads\\*REAL*VR*Red*Dead*"
+  ],
+  "successVerdicts": ["IMPORTED", "NO_MATCHES"],
+  "requiredEvidence": [
+    "JSON command result",
+    "SHA-256 manifest for each imported package",
+    "VR-Research-Lab/docs/experiment-logs/battle-bridge-vr-import-*.md"
+  ],
+  "safety": {
+    "copyOnly": true,
+    "doNotCommitPrivatePackages": true,
+    "preserveDownloads": true,
+    "noExecutionOfDownloadedBinaries": true
+  }
+}
