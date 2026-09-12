@@ -14,6 +14,8 @@ const CLEANUP_RESERVE_PR_NUMBER = 2126;
 const CLEANUP_RESERVE_BRANCH = 'fix/mission-worker-failure-cleanup-reserve-v1';
 const POST_AUTHORITY_OBSERVATION_PR_NUMBER = 2152;
 const POST_AUTHORITY_OBSERVATION_BRANCH = 'fix/mission-worker-post-authority-observation-v1';
+const SELF_CLEANUP_OBSERVATION_BUDGET_PR_NUMBER = 2191;
+const SELF_CLEANUP_OBSERVATION_BUDGET_BRANCH = 'fix/mission-worker-self-cleanup-observation-budget-v2';
 const RUNTIME_RESTART_TIMEOUT_PR_NUMBER = 2160;
 const RUNTIME_RESTART_TIMEOUT_BRANCH = 'fix/post-sync-runtime-restart-timeout-truth-v1';
 const ORPHAN_CAPABILITY_PR_NUMBER = 2105;
@@ -223,9 +225,9 @@ function inspectPostAuthorityObservationSource(source) {
     return findings;
   }
 
-  requireIn(observer, /\$observationDeadlineUtc\s*=\s*\[datetime\]::UtcNow\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/i, 'mission-worker-post-authority-cleanup-budget-window-missing', 'Post-authority observation must derive its window from the fixed Mission Worker cleanup budget.');
-  requireIn(observer, /\$reserveDeadlineUtc\s*=\s*\$script:operationDeadlineUtc\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/i, 'mission-worker-post-authority-reserve-cap-missing', 'Observation must remain capped at operation deadline plus the fixed Mission Worker cleanup budget.');
-  requireIn(observer, /if\s*\(\s*\$observationDeadlineUtc\s+-gt\s+\$reserveDeadlineUtc\s*\)[\s\S]*?\$observationDeadlineUtc\s*=\s*\$reserveDeadlineUtc/i, 'mission-worker-post-authority-deadline-minimum-missing', 'Observation must select the earlier cleanup-budget-derived deadline.');
+  requireIn(observer, /\$observationDeadlineUtc\s*=\s*\[datetime\]::UtcNow\.AddSeconds\(4\)/i, 'mission-worker-post-authority-four-second-window-missing', 'Post-authority observation must remain a fixed four-second slice.');
+  requireIn(observer, /\$reserveDeadlineUtc\s*=\s*\$script:operationDeadlineUtc\.AddSeconds\(4\)/i, 'mission-worker-post-authority-reserve-cap-missing', 'Observation must remain capped at operation deadline plus four seconds.');
+  requireIn(observer, /if\s*\(\s*\$observationDeadlineUtc\s+-gt\s+\$reserveDeadlineUtc\s*\)[\s\S]*?\$observationDeadlineUtc\s*=\s*\$reserveDeadlineUtc/i, 'mission-worker-post-authority-deadline-minimum-missing', 'Observation must select the earlier four-second deadline.');
   requireIn(observer, /Get-ScheduledTask\s+-TaskName\s+'Stephanos Mission Orchestrator Worker'\s+-TaskPath\s+'\\'\s+-ErrorAction\s+Stop/i, 'mission-worker-post-authority-task-not-fixed', 'Observer must inspect only the fixed Mission Worker Scheduled Task.');
   requireIn(observer, /\[string\]\$task\.State\s+-in\s+@\('Ready',\s*'Disabled'\)/i, 'mission-worker-post-authority-terminal-task-state-missing', 'Only Ready or Disabled task state may support cleanup completion.');
   requireIn(observer, /Get-CimInstance\s+Win32_Process\s+-Filter\s+"Name = 'node\.exe'"\s+-OperationTimeoutSec\s+1\s+-ErrorAction\s+Stop/i, 'mission-worker-post-authority-node-query-not-fixed', 'Observer must use the fixed bounded Node CIM query.');
@@ -244,6 +246,22 @@ function inspectPostAuthorityObservationSource(source) {
 
   forbidIn(observer, /\$script:operationDeadlineUtc\s*=/i, 'mission-worker-post-authority-deadline-mutation-forbidden', 'Observation may not extend or mutate restart authority.');
   forbidIn(observer, /\bStop-Process\b|\bStop-ScheduledTask\b|\bStart-ScheduledTask\b|\bStart-Process\b|\.Kill\s*\(|Invoke-Expression|\biex\b|cmd(?:\.exe)?\s+\/c|powershell(?:\.exe)?\s+-command/i, 'mission-worker-post-authority-mutation-forbidden', 'Observation may not gain process, task or generic shell mutation authority.');
+  return findings;
+}
+
+function inspectSelfCleanupObservationBudgetSource(source) {
+  const findings = inspectPostAuthorityObservationSource(source).filter((item) => ![
+    'mission-worker-post-authority-four-second-window-missing',
+    'mission-worker-post-authority-reserve-cap-missing',
+  ].includes(item.code));
+  const observer = functionSlice(source, 'Wait-MissionWorkerSelfCleanupObservation');
+  if (!observer) return findings;
+  if (!/\$observationDeadlineUtc\s*=\s*\[datetime\]::UtcNow\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/i.test(observer)) {
+    findings.push(finding('mission-worker-self-cleanup-observation-budget-window-missing', 'PR #2191 observation must derive its window from the fixed Mission Worker cleanup budget.'));
+  }
+  if (!/\$reserveDeadlineUtc\s*=\s*\$script:operationDeadlineUtc\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/i.test(observer)) {
+    findings.push(finding('mission-worker-self-cleanup-observation-budget-reserve-cap-missing', 'PR #2191 observation cap must derive from the fixed Mission Worker cleanup budget.'));
+  }
   return findings;
 }
 
@@ -402,6 +420,7 @@ function profileFor(input = {}) {
   if (Number(input.prNumber) === CLEANUP_PR_NUMBER && text(input.branch) === CLEANUP_BRANCH) return 'cleanup';
   if (Number(input.prNumber) === CLEANUP_RESERVE_PR_NUMBER && text(input.branch) === CLEANUP_RESERVE_BRANCH) return 'cleanup-reserve';
   if (Number(input.prNumber) === POST_AUTHORITY_OBSERVATION_PR_NUMBER && text(input.branch) === POST_AUTHORITY_OBSERVATION_BRANCH) return 'post-authority-observation';
+  if (Number(input.prNumber) === SELF_CLEANUP_OBSERVATION_BUDGET_PR_NUMBER && text(input.branch) === SELF_CLEANUP_OBSERVATION_BUDGET_BRANCH) return 'self-cleanup-observation-budget';
   if (Number(input.prNumber) === RUNTIME_RESTART_TIMEOUT_PR_NUMBER && text(input.branch) === RUNTIME_RESTART_TIMEOUT_BRANCH) return 'runtime-restart-timeout';
   if (Number(input.prNumber) === ORPHAN_CAPABILITY_PR_NUMBER && text(input.branch) === ORPHAN_CAPABILITY_BRANCH) return 'orphan-capability';
   return null;
@@ -435,6 +454,8 @@ export function analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input = {}) 
     findings.push(...inspectCleanupReserveSource(sources[0].content));
   } else if (profile === 'post-authority-observation') {
     findings.push(...inspectPostAuthorityObservationSource(sources[0].content));
+  } else if (profile === 'self-cleanup-observation-budget') {
+    findings.push(...inspectSelfCleanupObservationBudgetSource(sources[0].content));
   } else if (profile === 'runtime-restart-timeout') {
     findings.push(...inspectRuntimeRestartTimeoutSource(sources[0].content));
   } else {
@@ -451,10 +472,12 @@ export function analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input = {}) 
       ? 'mission-worker-cleanup-reserve'
       : profile === 'post-authority-observation'
         ? 'mission-worker-post-authority-observation'
-        : profile === 'runtime-restart-timeout'
-          ? 'mission-worker-runtime-restart-timeout'
-          : 'mission-worker-orphan-capability';
-  const cleanupProfile = profile === 'cleanup' || profile === 'cleanup-reserve' || profile === 'post-authority-observation' || profile === 'runtime-restart-timeout';
+        : profile === 'self-cleanup-observation-budget'
+          ? 'mission-worker-self-cleanup-observation-budget'
+          : profile === 'runtime-restart-timeout'
+            ? 'mission-worker-runtime-restart-timeout'
+            : 'mission-worker-orphan-capability';
+  const cleanupProfile = profile === 'cleanup' || profile === 'cleanup-reserve' || profile === 'post-authority-observation' || profile === 'self-cleanup-observation-budget' || profile === 'runtime-restart-timeout';
   return Object.freeze({
     schemaVersion: SCHEMA,
     eligible: true,
@@ -468,8 +491,8 @@ export function analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input = {}) 
         ? [
           'proofs/windows-authority/mission-worker-cleanup/launch-receipt-preferred',
           'proofs/windows-authority/mission-worker-cleanup/exact-process-capability-reverified',
-          ...((profile === 'cleanup-reserve' || profile === 'post-authority-observation' || profile === 'runtime-restart-timeout') ? ['proofs/windows-authority/mission-worker-cleanup-reserve/derived-failure-cleanup-window'] : []),
-          ...((profile === 'post-authority-observation' || profile === 'runtime-restart-timeout') ? ['proofs/windows-authority/mission-worker-post-authority-observation/fail-closed-uninspectable-node'] : []),
+          ...((profile === 'cleanup-reserve' || profile === 'post-authority-observation' || profile === 'self-cleanup-observation-budget' || profile === 'runtime-restart-timeout') ? ['proofs/windows-authority/mission-worker-cleanup-reserve/derived-failure-cleanup-window'] : []),
+          ...((profile === 'post-authority-observation' || profile === 'self-cleanup-observation-budget' || profile === 'runtime-restart-timeout') ? ['proofs/windows-authority/mission-worker-post-authority-observation/fail-closed-uninspectable-node'] : []),
         ]
         : ['proofs/windows-authority/mission-worker-orphan-capability/cim-identity-stable', 'proofs/windows-authority/mission-worker-orphan-capability/same-api-starttime-rebound']),
     ]) : Object.freeze([]),
@@ -482,19 +505,23 @@ export function analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input = {}) 
         ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_RESERVE_CLEAN'
         : profile === 'post-authority-observation'
           ? 'WINDOWS_AUTHORITY_MISSION_WORKER_POST_AUTHORITY_OBSERVATION_CLEAN'
-          : profile === 'runtime-restart-timeout'
-            ? 'WINDOWS_AUTHORITY_MISSION_WORKER_RUNTIME_RESTART_TIMEOUT_CLEAN'
-            : profile === 'cleanup'
-              ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_CLEAN'
-              : 'WINDOWS_AUTHORITY_MISSION_WORKER_ORPHAN_CAPABILITY_CLEAN')
+          : profile === 'self-cleanup-observation-budget'
+            ? 'WINDOWS_AUTHORITY_MISSION_WORKER_SELF_CLEANUP_OBSERVATION_BUDGET_CLEAN'
+            : profile === 'runtime-restart-timeout'
+              ? 'WINDOWS_AUTHORITY_MISSION_WORKER_RUNTIME_RESTART_TIMEOUT_CLEAN'
+              : profile === 'cleanup'
+                ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_CLEAN'
+                : 'WINDOWS_AUTHORITY_MISSION_WORKER_ORPHAN_CAPABILITY_CLEAN')
       : (profile === 'cleanup-reserve'
         ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_RESERVE_FINDINGS'
         : profile === 'post-authority-observation'
           ? 'WINDOWS_AUTHORITY_MISSION_WORKER_POST_AUTHORITY_OBSERVATION_FINDINGS'
-          : profile === 'runtime-restart-timeout'
-            ? 'WINDOWS_AUTHORITY_MISSION_WORKER_RUNTIME_RESTART_TIMEOUT_FINDINGS'
-            : profile === 'cleanup'
-              ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_FINDINGS'
-              : 'WINDOWS_AUTHORITY_MISSION_WORKER_ORPHAN_CAPABILITY_FINDINGS'),
+          : profile === 'self-cleanup-observation-budget'
+            ? 'WINDOWS_AUTHORITY_MISSION_WORKER_SELF_CLEANUP_OBSERVATION_BUDGET_FINDINGS'
+            : profile === 'runtime-restart-timeout'
+              ? 'WINDOWS_AUTHORITY_MISSION_WORKER_RUNTIME_RESTART_TIMEOUT_FINDINGS'
+              : profile === 'cleanup'
+                ? 'WINDOWS_AUTHORITY_MISSION_WORKER_CLEANUP_FINDINGS'
+                : 'WINDOWS_AUTHORITY_MISSION_WORKER_ORPHAN_CAPABILITY_FINDINGS'),
   });
 }
