@@ -104,7 +104,7 @@ Apply rules to the authority surface actually affected; do not impose high-risk 
 - If no qualified alternative exists for that exact task class, park only that lane with a typed blocker and continue resource-disjoint eligible work.
 
 ## Protected ready-transition continuity
-- For authorised draft-to-ready transitions, prefer the existing #1507 protected workflow-dispatch mailbox and `MARK_PROTECTED_PR_READY` route over any client-side GraphQL convenience mutation.
+- For authorised draft-to-ready transitions, prefer the existing canonical #2158 protected workflow-dispatch mailbox and `MARK_PROTECTED_PR_READY` route over any client-side GraphQL convenience mutation.
 - Treat connected-client failures mentioning `Repository.fullDatabaseId` / `undefinedField` as a known client schema defect, not as evidence that GitHub or the protected ready route is unavailable.
 - Do not retry that broken client mutation, invent caller-supplied GraphQL, or create a second ready/merge mechanism. Use `protectedReadyExecutionRouteV1` to select the canonical route and fail closed if its exact identity, review, mailbox, or operator-authority predicates are missing.
 - The ready operation grants no merge, deployment, runtime, provider, credential, ruleset, or branch-mutation authority beyond the exact protected ready transition.
