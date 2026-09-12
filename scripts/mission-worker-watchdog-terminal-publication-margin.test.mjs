@@ -20,12 +20,12 @@ test('watchdog preserves restart authority plus cleanup and terminal-publication
 
   assert.equal(cleanupBudgetSeconds, 10);
   assert.equal(WORKER_WATCHDOG_PUBLICATION_RESERVE_MS, 5_000);
-  assert.equal(WORKER_WATCHDOG_START_TIMEOUT_MS, 105_000);
+  assert.equal(WORKER_WATCHDOG_START_TIMEOUT_MS, 100_000);
   assert.equal(WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS, 15_000);
   assert.equal(
     WORKER_WATCHDOG_START_TIMEOUT_MS - WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS,
-    90_000,
-    'the fixed restart authority budget must remain 90 seconds',
+    85_000,
+    'the fixed restart authority budget must remain 85 seconds',
   );
   assert.equal(
     WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS,
