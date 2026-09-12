@@ -16,6 +16,7 @@ const BASE = 'b'.repeat(40);
 const TREE = 'c'.repeat(40);
 const DIGEST = `sha256:${'d'.repeat(64)}`;
 const PAYLOAD = 'e'.repeat(64);
+const AUTHORIZATION_COMMENT_ID = 5640927439;
 const NOW = new Date('2026-08-16T03:30:00.000Z');
 
 function common(overrides = {}) {
@@ -69,7 +70,7 @@ test('clean independent review selects only the canonical protected workflow dis
   assert.equal(plan.ok, true);
   const args = buildProtectedOperatorWorkflowDispatchArgs(plan, {
     head: { ref: 'agent/forge-m2-podman-prerequisite-bootstrap-v1' },
-  }, TREE);
+  }, TREE, AUTHORIZATION_COMMENT_ID);
   assert.ok(args);
   assert.deepEqual(args.slice(0, 5), [
     'workflow', 'run', PROTECTED_OPERATOR_MERGE_WORKFLOW,
@@ -88,6 +89,7 @@ test('clean independent review selects only the canonical protected workflow dis
   assert.ok(args.includes('independent_review_artifact_id=9256477379'));
   assert.ok(args.includes(`independent_review_artifact_digest=${DIGEST}`));
   assert.ok(args.includes(`independent_review_payload_sha256=${PAYLOAD}`));
+  assert.ok(args.includes(`authorization_comment_id=${AUTHORIZATION_COMMENT_ID}`));
   assert.equal(args.includes('pr'), false);
   assert.equal(args.includes('merge'), false);
 });
@@ -117,6 +119,6 @@ test('workflow dispatch builder fails closed on an invalid head tree or missing 
     mergeApprovalToken: `APPROVE_PROTECTED_WORKFLOW_SQUASH_MERGE:1805:${HEAD}`,
   });
   const plan = buildProtectedOpenClawMergePlan(command, { now: NOW, userProfile: 'C:/Users/Stephan' });
-  assert.equal(buildProtectedOperatorWorkflowDispatchArgs(plan, { head: { ref: 'branch' } }, 'not-a-tree'), null);
-  assert.equal(buildProtectedOperatorWorkflowDispatchArgs(plan, { head: {} }, TREE), null);
+  assert.equal(buildProtectedOperatorWorkflowDispatchArgs(plan, { head: { ref: 'branch' } }, 'not-a-tree', AUTHORIZATION_COMMENT_ID), null);
+  assert.equal(buildProtectedOperatorWorkflowDispatchArgs(plan, { head: {} }, TREE, AUTHORIZATION_COMMENT_ID), null);
 });

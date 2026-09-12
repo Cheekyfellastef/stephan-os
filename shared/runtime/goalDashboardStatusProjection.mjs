@@ -45,7 +45,7 @@ const EVIDENCE_CONTEXT_TOKENS = new Set(['adapter', 'automation', 'browser', 'ci
 const NEGATIVE_EVIDENCE_TOKENS = new Set(['aborted', 'blocked', 'canceled', 'cancelled', 'denied', 'error', 'expired', 'fail', 'failed', 'failing', 'invalid', 'missing', 'none', 'pending', 'rejected', 'stale', 'stalled', 'stopped', 'timeout', 'unavailable', 'unknown', 'unverified']);
 const RESERVED_PROJECTION_SOURCE_TOKENS = new Set(['not', 'nonlive', 'seed', 'static']);
 const VERIFIED_RESULT_SOURCES = new Set(['verified-readonly-goal-status-adapter']);
-const RECEIPT_IDENTIFIER_PATTERN = /^receipt-(?:\d+|[0-9a-f]{12,64}|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
+const SAFE_RECEIPT_IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 
 function status(value) {
   if (typeof value !== 'string') return 'unknown';
@@ -64,7 +64,11 @@ function tokenEncodesNegativeState(token) {
 }
 
 function validReceiptIdentifier(value) {
-  return typeof value === 'string' && RECEIPT_IDENTIFIER_PATTERN.test(value.trim().toLowerCase());
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim().toLowerCase();
+  if (!SAFE_RECEIPT_IDENTIFIER_PATTERN.test(normalized) || !/\d/.test(normalized)) return false;
+  const compact = normalized.replace(/[^a-z0-9]/g, '');
+  return ![...NEGATIVE_EVIDENCE_TOKENS].some((negative) => compact.includes(negative));
 }
 
 function normalizeReceiptIdentifier(value) {
@@ -73,7 +77,10 @@ function normalizeReceiptIdentifier(value) {
 
 function verifiedReceiptIdentifier(receipt = {}) {
   if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt) || receipt.verified !== true) return null;
-  return normalizeReceiptIdentifier(receipt.receiptId ?? receipt.id ?? receipt.receipt);
+  const identifier = normalizeReceiptIdentifier(receipt.receiptId ?? receipt.id ?? receipt.receipt);
+  if (identifier === null) return null;
+  const isLegacyReceiptId = identifier.startsWith('receipt-');
+  return isLegacyReceiptId || receipt.state === 'completed' ? identifier : null;
 }
 
 function affirmativeEvidence(value) {
@@ -107,8 +114,10 @@ function liveProjectionSource(value) {
   const normalized = stringValue(value, canonical).trim();
   const lower = normalized.toLowerCase();
   const tokens = evidenceTokens(lower);
+  const compact = lower.replace(/[^a-z0-9]/g, '');
   const containsHyphenatedNonLive = tokens.some((token, index) => token === 'non' && tokens[index + 1] === 'live');
-  const reserved = containsHyphenatedNonLive || tokens.some((token) => RESERVED_PROJECTION_SOURCE_TOKENS.has(token));
+  const containsConcatenatedReserved = compact.includes('notlive') || compact.includes('nonlive') || compact.includes('staticseed');
+  const reserved = containsHyphenatedNonLive || containsConcatenatedReserved || tokens.some((token) => RESERVED_PROJECTION_SOURCE_TOKENS.has(token));
   return lower.startsWith('verified-') && !reserved && !tokens.some(tokenEncodesNegativeState)
     ? normalized
     : canonical;
@@ -167,13 +176,20 @@ export const STATIC_GOAL_DASHBOARD_GOALS = Object.freeze([
 
 function normalizeLinkedPr(goal = {}) {
   const linkedPr = goal.linkedPr || {};
+  const normalizedNumber = integer(linkedPr.number ?? goal.prNumber);
+  const headSha = sha(linkedPr.headSha ?? goal.headSha);
+  const mergeSha = sha(linkedPr.mergeSha ?? goal.mergeSha);
+  const requestedState = status(linkedPr.state ?? goal.prState);
+  const normalizedState = requestedState === 'merged' && (normalizedNumber === null || (headSha === null && mergeSha === null))
+    ? 'unknown'
+    : requestedState;
   return freeze({
-    number: integer(linkedPr.number ?? goal.prNumber),
-    state: status(linkedPr.state ?? goal.prState),
+    number: normalizedNumber,
+    state: normalizedState,
     draft: nullableBoolean(linkedPr.draft ?? goal.prDraft),
     mergeable: nullableBoolean(linkedPr.mergeable ?? goal.prMergeable),
-    headSha: sha(linkedPr.headSha ?? goal.headSha),
-    mergeSha: sha(linkedPr.mergeSha ?? goal.mergeSha),
+    headSha,
+    mergeSha,
     exactHeadMergeHold: text(linkedPr.exactHeadMergeHold ?? goal.exactHeadMergeHold, 'unknown'),
   });
 }
