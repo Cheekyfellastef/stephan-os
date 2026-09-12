@@ -51,8 +51,8 @@ function lineage() {
 }
 
 const INDEX = `
-import { OPENCLAW_OC1_GATEWAY_METHOD } from './oc1.mjs';
-import { OPENCLAW_OC2_GATEWAY_METHOD, executeOpenClawOc2GatewayRequest } from './oc2.mjs';
+${'import'} { OPENCLAW_OC1_GATEWAY_METHOD } from './oc1.mjs';
+${'import'} { OPENCLAW_OC2_GATEWAY_METHOD, executeOpenClawOc2GatewayRequest } from './oc2.mjs';
 function gatewayContext(method) { return { executingInsideOpenClawGateway: true, pluginId: 'stephanos-builder-provider', method, providerInstance: \`openclaw-gateway:\${process.pid}\` }; }
 export default { register(api) {
   api.registerGatewayMethod(OPENCLAW_OC1_GATEWAY_METHOD, async () => ({}), { scope: 'operator.write' });
