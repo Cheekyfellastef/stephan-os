@@ -143,8 +143,8 @@ function Wait-MissionWorkerSelfCleanupObservation {
     # Observation only: never extend the restart/mutation deadline. This slice
     # is capped within the existing ten-second child-exit reserve, even if the
     # caller reaches it late. The launcher owns cancellation and self-cleanup.
-    $observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(4)
-    $reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds(4)
+    $observationDeadlineUtc = [datetime]::UtcNow.AddSeconds($missionWorkerCleanupTimeoutSeconds)
+    $reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds($missionWorkerCleanupTimeoutSeconds)
     if ($observationDeadlineUtc -gt $reserveDeadlineUtc) {
         $observationDeadlineUtc = $reserveDeadlineUtc
     }

@@ -223,9 +223,9 @@ function inspectPostAuthorityObservationSource(source) {
     return findings;
   }
 
-  requireIn(observer, /\$observationDeadlineUtc\s*=\s*\[datetime\]::UtcNow\.AddSeconds\(4\)/i, 'mission-worker-post-authority-four-second-window-missing', 'Post-authority observation must remain a fixed four-second slice.');
-  requireIn(observer, /\$reserveDeadlineUtc\s*=\s*\$script:operationDeadlineUtc\.AddSeconds\(4\)/i, 'mission-worker-post-authority-reserve-cap-missing', 'Observation must remain capped at operation deadline plus four seconds.');
-  requireIn(observer, /if\s*\(\s*\$observationDeadlineUtc\s+-gt\s+\$reserveDeadlineUtc\s*\)[\s\S]*?\$observationDeadlineUtc\s*=\s*\$reserveDeadlineUtc/i, 'mission-worker-post-authority-deadline-minimum-missing', 'Observation must select the earlier four-second deadline.');
+  requireIn(observer, /\$observationDeadlineUtc\s*=\s*\[datetime\]::UtcNow\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/i, 'mission-worker-post-authority-cleanup-budget-window-missing', 'Post-authority observation must derive its window from the fixed Mission Worker cleanup budget.');
+  requireIn(observer, /\$reserveDeadlineUtc\s*=\s*\$script:operationDeadlineUtc\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/i, 'mission-worker-post-authority-reserve-cap-missing', 'Observation must remain capped at operation deadline plus the fixed Mission Worker cleanup budget.');
+  requireIn(observer, /if\s*\(\s*\$observationDeadlineUtc\s+-gt\s+\$reserveDeadlineUtc\s*\)[\s\S]*?\$observationDeadlineUtc\s*=\s*\$reserveDeadlineUtc/i, 'mission-worker-post-authority-deadline-minimum-missing', 'Observation must select the earlier cleanup-budget-derived deadline.');
   requireIn(observer, /Get-ScheduledTask\s+-TaskName\s+'Stephanos Mission Orchestrator Worker'\s+-TaskPath\s+'\\'\s+-ErrorAction\s+Stop/i, 'mission-worker-post-authority-task-not-fixed', 'Observer must inspect only the fixed Mission Worker Scheduled Task.');
   requireIn(observer, /\[string\]\$task\.State\s+-in\s+@\('Ready',\s*'Disabled'\)/i, 'mission-worker-post-authority-terminal-task-state-missing', 'Only Ready or Disabled task state may support cleanup completion.');
   requireIn(observer, /Get-CimInstance\s+Win32_Process\s+-Filter\s+"Name = 'node\.exe'"\s+-OperationTimeoutSec\s+1\s+-ErrorAction\s+Stop/i, 'mission-worker-post-authority-node-query-not-fixed', 'Observer must use the fixed bounded Node CIM query.');

@@ -103,8 +103,8 @@ const POST_AUTHORITY_SAFE_SOURCE = `
 ${RESERVE_SAFE_SOURCE}
 function Wait-MissionWorkerSelfCleanupObservation {
   param([Parameter(Mandatory = $true)][string]$ExpectedRepoRoot)
-  $observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(4)
-  $reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds(4)
+  $observationDeadlineUtc = [datetime]::UtcNow.AddSeconds($missionWorkerCleanupTimeoutSeconds)
+  $reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds($missionWorkerCleanupTimeoutSeconds)
   if ($observationDeadlineUtc -gt $reserveDeadlineUtc) {
     $observationDeadlineUtc = $reserveDeadlineUtc
   }
@@ -344,8 +344,8 @@ test('exact #2152 post-authority observation profile is eligible and clean only 
 
 test('#2152 observer rejects removed deadline, task and live Node identity boundaries', () => {
   for (const [unsafe, code] of [
-    [POST_AUTHORITY_SAFE_SOURCE.replace('$observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(4)', '$observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(5)'), 'mission-worker-post-authority-four-second-window-missing'],
-    [POST_AUTHORITY_SAFE_SOURCE.replace('$reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds(4)', '$reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds(5)'), 'mission-worker-post-authority-reserve-cap-missing'],
+    [POST_AUTHORITY_SAFE_SOURCE.replace('$observationDeadlineUtc = [datetime]::UtcNow.AddSeconds($missionWorkerCleanupTimeoutSeconds)', '$observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(5)'), 'mission-worker-post-authority-cleanup-budget-window-missing'],
+    [POST_AUTHORITY_SAFE_SOURCE.replace('$reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds($missionWorkerCleanupTimeoutSeconds)', '$reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds(5)'), 'mission-worker-post-authority-reserve-cap-missing'],
     [POST_AUTHORITY_SAFE_SOURCE.replace("[string]$task.State -in @('Ready', 'Disabled')", "[string]$task.State -in @('Ready', 'Running')"), 'mission-worker-post-authority-terminal-task-state-missing'],
     [POST_AUTHORITY_SAFE_SOURCE.replace('-OperationTimeoutSec 1 -ErrorAction Stop', '-ErrorAction Stop'), 'mission-worker-post-authority-node-query-not-fixed'],
     [POST_AUTHORITY_SAFE_SOURCE.replace('foreach ($process in $nodeProcesses)', 'foreach ($process in @())'), 'mission-worker-post-authority-node-enumeration-missing'],

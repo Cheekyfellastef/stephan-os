@@ -26,7 +26,7 @@ test('post-authority cleanup observation consumes the existing fixed cleanup bud
 test('cleanup observation remains read-only and fail-closed while using the full existing reserve', () => {
   const observer = sliceFunction(runtimeSource, 'Wait-MissionWorkerSelfCleanupObservation', 'Write-BoundedAtomicJson');
 
-  assert.match(observer, /Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker' -TaskPath '\\\\' -ErrorAction Stop/);
+  assert.match(observer, /Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker' -TaskPath '\\' -ErrorAction Stop/);
   assert.match(observer, /\[string\]\$task\.State -in @\('Ready', 'Disabled'\)/);
   assert.match(observer, /Get-CimInstance Win32_Process[^\r\n]*-OperationTimeoutSec 1 -ErrorAction Stop/);
   assert.match(observer, /Test-ExactCanonicalWorkerProcess -Process \$process -ExpectedRepoRoot \$ExpectedRepoRoot/);
