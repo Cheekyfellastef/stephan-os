@@ -11,6 +11,7 @@ import {
 const HEAD = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
+const CANONICAL_OC2_BRANCH = 'agent/openclaw-oc2-deterministic-test-build-v1';
 
 function sha1Blob(content) {
   const bytes = Buffer.from(content, 'utf8');
@@ -152,7 +153,7 @@ function sources(overrides = {}) {
 }
 
 function input(overrides = {}) {
-  return { repository: REPOSITORY, prNumber: 1931, sourceHead: HEAD, baseSha: BASE, lineageEvidence: lineage(), analysis: analysis(), sources: sources(), ...overrides };
+  return { repository: REPOSITORY, prNumber: 1931, branch: CANONICAL_OC2_BRANCH, sourceHead: HEAD, baseSha: BASE, lineageEvidence: lineage(), analysis: analysis(), sources: sources(), ...overrides };
 }
 
 test('OC2 specialist cleanly reviews the exact closed OC2 surfaces', () => {
