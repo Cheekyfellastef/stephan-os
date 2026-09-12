@@ -476,6 +476,181 @@ function changedFiles(output = '') {
   return String(output || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
+function safeGitRelativePath(value = '') {
+  const candidate = String(value || '');
+  return Boolean(candidate)
+    && candidate === candidate.trim()
+    && !candidate.startsWith('-')
+    && !candidate.startsWith('/')
+    && !/^[A-Za-z]:[\\/]/.test(candidate)
+    && !candidate.includes('\\')
+    && !/[\0\r\n\t]/.test(candidate)
+    && !candidate.split('/').includes('..');
+}
+
+function absorbTargetIdenticalDirt({
+  spawnSyncFn,
+  repoRoot,
+  beforeHead,
+  targetHead,
+} = {}) {
+  const stableHead = git(spawnSyncFn, repoRoot, ['rev-parse', 'HEAD']);
+  if (!stableHead.ok || stableHead.stdout !== beforeHead) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'TARGET_IDENTICAL_DIRT_HEAD_CHANGED',
+      stableHead,
+      indexMutationPerformed: false,
+      worktreeMutationPerformed: false,
+      destructiveCleanupPerformed: false,
+    });
+  }
+
+  const targetChangedPaths = git(spawnSyncFn, repoRoot, ['diff', '--name-only', `${beforeHead}..${targetHead}`]);
+  if (!targetChangedPaths.ok) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'TARGET_IDENTICAL_DIRT_PATHS_UNAVAILABLE',
+      targetChangedPaths,
+      indexMutationPerformed: false,
+      worktreeMutationPerformed: false,
+      destructiveCleanupPerformed: false,
+    });
+  }
+
+  const proofs = [];
+  for (const path of [...new Set(changedFiles(targetChangedPaths.stdout))]) {
+    if (!safeGitRelativePath(path)) {
+      return Object.freeze({
+        ok: false,
+        blocker: 'TARGET_IDENTICAL_DIRT_PATH_INVALID',
+        path,
+        targetChangedPaths,
+        proofs: Object.freeze(proofs),
+        indexMutationPerformed: false,
+        worktreeMutationPerformed: false,
+        destructiveCleanupPerformed: false,
+      });
+    }
+    const pathStatus = git(spawnSyncFn, repoRoot, ['status', '--porcelain=v1', '--untracked-files=all', '--', path]);
+    if (!pathStatus.ok) {
+      return Object.freeze({
+        ok: false,
+        blocker: 'TARGET_IDENTICAL_DIRT_STATUS_UNAVAILABLE',
+        path,
+        pathStatus,
+        targetChangedPaths,
+        proofs: Object.freeze(proofs),
+        indexMutationPerformed: false,
+        worktreeMutationPerformed: false,
+        destructiveCleanupPerformed: false,
+      });
+    }
+    if (!pathStatus.stdout) continue;
+
+    const targetBlob = git(spawnSyncFn, repoRoot, ['rev-parse', `${targetHead}:${path}`]);
+    const worktreeBlob = git(spawnSyncFn, repoRoot, ['hash-object', `--path=${path}`, '--', path]);
+    const exact = targetBlob.ok
+      && worktreeBlob.ok
+      && EXACT_GIT_HEAD.test(targetBlob.stdout)
+      && worktreeBlob.stdout === targetBlob.stdout;
+    if (!exact) {
+      proofs.push(Object.freeze({
+        path,
+        status: pathStatus.stdout,
+        targetBlob: targetBlob.stdout,
+        worktreeBlob: worktreeBlob.stdout,
+        exact,
+      }));
+      return Object.freeze({
+        ok: false,
+        blocker: 'TARGET_IDENTICAL_DIRT_MISMATCH',
+        path,
+        targetChangedPaths,
+        proofs: Object.freeze(proofs),
+        indexMutationPerformed: false,
+        worktreeMutationPerformed: false,
+        destructiveCleanupPerformed: false,
+      });
+    }
+
+    const headBlob = git(spawnSyncFn, repoRoot, ['rev-parse', `${beforeHead}:${path}`]);
+    const indexBlob = git(spawnSyncFn, repoRoot, ['rev-parse', `:${path}`]);
+    const headBlobPresent = headBlob.ok && EXACT_GIT_HEAD.test(headBlob.stdout);
+    const indexBlobPresent = indexBlob.ok && EXACT_GIT_HEAD.test(indexBlob.stdout);
+    const indexSafe = indexBlobPresent
+      ? indexBlob.stdout === targetBlob.stdout || (headBlobPresent && indexBlob.stdout === headBlob.stdout)
+      : !headBlobPresent;
+    proofs.push(Object.freeze({
+      path,
+      status: pathStatus.stdout,
+      targetBlob: targetBlob.stdout,
+      worktreeBlob: worktreeBlob.stdout,
+      headBlob: headBlob.stdout,
+      indexBlob: indexBlob.stdout,
+      exact,
+      indexSafe,
+    }));
+    if (!indexSafe) {
+      return Object.freeze({
+        ok: false,
+        blocker: 'TARGET_IDENTICAL_DIRT_INDEX_CONTENT_MISMATCH',
+        path,
+        targetChangedPaths,
+        proofs: Object.freeze(proofs),
+        indexMutationPerformed: false,
+        worktreeMutationPerformed: false,
+        destructiveCleanupPerformed: false,
+      });
+    }
+  }
+
+  if (!proofs.length) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'TARGET_IDENTICAL_DIRT_NOT_PRESENT',
+      targetChangedPaths,
+      proofs: Object.freeze([]),
+      indexMutationPerformed: false,
+      worktreeMutationPerformed: false,
+      destructiveCleanupPerformed: false,
+    });
+  }
+
+  const paths = proofs.map((proof) => proof.path);
+  const stage = git(spawnSyncFn, repoRoot, ['add', '--', ...paths]);
+  const exactIndex = stage.ok
+    ? git(spawnSyncFn, repoRoot, ['diff', '--cached', '--quiet', targetHead, '--', ...paths])
+    : null;
+  if (!stage.ok || !exactIndex?.ok) {
+    return Object.freeze({
+      ok: false,
+      blocker: stage.ok ? 'TARGET_IDENTICAL_DIRT_INDEX_MISMATCH' : 'TARGET_IDENTICAL_DIRT_STAGE_FAILED',
+      targetChangedPaths,
+      proofs: Object.freeze(proofs),
+      paths: Object.freeze(paths),
+      stage,
+      exactIndex,
+      indexMutationPerformed: stage.ok,
+      worktreeMutationPerformed: false,
+      destructiveCleanupPerformed: false,
+    });
+  }
+
+  return Object.freeze({
+    ok: true,
+    blocker: '',
+    targetChangedPaths,
+    proofs: Object.freeze(proofs),
+    paths: Object.freeze(paths),
+    stage,
+    exactIndex,
+    indexMutationPerformed: true,
+    worktreeMutationPerformed: false,
+    destructiveCleanupPerformed: false,
+  });
+}
+
 function classifyCompletedSyncBlocker({ afterHead, approvedTargetHead, statusAfter, diffNames, tests } = {}) {
   if (!afterHead?.ok) return 'POST_SYNC_HEAD_READ_FAILED';
   if (afterHead.stdout !== approvedTargetHead) return 'POST_SYNC_HEAD_MISMATCH';
@@ -643,8 +818,22 @@ export function syncCodexDispatchBridge({
   }
 
   let fastForward = null;
+  let initialFastForward = null;
+  let identicalDirtAbsorption = null;
   if (counts.behind > 0) {
     fastForward = git(spawnSyncFn, repoRoot, ['merge', '--ff-only', approvedTargetHead], 120000);
+    initialFastForward = fastForward;
+    if (!fastForward.ok && statusBeforeSync.stdout) {
+      identicalDirtAbsorption = absorbTargetIdenticalDirt({
+        spawnSyncFn,
+        repoRoot,
+        beforeHead: beforeHead.stdout,
+        targetHead: approvedTargetHead,
+      });
+      if (identicalDirtAbsorption.ok) {
+        fastForward = git(spawnSyncFn, repoRoot, ['merge', '--ff-only', approvedTargetHead], 120000);
+      }
+    }
     if (!fastForward.ok) {
       return Object.freeze({
         ok: false,
@@ -657,6 +846,8 @@ export function syncCodexDispatchBridge({
         behind: counts.behind,
         statusBefore: statusBefore.stdout,
         fastForward,
+        initialFastForward,
+        identicalDirtAbsorption,
         nextOperatorAction: 'Inspect the exact Git blocker. Existing work was not cleaned, stashed, reset, or discarded.',
       });
     }
@@ -724,6 +915,8 @@ export function syncCodexDispatchBridge({
     statusAfter: statusAfter.stdout,
     fetchResult,
     fastForward,
+    initialFastForward,
+    identicalDirtAbsorption,
     tests,
     preservation,
     restartRequired,
