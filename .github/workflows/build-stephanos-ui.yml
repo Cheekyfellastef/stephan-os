@@ -87,7 +87,8 @@ jobs:
             scripts/stephanos-build-utils.test.mjs \
             scripts/windows-ignition-browser-surfaces.test.mjs \
             scripts/run-battle-bridge-ignition.test.mjs \
-            scripts/refresh-stephanos-ui-4173.test.mjs
+            scripts/refresh-stephanos-ui-4173.test.mjs \
+            tests/goal-dashboard-remote-live.test.mjs
 
   vr-research-tests:
     runs-on: ubuntu-latest
