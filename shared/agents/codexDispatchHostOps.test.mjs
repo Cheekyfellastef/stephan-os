@@ -199,7 +199,7 @@ test('sync bridge accepts an already-current main checkout and names verificatio
   });
   assert.equal(result.updated, false);
   assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'POST_SYNC_VERIFICATION_FAILED');
+  assert.equal(result.blocker, 'POST_SYNC_VERIFICATION_TEST_FAILURE');
   assert.equal(result.statusBefore, ' M apps/stephanos/dist/index.html');
   assert.equal(result.statusAfter, ' M apps/stephanos/dist/index.html');
 });
