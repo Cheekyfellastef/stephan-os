@@ -59,6 +59,23 @@ jobs:
 
           touch _site/.nojekyll
 
+      - name: Enable bounded remote Goal Dashboard projection
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = '_site/apps/goal-dashboard/index.html';
+          const marker = '<script src="./remote-live.js"></script>';
+          let html = fs.readFileSync(path, 'utf8');
+          if (!html.includes(marker)) {
+            if (!html.includes('</body>')) throw new Error('GOAL_DASHBOARD_BODY_CLOSE_NOT_FOUND');
+            html = html.replace('</body>', `  ${marker}\n</body>`);
+            fs.writeFileSync(path, html, 'utf8');
+          }
+          if (!fs.existsSync('_site/apps/goal-dashboard/remote-live.js')) {
+            throw new Error('GOAL_DASHBOARD_REMOTE_LIVE_ADAPTER_MISSING');
+          }
+          NODE
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

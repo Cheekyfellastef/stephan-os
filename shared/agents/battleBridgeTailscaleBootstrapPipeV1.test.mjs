@@ -15,6 +15,7 @@ import {
 
 const HEAD = 'a'.repeat(40);
 const NOW = new Date('2026-08-07T13:45:00.000Z');
+const CANONICAL_MAILBOX_ISSUE = 2158;
 
 function command(overrides = {}) {
   return {
@@ -22,7 +23,7 @@ function command(overrides = {}) {
     requestId: 'tailscale-bootstrap-72d4e79-20260807T1345Z',
     operation: BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
     expiresAt: '2026-08-07T14:00:00.000Z',
@@ -39,7 +40,7 @@ test('owner-authored exact-head request is accepted and Codex is not required', 
   assert.equal(extracted.ok, true);
   const result = validateBattleBridgeTailscaleBootstrap(extracted.command, {
     authorLogin: 'Cheekyfellastef',
-    issueNumber: 1507,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     now: NOW,
     currentMainHead: HEAD,
   });
@@ -52,14 +53,15 @@ test('owner-authored exact-head request is accepted and Codex is not required', 
   assert.equal(BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_TAG, 'tag:stephanos-github-recovery');
 });
 
-test('request rejects foreign author, issue, head, expiry and any extra authority field', () => {
+test('request rejects foreign author, retired/foreign issue, head, expiry and any extra authority field', () => {
   const fixtures = [
-    { value: command(), options: { authorLogin: 'someone-else', issueNumber: 1507, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_AUTHOR_NOT_ALLOWED' },
-    { value: command(), options: { authorLogin: 'Cheekyfellastef', issueNumber: 1508, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_ISSUE_MISMATCH' },
-    { value: command(), options: { authorLogin: 'Cheekyfellastef', issueNumber: 1507, now: NOW, currentMainHead: 'b'.repeat(40) }, blocker: 'TAILSCALE_BOOTSTRAP_MAIN_HEAD_MISMATCH' },
-    { value: command({ expiresAt: '2026-08-07T15:00:00.000Z' }), options: { authorLogin: 'Cheekyfellastef', issueNumber: 1507, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_EXPIRY_TOO_FAR_AHEAD' },
-    { value: { ...command(), command: 'whoami' }, options: { authorLogin: 'Cheekyfellastef', issueNumber: 1507, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_FIELDS_NOT_EXACT' },
-    { value: { ...command(), path: 'C:\\Windows' }, options: { authorLogin: 'Cheekyfellastef', issueNumber: 1507, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_FIELDS_NOT_EXACT' },
+    { value: command(), options: { authorLogin: 'someone-else', issueNumber: CANONICAL_MAILBOX_ISSUE, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_AUTHOR_NOT_ALLOWED' },
+    { value: command(), options: { authorLogin: 'Cheekyfellastef', issueNumber: 1507, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_ISSUE_MISMATCH' },
+    { value: command(), options: { authorLogin: 'Cheekyfellastef', issueNumber: 2159, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_ISSUE_MISMATCH' },
+    { value: command(), options: { authorLogin: 'Cheekyfellastef', issueNumber: CANONICAL_MAILBOX_ISSUE, now: NOW, currentMainHead: 'b'.repeat(40) }, blocker: 'TAILSCALE_BOOTSTRAP_MAIN_HEAD_MISMATCH' },
+    { value: command({ expiresAt: '2026-08-07T15:00:00.000Z' }), options: { authorLogin: 'Cheekyfellastef', issueNumber: CANONICAL_MAILBOX_ISSUE, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_EXPIRY_TOO_FAR_AHEAD' },
+    { value: { ...command(), command: 'whoami' }, options: { authorLogin: 'Cheekyfellastef', issueNumber: CANONICAL_MAILBOX_ISSUE, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_FIELDS_NOT_EXACT' },
+    { value: { ...command(), path: 'C:\\Windows' }, options: { authorLogin: 'Cheekyfellastef', issueNumber: CANONICAL_MAILBOX_ISSUE, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_FIELDS_NOT_EXACT' },
   ];
   for (const fixture of fixtures) {
     const result = validateBattleBridgeTailscaleBootstrap(fixture.value, fixture.options);

@@ -31,7 +31,7 @@ function command(overrides = {}) {
     requestId: 'req-1507-0001',
     operation: 'UPDATE_STEPHANOS_FROM_CHAT',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: 2158,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: 'fb10c39a5c0178158bc3b43c5539e8f5d023bc2a',
@@ -93,6 +93,15 @@ test('extracts and accepts an owner-authored bounded command', () => {
   });
   assert.equal(validated.verdict, 'COMMAND_ACCEPTED');
   assert.equal(validated.command.operation, 'UPDATE_STEPHANOS_FROM_CHAT');
+});
+
+test('rejects the retired canonical mailbox issue', () => {
+  const validated = validateBattleBridgeGitHubCommand(command({ issueNumber: 1507 }), {
+    authorLogin: 'Cheekyfellastef',
+    now,
+  });
+  assert.equal(validated.ok, false);
+  assert.equal(validated.blocker, 'COMMAND_ISSUE_MISMATCH');
 });
 
 test('scoped delivery identity is exact, operation-bound and preserved in receipts', () => {
