@@ -26,6 +26,57 @@ export const WORKER_WATCHDOG_RESTART_COOLDOWN_MS = 5 * 60 * 1000;
 export const WORKER_WATCHDOG_RUN_BUDGET_MS = 110_000;
 export const WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS = 5_000;
 export const WORKER_WATCHDOG_START_TIMEOUT_MS = 95_000;
+
+const BOUNDED_MISSION_WORKER_RESTART_BLOCKERS = new Set([
+  'MISSION_WORKER_RESTART_DEADLINE_EXHAUSTED',
+  'MISSION_WORKER_INVOCATION_RECORD_TOO_LARGE',
+  'MISSION_WORKER_RESTART_REQUEST_INVALID',
+  'MISSION_WORKER_RESTART_REQUEST_ALREADY_PRESENT',
+  'MISSION_WORKER_RESTART_REQUEST_CHANGED_BEFORE_RECLAIM',
+  'MISSION_WORKER_RESTART_REQUEST_RECLAIM_FAILED',
+  'MISSION_WORKER_RESTART_REQUEST_CLEANUP_IDENTITY_CHANGED',
+  'MISSION_WORKER_RESTART_REQUEST_CLEANUP_FAILED',
+  'MISSION_WORKER_CLEANUP_TASK_NOT_ALLOWLISTED',
+  'MISSION_WORKER_CLEANUP_INVOCATION_ID_INVALID',
+  'MISSION_WORKER_CLEANUP_INVOCATION_CLAIM_NOT_PROVEN',
+  'MISSION_WORKER_CLEANUP_LAUNCH_RECEIPT_NOT_PROVEN',
+  'MISSION_WORKER_CLEANUP_LAUNCH_RECEIPT_MISMATCH',
+  'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN',
+  'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED',
+  'MISSION_WORKER_CLEANUP_PROCESS_DID_NOT_STOP',
+  'MISSION_WORKER_CLEANUP_TASK_MISSING',
+  'MISSION_WORKER_CLEANUP_TASK_DID_NOT_STOP',
+  'MISSION_WORKER_RESTART_DEADLINE_REQUIRED',
+  'MISSION_WORKER_RESTART_DEADLINE_INVALID',
+  'MISSION_WORKER_TASK_DID_NOT_STOP',
+  'MISSION_WORKER_EXISTING_PROCESS_IDENTITY_CHANGED',
+  'MISSION_WORKER_EXISTING_PROCESS_CAPABILITY_CHANGED',
+  'MISSION_WORKER_VERIFIED_PROCESS_DID_NOT_STOP',
+  'MISSION_WORKER_CANONICAL_PROCESS_QUERY_FAILED',
+  'MISSION_WORKER_CANONICAL_PROCESS_IDENTITY_AMBIGUOUS',
+  'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED',
+  'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED',
+  'MISSION_WORKER_ORPHAN_PROCESS_DID_NOT_STOP',
+  'MISSION_WORKER_INVOCATION_ID_GENERATION_FAILED',
+  'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT',
+  'MISSION_WORKER_FRESH_INSTANCE_NOT_PROVEN',
+  'MISSION_WORKER_INVOCATION_IDENTITY_NOT_PROVEN',
+  'MISSION_WORKER_TASK_NOT_RUNNING_AFTER_START',
+  'MISSION_WORKER_POST_START_PROOF_FAILED',
+  'MISSION_WORKER_POST_START_CLEANUP_FAILED',
+  'MISSION_WORKER_DEADLINE_SELF_CLEANUP_NOT_PROVEN',
+]);
+
+function extractBoundedMissionWorkerRestartBlocker(...values) {
+  const candidates = new Set();
+  for (const value of values) {
+    const body = String(value ?? '').slice(0, 16 * 1024);
+    for (const match of body.matchAll(/\bMISSION_WORKER_[A-Z0-9_]+\b/g)) {
+      if (BOUNDED_MISSION_WORKER_RESTART_BLOCKERS.has(match[0])) candidates.add(match[0]);
+    }
+  }
+  return candidates.size === 1 ? [...candidates][0] : '';
+}
 export const WORKER_WATCHDOG_RECOVERY_PROBE_TIMEOUT_MS = 5_000;
 export const WORKER_WATCHDOG_PUBLICATION_RESERVE_MS = 5_000;
 export const WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS = 10_000;
@@ -133,13 +184,18 @@ export function createFixedWorkerProbeAdapter({
         windowsHide: true,
         timeout: boundedTimeoutMs,
         stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, GIT_REDIRECT_STDERR: 'off' },
       });
       if (result.error || result.status !== 0) {
+        const restartBlocker = mode === 'StartApprovedWorkerTask'
+          ? extractBoundedMissionWorkerRestartBlocker(result.error?.message, result.stderr, result.stdout)
+          : '';
         return Object.freeze({
           ok: false,
           mode,
           status: result.status,
-          error: result.error?.message || text(result.stderr) || text(result.stdout) || `Probe exited with ${result.status}.`,
+          restartBlocker,
+          error: restartBlocker || result.error?.message || text(result.stderr) || text(result.stdout) || `Probe exited with ${result.status}.`,
           performsShellExecution: false,
           visiblePowerShellRequired: false,
         });
@@ -250,6 +306,7 @@ async function publishWatchdogRecords({
     restartProofFresh: restartProof?.proofFresh === true,
     restartSourceHead: text(restartProof?.sourceHead),
     restartVerdict: text(restartProof?.restartVerdict),
+    restartBlocker: text(restartProof?.restartBlocker),
     supervisorDetectedWorkerDown: initialAssessment?.healthy === false,
     supervisorRestartedWorker: restartAttempted,
     workerRecovered: finalAssessment?.healthy === true,
@@ -436,7 +493,7 @@ export async function runBattleBridgeWorkerWatchdog({
         restartAttempted: true,
         restartAttemptedAtUtc,
         probeError: startResult.error || 'Fixed worker task start was not proven.',
-        restartProof: startResult.data,
+        restartProof: { ...(startResult.data || {}), restartBlocker: text(startResult.restartBlocker) },
       });
       return Object.freeze({ ok: false, classification: 'WORKER_WATCHDOG_START_FAILED', decision, startResult, publication });
     }

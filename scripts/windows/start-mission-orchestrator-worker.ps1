@@ -7,6 +7,37 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
+function Get-CanonicalTrackedSourceAssessment {
+    param([string]$GitExecutable, [string]$RepositoryRoot)
+    $runtimeMemoryPath = 'stephanos-server/data/memory/durable-memory.json'
+    $runtimeUiDistPrefix = 'apps/stephanos/dist/'
+    $trackedStatus = @(& $GitExecutable -C $RepositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
+    if ($LASTEXITCODE -ne 0) { throw 'Canonical tracked source inspection failed.' }
+    $sourceDirt = @()
+    foreach ($raw in @($trackedStatus)) {
+        $line = [string]$raw
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        if ($line.Length -lt 4) {
+            $sourceDirt += $line
+            continue
+        }
+        $status = $line.Substring(0, 2)
+        $pathSegment = $line.Substring(3).Trim()
+        if ($pathSegment.Contains(' -> ')) {
+            $sourceDirt += $line
+            continue
+        }
+        $path = $pathSegment.Trim('"').Replace('\', '/')
+        if ($status -eq ' M' -and $path -eq $runtimeMemoryPath) { continue }
+        if (($status -eq ' M' -or $status -eq ' D') -and $path.StartsWith($runtimeUiDistPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        $sourceDirt += $line
+    }
+    return [pscustomobject]@{
+        SourceDirt = @($sourceDirt)
+        SourceClean = ($sourceDirt.Count -eq 0)
+    }
+}
+
 
 # WORKER_LOG_RETENTION_FUNCTION_START
 function Invoke-BoundedWorkerLogRetention {
@@ -390,23 +421,35 @@ if ($canonicalNodeItem.PSIsContainer `
     -or -not [string]::Equals([System.IO.Path]::GetFullPath($canonicalNodeItem.FullName), $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw 'Canonical Node executable identity is invalid.'
 }
-$branch = (& $canonicalGit -C $repositoryRoot branch --show-current).Trim()
-if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') {
-    throw 'Mission Orchestrator worker requires the canonical checkout on branch main.'
+$previousGitRedirectStderr = [Environment]::GetEnvironmentVariable('GIT_REDIRECT_STDERR', 'Process')
+$env:GIT_REDIRECT_STDERR = 'off'
+try {
+    $branch = (& $canonicalGit -C $repositoryRoot branch --show-current).Trim()
+    if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') {
+        throw 'Mission Orchestrator worker requires the canonical checkout on branch main.'
+    }
+    $headSha = (& $canonicalGit -C $repositoryRoot rev-parse HEAD).Trim().ToLowerInvariant()
+    if ($LASTEXITCODE -ne 0 -or $headSha -notmatch '^[0-9a-f]{40}$') {
+        throw 'Mission Orchestrator worker could not prove a canonical 40-character Git head.'
+    }
+    $sourceAssessment = Get-CanonicalTrackedSourceAssessment -GitExecutable $canonicalGit -RepositoryRoot $repositoryRoot
+    if ($LASTEXITCODE -ne 0 -or -not $sourceAssessment.SourceClean) {
+        throw 'Mission Orchestrator worker requires tracked-clean exact-head source.'
+    }
+    $remoteMain = @(& $canonicalGit 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>&1)
+    if ($LASTEXITCODE -ne 0 -or $remoteMain.Count -ne 1 `
+        -or [string]$remoteMain[0] -notmatch '^([0-9a-fA-F]{40})\s+refs/heads/main$' `
+        -or $Matches[1].ToLowerInvariant() -ne $headSha) {
+        throw 'Mission Orchestrator worker requires the exact current public main head.'
+    }
 }
-$headSha = (& $canonicalGit -C $repositoryRoot rev-parse HEAD).Trim().ToLowerInvariant()
-if ($LASTEXITCODE -ne 0 -or $headSha -notmatch '^[0-9a-f]{40}$') {
-    throw 'Mission Orchestrator worker could not prove a canonical 40-character Git head.'
-}
-$trackedStatus = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
-if ($LASTEXITCODE -ne 0 -or $trackedStatus.Count -ne 0) {
-    throw 'Mission Orchestrator worker requires tracked-clean exact-head source.'
-}
-$remoteMain = @(& $canonicalGit 'ls-remote' '--exit-code' $publicRemote 'refs/heads/main' 2>&1)
-if ($LASTEXITCODE -ne 0 -or $remoteMain.Count -ne 1 `
-    -or [string]$remoteMain[0] -notmatch '^([0-9a-fA-F]{40})\s+refs/heads/main$' `
-    -or $Matches[1].ToLowerInvariant() -ne $headSha) {
-    throw 'Mission Orchestrator worker requires the exact current public main head.'
+finally {
+    if ([string]::IsNullOrEmpty($previousGitRedirectStderr)) {
+        Remove-Item Env:GIT_REDIRECT_STDERR -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:GIT_REDIRECT_STDERR = $previousGitRedirectStderr
+    }
 }
 
 [System.IO.Directory]::CreateDirectory($receiptRoot) | Out-Null

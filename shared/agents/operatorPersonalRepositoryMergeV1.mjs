@@ -44,7 +44,7 @@ export function validatePersonalRepositoryPriorJobEnvelope(run = {}, job = {}) {
   const expectedCheckRunUrl = `https://api.github.com/repos/${repository}/check-runs/${jobId}`;
   const expectedHtmlUrl = `https://github.com/${repository}/actions/runs/${runId}/job/${jobId}`;
   if (!REPOSITORY_PATTERN.test(repository)) blockers.push('prior-job-repository-invalid');
-  if (!runId) blockers.push('prior-job-run-id-invalid');
+  if (!runId) blockers.push('prior-run-id-invalid');
   if (!jobId) blockers.push('prior-job-id-invalid');
   if (!runAttempt || runAttempt > strictPositiveInteger(run?.run_attempt)) blockers.push('prior-job-attempt-invalid');
   if (strictPositiveInteger(job?.run_id) !== runId) blockers.push('prior-job-parent-run-mismatch');
@@ -976,7 +976,35 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
   const workflowRunId = strictPositiveInteger(expected.workflowRunId);
   const workflowRunAttempt = strictPositiveInteger(expected.workflowRunAttempt);
   const expectedTitle = personalRepositoryDispatchTitle(sourceHead);
-  const expectedActor = OPERATOR_MERGE_REVIEWER.toLowerCase();
+  const nativeOwnerActor = OPERATOR_MERGE_REVIEWER.toLowerCase();
+  const mailboxAuthorization = expected?.mailboxAuthorization;
+  const mailboxAuthorizationKeys = mailboxAuthorization && typeof mailboxAuthorization === 'object'
+    && !Array.isArray(mailboxAuthorization)
+    ? Object.keys(mailboxAuthorization).sort()
+    : [];
+  const expectedMailboxAuthorizationKeys = [
+    'authorizedAtUtc',
+    'commentId',
+    'operatorAuthor',
+    'requestId',
+    'transportActor',
+  ];
+  const mailboxAuthorizationSupplied = expected?.mailboxAuthorization !== undefined;
+  const mailboxAuthorizationValid = Boolean(
+    mailboxAuthorizationSupplied
+    && mailboxAuthorization
+    && mailboxAuthorizationKeys.length === expectedMailboxAuthorizationKeys.length
+    && mailboxAuthorizationKeys.every((key, index) => key === expectedMailboxAuthorizationKeys[index])
+    && strictPositiveInteger(mailboxAuthorization.commentId)
+    && text(mailboxAuthorization.requestId)
+    && text(mailboxAuthorization.operatorAuthor).toLowerCase() === nativeOwnerActor
+    && text(mailboxAuthorization.transportActor).toLowerCase() === 'github-actions[bot]'
+    && EXPLICIT_TIMEZONE.test(text(mailboxAuthorization.authorizedAtUtc))
+    && Number.isFinite(new Date(mailboxAuthorization.authorizedAtUtc).getTime())
+  );
+  const expectedActor = mailboxAuthorizationValid
+    ? 'github-actions[bot]'
+    : nativeOwnerActor;
   const currentMismatches = [
     ['run-id', strictPositiveInteger(run?.id) === workflowRunId],
     ['run-attempt', strictPositiveInteger(run?.run_attempt) === workflowRunAttempt],
@@ -1070,6 +1098,9 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
       : []),
     ...(priorAttemptLimitExceeded ? ['personal-repository-prior-run-attempt-limit-exceeded'] : []),
     ...(retryableProofDuplicate ? ['personal-repository-prior-run-proof-duplicate'] : []),
+    ...(mailboxAuthorizationSupplied && !mailboxAuthorizationValid
+      ? ['personal-repository-mailbox-authorization-provenance-invalid']
+      : []),
     ...(currentMismatches.length ? ['personal-repository-workflow-run-identity-mismatch'] : []),
     ...(malformedPriorRunIds.length ? ['personal-repository-prior-attempt-invalid'] : []),
     ...(replayRunIds.length ? ['personal-repository-prior-attempt-exists'] : []),

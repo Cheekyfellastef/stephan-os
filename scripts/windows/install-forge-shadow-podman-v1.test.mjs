@@ -36,6 +36,38 @@ test('Windows and executable identities are fixed rather than PATH selected', ()
   lacks('scoop');
 });
 
+test('Windows 10 x64 compatibility authority uses an exact build range and real WSL2 evidence', () => {
+  has("$WindowsHostAdapter = 'podman-desktop-windows10-wsl2-v1'");
+  has('$MinimumWindowsBuild = 19043');
+  has('$MaximumWindowsBuildExclusive = 22000');
+  has("$RequiredWindowsArchitecture = 'X64'");
+  has("$PodmanDesktopVersion = '1.29.1'");
+  has("$PodmanDesktopSourceCommit = 'a969ee0e0b07285122dd4988a58edb0a1a25d5fc'");
+  has("$PodmanDesktopPodmanManifestBlob = '5acfedd1c3171414aa218a1d5d95ea7529687809'");
+  has("Fail 'WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED'");
+  has("$WindowsCurrentVersionKey = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion'");
+  has("Fail 'WINDOWS_PRODUCT_IDENTITY_UNAVAILABLE'");
+  has("Fail 'WINDOWS_10_CLIENT_REQUIRED'");
+  has("$ObservedWindowsInstallationType -ne 'Client'");
+  has("$ObservedWindowsProductName -notmatch '^Windows 10(?:\\s|$)'");
+  has('[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()');
+  has('$ObservedWindowsArchitecture -ne $RequiredWindowsArchitecture');
+  has('$ObservedWindowsBuild -ge $MaximumWindowsBuildExclusive');
+  has('function Get-Wsl2Evidence');
+  has("@('--status')");
+  has("@('--list', '--verbose')");
+  has("return 'default-version-2'");
+  has("return 'distribution-version-2'");
+  has('$ObservedWsl2Evidence = Get-Wsl2Evidence');
+  has("if (-not $ObservedWsl2Evidence) { Fail 'WSL2_NOT_AVAILABLE' }");
+  has('maximumWindowsBuildExclusive = $MaximumWindowsBuildExclusive');
+  has('requiredWindowsArchitecture = $RequiredWindowsArchitecture');
+  has('observedWindowsArchitecture = $ObservedWindowsArchitecture');
+  has('wsl2Evidence = $ObservedWsl2Evidence');
+  lacks('$wslStatus = Invoke-Fixed');
+  lacks('WINDOWS_11_OR_NEWER_REQUIRED');
+});
+
 test('machine creation and inspection are WSL rootless bounded identities', () => {
   has("'machine', 'init', '--provider', 'wsl', '--rootful=false', '--cpus', '4', '--memory', '4096', '--disk-size', '40'");
   has("'machine', 'inspect', '--format', '{{json .}}', $MachineName");

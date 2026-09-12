@@ -21,6 +21,12 @@ const USER_AGENT = 'stephanos-protected-workflow-dispatch-mailbox-v1';
 const READY_MUTATION = 'mutation($pullRequestId:ID!){markPullRequestReadyForReview(input:{pullRequestId:$pullRequestId}){pullRequest{id number isDraft headRefOid}}}';
 
 function text(value) { return String(value ?? '').trim(); }
+function positiveInteger(value) {
+  const raw = text(value);
+  if (!/^[1-9][0-9]*$/.test(raw)) return 0;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) ? parsed : 0;
+}
 function fail(message, details = {}) {
   const error = new Error(message);
   error.details = details;
@@ -119,6 +125,7 @@ async function main() {
   const event = JSON.parse(readFileSync(eventPath, 'utf8'));
   const issueNumber = Number(event?.issue?.number || 0);
   const authorLogin = text(event?.comment?.user?.login);
+  const authorizationCommentId = positiveInteger(event?.comment?.id);
   const body = text(event?.comment?.body);
   const authoredAt = new Date(event?.comment?.created_at || 0);
   const now = new Date();
@@ -129,6 +136,7 @@ async function main() {
     console.log(JSON.stringify({ ok: true, verdict: 'PROTECTED_WORKFLOW_DISPATCH_IGNORED' }));
     return;
   }
+  if (!authorizationCommentId) fail('PROTECTED_WORKFLOW_DISPATCH_AUTHORIZATION_COMMENT_ID_INVALID');
 
   const extracted = extractProtectedWorkflowDispatch(body);
   if (!extracted.ok) fail(extracted.blocker, extracted.details);
@@ -163,7 +171,7 @@ async function main() {
 
   if (command.operation === PROTECTED_WORKFLOW_DISPATCH_OPERATION) {
     await readExactState(command, { allowDraft: false });
-    const dispatch = buildProtectedWorkflowDispatchRequest(command);
+    const dispatch = buildProtectedWorkflowDispatchRequest(command, { authorizationCommentId });
     if (!dispatch.ok) fail(dispatch.blocker, dispatch.details);
     await github(dispatch.path, { method: dispatch.method, body: dispatch.body, expectedStatus: 204 });
     const receipt = await postReceipt(command, 'PROTECTED_MERGE_WORKFLOW_DISPATCHED');

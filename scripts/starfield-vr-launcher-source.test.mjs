@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const launcherUrl = new URL('./windows/launch-starfield-vr.ps1', import.meta.url);
+const splashUrl = new URL('./windows/launch-starfield-vr-with-splash.ps1', import.meta.url);
 const installerUrl = new URL('./windows/install-starfield-vr-desktop-shortcut.ps1', import.meta.url);
 const packageUrl = new URL('../package.json', import.meta.url);
 
@@ -24,13 +25,37 @@ test('launcher is launch-only and cannot install or download a VR mod', async ()
   assert.match(source, /Start-Process -FilePath \$launchExecutable -WorkingDirectory \$workingDirectory -PassThru/);
 });
 
-test('installer creates exactly one current-user shortcut named Starfield VR', async () => {
+test('splash is presentation-only and delegates readiness plus launch to the canonical launcher', async () => {
+  const source = await readFile(splashUrl, 'utf8');
+  assert.match(source, /Add-Type -AssemblyName System\.Windows\.Forms/);
+  assert.match(source, /STARFIELD VR/);
+  assert.match(source, /Preparing Starfield VR/);
+  assert.match(source, /Checking Quest 3 route/);
+  assert.match(source, /Checking Meta Air Link/);
+  assert.match(source, /Checking OpenXR runtime/);
+  assert.match(source, /Checking verified VR provider/);
+  assert.match(source, /Ready to launch/);
+  assert.match(source, /Launching Starfield VR/);
+  assert.match(source, /Invoke-StarfieldVrLauncher -ReadinessOnly/);
+  assert.match(source, /Invoke-StarfieldVrLauncher/);
+  assert.match(source, /STARFIELD_VR_LAUNCH_READY/);
+  assert.match(source, /Flat Starfield was not started/);
+  assert.match(source, /Show details/);
+  assert.match(source, /Cancel/);
+  assert.doesNotMatch(source, /Invoke-WebRequest|Start-BitsTransfer|Expand-Archive|Copy-Item|Set-ItemProperty/i);
+  assert.doesNotMatch(source, /Start-Process\s+-FilePath\s+.*Starfield|sfse_loader\.exe|dxgi\.dll/i);
+});
+
+test('installer creates exactly one current-user shortcut named Starfield VR through the splash wrapper', async () => {
   const source = await readFile(installerUrl, 'utf8');
   assert.match(source, /\[Environment\]::GetFolderPath\(\[Environment\+SpecialFolder\]::Desktop\)/);
   assert.match(source, /Join-Path \$desktopPath 'Starfield VR\.lnk'/);
+  assert.match(source, /launch-starfield-vr-with-splash\.ps1/);
+  assert.match(source, /\$arguments = [\s\S]*\$splashLauncherScript/);
   assert.match(source, /New-Object -ComObject WScript\.Shell/);
   assert.match(source, /SupportsShouldProcess = \$true/);
   assert.match(source, /-WindowStyle Hidden/);
+  assert.match(source, /splashLauncherScript = \$splashLauncherScript/);
   assert.doesNotMatch(source, /AllUsersDesktop|Public\\Desktop|RunAs|Verb\s*=\s*'runas'/i);
 });
 

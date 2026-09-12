@@ -17,6 +17,37 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
+function Get-CanonicalTrackedSourceAssessment {
+    param([string]$GitExecutable, [string]$RepositoryRoot)
+    $runtimeMemoryPath = 'stephanos-server/data/memory/durable-memory.json'
+    $runtimeUiDistPrefix = 'apps/stephanos/dist/'
+    $trackedStatus = @(& $GitExecutable -C $RepositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>$null)
+    if ($LASTEXITCODE -ne 0) { throw 'Canonical tracked source inspection failed.' }
+    $sourceDirt = @()
+    foreach ($raw in @($trackedStatus)) {
+        $line = [string]$raw
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        if ($line.Length -lt 4) {
+            $sourceDirt += $line
+            continue
+        }
+        $status = $line.Substring(0, 2)
+        $pathSegment = $line.Substring(3).Trim()
+        if ($pathSegment.Contains(' -> ')) {
+            $sourceDirt += $line
+            continue
+        }
+        $path = $pathSegment.Trim('"').Replace('\', '/')
+        if ($status -eq ' M' -and $path -eq $runtimeMemoryPath) { continue }
+        if (($status -eq ' M' -or $status -eq ' D') -and $path.StartsWith($runtimeUiDistPrefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        $sourceDirt += $line
+    }
+    return [pscustomobject]@{
+        SourceDirt = @($sourceDirt)
+        SourceClean = ($sourceDirt.Count -eq 0)
+    }
+}
+
 $backendExpectedHeadHandoffPath = $null
 $backendTaskDisabledByRepair = $false
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
@@ -31,6 +62,7 @@ $workerStartedAtUtc = ''
 $postStartSourceProofOk = $false
 $missionWorkerStopTimeoutSeconds = 15
 $missionWorkerCleanupTimeoutSeconds = 10
+$missionWorkerFailureCleanupReserveSeconds = $missionWorkerStopTimeoutSeconds + $missionWorkerCleanupTimeoutSeconds + 5
 $operationDeadlineUtc = [datetime]::MaxValue
 $invocationId = ''
 $invocationBound = $false
@@ -103,6 +135,47 @@ function New-CryptographicInvocationId {
     $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
     try { $generator.GetBytes($bytes) } finally { $generator.Dispose() }
     return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
+}
+
+function Wait-MissionWorkerSelfCleanupObservation {
+    param([Parameter(Mandatory = $true)][string]$ExpectedRepoRoot)
+
+    # Observation only: never extend the restart/mutation deadline. This slice
+    # is capped within the existing ten-second child-exit reserve, even if the
+    # caller reaches it late. The launcher owns cancellation and self-cleanup.
+    $observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(4)
+    $reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds(4)
+    if ($observationDeadlineUtc -gt $reserveDeadlineUtc) {
+        $observationDeadlineUtc = $reserveDeadlineUtc
+    }
+    while ([datetime]::UtcNow -lt $observationDeadlineUtc) {
+        try {
+            $task = Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker' -TaskPath '\' -ErrorAction Stop
+            if ($task -and [string]$task.State -in @('Ready', 'Disabled')) {
+                $workers = @()
+                $nodeProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -OperationTimeoutSec 1 -ErrorAction Stop)
+                foreach ($process in $nodeProcesses) {
+                    $executablePath = [string]$process.ExecutablePath
+                    $commandLine = [string]$process.CommandLine
+                    if ([string]::IsNullOrWhiteSpace($executablePath) -or [string]::IsNullOrWhiteSpace($commandLine)) {
+                        return $false
+                    }
+                    [void][System.IO.Path]::GetFullPath($executablePath)
+                    $arguments = @(ConvertFrom-WindowsCommandLine -CommandLine $commandLine)
+                    if ($arguments.Count -eq 0) { return $false }
+                    if (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot) {
+                        $workers += $process
+                    }
+                }
+                if ($workers.Count -eq 0 -and [datetime]::UtcNow -lt $observationDeadlineUtc) {
+                    return $true
+                }
+            }
+        }
+        catch { return $false }
+        Start-Sleep -Milliseconds 100
+    }
+    return $false
 }
 
 function Write-BoundedAtomicJson {
@@ -219,9 +292,8 @@ function Read-CanonicalWorkerSourceProof {
         Stop-WithBlocker 'EXPECTED_HEAD_MISMATCH'
     }
 
-    $trackedStatus = @(& $GitExecutable -C $RepositoryRoot status '--porcelain=v1' '--untracked-files=no' 2>&1)
-    $trackedStatusExitCode = $LASTEXITCODE
-    if ($trackedStatusExitCode -ne 0 -or $trackedStatus.Count -ne 0) {
+    $sourceAssessment = Get-CanonicalTrackedSourceAssessment -GitExecutable $GitExecutable -RepositoryRoot $RepositoryRoot
+    if (-not $sourceAssessment.SourceClean) {
         if ($Phase -eq 'POST_START') { Stop-WithBlocker 'CANONICAL_TRACKED_SOURCE_CHANGED_DURING_WORKER_START' }
         Stop-WithBlocker 'CANONICAL_TRACKED_SOURCE_DIRTY'
     }
@@ -257,7 +329,7 @@ function Get-VerifiedBackendListener {
     if ($processIds.Count -eq 0) { return $null }
     if ($processIds.Count -ne 1) { Stop-WithBlocker 'BACKEND_LISTENER_IDENTITY_AMBIGUOUS' }
     $processId = [int]$processIds[0]
-    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
     if (-not $process) { Stop-WithBlocker 'BACKEND_LISTENER_PROCESS_MISSING' }
     $executable = [System.IO.Path]::GetFullPath([string]$process.ExecutablePath)
     if (-not [string]::Equals($executable, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)) { Stop-WithBlocker 'BACKEND_LISTENER_NOT_CANONICAL_NODE' }
@@ -524,7 +596,7 @@ function Get-VerifiedWorkerProcessFromHeartbeat {
         }
         finally { $sha256.Dispose() }
         $launchReceiptDigest = ([BitConverter]::ToString($launchReceiptHash)).Replace('-', '').ToLowerInvariant()
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
         if (-not (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot)) { return $null }
         $liveProcessStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
@@ -558,6 +630,75 @@ function Get-VerifiedWorkerProcessFromHeartbeat {
     catch { return $null }
     finally {
         if ($processCapability -and -not $retainProcessCapability) { $processCapability.Dispose() }
+    }
+}
+
+function Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat {
+    param(
+        [Parameter(Mandatory = $true)][string]$ExpectedRepoRoot
+    )
+
+    $canonicalWorkers = @()
+    try {
+        $nodeProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -OperationTimeoutSec 1 -ErrorAction Stop)
+    }
+    catch {
+        Stop-WithBlocker 'MISSION_WORKER_CANONICAL_PROCESS_QUERY_FAILED'
+    }
+
+    foreach ($process in $nodeProcesses) {
+        if (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot) {
+            $canonicalWorkers += $process
+        }
+    }
+
+    if ($canonicalWorkers.Count -gt 1) {
+        Stop-WithBlocker 'MISSION_WORKER_CANONICAL_PROCESS_IDENTITY_AMBIGUOUS'
+    }
+    if ($canonicalWorkers.Count -eq 0) { return $null }
+
+    $candidate = $canonicalWorkers[0]
+    $processId = [int]$candidate.ProcessId
+    if ($processId -le 0) {
+        Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
+    }
+
+    $candidateStartedAtUtc = ([datetime]$candidate.CreationDate).ToUniversalTime()
+    $processCapability = $null
+    $retainProcessCapability = $false
+    try {
+        $processCapability = [System.Diagnostics.Process]::GetProcessById($processId)
+        if ($processCapability.HasExited -or $processCapability.Id -ne $processId) {
+            Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED'
+        }
+        $null = $processCapability.Handle
+        $capabilityProcessStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+
+        $candidateReRead = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
+        if (-not $candidateReRead -or -not (Test-ExactCanonicalWorkerProcess -Process $candidateReRead -ExpectedRepoRoot $ExpectedRepoRoot)) {
+            Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
+        }
+        $candidateReReadStartedAtUtc = ([datetime]$candidateReRead.CreationDate).ToUniversalTime()
+        if ($candidateReReadStartedAtUtc.Ticks -ne $candidateStartedAtUtc.Ticks) {
+            Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
+        }
+
+        $retainProcessCapability = $true
+        return [PSCustomObject]@{
+            ProcessId = $processId
+            ProcessStartedAtUtc = $capabilityProcessStartedAtUtc
+            ProcessCapability = $processCapability
+            CanonicalWorkerCommandVerified = $true
+        }
+    }
+    catch {
+        if ([string]$_.Exception.Message -like 'MISSION_WORKER_*') { throw }
+        Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED'
+    }
+    finally {
+        if ($processCapability -and -not $retainProcessCapability) {
+            $processCapability.Dispose()
+        }
     }
 }
 
@@ -624,7 +765,7 @@ function Get-VerifiedFreshWorkerInstance {
         if ($boundHeartbeatTimestampUtc -le $receiptProcessStartedAtUtc `
             -or $boundHeartbeatTimestampUtc -gt $invocationHeartbeatObservedAtUtc `
             -or $timestamp -lt $boundHeartbeatTimestampUtc) { return $null }
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
         $processStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
         if ($processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks) { return $null }
@@ -667,7 +808,7 @@ function Get-VerifiedInvocationProcessFromLaunchReceipt {
         $processId = [int]$receipt.workerPid
         $processStartedAtUtc = [datetime]::Parse([string]$receipt.workerStartedAtUtc).ToUniversalTime()
         if ($processId -le 0 -or $processStartedAtUtc -le $StartedAfterUtc) { return $null }
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
         $observedStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
         if ($observedStartedAtUtc.Ticks -ne $processStartedAtUtc.Ticks) { return $null }
@@ -681,6 +822,86 @@ function Get-VerifiedInvocationProcessFromLaunchReceipt {
         }
     }
     catch { return $null }
+}
+
+
+function Get-VerifiedCleanupFallbackWorkerProcess {
+    param(
+        [Parameter(Mandatory = $true)][object]$Plan,
+        [Parameter(Mandatory = $true)][datetime]$StartedAfterUtc,
+        [Parameter(Mandatory = $true)][string]$ExpectedRepoRoot,
+        [int]$ExpectedProcessId = 0,
+        [datetime]$ExpectedProcessStartedAtUtc = [datetime]::MinValue
+    )
+
+    if ([string]$Plan.TaskName -ne 'Stephanos Mission Orchestrator Worker') {
+        Stop-WithBlocker 'MISSION_WORKER_CLEANUP_TASK_NOT_ALLOWLISTED'
+    }
+    $cleanupTask = Get-ScheduledTask -TaskName $Plan.TaskName -TaskPath '\' -ErrorAction SilentlyContinue
+    if (-not $cleanupTask) { Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN' }
+    if ([string]$cleanupTask.State -in @('Running', 'Queued')) {
+        Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN'
+    }
+
+    $candidate = $null
+    try {
+        $candidate = Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat -ExpectedRepoRoot $ExpectedRepoRoot
+    }
+    catch {
+        Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN'
+    }
+    if (-not $candidate) { Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN' }
+    if ($candidate.ProcessStartedAtUtc.ToUniversalTime().Ticks -le $StartedAfterUtc.ToUniversalTime().Ticks) {
+        if ($candidate.ProcessCapability) { $candidate.ProcessCapability.Dispose() }
+        Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN'
+    }
+
+    if (($ExpectedProcessId -gt 0 -and $candidate.ProcessId -ne $ExpectedProcessId) `
+        -or ($ExpectedProcessStartedAtUtc -ne [datetime]::MinValue `
+            -and $candidate.ProcessStartedAtUtc.ToUniversalTime().Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks)) {
+        if ($candidate.ProcessCapability) { $candidate.ProcessCapability.Dispose() }
+        Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED'
+    }
+
+    $processCapability = $null
+    $retainProcessCapability = $false
+    try {
+        $reread = Get-CimInstance Win32_Process -Filter "ProcessId = $($candidate.ProcessId)" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
+        if (-not $reread -or -not (Test-ExactCanonicalWorkerProcess -Process $reread -ExpectedRepoRoot $ExpectedRepoRoot)) {
+            Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED'
+        }
+        $rereadStartedAtUtc = ([datetime]$reread.CreationDate).ToUniversalTime()
+        if ($rereadStartedAtUtc.Ticks -ne $candidate.ProcessStartedAtUtc.ToUniversalTime().Ticks) {
+            Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED'
+        }
+
+        $processCapability = [System.Diagnostics.Process]::GetProcessById([int]$candidate.ProcessId)
+        if ($processCapability.HasExited -or $processCapability.Id -ne [int]$candidate.ProcessId) {
+            Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED'
+        }
+        $null = $processCapability.Handle
+        $capabilityStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+        if ($capabilityStartedAtUtc.Ticks -ne $candidate.ProcessStartedAtUtc.ToUniversalTime().Ticks) {
+            Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED'
+        }
+
+        if ($candidate.ProcessCapability) { $candidate.ProcessCapability.Dispose() }
+        $retainProcessCapability = $true
+        return [PSCustomObject]@{
+            ProcessId = [int]$candidate.ProcessId
+            ProcessStartedAtUtc = $candidate.ProcessStartedAtUtc.ToUniversalTime()
+            ProcessCapability = $processCapability
+            CanonicalWorkerCommandVerified = $true
+        }
+    }
+    catch {
+        if ($candidate.ProcessCapability) { $candidate.ProcessCapability.Dispose() }
+        if ([string]$_.Exception.Message -like 'MISSION_WORKER_*') { throw }
+        Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED'
+    }
+    finally {
+        if ($processCapability -and -not $retainProcessCapability) { $processCapability.Dispose() }
+    }
 }
 
 function Stop-NewlyStartedOwnedWorker {
@@ -728,46 +949,82 @@ function Stop-NewlyStartedOwnedWorker {
         -ExpectedSourceHead $ExpectedSourceHead `
         -ExpectedRepoRoot $ExpectedRepoRoot `
         -ExpectedInvocationId $ExpectedInvocationId
-    if (-not $verifiedInvocationProcess) {
-        Stop-WithBlocker 'MISSION_WORKER_CLEANUP_LAUNCH_RECEIPT_NOT_PROVEN'
+    $cleanupFallbackUsed = $false
+    if ($verifiedInvocationProcess) {
+        if ($ExpectedProcessId -le 0) { $ExpectedProcessId = $verifiedInvocationProcess.ProcessId }
+        if ($ExpectedProcessStartedAtUtc -eq [datetime]::MinValue) {
+            $ExpectedProcessStartedAtUtc = $verifiedInvocationProcess.ProcessStartedAtUtc
+        }
+        if ($verifiedInvocationProcess.ProcessId -ne $ExpectedProcessId `
+            -or $verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks) {
+            Stop-WithBlocker 'MISSION_WORKER_CLEANUP_LAUNCH_RECEIPT_MISMATCH'
+        }
     }
-    if ($ExpectedProcessId -le 0) { $ExpectedProcessId = $verifiedInvocationProcess.ProcessId }
-    if ($ExpectedProcessStartedAtUtc -eq [datetime]::MinValue) {
-        $ExpectedProcessStartedAtUtc = $verifiedInvocationProcess.ProcessStartedAtUtc
-    }
-    if ($verifiedInvocationProcess.ProcessId -ne $ExpectedProcessId `
-        -or $verifiedInvocationProcess.ProcessStartedAtUtc.Ticks -ne $ExpectedProcessStartedAtUtc.ToUniversalTime().Ticks) {
-        Stop-WithBlocker 'MISSION_WORKER_CLEANUP_LAUNCH_RECEIPT_MISMATCH'
+    else {
+        $fallbackProcess = Get-VerifiedCleanupFallbackWorkerProcess `
+            -Plan $Plan `
+            -StartedAfterUtc $StartedAfterUtc `
+            -ExpectedRepoRoot $ExpectedRepoRoot `
+            -ExpectedProcessId $ExpectedProcessId `
+            -ExpectedProcessStartedAtUtc $ExpectedProcessStartedAtUtc
+        if (-not $fallbackProcess) { Stop-WithBlocker 'MISSION_WORKER_CLEANUP_LAUNCH_RECEIPT_NOT_PROVEN' }
+        $cleanupFallbackUsed = $true
+        $ExpectedProcessId = $fallbackProcess.ProcessId
+        $ExpectedProcessStartedAtUtc = $fallbackProcess.ProcessStartedAtUtc
+        if ($fallbackProcess.ProcessCapability) { $fallbackProcess.ProcessCapability.Dispose() }
     }
 
     $verifiedWorker = $null
     if ($ExpectedProcessId -gt 0) {
-        $verifiedWorker = Get-VerifiedFreshWorkerInstance `
-            -HeartbeatPath $HeartbeatPath `
-            -StartedAfterUtc $StartedAfterUtc `
-            -ExpectedSourceHead $ExpectedSourceHead `
-            -ExpectedRepoRoot $ExpectedRepoRoot `
-            -ExpectedInvocationId $ExpectedInvocationId `
-            -ExpectedProcessId $ExpectedProcessId `
-            -ExpectedProcessStartedAtUtc $ExpectedProcessStartedAtUtc
+        if ($cleanupFallbackUsed) {
+            $verifiedWorker = Get-VerifiedCleanupFallbackWorkerProcess `
+                -Plan $Plan `
+                -StartedAfterUtc $StartedAfterUtc `
+                -ExpectedRepoRoot $ExpectedRepoRoot `
+                -ExpectedProcessId $ExpectedProcessId `
+                -ExpectedProcessStartedAtUtc $ExpectedProcessStartedAtUtc
+        }
+        else {
+            $verifiedWorker = Get-VerifiedFreshWorkerInstance `
+                -HeartbeatPath $HeartbeatPath `
+                -StartedAfterUtc $StartedAfterUtc `
+                -ExpectedSourceHead $ExpectedSourceHead `
+                -ExpectedRepoRoot $ExpectedRepoRoot `
+                -ExpectedInvocationId $ExpectedInvocationId `
+                -ExpectedProcessId $ExpectedProcessId `
+                -ExpectedProcessStartedAtUtc $ExpectedProcessStartedAtUtc
+        }
         if (-not $verifiedWorker) {
-            Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN'
+            Stop-WithBlocker $(if ($cleanupFallbackUsed) { 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN' } else { 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_NOT_PROVEN' })
         }
     }
 
     if ($verifiedWorker) {
-        $reverifiedWorker = Get-VerifiedFreshWorkerInstance `
-            -HeartbeatPath $HeartbeatPath `
-            -StartedAfterUtc $StartedAfterUtc `
-            -ExpectedSourceHead $ExpectedSourceHead `
-            -ExpectedRepoRoot $ExpectedRepoRoot `
-            -ExpectedInvocationId $ExpectedInvocationId `
-            -ExpectedProcessId $verifiedWorker.ProcessId `
-            -ExpectedProcessStartedAtUtc $verifiedWorker.ProcessStartedAtUtc
+        if ($cleanupFallbackUsed) {
+            $reverifiedWorker = Get-VerifiedCleanupFallbackWorkerProcess `
+                -Plan $Plan `
+                -StartedAfterUtc $StartedAfterUtc `
+                -ExpectedRepoRoot $ExpectedRepoRoot `
+                -ExpectedProcessId $verifiedWorker.ProcessId `
+                -ExpectedProcessStartedAtUtc $verifiedWorker.ProcessStartedAtUtc
+        }
+        else {
+            $reverifiedWorker = Get-VerifiedFreshWorkerInstance `
+                -HeartbeatPath $HeartbeatPath `
+                -StartedAfterUtc $StartedAfterUtc `
+                -ExpectedSourceHead $ExpectedSourceHead `
+                -ExpectedRepoRoot $ExpectedRepoRoot `
+                -ExpectedInvocationId $ExpectedInvocationId `
+                -ExpectedProcessId $verifiedWorker.ProcessId `
+                -ExpectedProcessStartedAtUtc $verifiedWorker.ProcessStartedAtUtc
+        }
         if (-not $reverifiedWorker `
             -or $reverifiedWorker.ProcessId -ne $verifiedWorker.ProcessId `
             -or $reverifiedWorker.ProcessStartedAtUtc.Ticks -ne $verifiedWorker.ProcessStartedAtUtc.Ticks) {
-            Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED'
+            Stop-WithBlocker $(if ($cleanupFallbackUsed) { 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED' } else { 'MISSION_WORKER_CLEANUP_PROCESS_IDENTITY_CHANGED' })
+        }
+        if ($verifiedWorker.PSObject.Properties.Name -contains 'ProcessCapability' -and $verifiedWorker.ProcessCapability) {
+            $verifiedWorker.ProcessCapability.Dispose()
         }
     }
 
@@ -785,8 +1042,16 @@ function Stop-NewlyStartedOwnedWorker {
         workerStartedAtUtc = $ExpectedProcessStartedAtUtc.ToUniversalTime().ToString('o')
     })
 
+    if ($reverifiedWorker -and $reverifiedWorker.PSObject.Properties.Name -contains 'ProcessCapability' -and $reverifiedWorker.ProcessCapability) {
+        $reverifiedWorker.ProcessCapability.Dispose()
+    }
+
     if ($ExpectedProcessId -gt 0 -and -not (Wait-UntilOperationDeadline -ReserveSeconds 1 -Condition {
-        -not (Get-CimInstance Win32_Process -Filter "ProcessId = $ExpectedProcessId" -ErrorAction SilentlyContinue)
+        try {
+            $cleanupProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $ExpectedProcessId" -OperationTimeoutSec 1 -ErrorAction Stop
+            return -not $cleanupProcess
+        }
+        catch { return $false }
     })) { Stop-WithBlocker 'MISSION_WORKER_CLEANUP_PROCESS_DID_NOT_STOP' }
 
     $cleanupTask = Get-ScheduledTask -TaskName $Plan.TaskName -TaskPath '\' -ErrorAction SilentlyContinue
@@ -818,8 +1083,10 @@ try {
 
     if (-not (Test-Path -LiteralPath $canonicalGit -PathType Leaf)) { Stop-WithBlocker 'CANONICAL_GIT_MISSING' }
     $canonicalGitItem = Get-Item -LiteralPath $canonicalGit -Force
+    $canonicalGitLinkType = [string]$canonicalGitItem.LinkType
     if ($canonicalGitItem.PSIsContainer `
-        -or $canonicalGitItem.LinkType `
+        -or (-not [string]::IsNullOrEmpty($canonicalGitLinkType) `
+            -and $canonicalGitLinkType -ne 'HardLink') `
         -or (($canonicalGitItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
         Stop-WithBlocker 'CANONICAL_GIT_IDENTITY_INVALID'
     }
@@ -917,10 +1184,10 @@ try {
     else {
         $heartbeatPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\mission-orchestrator-worker-heartbeat.json'
         $oldWorker = Get-VerifiedWorkerProcessFromHeartbeat -HeartbeatPath $heartbeatPath -ExpectedRepoRoot $repoRoot
-        if ([string]$task.State -eq 'Running') {
+        if ([string]$task.State -in @('Running', 'Queued')) {
             Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
             if (-not (Wait-UntilOperationDeadline -ReserveSeconds 12 -Condition {
-                [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -ne 'Running'
+                [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -notin @('Running', 'Queued')
             })) { Stop-WithBlocker 'MISSION_WORKER_TASK_DID_NOT_STOP' }
         }
         if ($oldWorker) {
@@ -964,6 +1231,47 @@ try {
                 if ($reverifiedProcessCapability) { $reverifiedProcessCapability.Dispose() }
             }
         }
+
+        if (-not $oldWorker) {
+            $preOrphanReclaimTask = Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\' -ErrorAction Stop
+            if ([string]$preOrphanReclaimTask.State -in @('Running', 'Queued')) {
+                Stop-WithBlocker 'MISSION_WORKER_TASK_DID_NOT_STOP'
+            }
+            $orphanWorker = Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat -ExpectedRepoRoot $repoRoot
+            if ($orphanWorker) {
+                $orphanWorkerRecheck = $null
+                $reverifiedOrphanProcessCapability = $null
+                try {
+                    $orphanWorkerRecheck = Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat -ExpectedRepoRoot $repoRoot
+                    if (-not $orphanWorkerRecheck -or $orphanWorkerRecheck.ProcessId -ne $orphanWorker.ProcessId -or $orphanWorkerRecheck.ProcessStartedAtUtc.Ticks -ne $orphanWorker.ProcessStartedAtUtc.Ticks) {
+                        Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'
+                    }
+                    $reverifiedOrphanProcessCapability = $orphanWorkerRecheck.ProcessCapability
+                    if ($reverifiedOrphanProcessCapability.HasExited -or $reverifiedOrphanProcessCapability.Id -ne $orphanWorker.ProcessId) {
+                        Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED'
+                    }
+                    $null = $reverifiedOrphanProcessCapability.Handle
+                    $orphanCapabilityStartedAtUtc = $reverifiedOrphanProcessCapability.StartTime.ToUniversalTime()
+                    if ($orphanCapabilityStartedAtUtc.Ticks -ne $orphanWorker.ProcessStartedAtUtc.Ticks) {
+                        Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED'
+                    }
+                    Assert-BeforeOperationDeadline -RequiredReserveSeconds 12
+                    $reverifiedOrphanProcessCapability.Kill()
+                    $terminatedVerifiedOwnedProcess = $true
+                    if (-not $reverifiedOrphanProcessCapability.WaitForExit(10000)) {
+                        Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_DID_NOT_STOP'
+                    }
+                }
+                catch {
+                    if ([string]$_.Exception.Message -like 'MISSION_WORKER_*') { throw }
+                    Stop-WithBlocker 'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED'
+                }
+                finally {
+                    if ($orphanWorker.ProcessCapability) { $orphanWorker.ProcessCapability.Dispose() }
+                    if ($reverifiedOrphanProcessCapability) { $reverifiedOrphanProcessCapability.Dispose() }
+                }
+            }
+        }
         $preStartSourceProof = Read-CanonicalWorkerSourceProof `
             -RepositoryRoot $repoRoot `
             -GitExecutable $canonicalGit `
@@ -998,7 +1306,7 @@ try {
         try {
             Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\'
             $workerTaskStarted = $true
-            if (-not (Wait-UntilOperationDeadline -ReserveSeconds 8 -Condition {
+            if (-not (Wait-UntilOperationDeadline -ReserveSeconds $missionWorkerFailureCleanupReserveSeconds -Condition {
                 $candidateWorker = Get-VerifiedFreshWorkerInstance `
                     -HeartbeatPath $heartbeatPath `
                     -StartedAfterUtc $startedAtUtc `
@@ -1116,9 +1424,7 @@ try {
                     if ($cleanupBlocker -notmatch '^[A-Z0-9_:-]{3,120}$') {
                         $cleanupBlocker = 'MISSION_WORKER_POST_START_CLEANUP_FAILED'
                     }
-                    if (-not (Wait-UntilOperationDeadline -Condition {
-                        [string](Get-ScheduledTask -TaskName $plan.TaskName -TaskPath '\').State -ne 'Running'
-                    })) {
+                    if (-not (Wait-MissionWorkerSelfCleanupObservation -ExpectedRepoRoot $repoRoot)) {
                         $cleanupBlocker = 'MISSION_WORKER_DEADLINE_SELF_CLEANUP_NOT_PROVEN'
                     }
                 }
