@@ -301,7 +301,11 @@ export async function runBattleBridgeControlPlaneBootstrapRecovery({
     });
   }
 
-  const multiSurfaceObservationEnabled = (platform === 'win32' && process.platform === 'win32')
+  const multiSurfaceObservationEnabled = (
+    platform === 'win32'
+    && process.platform === 'win32'
+    && mailboxIndexReader === readMailboxReceiptIndex
+  )
     || typeof recoveryMeshStatusReader === 'function'
     || typeof recoveryLifeboatHeartbeatReader === 'function';
 
