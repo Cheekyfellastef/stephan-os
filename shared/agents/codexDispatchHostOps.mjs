@@ -481,7 +481,7 @@ function classifyCompletedSyncBlocker({ afterHead, approvedTargetHead, statusAft
   if (afterHead.stdout !== approvedTargetHead) return 'POST_SYNC_HEAD_MISMATCH';
   if (!statusAfter?.ok) return 'POST_SYNC_STATUS_READ_FAILED';
   if (!diffNames?.ok) return 'POST_SYNC_CHANGED_FILES_READ_FAILED';
-  if (!tests?.ok) return 'POST_SYNC_VERIFICATION_FAILED';
+  if (!tests?.ok) return 'POST_SYNC_VERIFICATION_TEST_FAILURE';
   return '';
 }
 
@@ -679,11 +679,18 @@ export function syncCodexDispatchBridge({
     'shared/agents/codexDispatchHostOps.mjs',
     'shared/agents/stephanosChatUpdate.mjs',
   ].includes(path));
-  const passed = afterHead.ok
-    && afterHead.stdout === approvedTargetHead
+  const sourceConverged = afterHead.ok && afterHead.stdout === approvedTargetHead;
+  const verificationPassed = tests.ok === true;
+  const verification = Object.freeze({
+    ok: verificationPassed,
+    summaryComplete: tests.tapSummary.summaryComplete,
+    failCount: tests.tapSummary.fail,
+    failingTests: tests.tapSummary.failingTests,
+  });
+  const passed = sourceConverged
     && statusAfter.ok
     && diffNames.ok
-    && tests.ok;
+    && verificationPassed;
   const blocker = passed ? '' : classifyCompletedSyncBlocker({
     afterHead,
     approvedTargetHead,
@@ -704,6 +711,9 @@ export function syncCodexDispatchBridge({
     beforeHead: beforeHead.stdout,
     remoteHead: remoteHead.stdout,
     afterHead: afterHead.stdout,
+    sourceConverged,
+    verificationPassed,
+    verification,
     aheadBeforeSync: counts.ahead,
     behindBeforeSync: counts.behind,
     updated: beforeHead.stdout !== afterHead.stdout,
