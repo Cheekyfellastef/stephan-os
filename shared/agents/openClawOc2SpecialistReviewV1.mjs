@@ -13,6 +13,7 @@ export const OPENCLAW_OC2_SPECIALIST_SCHEMA_V1 = 'stephanos.openclaw-oc2-special
 
 const SOURCE_SCHEMA = 'stephanos.windows-authority-source.v1';
 const CANONICAL_REPOSITORY = 'Cheekyfellastef/stephan-os';
+const CANONICAL_OC2_BRANCH = 'agent/openclaw-oc2-deterministic-test-build-v1';
 const OC2_PR = 1931;
 const SHA = /^[a-f0-9]{40}$/;
 const text = (value) => String(value ?? '').trim();
@@ -317,6 +318,7 @@ export function analyzeOpenClawOc2SpecialistReviewV1(input = {}) {
   const escalation = escalationPaths(input.analysis);
   const eligible = repository === CANONICAL_REPOSITORY
     && input.prNumber === OC2_PR
+    && text(input.branch) === CANONICAL_OC2_BRANCH
     && SHA.test(sourceHead)
     && SHA.test(baseSha)
     && escalation.length === OPENCLAW_OC2_SPECIALIST_PATHS_V1.length;
