@@ -4,10 +4,10 @@ import test from 'node:test';
 
 const source = await readFile(new URL('./windows/restart-approved-stephanos-runtime.ps1', import.meta.url), 'utf8');
 
-test('post-authority cleanup observation uses a fixed four-second slice inside child-exit reserve', () => {
+test('post-authority cleanup observation uses the full fixed ten-second child-exit reserve', () => {
   const observer = sliceFunction('Wait-MissionWorkerSelfCleanupObservation', 'Write-BoundedAtomicJson');
-  assert.match(observer, /\$observationDeadlineUtc = \[datetime\]::UtcNow\.AddSeconds\(4\)/);
-  assert.match(observer, /\$reserveDeadlineUtc = \$script:operationDeadlineUtc\.AddSeconds\(4\)/);
+  assert.match(observer, /\$observationDeadlineUtc = \[datetime\]::UtcNow\.AddSeconds\(10\)/);
+  assert.match(observer, /\$reserveDeadlineUtc = \$script:operationDeadlineUtc\.AddSeconds\(10\)/);
   assert.match(observer, /if \(\$observationDeadlineUtc -gt \$reserveDeadlineUtc\)/);
   assert.match(observer, /\$observationDeadlineUtc = \$reserveDeadlineUtc/);
   assert.match(observer, /while \(\[datetime\]::UtcNow -lt \$observationDeadlineUtc\)/);
