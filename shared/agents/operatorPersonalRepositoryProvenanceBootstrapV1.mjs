@@ -71,7 +71,7 @@ function exactSourceSemantics(workflowSource, gateSource) {
   const workflow = String(workflowSource || '');
   const gate = String(gateSource || '');
   return /^ {6}authorization_comment_id:\s*$/m.test(workflow)
-    && /description:\s*Event-derived exact owner-authored #1507 authorization comment ID for protected squash only/.test(workflow)
+    && /description:\s*Event-derived exact owner-authored #2158 authorization comment ID for protected squash only/.test(workflow)
     && /^ {8}required:\s*false\s*$/m.test(workflow)
     && /^ {8}default:\s*''\s*$/m.test(workflow)
     && /authorization_comment_id/.test(gate)

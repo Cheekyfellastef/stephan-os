@@ -14,5 +14,7 @@ test('protected workflow dispatcher carries the GitHub permissions required for 
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /ref: main/);
   assert.match(workflow, /node scripts\/dispatch-protected-merge-from-mailbox\.mjs/);
+  assert.match(workflow, /github\.event\.issue\.number == 2158/);
+  assert.doesNotMatch(workflow, /github\.event\.issue\.number == 1507/);
   assert.doesNotMatch(workflow, /contents: read/);
 });

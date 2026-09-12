@@ -25,7 +25,7 @@ function common(overrides = {}) {
     requestId: 'protected-workflow-test-0001',
     operation: 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: 2158,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,

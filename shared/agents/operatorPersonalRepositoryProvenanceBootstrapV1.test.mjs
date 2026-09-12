@@ -52,7 +52,7 @@ const workflowSource = `
   workflow_dispatch:
     inputs:
       authorization_comment_id:
-        description: Event-derived exact owner-authored #1507 authorization comment ID for protected squash only
+        description: Event-derived exact owner-authored #2158 authorization comment ID for protected squash only
         required: false
         default: ''
         type: string
