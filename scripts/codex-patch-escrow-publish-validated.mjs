@@ -57,6 +57,22 @@ function run(executable, args, options = {}) {
   return { stdout: result.stdout || '', stderr: result.stderr || '' };
 }
 
+export function parseWorkspaceChangedFiles(statusOutput) {
+  return String(statusOutput || '')
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((entry) => {
+      if (entry.length < 4 || entry[2] !== ' ') throw new Error('invalid git porcelain status entry');
+      return entry.slice(3).replace(/^"|"$/g, '');
+    });
+}
+
+function statusChangedFiles(repositoryRoot) {
+  return parseWorkspaceChangedFiles(
+    run('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: repositoryRoot }).stdout,
+  );
+}
+
 async function githubRequest(path, options = {}) {
   const token = text(process.env.GITHUB_TOKEN);
   const apiUrl = text(process.env.GITHUB_API_URL, 'https://api.github.com');
@@ -119,7 +135,7 @@ function applyPatchToWorkspace(repositoryRoot, manifest, patchPath) {
   run('git', ['checkout', '--detach', manifest.baseSha], { cwd: repositoryRoot });
   run('git', ['apply', '--check', '--binary', patchPath], { cwd: repositoryRoot });
   run('git', ['apply', '--binary', patchPath], { cwd: repositoryRoot });
-  const actualChangedFiles = lines(run('git', ['diff', '--name-only'], { cwd: repositoryRoot }).stdout);
+  const actualChangedFiles = statusChangedFiles(repositoryRoot);
   if (!sameStrings(actualChangedFiles, manifest.changedFiles)) throw new Error('applied validated patch changed files do not match manifest');
   run('git', ['diff', '--check'], { cwd: repositoryRoot });
   return Object.freeze(actualChangedFiles);
