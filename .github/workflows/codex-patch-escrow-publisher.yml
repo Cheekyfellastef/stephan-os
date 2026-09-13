@@ -8,6 +8,7 @@ on:
       - '.github/workflows/codex-patch-escrow-publisher.yml'
       - 'scripts/codex-patch-escrow-attest.mjs'
       - 'scripts/codex-patch-escrow-export.mjs'
+      - 'scripts/codex-patch-escrow-finalize-validation.mjs'
       - 'scripts/codex-patch-escrow-prepare.mjs'
       - 'scripts/codex-patch-escrow-publisher.mjs'
       - 'scripts/codex-patch-escrow-publish-validated.mjs'
@@ -58,6 +59,7 @@ jobs:
         run: |
           node --check scripts/codex-patch-escrow-attest.mjs
           node --check scripts/codex-patch-escrow-export.mjs
+          node --check scripts/codex-patch-escrow-finalize-validation.mjs
           node --check scripts/codex-patch-escrow-prepare.mjs
           node --check scripts/codex-patch-escrow-publisher.mjs
           node --check scripts/codex-patch-escrow-publish-validated.mjs
@@ -137,13 +139,13 @@ jobs:
           name: patch-escrow-prepared-${{ github.run_id }}-${{ github.event.issue.number }}
           path: ${{ runner.temp }}/patch-escrow-prepared
 
-      - name: Prepare disposable workspace and output for isolated validation
+      - name: Prepare disposable workspace and trusted output directories
         run: |
-          rm -rf "${{ runner.temp }}/patch-escrow-isolated-workspace" "${{ runner.temp }}/patch-escrow-validated"
-          mkdir -p "${{ runner.temp }}/patch-escrow-isolated-workspace" "${{ runner.temp }}/patch-escrow-validated"
+          rm -rf "${{ runner.temp }}/patch-escrow-isolated-workspace" "${{ runner.temp }}/patch-escrow-validation-report" "${{ runner.temp }}/patch-escrow-validated"
+          mkdir -p "${{ runner.temp }}/patch-escrow-isolated-workspace" "${{ runner.temp }}/patch-escrow-validation-report" "${{ runner.temp }}/patch-escrow-validated"
           cp -a "$GITHUB_WORKSPACE/." "${{ runner.temp }}/patch-escrow-isolated-workspace/"
 
-      - name: Revalidate, test, and attest inside a credential-free PID namespace
+      - name: Revalidate and test inside a credential-free PID namespace
         run: |
           docker run --rm \
             --network none \
@@ -157,11 +159,17 @@ jobs:
             --workdir /workspace \
             --mount type=bind,src="${{ runner.temp }}/patch-escrow-isolated-workspace",dst=/workspace \
             --mount type=bind,src="${{ runner.temp }}/patch-escrow-prepared",dst=/input,readonly \
-            --mount type=bind,src="${{ runner.temp }}/patch-escrow-validated",dst=/output \
-            node:22-bookworm \
-            node scripts/codex-patch-escrow-attest.mjs \
+            node:22-bookworm@sha256:8a34c4ab3ea2c5cd194f07e317b2a8f09461d3c8b05c4e34c8ccd56d56024c4d \
+            node scripts/codex-patch-escrow-validate-prepared.mjs \
               /input/patch-escrow-prepared.json \
-              /output/patch-escrow-validated.json
+            > "${{ runner.temp }}/patch-escrow-validation-report/validation-report.json"
+
+      - name: Finalize the validated artifact after the isolated container has exited
+        run: >-
+          node scripts/codex-patch-escrow-finalize-validation.mjs
+          "${{ runner.temp }}/patch-escrow-prepared/patch-escrow-prepared.json"
+          "${{ runner.temp }}/patch-escrow-validation-report/validation-report.json"
+          "${{ runner.temp }}/patch-escrow-validated/patch-escrow-validated.json"
 
       - name: Upload the exact token-free validated artifact
         uses: actions/upload-artifact@v4
