@@ -5,11 +5,19 @@ import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
 
 export const BATTLE_BRIDGE_CANONICAL_REMOTE_URL = 'https://github.com/Cheekyfellastef/stephan-os.git';
 export const BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE = '/usr/bin/git';
+export const BATTLE_BRIDGE_GITHUB_HOST = 'github.com';
+export const BATTLE_BRIDGE_POSIX_GITHUB_CLI_EXECUTABLE = '/usr/bin/gh';
 
 export function resolveBattleBridgeGitExecutable(platform = process.platform) {
   if (platform === 'win32') return BATTLE_BRIDGE_WINDOWS_HOST.git;
   if (platform === 'linux' || platform === 'darwin') return BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE;
   throw new Error(`BATTLE_BRIDGE_GIT_PLATFORM_UNSUPPORTED:${platform}`);
+}
+
+export function resolveBattleBridgeGitHubCliExecutable(platform = process.platform) {
+  if (platform === 'win32') return BATTLE_BRIDGE_WINDOWS_HOST.githubCli;
+  if (platform === 'linux' || platform === 'darwin') return BATTLE_BRIDGE_POSIX_GITHUB_CLI_EXECUTABLE;
+  throw new Error(`BATTLE_BRIDGE_GITHUB_CLI_PLATFORM_UNSUPPORTED:${platform}`);
 }
 
 export function battleBridgeCanonicalRepositoryArgs(repoRoot) {

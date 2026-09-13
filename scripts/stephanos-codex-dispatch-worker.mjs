@@ -36,6 +36,11 @@ import {
   createScenarioSourceGitEnvironment,
   evaluateMusicRatingPreservesPlaybackScenarioEvidence,
 } from './browser-proof-runner.mjs';
+import {
+  BATTLE_BRIDGE_GITHUB_HOST,
+  createBattleBridgeMinimalChildEnvironment,
+  resolveBattleBridgeGitHubCliExecutable,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 const APPROVED_GENERATED_PREFIXES = Object.freeze([
   'apps/stephanos/dist/',
@@ -71,7 +76,12 @@ function writeJson(path, value) {
 }
 
 function gitCapture(repoRoot, args, spawnSyncFn = spawnSync) {
-  const result = spawnSyncFn('git', args, { cwd: repoRoot, encoding: 'utf8', shell: false });
+  const result = spawnSyncFn('git', args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    shell: false,
+    env: createBattleBridgeMinimalChildEnvironment(process.env, { git: true, platform: process.platform }),
+  });
   return {
     ok: !result.error && result.status === 0,
     status: result.status,
@@ -82,13 +92,20 @@ function gitCapture(repoRoot, args, spawnSyncFn = spawnSync) {
 }
 
 function processCapture(spawnSyncFn, executable, args, options = {}) {
+  const gitExecutable = /(^|[\\/])git(?:\.exe)?$/i.test(String(executable || ''));
+  const githubExecutable = /(^|[\\/])gh(?:\.exe)?$/i.test(String(executable || ''));
+  const authorityEnvironment = options.environment || process.env;
   const result = spawnSyncFn(executable, args, {
     cwd: options.cwd,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
     timeout: 120000,
-    env: options.env,
+    env: gitExecutable
+      ? createBattleBridgeMinimalChildEnvironment(authorityEnvironment, { git: true, platform: options.platform || process.platform })
+      : githubExecutable
+        ? createBattleBridgeMinimalChildEnvironment(authorityEnvironment, { platform: options.platform || process.platform })
+        : options.env,
   });
   return {
     ok: !result.error && result.status === 0,
@@ -97,12 +114,20 @@ function processCapture(spawnSyncFn, executable, args, options = {}) {
 }
 
 function processTextCapture(spawnSyncFn, executable, args, options = {}) {
+  const gitExecutable = /(^|[\\/])git(?:\.exe)?$/i.test(String(executable || ''));
+  const githubExecutable = /(^|[\\/])gh(?:\.exe)?$/i.test(String(executable || ''));
+  const authorityEnvironment = options.environment || process.env;
   const result = spawnSyncFn(executable, args, {
     cwd: options.cwd,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
     timeout: 120000,
+    env: gitExecutable
+      ? createBattleBridgeMinimalChildEnvironment(authorityEnvironment, { git: true, platform: options.platform || process.platform })
+      : githubExecutable
+        ? createBattleBridgeMinimalChildEnvironment(authorityEnvironment, { platform: options.platform || process.platform })
+        : options.env,
   });
   return {
     ok: !result.error && result.status === 0,
@@ -113,6 +138,7 @@ function processTextCapture(spawnSyncFn, executable, args, options = {}) {
 export function validateExactHeadAtWorkerStart(task, {
   spawnSyncFn = spawnSync,
   platform = process.platform,
+  environment = process.env,
   verificationPhase = 'worker-start',
   checkSourceStatus = true,
 } = {}) {
@@ -130,11 +156,54 @@ export function validateExactHeadAtWorkerStart(task, {
   let mergeCommitHead = '';
   let githubMainHead = '';
   let mergeCommitIncluded = false;
-  if (proofTarget === 'PULL_REQUEST_HEAD') {
+  const githubExecutable = resolveBattleBridgeGitHubCliExecutable(platform);
+  if (proofTarget === 'PULL_REQUEST_HEAD_BASE_BOUND') {
+    pullRequestHead = String(proof.pullRequestHead || '').trim().toLowerCase();
+    githubMainHead = String(proof.githubMainHead || '').trim().toLowerCase();
+    if (pullRequestHead !== expectedHead || !/^[0-9a-f]{40}$/.test(githubMainHead)
+        || String(proof.mergeCommitHead || '').trim() || proof.mergeCommitIncluded === true) {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_BASE_BOUND_PROOF_INVALID', expectedHead, branch: expectedBranch, verificationPhase });
+    }
+    const prLookup = processTextCapture(
+      spawnSyncFn,
+      githubExecutable,
+      ['api', `repos/${repository}/pulls/${prNumber}`, '--hostname', BATTLE_BRIDGE_GITHUB_HOST],
+      { platform, environment },
+    );
+    let prIdentity;
+    try { prIdentity = prLookup.ok ? JSON.parse(prLookup.stdout) : null; } catch { prIdentity = null; }
+    if (!prIdentity || typeof prIdentity !== 'object') {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_IDENTITY_LOOKUP_FAILED', expectedHead, branch: expectedBranch, verificationPhase });
+    }
+    const observedPullRequestHead = String(prIdentity?.head?.sha || '').trim().toLowerCase();
+    const observedBaseHead = String(prIdentity?.base?.sha || '').trim().toLowerCase();
+    if (observedPullRequestHead !== pullRequestHead) {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_MISMATCH', expectedHead, pullRequestHead: observedPullRequestHead, githubMainHead, branch: expectedBranch, verificationPhase });
+    }
+    if (String(prIdentity?.base?.ref || '') !== 'main') {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_BASE_BRANCH_MISMATCH', expectedHead, pullRequestHead, githubMainHead, branch: expectedBranch, verificationPhase });
+    }
+    if (observedBaseHead !== githubMainHead) {
+      return Object.freeze({ ok: false, required: true, blocker: 'PR_BASE_HEAD_MISMATCH', expectedHead, pullRequestHead, githubMainHead: observedBaseHead, branch: expectedBranch, verificationPhase });
+    }
+    const main = processCapture(
+      spawnSyncFn,
+      githubExecutable,
+      ['api', `repos/${repository}/commits/main`, '--hostname', BATTLE_BRIDGE_GITHUB_HOST, '--jq', '.sha'],
+      { platform, environment },
+    );
+    if (!main.ok || !/^[0-9a-f]{40}$/.test(main.stdout)) {
+      return Object.freeze({ ok: false, required: true, blocker: 'GITHUB_MAIN_HEAD_LOOKUP_FAILED', expectedHead, pullRequestHead, githubMainHead, branch: expectedBranch, verificationPhase });
+    }
+    if (main.stdout !== githubMainHead) {
+      return Object.freeze({ ok: false, required: true, blocker: 'GITHUB_MAIN_HEAD_MISMATCH', expectedHead, pullRequestHead, githubMainHead: main.stdout, branch: expectedBranch, verificationPhase });
+    }
+  } else if (proofTarget === 'PULL_REQUEST_HEAD') {
     const gh = processCapture(
       spawnSyncFn,
-      platform === 'win32' ? 'gh.exe' : 'gh',
-      ['api', `repos/${repository}/pulls/${prNumber}`, '--jq', '.head.sha'],
+      githubExecutable,
+      ['api', `repos/${repository}/pulls/${prNumber}`, '--hostname', BATTLE_BRIDGE_GITHUB_HOST, '--jq', '.head.sha'],
+      { platform, environment },
     );
     if (!gh.ok || !/^[0-9a-f]{40}$/.test(gh.stdout)) {
       return Object.freeze({ ok: false, required: true, blocker: 'PR_HEAD_LOOKUP_FAILED', expectedHead, branch: expectedBranch, verificationPhase });
@@ -155,8 +224,9 @@ export function validateExactHeadAtWorkerStart(task, {
     }
     const prLookup = processTextCapture(
       spawnSyncFn,
-      platform === 'win32' ? 'gh.exe' : 'gh',
-      ['api', `repos/${repository}/pulls/${prNumber}`],
+      githubExecutable,
+      ['api', `repos/${repository}/pulls/${prNumber}`, '--hostname', BATTLE_BRIDGE_GITHUB_HOST],
+      { platform, environment },
     );
     let prIdentity;
     try { prIdentity = prLookup.ok ? JSON.parse(prLookup.stdout) : null; } catch { prIdentity = null; }
@@ -177,8 +247,9 @@ export function validateExactHeadAtWorkerStart(task, {
     }
     const main = processCapture(
       spawnSyncFn,
-      platform === 'win32' ? 'gh.exe' : 'gh',
-      ['api', `repos/${repository}/commits/main`, '--jq', '.sha'],
+      githubExecutable,
+      ['api', `repos/${repository}/commits/main`, '--hostname', BATTLE_BRIDGE_GITHUB_HOST, '--jq', '.sha'],
+      { platform, environment },
     );
     if (!main.ok || !/^[0-9a-f]{40}$/.test(main.stdout)) {
       return Object.freeze({ ok: false, required: true, blocker: 'GITHUB_MAIN_HEAD_LOOKUP_FAILED', expectedHead, pullRequestHead, mergeCommitHead, branch: expectedBranch, verificationPhase });
@@ -211,7 +282,7 @@ export function validateExactHeadAtWorkerStart(task, {
     spawnSyncFn,
     platform === 'win32' ? 'git.exe' : 'git',
     ['rev-parse', 'HEAD'],
-    { cwd: task.repoRoot },
+    { cwd: task.repoRoot, platform, environment },
   );
   if (!git.ok || !/^[0-9a-f]{40}$/.test(git.stdout)) {
     return Object.freeze({ ok: false, required: true, blocker: 'LOCAL_HEAD_LOOKUP_FAILED', expectedHead, pullRequestHead, mergeCommitHead, githubMainHead, mergeCommitIncluded, branch: expectedBranch, verificationPhase });
@@ -251,7 +322,7 @@ export function validateExactHeadAtWorkerStart(task, {
     spawnSyncFn,
     platform === 'win32' ? 'git.exe' : 'git',
     ['status', '--porcelain=v1', '--untracked-files=all'],
-    { cwd: task.repoRoot },
+    { cwd: task.repoRoot, platform, environment },
   );
   if (!status.ok) {
     return Object.freeze({
@@ -1801,8 +1872,20 @@ export async function runCodexWorker(taskPath, {
   const expectedDistFingerprint = exactHeadValidation.required
     ? String(exactHeadRuntimeBundle?.expectedDistFingerprint || '').trim().toLowerCase()
     : '';
+  const ignoredFilesMustRemainAbsent = task.safety?.ignoredFilesMustRemainAbsent === true;
+  const worktreeCommonDirectory = String(task.readOnlyPullRequestWorktree?.commonDirectory || '');
+  const pathIdentity = (value) => {
+    const normalized = resolve(String(value || ''));
+    return platform === 'win32' ? normalized.toLowerCase() : normalized;
+  };
   const sourceHeadBefore = gitCapture(task.repoRoot, ['rev-parse', 'HEAD'], spawnSyncFn);
   const statusBefore = gitCapture(task.repoRoot, ['status', '--porcelain=v1', '--untracked-files=all'], spawnSyncFn);
+  const commonDirectoryBefore = ignoredFilesMustRemainAbsent
+    ? gitCapture(task.repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir'], spawnSyncFn)
+    : Object.freeze({ ok: true, stdout: '', stderr: '' });
+  const ignoredBefore = ignoredFilesMustRemainAbsent
+    ? gitCapture(task.repoRoot, ['ls-files', '--others', '--ignored', '--exclude-standard'], spawnSyncFn)
+    : Object.freeze({ ok: true, stdout: '', stderr: '' });
   const dirtBefore = classifyPostTaskDirt(statusBefore.stdout);
   let preExecutionBlocker = '';
   if (exactHeadValidation.required) {
@@ -1817,6 +1900,12 @@ export async function runCodexWorker(taskPath, {
     else if (sourceHeadBefore.stdout !== exactHeadValidation.expectedHead) preExecutionBlocker = 'EXPECTED_HEAD_MISMATCH';
     else if (!statusBefore.ok) preExecutionBlocker = 'LOCAL_SOURCE_STATUS_LOOKUP_FAILED';
     else if (!dirtBefore.safe) preExecutionBlocker = 'PRE_EXISTING_SOURCE_DIRT';
+    else if (!commonDirectoryBefore.ok
+      || pathIdentity(commonDirectoryBefore.stdout) !== pathIdentity(worktreeCommonDirectory)) {
+      preExecutionBlocker = 'READ_ONLY_PR_WORKTREE_IDENTITY_CHANGED';
+    }
+    else if (!ignoredBefore.ok) preExecutionBlocker = 'LOCAL_IGNORED_FILE_STATUS_LOOKUP_FAILED';
+    else if (ignoredBefore.stdout) preExecutionBlocker = 'PRE_EXISTING_IGNORED_WORKTREE_CONTENT';
   }
   if (preExecutionBlocker) {
     const completedAt = now();
@@ -1838,6 +1927,9 @@ export async function runCodexWorker(taskPath, {
       expectedDistManifestPath,
       sourceHeadBefore: sourceHeadBefore.stdout,
       statusBeforeOk: statusBefore.ok,
+      ignoredBeforeOk: ignoredBefore.ok,
+      ignoredBefore: ignoredBefore.stdout,
+      commonDirectoryBefore: commonDirectoryBefore.stdout,
       dirtBefore,
       blocker: preExecutionBlocker,
       nextOperatorAction: `Repair the exact-head source blocker before retrying: ${preExecutionBlocker}.`,
@@ -2071,6 +2163,12 @@ export async function runCodexWorker(taskPath, {
     : Object.freeze({ ok: true, required: false });
   const sourceHeadAfter = gitCapture(task.repoRoot, ['rev-parse', 'HEAD'], spawnSyncFn);
   const statusAfter = gitCapture(task.repoRoot, ['status', '--porcelain=v1', '--untracked-files=all'], spawnSyncFn);
+  const commonDirectoryAfter = ignoredFilesMustRemainAbsent
+    ? gitCapture(task.repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir'], spawnSyncFn)
+    : Object.freeze({ ok: true, stdout: '', stderr: '' });
+  const ignoredAfter = ignoredFilesMustRemainAbsent
+    ? gitCapture(task.repoRoot, ['ls-files', '--others', '--ignored', '--exclude-standard'], spawnSyncFn)
+    : Object.freeze({ ok: true, stdout: '', stderr: '' });
   const dirtAfter = classifyPostTaskDirt(statusAfter.stdout);
   const dirtDelta = compareDirtSnapshots(dirtBefore, dirtAfter);
   const runtimeDistFingerprintAfter = exactHeadValidation.required
@@ -2099,9 +2197,20 @@ export async function runCodexWorker(taskPath, {
     sourceHeadUnchanged,
     sourceHeadBound,
   } = sourceSafety;
-  const passed = execution.passed && browserProof.ok && sourceSafe;
-  const finalStatus = passed ? 'DONE' : (sourceSafe ? 'FAILED' : 'BLOCKED');
-  const safetyBlocker = !sourceSafety.exactHeadStatusAvailable
+  const ignoredFilesSafe = !ignoredFilesMustRemainAbsent
+    || (ignoredBefore.ok && !ignoredBefore.stdout && ignoredAfter.ok && !ignoredAfter.stdout);
+  const worktreeIdentitySafe = !ignoredFilesMustRemainAbsent
+    || (commonDirectoryBefore.ok && commonDirectoryAfter.ok
+      && pathIdentity(commonDirectoryBefore.stdout) === pathIdentity(worktreeCommonDirectory)
+      && pathIdentity(commonDirectoryAfter.stdout) === pathIdentity(worktreeCommonDirectory));
+  const executionSourceSafe = sourceSafe && ignoredFilesSafe && worktreeIdentitySafe;
+  const passed = execution.passed && browserProof.ok && executionSourceSafe;
+  const finalStatus = passed ? 'DONE' : (executionSourceSafe ? 'FAILED' : 'BLOCKED');
+  const safetyBlocker = !worktreeIdentitySafe
+    ? 'READ_ONLY_PR_WORKTREE_IDENTITY_CHANGED'
+    : (!ignoredFilesSafe
+    ? 'IGNORED_WORKTREE_CONTAMINATION_DETECTED'
+    : (!sourceSafety.exactHeadStatusAvailable
     ? 'LOCAL_SOURCE_STATUS_LOOKUP_FAILED'
     : (!sourceSafety.exactHeadExecutionBound
       ? 'EXACT_HEAD_TARGET_CHANGED_DURING_PROOF'
@@ -2109,10 +2218,10 @@ export async function runCodexWorker(taskPath, {
         ? 'LOCAL_HEAD_CHANGED_DURING_PROOF'
         : (!sourceSafety.exactHeadRuntimeBound
           ? 'GENERATED_RUNTIME_INTEGRITY_MISMATCH'
-          : 'SOURCE_MUTATION_DETECTED')));
+          : 'SOURCE_MUTATION_DETECTED')))));
   const finalBlocker = passed
     ? ''
-    : (sourceSafe
+    : (executionSourceSafe
       ? (browserProof.blocker || execution.reason || 'CODEX_EXEC_FAILED')
       : safetyBlocker);
   let result = {
@@ -2137,6 +2246,13 @@ export async function runCodexWorker(taskPath, {
     sourceHeadUnchanged,
     sourceHeadBound,
     sourceSafety,
+    ignoredFilesMustRemainAbsent,
+    ignoredBefore: ignoredBefore.stdout,
+    ignoredAfter: ignoredAfter.stdout,
+    ignoredFilesSafe,
+    commonDirectoryBefore: commonDirectoryBefore.stdout,
+    commonDirectoryAfter: commonDirectoryAfter.stdout,
+    worktreeIdentitySafe,
     exactHeadRuntimeBundle,
     expectedDistFingerprint,
     expectedDistManifestPath,
@@ -2181,11 +2297,14 @@ export async function runCodexWorker(taskPath, {
       approvalPolicy: 'never',
       sandboxMode: 'read-only',
       nestedDispatchMcpEnabled: false,
+      ignoredFilesMustRemainAbsent,
+      ignoredFilesSafe,
+      worktreeIdentitySafe,
       isolationMechanism: 'ignore-user-config',
     },
     nextOperatorAction: passed
       ? 'Review the returned proof and decide whether the owning goal may advance.'
-      : (!sourceSafe
+      : (!executionSourceSafe
         ? 'Inspect the task logs and source dirt. Do not auto-discard changes.'
         : `Inspect the task logs and repair the precise runtime blocker: ${browserProof.blocker || execution.reason || 'CODEX_EXEC_FAILED'}.`),
   };
