@@ -158,7 +158,7 @@ $task.Principal.LogonType -ne 'Interactive'
 $task.Principal.RunLevel -ne 'Limited'
 Read-FreshHealthyHeartbeat -BankId $activeBank -ExpectedManifest
 Assert-ActivePayloadManifest -BankId $activeBank -ExpectedManifest
-if ($null -ne $activeState -and $manifestSha256 -eq [string]$activeState.manifestSha256) {
+if ($null -ne $activeState -and $activeBankFreshHealthy -and $manifestSha256 -eq [string]$activeState.manifestSha256) {
 Assert-CanonicalScheduledTask -CurrentUser $currentUser
 Remove-Item -LiteralPath $stageRoot -Recurse -Force
 installDisposition = 'ALREADY_CURRENT_HEALTHY'
