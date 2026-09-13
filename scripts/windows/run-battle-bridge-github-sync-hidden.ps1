@@ -17,8 +17,15 @@ if ([System.IO.Path]::GetFullPath($repoRoot) -ne $expectedRepoRoot) {
 }
 
 $coordinatorPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-github-sync-and-refresh.mjs')).Path
+$goalDiscoveryPath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-goal-discovery-heartbeat.mjs')).Path
 $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
 if (-not $nodeCommand) { $nodeCommand = Get-Command node -ErrorAction Stop }
 
 & $nodeCommand.Source $coordinatorPath *> $null
+$syncExitCode = $LASTEXITCODE
+if ($syncExitCode -ne 0) {
+    exit $syncExitCode
+}
+
+& $nodeCommand.Source $goalDiscoveryPath *> $null
 exit $LASTEXITCODE
