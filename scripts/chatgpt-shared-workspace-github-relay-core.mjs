@@ -148,6 +148,17 @@ function staleQaQuestion(record = {}, nowMs = Date.now()) {
   return Number.isFinite(recordMs) && Number.isFinite(nowMs) && nowMs - recordMs > DEFAULT_STALE_AFTER_MS;
 }
 
+function staleQaReplayEligible(record = {}, nowMs = Date.now()) {
+  if (!staleQaQuestion(record, nowMs)) return false;
+  const decoded = decodeStephanosWorkspaceQuestionRecord(record, {
+    workspaceValidationOptions: { nowMs },
+  });
+  return decoded.valid === false
+    && Array.isArray(decoded.errors)
+    && decoded.errors.length === 1
+    && decoded.errors[0] === 'workspace:stale-record';
+}
+
 function qaQuestionSegments(questionRecord = {}) {
   return ['inbox', `qa-question-${digest(text(questionRecord.messageId)).slice(0, 24)}.json`];
 }
@@ -601,7 +612,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
       });
       if (existingQuestion.ok) {
         if (!sameJson(existingQuestion.record, questionRecord)) {
-          if (staleQaQuestion(existingQuestion.record, nowMs) && sameQaReplayIdentity(existingQuestion.record, questionRecord)) {
+          if (staleQaReplayEligible(existingQuestion.record, nowMs) && sameQaReplayIdentity(existingQuestion.record, questionRecord)) {
             primaryWrite = { ok: true, reason: 'WORKSPACE_QA_STALE_QUESTION_SEMANTIC_RESUME', bytes: 0, resumed: true };
           } else {
             deliveryStatus = 'WORKSPACE_QA_EXISTING_QUESTION_CONFLICT';
