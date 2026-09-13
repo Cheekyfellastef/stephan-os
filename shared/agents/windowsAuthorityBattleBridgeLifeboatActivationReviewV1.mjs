@@ -27,8 +27,9 @@ const HISTORIC_EXPECTED_BLOBS = Object.freeze({
 });
 const IDEMPOTENT_EXPECTED_BLOBS = Object.freeze({
   ...HISTORIC_EXPECTED_BLOBS,
-  'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': 'd56f6a37969f2d58a572b0471ed7651063d14796',
-  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '8003ccbf2299c8530d39b86fba8b2e36c9114dcf',
+  'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': '0ac877b0d7e877de9b010d415cf5e0bce2df8e64',
+  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': 'd3eb854e221cdd3aa36f23f1e9d5038c6c34d8df',
+  'shared/agents/postSyncRuntimeRefreshCoordinator.mjs': '9578d6ca272d0715a41423b75b5a30cb674c4267',
 });
 
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
