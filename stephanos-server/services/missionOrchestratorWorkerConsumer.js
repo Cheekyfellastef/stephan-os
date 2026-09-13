@@ -1,5 +1,10 @@
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
+import {
+  appendExecutionReceipt,
+  createExecutionReceipt,
+  readExecutionReceiptHistory,
+} from '../../shared/agents/executionReceiptV1.mjs';
 import { buildMissionEventFromWorkerResult } from '../../shared/agents/missionOrchestratorWorkerResult.mjs';
 import { gateSourceWorkerCompletionV1 } from '../../shared/agents/sourceArtifactEscrowCompletionGateV1.mjs';
 import { appendMissionEvent } from './missionOrchestratorStore.js';
@@ -13,6 +18,112 @@ function queuePaths(root, adapter) {
 
 async function ensurePaths(paths) {
   await Promise.all(Object.values(paths).map((path) => mkdir(path, { recursive: true })));
+}
+
+function executionReceiptRoot(options = {}) {
+  return options.sharedWorkspaceRoot
+    || options.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
+    || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
+    || '';
+}
+
+function executionReceiptOptions(options = {}) {
+  return {
+    repoRoot: options.repoRoot
+      || options.env?.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT
+      || process.env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT,
+  };
+}
+
+function nextReceiptTimestamp(previous, options = {}, explicitTimestamp = '') {
+  const explicit = Date.parse(String(explicitTimestamp || ''));
+  const requested = options.now instanceof Date ? options.now.getTime() : Date.now();
+  const previousMs = Date.parse(previous?.timestampUtc || '');
+  return new Date(Math.max(
+    Number.isFinite(explicit) ? explicit : requested,
+    Number.isFinite(previousMs) ? previousMs + 1 : requested,
+  )).toISOString();
+}
+
+async function appendReceiptTransition(previous, state, options = {}, additions = {}) {
+  if (!previous) return null;
+  const root = executionReceiptRoot(options);
+  if (!root) throw new Error('EXECUTION_RECEIPT_WORKSPACE_REQUIRED');
+  const receipt = createExecutionReceipt({
+    repository: previous.repository,
+    issueNumber: previous.issueNumber,
+    prNumber: previous.prNumber,
+    branch: previous.branch,
+    sourceHead: previous.sourceHead,
+    workerId: previous.workerId,
+    workerType: previous.workerType,
+    executionId: previous.executionId,
+    leaseKey: previous.leaseKey,
+    state,
+    phase: additions.phase || state,
+    sequence: previous.sequence + 1,
+    predecessorReceiptId: previous.receiptId,
+    timestampUtc: nextReceiptTimestamp(previous, options, additions.timestampUtc),
+    blocker: additions.blocker || '',
+    operatorActionRequired: additions.operatorActionRequired === true,
+    proofRefs: additions.proofRefs || previous.proofRefs,
+    expectedNextAction: additions.expectedNextAction || '',
+  });
+  const appended = await appendExecutionReceipt(root, receipt, executionReceiptOptions(options));
+  if (appended?.ok !== true) {
+    const error = new Error(`EXECUTION_RECEIPT_APPEND_FAILED:${appended?.reason || 'unknown'}`);
+    error.code = 'EXECUTION_RECEIPT_APPEND_FAILED';
+    error.receipt = receipt;
+    error.appendResult = appended;
+    throw error;
+  }
+  return receipt;
+}
+
+async function beginNativeExecutionReceiptChain(claim, options = {}) {
+  const root = executionReceiptRoot(options);
+  if (!root) return null;
+  const executionId = String(claim?.item?.actionId || '').trim().toLowerCase();
+  if (!executionId) return null;
+  const history = await readExecutionReceiptHistory(root, { executionId }, executionReceiptOptions(options));
+  if (history?.ok !== true) {
+    const error = new Error(`EXECUTION_RECEIPT_HISTORY_BLOCKED:${history?.reason || 'unknown'}`);
+    error.code = 'EXECUTION_RECEIPT_HISTORY_BLOCKED';
+    error.history = history;
+    throw error;
+  }
+  let current = history.latestReceipt;
+  if (!current) return null;
+  if (current.state !== 'queued') {
+    const error = new Error(`EXECUTION_RECEIPT_CLAIM_STATE_INVALID:${current.state}`);
+    error.code = 'EXECUTION_RECEIPT_CLAIM_STATE_INVALID';
+    error.receipt = current;
+    throw error;
+  }
+  const actionGrant = options.actionGrant;
+  if (actionGrant) {
+    const mismatched = (
+      String(actionGrant.repository || '').toLowerCase() !== current.repository.toLowerCase()
+      || Number(actionGrant.issueNumber) !== current.issueNumber
+      || Number(actionGrant.prNumber) !== current.prNumber
+      || String(actionGrant.branch || '') !== current.branch
+      || String(actionGrant.headSha || '').toLowerCase() !== current.sourceHead
+    );
+    if (mismatched) throw new Error('EXECUTION_RECEIPT_ACTION_GRANT_IDENTITY_MISMATCH');
+  }
+  current = await appendReceiptTransition(current, 'accepted', options, {
+    phase: 'worker-claim-accepted',
+    expectedNextAction: 'Worker must append started before executor authority is invoked.',
+  });
+  current = await appendReceiptTransition(current, 'started', options, {
+    phase: 'worker-execution-started',
+    expectedNextAction: 'Worker must publish fresh progress heartbeat or terminal truth.',
+  });
+  current = await appendReceiptTransition(current, 'progress', options, {
+    phase: 'worker-execution-active',
+    expectedNextAction: 'Worker must publish deterministic terminal truth after result validation.',
+  });
+  return current;
 }
 
 export async function claimNextMissionWorkerItem(adapter, options = {}) {
@@ -117,7 +228,9 @@ async function processAgentClaim(adapter, options, execute) {
   if (!claim) return { processed: false, reason: 'queue-empty' };
   claim.options = options;
   const action = claim.item.payload;
+  let executionReceipt = null;
   try {
+    executionReceipt = await beginNativeExecutionReceiptChain(claim, options);
     let execution = await execute(action, claim);
     const changedFiles = Array.isArray(execution?.changedFiles) ? execution.changedFiles.filter(Boolean) : [];
     if (execution?.success === true && changedFiles.length > 0) {
@@ -138,6 +251,22 @@ async function processAgentClaim(adapter, options, execute) {
       evidenceReceipts: execution.evidenceReceipts || [],
       error: execution.error || '',
     }, options);
+    if (executionReceipt) {
+      executionReceipt = await appendReceiptTransition(
+        executionReceipt,
+        execution.success === true ? 'completed' : 'failed',
+        options,
+        {
+          phase: execution.success === true ? 'worker-result-validated' : 'worker-result-blocked',
+          timestampUtc: execution.completedAt || '',
+          blocker: execution.success === true ? '' : (execution.error || 'MISSION_WORKER_EXECUTION_BLOCKED'),
+          proofRefs: execution.evidenceReceipts || executionReceipt.proofRefs,
+          expectedNextAction: execution.success === true
+            ? 'Release/refill may consume this terminal receipt after canonical completion gates pass.'
+            : 'Surface blocker and keep mutation authority closed until a new bounded execution is admitted.',
+        },
+      );
+    }
     const result = {
       schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
       actionId: action.actionId,
@@ -155,8 +284,19 @@ async function processAgentClaim(adapter, options, execute) {
       finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
     };
     const resultPath = await finishClaim(claim, result, execution.success === true);
-    return { processed: true, claim, applied, result, resultPath };
+    return { processed: true, claim, applied, result, resultPath, executionReceipt };
   } catch (error) {
+    if (executionReceipt && !['completed', 'failed', 'cancelled'].includes(executionReceipt.state)) {
+      try {
+        executionReceipt = await appendReceiptTransition(executionReceipt, 'failed', options, {
+          phase: 'worker-execution-failed',
+          blocker: error?.message || `${adapter} execution failed.`,
+          expectedNextAction: 'Surface blocker and keep mutation authority closed until a new bounded execution is admitted.',
+        });
+      } catch (receiptError) {
+        error.executionReceiptFailure = receiptError;
+      }
+    }
     try {
       await collectAgentWorkerResult({ missionId: action.missionId, actionId: action.actionId, adapter, success: false, error: error?.message || `${adapter} execution failed.` }, options);
     } catch {
