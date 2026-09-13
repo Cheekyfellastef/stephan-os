@@ -283,7 +283,9 @@ function reviewIndex(source, path, findings) {
   if (countMatches(code, /\bapi\.registerGatewayMethod\s*\(/g) !== 2 || hasGatewayAlias(source)) {
     findings.push(finding('openclaw-oc2-index-gateway-registration-set-not-closed', path));
   }
-  if (hasExecutorAlias(source) || countMatches(code, /\bexecuteOpenClawOc2GatewayRequest\s*\(/g) !== 1) {
+  if (hasExecutorAlias(source)
+    || countMatches(code, /\bexecuteOpenClawOc2GatewayRequest\b/g) !== 2
+    || countMatches(code, /\bexecuteOpenClawOc2GatewayRequest\s*\(/g) !== 1) {
     findings.push(finding('openclaw-oc2-index-executor-binding-incomplete', path));
   }
   const oc2Call = /api\.registerGatewayMethod\s*\(\s*OPENCLAW_OC2_GATEWAY_METHOD\s*,/.exec(code);
