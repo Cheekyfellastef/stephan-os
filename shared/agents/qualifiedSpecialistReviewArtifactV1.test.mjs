@@ -4,8 +4,10 @@ import test from 'node:test';
 import {
   QUALIFIED_SPECIALIST_ARTIFACT_SCHEMA_VERSION,
   adjudicateQualifiedSpecialistReview,
+  qualifiedSpecialistEscalationPaths,
   validateQualifiedSpecialistReviewArtifact,
 } from './qualifiedSpecialistReviewV1.mjs';
+import { isApprovalBoundaryBootstrapAnalysis } from './operatorMergeApprovalGate.mjs';
 import {
   INDEPENDENT_REVIEW_ARTIFACT_SPECIALIST_SCHEMA_VERSION,
   buildIndependentReviewArtifact,
@@ -40,6 +42,17 @@ function analysis() {
   };
 }
 
+function analysisWithFindings(findings, counts = { P0: findings.length, P1: 0, P2: 0 }) {
+  return {
+    schemaVersion: 'stephanos.independent-security-analysis.v1',
+    findings,
+    counts,
+    verdict: 'findings',
+    proofRefs: findings.map((item) => `proofs/changed-file/${item.path}`),
+    finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_FINDINGS',
+  };
+}
+
 function request(overrides = {}) {
   return {
     id: 1001,
@@ -70,9 +83,9 @@ function response(overrides = {}) {
   };
 }
 
-function adjudicate(comments) {
+function adjudicate(comments, analysisInput = analysis()) {
   return adjudicateQualifiedSpecialistReview({
-    analysis: analysis(),
+    analysis: analysisInput,
     reviews: [],
     comments,
     repository,
@@ -104,6 +117,86 @@ test('authenticated scoped request and app response mint one provider-neutral sp
     paths,
   });
   assert.equal(validation.valid, true, validation.blockers.join(', '));
+});
+
+test('mixed specialist and bootstrap findings discharge only specialist-covered paths', () => {
+  const specialistFinding = analysis().findings[0];
+  const bootstrapFinding = {
+    severity: 'P0',
+    code: 'approval-boundary-v2-self-change-requires-qualified-review',
+    summary: 'Separate qualified bootstrap review required.',
+    path: 'shared/agents/windowsAuthorityMissionWorkerCleanupReviewV1.mjs',
+  };
+  const mixed = analysisWithFindings([specialistFinding, bootstrapFinding]);
+  assert.deepEqual(qualifiedSpecialistEscalationPaths(mixed), [specialistFinding.path]);
+
+  const result = adjudicate([request(), response()], mixed);
+  assert.equal(result.required, true);
+  assert.equal(result.valid, true, result.blockers.join(', '));
+  assert.deepEqual(result.paths, [specialistFinding.path]);
+  assert.deepEqual(result.analysis.findings, [bootstrapFinding]);
+  assert.deepEqual(result.analysis.counts, { P0: 1, P1: 0, P2: 0 });
+  assert.equal(result.analysis.verdict, 'findings');
+  assert.equal(result.analysis.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_FINDINGS');
+  assert.equal(isApprovalBoundaryBootstrapAnalysis(result.analysis), true);
+  assert.ok(result.analysis.proofRefs.some((proof) => proof.includes('specialist-review/artifact-sha256-')));
+});
+
+test('mixed specialist and unknown P0 findings preserve the unknown blocker', () => {
+  const specialistFinding = analysis().findings[0];
+  const unknownFinding = {
+    severity: 'P0',
+    code: 'unrecognized-high-risk-policy-finding',
+    summary: 'Unknown P0 must survive specialist adjudication.',
+    path: 'shared/agents/unknownAuthorityBoundaryV1.mjs',
+  };
+  const mixed = analysisWithFindings([specialistFinding, unknownFinding]);
+  const result = adjudicate([request(), response()], mixed);
+  assert.equal(result.valid, true, result.blockers.join(', '));
+  assert.deepEqual(result.analysis.findings, [unknownFinding]);
+  assert.deepEqual(result.analysis.counts, { P0: 1, P1: 0, P2: 0 });
+  assert.equal(result.analysis.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_FINDINGS');
+  assert.equal(isApprovalBoundaryBootstrapAnalysis(result.analysis), false);
+});
+
+test('mixed findings without specialist evidence remain blocked and unchanged', () => {
+  const specialistFinding = analysis().findings[0];
+  const bootstrapFinding = {
+    severity: 'P0',
+    code: 'approval-boundary-v2-self-change-requires-qualified-review',
+    summary: 'Separate qualified bootstrap review required.',
+    path: 'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
+  };
+  const mixed = analysisWithFindings([specialistFinding, bootstrapFinding]);
+  const result = adjudicate([], mixed);
+  assert.equal(result.required, true);
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.blockers, ['qualified-specialist-review-missing']);
+  assert.deepEqual(result.analysis, mixed);
+});
+
+test('specialist escalation extraction fails closed on malformed counts, P1/P2, missing paths and no supported specialist path', () => {
+  const specialistFinding = analysis().findings[0];
+  const cases = [
+    analysisWithFindings([specialistFinding], { P0: '1', P1: 0, P2: 0 }),
+    analysisWithFindings([specialistFinding], { P0: 2, P1: 0, P2: 0 }),
+    analysisWithFindings([{ ...specialistFinding, severity: 'P1' }], { P0: 0, P1: 1, P2: 0 }),
+    analysisWithFindings([{ ...specialistFinding, severity: 'P2' }], { P0: 0, P1: 0, P2: 1 }),
+    analysisWithFindings([{ ...specialistFinding, path: '' }]),
+    analysisWithFindings([{
+      severity: 'P0',
+      code: 'approval-boundary-v2-self-change-requires-qualified-review',
+      summary: 'Bootstrap only.',
+      path: 'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
+    }]),
+  ];
+  for (const candidate of cases) {
+    assert.deepEqual(qualifiedSpecialistEscalationPaths(candidate), []);
+    const result = adjudicate([request(), response()], candidate);
+    assert.equal(result.required, false);
+    assert.equal(result.valid, false);
+    assert.deepEqual(result.blockers, ['specialist-review-cannot-cover-non-escalation-findings']);
+  }
 });
 
 test('real GitHub issue-comment response binds reviewed commit when resolved_commit_id is absent', () => {
