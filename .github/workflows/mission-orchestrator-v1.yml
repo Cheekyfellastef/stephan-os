@@ -16,6 +16,7 @@ on:
       - 'stephanos-server/services/missionOrchestrator*.js'
       - 'scripts/mission-orchestrator-worker.mjs'
       - 'scripts/mission-orchestrator-worker.test.mjs'
+      - 'scripts/mission-orchestrator-worker.oc2.test.mjs'
       - 'scripts/windows/*mission-orchestrator-worker*.ps1'
       - 'integrations/openclaw/stephanos-builder-provider/**'
   workflow_dispatch:
@@ -39,6 +40,8 @@ jobs:
           node --check scripts/mission-orchestrator-worker.mjs
           node --check integrations/openclaw/stephanos-builder-provider/lib/oc1-repository-scout.mjs
           node --check integrations/openclaw/stephanos-builder-provider/lib/oc1-gateway-provider.mjs
+          node --check integrations/openclaw/stephanos-builder-provider/lib/oc2-deterministic-test-build.mjs
+          node --check integrations/openclaw/stephanos-builder-provider/lib/oc2-gateway-provider.mjs
       - name: Parse Mission Orchestrator durable runtime services
         run: |
           node --check stephanos-server/services/missionOrchestratorStore.js
@@ -60,8 +63,15 @@ jobs:
         run: node --test shared/agents/missionOrchestrator.test.mjs shared/agents/missionOrchestratorWorker.test.mjs shared/agents/missionOrchestratorWorkerResult.test.mjs
       - name: Run Mission Orchestrator durable runtime and worker queue tests
         run: node --test stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorControlService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js stephanos-server/services/missionOrchestratorWorkerConsumer.test.js stephanos-server/services/missionOrchestratorGitHubInspection.test.js
-      - name: Run persistent worker and OC1 provider adapter tests
-        run: node --test scripts/mission-orchestrator-worker.test.mjs integrations/openclaw/stephanos-builder-provider/oc1-repository-scout.test.mjs integrations/openclaw/stephanos-builder-provider/oc1-gateway-provider.test.mjs
+      - name: Run persistent worker and OpenClaw provider adapter tests
+        run: >-
+          node --test
+          scripts/mission-orchestrator-worker.test.mjs
+          scripts/mission-orchestrator-worker.oc2.test.mjs
+          integrations/openclaw/stephanos-builder-provider/oc1-repository-scout.test.mjs
+          integrations/openclaw/stephanos-builder-provider/oc1-gateway-provider.test.mjs
+          integrations/openclaw/stephanos-builder-provider/oc2-deterministic-test-build.test.mjs
+          integrations/openclaw/stephanos-builder-provider/oc2-gateway-provider.test.mjs
       - name: Run signed authorization and executor regressions
         run: node --test shared/agents/openClawGitHubAuthorization.test.mjs shared/agents/openClawGitHubOperator.test.mjs shared/agents/openClawGitHubExecutorPreflight.test.mjs
       - name: Run ownership and Mission Operations regression tests
