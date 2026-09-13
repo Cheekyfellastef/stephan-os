@@ -25,7 +25,7 @@ function source(path, content) {
     path,
     ref: HEAD,
     exists: true,
-    size: Buffer.byteLength(content, 'utf8'),
+    size: Buffer.byteLength(content),
     blobSha: sha1Blob(content),
     content,
   };
@@ -159,55 +159,112 @@ function input(overrides = {}) {
 test('OC2 specialist cleanly reviews the exact closed OC2 surfaces', () => {
   const result = analyzeOpenClawOc2SpecialistReviewV1(input());
   assert.equal(result.eligible, true);
-  assert.equal(result.clean, true);
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
   assert.equal(result.findings.length, 0);
 });
 
-test('OC2 specialist is not applicable to another PR or incomplete escalation', () => {
+test('OC2 specialist is not applicable to another PR, branch, or incomplete escalation', () => {
   assert.equal(analyzeOpenClawOc2SpecialistReviewV1(input({ prNumber: 1905 })).eligible, false);
-  const incomplete = analysis(); incomplete.findings.pop();
+  assert.equal(analyzeOpenClawOc2SpecialistReviewV1(input({ branch: 'replayed/oc2' })).eligible, false);
+  const incomplete = analysis();
+  incomplete.findings.pop();
   assert.equal(analyzeOpenClawOc2SpecialistReviewV1(input({ analysis: incomplete })).eligible, false);
 });
 
-test('OC2 specialist rejects every extra process route', () => {
+test('OC2 specialist rejects every direct extra process route', () => {
   for (const injected of ['spawn(userExecutable, userArgs);', 'spawnSync(userExecutable, userArgs);', 'spawnSyncFn(userExecutable, userArgs);']) {
-    const result = analyzeOpenClawOc2SpecialistReviewV1(input({ sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: `${EXECUTOR}\n${injected}` }) }));
+    const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+      sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: `${EXECUTOR}\n${injected}` }),
+    }));
     assert.equal(result.clean, false);
     assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-unbounded-process-authority-forbidden'));
   }
 });
 
-test('OC2 specialist does not accept authority checks preserved only in comments', () => {
-  const weakened = EXECUTOR.replace('grant?.boundedActionCount !== 1', 'true').concat('\n// grant?.boundedActionCount !== 1');
-  const result = analyzeOpenClawOc2SpecialistReviewV1(input({ sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: weakened }) }));
+test('OC2 specialist rejects aliased and bound process invocation', () => {
+  for (const injected of [
+    'const invoke = spawnSyncFn; invoke(userExecutable, userArgs);',
+    'const invoke = spawnSyncFn.bind(null); invoke(userExecutable, userArgs);',
+  ]) {
+    const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+      sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: `${EXECUTOR}\n${injected}` }),
+    }));
+    assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-unbounded-process-authority-forbidden'));
+  }
+});
+
+test('OC2 specialist rejects authority checks preserved only in comments or decoys', () => {
+  const weakened = EXECUTOR.replace('grant?.boundedActionCount !== 1', 'true')
+    .concat('\n// grant?.boundedActionCount !== 1\nfunction decoy(){ return grant?.boundedActionCount !== 1; }');
+  const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+    sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: weakened }),
+  }));
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-bounded-action-gate-missing'));
 });
 
-test('OC2 specialist rejects an additional gateway registration', () => {
-  const widened = INDEX.replace('api.registerCommand', "api.registerGatewayMethod('unexpected.method', async () => ({}), { scope: 'operator.write' });\n  api.registerCommand");
-  const result = analyzeOpenClawOc2SpecialistReviewV1(input({ sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[0]]: widened }) }));
-  assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-index-gateway-registration-set-not-closed'));
+test('OC2 specialist rejects direct and aliased additional gateway registrations', () => {
+  const direct = INDEX.replace(
+    'api.registerCommand',
+    "api.registerGatewayMethod('unexpected.method', async () => ({}), { scope: 'operator.write' });\n  api.registerCommand",
+  );
+  const aliased = INDEX.replace(
+    'api.registerCommand',
+    "const add = api.registerGatewayMethod.bind(api); add('unexpected.method', async () => ({}), { scope: 'operator.write' });\n  api.registerCommand",
+  );
+  for (const widened of [direct, aliased]) {
+    const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+      sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[0]]: widened }),
+    }));
+    assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-index-gateway-registration-set-not-closed'));
+  }
 });
 
-test('OC2 specialist rejects filesystem and network authority widening', () => {
-  for (const injected of ["writeFileSync('/tmp/outside', 'x');", "fetch('https://example.com');", "import http from 'node:http';\nhttp.get(url);"]) {
-    const result = analyzeOpenClawOc2SpecialistReviewV1(input({ sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: `${EXECUTOR}\n${injected}` }) }));
+test('OC2 specialist rejects filesystem and network authority widening including aliases and dynamic imports', () => {
+  for (const injected of [
+    "writeFileSync('/tmp/outside', 'x');",
+    "fetch('https://example.com');",
+    "import http from 'node:http';\nhttp.get(url);",
+    "import { writeFileSync as save } from 'node:fs';\nsave('/tmp/outside', 'x');",
+    "const { get: send } = await import('node:https');\nsend(url);",
+  ]) {
+    const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+      sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: `${EXECUTOR}\n${injected}` }),
+    }));
     assert.equal(result.clean, false);
   }
 });
 
-test('OC2 specialist rejects skipped or inert advertised regressions', () => {
-  const skipped = EXECUTOR_TEST.replace("test('OC2 admits only", "test.skip('OC2 admits only");
-  const result = analyzeOpenClawOc2SpecialistReviewV1(input({ sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[3]]: skipped }) }));
-  assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-test-active-regression-missing'));
+test('OC2 specialist rejects skipped, commented, early-return, and nested advertised regressions', () => {
+  const variants = [
+    EXECUTOR_TEST.replace("test('OC2 admits only", "test.skip('OC2 admits only"),
+    EXECUTOR_TEST.replace('assert.deepEqual(result.changedFiles, []);', '// assert.deepEqual(result.changedFiles, []);'),
+    EXECUTOR_TEST.replace('assert.deepEqual(result.changedFiles, []);', 'return; assert.deepEqual(result.changedFiles, []);'),
+    EXECUTOR_TEST.replace('assert.deepEqual(result.changedFiles, []);', '(() => { assert.deepEqual(result.changedFiles, []); })();'),
+  ];
+  for (const weakened of variants) {
+    const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+      sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[3]]: weakened }),
+    }));
+    assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-test-active-regression-missing'));
+  }
+});
 
-  const commented = EXECUTOR_TEST.replace('assert.deepEqual(result.changedFiles, []);', '// assert.deepEqual(result.changedFiles, []);');
-  const result2 = analyzeOpenClawOc2SpecialistReviewV1(input({ sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[3]]: commented }) }));
-  assert.ok(result2.findings.some((item) => item.code === 'openclaw-oc2-test-active-regression-missing'));
+test('OC2 specialist rejects executor calls outside the registered OC2 callback and executor aliases', () => {
+  const variants = [
+    INDEX.replace('api.registerCommand', 'executeOpenClawOc2GatewayRequest({}, {});\n  api.registerCommand'),
+    INDEX.replace('api.registerCommand', 'const runOc2 = executeOpenClawOc2GatewayRequest; runOc2({}, {});\n  api.registerCommand'),
+  ];
+  for (const widened of variants) {
+    const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+      sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[0]]: widened }),
+    }));
+    assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-index-executor-binding-incomplete'));
+  }
 });
 
 test('OC2 specialist fails closed on source evidence drift', () => {
-  const drifted = sources(); drifted[0] = { ...drifted[0], blobSha: 'c'.repeat(40) };
+  const drifted = sources();
+  drifted[0] = { ...drifted[0], blobSha: 'c'.repeat(40) };
   const result = analyzeOpenClawOc2SpecialistReviewV1(input({ sources: drifted }));
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-source-evidence-invalid'));
 });
