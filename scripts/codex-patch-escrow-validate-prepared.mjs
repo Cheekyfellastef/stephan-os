@@ -222,9 +222,17 @@ function assertNoPersistedGitCredentials(repositoryRoot) {
   if (/x-access-token|oauth2:|https:\/\/[^/@]+@/i.test(remoteUrl)) throw new Error('credential-bearing git remote is forbidden during patched-code tests');
 }
 
-function statusChangedFiles(repositoryRoot) {
-  return lines(run('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: repositoryRoot }).stdout)
+export function parsePorcelainChangedFiles(raw) {
+  return String(raw || '')
+    .split(/\r?\n/)
+    .filter((entry) => entry.length >= 4)
     .map((entry) => entry.slice(3).replace(/^"|"$/g, ''));
+}
+
+function statusChangedFiles(repositoryRoot) {
+  return parsePorcelainChangedFiles(
+    run('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: repositoryRoot }).stdout,
+  );
 }
 
 function writePatchFile(manifest, patch) {
@@ -257,7 +265,7 @@ function applyPatchToWorkspace(repositoryRoot, manifest, patchPath) {
   run('git', ['checkout', '--detach', manifest.baseSha], { cwd: repositoryRoot });
   run('git', ['apply', '--check', '--binary', patchPath], { cwd: repositoryRoot });
   run('git', ['apply', '--binary', patchPath], { cwd: repositoryRoot });
-  const actualChangedFiles = lines(run('git', ['diff', '--name-only'], { cwd: repositoryRoot }).stdout);
+  const actualChangedFiles = statusChangedFiles(repositoryRoot);
   if (!sameStrings(actualChangedFiles, manifest.changedFiles)) throw new Error('applied patch changed files do not match signed manifest');
   run('git', ['diff', '--check'], { cwd: repositoryRoot });
   return Object.freeze(actualChangedFiles);
