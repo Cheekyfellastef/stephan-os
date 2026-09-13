@@ -16,6 +16,7 @@ function validationBlock() {
 test('patch escrow validation runs patched code in a networkless constrained digest-pinned container', () => {
   const block = validationBlock();
   assert.match(block, /docker run --rm/);
+  assert.match(block, /--user "\$\(id -u\):\$\(id -g\)"/);
   assert.match(block, /--network none/);
   assert.match(block, /--read-only/);
   assert.match(block, /--cap-drop ALL/);
