@@ -13,6 +13,7 @@ import {
 const OWNER = 'Cheekyfellastef';
 const HEAD = 'b3aca072a1c66555a1a2d3b4343f218af8d33ef4';
 const REQUEST_ID = 'receipt-index-mirror-20260717T2045Z';
+const CANONICAL_MAILBOX_ISSUE = 2158;
 
 function command(overrides = {}) {
   return {
@@ -20,7 +21,7 @@ function command(overrides = {}) {
     requestId: REQUEST_ID,
     operation: 'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -35,7 +36,7 @@ function receipt(overrides = {}) {
     requestId: REQUEST_ID,
     operation: 'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     branch: 'main',
     state: 'DONE',
     acceptedAt: '2026-07-17T20:45:00.000Z',
@@ -77,12 +78,13 @@ function receiptComment(value = receipt(), user = OWNER) {
   };
 }
 
-test('only owner-authored comments with exact repository, issue and branch identity are accepted', () => {
+test('only owner-authored comments with exact repository, active issue and branch identity are accepted', () => {
   assert.equal(extractTrustedMailboxCommandComment(commandComment(), OWNER).expectedHead, HEAD);
   assert.equal(extractTrustedMailboxReceiptComment(receiptComment(), OWNER).requestId, REQUEST_ID);
   assert.equal(extractTrustedMailboxCommandComment(commandComment(command(), 'attacker'), OWNER), null);
   assert.equal(extractTrustedMailboxReceiptComment(receiptComment(receipt(), 'attacker'), OWNER), null);
   assert.equal(extractTrustedMailboxCommandComment(commandComment(command({ repository: 'other/repo' })), OWNER), null);
+  assert.equal(extractTrustedMailboxReceiptComment(receiptComment(receipt({ issueNumber: 1507 })), OWNER), null);
   assert.equal(extractTrustedMailboxReceiptComment(receiptComment(receipt({ issueNumber: 999 })), OWNER), null);
   assert.equal(extractTrustedMailboxReceiptComment(receiptComment(receipt({ branch: 'feature' })), OWNER), null);
 });

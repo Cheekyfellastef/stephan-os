@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import {
   CODEX_DISPATCH_TEST_ARGS,
@@ -8,7 +9,7 @@ import {
   syncCodexDispatchBridge,
 } from './codexDispatchHostOps.mjs';
 import { BATTLE_BRIDGE_RUNTIME_DATA_PATHS } from './battleBridgeDirtyDataPreservationV1.mjs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -152,6 +153,241 @@ test('sync bridge pins fast-forward safety and mutation to the exact head observ
   assert.equal(spawnSyncFn.calls.includes('git merge --ff-only origin/main'), false);
 });
 
+test('sync bridge absorbs only target-identical overlapping dirt before retrying the same exact fast-forward', () => {
+  const oldHead = 'a'.repeat(40);
+  const newHead = 'b'.repeat(40);
+  const serviceBlob = 'c'.repeat(40);
+  const testBlob = 'd'.repeat(40);
+  const service = 'stephanos-server/services/sharedWorkspaceDashboardFeedService.js';
+  const regression = 'stephanos-server/services/sharedWorkspaceDashboardFeedService.test.js';
+  const changed = `${service}\n${regression}\n`;
+  const spawnSyncFn = scriptedSpawn({
+    'git branch --show-current': { stdout: 'main\n' },
+    'git rev-parse HEAD': [{ stdout: `${oldHead}\n` }, { stdout: `${oldHead}\n` }, { stdout: `${newHead}\n` }],
+    'git status --porcelain=v1 --untracked-files=all': [
+      { stdout: ` M ${service}\n?? ${regression}\n M apps/stephanos/dist/index.html\n` },
+      { stdout: ' M apps/stephanos/dist/index.html\n' },
+    ],
+    'git fetch origin main': { stdout: '' },
+    'git rev-parse origin/main': { stdout: `${newHead}\n` },
+    [`git rev-list --left-right --count HEAD...${newHead}`]: { stdout: '0\t1\n' },
+    [`git merge --ff-only ${newHead}`]: [
+      { status: 1, stderr: 'local changes would be overwritten\n' },
+      { stdout: 'Fast-forward\n' },
+    ],
+    [`git diff --name-only ${oldHead}..${newHead}`]: [{ stdout: changed }, { stdout: changed }],
+    [`git status --porcelain=v1 --untracked-files=all -- ${service}`]: { stdout: ` M ${service}\n` },
+    [`git status --porcelain=v1 --untracked-files=all -- ${regression}`]: { stdout: `?? ${regression}\n` },
+    [`git rev-parse ${newHead}:${service}`]: { stdout: `${serviceBlob}\n` },
+    [`git hash-object --path=${service} -- ${service}`]: { stdout: `${serviceBlob}\n` },
+    [`git rev-parse ${oldHead}:${service}`]: { stdout: `${'e'.repeat(40)}\n` },
+    [`git rev-parse :${service}`]: { stdout: `${'e'.repeat(40)}\n` },
+    [`git rev-parse ${newHead}:${regression}`]: { stdout: `${testBlob}\n` },
+    [`git hash-object --path=${regression} -- ${regression}`]: { stdout: `${testBlob}\n` },
+    [`git rev-parse ${oldHead}:${regression}`]: { status: 1, stderr: 'path does not exist\n' },
+    [`git rev-parse :${regression}`]: { status: 1, stderr: 'path does not exist\n' },
+    [`git add -- ${service} ${regression}`]: { stdout: '' },
+    [`git diff --cached --quiet ${newHead} -- ${service} ${regression}`]: { stdout: '' },
+    [nodeTestCommand()]: { stdout: '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n' },
+  });
+
+  const result = syncCodexDispatchBridge({
+    repoRoot: 'C:\\repo',
+    operatorApproval: 'operator-approved',
+    expectedBranch: 'main',
+    nodeCommand: 'node.exe',
+    spawnSyncFn,
+  });
+
+  assert.equal(result.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(result.afterHead, newHead);
+  assert.equal(result.initialFastForward.ok, false);
+  assert.equal(result.fastForward.ok, true);
+  assert.equal(result.identicalDirtAbsorption.ok, true);
+  assert.deepEqual(result.identicalDirtAbsorption.paths, [service, regression]);
+  assert.equal(result.identicalDirtAbsorption.worktreeMutationPerformed, false);
+  assert.equal(result.identicalDirtAbsorption.destructiveCleanupPerformed, false);
+  assert.equal(spawnSyncFn.calls.filter((call) => call === `git merge --ff-only ${newHead}`).length, 2);
+  assert.equal(spawnSyncFn.calls.some((call) => /reset|clean|stash|checkout/i.test(call)), false);
+});
+
+test('real Git fast-forward preserves and canonicalizes target-identical tracked and untracked files', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'stephanos-sync-identical-'));
+  const repoRoot = path.join(root, 'repo');
+  const remoteRoot = path.join(root, 'remote.git');
+  const service = 'stephanos-server/services/sharedWorkspaceDashboardFeedService.js';
+  const regression = 'stephanos-server/services/sharedWorkspaceDashboardFeedService.test.js';
+  const servicePath = path.join(repoRoot, service);
+  const regressionPath = path.join(repoRoot, regression);
+  const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8', shell: false, windowsHide: true });
+  try {
+    await mkdir(path.dirname(servicePath), { recursive: true });
+    assert.equal(git(root, ['init', '-b', 'main', repoRoot]).status, 0);
+    assert.equal(git(repoRoot, ['config', 'user.email', 'test@example.invalid']).status, 0);
+    assert.equal(git(repoRoot, ['config', 'user.name', 'Stephanos Test']).status, 0);
+    await writeFile(servicePath, 'old\n');
+    assert.equal(git(repoRoot, ['add', '--', service]).status, 0);
+    assert.equal(git(repoRoot, ['commit', '-m', 'old']).status, 0);
+    const oldHead = git(repoRoot, ['rev-parse', 'HEAD']).stdout.trim();
+
+    assert.equal(git(repoRoot, ['switch', '-c', 'target']).status, 0);
+    await writeFile(servicePath, 'canonical\n');
+    await writeFile(regressionPath, 'canonical test\n');
+    assert.equal(git(repoRoot, ['add', '--', service, regression]).status, 0);
+    assert.equal(git(repoRoot, ['commit', '-m', 'target']).status, 0);
+    const targetHead = git(repoRoot, ['rev-parse', 'HEAD']).stdout.trim();
+    assert.equal(git(repoRoot, ['switch', 'main']).status, 0);
+    assert.equal(git(root, ['clone', '--bare', repoRoot, remoteRoot]).status, 0);
+    assert.equal(git(remoteRoot, ['update-ref', 'refs/heads/main', targetHead]).status, 0);
+    assert.equal(git(repoRoot, ['remote', 'add', 'origin', remoteRoot]).status, 0);
+
+    await writeFile(servicePath, 'canonical\n');
+    await writeFile(regressionPath, 'canonical test\n');
+    const spawnSyncFn = (command, args, options) => command === 'node-test'
+      ? { status: 0, stdout: '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n', stderr: '' }
+      : spawnSync(command, args, options);
+    const result = syncCodexDispatchBridge({
+      repoRoot,
+      operatorApproval: 'operator-approved',
+      expectedBranch: 'main',
+      nodeCommand: 'node-test',
+      spawnSyncFn,
+    });
+
+    assert.equal(result.ok, true, JSON.stringify(result, null, 2));
+    assert.equal(result.beforeHead, oldHead);
+    assert.equal(result.afterHead, targetHead);
+    assert.deepEqual(result.identicalDirtAbsorption.paths, [service, regression]);
+    assert.equal(git(repoRoot, ['status', '--porcelain=v1', '--', service, regression]).stdout, '');
+    assert.equal(await readFile(servicePath, 'utf8'), 'canonical\n');
+    assert.equal(await readFile(regressionPath, 'utf8'), 'canonical test\n');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('sync bridge never stages overlapping dirt unless every worktree blob matches the exact target', () => {
+  const oldHead = 'a'.repeat(40);
+  const newHead = 'b'.repeat(40);
+  const path = 'stephanos-server/services/sharedWorkspaceDashboardFeedService.js';
+  const spawnSyncFn = scriptedSpawn({
+    'git branch --show-current': { stdout: 'main\n' },
+    'git rev-parse HEAD': [{ stdout: `${oldHead}\n` }, { stdout: `${oldHead}\n` }],
+    'git status --porcelain=v1 --untracked-files=all': { stdout: ` M ${path}\n` },
+    'git fetch origin main': { stdout: '' },
+    'git rev-parse origin/main': { stdout: `${newHead}\n` },
+    [`git rev-list --left-right --count HEAD...${newHead}`]: { stdout: '0\t1\n' },
+    [`git merge --ff-only ${newHead}`]: { status: 1, stderr: 'local changes would be overwritten\n' },
+    [`git diff --name-only ${oldHead}..${newHead}`]: { stdout: `${path}\n` },
+    [`git status --porcelain=v1 --untracked-files=all -- ${path}`]: { stdout: ` M ${path}\n` },
+    [`git rev-parse ${newHead}:${path}`]: { stdout: `${'c'.repeat(40)}\n` },
+    [`git hash-object --path=${path} -- ${path}`]: { stdout: `${'d'.repeat(40)}\n` },
+  });
+
+  const result = syncCodexDispatchBridge({
+    repoRoot: 'C:\\repo',
+    operatorApproval: 'operator-approved',
+    expectedBranch: 'main',
+    nodeCommand: 'node.exe',
+    spawnSyncFn,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'FAST_FORWARD_FAILED');
+  assert.equal(result.identicalDirtAbsorption.blocker, 'TARGET_IDENTICAL_DIRT_MISMATCH');
+  assert.equal(result.identicalDirtAbsorption.indexMutationPerformed, false);
+  assert.equal(spawnSyncFn.calls.some((call) => call.startsWith('git add ')), false);
+  assert.equal(spawnSyncFn.calls.some((call) => /reset|clean|stash|checkout/i.test(call)), false);
+});
+
+test('sync bridge rejects target-identical worktree bytes when the index contains distinct staged work', () => {
+  const oldHead = 'a'.repeat(40);
+  const newHead = 'b'.repeat(40);
+  const targetBlob = 'c'.repeat(40);
+  const headBlob = 'd'.repeat(40);
+  const stagedBlob = 'e'.repeat(40);
+  const path = 'stephanos-server/services/sharedWorkspaceDashboardFeedService.js';
+  const spawnSyncFn = scriptedSpawn({
+    'git branch --show-current': { stdout: 'main\n' },
+    'git rev-parse HEAD': [{ stdout: `${oldHead}\n` }, { stdout: `${oldHead}\n` }],
+    'git status --porcelain=v1 --untracked-files=all': { stdout: `MM ${path}\n` },
+    'git fetch origin main': { stdout: '' },
+    'git rev-parse origin/main': { stdout: `${newHead}\n` },
+    [`git rev-list --left-right --count HEAD...${newHead}`]: { stdout: '0\t1\n' },
+    [`git merge --ff-only ${newHead}`]: { status: 1, stderr: 'local changes would be overwritten\n' },
+    [`git diff --name-only ${oldHead}..${newHead}`]: { stdout: `${path}\n` },
+    [`git status --porcelain=v1 --untracked-files=all -- ${path}`]: { stdout: `MM ${path}\n` },
+    [`git rev-parse ${newHead}:${path}`]: { stdout: `${targetBlob}\n` },
+    [`git hash-object --path=${path} -- ${path}`]: { stdout: `${targetBlob}\n` },
+    [`git rev-parse ${oldHead}:${path}`]: { stdout: `${headBlob}\n` },
+    [`git rev-parse :${path}`]: { stdout: `${stagedBlob}\n` },
+  });
+
+  const result = syncCodexDispatchBridge({
+    repoRoot: 'C:\\repo',
+    operatorApproval: 'operator-approved',
+    expectedBranch: 'main',
+    nodeCommand: 'node.exe',
+    spawnSyncFn,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'FAST_FORWARD_FAILED');
+  assert.equal(result.identicalDirtAbsorption.blocker, 'TARGET_IDENTICAL_DIRT_INDEX_CONTENT_MISMATCH');
+  assert.equal(result.identicalDirtAbsorption.indexMutationPerformed, false);
+  assert.equal(spawnSyncFn.calls.some((call) => call.startsWith('git add ')), false);
+});
+
+test('real Git rejection preserves distinct staged content behind target-identical worktree bytes', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'stephanos-sync-staged-preservation-'));
+  const repoRoot = path.join(root, 'repo');
+  const remoteRoot = path.join(root, 'remote.git');
+  const service = 'stephanos-server/services/sharedWorkspaceDashboardFeedService.js';
+  const servicePath = path.join(repoRoot, service);
+  const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8', shell: false, windowsHide: true });
+  try {
+    await mkdir(path.dirname(servicePath), { recursive: true });
+    assert.equal(git(root, ['init', '-b', 'main', repoRoot]).status, 0);
+    assert.equal(git(repoRoot, ['config', 'user.email', 'test@example.invalid']).status, 0);
+    assert.equal(git(repoRoot, ['config', 'user.name', 'Stephanos Test']).status, 0);
+    await writeFile(servicePath, 'old\n');
+    assert.equal(git(repoRoot, ['add', '--', service]).status, 0);
+    assert.equal(git(repoRoot, ['commit', '-m', 'old']).status, 0);
+    const oldHead = git(repoRoot, ['rev-parse', 'HEAD']).stdout.trim();
+
+    assert.equal(git(repoRoot, ['switch', '-c', 'target']).status, 0);
+    await writeFile(servicePath, 'canonical\n');
+    assert.equal(git(repoRoot, ['add', '--', service]).status, 0);
+    assert.equal(git(repoRoot, ['commit', '-m', 'target']).status, 0);
+    const targetHead = git(repoRoot, ['rev-parse', 'HEAD']).stdout.trim();
+    assert.equal(git(repoRoot, ['switch', 'main']).status, 0);
+    assert.equal(git(root, ['clone', '--bare', repoRoot, remoteRoot]).status, 0);
+    assert.equal(git(remoteRoot, ['update-ref', 'refs/heads/main', targetHead]).status, 0);
+    assert.equal(git(repoRoot, ['remote', 'add', 'origin', remoteRoot]).status, 0);
+
+    await writeFile(servicePath, 'staged-only\n');
+    assert.equal(git(repoRoot, ['add', '--', service]).status, 0);
+    const stagedBlob = git(repoRoot, ['rev-parse', `:${service}`]).stdout.trim();
+    await writeFile(servicePath, 'canonical\n');
+    const result = syncCodexDispatchBridge({
+      repoRoot,
+      operatorApproval: 'operator-approved',
+      expectedBranch: 'main',
+      nodeCommand: 'node-test',
+      spawnSyncFn: spawnSync,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'FAST_FORWARD_FAILED');
+    assert.equal(result.identicalDirtAbsorption.blocker, 'TARGET_IDENTICAL_DIRT_INDEX_CONTENT_MISMATCH');
+    assert.equal(git(repoRoot, ['rev-parse', 'HEAD']).stdout.trim(), oldHead);
+    assert.equal(git(repoRoot, ['rev-parse', `:${service}`]).stdout.trim(), stagedBlob);
+    assert.equal(await readFile(servicePath, 'utf8'), 'canonical\n');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('sync bridge fails if the post-merge HEAD is not the exact origin/main observed after fetch', () => {
   const spawnSyncFn = scriptedSpawn({
     'git branch --show-current': { stdout: 'main\n' },
@@ -199,7 +435,7 @@ test('sync bridge accepts an already-current main checkout and names verificatio
   });
   assert.equal(result.updated, false);
   assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'POST_SYNC_VERIFICATION_FAILED');
+  assert.equal(result.blocker, 'POST_SYNC_VERIFICATION_TEST_FAILURE');
   assert.equal(result.statusBefore, ' M apps/stephanos/dist/index.html');
   assert.equal(result.statusAfter, ' M apps/stephanos/dist/index.html');
 });

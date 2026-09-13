@@ -5,10 +5,11 @@ import { readFile } from 'node:fs/promises';
 const workflowUrl = new URL('../.github/workflows/battle-bridge-tailscale-bootstrap-pipe.yml', import.meta.url);
 const runnerUrl = new URL('./battle-bridge-tailscale-bootstrap-pipe.mjs', import.meta.url);
 
-test('workflow keeps live bootstrap on owner-authored issue 1507 with minimal permissions', async () => {
+test('workflow keeps live bootstrap on owner-authored canonical issue 2158 with minimal permissions', async () => {
   const source = await readFile(workflowUrl, 'utf8');
   assert.match(source, /issue_comment:/);
-  assert.match(source, /github\.event\.issue\.number == 1507/);
+  assert.match(source, /github\.event\.issue\.number == 2158/);
+  assert.doesNotMatch(source, /github\.event\.issue\.number == 1507/);
   assert.match(source, /github\.actor == 'Cheekyfellastef'/);
   assert.match(source, /```stephanos-battle-bridge-tailscale-bootstrap/);
   assert.match(source, /permissions:\n  contents: read/);
