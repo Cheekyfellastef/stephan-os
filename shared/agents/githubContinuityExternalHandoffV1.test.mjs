@@ -79,6 +79,22 @@ function runningMission(adapter = 'chatgpt-github') {
   return running;
 }
 
+function sourceArtifactEscrow(handoff, overrides = {}) {
+  const body = JSON.parse(handoff.sharedWorkspaceHandoffCandidate.body);
+  return {
+    schemaVersion: 'stephanos.source-artifact-escrow.v1', artifactKind: 'COMPLETE_FILE_BUNDLE',
+    missionId: handoff.queueItemCandidate.missionId, actionId: handoff.actionId,
+    repository: handoff.repository, canonicalIssue: 1637, canonicalPr: 1830, canonicalBranch: body.branch,
+    exactParentHead: handoff.expectedSourceHead, exactParentTree: 'd'.repeat(40), exactResultTree: 'e'.repeat(40),
+    localCommitSha: 'f'.repeat(40), completeArtifactSha256: '1'.repeat(64), artifactRef: 'proofs/external-source-artifact',
+    externallyReadable: true, commitMessage: 'Complete external continuity source step', executorIdentity: handoff.queueItemCandidate.adapter,
+    createdAtUtc: '2026-08-17T14:30:30.000Z', expiresAtUtc: '2026-08-18T14:30:30.000Z',
+    changedFiles: [{ path: FILE, beforeBlobSha: '2'.repeat(40), afterBlobSha: '3'.repeat(40), sha256: '4'.repeat(64) }],
+    testsRun: ['node --test continuity-example.test.mjs'], testVerdicts: ['PASS'], diffCheckVerdict: 'PASS',
+    ...overrides,
+  };
+}
+
 function completion(handoff, overrides = {}) {
   return {
     schemaVersion: GITHUB_CONTINUITY_EXTERNAL_COMPLETION_SCHEMA,
@@ -88,6 +104,7 @@ function completion(handoff, overrides = {}) {
     success: true, resultId: 'external-result-001', changedFiles: [FILE],
     receipt: receipt('source proof', { receiptId: 'external-source-proof', source: 'chatgpt-github', evidenceType: 'EXTERNAL_LANE_COMPLETION', sha256: 'c'.repeat(64) }),
     proofRefs: ['receipts/external-source-proof'], completedAtUtc: '2026-08-17T14:31:00.000Z', error: '',
+    sourceArtifactEscrow: sourceArtifactEscrow(handoff),
     sourceMutationAuthorityAdded: false, mergeAuthorityAdded: false, deploymentAuthorityAdded: false,
     runtimeMutationAuthorityAdded: false, protectedMergeDispatchAllowed: false,
     duplicateDispatchAllowed: false, arbitraryCommandAllowed: false, ...overrides,
@@ -162,7 +179,7 @@ test('an already-running mission dispatch cannot be taken over', () => {
   assert.equal(result.authority.existingDispatchTakeoverAllowed, false);
 });
 
-test('successful portable completion preflights canonical AGENT_RESULT_RECEIVED', () => {
+test('successful portable completion preflights canonical AGENT_RESULT_RECEIVED only after exact escrow proof', () => {
   const handoff = build();
   const result = adjudicateGitHubContinuityExternalCompletionV1({
     handoff, completionReceipt: completion(handoff), missionState: runningMission(),
@@ -172,6 +189,33 @@ test('successful portable completion preflights canonical AGENT_RESULT_RECEIVED'
   assert.equal(result.projectedMissionState.dispatch.status, 'complete');
   assert.equal(result.projectedMissionState.currentPhase, 'GITHUB_COMMIT');
   assert.deepEqual(result.projectedMissionState.git.changedFiles, [FILE]);
+});
+
+test('successful source completion without escrow fails closed before event projection', () => {
+  const handoff = build();
+  const result = adjudicateGitHubContinuityExternalCompletionV1({
+    handoff, completionReceipt: completion(handoff, { sourceArtifactEscrow: null }), missionState: runningMission(),
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.eventCandidate, null);
+  assert.equal(result.projectedMissionState, null);
+  assert.ok(result.blockers.includes('SOURCE_ARTIFACT_ESCROW_IDENTITY_MISMATCH') || result.blockers.includes('SOURCE_ARTIFACT_ESCROW_REQUIRED'));
+});
+
+test('successful source completion rejects mission, branch and parent escrow drift', () => {
+  const handoff = build();
+  for (const sourceArtifactEscrow of [
+    sourceArtifactEscrow(handoff, { missionId: 'goal-9999-pr-9999-drift' }),
+    sourceArtifactEscrow(handoff, { canonicalBranch: 'orchestrator/drifted-branch' }),
+    sourceArtifactEscrow(handoff, { exactParentHead: '9'.repeat(40) }),
+  ]) {
+    const result = adjudicateGitHubContinuityExternalCompletionV1({
+      handoff, completionReceipt: completion(handoff, { sourceArtifactEscrow }), missionState: runningMission(),
+    });
+    assert.equal(result.valid, false);
+    assert.equal(result.eventCandidate, null);
+    assert.ok(result.blockers.includes('SOURCE_ARTIFACT_ESCROW_IDENTITY_MISMATCH'));
+  }
 });
 
 test('completion rejects fabricated handoff correlation, scope drift and authority widening', () => {
@@ -185,7 +229,7 @@ test('completion rejects fabricated handoff correlation, scope drift and authori
     handoff, completionReceipt: completion(handoff, { changedFiles: ['shared/agents/unrelated.mjs'] }), missionState: runningMission(),
   });
   assert.equal(scope.valid, false);
-  assert.ok(scope.blockers.includes('completion-event-preflight-failed'));
+  assert.ok(scope.blockers.includes('SOURCE_ARTIFACT_ESCROW_IDENTITY_MISMATCH'));
 
   const authority = adjudicateGitHubContinuityExternalCompletionV1({
     handoff, completionReceipt: completion(handoff, { mergeAuthorityAdded: true }), missionState: runningMission(),
@@ -194,16 +238,28 @@ test('completion rejects fabricated handoff correlation, scope drift and authori
   assert.ok(authority.blockers.includes('completion-authority-invalid'));
 });
 
-test('external failure remains a blocked canonical mission result', () => {
+test('external failure remains a blocked canonical mission result without escrow', () => {
   const handoff = build();
   const result = adjudicateGitHubContinuityExternalCompletionV1({
     handoff,
-    completionReceipt: completion(handoff, { success: false, resultId: '', changedFiles: [], receipt: null, error: 'external lane failed' }),
+    completionReceipt: completion(handoff, { success: false, resultId: '', changedFiles: [], receipt: null, error: 'external lane failed', sourceArtifactEscrow: null }),
     missionState: runningMission(),
   });
   assert.equal(result.valid, true, result.blockers.join(', '));
   assert.equal(result.finalVerdict, 'GITHUB_CONTINUITY_EXTERNAL_FAILURE_EVENT_READY');
   assert.equal(result.projectedMissionState.currentPhase, 'BLOCKED');
+});
+
+test('successful zero-source completion remains compatible without escrow', () => {
+  const handoff = build();
+  const result = adjudicateGitHubContinuityExternalCompletionV1({
+    handoff,
+    completionReceipt: completion(handoff, { changedFiles: [], sourceArtifactEscrow: null }),
+    missionState: runningMission(),
+  });
+  assert.equal(result.valid, true, result.blockers.join(', '));
+  assert.equal(result.authority.mergeAuthorityAdded, false);
+  assert.equal(result.authority.runtimeMutationAuthorityAdded, false);
 });
 
 test('hostile caller objects fail closed without invoking accessors or toJSON', () => {
