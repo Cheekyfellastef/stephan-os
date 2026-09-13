@@ -49,6 +49,7 @@ const COMPLETION_KEYS = Object.freeze([
   'sourceMutationAuthorityAdded','mergeAuthorityAdded','deploymentAuthorityAdded','runtimeMutationAuthorityAdded',
   'protectedMergeDispatchAllowed','duplicateDispatchAllowed','arbitraryCommandAllowed',
 ]);
+const LEGACY_COMPLETION_KEYS = Object.freeze(COMPLETION_KEYS.filter((key)=>key!=='sourceArtifactEscrow'));
 const ZERO_AUTHORITY = Object.freeze({
   queueWriteAllowed:false, sharedWorkspaceWriteAllowed:false, existingDispatchTakeoverAllowed:false,
   sourceMutationAuthorityAdded:false, mergeAuthorityAdded:false, deploymentAuthorityAdded:false,
@@ -270,7 +271,7 @@ export function adjudicateGitHubContinuityExternalCompletionV1(rawInput={}) {
   if (!input) return blockedCompletion('completion-input-not-data-only-or-closed-world');
   const h=input.handoff,c=input.completionReceipt,s=input.missionState;
   if (!validPreparedHandoff(h)) return blockedCompletion('handoff-candidate-invalid');
-  if (!c||!exactKeys(c,COMPLETION_KEYS)||c.schemaVersion!==GITHUB_CONTINUITY_EXTERNAL_COMPLETION_SCHEMA) return blockedCompletion('completion-receipt-shape-invalid');
+  if (!c||(!exactKeys(c,COMPLETION_KEYS)&&!exactKeys(c,LEGACY_COMPLETION_KEYS))||c.schemaVersion!==GITHUB_CONTINUITY_EXTERNAL_COMPLETION_SCHEMA) return blockedCompletion('completion-receipt-shape-invalid');
   const proofRefs=refs(c.proofRefs,1), files=changedFiles(c.changedFiles), completedAt=isoMs(c.completedAtUtc);
   if (!proofRefs||!files||completedAt===null) return blockedCompletion('completion-evidence-invalid');
   if (c.repository!==h.repository||text(c.expectedSourceHead).toLowerCase()!==h.expectedSourceHead||c.handoffId!==h.handoffId
@@ -288,6 +289,7 @@ export function adjudicateGitHubContinuityExternalCompletionV1(rawInput={}) {
   if (c.success===true && files.length>0) {
     const handoffBody=preparedHandoffBody(h);
     if (!handoffBody || text(handoffBody.branch)!==text(s.git?.branch)) return blockedCompletion('SOURCE_ARTIFACT_ESCROW_IDENTITY_MISMATCH');
+    if (!Object.hasOwn(c,'sourceArtifactEscrow') || c.sourceArtifactEscrow===null) return blockedCompletion('SOURCE_ARTIFACT_ESCROW_REQUIRED');
     const escrow=c.sourceArtifactEscrow;
     const escrowPaths=escrowChangedFilePaths(escrow);
     if (!escrowPaths || JSON.stringify(escrowPaths)!==JSON.stringify([...files].sort())) return blockedCompletion('SOURCE_ARTIFACT_ESCROW_IDENTITY_MISMATCH');
