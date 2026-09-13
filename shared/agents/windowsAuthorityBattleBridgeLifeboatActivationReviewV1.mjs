@@ -136,7 +136,7 @@ function reviewIdempotentReinstall(source, path, findings) {
     ['changed = $true', 'lifeboat-promotion-change-proof-missing'],
   ]) requireLiteral(findings, source, path, literal, code);
 
-  const branchStart = source.indexOf('if ($null -ne $activeState -and $manifestSha256 -eq [string]$activeState.manifestSha256) {');
+  const branchStart = source.indexOf('if ($null -ne $activeState -and $activeBankFreshHealthy -and $manifestSha256 -eq [string]$activeState.manifestSha256) {');
   const branchEnd = source.indexOf('\n$targetRoot = Join-Path $banksRoot $targetBank', branchStart);
   if (!(branchStart >= 0 && branchEnd > branchStart)) {
     findings.push(finding('lifeboat-idempotent-bounded-branch-missing', path));
