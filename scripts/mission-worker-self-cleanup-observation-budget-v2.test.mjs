@@ -35,10 +35,14 @@ test('cleanup observation remains read-only and fail-closed while using the full
   assert.doesNotMatch(observer, /Stop-Process|Stop-ScheduledTask|Start-ScheduledTask|Start-Process|\.Kill\(|Remove-Item|Set-Content|Invoke-Expression/);
 });
 
-test('existing Windows specialist requires the cleanup-budget-derived observation window and rejects the retired four-second pin', () => {
-  assert.match(specialistSource, /missionWorkerCleanupTimeoutSeconds/);
-  assert.match(specialistSource, /observationDeadlineUtc[^\r\n]*missionWorkerCleanupTimeoutSeconds/);
-  assert.match(specialistSource, /reserveDeadlineUtc[^\r\n]*missionWorkerCleanupTimeoutSeconds/);
-  assert.doesNotMatch(specialistSource, /mission-worker-post-authority-four-second-window-missing/);
-  assert.doesNotMatch(specialistSource, /Post-authority observation must remain a fixed four-second slice/);
+test('PR #2191 specialist profile requires the cleanup-budget-derived window without changing legacy four-second profiles', () => {
+  const inspector = sliceFunction(specialistSource, 'inspectSelfCleanupObservationBudgetSource', 'executablePowerShellSource');
+
+  assert.match(inspector, /mission-worker-post-authority-four-second-window-missing/);
+  assert.match(inspector, /mission-worker-post-authority-reserve-cap-missing/);
+  assert.match(inspector, /observationDeadlineUtc[^\r\n]*missionWorkerCleanupTimeoutSeconds/);
+  assert.match(inspector, /reserveDeadlineUtc[^\r\n]*missionWorkerCleanupTimeoutSeconds/);
+  assert.match(inspector, /mission-worker-self-cleanup-observation-budget-window-missing/);
+  assert.match(inspector, /mission-worker-self-cleanup-observation-budget-reserve-cap-missing/);
+  assert.doesNotMatch(inspector, /Post-authority observation must remain a fixed four-second slice/);
 });
