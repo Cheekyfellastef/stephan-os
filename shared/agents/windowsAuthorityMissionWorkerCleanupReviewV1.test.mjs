@@ -392,20 +392,20 @@ test('exact #2191 cleanup-budget observation profile is independently eligible a
 
 test('#2152 observer rejects removed deadline, task and live Node identity boundaries', () => {
   for (const [unsafe, code] of [
-    [POST_AUTHORITY_SAFE_SOURCE.replace('$observationDeadlineUtc = [datetime]::UtcNow.AddSeconds($missionWorkerCleanupTimeoutSeconds)', '$observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(5)'), 'mission-worker-post-authority-four-second-window-missing'],
-    [POST_AUTHORITY_SAFE_SOURCE.replace('$reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds($missionWorkerCleanupTimeoutSeconds)', '$reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds(5)'), 'mission-worker-post-authority-reserve-cap-missing'],
-    [POST_AUTHORITY_SAFE_SOURCE.replace("[string]$task.State -in @('Ready', 'Disabled')", "[string]$task.State -in @('Ready', 'Running')"), 'mission-worker-post-authority-terminal-task-state-missing'],
-    [POST_AUTHORITY_SAFE_SOURCE.replace('-OperationTimeoutSec 1 -ErrorAction Stop', '-ErrorAction Stop'), 'mission-worker-post-authority-node-query-not-fixed'],
-    [POST_AUTHORITY_SAFE_SOURCE.replace('foreach ($process in $nodeProcesses)', 'foreach ($process in @())'), 'mission-worker-post-authority-node-enumeration-missing'],
-    [POST_AUTHORITY_SAFE_SOURCE.replace('$executablePath = [string]$process.ExecutablePath', '$executablePath = $null'), 'mission-worker-post-authority-executable-inspection-missing'],
-    [POST_AUTHORITY_SAFE_SOURCE.replace('$commandLine = [string]$process.CommandLine', '$commandLine = $null'), 'mission-worker-post-authority-command-inspection-missing'],
-    [POST_AUTHORITY_SAFE_SOURCE.replace('if ([string]::IsNullOrWhiteSpace($executablePath) -or [string]::IsNullOrWhiteSpace($commandLine)) {', 'if ($false) {'), 'mission-worker-post-authority-uninspectable-node-not-blocked'],
-    [POST_AUTHORITY_SAFE_SOURCE.replace('[void][System.IO.Path]::GetFullPath($executablePath)', '$null = $executablePath'), 'mission-worker-post-authority-executable-normalization-missing'],
-    [POST_AUTHORITY_SAFE_SOURCE.replace('$arguments = @(ConvertFrom-WindowsCommandLine -CommandLine $commandLine)', '$arguments = @("node", "worker")'), 'mission-worker-post-authority-command-parse-missing'],
-    [POST_AUTHORITY_SAFE_SOURCE.replace('if ($arguments.Count -eq 0) { return $false }', 'if ($false) { return $false }'), 'mission-worker-post-authority-malformed-command-not-blocked'],
-    [POST_AUTHORITY_SAFE_SOURCE.replace('Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot', '$true'), 'mission-worker-post-authority-canonical-classifier-missing'],
-    [POST_AUTHORITY_SAFE_SOURCE.replace('$workers.Count -eq 0 -and [datetime]::UtcNow -lt $observationDeadlineUtc', '$workers.Count -ge 0'), 'mission-worker-post-authority-absence-proof-missing'],
-    [POST_AUTHORITY_SAFE_SOURCE.replace('catch { return $false }', 'catch { }'), 'mission-worker-post-authority-observation-failure-not-blocked'],
+    [LEGACY_POST_AUTHORITY_SAFE_SOURCE.replace('$observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(4)', '$observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(5)'), 'mission-worker-post-authority-four-second-window-missing'],
+    [LEGACY_POST_AUTHORITY_SAFE_SOURCE.replace('$reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds(4)', '$reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds(5)'), 'mission-worker-post-authority-reserve-cap-missing'],
+    [LEGACY_POST_AUTHORITY_SAFE_SOURCE.replace("[string]$task.State -in @('Ready', 'Disabled')", "[string]$task.State -in @('Ready', 'Running')"), 'mission-worker-post-authority-terminal-task-state-missing'],
+    [LEGACY_POST_AUTHORITY_SAFE_SOURCE.replace('-OperationTimeoutSec 1 -ErrorAction Stop', '-ErrorAction Stop'), 'mission-worker-post-authority-node-query-not-fixed'],
+    [LEGACY_POST_AUTHORITY_SAFE_SOURCE.replace('foreach ($process in $nodeProcesses)', 'foreach ($process in @())'), 'mission-worker-post-authority-node-enumeration-missing'],
+    [LEGACY_POST_AUTHORITY_SAFE_SOURCE.replace('$executablePath = [string]$process.ExecutablePath', '$executablePath = $null'), 'mission-worker-post-authority-executable-inspection-missing'],
+    [LEGACY_POST_AUTHORITY_SAFE_SOURCE.replace('$commandLine = [string]$process.CommandLine', '$commandLine = $null'), 'mission-worker-post-authority-command-inspection-missing'],
+    [LEGACY_POST_AUTHORITY_SAFE_SOURCE.replace('if ([string]::IsNullOrWhiteSpace($executablePath) -or [string]::IsNullOrWhiteSpace($commandLine)) {', 'if ($false) {'), 'mission-worker-post-authority-uninspectable-node-not-blocked'],
+    [LEGACY_POST_AUTHORITY_SAFE_SOURCE.replace('[void][System.IO.Path]::GetFullPath($executablePath)', '$null = $executablePath'), 'mission-worker-post-authority-executable-normalization-missing'],
+    [LEGACY_POST_AUTHORITY_SAFE_SOURCE.replace('$arguments = @(ConvertFrom-WindowsCommandLine -CommandLine $commandLine)', '$arguments = @("node", "worker")'), 'mission-worker-post-authority-command-parse-missing'],
+    [LEGACY_POST_AUTHORITY_SAFE_SOURCE.replace('if ($arguments.Count -eq 0) { return $false }', 'if ($false) { return $false }'), 'mission-worker-post-authority-malformed-command-not-blocked'],
+    [LEGACY_POST_AUTHORITY_SAFE_SOURCE.replace('Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot', '$true'), 'mission-worker-post-authority-canonical-classifier-missing'],
+    [LEGACY_POST_AUTHORITY_SAFE_SOURCE.replace('$workers.Count -eq 0 -and [datetime]::UtcNow -lt $observationDeadlineUtc', '$workers.Count -ge 0'), 'mission-worker-post-authority-absence-proof-missing'],
+    [LEGACY_POST_AUTHORITY_SAFE_SOURCE.replace('catch { return $false }', 'catch { }'), 'mission-worker-post-authority-observation-failure-not-blocked'],
   ]) {
     const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(postAuthorityInput(unsafe));
     assert.equal(result.eligible, true);
