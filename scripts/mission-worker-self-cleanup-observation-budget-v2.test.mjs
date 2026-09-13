@@ -19,6 +19,9 @@ test('post-authority cleanup observation consumes the existing fixed cleanup bud
   assert.match(runtimeSource, /\$missionWorkerCleanupTimeoutSeconds\s*=\s*10\b/);
   assert.match(observer, /\$observationDeadlineUtc\s*=\s*\[datetime\]::UtcNow\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/);
   assert.match(observer, /\$reserveDeadlineUtc\s*=\s*\$script:operationDeadlineUtc\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/);
+  assert.match(observer, /\$observationOperationReserveSeconds\s*=\s*2\b/);
+  assert.match(observer, /while \(\[datetime\]::UtcNow\.AddSeconds\(\$observationOperationReserveSeconds\) -lt \$observationDeadlineUtc\)/);
+  assert.match(observer, /if \(\[datetime\]::UtcNow\.AddSeconds\(1\) -ge \$observationDeadlineUtc\) \{ return \$false \}/);
   assert.doesNotMatch(observer, /AddSeconds\(4\)/);
   assert.doesNotMatch(observer, /\$script:operationDeadlineUtc\s*=/);
 });
@@ -26,9 +29,14 @@ test('post-authority cleanup observation consumes the existing fixed cleanup bud
 test('cleanup observation remains read-only and fail-closed while using the full existing reserve', () => {
   const observer = sliceFunction(runtimeSource, 'Wait-MissionWorkerSelfCleanupObservation', 'Write-BoundedAtomicJson');
 
+  const taskReadIndex = observer.indexOf("Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker'");
+  const cimGuardIndex = observer.indexOf('[datetime]::UtcNow.AddSeconds(1) -ge $observationDeadlineUtc');
+  const cimReadIndex = observer.indexOf('Get-CimInstance Win32_Process');
+
   assert.match(observer, /Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker' -TaskPath '\\' -ErrorAction Stop/);
   assert.match(observer, /\[string\]\$task\.State -in @\('Ready', 'Disabled'\)/);
   assert.match(observer, /Get-CimInstance Win32_Process[^\r\n]*-OperationTimeoutSec 1 -ErrorAction Stop/);
+  assert.ok(taskReadIndex >= 0 && cimGuardIndex > taskReadIndex && cimReadIndex > cimGuardIndex, 'CIM observation must be guarded by the final one-second deadline check');
   assert.match(observer, /Test-ExactCanonicalWorkerProcess -Process \$process -ExpectedRepoRoot \$ExpectedRepoRoot/);
   assert.match(observer, /\$workers\.Count -eq 0/);
   assert.match(observer, /catch \{ return \$false \}/);
