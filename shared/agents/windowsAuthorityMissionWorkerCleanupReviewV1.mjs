@@ -63,6 +63,22 @@ function exactLineage(lineage, sourceHead, baseSha) {
     && lineage.comparison.mergeBaseCommitSha === baseSha;
 }
 
+function exactSelfCleanupObservationBudgetLineage(lineage, sourceHead, baseSha) {
+  return lineage?.schemaVersion === LINEAGE_SCHEMA
+    && lineage.repository === REPOSITORY
+    && lineage.sourceHead === sourceHead
+    && lineage.sourceCommitSha === sourceHead
+    && lineage.baseSha === baseSha
+    && lineage.liveMainBeforeSha === baseSha
+    && lineage.liveMainAfterSha === baseSha
+    && lineage?.comparison?.status === 'ahead'
+    && Number.isSafeInteger(lineage?.comparison?.aheadBy)
+    && lineage.comparison.aheadBy > 0
+    && lineage.comparison.behindBy === 0
+    && lineage.comparison.baseCommitSha === baseSha
+    && lineage.comparison.mergeBaseCommitSha === baseSha;
+}
+
 function exactSource(source, sourceHead) {
   const content = typeof source?.content === 'string' ? source.content : '';
   const size = Buffer.byteLength(content, 'utf8');
@@ -442,7 +458,10 @@ export function analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input = {}) 
   });
 
   const findings = [];
-  if (!exactLineage(input.lineageEvidence, sourceHead, baseSha)) {
+  const lineageValid = profile === 'self-cleanup-observation-budget'
+    ? exactSelfCleanupObservationBudgetLineage(input.lineageEvidence, sourceHead, baseSha)
+    : exactLineage(input.lineageEvidence, sourceHead, baseSha);
+  if (!lineageValid) {
     findings.push(finding('mission-worker-cleanup-current-main-lineage-invalid', 'Review requires exact-current-main ahead-only lineage.'));
   }
   const sources = Array.isArray(input.sources) ? input.sources : [];
