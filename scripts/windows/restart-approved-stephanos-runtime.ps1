@@ -140,19 +140,17 @@ function New-CryptographicInvocationId {
 function Wait-MissionWorkerSelfCleanupObservation {
     param([Parameter(Mandatory = $true)][string]$ExpectedRepoRoot)
 
-    # Observation only: never extend the restart/mutation deadline. The nominal
-    # window remains the full cleanup budget, but a new task/CIM iteration may
-    # start only while bounded operation slack remains before that deadline.
+    # Observation only: never extend the restart/mutation deadline. This slice
+    # is capped within the existing ten-second child-exit reserve, even if the
+    # caller reaches it late. The launcher owns cancellation and self-cleanup.
     $observationDeadlineUtc = [datetime]::UtcNow.AddSeconds($missionWorkerCleanupTimeoutSeconds)
     $reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds($missionWorkerCleanupTimeoutSeconds)
     if ($observationDeadlineUtc -gt $reserveDeadlineUtc) {
         $observationDeadlineUtc = $reserveDeadlineUtc
     }
-    $observationOperationReserveSeconds = 2
-    while ([datetime]::UtcNow.AddSeconds($observationOperationReserveSeconds) -lt $observationDeadlineUtc) {
+    while ([datetime]::UtcNow -lt $observationDeadlineUtc) {
         try {
             $task = Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker' -TaskPath '\' -ErrorAction Stop
-            if ([datetime]::UtcNow.AddSeconds(1) -ge $observationDeadlineUtc) { return $false }
             if ($task -and [string]$task.State -in @('Ready', 'Disabled')) {
                 $workers = @()
                 $nodeProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -OperationTimeoutSec 1 -ErrorAction Stop)
@@ -300,7 +298,7 @@ function Read-CanonicalWorkerSourceProof {
         Stop-WithBlocker 'CANONICAL_TRACKED_SOURCE_DIRTY'
     }
 
-    $publicMainHead = Read-PublicMainHead -GitExecutable $canonicalGit
+    $publicMainHead = Read-PublicMainHead -GitExecutable $GitExecutable
     if ($publicMainHead -ne $ExpectedSourceHead) {
         if ($Phase -eq 'POST_START') { Stop-WithBlocker 'CANONICAL_PUBLIC_MAIN_CHANGED_DURING_WORKER_START' }
         Stop-WithBlocker 'EXPECTED_HEAD_NOT_PUBLIC_MAIN'
