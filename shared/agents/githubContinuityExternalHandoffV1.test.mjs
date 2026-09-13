@@ -204,13 +204,13 @@ test('successful source completion without escrow fails closed before event proj
 
 test('successful source completion rejects mission, branch and parent escrow drift', () => {
   const handoff = build();
-  for (const sourceArtifactEscrow of [
+  for (const escrow of [
     sourceArtifactEscrow(handoff, { missionId: 'goal-9999-pr-9999-drift' }),
     sourceArtifactEscrow(handoff, { canonicalBranch: 'orchestrator/drifted-branch' }),
     sourceArtifactEscrow(handoff, { exactParentHead: '9'.repeat(40) }),
   ]) {
     const result = adjudicateGitHubContinuityExternalCompletionV1({
-      handoff, completionReceipt: completion(handoff, { sourceArtifactEscrow }), missionState: runningMission(),
+      handoff, completionReceipt: completion(handoff, { sourceArtifactEscrow: escrow }), missionState: runningMission(),
     });
     assert.equal(result.valid, false);
     assert.equal(result.eventCandidate, null);
