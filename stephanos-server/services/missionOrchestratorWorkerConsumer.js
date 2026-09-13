@@ -80,12 +80,79 @@ async function appendReceiptTransition(previous, state, options = {}, additions 
   return receipt;
 }
 
+function normalizedText(value) {
+  return String(value ?? '').trim();
+}
+
+function persistedNativeBinding(claim) {
+  const grant = claim?.item?.actionGrant;
+  const binding = claim?.item?.executionBinding;
+  if (!grant && !binding) return null;
+  if (!grant || !binding) throw new Error('EXECUTION_RECEIPT_QUEUE_BINDING_INCOMPLETE');
+  if (grant.schemaVersion !== 'stephanos.mission-worker-action-grant.v1') {
+    throw new Error('EXECUTION_RECEIPT_QUEUE_GRANT_SCHEMA_INVALID');
+  }
+  if (binding.schemaVersion !== 'stephanos.mission-worker-queue-execution-binding.v1') {
+    throw new Error('EXECUTION_RECEIPT_QUEUE_BINDING_SCHEMA_INVALID');
+  }
+  const grantMismatch = (
+    normalizedText(binding.executionId).toLowerCase() !== normalizedText(grant.actionId).toLowerCase()
+    || normalizedText(binding.grantId) !== normalizedText(grant.grantId)
+    || normalizedText(binding.missionId).toLowerCase() !== normalizedText(grant.missionId).toLowerCase()
+    || Number(binding.missionRevision) !== Number(grant.missionRevision)
+    || normalizedText(binding.repository).toLowerCase() !== normalizedText(grant.repository).toLowerCase()
+    || Number(binding.issueNumber) !== Number(grant.issueNumber)
+    || Number(binding.prNumber) !== Number(grant.prNumber)
+    || normalizedText(binding.branch) !== normalizedText(grant.branch)
+    || normalizedText(binding.headSha).toLowerCase() !== normalizedText(grant.headSha).toLowerCase()
+    || normalizedText(binding.sourceRevision).toLowerCase() !== normalizedText(grant.sourceRevision).toLowerCase()
+  );
+  if (grantMismatch) throw new Error('EXECUTION_RECEIPT_QUEUE_GRANT_BINDING_MISMATCH');
+  return { grant, binding };
+}
+
+function requirePersistedBindingMatchesReceipt(persisted, receipt, options = {}) {
+  if (!persisted) return;
+  const { grant, binding } = persisted;
+  const mismatch = (
+    normalizedText(binding.executionId).toLowerCase() !== normalizedText(receipt.executionId).toLowerCase()
+    || normalizedText(binding.leaseKey) !== normalizedText(receipt.leaseKey)
+    || normalizedText(binding.repository).toLowerCase() !== normalizedText(receipt.repository).toLowerCase()
+    || Number(binding.issueNumber) !== Number(receipt.issueNumber)
+    || Number(binding.prNumber) !== Number(receipt.prNumber)
+    || normalizedText(binding.branch) !== normalizedText(receipt.branch)
+    || normalizedText(binding.headSha).toLowerCase() !== normalizedText(receipt.sourceHead).toLowerCase()
+  );
+  if (mismatch) throw new Error('EXECUTION_RECEIPT_QUEUE_BINDING_IDENTITY_MISMATCH');
+
+  const suppliedGrant = options.actionGrant;
+  if (suppliedGrant) {
+    const suppliedMismatch = (
+      normalizedText(suppliedGrant.grantId) !== normalizedText(grant.grantId)
+      || normalizedText(suppliedGrant.actionId).toLowerCase() !== normalizedText(grant.actionId).toLowerCase()
+      || normalizedText(suppliedGrant.missionId).toLowerCase() !== normalizedText(grant.missionId).toLowerCase()
+      || Number(suppliedGrant.missionRevision) !== Number(grant.missionRevision)
+      || normalizedText(suppliedGrant.repository).toLowerCase() !== normalizedText(grant.repository).toLowerCase()
+      || Number(suppliedGrant.issueNumber) !== Number(grant.issueNumber)
+      || Number(suppliedGrant.prNumber) !== Number(grant.prNumber)
+      || normalizedText(suppliedGrant.branch) !== normalizedText(grant.branch)
+      || normalizedText(suppliedGrant.headSha).toLowerCase() !== normalizedText(grant.headSha).toLowerCase()
+      || normalizedText(suppliedGrant.sourceRevision).toLowerCase() !== normalizedText(grant.sourceRevision).toLowerCase()
+    );
+    if (suppliedMismatch) throw new Error('EXECUTION_RECEIPT_RUNTIME_GRANT_MISMATCH');
+  }
+}
+
 async function beginNativeExecutionReceiptChain(claim, options = {}) {
   const root = executionReceiptRoot(options);
   if (!root) return null;
   const executionId = String(claim?.item?.actionId || '').trim().toLowerCase();
   if (!executionId) return null;
-  const history = await readExecutionReceiptHistory(root, { executionId }, executionReceiptOptions(options));
+  const persisted = persistedNativeBinding(claim);
+  const filters = persisted
+    ? { executionId, leaseKey: persisted.binding.leaseKey, expectedHead: persisted.binding.headSha }
+    : { executionId };
+  const history = await readExecutionReceiptHistory(root, filters, executionReceiptOptions(options));
   if (history?.ok !== true) {
     const error = new Error(`EXECUTION_RECEIPT_HISTORY_BLOCKED:${history?.reason || 'unknown'}`);
     error.code = 'EXECUTION_RECEIPT_HISTORY_BLOCKED';
@@ -93,15 +160,19 @@ async function beginNativeExecutionReceiptChain(claim, options = {}) {
     throw error;
   }
   let current = history.latestReceipt;
-  if (!current) return null;
+  if (!current) {
+    if (persisted) throw new Error('EXECUTION_RECEIPT_QUEUED_TRUTH_REQUIRED');
+    return null;
+  }
   if (current.state !== 'queued') {
     const error = new Error(`EXECUTION_RECEIPT_CLAIM_STATE_INVALID:${current.state}`);
     error.code = 'EXECUTION_RECEIPT_CLAIM_STATE_INVALID';
     error.receipt = current;
     throw error;
   }
-  const actionGrant = options.actionGrant;
-  if (actionGrant) {
+  requirePersistedBindingMatchesReceipt(persisted, current, options);
+  if (!persisted && options.actionGrant) {
+    const actionGrant = options.actionGrant;
     const mismatched = (
       String(actionGrant.repository || '').toLowerCase() !== current.repository.toLowerCase()
       || Number(actionGrant.issueNumber) !== current.issueNumber
