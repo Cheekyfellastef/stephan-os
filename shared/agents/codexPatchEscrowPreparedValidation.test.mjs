@@ -52,7 +52,7 @@ function fixture() {
     bundleId: prepared.bundleId,
     patchSha256: prepared.patchSha256,
     expectedTreeSha: TREE_SHA,
-    ancestry: { safe: true, blockers: [], inspectedPids: [200] },
+    ancestry: { safe: true, blockers: [], inspectedPids: [200, 1] },
     testEvidence: { profile: 'node-changed', commands: ['node --check shared/agents/a.mjs'] },
   };
   return { bundle, patch, prepared, preparedBytes, validationResult };
@@ -151,6 +151,7 @@ test('process ancestry guard detects a GitHub token held by a readable parent pr
     ['/proc/200/status', 'Name:\tnode\nPPid:\t100\n'],
     ['/proc/100/environ', 'GITHUB_TOKEN=repository-token\0PATH=/usr/bin\0'],
     ['/proc/100/status', 'Name:\tbash\nPPid:\t1\n'],
+    ['/proc/1/environ', 'PATH=/usr/bin\0'],
   ]);
   const result = inspectGithubCredentialProcessAncestry({
     platform: 'linux',
@@ -162,10 +163,26 @@ test('process ancestry guard detects a GitHub token held by a readable parent pr
   });
   assert.equal(result.safe, false);
   assert.equal(result.blockers.includes('github-credential-in-process-ancestry:100:GITHUB_TOKEN'), true);
-  assert.deepEqual(result.inspectedPids, [200, 100]);
+  assert.deepEqual(result.inspectedPids, [200, 100, 1]);
 });
 
-test('process ancestry guard accepts a clean chain ending at PID 1 without reading PID 1 proc files', () => {
+test('process ancestry guard detects a GitHub token held by readable PID 1', () => {
+  const files = new Map([
+    ['/proc/200/environ', 'PATH=/usr/bin\0'],
+    ['/proc/200/status', 'Name:\tnode\nPPid:\t1\n'],
+    ['/proc/1/environ', 'GITHUB_TOKEN=root-token\0PATH=/usr/bin\0'],
+  ]);
+  const result = inspectGithubCredentialProcessAncestry({
+    platform: 'linux',
+    startPid: 200,
+    readProcFile: (path) => files.get(path),
+  });
+  assert.equal(result.safe, false);
+  assert.equal(result.blockers.includes('github-credential-in-process-ancestry:1:GITHUB_TOKEN'), true);
+  assert.deepEqual(result.inspectedPids, [200, 1]);
+});
+
+test('process ancestry guard accepts EACCES at PID 1 after clean readable descendants', () => {
   const files = new Map([
     ['/proc/200/environ', 'GITHUB_TOKEN=\0PATH=/usr/bin\0'],
     ['/proc/200/status', 'Name:\tnode\nPPid:\t1\n'],
@@ -184,7 +201,51 @@ test('process ancestry guard accepts a clean chain ending at PID 1 without readi
   });
   assert.equal(result.safe, true);
   assert.deepEqual(result.blockers, []);
-  assert.deepEqual(result.inspectedPids, [200]);
+  assert.deepEqual(result.inspectedPids, [200, 1]);
+});
+
+test('process ancestry guard accepts EPERM at PID 1 after clean readable descendants', () => {
+  const files = new Map([
+    ['/proc/200/environ', 'PATH=/usr/bin\0'],
+    ['/proc/200/status', 'Name:\tnode\nPPid:\t1\n'],
+  ]);
+  const result = inspectGithubCredentialProcessAncestry({
+    platform: 'linux',
+    startPid: 200,
+    readProcFile: (path) => {
+      if (!files.has(path)) {
+        const error = new Error(`unreadable fixture ${path}`);
+        error.code = 'EPERM';
+        throw error;
+      }
+      return files.get(path);
+    },
+  });
+  assert.equal(result.safe, true);
+  assert.deepEqual(result.blockers, []);
+  assert.deepEqual(result.inspectedPids, [200, 1]);
+});
+
+test('process ancestry guard remains fail-closed for unexpected PID 1 read errors', () => {
+  const files = new Map([
+    ['/proc/200/environ', 'PATH=/usr/bin\0'],
+    ['/proc/200/status', 'Name:\tnode\nPPid:\t1\n'],
+  ]);
+  const result = inspectGithubCredentialProcessAncestry({
+    platform: 'linux',
+    startPid: 200,
+    readProcFile: (path) => {
+      if (!files.has(path)) {
+        const error = new Error(`unreadable fixture ${path}`);
+        error.code = 'EIO';
+        throw error;
+      }
+      return files.get(path);
+    },
+  });
+  assert.equal(result.safe, false);
+  assert.equal(result.blockers.includes('process-ancestry-unreadable:1:EIO'), true);
+  assert.deepEqual(result.inspectedPids, [200, 1]);
 });
 
 test('process ancestry guard remains fail-closed when a non-root ancestor is unreadable', () => {
