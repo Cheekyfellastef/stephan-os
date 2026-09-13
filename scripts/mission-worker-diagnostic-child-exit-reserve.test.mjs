@@ -75,15 +75,15 @@ test('diagnostic reuses watchdog child-exit reserve without widening restart aut
     MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS,
     WORKER_WATCHDOG_START_TIMEOUT_MS - WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS,
   );
-  assert.equal(WORKER_WATCHDOG_START_TIMEOUT_MS, 95_000);
-  assert.equal(WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS, 10_000);
+  assert.equal(WORKER_WATCHDOG_START_TIMEOUT_MS, 100_000);
+  assert.equal(WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS, 15_000);
   assert.equal(MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS, 85_000);
-  assert.equal(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS, 95_000);
+  assert.equal(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS, 100_000);
   assert.equal(MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS, 10_000);
-  assert.equal(MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS, 105_000);
+  assert.equal(MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS, 110_000);
 });
 
-test('StartApprovedWorkerTask gets 85-second authority inside a 95-second child process budget', async () => {
+test('StartApprovedWorkerTask gets 85-second authority inside a 100-second child process budget', async () => {
   let observed = null;
   const result = await runMissionWorkerDiagnosticLink({ expectedHead: HEAD }, dependencies(() => ({
     run: (mode, options) => {
@@ -94,13 +94,13 @@ test('StartApprovedWorkerTask gets 85-second authority inside a 95-second child 
 
   assert.equal(result.ok, true);
   assert.equal(observed.mode, 'StartApprovedWorkerTask');
-  assert.equal(observed.options.timeoutMs, 95_000);
+  assert.equal(observed.options.timeoutMs, 100_000);
   assert.equal(observed.options.deadlineUtc, '2026-09-01T18:01:25.000Z');
   assert.equal(result.deadlineUtc, '2026-09-01T18:01:25.000Z');
   assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
   assert.equal(result.restartAuthorityMs, 85_000);
-  assert.equal(result.childTimeoutMs, 95_000);
-  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
+  assert.equal(result.childTimeoutMs, 100_000);
+  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:50.000Z');
 });
 
 test('typed terminal blocker can be returned during the child-exit reserve', async () => {
@@ -120,9 +120,9 @@ test('typed terminal blocker can be returned during the child-exit reserve', asy
   assert.equal(result.blocker, 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT');
   assert.equal(result.typedRestartBlocker, 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT');
   assert.equal(observed.options.deadlineUtc, '2026-09-01T18:01:25.000Z');
-  assert.equal(observed.options.timeoutMs, 95_000);
+  assert.equal(observed.options.timeoutMs, 100_000);
   assert.equal(result.restartAuthorityMs, 85_000);
-  assert.equal(result.childTimeoutMs, 95_000);
-  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
+  assert.equal(result.childTimeoutMs, 100_000);
+  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:50.000Z');
   assert.equal(result.error, undefined);
 });
