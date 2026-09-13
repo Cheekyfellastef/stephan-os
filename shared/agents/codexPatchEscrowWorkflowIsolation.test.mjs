@@ -13,7 +13,7 @@ function validationBlock() {
   return workflow.slice(start, end);
 }
 
-test('patch escrow validation runs patched code in a networkless constrained container', () => {
+test('patch escrow validation runs patched code in a networkless constrained digest-pinned container', () => {
   const block = validationBlock();
   assert.match(block, /docker run --rm/);
   assert.match(block, /--network none/);
@@ -24,17 +24,31 @@ test('patch escrow validation runs patched code in a networkless constrained con
   assert.match(block, /--memory 2g/);
   assert.match(block, /--cpus 2/);
   assert.match(block, /--tmpfs \/tmp:rw,nosuid,nodev,size=512m/);
-  assert.match(block, /node:22-bookworm/);
+  assert.match(block, /node:22-bookworm@sha256:[a-f0-9]{64}/);
+  assert.doesNotMatch(block, /\n\s*node:22-bookworm\\\s*$/m);
 });
 
-test('isolated validator receives only bounded workspace input and output mounts', () => {
+test('isolated validator receives only bounded workspace and read-only prepared input mounts', () => {
   const block = validationBlock();
   const mounts = [...block.matchAll(/--mount ([^\\\n]+)/g)].map((match) => match[1]);
-  assert.equal(mounts.length, 3);
+  assert.equal(mounts.length, 2);
   assert.equal(mounts.some((mount) => mount.includes('dst=/workspace')), true);
   assert.equal(mounts.some((mount) => mount.includes('dst=/input,readonly')), true);
-  assert.equal(mounts.some((mount) => mount.includes('dst=/output')), true);
+  assert.equal(mounts.some((mount) => mount.includes('dst=/output')), false);
   assert.doesNotMatch(block, /docker\.sock|podman\.sock/);
+});
+
+test('patched code can emit only a captured validation report and trusted host finalization happens after container exit', () => {
+  const block = validationBlock();
+  const dockerStart = block.indexOf('docker run --rm');
+  const reportCapture = block.indexOf('patch-escrow-validation-report/validation-report.json');
+  const finalize = block.indexOf('codex-patch-escrow-finalize-validation.mjs');
+  assert.ok(dockerStart >= 0);
+  assert.ok(reportCapture > dockerStart);
+  assert.ok(finalize > reportCapture);
+  assert.match(block, /node scripts\/codex-patch-escrow-validate-prepared\.mjs/);
+  assert.doesNotMatch(block.slice(dockerStart, finalize), /patch-escrow-validated\.json/);
+  assert.match(block.slice(finalize), /patch-escrow-validated\/patch-escrow-validated\.json/);
 });
 
 test('validation container is not passed GitHub credentials and publication remains separate', () => {
@@ -49,11 +63,13 @@ test('validation container is not passed GitHub credentials and publication rema
   assert.match(publish, /contents: write/);
   assert.match(publish, /Publish only the attested patch and tree without rerunning patched code/);
   assert.doesNotMatch(publish, /codex-patch-escrow-attest\.mjs/);
+  assert.doesNotMatch(publish, /codex-patch-escrow-validate-prepared\.mjs/);
 });
 
-test('workflow verification itself pins the isolation regression', () => {
+test('workflow verification pins both isolation regression and trusted finalizer syntax', () => {
   const verifyStart = workflow.indexOf('  verify:');
   const prepareStart = workflow.indexOf('\n  prepare-publication:', verifyStart);
   const verify = workflow.slice(verifyStart, prepareStart);
   assert.match(verify, /shared\/agents\/codexPatchEscrowWorkflowIsolation\.test\.mjs/);
+  assert.match(verify, /node --check scripts\/codex-patch-escrow-finalize-validation\.mjs/);
 });
