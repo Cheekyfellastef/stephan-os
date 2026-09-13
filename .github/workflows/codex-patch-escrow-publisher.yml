@@ -19,6 +19,7 @@ on:
       - 'shared/agents/codexPatchEscrowIdentity.test.mjs'
       - 'shared/agents/codexPatchEscrowPreparedValidation.test.mjs'
       - 'shared/agents/codexPatchEscrowPublisher.test.mjs'
+      - 'shared/agents/codexPatchEscrowWorkflowIsolation.test.mjs'
       - 'shared/agents/codexPatchEscrow.RUNBOOK.md'
   issue_comment:
     types:
@@ -51,6 +52,7 @@ jobs:
           shared/agents/codexPatchEscrowIdentity.test.mjs
           shared/agents/codexPatchEscrowPublisher.test.mjs
           shared/agents/codexPatchEscrowPreparedValidation.test.mjs
+          shared/agents/codexPatchEscrowWorkflowIsolation.test.mjs
 
       - name: Parse escrow scripts
         run: |
@@ -135,18 +137,37 @@ jobs:
           name: patch-escrow-prepared-${{ github.run_id }}-${{ github.event.issue.number }}
           path: ${{ runner.temp }}/patch-escrow-prepared
 
-      - name: Revalidate, test, and attest in a credential-free process tree
+      - name: Prepare disposable workspace and output for isolated validation
         run: |
-          unset GITHUB_TOKEN GH_TOKEN GITHUB_PAT GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
-          node scripts/codex-patch-escrow-attest.mjs \
-            "${{ runner.temp }}/patch-escrow-prepared/patch-escrow-prepared.json" \
-            "${{ runner.temp }}/patch-escrow-validated.json"
+          rm -rf "${{ runner.temp }}/patch-escrow-isolated-workspace" "${{ runner.temp }}/patch-escrow-validated"
+          mkdir -p "${{ runner.temp }}/patch-escrow-isolated-workspace" "${{ runner.temp }}/patch-escrow-validated"
+          cp -a "$GITHUB_WORKSPACE/." "${{ runner.temp }}/patch-escrow-isolated-workspace/"
+
+      - name: Revalidate, test, and attest inside a credential-free PID namespace
+        run: |
+          docker run --rm \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --pids-limit 256 \
+            --memory 2g \
+            --cpus 2 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=512m \
+            --workdir /workspace \
+            --mount type=bind,src="${{ runner.temp }}/patch-escrow-isolated-workspace",dst=/workspace \
+            --mount type=bind,src="${{ runner.temp }}/patch-escrow-prepared",dst=/input,readonly \
+            --mount type=bind,src="${{ runner.temp }}/patch-escrow-validated",dst=/output \
+            node:22-bookworm \
+            node scripts/codex-patch-escrow-attest.mjs \
+              /input/patch-escrow-prepared.json \
+              /output/patch-escrow-validated.json
 
       - name: Upload the exact token-free validated artifact
         uses: actions/upload-artifact@v4
         with:
           name: patch-escrow-validated-${{ github.run_id }}-${{ github.event.issue.number }}
-          path: ${{ runner.temp }}/patch-escrow-validated.json
+          path: ${{ runner.temp }}/patch-escrow-validated/patch-escrow-validated.json
           if-no-files-found: error
           retention-days: 1
 
