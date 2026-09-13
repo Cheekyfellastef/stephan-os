@@ -77,6 +77,28 @@ function encodedMissionIdentity(value) {
   };
 }
 
+function durableQueueExecutionBinding(grant) {
+  if (!grant || grant.schemaVersion !== 'stephanos.mission-worker-action-grant.v1') return null;
+  const missionId = text(grant.missionId).toLowerCase();
+  const missionRevision = Number(grant.missionRevision);
+  const executionId = text(grant.actionId).toLowerCase();
+  if (!missionId || !Number.isSafeInteger(missionRevision) || missionRevision < 0 || !executionId) return null;
+  return Object.freeze({
+    schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+    executionId,
+    leaseKey: `${missionId}-r${missionRevision}-lease`.slice(0, 80),
+    grantId: text(grant.grantId),
+    missionId,
+    missionRevision,
+    repository: text(grant.repository),
+    issueNumber: positiveInteger(grant.issueNumber),
+    prNumber: positiveInteger(grant.prNumber),
+    branch: text(grant.branch),
+    headSha: text(grant.headSha).toLowerCase(),
+    sourceRevision: text(grant.sourceRevision).toLowerCase(),
+  });
+}
+
 async function publishExternalLaneHandoff(state, action, options = {}) {
   const root = options.sharedWorkspaceRoot
     || options.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
@@ -339,6 +361,17 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
       };
     }
   }
+  const actionGrant = options.actionGrant || null;
+  const executionBinding = durableQueueExecutionBinding(actionGrant);
+  if (actionGrant && !executionBinding) {
+    return {
+      published: false,
+      reason: 'queue-execution-binding-unavailable',
+      blockers: ['durable-queue-execution-binding-unavailable'],
+      action,
+      path: '',
+    };
+  }
   const path = resolve(paths.pending, `${action.actionId}.json`);
   const published = await createImmutableJson(path, {
     schemaVersion: 'stephanos.mission-worker-queue-item.v1',
@@ -346,6 +379,8 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     actionId: action.actionId,
     missionId: state.missionId,
     createdAt: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString(),
+    actionGrant,
+    executionBinding,
     payload,
   });
   if (!published) {
