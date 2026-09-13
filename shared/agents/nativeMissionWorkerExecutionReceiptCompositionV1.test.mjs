@@ -29,10 +29,16 @@ test('Mission Worker claim and execution append accepted started progress and te
     'Mission Worker consumer must reuse the canonical execution receipt subsystem');
   assert.match(workerConsumer, /appendExecutionReceipt/,
     'Mission Worker consumer must durably append lifecycle receipts');
-  for (const state of ['accepted', 'started', 'progress', 'completed', 'failed', 'cancelled']) {
-    assert.match(workerConsumer, new RegExp(`state\\s*:\\s*['"]${state}['"]`),
-      `Mission Worker consumer must preserve canonical ${state} receipt semantics`);
+  for (const state of ['accepted', 'started', 'progress']) {
+    assert.match(workerConsumer, new RegExp(`appendReceiptTransition\\([\\s\\S]*?['"]${state}['"]`),
+      `Mission Worker consumer must append canonical ${state} receipt semantics through the transition helper`);
   }
+  assert.match(workerConsumer, /execution\.success\s*===\s*true\s*\?\s*['"]completed['"]\s*:\s*['"]failed['"]/,
+    'normal terminal execution must resolve deterministically to completed or failed');
+  assert.match(workerConsumer, /appendReceiptTransition\([^)]*['"]failed['"]/s,
+    'exceptional execution must append failed terminal truth');
+  assert.match(workerConsumer, /['"]cancelled['"]/,
+    'the canonical terminal-state policy must continue to recognize cancelled truth');
   assert.match(workerConsumer, /heartbeat/i,
     'claim/execution composition must publish fresh heartbeat truth rather than infer liveness');
 });
