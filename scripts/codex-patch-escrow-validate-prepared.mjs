@@ -165,9 +165,25 @@ export function inspectGithubCredentialProcessAncestry(options = {}) {
   let pid = Number.parseInt(options.startPid ?? process.pid, 10);
 
   while (Number.isSafeInteger(pid) && pid > 0 && !seen.has(pid)) {
-    if (pid === 1) break;
     seen.add(pid);
     inspectedPids.push(pid);
+
+    if (pid === 1) {
+      let environment;
+      try {
+        environment = readProcFile('/proc/1/environ');
+      } catch (error) {
+        const code = text(error?.code || error?.message, 'unknown');
+        if (code === 'EACCES' || code === 'EPERM') break;
+        blockers.push(`process-ancestry-unreadable:1:${code}`);
+        break;
+      }
+      for (const entry of parseEnvironmentNames(environment)) {
+        if (GITHUB_CREDENTIAL_NAMES.has(entry.name) && entry.value) blockers.push(`github-credential-in-process-ancestry:1:${entry.name}`);
+      }
+      break;
+    }
+
     let environment;
     let status;
     try {
