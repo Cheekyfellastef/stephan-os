@@ -10,7 +10,9 @@ test('post-authority cleanup observation uses the fixed cleanup budget inside ch
   assert.match(observer, /\$reserveDeadlineUtc = \$script:operationDeadlineUtc\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/);
   assert.match(observer, /if \(\$observationDeadlineUtc -gt \$reserveDeadlineUtc\)/);
   assert.match(observer, /\$observationDeadlineUtc = \$reserveDeadlineUtc/);
-  assert.match(observer, /while \(\[datetime\]::UtcNow -lt \$observationDeadlineUtc\)/);
+  assert.match(observer, /\$observationOperationReserveSeconds = 2/);
+  assert.match(observer, /while \(\[datetime\]::UtcNow\.AddSeconds\(\$observationOperationReserveSeconds\) -lt \$observationDeadlineUtc\)/);
+  assert.match(observer, /if \(\[datetime\]::UtcNow\.AddSeconds\(1\) -ge \$observationDeadlineUtc\) \{ return \$false \}/);
   assert.doesNotMatch(observer, /\$script:operationDeadlineUtc\s*=/);
 });
 
