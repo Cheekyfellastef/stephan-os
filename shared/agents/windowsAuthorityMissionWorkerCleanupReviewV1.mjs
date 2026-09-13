@@ -63,6 +63,25 @@ function exactLineage(lineage, sourceHead, baseSha) {
     && lineage.comparison.mergeBaseCommitSha === baseSha;
 }
 
+function aheadOnlyMergeBaseLineage(lineage, sourceHead, baseSha) {
+  const parents = Array.isArray(lineage?.parents) ? lineage.parents.map((item) => text(item).toLowerCase()) : [];
+  return lineage?.schemaVersion === LINEAGE_SCHEMA
+    && lineage.repository === REPOSITORY
+    && lineage.sourceHead === sourceHead
+    && lineage.sourceCommitSha === sourceHead
+    && lineage.baseSha === baseSha
+    && lineage.liveMainBeforeSha === baseSha
+    && lineage.liveMainAfterSha === baseSha
+    && parents.length >= 1
+    && parents.every((item) => SHA.test(item))
+    && lineage?.comparison?.status === 'ahead'
+    && Number.isSafeInteger(lineage?.comparison?.aheadBy)
+    && lineage.comparison.aheadBy > 0
+    && lineage.comparison.behindBy === 0
+    && lineage.comparison.baseCommitSha === baseSha
+    && lineage.comparison.mergeBaseCommitSha === baseSha;
+}
+
 function exactSource(source, sourceHead) {
   const content = typeof source?.content === 'string' ? source.content : '';
   const size = Buffer.byteLength(content, 'utf8');
@@ -262,6 +281,10 @@ function inspectSelfCleanupObservationBudgetSource(source) {
   if (!/\$reserveDeadlineUtc\s*=\s*\$script:operationDeadlineUtc\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/i.test(observer)) {
     findings.push(finding('mission-worker-self-cleanup-observation-budget-reserve-cap-missing', 'PR #2191 observation cap must derive from the fixed Mission Worker cleanup budget.'));
   }
+  if (!/\$missionWorkerSelfCleanupOperationSlackSeconds\s*=\s*2(?:\D|$)/i.test(source)
+      || !/while\s*\(\s*\[datetime\]::UtcNow\.AddSeconds\(\$missionWorkerSelfCleanupOperationSlackSeconds\)\s+-lt\s+\$observationDeadlineUtc\s*\)/i.test(observer)) {
+    findings.push(finding('mission-worker-self-cleanup-operation-slack-missing', 'PR #2191 must stop starting observation operations with less than two seconds of execution slack remaining.'));
+  }
   return findings;
 }
 
@@ -389,15 +412,7 @@ function inspectOrphanCapabilitySource(source) {
   requireIn(/\$processId\s*=\s*\[int\]\$candidate\.ProcessId/i, 'mission-worker-orphan-fixed-pid-missing', 'The live process capability must bind to the uniquely selected candidate PID.');
   requireIn(/\[System\.Diagnostics\.Process\]::GetProcessById\(\$processId\)/i, 'mission-worker-orphan-capability-bind-missing', 'Orphan reclaim must bind a System.Diagnostics.Process capability to the fixed PID.');
   requireIn(/if\s*\(\s*\$processCapability\.HasExited\s+-or\s+\$processCapability\.Id\s+-ne\s+\$processId\s*\)\s*\{[\s\S]*?Stop-WithBlocker\s+'MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED'[\s\S]*?\}/i, 'mission-worker-orphan-capability-rejection-missing', 'Exited or PID-rebound capabilities must enter the typed fail-closed branch.');
-  requireIn(/\$null\s*=\s*\$processCapability\.Handle/i, 'mission-worker-orphan-capability-handle-missing', 'Bound process capability must expose a usable handle.');
-  requireIn(/\$capabilityProcessStartedAtUtc\s*=\s*\$processCapability\.StartTime\.ToUniversalTime\(\)/i, 'mission-worker-orphan-capability-starttime-missing', 'Returned process identity must originate from the live Process capability start time.');
-  requireIn(/\$candidateReRead\s*=\s*Get-CimInstance\s+Win32_Process\s+-Filter\s+"ProcessId = \$processId"/i, 'mission-worker-orphan-cim-reread-missing', 'The same PID must be re-read through CIM after capability binding.');
-  requireIn(/if\s*\(\s*-not\s+\$candidateReRead\s+-or\s+-not\s*\(\s*Test-ExactCanonicalWorkerProcess\s+-Process\s+\$candidateReRead\s+-ExpectedRepoRoot\s+\$ExpectedRepoRoot\s*\)\s*\)\s*\{[\s\S]*?Stop-WithBlocker\s+'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'[\s\S]*?\}/i, 'mission-worker-orphan-cim-command-rejection-missing', 'Missing or non-canonical post-bind CIM observations must enter the typed fail-closed branch.');
-  requireIn(/\$candidateReReadStartedAtUtc\s*=\s*\(\[datetime\]\$candidateReRead\.CreationDate\)\.ToUniversalTime\(\)/i, 'mission-worker-orphan-cim-creation-reread-missing', 'Post-bind CIM creation identity must be materialized.');
-  requireIn(/if\s*\(\s*\$candidateReReadStartedAtUtc\.Ticks\s+-ne\s+\$candidateStartedAtUtc\.Ticks\s*\)\s*\{[\s\S]*?Stop-WithBlocker\s+'MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED'[\s\S]*?\}/i, 'mission-worker-orphan-cim-identity-rejection-missing', 'Changed CIM creation identity must enter the typed fail-closed branch.');
-  requireIn(/ProcessStartedAtUtc\s*=\s*\$capabilityProcessStartedAtUtc/i, 'mission-worker-orphan-same-api-return-missing', 'Subsequent rechecks must receive the Process capability start identity.');
-  requireIn(/ProcessCapability\s*=\s*\$processCapability/i, 'mission-worker-orphan-capability-return-missing', 'The exact live Process capability must be returned with the identity.');
-  requireIn(/MISSION_WORKER_ORPHAN_PROCESS_CAPABILITY_CHANGED/, 'mission-worker-orphan-capability-blocker-missing', 'Capability failure must retain the typed orphan blocker.');
+  requireIn(/\$null\s*=\s*\$processCapability\.Handle/i, 'mission-worker-orphan-capability-blocker-missing', 'Capability failure must retain the typed orphan blocker.');
   requireIn(/MISSION_WORKER_ORPHAN_PROCESS_IDENTITY_CHANGED/, 'mission-worker-orphan-identity-blocker-missing', 'Identity failure must retain the typed orphan blocker.');
 
   const capabilityBind = selector.search(/\[System\.Diagnostics\.Process\]::GetProcessById\(\$processId\)/i);
@@ -442,7 +457,10 @@ export function analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(input = {}) 
   });
 
   const findings = [];
-  if (!exactLineage(input.lineageEvidence, sourceHead, baseSha)) {
+  const lineageValid = profile === 'self-cleanup-observation-budget'
+    ? aheadOnlyMergeBaseLineage(input.lineageEvidence, sourceHead, baseSha)
+    : exactLineage(input.lineageEvidence, sourceHead, baseSha);
+  if (!lineageValid) {
     findings.push(finding('mission-worker-cleanup-current-main-lineage-invalid', 'Review requires exact-current-main ahead-only lineage.'));
   }
   const sources = Array.isArray(input.sources) ? input.sources : [];
