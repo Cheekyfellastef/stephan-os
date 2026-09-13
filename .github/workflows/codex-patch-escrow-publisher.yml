@@ -155,6 +155,7 @@ jobs:
             --pids-limit 256 \
             --memory 2g \
             --cpus 2 \
+            --user "$(id -u):$(id -g)" \
             --tmpfs /tmp:rw,nosuid,nodev,size=512m \
             --workdir /workspace \
             --env GIT_CONFIG_COUNT=1 \
