@@ -30,6 +30,8 @@ test('protects the exact OpenClaw reviewer-specialist composition boundary', () 
     'shared/agents/openClawBuilderProviderSpecialistReviewLegacyV1.mjs',
     'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs',
     'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.test.mjs',
+    'shared/agents/openClawOc2SpecialistReviewV1.mjs',
+    'shared/agents/openClawOc2SpecialistReviewV1.test.mjs',
   ]);
 
   for (const path of OPENCLAW_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1) {
