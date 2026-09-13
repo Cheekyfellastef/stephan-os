@@ -73,6 +73,7 @@ test('normalizes only read-only usage-surface proof as success and preserves lab
     matchedUsageControl: '',
     matchedUsageLabel: '1 reset available',
     usageControlResolution: 'labeled-ancestor',
+    usageSurfaceKind: 'authenticated-desktop-codex-usage',
     navigationAttempted: true,
     navigationRetryCount: 1,
     profileMenuOpened: true,
@@ -92,6 +93,7 @@ test('normalizes only read-only usage-surface proof as success and preserves lab
   assert.equal(success.navigationRetryCount, 1);
   assert.equal(success.matchedUsageLabel, '1 reset available');
   assert.equal(success.usageControlResolution, 'labeled-ancestor');
+  assert.equal(success.usageSurfaceKind, 'authenticated-desktop-codex-usage');
   assert.equal(success.expiryTexts[0], 'Banked reset expires 25 Jul 2026');
 
   for (const override of [
@@ -104,12 +106,36 @@ test('normalizes only read-only usage-surface proof as success and preserves lab
       ok: true,
       finalVerdict: 'CODEX_BANKED_RESET_STATUS_READY',
       usageSurfaceMatched: true,
+      usageSurfaceKind: 'authenticated-desktop-codex-usage',
       pressAttempted: false,
       pressCount: 0,
       ...override,
     }, command());
     assert.equal(blocked.ok, false);
   }
+});
+
+test('accepts only closed authenticated usage-surface identities', () => {
+  const base = {
+    ok: true,
+    finalVerdict: 'CODEX_BANKED_RESET_STATUS_READY',
+    usageSurfaceMatched: true,
+    pressAttempted: false,
+    pressCount: 0,
+  };
+  const edge = normalizeCodexBankedResetStatusResult({
+    ...base,
+    usageSurfaceKind: 'authenticated-edge-codex-analytics',
+  }, command());
+  assert.equal(edge.ok, true);
+  assert.equal(edge.usageSurfaceKind, 'authenticated-edge-codex-analytics');
+  const callerSelected = normalizeCodexBankedResetStatusResult({
+    ...base,
+    usageSurfaceKind: 'caller-selected-browser-page',
+  }, command());
+  assert.equal(callerSelected.ok, false);
+  assert.equal(callerSelected.usageSurfaceKind, '');
+  assert.equal(normalizeCodexBankedResetStatusResult(base, command()).ok, false);
 });
 
 test('preserves a bounded retry count and sanitized navigation error without changing zero-press status', () => {
@@ -184,6 +210,7 @@ test('executes the fixed outer invocation exactly once and returns bounded label
           finalVerdict: 'CODEX_BANKED_RESET_STATUS_READY',
           observedAtUtc: '2026-07-20T22:31:00.000Z',
           usageSurfaceMatched: true,
+          usageSurfaceKind: 'authenticated-desktop-codex-usage',
           pressAttempted: false,
           pressCount: 0,
           navigationAttempted: true,

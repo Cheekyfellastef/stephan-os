@@ -7,6 +7,7 @@ const root = resolve(process.cwd());
 const read = (path) => readFileSync(resolve(root, path), 'utf8');
 
 const navigation = read('scripts/windows/codex-banked-reset-ui-navigation.psm1');
+const usageEvidence = read('scripts/windows/codex-usage-surface-evidence.psm1');
 const navigationCompat = read('scripts/windows/compat/codex-banked-reset-ui-navigation.psm1');
 const statusWrapper = read('scripts/windows/read-codex-banked-reset-status-with-navigation.ps1');
 const executionWrapper = read('scripts/windows/invoke-codex-banked-reset-ui-with-navigation.ps1');
@@ -59,9 +60,28 @@ test('resolves a bounded invocable ancestor even when its own accessible name is
 
 test('requires structural usage-panel proof rather than matching reset words alone', () => {
   assert.match(navigation, /function Test-CodexUsagePanelEvidence/);
-  assert.match(navigation, /\\b\\d\{1,3\}\\s\*%/);
-  assert.match(navigation, /\$resetAction\.Count -gt 0 -or \$expiry\.Count -gt 0/);
+  assert.match(navigation, /Resolve-CodexUsageSurfaceEvidence/);
+  assert.match(usageEvidence, /Weekly usage limit/);
+  assert.match(usageEvidence, /https:\/\/chatgpt\\\.com\/codex\/cloud\/settings\/analytics/);
+  assert.match(usageEvidence, /EDGE_CODEX_ANALYTICS_ORIGIN_NOT_UNIQUE/);
+  assert.match(usageEvidence, /EDGE_WEEKLY_REMAINING_PERCENTAGE_NOT_UNIQUE/);
+  assert.match(usageEvidence, /EDGE_USAGE_RESET_TIME_NOT_FOUND/);
+  assert.match(usageEvidence, /EDGE_BANKED_RESET_ACTION_NOT_FOUND/);
+  assert.match(usageEvidence, /function Select-CodexUniqueProcessCandidates/);
+  assert.match(navigation, /\$processCandidates = @\(Select-CodexUniqueProcessCandidates -Candidates @\(\$windows\)\)/);
+  assert.doesNotMatch(navigation, /\$windows = @\(Select-CodexUniqueProcessCandidates/);
+  assert.match(navigation, /foreach \(\$window in \$processCandidates\)/);
+  assert.match(navigation, /foreach \(\$window in @\(\$windows\)\)[\s\S]*Test-CodexDesktopAppWindowEvidence -Window \$window -Snapshot \$snapshot/);
+  assert.match(statusCore, /Select-CodexUniqueProcessCandidates -Candidates @\(\$windowCandidates\)/);
   assert.match(navigation, /BLOCKED_RESET_USAGE_PANEL_NOT_PROVEN/);
+});
+
+test('keeps authenticated Edge analytics strictly read only', () => {
+  assert.match(navigation, /AllowReadOnlyEdgeAnalytics/);
+  assert.match(statusWrapper, /Open-CodexUsagePanel -AllowReadOnlyEdgeAnalytics/);
+  assert.doesNotMatch(executionWrapper, /Open-CodexUsagePanel -AllowReadOnlyEdgeAnalytics/);
+  assert.match(navigationCompat, /Open-CodexUsagePanel -AllowReadOnlyEdgeAnalytics:\$AllowEdgeAnalytics/);
+  assert.match(navigation, /authenticated-edge-analytics-already-open/);
 });
 
 test('keeps labeled-ancestor selection bounded and fail closed', () => {

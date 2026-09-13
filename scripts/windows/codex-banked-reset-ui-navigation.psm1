@@ -1,5 +1,11 @@
 Set-StrictMode -Version Latest
 
+$usageEvidenceModulePath = Join-Path $PSScriptRoot 'codex-usage-surface-evidence.psm1'
+if (-not (Test-Path -LiteralPath $usageEvidenceModulePath -PathType Leaf)) {
+    throw 'Codex usage-surface evidence module is missing.'
+}
+Import-Module $usageEvidenceModulePath -Force -ErrorAction Stop
+
 function Convert-ToCodexSafeText {
     param([object]$Value, [int]$Limit = 220)
     $text = [string]$Value
@@ -19,6 +25,16 @@ function New-CodexUiSnapshotItem {
         $name = Convert-ToCodexSafeText $Element.Current.Name 220
         $automationId = Convert-ToCodexSafeText $Element.Current.AutomationId 160
         $className = Convert-ToCodexSafeText $Element.Current.ClassName 120
+        $value = ''
+        $valuePattern = $null
+        try {
+            if ($Element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern)) {
+                $typedValuePattern = [System.Windows.Automation.ValuePattern]$valuePattern
+                $value = Convert-ToCodexSafeText $typedValuePattern.Current.Value 500
+            }
+        } catch {
+            $value = ''
+        }
         if (-not $name -and $FallbackName) {
             $name = Convert-ToCodexSafeText $FallbackName 220
         }
@@ -28,6 +44,7 @@ function New-CodexUiSnapshotItem {
             Element = $Element
             Name = $name
             AutomationId = $automationId
+            Value = $value
             ClassName = $className
             Type = Convert-ToCodexSafeText $Element.Current.ControlType.ProgrammaticName 100
             Enabled = [bool]$Element.Current.IsEnabled
@@ -351,30 +368,44 @@ function Select-CodexLabeledUsageControl {
 }
 
 function Test-CodexUsagePanelEvidence {
-    param([array]$Snapshot)
+    param(
+        [array]$Snapshot,
+        [ValidateSet('ChatGPT', 'Codex', 'msedge')]
+        [string]$ProcessName = 'ChatGPT'
+    )
 
-    $meter = @($Snapshot | Where-Object {
-        $_.Name -match '\b\d{1,3}\s*%' -and
-        $_.Name -match '(?i)usage|remaining|meter|limit|codex|weekly|five.?day|5.?day'
-    })
-    if ($meter.Count -eq 0) { return $false }
+    $evidence = Resolve-CodexUsageSurfaceEvidence -Snapshot @($Snapshot) -ProcessName $ProcessName
+    return $evidence.valid -eq $true
+}
 
-    $resetAction = @($Snapshot | Where-Object {
+function Test-CodexDesktopAppWindowEvidence {
+    param(
+        [pscustomobject]$Window,
+        [array]$Snapshot
+    )
+
+    if ($Window.ProcessName -notin @('ChatGPT', 'Codex')) { return $false }
+    if ($Window.Name -match '(?i)codex|chatgpt|openai') { return $true }
+
+    $profileMarkers = @($Snapshot | Where-Object {
         $_.Enabled -and -not $_.Offscreen -and
-        $_.Type -match 'ControlType\.(Button|MenuItem|Hyperlink|ListItem)' -and
-        $_.Name -match '(?i)\b(redeem|apply|use|reset)\b' -and
-        $_.Name -notmatch '(?i)billing|purchase|buy credits|add credits|auto.?top.?up'
+        (
+            $_.Name -match '(?i)profile menu|open profile|user menu|account menu|avatar' -or
+            $_.AutomationId -match '(?i)profile|account|user|avatar'
+        )
     })
-    $expiry = @($Snapshot | Where-Object {
-        $_.Name -match '(?i)expire|expiry|expires' -and
-        $_.Name -match '(?i)\b20\d{2}\b|\bjan(?:uary)?\b|\bfeb(?:ruary)?\b|\bmar(?:ch)?\b|\bapr(?:il)?\b|\bmay\b|\bjun(?:e)?\b|\bjul(?:y)?\b|\baug(?:ust)?\b|\bsep(?:tember)?\b|\boct(?:ober)?\b|\bnov(?:ember)?\b|\bdec(?:ember)?\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b'
+    $appMarkers = @($Snapshot | Where-Object {
+        $_.Enabled -and -not $_.Offscreen -and
+        $_.Name -match '(?i)^\s*(?:ChatGPT|Codex|New chat|New task)\s*$'
     })
-    return $resetAction.Count -gt 0 -or $expiry.Count -gt 0
+    return $profileMarkers.Count -gt 0 -and $appMarkers.Count -gt 0
 }
 
 function Open-CodexUsagePanel {
     [CmdletBinding()]
-    param()
+    param(
+        [switch]$AllowReadOnlyEdgeAnalytics
+    )
 
     try {
         Add-Type -AssemblyName UIAutomationClient
@@ -424,11 +455,9 @@ function Open-CodexUsagePanel {
             $processName = ''
             try { $processName = (Get-Process -Id $processId -ErrorAction Stop).ProcessName } catch { continue }
             if ($allowedProcessNames -notcontains $processName) { continue }
-            if ($name -notmatch '(?i)codex|chatgpt|openai') { continue }
             $windows += [pscustomobject]@{ Element = $window; Name = $name; ProcessName = $processName; ProcessId = $processId }
         } catch { continue }
     }
-
     if ($windows.Count -eq 0) {
         return [pscustomobject]@{
             ok = $false
@@ -440,14 +469,20 @@ function Open-CodexUsagePanel {
         }
     }
 
+    $processCandidates = @(Select-CodexUniqueProcessCandidates -Candidates @($windows))
+    $processSnapshots = @{}
     $matchingWindows = @()
-    foreach ($window in $windows) {
+    foreach ($window in $processCandidates) {
         $snapshot = Get-CodexProcessSnapshot -Root $root -ProcessId $window.ProcessId
-        if (Test-CodexUsagePanelEvidence $snapshot) {
-            $matchingWindows += [pscustomobject]@{ Window = $window; Snapshot = $snapshot }
+        $processSnapshots[[string]$window.ProcessId] = @($snapshot)
+        $evidence = Resolve-CodexUsageSurfaceEvidence -Snapshot @($snapshot) -ProcessName $window.ProcessName
+        $edgeAllowed = $window.ProcessName -ne 'msedge' -or $AllowReadOnlyEdgeAnalytics.IsPresent
+        if ($edgeAllowed -and $evidence.valid -eq $true) {
+            $matchingWindows += [pscustomobject]@{ Window = $window; Snapshot = $snapshot; Evidence = $evidence }
         }
     }
     if ($matchingWindows.Count -eq 1) {
+        $isEdgeAnalytics = $matchingWindows[0].Window.ProcessName -eq 'msedge'
         return [pscustomobject]@{
             ok = $true
             blocker = ''
@@ -458,8 +493,9 @@ function Open-CodexUsagePanel {
             matchedProfileControl = ''
             matchedUsageControl = 'already-open'
             matchedUsageLabel = ''
-            usageControlResolution = 'already-open'
-            proofRefs = @('codex-usage-panel-fixed-navigation', 'usage-panel-already-open')
+            usageControlResolution = if ($isEdgeAnalytics) { 'authenticated-edge-analytics-already-open' } else { 'already-open' }
+            usageSurfaceKind = $matchingWindows[0].Evidence.surfaceKind
+            proofRefs = @('codex-usage-panel-fixed-navigation', 'usage-panel-already-open') + @($matchingWindows[0].Evidence.proofRefs)
         }
     }
     if ($matchingWindows.Count -gt 1) {
@@ -473,10 +509,25 @@ function Open-CodexUsagePanel {
         }
     }
 
+    $navigationWindows = @()
+    foreach ($window in @($windows)) {
+        $processKey = [string]$window.ProcessId
+        if ($processSnapshots.ContainsKey($processKey)) {
+            $snapshot = @($processSnapshots[$processKey])
+        } else {
+            $snapshot = @(Get-CodexProcessSnapshot -Root $root -ProcessId $window.ProcessId)
+            $processSnapshots[$processKey] = @($snapshot)
+        }
+        if (Test-CodexDesktopAppWindowEvidence -Window $window -Snapshot $snapshot) {
+            $navigationWindows += $window
+        }
+    }
+    $windows = @($navigationWindows)
+
     if ($windows.Count -ne 1) {
         return [pscustomobject]@{
             ok = $false
-            blocker = 'BLOCKED_RESET_MULTIPLE_APP_WINDOWS'
+            blocker = if ($windows.Count -eq 0) { 'BLOCKED_RESET_AUTHENTICATED_APP_WINDOW_NOT_FOUND' } else { 'BLOCKED_RESET_MULTIPLE_APP_WINDOWS' }
             navigationAttempted = $false
             profileMenuOpened = $false
             usagePanelOpened = $false
@@ -625,7 +676,7 @@ function Open-CodexUsagePanel {
 
     Start-Sleep -Milliseconds 1200
     $usageSnapshot = Get-CodexProcessSnapshot -Root $root -ProcessId $selectedWindow.ProcessId
-    if (-not (Test-CodexUsagePanelEvidence $usageSnapshot)) {
+    if (-not (Test-CodexUsagePanelEvidence -Snapshot $usageSnapshot -ProcessName $selectedWindow.ProcessName)) {
         return [pscustomobject]@{
             ok = $false
             blocker = 'BLOCKED_RESET_USAGE_PANEL_NOT_PROVEN'
@@ -652,6 +703,7 @@ function Open-CodexUsagePanel {
         matchedUsageControl = Convert-ToCodexSafeText $usageControl.Name 160
         matchedUsageLabel = $matchedUsageLabel
         usageControlResolution = $usageControlResolution
+        usageSurfaceKind = 'authenticated-desktop-codex-usage'
         proofRefs = @('codex-usage-panel-fixed-navigation', 'profile-menu-opened', 'same-process-popup-scanned', 'profile-popup-delta-scanned', 'usage-panel-opened')
     }
 }

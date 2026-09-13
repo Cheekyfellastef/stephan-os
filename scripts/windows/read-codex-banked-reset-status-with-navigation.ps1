@@ -107,13 +107,13 @@ $navigation = $null
 $navigationRetryCount = 0
 $firstNavigationError = ''
 try {
-    $navigation = Open-CodexUsagePanel
+    $navigation = Open-CodexUsagePanel -AllowReadOnlyEdgeAnalytics
 } catch {
     $firstNavigationError = Convert-ToSafeDiagnosticText $_.Exception.Message 300
     $navigationRetryCount = 1
     Start-Sleep -Milliseconds 350
     try {
-        $navigation = Open-CodexUsagePanel
+        $navigation = Open-CodexUsagePanel -AllowReadOnlyEdgeAnalytics
     } catch {
         $retryError = Convert-ToSafeDiagnosticText $_.Exception.Message 300
         $combinedRetryError = Convert-ToSafeDiagnosticText ("first: $firstNavigationError | retry: $retryError") 300
