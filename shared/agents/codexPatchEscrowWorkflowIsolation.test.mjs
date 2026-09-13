@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { parseWorkspaceChangedFiles } from '../../scripts/codex-patch-escrow-publish-validated.mjs';
 
 const workflowPath = new URL('../../.github/workflows/codex-patch-escrow-publisher.yml', import.meta.url);
 const workflow = readFileSync(workflowPath, 'utf8');
@@ -76,6 +77,17 @@ test('validation container is not passed GitHub credentials and publication rema
   assert.match(publish, /Publish only the attested patch and tree without rerunning patched code/);
   assert.doesNotMatch(publish, /codex-patch-escrow-attest\.mjs/);
   assert.doesNotMatch(publish, /codex-patch-escrow-validate-prepared\.mjs/);
+});
+
+test('validated publisher preserves porcelain status columns for tracked and untracked files', () => {
+  assert.deepEqual(
+    parseWorkspaceChangedFiles(' M shared/agents/tracked.mjs\n?? shared/agents/new.test.mjs\n'),
+    ['shared/agents/tracked.mjs', 'shared/agents/new.test.mjs'],
+  );
+  assert.throws(
+    () => parseWorkspaceChangedFiles('M malformed-entry\n'),
+    /invalid git porcelain status entry/,
+  );
 });
 
 test('workflow verification pins both isolation regression and trusted finalizer syntax', () => {
