@@ -598,7 +598,14 @@ export function adjudicateQualifiedSpecialistReview(input = {}) {
     });
   }
 
-  const legacyCandidates = (Array.isArray(input.reviews) ? input.reviews : [])
+  // Provider-specific Codex review evidence is optional capacity, never an
+  // implicit critical-path fallback.  Callers must positively admit that
+  // route for this exact adjudication.  In particular, automation-authored
+  // GitHub comments cannot make the route eligible merely by mentioning
+  // @codex or by arriving from an account with repository authority.
+  const codexRouteAdmitted = input.codexRequired === true;
+
+  const legacyCandidates = (codexRouteAdmitted && Array.isArray(input.reviews) ? input.reviews : [])
     .map((review) => validateSpecialistReviewCandidate(review, {
       repository: input.repository,
       prNumber: input.prNumber,
@@ -609,7 +616,7 @@ export function adjudicateQualifiedSpecialistReview(input = {}) {
     }))
     .filter((candidate) => candidate.valid);
   const artifactCandidates = providerNeutralArtifactCandidates(
-    Array.isArray(input.comments) ? input.comments : [],
+    codexRouteAdmitted && Array.isArray(input.comments) ? input.comments : [],
     {
       repository: input.repository,
       prNumber: input.prNumber,
@@ -631,7 +638,9 @@ export function adjudicateQualifiedSpecialistReview(input = {}) {
       reviewId: 0,
       blockers: Object.freeze([
         candidates.length === 0
-          ? 'qualified-specialist-review-missing'
+          ? (codexRouteAdmitted
+            ? 'qualified-specialist-review-missing'
+            : 'qualified-specialist-review-provider-route-not-admitted')
           : 'qualified-specialist-review-ambiguous',
       ]),
     });
