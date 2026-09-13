@@ -253,6 +253,10 @@ test('OC2 specialist rejects executor calls outside the registered OC2 callback 
   const variants = [
     INDEX.replace('api.registerCommand', 'executeOpenClawOc2GatewayRequest({}, {});\n  api.registerCommand'),
     INDEX.replace('api.registerCommand', 'const runOc2 = executeOpenClawOc2GatewayRequest; runOc2({}, {});\n  api.registerCommand'),
+    INDEX.replace(
+      'api.registerCommand',
+      'Reflect.apply(executeOpenClawOc2GatewayRequest, null, [params, { gatewayRuntimeContext: gatewayContext(OPENCLAW_OC2_GATEWAY_METHOD) }]);\n  api.registerCommand',
+    ),
   ];
   for (const widened of variants) {
     const result = analyzeOpenClawOc2SpecialistReviewV1(input({
