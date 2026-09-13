@@ -7,6 +7,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
+import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
 
 export const BATTLE_BRIDGE_SYNC_AND_REFRESH_SCHEMA = 'stephanos.battle-bridge-sync-and-refresh.v1';
 export const BATTLE_BRIDGE_SYNC_AND_REFRESH_RESULT_MARKER = 'BATTLE_BRIDGE_SYNC_AND_REFRESH_RESULT=';
@@ -179,6 +180,7 @@ export async function runBattleBridgeSyncAndRefresh({
   adapter = createFixedSyncAndRefreshAdapter(),
   pendingReader = readPendingPostSyncRefresh,
   controlPlaneReconciler = reconcileBattleBridgeControlPlane,
+  goalDiscoveryHeartbeat = runBattleBridgeGoalDiscoveryHeartbeat,
   platform = process.platform,
   maxCycles = MAX_SYNC_REFRESH_CYCLES,
 } = {}) {
@@ -308,6 +310,21 @@ export async function runBattleBridgeSyncAndRefresh({
           finalVerdict: 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED',
         });
       }
+      const goalDiscovery = await goalDiscoveryHeartbeat();
+      if (goalDiscovery?.ok !== true) {
+        return Object.freeze({
+          ok: false,
+          blocker: String(goalDiscovery?.blocker || goalDiscovery?.finalVerdict || 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED'),
+          sourceHead,
+          syncClassification: sync.result.evaluation.classification,
+          refreshes: Object.freeze(refreshes),
+          sourceForwardedBeforeRefresh,
+          refreshDebtCoalesced,
+          controlPlaneRepair,
+          goalDiscovery: goalDiscovery || null,
+          finalVerdict: 'SYNC_AND_REFRESH_GOAL_DISCOVERY_BLOCKED',
+        });
+      }
       return Object.freeze({
         schemaVersion: BATTLE_BRIDGE_SYNC_AND_REFRESH_SCHEMA,
         ok: true,
@@ -320,6 +337,8 @@ export async function runBattleBridgeSyncAndRefresh({
         refreshDebtCoalesced,
         controlPlaneRepair,
         controlPlaneRepairObserved: true,
+        goalDiscovery,
+        goalDiscoveryObserved: true,
         arbitraryShellAllowed: false,
         destructiveGitAllowed: false,
         liveOpenClawUpdateAllowed: false,
