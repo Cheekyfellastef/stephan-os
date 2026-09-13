@@ -148,6 +148,7 @@ jobs:
       - name: Revalidate and test inside a credential-free PID namespace
         run: |
           docker run --rm \
+            --user "$(id -u):$(id -g)" \
             --network none \
             --read-only \
             --cap-drop ALL \
