@@ -48,8 +48,8 @@ function Invoke-MissionWorkerStartupHeartbeatProof {
 }
 function Wait-MissionWorkerSelfCleanupObservation {
   param([Parameter(Mandatory = $true)][string]$ExpectedRepoRoot)
-  $observationDeadlineUtc = [datetime]::UtcNow.AddSeconds($missionWorkerCleanupTimeoutSeconds)
-  $reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds($missionWorkerCleanupTimeoutSeconds)
+  $observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(4)
+  $reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds(4)
   if ($observationDeadlineUtc -gt $reserveDeadlineUtc) { $observationDeadlineUtc = $reserveDeadlineUtc }
   while ([datetime]::UtcNow -lt $observationDeadlineUtc) {
     try {
