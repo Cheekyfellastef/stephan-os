@@ -28,6 +28,12 @@ test('patch escrow validation runs patched code in a networkless constrained dig
   assert.doesNotMatch(block, /\n\s*node:22-bookworm\\\s*$/m);
 });
 
+test('isolated validator runs as the runner workspace owner identity', () => {
+  const block = validationBlock();
+  assert.match(block, /--user "\$\(id -u\):\$\(id -g\)"/);
+  assert.doesNotMatch(block, /chmod\s+-R\s+(?:a\+rwX|ugo\+rwX).*\.git/);
+});
+
 test('isolated validator trusts only its exact bind-mounted Git workspace', () => {
   const block = validationBlock();
   assert.match(block, /--env GIT_CONFIG_COUNT=1/);
