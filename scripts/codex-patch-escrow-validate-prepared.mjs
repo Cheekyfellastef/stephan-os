@@ -165,6 +165,7 @@ export function inspectGithubCredentialProcessAncestry(options = {}) {
   let pid = Number.parseInt(options.startPid ?? process.pid, 10);
 
   while (Number.isSafeInteger(pid) && pid > 0 && !seen.has(pid)) {
+    if (pid === 1) break;
     seen.add(pid);
     inspectedPids.push(pid);
     let environment;
