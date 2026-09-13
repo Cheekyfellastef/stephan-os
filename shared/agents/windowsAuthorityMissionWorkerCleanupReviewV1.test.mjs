@@ -390,6 +390,35 @@ test('exact #2191 cleanup-budget observation profile is independently eligible a
   assert.equal(analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(selfCleanupObservationInput(POST_AUTHORITY_SAFE_SOURCE, { branch: 'other' })).eligible, false);
 });
 
+test('#2191 accepts exact ahead-only multi-commit lineage without immediate-parent membership', () => {
+  const candidate = selfCleanupObservationInput();
+  candidate.lineageEvidence.parents = ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'];
+  candidate.lineageEvidence.comparison.aheadBy = 3;
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(candidate);
+  assert.equal(result.clean, true);
+  assert.deepEqual(result.findings, []);
+});
+
+test('#2191 ahead-only lineage remains fail-closed and historical profiles remain immediate-parent strict', () => {
+  for (const comparison of [
+    { mergeBaseCommitSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+    { status: 'behind', aheadBy: 0, behindBy: 1 },
+    { status: 'diverged', aheadBy: 2, behindBy: 1 },
+  ]) {
+    const candidate = selfCleanupObservationInput();
+    Object.assign(candidate.lineageEvidence.comparison, comparison);
+    const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(candidate);
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-current-main-lineage-invalid'));
+  }
+
+  const historical = input();
+  historical.lineageEvidence.parents = ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'];
+  const result = analyzeWindowsAuthorityMissionWorkerCleanupReviewV1(historical);
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'mission-worker-cleanup-current-main-lineage-invalid'));
+});
+
 test('#2152 observer rejects removed deadline, task and live Node identity boundaries', () => {
   for (const [unsafe, code] of [
     [LEGACY_POST_AUTHORITY_SAFE_SOURCE.replace('$observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(4)', '$observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(5)'), 'mission-worker-post-authority-four-second-window-missing'],
