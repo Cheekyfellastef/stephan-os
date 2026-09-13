@@ -1,0 +1,86 @@
+{
+  "id": "vr-research-import-uevr-public-reference-v1",
+  "title": "Validate and ingest only licence-compatible UEVR-family reference evidence",
+  "status": "ready-with-evidence-pins",
+  "executionSurface": "battle-bridge-windows",
+  "workingDirectory": "%USERPROFILE%\\Documents\\GitHub\\stephan-os",
+  "evidenceObservedDate": "2026-08-17",
+  "policy": {
+    "publicSourceOnly": true,
+    "publicReadableDoesNotImplyReusable": true,
+    "preserveLicences": true,
+    "requireExactObservedEvidenceBeforeIngestion": true,
+    "pinCommitShas": true,
+    "doNotVendorIntoProductRuntime": true,
+    "doNotImportGameAssets": true,
+    "derivedNotesMayBeCommitted": true,
+    "evidenceDriftVerdict": "EVIDENCE_DRIFT"
+  },
+  "upstreams": [
+    {
+      "name": "UEVR",
+      "repository": "https://github.com/praydog/UEVR.git",
+      "expectedHeadSha": "74b76bc9428a906cbdc69de3ebc1905fd0e9cc57",
+      "expectedLicencePath": "LICENSE",
+      "expectedLicenceBlobSha": "9fe814da6591bf98ab8f1f90ece0f6dcc8ca9604",
+      "licenceClassification": "ALL_RIGHTS_RESERVED",
+      "accessStatus": "PUBLIC_READABLE_RESTRICTED",
+      "permittedAction": "METADATA_AND_NON_EXPRESSIVE_ARCHITECTURAL_OBSERVATIONS_ONLY",
+      "cloneAllowed": false,
+      "implementationInventoryAllowed": false,
+      "destination": null
+    },
+    {
+      "name": "UESDK",
+      "repository": "https://github.com/praydog/UESDK.git",
+      "expectedHeadSha": null,
+      "expectedLicencePath": null,
+      "expectedLicenceBlobSha": null,
+      "licenceClassification": "UNKNOWN",
+      "accessStatus": "UPSTREAM_UNAVAILABLE_OR_RESTRICTED",
+      "permittedAction": "METADATA_LINK_ONLY",
+      "cloneAllowed": false,
+      "implementationInventoryAllowed": false,
+      "destination": null
+    },
+    {
+      "name": "UEVR Frontend",
+      "repository": "https://github.com/praydog/uevr-frontend.git",
+      "expectedHeadSha": "dd6d372813097668a67e107c543f513d3170dc7a",
+      "expectedLicencePath": "LICENSE",
+      "expectedLicenceBlobSha": "566b2a33fcdae086c79da6fc2ec089b96707d8cc",
+      "licenceClassification": "MIT",
+      "accessStatus": "PUBLIC_MIT_PINNED",
+      "permittedAction": "EXACT_PIN_SOURCE_INGESTION",
+      "cloneAllowed": true,
+      "implementationInventoryAllowed": true,
+      "destination": "VR-Research-Lab/upstream-reference/uevr/uevr-frontend"
+    }
+  ],
+  "preflight": [
+    "Resolve each repository using the exact canonical repository identity; do not substitute mirrors, forks or similarly named repositories.",
+    "For UEVR, verify the exact expected head and licence blob if they remain publicly readable. Record URL, head, access state and licence metadata only; do not clone or inventory implementation files.",
+    "For UESDK, confirm that anonymous access remains unavailable/restricted. Record that state as evidence only. If it becomes available, stop with EVIDENCE_DRIFT until its exact head and licence are independently classified; do not clone it during this task.",
+    "For UEVR Frontend, require repository identity, HEAD SHA and licence blob to match every expected value exactly before any clone or fetch intended for source ingestion.",
+    "If any expected repository identity, access state, head, licence blob or permitted-action classification differs, stop with EVIDENCE_DRIFT before source ingestion."
+  ],
+  "steps": [
+    "Create the upstream-reference/uevr directory only after preflight succeeds for the exact MIT frontend evidence.",
+    "Retain UEVR backend as metadata/link evidence only; never clone it into the durable corpus under this task.",
+    "Retain UESDK as metadata/link-only unavailable/restricted evidence; never make its clone an acceptance requirement.",
+    "Clone only the UEVR Frontend repository when missing, then checkout exactly dd6d372813097668a67e107c543f513d3170dc7a without silently following a moved branch.",
+    "For an existing UEVR Frontend clone, fetch may update remote metadata but must not move the pinned research checkout automatically; revalidate the expected head and MIT licence before using newly fetched material.",
+    "Write a manifest containing all three repository URLs, access classifications, expected/observed heads, licence classifications, licence blobs where available, permitted actions, observation date and any blocker.",
+    "Generate an implementation file inventory for the exact MIT UEVR Frontend only.",
+    "Write derived architecture notes for the restricted backend or unavailable UESDK only as non-expressive observations from permitted evidence; do not copy their source or implementation inventory.",
+    "Keep any permitted cloned upstream repository out of normal Stephanos product builds and test discovery."
+  ],
+  "acceptance": [
+    "The UEVR backend is recorded as PUBLIC_READABLE_RESTRICTED at the pinned evidence, with no clone and no implementation inventory.",
+    "UESDK is recorded as UPSTREAM_UNAVAILABLE_OR_RESTRICTED or the task stops with EVIDENCE_DRIFT before any attempt to ingest it.",
+    "Only UEVR Frontend may be source-ingested, and only when exact head dd6d372813097668a67e107c543f513d3170dc7a and MIT licence blob 566b2a33fcdae086c79da6fc2ec089b96707d8cc are revalidated.",
+    "Every upstream has an explicit access status, licence classification, permitted action and evidence date in the manifest.",
+    "Any moved head, changed licence blob, changed access state or unknown evidence fails closed as EVIDENCE_DRIFT instead of accepting the new state.",
+    "No game assets, restricted backend source, inaccessible UESDK source or unclear third-party profile packages are imported."
+  ]
+}

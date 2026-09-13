@@ -265,19 +265,22 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
   const selectedMissionId = text(admission.selectedMission?.missionId).toLowerCase();
   const running = (Array.isArray(admission.activeMissions) ? admission.activeMissions : [])
     .filter((mission) => text(mission.dispatch?.status).toLowerCase() === 'running');
-  const selectedConsumesSlot = Boolean(
-    selectedMissionId
-    && !running.some((mission) => text(mission.missionId).toLowerCase() === selectedMissionId),
-  );
-  const availableSlots = Math.max(0, desiredWidth - running.length - (selectedConsumesSlot ? 1 : 0));
+  const runningMissionIds = new Set(running
+    .map((mission) => text(mission.missionId).toLowerCase())
+    .filter(Boolean));
+  const availableSlots = Math.max(0, desiredWidth - running.length);
   const occupiedScopes = running.flatMap(missionScopes);
   const usedCapacity = new Set(running.map((mission) => [
     text(mission.dispatch?.adapter),
     text(mission.dispatch?.workerId),
     text(mission.dispatch?.capacityReceiptId),
   ].join(':').toLowerCase()).filter((value) => value !== '::'));
-  const candidates = (Array.isArray(admission.runnableMissions) ? admission.runnableMissions : [])
-    .filter((mission) => text(mission.missionId).toLowerCase() !== selectedMissionId);
+  const candidates = [...(Array.isArray(admission.runnableMissions) ? admission.runnableMissions : [])]
+    .filter((mission) => !runningMissionIds.has(text(mission.missionId).toLowerCase()))
+    .sort((left, right) => (
+      Number(text(right.missionId).toLowerCase() === selectedMissionId)
+      - Number(text(left.missionId).toLowerCase() === selectedMissionId)
+    ));
   const dispatched = [];
   const held = [];
 
