@@ -157,6 +157,9 @@ jobs:
             --cpus 2 \
             --tmpfs /tmp:rw,nosuid,nodev,size=512m \
             --workdir /workspace \
+            --env GIT_CONFIG_COUNT=1 \
+            --env GIT_CONFIG_KEY_0=safe.directory \
+            --env GIT_CONFIG_VALUE_0=/workspace \
             --mount type=bind,src="${{ runner.temp }}/patch-escrow-isolated-workspace",dst=/workspace \
             --mount type=bind,src="${{ runner.temp }}/patch-escrow-prepared",dst=/input,readonly \
             node:22-bookworm@sha256:8a34c4ab3ea2c5cd194f07e317b2a8f09461d3c8b05c4e34c8ccd56d56024c4d \
