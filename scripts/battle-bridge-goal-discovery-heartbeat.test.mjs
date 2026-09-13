@@ -29,11 +29,13 @@ test('goal discovery heartbeat fails closed when the conveyor blocks', async () 
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED');
 });
 
-test('Battle Bridge GitHub sync launcher checks goals only after successful sync', async () => {
-  const source = await readFile(new URL('./windows/run-battle-bridge-github-sync-hidden.ps1', import.meta.url), 'utf8');
-  assert.match(source, /battle-bridge-github-sync-and-refresh\.mjs/);
-  assert.match(source, /battle-bridge-goal-discovery-heartbeat\.mjs/);
-  assert.match(source, /\$syncExitCode\s*=\s*\$LASTEXITCODE/);
-  assert.match(source, /if \(\$syncExitCode -ne 0\) \{[\s\S]*?exit \$syncExitCode[\s\S]*?\}[\s\S]*?\$goalDiscoveryPath/);
-  assert.doesNotMatch(source, /Invoke-Expression|cmd\.exe|reset --hard|git clean|git push/i);
+test('Battle Bridge sync coordinator owns goal discovery after successful convergence', async () => {
+  const coordinatorSource = await readFile(new URL('./battle-bridge-github-sync-and-refresh.mjs', import.meta.url), 'utf8');
+  const launcherSource = await readFile(new URL('./windows/run-battle-bridge-github-sync-hidden.ps1', import.meta.url), 'utf8');
+  assert.match(coordinatorSource, /battle-bridge-goal-discovery-heartbeat\.mjs/);
+  assert.match(coordinatorSource, /goalDiscoveryHeartbeat\s*=\s*runBattleBridgeGoalDiscoveryHeartbeat/);
+  assert.match(coordinatorSource, /const goalDiscovery = await goalDiscoveryHeartbeat\(\)/);
+  assert.match(coordinatorSource, /SYNC_AND_REFRESH_GOAL_DISCOVERY_BLOCKED/);
+  assert.doesNotMatch(launcherSource, /battle-bridge-goal-discovery-heartbeat\.mjs|goalDiscoveryPath/);
+  assert.doesNotMatch(launcherSource, /Invoke-Expression|cmd\.exe|reset --hard|git clean|git push/i);
 });
