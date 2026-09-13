@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createPatchEscrowBundle } from './codexPatchEscrow.mjs';
 import {
   buildPreparedPatchEscrow,
@@ -57,6 +58,13 @@ function fixture() {
   };
   return { bundle, patch, prepared, preparedBytes, validationResult };
 }
+
+test('workspace changed-file proof includes untracked files created by the patch', () => {
+  const source = readFileSync(new URL('../../scripts/codex-patch-escrow-validate-prepared.mjs', import.meta.url), 'utf8');
+  assert.match(source, /function statusChangedFiles\(repositoryRoot\)[\s\S]*?git',[\s\S]*?'status',[\s\S]*?'--porcelain=v1',[\s\S]*?'--untracked-files=all'/);
+  assert.match(source, /function applyPatchToWorkspace\(repositoryRoot, manifest, patchPath\)[\s\S]*?const actualChangedFiles = statusChangedFiles\(repositoryRoot\);/);
+  assert.doesNotMatch(source, /function applyPatchToWorkspace\(repositoryRoot, manifest, patchPath\)[\s\S]*?const actualChangedFiles = lines\(run\('git', \['diff', '--name-only'\]/);
+});
 
 test('prepared patch escrow revalidates the exact manifest and patch without GitHub credentials', () => {
   const { prepared } = fixture();
