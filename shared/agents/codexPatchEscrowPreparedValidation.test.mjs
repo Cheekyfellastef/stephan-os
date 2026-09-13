@@ -8,6 +8,7 @@ import {
 } from '../../scripts/codex-patch-escrow-prepare.mjs';
 import {
   inspectGithubCredentialProcessAncestry,
+  parsePorcelainChangedFiles,
   validatePreparedPatchEscrow,
 } from '../../scripts/codex-patch-escrow-validate-prepared.mjs';
 import {
@@ -64,6 +65,13 @@ test('workspace changed-file proof includes untracked files created by the patch
   assert.match(source, /function statusChangedFiles\(repositoryRoot\)[\s\S]*?git',[\s\S]*?'status',[\s\S]*?'--porcelain=v1',[\s\S]*?'--untracked-files=all'/);
   assert.match(source, /function applyPatchToWorkspace\(repositoryRoot, manifest, patchPath\)[\s\S]*?const actualChangedFiles = statusChangedFiles\(repositoryRoot\);/);
   assert.doesNotMatch(source, /function applyPatchToWorkspace\(repositoryRoot, manifest, patchPath\)[\s\S]*?const actualChangedFiles = lines\(run\('git', \['diff', '--name-only'\]/);
+});
+
+test('porcelain changed-file parser preserves tracked and untracked path prefixes', () => {
+  assert.deepEqual(
+    parsePorcelainChangedFiles(' M scripts/file.mjs\n?? shared/new-file.mjs\n'),
+    ['scripts/file.mjs', 'shared/new-file.mjs'],
+  );
 });
 
 test('prepared patch escrow revalidates the exact manifest and patch without GitHub credentials', () => {
