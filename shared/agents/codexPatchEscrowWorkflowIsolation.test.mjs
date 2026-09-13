@@ -28,6 +28,17 @@ test('patch escrow validation runs patched code in a networkless constrained dig
   assert.doesNotMatch(block, /\n\s*node:22-bookworm\\\s*$/m);
 });
 
+test('isolated validator trusts only its exact bind-mounted Git workspace', () => {
+  const block = validationBlock();
+  assert.match(block, /--env GIT_CONFIG_COUNT=1/);
+  assert.match(block, /--env GIT_CONFIG_KEY_0=safe\.directory/);
+  assert.match(block, /--env GIT_CONFIG_VALUE_0=\/workspace/);
+  assert.doesNotMatch(block, /GIT_CONFIG_VALUE_0=\*/);
+  assert.doesNotMatch(workflow.slice(0, workflow.indexOf('docker run --rm')), /GIT_CONFIG_(?:COUNT|KEY_0|VALUE_0)/);
+  const publishStart = workflow.indexOf('  publish:');
+  assert.doesNotMatch(workflow.slice(publishStart), /GIT_CONFIG_(?:COUNT|KEY_0|VALUE_0)|safe\.directory/);
+});
+
 test('isolated validator receives only bounded workspace and read-only prepared input mounts', () => {
   const block = validationBlock();
   const mounts = [...block.matchAll(/--mount ([^\\\n]+)/g)].map((match) => match[1]);
