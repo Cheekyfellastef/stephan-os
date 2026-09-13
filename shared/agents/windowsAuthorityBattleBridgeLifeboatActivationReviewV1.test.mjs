@@ -158,7 +158,7 @@ $task.Principal.LogonType -ne 'Interactive'
 $task.Principal.RunLevel -ne 'Limited'
 Read-FreshHealthyHeartbeat -BankId $activeBank -ExpectedManifest
 Assert-ActivePayloadManifest -BankId $activeBank -ExpectedManifest
-if ($null -ne $activeState -and $manifestSha256 -eq [string]$activeState.manifestSha256) {
+if ($null -ne $activeState -and $activeBankFreshHealthy -and $manifestSha256 -eq [string]$activeState.manifestSha256) {
 Assert-CanonicalScheduledTask -CurrentUser $currentUser
 Remove-Item -LiteralPath $stageRoot -Recurse -Force
 installDisposition = 'ALREADY_CURRENT_HEALTHY'
@@ -244,7 +244,7 @@ test('idempotent reinstall profile accepts only the exact singleton installer es
   assert.equal(result.proofRefs.length, 7);
 });
 
-test('idempotent reinstall profile rejects stale pins and any missing same-manifest task/state proof', () => {
+test('idempotent reinstall profile rejects stale pins, missing freshness, and missing same-manifest task/state proof', () => {
   const stale = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
     repository: REPOSITORY,
     sourceHead: HEAD,
@@ -253,6 +253,22 @@ test('idempotent reinstall profile rejects stale pins and any missing same-manif
   });
   assert.equal(stale.clean, false);
   assert.ok(stale.findings.some((item) => item.code === 'windows-authority-source-evidence-invalid'));
+
+  const freshnessRemoved = idempotentContentFor('scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1')
+    .replace(' -and $activeBankFreshHealthy', '');
+  const freshnessWeakened = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: idempotentAnalysis(),
+    sources: sources({
+      blobs: IDEMPOTENT_BLOBS,
+      contentFor: (path) => path === 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'
+        ? freshnessRemoved
+        : idempotentContentFor(path),
+    }),
+  });
+  assert.equal(freshnessWeakened.clean, false);
+  assert.ok(freshnessWeakened.findings.some((item) => item.code === 'lifeboat-idempotent-bounded-branch-missing'));
 
   const weakenedInstaller = idempotentContentFor('scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1')
     .replace('Assert-CanonicalScheduledTask -CurrentUser $currentUser', 'REMOVED_TASK_REPROOF');
