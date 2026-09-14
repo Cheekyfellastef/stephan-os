@@ -24,6 +24,13 @@ function claim(adapter = 'chatgpt-github') {
   };
 }
 
+function writer(calls) {
+  return async (root, segments, handoff) => {
+    calls.push({ root, segments, handoff, body: JSON.parse(handoff.body) });
+    return { ok: true, path: `${root}/${segments.join('/')}` };
+  };
+}
+
 test('claims chatgpt-github through canonical Mission Worker queue and publishes one driver-neutral handoff', async () => {
   const calls = [];
   const result = await claimDriverNeutralExternalConstruction({
@@ -31,7 +38,7 @@ test('claims chatgpt-github through canonical Mission Worker queue and publishes
     repoRoot: 'C:/repo',
     now: new Date('2026-09-14T12:00:00.000Z'),
     claimNext: async (adapter) => adapter === 'chatgpt-github' ? claim(adapter) : null,
-    writeAtomicJson: undefined,
+    writeHandoff: writer(calls),
   });
   assert.equal(result.ok, true);
   assert.equal(result.claimed, true);
@@ -39,11 +46,15 @@ test('claims chatgpt-github through canonical Mission Worker queue and publishes
   assert.equal(result.classification, 'EXTERNAL_CONSTRUCTION_CLAIMED');
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.runtimeMutationAuthority, false);
-  void calls;
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].body.claimState, 'CLAIMED');
+  assert.equal(calls[0].body.oneWriterRequired, true);
+  assert.equal(calls[0].body.leaseSeizureAllowed, false);
 });
 
 test('tries foundry-forge when chatgpt-github has no ready item', async () => {
   const seen = [];
+  const calls = [];
   const result = await claimDriverNeutralExternalConstruction({
     sharedWorkspaceRoot: 'C:/workspace',
     repoRoot: 'C:/repo',
@@ -51,10 +62,12 @@ test('tries foundry-forge when chatgpt-github has no ready item', async () => {
       seen.push(adapter);
       return adapter === 'foundry-forge' ? claim(adapter) : null;
     },
+    writeHandoff: writer(calls),
   });
   assert.deepEqual(seen, ['chatgpt-github', 'foundry-forge']);
   assert.equal(result.claimed, true);
   assert.equal(result.adapter, 'foundry-forge');
+  assert.equal(calls.length, 1);
 });
 
 test('truthfully remains idle when neither external lane has work', async () => {
