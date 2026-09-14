@@ -12,7 +12,7 @@ import {
 } from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
 import { reviewCurrentWorkerWatchdogSourceSemanticsV2 } from '../shared/agents/windowsAuthorityWorkerWatchdogReviewV2.mjs';
 
-const PRIOR_WRAPPER = 'scripts/independent-merge-security-review-v2.mjs';
+const PRIOR_WRAPPER = 'scripts/independent-merge-security-review-with-openclaw-specialist-v1.mjs';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const PR_NUMBER = 2222;
 const BRANCH = 'fix/mission-worker-watchdog-restart-v1';
