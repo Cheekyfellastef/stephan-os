@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "stephanos.post-specialist-preservation-lineage.fixture.v1",
+  "prNumber": 2222,
+  "reviewedHead": "c45c30d0895a8d9fa7bd109ae25396266e6e6e1a",
+  "reviewedBase": "6c58691c0cb3bcc8631e4a3a950ec486740301aa",
+  "currentHead": "4c57f4d8da54b0bbcbae287a9baa075b2205749f",
+  "currentBase": "9716fc107b8bbc1100e189e1d49a56bb00cbad4a",
+  "specialistReviewId": 5198433717,
+  "required": {
+    "currentHeadParents": [
+      "c45c30d0895a8d9fa7bd109ae25396266e6e6e1a",
+      "9716fc107b8bbc1100e189e1d49a56bb00cbad4a"
+    ],
+    "featureBlobsPreserved": true,
+    "sourceEstateUnchanged": true,
+    "retryCountWidened": false,
+    "authorityWidened": false
+  }
+}
