@@ -15,7 +15,7 @@ function sliceFunction(name, nextName) {
 test('post-authority self-cleanup proof receives a fresh fixed read-only observation window even after mutation deadline exhaustion', () => {
   const observer = sliceFunction('Wait-MissionWorkerSelfCleanupObservation', 'Write-BoundedAtomicJson');
   assert.match(observer, /\$observationDeadlineUtc\s*=\s*\[datetime\]::UtcNow\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/);
-  assert.doesNotMatch(observer, /\$script:operationDeadlineUtc\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/);
+  assert.doesNotMatch(observer, /operationDeadlineUtc/);
   assert.doesNotMatch(observer, /\$reserveDeadlineUtc\b/);
   assert.doesNotMatch(observer, /\$observationDeadlineUtc\s*=\s*\$reserveDeadlineUtc/);
 });
