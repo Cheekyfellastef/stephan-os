@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "source_id": "github-dariulone-cyberpunk-vr-port",
+  "title": "CyberpunkVR Port",
+  "priority": "P0",
+  "status": "registered-open-source-awaiting-exact-commit-pin",
+  "repository": "dariulone/cyberpunk-vr-port",
+  "canonical_release_source": "https://www.nexusmods.com/cyberpunk2077/mods/30093",
+  "snapshot_release": "0.1.0 engineering documentation / Nexus package 0.0.9",
+  "snapshot_date": "2026-08-05",
+  "licence": "MIT for the GitHub repository; Nexus package assets, dependencies and third-party components retain independent terms",
+  "rights_boundary": "Inspect and adapt MIT-covered source with attribution only after pinning the exact commit and inventorying bundled or external dependencies. Do not assume Nexus redistribution permissions or third-party assets inherit MIT.",
+  "evidence_role": "Direct implementation evidence for REDengine OpenXR integration, genuine per-eye engine rendering, VRIK embodiment, tracked hands, weapon aiming, motion melee, holsters, stereo HUD and in-headset diagnostics.",
+  "known_boundaries": [
+    "The exact reviewed GitHub commit is not yet pinned.",
+    "Public package and repository version labels are not fully aligned.",
+    "Published testing mentions PICO 4 through VDXR; Quest 3 Meta Air Link proof is not established.",
+    "Installation requires multiple Cyberpunk modding dependencies whose licences and versions must be reviewed independently."
+  ],
+  "programme_links": [1591, 1592, 1593, 1594, 1595, 1596, 1597, 1605, 1606],
+  "refresh_owner": 1596,
+  "promotion_rule": "Promote only exact-commit, evidence-linked methods after dependency and licence review. Require installed-file identity and physical Quest 3 Air Link proof before any runtime acceptance claim."
+}

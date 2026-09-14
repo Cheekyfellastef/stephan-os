@@ -42,7 +42,46 @@ export function parseReviewPlanTargets(raw) {
   });
 }
 
-export function classifyExactCurrentMainReviewTarget({ repository, currentMainSha, pullRequest } = {}) {
+export function classifyCurrentMainAncestry({ currentMainSha, headSha, compare } = {}) {
+  const mainSha = text(currentMainSha).toLowerCase();
+  const exactHeadSha = text(headSha).toLowerCase();
+  const compareBaseSha = text(compare?.base_commit?.sha).toLowerCase();
+  const mergeBaseSha = text(compare?.merge_base_commit?.sha).toLowerCase();
+  const status = text(compare?.status).toLowerCase();
+  const behindBy = Number(compare?.behind_by);
+  const commits = Array.isArray(compare?.commits) ? compare.commits : [];
+  const comparedHeadSha = status === 'identical'
+    ? compareBaseSha
+    : text(commits.at(-1)?.sha).toLowerCase();
+
+  if (
+    !SHA40.test(mainSha)
+    || !SHA40.test(exactHeadSha)
+    || !SHA40.test(compareBaseSha)
+    || !SHA40.test(mergeBaseSha)
+    || !SHA40.test(comparedHeadSha)
+    || compareBaseSha !== mainSha
+    || comparedHeadSha !== exactHeadSha
+  ) {
+    return Object.freeze({ proven: false, reason: 'CURRENT_MAIN_ANCESTRY_IDENTITY_MISMATCH' });
+  }
+  if (
+    !Number.isSafeInteger(behindBy)
+    || behindBy !== 0
+    || mergeBaseSha !== mainSha
+    || !['ahead', 'identical'].includes(status)
+  ) {
+    return Object.freeze({ proven: false, reason: 'CURRENT_MAIN_NOT_ANCESTOR_OF_HEAD' });
+  }
+  return Object.freeze({ proven: true, reason: 'CURRENT_MAIN_ANCESTOR_OF_HEAD' });
+}
+
+export function classifyExactCurrentMainReviewTarget({
+  repository,
+  currentMainSha,
+  pullRequest,
+  currentMainCompare = null,
+} = {}) {
   const repo = text(repository);
   const mainSha = text(currentMainSha).toLowerCase();
   const prNumber = positiveInteger(pullRequest?.number);
@@ -67,14 +106,44 @@ export function classifyExactCurrentMainReviewTarget({ repository, currentMainSh
   if (!SHA40.test(baseSha) || !SHA40.test(headSha)) {
     return Object.freeze({ eligible: false, prNumber, reason: 'HEAD_OR_BASE_UNPROVEN', currentMainSha: mainSha, baseSha, headSha });
   }
-  if (baseSha !== mainSha) {
+  if (baseSha === mainSha) {
+    return Object.freeze({ eligible: true, prNumber, reason: 'EXACT_CURRENT_MAIN', currentMainSha: mainSha, baseSha, headSha });
+  }
+  if (!currentMainCompare) {
     return Object.freeze({ eligible: false, prNumber, reason: 'BASE_NOT_EXACT_CURRENT_MAIN', currentMainSha: mainSha, baseSha, headSha });
   }
-  return Object.freeze({ eligible: true, prNumber, reason: 'EXACT_CURRENT_MAIN', currentMainSha: mainSha, baseSha, headSha });
+
+  const ancestry = classifyCurrentMainAncestry({
+    currentMainSha: mainSha,
+    headSha,
+    compare: currentMainCompare,
+  });
+  if (!ancestry.proven) {
+    return Object.freeze({ eligible: false, prNumber, reason: ancestry.reason, currentMainSha: mainSha, baseSha, headSha });
+  }
+  return Object.freeze({
+    eligible: true,
+    prNumber,
+    reason: 'CURRENT_MAIN_ANCESTOR_OF_HEAD',
+    currentMainSha: mainSha,
+    baseSha,
+    headSha,
+  });
 }
 
-export function filterExactCurrentMainReviewTargets({ repository, currentMainSha, targets = [], pullRequests = [] } = {}) {
+export function filterExactCurrentMainReviewTargets({
+  repository,
+  currentMainSha,
+  targets = [],
+  pullRequests = [],
+  currentMainComparisons = [],
+} = {}) {
   const byNumber = new Map((Array.isArray(pullRequests) ? pullRequests : []).map((pr) => [positiveInteger(pr?.number), pr]));
+  const compareByNumber = new Map(
+    (Array.isArray(currentMainComparisons) ? currentMainComparisons : [])
+      .map((entry) => [positiveInteger(entry?.prNumber), entry?.compare])
+      .filter(([prNumber]) => prNumber),
+  );
   const admitted = [];
   const held = [];
   for (const target of Array.isArray(targets) ? targets : []) {
@@ -84,7 +153,12 @@ export function filterExactCurrentMainReviewTargets({ repository, currentMainSha
       held.push(Object.freeze({ prNumber, reason: 'PR_EVIDENCE_MISSING' }));
       continue;
     }
-    const classification = classifyExactCurrentMainReviewTarget({ repository, currentMainSha, pullRequest });
+    const classification = classifyExactCurrentMainReviewTarget({
+      repository,
+      currentMainSha,
+      pullRequest,
+      currentMainCompare: compareByNumber.get(prNumber) || null,
+    });
     if (classification.eligible) admitted.push(Object.freeze({ prNumber }));
     else held.push(classification);
   }
@@ -131,10 +205,34 @@ export async function resolveExactCurrentMainReviewTargets({
   if (!SHA40.test(currentMainSha)) throw new Error('current protected main SHA is unproven');
 
   const pullRequests = [];
+  const currentMainComparisons = [];
   for (const target of targets) {
-    pullRequests.push(await githubGet(`/repos/${owner}/${name}/pulls/${target.prNumber}`, { token, fetchFn }));
+    const pullRequest = await githubGet(`/repos/${owner}/${name}/pulls/${target.prNumber}`, { token, fetchFn });
+    pullRequests.push(pullRequest);
+
+    const preliminary = classifyExactCurrentMainReviewTarget({
+      repository: repo,
+      currentMainSha,
+      pullRequest,
+    });
+    if (preliminary.reason !== 'BASE_NOT_EXACT_CURRENT_MAIN') continue;
+
+    const headSha = text(pullRequest?.head?.sha).toLowerCase();
+    if (!SHA40.test(headSha)) continue;
+    const compare = await githubGet(`/repos/${owner}/${name}/compare/${currentMainSha}...${headSha}`, { token, fetchFn });
+    currentMainComparisons.push(Object.freeze({ prNumber: target.prNumber, compare }));
   }
-  return Object.freeze({ currentMainSha, ...filterExactCurrentMainReviewTargets({ repository: repo, currentMainSha, targets, pullRequests }) });
+
+  return Object.freeze({
+    currentMainSha,
+    ...filterExactCurrentMainReviewTargets({
+      repository: repo,
+      currentMainSha,
+      targets,
+      pullRequests,
+      currentMainComparisons,
+    }),
+  });
 }
 
 export async function main({ env = process.env, fetchFn = globalThis.fetch, outputPath = env.GITHUB_OUTPUT } = {}) {
@@ -145,7 +243,19 @@ export async function main({ env = process.env, fetchFn = globalThis.fetch, outp
     fetchFn,
   });
   const targets = JSON.stringify(result.targets);
-  const held = JSON.stringify(result.held.map(({ prNumber, reason, baseSha = '', currentMainSha = '' }) => ({ prNumber, reason, baseSha, currentMainSha })));
+  const held = JSON.stringify(result.held.map(({
+    prNumber,
+    reason,
+    baseSha = '',
+    currentMainSha = '',
+    headSha = '',
+  }) => ({
+    prNumber,
+    reason,
+    baseSha,
+    currentMainSha,
+    headSha,
+  })));
   console.log(`EXACT_CURRENT_MAIN_REVIEW_TARGETS=${targets}`);
   console.log(`EXACT_CURRENT_MAIN_REVIEW_HELD=${held}`);
   appendOutput('targets', targets, outputPath);
