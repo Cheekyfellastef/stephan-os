@@ -58,3 +58,47 @@ test('unsafe identifiers fail closed', () => {
   assert.equal(lineage.valid, false);
   assert.deepEqual(lineage.errors, ['correlationId-invalid']);
 });
+
+test('lineage ids use the same grammar as Shared Workspace correlation ids', () => {
+  for (const correlationId of [
+    'contains:colon',
+    `a${'b'.repeat(81)}`,
+  ]) {
+    const lineage = resolveStephanosConversationLineage({ correlationId });
+    assert.equal(lineage.valid, false);
+    assert.deepEqual(lineage.errors, ['correlationId-invalid']);
+  }
+
+  const maxLength = `a${'b'.repeat(80)}`;
+  assert.equal(resolveStephanosConversationLineage({ correlationId: maxLength }).valid, true);
+});
+
+test('missing or non-data lineage input fails closed without executing accessors', () => {
+  assert.deepEqual(resolveStephanosConversationLineage(null).errors, ['lineage-input-invalid']);
+  assert.deepEqual(resolveStephanosConversationLineage([]).errors, ['lineage-input-invalid']);
+
+  let getterCalls = 0;
+  const accessorInput = {};
+  Object.defineProperty(accessorInput, 'correlationId', {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return 'ambient-gap-owner-routing-1721-002';
+    },
+  });
+
+  const lineage = resolveStephanosConversationLineage(accessorInput);
+  assert.equal(lineage.valid, false);
+  assert.deepEqual(lineage.errors, ['lineage-input-invalid']);
+  assert.equal(getterCalls, 0);
+});
+
+test('unexpected lineage fields fail closed', () => {
+  const lineage = resolveStephanosConversationLineage({
+    correlationId: 'ambient-gap-owner-routing-1721-002',
+    authority: 'merge',
+  });
+
+  assert.equal(lineage.valid, false);
+  assert.deepEqual(lineage.errors, ['lineage-input-invalid']);
+});
