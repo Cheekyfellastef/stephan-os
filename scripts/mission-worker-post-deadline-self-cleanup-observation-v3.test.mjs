@@ -21,7 +21,7 @@ test('post-authority self-cleanup proof receives a fresh fixed read-only observa
 
 test('post-deadline observation remains bounded, read-only and exact canonical-worker scoped', () => {
   const observer = sliceFunction('Wait-MissionWorkerSelfCleanupObservation', 'Write-BoundedAtomicJson');
-  assert.match(observer, /Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker' -TaskPath '\\\\' -ErrorAction Stop/);
+  assert.match(observer, /Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker' -TaskPath '\\' -ErrorAction Stop/);
   assert.match(observer, /Test-ExactCanonicalWorkerProcess -Process \$process -ExpectedRepoRoot \$ExpectedRepoRoot/);
   assert.match(observer, /Start-Sleep -Milliseconds 100/);
   assert.match(observer, /return \$false/);
