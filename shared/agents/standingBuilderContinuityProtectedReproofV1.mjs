@@ -74,11 +74,10 @@ export function buildStandingBuilderContinuityProtectedReproofV1(input = {}) {
   if (!changedEstateSha256) blockers.push('standing-reproof-changed-estate-digest-invalid');
   if (!independentReviewPayloadSha256) blockers.push('standing-reproof-review-payload-digest-invalid');
 
-  const binding = eligibility.binding || {};
-  if (text(binding.repository) && text(binding.repository) !== repository) blockers.push('standing-reproof-eligibility-repository-drift');
-  if (Number(binding.prNumber) && Number(binding.prNumber) !== prNumber) blockers.push('standing-reproof-eligibility-pr-drift');
-  if (text(binding.sourceHead) && text(binding.sourceHead).toLowerCase() !== sourceHead) blockers.push('standing-reproof-eligibility-head-drift');
-  if (text(binding.baseSha) && text(binding.baseSha).toLowerCase() !== baseSha) blockers.push('standing-reproof-eligibility-base-drift');
+  if (text(eligibility.repository) !== repository) blockers.push('standing-reproof-eligibility-repository-drift');
+  if (Number(eligibility.prNumber) !== prNumber) blockers.push('standing-reproof-eligibility-pr-drift');
+  if (text(eligibility.sourceHead).toLowerCase() !== sourceHead) blockers.push('standing-reproof-eligibility-head-drift');
+  if (text(eligibility.baseSha).toLowerCase() !== baseSha) blockers.push('standing-reproof-eligibility-base-drift');
 
   if (input.pullRequestOpen !== true) blockers.push('standing-reproof-pr-not-open');
   if (input.pullRequestDraft === true) blockers.push('standing-reproof-pr-still-draft');
