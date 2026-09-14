@@ -25,6 +25,8 @@ test('protects the exact OpenClaw reviewer-specialist composition boundary', () 
   assert.deepEqual(OPENCLAW_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1, [
     'scripts/independent-merge-security-review-entry-v1.mjs',
     'scripts/independent-merge-security-review-with-openclaw-specialist-v1.mjs',
+    'scripts/independent-merge-security-review-with-mission-worker-restart-specialist-v1.mjs',
+    'scripts/independent-merge-security-review-mission-worker-restart-specialist-v1.test.mjs',
     'shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs',
     'shared/agents/openClawBuilderProviderSpecialistReviewV1.test.mjs',
     'shared/agents/openClawBuilderProviderSpecialistReviewLegacyV1.mjs',
