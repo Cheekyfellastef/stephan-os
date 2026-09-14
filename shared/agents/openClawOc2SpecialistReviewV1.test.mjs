@@ -181,10 +181,13 @@ test('OC2 specialist rejects every direct extra process route', () => {
   }
 });
 
-test('OC2 specialist rejects aliased and bound process invocation', () => {
+test('OC2 specialist rejects aliased, bound, object, array, and property-stored process invocation', () => {
   for (const injected of [
     'const invoke = spawnSyncFn; invoke(userExecutable, userArgs);',
     'const invoke = spawnSyncFn.bind(null); invoke(userExecutable, userArgs);',
+    'const holder = { run: spawnSyncFn }; holder.run(userExecutable, userArgs);',
+    'const holder = [spawnSyncFn]; holder[0](userExecutable, userArgs);',
+    'const holder = {}; holder.run = spawnSyncFn; holder.run(userExecutable, userArgs);',
   ]) {
     const result = analyzeOpenClawOc2SpecialistReviewV1(input({
       sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: `${EXECUTOR}\n${injected}` }),
@@ -202,7 +205,16 @@ test('OC2 specialist rejects authority checks preserved only in comments or deco
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-bounded-action-gate-missing'));
 });
 
-test('OC2 specialist rejects direct and aliased additional gateway registrations', () => {
+test('OC2 specialist binds rejecting predicates to their own consequent', () => {
+  const weakened = EXECUTOR.replace('|| grant?.boundedActionCount !== 1', '|| false')
+    .concat('\nfunction decoy(grant) { if (grant?.boundedActionCount !== 1) { audit(grant); } if (true) return false; }');
+  const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+    sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: weakened }),
+  }));
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-bounded-action-gate-missing'));
+});
+
+test('OC2 specialist rejects direct, aliased, and computed additional gateway registrations', () => {
   const direct = INDEX.replace(
     'api.registerCommand',
     "api.registerGatewayMethod('unexpected.method', async () => ({}), { scope: 'operator.write' });\n  api.registerCommand",
@@ -211,7 +223,11 @@ test('OC2 specialist rejects direct and aliased additional gateway registrations
     'api.registerCommand',
     "const add = api.registerGatewayMethod.bind(api); add('unexpected.method', async () => ({}), { scope: 'operator.write' });\n  api.registerCommand",
   );
-  for (const widened of [direct, aliased]) {
+  const computed = INDEX.replace(
+    'api.registerCommand',
+    "api['registerGatewayMethod']('unexpected.method', async () => ({}), { scope: 'operator.write' });\n  api.registerCommand",
+  );
+  for (const widened of [direct, aliased, computed]) {
     const result = analyzeOpenClawOc2SpecialistReviewV1(input({
       sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[0]]: widened }),
     }));
@@ -219,13 +235,16 @@ test('OC2 specialist rejects direct and aliased additional gateway registrations
   }
 });
 
-test('OC2 specialist rejects filesystem and network authority widening including aliases and dynamic imports', () => {
+test('OC2 specialist rejects filesystem and network authority widening including aliases, computed access, and dynamic imports', () => {
   for (const injected of [
     "writeFileSync('/tmp/outside', 'x');",
     "fetch('https://example.com');",
     "import http from 'node:http';\nhttp.get(url);",
     "import { writeFileSync as save } from 'node:fs';\nsave('/tmp/outside', 'x');",
     "const { get: send } = await import('node:https');\nsend(url);",
+    "const moduleName = 'node:https'; const { get: send } = await import(moduleName); send(url);",
+    "https['get'](url);",
+    "fs['writeFileSync']('/tmp/outside', 'x');",
   ]) {
     const result = analyzeOpenClawOc2SpecialistReviewV1(input({
       sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: `${EXECUTOR}\n${injected}` }),
@@ -234,11 +253,12 @@ test('OC2 specialist rejects filesystem and network authority widening including
   }
 });
 
-test('OC2 specialist rejects skipped, commented, early-return, and nested advertised regressions', () => {
+test('OC2 specialist rejects skipped, commented, early-return, return-expression, and nested advertised regressions', () => {
   const variants = [
     EXECUTOR_TEST.replace("test('OC2 admits only", "test.skip('OC2 admits only"),
     EXECUTOR_TEST.replace('assert.deepEqual(result.changedFiles, []);', '// assert.deepEqual(result.changedFiles, []);'),
     EXECUTOR_TEST.replace('assert.deepEqual(result.changedFiles, []);', 'return; assert.deepEqual(result.changedFiles, []);'),
+    EXECUTOR_TEST.replace('assert.deepEqual(result.changedFiles, []);', 'return false; assert.deepEqual(result.changedFiles, []);'),
     EXECUTOR_TEST.replace('assert.deepEqual(result.changedFiles, []);', '(() => { assert.deepEqual(result.changedFiles, []); })();'),
   ];
   for (const weakened of variants) {
