@@ -134,6 +134,8 @@ export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
   'shared/agents/protectedOpenClawMergeMailboxAdapter.mjs',
   'shared/agents/providerNeutralReviewV1.mjs',
   'shared/agents/qualifiedSpecialistReviewV1.mjs',
+  'shared/agents/standingBuilderContinuityAuthorityV1.mjs',
+  'shared/agents/standingBuilderContinuityProtectedReproofV1.mjs',
 ]);
 
 export const WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1 = Object.freeze([
