@@ -54,6 +54,49 @@ test('classifies UI backend worker and natural reload targets deterministically'
   ]);
 });
 
+test('exact six-path mailbox starvation delivery is installable through natural reload', () => {
+  const plan = classifyPostSyncRefresh([
+    '.github/workflows/battle-bridge-mailbox-outbox-starvation-v1.yml',
+    'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
+    'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.test.mjs',
+    'scripts/battle-bridge-github-command-mailbox.mjs',
+    'scripts/battle-bridge-github-command-mailbox.test.mjs',
+    'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.changedPathCount, 6);
+  assert.equal(plan.noRuntimePathCount, 3);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+test('complete mailbox ledger and guardian-chain repair range has no unclassified runtime path', () => {
+  const changedPaths = [
+    '.github/workflows/battle-bridge-mailbox-outbox-starvation-v1.yml',
+    'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
+    'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.test.mjs',
+    'scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs',
+    'scripts/battle-bridge-github-command-mailbox.mjs',
+    'scripts/battle-bridge-github-command-mailbox.test.mjs',
+    'scripts/battle-bridge-recovery-mesh-guardian.test.mjs',
+    'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
+    'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1',
+    'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1',
+    'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
+    'shared/agents/postSyncRuntimeRefreshCoordinator.test.mjs',
+    'shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.mjs',
+    'shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.test.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.changedPathCount, changedPaths.length);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
 test('launcher-critical shell sources select the UI refresh target', () => {
   for (const path of [
     'main.js',

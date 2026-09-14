@@ -120,6 +120,21 @@ test('GitHub telemetry reports authority=gh-cli when fallback succeeds', async (
   assert.equal(telemetry.mergeAllowed, false);
 });
 
+test('GitHub telemetry fails closed within a bounded time when the optional adapter stalls', async () => {
+  const startedAt = Date.now();
+  const telemetry = await readGithubTelemetry({
+    env: { GITHUB_REPOSITORY: 'owner/repo', GITHUB_TOKEN: 'bounded-token' },
+    secretStoreToken: '',
+    fetchImpl: async () => new Promise(() => {}),
+    requestTimeoutMs: 20,
+  });
+
+  assert.equal(telemetry.status, 'adapter_error');
+  assert.match(telemetry.blockers[0], /GitHub telemetry request timed out/);
+  assert.equal(Date.now() - startedAt < 500, true);
+  assert.equal(JSON.stringify(telemetry).includes('bounded-token'), false);
+});
+
 test('PR evidence uses shared resolver authority and gh CLI fallback after explicit 403', async () => {
   const calls = [];
   const auth = await resolveGithubAuth({ env: { GITHUB_TOKEN: 'bad-env-token' }, secretStoreToken: '', ghTokenProvider: async () => 'unused-gh-token' });

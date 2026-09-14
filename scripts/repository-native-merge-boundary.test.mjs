@@ -27,7 +27,7 @@ test('no local npm command exposes merge authority', async () => {
   assert.equal(packageJson.scripts['stephanos:publish-merge'], 'node scripts/repository-native-publish-merge-lane.mjs');
 });
 
-test('protected boundary keeps the native queue and adds only the exact user-owned dispatch fallback', async () => {
+test('protected boundary keeps the native queue and adds only the exact mobile-safe user-owned dispatch fallback', async () => {
   const protectedSource = await readFile(protectedWorkflow, 'utf8');
   const independentSource = await readFile(independentWorkflow, 'utf8');
   assert.match(protectedSource, /^  merge_group:\s*$/m);
@@ -63,7 +63,12 @@ test('protected boundary keeps the native queue and adds only the exact user-own
   assert.equal([...protectedSource.matchAll(/steps\.ruleset-proof-token\.outputs\.token/g)].length, 3);
   assert.doesNotMatch(protectedSource, /permission-(?!administration: write)/);
   assert.doesNotMatch(protectedSource, /skip-token-revoke:/);
-  assert.equal([...protectedSource.matchAll(/name: operator-merge-approval/g)].length, 4);
+  assert.equal([...protectedSource.matchAll(/name: operator-merge-approval/g)].length, 1);
+  assert.match(protectedSource, /readonly CANONICAL_OPERATOR='Cheekyfellastef'/);
+  const mergeQueueJob = protectedSource.slice(
+    protectedSource.indexOf('  operator-merge-queue-boundary:'),
+    protectedSource.indexOf('  personal-repository-evidence:'),
+  );
   const evidenceJob = protectedSource.slice(
     protectedSource.indexOf('  personal-repository-evidence:'),
     protectedSource.indexOf('  operator-personal-repository-approval:'),
@@ -75,28 +80,33 @@ test('protected boundary keeps the native queue and adds only the exact user-own
   const mergeJob = protectedSource.slice(
     protectedSource.indexOf('  operator-personal-repository-squash-merge:'),
   );
+  assert.match(mergeQueueJob, /environment:\s*\n      name: operator-merge-approval/);
   assert.match(evidenceJob, /actions\/create-github-app-token@v2/);
   assert.match(evidenceJob, /STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}/);
-  assert.match(evidenceJob, /environment:\s*\n      name: operator-merge-approval/);
+  assert.doesNotMatch(evidenceJob, /environment:\s*\n      name: operator-merge-approval/);
   assert.match(evidenceJob, /Collect exact personal-repository evidence after protected admission/);
   assert.doesNotMatch(evidenceJob, /contents: write|issues: write|pull-requests: write/);
   assert.match(approvalJob, /actions\/create-github-app-token@v2/);
   assert.match(approvalJob, /STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}/);
   assert.match(approvalJob, /needs: \[personal-repository-evidence\]/);
   assert.match(approvalJob, /Re-prove immutable evidence after protected approval/);
+  assert.doesNotMatch(approvalJob, /environment:\s*\n      name: operator-merge-approval/);
   assert.doesNotMatch(approvalJob, /contents: write|issues: write|pull-requests: write/);
   assert.match(mergeJob, /actions\/create-github-app-token@v2/);
   assert.match(mergeJob, /STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}/);
   assert.match(mergeJob, /needs: \[personal-repository-evidence, operator-personal-repository-approval\]/);
   assert.match(mergeJob, /Re-prove, squash exact head and publish the bounded receipt/);
+  assert.doesNotMatch(mergeJob, /environment:\s*\n      name: operator-merge-approval/);
   assert.doesNotMatch(protectedSource, /\b(?:actions|deployments|statuses|checks): write\b/);
   assert.doesNotMatch(protectedSource, /recover|repository_dispatch|workflow_call|continue-on-error/);
   assert.doesNotMatch(protectedSource, /STEPHANOS_RULESET_PROOF_TOKEN[^\n]*(?:GITHUB_OUTPUT|GITHUB_ENV|upload-artifact)/i);
 
   assert.match(independentSource, /pull_request_target:/);
+  assert.match(independentSource, /^  workflow_dispatch:\s*$/m);
   assert.match(independentSource, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
-  assert.match(independentSource, /persist-credentials: false/);
-  assert.match(independentSource, /independent-merge-security-review-v2\.mjs/);
+  assert.match(independentSource, /ref: \$\{\{ github\.sha \}\}/);
+  assert.equal([...independentSource.matchAll(/persist-credentials: false/g)].length, 2);
+  assert.match(independentSource, /independent-merge-security-review-entry-v1\.mjs/);
 });
 
 test('personal-repository executor is workflow-dispatch-only and performs one exact-head squash without branch deletion', async () => {
@@ -104,6 +114,15 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /GITHUB_EVENT_NAME !== 'workflow_dispatch'/);
   assert.match(source, /triggering_actor\?\.login \|\| run\?\.actor\?\.login/);
   assert.match(source, /validatePersonalRepositoryEvidence/);
+  assert.match(source, /validatePersonalRepositoryCheckRunsWithBoundedReread/);
+  assert.match(source, /validatePersonalRepositoryWorkflowRunHydration/);
+  assert.match(source, /hydrateExactHeadWorkflowRuns/);
+  assert.match(source, /actions\/runs\/\$\{run\?\.id\}/);
+  assert.doesNotMatch(source, /CHECK_SNAPSHOT_REREAD_DELAY_MS/);
+  assert.match(source, /if \(attempt === 1\) return initialCheckSnapshot/);
+  assert.match(source, /snapshotAttempts: checks\.snapshotAttempts/);
+  assert.match(source, /acceptedWorkflowRuns = checks\.selectedSnapshot\.workflowRuns/);
+  assert.match(source, /validatePersonalRepositoryWorkflowRuns\([\s\S]*?acceptedWorkflowRuns/);
   assert.match(source, /validatePersonalRepositoryConfiguration/);
   assert.match(source, /validatePersonalRepositoryWorkflowRuns/);
   assert.match(source, /authorization === 'omit' && \(method !== 'GET' \|\| body !== null\)/);
@@ -132,10 +151,17 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.doesNotMatch(source, /GH_TOKEN[^\n]*rules|GITHUB_TOKEN[^\n]*rules/);
   assert.match(source, /loadSelectedIndependentReview/);
   assert.match(source, /personal-repository-prior-attempt-exists/);
+  assert.match(source, /execution\.replayRunIds\.length > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX/);
+  assert.match(source, /execution\.blockers\.includes\('personal-repository-prior-run-attempt-limit-exceeded'\)/);
+  assert.match(source, /actions\/runs\/\$\{runId\}\/jobs/);
+  assert.match(source, /jobs\?filter=all/);
+  assert.match(source, /retryablePriorFailures: execution\.retryablePriorFailures/);
+  assert.match(source, /retryablePriorFailures: collected\.packet\.retryablePriorFailures/);
   assert.match(source, /expectedDisplayTitle = `Protected operator merge \$\{context\.dispatch\.identity\.sourceHead\}`/);
   assert.doesNotMatch(source, /expectedDisplayTitle = `Protected operator merge PR #/);
   assert.match(source, /mismatches: runIdentityMismatches/);
   assert.doesNotMatch(source, /mismatches:[^\n]*run\?\./);
+  assert.doesNotMatch(source, /jobs\?filter=latest/);
   assert.match(source, /validatePersonalRepositoryApprovalReceipt/);
   assert.match(source, /PERSONAL_REPOSITORY_EVIDENCE_READY_AFTER_PROTECTED_ADMISSION/);
   assert.match(source, /PERSONAL_REPOSITORY_PROTECTED_APPROVAL_READY/);

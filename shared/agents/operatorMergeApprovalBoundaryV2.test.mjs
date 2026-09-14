@@ -7,6 +7,9 @@ import {
   analyzeIndependentSecurityReviewV2,
   validatePersonalRepositoryProtectedWorkflowSource,
 } from './operatorMergeApprovalBoundaryV2.mjs';
+import {
+  analyzeIndependentSecurityReviewWithFinalSourcePolicyV1,
+} from './operatorMergeApprovalGateV2IndependentReviewFinalSourceV1.mjs';
 import { isApprovalBoundaryBootstrapAnalysis } from './operatorMergeApprovalGateV2.mjs';
 import { createProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
 import {
@@ -333,7 +336,7 @@ test('fails closed when any live v2 boundary attempts to review itself', () => {
 test('valid final exact-head workflow source prevents hunk-only false trust findings', () => {
   const path = '.github/workflows/independent-merge-security-review.yml';
   const finalContent = workflowContent(path).replace('timeout-minutes: 15', 'timeout-minutes: 16');
-  const result = analyzeIndependentSecurityReviewV2({
+  const result = analyzeIndependentSecurityReviewWithFinalSourcePolicyV1({
     changedFiles: [{ filename: path, status: 'modified' }],
     diff: diffFor(path, ['timeout-minutes: 16']),
     repository,
