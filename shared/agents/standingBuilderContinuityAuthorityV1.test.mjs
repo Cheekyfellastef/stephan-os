@@ -84,6 +84,31 @@ test('provider-unavailable specialist escalation can become eligibility only, ne
   assert.equal(result.requiresProtectedWorkflowReproof, true);
 });
 
+test('current PR #2222 canary classifies its exact two Windows P0s as provider-friction eligibility only', () => {
+  const result = evaluateStandingBuilderContinuityFallbackV1(eligibleInput({
+    sourceHead: 'e161f88f09de4614d3befb857884b68a060aaad2',
+    baseSha: 'e5f59be5ee213fb61a536d58aa5fc989b2c68abc',
+    independentFindings: [
+      {
+        severity: 'P0',
+        code: 'unsupported-high-risk-surface',
+        path: 'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1',
+      },
+      {
+        severity: 'P0',
+        code: 'unsupported-high-risk-surface',
+        path: 'scripts/windows/restart-approved-stephanos-runtime.ps1',
+      },
+    ],
+  }));
+  assert.equal(result.eligible, true);
+  assert.equal(result.finalVerdict, 'STANDING_AUTHORITY_ELIGIBLE');
+  assert.equal(result.specialistReviewSatisfied, false);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.runtimeMutationAuthority, false);
+  assert.equal(result.requiresProtectedWorkflowReproof, true);
+});
+
 test('a real P1 remains a hard blocker rather than provider friction', () => {
   const result = evaluateStandingBuilderContinuityFallbackV1(eligibleInput({
     independentFindings: [
