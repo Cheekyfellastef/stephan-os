@@ -4,7 +4,10 @@ import {
 } from './operatorMergeApprovalGate.mjs';
 
 export const INDEPENDENT_REVIEW_RETRY_SCHEMA_VERSION = 'stephanos.independent-review-retry-plan.v1';
-export const INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT = 2;
+// Keep retries bounded, but reserve one final failed-job retry for the case
+// where required specialist evidence arrives only after the original run and
+// its first retry have already consumed the earlier attempts.
+export const INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT = 3;
 
 export const INDEPENDENT_REVIEW_RETRY_DECISION = Object.freeze({
   INVALID_INPUT: 'INVALID_INPUT',
