@@ -3,15 +3,15 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { ensureCriticalBacklogMission } from '../stephanos-server/services/criticalBacklogConveyorService.js';
-import { claimDriverNeutralExternalConstruction } from '../stephanos-server/services/driverNeutralExternalPickupService.js';
+import { processNextProviderNeutralSourceBuild } from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
 
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA = 'stephanos.battle-bridge-goal-discovery-heartbeat.v1';
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT_MARKER = 'BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT=';
 
 export async function runBattleBridgeGoalDiscoveryHeartbeat({
   conveyor = ensureCriticalBacklogMission,
-  claimExternalConstruction = claimDriverNeutralExternalConstruction,
-  externalPickupOptions = {},
+  buildClaimedGoal = processNextProviderNeutralSourceBuild,
+  builderOptions = {},
 } = {}) {
   try {
     const result = await conveyor();
@@ -20,29 +20,29 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
         ok: false,
         conveyorResult: result || null,
-        externalConstructionPickup: null,
+        sourceBuild: null,
         mergeAuthority: false,
         runtimeMutationAuthority: false,
-        arbitraryShellAllowed: false,
         destructiveGitAllowed: false,
         finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED',
       });
     }
 
-    const externalConstructionPickup = await claimExternalConstruction(externalPickupOptions);
+    const sourceBuild = await buildClaimedGoal(builderOptions);
+    const built = sourceBuild?.processed === true && sourceBuild?.success === true;
+    const blocked = sourceBuild?.processed === true && sourceBuild?.success === false;
     return Object.freeze({
       schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
-      ok: externalConstructionPickup?.ok !== false,
+      ok: !blocked,
       conveyorResult: result,
-      externalConstructionPickup: externalConstructionPickup || null,
+      sourceBuild: sourceBuild || null,
       mergeAuthority: false,
       runtimeMutationAuthority: false,
-      arbitraryShellAllowed: false,
       destructiveGitAllowed: false,
-      finalVerdict: externalConstructionPickup?.ok === false
-        ? 'GOAL_DISCOVERY_HEARTBEAT_EXTERNAL_PICKUP_BLOCKED'
-        : externalConstructionPickup?.claimed === true
-          ? 'GOAL_DISCOVERY_HEARTBEAT_CONSTRUCTION_CLAIMED'
+      finalVerdict: blocked
+        ? 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_BUILD_BLOCKED'
+        : built
+          ? 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED'
           : 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE',
     });
   } catch (error) {
@@ -51,10 +51,9 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       ok: false,
       blocker: String(error?.message || 'GOAL_DISCOVERY_HEARTBEAT_FAILED'),
       conveyorResult: null,
-      externalConstructionPickup: null,
+      sourceBuild: null,
       mergeAuthority: false,
       runtimeMutationAuthority: false,
-      arbitraryShellAllowed: false,
       destructiveGitAllowed: false,
       finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED',
     });
