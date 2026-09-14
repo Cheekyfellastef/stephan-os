@@ -109,6 +109,7 @@ jobs:
           shared/agents/openClawBuilderProviderSpecialistReviewV1.test.mjs
           scripts/independent-merge-security-review-with-windows-specialist-v1.test.mjs
           scripts/independent-merge-security-review-with-openclaw-specialist-v1.test.mjs
+          scripts/independent-merge-security-review-mission-worker-restart-specialist-v1.test.mjs
 
       - name: Review the complete exact-head and exact-base diff without mutation authority
         timeout-minutes: 15
