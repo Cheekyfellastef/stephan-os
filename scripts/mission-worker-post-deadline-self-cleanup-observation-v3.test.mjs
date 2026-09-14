@@ -16,6 +16,7 @@ test('post-authority self-cleanup proof receives a fresh fixed read-only observa
   const observer = sliceFunction('Wait-MissionWorkerSelfCleanupObservation', 'Write-BoundedAtomicJson');
   assert.match(observer, /\$observationDeadlineUtc\s*=\s*\[datetime\]::UtcNow\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/);
   assert.doesNotMatch(observer, /\$script:operationDeadlineUtc\.AddSeconds\(\$missionWorkerCleanupTimeoutSeconds\)/);
+  assert.doesNotMatch(observer, /\$reserveDeadlineUtc\b/);
   assert.doesNotMatch(observer, /\$observationDeadlineUtc\s*=\s*\$reserveDeadlineUtc/);
 });
 
@@ -23,6 +24,8 @@ test('post-deadline observation remains bounded, read-only and exact canonical-w
   const observer = sliceFunction('Wait-MissionWorkerSelfCleanupObservation', 'Write-BoundedAtomicJson');
   assert.match(observer, /Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker' -TaskPath '\\' -ErrorAction Stop/);
   assert.match(observer, /Test-ExactCanonicalWorkerProcess -Process \$process -ExpectedRepoRoot \$ExpectedRepoRoot/);
+  assert.match(observer, /\$observationOperationReserveSeconds\s*=\s*2/);
+  assert.match(observer, /\[datetime\]::UtcNow\.AddSeconds\(1\) -ge \$observationDeadlineUtc/);
   assert.match(observer, /Start-Sleep -Milliseconds 100/);
   assert.match(observer, /return \$false/);
   assert.doesNotMatch(observer, /Stop-Process|Stop-ScheduledTask|Start-ScheduledTask|Set-ScheduledTask|Unregister-ScheduledTask|Remove-Item|Move-Item|Write-BoundedAtomicJson/);
