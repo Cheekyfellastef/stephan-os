@@ -2,6 +2,8 @@ import {
   STEPHANOS_CONVERSATION_LINEAGE_KIND,
   resolveStephanosConversationLineage,
 } from './stephanosConversationLineageV1.mjs';
+import { validateStephanosAmbientCapabilityQuestion } from './stephanosAmbientCapabilityQuestionV1.mjs';
+import { validateStephanosCapabilityQuestion } from './stephanosConversationalCapabilityLadderV1.mjs';
 
 export const STEPHANOS_WORKSPACE_CONVERSATION_LINEAGE_SCHEMA_VERSION = 'stephanos.workspace-conversation-lineage.v1';
 
@@ -70,5 +72,29 @@ export function resolveStephanosWorkspaceConversationLineage(record, payload) {
     ambient: lineage.kind === STEPHANOS_CONVERSATION_LINEAGE_KIND.AMBIENT,
     formalRound: lineage.kind === STEPHANOS_CONVERSATION_LINEAGE_KIND.FORMAL_ROUND,
     errors: Object.freeze([]),
+  });
+}
+
+/**
+ * Validate a workspace question against the contract selected by its resolved
+ * lineage. This is the bounded adapter seam used to stop ambient questions
+ * being forced through the formal ten-question-round validator.
+ */
+export function validateStephanosWorkspaceQuestionByLineage(record, payload, options = {}) {
+  const lineage = resolveStephanosWorkspaceConversationLineage(record, payload);
+  if (!lineage.valid) {
+    return Object.freeze({ valid: false, lineage, question: null, errors: lineage.errors });
+  }
+
+  const validation = lineage.ambient
+    ? validateStephanosAmbientCapabilityQuestion(payload, options.ambientQuestionValidationOptions)
+    : validateStephanosCapabilityQuestion(payload, options.questionValidationOptions);
+  const errors = Object.freeze([...(validation.errors || [])]);
+
+  return Object.freeze({
+    valid: Boolean(validation.valid),
+    lineage,
+    question: validation.valid ? (validation.question || payload) : null,
+    errors,
   });
 }
