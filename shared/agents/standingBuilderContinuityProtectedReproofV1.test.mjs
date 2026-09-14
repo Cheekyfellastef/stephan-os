@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { APPROVAL_BOUNDARY_PATHS_V2 } from './operatorMergeApprovalBoundaryV2.mjs';
 import {
   STANDING_BUILDER_CONTINUITY_AUTHORITY_SCHEMA,
   STANDING_BUILDER_CONTINUITY_POLICY_VERSION,
@@ -109,6 +110,15 @@ function validInput(overrides = {}) {
     ...overrides,
   };
 }
+
+test('standing builder-continuity authority code is itself an approval boundary', () => {
+  for (const path of [
+    'shared/agents/standingBuilderContinuityAuthorityV1.mjs',
+    'shared/agents/standingBuilderContinuityProtectedReproofV1.mjs',
+  ]) {
+    assert.ok(APPROVAL_BOUNDARY_PATHS_V2.includes(path), `${path} must be protected as an approval boundary`);
+  }
+});
 
 test('PR #2222 ready-state canary can enter only the existing protected reproof workflow', () => {
   const result = buildStandingBuilderContinuityProtectedReproofV1(validInput());
