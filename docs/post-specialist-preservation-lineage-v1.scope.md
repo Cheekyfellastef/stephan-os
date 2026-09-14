@@ -1,0 +1,1 @@
+Scope is limited to the existing post-specialist retry admission seam and its deterministic regression. Do not alter retry ceilings, review authority, Windows runtime authority, source publication authority, or merge policy.
