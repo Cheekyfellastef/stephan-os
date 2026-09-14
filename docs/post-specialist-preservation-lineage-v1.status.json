@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "stephanos.repair-lane-status.v1",
+  "goal": "#1622",
+  "blockedPr": 2222,
+  "stage": "SOURCE_CHANGED",
+  "currentHead": "d804dc2b82ec6e0114decee9101647291147ef11",
+  "blocker": "post-specialist retry selector does not admit preservation-equivalent specialist evidence after unrelated main convergence",
+  "next": "implement authoritative lineage and feature-blob preservation validation, then rerun deterministic regression"
+}
