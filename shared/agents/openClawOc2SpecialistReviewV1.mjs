@@ -144,15 +144,41 @@ function functionBody(source, names) {
   return null;
 }
 
+function callbackTopLevel(source) {
+  const masked = executableOnly(source);
+  let depth = 0;
+  let out = '';
+  for (let i = 0; i < masked.length; i += 1) {
+    const ch = masked[i];
+    if (ch === '{') { depth += 1; out += ' '; continue; }
+    if (ch === '}') { depth = Math.max(0, depth - 1); out += ' '; continue; }
+    out += depth === 0 ? ch : (ch === '\n' ? '\n' : ' ');
+  }
+  return out;
+}
+
 function conditionBlocks(bodySource) {
   const blocks = [];
+  const masked = executableOnly(bodySource);
   const ifPattern = /\bif\s*\(/g;
-  for (const match of bodySource.matchAll(ifPattern)) {
+  for (const match of masked.matchAll(ifPattern)) {
     const open = match.index + match[0].lastIndexOf('(');
-    const close = matchBalanced(bodySource, open, '(', ')');
+    const close = matchBalanced(masked, open, '(', ')');
     if (close < 0) continue;
-    const after = bodySource.slice(close + 1, close + 220);
-    if (!/\breturn\b/.test(after)) continue;
+    let cursor = close + 1;
+    while (/\s/.test(masked[cursor] || '')) cursor += 1;
+    let consequent = '';
+    if (masked[cursor] === '{') {
+      const end = matchBalanced(masked, cursor, '{', '}');
+      if (end < 0) continue;
+      consequent = bodySource.slice(cursor + 1, end);
+    } else {
+      const semi = masked.indexOf(';', cursor);
+      if (semi < 0) continue;
+      consequent = bodySource.slice(cursor, semi + 1);
+    }
+    const top = callbackTopLevel(consequent);
+    if (!/\b(?:return|throw)\b/.test(top)) continue;
     blocks.push(bodySource.slice(open + 1, close));
   }
   return blocks;
@@ -189,19 +215,6 @@ function countMatches(source, pattern) {
   return matches ? matches.length : 0;
 }
 
-function callbackTopLevel(source) {
-  const masked = executableOnly(source);
-  let depth = 0;
-  let out = '';
-  for (let i = 0; i < masked.length; i += 1) {
-    const ch = masked[i];
-    if (ch === '{') { depth += 1; out += ' '; continue; }
-    if (ch === '}') { depth = Math.max(0, depth - 1); out += ' '; continue; }
-    out += depth === 0 ? ch : (ch === '\n' ? '\n' : ' ');
-  }
-  return out;
-}
-
 function activeTestHas(source, title, assertionPattern) {
   const uncommented = stripComments(source);
   if (/\b(?:test|it|describe)\.(?:skip|todo|only)\s*\(/.test(uncommented)) return false;
@@ -221,14 +234,19 @@ function activeTestHas(source, title, assertionPattern) {
   const assertion = assertionPattern.exec(top);
   if (!assertion) return false;
   const before = top.slice(0, assertion.index);
-  if (/\breturn\s*;/.test(before) || /\bthrow\b/.test(before)) return false;
+  if (/\b(?:return|throw)\b/.test(before)) return false;
   return true;
 }
 
 function importAuthorityViolation(source) {
   const uncommented = stripComments(source);
-  if (/\bimport\s*\(\s*['"]node:(?:fs|fs\/promises|http|https|net|tls|dgram|dns|child_process)['"]\s*\)/.test(uncommented)) return true;
+  const executable = executableOnly(source);
+  if (/\bimport\s*\(/.test(executable)) return true;
+  if (/\brequire\s*\(/.test(executable)) return true;
   if (/\bfrom\s+['"]node:(?:http|https|net|tls|dgram|dns)['"]/.test(uncommented)) return true;
+  if (/\b(?:fs|fsp|http|https|net|tls|dgram|dns|childProcess|child_process)\s*\[[^\]]+\]/.test(uncommented)) return true;
+  if (/\b(?:globalThis|global)\s*\[\s*['"]fetch['"]\s*\]/.test(uncommented)) return true;
+  if (/\bprocess\s*\.\s*getBuiltinModule\s*\(/.test(executable)) return true;
   const fsImports = [...uncommented.matchAll(/\bimport\s*\{([^}]*)\}\s*from\s*['"]node:fs(?:\/promises)?['"]/g)];
   const allowedFs = new Set(['existsSync', 'readFileSync', 'readFile', 'stat', 'statSync', 'lstat', 'lstatSync', 'readdir', 'readdirSync', 'access', 'accessSync']);
   for (const match of fsImports) {
@@ -252,14 +270,20 @@ function hasProcessAlias(source) {
   if (/\b(?:const|let|var)\s+(?!spawnSyncFn\b)[A-Za-z_$][\w$]*\s*=\s*spawnSyncFn\b/.test(code)) return true;
   if (/\bspawnSyncFn\s*\.\s*(?:bind|call|apply)\b/.test(code)) return true;
   if (/\bimport\s*\{[^}]*spawnSync\s+as\s+/i.test(stripComments(source))) return true;
+  if (/[{,]\s*[A-Za-z_$][\w$]*\s*:\s*spawnSyncFn\b/.test(code)) return true;
+  if (/\[\s*spawnSyncFn\s*(?:,|\])/.test(code) || /,\s*spawnSyncFn\s*\]/.test(code)) return true;
+  if (/\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[[^\]]+\])\s*=\s*spawnSyncFn\b/.test(code)) return true;
   return false;
 }
 
 function hasGatewayAlias(source) {
   const code = executableOnly(source);
+  const uncommented = stripComments(source);
   return /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*api\.registerGatewayMethod\b/.test(code)
     || /\bapi\.registerGatewayMethod\s*\.\s*bind\b/.test(code)
-    || /\{\s*registerGatewayMethod\s*(?::|,|\})/.test(code);
+    || /\{\s*registerGatewayMethod\s*(?::|,|\})/.test(code)
+    || /\bapi\s*\[\s*['"]registerGatewayMethod['"]\s*\]/.test(uncommented)
+    || /\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[[^\]]+\])\s*=\s*api\.registerGatewayMethod\b/.test(code);
 }
 
 function hasExecutorAlias(source) {
