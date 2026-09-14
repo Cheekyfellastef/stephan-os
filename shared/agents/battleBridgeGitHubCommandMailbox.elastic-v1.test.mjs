@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
   BATTLE_BRIDGE_GITHUB_COMMAND_MARKER,
   BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA,
   selectBattleBridgeGitHubCommandBatch,
@@ -16,7 +17,7 @@ function command(requestId) {
     requestId,
     operation: 'READ_DEPLOYMENT_STATUS',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -27,7 +28,7 @@ function command(requestId) {
 function comment(id, requestId) {
   return {
     id,
-    html_url: `https://github.com/Cheekyfellastef/stephan-os/issues/1507#issuecomment-${id}`,
+    html_url: `https://github.com/Cheekyfellastef/stephan-os/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}#issuecomment-${id}`,
     created_at: NOW.toISOString(),
     user: { login: 'Cheekyfellastef' },
     body: `\`\`\`${BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(command(requestId))}\n\`\`\``,
