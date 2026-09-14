@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, statSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
 import process from 'node:process';
@@ -224,13 +224,28 @@ function formatInvocation(invocation) {
 function spawnUi4173Repair({ spawnFn, platform, logs, expectedHead, environment }) {
   const invocation = resolveUi4173RepairInvocation(platform);
   const childEnvironment = { ...environment, STEPHANOS_EXPECTED_HEAD: expectedHead };
+  let stdoutFd = null;
+  let stderrFd = null;
   let child;
   try {
-    child = spawnFn(invocation.command, invocation.commandArgs, { cwd: invocation.cwd, env: childEnvironment, detached: true, stdio: ['ignore', 'pipe', 'pipe'], shell: invocation.shell });
-    if (child?.stdout?.pipe) child.stdout.pipe(createWriteStream(logs.stdoutLogPath, { flags: 'a' }));
-    if (child?.stderr?.pipe) child.stderr.pipe(createWriteStream(logs.stderrLogPath, { flags: 'a' }));
+    stdoutFd = openSync(logs.stdoutLogPath, 'a');
+    stderrFd = openSync(logs.stderrLogPath, 'a');
+    // A detached Windows npm/cmd process must inherit durable file handles.
+    // Pipe handles keep the ignition parent alive and are not reliable across
+    // the nested cmd -> npm -> node cold-start chain after a desktop reboot.
+    child = spawnFn(invocation.command, invocation.commandArgs, {
+      cwd: invocation.cwd,
+      env: childEnvironment,
+      detached: true,
+      windowsHide: true,
+      stdio: ['ignore', stdoutFd, stderrFd],
+      shell: invocation.shell,
+    });
   } catch (error) {
     return Promise.resolve({ ok: false, invocation, error });
+  } finally {
+    if (Number.isInteger(stdoutFd)) closeSync(stdoutFd);
+    if (Number.isInteger(stderrFd)) closeSync(stderrFd);
   }
 
   if (!(child instanceof EventEmitter) && typeof child?.on !== 'function') {

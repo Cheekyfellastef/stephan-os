@@ -16,7 +16,7 @@ function command(requestId) {
     requestId,
     operation: 'UPDATE_STEPHANOS_FROM_CHAT',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: mailbox.BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -27,7 +27,7 @@ function command(requestId) {
 function comment(requestId, id) {
   return {
     id,
-    html_url: `https://github.com/Cheekyfellastef/stephan-os/issues/1507#issuecomment-${id}`,
+    html_url: `https://github.com/Cheekyfellastef/stephan-os/issues/${mailbox.BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}#issuecomment-${id}`,
     created_at: '2026-09-04T16:39:00Z',
     user: { login: 'Cheekyfellastef' },
     body: `\`\`\`${mailbox.BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(command(requestId))}\n\`\`\``,

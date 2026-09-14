@@ -4,6 +4,10 @@ import {
   runMissionWorkerDiagnosticLink,
 } from '../../scripts/mission-worker-diagnostic-link.mjs';
 import { planElasticBattleBridgeMailboxDispatch } from './elasticBattleBridgeMailboxCapacityV1.mjs';
+import {
+  BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
+  validateApprovedBackendRestartCommandShape,
+} from './battleBridgeApprovedBackendRestartMailboxV1.mjs';
 
 export * from './battleBridgeGitHubCommandMailboxLegacyV1.mjs';
 
@@ -14,6 +18,17 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const DIAGNOSTIC_LINK_ALLOWED_FIELDS = new Set([
+  'schemaVersion',
+  'requestId',
+  'operation',
+  'repository',
+  'issueNumber',
+  'branch',
+  'operatorApproval',
+  'expectedHead',
+  'expiresAt',
+]);
+const APPROVED_BACKEND_RESTART_SELECTED_FIELDS = Object.freeze([
   'schemaVersion',
   'requestId',
   'operation',
@@ -51,6 +66,20 @@ function validateDiagnosticLinkCommandShape(command = {}) {
     return fail('MISSION_WORKER_DIAGNOSTIC_LINK_EXPECTED_HEAD_REQUIRED', { requested: true });
   }
   return Object.freeze({ ok: true, requested: true, expectedHead });
+}
+
+function projectApprovedBackendRestartSelectedCommand(command = {}) {
+  if (String(command?.operation || '') !== BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION) {
+    return command;
+  }
+  const projected = {};
+  for (const field of APPROVED_BACKEND_RESTART_SELECTED_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(command || {}, field)) projected[field] = command[field];
+  }
+  projected.operation = BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION;
+  projected.expectedHead = String(projected.expectedHead || '').trim().toLowerCase();
+  const shape = validateApprovedBackendRestartCommandShape(projected);
+  return shape.ok ? Object.freeze(projected) : command;
 }
 
 function projectDiagnosticEnvelope(command = {}, expectedHead = DIAGNOSTIC_EXPECTED_HEAD_UNSET) {
@@ -217,8 +246,16 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
   const selected = legacy.selectBattleBridgeGitHubCommandBatch(translated, options);
   if (!selected?.ok) return selected;
 
-  const commands = Array.isArray(selected.commands)
+  const selectedCommands = Array.isArray(selected.commands)
     ? selected.commands.map((entry) => {
+      const projectedCommand = projectApprovedBackendRestartSelectedCommand(entry.command);
+      if (projectedCommand === entry.command) return entry;
+      return Object.freeze({ ...entry, command: projectedCommand });
+    })
+    : [];
+
+  const commands = Array.isArray(selected.commands)
+    ? selectedCommands.map((entry) => {
       const original = diagnosticOriginals.get(String(entry?.commentId ?? ''));
       if (!original?.shape?.ok) return entry;
       return Object.freeze({

@@ -1,9 +1,11 @@
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
+
 export const PROTECTED_WORKFLOW_DISPATCH_SCHEMA = 'stephanos.protected-workflow-dispatch.v1';
 export const PROTECTED_WORKFLOW_DISPATCH_MARKER = 'stephanos-protected-workflow-dispatch';
 export const PROTECTED_WORKFLOW_DISPATCH_OPERATION = 'DISPATCH_PROTECTED_OPERATOR_MERGE';
 export const PROTECTED_WORKFLOW_READY_OPERATION = 'MARK_PROTECTED_PR_READY';
 export const PROTECTED_WORKFLOW_DISPATCH_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const PROTECTED_WORKFLOW_DISPATCH_ISSUE = 1507;
+export const PROTECTED_WORKFLOW_DISPATCH_ISSUE = CANONICAL_MAILBOX_ISSUE;
 export const PROTECTED_WORKFLOW_DISPATCH_AUTHOR = 'Cheekyfellastef';
 export const PROTECTED_WORKFLOW_DISPATCH_PATH = '.github/workflows/operator-merge-approval-gate.yml';
 export const PROTECTED_WORKFLOW_DISPATCH_WORKFLOW_ID = 'operator-merge-approval-gate.yml';
