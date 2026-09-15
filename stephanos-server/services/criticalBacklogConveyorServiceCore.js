@@ -606,20 +606,45 @@ export async function ensureCriticalBacklogMission({
         ? elasticControllerProjection(elasticAdmission)
         : null;
       if (elasticProjection) {
-        const capacityRouting = await readCapacityRouting({
-          root: paths.workspaceRoot,
-          repoRoot: paths.repoRoot,
-          nowUtc,
-          sourceRevision,
-          env,
-        });
-        elasticIgnition = await dispatchElasticBuilds(elasticAdmission, {
-          env,
-          now,
-          paths,
-          sourceRevision,
-          capacityRouting,
-        });
+        if (workerRuntimeHold) {
+          const desiredWidth = Math.max(0, Math.min(MAXIMUM_BUILD_LANES, Number(elasticAdmission.desiredWidth) || 0));
+          const runningCount = (Array.isArray(elasticAdmission.activeMissions) ? elasticAdmission.activeMissions : [])
+            .filter((mission) => text(mission?.dispatch?.status).toLowerCase() === 'running').length;
+          elasticIgnition = Object.freeze({
+            schemaVersion: ELASTIC_GOAL_BUILD_IGNITION_SCHEMA,
+            ok: true,
+            classification: 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD',
+            sourceRevision,
+            desiredWidth,
+            availableSlots: Math.max(0, desiredWidth - runningCount),
+            dispatchCount: 0,
+            dispatched: Object.freeze([]),
+            held: Object.freeze([Object.freeze({
+              missionId: text(elasticAdmission.selectedMission?.missionId).toLowerCase(),
+              reason: 'MISSION_WORKER_RUNTIME_NOT_READY',
+            })]),
+            runtimeBlockers: Object.freeze([...programmeBlockers]),
+            resourceDisjointOneWriterProven: true,
+            blockedLaneDoesNotStallFleet: false,
+            mergeAuthority: false,
+            runtimeMutationAuthority: false,
+          });
+        } else {
+          const capacityRouting = await readCapacityRouting({
+            root: paths.workspaceRoot,
+            repoRoot: paths.repoRoot,
+            nowUtc,
+            sourceRevision,
+            env,
+          });
+          elasticIgnition = await dispatchElasticBuilds(elasticAdmission, {
+            env,
+            now,
+            paths,
+            sourceRevision,
+            capacityRouting,
+          });
+        }
         return Object.freeze({
           schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
           ok: true,
