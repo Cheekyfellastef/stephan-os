@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { createExecutionReceipt } from './executionReceiptV1.mjs';
 import {
   STEPHANOS_NATIVE_STAGING_REQUEST_SCHEMA,
   STEPHANOS_NATIVE_MODEL_RESULT_SCHEMA,
@@ -32,6 +33,46 @@ function fixture() {
   };
   return { request, result, one, two };
 }
+function groundedTestReceipt(request, testId='native-focused-test', outputSha256=hash('pass')) {
+  return {
+    testId,
+    outputSha256,
+    executionReceipt:createExecutionReceipt({
+      receiptId:`native-test-${testId}`,
+      repository:request.repository,
+      issueNumber:2007,
+      prNumber:0,
+      branch:request.branch,
+      sourceHead:HEAD,
+      workerId:request.workerId,
+      workerType:'orchestration-engine',
+      executionId:request.actionId,
+      leaseKey:request.leaseId,
+      state:'completed',
+      phase:`native-test:${testId}`,
+      sequence:1,
+      timestampUtc:'2026-09-15T14:39:00Z',
+      heartbeatExpiresAtUtc:'2026-09-15T14:41:00Z',
+      blocker:'',
+      operatorActionRequired:false,
+      proofRefs:[`proof/native-test/${outputSha256}`],
+      expectedNextAction:'',
+    }),
+  };
+}
+function proofFor(request, two, overrides={}) {
+  return {
+    baseHead: HEAD,
+    leaseId: request.leaseId,
+    changedFiles:['shared/agents/a.mjs'],
+    testReceipts:[groundedTestReceipt(request)],
+    sourceAfter:[
+      { path:'shared/agents/a.mjs', sha256:hash('export const one = 3;\n') },
+      { path:'shared/agents/b.mjs', sha256:hash(two) },
+    ],
+    ...overrides,
+  };
+}
 
 test('valid bounded request and model result produce promotion-eligible exact receipt', () => {
   const { request, result, two } = fixture();
@@ -41,16 +82,9 @@ test('valid bounded request and model result produce promotion-eligible exact re
   assert.equal(plan.ok, true);
   assert.equal(plan.branch, 'stephanos/native-canary-2007');
   assert.equal(plan.modelMayPromote, false);
-  const proof = {
-    baseHead: HEAD, leaseId: request.leaseId, changedFiles:['shared/agents/a.mjs'],
-    testReceipts:[{ testId:'native-focused-test', passed:true, outputSha256:hash('pass') }],
-    sourceAfter:[
-      { path:'shared/agents/a.mjs', sha256:hash('export const one = 3;\n') },
-      { path:'shared/agents/b.mjs', sha256:hash(two) },
-    ],
-  };
-  assert.equal(verifyStephanosNativeTestAndScopeProof(plan, proof).valid, true);
-  const receipt = createStephanosNativeStagingReceipt(plan, proof, { observedAtUtc:'2026-09-15T14:40:00Z' });
+  const proof = proofFor(request, two);
+  assert.equal(verifyStephanosNativeTestAndScopeProof(request, result, proof).valid, true);
+  const receipt = createStephanosNativeStagingReceipt(request, result, proof, { observedAtUtc:'2026-09-15T14:40:00Z' });
   assert.equal(receipt.sourceChanged, true);
   assert.equal(receipt.testsPassed, true);
   assert.equal(receipt.promotionEligible, true);
@@ -96,13 +130,47 @@ test('malformed allowedFiles fails closed without throwing', () => {
   assert.ok(verdict.errors.includes('allowed-files-invalid'));
 });
 
-test('test omission, unexpected changed scope and untouched-file drift block promotion', () => {
+test('proof verifier rebuilds the canonical plan instead of accepting forged plan-shaped data', () => {
+  const { request, result, two } = fixture();
+  const forgedRequest={...request,allowedFiles:['package.json'],sourceSnapshots:[{path:'package.json',content:'{}\n',sha256:hash('{}\n')}]};
+  const proof=proofFor(request,two);
+  assert.equal(verifyStephanosNativeTestAndScopeProof(forgedRequest,result,proof).valid,false);
+});
+
+test('test proof must be grounded in exact canonical execution receipt identity', () => {
+  const { request, result, two } = fixture();
+  const synthetic={testId:'native-focused-test',outputSha256:hash('pass'),executionReceipt:{}};
+  const proof=proofFor(request,two,{testReceipts:[synthetic]});
+  const verdict=verifyStephanosNativeTestAndScopeProof(request,result,proof);
+  assert.equal(verdict.valid,false);
+  assert.ok(verdict.errors.some((error)=>error.startsWith('required-test-invalid:native-focused-test:')));
+  const wrongWorker=groundedTestReceipt(request);
+  wrongWorker.executionReceipt={...wrongWorker.executionReceipt,workerId:'other-worker'};
+  const wrongWorkerVerdict=verifyStephanosNativeTestAndScopeProof(request,result,proofFor(request,two,{testReceipts:[wrongWorker]}));
+  assert.equal(wrongWorkerVerdict.valid,false);
+});
+
+test('validated head and lease identities are canonicalized into the plan', () => {
   const { request, result } = fixture();
-  const plan = buildStephanosNativeStagingPlan(request, result);
-  const base = { baseHead:HEAD, leaseId:request.leaseId, changedFiles:['shared/agents/a.mjs'], testReceipts:[], sourceAfter:[] };
-  assert.equal(verifyStephanosNativeTestAndScopeProof(plan, base).valid, false);
-  const widened = { ...base, changedFiles:['shared/agents/a.mjs','package.json'] };
-  assert.equal(verifyStephanosNativeTestAndScopeProof(plan, widened).valid, false);
+  const paddedRequest={...request,baseHead:`  ${HEAD}  `,leaseId:'  lease-native-2007  '};
+  const paddedResult={...result,baseHead:` ${HEAD} `};
+  const plan=buildStephanosNativeStagingPlan(paddedRequest,paddedResult);
+  assert.equal(plan.ok,true);
+  assert.equal(plan.baseHead,HEAD);
+  assert.equal(plan.leaseId,'lease-native-2007');
+});
+
+test('test omission, unexpected changed scope and untouched-file drift block promotion', () => {
+  const { request, result, two } = fixture();
+  const noTests=proofFor(request,two,{testReceipts:[]});
+  assert.equal(verifyStephanosNativeTestAndScopeProof(request,result,noTests).valid,false);
+  const widened=proofFor(request,two,{changedFiles:['shared/agents/a.mjs','package.json']});
+  assert.equal(verifyStephanosNativeTestAndScopeProof(request,result,widened).valid,false);
+  const drifted=proofFor(request,two,{sourceAfter:[
+    {path:'shared/agents/a.mjs',sha256:hash('export const one = 3;\n')},
+    {path:'shared/agents/b.mjs',sha256:hash('drift')},
+  ]});
+  assert.equal(verifyStephanosNativeTestAndScopeProof(request,result,drifted).valid,false);
 });
 
 test('accessor-bearing expected request field is rejected without invoking accessors', () => {
