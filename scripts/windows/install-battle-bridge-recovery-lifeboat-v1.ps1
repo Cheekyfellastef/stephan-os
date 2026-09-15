@@ -124,6 +124,13 @@ if ($activeBank) {
         $null = Read-FreshHealthyHeartbeat -BankId $activeBank -ExpectedManifest ([string]$activeState.manifestSha256)
         $activeBankFreshHealthy = $true
     } catch {
+        $heartbeatFailure = [string]$_.Exception.Message
+        $recoverableHeartbeatFailures = @(
+            "Lifeboat bank $activeBank has no heartbeat.",
+            "Lifeboat bank $activeBank heartbeat is not healthy and payload verified.",
+            "Lifeboat bank $activeBank heartbeat is stale."
+        )
+        if ($heartbeatFailure -notin $recoverableHeartbeatFailures) { throw }
         $activeBankFreshHealthy = $false
     }
 }
@@ -160,6 +167,19 @@ if ($null -ne $activeState -and $activeBankFreshHealthy -and $manifestSha256 -eq
         $startedNow = $true
     }
     $rollbackBank = if ($activeState.PSObject.Properties['rollbackBank']) { [string]$activeState.rollbackBank } else { '' }
+    $rollbackBankFreshHealthy = $false
+    if ($rollbackBank -in @('A', 'B') -and $rollbackBank -ne $activeBank -and $activeState.PSObject.Properties['previousManifestSha256']) {
+        $rollbackManifest = ([string]$activeState.previousManifestSha256).Trim().ToLowerInvariant()
+        if ($rollbackManifest -match '^[a-f0-9]{64}$') {
+            try {
+                $null = Assert-ActivePayloadManifest -BankId $rollbackBank -ExpectedManifest $rollbackManifest
+                $null = Read-FreshHealthyHeartbeat -BankId $rollbackBank -ExpectedManifest $rollbackManifest
+                $rollbackBankFreshHealthy = $true
+            } catch {
+                $rollbackBankFreshHealthy = $false
+            }
+        }
+    }
     [pscustomobject]@{
         schemaVersion = 'stephanos.battle-bridge-recovery-lifeboat-install.v1'
         taskName = $taskName
@@ -176,7 +196,7 @@ if ($null -ne $activeState -and $activeBankFreshHealthy -and $manifestSha256 -eq
         githubClaimConsumerIncluded = $true
         githubEndpointFixed = $true
         githubTokenRequired = $false
-        productionRedundancyReady = [bool]($activeBankFreshHealthy -and $activeBank -in @('A', 'B'))
+        productionRedundancyReady = [bool]$rollbackBankFreshHealthy
         immutableLauncher = $true
         windowlessLauncher = $true
         windowlessLauncherSha256 = $windowlessLauncherSha256
