@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { APPROVAL_BOUNDARY_PATHS_V2 } from './operatorMergeApprovalBoundaryV2.mjs';
 import {
+  STANDING_BUILDER_CONTINUITY_ALLOWED_ACTION_CLASSES,
   STANDING_BUILDER_CONTINUITY_AUTHORITY_SCHEMA,
+  STANDING_BUILDER_CONTINUITY_FORBIDDEN_ACTION_CLASSES,
   STANDING_BUILDER_CONTINUITY_POLICY_VERSION,
 } from './standingBuilderContinuityAuthorityV1.mjs';
 import {
@@ -37,8 +39,8 @@ function authority(overrides = {}) {
     missionClass: 'BUILDER_CONTINUITY',
     canonicalGoalRefs: [1557, 1622, 1802],
     repository: REPOSITORY,
-    allowedActionClasses: ['PROTECTED_REPROOF'],
-    forbiddenActionClasses: ['DIRECT_MAIN_WRITE', 'RUNTIME_MUTATION'],
+    allowedActionClasses: [...STANDING_BUILDER_CONTINUITY_ALLOWED_ACTION_CLASSES],
+    forbiddenActionClasses: [...STANDING_BUILDER_CONTINUITY_FORBIDDEN_ACTION_CLASSES],
     createdAtUtc: '2026-09-14T07:00:00Z',
     revocationState: 'ACTIVE',
     policyVersion: STANDING_BUILDER_CONTINUITY_POLICY_VERSION,
@@ -150,10 +152,26 @@ test('draft PR cannot enter protected reproof execution', () => {
   assert.ok(result.blockers.includes('standing-reproof-pr-still-draft'));
 });
 
+test('unknown draft state cannot enter protected reproof execution', () => {
+  for (const pullRequestDraft of [null, undefined, 'false', 0]) {
+    const result = buildStandingBuilderContinuityProtectedReproofV1(validInput({ pullRequestDraft }));
+    assert.equal(result.ready, false);
+    assert.ok(result.blockers.includes('standing-reproof-pr-still-draft'));
+  }
+});
+
 test('unresolved review thread blocks protected reproof', () => {
   const result = buildStandingBuilderContinuityProtectedReproofV1(validInput({ unresolvedReviewThreads: 1 }));
   assert.equal(result.ready, false);
   assert.ok(result.blockers.includes('standing-reproof-unresolved-review-threads'));
+});
+
+test('unknown unresolved-thread evidence blocks protected reproof', () => {
+  for (const unresolvedReviewThreads of [null, undefined, '0', -1]) {
+    const result = buildStandingBuilderContinuityProtectedReproofV1(validInput({ unresolvedReviewThreads }));
+    assert.equal(result.ready, false);
+    assert.ok(result.blockers.includes('standing-reproof-unresolved-review-threads-unknown'));
+  }
 });
 
 test('changed estate drift blocks protected reproof', () => {
