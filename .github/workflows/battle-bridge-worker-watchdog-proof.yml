@@ -17,6 +17,7 @@ on:
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
       - 'scripts/mission-worker-git-stderr-isolation.test.mjs'
       - 'scripts/mission-worker-cleanup-launch-receipt-proof.test.mjs'
+      - 'scripts/mission-worker-process-start-api-consistency.test.mjs'
       - 'scripts/windows/*worker-watchdog.ps1'
       - 'scripts/windows/start-mission-orchestrator-worker.ps1'
       - 'scripts/windows/restart-approved-stephanos-runtime.ps1'
@@ -37,6 +38,7 @@ on:
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
       - 'scripts/mission-worker-git-stderr-isolation.test.mjs'
       - 'scripts/mission-worker-cleanup-launch-receipt-proof.test.mjs'
+      - 'scripts/mission-worker-process-start-api-consistency.test.mjs'
       - 'scripts/windows/*worker-watchdog.ps1'
       - 'scripts/windows/start-mission-orchestrator-worker.ps1'
       - 'scripts/windows/restart-approved-stephanos-runtime.ps1'
@@ -80,6 +82,7 @@ jobs:
           node --check scripts/mission-orchestrator-worker-heartbeat.mjs
           node --check scripts/mission-orchestrator-worker-heartbeat-active-claim.mjs
           node --check scripts/mission-orchestrator-worker-supervised.mjs
+          node --check scripts/mission-worker-process-start-api-consistency.test.mjs
 
       - name: Parse Windows watchdog scripts
         shell: pwsh
@@ -114,6 +117,9 @@ jobs:
 
       - name: Test Mission Worker cleanup launch receipt proof
         run: node --test scripts/mission-worker-cleanup-launch-receipt-proof.test.mjs
+
+      - name: Test Mission Worker process start-time API consistency
+        run: node --test scripts/mission-worker-process-start-api-consistency.test.mjs
 
       - name: Test supervised worker
         run: node --test scripts/mission-orchestrator-worker-supervised.test.mjs
