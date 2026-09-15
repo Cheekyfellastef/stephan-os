@@ -13,6 +13,7 @@ import {
 const hash=(v)=>createHash('sha256').update(v).digest('hex');
 const HEAD='b'.repeat(40);
 const NOW='2026-09-15T14:41:00Z';
+const KEY_ID='battle-bridge-native-capacity-key-v1';
 const {privateKey,publicKey}=generateKeyPairSync('ed25519');
 const privateKeyPem=privateKey.export({type:'pkcs8',format:'pem'});
 const publicKeyPem=publicKey.export({type:'spki',format:'pem'});
@@ -32,10 +33,11 @@ function expected(p=payload(), overrides={}) { return {
   sourceHead:p.sourceHead,
   workerId:p.workerId,
   nowUtc:NOW,
+  keyId:KEY_ID,
   ...overrides,
 }; }
 function signedReceipt(p=payload()) {
-  return createStephanosNativeCapacityReceipt(p,{privateKeyPem,keyId:'battle-bridge-native-capacity-key-v1'});
+  return createStephanosNativeCapacityReceipt(p,{privateKeyPem,keyId:KEY_ID});
 }
 function authorityOptions(p=payload(), overrides={}) {
   return {publicKeyPem,expected:expected(p),...overrides};
@@ -54,11 +56,11 @@ test('fresh local Ollama capacity signs, verifies against exact target and yield
   assert.equal(authority.mergeAuthority,false);
 });
 
-test('verification requires independent clock and exact repository/head/worker bindings',()=>{
+test('verification requires independent clock, signer identity and exact repository/head/worker bindings',()=>{
   const p=payload();
   const receipt=signedReceipt(p);
   const complete=expected(p);
-  for (const missing of ['repository','sourceHead','workerId','nowUtc']) {
+  for (const missing of ['repository','sourceHead','workerId','nowUtc','keyId']) {
     const incomplete={...complete};
     delete incomplete[missing];
     const verdict=verifyStephanosNativeCapacityReceipt(receipt,{publicKeyPem,expected:incomplete});
@@ -68,6 +70,22 @@ test('verification requires independent clock and exact repository/head/worker b
   const replay=verifyStephanosNativeCapacityReceipt(receipt,{publicKeyPem,expected:expected(p,{nowUtc:'2027-09-15T14:41:00Z'})});
   assert.equal(replay.valid,false);
   assert.ok(replay.errors.includes('freshness-invalid'));
+  const relabeled={...receipt,keyId:'different-trusted-key'};
+  const wrongIdentity=verifyStephanosNativeCapacityReceipt(relabeled,{publicKeyPem,expected:expected(p)});
+  assert.equal(wrongIdentity.valid,false);
+  assert.ok(wrongIdentity.errors.includes('verification-key-id-mismatch'));
+});
+
+test('verified payload is a deeply immutable authenticated snapshot',()=>{
+  const p=payload();
+  const receipt=signedReceipt(p);
+  const verdict=verifyStephanosNativeCapacityReceipt(receipt,{publicKeyPem,expected:expected(p)});
+  assert.equal(verdict.valid,true);
+  assert.notEqual(verdict.payload,receipt.payload);
+  assert.ok(Object.isFrozen(verdict.payload));
+  assert.ok(Object.isFrozen(verdict.payload.supportedTaskClasses));
+  assert.throws(()=>{ verdict.payload.supportedTaskClasses[0]='EXACT_HEAD_REVIEW'; },TypeError);
+  assert.equal(verdict.payload.supportedTaskClasses[0],'FOCUSED_REPAIR');
 });
 
 test('source authority can only derive from a verified fresh receipt and exact context',()=>{
@@ -118,7 +136,7 @@ test('signing rejects accessor-bearing payload before reading observedAtUtc',()=
   const descriptors=Object.fromEntries(Object.entries(p).map(([key,value])=>[key,{value,enumerable:true,writable:true,configurable:true}]));
   descriptors.observedAtUtc={get(){invoked+=1;throw new Error('must-not-run');},enumerable:true,configurable:true};
   const hostile=Object.create(Object.prototype,descriptors);
-  assert.equal(createStephanosNativeCapacityReceipt(hostile,{privateKeyPem,keyId:'battle-bridge-native-capacity-key-v1'}),null);
+  assert.equal(createStephanosNativeCapacityReceipt(hostile,{privateKeyPem,keyId:KEY_ID}),null);
   assert.equal(invoked,0);
 });
 
@@ -169,4 +187,23 @@ test('accessor-bearing verification options fail closed without invoking getters
   assert.equal(verdict.valid,false);
   assert.ok(verdict.errors.includes('verification-key-invalid'));
   assert.equal(invoked,0);
+});
+
+test('proxy payload and verification context fail closed without proxy traps executing',()=>{
+  let traps=0;
+  const hostilePayload=new Proxy(payload(),{
+    getPrototypeOf(){traps+=1;throw new Error('must-not-run');},
+    ownKeys(){traps+=1;throw new Error('must-not-run');},
+  });
+  assert.equal(validateStephanosNativeCapacityPayload(hostilePayload,expected()).valid,false);
+  assert.equal(traps,0);
+  const receipt=signedReceipt(payload());
+  const hostileExpected=new Proxy(expected(),{
+    getPrototypeOf(){traps+=1;throw new Error('must-not-run');},
+    ownKeys(){traps+=1;throw new Error('must-not-run');},
+  });
+  const verdict=verifyStephanosNativeCapacityReceipt(receipt,{publicKeyPem,expected:hostileExpected});
+  assert.equal(verdict.valid,false);
+  assert.ok(verdict.errors.includes('verification-context-invalid'));
+  assert.equal(traps,0);
 });
