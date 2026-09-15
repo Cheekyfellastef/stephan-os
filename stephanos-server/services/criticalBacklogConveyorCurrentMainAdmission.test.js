@@ -23,9 +23,9 @@ const paths = Object.freeze({
   snapshotRoot: '/snapshots',
 });
 
-test('elastic source admission uses canonical main while stale physical worker remains HOLD', async () => {
-  let observedSourceRevision = '';
-  let observedCapacityRevision = '';
+test('stale worker HOLD admits canonical main but keeps worker dispatch fail closed', async () => {
+  let admissionCount = 0;
+  let capacityReadCount = 0;
   let dispatchCount = 0;
   const result = await ensureCriticalBacklogMission({
     now: NOW,
@@ -37,22 +37,24 @@ test('elastic source admission uses canonical main while stale physical worker r
       machineryInventory: { sourceHead: CURRENT_MAIN },
       scheduler: { failClosed: false, elasticCapacity: { status: 'RUNNING' } },
     }),
-    ensureElasticMissions: async () => ({
-      ok: true,
-      createdMissionCount: 0,
-      desiredWidth: 1,
-      selectedMission: mission,
-      elasticMissions: [mission],
-      activeMissions: [],
-      runnableMissions: [mission],
-    }),
-    readCapacityRouting: async ({ sourceRevision }) => {
-      observedCapacityRevision = sourceRevision;
+    ensureElasticMissions: async () => {
+      admissionCount += 1;
+      return {
+        ok: true,
+        createdMissionCount: 0,
+        desiredWidth: 1,
+        selectedMission: mission,
+        elasticMissions: [mission],
+        activeMissions: [],
+        runnableMissions: [mission],
+      };
+    },
+    readCapacityRouting: async () => {
+      capacityReadCount += 1;
       return { providerNeutralCapacity: 'fresh' };
     },
-    dispatchElasticBuilds: async (_admission, { sourceRevision }) => {
+    dispatchElasticBuilds: async () => {
       dispatchCount += 1;
-      observedSourceRevision = sourceRevision;
       return { ok: true, dispatchCount: 1, dispatched: [{ missionId: mission.missionId }] };
     },
     dispatchActiveCriticalMission: async () => ({ ok: true, classification: 'CRITICAL_ACTIVE_MISSION_DISPATCH_NOT_REQUIRED' }),
@@ -63,10 +65,19 @@ test('elastic source admission uses canonical main while stale physical worker r
   assert.equal(result.programmeStatus, 'HOLD');
   assert.equal(result.workerRuntimeHold, true);
   assert.deepEqual(result.programmeBlockers, ['worker-heartbeat-invalid-or-missing']);
-  assert.equal(dispatchCount, 1);
-  assert.equal(observedCapacityRevision, CURRENT_MAIN);
-  assert.equal(observedSourceRevision, CURRENT_MAIN);
-  assert.notEqual(observedSourceRevision, STALE_WORKER_HEAD);
+  assert.equal(admissionCount, 1);
+  assert.equal(capacityReadCount, 0);
+  assert.equal(dispatchCount, 0);
+  assert.equal(result.elasticIgnition.classification, 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD');
+  assert.equal(result.elasticIgnition.sourceRevision, CURRENT_MAIN);
+  assert.equal(result.elasticIgnition.dispatchCount, 0);
+  assert.deepEqual(result.elasticIgnition.dispatched, []);
+  assert.deepEqual(result.elasticIgnition.held, [{
+    missionId: mission.missionId,
+    reason: 'MISSION_WORKER_RUNTIME_NOT_READY',
+  }]);
+  assert.deepEqual(result.elasticIgnition.runtimeBlockers, ['worker-heartbeat-invalid-or-missing']);
+  assert.equal(result.elasticIgnition.runtimeMutationAuthority, false);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.arbitraryShellAllowed, false);
 });
