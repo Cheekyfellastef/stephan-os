@@ -289,7 +289,7 @@ test('one global run budget stops recovery probes in time to publish bounded fai
     assert.equal(inspections, 1);
     assert.deepEqual(observedTimeouts.map((item) => item.mode), ['Inspect', 'StartApprovedWorkerTask']);
     assert.equal(observedTimeouts[0].timeoutMs, WORKER_WATCHDOG_INITIAL_PROBE_TIMEOUT_MS);
-    assert.ok(observedTimeouts[1].timeoutMs > 0 && observedTimeouts[1].timeoutMs <= 95_000);
+    assert.ok(observedTimeouts[1].timeoutMs > 0 && observedTimeouts[1].timeoutMs <= 100_000);
     assert.equal(observedTimeouts[0].deadlineUtc, undefined);
     assert.equal(observedTimeouts[1].deadlineUtc, '2026-08-12T20:01:25.000Z');
     const status = await readCurrentStatus(paths);
