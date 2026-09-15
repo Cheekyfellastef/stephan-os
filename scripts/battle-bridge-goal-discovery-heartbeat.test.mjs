@@ -30,7 +30,7 @@ test('goal discovery heartbeat fails closed when the conveyor blocks', async () 
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED');
 });
 
-test('held elastic mission does not strand already-admitted queued source work', async () => {
+test('held elastic mission does not strand admitted work or stop controller continuity', async () => {
   let buildCalls=0;
   const conveyor=async () => ({
     ok:true,
@@ -53,13 +53,19 @@ test('held elastic mission does not strand already-admitted queued source work',
   assert.equal(built.finalVerdict,'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED');
   assert.equal(built.elasticHold.held[0].missionId,'critical-2009-elastic-goal');
 
-  const held=await runBattleBridgeGoalDiscoveryHeartbeat({
+  const parked=await runBattleBridgeGoalDiscoveryHeartbeat({
     conveyor,
     buildClaimedGoal:async () => ({processed:false,success:false,reason:'queue-empty'}),
   });
-  assert.equal(held.ok,false);
-  assert.equal(held.finalVerdict,'GOAL_DISCOVERY_HEARTBEAT_ELASTIC_SOURCE_BUILD_HELD');
-  assert.match(held.blocker,/critical-2009-elastic-goal:DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE/);
+  assert.equal(parked.ok,true);
+  assert.equal(parked.finalVerdict,'GOAL_DISCOVERY_HEARTBEAT_ELASTIC_SOURCE_BUILD_PARKED_CONTINUING');
+  assert.equal(parked.heldLaneParked,true);
+  assert.equal(parked.controllerContinuity,'CONTINUE');
+  assert.deepEqual(parked.parkedLaneBlockers,[
+    'critical-2009-elastic-goal:DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE',
+  ]);
+  assert.equal(parked.mergeAuthority,false);
+  assert.equal(parked.runtimeMutationAuthority,false);
 });
 
 test('Battle Bridge sync coordinator owns goal discovery after successful convergence', async () => {
