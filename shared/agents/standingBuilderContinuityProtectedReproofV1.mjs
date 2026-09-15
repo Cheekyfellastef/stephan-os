@@ -80,10 +80,14 @@ export function buildStandingBuilderContinuityProtectedReproofV1(input = {}) {
   if (text(eligibility.baseSha).toLowerCase() !== baseSha) blockers.push('standing-reproof-eligibility-base-drift');
 
   if (input.pullRequestOpen !== true) blockers.push('standing-reproof-pr-not-open');
-  if (input.pullRequestDraft === true) blockers.push('standing-reproof-pr-still-draft');
+  if (input.pullRequestDraft !== false) blockers.push('standing-reproof-pr-still-draft');
   if (input.pullRequestMerged === true) blockers.push('standing-reproof-pr-already-merged');
   if (input.mergeable !== true) blockers.push('standing-reproof-not-mergeable');
-  if (Number(input.unresolvedReviewThreads) !== 0) blockers.push('standing-reproof-unresolved-review-threads');
+  if (!Number.isSafeInteger(input.unresolvedReviewThreads) || input.unresolvedReviewThreads < 0) {
+    blockers.push('standing-reproof-unresolved-review-threads-unknown');
+  } else if (input.unresolvedReviewThreads !== 0) {
+    blockers.push('standing-reproof-unresolved-review-threads');
+  }
   if (input.exactHostedChecksGreen !== true) blockers.push('standing-reproof-hosted-checks-not-green');
   if (input.deterministicHighRiskTestsGreen !== true) blockers.push('standing-reproof-high-risk-tests-not-green');
   if (input.independentReviewBoundToTuple !== true) blockers.push('standing-reproof-independent-review-not-bound');
