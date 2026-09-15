@@ -16,6 +16,9 @@ const NOW='2026-09-15T14:41:00Z';
 const {privateKey,publicKey}=generateKeyPairSync('ed25519');
 const privateKeyPem=privateKey.export({type:'pkcs8',format:'pem'});
 const publicKeyPem=publicKey.export({type:'spki',format:'pem'});
+const {privateKey:rsaPrivateKey,publicKey:rsaPublicKey}=generateKeyPairSync('rsa',{modulusLength:2048});
+const rsaPrivateKeyPem=rsaPrivateKey.export({type:'pkcs8',format:'pem'});
+const rsaPublicKeyPem=rsaPublicKey.export({type:'spki',format:'pem'});
 function payload(overrides={}) { return {
   schemaVersion:STEPHANOS_NATIVE_CAPACITY_PAYLOAD_SCHEMA, receiptId:'native-capacity-1', repository:'Cheekyfellastef/stephan-os', sourceHead:HEAD,
   workerId:'stephanos-native-battle-bridge', provider:'ollama-local', transport:'http-loopback-fixed', endpoint:'http://127.0.0.1:11434', model:'qwen:14b',
@@ -109,6 +112,39 @@ test('source authority cannot widen task classes beyond the verified signed capa
   assert.ok(verdict.errors.includes('authority-task-classes-invalid'));
 });
 
+test('signing rejects accessor-bearing payload before reading observedAtUtc',()=>{
+  let invoked=0;
+  const p=payload();
+  const descriptors=Object.fromEntries(Object.entries(p).map(([key,value])=>[key,{value,enumerable:true,writable:true,configurable:true}]));
+  descriptors.observedAtUtc={get(){invoked+=1;throw new Error('must-not-run');},enumerable:true,configurable:true};
+  const hostile=Object.create(Object.prototype,descriptors);
+  assert.equal(createStephanosNativeCapacityReceipt(hostile,{privateKeyPem,keyId:'battle-bridge-native-capacity-key-v1'}),null);
+  assert.equal(invoked,0);
+});
+
+test('authority list accessors fail closed before any element getter executes',()=>{
+  let invoked=0;
+  const p=payload();
+  const receipt=signedReceipt(p);
+  const authority=createStephanosNativeSourceAuthority(receipt,authorityOptions(p));
+  const hostileOperations=['SOURCE_CONSTRUCTION','FOCUSED_TESTS'];
+  Object.defineProperty(hostileOperations,'0',{get(){invoked+=1;throw new Error('must-not-run');},enumerable:true,configurable:true});
+  const hostile={...authority,allowedOperations:hostileOperations};
+  const verdict=validateStephanosNativeSourceAuthority(hostile,receipt,authorityOptions(p));
+  assert.equal(verdict.valid,false);
+  assert.ok(verdict.errors.includes('authority-operations-invalid'));
+  assert.equal(invoked,0);
+});
+
+test('receipt cryptographic policy accepts only actual Ed25519 keys',()=>{
+  const p=payload();
+  assert.equal(createStephanosNativeCapacityReceipt(p,{privateKeyPem:rsaPrivateKeyPem,keyId:'rsa-misconfigured-key'}),null);
+  const receipt=signedReceipt(p);
+  const verdict=verifyStephanosNativeCapacityReceipt(receipt,{publicKeyPem:rsaPublicKeyPem,expected:expected(p)});
+  assert.equal(verdict.valid,false);
+  assert.ok(verdict.errors.includes('verification-key-invalid'));
+});
+
 test('accessor-bearing capacity payload fails closed without invoking expected fields',()=>{
   let invoked=0;
   const p=payload();
@@ -118,5 +154,19 @@ test('accessor-bearing capacity payload fails closed without invoking expected f
   const verdict=validateStephanosNativeCapacityPayload(hostile,expected(p));
   assert.equal(verdict.valid,false);
   assert.ok(verdict.errors.includes('payload-shape-invalid'));
+  assert.equal(invoked,0);
+});
+
+test('accessor-bearing verification options fail closed without invoking getters',()=>{
+  let invoked=0;
+  const p=payload();
+  const receipt=signedReceipt(p);
+  const options=Object.create(Object.prototype,{
+    publicKeyPem:{get(){invoked+=1;throw new Error('must-not-run');},enumerable:true,configurable:true},
+    expected:{value:expected(p),enumerable:true,writable:true,configurable:true},
+  });
+  const verdict=verifyStephanosNativeCapacityReceipt(receipt,options);
+  assert.equal(verdict.valid,false);
+  assert.ok(verdict.errors.includes('verification-key-invalid'));
   assert.equal(invoked,0);
 });
