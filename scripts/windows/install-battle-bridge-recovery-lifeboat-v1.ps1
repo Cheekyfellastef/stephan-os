@@ -117,9 +117,22 @@ if (Test-Path -LiteralPath $installedWindowlessLauncher -PathType Leaf) {
 $windowlessLauncherSha256 = Get-Sha256 $installedWindowlessLauncher
 
 $activeBank = if ($null -eq $activeState) { '' } else { [string]$activeState.activeBank }
+$activeBankFreshHealthy = $false
 if ($activeBank) {
-    $null = Read-FreshHealthyHeartbeat -BankId $activeBank -ExpectedManifest ([string]$activeState.manifestSha256)
     $null = Assert-ActivePayloadManifest -BankId $activeBank -ExpectedManifest ([string]$activeState.manifestSha256)
+    try {
+        $null = Read-FreshHealthyHeartbeat -BankId $activeBank -ExpectedManifest ([string]$activeState.manifestSha256)
+        $activeBankFreshHealthy = $true
+    } catch {
+        $heartbeatFailure = [string]$_.Exception.Message
+        $recoverableHeartbeatFailures = @(
+            "Lifeboat bank $activeBank has no heartbeat.",
+            "Lifeboat bank $activeBank heartbeat is not healthy and payload verified.",
+            "Lifeboat bank $activeBank heartbeat is stale."
+        )
+        if ($heartbeatFailure -notin $recoverableHeartbeatFailures) { throw }
+        $activeBankFreshHealthy = $false
+    }
 }
 $targetBank = if ($activeBank -eq 'A') { 'B' } else { 'A' }
 if ($targetBank -eq $activeBank) { throw 'Lifeboat installer must never target the active bank.' }
@@ -144,7 +157,7 @@ $sha = [System.Security.Cryptography.SHA256]::Create()
 try { $manifestSha256 = ([BitConverter]::ToString($sha.ComputeHash($manifestBytes))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }
 Set-Content -LiteralPath (Join-Path $stageRoot 'manifest.sha256') -Value $manifestSha256 -Encoding ASCII
 
-if ($null -ne $activeState -and $manifestSha256 -eq [string]$activeState.manifestSha256) {
+if ($null -ne $activeState -and $activeBankFreshHealthy -and $manifestSha256 -eq [string]$activeState.manifestSha256) {
     $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     $null = Assert-CanonicalScheduledTask -CurrentUser $currentUser
     Remove-Item -LiteralPath $stageRoot -Recurse -Force
@@ -154,6 +167,19 @@ if ($null -ne $activeState -and $manifestSha256 -eq [string]$activeState.manifes
         $startedNow = $true
     }
     $rollbackBank = if ($activeState.PSObject.Properties['rollbackBank']) { [string]$activeState.rollbackBank } else { '' }
+    $rollbackBankFreshHealthy = $false
+    if ($rollbackBank -in @('A', 'B') -and $rollbackBank -ne $activeBank -and $activeState.PSObject.Properties['previousManifestSha256']) {
+        $rollbackManifest = ([string]$activeState.previousManifestSha256).Trim().ToLowerInvariant()
+        if ($rollbackManifest -match '^[a-f0-9]{64}$') {
+            try {
+                $null = Assert-ActivePayloadManifest -BankId $rollbackBank -ExpectedManifest $rollbackManifest
+                $null = Read-FreshHealthyHeartbeat -BankId $rollbackBank -ExpectedManifest $rollbackManifest
+                $rollbackBankFreshHealthy = $true
+            } catch {
+                $rollbackBankFreshHealthy = $false
+            }
+        }
+    }
     [pscustomobject]@{
         schemaVersion = 'stephanos.battle-bridge-recovery-lifeboat-install.v1'
         taskName = $taskName
@@ -170,7 +196,7 @@ if ($null -ne $activeState -and $manifestSha256 -eq [string]$activeState.manifes
         githubClaimConsumerIncluded = $true
         githubEndpointFixed = $true
         githubTokenRequired = $false
-        productionRedundancyReady = [bool]($rollbackBank -in @('A', 'B'))
+        productionRedundancyReady = [bool]$rollbackBankFreshHealthy
         immutableLauncher = $true
         windowlessLauncher = $true
         windowlessLauncherSha256 = $windowlessLauncherSha256
@@ -224,7 +250,7 @@ if ($PSCmdlet.ShouldProcess($targetRoot, "Stage and prove candidate lifeboat in 
         selfTestVerdict = 'PASS'
         promotedAtUtc = [DateTime]::UtcNow.ToString('o')
         previousManifestSha256 = if ($null -eq $activeState) { '' } else { [string]$activeState.manifestSha256 }
-        productionRedundancyReady = [bool]($activeBank -in @('A', 'B'))
+        productionRedundancyReady = [bool]($activeBankFreshHealthy -and $activeBank -in @('A', 'B'))
         githubClaimConsumerIncluded = $true
         windowlessLauncher = $true
         windowlessLauncherSha256 = $windowlessLauncherSha256
@@ -260,7 +286,7 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register fixed independent Battle Bridge
     githubClaimConsumerIncluded = $true
     githubEndpointFixed = $true
     githubTokenRequired = $false
-    productionRedundancyReady = [bool]($activeBank -in @('A', 'B'))
+    productionRedundancyReady = [bool]($activeBankFreshHealthy -and $activeBank -in @('A', 'B'))
     immutableLauncher = $true
     windowlessLauncher = $true
     windowlessLauncherSha256 = $windowlessLauncherSha256
