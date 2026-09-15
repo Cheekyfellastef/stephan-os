@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  STANDING_BUILDER_CONTINUITY_ALLOWED_ACTION_CLASSES,
   STANDING_BUILDER_CONTINUITY_AUTHORITY_SCHEMA,
+  STANDING_BUILDER_CONTINUITY_FORBIDDEN_ACTION_CLASSES,
   STANDING_BUILDER_CONTINUITY_POLICY_VERSION,
   evaluateStandingBuilderContinuityFallbackV1,
   validateStandingBuilderContinuityAuthorityV1,
@@ -18,8 +20,8 @@ function authority(overrides = {}) {
     missionClass: 'BUILDER_CONTINUITY',
     canonicalGoalRefs: [1291, 1497, 1556, 1557, 1622, 1637],
     repository: 'Cheekyfellastef/stephan-os',
-    allowedActionClasses: ['BOUNDED_SOURCE_REPAIR', 'PROTECTED_ADMISSION_REPROOF'],
-    forbiddenActionClasses: ['ARBITRARY_SHELL', 'CREDENTIAL_CHANGE', 'DIRECT_MAIN_WRITE', 'RUNTIME_MUTATION'],
+    allowedActionClasses: [...STANDING_BUILDER_CONTINUITY_ALLOWED_ACTION_CLASSES],
+    forbiddenActionClasses: [...STANDING_BUILDER_CONTINUITY_FORBIDDEN_ACTION_CLASSES],
     createdAtUtc: '2026-09-14T07:00:00Z',
     revocationState: 'ACTIVE',
     policyVersion: STANDING_BUILDER_CONTINUITY_POLICY_VERSION,
@@ -71,6 +73,22 @@ test('revoked standing authority fails closed', () => {
   const result = validateStandingBuilderContinuityAuthorityV1(authority({ revocationState: 'REVOKED' }));
   assert.equal(result.valid, false);
   assert.ok(result.blockers.includes('standing-authority-revoked'));
+});
+
+test('V1 rejects arbitrary allowed action classes even when syntactically valid', () => {
+  const result = validateStandingBuilderContinuityAuthorityV1(authority({
+    allowedActionClasses: ['DIRECT_MAIN_WRITE'],
+  }));
+  assert.equal(result.valid, false);
+  assert.ok(result.blockers.includes('standing-authority-allowed-actions-not-canonical'));
+});
+
+test('V1 requires the complete canonical forbidden action set', () => {
+  const result = validateStandingBuilderContinuityAuthorityV1(authority({
+    forbiddenActionClasses: ['DIRECT_MAIN_WRITE', 'RUNTIME_MUTATION'],
+  }));
+  assert.equal(result.valid, false);
+  assert.ok(result.blockers.includes('standing-authority-forbidden-actions-not-canonical'));
 });
 
 test('provider-unavailable specialist escalation can become eligibility only, never merge authority', () => {
@@ -139,6 +157,14 @@ test('identity drift, unresolved threads and ownership ambiguity remain blockers
   assert.ok(result.blockers.includes('standing-authority-unresolved-review-threads'));
 });
 
+test('unknown unresolved-thread evidence fails closed instead of coercing to zero', () => {
+  for (const unresolvedReviewThreads of [null, undefined, '0', -1]) {
+    const result = evaluateStandingBuilderContinuityFallbackV1(eligibleInput({ unresolvedReviewThreads }));
+    assert.equal(result.eligible, false);
+    assert.ok(result.blockers.includes('standing-authority-unresolved-review-threads-unknown'));
+  }
+});
+
 test('missing exact deterministic quorum evidence fails closed', () => {
   const result = evaluateStandingBuilderContinuityFallbackV1(eligibleInput({
     quorumProofs: ['exact-head-hosted-checks'],
@@ -151,4 +177,12 @@ test('new authority surfaces are never eligible under continuity standing author
   const result = evaluateStandingBuilderContinuityFallbackV1(eligibleInput({ newAuthoritySurfaceIntroduced: true }));
   assert.equal(result.eligible, false);
   assert.ok(result.blockers.includes('standing-authority-new-authority-surface-forbidden'));
+});
+
+test('unknown authority-surface evidence fails closed', () => {
+  for (const newAuthoritySurfaceIntroduced of [null, undefined, 'false', 0]) {
+    const result = evaluateStandingBuilderContinuityFallbackV1(eligibleInput({ newAuthoritySurfaceIntroduced }));
+    assert.equal(result.eligible, false);
+    assert.ok(result.blockers.includes('standing-authority-new-authority-surface-forbidden'));
+  }
 });
