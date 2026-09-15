@@ -10,6 +10,7 @@
   const MAX_BEACON_AGE_MS = 3 * 60 * 1000;
   const SHA = /^[0-9a-f]{40}$/;
   const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+  const AUTONOMY_GATES = ['SYNC', 'CONTROL_PLANE', 'HEARTBEAT', 'ELIGIBLE_GOAL', 'SELECT', 'CLAIM', 'SOURCE_CHANGED', 'TESTED', 'TERMINAL_RECEIPT', 'REVIEW_HANDOFF', 'RELEASE', 'SELECT_NEXT'];
 
   function isLocalHost() {
     return LOCAL_HOSTS.has(String(window.location?.hostname || '').toLowerCase());
@@ -70,6 +71,80 @@
     return (Array.isArray(beacon?.surfaces) ? beacon.surfaces : []).find((item) => item?.id === id) || null;
   }
 
+  function gate(id, state, reason = '') {
+    return { id, state, reason: String(reason || '') };
+  }
+
+  function remoteAutonomyBuildTrack(beacon) {
+    const sync = surface(beacon, 'githubSync');
+    const refresh = surface(beacon, 'postSyncRefresh');
+    const worker = surface(beacon, 'missionWorker');
+    const syncState = String(sync?.state || sync?.rawState || 'UNKNOWN').toUpperCase();
+    const refreshBlocker = String(refresh?.blocker || '');
+    const syncGate = syncState.startsWith('SYNC_') && !syncState.includes('BLOCK')
+      ? gate('SYNC', 'PASS')
+      : syncState.includes('BLOCK')
+        ? gate('SYNC', 'BLOCKED', syncState)
+        : gate('SYNC', 'UNKNOWN', syncState);
+    const controlPlaneGate = refreshBlocker.startsWith('CONTROL_PLANE_')
+      ? gate('CONTROL_PLANE', 'BLOCKED', refreshBlocker)
+      : gate('CONTROL_PLANE', 'UNKNOWN', refreshBlocker || 'CONTROL_PLANE_SIGNAL_NOT_PUBLISHED');
+    const stoppedBeforeHeartbeat = controlPlaneGate.state === 'BLOCKED' || syncGate.state === 'BLOCKED';
+    const downstream = AUTONOMY_GATES.slice(2).map((id) => gate(id, stoppedBeforeHeartbeat ? 'NOT_REACHED' : 'UNKNOWN'));
+    if (!stoppedBeforeHeartbeat && worker) {
+      const heartbeat = downstream.find((item) => item.id === 'HEARTBEAT');
+      if (heartbeat && String(worker.rawState || '').includes('TICK_PASS')) heartbeat.state = 'PASS';
+    }
+    const gates = [syncGate, controlPlaneGate, ...downstream];
+    const first = gates.find((item) => item.state === 'BLOCKED')
+      || gates.find((item) => item.state === 'WAITING')
+      || gates.find((item) => item.state === 'NOT_REACHED')
+      || gates.find((item) => item.state === 'UNKNOWN')
+      || null;
+    return {
+      schemaVersion: 'stephanos.autonomy-build-track.remote.v1',
+      timestampUtc: String(beacon?.observedAtUtc || ''),
+      sourceHead: safeSha(beacon?.sourceHead),
+      gates,
+      currentGate: first?.id || 'COMPLETE',
+      currentState: first?.state || 'PASS',
+      blocker: first?.state === 'BLOCKED' ? first.reason : '',
+    };
+  }
+
+  function glyph(state) {
+    if (state === 'PASS') return '✓';
+    if (state === 'BLOCKED') return '✕';
+    if (state === 'WAITING') return '…';
+    if (state === 'NOT_REACHED') return '○';
+    return '?';
+  }
+
+  function formatAutonomyBuildTrack(track) {
+    if (!track || !Array.isArray(track.gates)) return '';
+    const compact = track.gates
+      .filter((item) => AUTONOMY_GATES.includes(String(item?.id || '')))
+      .map((item) => `${String(item.id).replaceAll('_', ' ')} ${glyph(String(item.state || 'UNKNOWN'))}`)
+      .join('  →  ');
+    return track.blocker ? `${compact}  ·  ${track.blocker}` : compact;
+  }
+
+  function setTelemetry(key, value) {
+    if (typeof window.setField === 'function') {
+      window.setField(key, value);
+      return;
+    }
+    const target = document.querySelector?.(`[data-live-telemetry-field="${key}"]`);
+    if (target) target.textContent = String(value ?? '');
+  }
+
+  function renderAutonomyBuildTrack(track) {
+    const rendered = formatAutonomyBuildTrack(track);
+    if (!rendered) return;
+    setTelemetry('automation-state', rendered);
+    if (track.blocker) setTelemetry('telemetry-blocker', track.blocker);
+  }
+
   function buildProjection({ beacon, ref, issues, nowMs = Date.now() }) {
     const githubHead = safeSha(ref?.object?.sha);
     const battleBridgeHead = safeSha(beacon?.sourceHead);
@@ -94,6 +169,7 @@
       timestampUtc: String(item.updated_at || ''),
       source: 'GitHub issue updated time',
     }));
+    const autonomyBuildTrack = remoteAutonomyBuildTrack(beacon);
 
     return {
       sourceTruth,
@@ -101,6 +177,7 @@
       finalVerdict: sourceTruth === 'CURRENT' ? 'GOAL_DASHBOARD_REMOTE_CURRENT' : 'GOAL_DASHBOARD_REMOTE_DEGRADED',
       goals,
       activeLaneCount: null,
+      autonomyBuildTrack,
       queueDispatcher: {
         dispatcherState: workerState,
         capabilityMode: 'remote-read-only',
@@ -160,15 +237,6 @@
     return response.json();
   }
 
-  function setTelemetry(key, value) {
-    if (typeof window.setField === 'function') {
-      window.setField(key, value);
-      return;
-    }
-    const target = document.querySelector?.(`[data-live-telemetry-field="${key}"]`);
-    if (target) target.textContent = String(value ?? '');
-  }
-
   function setBadge(value, truthState) {
     if (typeof window.setSourceBadge === 'function') {
       window.setSourceBadge(value, truthState);
@@ -191,14 +259,16 @@
     setTelemetry('github-state', remote.exactHeadMatch
       ? `main ${remote.githubHead.slice(0, 8)} · Battle Bridge exact-head`
       : `main ${remote.githubHead.slice(0, 8) || 'unknown'} · Battle Bridge ${remote.battleBridgeHead.slice(0, 8) || 'unknown'}`);
-    setTelemetry('automation-state', `Mission Worker ${remote.missionWorkerState} · watchdog ${remote.workerWatchdogState}`);
+    renderAutonomyBuildTrack(projection.autonomyBuildTrack);
     setTelemetry('proof-state', `Runtime surfaces ${remote.answeredSurfaceCount}/${remote.requiredSurfaceCount} proven · per-goal proof UNKNOWN`);
     setTelemetry('feed-endpoint', 'GitHub public projection + Battle Bridge beacon #1889');
     setTelemetry('last-refresh', `Remote evidence ${remote.observedAtUtc || 'timestamp unavailable'}`);
     setTelemetry('workspace-root', 'Sanitized remote projection · local workspace path intentionally private');
-    setTelemetry('telemetry-blocker', projection.operatorAttention.blockers.length
-      ? projection.operatorAttention.blockers.join(' · ')
-      : 'No remote blocker published.');
+    if (!projection.autonomyBuildTrack?.blocker) {
+      setTelemetry('telemetry-blocker', projection.operatorAttention.blockers.length
+        ? projection.operatorAttention.blockers.join(' · ')
+        : 'No remote blocker published.');
+    }
 
     const grid = document.getElementById?.('goal-grid');
     if (grid?.setAttribute) {
@@ -211,6 +281,20 @@
       refreshedAtUtc: new Date().toISOString(),
       ...remote,
     };
+  }
+
+  function installLocalAutonomyTrackRendering() {
+    if (!isLocalHost() || typeof window.applyProjection !== 'function') return;
+    const original = window.applyProjection;
+    if (original.__stephanosAutonomyTrackWrapped === true) return;
+    const wrapped = function wrappedApplyProjection(projection, ...args) {
+      const result = original.call(this, projection, ...args);
+      renderAutonomyBuildTrack(projection?.autonomyBuildTrack);
+      return result;
+    };
+    wrapped.__stephanosAutonomyTrackWrapped = true;
+    window.applyProjection = wrapped;
+    renderAutonomyBuildTrack(window.__stephanosGoalDashboardProjection?.autonomyBuildTrack);
   }
 
   function markRemoteUnavailable(error) {
@@ -254,8 +338,12 @@
     parseBeaconComment,
     latestBeacon,
     buildProjection,
+    remoteAutonomyBuildTrack,
+    formatAutonomyBuildTrack,
     refreshRemote,
   });
+
+  installLocalAutonomyTrackRendering();
 
   if (!isLocalHost()) {
     window.setTimeout(refreshRemote, 0);
