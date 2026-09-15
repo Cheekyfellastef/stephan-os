@@ -93,6 +93,8 @@ test('classifies every live v2 approval-boundary path', () => {
     'shared/agents/protectedOpenClawMergeMailboxAdapter.mjs',
     'shared/agents/providerNeutralReviewV1.mjs',
     'shared/agents/qualifiedSpecialistReviewV1.mjs',
+    'shared/agents/standingBuilderContinuityAuthorityV1.mjs',
+    'shared/agents/standingBuilderContinuityProtectedReproofV1.mjs',
   ]);
 });
 
