@@ -573,8 +573,22 @@ export async function ensureCriticalBacklogMission({
       orchestratorRoot: paths.orchestratorRoot,
       snapshotRoot: paths.snapshotRoot,
     });
+    const sourceRevision = text(authoritative?.machineryInventory?.sourceHead).toLowerCase();
+    const programmeBlockers = (Array.isArray(authoritative?.blockers) ? authoritative.blockers : [])
+      .map((blocker) => text(blocker))
+      .filter(Boolean);
+    const workerRuntimeHold = Boolean(
+      authoritative?.status === 'HOLD'
+      && programmeBlockers.length > 0
+      && programmeBlockers.every((blocker) => [
+        'worker-heartbeat-stale',
+        'worker-heartbeat-invalid-or-missing',
+        'source:mission-worker-heartbeat-unavailable',
+      ].includes(blocker)),
+    );
     if (
-      authoritative?.status === 'READY'
+      (authoritative?.status === 'READY' || workerRuntimeHold)
+      && SHA_40.test(sourceRevision)
       && authoritative?.scheduler?.failClosed === false
       && authoritative?.scheduler?.elasticCapacity?.status === 'RUNNING'
     ) {
@@ -592,16 +606,13 @@ export async function ensureCriticalBacklogMission({
         ? elasticControllerProjection(elasticAdmission)
         : null;
       if (elasticProjection) {
-        const sourceRevision = text(authoritative?.machineryInventory?.sourceHead).toLowerCase();
-        const capacityRouting = SHA_40.test(sourceRevision)
-          ? await readCapacityRouting({
-              root: paths.workspaceRoot,
-              repoRoot: paths.repoRoot,
-              nowUtc,
-              sourceRevision,
-              env,
-            })
-          : null;
+        const capacityRouting = await readCapacityRouting({
+          root: paths.workspaceRoot,
+          repoRoot: paths.repoRoot,
+          nowUtc,
+          sourceRevision,
+          env,
+        });
         elasticIgnition = await dispatchElasticBuilds(elasticAdmission, {
           env,
           now,
@@ -624,6 +635,9 @@ export async function ensureCriticalBacklogMission({
           publication: null,
           elasticAdmission,
           elasticIgnition,
+          programmeStatus: text(authoritative?.status).toUpperCase(),
+          programmeBlockers: Object.freeze([...programmeBlockers]),
+          workerRuntimeHold,
           arbitraryShellAllowed: false,
           destructiveGitAllowed: false,
           duplicateActiveMissionAllowed: false,
