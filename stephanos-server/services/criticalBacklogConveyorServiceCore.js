@@ -592,7 +592,7 @@ export async function ensureCriticalBacklogMission({
         ? elasticControllerProjection(elasticAdmission)
         : null;
       if (elasticProjection) {
-        const sourceRevision = text(env.STEPHANOS_MISSION_WORKER_HEAD_SHA).toLowerCase();
+        const sourceRevision = text(authoritative?.machineryInventory?.sourceHead).toLowerCase();
         const capacityRouting = SHA_40.test(sourceRevision)
           ? await readCapacityRouting({
               root: paths.workspaceRoot,
