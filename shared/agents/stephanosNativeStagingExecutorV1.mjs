@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { posix as path } from 'node:path';
+import { validateExecutionReceipt } from './executionReceiptV1.mjs';
 
 export const STEPHANOS_NATIVE_STAGING_REQUEST_SCHEMA = 'stephanos.native-staging-request.v1';
 export const STEPHANOS_NATIVE_MODEL_RESULT_SCHEMA = 'stephanos.native-model-result.v1';
@@ -18,6 +19,7 @@ const REQUEST_KEYS = Object.freeze([
   'allowedFiles','requiredTestIds','sourceSnapshots',
 ]);
 const RESULT_KEYS = Object.freeze(['schemaVersion','missionId','actionId','baseHead','replacements','summary']);
+const TEST_RECEIPT_KEYS = Object.freeze(['testId','outputSha256','executionReceipt']);
 const PROTECTED_PATH_SEGMENTS = new Set(['.git','node_modules','dist','build','coverage','.next','out']);
 
 function text(v) { return typeof v === 'string' ? v.trim() : ''; }
@@ -76,14 +78,16 @@ function frozen(value) { return Object.freeze(value); }
 export function validateStephanosNativeStagingRequest(request = {}) {
   const errors = [];
   if (!exactKeys(request, REQUEST_KEYS)) {
-    return frozen({ valid:false, errors:frozen(['request-shape-invalid']), allowedFiles:frozen([]) });
+    return frozen({ valid:false, errors:frozen(['request-shape-invalid']), allowedFiles:frozen([]), branch:'', baseHead:'', leaseId:'' });
   }
   if (request.schemaVersion !== STEPHANOS_NATIVE_STAGING_REQUEST_SCHEMA) errors.push('request-schema-invalid');
   for (const key of ['missionId','actionId','workerId','leaseId']) if (!SAFE_ID.test(text(request[key]))) errors.push(`${key}-invalid`);
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(text(request.repository))) errors.push('repository-invalid');
   const branch = canonicalBranch(request.branch);
   if (!branch) errors.push('branch-invalid');
-  if (!SHA40.test(text(request.baseHead).toLowerCase())) errors.push('base-head-invalid');
+  const baseHead = text(request.baseHead).toLowerCase();
+  const leaseId = text(request.leaseId);
+  if (!SHA40.test(baseHead)) errors.push('base-head-invalid');
   const allowedInput = plainArray(request.allowedFiles) ? request.allowedFiles : [];
   if (!plainArray(request.allowedFiles) || request.allowedFiles.length < 1 || request.allowedFiles.length > MAX_FILES || !unique(request.allowedFiles)) errors.push('allowed-files-invalid');
   const allowed = allowedInput.map(canonicalPath);
@@ -111,7 +115,14 @@ export function validateStephanosNativeStagingRequest(request = {}) {
   }
   if (totalBytes > MAX_TOTAL_BYTES) errors.push('source-snapshot-total-too-large');
   for (const p of allowed.filter(Boolean)) if (!byPath.has(p)) errors.push('source-snapshot-missing');
-  return frozen({ valid: errors.length === 0, errors: frozen([...new Set(errors)]), allowedFiles: frozen(allowed.filter(Boolean)), branch });
+  return frozen({
+    valid: errors.length === 0,
+    errors: frozen([...new Set(errors)]),
+    allowedFiles: frozen(allowed.filter(Boolean)),
+    branch,
+    baseHead,
+    leaseId,
+  });
 }
 
 export function validateStephanosNativeModelResult(result = {}, request = {}) {
@@ -121,7 +132,7 @@ export function validateStephanosNativeModelResult(result = {}, request = {}) {
   const errors = [];
   if (result.schemaVersion !== STEPHANOS_NATIVE_MODEL_RESULT_SCHEMA) errors.push('result-schema-invalid');
   if (text(result.missionId) !== text(request.missionId) || text(result.actionId) !== text(request.actionId)) errors.push('result-identity-mismatch');
-  if (text(result.baseHead).toLowerCase() !== text(request.baseHead).toLowerCase()) errors.push('result-head-mismatch');
+  if (text(result.baseHead).toLowerCase() !== requestValidation.baseHead) errors.push('result-head-mismatch');
   if (!text(result.summary) || text(result.summary).length > 2000) errors.push('result-summary-invalid');
   const replacements = plainArray(result.replacements) ? result.replacements : [];
   if (!plainArray(result.replacements) || replacements.length < 1 || replacements.length > MAX_FILES) errors.push('replacements-invalid');
@@ -161,17 +172,17 @@ export function buildStephanosNativeStagingPlan(request, result) {
   return frozen({
     ok: true,
     schemaVersion: STEPHANOS_NATIVE_PROMOTION_JOURNAL_SCHEMA,
-    missionId: request.missionId,
-    actionId: request.actionId,
-    workerId: request.workerId,
-    repository: request.repository,
+    missionId: text(request.missionId),
+    actionId: text(request.actionId),
+    workerId: text(request.workerId),
+    repository: text(request.repository),
     branch: requestValidation.branch,
-    baseHead: request.baseHead.toLowerCase(),
-    leaseId: request.leaseId,
+    baseHead: requestValidation.baseHead,
+    leaseId: requestValidation.leaseId,
     changedFiles: frozen(validation.replacements.map((r) => r.path)),
     replacements: validation.replacements,
     untouched: frozen(untouched),
-    requiredTestIds: frozen([...request.requiredTestIds]),
+    requiredTestIds: frozen(request.requiredTestIds.map(text)),
     arbitraryCommandAllowed: false,
     modelMayPromote: false,
     leaseSeizureAllowed: false,
@@ -179,19 +190,63 @@ export function buildStephanosNativeStagingPlan(request, result) {
   });
 }
 
-export function verifyStephanosNativeTestAndScopeProof(plan, proof = {}) {
-  if (!plan?.ok) return frozen({ valid: false, errors: frozen(['plan-invalid']) });
-  if (!exactKeys(proof, ['baseHead','leaseId','changedFiles','testReceipts','sourceAfter'])) return frozen({ valid:false, errors:frozen(['proof-shape-invalid']) });
+function validateGroundedTestReceipt(testReceipt, plan) {
+  if (!exactKeys(testReceipt, TEST_RECEIPT_KEYS)) return frozen({ valid:false, reason:'test-receipt-shape-invalid' });
+  const testId = text(testReceipt.testId);
+  const outputSha256 = text(testReceipt.outputSha256).toLowerCase();
+  if (!plan.requiredTestIds.includes(testId) || !SHA256.test(outputSha256)) {
+    return frozen({ valid:false, reason:'test-receipt-binding-invalid' });
+  }
+  const executionReceipt = testReceipt.executionReceipt;
+  const executionValidation = validateExecutionReceipt(executionReceipt, {
+    repository: plan.repository,
+    branch: plan.branch,
+    expectedHead: plan.baseHead,
+    executionId: plan.actionId,
+    leaseKey: plan.leaseId,
+  });
+  const expectedProofRef = `proof/native-test/${outputSha256}`;
+  const valid = executionValidation.valid
+    && executionReceipt.workerId === plan.workerId
+    && executionReceipt.workerType === 'orchestration-engine'
+    && executionReceipt.state === 'completed'
+    && executionReceipt.phase === `native-test:${testId}`
+    && executionReceipt.operatorActionRequired === false
+    && !text(executionReceipt.blocker)
+    && Array.isArray(executionReceipt.proofRefs)
+    && executionReceipt.proofRefs.includes(expectedProofRef);
+  return frozen({ valid, reason: valid ? '' : executionValidation.refusalReason || 'test-execution-receipt-invalid' });
+}
+
+export function verifyStephanosNativeTestAndScopeProof(request, result, proof = {}) {
+  const plan = buildStephanosNativeStagingPlan(request, result);
+  if (!plan?.ok) return frozen({ valid: false, errors: frozen(['plan-invalid']), plan });
+  if (!exactKeys(proof, ['baseHead','leaseId','changedFiles','testReceipts','sourceAfter'])) {
+    return frozen({ valid:false, errors:frozen(['proof-shape-invalid']), plan });
+  }
   const errors = [];
   if (text(proof.baseHead).toLowerCase() !== plan.baseHead) errors.push('proof-head-mismatch');
   if (text(proof.leaseId) !== plan.leaseId) errors.push('proof-lease-mismatch');
   const changed = plainArray(proof.changedFiles) ? proof.changedFiles.map(canonicalPath) : [];
   if (!plainArray(proof.changedFiles) || !unique(changed) || JSON.stringify([...changed].sort()) !== JSON.stringify([...plan.changedFiles].sort())) errors.push('changed-scope-mismatch');
   const receipts = plainArray(proof.testReceipts) ? proof.testReceipts : [];
+  if (!plainArray(proof.testReceipts) || receipts.length !== plan.requiredTestIds.length) errors.push('test-receipt-set-invalid');
   for (const testId of plan.requiredTestIds) {
-    if (!receipts.some((receipt) => exactKeys(receipt, ['testId','passed','outputSha256']) && receipt.testId === testId && receipt.passed === true && SHA256.test(text(receipt.outputSha256)))) errors.push(`required-test-missing:${testId}`);
+    const matching = receipts.filter((receipt) => exactKeys(receipt, TEST_RECEIPT_KEYS) && text(receipt.testId) === testId);
+    if (matching.length !== 1) {
+      errors.push(`required-test-missing:${testId}`);
+      continue;
+    }
+    const validation = validateGroundedTestReceipt(matching[0], plan);
+    if (!validation.valid) errors.push(`required-test-invalid:${testId}:${validation.reason}`);
   }
   const after = plainArray(proof.sourceAfter) ? proof.sourceAfter : [];
+  const expectedAfterCount = plan.replacements.length + plan.untouched.length;
+  if (!plainArray(proof.sourceAfter) || after.length !== expectedAfterCount) errors.push('source-after-set-invalid');
+  const afterPaths = after
+    .filter((item) => exactKeys(item, ['path','sha256']))
+    .map((item) => canonicalPath(item.path));
+  if (afterPaths.length !== after.length || !unique(afterPaths)) errors.push('source-after-set-invalid');
   for (const replacement of plan.replacements) {
     const record = after.find((item) => exactKeys(item, ['path','sha256']) && canonicalPath(item.path) === replacement.path);
     if (!record || text(record.sha256).toLowerCase() !== replacement.afterSha256) errors.push(`after-digest-mismatch:${replacement.path}`);
@@ -200,12 +255,13 @@ export function verifyStephanosNativeTestAndScopeProof(plan, proof = {}) {
     const record = after.find((item) => exactKeys(item, ['path','sha256']) && canonicalPath(item.path) === untouched.path);
     if (!record || text(record.sha256).toLowerCase() !== untouched.sha256) errors.push(`untouched-drift:${untouched.path}`);
   }
-  return frozen({ valid: errors.length === 0, errors: frozen([...new Set(errors)]) });
+  return frozen({ valid: errors.length === 0, errors: frozen([...new Set(errors)]), plan });
 }
 
-export function createStephanosNativeStagingReceipt(plan, proof = {}, options = {}) {
-  const validation = verifyStephanosNativeTestAndScopeProof(plan, proof);
+export function createStephanosNativeStagingReceipt(request, result, proof = {}, options = {}) {
+  const validation = verifyStephanosNativeTestAndScopeProof(request, result, proof);
   if (!validation.valid) return null;
+  const plan = validation.plan;
   const observedAtUtc = text(options.observedAtUtc);
   if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(observedAtUtc) || !Number.isFinite(Date.parse(observedAtUtc))) return null;
   const treeMaterial = plan.replacements.map((item) => `${item.path}\0${item.afterSha256}`).sort().join('\n');
