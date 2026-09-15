@@ -40,6 +40,10 @@ const API_DIGEST = /^sha256:[a-f0-9]{64}$/;
 const INTEGER = /^[1-9][0-9]*$/;
 const LEGACY_PULL_REQUEST_TARGET_BINDING = 'legacy-pull-request-target';
 const CANONICAL_REPOSITORY_API_URL = 'https://api.github.com/repos/' + CANONICAL_REPOSITORY;
+const CANONICAL_MAILBOX_ISSUE = 2158;
+const CANONICAL_MAILBOX_AUTHOR = 'Cheekyfellastef';
+const CANONICAL_MAILBOX_MARKER = 'stephanos-battle-bridge-command';
+const CANONICAL_MAILBOX_PAGE_SIZE = 100;
 const FORBIDDEN_FIELDS = Object.freeze([
   'command', 'commands', 'executable', 'args', 'arguments', 'shell', 'powershell',
   'script', 'path', 'privateKey', 'publicKey', 'credential', 'cookie', 'session',
@@ -157,6 +161,61 @@ function runOk(runCommand, executable, args, options, blocker) {
     throw new Error(blocker + ':' + (result?.error?.message || result?.stderr || result?.status || 'unknown'));
   }
   return result;
+}
+
+export function resolveProtectedOperatorAuthorizationCommentId(comments = [], plan = {}) {
+  const requestId = String(plan?.normalized?.requestId || '');
+  const expectedHead = String(plan?.normalized?.expectedHead || '').toLowerCase();
+  const expectedBase = String(plan?.normalized?.expectedBase || '').toLowerCase();
+  const prNumber = positiveInteger(plan?.normalized?.prNumber);
+  const reviewRunId = positiveInteger(plan?.normalized?.reviewRunId);
+  const reviewArtifactId = positiveInteger(plan?.normalized?.reviewArtifactId);
+  const mergeApprovalToken = String(plan?.normalized?.mergeApprovalToken || '');
+  if (!requestId || !SHA40.test(expectedHead) || !SHA40.test(expectedBase) || !prNumber
+    || !reviewRunId || !reviewArtifactId || !mergeApprovalToken) return 0;
+
+  for (const comment of [...comments].reverse()) {
+    const commentId = positiveInteger(comment?.id);
+    const body = String(comment?.body || '');
+    if (!commentId
+      || comment?.user?.login !== CANONICAL_MAILBOX_AUTHOR
+      || comment?.issue_url !== `https://api.github.com/repos/${CANONICAL_REPOSITORY}/issues/${CANONICAL_MAILBOX_ISSUE}`
+      || !body.includes(CANONICAL_MAILBOX_MARKER)) continue;
+    const fence = body.match(/```stephanos-battle-bridge-command\s*([\s\S]*?)```/i);
+    if (!fence) continue;
+    let candidate;
+    try { candidate = JSON.parse(fence[1].trim()); } catch { continue; }
+    if (String(candidate?.requestId || '') !== requestId
+      || candidate?.operation !== PROTECTED_OPENCLAW_MERGE_OPERATION
+      || Number(candidate?.issueNumber) !== CANONICAL_MAILBOX_ISSUE
+      || Number(candidate?.prNumber) !== prNumber
+      || String(candidate?.expectedHead || '').toLowerCase() !== expectedHead
+      || String(candidate?.expectedBase || '').toLowerCase() !== expectedBase
+      || Number(candidate?.reviewRunId) !== reviewRunId
+      || Number(candidate?.reviewArtifactId) !== reviewArtifactId
+      || String(candidate?.mergeApprovalToken || '') !== mergeApprovalToken) continue;
+    return commentId;
+  }
+  return 0;
+}
+
+function readProtectedOperatorAuthorizationCommentId(runCommand, plan) {
+  const issue = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
+    'api', `repos/${CANONICAL_REPOSITORY}/issues/${CANONICAL_MAILBOX_ISSUE}`,
+  ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_MAILBOX_ISSUE_LOOKUP_FAILED').stdout, 'PROTECTED_MERGE_MAILBOX_ISSUE_JSON_INVALID');
+  const commentCount = Number(issue?.comments || 0);
+  if (!Number.isSafeInteger(commentCount) || commentCount < 1) return 0;
+  const lastPage = Math.max(1, Math.ceil(commentCount / CANONICAL_MAILBOX_PAGE_SIZE));
+  const firstPage = Math.max(1, lastPage - 1);
+  const comments = [];
+  for (let page = firstPage; page <= lastPage; page += 1) {
+    const pagePayload = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
+      'api', `repos/${CANONICAL_REPOSITORY}/issues/${CANONICAL_MAILBOX_ISSUE}/comments?per_page=${CANONICAL_MAILBOX_PAGE_SIZE}&page=${page}`,
+    ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_MAILBOX_COMMENT_LOOKUP_FAILED').stdout, 'PROTECTED_MERGE_MAILBOX_COMMENT_JSON_INVALID');
+    if (!Array.isArray(pagePayload)) return 0;
+    comments.push(...pagePayload);
+  }
+  return resolveProtectedOperatorAuthorizationCommentId(comments, plan);
 }
 
 function validateLivePullRequest(pull, command) {
@@ -355,9 +414,10 @@ export function buildProtectedOpenClawMergePlan(command = {}, options = {}) {
   });
 }
 
-export function buildProtectedOperatorWorkflowDispatchArgs(plan, pull, headTree) {
+export function buildProtectedOperatorWorkflowDispatchArgs(plan, pull, headTree, authorizationCommentId = 0) {
+  const commentId = positiveInteger(authorizationCommentId);
   if (!plan?.ok || plan.normalized?.reviewMode !== PROTECTED_OPERATOR_WORKFLOW_MERGE_MODE
-    || !pull?.head?.ref || !SHA40.test(String(headTree || '').toLowerCase())) return null;
+    || !pull?.head?.ref || !SHA40.test(String(headTree || '').toLowerCase()) || !commentId) return null;
   return Object.freeze([
     'workflow', 'run', PROTECTED_OPERATOR_MERGE_WORKFLOW,
     '--repo', 'Cheekyfellastef/stephan-os',
@@ -373,6 +433,7 @@ export function buildProtectedOperatorWorkflowDispatchArgs(plan, pull, headTree)
     '-f', 'independent_review_artifact_id=' + plan.normalized.reviewArtifactId,
     '-f', 'independent_review_artifact_digest=' + plan.normalized.reviewArtifactDigest,
     '-f', 'independent_review_payload_sha256=' + plan.normalized.reviewPayloadSha256,
+    '-f', 'authorization_comment_id=' + commentId,
   ]);
 }
 
@@ -449,7 +510,9 @@ export async function executeProtectedOpenClawMergeOnBattleBridge(command = {}, 
         'api', 'repos/Cheekyfellastef/stephan-os/git/commits/' + plan.normalized.expectedHead,
       ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_HEAD_TREE_FAILED').stdout, 'PROTECTED_MERGE_HEAD_TREE_JSON_INVALID');
       const headTree = String(headCommit?.tree?.sha || '').toLowerCase();
-      const dispatchArgs = buildProtectedOperatorWorkflowDispatchArgs(plan, pullAgain, headTree);
+      const authorizationCommentId = readProtectedOperatorAuthorizationCommentId(runCommand, plan);
+      if (!authorizationCommentId) return fail('PROTECTED_MERGE_AUTHORIZATION_COMMENT_NOT_FOUND');
+      const dispatchArgs = buildProtectedOperatorWorkflowDispatchArgs(plan, pullAgain, headTree, authorizationCommentId);
       if (!dispatchArgs) return fail('PROTECTED_MERGE_WORKFLOW_INPUTS_INVALID');
       runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, dispatchArgs, {
         cwd: plan.repositoryRoot,
@@ -467,6 +530,7 @@ export async function executeProtectedOpenClawMergeOnBattleBridge(command = {}, 
         expectedBase: plan.normalized.expectedBase,
         reviewRunId: plan.normalized.reviewRunId,
         reviewArtifactId: plan.normalized.reviewArtifactId,
+        authorizationCommentId,
         workflow: PROTECTED_OPERATOR_MERGE_WORKFLOW,
         workflowRunId: Number(run?.id || 0),
         workflowRunStatus: String(run?.status || 'queued'),

@@ -1,0 +1,32 @@
+name: Integration Burst Coalescer Proof
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - shared/agents/integrationBurstCoalescerV1.mjs
+      - shared/agents/integrationBurstCoalescerV1.test.mjs
+      - .github/workflows/integration-burst-coalescer-proof.yml
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Parse coalescer source
+        run: node --check shared/agents/integrationBurstCoalescerV1.mjs
+      - name: Run focused coalescer regressions
+        run: node --test shared/agents/integrationBurstCoalescerV1.test.mjs
+      - name: Check exact diff whitespace
+        run: git diff --check origin/main...HEAD

@@ -15,6 +15,7 @@ import {
 
 const HEAD = 'a'.repeat(40);
 const NOW = new Date('2026-08-07T13:45:00.000Z');
+const CANONICAL_MAILBOX_ISSUE = 2158;
 
 function command(overrides = {}) {
   return {
@@ -22,7 +23,7 @@ function command(overrides = {}) {
     requestId: 'tailscale-bootstrap-72d4e79-20260807T1345Z',
     operation: BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
     expiresAt: '2026-08-07T14:00:00.000Z',
@@ -39,7 +40,7 @@ test('owner-authored exact-head request is accepted and Codex is not required', 
   assert.equal(extracted.ok, true);
   const result = validateBattleBridgeTailscaleBootstrap(extracted.command, {
     authorLogin: 'Cheekyfellastef',
-    issueNumber: 1507,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     now: NOW,
     currentMainHead: HEAD,
   });
@@ -52,14 +53,15 @@ test('owner-authored exact-head request is accepted and Codex is not required', 
   assert.equal(BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_TAG, 'tag:stephanos-github-recovery');
 });
 
-test('request rejects foreign author, issue, head, expiry and any extra authority field', () => {
+test('request rejects foreign author, retired/foreign issue, head, expiry and any extra authority field', () => {
   const fixtures = [
-    { value: command(), options: { authorLogin: 'someone-else', issueNumber: 1507, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_AUTHOR_NOT_ALLOWED' },
-    { value: command(), options: { authorLogin: 'Cheekyfellastef', issueNumber: 1508, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_ISSUE_MISMATCH' },
-    { value: command(), options: { authorLogin: 'Cheekyfellastef', issueNumber: 1507, now: NOW, currentMainHead: 'b'.repeat(40) }, blocker: 'TAILSCALE_BOOTSTRAP_MAIN_HEAD_MISMATCH' },
-    { value: command({ expiresAt: '2026-08-07T15:00:00.000Z' }), options: { authorLogin: 'Cheekyfellastef', issueNumber: 1507, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_EXPIRY_TOO_FAR_AHEAD' },
-    { value: { ...command(), command: 'whoami' }, options: { authorLogin: 'Cheekyfellastef', issueNumber: 1507, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_FIELDS_NOT_EXACT' },
-    { value: { ...command(), path: 'C:\\Windows' }, options: { authorLogin: 'Cheekyfellastef', issueNumber: 1507, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_FIELDS_NOT_EXACT' },
+    { value: command(), options: { authorLogin: 'someone-else', issueNumber: CANONICAL_MAILBOX_ISSUE, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_AUTHOR_NOT_ALLOWED' },
+    { value: command(), options: { authorLogin: 'Cheekyfellastef', issueNumber: 1507, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_ISSUE_MISMATCH' },
+    { value: command(), options: { authorLogin: 'Cheekyfellastef', issueNumber: 2159, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_ISSUE_MISMATCH' },
+    { value: command(), options: { authorLogin: 'Cheekyfellastef', issueNumber: CANONICAL_MAILBOX_ISSUE, now: NOW, currentMainHead: 'b'.repeat(40) }, blocker: 'TAILSCALE_BOOTSTRAP_MAIN_HEAD_MISMATCH' },
+    { value: command({ expiresAt: '2026-08-07T15:00:00.000Z' }), options: { authorLogin: 'Cheekyfellastef', issueNumber: CANONICAL_MAILBOX_ISSUE, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_EXPIRY_TOO_FAR_AHEAD' },
+    { value: { ...command(), command: 'whoami' }, options: { authorLogin: 'Cheekyfellastef', issueNumber: CANONICAL_MAILBOX_ISSUE, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_FIELDS_NOT_EXACT' },
+    { value: { ...command(), path: 'C:\\Windows' }, options: { authorLogin: 'Cheekyfellastef', issueNumber: CANONICAL_MAILBOX_ISSUE, now: NOW, currentMainHead: HEAD }, blocker: 'TAILSCALE_BOOTSTRAP_FIELDS_NOT_EXACT' },
   ];
   for (const fixture of fixtures) {
     const result = validateBattleBridgeTailscaleBootstrap(fixture.value, fixture.options);
@@ -68,17 +70,27 @@ test('request rejects foreign author, issue, head, expiry and any extra authorit
   }
 });
 
-test('fixed remote PowerShell only bootstraps canonical GitHub Sync and proves exact head', () => {
+test('fixed remote PowerShell preserves the exact six-file runtime profile before canonical sync', () => {
   const source = buildFixedBattleBridgeBootstrapPowerShell(HEAD);
+  assert.match(source, /stephanos-codex-dispatch-mcp\.mjs/);
+  assert.match(source, /sync_codex_dispatch_bridge/);
+  assert.match(source, /battle-bridge-runtime-data-v1/);
+  assert.match(source, /preservationApproval/);
+  assert.match(source, /operator-approved/);
+  assert.match(source, /preservation\.receipt\.itemCount -ne 6/);
+  assert.match(source, /preservation\.receipt\.allHashesVerified -ne \$true/);
+  assert.match(source, /preservation\.destructiveCleanupPerformed -ne \$false/);
+  assert.ok(source.includes(String.raw`C:\Program Files\nodejs\node.exe`));
+  assert.ok(source.includes(String.raw`C:\Program Files\Git\cmd\git.exe`));
   assert.match(source, /install-battle-bridge-github-sync\.ps1/);
   assert.match(source, /status-battle-bridge-github-sync\.ps1/);
   assert.match(source, /Stephanos Battle Bridge GitHub Sync/);
   assert.match(source, /-StartNow/);
-  assert.ok(source.includes(String.raw`C:\Program Files\Git\cmd\git.exe`));
   assert.match(source, new RegExp(HEAD));
   assert.match(source, /BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_READY/);
   assert.match(source, /liveOpenClawUpdateAllowed -ne \$false/);
   assert.match(source, /codexRequired = \$false/);
+  assert.match(source, /try \{ \$mcpOutput = @\(\$mcpInput \| & \$node \$mcp\) \} catch \{ throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_SYNC_FAILED' \}/);
   assert.match(source, /try \{ \$installerOutput = @\(& \$installer -StartNow\) \} catch \{ throw 'TAILSCALE_BOOTSTRAP_SYNC_INSTALLER_FAILED' \}/);
   assert.match(source, /try \{ \$statusOutput = @\(& \$statusScript\) \} catch \{ throw 'TAILSCALE_BOOTSTRAP_SYNC_STATUS_FAILED' \}/);
   assert.doesNotMatch(source, /reset --hard|git clean|git stash|git rebase|git push|Restart-Computer|Stop-Computer|Invoke-Expression/i);
@@ -88,7 +100,7 @@ test('fixed remote PowerShell only bootstraps canonical GitHub Sync and proves e
   assert.ok(encoded.length > 100);
 });
 
-test('receipt validation requires exact head and bounded safety posture', () => {
+test('receipt validation requires preservation proof, exact head and bounded safety posture', () => {
   const receipt = {
     schemaVersion: 'stephanos.battle-bridge-tailscale-bootstrap-receipt.v1',
     repository: 'Cheekyfellastef/stephan-os',
@@ -98,6 +110,9 @@ test('receipt validation requires exact head and bounded safety posture', () => 
     taskInstalled: true,
     taskState: 'Ready',
     lastTaskResult: 0,
+    preservationProfile: 'battle-bridge-runtime-data-v1',
+    preservationItemCount: 6,
+    preservationHashesVerified: true,
     codexRequired: false,
     arbitraryCommandAllowed: false,
     arbitraryPathAllowed: false,
@@ -109,6 +124,8 @@ test('receipt validation requires exact head and bounded safety posture', () => 
   };
   assert.equal(validateBattleBridgeTailscaleBootstrapReceipt(receipt, HEAD), true);
   assert.equal(validateBattleBridgeTailscaleBootstrapReceipt({ ...receipt, observedHead: 'b'.repeat(40) }, HEAD), false);
+  assert.equal(validateBattleBridgeTailscaleBootstrapReceipt({ ...receipt, preservationItemCount: 5 }, HEAD), false);
+  assert.equal(validateBattleBridgeTailscaleBootstrapReceipt({ ...receipt, preservationHashesVerified: false }, HEAD), false);
   assert.equal(validateBattleBridgeTailscaleBootstrapReceipt({ ...receipt, codexRequired: true }, HEAD), false);
   assert.equal(validateBattleBridgeTailscaleBootstrapReceipt({ ...receipt, destructiveGitAllowed: true }, HEAD), false);
 });

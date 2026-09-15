@@ -152,15 +152,33 @@ function groundedCodexEvidence(action, finalOutput, events, timestamp) {
     const requirement = text(evidence.requirement);
     const command = text(evidence.command);
     if (!requiredEvidence.has(requirement) || !requiredTests.has(command)) continue;
-    const commandEvent = successful.find((event) => text(event.item?.command).includes(command));
+    const commandEvent = successful.find((event) => text(event.item?.command) === command);
     if (!commandEvent) continue;
     receipts.push({
       receiptId: `codex-evidence-${createHash('sha256').update(`${requirement}\n${command}`).digest('hex').slice(0, 20)}`,
-      requirement, source: 'codex-cli', evidenceType: 'command-output', verified: true,
+      requirement, testCommand: command, source: 'codex-cli', evidenceType: 'command-output', verified: true,
       commandOutputHash: createHash('sha256').update(JSON.stringify(commandEvent)).digest('hex'), createdAt: timestamp,
     });
   }
   return receipts;
+}
+
+function groundedCodexTestReceipts(action, events, timestamp) {
+  const successful = successfulCodexCommands(events);
+  return [...new Set((action.requiredTests || []).map((value) => text(value)).filter(Boolean))].flatMap((command) => {
+    const commandEvent = successful.find((event) => text(event.item?.command) === command);
+    if (!commandEvent) return [];
+    return [{
+      receiptId: `codex-test-${createHash('sha256').update(command).digest('hex').slice(0, 20)}`,
+      requirement: 'source deterministic test',
+      testCommand: command,
+      source: 'codex-cli',
+      evidenceType: 'source-test-command',
+      verified: true,
+      commandOutputHash: createHash('sha256').update(JSON.stringify(commandEvent)).digest('hex'),
+      createdAt: timestamp,
+    }];
+  });
 }
 
 function inspectChangedFiles(worktreePath, run) {
@@ -188,21 +206,24 @@ export async function executeCodexAction(action, claim, options = {}) {
     const stdout = result.stdout || '';
     const stderr = result.stderr || '';
     const commandOutputHash = outputHash(stdout, stderr);
-    if (result.error || result.status !== 0) return { success: false, error: result.error?.message || stderr || stdout || `Codex exited with code ${result.status}.`, completedAt: timestamp, changedFiles: [], evidenceReceipts: [] };
+    if (result.error || result.status !== 0) return { success: false, error: result.error?.message || stderr || stdout || `Codex exited with code ${result.status}.`, completedAt: timestamp, changedFiles: [], evidenceReceipts: [], sourceTestReceipts: [] };
     let finalOutput;
     try { finalOutput = JSON.parse(await readFile(outputPath, 'utf8')); }
-    catch { return { success: false, error: 'Codex did not produce a valid schema-constrained result.', completedAt: timestamp, changedFiles: [], evidenceReceipts: [] }; }
+    catch { return { success: false, error: 'Codex did not produce a valid schema-constrained result.', completedAt: timestamp, changedFiles: [], evidenceReceipts: [], sourceTestReceipts: [] }; }
     const changedFiles = inspectChangedFiles(worktreePath, run);
     const unsafeChanges = changedFiles.filter((path) => !pathAllowed(path, action.allowedFiles || []));
     const events = parseCodexJsonLines(stdout);
     const threadId = text(events.find((event) => event.type === 'thread.started')?.thread_id, action.actionId);
     const success = finalOutput.success === true && changedFiles.length > 0 && unsafeChanges.length === 0;
+    const evidenceReceipts = success ? groundedCodexEvidence(action, finalOutput, events, timestamp) : [];
+    const sourceTestReceipts = success ? groundedCodexTestReceipts(action, events, timestamp) : [];
     return {
       success,
       error: success ? '' : unsafeChanges.length ? `Codex changed files outside approved scope: ${unsafeChanges.join(', ')}` : changedFiles.length ? text(finalOutput.summary, 'Codex reported an unsuccessful result.') : 'Codex completed without a source change.',
       resultId: threadId, changedFiles, completedAt: timestamp,
       receipt: success ? { receiptId: `codex-result-${action.actionId}`.slice(0, 128), requirement: 'codex result', source: 'codex-cli', evidenceType: 'codex-exec', verified: true, commandOutputHash, createdAt: timestamp } : undefined,
-      evidenceReceipts: success ? groundedCodexEvidence(action, finalOutput, events, timestamp) : [],
+      evidenceReceipts,
+      sourceTestReceipts,
     };
   } finally {
     await Promise.all([rm(schemaPath, { force: true }), rm(outputPath, { force: true })]);
@@ -504,6 +525,7 @@ export async function runMissionWorkerTick(options = {}) {
   const workerOptions = {
     ...options,
     actionGrant,
+    runCommand: options.runCommand || defaultRun,
     privateKeyPath: options.privateKeyPath
       || options.env?.STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH
       || process.env.STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH,

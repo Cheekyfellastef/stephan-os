@@ -140,6 +140,23 @@ test('fallback receipts must be exact, fresh, bounded and repository-scoped', ()
   }).valid, false);
 });
 
+test('OpenClaw is a first-class route identity but generic build-lane receipts cannot self-admit it', () => {
+  assert.equal(MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL, 'OPENCLAW_LOCAL');
+  const forgedGenericOpenClaw = githubReceipt({
+    receiptId: 'openclaw-generic-capacity-20260810t1159z',
+    route: MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL,
+    workerId: 'openclaw-worker-01',
+    proofRefs: ['receipts/openclaw/capacity.json'],
+  });
+  const result = validateBuildLaneCapacityReceipt(forgedGenericOpenClaw, {
+    repository: REPOSITORY,
+    taskClass: 'FOCUSED_REPAIR',
+    nowUtc: NOW,
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL);
+  assert.equal(result.valid, false);
+});
+
 test('a lane worker can publish its fresh capacity receipt to the canonical fabric status path', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'build-lane-capacity-'));
   const root = join(parent, 'workspace');

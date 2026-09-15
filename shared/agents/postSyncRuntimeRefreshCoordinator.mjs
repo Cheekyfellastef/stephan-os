@@ -19,6 +19,9 @@ export const POST_SYNC_REFRESH_TARGETS = Object.freeze({
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const SAFE_RELATIVE_PATH = /^[A-Za-z0-9._@+()\-][A-Za-z0-9._@+()\-/ ]{0,500}$/;
+const CANONICAL_WORKER_WATCHDOG_PROBE_PATH = 'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1';
+const REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH = 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs';
+const MISSION_WORKER_POST_SYNC_COORDINATOR_PATH = 'scripts/battle-bridge-post-sync-refresh.mjs';
 const TARGET_ORDER = Object.freeze([
   POST_SYNC_REFRESH_TARGETS.UI_4173,
   POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
@@ -34,6 +37,7 @@ const NATURAL_EXACT = new Set([
   'shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.mjs',
   'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
   'scripts/battle-bridge-github-command-mailbox.mjs',
+  REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH,
   'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
   'scripts/battle-bridge-github-sync-executor.mjs',
   'scripts/battle-bridge-github-sync-and-refresh.mjs',
@@ -52,6 +56,8 @@ const NATURAL_EXACT = new Set([
   'scripts/windows/uninstall-battle-bridge-github-sync.ps1',
   'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1',
   'scripts/windows/run-battle-bridge-outbound-health-beacon-hidden.ps1',
+  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
+  'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
   'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
   'scripts/windows/restart-approved-stephanos-runtime.ps1',
 ]);
@@ -120,6 +126,18 @@ export function parseGitChangedPathStatus(stdout) {
     if (parts.length !== expectedPathCount || parts.some((entry) => !String(entry ?? '').trim())) {
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_CHANGED_PATH_STATUS_INVALID', paths: Object.freeze([]) });
     }
+    const removesCanonicalProbe = status === 'D'
+      ? parts[0] === CANONICAL_WORKER_WATCHDOG_PROBE_PATH
+      : /^R[0-9]*$/.test(status) && parts[0] === CANONICAL_WORKER_WATCHDOG_PROBE_PATH;
+    if (removesCanonicalProbe) {
+      return Object.freeze({ ok: false, blocker: 'POST_SYNC_CANONICAL_WORKER_WATCHDOG_PROBE_REMOVED', paths: Object.freeze([]) });
+    }
+    const removesRequiredMailboxWrapper = status === 'D'
+      ? parts[0] === REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH
+      : /^R[0-9]*$/.test(status) && parts[0] === REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH;
+    if (removesRequiredMailboxWrapper) {
+      return Object.freeze({ ok: false, blocker: 'POST_SYNC_REQUIRED_MAILBOX_WRAPPER_REMOVED', paths: Object.freeze([]) });
+    }
     paths.push(...parts);
   }
   return Object.freeze({ ok: true, paths: Object.freeze([...new Set(paths)]) });
@@ -134,6 +152,7 @@ function isTestOrDocumentation(path) {
 
 function isOpenClawPath(path) {
   if (NATURAL_EXACT.has(path)) return false;
+  if (path.startsWith('stephanos-server/')) return false;
   return path.startsWith('integrations/openclaw/')
     || path.startsWith('openclaw/')
     || /(?:^|\/)[^/]*openclaw[^/]*\.(?:mjs|js|ps1|vbs|json)$/i.test(path)
@@ -176,6 +195,7 @@ function isBackendPath(path) {
 }
 
 function isMissionWorkerPath(path) {
+  if (path === MISSION_WORKER_POST_SYNC_COORDINATOR_PATH) return true;
   if (NATURAL_EXACT.has(path)) return false;
   return (path.startsWith('shared/agents/') && !NATURAL_EXACT.has(path))
     || path.startsWith('scripts/mission-orchestrator-worker')
@@ -183,6 +203,7 @@ function isMissionWorkerPath(path) {
     || [
       'scripts/windows/start-mission-orchestrator-worker.ps1',
       'scripts/windows/install-mission-orchestrator-worker-autostart.ps1',
+      CANONICAL_WORKER_WATCHDOG_PROBE_PATH,
       'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
       'package.json',
       'package-lock.json',

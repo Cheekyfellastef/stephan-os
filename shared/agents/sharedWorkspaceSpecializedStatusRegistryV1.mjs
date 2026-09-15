@@ -20,6 +20,15 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     role: 'single-use-recovery-authority',
   }),
   record({
+    fileName: 'battle-bridge-complete-state-current.json',
+    schemaIds: ['stephanos.battle-bridge-outbound-health-beacon.v1'],
+    sourcePaths: [
+      'scripts/battle-bridge-outbound-health-beacon.mjs',
+      'scripts/battle-bridge-outbound-health-beacon-core.mjs',
+    ],
+    role: 'battle-bridge-complete-state-projection',
+  }),
+  record({
     fileName: 'battle-bridge-ignition-supervisor-current.json',
     schemaIds: ['stephanos.battle-bridge-ignition-supervisor.v1'],
     sourcePaths: [
@@ -61,6 +70,12 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
       'shared/agents/guardedGoalRunnerV1.mjs',
     ],
     role: 'guarded-goal-runner-pr-proof',
+  }),
+  record({
+    fileName: 'ignition-browser-surfaces-current.json',
+    schemaIds: ['stephanos.ignition-browser-surface-receipt.v1'],
+    sourcePaths: ['windows/Launch-Stephanos-Local.ps1'],
+    role: 'ignition-browser-window-proof',
   }),
   record({
     fileName: 'mission-orchestrator-worker-heartbeat.json',
