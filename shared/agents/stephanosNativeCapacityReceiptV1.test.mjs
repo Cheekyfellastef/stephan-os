@@ -31,22 +31,29 @@ function expected(p=payload(), overrides={}) { return {
   nowUtc:NOW,
   ...overrides,
 }; }
+function signedReceipt(p=payload()) {
+  return createStephanosNativeCapacityReceipt(p,{privateKeyPem,keyId:'battle-bridge-native-capacity-key-v1'});
+}
+function authorityOptions(p=payload(), overrides={}) {
+  return {publicKeyPem,expected:expected(p),...overrides};
+}
 
 test('fresh local Ollama capacity signs, verifies against exact target and yields non-seizing source authority',()=>{
   const p=payload();
   assert.equal(validateStephanosNativeCapacityPayload(p,expected(p)).valid,true);
-  const receipt=createStephanosNativeCapacityReceipt(p,{privateKeyPem,keyId:'battle-bridge-native-capacity-key-v1'});
+  const receipt=signedReceipt(p);
   assert.ok(receipt);
   assert.equal(verifyStephanosNativeCapacityReceipt(receipt,{publicKeyPem,expected:expected(p)}).valid,true);
-  const authority=createStephanosNativeSourceAuthority(p);
-  assert.equal(validateStephanosNativeSourceAuthority(authority,p).valid,true);
+  const authority=createStephanosNativeSourceAuthority(receipt,authorityOptions(p));
+  assert.ok(authority);
+  assert.equal(validateStephanosNativeSourceAuthority(authority,receipt,authorityOptions(p)).valid,true);
   assert.equal(authority.leaseSeizureAllowed,false);
   assert.equal(authority.mergeAuthority,false);
 });
 
 test('verification requires independent clock and exact repository/head/worker bindings',()=>{
   const p=payload();
-  const receipt=createStephanosNativeCapacityReceipt(p,{privateKeyPem,keyId:'battle-bridge-native-capacity-key-v1'});
+  const receipt=signedReceipt(p);
   const complete=expected(p);
   for (const missing of ['repository','sourceHead','workerId','nowUtc']) {
     const incomplete={...complete};
@@ -60,9 +67,20 @@ test('verification requires independent clock and exact repository/head/worker b
   assert.ok(replay.errors.includes('freshness-invalid'));
 });
 
+test('source authority can only derive from a verified fresh receipt and exact context',()=>{
+  const p=payload();
+  const receipt=signedReceipt(p);
+  assert.ok(createStephanosNativeSourceAuthority(receipt,authorityOptions(p)));
+  assert.equal(createStephanosNativeSourceAuthority(receipt,{publicKeyPem,expected:expected(p,{nowUtc:'2027-09-15T14:41:00Z'})}),null);
+  assert.equal(createStephanosNativeSourceAuthority(receipt,{publicKeyPem,expected:expected(p,{repository:'other/repo'})}),null);
+  assert.equal(createStephanosNativeSourceAuthority(p,authorityOptions(p)),null);
+  const tampered={...receipt,payload:{...receipt.payload,model:'qwen:32b'}};
+  assert.equal(createStephanosNativeSourceAuthority(tampered,authorityOptions(p)),null);
+});
+
 test('tamper, replay/staleness, remote transport and authority widening fail closed',()=>{
   const p=payload();
-  const receipt=createStephanosNativeCapacityReceipt(p,{privateKeyPem,keyId:'battle-bridge-native-capacity-key-v1'});
+  const receipt=signedReceipt(p);
   const tampered={...receipt,payload:{...receipt.payload,model:'qwen:32b'}};
   assert.equal(verifyStephanosNativeCapacityReceipt(tampered,{publicKeyPem,expected:expected(p)}).valid,false);
   assert.equal(validateStephanosNativeCapacityPayload(p,expected(p,{nowUtc:'2026-09-15T15:00:00Z'})).valid,false);
@@ -80,12 +98,25 @@ test('wrong repository/head/worker and pressured load cannot become routable tru
   assert.equal(validateStephanosNativeCapacityPayload(payload({loadState:'PRESSURED'}),{nowUtc:NOW}).valid,false);
 });
 
-test('source authority cannot widen task classes beyond the signed capacity payload',()=>{
+test('source authority cannot widen task classes beyond the verified signed capacity payload',()=>{
   const p=payload();
-  const authority=createStephanosNativeSourceAuthority(p);
-  assert.equal(validateStephanosNativeSourceAuthority(authority,p).valid,true);
+  const receipt=signedReceipt(p);
+  const authority=createStephanosNativeSourceAuthority(receipt,authorityOptions(p));
+  assert.equal(validateStephanosNativeSourceAuthority(authority,receipt,authorityOptions(p)).valid,true);
   const widened={...authority,allowedTaskClasses:['EXACT_HEAD_REVIEW']};
-  const verdict=validateStephanosNativeSourceAuthority(widened,p);
+  const verdict=validateStephanosNativeSourceAuthority(widened,receipt,authorityOptions(p));
   assert.equal(verdict.valid,false);
   assert.ok(verdict.errors.includes('authority-task-classes-invalid'));
+});
+
+test('accessor-bearing capacity payload fails closed without invoking expected fields',()=>{
+  let invoked=0;
+  const p=payload();
+  const descriptors=Object.fromEntries(Object.entries(p).map(([key,value])=>[key,{value,enumerable:true,writable:true,configurable:true}]));
+  descriptors.model={get(){invoked+=1;throw new Error('must-not-run');},enumerable:true,configurable:true};
+  const hostile=Object.create(Object.prototype,descriptors);
+  const verdict=validateStephanosNativeCapacityPayload(hostile,expected(p));
+  assert.equal(verdict.valid,false);
+  assert.ok(verdict.errors.includes('payload-shape-invalid'));
+  assert.equal(invoked,0);
 });
