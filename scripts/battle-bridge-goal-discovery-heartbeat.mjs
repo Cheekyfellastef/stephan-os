@@ -38,6 +38,7 @@ export async function publishAutonomyBuildTrackStatus(track, {
     mergeAuthority: false,
     runtimeMutationAuthority: false,
     destructiveGitAllowed: false,
+    arbitraryShellAllowed: false,
   });
   return writeAtomicJson(
     paths.workspaceRoot,
@@ -86,6 +87,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         mergeAuthority: false,
         runtimeMutationAuthority: false,
         destructiveGitAllowed: false,
+        arbitraryShellAllowed: false,
         finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED',
       });
     }
@@ -109,6 +111,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       mergeAuthority: false,
       runtimeMutationAuthority: false,
       destructiveGitAllowed: false,
+      arbitraryShellAllowed: false,
       finalVerdict: blocked
         ? 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_BUILD_BLOCKED'
         : built
@@ -134,6 +137,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       mergeAuthority: false,
       runtimeMutationAuthority: false,
       destructiveGitAllowed: false,
+      arbitraryShellAllowed: false,
       finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED',
     });
   }
