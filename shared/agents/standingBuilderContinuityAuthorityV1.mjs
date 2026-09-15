@@ -16,6 +16,16 @@ const REQUIRED_HIGH_RISK_QUORUM = Object.freeze([
 export const STANDING_BUILDER_CONTINUITY_AUTHORITY_SCHEMA =
   'stephanos.standing-builder-continuity-authority.v1';
 export const STANDING_BUILDER_CONTINUITY_POLICY_VERSION = '1.0.0';
+export const STANDING_BUILDER_CONTINUITY_ALLOWED_ACTION_CLASSES = Object.freeze([
+  'PROTECTED_ADMISSION_REPROOF',
+  'PROTECTED_REPROOF',
+]);
+export const STANDING_BUILDER_CONTINUITY_FORBIDDEN_ACTION_CLASSES = Object.freeze([
+  'ARBITRARY_SHELL',
+  'CREDENTIAL_CHANGE',
+  'DIRECT_MAIN_WRITE',
+  'RUNTIME_MUTATION',
+]);
 export const STANDING_BUILDER_CONTINUITY_VERDICTS = Object.freeze({
   ELIGIBLE: 'STANDING_AUTHORITY_ELIGIBLE',
   BLOCKED: 'STANDING_AUTHORITY_BLOCKED',
@@ -62,6 +72,12 @@ function actionClasses(value) {
   return Object.freeze([...actions].sort());
 }
 
+function sameActionClasses(actual, expected) {
+  return Array.isArray(actual)
+    && actual.length === expected.length
+    && actual.every((action, index) => action === expected[index]);
+}
+
 function explicitTimestamp(value) {
   const normalized = text(value);
   if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(normalized)) return '';
@@ -82,6 +98,12 @@ export function validateStandingBuilderContinuityAuthorityV1(envelope = {}) {
   const forbidden = actionClasses(envelope.forbiddenActionClasses);
   if (!allowed || allowed.length === 0) blockers.push('standing-authority-allowed-actions-invalid');
   if (!forbidden || forbidden.length === 0) blockers.push('standing-authority-forbidden-actions-invalid');
+  if (allowed && !sameActionClasses(allowed, STANDING_BUILDER_CONTINUITY_ALLOWED_ACTION_CLASSES)) {
+    blockers.push('standing-authority-allowed-actions-not-canonical');
+  }
+  if (forbidden && !sameActionClasses(forbidden, STANDING_BUILDER_CONTINUITY_FORBIDDEN_ACTION_CLASSES)) {
+    blockers.push('standing-authority-forbidden-actions-not-canonical');
+  }
   if (allowed && forbidden && allowed.some((action) => forbidden.includes(action))) blockers.push('standing-authority-action-overlap');
   if (!explicitTimestamp(envelope.createdAtUtc)) blockers.push('standing-authority-created-at-invalid');
   if (!ALLOWED_REVOCATION_STATES.has(text(envelope.revocationState))) blockers.push('standing-authority-revocation-state-invalid');
@@ -127,14 +149,18 @@ export function evaluateStandingBuilderContinuityFallbackV1(input = {}) {
 
   if (input.builderContinuityPurpose !== true) blockers.push('standing-authority-purpose-not-builder-continuity');
   if (input.scopeBounded !== true) blockers.push('standing-authority-scope-not-bounded');
-  if (input.newAuthoritySurfaceIntroduced === true) blockers.push('standing-authority-new-authority-surface-forbidden');
+  if (input.newAuthoritySurfaceIntroduced !== false) blockers.push('standing-authority-new-authority-surface-forbidden');
   if (input.exactHostedChecksGreen !== true) blockers.push('standing-authority-hosted-checks-not-green');
   if (input.deterministicHighRiskTestsGreen !== true) blockers.push('standing-authority-high-risk-tests-not-green');
   if (input.providerUnavailableProven !== true) blockers.push('standing-authority-provider-unavailability-not-proven');
   if (input.sourceIdentityCurrent !== true) blockers.push('standing-authority-source-identity-not-current');
   if (input.resourceOwnershipUnambiguous !== true) blockers.push('standing-authority-resource-owner-ambiguous');
   if (input.mergeable !== true) blockers.push('standing-authority-target-not-mergeable');
-  if (Number(input.unresolvedReviewThreads) !== 0) blockers.push('standing-authority-unresolved-review-threads');
+  if (!Number.isSafeInteger(input.unresolvedReviewThreads) || input.unresolvedReviewThreads < 0) {
+    blockers.push('standing-authority-unresolved-review-threads-unknown');
+  } else if (input.unresolvedReviewThreads !== 0) {
+    blockers.push('standing-authority-unresolved-review-threads');
+  }
 
   const findings = Array.isArray(input.independentFindings) ? input.independentFindings : [];
   const substantive = findings.filter((finding) => !findingIsOnlySpecialistEscalation(finding));
