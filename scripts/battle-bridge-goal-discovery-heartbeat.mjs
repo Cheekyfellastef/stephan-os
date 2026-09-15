@@ -19,6 +19,20 @@ import { processNextProviderNeutralSourceBuild } from '../stephanos-server/servi
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA = 'stephanos.battle-bridge-goal-discovery-heartbeat.v1';
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT_MARKER = 'BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT=';
 
+function heldElasticDispatch(result = {}) {
+  const ignition = result?.elasticIgnition;
+  const dispatchCount = Number(ignition?.dispatchCount || 0);
+  const held = Array.isArray(ignition?.held) ? ignition.held : [];
+  if (dispatchCount > 0 || held.length === 0) return null;
+  return Object.freeze({
+    classification: String(ignition?.classification || 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD'),
+    held: Object.freeze(held.map((item) => Object.freeze({
+      missionId: String(item?.missionId || ''),
+      reason: String(item?.reason || 'ELASTIC_SOURCE_BUILD_HELD'),
+    }))),
+  });
+}
+
 export async function publishAutonomyBuildTrackStatus(track, {
   paths = resolveCriticalBacklogRuntimePaths(),
 } = {}) {
@@ -92,20 +106,48 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       });
     }
 
+    const elasticHold = heldElasticDispatch(result);
     const sourceBuild = await buildClaimedGoal(builderOptions);
     const built = sourceBuild?.processed === true && sourceBuild?.success === true;
     const blocked = sourceBuild?.processed === true && sourceBuild?.success === false;
+    const effectiveConveyorResult = !built && !blocked && elasticHold
+      ? Object.freeze({
+        ...result,
+        ok: false,
+        blocker: elasticHold.held.map((item) => `${item.missionId}:${item.reason}`).join(';'),
+      })
+      : result;
     const autonomyTrack = projectHeartbeatAutonomyBuildTrack({
-      conveyorResult: result,
+      conveyorResult: effectiveConveyorResult,
       sourceBuild: sourceBuild || null,
       timestampUtc,
     });
     const trackPublication = await publishTrackSafely(autonomyTrack, publishTrack, paths);
+
+    if (!built && !blocked && elasticHold) {
+      return Object.freeze({
+        schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
+        ok: false,
+        blocker: elasticHold.held.map((item) => `${item.missionId}:${item.reason}`).join(';'),
+        conveyorResult: result,
+        sourceBuild: sourceBuild || null,
+        elasticHold,
+        autonomyTrack,
+        trackPublication,
+        mergeAuthority: false,
+        runtimeMutationAuthority: false,
+        destructiveGitAllowed: false,
+        arbitraryShellAllowed: false,
+        finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_ELASTIC_SOURCE_BUILD_HELD',
+      });
+    }
+
     return Object.freeze({
       schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
       ok: !blocked,
       conveyorResult: result,
       sourceBuild: sourceBuild || null,
+      elasticHold: elasticHold || null,
       autonomyTrack,
       trackPublication,
       mergeAuthority: false,
