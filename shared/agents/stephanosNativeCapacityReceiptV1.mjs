@@ -24,8 +24,25 @@ const AUTHORITY_KEYS = Object.freeze([
 
 function text(v) { return typeof v === 'string' ? v.trim() : ''; }
 function timestamp(v) { const s=text(v); if(!/(?:Z|[+-]\d{2}:\d{2})$/i.test(s)) return null; const n=Date.parse(s); return Number.isFinite(n)?n:null; }
-function exactKeys(v, keys) { return v && Object.getPrototypeOf(v) === Object.prototype && JSON.stringify(Object.keys(v).sort()) === JSON.stringify([...keys].sort()); }
-function plainArray(v) { return Array.isArray(v) && Object.getPrototypeOf(v) === Array.prototype; }
+function exactKeys(v, keys) {
+  if (!v || Object.getPrototypeOf(v) !== Object.prototype) return false;
+  const descriptors=Object.getOwnPropertyDescriptors(v);
+  const ownKeys=Reflect.ownKeys(descriptors);
+  if (ownKeys.some((key)=>typeof key!=='string')) return false;
+  if (JSON.stringify([...ownKeys].sort())!==JSON.stringify([...keys].sort())) return false;
+  return ownKeys.every((key)=>Object.prototype.hasOwnProperty.call(descriptors[key],'value')&&descriptors[key].enumerable===true);
+}
+function plainArray(v) {
+  if (!Array.isArray(v)||Object.getPrototypeOf(v)!==Array.prototype) return false;
+  const descriptors=Object.getOwnPropertyDescriptors(v);
+  const keys=Reflect.ownKeys(descriptors);
+  if(keys.some((key)=>typeof key!=='string')||keys.length!==v.length+1||!Object.prototype.hasOwnProperty.call(descriptors,'length')) return false;
+  for(let index=0;index<v.length;index+=1){
+    const descriptor=descriptors[String(index)];
+    if(!descriptor||!Object.prototype.hasOwnProperty.call(descriptor,'value')||descriptor.enumerable!==true) return false;
+  }
+  return true;
+}
 function uniqueStrings(v) { if(!plainArray(v)) return null; const out=v.map(text); return out.every(Boolean) && out.length===new Set(out).size ? out : null; }
 function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -37,7 +54,7 @@ function frozen(v){ return Object.freeze(v); }
 
 export function validateStephanosNativeCapacityPayload(payload = {}, expected = {}) {
   const errors=[];
-  if(!exactKeys(payload,PAYLOAD_KEYS)) errors.push('payload-shape-invalid');
+  if(!exactKeys(payload,PAYLOAD_KEYS)) return frozen({valid:false,errors:frozen(['payload-shape-invalid']),payload:null});
   if(payload.schemaVersion!==STEPHANOS_NATIVE_CAPACITY_PAYLOAD_SCHEMA) errors.push('payload-schema-invalid');
   if(!SAFE_ID.test(text(payload.receiptId))) errors.push('receipt-id-invalid');
   if(!REPOSITORY.test(text(payload.repository)) || (expected.repository && payload.repository!==expected.repository)) errors.push('repository-invalid');
@@ -70,7 +87,7 @@ export function createStephanosNativeCapacityReceipt(payload, { privateKeyPem, k
 
 export function verifyStephanosNativeCapacityReceipt(receipt={}, { publicKeyPem, expected={} } = {}) {
   const errors=[];
-  if(!exactKeys(receipt,RECEIPT_KEYS)) errors.push('receipt-shape-invalid');
+  if(!exactKeys(receipt,RECEIPT_KEYS)) return frozen({valid:false,errors:frozen(['receipt-shape-invalid']),payload:null});
   if(receipt.schemaVersion!==STEPHANOS_NATIVE_CAPACITY_RECEIPT_SCHEMA||receipt.algorithm!=='Ed25519'||!SAFE_ID.test(text(receipt.keyId))) errors.push('receipt-identity-invalid');
   const expectedRepository=text(expected?.repository);
   const expectedSourceHead=text(expected?.sourceHead).toLowerCase();
@@ -92,9 +109,13 @@ export function verifyStephanosNativeCapacityReceipt(receipt={}, { publicKeyPem,
   return frozen({valid:errors.length===0,errors:frozen([...new Set(errors)]),payload:errors.length?null:receipt.payload});
 }
 
-export function createStephanosNativeSourceAuthority(payload, options={}) {
-  const observed=timestamp(payload?.observedAtUtc); const expires=timestamp(payload?.expiresAtUtc);
-  if(observed===null||expires===null) return null;
+export function createStephanosNativeSourceAuthority(receipt, options={}) {
+  const verification=verifyStephanosNativeCapacityReceipt(receipt,{
+    publicKeyPem:options.publicKeyPem,
+    expected:options.expected,
+  });
+  if(!verification.valid) return null;
+  const payload=verification.payload;
   const authority={
     schemaVersion:STEPHANOS_NATIVE_AUTHORITY_SCHEMA,
     authorityId:text(options.authorityId)||`native-authority-${hash(`${payload.receiptId}\n${payload.sourceHead}`).slice(0,24)}`,
@@ -108,9 +129,15 @@ export function createStephanosNativeSourceAuthority(payload, options={}) {
   return frozen(authority);
 }
 
-export function validateStephanosNativeSourceAuthority(authority={}, payload={}) {
+export function validateStephanosNativeSourceAuthority(authority={}, receipt={}, options={}) {
+  const verification=verifyStephanosNativeCapacityReceipt(receipt,{
+    publicKeyPem:options.publicKeyPem,
+    expected:options.expected,
+  });
+  if(!verification.valid) return frozen({valid:false,errors:frozen([`capacity-receipt-invalid:${verification.errors[0]||'unknown'}`])});
+  const payload=verification.payload;
   const errors=[];
-  if(!exactKeys(authority,AUTHORITY_KEYS)||authority.schemaVersion!==STEPHANOS_NATIVE_AUTHORITY_SCHEMA) errors.push('authority-shape-invalid');
+  if(!exactKeys(authority,AUTHORITY_KEYS)||authority.schemaVersion!==STEPHANOS_NATIVE_AUTHORITY_SCHEMA) return frozen({valid:false,errors:frozen(['authority-shape-invalid'])});
   if(!SAFE_ID.test(text(authority.authorityId))) errors.push('authority-id-invalid');
   if(authority.repository!==payload.repository||text(authority.sourceHead).toLowerCase()!==text(payload.sourceHead).toLowerCase()||authority.workerId!==payload.workerId||authority.capacityReceiptId!==payload.receiptId||authority.qualificationId!==payload.qualificationId) errors.push('authority-binding-mismatch');
   if(JSON.stringify(authority.allowedOperations)!==JSON.stringify(['SOURCE_CONSTRUCTION','FOCUSED_TESTS'])) errors.push('authority-operations-invalid');
