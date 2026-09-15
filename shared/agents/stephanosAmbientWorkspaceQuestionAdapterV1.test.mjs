@@ -31,7 +31,7 @@ function options(overrides = {}) {
   return {
     correlationId: 'ambient-1721-original',
     relatedIssue: '#1721',
-    proofRefs: ['issue:#1721', 'goal:#1290'],
+    proofRefs: ['proof/issue-1721', 'proof/goal-1290'],
     workspaceValidationOptions: { nowMs },
     ...overrides,
   };
