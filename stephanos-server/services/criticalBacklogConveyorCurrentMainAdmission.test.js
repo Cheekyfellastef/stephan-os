@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { runBattleBridgeGoalDiscoveryHeartbeat } from '../../scripts/battle-bridge-goal-discovery-heartbeat.mjs';
 import { ensureCriticalBacklogMission } from './criticalBacklogConveyorService.js';
 
 const CURRENT_MAIN = 'a'.repeat(40);
@@ -23,11 +24,8 @@ const paths = Object.freeze({
   snapshotRoot: '/snapshots',
 });
 
-test('stale worker HOLD admits canonical main but keeps worker dispatch fail closed', async () => {
-  let admissionCount = 0;
-  let capacityReadCount = 0;
-  let dispatchCount = 0;
-  const result = await ensureCriticalBacklogMission({
+async function staleWorkerHoldResult({ dispatchElasticBuilds } = {}) {
+  return ensureCriticalBacklogMission({
     now: NOW,
     env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: STALE_WORKER_HEAD },
     paths,
@@ -37,37 +35,33 @@ test('stale worker HOLD admits canonical main but keeps worker dispatch fail clo
       machineryInventory: { sourceHead: CURRENT_MAIN },
       scheduler: { failClosed: false, elasticCapacity: { status: 'RUNNING' } },
     }),
-    ensureElasticMissions: async () => {
-      admissionCount += 1;
-      return {
-        ok: true,
-        createdMissionCount: 0,
-        desiredWidth: 1,
-        selectedMission: mission,
-        elasticMissions: [mission],
-        activeMissions: [],
-        runnableMissions: [mission],
-      };
-    },
+    ensureElasticMissions: async () => ({
+      ok: true,
+      createdMissionCount: 0,
+      desiredWidth: 1,
+      selectedMission: mission,
+      elasticMissions: [mission],
+      activeMissions: [],
+      runnableMissions: [mission],
+    }),
     readCapacityRouting: async () => {
-      capacityReadCount += 1;
-      return { providerNeutralCapacity: 'fresh' };
+      throw new Error('capacity routing must remain behind stale runtime readiness');
     },
-    dispatchElasticBuilds: async () => {
-      dispatchCount += 1;
-      return { ok: true, dispatchCount: 1, dispatched: [{ missionId: mission.missionId }] };
-    },
+    dispatchElasticBuilds: dispatchElasticBuilds ?? (async () => {
+      throw new Error('worker dispatch must remain behind stale runtime readiness');
+    }),
     dispatchActiveCriticalMission: async () => ({ ok: true, classification: 'CRITICAL_ACTIVE_MISSION_DISPATCH_NOT_REQUIRED' }),
   });
+}
+
+test('stale worker HOLD admits canonical main but keeps worker dispatch fail closed', async () => {
+  const result = await staleWorkerHoldResult();
 
   assert.equal(result.ok, true);
   assert.equal(result.classification, 'ELASTIC_GOAL_MISSION_SELECTED');
   assert.equal(result.programmeStatus, 'HOLD');
   assert.equal(result.workerRuntimeHold, true);
   assert.deepEqual(result.programmeBlockers, ['worker-heartbeat-invalid-or-missing']);
-  assert.equal(admissionCount, 1);
-  assert.equal(capacityReadCount, 0);
-  assert.equal(dispatchCount, 0);
   assert.equal(result.elasticIgnition.classification, 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD');
   assert.equal(result.elasticIgnition.sourceRevision, CURRENT_MAIN);
   assert.equal(result.elasticIgnition.dispatchCount, 0);
@@ -80,6 +74,30 @@ test('stale worker HOLD admits canonical main but keeps worker dispatch fail clo
   assert.equal(result.elasticIgnition.runtimeMutationAuthority, false);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.arbitraryShellAllowed, false);
+});
+
+test('stale-worker held lane is parked while admitted source work can still drain', async () => {
+  const conveyorResult = await staleWorkerHoldResult();
+
+  const parked = await runBattleBridgeGoalDiscoveryHeartbeat({
+    conveyor: async () => conveyorResult,
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+  assert.equal(parked.ok, true);
+  assert.equal(parked.heldLaneParked, true);
+  assert.equal(parked.controllerContinuity, 'CONTINUE');
+  assert.deepEqual(parked.parkedLaneBlockers, [
+    `${mission.missionId}:MISSION_WORKER_RUNTIME_NOT_READY`,
+  ]);
+  assert.equal(parked.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_ELASTIC_SOURCE_BUILD_PARKED_CONTINUING');
+
+  const drained = await runBattleBridgeGoalDiscoveryHeartbeat({
+    conveyor: async () => conveyorResult,
+    buildClaimedGoal: async () => ({ processed: true, success: true, reason: 'source-changed-and-tested' }),
+  });
+  assert.equal(drained.ok, true);
+  assert.equal(drained.elasticHold.held[0].reason, 'MISSION_WORKER_RUNTIME_NOT_READY');
+  assert.equal(drained.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED');
 });
 
 test('non-worker programme HOLD cannot enter elastic source admission', async () => {
