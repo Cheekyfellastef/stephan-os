@@ -20,7 +20,7 @@ const HISTORIC_BLOBS = Object.freeze({
 const IDEMPOTENT_BLOBS = Object.freeze({
   ...HISTORIC_BLOBS,
   'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': '0ac877b0d7e877de9b010d415cf5e0bce2df8e64',
-  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': 'd3eb854e221cdd3aa36f23f1e9d5038c6c34d8df',
+  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '8e9deb80eaa4fab74f155b3bc8cb87a7e93ade3b',
   'shared/agents/postSyncRuntimeRefreshCoordinator.mjs': '9578d6ca272d0715a41423b75b5a30cb674c4267',
 });
 
@@ -158,6 +158,8 @@ $task.Principal.LogonType -ne 'Interactive'
 $task.Principal.RunLevel -ne 'Limited'
 Read-FreshHealthyHeartbeat -BankId $activeBank -ExpectedManifest
 Assert-ActivePayloadManifest -BankId $activeBank -ExpectedManifest
+$recoverableHeartbeatFailures = @(
+if ($heartbeatFailure -notin $recoverableHeartbeatFailures) { throw }
 if ($null -ne $activeState -and $activeBankFreshHealthy -and $manifestSha256 -eq [string]$activeState.manifestSha256) {
 Assert-CanonicalScheduledTask -CurrentUser $currentUser
 Remove-Item -LiteralPath $stageRoot -Recurse -Force
@@ -168,6 +170,10 @@ scheduledTaskIdentityReproved = $true
 if ($StartNow -and $PSCmdlet.ShouldProcess($taskName, 'Start existing canonical Battle Bridge recovery lifeboat task')) {
 Start-ScheduledTask -TaskName $taskName
 }
+$rollbackBankFreshHealthy = $false
+Assert-ActivePayloadManifest -BankId $rollbackBank -ExpectedManifest $rollbackManifest
+Read-FreshHealthyHeartbeat -BankId $rollbackBank -ExpectedManifest $rollbackManifest
+productionRedundancyReady = [bool]$rollbackBankFreshHealthy
 activeBankOverwriteAllowed = $false
 dualBankOverwriteAllowed = $false
 arbitraryShellAllowed = $false
@@ -244,7 +250,7 @@ test('idempotent reinstall profile accepts only the exact singleton installer es
   assert.equal(result.proofRefs.length, 7);
 });
 
-test('idempotent reinstall profile rejects stale pins, missing freshness, and missing same-manifest task/state proof', () => {
+test('idempotent reinstall profile rejects stale pins, unsafe heartbeat recovery, missing freshness and missing rollback proof', () => {
   const stale = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
     repository: REPOSITORY,
     sourceHead: HEAD,
@@ -253,6 +259,22 @@ test('idempotent reinstall profile rejects stale pins, missing freshness, and mi
   });
   assert.equal(stale.clean, false);
   assert.ok(stale.findings.some((item) => item.code === 'windows-authority-source-evidence-invalid'));
+
+  const heartbeatFailOpen = idempotentContentFor('scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1')
+    .replace('if ($heartbeatFailure -notin $recoverableHeartbeatFailures) { throw }', 'UNSAFE_HEARTBEAT_DOWNGRADE');
+  const heartbeatWeakened = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: idempotentAnalysis(),
+    sources: sources({
+      blobs: IDEMPOTENT_BLOBS,
+      contentFor: (path) => path === 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'
+        ? heartbeatFailOpen
+        : idempotentContentFor(path),
+    }),
+  });
+  assert.equal(heartbeatWeakened.clean, false);
+  assert.ok(heartbeatWeakened.findings.some((item) => item.code === 'lifeboat-heartbeat-identity-fail-closed-missing'));
 
   const freshnessRemoved = idempotentContentFor('scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1')
     .replace(' -and $activeBankFreshHealthy', '');
@@ -269,6 +291,22 @@ test('idempotent reinstall profile rejects stale pins, missing freshness, and mi
   });
   assert.equal(freshnessWeakened.clean, false);
   assert.ok(freshnessWeakened.findings.some((item) => item.code === 'lifeboat-idempotent-bounded-branch-missing'));
+
+  const rollbackRemoved = idempotentContentFor('scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1')
+    .replace('Read-FreshHealthyHeartbeat -BankId $rollbackBank -ExpectedManifest $rollbackManifest', 'REMOVED_ROLLBACK_HEARTBEAT_PROOF');
+  const rollbackWeakened = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: idempotentAnalysis(),
+    sources: sources({
+      blobs: IDEMPOTENT_BLOBS,
+      contentFor: (path) => path === 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'
+        ? rollbackRemoved
+        : idempotentContentFor(path),
+    }),
+  });
+  assert.equal(rollbackWeakened.clean, false);
+  assert.ok(rollbackWeakened.findings.some((item) => item.code === 'lifeboat-idempotent-rollback-heartbeat-proof-missing'));
 
   const weakenedInstaller = idempotentContentFor('scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1')
     .replace('Assert-CanonicalScheduledTask -CurrentUser $currentUser', 'REMOVED_TASK_REPROOF');
