@@ -134,7 +134,7 @@ async function persistTestEvidence(workspaceRoot, request, options = {}) {
         `source-head:${HEAD}`,
         `lease:${request.leaseId.toLowerCase()}`,
       ],
-      proofRefs:[],
+      proofRefs:[proofRef],
     });
     const write = await writeAtomicJson(
       workspaceRoot,
@@ -293,7 +293,7 @@ test('test omission, unexpected changed scope and untouched-file drift block pro
 test('accessor-bearing expected request field is rejected without invoking accessors', () => {
   let invoked = 0;
   const request = fixture().request;
-  const descriptors=Object.fromEntries(Object.entries(request).map(([key,value]) => [key,{ value, enumerable:true, writable:true, configurable:true }]));
+  const descriptors=Object.fromEntries(Object.entries(request).map(([key,value]) => [key,{ value, enumerable:true,writable:true,configurable:true }]));
   descriptors.schemaVersion={ get(){ invoked += 1; throw new Error('must-not-run'); }, enumerable:true, configurable:true };
   const hostile=Object.create(Object.prototype,descriptors);
   const validation=validateStephanosNativeStagingRequest(hostile);
