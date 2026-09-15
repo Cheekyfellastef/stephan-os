@@ -15,9 +15,10 @@ const mission = Object.freeze({
   git: { branch: 'openclaw/elastic-goal-1622', worktreePath: '/bounded/critical-1622-elastic-goal' },
 });
 
-test('elastic ignition admits authoritative canonical main even when physical worker env still names the prior head', async () => {
+test('elastic source admission uses canonical main while stale physical worker remains HOLD', async () => {
   let observedSourceRevision = '';
   let observedCapacityRevision = '';
+  let dispatchCount = 0;
   const result = await ensureCriticalBacklogMission({
     now: NOW,
     env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: STALE_WORKER_HEAD },
@@ -29,7 +30,8 @@ test('elastic ignition admits authoritative canonical main even when physical wo
       snapshotRoot: '/snapshots',
     },
     readProgrammeProjection: async () => ({
-      status: 'READY',
+      status: 'HOLD',
+      blockers: ['worker-heartbeat-invalid-or-missing'],
       machineryInventory: { sourceHead: CURRENT_MAIN },
       scheduler: { failClosed: false, elasticCapacity: { status: 'RUNNING' } },
     }),
@@ -47,6 +49,7 @@ test('elastic ignition admits authoritative canonical main even when physical wo
       return { providerNeutralCapacity: 'fresh' };
     },
     dispatchElasticBuilds: async (_admission, { sourceRevision }) => {
+      dispatchCount += 1;
       observedSourceRevision = sourceRevision;
       return { ok: true, dispatchCount: 1, dispatched: [{ missionId: mission.missionId }] };
     },
@@ -55,7 +58,13 @@ test('elastic ignition admits authoritative canonical main even when physical wo
 
   assert.equal(result.ok, true);
   assert.equal(result.classification, 'ELASTIC_GOAL_MISSION_SELECTED');
+  assert.equal(result.programmeStatus, 'HOLD');
+  assert.equal(result.workerRuntimeHold, true);
+  assert.deepEqual(result.programmeBlockers, ['worker-heartbeat-invalid-or-missing']);
+  assert.equal(dispatchCount, 1);
   assert.equal(observedCapacityRevision, CURRENT_MAIN);
   assert.equal(observedSourceRevision, CURRENT_MAIN);
   assert.notEqual(observedSourceRevision, STALE_WORKER_HEAD);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.arbitraryShellAllowed, false);
 });
