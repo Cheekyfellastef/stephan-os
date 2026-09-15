@@ -42,7 +42,7 @@ function checks(status, rows) {
   };
 }
 
-test('parseable non-zero gh checks observation reaches canonical classifier', () => {
+test('parseable gh checks status 1 reaches canonical classifier', () => {
   const rows = [
     ...successfulRequiredChecks(),
     { name: 'coordinate', workflow: 'Exact-Head Review Dispatch', state: 'SKIPPED' },
@@ -70,6 +70,42 @@ test('canonical classifier still blocks a genuine failed required workflow', () 
   assert.equal(validateProtectedMergeCheckRows(observation.checkPayload), false);
 });
 
+test('cancelled authentication pending signal and unknown gh exits fail closed', () => {
+  const rows = successfulRequiredChecks();
+  const cases = [
+    { status: 2, blocker: 'github-pr-checks-transport-failed' },
+    { status: 4, blocker: 'github-pr-checks-transport-failed' },
+    { status: 8, blocker: 'github-pr-checks-pending' },
+    { status: null, blocker: 'github-pr-checks-transport-failed' },
+    { status: 3, blocker: 'github-pr-checks-transport-failed' },
+    { status: 99, blocker: 'github-pr-checks-transport-failed' },
+  ];
+
+  for (const { status, blocker } of cases) {
+    const observation = parseOpenClawGitHubMergeObservation({
+      view: view(),
+      checks: checks(status, rows),
+    });
+    assert.equal(observation.valid, false, `status ${status} must fail closed`);
+    assert.equal(observation.checkPayload, null, `status ${status} must not reach the classifier`);
+    assert.ok(observation.blockers.includes(blocker), `status ${status} must report ${blocker}`);
+  }
+});
+
+test('spawn errors fail closed even when stdout contains parseable rows', () => {
+  const observation = parseOpenClawGitHubMergeObservation({
+    view: view(),
+    checks: {
+      ...checks(1, successfulRequiredChecks()),
+      error: new Error('spawn failed'),
+    },
+  });
+
+  assert.equal(observation.valid, false);
+  assert.equal(observation.checkPayload, null);
+  assert.ok(observation.blockers.includes('github-pr-checks-transport-failed'));
+});
+
 test('malformed or non-array check JSON fails closed before classification', () => {
   const malformed = parseOpenClawGitHubMergeObservation({
     view: view(),
@@ -95,7 +131,7 @@ test('view transport failures remain terminal', () => {
   assert.match(observation.blockers.join(' '), /view-transport-failed/);
 });
 
-test('Windows executor delegates parseable check-state exits instead of rejecting them first', () => {
+test('Windows executor delegates only parseable check-state exits instead of blanket-rejecting status 1', () => {
   const source = readFileSync(new URL('../../scripts/openclaw-github-operator.mjs', import.meta.url), 'utf8');
   assert.match(source, /parseOpenClawGitHubMergeObservation/);
   assert.match(source, /mergeObservation\.checkPayload/);
