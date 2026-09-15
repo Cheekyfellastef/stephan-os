@@ -39,6 +39,7 @@ test('valid bounded request and model result produce promotion-eligible exact re
   assert.equal(validateStephanosNativeModelResult(result, request).valid, true);
   const plan = buildStephanosNativeStagingPlan(request, result);
   assert.equal(plan.ok, true);
+  assert.equal(plan.branch, 'stephanos/native-canary-2007');
   assert.equal(plan.modelMayPromote, false);
   const proof = {
     baseHead: HEAD, leaseId: request.leaseId, changedFiles:['shared/agents/a.mjs'],
@@ -68,6 +69,33 @@ test('forged validation flags, traversal, out-of-scope writes and before-digest 
   assert.equal(validateStephanosNativeModelResult(stale, request).valid, false);
 });
 
+test('protected main aliases and protected or generated source paths cannot enter staging', () => {
+  const { request } = fixture();
+  for (const branch of ['main','refs/heads/main']) {
+    const verdict = validateStephanosNativeStagingRequest({ ...request, branch });
+    assert.equal(verdict.valid, false);
+    assert.ok(verdict.errors.includes('branch-invalid'));
+  }
+  for (const protectedPath of ['.git/config','.env','node_modules/x/index.js','runtime/state.json','apps/stephanos/dist/index.js']) {
+    const content='blocked\n';
+    const verdict=validateStephanosNativeStagingRequest({
+      ...request,
+      allowedFiles:[protectedPath],
+      sourceSnapshots:[{path:protectedPath,content,sha256:hash(content)}],
+    });
+    assert.equal(verdict.valid,false,`${protectedPath} must be rejected`);
+    assert.ok(verdict.errors.includes('allowed-file-path-invalid'));
+  }
+});
+
+test('malformed allowedFiles fails closed without throwing', () => {
+  const { request } = fixture();
+  assert.doesNotThrow(() => validateStephanosNativeStagingRequest({ ...request, allowedFiles:'shared/agents/a.mjs' }));
+  const verdict=validateStephanosNativeStagingRequest({ ...request, allowedFiles:'shared/agents/a.mjs' });
+  assert.equal(verdict.valid,false);
+  assert.ok(verdict.errors.includes('allowed-files-invalid'));
+});
+
 test('test omission, unexpected changed scope and untouched-file drift block promotion', () => {
   const { request, result } = fixture();
   const plan = buildStephanosNativeStagingPlan(request, result);
@@ -77,7 +105,19 @@ test('test omission, unexpected changed scope and untouched-file drift block pro
   assert.equal(verifyStephanosNativeTestAndScopeProof(plan, widened).valid, false);
 });
 
-test('accessor-bearing request is rejected without invoking accessors', () => {
+test('accessor-bearing expected request field is rejected without invoking accessors', () => {
+  let invoked = 0;
+  const request = fixture().request;
+  const descriptors=Object.fromEntries(Object.entries(request).map(([key,value]) => [key,{ value, enumerable:true, writable:true, configurable:true }]));
+  descriptors.schemaVersion={ get(){ invoked += 1; throw new Error('must-not-run'); }, enumerable:true, configurable:true };
+  const hostile=Object.create(Object.prototype,descriptors);
+  const validation=validateStephanosNativeStagingRequest(hostile);
+  assert.equal(validation.valid,false);
+  assert.ok(validation.errors.includes('request-shape-invalid'));
+  assert.equal(invoked,0);
+});
+
+test('extra accessor-bearing request field is rejected without invoking accessors', () => {
   let invoked = 0;
   const request = fixture().request;
   const hostile = Object.create(Object.prototype, {
