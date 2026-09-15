@@ -28,7 +28,7 @@ const HISTORIC_EXPECTED_BLOBS = Object.freeze({
 const IDEMPOTENT_EXPECTED_BLOBS = Object.freeze({
   ...HISTORIC_EXPECTED_BLOBS,
   'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': '0ac877b0d7e877de9b010d415cf5e0bce2df8e64',
-  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': 'd3eb854e221cdd3aa36f23f1e9d5038c6c34d8df',
+  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '8e9deb80eaa4fab74f155b3bc8cb87a7e93ade3b',
   'shared/agents/postSyncRuntimeRefreshCoordinator.mjs': '9578d6ca272d0715a41423b75b5a30cb674c4267',
 });
 
@@ -111,6 +111,8 @@ function reviewInstaller(source, path, findings) {
     ['gitMutationAllowed = $false', 'lifeboat-git-denial-missing'],
     ['sourceMutationAllowed = $false', 'lifeboat-source-denial-missing'],
     ['pcRestartAllowed = $false', 'lifeboat-pc-restart-denial-missing'],
+    ['$recoverableHeartbeatFailures = @(', 'lifeboat-recoverable-heartbeat-classification-missing'],
+    ['if ($heartbeatFailure -notin $recoverableHeartbeatFailures) { throw }', 'lifeboat-heartbeat-identity-fail-closed-missing'],
   ]) requireLiteral(findings, source, path, literal, code);
   forbid(findings, source, path, /New-ScheduledTaskAction\s+-Execute\s+\$powershellExe/i, 'lifeboat-direct-powershell-task-forbidden');
   forbid(findings, source, path, /-WindowStyle\s+Hidden/i, 'lifeboat-windowstyle-hidden-regression');
@@ -152,6 +154,10 @@ function reviewIdempotentReinstall(source, path, findings) {
     ['scheduledTaskIdentityReproved = $true', 'lifeboat-idempotent-task-reproof-receipt-missing'],
     ["if ($StartNow -and $PSCmdlet.ShouldProcess($taskName, 'Start existing canonical Battle Bridge recovery lifeboat task'))", 'lifeboat-idempotent-start-now-boundary-missing'],
     ['Start-ScheduledTask -TaskName $taskName', 'lifeboat-idempotent-fixed-task-start-missing'],
+    ['$rollbackBankFreshHealthy = $false', 'lifeboat-idempotent-rollback-freshness-state-missing'],
+    ['Assert-ActivePayloadManifest -BankId $rollbackBank -ExpectedManifest $rollbackManifest', 'lifeboat-idempotent-rollback-manifest-proof-missing'],
+    ['Read-FreshHealthyHeartbeat -BankId $rollbackBank -ExpectedManifest $rollbackManifest', 'lifeboat-idempotent-rollback-heartbeat-proof-missing'],
+    ['productionRedundancyReady = [bool]$rollbackBankFreshHealthy', 'lifeboat-idempotent-redundancy-proof-missing'],
     ['activeBankOverwriteAllowed = $false', 'lifeboat-idempotent-active-bank-overwrite-denial-missing'],
     ['dualBankOverwriteAllowed = $false', 'lifeboat-idempotent-dual-bank-overwrite-denial-missing'],
     ['arbitraryShellAllowed = $false', 'lifeboat-idempotent-shell-denial-missing'],
@@ -160,6 +166,7 @@ function reviewIdempotentReinstall(source, path, findings) {
     ['pcRestartAllowed = $false', 'lifeboat-idempotent-pc-restart-denial-missing'],
     ['return', 'lifeboat-idempotent-terminal-return-missing'],
   ]) requireLiteral(findings, branch, path, literal, code);
+  forbid(findings, branch, path, /productionRedundancyReady\s*=\s*\[bool\]\(\$activeBankFreshHealthy/i, 'lifeboat-idempotent-active-bank-redundancy-claim-forbidden');
   forbid(findings, branch, path, /Register-ScheduledTask/i, 'lifeboat-idempotent-task-reregistration-forbidden');
   forbid(findings, branch, path, /Write-AtomicJson/i, 'lifeboat-idempotent-active-state-rewrite-forbidden');
 }
