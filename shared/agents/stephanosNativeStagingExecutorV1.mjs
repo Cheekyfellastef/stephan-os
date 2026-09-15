@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { posix as path } from 'node:path';
+import { types as utilTypes } from 'node:util';
 import { readCurrentExecutionReceipt } from './executionReceiptV1.mjs';
 import {
   SHARED_WORKSPACE_RECORD_KINDS,
@@ -30,28 +31,41 @@ const TEST_OUTPUT_KEYS = Object.freeze(['testId','outputSha256']);
 const PROTECTED_PATH_SEGMENTS = new Set(['.git','node_modules','dist','build','coverage','.next','out']);
 
 function text(value) { return typeof value === 'string' ? value.trim() : ''; }
+function inspectable(value) {
+  return Boolean(value) && (typeof value === 'object' || typeof value === 'function') && !utilTypes.isProxy(value);
+}
 function exactKeys(value, keys) {
-  if (!value || Object.getPrototypeOf(value) !== Object.prototype) return false;
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const ownKeys = Reflect.ownKeys(descriptors);
-  if (ownKeys.some((key) => typeof key !== 'string')) return false;
-  if (JSON.stringify([...ownKeys].sort()) !== JSON.stringify([...keys].sort())) return false;
-  return ownKeys.every((key) => {
-    const descriptor = descriptors[key];
-    return Object.prototype.hasOwnProperty.call(descriptor, 'value') && descriptor.enumerable === true;
-  });
+  if (!inspectable(value)) return false;
+  try {
+    if (Object.getPrototypeOf(value) !== Object.prototype) return false;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const ownKeys = Reflect.ownKeys(descriptors);
+    if (ownKeys.some((key) => typeof key !== 'string')) return false;
+    if (JSON.stringify([...ownKeys].sort()) !== JSON.stringify([...keys].sort())) return false;
+    return ownKeys.every((key) => {
+      const descriptor = descriptors[key];
+      return Object.prototype.hasOwnProperty.call(descriptor, 'value') && descriptor.enumerable === true;
+    });
+  } catch {
+    return false;
+  }
 }
 function plainArray(value) {
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return false;
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const ownKeys = Reflect.ownKeys(descriptors);
-  if (ownKeys.some((key) => typeof key !== 'string')) return false;
-  if (ownKeys.length !== value.length + 1 || !Object.prototype.hasOwnProperty.call(descriptors, 'length')) return false;
-  for (let index = 0; index < value.length; index += 1) {
-    const descriptor = descriptors[String(index)];
-    if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value') || descriptor.enumerable !== true) return false;
+  if (!Array.isArray(value) || utilTypes.isProxy(value)) return false;
+  try {
+    if (Object.getPrototypeOf(value) !== Array.prototype) return false;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const ownKeys = Reflect.ownKeys(descriptors);
+    if (ownKeys.some((key) => typeof key !== 'string')) return false;
+    if (ownKeys.length !== value.length + 1 || !Object.prototype.hasOwnProperty.call(descriptors, 'length')) return false;
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value') || descriptor.enumerable !== true) return false;
+    }
+    return true;
+  } catch {
+    return false;
   }
-  return true;
 }
 function unique(values) { return plainArray(values) && values.length === new Set(values).size; }
 function sha256(value) { return createHash('sha256').update(value).digest('hex'); }
@@ -229,116 +243,86 @@ async function readPersistedNativeTestEvidence(plan, output, options = {}) {
 
   const executionId = buildStephanosNativeTestExecutionId(plan.actionId, testId);
   const proofRef = buildStephanosNativeTestProofRef(outputSha256);
-  const persisted = await readCurrentExecutionReceipt(options.workspaceRoot, {
-    repository: plan.repository,
-    branch: plan.branch,
-    expectedHead: plan.baseHead,
-    executionId,
-    leaseKey: plan.leaseId,
-  }, {
-    repoRoot: options.repoRoot,
-    nowMs: options.nowMs,
-  });
-  const receipt = persisted?.receipt;
-  if (!persisted?.ok || !receipt) return frozen({ valid:false, reason:persisted?.reason || 'persisted-execution-receipt-missing' });
-  const receiptValid = receipt.workerId === plan.workerId
-    && receipt.workerType === 'orchestration-engine'
-    && receipt.state === 'completed'
-    && receipt.phase === `native-test:${testId}`
-    && receipt.operatorActionRequired === false
-    && !text(receipt.blocker)
-    && Array.isArray(receipt.proofRefs)
-    && receipt.proofRefs.includes(proofRef);
-  if (!receiptValid) return frozen({ valid:false, reason:'persisted-execution-receipt-binding-invalid' });
+  const execution = await readCurrentExecutionReceipt(options.workspaceRoot, executionId, { repoRoot:options.repoRoot, nowMs:options.nowMs });
+  if (!execution.ok || execution.current?.state !== 'completed') return frozen({ valid:false, reason:'persisted-execution-receipt-missing' });
+  const receipt = execution.current;
+  if (receipt.repository !== plan.repository
+    || receipt.branch !== plan.branch
+    || text(receipt.sourceHead).toLowerCase() !== plan.baseHead
+    || text(receipt.workerId).toLowerCase() !== plan.workerId
+    || text(receipt.leaseKey).toLowerCase() !== plan.leaseId
+    || receipt.executionId !== executionId
+    || receipt.phase !== `native-test:${testId}`
+    || !plainArray(receipt.proofRefs)
+    || !receipt.proofRefs.includes(proofRef)) return frozen({ valid:false, reason:'persisted-execution-receipt-binding-invalid' });
 
-  const proofFile = `native-test-${outputSha256}.json`;
-  const resolved = resolveSharedWorkspacePath({
-    root: options.workspaceRoot,
-    repoRoot: options.repoRoot,
-    segments: ['proof', proofFile],
-  });
-  if (!resolved.ok) return frozen({ valid:false, reason:resolved.reason });
   let proofRecord;
   try {
-    proofRecord = JSON.parse(await readFile(resolved.path, 'utf8'));
-  } catch (error) {
-    return frozen({ valid:false, reason:error?.code === 'ENOENT' ? 'persisted-test-proof-missing' : 'persisted-test-proof-read-failed' });
+    const proofPath = resolveSharedWorkspacePath(options.workspaceRoot, ['proof', `native-test-${outputSha256}.json`]);
+    proofRecord = JSON.parse(await readFile(proofPath, 'utf8'));
+  } catch {
+    return frozen({ valid:false, reason:'persisted-test-proof-missing' });
   }
-  const proofValidation = validateSharedWorkspaceRecord(proofRecord, { nowMs: options.nowMs });
-  const expectedRefs = [
-    `action:${plan.actionId}`,
-    `test:${testId}`,
-    `output-sha256:${outputSha256}`,
-    `source-head:${plan.baseHead}`,
-    `lease:${plan.leaseId}`,
-  ];
-  const proofValid = proofValidation.valid
-    && proofValidation.stale !== true
-    && proofRecord.kind === SHARED_WORKSPACE_RECORD_KINDS.PROOF
-    && proofRecord.participantId === plan.workerId
-    && proofRecord.correlationId === executionId
-    && proofRecord.status === 'passed'
-    && Array.isArray(proofRecord.refs)
-    && expectedRefs.every((ref) => proofRecord.refs.includes(ref));
-  return frozen({
-    valid: proofValid,
-    reason: proofValid ? '' : proofValidation.refusalReason || 'persisted-test-proof-binding-invalid',
-    executionId,
-    proofRef,
-  });
+  const proofValidation = validateSharedWorkspaceRecord(proofRecord, SHARED_WORKSPACE_RECORD_KINDS.PROOF, { repoRoot:options.repoRoot, nowMs:options.nowMs });
+  if (!proofValidation.valid) return frozen({ valid:false, reason:'persisted-test-proof-invalid' });
+  const refs = plainArray(proofRecord.refs) ? proofRecord.refs : [];
+  if (proofRecord.participantId !== plan.workerId
+    || proofRecord.correlationId !== executionId
+    || proofRecord.status !== 'passed'
+    || !refs.includes(`action:${plan.actionId}`)
+    || !refs.includes(`test:${testId}`)
+    || !refs.includes(`output-sha256:${outputSha256}`)
+    || !refs.includes(`source-head:${plan.baseHead}`)
+    || !refs.includes(`lease:${plan.leaseId}`)
+    || !plainArray(proofRecord.proofRefs)
+    || !proofRecord.proofRefs.includes(proofRef)) return frozen({ valid:false, reason:'persisted-test-proof-binding-invalid' });
+  return frozen({ valid:true, testId, outputSha256, executionId, proofRef });
 }
 
 export async function verifyStephanosNativeTestAndScopeProof(request, result, proof = {}, options = {}) {
   const plan = buildStephanosNativeStagingPlan(request, result);
-  if (!plan?.ok) return frozen({ valid:false, errors:frozen(['plan-invalid']), plan });
-  if (!exactKeys(proof, ['baseHead','leaseId','changedFiles','testOutputs','sourceAfter'])) {
-    return frozen({ valid:false, errors:frozen(['proof-shape-invalid']), plan });
-  }
+  if (!plan.ok) return frozen({ valid:false, errors:frozen([`plan-invalid:${plan.reason}`]) });
   const errors = [];
+  if (!exactKeys(proof, ['baseHead','leaseId','changedFiles','testOutputs','sourceAfter'])) return frozen({ valid:false, errors:frozen(['proof-shape-invalid']) });
   if (text(proof.baseHead).toLowerCase() !== plan.baseHead) errors.push('proof-head-mismatch');
   if (text(proof.leaseId).toLowerCase() !== plan.leaseId) errors.push('proof-lease-mismatch');
-
-  const changed = plainArray(proof.changedFiles) ? proof.changedFiles.map(canonicalPath) : [];
-  if (!plainArray(proof.changedFiles) || !unique(changed) || JSON.stringify([...changed].sort()) !== JSON.stringify([...plan.changedFiles].sort())) errors.push('changed-scope-mismatch');
-
-  const outputs = plainArray(proof.testOutputs) ? proof.testOutputs : [];
-  if (!plainArray(proof.testOutputs) || outputs.length !== plan.requiredTestIds.length) errors.push('test-output-set-invalid');
-  const normalizedOutputIds = outputs.filter((item) => exactKeys(item, TEST_OUTPUT_KEYS)).map((item) => text(item.testId).toLowerCase());
-  if (normalizedOutputIds.length !== outputs.length || new Set(normalizedOutputIds).size !== normalizedOutputIds.length) errors.push('test-output-set-invalid');
-  for (const testId of plan.requiredTestIds) {
-    const matching = outputs.filter((item) => exactKeys(item, TEST_OUTPUT_KEYS) && text(item.testId).toLowerCase() === testId);
-    if (matching.length !== 1) {
-      errors.push(`required-test-missing:${testId}`);
-      continue;
+  const changedFiles = plainArray(proof.changedFiles) ? proof.changedFiles.map(canonicalPath) : [];
+  if (!plainArray(proof.changedFiles) || changedFiles.some((item) => !item) || !unique(changedFiles)) errors.push('changed-files-invalid');
+  const expectedChanged = plan.changedFiles;
+  if (changedFiles.length !== expectedChanged.length || changedFiles.some((item,index) => item !== expectedChanged[index])) errors.push('changed-scope-mismatch');
+  const testOutputs = plainArray(proof.testOutputs) ? proof.testOutputs : [];
+  if (!plainArray(proof.testOutputs)
+    || testOutputs.length !== plan.requiredTestIds.length
+    || testOutputs.some((item) => !exactKeys(item, TEST_OUTPUT_KEYS))
+    || new Set(testOutputs.map((item)=>text(item.testId).toLowerCase())).size !== testOutputs.length) errors.push('test-output-set-invalid');
+  else {
+    for (const testId of plan.requiredTestIds) {
+      const output = testOutputs.find((item) => text(item.testId).toLowerCase() === testId);
+      if (!output) { errors.push(`required-test-missing:${testId}`); continue; }
+      const persisted = await readPersistedNativeTestEvidence(plan, output, options);
+      if (!persisted.valid) errors.push(`required-test-invalid:${testId}:${persisted.reason}`);
     }
-    const persisted = await readPersistedNativeTestEvidence(plan, matching[0], options);
-    if (!persisted.valid) errors.push(`required-test-invalid:${testId}:${persisted.reason}`);
   }
-
   const after = plainArray(proof.sourceAfter) ? proof.sourceAfter : [];
-  const expectedAfterCount = plan.replacements.length + plan.untouched.length;
-  if (!plainArray(proof.sourceAfter) || after.length !== expectedAfterCount) errors.push('source-after-set-invalid');
-  const afterPaths = after.filter((item) => exactKeys(item, ['path','sha256'])).map((item) => canonicalPath(item.path));
-  if (afterPaths.length !== after.length || !unique(afterPaths)) errors.push('source-after-set-invalid');
-  for (const replacement of plan.replacements) {
-    const record = after.find((item) => exactKeys(item, ['path','sha256']) && canonicalPath(item.path) === replacement.path);
-    if (!record || text(record.sha256).toLowerCase() !== replacement.afterSha256) errors.push(`after-digest-mismatch:${replacement.path}`);
-  }
-  for (const untouched of plan.untouched) {
-    const record = after.find((item) => exactKeys(item, ['path','sha256']) && canonicalPath(item.path) === untouched.path);
-    if (!record || text(record.sha256).toLowerCase() !== untouched.sha256) errors.push(`untouched-drift:${untouched.path}`);
+  if (!plainArray(proof.sourceAfter) || after.length !== request.sourceSnapshots.length || after.some((item) => !exactKeys(item,['path','sha256']))) errors.push('source-after-invalid');
+  else {
+    const byPath = new Map(after.map((item) => [canonicalPath(item.path), text(item.sha256).toLowerCase()]));
+    for (const source of request.sourceSnapshots) {
+      const sourcePath = canonicalPath(source.path);
+      const replacement = plan.replacements.find((item) => item.path === sourcePath);
+      const expectedDigest = replacement?.afterSha256 || text(source.sha256).toLowerCase();
+      if (byPath.get(sourcePath) !== expectedDigest) errors.push(`source-after-mismatch:${sourcePath}`);
+    }
   }
   return frozen({ valid:errors.length === 0, errors:frozen([...new Set(errors)]), plan });
 }
 
-export async function createStephanosNativeStagingReceipt(request, result, proof = {}, options = {}) {
-  const validation = await verifyStephanosNativeTestAndScopeProof(request, result, proof, options);
-  if (!validation.valid) return null;
-  const plan = validation.plan;
+export async function createStephanosNativeStagingReceipt(request, result, proof, options = {}) {
+  const verification = await verifyStephanosNativeTestAndScopeProof(request, result, proof, options);
+  if (!verification.valid) return null;
   const observedAtUtc = text(options.observedAtUtc);
-  if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(observedAtUtc) || !Number.isFinite(Date.parse(observedAtUtc))) return null;
-  const treeMaterial = plan.replacements.map((item) => `${item.path}\0${item.afterSha256}`).sort().join('\n');
-  const diffMaterial = plan.replacements.map((item) => `${item.path}\0${item.beforeSha256}\0${item.afterSha256}`).sort().join('\n');
+  if (!observedAtUtc || !Number.isFinite(Date.parse(observedAtUtc))) return null;
+  const plan = verification.plan;
   return frozen({
     schemaVersion: STEPHANOS_NATIVE_STAGING_RECEIPT_SCHEMA,
     missionId: plan.missionId,
@@ -349,15 +333,14 @@ export async function createStephanosNativeStagingReceipt(request, result, proof
     baseHead: plan.baseHead,
     leaseId: plan.leaseId,
     changedFiles: plan.changedFiles,
-    testIds: plan.requiredTestIds,
-    stagedTreeSha256: sha256(treeMaterial),
-    diffSha256: sha256(diffMaterial),
+    stagedTreeSha256: sha256(plan.replacements.map((item)=>`${item.path}\0${item.afterSha256}`).join('\n')),
+    diffSha256: sha256(plan.replacements.map((item)=>`${item.path}\n${item.beforeSha256}\n${item.afterSha256}`).join('\n---\n')),
     observedAtUtc,
     sourceChanged: true,
     testsPassed: true,
     promotionEligible: true,
-    arbitraryCommandAllowed: false,
     modelMayPromote: false,
+    leaseSeizureAllowed: false,
     mergeAuthority: false,
   });
 }
