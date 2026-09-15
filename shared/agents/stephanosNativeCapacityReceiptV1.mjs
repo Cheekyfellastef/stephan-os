@@ -72,7 +72,17 @@ export function verifyStephanosNativeCapacityReceipt(receipt={}, { publicKeyPem,
   const errors=[];
   if(!exactKeys(receipt,RECEIPT_KEYS)) errors.push('receipt-shape-invalid');
   if(receipt.schemaVersion!==STEPHANOS_NATIVE_CAPACITY_RECEIPT_SCHEMA||receipt.algorithm!=='Ed25519'||!SAFE_ID.test(text(receipt.keyId))) errors.push('receipt-identity-invalid');
-  const payloadValidation=validateStephanosNativeCapacityPayload(receipt.payload,expected);
+  const expectedRepository=text(expected?.repository);
+  const expectedSourceHead=text(expected?.sourceHead).toLowerCase();
+  const expectedWorkerId=text(expected?.workerId);
+  const expectedNowUtc=text(expected?.nowUtc);
+  if(!REPOSITORY.test(expectedRepository)||!SHA40.test(expectedSourceHead)||!SAFE_ID.test(expectedWorkerId)||timestamp(expectedNowUtc)===null) errors.push('verification-context-invalid');
+  const payloadValidation=validateStephanosNativeCapacityPayload(receipt.payload,{
+    repository:expectedRepository,
+    sourceHead:expectedSourceHead,
+    workerId:expectedWorkerId,
+    nowUtc:expectedNowUtc,
+  });
   if(!payloadValidation.valid) errors.push(...payloadValidation.errors);
   let signatureValid=false;
   if(text(publicKeyPem)&&typeof receipt.signatureBase64==='string') {
@@ -104,7 +114,9 @@ export function validateStephanosNativeSourceAuthority(authority={}, payload={})
   if(!SAFE_ID.test(text(authority.authorityId))) errors.push('authority-id-invalid');
   if(authority.repository!==payload.repository||text(authority.sourceHead).toLowerCase()!==text(payload.sourceHead).toLowerCase()||authority.workerId!==payload.workerId||authority.capacityReceiptId!==payload.receiptId||authority.qualificationId!==payload.qualificationId) errors.push('authority-binding-mismatch');
   if(JSON.stringify(authority.allowedOperations)!==JSON.stringify(['SOURCE_CONSTRUCTION','FOCUSED_TESTS'])) errors.push('authority-operations-invalid');
-  if(!plainArray(authority.allowedTaskClasses)||!authority.allowedTaskClasses.length) errors.push('authority-task-classes-invalid');
+  const authorityTaskClasses=uniqueStrings(authority.allowedTaskClasses);
+  const payloadTaskClasses=uniqueStrings(payload.supportedTaskClasses);
+  if(!authorityTaskClasses?.length||!payloadTaskClasses?.length||JSON.stringify(authorityTaskClasses)!==JSON.stringify(payloadTaskClasses)) errors.push('authority-task-classes-invalid');
   if(authority.leaseSeizureAllowed!==false||authority.mergeAuthority!==false||authority.arbitraryCommandAllowed!==false) errors.push('authority-widening-forbidden');
   if(authority.issuedAtUtc!==payload.observedAtUtc||authority.expiresAtUtc!==payload.expiresAtUtc) errors.push('authority-freshness-binding-invalid');
   return frozen({valid:errors.length===0,errors:frozen([...new Set(errors)])});
