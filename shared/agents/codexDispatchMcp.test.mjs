@@ -16,6 +16,7 @@ import {
 
 const HEAD = 'a'.repeat(40);
 const OTHER_HEAD = 'c'.repeat(40);
+const BASE_HEAD = 'd'.repeat(40);
 const NOW = '2026-08-08T12:00:00.000Z';
 const TASK = 'Run the exact Battle Bridge ignition proof and return evidence.';
 
@@ -33,8 +34,17 @@ function exactHeadProof() {
   };
 }
 
-function remoteDispatchArgs({ observedAt = NOW } = {}) {
-  const proof = exactHeadProof();
+function exactBaseBoundHeadProof() {
+  return {
+    ...exactHeadProof(),
+    proofTarget: 'PULL_REQUEST_HEAD_BASE_BOUND',
+    pullRequestHead: HEAD,
+    githubMainHead: BASE_HEAD,
+    proofScenario: 'battle-bridge-base-bound-specialist-review',
+  };
+}
+
+function remoteDispatchArgs({ observedAt = NOW, proof = exactHeadProof(), surfaceHead = HEAD } = {}) {
   const receiptResult = createRemoteCodexOperatorApprovalReceipt({
     approvalId: 'approval-battle-bridge-ignition',
     requestId: 'remote-battle-bridge-ignition-1706',
@@ -69,7 +79,7 @@ function remoteDispatchArgs({ observedAt = NOW } = {}) {
     platform: 'win32',
     can_local_windows_proof: true,
     repositoryRoot: 'C:\\repo',
-    sourceHead: HEAD,
+    sourceHead: surfaceHead,
     serverSourceSha256: 'b'.repeat(64),
     toolsListed: ['dispatch_codex_task', 'get_codex_task_status', 'read_codex_task_result'],
     requiredDispatchToolsPresent: true,
@@ -166,7 +176,7 @@ test('MCP server advertises guarded dispatch, sync, full update, and determinist
   });
   const initialized = await initializeCompatibleSession(handler);
   assert.equal(initialized.serverInfo.name, STEPHANOS_CODEX_DISPATCH_MCP_NAME);
-  assert.equal(initialized.serverInfo.version, '1.2.0');
+  assert.equal(initialized.serverInfo.version, '1.3.0');
   const listed = await handler('tools/list');
   assert.deepEqual(listed.tools.map((tool) => tool.name), [
     'dispatch_codex_task',
@@ -417,7 +427,7 @@ test('dispatch rejects missing, forged, or mismatched authority without reaching
 test('dispatch rejects stale or mismatched transported attachments', async () => {
   for (const tamper of [
     (args) => { args.surfaceAttachment.observedAt = '2026-08-08T11:40:00.000Z'; },
-    (args) => { args.surfaceAttachment.sourceHead = OTHER_HEAD; },
+    (args) => { args.surfaceAttachment.sourceHead = ''; },
     (args) => { args.surfaceAttachment.requiredDispatchToolsPresent = false; },
     (args) => { args.surfaceAttachment.repositoryRoot = 'C:\\other-repo'; },
   ]) {
@@ -430,6 +440,88 @@ test('dispatch rejects stale or mismatched transported attachments', async () =>
     assert.equal(result.isError, true);
     assert.equal(integration.calls.length, 0);
   }
+});
+
+test('PR-head dispatch uses one server-resolved clean linked worktree while the control plane remains on main', async () => {
+  const targetRoot = 'C:\\approved-review-worktree';
+  const integration = fakeIntegration();
+  const args = structuredClone(remoteDispatchArgs({
+    proof: exactBaseBoundHeadProof(),
+    surfaceHead: BASE_HEAD,
+  }));
+  let resolveCalls = 0;
+  let reproofCalls = 0;
+  let factoryCalls = 0;
+  const handler = createCodexDispatchMcpHandler({
+    integration: fakeIntegration(),
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({
+      readRepositoryHead: (root) => root === targetRoot ? HEAD : BASE_HEAD,
+    }),
+    resolveReadOnlyReviewWorktree(input) {
+      resolveCalls += 1;
+      assert.equal(input.canonicalRepositoryRoot, 'C:\\repo');
+      assert.equal(input.expectedHead, HEAD);
+      assert.equal(input.proofTarget, 'PULL_REQUEST_HEAD_BASE_BOUND');
+      return {
+        ok: true,
+        worktree: {
+          schemaVersion: 'stephanos.read-only-pull-request-worktree.v1',
+          repositoryRoot: targetRoot,
+          sourceHead: HEAD,
+          commonDirectory: 'C:\\repo\\.git',
+          cleanTrackedAndUntracked: true,
+          ignoredFilesAbsent: true,
+          sourceMutationAllowed: false,
+        },
+      };
+    },
+    reproveReadOnlyReviewWorktree(receipt) {
+      reproofCalls += 1;
+      assert.equal(receipt.repositoryRoot, targetRoot);
+      return { ok: true, worktree: receipt };
+    },
+    integrationForRepositoryRoot({ repoRoot }) {
+      factoryCalls += 1;
+      assert.equal(repoRoot, targetRoot);
+      return integration;
+    },
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: args });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.executionProof.mode, 'registered-read-only-pr-worktree');
+  assert.equal(result.structuredContent.executionProof.controlHead, BASE_HEAD);
+  assert.equal(result.structuredContent.executionProof.sourceHead, HEAD);
+  assert.equal(result.structuredContent.executionProof.sourceMutationAllowed, false);
+  assert.equal(resolveCalls, 1);
+  assert.equal(reproofCalls, 1);
+  assert.equal(factoryCalls, 1);
+  assert.equal(integration.calls.length, 1);
+});
+
+test('PR-head dispatch fails before queue creation when no exact clean worktree is proven', async () => {
+  const integration = fakeIntegration();
+  const args = structuredClone(remoteDispatchArgs({
+    proof: exactBaseBoundHeadProof(),
+    surfaceHead: BASE_HEAD,
+  }));
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({ readRepositoryHead: () => BASE_HEAD }),
+    resolveReadOnlyReviewWorktree: () => ({
+      ok: false,
+      verdict: 'BLOCKED',
+      blocker: 'READ_ONLY_PR_WORKTREE_EXACT_CLEAN_CANDIDATE_NOT_FOUND',
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: args });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.blocker, 'READ_ONLY_PR_WORKTREE_EXACT_CLEAN_CANDIDATE_NOT_FOUND');
+  assert.equal(integration.calls.length, 0);
 });
 
 test('dispatch revalidates approval expiry at the MCP boundary', async () => {
