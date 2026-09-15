@@ -26,6 +26,7 @@ import {
   loadSharedWorkspaceHeadTruthEvidence,
 } from '../shared/agents/sharedWorkspaceHeadTruthV1.mjs';
 import {
+  DEFAULT_STALE_AFTER_MS,
   createSharedWorkspaceEventRecord,
   createSharedWorkspaceReceiptRecord,
   resolveSharedWorkspacePath,
@@ -97,6 +98,65 @@ function sameJson(left, right) {
   } catch {
     return false;
   }
+}
+
+function qaReplayIdentity(record = {}) {
+  try {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) return null;
+    if (text(record.recordSubtype) !== 'conversation-question') return null;
+    const body = JSON.parse(String(record.body ?? ''));
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+    if (body.subtype !== 'conversation-question' || !body.payload || typeof body.payload !== 'object' || Array.isArray(body.payload)) return null;
+    const { createdAtUtc: _createdAtUtc, ...payload } = body.payload;
+    return Object.freeze({
+      schemaVersion: record.schemaVersion,
+      kind: record.kind,
+      messageId: record.messageId,
+      participantId: record.participantId,
+      recipientParticipantId: record.recipientParticipantId,
+      correlationId: record.correlationId,
+      relatedIssue: record.relatedIssue,
+      relatedPr: record.relatedPr,
+      channel: record.channel,
+      recordSubtype: record.recordSubtype,
+      subjectId: record.subjectId,
+      summary: record.summary,
+      body: Object.freeze({
+        schemaVersion: body.schemaVersion,
+        subtype: body.subtype,
+        payload: Object.freeze(payload),
+      }),
+      sourceMutationAllowed: record.sourceMutationAllowed,
+      commandExecutionAllowed: record.commandExecutionAllowed,
+      approvalAllowed: record.approvalAllowed,
+      mergeAllowed: record.mergeAllowed,
+      deploymentAllowed: record.deploymentAllowed,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function sameQaReplayIdentity(left, right) {
+  const leftIdentity = qaReplayIdentity(left);
+  const rightIdentity = qaReplayIdentity(right);
+  return Boolean(leftIdentity && rightIdentity && sameJson(leftIdentity, rightIdentity));
+}
+
+function staleQaQuestion(record = {}, nowMs = Date.now()) {
+  const recordMs = Date.parse(text(record.timestampUtc));
+  return Number.isFinite(recordMs) && Number.isFinite(nowMs) && nowMs - recordMs > DEFAULT_STALE_AFTER_MS;
+}
+
+function staleQaReplayEligible(record = {}, nowMs = Date.now()) {
+  if (!staleQaQuestion(record, nowMs)) return false;
+  const decoded = decodeStephanosWorkspaceQuestionRecord(record, {
+    workspaceValidationOptions: { nowMs },
+  });
+  return decoded.valid === false
+    && Array.isArray(decoded.errors)
+    && decoded.errors.length === 1
+    && decoded.errors[0] === 'workspace:stale-record';
 }
 
 function qaQuestionSegments(questionRecord = {}) {
@@ -552,8 +612,12 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
       });
       if (existingQuestion.ok) {
         if (!sameJson(existingQuestion.record, questionRecord)) {
-          deliveryStatus = 'WORKSPACE_QA_EXISTING_QUESTION_CONFLICT';
-          primaryWrite = { ok: false, reason: deliveryStatus, bytes: 0 };
+          if (staleQaReplayEligible(existingQuestion.record, nowMs) && sameQaReplayIdentity(existingQuestion.record, questionRecord)) {
+            primaryWrite = { ok: true, reason: 'WORKSPACE_QA_STALE_QUESTION_SEMANTIC_RESUME', bytes: 0, resumed: true };
+          } else {
+            deliveryStatus = 'WORKSPACE_QA_EXISTING_QUESTION_CONFLICT';
+            primaryWrite = { ok: false, reason: deliveryStatus, bytes: 0 };
+          }
         } else {
           primaryWrite = { ok: true, reason: 'WORKSPACE_RECORD_ALREADY_PERSISTED', bytes: 0, resumed: true };
         }
