@@ -601,15 +601,15 @@ function Get-VerifiedWorkerProcessFromHeartbeat {
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
         if (-not (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot)) { return $null }
-        $liveProcessStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
-        if ($liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks) { return $null }
         $processCapability = [System.Diagnostics.Process]::GetProcessById($processId)
         try {
             if ($processCapability.HasExited -or $processCapability.Id -ne $processId) {
                 throw 'PROCESS_CAPABILITY_IDENTITY_MISMATCH'
             }
             $null = $processCapability.Handle
-            $capabilityProcessStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+            $liveProcessStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+            if ($liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks) { return $null }
+            $capabilityProcessStartedAtUtc = $liveProcessStartedAtUtc
             if ($capabilityProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks) {
                 throw 'PROCESS_CAPABILITY_IDENTITY_MISMATCH'
             }
@@ -769,8 +769,14 @@ function Get-VerifiedFreshWorkerInstance {
             -or $timestamp -lt $boundHeartbeatTimestampUtc) { return $null }
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
-        $processStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
-        if ($processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks) { return $null }
+        $processCapability = [System.Diagnostics.Process]::GetProcessById($processId)
+        try {
+            if ($processCapability.HasExited -or $processCapability.Id -ne $processId) { return $null }
+            $null = $processCapability.Handle
+            $processStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+            if ($processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks) { return $null }
+        }
+        finally { $processCapability.Dispose() }
         if (-not (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot)) { return $null }
         return [PSCustomObject]@{
             ProcessId = $processId
@@ -812,8 +818,14 @@ function Get-VerifiedInvocationProcessFromLaunchReceipt {
         if ($processId -le 0 -or $processStartedAtUtc -le $StartedAfterUtc) { return $null }
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
-        $observedStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
-        if ($observedStartedAtUtc.Ticks -ne $processStartedAtUtc.Ticks) { return $null }
+        $processCapability = [System.Diagnostics.Process]::GetProcessById($processId)
+        try {
+            if ($processCapability.HasExited -or $processCapability.Id -ne $processId) { return $null }
+            $null = $processCapability.Handle
+            $observedStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+            if ($observedStartedAtUtc.Ticks -ne $processStartedAtUtc.Ticks) { return $null }
+        }
+        finally { $processCapability.Dispose() }
         if (-not (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot)) { return $null }
         return [PSCustomObject]@{
             ProcessId = $processId
