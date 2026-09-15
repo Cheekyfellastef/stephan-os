@@ -54,6 +54,33 @@ test('goal discovery heartbeat fails closed when the conveyor blocks and publish
   assert.equal(result.autonomyTrack.blocker, 'NO_QUALIFIED_CAPACITY');
 });
 
+test('goal discovery heartbeat preserves a held elastic dispatch as a blocking autonomy signal', async () => {
+  const capture = captureTrack();
+  const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+    conveyor: async () => ({
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-1622-elastic-goal', issueNumber: 1622 } },
+      elasticIgnition: {
+        ok: true,
+        dispatchCount: 0,
+        classification: 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD',
+        held: [{ missionId: 'critical-1622-elastic-goal', reason: 'SOURCE_REVISION_NOT_ADMITTED' }],
+      },
+    }),
+    buildClaimedGoal: async () => ({ processed: false, reason: 'queue-empty' }),
+    publishTrack: capture.publishTrack,
+    now: new Date('2026-09-15T12:01:30.000Z'),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_ELASTIC_SOURCE_BUILD_HELD');
+  assert.equal(result.blocker, 'critical-1622-elastic-goal:SOURCE_REVISION_NOT_ADMITTED');
+  assert.equal(result.elasticHold.held[0].reason, 'SOURCE_REVISION_NOT_ADMITTED');
+  assert.equal(capture.published.length, 1);
+  assert.notEqual(result.autonomyTrack.currentState, 'COMPLETE');
+  assert.match(result.autonomyTrack.blocker, /SOURCE_REVISION_NOT_ADMITTED/);
+});
+
 test('goal discovery heartbeat publishes source/test/terminal receipt progress for a real source build', async () => {
   const capture = captureTrack();
   const result = await runBattleBridgeGoalDiscoveryHeartbeat({
