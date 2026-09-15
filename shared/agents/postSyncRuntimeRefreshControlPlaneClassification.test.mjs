@@ -83,3 +83,21 @@ test('worker watchdog and Recovery Mesh liveness repair coalesces as natural rel
   assert.equal(plan.openClawApprovalRequired, false);
   assert.equal(plan.automaticExecutionAllowed, true);
 });
+
+test('windowless Lifeboat delivery and its fixed control-plane reconciler naturally reload without stranding sync', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs',
+    'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
+    'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
+    'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs',
+  ]);
+
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.unsafePathCount, 0);
+  assert.equal(plan.openClawApprovalRequired, false);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});

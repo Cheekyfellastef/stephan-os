@@ -17,6 +17,10 @@ export const DASHBOARD_FEED_STATES = Object.freeze({
   UNAVAILABLE: 'unavailable',
   ERROR: 'error',
 });
+export const SHARED_WORKSPACE_FEED_RECORD_SCOPES = Object.freeze({
+  CURRENT_STATE: 'current-state',
+  FULL_HISTORY: 'full-history',
+});
 export const MIN_DASHBOARD_FEED_POLL_INTERVAL_MS = 15_000;
 export const DEFAULT_DASHBOARD_FEED_POLL_INTERVAL_MS = 30_000;
 
@@ -26,7 +30,10 @@ const DIRECTORY_BY_KIND = Object.freeze({
   proof: 'proofRecords',
   capabilities: 'capabilityRecords',
   events: 'eventRecords',
+  receipts: 'receiptRecords',
 });
+const HISTORICAL_DIRECTORIES = new Set(['events', 'receipts']);
+const DASHBOARD_OPERATOR_DECISION_RECEIPT_SCHEMA = 'stephanos.operator-decision-receipt.v1';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -45,8 +52,14 @@ function safePollIntervalMs(value) {
   return Math.max(MIN_DASHBOARD_FEED_POLL_INTERVAL_MS, Math.floor(parsed));
 }
 
+function safeRecordScope(value) {
+  return value === SHARED_WORKSPACE_FEED_RECORD_SCOPES.FULL_HISTORY
+    ? SHARED_WORKSPACE_FEED_RECORD_SCOPES.FULL_HISTORY
+    : SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE;
+}
+
 function emptyRecords() {
-  return { goalRecords: [], statusRecords: [], proofRecords: [], capabilityRecords: [], eventRecords: [] };
+  return { goalRecords: [], statusRecords: [], proofRecords: [], capabilityRecords: [], eventRecords: [], receiptRecords: [] };
 }
 
 function classifyFeed({ resolved, records, projection, errors }) {
@@ -100,10 +113,15 @@ async function readRecordDirectory(root, directory, options) {
   const errors = [];
   for (const name of names.filter((item) => (
     item.endsWith('.json')
+    && !(directory === 'receipts' && item.endsWith('.pending.json'))
     && !isSharedWorkspaceSpecializedStatusFile({ directory, fileName: item })
   ))) {
     try {
       const record = JSON.parse(await readFile(join(resolved.path, name), 'utf8'));
+      if (
+        directory === 'receipts'
+        && record?.operatorDecisionSchemaVersion !== DASHBOARD_OPERATOR_DECISION_RECEIPT_SCHEMA
+      ) continue;
       const validation = validateSharedWorkspaceRecord(record, options);
       if (validation.valid) records.push(record);
       else errors.push(`${directory}/${name}:${validation.errors.join(',')}`);
@@ -148,11 +166,16 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : DEFAULT_STALE_AFTER_MS;
   const polling = createSharedWorkspaceDashboardPollingContract(input);
+  const recordScope = safeRecordScope(input.recordScope);
   const resolved = resolveSharedWorkspacePath({ root: input.root, repoRoot: input.repoRoot, segments: [] });
   const records = emptyRecords();
   const errors = [];
   if (resolved.ok) {
     for (const [directory, key] of Object.entries(DIRECTORY_BY_KIND)) {
+      if (
+        recordScope === SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE
+        && HISTORICAL_DIRECTORIES.has(directory)
+      ) continue;
       const result = await readRecordDirectory(resolved.root, directory, { repoRoot: input.repoRoot, nowMs, staleAfterMs });
       records[key] = result.records;
       errors.push(...result.errors);
@@ -179,6 +202,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     schemaVersion: SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION,
     kind: 'stephanos.shared_workspace.dashboard_feed',
     readOnly: true,
+    recordScope,
     state: classification.state,
     reason: classification.reason,
     exactNextAction: classification.exactNextAction,

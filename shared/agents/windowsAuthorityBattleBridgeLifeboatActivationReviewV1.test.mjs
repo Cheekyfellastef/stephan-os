@@ -8,17 +8,23 @@ import {
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = 'a'.repeat(40);
-const BLOBS = Object.freeze({
+const HISTORIC_BLOBS = Object.freeze({
   'scripts/battle-bridge-control-plane-self-repair.test.mjs': 'f72094e4f92b7168768a5e38b7e43de07ff752a8',
-  'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': '7f54c6f911d0f7012121b615b8cb6d84adffb46a',
+  'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': 'a8e4b0dc13593017979b000e5caa7f7d97e2d98d',
   'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '1da7c432fd051f7b9249d881638d21b131fa98a4',
   'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs': 'c724540a727aab7881dd3b06b52aa7cf9d86f7d8',
   'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs': '95ead85880038b3bf630a1d95e134f5f3deeb936',
   'shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs': 'dbc82832cdf528ea144d21338971aa309d4ee667',
-  'shared/agents/postSyncRuntimeRefreshCoordinator.mjs': '908e55aa2c87250e59e6dbce198bad562f783696',
+  'shared/agents/postSyncRuntimeRefreshCoordinator.mjs': 'e92065e6c0d61365ff6f1b7c8aec75200e5102b6',
+});
+const IDEMPOTENT_BLOBS = Object.freeze({
+  ...HISTORIC_BLOBS,
+  'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': '0ac877b0d7e877de9b010d415cf5e0bce2df8e64',
+  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '8e9deb80eaa4fab74f155b3bc8cb87a7e93ade3b',
+  'shared/agents/postSyncRuntimeRefreshCoordinator.mjs': '9578d6ca272d0715a41423b75b5a30cb674c4267',
 });
 
-function analysis(overrides = {}) {
+function historicAnalysis(overrides = {}) {
   return {
     findings: [
       { severity: 'P0', code: 'unsupported-high-risk-surface', path: 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1' },
@@ -27,8 +33,16 @@ function analysis(overrides = {}) {
     ...overrides,
   };
 }
+function idempotentAnalysis(overrides = {}) {
+  return {
+    findings: [
+      { severity: 'P0', code: 'unsupported-high-risk-surface', path: 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1' },
+    ],
+    ...overrides,
+  };
+}
 
-function contentFor(path) {
+function historicContentFor(path) {
   if (path === 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1') return String.raw`
 $taskName = 'Stephanos Battle Bridge Recovery Lifeboat'
 $candidateVersion = '1.2.0'
@@ -61,7 +75,7 @@ localAppData = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%")
 systemRoot = shell.ExpandEnvironmentStrings("%SystemRoot%")
 launcher = localAppData & "\Stephanos\BattleBridgeRecoveryLifeboat\run-battle-bridge-recovery-lifeboat-active-v1.ps1"
 exitCode = shell.Run(command, 0, True)
-`.replaceAll('\\"', '"');
+`;
   if (path === 'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs') return String.raw`
 id: 'recoveryLifeboat'
 taskName: 'Stephanos Battle Bridge Recovery Lifeboat'
@@ -111,11 +125,11 @@ assert.equal(result.failedTaskId, 'recoveryLifeboat')
 assert.equal(powerShellCalls.length, 5)
 `;
   if (path === 'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs') return String.raw`
-New-ScheduledTaskAction -Execute \$wscriptExe
-shell\.Run\(command, 0, True\)
-WScript\.Arguments
-New-ScheduledTaskAction -Execute \$powershellExe
+$wscriptExe
+$powershellExe
 -WindowStyle Hidden
+shell
+WScript
 `;
   return String.raw`
 worker watchdog and Recovery Mesh liveness repair coalesces as natural reload only
@@ -129,7 +143,52 @@ assert.equal(plan.automaticExecutionAllowed, true)
 `;
 }
 
-function sources(overrides = {}) {
+function idempotentContentFor(path) {
+  if (path !== 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1') return historicContentFor(path);
+  return `${historicContentFor(path)}
+function Read-FreshHealthyHeartbeat
+function Assert-ActivePayloadManifest
+function Assert-CanonicalScheduledTask
+Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
+$actions.Count -ne 1
+$actions[0].Execute -ne $wscriptExe
+$actions[0].Arguments -ne $expectedArguments
+$task.Principal.UserId -ne $CurrentUser
+$task.Principal.LogonType -ne 'Interactive'
+$task.Principal.RunLevel -ne 'Limited'
+Read-FreshHealthyHeartbeat -BankId $activeBank -ExpectedManifest
+Assert-ActivePayloadManifest -BankId $activeBank -ExpectedManifest
+$recoverableHeartbeatFailures = @(
+if ($heartbeatFailure -notin $recoverableHeartbeatFailures) { throw }
+if ($null -ne $activeState -and $activeBankFreshHealthy -and $manifestSha256 -eq [string]$activeState.manifestSha256) {
+Assert-CanonicalScheduledTask -CurrentUser $currentUser
+Remove-Item -LiteralPath $stageRoot -Recurse -Force
+installDisposition = 'ALREADY_CURRENT_HEALTHY'
+changed = $false
+activeBankAfter = $activeBank
+scheduledTaskIdentityReproved = $true
+if ($StartNow -and $PSCmdlet.ShouldProcess($taskName, 'Start existing canonical Battle Bridge recovery lifeboat task')) {
+Start-ScheduledTask -TaskName $taskName
+}
+$rollbackBankFreshHealthy = $false
+Assert-ActivePayloadManifest -BankId $rollbackBank -ExpectedManifest $rollbackManifest
+Read-FreshHealthyHeartbeat -BankId $rollbackBank -ExpectedManifest $rollbackManifest
+productionRedundancyReady = [bool]$rollbackBankFreshHealthy
+activeBankOverwriteAllowed = $false
+dualBankOverwriteAllowed = $false
+arbitraryShellAllowed = $false
+gitMutationAllowed = $false
+sourceMutationAllowed = $false
+pcRestartAllowed = $false
+return
+}
+$targetRoot = Join-Path $banksRoot $targetBank
+installDisposition = 'PROMOTED_CANDIDATE'
+changed = $true
+`;
+}
+
+function sources({ blobs = HISTORIC_BLOBS, contentFor = historicContentFor, overrides = {} } = {}) {
   return WINDOWS_AUTHORITY_BATTLE_BRIDGE_LIFEBOAT_ACTIVATION_PATHS_V1.map((path) => ({
     schemaVersion: 'stephanos.windows-authority-source.v1',
     repository: REPOSITORY,
@@ -137,17 +196,17 @@ function sources(overrides = {}) {
     ref: HEAD,
     exists: true,
     size: Buffer.byteLength(contentFor(path)),
-    blobSha: BLOBS[path],
+    blobSha: blobs[path],
     content: contentFor(path),
     ...(overrides[path] || {}),
   }));
 }
 
-test('specialist plans exactly the seven-file five-task Lifeboat activation estate for the two generic Windows escalations', () => {
+test('historic specialist still plans exactly the seven-file Lifeboat activation estate for the two generic Windows escalations', () => {
   const result = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
     repository: REPOSITORY,
     sourceHead: HEAD,
-    analysis: analysis(),
+    analysis: historicAnalysis(),
     sources: [],
   });
   assert.equal(result.eligible, true);
@@ -156,11 +215,11 @@ test('specialist plans exactly the seven-file five-task Lifeboat activation esta
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_SOURCE_REQUIRED');
 });
 
-test('specialist seals only the exact pinned windowless Lifeboat-first five-task activation contract', () => {
+test('historic specialist seals the existing pinned windowless Lifeboat-first activation contract unchanged', () => {
   const result = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
     repository: REPOSITORY,
     sourceHead: HEAD,
-    analysis: analysis(),
+    analysis: historicAnalysis(),
     sources: sources(),
   });
   assert.equal(result.eligible, true);
@@ -170,11 +229,117 @@ test('specialist seals only the exact pinned windowless Lifeboat-first five-task
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_PASS');
 });
 
-test('specialist rejects broadened findings, widened source estate and wrong pinned source identity', () => {
+test('idempotent reinstall profile accepts only the exact singleton installer escalation and exact current repair blobs', () => {
+  const plan = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: idempotentAnalysis(),
+    sources: [],
+  });
+  assert.equal(plan.eligible, true);
+  assert.deepEqual(plan.reviewedPaths, WINDOWS_AUTHORITY_BATTLE_BRIDGE_LIFEBOAT_ACTIVATION_PATHS_V1);
+
+  const result = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: idempotentAnalysis(),
+    sources: sources({ blobs: IDEMPOTENT_BLOBS, contentFor: idempotentContentFor }),
+  });
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_PASS');
+  assert.equal(result.proofRefs.length, 7);
+});
+
+test('idempotent reinstall profile rejects stale pins, unsafe heartbeat recovery, missing freshness and missing rollback proof', () => {
+  const stale = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: idempotentAnalysis(),
+    sources: sources({ contentFor: idempotentContentFor }),
+  });
+  assert.equal(stale.clean, false);
+  assert.ok(stale.findings.some((item) => item.code === 'windows-authority-source-evidence-invalid'));
+
+  const heartbeatFailOpen = idempotentContentFor('scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1')
+    .replace('if ($heartbeatFailure -notin $recoverableHeartbeatFailures) { throw }', 'UNSAFE_HEARTBEAT_DOWNGRADE');
+  const heartbeatWeakened = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: idempotentAnalysis(),
+    sources: sources({
+      blobs: IDEMPOTENT_BLOBS,
+      contentFor: (path) => path === 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'
+        ? heartbeatFailOpen
+        : idempotentContentFor(path),
+    }),
+  });
+  assert.equal(heartbeatWeakened.clean, false);
+  assert.ok(heartbeatWeakened.findings.some((item) => item.code === 'lifeboat-heartbeat-identity-fail-closed-missing'));
+
+  const freshnessRemoved = idempotentContentFor('scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1')
+    .replace(' -and $activeBankFreshHealthy', '');
+  const freshnessWeakened = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: idempotentAnalysis(),
+    sources: sources({
+      blobs: IDEMPOTENT_BLOBS,
+      contentFor: (path) => path === 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'
+        ? freshnessRemoved
+        : idempotentContentFor(path),
+    }),
+  });
+  assert.equal(freshnessWeakened.clean, false);
+  assert.ok(freshnessWeakened.findings.some((item) => item.code === 'lifeboat-idempotent-bounded-branch-missing'));
+
+  const rollbackRemoved = idempotentContentFor('scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1')
+    .replace('Read-FreshHealthyHeartbeat -BankId $rollbackBank -ExpectedManifest $rollbackManifest', 'REMOVED_ROLLBACK_HEARTBEAT_PROOF');
+  const rollbackWeakened = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: idempotentAnalysis(),
+    sources: sources({
+      blobs: IDEMPOTENT_BLOBS,
+      contentFor: (path) => path === 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'
+        ? rollbackRemoved
+        : idempotentContentFor(path),
+    }),
+  });
+  assert.equal(rollbackWeakened.clean, false);
+  assert.ok(rollbackWeakened.findings.some((item) => item.code === 'lifeboat-idempotent-rollback-heartbeat-proof-missing'));
+
+  const weakenedInstaller = idempotentContentFor('scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1')
+    .replace('Assert-CanonicalScheduledTask -CurrentUser $currentUser', 'REMOVED_TASK_REPROOF');
+  const weakened = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: idempotentAnalysis(),
+    sources: sources({
+      blobs: IDEMPOTENT_BLOBS,
+      contentFor: (path) => path === 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1'
+        ? weakenedInstaller
+        : idempotentContentFor(path),
+    }),
+  });
+  assert.equal(weakened.clean, false);
+  assert.ok(weakened.findings.some((item) => item.code === 'lifeboat-idempotent-task-reproof-not-bound'));
+});
+
+test('specialist rejects broadened unsupported surfaces, duplicate findings, widened source estate and wrong pinned source identity', () => {
+  const duplicateSingleton = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
+    repository: REPOSITORY,
+    sourceHead: HEAD,
+    analysis: idempotentAnalysis({ findings: [...idempotentAnalysis().findings, ...idempotentAnalysis().findings] }),
+    sources: [],
+  });
+  assert.equal(duplicateSingleton.eligible, false);
+
   const broadened = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
     repository: REPOSITORY,
     sourceHead: HEAD,
-    analysis: analysis({ findings: [...analysis().findings, { severity: 'P0', code: 'unsupported-high-risk-surface', path: 'scripts/windows/other.ps1' }] }),
+    analysis: idempotentAnalysis({
+      findings: [...idempotentAnalysis().findings, { severity: 'P0', code: 'unsupported-high-risk-surface', path: 'scripts/windows/other.ps1' }],
+    }),
     sources: [],
   });
   assert.equal(broadened.eligible, false);
@@ -182,7 +347,7 @@ test('specialist rejects broadened findings, widened source estate and wrong pin
   const widened = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
     repository: REPOSITORY,
     sourceHead: HEAD,
-    analysis: analysis(),
+    analysis: historicAnalysis(),
     sources: [...sources(), { ...sources()[0], path: 'extra' }],
   });
   assert.equal(widened.clean, false);
@@ -191,9 +356,11 @@ test('specialist rejects broadened findings, widened source estate and wrong pin
   const wrongBlob = analyzeWindowsAuthorityBattleBridgeLifeboatActivationReview({
     repository: REPOSITORY,
     sourceHead: HEAD,
-    analysis: analysis(),
+    analysis: historicAnalysis(),
     sources: sources({
-      'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': { blobSha: 'b'.repeat(40) },
+      overrides: {
+        'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': { blobSha: 'b'.repeat(40) },
+      },
     }),
   });
   assert.equal(wrongBlob.clean, false);

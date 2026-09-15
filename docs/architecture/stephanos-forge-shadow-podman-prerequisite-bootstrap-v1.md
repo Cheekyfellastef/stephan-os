@@ -50,9 +50,36 @@ The source fixes exactly:
 - installation scope: current user only;
 - resulting executable: `%LOCALAPPDATA%\Programs\Podman\podman.exe`.
 
+### Windows 10 compatibility adapter
+
+The Battle Bridge is Windows 10 Pro 22H2, so the prerequisite carries one replaceable host adapter, `podman-desktop-windows10-wsl2-v1`. It does not create a second Forge runtime or install Podman Desktop. It records the upstream compatibility authority that Podman Desktop supports Windows 10 build `19043+` and, at Podman Desktop `1.29.1`, selects the same Windows x64 Podman `6.0.2` installer already pinned above.
+
+That upstream support floor does not make this adapter a generic future-Windows adapter. The executable admission boundary is deliberately narrower and exact:
+
+- Windows client SKU only;
+- Windows 10 product identity;
+- x64 OS architecture only;
+- build `19043` through `21999` inclusive;
+- working WSL2 proved by either `Default Version: 2` from `wsl.exe --status` or at least one version-2 distribution from `wsl.exe --list --verbose`;
+- the existing `podman-wsl-rootless` runtime boundary.
+
+The authority is fixed to:
+
+- Podman Desktop version `1.29.1`;
+- source commit `a969ee0e0b07285122dd4988a58edb0a1a25d5fc`;
+- bundled-Podman manifest blob `5acfedd1c3171414aa218a1d5d95ea7529687809`;
+- host floor Windows 10 client build `19043`;
+- host ceiling build `22000` exclusive;
+- x64 architecture;
+- the existing `podman-wsl-rootless` runtime boundary.
+
+The upstream evidence is independently auditable through Podman Desktop's Windows installation support floor, 1.29 release record, and exact `podman.json` manifest at the pinned commit.
+
+The adapter only changes host admission. Podman version, MSI URL, MSI digest, Authenticode verification, fixed executable path, user scope, WSL provider, machine identity, Forgejo digest and all no-authority receipts remain canonical.
+
 The fixed adapter verifies canonical `main`, exact head, exact tree and the committed/working prerequisite-installer blob before mutation and repeats source identity proof afterwards.
 
-The installer requires Windows 11+, the fixed Git executable and an already available WSL2 environment. It does not enable Windows features, request elevation, reboot the host, create a Podman machine or alter system-scope Podman state.
+The installer does not treat the presence of `wsl.exe`, or a successful WSL command exit code by itself, as WSL2 proof. A WSL1-only or unconfigured host therefore remains blocked. It does not enable Windows features, request elevation, reboot the host, create a Podman machine or alter system-scope Podman state. A host below the build floor returns `WINDOWS_10_BUILD_19043_OR_NEWER_REQUIRED`; a server, non-client, non-x64, Windows-11-build or otherwise out-of-adapter host returns the closed Windows-10 client blocker; unreadable product identity returns `WINDOWS_PRODUCT_IDENTITY_UNAVAILABLE`; a compatible host without proved WSL2 returns `WSL2_NOT_AVAILABLE`.
 
 If exact Podman 6.0.2 is already present at the fixed user path, the operation returns success without reinstalling it.
 
@@ -93,12 +120,17 @@ and proves `readyForM2=true` while still proving:
 After this source slice receives ordinary provider-neutral review and protected merge authorization, the Battle Bridge sequence is:
 
 1. synchronize exact merged main through the existing #1507 path;
-2. execute one prerequisite-only `INSTALL_FORGE_SHADOW_M2` command with no image digest;
-3. require `FORGE_SHADOW_PODMAN_PREREQUISITE_READY` and record the exact resolver-produced Forgejo digest;
-4. execute the already-authorized normal M2 command with that exact digest;
-5. require genuine fresh `FORGE_SHADOW_M2_READY` proof;
-6. prepare immutable M3 artifacts;
-7. derive the canonical M3 runtime plan;
-8. execute exactly one bounded M3 proof;
-9. require `FORGE_SHADOW_M3_EXECUTION_PROVEN` and teardown truth;
-10. only after the later capacity publication and one genuine machinery task completes without Remote Codex may Forge be described as a usable production build lane.
+2. prove the exact Windows 10 x64 build range and real WSL2 evidence;
+3. execute one prerequisite-only `INSTALL_FORGE_SHADOW_M2` command with no image digest;
+4. require `FORGE_SHADOW_PODMAN_PREREQUISITE_READY` and record the exact resolver-produced Forgejo digest;
+5. execute the separately authorized normal M2 command with that exact digest;
+6. require genuine fresh `FORGE_SHADOW_M2_READY` proof;
+7. prepare immutable M3 artifacts;
+8. derive the canonical M3 runtime plan;
+9. execute exactly one bounded M3 proof;
+10. require `FORGE_SHADOW_M3_EXECUTION_PROVEN` and teardown truth;
+11. only after capacity publication and a genuine machinery task completes without dependence on Codex may Forge be described as a usable production build lane.
+
+## Shared invariant
+
+Host compatibility is an adapter fact, never permission to weaken the canonical Forge runtime. A platform adapter may widen admission only when it binds immutable upstream compatibility authority to the already-pinned executable and then republishes the same bounded receipts. Missing OS features, elevation or a restart remain explicit operator prerequisites rather than hidden installer side effects.

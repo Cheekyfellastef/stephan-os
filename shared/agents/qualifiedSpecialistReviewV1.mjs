@@ -221,11 +221,14 @@ function responseMatches(comment = {}, options = {}) {
   const reviewedCommitRef = qualifiedSpecialistCommentHeadRef(comment);
   const resolvedCommitId = text(comment?.resolved_commit_id ?? comment?.resolvedCommitId).toLowerCase();
   const sourceHead = text(options.sourceHead).toLowerCase();
+  const reviewedHeadMatches = reviewedCommitRef.length >= 7
+    && sourceHead.startsWith(reviewedCommitRef);
+  const resolvedHeadMatches = !resolvedCommitId || resolvedCommitId === sourceHead;
   return isTrustedProviderResponse(comment)
     && Buffer.byteLength(body, 'utf8') <= MAX_SPECIALIST_COMMENT_BODY_BYTES
     && /^Codex Review:\s*Didn't find any major issues\./i.test(body)
-    && reviewedCommitRef.length >= 7
-    && resolvedCommitId === sourceHead
+    && reviewedHeadMatches
+    && resolvedHeadMatches
     && Number.isFinite(createdAtMs)
     && Number.isFinite(updatedAtMs)
     && updatedAtMs === createdAtMs;
@@ -466,21 +469,29 @@ function providerNeutralArtifactCandidates(comments = [], options = {}) {
 
 export function qualifiedSpecialistEscalationPaths(analysis = {}) {
   const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
+  const counts = analysis?.counts && typeof analysis.counts === 'object' && !Array.isArray(analysis.counts)
+    ? analysis.counts
+    : null;
   if (analysis?.schemaVersion !== 'stephanos.independent-security-analysis.v1'
     || analysis?.finalVerdict !== 'INDEPENDENT_SECURITY_REVIEW_FINDINGS'
     || analysis?.verdict !== 'findings'
     || findings.length < 1
     || findings.some((item) => (
       text(item?.severity).toUpperCase() !== 'P0'
-      || text(item?.code) !== QUALIFIED_SPECIALIST_FINDING_CODE
       || !text(item?.path)
     ))
-    || Number(analysis?.counts?.P0) !== findings.length
-    || Number(analysis?.counts?.P1) !== 0
-    || Number(analysis?.counts?.P2) !== 0) {
+    || !counts
+    || !Number.isSafeInteger(counts.P0)
+    || !Number.isSafeInteger(counts.P1)
+    || !Number.isSafeInteger(counts.P2)
+    || counts.P0 !== findings.length
+    || counts.P1 !== 0
+    || counts.P2 !== 0) {
     return Object.freeze([]);
   }
-  return Object.freeze(unique(findings.map((item) => text(item.path))).sort());
+  return Object.freeze(unique(findings
+    .filter((item) => text(item?.code) === QUALIFIED_SPECIALIST_FINDING_CODE)
+    .map((item) => text(item.path))).sort());
 }
 
 function validateSpecialistReviewCandidate(review = {}, options = {}) {
@@ -650,19 +661,33 @@ export function adjudicateQualifiedSpecialistReview(input = {}) {
       `proofs/specialist-review/reviewer-${QUALIFIED_SPECIALIST_REVIEWER_LOGIN}`,
     ]),
   ]);
-  const cleanAnalysis = Object.freeze({
+  const coveredPaths = new Set(paths);
+  const residualFindings = (Array.isArray(analysis.findings) ? analysis.findings : [])
+    .filter((item) => !(
+      text(item?.code) === QUALIFIED_SPECIALIST_FINDING_CODE
+      && coveredPaths.has(text(item?.path))
+    ));
+  const residualCounts = Object.freeze({
+    P0: residualFindings.filter((item) => text(item?.severity).toUpperCase() === 'P0').length,
+    P1: residualFindings.filter((item) => text(item?.severity).toUpperCase() === 'P1').length,
+    P2: residualFindings.filter((item) => text(item?.severity).toUpperCase() === 'P2').length,
+  });
+  const residualClean = residualFindings.length === 0;
+  const adjudicatedAnalysis = Object.freeze({
     schemaVersion: 'stephanos.independent-security-analysis.v1',
-    findings: Object.freeze([]),
-    counts: Object.freeze({ P0: 0, P1: 0, P2: 0 }),
-    verdict: 'clean',
+    findings: Object.freeze(residualFindings),
+    counts: residualCounts,
+    verdict: residualClean ? 'clean' : 'findings',
     proofRefs: Object.freeze(proofRefs),
-    finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_CLEAN',
+    finalVerdict: residualClean
+      ? 'INDEPENDENT_SECURITY_REVIEW_CLEAN'
+      : 'INDEPENDENT_SECURITY_REVIEW_FINDINGS',
   });
 
   return Object.freeze({
     required: true,
     valid: true,
-    analysis: cleanAnalysis,
+    analysis: adjudicatedAnalysis,
     receipt: candidate.receipt,
     artifact: candidate.artifact || null,
     reviewId: candidate.reviewId,

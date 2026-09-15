@@ -20,6 +20,7 @@ import {
 const HEAD = 'a'.repeat(40);
 const OLD_HEAD = 'b'.repeat(40);
 const NOW = new Date('2026-08-07T13:45:00.000Z');
+const CANONICAL_MAILBOX_ISSUE = 2158;
 
 function command(overrides = {}) {
   return {
@@ -27,7 +28,7 @@ function command(overrides = {}) {
     requestId: 'tailscale-prerequisite-72d4e79-20260807T1345Z',
     operation: BATTLE_BRIDGE_TAILSCALE_PREREQUISITE_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     expectedHead: HEAD,
     expiresAt: '2026-08-07T14:00:00.000Z',
     ...overrides,
@@ -42,7 +43,7 @@ test('read-only prerequisite request is owner-authored, exact-head bound and Cod
   const extracted = extractBattleBridgeTailscalePrerequisiteCheck(body());
   assert.equal(extracted.ok, true);
   const result = validateBattleBridgeTailscalePrerequisiteCheck(extracted.command, {
-    authorLogin: 'Cheekyfellastef', issueNumber: 1507, now: NOW, currentMainHead: HEAD,
+    authorLogin: 'Cheekyfellastef', issueNumber: CANONICAL_MAILBOX_ISSUE, now: NOW, currentMainHead: HEAD,
   });
   assert.equal(result.ok, true);
   assert.equal(result.request.operation, 'CHECK_BOOTSTRAP_PREREQUISITES');
@@ -52,12 +53,13 @@ test('read-only prerequisite request is owner-authored, exact-head bound and Cod
   assert.equal(BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_TAG, 'tag:stephanos-github-recovery');
 });
 
-test('prerequisite request fails closed on foreign author, stale head, long expiry and extra fields', () => {
+test('prerequisite request fails closed on foreign author, retired issue, stale head, long expiry and extra fields', () => {
   const fixtures = [
-    [command(), { authorLogin: 'other', issueNumber: 1507, now: NOW, currentMainHead: HEAD }, 'TAILSCALE_BOOTSTRAP_PREREQUISITE_AUTHOR_NOT_ALLOWED'],
-    [command(), { authorLogin: 'Cheekyfellastef', issueNumber: 1507, now: NOW, currentMainHead: OLD_HEAD }, 'TAILSCALE_BOOTSTRAP_PREREQUISITE_MAIN_HEAD_MISMATCH'],
-    [command({ expiresAt: '2026-08-07T15:00:00.000Z' }), { authorLogin: 'Cheekyfellastef', issueNumber: 1507, now: NOW, currentMainHead: HEAD }, 'TAILSCALE_BOOTSTRAP_PREREQUISITE_EXPIRY_TOO_FAR_AHEAD'],
-    [{ ...command(), command: 'whoami' }, { authorLogin: 'Cheekyfellastef', issueNumber: 1507, now: NOW, currentMainHead: HEAD }, 'TAILSCALE_BOOTSTRAP_PREREQUISITE_FIELDS_NOT_EXACT'],
+    [command(), { authorLogin: 'other', issueNumber: CANONICAL_MAILBOX_ISSUE, now: NOW, currentMainHead: HEAD }, 'TAILSCALE_BOOTSTRAP_PREREQUISITE_AUTHOR_NOT_ALLOWED'],
+    [command(), { authorLogin: 'Cheekyfellastef', issueNumber: 1507, now: NOW, currentMainHead: HEAD }, 'TAILSCALE_BOOTSTRAP_PREREQUISITE_ISSUE_MISMATCH'],
+    [command(), { authorLogin: 'Cheekyfellastef', issueNumber: CANONICAL_MAILBOX_ISSUE, now: NOW, currentMainHead: OLD_HEAD }, 'TAILSCALE_BOOTSTRAP_PREREQUISITE_MAIN_HEAD_MISMATCH'],
+    [command({ expiresAt: '2026-08-07T15:00:00.000Z' }), { authorLogin: 'Cheekyfellastef', issueNumber: CANONICAL_MAILBOX_ISSUE, now: NOW, currentMainHead: HEAD }, 'TAILSCALE_BOOTSTRAP_PREREQUISITE_EXPIRY_TOO_FAR_AHEAD'],
+    [{ ...command(), command: 'whoami' }, { authorLogin: 'Cheekyfellastef', issueNumber: CANONICAL_MAILBOX_ISSUE, now: NOW, currentMainHead: HEAD }, 'TAILSCALE_BOOTSTRAP_PREREQUISITE_FIELDS_NOT_EXACT'],
   ];
   for (const [value, options, blocker] of fixtures) {
     const result = validateBattleBridgeTailscalePrerequisiteCheck(value, options);
