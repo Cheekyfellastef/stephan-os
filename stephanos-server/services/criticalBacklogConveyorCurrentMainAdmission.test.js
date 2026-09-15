@@ -15,6 +15,14 @@ const mission = Object.freeze({
   git: { branch: 'openclaw/elastic-goal-1622', worktreePath: '/bounded/critical-1622-elastic-goal' },
 });
 
+const paths = Object.freeze({
+  repoRoot: '/repo',
+  workspaceRoot: '/workspace',
+  worktreeRoot: '/worktrees',
+  orchestratorRoot: '/orchestrator',
+  snapshotRoot: '/snapshots',
+});
+
 test('elastic source admission uses canonical main while stale physical worker remains HOLD', async () => {
   let observedSourceRevision = '';
   let observedCapacityRevision = '';
@@ -22,13 +30,7 @@ test('elastic source admission uses canonical main while stale physical worker r
   const result = await ensureCriticalBacklogMission({
     now: NOW,
     env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: STALE_WORKER_HEAD },
-    paths: {
-      repoRoot: '/repo',
-      workspaceRoot: '/workspace',
-      worktreeRoot: '/worktrees',
-      orchestratorRoot: '/orchestrator',
-      snapshotRoot: '/snapshots',
-    },
+    paths,
     readProgrammeProjection: async () => ({
       status: 'HOLD',
       blockers: ['worker-heartbeat-invalid-or-missing'],
@@ -65,6 +67,39 @@ test('elastic source admission uses canonical main while stale physical worker r
   assert.equal(observedCapacityRevision, CURRENT_MAIN);
   assert.equal(observedSourceRevision, CURRENT_MAIN);
   assert.notEqual(observedSourceRevision, STALE_WORKER_HEAD);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.arbitraryShellAllowed, false);
+});
+
+test('non-worker programme HOLD cannot enter elastic source admission', async () => {
+  let admissionCount = 0;
+  let dispatchCount = 0;
+  const result = await ensureCriticalBacklogMission({
+    backlog: [],
+    now: NOW,
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: STALE_WORKER_HEAD },
+    paths,
+    readProgrammeProjection: async () => ({
+      status: 'HOLD',
+      blockers: ['controller-heartbeat-stale'],
+      machineryInventory: { sourceHead: CURRENT_MAIN },
+      scheduler: { failClosed: false, elasticCapacity: { status: 'RUNNING' } },
+    }),
+    ensureElasticMissions: async () => {
+      admissionCount += 1;
+      return { ok: true, selectedMission: mission };
+    },
+    dispatchElasticBuilds: async () => {
+      dispatchCount += 1;
+      return { ok: true, dispatchCount: 1 };
+    },
+    listMissions: async () => [],
+    publishProjection: async () => ({ ok: true }),
+  });
+
+  assert.equal(admissionCount, 0);
+  assert.equal(dispatchCount, 0);
+  assert.equal(result.ok, false);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.arbitraryShellAllowed, false);
 });
