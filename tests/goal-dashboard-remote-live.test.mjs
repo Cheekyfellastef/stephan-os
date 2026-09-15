@@ -24,7 +24,9 @@ function beacon(overrides = {}) {
     nextAutomaticAction: 'Continue canonical work.',
     telemetry: { answeredSurfaceCount: 7, requiredSurfaceCount: 7 },
     surfaces: [
-      { id: 'missionWorker', state: 'BUILDING', observedAtUtc: '2026-09-12T12:34:30.000Z', head: HEAD },
+      { id: 'githubSync', state: 'SYNC_NO_CHANGE', rawState: 'SYNC_NO_CHANGE', observedAtUtc: '2026-09-12T12:34:30.000Z', head: HEAD },
+      { id: 'postSyncRefresh', state: 'CURRENT', rawState: 'REFRESH_COMPLETE', observedAtUtc: '2026-09-12T12:34:30.000Z', head: HEAD, blocker: '' },
+      { id: 'missionWorker', state: 'BUILDING', rawState: 'MISSION_WORKER_TICK_PASS', observedAtUtc: '2026-09-12T12:34:30.000Z', head: HEAD },
       { id: 'workerWatchdog', state: 'WORKER_WATCHDOG_HEALTHY', observedAtUtc: '2026-09-12T12:34:30.000Z', head: HEAD },
     ],
     ...overrides,
@@ -47,7 +49,7 @@ function makeContext({ hostname = 'localhost', fetchImpl = async () => ({ ok: fa
     setInterval() { return 1; },
     setField(key, value) { fields.set(key, String(value)); },
     setSourceBadge(value, truth) { fields.set('source-badge', String(value)); fields.set('source-truth', String(truth)); },
-    applyProjection(projection, source, feedState) { window.applied = { projection, source, feedState }; },
+    applyProjection(projection, sourceState, feedState) { window.applied = { projection, source: sourceState, feedState }; },
   };
   const document = {
     visibilityState: 'visible',
@@ -87,6 +89,46 @@ test('remote projection is current only with fresh exact-head complete evidence'
   assert.equal(projection.goals[0].statusTruth, 'CURRENT');
   assert.equal(projection.goals[0].proofTruth, 'UNKNOWN');
   assert.equal(projection.goals[0].source, 'github-public-issue');
+});
+
+test('remote autonomy track exposes the exact control-plane Lifeboat interlock and stops downstream gates', () => {
+  const { api } = makeContext();
+  const blocked = beacon({
+    surfaces: [
+      { id: 'githubSync', state: 'SYNC_NO_CHANGE', rawState: 'SYNC_NO_CHANGE', head: HEAD },
+      {
+        id: 'postSyncRefresh',
+        state: 'STALE',
+        rawState: 'REFRESH_COMPLETE',
+        blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryLifeboat',
+        head: HEAD,
+      },
+      { id: 'missionWorker', state: 'IDLE', rawState: 'MISSION_WORKER_TICK_PASS', head: HEAD },
+    ],
+  });
+  const track = api.remoteAutonomyBuildTrack(blocked);
+  assert.equal(track.gates.find((gate) => gate.id === 'SYNC').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'CONTROL_PLANE').state, 'BLOCKED');
+  assert.equal(track.gates.find((gate) => gate.id === 'HEARTBEAT').state, 'NOT_REACHED');
+  assert.equal(track.currentGate, 'CONTROL_PLANE');
+  assert.equal(track.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryLifeboat');
+  assert.match(api.formatAutonomyBuildTrack(track), /SYNC ✓.*CONTROL PLANE ✕.*HEARTBEAT ○/);
+});
+
+test('local dashboard renders the Shared Workspace autonomy track into the existing Automation signal line', () => {
+  const { window, fields } = makeContext({ hostname: '127.0.0.1' });
+  window.applyProjection({
+    autonomyBuildTrack: {
+      gates: [
+        { id: 'SYNC', state: 'PASS' },
+        { id: 'CONTROL_PLANE', state: 'BLOCKED', reason: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryLifeboat' },
+        { id: 'HEARTBEAT', state: 'NOT_REACHED' },
+      ],
+      blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryLifeboat',
+    },
+  }, 'live-shared-workspace', 'ready');
+  assert.match(fields.get('automation-state'), /SYNC ✓.*CONTROL PLANE ✕.*HEARTBEAT ○/);
+  assert.equal(fields.get('telemetry-blocker'), 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryLifeboat');
 });
 
 test('remote projection stays degraded for partial telemetry and conflicting heads', () => {
@@ -138,6 +180,7 @@ test('remote browser refresh reads public GitHub truth only and renders iPad-saf
   assert.equal(window.applied.feedState, 'ready');
   assert.equal(fields.get('source-badge'), 'REMOTE LIVE');
   assert.match(fields.get('goal-data-source'), /REMOTE GitHub \+ Battle Bridge health beacon/);
+  assert.match(fields.get('automation-state'), /SYNC ✓/);
   assert.match(fields.get('workspace-root'), /local workspace path intentionally private/);
   assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'remote-github');
   assert.equal(grid.attrs['data-goal-dashboard-feed-state'], 'ready');
