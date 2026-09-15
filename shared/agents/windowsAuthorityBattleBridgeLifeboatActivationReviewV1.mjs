@@ -100,7 +100,7 @@ function reviewInstaller(source, path, findings) {
     ['-MultipleInstances IgnoreNew', 'lifeboat-ignore-new-missing'],
     ['githubClaimConsumerIncluded = $true', 'lifeboat-consumer-proof-missing'],
     ['windowlessLauncher = $true', 'lifeboat-windowless-proof-missing'],
-    ['scheduledTaskExecutable = $wscriptExe', 'lifeboat-executable-proof-missing'],
+    ['scheduledTaskExecutable = $wscriptExe', 'lifeboat-executable-proof-field-missing'],
     ['directPowerShellTaskLaunch = $false', 'lifeboat-direct-powershell-denial-missing'],
     ['repoCheckoutRequiredAfterInstall = $false', 'lifeboat-checkout-independence-missing'],
     ['openClawGatewayRequiredAfterInstall = $false', 'lifeboat-openclaw-independence-missing'],
@@ -111,8 +111,6 @@ function reviewInstaller(source, path, findings) {
     ['gitMutationAllowed = $false', 'lifeboat-git-denial-missing'],
     ['sourceMutationAllowed = $false', 'lifeboat-source-denial-missing'],
     ['pcRestartAllowed = $false', 'lifeboat-pc-restart-denial-missing'],
-    ['$recoverableHeartbeatFailures = @(', 'lifeboat-recoverable-heartbeat-classification-missing'],
-    ['if ($heartbeatFailure -notin $recoverableHeartbeatFailures) { throw }', 'lifeboat-heartbeat-identity-fail-closed-missing'],
   ]) requireLiteral(findings, source, path, literal, code);
   forbid(findings, source, path, /New-ScheduledTaskAction\s+-Execute\s+\$powershellExe/i, 'lifeboat-direct-powershell-task-forbidden');
   forbid(findings, source, path, /-WindowStyle\s+Hidden/i, 'lifeboat-windowstyle-hidden-regression');
@@ -127,6 +125,8 @@ function reviewIdempotentReinstall(source, path, findings) {
     ['function Assert-CanonicalScheduledTask', 'lifeboat-idempotent-task-proof-missing'],
     ['Read-FreshHealthyHeartbeat -BankId $activeBank -ExpectedManifest', 'lifeboat-idempotent-fresh-heartbeat-proof-missing'],
     ['Assert-ActivePayloadManifest -BankId $activeBank -ExpectedManifest', 'lifeboat-idempotent-active-manifest-binding-missing'],
+    ['$recoverableHeartbeatFailures = @(', 'lifeboat-recoverable-heartbeat-classification-missing'],
+    ['if ($heartbeatFailure -notin $recoverableHeartbeatFailures) { throw }', 'lifeboat-heartbeat-identity-fail-closed-missing'],
     ['Get-ScheduledTask -TaskName $taskName -ErrorAction Stop', 'lifeboat-idempotent-task-read-missing'],
     ['$actions.Count -ne 1', 'lifeboat-idempotent-task-action-count-missing'],
     ['$actions[0].Execute -ne $wscriptExe', 'lifeboat-idempotent-task-executable-proof-missing'],
