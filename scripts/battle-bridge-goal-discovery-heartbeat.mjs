@@ -57,13 +57,17 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
     if (!built && !blocked && elasticHold) {
       return Object.freeze({
         schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
-        ok: false,
-        blocker: elasticHold.held.map((item) => `${item.missionId}:${item.reason}`).join(';'),
+        ok: true,
         conveyorResult: result,
         sourceBuild: sourceBuild || null,
         elasticHold,
+        parkedLaneBlockers: Object.freeze(
+          elasticHold.held.map((item) => `${item.missionId}:${item.reason}`),
+        ),
+        heldLaneParked: true,
+        controllerContinuity: 'CONTINUE',
         ...authorityBoundary(),
-        finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_ELASTIC_SOURCE_BUILD_HELD',
+        finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_ELASTIC_SOURCE_BUILD_PARKED_CONTINUING',
       });
     }
 
