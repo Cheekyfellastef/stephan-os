@@ -5,6 +5,7 @@ import {
   sign as cryptoSign,
   verify as cryptoVerify,
 } from 'node:crypto';
+import { types as utilTypes } from 'node:util';
 
 export const STEPHANOS_NATIVE_CAPACITY_PAYLOAD_SCHEMA = 'stephanos.native-capacity-payload.v1';
 export const STEPHANOS_NATIVE_CAPACITY_RECEIPT_SCHEMA = 'stephanos.native-capacity-receipt.v1';
@@ -27,7 +28,7 @@ const AUTHORITY_KEYS = Object.freeze([
   'schemaVersion','authorityId','repository','sourceHead','workerId','capacityReceiptId','qualificationId',
   'allowedOperations','allowedTaskClasses','issuedAtUtc','expiresAtUtc','leaseSeizureAllowed','mergeAuthority','arbitraryCommandAllowed',
 ]);
-const EXPECTED_KEYS = Object.freeze(['repository','sourceHead','workerId','nowUtc']);
+const EXPECTED_KEYS = Object.freeze(['repository','sourceHead','workerId','nowUtc','keyId']);
 
 function text(value) { return typeof value === 'string' ? value.trim() : ''; }
 function timestamp(value) {
@@ -36,19 +37,27 @@ function timestamp(value) {
   const parsed = Date.parse(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
+function inspectable(value) {
+  return Boolean(value) && (typeof value === 'object' || typeof value === 'function') && !utilTypes.isProxy(value);
+}
 function exactKeys(value, keys) {
-  if (!value || Object.getPrototypeOf(value) !== Object.prototype) return false;
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const ownKeys = Reflect.ownKeys(descriptors);
-  if (ownKeys.some((key) => typeof key !== 'string')) return false;
-  if (JSON.stringify([...ownKeys].sort()) !== JSON.stringify([...keys].sort())) return false;
-  return ownKeys.every((key) => {
-    const descriptor = descriptors[key];
-    return Object.prototype.hasOwnProperty.call(descriptor, 'value') && descriptor.enumerable === true;
-  });
+  if (!inspectable(value)) return false;
+  try {
+    if (Object.getPrototypeOf(value) !== Object.prototype) return false;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const ownKeys = Reflect.ownKeys(descriptors);
+    if (ownKeys.some((key) => typeof key !== 'string')) return false;
+    if (JSON.stringify([...ownKeys].sort()) !== JSON.stringify([...keys].sort())) return false;
+    return ownKeys.every((key) => {
+      const descriptor = descriptors[key];
+      return Object.prototype.hasOwnProperty.call(descriptor, 'value') && descriptor.enumerable === true;
+    });
+  } catch {
+    return false;
+  }
 }
 function dataValue(value, key) {
-  if (!value || (typeof value !== 'object' && typeof value !== 'function')) return undefined;
+  if (!inspectable(value)) return undefined;
   try {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     return descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value') ? descriptor.value : undefined;
@@ -57,15 +66,20 @@ function dataValue(value, key) {
   }
 }
 function plainArray(value) {
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return false;
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const keys = Reflect.ownKeys(descriptors);
-  if (keys.some((key) => typeof key !== 'string') || keys.length !== value.length + 1 || !Object.prototype.hasOwnProperty.call(descriptors, 'length')) return false;
-  for (let index = 0; index < value.length; index += 1) {
-    const descriptor = descriptors[String(index)];
-    if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value') || descriptor.enumerable !== true) return false;
+  if (!Array.isArray(value) || utilTypes.isProxy(value)) return false;
+  try {
+    if (Object.getPrototypeOf(value) !== Array.prototype) return false;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Reflect.ownKeys(descriptors);
+    if (keys.some((key) => typeof key !== 'string') || keys.length !== value.length + 1 || !Object.prototype.hasOwnProperty.call(descriptors, 'length')) return false;
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value') || descriptor.enumerable !== true) return false;
+    }
+    return true;
+  } catch {
+    return false;
   }
-  return true;
 }
 function uniqueStrings(value) {
   if (!plainArray(value)) return null;
@@ -79,6 +93,13 @@ function canonical(value) {
     return `{${Object.keys(value).sort().map((key)=>`${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
   }
   return JSON.stringify(value);
+}
+function immutableSnapshot(value) {
+  if (Array.isArray(value)) return Object.freeze(value.map(immutableSnapshot));
+  if (value && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.freeze(Object.fromEntries(Object.entries(value).map(([key,item])=>[key,immutableSnapshot(item)])));
+  }
+  return value;
 }
 function hash(value) { return createHash('sha256').update(value).digest('hex'); }
 function frozen(value) { return Object.freeze(value); }
@@ -106,8 +127,9 @@ function normalizeVerificationContext(expected) {
   const sourceHead = text(expected.sourceHead).toLowerCase();
   const workerId = text(expected.workerId);
   const nowUtc = text(expected.nowUtc);
-  if (!REPOSITORY.test(repository) || !SHA40.test(sourceHead) || !SAFE_ID.test(workerId) || timestamp(nowUtc) === null) return null;
-  return frozen({ repository, sourceHead, workerId, nowUtc });
+  const keyId = text(expected.keyId);
+  if (!REPOSITORY.test(repository) || !SHA40.test(sourceHead) || !SAFE_ID.test(workerId) || timestamp(nowUtc) === null || !SAFE_ID.test(keyId)) return null;
+  return frozen({ repository, sourceHead, workerId, nowUtc, keyId });
 }
 
 export function validateStephanosNativeCapacityPayload(payload = {}, expected = {}) {
@@ -153,7 +175,7 @@ export function createStephanosNativeCapacityReceipt(payload, options = {}) {
   } catch {
     return null;
   }
-  return frozen({ schemaVersion:STEPHANOS_NATIVE_CAPACITY_RECEIPT_SCHEMA, algorithm:'Ed25519', keyId, payload, signatureBase64 });
+  return frozen({ schemaVersion:STEPHANOS_NATIVE_CAPACITY_RECEIPT_SCHEMA, algorithm:'Ed25519', keyId, payload:immutableSnapshot(payload), signatureBase64 });
 }
 
 export function verifyStephanosNativeCapacityReceipt(receipt = {}, options = {}) {
@@ -162,6 +184,7 @@ export function verifyStephanosNativeCapacityReceipt(receipt = {}, options = {})
   if (receipt.schemaVersion !== STEPHANOS_NATIVE_CAPACITY_RECEIPT_SCHEMA || receipt.algorithm !== 'Ed25519' || !SAFE_ID.test(text(receipt.keyId))) errors.push('receipt-identity-invalid');
   const expected = normalizeVerificationContext(dataValue(options, 'expected'));
   if (!expected) errors.push('verification-context-invalid');
+  if (expected && receipt.keyId !== expected.keyId) errors.push('verification-key-id-mismatch');
   const payloadValidation = validateStephanosNativeCapacityPayload(receipt.payload, expected || {});
   if (!payloadValidation.valid) errors.push(...payloadValidation.errors);
   const publicKey = ed25519PublicKey(dataValue(options, 'publicKeyPem'));
@@ -180,7 +203,7 @@ export function verifyStephanosNativeCapacityReceipt(receipt = {}, options = {})
     }
   }
   if (!signatureValid) errors.push('signature-invalid');
-  return frozen({ valid:errors.length === 0, errors:frozen([...new Set(errors)]), payload:errors.length ? null : receipt.payload });
+  return frozen({ valid:errors.length === 0, errors:frozen([...new Set(errors)]), payload:errors.length ? null : immutableSnapshot(receipt.payload) });
 }
 
 export function createStephanosNativeSourceAuthority(receipt, options = {}) {
