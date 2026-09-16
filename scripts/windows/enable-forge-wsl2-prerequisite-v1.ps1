@@ -159,9 +159,10 @@ if ($WhatIfPreference) {
 
 if (-not $ElevatedChild) {
     if (Test-Path -LiteralPath $ReceiptPath) { Remove-Item -LiteralPath $ReceiptPath -Force }
+    $quotedScriptPath = '"{0}"' -f $ScriptPath
     $arguments = @(
         '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-        '-File', $ScriptPath,
+        '-File', $quotedScriptPath,
         '-ExpectedHead', $ExpectedHead,
         '-OperatorApproved', '-ElevatedChild'
     )
