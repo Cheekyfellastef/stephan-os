@@ -31,6 +31,7 @@ $ObservedWindowsProductName = ''
 $ObservedWindowsInstallationType = ''
 $ObservedWindowsArchitecture = ''
 $ObservedWsl2Evidence = ''
+$BrokerOrElevated = $VisibleElevationBroker.IsPresent -or $ElevatedChild.IsPresent
 
 function Emit-Receipt([bool]$Ok, [string]$Status, [string]$Blocker, [hashtable]$Details = @{}, [switch]$ToFile) {
     $result = [ordered]@{
@@ -135,24 +136,24 @@ try {
     $ObservedWindowsInstallationType = ([string]$windowsIdentity.InstallationType).Trim()
     $ObservedWindowsArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
 } catch {
-    Exit-Blocked 'WINDOWS_PRODUCT_IDENTITY_UNAVAILABLE' -ToFile:$ElevatedChild
+    Exit-Blocked 'WINDOWS_PRODUCT_IDENTITY_UNAVAILABLE' -ToFile:$BrokerOrElevated
 }
 if ($ObservedWindowsInstallationType -ne 'Client' -or $ObservedWindowsProductName -notmatch '^Windows 10(?:\s|$)' -or $ObservedWindowsArchitecture -ne $RequiredWindowsArchitecture) {
-    Exit-Blocked 'WINDOWS_10_X64_CLIENT_REQUIRED' -ToFile:$ElevatedChild
+    Exit-Blocked 'WINDOWS_10_X64_CLIENT_REQUIRED' -ToFile:$BrokerOrElevated
 }
 if ($ObservedWindowsBuild -lt $MinimumWindowsBuild -or $ObservedWindowsBuild -ge $MaximumWindowsBuildExclusive) {
-    Exit-Blocked 'WINDOWS_10_BUILD_NOT_ADMITTED' -ToFile:$ElevatedChild
+    Exit-Blocked 'WINDOWS_10_BUILD_NOT_ADMITTED' -ToFile:$BrokerOrElevated
 }
-if (-not (Test-Path -LiteralPath $PowerShellExe -PathType Leaf)) { Exit-Blocked 'FIXED_POWERSHELL_EXECUTABLE_MISSING' -ToFile:$ElevatedChild }
-if (-not (Test-Path -LiteralPath $DismExe -PathType Leaf)) { Exit-Blocked 'FIXED_DISM_EXECUTABLE_MISSING' -ToFile:$ElevatedChild }
-if (-not (Test-Path -LiteralPath $WslExe -PathType Leaf)) { Exit-Blocked 'WSL_EXECUTABLE_MISSING' -ToFile:$ElevatedChild }
-Assert-CanonicalSource -ToFile:$ElevatedChild
+if (-not (Test-Path -LiteralPath $PowerShellExe -PathType Leaf)) { Exit-Blocked 'FIXED_POWERSHELL_EXECUTABLE_MISSING' -ToFile:$BrokerOrElevated }
+if (-not (Test-Path -LiteralPath $DismExe -PathType Leaf)) { Exit-Blocked 'FIXED_DISM_EXECUTABLE_MISSING' -ToFile:$BrokerOrElevated }
+if (-not (Test-Path -LiteralPath $WslExe -PathType Leaf)) { Exit-Blocked 'WSL_EXECUTABLE_MISSING' -ToFile:$BrokerOrElevated }
+Assert-CanonicalSource -ToFile:$BrokerOrElevated
 $ObservedWsl2Evidence = Get-Wsl2Evidence
 if ($ObservedWsl2Evidence) {
-    Emit-Receipt $true 'FORGE_WSL2_PREREQUISITE_READY' '' @{ rebootRequired = $false } -ToFile:$ElevatedChild
+    Emit-Receipt $true 'FORGE_WSL2_PREREQUISITE_READY' '' @{ rebootRequired = $false } -ToFile:$BrokerOrElevated
     exit 0
 }
-if (-not $OperatorApproved -and -not $WhatIfPreference) { Exit-Blocked 'EXACT_WSL2_OPERATOR_APPROVAL_REQUIRED' -ToFile:$ElevatedChild }
+if (-not $OperatorApproved -and -not $WhatIfPreference) { Exit-Blocked 'EXACT_WSL2_OPERATOR_APPROVAL_REQUIRED' -ToFile:$BrokerOrElevated }
 if ($WhatIfPreference) {
     Emit-Receipt $true 'WHAT_IF_READY' '' @{ mutationPerformed = $false }
     exit 0
