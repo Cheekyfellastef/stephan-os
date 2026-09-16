@@ -28,7 +28,7 @@ const HISTORIC_EXPECTED_BLOBS = Object.freeze({
 const IDEMPOTENT_EXPECTED_BLOBS = Object.freeze({
   ...HISTORIC_EXPECTED_BLOBS,
   'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': '0ac877b0d7e877de9b010d415cf5e0bce2df8e64',
-  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': 'd3eb854e221cdd3aa36f23f1e9d5038c6c34d8df',
+  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '8e9deb80eaa4fab74f155b3bc8cb87a7e93ade3b',
   'shared/agents/postSyncRuntimeRefreshCoordinator.mjs': '9578d6ca272d0715a41423b75b5a30cb674c4267',
 });
 
@@ -100,7 +100,7 @@ function reviewInstaller(source, path, findings) {
     ['-MultipleInstances IgnoreNew', 'lifeboat-ignore-new-missing'],
     ['githubClaimConsumerIncluded = $true', 'lifeboat-consumer-proof-missing'],
     ['windowlessLauncher = $true', 'lifeboat-windowless-proof-missing'],
-    ['scheduledTaskExecutable = $wscriptExe', 'lifeboat-executable-proof-missing'],
+    ['scheduledTaskExecutable = $wscriptExe', 'lifeboat-executable-proof-field-missing'],
     ['directPowerShellTaskLaunch = $false', 'lifeboat-direct-powershell-denial-missing'],
     ['repoCheckoutRequiredAfterInstall = $false', 'lifeboat-checkout-independence-missing'],
     ['openClawGatewayRequiredAfterInstall = $false', 'lifeboat-openclaw-independence-missing'],
@@ -125,6 +125,8 @@ function reviewIdempotentReinstall(source, path, findings) {
     ['function Assert-CanonicalScheduledTask', 'lifeboat-idempotent-task-proof-missing'],
     ['Read-FreshHealthyHeartbeat -BankId $activeBank -ExpectedManifest', 'lifeboat-idempotent-fresh-heartbeat-proof-missing'],
     ['Assert-ActivePayloadManifest -BankId $activeBank -ExpectedManifest', 'lifeboat-idempotent-active-manifest-binding-missing'],
+    ['$recoverableHeartbeatFailures = @(', 'lifeboat-recoverable-heartbeat-classification-missing'],
+    ['if ($heartbeatFailure -notin $recoverableHeartbeatFailures) { throw }', 'lifeboat-heartbeat-identity-fail-closed-missing'],
     ['Get-ScheduledTask -TaskName $taskName -ErrorAction Stop', 'lifeboat-idempotent-task-read-missing'],
     ['$actions.Count -ne 1', 'lifeboat-idempotent-task-action-count-missing'],
     ['$actions[0].Execute -ne $wscriptExe', 'lifeboat-idempotent-task-executable-proof-missing'],
@@ -136,7 +138,7 @@ function reviewIdempotentReinstall(source, path, findings) {
     ['changed = $true', 'lifeboat-promotion-change-proof-missing'],
   ]) requireLiteral(findings, source, path, literal, code);
 
-  const branchStart = source.indexOf('if ($null -ne $activeState -and $manifestSha256 -eq [string]$activeState.manifestSha256) {');
+  const branchStart = source.indexOf('if ($null -ne $activeState -and $activeBankFreshHealthy -and $manifestSha256 -eq [string]$activeState.manifestSha256) {');
   const branchEnd = source.indexOf('\n$targetRoot = Join-Path $banksRoot $targetBank', branchStart);
   if (!(branchStart >= 0 && branchEnd > branchStart)) {
     findings.push(finding('lifeboat-idempotent-bounded-branch-missing', path));
@@ -152,6 +154,10 @@ function reviewIdempotentReinstall(source, path, findings) {
     ['scheduledTaskIdentityReproved = $true', 'lifeboat-idempotent-task-reproof-receipt-missing'],
     ["if ($StartNow -and $PSCmdlet.ShouldProcess($taskName, 'Start existing canonical Battle Bridge recovery lifeboat task'))", 'lifeboat-idempotent-start-now-boundary-missing'],
     ['Start-ScheduledTask -TaskName $taskName', 'lifeboat-idempotent-fixed-task-start-missing'],
+    ['$rollbackBankFreshHealthy = $false', 'lifeboat-idempotent-rollback-freshness-state-missing'],
+    ['Assert-ActivePayloadManifest -BankId $rollbackBank -ExpectedManifest $rollbackManifest', 'lifeboat-idempotent-rollback-manifest-proof-missing'],
+    ['Read-FreshHealthyHeartbeat -BankId $rollbackBank -ExpectedManifest $rollbackManifest', 'lifeboat-idempotent-rollback-heartbeat-proof-missing'],
+    ['productionRedundancyReady = [bool]$rollbackBankFreshHealthy', 'lifeboat-idempotent-redundancy-proof-missing'],
     ['activeBankOverwriteAllowed = $false', 'lifeboat-idempotent-active-bank-overwrite-denial-missing'],
     ['dualBankOverwriteAllowed = $false', 'lifeboat-idempotent-dual-bank-overwrite-denial-missing'],
     ['arbitraryShellAllowed = $false', 'lifeboat-idempotent-shell-denial-missing'],
@@ -160,6 +166,7 @@ function reviewIdempotentReinstall(source, path, findings) {
     ['pcRestartAllowed = $false', 'lifeboat-idempotent-pc-restart-denial-missing'],
     ['return', 'lifeboat-idempotent-terminal-return-missing'],
   ]) requireLiteral(findings, branch, path, literal, code);
+  forbid(findings, branch, path, /productionRedundancyReady\s*=\s*\[bool\]\(\$activeBankFreshHealthy/i, 'lifeboat-idempotent-active-bank-redundancy-claim-forbidden');
   forbid(findings, branch, path, /Register-ScheduledTask/i, 'lifeboat-idempotent-task-reregistration-forbidden');
   forbid(findings, branch, path, /Write-AtomicJson/i, 'lifeboat-idempotent-active-state-rewrite-forbidden');
 }
