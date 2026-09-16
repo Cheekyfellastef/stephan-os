@@ -53,7 +53,7 @@ function lineage() {
 
 const INDEX = `
 ${'import'} { OPENCLAW_OC1_GATEWAY_METHOD } from './oc1.mjs';
-${'import'} { OPENCLAW_OC2_GATEWAY_METHOD, executeOpenClawOc2GatewayRequest } from './oc2.mjs';
+${'import'} { OPENCLAW_OC2_GATEWAY_METHOD, executeOpenClawOc2GatewayRequest } from './lib/oc2-gateway-provider.mjs';
 function gatewayContext(method) { return { executingInsideOpenClawGateway: true, pluginId: 'stephanos-builder-provider', method, providerInstance: \`openclaw-gateway:\${process.pid}\` }; }
 export default { register(api) {
   api.registerGatewayMethod(OPENCLAW_OC1_GATEWAY_METHOD, async () => ({}), { scope: 'operator.write' });
@@ -283,6 +283,19 @@ test('OC2 specialist rejects executor calls outside the registered OC2 callback 
       sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[0]]: widened }),
     }));
     assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-index-executor-binding-incomplete'));
+  }
+});
+
+test('OC2 specialist rejects dynamic or duplicate OC2 provider import routes', () => {
+  const variants = [
+    `${INDEX}\nconst key = ['executeOpenClawOc2', 'GatewayRequest'].join(''); const ns = await import('./lib/oc2-gateway-provider.mjs'); Reflect.apply(ns[key], null, []);`,
+    `${INDEX}\nimport * as oc2Provider from './lib/oc2-gateway-provider.mjs'; const key = ['executeOpenClawOc2', 'GatewayRequest'].join(''); Reflect.apply(oc2Provider[key], null, []);`,
+  ];
+  for (const widened of variants) {
+    const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+      sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[0]]: widened }),
+    }));
+    assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-index-executor-import-route-not-closed'));
   }
 });
 
