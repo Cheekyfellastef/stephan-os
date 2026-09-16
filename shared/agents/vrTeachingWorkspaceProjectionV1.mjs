@@ -21,15 +21,25 @@ const EVIDENCE_PLANES = new Set([
 
 function text(value) { return String(value ?? '').trim(); }
 function list(value) { return Array.isArray(value) ? value.filter(Boolean) : []; }
+function normalizedTextList(value) { return list(value).map(text).filter(Boolean); }
 function hash(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
+function dedupeObjects(items, identity) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = identity(item);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 function normalizeTeaching(record = {}) {
   const teachingKey = text(record.teachingKey);
   const candidateKey = text(record.candidateKey);
   const sourceId = text(record.sourceId || record.canonicalSourceId);
   const observedIdentity = text(record.observedIdentity || record.exactObservedIdentity);
-  const evidencePlanes = list(record.evidencePlanes || [record.evidencePlane]).map(text);
-  const proofRefs = list(record.proofRefs).map(text);
+  const evidencePlanes = normalizedTextList(record.evidencePlanes || [record.evidencePlane]);
+  const proofRefs = normalizedTextList(record.proofRefs);
   const errors = [];
   if (!teachingKey) errors.push('missing-teachingKey');
   if (!candidateKey) errors.push('missing-candidateKey');
@@ -56,8 +66,8 @@ function normalizeTeaching(record = {}) {
       reusableMethod: text(record.reusableMethod || record.capability),
       applicability: text(record.applicability),
       nonApplicability: text(record.nonApplicability),
-      constraints: Object.freeze(list(record.constraints).map(text)),
-      failureModes: Object.freeze(list(record.failureModes).map(text)),
+      constraints: Object.freeze(normalizedTextList(record.constraints)),
+      failureModes: Object.freeze(normalizedTextList(record.failureModes)),
       fallback: text(record.fallback),
       requiredProofLevel: text(record.requiredProofLevel),
       freshnessIdentity: text(record.freshnessIdentity || observedIdentity),
@@ -85,7 +95,7 @@ export function projectVrTeachingIntoSharedWorkspace(input = {}) {
     accepted.push(item);
   }
 
-  const capabilityGraphCandidates = accepted.map((item) => Object.freeze({
+  const newGraphCandidates = accepted.map((item) => Object.freeze({
     teachingKey: item.teachingKey,
     candidateKey: item.candidateKey,
     sourceId: item.sourceId,
@@ -96,8 +106,18 @@ export function projectVrTeachingIntoSharedWorkspace(input = {}) {
     requiredProofLevel: item.requiredProofLevel,
     proofRefs: item.proofRefs,
   }));
-  const methodLibrary = accepted.map((item) => Object.freeze({ ...item }));
-  const proofRefs = [...new Set(accepted.flatMap((item) => item.proofRefs))];
+  const capabilityGraphCandidates = dedupeObjects(
+    [...list(input.capabilityGraphCandidates), ...newGraphCandidates],
+    (item) => text(item?.teachingKey) || text(item?.candidateKey),
+  );
+  const methodLibrary = dedupeObjects(
+    [...list(input.methodLibrary), ...accepted.map((item) => Object.freeze({ ...item }))],
+    (item) => text(item?.teachingKey) || text(item?.candidateKey) || text(item?.reusableMethod),
+  );
+  const proofRefs = [...new Set([
+    ...normalizedTextList(input.proofRefs),
+    ...accepted.flatMap((item) => item.proofRefs),
+  ])];
   const projection = buildVrResearchWorkspaceProjection({
     ...input,
     capabilityGraphCandidates,
