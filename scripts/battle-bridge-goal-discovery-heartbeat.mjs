@@ -165,9 +165,10 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       sweepAttempts: Object.freeze([...sweepAttempts]),
       parkedLaneBlockers: Object.freeze([...parkedLaneBlockers]),
       heldLaneParked: parkedLaneBlockers.size > 0,
-      noRunnableSourceWorkProven: true,
+      noRunnableSourceWorkProven: false,
+      workConservingSweepExhausted: true,
       materialProgress: false,
-      controllerContinuity: 'NEXT_SCHEDULED_SWEEP',
+      controllerContinuity: 'CONTINUE_NEXT_SWEEP',
       ...authorityBoundary(),
       finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED',
     });
