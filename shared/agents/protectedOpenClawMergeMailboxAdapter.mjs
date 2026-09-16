@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { validateIndependentReviewArtifact } from './operatorMergeReviewArtifactV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
+import { approveProtectedOperatorEnvironmentOnBattleBridgeV1 } from './operatorEnvironmentApprovalBattleBridgeV1.mjs';
 import {
   APPROVAL_BOUNDARY_PATHS_V2,
   WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1,
@@ -447,6 +448,32 @@ function latestMatchingWorkflowRun(payload, plan) {
   )) || null;
 }
 
+function protectedOperatorEnvironmentApprovalResult(plan, headTree, authorizationCommentId, approval, lifecycle = 'PROTECTED_OPERATOR_MERGE_ENVIRONMENT_APPROVED') {
+  return Object.freeze({
+    ok: true,
+    finalVerdict: lifecycle,
+    prNumber: plan.normalized.prNumber,
+    expectedHead: plan.normalized.expectedHead,
+    expectedHeadTree: headTree,
+    expectedBase: plan.normalized.expectedBase,
+    reviewRunId: plan.normalized.reviewRunId,
+    reviewArtifactId: plan.normalized.reviewArtifactId,
+    authorizationCommentId,
+    workflow: PROTECTED_OPERATOR_MERGE_WORKFLOW,
+    workflowRunId: Number(approval?.workflowRunId || 0),
+    workflowRunStatus: 'environment-approved',
+    workflowRunConclusion: '',
+    environmentApprovalAccepted: approval?.ok === true,
+    environmentId: Number(approval?.environmentId || 0),
+    authenticatedActor: String(approval?.authenticatedActor || ''),
+    directMergePerformed: false,
+    arbitraryShellAllowed: false,
+    adminBypassAllowed: false,
+    directMainWriteAllowed: false,
+    forcePushAllowed: false,
+  });
+}
+
 export async function executeProtectedOpenClawMergeOnBattleBridge(command = {}, options = {}) {
   const plan = buildProtectedOpenClawMergePlan(command, options);
   if (!plan.ok) return plan;
@@ -512,35 +539,90 @@ export async function executeProtectedOpenClawMergeOnBattleBridge(command = {}, 
       const headTree = String(headCommit?.tree?.sha || '').toLowerCase();
       const authorizationCommentId = readProtectedOperatorAuthorizationCommentId(runCommand, plan);
       if (!authorizationCommentId) return fail('PROTECTED_MERGE_AUTHORIZATION_COMMENT_NOT_FOUND');
+
+      const approvalInput = Object.freeze({
+        repositoryRoot: plan.repositoryRoot,
+        prNumber: plan.normalized.prNumber,
+        branch: pullAgain.head.ref,
+        headSha: plan.normalized.expectedHead,
+        baseSha: plan.normalized.expectedBase,
+      });
+      const approvalOptions = Object.freeze({
+        runCommand,
+        ...(typeof options.sleep === 'function' ? { sleep: options.sleep } : {}),
+        ...(positiveInteger(options.environmentApprovalMaxPolls)
+          ? { maxPolls: positiveInteger(options.environmentApprovalMaxPolls) }
+          : {}),
+        ...(Number.isFinite(Number(options.environmentApprovalPollMs))
+          ? { pollMs: Number(options.environmentApprovalPollMs) }
+          : {}),
+      });
+
+      const existingApproval = await approveProtectedOperatorEnvironmentOnBattleBridgeV1(approvalInput, {
+        ...approvalOptions,
+        maxPolls: 1,
+        pollMs: 0,
+      });
+      if (existingApproval.ok) {
+        return protectedOperatorEnvironmentApprovalResult(
+          plan,
+          headTree,
+          authorizationCommentId,
+          existingApproval,
+          'PROTECTED_OPERATOR_MERGE_EXISTING_ENVIRONMENT_APPROVED',
+        );
+      }
+      if (existingApproval.blocker === 'OPERATOR_ENVIRONMENT_APPROVAL_RUN_NOT_WAITING') {
+        const awaitedApproval = await approveProtectedOperatorEnvironmentOnBattleBridgeV1(approvalInput, approvalOptions);
+        if (awaitedApproval.ok) {
+          return protectedOperatorEnvironmentApprovalResult(
+            plan,
+            headTree,
+            authorizationCommentId,
+            awaitedApproval,
+            'PROTECTED_OPERATOR_MERGE_EXISTING_ENVIRONMENT_APPROVED',
+          );
+        }
+        if (awaitedApproval.blocker !== 'OPERATOR_ENVIRONMENT_APPROVAL_NO_ACTIVE_RUN') {
+          return fail('PROTECTED_MERGE_ENVIRONMENT_APPROVAL_FAILED', {
+            approvalBlocker: awaitedApproval.blocker,
+            approvalDetails: awaitedApproval.details || {},
+          });
+        }
+      } else if (existingApproval.blocker !== 'OPERATOR_ENVIRONMENT_APPROVAL_NO_ACTIVE_RUN') {
+        return fail('PROTECTED_MERGE_ENVIRONMENT_APPROVAL_PREFLIGHT_BLOCKED', {
+          approvalBlocker: existingApproval.blocker,
+          approvalDetails: existingApproval.details || {},
+        });
+      }
+
       const dispatchArgs = buildProtectedOperatorWorkflowDispatchArgs(plan, pullAgain, headTree, authorizationCommentId);
       if (!dispatchArgs) return fail('PROTECTED_MERGE_WORKFLOW_INPUTS_INVALID');
       runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, dispatchArgs, {
         cwd: plan.repositoryRoot,
       }, 'PROTECTED_MERGE_WORKFLOW_DISPATCH_FAILED');
-      const runs = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
-        'api', 'repos/Cheekyfellastef/stephan-os/actions/workflows/' + PROTECTED_OPERATOR_MERGE_WORKFLOW + '/runs?event=workflow_dispatch&per_page=20',
-      ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_WORKFLOW_RUN_LOOKUP_FAILED').stdout, 'PROTECTED_MERGE_WORKFLOW_RUN_LOOKUP_JSON_INVALID');
-      const run = latestMatchingWorkflowRun(runs, plan);
-      return Object.freeze({
-        ok: true,
-        finalVerdict: 'PROTECTED_OPERATOR_MERGE_WORKFLOW_DISPATCHED',
-        prNumber: plan.normalized.prNumber,
-        expectedHead: plan.normalized.expectedHead,
-        expectedHeadTree: headTree,
-        expectedBase: plan.normalized.expectedBase,
-        reviewRunId: plan.normalized.reviewRunId,
-        reviewArtifactId: plan.normalized.reviewArtifactId,
+
+      const approval = await approveProtectedOperatorEnvironmentOnBattleBridgeV1(approvalInput, approvalOptions);
+      if (!approval.ok) {
+        const runs = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
+          'api', 'repos/Cheekyfellastef/stephan-os/actions/workflows/' + PROTECTED_OPERATOR_MERGE_WORKFLOW + '/runs?event=workflow_dispatch&per_page=20',
+        ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_WORKFLOW_RUN_LOOKUP_FAILED').stdout, 'PROTECTED_MERGE_WORKFLOW_RUN_LOOKUP_JSON_INVALID');
+        const run = latestMatchingWorkflowRun(runs, plan);
+        return fail('PROTECTED_MERGE_ENVIRONMENT_APPROVAL_FAILED', {
+          approvalBlocker: approval.blocker,
+          approvalDetails: approval.details || {},
+          workflowRunId: Number(run?.id || 0),
+          workflowRunStatus: String(run?.status || ''),
+          workflowRunConclusion: String(run?.conclusion || ''),
+        });
+      }
+
+      return protectedOperatorEnvironmentApprovalResult(
+        plan,
+        headTree,
         authorizationCommentId,
-        workflow: PROTECTED_OPERATOR_MERGE_WORKFLOW,
-        workflowRunId: Number(run?.id || 0),
-        workflowRunStatus: String(run?.status || 'queued'),
-        workflowRunConclusion: String(run?.conclusion || ''),
-        directMergePerformed: false,
-        arbitraryShellAllowed: false,
-        adminBypassAllowed: false,
-        directMainWriteAllowed: false,
-        forcePushAllowed: false,
-      });
+        approval,
+      );
     }
 
     writeFileSync(plan.claimsPath, JSON.stringify(plan.claims, null, 2) + '\n', 'utf8');
