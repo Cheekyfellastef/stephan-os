@@ -11,6 +11,7 @@ test('goal discovery heartbeat delegates to the existing critical backlog convey
       calls += 1;
       return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' };
     },
+    buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
   assert.equal(calls, 1);
   assert.equal(result.ok, true);
@@ -27,6 +28,44 @@ test('goal discovery heartbeat fails closed when the conveyor blocks', async () 
   });
   assert.equal(result.ok, false);
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED');
+});
+
+test('held elastic mission does not strand admitted work or stop controller continuity', async () => {
+  let buildCalls=0;
+  const conveyor=async () => ({
+    ok:true,
+    classification:'ELASTIC_GOAL_MISSION_SELECTED',
+    elasticIgnition:{
+      classification:'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD',
+      dispatchCount:0,
+      held:[{missionId:'critical-2009-elastic-goal',reason:'DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE'}],
+    },
+  });
+  const built=await runBattleBridgeGoalDiscoveryHeartbeat({
+    conveyor,
+    buildClaimedGoal:async () => {
+      buildCalls+=1;
+      return {processed:true,success:true,reason:'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'};
+    },
+  });
+  assert.equal(buildCalls,1);
+  assert.equal(built.ok,true);
+  assert.equal(built.finalVerdict,'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED');
+  assert.equal(built.elasticHold.held[0].missionId,'critical-2009-elastic-goal');
+
+  const parked=await runBattleBridgeGoalDiscoveryHeartbeat({
+    conveyor,
+    buildClaimedGoal:async () => ({processed:false,success:false,reason:'queue-empty'}),
+  });
+  assert.equal(parked.ok,true);
+  assert.equal(parked.finalVerdict,'GOAL_DISCOVERY_HEARTBEAT_ELASTIC_SOURCE_BUILD_PARKED_CONTINUING');
+  assert.equal(parked.heldLaneParked,true);
+  assert.equal(parked.controllerContinuity,'CONTINUE');
+  assert.deepEqual(parked.parkedLaneBlockers,[
+    'critical-2009-elastic-goal:DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE',
+  ]);
+  assert.equal(parked.mergeAuthority,false);
+  assert.equal(parked.runtimeMutationAuthority,false);
 });
 
 test('Battle Bridge sync coordinator owns goal discovery after successful convergence', async () => {
