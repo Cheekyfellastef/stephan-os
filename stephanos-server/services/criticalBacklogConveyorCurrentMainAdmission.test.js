@@ -85,11 +85,13 @@ test('stale-worker held lane is parked while admitted source work can still drai
   });
   assert.equal(parked.ok, true);
   assert.equal(parked.heldLaneParked, true);
-  assert.equal(parked.controllerContinuity, 'CONTINUE');
+  assert.equal(parked.controllerContinuity, 'CONTINUE_NEXT_SWEEP');
+  assert.equal(parked.workConservingSweepExhausted, true);
+  assert.equal(parked.noRunnableSourceWorkProven, false);
   assert.deepEqual(parked.parkedLaneBlockers, [
     `${mission.missionId}:MISSION_WORKER_RUNTIME_NOT_READY`,
   ]);
-  assert.equal(parked.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_ELASTIC_SOURCE_BUILD_PARKED_CONTINUING');
+  assert.equal(parked.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED');
 
   const drained = await runBattleBridgeGoalDiscoveryHeartbeat({
     conveyor: async () => conveyorResult,
