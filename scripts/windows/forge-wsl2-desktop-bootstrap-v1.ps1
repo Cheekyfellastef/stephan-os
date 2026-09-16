@@ -151,6 +151,9 @@ Assert-CanonicalSource
 Consume-ElevatedReceipt | Out-Null
 
 if (-not $DesktopPath -or -not $LauncherPath) { Exit-Blocked 'FORGE_WSL2_DESKTOP_UNAVAILABLE' }
+if (Test-Path -LiteralPath $LauncherPath) {
+    Exit-Blocked 'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED' @{ reason = 'existing-desktop-path-refused' }
+}
 
 $launcher = @"
 @echo off
@@ -160,7 +163,7 @@ del "%~f0"
 exit /b %STEPHANOS_FORGE_EXIT%
 "@
 try {
-    Set-Content -LiteralPath $LauncherPath -Value $launcher -Encoding ASCII -Force
+    Set-Content -LiteralPath $LauncherPath -Value $launcher -Encoding ASCII
 } catch {
     Exit-Blocked 'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED'
 }
