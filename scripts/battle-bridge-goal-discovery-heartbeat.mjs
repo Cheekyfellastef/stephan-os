@@ -8,6 +8,29 @@ import { processNextProviderNeutralSourceBuild } from '../stephanos-server/servi
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA = 'stephanos.battle-bridge-goal-discovery-heartbeat.v1';
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT_MARKER = 'BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT=';
 
+function heldElasticDispatch(result = {}) {
+  const ignition = result?.elasticIgnition;
+  const dispatchCount = Number(ignition?.dispatchCount || 0);
+  const held = Array.isArray(ignition?.held) ? ignition.held : [];
+  if (dispatchCount > 0 || held.length === 0) return null;
+  return Object.freeze({
+    classification: String(ignition?.classification || 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD'),
+    held: Object.freeze(held.map((item) => Object.freeze({
+      missionId: String(item?.missionId || ''),
+      reason: String(item?.reason || 'ELASTIC_SOURCE_BUILD_HELD'),
+    }))),
+  });
+}
+
+function authorityBoundary() {
+  return {
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+  };
+}
+
 export async function runBattleBridgeGoalDiscoveryHeartbeat({
   conveyor = ensureCriticalBacklogMission,
   buildClaimedGoal = processNextProviderNeutralSourceBuild,
@@ -21,24 +44,40 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         ok: false,
         conveyorResult: result || null,
         sourceBuild: null,
-        mergeAuthority: false,
-        runtimeMutationAuthority: false,
-        destructiveGitAllowed: false,
+        ...authorityBoundary(),
         finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED',
       });
     }
 
+    const elasticHold = heldElasticDispatch(result);
     const sourceBuild = await buildClaimedGoal(builderOptions);
     const built = sourceBuild?.processed === true && sourceBuild?.success === true;
     const blocked = sourceBuild?.processed === true && sourceBuild?.success === false;
+
+    if (!built && !blocked && elasticHold) {
+      return Object.freeze({
+        schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
+        ok: true,
+        conveyorResult: result,
+        sourceBuild: sourceBuild || null,
+        elasticHold,
+        parkedLaneBlockers: Object.freeze(
+          elasticHold.held.map((item) => `${item.missionId}:${item.reason}`),
+        ),
+        heldLaneParked: true,
+        controllerContinuity: 'CONTINUE',
+        ...authorityBoundary(),
+        finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_ELASTIC_SOURCE_BUILD_PARKED_CONTINUING',
+      });
+    }
+
     return Object.freeze({
       schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
       ok: !blocked,
       conveyorResult: result,
       sourceBuild: sourceBuild || null,
-      mergeAuthority: false,
-      runtimeMutationAuthority: false,
-      destructiveGitAllowed: false,
+      elasticHold: elasticHold || null,
+      ...authorityBoundary(),
       finalVerdict: blocked
         ? 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_BUILD_BLOCKED'
         : built
@@ -52,9 +91,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       blocker: String(error?.message || 'GOAL_DISCOVERY_HEARTBEAT_FAILED'),
       conveyorResult: null,
       sourceBuild: null,
-      mergeAuthority: false,
-      runtimeMutationAuthority: false,
-      destructiveGitAllowed: false,
+      ...authorityBoundary(),
       finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED',
     });
   }
