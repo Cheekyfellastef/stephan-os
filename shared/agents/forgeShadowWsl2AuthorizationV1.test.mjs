@@ -26,7 +26,7 @@ function command(overrides = {}) {
     forgejoImageDigest: '',
     runtimeBoundary: 'podman-wsl-rootless',
     m2Only: true,
-    expiresAt: '2026-09-05T18:00:00.000Z',
+    expiresAt: '2026-09-16T18:00:00.000Z',
     ...overrides,
   };
 }
@@ -43,10 +43,11 @@ test('keeps the existing Forge command schema unchanged', () => {
   assert.equal(Object.hasOwn(result.command, 'wsl2PrerequisiteAuthorized'), false);
 });
 
-test('binds WSL2 mutation authority to exactly two fixed one-use request identities', () => {
+test('binds WSL2 mutation authority to exactly three fixed one-use request identities', () => {
   assert.deepEqual(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1, [
     'forge-wsl2-enable-authorized-20260905-v1',
     'forge-wsl2-postreboot-authorized-20260905-v1',
+    'forge-wsl2-visible-elevation-authorized-20260916-v1',
   ]);
   assert.match(source, /AUTHORIZED_REQUEST_IDS\.has\(String\(normalized\.requestId \|\| ''\)\)/);
   assert.doesNotMatch(source, /wsl2PrerequisiteAuthorized/);
@@ -62,6 +63,14 @@ test('ordinary Forge prerequisite commands cannot enter the WSL2 elevation rung'
     assert.equal(authorized.ok, true);
     assert.equal(authorized.command.prerequisiteOnly, true);
   }
+});
+
+test('visible-elevation repair adds only one new bounded WSL2 retry identity', () => {
+  const retryId = 'forge-wsl2-visible-elevation-authorized-20260916-v1';
+  assert.equal(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1.filter((id) => id === retryId).length, 1);
+  assert.equal(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1.length, 3);
+  assert.equal(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1.some((id) => id.includes('*')), false);
+  assert.equal(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1.some((id) => id.endsWith('-')), false);
 });
 
 test('WSL2 source route is fixed, source-bound, typed and explicitly non-rebooting', () => {
