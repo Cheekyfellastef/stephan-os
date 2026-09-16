@@ -9,6 +9,7 @@ import {
 } from './forgeShadowBattleBridgeAdapterV1.mjs';
 
 const source = readFileSync(new URL('./forgeShadowBattleBridgeAdapterV1.mjs', import.meta.url), 'utf8');
+const desktopWrapper = readFileSync(new URL('../../scripts/windows/forge-wsl2-desktop-bootstrap-v1.ps1', import.meta.url), 'utf8');
 const wslScript = readFileSync(new URL('../../scripts/windows/enable-forge-wsl2-prerequisite-v1.ps1', import.meta.url), 'utf8');
 const HEAD = 'a'.repeat(40);
 
@@ -43,11 +44,14 @@ test('keeps the existing Forge command schema unchanged', () => {
   assert.equal(Object.hasOwn(result.command, 'wsl2PrerequisiteAuthorized'), false);
 });
 
-test('binds WSL2 mutation authority to exactly three fixed one-use request identities', () => {
+test('binds WSL2 mutation authority to exactly six fixed one-use request identities', () => {
   assert.deepEqual(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1, [
     'forge-wsl2-enable-authorized-20260905-v1',
     'forge-wsl2-postreboot-authorized-20260905-v1',
     'forge-wsl2-visible-elevation-authorized-20260916-v1',
+    'forge-wsl2-desktop-bootstrap-authorized-20260916-v1',
+    'forge-wsl2-desktop-receipt-authorized-20260916-v1',
+    'forge-wsl2-desktop-postreboot-authorized-20260916-v1',
   ]);
   assert.match(source, /AUTHORIZED_REQUEST_IDS\.has\(String\(normalized\.requestId \|\| ''\)\)/);
   assert.doesNotMatch(source, /wsl2PrerequisiteAuthorized/);
@@ -65,20 +69,30 @@ test('ordinary Forge prerequisite commands cannot enter the WSL2 elevation rung'
   }
 });
 
-test('visible-elevation repair adds only one new bounded WSL2 retry identity', () => {
-  const retryId = 'forge-wsl2-visible-elevation-authorized-20260916-v1';
-  assert.equal(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1.filter((id) => id === retryId).length, 1);
-  assert.equal(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1.length, 3);
+test('desktop bootstrap repair adds exactly three new bounded WSL2 continuation identities', () => {
+  const desktopIds = [
+    'forge-wsl2-desktop-bootstrap-authorized-20260916-v1',
+    'forge-wsl2-desktop-receipt-authorized-20260916-v1',
+    'forge-wsl2-desktop-postreboot-authorized-20260916-v1',
+  ];
+  for (const requestId of desktopIds) {
+    assert.equal(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1.filter((id) => id === requestId).length, 1);
+  }
+  assert.equal(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1.length, 6);
   assert.equal(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1.some((id) => id.includes('*')), false);
   assert.equal(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1.some((id) => id.endsWith('-')), false);
 });
 
-test('WSL2 source route is fixed, source-bound, typed and explicitly non-rebooting', () => {
-  assert.match(source, /scripts\/windows\/enable-forge-wsl2-prerequisite-v1\.ps1/);
+test('WSL2 source route is exact-head desktop-bound while admin mutation stays in reviewed script', () => {
+  assert.match(source, /scripts\/windows\/forge-wsl2-desktop-bootstrap-v1\.ps1/);
   assert.match(source, /workingBlob === identity\.committedBlob/);
   assert.match(source, /receipt\.rebootPerformed !== false/);
   assert.match(source, /receipt\.githubCredentialUsed !== false/);
   assert.match(source, /FORGE_WSL2_REBOOT_REQUIRED/);
+  assert.match(desktopWrapper, /scripts\/windows\/enable-forge-wsl2-prerequisite-v1\.ps1/);
+  assert.match(desktopWrapper, /hash-object/);
+  assert.match(desktopWrapper, /Stephanos Forge WSL2 Bootstrap\.cmd/);
+  assert.doesNotMatch(desktopWrapper, /-Verb\s+RunAs/);
   assert.match(wslScript, /Microsoft-Windows-Subsystem-Linux/);
   assert.match(wslScript, /VirtualMachinePlatform/);
   assert.match(wslScript, /rebootPerformed = \$false/);
@@ -97,5 +111,6 @@ test('WSL2 wrapper grants no generic command, credential acquisition or provider
     /mergeAuthority\s*[:=]\s*true/i,
   ]) {
     assert.doesNotMatch(source, forbidden);
+    assert.doesNotMatch(desktopWrapper, forbidden);
   }
 });
