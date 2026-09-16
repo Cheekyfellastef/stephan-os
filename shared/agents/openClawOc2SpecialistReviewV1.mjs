@@ -304,6 +304,12 @@ function reviewIndex(source, path, findings) {
     ['Qualification is reserved for canonical Mission Worker claims executed by the OpenClaw Gateway plugin.', 'openclaw-oc2-index-manual-qualification-denial-missing'],
   ]);
   const code = executableOnly(source);
+  const uncommented = stripComments(source);
+  const canonicalOc2Import = /\bimport\s*\{\s*OPENCLAW_OC2_GATEWAY_METHOD\s*,\s*executeOpenClawOc2GatewayRequest\s*,?\s*\}\s*from\s*['"]\.\/lib\/oc2-gateway-provider\.mjs['"]\s*;?/.test(uncommented);
+  const oc2ProviderImportCount = countMatches(uncommented, /\bfrom\s*['"]\.\/lib\/oc2-gateway-provider\.mjs['"]/g);
+  if (!canonicalOc2Import || oc2ProviderImportCount !== 1 || /\bimport\s*\(/.test(code) || /\brequire\s*\(/.test(code)) {
+    findings.push(finding('openclaw-oc2-index-executor-import-route-not-closed', path));
+  }
   if (countMatches(code, /\bapi\.registerGatewayMethod\s*\(/g) !== 2 || hasGatewayAlias(source)) {
     findings.push(finding('openclaw-oc2-index-gateway-registration-set-not-closed', path));
   }
