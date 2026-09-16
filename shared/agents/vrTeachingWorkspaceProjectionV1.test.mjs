@@ -63,6 +63,30 @@ test('blocks incomplete teaching rather than strengthening uncertain evidence', 
   assert.equal(result.projectionReceipt.verdict, 'VR_TEACHING_WORKSPACE_PROJECTION_BLOCKED');
 });
 
+test('rejects whitespace-only proof references', () => {
+  const result = projectVrTeachingIntoSharedWorkspace({
+    teachingRecords: [teaching({ proofRefs: ['   '] })],
+    updatedAt: UPDATED_AT,
+    nowMs: Date.parse(UPDATED_AT),
+  });
+  assert.equal(result.projectionReceipt.counters.policyBlocked, 1);
+  assert.match(result.projectionReceipt.policyBlocked[0].errors.join(','), /missing-proofRefs/);
+});
+
+test('preserves existing workspace knowledge while appending a teaching', () => {
+  const result = projectVrTeachingIntoSharedWorkspace({
+    teachingRecords: [teaching()],
+    capabilityGraphCandidates: [{ candidateKey: 'existing-graph', reusableMethod: 'Existing graph method' }],
+    methodLibrary: [{ teachingKey: 'existing-method', reusableMethod: 'Existing method' }],
+    proofRefs: ['proofs/existing'],
+    updatedAt: UPDATED_AT,
+    nowMs: Date.parse(UPDATED_AT),
+  });
+  assert.equal(result.projection.capabilityGraphCandidates.length, 2);
+  assert.equal(result.projection.methodLibrary.length, 2);
+  assert.deepEqual(result.projection.proofRefs, ['proofs/existing', 'proofs/vr-teaching/meta-xr-simulator']);
+});
+
 test('forbids a teaching record from self-asserting Shared Workspace confirmation', () => {
   const result = projectVrTeachingIntoSharedWorkspace({
     teachingRecords: [teaching({ sharedWorkspaceProjectionState: 'CONFIRMED' })],
