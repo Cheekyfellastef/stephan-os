@@ -30,11 +30,12 @@ test('desktop launcher delegates elevation only to the already-reviewed source-c
   assert.match(elevation, /Start-Process -FilePath \$PowerShellExe -ArgumentList \$arguments -Verb RunAs -Wait -PassThru/);
 });
 
-test('adapter admits exactly two new bounded desktop-bootstrap request identities', async () => {
+test('adapter admits exactly three new bounded desktop-bootstrap continuation identities', async () => {
   const source = await readFile(adapterUrl, 'utf8');
 
   assert.match(source, /'forge-wsl2-desktop-bootstrap-authorized-20260916-v1'/);
   assert.match(source, /'forge-wsl2-desktop-receipt-authorized-20260916-v1'/);
+  assert.match(source, /'forge-wsl2-desktop-postreboot-authorized-20260916-v1'/);
   assert.match(source, /WSL2_SCRIPT_RELATIVE_PATH = 'scripts\/windows\/forge-wsl2-desktop-bootstrap-v1\.ps1'/);
   assert.match(source, /'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED'/);
   assert.doesNotMatch(source, /forge-wsl2-desktop-\*/);
