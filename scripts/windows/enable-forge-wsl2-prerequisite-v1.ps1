@@ -5,6 +5,7 @@ param(
     [string]$ExpectedHead,
 
     [switch]$OperatorApproved,
+    [switch]$VisibleElevationBroker,
     [switch]$ElevatedChild
 )
 
@@ -157,22 +158,23 @@ if ($WhatIfPreference) {
     exit 0
 }
 
-if (-not $ElevatedChild) {
+$quotedScriptPath = '"{0}"' -f $ScriptPath
+
+if (-not $ElevatedChild -and -not $VisibleElevationBroker) {
     if (Test-Path -LiteralPath $ReceiptPath) { Remove-Item -LiteralPath $ReceiptPath -Force }
-    $quotedScriptPath = '"{0}"' -f $ScriptPath
-    $arguments = @(
-        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    $brokerArguments = @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass',
         '-File', $quotedScriptPath,
         '-ExpectedHead', $ExpectedHead,
-        '-OperatorApproved', '-ElevatedChild'
+        '-OperatorApproved', '-VisibleElevationBroker'
     )
     try {
-        $process = Start-Process -FilePath $PowerShellExe -ArgumentList $arguments -Verb RunAs -Wait -PassThru
+        $broker = Start-Process -FilePath $PowerShellExe -ArgumentList $brokerArguments -WindowStyle Normal -Wait -PassThru
     } catch {
         Exit-Blocked 'WSL2_ELEVATION_CANCELLED_OR_FAILED'
     }
     if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
-        Exit-Blocked 'WSL2_ELEVATED_RECEIPT_MISSING' @{ elevatedExitCode = $process.ExitCode }
+        Exit-Blocked 'WSL2_ELEVATED_RECEIPT_MISSING' @{ elevatedExitCode = $broker.ExitCode }
     }
     try {
         $json = Get-Content -LiteralPath $ReceiptPath -Raw -Encoding UTF8
@@ -181,9 +183,24 @@ if (-not $ElevatedChild) {
             Exit-Blocked 'WSL2_ELEVATED_RECEIPT_INVALID'
         }
         $json.Trim()
-        exit $process.ExitCode
+        exit $broker.ExitCode
     } finally {
         Remove-Item -LiteralPath $ReceiptPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+if ($VisibleElevationBroker -and -not $ElevatedChild) {
+    $arguments = @(
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', $quotedScriptPath,
+        '-ExpectedHead', $ExpectedHead,
+        '-OperatorApproved', '-ElevatedChild'
+    )
+    try {
+        $process = Start-Process -FilePath $PowerShellExe -ArgumentList $arguments -Verb RunAs -Wait -PassThru
+        exit $process.ExitCode
+    } catch {
+        Exit-Blocked 'WSL2_ELEVATION_CANCELLED_OR_FAILED' -ToFile
     }
 }
 
