@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import { STEPHANOS_AMBIENT_CAPABILITY_QUESTION_SCHEMA_VERSION } from './stephanosAmbientCapabilityQuestionV1.mjs';
+import { STEPHANOS_CAPABILITY_QUESTION_SCHEMA_VERSION } from './stephanosConversationalCapabilityLadderV1.mjs';
 import {
   createStephanosAmbientWorkspaceQuestionRecord,
   decodeStephanosAmbientWorkspaceQuestionRecord,
+  persistStephanosWorkspaceQuestionRecord,
+  readPersistedStephanosWorkspaceQuestionRecord,
 } from './stephanosAmbientWorkspaceQuestionAdapterV1.mjs';
 
 const createdAtUtc = '2026-09-15T00:30:00.000Z';
@@ -27,6 +33,24 @@ function question(overrides = {}) {
   };
 }
 
+function formalQuestion(overrides = {}) {
+  return {
+    schemaVersion: STEPHANOS_CAPABILITY_QUESTION_SCHEMA_VERSION,
+    roundId: 'round-001',
+    questionId: 'formal-q-001',
+    askerParticipantId: 'chatgpt',
+    targetParticipantId: 'stephanos',
+    questionText: 'What product goal should advance next?',
+    questionClass: 'CURRENT_PROGRAMME_TRUTH',
+    intentFingerprint: 'intent-12345678',
+    noveltyRefs: [],
+    contextRefs: ['goal:#1290'],
+    expectedEvidenceClass: 'CANONICAL_STATE',
+    createdAtUtc,
+    ...overrides,
+  };
+}
+
 function options(overrides = {}) {
   return {
     correlationId: 'ambient-1721-original',
@@ -34,6 +58,24 @@ function options(overrides = {}) {
     proofRefs: ['proof/issue-1721', 'proof/goal-1290'],
     workspaceValidationOptions: { nowMs },
     ...overrides,
+  };
+}
+
+function formalRecord() {
+  const built = createStephanosAmbientWorkspaceQuestionRecord(question(), options());
+  assert.equal(built.valid, true, built.errors.join(', '));
+  const payload = formalQuestion();
+  return {
+    ...built.record,
+    messageId: 'qa-formal-001',
+    correlationId: payload.roundId,
+    subjectId: payload.questionId,
+    summary: `Formal question ${payload.questionId} for ${payload.targetParticipantId}`,
+    body: JSON.stringify({
+      schemaVersion: 'stephanos.shared-workspace-conversation-adapter.v1',
+      subtype: 'conversation-question',
+      payload,
+    }),
   };
 }
 
@@ -84,4 +126,83 @@ test('fails closed on accessor-bearing workspace records without executing gette
   assert.equal(decoded.valid, false);
   assert.deepEqual(decoded.errors, ['record-invalid']);
   assert.equal(getterCalls, 0);
+});
+
+test('persists ambient lineage through the canonical Shared Workspace inbox and reads it back', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-ambient-workspace-'));
+  try {
+    const built = createStephanosAmbientWorkspaceQuestionRecord(question(), options());
+    assert.equal(built.valid, true, built.errors.join(', '));
+
+    const persisted = await persistStephanosWorkspaceQuestionRecord(root, built.record, options());
+    assert.equal(persisted.ok, true, persisted.reason);
+    assert.equal(persisted.lineage.ambient, true);
+    assert.equal(persisted.lineage.formalRound, false);
+
+    const readback = await readPersistedStephanosWorkspaceQuestionRecord(root, built.record.messageId, options());
+    assert.equal(readback.ok, true, readback.reason);
+    assert.equal(readback.lineage.ambient, true);
+    assert.equal(readback.question.questionId, 'ambient-q-1721-original');
+    assert.equal(Object.hasOwn(readback.question, 'roundId'), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('persists formal round lineage without collapsing it into ambient semantics', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-formal-workspace-'));
+  try {
+    const record = formalRecord();
+    const persisted = await persistStephanosWorkspaceQuestionRecord(root, record, options());
+    assert.equal(persisted.ok, true, persisted.reason);
+    assert.equal(persisted.lineage.formalRound, true);
+    assert.equal(persisted.lineage.ambient, false);
+    assert.equal(persisted.lineage.roundId, 'round-001');
+
+    const readback = await readPersistedStephanosWorkspaceQuestionRecord(root, record.messageId, options());
+    assert.equal(readback.ok, true, readback.reason);
+    assert.equal(readback.lineage.formalRound, true);
+    assert.equal(readback.question.roundId, 'round-001');
+    assert.equal(readback.record.correlationId, 'round-001');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects mixed formal lineage before persistence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-mixed-workspace-'));
+  try {
+    const record = formalRecord();
+    const mixed = { ...record, correlationId: 'different-round' };
+    const persisted = await persistStephanosWorkspaceQuestionRecord(root, mixed, options());
+    assert.equal(persisted.ok, false);
+    assert.match(persisted.errors.join(','), /formal-round-correlation-mismatch|roundId/i);
+    const readback = await readPersistedStephanosWorkspaceQuestionRecord(root, mixed.messageId, options());
+    assert.equal(readback.ok, false);
+    assert.equal(readback.reason, 'workspace-question-not-found');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects accessor-bearing records before persistence without executing getters', async () => {
+  let getterCalls = 0;
+  const record = formalRecord();
+  Object.defineProperty(record, 'channel', {
+    enumerable: true,
+    configurable: true,
+    get() {
+      getterCalls += 1;
+      return 'shared-participant-qa';
+    },
+  });
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-accessor-workspace-'));
+  try {
+    const persisted = await persistStephanosWorkspaceQuestionRecord(root, record, options());
+    assert.equal(persisted.ok, false);
+    assert.equal(persisted.reason, 'record-invalid');
+    assert.equal(getterCalls, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
