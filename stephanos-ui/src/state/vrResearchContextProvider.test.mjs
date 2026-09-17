@@ -16,7 +16,7 @@ function projection(overrides = {}) {
 
 function teachingEnvelope(overrides = {}) {
   const projected = projection({ capabilityGraphCandidates: [{ teachingKey: 'teach:integration' }], proofRefs: ['proofs/vr/integration'], ...overrides });
-  return { projection: projected, projectionReceipt: { verdict: 'VR_TEACHING_WORKSPACE_PROJECTION_READY', projectionId: projected.projectionId } };
+  return { projection: projected, projectionReceipt: { verdict: 'VR_TEACHING_WORKSPACE_PROJECTION_READY', projectionId: projected.projectionId, contentDigest: 'fixture-content-digest' } };
 }
 
 test('fails honestly when canonical VR projection is missing', () => {
@@ -55,14 +55,16 @@ test('rejects a teaching envelope whose receipt does not match its projection', 
   const envelope = teachingEnvelope();
   envelope.projectionReceipt.projectionId = 'different-projection';
   const inspection = inspectVrResearchProjection({ now: NOW, vrTeachingWorkspaceProjection: envelope });
-  assert.equal(inspection.status, 'MISSING');
+  assert.equal(inspection.status, 'INVALID');
+  assert.equal(inspection.proofState, 'invalid');
 });
 
 test('rejects a teaching envelope when both projection identities are blank', () => {
   const envelope = teachingEnvelope({ projectionId: '' });
   envelope.projectionReceipt.projectionId = '';
   const inspection = inspectVrResearchProjection({ now: NOW, vrTeachingWorkspaceProjection: envelope });
-  assert.equal(inspection.status, 'MISSING');
+  assert.equal(inspection.status, 'INVALID');
+  assert.equal(inspection.proofState, 'invalid');
 });
 
 test('marks stale VR truth as non-ready and requests refresh', () => {
