@@ -1,10 +1,14 @@
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 
 import {
   DEFAULT_STALE_AFTER_MS,
   SHARED_WORKSPACE_RECORD_KINDS,
   SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
+  ensureSharedWorkspaceLayout,
+  resolveSharedWorkspacePath,
   validateSharedWorkspaceRecord,
+  writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
 import {
   validateStephanosAmbientCapabilityQuestion,
@@ -52,6 +56,43 @@ function authorityBoundary() {
     approvalAllowed: false,
     mergeAllowed: false,
     deploymentAllowed: false,
+  });
+}
+
+function inspectStephanosWorkspaceQuestionRecord(record, options = {}) {
+  const safeRecord = dataOnlyRecord(record);
+  if (!safeRecord) {
+    return Object.freeze({ valid: false, record: null, question: null, lineage: null, errors: Object.freeze(['record-invalid']) });
+  }
+
+  const errors = [];
+  if (safeRecord.channel !== STEPHANOS_AMBIENT_WORKSPACE_QUESTION_CHANNEL) errors.push('channel-mismatch');
+  if (safeRecord.recordSubtype !== STEPHANOS_AMBIENT_WORKSPACE_QUESTION_SUBTYPE) errors.push('record-subtype-mismatch');
+  for (const field of ['sourceMutationAllowed', 'commandExecutionAllowed', 'approvalAllowed', 'mergeAllowed', 'deploymentAllowed']) {
+    if (safeRecord[field] !== false) errors.push(`${field}-must-remain-false`);
+  }
+
+  let parsed = null;
+  try { parsed = JSON.parse(text(safeRecord.body)); } catch { errors.push('conversation-body-invalid-json'); }
+  const payload = parsed?.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) errors.push('conversation-body-payload-invalid');
+
+  let selected = null;
+  if (payload) {
+    selected = validateStephanosWorkspaceQuestionByLineage(safeRecord, payload, options);
+    errors.push(...selected.errors.map((error) => `question:${error}`));
+    if (safeRecord.participantId !== payload.askerParticipantId) errors.push('asker-participant-lineage-mismatch');
+    if (safeRecord.recipientParticipantId !== payload.targetParticipantId) errors.push('target-participant-lineage-mismatch');
+    if (safeRecord.subjectId !== payload.questionId) errors.push('question-lineage-mismatch');
+  }
+
+  const unique = Object.freeze([...new Set(errors)]);
+  return Object.freeze({
+    valid: unique.length === 0,
+    record: unique.length === 0 ? Object.freeze(safeRecord) : null,
+    question: unique.length === 0 ? (selected?.question || payload) : null,
+    lineage: unique.length === 0 ? selected?.lineage || null : null,
+    errors: unique,
   });
 }
 
@@ -110,28 +151,89 @@ export function createStephanosAmbientWorkspaceQuestionRecord(question, options 
 }
 
 export function decodeStephanosAmbientWorkspaceQuestionRecord(record, options = {}) {
-  const safeRecord = dataOnlyRecord(record);
-  if (!safeRecord) {
-    return Object.freeze({ valid: false, question: null, errors: Object.freeze(['record-invalid']) });
+  const inspected = inspectStephanosWorkspaceQuestionRecord(record, options);
+  if (!inspected.valid) {
+    return Object.freeze({ valid: false, question: null, errors: inspected.errors });
   }
-  const errors = [];
-  if (safeRecord.channel !== STEPHANOS_AMBIENT_WORKSPACE_QUESTION_CHANNEL) errors.push('channel-mismatch');
-  if (safeRecord.recordSubtype !== STEPHANOS_AMBIENT_WORKSPACE_QUESTION_SUBTYPE) errors.push('record-subtype-mismatch');
-  for (const field of ['sourceMutationAllowed', 'commandExecutionAllowed', 'approvalAllowed', 'mergeAllowed', 'deploymentAllowed']) {
-    if (safeRecord[field] !== false) errors.push(`${field}-must-remain-false`);
+  if (inspected.lineage?.ambient !== true) {
+    return Object.freeze({ valid: false, question: null, errors: Object.freeze(['ambient-lineage-required']) });
+  }
+  return Object.freeze({ valid: true, question: inspected.question, errors: Object.freeze([]) });
+}
+
+export async function persistStephanosWorkspaceQuestionRecord(rootInput, record, options = {}) {
+  const inspected = inspectStephanosWorkspaceQuestionRecord(record, options);
+  if (!inspected.valid) {
+    return Object.freeze({ ok: false, reason: inspected.errors[0] || 'record-invalid', errors: inspected.errors, record: null, question: null, lineage: null });
   }
 
-  let parsed = null;
-  try { parsed = JSON.parse(text(safeRecord.body)); } catch { errors.push('conversation-body-invalid-json'); }
-  const payload = parsed?.payload;
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) errors.push('conversation-body-payload-invalid');
-  if (payload) {
-    const selected = validateStephanosWorkspaceQuestionByLineage(safeRecord, payload, options);
-    errors.push(...selected.errors.map((error) => `question:${error}`));
-    if (selected.lineage?.ambient !== true) errors.push('ambient-lineage-required');
-    if (safeRecord.participantId !== payload.askerParticipantId) errors.push('asker-participant-lineage-mismatch');
-    if (safeRecord.recipientParticipantId !== payload.targetParticipantId) errors.push('target-participant-lineage-mismatch');
-    if (safeRecord.subjectId !== payload.questionId) errors.push('question-lineage-mismatch');
+  const nowMs = Number.isFinite(options.workspaceValidationOptions?.nowMs)
+    ? options.workspaceValidationOptions.nowMs
+    : Date.now();
+  const validation = validateSharedWorkspaceRecord(inspected.record, { nowMs, staleAfterMs: DEFAULT_STALE_AFTER_MS });
+  if (!validation.valid || validation.stale) {
+    const reason = validation.errors[0] || (validation.stale ? 'stale-record' : 'workspace-record-invalid');
+    return Object.freeze({ ok: false, reason, errors: Object.freeze([reason]), record: null, question: null, lineage: null });
   }
-  return Object.freeze({ valid: errors.length === 0, question: errors.length === 0 ? payload : null, errors: Object.freeze([...new Set(errors)]) });
+
+  const layout = await ensureSharedWorkspaceLayout({ root: rootInput, repoRoot: options.repoRoot });
+  if (!layout.ok) {
+    return Object.freeze({ ok: false, reason: layout.reason, errors: Object.freeze([layout.reason]), record: null, question: null, lineage: null });
+  }
+
+  const write = await writeAtomicJson(
+    layout.root,
+    ['inbox', `${inspected.record.messageId}.json`],
+    inspected.record,
+    { repoRoot: options.repoRoot, nowMs, staleAfterMs: DEFAULT_STALE_AFTER_MS },
+  );
+  if (!write.ok) {
+    return Object.freeze({ ok: false, reason: write.reason, errors: Object.freeze([write.reason]), record: null, question: null, lineage: null, write });
+  }
+
+  return Object.freeze({
+    ok: true,
+    reason: 'STEPHANOS_WORKSPACE_QUESTION_PERSISTED',
+    record: inspected.record,
+    question: inspected.question,
+    lineage: inspected.lineage,
+    write,
+  });
+}
+
+export async function readPersistedStephanosWorkspaceQuestionRecord(rootInput, messageId, options = {}) {
+  const normalizedMessageId = text(messageId);
+  if (!normalizedMessageId) {
+    return Object.freeze({ ok: false, reason: 'messageId-required', record: null, question: null, lineage: null, errors: Object.freeze(['messageId-required']) });
+  }
+
+  const resolved = resolveSharedWorkspacePath({
+    root: rootInput,
+    repoRoot: options.repoRoot,
+    segments: ['inbox', `${normalizedMessageId}.json`],
+  });
+  if (!resolved.ok) {
+    return Object.freeze({ ok: false, reason: resolved.reason, record: null, question: null, lineage: null, errors: Object.freeze([resolved.reason]) });
+  }
+
+  let record = null;
+  try {
+    record = JSON.parse(await readFile(resolved.path, 'utf8'));
+  } catch {
+    return Object.freeze({ ok: false, reason: 'workspace-question-not-found', record: null, question: null, lineage: null, errors: Object.freeze(['workspace-question-not-found']) });
+  }
+
+  const inspected = inspectStephanosWorkspaceQuestionRecord(record, options);
+  if (!inspected.valid) {
+    return Object.freeze({ ok: false, reason: inspected.errors[0] || 'record-invalid', record: null, question: null, lineage: null, errors: inspected.errors });
+  }
+
+  return Object.freeze({
+    ok: true,
+    reason: 'STEPHANOS_WORKSPACE_QUESTION_READBACK_READY',
+    record: inspected.record,
+    question: inspected.question,
+    lineage: inspected.lineage,
+    errors: Object.freeze([]),
+  });
 }
