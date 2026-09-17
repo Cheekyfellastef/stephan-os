@@ -31,7 +31,14 @@ function overlap(left, right) { const leftAliases = aliases(left); const rightAl
 function replaceGraph(existing, fresh) { return [...existing.filter((entry) => !fresh.some((candidate) => overlap(entry, candidate))), ...fresh]; }
 function replaceMethods(existing, fresh) { return [...existing.filter((entry) => !fresh.some((candidate) => overlap(entry, candidate))), ...fresh]; }
 function registryEntries(registry) { if (Array.isArray(registry)) return registry; if (registry && typeof registry === 'object' && Array.isArray(registry.sources)) return registry.sources; if (registry && typeof registry === 'object') return Object.entries(registry).map(([sourceId, value]) => typeof value === 'object' && value ? { sourceId, ...value } : { sourceId, observedIdentity: value }); return []; }
-function registeredRevisions(entry) { return norm([entry?.observedIdentity, entry?.exactObservedIdentity, entry?.revision, entry?.freshnessIdentity, entry?.snapshot_commit, entry?.snapshot_version, entry?.snapshot_release, entry?.snapshot_date]); }
+function registeredRevisions(entry) {
+  const componentRevisions = Object.entries(entry && typeof entry === 'object' ? entry : {}).flatMap(([key, value]) => {
+    const normalizedKey = text(key).toLowerCase();
+    if (normalizedKey === 'schema_version' || normalizedKey === 'schemaversion') return [];
+    return /(?:^|_)(?:snapshot_(?:commit|version|release|date)|commit|version|release)$/.test(normalizedKey) ? [value] : [];
+  });
+  return norm([entry?.observedIdentity, entry?.exactObservedIdentity, entry?.revision, entry?.freshnessIdentity, entry?.snapshot_commit, entry?.snapshot_version, entry?.snapshot_release, entry?.snapshot_date, ...componentRevisions]);
+}
 function registrySourceId(entry) { return text(entry?.sourceId || entry?.source_id || entry?.id || entry?.canonicalSourceId || entry?.canonical_source_id); }
 function validateSource(sourceId, observedIdentity, registry) {
   if (registry === undefined || registry === null) return ['canonical-source-registry-required'];
