@@ -262,8 +262,13 @@ async function readPersistedNativeTestEvidence(plan, output, options = {}) {
 
   let proofRecord;
   try {
-    const proofPath = resolveSharedWorkspacePath(options.workspaceRoot, ['proof', `native-test-${outputSha256}.json`]);
-    proofRecord = JSON.parse(await readFile(proofPath, 'utf8'));
+    const proofPath = resolveSharedWorkspacePath({
+      root: options.workspaceRoot,
+      repoRoot: options.repoRoot,
+      segments: ['proof', `native-test-${outputSha256}.json`],
+    });
+    if (!proofPath.ok) return frozen({ valid:false, reason:'persisted-test-proof-missing' });
+    proofRecord = JSON.parse(await readFile(proofPath.path, 'utf8'));
   } catch {
     return frozen({ valid:false, reason:'persisted-test-proof-missing' });
   }
