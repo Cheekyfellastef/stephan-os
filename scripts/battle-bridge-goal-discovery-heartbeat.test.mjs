@@ -11,10 +11,13 @@ test('goal discovery heartbeat delegates to the existing critical backlog convey
       calls += 1;
       return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' };
     },
+    buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
   assert.equal(calls, 1);
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
+  assert.equal(result.noRunnableSourceWorkProven, true);
+  assert.equal(result.materialProgress, false);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.runtimeMutationAuthority, false);
   assert.equal(result.arbitraryShellAllowed, false);
@@ -27,6 +30,123 @@ test('goal discovery heartbeat fails closed when the conveyor blocks', async () 
   });
   assert.equal(result.ok, false);
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED');
+});
+
+test('held elastic mission does not strand admitted work or stop controller continuity', async () => {
+  let buildCalls=0;
+  const conveyor=async () => ({
+    ok:true,
+    classification:'ELASTIC_GOAL_MISSION_SELECTED',
+    elasticIgnition:{
+      classification:'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD',
+      dispatchCount:0,
+      held:[{missionId:'critical-2009-elastic-goal',reason:'DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE'}],
+    },
+  });
+  const built=await runBattleBridgeGoalDiscoveryHeartbeat({
+    conveyor,
+    buildClaimedGoal:async () => {
+      buildCalls+=1;
+      return {processed:true,success:true,reason:'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'};
+    },
+  });
+  assert.equal(buildCalls,1);
+  assert.equal(built.ok,true);
+  assert.equal(built.finalVerdict,'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED');
+  assert.equal(built.elasticHold.held[0].missionId,'critical-2009-elastic-goal');
+  assert.equal(built.materialProgress,true);
+
+  let queueEmptyCalls=0;
+  const swept=await runBattleBridgeGoalDiscoveryHeartbeat({
+    conveyor,
+    maxWorkConservingAttempts:3,
+    buildClaimedGoal:async () => {
+      queueEmptyCalls+=1;
+      return {processed:false,success:false,reason:'queue-empty'};
+    },
+  });
+  assert.equal(queueEmptyCalls,3);
+  assert.equal(swept.ok,true);
+  assert.equal(swept.finalVerdict,'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED');
+  assert.equal(swept.workConservingSweepExhausted,true);
+  assert.equal(swept.noRunnableSourceWorkProven,false);
+  assert.equal(swept.heldLaneParked,true);
+  assert.equal(swept.controllerContinuity,'CONTINUE_NEXT_SWEEP');
+  assert.deepEqual(swept.parkedLaneBlockers,[
+    'critical-2009-elastic-goal:DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE',
+  ]);
+  assert.equal(swept.mergeAuthority,false);
+  assert.equal(swept.runtimeMutationAuthority,false);
+});
+
+test('blocked claimed source lane is parked and the same run continues to another build', async () => {
+  let buildCalls=0;
+  let conveyorCalls=0;
+  const result=await runBattleBridgeGoalDiscoveryHeartbeat({
+    maxWorkConservingAttempts:4,
+    conveyor:async () => {
+      conveyorCalls+=1;
+      return {ok:true,classification:'ELASTIC_GOAL_MISSION_SELECTED'};
+    },
+    buildClaimedGoal:async () => {
+      buildCalls+=1;
+      if (buildCalls===1) {
+        return {
+          processed:true,
+          success:false,
+          missionId:'goal-a',
+          error:'EXACT_HEAD_REVIEW_WAIT',
+          finalVerdict:'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED',
+        };
+      }
+      return {
+        processed:true,
+        success:true,
+        missionId:'goal-b',
+        finalVerdict:'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
+      };
+    },
+  });
+  assert.equal(conveyorCalls,2);
+  assert.equal(buildCalls,2);
+  assert.equal(result.ok,true);
+  assert.equal(result.materialProgress,true);
+  assert.equal(result.finalVerdict,'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED');
+  assert.equal(result.sourceBuild.missionId,'goal-b');
+  assert.deepEqual(result.parkedLaneBlockers,['goal-a:EXACT_HEAD_REVIEW_WAIT']);
+  assert.equal(result.sweepAttemptCount,2);
+});
+
+test('held queue-empty lane is retried within the same bounded sweep and can discover later material work', async () => {
+  let buildCalls=0;
+  const conveyor=async () => ({
+    ok:true,
+    classification:'ELASTIC_GOAL_MISSION_SELECTED',
+    elasticIgnition:{
+      classification:'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD',
+      dispatchCount:0,
+      held:[{missionId:'goal-held',reason:'PROVIDER_TEMPORARILY_UNAVAILABLE'}],
+    },
+  });
+  const result=await runBattleBridgeGoalDiscoveryHeartbeat({
+    conveyor,
+    maxWorkConservingAttempts:4,
+    buildClaimedGoal:async () => {
+      buildCalls+=1;
+      if (buildCalls<3) return {processed:false,success:false,reason:'queue-empty'};
+      return {
+        processed:true,
+        success:true,
+        missionId:'goal-product',
+        finalVerdict:'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
+      };
+    },
+  });
+  assert.equal(buildCalls,3);
+  assert.equal(result.materialProgress,true);
+  assert.equal(result.sourceBuild.missionId,'goal-product');
+  assert.equal(result.sweepAttemptCount,3);
+  assert.deepEqual(result.parkedLaneBlockers,['goal-held:PROVIDER_TEMPORARILY_UNAVAILABLE']);
 });
 
 test('Battle Bridge sync coordinator owns goal discovery after successful convergence', async () => {
