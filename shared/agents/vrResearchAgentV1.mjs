@@ -234,6 +234,18 @@ export function planVrResearchAgentCycle(input = {}) {
     : input;
   const readModel = vrTeachingWorkspaceProjection?.agentReadModel
     || buildVrResearchAgentReadModel(effectiveInput);
+  if (vrTeachingWorkspaceProjection?.projectionReceipt?.verdict === 'VR_TEACHING_WORKSPACE_PROJECTION_BLOCKED') {
+    const action = VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE;
+    return Object.freeze({
+      schemaVersion: VR_RESEARCH_AGENT_SCHEMA_VERSION,
+      agentId: VR_RESEARCH_AGENT_ID,
+      mode: VR_RESEARCH_AGENT_MODES.PROPOSAL_ONLY,
+      verdict: VR_RESEARCH_AGENT_VERDICTS.INVALID_INPUT,
+      readModel,
+      vrTeachingWorkspaceProjection,
+      proposal: proposal(action, 'vr-teaching-workspace-projection-blocked', readModel, effectiveInput),
+    });
+  }
   if (!readModel.ready) {
     const action = VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE;
     return Object.freeze({
