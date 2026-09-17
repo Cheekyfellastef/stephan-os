@@ -70,6 +70,10 @@ function source(path, content) {
   };
 }
 
+function testSource(titles) {
+  return titles.map((title) => `test('${title}', () => { assert.equal(true, true); });`).join('\n');
+}
+
 function oc9Contents(overrides = {}) {
   return {
     '.github/workflows/openclaw-update-preflight-proof.yml': [
@@ -82,32 +86,28 @@ function oc9Contents(overrides = {}) {
     ].join('\n'),
     'scripts/openclaw-update-preflight.mjs': [
       'const MAX_INPUT_BYTES = 256 * 1024;',
-      'buildOpenClawUpdatePreflightV1(input)',
-      'OPENCLAW_UPDATE_PREFLIGHT_ERROR=',
-      'BLOCKED_WITH_RESTORE_PATH ? 2 : 0',
+      'const result = buildOpenClawUpdatePreflightV1(input);',
+      'stderr.write(`OPENCLAW_UPDATE_PREFLIGHT_ERROR=${error}`);',
+      "return result.status === OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH ? 2 : 0;",
     ].join('\n'),
-    'scripts/openclaw-update-preflight.test.mjs': [
+    'scripts/openclaw-update-preflight.test.mjs': testSource([
       'CLI reads one bounded JSON observation from stdin and writes no mutation claim',
       'CLI exits 2 for a blocked preflight while still returning the rollback packet',
       'CLI rejects malformed JSON without emitting a packet',
       'CLI entrypoint detection handles Windows paths without depending on file URL spelling',
-    ].join('\n'),
+    ]),
     'shared/agents/openClawUpdatePreflightV1.mjs': [
-      "APPROVAL_REQUIRED: 'APPROVAL_REQUIRED'",
-      "BLOCKED_WITH_RESTORE_PATH: 'BLOCKED_WITH_RESTORE_PATH'",
-      "MANUAL_ONLY: 'MANUAL_ONLY'",
-      'SECRET_PATH_PATTERN',
-      'OPENCLAW_GATEWAY_APPROVED_ENDPOINT',
-      'OPENCLAW_GATEWAY_STARTUP_SOURCE',
-      'getOpenClawGatewayStartupCommand()',
-      'mutationAllowed: false',
-      'updateAttempted: false',
-      'absolutePathsPublished: false',
-      'REQUEST_EXACT_OPERATOR_APPROVAL',
-      'RESTORE_PREVIOUS_PINNED_OPENCLAW_PACKAGE',
-      'RESTORE_PROTECTED_CONFIG_SOURCE_AND_RUNTIME_IDENTITIES',
+      "const STATUS = { APPROVAL_REQUIRED: 'APPROVAL_REQUIRED', BLOCKED_WITH_RESTORE_PATH: 'BLOCKED_WITH_RESTORE_PATH' };",
+      "const CLASS = { MANUAL_ONLY: 'MANUAL_ONLY' };",
+      'const SECRET_PATH_PATTERN = /secret/;',
+      "const OPENCLAW_GATEWAY_APPROVED_ENDPOINT = 'http://127.0.0.1:18789';",
+      "const OPENCLAW_GATEWAY_STARTUP_SOURCE = 'source';",
+      'getOpenClawGatewayStartupCommand();',
+      'const safety = { mutationAllowed: false, updateAttempted: false, absolutePathsPublished: false };',
+      "const dryRun = [{ action: 'REQUEST_EXACT_OPERATOR_APPROVAL' }];",
+      "const rollback = [{ action: 'RESTORE_PREVIOUS_PINNED_OPENCLAW_PACKAGE' }, { action: 'RESTORE_PROTECTED_CONFIG_SOURCE_AND_RUNTIME_IDENTITIES' }];",
     ].join('\n'),
-    'shared/agents/openClawUpdatePreflightV1.test.mjs': [
+    'shared/agents/openClawUpdatePreflightV1.test.mjs': testSource([
       'builds a deterministic approval-required manifest without publishing absolute paths',
       'blocks unknown and secret-bearing inventory paths while retaining a rollback plan',
       'fails closed on gateway identity drift and unpinned update packets',
@@ -115,7 +115,7 @@ function oc9Contents(overrides = {}) {
       'rejects conflicting duplicate path identities with order-independent blocked evidence',
       'fails closed on links, malformed existence evidence, invalid sizes and stale absent digests',
       'reports no update needed when the pinned target version already matches',
-    ].join('\n'),
+    ]),
     ...overrides,
   };
 }
@@ -242,6 +242,36 @@ test('OC9 successor specialist rejects dynamic child-process imports and process
     assert.equal(result.clean, false);
     assert.ok(result.findings.some((item) => item.code === 'oc9-cli-process-filesystem-network-authority-forbidden'));
   }
+});
+
+test('OC9 successor specialist rejects markers moved into comments or inert strings', () => {
+  const baseCli = oc9Contents()['scripts/openclaw-update-preflight.mjs'];
+  const inertCli = baseCli.replace(
+    'const result = buildOpenClawUpdatePreflightV1(input);',
+    "const marker = 'buildOpenClawUpdatePreflightV1(input)';",
+  );
+  const cliResult = oc9Review({ overrides: { 'scripts/openclaw-update-preflight.mjs': inertCli } });
+  assert.equal(cliResult.clean, false);
+  assert.ok(cliResult.findings.some((item) => item.code === 'oc9-cli-canonical-model-call-missing'));
+
+  const inertTests = [
+    'CLI reads one bounded JSON observation from stdin and writes no mutation claim',
+    'CLI exits 2 for a blocked preflight while still returning the rollback packet',
+    'CLI rejects malformed JSON without emitting a packet',
+    'CLI entrypoint detection handles Windows paths without depending on file URL spelling',
+  ].map((title) => `'${title}';`).join('\n');
+  const testResult = oc9Review({ overrides: { 'scripts/openclaw-update-preflight.test.mjs': inertTests } });
+  assert.equal(testResult.clean, false);
+  assert.ok(testResult.findings.some((item) => item.code === 'oc9-cli-test-mutation-denial-missing'));
+
+  const model = oc9Contents()['shared/agents/openClawUpdatePreflightV1.mjs'];
+  const commentedModel = model.replace(
+    'const safety = { mutationAllowed: false, updateAttempted: false, absolutePathsPublished: false };',
+    'const safety = { mutationAllowed: true, updateAttempted: false, absolutePathsPublished: false };\n// mutationAllowed: false',
+  );
+  const modelResult = oc9Review({ overrides: { 'shared/agents/openClawUpdatePreflightV1.mjs': commentedModel } });
+  assert.equal(modelResult.clean, false);
+  assert.ok(modelResult.findings.some((item) => item.code === 'oc9-model-mutation-denial-missing'));
 });
 
 test('OC9 successor specialist fails closed on stale lineage, widened source estate, or hidden authority', () => {
