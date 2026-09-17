@@ -5,6 +5,7 @@ param(
     [string]$ExpectedHead,
 
     [switch]$OperatorApproved,
+    [switch]$VisibleElevationBroker,
     [switch]$ElevatedChild
 )
 
@@ -30,6 +31,7 @@ $ObservedWindowsProductName = ''
 $ObservedWindowsInstallationType = ''
 $ObservedWindowsArchitecture = ''
 $ObservedWsl2Evidence = ''
+$BrokerOrElevated = $VisibleElevationBroker.IsPresent -or $ElevatedChild.IsPresent
 
 function Emit-Receipt([bool]$Ok, [string]$Status, [string]$Blocker, [hashtable]$Details = @{}, [switch]$ToFile) {
     $result = [ordered]@{
@@ -134,44 +136,46 @@ try {
     $ObservedWindowsInstallationType = ([string]$windowsIdentity.InstallationType).Trim()
     $ObservedWindowsArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
 } catch {
-    Exit-Blocked 'WINDOWS_PRODUCT_IDENTITY_UNAVAILABLE' -ToFile:$ElevatedChild
+    Exit-Blocked 'WINDOWS_PRODUCT_IDENTITY_UNAVAILABLE' -ToFile:$BrokerOrElevated
 }
 if ($ObservedWindowsInstallationType -ne 'Client' -or $ObservedWindowsProductName -notmatch '^Windows 10(?:\s|$)' -or $ObservedWindowsArchitecture -ne $RequiredWindowsArchitecture) {
-    Exit-Blocked 'WINDOWS_10_X64_CLIENT_REQUIRED' -ToFile:$ElevatedChild
+    Exit-Blocked 'WINDOWS_10_X64_CLIENT_REQUIRED' -ToFile:$BrokerOrElevated
 }
 if ($ObservedWindowsBuild -lt $MinimumWindowsBuild -or $ObservedWindowsBuild -ge $MaximumWindowsBuildExclusive) {
-    Exit-Blocked 'WINDOWS_10_BUILD_NOT_ADMITTED' -ToFile:$ElevatedChild
+    Exit-Blocked 'WINDOWS_10_BUILD_NOT_ADMITTED' -ToFile:$BrokerOrElevated
 }
-if (-not (Test-Path -LiteralPath $PowerShellExe -PathType Leaf)) { Exit-Blocked 'FIXED_POWERSHELL_EXECUTABLE_MISSING' -ToFile:$ElevatedChild }
-if (-not (Test-Path -LiteralPath $DismExe -PathType Leaf)) { Exit-Blocked 'FIXED_DISM_EXECUTABLE_MISSING' -ToFile:$ElevatedChild }
-if (-not (Test-Path -LiteralPath $WslExe -PathType Leaf)) { Exit-Blocked 'WSL_EXECUTABLE_MISSING' -ToFile:$ElevatedChild }
-Assert-CanonicalSource -ToFile:$ElevatedChild
+if (-not (Test-Path -LiteralPath $PowerShellExe -PathType Leaf)) { Exit-Blocked 'FIXED_POWERSHELL_EXECUTABLE_MISSING' -ToFile:$BrokerOrElevated }
+if (-not (Test-Path -LiteralPath $DismExe -PathType Leaf)) { Exit-Blocked 'FIXED_DISM_EXECUTABLE_MISSING' -ToFile:$BrokerOrElevated }
+if (-not (Test-Path -LiteralPath $WslExe -PathType Leaf)) { Exit-Blocked 'WSL_EXECUTABLE_MISSING' -ToFile:$BrokerOrElevated }
+Assert-CanonicalSource -ToFile:$BrokerOrElevated
 $ObservedWsl2Evidence = Get-Wsl2Evidence
 if ($ObservedWsl2Evidence) {
-    Emit-Receipt $true 'FORGE_WSL2_PREREQUISITE_READY' '' @{ rebootRequired = $false } -ToFile:$ElevatedChild
+    Emit-Receipt $true 'FORGE_WSL2_PREREQUISITE_READY' '' @{ rebootRequired = $false } -ToFile:$BrokerOrElevated
     exit 0
 }
-if (-not $OperatorApproved -and -not $WhatIfPreference) { Exit-Blocked 'EXACT_WSL2_OPERATOR_APPROVAL_REQUIRED' -ToFile:$ElevatedChild }
+if (-not $OperatorApproved -and -not $WhatIfPreference) { Exit-Blocked 'EXACT_WSL2_OPERATOR_APPROVAL_REQUIRED' -ToFile:$BrokerOrElevated }
 if ($WhatIfPreference) {
     Emit-Receipt $true 'WHAT_IF_READY' '' @{ mutationPerformed = $false }
     exit 0
 }
 
-if (-not $ElevatedChild) {
+$quotedScriptPath = '"{0}"' -f $ScriptPath
+
+if (-not $ElevatedChild -and -not $VisibleElevationBroker) {
     if (Test-Path -LiteralPath $ReceiptPath) { Remove-Item -LiteralPath $ReceiptPath -Force }
-    $arguments = @(
-        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-        '-File', $ScriptPath,
+    $brokerArguments = @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass',
+        '-File', $quotedScriptPath,
         '-ExpectedHead', $ExpectedHead,
-        '-OperatorApproved', '-ElevatedChild'
+        '-OperatorApproved', '-VisibleElevationBroker'
     )
     try {
-        $process = Start-Process -FilePath $PowerShellExe -ArgumentList $arguments -Verb RunAs -Wait -PassThru
+        $broker = Start-Process -FilePath $PowerShellExe -ArgumentList $brokerArguments -WindowStyle Normal -Wait -PassThru
     } catch {
         Exit-Blocked 'WSL2_ELEVATION_CANCELLED_OR_FAILED'
     }
     if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
-        Exit-Blocked 'WSL2_ELEVATED_RECEIPT_MISSING' @{ elevatedExitCode = $process.ExitCode }
+        Exit-Blocked 'WSL2_ELEVATED_RECEIPT_MISSING' @{ elevatedExitCode = $broker.ExitCode }
     }
     try {
         $json = Get-Content -LiteralPath $ReceiptPath -Raw -Encoding UTF8
@@ -180,9 +184,24 @@ if (-not $ElevatedChild) {
             Exit-Blocked 'WSL2_ELEVATED_RECEIPT_INVALID'
         }
         $json.Trim()
-        exit $process.ExitCode
+        exit $broker.ExitCode
     } finally {
         Remove-Item -LiteralPath $ReceiptPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+if ($VisibleElevationBroker -and -not $ElevatedChild) {
+    $arguments = @(
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', $quotedScriptPath,
+        '-ExpectedHead', $ExpectedHead,
+        '-OperatorApproved', '-ElevatedChild'
+    )
+    try {
+        $process = Start-Process -FilePath $PowerShellExe -ArgumentList $arguments -Verb RunAs -Wait -PassThru
+        exit $process.ExitCode
+    } catch {
+        Exit-Blocked 'WSL2_ELEVATION_CANCELLED_OR_FAILED' -ToFile
     }
 }
 
