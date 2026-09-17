@@ -176,7 +176,7 @@ test('rejects mixed formal lineage before persistence', async () => {
     const mixed = { ...record, correlationId: 'different-round' };
     const persisted = await persistStephanosWorkspaceQuestionRecord(root, mixed, options());
     assert.equal(persisted.ok, false);
-    assert.match(persisted.errors.join(','), /formal-round-correlation-mismatch|roundId/i);
+    assert.match(persisted.errors.join(','), /mixed-formal-ambient-lineage/);
     const readback = await readPersistedStephanosWorkspaceQuestionRecord(root, mixed.messageId, options());
     assert.equal(readback.ok, false);
     assert.equal(readback.reason, 'workspace-question-not-found');
