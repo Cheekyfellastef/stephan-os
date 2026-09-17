@@ -6,6 +6,7 @@ import {
   createAgentCapabilityRecord,
   validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
+import { projectVrTeachingIntoSharedWorkspace } from './vrTeachingWorkspaceProjectionV1.mjs';
 
 export const VR_RESEARCH_AGENT_SCHEMA_VERSION = 'stephanos.vr-research-agent.v1';
 export const VR_RESEARCH_AGENT_ID = 'vr-research-agent';
@@ -155,6 +156,36 @@ export function buildVrResearchAgentReadModel(input = {}) {
   });
 }
 
+function teachingProjectionInput(input = {}) {
+  const existing = input.workspaceProjection && typeof input.workspaceProjection === 'object'
+    ? input.workspaceProjection
+    : {};
+  return {
+    ...existing,
+    ...input,
+    currentTarget: text(input.currentTarget || existing.currentTarget),
+    desiredExperience: text(input.desiredExperience || existing.desiredExperience),
+    programmeStage: text(input.programmeStage || existing.programmeStage),
+    nextAuthorisedAction: text(input.nextAuthorisedAction || existing.nextAuthorisedAction),
+    facts: list(input.facts).length ? list(input.facts) : list(existing.facts),
+    hypotheses: list(input.hypotheses).length ? list(input.hypotheses) : list(existing.hypotheses),
+    decisions: list(input.decisions).length ? list(input.decisions) : list(existing.decisions),
+    discoveryCandidates: list(input.discoveryCandidates).length ? list(input.discoveryCandidates) : list(existing.discoveryCandidates),
+    capabilityGraphCandidates: list(existing.capabilityGraphCandidates),
+    methodLibrary: list(existing.methodLibrary),
+    runtimeEvidenceRequests: list(input.runtimeEvidenceRequests).length ? list(input.runtimeEvidenceRequests) : list(existing.runtimeEvidenceRequests),
+    battleBridgeEvidence: list(input.battleBridgeEvidence).length ? list(input.battleBridgeEvidence) : list(existing.battleBridgeEvidence),
+    blockers: list(input.blockers).length ? list(input.blockers) : list(existing.blockers),
+    proofRefs: list(existing.proofRefs),
+    updatedAt: text(input.updatedAt || input.timestampUtc || existing.updatedAt, new Date().toISOString()),
+  };
+}
+
+function materializeTeachingCycle(input = {}) {
+  if (list(input.teachingRecords).length === 0) return null;
+  return projectVrTeachingIntoSharedWorkspace(teachingProjectionInput(input));
+}
+
 function routeForAction(action, input = {}) {
   const available = input.availableSurfaces && typeof input.availableSurfaces === 'object'
     ? input.availableSurfaces
@@ -197,18 +228,22 @@ function proposal(action, reason, readModel, input = {}) {
 }
 
 export function planVrResearchAgentCycle(input = {}) {
-  const readModel = buildVrResearchAgentReadModel(input);
+  const vrTeachingWorkspaceProjection = materializeTeachingCycle(input);
+  const effectiveInput = vrTeachingWorkspaceProjection
+    ? { ...input, workspaceProjection: vrTeachingWorkspaceProjection.projection }
+    : input;
+  const readModel = vrTeachingWorkspaceProjection?.agentReadModel
+    || buildVrResearchAgentReadModel(effectiveInput);
   if (!readModel.ready) {
-    const action = readModel.verdict === VR_RESEARCH_AGENT_VERDICTS.WORKSPACE_MISSING
-      ? VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE
-      : VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE;
+    const action = VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE;
     return Object.freeze({
       schemaVersion: VR_RESEARCH_AGENT_SCHEMA_VERSION,
       agentId: VR_RESEARCH_AGENT_ID,
       mode: VR_RESEARCH_AGENT_MODES.PROPOSAL_ONLY,
       verdict: readModel.verdict,
       readModel,
-      proposal: proposal(action, readModel.blockers[0] || 'workspace-refresh-required', readModel, input),
+      ...(vrTeachingWorkspaceProjection ? { vrTeachingWorkspaceProjection } : {}),
+      proposal: proposal(action, readModel.blockers[0] || 'workspace-refresh-required', readModel, effectiveInput),
     });
   }
 
@@ -236,7 +271,8 @@ export function planVrResearchAgentCycle(input = {}) {
       ? VR_RESEARCH_AGENT_VERDICTS.NO_ACTION
       : VR_RESEARCH_AGENT_VERDICTS.READY,
     readModel,
-    proposal: proposal(action, reason, readModel, input),
+    ...(vrTeachingWorkspaceProjection ? { vrTeachingWorkspaceProjection } : {}),
+    proposal: proposal(action, reason, readModel, effectiveInput),
   });
 }
 
@@ -267,12 +303,15 @@ export function createVrResearchAgentWorkspaceRecords(input = {}) {
       requiresOperator: cycle.proposal.requiresOperator,
       freshness: cycle.readModel.freshness,
       sourceCount: cycle.readModel.sourceSummary.sourceCount,
+      teachingProjectionReceiptId: cycle.vrTeachingWorkspaceProjection?.projectionReceipt?.receiptId || null,
+      teachingProjectionVerdict: cycle.vrTeachingWorkspaceProjection?.projectionReceipt?.verdict || null,
     }),
     proofRefs,
   };
   return Object.freeze({
     capability,
     status,
+    vrTeachingWorkspaceProjection: cycle.vrTeachingWorkspaceProjection || null,
     validations: Object.freeze({
       capability: validateSharedWorkspaceRecord(capability, input.validationOptions),
       status: validateSharedWorkspaceRecord(status, input.validationOptions),
