@@ -183,6 +183,26 @@ test('canonical agent cycle projects valid #1593 teaching into Shared Workspace 
   assert.equal(statusBody.teachingProjectionReceiptId, cycle.vrTeachingWorkspaceProjection.projectionReceipt.receiptId);
 });
 
+test('blocked teaching receipt blocks the production agent cycle before downstream graph action', () => {
+  const cycle = planVrResearchAgentCycle({
+    nowMs: NOW,
+    updatedAt: '2026-08-03T14:25:00.000Z',
+    workspaceProjection: freshProjection({
+      capabilityGraphCandidates: [{ candidateKey: 'existing-capability', reusableMethod: 'Existing capability' }],
+      proofRefs: ['proofs/vr/existing'],
+    }),
+    sourceRegistry: registry(),
+    teachingRecords: [{ ...teaching(), observedIdentity: 'not-registered' }],
+    availableSurfaces: { openClaw: true, battleBridge: false },
+  });
+
+  assert.equal(cycle.vrTeachingWorkspaceProjection.projectionReceipt.verdict, 'VR_TEACHING_WORKSPACE_PROJECTION_BLOCKED');
+  assert.equal(cycle.readModel.ready, true);
+  assert.equal(cycle.verdict, VR_RESEARCH_AGENT_VERDICTS.INVALID_INPUT);
+  assert.equal(cycle.proposal.action, VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE);
+  assert.equal(cycle.proposal.reason, 'vr-teaching-workspace-projection-blocked');
+});
+
 test('workspace records validate against the canonical Shared Agent Workspace contract', () => {
   const cycle = planVrResearchAgentCycle({
     nowMs: NOW,
