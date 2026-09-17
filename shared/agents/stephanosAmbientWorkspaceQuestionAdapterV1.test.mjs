@@ -68,3 +68,20 @@ test('preserves zero authority on ambient workspace traffic', () => {
     assert.equal(built.record[field], false);
   }
 });
+
+test('fails closed on accessor-bearing workspace records without executing getters', () => {
+  let getterCalls = 0;
+  const record = {};
+  Object.defineProperty(record, 'channel', {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return 'shared-participant-qa';
+    },
+  });
+
+  const decoded = decodeStephanosAmbientWorkspaceQuestionRecord(record, options());
+  assert.equal(decoded.valid, false);
+  assert.deepEqual(decoded.errors, ['record-invalid']);
+  assert.equal(getterCalls, 0);
+});
