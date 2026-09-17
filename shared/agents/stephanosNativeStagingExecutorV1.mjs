@@ -203,7 +203,7 @@ export function validateStephanosNativeModelResult(result = {}, request = {}) {
     }
   }
   if (totalBytes > MAX_TOTAL_BYTES) errors.push('replacement-total-too-large');
-  return frozen({ valid: errors.length === 0, errors: frozen([...new Set(errors)]), replacements: frozen(normalized) });
+  return frozen({ valid: errors.length === 0, errors:frozen([...new Set(errors)]), replacements:frozen(normalized) });
 }
 
 export function buildStephanosNativeStagingPlan(request, result) {
@@ -243,9 +243,13 @@ async function readPersistedNativeTestEvidence(plan, output, options = {}) {
 
   const executionId = buildStephanosNativeTestExecutionId(plan.actionId, testId);
   const proofRef = buildStephanosNativeTestProofRef(outputSha256);
-  const execution = await readCurrentExecutionReceipt(options.workspaceRoot, executionId, { repoRoot:options.repoRoot, nowMs:options.nowMs });
-  if (!execution.ok || execution.current?.state !== 'completed') return frozen({ valid:false, reason:'persisted-execution-receipt-missing' });
-  const receipt = execution.current;
+  const execution = await readCurrentExecutionReceipt(
+    options.workspaceRoot,
+    { executionId },
+    { repoRoot:options.repoRoot, nowMs:options.nowMs },
+  );
+  if (!execution.ok || execution.receipt?.state !== 'completed') return frozen({ valid:false, reason:'persisted-execution-receipt-missing' });
+  const receipt = execution.receipt;
   if (receipt.repository !== plan.repository
     || receipt.branch !== plan.branch
     || text(receipt.sourceHead).toLowerCase() !== plan.baseHead
