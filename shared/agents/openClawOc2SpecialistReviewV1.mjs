@@ -209,12 +209,24 @@ function splitTopLevelLogical(source, operator) {
   return parts;
 }
 
+function unwrapOuterParens(source) {
+  let value = source.trim();
+  while (value.startsWith('(')) {
+    const masked = executableOnly(value);
+    const close = matchBalanced(masked, 0, '(', ')');
+    if (close !== masked.length - 1) break;
+    value = value.slice(1, -1).trim();
+  }
+  return value;
+}
+
 function conditionHasSufficientRejectingPredicate(condition, pattern) {
   const clauses = splitTopLevelLogical(condition, '||');
   return clauses.some((clause) => {
-    const executable = executableOnly(clause).trim();
-    if (!pattern.test(executable)) return false;
-    return splitTopLevelLogical(executable, '&&').length === 1;
+    const normalized = unwrapOuterParens(clause);
+    const semantic = stripComments(normalized).trim();
+    if (!pattern.test(semantic)) return false;
+    return splitTopLevelLogical(normalized, '&&').length === 1;
   });
 }
 
@@ -253,6 +265,7 @@ function countMatches(source, pattern) {
 
 function helperCalls(source, name) {
   const code = executableOnly(source);
+  const uncommented = stripComments(source);
   const calls = [];
   const pattern = new RegExp(`\\b${name}\\s*\\(`, 'g');
   for (const match of code.matchAll(pattern)) {
@@ -261,7 +274,7 @@ function helperCalls(source, name) {
     const open = code.indexOf('(', match.index);
     const close = matchBalanced(code, open, '(', ')');
     if (open < 0 || close < 0) return null;
-    calls.push(code.slice(match.index, close + 1).replace(/\s+/g, '').replace(/"/g, "'"));
+    calls.push(uncommented.slice(match.index, close + 1).replace(/\s+/g, '').replace(/"/g, "'"));
   }
   return calls;
 }
