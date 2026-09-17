@@ -1,132 +1,53 @@
-import { projectVrTeachingIntoSharedWorkspace } from '../../../shared/agents/vrTeachingWorkspaceProjectionV1.mjs';
-
 export const VR_RESEARCH_CONTEXT_PROVIDER_ID = 'vrResearch';
 export const VR_RESEARCH_CONTEXT_SCHEMA_VERSION = 'stephanos.vr-research.workspace.v1';
 export const VR_RESEARCH_CONTEXT_DOMAIN_ID = 'vr-research';
 
 const DEFAULT_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 const MAX_SUMMARY_ITEMS = 5;
+const VR_EVIDENCE_PLANES = Object.freeze(['NORMATIVE_OR_OFFICIAL_SPECIFICATION','OFFICIAL_AUTHORING_EVIDENCE','DIRECT_PUBLIC_SOURCE_EVIDENCE','PUBLIC_PRODUCT_OR_CREATOR_CLAIM','APPROVED_LOCAL_PACKAGE_EVIDENCE','OBSERVED_RUNTIME_OR_HEADSET_PROOF','STEPHANOS_INFERENCE_OR_PROPOSAL']);
 
-function asObject(value) {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
-}
-
-function asText(value, fallback = '') {
-  if (value === null || value === undefined) return fallback;
-  const normalized = String(value).trim();
-  return normalized || fallback;
-}
-
-function asList(value) {
-  return Array.isArray(value) ? value.filter((item) => item !== null && item !== undefined) : [];
-}
-
-function boundedStrings(value, limit = MAX_SUMMARY_ITEMS) {
-  return asList(value)
-    .map((item) => {
-      if (typeof item === 'string') return item.trim();
-      if (item && typeof item === 'object') return asText(item.summary || item.title || item.id || item.status);
-      return asText(item);
-    })
-    .filter(Boolean)
-    .slice(0, limit);
-}
+function asObject(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : null; }
+function asText(value, fallback = '') { if (value === null || value === undefined) return fallback; const normalized = String(value).trim(); return normalized || fallback; }
+function asList(value) { return Array.isArray(value) ? value.filter((item) => item !== null && item !== undefined) : []; }
+function boundedStrings(value, limit = MAX_SUMMARY_ITEMS) { return asList(value).map((item) => { if (typeof item === 'string') return item.trim(); if (item && typeof item === 'object') return asText(item.summary || item.title || item.id || item.status); return asText(item); }).filter(Boolean).slice(0, limit); }
+function uniqueBy(items, identity) { const seen = new Set(); return items.filter((item) => { const key = identity(item); if (!key || seen.has(key)) return false; seen.add(key); return true; }); }
 
 function directProjection(input = {}) {
-  return asObject(input.vrResearchProjection)
-    || asObject(input.sharedWorkspace?.vrResearchProjection)
-    || asObject(input.sharedWorkspace?.domains?.[VR_RESEARCH_CONTEXT_DOMAIN_ID])
-    || asObject(input.missionState?.vrResearchProjection)
-    || asObject(input.missionState?.operatorReliefProjection?.vrResearchProjection)
-    || asObject(input.context?.vrResearchProjection)
-    || null;
+  return asObject(input.vrResearchProjection) || asObject(input.sharedWorkspace?.vrResearchProjection) || asObject(input.sharedWorkspace?.domains?.[VR_RESEARCH_CONTEXT_DOMAIN_ID]) || asObject(input.missionState?.vrResearchProjection) || asObject(input.missionState?.operatorReliefProjection?.vrResearchProjection) || asObject(input.context?.vrResearchProjection) || null;
 }
 
-function candidateProjection(input = {}) {
-  const teachingRecords = asList(input.vrTeachingRecords || input.sharedWorkspace?.vrTeachingRecords);
-  if (teachingRecords.length) {
-    const projectionInput = asObject(input.vrTeachingProjectionInput)
-      || asObject(input.sharedWorkspace?.vrTeachingProjectionInput)
-      || {};
-    return projectVrTeachingIntoSharedWorkspace({
-      ...projectionInput,
-      teachingRecords,
-      updatedAt: asText(projectionInput.updatedAt, asText(input.now, new Date().toISOString())),
-      nowMs: input.now instanceof Date ? input.now.getTime() : undefined,
-    }).projection;
-  }
-  return directProjection(input);
+// Browser-safe read projection. The authoritative Shared Workspace writer remains the
+// server-side vrTeachingWorkspaceProjectionV1 adapter; this seam only makes already
+// governed teaching records visible to the UI without importing Node-only fs/crypto.
+function browserTeachingProjection(input = {}, teachingRecords = []) {
+  const projectionInput = asObject(input.vrTeachingProjectionInput) || asObject(input.sharedWorkspace?.vrTeachingProjectionInput) || {};
+  const base = directProjection(input);
+  const accepted = teachingRecords.filter((record) => asText(record?.teachingKey) && asText(record?.candidateKey) && asText(record?.sourceId || record?.canonicalSourceId) && asText(record?.observedIdentity || record?.exactObservedIdentity) && asText(record?.licenceBoundary || record?.licenseBoundary) && asText(record?.reusableMethod || record?.capability) && asList(record?.proofRefs).map(asText).filter(Boolean).length);
+  const capabilityGraphCandidates = uniqueBy([...(asList(base?.capabilityGraphCandidates || projectionInput.capabilityGraphCandidates)), ...accepted.map((record) => ({ teachingKey: asText(record.teachingKey), candidateKey: asText(record.candidateKey), sourceId: asText(record.sourceId || record.canonicalSourceId), observedIdentity: asText(record.observedIdentity || record.exactObservedIdentity), evidencePlanes: asList(record.evidencePlanes || [record.evidencePlane]).map(asText).filter(Boolean), confidence: asText(record.confidence), reusableMethod: asText(record.reusableMethod || record.capability), requiredProofLevel: asText(record.requiredProofLevel), proofRefs: asList(record.proofRefs).map(asText).filter(Boolean) }))], (item) => asText(item?.teachingKey || item?.candidateKey));
+  const proofRefs = [...new Set([...(asList(base?.proofRefs || projectionInput.proofRefs).map(asText).filter(Boolean)), ...accepted.flatMap((record) => asList(record.proofRefs).map(asText).filter(Boolean))])];
+  if (base) return Object.freeze({ ...base, capabilityGraphCandidates: Object.freeze(capabilityGraphCandidates), proofRefs: Object.freeze(proofRefs) });
+  const registry = asObject(projectionInput.sourceRegistry) || {};
+  const workspace = asObject(projectionInput.workspaceModel) || {};
+  const updatedAt = asText(projectionInput.updatedAt, asText(input.now, new Date().toISOString()));
+  return Object.freeze({ schemaVersion: VR_RESEARCH_CONTEXT_SCHEMA_VERSION, domainId: VR_RESEARCH_CONTEXT_DOMAIN_ID, projectionId: 'vr-research-browser-teaching-read', updatedAt, staleAfterMs: DEFAULT_STALE_AFTER_MS, freshness: 'FRESH', currentTarget: asText(projectionInput.currentTarget || workspace.targets?.[0]?.name, 'Starfield VR'), desiredExperience: asText(projectionInput.desiredExperience, 'Skyrim VR-quality Starfield with compounding reusable capability'), programmeStage: asText(projectionInput.programmeStage, 'research-intelligence-buildout'), nextAuthorisedAction: asText(projectionInput.nextAuthorisedAction, 'Complete canonical workspace, agent and live evidence connections.'), sourceRegistry: Object.freeze({ schemaVersion: asText(registry.schema_version || registry.schemaVersion, 'unknown'), sourceCount: asList(registry.sources).length, sourceHealth: {}, licenceHealth: {}, sources: Object.freeze(asList(registry.sources)) }), facts: Object.freeze(asList(projectionInput.facts)), hypotheses: Object.freeze(asList(projectionInput.hypotheses)), decisions: Object.freeze(asList(projectionInput.decisions)), researchQueue: Object.freeze(asList(workspace.experiments).filter((item) => !['validated','complete','retired'].includes(asText(item?.status).toLowerCase()))), capabilityGraphCandidates: Object.freeze(capabilityGraphCandidates), runtimeEvidenceRequests: Object.freeze(asList(projectionInput.runtimeEvidenceRequests)), battleBridgeEvidence: Object.freeze(asList(projectionInput.battleBridgeEvidence)), blockers: Object.freeze(asList(projectionInput.blockers)), proofRefs: Object.freeze(proofRefs), evidencePlanes: VR_EVIDENCE_PLANES, writePolicy: Object.freeze({ validatedEventsOnly: true, agentMaySelfPromoteClaims: false, privateAgentStateForbidden: true, arbitraryFileAccessAllowed: false, arbitraryShellAllowed: false, mergeAuthority: false }) });
 }
+
+function candidateProjection(input = {}) { const teachingRecords = asList(input.vrTeachingRecords || input.sharedWorkspace?.vrTeachingRecords); return teachingRecords.length ? browserTeachingProjection(input, teachingRecords) : directProjection(input); }
 
 export function inspectVrResearchProjection(input = {}) {
   const projection = candidateProjection(input);
-  if (!projection) {
-    return Object.freeze({ status: 'MISSING', proofState: 'missing', projection: null, warning: 'Canonical vr-research Shared Workspace projection is unavailable.' });
-  }
-
-  const schemaVersion = asText(projection.schemaVersion);
-  const domainId = asText(projection.domainId);
-  if (schemaVersion !== VR_RESEARCH_CONTEXT_SCHEMA_VERSION || domainId !== VR_RESEARCH_CONTEXT_DOMAIN_ID) {
-    return Object.freeze({ status: 'INVALID', proofState: 'invalid', projection, warning: `Canonical vr-research projection identity is invalid: ${schemaVersion || 'missing-schema'} / ${domainId || 'missing-domain'}.` });
-  }
-
-  const updatedAtMs = Date.parse(asText(projection.updatedAt));
-  const nowMs = input.now instanceof Date ? input.now.getTime() : Date.parse(asText(input.now, new Date().toISOString()));
-  const staleAfterMs = Number.isFinite(Number(projection.staleAfterMs)) && Number(projection.staleAfterMs) > 0 ? Number(projection.staleAfterMs) : DEFAULT_STALE_AFTER_MS;
-
-  if (!Number.isFinite(updatedAtMs) || !Number.isFinite(nowMs)) {
-    return Object.freeze({ status: 'INVALID', proofState: 'invalid', projection, warning: 'Canonical vr-research projection has invalid freshness timestamps.' });
-  }
-
-  const ageMs = Math.max(0, nowMs - updatedAtMs);
-  const stale = ageMs > staleAfterMs || asText(projection.freshness).toUpperCase() === 'STALE';
+  if (!projection) return Object.freeze({ status: 'MISSING', proofState: 'missing', projection: null, warning: 'Canonical vr-research Shared Workspace projection is unavailable.' });
+  const schemaVersion = asText(projection.schemaVersion); const domainId = asText(projection.domainId);
+  if (schemaVersion !== VR_RESEARCH_CONTEXT_SCHEMA_VERSION || domainId !== VR_RESEARCH_CONTEXT_DOMAIN_ID) return Object.freeze({ status: 'INVALID', proofState: 'invalid', projection, warning: `Canonical vr-research projection identity is invalid: ${schemaVersion || 'missing-schema'} / ${domainId || 'missing-domain'}.` });
+  const updatedAtMs = Date.parse(asText(projection.updatedAt)); const nowMs = input.now instanceof Date ? input.now.getTime() : Date.parse(asText(input.now, new Date().toISOString())); const staleAfterMs = Number.isFinite(Number(projection.staleAfterMs)) && Number(projection.staleAfterMs) > 0 ? Number(projection.staleAfterMs) : DEFAULT_STALE_AFTER_MS;
+  if (!Number.isFinite(updatedAtMs) || !Number.isFinite(nowMs)) return Object.freeze({ status: 'INVALID', proofState: 'invalid', projection, warning: 'Canonical vr-research projection has invalid freshness timestamps.' });
+  const ageMs = Math.max(0, nowMs - updatedAtMs); const stale = ageMs > staleAfterMs || asText(projection.freshness).toUpperCase() === 'STALE';
   return Object.freeze({ status: stale ? 'STALE' : 'READY', proofState: stale ? 'stale' : 'ready', projection, ageMs, staleAfterMs, warning: stale ? 'Canonical vr-research Shared Workspace projection is stale and must be refreshed before it is treated as current truth.' : '' });
 }
 
 export function buildVrResearchContextSummary(input = {}) {
-  const inspection = inspectVrResearchProjection(input);
-  const projection = inspection.projection || {};
-  const sourceRegistry = asObject(projection.sourceRegistry) || {};
-  const writePolicy = asObject(projection.writePolicy) || {};
-
-  return Object.freeze({
-    status: inspection.status,
-    proofState: inspection.proofState,
-    schemaVersion: asText(projection.schemaVersion, 'unavailable'),
-    domainId: asText(projection.domainId, VR_RESEARCH_CONTEXT_DOMAIN_ID),
-    projectionId: asText(projection.projectionId, 'unavailable'),
-    updatedAt: asText(projection.updatedAt, 'unknown'),
-    ageMs: Number.isFinite(inspection.ageMs) ? inspection.ageMs : null,
-    currentTarget: asText(projection.currentTarget, 'unknown'),
-    desiredExperience: asText(projection.desiredExperience, 'unknown'),
-    programmeStage: asText(projection.programmeStage, 'unknown'),
-    nextAuthorisedAction: asText(projection.nextAuthorisedAction, 'Refresh canonical vr-research Shared Workspace projection.'),
-    sourceCount: Number(sourceRegistry.sourceCount || 0),
-    sourceHealth: asObject(sourceRegistry.sourceHealth) || {},
-    licenceHealth: asObject(sourceRegistry.licenceHealth) || {},
-    known: Object.freeze({ factCount: asList(projection.facts).length, facts: Object.freeze(boundedStrings(projection.facts)), decisionCount: asList(projection.decisions).length, decisions: Object.freeze(boundedStrings(projection.decisions)) }),
-    observed: Object.freeze({ battleBridgeEvidenceCount: asList(projection.battleBridgeEvidence).length, battleBridgeEvidence: Object.freeze(boundedStrings(projection.battleBridgeEvidence)), proofRefs: Object.freeze(boundedStrings(projection.proofRefs, 10)) }),
-    inferred: Object.freeze({ hypothesisCount: asList(projection.hypotheses).length, hypotheses: Object.freeze(boundedStrings(projection.hypotheses)), capabilityCandidateCount: asList(projection.capabilityGraphCandidates).length }),
-    proposed: Object.freeze({ nextAuthorisedAction: asText(projection.nextAuthorisedAction, 'unknown'), researchQueueCount: asList(projection.researchQueue).length, researchQueue: Object.freeze(boundedStrings(projection.researchQueue)), runtimeEvidenceRequestCount: asList(projection.runtimeEvidenceRequests).length }),
-    blocked: Object.freeze({ blockerCount: asList(projection.blockers).length, blockers: Object.freeze(boundedStrings(projection.blockers)), stale: inspection.status === 'STALE', missing: inspection.status === 'MISSING', invalid: inspection.status === 'INVALID' }),
-    evidencePlanes: Object.freeze(boundedStrings(projection.evidencePlanes, 10)),
-    writePolicy: Object.freeze({ validatedEventsOnly: writePolicy.validatedEventsOnly === true, agentMaySelfPromoteClaims: writePolicy.agentMaySelfPromoteClaims === true, privateAgentStateForbidden: writePolicy.privateAgentStateForbidden !== false, arbitraryShellAllowed: writePolicy.arbitraryShellAllowed === true, mergeAuthority: writePolicy.mergeAuthority === true }),
-  });
+  const inspection = inspectVrResearchProjection(input); const projection = inspection.projection || {}; const sourceRegistry = asObject(projection.sourceRegistry) || {}; const writePolicy = asObject(projection.writePolicy) || {};
+  return Object.freeze({ status: inspection.status, proofState: inspection.proofState, schemaVersion: asText(projection.schemaVersion, 'unavailable'), domainId: asText(projection.domainId, VR_RESEARCH_CONTEXT_DOMAIN_ID), projectionId: asText(projection.projectionId, 'unavailable'), updatedAt: asText(projection.updatedAt, 'unknown'), ageMs: Number.isFinite(inspection.ageMs) ? inspection.ageMs : null, currentTarget: asText(projection.currentTarget, 'unknown'), desiredExperience: asText(projection.desiredExperience, 'unknown'), programmeStage: asText(projection.programmeStage, 'unknown'), nextAuthorisedAction: asText(projection.nextAuthorisedAction, 'Refresh canonical vr-research Shared Workspace projection.'), sourceCount: Number(sourceRegistry.sourceCount || 0), sourceHealth: asObject(sourceRegistry.sourceHealth) || {}, licenceHealth: asObject(sourceRegistry.licenceHealth) || {}, known: Object.freeze({ factCount: asList(projection.facts).length, facts: Object.freeze(boundedStrings(projection.facts)), decisionCount: asList(projection.decisions).length, decisions: Object.freeze(boundedStrings(projection.decisions)) }), observed: Object.freeze({ battleBridgeEvidenceCount: asList(projection.battleBridgeEvidence).length, battleBridgeEvidence: Object.freeze(boundedStrings(projection.battleBridgeEvidence)), proofRefs: Object.freeze(boundedStrings(projection.proofRefs, 10)) }), inferred: Object.freeze({ hypothesisCount: asList(projection.hypotheses).length, hypotheses: Object.freeze(boundedStrings(projection.hypotheses)), capabilityCandidateCount: asList(projection.capabilityGraphCandidates).length }), proposed: Object.freeze({ nextAuthorisedAction: asText(projection.nextAuthorisedAction, 'unknown'), researchQueueCount: asList(projection.researchQueue).length, researchQueue: Object.freeze(boundedStrings(projection.researchQueue)), runtimeEvidenceRequestCount: asList(projection.runtimeEvidenceRequests).length }), blocked: Object.freeze({ blockerCount: asList(projection.blockers).length, blockers: Object.freeze(boundedStrings(projection.blockers)), stale: inspection.status === 'STALE', missing: inspection.status === 'MISSING', invalid: inspection.status === 'INVALID' }), evidencePlanes: Object.freeze(boundedStrings(projection.evidencePlanes, 10)), writePolicy: Object.freeze({ validatedEventsOnly: writePolicy.validatedEventsOnly === true, agentMaySelfPromoteClaims: writePolicy.agentMaySelfPromoteClaims === true, privateAgentStateForbidden: writePolicy.privateAgentStateForbidden !== false, arbitraryShellAllowed: writePolicy.arbitraryShellAllowed === true, mergeAuthority: writePolicy.mergeAuthority === true }) });
 }
 
-export const vrResearchContextProvider = Object.freeze({
-  id: VR_RESEARCH_CONTEXT_PROVIDER_ID,
-  label: 'VR Research',
-  priority: 65,
-  defaultEnabled: false,
-  getSummary: buildVrResearchContextSummary,
-  getWarnings: (input) => { const inspection = inspectVrResearchProjection(input); return inspection.warning ? [inspection.warning] : []; },
-  getNextAction: (input) => {
-    const inspection = inspectVrResearchProjection(input);
-    if (inspection.status === 'READY') return [asText(inspection.projection?.nextAuthorisedAction, 'Continue the next bounded VR research action.')];
-    return ['Refresh and validate the canonical vr-research Shared Workspace projection before answering from it.'];
-  },
-  getProofState: (input) => inspectVrResearchProjection(input).proofState,
-  getCanonLinks: () => ['goal.1592.shared-vr-research-workspace', 'goal.1594.vr-context-provider'],
-  getSourceRefs: () => ['vrResearchProjection', 'sharedWorkspace.vrResearchProjection', 'sharedWorkspace.domains.vr-research', 'missionState.vrResearchProjection', 'vrTeachingRecords', 'sharedWorkspace.vrTeachingRecords'],
-});
+export const vrResearchContextProvider = Object.freeze({ id: VR_RESEARCH_CONTEXT_PROVIDER_ID, label: 'VR Research', priority: 65, defaultEnabled: false, getSummary: buildVrResearchContextSummary, getWarnings: (input) => { const inspection = inspectVrResearchProjection(input); return inspection.warning ? [inspection.warning] : []; }, getNextAction: (input) => { const inspection = inspectVrResearchProjection(input); if (inspection.status === 'READY') return [asText(inspection.projection?.nextAuthorisedAction, 'Continue the next bounded VR research action.')]; return ['Refresh and validate the canonical vr-research Shared Workspace projection before answering from it.']; }, getProofState: (input) => inspectVrResearchProjection(input).proofState, getCanonLinks: () => ['goal.1592.shared-vr-research-workspace', 'goal.1594.vr-context-provider'], getSourceRefs: () => ['vrResearchProjection', 'sharedWorkspace.vrResearchProjection', 'sharedWorkspace.domains.vr-research', 'missionState.vrResearchProjection', 'vrTeachingRecords', 'sharedWorkspace.vrTeachingRecords'] });
