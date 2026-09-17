@@ -32,6 +32,19 @@ function proofRefs(values) {
   return Object.freeze(output);
 }
 
+function dataOnlyRecord(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return null;
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const snapshot = {};
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (!Object.hasOwn(descriptor, 'value') || descriptor.get || descriptor.set) return null;
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
+}
+
 function authorityBoundary() {
   return Object.freeze({
     sourceMutationAllowed: false,
@@ -97,27 +110,28 @@ export function createStephanosAmbientWorkspaceQuestionRecord(question, options 
 }
 
 export function decodeStephanosAmbientWorkspaceQuestionRecord(record, options = {}) {
-  const errors = [];
-  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+  const safeRecord = dataOnlyRecord(record);
+  if (!safeRecord) {
     return Object.freeze({ valid: false, question: null, errors: Object.freeze(['record-invalid']) });
   }
-  if (record.channel !== STEPHANOS_AMBIENT_WORKSPACE_QUESTION_CHANNEL) errors.push('channel-mismatch');
-  if (record.recordSubtype !== STEPHANOS_AMBIENT_WORKSPACE_QUESTION_SUBTYPE) errors.push('record-subtype-mismatch');
+  const errors = [];
+  if (safeRecord.channel !== STEPHANOS_AMBIENT_WORKSPACE_QUESTION_CHANNEL) errors.push('channel-mismatch');
+  if (safeRecord.recordSubtype !== STEPHANOS_AMBIENT_WORKSPACE_QUESTION_SUBTYPE) errors.push('record-subtype-mismatch');
   for (const field of ['sourceMutationAllowed', 'commandExecutionAllowed', 'approvalAllowed', 'mergeAllowed', 'deploymentAllowed']) {
-    if (record[field] !== false) errors.push(`${field}-must-remain-false`);
+    if (safeRecord[field] !== false) errors.push(`${field}-must-remain-false`);
   }
 
   let parsed = null;
-  try { parsed = JSON.parse(text(record.body)); } catch { errors.push('conversation-body-invalid-json'); }
+  try { parsed = JSON.parse(text(safeRecord.body)); } catch { errors.push('conversation-body-invalid-json'); }
   const payload = parsed?.payload;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) errors.push('conversation-body-payload-invalid');
   if (payload) {
-    const selected = validateStephanosWorkspaceQuestionByLineage(record, payload, options);
+    const selected = validateStephanosWorkspaceQuestionByLineage(safeRecord, payload, options);
     errors.push(...selected.errors.map((error) => `question:${error}`));
     if (selected.lineage?.ambient !== true) errors.push('ambient-lineage-required');
-    if (record.participantId !== payload.askerParticipantId) errors.push('asker-participant-lineage-mismatch');
-    if (record.recipientParticipantId !== payload.targetParticipantId) errors.push('target-participant-lineage-mismatch');
-    if (record.subjectId !== payload.questionId) errors.push('question-lineage-mismatch');
+    if (safeRecord.participantId !== payload.askerParticipantId) errors.push('asker-participant-lineage-mismatch');
+    if (safeRecord.recipientParticipantId !== payload.targetParticipantId) errors.push('target-participant-lineage-mismatch');
+    if (safeRecord.subjectId !== payload.questionId) errors.push('question-lineage-mismatch');
   }
   return Object.freeze({ valid: errors.length === 0, question: errors.length === 0 ? payload : null, errors: Object.freeze([...new Set(errors)]) });
 }
