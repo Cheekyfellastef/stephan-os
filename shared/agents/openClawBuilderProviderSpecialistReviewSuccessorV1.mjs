@@ -113,42 +113,123 @@ function exactOc9Source(source, sourceHead, path) {
     && text(source.blobSha).toLowerCase() === gitBlobSha(content));
 }
 
+function maskCommentsAndStrings(source, { preserveStrings = false } = {}) {
+  let out = '';
+  let quote = '';
+  let lineComment = false;
+  let blockComment = false;
+  let escaped = false;
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i];
+    const next = source[i + 1] || '';
+    if (lineComment) {
+      if (ch === '\n') { lineComment = false; out += '\n'; } else out += ' ';
+      continue;
+    }
+    if (blockComment) {
+      if (ch === '*' && next === '/') { blockComment = false; out += '  '; i += 1; }
+      else out += ch === '\n' ? '\n' : ' ';
+      continue;
+    }
+    if (quote) {
+      if (preserveStrings) out += ch;
+      else out += ch === '\n' ? '\n' : ' ';
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '/' && next === '/') { lineComment = true; out += '  '; i += 1; continue; }
+    if (ch === '/' && next === '*') { blockComment = true; out += '  '; i += 1; continue; }
+    if (ch === '\'' || ch === '"' || ch === '`') {
+      quote = ch;
+      out += preserveStrings ? ch : ' ';
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+const stripComments = (source) => maskCommentsAndStrings(source, { preserveStrings: true });
+const executableOnly = (source) => maskCommentsAndStrings(source);
+
+function literalStartsInExecutableSource(source, literal) {
+  const masked = executableOnly(source);
+  let index = source.indexOf(literal);
+  while (index >= 0) {
+    if (masked[index] === source[index] && masked[index] !== ' ') return true;
+    index = source.indexOf(literal, index + 1);
+  }
+  return false;
+}
+
+function requireExecutableLiterals(findings, source, path, rules) {
+  for (const [literal, code] of rules) {
+    if (!literalStartsInExecutableSource(source, literal)) findings.push(finding(code, path));
+  }
+}
+
+function activeTestTitle(source, title) {
+  const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\btest\\s*\\(\\s*(['\"])${escaped}\\1\\s*,`).test(stripComments(source));
+}
+
+function requireActiveTests(findings, source, path, rules) {
+  for (const [title, code] of rules) if (!activeTestTitle(source, title)) findings.push(finding(code, path));
+}
+
 function requireLiterals(findings, source, path, rules) {
-  for (const [literal, code] of rules) if (!source.includes(literal)) findings.push(finding(code, path));
+  const uncommented = stripComments(source);
+  for (const [literal, code] of rules) if (!uncommented.includes(literal)) findings.push(finding(code, path));
 }
 
 function forbidPatterns(findings, source, path, rules) {
-  for (const [pattern, code] of rules) if (pattern.test(source)) findings.push(finding(code, path));
+  const uncommented = stripComments(source);
+  for (const [pattern, code] of rules) if (pattern.test(uncommented)) findings.push(finding(code, path));
 }
 
 function workflowWritePermissionViolation(source) {
-  return /^\s*permissions\s*:\s*write-all\s*(?:#.*)?$/im.test(source)
-    || /^\s*[A-Za-z0-9_-]+\s*:\s*write\s*(?:#.*)?$/im.test(source)
-    || /\bpermissions\s*:\s*\{[^}]*:\s*write\b/i.test(source);
+  const uncommented = source.split('\n').filter((line) => !line.trimStart().startsWith('#')).join('\n');
+  return /^\s*permissions\s*:\s*write-all\s*(?:#.*)?$/im.test(uncommented)
+    || /^\s*[A-Za-z0-9_-]+\s*:\s*write\s*(?:#.*)?$/im.test(uncommented)
+    || /\bpermissions\s*:\s*\{[^}]*:\s*write\b/i.test(uncommented);
+}
+
+function workflowHasExactLine(source, line) {
+  return source.split('\n').some((candidate) => {
+    const trimmed = candidate.trim();
+    return !trimmed.startsWith('#') && trimmed === line;
+  });
 }
 
 function dynamicAuthorityViolation(source) {
+  const uncommented = stripComments(source);
   const modules = '(?:child_process|fs|http|https|net)';
   const staticImport = new RegExp(`\\bfrom\\s+['\"](?:node:)?${modules}['\"]`, 'i');
   const dynamicImport = new RegExp(`\\bimport\\s*\\(\\s*['\"](?:node:)?${modules}['\"]\\s*\\)`, 'i');
   const requireImport = new RegExp(`\\brequire\\s*\\(\\s*['\"](?:node:)?${modules}['\"]\\s*\\)`, 'i');
   const processCall = /\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(/i;
   const computedProcessCall = /\[\s*['"](?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)['"]\s*\]\s*\(/i;
-  return staticImport.test(source)
-    || dynamicImport.test(source)
-    || requireImport.test(source)
-    || processCall.test(source)
-    || computedProcessCall.test(source);
+  return staticImport.test(uncommented)
+    || dynamicImport.test(uncommented)
+    || requireImport.test(uncommented)
+    || processCall.test(uncommented)
+    || computedProcessCall.test(uncommented);
 }
 
 function reviewOc9Workflow(source, path, findings) {
-  requireLiterals(findings, source, path, [
-    ['permissions:\n  contents: read', 'oc9-workflow-read-only-permission-missing'],
-    ["node --check shared/agents/openClawUpdatePreflightV1.mjs", 'oc9-workflow-model-parse-proof-missing'],
-    ["node --check scripts/openclaw-update-preflight.mjs", 'oc9-workflow-cli-parse-proof-missing'],
+  if (!/^permissions:\s*\n\s+contents:\s*read\s*$/m.test(source)) {
+    findings.push(finding('oc9-workflow-read-only-permission-missing', path));
+  }
+  for (const [line, code] of [
+    ['node --check shared/agents/openClawUpdatePreflightV1.mjs', 'oc9-workflow-model-parse-proof-missing'],
+    ['node --check scripts/openclaw-update-preflight.mjs', 'oc9-workflow-cli-parse-proof-missing'],
     ['node --test shared/agents/openClawUpdatePreflightV1.test.mjs scripts/openclaw-update-preflight.test.mjs', 'oc9-workflow-focused-proof-missing'],
     ['git diff --check', 'oc9-workflow-patch-hygiene-proof-missing'],
-  ]);
+  ]) {
+    if (!workflowHasExactLine(source, line)) findings.push(finding(code, path));
+  }
   forbidPatterns(findings, source, path, [
     [/pull_request_target\s*:/i, 'oc9-workflow-pull-request-target-forbidden'],
     [/\bsecrets\.[A-Za-z0-9_]+/i, 'oc9-workflow-secret-consumption-forbidden'],
@@ -157,12 +238,14 @@ function reviewOc9Workflow(source, path, findings) {
 }
 
 function reviewOc9Cli(source, path, findings) {
-  requireLiterals(findings, source, path, [
+  requireExecutableLiterals(findings, source, path, [
     ['const MAX_INPUT_BYTES = 256 * 1024;', 'oc9-cli-bounded-input-missing'],
     ['buildOpenClawUpdatePreflightV1(input)', 'oc9-cli-canonical-model-call-missing'],
-    ['OPENCLAW_UPDATE_PREFLIGHT_ERROR=', 'oc9-cli-fail-closed-error-missing'],
     ['BLOCKED_WITH_RESTORE_PATH ? 2 : 0', 'oc9-cli-blocked-exit-contract-missing'],
   ]);
+  if (!/\bstderr\.write\s*\(\s*`OPENCLAW_UPDATE_PREFLIGHT_ERROR=/.test(stripComments(source))) {
+    findings.push(finding('oc9-cli-fail-closed-error-missing', path));
+  }
   forbidPatterns(findings, source, path, [
     [/shell\s*:\s*true|\beval\s*\(|new\s+Function\s*\(/i, 'oc9-cli-dynamic-execution-forbidden'],
   ]);
@@ -170,7 +253,7 @@ function reviewOc9Cli(source, path, findings) {
 }
 
 function reviewOc9CliTests(source, path, findings) {
-  requireLiterals(findings, source, path, [
+  requireActiveTests(findings, source, path, [
     ['CLI reads one bounded JSON observation from stdin and writes no mutation claim', 'oc9-cli-test-mutation-denial-missing'],
     ['CLI exits 2 for a blocked preflight while still returning the rollback packet', 'oc9-cli-test-blocked-rollback-missing'],
     ['CLI rejects malformed JSON without emitting a packet', 'oc9-cli-test-malformed-json-missing'],
@@ -183,7 +266,7 @@ function reviewOc9CliTests(source, path, findings) {
 }
 
 function reviewOc9Model(source, path, findings) {
-  requireLiterals(findings, source, path, [
+  requireExecutableLiterals(findings, source, path, [
     ["APPROVAL_REQUIRED: 'APPROVAL_REQUIRED'", 'oc9-model-approval-status-missing'],
     ["BLOCKED_WITH_RESTORE_PATH: 'BLOCKED_WITH_RESTORE_PATH'", 'oc9-model-blocked-status-missing'],
     ["MANUAL_ONLY: 'MANUAL_ONLY'", 'oc9-model-manual-only-class-missing'],
@@ -191,12 +274,12 @@ function reviewOc9Model(source, path, findings) {
     ['OPENCLAW_GATEWAY_APPROVED_ENDPOINT', 'oc9-model-gateway-endpoint-binding-missing'],
     ['OPENCLAW_GATEWAY_STARTUP_SOURCE', 'oc9-model-gateway-source-binding-missing'],
     ['getOpenClawGatewayStartupCommand()', 'oc9-model-gateway-command-binding-missing'],
-    ["mutationAllowed: false", 'oc9-model-mutation-denial-missing'],
-    ["updateAttempted: false", 'oc9-model-update-attempt-denial-missing'],
-    ["absolutePathsPublished: false", 'oc9-model-absolute-path-denial-missing'],
-    ['REQUEST_EXACT_OPERATOR_APPROVAL', 'oc9-model-exact-approval-step-missing'],
-    ['RESTORE_PREVIOUS_PINNED_OPENCLAW_PACKAGE', 'oc9-model-rollback-package-step-missing'],
-    ['RESTORE_PROTECTED_CONFIG_SOURCE_AND_RUNTIME_IDENTITIES', 'oc9-model-rollback-protected-state-step-missing'],
+    ['mutationAllowed: false', 'oc9-model-mutation-denial-missing'],
+    ['updateAttempted: false', 'oc9-model-update-attempt-denial-missing'],
+    ['absolutePathsPublished: false', 'oc9-model-absolute-path-denial-missing'],
+    ["action: 'REQUEST_EXACT_OPERATOR_APPROVAL'", 'oc9-model-exact-approval-step-missing'],
+    ["action: 'RESTORE_PREVIOUS_PINNED_OPENCLAW_PACKAGE'", 'oc9-model-rollback-package-step-missing'],
+    ["action: 'RESTORE_PROTECTED_CONFIG_SOURCE_AND_RUNTIME_IDENTITIES'", 'oc9-model-rollback-protected-state-step-missing'],
   ]);
   forbidPatterns(findings, source, path, [
     [/from ['"]node:(?:child_process|fs|http|https|net)['"]|require\(['"](?:child_process|fs|http|https|net)['"]\)/, 'oc9-model-process-filesystem-network-authority-forbidden'],
@@ -205,7 +288,7 @@ function reviewOc9Model(source, path, findings) {
 }
 
 function reviewOc9ModelTests(source, path, findings) {
-  requireLiterals(findings, source, path, [
+  requireActiveTests(findings, source, path, [
     ['builds a deterministic approval-required manifest without publishing absolute paths', 'oc9-model-test-deterministic-manifest-missing'],
     ['blocks unknown and secret-bearing inventory paths while retaining a rollback plan', 'oc9-model-test-secret-block-missing'],
     ['fails closed on gateway identity drift and unpinned update packets', 'oc9-model-test-gateway-drift-missing'],
