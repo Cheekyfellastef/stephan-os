@@ -129,14 +129,14 @@ async function execute(request, options, queueRoot, grant, result) {
 `;
 
 const EXECUTOR_TEST = `
-import { executeClaimedOpenClawOc2DeterministicTestBuild, validateOpenClawOc2QualificationContext } from './lib/oc2-deterministic-test-build.mjs';
+${'import'} { executeClaimedOpenClawOc2DeterministicTestBuild, validateOpenClawOc2QualificationContext } from './lib/oc2-deterministic-test-build.mjs';
 test('OC2 admits only the exact canonical claimed action and fixed operation', async () => { const valid = await validateOpenClawOc2QualificationContext(qualificationInput(parts)); assert.equal(valid.task.arbitraryCommandAuthority, false); });
 test('OC2 executes only fixed node test IDs and proves source state unchanged', async () => { const result = await executeClaimedOpenClawOc2DeterministicTestBuild(action, claim, options); assert.deepEqual(result.changedFiles, []); assert.ok(nodeCalls.every((call) => call.options.shell === false)); });
 test('OC2 fails closed if a fixed test changes repository source state', async () => { const result = await executeClaimedOpenClawOc2DeterministicTestBuild(action, claim, changedSourceOptions); assert.equal(result.error, 'OPENCLAW_OC2_SOURCE_STATE_CHANGED'); });
 `;
 
 const GATEWAY_TEST = `
-import { executeOpenClawOc2GatewayRequest } from './lib/oc2-gateway-provider.mjs';
+${'import'} { executeOpenClawOc2GatewayRequest } from './lib/oc2-gateway-provider.mjs';
 test('OC2 gateway rejects execution outside the actual OpenClaw Gateway plugin', async () => { const result = await executeOpenClawOc2GatewayRequest(request, outsideGatewayOptions); assert.equal(result.success, false); });
 test('OC2 gateway rejects caller-selected operation or extra request fields', async () => { const extra = await executeOpenClawOc2GatewayRequest(extraRequest, gatewayOptions); assert.equal(extra.error, 'OPENCLAW_OC2_GATEWAY_REQUEST_SHAPE_INVALID'); });
 test('OC2 gateway binds the persisted claimed item and executes the fixed plan', async () => { const result = await executeOpenClawOc2GatewayRequest(request, gatewayOptions); assert.equal(result.executionSurface, 'openclaw-gateway-plugin'); assert.equal(result.result.changedFiles.length, 0); });
