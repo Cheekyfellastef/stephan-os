@@ -1,11 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  buildVrResearchContextSummary,
-  inspectVrResearchProjection,
-  vrResearchContextProvider,
-} from './vrResearchContextProvider.js';
+import { buildVrResearchContextSummary, inspectVrResearchProjection, vrResearchContextProvider } from './vrResearchContextProvider.js';
 
 const NOW = new Date('2026-08-03T15:45:00Z');
 
@@ -16,6 +12,11 @@ function projection(overrides = {}) {
     facts: ['Meta Air Link over Wi-Fi is the primary Quest 3 transport.'], hypotheses: ['A room-fixed theatre will preserve comfort during forced cinematic cameras.'], decisions: ['Wired Meta Link is unavailable and must not be requested.'], researchQueue: [{ id: 'vr-exp-001', title: 'Prove Starfield dialogue presentation', status: 'queued' }], runtimeEvidenceRequests: ['Exact Battle Bridge runtime and Quest 3 proof'], battleBridgeEvidence: ['source head verified'], blockers: [{ id: 'runtime-proof', summary: 'Quest 3 proof pending' }], proofRefs: ['evidence/vr/context-provider'], capabilityGraphCandidates: ['cutscene-theatre'], evidencePlanes: ['NORMATIVE_OR_OFFICIAL_SPECIFICATION', 'OBSERVED_RUNTIME_OR_HEADSET_PROOF'],
     writePolicy: { validatedEventsOnly: true, agentMaySelfPromoteClaims: false, privateAgentStateForbidden: true, arbitraryShellAllowed: false, mergeAuthority: false }, ...overrides,
   };
+}
+
+function teachingEnvelope(overrides = {}) {
+  const projected = projection({ capabilityGraphCandidates: [{ teachingKey: 'teach:integration' }], proofRefs: ['proofs/vr/integration'], ...overrides });
+  return { projection: projected, projectionReceipt: { verdict: 'VR_TEACHING_WORKSPACE_PROJECTION_READY', projectionId: projected.projectionId } };
 }
 
 test('fails honestly when canonical VR projection is missing', () => {
@@ -31,15 +32,27 @@ test('projects fresh canonical VR truth into known observed inferred proposed an
   assert.equal(summary.status, 'READY'); assert.equal(summary.proofState, 'ready'); assert.equal(summary.currentTarget, 'Starfield VR'); assert.equal(summary.sourceCount, 18); assert.equal(summary.known.factCount, 1); assert.equal(summary.observed.battleBridgeEvidenceCount, 1); assert.equal(summary.inferred.hypothesisCount, 1); assert.equal(summary.proposed.researchQueueCount, 1); assert.equal(summary.blocked.blockerCount, 1); assert.equal(summary.writePolicy.validatedEventsOnly, true); assert.equal(summary.writePolicy.agentMaySelfPromoteClaims, false); assert.equal(summary.writePolicy.arbitraryShellAllowed, false); assert.equal(summary.writePolicy.mergeAuthority, false);
 });
 
-test('canonical context flow projects governed teaching records into workspace and agent-visible capability state', () => {
-  const summary = buildVrResearchContextSummary({
-    now: NOW,
-    vrTeachingRecords: [{ teachingKey: 'teach:integration', candidateKey: 'vrdisc:integration', sourceId: 'official-source', observedIdentity: 'docs-v1', evidencePlanes: ['NORMATIVE_OR_OFFICIAL_SPECIFICATION'], confidence: 'high', licenceBoundary: 'Official documentation; method-level reuse only.', reusableMethod: 'Run simulator preflight before headset proof.', requiredProofLevel: 'OBSERVED_RUNTIME_OR_HEADSET_PROOF', proofRefs: ['proofs/vr/integration'] }],
-    vrTeachingProjectionInput: { sourceRegistry: { schema_version: '1.6', sources: [] }, workspaceModel: { schemaVersion: 'stephanos.vr-research-lab.workspace.v2', targets: [{ name: 'Starfield VR' }], experiments: [] }, updatedAt: NOW.toISOString() },
-  });
+test('consumes a canonical adjudicated teaching projection and receipt', () => {
+  const summary = buildVrResearchContextSummary({ now: NOW, vrTeachingWorkspaceProjection: teachingEnvelope() });
   assert.equal(summary.status, 'READY');
   assert.equal(summary.inferred.capabilityCandidateCount, 1);
   assert.deepEqual(summary.observed.proofRefs, ['proofs/vr/integration']);
+});
+
+test('does not adjudicate raw teaching records as UI truth', () => {
+  const summary = buildVrResearchContextSummary({
+    now: NOW,
+    vrTeachingRecords: [{ teachingKey: 'teach:unsafe', evidencePlanes: ['UNKNOWN'], sharedWorkspaceProjectionState: 'CONFIRMED' }],
+  });
+  assert.equal(summary.status, 'MISSING');
+  assert.equal(summary.inferred.capabilityCandidateCount, 0);
+});
+
+test('rejects a teaching envelope whose receipt does not match its projection', () => {
+  const envelope = teachingEnvelope();
+  envelope.projectionReceipt.projectionId = 'different-projection';
+  const inspection = inspectVrResearchProjection({ now: NOW, vrTeachingWorkspaceProjection: envelope });
+  assert.equal(inspection.status, 'MISSING');
 });
 
 test('marks stale VR truth as non-ready and requests refresh', () => {
