@@ -65,6 +65,19 @@ test('deduplicates same stable teaching key and selects only an explicitly super
   assert.equal(result.projection.methodLibrary.find((entry) => entry.teachingKey === fresh.teachingKey).reusableMethod, 'Fresh');
 });
 
+test('resolves an explicit supersession chain independently of batch order', () => {
+  const a = teaching({ observedIdentity: 'A', reusableMethod: 'A' });
+  const b = teaching({ observedIdentity: 'B', supersedesObservedIdentity: 'A', reusableMethod: 'B' });
+  const c = teaching({ observedIdentity: 'C', supersedesObservedIdentity: 'B', reusableMethod: 'C' });
+  const sourceRegistry = [{ sourceId: 'meta-xr-simulator', snapshot_commit: 'A', snapshot_version: 'B', snapshot_release: 'C' }];
+  for (const teachingRecords of [[a, b, c], [c, a, b], [b, c, a]]) {
+    const result = project({ teachingRecords, sourceRegistry });
+    assert.equal(result.projectionReceipt.verdict, 'VR_TEACHING_WORKSPACE_PROJECTION_READY');
+    assert.equal(result.projectionReceipt.counters.projected, 1);
+    assert.equal(result.projection.methodLibrary.find((entry) => entry.teachingKey === c.teachingKey).observedIdentity, 'C');
+  }
+});
+
 test('fails closed on differing revisions without explicit supersession regardless of input order', () => {
   const v10 = teaching({ observedIdentity: 'v10', freshnessIdentity: 'v10' });
   const v9 = teaching({ observedIdentity: 'v9', freshnessIdentity: 'v9' });
@@ -135,6 +148,14 @@ test('requires the canonical source registry and exact registered revision', () 
   }
 });
 
+test('accepts any exact identity recorded on one canonical source entry', () => {
+  const sourceRegistry = [{ source_id: 'meta-xr-simulator', snapshot_commit: 'commit-1', snapshot_release: 'release-1' }];
+  for (const observedIdentity of ['commit-1', 'release-1']) {
+    const result = project({ teachingRecords: [teaching({ observedIdentity })], sourceRegistry });
+    assert.equal(result.projectionReceipt.verdict, 'VR_TEACHING_WORKSPACE_PROJECTION_READY');
+  }
+});
+
 test('preserves legacy string graph candidates and existing knowledge', () => {
   const result = project({ teachingRecords: [], capabilityGraphCandidates: ['cutscene-theatre', { candidateKey: 'existing-graph' }], methodLibrary: [{ teachingKey: 'existing-method', reusableMethod: 'Existing' }], proofRefs: ['proofs/existing'] });
   assert.deepEqual(result.projection.capabilityGraphCandidates, ['cutscene-theatre', { candidateKey: 'existing-graph' }]);
@@ -150,6 +171,17 @@ test('refresh replaces stale graph entries through either teaching or candidate 
     const candidates = result.projection.capabilityGraphCandidates.filter((entry) => entry?.candidateKey === 'candidate-refresh' || entry?.teachingKey === 'teach-refresh');
     assert.equal(candidates.length, 1);
     assert.equal(candidates[0].observedIdentity, 'docs-2026-09-17');
+  }
+});
+
+test('refresh replaces stale Method Library entries through either teaching or candidate identity alias', () => {
+  const fresh = teaching({ teachingKey: 'teach-refresh', candidateKey: 'candidate-refresh', observedIdentity: 'docs-2026-09-17', reusableMethod: 'Fresh method' });
+  const sourceRegistry = [{ sourceId: 'meta-xr-simulator', observedIdentity: 'docs-2026-09-17' }];
+  for (const existing of [{ candidateKey: 'candidate-refresh', reusableMethod: 'Old' }, { teachingKey: 'teach-refresh', reusableMethod: 'Old' }]) {
+    const result = project({ teachingRecords: [fresh], methodLibrary: [existing], sourceRegistry });
+    const methods = result.projection.methodLibrary.filter((entry) => entry?.candidateKey === 'candidate-refresh' || entry?.teachingKey === 'teach-refresh');
+    assert.equal(methods.length, 1);
+    assert.equal(methods[0].reusableMethod, 'Fresh method');
   }
 });
 
