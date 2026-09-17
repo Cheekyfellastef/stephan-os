@@ -39,18 +39,28 @@ test('consumes a canonical adjudicated teaching projection and receipt', () => {
   assert.deepEqual(summary.observed.proofRefs, ['proofs/vr/integration']);
 });
 
-test('does not adjudicate raw teaching records as UI truth', () => {
+test('does not adjudicate raw teaching records as UI truth even when a direct canonical projection exists', () => {
+  const direct = projection();
   const summary = buildVrResearchContextSummary({
     now: NOW,
-    vrTeachingRecords: [{ teachingKey: 'teach:unsafe', evidencePlanes: ['UNKNOWN'], sharedWorkspaceProjectionState: 'CONFIRMED' }],
+    vrResearchProjection: direct,
+    vrTeachingRecords: [{ teachingKey: 'teach:unsafe', candidateKey: 'unsafe', sourceId: 'unsafe', observedIdentity: 'unsafe', confidence: 'high', licenceBoundary: 'unsafe', reusableMethod: 'unsafe', proofRefs: ['unsafe'], evidencePlanes: ['NORMATIVE_OR_OFFICIAL_SPECIFICATION'] }],
   });
-  assert.equal(summary.status, 'MISSING');
-  assert.equal(summary.inferred.capabilityCandidateCount, 0);
+  assert.equal(summary.status, 'READY');
+  assert.equal(summary.inferred.capabilityCandidateCount, 1);
+  assert.deepEqual(summary.observed.proofRefs, ['evidence/vr/context-provider']);
 });
 
 test('rejects a teaching envelope whose receipt does not match its projection', () => {
   const envelope = teachingEnvelope();
   envelope.projectionReceipt.projectionId = 'different-projection';
+  const inspection = inspectVrResearchProjection({ now: NOW, vrTeachingWorkspaceProjection: envelope });
+  assert.equal(inspection.status, 'MISSING');
+});
+
+test('rejects a teaching envelope when both projection identities are blank', () => {
+  const envelope = teachingEnvelope({ projectionId: '' });
+  envelope.projectionReceipt.projectionId = '';
   const inspection = inspectVrResearchProjection({ now: NOW, vrTeachingWorkspaceProjection: envelope });
   assert.equal(inspection.status, 'MISSING');
 });
