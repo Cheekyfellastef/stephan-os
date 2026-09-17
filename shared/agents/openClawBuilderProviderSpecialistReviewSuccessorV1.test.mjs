@@ -70,8 +70,8 @@ function source(path, content) {
   };
 }
 
-function oc9Sources(overrides = {}) {
-  const contents = {
+function oc9Contents(overrides = {}) {
+  return {
     '.github/workflows/openclaw-update-preflight-proof.yml': [
       'permissions:',
       '  contents: read',
@@ -118,7 +118,24 @@ function oc9Sources(overrides = {}) {
     ].join('\n'),
     ...overrides,
   };
+}
+
+function oc9Sources(overrides = {}) {
+  const contents = oc9Contents(overrides);
   return OPENCLAW_UPDATE_PREFLIGHT_SUCCESSOR_SPECIALIST_PATHS_V1.map((path) => source(path, contents[path]));
+}
+
+function oc9Review({ lineageEvidence = lineage(), overrides = {} } = {}) {
+  return analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1({
+    repository: REPOSITORY,
+    prNumber: 1654,
+    branch: OC9_BRANCH,
+    sourceHead: HEAD,
+    baseSha: BASE,
+    lineageEvidence,
+    analysis: oc9Analysis(),
+    sources: oc9Sources(overrides),
+  });
 }
 
 test('successor specialist owns only the exact #2048 authority-bearing path', () => {
@@ -183,22 +200,48 @@ test('OC9 successor specialist reviews only the exact five-file #1654 estate and
     'shared/agents/openClawUpdatePreflightV1.mjs',
     'shared/agents/openClawUpdatePreflightV1.test.mjs',
   ]);
-  const result = analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1({
-    repository: REPOSITORY,
-    prNumber: 1654,
-    branch: OC9_BRANCH,
-    sourceHead: HEAD,
-    baseSha: BASE,
-    lineageEvidence: lineage(),
-    analysis: oc9Analysis(),
-    sources: oc9Sources(),
-  });
+  const result = oc9Review();
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true);
   assert.equal(result.finalVerdict, 'OPENCLAW_UPDATE_PREFLIGHT_SPECIALIST_CLEAN');
   assert.deepEqual(result.reviewedPaths, OPENCLAW_UPDATE_PREFLIGHT_SUCCESSOR_SPECIALIST_PATHS_V1);
   assert.equal(result.findings.length, 0);
   assert.equal(result.proofRefs.length, 5);
+});
+
+test('OC9 successor specialist accepts valid multi-commit ahead-only lineage', () => {
+  const result = oc9Review({
+    lineageEvidence: lineage({
+      parents: ['3333333333333333333333333333333333333333'],
+      comparison: { ...lineage().comparison, aheadBy: 3 },
+    }),
+  });
+  assert.equal(result.clean, true);
+});
+
+test('OC9 successor specialist rejects any workflow write permission', () => {
+  const baseWorkflow = oc9Contents()['.github/workflows/openclaw-update-preflight-proof.yml'];
+  for (const widened of [
+    `${baseWorkflow}\npermissions: write-all`,
+    `${baseWorkflow}\njobs:\n  proof:\n    permissions:\n      id-token: write`,
+    `${baseWorkflow}\njobs:\n  proof:\n    permissions: { contents: read, issues: write }`,
+  ]) {
+    const result = oc9Review({ overrides: { '.github/workflows/openclaw-update-preflight-proof.yml': widened } });
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some((item) => item.code === 'oc9-workflow-write-permission-forbidden'));
+  }
+});
+
+test('OC9 successor specialist rejects dynamic child-process imports and process execution APIs', () => {
+  const baseCli = oc9Contents()['scripts/openclaw-update-preflight.mjs'];
+  for (const widened of [
+    `${baseCli}\nconst child = await import('node:child_process');\nchild.execFileSync('powershell.exe', []);`,
+    `${baseCli}\nconst child = require('child_process');\nchild.spawnSync('powershell.exe', []);`,
+  ]) {
+    const result = oc9Review({ overrides: { 'scripts/openclaw-update-preflight.mjs': widened } });
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some((item) => item.code === 'oc9-cli-process-filesystem-network-authority-forbidden'));
+  }
 });
 
 test('OC9 successor specialist fails closed on stale lineage, widened source estate, or hidden authority', () => {
@@ -238,7 +281,7 @@ test('OC9 successor specialist fails closed on stale lineage, widened source est
     lineageEvidence: lineage(),
     analysis: oc9Analysis(),
     sources: oc9Sources({
-      'shared/agents/openClawUpdatePreflightV1.mjs': `${oc9Sources().find((item) => item.path === 'shared/agents/openClawUpdatePreflightV1.mjs').content}\nspawn('powershell.exe')`,
+      'shared/agents/openClawUpdatePreflightV1.mjs': `${oc9Contents()['shared/agents/openClawUpdatePreflightV1.mjs']}\nspawn('powershell.exe')`,
     }),
   });
   assert.equal(hiddenAuthority.clean, false);
