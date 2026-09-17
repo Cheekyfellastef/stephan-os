@@ -156,6 +156,25 @@ test('accepts any exact identity recorded on one canonical source entry', () => 
   }
 });
 
+test('accepts component-specific identities recorded by the canonical source registry', () => {
+  const sourceRegistry = [{
+    source_id: 'meta-xr-simulator',
+    schema_version: '1.6',
+    skse64_snapshot_commit: 'skse-commit',
+    higgs_snapshot_commit: 'higgs-commit',
+    historical_snapshot_commit: 'history-commit',
+    supporting_snapshot_commit: 'support-commit',
+    vrik_version: 'vrik-2.1',
+    planck_version: 'planck-1.0',
+  }];
+  for (const observedIdentity of ['skse-commit', 'higgs-commit', 'history-commit', 'support-commit', 'vrik-2.1', 'planck-1.0']) {
+    const result = project({ teachingRecords: [teaching({ observedIdentity })], sourceRegistry });
+    assert.equal(result.projectionReceipt.verdict, 'VR_TEACHING_WORKSPACE_PROJECTION_READY');
+  }
+  const schemaMetadata = project({ teachingRecords: [teaching({ observedIdentity: '1.6' })], sourceRegistry });
+  assert.equal(schemaMetadata.projectionReceipt.verdict, 'VR_TEACHING_WORKSPACE_PROJECTION_BLOCKED');
+});
+
 test('preserves legacy string graph candidates and existing knowledge', () => {
   const result = project({ teachingRecords: [], capabilityGraphCandidates: ['cutscene-theatre', { candidateKey: 'existing-graph' }], methodLibrary: [{ teachingKey: 'existing-method', reusableMethod: 'Existing' }], proofRefs: ['proofs/existing'] });
   assert.deepEqual(result.projection.capabilityGraphCandidates, ['cutscene-theatre', { candidateKey: 'existing-graph' }]);
