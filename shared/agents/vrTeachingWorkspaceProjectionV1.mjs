@@ -29,15 +29,15 @@ function aliases(item) { if (typeof item === 'string') return new Set([`string:$
 function legacyAlias(item) { return item && typeof item === 'object' && !text(item.teachingKey) && !text(item.candidateKey) ? text(item.reusableMethod) : ''; }
 function overlap(left, right) { const leftAliases = aliases(left); const rightAliases = aliases(right); if (leftAliases.size && rightAliases.size) { for (const key of leftAliases) if (rightAliases.has(key)) return true; return false; } const legacy = legacyAlias(left); return Boolean(legacy && legacy === text(right?.reusableMethod)); }
 function replaceGraph(existing, fresh) { return [...existing.filter((entry) => !fresh.some((candidate) => overlap(entry, candidate))), ...fresh]; }
-function replaceMethods(existing, fresh) { const keys = new Set(fresh.map((entry) => text(entry.teachingKey) || text(entry.candidateKey)).filter(Boolean)); return [...existing.filter((entry) => !keys.has(text(entry?.teachingKey) || text(entry?.candidateKey))), ...fresh]; }
+function replaceMethods(existing, fresh) { return [...existing.filter((entry) => !fresh.some((candidate) => overlap(entry, candidate))), ...fresh]; }
 function registryEntries(registry) { if (Array.isArray(registry)) return registry; if (registry && typeof registry === 'object' && Array.isArray(registry.sources)) return registry.sources; if (registry && typeof registry === 'object') return Object.entries(registry).map(([sourceId, value]) => typeof value === 'object' && value ? { sourceId, ...value } : { sourceId, observedIdentity: value }); return []; }
-function registeredRevision(entry) { return text(entry?.observedIdentity || entry?.exactObservedIdentity || entry?.revision || entry?.freshnessIdentity || entry?.snapshot_commit || entry?.snapshot_version || entry?.snapshot_release || entry?.snapshot_date); }
+function registeredRevisions(entry) { return norm([entry?.observedIdentity, entry?.exactObservedIdentity, entry?.revision, entry?.freshnessIdentity, entry?.snapshot_commit, entry?.snapshot_version, entry?.snapshot_release, entry?.snapshot_date]); }
 function registrySourceId(entry) { return text(entry?.sourceId || entry?.source_id || entry?.id || entry?.canonicalSourceId || entry?.canonical_source_id); }
 function validateSource(sourceId, observedIdentity, registry) {
   if (registry === undefined || registry === null) return ['canonical-source-registry-required'];
   const matching = registryEntries(registry).filter((entry) => registrySourceId(entry) === sourceId);
   if (!matching.length) return ['source-not-in-canonical-registry'];
-  const revisions = matching.map(registeredRevision).filter(Boolean);
+  const revisions = [...new Set(matching.flatMap(registeredRevisions))];
   if (!revisions.length) return ['registered-source-revision-required'];
   return revisions.includes(observedIdentity) ? [] : ['source-revision-mismatch'];
 }
@@ -52,19 +52,48 @@ function normalize(record = {}, input = {}) {
   if (text(record.sharedWorkspaceProjectionState).toUpperCase() === 'CONFIRMED') errors.push('self-confirmed-projection-forbidden');
   return { valid: !errors.length, errors, value: Object.freeze({ teachingKey, candidateKey, sourceId, observedIdentity, sourceCommentId: text(record.sourceCommentId), teachingCommentId: text(record.teachingCommentId), evidencePlanes: Object.freeze(evidencePlanes), confidence, licenceBoundary: text(record.licenceBoundary || record.licenseBoundary), reusableMethod: text(record.reusableMethod || record.capability), applicability: text(record.applicability), nonApplicability: text(record.nonApplicability), constraints: Object.freeze(norm(record.constraints)), failureModes: Object.freeze(norm(record.failureModes)), fallback: text(record.fallback), requiredProofLevel, freshnessIdentity: text(record.freshnessIdentity || observedIdentity), supersedesObservedIdentity: text(record.supersedesObservedIdentity), parityProjectionState: text(record.parityProjectionState || 'NOT_APPLICABLE'), proofRefs: Object.freeze(proofRefs) }) };
 }
-function explicitlySupersedes(left, right) { return text(left.supersedesObservedIdentity) === text(right.observedIdentity); }
 function select(items) {
-  const selected = new Map(), duplicates = [], conflicts = [];
+  const accepted = [], duplicates = [], conflicts = [];
+  const groups = new Map();
   for (const item of items) {
-    const key = item.teachingKey, prior = selected.get(key);
-    if (!prior) { selected.set(key, item); continue; }
-    duplicates.push(key);
-    if (item.observedIdentity === prior.observedIdentity) { if (hash(item) !== hash(prior)) { conflicts.push({ teachingKey: key, errors: ['conflicting-equal-identity-revision'] }); selected.delete(key); } continue; }
-    if (explicitlySupersedes(item, prior) && !explicitlySupersedes(prior, item)) { selected.set(key, item); continue; }
-    if (explicitlySupersedes(prior, item) && !explicitlySupersedes(item, prior)) continue;
-    conflicts.push({ teachingKey: key, errors: ['unproven-revision-supersession'] }); selected.delete(key);
+    if (!groups.has(item.teachingKey)) groups.set(item.teachingKey, []);
+    groups.get(item.teachingKey).push(item);
   }
-  return { accepted: [...selected.values()], duplicates, conflicts };
+  for (const [key, group] of groups) {
+    const byIdentity = new Map();
+    let equalIdentityConflict = false;
+    for (const item of group) {
+      const prior = byIdentity.get(item.observedIdentity);
+      if (!prior) { byIdentity.set(item.observedIdentity, item); continue; }
+      duplicates.push(key);
+      if (hash(item) !== hash(prior)) equalIdentityConflict = true;
+    }
+    if (equalIdentityConflict) { conflicts.push({ teachingKey: key, errors: ['conflicting-equal-identity-revision'] }); continue; }
+    const revisions = [...byIdentity.values()];
+    if (revisions.length === 1) { accepted.push(revisions[0]); continue; }
+    for (let index = 1; index < revisions.length; index += 1) duplicates.push(key);
+    const superseded = new Set();
+    let invalidChain = false;
+    for (const item of revisions) {
+      const parent = text(item.supersedesObservedIdentity);
+      if (!parent) continue;
+      if (parent === item.observedIdentity || !byIdentity.has(parent) || superseded.has(parent)) { invalidChain = true; break; }
+      superseded.add(parent);
+    }
+    const terminals = revisions.filter((item) => !superseded.has(item.observedIdentity));
+    const roots = revisions.filter((item) => !text(item.supersedesObservedIdentity));
+    if (invalidChain || terminals.length !== 1 || roots.length !== 1) { conflicts.push({ teachingKey: key, errors: ['unproven-revision-supersession'] }); continue; }
+    const seen = new Set();
+    let cursor = terminals[0];
+    while (cursor && !seen.has(cursor.observedIdentity)) {
+      seen.add(cursor.observedIdentity);
+      const parent = text(cursor.supersedesObservedIdentity);
+      cursor = parent ? byIdentity.get(parent) : null;
+    }
+    if (seen.size !== revisions.length || cursor) { conflicts.push({ teachingKey: key, errors: ['unproven-revision-supersession'] }); continue; }
+    accepted.push(terminals[0]);
+  }
+  return { accepted, duplicates, conflicts };
 }
 function content(graph, methods, proofRefs) { return { capabilityGraphCandidates: graph, methodLibrary: methods, proofRefs }; }
 function digest(graph, methods, proofRefs) { return portable(JSON.stringify(content(graph, methods, proofRefs))); }
