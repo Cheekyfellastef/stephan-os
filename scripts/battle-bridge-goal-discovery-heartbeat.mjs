@@ -18,6 +18,7 @@ import { processNextProviderNeutralSourceBuild } from '../stephanos-server/servi
 
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA = 'stephanos.battle-bridge-goal-discovery-heartbeat.v1';
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT_MARKER = 'BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT=';
+export const DEFAULT_WORK_CONSERVING_SWEEP_LIMIT = 5;
 
 function heldElasticDispatch(result = {}) {
   const ignition = result?.elasticIgnition;
@@ -30,6 +31,63 @@ function heldElasticDispatch(result = {}) {
       missionId: String(item?.missionId || ''),
       reason: String(item?.reason || 'ELASTIC_SOURCE_BUILD_HELD'),
     }))),
+  });
+}
+
+function authorityBoundary() {
+  return {
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+  };
+}
+
+function sweepLimit(value) {
+  const numeric = Number(value);
+  if (!Number.isSafeInteger(numeric) || numeric < 1) return DEFAULT_WORK_CONSERVING_SWEEP_LIMIT;
+  return Math.min(numeric, DEFAULT_WORK_CONSERVING_SWEEP_LIMIT);
+}
+
+function addElasticBlockers(blockers, elasticHold) {
+  for (const item of elasticHold?.held || []) {
+    blockers.add(`${item.missionId}:${item.reason}`);
+  }
+}
+
+function sourceBuildBlocker(sourceBuild = {}) {
+  const missionId = String(sourceBuild?.missionId || sourceBuild?.actionId || 'claimed-source-lane');
+  const reason = String(
+    sourceBuild?.error
+    || sourceBuild?.reason
+    || sourceBuild?.finalVerdict
+    || 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED',
+  );
+  return `${missionId}:${reason}`;
+}
+
+function frozenSweepAttempt({ attemptNumber, result, sourceBuild, elasticHold }) {
+  return Object.freeze({
+    attemptNumber,
+    conveyorClassification: String(result?.classification || ''),
+    sourceBuildProcessed: sourceBuild?.processed === true,
+    sourceBuildSuccess: sourceBuild?.success === true,
+    sourceBuildMissionId: String(sourceBuild?.missionId || ''),
+    sourceBuildVerdict: String(sourceBuild?.finalVerdict || sourceBuild?.reason || ''),
+    elasticHoldClassification: String(elasticHold?.classification || ''),
+  });
+}
+
+function trackConveyorResult(result, sourceBuild, elasticHold) {
+  const built = sourceBuild?.processed === true && sourceBuild?.success === true;
+  const blocked = sourceBuild?.processed === true && sourceBuild?.success === false;
+  if (built || blocked || !elasticHold) return result;
+  return Object.freeze({
+    ...result,
+    elasticIgnition: Object.freeze({
+      ...(result?.elasticIgnition || {}),
+      ok: false,
+    }),
   });
 }
 
@@ -49,10 +107,7 @@ export async function publishAutonomyBuildTrackStatus(track, {
       proofRefs: [],
     }),
     autonomyTrack: track,
-    mergeAuthority: false,
-    runtimeMutationAuthority: false,
-    destructiveGitAllowed: false,
-    arbitraryShellAllowed: false,
+    ...authorityBoundary(),
   });
   return writeAtomicJson(
     paths.workspaceRoot,
@@ -73,113 +128,176 @@ async function publishTrackSafely(track, publishTrack, paths) {
   }
 }
 
+async function projectAndPublishTrack({ result, sourceBuild, elasticHold, timestampUtc, publishTrack, paths }) {
+  const autonomyTrack = projectHeartbeatAutonomyBuildTrack({
+    conveyorResult: trackConveyorResult(result, sourceBuild, elasticHold),
+    sourceBuild: sourceBuild || null,
+    timestampUtc,
+  });
+  const trackPublication = await publishTrackSafely(autonomyTrack, publishTrack, paths);
+  return Object.freeze({ autonomyTrack, trackPublication });
+}
+
 export async function runBattleBridgeGoalDiscoveryHeartbeat({
   conveyor = ensureCriticalBacklogMission,
   buildClaimedGoal = processNextProviderNeutralSourceBuild,
   builderOptions = {},
+  maxWorkConservingAttempts = DEFAULT_WORK_CONSERVING_SWEEP_LIMIT,
   paths = resolveCriticalBacklogRuntimePaths(),
   publishTrack = publishAutonomyBuildTrackStatus,
   now = new Date(),
 } = {}) {
+  const limit = sweepLimit(maxWorkConservingAttempts);
+  const parkedLaneBlockers = new Set();
+  const sweepAttempts = [];
   const timestampUtc = now instanceof Date ? now.toISOString() : new Date().toISOString();
+  let latestResult = null;
+  let latestSourceBuild = null;
+  let latestElasticHold = null;
+  let latestAutonomyTrack = null;
+  let latestTrackPublication = null;
+
   try {
-    const result = await conveyor();
-    if (result?.ok !== true) {
-      const autonomyTrack = projectHeartbeatAutonomyBuildTrack({
-        conveyorResult: result || { ok: false, blocker: 'CONVEYOR_RESULT_MISSING' },
-        sourceBuild: null,
-        timestampUtc,
-      });
-      const trackPublication = await publishTrackSafely(autonomyTrack, publishTrack, paths);
-      return Object.freeze({
-        schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
-        ok: false,
-        conveyorResult: result || null,
-        sourceBuild: null,
-        autonomyTrack,
-        trackPublication,
-        mergeAuthority: false,
-        runtimeMutationAuthority: false,
-        destructiveGitAllowed: false,
-        arbitraryShellAllowed: false,
-        finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED',
-      });
-    }
+    for (let attemptIndex = 0; attemptIndex < limit; attemptIndex += 1) {
+      const result = await conveyor();
+      latestResult = result || null;
+      if (result?.ok !== true) {
+        const projected = await projectAndPublishTrack({
+          result: result || { ok: false, blocker: 'CONVEYOR_RESULT_MISSING' },
+          sourceBuild: null,
+          elasticHold: null,
+          timestampUtc,
+          publishTrack,
+          paths,
+        });
+        return Object.freeze({
+          schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
+          ok: false,
+          conveyorResult: result || null,
+          sourceBuild: latestSourceBuild,
+          autonomyTrack: projected.autonomyTrack,
+          trackPublication: projected.trackPublication,
+          sweepAttemptCount: sweepAttempts.length,
+          sweepAttempts: Object.freeze([...sweepAttempts]),
+          parkedLaneBlockers: Object.freeze([...parkedLaneBlockers]),
+          ...authorityBoundary(),
+          finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED',
+        });
+      }
 
-    const elasticHold = heldElasticDispatch(result);
-    const sourceBuild = await buildClaimedGoal(builderOptions);
-    const built = sourceBuild?.processed === true && sourceBuild?.success === true;
-    const blocked = sourceBuild?.processed === true && sourceBuild?.success === false;
-    const effectiveConveyorResult = !built && !blocked && elasticHold
-      ? Object.freeze({
-        ...result,
-        ok: false,
-        blocker: elasticHold.held.map((item) => `${item.missionId}:${item.reason}`).join(';'),
-      })
-      : result;
-    const autonomyTrack = projectHeartbeatAutonomyBuildTrack({
-      conveyorResult: effectiveConveyorResult,
-      sourceBuild: sourceBuild || null,
-      timestampUtc,
-    });
-    const trackPublication = await publishTrackSafely(autonomyTrack, publishTrack, paths);
+      const elasticHold = heldElasticDispatch(result);
+      latestElasticHold = elasticHold;
+      addElasticBlockers(parkedLaneBlockers, elasticHold);
 
-    if (!built && !blocked && elasticHold) {
-      return Object.freeze({
-        schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
-        ok: false,
-        blocker: elasticHold.held.map((item) => `${item.missionId}:${item.reason}`).join(';'),
-        conveyorResult: result,
-        sourceBuild: sourceBuild || null,
+      const sourceBuild = await buildClaimedGoal(builderOptions);
+      latestSourceBuild = sourceBuild || null;
+      const built = sourceBuild?.processed === true && sourceBuild?.success === true;
+      const blocked = sourceBuild?.processed === true && sourceBuild?.success === false;
+      sweepAttempts.push(frozenSweepAttempt({
+        attemptNumber: attemptIndex + 1,
+        result,
+        sourceBuild,
         elasticHold,
-        autonomyTrack,
-        trackPublication,
-        mergeAuthority: false,
-        runtimeMutationAuthority: false,
-        destructiveGitAllowed: false,
-        arbitraryShellAllowed: false,
-        finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_ELASTIC_SOURCE_BUILD_HELD',
+      }));
+
+      const projected = await projectAndPublishTrack({
+        result,
+        sourceBuild,
+        elasticHold,
+        timestampUtc,
+        publishTrack,
+        paths,
       });
+      latestAutonomyTrack = projected.autonomyTrack;
+      latestTrackPublication = projected.trackPublication;
+
+      if (built) {
+        return Object.freeze({
+          schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
+          ok: true,
+          conveyorResult: result,
+          sourceBuild,
+          elasticHold: elasticHold || null,
+          autonomyTrack: latestAutonomyTrack,
+          trackPublication: latestTrackPublication,
+          sweepAttemptCount: sweepAttempts.length,
+          sweepAttempts: Object.freeze([...sweepAttempts]),
+          parkedLaneBlockers: Object.freeze([...parkedLaneBlockers]),
+          heldLaneParked: parkedLaneBlockers.size > 0,
+          materialProgress: true,
+          controllerContinuity: 'CONTINUE',
+          ...authorityBoundary(),
+          finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED',
+        });
+      }
+
+      if (blocked) {
+        parkedLaneBlockers.add(sourceBuildBlocker(sourceBuild));
+        continue;
+      }
+
+      if (!elasticHold) {
+        return Object.freeze({
+          schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
+          ok: true,
+          conveyorResult: result,
+          sourceBuild: sourceBuild || null,
+          elasticHold: null,
+          autonomyTrack: latestAutonomyTrack,
+          trackPublication: latestTrackPublication,
+          sweepAttemptCount: sweepAttempts.length,
+          sweepAttempts: Object.freeze([...sweepAttempts]),
+          parkedLaneBlockers: Object.freeze([...parkedLaneBlockers]),
+          noRunnableSourceWorkProven: true,
+          materialProgress: false,
+          controllerContinuity: 'IDLE_NO_RUNNABLE_SOURCE_WORK',
+          ...authorityBoundary(),
+          finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE',
+        });
+      }
     }
 
     return Object.freeze({
       schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
-      ok: !blocked,
-      conveyorResult: result,
-      sourceBuild: sourceBuild || null,
-      elasticHold: elasticHold || null,
-      autonomyTrack,
-      trackPublication,
-      mergeAuthority: false,
-      runtimeMutationAuthority: false,
-      destructiveGitAllowed: false,
-      arbitraryShellAllowed: false,
-      finalVerdict: blocked
-        ? 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_BUILD_BLOCKED'
-        : built
-          ? 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED'
-          : 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE',
+      ok: true,
+      conveyorResult: latestResult,
+      sourceBuild: latestSourceBuild,
+      elasticHold: latestElasticHold,
+      autonomyTrack: latestAutonomyTrack,
+      trackPublication: latestTrackPublication,
+      sweepAttemptCount: sweepAttempts.length,
+      sweepAttempts: Object.freeze([...sweepAttempts]),
+      parkedLaneBlockers: Object.freeze([...parkedLaneBlockers]),
+      heldLaneParked: parkedLaneBlockers.size > 0,
+      noRunnableSourceWorkProven: false,
+      workConservingSweepExhausted: true,
+      materialProgress: false,
+      controllerContinuity: 'CONTINUE_NEXT_SWEEP',
+      ...authorityBoundary(),
+      finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED',
     });
   } catch (error) {
     const blocker = String(error?.message || 'GOAL_DISCOVERY_HEARTBEAT_FAILED');
-    const autonomyTrack = projectHeartbeatAutonomyBuildTrack({
-      conveyorResult: { ok: false, blocker },
+    const projected = await projectAndPublishTrack({
+      result: { ok: false, blocker },
       sourceBuild: null,
+      elasticHold: null,
       timestampUtc,
+      publishTrack,
+      paths,
     });
-    const trackPublication = await publishTrackSafely(autonomyTrack, publishTrack, paths);
     return Object.freeze({
       schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
       ok: false,
       blocker,
-      conveyorResult: null,
-      sourceBuild: null,
-      autonomyTrack,
-      trackPublication,
-      mergeAuthority: false,
-      runtimeMutationAuthority: false,
-      destructiveGitAllowed: false,
-      arbitraryShellAllowed: false,
+      conveyorResult: latestResult,
+      sourceBuild: latestSourceBuild,
+      autonomyTrack: projected.autonomyTrack,
+      trackPublication: projected.trackPublication,
+      sweepAttemptCount: sweepAttempts.length,
+      sweepAttempts: Object.freeze([...sweepAttempts]),
+      parkedLaneBlockers: Object.freeze([...parkedLaneBlockers]),
+      ...authorityBoundary(),
       finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED',
     });
   }
