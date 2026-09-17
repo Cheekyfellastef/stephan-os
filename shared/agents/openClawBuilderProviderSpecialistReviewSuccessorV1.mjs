@@ -63,7 +63,8 @@ function exactLineage(lineage, sourceHead, baseSha) {
     && lineage?.baseSha === baseSha
     && lineage?.liveMainBeforeSha === baseSha
     && lineage?.liveMainAfterSha === baseSha
-    && parents.includes(baseSha)
+    && parents.length > 0
+    && parents.every((parent) => FULL_SHA.test(parent))
     && lineage?.comparison?.status === 'ahead'
     && Number.isSafeInteger(lineage?.comparison?.aheadBy)
     && lineage.comparison.aheadBy > 0
@@ -120,6 +121,26 @@ function forbidPatterns(findings, source, path, rules) {
   for (const [pattern, code] of rules) if (pattern.test(source)) findings.push(finding(code, path));
 }
 
+function workflowWritePermissionViolation(source) {
+  return /^\s*permissions\s*:\s*write-all\s*(?:#.*)?$/im.test(source)
+    || /^\s*[A-Za-z0-9_-]+\s*:\s*write\s*(?:#.*)?$/im.test(source)
+    || /\bpermissions\s*:\s*\{[^}]*:\s*write\b/i.test(source);
+}
+
+function dynamicAuthorityViolation(source) {
+  const modules = '(?:child_process|fs|http|https|net)';
+  const staticImport = new RegExp(`\\bfrom\\s+['\"](?:node:)?${modules}['\"]`, 'i');
+  const dynamicImport = new RegExp(`\\bimport\\s*\\(\\s*['\"](?:node:)?${modules}['\"]\\s*\\)`, 'i');
+  const requireImport = new RegExp(`\\brequire\\s*\\(\\s*['\"](?:node:)?${modules}['\"]\\s*\\)`, 'i');
+  const processCall = /\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(/i;
+  const computedProcessCall = /\[\s*['"](?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)['"]\s*\]\s*\(/i;
+  return staticImport.test(source)
+    || dynamicImport.test(source)
+    || requireImport.test(source)
+    || processCall.test(source)
+    || computedProcessCall.test(source);
+}
+
 function reviewOc9Workflow(source, path, findings) {
   requireLiterals(findings, source, path, [
     ['permissions:\n  contents: read', 'oc9-workflow-read-only-permission-missing'],
@@ -130,9 +151,9 @@ function reviewOc9Workflow(source, path, findings) {
   ]);
   forbidPatterns(findings, source, path, [
     [/pull_request_target\s*:/i, 'oc9-workflow-pull-request-target-forbidden'],
-    [/contents:\s*write|pull-requests:\s*write|actions:\s*write|checks:\s*write/i, 'oc9-workflow-write-permission-forbidden'],
     [/\bsecrets\.[A-Za-z0-9_]+/i, 'oc9-workflow-secret-consumption-forbidden'],
   ]);
+  if (workflowWritePermissionViolation(source)) findings.push(finding('oc9-workflow-write-permission-forbidden', path));
 }
 
 function reviewOc9Cli(source, path, findings) {
@@ -143,9 +164,9 @@ function reviewOc9Cli(source, path, findings) {
     ['BLOCKED_WITH_RESTORE_PATH ? 2 : 0', 'oc9-cli-blocked-exit-contract-missing'],
   ]);
   forbidPatterns(findings, source, path, [
-    [/from ['"]node:(?:child_process|fs|http|https|net)['"]|require\(['"](?:child_process|fs|http|https|net)['"]\)/, 'oc9-cli-process-filesystem-network-authority-forbidden'],
     [/shell\s*:\s*true|\beval\s*\(|new\s+Function\s*\(/i, 'oc9-cli-dynamic-execution-forbidden'],
   ]);
+  if (dynamicAuthorityViolation(source)) findings.push(finding('oc9-cli-process-filesystem-network-authority-forbidden', path));
 }
 
 function reviewOc9CliTests(source, path, findings) {
