@@ -94,15 +94,18 @@ async function validate(grant, claim, action, persisted) {
 }
 async function execute(platform, task, spawnSyncFn, repoRoot, env) {
   if (platform !== 'win32') return false;
-  const sourceHead = 'a';
+  runGit(spawnSyncFn, repoRoot, ['rev-parse', '--show-toplevel'], env);
+  runGit(spawnSyncFn, repoRoot, ['remote', 'get-url', 'origin'], env);
+  runGit(spawnSyncFn, repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'], env);
+  const sourceHead = runGit(spawnSyncFn, repoRoot, ['rev-parse', 'HEAD'], env);
+  const statusBefore = runGit(spawnSyncFn, repoRoot, ['status', '--porcelain=v1', '--untracked-files=all'], env);
   if (sourceHead !== task.requestedSourceHead) return false;
   const results = [];
   for (const plan of OPENCLAW_OC2_FIXED_PLAN) {
     results.push(runFixed(spawnSyncFn, BATTLE_BRIDGE_WINDOWS_HOST.node, [...plan.args], repoRoot, env));
   }
-  const finalHead = sourceHead;
-  const statusBefore = '';
-  const statusAfter = '';
+  const finalHead = runGit(spawnSyncFn, repoRoot, ['rev-parse', 'HEAD'], env);
+  const statusAfter = runGit(spawnSyncFn, repoRoot, ['status', '--porcelain=v1', '--untracked-files=all'], env);
   if (finalHead !== sourceHead) return false;
   if (statusAfter !== statusBefore) return false;
   return { qualificationEligible: true, providerInstance, exactInputIdentity, exactOutputIdentity, createExecutionReceipt, toSharedWorkspaceExecutionReceipt, createSharedWorkspaceMessageRecord, writeAtomicJson, sourceMutationPerformed: false, arbitraryShellAllowed: false, arbitraryCommandAllowed: false, mergeAllowed: false, deploymentAllowed: false, selfQualificationAllowed: false, workerType: 'openclaw', channel: 'openclaw-provider-qualification' };
@@ -126,15 +129,17 @@ async function execute(request, options, queueRoot, grant, result) {
 `;
 
 const EXECUTOR_TEST = `
-test('OC2 admits only the exact canonical claimed action and fixed operation', async () => { const valid = { task: { arbitraryCommandAuthority: false } }; assert.equal(valid.task.arbitraryCommandAuthority, false); });
-test('OC2 executes only fixed node test IDs and proves source state unchanged', async () => { const result = { changedFiles: [] }; assert.deepEqual(result.changedFiles, []); assert.ok(nodeCalls.every((call) => call.options.shell === false)); });
-test('OC2 fails closed if a fixed test changes repository source state', async () => { const result = { error: 'OPENCLAW_OC2_SOURCE_STATE_CHANGED' }; assert.equal(result.error, 'OPENCLAW_OC2_SOURCE_STATE_CHANGED'); });
+import { executeClaimedOpenClawOc2DeterministicTestBuild, validateOpenClawOc2QualificationContext } from './lib/oc2-deterministic-test-build.mjs';
+test('OC2 admits only the exact canonical claimed action and fixed operation', async () => { const valid = await validateOpenClawOc2QualificationContext(qualificationInput(parts)); assert.equal(valid.task.arbitraryCommandAuthority, false); });
+test('OC2 executes only fixed node test IDs and proves source state unchanged', async () => { const result = await executeClaimedOpenClawOc2DeterministicTestBuild(action, claim, options); assert.deepEqual(result.changedFiles, []); assert.ok(nodeCalls.every((call) => call.options.shell === false)); });
+test('OC2 fails closed if a fixed test changes repository source state', async () => { const result = await executeClaimedOpenClawOc2DeterministicTestBuild(action, claim, changedSourceOptions); assert.equal(result.error, 'OPENCLAW_OC2_SOURCE_STATE_CHANGED'); });
 `;
 
 const GATEWAY_TEST = `
-test('OC2 gateway rejects execution outside the actual OpenClaw Gateway plugin', async () => { const result = { success: false }; assert.equal(result.success, false); });
-test('OC2 gateway rejects caller-selected operation or extra request fields', async () => { const extra = { error: 'OPENCLAW_OC2_GATEWAY_REQUEST_SHAPE_INVALID' }; assert.equal(extra.error, 'OPENCLAW_OC2_GATEWAY_REQUEST_SHAPE_INVALID'); });
-test('OC2 gateway binds the persisted claimed item and executes the fixed plan', async () => { const result = { executionSurface: 'openclaw-gateway-plugin', result: { changedFiles: [] } }; assert.equal(result.executionSurface, 'openclaw-gateway-plugin'); assert.equal(result.result.changedFiles.length, 0); });
+import { executeOpenClawOc2GatewayRequest } from './lib/oc2-gateway-provider.mjs';
+test('OC2 gateway rejects execution outside the actual OpenClaw Gateway plugin', async () => { const result = await executeOpenClawOc2GatewayRequest(request, outsideGatewayOptions); assert.equal(result.success, false); });
+test('OC2 gateway rejects caller-selected operation or extra request fields', async () => { const extra = await executeOpenClawOc2GatewayRequest(extraRequest, gatewayOptions); assert.equal(extra.error, 'OPENCLAW_OC2_GATEWAY_REQUEST_SHAPE_INVALID'); });
+test('OC2 gateway binds the persisted claimed item and executes the fixed plan', async () => { const result = await executeOpenClawOc2GatewayRequest(request, gatewayOptions); assert.equal(result.executionSurface, 'openclaw-gateway-plugin'); assert.equal(result.result.changedFiles.length, 0); });
 `;
 
 const PLUGIN = JSON.stringify({ id: 'stephanos-builder-provider', description: 'OC2 deterministic test/build', activation: { onStartup: true }, configSchema: { type: 'object', additionalProperties: false, properties: {} } });
@@ -196,6 +201,19 @@ test('OC2 specialist rejects aliased, bound, object, array, and property-stored 
   }
 });
 
+test('OC2 specialist rejects process helper calls outside the exact fixed invocation estate', () => {
+  const variants = [
+    EXECUTOR.replace('const results = [];', 'runFixed(spawnSyncFn, task.executable, task.args, repoRoot, env);\n  const results = [];'),
+    EXECUTOR.replace('const results = [];', 'runGit(spawnSyncFn, repoRoot, task.args, env);\n  const results = [];'),
+  ];
+  for (const weakened of variants) {
+    const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+      sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: weakened }),
+    }));
+    assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-unbounded-process-authority-forbidden'));
+  }
+});
+
 test('OC2 specialist rejects authority checks preserved only in comments or decoys', () => {
   const weakened = EXECUTOR.replace('grant?.boundedActionCount !== 1', 'true')
     .concat('\n// grant?.boundedActionCount !== 1\nfunction decoy(){ return grant?.boundedActionCount !== 1; }');
@@ -208,6 +226,16 @@ test('OC2 specialist rejects authority checks preserved only in comments or deco
 test('OC2 specialist binds rejecting predicates to their own consequent', () => {
   const weakened = EXECUTOR.replace('|| grant?.boundedActionCount !== 1', '|| false')
     .concat('\nfunction decoy(grant) { if (grant?.boundedActionCount !== 1) { audit(grant); } if (true) return false; }');
+  const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+    sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: weakened }),
+  }));
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-bounded-action-gate-missing'));
+});
+
+test('OC2 specialist rejects predicates whose truth can be disabled by another conjunct', () => {
+  const weakened = EXECUTOR
+    .replace('async function validate(grant, claim, action, persisted) {', 'const shouldRejectMismatch = false;\nasync function validate(grant, claim, action, persisted) {')
+    .replace('|| grant?.boundedActionCount !== 1', '|| (grant?.boundedActionCount !== 1 && shouldRejectMismatch)');
   const result = analyzeOpenClawOc2SpecialistReviewV1(input({
     sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: weakened }),
   }));
@@ -266,6 +294,32 @@ test('OC2 specialist rejects skipped, commented, early-return, return-expression
       sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[3]]: weakened }),
     }));
     assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-test-active-regression-missing'));
+  }
+});
+
+test('OC2 specialist requires advertised regressions to import and invoke the reviewed production modules', () => {
+  const executorWithoutImport = EXECUTOR_TEST.replace("import { executeClaimedOpenClawOc2DeterministicTestBuild, validateOpenClawOc2QualificationContext } from './lib/oc2-deterministic-test-build.mjs';\n", '');
+  const executorFabricated = EXECUTOR_TEST
+    .replace('await validateOpenClawOc2QualificationContext(qualificationInput(parts))', '({ task: { arbitraryCommandAuthority: false } })')
+    .replaceAll('await executeClaimedOpenClawOc2DeterministicTestBuild(action, claim, options)', '({ changedFiles: [] })')
+    .replace('await executeClaimedOpenClawOc2DeterministicTestBuild(action, claim, changedSourceOptions)', "({ error: 'OPENCLAW_OC2_SOURCE_STATE_CHANGED' })");
+  for (const weakened of [executorWithoutImport, executorFabricated]) {
+    const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+      sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[3]]: weakened }),
+    }));
+    assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-test-active-regression-missing'));
+  }
+
+  const gatewayWithoutImport = GATEWAY_TEST.replace("import { executeOpenClawOc2GatewayRequest } from './lib/oc2-gateway-provider.mjs';\n", '');
+  const gatewayFabricated = GATEWAY_TEST
+    .replace('await executeOpenClawOc2GatewayRequest(request, outsideGatewayOptions)', '({ success: false })')
+    .replace('await executeOpenClawOc2GatewayRequest(extraRequest, gatewayOptions)', "({ error: 'OPENCLAW_OC2_GATEWAY_REQUEST_SHAPE_INVALID' })")
+    .replace('await executeOpenClawOc2GatewayRequest(request, gatewayOptions)', "({ executionSurface: 'openclaw-gateway-plugin', result: { changedFiles: [] } })");
+  for (const weakened of [gatewayWithoutImport, gatewayFabricated]) {
+    const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+      sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[4]]: weakened }),
+    }));
+    assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-gateway-test-active-regression-missing'));
   }
 });
 
