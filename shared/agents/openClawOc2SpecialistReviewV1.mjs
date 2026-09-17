@@ -184,6 +184,40 @@ function conditionBlocks(bodySource) {
   return blocks;
 }
 
+function splitTopLevelLogical(source, operator) {
+  const masked = executableOnly(source);
+  const parts = [];
+  let start = 0;
+  let paren = 0;
+  let bracket = 0;
+  let brace = 0;
+  for (let i = 0; i < masked.length; i += 1) {
+    const ch = masked[i];
+    if (ch === '(') paren += 1;
+    else if (ch === ')') paren = Math.max(0, paren - 1);
+    else if (ch === '[') bracket += 1;
+    else if (ch === ']') bracket = Math.max(0, bracket - 1);
+    else if (ch === '{') brace += 1;
+    else if (ch === '}') brace = Math.max(0, brace - 1);
+    if (paren === 0 && bracket === 0 && brace === 0 && masked.slice(i, i + operator.length) === operator) {
+      parts.push(source.slice(start, i));
+      start = i + operator.length;
+      i += operator.length - 1;
+    }
+  }
+  parts.push(source.slice(start));
+  return parts;
+}
+
+function conditionHasSufficientRejectingPredicate(condition, pattern) {
+  const clauses = splitTopLevelLogical(condition, '||');
+  return clauses.some((clause) => {
+    const executable = executableOnly(clause).trim();
+    if (!pattern.test(executable)) return false;
+    return splitTopLevelLogical(executable, '&&').length === 1;
+  });
+}
+
 function requireRejectingPredicates(findings, body, path, rules) {
   if (!body) {
     for (const [, code] of rules) findings.push(finding(code, path));
@@ -191,7 +225,9 @@ function requireRejectingPredicates(findings, body, path, rules) {
   }
   const conditions = conditionBlocks(body.uncommented);
   for (const [pattern, code] of rules) {
-    if (!conditions.some((condition) => pattern.test(condition))) findings.push(finding(code, path));
+    if (!conditions.some((condition) => conditionHasSufficientRejectingPredicate(condition, pattern))) {
+      findings.push(finding(code, path));
+    }
   }
 }
 
@@ -215,9 +251,55 @@ function countMatches(source, pattern) {
   return matches ? matches.length : 0;
 }
 
-function activeTestHas(source, title, assertionPattern) {
+function helperCalls(source, name) {
+  const code = executableOnly(source);
+  const calls = [];
+  const pattern = new RegExp(`\\b${name}\\s*\\(`, 'g');
+  for (const match of code.matchAll(pattern)) {
+    const prefix = code.slice(Math.max(0, match.index - 32), match.index);
+    if (/\bfunction\s+$/.test(prefix)) continue;
+    const open = code.indexOf('(', match.index);
+    const close = matchBalanced(code, open, '(', ')');
+    if (open < 0 || close < 0) return null;
+    calls.push(code.slice(match.index, close + 1).replace(/\s+/g, '').replace(/"/g, "'"));
+  }
+  return calls;
+}
+
+function fixedHelperCallEstateClosed(source) {
+  const fixedCalls = helperCalls(source, 'runFixed');
+  const gitCalls = helperCalls(source, 'runGit');
+  if (!fixedCalls || !gitCalls) return false;
+  const expectedFixed = [
+    'runFixed(spawnSyncFn,BATTLE_BRIDGE_WINDOWS_HOST.git,args,repoRoot,env,15_000)',
+    'runFixed(spawnSyncFn,BATTLE_BRIDGE_WINDOWS_HOST.node,[...plan.args],repoRoot,env)',
+  ].sort();
+  if (JSON.stringify([...fixedCalls].sort()) !== JSON.stringify(expectedFixed)) return false;
+  const expectedGit = [
+    "runGit(spawnSyncFn,repoRoot,['rev-parse','--show-toplevel'],env)",
+    "runGit(spawnSyncFn,repoRoot,['remote','get-url','origin'],env)",
+    "runGit(spawnSyncFn,repoRoot,['rev-parse','--abbrev-ref','HEAD'],env)",
+    "runGit(spawnSyncFn,repoRoot,['rev-parse','HEAD'],env)",
+    "runGit(spawnSyncFn,repoRoot,['status','--porcelain=v1','--untracked-files=all'],env)",
+    "runGit(spawnSyncFn,repoRoot,['rev-parse','HEAD'],env)",
+    "runGit(spawnSyncFn,repoRoot,['status','--porcelain=v1','--untracked-files=all'],env)",
+  ].sort();
+  return JSON.stringify([...gitCalls].sort()) === JSON.stringify(expectedGit);
+}
+
+function hasStaticNamedImport(source, modulePath, symbol) {
+  const uncommented = stripComments(source);
+  const escapedModule = modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`\\bimport\\s*\\{([^}]*)\\}\\s*from\\s*['\"]${escapedModule}['\"]`);
+  const match = pattern.exec(uncommented);
+  if (!match) return false;
+  return match[1].split(',').map((item) => item.trim()).includes(symbol);
+}
+
+function activeTestHas(source, title, assertionPattern, required = {}) {
   const uncommented = stripComments(source);
   if (/\b(?:test|it|describe)\.(?:skip|todo|only)\s*\(/.test(uncommented)) return false;
+  if (required.modulePath && required.symbol && !hasStaticNamedImport(source, required.modulePath, required.symbol)) return false;
   const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const opener = new RegExp(`\\btest\\s*\\(\\s*(['\"])${escapedTitle}\\1\\s*,`);
   const match = opener.exec(uncommented);
@@ -235,6 +317,10 @@ function activeTestHas(source, title, assertionPattern) {
   if (!assertion) return false;
   const before = top.slice(0, assertion.index);
   if (/\b(?:return|throw)\b/.test(before)) return false;
+  if (required.symbol) {
+    const invocation = new RegExp(`\\b${required.symbol}\\s*\\(`);
+    if (!invocation.test(before)) return false;
+  }
   return true;
 }
 
@@ -395,7 +481,7 @@ function reviewDeterministicExecutor(source, path, findings) {
   ]);
 
   const code = executableOnly(source);
-  if (countMatches(code, /\bspawnSyncFn\s*\(/g) !== 1 || hasProcessAlias(source)) {
+  if (countMatches(code, /\bspawnSyncFn\s*\(/g) !== 1 || hasProcessAlias(source) || !fixedHelperCallEstateClosed(source)) {
     findings.push(finding('openclaw-oc2-unbounded-process-authority-forbidden', path));
   }
   forbidExecutablePatterns(findings, source, path, [
@@ -444,11 +530,15 @@ function reviewGateway(source, path, findings) {
 
 function reviewExecutorTest(source, path, findings) {
   const checks = [
-    ['OC2 admits only the exact canonical claimed action and fixed operation', /assert\.equal\s*\(\s*valid\.task\.arbitraryCommandAuthority\s*,\s*false\s*\)/],
-    ['OC2 executes only fixed node test IDs and proves source state unchanged', /assert\.deepEqual\s*\(\s*result\.changedFiles\s*,\s*\[\s*\]\s*\)/],
-    ['OC2 fails closed if a fixed test changes repository source state', /assert\.equal\s*\(\s*result\.error\s*,/],
+    ['OC2 admits only the exact canonical claimed action and fixed operation', /assert\.equal\s*\(\s*valid\.task\.arbitraryCommandAuthority\s*,\s*false\s*\)/, 'validateOpenClawOc2QualificationContext'],
+    ['OC2 executes only fixed node test IDs and proves source state unchanged', /assert\.deepEqual\s*\(\s*result\.changedFiles\s*,\s*\[\s*\]\s*\)/, 'executeClaimedOpenClawOc2DeterministicTestBuild'],
+    ['OC2 fails closed if a fixed test changes repository source state', /assert\.equal\s*\(\s*result\.error\s*,/, 'executeClaimedOpenClawOc2DeterministicTestBuild'],
   ];
-  for (const [title, assertion] of checks) if (!activeTestHas(source, title, assertion)) findings.push(finding('openclaw-oc2-test-active-regression-missing', path));
+  for (const [title, assertion, symbol] of checks) {
+    if (!activeTestHas(source, title, assertion, { modulePath: './lib/oc2-deterministic-test-build.mjs', symbol })) {
+      findings.push(finding('openclaw-oc2-test-active-regression-missing', path));
+    }
+  }
 }
 
 function reviewGatewayTest(source, path, findings) {
@@ -457,7 +547,11 @@ function reviewGatewayTest(source, path, findings) {
     ['OC2 gateway rejects caller-selected operation or extra request fields', /assert\.equal\s*\(\s*extra\.error\s*,/],
     ['OC2 gateway binds the persisted claimed item and executes the fixed plan', /assert\.equal\s*\(\s*result\.executionSurface\s*,/],
   ];
-  for (const [title, assertion] of checks) if (!activeTestHas(source, title, assertion)) findings.push(finding('openclaw-oc2-gateway-test-active-regression-missing', path));
+  for (const [title, assertion] of checks) {
+    if (!activeTestHas(source, title, assertion, { modulePath: './lib/oc2-gateway-provider.mjs', symbol: 'executeOpenClawOc2GatewayRequest' })) {
+      findings.push(finding('openclaw-oc2-gateway-test-active-regression-missing', path));
+    }
+  }
 }
 
 function reviewPlugin(source, path, findings) {
