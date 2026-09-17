@@ -53,46 +53,49 @@ test('deduplicates the same teaching identity in one projection cycle', () => {
 });
 
 test('blocks incomplete teaching rather than strengthening uncertain evidence', () => {
-  const result = projectVrTeachingIntoSharedWorkspace({
-    teachingRecords: [teaching({ licenceBoundary: '', proofRefs: [] })],
-    updatedAt: UPDATED_AT,
-    nowMs: Date.parse(UPDATED_AT),
-  });
+  const result = projectVrTeachingIntoSharedWorkspace({ teachingRecords: [teaching({ licenceBoundary: '', proofRefs: [] })], updatedAt: UPDATED_AT, nowMs: Date.parse(UPDATED_AT) });
   assert.equal(result.projection.methodLibrary.length, 0);
   assert.equal(result.projectionReceipt.counters.policyBlocked, 1);
   assert.equal(result.projectionReceipt.verdict, 'VR_TEACHING_WORKSPACE_PROJECTION_BLOCKED');
 });
 
+test('rejects teaching without required confidence', () => {
+  const result = projectVrTeachingIntoSharedWorkspace({ teachingRecords: [teaching({ confidence: '   ' })], updatedAt: UPDATED_AT, nowMs: Date.parse(UPDATED_AT) });
+  assert.equal(result.projection.methodLibrary.length, 0);
+  assert.equal(result.projectionReceipt.counters.policyBlocked, 1);
+  assert.match(result.projectionReceipt.policyBlocked[0].errors.join(','), /missing-confidence/);
+});
+
 test('rejects whitespace-only proof references', () => {
-  const result = projectVrTeachingIntoSharedWorkspace({
-    teachingRecords: [teaching({ proofRefs: ['   '] })],
-    updatedAt: UPDATED_AT,
-    nowMs: Date.parse(UPDATED_AT),
-  });
+  const result = projectVrTeachingIntoSharedWorkspace({ teachingRecords: [teaching({ proofRefs: ['   '] })], updatedAt: UPDATED_AT, nowMs: Date.parse(UPDATED_AT) });
   assert.equal(result.projectionReceipt.counters.policyBlocked, 1);
   assert.match(result.projectionReceipt.policyBlocked[0].errors.join(','), /missing-proofRefs/);
 });
 
 test('preserves existing workspace knowledge while appending a teaching', () => {
-  const result = projectVrTeachingIntoSharedWorkspace({
-    teachingRecords: [teaching()],
-    capabilityGraphCandidates: [{ candidateKey: 'existing-graph', reusableMethod: 'Existing graph method' }],
-    methodLibrary: [{ teachingKey: 'existing-method', reusableMethod: 'Existing method' }],
-    proofRefs: ['proofs/existing'],
-    updatedAt: UPDATED_AT,
-    nowMs: Date.parse(UPDATED_AT),
-  });
+  const result = projectVrTeachingIntoSharedWorkspace({ teachingRecords: [teaching()], capabilityGraphCandidates: [{ candidateKey: 'existing-graph', reusableMethod: 'Existing graph method' }], methodLibrary: [{ teachingKey: 'existing-method', reusableMethod: 'Existing method' }], proofRefs: ['proofs/existing'], updatedAt: UPDATED_AT, nowMs: Date.parse(UPDATED_AT) });
   assert.equal(result.projection.capabilityGraphCandidates.length, 2);
   assert.equal(result.projection.methodLibrary.length, 2);
   assert.deepEqual(result.projection.proofRefs, ['proofs/existing', 'proofs/vr-teaching/meta-xr-simulator']);
 });
 
-test('forbids a teaching record from self-asserting Shared Workspace confirmation', () => {
+test('refresh replaces stale entries with the accepted teaching identity', () => {
+  const refreshed = teaching({ observedIdentity: 'docs-2026-09-17', reusableMethod: 'Refreshed simulator-first method.', proofRefs: ['proofs/vr-teaching/refreshed'] });
   const result = projectVrTeachingIntoSharedWorkspace({
-    teachingRecords: [teaching({ sharedWorkspaceProjectionState: 'CONFIRMED' })],
+    teachingRecords: [refreshed],
+    capabilityGraphCandidates: [{ teachingKey: refreshed.teachingKey, candidateKey: refreshed.candidateKey, observedIdentity: 'docs-old', reusableMethod: 'Stale method' }],
+    methodLibrary: [{ teachingKey: refreshed.teachingKey, candidateKey: refreshed.candidateKey, observedIdentity: 'docs-old', reusableMethod: 'Stale method' }],
     updatedAt: UPDATED_AT,
     nowMs: Date.parse(UPDATED_AT),
   });
+  assert.equal(result.projection.capabilityGraphCandidates.length, 1);
+  assert.equal(result.projection.capabilityGraphCandidates[0].observedIdentity, 'docs-2026-09-17');
+  assert.equal(result.projection.methodLibrary.length, 1);
+  assert.equal(result.projection.methodLibrary[0].reusableMethod, 'Refreshed simulator-first method.');
+});
+
+test('forbids a teaching record from self-asserting Shared Workspace confirmation', () => {
+  const result = projectVrTeachingIntoSharedWorkspace({ teachingRecords: [teaching({ sharedWorkspaceProjectionState: 'CONFIRMED' })], updatedAt: UPDATED_AT, nowMs: Date.parse(UPDATED_AT) });
   assert.equal(result.projectionReceipt.counters.policyBlocked, 1);
   assert.match(result.projectionReceipt.policyBlocked[0].errors.join(','), /self-confirmed-projection-forbidden/);
 });
