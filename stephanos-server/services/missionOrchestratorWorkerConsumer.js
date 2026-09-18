@@ -412,6 +412,11 @@ export async function processNextCodexItem(options = {}) {
   return processAgentClaim('codex', options, options.executeCodexAction);
 }
 
+export async function processNextStephanosNativeItem(options = {}) {
+  if (typeof options.executeStephanosNativeAction !== 'function') throw new Error('Stephanos-native execution adapter is required.');
+  return processAgentClaim('stephanos-native', options, options.executeStephanosNativeAction);
+}
+
 export async function processNextOpenClawReadonlyItem(options = {}) {
   if (typeof options.executeOpenClawReadonlyAction !== 'function') throw new Error('OpenClaw read-only execution adapter is required.');
   return processAgentClaim('openclaw-readonly', options, options.executeOpenClawReadonlyAction);
