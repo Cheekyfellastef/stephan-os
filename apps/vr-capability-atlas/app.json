@@ -1,7 +1,7 @@
 {
   "name": "VR Capability Atlas",
   "icon": "🌌",
-  "entry": "index-v2.html",
+  "entry": "index-v3.html",
   "type": "research",
   "packaging": "classic-static",
   "capabilities": [
@@ -12,7 +12,10 @@
     "research-linked-concept-gallery",
     "responsive-4k-concept-assets",
     "keyboard-concept-navigation",
-    "concept-lightbox"
+    "concept-lightbox",
+    "media-asset-fabric-v1",
+    "content-addressed-media-cache",
+    "vector-native-sharp-fallback"
   ],
   "eventsPublished": [],
   "eventsConsumed": [
