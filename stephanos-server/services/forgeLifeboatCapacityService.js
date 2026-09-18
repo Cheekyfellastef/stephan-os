@@ -8,7 +8,10 @@ import {
   forgeLifeboatProofRef,
 } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 import { publishGitHubContinuityCapacityPublicationV1 } from '../../shared/agents/githubContinuityCapacityPublicationV1.mjs';
-import { writeAtomicJson } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
+  createSharedWorkspaceProofRecord,
+  writeAtomicJson,
+} from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { resolveCriticalBacklogRuntimePaths } from './criticalBacklogConveyorServiceCore.js';
 import { readMissionWorkerQueue } from './missionOrchestratorWorkerService.js';
 
@@ -148,12 +151,20 @@ export async function refreshForgeLifeboatCapacity(options = {}) {
   const authorityId = forgeLifeboatAuthorityReceiptId(sourceHead);
   const proofFile = proofRef.replace(/^proof\//, '');
   const proof = Object.freeze({
-    schemaVersion: FORGE_LIFEBOAT_PROOF_SCHEMA,
-    proofId: `forge-lifeboat-${sourceHead}`,
-    observedAtUtc,
-    expiresAtUtc,
-    repository,
+    ...createSharedWorkspaceProofRecord({
+      proofId: `forge-lifeboat-${sourceHead}`,
+      participantId: FORGE_LIFEBOAT_WORKER_ID,
+      timestampUtc: observedAtUtc,
+      correlationId: authorityId,
+      relatedIssue: '#1671',
+      status: 'PASS',
+      summary: `Lane 6 local model ${model} answered one bounded loopback generation probe in ${latencySeconds}s on exact source ${sourceHead}.`,
+      refs: [proofRef],
+      proofRefs: [proofRef],
+    }),
+    schema: FORGE_LIFEBOAT_PROOF_SCHEMA,
     sourceHead,
+    repository,
     workerId: FORGE_LIFEBOAT_WORKER_ID,
     endpoint,
     model,
@@ -170,6 +181,7 @@ export async function refreshForgeLifeboatCapacity(options = {}) {
     runtimeMutationAuthority: false,
     leaseSeizureAllowed: false,
     arbitraryCommandAllowed: false,
+    expiresAtUtc,
     finalVerdict: 'FORGE_LIFEBOAT_LOCAL_MODEL_CAPACITY_PROVEN',
   });
 
