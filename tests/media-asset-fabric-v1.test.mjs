@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import {
@@ -11,13 +12,14 @@ import {
   mediaVariantSpec,
   validateMediaAssetPointer,
 } from '../shared/media/mediaAssetFabricV1.mjs';
+import { inspectMediaAssetBytes } from '../shared/media/mediaAssetInspectionV1.mjs';
 import {
   getVrAtlasMediaManifest,
   renderVrAtlasVectorFallback,
   resolveVrAtlasMediaAsset,
 } from '../stephanos-server/services/mediaAssetService.js';
 
-const root = resolve(new URL('..', import.meta.url).pathname.replace(/^\/(?:[A-Za-z]:)/, (value) => value.slice(1)));
+const root = fileURLToPath(new URL('..', import.meta.url));
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
 test('Media Asset Fabric publishes ten VR Atlas assets with 640/1920/3840 variants', () => {
@@ -35,7 +37,7 @@ test('Media Asset Fabric publishes ten VR Atlas assets with 640/1920/3840 varian
   }
 });
 
-test('vector-native fallback is resolution-independent and truth-labelled', () => {
+test('vector-native fallback is resolution-independent, byte-verifiable and truth-labelled', () => {
   const hero = renderVrAtlasVectorFallback('spatial-bridge', 'hero');
   assert.ok(hero);
   assert.equal(hero.contentType, 'image/svg+xml');
@@ -44,6 +46,8 @@ test('vector-native fallback is resolution-independent and truth-labelled', () =
   assert.equal(hero.qualityClass, 'VECTOR_NATIVE_SHARP');
   assert.match(hero.bytes.toString('utf8'), /VECTOR-NATIVE SHARP FALLBACK · NOT RUNTIME PROOF/);
   assert.equal(hero.sha256, sha256(hero.bytes));
+  const inspected = inspectMediaAssetBytes(hero.bytes, hero.extension);
+  assert.deepEqual([inspected.ok, inspected.width, inspected.height], [true, 3840, 2160]);
 });
 
 test('4K raster quality gate rejects the old tiny-payload failure mode and thumbnail upscale lineage', () => {
@@ -71,21 +75,28 @@ test('4K raster quality gate rejects the old tiny-payload failure mode and thumb
   assert.ok(upscaled.reasons.includes('thumbnail-upscale-forbidden'));
 });
 
-test('verified content-addressed cache wins over the vector fallback only when hash, size and pointer agree', async () => {
+test('media byte inspector rejects arbitrary bytes even when their size looks like a 4K raster', () => {
+  const fake = Buffer.alloc(900_000, 7);
+  const inspected = inspectMediaAssetBytes(fake, 'avif');
+  assert.equal(inspected.ok, false);
+  assert.equal(inspected.reason, 'avif-signature-invalid');
+});
+
+test('content-addressed cache wins over fallback only when pointer, hash, bytes and natural dimensions agree', async () => {
   const cacheRoot = await mkdtemp(join(tmpdir(), 'stephanos-media-fabric-'));
   try {
-    const bytes = Buffer.alloc(700_000, 7);
+    const bytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="3840" height="2160" viewBox="0 0 3840 2160"><rect width="3840" height="2160" fill="#06131f"/></svg>', 'utf8');
     const digest = sha256(bytes);
     await mkdir(join(cacheRoot, 'objects'), { recursive: true });
     await mkdir(join(cacheRoot, 'pointers', 'vr-atlas'), { recursive: true });
-    await writeFile(join(cacheRoot, 'objects', `${digest}.avif`), bytes);
+    await writeFile(join(cacheRoot, 'objects', `${digest}.svg`), bytes);
     await writeFile(join(cacheRoot, 'pointers', 'vr-atlas', 'spatial-bridge.hero.json'), JSON.stringify({
       schemaVersion: MEDIA_ASSET_POINTER_SCHEMA,
       collection: MEDIA_COLLECTION_VR_ATLAS,
       assetId: 'spatial-bridge',
       variant: 'hero',
-      extension: 'avif',
-      contentType: 'image/avif',
+      extension: 'svg',
+      contentType: 'image/svg+xml',
       width: 3840,
       height: 2160,
       byteSize: bytes.length,
@@ -99,6 +110,8 @@ test('verified content-addressed cache wins over the vector fallback only when h
     assert.equal(resolved.source, 'verified-content-addressed-cache');
     assert.equal(resolved.sha256, digest);
     assert.equal(resolved.byteSize, bytes.length);
+    const inspected = inspectMediaAssetBytes(resolved.bytes, resolved.extension);
+    assert.deepEqual([inspected.ok, inspected.width, inspected.height], [true, 3840, 2160]);
   } finally {
     await rm(cacheRoot, { recursive: true, force: true });
   }
