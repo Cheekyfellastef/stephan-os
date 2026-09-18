@@ -62,6 +62,9 @@ test('Stephanos may request the existing continuity controller to resume a prove
   const result = projectStephanosGoalContinuation({ checkpoint: checkpoint(), current: current(), schedulerCandidate: candidate() });
   assert.equal(result.state, GOAL_BUILDING_CONTINUATION_STATES.AUTO_CONTINUE_ELIGIBLE);
   assert.equal(result.mayRequestExistingControllerContinuation, true);
+  assert.equal(result.materialProgressRequiredBeforeControllerReturn, true);
+  assert.ok(result.nonMaterialSignalsDoNotSatisfyProgress.includes('ACTION_DISPATCHED'));
+  assert.ok(result.nonMaterialSignalsDoNotSatisfyProgress.includes('HEARTBEAT'));
   assert.equal(result.continuationTarget, 'EXISTING_1557_CONTINUITY_CONTROLLER');
   assert.equal(result.duplicateControllerForbidden, true);
   assert.equal(result.duplicateMissionForbidden, true);
@@ -81,7 +84,7 @@ test('operator-gated work is parked and asks only the existing refill machinery 
   assert.equal(result.refillTarget, 'EXISTING_1947_CAPACITY_REFILL');
 });
 
-test('main movement forces reproof and prevents autonomous continuation', () => {
+test('main movement forces reproof but immediately releases independent construction capacity', () => {
   const result = projectStephanosGoalContinuation({
     checkpoint: checkpoint(),
     current: current({ protectedMainHead: '4'.repeat(40) }),
@@ -89,6 +92,8 @@ test('main movement forces reproof and prevents autonomous continuation', () => 
   });
   assert.equal(result.state, GOAL_BUILDING_CONTINUATION_STATES.REPROVE_BEFORE_CONTINUE);
   assert.equal(result.mayRequestExistingControllerContinuation, false);
+  assert.equal(result.mayRequestCapacityRefill, true);
+  assert.equal(result.refillTarget, 'EXISTING_1947_CAPACITY_REFILL');
 });
 
 test('scheduler identity mismatch fails closed rather than creating a new owner or mission', () => {
@@ -100,9 +105,11 @@ test('scheduler identity mismatch fails closed rather than creating a new owner 
   assert.equal(result.state, GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD);
   assert.ok(result.reasons.includes('scheduler-mission-mismatch'));
   assert.equal(result.mayRequestExistingControllerContinuation, false);
+  assert.equal(result.mayRequestCapacityRefill, false);
+  assert.equal(result.materialProgressRequiredBeforeControllerReturn, false);
 });
 
-test('missing qualified provider does not fabricate execution', () => {
+test('missing qualified provider parks only that route and refills the released lane', () => {
   const result = projectStephanosGoalContinuation({
     checkpoint: checkpoint(),
     current: current(),
@@ -110,4 +117,18 @@ test('missing qualified provider does not fabricate execution', () => {
   });
   assert.equal(result.state, GOAL_BUILDING_CONTINUATION_STATES.BLOCKED_ROUTE_OWNER_REQUIRED);
   assert.equal(result.mayRequestExistingControllerContinuation, false);
+  assert.equal(result.mayRequestCapacityRefill, true);
+  assert.equal(result.refillTarget, 'EXISTING_1947_CAPACITY_REFILL');
+  assert.equal(result.materialProgressRequiredBeforeControllerReturn, true);
+});
+
+test('owned blocker is lane-scoped and cannot consume otherwise usable build capacity', () => {
+  const result = projectStephanosGoalContinuation({
+    checkpoint: checkpoint({ blockers: [{ blockerId: 'review-gate', ownerId: 'review-factory', state: 'BLOCKED' }] }),
+    current: current(),
+    schedulerCandidate: candidate(),
+  });
+  assert.equal(result.state, GOAL_BUILDING_CONTINUATION_STATES.BLOCKED_ROUTE_OWNER_REQUIRED);
+  assert.equal(result.mayRequestCapacityRefill, true);
+  assert.equal(result.refillTarget, 'EXISTING_1947_CAPACITY_REFILL');
 });
