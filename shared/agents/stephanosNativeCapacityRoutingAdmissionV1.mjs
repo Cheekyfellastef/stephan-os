@@ -7,8 +7,8 @@ import {
   STEPHANOS_NATIVE_ROUTE,
   validateStephanosNativeSourceAuthority,
   verifyStephanosNativeCapacityReceipt,
-} from '../../shared/agents/stephanosNativeCapacityReceiptV1.mjs';
-import { resolveSharedWorkspacePath } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+} from './stephanosNativeCapacityReceiptV1.mjs';
+import { resolveSharedWorkspacePath } from './sharedAgentWorkspaceStore.mjs';
 
 export const STEPHANOS_NATIVE_ROUTING_ADMISSION_SCHEMA = 'stephanos.native-routing-admission.v1';
 export const STEPHANOS_NATIVE_CAPACITY_STATUS_ID = 'stephanos-native-capacity-current';
