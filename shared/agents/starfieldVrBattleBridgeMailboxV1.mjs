@@ -99,7 +99,7 @@ function verifyWorkingScriptIdentity(relativePath, absolutePath, expectedHead, p
 
   const workingInvocation = spawnSyncFn(
     'git',
-    ['hash-object', '--no-filters', '--', absolutePath],
+    ['hash-object', `--path=${relativePath}`, '--', absolutePath],
     invocationOptions(paths.repoRoot, 30_000),
   );
   const workingBlob = String(workingInvocation?.stdout || '').trim().toLowerCase();
