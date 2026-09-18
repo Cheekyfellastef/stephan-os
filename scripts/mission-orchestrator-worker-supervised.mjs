@@ -79,7 +79,8 @@ export function createMissionWorkerTickLogProjection(result, checkedAt) {
 
 function stableLogSignature(projection) { const { checkedAt: _checkedAt, ...stable } = projection; return JSON.stringify(stable); }
 function processResultText(result, key) { const value = ownData(result, key); return typeof value === 'string' ? value : ''; }
-export function missionWorkerTickMadeProgress(result) { const publication = ownData(result, 'publish'); const processing = ownData(result, 'processed'); return ownData(publication, 'published') === true || ownData(processing, 'processed') === true; }
+export function missionWorkerTickMadeProgress(result) { const processing = ownData(result, 'processed'); return ownData(processing, 'processed') === true; }
+function controllerRequiresMaterialProgress(controller) { const projection = ownData(controller, 'authoritativeProjection'); const status = boundedText(ownData(projection, 'status'), 32).toUpperCase(); return Boolean(status) && status !== 'HOLD'; }
 function invalidRepositoryIdentity(blocker, overrides = {}) { return Object.freeze({ valid: false, canonical: false, branch: '', headSha: '', sourceClean: false, worktreeClean: false, runtimeDirtCount: 0, blocker, ...overrides }); }
 
 function runBoundedGitObservation({ repositoryRoot, spawnSyncFn, args }) {
@@ -138,7 +139,7 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
       if (mailboxBootstrapPending) { mailboxBootstrapPending = false; try { const mailboxBootstrap = await bootstrapMailbox({ env }); stdout.write(`${JSON.stringify({ checkedAt: now(), ...mailboxBootstrap })}\n`); } catch (error) { stderr.write(`${JSON.stringify({ checkedAt: now(), finalVerdict: 'MAILBOX_SELF_BOOTSTRAP_FAILED', error: error?.message || String(error), operatorNeeded: true })}\n`); if (once) exitCode = 1; } }
       const capacityRoutingOptions = { root: env.STEPHANOS_SHARED_AGENT_WORKSPACE, repoRoot: env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT, nowUtc: checkedAt };
       const controller = await runControllerCycle({}, { env, ...capacityRoutingOptions, sourceRevision: env.STEPHANOS_MISSION_WORKER_HEAD_SHA }); const controllerLog = createMissionWorkerControllerLogProjection(controller, checkedAt); const controllerLogSignature = stableLogSignature(controllerLog); if (once || controllerLogSignature !== lastControllerLogSignature) { stdout.write(`${JSON.stringify(controllerLog)}\n`); lastControllerLogSignature = controllerLogSignature; }
-      materialProgressRequired = ownData(controller, 'materialProgressRequiredBeforeControllerReturn') === true;
+      materialProgressRequired = controllerRequiresMaterialProgress(controller);
       if (controller?.allowWorkerTick === true) {
         const actionGrant = controller.workerActionGrant; const capacityRoute = boundedText(ownData(actionGrant, 'capacityRoute'), 48); const capacityRouting = capacityRoute ? await loadCapacityRoutingInput(capacityRoutingOptions) : undefined; activeActionGrant = actionGrant; let tickSettled = false; let activeClaimHeartbeatPublished = false;
         const watchActiveClaim = async () => { while (!tickSettled && !activeClaimHeartbeatPublished) { let activeClaim = null; try { activeClaim = await readActiveClaim({ env, actionGrant }); } catch { activeClaim = null; } if (tickSettled) return; if (activeClaim) { activeClaimHeartbeatPublished = true; await queueHeartbeat('MISSION_WORKER_TICK_RUNNING'); return; } await sleepActiveClaimProbe(claimProbeIntervalMs); } };
