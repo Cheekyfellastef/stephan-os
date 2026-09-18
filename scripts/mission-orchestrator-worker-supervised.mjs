@@ -80,6 +80,7 @@ export function createMissionWorkerTickLogProjection(result, checkedAt) {
 function stableLogSignature(projection) { const { checkedAt: _checkedAt, ...stable } = projection; return JSON.stringify(stable); }
 function processResultText(result, key) { const value = ownData(result, key); return typeof value === 'string' ? value : ''; }
 export function missionWorkerTickMadeProgress(result) { const processing = ownData(result, 'processed'); return ownData(processing, 'processed') === true; }
+function missionWorkerTickHadActivity(result) { const publication = ownData(result, 'publish'); return ownData(publication, 'published') === true || missionWorkerTickMadeProgress(result); }
 function controllerRequiresMaterialProgress(controller) { const projection = ownData(controller, 'authoritativeProjection'); const status = boundedText(ownData(projection, 'status'), 32).toUpperCase(); return Boolean(status) && status !== 'HOLD'; }
 function invalidRepositoryIdentity(blocker, overrides = {}) { return Object.freeze({ valid: false, canonical: false, branch: '', headSha: '', sourceClean: false, worktreeClean: false, runtimeDirtCount: 0, blocker, ...overrides }); }
 
@@ -132,7 +133,7 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
     if (reloadRequired) { stderr.write(`${JSON.stringify({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'worker-reload', checkedAt, finalVerdict: 'MISSION_WORKER_CANONICAL_RELOAD_REQUIRED', exitCode: MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE })}\n`); return MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE; }
     if (identityValid && !identityCanonical) repositoryDriftObserved = true;
     if (!identityCanonical) { consecutiveProgressRechecks = 0; if (once) return 0; await sleep(Math.max(Number.isFinite(intervalMs) ? intervalMs : 2000, 250)); continue; }
-    let lastTickVerdict = 'MISSION_WORKER_TICK_PASS'; let heartbeatWriteFailed = false; let heartbeatWrites = Promise.resolve(); let tickMadeProgress = false; let materialProgressRequired = false;
+    let lastTickVerdict = 'MISSION_WORKER_TICK_PASS'; let heartbeatWriteFailed = false; let heartbeatWrites = Promise.resolve(); let tickHadActivity = false; let materialProgressRequired = false;
     const queueHeartbeat = (lastTickVerdictValue, timestampUtc = now()) => { const heartbeatActionGrant = activeActionGrant; heartbeatWrites = heartbeatWrites.then(async () => { try { await writeHeartbeat({ env, timestampUtc, lastTickVerdict: lastTickVerdictValue, activeActionGrant: heartbeatActionGrant }); } catch (error) { heartbeatWriteFailed = true; stderr.write(`${JSON.stringify({ checkedAt: timestampUtc, finalVerdict: 'MISSION_WORKER_HEARTBEAT_WRITE_FAILED', error: error.message })}\n`); } }); return heartbeatWrites; };
     await queueHeartbeat('MISSION_WORKER_TICK_RUNNING', checkedAt); const heartbeatTimer = setIntervalFn(() => { void queueHeartbeat('MISSION_WORKER_TICK_RUNNING'); }, heartbeatIntervalMs);
     try {
@@ -144,13 +145,13 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
         const actionGrant = controller.workerActionGrant; const capacityRoute = boundedText(ownData(actionGrant, 'capacityRoute'), 48); const capacityRouting = capacityRoute ? await loadCapacityRoutingInput(capacityRoutingOptions) : undefined; activeActionGrant = actionGrant; let tickSettled = false; let activeClaimHeartbeatPublished = false;
         const watchActiveClaim = async () => { while (!tickSettled && !activeClaimHeartbeatPublished) { let activeClaim = null; try { activeClaim = await readActiveClaim({ env, actionGrant }); } catch { activeClaim = null; } if (tickSettled) return; if (activeClaim) { activeClaimHeartbeatPublished = true; await queueHeartbeat('MISSION_WORKER_TICK_RUNNING'); return; } await sleepActiveClaimProbe(claimProbeIntervalMs); } };
         let result; const tickPromise = runTick({ env, actionGrant, capacityRouting }); const activeClaimWatcher = watchActiveClaim(); try { result = await tickPromise; } finally { tickSettled = true; await activeClaimWatcher; activeActionGrant = undefined; }
-        tickMadeProgress = missionWorkerTickMadeProgress(result);
-        if (materialProgressRequired && !tickMadeProgress) { lastTickVerdict = 'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS'; stderr.write(`${JSON.stringify({ checkedAt: now(), finalVerdict: lastTickVerdict, missionId: boundedText(ownData(actionGrant, 'missionId'), 96), actionId: boundedText(ownData(actionGrant, 'actionId'), 96) })}\n`); if (once) exitCode = 1; }
+        const tickMadeMaterialProgress = missionWorkerTickMadeProgress(result); tickHadActivity = missionWorkerTickHadActivity(result);
+        if (materialProgressRequired && !tickMadeMaterialProgress) { lastTickVerdict = 'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS'; stderr.write(`${JSON.stringify({ checkedAt: now(), finalVerdict: lastTickVerdict, missionId: boundedText(ownData(actionGrant, 'missionId'), 96), actionId: boundedText(ownData(actionGrant, 'actionId'), 96) })}\n`); if (once) exitCode = 1; }
         const tickLog = createMissionWorkerTickLogProjection(result, checkedAt); const tickLogSignature = stableLogSignature(tickLog); if (once || tickLogSignature !== lastTickLogSignature) { stdout.write(`${JSON.stringify(tickLog)}\n`); lastTickLogSignature = tickLogSignature; }
       } else if (materialProgressRequired) { lastTickVerdict = 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT'; stderr.write(`${JSON.stringify({ checkedAt: now(), finalVerdict: lastTickVerdict })}\n`); if (once) exitCode = 1; }
     } catch (error) { activeActionGrant = undefined; lastTickVerdict = 'MISSION_WORKER_TICK_FAILED'; stderr.write(`${JSON.stringify({ checkedAt, finalVerdict: lastTickVerdict, error: error.message })}\n`); if (once) exitCode = 1; } finally { clearIntervalFn(heartbeatTimer); await heartbeatWrites; }
     await queueHeartbeat(lastTickVerdict); if (heartbeatWriteFailed && once) exitCode = 1;
-    if (!once) { const steadyDelayMs = Math.max(Number.isFinite(intervalMs) ? intervalMs : 2000, 250); let delayMs = steadyDelayMs; if (tickMadeProgress && consecutiveProgressRechecks < MAX_CONSECUTIVE_PROGRESS_RECHECKS) { consecutiveProgressRechecks += 1; delayMs = PROGRESS_RECHECK_INTERVAL_MS; } else { consecutiveProgressRechecks = 0; } await sleep(delayMs); }
+    if (!once) { const steadyDelayMs = Math.max(Number.isFinite(intervalMs) ? intervalMs : 2000, 250); let delayMs = steadyDelayMs; if (tickHadActivity && consecutiveProgressRechecks < MAX_CONSECUTIVE_PROGRESS_RECHECKS) { consecutiveProgressRechecks += 1; delayMs = PROGRESS_RECHECK_INTERVAL_MS; } else { consecutiveProgressRechecks = 0; } await sleep(delayMs); }
   } while (!once);
   return exitCode;
 }
