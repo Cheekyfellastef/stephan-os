@@ -53,8 +53,17 @@ const lightbox = $('#conceptLightbox');
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
 const norm = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ');
 
+function resolveMediaOrigin() {
+  const port = String(globalThis.location?.port || '');
+  const hostname = String(globalThis.location?.hostname || '127.0.0.1');
+  const protocol = String(globalThis.location?.protocol || 'http:');
+  if (port === '4173' || port === '5173') return `${protocol}//${hostname}:8787`;
+  return String(globalThis.location?.origin || 'http://127.0.0.1:8787');
+}
+const MEDIA_ORIGIN = resolveMediaOrigin();
+
 function mediaUrl(concept, variant) {
-  return `/api/media/vr-atlas/${encodeURIComponent(concept.id)}/${variant}`;
+  return `${MEDIA_ORIGIN}/api/media/vr-atlas/${encodeURIComponent(concept.id)}/${variant}`;
 }
 
 function mediaPicture(concept, { lightboxMode = false } = {}) {
@@ -212,7 +221,7 @@ function sourceRow(source) {
 }
 async function hydrateMediaManifest() {
   try {
-    const response = await fetch('/api/media/vr-atlas/manifest', { cache: 'no-store' });
+    const response = await fetch(`${MEDIA_ORIGIN}/api/media/vr-atlas/manifest`, { cache: 'no-store' });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     if (data?.schemaVersion !== 'stephanos.media-asset-fabric.v1' || Number(data?.assetCount) !== 10) throw new Error('manifest-invalid');
@@ -240,7 +249,7 @@ async function hydrate() {
     rerankConcepts();
     const local = workspaceResult.url.startsWith('..') && registryResult.url.startsWith('..');
     const stamp = workspace.updatedAt ? new Date(workspace.updatedAt).toLocaleString() : 'current';
-    const mediaState = mediaManifest ? 'Media Fabric V1 sharp path' : 'media manifest unproven';
+    const mediaState = mediaManifest ? `Media Fabric V1 sharp path @ ${MEDIA_ORIGIN}` : `media manifest unproven @ ${MEDIA_ORIGIN}`;
     setState('live', `${local ? 'Battle Bridge / repo-local' : 'GitHub main'} · workspace ${stamp} · ${mediaState} · auto-refresh 60s`);
   } catch (error) {
     renderSnapshot();
