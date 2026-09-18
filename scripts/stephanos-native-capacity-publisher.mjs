@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createPublicKey, generateKeyPairSync } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +12,8 @@ import {
 
 export const STEPHANOS_NATIVE_CAPACITY_KEY_ID = 'stephanos-native-capacity-key-v1';
 export const STEPHANOS_NATIVE_CAPACITY_REFRESH_MS = 60_000;
+export const STEPHANOS_NATIVE_CAPACITY_RELOAD_EXIT_CODE = 75;
+const SHA40 = /^[0-9a-f]{40}$/;
 
 function text(value) { return typeof value === 'string' ? value.trim() : ''; }
 function missionRunnerRoot(env = process.env) {
@@ -18,6 +21,18 @@ function missionRunnerRoot(env = process.env) {
   if (configured) return resolve(configured);
   if (!text(env.USERPROFILE)) return '';
   return resolve(env.USERPROFILE, 'Documents', 'OpenClaw-Standalone', 'mission-runner');
+}
+function canonicalRepositoryRoot(env = process.env) {
+  const configured = text(env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT);
+  if (configured) return resolve(configured);
+  if (!text(env.USERPROFILE)) return '';
+  return resolve(env.USERPROFILE, 'Documents', 'GitHub', 'stephan-os');
+}
+function canonicalWorkspaceRoot(env = process.env) {
+  const configured = text(env.STEPHANOS_SHARED_AGENT_WORKSPACE);
+  if (configured) return resolve(configured);
+  if (!text(env.USERPROFILE)) return '';
+  return resolve(env.USERPROFILE, 'Documents', 'Stephanos-openclaw-workspace');
 }
 function capacityKeyPaths(env = process.env) {
   const root = missionRunnerRoot(env);
@@ -51,12 +66,50 @@ export async function ensureStephanosNativeCapacityKeyPair(options = {}) {
   return Object.freeze({ ok: true, reason: 'STEPHANOS_NATIVE_CAPACITY_KEY_READY', ...paths, privateKeyPem });
 }
 
-function runtimeOptions(env, privateKeyPem, now = new Date()) {
+export function inspectStephanosNativeCapacitySourceIdentity(options = {}) {
+  const env = options.env || process.env;
+  const repoRoot = canonicalRepositoryRoot(env);
+  const workspaceRoot = canonicalWorkspaceRoot(env);
+  const gitExecutable = text(env.STEPHANOS_GIT_EXECUTABLE) || 'C:\\Program Files\\Git\\cmd\\git.exe';
+  const run = options.spawnSyncFn || spawnSync;
+  if (!repoRoot || !workspaceRoot) return Object.freeze({ ok: false, reason: 'native-capacity-runtime-root-missing' });
+  const runGit = (args) => run(gitExecutable, ['-C', repoRoot, ...args], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    shell: false,
+    windowsHide: true,
+    timeout: 10_000,
+    maxBuffer: 64 * 1024,
+  });
+  try {
+    const branchResult = runGit(['branch', '--show-current']);
+    const headResult = runGit(['rev-parse', 'HEAD']);
+    const dirtResult = runGit(['status', '--porcelain=v1', '--untracked-files=no']);
+    if (branchResult?.status !== 0 || headResult?.status !== 0 || dirtResult?.status !== 0) {
+      return Object.freeze({ ok: false, reason: 'native-capacity-source-identity-read-failed' });
+    }
+    const branch = text(branchResult.stdout);
+    const sourceHead = text(headResult.stdout).toLowerCase();
+    const trackedDirt = text(dirtResult.stdout);
+    if (branch !== 'main') return Object.freeze({ ok: false, reason: 'native-capacity-source-not-main', branch, sourceHead });
+    if (!SHA40.test(sourceHead)) return Object.freeze({ ok: false, reason: 'native-capacity-source-head-invalid', branch, sourceHead: '' });
+    if (trackedDirt) return Object.freeze({ ok: false, reason: 'native-capacity-source-dirty', branch, sourceHead });
+    const expectedHead = text(env.STEPHANOS_MISSION_WORKER_HEAD_SHA).toLowerCase();
+    if (expectedHead && expectedHead !== sourceHead) {
+      return Object.freeze({ ok: false, reason: 'native-capacity-launch-head-mismatch', branch, sourceHead, expectedHead });
+    }
+    return Object.freeze({ ok: true, reason: 'STEPHANOS_NATIVE_CAPACITY_SOURCE_IDENTITY_PROVED', repoRoot, workspaceRoot, branch, sourceHead });
+  } catch {
+    return Object.freeze({ ok: false, reason: 'native-capacity-source-identity-read-failed' });
+  }
+}
+
+function runtimeOptions(env, identity, privateKeyPem, now = new Date()) {
   return {
-    workspaceRoot: text(env.STEPHANOS_SHARED_AGENT_WORKSPACE),
-    repoRoot: text(env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT),
+    workspaceRoot: identity.workspaceRoot,
+    repoRoot: identity.repoRoot,
     repository: text(env.STEPHANOS_MISSION_WORKER_REPOSITORY) || 'Cheekyfellastef/stephan-os',
-    sourceHead: text(env.STEPHANOS_MISSION_WORKER_HEAD_SHA).toLowerCase(),
+    sourceHead: identity.sourceHead,
     workerId: 'stephanos-native-battle-bridge',
     keyId: STEPHANOS_NATIVE_CAPACITY_KEY_ID,
     privateKeyPem,
@@ -87,6 +140,12 @@ export async function runStephanosNativeCapacityPublisher(options = {}) {
   const argv = options.argv || process.argv.slice(2);
   const once = argv.includes('--once');
   const refreshMs = Math.max(Number.parseInt(text(env.STEPHANOS_NATIVE_CAPACITY_REFRESH_MS) || String(STEPHANOS_NATIVE_CAPACITY_REFRESH_MS), 10) || STEPHANOS_NATIVE_CAPACITY_REFRESH_MS, 15_000);
+  const initialIdentity = inspectStephanosNativeCapacitySourceIdentity({ env, spawnSyncFn: options.spawnSyncFn });
+  if (!initialIdentity.ok) {
+    stderr.write(`${JSON.stringify({ finalVerdict: 'STEPHANOS_NATIVE_CAPACITY_BLOCKED', reason: initialIdentity.reason })}\n`);
+    return 1;
+  }
+  const launchHead = initialIdentity.sourceHead;
   const keys = await ensureStephanosNativeCapacityKeyPair({ env });
   if (!keys.ok) {
     stderr.write(`${JSON.stringify({ finalVerdict: 'STEPHANOS_NATIVE_CAPACITY_BLOCKED', reason: keys.reason })}\n`);
@@ -99,7 +158,17 @@ export async function runStephanosNativeCapacityPublisher(options = {}) {
   process.once('SIGTERM', stop);
   try {
     do {
-      const runtime = runtimeOptions(env, keys.privateKeyPem, options.now ? options.now() : new Date());
+      const identity = inspectStephanosNativeCapacitySourceIdentity({ env, spawnSyncFn: options.spawnSyncFn });
+      if (!identity.ok || identity.sourceHead !== launchHead) {
+        await clearStephanosNativeCapacityStatus({
+          workspaceRoot: identity.workspaceRoot || initialIdentity.workspaceRoot,
+          repoRoot: identity.repoRoot || initialIdentity.repoRoot,
+        }).catch(() => {});
+        const reason = identity.ok ? 'native-capacity-canonical-reload-required' : identity.reason;
+        stderr.write(`${JSON.stringify({ finalVerdict: 'STEPHANOS_NATIVE_CAPACITY_RELOAD_REQUIRED', reason, launchHead, observedHead: identity.sourceHead || '' })}\n`);
+        return STEPHANOS_NATIVE_CAPACITY_RELOAD_EXIT_CODE;
+      }
+      const runtime = runtimeOptions(env, identity, keys.privateKeyPem, options.now ? options.now() : new Date());
       const result = await publishStephanosNativeCapacityV1({ ...runtime, fetchImpl: options.fetchImpl });
       const log = projection(result, runtime.sourceHead);
       (result.ok ? stdout : stderr).write(`${JSON.stringify(log)}\n`);
@@ -108,8 +177,9 @@ export async function runStephanosNativeCapacityPublisher(options = {}) {
     } while (!stopping);
     return 0;
   } finally {
-    const runtime = runtimeOptions(env, keys.privateKeyPem, options.now ? options.now() : new Date());
-    await clearStephanosNativeCapacityStatus({ workspaceRoot: runtime.workspaceRoot, repoRoot: runtime.repoRoot }).catch(() => {});
+    if (!once || stopping) {
+      await clearStephanosNativeCapacityStatus({ workspaceRoot: initialIdentity.workspaceRoot, repoRoot: initialIdentity.repoRoot }).catch(() => {});
+    }
     process.removeListener('SIGINT', stop);
     process.removeListener('SIGTERM', stop);
   }
