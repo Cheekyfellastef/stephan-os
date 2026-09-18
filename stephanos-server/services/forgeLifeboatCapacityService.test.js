@@ -78,6 +78,26 @@ test('publishes one short-lived Lane 6 receipt from a real local-model probe and
   assert.deepEqual(publications[0].proofRefs, [forgeLifeboatProofRef(HEAD)]);
 });
 
+test('normalizes the existing STEP HANOS Ollama /api/chat endpoint shape to the fixed loopback base', async () => {
+  const observedEndpoints = [];
+  const { options, proofs } = baseOptions({
+    env: { STEPHANOS_OLLAMA_ENDPOINT: 'http://127.0.0.1:11434/api/chat' },
+    probeLocalBuilder: async ({ endpoint }) => {
+      observedEndpoints.push(endpoint);
+      return {
+        ok: true,
+        latencyMs: 900,
+        requestSha256: '3'.repeat(64),
+        responseSha256: '4'.repeat(64),
+      };
+    },
+  });
+  const result = await refreshForgeLifeboatCapacity(options);
+  assert.equal(result.available, true);
+  assert.deepEqual(observedEndpoints, ['http://127.0.0.1:11434']);
+  assert.equal(proofs[0].endpoint, 'http://127.0.0.1:11434');
+});
+
 test('does not advertise Lane 6 when source head or local model proof is missing', async () => {
   const noHead = baseOptions({ readSourceHead: async () => '' });
   const headResult = await refreshForgeLifeboatCapacity(noHead.options);
