@@ -99,7 +99,7 @@ async function resolveAsset(path){
     const encoded=(await response.text()).replace(/\s+/g,'');
     const binary=atob(encoded),bytes=new Uint8Array(binary.length);
     for(let index=0;index<binary.length;index+=1)bytes[index]=binary.charCodeAt(index);
-    const url=URL.createObjectURL(new Blob([bytes],{type:'image/jpeg'}));
+    const url=URL.createObjectURL(new Blob([bytes],{type:'image/avif'}));
     assetUrls.set(path,url);
     return url;
   })().catch(error=>{console.warn('Concept asset unavailable',path,error);return '';}).finally(()=>assetPromises.delete(path));

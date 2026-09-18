@@ -13,21 +13,12 @@ import {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-function jpegDimensions(filePath) {
+function avifDimensions(filePath) {
   const data = Buffer.from(fs.readFileSync(filePath, 'ascii').replace(/\s+/g, ''), 'base64');
-  assert.equal(data[0], 0xff);
-  assert.equal(data[1], 0xd8);
-  let offset = 2;
-  while (offset < data.length) {
-    if (data[offset] !== 0xff) { offset += 1; continue; }
-    const marker = data[offset + 1];
-    const length = data.readUInt16BE(offset + 2);
-    if (marker >= 0xc0 && marker <= 0xc3) {
-      return { height: data.readUInt16BE(offset + 5), width: data.readUInt16BE(offset + 7) };
-    }
-    offset += 2 + length;
-  }
-  throw new Error(`JPEG dimensions unavailable for ${filePath}`);
+  assert.equal(data.subarray(4, 12).toString('ascii'), 'ftypavif');
+  const marker = data.indexOf(Buffer.from('ispe'));
+  assert.ok(marker >= 4, `AVIF dimensions unavailable for ${filePath}`);
+  return { width: data.readUInt32BE(marker + 8), height: data.readUInt32BE(marker + 12) };
 }
 
 test('deluxe atlas exposes ten unique research-linked concept views', () => {
@@ -45,7 +36,7 @@ test('every concept has separate thumbnail, panel and 4K hero assets', () => {
     for (const [variant, dimensions] of Object.entries(expected)) {
       const filePath = path.resolve(root, 'apps/vr-capability-atlas', concept.assets[variant]);
       assert.ok(fs.existsSync(filePath), `${concept.id} ${variant} asset missing`);
-      const actual = jpegDimensions(filePath);
+      const actual = avifDimensions(filePath);
       assert.deepEqual([actual.width, actual.height], dimensions, `${concept.id} ${variant} dimensions`);
     }
   }

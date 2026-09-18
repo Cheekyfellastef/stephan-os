@@ -75,9 +75,9 @@ export const CONCEPT_CATALOG = [
   ...concept,
   catalogIndex,
   assets: {
-    thumb: `./concepts/thumb/${concept.id}.jpg.b64.txt`,
-    panel: `./concepts/panel/${concept.id}.jpg.b64.txt`,
-    hero: `./concepts/hero/${concept.id}.jpg.b64.txt`,
+    thumb: `./concepts/thumb/${concept.id}.avif.b64.txt`,
+    panel: `./concepts/panel/${concept.id}.avif.b64.txt`,
+    hero: `./concepts/hero/${concept.id}.avif.b64.txt`,
   },
 }));
 
