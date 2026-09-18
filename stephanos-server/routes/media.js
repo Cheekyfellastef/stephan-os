@@ -13,6 +13,24 @@ router.get('/vr-atlas/manifest', (_req, res) => {
   res.json(getVrAtlasMediaManifest());
 });
 
+router.get('/vr-atlas/health', (_req, res) => {
+  const manifest = getVrAtlasMediaManifest();
+  const configuredSourceHead = String(process.env.STEPHANOS_BACKEND_SOURCE_HEAD || '').trim().toLowerCase();
+  const sourceHead = /^[0-9a-f]{40}$/.test(configuredSourceHead) ? configuredSourceHead : '';
+  res.set('Cache-Control', 'no-cache');
+  res.json({
+    ok: true,
+    schemaVersion: 'stephanos.media-runtime-health.v1',
+    mediaFabricSchemaVersion: manifest.schemaVersion,
+    collection: manifest.collection,
+    assetCount: manifest.assetCount,
+    sharpFallback: manifest.sharpFallback,
+    variants: ['thumb', 'panel', 'hero'],
+    sourceHead,
+    exactHeadIdentityAvailable: Boolean(sourceHead),
+  });
+});
+
 router.get('/vr-atlas/:assetId/:variant', async (req, res) => {
   const result = await resolveVrAtlasMediaAsset(req.params.assetId, req.params.variant);
   if (!result.ok) {
