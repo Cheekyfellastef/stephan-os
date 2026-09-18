@@ -56,6 +56,21 @@ function changedFiles(worktreePath, run) {
     .split(/\r?\n/).map(normalizePath).filter(Boolean))].sort();
 }
 
+function reverseAppliedPatch(worktreePath, patchPath, run) {
+  const check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--reverse', '--whitespace=error-all', patchPath], { cwd: worktreePath });
+  if (check.error || check.status !== 0) {
+    throw new Error(`PROVIDER_NEUTRAL_PATCH_ROLLBACK_CHECK_FAILED:${text(check.stderr || check.stdout)}`);
+  }
+  const reverse = run('git.exe', ['-C', worktreePath, 'apply', '--reverse', '--whitespace=error-all', patchPath], { cwd: worktreePath });
+  if (reverse.error || reverse.status !== 0) {
+    throw new Error(`PROVIDER_NEUTRAL_PATCH_ROLLBACK_FAILED:${text(reverse.stderr || reverse.stdout)}`);
+  }
+  const remaining = changedFiles(worktreePath, run);
+  if (remaining.length) {
+    throw new Error(`PROVIDER_NEUTRAL_PATCH_ROLLBACK_LEFT_CHANGES:${remaining.join(',')}`);
+  }
+}
+
 function localBuilderPrompt(action = {}) {
   return [
     'You are the bounded Stephanos source builder.',
@@ -147,12 +162,17 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
   const run = options.runCommand || defaultRun;
   const completedAt = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString();
   let patchPath = '';
+  let patchApplied = false;
+  let succeeded = false;
   try {
     if (action.actionKind !== 'agent-handoff' || !EXTERNAL_ADAPTERS.includes(claim.adapter)) {
       throw new Error('PROVIDER_NEUTRAL_ACTION_NOT_SOURCE_BUILD');
     }
     if (!worktreePath || !existsSync(worktreePath)) throw new Error('PROVIDER_NEUTRAL_WORKTREE_REQUIRED');
     if (!Array.isArray(action.allowedFiles) || action.allowedFiles.length === 0) throw new Error('PROVIDER_NEUTRAL_ALLOWED_FILES_REQUIRED');
+
+    const startingChanges = changedFiles(worktreePath, run);
+    if (startingChanges.length) throw new Error(`PROVIDER_NEUTRAL_WORKTREE_NOT_CLEAN:${startingChanges.join(',')}`);
 
     const generated = await callLocalBuilder(action, options);
     patchPath = resolve(worktreePath, `.stephanos-${text(action.actionId, 'source-build')}.patch`);
@@ -162,15 +182,12 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     if (check.error || check.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:${text(check.stderr || check.stdout)}`);
     const apply = run('git.exe', ['-C', worktreePath, 'apply', '--whitespace=error-all', patchPath], { cwd: worktreePath });
     if (apply.error || apply.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_APPLY_FAILED:${text(apply.stderr || apply.stdout)}`);
+    patchApplied = true;
 
     const files = changedFiles(worktreePath, run);
     if (files.length === 0) throw new Error('PROVIDER_NEUTRAL_SOURCE_UNCHANGED');
     const unsafe = files.filter((path) => !pathAllowed(path, action.allowedFiles));
-    if (unsafe.length) {
-      run('git.exe', ['-C', worktreePath, 'reset', '--hard', 'HEAD'], { cwd: worktreePath });
-      run('git.exe', ['-C', worktreePath, 'clean', '-fd'], { cwd: worktreePath });
-      throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
-    }
+    if (unsafe.length) throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
 
     const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
     const receipt = Object.freeze({
@@ -208,6 +225,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       error: '',
     }, options);
 
+    succeeded = true;
     return Object.freeze({
       schemaVersion: PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA,
       processed: true,
@@ -220,6 +238,11 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
     });
   } catch (error) {
+    let failure = error?.message || 'provider-neutral source build failed';
+    if (patchApplied && !succeeded && patchPath) {
+      try { reverseAppliedPatch(worktreePath, patchPath, run); }
+      catch (rollbackError) { failure = `${failure};${rollbackError?.message || 'PROVIDER_NEUTRAL_PATCH_ROLLBACK_FAILED'}`; }
+    }
     try {
       await collectAgentWorkerResult({
         missionId: action.missionId,
@@ -227,7 +250,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
         adapter: claim.adapter,
         success: false,
         changedFiles: [],
-        error: error?.message || 'provider-neutral source build failed',
+        error: failure,
       }, options);
     } catch { /* Preserve original failure. */ }
     return Object.freeze({
@@ -237,7 +260,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       adapter: claim.adapter,
       missionId: text(action.missionId),
       actionId: text(action.actionId),
-      error: error?.message || 'provider-neutral source build failed',
+      error: failure,
       finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED',
     });
   } finally {
