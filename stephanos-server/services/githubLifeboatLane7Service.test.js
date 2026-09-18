@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -16,6 +17,20 @@ const NOW = new Date('2026-09-18T10:30:00.000Z');
 const HEAD = 'a'.repeat(40);
 const RESULT = 'd'.repeat(40);
 const PATH = 'shared/agents/lane7-test.mjs';
+
+function digestEscrow(escrow) {
+  const files = escrow.changedFiles.map((file) => ({
+    path: file.path,
+    beforeBlobSha: file.beforeBlobSha,
+    afterBlobSha: file.afterBlobSha,
+    sha256: file.sha256,
+  })).sort((a, b) => a.path.localeCompare(b.path));
+  return createHash('sha256').update(JSON.stringify({
+    commitSha: escrow.localCommitSha,
+    resultTree: escrow.exactResultTree,
+    changedFiles: files,
+  }), 'utf8').digest('hex');
+}
 
 function inbox(state = 'READY', overrides = {}) {
   const body = {
@@ -37,7 +52,7 @@ function inbox(state = 'READY', overrides = {}) {
   };
 }
 
-function adapter(observed, writes = []) {
+function adapter(observed, writes = [], extra = {}) {
   return {
     readComment(commentId) {
       assert.equal(commentId, GITHUB_LIFEBOAT_LANE7_INBOX_COMMENT_ID);
@@ -47,6 +62,7 @@ function adapter(observed, writes = []) {
       writes.push({ commentId, body });
       return { ok: true };
     },
+    ...extra,
   };
 }
 
@@ -76,6 +92,28 @@ function baseOptions(observed, extra = {}) {
   };
 }
 
+function queueEntry({ actionId = 'lane7-action-001', missionId = 'goal-1622-lane7', allowedFiles = [PATH] } = {}) {
+  return {
+    adapter: 'chatgpt-github',
+    item: {
+      schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+      adapter: 'chatgpt-github',
+      actionId,
+      missionId,
+      createdAt: NOW.toISOString(),
+      actionGrant: {
+        repository: 'Cheekyfellastef/stephan-os', issueNumber: 1622, prNumber: 0,
+        branch: 'fix/lane7-test', headSha: HEAD, sourceRevision: HEAD,
+      },
+      payload: {
+        actionId, missionId, adapter: 'chatgpt-github', repository: 'Cheekyfellastef/stephan-os',
+        branch: 'fix/lane7-test', allowedFiles, requiredTests: ['node --test lane7.test.mjs'],
+        requiredEvidence: ['focused tests'], capacityReceiptId: 'lane7-capacity', capacityProofRefs: ['proof/lane7.json'],
+      },
+    },
+  };
+}
+
 test('fresh authenticated Lane 7 heartbeat publishes canonical CHATGPT_GITHUB focused-repair capacity', async () => {
   const fixture = baseOptions(inbox());
   const result = await runGitHubLifeboatLane7(fixture.options);
@@ -94,48 +132,42 @@ test('stale or wrong-head Lane 7 heartbeat never becomes build capacity', async 
     observedAtUtc: '2026-09-18T10:00:00.000Z',
     expiresAtUtc: '2026-09-18T10:04:00.000Z',
   }));
-  const staleResult = await runGitHubLifeboatLane7(stale.options);
-  assert.equal(staleResult.capacity.available, false);
+  assert.equal((await runGitHubLifeboatLane7(stale.options)).capacity.available, false);
   assert.equal(stale.publications.length, 0);
 
   const wrongHead = baseOptions(inbox('READY', { sourceHead: 'b'.repeat(40) }));
-  const wrongHeadResult = await runGitHubLifeboatLane7(wrongHead.options);
-  assert.equal(wrongHeadResult.capacity.available, false);
+  assert.equal((await runGitHubLifeboatLane7(wrongHead.options)).capacity.available, false);
   assert.equal(wrongHead.publications.length, 0);
 });
 
-test('Lane 7 projects one existing canonical chatgpt-github queue item without creating a second queue', async () => {
-  const actionId = 'lane7-action-001';
-  const missionId = 'goal-1622-lane7';
-  const queue = [{
-    adapter: 'chatgpt-github',
-    item: {
-      schemaVersion: 'stephanos.mission-worker-queue-item.v1',
-      adapter: 'chatgpt-github',
-      actionId,
-      missionId,
-      createdAt: NOW.toISOString(),
-      actionGrant: {
-        repository: 'Cheekyfellastef/stephan-os', issueNumber: 1622, prNumber: 0,
-        branch: 'fix/lane7-test', headSha: HEAD, sourceRevision: HEAD,
-      },
-      payload: {
-        actionId, missionId, adapter: 'chatgpt-github', repository: 'Cheekyfellastef/stephan-os',
-        branch: 'fix/lane7-test', allowedFiles: [PATH], requiredTests: ['node --test lane7.test.mjs'],
-        requiredEvidence: ['focused tests'], capacityReceiptId: 'lane7-capacity', capacityProofRefs: ['proof/lane7.json'],
-      },
-    },
-  }];
+test('Lane 7 projects one existing canonical chatgpt-github queue item and preserves canonical glob scopes', async () => {
+  const entry = queueEntry({ allowedFiles: ['shared/agents/**', 'scripts/**'] });
+  const { actionId, missionId } = entry.item;
   const fixture = baseOptions(inbox(), {
-    readQueue: async () => queue,
+    readQueue: async () => [entry],
     readWorkspaceHandoff: async () => ({ handoffId: actionId, toParticipantId: 'chatgpt', correlationId: missionId }),
   });
   const result = await runGitHubLifeboatLane7(fixture.options);
   assert.equal(result.outbox.payload.state, 'HANDOFF_READY');
   assert.equal(result.outbox.payload.handoff.actionId, actionId);
   assert.equal(result.outbox.payload.handoff.headSha, HEAD);
-  assert.deepEqual(result.outbox.payload.handoff.allowedFiles, [PATH]);
+  assert.deepEqual(result.outbox.payload.handoff.allowedFiles, ['shared/agents/**', 'scripts/**']);
   assert.equal(result.outbox.payload.handoff.authority.mergeAuthority, false);
+});
+
+test('Lane 7 refuses to claim until the exact canonical handoff is validated', async () => {
+  const entry = queueEntry();
+  let claimCalls = 0;
+  const claimed = inbox('CLAIMED', { claim: { actionId: entry.item.actionId, missionId: entry.item.missionId } });
+  const fixture = baseOptions(claimed, {
+    readQueue: async () => [entry],
+    readWorkspaceHandoff: async () => null,
+    claimNext: async () => { claimCalls += 1; return null; },
+  });
+  const result = await runGitHubLifeboatLane7(fixture.options);
+  assert.equal(claimCalls, 0);
+  assert.equal(result.claim.ok, false);
+  assert.equal(result.claim.reason, 'LANE7_CLAIM_AUTHORITATIVE_HANDOFF_UNPROVEN');
 });
 
 test('Lane 7 completion advances only after exact external escrow is proven', async () => {
@@ -153,20 +185,22 @@ test('Lane 7 completion advances only after exact external escrow is proven', as
   };
   const payload = {
     actionId, missionId, adapter: 'chatgpt-github', repository: 'Cheekyfellastef/stephan-os',
-    branch: 'fix/lane7-test', allowedFiles: [PATH], requiredTests: ['node --test lane7.test.mjs'],
+    branch: 'fix/lane7-test', allowedFiles: ['shared/agents/**'], requiredTests: ['node --test lane7.test.mjs'],
   };
   const item = { actionId, missionId, actionGrant, payload };
   await writeFile(processingPath, JSON.stringify(item));
   const escrow = {
     schemaVersion: 'stephanos.source-artifact-escrow.v1', artifactKind: 'EXACT_COMMIT', repository: 'Cheekyfellastef/stephan-os',
+    missionId, actionId,
     canonicalIssue: 1622, canonicalPr: null, canonicalBranch: 'fix/lane7-test', exactParentHead: HEAD,
     exactParentTree: 'b'.repeat(40), exactResultTree: 'c'.repeat(40), localCommitSha: RESULT,
-    completeArtifactSha256: 'e'.repeat(64), artifactRef: `https://github.com/Cheekyfellastef/stephan-os/commit/${RESULT}`,
+    completeArtifactSha256: '', artifactRef: `https://github.com/Cheekyfellastef/stephan-os/commit/${RESULT}`,
     externallyReadable: true, commitMessage: 'Lane 7 test', executorIdentity: 'chatgpt-github',
     changedFiles: [{ path: PATH, beforeBlobSha: '1'.repeat(40), afterBlobSha: '2'.repeat(40), sha256: '3'.repeat(64) }],
     testsRun: ['node --test lane7.test.mjs'], testVerdicts: ['PASS'], diffCheckVerdict: 'PASS',
     createdAtUtc: NOW.toISOString(), expiresAtUtc: new Date(NOW.getTime() + 10 * 60 * 1000).toISOString(),
   };
+  escrow.completeArtifactSha256 = digestEscrow(escrow);
   const completion = {
     actionId, missionId, success: true, resultId: 'lane7-result-001', changedFiles: [PATH],
     receipt: { requirement: 'source proof', source: 'chatgpt-github', evidenceType: 'EXTERNAL_LANE_COMPLETION', verified: true, sha256: '4'.repeat(64) },
@@ -199,4 +233,47 @@ test('Lane 7 completion advances only after exact external escrow is proven', as
   const blocked = await runGitHubLifeboatLane7(missingEscrow.options);
   assert.equal(blocked.completion.ok, false);
   assert.match(blocked.completion.reason, /ESCROW/);
+});
+
+test('Lane 7 rejects an exact commit whose complete GitHub diff contains undeclared files', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'lane7-hidden-diff-'));
+  const processing = join(root, 'processing');
+  const completed = join(root, 'completed');
+  const failed = join(root, 'failed');
+  await Promise.all([mkdir(processing), mkdir(completed), mkdir(failed)]);
+  const actionId = 'lane7-action-hidden';
+  const missionId = 'goal-1622-lane7-hidden';
+  const actionGrant = { repository: 'Cheekyfellastef/stephan-os', issueNumber: 1622, prNumber: 0, branch: 'fix/lane7-hidden', headSha: HEAD, sourceRevision: HEAD };
+  const payload = { actionId, missionId, adapter: 'chatgpt-github', repository: 'Cheekyfellastef/stephan-os', branch: 'fix/lane7-hidden', allowedFiles: ['shared/agents/**'], requiredTests: ['node --test lane7.test.mjs'] };
+  const item = { actionId, missionId, actionGrant, payload };
+  const processingPath = join(processing, `${actionId}.json`);
+  await writeFile(processingPath, JSON.stringify(item));
+  const escrow = {
+    schemaVersion: 'stephanos.source-artifact-escrow.v1', artifactKind: 'EXACT_COMMIT', repository: 'Cheekyfellastef/stephan-os', missionId, actionId,
+    canonicalIssue: 1622, canonicalPr: null, canonicalBranch: 'fix/lane7-hidden', exactParentHead: HEAD, exactParentTree: 'b'.repeat(40), exactResultTree: 'c'.repeat(40), localCommitSha: RESULT,
+    completeArtifactSha256: '', artifactRef: `https://github.com/Cheekyfellastef/stephan-os/commit/${RESULT}`, externallyReadable: true, commitMessage: 'hidden diff test', executorIdentity: 'chatgpt-github',
+    changedFiles: [{ path: PATH, beforeBlobSha: '1'.repeat(40), afterBlobSha: '2'.repeat(40), sha256: '3'.repeat(64) }],
+    testsRun: ['node --test lane7.test.mjs'], testVerdicts: ['PASS'], diffCheckVerdict: 'PASS', createdAtUtc: NOW.toISOString(), expiresAtUtc: new Date(NOW.getTime() + 10 * 60 * 1000).toISOString(),
+  };
+  escrow.completeArtifactSha256 = digestEscrow(escrow);
+  const completion = {
+    actionId, missionId, success: true, resultId: 'lane7-result-hidden', changedFiles: [PATH], sourceArtifactEscrow: escrow, completedAtUtc: NOW.toISOString(),
+    receipt: { requirement: 'source proof', source: 'chatgpt-github', evidenceType: 'EXTERNAL_LANE_COMPLETION', verified: true, sha256: '4'.repeat(64) },
+    evidenceReceipts: [{ requirement: 'tests', source: 'gha', evidenceType: 'TEST', verified: true, sha256: '5'.repeat(64) }],
+  };
+  const observed = inbox('COMPLETED', { completion });
+  const fixture = baseOptions(observed, {
+    adapter: adapter(observed, [], {
+      readGitCommit: async (sha) => sha === RESULT ? { ok: true, treeSha: 'c'.repeat(40), parents: [HEAD] } : { ok: true, treeSha: 'b'.repeat(40), parents: [] },
+      readBranchHead: async () => ({ ok: true, sha: RESULT }),
+      readCommitChangedFiles: async () => ({ ok: true, files: [PATH, 'shared/agents/hidden.mjs'] }),
+      readFileAt: async () => ({ ok: true, blobSha: '2'.repeat(40), sha256: '3'.repeat(64) }),
+    }),
+    readQueue: async () => [],
+    loadProcessingClaim: async () => ({ adapter: 'chatgpt-github', item, processingPath, paths: { processing, completed, failed, pending: join(root, 'pending') } }),
+    collectResult: async () => { throw new Error('must not collect hidden diff'); },
+  });
+  const result = await runGitHubLifeboatLane7(fixture.options);
+  assert.equal(result.completion.ok, false);
+  assert.equal(result.completion.reason, 'LANE7_ESCROW_COMPLETE_DIFF_MISMATCH');
 });
