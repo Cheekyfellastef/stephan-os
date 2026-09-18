@@ -23,12 +23,26 @@ function text(value, fallback = '') {
   return normalized || fallback;
 }
 
+function pathForbidden(path) {
+  return /(^|\/)(?:\.git|node_modules|runtime|runtime-data|data|tmp)(?:\/|$)|(^|\/)\.env(?:\.|$)|\.(?:pem|pfx|key)$/i.test(path);
+}
+
 function safePath(value) {
   const candidate = text(value).replace(/\\/g, '/').replace(/^\.\/+/, '');
-  return SAFE_PATH.test(candidate)
-    && !/(^|\/)(?:\.git|node_modules|runtime|runtime-data|data|tmp)(?:\/|$)|(^|\/)\.env(?:\.|$)|\.(?:pem|pfx|key)$/i.test(candidate)
-    ? candidate
-    : '';
+  return SAFE_PATH.test(candidate) && !pathForbidden(candidate) ? candidate : '';
+}
+
+function safeScope(value) {
+  const raw = text(value).replace(/\\/g, '/').replace(/^\.\/+/, '');
+  if (raw.endsWith('/**')) {
+    const base = safePath(raw.slice(0, -3));
+    return base ? `${base}/**` : '';
+  }
+  if (raw.endsWith('/')) {
+    const base = safePath(raw.slice(0, -1));
+    return base ? `${base}/` : '';
+  }
+  return safePath(raw);
 }
 
 function authorityBoundary() {
@@ -75,7 +89,7 @@ function validateProcessingItem(item, sourceHead) {
   const grant = item?.actionGrant || {};
   const missionId = text(item?.missionId).toLowerCase();
   const actionId = text(item?.actionId).toLowerCase();
-  const allowedFiles = (Array.isArray(action.allowedFiles) ? action.allowedFiles : []).map(safePath).filter(Boolean);
+  const allowedFiles = (Array.isArray(action.allowedFiles) ? action.allowedFiles : []).map(safeScope).filter(Boolean);
   const requiredTests = (Array.isArray(action.requiredTests) ? action.requiredTests : []).map(text).filter(Boolean);
   const grantHead = text(grant.headSha || grant.sourceRevision).toLowerCase();
   const sourceRevision = text(grant.sourceRevision || sourceHead).toLowerCase();
@@ -83,7 +97,7 @@ function validateProcessingItem(item, sourceHead) {
   if (item?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1') return { ok: false, reason: 'LANE7_CLAIM_ACK_QUEUE_SCHEMA_INVALID' };
   if (text(item?.adapter).toLowerCase() !== 'chatgpt-github' || text(action.adapter).toLowerCase() !== 'chatgpt-github') return { ok: false, reason: 'LANE7_CLAIM_ACK_ADAPTER_INVALID' };
   if (!SAFE_ID.test(missionId) || !SAFE_ID.test(actionId) || text(action.missionId).toLowerCase() !== missionId || text(action.actionId).toLowerCase() !== actionId) return { ok: false, reason: 'LANE7_CLAIM_ACK_IDENTITY_INVALID' };
-  if (!SHA40.test(sourceHead) || !SHA40.test(grantHead) || !SHA40.test(sourceRevision)) return { ok: false, reason: 'LANE7_CLAIM_ACK_HEAD_INVALID' };
+  if (!SHA40.test(sourceHead) || !SHA40.test(grantHead) || !SHA40.test(sourceRevision) || grantHead !== sourceHead || sourceRevision !== sourceHead) return { ok: false, reason: 'LANE7_CLAIM_ACK_HEAD_INVALID' };
   if (!allowedFiles.length || allowedFiles.length > MAX_FILES || requiredTests.length > MAX_TESTS) return { ok: false, reason: 'LANE7_CLAIM_ACK_SCOPE_INVALID' };
 
   return {
