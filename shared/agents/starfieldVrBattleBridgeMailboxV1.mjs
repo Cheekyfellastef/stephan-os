@@ -112,6 +112,24 @@ function verifyWorkingScriptIdentity(relativePath, absolutePath, expectedHead, p
   return Object.freeze({ ok: true, script: relativePath, committedBlob, workingBlob });
 }
 
+function verifyCurrentProtectedMain(expectedHead, paths, spawnSyncFn) {
+  const invocation = spawnSyncFn(
+    'git',
+    ['ls-remote', 'origin', 'refs/heads/main'],
+    invocationOptions(paths.repoRoot, 30_000),
+  );
+  const output = String(invocation?.stdout || '').trim();
+  const match = /^([0-9a-f]{40})\s+refs\/heads\/main$/i.exec(output);
+  if (invocation?.error || invocation?.status !== 0 || !match) {
+    return fail('STARFIELD_VR_GITHUB_MAIN_HEAD_READ_FAILED');
+  }
+  const githubMainHead = String(match[1] || '').toLowerCase();
+  if (githubMainHead !== expectedHead) {
+    return fail('STARFIELD_VR_GITHUB_MAIN_HEAD_MISMATCH', { githubMainHead, expectedHead });
+  }
+  return Object.freeze({ ok: true, githubMainHead, expectedHead });
+}
+
 function inspectShortcut(paths, spawnSyncFn) {
   const invocation = spawnSyncFn(paths.powershellExe, [
     '-NoProfile',
@@ -236,6 +254,8 @@ export async function executeStarfieldVrBattleBridgeCommand(command = {}, {
   }
 
   if (shape.operation === STARFIELD_VR_SHORTCUT_INSTALL_OPERATION) {
+    const protectedMain = verifyCurrentProtectedMain(shape.expectedHead, paths, spawnSyncFn);
+    if (!protectedMain.ok) return protectedMain;
     if (!existsSyncFn(paths.installerScript)) return fail('STARFIELD_VR_SHORTCUT_INSTALLER_MISSING');
     const installerIdentity = verifyWorkingScriptIdentity(
       INSTALLER_RELATIVE_PATH,
@@ -305,6 +325,8 @@ export async function executeStarfieldVrBattleBridgeCommand(command = {}, {
     sourceMutationAllowed: false,
     finalVerdict: shape.operation === STARFIELD_VR_SHORTCUT_INSTALL_OPERATION
       ? 'STARFIELD_VR_SHORTCUT_INSTALL_PROVEN'
-      : 'STARFIELD_VR_DELIVERY_STATUS_READ',
+      : observed.installed
+        ? 'STARFIELD_VR_DELIVERY_STATUS_INSTALLED'
+        : 'STARFIELD_VR_DELIVERY_STATUS_NOT_INSTALLED',
   });
 }
