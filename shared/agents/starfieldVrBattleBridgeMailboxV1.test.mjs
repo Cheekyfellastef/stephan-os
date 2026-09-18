@@ -66,6 +66,9 @@ function success(stdout) {
 
 function gitResult(args, overrides = {}) {
   if (args[0] === 'rev-parse' && args[1] === 'HEAD') return success(`${HEAD}\n`);
+  if (args[0] === 'ls-remote' && args[1] === 'origin' && args[2] === 'refs/heads/main') {
+    return success(`${overrides.githubMainHead || HEAD}\trefs/heads/main\n`);
+  }
   if (args[0] === 'rev-parse' && /install-starfield-vr-desktop-shortcut\.ps1$/.test(args[1])) {
     return success(`${overrides.installerCommittedBlob || INSTALLER_BLOB}\n`);
   }
@@ -139,7 +142,7 @@ test('read operation verifies committed probe bytes and inspects actual shortcut
     platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: harness.spawnSyncFn,
   });
   assert.equal(result.ok, true);
-  assert.equal(result.finalVerdict, 'STARFIELD_VR_DELIVERY_STATUS_READ');
+  assert.equal(result.finalVerdict, 'STARFIELD_VR_DELIVERY_STATUS_NOT_INSTALLED');
   assert.equal(result.installed, false);
   assert.equal(result.observation.desktopIconPresent, false);
   assert.equal(harness.calls.length, 5);
@@ -157,7 +160,17 @@ test('read operation verifies committed probe bytes and inspects actual shortcut
   assert.equal(result.launchAllowed, false);
 });
 
-test('install operation verifies both scripts before mutation and requires actual shortcut route proof', async () => {
+test('read receipt verdict carries installed truth without publishing local filesystem paths', async () => {
+  const harness = spawnHarness({ installed: true });
+  const result = await executeStarfieldVrBattleBridgeCommand(command(), {
+    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: harness.spawnSyncFn,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.installed, true);
+  assert.equal(result.finalVerdict, 'STARFIELD_VR_DELIVERY_STATUS_INSTALLED');
+});
+
+test('install operation verifies current protected main and both scripts before mutation and requires actual shortcut route proof', async () => {
   const harness = spawnHarness({ installed: true });
   const result = await executeStarfieldVrBattleBridgeCommand(command(STARFIELD_VR_SHORTCUT_INSTALL_OPERATION), {
     platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: harness.spawnSyncFn,
@@ -165,9 +178,10 @@ test('install operation verifies both scripts before mutation and requires actua
   assert.equal(result.ok, true);
   assert.equal(result.installed, true);
   assert.equal(result.finalVerdict, 'STARFIELD_VR_SHORTCUT_INSTALL_PROVEN');
-  assert.equal(harness.calls.length, 8);
+  assert.equal(harness.calls.length, 9);
+  assert.deepEqual(harness.calls[1].args, ['ls-remote', 'origin', 'refs/heads/main']);
   const firstPowerShellIndex = harness.calls.findIndex((call) => /powershell\.exe$/i.test(call.executable));
-  assert.equal(firstPowerShellIndex, 5);
+  assert.equal(firstPowerShellIndex, 6);
   assert.equal(harness.calls.slice(0, firstPowerShellIndex).every((call) => call.executable === 'git'), true);
   const installerCall = harness.calls[firstPowerShellIndex];
   assert.deepEqual(installerCall.args.slice(0, 5), [
@@ -196,6 +210,19 @@ test('exact-head mismatch blocks before script identity checks or Windows mutati
   assert.equal(result.blocker, 'STARFIELD_VR_LOCAL_HEAD_MISMATCH');
   assert.equal(calls.length, 1);
   assert.equal(calls[0].executable, 'git');
+});
+
+test('install blocks if protected main has advanced beyond the approved head', async () => {
+  const harness = spawnHarness({ gitOverrides: { githubMainHead: 'b'.repeat(40) }, installed: true });
+  const result = await executeStarfieldVrBattleBridgeCommand(command(STARFIELD_VR_SHORTCUT_INSTALL_OPERATION), {
+    platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: harness.spawnSyncFn,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'STARFIELD_VR_GITHUB_MAIN_HEAD_MISMATCH');
+  assert.equal(result.githubMainHead, 'b'.repeat(40));
+  assert.equal(harness.calls.length, 2);
+  assert.deepEqual(harness.calls[1].args, ['ls-remote', 'origin', 'refs/heads/main']);
+  assert.equal(harness.calls.some((call) => /powershell\.exe$/i.test(call.executable)), false);
 });
 
 test('dirty installer blocks before any PowerShell, probe or delivery proof execution', async () => {
