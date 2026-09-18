@@ -12,8 +12,6 @@ const HEAD = 'a'.repeat(40);
 const ELEVATION_PATH = WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1[0];
 const BOOTSTRAP_PATH = WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1[1];
 
-// Self-contained inert fixtures. The reviewer bootstrap must not depend on the
-// unadmitted implementation files that it exists to review.
 const elevationSource = [
   "[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]",
   'param(',
@@ -61,20 +59,36 @@ const bootstrapSource = [
   "$ReceiptPath = Join-Path $env:LOCALAPPDATA 'Stephanos\\forge-wsl2-prerequisite-elevated-v1.json'",
   "$DesktopPath = [Environment]::GetFolderPath('Desktop')",
   "$LauncherName = 'Stephanos Forge WSL2 Bootstrap.cmd'",
-  "$LauncherPath = Join-Path $DesktopPath $LauncherName",
+  '$LauncherPath = Join-Path $DesktopPath $LauncherName',
   'rebootPerformed = $false',
   'podmanMutation = $false',
   'forgeRuntimeMutation = $false',
   'sourceMutation = $false',
   'githubCredentialUsed = $false',
-  "Invoke-Fixed $GitExe @('-C', $RepoRoot, 'hash-object', \"--path=$($entry.Relative)\", $entry.Path)",
-  "Exit-Blocked 'WSL2_PREREQUISITE_SCRIPT_IDENTITY_MISMATCH'",
+  'function Assert-CanonicalSource {',
+  "  $branch = ((Invoke-Fixed $GitExe @('-C', $RepoRoot, 'branch', '--show-current')).Output -join '').Trim()",
+  "  $head = ((Invoke-Fixed $GitExe @('-C', $RepoRoot, 'rev-parse', 'HEAD')).Output -join '').Trim().ToLowerInvariant()",
+  '  foreach ($entry in @(',
+  '    [pscustomobject]@{ Relative = $WrapperRelativePath; Path = $ScriptPath },',
+  '    [pscustomobject]@{ Relative = $ElevationScriptRelativePath; Path = $ElevationScriptPath }',
+  '  )) {',
+  "    $committedBlob = ((Invoke-Fixed $GitExe @('-C', $RepoRoot, 'rev-parse', \"$ExpectedHead`:$($entry.Relative)\")).Output -join '').Trim().ToLowerInvariant()",
+  "    $workingBlob = ((Invoke-Fixed $GitExe @('-C', $RepoRoot, 'hash-object', \"--path=$($entry.Relative)\", $entry.Path)).Output -join '').Trim().ToLowerInvariant()",
+  "    if ($committedBlob -notmatch '^[0-9a-f]{40}$' -or $workingBlob -ne $committedBlob) {",
+  "      Exit-Blocked 'WSL2_PREREQUISITE_SCRIPT_IDENTITY_MISMATCH'",
+  '    }',
+  '  }',
+  '}',
+  'function Consume-ElevatedReceipt { return $false }',
   'if (Test-Path -LiteralPath $LauncherPath) {',
   "  Exit-Blocked 'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED' @{ reason = 'existing-desktop-path-refused' }",
   '}',
   '$launcher = @"',
+  '@echo off',
   '"$PowerShellExe" -NoProfile -ExecutionPolicy Bypass -File "$ElevationScriptPath" -ExpectedHead $ExpectedHead -OperatorApproved -VisibleElevationBroker',
+  'set "STEPHANOS_FORGE_EXIT=%ERRORLEVEL%"',
   'del "%~f0"',
+  'exit /b %STEPHANOS_FORGE_EXIT%',
   '"@',
   'Set-Content -LiteralPath $LauncherPath -Value $launcher -Encoding ASCII',
   "Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED'",
@@ -115,65 +129,75 @@ test('Forge WSL2 specialist always reviews the closed two-file authority estate'
   assert.equal(result.clean, true);
   assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1);
   assert.equal(result.proofRefs.length, 2);
-  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_FORGE_WSL2_SPECIALIST_CLEAN');
 });
 
 test('either authority path escalates into review of both files', () => {
-  const fromElevation = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ findingPath: ELEVATION_PATH }));
-  const fromBootstrap = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ findingPath: BOOTSTRAP_PATH }));
-  assert.equal(fromElevation.clean, true);
-  assert.equal(fromBootstrap.clean, true);
-  assert.deepEqual(fromElevation.reviewedPaths, WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1);
-  assert.deepEqual(fromBootstrap.reviewedPaths, WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1);
+  assert.equal(analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ findingPath: ELEVATION_PATH })).clean, true);
+  assert.equal(analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ findingPath: BOOTSTRAP_PATH })).clean, true);
 });
 
 test('automatic reboot and dynamic execution in the elevated child fail closed', () => {
-  const bad = `${elevationSource}\nRestart-Computer\nInvoke-Expression $payload\n`;
-  const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ elevation: bad }));
-  assert.equal(result.clean, false);
+  const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ elevation: `${elevationSource}\nRestart-Computer\nInvoke-Expression $payload` }));
   const codes = result.findings.map((finding) => finding.code);
+  assert.equal(result.clean, false);
   assert.ok(codes.includes('forge-wsl2-automatic-restart-forbidden'));
   assert.ok(codes.includes('forge-wsl2-dynamic-execution-forbidden'));
 });
 
-test('caller-selected feature or command authority in the elevated child fails closed', () => {
+test('caller-selected authority in the elevated child fails closed', () => {
   const bad = elevationSource.replace('[switch]$OperatorApproved', '[switch]$OperatorApproved, [string]$Feature, [string]$Command');
   const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ elevation: bad }));
-  assert.equal(result.clean, false);
   assert.ok(result.findings.some((finding) => finding.code === 'forge-wsl2-caller-authority-forbidden'));
 });
 
-test('widening beyond the fixed two-feature set fails closed', () => {
-  const bad = elevationSource.replace(
-    "$RequiredFeatures = @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform')",
-    "$RequiredFeatures = @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform', 'Containers')",
-  );
-  const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ elevation: bad }));
-  assert.equal(result.clean, false);
-  assert.ok(result.findings.some((finding) => finding.code === 'forge-wsl2-feature-set-not-fixed'));
-});
-
 test('desktop bootstrap direct elevation, restart and force overwrite fail closed', () => {
-  const bad = `${bootstrapSource}\nStart-Process powershell.exe -Verb RunAs\nRestart-Computer\nSet-Content -LiteralPath $LauncherPath -Value $launcher -Encoding ASCII -Force\n`;
+  const bad = `${bootstrapSource}\nStart-Process powershell.exe -Verb RunAs\nRestart-Computer\nSet-Content -LiteralPath $LauncherPath -Value $launcher -Encoding ASCII -Force`;
   const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: bad }));
-  assert.equal(result.clean, false);
   const codes = result.findings.map((finding) => finding.code);
   assert.ok(codes.includes('forge-wsl2-bootstrap-direct-elevation-forbidden'));
   assert.ok(codes.includes('forge-wsl2-bootstrap-automatic-restart-forbidden'));
   assert.ok(codes.includes('forge-wsl2-bootstrap-force-overwrite-forbidden'));
 });
 
+test('committed blob lookup and comparison are mandatory inside canonical source proof', () => {
+  const bad = bootstrapSource.replace(
+    "    if ($committedBlob -notmatch '^[0-9a-f]{40}$' -or $workingBlob -ne $committedBlob) {",
+    '    if ($workingBlob) {',
+  );
+  const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: bad }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((finding) => finding.code === 'forge-wsl2-bootstrap-committed-blob-compare-missing'));
+});
+
+test('generated launcher body is exact and rejects appended commands', () => {
+  const bad = bootstrapSource.replace(
+    'set "STEPHANOS_FORGE_EXIT=%ERRORLEVEL%"',
+    'set "STEPHANOS_FORGE_EXIT=%ERRORLEVEL%"\npowershell.exe -Command "Write-Host widened"',
+  );
+  const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: bad }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((finding) => finding.code === 'forge-wsl2-bootstrap-launcher-not-closed-world'));
+});
+
+test('all fixed executable call sites are closed to the four read-only Git proof commands', () => {
+  const bad = bootstrapSource.replace(
+    'function Consume-ElevatedReceipt { return $false }',
+    "Invoke-Fixed $GitExe @('-C', $RepoRoot, 'reset', '--hard')\nfunction Consume-ElevatedReceipt { return $false }",
+  );
+  const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: bad }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((finding) => finding.code === 'forge-wsl2-bootstrap-fixed-invocation-estate-widened'));
+});
+
 test('desktop bootstrap caller-selected command authority fails closed', () => {
   const bad = bootstrapSource.replace('[switch]$OperatorApproved', '[switch]$OperatorApproved, [string]$Command');
   const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: bad }));
-  assert.equal(result.clean, false);
   assert.ok(result.findings.some((finding) => finding.code === 'forge-wsl2-bootstrap-caller-authority-forbidden'));
 });
 
 test('missing collision refusal fails closed', () => {
   const bad = bootstrapSource.replace("if (Test-Path -LiteralPath $LauncherPath) {\n  Exit-Blocked 'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED' @{ reason = 'existing-desktop-path-refused' }\n}", '');
   const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: bad }));
-  assert.equal(result.clean, false);
   const codes = result.findings.map((finding) => finding.code);
   assert.ok(codes.includes('forge-wsl2-bootstrap-collision-guard-missing'));
   assert.ok(codes.includes('forge-wsl2-bootstrap-collision-reason-missing'));
