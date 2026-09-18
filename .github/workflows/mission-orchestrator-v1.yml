@@ -45,6 +45,7 @@ jobs:
           node --check stephanos-server/services/missionOrchestratorControlService.js
           node --check stephanos-server/services/missionOrchestratorWorkerService.js
           node --check stephanos-server/services/missionOrchestratorWorkerConsumer.js
+          node --check stephanos-server/services/missionOrchestratorStephanosNativeExecutor.js
       - name: Parse Windows worker scripts
         shell: pwsh
         run: |
@@ -59,7 +60,7 @@ jobs:
       - name: Run Mission Orchestrator lifecycle and worker planner tests
         run: node --test shared/agents/missionOrchestrator.test.mjs shared/agents/missionOrchestratorWorker.test.mjs shared/agents/missionOrchestratorWorkerResult.test.mjs
       - name: Run Mission Orchestrator durable runtime and worker queue tests
-        run: node --test stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorControlService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js stephanos-server/services/missionOrchestratorWorkerConsumer.test.js stephanos-server/services/missionOrchestratorGitHubInspection.test.js
+        run: node --test stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorControlService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js stephanos-server/services/missionOrchestratorWorkerConsumer.test.js stephanos-server/services/missionOrchestratorGitHubInspection.test.js stephanos-server/services/missionOrchestratorStephanosNativeExecutor.test.js
       - name: Run persistent worker and OC1 provider adapter tests
         run: node --test scripts/mission-orchestrator-worker.test.mjs integrations/openclaw/stephanos-builder-provider/oc1-repository-scout.test.mjs integrations/openclaw/stephanos-builder-provider/oc1-gateway-provider.test.mjs
       - name: Run signed authorization and executor regressions
