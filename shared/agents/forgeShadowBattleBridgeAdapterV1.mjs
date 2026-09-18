@@ -57,6 +57,7 @@ export const validateForgeShadowBattleBridgeCommand = core.validateForgeShadowBa
 export const FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1 = Object.freeze([
   'forge-wsl2-enable-authorized-20260905-v1',
   'forge-wsl2-postreboot-authorized-20260905-v1',
+  'forge-wsl2-visible-elevation-authorized-20260916-v1',
 ]);
 
 const AUTHORIZED_REQUEST_IDS = new Set(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1);
