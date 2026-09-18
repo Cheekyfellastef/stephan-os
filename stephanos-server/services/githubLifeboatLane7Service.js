@@ -9,9 +9,7 @@ import {
   readExecutionReceiptHistory,
 } from '../../shared/agents/executionReceiptV1.mjs';
 import { gateSourceWorkerCompletionV1 } from '../../shared/agents/sourceArtifactEscrowCompletionGateV1.mjs';
-import {
-  MISSION_CONTROLLER_ROUTE,
-} from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
+import { MISSION_CONTROLLER_ROUTE } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 import {
   createSharedWorkspaceProofRecord,
   validateSharedWorkspaceRecord,
@@ -45,7 +43,7 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,160}$/;
 const SAFE_PATH = /^(?!\/)(?![A-Za-z]:\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._@+ -]+(?:\/[A-Za-z0-9._@+ -]+)*$/;
 const MAX_WINDOW_MS = 5 * 60 * 1000;
 const RECEIPT_WINDOW_MS = 4 * 60 * 1000;
-const MAX_FOCUSED_FILES = 12;
+const MAX_FOCUSED_SCOPES = 12;
 const MAX_TESTS = 12;
 
 function text(value, fallback = '') {
@@ -57,19 +55,35 @@ function sha256(value) {
   return createHash('sha256').update(String(value), 'utf8').digest('hex');
 }
 
-function safePath(value) {
-  const path = text(value).replace(/\\/g, '/').replace(/^\.\/+/, '');
-  return SAFE_PATH.test(path)
-    && !/(^|\/)(?:\.git|node_modules|runtime|runtime-data|data|tmp)(?:\/|$)|(^|\/)\.env(?:\.|$)|\.(?:pem|pfx|key)$/i.test(path)
-    ? path
-    : '';
+function pathForbidden(path) {
+  return /(^|\/)(?:\.git|node_modules|runtime|runtime-data|data|tmp)(?:\/|$)|(^|\/)\.env(?:\.|$)|\.(?:pem|pfx|key)$/i.test(path);
 }
 
-function pathAllowed(path, allowedFiles = []) {
-  return allowedFiles.some((allowed) => {
-    const normalized = safePath(allowed);
-    if (!normalized) return false;
-    return normalized.endsWith('/') ? path.startsWith(normalized) : path === normalized;
+function safePath(value) {
+  const path = text(value).replace(/\\/g, '/').replace(/^\.\/+/, '');
+  return SAFE_PATH.test(path) && !pathForbidden(path) ? path : '';
+}
+
+function safeScope(value) {
+  const raw = text(value).replace(/\\/g, '/').replace(/^\.\/+/, '');
+  if (raw.endsWith('/**')) {
+    const base = safePath(raw.slice(0, -3));
+    return base ? `${base}/**` : '';
+  }
+  if (raw.endsWith('/')) {
+    const base = safePath(raw.slice(0, -1));
+    return base ? `${base}/` : '';
+  }
+  return safePath(raw);
+}
+
+function pathAllowed(path, allowedScopes = []) {
+  return allowedScopes.some((allowed) => {
+    const scope = safeScope(allowed);
+    if (!scope) return false;
+    if (scope.endsWith('/**')) return path === scope.slice(0, -3) || path.startsWith(scope.slice(0, -2));
+    if (scope.endsWith('/')) return path.startsWith(scope);
+    return path === scope;
   });
 }
 
@@ -143,6 +157,15 @@ export function createFixedGitHubLifeboatLane7Adapter(options = {}) {
       let bytes;
       try { bytes = Buffer.from(String(payload.content || '').replace(/\s+/g, ''), 'base64'); } catch { return Object.freeze({ ok: false, reason: 'LANE7_FILE_DECODE_FAILED' }); }
       return Object.freeze({ ok: true, blobSha: text(payload.sha).toLowerCase(), sha256: createHash('sha256').update(bytes).digest('hex') });
+    },
+    readCommitChangedFiles(parentHead, resultCommit) {
+      const payload = json(api([`repos/${GITHUB_LIFEBOAT_LANE7_REPOSITORY}/compare/${parentHead}...${resultCommit}`]));
+      if (!payload || text(payload.status).toLowerCase() !== 'ahead' || Number(payload.ahead_by) !== 1 || Number(payload.total_commits) !== 1 || !Array.isArray(payload.files)) {
+        return Object.freeze({ ok: false, reason: 'LANE7_COMMIT_DIFF_READ_FAILED' });
+      }
+      const files = payload.files.map((file) => safePath(file?.filename)).filter(Boolean).sort();
+      if (files.length !== payload.files.length || new Set(files).size !== files.length) return Object.freeze({ ok: false, reason: 'LANE7_COMMIT_DIFF_INVALID' });
+      return Object.freeze({ ok: true, files: Object.freeze(files) });
     },
   });
 }
@@ -247,19 +270,29 @@ function projectedHandoff(entry, handoff, sourceHead) {
   const item = entry.item || {};
   const action = item.payload || {};
   const grant = item.actionGrant || {};
-  const allowedFiles = (Array.isArray(action.allowedFiles) ? action.allowedFiles : []).map(safePath).filter(Boolean);
+  const allowedFiles = (Array.isArray(action.allowedFiles) ? action.allowedFiles : []).map(safeScope).filter(Boolean);
   const requiredTests = Array.isArray(action.requiredTests) ? action.requiredTests.map(text).filter(Boolean) : [];
-  if (!allowedFiles.length || allowedFiles.length > MAX_FOCUSED_FILES || requiredTests.length > MAX_TESTS) return Object.freeze({ held: true, reason: 'LANE7_FOCUSED_REPAIR_SCOPE_TOO_WIDE' });
+  const missionId = text(item.missionId).toLowerCase();
+  const actionId = text(item.actionId).toLowerCase();
+  const repository = text(grant.repository || action.repository);
+  const headSha = text(grant.headSha || grant.sourceRevision).toLowerCase();
+  const sourceRevision = text(grant.sourceRevision || sourceHead).toLowerCase();
+  const identityValid = item.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+    && text(item.adapter).toLowerCase() === 'chatgpt-github'
+    && text(action.adapter).toLowerCase() === 'chatgpt-github'
+    && SAFE_ID.test(missionId) && SAFE_ID.test(actionId)
+    && text(action.missionId).toLowerCase() === missionId && text(action.actionId).toLowerCase() === actionId
+    && repository === GITHUB_LIFEBOAT_LANE7_REPOSITORY && headSha === sourceHead && sourceRevision === sourceHead;
+  if (!identityValid || !allowedFiles.length || allowedFiles.length > MAX_FOCUSED_SCOPES || requiredTests.length > MAX_TESTS) {
+    return Object.freeze({ held: true, reason: identityValid ? 'LANE7_FOCUSED_REPAIR_SCOPE_TOO_WIDE' : 'LANE7_HANDOFF_IDENTITY_INVALID' });
+  }
   return Object.freeze({
     held: false,
-    missionId: text(item.missionId).toLowerCase(),
-    actionId: text(item.actionId).toLowerCase(),
-    repository: text(grant.repository || action.repository, GITHUB_LIFEBOAT_LANE7_REPOSITORY),
+    missionId, actionId, repository,
     issueNumber: Number(grant.issueNumber) || null,
     prNumber: Number(grant.prNumber) || null,
     branch: text(grant.branch || action.branch),
-    headSha: text(grant.headSha || grant.sourceRevision).toLowerCase(),
-    sourceRevision: text(grant.sourceRevision || sourceHead).toLowerCase(),
+    headSha, sourceRevision,
     allowedFiles: Object.freeze(allowedFiles),
     requiredTests: Object.freeze(requiredTests),
     requiredEvidence: Object.freeze((Array.isArray(action.requiredEvidence) ? action.requiredEvidence : []).map(text).filter(Boolean).slice(0, 16)),
@@ -323,8 +356,28 @@ async function appendReceipt(previous, state, phase, paths, now, options, additi
   return receipt;
 }
 
-async function beginClaim(inbox, paths, now, options) {
+async function validatedClaimTarget(inbox, queue, sourceHead, paths, now, options) {
   if (inbox.state !== 'CLAIMED') return null;
+  const requested = inbox.envelope.claim;
+  const matches = queue.filter((entry) => text(entry.adapter).toLowerCase() === 'chatgpt-github'
+    && text(entry?.item?.actionId).toLowerCase() === text(requested.actionId).toLowerCase()
+    && text(entry?.item?.missionId).toLowerCase() === text(requested.missionId).toLowerCase());
+  if (matches.length !== 1) return Object.freeze({ ok: false, reason: 'LANE7_CLAIM_NOT_EXACTLY_ONE_PENDING_HANDOFF' });
+  const entry = matches[0];
+  const handoff = await readPersistedHandoff(entry, paths, now.getTime(), options);
+  if (!handoff) return Object.freeze({ ok: false, reason: 'LANE7_CLAIM_AUTHORITATIVE_HANDOFF_UNPROVEN' });
+  const projected = projectedHandoff(entry, handoff, sourceHead);
+  if (projected.held) return Object.freeze({ ok: false, reason: projected.reason });
+  if (projected.actionId !== text(requested.actionId).toLowerCase() || projected.missionId !== text(requested.missionId).toLowerCase()) {
+    return Object.freeze({ ok: false, reason: 'LANE7_CLAIM_PROJECTED_HANDOFF_MISMATCH' });
+  }
+  return Object.freeze({ ok: true, entry, projected });
+}
+
+async function beginClaim(inbox, queue, sourceHead, paths, now, options) {
+  if (inbox.state !== 'CLAIMED') return null;
+  const target = await validatedClaimTarget(inbox, queue, sourceHead, paths, now, options);
+  if (!target?.ok) return target;
   const claimRequest = inbox.envelope.claim;
   const queueRoot = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   const claimFn = options.claimNext || claimNextMissionWorkerItem;
@@ -371,17 +424,25 @@ async function verifyPublishedEscrow(escrow, claim, adapter, options) {
   if (text(escrow.canonicalBranch) !== branch || text(escrow.exactParentHead).toLowerCase() !== parentHead) return Object.freeze({ ok: false, reason: 'LANE7_ESCROW_PARENT_MISMATCH' });
   if (text(escrow.artifactRef) !== `https://github.com/${GITHUB_LIFEBOAT_LANE7_REPOSITORY}/commit/${resultCommit}`) return Object.freeze({ ok: false, reason: 'LANE7_ESCROW_ARTIFACT_REF_INVALID' });
   if (text(escrow.completeArtifactSha256).toLowerCase() !== escrowDigest(escrow)) return Object.freeze({ ok: false, reason: 'LANE7_ESCROW_DIGEST_INVALID' });
-  const [commit, parent, branchHead] = await Promise.all([adapter.readGitCommit(resultCommit), adapter.readGitCommit(parentHead), adapter.readBranchHead(branch)]);
-  if (!commit.ok || !parent.ok || !branchHead.ok || branchHead.sha !== resultCommit || commit.parents[0] !== parentHead || commit.treeSha !== text(escrow.exactResultTree).toLowerCase() || parent.treeSha !== text(escrow.exactParentTree).toLowerCase()) return Object.freeze({ ok: false, reason: 'LANE7_ESCROW_GITHUB_IDENTITY_UNPROVEN' });
+  const [commit, parent, branchHead, diff] = await Promise.all([
+    adapter.readGitCommit(resultCommit), adapter.readGitCommit(parentHead), adapter.readBranchHead(branch), adapter.readCommitChangedFiles(parentHead, resultCommit),
+  ]);
+  if (!commit.ok || !parent.ok || !branchHead.ok || !diff.ok || branchHead.sha !== resultCommit || commit.parents[0] !== parentHead || commit.treeSha !== text(escrow.exactResultTree).toLowerCase() || parent.treeSha !== text(escrow.exactParentTree).toLowerCase()) {
+    return Object.freeze({ ok: false, reason: 'LANE7_ESCROW_GITHUB_IDENTITY_UNPROVEN' });
+  }
   const files = Array.isArray(escrow.changedFiles) ? escrow.changedFiles : [];
-  if (!files.length || files.length > MAX_FOCUSED_FILES) return Object.freeze({ ok: false, reason: 'LANE7_ESCROW_CHANGED_FILES_INVALID' });
+  if (!files.length || files.length > MAX_FOCUSED_SCOPES) return Object.freeze({ ok: false, reason: 'LANE7_ESCROW_CHANGED_FILES_INVALID' });
+  const escrowPaths = files.map((file) => safePath(file.path)).filter(Boolean).sort();
+  if (escrowPaths.length !== files.length || JSON.stringify(escrowPaths) !== JSON.stringify([...diff.files].sort())) {
+    return Object.freeze({ ok: false, reason: 'LANE7_ESCROW_COMPLETE_DIFF_MISMATCH' });
+  }
   for (const file of files) {
     const path = safePath(file.path);
     if (!path || !pathAllowed(path, action.allowedFiles || [])) return Object.freeze({ ok: false, reason: `LANE7_ESCROW_SCOPE_VIOLATION:${path || 'invalid'}` });
     const [before, after] = await Promise.all([adapter.readFileAt(path, parentHead), adapter.readFileAt(path, resultCommit)]);
     if (!before.ok || !after.ok || before.blobSha !== text(file.beforeBlobSha).toLowerCase() || after.blobSha !== text(file.afterBlobSha).toLowerCase() || after.sha256 !== text(file.sha256).toLowerCase()) return Object.freeze({ ok: false, reason: `LANE7_ESCROW_FILE_IDENTITY_UNPROVEN:${path}` });
   }
-  return Object.freeze({ ok: true, branch, parentHead, resultCommit });
+  return Object.freeze({ ok: true, branch, parentHead, resultCommit, changedFiles: Object.freeze(escrowPaths) });
 }
 
 function validResultReceipt(receipt) {
@@ -469,7 +530,7 @@ export async function runGitHubLifeboatLane7(options = {}) {
   let claim = null;
   let completion = null;
   try {
-    claim = await beginClaim(inbox, paths, now, options);
+    claim = await beginClaim(inbox, queue, sourceHead, paths, now, options);
     completion = await applyCompletion(inbox, paths, now, adapter, options);
   } catch (error) {
     return Object.freeze({ schemaVersion: GITHUB_LIFEBOAT_LANE7_SCHEMA, ok: false, sourceHead, inbox, capacity, claim, completion, blocker: text(error?.message, 'LANE7_EXECUTION_FAILED'), ...authorityBoundary(), finalVerdict: 'GITHUB_LIFEBOAT_LANE7_BLOCKED' });
@@ -479,12 +540,7 @@ export async function runGitHubLifeboatLane7(options = {}) {
   return Object.freeze({
     schemaVersion: GITHUB_LIFEBOAT_LANE7_SCHEMA,
     ok: inbox.ok && outbox.ok,
-    sourceHead,
-    inbox,
-    capacity,
-    claim,
-    completion,
-    outbox,
+    sourceHead, inbox, capacity, claim, completion, outbox,
     ...authorityBoundary(),
     finalVerdict: completion?.ok && completion?.result?.success
       ? 'GITHUB_LIFEBOAT_LANE7_SOURCE_CHANGED_AND_TESTED'
