@@ -22,6 +22,11 @@ export const NON_MATERIAL_CONTROLLER_SIGNALS = Object.freeze([
   'WORK_CLASSIFIED',
 ]);
 
+const REPROOF_REASONS = new Set([
+  'protected-main-moved-reprove-required',
+  'source-head-moved-reprove-required',
+]);
+
 function normalizeCandidate(candidate = {}) {
   return Object.freeze({
     goalId: safeId(candidate.goalId),
@@ -53,10 +58,11 @@ export function projectStephanosGoalContinuation(input = {}) {
   let mayRequestCapacityRefill = false;
 
   if (reasons.length > 0) {
-    state = evaluation.mustReprove
+    const exclusivelyReproof = evaluation.mustReprove && reasons.every((reason) => REPROOF_REASONS.has(reason));
+    state = exclusivelyReproof
       ? GOAL_BUILDING_CONTINUATION_STATES.REPROVE_BEFORE_CONTINUE
       : GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD;
-    mayRequestCapacityRefill = evaluation.mustReprove;
+    mayRequestCapacityRefill = exclusivelyReproof;
   } else if (evaluation.state === GOAL_BUILDING_RESUME_STATES.RESUMABLE) {
     if (candidate.schedulerEligible && candidate.qualifiedProviderAvailable && !candidate.operatorGate) {
       state = GOAL_BUILDING_CONTINUATION_STATES.AUTO_CONTINUE_ELIGIBLE;
