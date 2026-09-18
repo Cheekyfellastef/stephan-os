@@ -1,5 +1,6 @@
 import express from 'express';
 
+import { inspectMediaAssetBytes } from '../../shared/media/mediaAssetInspectionV1.mjs';
 import {
   getVrAtlasMediaManifest,
   resolveVrAtlasMediaAsset,
@@ -19,6 +20,18 @@ router.get('/vr-atlas/:assetId/:variant', async (req, res) => {
     return;
   }
 
+  const inspection = inspectMediaAssetBytes(result.bytes, result.extension);
+  if (!inspection.ok || inspection.width !== result.width || inspection.height !== result.height) {
+    res.status(422).json({
+      ok: false,
+      reason: 'MEDIA_ASSET_BYTE_IDENTITY_FAILED',
+      observedFormat: inspection.format || '',
+      observedWidth: inspection.width || 0,
+      observedHeight: inspection.height || 0,
+    });
+    return;
+  }
+
   res.set({
     'Content-Type': result.contentType,
     'Content-Length': String(result.byteSize),
@@ -28,11 +41,12 @@ router.get('/vr-atlas/:assetId/:variant', async (req, res) => {
     'X-Stephanos-Media-Asset': result.assetId,
     'X-Stephanos-Media-Variant': result.variant,
     'X-Stephanos-Media-Sha256': result.sha256,
-    'X-Stephanos-Media-Width': String(result.width),
-    'X-Stephanos-Media-Height': String(result.height),
+    'X-Stephanos-Media-Width': String(inspection.width),
+    'X-Stephanos-Media-Height': String(inspection.height),
     'X-Stephanos-Media-Bytes': String(result.byteSize),
     'X-Stephanos-Media-Source': result.source,
     'X-Stephanos-Media-Quality': result.qualityClass,
+    'X-Stephanos-Media-Byte-Identity': 'verified',
   });
   res.status(200).send(result.bytes);
 });
