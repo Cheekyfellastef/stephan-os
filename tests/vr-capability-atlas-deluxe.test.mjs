@@ -14,7 +14,7 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function jpegDimensions(filePath) {
-  const data = fs.readFileSync(filePath);
+  const data = Buffer.from(fs.readFileSync(filePath, 'ascii').replace(/\s+/g, ''), 'base64');
   assert.equal(data[0], 0xff);
   assert.equal(data[1], 0xd8);
   let offset = 2;

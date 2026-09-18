@@ -11,6 +11,8 @@ const fallbackMethods=[['Capability Route Planner','active','Choose native, fram
 
 let sources=[...fallbackSources],methods=[...fallbackMethods],workspace=null,active='all';
 let rankedConcepts=[],selectedConceptId='',selectionPinnedByUser=false,conceptAssetsPrewarmed=false;
+let thumbnailAssetsLoading=false;
+const assetUrls=new Map(),assetPromises=new Map(),selectedAssetRequests=new Set();
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const sourceCount=$('#sourceCount'),techniqueCount=$('#techniqueCount'),targetCount=$('#targetCount'),researchTitle=$('#researchTitle'),badge=$('#badge'),liveMeta=$('#liveMeta'),search=$('#search'),refresh=$('#refresh');
 const lightbox=$('#conceptLightbox');
@@ -49,7 +51,10 @@ function researchItems(){
 }
 function picture(c,{lightboxMode=false}={}){
   const sizes=lightboxMode?'100vw':'(min-width: 1840px) 1796px, (min-width: 900px) calc(100vw - 44px), calc(100vw - 28px)';
-  return `<picture><source media="(min-width:1800px)" srcset="${c.assets.hero}"><source media="(min-width:900px)" srcset="${c.assets.panel} 1x, ${c.assets.hero} 2x"><img src="${c.assets.panel}" srcset="${c.assets.thumb} 640w, ${c.assets.panel} 1920w, ${c.assets.hero} 3840w" sizes="${sizes}" width="3840" height="2160" alt="${esc(c.alt)}" decoding="async" fetchpriority="high"></picture>`;
+  const thumb=assetUrls.get(c.assets.thumb),panel=assetUrls.get(c.assets.panel),hero=assetUrls.get(c.assets.hero);
+  if(!panel)return `<span class="concept-placeholder" role="img" aria-label="${esc(c.alt)}"><span>Preparing full-resolution concept…</span></span>`;
+  const candidates=[[thumb,640],[panel,1920],[hero,3840]].filter(([url])=>url).map(([url,width])=>`${url} ${width}w`).join(', ');
+  return `<picture>${hero?`<source media="(min-width:1800px)" srcset="${hero}">`:''}${hero?`<source media="(min-width:900px)" srcset="${panel} 1x, ${hero} 2x">`:''}<img src="${panel}" srcset="${candidates}" sizes="${sizes}" width="3840" height="2160" alt="${esc(c.alt)}" decoding="async" fetchpriority="high"></picture>`;
 }
 function currentConcept(){return rankedConcepts.find(c=>c.id===selectedConceptId)||rankedConcepts[0];}
 function supportCopy(concept){return concept.hits.length?concept.hits.map(esc).join(' · '):'No strong canonical match yet — retained as a bounded future direction.';}
@@ -59,11 +64,13 @@ function renderConcepts(){
   const support=supportCopy(selected);
   $('#conceptMeta').textContent=`${rankedConcepts.length} views ranked against ${sources.length} canonical sources, ${methods.length} techniques${Array.isArray(workspace?.targets)?` and ${workspace.targets.length} mission targets`:''}. ${selectionPinnedByUser?'Your selected scene is preserved.':'The strongest current match is selected.'}`;
   $('#conceptStage').innerHTML=`<article class="concept-feature"><button id="conceptHeroButton" class="concept-feature-media" type="button" aria-label="Open ${esc(selected.title)} in a lightbox">${picture(selected)}<span class="hero-shade"></span><span class="truth-ribbon">CONCEPT PROJECTION / NOT RUNTIME PROOF</span><span class="rank-pill">LIVE RANK #${selected.rank} · RESEARCH FIT ${selected.fit}%</span><span class="zoom-hint">Open lightbox ↗</span></button><div class="concept-feature-copy"><div><div class="kicker">Featured research match</div><h3>${esc(selected.title)}</h3><p>${esc(selected.description)}</p></div><div class="concept-evidence"><b>${selected.score?'CURRENT CANONICAL SUPPORT':'FUTURE DIRECTION'}</b><span>${support}</span><div class="concept-tags">${selected.tags.slice(0,7).map(tag=>`<span class="concept-tag">${esc(tag)}</span>`).join('')}</div></div><div class="feature-actions"><button class="control-button" type="button" data-concept-step="-1" aria-label="Previous concept">← Previous</button><button id="openLightbox" class="control-button primary" type="button">View large</button><button class="control-button" type="button" data-concept-step="1" aria-label="Next concept">Next →</button></div></div></article>`;
-  $('#conceptThumbnails').innerHTML=rankedConcepts.map(c=>`<button class="concept-thumbnail ${c.id===selected.id?'selected':''}" type="button" role="listitem" data-concept-id="${c.id}" aria-pressed="${c.id===selected.id}" aria-label="Show ${esc(c.title)}"><span class="thumbnail-media"><img src="${c.assets.thumb}" width="640" height="360" loading="lazy" decoding="async" alt=""><span class="thumbnail-rank">#${c.rank}</span></span><span class="thumbnail-copy"><b>${esc(c.title)}</b><small>${c.fit}% research fit</small></span></button>`).join('');
+  $('#conceptThumbnails').innerHTML=rankedConcepts.map(c=>{const thumb=assetUrls.get(c.assets.thumb);return `<button class="concept-thumbnail ${c.id===selected.id?'selected':''}" type="button" role="listitem" data-concept-id="${c.id}" aria-pressed="${c.id===selected.id}" aria-label="Show ${esc(c.title)}"><span class="thumbnail-media">${thumb?`<img src="${thumb}" width="640" height="360" loading="lazy" decoding="async" alt="">`:'<span class="thumbnail-placeholder">Loading view…</span>'}<span class="thumbnail-rank">#${c.rank}</span></span><span class="thumbnail-copy"><b>${esc(c.title)}</b><small>${c.fit}% research fit</small></span></button>`;}).join('');
   $$('[data-concept-id]').forEach(button=>button.addEventListener('click',()=>selectConcept(button.dataset.conceptId,true)));
   $$('[data-concept-step]').forEach(button=>button.addEventListener('click',()=>navigateConcept(Number(button.dataset.conceptStep))));
   $('#conceptHeroButton').addEventListener('click',openLightbox);
   $('#openLightbox').addEventListener('click',openLightbox);
+  ensureSelectedAssets(selected);
+  ensureThumbnailAssets();
   prewarmConceptPanels();
 }
 function rerankConcepts(){
@@ -83,10 +90,40 @@ function navigateConcept(direction){
   const next=(index+direction+rankedConcepts.length)%rankedConcepts.length;
   selectConcept(rankedConcepts[next].id,true);
 }
+async function resolveAsset(path){
+  if(assetUrls.has(path))return assetUrls.get(path);
+  if(assetPromises.has(path))return assetPromises.get(path);
+  const promise=(async()=>{
+    const response=await fetch(path,{cache:'force-cache'});
+    if(!response.ok)throw new Error(`HTTP ${response.status} for ${path}`);
+    const encoded=(await response.text()).replace(/\s+/g,'');
+    const binary=atob(encoded),bytes=new Uint8Array(binary.length);
+    for(let index=0;index<binary.length;index+=1)bytes[index]=binary.charCodeAt(index);
+    const url=URL.createObjectURL(new Blob([bytes],{type:'image/jpeg'}));
+    assetUrls.set(path,url);
+    return url;
+  })().catch(error=>{console.warn('Concept asset unavailable',path,error);return '';}).finally(()=>assetPromises.delete(path));
+  assetPromises.set(path,promise);
+  return promise;
+}
+function ensureSelectedAssets(concept){
+  const missing=[concept.assets.panel,concept.assets.hero].filter(path=>!assetUrls.has(path));
+  if(!missing.length||selectedAssetRequests.has(concept.id))return;
+  selectedAssetRequests.add(concept.id);
+  Promise.all(missing.map(resolveAsset)).finally(()=>{
+    selectedAssetRequests.delete(concept.id);
+    if(selectedConceptId===concept.id){renderConcepts();if(lightbox.open)populateLightbox();}
+  });
+}
+function ensureThumbnailAssets(){
+  if(thumbnailAssetsLoading||CONCEPT_CATALOG.every(concept=>assetUrls.has(concept.assets.thumb)))return;
+  thumbnailAssetsLoading=true;
+  Promise.all(CONCEPT_CATALOG.map(concept=>resolveAsset(concept.assets.thumb))).finally(()=>{thumbnailAssetsLoading=false;renderConcepts();});
+}
 function prewarmConceptPanels(){
   if(conceptAssetsPrewarmed)return;
   conceptAssetsPrewarmed=true;
-  const load=()=>rankedConcepts.forEach(c=>{const image=new Image();image.src=c.assets.panel;});
+  const load=()=>Promise.all(CONCEPT_CATALOG.map(concept=>resolveAsset(concept.assets.panel)));
   if('requestIdleCallback'in window)window.requestIdleCallback(load,{timeout:1800});else window.setTimeout(load,250);
 }
 function populateLightbox(){
