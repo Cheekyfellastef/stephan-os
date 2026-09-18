@@ -362,7 +362,7 @@ async function processAgentClaim(adapter, options, execute) {
           phase: execution.success === true ? 'worker-result-validated' : 'worker-result-blocked',
           timestampUtc: execution.completedAt || '',
           blocker: execution.success === true ? '' : (execution.error || 'MISSION_WORKER_EXECUTION_BLOCKED'),
-          proofRefs: execution.evidenceReceipts || executionReceipt.proofRefs,
+          proofRefs: execution.proofRefs || executionReceipt.proofRefs,
           expectedNextAction: execution.success === true
             ? 'Release/refill may consume this terminal receipt after canonical completion gates pass.'
             : 'Surface blocker and keep mutation authority closed until a new bounded execution is admitted.',
