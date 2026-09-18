@@ -136,7 +136,7 @@ test('projection preserves only the ordinary canonical command envelope', () => 
   assert.equal(projected.command.expectedHead, HEAD);
 });
 
-test('read operation verifies committed probe bytes and inspects actual shortcut without mutation', async () => {
+test('read operation verifies canonical committed probe identity and inspects actual shortcut without mutation', async () => {
   const harness = spawnHarness();
   const result = await executeStarfieldVrBattleBridgeCommand(command(), {
     platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: harness.spawnSyncFn,
@@ -148,7 +148,10 @@ test('read operation verifies committed probe bytes and inspects actual shortcut
   assert.equal(harness.calls.length, 5);
   assert.deepEqual(harness.calls[0].args, ['rev-parse', 'HEAD']);
   assert.deepEqual(harness.calls[1].args, ['rev-parse', `${HEAD}:scripts/starfield-vr-delivery-truth-probe.mjs`]);
-  assert.deepEqual(harness.calls[2].args.slice(0, 3), ['hash-object', '--no-filters', '--']);
+  assert.deepEqual(harness.calls[2].args.slice(0, 3), [
+    'hash-object', '--path=scripts/starfield-vr-delivery-truth-probe.mjs', '--',
+  ]);
+  assert.equal(harness.calls[2].args.includes('--no-filters'), false);
   assert.equal(harness.calls[3].executable, NODE);
   assert.equal(harness.calls[4].executable, POWERSHELL);
   assert.equal(harness.calls[4].args.includes('-Command'), true);
@@ -180,6 +183,12 @@ test('install operation verifies current protected main and both scripts before 
   assert.equal(result.finalVerdict, 'STARFIELD_VR_SHORTCUT_INSTALL_PROVEN');
   assert.equal(harness.calls.length, 9);
   assert.deepEqual(harness.calls[1].args, ['ls-remote', 'origin', 'refs/heads/main']);
+  assert.deepEqual(harness.calls[3].args.slice(0, 3), [
+    'hash-object', '--path=scripts/windows/install-starfield-vr-desktop-shortcut.ps1', '--',
+  ]);
+  assert.deepEqual(harness.calls[5].args.slice(0, 3), [
+    'hash-object', '--path=scripts/starfield-vr-delivery-truth-probe.mjs', '--',
+  ]);
   const firstPowerShellIndex = harness.calls.findIndex((call) => /powershell\.exe$/i.test(call.executable));
   assert.equal(firstPowerShellIndex, 6);
   assert.equal(harness.calls.slice(0, firstPowerShellIndex).every((call) => call.executable === 'git'), true);
