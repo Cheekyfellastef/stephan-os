@@ -6,8 +6,11 @@ import { tmpdir } from 'node:os';
 
 import {
   BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
+  FORGE_LIFEBOAT_WORKER_ID,
   MISSION_CONTROLLER_ROUTE,
   createBuildLaneCapacityStatusRecord,
+  forgeLifeboatAuthorityReceiptId,
+  forgeLifeboatProofRef,
   publishBuildLaneCapacityToSharedWorkspace,
   routeMissionControllerCapacity,
   validateBuildLaneCapacityReceipt,
@@ -15,6 +18,7 @@ import {
 
 const NOW = '2026-08-10T12:00:00.000Z';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
+const SOURCE_HEAD = 'a'.repeat(40);
 
 function mission(overrides = {}) {
   return {
@@ -64,6 +68,31 @@ function githubReceipt(overrides = {}) {
   };
 }
 
+function forgeReceipt(overrides = {}) {
+  return {
+    ...githubReceipt(),
+    receiptId: 'forge-builder-capacity-20260810t1159z',
+    route: MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
+    workerId: 'stephanos-forge-builder-01',
+    authorityReceiptIds: ['forge-m2-runtime-001', 'forge-m3-runtime-001'],
+    proofRefs: ['receipts/forge-builder/capacity.json'],
+    ...overrides,
+  };
+}
+
+function lifeboatReceipt(sourceHead = SOURCE_HEAD, overrides = {}) {
+  return {
+    ...forgeReceipt(),
+    receiptId: 'forge-lifeboat-capacity-20260810t1159z',
+    workerId: FORGE_LIFEBOAT_WORKER_ID,
+    queueDepth: 0,
+    p95StartLatencySeconds: 3,
+    authorityReceiptIds: [forgeLifeboatAuthorityReceiptId(sourceHead)],
+    proofRefs: [forgeLifeboatProofRef(sourceHead)],
+    ...overrides,
+  };
+}
+
 test('keeps an eligible implementation on Codex when fresh meter capacity covers it', () => {
   const result = routeMissionControllerCapacity({ nowUtc: NOW, mission: mission(), codexStatus: codexStatus() });
   assert.equal(result.route, MISSION_CONTROLLER_ROUTE.CODEX);
@@ -85,6 +114,55 @@ test('low Codex capacity routes an unowned source repair to a freshly proven Git
   assert.equal(result.selectedCapacityReceiptId, githubReceipt().receiptId);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('Lane 6 routes a source-only repair from the exact-head local lifeboat receipt without Forge sidecar M2/M3', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    forgeLaneReceipt: lifeboatReceipt(),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE);
+  assert.equal(result.adapter, 'foundry-forge');
+  assert.equal(result.workerId, FORGE_LIFEBOAT_WORKER_ID);
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.selectedCapacityReceiptId, lifeboatReceipt().receiptId);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('ordinary Forge capacity still cannot self-admit without the existing M2/M3 sidecar proof', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    forgeLaneReceipt: forgeReceipt(),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+});
+
+test('Lane 6 receipt is rejected when its authority or proof is bound to another source head', () => {
+  const otherHead = 'b'.repeat(40);
+  for (const receipt of [
+    lifeboatReceipt(otherHead),
+    lifeboatReceipt(SOURCE_HEAD, { authorityReceiptIds: ['forge-lifeboat-local-source-wrong'] }),
+    lifeboatReceipt(SOURCE_HEAD, { proofRefs: ['proof/forge-lifeboat-local-capacity-wrong.json'] }),
+  ]) {
+    const result = routeMissionControllerCapacity({
+      nowUtc: NOW,
+      sourceHead: SOURCE_HEAD,
+      mission: mission(),
+      codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+      forgeLaneReceipt: receipt,
+    });
+    assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+    assert.equal(result.dispatchAllowed, false);
+  }
 });
 
 test('missing or stale meter truth cannot be silently treated as Codex capacity', () => {
@@ -119,6 +197,23 @@ test('Windows-bound work is not sent to a GitHub-only construction lane', () => 
     githubLaneReceipt: githubReceipt({ supportedTaskClasses: ['WINDOWS_RUNTIME_PROOF'] }),
   });
   assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.ok(result.blockers.includes('proven-windows-capable-fallback-unavailable'));
+});
+
+test('Windows/runtime work is never sent through the simple Lane 6 lifeboat', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission({
+      allowedFiles: ['scripts/windows/repair-worker.ps1'],
+      requiredEvidence: ['Windows runtime proof'],
+    }),
+    task: { taskClass: 'WINDOWS_RUNTIME_PROOF', windowsBound: true },
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    forgeLaneReceipt: lifeboatReceipt(SOURCE_HEAD, { supportedTaskClasses: ['WINDOWS_RUNTIME_PROOF'] }),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
   assert.ok(result.blockers.includes('proven-windows-capable-fallback-unavailable'));
 });
 
