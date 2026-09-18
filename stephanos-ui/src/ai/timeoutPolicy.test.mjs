@@ -18,7 +18,7 @@ test('resolveUiRequestTimeoutPolicy keeps frontend baseline timeout when no prov
   assert.equal(policy.timeoutOverrideApplied, false);
 });
 
-test('resolveUiRequestTimeoutPolicy expands UI timeout when ollama per-model override exceeds baseline', () => {
+test('resolveUiRequestTimeoutPolicy expands UI timeout across the full ollama warmup retry bound for a per-model override', () => {
   const policy = resolveUiRequestTimeoutPolicy({
     runtimeConfig: { timeoutMs: 30000, timeoutSource: 'default:30000ms' },
     provider: 'ollama',
@@ -34,15 +34,15 @@ test('resolveUiRequestTimeoutPolicy expands UI timeout when ollama per-model ove
     },
   });
 
-  assert.equal(policy.backendRouteTimeoutMs, 120000);
+  assert.equal(policy.backendRouteTimeoutMs, 270000);
   assert.equal(policy.providerTimeoutMs, 120000);
   assert.equal(policy.modelTimeoutMs, 120000);
-  assert.equal(policy.uiRequestTimeoutMs, 121500);
+  assert.equal(policy.uiRequestTimeoutMs, 271500);
   assert.equal(policy.timeoutOverrideApplied, true);
-  assert.match(policy.timeoutPolicySource, /provider:ollama:model-override:qwen:32b:ui-grace/);
+  assert.match(policy.timeoutPolicySource, /provider:ollama:model-override:qwen:32b:warmup-retry-bound:ui-grace/);
 });
 
-test('resolveUiRequestTimeoutPolicy keeps an explicit per-model override authoritative', () => {
+test('resolveUiRequestTimeoutPolicy keeps an explicit per-model override authoritative while covering its retry window', () => {
   const policy = resolveUiRequestTimeoutPolicy({
     runtimeConfig: { timeoutMs: 30000, timeoutSource: 'default:30000ms' },
     provider: 'ollama',
@@ -60,11 +60,12 @@ test('resolveUiRequestTimeoutPolicy keeps an explicit per-model override authori
 
   assert.equal(policy.providerTimeoutMs, 12000);
   assert.equal(policy.modelTimeoutMs, 12000);
-  assert.equal(policy.uiRequestTimeoutMs, 13500);
-  assert.equal(policy.timeoutPolicySource, 'provider:ollama:model-override:qwen:14b:ui-grace');
+  assert.equal(policy.backendRouteTimeoutMs, 54000);
+  assert.equal(policy.uiRequestTimeoutMs, 55500);
+  assert.equal(policy.timeoutPolicySource, 'provider:ollama:model-override:qwen:14b:warmup-retry-bound:ui-grace');
 });
 
-test('resolveUiRequestTimeoutPolicy derives heavy-model timeout from backend-aligned provider truth when runtime timeout is missing', () => {
+test('resolveUiRequestTimeoutPolicy derives heavy-model timeout and full warmup retry bound when runtime timeout is missing', () => {
   const policy = resolveUiRequestTimeoutPolicy({
     runtimeConfig: {},
     provider: 'ollama',
@@ -78,8 +79,9 @@ test('resolveUiRequestTimeoutPolicy derives heavy-model timeout from backend-ali
   assert.equal(policy.uiTimeoutBaselineMs, 30000);
   assert.equal(policy.providerTimeoutMs, 75000);
   assert.equal(policy.modelTimeoutMs, 75000);
-  assert.equal(policy.uiRequestTimeoutMs, 76500);
-  assert.equal(policy.timeoutPolicySource, 'provider:ollama:model-baseline:qwen:14b:ui-grace');
+  assert.equal(policy.backendRouteTimeoutMs, 180000);
+  assert.equal(policy.uiRequestTimeoutMs, 181500);
+  assert.equal(policy.timeoutPolicySource, 'provider:ollama:model-baseline:qwen:14b:warmup-retry-bound:ui-grace');
 });
 
 test('resolveUiRequestTimeoutPolicy prefers canonical runtime timeout truth over stale 30000 baseline', () => {
@@ -140,7 +142,7 @@ test('regression: avoid ui_request_timeout_ms at 30000ms when runtime ollama tim
   assert.equal(policy.uiRequestTimeoutMs, 121500);
 });
 
-test('regression: lightweight ollama keeps configured provider timeout over stale frontend fallback', () => {
+test('regression: lightweight ollama covers the possible backend warmup retry instead of the stale frontend fallback', () => {
   const policy = resolveUiRequestTimeoutPolicy({
     runtimeConfig: {
       timeoutMs: 30000,
@@ -157,12 +159,12 @@ test('regression: lightweight ollama keeps configured provider timeout over stal
   });
 
   assert.equal(policy.providerTimeoutMs, 12000);
-  assert.equal(policy.backendRouteTimeoutMs, 12000);
-  assert.equal(policy.uiRequestTimeoutMs, 13500);
-  assert.equal(policy.timeoutPolicySource, 'provider:ollama:default-timeout:ui-grace');
+  assert.equal(policy.backendRouteTimeoutMs, 54000);
+  assert.equal(policy.uiRequestTimeoutMs, 55500);
+  assert.equal(policy.timeoutPolicySource, 'provider:ollama:default-timeout:warmup-retry-bound:ui-grace');
 });
 
-test('regression live case: local-desktop qwen execution waits for the backend heavy-model baseline', () => {
+test('regression live case: local-desktop qwen execution waits through the backend cold-start retry window', () => {
   const liveCase = {
     executableProvider: 'ollama',
     requestedProviderIntent: 'gemini',
@@ -193,12 +195,13 @@ test('regression live case: local-desktop qwen execution waits for the backend h
 
   assert.equal(policy.providerTimeoutMs, 75000);
   assert.equal(policy.modelTimeoutMs, 75000);
-  assert.equal(policy.uiRequestTimeoutMs, 76500);
-  assert.equal(policy.timeoutPolicySource, 'provider:ollama:model-baseline:qwen:14b:ui-grace');
+  assert.equal(policy.backendRouteTimeoutMs, 180000);
+  assert.equal(policy.uiRequestTimeoutMs, 181500);
+  assert.equal(policy.timeoutPolicySource, 'provider:ollama:model-baseline:qwen:14b:warmup-retry-bound:ui-grace');
   assert.notEqual(policy.timeoutPolicySource, 'frontend:api-runtime');
 });
 
-test('home-node canonical execution truth uses gpt-oss heavy-model timeout over gemini request intent', () => {
+test('home-node canonical execution truth uses gpt-oss full warmup retry bound over gemini request intent', () => {
   const policy = resolveUiRequestTimeoutPolicy({
     runtimeConfig: {
       timeoutMs: 30000,
@@ -229,8 +232,9 @@ test('home-node canonical execution truth uses gpt-oss heavy-model timeout over 
 
   assert.equal(policy.providerTimeoutMs, 75000);
   assert.equal(policy.modelTimeoutMs, 75000);
-  assert.equal(policy.uiRequestTimeoutMs, 76500);
-  assert.equal(policy.timeoutPolicySource, 'canonical-runtime-execution-truth:provider:ollama:model-baseline:gpt-oss:20b:ui-grace');
+  assert.equal(policy.backendRouteTimeoutMs, 180000);
+  assert.equal(policy.uiRequestTimeoutMs, 181500);
+  assert.equal(policy.timeoutPolicySource, 'canonical-runtime-execution-truth:provider:ollama:model-baseline:gpt-oss:20b:warmup-retry-bound:ui-grace');
   assert.doesNotMatch(policy.timeoutPolicySource, /frontend:api-runtime/);
 });
 
