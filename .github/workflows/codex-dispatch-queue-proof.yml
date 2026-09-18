@@ -71,15 +71,7 @@ jobs:
 
       - name: Shared-agent regressions S-Z
         if: always()
-        run: bash .github/scripts/run-node-test-shard.sh S-Z 'shared/agents/[s-z]*.test.mjs'
-
-      - name: Upload S-Z diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: shared-agent-s-z-diagnostics
-          path: ${{ runner.temp }}/shared-agent-S-Z-diagnostics.log
-          if-no-files-found: error
+        run: node --test --test-reporter=dot shared/agents/[s-z]*.test.mjs
 
       - name: Diff check
         if: always()
