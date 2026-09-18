@@ -319,4 +319,4 @@ test('accessor-bearing extra test evidence is rejected without invoking it', asy
   );
   assert.equal(verdict.valid,false);
   assert.equal(invoked,0);
-});
+}));
