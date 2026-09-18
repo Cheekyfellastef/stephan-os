@@ -4,9 +4,56 @@ import { readFile } from 'node:fs/promises';
 
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
 
+const lifeboatReady = async () => ({
+  ok: true,
+  available: true,
+  workerId: 'stephanos-forge-lifeboat-local',
+  finalVerdict: 'FORGE_LIFEBOAT_LANE_6_CAPACITY_PUBLISHED',
+  mergeAuthority: false,
+  runtimeMutationAuthority: false,
+});
+
+function heartbeat(options = {}) {
+  return runBattleBridgeGoalDiscoveryHeartbeat({
+    refreshLifeboatCapacity: lifeboatReady,
+    ...options,
+  });
+}
+
+test('goal discovery heartbeat refreshes Lane 6 before delegating to the existing critical backlog conveyor', async () => {
+  const order = [];
+  const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+    refreshLifeboatCapacity: async () => {
+      order.push('lifeboat');
+      return lifeboatReady();
+    },
+    conveyor: async () => {
+      order.push('conveyor');
+      return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' };
+    },
+    buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
+  });
+  assert.deepEqual(order, ['lifeboat', 'conveyor']);
+  assert.equal(result.lifeboatCapacity.available, true);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.runtimeMutationAuthority, false);
+});
+
+test('unavailable Lane 6 does not strand other admitted work', async () => {
+  const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+    refreshLifeboatCapacity: async () => { throw new Error('ollama-offline'); },
+    conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
+    buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.lifeboatCapacity.available, false);
+  assert.match(result.lifeboatCapacity.reason, /ollama-offline/);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
+});
+
 test('goal discovery heartbeat delegates to the existing critical backlog conveyor without authority widening', async () => {
   let calls = 0;
-  const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+  const result = await heartbeat({
     conveyor: async () => {
       calls += 1;
       return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' };
@@ -25,7 +72,7 @@ test('goal discovery heartbeat delegates to the existing critical backlog convey
 });
 
 test('goal discovery heartbeat fails closed when the conveyor blocks', async () => {
-  const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+  const result = await heartbeat({
     conveyor: async () => ({ ok: false, blocker: 'NO_QUALIFIED_CAPACITY' }),
   });
   assert.equal(result.ok, false);
@@ -43,7 +90,7 @@ test('held elastic mission does not strand admitted work or stop controller cont
       held:[{missionId:'critical-2009-elastic-goal',reason:'DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE'}],
     },
   });
-  const built=await runBattleBridgeGoalDiscoveryHeartbeat({
+  const built=await heartbeat({
     conveyor,
     buildClaimedGoal:async () => {
       buildCalls+=1;
@@ -57,7 +104,7 @@ test('held elastic mission does not strand admitted work or stop controller cont
   assert.equal(built.materialProgress,true);
 
   let queueEmptyCalls=0;
-  const swept=await runBattleBridgeGoalDiscoveryHeartbeat({
+  const swept=await heartbeat({
     conveyor,
     maxWorkConservingAttempts:3,
     buildClaimedGoal:async () => {
@@ -82,7 +129,7 @@ test('held elastic mission does not strand admitted work or stop controller cont
 test('blocked claimed source lane is parked and the same run continues to another build', async () => {
   let buildCalls=0;
   let conveyorCalls=0;
-  const result=await runBattleBridgeGoalDiscoveryHeartbeat({
+  const result=await heartbeat({
     maxWorkConservingAttempts:4,
     conveyor:async () => {
       conveyorCalls+=1;
@@ -128,7 +175,7 @@ test('held queue-empty lane is retried within the same bounded sweep and can dis
       held:[{missionId:'goal-held',reason:'PROVIDER_TEMPORARILY_UNAVAILABLE'}],
     },
   });
-  const result=await runBattleBridgeGoalDiscoveryHeartbeat({
+  const result=await heartbeat({
     conveyor,
     maxWorkConservingAttempts:4,
     buildClaimedGoal:async () => {

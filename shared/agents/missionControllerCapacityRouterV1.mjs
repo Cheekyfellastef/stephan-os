@@ -22,6 +22,10 @@ export const MISSION_CONTROLLER_ROUTE = Object.freeze({
   WAIT_FOR_PROVEN_CAPACITY: 'WAIT_FOR_PROVEN_CAPACITY',
 });
 
+export const FORGE_LIFEBOAT_WORKER_ID = 'stephanos-forge-lifeboat-local';
+export const FORGE_LIFEBOAT_AUTHORITY_PREFIX = 'forge-lifeboat-local-source-';
+export const FORGE_LIFEBOAT_PROOF_PREFIX = 'proof/forge-lifeboat-local-capacity-';
+
 const RECEIPT_KEYS = Object.freeze([
   'schemaVersion', 'receiptId', 'route', 'repository', 'workerId', 'state',
   'supportedOperations', 'supportedTaskClasses', 'observedAtUtc', 'expiresAtUtc',
@@ -61,6 +65,16 @@ function uniqueStrings(value) {
   return values.length === new Set(values).size ? values : null;
 }
 function frozen(value) { return Object.freeze(value); }
+
+export function forgeLifeboatAuthorityReceiptId(sourceHead = '') {
+  const normalized = text(sourceHead).toLowerCase();
+  return FULL_SHA.test(normalized) ? `${FORGE_LIFEBOAT_AUTHORITY_PREFIX}${normalized}` : '';
+}
+
+export function forgeLifeboatProofRef(sourceHead = '') {
+  const normalized = text(sourceHead).toLowerCase();
+  return FULL_SHA.test(normalized) ? `${FORGE_LIFEBOAT_PROOF_PREFIX}${normalized}.json` : '';
+}
 
 function taskForMission(mission = {}, explicitTask = {}) {
   const allowedFiles = list(mission.allowedFiles);
@@ -203,6 +217,19 @@ function candidateForReceipt(receipt, expected) {
   });
 }
 
+function forgeLifeboatCandidate(receipt, expected, sourceHead) {
+  const normalizedHead = text(sourceHead).toLowerCase();
+  if (!FULL_SHA.test(normalizedHead) || receipt?.workerId !== FORGE_LIFEBOAT_WORKER_ID) return null;
+  const candidate = candidateForReceipt(receipt, expected);
+  if (candidate?.route !== MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE) return null;
+  const authorityId = forgeLifeboatAuthorityReceiptId(normalizedHead);
+  const proofRef = forgeLifeboatProofRef(normalizedHead);
+  if (candidate.authorityReceiptIds.length !== 1 || candidate.authorityReceiptIds[0] !== authorityId) return null;
+  if (candidate.proofRefs.length !== 1 || candidate.proofRefs[0] !== proofRef) return null;
+  if (candidate.p95StartLatencySeconds > 600 || candidate.queueDepth > 64) return null;
+  return candidate;
+}
+
 function selectFallback(input, task, nowUtc) {
   const expected = { repository: text(input.mission?.repository), taskClass: task.taskClass, nowUtc };
   const candidates = [];
@@ -211,8 +238,13 @@ function selectFallback(input, task, nowUtc) {
     if (github?.route === MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB) candidates.push(github);
   }
   const forge = adjudicateForgeSidecarCapacity(input.forgeSidecar, { nowUtc });
+  const lifeboat = !task.windowsBound
+    ? forgeLifeboatCandidate(input.forgeLaneReceipt, expected, input.sourceHead)
+    : null;
   const forgeCandidate = candidateForReceipt(input.forgeLaneReceipt, expected);
-  if (
+  if (lifeboat) {
+    candidates.push(lifeboat);
+  } else if (
     forge?.canCarryRealWork === true
     && forgeCandidate?.route === MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE
     && forgeCandidate.authorityReceiptIds.includes(forge.m2ReceiptId)
@@ -223,7 +255,7 @@ function selectFallback(input, task, nowUtc) {
     || left.queueDepth - right.queueDepth
     || left.route.localeCompare(right.route)
   ));
-  return frozen({ selected: candidates[0] || null, candidates: frozen(candidates), forge });
+  return frozen({ selected: candidates[0] || null, candidates: frozen(candidates), forge, lifeboat });
 }
 
 export function routeMissionControllerCapacity(input = {}) {
