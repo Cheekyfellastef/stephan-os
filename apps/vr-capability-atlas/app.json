@@ -1,14 +1,15 @@
 {
   "name": "VR Capability Atlas",
   "icon": "🌌",
-  "entry": "index.html",
+  "entry": "index-v2.html",
   "type": "research",
   "packaging": "classic-static",
   "capabilities": [
     "vr-analysis",
     "research-workspace",
     "technique-catalog",
-    "live-capability-atlas"
+    "live-capability-atlas",
+    "research-linked-concept-gallery"
   ],
   "eventsPublished": [],
   "eventsConsumed": [
