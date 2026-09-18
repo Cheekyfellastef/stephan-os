@@ -9,6 +9,7 @@ import {
   clearStephanosNativeCapacityStatus,
   publishStephanosNativeCapacityV1,
 } from '../shared/agents/stephanosNativeCapacityPublisherV1.mjs';
+import { readMissionWorkerQueue } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
 
 export const STEPHANOS_NATIVE_CAPACITY_KEY_ID = 'stephanos-native-capacity-key-v1';
 export const STEPHANOS_NATIVE_CAPACITY_REFRESH_MS = 60_000;
@@ -116,6 +117,9 @@ function runtimeOptions(env, identity, privateKeyPem, now = new Date()) {
     observedAtUtc: now.toISOString(),
     endpoint: text(env.STEPHANOS_NATIVE_OLLAMA_ENDPOINT) || 'http://127.0.0.1:11434',
     model: text(env.STEPHANOS_NATIVE_CAPACITY_MODEL) || 'qwen:14b',
+    env,
+    readQueue: readMissionWorkerQueue,
+    queueRoot: text(env.STEPHANOS_MISSION_WORKER_QUEUE_DIR),
   };
 }
 
