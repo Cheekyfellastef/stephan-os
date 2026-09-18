@@ -55,6 +55,25 @@ test('goal discovery heartbeat refreshes Lane 7 then Lane 6 before delegating to
   assert.equal(result.runtimeMutationAuthority, false);
 });
 
+test('Lane 7 receives canonical git command by default and preserves an explicit caller override', async () => {
+  const observedGitCommands = [];
+  const run = (githubLifeboatOptions = {}) => runBattleBridgeGoalDiscoveryHeartbeat({
+    githubLifeboatOptions,
+    refreshGithubLifeboat: async (options) => {
+      observedGitCommands.push(options.gitCommand);
+      return githubLifeboatReady();
+    },
+    refreshLifeboatCapacity: lifeboatReady,
+    conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
+    buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
+  });
+
+  await run();
+  await run({ gitCommand: 'test-git-override' });
+
+  assert.deepEqual(observedGitCommands, ['git', 'test-git-override']);
+});
+
 test('unavailable Lane 7 does not strand Lane 6 or other admitted work', async () => {
   const result = await runBattleBridgeGoalDiscoveryHeartbeat({
     refreshGithubLifeboat: async () => { throw new Error('github-writer-offline'); },
