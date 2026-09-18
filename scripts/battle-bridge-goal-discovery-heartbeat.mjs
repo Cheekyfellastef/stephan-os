@@ -131,8 +131,12 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   let githubLifeboatClaimAck = null;
 
   try {
-    try { githubLifeboat = await refreshGithubLifeboat(githubLifeboatOptions); }
-    catch (error) { githubLifeboat = unavailableGithubLifeboat(error); }
+    try {
+      githubLifeboat = await refreshGithubLifeboat({
+        ...githubLifeboatOptions,
+        gitCommand: githubLifeboatOptions.gitCommand || 'git',
+      });
+    } catch (error) { githubLifeboat = unavailableGithubLifeboat(error); }
 
     try {
       githubLifeboatClaimAck = await refreshGithubLifeboatClaimAck({
