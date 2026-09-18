@@ -157,49 +157,61 @@ function runBoundedGitObservation({ repositoryRoot, spawnSyncFn, args }) {
   return Object.freeze({ ok, stdout: ok ? stdout : '' });
 }
 
-export function inspectMissionWorkerRepositoryIdentity({ env = process.env, spawnSyncFn = spawnSync } = {}) {
+function parsePorcelainV2Identity(stdout) {
+  let branch = '';
+  let headSha = '';
+  for (const line of stdout.split(/\r?\n/)) {
+    if (line.startsWith('# branch.head ')) {
+      if (branch) return null;
+      branch = line.slice('# branch.head '.length).trim();
+    } else if (line.startsWith('# branch.oid ')) {
+      if (headSha) return null;
+      headSha = line.slice('# branch.oid '.length).trim().toLowerCase();
+    }
+  }
+  return branch && SHA_40.test(headSha) ? Object.freeze({ branch, headSha }) : null;
+}
+
+export function inspectMissionWorkerRepositoryIdentity({
+  env = process.env,
+  spawnSyncFn = spawnSync,
+} = {}) {
   const repositoryRoot = boundedText(env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT, 1024);
   const expectedHeadSha = boundedText(env.STEPHANOS_MISSION_WORKER_HEAD_SHA, 40).toLowerCase();
-  if (!repositoryRoot || !SHA_40.test(expectedHeadSha)) {
+  if (!path.win32.isAbsolute(repositoryRoot) || !SHA_40.test(expectedHeadSha)) {
     return invalidRepositoryIdentity('MISSION_WORKER_LAUNCH_IDENTITY_INVALID');
   }
-  const readBranchIdentity = () => runBoundedGitObservation({
-    repositoryRoot,
-    spawnSyncFn,
-    args: ['status', '--porcelain=v2', '--branch', '--untracked-files=no'],
-  });
-  const before = readBranchIdentity();
-  const dirt = runBoundedGitObservation({
+
+  const identityArgs = ['status', '--porcelain=v2', '--branch', '--untracked-files=no'];
+  const identityBeforeRead = runBoundedGitObservation({ repositoryRoot, spawnSyncFn, args: identityArgs });
+  const dirtRead = runBoundedGitObservation({
     repositoryRoot,
     spawnSyncFn,
     args: ['status', '--porcelain=v1', '--untracked-files=all'],
   });
-  const after = readBranchIdentity();
-  if (!before.ok || !dirt.ok || !after.ok) return invalidRepositoryIdentity('MISSION_WORKER_REPOSITORY_IDENTITY_READ_FAILED');
-  const parseBranchIdentity = (stdout) => {
-    const oid = stdout.split(/\r?\n/u).filter((line) => line.startsWith('# branch.oid '));
-    const branch = stdout.split(/\r?\n/u).filter((line) => line.startsWith('# branch.head '));
-    if (oid.length !== 1 || branch.length !== 1) return null;
-    const headSha = oid[0].slice('# branch.oid '.length).trim().toLowerCase();
-    const branchName = branch[0].slice('# branch.head '.length).trim();
-    return SHA_40.test(headSha) && branchName ? { headSha, branch: branchName } : null;
-  };
-  const beforeIdentity = parseBranchIdentity(before.stdout);
-  const afterIdentity = parseBranchIdentity(after.stdout);
-  if (!beforeIdentity || !afterIdentity) return invalidRepositoryIdentity('MISSION_WORKER_REPOSITORY_IDENTITY_AMBIGUOUS');
-  if (beforeIdentity.headSha !== afterIdentity.headSha || beforeIdentity.branch !== afterIdentity.branch) {
-    return invalidRepositoryIdentity('MISSION_WORKER_REPOSITORY_IDENTITY_MOVED_DURING_READ');
+  const identityAfterRead = runBoundedGitObservation({ repositoryRoot, spawnSyncFn, args: identityArgs });
+  if (!identityBeforeRead.ok || !dirtRead.ok || !identityAfterRead.ok) {
+    return invalidRepositoryIdentity('MISSION_WORKER_REPOSITORY_IDENTITY_READ_FAILED');
   }
-  const dirtClassification = classifyDirt(dirt.stdout);
-  const sourceClean = dirtClassification.sourceDirt.length === 0;
-  const runtimeDirtCount = dirtClassification.runtimeDirt.length;
-  const worktreeClean = sourceClean && runtimeDirtCount === 0;
-  const branch = beforeIdentity.branch;
-  const headSha = beforeIdentity.headSha;
-  const valid = true;
+
+  const identityBefore = parsePorcelainV2Identity(identityBeforeRead.stdout);
+  const identityAfter = parsePorcelainV2Identity(identityAfterRead.stdout);
+  if (!identityBefore || !identityAfter) {
+    return invalidRepositoryIdentity('MISSION_WORKER_REPOSITORY_IDENTITY_AMBIGUOUS');
+  }
+  if (identityBefore.branch !== identityAfter.branch || identityBefore.headSha !== identityAfter.headSha) {
+    return invalidRepositoryIdentity('MISSION_WORKER_REPOSITORY_IDENTITY_CHANGED_DURING_READ');
+  }
+
+  const dirtLines = dirtRead.stdout.split(/\r?\n/).filter(Boolean);
+  const dirt = classifyDirt(dirtLines);
+  const sourceClean = dirt.blocksSync === false;
+  const worktreeClean = dirtLines.length === 0;
+  const runtimeDirtCount = Array.isArray(dirt.runtimeOnly) ? dirt.runtimeOnly.length : 0;
+  const { branch, headSha } = identityAfter;
   const canonical = branch === 'main' && headSha === expectedHeadSha && sourceClean;
   return Object.freeze({
-    valid,
+    valid: true,
     canonical,
     branch,
     headSha,
@@ -333,7 +345,6 @@ export async function runSupervisedMissionWorker({
     let heartbeatWriteFailed = false;
     let heartbeatWrites = Promise.resolve();
     let tickMadeProgress = false;
-    let materialProgressRequired = false;
 
     const queueHeartbeat = (lastTickVerdictValue, timestampUtc = now()) => {
       const heartbeatActionGrant = activeActionGrant;
@@ -391,7 +402,6 @@ export async function runSupervisedMissionWorker({
         stdout.write(`${JSON.stringify(controllerLog)}\n`);
         lastControllerLogSignature = controllerLogSignature;
       }
-      materialProgressRequired = ownData(controller, 'materialProgressRequiredBeforeControllerReturn') === true;
       if (controller?.allowWorkerTick === true) {
         const actionGrant = controller.workerActionGrant;
         const capacityRoute = boundedText(ownData(actionGrant, 'capacityRoute'), 48);
@@ -434,26 +444,12 @@ export async function runSupervisedMissionWorker({
           activeActionGrant = undefined;
         }
         tickMadeProgress = missionWorkerTickMadeProgress(result);
-        if (materialProgressRequired && !tickMadeProgress) {
-          lastTickVerdict = 'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS';
-          stderr.write(`${JSON.stringify({
-            checkedAt: now(),
-            finalVerdict: lastTickVerdict,
-            missionId: boundedText(ownData(actionGrant, 'missionId'), 96),
-            actionId: boundedText(ownData(actionGrant, 'actionId'), 96),
-          })}\n`);
-          if (once) exitCode = 1;
-        }
         const tickLog = createMissionWorkerTickLogProjection(result, checkedAt);
         const tickLogSignature = stableLogSignature(tickLog);
         if (once || tickLogSignature !== lastTickLogSignature) {
           stdout.write(`${JSON.stringify(tickLog)}\n`);
           lastTickLogSignature = tickLogSignature;
         }
-      } else if (materialProgressRequired) {
-        lastTickVerdict = 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT';
-        stderr.write(`${JSON.stringify({ checkedAt: now(), finalVerdict: lastTickVerdict })}\n`);
-        if (once) exitCode = 1;
       }
     } catch (error) {
       activeActionGrant = undefined;
