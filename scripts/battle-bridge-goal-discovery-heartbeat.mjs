@@ -3,6 +3,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { ensureCriticalBacklogMission } from '../stephanos-server/services/criticalBacklogConveyorService.js';
+import { refreshForgeLifeboatCapacity } from '../stephanos-server/services/forgeLifeboatCapacityService.js';
 import { processNextProviderNeutralSourceBuild } from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
 
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA = 'stephanos.battle-bridge-goal-discovery-heartbeat.v1';
@@ -67,8 +68,22 @@ function frozenSweepAttempt({ attemptNumber, result, sourceBuild, elasticHold })
   });
 }
 
+function unavailableLifeboat(error) {
+  return Object.freeze({
+    ok: false,
+    available: false,
+    reason: `FORGE_LIFEBOAT_CAPACITY_REFRESH_FAILED:${String(error?.message || 'unknown')}`,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+    leaseSeizureAllowed: false,
+    arbitraryCommandAllowed: false,
+  });
+}
+
 export async function runBattleBridgeGoalDiscoveryHeartbeat({
   conveyor = ensureCriticalBacklogMission,
+  refreshLifeboatCapacity = refreshForgeLifeboatCapacity,
+  lifeboatOptions = {},
   buildClaimedGoal = processNextProviderNeutralSourceBuild,
   builderOptions = {},
   maxWorkConservingAttempts = DEFAULT_WORK_CONSERVING_SWEEP_LIMIT,
@@ -79,8 +94,12 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   let latestResult = null;
   let latestSourceBuild = null;
   let latestElasticHold = null;
+  let lifeboatCapacity = null;
 
   try {
+    try { lifeboatCapacity = await refreshLifeboatCapacity(lifeboatOptions); }
+    catch (error) { lifeboatCapacity = unavailableLifeboat(error); }
+
     for (let attemptIndex = 0; attemptIndex < limit; attemptIndex += 1) {
       const result = await conveyor();
       latestResult = result || null;
@@ -88,6 +107,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
           ok: false,
+          lifeboatCapacity,
           conveyorResult: result || null,
           sourceBuild: latestSourceBuild,
           sweepAttemptCount: sweepAttempts.length,
@@ -117,6 +137,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
           ok: true,
+          lifeboatCapacity,
           conveyorResult: result,
           sourceBuild,
           elasticHold: elasticHold || null,
@@ -140,6 +161,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
           ok: true,
+          lifeboatCapacity,
           conveyorResult: result,
           sourceBuild: sourceBuild || null,
           elasticHold: null,
@@ -158,6 +180,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
     return Object.freeze({
       schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
       ok: true,
+      lifeboatCapacity,
       conveyorResult: latestResult,
       sourceBuild: latestSourceBuild,
       elasticHold: latestElasticHold,
@@ -177,6 +200,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
       ok: false,
       blocker: String(error?.message || 'GOAL_DISCOVERY_HEARTBEAT_FAILED'),
+      lifeboatCapacity,
       conveyorResult: latestResult,
       sourceBuild: latestSourceBuild,
       sweepAttemptCount: sweepAttempts.length,
