@@ -579,7 +579,7 @@ export async function readMissionWorkerQueue(options = {}) {
     try { entries = await readdir(paths.pending, { withFileTypes: true }); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
     for (const entry of entries.filter((item) => item.isFile() && item.name.endsWith('.json'))) {
       const path = join(paths.pending, entry.name);
-      try { result.push({ adapter, path, item: JSON.parse(await readFile(path, 'utf8')) });
+      try { result.push({ adapter, path, item: JSON.parse(await readFile(path, 'utf8')) }); }
       catch { result.push({ adapter, path, item: null, error: 'queue-item-read-failed' }); }
     }
   }
