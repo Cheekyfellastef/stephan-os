@@ -148,8 +148,6 @@ export async function probeStephanosNativeOllamaV1(options = {}) {
       responseSha256: hash(chat.raw),
       tagsSha256: hash(tags.raw),
       processSha256: hash(ps.raw),
-      queueDepth: 0,
-      queueDepthSource: 'publisher-single-flight',
       p95StartLatencySeconds: Number(latencySeconds.toFixed(3)),
       loadState: 'READY',
       loadedModelSizeBytes: Number.isFinite(Number(loaded?.size)) ? Number(loaded.size) : 0,
@@ -190,6 +188,17 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
     const probe = await probeStephanosNativeOllamaV1(options);
     if (!probe.ok) return frozen({ ok: false, reason: probe.reason, probe, cleared: true });
 
+    if (typeof options.readQueue !== 'function') {
+      return frozen({ ok: false, reason: 'native-capacity-queue-unproven', cleared: true });
+    }
+    const queue = await options.readQueue({ env: options.env || process.env, queueRoot: options.queueRoot });
+    if (!Array.isArray(queue)) return frozen({ ok: false, reason: 'native-capacity-queue-unproven', cleared: true });
+    const queueDepth = queue.length;
+    if (!Number.isSafeInteger(queueDepth) || queueDepth < 0 || queueDepth > 64) {
+      return frozen({ ok: false, reason: 'native-capacity-queue-depth-invalid', cleared: true });
+    }
+    const queueDepthSource = 'canonical-mission-worker-queue';
+
     const proofSeed = JSON.stringify({
       repository, sourceHead, workerId, observedAtUtc,
       model: probe.model,
@@ -198,10 +207,11 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
       responseSha256: probe.responseSha256,
       tagsSha256: probe.tagsSha256,
       processSha256: probe.processSha256,
+      queueDepth,
     });
     const proofDigest = hash(proofSeed);
-    const proofRef = `proof/native-capacity-runtime-${proofDigest}.json`;
     const proofId = `native-capacity-runtime-${proofDigest.slice(0, 40)}`;
+    const proofRef = `proof/${proofId}.json`;
     const runtimeProof = frozen({
       ...createSharedWorkspaceProofRecord({
         proofId,
@@ -218,6 +228,7 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
           `request-sha256:${probe.requestSha256}`,
           `response-sha256:${probe.responseSha256}`,
           `load-state:${probe.loadState}`,
+          `queue-depth:${queueDepth}`,
         ],
         proofRefs: [proofRef],
       }),
@@ -232,8 +243,8 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
       responseSha256: probe.responseSha256,
       tagsSha256: probe.tagsSha256,
       processSha256: probe.processSha256,
-      queueDepth: probe.queueDepth,
-      queueDepthSource: probe.queueDepthSource,
+      queueDepth,
+      queueDepthSource,
       p95StartLatencySeconds: probe.p95StartLatencySeconds,
       loadState: probe.loadState,
       loadedModelSizeBytes: probe.loadedModelSizeBytes,
@@ -265,7 +276,7 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
       supportedOperations: frozen(['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS']),
       observedAtUtc,
       expiresAtUtc,
-      queueDepth: probe.queueDepth,
+      queueDepth,
       p95StartLatencySeconds: probe.p95StartLatencySeconds,
       loadState: probe.loadState,
       requestSha256: probe.requestSha256,
