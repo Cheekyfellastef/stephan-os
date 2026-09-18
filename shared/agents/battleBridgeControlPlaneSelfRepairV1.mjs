@@ -285,6 +285,7 @@ export function reconcileBattleBridgeControlPlane({
   if (!identity.ok) return identity;
 
   const results = [];
+  const installerFailures = [];
   for (const task of BATTLE_BRIDGE_CONTROL_PLANE_TASKS) {
     const installerPath = resolve(canonicalRoot, task.installerRelativePath);
     const command = capture(spawnSyncFn, POWERSHELL_EXE, [
@@ -295,15 +296,22 @@ export function reconcileBattleBridgeControlPlane({
       '-StartNow',
     ], { cwd: canonicalRoot, timeout: 180_000 });
     if (!command.ok) {
-      return blocked('CONTROL_PLANE_FIXED_INSTALLER_FAILED', {
-        branch: identity.branch,
-        sourceHead: identity.sourceHead,
-        sourceDirtSafe: true,
-        runtimeOnlyDirtCount: identity.runtimeOnlyDirtCount,
-        generatedSourceDirtCount: identity.generatedSourceDirtCount,
-        dirtSummary: identity.dirtSummary,
-        failedTaskId: task.id,
-      });
+      installerFailures.push(Object.freeze({
+        id: task.id,
+        taskName: task.taskName,
+        blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+      }));
+      results.push(Object.freeze({
+        id: task.id,
+        taskName: task.taskName,
+        installerRelativePath: task.installerRelativePath,
+        intervalMinutes: task.intervalMinutes,
+        installed: false,
+        startRequested: true,
+        receiptValid: false,
+        installerExitOk: false,
+      }));
+      continue;
     }
     const payload = parseInstallerJson(command.stdout);
     const receiptValid = validateTaskReceipt(task.id, payload);
@@ -327,6 +335,25 @@ export function reconcileBattleBridgeControlPlane({
       startRequested: true,
       receiptValid: true,
     }));
+  }
+
+  if (installerFailures.length > 0) {
+    const primaryFailure = installerFailures[0];
+    return blocked(primaryFailure.blocker, {
+      branch: identity.branch,
+      sourceHead: identity.sourceHead,
+      sourceDirtSafe: true,
+      runtimeOnlyDirtCount: identity.runtimeOnlyDirtCount,
+      generatedSourceDirtCount: identity.generatedSourceDirtCount,
+      dirtSummary: identity.dirtSummary,
+      failedTaskId: primaryFailure.id,
+      failedTaskIds: Object.freeze(installerFailures.map((failure) => failure.id)),
+      installerFailureCount: installerFailures.length,
+      taskCount: results.length,
+      tasks: Object.freeze(results),
+      workConservingRepairAttempted: true,
+      independentFixedRepairContinued: true,
+    });
   }
 
   return Object.freeze({
