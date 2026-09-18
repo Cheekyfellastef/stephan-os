@@ -33,6 +33,11 @@ function text(value, fallback = '') {
   return normalized || fallback;
 }
 
+function normalizeOllamaBaseEndpoint(value) {
+  const raw = text(value, FORGE_LIFEBOAT_DEFAULT_ENDPOINT).replace(/\/+$/, '');
+  return raw.replace(/\/api\/(?:chat|generate)$/i, '').replace(/\/+$/, '');
+}
+
 function sha256(value) {
   return createHash('sha256').update(String(value), 'utf8').digest('hex');
 }
@@ -120,7 +125,7 @@ export async function refreshForgeLifeboatCapacity(options = {}) {
   const env = options.env || process.env;
   const paths = options.paths || resolveCriticalBacklogRuntimePaths({ env });
   const repository = FORGE_LIFEBOAT_REPOSITORY;
-  const endpoint = text(options.endpoint || env.STEPHANOS_OLLAMA_ENDPOINT, FORGE_LIFEBOAT_DEFAULT_ENDPOINT).replace(/\/$/, '');
+  const endpoint = normalizeOllamaBaseEndpoint(options.endpoint || env.STEPHANOS_OLLAMA_ENDPOINT);
   const model = text(options.model || env.STEPHANOS_LOCAL_BUILDER_MODEL, FORGE_LIFEBOAT_DEFAULT_MODEL);
   if (!LOOPBACK_ENDPOINTS.has(endpoint) || !SAFE_MODEL.test(model)) {
     return unavailable('FORGE_LIFEBOAT_LOCAL_IDENTITY_INVALID');
