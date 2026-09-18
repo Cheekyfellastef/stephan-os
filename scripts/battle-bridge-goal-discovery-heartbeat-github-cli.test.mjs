@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import process from 'node:process';
+import { readFile } from 'node:fs/promises';
 
 import {
   BATTLE_BRIDGE_CANONICAL_GITHUB_CLI,
@@ -46,6 +47,13 @@ test('Lane 7 receives the canonical GitHub CLI identity from the goal-discovery 
   assert.deepEqual(observed, [expected]);
   assert.equal(result.ok, true);
   assert.equal(result.githubLifeboat.available, true);
+});
+
+test('Lane 7 source pins the canonical Windows GitHub CLI path instead of relying on hidden-task PATH lookup', async () => {
+  const source = await readFile(new URL('./battle-bridge-goal-discovery-heartbeat.mjs', import.meta.url), 'utf8');
+  assert.match(source, /process\.platform === 'win32'[\s\S]*C:\\\\Program Files\\\\GitHub CLI\\\\gh\.exe/);
+  assert.match(source, /ghCommand:\s*githubLifeboatOptions\.ghCommand \|\| BATTLE_BRIDGE_CANONICAL_GITHUB_CLI/);
+  assert.doesNotMatch(source, /ghCommand:\s*githubLifeboatOptions\.ghCommand \|\| ['"]gh['"]/);
 });
 
 test('Lane 7 preserves an explicit GitHub CLI override', async () => {
