@@ -1,6 +1,11 @@
 const DEFAULT_UI_REQUEST_TIMEOUT_MS = 30000;
 const SAFE_OLLAMA_TIMEOUT_MS = 8000;
 const UI_TIMEOUT_GRACE_MS = 1500;
+const OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES = Object.freeze({
+  'qwen:14b': 75000,
+  'gpt-oss:20b': 75000,
+  'qwen:32b': 120000,
+});
 
 function asPositiveNumber(value, fallback = null) {
   const parsed = Number(value);
@@ -71,13 +76,30 @@ export function resolveOllamaTimeoutPolicy({ providerConfig = {}, requestedModel
   }
 
   const defaultTimeout = asPositiveNumber(providerConfig?.defaultOllamaTimeoutMs ?? providerConfig?.timeoutMs);
+  const heavyModelBaseline = asPositiveNumber(OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES[normalizedModel]);
   if (defaultTimeout && defaultTimeout >= 1000) {
+    const providerTimeoutMs = heavyModelBaseline
+      ? Math.max(1000, defaultTimeout, heavyModelBaseline)
+      : Math.max(1000, defaultTimeout);
+    const modelBaselineApplied = Boolean(heavyModelBaseline && providerTimeoutMs > defaultTimeout);
     return {
-      providerTimeoutMs: Math.max(1000, defaultTimeout),
-      modelTimeoutMs: null,
-      timeoutPolicySource: 'provider:ollama:default-timeout',
+      providerTimeoutMs,
+      modelTimeoutMs: modelBaselineApplied ? providerTimeoutMs : null,
+      timeoutPolicySource: modelBaselineApplied
+        ? `provider:ollama:model-baseline:${normalizedModel}`
+        : 'provider:ollama:default-timeout',
       timeoutOverrideApplied: false,
       timeoutModel: normalizedModel || null,
+    };
+  }
+
+  if (heavyModelBaseline) {
+    return {
+      providerTimeoutMs: Math.max(1000, heavyModelBaseline),
+      modelTimeoutMs: Math.max(1000, heavyModelBaseline),
+      timeoutPolicySource: `provider:ollama:model-baseline:${normalizedModel}`,
+      timeoutOverrideApplied: false,
+      timeoutModel: normalizedModel,
     };
   }
 
