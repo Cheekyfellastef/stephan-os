@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -9,7 +9,9 @@ import {
   createExecutionReceipt,
 } from './executionReceiptV1.mjs';
 import {
+  SHARED_WORKSPACE_RECORD_KINDS,
   createSharedWorkspaceProofRecord,
+  resolveSharedWorkspacePath,
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
 import {
@@ -19,6 +21,7 @@ import {
   buildStephanosNativeTestExecutionId,
   buildStephanosNativeTestProofRef,
   createStephanosNativeStagingReceipt,
+  stageStephanosNativeModelResult,
   validateStephanosNativeModelResult,
   validateStephanosNativeStagingRequest,
   verifyStephanosNativeTestAndScopeProof,
@@ -85,15 +88,31 @@ async function withWorkspace(action) {
   }
 }
 
+const stageOptions = (workspaceRoot) => ({
+  workspaceRoot,
+  repoRoot:REPO_ROOT,
+  nowMs:NOW_MS,
+  observedAtUtc:NOW_UTC,
+  relatedIssue:'2007',
+  relatedPr:'2239',
+});
+const verifyOptions = (workspaceRoot) => ({ workspaceRoot, repoRoot:REPO_ROOT, nowMs:NOW_MS });
+
 async function persistTestEvidence(workspaceRoot, request, result, options = {}) {
+  const plan = buildStephanosNativeStagingPlan(request, result);
+  assert.equal(plan.ok, true, plan.reason);
+  let stage = null;
+  if (options.persistStage !== false) {
+    stage = await stageStephanosNativeModelResult(request, result, stageOptions(workspaceRoot));
+    assert.equal(stage.ok, true, stage.reason);
+  }
   const testId = options.testId || 'native-focused-test';
   const outputSha256 = options.outputSha256 || hash('pass');
-  const executionId = buildStephanosNativeTestExecutionId(request.actionId, testId);
+  const executionId = buildStephanosNativeTestExecutionId(request.missionId, request.actionId, testId);
   const proofRef = buildStephanosNativeTestProofRef(outputSha256);
   const workerId = options.workerId || request.workerId;
   const phase = options.phase || `native-test:${testId}`;
-  const plan = buildStephanosNativeStagingPlan(request, result);
-  assert.equal(plan.ok, true, plan.reason);
+  const missionRef = `proof/native-mission-${hash(request.missionId)}.sha256`;
   const stagedProofRefs = options.bindStagedIdentity === false ? [] : [
     `proof/native-staged-tree-${plan.stagedTreeSha256}.sha256`,
     `proof/native-staged-diff-${plan.diffSha256}.sha256`,
@@ -116,7 +135,7 @@ async function persistTestEvidence(workspaceRoot, request, result, options = {})
     heartbeatExpiresAtUtc:'2026-09-15T15:51:00.000Z',
     blocker:'',
     operatorActionRequired:false,
-    proofRefs:[proofRef,...stagedProofRefs],
+    proofRefs:[proofRef,missionRef,...stagedProofRefs],
     expectedNextAction:'',
   });
   if (options.persistReceipt !== false) {
@@ -138,6 +157,7 @@ async function persistTestEvidence(workspaceRoot, request, result, options = {})
       status:'passed',
       summary:`Persisted native focused test ${testId}.`,
       refs:[
+        `mission:${request.missionId}`,
         `action:${request.actionId.toLowerCase()}`,
         `test:${testId.toLowerCase()}`,
         `output-sha256:${outputSha256}`,
@@ -145,7 +165,7 @@ async function persistTestEvidence(workspaceRoot, request, result, options = {})
         `lease:${request.leaseId.toLowerCase()}`,
         ...stagedRefs,
       ],
-      proofRefs:[proofRef,...stagedProofRefs],
+      proofRefs:[proofRef,missionRef,...stagedProofRefs],
     });
     const write = await writeAtomicJson(
       workspaceRoot,
@@ -155,18 +175,13 @@ async function persistTestEvidence(workspaceRoot, request, result, options = {})
     );
     assert.equal(write.ok, true, write.reason);
   }
-  return { outputSha256, executionId, proofRef, receipt, plan };
+  return { outputSha256, executionId, proofRef, receipt, plan, stage };
 }
 
-const verifyOptions = (workspaceRoot) => ({ workspaceRoot, repoRoot:REPO_ROOT, nowMs:NOW_MS });
-
-test('persisted canonical execution receipt plus persisted proof makes bounded staging promotion-eligible', async () => withWorkspace(async (workspaceRoot) => {
+test('persisted stage plus canonical execution proof is promotion-eligible', async () => withWorkspace(async (workspaceRoot) => {
   const { request, result, two } = fixture();
   assert.equal(validateStephanosNativeStagingRequest(request).valid, true);
   assert.equal(validateStephanosNativeModelResult(result, request).valid, true);
-  const plan = buildStephanosNativeStagingPlan(request, result);
-  assert.equal(plan.ok, true);
-  assert.equal(plan.modelMayPromote, false);
   const evidence = await persistTestEvidence(workspaceRoot, request, result);
   const proof = proofFor(request, two, evidence.outputSha256);
   const verification = await verifyStephanosNativeTestAndScopeProof(request, result, proof, verifyOptions(workspaceRoot));
@@ -179,8 +194,8 @@ test('persisted canonical execution receipt plus persisted proof makes bounded s
   assert.equal(receipt.sourceChanged, true);
   assert.equal(receipt.testsPassed, true);
   assert.equal(receipt.promotionEligible, true);
-  assert.equal(receipt.stagedTreeSha256, plan.stagedTreeSha256);
-  assert.equal(receipt.diffSha256, plan.diffSha256);
+  assert.equal(receipt.stagedTreeSha256, evidence.plan.stagedTreeSha256);
+  assert.equal(receipt.diffSha256, evidence.plan.diffSha256);
   assert.equal(receipt.mergeAuthority, false);
 }));
 
@@ -220,25 +235,106 @@ test('missing persisted execution history or proof artifact blocks promotion', a
   assert.ok(verdict.errors.some((error) => error.includes('persisted-test-proof-missing')));
 }));
 
-test('persisted evidence with wrong worker or phase cannot prove tests passed', async () => withWorkspace(async (workspaceRoot) => {
-  const { request, result, two } = fixture();
-  const outputSha256 = hash('wrong-worker');
-  await persistTestEvidence(workspaceRoot, request, result, { outputSha256, workerId:'other-worker' });
-  let verdict = await verifyStephanosNativeTestAndScopeProof(request, result, proofFor(request, two, outputSha256), verifyOptions(workspaceRoot));
-  assert.equal(verdict.valid, false);
-  assert.ok(verdict.errors.some((error) => error.includes('persisted-execution-receipt-binding-invalid')));
-}));
-
 test('base-only persisted test evidence cannot prove staged replacements', async () => withWorkspace(async (workspaceRoot) => {
   const { request, result, two } = fixture();
   const outputSha256 = hash('base-only');
   await persistTestEvidence(workspaceRoot, request, result, { outputSha256, bindStagedIdentity:false });
+  const verdict = await verifyStephanosNativeTestAndScopeProof(request, result, proofFor(request, two, outputSha256), verifyOptions(workspaceRoot));
+  assert.equal(verdict.valid, false);
+  assert.ok(verdict.errors.some((error) => error.includes('persisted-execution-receipt-binding-invalid')));
+}));
+
+test('caller sourceAfter cannot substitute for missing persisted staging state', async () => withWorkspace(async (workspaceRoot) => {
+  const { request, result, two } = fixture();
+  const evidence = await persistTestEvidence(workspaceRoot, request, result, { persistStage:false });
   const verdict = await verifyStephanosNativeTestAndScopeProof(
     request,
     result,
-    proofFor(request, two, outputSha256),
+    proofFor(request, two, evidence.outputSha256),
     verifyOptions(workspaceRoot),
   );
+  assert.equal(verdict.valid, false);
+  assert.ok(verdict.errors.includes('persisted-staging-evidence-missing'));
+}));
+
+test('tampered persisted staged bytes block promotion', async () => withWorkspace(async (workspaceRoot) => {
+  const { request, result, two } = fixture();
+  const evidence = await persistTestEvidence(workspaceRoot, request, result);
+  const stagePath = resolveSharedWorkspacePath({
+    root:workspaceRoot,
+    repoRoot:REPO_ROOT,
+    segments:['evidence','receipts',evidence.stage.stageId,'files',`${hash('shared/agents/a.mjs')}.stage`],
+  });
+  assert.equal(stagePath.ok, true, stagePath.reason);
+  await writeFile(stagePath.path, 'tampered\n', 'utf8');
+  const verdict = await verifyStephanosNativeTestAndScopeProof(request, result, proofFor(request, two, evidence.outputSha256), verifyOptions(workspaceRoot));
+  assert.equal(verdict.valid, false);
+  assert.ok(verdict.errors.some((error) => error.includes('persisted-staging-source-drift:shared/agents/a.mjs')));
+}));
+
+test('non-proof shared-workspace record cannot masquerade as persisted test proof', async () => withWorkspace(async (workspaceRoot) => {
+  const { request, result, two } = fixture();
+  const outputSha256 = hash('wrong-kind');
+  const evidence = await persistTestEvidence(workspaceRoot, request, result, { outputSha256, persistProof:false });
+  const missionRef = `proof/native-mission-${hash(request.missionId)}.sha256`;
+  const fake = {
+    ...createSharedWorkspaceProofRecord({
+      proofId:`native-test-${outputSha256}`,
+      participantId:request.workerId,
+      timestampUtc:'2026-09-15T15:49:00.000Z',
+      correlationId:evidence.executionId,
+      relatedIssue:'2007',
+      relatedPr:'2239',
+      status:'passed',
+      summary:'wrong record kind',
+      refs:[
+        `mission:${request.missionId}`,
+        `action:${request.actionId}`,
+        'test:native-focused-test',
+        `output-sha256:${outputSha256}`,
+        `source-head:${HEAD}`,
+        `lease:${request.leaseId}`,
+        `staged-tree-sha256:${evidence.plan.stagedTreeSha256}`,
+        `diff-sha256:${evidence.plan.diffSha256}`,
+      ],
+      proofRefs:[
+        `proof/native-test-${outputSha256}.json`,
+        missionRef,
+        `proof/native-staged-tree-${evidence.plan.stagedTreeSha256}.sha256`,
+        `proof/native-staged-diff-${evidence.plan.diffSha256}.sha256`,
+      ],
+    }),
+    kind:SHARED_WORKSPACE_RECORD_KINDS.GOAL,
+  };
+  const write = await writeAtomicJson(workspaceRoot, ['proof', `native-test-${outputSha256}.json`], fake, { repoRoot:REPO_ROOT, nowMs:NOW_MS });
+  assert.equal(write.ok, true, write.reason);
+  const verdict = await verifyStephanosNativeTestAndScopeProof(request, result, proofFor(request, two, outputSha256), verifyOptions(workspaceRoot));
+  assert.equal(verdict.valid, false);
+  assert.ok(verdict.errors.some((error) => error.includes('persisted-test-proof-invalid')));
+}));
+
+test('persisted test evidence cannot replay across mission identities', async () => withWorkspace(async (workspaceRoot) => {
+  const first = fixture();
+  const evidence = await persistTestEvidence(workspaceRoot, first.request, first.result, { outputSha256:hash('mission-a') });
+  const secondRequest = { ...first.request, missionId:'critical-2007-other-goal' };
+  const secondResult = { ...first.result, missionId:secondRequest.missionId };
+  const secondStage = await stageStephanosNativeModelResult(secondRequest, secondResult, stageOptions(workspaceRoot));
+  assert.equal(secondStage.ok, true, secondStage.reason);
+  const verdict = await verifyStephanosNativeTestAndScopeProof(
+    secondRequest,
+    secondResult,
+    proofFor(secondRequest, first.two, evidence.outputSha256),
+    verifyOptions(workspaceRoot),
+  );
+  assert.equal(verdict.valid, false);
+  assert.ok(verdict.errors.some((error) => error.includes('persisted-execution-receipt-missing')));
+}));
+
+test('persisted evidence with wrong worker or phase cannot prove tests passed', async () => withWorkspace(async (workspaceRoot) => {
+  const { request, result, two } = fixture();
+  const outputSha256 = hash('wrong-worker');
+  await persistTestEvidence(workspaceRoot, request, result, { outputSha256, workerId:'other-worker' });
+  const verdict = await verifyStephanosNativeTestAndScopeProof(request, result, proofFor(request, two, outputSha256), verifyOptions(workspaceRoot));
   assert.equal(verdict.valid, false);
   assert.ok(verdict.errors.some((error) => error.includes('persisted-execution-receipt-binding-invalid')));
 }));
@@ -266,14 +362,17 @@ test('forged validation flags, traversal, out-of-scope writes and before-digest 
   assert.equal(validateStephanosNativeModelResult({ ...result, replacements:[{ ...result.replacements[0], beforeSha256:'b'.repeat(64) }] }, request).valid, false);
 });
 
-test('protected main aliases and protected or generated source paths cannot enter staging', () => {
+test('protected main aliases and protected, generated, or Windows-aliased source paths cannot enter staging', () => {
   const { request } = fixture();
   for (const branch of ['main','refs/heads/main']) {
     const verdict = validateStephanosNativeStagingRequest({ ...request, branch });
     assert.equal(verdict.valid, false);
     assert.ok(verdict.errors.includes('branch-invalid'));
   }
-  for (const protectedPath of ['.git/config','.env','node_modules/x/index.js','runtime/state.json','apps/stephanos/dist/index.js']) {
+  for (const protectedPath of [
+    '.git/config','.git./config','.env','node_modules/x/index.js','node_modules./x/index.js',
+    'runtime/state.json','apps/stephanos/dist/index.js','safe/name:stream.js','safe/COM1.txt','safe/trailing./x.js',
+  ]) {
     const content='blocked\n';
     const verdict=validateStephanosNativeStagingRequest({
       ...request,
@@ -303,7 +402,7 @@ test('validated head and lease identities are canonicalized into the plan', () =
   assert.equal(plan.leaseId,'lease-native-2007');
 });
 
-test('test omission, unexpected changed scope and untouched-file drift block promotion', async () => withWorkspace(async (workspaceRoot) => {
+test('test omission, unexpected changed scope and caller source-after drift block promotion', async () => withWorkspace(async (workspaceRoot) => {
   const { request, result, two } = fixture();
   const evidence = await persistTestEvidence(workspaceRoot, request, result);
   const noTests=proofFor(request,two,evidence.outputSha256,{testOutputs:[]});
@@ -311,10 +410,12 @@ test('test omission, unexpected changed scope and untouched-file drift block pro
   const widened=proofFor(request,two,evidence.outputSha256,{changedFiles:['shared/agents/a.mjs','package.json']});
   assert.equal((await verifyStephanosNativeTestAndScopeProof(request,result,widened,verifyOptions(workspaceRoot))).valid,false);
   const drifted=proofFor(request,two,evidence.outputSha256,{sourceAfter:[
-    {path:'shared/agents/a.mjs',sha256:hash('export const one = 3;\n')},
-    {path:'shared/agents/b.mjs',sha256:hash('drift')},
+    {path:'shared/agents/a.mjs',sha256:hash('wrong')},
+    {path:'shared/agents/b.mjs',sha256:hash(two)},
   ]});
-  assert.equal((await verifyStephanosNativeTestAndScopeProof(request,result,drifted,verifyOptions(workspaceRoot))).valid,false);
+  const driftVerdict=await verifyStephanosNativeTestAndScopeProof(request,result,drifted,verifyOptions(workspaceRoot));
+  assert.equal(driftVerdict.valid,false);
+  assert.ok(driftVerdict.errors.includes('source-after-mismatch:shared/agents/a.mjs'));
 }));
 
 test('accessor-bearing expected request field is rejected without invoking accessors', () => {
