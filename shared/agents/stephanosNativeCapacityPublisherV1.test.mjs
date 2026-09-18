@@ -73,6 +73,7 @@ function publicationOptions(workspaceRoot, overrides = {}) {
     endpoint: 'http://127.0.0.1:11434',
     model: 'qwen:14b',
     fetchImpl: fetchFixture(),
+    readQueue: async () => [],
     nowMs: () => { clock += 1_250; return clock; },
     ...overrides,
   };
@@ -88,6 +89,7 @@ test('live local qualification publishes signed exact-head native capacity and b
   assert.equal(result.statusRecord.arbitraryCommandAllowed, false);
   assert.equal(result.statusRecord.capacityReceipt.payload.sourceHead, HEAD);
   assert.equal(result.statusRecord.capacityReceipt.payload.model, 'qwen:14b');
+  assert.equal(result.statusRecord.capacityReceipt.payload.queueDepth, 0);
   assert.equal(result.statusRecord.sourceAuthority.allowedOperations[0], 'SOURCE_CONSTRUCTION');
   assert.equal(result.statusRecord.sourceAuthority.mergeAuthority, false);
   assert.equal(verifyStephanosNativeCapacityReceipt(result.statusRecord.capacityReceipt, {
@@ -104,6 +106,32 @@ test('live local qualification publishes signed exact-head native capacity and b
   assert.equal(persisted.capacityReceipt.payload.sourceHead, HEAD);
   assert.equal(persisted.publisherAttestation.keyId, KEY_ID);
   assert.equal(persisted.capacityReceipt.payload.proofRefs.length, 1);
+  assert.equal(persisted.capacityReceipt.payload.proofRefs[0], result.proofRef);
+  const proofPath = join(workspaceRoot, ...result.proofRef.split('/'));
+  const proof = JSON.parse(await readFile(proofPath, 'utf8'));
+  assert.equal(proof.proofId, result.proofRef.replace(/^proof\//, '').replace(/\.json$/, ''));
+  assert.equal(proof.queueDepth, 0);
+}));
+
+test('signed capacity uses measured canonical Mission Worker queue depth', async () => withWorkspace(async (workspaceRoot) => {
+  const result = await publishStephanosNativeCapacityV1(publicationOptions(workspaceRoot, {
+    readQueue: async () => [
+      { adapter: 'foundry-forge' },
+      { adapter: 'chatgpt-github' },
+    ],
+  }));
+  assert.equal(result.ok, true, result.reason);
+  assert.equal(result.statusRecord.capacityReceipt.payload.queueDepth, 2);
+  assert.equal(result.proofRecord.queueDepth, 2);
+  assert.equal(result.proofRecord.queueDepthSource, 'canonical-mission-worker-queue');
+  assert.ok(result.proofRecord.refs.includes('queue-depth:2'));
+}));
+
+test('publisher fails dark when canonical queue posture cannot be proved', async () => withWorkspace(async (workspaceRoot) => {
+  const result = await publishStephanosNativeCapacityV1(publicationOptions(workspaceRoot, { readQueue: undefined }));
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'native-capacity-queue-unproven');
+  await assert.rejects(readFile(join(workspaceRoot, 'status', `${STEPHANOS_NATIVE_CAPACITY_STATUS_ID}.json`), 'utf8'), { code: 'ENOENT' });
 }));
 
 test('probe refuses model substitution even when a different local model returns a plausible repair', async () => {
