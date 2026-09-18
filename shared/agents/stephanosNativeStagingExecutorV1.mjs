@@ -272,7 +272,7 @@ async function readPersistedNativeTestEvidence(plan, output, options = {}) {
   } catch {
     return frozen({ valid:false, reason:'persisted-test-proof-missing' });
   }
-  const proofValidation = validateSharedWorkspaceRecord(proofRecord, SHARED_WORKSPACE_RECORD_KINDS.PROOF, { repoRoot:options.repoRoot, nowMs:options.nowMs });
+  const proofValidation = validateSharedWorkspaceRecord(proofRecord, { repoRoot:options.repoRoot, nowMs:options.nowMs });
   if (!proofValidation.valid) return frozen({ valid:false, reason:'persisted-test-proof-invalid' });
   const refs = plainArray(proofRecord.refs) ? proofRecord.refs : [];
   if (proofRecord.participantId !== plan.workerId
