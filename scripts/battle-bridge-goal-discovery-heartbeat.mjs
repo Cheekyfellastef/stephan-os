@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { ensureCriticalBacklogMission } from '../stephanos-server/services/criticalBacklogConveyorService.js';
 import { refreshForgeLifeboatCapacity } from '../stephanos-server/services/forgeLifeboatCapacityService.js';
+import { runGitHubLifeboatLane7 } from '../stephanos-server/services/githubLifeboatLane7Service.js';
 import { processNextProviderNeutralSourceBuild } from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
 
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA = 'stephanos.battle-bridge-goal-discovery-heartbeat.v1';
@@ -80,10 +81,25 @@ function unavailableLifeboat(error) {
   });
 }
 
+function unavailableGithubLifeboat(error) {
+  return Object.freeze({
+    ok: false,
+    available: false,
+    reason: `GITHUB_LIFEBOAT_LANE7_REFRESH_FAILED:${String(error?.message || 'unknown')}`,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    leaseSeizureAllowed: false,
+    arbitraryCommandAllowed: false,
+  });
+}
+
 export async function runBattleBridgeGoalDiscoveryHeartbeat({
   conveyor = ensureCriticalBacklogMission,
   refreshLifeboatCapacity = refreshForgeLifeboatCapacity,
   lifeboatOptions = {},
+  refreshGithubLifeboat = runGitHubLifeboatLane7,
+  githubLifeboatOptions = {},
   buildClaimedGoal = processNextProviderNeutralSourceBuild,
   builderOptions = {},
   maxWorkConservingAttempts = DEFAULT_WORK_CONSERVING_SWEEP_LIMIT,
@@ -95,8 +111,12 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   let latestSourceBuild = null;
   let latestElasticHold = null;
   let lifeboatCapacity = null;
+  let githubLifeboat = null;
 
   try {
+    try { githubLifeboat = await refreshGithubLifeboat(githubLifeboatOptions); }
+    catch (error) { githubLifeboat = unavailableGithubLifeboat(error); }
+
     try { lifeboatCapacity = await refreshLifeboatCapacity(lifeboatOptions); }
     catch (error) { lifeboatCapacity = unavailableLifeboat(error); }
 
@@ -107,6 +127,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
           ok: false,
+          githubLifeboat,
           lifeboatCapacity,
           conveyorResult: result || null,
           sourceBuild: latestSourceBuild,
@@ -137,6 +158,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
           ok: true,
+          githubLifeboat,
           lifeboatCapacity,
           conveyorResult: result,
           sourceBuild,
@@ -161,6 +183,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
           ok: true,
+          githubLifeboat,
           lifeboatCapacity,
           conveyorResult: result,
           sourceBuild: sourceBuild || null,
@@ -180,6 +203,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
     return Object.freeze({
       schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
       ok: true,
+      githubLifeboat,
       lifeboatCapacity,
       conveyorResult: latestResult,
       sourceBuild: latestSourceBuild,
@@ -200,6 +224,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
       ok: false,
       blocker: String(error?.message || 'GOAL_DISCOVERY_HEARTBEAT_FAILED'),
+      githubLifeboat,
       lifeboatCapacity,
       conveyorResult: latestResult,
       sourceBuild: latestSourceBuild,
