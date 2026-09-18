@@ -13,6 +13,7 @@ import { resolveSharedWorkspacePath } from './sharedAgentWorkspaceStore.mjs';
 export const STEPHANOS_NATIVE_ROUTING_ADMISSION_SCHEMA = 'stephanos.native-routing-admission.v1';
 export const STEPHANOS_NATIVE_CAPACITY_STATUS_ID = 'stephanos-native-capacity-current';
 export const STEPHANOS_NATIVE_CAPACITY_PUBLIC_KEY_FILE = 'stephanos-native-capacity-public.pem';
+export const STEPHANOS_NATIVE_CAPACITY_KEY_ID = 'stephanos-native-capacity-key-v1';
 
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:@/-]{2,239}$/i;
@@ -60,6 +61,17 @@ function receiptDigest(receipt) {
   } catch {
     return '';
   }
+}
+
+function authorityIdFromVerifiedPayload(payload) {
+  const receiptId = text(payload?.receiptId);
+  const sourceHead = text(payload?.sourceHead).toLowerCase();
+  if (!SAFE_ID.test(receiptId) || !FULL_SHA.test(sourceHead)) return '';
+  const digest = createHash('sha256')
+    .update(`${receiptId}\n${sourceHead}`)
+    .digest('hex')
+    .slice(0, 24);
+  return `native-authority-${digest}`;
 }
 
 export function isVerifiedStephanosNativeRoutingCandidate(candidate) {
@@ -131,10 +143,15 @@ export async function readVerifiedStephanosNativeRoutingCandidate(options = {}) 
   const authority = status?.sourceAuthority;
   const payload = receipt?.payload;
   const workerId = text(payload?.workerId);
-  const keyId = text(receipt?.keyId);
   const proofRefs = uniqueStrings(payload?.proofRefs);
   const attestation = status?.publisherAttestation;
-  const expected = { repository, sourceHead, workerId, nowUtc, keyId };
+  const expected = {
+    repository,
+    sourceHead,
+    workerId,
+    nowUtc,
+    keyId: STEPHANOS_NATIVE_CAPACITY_KEY_ID,
+  };
 
   const receiptValidation = verifyStephanosNativeCapacityReceipt(receipt, {
     publicKeyPem,
@@ -145,6 +162,18 @@ export async function readVerifiedStephanosNativeRoutingCandidate(options = {}) 
       schemaVersion: STEPHANOS_NATIVE_ROUTING_ADMISSION_SCHEMA,
       ok: false,
       reason: `STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:${receiptValidation.errors[0] || 'unknown'}`,
+      candidate: null,
+      mergeAuthority: false,
+      leaseSeizureAllowed: false,
+    });
+  }
+
+  const expectedAuthorityId = authorityIdFromVerifiedPayload(receiptValidation.payload);
+  if (!expectedAuthorityId || text(authority?.authorityId) !== expectedAuthorityId) {
+    return frozen({
+      schemaVersion: STEPHANOS_NATIVE_ROUTING_ADMISSION_SCHEMA,
+      ok: false,
+      reason: 'STEPHANOS_NATIVE_SOURCE_AUTHORITY_INVALID:authority-id-binding-mismatch',
       candidate: null,
       mergeAuthority: false,
       leaseSeizureAllowed: false,
@@ -175,7 +204,7 @@ export async function readVerifiedStephanosNativeRoutingCandidate(options = {}) 
     && status?.mergeAuthority === false
     && status?.leaseSeizureAllowed === false
     && status?.duplicateDispatchAllowed === false
-    && attestation?.keyId === keyId
+    && attestation?.keyId === STEPHANOS_NATIVE_CAPACITY_KEY_ID
     && text(attestation?.sourceHead).toLowerCase() === sourceHead
     && attestation?.receiptSha256 === receiptDigest(receipt)
     && proofRefs?.length > 0
@@ -223,7 +252,7 @@ export async function readVerifiedStephanosNativeRoutingCandidate(options = {}) 
     queueDepth: payload.queueDepth,
     p95StartLatencySeconds: payload.p95StartLatencySeconds,
     capacityReceiptId: payload.receiptId,
-    authorityReceiptIds: frozen([authority.authorityId]),
+    authorityReceiptIds: frozen([expectedAuthorityId]),
     proofRefs: frozen([...proofRefs]),
     sourceMutationAllowed: true,
     arbitraryCommandAllowed: false,
