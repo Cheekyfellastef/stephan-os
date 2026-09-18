@@ -85,10 +85,11 @@ export function forgeLifeboatProofRef(sourceHead = '') {
 
 function taskForMission(mission = {}, explicitTask = {}) {
   const allowedFiles = list(mission.allowedFiles);
+  const requestedTaskClass = text(explicitTask.taskClass).toUpperCase();
   const windowsBound = explicitTask.windowsBound === true
-    || allowedFiles.some((path) => /(?:^|\/)windows(?:\/|$)|\.ps1$/i.test(text(path)))
+    || requestedTaskClass === CODEX_TASK_CLASS.WINDOWS_RUNTIME_PROOF
     || list(mission.requiredEvidence).some((item) => /windows runtime|battle bridge/i.test(text(item)));
-  const taskClass = text(explicitTask.taskClass).toUpperCase()
+  const taskClass = requestedTaskClass
     || (windowsBound
       ? CODEX_TASK_CLASS.WINDOWS_RUNTIME_PROOF
       : (text(mission.currentPhase).toUpperCase() === 'REPAIR_REQUIRED'
