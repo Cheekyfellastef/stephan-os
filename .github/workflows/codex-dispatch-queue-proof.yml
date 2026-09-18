@@ -71,7 +71,7 @@ jobs:
 
       - name: Shared-agent regressions S-Z
         if: always()
-        run: node --test --test-reporter=dot shared/agents/[s-z]*.test.mjs
+        run: bash .github/scripts/run-node-test-shard.sh S-Z 'shared/agents/[s-z]*.test.mjs'
 
       - name: Diff check
         if: always()
