@@ -69,6 +69,14 @@ function plainArray(value) {
 }
 function unique(values) { return plainArray(values) && values.length === new Set(values).size; }
 function sha256(value) { return createHash('sha256').update(value).digest('hex'); }
+function stagedTreeSha256(replacements) {
+  return sha256(replacements.map((item)=>`${item.path}\0${item.afterSha256}`).join('\n'));
+}
+function stagedDiffSha256(replacements) {
+  return sha256(replacements.map((item)=>`${item.path}\n${item.beforeSha256}\n${item.afterSha256}`).join('\n---\n'));
+}
+function stagedTreeProofRef(digest) { return `proof/native-staged-tree-${digest}.sha256`; }
+function stagedDiffProofRef(digest) { return `proof/native-staged-diff-${digest}.sha256`; }
 function frozen(value) { return Object.freeze(value); }
 function canonicalBranch(value) {
   const raw = text(value);
@@ -213,6 +221,8 @@ export function buildStephanosNativeStagingPlan(request, result) {
   const untouched = request.sourceSnapshots
     .filter((source) => !validation.replacements.some((replacement) => replacement.path === canonicalPath(source.path)))
     .map((source) => frozen({ path: canonicalPath(source.path), sha256: text(source.sha256).toLowerCase() }));
+  const stagedTreeDigest = stagedTreeSha256(validation.replacements);
+  const diffDigest = stagedDiffSha256(validation.replacements);
   return frozen({
     ok: true,
     schemaVersion: STEPHANOS_NATIVE_PROMOTION_JOURNAL_SCHEMA,
@@ -227,6 +237,8 @@ export function buildStephanosNativeStagingPlan(request, result) {
     replacements: validation.replacements,
     untouched: frozen(untouched),
     requiredTestIds: requestValidation.requiredTestIds,
+    stagedTreeSha256: stagedTreeDigest,
+    diffSha256: diffDigest,
     arbitraryCommandAllowed: false,
     modelMayPromote: false,
     leaseSeizureAllowed: false,
@@ -243,6 +255,8 @@ async function readPersistedNativeTestEvidence(plan, output, options = {}) {
 
   const executionId = buildStephanosNativeTestExecutionId(plan.actionId, testId);
   const proofRef = buildStephanosNativeTestProofRef(outputSha256);
+  const treeProofRef = stagedTreeProofRef(plan.stagedTreeSha256);
+  const diffProofRef = stagedDiffProofRef(plan.diffSha256);
   const execution = await readCurrentExecutionReceipt(
     options.workspaceRoot,
     { executionId },
@@ -258,7 +272,9 @@ async function readPersistedNativeTestEvidence(plan, output, options = {}) {
     || receipt.executionId !== executionId
     || receipt.phase !== `native-test:${testId}`
     || !plainArray(receipt.proofRefs)
-    || !receipt.proofRefs.includes(proofRef)) return frozen({ valid:false, reason:'persisted-execution-receipt-binding-invalid' });
+    || !receipt.proofRefs.includes(proofRef)
+    || !receipt.proofRefs.includes(treeProofRef)
+    || !receipt.proofRefs.includes(diffProofRef)) return frozen({ valid:false, reason:'persisted-execution-receipt-binding-invalid' });
 
   let proofRecord;
   try {
@@ -283,8 +299,12 @@ async function readPersistedNativeTestEvidence(plan, output, options = {}) {
     || !refs.includes(`output-sha256:${outputSha256}`)
     || !refs.includes(`source-head:${plan.baseHead}`)
     || !refs.includes(`lease:${plan.leaseId}`)
+    || !refs.includes(`staged-tree-sha256:${plan.stagedTreeSha256}`)
+    || !refs.includes(`diff-sha256:${plan.diffSha256}`)
     || !plainArray(proofRecord.proofRefs)
-    || !proofRecord.proofRefs.includes(proofRef)) return frozen({ valid:false, reason:'persisted-test-proof-binding-invalid' });
+    || !proofRecord.proofRefs.includes(proofRef)
+    || !proofRecord.proofRefs.includes(treeProofRef)
+    || !proofRecord.proofRefs.includes(diffProofRef)) return frozen({ valid:false, reason:'persisted-test-proof-binding-invalid' });
   return frozen({ valid:true, testId, outputSha256, executionId, proofRef });
 }
 
@@ -342,8 +362,8 @@ export async function createStephanosNativeStagingReceipt(request, result, proof
     baseHead: plan.baseHead,
     leaseId: plan.leaseId,
     changedFiles: plan.changedFiles,
-    stagedTreeSha256: sha256(plan.replacements.map((item)=>`${item.path}\0${item.afterSha256}`).join('\n')),
-    diffSha256: sha256(plan.replacements.map((item)=>`${item.path}\n${item.beforeSha256}\n${item.afterSha256}`).join('\n---\n')),
+    stagedTreeSha256: plan.stagedTreeSha256,
+    diffSha256: plan.diffSha256,
     observedAtUtc,
     sourceChanged: true,
     testsPassed: true,
