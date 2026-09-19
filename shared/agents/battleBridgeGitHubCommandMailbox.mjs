@@ -8,16 +8,35 @@ import {
   BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
   validateApprovedBackendRestartCommandShape,
 } from './battleBridgeApprovedBackendRestartMailboxV1.mjs';
+import {
+  STARFIELD_VR_BATTLE_BRIDGE_OPERATIONS,
+  STARFIELD_VR_DELIVERY_STATUS_OPERATION,
+  STARFIELD_VR_SHORTCUT_INSTALL_OPERATION,
+  executeStarfieldVrBattleBridgeCommand,
+  validateStarfieldVrBattleBridgeCommandShape,
+} from './starfieldVrBattleBridgeMailboxV1.mjs';
 
 export * from './battleBridgeGitHubCommandMailboxLegacyV1.mjs';
 
 export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   ...legacy.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
   MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION,
+  ...STARFIELD_VR_BATTLE_BRIDGE_OPERATIONS,
 ]);
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const DIAGNOSTIC_LINK_ALLOWED_FIELDS = new Set([
+  'schemaVersion',
+  'requestId',
+  'operation',
+  'repository',
+  'issueNumber',
+  'branch',
+  'operatorApproval',
+  'expectedHead',
+  'expiresAt',
+]);
+const STARFIELD_VR_ALLOWED_FIELDS = new Set([
   'schemaVersion',
   'requestId',
   'operation',
@@ -43,10 +62,18 @@ const DIAGNOSTIC_LINK_TERMINAL_BLOCKERS = new Set([
   'MISSION_WORKER_DIAGNOSTIC_LINK_EXPECTED_HEAD_REQUIRED',
   'MISSION_WORKER_DIAGNOSTIC_LINK_FIELD_NOT_ALLOWED',
 ]);
+const STARFIELD_VR_TERMINAL_BLOCKERS = new Set([
+  'STARFIELD_VR_EXPECTED_HEAD_REQUIRED',
+  'STARFIELD_VR_FIELD_NOT_ALLOWED',
+]);
 const DIAGNOSTIC_EXPECTED_HEAD_UNSET = Symbol('DIAGNOSTIC_EXPECTED_HEAD_UNSET');
 
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
+}
+
+function isStarfieldVrOperation(operation = '') {
+  return STARFIELD_VR_BATTLE_BRIDGE_OPERATIONS.includes(String(operation || ''));
 }
 
 function validateDiagnosticLinkCommandShape(command = {}) {
@@ -95,12 +122,34 @@ function projectDiagnosticEnvelope(command = {}, expectedHead = DIAGNOSTIC_EXPEC
   return Object.freeze(projected);
 }
 
+function projectStarfieldVrEnvelope(command = {}, operation = '', expectedHead = '') {
+  const projected = {};
+  for (const field of STARFIELD_VR_ALLOWED_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(command || {}, field)) projected[field] = command[field];
+  }
+  projected.operation = String(operation || command?.operation || '');
+  projected.expectedHead = String(expectedHead || command?.expectedHead || '').trim().toLowerCase();
+  return Object.freeze(projected);
+}
+
 function translateDiagnosticLinkForLegacy(command = {}, shape = {}) {
   const translated = {};
   for (const field of DIAGNOSTIC_LINK_ALLOWED_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(command || {}, field)) translated[field] = command[field];
   }
   translated.operation = 'RUN_WORKER_WATCHDOG_ACCEPTANCE';
+  translated.expectedHead = shape?.ok === true ? shape.expectedHead : 'invalid';
+  return translated;
+}
+
+function translateStarfieldVrForLegacy(command = {}, shape = {}) {
+  const translated = {};
+  for (const field of STARFIELD_VR_ALLOWED_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(command || {}, field)) translated[field] = command[field];
+  }
+  translated.operation = String(command?.operation || '') === STARFIELD_VR_DELIVERY_STATUS_OPERATION
+    ? 'READ_DEPLOYMENT_STATUS'
+    : 'RUN_WORKER_WATCHDOG_ACCEPTANCE';
   translated.expectedHead = shape?.ok === true ? shape.expectedHead : 'invalid';
   return translated;
 }
@@ -142,13 +191,58 @@ function projectDiagnosticTerminalRejection(original = {}, options = {}) {
   });
 }
 
+function projectStarfieldVrTerminalRejection(original = {}, options = {}) {
+  const command = original?.command || {};
+  const shape = original?.shape || {};
+  const comment = original?.comment || {};
+  if (shape?.ok === true || !STARFIELD_VR_TERMINAL_BLOCKERS.has(String(shape?.blocker || ''))) return null;
+
+  const originalExpectedHead = String(command?.expectedHead || '').trim().toLowerCase();
+  const validationHead = SHA_PATTERN.test(originalExpectedHead)
+    ? originalExpectedHead
+    : '0'.repeat(40);
+  const envelope = legacy.validateBattleBridgeGitHubCommand(
+    translateStarfieldVrForLegacy(command, { ok: true, expectedHead: validationHead }),
+    {
+      authorLogin: String(comment?.user?.login || ''),
+      now: options?.now || new Date(),
+      authoredAt: comment?.created_at || options?.now || new Date(),
+    },
+  );
+  if (!envelope?.ok) return null;
+
+  const commentId = Number(comment?.id || 0);
+  if (!Number.isSafeInteger(commentId) || commentId < 1) return null;
+  return Object.freeze({
+    commentId,
+    commentUrl: String(comment?.html_url || comment?.url || ''),
+    blocker: String(shape.blocker),
+    command: projectStarfieldVrEnvelope(envelope.command, command.operation, originalExpectedHead),
+  });
+}
+
 export function isTerminalizableOwnerCommandBlocker(value) {
   const blocker = String(value || '');
   return DIAGNOSTIC_LINK_TERMINAL_BLOCKERS.has(blocker)
+    || STARFIELD_VR_TERMINAL_BLOCKERS.has(blocker)
     || legacy.isTerminalizableOwnerCommandBlocker(blocker);
 }
 
 export function validateBattleBridgeGitHubCommand(command = {}, options = {}) {
+  if (isStarfieldVrOperation(command?.operation)) {
+    const shape = validateStarfieldVrBattleBridgeCommandShape(command);
+    if (!shape.ok) return shape;
+    const envelope = legacy.validateBattleBridgeGitHubCommand(
+      translateStarfieldVrForLegacy(command, shape),
+      options,
+    );
+    if (!envelope?.ok) return envelope;
+    return Object.freeze({
+      ...envelope,
+      command: projectStarfieldVrEnvelope(envelope.command, shape.operation, shape.expectedHead),
+    });
+  }
+
   const diagnostic = validateDiagnosticLinkCommandShape(command);
   if (!diagnostic.ok) return diagnostic;
   if (!diagnostic.requested) return legacy.validateBattleBridgeGitHubCommand(command, options);
@@ -166,6 +260,12 @@ export function validateBattleBridgeGitHubCommand(command = {}, options = {}) {
 
 export function classifyBattleBridgeMailboxOperation(operation = '') {
   if (String(operation || '') === MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION) {
+    return legacy.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
+  }
+  if (String(operation || '') === STARFIELD_VR_DELIVERY_STATUS_OPERATION) {
+    return legacy.BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION;
+  }
+  if (String(operation || '') === STARFIELD_VR_SHORTCUT_INSTALL_OPERATION) {
     return legacy.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
   }
   return legacy.classifyBattleBridgeMailboxOperation(operation);
@@ -229,9 +329,22 @@ function applyElasticMailboxPlan(commands = [], options = {}) {
 
 export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}) {
   const diagnosticOriginals = new Map();
+  const starfieldOriginals = new Map();
   const translated = (Array.isArray(comments) ? comments : []).map((comment) => {
     const extracted = legacy.extractBattleBridgeGitHubCommand(comment?.body || '');
-    if (!extracted.ok || extracted.command?.operation !== MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION) {
+    if (!extracted.ok) return comment;
+
+    if (isStarfieldVrOperation(extracted.command?.operation)) {
+      const shape = validateStarfieldVrBattleBridgeCommandShape(extracted.command);
+      starfieldOriginals.set(String(comment?.id ?? ''), Object.freeze({
+        command: extracted.command,
+        shape,
+        comment,
+      }));
+      return translatedComment(comment, translateStarfieldVrForLegacy(extracted.command, shape));
+    }
+
+    if (extracted.command?.operation !== MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION) {
       return comment;
     }
     const shape = validateDiagnosticLinkCommandShape(extracted.command);
@@ -249,8 +362,20 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
   const selectedCommands = Array.isArray(selected.commands)
     ? selected.commands.map((entry) => {
       const projectedCommand = projectApprovedBackendRestartSelectedCommand(entry.command);
-      if (projectedCommand === entry.command) return entry;
-      return Object.freeze({ ...entry, command: projectedCommand });
+      const starfieldOriginal = starfieldOriginals.get(String(entry?.commentId ?? ''));
+      if (!starfieldOriginal?.shape?.ok) {
+        if (projectedCommand === entry.command) return entry;
+        return Object.freeze({ ...entry, command: projectedCommand });
+      }
+      return Object.freeze({
+        ...entry,
+        command: projectStarfieldVrEnvelope(
+          projectedCommand,
+          starfieldOriginal.shape.operation,
+          starfieldOriginal.shape.expectedHead,
+        ),
+        partition: classifyBattleBridgeMailboxOperation(starfieldOriginal.shape.operation),
+      });
     })
     : [];
 
@@ -268,6 +393,10 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
 
   const rejected = Array.isArray(selected.rejected)
     ? selected.rejected.map((entry) => {
+      const starfieldOriginal = starfieldOriginals.get(String(entry?.commentId ?? ''));
+      if (starfieldOriginal && !starfieldOriginal.shape?.ok) {
+        return Object.freeze({ ...entry, blocker: starfieldOriginal.shape.blocker });
+      }
       const original = diagnosticOriginals.get(String(entry?.commentId ?? ''));
       if (!original || original.shape?.ok) return entry;
       return Object.freeze({ ...entry, blocker: original.shape.blocker });
@@ -276,6 +405,18 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
 
   const terminalRejections = Array.isArray(selected.terminalRejections)
     ? selected.terminalRejections.map((entry) => {
+      const starfieldOriginal = starfieldOriginals.get(String(entry?.commentId ?? ''));
+      if (starfieldOriginal) {
+        return Object.freeze({
+          ...entry,
+          blocker: starfieldOriginal.shape?.ok === true ? entry.blocker : starfieldOriginal.shape.blocker,
+          command: projectStarfieldVrEnvelope(
+            entry.command,
+            starfieldOriginal.command?.operation,
+            String(starfieldOriginal.command?.expectedHead || '').trim().toLowerCase(),
+          ),
+        });
+      }
       const original = diagnosticOriginals.get(String(entry?.commentId ?? ''));
       if (!original) return entry;
       return Object.freeze({
@@ -294,6 +435,19 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
   );
   if (Array.isArray(selected.rejected)) {
     for (const entry of selected.rejected) {
+      const starfieldOriginal = starfieldOriginals.get(String(entry?.commentId ?? ''));
+      if (starfieldOriginal && starfieldOriginal.shape?.ok !== true) {
+        const terminal = projectStarfieldVrTerminalRejection(starfieldOriginal, options);
+        if (terminal) {
+          const requestId = String(terminal.command?.requestId || '');
+          if (!options?.consumedRequestIds?.has?.(requestId) && !terminalRequestIds.has(requestId)) {
+            terminalRequestIds.add(requestId);
+            terminalRejections.push(terminal);
+          }
+        }
+        continue;
+      }
+
       const original = diagnosticOriginals.get(String(entry?.commentId ?? ''));
       if (!original || original.shape?.ok === true) continue;
       const terminal = projectDiagnosticTerminalRejection(original, options);
@@ -332,6 +486,30 @@ export function selectNextBattleBridgeGitHubCommand(comments = [], options = {})
 }
 
 export async function executeBattleBridgeGitHubCommand(command, options = {}) {
+  if (isStarfieldVrOperation(command?.operation)) {
+    const shape = validateStarfieldVrBattleBridgeCommandShape(command);
+    if (!shape.ok) return shape;
+    const executor = typeof options?.executeStarfieldVrBattleBridgeCommandFn === 'function'
+      ? options.executeStarfieldVrBattleBridgeCommandFn
+      : executeStarfieldVrBattleBridgeCommand;
+    try {
+      const result = await executor(command, options);
+      return Object.freeze({
+        ok: result?.ok !== false,
+        verdict: result?.ok === false ? 'COMMAND_EXECUTION_BLOCKED' : 'COMMAND_EXECUTION_COMPLETE',
+        operation: shape.operation,
+        requestId: String(command?.requestId || ''),
+        ...(result?.ok === false ? { blocker: String(result?.blocker || 'STARFIELD_VR_COMMAND_EXECUTION_FAILED') } : {}),
+        result,
+      });
+    } catch {
+      return fail('STARFIELD_VR_COMMAND_EXECUTION_FAILED', {
+        operation: shape.operation,
+        requestId: String(command?.requestId || ''),
+      });
+    }
+  }
+
   if (String(command?.operation || '') !== MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION) {
     return legacy.executeBattleBridgeGitHubCommand(command, options);
   }

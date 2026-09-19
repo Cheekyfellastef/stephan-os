@@ -28,10 +28,15 @@ export const PROTECTED_OPENCLAW_MERGE_MAX_BOOTSTRAP_FINDINGS = 20;
 export const PROTECTED_OPENCLAW_MERGE_REQUIRED_WORKFLOWS = PROTECTED_MERGE_REQUIRED_WORKFLOWS;
 export const PROTECTED_OPERATOR_MERGE_WORKFLOW = 'operator-merge-approval-gate.yml';
 export const PROTECTED_OPERATOR_MERGE_WORKFLOW_MODE = 'user-owned-protected-squash';
+export const PROTECTED_OPENCLAW_SPECIALIST_SUCCESSOR_BOOTSTRAP_PATHS = Object.freeze([
+  'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs',
+  'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.test.mjs',
+]);
 
 const PROTECTED_OPENCLAW_BOOTSTRAP_PATHS = new Set([
   ...APPROVAL_BOUNDARY_PATHS_V2,
   ...WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1,
+  ...PROTECTED_OPENCLAW_SPECIALIST_SUCCESSOR_BOOTSTRAP_PATHS,
 ]);
 
 const SHA40 = /^[a-f0-9]{40}$/;

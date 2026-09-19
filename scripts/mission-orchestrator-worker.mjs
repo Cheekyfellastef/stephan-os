@@ -9,11 +9,13 @@ import {
   processNextGitHubInspectionItem,
   processNextOpenClawReadonlyItem,
   processNextSignedOpenClawItem,
+  processNextStephanosNativeItem,
 } from '../stephanos-server/services/missionOrchestratorWorkerConsumer.js';
 import {
   publishNextMissionWorkerAction,
   readMissionWorkerQueue,
 } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
+import { executeStephanosNativeAction } from '../stephanos-server/services/missionOrchestratorStephanosNativeExecutor.js';
 import {
   OPENCLAW_OC1_ISSUE,
   OPENCLAW_OC1_PROVIDER,
@@ -557,6 +559,11 @@ export async function runMissionWorkerTick(options = {}) {
     processed = await processNextCodexItem({
       ...workerOptions,
       executeCodexAction: (action, claim) => executeCodexAction(action, claim, options),
+    });
+  } else if (selection.entry.adapter === 'stephanos-native') {
+    processed = await processNextStephanosNativeItem({
+      ...workerOptions,
+      executeStephanosNativeAction: (action, claim) => executeStephanosNativeAction(action, claim, workerOptions),
     });
   } else if (selection.entry.adapter === 'openclaw-readonly') {
     processed = await processNextOpenClawReadonlyItem({

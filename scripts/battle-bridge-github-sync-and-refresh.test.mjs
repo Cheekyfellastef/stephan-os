@@ -110,9 +110,10 @@ test('new source update without old debt refreshes and then runs a second sync f
   assert.equal(result.refreshDebtCoalesced, false);
 });
 
-test('converged Windows sync reconciles the fixed recovery mesh and then wakes goal discovery', async () => {
+test('converged Windows sync wakes goal discovery and reconciles the fixed recovery mesh', async () => {
   const repairs = [];
   const wakeups = [];
+  const calls = [];
   const result = await runBattleBridgeSyncAndRefresh({
     paths,
     expectedPaths: paths,
@@ -123,6 +124,7 @@ test('converged Windows sync reconciles the fixed recovery mesh and then wakes g
       runRefresh() { throw new Error('refresh should not run'); },
     },
     controlPlaneReconciler(input) {
+      calls.push('repair');
       repairs.push(input);
       return {
         ok: true,
@@ -135,6 +137,7 @@ test('converged Windows sync reconciles the fixed recovery mesh and then wakes g
       };
     },
     goalDiscoveryHeartbeat: async () => {
+      calls.push('goal-discovery');
       wakeups.push('goal-discovery');
       return { ok: true, finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE' };
     },
@@ -144,11 +147,14 @@ test('converged Windows sync reconciles the fixed recovery mesh and then wakes g
   assert.equal(result.controlPlaneRepair.repairAttempted, true);
   assert.deepEqual(repairs, [{ repoRoot: paths.repoRoot, expectedHead: B, platform: 'win32' }]);
   assert.deepEqual(wakeups, ['goal-discovery']);
+  assert.deepEqual(calls, ['goal-discovery', 'repair']);
   assert.equal(result.goalDiscoveryObserved, true);
+  assert.equal(result.workConservingGoalDiscoveryPreserved, true);
 });
 
-test('control-plane repair failure blocks sync completion and does not wake goal discovery', async () => {
+test('control-plane repair failure still blocks wrapper completion after one work-conserving goal-discovery tick', async () => {
   let wakeups = 0;
+  const calls = [];
   const result = await runBattleBridgeSyncAndRefresh({
     paths,
     expectedPaths: paths,
@@ -159,15 +165,23 @@ test('control-plane repair failure blocks sync completion and does not wake goal
       runRefresh() { throw new Error('refresh should not run'); },
     },
     controlPlaneReconciler() {
+      calls.push('repair');
       return { ok: false, blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED' };
     },
-    goalDiscoveryHeartbeat: async () => { wakeups += 1; return { ok: true }; },
+    goalDiscoveryHeartbeat: async () => {
+      calls.push('goal-discovery');
+      wakeups += 1;
+      return { ok: true, finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE' };
+    },
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED');
   assert.equal(result.finalVerdict, 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED');
   assert.equal(result.controlPlaneRepair.repairAttempted, true);
-  assert.equal(wakeups, 0);
+  assert.equal(wakeups, 1);
+  assert.deepEqual(calls, ['goal-discovery', 'repair']);
+  assert.equal(result.goalDiscoveryObserved, true);
+  assert.equal(result.workConservingGoalDiscoveryPreserved, true);
 });
 
 test('goal discovery failure blocks otherwise converged completion', async () => {
