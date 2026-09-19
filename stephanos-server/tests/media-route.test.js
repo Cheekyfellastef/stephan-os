@@ -4,14 +4,14 @@ import test from 'node:test';
 
 import express from 'express';
 
-import mediaRouter from '../routes/media.js';
-
 const HEAD = 'a'.repeat(40);
+const BACKEND_BOOTSTRAP_HEAD = Symbol.for('stephanos.backend.exact-head-bootstrap');
 
 test('Media Fabric runtime health exposes bounded exact-head identity', async () => {
-  const previousSourceHead = process.env.STEPHANOS_BACKEND_SOURCE_HEAD;
-  process.env.STEPHANOS_BACKEND_SOURCE_HEAD = HEAD;
+  const previousBootstrapHead = globalThis[BACKEND_BOOTSTRAP_HEAD];
+  globalThis[BACKEND_BOOTSTRAP_HEAD] = HEAD;
 
+  const { default: mediaRouter } = await import(`../routes/media.js?runtime-health-test=${Date.now()}`);
   const app = express();
   app.use('/api/media', mediaRouter);
   const server = app.listen(0, '127.0.0.1');
@@ -35,7 +35,7 @@ test('Media Fabric runtime health exposes bounded exact-head identity', async ()
     assert.equal(payload.exactHeadIdentityAvailable, true);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
-    if (previousSourceHead === undefined) delete process.env.STEPHANOS_BACKEND_SOURCE_HEAD;
-    else process.env.STEPHANOS_BACKEND_SOURCE_HEAD = previousSourceHead;
+    if (previousBootstrapHead === undefined) delete globalThis[BACKEND_BOOTSTRAP_HEAD];
+    else globalThis[BACKEND_BOOTSTRAP_HEAD] = previousBootstrapHead;
   }
 });
