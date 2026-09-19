@@ -13,8 +13,10 @@ const HEX_C = 'c'.repeat(64);
 function input() {
   return {
     observedAtUtc: '2026-08-03T17:55:00Z',
+    referenceTimeUtc: '2026-08-03T17:56:00Z',
     repository: 'Cheekyfellastef/stephan-os',
     sourceHead: '1'.repeat(40),
+    openClawProcesses: [],
     openClaw: {
       version: '2026.6.1',
       executablePath: 'C:\\OpenClaw\\openclaw.cmd',
@@ -35,6 +37,8 @@ function input() {
     inventory: [
       { path: 'plugins/openclaw/command.mjs', digestSha256: HEX_A },
       { path: '.openclaw/openclaw.json', digestSha256: HEX_B },
+      { path: 'C:\\OpenClaw\\runtime\\receipts', kind: 'directory', digestSha256: HEX_C, reparsePoint: false },
+      { path: 'C:\\OpenClaw\\node_modules\\openclaw', kind: 'package', digestSha256: HEX_B, reparsePoint: false },
     ],
   };
 }
@@ -54,7 +58,7 @@ test('CLI reads one bounded JSON observation from stdin and writes no mutation c
 
 test('CLI exits 2 for a blocked preflight while still returning the rollback packet', () => {
   const blocked = input();
-  blocked.inventory.push({ path: 'unknown/addon.bin', digestSha256: HEX_C });
+  blocked.openClawProcesses = [7331];
   const result = spawnSync(process.execPath, [CLI], {
     input: JSON.stringify(blocked),
     encoding: 'utf8',

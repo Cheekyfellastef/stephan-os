@@ -10,9 +10,12 @@ import {
 } from './openClawWorkspaceHygiene.mjs';
 
 export const OPENCLAW_UPDATE_PREFLIGHT_SCHEMA = 'stephanos.openclaw-update-preflight.v1';
-export const OPENCLAW_UPDATE_PREFLIGHT_VERSION = '1.0.0';
+export const OPENCLAW_UPDATE_PREFLIGHT_VERSION = '1.1.0';
 export const OPENCLAW_UPDATE_PREFLIGHT_MAX_INVENTORY = 512;
 export const OPENCLAW_UPDATE_PREFLIGHT_MAX_TEXT = 512;
+export const OPENCLAW_UPDATE_PREFLIGHT_MAX_AGE_MS = 5 * 60 * 1000;
+export const OPENCLAW_UPDATE_PREFLIGHT_MAX_FUTURE_SKEW_MS = 60 * 1000;
+export const OPENCLAW_UPDATE_PREFLIGHT_MAX_PROCESSES = 64;
 
 export const OPENCLAW_UPDATE_PREFLIGHT_STATUS = Object.freeze({
   APPROVAL_REQUIRED: 'APPROVAL_REQUIRED',
@@ -30,6 +33,12 @@ export const OPENCLAW_PRESERVATION_CLASS = Object.freeze({
   APPROVAL_REQUIRED: 'APPROVAL_REQUIRED',
 });
 
+const REQUIRED_PRESERVATION_CLASSES = Object.freeze([
+  OPENCLAW_PRESERVATION_CLASS.UPDATE_TARGET,
+  OPENCLAW_PRESERVATION_CLASS.PRESERVE_SOURCE,
+  OPENCLAW_PRESERVATION_CLASS.PRESERVE_CONFIG,
+  OPENCLAW_PRESERVATION_CLASS.PRESERVE_RUNTIME,
+]);
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._:/+-]{0,127}$/i;
@@ -71,11 +80,19 @@ function normalizePath(value) {
   if (!raw || raw.length > OPENCLAW_UPDATE_PREFLIGHT_MAX_TEXT || CONTROL_CHARACTERS.test(raw)) return '';
   const slashed = raw.replace(/\\/g, '/').replace(/\/+/g, '/');
   const withoutQuotes = slashed.replace(/^["'`]+|["'`]+$/g, '');
-  const isAbsolute = WINDOWS_ABSOLUTE_PATH.test(withoutQuotes) || withoutQuotes.startsWith('/');
-  const comparable = isAbsolute ? withoutQuotes : withoutQuotes.replace(/^\.\//, '');
-  const segments = comparable.split('/').filter(Boolean);
-  if (segments.some((segment) => segment === '..')) return '';
-  return comparable.replace(/\/$/, '');
+  const windowsAbsolute = WINDOWS_ABSOLUTE_PATH.test(withoutQuotes);
+  const posixAbsolute = withoutQuotes.startsWith('/');
+  const comparable = (windowsAbsolute || posixAbsolute) ? withoutQuotes : withoutQuotes.replace(/^\.\//, '');
+  const normalizedSegments = [];
+  for (const segment of comparable.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') return '';
+    normalizedSegments.push(segment);
+  }
+  if (!normalizedSegments.length) return '';
+  const joined = normalizedSegments.join('/');
+  if (posixAbsolute) return `/${joined}`.replace(/\/$/, '');
+  return joined.replace(/\/$/, '');
 }
 
 function isAbsolutePath(value) {
@@ -173,6 +190,7 @@ function normalizeInventory(inventory, blockers) {
       blockers.push('INVENTORY_ITEM_MALFORMED');
       continue;
     }
+    const identity = safePathIdentity(item.path);
     const classified = classifyOpenClawPreservationPath(item.path);
     const digestSha256 = normalizeDigest(item.digestSha256 ?? item.sha256);
     const existsProvided = Object.prototype.hasOwnProperty.call(item, 'exists');
@@ -183,6 +201,12 @@ function normalizeInventory(inventory, blockers) {
     const kind = kindValid ? rawKind : 'unsupported';
     const sizeProvided = Object.prototype.hasOwnProperty.call(item, 'size');
     const size = normalizeSize(item.size);
+    const needsWindowsReparseEvidence = Boolean(identity)
+      && WINDOWS_ABSOLUTE_PATH.test(identity.normalized)
+      && (kind === 'directory' || kind === 'package');
+    const reparseProvided = Object.prototype.hasOwnProperty.call(item, 'reparsePoint');
+    const reparseValid = !needsWindowsReparseEvidence || (reparseProvided && typeof item.reparsePoint === 'boolean');
+    const reparsePoint = needsWindowsReparseEvidence && reparseValid ? item.reparsePoint : null;
     const entry = Object.freeze({
       displayPath: classified.displayPath,
       pathFingerprintSha256: classified.pathFingerprintSha256,
@@ -192,6 +216,7 @@ function normalizeInventory(inventory, blockers) {
       exists,
       size,
       digestSha256: exists === true ? digestSha256 || null : null,
+      reparsePoint,
     });
 
     if (!classified.pathFingerprintSha256) blockers.push('INVENTORY_PATH_UNSAFE');
@@ -201,6 +226,12 @@ function normalizeInventory(inventory, blockers) {
     if (exists === false && digestSha256) blockers.push(`ABSENT_INVENTORY_DIGEST_PRESENT:${classified.pathFingerprintSha256 || 'unsafe'}`);
     if (exists === true && classified.classification !== OPENCLAW_PRESERVATION_CLASS.REBUILDABLE_GENERATED && !digestSha256) {
       blockers.push(`MISSING_DIGEST:${classified.pathFingerprintSha256 || 'unsafe'}`);
+    }
+    if (needsWindowsReparseEvidence && !reparseValid) {
+      blockers.push(`WINDOWS_REPARSE_EVIDENCE_REQUIRED:${classified.pathFingerprintSha256 || 'unsafe'}`);
+    }
+    if (needsWindowsReparseEvidence && reparsePoint === true) {
+      blockers.push(`WINDOWS_REPARSE_POINT_FORBIDDEN:${classified.pathFingerprintSha256 || 'unsafe'}`);
     }
     if (classified.classification === OPENCLAW_PRESERVATION_CLASS.MANUAL_ONLY) {
       blockers.push(`MANUAL_ONLY_PATH:${classified.pathFingerprintSha256}`);
@@ -224,6 +255,29 @@ function normalizeInventory(inventory, blockers) {
   return [...byFingerprint.values()].sort((a, b) => (
     a.pathFingerprintSha256.localeCompare(b.pathFingerprintSha256)
   ));
+}
+
+function normalizeProcessEvidence(value, blockers) {
+  if (!Array.isArray(value)) {
+    blockers.push('OPENCLAW_PROCESS_EVIDENCE_NOT_ARRAY');
+    return Object.freeze({ observed: false, runningOpenClawPids: Object.freeze([]) });
+  }
+  if (value.length > OPENCLAW_UPDATE_PREFLIGHT_MAX_PROCESSES) {
+    blockers.push('OPENCLAW_PROCESS_EVIDENCE_LIMIT_EXCEEDED');
+    return Object.freeze({ observed: false, runningOpenClawPids: Object.freeze([]) });
+  }
+  const pids = [];
+  for (const rawPid of value) {
+    const pid = Number(rawPid);
+    if (!Number.isSafeInteger(pid) || pid <= 0) {
+      blockers.push('OPENCLAW_PROCESS_PID_INVALID');
+      continue;
+    }
+    pids.push(pid);
+  }
+  const unique = [...new Set(pids)].sort((a, b) => a - b);
+  for (const pid of unique) blockers.push(`OPENCLAW_PROCESS_RUNNING:${pid}`);
+  return Object.freeze({ observed: true, runningOpenClawPids: Object.freeze(unique) });
 }
 
 function normalizeOpenClawFingerprint(input, blockers) {
@@ -288,6 +342,13 @@ function uniqueSorted(values) {
   return [...new Set(values.filter(Boolean))].sort();
 }
 
+function parseExplicitTimestamp(value) {
+  const normalized = text(value);
+  if (!normalized || !EXPLICIT_TIMEZONE.test(normalized)) return null;
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function buildDryRunPlan() {
   return Object.freeze([
     Object.freeze({ step: 1, action: 'VERIFY_EXACT_PREFLIGHT_MANIFEST', executed: false, mutation: false }),
@@ -314,10 +375,16 @@ function buildRollbackPlan() {
 export function buildOpenClawUpdatePreflightV1(input = {}) {
   const blockers = [];
   const observedAtUtc = text(input.observedAtUtc);
+  const referenceTimeUtc = text(input.referenceTimeUtc);
   const repository = text(input.repository);
   const sourceHead = lower(input.sourceHead);
-  if (!observedAtUtc || !EXPLICIT_TIMEZONE.test(observedAtUtc) || Number.isNaN(Date.parse(observedAtUtc))) {
-    blockers.push('OBSERVED_AT_UTC_INVALID');
+  const observedAt = parseExplicitTimestamp(observedAtUtc);
+  const referenceTime = parseExplicitTimestamp(referenceTimeUtc);
+  if (observedAt === null) blockers.push('OBSERVED_AT_UTC_INVALID');
+  if (referenceTime === null) blockers.push('REFERENCE_TIME_UTC_INVALID');
+  if (observedAt !== null && referenceTime !== null) {
+    if (observedAt - referenceTime > OPENCLAW_UPDATE_PREFLIGHT_MAX_FUTURE_SKEW_MS) blockers.push('OBSERVATION_FROM_FUTURE');
+    if (referenceTime - observedAt > OPENCLAW_UPDATE_PREFLIGHT_MAX_AGE_MS) blockers.push('OBSERVATION_STALE');
   }
   if (!SAFE_ID_PATTERN.test(repository) || !repository.includes('/')) blockers.push('REPOSITORY_IDENTITY_INVALID');
   if (!SHA_PATTERN.test(sourceHead)) blockers.push('SOURCE_HEAD_INVALID');
@@ -325,6 +392,11 @@ export function buildOpenClawUpdatePreflightV1(input = {}) {
   const current = normalizeOpenClawFingerprint(input.openClaw, blockers);
   const updatePacket = normalizeUpdatePacket(input.updatePacket, blockers);
   const entries = normalizeInventory(input.inventory, blockers);
+  const processEvidence = normalizeProcessEvidence(input.openClawProcesses, blockers);
+  const counts = countByClassification(entries);
+  for (const requiredClass of REQUIRED_PRESERVATION_CLASSES) {
+    if ((counts[requiredClass] ?? 0) < 1) blockers.push(`PRESERVATION_CLASS_EVIDENCE_MISSING:${requiredClass}`);
+  }
   const blockersUnique = uniqueSorted(blockers);
   const noUpdateNeeded = current.version && updatePacket.targetVersion && current.version === updatePacket.targetVersion;
 
@@ -332,8 +404,11 @@ export function buildOpenClawUpdatePreflightV1(input = {}) {
     schema: 'stephanos.openclaw-preservation-manifest.v1',
     repository: SAFE_ID_PATTERN.test(repository) && repository.includes('/') ? repository : null,
     sourceHead: SHA_PATTERN.test(sourceHead) ? sourceHead : null,
+    observedAtUtc: observedAt === null ? null : observedAtUtc,
+    referenceTimeUtc: referenceTime === null ? null : referenceTimeUtc,
     current,
     updatePacket,
+    processEvidence,
     entries,
   });
   const manifestSha256 = sha256(canonicalJson(manifestCore));
@@ -347,6 +422,7 @@ export function buildOpenClawUpdatePreflightV1(input = {}) {
     schema: OPENCLAW_UPDATE_PREFLIGHT_SCHEMA,
     version: OPENCLAW_UPDATE_PREFLIGHT_VERSION,
     observedAtUtc: observedAtUtc || null,
+    referenceTimeUtc: referenceTimeUtc || null,
     repository: manifestCore.repository,
     sourceHead: manifestCore.sourceHead,
     status,
@@ -354,10 +430,11 @@ export function buildOpenClawUpdatePreflightV1(input = {}) {
     blockers: blockersUnique,
     currentOpenClaw: current,
     updatePacket,
+    processEvidence,
     preservationManifest: Object.freeze({
       ...manifestCore,
       manifestSha256,
-      counts: countByClassification(entries),
+      counts,
     }),
     dryRunPlan: buildDryRunPlan(),
     rollbackPlan: buildRollbackPlan(),
@@ -375,7 +452,7 @@ export function buildOpenClawUpdatePreflightV1(input = {}) {
       absolutePathsPublished: false,
     }),
     nextAction: status === OPENCLAW_UPDATE_PREFLIGHT_STATUS.APPROVAL_REQUIRED
-      ? 'Review the exact preservation manifest, dry-run plan and rollback plan, then issue a separate exact update-packet approval.'
+      ? 'Review the exact preservation manifest, idle-process evidence, dry-run plan and rollback plan, then issue a separate exact update-packet approval.'
       : status === OPENCLAW_UPDATE_PREFLIGHT_STATUS.NO_UPDATE_NEEDED
         ? 'No version-changing update is required; retain the preservation manifest as the current baseline.'
         : 'Resolve every named blocker without mutating OpenClaw, then regenerate the read-only preflight.',

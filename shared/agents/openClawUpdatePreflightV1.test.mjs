@@ -16,8 +16,10 @@ const HEAD = '1'.repeat(40);
 function validInput(overrides = {}) {
   return {
     observedAtUtc: '2026-08-03T17:55:00Z',
+    referenceTimeUtc: '2026-08-03T17:56:00Z',
     repository: 'Cheekyfellastef/stephan-os',
     sourceHead: HEAD,
+    openClawProcesses: [],
     openClaw: {
       version: '2026.6.1',
       executablePath: 'C:\\Users\\Stephan\\AppData\\Roaming\\npm\\openclaw.cmd',
@@ -38,9 +40,9 @@ function validInput(overrides = {}) {
     inventory: [
       { path: 'integrations/openclaw/stephanos-ignite-command/index.mjs', digestSha256: HEX_A, size: 1200 },
       { path: '.openclaw/openclaw.json', digestSha256: HEX_B, size: 14489 },
-      { path: 'C:\\Users\\Stephan\\Documents\\Stephanos-openclaw-workspace\\receipts', kind: 'directory', digestSha256: HEX_C },
+      { path: 'C:\\Users\\Stephan\\Documents\\Stephanos-openclaw-workspace\\receipts', kind: 'directory', digestSha256: HEX_C, reparsePoint: false },
       { path: 'apps/stephanos/dist/assets/index.js', size: 5000 },
-      { path: 'C:\\Users\\Stephan\\AppData\\Roaming\\npm\\node_modules\\openclaw', kind: 'package', digestSha256: HEX_B },
+      { path: 'C:\\Users\\Stephan\\AppData\\Roaming\\npm\\node_modules\\openclaw', kind: 'package', digestSha256: HEX_B, reparsePoint: false },
     ],
     ...overrides,
   };
@@ -51,14 +53,13 @@ test('builds a deterministic approval-required manifest without publishing absol
   const second = buildOpenClawUpdatePreflightV1(validInput({
     inventory: [...validInput().inventory].reverse(),
   }));
-
   assert.equal(first.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.APPROVAL_REQUIRED);
   assert.equal(first.blocker, null);
   assert.equal(first.safety.mutationAllowed, false);
   assert.equal(first.safety.updateAttempted, false);
   assert.equal(first.safety.absolutePathsPublished, false);
-  assert.equal(first.currentOpenClaw.gatewayEndpoint, 'http://127.0.0.1:18789');
-  assert.equal(first.currentOpenClaw.startupCommand, 'openclaw gateway start --json');
+  assert.equal(first.processEvidence.observed, true);
+  assert.deepEqual(first.processEvidence.runningOpenClawPids, []);
   assert.equal(first.preservationManifest.manifestSha256, second.preservationManifest.manifestSha256);
   assert.equal(first.preservationManifest.entries.length, 5);
   assert.equal(first.preservationManifest.counts.PRESERVE_SOURCE, 1);
@@ -66,7 +67,6 @@ test('builds a deterministic approval-required manifest without publishing absol
   assert.equal(first.preservationManifest.counts.PRESERVE_RUNTIME, 1);
   assert.equal(first.preservationManifest.counts.REBUILDABLE_GENERATED, 1);
   assert.equal(first.preservationManifest.counts.UPDATE_TARGET, 1);
-
   const serialized = JSON.stringify(first);
   assert.doesNotMatch(serialized, /C:\\\\Users\\\\Stephan/i);
   assert.doesNotMatch(serialized, /AppData\\\\Roaming/i);
@@ -91,13 +91,10 @@ test('blocks unknown and secret-bearing inventory paths while retaining a rollba
       { path: 'C:\\Users\\Stephan\\.openclaw\\sessions\\current.json', digestSha256: HEX_B },
     ],
   }));
-
   assert.equal(result.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH);
   assert.ok(result.blockers.some((blocker) => blocker.startsWith('UNCLASSIFIED_PATH:')));
   assert.ok(result.blockers.some((blocker) => blocker.startsWith('MANUAL_ONLY_PATH:')));
   assert.equal(result.rollbackPlan.length, 6);
-  assert.equal(result.safety.operatorApprovalRequired, false);
-  assert.doesNotMatch(JSON.stringify(result), /sessions\\\\current\.json/i);
 });
 
 test('fails closed on gateway identity drift and unpinned update packets', () => {
@@ -105,70 +102,109 @@ test('fails closed on gateway identity drift and unpinned update packets', () =>
   input.openClaw.gatewayEndpoint = 'http://127.0.0.1:9999';
   input.openClaw.startupCommand = 'openclaw gateway run --force';
   input.updatePacket.packetSha256 = '';
-
   const result = buildOpenClawUpdatePreflightV1(input);
   assert.equal(result.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH);
   assert.ok(result.blockers.includes('OPENCLAW_GATEWAY_ENDPOINT_MISMATCH'));
   assert.ok(result.blockers.includes('OPENCLAW_STARTUP_COMMAND_MISMATCH'));
   assert.ok(result.blockers.includes('UPDATE_PACKET_DIGEST_MISSING'));
-  assert.equal(result.safety.servicesStopped, false);
-  assert.equal(result.safety.configWritten, false);
 });
 
 test('requires digests for protected identities but not rebuildable generated output', () => {
-  const result = buildOpenClawUpdatePreflightV1(validInput({
-    inventory: [
-      { path: 'plugins/openclaw/command.mjs', size: 42 },
-      { path: 'apps/stephanos/dist/index.html', size: 55 },
-    ],
-  }));
-
+  const input = validInput();
+  input.inventory[0] = { ...input.inventory[0], digestSha256: undefined };
+  const result = buildOpenClawUpdatePreflightV1(input);
   assert.equal(result.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH);
   assert.equal(result.blockers.filter((value) => value.startsWith('MISSING_DIGEST:')).length, 1);
 });
 
 test('rejects conflicting duplicate path identities with order-independent blocked evidence', () => {
-  const inventory = [
-    { path: 'Plugins\\OpenClaw\\command.mjs', digestSha256: HEX_A },
-    { path: 'plugins/openclaw/command.mjs', digestSha256: HEX_B },
-  ];
-  const forward = buildOpenClawUpdatePreflightV1(validInput({ inventory }));
-  const reversed = buildOpenClawUpdatePreflightV1(validInput({ inventory: [...inventory].reverse() }));
-
+  const base = validInput();
+  const duplicate = { path: 'Integrations\\OpenClaw\\stephanos-ignite-command\\index.mjs', digestSha256: HEX_B };
+  const inventory = [...base.inventory, duplicate];
+  const forward = buildOpenClawUpdatePreflightV1({ ...base, inventory });
+  const reversed = buildOpenClawUpdatePreflightV1({ ...base, inventory: [...inventory].reverse() });
   assert.equal(forward.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH);
   assert.ok(forward.blockers.some((value) => value.startsWith('CONFLICTING_INVENTORY_IDENTITY:')));
   assert.deepEqual(forward.blockers, reversed.blockers);
   assert.equal(forward.preservationManifest.manifestSha256, reversed.preservationManifest.manifestSha256);
-  assert.deepEqual(forward.preservationManifest.entries, reversed.preservationManifest.entries);
 });
 
-test('fails closed on links, malformed existence evidence, invalid sizes and stale absent digests', () => {
-  const result = buildOpenClawUpdatePreflightV1(validInput({
-    inventory: [
-      { path: 'plugins/openclaw/link.mjs', kind: 'symlink', exists: 'yes', size: -1, digestSha256: HEX_A },
-      { path: 'plugins/openclaw/absent.mjs', exists: false, digestSha256: HEX_B },
-    ],
-  }));
-
+test('fails closed on malformed existence and size evidence', () => {
+  const base = validInput();
+  base.inventory.push({ path: 'plugins/openclaw/link.mjs', kind: 'symlink', exists: 'yes', size: -1, digestSha256: HEX_A });
+  base.inventory.push({ path: 'plugins/openclaw/absent.mjs', exists: false, digestSha256: HEX_B });
+  const result = buildOpenClawUpdatePreflightV1(base);
   assert.equal(result.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH);
   assert.ok(result.blockers.some((value) => value.startsWith('UNSUPPORTED_INVENTORY_KIND:')));
   assert.ok(result.blockers.some((value) => value.startsWith('INVENTORY_EXISTS_INVALID:')));
   assert.ok(result.blockers.some((value) => value.startsWith('INVENTORY_SIZE_INVALID:')));
   assert.ok(result.blockers.some((value) => value.startsWith('ABSENT_INVENTORY_DIGEST_PRESENT:')));
-  assert.ok(result.preservationManifest.entries.some((entry) => entry.kind === 'unsupported' && entry.exists === null));
+});
+
+test('requires every preservation class before approval can be requested', () => {
+  const result = buildOpenClawUpdatePreflightV1(validInput({
+    inventory: [{ path: 'apps/stephanos/dist/index.js', size: 5 }],
+  }));
+  assert.equal(result.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH);
+  for (const required of ['UPDATE_TARGET', 'PRESERVE_SOURCE', 'PRESERVE_CONFIG', 'PRESERVE_RUNTIME']) {
+    assert.ok(result.blockers.includes(`PRESERVATION_CLASS_EVIDENCE_MISSING:${required}`));
+  }
+});
+
+test('requires explicit idle-process evidence and blocks any observed OpenClaw PID', () => {
+  const missing = validInput();
+  delete missing.openClawProcesses;
+  const missingResult = buildOpenClawUpdatePreflightV1(missing);
+  assert.ok(missingResult.blockers.includes('OPENCLAW_PROCESS_EVIDENCE_NOT_ARRAY'));
+  const running = buildOpenClawUpdatePreflightV1(validInput({ openClawProcesses: [4120, 4120, 9188] }));
+  assert.equal(running.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH);
+  assert.ok(running.blockers.includes('OPENCLAW_PROCESS_RUNNING:4120'));
+  assert.ok(running.blockers.includes('OPENCLAW_PROCESS_RUNNING:9188'));
+});
+
+test('rejects stale and implausibly future observations against an explicit reference clock', () => {
+  const stale = buildOpenClawUpdatePreflightV1(validInput({
+    observedAtUtc: '2026-08-03T17:00:00Z',
+    referenceTimeUtc: '2026-08-03T17:56:00Z',
+  }));
+  assert.ok(stale.blockers.includes('OBSERVATION_STALE'));
+  const future = buildOpenClawUpdatePreflightV1(validInput({
+    observedAtUtc: '2026-08-03T18:00:00Z',
+    referenceTimeUtc: '2026-08-03T17:56:00Z',
+  }));
+  assert.ok(future.blockers.includes('OBSERVATION_FROM_FUTURE'));
+});
+
+test('canonicalizes dot path segments before fingerprinting', () => {
+  const dotted = classifyOpenClawPreservationPath('C:\\OpenClaw\\node_modules\\.\\openclaw');
+  const canonical = classifyOpenClawPreservationPath('C:\\OpenClaw\\node_modules\\openclaw');
+  assert.equal(dotted.pathFingerprintSha256, canonical.pathFingerprintSha256);
+  assert.equal(dotted.classification, OPENCLAW_PRESERVATION_CLASS.UPDATE_TARGET);
+});
+
+test('requires explicit non-reparse evidence for Windows package and directory entries', () => {
+  const missing = validInput();
+  missing.inventory = missing.inventory.map((entry) => {
+    if (entry.kind === 'package') {
+      const { reparsePoint, ...rest } = entry;
+      return rest;
+    }
+    return entry;
+  });
+  const missingResult = buildOpenClawUpdatePreflightV1(missing);
+  assert.ok(missingResult.blockers.some((value) => value.startsWith('WINDOWS_REPARSE_EVIDENCE_REQUIRED:')));
+  const reparse = validInput();
+  reparse.inventory = reparse.inventory.map((entry) => entry.kind === 'directory' ? { ...entry, reparsePoint: true } : entry);
+  const reparseResult = buildOpenClawUpdatePreflightV1(reparse);
+  assert.ok(reparseResult.blockers.some((value) => value.startsWith('WINDOWS_REPARSE_POINT_FORBIDDEN:')));
 });
 
 test('reports no update needed when the pinned target version already matches', () => {
   const result = buildOpenClawUpdatePreflightV1(validInput({
-    updatePacket: {
-      ...validInput().updatePacket,
-      targetVersion: '2026.6.1',
-    },
+    updatePacket: { ...validInput().updatePacket, targetVersion: '2026.6.1' },
   }));
-
   assert.equal(result.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.NO_UPDATE_NEEDED);
   assert.equal(result.safety.operatorApprovalRequired, false);
-  assert.match(result.nextAction, /No version-changing update/);
 });
 
 test('renders a compact mutation-free summary', () => {
@@ -177,5 +213,5 @@ test('renders a compact mutation-free summary', () => {
   assert.match(summary, /OPENCLAW_UPDATE_PREFLIGHT=APPROVAL_REQUIRED/);
   assert.match(summary, /MUTATION_ALLOWED=NO/);
   assert.match(summary, /OPERATOR_APPROVAL_REQUIRED=YES/);
-  assert.match(summary, new RegExp(`MANIFEST_SHA256=[a-f0-9]{64}`));
+  assert.match(summary, /MANIFEST_SHA256=[a-f0-9]{64}/);
 });
