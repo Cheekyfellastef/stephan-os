@@ -136,6 +136,14 @@ function markUnavailable(img) {
   img.style.display = 'none';
 }
 
+function conceptIdForImage(img) {
+  return String(
+    img?.dataset?.mediaAsset
+    || img?.closest?.('picture[data-media-asset]')?.dataset?.mediaAsset
+    || '',
+  ).toLowerCase();
+}
+
 function installBrowserResilience() {
   const diagnostics = {
     schemaVersion: MEDIA_SCHEMA,
@@ -149,7 +157,8 @@ function installBrowserResilience() {
 
   const style = document.createElement('style');
   style.textContent = `
-    img[data-media-asset]:not([data-media-resolved="true"]) { visibility: hidden; }
+    img[data-media-asset]:not([data-media-resolved="true"]),
+    picture[data-media-asset] img:not([data-media-resolved="true"]) { visibility: hidden; }
   `;
   document.head.append(style);
 
@@ -165,7 +174,7 @@ function installBrowserResilience() {
   async function repairImage(img) {
     if (!(img instanceof HTMLImageElement)) return;
     if (img.dataset.mediaResolved === 'true') return;
-    const concept = conceptsById.get(String(img.dataset.mediaAsset || '').toLowerCase());
+    const concept = conceptsById.get(conceptIdForImage(img));
     if (!concept) return;
     img.dataset.mediaResolved = 'pending';
 
@@ -192,9 +201,9 @@ function installBrowserResilience() {
 
   function scan(root) {
     if (!root) return;
-    if (root instanceof HTMLImageElement && root.matches('img[data-media-asset]')) repairImage(root);
+    if (root instanceof HTMLImageElement) repairImage(root);
     if (typeof root.querySelectorAll === 'function') {
-      root.querySelectorAll('img[data-media-asset]').forEach(repairImage);
+      root.querySelectorAll('img[data-media-asset], picture[data-media-asset] img').forEach(repairImage);
     }
   }
 
