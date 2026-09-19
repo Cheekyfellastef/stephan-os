@@ -29,13 +29,23 @@ test('declared permanent constraint is recognised without being called stale', (
   assert.equal(finding.needsLifecycleReview, false);
 });
 
-test('known mutation defaults are surfaced as one candidate family', () => {
+test('known mutation defaults and automatic launch denial are surfaced as one candidate family', () => {
   const findings = classifyConstraintCandidate({
-    file: 'stephanos-ui/src/state/missionEvidenceLedgerModel.js',
+    file: 'shared/agents/codexDispatchQueue.mjs',
     line: 9,
-    excerpt: 'mutationAllowed: false, openClawMutationLocked: true, codexAutoDispatchAllowed: false,',
+    excerpt: 'automaticCodexLaunchAllowed: false,',
+    context: 'mutationAllowed: false, openClawMutationLocked: true, codexAutoDispatchAllowed: false, automaticCodexLaunchAllowed: false,',
   });
   assert.equal(findings.some((finding) => finding.constraintClass === 'MUTATION_DEFAULT_DENY'), true);
+});
+
+test('provider qualification without admission authority is surfaced', () => {
+  const findings = classifyConstraintCandidate({
+    file: 'shared/agents/openClawTaskClassPromotionCandidateV1.mjs',
+    line: 300,
+    excerpt: 'providerPoolAdmissionAllowed: false, providerQualificationAuthority: false,',
+  });
+  assert.equal(findings.some((finding) => finding.constraintClass === 'PROVIDER_ADMISSION_DENY'), true);
 });
 
 test('restart-intent-only recovery is surfaced', () => {
