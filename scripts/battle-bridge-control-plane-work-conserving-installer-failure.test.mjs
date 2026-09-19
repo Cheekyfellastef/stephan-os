@@ -1,9 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
+import {
+  classifyFixedInstallerFailure,
+  reconcileBattleBridgeControlPlane,
+} from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 
 const HEAD = 'a'.repeat(40);
+const GENERIC = 'CONTROL_PLANE_FIXED_INSTALLER_FAILED';
 
 const receipts = Object.freeze({
   recoveryMesh: Object.freeze({
@@ -77,7 +81,7 @@ const receipts = Object.freeze({
   }),
 });
 
-function fixedSpawn() {
+function fixedSpawn({ lifeboatStderr = 'bounded simulated installer failure' } = {}) {
   const calls = [];
   const spawn = (command, args, options) => {
     calls.push({ command, args: [...args], options: { ...options } });
@@ -85,7 +89,7 @@ function fixedSpawn() {
     if (args.includes('rev-parse') && args.includes('HEAD')) return { status: 0, stdout: `${HEAD}\n`, stderr: '' };
     if (args.includes('status') && args.includes('--porcelain=v1')) return { status: 0, stdout: '', stderr: '' };
     if (args.some((arg) => String(arg).endsWith('install-battle-bridge-recovery-lifeboat-v1.ps1'))) {
-      return { status: 1, stdout: '', stderr: 'bounded simulated installer failure' };
+      return { status: 1, stdout: '', stderr: lifeboatStderr };
     }
     if (args.some((arg) => String(arg).endsWith('install-battle-bridge-recovery-mesh.ps1'))) {
       return { status: 0, stdout: `${JSON.stringify(receipts.recoveryMesh)}\n`, stderr: '' };
@@ -105,6 +109,49 @@ function fixedSpawn() {
   return spawn;
 }
 
+test('known Lifeboat installer failures collapse to closed-world diagnostic codes only', () => {
+  const cases = [
+    [
+      'Installed immutable lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.',
+      'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_ACTIVE_LAUNCHER_MISMATCH',
+    ],
+    [
+      'Installed immutable windowless lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.',
+      'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_WINDOWLESS_LAUNCHER_MISMATCH',
+    ],
+    [
+      'Lifeboat bank A active manifest file does not match active state.',
+      'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_MANIFEST_MISMATCH',
+    ],
+    [
+      'Lifeboat bank B heartbeat manifest mismatch.',
+      'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_HEARTBEAT_MANIFEST_MISMATCH',
+    ],
+    [
+      'Existing lifeboat scheduled task arguments are not canonical.',
+      'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_TASK_ARGUMENTS_INVALID',
+    ],
+    [
+      'Candidate lifeboat bank failed its installed-bank self-test: secret-looking-runtime-detail',
+      'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_CANDIDATE_SELF_TEST_FAILED',
+    ],
+  ];
+
+  for (const [stderr, expected] of cases) {
+    const blocker = classifyFixedInstallerFailure('recoveryLifeboat', stderr);
+    assert.equal(blocker, expected);
+    assert.doesNotMatch(blocker, /secret-looking-runtime-detail/i);
+    assert.doesNotMatch(blocker, /[\\/]/);
+  }
+});
+
+test('unknown and non-Lifeboat installer failures stay generic and do not echo stderr', () => {
+  const sensitive = 'unexpected failure C:\\Users\\operator\\token-secret-value';
+  assert.equal(classifyFixedInstallerFailure('recoveryLifeboat', sensitive), GENERIC);
+  assert.equal(classifyFixedInstallerFailure('recoveryMesh', 'heartbeat manifest mismatch. token-secret-value'), GENERIC);
+  assert.doesNotMatch(classifyFixedInstallerFailure('recoveryLifeboat', sensitive), /token-secret-value|Users/i);
+});
+
 test('fixed installer process failure stays blocking while later independent fixed repairs continue', () => {
   const spawnSyncFn = fixedSpawn();
   const result = reconcileBattleBridgeControlPlane({
@@ -115,7 +162,7 @@ test('fixed installer process failure stays blocking while later independent fix
   });
 
   assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED');
+  assert.equal(result.blocker, GENERIC);
   assert.equal(result.failedTaskId, 'recoveryLifeboat');
   assert.deepEqual(result.failedTaskIds, ['recoveryLifeboat']);
   assert.equal(result.installerFailureCount, 1);
@@ -143,4 +190,28 @@ test('fixed installer process failure stays blocking while later independent fix
   assert.equal(result.gitMutationAllowed, false);
   assert.equal(result.pcRestartAllowed, false);
   assert.equal(result.publicExposureChanged, false);
+});
+
+test('recognized Lifeboat failure becomes remote-safe blocker while work-conserving sweep continues', () => {
+  const secret = 'SECRET_SHOULD_NOT_ESCAPE';
+  const spawnSyncFn = fixedSpawn({
+    lifeboatStderr: `Candidate lifeboat bank failed its installed-bank self-test: ${secret}`,
+  });
+  const result = reconcileBattleBridgeControlPlane({
+    repoRoot: '/repo',
+    expectedHead: HEAD,
+    platform: 'win32',
+    spawnSyncFn,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_CANDIDATE_SELF_TEST_FAILED');
+  assert.equal(result.failedTaskId, 'recoveryLifeboat');
+  assert.equal(result.taskCount, 5);
+  assert.deepEqual(result.tasks.slice(1).map((task) => task.installed), [true, true, true, true]);
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+  assert.equal(result.arbitraryShellAllowed, false);
+  assert.equal(result.sourceMutationAllowed, false);
+  assert.equal(result.gitMutationAllowed, false);
+  assert.equal(result.pcRestartAllowed, false);
 });

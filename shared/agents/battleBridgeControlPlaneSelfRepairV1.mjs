@@ -42,6 +42,117 @@ const SHA = /^[0-9a-f]{40}$/;
 const POWERSHELL_EXE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const GIT_EXE = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const MAX_OUTPUT_BYTES = 128 * 1024;
+const GENERIC_FIXED_INSTALLER_BLOCKER = 'CONTROL_PLANE_FIXED_INSTALLER_FAILED';
+const RECOVERY_LIFEBOAT_INSTALLER_FAILURE_RULES = Object.freeze([
+  Object.freeze({
+    fragment: 'LOCALAPPDATA is required.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_LOCALAPPDATA_REQUIRED',
+  }),
+  Object.freeze({
+    fragment: 'Required fixed lifeboat component is missing:',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_REQUIRED_COMPONENT_MISSING',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat active-bank schema is invalid.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_STATE_SCHEMA_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat active bank is invalid.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_BANK_IDENTITY_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat active manifest is invalid.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_MANIFEST_IDENTITY_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat active bank is not self-test proven.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_SELF_TEST_NOT_PROVEN',
+  }),
+  Object.freeze({
+    fragment: 'Installed immutable lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_ACTIVE_LAUNCHER_MISMATCH',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat active state requires the immutable active-bank launcher to already be installed.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_ACTIVE_LAUNCHER_MISSING',
+  }),
+  Object.freeze({
+    fragment: 'Installed immutable windowless lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_WINDOWLESS_LAUNCHER_MISMATCH',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat active state requires the immutable windowless launcher to already be installed.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_WINDOWLESS_LAUNCHER_MISSING',
+  }),
+  Object.freeze({
+    fragment: 'active manifest file is missing.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_MANIFEST_FILE_MISSING',
+  }),
+  Object.freeze({
+    fragment: 'active manifest file is invalid.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_MANIFEST_FILE_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'active manifest file does not match active state.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_MANIFEST_MISMATCH',
+  }),
+  Object.freeze({
+    fragment: 'heartbeat schema is invalid.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_HEARTBEAT_SCHEMA_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'heartbeat identity is invalid.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_HEARTBEAT_IDENTITY_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'heartbeat manifest mismatch.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_HEARTBEAT_MANIFEST_MISMATCH',
+  }),
+  Object.freeze({
+    fragment: 'has no heartbeat.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_HEARTBEAT_MISSING',
+  }),
+  Object.freeze({
+    fragment: 'heartbeat is not healthy and payload verified.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_HEARTBEAT_UNHEALTHY',
+  }),
+  Object.freeze({
+    fragment: 'heartbeat is stale.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_HEARTBEAT_STALE',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat scheduled task action count is not canonical.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_TASK_ACTION_COUNT_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat scheduled task executable is not canonical.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_TASK_EXECUTABLE_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat scheduled task arguments are not canonical.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_TASK_ARGUMENTS_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat scheduled task principal is not canonical.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_TASK_PRINCIPAL_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat scheduled task logon type is not canonical.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_TASK_LOGON_TYPE_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat scheduled task run level is not canonical.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_TASK_RUN_LEVEL_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Lifeboat installer must never target the active bank.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_BANK_TARGET_GUARD',
+  }),
+  Object.freeze({
+    fragment: 'Candidate lifeboat bank failed its installed-bank self-test:',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_CANDIDATE_SELF_TEST_FAILED',
+  }),
+]);
 
 function text(value) {
   return String(value ?? '').trim();
@@ -49,6 +160,15 @@ function text(value) {
 
 function splitLines(value) {
   return String(value ?? '').split(/\r?\n/).filter((line) => line.trim());
+}
+
+export function classifyFixedInstallerFailure(taskId, stderr = '') {
+  if (taskId !== 'recoveryLifeboat') return GENERIC_FIXED_INSTALLER_BLOCKER;
+  const source = String(stderr ?? '');
+  for (const rule of RECOVERY_LIFEBOAT_INSTALLER_FAILURE_RULES) {
+    if (source.includes(rule.fragment)) return rule.blocker;
+  }
+  return GENERIC_FIXED_INSTALLER_BLOCKER;
 }
 
 function capture(spawnSyncFn, executable, args, { cwd, timeout = 180_000 } = {}) {
@@ -296,10 +416,11 @@ export function reconcileBattleBridgeControlPlane({
       '-StartNow',
     ], { cwd: canonicalRoot, timeout: 180_000 });
     if (!command.ok) {
+      const failureBlocker = classifyFixedInstallerFailure(task.id, command.stderr);
       installerFailures.push(Object.freeze({
         id: task.id,
         taskName: task.taskName,
-        blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+        blocker: failureBlocker,
       }));
       results.push(Object.freeze({
         id: task.id,
