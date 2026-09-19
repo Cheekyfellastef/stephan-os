@@ -5,6 +5,7 @@ import {
 
 export const INDEPENDENT_REVIEW_RETRY_SCHEMA_VERSION = 'stephanos.independent-review-retry-plan.v1';
 export const INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT = 2;
+export const INDEPENDENT_REVIEW_POST_SPECIALIST_MAX_RUN_ATTEMPT = 3;
 
 export const INDEPENDENT_REVIEW_RETRY_DECISION = Object.freeze({
   INVALID_INPUT: 'INVALID_INPUT',
@@ -104,7 +105,7 @@ export function planIndependentReviewRetry(input = {}) {
     && text(workflow.state).toLowerCase() === 'active'
     && positiveInteger(pr.number) > 0
     && text(pr.state).toLowerCase() === 'open'
-    && pr.draft === false
+    && typeof pr.draft === 'boolean'
     && pr.sameRepository === true
     && text(pr.baseRef) === 'main'
     && text(pr.headRef)
@@ -134,6 +135,10 @@ export function planIndependentReviewRetry(input = {}) {
   const runAttempt = positiveInteger(run.run_attempt);
   const status = text(run.status).toLowerCase();
   const conclusion = text(run.conclusion).toLowerCase();
+  const postSpecialistRetryAllowed = input.postSpecialistRetryAllowed === true;
+  const retryLimit = postSpecialistRetryAllowed
+    ? INDEPENDENT_REVIEW_POST_SPECIALIST_MAX_RUN_ATTEMPT
+    : INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT;
   const selected = {
     ...base,
     runId,
@@ -141,6 +146,8 @@ export function planIndependentReviewRetry(input = {}) {
     runNumber: positiveInteger(run.run_number) || null,
     runStatus: status,
     runConclusion: conclusion || null,
+    postSpecialistRetryAllowed,
+    retryLimit,
   };
 
   if (RUNNING_STATES.has(status) || status !== 'completed') {
@@ -164,7 +171,7 @@ export function planIndependentReviewRetry(input = {}) {
       reason: `review conclusion ${conclusion || 'unknown'} is not eligible for failed-job-only retry`,
     });
   }
-  if (runAttempt >= INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT) {
+  if (runAttempt >= retryLimit) {
     return Object.freeze({
       ...selected,
       decision: INDEPENDENT_REVIEW_RETRY_DECISION.RETRY_BUDGET_EXHAUSTED,
@@ -174,7 +181,9 @@ export function planIndependentReviewRetry(input = {}) {
   return Object.freeze({
     ...selected,
     decision: INDEPENDENT_REVIEW_RETRY_DECISION.RERUN_FAILED_JOBS,
-    reason: 'the latest exact canonical review failed before a receipt and is eligible for one failed-job-only retry',
+    reason: postSpecialistRetryAllowed && runAttempt >= INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT
+      ? 'late exact-head specialist evidence admits one final failed-job-only reproof retry'
+      : 'the latest exact canonical review failed before a receipt and is eligible for one failed-job-only retry',
     mutationAllowed: true,
     operation: 'rerun-failed-jobs',
   });

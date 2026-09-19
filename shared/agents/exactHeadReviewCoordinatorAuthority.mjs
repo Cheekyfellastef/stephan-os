@@ -3,6 +3,7 @@ import { EXACT_HEAD_REVIEW_MARKERS } from './exactHeadReviewDispatchCoordinator.
 export const MACHINE_COORDINATOR_SENTINEL_LOGIN = 'stephanos-machine-coordinator';
 export const REVIEW_COORDINATOR_WORKFLOW_NAME = 'Exact-Head Review Dispatch';
 export const REVIEW_COORDINATOR_WORKFLOW_PATH = '.github/workflows/exact-head-review-dispatch.yml';
+export const REVIEW_COORDINATOR_PLAN_JOB = 'plan';
 export const REVIEW_COORDINATOR_JOB = 'coordinate';
 
 export const REVIEW_COORDINATOR_CREDENTIAL_SOURCE = Object.freeze({
@@ -118,7 +119,9 @@ function validateGitHubActionsBoundary(environment = {}) {
     : '';
   const blockers = [];
   if (environment.GITHUB_ACTIONS !== 'true') blockers.push('not-github-actions');
-  if (text(environment.GITHUB_JOB) !== REVIEW_COORDINATOR_JOB) blockers.push('wrong-job');
+  const planOnly = text(environment.STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY).toLowerCase() === 'true';
+  const expectedJob = planOnly ? REVIEW_COORDINATOR_PLAN_JOB : REVIEW_COORDINATOR_JOB;
+  if (text(environment.GITHUB_JOB) !== expectedJob) blockers.push('wrong-job');
   if (text(environment.GITHUB_WORKFLOW) !== REVIEW_COORDINATOR_WORKFLOW_NAME) blockers.push('wrong-workflow');
   if (!MACHINE_EVENTS.has(text(environment.GITHUB_EVENT_NAME))) blockers.push('wrong-event');
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) blockers.push('invalid-repository');

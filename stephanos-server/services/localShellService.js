@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { getLocalShellConfig } from '../config/localShellConfig.js';
+import { fixedBackendExecutable } from './fixedBackendExecutable.js';
 
 const LOCAL_SHELL_SESSION = {
   lastPid: null,
@@ -34,6 +35,7 @@ function buildWindowFocusTypeDefinition() {
 
 function buildOpenRepoPowerShellScript(repoPath) {
   const escapedPath = escapePowerShellSingleQuotedLiteral(repoPath);
+  const fixedPowerShell = escapePowerShellSingleQuotedLiteral(fixedBackendExecutable('powershell', 'win32'));
   const setLocationCommand = `Set-Location -LiteralPath '${escapedPath}'`;
   const escapedSetLocation = escapePowerShellSingleQuotedLiteral(setLocationCommand);
 
@@ -41,7 +43,7 @@ function buildOpenRepoPowerShellScript(repoPath) {
     '$ErrorActionPreference = "Stop"',
     `$repoPath = '${escapedPath}'`,
     `$launchCommand = '${escapedSetLocation}'`,
-    "$proc = Start-Process -FilePath 'powershell.exe' -WorkingDirectory $repoPath -ArgumentList @('-NoExit', '-Command', $launchCommand) -PassThru",
+    `$proc = Start-Process -FilePath '${fixedPowerShell}' -WorkingDirectory $repoPath -ArgumentList @('-NoExit', '-Command', $launchCommand) -PassThru`,
     '$mainWindowHandle = [IntPtr]::Zero',
     'for ($i = 0; $i -lt 20; $i++) {',
     '  Start-Sleep -Milliseconds 150',
@@ -90,8 +92,8 @@ function buildFocusRepoPowerShellScript(pid) {
   ].join('\n');
 }
 
-function runPowerShellJsonScript(script, { spawnSyncImpl = spawnSync } = {}) {
-  const child = spawnSyncImpl('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
+function runPowerShellJsonScript(script, { spawnSyncImpl = spawnSync, platform = process.platform } = {}) {
+  const child = spawnSyncImpl(fixedBackendExecutable('powershell', platform), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
     windowsHide: true,
     encoding: 'utf8',
   });
@@ -160,7 +162,7 @@ export function launchRepoPowerShell({ env = process.env, platform = process.pla
   }
 
   const script = buildOpenRepoPowerShellScript(config.repoPath);
-  const launchResult = runPowerShellJsonScript(script, { spawnSyncImpl });
+  const launchResult = runPowerShellJsonScript(script, { spawnSyncImpl, platform });
 
   if (launchResult.ok && Number.isFinite(launchResult.pid)) {
     LOCAL_SHELL_SESSION.lastPid = launchResult.pid;
@@ -203,7 +205,7 @@ export function focusRepoPowerShell({ env = process.env, platform = process.plat
   }
 
   const script = buildFocusRepoPowerShellScript(LOCAL_SHELL_SESSION.lastPid);
-  const focusResult = runPowerShellJsonScript(script, { spawnSyncImpl });
+  const focusResult = runPowerShellJsonScript(script, { spawnSyncImpl, platform });
   return {
     ok: focusResult.ok,
     focused: focusResult.focusApplied,

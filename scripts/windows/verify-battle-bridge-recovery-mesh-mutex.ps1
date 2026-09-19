@@ -11,15 +11,21 @@ if (-not $env:USERPROFILE) { throw 'USERPROFILE is required.' }
 $expectedLauncher = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os\scripts\windows\run-battle-bridge-recovery-mesh-hidden.ps1'))
 $canonicalPowerShell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
-$expectedCommandLine = '"{0}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{1}"' -f $canonicalPowerShell, $expectedLauncher
+# WScript.Shell.Run records one additional ASCII separator after the quoted
+# executable in Win32_Process.CommandLine. Keep strict full-string equality to
+# that observed scheduled-task representation; do not normalize or parse it.
+$expectedCommandLine = '"{0}"  -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{1}"' -f $canonicalPowerShell, $expectedLauncher
 $verifier = Get-CimInstance Win32_Process -Filter "ProcessId = $PID"
 $node = Get-CimInstance Win32_Process -Filter "ProcessId = $NodePid"
 $launcher = Get-CimInstance Win32_Process -Filter "ProcessId = $LauncherPid"
-if (-not $verifier -or -not $node -or -not $launcher
-    -or [int]$verifier.ParentProcessId -ne $NodePid -or [int]$node.ParentProcessId -ne $LauncherPid
-    -or -not [string]::Equals([string]$node.ExecutablePath, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)
-    -or -not [string]::Equals([string]$launcher.ExecutablePath, $canonicalPowerShell, [System.StringComparison]::OrdinalIgnoreCase)
-    -or -not [string]::Equals([string]$launcher.CommandLine, $expectedCommandLine, [System.StringComparison]::OrdinalIgnoreCase)) {
+$nodeExecutableMatches = $node -and [string]::Equals([string]$node.ExecutablePath, $canonicalNode, [System.StringComparison]::OrdinalIgnoreCase)
+$launcherExecutableMatches = $launcher -and [string]::Equals([string]$launcher.ExecutablePath, $canonicalPowerShell, [System.StringComparison]::OrdinalIgnoreCase)
+$launcherCommandLineMatches = $launcher -and [string]::Equals([string]$launcher.CommandLine, $expectedCommandLine, [System.StringComparison]::OrdinalIgnoreCase)
+$processLineageMatches = $false
+if ($verifier -and $node -and $launcher) {
+    $processLineageMatches = [int]$verifier.ParentProcessId -eq $NodePid -and [int]$node.ParentProcessId -eq $LauncherPid
+}
+if (-not $processLineageMatches -or -not $nodeExecutableMatches -or -not $launcherExecutableMatches -or -not $launcherCommandLineMatches) {
     throw 'RECOVERY_MESH_LAUNCHER_PROCESS_ATTESTATION_INVALID'
 }
 

@@ -1,0 +1,37 @@
+name: Stall Sentinel Review Pipeline Proof
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - shared/agents/stallSentinelReviewPipelineV1.mjs
+      - shared/agents/stallSentinelReviewPipelineV1.test.mjs
+      - .github/workflows/stall-sentinel-review-pipeline-proof.yml
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Parse Stall Sentinel source
+        run: node --check shared/agents/stallSentinelReviewPipelineV1.mjs
+      - name: Run deterministic review-pipeline regressions
+        run: node --test shared/agents/stallSentinelReviewPipelineV1.test.mjs
+      - name: Prove existing Forge capacity contracts remain parseable
+        run: |
+          node --check shared/agents/dualForgeConstructionSidecarV1.mjs
+          node --check shared/agents/forgeShadowM3RunnerAdmissionV1.mjs
+          node --check shared/agents/forgeShadowM3RunnerRuntimePlanV1.mjs
+      - name: Check exact diff whitespace
+        run: git diff --check origin/main...HEAD

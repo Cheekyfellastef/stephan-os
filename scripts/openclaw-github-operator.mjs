@@ -148,7 +148,7 @@ if (String(input.operation || '').toLowerCase() === 'merge-pr') {
   ]);
   const checks = run('gh.exe', [
     'pr', 'checks', String(input.prNumber), '--repo', String(input.repository),
-    '--json', 'state',
+    '--json', 'name,state,workflow',
   ]);
   if (view.error || view.status !== 0 || checks.error || checks.status !== 0) {
     fail('GitHub merge preflight could not be verified.', {
@@ -165,7 +165,7 @@ if (String(input.operation || '').toLowerCase() === 'merge-pr') {
     actualHeadSha: viewPayload.headRefOid,
     baseBranch: viewPayload.baseRefName,
     mergeable: viewPayload.mergeable === 'MERGEABLE' && viewPayload.state === 'OPEN',
-    checks: checkPayload.map((check) => String(check.state || '').toLowerCase()),
+    checks: checkPayload,
   };
 }
 

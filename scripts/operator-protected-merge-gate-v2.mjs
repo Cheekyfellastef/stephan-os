@@ -3,14 +3,8 @@
 import { createHash } from 'node:crypto';
 import {
   appendFileSync,
-  mkdtempSync,
   readFileSync,
-  rmSync,
-  writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
 import {
   INDEPENDENT_REVIEW_WORKFLOW_NAME,
   INDEPENDENT_REVIEW_WORKFLOW_PATH,
@@ -31,6 +25,10 @@ import {
   validateIndependentReviewArtifact,
   validateIndependentReviewArtifactSet,
 } from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
+import {
+  executePersonalRepositoryArtifactArchiveTransport,
+  extractPersonalRepositoryArtifactZip,
+} from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-merge-queue-required-check';
@@ -111,12 +109,34 @@ async function apiJson(path, options = {}) {
   return raw ? parseJson(raw, `GitHub JSON response for ${path} was invalid.`) : null;
 }
 
-async function apiBytes(path, maxBytes) {
-  const { bytes } = await githubResponse(path, {
-    accept: 'application/octet-stream',
+async function apiArtifactArchive(path, repository, maxBytes) {
+  const token = text(process.env.GH_TOKEN || process.env.GITHUB_TOKEN);
+  if (!token) fail('GitHub Actions token is required.');
+  return executePersonalRepositoryArtifactArchiveTransport({
+    path,
+    repository,
     maxBytes,
+    requestApiRedirect: (request) => fetch(request.url, {
+      method: request.method,
+      body: request.body,
+      redirect: request.redirect,
+      headers: {
+        ...request.headers,
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': API_VERSION,
+        'User-Agent': USER_AGENT,
+      },
+    }),
+    requestArchive: (request) => fetch(request.url, {
+      method: request.method,
+      body: request.body,
+      redirect: request.redirect,
+      headers: {
+        ...request.headers,
+        'User-Agent': USER_AGENT,
+      },
+    }),
   });
-  return bytes;
 }
 
 async function apiCollection(path, itemKey = null) {
@@ -336,19 +356,6 @@ async function collectQueueConfiguration(context, expectedIntegrationId) {
   return validation;
 }
 
-function runUnzip(args, message, maxBuffer = INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES + 1) {
-  const result = spawnSync('unzip', args, {
-    encoding: 'utf8',
-    shell: false,
-    windowsHide: true,
-    maxBuffer,
-  });
-  if (result.status !== 0) {
-    fail(message, { stderr: result.stderr || result.error?.message || '' });
-  }
-  return result.stdout || '';
-}
-
 async function loadIndependentReview(context, groupIdentity) {
   const definitions = (await apiCollection(
     `/repos/${context.owner}/${context.repo}/actions/workflows`,
@@ -420,8 +427,9 @@ async function loadIndependentReview(context, groupIdentity) {
       blockers: artifactSet.blockers,
     });
   }
-  const archiveBytes = await apiBytes(
+  const archiveBytes = await apiArtifactArchive(
     `/repos/${context.owner}/${context.repo}/actions/artifacts/${artifactSet.artifactId}/zip`,
+    context.repository,
     INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES,
   );
   if (archiveBytes.length !== artifactSet.sizeInBytes) {
@@ -431,48 +439,31 @@ async function loadIndependentReview(context, groupIdentity) {
   if (archiveDigest !== artifactSet.archiveDigest) {
     fail('Independent review artifact archive digest differs from its metadata.');
   }
-  const temporaryDirectory = mkdtempSync(join(tmpdir(), 'stephanos-merge-queue-review-'));
-  const archivePath = join(temporaryDirectory, 'review.zip');
-  try {
-    writeFileSync(archivePath, archiveBytes, { flag: 'wx', mode: 0o600 });
-    const entries = runUnzip(['-Z1', archivePath], 'Independent review artifact directory is unreadable.')
-      .split(/\r?\n/)
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-    if (entries.length !== 1 || entries[0] !== INDEPENDENT_REVIEW_ARTIFACT_FILE) {
-      fail('Independent review artifact must contain exactly the canonical result file.', { entries });
-    }
-    const artifact = parseJson(
-      runUnzip(
-        ['-p', archivePath, INDEPENDENT_REVIEW_ARTIFACT_FILE],
-        'Independent review artifact payload is unreadable.',
-      ),
-      'Independent review artifact payload is invalid JSON.',
-    );
-    const validation = validateIndependentReviewArtifact(artifact, {
-      repository: context.repository,
-      prNumber: groupIdentity.prNumber,
-      branch: groupIdentity.branch,
-      expectedHead: groupIdentity.sourceHead,
-      expectedBaseSha: groupIdentity.baseSha,
-      workflowRunId,
-      workflowRunAttempt,
-    });
-    if (!validation.valid) {
-      fail('Independent review artifact is invalid or stale.', { blockers: validation.blockers });
-    }
-    return {
-      workflowRunId,
-      workflowRunAttempt,
-      artifactId: artifactSet.artifactId,
-      artifactDigest: archiveDigest,
-      payloadSha256: artifact.payloadSha256,
-      reviewMode: artifact.reviewMode,
-      findings: artifact.receipt.findings,
-    };
-  } finally {
-    rmSync(temporaryDirectory, { recursive: true, force: true });
+  const artifact = parseJson(
+    extractPersonalRepositoryArtifactZip(archiveBytes, INDEPENDENT_REVIEW_ARTIFACT_FILE).toString('utf8'),
+    'Independent review artifact payload is invalid JSON.',
+  );
+  const validation = validateIndependentReviewArtifact(artifact, {
+    repository: context.repository,
+    prNumber: groupIdentity.prNumber,
+    branch: groupIdentity.branch,
+    expectedHead: groupIdentity.sourceHead,
+    expectedBaseSha: groupIdentity.baseSha,
+    workflowRunId,
+    workflowRunAttempt,
+  });
+  if (!validation.valid) {
+    fail('Independent review artifact is invalid or stale.', { blockers: validation.blockers });
   }
+  return {
+    workflowRunId,
+    workflowRunAttempt,
+    artifactId: artifactSet.artifactId,
+    artifactDigest: archiveDigest,
+    payloadSha256: artifact.payloadSha256,
+    reviewMode: artifact.reviewMode,
+    findings: artifact.receipt.findings,
+  };
 }
 
 function evidencePacket(context, groupEvidence, configuration, execution, independentReview) {

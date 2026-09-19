@@ -11,13 +11,17 @@ import {
 import {
   EXACT_HEAD_REVIEW_DECISION,
   EXACT_HEAD_REVIEW_MARKERS,
+  EXACT_HEAD_REVIEW_PROGRESS,
   REQUIRED_EXACT_HEAD_WORKFLOWS,
   REQUIRED_EXACT_HEAD_WORKFLOW_PATHS,
   buildMissingReceiptEscalationComment,
   buildReviewDispatchComment,
   buildReviewReceiptComment,
+  candidateReviewPrNumbers,
   canonicalLaneEvidence,
+  exactHeadReviewProgress,
   evaluateExactHeadReviewDispatch,
+  explicitOwnerExactHeadReviewRequest,
   isCanonicalReviewLaneComment,
   parseOptionalManualPrNumber,
 } from './exactHeadReviewDispatchCoordinator.mjs';
@@ -110,6 +114,7 @@ function baseInput(overrides = {}) {
     independentReviewJobsByRunId: {
       [String(REVIEW_RUN_ID)]: independentReviewJobs(),
     },
+    unresolvedThreadCount: 0,
     comments: [],
     reviews: [],
     ...overrides,
@@ -149,12 +154,64 @@ test('waits when any required workflow is missing or still running', () => {
   assert.deepEqual(pending.pendingWorkflows, [REQUIRED_EXACT_HEAD_WORKFLOWS[2]]);
 });
 
+test('surfaces an exact-head and exact-base review as precomputed while workflows finish', () => {
+  const pendingRuns = successfulRuns();
+  pendingRuns[2] = { ...pendingRuns[2], status: 'in_progress', conclusion: null };
+  const result = evaluateExactHeadReviewDispatch(baseInput({
+    workflowRuns: pendingRuns,
+    comments: [providerNeutralComment({ createdAt: '2026-07-19T16:10:00Z' })],
+  }));
+  assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS_REVIEW_READY);
+  assert.equal(result.reviewReady, true);
+  assert.equal(result.externalReceiptId, 93);
+  assert.deepEqual(result.pendingWorkflows, [REQUIRED_EXACT_HEAD_WORKFLOWS[2]]);
+  assert.equal(
+    exactHeadReviewProgress(result.decision),
+    EXACT_HEAD_REVIEW_PROGRESS.REVIEW_PRECOMPUTED,
+  );
+});
+
 test('blocks review dispatch when a required workflow fails', () => {
   const runs = successfulRuns();
   runs[4] = { ...runs[4], conclusion: 'failure' };
   const result = evaluateExactHeadReviewDispatch(baseInput({ workflowRuns: runs }));
   assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.BLOCKED_WORKFLOWS);
   assert.deepEqual(result.failedWorkflows, [REQUIRED_EXACT_HEAD_WORKFLOWS[4]]);
+});
+
+test('precomputes during CI but blocks receipt consumption until every review thread is resolved', () => {
+  const pendingRuns = successfulRuns();
+  pendingRuns[2] = { ...pendingRuns[2], status: 'in_progress', conclusion: null };
+  const receipt = providerNeutralComment({ createdAt: '2026-07-19T16:10:00Z' });
+  const precomputed = evaluateExactHeadReviewDispatch(baseInput({
+    workflowRuns: pendingRuns,
+    comments: [receipt],
+    unresolvedThreadCount: 1,
+  }));
+  assert.equal(precomputed.decision, EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS_REVIEW_READY);
+  assert.equal(precomputed.reviewReady, true);
+
+  const blocked = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [receipt],
+    unresolvedThreadCount: 1,
+  }));
+  assert.equal(blocked.decision, EXACT_HEAD_REVIEW_DECISION.BLOCKED_REVIEW_THREADS);
+  assert.equal(blocked.unresolvedThreadCount, 1);
+  assert.equal(blocked.reviewReady, true);
+  assert.equal(exactHeadReviewProgress(blocked.decision), EXACT_HEAD_REVIEW_PROGRESS.BLOCKED);
+
+  const unavailable = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [receipt],
+    unresolvedThreadCount: null,
+  }));
+  assert.equal(unavailable.decision, EXACT_HEAD_REVIEW_DECISION.BLOCKED_REVIEW_THREADS);
+  assert.equal(unavailable.unresolvedThreadCount, null);
+
+  const dispatchWithoutReceipt = evaluateExactHeadReviewDispatch(baseInput({
+    unresolvedThreadCount: 2,
+  }));
+  assert.equal(dispatchWithoutReceipt.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+  assert.equal(dispatchWithoutReceipt.actionRequired, true);
 });
 
 test('binds required workflow proofs to source-controlled workflow paths', () => {
@@ -183,27 +240,25 @@ test('ignores dispatch and review evidence tied to an older head', () => {
   assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
-test('records a matching Codex receipt once and then remains terminal for that head', () => {
+test('never accepts a Codex review comment as an authoritative receipt', () => {
   const external = {
     id: 91,
     body: `Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`${HEAD}\``,
     user: TRUSTED_CODEX_REVIEWER,
     createdAt: '2026-07-19T16:29:30Z',
   };
-  const record = evaluateExactHeadReviewDispatch(baseInput({ comments: [external] }));
-  assert.equal(record.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
-  assert.equal(record.externalReceiptId, 91);
+  const result = evaluateExactHeadReviewDispatch(baseInput({ comments: [external] }));
+  assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+  assert.equal(result.externalReceiptId ?? null, null);
 
-  const recorded = evaluateExactHeadReviewDispatch(baseInput({
+  const withDurableMarker = evaluateExactHeadReviewDispatch(baseInput({
     comments: [
       external,
       coordinatorComment({ id: 92, body: marker(EXACT_HEAD_REVIEW_MARKERS.RECEIPT), createdAt: '2026-07-19T16:29:40Z' }),
     ],
   }));
-  assert.equal(recorded.decision, EXACT_HEAD_REVIEW_DECISION.REVIEW_RECEIPT_RECORDED);
-  assert.equal(recorded.actionRequired, false);
+  assert.equal(withDurableMarker.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
-
 
 function providerNeutralComment({
   id = 93,
@@ -238,6 +293,7 @@ ${JSON.stringify(receipt, null, 2)}
 \`\`\``,
     user,
     createdAt,
+    receipt,
   };
 }
 
@@ -248,6 +304,33 @@ test('records only a workflow-bound authenticated provider-neutral GitHub Action
   assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
   assert.equal(result.externalReceiptId, 93);
   assert.match(result.reason, /authenticated exact-head review receipt/i);
+});
+
+test('keeps a validated artifact receipt durably discoverable through the trusted coordinator index', () => {
+  const external = providerNeutralComment({ createdAt: '2026-07-19T16:10:00Z' });
+  const body = buildReviewReceiptComment({
+    prNumber: 1559,
+    headSha: HEAD,
+    externalReceiptId: external.id,
+    providerNeutralReceipt: external.receipt,
+  });
+  assert.match(body, new RegExp(EXACT_HEAD_REVIEW_MARKERS.ARTIFACT_INDEX));
+  assert.match(body, /stephanos-protected-security-review/);
+  assert.match(body, /stephanos\.provider-neutral\.review/);
+
+  const durableIndex = coordinatorComment({
+    id: 94,
+    body,
+    createdAt: '2026-07-19T16:29:40Z',
+  });
+  const recorded = evaluateExactHeadReviewDispatch(baseInput({ comments: [durableIndex] }));
+  assert.equal(recorded.decision, EXACT_HEAD_REVIEW_DECISION.REVIEW_RECEIPT_RECORDED);
+  assert.equal(recorded.receiptCommentId, 94);
+
+  const forged = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [{ ...durableIndex, user: { login: UNTRUSTED_ACTOR } }],
+  }));
+  assert.equal(forged.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
 test('rejects forged, stale or workflow-unbound provider-neutral review comments', () => {
@@ -306,11 +389,11 @@ test('provider-neutral handoff never dispatches the Codex reviewer', () => {
   assert.doesNotMatch(body, /@codex review/);
 });
 
-test('accepts a review object only when its exact commit matches', () => {
+test('ignores Codex review objects regardless of exact commit identity', () => {
   const matching = evaluateExactHeadReviewDispatch(baseInput({
     reviews: [{ id: 22, commitId: HEAD, body: 'Automated review', user: TRUSTED_CODEX_REVIEWER, submittedAt: '2026-07-19T16:29:00Z' }],
   }));
-  assert.equal(matching.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+  assert.equal(matching.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 
   const stale = evaluateExactHeadReviewDispatch(baseInput({
     reviews: [{ id: 23, commitId: OLD_HEAD, body: 'Automated review', user: TRUSTED_CODEX_REVIEWER, submittedAt: '2026-07-19T16:29:00Z' }],
@@ -318,15 +401,16 @@ test('accepts a review object only when its exact commit matches', () => {
   assert.equal(stale.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
-test('accepts only the authenticated Codex GitHub App identity', () => {
-  const untrustedActors = [
+test('Codex actor identity and quota telemetry never grant authoritative review evidence', () => {
+  const actors = [
     { login: 'fake-chatgpt-codex-connector', type: 'Bot', id: 199175422 },
     { login: 'chatgpt-codex-connector', type: 'User', id: 199175422 },
     { login: 'codex', type: 'User', id: 199175422 },
     { login: 'chatgpt-codex-connector[bot]', type: 'User', id: 199175422 },
     { login: 'chatgpt-codex-connector[bot]', type: 'Bot', id: 12345 },
+    TRUSTED_CODEX_REVIEWER,
   ];
-  for (const [index, user] of untrustedActors.entries()) {
+  for (const [index, user] of actors.entries()) {
     const result = evaluateExactHeadReviewDispatch(baseInput({
       comments: [{
         id: 24 + index,
@@ -338,25 +422,15 @@ test('accepts only the authenticated Codex GitHub App identity', () => {
     assert.equal(result.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
   }
 
-  const exactBot = evaluateExactHeadReviewDispatch(baseInput({
+  const quotaNotice = evaluateExactHeadReviewDispatch(baseInput({
     comments: [{
-      id: 25,
-      body: `Codex Review\n\n**Reviewed commit:** \`${HEAD}\``,
+      id: 31,
+      body: 'You have reached your Codex usage limits for code reviews.',
       user: TRUSTED_CODEX_REVIEWER,
-      createdAt: '2026-07-19T16:29:00Z',
+      createdAt: '2026-07-19T16:29:01Z',
     }],
   }));
-  assert.equal(exactBot.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
-
-  const ambiguousPrefix = evaluateExactHeadReviewDispatch(baseInput({
-    comments: [{
-      id: 30,
-      body: `Codex Review\n\n**Reviewed commit:** \`${HEAD.slice(0, 12)}\``,
-      user: TRUSTED_CODEX_REVIEWER,
-      createdAt: '2026-07-19T16:29:00Z',
-    }],
-  }));
-  assert.equal(ambiguousPrefix.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
+  assert.equal(quotaNotice.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
 test('escalates once when a posted request has no receipt after the bounded timeout', () => {
@@ -373,9 +447,21 @@ test('escalates once when a posted request has no receipt after the bounded time
     ],
     receiptTimeoutMs: 10 * 60 * 1000,
   }));
-  assert.equal(alreadyEscalated.decision, EXACT_HEAD_REVIEW_DECISION.WAIT_REVIEW_RECEIPT);
+  assert.equal(alreadyEscalated.decision, EXACT_HEAD_REVIEW_DECISION.STALLED_MISSING_RECEIPT);
   assert.equal(alreadyEscalated.escalated, true);
   assert.equal(alreadyEscalated.actionRequired, false);
+});
+
+test('keeps normal waiting distinct from a persistent missing-receipt stall', () => {
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS), EXACT_HEAD_REVIEW_PROGRESS.WAITING_FOR_WORKFLOWS);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.WAIT_WORKFLOWS_REVIEW_READY), EXACT_HEAD_REVIEW_PROGRESS.REVIEW_PRECOMPUTED);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW), EXACT_HEAD_REVIEW_PROGRESS.REVIEW_DISPATCHED);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.WAIT_REVIEW_RECEIPT), EXACT_HEAD_REVIEW_PROGRESS.WAITING_FOR_RECEIPT);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.ESCALATE_MISSING_RECEIPT), EXACT_HEAD_REVIEW_PROGRESS.STALLED_MISSING_RECEIPT);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.STALLED_MISSING_RECEIPT), EXACT_HEAD_REVIEW_PROGRESS.STALLED_MISSING_RECEIPT);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT), EXACT_HEAD_REVIEW_PROGRESS.RECEIPT_RECORDED);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.REVIEW_RECEIPT_RECORDED), EXACT_HEAD_REVIEW_PROGRESS.REVIEW_COMPLETE);
+  assert.equal(exactHeadReviewProgress(EXACT_HEAD_REVIEW_DECISION.BLOCKED_WORKFLOWS), EXACT_HEAD_REVIEW_PROGRESS.BLOCKED);
 });
 
 test('fails closed without canonical lane evidence or for an external head repository', () => {
@@ -514,6 +600,19 @@ test('manual PR numbers accept only safe positive decimal digits', () => {
   }
 });
 
+test('targets the event PR directly and preserves independent workflow-run lanes', () => {
+  assert.deepEqual(candidateReviewPrNumbers({ event: { issue: { number: 1706, pull_request: {} } } }), [1706]);
+  assert.deepEqual(candidateReviewPrNumbers({
+    event: { workflow_run: { pull_requests: [{ number: 1706 }, { number: 1703 }, { number: 1706 }] } },
+  }), [1706, 1703]);
+  assert.deepEqual(candidateReviewPrNumbers({
+    event: { issue: { number: 1706, pull_request: {} } },
+    manualPrNumber: 1703,
+  }), [1703]);
+  assert.deepEqual(candidateReviewPrNumbers({ event: {} }), []);
+  assert.throws(() => candidateReviewPrNumbers({ manualPrNumber: 0 }), /safe positive integer/);
+});
+
 test('ignores forged coordinator markers for dispatch, receipt and escalation state', () => {
   const forgedDispatch = evaluateExactHeadReviewDispatch(baseInput({
     comments: [{
@@ -542,7 +641,7 @@ test('ignores forged coordinator markers for dispatch, receipt and escalation st
       },
     ],
   }));
-  assert.equal(forgedReceipt.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+  assert.equal(forgedReceipt.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 
   const trustedDispatch = coordinatorComment({ id: 83, body: marker(EXACT_HEAD_REVIEW_MARKERS.DISPATCH), createdAt: '2026-07-19T16:25:00Z' });
   const forgedEscalation = evaluateExactHeadReviewDispatch(baseInput({
@@ -561,7 +660,7 @@ test('ignores forged coordinator markers for dispatch, receipt and escalation st
   assert.equal(forgedEscalation.decision, EXACT_HEAD_REVIEW_DECISION.ESCALATE_MISSING_RECEIPT);
 });
 
-test('accepts review receipts only after successful exact-head workflow completion', () => {
+test('consumes precomputed exact-base provider receipts while Codex comments remain non-authoritative', () => {
   const earlyExternal = {
     id: 90,
     body: `Codex Review\n\n**Reviewed commit:** \`${HEAD}\``,
@@ -580,23 +679,31 @@ test('accepts review receipts only after successful exact-head workflow completi
   const ambiguous = evaluateExactHeadReviewDispatch(baseInput({ comments: [ambiguousSameSecond] }));
   assert.equal(ambiguous.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 
+  const precomputedProviderReceipt = providerNeutralComment({
+    id: 96,
+    createdAt: '2026-07-19T16:10:00Z',
+  });
+  const providerReady = evaluateExactHeadReviewDispatch(baseInput({
+    comments: [precomputedProviderReceipt],
+  }));
+  assert.equal(providerReady.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+  assert.equal(providerReady.externalReceiptId, 96);
+
   const postWorkflowExternal = { ...earlyExternal, id: 92, createdAt: '2026-07-19T16:24:01Z' };
   const beforeExternalMarker = coordinatorComment({
     id: 93,
     body: marker(EXACT_HEAD_REVIEW_MARKERS.RECEIPT),
     createdAt: '2026-07-19T16:24:00Z',
   });
-  const causal = evaluateExactHeadReviewDispatch(baseInput({ comments: [postWorkflowExternal, beforeExternalMarker] }));
-  assert.equal(causal.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+  const stillIgnored = evaluateExactHeadReviewDispatch(baseInput({ comments: [postWorkflowExternal, beforeExternalMarker] }));
+  assert.equal(stillIgnored.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
-test('orders same-second durable receipts causally and treats review IDs as incomparable', () => {
-  const externalComment = {
+test('orders provider-neutral same-second durable receipts causally and ignores Codex review IDs', () => {
+  const externalComment = providerNeutralComment({
     id: 100,
-    body: `Codex Review\n\n**Reviewed commit:** \`${HEAD}\``,
     createdAt: '2026-07-19T16:29:30Z',
-    user: TRUSTED_CODEX_REVIEWER,
-  };
+  });
   const earlierMarker = coordinatorComment({
     id: 99,
     body: marker(EXACT_HEAD_REVIEW_MARKERS.RECEIPT),
@@ -620,8 +727,8 @@ test('orders same-second durable receipts causally and treats review IDs as inco
     submittedAt: '2026-07-19T16:29:30Z',
     user: TRUSTED_CODEX_REVIEWER,
   };
-  const incomparable = evaluateExactHeadReviewDispatch(baseInput({ reviews: [externalReview], comments: [laterMarker] }));
-  assert.equal(incomparable.decision, EXACT_HEAD_REVIEW_DECISION.RECORD_REVIEW_RECEIPT);
+  const ignored = evaluateExactHeadReviewDispatch(baseInput({ reviews: [externalReview], comments: [laterMarker] }));
+  assert.equal(ignored.decision, EXACT_HEAD_REVIEW_DECISION.DISPATCH_REVIEW);
 });
 
 test('requires workflow completion timestamps and ignores pre-proof dispatch markers', () => {
@@ -642,19 +749,49 @@ test('requires workflow completion timestamps and ignores pre-proof dispatch mar
 
 test('wires the trusted coordinator identity through the runner and trusted workflow', () => {
   const runner = fs.readFileSync(new URL('../../scripts/exact-head-review-dispatch.mjs', import.meta.url), 'utf8');
-  const workflow = fs.readFileSync(new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url), 'utf8');
+  const workflow = fs
+    .readFileSync(new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url), 'utf8')
+    .replace(/\r\n?/g, '\n');
   assert.match(runner, /bounded GitHub token actor is not authorised/);
   assert.match(runner, /selectReviewCoordinatorCredential\(process\.env\)/);
   assert.match(runner, /const laneAuthorityLogin = trustedLaneAuthorityLogin\(owner\)/);
   assert.match(runner, /trustedCoordinatorLogin:\s*MACHINE_COORDINATOR_SENTINEL_LOGIN/);
   assert.match(runner, /parseOptionalManualPrNumber\(process\.env\.STEPHANOS_EXACT_HEAD_REVIEW_PR\)/);
-  assert.match(runner, /const numbers = \(await listOpenPullRequests/);
+  assert.match(runner, /requestedNumbers\.length \? loadRequestedCanonicalContexts : discoverCanonicalContexts/);
+  assert.match(runner, /unresolvedThreadCount\(owner, repo, prNumber, token\)/);
+  assert.match(runner, /unresolvedThreadCount: context\.unresolvedThreadCount/);
+  assert.match(runner, /validateIndependentReviewArtifact\(artifact/);
+  assert.match(runner, /STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED/);
+  assert.match(runner, /independentReviewArtifactComments/);
+  assert.match(runner, /mapWithConcurrency\(openPullRequests, 8/);
+  assert.doesNotMatch(runner, /multiple canonical review lanes detected/);
   assert.match(runner, /REQUESTED_PR_NOT_CANONICAL/);
   assert.match(runner, /GitHub pagination exceeded.*refusing partial evidence/);
+  assert.match(runner, /EXACT_HEAD_REVIEW_PROGRESS_PR_/);
+  assert.match(runner, /STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY/);
+  assert.match(runner, /EXACT_HEAD_REVIEW_PLAN_TARGETS/);
+  assert.match(runner, /mutation execution requires exactly one PR-scoped coordinator target/);
+  assert.doesNotMatch(workflow, /github\.event\.workflow_run\.pull_requests\[0\]\.number/);
+  assert.match(workflow, /targets:\s*\$\{\{ steps\.admit\.outputs\.targets \}\}/);
+  assert.match(workflow, /target:\s*\$\{\{ fromJSON\(needs\.plan\.outputs\.targets\) \}\}/);
+  assert.match(workflow, /group: exact-head-review-dispatch-\$\{\{ github\.repository \}\}-pr-\$\{\{ matrix\.target\.prNumber \}\}/);
+  assert.match(workflow, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR:\s*\$\{\{ matrix\.target\.prNumber \}\}/);
+  assert.match(workflow, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD:\s*\$\{\{ fromJSON\(steps\.coordinate\.outputs\.retry_targets\)\[0\]\.exactHead \}\}/);
+  assert.match(workflow, /max-parallel:\s*4/);
+  assert.match(workflow, /uses: actions\/download-artifact@v4/);
+  assert.match(workflow, /run-id: \$\{\{ github\.event\.workflow_run\.id \}\}/);
+  assert.match(workflow, /STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED/);
+  assert.doesNotMatch(workflow, /steps\.coordinate\.outputs\.decision ==/);
+  assert.match(workflow, /Progress: `VERIFIED_ONLY`/);
+  assert.match(workflow, /Progress: `PULL_REQUEST_PLAN_NEUTRAL`/);
+  assert.match(
+    workflow,
+    /Discover canonical PR targets without mutation\n        id: plan\n        if: >-\n          github\.event_name != 'pull_request'/,
+  );
+  assert.match(workflow, /workflows:[\s\S]*Independent Merge Security Review/);
   assert.match(workflow, /GITHUB_TOKEN:\s*\$\{\{ github\.token \}\}/);
   assert.match(workflow, /STEPHANOS_REVIEW_LANE_AUTHORITY_LOGIN:\s*\$\{\{ github\.repository_owner \}\}/);
-  assert.match(workflow, /STEPHANOS_REVIEW_DISPATCH_TOKEN:\s*\$\{\{ secrets\.STEPHANOS_REVIEW_DISPATCH_TOKEN \}\}/);
-  assert.doesNotMatch(workflow, /STEPHANOS_REVIEW_DISPATCH_TOKEN:[^\n]*\|\|/);
+  assert.doesNotMatch(workflow, /STEPHANOS_REVIEW_DISPATCH_TOKEN:/);
 });
 
 test('runs every required proof workflow for every pull request head', () => {
@@ -699,9 +836,86 @@ test('renders exact-head dispatch, receipt and escalation comments with durable 
 
   const escalation = buildMissingReceiptEscalationComment({ prNumber: 1559, headSha: HEAD, timeoutMinutes: 10, dispatchCommentId: 40 });
   assert.match(escalation, new RegExp(EXACT_HEAD_REVIEW_MARKERS.ESCALATION));
+  assert.match(escalation, /authenticated provider-neutral receipt/);
+  assert.doesNotMatch(escalation, /provider-neutral or Codex receipt/);
   assert.match(escalation, /Duplicate dispatch is rejected/);
 
   assert.throws(() => buildReviewDispatchComment({ prNumber: 0, headSha: HEAD }), /valid PR number/);
   assert.throws(() => buildReviewReceiptComment({ prNumber: -1, headSha: HEAD }), /valid PR number/);
   assert.throws(() => buildMissingReceiptEscalationComment({ prNumber: '', headSha: HEAD }), /valid PR number/);
+});
+
+test('exact owner review request is bounded to one PR and exact head', () => {
+  const headSha = 'a'.repeat(40);
+  const request = explicitOwnerExactHeadReviewRequest({
+    laneAuthorityLogin: 'Cheekyfellastef',
+    event: {
+      issue: { number: 1868, pull_request: { url: 'https://api.github.com/repos/Cheekyfellastef/stephan-os/pulls/1868' } },
+      comment: {
+        id: 5473673649,
+        body: '/stephanos-review ' + headSha + '\n\nQUALIFIED_BOOTSTRAP_AUTHORIZED=true',
+        user: { login: 'Cheekyfellastef', type: 'User' },
+      },
+    },
+  });
+  assert.deepEqual(request, {
+    authorized: true,
+    prNumber: 1868,
+    headSha,
+    commentId: 5473673649,
+  });
+
+  assert.equal(explicitOwnerExactHeadReviewRequest({
+    laneAuthorityLogin: 'Cheekyfellastef',
+    event: {
+      issue: { number: 1868, pull_request: {} },
+      comment: { body: '/stephanos-review ' + headSha, user: { login: 'github-actions[bot]', type: 'Bot' } },
+    },
+  }).authorized, false);
+
+  assert.equal(explicitOwnerExactHeadReviewRequest({
+    laneAuthorityLogin: 'Cheekyfellastef',
+    event: {
+      issue: { number: 1868, pull_request: {} },
+      comment: { body: '/stephanos-review short-head', user: { login: 'Cheekyfellastef', type: 'User' } },
+    },
+  }).authorized, false);
+});
+
+test('exact owner review request can substitute only for missing canonical lane evidence', () => {
+  const headSha = 'a'.repeat(40);
+  const input = {
+    repository: 'Cheekyfellastef/stephan-os',
+    now: '2026-08-31T04:21:30.000Z',
+    trustedCoordinatorLogin: 'Cheekyfellastef',
+    canonicalLaneConfirmed: false,
+    ownerExactHeadReviewRequested: true,
+    pr: {
+      number: 1868,
+      state: 'open',
+      baseRef: 'main',
+      baseSha: 'b'.repeat(40),
+      headRef: 'agent/personal-repository-bootstrap-policy-v1',
+      headSha,
+      sameRepository: true,
+    },
+    workflowRuns: [],
+    unresolvedThreadCount: 0,
+    comments: [],
+    reviews: [],
+  };
+  const admitted = evaluateExactHeadReviewDispatch(input);
+  assert.notEqual(admitted.decision, 'INELIGIBLE');
+
+  const blocked = evaluateExactHeadReviewDispatch({
+    ...input,
+    ownerExactHeadReviewRequested: false,
+  });
+  assert.equal(blocked.decision, 'INELIGIBLE');
+
+  const crossRepo = evaluateExactHeadReviewDispatch({
+    ...input,
+    pr: { ...input.pr, sameRepository: false },
+  });
+  assert.equal(crossRepo.decision, 'INELIGIBLE');
 });

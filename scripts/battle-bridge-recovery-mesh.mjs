@@ -17,6 +17,8 @@ import {
   BATTLE_BRIDGE_RECOVERY_ROUTES,
   adjudicateBattleBridgeRecoveryMesh,
 } from '../shared/agents/battleBridgeRecoveryMeshV1.mjs';
+import { CANONICAL_MAILBOX_ISSUE } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
+import { reconcileBattleBridgeGitHubSyncTask } from '../shared/agents/battleBridgeGitHubSyncSelfRepairV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import {
   appendWorkspaceJsonl,
@@ -80,8 +82,6 @@ export function createFixedRecoveryMeshMutexVerifier({ verifierScriptPath, spawn
 }
 
 function verifyCurrentRecoveryMeshMutexAuthority(env) {
-  // This runner is deployed only on Windows. Non-Windows execution is the
-  // deterministic unit-test surface and cannot reach the Windows adapters.
   if (process.platform !== 'win32') return Object.freeze({ ok: true, nonWindowsTestSurface: true, blocker: '' });
   if (env.STEPHANOS_RECOVERY_MESH_MUTEX_HELD !== '1') {
     return Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_WINDOWS_MUTEX_REQUIRED' });
@@ -305,7 +305,7 @@ export async function verifyRecoveryMeshAuthenticationEvidence(paths, requests, 
       const liveSourceHead = text(sourceHeadReader(paths.repoRoot)).toLowerCase();
       if (!mailboxReceiptRead.ok || receipt?.schemaVersion !== 'stephanos.battle-bridge-github-command-receipt.v1'
         || receipt.requestId !== record.subject || receipt.operation !== 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'
-        || !['ACCEPTED', 'DONE'].includes(receipt.state) || receipt.repository !== 'Cheekyfellastef/stephan-os' || Number(receipt.issueNumber) !== 1507
+        || !['ACCEPTED', 'DONE'].includes(receipt.state) || receipt.repository !== 'Cheekyfellastef/stephan-os' || Number(receipt.issueNumber) !== CANONICAL_MAILBOX_ISSUE
         || !Number.isFinite(authorityAtMs) || authorityAtMs > now.getTime() + 30_000 || now.getTime() - authorityAtMs > GITHUB_AUTHORITY_MAX_AGE_MS
         || !EXACT_HEAD.test(expectedHead) || observedHead !== expectedHead || text(record.authorityHead).toLowerCase() !== expectedHead
         || liveSourceHead !== expectedHead) {
@@ -541,6 +541,8 @@ export async function runBattleBridgeRecoveryMesh({
   recoveryProbeDelayMs = 5_000,
   maximumRecoveryProbes = 3,
   sourceHeadReader = defaultSourceHeadReader,
+  platform = process.platform,
+  githubSyncSelfRepairFn = reconcileBattleBridgeGitHubSyncTask,
 } = {}) {
   const mutexVerification = verifyCurrentRecoveryMeshMutexAuthority(env);
   if (!mutexVerification.ok) return Object.freeze({ ok: false, classification: mutexVerification.blocker, mutexVerification });
@@ -618,9 +620,6 @@ export async function runBattleBridgeRecoveryMesh({
     let recoveryProbeCount = 0;
     if (!(initial.workerHealthy && initial.mailboxHealthy && initial.backendHealthy && initial.gatewayHealthy)) {
       recoveryAttempted = true;
-      // This synchronous check is deliberately adjacent to the only mutating
-      // recovery dispatch. GitHub authority must still bind the live checkout
-      // after adjudication, lease persistence, and the initial inspection.
       const dispatchHeadVerification = verifyRecoveryDispatchSourceHead(paths, decision, evidenceVerification, sourceHeadReader);
       if (!dispatchHeadVerification.ok) {
         return Object.freeze({ ok: false, classification: dispatchHeadVerification.blocker, decision, initial, dispatchHeadVerification, lock });
@@ -646,18 +645,52 @@ export async function runBattleBridgeRecoveryMesh({
       ...decision.accepted.map((request) => request.idempotencyKey),
     ])].slice(-500);
     await writeStateAtomically(paths.statePath, { schemaVersion: BATTLE_BRIDGE_RECOVERY_MESH_RUNNER_SCHEMA, updatedAtUtc: now.toISOString(), activeLease: null, consumedIdempotencyKeys });
+
     const coreHealthy = final.workerHealthy && final.mailboxHealthy;
+    const syncRepairExpectedHead = text(sourceHeadReader(paths.repoRoot)).toLowerCase();
+    let githubSyncSelfRepair;
+    if (platform === 'win32') {
+      try {
+        githubSyncSelfRepair = githubSyncSelfRepairFn({
+          repoRoot: paths.repoRoot,
+          expectedHead: syncRepairExpectedHead,
+          platform,
+          now,
+        });
+      } catch (error) {
+        githubSyncSelfRepair = Object.freeze({
+          ok: false,
+          blocker: 'RECOVERY_MESH_GITHUB_SYNC_SELF_REPAIR_EXCEPTION',
+          error: error?.message || String(error),
+          codexRequired: false,
+          mutationPerformed: false,
+        });
+      }
+    } else {
+      githubSyncSelfRepair = Object.freeze({
+        ok: true,
+        skipped: true,
+        blocker: '',
+        finalVerdict: 'BATTLE_BRIDGE_GITHUB_SYNC_SELF_REPAIR_NON_WINDOWS_TEST_SURFACE',
+        codexRequired: false,
+        mutationPerformed: false,
+      });
+    }
+    const syncHealthy = githubSyncSelfRepair?.ok === true;
     return Object.freeze({
-      ok: coreHealthy && publication.ok,
-      classification: publication.classification,
+      ok: coreHealthy && publication.ok && syncHealthy,
+      classification: syncHealthy
+        ? publication.classification
+        : (githubSyncSelfRepair?.blocker || 'RECOVERY_MESH_GITHUB_SYNC_SELF_REPAIR_BLOCKED'),
       decision,
       initial,
       final,
       recoveryAttempted,
       recoveryProbeCount,
       publication,
+      githubSyncSelfRepair,
       lock,
-      acceptsRuntimeWork: coreHealthy,
+      acceptsRuntimeWork: coreHealthy && syncHealthy,
       bulletproofAcceptanceClaimed: false,
     });
   } finally {

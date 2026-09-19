@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto';
 import { issueOpenClawGitHubAuthorization } from './openClawGitHubAuthorization.mjs';
 import { buildOpenClawGitHubOperation } from './openClawGitHubOperator.mjs';
 import { applyMissionOrchestratorEvent } from './missionOrchestrator.mjs';
+import {
+  MISSION_CONTROLLER_ROUTE,
+} from './missionControllerCapacityRouterV1.mjs';
+import { routeProviderIndependentMissionCapacityV1 } from './providerIndependentMissionCapacityRouteV1.mjs';
 
 const OPENCLAW_BRANCH_PATTERN = /^openclaw\/[a-z0-9][a-z0-9._/-]{2,127}$/;
 const SHA40_PATTERN = /^[a-f0-9]{40}$/;
@@ -65,7 +69,44 @@ function operationClaims(state, operation, options = {}) {
 }
 
 function blocked(state, reason) {
-  return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'blocked'), missionId: state.missionId, actionKind: 'blocked', executable: false, blockers: [reason], finalVerdict: 'BLOCKED' };
+  const blockers = (Array.isArray(reason) ? reason : [reason])
+    .map((item) => text(item))
+    .filter(Boolean);
+  return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'blocked'), missionId: state.missionId, actionKind: 'blocked', executable: false, blockers, finalVerdict: 'BLOCKED' };
+}
+
+function capacityRouteForMission(state, options = {}) {
+  const grant = options.actionGrant;
+  if (
+    grant?.schemaVersion === 'stephanos.mission-worker-action-grant.v1'
+    && text(grant.missionId).toLowerCase() === text(state.missionId).toLowerCase()
+    && Object.values(MISSION_CONTROLLER_ROUTE).includes(text(grant.capacityRoute).toUpperCase())
+  ) {
+    return {
+      route: text(grant.capacityRoute).toUpperCase(),
+      adapter: text(grant.adapter),
+      workerId: text(grant.workerId),
+      selectedCapacityReceiptId: text(grant.capacityReceiptId),
+      proofRefs: Array.isArray(grant.capacityProofRefs) ? grant.capacityProofRefs : [],
+      dispatchAllowed: true,
+      blockers: [],
+    };
+  }
+  if (!options.capacityRouting) {
+    return {
+      route: MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY,
+      adapter: '',
+      dispatchAllowed: false,
+      blockers: ['provider-independent-capacity-routing-unavailable'],
+    };
+  }
+  return routeProviderIndependentMissionCapacityV1({
+    ...options.capacityRouting,
+    nowUtc: options.capacityRouting.nowUtc || nowIso(options),
+    mission: state,
+    preferNonOpenAi: options.capacityRouting.preferNonOpenAi !== false,
+    openAiBlackout: options.capacityRouting.openAiBlackout === true,
+  });
 }
 
 export function projectMissionWorkerActionState(state, options = {}) {
@@ -113,7 +154,25 @@ export function buildMissionWorkerAction(state, options = {}) {
   }
 
   if (['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(state.currentPhase)) {
-    return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'codex'), missionId: state.missionId, actionKind: 'agent-handoff', adapter: 'codex', owner: 'codex', activeWriter: 'Codex', operatorIntent: state.operatorIntent, intendedOutcome: state.intendedOutcome, repository: state.repository, worktreePath: state.git?.worktreePath || '', allowedFiles: state.allowedFiles || [], requiredTests: state.requiredTests || [], requiredEvidence: state.requiredEvidence || [], repairRound: state.repair?.currentRound || 0, executable: true, blockers: [], finalVerdict: 'READY_TO_DISPATCH_CODEX' };
+    const capacity = capacityRouteForMission(state, options);
+    if (capacity && (capacity.dispatchAllowed !== true || !text(capacity.adapter))) {
+      return blocked(state, (capacity.blockers || []).length > 0
+        ? capacity.blockers
+        : 'No freshly proven build lane can accept this mission.');
+    }
+    const adapter = text(capacity?.adapter, 'codex');
+    const route = text(capacity?.route, MISSION_CONTROLLER_ROUTE.CODEX).toUpperCase();
+    const owner = adapter === 'codex' ? 'codex' : text(capacity?.workerId, adapter);
+    const activeWriter = adapter === 'codex' ? 'Codex' : owner;
+    return {
+      schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, adapter), missionId: state.missionId,
+      actionKind: 'agent-handoff', adapter, capacityRoute: route, capacityReceiptId: text(capacity?.selectedCapacityReceiptId),
+      capacityProofRefs: Array.isArray(capacity?.proofRefs) ? capacity.proofRefs : [], owner, activeWriter,
+      operatorIntent: state.operatorIntent, intendedOutcome: state.intendedOutcome, repository: state.repository,
+      worktreePath: state.git?.worktreePath || '', branch: state.git?.branch || '', allowedFiles: state.allowedFiles || [],
+      requiredTests: state.requiredTests || [], requiredEvidence: state.requiredEvidence || [], repairRound: state.repair?.currentRound || 0,
+      executable: true, blockers: [], finalVerdict: adapter === 'codex' ? 'READY_TO_DISPATCH_CODEX' : 'READY_TO_PUBLISH_PROVEN_FALLBACK_HANDOFF',
+    };
   }
   if (state.currentPhase === 'LIVE_RUNTIME_INVESTIGATION') {
     return {

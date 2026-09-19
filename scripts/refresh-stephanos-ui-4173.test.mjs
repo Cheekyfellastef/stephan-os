@@ -7,6 +7,9 @@ import {
   waitForUiHealthState,
 } from './refresh-stephanos-ui-4173.mjs';
 
+const HEAD_A = 'a'.repeat(40);
+const HEAD_D = 'd'.repeat(40);
+
 test('Windows build and verify steps use the controlled cmd npm wrapper', () => {
   assert.deepEqual(resolveNpmStep('win32', 'stephanos:build'), {
     command: 'cmd.exe',
@@ -54,7 +57,8 @@ test('stale live UI completes build, verify, stop, detached start, and exact-hea
   const steps = [];
   const result = await refreshStephanosUi4173({
     platform: 'win32',
-    currentHeadFn: () => 'abc1234',
+    expectedHead: HEAD_A,
+    currentHeadFn: () => HEAD_A,
     runStepFn: (label, command, args) => {
       steps.push({ label, command, args });
       return true;
@@ -68,7 +72,7 @@ test('stale live UI completes build, verify, stop, detached start, and exact-hea
     startServerFn: () => ({ started: true, pid: 4173, logPath: 'logs/refresh' }),
     waitForExactHeadFn: async ({ currentHead }) => ({
       ready: true,
-      proof: { ready: true, currentHead, gitCommit: 'abc1234' },
+      proof: { ready: true, currentHead, gitCommit: HEAD_A },
     }),
   });
 
@@ -83,7 +87,8 @@ test('down UI skips restart request but still starts and proves the replacement'
   let restartCalls = 0;
   const result = await refreshStephanosUi4173({
     platform: 'linux',
-    currentHeadFn: () => 'def5678',
+    expectedHead: HEAD_D,
+    currentHeadFn: () => HEAD_D,
     runStepFn: () => true,
     probeHealthFn: async () => ({ reachable: false, error: 'connection refused' }),
     requestRestartFn: async () => {
@@ -96,7 +101,7 @@ test('down UI skips restart request but still starts and proves the replacement'
 
   assert.equal(restartCalls, 0);
   assert.equal(result.restart.requested, false);
-  assert.equal(result.exactHeadProof.currentHead, 'def5678');
+  assert.equal(result.exactHeadProof.currentHead, HEAD_D);
 });
 
 test('accepted restart that never releases 4173 fails closed before replacement start', async () => {
@@ -104,7 +109,8 @@ test('accepted restart that never releases 4173 fails closed before replacement 
   await assert.rejects(
     refreshStephanosUi4173({
       platform: 'win32',
-      currentHeadFn: () => 'abc1234',
+      expectedHead: HEAD_A,
+      currentHeadFn: () => HEAD_A,
       runStepFn: () => true,
       probeHealthFn: async () => ({ reachable: true }),
       requestRestartFn: async () => ({ accepted: true, status: 202 }),
@@ -124,7 +130,8 @@ test('replacement that never reaches exact HEAD fails with its bounded log locat
   await assert.rejects(
     refreshStephanosUi4173({
       platform: 'win32',
-      currentHeadFn: () => 'abc1234',
+      expectedHead: HEAD_A,
+      currentHeadFn: () => HEAD_A,
       runStepFn: () => true,
       probeHealthFn: async () => ({ reachable: false }),
       startServerFn: () => ({ started: true, pid: 1, logPath: 'logs/refresh-proof' }),
@@ -132,4 +139,21 @@ test('replacement that never reaches exact HEAD fails with its bounded log locat
     }),
     /failed exact-head proof \(fetch failed\).*logs\/refresh-proof/,
   );
+});
+
+test('refresh child blocks an expected-head change before build or restart mutation', async () => {
+  let reads = 0;
+  const steps = [];
+  await assert.rejects(refreshStephanosUi4173({
+    platform: 'linux',
+    expectedHead: HEAD_A,
+    currentHeadFn: () => {
+      reads += 1;
+      return reads === 1 ? HEAD_A : HEAD_D;
+    },
+    runStepFn: (label) => { steps.push(label); return true; },
+    probeHealthFn: async () => ({ reachable: true }),
+    requestRestartFn: async () => { throw new Error('restart must not run'); },
+  }), /UI_4173_REFRESH_EXPECTED_HEAD_MISMATCH/);
+  assert.deepEqual(steps, ['build-current-ui', 'verify-current-ui']);
 });

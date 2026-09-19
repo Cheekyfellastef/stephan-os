@@ -91,12 +91,39 @@ test('chat update stops safely when fast-forward sync is blocked', async () => {
   assert.equal(diagnosticsCalled, false);
 });
 
+test('chat update preserves exact installed source truth when post-sync verification blocks runtime refresh', async () => {
+  const head = '10ce35ad3d9542694f02e6727954b965d3de4f6b';
+  let diagnosticsCalled = false;
+  const result = await updateStephanosFromChat({
+    expectedHead: head,
+    operatorApproval: 'operator-approved',
+    syncFn: () => ({
+      ok: false,
+      status: 'FAILED',
+      blocker: 'POST_SYNC_VERIFICATION_FAILED',
+      branch: 'main',
+      afterHead: head,
+      tests: { ok: false, status: 1 },
+    }),
+    diagnosticsFn: () => { diagnosticsCalled = true; },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'POST_SYNC_VERIFICATION_FAILED');
+  assert.equal(result.sourceInstalled, true);
+  assert.equal(result.sourceHead, head);
+  assert.equal(result.branch, 'main');
+  assert.equal(result.expectedHeadMatch, true);
+  assert.equal(result.runtimeRefreshAttempted, false);
+  assert.equal(diagnosticsCalled, false);
+});
+
 test('chat update fast-forwards, runs the canonical ignition entry, and proves exact-head runtime without manual PowerShell', async () => {
   const head = '443e3bcb6f6da050961b881160f7d5a4ca463fee';
   const diagnostics = [health(head), health(head)];
   const spawnSyncFn = scriptedSpawn({
-    before: ' M apps/stephanos/dist/index.html\n M stephanos-server/data/memory/durable-memory.json\n',
-    after: ' M apps/stephanos/dist/index.html\n M stephanos-server/data/memory/durable-memory.json\n',
+    before: ' D apps/stephanos/dist/assets/old-build.js\n M apps/stephanos/dist/index.html\n M stephanos-server/data/memory/durable-memory.json\n',
+    after: ' D apps/stephanos/dist/assets/old-build.js\n M apps/stephanos/dist/index.html\n M stephanos-server/data/memory/durable-memory.json\n',
   });
   const result = await updateStephanosFromChat({
     repoRoot: 'C:\\repo',
@@ -118,6 +145,13 @@ test('chat update fast-forwards, runs the canonical ignition entry, and proves e
   assert.equal(result.runtimeProofPassed, true);
   assert.equal(result.runtimeProof.attemptCount, 1);
   assert.equal(result.dirtDelta.sourceMutationDetected, false);
+  assert.deepEqual(result.dirtBefore.source, []);
+  assert.deepEqual(result.dirtBefore.runtime, [
+    'apps/stephanos/dist/assets/old-build.js',
+    'apps/stephanos/dist/index.html',
+    'stephanos-server/data/memory/durable-memory.json',
+  ]);
+  assert.equal(result.dirtBefore.entries[0].status, ' D');
   assert.equal(result.operatorPowerShellRequired, false);
   assert.equal(result.codexChildUsed, false);
   assert.equal(result.processControlPerformed, true);

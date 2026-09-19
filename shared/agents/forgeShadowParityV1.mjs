@@ -1,6 +1,6 @@
 const SHA40 = /^[a-f0-9]{40}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
-const REPOSITORY = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
+const FIXED_REPOSITORY = 'Cheekyfellastef/stephan-os';
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 
 export const FORGE_SHADOW_PARITY_SCHEMA = 'stephanos.forge-shadow-parity.v1';
@@ -57,7 +57,7 @@ export function evaluateForgeShadowParity(input = {}) {
   const backupAtMs = instant(backup.completedAtUtc);
   const blockers = [];
 
-  if (!REPOSITORY.test(repository)) blockers.push('repository-invalid');
+  if (repository !== FIXED_REPOSITORY) blockers.push('repository-not-allowlisted');
   for (const [label, value] of [
     ['github-head', githubHead],
     ['github-tree', githubTree],

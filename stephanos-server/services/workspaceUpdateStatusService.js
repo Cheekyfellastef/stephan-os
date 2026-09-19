@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { fixedBackendExecutable } from './fixedBackendExecutable.js';
 
 const execFileAsync = promisify(execFile);
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
@@ -11,7 +12,7 @@ function text(value, fallback = '') {
 
 async function git(args, options = {}) {
   try {
-    const result = await execFileAsync('git', args, {
+    const result = await execFileAsync(fixedBackendExecutable('git'), args, {
       cwd: options.cwd || process.cwd(),
       timeout: Number.isFinite(options.timeoutMs) ? options.timeoutMs : 2500,
       maxBuffer: 1024 * 1024,
