@@ -1,0 +1,121 @@
+{
+  "schemaVersion": "stephanos.vr-capability-readiness.v1",
+  "updatedAt": "2026-09-19T20:55:00+01:00",
+  "sourceHead": "5a45792872d4c1f4f80cf6b56daf6b875d1cc21f",
+  "staleAfterHours": 336,
+  "scoring": {
+    "absolute": true,
+    "normalized": false,
+    "unknownContributes": 0,
+    "rule": "Capability readiness is separate from research fit. Scores are the sum of five proof stages: design/spec 10, implementation 30, automated proof 20, runtime proof 20, operator acceptance 20. A stage contributes only when canonical evidence explicitly supports it. 100 means every stage is proven; research strength alone never raises capability readiness."
+  },
+  "stageWeights": {
+    "design": 10,
+    "implementation": 30,
+    "automatedProof": 20,
+    "runtimeProof": 20,
+    "operatorAcceptance": 20
+  },
+  "capabilities": [
+    {
+      "id": "spatial-bridge",
+      "stages": {
+        "design": {"status": "proven", "evidence": ["VR-Research-Lab/lab-workspace.json#spatialBridge"], "note": "Canonical Spatial Bridge doctrine, captain model, authority stages and readiness gates are recorded."},
+        "implementation": {"status": "pending", "evidence": ["VR-Research-Lab/lab-workspace.json#spatialBridge.status"], "note": "Canonical status is doctrine-recorded-implementation-deferred."},
+        "automatedProof": {"status": "pending", "evidence": [], "note": "No canonical automated proof for the spatial VR surface is recorded."},
+        "runtimeProof": {"status": "pending", "evidence": [], "note": "No canonical spatial-surface runtime proof is recorded."},
+        "operatorAcceptance": {"status": "pending", "evidence": [], "note": "No physical Quest 3 acceptance receipt for the Spatial Bridge is recorded."}
+      }
+    },
+    {
+      "id": "embodied-exploration",
+      "stages": {
+        "design": {"status": "proven", "evidence": ["VR-Research-Lab/lab-workspace.json#techniques/Skyrim VR Parity Decomposition", "VR-Research-Lab/lab-workspace.json#techniques/Transport-neutral Hand Pose Contract"], "note": "Embodiment and hand-contract methods are explicitly represented in the canonical workspace."},
+        "implementation": {"status": "pending", "evidence": [], "note": "No Stephanos embodied-exploration implementation is recorded as built."},
+        "automatedProof": {"status": "pending", "evidence": [], "note": "No automated embodiment acceptance proof is recorded."},
+        "runtimeProof": {"status": "pending", "evidence": [], "note": "External references are not counted as Stephanos runtime proof."},
+        "operatorAcceptance": {"status": "pending", "evidence": [], "note": "No operator headset acceptance receipt is recorded."}
+      }
+    },
+    {
+      "id": "immersive-engineering",
+      "stages": {
+        "design": {"status": "proven", "evidence": ["apps/vr-capability-atlas/atlas-concepts.mjs#immersive-engineering"], "note": "The capability is explicitly defined as a bounded concept projection."},
+        "implementation": {"status": "pending", "evidence": [], "note": "No canonical immersive engineering implementation is recorded."},
+        "automatedProof": {"status": "pending", "evidence": [], "note": "No automated proof is recorded."},
+        "runtimeProof": {"status": "pending", "evidence": [], "note": "No runtime proof is recorded."},
+        "operatorAcceptance": {"status": "pending", "evidence": [], "note": "No operator acceptance is recorded."}
+      }
+    },
+    {
+      "id": "spatial-collaboration",
+      "stages": {
+        "design": {"status": "proven", "evidence": ["apps/vr-capability-atlas/atlas-concepts.mjs#spatial-collaboration"], "note": "The capability is explicitly defined as a bounded concept projection."},
+        "implementation": {"status": "pending", "evidence": [], "note": "No canonical collaborative spatial-room implementation is recorded."},
+        "automatedProof": {"status": "pending", "evidence": [], "note": "No automated proof is recorded."},
+        "runtimeProof": {"status": "pending", "evidence": [], "note": "No runtime proof is recorded."},
+        "operatorAcceptance": {"status": "pending", "evidence": [], "note": "No operator acceptance is recorded."}
+      }
+    },
+    {
+      "id": "living-starship",
+      "stages": {
+        "design": {"status": "proven", "evidence": ["VR-Research-Lab/lab-workspace.json#targets/Starfield VR", "VR-Research-Lab/lab-workspace.json#experiments/exp-starfield-living-starship"], "note": "The Starfield target and Living Starship vertical-slice experiment are canonically defined."},
+        "implementation": {"status": "pending", "evidence": ["VR-Research-Lab/lab-workspace.json#experiments/exp-starfield-living-starship.status"], "note": "The canonical experiment is still idea state, so implementation credit is withheld."},
+        "automatedProof": {"status": "pending", "evidence": [], "note": "No complete Living Starship automated acceptance proof is recorded."},
+        "runtimeProof": {"status": "pending", "evidence": [], "note": "No complete Living Starship runtime proof is recorded."},
+        "operatorAcceptance": {"status": "pending", "evidence": [], "note": "No complete Living Starship Quest 3 acceptance receipt is recorded."}
+      }
+    },
+    {
+      "id": "physical-interaction",
+      "stages": {
+        "design": {"status": "proven", "evidence": ["VR-Research-Lab/lab-workspace.json#techniques/Skyrim VR Parity Decomposition", "VR-Research-Lab/lab-workspace.json#techniques/Transport-neutral Hand Pose Contract"], "note": "The canonical workspace defines reusable body, hand and interaction methods."},
+        "implementation": {"status": "pending", "evidence": [], "note": "No title-neutral Stephanos physical-interaction implementation is recorded as built."},
+        "automatedProof": {"status": "pending", "evidence": [], "note": "No automated physical-interaction proof is recorded."},
+        "runtimeProof": {"status": "pending", "evidence": [], "note": "Reference ecosystems are not counted as Stephanos runtime proof."},
+        "operatorAcceptance": {"status": "pending", "evidence": [], "note": "No operator headset acceptance receipt is recorded."}
+      }
+    },
+    {
+      "id": "adaptive-dialogue",
+      "stages": {
+        "design": {"status": "proven", "evidence": ["VR-Research-Lab/lab-workspace.json#techniques/Adaptive Dialogue Presentation", "VR-Research-Lab/lab-workspace.json#experiments/exp-starfield-dialogue-controller"], "note": "Adaptive dialogue is design-active and has a canonically defined experiment."},
+        "implementation": {"status": "pending", "evidence": ["VR-Research-Lab/lab-workspace.json#experiments/exp-starfield-dialogue-controller.status"], "note": "The canonical experiment is still idea state."},
+        "automatedProof": {"status": "pending", "evidence": [], "note": "No automated dialogue-presentation acceptance proof is recorded."},
+        "runtimeProof": {"status": "pending", "evidence": [], "note": "No Starfield runtime proof for the adaptive controller is recorded."},
+        "operatorAcceptance": {"status": "pending", "evidence": [], "note": "No operator headset acceptance receipt is recorded."}
+      }
+    },
+    {
+      "id": "cinematic-theatre",
+      "stages": {
+        "design": {"status": "proven", "evidence": ["VR-Research-Lab/lab-workspace.json#techniques/Room-fixed 3D Cutscene Theatre"], "note": "The room-fixed theatre method is reference-proven and canonically extracted."},
+        "implementation": {"status": "pending", "evidence": [], "note": "Reference-proven external behaviour is not counted as a Stephanos implementation."},
+        "automatedProof": {"status": "pending", "evidence": [], "note": "No Stephanos integration proof is recorded."},
+        "runtimeProof": {"status": "pending", "evidence": [], "note": "No Stephanos runtime proof is recorded."},
+        "operatorAcceptance": {"status": "pending", "evidence": [], "note": "No local physical headset acceptance receipt is recorded."}
+      }
+    },
+    {
+      "id": "flat-to-vr-lab",
+      "stages": {
+        "design": {"status": "proven", "evidence": ["VR-Research-Lab/lab-workspace.json#techniques/Capability Route Planner", "VR-Research-Lab/lab-workspace.json#techniques/Monocular Flat-to-VR Reconstruction"], "note": "The canonical workspace defines route planning and reconstruction methods."},
+        "implementation": {"status": "pending", "evidence": ["VR-Research-Lab/lab-workspace.json#experiments/exp-resistant-game-offline-stereo"], "note": "The reconstruction experiment is still idea state; a full conversion laboratory implementation is not claimed."},
+        "automatedProof": {"status": "pending", "evidence": [], "note": "No full conversion-lab automated proof is recorded."},
+        "runtimeProof": {"status": "pending", "evidence": [], "note": "No end-to-end local conversion runtime proof is recorded."},
+        "operatorAcceptance": {"status": "pending", "evidence": [], "note": "No end-to-end operator headset acceptance is recorded."}
+      }
+    },
+    {
+      "id": "capability-factory",
+      "stages": {
+        "design": {"status": "proven", "evidence": ["VR-Research-Lab/lab-workspace.json", "VR-Research-Lab/knowledge-sources/source-stack-unlocks.md"], "note": "The reusable factory mission, compounding-agency rule, route planner and evidence model are canonically defined."},
+        "implementation": {"status": "proven", "evidence": ["VR-Research-Lab/lab-workspace.json", "VR-Research-Lab/knowledge-sources.json", "apps/vr-capability-atlas/app.json"], "note": "A live canonical research workspace, source registry, technique library, experiments and Atlas projection exist on main."},
+        "automatedProof": {"status": "pending", "evidence": [], "note": "Existing Atlas/media tests do not by themselves prove the whole reusable capability factory, so this stage remains withheld."},
+        "runtimeProof": {"status": "pending", "evidence": [], "note": "No single end-to-end runtime receipt proves the full factory loop yet."},
+        "operatorAcceptance": {"status": "pending", "evidence": [], "note": "No explicit end-to-end operator acceptance receipt for the full factory loop is recorded."}
+      }
+    }
+  ]
+}
