@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -13,6 +14,7 @@ import {
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { answerStephanosWorkspaceQuestionRecord } from '../shared/agents/stephanosSharedParticipantLiveQaResponseProjectionV1.mjs';
 import { buildSharedWorkspaceQaAnswerDiagnosticV1 } from '../shared/agents/sharedWorkspaceQaAnswerDiagnosticV1.mjs';
+import { buildStephanosQaFlywheelContinuationV1 } from '../shared/agents/stephanosQaFlywheelContinuationV1.mjs';
 import {
   CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA,
   CHATGPT_SHARED_WORKSPACE_ISSUE,
@@ -54,6 +56,7 @@ export const CHATGPT_GOAL_ADMISSION_MAX_PREREQUISITES = 32;
 const SAFE_REPOSITORY = 'Cheekyfellastef/stephan-os';
 const SAFE_TITLE_MAX = 240;
 const REVERSIBILITY = new Set(['UNKNOWN', 'REVERSIBLE', 'PARTIAL', 'IRREVERSIBLE']);
+const TERMINAL_GOAL_STATES = new Set(['COMPLETE', 'CLOSED', 'CANCELLED', 'SUPERSEDED']);
 const GOAL_PAYLOAD_KEYS = new Set([
   'criticalPathWeight',
   'issueNumber',
@@ -302,9 +305,135 @@ function renderResponseWithDiagnostic(body, diagnostic) {
   }
 }
 
+function hash24(value) {
+  return createHash('sha256').update(String(value ?? '')).digest('hex').slice(0, 24);
+}
+
+async function readWorkspaceJson({ root, repoRoot, segments, readFileFn }) {
+  const resolved = resolveSharedWorkspacePath({ root, repoRoot, segments });
+  if (!resolved.ok) return Object.freeze({ ok: false, reason: resolved.reason, record: null });
+  try {
+    return Object.freeze({ ok: true, reason: 'WORKSPACE_RECORD_READ', record: JSON.parse(await readFileFn(resolved.path, 'utf8')) });
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      reason: error?.code === 'ENOENT' ? 'WORKSPACE_RECORD_NOT_FOUND' : 'WORKSPACE_RECORD_READ_FAILED',
+      record: null,
+    });
+  }
+}
+
+function usableGoalRecord(record, expectedIssue) {
+  if (!record || record.kind !== SHARED_WORKSPACE_RECORD_KINDS.GOAL) return false;
+  const issue = positiveInteger(record.issueNumber ?? record.issue ?? record.relatedIssue ?? record.goalId?.replace(/^goal-/, ''));
+  if (!issue || issue !== expectedIssue) return false;
+  return !TERMINAL_GOAL_STATES.has(text(record.state ?? record.status).toUpperCase());
+}
+
+async function readGoalRecord({ root, repoRoot, issueNumber, readFileFn }) {
+  if (!issueNumber) return null;
+  const result = await readWorkspaceJson({
+    root,
+    repoRoot,
+    segments: ['goals', `goal-${issueNumber}.json`],
+    readFileFn,
+  });
+  return result.ok && usableGoalRecord(result.record, issueNumber) ? result.record : null;
+}
+
+function priorGapFromHandoff(record, expectedSignature) {
+  if (!record || record.kind !== SHARED_WORKSPACE_RECORD_KINDS.HANDOFF) return null;
+  try {
+    const body = JSON.parse(String(record.body || ''));
+    const gap = body?.gapObservation;
+    return gap?.gapSignature === expectedSignature ? gap : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function reconcileWorkspaceQaFlywheelV1({
+  questionRecord,
+  root,
+  repoRoot,
+  nowMs,
+  readFileFn = readFile,
+  writeAtomicJsonFn = writeAtomicJson,
+} = {}) {
+  if (!questionRecord) return Object.freeze({ ok: true, classification: 'NO_QA_FLYWHEEL_INPUT' });
+  const answerSegments = ['outbox', `qa-answer-${hash24(text(questionRecord.messageId))}.json`];
+  const answerRead = await readWorkspaceJson({ root, repoRoot, segments: answerSegments, readFileFn });
+  if (!answerRead.ok) return Object.freeze({ ok: false, classification: 'QA_ANSWER_NOT_DURABLE', reason: answerRead.reason });
+
+  const relatedIssue = positiveInteger(questionRecord.relatedIssue);
+  let existingGoalRecord = await readGoalRecord({ root, repoRoot, issueNumber: relatedIssue, readFileFn });
+  let ownerSource = existingGoalRecord ? 'QUESTION_RELATED_GOAL' : '';
+  if (!existingGoalRecord && relatedIssue !== 1721) {
+    existingGoalRecord = await readGoalRecord({ root, repoRoot, issueNumber: 1721, readFileFn });
+    if (existingGoalRecord) ownerSource = 'AMBIENT_GAP_UMBRELLA';
+  }
+
+  let continuation = buildStephanosQaFlywheelContinuationV1({
+    questionRecord,
+    answerRecord: answerRead.record,
+    existingGoalRecord,
+    nowMs,
+  });
+  if (!continuation.ok) return Object.freeze({ ok: false, classification: continuation.classification, continuation });
+  if (!continuation.handoffRecord) {
+    return Object.freeze({ ok: true, classification: continuation.classification, continuation, ownerSource });
+  }
+
+  const handoffSegments = ['outbox', `${continuation.handoffRecord.handoffId}.json`];
+  const priorRead = await readWorkspaceJson({ root, repoRoot, segments: handoffSegments, readFileFn });
+  if (priorRead.ok) {
+    const priorGap = priorGapFromHandoff(priorRead.record, continuation.gapObservation.gapSignature);
+    if (!priorGap) {
+      return Object.freeze({ ok: false, classification: 'QA_GAP_HANDOFF_CONFLICT', continuation, ownerSource });
+    }
+    continuation = buildStephanosQaFlywheelContinuationV1({
+      questionRecord,
+      answerRecord: answerRead.record,
+      existingGoalRecord,
+      existingGapObservation: priorGap,
+      nowMs,
+    });
+    if (!continuation.ok) return Object.freeze({ ok: false, classification: continuation.classification, continuation, ownerSource });
+  } else if (priorRead.reason !== 'WORKSPACE_RECORD_NOT_FOUND') {
+    return Object.freeze({ ok: false, classification: 'QA_GAP_HANDOFF_READ_FAILED', reason: priorRead.reason, continuation, ownerSource });
+  }
+
+  const handoffWrite = await writeAtomicJsonFn(root, handoffSegments, continuation.handoffRecord, { repoRoot, nowMs });
+  if (handoffWrite?.ok !== true) {
+    return Object.freeze({ ok: false, classification: 'QA_GAP_HANDOFF_WRITE_FAILED', reason: handoffWrite?.reason, continuation, ownerSource });
+  }
+
+  let goalWrite = Object.freeze({ ok: true, reason: 'NO_EXISTING_GOAL_UPDATE_REQUIRED' });
+  if (continuation.goalRecordUpdate) {
+    const issueNumber = positiveInteger(continuation.goalRecordUpdate.issueNumber ?? continuation.goalRecordUpdate.issue ?? continuation.goalRecordUpdate.relatedIssue);
+    if (!issueNumber) return Object.freeze({ ok: false, classification: 'QA_GAP_GOAL_IDENTITY_INVALID', continuation, ownerSource });
+    goalWrite = await writeAtomicJsonFn(root, ['goals', `goal-${issueNumber}.json`], continuation.goalRecordUpdate, { repoRoot, nowMs });
+    if (goalWrite?.ok !== true) {
+      return Object.freeze({ ok: false, classification: 'QA_GAP_GOAL_UPDATE_FAILED', reason: goalWrite?.reason, continuation, ownerSource });
+    }
+  }
+
+  return Object.freeze({
+    ok: true,
+    classification: continuation.classification,
+    continuation,
+    ownerSource,
+    handoffWrite,
+    goalWrite,
+  });
+}
+
 export async function runChatGptSharedWorkspaceGitHubRelay(options = {}) {
   let qaAnswerDiagnostic = null;
   let goalAdmission = null;
+  let qaQuestionRecord = null;
+  let qaFlywheelContinuation = null;
+  let qaFlywheelAttempted = false;
   const answerQuestionFn = typeof options.answerQuestionFn === 'function'
     ? options.answerQuestionFn
     : answerStephanosWorkspaceQuestionRecord;
@@ -340,23 +469,49 @@ export async function runChatGptSharedWorkspaceGitHubRelay(options = {}) {
       return goalAdmission;
     },
     answerQuestionFn: async (questionRecord, answerOptions) => {
+      qaQuestionRecord = questionRecord;
       const answered = await answerQuestionFn(questionRecord, answerOptions);
       qaAnswerDiagnostic = rejectionDiagnostic(answered, questionRecord);
       return answered;
     },
     writeAtomicJsonFn: async (root, segments, record, writeOptions) => {
+      const isQaCompletion = qaQuestionRecord
+        && Array.isArray(segments)
+        && segments[0] === 'receipts'
+        && text(record?.disposition).endsWith(':WORKSPACE_QA_PASS')
+        && text(record?.disposition).startsWith('RELAY_COMPLETE:');
+      if (isQaCompletion && !qaFlywheelAttempted) {
+        qaFlywheelAttempted = true;
+        qaFlywheelContinuation = await reconcileWorkspaceQaFlywheelV1({
+          questionRecord: qaQuestionRecord,
+          root,
+          repoRoot: writeOptions.repoRoot,
+          nowMs: writeOptions.nowMs,
+          readFileFn,
+          writeAtomicJsonFn,
+        });
+        if (qaFlywheelContinuation?.ok !== true) {
+          return { ok: false, reason: 'QA_FLYWHEEL_CONTINUATION_FAILED', qaFlywheelContinuation };
+        }
+      }
       const augmented = qaAnswerDiagnostic && Array.isArray(segments) && segments[0] === 'receipts'
         ? Object.freeze({ ...record, qaAnswerDiagnostic })
         : record;
       return writeAtomicJsonFn(root, segments, augmented, writeOptions);
     },
     adapter: Object.freeze({
-      readRequest: (...args) => adapter.readRequest(...args),
+      readRequest: (...args) => {
+        const observed = adapter.readRequest(...args);
+        const parsed = observed?.ok ? parseChatGptSharedWorkspaceRequestComment(observed.body) : null;
+        const candidate = parsed?.ok ? parsed.request?.boundedPayload?.questionRecord : null;
+        if (candidate) qaQuestionRecord = candidate;
+        return observed;
+      },
       writeResponse: (body) => adapter.writeResponse(renderResponseWithDiagnostic(body, qaAnswerDiagnostic)),
     }),
   });
 
-  return Object.freeze({ ...result, qaAnswerDiagnostic, goalAdmission });
+  return Object.freeze({ ...result, qaAnswerDiagnostic, goalAdmission, qaFlywheelContinuation });
 }
 
 export function isDirectCliEntrypoint({ metaUrl = import.meta.url, argv1 = process.argv[1] } = {}) {
