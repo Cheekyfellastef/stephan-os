@@ -16,16 +16,148 @@
 <aside class="card"><div class="head"><h2>Programme posture</h2><span id="sourcebadge" class="badge">CONNECTING</span></div><div class="state"><div class="row"><span>Shared Workspace</span><b id="workspace">UNKNOWN</b></div><div class="row"><span>Queue dispatcher</span><b id="dispatcher">UNKNOWN</b></div><div class="row"><span>Battle Bridge</span><b id="battle">UNKNOWN</b></div><div class="row"><span>OpenClaw</span><b id="openclaw">UNKNOWN</b></div></div><div class="next"><span class="cyan">NEXT</span><br><span id="nextaction">Waiting for live telemetry.</span></div></aside>
 </section>
 <section class="grid">
-<article class="card span8"><div class="head"><div><h2>Elastic build fabric</h2><div class="sub">Goal #1637 · five baseline roles, safely widening above five</div></div><span class="badge">5+ lanes</span></div><div class="lanes"><div class="lane"><b>Lane 1</b><strong>Source + implementation</strong><small>Patches, branches, commits and bounded repairs.</small><em id="lane1">● tracked</em></div><div class="lane"><b>Lane 2</b><strong>Review + assurance</strong><small>Independent exact-head review and hostile regressions.</small><em>● tracked</em></div><div class="lane"><b>Lane 3</b><strong>CI + proof</strong><small>Hosted checks, evidence and proof-cache decisions.</small><em>● tracked</em></div><div class="lane"><b>Lane 4</b><strong>Battle Bridge</strong><small>Windows runtime, sync and protected local receipts.</small><em id="lane4">● tracked</em></div><div class="lane"><b>Lane 5</b><strong>Experience</strong><small>Browser, Music, VR and interaction acceptance.</small><em>● tracked</em></div></div></article>
-<article class="card span4"><div class="head"><div><h2>Autonomous build track</h2><div class="sub">Goal #1622</div></div><span class="badge">idle-but-live</span></div><div id="autonomy" class="terminal">STATUS: resolving…\nPROOF: resolving…\nBLOCKERS: resolving…</div></article>
+<article class="card span8"><div class="head"><div><h2>Elastic build fabric</h2><div class="sub">#1637 · Goal: Elastic Five-Lane Build Fabric and Signed Authority Records V1 · five baseline roles, safely widening above five</div></div><span class="badge">5+ lanes</span></div><div class="lanes"><div class="lane"><b>Lane 1</b><strong>Source + implementation</strong><small>Patches, branches, commits and bounded repairs.</small><em id="lane1">● tracked</em></div><div class="lane"><b>Lane 2</b><strong>Review + assurance</strong><small>Independent exact-head review and hostile regressions.</small><em>● tracked</em></div><div class="lane"><b>Lane 3</b><strong>CI + proof</strong><small>Hosted checks, evidence and proof-cache decisions.</small><em>● tracked</em></div><div class="lane"><b>Lane 4</b><strong>Battle Bridge</strong><small>Windows runtime, sync and protected local receipts.</small><em id="lane4">● tracked</em></div><div class="lane"><b>Lane 5</b><strong>Experience</strong><small>Browser, Music, VR and interaction acceptance.</small><em>● tracked</em></div></div></article>
+<article class="card span4"><div class="head"><div><h2>Autonomous build track</h2><div class="sub">#1622 · Wire guarded implementation pickup into the existing Stephanos dispatch machinery</div></div><span id="autonomybadge" class="badge">UNKNOWN</span></div><div id="autonomy" class="terminal">STATUS: resolving…\nPROOF: resolving…\nBLOCKERS: resolving…</div></article>
 <article class="card span6"><div class="head"><div><h2>Durable goal estate</h2><div class="sub">Exact number + title + live proof truth</div></div><span class="badge">canonical</span></div><div id="goals" class="goals"></div></article>
-<article class="card span6"><div class="head"><div><h2>Apron + open pull requests</h2><div class="sub">Live from GitHub</div></div><span id="prcount" class="badge">resolving…</span></div><div id="prs" class="prs"></div></article>
-<article class="card span8"><div class="head"><div><h2>Capability constellation</h2><div class="sub">Current system-level posture</div></div><span class="badge">read only</span></div><div class="systems"><div class="sys"><strong>Battle Bridge</strong><span>Windows runtime spine</span><b id="sysbattle">UNKNOWN</b></div><div class="sys"><strong>Stephanos Forge</strong><span>Goal #1671 sovereign sidecar</span><b id="sysforge">UNKNOWN</b></div><div class="sys"><strong>OpenClaw</strong><span>Provider-neutral digital hands</span><b id="sysopenclaw">UNKNOWN</b></div><div class="sys"><strong>Shared Workspace</strong><span>Canonical cross-chat state</span><b id="sysworkspace">UNKNOWN</b></div><div class="sys"><strong>Music Tile</strong><span>Playback + rating continuity</span><b>TRACKED</b></div><div class="sys"><strong>VR + Spatial</strong><span>Capability factory + workspace</span><b>TRACKED</b></div></div></article>
+<article class="card span6"><div class="head"><div><h2>Apron + open pull requests</h2><div class="sub">Latest page from GitHub, never presented as a repository-wide total</div></div><span id="prcount" class="badge">resolving…</span></div><div id="prs" class="prs"></div></article>
+<article class="card span8"><div class="head"><div><h2>Capability constellation</h2><div class="sub">Current system-level posture</div></div><span class="badge">read only</span></div><div class="systems"><div class="sys"><strong>Battle Bridge</strong><span>Windows runtime spine</span><b id="sysbattle">UNKNOWN</b></div><div class="sys"><strong>Stephanos Forge</strong><span>#1671 · Goal: Add a parallel Stephanos Forge sidecar beside GitHub</span><b id="sysforge">UNKNOWN</b></div><div class="sys"><strong>OpenClaw</strong><span>Provider-neutral digital hands</span><b id="sysopenclaw">UNKNOWN</b></div><div class="sys"><strong>Shared Workspace</strong><span>Canonical cross-chat state</span><b id="sysworkspace">UNKNOWN</b></div><div class="sys"><strong>Music Tile</strong><span>Playback + rating continuity</span><b>TRACKED</b></div><div class="sys"><strong>VR + Spatial</strong><span>Capability factory + workspace</span><b>TRACKED</b></div></div></article>
 <article class="card span4"><div class="head"><div><h2>Proof spine</h2><div class="sub">Evidence, not narration</div></div><span class="badge">fail closed</span></div><div id="proof" class="proof"></div><div id="mainproof" class="terminal">Waiting for GitHub main…</div></article>
 </section>
 </div>
 <script>
-const REPO='Cheekyfellastef/stephan-os',API='https://api.github.com/repos/'+REPO,TARGET=[1622,1637,1671];let feed=null,goals={},timer;const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));function local(){try{return new Date().toLocaleString()}catch{return ''}}function backend(){const l=location,h=String(l.hostname||'').toLowerCase();if(l.protocol==='file:')return'http://127.0.0.1:8787';if(!['localhost','127.0.0.1','::1'].includes(h))return null;if(String(l.port)==='4173')return(l.protocol||'http:')+'//'+(l.hostname||'127.0.0.1')+':8787';return''}async function j(url){const c=new AbortController,t=setTimeout(()=>c.abort(),6500);try{const r=await fetch(url,{cache:'no-store',signal:c.signal});if(!r.ok)throw Error(r.status);return await r.json()}finally{clearTimeout(t)}}function n(g){const m=String(g?.issue??g?.number??'').match(/(\d+)/);return m?+m[1]:null}function sg(i){return feed?.projection?.goals?.find(g=>n(g)===i)}function cls(v){v=String(v||'').toUpperCase();return v==='CURRENT'||v==='READY'||v==='RUNNING'?'current':v.includes('STALE')||v.includes('BLOCK')?'stale':''}function renderGoals(){const box=$('goals');box.innerHTML=TARGET.map(i=>{const s=sg(i),g=goals[i],title=s?.title||g?.title||('#'+i),state=s?.statusTruth||g?.state?.toUpperCase()||'UNKNOWN',proof=s?.proofTruth||'GITHUB ONLY',blocks=Array.isArray(s?.blockers)&&s.blockers.length?' · '+s.blockers.join(', '):'',next=s?.exactNextAction||'';return'<div class="goal"><div class="num">#'+i+'</div><div><h3>'+esc(title)+'</h3><p>'+esc(proof+blocks+(next?' · '+next:''))+'</p></div><span class="truth '+cls(state)+'">'+esc(state)+'</span></div>'}).join('')}function renderFeed(f){feed=f;const p=f.projection||{},q=p.queueDispatcher||{},b=p.battleBridgeSupervisor||{},o=p.openClawCapabilityLadder||{},a=p.operatorAttention||{},state=String(f.state||'unknown').toUpperCase();$('workspace').textContent=state;$('dispatcher').textContent=q.dispatcherState||'UNKNOWN';$('battle').textContent=b.overallState||'UNKNOWN';const cr=Array.isArray(o.canRunNow)?o.canRunNow.length:0,na=Array.isArray(o.needsApproval)?o.needsApproval.length:0,bl=Array.isArray(o.blocked)?o.blocked.length:0;$('openclaw').textContent=(cr||na||bl)?cr+' NOW · '+na+' APPROVAL · '+bl+' BLOCKED':'UNKNOWN';$('nextaction').textContent=a.exactNextAction||f.exactNextAction||'No exact next action published.';$('lane1').textContent='● '+(q.dispatcherState||'unknown')+(Number.isFinite(q.queueDepth)?' · queue '+q.queueDepth:'');$('lane4').textContent='● '+(b.overallState||'unknown');$('sysbattle').textContent=b.overallState||'UNKNOWN';$('sysworkspace').textContent=state;$('sysopenclaw').textContent=$('openclaw').textContent;const fgoal=sg(1671);$('sysforge').textContent=fgoal?.statusTruth||fgoal?.proofTruth||goals[1671]?.state?.toUpperCase()||'UNKNOWN';const a1622=sg(1622);$('autonomy').textContent='STATUS: '+(a1622?.statusTruth||goals[1622]?.state?.toUpperCase()||'UNKNOWN')+'\nPROOF: '+(a1622?.proofTruth||'UNKNOWN')+'\nBLOCKERS: '+(Array.isArray(a1622?.blockers)&&a1622.blockers.length?a1622.blockers.join(', '):'none published');$('sourcebadge').textContent='SHARED WORKSPACE '+state;$('dot').className='dot '+(state==='READY'?'ok':state==='STALE'?'warn':'');renderGoals();renderProof()}function renderProof(main){const sha=main?.commit?.sha||window.__sha||'',msg=main?.commit?.commit?.message||window.__msg||'';$('proof').innerHTML='<div class="proofrow"><span>Protected main</span><b>'+esc(sha.slice(0,12)||'UNKNOWN')+'</b></div>'+TARGET.map(i=>'<div class="proofrow"><span>Goal #'+i+' proof truth</span><b>'+esc(sg(i)?.proofTruth||'UNKNOWN')+'</b></div>').join('');$('mainproof').innerHTML=sha?'<span class="ok">LIVE GITHUB MAIN</span>\n'+esc(msg.split('\n')[0])+'\n\ncommit <span class="cyan">'+esc(sha.slice(0,12))+'…</span>':'Waiting for GitHub main…'}async function refreshGithub(){try{const [main,pulls,...iss]=await Promise.all([j(API+'/branches/main'),j(API+'/pulls?state=open&per_page=20&sort=updated&direction=desc'),...TARGET.map(i=>j(API+'/issues/'+i))]);const sha=main.commit.sha,msg=main.commit.commit.message;window.__sha=sha;window.__msg=msg;$('headsha').textContent='main '+sha.slice(0,12);$('mainchip').textContent=sha.slice(0,12)+'…';goals=Object.fromEntries(iss.map(x=>[x.number,x]));$('prs').innerHTML=pulls.slice(0,12).map(p=>'<div class="pr"><div class="num">#'+p.number+'</div><div><h3>'+esc(p.title)+'</h3><p>'+esc((p.draft?'DRAFT':'OPEN')+' · updated '+new Date(p.updated_at).toLocaleString())+'</p></div><span class="truth">'+(p.draft?'DRAFT':'OPEN')+'</span></div>').join('');$('prcount').textContent=pulls.length+' open';renderGoals();renderProof(main);if(!feed){$('sourcebadge').textContent='GITHUB LIVE';$('dot').className='dot ok'}$('refreshed').textContent=local()}catch(e){if(!feed){$('sourcebadge').textContent='LIVE SOURCES OFFLINE';$('dot').className='dot'}}}async function refreshFeed(){const base=backend();if(base===null){if(!feed){$('workspace').textContent='LOCAL ONLY';$('nextaction').textContent='Open this page through the Battle Bridge local site to add Shared Workspace telemetry. GitHub remains live here.'}return}try{const f=await j(base+'/api/shared-workspace/dashboard-feed');if(f.schemaVersion!=='stephanos.shared-workspace-dashboard-feed.v1'||!f.projection)throw Error('schema');renderFeed(f);clearTimeout(timer);timer=setTimeout(refreshFeed,Math.max(5000,Number(f?.polling?.pollIntervalMs)||15000))}catch(e){if(!feed)$('workspace').textContent='UNREACHABLE';clearTimeout(timer);timer=setTimeout(refreshFeed,15000)}}async function refresh(){await Promise.allSettled([refreshGithub(),refreshFeed()]);$('refreshed').textContent=local()}$('refresh').onclick=refresh;renderGoals();renderProof();refresh();setInterval(refreshGithub,600000);
+const REPO='Cheekyfellastef/stephan-os';
+const API='https://api.github.com/repos/'+REPO;
+const TARGET=[1622,1637,1671];
+const GOAL_TITLES=Object.freeze({
+  1622:'Wire guarded implementation pickup into the existing Stephanos dispatch machinery',
+  1637:'Goal: Elastic Five-Lane Build Fabric and Signed Authority Records V1',
+  1671:'Goal: Add a parallel Stephanos Forge sidecar beside GitHub'
+});
+let feed=null,goals={},timer,githubLive=false;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function local(){try{return new Date().toLocaleString()}catch{return ''}}
+function backend(){const l=location,h=String(l.hostname||'').toLowerCase();if(l.protocol==='file:')return'http://127.0.0.1:8787';if(!['localhost','127.0.0.1','::1'].includes(h))return null;if(String(l.port)==='4173')return(l.protocol||'http:')+'//'+(l.hostname||'127.0.0.1')+':8787';return''}
+async function j(url){const c=new AbortController,t=setTimeout(()=>c.abort(),6500);try{const r=await fetch(url,{cache:'no-store',signal:c.signal});if(!r.ok)throw Error(r.status);return await r.json()}finally{clearTimeout(t)}}
+function n(g){const m=String(g?.issue??g?.number??'').match(/(\d+)/);return m?+m[1]:null}
+function sg(i){return feed?.projection?.goals?.find(g=>n(g)===i)}
+function cls(v){v=String(v||'').toUpperCase();return v==='CURRENT'||v==='READY'||v==='RUNNING'||v==='ACTIVE'?'current':v.includes('STALE')||v.includes('BLOCK')?'stale':''}
+function githubIssueState(i){return githubLive&&goals[i]?.state?'GITHUB '+String(goals[i].state).toUpperCase():'UNKNOWN'}
+function renderGoals(){
+  $('goals').innerHTML=TARGET.map(i=>{
+    const s=sg(i),g=goals[i],title=s?.title||g?.title||GOAL_TITLES[i];
+    const state=s?.statusTruth||githubIssueState(i);
+    const proof=s?.proofTruth||(githubLive&&g?'GITHUB ISSUE ONLY':'NO LIVE PROOF');
+    const blocks=Array.isArray(s?.blockers)&&s.blockers.length?' · '+s.blockers.join(', '):'';
+    const next=s?.exactNextAction||'';
+    return '<div class="goal"><div class="num">#'+i+'</div><div><h3>'+esc(title)+'</h3><p>'+esc(proof+blocks+(next?' · '+next:''))+'</p></div><span class="truth '+cls(state)+'">'+esc(state)+'</span></div>';
+  }).join('');
+}
+function autonomyBadge(goal){
+  const status=String(goal?.statusTruth||'UNKNOWN').toUpperCase();
+  const proof=String(goal?.proofTruth||'UNKNOWN').toUpperCase();
+  if(status.includes('BLOCK')||proof.includes('BLOCK'))return'BLOCKED';
+  if(['CURRENT','READY','RUNNING','ACTIVE'].some(v=>status.includes(v)))return status;
+  return status==='UNKNOWN'?'UNKNOWN':status;
+}
+function renderFeed(f){
+  feed=f;
+  const p=f.projection||{},q=p.queueDispatcher||{},b=p.battleBridgeSupervisor||{},o=p.openClawCapabilityLadder||{},a=p.operatorAttention||{},state=String(f.state||'unknown').toUpperCase();
+  $('workspace').textContent=state;
+  $('dispatcher').textContent=q.dispatcherState||'UNKNOWN';
+  $('battle').textContent=b.overallState||'UNKNOWN';
+  const cr=Array.isArray(o.canRunNow)?o.canRunNow.length:0,na=Array.isArray(o.needsApproval)?o.needsApproval.length:0,bl=Array.isArray(o.blocked)?o.blocked.length:0;
+  $('openclaw').textContent=(cr||na||bl)?cr+' NOW · '+na+' APPROVAL · '+bl+' BLOCKED':'UNKNOWN';
+  $('nextaction').textContent=a.exactNextAction||f.exactNextAction||'No exact next action published.';
+  $('lane1').textContent='● '+(q.dispatcherState||'unknown')+(Number.isFinite(q.queueDepth)?' · queue '+q.queueDepth:'');
+  $('lane4').textContent='● '+(b.overallState||'unknown');
+  $('sysbattle').textContent=b.overallState||'UNKNOWN';
+  $('sysworkspace').textContent=state;
+  $('sysopenclaw').textContent=$('openclaw').textContent;
+  const fgoal=sg(1671);
+  $('sysforge').textContent=fgoal?.statusTruth||fgoal?.proofTruth||githubIssueState(1671);
+  const a1622=sg(1622);
+  $('autonomybadge').textContent=autonomyBadge(a1622);
+  $('autonomy').textContent='STATUS: '+(a1622?.statusTruth||'UNKNOWN')+'\nPROOF: '+(a1622?.proofTruth||'UNKNOWN')+'\nBLOCKERS: '+(Array.isArray(a1622?.blockers)&&a1622.blockers.length?a1622.blockers.join(', '):'none published');
+  $('sourcebadge').textContent='SHARED WORKSPACE '+state;
+  $('dot').className='dot '+(state==='READY'?'ok':state==='STALE'?'warn':'');
+  renderGoals();
+  renderProof();
+}
+function invalidateFeed(label='UNREACHABLE'){
+  feed=null;
+  $('workspace').textContent=label;
+  $('dispatcher').textContent='UNKNOWN';
+  $('battle').textContent='UNKNOWN';
+  $('openclaw').textContent='UNKNOWN';
+  $('nextaction').textContent=label==='LOCAL ONLY'?'Open this page through the Battle Bridge local site to add Shared Workspace telemetry. GitHub can remain available here.':'Shared Workspace telemetry is unavailable; cached runtime truth has been invalidated.';
+  $('lane1').textContent='● telemetry unavailable';
+  $('lane4').textContent='● telemetry unavailable';
+  $('sysbattle').textContent='UNKNOWN';
+  $('sysworkspace').textContent=label;
+  $('sysopenclaw').textContent='UNKNOWN';
+  $('sysforge').textContent=githubIssueState(1671);
+  $('autonomybadge').textContent='UNKNOWN';
+  $('autonomy').textContent='STATUS: UNKNOWN\nPROOF: SHARED WORKSPACE UNAVAILABLE\nBLOCKERS: UNKNOWN';
+  $('sourcebadge').textContent=githubLive?'GITHUB LIVE · WORKSPACE '+label:'LIVE SOURCES OFFLINE';
+  $('dot').className=githubLive?'dot warn':'dot';
+  renderGoals();
+  renderProof();
+}
+function renderProof(main){
+  const sha=main?.commit?.sha||window.__sha||'',msg=main?.commit?.commit?.message||window.__msg||'';
+  $('proof').innerHTML='<div class="proofrow"><span>Protected main</span><b>'+esc(sha.slice(0,12)||'UNKNOWN')+'</b></div>'+TARGET.map(i=>'<div class="proofrow"><span>#'+i+' · '+esc(GOAL_TITLES[i])+' · proof truth</span><b>'+esc(sg(i)?.proofTruth||'UNKNOWN')+'</b></div>').join('');
+  $('mainproof').innerHTML=sha?'<span class="ok">LIVE GITHUB MAIN</span>\n'+esc(msg.split('\n')[0])+'\n\ncommit <span class="cyan">'+esc(sha.slice(0,12))+'…</span>':'GitHub main unavailable.';
+}
+function invalidateGithub(){
+  githubLive=false;
+  window.__sha='';window.__msg='';goals={};
+  $('headsha').textContent='main unavailable';
+  $('mainchip').textContent='unavailable';
+  $('prs').innerHTML='<div class="pr"><div class="num">!</div><div><h3>GitHub apron unavailable</h3><p>Cached pull-request data has been invalidated.</p></div><span class="truth stale">OFFLINE</span></div>';
+  $('prcount').textContent='unavailable';
+  if(!feed){$('sourcebadge').textContent='LIVE SOURCES OFFLINE';$('dot').className='dot'}
+  renderGoals();
+  renderProof();
+}
+async function refreshGithub(){
+  try{
+    const [main,pulls,...iss]=await Promise.all([j(API+'/branches/main'),j(API+'/pulls?state=open&per_page=12&sort=updated&direction=desc'),...TARGET.map(i=>j(API+'/issues/'+i))]);
+    githubLive=true;
+    const sha=main.commit.sha,msg=main.commit.commit.message;
+    window.__sha=sha;window.__msg=msg;
+    $('headsha').textContent='main '+sha.slice(0,12);
+    $('mainchip').textContent=sha.slice(0,12)+'…';
+    goals=Object.fromEntries(iss.map(x=>[x.number,x]));
+    $('prs').innerHTML=pulls.map(p=>'<div class="pr"><div class="num">#'+p.number+'</div><div><h3>'+esc(p.title)+'</h3><p>'+esc((p.draft?'DRAFT':'OPEN')+' · updated '+new Date(p.updated_at).toLocaleString())+'</p></div><span class="truth">'+(p.draft?'DRAFT':'OPEN')+'</span></div>').join('');
+    $('prcount').textContent='latest '+pulls.length+' shown';
+    renderGoals();
+    renderProof(main);
+    if(!feed){$('sourcebadge').textContent='GITHUB LIVE · WORKSPACE UNAVAILABLE';$('dot').className='dot warn'}
+    $('refreshed').textContent=local();
+  }catch(e){invalidateGithub()}
+}
+async function refreshFeed(){
+  const base=backend();
+  if(base===null){invalidateFeed('LOCAL ONLY');return}
+  try{
+    const f=await j(base+'/api/shared-workspace/dashboard-feed');
+    if(f.schemaVersion!=='stephanos.shared-workspace-dashboard-feed.v1'||!f.projection)throw Error('schema');
+    renderFeed(f);
+    clearTimeout(timer);
+    timer=setTimeout(refreshFeed,Math.max(5000,Number(f?.polling?.pollIntervalMs)||15000));
+  }catch(e){
+    invalidateFeed('UNREACHABLE');
+    clearTimeout(timer);
+    timer=setTimeout(refreshFeed,15000);
+  }
+}
+async function refresh(){await Promise.allSettled([refreshGithub(),refreshFeed()]);$('refreshed').textContent=local()}
+$('refresh').onclick=refresh;
+renderGoals();
+renderProof();
+refresh();
+setInterval(refreshGithub,600000);
 </script>
 </body>
 </html>
