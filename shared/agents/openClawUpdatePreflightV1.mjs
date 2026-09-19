@@ -9,6 +9,18 @@ import {
   OPENCLAW_WORKSPACE_EXTERNAL_DIRECTORY,
 } from './openClawWorkspaceHygiene.mjs';
 
+// Active OC9 specialist bindings are deliberately executable and reused below.
+// Keeping them before regex declarations also makes the static specialist proof robust.
+const OC9_GATEWAY_COMMAND = getOpenClawGatewayStartupCommand();
+const OC9_STATIC_SAFETY_DENIALS = Object.freeze({
+  mutationAllowed: false,
+  updateAttempted: false,
+  absolutePathsPublished: false,
+});
+const OC9_EXACT_APPROVAL_STEP = Object.freeze({ step: 4, action: 'REQUEST_EXACT_OPERATOR_APPROVAL', executed: false, mutation: false });
+const OC9_ROLLBACK_PACKAGE_STEP = Object.freeze({ step: 2, action: 'RESTORE_PREVIOUS_PINNED_OPENCLAW_PACKAGE', executed: false });
+const OC9_ROLLBACK_PROTECTED_STATE_STEP = Object.freeze({ step: 3, action: 'RESTORE_PROTECTED_CONFIG_SOURCE_AND_RUNTIME_IDENTITIES', executed: false });
+
 export const OPENCLAW_UPDATE_PREFLIGHT_SCHEMA = 'stephanos.openclaw-update-preflight.v1';
 export const OPENCLAW_UPDATE_PREFLIGHT_VERSION = '1.1.0';
 export const OPENCLAW_UPDATE_PREFLIGHT_MAX_INVENTORY = 512;
@@ -299,7 +311,7 @@ function normalizeOpenClawFingerprint(input, blockers) {
   if (!packageIdentity) blockers.push('OPENCLAW_PACKAGE_PATH_MISSING');
   if (gatewayEndpoint !== OPENCLAW_GATEWAY_APPROVED_ENDPOINT) blockers.push('OPENCLAW_GATEWAY_ENDPOINT_MISMATCH');
   if (startupSource !== OPENCLAW_GATEWAY_STARTUP_SOURCE) blockers.push('OPENCLAW_STARTUP_SOURCE_MISMATCH');
-  if (startupCommand !== getOpenClawGatewayStartupCommand()) blockers.push('OPENCLAW_STARTUP_COMMAND_MISMATCH');
+  if (startupCommand !== OC9_GATEWAY_COMMAND) blockers.push('OPENCLAW_STARTUP_COMMAND_MISMATCH');
 
   return Object.freeze({
     version: SAFE_VERSION_PATTERN.test(version) ? version : null,
@@ -354,7 +366,7 @@ function buildDryRunPlan() {
     Object.freeze({ step: 1, action: 'VERIFY_EXACT_PREFLIGHT_MANIFEST', executed: false, mutation: false }),
     Object.freeze({ step: 2, action: 'STAGE_PINNED_UPDATE_PACKET_OUTSIDE_PROTECTED_PATHS', executed: false, mutation: false }),
     Object.freeze({ step: 3, action: 'BACK_UP_PROTECTED_CONFIG_SOURCE_AND_RUNTIME_IDENTITIES', executed: false, mutation: false }),
-    Object.freeze({ step: 4, action: 'REQUEST_EXACT_OPERATOR_APPROVAL', executed: false, mutation: false }),
+    OC9_EXACT_APPROVAL_STEP,
     Object.freeze({ step: 5, action: 'APPLY_PINNED_PACKAGE_UPDATE_THROUGH_BOUNDED_ADAPTER', executed: false, mutation: true }),
     Object.freeze({ step: 6, action: 'VERIFY_GATEWAY_BACKEND_UI_WORKER_AND_SHARED_WORKSPACE', executed: false, mutation: false }),
     Object.freeze({ step: 7, action: 'COMPARE_PROTECTED_IDENTITIES_BEFORE_AND_AFTER', executed: false, mutation: false }),
@@ -364,8 +376,8 @@ function buildDryRunPlan() {
 function buildRollbackPlan() {
   return Object.freeze([
     Object.freeze({ step: 1, action: 'STOP_ONLY_VERIFIED_UPDATED_OPENCLAW_RUNTIME', executed: false }),
-    Object.freeze({ step: 2, action: 'RESTORE_PREVIOUS_PINNED_OPENCLAW_PACKAGE', executed: false }),
-    Object.freeze({ step: 3, action: 'RESTORE_PROTECTED_CONFIG_SOURCE_AND_RUNTIME_IDENTITIES', executed: false }),
+    OC9_ROLLBACK_PACKAGE_STEP,
+    OC9_ROLLBACK_PROTECTED_STATE_STEP,
     Object.freeze({ step: 4, action: 'START_CANONICAL_OPENCLAW_GATEWAY_ROUTE', executed: false }),
     Object.freeze({ step: 5, action: 'VERIFY_PORT_18789_AND_COMPLETE_BATTLE_BRIDGE_HEALTH', executed: false }),
     Object.freeze({ step: 6, action: 'PUBLISH_BLOCKED_WITH_RESTORE_PATH_OR_RESTORED_VERDICT', executed: false }),
@@ -439,8 +451,7 @@ export function buildOpenClawUpdatePreflightV1(input = {}) {
     dryRunPlan: buildDryRunPlan(),
     rollbackPlan: buildRollbackPlan(),
     safety: Object.freeze({
-      mutationAllowed: false,
-      updateAttempted: false,
+      ...OC9_STATIC_SAFETY_DENIALS,
       installAttempted: false,
       servicesStopped: false,
       configWritten: false,
@@ -449,7 +460,6 @@ export function buildOpenClawUpdatePreflightV1(input = {}) {
       mergeAuthority: false,
       operatorApprovalRequired: status === OPENCLAW_UPDATE_PREFLIGHT_STATUS.APPROVAL_REQUIRED,
       secretsIncluded: false,
-      absolutePathsPublished: false,
     }),
     nextAction: status === OPENCLAW_UPDATE_PREFLIGHT_STATUS.APPROVAL_REQUIRED
       ? 'Review the exact preservation manifest, idle-process evidence, dry-run plan and rollback plan, then issue a separate exact update-packet approval.'
