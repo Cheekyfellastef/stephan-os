@@ -22,10 +22,13 @@ test('installer is hidden limited and uses one fixed local scheduled task', asyn
   assert.doesNotMatch(source, /Invoke-Expression|Start-Process|cmd\.exe|git\s+(?:reset|clean|checkout|push|rebase)/i);
 });
 
-test('hidden runner invokes only the fixed source-controlled Node runtime', async () => {
+test('hidden runner invokes only the fixed source-controlled runtime through canonical Node', async () => {
   const source = await read('../../scripts/windows/run-battle-bridge-monitor-multiplexer-hidden.ps1');
   assert.match(source, /battle-bridge-monitor-multiplexer-runtime-v2\.mjs/);
-  assert.match(source, /Get-Command node(?:\.exe)?/);
+  assert.match(source, /\$canonicalNode\s*=\s*'C:\\Program Files\\nodejs\\node\.exe'/);
+  assert.match(source, /Test-Path -LiteralPath \$canonicalNode -PathType Leaf/);
+  assert.match(source, /& \$canonicalNode \$runtimePath/);
+  assert.doesNotMatch(source, /Get-Command\s+node(?:\.exe)?/i);
   assert.doesNotMatch(source, /param\([^)]*\$[A-Za-z]/s);
   assert.doesNotMatch(source, /Invoke-Expression|Start-Process|cmd\.exe/i);
 });
