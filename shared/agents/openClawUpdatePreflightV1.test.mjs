@@ -50,9 +50,7 @@ function validInput(overrides = {}) {
 
 test('builds a deterministic approval-required manifest without publishing absolute paths', () => {
   const first = buildOpenClawUpdatePreflightV1(validInput());
-  const second = buildOpenClawUpdatePreflightV1(validInput({
-    inventory: [...validInput().inventory].reverse(),
-  }));
+  const second = buildOpenClawUpdatePreflightV1(validInput({ inventory: [...validInput().inventory].reverse() }));
   assert.equal(first.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.APPROVAL_REQUIRED);
   assert.equal(first.blocker, null);
   assert.equal(first.safety.mutationAllowed, false);
@@ -129,7 +127,7 @@ test('rejects conflicting duplicate path identities with order-independent block
   assert.equal(forward.preservationManifest.manifestSha256, reversed.preservationManifest.manifestSha256);
 });
 
-test('fails closed on malformed existence and size evidence', () => {
+test('fails closed on links, malformed existence evidence, invalid sizes and stale absent digests', () => {
   const base = validInput();
   base.inventory.push({ path: 'plugins/openclaw/link.mjs', kind: 'symlink', exists: 'yes', size: -1, digestSha256: HEX_A });
   base.inventory.push({ path: 'plugins/openclaw/absent.mjs', exists: false, digestSha256: HEX_B });
@@ -142,9 +140,7 @@ test('fails closed on malformed existence and size evidence', () => {
 });
 
 test('requires every preservation class before approval can be requested', () => {
-  const result = buildOpenClawUpdatePreflightV1(validInput({
-    inventory: [{ path: 'apps/stephanos/dist/index.js', size: 5 }],
-  }));
+  const result = buildOpenClawUpdatePreflightV1(validInput({ inventory: [{ path: 'apps/stephanos/dist/index.js', size: 5 }] }));
   assert.equal(result.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH);
   for (const required of ['UPDATE_TARGET', 'PRESERVE_SOURCE', 'PRESERVE_CONFIG', 'PRESERVE_RUNTIME']) {
     assert.ok(result.blockers.includes(`PRESERVATION_CLASS_EVIDENCE_MISSING:${required}`));
@@ -163,15 +159,9 @@ test('requires explicit idle-process evidence and blocks any observed OpenClaw P
 });
 
 test('rejects stale and implausibly future observations against an explicit reference clock', () => {
-  const stale = buildOpenClawUpdatePreflightV1(validInput({
-    observedAtUtc: '2026-08-03T17:00:00Z',
-    referenceTimeUtc: '2026-08-03T17:56:00Z',
-  }));
+  const stale = buildOpenClawUpdatePreflightV1(validInput({ observedAtUtc: '2026-08-03T17:00:00Z', referenceTimeUtc: '2026-08-03T17:56:00Z' }));
   assert.ok(stale.blockers.includes('OBSERVATION_STALE'));
-  const future = buildOpenClawUpdatePreflightV1(validInput({
-    observedAtUtc: '2026-08-03T18:00:00Z',
-    referenceTimeUtc: '2026-08-03T17:56:00Z',
-  }));
+  const future = buildOpenClawUpdatePreflightV1(validInput({ observedAtUtc: '2026-08-03T18:00:00Z', referenceTimeUtc: '2026-08-03T17:56:00Z' }));
   assert.ok(future.blockers.includes('OBSERVATION_FROM_FUTURE'));
 });
 
@@ -200,9 +190,7 @@ test('requires explicit non-reparse evidence for Windows package and directory e
 });
 
 test('reports no update needed when the pinned target version already matches', () => {
-  const result = buildOpenClawUpdatePreflightV1(validInput({
-    updatePacket: { ...validInput().updatePacket, targetVersion: '2026.6.1' },
-  }));
+  const result = buildOpenClawUpdatePreflightV1(validInput({ updatePacket: { ...validInput().updatePacket, targetVersion: '2026.6.1' } }));
   assert.equal(result.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.NO_UPDATE_NEEDED);
   assert.equal(result.safety.operatorApprovalRequired, false);
 });
