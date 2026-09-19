@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 import { buildVrResearchContextSummary, computeVrTeachingReceiptId, inspectVrResearchProjection, vrResearchContextProvider } from './vrResearchContextProvider.js';
 
@@ -15,7 +16,7 @@ function projection(overrides = {}) {
 }
 
 function contentBinding(projected) { return JSON.stringify({ capabilityGraphCandidates: projected.capabilityGraphCandidates || [], methodLibrary: projected.methodLibrary || [], proofRefs: projected.proofRefs || [] }); }
-function portableContentDigest(value) { let digest=2166136261; for(let i=0;i<value.length;i++){ digest^=value.charCodeAt(i); digest=Math.imul(digest,16777619)>>>0; } return `fnv1a32:${digest.toString(16).padStart(8,'0')}`; }
+function portableContentDigest(value) { return `sha256:${createHash('sha256').update(value).digest('hex')}`; }
 function teachingEnvelope(overrides = {}) {
   const projected = projection({ capabilityGraphCandidates: [{ teachingKey: 'teach:integration' }], proofRefs: ['proofs/vr/integration'], ...overrides });
   const binding=contentBinding(projected),contentDigest=portableContentDigest(binding);
@@ -32,6 +33,6 @@ test('rejects a teaching envelope with a missing or unrelated receipt schema', (
 test('rejects a teaching envelope with missing producer receipt identity', () => { const envelope=teachingEnvelope(); delete envelope.projectionReceipt.receiptId; const inspection=inspectVrResearchProjection({now:NOW,vrTeachingWorkspaceProjection:envelope}); assert.equal(inspection.status,'INVALID'); assert.equal(inspection.proofState,'invalid'); });
 test('rejects content rebound with a stale producer receipt identity even when public binding and digest are recomputed', () => { const envelope=teachingEnvelope(); const staleReceiptId=envelope.projectionReceipt.receiptId; envelope.projection.proofRefs=['proofs/vr/rebound']; const binding=contentBinding(envelope.projection),contentDigest=portableContentDigest(binding); envelope.projectionReceipt.contentBinding=binding; envelope.projectionReceipt.contentDigest=contentDigest; envelope.projectionReceipt.receiptId=staleReceiptId; const inspection=inspectVrResearchProjection({now:NOW,vrTeachingWorkspaceProjection:envelope}); assert.equal(inspection.status,'INVALID'); assert.equal(inspection.proofState,'invalid'); });
 test('rejects teaching content mutated after receipt issuance', () => { const envelope = teachingEnvelope(); envelope.projection.proofRefs = ['proofs/vr/tampered']; const inspection = inspectVrResearchProjection({ now: NOW, vrTeachingWorkspaceProjection: envelope }); assert.equal(inspection.status, 'INVALID'); assert.equal(inspection.proofState, 'invalid'); });
-test('rejects a forged digest even when content binding matches projected content', () => { const envelope=teachingEnvelope(); envelope.projectionReceipt.contentDigest='fnv1a32:00000000'; const inspection=inspectVrResearchProjection({now:NOW,vrTeachingWorkspaceProjection:envelope}); assert.equal(inspection.status,'INVALID'); assert.equal(inspection.proofState,'invalid'); });
+test('rejects a forged digest even when content binding matches projected content', () => { const envelope=teachingEnvelope(); envelope.projectionReceipt.contentDigest='sha256:0000000000000000000000000000000000000000000000000000000000000000'; const inspection=inspectVrResearchProjection({now:NOW,vrTeachingWorkspaceProjection:envelope}); assert.equal(inspection.status,'INVALID'); assert.equal(inspection.proofState,'invalid'); });
 test('marks stale VR truth as non-ready and requests refresh', () => { const staleProjection = projection({ updatedAt: '2026-07-30T00:00:00Z', staleAfterMs: 60 * 60 * 1000 }); const inspection = inspectVrResearchProjection({ now: NOW, vrResearchProjection: staleProjection }); assert.equal(inspection.status, 'STALE'); assert.equal(inspection.proofState, 'stale'); assert.match(inspection.warning, /stale/i); });
 test('rejects a conflicting projection identity', () => { const inspection = inspectVrResearchProjection({ now: NOW, vrResearchProjection: projection({ domainId: 'private-vr-agent-memory' }) }); assert.equal(inspection.status, 'INVALID'); assert.equal(inspection.proofState, 'invalid'); assert.match(inspection.warning, /identity is invalid/i); });
