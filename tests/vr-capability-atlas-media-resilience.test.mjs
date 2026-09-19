@@ -10,7 +10,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 test('VR Atlas uses Media Fabric only when a verified raster cache is actually serving artwork', () => {
   assert.equal(chooseAtlasMediaTransport({ ok: true, source: 'verified-content-addressed-cache' }), 'fabric');
-  assert.equal(chooseAtlasMediaTransport({ ok: true, source: 'deterministic-vector-fallback' }), 'bundled');
+  assert.equal(chooseAtlasMediaTransport({ ok: true, source: 'vector-native-fallback' }), 'bundled');
   assert.equal(chooseAtlasMediaTransport({ ok: false, source: '' }), 'bundled');
 });
 
@@ -27,4 +27,6 @@ test('VR Atlas wires media resilience before V3 rendering and retains portable b
   assert.match(resilience, /image\/avif/);
   assert.match(resilience, /MutationObserver/);
   assert.match(resilience, /verified-content-addressed-cache/);
+  assert.match(resilience, /conceptIdForImage/);
+  assert.match(resilience, /picture\[data-media-asset\] img/);
 });
