@@ -16,7 +16,7 @@ import {
 import { readSharedWorkspaceDashboardFeed } from './shared-workspace-dashboard-feed.mjs';
 import { createVrCapabilityProofRef } from './vrCapabilityProofContractV1.mjs';
 import { publishVrCapabilityEvidence } from './vrCapabilityEvidencePublisherV1.mjs';
-import { projectVrCapabilityLiveState } from './vrCapabilityLiveProjectionV1.mjs';
+import { projectVrCapabilityLiveTruth } from './vrCapabilityLiveTruthV2.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const baseLedger = JSON.parse(await readFile(resolve(repoRoot, 'VR-Research-Lab/capability-readiness.json'), 'utf8'));
@@ -39,23 +39,40 @@ test('Verification Harness canonical proof ref promotes one exact VR capability 
   const written = await writeVerificationPacketToSharedWorkspace(root, aggregate, { repoRoot, nowMs: NOW });
   assert.equal(written.ok, true);
   const shared = await readSharedWorkspaceDashboardFeed({ root, repoRoot, nowMs: NOW, staleAfterMs: 86_400_000 });
-  const projected = projectVrCapabilityLiveState({ baseLedger: clone(baseLedger), baseConcepts: clone(CONCEPT_CATALOG), records: shared.records, nowMs: NOW });
+  const projected = projectVrCapabilityLiveTruth({ baseLedger: clone(baseLedger), baseConcepts: clone(CONCEPT_CATALOG), records: shared.records, nowMs: NOW });
   const result = capabilityReadinessForConcept(projected.ledger, 'living-starship', { nowMs: NOW });
   assert.equal(result.percent, 40);
   assert.equal(result.gates.find((gate) => gate.id === 'implementation')?.proven, true);
 });
 
 test('failed and ambiguous VR evidence stays fail-closed without inflating capability', () => {
-  const projected = projectVrCapabilityLiveState({
+  const projected = projectVrCapabilityLiveTruth({
     baseLedger: clone(baseLedger),
     baseConcepts: clone(CONCEPT_CATALOG),
     records: { proofRecords: [
       { status: 'PASS', capabilityId: 'living-starship', proofRefs: ['proofs/unrelated'] },
-      { status: 'FAIL', proofRefs: [createVrCapabilityProofRef('living-starship', 'runtimeProof')] },
+      { status: 'FAIL', timestampUtc: '2026-09-19T20:29:00Z', proofRefs: [createVrCapabilityProofRef('living-starship', 'runtimeProof')] },
     ] },
     nowMs: NOW,
   });
   assert.equal(capabilityReadinessForConcept(projected.ledger, 'living-starship', { nowMs: NOW }).percent, 10);
+});
+
+test('newer failed proof revokes an older live promotion instead of leaving a stale high score', () => {
+  const ref = createVrCapabilityProofRef('living-starship', 'implementation');
+  const projected = projectVrCapabilityLiveTruth({
+    baseLedger: clone(baseLedger),
+    baseConcepts: clone(CONCEPT_CATALOG),
+    records: { proofRecords: [
+      { proofId: 'new-fail', status: 'FAIL', timestampUtc: '2026-09-19T20:29:00Z', proofRefs: [ref] },
+      { proofId: 'old-pass', status: 'PASS', timestampUtc: '2026-09-19T20:20:00Z', proofRefs: [ref] },
+    ] },
+    nowMs: NOW,
+  });
+  const result = capabilityReadinessForConcept(projected.ledger, 'living-starship', { nowMs: NOW });
+  assert.equal(result.percent, 10);
+  assert.equal(result.gates.find((gate) => gate.id === 'implementation')?.proven, false);
+  assert.equal(projected.evidenceSummary.revokedStageCount, 1);
 });
 
 test('verified Spatial Workspace visual evidence becomes the live Current Capability source', async () => {
@@ -73,7 +90,7 @@ test('verified Spatial Workspace visual evidence becomes the live Current Capabi
   }, { repoRoot, nowMs: NOW });
   assert.equal(published.ok, true);
   const shared = await readSharedWorkspaceDashboardFeed({ root, repoRoot, nowMs: NOW, staleAfterMs: 86_400_000 });
-  const projected = projectVrCapabilityLiveState({ baseLedger: clone(baseLedger), baseConcepts: clone(CONCEPT_CATALOG), records: shared.records, nowMs: NOW });
+  const projected = projectVrCapabilityLiveTruth({ baseLedger: clone(baseLedger), baseConcepts: clone(CONCEPT_CATALOG), records: shared.records, nowMs: NOW });
   const result = capabilityReadinessForConcept(projected.ledger, 'spatial-bridge', { nowMs: NOW });
   assert.equal(result.visual.currentViewUrl, 'https://battle-bridge.invalid/captures/spatial-bridge.webp');
   assert.equal(result.visual.currentViewSource, 'spatial-workspace');
@@ -81,7 +98,7 @@ test('verified Spatial Workspace visual evidence becomes the live Current Capabi
 });
 
 test('canonical live concept candidate expands the Atlas beyond the ten seed concepts', () => {
-  const projected = projectVrCapabilityLiveState({
+  const projected = projectVrCapabilityLiveTruth({
     baseLedger: clone(baseLedger),
     baseConcepts: clone(CONCEPT_CATALOG.slice(0, 10)),
     workspaceConceptCandidates: [{
