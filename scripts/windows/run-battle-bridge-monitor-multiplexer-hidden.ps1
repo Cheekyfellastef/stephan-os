@@ -17,8 +17,10 @@ if ([System.IO.Path]::GetFullPath($repoRoot) -ne $expectedRepoRoot) {
 }
 
 $runtimePath = (Resolve-Path (Join-Path $repoRoot 'scripts\battle-bridge-monitor-multiplexer-runtime-v2.mjs')).Path
-$nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
-if (-not $nodeCommand) { $nodeCommand = Get-Command node -ErrorAction Stop }
+$canonicalNode = 'C:\Program Files\nodejs\node.exe'
+if (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) {
+    throw "Canonical Node executable is missing: $canonicalNode"
+}
 
-& $nodeCommand.Source $runtimePath *> $null
+& $canonicalNode $runtimePath *> $null
 exit $LASTEXITCODE
