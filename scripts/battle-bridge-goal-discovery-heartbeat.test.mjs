@@ -13,16 +13,31 @@ const lifeboatReady = async () => ({
   runtimeMutationAuthority: false,
 });
 
+const githubLifeboatReady = async () => ({
+  ok: true,
+  available: true,
+  workerId: 'stephanos-github-lifeboat-external',
+  finalVerdict: 'GITHUB_LIFEBOAT_LANE7_READY',
+  mergeAuthority: false,
+  deploymentAuthority: false,
+  runtimeMutationAuthority: false,
+});
+
 function heartbeat(options = {}) {
   return runBattleBridgeGoalDiscoveryHeartbeat({
     refreshLifeboatCapacity: lifeboatReady,
+    refreshGithubLifeboat: githubLifeboatReady,
     ...options,
   });
 }
 
-test('goal discovery heartbeat refreshes Lane 6 before delegating to the existing critical backlog conveyor', async () => {
+test('goal discovery heartbeat refreshes Lane 7 then Lane 6 before delegating to the existing critical backlog conveyor', async () => {
   const order = [];
   const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+    refreshGithubLifeboat: async () => {
+      order.push('github-lifeboat');
+      return githubLifeboatReady();
+    },
     refreshLifeboatCapacity: async () => {
       order.push('lifeboat');
       return lifeboatReady();
@@ -33,14 +48,49 @@ test('goal discovery heartbeat refreshes Lane 6 before delegating to the existin
     },
     buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
-  assert.deepEqual(order, ['lifeboat', 'conveyor']);
+  assert.deepEqual(order, ['github-lifeboat', 'lifeboat', 'conveyor']);
+  assert.equal(result.githubLifeboat.available, true);
   assert.equal(result.lifeboatCapacity.available, true);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.runtimeMutationAuthority, false);
 });
 
+test('Lane 7 receives canonical git command by default and preserves an explicit caller override', async () => {
+  const observedGitCommands = [];
+  const run = (githubLifeboatOptions = {}) => runBattleBridgeGoalDiscoveryHeartbeat({
+    githubLifeboatOptions,
+    refreshGithubLifeboat: async (options) => {
+      observedGitCommands.push(options.gitCommand);
+      return githubLifeboatReady();
+    },
+    refreshLifeboatCapacity: lifeboatReady,
+    conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
+    buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
+  });
+
+  await run();
+  await run({ gitCommand: 'test-git-override' });
+
+  assert.deepEqual(observedGitCommands, ['git', 'test-git-override']);
+});
+
+test('unavailable Lane 7 does not strand Lane 6 or other admitted work', async () => {
+  const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+    refreshGithubLifeboat: async () => { throw new Error('github-writer-offline'); },
+    refreshLifeboatCapacity: lifeboatReady,
+    conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
+    buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.githubLifeboat.available, false);
+  assert.match(result.githubLifeboat.reason, /github-writer-offline/);
+  assert.equal(result.lifeboatCapacity.available, true);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
+});
+
 test('unavailable Lane 6 does not strand other admitted work', async () => {
   const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+    refreshGithubLifeboat: githubLifeboatReady,
     refreshLifeboatCapacity: async () => { throw new Error('ollama-offline'); },
     conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
     buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
@@ -48,6 +98,7 @@ test('unavailable Lane 6 does not strand other admitted work', async () => {
   assert.equal(result.ok, true);
   assert.equal(result.lifeboatCapacity.available, false);
   assert.match(result.lifeboatCapacity.reason, /ollama-offline/);
+  assert.equal(result.githubLifeboat.available, true);
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
 });
 

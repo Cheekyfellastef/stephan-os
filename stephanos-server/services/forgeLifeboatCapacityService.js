@@ -42,8 +42,9 @@ function sha256(value) {
   return createHash('sha256').update(String(value), 'utf8').digest('hex');
 }
 
-function defaultReadSourceHead(repoRoot) {
-  const result = spawnSync('git.exe', ['-C', repoRoot, 'rev-parse', 'HEAD'], {
+function defaultReadSourceHead(repoRoot, options = {}) {
+  const run = options.spawnSyncFn || spawnSync;
+  const result = run(options.gitCommand || 'git', ['-C', repoRoot, 'rev-parse', 'HEAD'], {
     cwd: repoRoot,
     encoding: 'utf8',
     shell: false,
@@ -131,7 +132,7 @@ export async function refreshForgeLifeboatCapacity(options = {}) {
     return unavailable('FORGE_LIFEBOAT_LOCAL_IDENTITY_INVALID');
   }
 
-  const readSourceHead = options.readSourceHead || defaultReadSourceHead;
+  const readSourceHead = options.readSourceHead || ((root) => defaultReadSourceHead(root, options));
   const sourceHead = text(await readSourceHead(paths.repoRoot)).toLowerCase();
   if (!SHA40.test(sourceHead)) return unavailable('FORGE_LIFEBOAT_SOURCE_HEAD_UNPROVEN');
 

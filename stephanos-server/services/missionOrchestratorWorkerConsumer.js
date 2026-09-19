@@ -114,6 +114,7 @@ function persistedNativeBinding(claim) {
 function requirePersistedBindingMatchesReceipt(persisted, receipt, options = {}) {
   if (!persisted) return;
   const { grant, binding } = persisted;
+  const exactHead = normalizedText(binding.headSha || binding.sourceRevision).toLowerCase();
   const mismatch = (
     normalizedText(binding.executionId).toLowerCase() !== normalizedText(receipt.executionId).toLowerCase()
     || normalizedText(binding.leaseKey) !== normalizedText(receipt.leaseKey)
@@ -121,7 +122,7 @@ function requirePersistedBindingMatchesReceipt(persisted, receipt, options = {})
     || Number(binding.issueNumber) !== Number(receipt.issueNumber)
     || Number(binding.prNumber) !== Number(receipt.prNumber)
     || normalizedText(binding.branch) !== normalizedText(receipt.branch)
-    || normalizedText(binding.headSha).toLowerCase() !== normalizedText(receipt.sourceHead).toLowerCase()
+    || exactHead !== normalizedText(receipt.sourceHead).toLowerCase()
   );
   if (mismatch) throw new Error('EXECUTION_RECEIPT_QUEUE_BINDING_IDENTITY_MISMATCH');
 
@@ -150,7 +151,7 @@ async function beginNativeExecutionReceiptChain(claim, options = {}) {
   if (!executionId) return null;
   const persisted = persistedNativeBinding(claim);
   const filters = persisted
-    ? { executionId, leaseKey: persisted.binding.leaseKey, expectedHead: persisted.binding.headSha }
+    ? { executionId, leaseKey: persisted.binding.leaseKey, expectedHead: persisted.binding.headSha || persisted.binding.sourceRevision }
     : { executionId };
   const history = await readExecutionReceiptHistory(root, filters, executionReceiptOptions(options));
   if (history?.ok !== true) {
@@ -160,6 +161,36 @@ async function beginNativeExecutionReceiptChain(claim, options = {}) {
     throw error;
   }
   let current = history.latestReceipt;
+  if (!current && persisted?.grant?.adapter === 'stephanos-native') {
+    const { grant, binding } = persisted;
+    const sourceHead = normalizedText(binding.headSha || binding.sourceRevision).toLowerCase();
+    const queued = createExecutionReceipt({
+      repository: binding.repository,
+      issueNumber: binding.issueNumber,
+      prNumber: binding.prNumber,
+      branch: binding.branch,
+      sourceHead,
+      workerId: grant.workerId,
+      workerType: 'orchestration-engine',
+      executionId: binding.executionId,
+      leaseKey: binding.leaseKey,
+      state: 'queued',
+      phase: 'native-queue-admitted',
+      sequence: 1,
+      timestampUtc: claim?.item?.createdAt || (options.now instanceof Date ? options.now.toISOString() : new Date().toISOString()),
+      proofRefs: grant.capacityProofRefs,
+      expectedNextAction: 'Stephanos-native worker may atomically claim this exact granted execution.',
+    });
+    const appended = await appendExecutionReceipt(root, queued, executionReceiptOptions(options));
+    if (appended?.ok !== true) {
+      const error = new Error(`EXECUTION_RECEIPT_APPEND_FAILED:${appended?.reason || 'unknown'}`);
+      error.code = 'EXECUTION_RECEIPT_APPEND_FAILED';
+      error.receipt = queued;
+      error.appendResult = appended;
+      throw error;
+    }
+    current = queued;
+  }
   if (!current) {
     if (persisted) throw new Error('EXECUTION_RECEIPT_QUEUED_TRUTH_REQUIRED');
     return null;
@@ -331,7 +362,7 @@ async function processAgentClaim(adapter, options, execute) {
           phase: execution.success === true ? 'worker-result-validated' : 'worker-result-blocked',
           timestampUtc: execution.completedAt || '',
           blocker: execution.success === true ? '' : (execution.error || 'MISSION_WORKER_EXECUTION_BLOCKED'),
-          proofRefs: execution.evidenceReceipts || executionReceipt.proofRefs,
+          proofRefs: execution.proofRefs || executionReceipt.proofRefs,
           expectedNextAction: execution.success === true
             ? 'Release/refill may consume this terminal receipt after canonical completion gates pass.'
             : 'Surface blocker and keep mutation authority closed until a new bounded execution is admitted.',
@@ -410,6 +441,11 @@ export async function processNextGitHubInspectionItem(options = {}) {
 export async function processNextCodexItem(options = {}) {
   if (typeof options.executeCodexAction !== 'function') throw new Error('Codex execution adapter is required.');
   return processAgentClaim('codex', options, options.executeCodexAction);
+}
+
+export async function processNextStephanosNativeItem(options = {}) {
+  if (typeof options.executeStephanosNativeAction !== 'function') throw new Error('Stephanos-native execution adapter is required.');
+  return processAgentClaim('stephanos-native', options, options.executeStephanosNativeAction);
 }
 
 export async function processNextOpenClawReadonlyItem(options = {}) {

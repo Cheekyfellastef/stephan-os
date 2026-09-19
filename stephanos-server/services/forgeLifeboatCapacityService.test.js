@@ -98,6 +98,24 @@ test('normalizes the existing STEP HANOS Ollama /api/chat endpoint shape to the 
   assert.equal(proofs[0].endpoint, 'http://127.0.0.1:11434');
 });
 
+test('uses canonical git command for Lane 6 source-head proof and preserves an explicit override', async () => {
+  const observedCommands = [];
+  const spawn = (command) => {
+    observedCommands.push(command);
+    return { error: null, status: 0, stdout: `${HEAD}\n`, stderr: '' };
+  };
+
+  const defaultRun = baseOptions({ readSourceHead: undefined, spawnSyncFn: spawn });
+  const defaultResult = await refreshForgeLifeboatCapacity(defaultRun.options);
+  assert.equal(defaultResult.available, true);
+
+  const overrideRun = baseOptions({ readSourceHead: undefined, spawnSyncFn: spawn, gitCommand: 'test-git-override' });
+  const overrideResult = await refreshForgeLifeboatCapacity(overrideRun.options);
+  assert.equal(overrideResult.available, true);
+
+  assert.deepEqual(observedCommands, ['git', 'test-git-override']);
+});
+
 test('does not advertise Lane 6 when source head or local model proof is missing', async () => {
   const noHead = baseOptions({ readSourceHead: async () => '' });
   const headResult = await refreshForgeLifeboatCapacity(noHead.options);
