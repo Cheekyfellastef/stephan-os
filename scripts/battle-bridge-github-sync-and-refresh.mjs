@@ -291,26 +291,18 @@ export async function runBattleBridgeSyncAndRefresh({
       if (!sourceHead) {
         return Object.freeze({ ok: false, blocker: 'SYNC_CONVERGED_HEAD_UNPROVEN', refreshes: Object.freeze(refreshes), finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
       }
+
+      // Source-building lanes are independently bounded and must get one work-conserving
+      // tick before auxiliary control-plane repair. A degraded recovery subsystem must not
+      // starve Forge/GitHub lifeboat capacity or canonical Mission Worker handoffs.
+      const goalDiscovery = await goalDiscoveryHeartbeat();
       const controlPlaneRepair = reconcileConvergedControlPlane({
         sourceHead,
         paths,
         controlPlaneReconciler,
         platform,
       });
-      if (!controlPlaneRepair.ok) {
-        return Object.freeze({
-          ok: false,
-          blocker: controlPlaneRepair.blocker,
-          sourceHead,
-          syncClassification: sync.result.evaluation.classification,
-          refreshes: Object.freeze(refreshes),
-          sourceForwardedBeforeRefresh,
-          refreshDebtCoalesced,
-          controlPlaneRepair,
-          finalVerdict: 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED',
-        });
-      }
-      const goalDiscovery = await goalDiscoveryHeartbeat();
+
       if (goalDiscovery?.ok !== true) {
         return Object.freeze({
           ok: false,
@@ -322,9 +314,28 @@ export async function runBattleBridgeSyncAndRefresh({
           refreshDebtCoalesced,
           controlPlaneRepair,
           goalDiscovery: goalDiscovery || null,
+          goalDiscoveryObserved: true,
           finalVerdict: 'SYNC_AND_REFRESH_GOAL_DISCOVERY_BLOCKED',
         });
       }
+
+      if (!controlPlaneRepair.ok) {
+        return Object.freeze({
+          ok: false,
+          blocker: controlPlaneRepair.blocker,
+          sourceHead,
+          syncClassification: sync.result.evaluation.classification,
+          refreshes: Object.freeze(refreshes),
+          sourceForwardedBeforeRefresh,
+          refreshDebtCoalesced,
+          controlPlaneRepair,
+          goalDiscovery,
+          goalDiscoveryObserved: true,
+          workConservingGoalDiscoveryPreserved: true,
+          finalVerdict: 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED',
+        });
+      }
+
       return Object.freeze({
         schemaVersion: BATTLE_BRIDGE_SYNC_AND_REFRESH_SCHEMA,
         ok: true,
@@ -339,6 +350,7 @@ export async function runBattleBridgeSyncAndRefresh({
         controlPlaneRepairObserved: true,
         goalDiscovery,
         goalDiscoveryObserved: true,
+        workConservingGoalDiscoveryPreserved: true,
         arbitraryShellAllowed: false,
         destructiveGitAllowed: false,
         liveOpenClawUpdateAllowed: false,
