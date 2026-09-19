@@ -30,7 +30,13 @@ export const CONSTRAINT_SIGNAL_RULES = Object.freeze([
     id: 'MUTATION_DEFAULT_DENY_SIGNAL',
     constraintClass: 'MUTATION_DEFAULT_DENY',
     description: 'Default-deny mutation/write/dispatch flags need an explicit promotion or revalidation path.',
-    test: ({ context }) => /\b(?:durableWriteAllowed|mutationAllowed|codexAutoDispatchAllowed)\s*:\s*false\b|\bopenClawMutationLocked\s*:\s*true\b/i.test(context),
+    test: ({ context }) => /\b(?:durableWriteAllowed|mutationAllowed|codexAutoDispatchAllowed|automaticCodexLaunchAllowed)\s*:\s*false\b|\bopenClawMutationLocked\s*:\s*true\b/i.test(context),
+  }),
+  Object.freeze({
+    id: 'PROVIDER_ADMISSION_DENY_SIGNAL',
+    constraintClass: 'PROVIDER_ADMISSION_DENY',
+    description: 'Qualification that can never flow into provider-pool admission may leave proven capability permanently unusable.',
+    test: ({ context }) => /\b(?:providerPoolAdmissionAllowed|providerQualificationAuthority)\s*:\s*false\b/i.test(context),
   }),
   Object.freeze({
     id: 'RESTART_INTENT_ONLY_SIGNAL',
