@@ -59,7 +59,18 @@ jobs:
 
       - name: Shared-agent regressions MM-MZ
         if: always()
-        run: node --test --test-reporter=dot shared/agents/m[m-z]*.test.mjs
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test --test-reporter=spec shared/agents/m[m-z]*.test.mjs 2>&1 | tee mm-mz.log
+
+      - name: Upload MM-MZ diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-1639-mm-mz-regression-log
+          path: mm-mz.log
+          if-no-files-found: ignore
 
       - name: Shared-agent regressions N-O
         if: always()
