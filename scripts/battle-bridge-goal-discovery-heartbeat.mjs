@@ -3,6 +3,9 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { ensureCriticalBacklogMission } from '../stephanos-server/services/criticalBacklogConveyorService.js';
+import { refreshForgeLifeboatCapacity } from '../stephanos-server/services/forgeLifeboatCapacityService.js';
+import { runGitHubLifeboatLane7 } from '../stephanos-server/services/githubLifeboatLane7Service.js';
+import { refreshGitHubLifeboatLane7ClaimAck } from '../stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.js';
 import { processNextProviderNeutralSourceBuild } from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
 
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA = 'stephanos.battle-bridge-goal-discovery-heartbeat.v1';
@@ -67,8 +70,52 @@ function frozenSweepAttempt({ attemptNumber, result, sourceBuild, elasticHold })
   });
 }
 
+function unavailableLifeboat(error) {
+  return Object.freeze({
+    ok: false,
+    available: false,
+    reason: `FORGE_LIFEBOAT_CAPACITY_REFRESH_FAILED:${String(error?.message || 'unknown')}`,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+    leaseSeizureAllowed: false,
+    arbitraryCommandAllowed: false,
+  });
+}
+
+function unavailableGithubLifeboat(error) {
+  return Object.freeze({
+    ok: false,
+    available: false,
+    reason: `GITHUB_LIFEBOAT_LANE7_REFRESH_FAILED:${String(error?.message || 'unknown')}`,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    leaseSeizureAllowed: false,
+    arbitraryCommandAllowed: false,
+  });
+}
+
+function unavailableGithubLifeboatClaimAck(error) {
+  return Object.freeze({
+    ok: false,
+    published: false,
+    reason: `GITHUB_LIFEBOAT_LANE7_CLAIM_ACK_REFRESH_FAILED:${String(error?.message || 'unknown')}`,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    leaseSeizureAllowed: false,
+    arbitraryCommandAllowed: false,
+  });
+}
+
 export async function runBattleBridgeGoalDiscoveryHeartbeat({
   conveyor = ensureCriticalBacklogMission,
+  refreshLifeboatCapacity = refreshForgeLifeboatCapacity,
+  lifeboatOptions = {},
+  refreshGithubLifeboat = runGitHubLifeboatLane7,
+  githubLifeboatOptions = {},
+  refreshGithubLifeboatClaimAck = refreshGitHubLifeboatLane7ClaimAck,
+  githubLifeboatClaimAckOptions = {},
   buildClaimedGoal = processNextProviderNeutralSourceBuild,
   builderOptions = {},
   maxWorkConservingAttempts = DEFAULT_WORK_CONSERVING_SWEEP_LIMIT,
@@ -79,8 +126,30 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   let latestResult = null;
   let latestSourceBuild = null;
   let latestElasticHold = null;
+  let lifeboatCapacity = null;
+  let githubLifeboat = null;
+  let githubLifeboatClaimAck = null;
 
   try {
+    try {
+      githubLifeboat = await refreshGithubLifeboat({
+        ...githubLifeboatOptions,
+        gitCommand: githubLifeboatOptions.gitCommand || 'git',
+      });
+    } catch (error) { githubLifeboat = unavailableGithubLifeboat(error); }
+
+    try {
+      githubLifeboatClaimAck = await refreshGithubLifeboatClaimAck({
+        ...githubLifeboatClaimAckOptions,
+        sourceHead: githubLifeboat?.sourceHead || githubLifeboatClaimAckOptions.sourceHead || '',
+      });
+    } catch (error) {
+      githubLifeboatClaimAck = unavailableGithubLifeboatClaimAck(error);
+    }
+
+    try { lifeboatCapacity = await refreshLifeboatCapacity(lifeboatOptions); }
+    catch (error) { lifeboatCapacity = unavailableLifeboat(error); }
+
     for (let attemptIndex = 0; attemptIndex < limit; attemptIndex += 1) {
       const result = await conveyor();
       latestResult = result || null;
@@ -88,6 +157,9 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
           ok: false,
+          githubLifeboat,
+          githubLifeboatClaimAck,
+          lifeboatCapacity,
           conveyorResult: result || null,
           sourceBuild: latestSourceBuild,
           sweepAttemptCount: sweepAttempts.length,
@@ -117,6 +189,9 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
           ok: true,
+          githubLifeboat,
+          githubLifeboatClaimAck,
+          lifeboatCapacity,
           conveyorResult: result,
           sourceBuild,
           elasticHold: elasticHold || null,
@@ -140,6 +215,9 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
           ok: true,
+          githubLifeboat,
+          githubLifeboatClaimAck,
+          lifeboatCapacity,
           conveyorResult: result,
           sourceBuild: sourceBuild || null,
           elasticHold: null,
@@ -158,6 +236,9 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
     return Object.freeze({
       schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
       ok: true,
+      githubLifeboat,
+      githubLifeboatClaimAck,
+      lifeboatCapacity,
       conveyorResult: latestResult,
       sourceBuild: latestSourceBuild,
       elasticHold: latestElasticHold,
@@ -177,6 +258,9 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
       ok: false,
       blocker: String(error?.message || 'GOAL_DISCOVERY_HEARTBEAT_FAILED'),
+      githubLifeboat,
+      githubLifeboatClaimAck,
+      lifeboatCapacity,
       conveyorResult: latestResult,
       sourceBuild: latestSourceBuild,
       sweepAttemptCount: sweepAttempts.length,
