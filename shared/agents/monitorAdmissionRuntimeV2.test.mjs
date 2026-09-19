@@ -118,7 +118,7 @@ test('controller pulses produce a fresh batched outbox notification on each due 
     nowMs: NOW,
     timestampUtc: new Date(NOW).toISOString(),
   });
-  assert.equal(first.ok, true);
+  assert.equal(first.ok, true, JSON.stringify(first, null, 2));
   assert.equal(first.logicalControllerCount, 1);
   assert.equal(first.externalTaskSlotsRequired, 1);
   assert.equal(first.tick.notificationRecords.length, 1);
