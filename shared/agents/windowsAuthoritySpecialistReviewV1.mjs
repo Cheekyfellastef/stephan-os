@@ -11,7 +11,7 @@ const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1
 const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupReviewV1.mjs';
 
 const BASE_BLOB_SHA = 'edf275b931809fca73119ccbe662cf74f5dcf726';
-const LEGACY_ROUTER_BLOB_SHA = 'bbc541e6b34cf53f894ecfc05eb65de0939c19a4';
+const LEGACY_ROUTER_BLOB_SHA = 'a74ee8dff1fa36c3d33f490c23efdb193da24747';
 const WSL2_BLOB_SHA = '9a3eec86af450cb685d3664faf6376363e0d1d74';
 const NATIVE_CAPACITY_PUBLISHER_BLOB_SHA = '6cb4b57f88d7402be3da51e7e0ad3ec2013981fb';
 const STARFIELD_VR_SPLASH_BLOB_SHA = '2532106b7f2d4d75db535d8c32aa1c282f98e7e4';
