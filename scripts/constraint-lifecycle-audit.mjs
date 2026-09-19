@@ -9,7 +9,11 @@ import {
 } from '../shared/agents/constraintLifecycleAuditV1.mjs';
 
 const SOURCE_EXTENSIONS = new Set(['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.ps1', '.md', '.json']);
+const PRODUCTION_CODE_EXTENSIONS = new Set(['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx']);
 const SKIP_DIRS = new Set(['.git', 'node_modules', '.cache', 'dist', 'coverage']);
+const FLYWHEEL_ENDPOINT_PATH_PREFIXES = ['shared/agents/', 'shared/runtime/', 'stephanos-server/services/'];
+const FLYWHEEL_ENDPOINT_NAME_PATTERN = /(?:GapIntake|ImprovementProposal|ReflectiveMemory|MissionAdmission|ExecutionHandoff|Promotion|Admission|Flywheel|SharedLessons|MethodLibrary)/i;
+const IMPORT_SPECIFIER_PATTERN = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)['"]([^'"]+)['"]/g;
 
 async function walk(root, current = root, files = []) {
   const entries = await fs.readdir(current, { withFileTypes: true });
@@ -22,13 +26,65 @@ async function walk(root, current = root, files = []) {
   return files;
 }
 
+function normalizeRelativePath(value) {
+  return value.replaceAll('\\', '/');
+}
+
+function isProductionCodeFile(relativePath) {
+  if (!PRODUCTION_CODE_EXTENSIONS.has(path.extname(relativePath))) return false;
+  return !/(?:^|\/)(?:test|tests|fixtures)(?:\/|$)|\.(?:test|spec)\.[^.]+$/i.test(relativePath);
+}
+
+function importedRelativePaths(importerPath, content) {
+  const imported = [];
+  for (const match of content.matchAll(IMPORT_SPECIFIER_PATTERN)) {
+    const specifier = match[1];
+    if (!specifier.startsWith('.')) continue;
+    const resolved = normalizeRelativePath(path.posix.normalize(path.posix.join(path.posix.dirname(importerPath), specifier)));
+    if (path.posix.extname(resolved)) {
+      imported.push(resolved);
+      continue;
+    }
+    for (const extension of PRODUCTION_CODE_EXTENSIONS) imported.push(`${resolved}${extension}`);
+    for (const extension of PRODUCTION_CODE_EXTENSIONS) imported.push(`${resolved}/index${extension}`);
+  }
+  return imported;
+}
+
+export function detectOrphanFlywheelEndpoints(records = []) {
+  const production = records.filter((record) => isProductionCodeFile(record.relativePath));
+  const imported = new Set();
+
+  for (const record of production) {
+    for (const resolved of importedRelativePaths(record.relativePath, record.content)) imported.add(resolved);
+  }
+
+  return production
+    .filter((record) => FLYWHEEL_ENDPOINT_PATH_PREFIXES.some((prefix) => record.relativePath.startsWith(prefix)))
+    .filter((record) => FLYWHEEL_ENDPOINT_NAME_PATTERN.test(path.posix.basename(record.relativePath)))
+    .filter((record) => /\bexport\s+(?:async\s+)?(?:function|class|const|let|var)\b/.test(record.content))
+    .filter((record) => !imported.has(record.relativePath))
+    .map((record) => Object.freeze({
+      signalId: 'ORPHAN_FLYWHEEL_ENDPOINT_SIGNAL',
+      constraintClass: 'FLYWHEEL_CONTINUITY',
+      description: 'A flywheel-facing module exists and exports capability, but no production module imports it; verify the intended downstream consumer or explicitly mark it as a terminal leaf.',
+      file: record.relativePath,
+      line: 1,
+      excerpt: `No production consumer imports ${path.posix.basename(record.relativePath)}.`,
+      lifecycleState: null,
+      needsLifecycleReview: true,
+    }));
+}
+
 export async function scanConstraintLifecycleCandidates(repoRoot) {
   const files = await walk(repoRoot);
   const findings = [];
+  const records = [];
 
   for (const absolute of files) {
     const content = await fs.readFile(absolute, 'utf8').catch(() => '');
-    const relativePath = path.relative(repoRoot, absolute).replaceAll('\\', '/');
+    const relativePath = normalizeRelativePath(path.relative(repoRoot, absolute));
+    records.push({ absolute, relativePath, content });
     const lines = content.split(/\r?\n/);
 
     for (let index = 0; index < lines.length; index += 1) {
@@ -43,6 +99,7 @@ export async function scanConstraintLifecycleCandidates(repoRoot) {
     }
   }
 
+  findings.push(...detectOrphanFlywheelEndpoints(records));
   return findings;
 }
 
