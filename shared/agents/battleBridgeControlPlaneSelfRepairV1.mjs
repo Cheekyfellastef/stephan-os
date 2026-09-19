@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 
 import { classifyDirt } from '../../scripts/battle-bridge-github-sync-policy.mjs';
 
@@ -43,6 +45,20 @@ const POWERSHELL_EXE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershe
 const GIT_EXE = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const MAX_OUTPUT_BYTES = 128 * 1024;
 const GENERIC_FIXED_INSTALLER_BLOCKER = 'CONTROL_PLANE_FIXED_INSTALLER_FAILED';
+const PINNED_LIFEBOAT_LAUNCHER_RESTORES = Object.freeze({
+  CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_ACTIVE_LAUNCHER_MISMATCH: Object.freeze({
+    kind: 'ACTIVE',
+    sourceRelativePath: 'scripts/windows/run-battle-bridge-recovery-lifeboat-active-v1.ps1',
+    installedFileName: 'run-battle-bridge-recovery-lifeboat-active-v1.ps1',
+    blobSha: '914d6f390e6288bea8911db1dac7de03af661826',
+  }),
+  CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_WINDOWLESS_LAUNCHER_MISMATCH: Object.freeze({
+    kind: 'WINDOWLESS',
+    sourceRelativePath: 'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
+    installedFileName: 'run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
+    blobSha: 'c724540a727aab7881dd3b06b52aa7cf9d86f7d8',
+  }),
+});
 const RECOVERY_LIFEBOAT_INSTALLER_FAILURE_RULES = Object.freeze([
   Object.freeze({
     fragment: 'LOCALAPPDATA is required.',
@@ -187,6 +203,70 @@ function capture(spawnSyncFn, executable, args, { cwd, timeout = 180_000 } = {})
     stderr: String(result?.stderr ?? '').slice(0, 1000),
     errorCode: result?.error?.code || '',
   });
+}
+
+function gitBlobSha1(value) {
+  const body = Buffer.isBuffer(value) ? value : Buffer.from(String(value ?? ''), 'utf8');
+  return createHash('sha1')
+    .update(Buffer.from(`blob ${body.length}\0`, 'utf8'))
+    .update(body)
+    .digest('hex');
+}
+
+function restorePinnedLifeboatLauncher({ failureBlocker, repoRoot, spawnSyncFn }) {
+  const spec = PINNED_LIFEBOAT_LAUNCHER_RESTORES[failureBlocker];
+  if (!spec) return Object.freeze({ ok: false, attempted: false, kind: '' });
+
+  const localAppData = text(process.env.LOCALAPPDATA);
+  if (!localAppData) return Object.freeze({ ok: false, attempted: true, kind: spec.kind });
+
+  const sourceBlob = capture(
+    spawnSyncFn,
+    GIT_EXE,
+    ['-C', repoRoot, 'rev-parse', `HEAD:${spec.sourceRelativePath}`],
+    { cwd: repoRoot },
+  );
+  if (!sourceBlob.ok || text(sourceBlob.stdout).toLowerCase() !== spec.blobSha) {
+    return Object.freeze({ ok: false, attempted: true, kind: spec.kind });
+  }
+
+  const blob = capture(
+    spawnSyncFn,
+    GIT_EXE,
+    ['-C', repoRoot, 'cat-file', 'blob', spec.blobSha],
+    { cwd: repoRoot },
+  );
+  if (!blob.ok || gitBlobSha1(blob.stdout) !== spec.blobSha) {
+    return Object.freeze({ ok: false, attempted: true, kind: spec.kind });
+  }
+
+  const lifeboatRoot = resolve(localAppData, 'Stephanos', 'BattleBridgeRecoveryLifeboat');
+  const target = resolve(lifeboatRoot, spec.installedFileName);
+  if (dirname(target) !== lifeboatRoot) {
+    return Object.freeze({ ok: false, attempted: true, kind: spec.kind });
+  }
+
+  const body = Buffer.from(blob.stdout, 'utf8');
+  const temporary = `${target}.restore-${process.pid}`;
+  try {
+    mkdirSync(lifeboatRoot, { recursive: true });
+    rmSync(temporary, { force: true });
+    writeFileSync(temporary, body, { flag: 'wx' });
+    if (gitBlobSha1(readFileSync(temporary)) !== spec.blobSha) {
+      return Object.freeze({ ok: false, attempted: true, kind: spec.kind });
+    }
+    renameSync(temporary, target);
+    if (gitBlobSha1(readFileSync(target)) !== spec.blobSha) {
+      return Object.freeze({ ok: false, attempted: true, kind: spec.kind });
+    }
+    return Object.freeze({ ok: true, attempted: true, kind: spec.kind });
+  } catch {
+    return Object.freeze({ ok: false, attempted: true, kind: spec.kind });
+  } finally {
+    try {
+      rmSync(temporary, { force: true });
+    } catch {}
+  }
 }
 
 function parseInstallerJson(stdout) {
@@ -408,13 +488,35 @@ export function reconcileBattleBridgeControlPlane({
   const installerFailures = [];
   for (const task of BATTLE_BRIDGE_CONTROL_PLANE_TASKS) {
     const installerPath = resolve(canonicalRoot, task.installerRelativePath);
-    const command = capture(spawnSyncFn, POWERSHELL_EXE, [
+    const runInstaller = () => capture(spawnSyncFn, POWERSHELL_EXE, [
       '-NoProfile',
       '-NonInteractive',
       '-ExecutionPolicy', 'Bypass',
       '-File', installerPath,
       '-StartNow',
     ], { cwd: canonicalRoot, timeout: 180_000 });
+
+    let command = runInstaller();
+    let pinnedLauncherRestoreAttemptCount = 0;
+    const restoredLauncherKinds = [];
+
+    if (task.id === 'recoveryLifeboat') {
+      for (let retry = 0; retry < 2 && !command.ok; retry += 1) {
+        const failureBlocker = classifyFixedInstallerFailure(task.id, command.stderr);
+        const spec = PINNED_LIFEBOAT_LAUNCHER_RESTORES[failureBlocker];
+        if (!spec || restoredLauncherKinds.includes(spec.kind)) break;
+        const restoration = restorePinnedLifeboatLauncher({
+          failureBlocker,
+          repoRoot: canonicalRoot,
+          spawnSyncFn,
+        });
+        if (restoration.attempted) pinnedLauncherRestoreAttemptCount += 1;
+        if (!restoration.ok) break;
+        restoredLauncherKinds.push(restoration.kind);
+        command = runInstaller();
+      }
+    }
+
     if (!command.ok) {
       const failureBlocker = classifyFixedInstallerFailure(task.id, command.stderr);
       installerFailures.push(Object.freeze({
@@ -431,6 +533,8 @@ export function reconcileBattleBridgeControlPlane({
         startRequested: true,
         receiptValid: false,
         installerExitOk: false,
+        pinnedLauncherRestoreAttemptCount,
+        restoredLauncherKinds: Object.freeze([...restoredLauncherKinds]),
       }));
       continue;
     }
@@ -455,6 +559,8 @@ export function reconcileBattleBridgeControlPlane({
       installed: true,
       startRequested: true,
       receiptValid: true,
+      pinnedLauncherRestoreAttemptCount,
+      restoredLauncherKinds: Object.freeze([...restoredLauncherKinds]),
     }));
   }
 
