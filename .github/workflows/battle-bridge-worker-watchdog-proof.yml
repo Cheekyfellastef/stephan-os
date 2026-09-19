@@ -17,6 +17,7 @@ on:
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
       - 'scripts/mission-worker-git-stderr-isolation.test.mjs'
       - 'scripts/mission-worker-cleanup-launch-receipt-proof.test.mjs'
+      - 'scripts/mission-worker-process-start-api-consistency.test.mjs'
       - 'scripts/windows/*worker-watchdog.ps1'
       - 'scripts/windows/start-mission-orchestrator-worker.ps1'
       - 'scripts/windows/restart-approved-stephanos-runtime.ps1'
@@ -37,6 +38,7 @@ on:
       - 'scripts/mission-orchestrator-worker-supervised*.mjs'
       - 'scripts/mission-worker-git-stderr-isolation.test.mjs'
       - 'scripts/mission-worker-cleanup-launch-receipt-proof.test.mjs'
+      - 'scripts/mission-worker-process-start-api-consistency.test.mjs'
       - 'scripts/windows/*worker-watchdog.ps1'
       - 'scripts/windows/start-mission-orchestrator-worker.ps1'
       - 'scripts/windows/restart-approved-stephanos-runtime.ps1'
@@ -66,6 +68,7 @@ jobs:
           node --check scripts/battle-bridge-worker-watchdog.mjs
           node --check scripts/battle-bridge-worker-watchdog-acceptance.mjs
           node --check scripts/battle-bridge-worker-watchdog-runner.mjs
+          node --check scripts/battle-bridge-worker-watchdog-conveyor-fairness.test.mjs
           node --check scripts/battle-bridge-github-command-mailbox.mjs
           node --check scripts/mission-worker-diagnostic-link.mjs
           node --check scripts/chatgpt-shared-workspace-github-relay.mjs
@@ -79,6 +82,7 @@ jobs:
           node --check scripts/mission-orchestrator-worker-heartbeat.mjs
           node --check scripts/mission-orchestrator-worker-heartbeat-active-claim.mjs
           node --check scripts/mission-orchestrator-worker-supervised.mjs
+          node --check scripts/mission-worker-process-start-api-consistency.test.mjs
 
       - name: Parse Windows watchdog scripts
         shell: pwsh
@@ -113,6 +117,9 @@ jobs:
 
       - name: Test Mission Worker cleanup launch receipt proof
         run: node --test scripts/mission-worker-cleanup-launch-receipt-proof.test.mjs
+
+      - name: Test Mission Worker process start-time API consistency
+        run: node --test scripts/mission-worker-process-start-api-consistency.test.mjs
 
       - name: Test supervised worker
         run: node --test scripts/mission-orchestrator-worker-supervised.test.mjs
@@ -151,7 +158,7 @@ jobs:
         run: node --test shared/agents/chatGptParticipantBridgeV1.test.mjs scripts/chatgpt-shared-workspace-github-relay.test.mjs
 
       - name: Test visibility observer, mirror and combined runner
-        run: node --test shared/agents/remoteCodexTaskVisibility.test.mjs scripts/remote-codex-task-visibility-observer.test.mjs scripts/remote-codex-github-mirror-publisher.test.mjs scripts/battle-bridge-worker-watchdog-runner.test.mjs
+        run: node --test shared/agents/remoteCodexTaskVisibility.test.mjs scripts/remote-codex-task-visibility-observer.test.mjs scripts/remote-codex-github-mirror-publisher.test.mjs scripts/battle-bridge-worker-watchdog-runner.test.mjs scripts/battle-bridge-worker-watchdog-conveyor-fairness.test.mjs
 
       - name: Test Windows script guards
         run: node --test scripts/battle-bridge-worker-watchdog-installer.test.mjs

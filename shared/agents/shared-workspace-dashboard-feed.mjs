@@ -17,6 +17,10 @@ export const DASHBOARD_FEED_STATES = Object.freeze({
   UNAVAILABLE: 'unavailable',
   ERROR: 'error',
 });
+export const SHARED_WORKSPACE_FEED_RECORD_SCOPES = Object.freeze({
+  CURRENT_STATE: 'current-state',
+  FULL_HISTORY: 'full-history',
+});
 export const MIN_DASHBOARD_FEED_POLL_INTERVAL_MS = 15_000;
 export const DEFAULT_DASHBOARD_FEED_POLL_INTERVAL_MS = 30_000;
 
@@ -28,6 +32,7 @@ const DIRECTORY_BY_KIND = Object.freeze({
   events: 'eventRecords',
   receipts: 'receiptRecords',
 });
+const HISTORICAL_DIRECTORIES = new Set(['events', 'receipts']);
 const DASHBOARD_OPERATOR_DECISION_RECEIPT_SCHEMA = 'stephanos.operator-decision-receipt.v1';
 
 function text(value, fallback = '') {
@@ -45,6 +50,12 @@ function safePollIntervalMs(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return DEFAULT_DASHBOARD_FEED_POLL_INTERVAL_MS;
   return Math.max(MIN_DASHBOARD_FEED_POLL_INTERVAL_MS, Math.floor(parsed));
+}
+
+function safeRecordScope(value) {
+  return value === SHARED_WORKSPACE_FEED_RECORD_SCOPES.FULL_HISTORY
+    ? SHARED_WORKSPACE_FEED_RECORD_SCOPES.FULL_HISTORY
+    : SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE;
 }
 
 function emptyRecords() {
@@ -155,11 +166,16 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : DEFAULT_STALE_AFTER_MS;
   const polling = createSharedWorkspaceDashboardPollingContract(input);
+  const recordScope = safeRecordScope(input.recordScope);
   const resolved = resolveSharedWorkspacePath({ root: input.root, repoRoot: input.repoRoot, segments: [] });
   const records = emptyRecords();
   const errors = [];
   if (resolved.ok) {
     for (const [directory, key] of Object.entries(DIRECTORY_BY_KIND)) {
+      if (
+        recordScope === SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE
+        && HISTORICAL_DIRECTORIES.has(directory)
+      ) continue;
       const result = await readRecordDirectory(resolved.root, directory, { repoRoot: input.repoRoot, nowMs, staleAfterMs });
       records[key] = result.records;
       errors.push(...result.errors);
@@ -186,6 +202,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     schemaVersion: SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION,
     kind: 'stephanos.shared_workspace.dashboard_feed',
     readOnly: true,
+    recordScope,
     state: classification.state,
     reason: classification.reason,
     exactNextAction: classification.exactNextAction,

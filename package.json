@@ -43,6 +43,7 @@
     "stephanos:battle-bridge:autostart:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/uninstall-stephanos-backend-autostart.ps1",
     "openclaw:stub:ensure": "node scripts/openclaw-readonly-adapter-ensure.mjs",
     "test:ui:reality": "node scripts/browser-proof-preflight.mjs && playwright test",
+    "prestephanos:ignite": "node scripts/battle-bridge-ignition-sync-preflight.mjs",
     "stephanos:ignite": "node scripts/run-battle-bridge-ignition.mjs",
     "stephanos:ignite:supervisor": "node scripts/battle-bridge-ignition-supervisor.mjs",
     "stephanos:ignite:auto-publish": "node scripts/ignite-stephanos-local-autopublish.mjs",

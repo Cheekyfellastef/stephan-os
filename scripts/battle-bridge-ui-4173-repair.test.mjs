@@ -239,6 +239,12 @@ test('Windows start uses controlled cmd.exe wrapper with fixed args for the cano
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.cwd, process.cwd());
   assert.equal(calls[0].options.env.STEPHANOS_EXPECTED_HEAD, EXACT_HEAD);
+  assert.equal(calls[0].options.detached, true);
+  assert.equal(calls[0].options.windowsHide, true);
+  assert.equal(calls[0].options.stdio[0], 'ignore');
+  assert.equal(Number.isInteger(calls[0].options.stdio[1]), true);
+  assert.equal(Number.isInteger(calls[0].options.stdio[2]), true);
+  assert.notEqual(calls[0].options.stdio[1], calls[0].options.stdio[2]);
   const output = json();
   assert.equal(output.invocation.kind, 'CONTROLLED_WINDOWS_NPM_WRAPPER');
   assert.equal(output.invocation.command, 'cmd.exe');

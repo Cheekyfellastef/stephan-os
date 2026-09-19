@@ -9,7 +9,7 @@ The Mission Orchestrator Worker, GitHub mailbox, source-update lock and source-m
 ## Recovery entrances
 
 1. `LOCAL_WINDOWS_SUPERVISOR` — the hidden `Stephanos Battle Bridge Recovery Mesh` task runs at logon and every minute.
-2. `GITHUB_MAILBOX` — the owner-authored, expiring `WAKE_BATTLE_BRIDGE_RECOVERY_MESH` command on issue #1507.
+2. `GITHUB_MAILBOX` — the owner-authored, expiring `WAKE_BATTLE_BRIDGE_RECOVERY_MESH` command on issue #2158.
 3. `TAILSCALE_CONTROL` — an authenticated Tailnet/SSH session invokes only `request-battle-bridge-recovery.ps1 -Route TAILSCALE_CONTROL` on the canonical Battle Bridge.
 4. `OPENCLAW_WHATSAPP` — authenticated `/stephanos-ignite wake` invokes the fixed OpenClaw adapter.
 5. `AUTHENTICATED_BREAK_GLASS` — issue a five-minute nonce, then confirm that exact nonce when every automatic route is unavailable.

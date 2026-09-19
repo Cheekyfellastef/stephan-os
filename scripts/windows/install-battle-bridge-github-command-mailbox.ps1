@@ -53,7 +53,7 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub comman
         -Trigger @($logonTrigger, $fastIntervalTrigger, $compatibilityIntervalTrigger) `
         -Principal $principal `
         -Settings $settings `
-        -Description 'Consumes only owner-authored, expiring, allowlisted Stephanos commands from issue 1507 and publishes a bounded Shared Workspace receipt index. One-minute polling is primary; the legacy five-minute trigger is retained as a compatibility fallback. No arbitrary shell, destructive Git, merge, push, or live OpenClaw update.' `
+        -Description 'Consumes only owner-authored, expiring, allowlisted Stephanos commands from the canonical mailbox authority issue and publishes a bounded Shared Workspace receipt index. One-minute polling is primary; the legacy five-minute trigger is retained as a compatibility fallback. No arbitrary shell, destructive Git, merge, push, or live OpenClaw update.' `
         -Force | Out-Null
     if ($StartNow) {
         Start-ScheduledTask -TaskName $taskName
