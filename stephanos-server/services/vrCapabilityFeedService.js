@@ -2,10 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import { CONCEPT_CATALOG } from '../../apps/vr-capability-atlas/atlas-concepts.mjs';
-import {
-  projectVrCapabilityLiveState,
-  VR_CAPABILITY_LIVE_FEED_SCHEMA,
-} from '../../shared/agents/vrCapabilityLiveProjectionV1.mjs';
+import { VR_CAPABILITY_LIVE_FEED_SCHEMA } from '../../shared/agents/vrCapabilityLiveProjectionV1.mjs';
+import { projectVrCapabilityLiveTruth } from '../../shared/agents/vrCapabilityLiveTruthV2.mjs';
 import {
   readSharedWorkspaceDashboardFeed,
   SHARED_WORKSPACE_FEED_RECORD_SCOPES,
@@ -44,7 +42,7 @@ export async function readVrCapabilityFeed({ env = process.env, repoRoot = proce
     workspaceReason = workspaceFeed.reason;
   }
 
-  const projection = projectVrCapabilityLiveState({
+  const projection = projectVrCapabilityLiveTruth({
     baseLedger,
     baseConcepts: CONCEPT_CATALOG,
     records,
