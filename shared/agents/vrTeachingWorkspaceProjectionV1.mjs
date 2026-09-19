@@ -11,7 +11,7 @@ function text(value) { return String(value ?? '').trim(); }
 function list(value) { return Array.isArray(value) ? value.filter((entry) => entry !== null && entry !== undefined) : []; }
 function norm(value) { return [...new Set(list(value).map(text).filter(Boolean))].sort(); }
 function hash(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
-function portable(value) { let digest = 2166136261; for (let index = 0; index < value.length; index += 1) { digest ^= value.charCodeAt(index); digest = Math.imul(digest, 16777619) >>> 0; } return `fnv1a32:${digest.toString(16).padStart(8, '0')}`; }
+function portable(value) { return `sha256:${createHash('sha256').update(value).digest('hex')}`; }
 function aliases(item) { if (typeof item === 'string') return new Set([`string:${text(item)}`]); return new Set([text(item?.teachingKey), text(item?.candidateKey)].filter(Boolean)); }
 function legacyAlias(item) { return item && typeof item === 'object' && !text(item.teachingKey) && !text(item.candidateKey) ? text(item.reusableMethod) : ''; }
 function overlap(left, right) { const leftAliases = aliases(left); const rightAliases = aliases(right); if (leftAliases.size && rightAliases.size) { for (const key of leftAliases) if (rightAliases.has(key)) return true; return false; } const legacy = legacyAlias(left); return Boolean(legacy && legacy === text(right?.reusableMethod)); }
