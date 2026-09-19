@@ -24,6 +24,20 @@ export const LOGICAL_CONTROLLER_SCOPE_PREFIX = 'controller:';
 const plainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value) => String(value ?? '').trim();
 const safeId = (value) => /^[a-z0-9][a-z0-9._-]{0,80}$/i.test(text(value)) ? text(value) : '';
+const DERIVED_MONITOR_AUTHORITY_FIELDS = Object.freeze([
+  'runnerRegistryOnly',
+  'arbitraryShellAllowed',
+  'arbitraryPowerShellAllowed',
+  'arbitraryFilesystemAccess',
+  'sourceMutationAllowed',
+  'mergeAuthority',
+]);
+
+function runtimeMonitorInput(definition = {}) {
+  const input = { ...definition };
+  for (const key of DERIVED_MONITOR_AUTHORITY_FIELDS) delete input[key];
+  return Object.freeze(input);
+}
 
 function runtimeSafeRegistry(value) {
   if (!plainObject(value) || value.registrySchemaVersion !== MONITOR_ADMISSION_REGISTRY_VERSION) return false;
@@ -77,7 +91,7 @@ export function buildMonitorRuntimeProjectionV2(registry = {}) {
   const controllerRecords = new Map();
   for (const record of monitorRecords) {
     if (!plainObject(record) || !plainObject(record.definition) || !plainObject(record.proposal)) continue;
-    monitors.push(record.definition);
+    monitors.push(runtimeMonitorInput(record.definition));
     if (isLogicalControllerPulseProposalV2(record.proposal)) controllerRecords.set(record.monitorId, record);
   }
   const handlers = Object.create(null);
