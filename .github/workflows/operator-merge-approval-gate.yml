@@ -156,6 +156,9 @@ jobs:
       workflow_run_attempt: ${{ steps.evidence.outputs.workflow_run_attempt }}
       evidence_sha256: ${{ steps.evidence.outputs.evidence_sha256 }}
       authorization_comment_id: ${{ steps.authorization.outputs.authorization_comment_id }}
+      authorization_head: ${{ steps.authorization.outputs.authorization_head }}
+      authorization_head_tree: ${{ steps.authorization.outputs.authorization_head_tree }}
+      authorization_base: ${{ steps.authorization.outputs.authorization_base }}
     steps:
       - name: Check out the trusted exact dispatch base
         uses: actions/checkout@v4
@@ -258,11 +261,12 @@ jobs:
           }, {
             now: new Date(),
             expectedCommentId: authorizationCommentId,
+            allowExpiredMaterialAuthorization: true,
           });
           if (!validation.ok) throw new Error(`authorization provenance blocked: ${validation.blocker}`);
           appendFileSync(
             process.env.GITHUB_OUTPUT,
-            `authorization_comment_id=${authorizationCommentId}\nauthorization_request_id=${validation.command.requestId}\n`,
+            `authorization_comment_id=${authorizationCommentId}\nauthorization_request_id=${validation.command.requestId}\nauthorization_head=${validation.materialAuthorization.authorizationHead}\nauthorization_head_tree=${validation.materialAuthorization.authorizationHeadTree}\nauthorization_base=${validation.materialAuthorization.authorizationBase}\n`,
             'utf8',
           );
           NODE
@@ -575,16 +579,22 @@ jobs:
           repositories: stephan-os
           permission-administration: write
 
-      - name: Re-prove, squash exact head and publish the bounded receipt
+      - name: Re-prove, squash exact head and publish the bounded receipt after main-movement-tolerant authorization gate
         if: ${{ inputs.mode == 'user-owned-protected-squash' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}
           STEPHANOS_AUTHORIZATION_COMMENT_ID: ${{ needs.personal-repository-evidence.outputs.authorization_comment_id }}
+          STEPHANOS_AUTHORIZATION_HEAD: ${{ needs.personal-repository-evidence.outputs.authorization_head }}
+          STEPHANOS_AUTHORIZATION_HEAD_TREE: ${{ needs.personal-repository-evidence.outputs.authorization_head_tree }}
+          STEPHANOS_AUTHORIZATION_BASE: ${{ needs.personal-repository-evidence.outputs.authorization_base }}
         run: |
           set -euo pipefail
           [[ "${STEPHANOS_AUTHORIZATION_COMMENT_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${STEPHANOS_AUTHORIZATION_HEAD}" =~ ^[a-f0-9]{40}$ ]]
+          [[ "${STEPHANOS_AUTHORIZATION_HEAD_TREE}" =~ ^[a-f0-9]{40}$ ]]
+          [[ "${STEPHANOS_AUTHORIZATION_BASE}" =~ ^[a-f0-9]{40}$ ]]
           evidence_outputs="${RUNNER_TEMP}/stephanos-personal-evidence.outputs"
           approval_outputs="${RUNNER_TEMP}/stephanos-personal-approval.outputs"
           : > "${evidence_outputs}"
@@ -614,6 +624,175 @@ jobs:
           [[ "${workflow_run_id}" =~ ^[1-9][0-9]*$ ]]
           [[ "${workflow_run_attempt}" =~ ^[1-9][0-9]*$ ]]
           [[ "${evidence_sha256}" =~ ^[a-f0-9]{64}$ ]]
+
+          export STEPHANOS_EXECUTION_REPOSITORY="${repository}"
+          export STEPHANOS_EXECUTION_PR_NUMBER="${pr_number}"
+          export STEPHANOS_EXECUTION_BRANCH="${branch}"
+          export STEPHANOS_EXECUTION_HEAD="${source_head}"
+          export STEPHANOS_EXECUTION_HEAD_TREE="${source_tree}"
+          export STEPHANOS_EXECUTION_BASE="${base_sha}"
+
+          node --input-type=module <<'NODE'
+          import { evaluateMainMovementTolerantBaseBinding } from './shared/agents/operatorMergeBaseBindingV1.mjs';
+          import { PERSONAL_REPOSITORY_AUTHORITY } from './shared/agents/operatorPersonalRepositoryMergeV1.mjs';
+
+          const SHA40 = /^[a-f0-9]{40}$/;
+          const repository = String(process.env.STEPHANOS_EXECUTION_REPOSITORY || '').trim();
+          const prNumber = Number(process.env.STEPHANOS_EXECUTION_PR_NUMBER);
+          const branch = String(process.env.STEPHANOS_EXECUTION_BRANCH || '').trim();
+          const currentHead = String(process.env.STEPHANOS_EXECUTION_HEAD || '').trim().toLowerCase();
+          const currentTree = String(process.env.STEPHANOS_EXECUTION_HEAD_TREE || '').trim().toLowerCase();
+          const currentBase = String(process.env.STEPHANOS_EXECUTION_BASE || '').trim().toLowerCase();
+          const authorizationHead = String(process.env.STEPHANOS_AUTHORIZATION_HEAD || '').trim().toLowerCase();
+          const authorizationTree = String(process.env.STEPHANOS_AUTHORIZATION_HEAD_TREE || '').trim().toLowerCase();
+          const authorizationBase = String(process.env.STEPHANOS_AUTHORIZATION_BASE || '').trim().toLowerCase();
+          const token = String(process.env.GH_TOKEN || '').trim();
+
+          if (repository !== 'Cheekyfellastef/stephan-os'
+            || !Number.isSafeInteger(prNumber) || prNumber < 1
+            || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/.test(branch)
+            || ![currentHead, currentTree, currentBase, authorizationHead, authorizationTree, authorizationBase]
+              .every((value) => SHA40.test(value))
+            || !token) {
+            throw new Error('main-movement-tolerant gate identity is invalid');
+          }
+
+          const api = async (path) => {
+            const response = await fetch(`https://api.github.com/repos/${repository}${path}`, {
+              method: 'GET',
+              redirect: 'error',
+              headers: {
+                Accept: 'application/vnd.github+json',
+                Authorization: `Bearer ${token}`,
+                'X-GitHub-Api-Version': '2022-11-28',
+                'User-Agent': 'stephanos-main-movement-tolerant-protected-execution-v1',
+              },
+            });
+            if (!response.ok) throw new Error(`trusted GitHub evidence unavailable (${response.status}) for ${path}`);
+            return response.json();
+          };
+
+          const boundedComparison = async (base, head, label) => {
+            const comparison = await api(`/compare/${base}...${head}`);
+            if (!Array.isArray(comparison?.files)) throw new Error(`${label} file evidence is missing`);
+            if (comparison.files.length >= 300) {
+              throw new Error(`${label} file evidence reached the GitHub comparison ceiling`);
+            }
+            return comparison;
+          };
+
+          const afterBlobEstate = (comparison, label) => comparison.files.map((file) => {
+            const path = String(file?.filename || '').trim();
+            const afterBlobSha = String(file?.sha || '').trim().toLowerCase();
+            const status = String(file?.status || '').trim().toLowerCase();
+            if (!path || !SHA40.test(afterBlobSha) || status === 'removed' || status === 'renamed') {
+              throw new Error(`${label} contains an unsupported or unprovable file identity: ${path || 'unknown'}`);
+            }
+            return Object.freeze({ path, afterBlobSha });
+          });
+
+          const authorizationCommit = await api(`/git/commits/${authorizationHead}`);
+          if (String(authorizationCommit?.tree?.sha || '').toLowerCase() !== authorizationTree) {
+            throw new Error('operator-authorized source tree no longer matches immutable Git evidence');
+          }
+          const currentCommit = await api(`/git/commits/${currentHead}`);
+          if (String(currentCommit?.tree?.sha || '').toLowerCase() !== currentTree) {
+            throw new Error('fresh execution source tree does not match immutable Git evidence');
+          }
+
+          const approvedComparison = await boundedComparison(
+            authorizationBase,
+            authorizationHead,
+            'operator-authorized material comparison',
+          );
+          const mainMovementComparison = await boundedComparison(
+            authorizationBase,
+            currentBase,
+            'authorization-base to current-main comparison',
+          );
+          const approvedChangedFiles = afterBlobEstate(
+            approvedComparison,
+            'operator-authorized material comparison',
+          );
+
+          let preservationConvergence;
+          if (currentHead !== authorizationHead || currentTree !== authorizationTree) {
+            const currentEstateComparison = await boundedComparison(
+              currentBase,
+              currentHead,
+              'preservation-converged execution comparison',
+            );
+            preservationConvergence = Object.freeze({
+              proven: true,
+              branch,
+              priorHead: authorizationHead,
+              priorTree: authorizationTree,
+              newHead: currentHead,
+              newTree: currentTree,
+              parents: Object.freeze((Array.isArray(currentCommit?.parents) ? currentCommit.parents : [])
+                .map((parent) => Object.freeze({ sha: String(parent?.sha || '').trim().toLowerCase() }))),
+              currentChangedFiles: Object.freeze(afterBlobEstate(
+                currentEstateComparison,
+                'preservation-converged execution comparison',
+              )),
+              force: false,
+              rebase: false,
+              reset: false,
+            });
+          }
+
+          const authorization = Object.freeze({
+            repository,
+            prNumber,
+            branch,
+            sourceHead: authorizationHead,
+            sourceTree: authorizationTree,
+            authorizationBase,
+            changedFiles: Object.freeze(approvedChangedFiles),
+            authorityClass: PERSONAL_REPOSITORY_AUTHORITY,
+          });
+          const observed = Object.freeze({
+            repository,
+            prNumber,
+            branch,
+            sourceHead: currentHead,
+            sourceTree: currentTree,
+            authorityClass: PERSONAL_REPOSITORY_AUTHORITY,
+            currentBase,
+            authorizationBaseToApprovedSourceComparison: approvedComparison,
+            authorizationBaseToCurrentBaseComparison: mainMovementComparison,
+            ...(preservationConvergence ? { preservationConvergence } : {}),
+            // Reaching this gate means the canonical exact execution evidence collector
+            // immediately above already proved current-head/current-base checks,
+            // independent review, mergeability and zero unresolved threads.
+            currentHeadBaseRequiredChecksGreen: true,
+            currentHeadBaseIndependentReviewClean: true,
+            unresolvedReviewThreads: 0,
+            mergeable: true,
+          });
+
+          const binding = evaluateMainMovementTolerantBaseBinding({
+            authorization,
+            observed,
+            expectedBase: currentBase,
+          });
+          if (binding.authorizationReusable !== true
+            || binding.protectedExecutionReady !== true
+            || binding.finalVerdict !== 'MAIN_MOVEMENT_TOLERANT_BASE_BINDING_READY') {
+            throw new Error(`main-movement-tolerant authorization blocked: ${binding.blockers.join(', ')}`);
+          }
+          console.log(JSON.stringify({
+            finalVerdict: binding.finalVerdict,
+            authorizationMode: binding.compatibility.authorizationMode,
+            authorizationBase: binding.authorizationBase,
+            executionBase: binding.executionBase,
+            executionHead: binding.compatibility.executionHead,
+            operatorReapprovalRequired: binding.compatibility.operatorReapprovalRequired,
+            mergeAuthority: binding.mergeAuthority,
+            deploymentAuthority: binding.deploymentAuthority,
+            runtimeMutationAuthority: binding.runtimeMutationAuthority,
+          }));
+          NODE
 
           GITHUB_OUTPUT="${approval_outputs}" \
           GITHUB_JOB=operator-personal-repository-approval \
