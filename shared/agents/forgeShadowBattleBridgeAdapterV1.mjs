@@ -58,10 +58,13 @@ export const FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1 = Object.freeze([
   'forge-wsl2-enable-authorized-20260905-v1',
   'forge-wsl2-postreboot-authorized-20260905-v1',
   'forge-wsl2-visible-elevation-authorized-20260916-v1',
+  'forge-wsl2-desktop-bootstrap-authorized-20260916-v1',
+  'forge-wsl2-desktop-receipt-authorized-20260916-v1',
+  'forge-wsl2-desktop-postreboot-authorized-20260916-v1',
 ]);
 
 const AUTHORIZED_REQUEST_IDS = new Set(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1);
-const WSL2_SCRIPT_RELATIVE_PATH = 'scripts/windows/enable-forge-wsl2-prerequisite-v1.ps1';
+const WSL2_SCRIPT_RELATIVE_PATH = 'scripts/windows/forge-wsl2-desktop-bootstrap-v1.ps1';
 const SHA40 = /^[0-9a-f]{40}$/;
 const WSL2_BLOCKERS = new Set([
   'CANONICAL_REPOSITORY_ROOT_MISSING',
@@ -83,6 +86,9 @@ const WSL2_BLOCKERS = new Set([
   'WSL2_MUTATION_NOT_CONFIRMED',
   'WSL2_WINDOWS_FEATURE_ENABLE_FAILED',
   'FORGE_WSL2_REBOOT_REQUIRED',
+  'FORGE_WSL2_DESKTOP_UNAVAILABLE',
+  'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED',
+  'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED',
   'WSL2_UPDATE_FAILED',
   'WSL2_DEFAULT_VERSION_2_FAILED',
   'WSL2_PROOF_NOT_READY_AFTER_CONFIGURATION',
