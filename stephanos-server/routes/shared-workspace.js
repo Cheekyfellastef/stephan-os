@@ -1,5 +1,6 @@
-﻿import express from 'express';
+import express from 'express';
 import { readBackendSharedWorkspaceDashboardFeed } from '../services/sharedWorkspaceDashboardFeedService.js';
+import { readVrCapabilityFeed } from '../services/vrCapabilityFeedService.js';
 
 export function createSharedWorkspaceRouter({ env = process.env, repoRoot = process.cwd(), nowMs, staleAfterMs } = {}) {
   const router = express.Router();
@@ -30,6 +31,27 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
         workspaceRoot: 'UNKNOWN',
         exactNextAction: 'Inspect Shared Workspace configuration and rerun the local Battle Bridge proof commands before claiming live health.',
         errors: ['SHARED_WORKSPACE_DASHBOARD_FEED_UNAVAILABLE'],
+      });
+    }
+  });
+
+  router.get('/vr-capability-feed', async (_req, res) => {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    try {
+      const feed = await readVrCapabilityFeed({ env, repoRoot, nowMs, staleAfterMs });
+      res.json(feed);
+    } catch (error) {
+      res.status(503).json({
+        schemaVersion: 'stephanos.vr-capability-live-feed.v1',
+        route: '/api/shared-workspace/vr-capability-feed',
+        readOnly: true,
+        state: 'unavailable',
+        reason: 'VR_CAPABILITY_FEED_UNAVAILABLE',
+        error: String(error?.message || 'unknown'),
       });
     }
   });

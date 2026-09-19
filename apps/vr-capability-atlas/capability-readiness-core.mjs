@@ -37,15 +37,16 @@ export function capabilityReadinessForConcept(ledger, conceptId, { nowMs = Date.
   if (!ledger || ledger.schemaVersion !== CAPABILITY_READINESS_SCHEMA) {
     return Object.freeze({ available: false, stale: false, reason: 'ledger-unavailable', percent: null, gates: Object.freeze([]) });
   }
-  const updatedAtMs = safeDateMs(ledger.updatedAt);
-  const staleAfterHours = Math.max(1, Number(ledger.staleAfterHours) || 336);
-  const ageHours = updatedAtMs ? Math.max(0, (Number(nowMs) - updatedAtMs) / 3_600_000) : Number.POSITIVE_INFINITY;
-  if (!updatedAtMs || ageHours > staleAfterHours) {
-    return Object.freeze({ available: false, stale: true, reason: 'ledger-stale', percent: null, gates: Object.freeze([]), updatedAt: String(ledger.updatedAt || ''), sourceHead: String(ledger.sourceHead || ''), ageHours });
-  }
   const entry = Array.isArray(ledger.capabilities) ? ledger.capabilities.find((candidate) => String(candidate?.id || '') === String(conceptId || '')) : null;
   if (!entry) {
-    return Object.freeze({ available: false, stale: false, reason: 'capability-unregistered', percent: null, gates: Object.freeze([]), updatedAt: String(ledger.updatedAt || ''), sourceHead: String(ledger.sourceHead || ''), ageHours });
+    return Object.freeze({ available: false, stale: false, reason: 'capability-unregistered', percent: null, gates: Object.freeze([]), updatedAt: String(ledger.updatedAt || ''), sourceHead: String(ledger.sourceHead || '') });
+  }
+  const evidenceUpdatedAt = String(entry.updatedAt || ledger.updatedAt || '');
+  const updatedAtMs = safeDateMs(evidenceUpdatedAt);
+  const staleAfterHours = Math.max(1, Number(entry.staleAfterHours ?? ledger.staleAfterHours) || 336);
+  const ageHours = updatedAtMs ? Math.max(0, (Number(nowMs) - updatedAtMs) / 3_600_000) : Number.POSITIVE_INFINITY;
+  if (!updatedAtMs || ageHours > staleAfterHours) {
+    return Object.freeze({ available: false, stale: true, reason: 'capability-evidence-stale', percent: null, gates: Object.freeze([]), updatedAt: evidenceUpdatedAt, sourceHead: String(ledger.sourceHead || ''), ageHours });
   }
   const scored = scoreCapabilityEntry(entry);
   return Object.freeze({
@@ -57,7 +58,7 @@ export function capabilityReadinessForConcept(ledger, conceptId, { nowMs = Date.
     complete: scored.complete,
     gates: scored.gates,
     visual: Object.freeze({ ...(entry.visual || {}) }),
-    updatedAt: String(ledger.updatedAt || ''),
+    updatedAt: evidenceUpdatedAt,
     sourceHead: String(ledger.sourceHead || ''),
     ageHours,
   });
@@ -74,7 +75,8 @@ export function maturityBandForPercent(percent) {
   const value = Number(percent);
   if (!Number.isFinite(value)) return 'unavailable';
   if (value >= 100) return 'accepted';
-  if (value >= 60) return 'runtime-like';
+  if (value >= 80) return 'runtime-like';
+  if (value >= 60) return 'proof-backed';
   if (value >= 40) return 'prototype';
   return 'design-grounded';
 }
