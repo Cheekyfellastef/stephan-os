@@ -34,6 +34,25 @@ function Get-Sha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Get-CrLfNormalizedSha256([string]$Path) {
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $normalized = New-Object 'System.Collections.Generic.List[byte]'
+    for ($index = 0; $index -lt $bytes.Length; $index += 1) {
+        if ($bytes[$index] -eq 13 -and ($index + 1) -lt $bytes.Length -and $bytes[$index + 1] -eq 10) {
+            $normalized.Add([byte]10)
+            $index += 1
+        } else {
+            $normalized.Add([byte]$bytes[$index])
+        }
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha.ComputeHash($normalized.ToArray()))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
 function Write-AtomicJson([string]$Path, [object]$Value) {
     $directory = Split-Path -Parent $Path
     [System.IO.Directory]::CreateDirectory($directory) | Out-Null
@@ -96,8 +115,17 @@ function Assert-CanonicalScheduledTask([string]$CurrentUser) {
 $activeState = Read-ActiveState
 
 if (Test-Path -LiteralPath $installedLauncher -PathType Leaf) {
-    if ((Get-Sha256 $installedLauncher) -ne (Get-Sha256 $sourceLauncher)) {
-        throw 'Installed immutable lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.'
+    $sourceLauncherSha256 = Get-Sha256 $sourceLauncher
+    if ((Get-Sha256 $installedLauncher) -ne $sourceLauncherSha256) {
+        if ((Get-CrLfNormalizedSha256 $installedLauncher) -ne (Get-CrLfNormalizedSha256 $sourceLauncher)) {
+            throw 'Installed immutable lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.'
+        }
+        if ($PSCmdlet.ShouldProcess($installedLauncher, 'Converge line-ending-equivalent immutable lifeboat active-bank launcher to exact reviewed source bytes')) {
+            Copy-Item -LiteralPath $sourceLauncher -Destination $installedLauncher -Force
+        }
+        if ((Get-Sha256 $installedLauncher) -ne $sourceLauncherSha256) {
+            throw 'Installed immutable lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.'
+        }
     }
 } elseif ($null -ne $activeState) {
     throw 'Existing lifeboat active state requires the immutable active-bank launcher to already be installed.'
@@ -106,8 +134,17 @@ if (Test-Path -LiteralPath $installedLauncher -PathType Leaf) {
 }
 
 if (Test-Path -LiteralPath $installedWindowlessLauncher -PathType Leaf) {
-    if ((Get-Sha256 $installedWindowlessLauncher) -ne (Get-Sha256 $sourceWindowlessLauncher)) {
-        throw 'Installed immutable windowless lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.'
+    $sourceWindowlessLauncherSha256 = Get-Sha256 $sourceWindowlessLauncher
+    if ((Get-Sha256 $installedWindowlessLauncher) -ne $sourceWindowlessLauncherSha256) {
+        if ((Get-CrLfNormalizedSha256 $installedWindowlessLauncher) -ne (Get-CrLfNormalizedSha256 $sourceWindowlessLauncher)) {
+            throw 'Installed immutable windowless lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.'
+        }
+        if ($PSCmdlet.ShouldProcess($installedWindowlessLauncher, 'Converge line-ending-equivalent immutable windowless lifeboat launcher to exact reviewed source bytes')) {
+            Copy-Item -LiteralPath $sourceWindowlessLauncher -Destination $installedWindowlessLauncher -Force
+        }
+        if ((Get-Sha256 $installedWindowlessLauncher) -ne $sourceWindowlessLauncherSha256) {
+            throw 'Installed immutable windowless lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.'
+        }
     }
 } elseif ($null -ne $activeState) {
     throw 'Existing lifeboat active state requires the immutable windowless launcher to already be installed.'
