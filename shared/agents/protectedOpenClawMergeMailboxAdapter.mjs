@@ -216,7 +216,7 @@ function readProtectedOperatorAuthorizationCommentId(runCommand, plan) {
   for (let page = firstPage; page <= lastPage; page += 1) {
     const pagePayload = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
       'api', `repos/${CANONICAL_REPOSITORY}/issues/${CANONICAL_MAILBOX_ISSUE}/comments?per_page=${CANONICAL_MAILBOX_PAGE_SIZE}&page=${page}`,
-    ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_MAILBOX_COMMENT_LOOKUP_FAILED').stdout, 'PROTECTED_MERGE_MAILBOX_COMMENT_LOOKUP_JSON_INVALID');
+    ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_MAILBOX_COMMENT_LOOKUP_FAILED').stdout, 'PROTECTED_MERGE_MAILBOX_COMMENT_JSON_INVALID');
     if (!Array.isArray(pagePayload)) return 0;
     comments.push(...pagePayload);
   }
